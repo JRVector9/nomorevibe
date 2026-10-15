@@ -111,12 +111,26 @@ export async function refreshProductEvidenceJob(
   if (pendingRequest && requestTurn) await runRequest();
 
   while (ctx.hasBudget()) {
-    const slugs = await dueEvidenceProductSlugs({
+    // Read one later product before external I/O so a full-page deadline can
+    // continue without starting another selection after the budget has ended.
+    const selectionLimit = Math.min(settings.batchSize + 1, 100);
+    const selected = await dueEvidenceProductSlugs({
       afterSlug,
-      limit: settings.batchSize,
+      limit: selectionLimit,
       now,
       settings,
     });
+    const slugs = selected.slice(0, settings.batchSize);
+    let untouchedNextPage = selected.length > slugs.length;
+    let finalPage = selected.length < selectionLimit;
+    // The selector caps at 100. At that setting, obtain the lookahead separately
+    // while the shared and dependency budgets still permit starting a read.
+    if (settings.batchSize === 100 && selected.length === 100 && ctx.hasBudget()
+      && !ctx.signal?.aborted && Date.now() < deadlineAt) {
+      const later = await dueEvidenceProductSlugs({ afterSlug: slugs.at(-1), limit: 1, now, settings });
+      untouchedNextPage = later.length > 0;
+      finalPage = !untouchedNextPage;
+    }
     if (slugs.length === 0) {
       await runRequest();
       ctx.log("evidence.refresh_batch", counts);
@@ -161,9 +175,13 @@ export async function refreshProductEvidenceJob(
       await saveCursor();
       await runRequest();
       if (!completedPage) {
-        untouchedLater = index < slugs.length - 1;
+        untouchedLater = index < slugs.length - 1 || untouchedNextPage;
         break;
       }
+    }
+    if (completedPage && untouchedNextPage && !ctx.hasBudget()) {
+      completedPage = false;
+      untouchedLater = true;
     }
     if (!completedPage) {
       const budgetElapsed = ctx.deadlineAt !== undefined && Date.now() >= ctx.deadlineAt;
@@ -174,7 +192,7 @@ export async function refreshProductEvidenceJob(
         ? { ...(afterSlug ? { afterSlug } : {}), requestTurn }
         : afterSlug ? { afterSlug } : ctx.cursor };
     }
-    if (slugs.length < settings.batchSize) {
+    if (finalPage) {
       ctx.log("evidence.refresh_batch", counts);
       return { done: true };
     }

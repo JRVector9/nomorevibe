@@ -89,7 +89,7 @@ git push -u origin codex/pipeline-pr00-evidence-progress-20261015
 gh pr create --base main --title "fix: release unused fetch bodies and continue evidence pages" --body-file /private/tmp/nomorevibe-pipeline-pr00-body.md
 ```
 
-- [ ] PR의 필수 `check`와 최신 base를 확인한다. main에 미반영된 동안 운영 반영 완료로 기록하지 않는다.
+- [x] PR의 필수 `check`/quality/통합3shard 전부PASS와 최신 base를 확인하고 PR427을 main `94d2f9e`에 병합했다(06:58:46Z). 운영 배포는 아직 안 했다.
 
 ```sh
 gh pr checks codex/pipeline-pr00-evidence-progress-20261015

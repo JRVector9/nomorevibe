@@ -99,7 +99,8 @@ git diff --check
 - [x] 전체 설계와 기존 코드·PR/main 상태 확인, 세 서버·독립 DR 요구를 PR 경계에 배정.
 - [x] PR-00용 별도 worktree/branch를 최신 `origin/main`에서 생성하고 X·문서 변경을 제외한4파일을 추출.
 - [x] PR-00 전체 검증·부모 diff 검토·원격 [PR #427](https://github.com/JRVector9/nomorevibe/pull/427) 생성.
-- [ ] PR-00 필수 CI 확인·병합/배포는 실제 완료 후 기록.
+- [x] PR-00 필수check/quality/통합3shard PASS 후 main `94d2f9e`에 병합(06:58:46Z).
+- [ ] PR-00 운영 배포는 고정image와 실제 runtime 확인 후 별도 기록.
 - [ ] PR-01 상세 계획 작성 → 최종 완료 계수의 실패 회귀부터 구현.
 - [ ] PR-02–17은 각 선행 합격 후 상세 계획·회귀·구현·검토·PR·migration/배포 증거 순서로 진행.
 

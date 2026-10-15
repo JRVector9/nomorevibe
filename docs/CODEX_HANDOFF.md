@@ -11,7 +11,10 @@ PR00 격리 추출·테스트를 병렬 수행했다. 별도 새 운영 writer�
 PR00 worktree `/Users/jr/Desktop/projects/nomorevibe-pr00`, branch
 `codex/pipeline-pr00-evidence-progress-20261015`, origin/main/base `b55ac083`.
 기존 c5fcb0b/90a57fd의 fetch·evidence 관련4파일만 추출(+253/-7), X 변경은 제외했다.
-PR00 커밋49fcdd0을 push하고 https://github.com/JRVector9/nomorevibe/pull/427 을 생성했다. 필수 CI는 확인 중이며 main merge/배포는 아직 안 했다.
+PR00 https://github.com/JRVector9/nomorevibe/pull/427 은 필수check/quality/통합3shard 전부PASS 후
+2026-10-15T06:58:46Z에 main `94d2f9e95f57f4ca2cf0d7f85f6765be6a4c10de`로 squash 병합했다.
+계획은 https://github.com/JRVector9/nomorevibe/pull/428 로 제출했고 최신main과 문서 handoff 충돌을 해소했다.
+이 PR의 최종 docs CI 확인·병합은 다음 단계다. 운영 배포는 아직 안 했다.
 
 ## Modified files / key design decisions
 
@@ -40,8 +43,11 @@ PR00 agent가 격리 worktree에서 실제 실행:
 
 ## Remaining work / exact next commands
 
-부모가 PR00 diff를 검토하고 빠진 공통 check를 실행한 뒤 결과 문서/명시적 파일 커밋·PR를 생성한다.
-설계/HTML/roadmap은 별도 docs PR로 공개해 X 브랜치의 다른 변경을 섞지 않는다.
+PR00 검증·독립 최종 review·최신base 필수CI·병합은 완료했다. PR428의 docs CI를 확인하고 병합한다.
+독립 검토의 Oracle 전체 자원 예산 gate 누락을 수정해 PR10/11 활성화 전 검증으로 앞당겼다.
+기존 근거 helper PID35683은06:55:15Z alive/cycle194/source saved누적4742, due45496출처/23067제품이었다.
+원래 deadline/cycle/I/O상한을 유지했고 운영 설정·모델·pause는 변경하지 않았다.
+root X 브랜치의 나머지 커밋은 두 PR에 섞지 않았다. PR428은 최신 main merge 도중 handoff만 충돌했고 두 phase를 보존해 해소했다.
 PR01 계수·격리 replay 다음, item/fence/공통 예산 검증 전 독립 consumer 활성화 금지.
 아직2배·Oracle 상시 신규업무·최종DR 달성/배포로 보고하지 않는다.
 
@@ -52,6 +58,41 @@ sed -n '1,230p' docs/superpowers/plans/2026-10-15-pipeline-pr-roadmap.md
 gh pr list --state open --limit 20
 ```
 
+
+
+---
+
+# 2026-10-15 — PR00 응답 정리·근거 이어 처리 독립 제출
+
+## Current objective / completed work / modified files
+
+사용자가 수집·검수2배/세 서버 설계를 PR 단위로 계획하고 진행하도록 승인했다.
+먼저 기존 로컬 수정의4파일만 origin/main b55ac083에서 독립 추출했다.
+`lib/net/fetch.ts`, `lib/jobs/products/evidence-refresh.ts`, `tests/link-evidence.test.ts`,
+`tests/evidence-refresh-continuation.test.ts`와 검증 문서
+`docs/operations/2026-10-15-pipeline-pr00-validation.md`, 이 handoff가 PR00 범위다.
+X·Oracle 역할·schema·모델·운영 설정은 이 PR에 포함하지 않는다.
+
+## Key design decisions / test commands and results / failed approaches
+
+unused body 정리 실패가 원래 outcome을 덮지 않는다. I/O 전 page lookahead만 수행하며
+selector 상한100·cursor·quota/abort/backoff guard를 유지한다. 후속 설계·PR roadmap은 별도 docs PR이다.
+실제 focused96/전체unit2,547/관련integration38/Python deploy23PASS, 타입·lint·i18n·build·bundle·diff 검사PASS.
+전체 명령과 기존 warning은 위 검증 문서에 기록했다. 전용 loopback55451 DB만 사용했다.
+첫 build는 외부 node_modules symlink root 문제로 실패, 실제 dependency 복사 후 source 변경 없이PASS.
+운영 DB·실모델 성능·장애 주입·배포는 실행하지 않았다. 새 DDL이 없어 운영 migration은 필요 없다.
+
+## Remaining work / exact next commands
+
+PR을 생성하고 최신 base의 필수 CI를 확인한다. 병합/배포는 실제 증거를 확인한 뒤 별도 기록한다.
+기존 근거 catch-up·발굴 pause·소개검수재개·keyword api-stop·예산은 유지한다.
+PR00은 전체 적체 해소·2배·Oracle DR 완료를 의미하지 않는다.
+
+```sh
+git diff --check
+gh pr checks codex/pipeline-pr00-evidence-progress-20261015
+gh pr view codex/pipeline-pr00-evidence-progress-20261015 --json url,headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
+```
 
 ---
 

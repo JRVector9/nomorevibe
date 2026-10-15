@@ -119,6 +119,11 @@ function timedOut(error: unknown): boolean {
   );
 }
 
+async function cancelUnusedBody(response: Response): Promise<void> {
+  // Cleanup failure must not replace the response's original outcome.
+  await response.body?.cancel().catch(() => {});
+}
+
 export async function readBodyStrictlyCapped(
   response: Response,
   maxBytes: number,
@@ -126,7 +131,10 @@ export async function readBodyStrictlyCapped(
   const declared = response.headers.get("content-length");
   if (declared !== null) {
     const bytes = Number(declared);
-    if (Number.isFinite(bytes) && bytes > maxBytes) return null;
+    if (Number.isFinite(bytes) && bytes > maxBytes) {
+      await cancelUnusedBody(response);
+      return null;
+    }
   }
 
   const reader = response.body?.getReader();
@@ -226,6 +234,7 @@ export async function fetchCapped(
       return { ok: true, status: 304, finalUrl: current, headers: response.headers, body: Buffer.alloc(0) };
     }
     if (response.status >= 300 && response.status < 400) {
+      await cancelUnusedBody(response);
       const location = response.headers.get("location");
       if (!location) return { ok: false, reason: "http", status: response.status };
       try {
@@ -235,7 +244,10 @@ export async function fetchCapped(
       }
       continue;
     }
-    if (!response.ok) return { ok: false, reason: "http", status: response.status };
+    if (!response.ok) {
+      await cancelUnusedBody(response);
+      return { ok: false, reason: "http", status: response.status };
+    }
 
     let body: Buffer | null;
     let truncated: boolean | undefined;

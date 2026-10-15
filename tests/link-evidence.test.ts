@@ -62,6 +62,29 @@ describe("capped external fetch", () => {
     expect(result).toEqual({ ok: false, reason: "too_large" });
   });
 
+  it("cancels a declared oversized body without reading or waiting for its tail", async () => {
+    const cancelled = vi.fn();
+    const pull = vi.fn(() => new Promise<void>(() => {}));
+    const body = new ReadableStream<Uint8Array>({ pull, cancel: cancelled }, { highWaterMark: 0 });
+    const result = await fetchCapped("https://example.com/large", {
+      maxBytes: 5,
+      request: async () => new Response(body, { headers: { "content-length": "500" } }),
+    });
+    expect(result).toEqual({ ok: false, reason: "too_large" });
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the size failure when cancelling a declared oversized body rejects", async () => {
+    const cancelled = vi.fn(() => Promise.reject(new Error("already closed")));
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled }, { highWaterMark: 0 });
+    await expect(fetchCapped("https://example.com/large", {
+      maxBytes: 5,
+      request: async () => new Response(body, { headers: { "content-length": "500" } }),
+    })).resolves.toEqual({ ok: false, reason: "too_large" });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects a streamed body above the cap instead of keeping a truncated success", async () => {
     const result = await fetchCapped("https://example.com/stream", {
       maxBytes: 4,
@@ -71,13 +94,62 @@ describe("capped external fetch", () => {
   });
 
   it("re-checks every redirect and rejects a redirect to a private address", async () => {
-    const request = vi.fn(async () => new Response(null, {
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled }, { highWaterMark: 0 });
+    const request = vi.fn(async () => new Response(body, {
       status: 302,
       headers: { location: "http://127.0.0.1/latest/meta-data" },
     }));
     const result = await fetchCapped("https://example.com/start", { maxBytes: 32, request });
     expect(result).toEqual({ ok: false, reason: "unsafe_url" });
     expect(request).toHaveBeenCalledTimes(1);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels a redirect body before opening the next hop", async () => {
+    const cancelled = vi.fn();
+    const pull = vi.fn(() => new Promise<void>(() => {}));
+    const body = new ReadableStream<Uint8Array>({ pull, cancel: cancelled }, { highWaterMark: 0 });
+    let cancelledBeforeNextHop = false;
+    const request = vi.fn(async (url: string) => {
+      if (url.endsWith("/start")) return new Response(body, { status: 302, headers: { location: "/final" } });
+      cancelledBeforeNextHop = cancelled.mock.calls.length === 1;
+      return new Response("ok");
+    });
+    expect(await fetchCapped("https://example.com/start", { maxBytes: 32, request }))
+      .toMatchObject({ ok: true, finalUrl: "https://example.com/final", body: Buffer.from("ok") });
+    expect(pull).not.toHaveBeenCalled();
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(cancelledBeforeNextHop).toBe(true);
+  });
+
+  it("cancels a redirect body even when the response has no Location", async () => {
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled }, { highWaterMark: 0 });
+    expect(await fetchCapped("https://example.com/start", { maxBytes: 32,
+      request: async () => new Response(body, { status: 302 }) }))
+      .toEqual({ ok: false, reason: "http", status: 302 });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels an HTTP error body without reading it or replacing the HTTP status", async () => {
+    const cancelled = vi.fn();
+    const pull = vi.fn(() => new Promise<void>(() => {}));
+    const body = new ReadableStream<Uint8Array>({ pull, cancel: cancelled }, { highWaterMark: 0 });
+    expect(await fetchCapped("https://example.com/missing", { maxBytes: 32,
+      request: async () => new Response(body, { status: 404 }) }))
+      .toEqual({ ok: false, reason: "http", status: 404 });
+    expect(pull).not.toHaveBeenCalled();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves HTTP failure when cancelling its response body rejects", async () => {
+    const cancelled = vi.fn(() => Promise.reject(new Error("already closed")));
+    const body = new ReadableStream<Uint8Array>({ cancel: cancelled }, { highWaterMark: 0 });
+    expect(await fetchCapped("https://example.com/error", { maxBytes: 32,
+      request: async () => new Response(body, { status: 500 }) }))
+      .toEqual({ ok: false, reason: "http", status: 500 });
+    expect(cancelled).toHaveBeenCalledTimes(1);
   });
 
   it("returns explicit http and timeout failures", async () => {
