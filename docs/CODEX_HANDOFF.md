@@ -1,3 +1,37 @@
+# 2026-10-15 — PR00 응답 정리·근거 이어 처리 독립 제출
+
+## Current objective / completed work / modified files
+
+사용자가 수집·검수2배/세 서버 설계를 PR 단위로 계획하고 진행하도록 승인했다.
+먼저 기존 로컬 수정의4파일만 origin/main b55ac083에서 독립 추출했다.
+`lib/net/fetch.ts`, `lib/jobs/products/evidence-refresh.ts`, `tests/link-evidence.test.ts`,
+`tests/evidence-refresh-continuation.test.ts`와 검증 문서
+`docs/operations/2026-10-15-pipeline-pr00-validation.md`, 이 handoff가 PR00 범위다.
+X·Oracle 역할·schema·모델·운영 설정은 이 PR에 포함하지 않는다.
+
+## Key design decisions / test commands and results / failed approaches
+
+unused body 정리 실패가 원래 outcome을 덮지 않는다. I/O 전 page lookahead만 수행하며
+selector 상한100·cursor·quota/abort/backoff guard를 유지한다. 후속 설계·PR roadmap은 별도 docs PR이다.
+실제 focused96/전체unit2,547/관련integration38/Python deploy23PASS, 타입·lint·i18n·build·bundle·diff 검사PASS.
+전체 명령과 기존 warning은 위 검증 문서에 기록했다. 전용 loopback55451 DB만 사용했다.
+첫 build는 외부 node_modules symlink root 문제로 실패, 실제 dependency 복사 후 source 변경 없이PASS.
+운영 DB·실모델 성능·장애 주입·배포는 실행하지 않았다. 새 DDL이 없어 운영 migration은 필요 없다.
+
+## Remaining work / exact next commands
+
+PR을 생성하고 최신 base의 필수 CI를 확인한다. 병합/배포는 실제 증거를 확인한 뒤 별도 기록한다.
+기존 근거 catch-up·발굴 pause·소개검수재개·keyword api-stop·예산은 유지한다.
+PR00은 전체 적체 해소·2배·Oracle DR 완료를 의미하지 않는다.
+
+```sh
+git diff --check
+gh pr checks codex/pipeline-pr00-evidence-progress-20261015
+gh pr view codex/pipeline-pr00-evidence-progress-20261015 --json url,headRefOid,baseRefOid,mergeStateStatus,statusCheckRollup
+```
+
+---
+
 # 2026-10-15 12:56 KST — 키워드 두 동결 캠페인 완료, OSS 의미 오류로 단독 검수 중지
 
 ## Current objective
