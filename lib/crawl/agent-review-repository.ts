@@ -2,14 +2,22 @@ import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { currentReplayDb } from "@/lib/db/replay-scope";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { claimItemLease, readItemStage, assertItemLease, releaseItemLease } from "@/lib/jobs/items/repository";
+import type { ItemOwner } from "@/lib/jobs/items/types";
+import { hasLiveFetchItem } from "./fetch-ownership";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
+  hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
+export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
@@ -40,14 +48,12 @@ export async function loadReviewInput(
     observations: observations.map(row => ({ id: `observation:${row.id}`, observation: row.facts })) });
 }
 
-type LockedReviewContext = {
+export type ReviewDomainContext = {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput;
 };
 
-/** Lock candidate → document → settings → repository identity → scan → lease, with no network. */
-async function currentReviewInput(tx: ProductTransaction, expected: {
-  candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput; lease: JobLease;
-}): Promise<LockedReviewContext | null> {
+/** Stage guards precede this domain-only lock phase. Jobs follow attempts/items. */
+async function lockCurrentReviewInput(tx: ProductTransaction, expected: ReviewDomainContext): Promise<ReviewDomainContext | null> {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, expected.candidate.id)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, expected.document.id)).for("share");
   const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
@@ -57,7 +63,6 @@ async function currentReviewInput(tx: ProductTransaction, expected: {
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
-  await assertJobLease(tx, expected.lease);
   const settings = mergeWithDefaults(settingsRow?.values);
   if (!candidate || !document || !isReviewCandidate(candidate)
     || candidate.productUrl !== document.productUrl
@@ -205,6 +210,7 @@ export async function requeueInvalidStarApprovals(settings: CrawlSettings, lease
   let reopened = 0;
   for (const { id } of ids) {
     const changed = await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
       const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, id)).for("update");
       if (!candidate || candidate.state !== "approved" || candidate.decidedBy !== "auto"
         || !candidate.signals?.starAutoApproval) return false;
@@ -215,6 +221,7 @@ export async function requeueInvalidStarApprovals(settings: CrawlSettings, lease
       if (document && candidateStarAutoApproval(candidate, document, settings, now)) return false;
       const fresh = document && document.fetchedAt <= now
         && now.getTime() - document.fetchedAt.getTime() < 24 * 3600_000;
+      let frontierBusy = false;
       if (!fresh) {
         await lockFrontierIdentity(tx, candidate.repo);
         const frontiers = await tx.select().from(crawlFrontier)
@@ -223,19 +230,22 @@ export async function requeueInvalidStarApprovals(settings: CrawlSettings, lease
         const [frontier] = frontiers;
         if (!frontier) await tx.insert(crawlFrontier).values({ repo: candidate.repo,
           signal: "star-auto-source-refresh", priority: 100 });
-        else if (frontier.state !== "pending" && frontier.state !== "fetching") {
+        else frontierBusy = await hasLiveFetchItem(tx, frontier.id);
+        if (frontier && !frontierBusy && frontier.state !== "pending" && frontier.state !== "fetching") {
           await tx.update(crawlFrontier).set({ state: "pending", attempts: 0,
             nextAttemptAt: frontier.lastError ? sql`greatest(now(), ${crawlFrontier.nextAttemptAt})` : sql`now()`,
             updatedAt: sql`now()` }).where(eq(crawlFrontier.id, frontier.id));
         }
       }
+      // Input invalidation preserves every existing owner; it never releases a live item.
+      await hasLiveAgentReviewItem(tx, candidate.id);
       const signals = { ...candidate.signals };
       if (fresh) delete signals.reconsiderAfter;
       else if (document) signals.reconsiderAfter = new Date(Math.min(document.fetchedAt.getTime(), now.getTime())).toISOString();
       await tx.update(crawlCandidates).set({ state: "new", reason: "source_changed", updatedAt: new Date(),
         signals }).where(eq(crawlCandidates.id, candidate.id));
       await requestJob(fresh ? "crawl-judge" : "crawl-fetch", tx);
-      await assertJobLease(tx, lease);
+      await assertJobLeaseAtWallTime(tx, lease);
       return true;
     });
     if (changed) reopened++;
@@ -255,12 +265,12 @@ export async function requeueStaleReviewSources(
 ): Promise<number> {
   if (!settings.enabled || settings.reviewMode === "off") return 0;
   return db.transaction(async tx => {
-    const candidates = await tx.select({ repo: crawlCandidates.repo }).from(crawlCandidates).where(and(
+    await lockPipelineInputStages(tx);
+    const candidates = await tx.select({ id: crawlCandidates.id, repo: crawlCandidates.repo,
+      productUrl: crawlCandidates.productUrl }).from(crawlCandidates).where(and(
       eq(crawlCandidates.decidedBy, "auto"),
-      or(
-        eq(crawlCandidates.state, "approved"),
-        and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS])),
-      ),
+      or(eq(crawlCandidates.state, "approved"),
+        and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))),
       sql`NOT EXISTS (SELECT 1 FROM crawl_documents review_document
         WHERE review_document.repo = ${crawlCandidates.repo}
           AND review_document.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
@@ -269,32 +279,47 @@ export async function requeueStaleReviewSources(
       sql`NOT EXISTS (SELECT 1 FROM crawl_frontier blocked_frontier
         WHERE lower(blocked_frontier.repo) = lower(${crawlCandidates.repo})
           AND (blocked_frontier.repo <> ${crawlCandidates.repo} OR blocked_frontier.state IN ('pending', 'fetching')
-            OR blocked_frontier.updated_at > now() - interval '24 hours'))`,
+            OR blocked_frontier.updated_at > clock_timestamp() - interval '24 hours'))`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
-    let queued = 0;
+    const documents = candidates.length ? await tx.select().from(crawlDocuments)
+      .where(inArray(crawlDocuments.repo, candidates.map(candidate => candidate.repo))).orderBy(asc(crawlDocuments.id)).for("share") : [];
+    const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+    if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return 0;
     for (const repo of [...new Set(candidates.map(row => row.repo.toLowerCase()))].sort()) await lockFrontierIdentity(tx, repo);
+    const frontiers = candidates.length ? await tx.select().from(crawlFrontier)
+      .where(inArray(sql`lower(${crawlFrontier.repo})`, candidates.map(candidate => candidate.repo.toLowerCase())))
+      .orderBy(asc(crawlFrontier.id)).for("update") : [];
+    const wallNow = await reviewWallTime(tx), semanticNow = reviewSemanticNow();
+    const targets: { candidateId: number; frontier: typeof crawlFrontier.$inferSelect; inserted: boolean }[] = [];
     for (const candidate of candidates) {
-      // Discovery may have added an alias after the initial selection.
-      const aliases = await tx.select({ repo: crawlFrontier.repo }).from(crawlFrontier)
-        .where(sql`lower(${crawlFrontier.repo}) = ${candidate.repo.toLowerCase()} and ${crawlFrontier.repo} <> ${candidate.repo}`).limit(1);
-      if (aliases.length) continue;
-      const [row] = await tx.insert(crawlFrontier).values({
-        repo: candidate.repo, signal: "review-source-refresh", priority: 100,
-      }).onConflictDoUpdate({
-        target: crawlFrontier.repo,
-        set: {
-          state: "pending", attempts: 0, nextAttemptAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
-        },
-        setWhere: sql`${crawlFrontier.state} NOT IN ('pending', 'fetching')
-          AND ${crawlFrontier.updatedAt} <= now() - interval '24 hours'`,
-      }).returning({ repo: crawlFrontier.repo });
-      if (row) queued += 1;
+      if (documents.some(document => document.repo === candidate.repo && document.productUrl === candidate.productUrl
+        && document.fetchedAt <= semanticNow && document.fetchedAt.getTime() > semanticNow.getTime() - 24 * 3600_000)) continue;
+      const matching = frontiers.filter(row => row.repo.toLowerCase() === candidate.repo.toLowerCase());
+      if (matching.some(row => row.repo !== candidate.repo)) continue;
+      let [frontier] = matching;
+      if (frontier && (frontier.state === "pending" || frontier.state === "fetching"
+        || frontier.updatedAt.getTime() > wallNow.getTime() - 24 * 3600_000)) continue;
+      const inserted = !frontier;
+      // The already-held repository identity serializes absent-row insertion before item locks.
+      if (!frontier) [frontier] = await tx.insert(crawlFrontier).values({ repo: candidate.repo,
+        signal: "review-source-refresh", priority: 100 }).returning();
+      targets.push({ candidateId: candidate.id, frontier, inserted });
+    }
+    // Finish every domain lock before inspecting items. Never reset a live fetch claim.
+    const busy = new Set<number>();
+    for (const target of targets) if (await hasLiveFetchItem(tx, target.frontier.id)) busy.add(target.frontier.id);
+    for (const target of targets) await hasLiveAgentReviewItem(tx, target.candidateId);
+    let queued = 0;
+    for (const target of targets) {
+      if (busy.has(target.frontier.id)) continue;
+      if (!target.inserted) await tx.update(crawlFrontier).set({ state: "pending", attempts: 0,
+        nextAttemptAt: sql`clock_timestamp()`, lastError: null, updatedAt: sql`clock_timestamp()` })
+        .where(eq(crawlFrontier.id, target.frontier.id));
+      queued++;
     }
     if (queued) await requestJob("crawl-fetch", tx);
-    // Scheduler locks catalog jobs in crawl-fetch → crawl-agent-review order. Keep the
-    // same order here; a lost lease still rolls this whole transaction back.
-    await assertJobLease(tx, lease);
+    await assertAgentReviewJob(tx, lease);
     return queued;
   });
 }
@@ -307,8 +332,8 @@ export async function handOffExhaustedFirstReviews(
 ): Promise<number> {
   if (!settings.enabled || settings.reviewMode !== "enforce") return 0;
   return db.transaction(async tx => {
-    const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
-    if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return 0;
+    const stages = await lockPipelineInputStages(tx);
+    if ((await readItemStage(tx, stages.ai1)).mode !== "legacy") return 0;
     const rows = await tx.select().from(crawlCandidates).where(and(
       or(eq(crawlCandidates.state, "approved"), and(eq(crawlCandidates.state, "needs_review"),
         inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))), eq(crawlCandidates.decidedBy, "auto"),
@@ -324,11 +349,15 @@ export async function handOffExhaustedFirstReviews(
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
     if (!rows.length) return 0;
+    const documents = await tx.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, rows.map(row => row.repo)))
+      .orderBy(asc(crawlDocuments.id)).for("share");
+    const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
+    if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return 0;
     const exhausted: number[] = [];
+    for (const repo of [...new Set(rows.map(row => row.repo))].sort()) await lockRepositoryAgentEvidence(tx, repo);
     for (const candidate of rows) {
-      const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share");
+      const document = documents.find(row => row.repo === candidate.repo);
       if (!document) continue;
-      await lockRepositoryAgentEvidence(tx, candidate.repo);
       const input = await loadReviewInput(candidate, document, settings, tx);
       if (input.validUntil <= reviewSemanticNow()) continue;
       const attempts = await tx.select().from(crawlReviewAttempts).where(and(
@@ -342,15 +371,17 @@ export async function handOffExhaustedFirstReviews(
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
         && attempt.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
-    if (!exhausted.length) return 0;
+    const unowned: number[] = [];
+    for (const candidateId of exhausted) if (!await hasLiveAgentReviewItem(tx, candidateId)) unowned.push(candidateId);
+    if (!unowned.length) return 0;
     const updated = await tx.update(crawlCandidates).set({
       state: "needs_review", reason: "ai_review_exhausted", updatedAt: sql`clock_timestamp()`,
       signals: sql`coalesce(${crawlCandidates.signals}, '{}'::jsonb) ||
         jsonb_build_object('firstReviewExhausted', jsonb_build_object('previousReason', ${crawlCandidates.reason}),
           'stoppedAt', jsonb_build_object('rule', 'AI 1차 심사',
           'detail', '자동 심사 재시도 한도에 도달했습니다. 사람이 확인해야 합니다.'))`,
-    }).where(inArray(crawlCandidates.id, exhausted)).returning({ id: crawlCandidates.id });
-    await assertJobLease(tx, lease);
+    }).where(inArray(crawlCandidates.id, unowned)).returning({ id: crawlCandidates.id });
+    await assertAgentReviewJob(tx, lease);
     return updated.length;
   });
 }
@@ -382,11 +413,12 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
   const scanFresh = sql`(fres.completed_at <= ${reviewSemanticNowSql()} AND fres.completed_at > ${reviewSemanticNowSql()} - interval '24 hours')`;
   return and(
+    not(liveAgentReviewItem(sql`${crawlCandidates.id}`)),
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
     options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} = 'running' AND EXISTS (SELECT 1 FROM jobs j
         WHERE j.name = 'crawl-agent-review' AND j.lease_token = ${crawlReviewAttempts.leaseToken}
-          AND j.locked_at >= now() - interval '90 seconds'))` : undefined,
+          AND j.locked_at >= clock_timestamp() - interval '90 seconds'))` : undefined,
     options.unreviewedOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ever
       WHERE ever.candidate_id = ${crawlCandidates.id} AND ever.state = 'succeeded')` : undefined,
     eq(crawlCandidates.decidedBy, "auto"),
@@ -408,14 +440,14 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
         OR (${crawlCandidates.state} = 'approved' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve')
         OR (${crawlCandidates.state} = 'needs_review' AND ${crawlReviewAttempts.outcome}->>'decision' = 'needs_review')))`,
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
-      AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > now())`,
+      AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > clock_timestamp())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')
       AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') < ${MAX_REVIEW_ATTEMPTS}`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} = 'superseded'
       AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
-      AND ${crawlReviewAttempts.completedAt} > now() - interval '24 hours') < 3`,
+      AND ${crawlReviewAttempts.completedAt} > clock_timestamp() - interval '24 hours') < 3`,
   )!;
 }
 
@@ -438,106 +470,183 @@ export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
   ).limit(Math.max(1, Math.min(100, limit)));
 }
 
-type ReviewContext = {
-  candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput; lease: JobLease;
-};
-export type ReviewClaim = { kind: "claimed" | "reused"; attempt: CrawlReviewAttempt }
-  | { kind: "skipped"; reason: string };
-
-export async function claimAgentReview(input: ReviewContext & {
-  provider: string; model: string; now?: Date;
-}): Promise<ReviewClaim> {
-  if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
+/** Read-only admission, never a substitute for the later claim/result transaction. */
+export async function canStartLegacyAgentReview(lease: JobLease, candidateId?: number): Promise<boolean> {
   return db.transaction(async tx => {
-    const locked = await currentReviewInput(tx, input);
-    const current = locked?.input;
-    if (!current) return { kind: "skipped", reason: "input_changed" };
-    const now = input.now ?? new Date();
-    const semanticNow = reviewSemanticNow(now);
-    const rows = await tx.select().from(crawlReviewAttempts).where(and(
-      eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
-      or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
-        eq(crawlReviewAttempts.model, input.model)), eq(crawlReviewAttempts.state, "running")),
-    )).orderBy(desc(crawlReviewAttempts.id)).limit(16).for("update");
-    const running = rows.find(row => row.state === "running");
-    if (running) {
-      if (running.leaseToken === input.lease.token) return { kind: "skipped", reason: "running" };
-      await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "owner_changed", completedAt: now })
-        .where(eq(crawlReviewAttempts.id, running.id));
-      running.state = "superseded";
-      running.errorCode = "owner_changed";
-      running.completedAt = now;
+    const stages = await lockPipelineInputStages(tx);
+    const stage = await readItemStage(tx, stages.ai1);
+    if (stage.mode !== "legacy") return false;
+    if (candidateId !== undefined) {
+      if (!Number.isSafeInteger(candidateId) || candidateId < 1) throw new Error("invalid_agent_review_candidate");
+      const [candidate] = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates)
+        .where(eq(crawlCandidates.id, candidateId)).for("share");
+      if (!candidate || await hasLiveAgentReviewItem(tx, candidateId)) return false;
     }
-    const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash
-      && row.provider === input.provider && row.model === input.model);
-    const success = same.find(row => row.state === "succeeded" && row.validUntil > semanticNow && row.outcome
-      && row.provider === input.provider);
-    if (success) return { kind: "reused", attempt: success };
-    const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
-      && row.errorCode !== "owner_changed").length;
-    const ownerChanges = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed"
-      && row.completedAt !== null && row.completedAt.getTime() > now.getTime() - 24 * 60 * 60_000).length;
-    if (ownerChanges >= 3) return { kind: "skipped", reason: "infrastructure_interruptions_exhausted" };
-    if (input.provider !== "rules" && modelFailures >= MAX_REVIEW_ATTEMPTS)
-      return { kind: "skipped", reason: "attempts_exhausted" };
-    if (same.some(row => row.state === "failed" && row.retryAfter && row.retryAfter > now)) {
-      return { kind: "skipped", reason: "retry_wait" };
-    }
-    const reusable = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
-      && row.provider === input.provider && row.model === input.model
-      && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION && row.outcome);
-    // Observation database IDs can change on a fresh scan with the same semantic evidence.
-    const copiedOutcome = reusable?.outcome ? { ...reusable.outcome,
-      evidenceIds: reusable.outcome.evidenceIds.map(id => {
-        if (id === "product") return id;
-        const old = reusable.snapshot.evidence.find(item => item.id === id);
-        return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
-      }),
-    } : undefined;
-    const [attempt] = await tx.insert(crawlReviewAttempts).values({
-      candidateId: input.candidate.id, kind: "automatic", state: "running",
-      inputHash: current.inputHash, policyHash: current.policyHash, sourceRevisionHash: current.sourceRevisionHash,
-      snapshot: current.snapshot, source: current.source,
-      promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-      provider: input.provider.slice(0, 80), model: input.model.slice(0, 160), attemptNumber: same.length + 1,
-      reusedFromAttemptId: reusable?.id ?? null,
-      outcome: copiedOutcome ? validateReviewOutcome(current, copiedOutcome) : null,
-      leaseToken: input.lease.token, validUntil: current.validUntil, startedAt: now,
-    }).returning();
-    return { kind: reusable ? "reused" : "claimed", attempt };
+    await assertAgentReviewJob(tx, lease);
+    return true;
   });
 }
 
-export async function recordAgentReview(input: ReviewContext & {
-  attempt: CrawlReviewAttempt; outcome?: ReviewOutcome; error?: string; retryAfter?: Date; now?: Date;
+export type ReviewClaim = { kind: "claimed" | "reused"; attempt: CrawlReviewAttempt; receipt: Ai1ReviewReceipt }
+  | { kind: "skipped"; reason: string };
+type ClaimContext = ReviewDomainContext & { provider: string; model: string; now?: Date };
+type ClaimAuthority = { kind: "legacy"; job: JobLease } | { kind: "item"; owner: ItemOwner; ttlMs: number };
+
+/** Caller time is semantic/recording context; operational retry budgets use DB wall time. */
+async function reviewWallTime(tx: ProductTransaction): Promise<Date> {
+  const [row] = await tx.execute<{ ms: number }>(sql`SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS ms`);
+  return new Date(row.ms);
+}
+
+export function claimAgentReview(input: ClaimContext & { lease: JobLease }): Promise<ReviewClaim> {
+  return claimReview(input, { kind: "legacy", job: input.lease });
+}
+
+/** Inactive adapter only. Item provenance is not part of the legacy replay certificate. */
+export async function claimItemAgentReview(input: ClaimContext & { owner: ItemOwner; ttlMs: number }): Promise<ReviewClaim> {
+  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  return claimReview(input, { kind: "item", owner: input.owner, ttlMs: input.ttlMs });
+}
+
+async function claimReview(input: ClaimContext, authority: ClaimAuthority): Promise<ReviewClaim> {
+  if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
+  return db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    const stage = await readItemStage(tx, stages.ai1);
+    if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
+      || authority.kind === "item" && stage.writerContractVersion < 1) return { kind: "skipped", reason: "stage_inactive" };
+    const locked = await lockCurrentReviewInput(tx, input);
+    if (!locked) {
+      if (authority.kind === "legacy") await assertAgentReviewJob(tx, authority.job);
+      return { kind: "skipped", reason: "input_changed" };
+    }
+    const current = locked.input;
+    const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
+    const rows = await tx.select().from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.candidateId, locked.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
+      or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
+        eq(crawlReviewAttempts.model, input.model)), eq(crawlReviewAttempts.state, "running")),
+    )).orderBy(desc(crawlReviewAttempts.id)).limit(16).for("update");
+    let ownership: Ai1ReviewReceipt["ownership"];
+    if (authority.kind === "legacy") {
+      if (await hasLiveAgentReviewItem(tx, locked.candidate.id)) {
+        await assertAgentReviewJob(tx, authority.job);
+        return { kind: "skipped", reason: "running" };
+      }
+      ownership = { kind: "legacy", stageEpoch: stage.epoch, job: authority.job };
+    } else {
+      const lease = await claimItemLease(tx, stages.ai1, binding, authority.owner, authority.ttlMs);
+      if (!lease) return { kind: "skipped", reason: "running" };
+      ownership = { kind: "item", lease: lease as Ai1ItemLease };
+    }
+    const token = ownership.kind === "legacy" ? ownership.job.token : ownership.lease.token;
+    const now = input.now ?? new Date();
+    const wallNow = await reviewWallTime(tx);
+    const semanticNow = reviewSemanticNow(now);
+    const claimed = async (): Promise<ReviewClaim> => {
+      const running = rows.find(row => row.state === "running");
+      if (running) {
+        if (running.leaseToken === token) return { kind: "skipped", reason: "running" };
+        await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "owner_changed", completedAt: wallNow })
+          .where(eq(crawlReviewAttempts.id, running.id));
+        running.state = "superseded";
+        running.errorCode = "owner_changed";
+        running.completedAt = wallNow;
+      }
+      const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash
+        && row.provider === input.provider && row.model === input.model);
+      const success = same.find(row => row.state === "succeeded" && row.validUntil > semanticNow && row.outcome
+        && row.provider === input.provider);
+      const result = (attempt: CrawlReviewAttempt, origin: Ai1ReviewOrigin): ReviewClaim => ({
+        kind: origin === "fresh" ? "claimed" : "reused", attempt, receipt: { attemptId: attempt.id, origin, ownership },
+      });
+      if (success) return result(success, "direct_reuse");
+      const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
+        && row.errorCode !== "owner_changed").length;
+      const ownerChanges = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed"
+        && row.completedAt !== null && row.completedAt.getTime() > wallNow.getTime() - 24 * 60 * 60_000).length;
+      if (ownerChanges >= 3) return { kind: "skipped", reason: "infrastructure_interruptions_exhausted" };
+      if (input.provider !== "rules" && modelFailures >= MAX_REVIEW_ATTEMPTS)
+        return { kind: "skipped", reason: "attempts_exhausted" };
+      if (same.some(row => row.state === "failed" && row.retryAfter && row.retryAfter > wallNow)) {
+        return { kind: "skipped", reason: "retry_wait" };
+      }
+      const reusable = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
+        && row.provider === input.provider && row.model === input.model
+        && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION && row.outcome);
+      // Fresh scans may replace observation IDs without changing semantic evidence.
+      const copiedOutcome = reusable?.outcome ? { ...reusable.outcome,
+        evidenceIds: reusable.outcome.evidenceIds.map(id => {
+          if (id === "product") return id;
+          const old = reusable.snapshot.evidence.find(item => item.id === id);
+          return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
+        }),
+      } : undefined;
+      const [attempt] = await tx.insert(crawlReviewAttempts).values({
+        candidateId: locked.candidate.id, kind: "automatic", state: "running",
+        inputHash: current.inputHash, policyHash: current.policyHash, sourceRevisionHash: current.sourceRevisionHash,
+        snapshot: current.snapshot, source: current.source,
+        promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
+        provider: input.provider, model: input.model, attemptNumber: same.length + 1,
+        reusedFromAttemptId: reusable?.id ?? null,
+        outcome: copiedOutcome ? validateReviewOutcome(current, copiedOutcome) : null,
+        leaseToken: token, validUntil: current.validUntil, startedAt: now,
+      }).returning();
+      return result(attempt, reusable ? "semantic_reuse" : "fresh");
+    };
+    const result = await claimed();
+    if (ownership.kind === "legacy") await assertAgentReviewJob(tx, ownership.job);
+    else if (result.kind === "skipped") await releaseItemLease(tx, stages.ai1, ownership.lease);
+    else await assertItemLease(tx, stages.ai1, ownership.lease);
+    return result;
+  });
+}
+
+export async function recordAgentReview(input: ReviewDomainContext & {
+  receipt: Ai1ReviewReceipt; outcome?: ReviewOutcome; error?: string; retryAfter?: Date; now?: Date;
   usage?: { inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null };
   /** Server-side rules only; never populated from the model response. */
   ruleRejection?: { reason: DecisionReason; existingSlug?: string; existingStatus?: ProductStatus };
 }): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
+  if (!input.receipt || !input.receipt.ownership) throw new Error("invalid_agent_review_receipt");
+  if (input.receipt.ownership.kind === "item" && currentReplayDb()) throw new Error("replay_item_execution_unsupported");
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   const result = await db.transaction(async tx => {
-    const locked = await currentReviewInput(tx, input);
+    const stages = await lockPipelineInputStages(tx);
+    const locked = await lockCurrentReviewInput(tx, input);
     const current = locked?.input;
-    const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, input.attempt.id)).for("update");
+    const [attempt] = await tx.select().from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.id, input.receipt.attemptId), eq(crawlReviewAttempts.candidateId, input.candidate.id),
+      eq(crawlReviewAttempts.kind, "automatic"),
+    )).for("update");
+    if (!attempt) throw new Error("invalid_agent_review_receipt");
+    await assertAgentReviewOwnership(tx, stages.ai1, input.receipt, attempt, input.input);
+    if (input.receipt.ownership.kind === "legacy") await assertAgentReviewJob(tx, input.receipt.ownership.job);
     const now = input.now ?? new Date();
-    const owns = attempt?.state === "running" && attempt.leaseToken === input.lease.token;
-    const reusable = attempt?.state === "succeeded";
-    if (!attempt || attempt.candidateId !== input.candidate.id || (!owns && !reusable)) return { applied: false, state: "superseded" as const };
-    if (!locked || !current || attempt.inputHash !== current.inputHash || attempt.sourceRevisionHash !== current.sourceRevisionHash) {
+    const owns = input.receipt.origin !== "direct_reuse" && attempt.state === "running";
+    const reusable = attempt.state === "succeeded";
+    if (!locked || !current || attempt.inputHash !== current.inputHash || attempt.sourceRevisionHash !== current.sourceRevisionHash
+      || attempt.validUntil <= reviewSemanticNow()) {
       if (owns) {
         await tx.update(crawlReviewAttempts).set({ state: "superseded", errorCode: "input_changed", completedAt: now })
           .where(eq(crawlReviewAttempts.id, attempt.id));
         await recordReplayFirstReviewTransition(tx, { kind: "superseded", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
       }
+      await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
+      return { applied: false, state: "superseded" as const };
+    }
+    if (!owns && !reusable) {
+      await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: "superseded" as const };
     }
     const finalWrite = await prepareReplayFinalWrite(tx, { stage: "first", candidateId: locked.candidate.id,
       firstAttemptId: attempt.id, input: current, settings: locked.settings });
     if (input.error) {
       if (owns) await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: input.error.slice(0, 120),
-        retryAfter: input.retryAfter ?? new Date(now.getTime() + 60_000), completedAt: now })
+        retryAfter: input.retryAfter ?? new Date((await reviewWallTime(tx)).getTime() + 60_000), completedAt: now })
         .where(eq(crawlReviewAttempts.id, attempt.id));
       await recordReplayFinalWrite(tx, finalWrite, requests);
+      await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: reusable ? "succeeded" as const : "failed" as const };
     }
     const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : input.outcome ?? attempt.outcome);
@@ -545,9 +654,8 @@ export async function recordAgentReview(input: ReviewContext & {
     if (owns) await tx.update(crawlReviewAttempts).set({ state: "succeeded", outcome, completedAt: now, errorCode: null,
       inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
-    const applied = input.settings.reviewMode === "enforce";
-    // 멈춘 곳은 이제 규칙이 아니라 AI 심사다. 승인이면 규칙이 보류하며 남긴 사유를 지운다
-    const kept = Object.fromEntries(Object.entries(input.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
+    const applied = locked.settings.reviewMode === "enforce";
+    const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
       reason: ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
@@ -555,19 +663,20 @@ export async function recordAgentReview(input: ReviewContext & {
       signals: { ...kept, agentReviewAttemptId: attempt.id,
         ...(ruleRejection?.existingSlug ? { existingSlug: ruleRejection.existingSlug, existingStatus: ruleRejection.existingStatus } : {}),
         ...(outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
-    }).where(eq(crawlCandidates.id, input.candidate.id));
-    // A replay of an already-applied success must not fan out another request.
-    if (owns || applied && input.candidate.signals?.agentReviewAttemptId !== attempt.id) {
-      if (input.settings.secondReview.enabled && attempt.provider !== "rules")
+    }).where(eq(crawlCandidates.id, locked.candidate.id));
+    // Preserve existing observe fanout, and avoid a duplicate handoff for applied history.
+    if (owns || applied && locked.candidate.signals?.agentReviewAttemptId !== attempt.id) {
+      if (locked.settings.secondReview.enabled && attempt.provider !== "rules")
         requests.push(await requestJob("second-review", tx));
-      if (outcome.decision === "approve" && !secondGateRequired(input.settings))
+      if (outcome.decision === "approve" && !secondGateRequired(locked.settings))
         requests.push(await requestJob("crawl-publish", tx));
     }
     await recordReplayFinalWrite(tx, finalWrite, requests);
+    await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
     return { applied, state: "succeeded" as const };
   });
   for (const request of requests) emitPipelineEvent("requested", { stage: "first", candidateId: input.candidate.id,
-    firstAttemptId: input.attempt.id, nextJob: request.job, requestedVersion: request.requestedVersion });
+    firstAttemptId: input.receipt.attemptId, nextJob: request.job, requestedVersion: request.requestedVersion });
   return result;
 }
 

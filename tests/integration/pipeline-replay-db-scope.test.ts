@@ -72,7 +72,7 @@ it("runs the existing input/claim/result repository with source locks and its or
     const claim = await claimAgentReview(context);
     if (claim.kind !== "claimed") throw new Error(`unexpected_claim_${claim.kind}`);
     expect(claim.attempt.startedAt).toBeInstanceOf(Date);
-    expect(await recordAgentReview({ ...context, attempt: claim.attempt, outcome: { decision: "approve", confidence: 0.95,
+    expect(await recordAgentReview({ ...context, receipt: claim.receipt, outcome: { decision: "approve", confidence: 0.95,
       reason: "A usable application", evidenceIds: ["product"] } })).toEqual({ applied: true, state: "succeeded" });
   }));
   expect((await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidate.id)))[0].state).toBe("succeeded");

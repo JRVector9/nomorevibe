@@ -42,12 +42,12 @@ it("stores observed reviews without mutating the candidate and reuses immutable 
   const claim = await claimAgentReview(context);
   expect(claim.kind).toBe("claimed");
   if (claim.kind === "skipped") throw new Error(claim.reason);
-  expect(await recordAgentReview({ ...context, attempt: claim.attempt, outcome })).toEqual({ applied: false, state: "succeeded" });
+  expect(await recordAgentReview({ ...context, receipt: claim.receipt, outcome })).toEqual({ applied: false, state: "succeeded" });
   expect(await crawl.getCandidate(context.candidate.repo)).toEqual(context.candidate);
   const again = await claimAgentReview(context);
   expect(again.kind).toBe("reused");
   if (again.kind === "skipped") throw new Error(again.reason);
-  await recordAgentReview({ ...context, attempt: again.attempt, outcome: { ...outcome, decision: "reject" } });
+  await recordAgentReview({ ...context, receipt: again.receipt, outcome: { ...outcome, decision: "reject" } });
   const rows = await db.select().from(crawlReviewAttempts);
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ outcome, inputTokens: null, outputTokens: null, costUsd: null });
@@ -66,7 +66,7 @@ it("copies reusable success to a new source revision without rewriting history",
   const context = await fixture();
   const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
-  await recordAgentReview({ ...context, attempt: first.attempt, outcome });
+  await recordAgentReview({ ...context, receipt: first.receipt, outcome });
   await db.update(crawlDocuments).set({ fetchedAt: new Date() }).where(eq(crawlDocuments.id, context.document.id));
   const document = (await crawl.getDocument(context.candidate.repo))!;
   const next = { ...context, document, input: await loadReviewInput(context.candidate, document, context.settings) };
@@ -74,7 +74,7 @@ it("copies reusable success to a new source revision without rewriting history",
   if (reused.kind === "skipped") throw new Error(reused.reason);
   expect(reused).toMatchObject({ kind: "reused", attempt: { state: "running", reusedFromAttemptId: first.attempt.id, outcome } });
   expect(reused.attempt.id).not.toBe(first.attempt.id);
-  await recordAgentReview({ ...next, attempt: reused.attempt, outcome });
+  await recordAgentReview({ ...next, receipt: reused.receipt, outcome });
   expect(await db.select().from(crawlReviewAttempts)).toHaveLength(2);
 });
 
@@ -82,7 +82,7 @@ it("does not carry an approval over to a refetched page whose body changed", asy
   const context = await fixture();
   const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
-  await recordAgentReview({ ...context, attempt: first.attempt, outcome });
+  await recordAgentReview({ ...context, receipt: first.receipt, outcome });
   await db.update(crawlDocuments).set({ fetchedAt: new Date(), pageMeta: { ...context.document.pageMeta,
     textSample: "Review App — run it locally. Install: npm install -g review-app" } }).where(eq(crawlDocuments.id, context.document.id));
   const document = (await crawl.getDocument(context.candidate.repo))!;
@@ -97,10 +97,10 @@ it("protects an administrator decision and refuses a stale worker token", async 
   if (claim.kind === "skipped") throw new Error(claim.reason);
   await crawl.recordJudgement({ repo: context.candidate.repo, productUrl: context.candidate.productUrl,
     state: "rejected", reason: "not_a_product", decidedBy: "admin" });
-  expect(await recordAgentReview({ ...context, attempt: claim.attempt, outcome })).toEqual({ applied: false, state: "superseded" });
+  expect(await recordAgentReview({ ...context, receipt: claim.receipt, outcome })).toEqual({ applied: false, state: "superseded" });
   expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({ state: "rejected", decidedBy: "admin" });
   await db.update(jobs).set({ leaseToken: "new-owner" }).where(eq(jobs.name, context.lease.name));
-  await expect(recordAgentReview({ ...context, attempt: claim.attempt, outcome })).rejects.toThrow("job_lease_lost");
+  await expect(recordAgentReview({ ...context, receipt: claim.receipt, outcome })).rejects.toThrow("job_lease_lost");
 });
 
 /** 거부 기록만 보고도 왜 거부됐는지 알 수 있어야 한다 — 규칙이 아니라 AI 가 멈췄으면 AI 의 이유를 남긴다 */
@@ -108,7 +108,7 @@ it("enforce 에서 AI 가 거부하면 그 이유를 거부 기록에 남긴다"
   const context = await fixture("enforce");
   const claim = await claimAgentReview(context);
   if (claim.kind === "skipped") throw new Error(claim.reason);
-  await recordAgentReview({ ...context, attempt: claim.attempt, outcome: { ...outcome, decision: "reject", reason: "A docs site for a CLI" } });
+  await recordAgentReview({ ...context, receipt: claim.receipt, outcome: { ...outcome, decision: "reject", reason: "A docs site for a CLI" } });
   expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({
     state: "rejected", signals: { stoppedAt: { rule: "AI 심사", detail: "A docs site for a CLI" } },
   });
@@ -120,7 +120,7 @@ it("stops after three infrastructure failures without rejecting the product", as
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
     expect(claim.attempt.attemptNumber).toBe(number);
-    await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
   }
   expect(await claimAgentReview(context)).toEqual({ kind: "skipped", reason: "attempts_exhausted" });
   expect(await crawl.getCandidate(context.candidate.repo)).toEqual(context.candidate);
@@ -135,7 +135,7 @@ it("hands an approved candidate to human review after three current-source failu
   for (let number = 1; number <= 3; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...context, attempt: claim.attempt, error: "gateway_error", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "gateway_error", retryAfter: new Date(0) });
   }
   expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
   expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({
@@ -153,7 +153,7 @@ it("does not combine failures from before and after README recovery", async () =
   for (let number = 0; number < 2; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
   }
   const document = (await crawl.setReadmeSample(base.candidate.repo, "New recovered README", base.document))!;
   const current = { ...context, document, input: await loadReviewInput(base.candidate, document, settings) };
@@ -161,7 +161,7 @@ it("does not combine failures from before and after README recovery", async () =
   expect(current.input.inputHash).not.toBe(context.input.inputHash);
   const claim = await claimAgentReview(current);
   if (claim.kind === "skipped") throw new Error(claim.reason);
-  await recordAgentReview({ ...current, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+  await recordAgentReview({ ...current, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
   expect(await handOffExhaustedFirstReviews(settings, current.lease)).toBe(0);
   expect(await listReviewCandidates(settings, 20, { readyOnly: true })).toMatchObject([{ id: base.candidate.id }]);
   expect(await claimAgentReview(current)).toMatchObject({ kind: "claimed", attempt: { attemptNumber: 2 } });
@@ -177,7 +177,7 @@ it.each(["ambiguous", "ai_evidence_insufficient"] as const)("hands exhausted %s 
   for (let number = 1; number <= 3; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...context, attempt: claim.attempt, error: "timeout", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
   }
   expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
   expect(await crawl.getCandidate(candidate.repo)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted",
@@ -244,21 +244,21 @@ it("preserves enforce across a stale settings form and reset; mode changes use C
 it("does not reuse another model's success on the same or a refreshed source", async () => {
   const context = await fixture(); const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
-  await recordAgentReview({...context, attempt: first.attempt, outcome});
+  await recordAgentReview({...context, receipt: first.receipt, outcome});
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {reusedFromAttemptId: null, outcome: null}});
 });
 it("does not exhaust a new model from the old model's failures", async () => {
   const context = await fixture();
   for (let i = 0; i < 3; i++) {
     const attempt = await claimAgentReview(context); if (attempt.kind === "skipped") throw new Error(attempt.reason);
-    await recordAgentReview({...context, attempt: attempt.attempt, error: "timeout", retryAfter: new Date(0)});
+    await recordAgentReview({...context, receipt: attempt.receipt, error: "timeout", retryAfter: new Date(0)});
   }
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {attemptNumber: 1}});
 });
 it("does not let an old model approval suppress review or satisfy enforce publication", async () => {
   const context = await fixture("enforce"); const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
-  await recordAgentReview({...context, attempt: first.attempt, outcome});
+  await recordAgentReview({...context, receipt: first.receipt, outcome});
   vi.stubEnv("CRAWL_REVIEW_MODEL", "other-model");
   try {
     expect((await listReviewCandidates(context.settings)).map(row => row.id)).toContain(context.candidate.id);
@@ -279,7 +279,7 @@ it("한 번도 심사받지 않은 후보가 유효기간 지난 재심사보다
   const old = await fixture();
   const first = await claimAgentReview(old);
   if (first.kind === "skipped") throw new Error(first.reason);
-  await recordAgentReview({ ...old, attempt: first.attempt, outcome });
+  await recordAgentReview({ ...old, receipt: first.receipt, outcome });
   // 유효기간이 지나 다시 보게 된 재심사 — 그리고 줄에서 더 오래된 쪽
   await db.update(crawlReviewAttempts).set({ validUntil: new Date(Date.now() - 60_000) });
   await db.update(crawlCandidates).set({ updatedAt: new Date(Date.now() - 7 * 86_400_000) })
@@ -340,7 +340,7 @@ it("uses worker eligibility for live review claims, stale leases, retry backoff 
   await db.update(jobs).set({ lockedAt: sql`now() - interval '2 minutes'` }).where(eq(jobs.name, context.lease.name));
   expect(await ids({ readyOnly: true })).toEqual([context.candidate.id]);
   await db.update(jobs).set({ lockedAt: sql`now()` }).where(eq(jobs.name, context.lease.name));
-  await recordAgentReview({ ...context, attempt: claim.attempt, error: 'timeout', retryAfter: new Date(Date.now() + 60_000) });
+  await recordAgentReview({ ...context, receipt: claim.receipt, error: 'timeout', retryAfter: new Date(Date.now() + 60_000) });
   expect(await ids({ readyOnly: true })).toEqual([]);
   await db.update(crawlReviewAttempts).set({ state: 'succeeded', validUntil: new Date(0) });
   expect(await ids()).toEqual([context.candidate.id]);

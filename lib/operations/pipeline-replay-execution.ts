@@ -208,7 +208,7 @@ async function artifactContent(tx: Raw, runId: string) {
     sourceRevisionHash: item.source_revision_hash, policyHash: item.policy_hash, seq: Number(item.seq), at: utc(item.at),
     firstAttemptId: Number(item.first_attempt_id), firstCallId: item.first_call_id, decision: item.decision, secondWitnesses: item.second_witnesses }));
   return { row, content: { kind: "pipeline-replay-ledger" as const, version: 1 as const, manifest: row.manifest,
-    run: { runId, epoch: Number(row.epoch), profile: "handlers-v4" as const, state: "sealed" as const,
+    run: { runId, epoch: Number(row.epoch), profile: "handlers-v5" as const, state: "sealed" as const,
       startedAt: utc(row.started_at), deadlineAt: utc(row.deadline_at), admissionClosedAt: utc(row.admission_closed_at),
       writersFencedAt: utc(row.writers_fenced_at), sealedAt: utc(row.sealed_at),
       chargedCalls: Number(row.charged_calls), chargedTokens: Number(row.charged_tokens) },

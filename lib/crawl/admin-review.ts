@@ -89,6 +89,7 @@ export async function overrideCandidate(request: AdminReviewRequest & {
     return { ok: false, message: '알 수 없는 결정 또는 거부 사유입니다.' };
   }
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const current = await lockedInput(tx, parsed.data.repo);
     if (!current) return { ok: false, message: '이미 발행되었거나 심사 원본이 없는 후보입니다.' };
     if (!matchesRequest(current, parsed.data) || current.document.productUrl !== current.candidate.productUrl) {
@@ -137,6 +138,7 @@ const previousSchema = z.object({
 export async function undoAdminDecision(input: { repo: string; attemptId: number; actor: string }): Promise<
   { ok: true; restored: { state: CandidateState; reason: DecisionReason | null } } | { ok: false; message: string }> {
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, input.repo)).for('update');
     if (!candidate) return { ok: false, message: '후보를 찾지 못했습니다.' };
     const parsed = previousSchema.safeParse(candidate.signals?.adminReviewPrevious);
@@ -175,6 +177,7 @@ export async function requestCandidateEvidence(request: AdminReviewRequest): Pro
   const parsed = adminReviewRequestSchema.safeParse(request);
   if (!parsed.success) return { ok: false, message: '최신 심사 화면에서 수집 사유를 1~2000자로 입력해주세요.' };
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const current = await lockedInput(tx, parsed.data.repo);
     if (!current || current.candidate.decidedBy !== 'auto' || current.candidate.state !== 'needs_review') {
       return { ok: false, message: '자동 판정에서 보류된 후보만 추가 근거를 요청할 수 있습니다.' };
@@ -412,6 +415,7 @@ export async function requeueResolvedCandidates(actor: string, limit = REVIEW_QU
   if (!resolved.length) return { scanned: candidates.length, requeued: 0, byReason: [] };
 
   const updated = await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     // 판정 큐로만 되돌린다. 결과는 규칙이 정한다 — 여기서 승인·거부를 대신 쓰지 않는다.
     // 읽은 뒤 사람이 결정했을 수 있으므로 쓰는 순간에도 보호 조건을 확인한다.
     const rows = await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() })

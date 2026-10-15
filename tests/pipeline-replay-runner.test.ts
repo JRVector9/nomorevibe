@@ -9,7 +9,13 @@ const fake = vi.hoisted(() => ({
   finalScope: vi.fn(), dbScope: vi.fn(), currentDb: vi.fn(), identity: vi.fn(), semantic: vi.fn(), transport: vi.fn(), runJob: vi.fn(),
   first: vi.fn(), second: vi.fn(), settings: vi.fn(), traces: [] as string[],
 }));
-vi.mock("@/lib/operations/pipeline-replay-database", () => ({ openVerifiedReplayHandlerDatabase: fake.open }));
+vi.mock("@/lib/operations/pipeline-replay-database", () => ({
+  openVerifiedReplayHandlerDatabase: fake.open,
+  assertVerifiedReplayHandlerDatabase: (database: unknown) => { expect(database).toBe(rawDatabase); },
+  verifyReplayDatabaseSession: async (transaction: unknown, database: unknown) => {
+    expect(transaction).toBe(rawTransaction); expect(database).toBe(rawDatabase);
+  },
+}));
 vi.mock("@/lib/operations/pipeline-replay-ledger", () => ({ ReplayLedger: class {
   prepare = fake.prepare; start = fake.start; drain = fake.drain; inspect = fake.inspect;
 } }));
@@ -43,7 +49,15 @@ function options() {
   return { identityPath: "protected-identity", manifest, inputs: [{ candidateId: 1, input: {} as ReviewInput }], fixture: vi.fn() };
 }
 const run = Object.freeze({ runId: "runner-unit" });
-const rawDatabase = { close: fake.close };
+async function rawTransaction(parts: TemplateStringsArray) {
+  const query = parts.join("?");
+  if (query.includes("FROM public.pipeline_stage_modes")) {
+    return [{ mode: "legacy", draining_from: null, epoch: 1, writer_contract_version: 0 }];
+  }
+  if (query.includes("FROM public.pipeline_item_leases")) return [];
+  throw new Error("unexpected_runner_unit_query");
+}
+const rawDatabase = { close: fake.close, client: { begin: async (load: (tx: typeof rawTransaction) => Promise<unknown>) => load(rawTransaction) } };
 beforeEach(() => {
   vi.resetAllMocks(); fake.traces.length = 0;
   fake.open.mockImplementation(async () => { fake.traces.push("open-raw"); return rawDatabase; });

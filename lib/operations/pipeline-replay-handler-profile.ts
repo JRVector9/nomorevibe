@@ -13,6 +13,8 @@ const tables: readonly Policy[] = [
   { name: "crawl_documents", select: true, update: ["id"], immutable: true },
   { name: "agent_repository_scans", select: true, update: ["id"], immutable: true },
   { name: "agent_repository_observations", select: true, update: ["id"], immutable: true },
+  { name: "pipeline_stage_modes", select: true, update: ["stage"], immutable: true },
+  { name: "pipeline_item_leases", select: true, update: ["work_key"], immutable: true },
   { name: "products", select: true },
   { name: "crawl_candidates", select: true, update: ["state", "reason", "decided_by", "signals", "updated_at"] },
   { name: "crawl_review_attempts", select: true, insert: true,
@@ -48,7 +50,7 @@ const tables: readonly Policy[] = [
 const sequences = ["crawl_review_attempts_id_seq", "second_reviews_id_seq", "crawl_frontier_id_seq"] as const;
 const journalTables = ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
   "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"] as const;
-const profileVersion = "handlers-v4";
+const profileVersion = "handlers-v5";
 const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences, journalTables })).digest("hex");
 const sourceGuard = "BEGIN RAISE EXCEPTION 'replay_handler_source_immutable' USING ERRCODE = '42501'; END";
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;

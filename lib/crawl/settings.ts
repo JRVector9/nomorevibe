@@ -10,6 +10,7 @@ import {
   type CrawlSettings,
 } from "./settings-schema";
 import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 
 const ROW_ID = 1;
 
@@ -125,6 +126,7 @@ export async function saveSettings(
   options: { expectedFormVersion?: string } = {},
 ): Promise<SaveResult> {
   return db.transaction(async tx => {
+  await lockPipelineInputStages(tx);
   await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
   const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
   const current = mergeWithDefaults(row?.values);
@@ -175,6 +177,7 @@ export async function changeReviewMode(input: {
     return { ok: false, issues: ["리뷰·발행 보호 배포 확인 후 모드를 변경해주세요"] };
   }
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     // Ensure the singleton exists before locking it; initial concurrent changes must also use CAS.
     await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
     const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");

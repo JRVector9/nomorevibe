@@ -19,7 +19,7 @@ import {
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
-import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
@@ -346,13 +346,15 @@ export async function holdSuspectedSpam(
   candidate: CrawlCandidate, verdict: { signals: Record<string, unknown> }, lease: JobLease,
 ): Promise<boolean> {
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidate.id)).for("update");
-    await assertJobLease(tx, lease);
+    await assertJobLeaseAtWallTime(tx, lease);
     if (!current || current.decidedBy !== "auto" || !isDeepStrictEqual(current, candidate)) return false;
     await tx.update(crawlCandidates).set({
       state: "needs_review", reason: "suspected_spam", updatedAt: sql`clock_timestamp()`,
       signals: { ...(current.signals ?? {}), suspectedSpam: verdict.signals.suspectedSpam, stoppedAt: verdict.signals.stoppedAt },
     }).where(eq(crawlCandidates.id, current.id));
+    await assertJobLeaseAtWallTime(tx, lease);
     return true;
   });
 }
@@ -421,11 +423,12 @@ export async function markFailed(claim: FetchClaim, error: string, options: { no
 /** AI 심사 입력용 README 앞부분을 원본 옆에 둔다. "" 은 없음 표시 — 다시 찾지 않는다 */
 export async function setReadmeSample(repo: string, readmeSample: string, expected: CrawlDocument, lease?: JobLease): Promise<CrawlDocument | undefined> {
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [updated] = await tx.update(crawlDocuments).set({
     pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify({ readmeSample, readmeSampleVersion: README_SAMPLE_VERSION })}::jsonb`,
   }).where(and(eq(crawlDocuments.repo, repo), eq(crawlDocuments.id, expected.id), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
     sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${expected.pageMeta === null ? null : JSON.stringify(expected.pageMeta)}::jsonb`)).returning();
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     return updated;
   });
 }
@@ -450,11 +453,12 @@ export async function recordPublishedReadme(expected: CrawlDocument, lease: JobL
     : { readmeRefreshAttempts: attempts, readmeRefreshError: result.error,
       readmeRetryAfter: result.retryAfter ?? Date.now() + Math.min(24 * 60, 15 * 2 ** (attempts - 1)) * 60_000 };
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const rows = await tx.update(crawlDocuments).set({
       pageMeta: sql`coalesce(${crawlDocuments.pageMeta}, '{}'::jsonb) || ${JSON.stringify(metadata)}::jsonb`,
     }).where(and(eq(crawlDocuments.id, expected.id), eq(crawlDocuments.repo, expected.repo), eq(crawlDocuments.fetchedAt, expected.fetchedAt),
       sql`${crawlDocuments.pageMeta} IS NOT DISTINCT FROM ${JSON.stringify(expected.pageMeta)}::jsonb`)).returning({ id: crawlDocuments.id });
-    await assertJobLease(tx, lease);
+    await assertJobLeaseAtWallTime(tx, lease);
     return rows.length > 0;
   });
 }
@@ -469,16 +473,21 @@ export async function refreshTextSample(
      where repo in (select repo from crawl_candidates where published_slug = ${slug})
   `);
   if (!expected) {
-    await withJobLeaseWrite(lease, write);
+    await db.transaction(async tx => {
+      await lockPipelineInputStages(tx);
+      await write(tx);
+      if (lease) await assertJobLeaseAtWallTime(tx, lease);
+    });
     return;
   }
   await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     if (!(await lockProductGeneration(tx, expected.id, slug))) return;
     const [current] = await tx.select({ url: products.url }).from(products).where(eq(products.id, expected.id));
     if (current.url !== expected.url || signal?.aborted) return;
     await write(tx);
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
   });
 }
@@ -753,10 +762,11 @@ export async function recordAutomaticJudgement(input: {
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   let candidateId: number | undefined;
   const committed = await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo,input.document.repo)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id,input.document.id)).for("share");
     const [settingsRow] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id,1)).for("share");
-    if (input.lease) await assertJobLease(tx, input.lease);
+    if (input.lease) await assertJobLeaseAtWallTime(tx, input.lease);
     // A pre-existing admin `new` is an explicit rejudge request. A later admin decision is never replaced.
     if ((candidate && candidate.state !== "new") || !isDeepStrictEqual(candidate,input.candidate)
       || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
@@ -782,6 +792,7 @@ export async function recordAutomaticJudgement(input: {
     if (input.settings.enabled && values.state === "approved"
       && (input.settings.reviewMode !== "enforce" || !!input.verdict.signals.starAutoApproval))
       requests.push(await requestJob("crawl-publish", tx));
+    if (input.lease) await assertJobLeaseAtWallTime(tx, input.lease);
     return true;
   });
   if (committed) {
