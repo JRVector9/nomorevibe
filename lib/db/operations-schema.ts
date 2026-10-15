@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean, index, check, primaryKey, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, check, primaryKey, foreignKey, uuid } from 'drizzle-orm/pg-core';
 import type { ItemBinding, ItemStage, ItemStageMode } from '@/lib/jobs/items/types';
+import type { ModelCapacityClass, ModelCapacityEventKind, ModelCapacityEventReason, ModelCapacityMode,
+  ModelCapacityPolicy, ModelCapacityPool, ModelCapacityState } from '@/lib/llm/capacity';
 
 /**
  * Cloudflare 에서 지울 제품 — 공개 제품이 내려가거나 지워지면 DB 트리거가 같은 트랜잭션에서 적는다(0057).
@@ -71,6 +73,83 @@ export const pipelineItemLeases = pgTable('pipeline_item_leases', {
   check('pipeline_item_leases_owner_check', sql`(${table.ownerInstanceId} is null and ${table.ownerBootId} is null and ${table.token} is null and ${table.leaseUntil} is null) or (${table.ownerInstanceId} is not null and char_length(btrim(${table.ownerInstanceId})) > 0 and ${table.ownerBootId} is not null and ${table.token} is not null and ${table.leaseUntil} is not null and ${table.itemEpoch} >= 1)`),
   check('pipeline_item_leases_epoch_check', sql`${table.stageEpoch} between 1 and 9007199254740991 and ${table.itemEpoch} between 0 and 9007199254740991`),
   index('pipeline_item_leases_expiry_idx').on(table.stage, table.leaseUntil, table.workKey).where(sql`${table.token} is not null`),
+]);
+
+/** Inactive model admission ledger. No caller, enable API, or post-dispatch release is installed here. */
+export const modelCapacityControl = pgTable('model_capacity_control', {
+  id: integer('id').primaryKey().default(1),
+  mode: varchar('mode', { length: 10 }).$type<ModelCapacityMode>().notNull().default('disabled'),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(1),
+  revision: bigint('revision', { mode: 'number' }).notNull().default(1),
+  policy: jsonb('policy').$type<ModelCapacityPolicy>(),
+  policyHash: varchar('policy_hash', { length: 64 }),
+  cursor: integer('cursor').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_capacity_control_id_check', sql`${table.id} = 1`),
+  check('model_capacity_control_mode_check', sql`${table.mode} in ('disabled','open','draining')`),
+  check('model_capacity_control_epoch_check', sql`${table.epoch} between 1 and 9007199254740991 and ${table.revision} between 1 and 9007199254740991`),
+  check('model_capacity_control_policy_check', sql`(${table.policy} is null and ${table.policyHash} is null and ${table.mode} = 'disabled') or (${table.policy} is not null and jsonb_typeof(${table.policy}) = 'object' and ${table.policyHash} is not null and ${table.policyHash} ~ '^[a-f0-9]{64}$')`),
+  check('model_capacity_control_cursor_check', sql`${table.cursor} between 0 and 95`),
+]);
+
+export const modelCapacityRequests = pgTable('model_capacity_requests', {
+  requestId: uuid('request_id').primaryKey(),
+  queueOrdinal: bigserial('queue_ordinal', { mode: 'number' }).notNull().unique(),
+  workKey: varchar('work_key', { length: 160 }).notNull(),
+  ownerInstanceId: varchar('owner_instance_id', { length: 120 }).notNull(),
+  ownerBootId: uuid('owner_boot_id').notNull(),
+  class: varchar('class', { length: 10 }).$type<ModelCapacityClass>().notNull(),
+  pool: varchar('pool', { length: 8 }).$type<ModelCapacityPool>().notNull(),
+  routeId: varchar('route_id', { length: 120 }).notNull(),
+  provider: varchar('provider', { length: 60 }).notNull(),
+  model: varchar('model', { length: 200 }).notNull(),
+  providerBudgetId: varchar('provider_budget_id', { length: 120 }).notNull(),
+  groupId: varchar('group_id', { length: 120 }).notNull(),
+  epoch: bigint('epoch', { mode: 'number' }).notNull(),
+  revision: bigint('revision', { mode: 'number' }).notNull(),
+  policyHash: varchar('policy_hash', { length: 64 }).notNull(),
+  state: varchar('state', { length: 13 }).$type<ModelCapacityState>().notNull(),
+  token: uuid('token'),
+  reservedUntil: timestamp('reserved_until', { withTimezone: true, precision: 3 }),
+  queuedAt: timestamp('queued_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  queueUntil: timestamp('queue_until', { withTimezone: true, precision: 3 }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_capacity_requests_ordinal_check', sql`${table.queueOrdinal} between 1 and 9007199254740991`),
+  check('model_capacity_requests_epoch_check', sql`${table.epoch} between 1 and 9007199254740991 and ${table.revision} between 1 and 9007199254740991`),
+  check('model_capacity_requests_class_check', sql`${table.class} in ('first','second','background')`),
+  check('model_capacity_requests_pool_check', sql`${table.pool} in ('reviewer','text') and (${table.class} = 'background' or ${table.pool} = 'reviewer')`),
+  check('model_capacity_requests_identity_check', sql`char_length(${table.workKey}) > 0 and ${table.workKey} = btrim(${table.workKey}) and ${table.workKey} !~ '[[:cntrl:]]' and char_length(${table.ownerInstanceId}) > 0 and ${table.ownerInstanceId} = btrim(${table.ownerInstanceId}) and ${table.ownerInstanceId} !~ '[[:cntrl:]]' and char_length(${table.routeId}) > 0 and ${table.routeId} = btrim(${table.routeId}) and ${table.routeId} !~ '[[:cntrl:]]' and char_length(${table.provider}) > 0 and ${table.provider} = btrim(${table.provider}) and ${table.provider} !~ '[[:cntrl:]]' and char_length(${table.model}) > 0 and ${table.model} = btrim(${table.model}) and ${table.model} !~ '[[:cntrl:]]' and char_length(${table.providerBudgetId}) > 0 and ${table.providerBudgetId} = btrim(${table.providerBudgetId}) and ${table.providerBudgetId} !~ '[[:cntrl:]]' and char_length(${table.groupId}) > 0 and ${table.groupId} = btrim(${table.groupId}) and ${table.groupId} !~ '[[:cntrl:]]'`),
+  check('model_capacity_requests_hash_check', sql`${table.policyHash} ~ '^[a-f0-9]{64}$'`),
+  check('model_capacity_requests_state_check', sql`${table.state} in ('waiting','reserved','dispatched','indeterminate','withdrawn')`),
+  check('model_capacity_requests_token_check', sql`(${table.token} is null and ${table.reservedUntil} is null and ${table.state} in ('waiting','withdrawn')) or (${table.token} is not null and ${table.reservedUntil} is not null and ${table.state} in ('reserved','dispatched','indeterminate','withdrawn'))`),
+  uniqueIndex('model_capacity_requests_live_work_idx').on(table.ownerInstanceId, table.ownerBootId, table.workKey).where(sql`${table.state} in ('waiting','reserved','dispatched','indeterminate')`),
+  index('model_capacity_requests_waiting_idx').on(table.class, table.queueOrdinal).where(sql`${table.state} = 'waiting'`),
+  index('model_capacity_requests_active_idx').on(table.providerBudgetId, table.groupId, table.pool).where(sql`${table.state} in ('reserved','dispatched','indeterminate')`),
+]);
+
+/** 0078 statement triggers reject UPDATE/DELETE, including zero rows, and TRUNCATE. */
+export const modelCapacityEvents = pgTable('model_capacity_events', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  requestId: uuid('request_id').notNull(),
+  kind: varchar('kind', { length: 32 }).$type<ModelCapacityEventKind>().notNull(),
+  epoch: bigint('epoch', { mode: 'number' }).notNull(),
+  revision: bigint('revision', { mode: 'number' }).notNull(),
+  policyHash: varchar('policy_hash', { length: 64 }).notNull(),
+  fromState: varchar('from_state', { length: 13 }).$type<ModelCapacityState>(),
+  toState: varchar('to_state', { length: 13 }).$type<ModelCapacityState>(),
+  reason: varchar('reason', { length: 32 }).$type<ModelCapacityEventReason>(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  foreignKey({ columns: [table.requestId], foreignColumns: [modelCapacityRequests.requestId], name: 'model_capacity_events_request_fk' }),
+  check('model_capacity_events_id_check', sql`${table.id} between 1 and 9007199254740991`),
+  check('model_capacity_events_epoch_check', sql`${table.epoch} between 1 and 9007199254740991 and ${table.revision} between 1 and 9007199254740991`),
+  check('model_capacity_events_hash_check', sql`${table.policyHash} ~ '^[a-f0-9]{64}$'`),
+  check('model_capacity_events_kind_check', sql`${table.kind} in ('queued','reserved','dispatch_started','reservation_cancelled','reservation_expired','wait_expired','policy_changed','dispatch_indeterminate')`),
+  check('model_capacity_events_state_check', sql`(${table.fromState} is null or ${table.fromState} in ('waiting','reserved','dispatched','indeterminate','withdrawn')) and (${table.toState} is null or ${table.toState} in ('waiting','reserved','dispatched','indeterminate','withdrawn'))`),
+  check('model_capacity_events_reason_check', sql`${table.reason} is null or ${table.reason} in ('transport_unknown','local_abort','process_exit','commit_unknown')`),
+  index('model_capacity_events_request_idx').on(table.requestId, table.id),
 ]);
 
 export const operationsObservations = pgTable('operations_observations', {
