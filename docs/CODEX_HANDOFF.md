@@ -1,3 +1,128 @@
+# 2026-10-15 — PR01b-4 병렬 구현·최종 리뷰·로컬 검증 완료 / PR433 필수 CI 대기
+
+## Objective / completed / modified files
+
+사용자 지정 gpt-6.1-sol/xhigh 담당3명이 AI1·AI2·공통 ledger 소유권을 나눠 구현하고 root가 통합·전체 리뷰했다.
+모든 담당 소유권 반환·교차 리뷰 완료. worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-final`,
+branch `codex/pipeline-pr01b-final-20261015`, 최신 base/main `664777d3175dbcded56dad96ad1e6d6f37027bb0`.
+writer 같은 tx의 final/event·strict settled-result proof·고정 handlers-v3·append-only finals 구현.
+수정 파일은 `git status --short`, 계약은 PR01b-final 계획, 실제 결과는 PR01b-final-validation 문서에 기록했다.
+[PR433](https://github.com/JRVector9/nomorevibe/pull/433) 생성·코드 b470f13 push 완료. 필수 CI 진행 중이다. 운영 DDL/배포/provider inference/새 consumer 활성화 없음.
+
+## Decisions / tests / failed approaches
+
+최종 완료는 실제 전후 행·기존 gate·동일 run 호출 증명이며 applied boolean이 아니다. domain/job/outbox 다음 run/event 잠금.
+단위274파일2,781PASS. 전체 DB157파일1,715PASS/기존TODO1은 마지막 보완 전;
+보완 뒤 root 관련 DB6파일68PASS, AI2 기존 포함3파일79PASS, AI1 actual15PASS.
+typegen/tsc/lint/i18n/Python23/build/bundle/diffPASS. lint 기존 vendor warning1.
+root/AI1 actual final0 RED, scope/transport RED, 실제 mutex 제거 canary RED→복원 GREEN을 확인했다.
+root 요청 정규화 RED2→GREEN, foreign-first NOWAIT55P03 RED→동일 candidateId 조건 GREEN.
+처음 가정한 AI1/AI2 교착은 서로 다른 job행이라 해당 경로만으로 입증되지 않는다. 불필요 foreign SHARE만 수정했다.
+실패 trigger를 profile 생성 뒤 넣으면 fingerprint drift라 전용 DB만 재생성하고 생성 전 설치로 바꿨다.
+세 전용55459/55460/55461 container stop. root cleanup4종0, PUBLIC CONNECT/TEMP·public USAGE ACL복구 확인.
+실제 로그 `/tmp/nomorevibe-b4-unit-complete-20261015.log`, `...-integration-all-...`, `...-final-targeted-...`.
+
+## Remaining / exact commands
+
+PR01b-4 최신 base CI→exact-head merge→main 전체 CI 확인. root X branch push 금지·사용자 assets 보존.
+b5 coverage/artifact/seal·initialStateHash 인증, b6 provider 전체비용/identity/취소 증명·baseline은 남았다.
+실모델 unsupported_provider_budget, 원래 PR01 전체/2배/Oracle DR 미판정.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-final
+git diff --check
+git status --short
+gh pr view 433 --json state,baseRefOid,headRefOid,mergeStateStatus,statusCheckRollup
+gh run list --branch codex/pipeline-pr01b-final-20261015 --workflow CI --limit 2
+# check/quality/통합3shard 성공 및 최신 base를 확인하고 exact-head merge한다.
+```
+
+---
+
+# 2026-10-15 — PR01b-4 병렬 착수 / 구현 전 계약 고정
+
+## Current objective
+
+사용자 지시대로 PR01부터 충돌 없는 병렬 구현과 root 전체 리뷰·취합을 계속한다.
+최신 main664777d/PR432 병합·전체 CI 성공에서 별도 worktree
+`/Users/jr/Desktop/projects/nomorevibe-pipeline-final`, branch `codex/pipeline-pr01b-final-20261015`를 만들었다.
+현재 단계는 같은 writer transaction의 최종 완료 기록이며 PR01 전체/2배 달성은 아직 아니다.
+
+## Completed / modified files / decisions
+
+AI1·AI2·provider 계약을 gpt-6.1-sol/xhigh 3명으로 읽기 검토했다. 제품 상태 반영과 final/event는
+같은 Drizzle transaction에 기록하고, 잠금은 domain/job 다음 run/event를 마지막에 잡는다.
+AI2 cleanup과 writer의 교착 가능성은 replay-only 공통 prefix mutex 및 gate 전체 사전 잠금으로 차단한다.
+공통 API·파일 소유권은 `docs/superpowers/plans/2026-10-15-pipeline-pr01b-final.md`에 기록한다.
+운영 설정/DB/migration/provider inference/새 consumer 활성화 변경 없음. root X branch push 금지.
+
+## Tests / failed approaches / remaining
+
+이 단계의 새 테스트는 아직 실행하지 않았다. 이전 PR432 테스트 결과는 아래 기록에만 해당한다.
+다음은 RED→구현→통합 검증→root 및 교차 리뷰→PR/최신 base CI이며, b5 coverage/seal과 b6 실모델 증명은 남아있다.
+독립 raw ledger transaction이나 commit 후 append로 final을 세는 접근은 원자성을 보장하지 못해 사용하지 않는다.
+현재 gateway serving source 일부의 실제 hash가 확인됐으나 total tokens/재시도/usage/cancellation 증명이 없어 admission은 닫혀 있다.
+
+## Exact next commands
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-final
+git status --short
+cat docs/superpowers/plans/2026-10-15-pipeline-pr01b-final.md
+# 이 worktree에서 전용 loopback 테스트 DB를 사용한다. root X branch/사용자 assets는 stage/push하지 않는다.
+npm test -- tests/pipeline-replay-transport.test.ts tests/pipeline-replay-runner.test.ts
+```
+
+---
+
+# 2026-10-15 — PR432 병합·main 전체 CI 성공 / 다음은 PR01b-4
+
+## Current objective / completed
+
+사용자 지시대로 gpt-6.1-sol/xhigh 서브에이전트3명 병렬 구현→담당 간 독립 읽기 리뷰→root 전체 코드 리뷰·통합 검증을 마쳤다.
+PR01b-3 [PR432](https://github.com/JRVector9/nomorevibe/pull/432)는 `2026-10-15T10:28:53Z`
+main `664777d3175dbcded56dad96ad1e6d6f37027bb0`로 병합했다.
+branch head `da68a395f5d3f367dd3a394f73bbe5951fcf6d29`, 최신 base9601e3b의
+[PR CI38719944888](https://github.com/JRVector9/nomorevibe/actions/runs/38719944888) quality·통합3shard·check 전체 SUCCESS,
+mergeState=CLEAN을 직접 확인하고 exact head로 squash merge했다.
+[main CI38720568825](https://github.com/JRVector9/nomorevibe/actions/runs/38720568825)는 quality·통합3shard·check·웹/워커 image까지 전체 SUCCESS다.
+이미지 생성은 운영 적용 증거가 아니다. 이번 작업에서 운영 수동 배포·migration·새 consumer 활성화는 하지 않았다.
+
+## Modified files / decisions / tests
+
+총30파일과 상세 내용은 아래 제출 직전 기록 및 runtime 검증 문서를 따른다.
+기존 AI1/AI2 핸들러·writer·gate와 두 고정 job만 fixture로 실행한다. 실제 provider·fetch/publisher는 열지 않는다.
+unit273파일2762PASS, 전체 DB154파일1689PASS/기존TODO1, typegen/tsc/lint/i18n/build/bundle/Python23/diffPASS.
+기존 clock/spam fixture 실패는 DBclock 기준으로 보정하고 전체를 재검증했다. 두 전용55457/55458 container stop,
+replay schema/role/연결0·원래 PUBLIC ACL 복구를 확인했다. 미해결 P1/P2 review 지적은 없다.
+
+## Remaining / exact next commands
+
+원래 PR01 전체는 부분 완료다. 다음 b4는 실제 writer와 같은 transaction의 final recorder다.
+반환 applied는 완료 판정 근거가 아니며 별도 appliedAttemptId 컬럼도 없다. candidate signals의 실제 적용 연결을 검증한다.
+AI2 gate의 모든 root/형제 표를 job 잠금 뒤 추가 취득하면 cleanup과 교착할 수 있어 공통 잠금순서와 두 연결 회귀가 필요하다.
+상세 사전 읽기 결과는 runtime 계획 마지막 절이다. b4/b5/b6 코드가 구현된 것으로 표시하지 않는다.
+실모델은 unsupported_provider_budget, 최종2배/Oracle DR 미판정이다. 운영 migration/수동 배포/새 consumer 활성화 없음.
+
+root는 codex/x-osaka-smoke-20261015이며 문서만 동기화한다. 이 branch는 push 금지, 사용자 untracked 보존.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-handler-runtime
+gh pr view 432 --json state,mergeCommit,mergedAt
+gh run view 38720568825 --json status,conclusion,jobs
+# main 664777d의 전체 CI/image SUCCESS는 확인 완료다.
+# 다음 b4는 최신 main의 별도 worktree에서 시작한다:
+cd /Users/jr/Desktop/projects/nomorevibe
+git fetch origin main
+git worktree add -b codex/pipeline-pr01b-final-20261015 /Users/jr/Desktop/projects/nomorevibe-pipeline-final origin/main
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-final
+# 기존 recordAgentReview/recordSecondReview/cleanup 잠금과 current predicate를 읽고 첫 원자 rollback RED부터 작성한다.
+# 운영 DB·운영 migration·provider 호출 금지. 테스트는 새 전용 loopback PG17을 쓴다.
+```
+
+
+---
+
 # 2026-10-15 — PR01b-3 실제 AI1/AI2 fixture runner 구현·전체 검증 완료
 
 ## Current objective

@@ -101,6 +101,8 @@ it("rejects a private nonce or connection target swap even when public metadata 
   }
 });
 it("grants only fixed capacity ledger inserts and lifecycle updates", async () => {
+  await database.client`SELECT frozen_input, frozen_hash FROM pipeline_replay.capacity_inputs LIMIT 1`;
+  await database.client`SELECT * FROM pipeline_replay.capacity_finals LIMIT 1`;
   await database.client.begin(async tx => {
     await replay.verifyReplayDatabaseSession(tx, database);
     await tx`INSERT INTO pipeline_replay.capacity_runs (run_id, owner_id, manifest, manifest_hash, state)
@@ -110,7 +112,9 @@ it("grants only fixed capacity ledger inserts and lifecycle updates", async () =
   });
   for (const query of ["UPDATE pipeline_replay.capacity_runs SET manifest = '{}'", "DELETE FROM pipeline_replay.capacity_runs",
     "INSERT INTO pipeline_replay.capacity_runs (run_id, owner_id, manifest, manifest_hash, state, charged_tokens) VALUES ('forbidden', '00000000-0000-4000-8000-000000000001', '{}', repeat('a',64), 'prepared', 0)",
-    "UPDATE pipeline_replay.capacity_inputs SET frozen_input = '{}'", "SELECT * FROM pipeline_replay.capacity_inputs",
+    "UPDATE pipeline_replay.capacity_inputs SET frozen_input = '{}'",
+    "UPDATE pipeline_replay.capacity_finals SET decision = 'reject'", "DELETE FROM pipeline_replay.capacity_finals",
+    "INSERT INTO pipeline_replay.capacity_finals (run_id,candidate_id,input_hash,source_revision_hash,policy_hash,seq,first_attempt_id,first_call_id,decision,second_witnesses,at) VALUES ('profile-ledger',1,repeat('a',64),repeat('b',64),repeat('c',64),1,1,'fake','approve','[]',now())",
     "SELECT * FROM pipeline_replay.capacity_transitions", "UPDATE pipeline_replay.capacity_transitions SET payload = '{}'",
     "INSERT INTO pipeline_replay.capacity_transitions (run_id, seq, at, kind, payload) VALUES ('profile-ledger', 2, now(), 'forbidden', '{}')",
     "UPDATE pipeline_replay.capacity_calls SET second_review_id = 2", "UPDATE pipeline_replay.capacity_calls SET request_hash = repeat('b',64)"])
@@ -140,7 +144,7 @@ it("rejects privilege drift on the same transaction before a handler write", asy
   for (const grant of ["UPDATE (name) ON public.products", "UPDATE (repo) ON public.crawl_documents", "DELETE ON public.jobs",
     "SELECT ON public.public_users", "UPDATE (nonce) ON pipeline_replay.handler_profile", "USAGE ON SEQUENCE public.products_id_seq",
     "UPDATE (manifest) ON pipeline_replay.capacity_runs", "INSERT (charged_tokens) ON pipeline_replay.capacity_runs",
-    "SELECT ON pipeline_replay.capacity_inputs", "UPDATE (vote) ON pipeline_replay.capacity_calls", "INSERT (at) ON pipeline_replay.capacity_transitions"]) {
+    "UPDATE (decision) ON pipeline_replay.capacity_finals", "UPDATE (vote) ON pipeline_replay.capacity_calls", "INSERT (at) ON pipeline_replay.capacity_transitions"]) {
     await admin.unsafe(`GRANT ${grant} TO ${quoted()}`);
     try {
       await expect(database.client.begin(async tx => { await replay.verifyReplayDatabaseSession(tx, database); }))
@@ -175,7 +179,7 @@ it("binds protected profile nonce and exact object OIDs instead of authenticatin
 });
 it("binds the fixed ledger version and complete column definitions", async () => {
   const [profile] = await admin`SELECT version FROM pipeline_replay.handler_profile`;
-  expect(profile.version).toBe("handlers-v2");
+  expect(profile.version).toBe("handlers-v3");
   await admin`ALTER TABLE pipeline_replay.capacity_calls ADD COLUMN extra_identity text`;
   try { await expect(replay.verifyReplayDatabaseSession(database.client, database)).rejects.toThrow("replay_database_privileges_rejected"); }
   finally { await admin`ALTER TABLE pipeline_replay.capacity_calls DROP COLUMN extra_identity`; }

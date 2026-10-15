@@ -47,7 +47,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await admin?.end({ timeout: 3 }); await release?.(); });
 beforeEach(async () => {
-  await admin`TRUNCATE pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
+  await admin`TRUNCATE pipeline_replay.capacity_finals, pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
     pipeline_replay.capacity_inputs, pipeline_replay.capacity_runs`;
   await admin`TRUNCATE second_reviews, crawl_review_attempts, crawl_candidates, crawl_frontier, jobs RESTART IDENTITY CASCADE`;
 });

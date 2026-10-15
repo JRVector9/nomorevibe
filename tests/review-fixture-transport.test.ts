@@ -50,12 +50,20 @@ describe("fixture model-call boundary", () => {
       h.events.push("writer");
     });
     expect(h.events).toEqual(["mode", "reserved", "dispatching", "in_flight", "fixture", "settled", "writer"]);
-    expect(h.ledger.settle).toHaveBeenCalledWith(run, expect.any(String), receipt);
+    expect(h.ledger.settle).toHaveBeenCalledWith(run, expect.any(String), receipt, { ok: true, outcomeHash: reviewHash(result.ok ? result.outcome : null),
+      decisionHash: result.ok ? reviewHash({ decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, reason: result.outcome.reason }) : null });
     expect(h.ledger.reserve).toHaveBeenCalledWith(run, expect.objectContaining({ ...binding,
       inputHash: review.inputHash, sourceRevisionHash: review.sourceRevisionHash, requestHash: expect.stringMatching(/^[a-f0-9]{64}$/), tokenUpperBound: 100 }));
     const call = h.fixture.mock.calls[0][0];
     expect(call.input).toEqual(review);
     expect(call.request).toEqual(h.ledger.reserve.mock.calls[0][1]);
+  });
+
+  it("settles an unsuccessful response without a successful outcome proof", async () => {
+    const h = harness();
+    h.fixture.mockResolvedValueOnce({ result: { ok: false, error: "auth" }, receipt });
+    await transport.withReviewFixtureTransport(h, () => transport.dispatchReviewFixtureCall(binding, input(), {}));
+    expect(h.ledger.settle).toHaveBeenCalledWith(run, expect.any(String), receipt, { ok: false, outcomeHash: null, decisionHash: null });
   });
 
   it("dispatches no fixture or reservation when already aborted", async () => {

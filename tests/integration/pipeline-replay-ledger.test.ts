@@ -46,21 +46,21 @@ async function prepare(overrides: Partial<CapacityManifest["limits"]> = {}, mode
   await ledger.start(run); return run;
 }
 async function clear() {
-  await admin`TRUNCATE pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
+  await admin`TRUNCATE pipeline_replay.capacity_finals, pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
     pipeline_replay.capacity_inputs, pipeline_replay.capacity_runs`;
 }
 beforeAll(async () => {
   const setup = await getReplayIdentityPath(); release = setup.release; identityPath = setup.identityPath;
   database = await openVerifiedReplayDatabase(setup.identityPath, {});
   admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
-  await admin`DROP TABLE IF EXISTS pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
+  await admin`DROP TABLE IF EXISTS pipeline_replay.capacity_finals, pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
     pipeline_replay.capacity_inputs, pipeline_replay.capacity_runs`;
   await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8"));
   const role = database.identity.roleName;
   await admin.unsafe(`GRANT SELECT, INSERT ON pipeline_replay.capacity_runs, pipeline_replay.capacity_inputs, pipeline_replay.capacity_calls, pipeline_replay.capacity_transitions TO "${role}"`);
   await admin.unsafe(`GRANT UPDATE (state, started_at, deadline_at, charged_calls, charged_tokens, event_seq)
     ON pipeline_replay.capacity_runs TO "${role}"`);
-  await admin.unsafe(`GRANT UPDATE (state, dispatched_at, settled_at, input_tokens, output_tokens)
+  await admin.unsafe(`GRANT UPDATE (state, dispatched_at, settled_at, input_tokens, output_tokens, result_ok, result_hash, result_decision_hash)
     ON pipeline_replay.capacity_calls TO "${role}"`);
   ledger = new ReplayLedger(database);
 }, 20_000);

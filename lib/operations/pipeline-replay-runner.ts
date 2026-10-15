@@ -11,6 +11,7 @@ import { runJob, type RunResult } from "@/lib/jobs/runner";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash, parseCapacityManifest, type CapacityManifest } from "./pipeline-capacity";
 import { openVerifiedReplayHandlerDatabase } from "./pipeline-replay-database";
 import { ReplayLedger } from "./pipeline-replay-ledger";
+import { withReplayFinalScope } from "./pipeline-replay-final";
 
 export type ReplayReviewJobName = "crawl-agent-review" | "second-review";
 export type FixtureReviewReplayOptions = {
@@ -66,7 +67,7 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
     try {
       await withReplayDatabaseScope(identityPath, async () => {
         assertReplayDatabaseScopeIdentity(database);
-        await withReviewReplayContext({ referenceTime: new Date(manifest.referenceTime) }, () =>
+        await withReplayFinalScope(run, () => withReviewReplayContext({ referenceTime: new Date(manifest.referenceTime) }, () =>
           withReviewFixtureTransport({ ledger, run, fixture, inputs, fullReviewPolicyHash: manifest.fullReviewPolicyHash,
             tokenUpperBound: manifest.limits.perCallTokenUpperBound }, async () => {
             for (const name of names) {
@@ -77,7 +78,7 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
               jobs.push({ name, result });
               if (signal.aborted || result.status === "failed" || result.status === "skipped" && result.reason === "stopping") break;
             }
-          }));
+          })));
       });
     } finally {
       // runJob has stopped and awaited its heartbeat before its promise settles.

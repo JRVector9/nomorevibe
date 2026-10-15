@@ -27,16 +27,19 @@ const tables: readonly Policy[] = [
   { schema: "pipeline_replay", name: "capacity_runs", select: true,
     insert: ["run_id", "owner_id", "manifest", "manifest_hash", "state"],
     update: ["state", "started_at", "deadline_at", "charged_calls", "charged_tokens", "event_seq"] },
-  { schema: "pipeline_replay", name: "capacity_inputs", select: [],
+  { schema: "pipeline_replay", name: "capacity_inputs", select: true,
     insert: ["run_id", "candidate_id", "input_hash", "source_revision_hash", "frozen_input", "frozen_hash"] },
   { schema: "pipeline_replay", name: "capacity_calls", select: true,
     insert: ["run_id", "call_id", "candidate_id", "first_attempt_id", "input_hash", "source_revision_hash", "stage",
       "second_review_id", "generation_key", "vote", "provider", "model", "request_hash", "token_upper_bound", "state"],
-    update: ["state", "dispatched_at", "settled_at", "input_tokens", "output_tokens"] },
+    update: ["state", "dispatched_at", "settled_at", "input_tokens", "output_tokens", "result_ok", "result_hash", "result_decision_hash"] },
+  { schema: "pipeline_replay", name: "capacity_finals", select: true,
+    insert: ["run_id", "candidate_id", "input_hash", "source_revision_hash", "policy_hash", "seq",
+      "first_attempt_id", "first_call_id", "decision", "second_witnesses"] },
   { schema: "pipeline_replay", name: "capacity_transitions", select: [], insert: ["run_id", "seq", "kind", "payload"] },
 ];
 const sequences = ["crawl_review_attempts_id_seq", "second_reviews_id_seq", "crawl_frontier_id_seq"] as const;
-const profileVersion = "handlers-v2";
+const profileVersion = "handlers-v3";
 const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences })).digest("hex");
 const sourceGuard = "BEGIN RAISE EXCEPTION 'replay_handler_source_immutable' USING ERRCODE = '42501'; END";
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;

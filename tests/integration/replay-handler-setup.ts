@@ -41,11 +41,14 @@ export async function removeReplayHandlerTestProfile(identityPath: string): Prom
   } finally { await admin.end({ timeout: 3 }); }
 }
 
-export async function getReplayHandlerIdentityPath(): Promise<{ identityPath: string; release(): Promise<void> }> {
+export async function getReplayHandlerIdentityPath(options: { beforeProvision?: (admin: postgres.Sql) => Promise<void> } = {}): Promise<{ identityPath: string; release(): Promise<void> }> {
   if (process.env.PIPELINE_REPLAY_IDENTITY_FILE) throw new Error("replay_handler_test_requires_owned_identity");
   const bootstrap = await getReplayIdentityPath();
   const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
-  try { await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8")); }
+  try {
+    await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8"));
+    await options.beforeProvision?.(admin);
+  }
   finally { await admin.end({ timeout: 3 }); }
   await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
     acknowledgeDedicatedCluster: true, env: {} });
