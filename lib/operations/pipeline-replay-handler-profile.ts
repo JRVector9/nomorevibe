@@ -4,9 +4,10 @@ import type postgres from "postgres";
 import type { ReplayDatabaseIdentity } from "./pipeline-replay-database";
 
 type Session = postgres.Sql | postgres.TransactionSql;
-type Policy = Readonly<{ name: string; select: true | readonly string[]; insert?: true; update?: readonly string[]; immutable?: true }>;
-// This is code policy, never a caller-provided grant list. INSERT is whole-table because
-// the existing Drizzle writers render omitted columns as DEFAULT in their INSERT.
+type Policy = Readonly<{ schema?: "pipeline_replay"; name: string; select: true | readonly string[];
+  insert?: true | readonly string[]; update?: readonly string[]; immutable?: true }>;
+// This is code policy, never a caller-provided grant list. Existing Drizzle writers
+// render omitted columns as DEFAULT and require table INSERT; raw ledger writes use columns.
 const tables: readonly Policy[] = [
   { name: "crawl_settings", select: true, update: ["id"], immutable: true },
   { name: "crawl_documents", select: true, update: ["id"], immutable: true },
@@ -23,9 +24,20 @@ const tables: readonly Policy[] = [
   { name: "jobs", select: true, insert: true,
     update: ["locked_at", "last_run_at", "updated_at", "lease_token", "runs", "requested_version", "worker_seen_at", "cursor", "processed_version", "not_before", "last_success_at", "last_error"] },
   { name: "operations_observations", select: ["key"], insert: true, update: ["value", "observed_at"] },
+  { schema: "pipeline_replay", name: "capacity_runs", select: true,
+    insert: ["run_id", "owner_id", "manifest", "manifest_hash", "state"],
+    update: ["state", "started_at", "deadline_at", "charged_calls", "charged_tokens", "event_seq"] },
+  { schema: "pipeline_replay", name: "capacity_inputs", select: [],
+    insert: ["run_id", "candidate_id", "input_hash", "source_revision_hash", "frozen_input", "frozen_hash"] },
+  { schema: "pipeline_replay", name: "capacity_calls", select: true,
+    insert: ["run_id", "call_id", "candidate_id", "first_attempt_id", "input_hash", "source_revision_hash", "stage",
+      "second_review_id", "generation_key", "vote", "provider", "model", "request_hash", "token_upper_bound", "state"],
+    update: ["state", "dispatched_at", "settled_at", "input_tokens", "output_tokens"] },
+  { schema: "pipeline_replay", name: "capacity_transitions", select: [], insert: ["run_id", "seq", "kind", "payload"] },
 ];
 const sequences = ["crawl_review_attempts_id_seq", "second_reviews_id_seq", "crawl_frontier_id_seq"] as const;
-const policyHash = createHash("sha256").update(JSON.stringify({ version: "handlers-v1", tables, sequences })).digest("hex");
+const profileVersion = "handlers-v2";
+const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences })).digest("hex");
 const sourceGuard = "BEGIN RAISE EXCEPTION 'replay_handler_source_immutable' USING ERRCODE = '42501'; END";
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;
 export class ReplayHandlerProfileError extends Error {
@@ -76,7 +88,7 @@ async function objects(session: Session, identity: ReplayDatabaseIdentity): Prom
     ORDER BY n.nspname, c.relname`;
 }
 function assertObjectPolicy(rows: ObjectRow[], identity: ReplayDatabaseIdentity): ObjectRow[] {
-  const expected = new Map<string, Policy>(tables.map(table => [`public.${table.name}`, table]));
+  const expected = new Map<string, Policy>(tables.map(table => [`${table.schema ?? "public"}.${table.name}`, table]));
   expected.set("pipeline_replay.identity", { name: "identity", select: true });
   expected.set("pipeline_replay.handler_profile", { name: "handler_profile", select: true });
   const allowed: ObjectRow[] = [];
@@ -93,12 +105,14 @@ function assertObjectPolicy(rows: ObjectRow[], identity: ReplayDatabaseIdentity)
     if (sequence) {
       if (row.kind !== "S" || !row.usage || row.select || row.update) reject("replay_database_privileges_rejected");
     } else {
-      if (row.kind !== "r" || row.select !== (table!.select === true) || row.insert !== Boolean(table!.insert) || row.update || row.usage)
+      if (row.kind !== "r" || row.select !== (table!.select === true) || row.insert !== (table!.insert === true) || row.update || row.usage)
         reject("replay_database_privileges_rejected");
       if (table!.update?.some(name => !row.columns.some(column => column.name === name))
+        || Array.isArray(table!.insert) && table!.insert.some(name => !row.columns.some(column => column.name === name))
         || table!.select !== true && table!.select.some(name => !row.columns.some(column => column.name === name))) reject("replay_database_privileges_rejected");
       for (const column of row.columns) {
-        if (column.select !== (table!.select === true || table!.select.includes(column.name)) || column.insert !== Boolean(table!.insert)
+        if (column.select !== (table!.select === true || table!.select.includes(column.name))
+          || column.insert !== (table!.insert === true || Boolean(table!.insert && table!.insert.includes(column.name)))
           || column.update !== Boolean(table!.update?.includes(column.name)) || column.references) reject("replay_database_privileges_rejected");
       }
       expected.delete(key);
@@ -165,9 +179,13 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
   await tx.unsafe(`CREATE FUNCTION pipeline_replay.reject_handler_source_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS '${sourceGuard.replace(/'/g, "''")}'`);
   await tx`REVOKE ALL ON FUNCTION pipeline_replay.reject_handler_source_mutation() FROM PUBLIC`;
   for (const table of tables) {
-    const relation = `public.${ident(table.name)}`, target = ident(identity.roleName);
-    const selection = table.select === true ? "SELECT" : `SELECT (${table.select.map(ident).join(",")})`;
-    await tx.unsafe(`GRANT ${selection}${table.insert ? ", INSERT" : ""} ON ${relation} TO ${target}`);
+    const relation = `${table.schema ?? "public"}.${ident(table.name)}`, target = ident(identity.roleName);
+    const grants = [];
+    if (table.select === true) grants.push("SELECT");
+    else if (table.select.length) grants.push(`SELECT (${table.select.map(ident).join(",")})`);
+    if (table.insert === true) grants.push("INSERT");
+    else if (table.insert?.length) grants.push(`INSERT (${table.insert.map(ident).join(",")})`);
+    if (grants.length) await tx.unsafe(`GRANT ${grants.join(",")} ON ${relation} TO ${target}`);
     if (table.update) await tx.unsafe(`GRANT UPDATE (${table.update.map(ident).join(",")}) ON ${relation} TO ${target}`);
     if (table.immutable) {
       await tx.unsafe(`CREATE TRIGGER replay_handler_source_immutable BEFORE UPDATE ON ${relation} FOR EACH STATEMENT EXECUTE FUNCTION pipeline_replay.reject_handler_source_mutation()`);
@@ -180,7 +198,7 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
   await tx`SET LOCAL search_path = pg_catalog,pipeline_replay,public`;
   const manifest = await binding(tx, identity);
   await tx`INSERT INTO pipeline_replay.handler_profile (version, nonce, database_oid, schema_oid, role_oid, owner_oid, policy_hash, manifest)
-    VALUES ('handlers-v1', ${identity.nonce}, ${identity.databaseOid}, ${identity.schemaOid}, ${identity.roleOid}, ${identity.ownerOid}, ${policyHash}, ${tx.json(manifest)})`;
+    VALUES (${profileVersion}, ${identity.nonce}, ${identity.databaseOid}, ${identity.schemaOid}, ${identity.roleOid}, ${identity.ownerOid}, ${policyHash}, ${tx.json(manifest)})`;
 }
 export async function verifyHandlerProfile(session: Session, identity: ReplayDatabaseIdentity): Promise<void> {
   let rows;
@@ -190,7 +208,7 @@ export async function verifyHandlerProfile(session: Session, identity: ReplayDat
       JOIN pg_catalog.pg_class c ON c.oid = 'pipeline_replay.handler_profile'::regclass`;
   } catch { return reject("replay_database_identity_mismatch"); }
   const row = rows[0];
-  if (rows.length !== 1 || row.version !== "handlers-v1" || row.nonce !== identity.nonce || row.database_oid !== identity.databaseOid
+  if (rows.length !== 1 || row.version !== profileVersion || row.nonce !== identity.nonce || row.database_oid !== identity.databaseOid
     || row.schema_oid !== identity.schemaOid || row.role_oid !== identity.roleOid || row.owner_oid !== identity.ownerOid
     || row.marker_owner !== identity.ownerOid || row.marker_kind !== "r" || row.marker_rls) reject("replay_database_identity_mismatch");
   if (row.policy_hash !== policyHash || !isDeepStrictEqual(await binding(session, identity), json(row.manifest)))

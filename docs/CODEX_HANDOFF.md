@@ -1,3 +1,68 @@
+# 2026-10-15 — PR01b-3 실제 AI1/AI2 fixture runner 구현·전체 검증 완료
+
+## Current objective
+
+사용자의 지시대로 서브에이전트 3개를 `gpt-6.1-sol` / `xhigh`로 병렬 실행하고 root가
+소유권을 나눠 관리·전체 코드 리뷰·통합 검증한다. 현재 worktree는
+`/Users/jr/Desktop/projects/nomorevibe-pipeline-handler-runtime`, branch
+`codex/pipeline-pr01b-runtime-20261015`, 기준 main은 `9601e3b` (#431)이다.
+PR431 main CI38716366046 전체 SUCCESS를 직접 재확인했다. 이번 변경은 아직 commit/push/PR 전이다.
+
+## Completed / modified files / key decisions
+
+- fixture 담당: `lib/crawl/review-fixture-transport.ts`, 기존 AI1/AI2 handler·세 adapter와 새 단위 회귀.
+  실제 input/attempt/AI2 generation·slot/provider/model/request에 장부를 결합하고 in-flight 커밋 뒤 callback,
+  엄격한 result/receipt 검증·settle 뒤 기존 writer 실행. settings 재검증, per-call deadline·취소·늦은 callback 차단.
+- runner 담당: `lib/operations/pipeline-replay-runner.ts`, `lib/jobs/runner.ts`, 새 단위 회귀.
+  verified 전용 raw ledger/Drizzle identity 일치, 두 검수 job만 실제 claim, roleLease·다른 job·실모델 차단.
+  전체 deadline을 ledger start 전부터 drain/연결 종료까지 유지한다. 기존 heartbeat 종료·lease/backoff 유지.
+- profile/ledger 담당: 고정 handlers-v2 table/column 권한과 AI2 row/generation/root vote call identity,
+  `pipeline-replay-{database,handler-profile,ledger}.ts`, 격리 bootstrap SQL·통합 helper/회귀.
+  products SELECT only·source 불변 유지. baseline/v1 profile은 자동 확장하지 않는다.
+- root: `lib/db/replay-scope.ts`의 private identity 결합과 실제 handler DB 통합 8개,
+  계획·검증·handoff/PR 담당. 세 agent 종료·소유권 반환, 서로 다른 담당의 교차 리뷰 완료.
+  발견된 fixture timeout·malformed result·settings 경계·입력 캡처·deadline 문제는 수정/재검증했다.
+
+## Tests / failed approaches
+
+- 실제 실행: unit273파일/2,762PASS; 새 실제 handler DB8PASS; 관련 DB6파일64PASS(8번째 신규 DB 회귀 추가 전).
+  typegen·tsc·lint·i18n·build·bundle·Python23·diff PASS. lint는 기존 vendor `_ctx` warning1이다.
+- 최초 전체 DB는153파일PASS/1파일FAIL,1688PASS/1FAIL/기존TODO1이었다. 스팸 테스트 원본의 host시각이
+  DB보다22.41ms 미래여서 ready0인 probe를 확인했다. 해당 fixture만 DBclock-1s로 설정해 단독9PASS,
+  독립 읽기 검토도 의미 약화 없음이다. 최종 전체 DB154파일/1,689PASS/기존TODO1,292.60초.
+  최종 로그 `/tmp/nomorevibe-pr01-runtime-integration-final-20261015.log`.
+- 실제 RED: 미구현 handler dispatch가 raw adapter guard에 닿음, fixture timeout/잘못된 result,
+  AI2 call metadata/권한·nested scope 경계. raw PG timestamp parser와 Drizzle UTC 입력 차이는
+  test fixture를 같은 Drizzle 경로로 읽어 해결했다. equality를 완화하지 않았다.
+- 기존 clock 통합 회귀는 host Date.now와 DB clock 간 약37.8ms 차이로 실패했다.
+  같은 DB clock에서 실행 전 lower bound를 읽도록 테스트만 수정했다. 운영 clock 로직 변경 없음.
+- `review` 스킬의 필수 checklist 파일이 없어 해당 workflow는 중단했다. root 직접 코드 리뷰와
+  다른 담당의 독립 검토 및 실제 DB 회귀로 검토했다.
+
+## Remaining / exact next commands
+
+1. 로컬 전체 검증과 validation/status 문서 갱신을 완료했다. 최신 main base에서 명시 파일만
+   commit/push/PR하고 CI 필수 check·통합3shard 성공 후 정확한 head SHA로 병합한다. root X branch push 금지.
+2. 전체 DB 뒤 replay schema 없음·runtime role0·연결0, 원래 PUBLIC ACL 복구를 직접 확인했다.
+   이번 전용55457/55458 container는 stop했고 삭제하지 않았다.
+3. 원래 PR01은 부분 완료다. 다음 b4는 기존 writer와 같은 transaction의 final,
+   b5는 readiness/coverage·artifact/seal, b6는 실제 provider 비용/usage/취소 증명과30분 baseline이다.
+   fixture 속도는 모델 처리량이 아니다. final/initialStateHash/coverage 인증은 아직 없으며2배 미판정이다.
+4. 운영 migration·실제 provider 호출·공개 발행·수동 배포·새 consumer 활성화 없음.
+   마지막 확인된 운영 릴리스8020dca/13앱과 발굴 pause 등 기존 운영 지시를 유지했다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-handler-runtime
+tail -60 /tmp/nomorevibe-pr01-runtime-integration-final-20261015.log
+git diff --check
+git status --short
+git fetch origin main
+# root가 정확한 이번 파일만 stage/commit/push/PR한다. root X branch push 금지.
+# 성공한 CI의 head SHA를 확인한 뒤 --match-head-commit으로만 병합한다.
+```
+
+---
+
 # 2026-10-15 — PR01b-2 DB scope·고정 handler profile 구현·전체 검증 완료
 
 ## Current objective

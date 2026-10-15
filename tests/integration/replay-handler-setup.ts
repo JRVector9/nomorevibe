@@ -1,4 +1,5 @@
 import postgres from "postgres";
+import { readFile } from "node:fs/promises";
 import { assertLocalTestDatabase } from "@/scripts/test-database";
 import { openVerifiedReplayHandlerDatabase, provisionReplayHandlerProfile, readReplayDatabaseIdentity } from "@/lib/operations/pipeline-replay-database";
 import { TEST_DATABASE_URL } from "./setup";
@@ -43,6 +44,9 @@ export async function removeReplayHandlerTestProfile(identityPath: string): Prom
 export async function getReplayHandlerIdentityPath(): Promise<{ identityPath: string; release(): Promise<void> }> {
   if (process.env.PIPELINE_REPLAY_IDENTITY_FILE) throw new Error("replay_handler_test_requires_owned_identity");
   const bootstrap = await getReplayIdentityPath();
+  const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
+  try { await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8")); }
+  finally { await admin.end({ timeout: 3 }); }
   await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
     acknowledgeDedicatedCluster: true, env: {} });
   return { identityPath: bootstrap.identityPath, async release() {

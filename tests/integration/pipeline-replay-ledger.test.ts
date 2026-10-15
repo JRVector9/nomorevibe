@@ -38,7 +38,8 @@ function request(run: ReplayRun, stage: "first" | "second" = "first", changes: P
   const { inputs } = fixture();
   return { callId: `call-${++serial}`, candidateId: 1, firstAttemptId: 11, stage,
     inputHash: inputs[0].input.inputHash, sourceRevisionHash: inputs[0].input.sourceRevisionHash,
-    provider: "abcllm", model: stage, requestHash: reviewHash({ request: serial }), tokenUpperBound: 100, ...changes };
+    provider: "abcllm", model: stage, requestHash: reviewHash({ request: serial }), tokenUpperBound: 100,
+    ...(stage === "second" ? { secondReviewId: 12, generationKey: "generation-1", vote: 12 } : {}), ...changes } as ReplayCallRequest;
 }
 async function prepare(overrides: Partial<CapacityManifest["limits"]> = {}, mode: CapacityManifest["mode"] = "fixtures") {
   const value = fixture(overrides, mode), run = await ledger.prepare(value.manifest, value.inputs);
@@ -90,6 +91,25 @@ it("retains the whole cancelled reservation and rejects dispatch races and reuse
   await expect(ledger.markDispatching(run, req.callId)).rejects.toThrow("replay_call_state_mismatch");
   await expect(ledger.reserve(run, { ...req, callId: "next" })).rejects.toThrow("replay_budget_exhausted");
   expect(await ledger.inspect(run)).toMatchObject({ chargedCalls: 1, chargedTokens: 100, activeCalls: 0 });
+});
+it("persists stage-bound AI2 identity including nullable published first attempt and fallback root slot", async () => {
+  await clear(); const run = await prepare();
+  const req = request(run, "second", { firstAttemptId: null, secondReviewId: 21, generationKey: "published-generation", vote: 12 });
+  await ledger.reserve(run, req);
+  const [stored] = await admin`SELECT first_attempt_id, second_review_id, generation_key, vote FROM pipeline_replay.capacity_calls
+    WHERE run_id = ${run.runId} AND call_id = ${req.callId}`;
+  expect(stored).toEqual({ first_attempt_id: null, second_review_id: "21", generation_key: "published-generation", vote: "12" });
+  const [event] = await admin`SELECT payload FROM pipeline_replay.capacity_transitions WHERE run_id = ${run.runId} AND kind = 'reserved'`;
+  expect(event.payload).toMatchObject({ secondReviewId: 21, generationKey: "published-generation", vote: 12 });
+});
+it("rejects missing, malformed or first-stage AI2 identity before charging", async () => {
+  await clear(); const run = await prepare();
+  const first = request(run), second = request(run, "second");
+  for (const invalid of [{ ...first, secondReviewId: 21, generationKey: "generation-1", vote: 12 },
+    { ...first, firstAttemptId: null }, { ...second, secondReviewId: undefined }, { ...second, generationKey: undefined },
+    { ...second, vote: undefined }, { ...second, secondReviewId: 0 }, { ...second, generationKey: "" }, { ...second, vote: 0 }])
+    await expect(ledger.reserve(run, invalid as ReplayCallRequest)).rejects.toThrow("replay_call_binding_mismatch");
+  expect(await ledger.inspect(run)).toMatchObject({ chargedCalls: 0, eventSeq: 2 });
 });
 it("records committed in-flight state before callback and does not refund unused tokens", async () => {
   await clear(); const run = await prepare(), req = request(run);

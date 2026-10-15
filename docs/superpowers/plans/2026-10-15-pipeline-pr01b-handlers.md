@@ -1,6 +1,9 @@
 # PR01b 다음 구현: 기존 검수 handler·writer의 격리 실행
 
-2026-10-15. 병합된 PR430/main2c7a71c(branch commit11151de)의 다음 단계 준비 계획이며 아직 이 문서의 코드는 구현하지 않았다.
+2026-10-15. PR430/main2c7a71c 뒤의 승인된 구현 계획이다. 1절은 #431/main9601e3b에 병합했고,
+2절은 [PR01b-3 runtime 계획](2026-10-15-pipeline-pr01b-runtime.md)에 따라 구현·검증 중이다.
+3절 final과4절 coverage/seal은 아직 미구현이다. 실제 납품 상태는
+[PR별 개발·적용 현황](2026-10-15-pipeline-delivery-status.md)을 따른다.
 사용자가 승인한 PR00–17의 PR01 범위다. 실제 provider admission과2배 성능 판정은 계속 별도 선행 조건이다.
 모든 agent/codex CLI는 gpt-6.1-sol/xhigh. writing-plans/execute-plan/TDD로 진행한다.
 
@@ -92,11 +95,11 @@ RED: zero supply/restart gap/30분 미달→미판정, cleanup 뒤 final history
 운영 migration·provider 설정 변경·일반 worker 활성화는 이 계획의 자동 작업에 포함하지 않는다.
 
 ```sh
-cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01b
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-handler-runtime
 git fetch origin main
-gh pr view 430 --json state,mergeCommit,statusCheckRollup
-# PR430 병합 뒤 최신 main에서 다음 전용 worktree/branch를 만든다.
-# bootstrap/profile 설계와 첫 RED를 작성하기 전 위 실제 boundary/clock/ledger 코드를 다시 확인한다.
+git status --short
+# b3 병합 뒤 최신 main에서 b4 전용 worktree/branch를 만든다.
+# recorder 첫 RED 전에 기존 writer/mandatory AI2 predicate와 private scope를 다시 확인한다.
 ```
 
 근거: PR430, `docs/operations/2026-10-15-pipeline-pr01b-{validation,provider-audit}.md`,

@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 
-const fake = vi.hoisted(() => ({ open: vi.fn(), verify: vi.fn(), assert: vi.fn(), traces: [] as string[] }));
+const fake = vi.hoisted(() => ({ open: vi.fn(), verify: vi.fn(), assert: vi.fn(), same: vi.fn(), traces: [] as string[] }));
 vi.mock("@/lib/operations/pipeline-replay-database", () => ({
   openVerifiedReplayHandlerDatabase: fake.open,
   assertVerifiedReplayHandlerDatabase: fake.assert,
+  assertSameReplayHandlerDatabase: fake.same,
   verifyReplayDatabaseSession: fake.verify,
 }));
 import { db, onPrimary, onReplica } from "@/lib/db";
-import { withReplayDatabaseScope } from "@/lib/db/replay-scope";
+import { assertReplayDatabaseScopeIdentity, withReplayDatabaseScope } from "@/lib/db/replay-scope";
+import type { VerifiedReplayDatabase } from "@/lib/operations/pipeline-replay-database";
 
 type Global = { db?: unknown; readDb?: unknown; pgClient?: unknown };
 const globals = globalThis as Global;
@@ -179,4 +181,28 @@ it("does not let an unawaited nested transaction outlive its parent commit bound
     expect(status).toBe("replay_transaction_work_not_awaited");
     expect(fake.traces.some(row => row.includes(":query:"))).toBe(false);
   });
+});
+
+it("binds the ledger handle to the active scope through the private verified identity", async () => {
+  const ledger = {} as VerifiedReplayDatabase;
+  expect(() => assertReplayDatabaseScopeIdentity(ledger)).toThrow("replay_database_scope_required");
+  await withReplayDatabaseScope("identity-a", async () => {
+    assertReplayDatabaseScopeIdentity(ledger);
+    const owned = await fake.open.mock.results.at(-1)!.value;
+    expect(fake.same).toHaveBeenCalledWith(owned, ledger);
+    fake.same.mockImplementationOnce(() => { throw new Error("replay_database_identity_mismatch"); });
+    expect(() => assertReplayDatabaseScopeIdentity(ledger)).toThrow("replay_database_identity_mismatch");
+  });
+});
+
+it("rejects inherited identity checks before consulting handles after scope exit", async () => {
+  let release!: () => void;
+  const wait = new Promise<void>(resolve => { release = resolve; });
+  let child!: Promise<void>;
+  await withReplayDatabaseScope("identity-a", async () => {
+    child = wait.then(() => assertReplayDatabaseScopeIdentity({} as VerifiedReplayDatabase));
+  });
+  release();
+  await expect(child).rejects.toThrow("replay_database_scope_closed");
+  expect(fake.same).not.toHaveBeenCalled();
 });

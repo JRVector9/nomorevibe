@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { open, unlink } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
 import type postgres from "postgres";
 import { z } from "zod";
 import { assertLocalTestDatabase } from "../../scripts/test-database";
@@ -69,6 +70,12 @@ export function assertVerifiedReplayDatabase(value: unknown): asserts value is V
 }
 export function assertVerifiedReplayHandlerDatabase(value: unknown): asserts value is VerifiedReplayDatabase {
   if (!value || typeof value !== "object" || !verified.has(value) || !handlers.has(value)) fail("verified_replay_handler_database_required");
+}
+/** Compare authenticated private identities, including credentials and nonce, without exposing either. */
+export function assertSameReplayHandlerDatabase(left: VerifiedReplayDatabase, right: VerifiedReplayDatabase): void {
+  assertVerifiedReplayHandlerDatabase(left);
+  assertVerifiedReplayHandlerDatabase(right);
+  if (!isDeepStrictEqual(verified.get(left), verified.get(right))) fail("replay_database_identity_mismatch");
 }
 const clientOptions = {
   max: 1, connect_timeout: 3, idle_timeout: 0, max_lifetime: 0, prepare: false, fetch_types: false, ssl: false,

@@ -1,4 +1,5 @@
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
+import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
 
 /**
@@ -57,6 +58,7 @@ const NON_CHAT_MODEL = /(bge|embed|whisper|-vl-|vl-\d|rerank)/i;
  * 키가 없거나 닿지 않으면 null.
  */
 export async function listGatewayModels(options: { timeoutMs?: number; request?: typeof fetch } = {}): Promise<string[] | null> {
+  assertLiveReviewAdapterAllowed();
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return null;
   try {
@@ -107,6 +109,7 @@ function usageFrom(value: Record<string, unknown>): ReviewUsage {
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<AgentReviewResult> {
+  assertLiveReviewAdapterAllowed();
   const key = process.env.ABCLLM_API_KEY?.trim();
   const model = gatewayModel(options.model);
   if (!key || !model) return { ok: false, error: "not_configured" };

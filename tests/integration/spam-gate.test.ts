@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 // 발행은 OG 복사·분류에서 바깥을 탄다 — 이 파일은 관문만 본다
 vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: vi.fn().mockResolvedValue(null) }));
@@ -128,8 +128,10 @@ describe("spam gate", () => {
     await putSpam(QUIET_PAGE, SPAM_REPO, { has_issues: true });
     await judge();
     expect(await crawl.getCandidate(SPAM_REPO)).toMatchObject({ state: "approved" });
-    // 심사 직전에 받은 README(받은 것으로 둔다 — 바깥을 타지 않게)
-    await db.update(crawlDocuments).set({ pageMeta: { ...QUIET_PAGE, readmeSample: SPAM_README, readmeSampleVersion: README_SAMPLE_VERSION } })
+    // 심사 직전에 받은 README(받은 것으로 둔다 — 바깥을 타지 않게).
+    // SQL freshness는 DB clock을 쓴다. host/컨테이너 clock 차이로 미래 원본이 되지 않게 고정한다.
+    await db.update(crawlDocuments).set({ fetchedAt: sql`clock_timestamp() - interval '1 second'`,
+      pageMeta: { ...QUIET_PAGE, readmeSample: SPAM_README, readmeSampleVersion: README_SAMPLE_VERSION } })
       .where(eq(crawlDocuments.repo, SPAM_REPO));
     expect(await runJob("crawl-agent-review", reviewCrawlCandidates)).toMatchObject({ status: "completed" });
     expect(review).not.toHaveBeenCalled();
