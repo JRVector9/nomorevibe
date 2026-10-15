@@ -10,6 +10,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- 아래는 이 저장소가 직접 관리한다 (next dev가 재작성하는 블록 밖) -->
 
+## 현재 파이프라인 PR의 검증 정책 (JR 지정, 2026-10-16)
+
+- PR별로는 변경 범위의 회귀 테스트와 필요한 정적 검사만 실행한다.
+- 수동 전체 unit·전체 DB·종합 테스트은 남은 모든 PR 개발이 끝난 뒤 통합 단계에서 실행한다. PR마다 반복하지 않는다.
+- 이미 실행한 결과와 실패는 보존하며, 실행하지 않은 검사를 통과했다고 기록하지 않는다.
+- GitHub의 필수 병합 CI는 저장소 규칙대로 유지한다.
+
 ## 운영 상태와 남은 검증
 
 운영 서비스는 `https://nomorevibe.com`에 배포되어 있다. Dokploy는 main을 사용하며

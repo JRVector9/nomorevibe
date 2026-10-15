@@ -119,9 +119,14 @@ function timedOut(error: unknown): boolean {
   );
 }
 
-async function cancelUnusedBody(response: Response): Promise<void> {
+async function cancelUnusedBody(response: Response): Promise<boolean> {
   // Cleanup failure must not replace the response's original outcome.
-  await response.body?.cancel().catch(() => {});
+  try {
+    await response.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function readBodyStrictlyCapped(
@@ -146,7 +151,7 @@ export async function readBodyStrictlyCapped(
     if (done) break;
     total += value.length;
     if (total > maxBytes) {
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
       return null;
     }
     chunks.push(value);
@@ -158,7 +163,7 @@ async function readBodyPrefix(response: Response, maxBytes: number): Promise<{ b
   const reader = response.body?.getReader();
   if (!reader) return { body: Buffer.alloc(0), truncated: false };
   if (maxBytes === 0) {
-    await reader.cancel();
+    await reader.cancel().catch(() => {});
     return { body: Buffer.alloc(0), truncated: true };
   }
   const chunks: Uint8Array[] = [];
@@ -170,14 +175,14 @@ async function readBodyPrefix(response: Response, maxBytes: number): Promise<{ b
     if (value.length > remaining) {
       // Copy only the retained prefix, without holding the oversized chunk's buffer.
       if (remaining > 0) chunks.push(Buffer.from(value.subarray(0, remaining)));
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
       return { body: Buffer.concat(chunks), truncated: true };
     }
     chunks.push(value);
     total += value.length;
     if (total === maxBytes) {
       // The retained excerpt is complete; do not wait for an unread response tail.
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
       return { body: Buffer.concat(chunks), truncated: true };
     }
   }
@@ -234,7 +239,9 @@ export async function fetchCapped(
       return { ok: true, status: 304, finalUrl: current, headers: response.headers, body: Buffer.alloc(0) };
     }
     if (response.status >= 300 && response.status < 400) {
-      await cancelUnusedBody(response);
+      if (!await cancelUnusedBody(response)) {
+        return { ok: false, reason: "http", status: response.status };
+      }
       const location = response.headers.get("location");
       if (!location) return { ok: false, reason: "http", status: response.status };
       try {
@@ -330,8 +337,8 @@ export async function acquireOrigin(origin: string, signal: AbortSignal): Promis
  *
  * 헤더에서 놓으면 같은 서버로 모인 세 요청의 본문이 동시에 흘러, 동시 요청을 막는 서버에서
  * 200·429·429가 났다(codex 재현). 본문이 끝나거나·취소되거나·오류가 나면 놓는다.
- * 본문을 안 읽고 버리는 호출부가 있어도 자리가 영영 묶이지 않게 **기한(signal)이 끝나면 무조건
- * 놓는다** — 기한이 본문 스트림도 끊으므로 그때는 이미 쓸모없는 연결이다.
+ * 기한은 본문 취소를 요청한다. 진행 중 read와 실제 취소가 정산된 뒤에만 자리를 놓고,
+ * 취소가 실패하면 자리를 유지한다.
  */
 function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSignal): Response {
   // 본문을 가질 수 없는 상태 코드는 새 Response로 감쌀 수 없다 — 곧장 놓는다
@@ -339,28 +346,66 @@ function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSi
     release();
     return res;
   }
-  signal.addEventListener("abort", release, { once: true });
   const reader = res.body.getReader();
+  let reading: Promise<ReadableStreamReadResult<Uint8Array>> | undefined;
+  let cancellation: Promise<void> | undefined;
+  let cancelling = false;
+  let aborted = false;
+  let abortReason: unknown;
+  let released = false;
+  let bodyController!: ReadableStreamDefaultController<Uint8Array>;
+  const finish = () => {
+    if (released) return;
+    released = true;
+    signal.removeEventListener("abort", onAbort);
+    release();
+  };
+  const cancel = (reason: unknown): Promise<void> => {
+    if (cancellation) return cancellation;
+    cancelling = true;
+    const pendingRead = reading;
+    // Install the shared Promise before calling cancel: it can wake a pending
+    // read before its underlying cancellation has finished.
+    cancellation = Promise.resolve().then(() => reader.cancel(reason)).then(async () => {
+      await pendingRead?.catch(() => {});
+      finish();
+    });
+    void cancellation.catch(() => {});
+    return cancellation;
+  };
+  const onAbort = () => {
+    aborted = true;
+    abortReason = signal.reason;
+    void cancel(abortReason);
+    bodyController.error(abortReason);
+  };
   const body = new ReadableStream<Uint8Array>({
+    start(controller) { bodyController = controller; },
     async pull(controller) {
+      if (cancelling) return;
+      const pendingRead = reader.read();
+      reading = pendingRead;
       try {
-        const { done, value } = await reader.read();
-        if (done) {
-          release();
+        const { done, value } = await pendingRead;
+        if (aborted) {
+          controller.error(abortReason);
+        } else if (done) {
+          if (!cancelling) finish();
           controller.close();
-        } else {
+        } else if (!cancelling) {
           controller.enqueue(value);
         }
       } catch (error) {
-        release();
-        controller.error(error);
+        if (!cancelling) finish();
+        controller.error(aborted ? abortReason : error);
+      } finally {
+        if (reading === pendingRead) reading = undefined;
       }
     },
-    cancel(reason) {
-      release();
-      return reader.cancel(reason);
-    },
+    cancel,
   });
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
   return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
@@ -402,16 +447,14 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive", op
 
     if (options.retryTransientErrors && (res.status === 408 || res.status === 429 || res.status >= 500 && res.status <= 599)) {
       const retryAt = retryAfterAt(res.headers.get("retry-after"));
-      await res.body?.cancel().catch(() => {});
-      release?.();
+      if (await cancelUnusedBody(res)) release?.();
       throw new PageFetchError("http", `HTTP ${res.status}`, res.status, retryAt);
     }
 
     // Some origins return nonstandard codes (e.g. 999). Preserve that failure
     // status without passing it to the stricter Response constructor below.
     if (res.status < 200 || res.status > 599) {
-      await res.body?.cancel().catch(() => {});
-      release?.();
+      if (await cancelUnusedBody(res)) release?.();
       return { finalUrl: current, response: res };
     }
 
@@ -420,7 +463,7 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive", op
       if (location) {
         // 따라갈 응답의 본문은 읽지 않는다. 닫지 않으면 연결이 풀로 돌아가지 않는다.
         // 다음 hop 전에 자리를 놓아야 같은 서버로 돌아오는 사슬이 스스로를 기다리지 않는다
-        await res.body?.cancel().catch(() => {});
+        if (!await cancelUnusedBody(res)) return null;
         release?.();
         try {
           current = new URL(location, current).toString();
@@ -447,7 +490,7 @@ export async function readBodyCapped(res: Response, maxBytes: number): Promise<B
     total += value.length;
     chunks.push(value);
     if (total >= maxBytes) {
-      reader.cancel();
+      await reader.cancel().catch(() => {});
       break;
     }
   }
