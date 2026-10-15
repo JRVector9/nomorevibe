@@ -1,3 +1,51 @@
+# 2026-10-16 — capture 최종 main 회귀18PASS / 제출 준비·combined 배타 병렬 착수
+
+현재capture HEAD ee6bc242는 actualmain1fa994d2/PR446정상병합을통합했다. 새55514의최종관련3files18PASS7.74s/actualexit0와전체raw·권한·원stage·함수/trigger baseline동일·STOP/exited0/OOMfalse를root가원로그직접확인했다. `/tmp/nomorevibe-pr04c2-capture-merge-c-{related18,final-readback,stop}-20261016.log`. 원source/driver동일이며최종root문서commit후이feature만push/PR/필수CI전체→normalmerge/mainCI가남았다. 첫JIT-onreadback가정오류는기능RED제외, repository0058 jitoff를추가변경없이보존했다. 55514는STOP상태보존/root정확정리대기다.
+
+다음WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-combined-capture`, branch codex/pipeline-pr04c2-combined-capture-20261016/baseee6bc24/depsclone·root nexttypegen actual0. root고정계획 docs/superpowers/plans/2026-10-16-pipeline-pr04c2-combined-capture.md와새validation을작성했고A/B/C에배타배정했다. A NEW combinedcapture module+primaryunit, B NEW adversarialunit, C NEW integration+fresh55515(portunusedroot확인)/pinnedPG17/loopbackdummy. A runnableSQL+strict rawbaseline/actualprimaryRED→동결→B/C samebaselineactualbehaviorRED/control→root수용뒤A해제순서를지킨다. 기존readiness/v1/profile/entry/권한byte0·itemreplay차단유지. 현재새PASS는아직없다. rootdocs4/Git/리뷰만소유.
+
+현재전체goal active/운영미적용/2배·실30분providerbaseline·OracleDR미완료/원본X branchpush금지. 다음명령은capture에서 git diff --check, git status --short --branch 후문서명시commit/push/PR; combined에서A/B/C동결SHA·원log/actualexit를읽고수용한다.
+
+---
+# 2026-10-16 — PR446 병합·capture 최신 main 통합
+
+PR446 필수CI38803582254 모든check SUCCESS→정상squash merge **main1fa994d2d72c70d8e73bbe021201d0de3d3eb708**. mainCI38804670621 진행중/image미확인. capture localfeature **84119d4**를commit하고actualmain을정상merge했다. 충돌은root소유handoff/delivery 두문서뿐이며capture최신검증·진행표를유지하고PR446main/CI상태를반영했다. main의fixture최종0524와신규plan/validation은그대로통합했고기존productionsource변경0. 합친최종fixture/capture관련회귀후featurepush/PR필수CI를확인한다. originalX branchpush금지/운영미적용/전체goal active.
+
+---
+# 2026-10-16 — capture 로컬 검증·최종 리뷰 완료 / fixture PR446 CI 대기
+
+전체 PR별 개발 goal은 active다. root가 gpt-6.1-sol/xhigh A/B/C의 파일·DB를 배타 배정하고 원로그·직접/교차리뷰·gate·Git을 취합했다. 원본X branch push금지/handoff만동기화. 운영deploy/DDL/inference/발굴재개0, 마지막운영8020dca·기본legacy1contract0·새consumer비활성·향후image전0077필수.
+
+## 완료 작업·변경 파일
+
+- fixture WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-wall-fixture-drain`: test1+docs4를 **3f26ae03aff52f1141194daa300f229b0712291d**로commit/push, **PR446** https://github.com/JRVector9/nomorevibe/pull/446. 필수CI38803582254는qualitySUCCESS·통합진행중이며아직병합아니다. 기존2PASS4.99s·강제1초 예상timeout2만/원작업정산후cleanup오류0·정적0·A/root리뷰P1/P2 0·55513rawreadbackSTOP완료. 최초CI20초지연await는미확정이다.
+- PR445 필수CI38800981283전체SUCCESS→actualmain **e11fa51c675924b54b0490512c10f43c8102c34f** 정상병합. mainCI38802089410은quality·통합1/2SUCCESS·통합3 healthy20초timeout/147후속FAIL/checkFAIL/imageSKIP. root원로그 `/tmp/nomorevibe-pr04c2-main-ci-failed-20261016.log` 직접확인. 실패를성공으로기록하지않으며새patch전무의미재시도0.
+- capture WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-item-capture`, branch codex/pipeline-pr04c2-item-capture-20261016/HEADcf863f7c(maine11정상통합). 변경8파일=신규source1/단위2/통합1/root docs4. source **5e313f404775b595414c5f5e3f49c8ad8a694eaa8bb65686d9672d92ad3637db**, Aunit **ee9c29c03a01596f4b29d698783addd27c1635ded73cc110685cf12383dc98cd**, Bunit **792a3e6e8615e91665493a5a8ae60e1d6ab0629aa694ac9e4b956bd3cac54fc7**, Ctest **5486855bf9c2d047bff0b35d12ae53927a18817aed71870dfd3b339d4fbef1a2** 동결·모든담당소유권반환/최종P1/P2 0.
+
+## 설계·실행한 검증
+
+captureReplayItemState(tx)는한literalSELECT로전체stage6/item12열·외부/과거/released행을읽고기존strictcanonical/hash를반환한다. Array형식/exact1행을검사한다. 현재state읽기일뿐ready/authority/인증journal/coverage/최신commit보증아니다. 기존itemstate01d06/v1/profile/entry/권한·itemreplay차단byte0.
+
+- A runnable d924baseline actual3FAIL/3control→같은6PASS, C actualSQL control1PASS/행동1FAIL→같은2/확장9PASS. B는A/C수용·A완성뒤별도원baselineWT에서동일driver38FAIL/52control→current89PASS/배열유사result1FAIL→최소Arrayguard뒤90PASS1.38s. nativePGshape/권한결함으로확대0.
+- A→C리뷰timeout P2는같은v5 CLI100ms로실제timeout1+raw복원42501/role·ACL잔류를확인했다. process종료/다른연결0뒤기존exportedprofile teardown+동일bootstraprelease 검증/원ACL복원으로own55511만정상복구했다. 원로그/identity를보존하고임의guard우회0. Set registry는actualsettle뒤만삭제·admin.end도오류합산한다. 기존9body byte불변, 최종9PASS(total1.97s/tests1.47s)/실제exit0·whole tsc/scopedlint0. 같은100ms는예상timeout1만·실제356ms정산·정리오류0/readback0. hook60초/dualerror경계는코드리뷰보강이며별도강제실험0.
+- root wholeunit **286files3216PASS7.93s/actualexit0**、관련DB capture9+state7 **16PASS3.42s/actualexit0**(최종wrapper보완전, 최종C9와구분), whole tsc/lint(기존vendorwarning1)/i18n4·8·11/Python23/build(dummyDB)/bundle actualexit0. br148.7/159.0/136.2KB. logs `/tmp/nomorevibe-pr04c2-capture-root-{unit,focused-db,tsc,lint,i18n,python,build,bundle}-20261016.log`. 로컬전체DB를다시돌렸다는주장0, PR필수CI전체가남았다.
+- C최종55511 전체raw·원stageupdated_at·PUBLIC/effective ACL·baselinejitoff/timeout·역할/schema/guards/함수/타conn0, B55513도원상readback·STOP/exited0/OOMfalse를root직접확인했다. 두전용container/volume은metadata보존/정확단독연결검증뒤제거actual0. `/tmp/nomorevibe-pr04c2-capture-completed-dbs-before-cleanup-20261016.json`, `...-owned-db-storage-cleanup-20261016.log`. 다른DB/image/cache/forensic보존.
+
+## 남은 작업·다음 에이전트 명령
+
+1. capture8파일명시localcommit후fixture PR446 CI결과확인→필수성공이면normalmerge/mainCI. capture에실제mainfix정상통합/원source동일/관련회귀후featurepush/PR/필수CI→정상merge/mainCI. 기존원본Xbranch는push금지.
+2. B의후속계약 `/tmp/nomorevibe-pr04c2-combined-selector-b-contract-20261016.md`와A의PR05inventory `/tmp/nomorevibe-pr05-model-slot-inventory-20261016.md`는읽기조사일뿐구현/PASS아니다. 단순같은TX의두SELECT로원자snapshot을주장하지않는다. queue-wideitemselector는현재없으며targetID actualclaim과logicalstate/경쟁unknown을분리한다. root가combinedsnapshot/claim differential후속계획·배타파일을고정하고진행한다.
+3. journal/coverage→version/profile→실authority/finalwall→혼합runner·PR05–17/provider실30분baseline/2배/OracleDR는미완료. 소단위완료로goal종료0.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-item-capture
+git status --short --branch
+git diff --check
+gh run view 38803582254 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+# 새파일을포함한명시8파일commit。C55511/B55513은최종readback뒤제거됐으므로더는접속하지않는다.
+```
+
+---
 # 2026-10-16 — main CI 동일 정리 실패 확인 / fixture 보강 제출
 
 PR445 main e11fa51c의 CI38802089410도 quality·통합1/2 SUCCESS, 통합3 healthy20초timeout→32files147FAIL/626PASS·17skip·TODO1, checkFAIL/imageSKIP로 끝났다. 원로그 `/tmp/nomorevibe-pr04c2-main-ci-failed-20261016.log`. root가 기존main과 같은 timeout/42501 경로를 직접 확인했다. source가 달라진 새 CI 전에 같은 실패를 재시도하지 않는다.
@@ -5,13 +53,6 @@ PR445 main e11fa51c의 CI38802089410도 quality·통합1/2 SUCCESS, 통합3 heal
 C capture 교차리뷰의 timeout정산 P2를 actualv5단일case CLI100ms로 확인했다: f087동일driver 1timeout/8skip/exit1와 raw복원42501·role/columnACL 잔류. 원process는종료·다른연결0이며identity를보존했다. root는own55511만 기존 exported removeReplayHandlerTestProfile와 replay-setup.ts의 bootstrap release 동일 검증/원ACL복원을 /tmp recovery에서재사용하도록배정했다. 임의guard우회0/타DB0, 복구기록뒤같은1파일 Promise정산fix/원9body·assertions보존/회복감도·rawreadbackSTOP·A재리뷰가남았다.
 
 B capture 독립unit90case/271행SHA792a3e6e8615e91665493a5a8ae60e1d6ab0629aa694ac9e4b956bd3cac54fc7은별도d924baseline에서38AssertionFAIL/52controlPASS595ms/exit1, import/setup오류0. 현재b417동일driverGREEN은진행중. whole tsc/scopedlint0.
-
----
-# 2026-10-16 — fixture 정산 PR 제출 준비 / capture 교차리뷰 보완
-
-별도 fixture WT는 root 직접 diff 리뷰와 A 교차리뷰(P1/P2 0), 기존2PASS/whole tsc·scopedlint0, 강제1초 timeout2만·정리실패0, 전용55513 readback/STOP을 취합했다. test1+문서4를 명시 commit/push/PR하고 필수 CI를 확인한다. 첫20초지연은미확정이다.
-
-Capture A→C 리뷰에서 P2 1건: 새 통합 테스트도 test timeout 시 원 test Promise보다 hooks cleanup이 먼저 실행될 수 있다. C에게 같은 1파일의 실제 Promise 추적/정산→profile해제→raw복원을 재배정했다. 기존 9개 본문·기대값은 유지하고 원2case 전체prefix 동일성은 이 정리 보강 전에 확인한 증거로 기록한다. 새보강 뒤 body와 assertions 보존/전체9GREEN·정적/강제timeout감도·rawreadbackSTOP·A재리뷰가 남았다. 구조 지적을 실제 RED로 소급하지 않는다. C55511은 root16PASS 뒤 C 단독 사용이다. B는 별도 baselineWT에서 독립unit RED→현재GREEN 진행중, root는현재capture source를바꾸지않는다.
 
 ---
 # 2026-10-16 — PR445 병합 / capture 실제 DB 16PASS / CI timeout 정산 검증 완료
@@ -55,6 +96,47 @@ git status --short --branch
 git diff --check
 gh run view 38802089410 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
 # B baseline/current同一driver SHA・原log・actualexit確認。C55511readback/STOPを先に受領。
+```
+
+---
+# 2026-10-16 — PR445 CI / 다음 capture 배타 병렬 / 선행 CI timeout 재현
+
+전체 개발 goal active. root가 gpt-6.1-sol/xhigh A/B/C의 파일·DB를 배타배정하고 실제RED·직접/교차리뷰·전체gate/Git을관리한다. 원본X branchpush금지/handoff만동기화. 운영deploy/DDL/provider inference/발굴재개0, 마지막운영8020dca/기본legacy1contract0/새consumer비활성/미래image전0077필수.
+
+## 완료·실제 결과
+
+- PR444 정상mainbcf4396e 병합. PR CI38798204078 전체SUCCESS. mainCI38799565167 최초quality기존thumbnail5초timeout1·통합3 c1ahealthy20초timeout→guard잔류147FAIL/626PASS·17skip·TODO1. 같은SHA failedjob재실행도 **qualitySUCCESS/통합3동일실패**, 통합1/2SUCCESS·checkFAIL·imageSKIP. 최초/재시도 원로그 `/tmp/nomorevibe-pr04c1b-main-ci-{failed,attempt2-failed}-20261016.log`. 같은실패를숨기거나mainCI성공으로기록하지않는다.
+- 순수 itemstate source01d06f0d…23221f2 신규1파일123행, primary5/B130/Cactual7 PASS. rootunit284파일3120PASS9.01s/관련DB4파일41PASS12.49s·모든actualexit0/type/lint/i18n/Python23/build/bundle0. 직접·B→A/A→C리뷰P1/P2 0. **feature28ab994084c2749397fef4cc8e42279290b5269b push/PR445**, PR CI38800981283 qualitySUCCESS/통합진행중. foundationWT clean, 아직병합아님.
+- C55509 raw기본3stage/ACL/defaulttimeout/타연결0/14테이블잔류0·STOP/exited0/OOMfalse root원로그직접확인. root기존readiness/profile fixture잔류는 fullraw사전검증/정확ID·repo/key로만정리했다. metadata `/tmp/nomorevibe-pr04c2-completed-db-before-cleanup-20261016.json` 보존후 exact완료container/volume만제거actual0(`/tmp/nomorevibe-pr04c2-owned-db-storage-cleanup-20261016.log`). 다른DB/image/cache/forensic보존.
+
+## 현재 구현 WT·배타 소유권
+
+새 `/Users/jr/Desktop/projects/nomorevibe-pipeline-item-capture`, branch codex/pipeline-pr04c2-item-capture-20261016/base28ab9940/depsclone완료/typegenactual0. root docs4=handoff/delivery/계획2026-10-16-pipeline-pr04c2-item-capture.md/validation동명. 고정API captureReplayItemState(tx)→{state,stateHash}; 한literalSQL statement에서전체2테이블to_jsonb를담고 기존canonical/hash만사용. 기존itemstate/v1/profile/entry/SQL/권한byte0·itemreplay차단유지. actualcapture읽기이지journal/coverage/ready/authority인증아님.
+
+- A /root/pr01_final_ai1: NEW lib/operations/pipeline-replay-item-capture.ts + NEW tests/pipeline-replay-item-capture.test.ts만. runnable rawcapture scaffold+unit actualRED→FREEZE/SHA통지. 독립B/CRED root수용전완성구현금지. DB/Git/docs0.
+- B /root/pr01_final_ai2: NEW tests/pipeline-replay-item-capture-adversarial.test.ts만. A동결후독립baseline RED→기대값동결→같은GREEN/source리뷰. **선행CI별도fixture수정배정준비때문에진행상태확인중**, 다른파일쓰기아직허용0.
+- C /root/provider_contract_evidence: NEW tests/integration/pipeline-replay-item-capture.test.ts만. 새55511/nomorevibe-pr04c2-capture-db-20261016/pinnedPG17/loopbackdummy. rootportunused확인. actualgeneric/fullrow/101+/profile전MVCC/v5제한SELECT/원immutable/실backend취소57014 등. 원control+행동RED수용후matrix확장. default20s/hook60s/generic90s·verifiedprofile해제뒤raw복원. 다른DB/source/Git/docs0.
+- root: docs4/직접리뷰/전체gate/Git. 선행PR445CI/정상merge/mainCI도병행추적.
+
+## 선행 fixture 조사·실패 접근과 별도 WT
+
+B가 원로그/소스읽기만조사한 `/tmp/nomorevibe-pr04c1b-ci-timeout-diagnosis-20261016.md` 52행: timeout뒤unknown-test stdout에원healthywriter가뒤늦게recorded/공개요청1 증거출력, afterEach/afterAll은원exercisePromise를추적·정산하지않고raw복원→guard42501/cascade. profile.release는exercise finally안에만있어hook이먼저시작된다. 최초20초가어느await에서소요됐는지는미확정. thumbnail같은파일단독5PASS와재시도qualitySUCCESS를일반flaky확정으로쓰지않는다.
+
+root 별도 `/Users/jr/Desktop/projects/nomorevibe-pipeline-wall-fixture-drain`, branch codex/pipeline-pr04c-ci-fixture-drain-20261016/baseoriginmainbcf4396e/depsclone완료. 기존tests/integration/pipeline-replay-certified-final-wall.test.ts의 test-local 원Promise추적/실정산→verifiedprofile해제→raw복원과phase시간진단보강을B에배정할준비중이다. **아직그파일쓰기배정/새수정/테스트실행0**. 새DB55513포트lsof미사용확인. production/TTL/권한/품질gate·timeout확대는근거확인전0. captureWT소유파일과분리한다.
+
+## 다음 명령·남은 작업
+
+1. PR445 CI38800981283 필수check 확인, 실패원인조사. normalmerge/mainCI성공을실제확인할때까지미완료.
+2. A runnable scaffold동결→B/C 실제behaviorRED 원driver/로그/exit root수용→A최소구현→같은GREEN·직접/교차리뷰·전체gate. noimport/setup오류RED.
+3. 반복CI실패는별도fixtureWT에서원Promise정산과최초지연phase를검증해수정; 보호우회/단순timeout완화0. root가B작업충돌없게명시배정한다.
+4. 다음domain+item combinedsnapshot/actualclaim differential→journal/coverage→version/profile→실authority/finalwall→혼합runner. PR05–17/provider실30분baseline/2배/OracleDR미완료. 소단위로goal완료0.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-item-capture
+git status --short --branch
+git diff --check
+gh run view 38800981283 --json status,conclusion,jobs --jq '{status,conclusion,jobs:[.jobs[]|{name,status,conclusion}]}'
+# C55511사용중/root나B임의접속0. 각담당메일함의동결SHA/실제exit먼저확인.
 ```
 
 ---
