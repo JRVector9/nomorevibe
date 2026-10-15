@@ -13,7 +13,8 @@ async function main() {
     try { const row = JSON.parse(line); if (row?.event === "review.pipeline") events.push(row); }
     catch { invalidLines++; }
   }
-  console.log(JSON.stringify({ ...summarizePipelineEvents(events), invalidLines }, null, 2));
+  console.log(JSON.stringify({ ...summarizePipelineEvents(events), invalidLines,
+    evidence: "best_effort_model_call_telemetry", authoritativeFinalThroughput: null, productionSpeedup: null }, null, 2));
 }
 
 void main().catch(error => { console.error(error instanceof Error ? error.message : "report_failed"); process.exitCode = 1; });
