@@ -17,8 +17,10 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR01b-5** 준비 coverage·writer fence·인증 artifact | **구현·root/교차 리뷰・로컬 필수 검증 완료** | [#434](https://github.com/JRVector9/nomorevibe/pull/434), `d95c6c8`; PR·main 전체 CI 성공(image 포함) | 미적용 | unit2,843·전체 DB1,745 PASS/기존 TODO1, 타입/lint/i18n/Python23/build/bundle PASS. 실제 두 단계·CLI·15초 heartbeat·양방향 fence·초기 actual binding 검증. [실제 검증 기록](../../operations/2026-10-15-pipeline-pr01b-coverage-validation.md) |
 | **원래 PR01 전체** 측정 기준·격리 replay | **부분 완료** | 위 기반만 병합 | replay/새 consumer 비활성 | 실제 handler·원자 final·준비 coverage·artifact/seal 기반까지 병합. provider 상한·실모델 baseline 미완료. **2배 성능 미판정** |
 | **PR02** item lease·stage mode 비활성 기반 | **구현·root/교차 리뷰·전체 로컬 검증 완료** | [#435](https://github.com/JRVector9/nomorevibe/pull/435), `8f2bdb3`; PR·main 전체 CI 성공(image 포함) | legacy/계약0·운영 미적용 | [상세 계획](2026-10-15-pipeline-pr02-item-leases.md)·[실제 진행 장부](../../operations/2026-10-15-pipeline-pr02-item-leases-validation.md). 새 DB33·unit2,849·전체DB1,778 PASS/기존TODO1·tsc/lint/build/bundle PASS. PR CI38756321978·main CI38757351403 모두 SUCCESS |
-| **PR03a** fetch writer 결합 | **병렬 구현·직접/교차 리뷰·전체 로컬 검증 완료** | 미병합 | 새 consumer 비활성 | [상세 계획](2026-10-15-pipeline-pr03a-fetch-writers.md)·[실제 검증](../../operations/2026-10-15-pipeline-pr03a-fetch-validation.md). root unit2,849·전체DB1,804 PASS/기존TODO1·tsc/lint/i18n/Python23/build/bundle PASS. 원격 PR/최신base CI 남음; 향후 배포 전0077 선적용 필수 |
-| **PR03b–17** | 미착수 | 미병합 | 비활성 | 아래는 예정된 검증이며 PASS 기록이 아님 |
+| **PR03a** fetch writer 결합 | **병렬 구현·직접/교차 리뷰·전체 로컬 검증 완료** | [#436](https://github.com/JRVector9/nomorevibe/pull/436), `254a5bb`; PR·main 전체 CI 성공(image 포함) | 새 consumer 비활성·운영 미적용 | [상세 계획](2026-10-15-pipeline-pr03a-fetch-writers.md)·[실제 검증](../../operations/2026-10-15-pipeline-pr03a-fetch-validation.md). root unit2,849·전체DB1,804 PASS/기존TODO1·tsc/lint/i18n/Python23/build/bundle PASS. PR CI38759886199·main CI38760739008 모두 SUCCESS; 향후 배포 전0077 선적용 필수 |
+| **PR03b** AI1 writer·공유 입력·legacy replay 호환 | **병렬 구현·root/교차 리뷰·전체 로컬 검증 완료** | 미병합 | legacy/계약0·새 consumer 비활성 | [계획](2026-10-16-pipeline-pr03b-ai1-writers.md)·[실제 검증](../../operations/2026-10-16-pipeline-pr03b-ai1-validation.md). unit2,853·최종 전체DB1,856 PASS/기존TODO1; type/lint/i18n/Python23/build/bundle PASS. 원격 CI/납품은 다음 단계 |
+| **PR03c** 제품·근거 입력·blocked 요청 보존 | **세 담당 구현·root/교차 리뷰 완료, 최종 전체 DB 실행 중** | 미병합 | 비활성 | source1da624d, unit2,857 PASS; 담당 evidence85·제품150·blocked/기존AI1/runner80 PASS(중복 합산 금지), type/lint/i18n/Python23/build/bundle PASS. 전체 DB 결과는 확정 전 |
+| **PR03d–17** | 남은 writer inventory 검토 완료 | 미병합 | 비활성 | maintenance/소개·분류 controller·전체AI2 writer·item B5 인증·legacy 외부 종료 증명 및 후속 로드맵이 남음. 아래는 예정 검증이며 PASS 기록이 아님 |
 
 PR433은 `2026-10-15T12:16:32Z` main4af0589로 병합했다. [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
 
@@ -26,9 +28,11 @@ PR434는 `2026-10-15T13:38:53Z` main `d95c6c8`로 병합했다. 최신 base `4af
 
 PR435는 `2026-10-15T15:06:10Z` main `8f2bdb3`로 병합됐다. 최신 base d95c6c8·head a7e8545의 [PR CI38756321978](https://github.com/JRVector9/nomorevibe/actions/runs/38756321978)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38757351403](https://github.com/JRVector9/nomorevibe/actions/runs/38757351403)는 웹/워커 image까지 전체 SUCCESS를 직접 확인했다.
 
+PR436은 `2026-10-15T15:29:10Z` main `254a5bb`로 병합됐다. 최신 base8f2bdb3·head b3cfeea의 [PR CI38759886199](https://github.com/JRVector9/nomorevibe/actions/runs/38759886199)는 필수 검사 전체 SUCCESS다. [main CI38760739008](https://github.com/JRVector9/nomorevibe/actions/runs/38760739008)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS를 직접 확인했다.
+
 PR430은 `2026-10-15T09:04:44Z`, PR431은 `2026-10-15T09:54:08Z` 병합됐다. 두 main CI는 image 작업까지 전체 성공을 직접 확인했다.
 image 생성 성공은 운영 적용 증거가 아니다. 마지막 확인된 운영 릴리스는 **`8020dca`**이며
-PR429–435를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
+PR429–436을 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
 실제 검수 모델·품질 gate·신규 GitHub/Show HN 발굴 중단·사람 판단·검색어 `api-stop`을 유지한다.
 
 ## PR01의 다음 검토 단위
