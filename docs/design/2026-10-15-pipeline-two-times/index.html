@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>NoMoreVibe · 수집·검수 구조 변경 비교</title>
+  <style>
+    :root{--bg:#f5f5f7;--surface:#fff;--ink:#1d1d1f;--muted:#585860;--line:#dadade;--soft:#efeff2;--accent:#b62e37;--accent-soft:#fff1f1;--green:#19663b;--green-soft:#edf7f0;--amber:#805000;--amber-soft:#fff6e8;--blue:#235a8c;--blue-soft:#eef5fc;--focus:#1c62b8}
+    *{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:85px}body{margin:0;color:var(--ink);background:var(--bg);font:15px/1.6 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif}button,select{font:inherit;color:inherit}button{cursor:pointer}a{color:var(--blue);text-underline-offset:4px}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:3px}button:active{transform:translateY(1px)}h1,h2,h3,p{margin:0}h1,h2,h3{text-wrap:balance}p{text-wrap:pretty}button,a,select{touch-action:manipulation}[hidden]{display:none!important}
+    .skip{position:absolute;left:12px;top:-90px;background:var(--surface);padding:12px;z-index:3}.skip:focus{top:8px}.top{border-bottom:1px solid var(--line);background:var(--surface)}.top-inner{max-width:1456px;padding:18px 32px;margin:auto;display:flex;justify-content:space-between;align-items:center;gap:16px}.brand{font-size:18px;font-weight:800;letter-spacing:-.5px}.brand span{color:var(--accent)}.meta{color:var(--muted);font-size:13px}.wrap{max-width:1456px;margin:auto;padding:0 32px}header.intro{padding:42px 0 28px;display:flex;justify-content:space-between;align-items:flex-start;gap:36px}h1{font-size:32px;letter-spacing:-1px;line-height:1.35;margin:12px 0 14px}.lead{max-width:72ch;color:var(--muted);font-size:16px}.status{display:inline-flex;align-items:center;gap:8px;padding:3px 10px;border:1px solid #e5b4b7;border-radius:5px;color:var(--accent);background:var(--accent-soft);font-size:13px;font-weight:650}.intro-aside{max-width:290px;padding-top:12px;color:var(--muted);font-size:14px}.intro-aside strong{display:block;color:var(--ink);margin-bottom:6px}.nav{display:flex;gap:24px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 14px}.nav a{color:var(--ink);font-weight:600;font-size:14px}.nav .download{margin-left:auto;color:var(--muted);font-weight:400}.section{padding:32px 0 8px}.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px}.section-head h2{font-size:22px;letter-spacing:-.5px}.section-head p{color:var(--muted);font-size:14px}.key{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 6px;background:var(--accent);color:#fff;border-radius:5px;font-size:13px;font-weight:700;vertical-align:middle}.checks{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}.checks li{display:grid;grid-template-columns:28px 200px minmax(0,1fr);gap:15px;align-items:start;padding:17px 0;border-bottom:1px solid var(--line)}.checks strong{font-size:15px}.checks p{color:var(--muted);max-width:82ch;font-size:14px}.checks a{text-decoration:none;color:var(--ink)}.check-mark{color:var(--green);font-weight:700}.compare-title{display:flex;gap:10px;align-items:center;margin-bottom:15px}.compare-title h3{font-size:17px}.tag{font-size:13px;padding:2px 8px;background:var(--soft);border:1px solid var(--line);border-radius:4px;color:var(--muted)}.diagram{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px;margin-bottom:20px}.old-flow{display:grid;grid-template-columns:1.05fr 30px .9fr 30px 2.6fr 30px .8fr;align-items:center;gap:8px}.old-box{border:1px solid var(--line);border-radius:7px;padding:15px;min-width:0}.old-box strong{display:block;margin-bottom:7px}.old-box small,.hint{display:block;font-size:13px;color:var(--muted)}.old-box.review{background:var(--amber-soft);border-color:#d4b785}.serial{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0}.serial span{background:white;border:1px solid #d4b785;padding:5px 8px;border-radius:4px;font-size:13px}.serial i{font-style:normal;color:var(--amber)}.arrow{text-align:center;font-size:22px;color:var(--muted)}.old-note{border-top:1px solid var(--line);margin-top:16px;padding-top:13px;font-size:13px;color:var(--muted)}
+    .diagram.new{padding-bottom:18px}.diagram-tools{display:flex;align-items:center;gap:12px;justify-content:space-between;flex-wrap:wrap;margin-bottom:18px}.toggle{min-height:44px;border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:7px 12px;font-size:14px}.toggle[aria-pressed=true]{color:var(--accent);border-color:#d69da2;background:var(--accent-soft)}.legend{font-size:13px;color:var(--muted);display:flex;gap:15px;flex-wrap:wrap}.legend span{display:inline-flex;align-items:center;gap:6px}.legend-dot{width:10px;height:10px;border:1px solid #a0a0a7;background:var(--surface);border-radius:2px}.legend-dot.changed{background:var(--accent);border-color:var(--accent)}.legend-dot.queue{background:var(--blue-soft);border-color:var(--blue)}.pipeline{display:grid;grid-template-columns:1.15fr 26px 1.3fr 26px .85fr 26px 1.12fr 26px 1.12fr 26px 1fr;gap:0;align-items:start}.lane{min-width:0;position:relative}.lane-label{min-height:44px;font-size:13px;font-weight:700;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:6px}.between{padding-top:125px}.node{display:block;width:100%;padding:13px 10px;border:1px solid #b8b8c0;border-radius:7px;background:var(--surface);text-align:left;min-height:76px;transition:background .18s,border-color .18s,box-shadow .18s;position:relative}.node strong{display:block;font-size:14px;line-height:1.5}.node small{display:block;color:var(--muted);font-size:13px;line-height:1.55;margin-top:4px}.node:hover{background:var(--soft)}.node[aria-pressed=true]{box-shadow:0 0 0 2px var(--blue);border-color:var(--blue)}.queue{background:var(--blue-soft);border-color:#9eb5cd;border-radius:16px / 9px}.queue:hover{background:#e0ecf8}.node+.node{margin-top:9px}.down{height:25px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:18px}.future{border-style:dashed;background:#fafafa}.node .label{font-size:13px;color:var(--accent);font-weight:700;display:block;margin-bottom:4px}.show-changes .node[data-changed=true]{border-color:#c78187;background:var(--accent-soft)}.show-changes .queue[data-changed=true]{border-color:#c78187;background:var(--accent-soft)}.node.wait{border-color:#bb8a39;background:var(--amber-soft)!important}.node.stop{border-color:var(--accent);background:var(--accent-soft)!important}.node.go{border-color:#78aa8a;background:var(--green-soft)!important}.state-text{display:block;font-weight:700;font-size:13px;margin-top:7px;color:var(--ink)}.outcome{border:1px solid var(--line);border-radius:5px;padding:9px;margin-top:14px;font-size:13px;color:var(--muted)}.outcome strong{color:var(--ink)}.shared{margin-top:22px;border-top:1px solid var(--line);padding-top:17px;display:grid;grid-template-columns:1fr 1fr;gap:18px}.shared p{font-size:14px;color:var(--muted)}.shared strong{color:var(--ink)}.diagram-caption{font-size:13px;color:var(--muted);margin-top:14px;max-width:100ch}.inspector{display:grid;grid-template-columns:190px minmax(0,1fr);gap:22px;background:var(--soft);border-radius:6px;margin-top:19px;padding:17px 20px}.inspector h3{font-size:15px}.inspector p{font-size:14px;color:var(--muted);max-width:90ch}.inspector .detail-label{font-size:13px;color:var(--blue);display:block;margin-bottom:4px}.scenario{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:22px;border-top:1px solid var(--line);padding-top:18px}.scenario label{font-size:14px;font-weight:600}.scenario select{padding:9px 34px 9px 12px;min-height:44px;max-width:100%;border:1px solid #aaaab4;border-radius:6px;background:var(--surface)}.scenario-note{font-size:13px;color:var(--muted)}.scenario-result{margin-top:12px;padding:14px 17px;border:1px solid var(--line);border-radius:6px;font-size:14px;background:var(--surface)}.scenario-result strong{display:block;margin-bottom:5px}.scenario-result p{max-width:100ch;color:var(--muted)}
+    .diff-table{border-collapse:collapse;width:100%;font-size:14px;background:var(--surface)}.diff-table th,.diff-table td{text-align:left;vertical-align:top;padding:16px;border-bottom:1px solid var(--line)}.diff-table th{font-weight:600;background:var(--soft)}.diff-table td:first-child{width:18%;font-weight:650}.diff-table td:nth-child(2){width:34%;color:var(--muted)}.diff-table td:nth-child(3){width:48%}.diff-table td p{margin-top:6px;color:var(--muted);font-size:13px}.table-shell{border:1px solid var(--line);border-radius:8px;overflow:hidden}.unchanged{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}.unchanged span{font-size:13px;padding:5px 10px;border:1px solid var(--line);border-radius:5px;background:var(--surface)}.validation{display:grid;grid-template-columns:1.2fr 1fr;gap:30px;background:var(--surface);padding:25px;border:1px solid var(--line);border-radius:8px}.formula{font-size:20px;font-weight:650;margin:10px 0 14px}.validation p{color:var(--muted);font-size:14px;max-width:70ch}.validation ul{font-size:14px;padding-left:20px;margin:9px 0}.validation li{margin-bottom:9px}.validation h3{font-size:16px}.test-path{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:16px;font-size:14px}.test-path b{border:1px solid var(--line);border-radius:5px;background:var(--surface);padding:8px 11px;font-weight:500}.notice{font-size:14px;color:var(--amber);background:var(--amber-soft);border:1px solid #ddc39a;border-radius:6px;padding:14px 17px;margin-top:16px}.rollout{list-style:none;padding:0;margin:10px 0 0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0 24px}.rollout li{padding:18px 0;border-top:1px solid var(--line);display:grid;grid-template-columns:25px 1fr;gap:9px;font-size:14px}.rollout span{color:var(--muted);font-variant-numeric:tabular-nums}.rollout strong{display:block;margin-bottom:4px}.rollout p{color:var(--muted);font-size:13px}.foot{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;border-top:1px solid var(--line);padding:23px 0 38px;margin-top:34px;font-size:13px;color:var(--muted)}.foot p{max-width:80ch}.print{border:1px solid var(--line);border-radius:5px;min-height:44px;padding:8px 12px;background:var(--surface);font-size:14px}
+    @media(max-width:1100px){.wrap{padding:0 22px}.old-flow{grid-template-columns:1fr 26px 1fr}.old-box.review{grid-column:1 / -1}.old-flow>.old-pub-arrow{display:none}.old-box.publish{grid-column:1 / -1}.pipeline{grid-template-columns:1fr 26px 1fr 26px 1fr;row-gap:22px}.pipeline>.lane:nth-of-type(7){grid-column:1}.pipeline>.between:nth-of-type(6){display:none}.pipeline>.lane:nth-of-type(7):before{content:'원본·규칙 처리 뒤 아래 AI 검수로 이어집니다 ↓';display:block;grid-column:1 / -1;position:relative;color:var(--muted);font-size:13px;margin-bottom:6px}.pipeline>.lane:nth-of-type(7) .lane-label{min-height:44px}.intro-aside{max-width:240px}.rollout{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:700px){html{scroll-padding-top:20px}.top-inner{padding:15px 18px}.meta{max-width:160px;text-align:right}.wrap{padding:0 16px}header.intro{padding:27px 0 22px;display:block}h1{font-size:25px;letter-spacing:-.6px}.lead{font-size:15px}.intro-aside{max-width:none;padding-top:18px;font-size:13px}.intro-aside strong{display:inline;margin-right:6px}.nav{gap:12px 20px}.nav .download{margin-left:0}.section{padding-top:27px}.section-head h2{font-size:20px}.checks li{grid-template-columns:24px 1fr;gap:8px 12px}.checks li p{grid-column:2}.diagram{padding:16px}.old-flow{display:flex;flex-direction:column;gap:8px;align-items:stretch}.old-flow>.old-pub-arrow{display:block}.old-flow>.arrow{transform:rotate(90deg);height:24px;line-height:24px}.pipeline{display:flex;flex-direction:column;gap:0}.lane{width:100%}.lane-label{min-height:38px;margin-top:5px}.between{width:100%;padding:9px 0;transform:rotate(90deg);height:43px}.pipeline>.between:nth-of-type(6){display:block}.pipeline>.lane:nth-of-type(7):before{display:none}.node{padding:12px 15px;min-height:70px}.lane.collectors .node+.node{margin-top:7px}.shared{grid-template-columns:1fr;gap:12px}.inspector{grid-template-columns:1fr;gap:9px;padding:15px}.scenario{gap:9px}.scenario select{width:100%}.diff-table thead{display:none}.diff-table,.diff-table tbody,.diff-table tr,.diff-table td{display:block;width:100%!important}.diff-table tr{padding:13px 15px;border-bottom:1px solid var(--line)}.diff-table tr:last-child{border:0}.diff-table td{padding:4px 0;border:0}.diff-table td[data-label]:before{content:attr(data-label);display:inline-block;margin-right:9px;font-size:13px;font-weight:650;color:var(--ink)}.validation{grid-template-columns:1fr;gap:20px;padding:18px}.formula{font-size:18px}.rollout{grid-template-columns:1fr}.legend{gap:9px}.foot{margin-top:24px}.diagram-tools{gap:10px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important}button:active{transform:none}}
+    @media print{body{background:white;font-size:12px}.wrap{max-width:none;padding:0}.top-inner{padding:10px 0}.nav,.diagram-tools,.scenario,.print,.skip{display:none}.intro-aside{max-width:220px}.diagram,.validation{break-inside:avoid}h1{font-size:25px}.pipeline{display:grid;grid-template-columns:1fr 16px 1fr 16px 1fr 16px 1fr 16px 1fr 16px 1fr;gap:0}.pipeline>.lane:nth-of-type(7){grid-column:auto}.pipeline>.lane:nth-of-type(7):before{display:none}.pipeline>.between:nth-of-type(6){display:block}.node{padding:8px 6px}.node strong{font-size:12px}.node small,.lane-label{font-size:11px}.section{padding-top:18px}.foot{padding-bottom:10px}a{color:inherit}}
+    .server-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.server{min-width:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:21px}.server.oracle{border-color:#90b39d}.server h3{font-size:19px;margin:8px 0}.server .host-kind{font-size:13px;font-weight:650;color:var(--blue)}.server.oracle .host-kind{color:var(--green)}.server ul{padding-left:19px;margin:14px 0 0;font-size:14px}.server li{margin-bottom:9px}.server p,.server small{font-size:13px;color:var(--muted)}.server small{display:block;border-top:1px solid var(--line);margin-top:15px;padding-top:12px}.review-note{margin-bottom:18px;padding:16px 18px;border:1px solid #b5cce3;border-radius:6px;background:var(--blue-soft);font-size:14px}.review-note p+p{margin-top:8px}.lifecycle{display:grid;grid-template-columns:1fr 28px 1.2fr 28px 1fr;align-items:center;gap:10px;margin-top:20px}.life-box{background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:16px;font-size:14px;min-width:0}.life-box strong{display:block;margin-bottom:6px}.life-box p{font-size:13px;color:var(--muted)}.life-box.oracle{background:var(--green-soft);border-color:#90b39d}.failure-controls{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:20px 0 13px}.failure-controls label{font-size:14px;font-weight:600}.failure-controls select{min-height:44px;padding:8px 12px;max-width:100%;border:1px solid #aaaab4;border-radius:6px;background:var(--surface)}.failure-output{padding:21px;background:var(--surface);border:1px solid var(--line);border-radius:8px}.failure-output h3{font-size:17px;margin-bottom:9px}.failure-output p{color:var(--muted);font-size:14px;max-width:100ch}.failure-output ol{padding-left:21px;margin:16px 0 0;font-size:14px}.failure-output li{padding:4px 0}.dependency-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:18px}.dependency{padding:18px;border:1px solid var(--line);border-radius:7px;background:var(--surface)}.dependency h3{font-size:15px;margin-bottom:8px}.dependency p{font-size:14px;color:var(--muted)}
+    @media(max-width:1000px){.server-grid{grid-template-columns:1fr}.server ul{columns:2;column-gap:30px}.server li{break-inside:avoid}.lifecycle{grid-template-columns:1fr 22px 1.2fr 22px 1fr}}
+    @media(max-width:700px){.server ul{columns:1}.lifecycle{display:flex;flex-direction:column;align-items:stretch;gap:8px}.lifecycle>.arrow{transform:rotate(90deg);height:25px;line-height:25px}.dependency-grid{grid-template-columns:1fr}.server{padding:18px}.failure-controls select{width:100%}.failure-output{padding:17px}}
+    @media print{.failure-controls{display:none}.server-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.server{padding:12px}.server ul{columns:1}.server,.life-box,.failure-output{break-inside:avoid}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">본문으로 바로가기</a>
+  <div class="top"><div class="top-inner"><div class="brand">NoMoreVibe<span>.</span> <span style="color:var(--muted);font-weight:400">구조 검토</span></div><div class="meta">2026.10.15 · 운영 조사 기반 설계안</div></div></div>
+  <main class="wrap" id="main">
+    <header class="intro">
+      <div><span class="status">설계안 · 새 역할과 장애복구 미배포</span><h1>세 서버가 일을 나누고,<br>마지막에는 오라클이 이어받도록.</h1><p class="lead">수집·AI 검수를 독립시키고, 오라클은 평소 번역과 등록 제품 관리를 맡습니다. M3·mini 동시 장애에 대비한 DB·모델·실행 경로까지 함께 설계합니다.</p></div>
+      <aside class="intro-aside"><strong>목표는 최종 검수 처리량 2배</strong>아직 실측한 결과가 아닙니다. 같은 입력·모델·품질 조건에서 검증하며 현행 비용 상한을 기준으로 설계합니다.</aside>
+    </header>
+    <nav class="nav" aria-label="문서 목차"><a href="#flow">이전 ↔ 변경 흐름도</a><a href="#servers">세 서버 역할</a><a href="#recovery">오라클 최종 장애복구</a><a href="#changes">주요 변경 6개</a><a href="#measure">2배 검증 기준</a><a href="#order">실행 순서</a><a class="download" href="../../superpowers/specs/2026-10-15-pipeline-two-times-design.md">상세 설계 원문 ↗</a></nav>
+
+    <section class="section" aria-labelledby="summary-title">
+      <div class="section-head"><h2 id="summary-title">먼저 확인할 세 가지</h2></div>
+      <ul class="checks">
+        <li><span class="check-mark" aria-hidden="true">✓</span><strong>수집·검수는 이미 분리</strong><p>현재도 crawler와 reviewer는 별도 역할이며 DB에 일감이 저장됩니다. 새 설계의 초점은 <b>reviewer 내부의 순차 실행을 풀고, 여러 처리기가 안전하게 일감을 나눠 갖는 것</b>입니다.</p></li>
+        <li><span class="check-mark" aria-hidden="true">✓</span><strong>많이 발견해도 AI는 계속 처리</strong><p>발견한 주소를 모으는 버퍼와 신선한 원본을 준비하는 버퍼를 분리합니다. 새 후보가 쌓여도 AI는 준비된 항목을 계속 가져가며, 원본 수집은 검수 속도에 맞춥니다.</p></li>
+        <li><span class="check-mark" aria-hidden="true">✓</span><strong>오라클도 평소 실제 업무 수행</strong><p><b>번역·제품 연결 확인·사이트 근거 갱신</b>을 상시 배정합니다. 장애 시에는 자체 스케줄러가 인계하며, DB와 모델까지 복구되는지 별도로 검증합니다. 현재는 설계 단계입니다.</p></li>
+      </ul>
+    </section>
+
+    <section class="section" id="flow" aria-labelledby="flow-title">
+      <div class="section-head"><h2 id="flow-title">이전 구조와 변경 구조</h2><p>변경 번호 1–6은 아래 비교표와 연결됩니다.</p></div>
+      <div class="diagram">
+        <div class="compare-title"><h3>현재</h3><span class="tag">운영 코드 조사 · 14:16–14:18 KST</span></div>
+        <div class="old-flow" aria-label="현재 crawler 별도 실행, DB 대기열, reviewer 내부 작업 순차 실행, publisher 별도 실행">
+          <div class="old-box"><strong>수집 crawler</strong><small>GitHub 8종 작업 · 5개 병렬 lane<br>역할당 active 1대</small></div><div class="arrow" aria-hidden="true">→</div>
+          <div class="old-box"><strong>기존 DB 대기열</strong><small>원본·후보·심사 결과 저장<br>다음 작업 요청도 기록</small></div><div class="arrow" aria-hidden="true">→</div>
+          <div class="old-box review"><strong>reviewer의 같은 실행 통로</strong><div class="serial"><span>규칙</span><i>→</i><span>AI 1차</span><i>→</i><span>AI 2차</span><i>→</i><span>발행분 재검수</span><i>→</i><span>소개 검수</span></div><small>작업 종류를 차례로 방문 · AI 1차와 2차는 겹쳐 실행하지 않음</small></div><div class="arrow old-pub-arrow" aria-hidden="true">→</div>
+          <div class="old-box publish"><strong>발행 publisher</strong><small>별도 실행 역할</small></div>
+        </div>
+        <p class="old-note">화살표는 reviewer가 작업 종류를 방문하는 순서입니다. 개별 후보가 발행 전에 발행분 재검수·소개 검수를 모두 거친다는 뜻은 아닙니다. 역할당 M3가 실행하고 mini는 예비로 대기합니다.</p>
+      </div>
+
+      <div class="diagram new show-changes" id="proposed">
+        <div class="compare-title"><h3>변경 설계</h3><span class="tag">기존 PostgreSQL 대기열 재사용</span></div>
+        <div class="diagram-tools"><button type="button" class="toggle" id="highlight" aria-pressed="true">변경된 부분 강조 켜짐</button><div class="legend"><span><i class="legend-dot changed" aria-hidden="true"></i>주요 변경</span><span><i class="legend-dot queue" aria-hidden="true"></i>대기열</span><span>점선 = 후속 연결</span></div></div>
+        <div class="pipeline" aria-label="변경 설계: 여러 발굴 수집기에서 발견 버퍼, 원본 수집, 규칙, AI1, 필수 AI2, 발행 순서. 각 단계는 독립 실행">
+          <div class="lane collectors"><div class="lane-label">여러 곳에서 발굴 <span class="key">1</span></div>
+            <button type="button" class="node" data-detail="collect" data-changed="true" aria-pressed="false" aria-controls="detail"><strong>GitHub 수집기 A · B</strong><small>검색어·시간 구간 분담<br>겹치는 후보는 중복 제거</small></button>
+            <button type="button" class="node" data-detail="collect" data-changed="true" aria-pressed="false" aria-controls="detail"><strong>Show HN 수집기</strong><small>다른 출처와 독립 처리</small></button>
+            <button type="button" class="node future" data-detail="x" aria-pressed="false" aria-controls="detail"><strong>X · osaka-smoke</strong><small>후속 연결 · 하루 10읽기<br>현재 실제 API 실행 보류</small></button>
+          </div>
+          <div class="arrow between" aria-hidden="true">→</div>
+          <div class="lane"><div class="lane-label">발견과 원본을 분리 <span class="key">2</span></div>
+            <button type="button" class="node queue" id="discovery-node" data-detail="buffer" data-changed="true" aria-pressed="false" aria-controls="detail"><strong>발견 주소 버퍼</strong><small>주소·출처·검색 위치 저장<br>API·저장량 예산 적용</small></button><div class="down" aria-hidden="true">↓</div>
+            <button type="button" class="node" id="fetch-node" data-detail="fetch" data-changed="true" aria-pressed="false" aria-controls="detail"><strong>원본 수집 처리기</strong><small>AI 입력 공급량에 맞춤<br>초기 동시 3 유지</small></button><div class="down" aria-hidden="true">↓</div>
+            <button type="button" class="node queue" id="fresh-node" data-detail="buffer" data-changed="true" aria-pressed="false" aria-controls="detail"><strong>신선한 원본 버퍼</strong><small>실측 후 목표 2시간분<br>상한 6시간분 · 나이 확인</small></button>
+          </div>
+          <div class="arrow between" aria-hidden="true">→</div>
+          <div class="lane"><div class="lane-label">빠른 규칙 판정</div><button type="button" class="node" id="rule-node" data-detail="rules" aria-pressed="false" aria-controls="detail"><strong>규칙 처리기</strong><small>기존 기준 유지<br>AI 필요 항목을 인계</small></button><div class="outcome">규칙으로 확정된 항목은<br><strong>별도 지표로 집계</strong></div></div>
+          <div class="arrow between" aria-hidden="true">→</div>
+          <div class="lane"><div class="lane-label">AI 1차 독립 실행 <span class="key">3</span></div>
+            <button type="button" class="node queue" id="ai1-queue" data-detail="ai1" aria-pressed="false" aria-controls="detail"><strong>AI 1차 대기</strong><small>처리 가능한 후보만 선점</small></button><div class="down" aria-hidden="true">↓</div>
+            <button type="button" class="node" id="ai1-node" data-detail="ai1" data-changed="true" aria-pressed="true" aria-controls="detail"><span class="label">독립 소비 · 빈 슬롯 즉시 채움</span><strong>AI 1차 처리기</strong><small>현재 OSS 120 모델 유지<br>2차·배경 작업과 겹쳐 실행</small></button><div class="outcome">판정 결과에 따라<br><strong>거절 확정 / 사람 검토 인계</strong><br>사람 대기는 최종 완료와 분리</div>
+          </div>
+          <div class="arrow between" aria-hidden="true">→</div>
+          <div class="lane"><div class="lane-label">필수 AI 2차 독립 실행 <span class="key">3</span></div>
+            <button type="button" class="node queue" id="ai2-queue" data-detail="ai2" aria-pressed="false" aria-controls="detail"><strong>AI 2차 대기</strong><small>2차가 필요한 항목 인계</small></button><div class="down" aria-hidden="true">↓</div>
+            <button type="button" class="node" id="ai2-node" data-detail="ai2" data-changed="true" aria-pressed="false" aria-controls="detail"><span class="label">1차 묶음 종료를 기다리지 않음</span><strong>AI 2차 처리기</strong><small>현재 supa Qwen 유지<br>예비 모델 조건도 유지</small></button><div class="outcome">판정 결과에 따라<br><strong>거절 확정 / 사람 검토 인계</strong><br>승인 조건 충족 시 발행 대기</div>
+          </div>
+          <div class="arrow between" aria-hidden="true">→</div>
+          <div class="lane"><div class="lane-label">발행 조건 확인</div>
+            <button type="button" class="node queue" id="publish-queue" data-detail="publish" aria-pressed="false" aria-controls="detail"><strong>발행 가능 대기</strong><small>필수 심사·입력 유효성 확인</small></button><div class="down" aria-hidden="true">↓</div>
+            <button type="button" class="node" id="publish-node" data-detail="publish" aria-pressed="false" aria-controls="detail"><strong>발행 처리기</strong><small>기존 공개 조건 유지<br>결과는 중복 적용 방지</small></button>
+          </div>
+        </div>
+        <div class="shared">
+          <p><span class="key">4</span> <strong>공통 작업 장부 · 작업별 소유권</strong><br>정상 소유자가 있는 일은 건너뛰고, 만료된 작업만 재할당합니다. 이전 실행이 늦게 보낸 결과는 저장을 거부합니다. 결과 저장과 다음 단계 인계는 함께 확정합니다.</p>
+          <p><span class="key">5</span> <strong>모든 AI 호출에 공통 한도</strong><br>AI 1·2차와 발행분 재검수·소개·검색어·번역·예비 모델을 함께 제한합니다. 배경 작업은 별도 실행하되 공정하게 몫을 배분합니다. 근거 HTTP 갱신은 별도 I/O 예산을 적용합니다.</p>
+        </div>
+        <p class="diagram-caption">신규 후보의 필수 2차 검수 경로입니다. 규칙·AI1은 M3, 원본 공급·AI2는 mini에 분담하고, 공개 후 번역·연결 확인은 아래 Oracle 경로로 이어집니다. 개별 작업 소유권을 먼저 갖추며 서버를 늘려도 공통 모델 용량은 그대로입니다.</p>
+        <div class="inspector" id="detail" aria-live="polite" aria-atomic="true"><div><span class="detail-label">단계를 클릭하면 설명 표시</span><h3 id="detail-title">AI 1차 · 기다리는 틈 줄이기</h3></div><p id="detail-body">현재는 AI 1차 작업이 끝나면 다른 reviewer 작업을 방문하고 다음 실행을 기다립니다. 변경 후에는 준비된 후보가 있고 공통 호출 슬롯을 얻을 수 있으면 바로 다음 후보를 가져갑니다. 모델·프롬프트·승인 기준은 유지합니다.</p></div>
+        <div class="scenario"><label for="scenario">상황별 동작 보기</label><select id="scenario"><option value="normal">정상 처리</option><option value="backlog">발견 주소가 많이 쌓임</option><option value="worker">AI 1차 처리기 한 대 중단</option><option value="provider">모델 서버 포화</option></select><span class="scenario-note">설계 동작 설명입니다. 실측·성능 시뮬레이션이 아닙니다.</span></div>
+        <div class="scenario-result" id="scenario-result" aria-live="polite" aria-atomic="true"><strong id="scenario-title">각 단계가 준비된 일감을 따로 가져갑니다.</strong><p id="scenario-body">수집 전체가 끝나기를 기다릴 필요가 없습니다. AI 1차와 2차는 서로 다른 후보를 동시에 처리하고, 호출 슬롯이 비면 다음 항목으로 이어갑니다.</p></div>
+      </div>
+    </section>
+
+    <section class="section" id="servers" aria-labelledby="servers-title">
+      <div class="section-head"><h2 id="servers-title">평상시 · 세 서버 모두 실제 일감을 처리</h2><p>배치 제안 · 아직 신규 서비스 미배포</p></div>
+      <div class="review-note"><p><strong>세 서버 모두 같은 업무를 실행할 수 있게 준비합니다.</strong> 아래 배치는 평소의 우선 담당입니다. mini의 원본 수집·AI2·웹/관리자를 M3와 Oracle도 맡을 수 있고, 나머지 수집·검수·발행·번역·유지관리·스케줄러도 서로 인계하도록 설계합니다.</p><p>동일 항목은 유효한 소유자 한 곳에서 처리합니다. Oracle은 1 CPU의 낮은 동시성으로 운영하며, <b>DB·모델·검색 embedding·권한까지 검증해야 전체 기능 인계 준비 완료</b>입니다. 현재 이 공통 실행 구성은 미배포입니다.</p></div>
+      <div class="review-note"><p><strong>재검토 결과:</strong> 근거 HTTP는 이미 crawler의 별도 lane에서 실행됩니다. 복제본 추가에 앞서 <b>제품 안의 사이트·GitHub 출처를 분리</b>하고, 전체 서버가 공유하는 호출 한도와 개별 작업 소유권을 만들어야 합니다.</p><p>Oracle이 M3의 중계 서버에만 의존하면 M3·mini 동시 장애를 견딜 수 없습니다. <b>Oracle 자체 실행기·스케줄러와 생존 DB 경로</b>를 두는 방향으로 보완했습니다.</p></div>
+      <div class="server-grid">
+        <article class="server"><span class="host-kind">신규 수집·1차 판정</span><h3>M3</h3><ul><li>GitHub 발굴·인증 근거·스캔</li><li>규칙 판정과 AI 1차</li><li>필수 심사 완료 후보 발행</li><li>Oracle 작업의 지정 예비</li></ul><small>GitHub quota를 서버마다 중복 배정하지 않습니다. 현재 신규 발굴 중단도 유지합니다.</small></article>
+        <article class="server"><span class="host-kind">원본 공급·2차 판정</span><h3>mini</h3><ul><li>신규 후보 원본 수집</li><li>AI 2차의 활성 처리기</li><li>M3 중단 시 미완료 작업 인계</li><li>기존 웹·관리자 운영 유지</li></ul><small>원본 동시 3·AI1+AI2 합 4를 전체 서버가 나눠 씁니다. 기존 standby를 켜는 것만으로 분산되지는 않습니다.</small></article>
+        <article class="server oracle"><span class="host-kind">필수 상시 업무 + 최종 장애 인계</span><h3>Oracle · osaka-smoke</h3><ul><li><b>번역:</b> 사유·한국어 소개·요청된 다국어 필드</li><li><b>연결 확인:</b> 등록 사이트 응답·이동·실패 관측</li><li><b>근거 갱신:</b> canonical site·공식 피드 HTTP</li><li><b>비상:</b> scheduler와 나머지 역할 축소 인계</li></ul><small>surfguide / ap-osaka-1 / osaka-smoke. ARM 1 CPU·약 6GB. 번역은 외부 모델 API를 사용하며 로컬 대형 모델을 띄우지 않습니다.</small></article>
+      </div>
+      <div class="lifecycle" aria-label="공개 제품은 DB에 등록 후 Oracle에서 번역 연결 확인 근거 HTTP를 처리하고 소유권과 현재 입력을 검증해 DB에 저장">
+        <div class="life-box"><strong>발행된 제품 · 기존 DB</strong><p>번역 수요·URL·근거별 다음 확인 시각<br>제품마다 입력 세대와 소유 token</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="life-box oracle"><strong>Oracle의 독립 처리 통로</strong><p>번역 / 연결 확인 / 사이트 근거<br>서로 다른 대기열, 공정한 몫 배분<br>GitHub quota 대기 중에도 가능한 HTTP 지속</p></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="life-box"><strong>현재 입력·소유권 확인 후 저장</strong><p>원문이 바뀐 번역·만료 결과 거부<br>사이트 성공과 제품 전체 완료 구분<br>내림·복구는 감사 이력과 함께 적용</p></div>
+      </div>
+      <div class="notice"><strong>연결 확인은 관측 지역 이전을 먼저 검증합니다.</strong> 현재는 403·timeout도 연속 실패에 포함됩니다. Oracle 지역 차단이나 광역 네트워크 장애를 제품 폐쇄로 오인하지 않도록 관측 위치·실패 종류·검증 보류를 구분해야 합니다. 기존 10회 자동 내림 기준과 기록은 보존하며, 비교 관측을 통과한 뒤 판정 입력 권한을 이전합니다.</div>
+      <p class="diagram-caption">번역은 원문 hash·locale·필드·정책 버전을 검사하고 기존 검증기·재시도 한도를 유지합니다. 요청된 다국어만 처리하는 현재 범위를 임의로 전체 언어 backfill로 확대하지 않습니다. facts/link 96시간·release feed 6시간과 신규 검수 원본 유효기간 24시간은 별개입니다. 기존 X 서비스는 실제 API gate가 닫혀 있어 이 상시 업무의 실처리로 세지 않습니다.</p>
+    </section>
+
+    <section class="section" id="recovery" aria-labelledby="recovery-title">
+      <div class="section-head"><h2 id="recovery-title">M3·mini가 모두 멈추면 · Oracle이 마지막 실행 장소</h2><p>장애 범위에 따라 실제 가능한 일을 구분</p></div>
+      <div class="failure-controls"><label for="failure-case">장애 범위 선택</label><select id="failure-case" aria-controls="failure-output"><option value="apps">M3·mini 중단 / DB·모델 생존</option><option value="database">기존 DB도 접근 불가</option><option value="models">M3에 의존한 모델도 중단</option><option value="partition">기존 DB 생존 여부 확인 불가</option></select></div>
+      <div class="failure-output" id="failure-output" aria-live="polite" aria-atomic="true"><h3 id="failure-title">Oracle 자체 스케줄러가 만료된 업무를 이어받습니다.</h3><p id="failure-body">살아 있는 DB의 소유권이 만료된 뒤 수집·규칙·AI 검수·발행을 제한된 동시성으로 재개합니다. 평소 번역·등록 후 관리는 계속합니다. 웹·관리자도 Oracle용 최소 운영 경로를 준비합니다.</p><ol id="failure-steps"><li>새 작업 유입을 줄이고 번역·제품 연결·발행 후 반영을 우선</li><li>공통 quota와 사람 결정·기존 중단 설정을 그대로 적용</li><li>한 작업씩 인계하고 늦게 돌아온 M3·mini 결과는 차단</li></ol></div>
+      <div class="dependency-grid">
+        <article class="dependency"><h3>DB·작업 장부도 Oracle에 복구 가능해야 함</h3><p>실측 NoMoreVibe DB 9.03GiB, 전체 DB 합19.79GiB, Oracle 여유 약20GiB입니다. 기존 DB는 x86, Oracle은 ARM이므로 물리 복제본을 그대로 옮기는 방식도 사용할 수 없습니다. NoMoreVibe 전용 논리 복제·백업 복원과 용량을 검증하고, 기존 writer를 차단한 뒤 전환합니다. 현재 미구현입니다.</p></article>
+        <article class="dependency"><h3>번역 모델도 M3와 독립된 경로 필요</h3><p>현재 번역은 abcllm의 OSS 120을 호출합니다. API 주소가 외부여도 실제 모델이 M3에 있으면 함께 멈춥니다. 독립된 제공 경로·품질·예산을 검증하고 장애용 자격 증명을 준비해야 모델 장애에도 번역이 계속됩니다. 번역 실패를 완료로 바꾸지 않습니다.</p></article>
+      </div>
+      <div class="notice">1 CPU의 비상 모드는 처리량을 낮춰 서비스를 이어가는 목적입니다. 정상 상태의 2배 목표와 별도로 측정합니다. DB 복원 지연·데이터 손실 허용치(RTO/RPO), 모델 대체 품질·비용, 실제 장애·복귀 시험이 필요합니다. DB가 전환되어도 기존 외부 호출이 끝났는지 확인한 뒤 공통 슬롯을 다시 엽니다.</div>
+    </section>
+
+    <section class="section" id="changes" aria-labelledby="changes-title">
+      <div class="section-head"><h2 id="changes-title">주요 변경 6개 체크</h2><p>무엇을 바꾸고, 어떤 효과를 확인할지</p></div>
+      <div class="table-shell"><table class="diff-table"><thead><tr><th scope="col">점검 항목</th><th scope="col">이전</th><th scope="col">변경 설계 · 확인할 효과</th></tr></thead><tbody>
+        <tr><td><span class="key">1</span> 수집 구간 분담</td><td data-label="이전">한 crawler 역할 안에 5개 병렬 lane. 같은 역할 복제본은 주·예비로 동작.</td><td data-label="변경">출처·검색어·시간 구간별로 여러 수집기가 다른 일감을 처리.<p>확인: 중복 수집률·출처별 발견량·API 예산 준수. 특정 출처 실패가 다른 출처를 막지 않는지.</p></td></tr>
+        <tr><td><span class="key">2</span> 버퍼와 유입 제어</td><td data-label="이전">대기량·나이에 따른 기존 admission 제어. 발견과 비싼 원본 공급을 더 세밀하게 나눌 필요.</td><td data-label="변경">발견 주소와 신선한 원본을 구분. 검수 속도에 맞춰 원본 공급 조절.<p>확인: AI 입력 부족 시간·대기 최고 나이. 지속 처리량 측정 전에는 기존 500/1000건 제어 유지.</p></td></tr>
+        <tr><td><span class="key">3</span> AI 1차·2차 실행</td><td data-label="이전">규칙·AI1·AI2·발행분 재검수·소개 검수가 같은 main lane에서 차례 실행.</td><td data-label="변경">AI1·AI2·배경 작업을 독립 소비. 준비된 후보가 있으면 빈 슬롯을 즉시 채움.<p>확인: 일감이 있는데도 모델 슬롯이 비는 시간 감소. 다른 후보의 1·2차 처리가 실제 겹치는지.</p></td></tr>
+        <tr><td><span class="key">4</span> 복제·장애 복구</td><td data-label="이전">역할·job 단위 lease에 의존. 현재 코드에서 복제본만 늘리면 동시 소비 불가.</td><td data-label="변경">작업별 소유권·유효기간·결과 검증 후 세 서버가 분담. Oracle은 번역·등록 후 관리를 상시 처리하고 최종 장애 시 다른 역할도 인계.<p>확인: 충돌·이중 발행 0, 늦은 결과 차단, DB 복구·독립 모델·Oracle 자체 scheduler와 실제 장애복귀 시험.</p></td></tr>
+        <tr><td><span class="key">5</span> 모델·배경 작업 예산</td><td data-label="이전">역할별 동시성 설정. 실행을 분리하면 전체 모델 호출이 겹쳐 늘 수 있음.</td><td data-label="변경">제공자·실제 모델별 공통 슬롯. 신규 검수·2차·배경 작업이 공정하게 나눠 사용.<p>초기 비교: reviewer 합 4 안에서 AI1/AI2 각 2부터. 전체 gateway 상한 8은 코드 기준이며 제공자의 더 낮은 제한이 우선.</p></td></tr>
+        <tr><td><span class="key">6</span> 2배 성능 판단</td><td data-label="이전">짧은 모델 단독 실험·유입이 없는 구간만으로 전체 처리 용량 확정 불가.</td><td data-label="변경">같은 조건의 준비된 일감을 유지하고, 기존/변경 각각 실제 모델로 30분 비교.<p>확인: 필수 심사가 끝난 고유 후보/시간 2배 이상, 품질 저하 없음. 재시도·예비 표·캐시 재사용을 완료량에 중복 가산하지 않음.</p></td></tr>
+      </tbody></table></div>
+      <div class="unchanged" aria-label="유지하는 조건"><span>유지 · 모델과 승인 기준</span><span>유지 · 사람 결정 보호</span><span>유지 · 기존 DB 장부</span><span>유지 · 외부 API·비용 상한</span><span>현재 신규 발굴 중단은 자동 해제하지 않음</span></div>
+    </section>
+
+    <section class="section" id="measure" aria-labelledby="measure-title">
+      <div class="section-head"><h2 id="measure-title"><span class="key">6</span> 2배는 이렇게 확인합니다</h2><p>현재 상태: 측정 전 목표</p></div>
+      <div class="validation"><div><h3>주 지표 · 필수 심사를 끝낸 고유 후보/시간</h3><div class="formula">변경 후 완료량 ÷ 기존 완료량 ≥ 2.0</div><p>승인 또는 거절이 확정된 후보를 비교 구간당 최대 한 번만 셉니다. 2차가 필요한 승인 후보는 2차까지 완료해야 합니다. 규칙만 완료·사람 인계·1차만 완료·캐시 재사용·발행 수는 따로 집계합니다.</p><p style="margin-top:12px">같은 입력 분포·모델·프롬프트·기준 시각과 동등한 초기 DB·캐시 조건을 맞춥니다. warm/cold cache는 구분하고, 실제 모델 호출 실험도 예산 안에서 진행합니다.</p></div><div><h3>함께 통과해야 하는 조건</h3><ul><li>검수 대기를 유지한 30분 구간을 양쪽에서 측정</li><li>전체 처리 지연 p95 악화 없음</li><li>기술 실패율은 기준 +1%p 이하</li><li>잘못된 승인·거절 증가 없음</li><li>사람 결정 덮어쓰기·필수 심사 누락·이중 발행 0건</li></ul></div></div>
+      <div class="test-path" aria-label="검증 순서"><b>기존 기준 측정</b><span aria-hidden="true">→</span><b>격리된 동일 입력 비교</b><span aria-hidden="true">→</span><b>30분 운영 canary</b><span aria-hidden="true">→</span><b>24시간 관측</b></div>
+      <div class="notice">모델 서버가 이미 포화라면 처리기를 늘려도 2배가 되지 않습니다. 그때는 추가 실행 분리보다 모델 제공 용량과 비용안을 먼저 검토합니다. 대기열이 비어 버린 측정도 최대 용량의 증거로 사용하지 않습니다.</div>
+    </section>
+
+    <section class="section" id="order" aria-labelledby="order-title"><div class="section-head"><h2 id="order-title">실행 순서</h2><p>격리 구현·검증 후 각 운영 전환 직전에 PR·CI·migration·canary 적용</p></div><ol class="rollout">
+      <li><span>1.</span><div><strong>기준 측정 준비</strong><p>동일 입력·고유 완료량·대기 시간 계측. 기존 운영 중단과 근거 회복 작업 유지.</p></div></li>
+      <li><span>2.</span><div><strong>공통 한도·소유권 선행</strong><p>모델 슬롯, 개별 lease, 출처 분리·결과 검증. DB 생존 경로와 Oracle 3순위 인계 계약 검증.</p></div></li>
+      <li><span>3.</span><div><strong>검수의 지속 처리</strong><p>AI1·AI2·배경 실행 분리. 준비된 후보와 빈 슬롯이 있을 때 즉시 이어 처리.</p></div></li>
+      <li><span>4.</span><div><strong>Oracle 상시 업무 활성화</strong><p>번역·사이트 근거부터 실제 저장 확인. 연결 확인은 지역 비교·중복 관측 방지 후 판정 권한 이전.</p></div></li>
+      <li><span>5.</span><div><strong>최종 장애·복귀 시험</strong><p>M3·mini 동시 중단, DB 복구, 독립 모델 번역, 이전 writer 차단, Oracle 최소 웹 경로 확인.</p></div></li>
+      <li><span>6.</span><div><strong>수집 분담·원본 공급</strong><p>검색 구간 분할과 버퍼 제어. 원본 동시 3부터, 실제 검수 공급 부족 시 증설 비교.</p></div></li>
+      <li><span>7.</span><div><strong>관리자에서 확인</strong><p>실행 host·최종 장애 인계 상태, 단계별 대기·모델 슬롯·실제 완료량·보류 이유 표시.</p></div></li>
+      <li><span>8.</span><div><strong>단계 배포·실측</strong><p>PR·CI·migration, 세 서버 순차 배포와 canary. 정상 2배·비상 유지 처리량을 각각 보고.</p></div></li>
+    </ol></section>
+    <footer class="foot"><p>이 페이지는 설계 비교용입니다. 파이프라인 변경 구현·운영 배포·2배 실측 성공을 의미하지 않습니다.<br>근거: <a href="../../superpowers/specs/2026-10-15-pipeline-two-times-design.md">2026-10-15 설계 원문</a> · <a href="../../operations/2026-10-14-pipeline-capacity-measurement.md">기존 용량 관측 보고서</a></p><button type="button" class="print" id="print">인쇄 / PDF 저장</button></footer>
+  </main>
+  <script>
+    'use strict';
+    const details = {
+      collect: ['수집 분담 · 같은 일감을 겹쳐 가져오지 않기', '수집기는 출처·검색어·시간 구간별로 작업을 가져갑니다. GitHub 수집기를 여러 개 실행해도 같은 인증의 API 한도를 각자 새로 배정하지 않습니다. 특정 구간 실패는 해당 구간만 재시도합니다. 신규 발굴 재개는 구현·검증 후 제한적으로 진행합니다.'],
+      x: ['X · 별도 서버와 별도 예산', 'X 수집기는 osaka-smoke에 별도 서비스로 설치되어 있습니다. UTC 하루 10읽기 장부를 유지하며, 실제 API 실행은 목적 승인 확인을 위한 gate가 닫힌 상태입니다. 이 흐름도의 통합 연결은 후속 설계이며 현재 공개 HOT 발행이 구현됐다는 뜻은 아닙니다.'],
+      buffer: ['버퍼 분리 · 많이 발견하되 원본은 필요한 만큼', '발견 주소는 외부 API·저장량 예산 안에서 모으고, 비싼 원본 수집은 AI 공급 상태에 맞춥니다. 지속 검수량 R을 실측한 뒤 신선한 검수 준비량 약 2시간분을 목표, 6시간분을 상한으로 조절합니다. 실측 전에는 기존 500/1000건 admission과 나이 제어를 유지합니다. 원본 유효기간은 24시간입니다.'],
+      fetch: ['원본 수집 · 검수에 입력이 끊기지 않게', '첫 변경에서는 원본 수집 동시 3을 유지합니다. AI가 일감을 기다리는 원인이 원본 공급 부족인지 측정한 뒤에만 동시 6을 격리 비교합니다. 호스트별 제한과 공통 I/O 예산을 지키며, 근거 갱신 등 배경 작업과 실행 예산을 구분합니다.'],
+      rules: ['규칙 판정 · AI가 필요한 후보를 빠르게 인계', '기존 규칙과 근거 기준을 유지합니다. AI가 필요한 후보는 저장 즉시 AI 1차 대기로 넘깁니다. 규칙만으로 종료된 후보는 AI 필수 심사 최종 완료량과 섞지 않고 별도로 집계합니다.'],
+      ai1: ['AI 1차 · 기다리는 틈 줄이기', '현재는 AI 1차 작업이 끝나면 다른 reviewer 작업을 방문하고 다음 실행을 기다립니다. 변경 후에는 준비된 후보가 있고 공통 호출 슬롯을 얻을 수 있으면 바로 다음 후보를 가져갑니다. 모델·프롬프트·승인 기준은 유지합니다.'],
+      ai2: ['AI 2차 · 1차와 다른 후보를 동시에 처리', '1차의 큰 묶음이 끝날 때까지 기다리지 않고, 2차가 필요한 후보가 저장되면 자기 대기열에서 가져옵니다. 현재 supa Qwen 기본 모델과 Coder 예비 조건을 유지합니다. 최초 실험은 reviewer 합 4 안에서 1차·2차 각 2부터 비교하며 공통 한도보다 많이 호출하지 않습니다.'],
+      publish: ['발행 · 필수 심사와 사람 결정을 다시 확인', '기존 발행 조건을 유지합니다. 현재 입력·정책·필수 심사·사람 결정이 유효한지 확인하고 결과를 멱등 적용합니다. 작업 결과와 다음 단계 요청을 같은 트랜잭션에서 확정해 전달 중복에도 결과를 두 번 적용하지 않습니다. 외부 모델 호출 자체의 정확히 한 번 실행은 보장하지 않습니다.']
+    };
+    const scenarios = {
+      normal: {title:'각 단계가 준비된 일감을 따로 가져갑니다.', body:'수집 전체가 끝나기를 기다릴 필요가 없습니다. AI 1차와 2차는 서로 다른 후보를 동시에 처리하고, 호출 슬롯이 비면 다음 항목으로 이어갑니다.', states:{}},
+      backlog: {title:'발견 주소가 쌓여도, 준비된 후보 검수는 계속됩니다.', body:'발견 주소는 API·저장량 예산 안에서 모읍니다. 신선한 원본 버퍼가 상한에 가까워지면 원본 가져오기를 줄이고 AI는 기존 준비 항목을 계속 처리합니다. 모델 공급 부족이 아니라면 수집 적체 때문에 AI를 멈추지 않습니다.', states:{'discovery-node':['wait','주소 대기 증가'],'fetch-node':['wait','원본 공급 조절'],'ai1-node':['go','준비 항목 계속 처리'],'ai2-node':['go','준비 항목 계속 처리']}},
+      worker: {title:'AI 1차 한 대가 멈추면, 소유권 만료 뒤 다른 처리기가 맡습니다.', body:'이미 2차와 발행 대기에 있는 후보는 계속 처리합니다. 1차의 진행 중 항목은 유효한 소유권이 있는 동안 중복 실행하지 않고, 만료 뒤 재할당합니다. 늦게 돌아온 이전 결과는 거부합니다. 이 동작은 개별 소유권 구현 후에 가능하며 DB·모델 서버는 여전히 공통 의존성입니다.', states:{'ai1-node':['stop','한 대 중단 → 만료 후 복구'],'ai1-queue':['wait','미처리 항목은 대기열 보존'],'ai2-node':['go','기존 2차 항목 계속'],'publish-node':['go','기존 발행 가능 항목 계속']}},
+      provider: {title:'모델 서버가 포화면, 호출을 더 늘리지 않고 대기합니다.', body:'AI 1차·2차·배경 작업 모두 공통 슬롯과 제공자 제한을 따릅니다. 대기 시간은 모델 실패와 구분하고, 반복 장애에는 제공자별 차단·재시도 지연을 적용합니다. 이 상황에서는 실행 분리만으로 2배를 보장할 수 없어 모델 제공 용량과 비용을 따로 검토합니다.', states:{'ai1-node':['wait','공통 모델 용량 대기'],'ai2-node':['wait','공통 모델 용량 대기'],'fetch-node':['wait','신선한 버퍼량 따라 조절'],'publish-node':['go','기존 발행 가능 항목 계속']}}
+    };
+    document.querySelectorAll('[data-detail]').forEach(button => button.addEventListener('click', () => {
+      document.querySelectorAll('[data-detail]').forEach(node => node.setAttribute('aria-pressed', String(node === button)));
+      const [title, body] = details[button.dataset.detail];
+      document.getElementById('detail-title').textContent = title;
+      document.getElementById('detail-body').textContent = body;
+    }));
+    document.getElementById('highlight').addEventListener('click', event => {
+      const active = event.currentTarget.getAttribute('aria-pressed') !== 'true';
+      event.currentTarget.setAttribute('aria-pressed', String(active));
+      event.currentTarget.textContent = '변경된 부분 강조 ' + (active ? '켜짐' : '꺼짐');
+      document.getElementById('proposed').classList.toggle('show-changes', active);
+    });
+    document.getElementById('scenario').addEventListener('change', event => {
+      document.querySelectorAll('.node').forEach(node => {node.classList.remove('wait','stop','go'); node.querySelector('.state-text')?.remove();});
+      const scenario = scenarios[event.target.value];
+      document.getElementById('scenario-title').textContent = scenario.title;
+      document.getElementById('scenario-body').textContent = scenario.body;
+      Object.entries(scenario.states).forEach(([id, [state, label]]) => {
+        const node = document.getElementById(id);
+        node.classList.add(state);
+        const text = document.createElement('span');text.className = 'state-text';text.textContent = label;node.append(text);
+      });
+    });
+    const failures = {
+      apps: {title:'Oracle 자체 스케줄러가 만료된 업무를 이어받습니다.', body:'살아 있는 DB의 소유권이 만료된 뒤 수집·규칙·AI 검수·발행을 제한된 동시성으로 재개합니다. 평소 번역·등록 후 관리는 계속합니다. 웹·관리자도 Oracle용 최소 운영 경로를 준비합니다.', steps:['새 작업 유입을 줄이고 번역·제품 연결·발행 후 반영을 우선','공통 quota와 사람 결정·기존 중단 설정을 그대로 적용','한 작업씩 인계하고 늦게 돌아온 M3·mini 결과는 차단']},
+      database: {title:'Oracle의 검증된 DB 복구 경로로 전환해야 합니다.', body:'기존 DB가 함께 사라지면 작업 큐와 번역 원문·완료 기록도 읽을 수 없습니다. x86 DB에서 ARM Oracle로의 논리 복제·복원, 데이터 시점·단일 writer를 검증한 뒤 작업을 재개합니다. 현재는 이 경로가 구현되지 않았습니다.', steps:['기존 writer 차단·복구 데이터 시점·누락 범위·DDL와 sequence 상태 확인','NoMoreVibe 전용 논리 복제본 또는 검증된 logical 백업을 복구하고 무결성 검사','구 외부 호출 종료·슬롯 재발급 안전성 확인 후 새 epoch에서 번역·연결 확인부터 재개']},
+      models: {title:'번역 지속에는 M3와 독립된 모델 제공 경로가 필요합니다.', body:'Oracle에 번역 워커가 살아 있어도 abcllm 뒤의 실제 모델이 M3에 있으면 번역이 멈춥니다. 품질·필드 검증과 비용 상한을 통과한 독립 모델 경로를 준비합니다. 모델이 없으면 HTTP 유지관리는 계속하고 번역은 원문과 함께 대기합니다.', steps:['실제 모델 제공 host와 외부 경로를 확인하고 장애용 공급자를 검증','새 자격 증명·quota·공통 슬롯을 적용하고 같은 번역 검증기 사용','승인된 경로가 살아 있을 때만 번역 재개; 자동 승인이나 미검증 출력 저장 없음']},
+      partition: {title:'기존 writer 상태가 불명확하면 이중 쓰기를 열지 않습니다.', body:'접속이 안 된다는 사실만으로 기존 DB가 꺼졌다고 단정할 수 없습니다. 독립된 차단 증거 또는 검증된 단일 writer 선출 권위가 있어야 DB를 승격합니다. 대기 중에는 현재 장부와 결과를 보존합니다.', steps:['독립 제어 경로로 기존 primary의 쓰기 차단 여부 확인','확정 전에는 새 DB 쓰기·제품 자동 내림·외부 발행 보류','복구 후 새 epoch·입력 세대로 재선점; 오래된 서버와 임시 관측의 늦은 결과 거부']}
+    };
+    document.getElementById('failure-case').addEventListener('change', event => {
+      const failure = failures[event.target.value];
+      document.getElementById('failure-title').textContent = failure.title;
+      document.getElementById('failure-body').textContent = failure.body;
+      const steps = document.getElementById('failure-steps');
+      steps.replaceChildren(...failure.steps.map(value => {const item = document.createElement('li');item.textContent = value;return item;}));
+    });
+    document.getElementById('print').addEventListener('click', () => window.print());
+  </script>
+</body>
+</html>

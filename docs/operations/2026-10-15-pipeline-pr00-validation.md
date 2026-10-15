@@ -37,8 +37,9 @@ DB 검증은 이 PR 전용 loopback Docker `nomorevibe-pipeline-pr00-test-db-202
 
 ## 배포·복구 상태
 
-이 문서 작성 시 원격 PR/필수 CI 확인 전이며 운영 배포는 하지 않았다.
-PR 생성 후 URL과 CI 결과를 별도 갱신한다. 단위/fixture 처리 속도를 실제 모델 처리량으로 보고하지 않는다.
+[PR #427](https://github.com/JRVector9/nomorevibe/pull/427)은 GitHub의 scope/quality/통합3shard/필수`check` 전부PASS 후
+2026-10-15T06:58:46Z에 main `94d2f9e95f57f4ca2cf0d7f85f6765be6a4c10de`로 병합했다.
+부모와 독립 agent가 전체 diff를 검토해 병합을 막는 문제를 발견하지 못했다. 운영 배포는 아직 안 했다. 단위/fixture 처리 속도를 실제 모델 처리량으로 보고하지 않는다.
 이 변경만으로2배·전체 근거 적체 해소·Oracle 업무 이전을 달성한 것은 아니다.
 
 main 병합과 고정 image 생성 뒤 기존 독립 워커 runbook으로 배포한다.
