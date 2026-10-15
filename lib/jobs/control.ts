@@ -82,6 +82,18 @@ export async function assertJobLease(tx: ProductTransaction, lease: JobLease, mo
   if (!owned) throw new JobLeaseLostError();
 }
 
+/** A result may wait for the job row. Check expiry against wall time only after
+ * that wait; transaction-start now() cannot prove the owner is still healthy. */
+export async function assertJobLeaseAtWallTime(tx: ProductTransaction, lease: JobLease,
+  mode: "share" | "update" = "share"): Promise<void> {
+  await tx.select({ name: jobs.name }).from(jobs).where(eq(jobs.name, lease.name)).for(mode);
+  const [owned] = await tx.select({ name: jobs.name }).from(jobs).where(and(
+    eq(jobs.name, lease.name), eq(jobs.leaseToken, lease.token),
+    sql`${jobs.lockedAt} >= clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
+  ));
+  if (!owned) throw new JobLeaseLostError();
+}
+
 /** Keep a worker side effect and its job-token check in one commit. */
 export function withJobLeaseWrite<T>(lease: JobLease | undefined, write: (tx: ProductTransaction) => Promise<T>): Promise<T> {
   return db.transaction(async tx => {

@@ -60,4 +60,8 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55467/nomorevibe_te
 자체 DB55467에 unrelated job(req13/proc5/cursor page71/pause2101)을 남긴 같은14회귀에서 기존 조회가 actual6FAIL/8PASS(2.24초)→수정 뒤14PASS(2.22초)였다. 매 테스트 뒤 unrelated job 불변도 검증하고 afterAll에서 자체 sentinel만 삭제한다. cleanup을 전체 삭제로 넓히지 않았고 timeout·생산 코드·기존 기대값을 바꾸지 않았다. 로그 `/tmp/nomorevibe-pr02-independent-scopes-{red,green,tsc,lint}-20261015.log`.
 root도 기존 다른 fixture가 남은55468에서 마지막 두 파일33PASS(3.34초)를 확인했다. 최종 전체 integration은162파일/1,778PASS/기존TODO1, 350.72초로 완료했다. 로그 `/tmp/nomorevibe-pr02-root-db-scoped-final-20261015.log`.
 
-최종 readback: 세 stage legacy/epoch1/계약0, item0, replay schema/role/trigger0, 다른 DB 연결0, 자체 PR02 sentinel job0을 확인했다. 자체 root55468 컨테이너만 중지한다. 운영 DB/DDL·provider 호출·수동 배포·새 consumer 활성화는 수행하지 않았다.
+최종 readback: 세 stage legacy/epoch1/계약0, item0, replay schema/role/trigger0, 다른 DB 연결0, 자체 PR02 sentinel job0을 확인했다. 자체 root55468 컨테이너만 중지했다. 운영 DB/DDL·provider 호출·수동 배포·새 consumer 활성화는 수행하지 않았다.
+
+## 원격 납품 확인 — 2026-10-16 KST
+
+[PR435](https://github.com/JRVector9/nomorevibe/pull/435)는 exact head a7e85457b7bac53b60d780f987fce8e257d6c2d1 / 최신 base d95c6c8의 필수 CI 성공 뒤 정상 squash 병합했다(2026-10-15T15:06:10Z, main8f2bdb3e4f0b009500fd4724a6319cd61f6e6885). [PR CI38756321978](https://github.com/JRVector9/nomorevibe/actions/runs/38756321978) 및 [main CI38757351403](https://github.com/JRVector9/nomorevibe/actions/runs/38757351403) quality·integration3·check·main 웹/워커 image 모두 SUCCESS를 직접 확인했다. 운영 migration·수동 배포·consumer 활성화는 수행하지 않았다.

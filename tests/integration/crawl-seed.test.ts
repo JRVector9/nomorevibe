@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { and, eq } from "drizzle-orm";
+import type { JobLease } from "@/lib/jobs/control";
+import { claimFetchFixtureJob } from "./fetch-fixtures";
 
 const searchCommits = vi.fn();
 const searchRepositories = vi.fn();
@@ -34,7 +37,7 @@ const searchPage = (repos: string[], full = false) => ({
 
 const tick = () => runJob("crawl-seed", seedFrontier);
 const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0];
-
+let fetchLease: JobLease | undefined;
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -44,6 +47,7 @@ beforeEach(async () => {
   await db.delete(crawlDiscoveryEvidence);
   await db.delete(crawlSettings);
   await db.delete(jobs);
+  fetchLease = undefined;
   searchCommits.mockReset();
   searchRepositories.mockReset();
   // 기본 신호 셋 중 커밋 둘만 켠다 — 레포 검색은 자기 테스트에서 따로 켠다
@@ -58,6 +62,9 @@ beforeEach(async () => {
       ],
     },
   }, "테스트");
+});
+afterEach(async () => {
+  if (fetchLease) await db.delete(jobs).where(and(eq(jobs.name, fetchLease.name), eq(jobs.leaseToken, fetchLease.token)));
 });
 
 describe("레포 검색 신호", () => {
@@ -163,7 +170,8 @@ describe("검색 잡", () => {
     await tick();
 
     expect(await crawl.frontierCounts()).toEqual({ pending: 2 });
-    const [entry] = await crawl.dequeue(1);
+    fetchLease = await claimFetchFixtureJob();
+    const [entry] = await crawl.dequeue(1, undefined, fetchLease);
     // 어떤 신호로 발견했는지 남는다 — 신호별 수율을 비교하려면 필요하다
     expect(entry).toMatchObject({ signal: "Claude 커밋 트레일러", priority: 100 });
     // 검색 힌트는 제작 AI 값으로 전달하지 않는다
@@ -182,7 +190,8 @@ describe("검색 잡", () => {
 
     await tick();
 
-    const [entry] = await crawl.dequeue(1);
+    fetchLease = await claimFetchFixtureJob();
+    const [entry] = await crawl.dequeue(1, undefined, fetchLease);
     expect(entry).toMatchObject({ signal: "토픽" });
     expect(entry.builder).toBeNull();
   });

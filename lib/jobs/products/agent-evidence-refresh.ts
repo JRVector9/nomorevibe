@@ -131,7 +131,10 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
           observations: result.observations.length, cached: result.cached, errorCode: result.errorCode,
           failed: result.scan?.state === 'failed' || !!result.errorCode });
         if (result.scan?.state === 'complete' && !result.errorCode) {
-          if (!result.cached) await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
+          if (!result.cached) {
+            if (!ctx.lease) throw new Error('admin_evidence_refresh_job_required');
+            await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
+          }
           await db.transaction(async tx => {
             await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() }).where(and(sql`lower(${crawlCandidates.repo}) = ${repositoryKey}`, eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.reason, 'ai_evidence_pending'), eq(crawlCandidates.decidedBy, 'auto')));
             if (ctx.lease) await assertJobLease(tx, ctx.lease);

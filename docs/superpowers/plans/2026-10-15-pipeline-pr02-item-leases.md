@@ -40,11 +40,11 @@ schema/journal는 한 담당만 수정한다. repository와 integration은 고�
 - [x] 두 연결 단일 승자·SKIP LOCKED·foreign owner 유지·만료 재할당·늦은 모든 쓰기 거절을 검증한다.
 - [x] claim/drain 선후관계·잠금 대기 중 만료·drain renew/완료·epoch fence·결과/요청 rollback을 검증한다.
 - [x] 계약0 활성화 금지·기존 role takeover와 job 요청/cursor/pause 보존을 확인한다.
-- [ ] 담당 종료 보고→root 직접/교차 리뷰→전체 필수 검증→최신 base CI→독립 PR로 납품한다.
+- [x] 담당 종료 보고→root 직접/교차 리뷰→전체 필수 검증→최신 base CI→PR435 정상 병합·main CI/image SUCCESS 확인.
 
 ## 완료와 복구 경계
 
-PR02 schema/types/repository와 새 단위6·DB33 회귀 구현은 완료했다. 최종 전체 integration162파일/1,778PASS/기존TODO1과 root 필수 로컬 검증을 완료했다. 최신 base PR CI·병합은 진행 중이며 실제 결과는 [검증 기록](../../operations/2026-10-15-pipeline-pr02-item-leases-validation.md)에 남긴다.
+PR02 schema/types/repository와 새 단위6·DB33 회귀 구현은 완료했다. 최종 전체 integration162파일/1,778PASS/기존TODO1과 root 필수 로컬 검증을 완료했다. PR435로 정상 병합하고 최신 base PR CI38756321978·main CI38757351403의 image까지 SUCCESS를 확인했으며 실제 결과는 [검증 기록](../../operations/2026-10-15-pipeline-pr02-item-leases-validation.md)에 남긴다.
 성공해도 PR03/04의 domain fencing, PR05 공통 모델 슬롯, PR06 독립 소비자·2배 성능, Oracle/DR 완료를 주장하지 않는다.
 repository는 active caller transaction과 PostgreSQL17 잠금 context를 검사한다. 최초 열린 child-owned stage mutex·종료 transaction·item→control 승격은 거절한다. 부모가 이미 가진 동일/강한 mutex는 유지하며 native adapter가 이전 child savepoint를 열어 둔 경우는 보수적으로 거절한다. PG/Drizzle 버전 변경 때 이 경계를 재검증한다.
 

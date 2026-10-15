@@ -1,15 +1,24 @@
-import { beforeAll, beforeEach, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier } from "@/lib/db/schema";
-import { dequeue, enqueue, markFrontier, putDocument, saveFetchedDocument } from "@/lib/crawl/repository";
+import { crawlCandidates, crawlDocuments, crawlFrontier, jobs } from "@/lib/db/schema";
+import { dequeue as dequeueOwned, enqueue, markFrontier, putDocument, requeue, saveFetchedDocument } from "@/lib/crawl/repository";
+import type { JobLease } from "@/lib/jobs/control";
 import { ensureSchema } from "./setup";
+import { claimFetchFixtureJob } from "./fetch-fixtures";
+
+let fetchLease: JobLease;
+const dequeue = (limit: number) => dequeueOwned(limit, undefined, fetchLease);
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
+  fetchLease = await claimFetchFixtureJob();
+});
+afterEach(async () => {
+  if (fetchLease) await db.delete(jobs).where(and(eq(jobs.name, fetchLease.name), eq(jobs.leaseToken, fetchLease.token)));
 });
 
 function document(repo: string, id: number) {
@@ -28,7 +37,9 @@ it("does not save a renamed repository a second time under a new path", async ()
   expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "maker/new-name") }))
     .toMatchObject({ state: "skipped", aliasOf: "maker/old-name" });
 
-  await markFrontier("maker/new-name", "skipped");
+  await requeue(["maker/new-name"]);
+  const [retry] = await dequeue(1);
+  await markFrontier(retry, "skipped");
   expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "maker/new-name") }))
     .toMatchObject({ aliasOf: null });
 });

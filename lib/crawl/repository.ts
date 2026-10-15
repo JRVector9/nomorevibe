@@ -10,7 +10,6 @@ import {
   crawlSettings,
   products,
   jobs,
-  type FrontierEntry,
   type FrontierState,
   type CrawlDocument,
   type CrawlCandidate,
@@ -21,10 +20,16 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { factsFromRepoMeta } from "./rules";
 import { assertJobLease, requestJob, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
-import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
+import { claimItemLease, lockItemStage, readItemStage } from "@/lib/jobs/items/repository";
+import type { ItemOwner, FetchItemBinding } from "@/lib/jobs/items/types";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { assertFetchJob, assertFetchOwnership, fetchClaimPredicate, finishFetchOwnership, hasLiveFetchItem,
+  type FetchClaim, type FetchItemLease } from "./fetch-ownership";
+import { lockAdminEvidenceRefreshCompletion, applyAdminEvidenceRefreshCompletion } from "./evidence-refresh-completion";
+export type { FetchClaim } from "./fetch-ownership";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -104,28 +109,35 @@ export async function getFrontierBuilder(repo: string): Promise<string | null> {
  */
 export async function recoverAbandonedFrontier(lease: JobLease): Promise<number> {
   if (lease.name !== "crawl-fetch") return 0;
-  const currentRun = db.select({ startedAt: jobs.lastRunAt }).from(jobs).where(and(
-    eq(jobs.name, "crawl-fetch"), eq(jobs.leaseToken, lease.token),
-    sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
-  ));
-  const rows = await db.transaction(async tx => {
-    const recovered = await tx.update(crawlFrontier).set({
-    state: "pending", attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
-    nextAttemptAt: sql`now()`, updatedAt: sql`now()`,
-  }).where(and(eq(crawlFrontier.state, "fetching"),
-    lt(crawlFrontier.updatedAt, sql`(${currentRun})`))).returning({ id: crawlFrontier.id });
-    if (recovered.length) await assertJobLease(tx, lease);
+  return db.transaction(async tx => {
+    const guard = await lockItemStage(tx, "fetch");
+    if ((await readItemStage(tx, guard)).mode !== "legacy") return 0;
+    const [job] = await tx.select({ startedAt: jobs.lastRunAt }).from(jobs)
+      .where(and(eq(jobs.name, lease.name), eq(jobs.leaseToken, lease.token)));
+    if (!job?.startedAt) return 0;
+    const rows = await tx.select().from(crawlFrontier).where(and(eq(crawlFrontier.state, "fetching"),
+      lt(crawlFrontier.updatedAt, job.startedAt))).orderBy(asc(crawlFrontier.id)).for("update", { skipLocked: true });
+    let recovered = 0;
+    for (const row of rows) {
+      if (await hasLiveFetchItem(tx, row.id)) continue;
+      await tx.update(crawlFrontier).set({ state: "pending", attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
+        nextAttemptAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(eq(crawlFrontier.id, row.id));
+      recovered++;
+    }
+    await assertFetchJob(tx, lease);
     return recovered;
   });
-  return rows.length;
 }
 
-export async function dequeue(limit: number, now?: Date, lease?: JobLease): Promise<FrontierEntry[]> {
+export async function dequeue(limit: number, now: Date | undefined, lease: JobLease): Promise<FetchClaim[]> {
   const at = nowExpr(now);
 
   // 잠금과 갱신을 한 트랜잭션에 둔다. SELECT ... FOR UPDATE의 잠금은 트랜잭션이
   // 끝날 때 풀리므로, 두 문장을 트랜잭션 밖에서 나눠 쓰면 잠금이 무의미해진다.
   const rows = await db.transaction(async (tx) => {
+    const guard = await lockItemStage(tx, "fetch");
+    const stage = await readItemStage(tx, guard);
+    if (stage.mode !== "legacy") return [];
     const locked = await tx
       .select({ id: crawlFrontier.id })
       .from(crawlFrontier)
@@ -141,6 +153,9 @@ export async function dequeue(limit: number, now?: Date, lease?: JobLease): Prom
 
     if (locked.length === 0) return [];
 
+    const available: number[] = [];
+    for (const row of locked) if (!await hasLiveFetchItem(tx, row.id)) available.push(row.id);
+    if (!available.length) return [];
     const claimedRows = await tx
       .update(crawlFrontier)
       .set({
@@ -152,12 +167,12 @@ export async function dequeue(limit: number, now?: Date, lease?: JobLease): Prom
       .where(
         inArray(
           crawlFrontier.id,
-          locked.map((l) => l.id),
+          available,
         ),
       )
       .returning();
-    if (lease) await assertJobLease(tx, lease);
-    return claimedRows;
+    await assertFetchJob(tx, lease);
+    return claimedRows.map(row => ({ ...row, ownership: { kind: "legacy" as const, stageEpoch: stage.epoch, job: lease } }));
   });
 
   // RETURNING은 순서를 보장하지 않는다 — 갱신된 순서로 나올 뿐이다.
@@ -171,13 +186,41 @@ export async function dequeue(limit: number, now?: Date, lease?: JobLease): Prom
  * 꺼낼 때 받은 소유권. dequeue가 attempts와 next_attempt_at을 함께 바꾸므로, 둘이 그대로면
  * 아직 내 것이다. 10분이 지나 회수돼 다른 워커가 다시 꺼냈으면 둘 다 바뀌어 있다.
  */
-export type FrontierClaim = Pick<FrontierEntry, "id" | "attempts" | "nextAttemptAt">;
+export type FrontierClaim = FetchClaim;
 
 /** RETURNING으로 받은 시각은 밀리초까지라, 비교도 밀리초에서 자른다 */
 function claimed(claim: FrontierClaim) {
-  return sql`(${crawlFrontier.state} = 'fetching' and ${crawlFrontier.id} = ${claim.id}
-    and ${crawlFrontier.attempts} = ${claim.attempts}
-    and date_trunc('milliseconds', ${crawlFrontier.nextAttemptAt}) = ${claim.nextAttemptAt.toISOString()}::timestamp)`;
+  return fetchClaimPredicate(claim);
+}
+
+/** Additive, intentionally not connected to the production consumer. */
+export async function claimFetchItem({ owner, ttlMs }: { owner: ItemOwner; ttlMs: number }): Promise<FetchClaim | null> {
+  const candidates = await db.select({ id: crawlFrontier.id }).from(crawlFrontier).where(and(
+    inArray(crawlFrontier.state, ["pending", "fetching"]), lte(crawlFrontier.nextAttemptAt, sql`clock_timestamp()`)))
+    .orderBy(desc(crawlFrontier.priority), asc(crawlFrontier.nextAttemptAt), asc(crawlFrontier.id)).limit(100);
+  for (const candidate of candidates) {
+    const result = await db.transaction(async tx => {
+      const guard = await lockItemStage(tx, "fetch");
+      const stage = await readItemStage(tx, guard);
+      if (stage.mode !== "items" || stage.writerContractVersion < 1) return null;
+      const [row] = await tx.select().from(crawlFrontier).where(and(eq(crawlFrontier.id, candidate.id),
+        inArray(crawlFrontier.state, ["pending", "fetching"]), lte(crawlFrontier.nextAttemptAt, sql`clock_timestamp()`)))
+        .for("update", { skipLocked: true });
+      if (!row) return null;
+      const [clock] = await tx.execute<{ next: string }>(sql`SELECT to_char(date_trunc('milliseconds', clock_timestamp() AT TIME ZONE 'UTC') + interval '10 minutes',
+        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS next`);
+      const binding: FetchItemBinding = { stage: "fetch", frontierId: row.id, repo: row.repo,
+        claim: { attempts: row.attempts + 1, nextAttemptAt: clock.next } };
+      const lease = await claimItemLease(tx, guard, binding, owner, ttlMs);
+      if (!lease) return null;
+      const [claimedRow] = await tx.update(crawlFrontier).set({ state: "fetching", attempts: binding.claim.attempts,
+        nextAttemptAt: new Date(binding.claim.nextAttemptAt), updatedAt: sql`clock_timestamp()` })
+        .where(eq(crawlFrontier.id, row.id)).returning();
+      return { ...claimedRow, ownership: { kind: "item" as const, lease: lease as FetchItemLease } };
+    });
+    if (result) return result;
+  }
+  return null;
 }
 
 /**
@@ -190,17 +233,19 @@ export type FrontierSkipCause = typeof SKIP_NOT_FOUND | typeof SKIP_EMPTY_REPOSI
 
 /** claim을 주면 아직 내 것일 때만 바꾼다 — 회수된 항목을 옛 워커가 끝내 버리지 않도록 */
 export async function markFrontier(
-  repo: string,
+  claim: FetchClaim,
   state: Extract<FrontierState, "done" | "skipped">,
-  claim?: FrontierClaim,
-  lease?: JobLease,
   cause?: FrontierSkipCause,
 ): Promise<void> {
   await db.transaction(async tx => {
+    const guard = await lockItemStage(tx, "fetch");
+    const [owned] = await tx.select({ id: crawlFrontier.id }).from(crawlFrontier).where(claimed(claim)).for("update");
+    await assertFetchOwnership(tx, guard, claim);
+    if (!owned) { await finishFetchOwnership(tx, guard, claim); return; }
     await tx.update(crawlFrontier)
     .set({ state, aliasOf: null, lastError: state === "skipped" ? cause ?? null : null, updatedAt: new Date() })
-    .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
-    if (lease) await assertJobLease(tx, lease);
+    .where(claimed(claim));
+    await finishFetchOwnership(tx, guard, claim);
   });
 }
 
@@ -222,6 +267,9 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
   if (lease.name !== "crawl-fetch") return 0;
   const cap = Math.max(1, Math.min(100, limit));
   return db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    if ((await readItemStage(tx, stages.fetch)).mode !== "legacy") return 0;
+    const plans: { candidate: CrawlCandidate; frontierId: number; gone: boolean; detail: string }[] = [];
     const candidates = await tx.select().from(crawlCandidates).where(and(
       eq(crawlCandidates.state, "new"),
       sql`${crawlCandidates.signals}->>'reconsiderAfter' IS NOT NULL`,
@@ -230,7 +278,6 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
           AND terminal.alias_of IS NULL)`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(cap).for("update", { skipLocked: true });
-    let handedOff = 0;
     for (const candidate of candidates) {
       const [document] = await tx.select().from(crawlDocuments)
         .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
@@ -243,17 +290,13 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
       const gone = frontier.state === "skipped" && frontier.lastError === SKIP_NOT_FOUND;
       const detail = frontier.state !== "skipped" ? `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}`
         : gone ? GONE_DETAIL : frontier.lastError === SKIP_EMPTY_REPOSITORY ? EMPTY_DETAIL : UNKNOWN_SKIP_DETAIL;
-      await tx.update(crawlCandidates).set({
-        state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
-        signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
-      }).where(eq(crawlCandidates.id, candidate.id));
-      handedOff++;
+      plans.push({ candidate, frontierId: frontier.id, gone, detail });
     }
     // 승인 대기·재시도 보류 — 마지막 원본보다 뒤에 저장소가 404 이거나 비어 있었거나, 재수집이 시도를 다 쓰고 실패했다.
     // 까닭이 기록되지 않은 옛 skipped 는 기다린다 — 원본 재수집이 하루 안에 다시 받아 까닭을 남긴다.
     // 실패(failed)를 넘기지 않던 때는 원본 재수집이 하루마다 다시 실패하는 후보가 승인 상태에 갇혔다 — 2026-10-08 운영에서
     // 커밋 메시지가 65KB 인 레포가 흔적 확인에서 매번 invalid_response 로 끝나 10-05 부터 심사도 사람 대기열도 아닌 곳에 있었다.
-    const parked = handedOff >= cap ? [] : await tx.select().from(crawlCandidates).where(and(
+    const parked = plans.length >= cap ? [] : await tx.select().from(crawlCandidates).where(and(
       eq(crawlCandidates.decidedBy, "auto"),
       or(eq(crawlCandidates.state, "approved"),
         and(eq(crawlCandidates.state, "needs_review"), inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))),
@@ -261,7 +304,7 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
         WHERE gone.repo = ${crawlCandidates.repo} AND gone.alias_of IS NULL AND gone.updated_at > doc.fetched_at
           AND (gone.state = 'failed' OR (gone.state = 'skipped' AND gone.last_error IN (${SKIP_NOT_FOUND}, ${SKIP_EMPTY_REPOSITORY}))))`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
-      .limit(cap - handedOff).for("update", { skipLocked: true });
+      .limit(cap).for("update", { skipLocked: true });
     for (const candidate of parked) {
       const [document] = await tx.select().from(crawlDocuments)
         .where(eq(crawlDocuments.repo, candidate.repo)).for("share");
@@ -273,13 +316,22 @@ export async function handOffFailedSourceRefreshes(lease: JobLease, limit = 20):
       const gone = !failed && frontier.lastError === SKIP_NOT_FOUND;
       if (!failed && !gone && frontier.lastError !== SKIP_EMPTY_REPOSITORY) continue;
       const detail = failed ? `GitHub 원본 재수집 실패: ${(frontier.lastError ?? "원인 미상").slice(0, 220)}` : gone ? GONE_DETAIL : EMPTY_DETAIL;
+      plans.push({ candidate, frontierId: frontier.id, gone, detail });
+    }
+    // Finish the domain lock prefix before touching any logical item slot.
+    const live = new Set<number>();
+    for (const id of [...new Set(plans.map(plan => plan.frontierId))].sort((a, b) => a - b))
+      if (await hasLiveFetchItem(tx, id)) live.add(id);
+    let handedOff = 0;
+    for (const { candidate, frontierId, gone, detail } of plans) {
+      if (live.has(frontierId) || handedOff >= cap) continue;
       await tx.update(crawlCandidates).set({
         state: "needs_review", reason: gone ? "repo_deleted" : "source_refresh_failed", updatedAt: sql`clock_timestamp()`,
         signals: { ...candidate.signals, stoppedAt: { rule: "원본 재수집", detail } },
       }).where(eq(crawlCandidates.id, candidate.id));
       handedOff++;
     }
-    if (handedOff) await assertJobLease(tx, lease);
+    await assertFetchJob(tx, lease);
     return handedOff;
   });
 }
@@ -306,17 +358,21 @@ export async function holdSuspectedSpam(
 }
 
 /** Return only this batch's still-owned claims; quota/budget waits are not failed attempts. */
-export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, lease?: JobLease): Promise<void> {
-  if (entries.length === 0) return;
+export async function deferFrontier(entries: FetchClaim[], retryAt?: Date): Promise<void> {
   const at = nowExpr();
-  await db.transaction(async tx => {
+  // One domain/item pair per transaction keeps arbitrary batch order out of the lock graph.
+  for (const claim of entries) await db.transaction(async tx => {
+    const guard = await lockItemStage(tx, "fetch");
+    const [owned] = await tx.select({ id: crawlFrontier.id }).from(crawlFrontier).where(claimed(claim)).for("update");
+    await assertFetchOwnership(tx, guard, claim);
+    if (!owned) { await finishFetchOwnership(tx, guard, claim); return; }
     await tx.update(crawlFrontier).set({
     state: "pending",
     attempts: sql`greatest(0, ${crawlFrontier.attempts} - 1)`,
     nextAttemptAt: retryAt ? sql`greatest(${at}, ${retryAt.toISOString()}::timestamp)` : at,
     updatedAt: at,
-  }).where(sql.join(entries.map(claimed), sql` or `));
-    if (lease) await assertJobLease(tx, lease);
+  }).where(claimed(claim));
+    await finishFetchOwnership(tx, guard, claim);
   });
 }
 
@@ -327,15 +383,16 @@ export async function deferFrontier(entries: FrontierEntry[], retryAt?: Date, le
  * claim을 주면 아직 내 것일 때만 기록한다. 회수된 항목에 옛 워커가 실패를 적으면 새 워커의
  * claim이 풀려, 그 워커가 받아 온 원본까지 버려진다.
  */
-export async function markFailed(repo: string, error: string, now?: Date, claim?: FrontierClaim, lease?: JobLease, retryAt?: Date): Promise<void> {
-  const current = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, repo) });
-  if (!current) return;
-
-  const exhausted = current.attempts >= MAX_ATTEMPTS;
-  const backoff = BACKOFF_MINUTES[Math.min(current.attempts - 1, BACKOFF_MINUTES.length - 1)] ?? 5;
-  const at = nowExpr(now);
-
+export async function markFailed(claim: FetchClaim, error: string, options: { now?: Date; retryAt?: Date } = {}): Promise<void> {
+  const { now, retryAt } = options;
   await db.transaction(async tx => {
+    const guard = await lockItemStage(tx, "fetch");
+    const [current] = await tx.select().from(crawlFrontier).where(claimed(claim)).for("update");
+    await assertFetchOwnership(tx, guard, claim);
+    if (!current) { await finishFetchOwnership(tx, guard, claim); return; }
+    const exhausted = current.attempts >= MAX_ATTEMPTS;
+    const backoff = BACKOFF_MINUTES[Math.min(current.attempts - 1, BACKOFF_MINUTES.length - 1)] ?? 5;
+    const at = nowExpr(now);
     await tx.update(crawlFrontier)
     .set({
       state: exhausted ? "failed" : "pending",
@@ -345,8 +402,8 @@ export async function markFailed(repo: string, error: string, now?: Date, claim?
       lastError: error.slice(0, 2000),
       updatedAt: sql`${at}`,
     })
-    .where(claim ? and(eq(crawlFrontier.repo, repo), claimed(claim)) : eq(crawlFrontier.repo, repo));
-    if (lease) await assertJobLease(tx, lease);
+    .where(claimed(claim));
+    await finishFetchOwnership(tx, guard, claim);
   });
 }
 
@@ -492,12 +549,12 @@ export async function putDocument(doc: {
  * 없는 행은 잠글 수 없다. 그것은 발행 직전 재판정(publish.ts)이 받친다.
  *
  * 잠금 순서는 관리자 심사(lockedInput)·발행 가드와 같다: 후보 → 원본 → 프론티어 → 잡.
- * 판정 요청(requestJob)은 여기서 하지 않는다 — 부른 쪽이 묶음이 끝날 때 한 번 한다.
+ * 원본과 근거 갱신 소비·item 완료·필요한 판정 요청을 같은 commit으로 확정한다.
  *
  * @returns claim을 잃었으면 null. 저장했으면 판정할 것이 새로 생겼는지.
  */
 export async function saveFetchedDocument(
-  claim: FrontierClaim,
+  claim: FetchClaim,
   doc: {
     repo: string;
     repoMeta: Record<string, unknown>;
@@ -505,10 +562,11 @@ export async function saveFetchedDocument(
     pageStatus: number | null;
     pageMeta: Record<string, unknown> | null;
   },
-  lease?: JobLease,
   initialEvidenceGate?: { settings: CrawlSettings; signals: Record<string, unknown> },
 ): Promise<{ needsJudgement: boolean; duplicateOf?: string; initialEvidenceRejected?: boolean; initialEvidenceDeferred?: boolean } | null> {
+  if (doc.repo !== claim.repo) throw new Error("invalid_fetch_claim");
   return db.transaction(async (tx) => {
+    const stages = await lockPipelineInputStages(tx);
     const githubId = typeof doc.repoMeta.id === "number" && Number.isSafeInteger(doc.repoMeta.id)
       && doc.repoMeta.id > 0 ? String(doc.repoMeta.id) : null;
     // A rename can arrive in two fetch lanes at once. Serialize by GitHub's stable ID,
@@ -518,26 +576,28 @@ export async function saveFetchedDocument(
     const [previous] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, doc.repo)).for("update");
     const settingsRow = initialEvidenceGate ? (await tx.select().from(crawlSettings)
       .where(eq(crawlSettings.id, 1)).for("share"))[0] : undefined;
+    const evidenceCompletion = await lockAdminEvidenceRefreshCompletion(tx, doc.repo, stages.fetch);
+    const [owned] = await tx.select({ id: crawlFrontier.id }).from(crawlFrontier).where(claimed(claim)).for("update");
+    await assertFetchOwnership(tx, stages.fetch, claim);
+    if (!owned) { await finishFetchOwnership(tx, stages.fetch, claim); return null; }
     if (initialEvidenceGate) {
-      const [owned] = await tx.select({ id: crawlFrontier.id }).from(crawlFrontier)
-        .where(claimed(claim)).for("update");
-      if (lease) await assertJobLease(tx, lease);
-      if (!owned) return null;
       // The unvisited page is usable only for a still-absent candidate under the
       // same policy. Give the claim back so a later tick collects the real page.
-      if (candidate || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values), initialEvidenceGate.settings))
+      if (candidate || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values), initialEvidenceGate.settings)) {
+        if (claim.ownership.kind === "legacy") await assertFetchJob(tx, claim.ownership.job);
         return { needsJudgement: false, initialEvidenceDeferred: true };
+      }
     }
     if (githubId && (!previous || previous.repoMeta.id !== doc.repoMeta.id)) {
       const [existing] = await tx.select({ repo: crawlDocuments.repo }).from(crawlDocuments)
         .where(and(sql`${crawlDocuments.repoMeta}->>'id' = ${githubId}`, ne(crawlDocuments.repo, doc.repo)))
         .orderBy(asc(crawlDocuments.id)).limit(1);
       if (existing) {
-        const [owned] = await tx.update(crawlFrontier)
+        await tx.update(crawlFrontier)
           .set({ state: "skipped", aliasOf: existing.repo, lastError: null, updatedAt: new Date() })
-          .where(claimed(claim)).returning({ id: crawlFrontier.id });
-        if (lease) await assertJobLease(tx, lease);
-        return owned ? { needsJudgement: false, duplicateOf: existing.repo } : null;
+          .where(claimed(claim));
+        await finishFetchOwnership(tx, stages.fetch, claim);
+        return { needsJudgement: false, duplicateOf: existing.repo };
       }
     }
     if (initialEvidenceGate) {
@@ -546,14 +606,14 @@ export async function saveFetchedDocument(
         decidedBy: "auto", signals: initialEvidenceGate.signals, judgedAt: new Date(), updatedAt: new Date(),
       }).onConflictDoNothing({ target: crawlCandidates.repo }).returning({ id: crawlCandidates.id });
       // An absent-row decision race must win before either source or frontier writes.
-      if (!inserted) return { needsJudgement: false, initialEvidenceDeferred: true };
+      if (!inserted) {
+        if (claim.ownership.kind === "legacy") await assertFetchJob(tx, claim.ownership.job);
+        return { needsJudgement: false, initialEvidenceDeferred: true };
+      }
     }
-    const [owned] = await tx.update(crawlFrontier)
+    await tx.update(crawlFrontier)
       .set({ state: "done", aliasOf: null, lastError: null, updatedAt: new Date() })
-      .where(claimed(claim))
-      .returning({ id: crawlFrontier.id });
-    if (lease) await assertJobLease(tx, lease);
-    if (!owned) return null;
+      .where(claimed(claim));
 
     // Deployment-page collection does not fetch repository README. Keep the last
     // observation until README collection succeeds, but require a fresh cache check.
@@ -562,21 +622,33 @@ export async function saveFetchedDocument(
       && typeof doc.pageMeta?.readmeSample !== "string";
     const values = { ...doc, pageMeta: carryReadme
       ? { ...doc.pageMeta, readmeSample, readmeSampleVersion: null }
-      : doc.pageMeta, fetchedAt: new Date() };
+      : doc.pageMeta, fetchedAt: sql`clock_timestamp()` };
     const [saved] = await tx.insert(crawlDocuments).values(values)
       .onConflictDoUpdate({ target: crawlDocuments.repo, set: values })
       .returning();
-    if (initialEvidenceGate) return { needsJudgement: false, initialEvidenceRejected: true };
-    if (!candidate || candidate.state === "new") return { needsJudgement: true };
-    if (candidate.decidedBy !== "auto" || candidate.publishedSlug
-      || !["approved", "needs_review"].includes(candidate.state)
-      || (candidate.productUrl === saved.productUrl && previous && !judgedSourceChanged(previous, saved))) {
-      return { needsJudgement: false };
+    if (initialEvidenceGate) {
+      await finishFetchOwnership(tx, stages.fetch, claim);
+      return { needsJudgement: false, initialEvidenceRejected: true };
     }
-    await tx.update(crawlCandidates).set({
-      productUrl: saved.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
-    }).where(eq(crawlCandidates.id, candidate.id));
-    return { needsJudgement: true };
+    let needsJudgement = !candidate || candidate.state === "new";
+    if (candidate && candidate.decidedBy === "auto" && !candidate.publishedSlug
+      && ["approved", "needs_review"].includes(candidate.state)
+      && !(candidate.productUrl === saved.productUrl && previous && !judgedSourceChanged(previous, saved))) {
+      await tx.update(crawlCandidates).set({
+        productUrl: saved.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
+      }).where(eq(crawlCandidates.id, candidate.id));
+      needsJudgement = true;
+    }
+    if (evidenceCompletion) {
+      const completed = await applyAdminEvidenceRefreshCompletion(tx, evidenceCompletion, { documentFetchedAt: saved.fetchedAt });
+      needsJudgement ||= completed.needsJudgement;
+    }
+    if (claim.ownership.kind === "legacy") await assertFetchJob(tx, claim.ownership.job);
+    if (needsJudgement) await requestJob("crawl-judge", tx);
+    // Both authority rows were already locked before jobs. Recheck wall time
+    // after the outbox wait, and only then release the settled item.
+    await finishFetchOwnership(tx, stages.fetch, claim);
+    return { needsJudgement };
   });
 }
 

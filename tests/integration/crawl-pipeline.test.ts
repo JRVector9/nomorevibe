@@ -1,15 +1,24 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { eq } from "drizzle-orm";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlFrontier, crawlDocuments, crawlCandidates } from "@/lib/db/schema";
+import { crawlFrontier, crawlDocuments, crawlCandidates, jobs } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
+import type { JobLease } from "@/lib/jobs/control";
 import { ensureSchema } from "./setup";
+import { claimFetchFixtureJob } from "./fetch-fixtures";
+
+let fetchLease: JobLease;
+const dequeue = (limit: number, now?: Date) => crawl.dequeue(limit, now, fetchLease);
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
+  fetchLease = await claimFetchFixtureJob();
+});
+afterEach(async () => {
+  if (fetchLease) await db.delete(jobs).where(and(eq(jobs.name, fetchLease.name), eq(jobs.leaseToken, fetchLease.token)));
 });
 
 describe("프론티어 — 큐 채우기", () => {
@@ -51,13 +60,13 @@ describe("프론티어 — 큐 채우기", () => {
   it("다 조사한 것도 다시 조사 대상으로 되돌린다", async () => {
     // 원본에서 뽑는 방법이 바뀌면(pageMeta 추출 로직) 다시 가져오는 수밖에 없다
     await crawl.enqueue([{ repo: "a/one", signal: "commit-trailer" }]);
-    await crawl.dequeue(1);
-    await crawl.markFrontier("a/one", "done");
-    expect(await crawl.dequeue(1)).toEqual([]);
+    const [claim] = await dequeue(1);
+    await crawl.markFrontier(claim, "done");
+    expect(await dequeue(1)).toEqual([]);
 
     expect(await crawl.requeue(["a/one"])).toBe(1);
 
-    const [entry] = await crawl.dequeue(1);
+    const [entry] = await dequeue(1);
     expect(entry?.repo).toBe("a/one");
     // 시도 횟수도 되돌린다 — 예전 실패 때문에 바로 소진되면 안 된다
     expect(entry?.attempts).toBe(1);
@@ -95,7 +104,7 @@ describe("프론티어 — 꺼내기", () => {
     // next_attempt_at은 DB의 now()로 들어간다. 비교 기준을 클라이언트 시각으로 삼으면
     // 두 시계 차이(로컬 Docker에서 실측 20ms)만큼 방금 넣은 항목이 안 꺼내진다.
     await crawl.enqueue([{ repo: "a/one", signal: "s" }]);
-    expect(await crawl.dequeue(1)).toHaveLength(1);
+    expect(await dequeue(1)).toHaveLength(1);
   });
 
   it("우선순위가 높은 것을 먼저 준다", async () => {
@@ -105,13 +114,13 @@ describe("프론티어 — 꺼내기", () => {
       { repo: "mid/three", signal: "s", priority: 50 },
     ]);
 
-    const taken = await crawl.dequeue(2);
+    const taken = await dequeue(2);
     expect(taken.map((t) => t.repo)).toEqual(["high/two", "mid/three"]);
   });
 
   it("꺼낸 항목은 fetching이 되고 시도 횟수가 오른다", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "s" }]);
-    const [taken] = await crawl.dequeue(1);
+    const [taken] = await dequeue(1);
 
     expect(taken.state).toBe("fetching");
     expect(taken.attempts).toBe(1);
@@ -119,19 +128,19 @@ describe("프론티어 — 꺼내기", () => {
 
   it("이미 꺼낸 항목을 곧바로 다시 주지 않는다", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "s" }]);
-    await crawl.dequeue(10);
+    await dequeue(10);
 
     // 두 번째 워커가 같은 항목을 가져가면 GitHub 호출이 낭비된다
-    expect(await crawl.dequeue(10)).toHaveLength(0);
+    expect(await dequeue(10)).toHaveLength(0);
   });
 
   it("가져오다 죽은 항목은 시간이 지나면 회수한다", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "s" }]);
-    await crawl.dequeue(1);
+    await dequeue(1);
 
     // 프로세스가 죽어 fetching인 채로 남은 상황
     const later = new Date(Date.now() + 20 * 60 * 1000);
-    const recovered = await crawl.dequeue(1, later);
+    const recovered = await dequeue(1, later);
 
     expect(recovered.map((r) => r.repo)).toEqual(["a/one"]);
     expect(recovered[0].attempts).toBe(2);
@@ -143,9 +152,9 @@ describe("프론티어 — 꺼내기", () => {
     );
 
     const [a, b, c] = await Promise.all([
-      crawl.dequeue(10),
-      crawl.dequeue(10),
-      crawl.dequeue(10),
+      dequeue(10),
+      dequeue(10),
+      dequeue(10),
     ]);
 
     const all = [...a, ...b, ...c].map((r) => r.repo);
@@ -157,18 +166,18 @@ describe("프론티어 — 꺼내기", () => {
 describe("프론티어 — 실패와 백오프", () => {
   it("일시적 실패는 미뤘다가 다시 시도한다", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "s" }]);
-    await crawl.dequeue(1);
+    const [claim] = await dequeue(1);
 
     const now = new Date();
-    await crawl.markFailed("a/one", "rate limit", now);
+    await crawl.markFailed(claim, "rate limit", { now });
 
     const entry = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "a/one") });
     expect(entry?.state).toBe("pending");
     expect(entry?.lastError).toContain("rate limit");
     // 곧바로 다시 꺼내지지 않는다
-    expect(await crawl.dequeue(1, now)).toHaveLength(0);
+    expect(await dequeue(1, now)).toHaveLength(0);
     // 백오프가 지나면 꺼내진다
-    expect(await crawl.dequeue(1, new Date(now.getTime() + 10 * 60_000))).toHaveLength(1);
+    expect(await dequeue(1, new Date(now.getTime() + 10 * 60_000))).toHaveLength(1);
   });
 
   it("재시도 한도를 소진하면 failed로 내려 큐를 막지 않는다", async () => {
@@ -178,23 +187,23 @@ describe("프론티어 — 실패와 백오프", () => {
     // new Date()를 그대로 쓰면 방금 넣은 항목이 "아직 시간이 안 됐다"로 걸린다.
     let at = new Date(Date.now() + 60_000);
     for (let i = 0; i < crawl.MAX_ATTEMPTS; i++) {
-      await crawl.dequeue(1, at);
-      await crawl.markFailed("a/one", `실패 ${i}`, at);
+      const [claim] = await dequeue(1, at);
+      await crawl.markFailed(claim, `실패 ${i}`, { now: at });
       at = new Date(at.getTime() + 6 * 60 * 60_000);
     }
 
     const entry = await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, "a/one") });
     expect(entry?.state).toBe("failed");
     // 영원히 재시도하지 않는다
-    expect(await crawl.dequeue(1, new Date(at.getTime() + 86_400_000))).toHaveLength(0);
+    expect(await dequeue(1, new Date(at.getTime() + 86_400_000))).toHaveLength(0);
   });
 
   it("성공하면 done, 값싼 거르기는 skipped로 남는다", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "s" }, { repo: "b/two", signal: "s" }]);
-    await crawl.dequeue(2);
+    const claims = await dequeue(2);
 
-    await crawl.markFrontier("a/one", "done");
-    await crawl.markFrontier("b/two", "skipped");
+    await crawl.markFrontier(claims.find(claim => claim.repo === "a/one")!, "done");
+    await crawl.markFrontier(claims.find(claim => claim.repo === "b/two")!, "skipped");
 
     expect(await crawl.frontierCounts()).toEqual({ done: 1, skipped: 1 });
   });
