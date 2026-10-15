@@ -34,7 +34,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   if (!lease) throw new Error("AI review requires a valid worker job lease");
   if (!await canStartLegacyAgentReview(lease)) {
     ctx.log("crawl.agent_review_skipped", { reason: "stage_inactive" });
-    return { done: false };
+    return { done: false, deferred: "stage_blocked" };
   }
   const reviewer = firstReviewer(settings);
   if (!reviewer) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
@@ -52,10 +52,16 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     : reviewProvider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
-  let next = 0, admitted = 0, progress = 0, stopped = false;
-  const canStart = () => !stopped && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
+  let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false;
+  const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
   const processCandidate = async (candidate: typeof candidates[number]) => {
-    if (!isReviewCandidate(candidate) || !await canStartLegacyAgentReview(lease, candidate.id)) return;
+    if (!isReviewCandidate(candidate)) return;
+    if (!await canStartLegacyAgentReview(lease, candidate.id)) {
+      // Candidate-level refusal can mean a healthy foreign item. Only an actual
+      // global stage refusal defers this request; this read is not dispatch fencing.
+      if (!await canStartLegacyAgentReview(lease)) stageBlocked = true;
+      return;
+    }
     const document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return;
     const input = await loadReviewInput(candidate, document, settings);
@@ -87,6 +93,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     const context = { candidate, document, settings, input };
     const claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
     if (claim.kind === "skipped") {
+      if (claim.reason === "stage_inactive") stageBlocked = true;
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
       return;
     }
@@ -167,6 +174,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const settled = await Promise.allSettled(lanes);
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
+  if (stageBlocked) return { done: false, deferred: "stage_blocked" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };

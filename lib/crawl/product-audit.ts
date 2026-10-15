@@ -9,6 +9,7 @@ import { getSettings } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
@@ -364,6 +365,7 @@ export function auditBanReason(aiReason: string | null): string {
 
 function removeOne(input: { itemId: number; slug: string; by: string }, only?: SQL): Promise<AuditDecisionResult> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [item] = await tx.select({ productId: productAuditItems.productId, campaignId: productAuditItems.campaignId,
       aiReason: productAuditItems.aiReason, aiConfidence: productAuditItems.aiConfidence }).from(productAuditItems)
       .where(eq(productAuditItems.id, input.itemId));

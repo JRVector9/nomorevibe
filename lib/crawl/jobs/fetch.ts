@@ -71,7 +71,9 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
-    const entries = await crawl.dequeue(BATCH, undefined, ctx.lease);
+    const admission = await crawl.dequeueWithAdmission(BATCH, undefined, ctx.lease);
+    if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
+    const entries = admission.entries;
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
       return { done: true };
@@ -86,6 +88,11 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     if (deferred) return { done: false };
   }
 
+  // Budget exhaustion may precede the first loop iteration or follow a wait.
+  // A zero-size dequeue checks admission under the same stage SHARE and claims
+  // no input; an inactive stage must still preserve its pending job request.
+  const admission = await crawl.dequeueWithAdmission(0, undefined, ctx.lease);
+  if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
   ctx.log("crawl.fetched", { ...tally, drained: false });
   return { done: false };
 }

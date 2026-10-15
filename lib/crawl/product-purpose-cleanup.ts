@@ -1,4 +1,5 @@
 import{createHash}from'node:crypto';
+import{lockPipelineInputStages}from'./pipeline-stage-context';
 import{and,desc,eq,inArray,isNull,sql}from'drizzle-orm';import{db}from'@/lib/db';import{products,crawlDocuments,productEvidenceAudit}from'@/lib/db/schema';import{lockProductGeneration}from'@/lib/domain/products/generation';import{nonProductPurpose,type NonProductPurpose}from'./product-purpose';
 export type PurposeRemoval={id:number;slug:string;url:string;repoUrl:string|null;name:string;tagline:string;updatedAt:string;documentAt:string|null;evidenceHash:string;purpose:NonProductPurpose};
 function classificationInput(name:string,tagline:string,meta:Record<string,unknown>|null|undefined){
@@ -12,6 +13,7 @@ export async function planPurposeRemovals():Promise<PurposeRemoval[]>{
 }
 export async function applyPurposeRemoval(expected:PurposeRemoval):Promise<boolean>{
  return db.transaction(async tx=>{
+  await lockPipelineInputStages(tx);
   if(!await lockProductGeneration(tx,expected.id,expected.slug))return false;
   const [p]=await tx.select().from(products).where(and(eq(products.id,expected.id),eq(products.slug,expected.slug),eq(products.url,expected.url),sql`${products.repoUrl} is not distinct from ${expected.repoUrl}`,sql`${products.updatedAt}=${expected.updatedAt}::timestamp`,inArray(products.status,['seeded','verified']),eq(products.source,'crawler'),isNull(products.claimedAt)));
   if(!p)return false;

@@ -21,7 +21,12 @@ const candidate={repo:"acme/app",productUrl:"https://app.example",decidedBy:"aut
 beforeEach(()=>{state.enforce=false;state.insert.mockClear();state.published.mockClear();});
 it("does not publish a legacy search hint as a builder", async()=>{
   expect((await publishCandidate(candidate)).ok).toBe(true);
-  expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({builder:null}),expect.any(Function));
+  expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({builder:null}),expect.any(Function), undefined);
+});
+it("passes the publisher's actual lease through the final insertion boundary", async()=>{
+  const lease = { name:"crawl-publish", token:"00000000-0000-4000-8000-000000000078", requestedVersion:7 };
+  expect((await publishCandidate(candidate, lease)).ok).toBe(true);
+  expect(state.insert).toHaveBeenCalledWith(expect.objectContaining({builder:null}),expect.any(Function), lease);
 });
 it("rechecks pending evidence even for a previously approved candidate",async()=>{
   state.enforce=true;

@@ -236,7 +236,7 @@ export async function publishCandidate(
          */
         verifyToken: generateVerifyToken(),
         editTokenHash: hashToken(editToken),
-      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease,decision:preclassification?.decision}));
+      }, tx => guardPublication(tx, {candidate,document,settings,slug,scanId:checkedEvidence?.scanId ?? null,lease,decision:preclassification?.decision}), lease);
       break;
     } catch (e) {
       if (e instanceof DuplicateRepositoryProductError) return { ok: false, reason: "already_listed", existing: { slug: e.existing.slug, status: e.existing.status } };

@@ -129,15 +129,24 @@ export async function recoverAbandonedFrontier(lease: JobLease): Promise<number>
   });
 }
 
+export type FetchDequeueResult = { kind: "stage_blocked" } | { kind: "ready"; entries: FetchClaim[] };
+
+/** Compatibility for callers that consume only claims, without acknowledging a job signal. */
 export async function dequeue(limit: number, now: Date | undefined, lease: JobLease): Promise<FetchClaim[]> {
+  const result = await dequeueWithAdmission(limit, now, lease);
+  return result.kind === "ready" ? result.entries : [];
+}
+
+/** Distinguish an inactive stage from an empty queue under the same stage SHARE. */
+export async function dequeueWithAdmission(limit: number, now: Date | undefined, lease: JobLease): Promise<FetchDequeueResult> {
   const at = nowExpr(now);
 
   // 잠금과 갱신을 한 트랜잭션에 둔다. SELECT ... FOR UPDATE의 잠금은 트랜잭션이
   // 끝날 때 풀리므로, 두 문장을 트랜잭션 밖에서 나눠 쓰면 잠금이 무의미해진다.
-  const rows = await db.transaction(async (tx) => {
+  const result = await db.transaction<FetchDequeueResult>(async (tx) => {
     const guard = await lockItemStage(tx, "fetch");
     const stage = await readItemStage(tx, guard);
-    if (stage.mode !== "legacy") return [];
+    if (stage.mode !== "legacy") return { kind: "stage_blocked" };
     const locked = await tx
       .select({ id: crawlFrontier.id })
       .from(crawlFrontier)
@@ -151,11 +160,11 @@ export async function dequeue(limit: number, now: Date | undefined, lease: JobLe
       .limit(limit)
       .for("update", { skipLocked: true });
 
-    if (locked.length === 0) return [];
+    if (locked.length === 0) return { kind: "ready", entries: [] };
 
     const available: number[] = [];
     for (const row of locked) if (!await hasLiveFetchItem(tx, row.id)) available.push(row.id);
-    if (!available.length) return [];
+    if (!available.length) return { kind: "ready", entries: [] };
     const claimedRows = await tx
       .update(crawlFrontier)
       .set({
@@ -172,14 +181,17 @@ export async function dequeue(limit: number, now: Date | undefined, lease: JobLe
       )
       .returning();
     await assertFetchJob(tx, lease);
-    return claimedRows.map(row => ({ ...row, ownership: { kind: "legacy" as const, stageEpoch: stage.epoch, job: lease } }));
+    return { kind: "ready", entries: claimedRows.map(row => ({ ...row,
+      ownership: { kind: "legacy" as const, stageEpoch: stage.epoch, job: lease } })) };
   });
 
+  if (result.kind === "stage_blocked") return result;
   // RETURNING은 순서를 보장하지 않는다 — 갱신된 순서로 나올 뿐이다.
   // 무엇을 꺼낼지는 SQL이 정하고, 어떤 순서로 처리할지는 여기서 확정한다.
-  return rows.sort(
+  result.entries.sort(
     (a, b) => b.priority - a.priority || a.nextAttemptAt.getTime() - b.nextAttemptAt.getTime(),
   );
+  return result;
 }
 
 /**

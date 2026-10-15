@@ -6,11 +6,12 @@ import { findRepositoryProduct, lockProductRepository } from "@/lib/domain/produ
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
 import type { StoppedAt } from "./rules";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 
 export class PublicationStateChangedError extends Error {
   constructor() { super("publication_state_changed"); }
@@ -44,8 +45,9 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
   signals?: Record<string, unknown>;
 }, lease?: JobLease):Promise<boolean> {
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const [current] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for("update");
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     if (!current || current.state !== "approved" || !isDeepStrictEqual(candidate,current)) return false;
     const now = new Date();
     await tx.update(crawlCandidates).set({
@@ -57,11 +59,13 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
         ...(failure.existing ? { existingSlug: failure.existing.slug, existingStatus: failure.existing.status } : {}),
       } } : {}),
     }).where(eq(crawlCandidates.id,current.id));
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     return true;
   });
 }
 
-/** Locks the reviewed rows and marks publication in the same transaction as the product insert. */
+/** Called inside stage-prefixed product insertion, before the insert. Repository
+ * identity may already be locked, so stages belong at that transaction's entry. */
 export async function guardPublication(tx: ProductTransaction, input: {
   decision?: { revision: number | null; sourceHash: string | null };
   candidate:CrawlCandidate; document:CrawlDocument; settings:CrawlSettings; slug:string; scanId:number|null; lease?: JobLease;
@@ -97,4 +101,5 @@ export async function guardPublication(tx: ProductTransaction, input: {
   else if (input.settings.reviewMode === "enforce") throw new ReviewApprovalChangedError();
   await tx.update(crawlCandidates).set({state:"published",publishedSlug:input.slug,updatedAt:new Date()})
     .where(eq(crawlCandidates.id,candidate.id));
+  if (input.lease) await assertJobLeaseAtWallTime(tx, input.lease);
 }

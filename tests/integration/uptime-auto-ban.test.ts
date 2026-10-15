@@ -11,6 +11,9 @@ vi.mock("@/lib/jobs/control", async importOriginal => {
   return { ...actual, assertJobLease: async (...args: Parameters<typeof actual.assertJobLease>) => {
     await actual.assertJobLease(...args);
     leaseObserver.afterCheck?.();
+  }, assertJobLeaseAtWallTime: async (...args: Parameters<typeof actual.assertJobLeaseAtWallTime>) => {
+    await actual.assertJobLeaseAtWallTime(...args);
+    leaseObserver.afterCheck?.();
   } };
 });
 

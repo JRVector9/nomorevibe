@@ -42,7 +42,7 @@ import type { Category } from "./schema";
 import { METRICS_WINDOW_DAYS } from "./clicks";
 import { lockProductRepository } from "./repository-identity";
 import { observedToolPredicate } from "./observed-tool";
-import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { EMBEDDING_DOCUMENT, EMBEDDING_MODEL, vectorLiteral } from "./embedding";
 import { createMemo } from "@/lib/cache/memo";
 import { STARS_BASELINE_HOURS } from "./stars";
@@ -50,6 +50,7 @@ import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
 import { taglineKoField } from "./korean-tagline";
 import { namesNeedingReview } from "./name-review";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { HIDDEN_BY_DEFAULT_CATEGORIES } from "./visibility";
 export { findRepositoryProduct } from "./repository-identity";
 
@@ -604,8 +605,9 @@ export async function nextAvailableSlug(name: string): Promise<string> {
   }
 }
 
-export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTransaction) => Promise<void>): Promise<void> {
+export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTransaction) => Promise<void>, lease?: JobLease): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     await lockProductRepository(tx, values.repoUrl);
     await beforeInsert?.(tx);
     const [product] = await tx.insert(products).values(values).returning();
@@ -616,11 +618,13 @@ export async function insert(values: NewProduct, beforeInsert?: (tx: ProductTran
       await queueProductRefresh({ slug: product.slug, productId: product.id,
         actor: "system:product_created", force: false }, tx);
     }
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
   });
 }
 
 export async function update(id: number, values: Partial<Product>): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     await lockProductRepository(tx, values.repoUrl);
     const [current] = await tx.select({ slug: products.slug }).from(products).where(eq(products.id, id));
     if (!current || !(await lockProductGeneration(tx, id, current.slug))) return;
@@ -659,6 +663,7 @@ export async function markVerified(
   values: Partial<Product>,
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     if (!(await lockProductGeneration(tx, id, slug))) return false;
     const [updated] = await tx.update(products)
       .set({ ...values, status: "verified", updatedAt: new Date() })
@@ -704,7 +709,10 @@ export async function removeTraces(slug: string): Promise<void> {
 }
 
 export async function remove(id: number): Promise<void> {
-  await db.delete(products).where(eq(products.id, id));
+  await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.delete(products).where(eq(products.id, id));
+  });
 }
 
 /**
@@ -716,6 +724,7 @@ export async function remove(id: number): Promise<void> {
  */
 export async function removeProductAndEvidence(id: number, slug: string): Promise<boolean> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     if (!(await lockProductGeneration(tx, id, slug))) return false;
     const [current] = await tx.select({ status: products.status })
       .from(products)
@@ -804,7 +813,11 @@ export async function setStatusWithAudit(input: {
     });
     return true;
   };
-  return transaction ? apply(transaction) : db.transaction(apply);
+  // Existing transactions acquire the stages at their entry, before any domain lock.
+  return transaction ? apply(transaction) : db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    return apply(tx);
+  });
 }
 
 export async function setOgImage(slug: string, path: string, lease?: JobLease): Promise<void> {

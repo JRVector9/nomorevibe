@@ -7,6 +7,7 @@ import { adminAuditRow } from "@/lib/operations/admin-log";
 import { type Result, ok, fail } from "./errors";
 import { isUnclaimed } from "./view";
 import { lockProductGeneration } from "./generation";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import * as repo from "./repository";
 import { isDismissReason, takedownReasonText, type DismissReason, type TakedownEntry, type TakedownKind, type TakedownSummary } from "./takedown-view";
 
@@ -225,6 +226,7 @@ export async function resolveTakedown(
   }
   const note = resolution.note?.trim().slice(0, MAX_NOTE) || null;
   const result = await db.transaction(async (tx): Promise<Result<{ slug: string; action: TakedownAction }>> => {
+    await lockPipelineInputStages(tx);
     const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, slug));
     // Lifecycle writers lock the product before its related rows. Keep that order here too.
     if (product && !(await lockProductGeneration(tx, product.id, slug))) return fail({ kind: "not_found" });

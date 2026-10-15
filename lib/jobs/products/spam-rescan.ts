@@ -3,8 +3,9 @@ import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, productEvidenceAudit, products } from "@/lib/db/schema";
 import { spamSignals, SPAM_DETECTOR_VERSION } from "@/lib/crawl/spam-signals";
 import { setStatusWithAudit, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
-import { withJobLeaseWrite } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, withJobLeaseWrite } from "@/lib/jobs/control";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 /**
  * 공개 제품에 스팸·악성 배포 판정(spam-signals.ts)을 다시 태우고, 잡히면 내린다 — 2026-10-08 운영자 결정(자동 차단).
@@ -76,11 +77,16 @@ export async function rescanPublishedSpam(ctx: JobContext<SpamRescanCursor>): Pr
       const owned = row.status === "verified" || row.claimedAt !== null || row.verifiedAt !== null;
       if (owned || row.unbanned || group.some((each) => each.decidedBy === "admin" || each.starAutoApproved)) exempt.push(row.slug);
       else if (bansLeft === 0) capped.push(row.slug);
-      else if (await withJobLeaseWrite(ctx.lease, (tx) => setStatusWithAudit({
-        id, slug: row.slug, status: "banned", action: "admin.product.ban", actor: SPAM_AUTO_BAN_ACTOR, reason: SPAM_AUTO_BAN_REASON,
-        metadata: { detector: SPAM_DETECTOR_VERSION, confidence: verdict.confidence, score: verdict.score,
-          signals: verdict.signals.map((signal) => signal.key) },
-      }, tx))) {
+      else if (await withJobLeaseWrite(ctx.lease, async (tx) => {
+        await lockPipelineInputStages(tx);
+        const changed = await setStatusWithAudit({
+          id, slug: row.slug, status: "banned", action: "admin.product.ban", actor: SPAM_AUTO_BAN_ACTOR, reason: SPAM_AUTO_BAN_REASON,
+          metadata: { detector: SPAM_DETECTOR_VERSION, confidence: verdict.confidence, score: verdict.score,
+            signals: verdict.signals.map((signal) => signal.key) },
+        }, tx);
+        if (ctx.lease) await assertJobLeaseAtWallTime(tx, ctx.lease);
+        return changed;
+      })) {
         banned.push(row.slug);
         bansLeft -= 1;
       }

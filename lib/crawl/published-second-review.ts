@@ -3,12 +3,14 @@ import { db } from '@/lib/db';
 import { crawlCandidates, products, secondReviews } from '@/lib/db/schema';
 import { lockProductGeneration } from '@/lib/domain/products/generation';
 import { setStatusWithAudit } from '@/lib/domain/products/repository';
+import { lockPipelineInputStages } from './pipeline-stage-context';
 
 /** The finding, product transition, and human decision must succeed together. */
 export async function decidePublishedSecondReview(input: {
   id: number; slug: string; decision: 'ban' | 'keep'; actor: string;
 }): Promise<boolean> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, input.slug));
     if (!product || !(await lockProductGeneration(tx, product.id, input.slug))) return false;
 

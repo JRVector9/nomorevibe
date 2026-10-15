@@ -83,7 +83,8 @@ it.each(["items", "draining"] as const)("rejects untracked %s stage state before
 
 it("seals actual two-stage fixture work only after all writers finish and authenticates the complete DB readback", async () => {
   const value = await prepare();
-  const signal = AbortSignal.timeout(30_000);
+  const replayCancellation = new AbortController();
+  const signal = AbortSignal.any([AbortSignal.timeout(30_000), replayCancellation.signal]);
   const external = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("external_fetch_canary"));
   let result: Awaited<ReturnType<typeof runCertifiedFixtureReviewReplay>>;
   try {
@@ -114,11 +115,14 @@ it("seals actual two-stage fixture work only after all writers finish and authen
     changed.seal.contentHash = replayArtifactContentHash(content);
     await expect(loadVerifiedReplayArtifact(database, value.manifest.runId, changed)).rejects.toThrow("replay_artifact_database_mismatch");
   } finally { await database.close(); }
+  // Replay has sealed and closed; its cancellation scope no longer owns independent artifact commands.
+  replayCancellation.abort();
+  expect(signal.aborted).toBe(true);
   const directory = await mkdtemp(join(tmpdir(), "replay-coverage-export-")), output = join(directory, "sealed.json");
   const cli = async (...args: string[]) => {
     const pending = promisify(execFile)(process.execPath,
       ["--import", "tsx", "scripts/measure-pipeline-replay.ts", ...args],
-      { maxBuffer: 2 * 1024 * 1024, timeout: 10_000, signal });
+      { maxBuffer: 2 * 1024 * 1024, timeout: 10_000 });
     // Abort can reject before the child closes its DB sockets. Teardown must wait.
     const closed = new Promise<void>(resolve => pending.child.once("close", () => resolve()));
     try { return await pending; } finally { await closed; }
