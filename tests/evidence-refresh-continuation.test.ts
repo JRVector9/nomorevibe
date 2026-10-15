@@ -68,6 +68,150 @@ it("asks to continue when the shared deadline hits and the selected page still h
   expect(run.saved).toEqual([{ afterSlug: "alpha" }]);
 });
 
+it("keeps a later page ready when the deadline lands exactly on the full page boundary", async () => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 2 });
+  mocks.due.mockImplementation(async ({ limit }) => ["alpha", "beta", "gamma"].slice(0, limit));
+  mocks.refresh.mockImplementation(async slug => {
+    if (slug === "beta") now = deadlineAt;
+    return ok;
+  });
+  const run = context({ deadlineAt, now: () => now });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({
+    done: false, continuation: "ready", cursor: { afterSlug: "beta" },
+  });
+  expect(mocks.due).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ limit: 3 }));
+  expect(mocks.refresh.mock.calls.map(([slug]) => slug)).toEqual(["alpha", "beta"]);
+  expect(run.saved).toEqual([{ afterSlug: "alpha" }, { afterSlug: "beta" }]);
+  expect(run.logs.at(-1)?.fields).toMatchObject({ attempted: 2, succeeded: 2, failed: 0 });
+});
+
+it("recognizes the final full page before the deadline without a later SQL probe", async () => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 2 });
+  mocks.due.mockImplementation(async ({ limit }) => ["alpha", "beta"].slice(0, limit));
+  mocks.refresh.mockImplementation(async slug => {
+    if (slug === "beta") now = deadlineAt;
+    return ok;
+  });
+  const run = context({ deadlineAt, now: () => now });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({ done: true });
+  expect(mocks.due).toHaveBeenCalledTimes(1);
+  expect(run.saved.at(-1)).toEqual({ afterSlug: "beta" });
+});
+
+it("obtains the maximum page's one-row lookahead before collecting and never advances to it", async () => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 100 });
+  const slugs = Array.from({ length: 101 }, (_, index) => `product-${String(index).padStart(3, "0")}`);
+  mocks.due.mockImplementation(async ({ afterSlug, limit }) => {
+    expect(now).toBeLessThan(deadlineAt);
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    return slugs.filter(slug => !afterSlug || slug > afterSlug).slice(0, limit);
+  });
+  mocks.refresh.mockImplementation(async slug => {
+    if (slug === slugs[99]) now = deadlineAt;
+    return ok;
+  });
+  const run = context({ deadlineAt, now: () => now });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({
+    done: false, continuation: "ready", cursor: { afterSlug: slugs[99] },
+  });
+  expect(mocks.due.mock.calls.map(([input]) => ({ limit: input.limit, afterSlug: input.afterSlug }))).toEqual([
+    { limit: 100, afterSlug: undefined }, { limit: 1, afterSlug: slugs[99] },
+  ]);
+  expect(mocks.refresh).toHaveBeenCalledTimes(100);
+  expect(run.saved.at(-1)).toEqual({ afterSlug: slugs[99] });
+  expect(run.logs.at(-1)?.fields).toMatchObject({ attempted: 100, succeeded: 100 });
+});
+
+it.each(["hold", "failure", "abort"] as const)("keeps the normal scheduling after %s at a full page boundary", async mode => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 2 });
+  mocks.due.mockImplementation(async ({ limit }) => ["alpha", "beta", "gamma"].slice(0, limit));
+  const controller = new AbortController();
+  mocks.refresh.mockImplementation(async (slug, options) => {
+    if (slug === "beta") {
+      now = deadlineAt;
+      if (mode === "hold") options.dependencies.log("evidence.github_refresh", { httpClass: "rate_limited" });
+      if (mode === "abort") controller.abort();
+      if (mode === "failure") throw new Error("provider failure");
+    }
+    return ok;
+  });
+  const run = context({ deadlineAt, now: () => now, signal: controller.signal });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({
+    done: false, cursor: { afterSlug: "beta" },
+  });
+  expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  expect(run.saved.at(-1)).toEqual({ afterSlug: "beta" });
+});
+
+it("starts no maximum-page lookahead if the selection used the remaining budget", async () => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 100 });
+  mocks.due.mockImplementation(async () => {
+    now = deadlineAt;
+    return Array.from({ length: 100 }, (_, index) => `product-${index}`);
+  });
+  const run = context({ deadlineAt, now: () => now });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({ done: false, cursor: null });
+  expect(mocks.due).toHaveBeenCalledTimes(1);
+  expect(mocks.refresh).not.toHaveBeenCalled();
+  expect(run.saved).toEqual([]);
+});
+
+it("visits the lookahead in the next page when budget remains", async () => {
+  const deadlineAt = 5_000;
+  vi.spyOn(Date, "now").mockReturnValue(deadlineAt - 20);
+  mocks.settings.mockResolvedValue({ batchSize: 2 });
+  mocks.due.mockImplementation(async ({ afterSlug, limit }) => ["alpha", "beta", "gamma"]
+    .filter(slug => !afterSlug || slug > afterSlug).slice(0, limit));
+  const run = context({ deadlineAt, now: () => deadlineAt - 20 });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({ done: true });
+  expect(mocks.refresh.mock.calls.map(([slug]) => slug)).toEqual(["alpha", "beta", "gamma"]);
+  expect(mocks.due.mock.calls.map(([input]) => input.afterSlug)).toEqual([undefined, "beta"]);
+  expect(run.saved.at(-1)).toEqual({ afterSlug: "gamma" });
+});
+
+it("does not mark the last full-page partial product complete or request a continuation", async () => {
+  const deadlineAt = 5_000;
+  let now = deadlineAt - 20;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  mocks.settings.mockResolvedValue({ batchSize: 2 });
+  mocks.due.mockImplementation(async ({ limit }) => ["alpha", "beta"].slice(0, limit));
+  mocks.refresh.mockImplementation(async slug => {
+    if (slug === "beta") {
+      now = deadlineAt;
+      return { ...ok, complete: false };
+    }
+    return ok;
+  });
+  const run = context({ deadlineAt, now: () => now });
+
+  await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).resolves.toEqual({
+    done: false, cursor: { afterSlug: "beta" },
+  });
+  expect(mocks.due).toHaveBeenCalledTimes(1);
+  expect(run.logs.at(-1)?.fields).toMatchObject({ attempted: 2, succeeded: 1 });
+});
+
 it("does not continue when the first selected product is incomplete and none completed", async () => {
   const deadlineAt = 5_000;
   let now = deadlineAt - 20;
