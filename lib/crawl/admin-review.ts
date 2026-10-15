@@ -6,10 +6,9 @@ import { crawlTaglines, type CandidateState, type CrawlDocument, type CrawlTagli
 import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier,
   crawlReviewAttempts, crawlSettings, type CrawlCandidate, type CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
-import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
+import { assertJobLeaseAtWallTime, requestJob, type JobLease } from '@/lib/jobs/control';
 import { operationsAudit } from '@/lib/db/operations-schema';
 import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
-import { effectiveAgentScanState } from '@/lib/domain/evidence/agents/coverage';
 import { secondReviewsFor } from './second-review';
 import { translationsFor } from './translations';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
@@ -21,6 +20,8 @@ import { judgeStoredDocument, type AmbiguityCause, type RuleStep } from './rules
 import { loadAgentJudgeInputs } from './admin-review-batch';
 import { lockFrontierIdentity } from './repository';
 import { adminAuditRow } from '@/lib/operations/admin-log';
+import { lockPipelineInputStages } from './pipeline-stage-context';
+import { applyAdminEvidenceRefreshCompletion, lockAdminEvidenceRefreshCompletion } from './evidence-refresh-completion';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -221,31 +222,19 @@ export async function requestCandidateEvidence(request: AdminReviewRequest): Pro
 }
 
 /** Called only after a fresh collector result; one accepted request permits one rule rejudge. */
-export async function requeueAfterAdminEvidenceRefresh(repo: string, lease?: JobLease): Promise<boolean> {
-  const [pending] = await db.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts)
-    .innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId)).where(and(
-      eq(crawlCandidates.repo, repo), eq(crawlCandidates.decidedBy, 'auto'), eq(crawlCandidates.state, 'needs_review'),
-      eq(crawlReviewAttempts.kind, 'evidence_refresh'),
-    )).limit(1);
-  if (!pending) return false;
+export async function requeueAfterAdminEvidenceRefresh(repo: string, lease: JobLease): Promise<boolean> {
+  if (lease?.name !== 'agent-evidence-refresh') throw new Error('admin_evidence_refresh_job_required');
   return db.transaction(async tx => {
-    const current = await lockedInput(tx, repo);
-    if (lease) await assertJobLease(tx, lease);
-    if (!current || current.candidate.decidedBy !== 'auto' || current.candidate.state !== 'needs_review') return false;
-    const [request] = await tx.select().from(crawlReviewAttempts).where(and(
-      eq(crawlReviewAttempts.candidateId, current.candidate.id), eq(crawlReviewAttempts.kind, 'evidence_refresh'),
-    )).orderBy(desc(crawlReviewAttempts.id)).limit(1).for('share');
-    if (!request || Number(current.candidate.signals?.adminEvidenceRefreshConsumedId ?? 0) >= request.id ||
-        request.source.candidateJudgedAt !== (current.candidate.judgedAt?.toISOString() ?? null)) return false;
-    const freshDocument = current.document.fetchedAt > new Date(request.source.documentFetchedAt);
-    const freshScan = !!current.scan?.completedAt && effectiveAgentScanState(current.scan) === 'complete' && !current.scan.lastErrorCode &&
-      current.scan.completedAt > new Date(request.source.scanCompletedAt ?? request.startedAt.toISOString());
-    if (!freshDocument && !freshScan) return false;
-    await tx.update(crawlCandidates).set({ state: 'new', reason: 'source_changed', updatedAt: new Date(),
-      signals: { ...current.candidate.signals, adminEvidenceRefreshConsumedId: request.id },
-    }).where(eq(crawlCandidates.id, current.candidate.id));
-    await requestJob('crawl-judge', tx);
-    return true;
+    // This collector controller is mode-independent; it grants no item execution
+    // authority and never releases an in-flight item's token.
+    const stages = await lockPipelineInputStages(tx);
+    const context = await lockAdminEvidenceRefreshCompletion(tx, repo, stages.fetch);
+    const result = context ? await applyAdminEvidenceRefreshCompletion(tx, context) : { consumed: false, needsJudgement: false };
+    // Catalog order is crawl-judge → agent-evidence-refresh. A lost collector
+    // lease rolls source consumption and its request back together.
+    if (result.needsJudgement) await requestJob('crawl-judge', tx);
+    await assertJobLeaseAtWallTime(tx, lease);
+    return result.consumed;
   });
 }
 

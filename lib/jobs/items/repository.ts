@@ -7,7 +7,7 @@ import { itemBindingHash, itemOwnerSchema, itemWorkKey, parseItemBinding,
 
 declare const guardBrand: unique symbol;
 export type ItemStageGuard = Readonly<{ [guardBrand]: true }>;
-type StageState = typeof pipelineStageModes.$inferSelect;
+export type StageState = typeof pipelineStageModes.$inferSelect;
 type LeaseRow = typeof pipelineItemLeases.$inferSelect;
 const guards = new WeakMap<ItemStageGuard, { tx: ProductTransaction; stage: ItemStage; txId: string }>();
 const itemTransactions = new WeakSet<ProductTransaction>();
@@ -83,6 +83,14 @@ export async function lockItemStage(tx: ProductTransaction, stage: ItemStage): P
   guards.set(guard, { tx, stage, txId: row.txId });
   itemTransactions.add(tx);
   return guard;
+}
+
+/** Observe mode/epoch only under this transaction's actual stage mutex.
+ * The returned row is not a replacement for the opaque guard or a lease. */
+export async function readItemStage(tx: ProductTransaction, guard: ItemStageGuard): Promise<StageState> {
+  const identity = guards.get(guard);
+  if (!identity) return fail("invalid_item_stage_guard");
+  return guardedStage(tx, guard, identity.stage);
 }
 
 /** A changed binding still competes for the same logical work slot. */

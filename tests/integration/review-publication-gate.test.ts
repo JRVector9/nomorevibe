@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, jobs, products } from "@/lib/db/schema";
 import { getSettings, saveSettings, changeReviewMode } from "@/lib/crawl/settings";
@@ -13,6 +13,10 @@ import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-rev
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { secondReviews } from "@/lib/db/schema";
 import { ensureSchema, resetTables } from "./setup";
+import type { JobLease } from "@/lib/jobs/control";
+import { claimFetchFixtureJob } from "./fetch-fixtures";
+
+let fetchLease: JobLease | undefined;
 
 const classify = vi.hoisted(() => vi.fn().mockResolvedValue(null));
 vi.mock("@/lib/crawl/classify", () => ({
@@ -29,6 +33,7 @@ beforeEach(async () => {
   await db.delete(crawlFrontier);
   await db.delete(crawlSettings);
   await db.delete(jobs);
+  fetchLease = undefined;
   await resetTables();
   classify.mockReset().mockResolvedValue(null);
   await saveSettings({ enabled: true }, "test");
@@ -37,6 +42,9 @@ beforeEach(async () => {
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
   vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "verified gate" })).toMatchObject({ ok: true });
+});
+afterEach(async () => {
+  if (fetchLease) await db.delete(jobs).where(and(eq(jobs.name, fetchLease.name), eq(jobs.leaseToken, fetchLease.token)));
 });
 
 async function candidate(index: number, approve = false, confidence?: number, installable = false) {
@@ -128,7 +136,8 @@ it("reopens an expired star approval for GitHub collection after a publisher out
   expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "new", reason: "source_changed" }]);
   expect(await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, "gate/expired")))
     .toMatchObject([{ repo: "gate/expired", state: "pending" }]);
-  const [claim] = await crawl.dequeue(1);
+  fetchLease = await claimFetchFixtureJob();
+  const [claim] = await crawl.dequeue(1, undefined, fetchLease);
   expect(claim.repo).toBe("gate/expired");
   expect(await crawl.saveFetchedDocument(claim, { repo: document.repo, repoMeta: document.repoMeta,
     productUrl: null, pageStatus: null, pageMeta: null })).toMatchObject({ needsJudgement: true });

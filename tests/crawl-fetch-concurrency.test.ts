@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 
 /**
  * 수집 잡의 동시 처리.
@@ -13,19 +14,22 @@ const mocks = vi.hoisted(() => ({
   repo: vi.fn(), page: vi.fn(), request: vi.fn(),
 }));
 vi.mock("@/lib/crawl/repository", () => ({
+  recoverAbandonedFrontier: async () => 0, handOffFailedSourceRefreshes: async () => 0,
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed,
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true, judge: { docsGenerators: [] }, discover: { queries: [], showHn: { enabled: true, priority: 120 } } }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
-vi.mock("@/lib/crawl/admin-review", () => ({ requeueAfterAdminEvidenceRefresh: async () => false }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));
 vi.mock("@/lib/jobs/control", () => ({ requestJob: mocks.request }));
 
 const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 
-const entry = (i: number) => ({ id: i, repo: `acme/app-${i}`, attempts: 1, nextAttemptAt: new Date(0) });
-const context = (hasBudget: () => boolean = () => true) => ({ cursor: null, hasBudget, save: vi.fn(), log: vi.fn() });
+const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
+const entry = (i: number): FetchClaim => ({ id: i + 1, repo: `acme/app-${i}`, signal: "test", builder: null,
+  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, aliasOf: null,
+  discoveredAt: new Date(0), updatedAt: new Date(0), ownership: { kind: "legacy", stageEpoch: 1, job } });
+const context = (hasBudget: () => boolean = () => true) => ({ cursor: null, lease: job, hasBudget, save: vi.fn(), log: vi.fn() });
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 동시에 몇 개가 떠 있었는지 잰다 */
@@ -68,9 +72,9 @@ it("페이지는 최대 셋까지 함께 받고, GitHub에는 하나씩 보낸�
   expect(pages.max).toBe(3);
   expect(github.max).toBe(1);
   expect(mocks.defer).not.toHaveBeenCalled();
-  // 새 원본이 일곱 개여도 판정 요청은 묶음당 한 번이다
-  expect(mocks.request).toHaveBeenCalledTimes(1);
-  expect(mocks.request).toHaveBeenCalledWith("crawl-judge");
+  // 판정 요청은 각 실제 source 저장 transaction이 소유하며 handler가 중복 요청하지 않는다.
+  expect(mocks.request).not.toHaveBeenCalled();
+  expect(mocks.save.mock.calls.map(call => call[0])).toEqual(expect.arrayContaining(entries));
 });
 
 it("같은 origin에는 한 번에 하나만 보낸다", async () => {
@@ -112,8 +116,8 @@ it("예산이 끝나면 끝낸 항목은 두고, 시작하지 않은 항목만 �
 
   expect(mocks.save).toHaveBeenCalledTimes(1);
   expect(mocks.defer).toHaveBeenCalledTimes(1);
-  expect(mocks.defer).toHaveBeenCalledWith(entries.slice(1));
-  expect(mocks.request).toHaveBeenCalledTimes(1);
+  expect(mocks.defer).toHaveBeenCalledWith(entries.slice(1), undefined);
+  expect(mocks.request).not.toHaveBeenCalled();
 });
 
 it("저장이 실패하면 새 항목을 시작하지 않고, 시작하지 않은 claim을 돌려준 뒤 실패로 끝낸다", async () => {
@@ -136,7 +140,7 @@ it("저장이 실패하면 새 항목을 시작하지 않고, 시작하지 않�
   await expect(fetchCrawlDocuments(context(() => !lost))).rejects.toThrow("job_lease_lost");
 
   expect(mocks.save).toHaveBeenCalledTimes(1);
-  expect(mocks.defer).toHaveBeenCalledWith(entries.slice(1));
+  expect(mocks.defer).toHaveBeenCalledWith(entries.slice(1), undefined);
 });
 
 it("한 항목의 본문 수신 실패는 그 항목의 실패로 끝나고 나머지는 계속한다", async () => {
@@ -153,7 +157,7 @@ it("한 항목의 본문 수신 실패는 그 항목의 실패로 끝나고 나�
   expect(await fetchCrawlDocuments(context())).toEqual({ done: true });
 
   expect(mocks.failed).toHaveBeenCalledTimes(1);
-  expect(mocks.failed).toHaveBeenCalledWith("acme/app-1", expect.stringContaining("본문"), undefined, entries[1]);
+  expect(mocks.failed).toHaveBeenCalledWith(entries[1], expect.stringContaining("본문"), { retryAt: undefined });
   expect(mocks.save).toHaveBeenCalledTimes(2);
   expect(mocks.defer).not.toHaveBeenCalled();
 });

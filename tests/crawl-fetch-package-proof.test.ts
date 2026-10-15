@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 
 /**
  * 수집 잡의 패키지 증거 확인 — 사이트 없는 스킬·플러그인·확장을 저장소 파일로 알아본다(package-proof.ts).
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   repo: vi.fn(), page: vi.fn(), request: vi.fn(), probe: vi.fn(),
 }));
 vi.mock("@/lib/crawl/repository", () => ({
+  recoverAbandonedFrontier: async () => 0, handOffFailedSourceRefreshes: async () => 0,
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge,
 }));
@@ -20,14 +22,16 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
 }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/package-probe", () => ({ probePackageManifests: mocks.probe }));
-vi.mock("@/lib/crawl/admin-review", () => ({ requeueAfterAdminEvidenceRefresh: async () => false }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));
 vi.mock("@/lib/jobs/control", () => ({ requestJob: mocks.request }));
 
 const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 
-const entry = (repo: string) => ({ id: 1, repo, signal: "Claude 커밋 트레일러", attempts: 1, nextAttemptAt: new Date(0) });
-const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
+const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
+const entry = (repo: string): FetchClaim => ({ id: 1, repo, signal: "Claude 커밋 트레일러", builder: null,
+  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, aliasOf: null,
+  discoveredAt: new Date(0), updatedAt: new Date(0), ownership: { kind: "legacy", stageEpoch: 1, job } });
+const context = () => ({ cursor: null, lease: job, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
 const run = async (meta: Record<string, unknown>) => {
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, default_branch: "main", ...meta } });
   mocks.dequeue.mockResolvedValueOnce([entry("maker/pdf-skill")]).mockResolvedValue([]);
@@ -80,5 +84,5 @@ it("한도에 걸리면 저장하지 않고 미루며, 다른 실패는 이 항�
   mocks.probe.mockResolvedValueOnce({ ok: false, error: { kind: "transport" } });
   await run({ stargazers_count: 12 });
   expect(mocks.save).not.toHaveBeenCalled();
-  expect(mocks.failed).toHaveBeenCalledWith("maker/pdf-skill", "패키지 확인 실패 — GitHub transport", undefined, expect.anything());
+  expect(mocks.failed).toHaveBeenCalledWith(entry("maker/pdf-skill"), "패키지 확인 실패 — GitHub transport");
 });

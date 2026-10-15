@@ -1,5 +1,5 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import type { FrontierEntry } from "@/lib/db/schema";
+import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 import { fetchPage } from "@/lib/net/fetch";
 import { normalizeUrl, extractPageMeta, metaRefreshTarget } from "@/lib/net/normalize";
 import { siteHints } from "@/lib/domain/products/thumbnails/candidates";
@@ -14,10 +14,6 @@ import { INSTALLABLE_MIN_STARS, PACKAGE_MIN_STARS, lacksDeployment } from "@/lib
 import { SHOW_HN_SIGNAL } from "@/lib/crawl/settings-schema";
 import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { extractGithubLinks } from "@/lib/crawl/github-links";
-import { requeueAfterAdminEvidenceRefresh } from "@/lib/crawl/admin-review";
-import { requestJob } from "@/lib/jobs/control";
-import { assertJobLease } from "@/lib/jobs/control";
-import { db } from "@/lib/db";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
 
@@ -55,6 +51,7 @@ const GITHUB_ORIGIN = "https://api.github.com";
 type Tally = { fetched: number; skipped: number; failed: number; gated: number };
 
 export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  if (!ctx.lease) throw new Error("fetch_job_lease_required");
   const settings = await getSettings();
   if (!settings.enabled) {
     ctx.log("crawl.fetch_skipped", { reason: "disabled" });
@@ -74,7 +71,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
-    const entries = ctx.lease ? await crawl.dequeue(BATCH, undefined, ctx.lease) : await crawl.dequeue(BATCH);
+    const entries = await crawl.dequeue(BATCH, undefined, ctx.lease);
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
       return { done: true };
@@ -101,10 +98,10 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
  * 나가지 않는다. 어떻게 끝나든(예외 포함) 시작하지 않은 claim은 돌려준다. 안 돌려주면
  * 10분 동안 fetching에 묶였다가 회수되고, 그 사이 시도 횟수만 하나 먹는다.
  *
- * 판정 요청은 묶음당 한 번이다. 원본마다 부르면 잡 행 하나를 두고 경합한다.
+ * 필요한 판정 요청은 각 원본 저장과 같은 transaction에서 확정한다.
  */
 async function fetchBatch(
-  entries: FrontierEntry[],
+  entries: FetchClaim[],
   ctx: JobContext<null>,
   settings: CrawlSettings,
   evidenceRequired: ReadonlySet<string>,
@@ -118,9 +115,8 @@ async function fetchBatch(
     deferred: false,
     retryAt: null as Date | null,
     pauseReason: null as "rate_limited" | "auth_unavailable" | null,
-    needsJudgement: 0,
     /** 시작은 했지만 끝내지 못해 그대로 돌려줄 것 — 한도·예산 대기는 실패한 시도가 아니다 */
-    giveBack: new Set<FrontierEntry>(),
+    giveBack: new Set<FetchClaim>(),
   };
 
   const lane = async () => {
@@ -152,7 +148,6 @@ async function fetchBatch(
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "fetched") {
           tally.fetched++;
-          if (outcome.needsJudgement) batch.needsJudgement++;
         } else if (outcome.kind === "skipped") {
           tally.skipped++;
         } else if (outcome.kind === "gated") {
@@ -171,21 +166,7 @@ async function fetchBatch(
   const lanes = await Promise.allSettled(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, lane));
 
   const unfinished = entries.filter((entry, index) => index >= batch.next || batch.giveBack.has(entry));
-  if (unfinished.length > 0) {
-    if (batch.retryAt) {
-      if (ctx.lease) await crawl.deferFrontier(unfinished, batch.retryAt, ctx.lease);
-      else await crawl.deferFrontier(unfinished, batch.retryAt);
-    } else if (ctx.lease) await crawl.deferFrontier(unfinished, undefined, ctx.lease);
-    else await crawl.deferFrontier(unfinished);
-  }
-  if (batch.needsJudgement > 0) {
-    const lease = ctx.lease;
-    if (lease) await db.transaction(async tx => {
-      await assertJobLease(tx, lease);
-      await requestJob("crawl-judge", tx);
-    });
-    else await requestJob("crawl-judge");
-  }
+  if (unfinished.length > 0) await crawl.deferFrontier(unfinished, batch.retryAt ?? undefined);
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
@@ -199,7 +180,7 @@ type EntryOutcome =
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
 async function fetchEntry(
-  entry: FrontierEntry,
+  entry: FetchClaim,
   result: Awaited<ReturnType<typeof getRepo>>,
   ctx: JobContext<null>,
   settings: CrawlSettings,
@@ -213,15 +194,13 @@ async function fetchEntry(
     }
     if (result.error.kind === "not_found") {
       // 지워졌거나 비공개로 바뀌었다 — 다시 시도할 이유가 없다. 404 였다는 것을 남긴다(사람 대기열의 "레포 삭제됨")
-      if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease, crawl.SKIP_NOT_FOUND);
-      else await crawl.markFrontier(entry.repo, "skipped", entry, undefined, crawl.SKIP_NOT_FOUND);
+      await crawl.markFrontier(entry, "skipped", crawl.SKIP_NOT_FOUND);
       return { kind: "skipped" };
     }
     const reason = result.error.kind === "http"
       ? `GitHub ${result.error.status}`
       : `GitHub ${result.error.kind}`;
-    if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
-    else await crawl.markFailed(entry.repo, reason, undefined, entry);
+    await crawl.markFailed(entry, reason);
     return { kind: "failed" };
   }
 
@@ -250,19 +229,17 @@ async function fetchEntry(
       }
       if (probe.error.kind === "not_found") {
         // 빈 레포 — 볼 것이 없다. 삭제와 섞이지 않게 까닭을 따로 남긴다
-        if (ctx.lease) await crawl.markFrontier(entry.repo, "skipped", entry, ctx.lease, crawl.SKIP_EMPTY_REPOSITORY);
-        else await crawl.markFrontier(entry.repo, "skipped", entry, undefined, crawl.SKIP_EMPTY_REPOSITORY);
+        await crawl.markFrontier(entry, "skipped", crawl.SKIP_EMPTY_REPOSITORY);
         return { kind: "skipped" };
       }
       const reason = `AI 흔적 확인 실패 — GitHub ${probe.error.kind === "http" ? probe.error.status : probe.error.kind}`;
-      if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
-      else await crawl.markFailed(entry.repo, reason, undefined, entry);
+      await crawl.markFailed(entry, reason);
       return { kind: "failed" };
     }
     if (probe.found.length === 0) {
       const saved = await crawl.saveFetchedDocument(entry, {
         repo: entry.repo, repoMeta, productUrl: homepage, pageStatus: null, pageMeta: null,
-      }, ctx.lease, { settings,
+      }, { settings,
         signals: { evidenceGate: { signal: entry.signal, recentCommits: PROBE_COMMITS, found: [] } },
       });
       if (!saved) {
@@ -298,8 +275,7 @@ async function fetchEntry(
       // 빈 저장소는 404·409 로 답한다 — 패키지가 없을 뿐이다. 나머지는 이 항목만 다시 시도한다
       if (!(probe.error.kind === "not_found" || (probe.error.kind === "http" && probe.error.status === 409))) {
         const reason = `패키지 확인 실패 — GitHub ${probe.error.kind === "http" ? probe.error.status : probe.error.kind}`;
-        if (ctx.lease) await crawl.markFailed(entry.repo, reason, undefined, entry, ctx.lease);
-        else await crawl.markFailed(entry.repo, reason, undefined, entry);
+        await crawl.markFailed(entry, reason);
         return { kind: "failed" };
       }
     } else if (probe.proof.length) {
@@ -319,9 +295,7 @@ async function fetchEntry(
        * 반복했고 최대 시도 횟수가 영영 걸리지 않았다(codex 재현).
        */
       const retryAt = error instanceof Error && "retryAt" in error && error.retryAt instanceof Date ? error.retryAt : undefined;
-      if (retryAt) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease, retryAt);
-      else if (ctx.lease) await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry, ctx.lease);
-      else await crawl.markFailed(entry.repo, `페이지 본문 수신 실패 — ${describeError(error)}`, undefined, entry);
+      await crawl.markFailed(entry, `페이지 본문 수신 실패 — ${describeError(error)}`, { retryAt });
       return { kind: "failed" };
     }
   }
@@ -333,7 +307,7 @@ async function fetchEntry(
     pageStatus: page?.status ?? null,
     // 들여보낸 흔적은 원본에 남긴다 — 심사 화면이 "왜 들어왔나"를 볼 수 있게
     pageMeta: page?.meta ? { ...page.meta, ...(evidence ? { evidenceGate: { signal: entry.signal, found: evidence } } : {}) } : null,
-  }, ctx.lease);
+  });
   if (!saved) {
     // 회수돼 다른 워커가 다시 꺼냈다 — 그쪽이 받은 것이 더 새것이다
     ctx.log("crawl.fetch_claim_lost", { repo: entry.repo });
@@ -343,7 +317,6 @@ async function fetchEntry(
     ctx.log("crawl.fetch_repository_alias", { repo: entry.repo, existingRepo: saved.duplicateOf });
     return { kind: "skipped" };
   }
-  await requeueAfterAdminEvidenceRefresh(entry.repo, ctx.lease);
   return { kind: "fetched", needsJudgement: saved.needsJudgement };
 }
 

@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 
 /**
  * 수집 잡의 AI 흔적 게이트.
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   showHn: { enabled: true, priority: 120, requireEvidence: false },
 }));
 vi.mock("@/lib/crawl/repository", () => ({
+  recoverAbandonedFrontier: async () => 0, handOffFailedSourceRefreshes: async () => 0,
   dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge, getCandidate: mocks.candidate,
   SKIP_NOT_FOUND: "github_not_found", SKIP_EMPTY_REPOSITORY: "github_empty_repository",
@@ -26,21 +28,23 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
 }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/ai-evidence-gate", () => ({ PROBE_COMMITS: 30, probeAiEvidence: mocks.probe }));
-vi.mock("@/lib/crawl/admin-review", () => ({ requeueAfterAdminEvidenceRefresh: async () => false }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));
 vi.mock("@/lib/jobs/control", () => ({ requestJob: mocks.request }));
 
 const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 
-const entry = (repo: string, signal: string) => ({ id: 1, repo, signal, attempts: 1, nextAttemptAt: new Date(0) });
-const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
+const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
+const entry = (repo: string, signal: string): FetchClaim => ({ id: 1, repo, signal, builder: null,
+  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, aliasOf: null,
+  discoveredAt: new Date(0), updatedAt: new Date(0), ownership: { kind: "legacy", stageEpoch: 1, job } });
+const context = () => ({ cursor: null, lease: job, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.showHn.requireEvidence = false;
   mocks.repo.mockResolvedValue({ ok: true, value: { id: 7, homepage: "https://app.test" } });
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "<title>App</title>" }));
-  mocks.save.mockImplementation(async (_claim, _doc, _lease, initialEvidenceGate) => initialEvidenceGate
+  mocks.save.mockImplementation(async (_claim, _doc, initialEvidenceGate) => initialEvidenceGate
     ? { needsJudgement: false, initialEvidenceRejected: true } : { needsJudgement: true });
   mocks.candidate.mockResolvedValue(undefined);
 });
@@ -57,7 +61,7 @@ it("이미 후보가 있는 레포의 재수집에는 흔적 관문을 걸지 �
   expect(mocks.judge).not.toHaveBeenCalledWith(expect.objectContaining({ reason: "ai_evidence_not_found" }));
   // 관문 없이 평소처럼 페이지를 받아 원본을 갱신한다
   expect(mocks.page).toHaveBeenCalled();
-  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", pageStatus: 200 }), undefined);
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", pageStatus: 200 }));
 });
 
 it("흔적이 없으면 페이지를 열지 않고 원본만 남긴 채 거절로 적는다", async () => {
@@ -69,7 +73,7 @@ it("흔적이 없으면 페이지를 열지 않고 원본만 남긴 채 거절�
 
   expect(mocks.probe).toHaveBeenCalledWith("kim/todo");
   expect(mocks.page).not.toHaveBeenCalled();
-  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", productUrl: "https://app.test", pageStatus: null, pageMeta: null }), undefined, expect.objectContaining({
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "kim/todo", productUrl: "https://app.test", pageStatus: null, pageMeta: null }), expect.objectContaining({
     signals: { evidenceGate: { signal: "한국어 README", recentCommits: 30, found: [] } },
   }));
   expect(mocks.judge).not.toHaveBeenCalled();
@@ -89,7 +93,7 @@ it("흔적이 있으면 평소처럼 페이지를 열고, 무엇이 들여보냈
   const saved = mocks.save.mock.calls[0][1];
   expect(saved.pageStatus).toBe(200);
   expect(saved.pageMeta.evidenceGate).toEqual({ signal: "한국어 README", found: ["file:CLAUDE.md", "trailer:claude-code"] });
-  expect(mocks.request).toHaveBeenCalledWith("crawl-judge");
+  expect(mocks.request).not.toHaveBeenCalled();
 });
 
 it("흔적을 요구하지 않는 신호는 더듬지 않는다", async () => {
@@ -124,8 +128,8 @@ it("빈 레포(404)는 건너뛰고, 다른 GitHub 실패는 항목 실패로 �
   await fetchCrawlDocuments(context());
 
   // 빈 저장소라는 까닭을 남긴다 — 사람 대기열에서 "레포 삭제됨"과 섞이지 않게
-  expect(mocks.mark).toHaveBeenCalledWith("kim/empty", "skipped", expect.anything(), undefined, "github_empty_repository");
-  expect(mocks.failed).toHaveBeenCalledWith("kim/flaky", "AI 흔적 확인 실패 — GitHub 502", undefined, expect.anything());
+  expect(mocks.mark).toHaveBeenCalledWith(entry("kim/empty", "한국어 README"), "skipped", "github_empty_repository");
+  expect(mocks.failed).toHaveBeenCalledWith(entry("kim/flaky", "한국어 README"), "AI 흔적 확인 실패 — GitHub 502");
   expect(mocks.page).not.toHaveBeenCalled();
 });
 
@@ -140,6 +144,6 @@ it("Show HN 은 설정으로 켰을 때만 더듬는다", async () => {
   mocks.probe.mockResolvedValue({ ok: true, found: [] });
   await fetchCrawlDocuments(context());
   expect(mocks.probe).toHaveBeenCalledWith("hn/app");
-  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "hn/app" }), undefined,
+  expect(mocks.save).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ repo: "hn/app" }),
     expect.objectContaining({ signals: { evidenceGate: { signal: "Show HN", recentCommits: 30, found: [] } } }));
 });

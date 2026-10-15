@@ -21,6 +21,7 @@ const { judge, factsFromRepoMeta, pageFactsFromDocument } = await import("@/lib/
 const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema } = await import("./setup");
+const { claimFetchFixtureJob } = await import("./fetch-fixtures");
 
 const repoMeta = (over: Record<string, unknown> = {}) => ({
   stargazers_count: 3,
@@ -154,9 +155,9 @@ describe("수집 잡", () => {
     expect(abandoned).toMatchObject({ repo: "audit/abandoned", state: "pending", attempts: 1 });
     expect(abandoned.nextAttemptAt.getTime()).toBeLessThan(future.getTime());
     expect(current).toMatchObject({ repo: "audit/current", state: "fetching", attempts: 1 });
-    expect((await crawl.dequeue(1)).map(row => row.repo)).toEqual(["audit/abandoned"]);
+    expect((await crawl.dequeue(1, undefined, lease)).map(row => row.repo)).toEqual(["audit/abandoned"]);
     expect(await crawl.recoverAbandonedFrontier(lease)).toBe(0);
-    await crawl.markFrontier(oldClaim.repo, "skipped", oldClaim);
+    await crawl.markFrontier({ ...oldClaim, ownership: { kind: "legacy", stageEpoch: 1, job: lease } }, "skipped");
     expect(await db.query.crawlFrontier.findFirst({ where: eq(crawlFrontier.repo, oldClaim.repo) }))
       .toMatchObject({ state: "fetching", attempts: 2 });
   });
@@ -178,7 +179,7 @@ describe("수집 잡", () => {
     await crawl.putDocument({ repo, repoMeta: STABLE_META,
       pageMeta: { readmeSample: "Old README", readmeSampleVersion: "previous" } });
     await crawl.enqueue([{ repo, signal: "commit-trailer" }]);
-    const [claim] = await crawl.dequeue(1);
+    const [claim] = await crawl.dequeue(1, undefined, await claimFetchFixtureJob());
     expect(await crawl.saveFetchedDocument(claim, { repo, repoMeta: STABLE_META,
       productUrl: "https://my-app.test", pageStatus: 200,
       pageMeta: { readmeSample: "", readmeSampleVersion: "fresh" } })).not.toBeNull();
@@ -331,7 +332,7 @@ describe("수집 잡", () => {
     await crawl.recordJudgement({ repo, productUrl, state: "approved", reason: "passed", decidedBy: "auto",
       signals: { starAutoApproval: { githubId: 100, stars: 500 } } });
     await crawl.enqueue([{ repo, signal: "test" }]);
-    const [claim] = await crawl.dequeue(1);
+    const [claim] = await crawl.dequeue(1, undefined, await claimFetchFixtureJob());
 
     const result = await crawl.saveFetchedDocument(claim, { repo, repoMeta: { ...meta, id: 101 }, productUrl,
       pageStatus: 200, pageMeta: { title: "My App" } });
@@ -360,7 +361,7 @@ describe("수집 잡", () => {
 
     expect(await crawl.frontierCounts()).toEqual({ pending: 1 });
     // 바로 다시 꺼내지 않는다
-    expect(await crawl.dequeue(10)).toEqual([]);
+    expect(await crawl.dequeue(10, undefined, await claimFetchFixtureJob())).toEqual([]);
   });
 
   it("한도에 걸리면 남은 항목을 두고 물러난다", async () => {
@@ -380,7 +381,7 @@ describe("수집 잡", () => {
     const waiting = await db.select().from(crawlFrontier);
     expect(waiting.map(entry => entry.nextAttemptAt)).toEqual([resetAt, resetAt]);
     expect(waiting.every(entry => entry.attempts === 0)).toBe(true);
-    expect(await crawl.dequeue(10)).toEqual([]);
+    expect(await crawl.dequeue(10, undefined, await claimFetchFixtureJob())).toEqual([]);
   });
 
   it("all credentials rejected pauses the batch without consuming repository attempts", async () => {
@@ -401,7 +402,7 @@ describe("수집 잡", () => {
 
   it("does not release a frontier claim replaced after the original batch was read", async () => {
     await crawl.enqueue([{ repo: "a/one", signal: "commit-trailer" }]);
-    const claimed = await crawl.dequeue(1);
+    const claimed = await crawl.dequeue(1, undefined, await claimFetchFixtureJob());
     await db.update(crawlFrontier).set({
       attempts: sql`${crawlFrontier.attempts} + 1`,
       nextAttemptAt: sql`now() + interval '20 minutes'`,
@@ -485,7 +486,7 @@ describe("수집 잡", () => {
     expect(await crawl.getCandidate("someone/reviewed")).toMatchObject({ state: "approved", decidedBy: "admin" });
   });
 
-  it("새 원본을 저장한 묶음은 판정을 한 번만 요청한다", async () => {
+  it("각 원본 저장이 자신의 판정 요청과 함께 확정된다", async () => {
     await crawl.enqueue([
       { repo: "a/one", signal: "commit-trailer" },
       { repo: "b/two", signal: "commit-trailer" },
@@ -496,8 +497,8 @@ describe("수집 잡", () => {
     await tick();
 
     expect(await crawl.frontierCounts()).toEqual({ done: 3 });
-    // 후보마다 부르면 잡 행 하나를 두고 경합한다 — 묶음이 끝날 때 한 번
-    expect(await judgeJob()).toMatchObject({ requestedVersion: 1, processedVersion: 0 });
+    // 항목마다 원본과 요청을 함께 commit한다. 중복 receipt는 별도 회귀에서 요청 0을 검증한다.
+    expect(await judgeJob()).toMatchObject({ requestedVersion: 3, processedVersion: 0 });
   });
 
   /**
