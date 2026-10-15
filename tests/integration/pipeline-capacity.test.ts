@@ -42,8 +42,8 @@ async function fixture(voters = ["second-a", "second-b"], decision: "approve" | 
     input: await loadReviewInput(candidate, document, settings) };
   const claim = await claimAgentReview(context);
   if (claim.kind === "skipped") throw new Error(claim.reason);
-  await recordAgentReview({ ...context, attempt: claim.attempt, outcome: { ...outcome, decision } });
-  return { ...context, attempt: claim.attempt };
+  await recordAgentReview({ ...context, receipt: claim.receipt, outcome: { ...outcome, decision } });
+  return { ...context, attempt: claim.attempt, receipt: claim.receipt };
 }
 async function approve(id: number) {
   const [row] = await db.select().from(secondReviews).where(eq(secondReviews.id, id));
@@ -152,7 +152,7 @@ it("local export keeps only frozen manifest inputs and reports copied reuse sepa
   const claim = await claimAgentReview(context);
   expect(claim.kind).toBe("reused");
   if (claim.kind === "skipped") throw new Error(claim.reason);
-  await recordAgentReview({ ...context, attempt: claim.attempt, outcome });
+  await recordAgentReview({ ...context, receipt: claim.receipt, outcome });
   expect((await snapshot(f)).generations).toHaveLength(2);
   const end = new Date().toISOString(), start = new Date(Date.now() - 60_000).toISOString();
   const hash = "a".repeat(64);

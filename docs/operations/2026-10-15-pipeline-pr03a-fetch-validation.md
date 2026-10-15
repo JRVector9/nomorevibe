@@ -36,7 +36,7 @@ gpt-6.1-sol/xhigh 담당3명을 source, 관리자 완료 helper, 독립 실제 D
 - collector 접점의 기존 실제 DB39PASS(3.93초), budget unit5PASS. 해당 결과는 별도 실행이며 전체 suite 결과로 더하지 않는다.
 - root 전체 integration164파일 **1,804PASS·기존TODO1**(349.72초), exit0. `/tmp/nomorevibe-pr03-root-db-final-20261016.log`. build와 bundle-size 모두 exit0. bundle 세 경로 모두 한도 이내다.
 - root55473 최종 readback: 세 stage legacy/epoch1/계약0, item0, replay schema/role0, 자체 pr03 fixture/frontier/candidate/document/job/function/trigger0, 다른 연결0, DB PUBLIC CONNECT/TEMP 및 schema USAGE 복원 확인 뒤 자체 컨테이너만 중지했다.
-- 최신base CI·원격 PR 납품은 아직 남아 있다.
+- [PR436](https://github.com/JRVector9/nomorevibe/pull/436)은 exact head b3cfeea51d4bd6e5638eebf6e5430f40422b86f8 / base8f2bdb3e4f0b009500fd4724a6319cd61f6e6885 필수 CI 성공 뒤 2026-10-15T15:29:10Z main254a5bbb8e6ca421ff3ff8a86d5127c537e7cfbf로 정상 squash 병합됐다. PR CI38759886199 및 main CI38760739008의 check·웹/워커 image까지 전체 SUCCESS를 직접 확인했다. 운영 미적용이다.
 
 ## 남은 경계
 

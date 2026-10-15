@@ -29,7 +29,7 @@ export const replayArtifactFinalSchema = inputKeySchema.extend({ policyHash: has
   secondWitnesses: z.array(witnessSchema).max(3) }).strict();
 export const replayArtifactSchema = z.object({ kind: z.literal("pipeline-replay-ledger"), version: z.literal(1),
   manifest: capacityManifestSchema,
-  run: z.object({ runId: text, epoch: positive, profile: z.literal("handlers-v4"), state: z.literal("sealed"),
+  run: z.object({ runId: text, epoch: positive, profile: z.literal("handlers-v5"), state: z.literal("sealed"),
     startedAt: date, deadlineAt: date, admissionClosedAt: date, writersFencedAt: date, sealedAt: date,
     chargedCalls: integer, chargedTokens: integer }).strict(),
   initial: z.object({ capturedAt: date, initialStateHash: hash, comparisonStateHash: hash,

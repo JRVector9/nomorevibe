@@ -1,3 +1,96 @@
+# 2026-10-16 — PR03b 전체 로컬 검증 완료 / PR03c 최종 DB 실행 중
+
+## Current objective / completed
+
+전체 PR별 병렬 개발 목표 active. root가 gpt-6.1-sol/xhigh 세 담당의 파일/DB/API·RED 승인·직접/교차 리뷰·취합/Git 납품을 관리한다. PR436 main254a5bb 및 필수CI/image 성공은 이미 확인했다. PR03b source07051b0/fixturef2370a5·66ca2c8 위에서 최종 로컬 검증 완료, 아직 push/PR0. PR03c source1da624d도 세 담당 handback·root/교차 리뷰 완료, 아직 push/PR0. 운영 릴리스8020dca 이후 새 운영 변경0.
+
+## Modified files / key decisions / actual tests
+
+PR03b WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai1`, branch `codex/pipeline-pr03b-ai1-20261016`, HEAD66ca2c8. source27파일+fixture commit3파일 및 상세 docs5개. 실제AI1 originreceipt·sameTX result/release/request·S3 controller·B5 handlers-v5 legacy-only를 구현했다. root unit2,853, 최종전체DB167파일1,856PASS/기존TODO1(396.06초,session97101 exit0), type/lint/i18n/Python23/build/bundle PASS. `/tmp/nomorevibe-pr03b-root-db-full-fresh-20261016.log`. 55482 최종readback item/schema/role/trigger/ownfixture/otherconnections0·legacy/epoch1/계약0·PUBLIC ACL 원복 확인. 자체55482와forensic55477 STOP중(session88336; 완료확인필요). 77의 실패DB자료는보존한다.
+
+첫full의 foreign input/job 격리 오류 및 두 번째full의 CREATE TRIGGER locktimeout→setup cleanup누락 연쇄실패를 숨기지 않는다. 실제 최초blocker미확정; fresh82 focused15/최종full은재현0. setup실패P2는actual3RED→3GREEN(기존15포함18PASS)으로정리. rawtimestampµs손실도actualteardownRED→원래suspend열만복원/rawJSON jobs·settings복원으로38PASS(4.35초). JSONcast/ownsentinel중복 중간fixture실패도기록, timeout/권한/assertion완화0. 정확결과는PR03b validation문서.
+
+PR03c WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-controllers`, branch `codex/pipeline-pr03c-controllers-20261016`, HEAD1da624d(base66ca2c8). source/test29파일1316+/51-커밋, root계획문서1개미커밋. 제품/evidence topTX S3, typed stage_blocked·CASunlock만, normaldonefalseACK유지. budget0 items/drain ACK 실제2RED/control1→3GREEN. directreopen outbox원자성·walltime actualRED들, 제품 만료7RED/control1→최종10파일150PASS(new30포함); evidence4파일85PASS(new15포함); blocked/기존AI1/runner4파일80PASS(new16포함). 중복 합산금지. product.insert optionalthirdJobLease로callback후generation/refresh/outbox까지끝난뒤검사하고publishactuallease전달, fullAI2gate·사람결정·healthyitem유지. 마지막교차리뷰 추가P1/P2없음.
+
+root PR03c 최종전체unit277파일2,857PASS(9.64초), typegen/tsc/전체lint(기존vendorwarning1+unusedfixturewarning은삭제후scopedlint0)/i18n/Python23/build/bundle exit0. fullDB는root55481에서session28846 실행중, `/tmp/nomorevibe-pr03c-root-db-full-fresh-20261016.log`, readonlylock관측동명-locks.jsonl. 담당자체78/79/80/83 모두정리후STOP. root81full은아직PASS주장불가.
+
+## Remaining work / exact next commands
+
+PR03b docs확정명시commit/push→PR필수CI/최신base→정상merge/mainCI/images; PR03c fullDB결과/owncleanup/readback→actualPR03bmain통합→별도PR. docs delivery/validation/handoff 모두 root소유. 다음controller/AI2 writer audit는 `/tmp/nomorevibe-pr03d-remaining-writer-audit-20261016.md`; 실제테스트실행0인읽기계획이다. maintenance와tagline/category/intro를다음분리하고AI2/B5itemcertificate/durablelegacyadmission은별도필수범위로남긴다. provider servingidentity/비용·취소/30분baseline·2배·OracleDR도미완료, defaultlegacy/계약0/newconsumerinactive유지. 향후legacyimage시작전0077migration필수. 다른usercontainer/stash/assets·원본Xbranchpush금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai1
+tail -8 /tmp/nomorevibe-pr03b-root-db-full-fresh-20261016.log
+git status --short
+# 자체STOP session88336 확인. docs5개만 확정commit하고 feature branch만push/PR/CI/정상merge.
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-controllers
+rg -n 'Test Files|Tests |Duration| FAIL ' /tmp/nomorevibe-pr03c-root-db-full-fresh-20261016.log
+# fullDB session28846 실제exit확인후 readback/cleanup. source1da624d 동결, new계획doc만미커밋.
+```
+
+---
+
+# Previous checkpoint — PR03b profile 설치 잠금 조사 / PR03c 세 담당 handback
+
+## Latest correction / actual state at 16:07 UTC
+
+PR03b HEAD f2370a5(source07051b0 + ownership fixture isolation), 원격 push/PR0. 두 번째 full DB는 session40093 exit1:166파일 중9실패/157성공,14실패/1,764성공/75skip/TODO1(343.74초). 첫 실제 오류는 first-final 마지막 case의 profile 설치 중 CREATE TRIGGER replay_handler_change ON public.crawl_candidates lock timeout(PG PID1830,15:55:39.773UTC)이다. 이후 미정리 profile 때문에 already_provisioned가 연쇄 발생했다. 실패 DB55477 보존, blocker는 아직 미확정이며 timeout/검증조건 완화0. 서버 원본 `/tmp/nomorevibe-pr03b-forensic-postgres-20261016.log:349`, full `/tmp/nomorevibe-pr03b-root-db-full-verified-20261016.log`. 새 root55482 `nomorevibe-pr03b-verify-db-20261016`에서 first-final만 실행 중(session58401, `/tmp/nomorevibe-pr03b-root-first-final-fresh-20261016.log`). 자동 ensureSchema가 migration한다. AI1 담당은 읽기 전용 원인 조사 중이다. 아래 과거 'fullDB재실행중'은 이 결과로 대체한다.
+
+PR03c HEAD f2370a5, 별도 controllers WT에서 담당 source handback/freeze. 제품 신규18 + 기존16파일227PASS(중복 합산 금지), evidence 최종4파일85PASS(새15 포함), blocked/기존AI1/runner4파일80PASS(새16 포함), unit7파일90PASS. 각 담당 전체tsc/scopedlint exit0. 실제 교차리뷰 fetch budget0 items/draining에서 요청을 ACK하는 P2를 새2RED/control1로 재현, loop 종료 후 limit0 typed admission 재확인으로3GREEN. 기존 legacy budget0 ACK 유지. Evidence foreign rows는 suspend열만복원하고 raw JSON/µs exact 복원 및 hash 전후동일을 검증했다. 제품 담당55478/evidence55479 STOP, blocked55480 readback 뒤STOP중. root55481 `nomorevibe-pr03c-root-db-20261016` fresh migration exit0이며 full tests 전이다. AI2 담당 제품 교차리뷰, root 직접리뷰 진행. production provider/DDL/consumer/운영변경0.
+
+다음: fresh82 결과·blocker 조사→PR03b 전체DB 검증 마무리. PR03c root 직접/교차 리뷰, 전체 unit/DB/static/build 검증, actual PR03b main 통합과 별도 PR. `tests/integration/agent-review-item-ownership.test.ts`의 원본 candidate 전체행 복원은 Drizzle Date µs 정밀도 주의: suspend한 decidedBy만 복원하고 raw snapshot exact 증명을 보완할지 root 판단(아직 미수정). 기존 source 행동 완화 금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai1
+tail -60 /tmp/nomorevibe-pr03b-root-first-final-fresh-20261016.log
+rg -n -C 3 'lock timeout' /tmp/nomorevibe-pr03b-forensic-postgres-20261016.log
+# session58401 write_stdin으로 실제 exit 확인. 55477 forensic 보존, 다른 container 변경 금지.
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-controllers
+git diff --check
+# 담당 handback 완료, source root 소유. 자체 root55481에서 최종검증은 아직 실행 전.
+```
+
+---
+
+# Previous checkpoint — PR03b source 동결·전체 DB 재검증 / PR03c 세 담당 구현 중
+
+## Current objective / completed
+
+전체 PR별 병렬 개발 목표는 active. root가 세 담당(gpt-6.1-sol/xhigh)의 파일/API/DB 소유권을 관리하고 실제 RED 승인·직접/교차 리뷰·전체 취합/Git 납품한다. PR436 main254a5bb 및 PR38759886199/main38760739008 전체 CI/image SUCCESS, 운영 미적용.
+PR03b WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai1`, branch `codex/pipeline-pr03b-ai1-20261016`, source07051b0 커밋 완료. 기존 root 직접·교차 리뷰 P1/P2 추가0. 한 신규 DB 파일의 fixture 격리 수정과 문서는 아직 미커밋이다. PR03b push/PR/merge 아직0.
+
+## Modified files / design decisions / actual tests
+
+PR03b source27파일은07051b0. 새 ownership·필수 origin receipt, AI1 result/release/request 원자성, shared README/text/admin/settings S3 prefix, B5 handlers-v5 최소 잠금권한+immutable guard/legacy-only admission을 적용했다. 기본legacy/epoch1/계약0·consumer 비활성 유지. 상세 계획/실제 검증 문서 참조.
+root unit277파일2,853PASS(8.30초), sharedDB11파일79PASS(62.98초), nexttypegen/tsc/전체lint/i18n/Python23/build/bundle exit0. 담당24unit/91기존DB/38독립DB PASS 및 자체55474/76 STOP, 75미생성. 첫 full DB166파일은1파일5FAIL/1,848PASS/TODO1(380.23초). foreign 후보가 global handler의 입력으로 들어오고 원본 managed job을 매test 복원한 fixture 격리 문제. root는 원본 후보를 시험동안 제외 후 exact복원하고 catalog원본은afterAll만복원, 실제preclaimjob snapshot을비교한다. 기존결과/권한/원자성/호출assertion 유지. 수정파일38PASS(4.27초); 마지막stable ordering 보완도 포함해 전체DB재실행중 session40093, log `/tmp/nomorevibe-pr03b-root-db-full-verified-20261016.log`. 최종fixture tsc/scopedlint session33616 exit0. root55477 실행중.
+실패한 중간fixture수정1FAIL/37PASS도 숨기지않으며 behavioral RED가 아니다. append-onlyaudit cleanup42501은 rollback후audit보존·ownfixture정리로해결. source 동작완화0.
+
+## PR03c current ownership / actual RED
+
+새 WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-controllers`, branch `codex/pipeline-pr03c-controllers-20261016`, base07051b0. node_modules APFSclone·root nexttypegen exit0. PR03b 최종main을나중에통합한다. 문서 `docs/superpowers/plans/2026-10-16-pipeline-pr03c-controllers.md` root만소유.
+- AI1 제품/발행: products repository/takedown/repo-reviews/uptime-auto-ban, crawl publication-guard/product-audit/product-purpose-cleanup/published-second-review, jobs/products/spam-rescan 및 NEW pipeline-product-stage-lock. 실제 확대RED15/control1→현재16PASS(1.68초); 추가mode/liveitem/publicationgate/기존business회귀 진행. own55478.
+- AI2 evidence: domain/evidence/agents/repository + jobs/products/agent-evidence-refresh 및 NEW pipeline-evidence-stage-lock. 실제stageRED5/control4, directreopen judge요청누락RED1·request실패시candidate선commitRED1. S3 prefix+최종walljob+실제reopen/request같은tx 구현승인. own55479.
+- 독립/runner 담당: jobs/runner, crawl/repository의dequeue관련, crawl/jobs/fetch·agent-review, 필요한fetchunit4/AI1unit1, NEW pipeline-blocked-requests. 추가로 B5 runner와runner unit의deferred첫결과중단호환만배정. 실제blockedRED4/control3. typeddequeue동일tx+기존배열wrapper, 전용stage_blocked outcome/CASunlock만허용, 기존donefalseACK유지. own55480.
+세 담당 모두 source행동수정 승인했고 각자소유만편집중. 같은파일/DB충돌0. migration/provider/Git/consumer/B5authority확장은금지. rootoldWT 검증과newWT source는분리.
+
+## Remaining work / next commands
+
+PR03b 전체DB PASS확정→자체55477fixture/role/trigger/connections/legacy기본값/PUBLIC ACL readback→STOP→최종문서·명시파일commit/push→PR/최신base필수CI→정상merge/mainCI/images. PR03c는handback후root직접/교차리뷰·전체검증·actualmain통합한다.
+미완료: maintenance/reconsider/rejudge/duplicate/tagline/category, fullAI2 writers, B5 itemcertificate(별도PR03d이후), durablelegacy외부종료/실모델servingidentity·비용·취소/30분baseline·후속PR05–17. 2배·OracleDR미판정. 마지막운영릴리스8020dca; 향후legacyimage시작전0077migration먼저필수. 운영변경0.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-ai1
+rg -n 'Test Files|Tests |Duration| FAIL ' /tmp/nomorevibe-pr03b-root-db-full-verified-20261016.log
+# fullDB현재session40093: tools.write_stdin polling으로실제exit확인
+# PASS후55477ownreadback/정리, 문서확정·명시commit/push·PR필수CI·정상merge
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-controllers
+git status --short
+cat docs/superpowers/plans/2026-10-16-pipeline-pr03c-controllers.md
+# 담당3명 실행중, fileownership 반환전root편집금지. docs는root소유.
+```
+
+---
+
 # 2026-10-16 — PR435 전체 CI 성공 / PR03a 전체 로컬 검증 완료
 
 ## Current objective / completed

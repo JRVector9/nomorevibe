@@ -27,8 +27,9 @@ export async function removeReplayHandlerTestProfile(identityPath: string): Prom
       const [runtime] = await tx`SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE usesysid = ${identity.roleOid}::oid) AS active,
         EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = ${identity.roleOid}::oid) AS owned`;
       if (runtime.active || runtime.owned) throw new Error("replay_test_runtime_still_connected");
-      for (const table of ["crawl_settings", "crawl_documents", "agent_repository_scans", "agent_repository_observations"])
-        await tx.unsafe(`DROP TRIGGER replay_handler_source_immutable ON public.${table}`);
+      for (const table of ["crawl_settings", "crawl_documents", "agent_repository_scans", "agent_repository_observations",
+        "pipeline_stage_modes", "pipeline_item_leases"])
+        await tx.unsafe(`DROP TRIGGER IF EXISTS replay_handler_source_immutable ON public.${table}`);
       for (const table of ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
         "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"])
         await tx.unsafe(`DROP TRIGGER replay_handler_change ON ${table}`);
@@ -51,10 +52,20 @@ export async function getReplayHandlerIdentityPath(options: { beforeProvision?: 
   try {
     await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8"));
     await options.beforeProvision?.(admin);
+    await admin.end({ timeout: 3 });
+    await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
+      acknowledgeDedicatedCluster: true, env: {} });
+  } catch (error) {
+    const errors = [error];
+    try { await admin.end({ timeout: 3 }); }
+    catch (cleanupError) { if (cleanupError !== error) errors.push(cleanupError); }
+    // The bootstrap owns the exact identity, original ACLs and runtime role.
+    // Its verified release must reject mismatches rather than remove another fixture.
+    try { await bootstrap.release(); }
+    catch (cleanupError) { errors.push(cleanupError); }
+    if (errors.length > 1) throw new AggregateError(errors, "replay_handler_setup_cleanup_failed", { cause: error });
+    throw error;
   }
-  finally { await admin.end({ timeout: 3 }); }
-  await provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath: bootstrap.identityPath,
-    acknowledgeDedicatedCluster: true, env: {} });
   return { identityPath: bootstrap.identityPath, async release() {
     await removeReplayHandlerTestProfile(bootstrap.identityPath);
     await bootstrap.release();

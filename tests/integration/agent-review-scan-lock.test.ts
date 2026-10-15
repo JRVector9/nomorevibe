@@ -53,7 +53,7 @@ async function fixture() {
   const context = {candidate,document,settings,lease,input:await loadReviewInput(candidate,document,settings)};
   const claim = await claimAgentReview({...context,provider:"claude-cli",model:"test"});
   if (claim.kind==="skipped") throw new Error(claim.reason);
-  await recordAgentReview({...context,attempt:claim.attempt,outcome:{decision:"approve",reason:"Deployed app",evidenceIds:["product"]}});
+  await recordAgentReview({...context,receipt:claim.receipt,outcome:{decision:"approve",reason:"Deployed app",evidenceIds:["product"]}});
   const [approved] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id));
   return {...context,candidate:approved,scan};
 }

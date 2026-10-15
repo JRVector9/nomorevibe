@@ -17,6 +17,7 @@ import { withReplayFinalScope } from "@/lib/operations/pipeline-replay-final";
 import { withReviewFixtureTransport, type ReviewFixtureCallback } from "@/lib/crawl/review-fixture-transport";
 import { withReviewReplayContext } from "@/lib/crawl/review-replay-context";
 import { loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
+import { legacyReviewReceiptFixture } from "./agent-review-receipt-fixtures";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
@@ -241,7 +242,8 @@ it("keeps a duplicate successful AI1 writer and its outbox idempotent", async ()
     const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, value.candidate.id));
     const [attempt] = await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidate.id));
     const input = await loadReviewInput(candidate, document, settings);
-    expect(await recordAgentReview({ candidate, document, settings, input, attempt, lease: ctx.lease! }))
+    const receipt = await legacyReviewReceiptFixture(attempt.id, ctx.lease!);
+    expect(await recordAgentReview({ candidate, document, settings, input, receipt }))
       .toEqual({ applied: true, state: "succeeded" });
   });
   expect(result.status).toBe("completed");
@@ -260,7 +262,8 @@ it("rejects a forged approval after the actual settled call failed", async () =>
     const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, value.candidate.id));
     const [attempt] = await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidate.id));
     const input = await loadReviewInput(candidate, document, settings);
-    await expect(recordAgentReview({ candidate, document, settings, input, attempt, lease: ctx.lease!, outcome: outcome("approve") }))
+    const receipt = await legacyReviewReceiptFixture(attempt.id, ctx.lease!);
+    await expect(recordAgentReview({ candidate, document, settings, input, receipt, outcome: outcome("approve") }))
       .rejects.toThrow("replay_final_result_mismatch");
   });
   expect(result.status).toBe("completed");

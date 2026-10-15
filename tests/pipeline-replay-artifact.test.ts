@@ -61,7 +61,7 @@ function fixture(): ReplayArtifact {
       models: { first: { provider: "abcllm", model: "first", canonicalModel: "first" }, second: [], fallbacks: [] },
       inputs: [{ ...input, readyAt: at(0), stratum: "new", reReview: false }],
       limits: { maxCalls: 100, maxTokens: 10_000, maxDurationMs: 1_800_000, concurrency: 1, perCallTokenUpperBound: 100 } },
-    run: { runId: "fixture-run", epoch: 1, profile: "handlers-v4", state: "sealed", startedAt: at(0), deadlineAt: at(1_800_000),
+    run: { runId: "fixture-run", epoch: 1, profile: "handlers-v5", state: "sealed", startedAt: at(0), deadlineAt: at(1_800_000),
       admissionClosedAt: at(1_800_000), writersFencedAt: at(1_800_100), sealedAt: at(1_800_200), chargedCalls: 0, chargedTokens: 0 },
     initial: { capturedAt: at(-1), initialStateHash: hash, comparisonStateHash: hash,
       projection: { version: 1, referenceTime: at(-86_400_000), universe: [entry],
@@ -386,4 +386,11 @@ it("rejects foreign databases, unsealed readback and changed expected artifacts 
     .rejects.toThrow("replay_artifact_database_mismatch");
   authority.readback.mockResolvedValue({ ...value, run: { ...value.run, state: "draining" } });
   await expect(loadVerifiedReplayArtifact(authority.database as VerifiedReplayDatabase, value.run.runId)).rejects.toThrow("invalid_replay_artifact");
+});
+
+
+it("rejects the earlier handler profile instead of relabeling its sealed evidence", () => {
+  const value = fixture();
+  const previous = { ...value, run: { ...value.run, profile: "handlers-v4" } };
+  expect(() => parseReplayArtifact(previous)).toThrow("invalid_replay_artifact");
 });

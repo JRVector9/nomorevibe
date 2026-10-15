@@ -53,7 +53,7 @@ async function first() {
   const context = { ...f, candidate, lease, provider: "claude-cli", model: "first-fixture", input: await loadReviewInput(candidate, f.document, f.settings) };
   const claim = await claimAgentReview(context);
   if (claim.kind === "skipped") throw Error(claim.reason);
-  return { ...context, attempt: claim.attempt };
+  return { ...context, attempt: claim.attempt, receipt: claim.receipt };
 }
 it.each(["off", "observe", "enforce"] as const)("rules commit wakes the existing consumers for mode %s", async mode => {
   const f = await fixture(mode);

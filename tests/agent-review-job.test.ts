@@ -3,23 +3,27 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
 vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.requestJob}));
 const context = () => ({cursor:null,hasBudget:()=>true,save:vi.fn(),log:vi.fn(),lease:{name:"crawl-agent-review",token:"token",requestedVersion:1}});
+const receipt = (attemptId = 1, origin: "fresh" | "direct_reuse" | "semantic_reuse" = "fresh") => ({
+  attemptId, origin, ownership: { kind: "legacy" as const, stageEpoch: 1, job: context().lease },
+});
 const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example",state:"approved",decidedBy:"auto",judgedAt:new Date()} as CrawlCandidate);
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
+  mocks.canStart.mockResolvedValue(true);
   mocks.requeue.mockResolvedValue(0);
   mocks.handOff.mockResolvedValue(0);
   mocks.readme.mockResolvedValue("");
@@ -28,7 +32,7 @@ beforeEach(() => {
     pageMeta:{title:"Demo"},pageStatus:200,fetchedAt:now} as CrawlDocument;
   mocks.list.mockResolvedValue([candidate()]);mocks.document.mockResolvedValue(document);
   mocks.input.mockImplementation(async (c,d,s) => createReviewInput(c,d,s,{scan:null,observations:[]}));
-  mocks.existing.mockResolvedValue(null);mocks.claim.mockResolvedValue({kind:"claimed",attempt:{id:1,attemptNumber:1}});
+  mocks.existing.mockResolvedValue(null);mocks.claim.mockResolvedValue({kind:"claimed",attempt:{id:1,attemptNumber:1},receipt:receipt()});
   mocks.record.mockResolvedValue({applied:false,state:"succeeded"});
   mocks.review.mockResolvedValue({ok:true,outcome:{decision:"approve",reason:"Deployed task tracker",evidenceIds:["product"]},usage:{}});
 });
@@ -42,7 +46,7 @@ it("기본 동시성 둘의 슬롯을 완료 후 다시 사용한다", async () 
   expect(await reviewCrawlCandidates(context())).toEqual({done:false});
   expect(mocks.review).toHaveBeenCalledTimes(3);
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1,2,3]);
-  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({settings:expect.objectContaining({reviewMode:"observe"}),outcome:expect.objectContaining({decision:"approve"}),lease:context().lease}));
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({settings:expect.objectContaining({reviewMode:"observe"}),outcome:expect.objectContaining({decision:"approve"}),receipt:receipt()}));
 });
 /**
  * 1차 심사자를 설정으로 갈아 끼울 수 있어야 한다.
@@ -170,8 +174,8 @@ it("leaves handoff to each result transaction without a duplicate batch request"
   mocks.settings!.reviewMode = "enforce";
   mocks.list.mockResolvedValue([candidate(),{...candidate(),id:2}]);
   const approval = {decision:"approve",reason:"Deployed task tracker",evidenceIds:["product"]};
-  mocks.claim.mockResolvedValueOnce({kind:"reused",attempt:{id:1,attemptNumber:1,outcome:approval}})
-    .mockResolvedValueOnce({kind:"claimed",attempt:{id:2,attemptNumber:1}});
+  mocks.claim.mockResolvedValueOnce({kind:"reused",attempt:{id:1,attemptNumber:1,outcome:approval},receipt:receipt(1,"direct_reuse")})
+    .mockResolvedValueOnce({kind:"claimed",attempt:{id:2,attemptNumber:1},receipt:receipt(2)});
   mocks.record.mockResolvedValue({applied:true,state:"succeeded"});
   await reviewCrawlCandidates(context());
   expect(mocks.record).toHaveBeenCalledTimes(2);
@@ -254,7 +258,7 @@ it("does not call the same candidate twice or request continuation after no prog
 
 it("a shutdown received during claim never enters a provider adapter", async () => {
   const stopping = new AbortController();
-  mocks.claim.mockImplementation(async () => { stopping.abort(); return { kind: "claimed", attempt: { id: 1, attemptNumber: 1 } }; });
+  mocks.claim.mockImplementation(async () => { stopping.abort(); return { kind: "claimed", attempt: { id: 1, attemptNumber: 1 }, receipt: receipt() }; });
   await reviewCrawlCandidates({ ...context(), signal: stopping.signal });
   expect(mocks.review).not.toHaveBeenCalled();
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ error: "cancelled" }));
@@ -266,4 +270,41 @@ it("cleans a claim instead of applying success received after shutdown", async (
   await reviewCrawlCandidates({ ...context(), signal: stopping.signal });
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ error: "cancelled" }));
   expect(mocks.record.mock.calls[0][0].outcome).toBeUndefined();
+});
+
+
+it("does not requeue, hand off, read README or call a provider when legacy stage admission is closed", async () => {
+  mocks.canStart.mockResolvedValue(false);
+  await reviewCrawlCandidates(context());
+  expect(mocks.requeue).not.toHaveBeenCalled();
+  expect(mocks.handOff).not.toHaveBeenCalled();
+  expect(mocks.list).not.toHaveBeenCalled();
+  expect(mocks.document).not.toHaveBeenCalled();
+  expect(mocks.readme).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("checks candidate admission before README when a logical item is owned", async () => {
+  mocks.canStart.mockResolvedValueOnce(true).mockResolvedValue(false);
+  await reviewCrawlCandidates(context());
+  expect(mocks.canStart).toHaveBeenCalledWith(context().lease, 1);
+  expect(mocks.document).not.toHaveBeenCalled();
+  expect(mocks.readme).not.toHaveBeenCalled();
+  expect(mocks.claim).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("settles the new running semantic reuse attempt when shutdown arrives during claim", async () => {
+  const stopping = new AbortController();
+  const semanticReceipt = receipt(42, "semantic_reuse");
+  mocks.claim.mockImplementation(async () => {
+    stopping.abort();
+    return { kind: "reused", attempt: { id: 42, attemptNumber: 1, reusedFromAttemptId: 7 }, receipt: semanticReceipt };
+  });
+  await reviewCrawlCandidates({ ...context(), signal: stopping.signal });
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledOnce();
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ receipt: semanticReceipt, error: "cancelled" }));
+  expect(mocks.record.mock.calls[0][0]).not.toHaveProperty("lease");
+  expect(mocks.record.mock.calls[0][0]).not.toHaveProperty("attempt");
 });

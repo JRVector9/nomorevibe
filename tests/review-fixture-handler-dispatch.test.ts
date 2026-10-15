@@ -16,6 +16,7 @@ vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: async (
 vi.mock("@/lib/domain/products/repository", () => ({ findRepositoryProduct: async () => null }));
 vi.mock("@/lib/crawl/repository", () => ({ holdSuspectedSpam: vi.fn() }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSources: async () => 0,
+  canStartLegacyAgentReview: async () => true,
   handOffExhaustedFirstReviews: async () => 0, listReviewCandidates: async () => [mocks.candidate],
   loadReviewInput: async () => mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.recordFirst }));
 vi.mock("@/lib/crawl/second-review-input", () => ({ loadSecondReviewInput: async () => mocks.input }));
@@ -41,7 +42,8 @@ beforeEach(() => {
   mocks.input = createReviewInput(mocks.candidate, mocks.document, mocks.settings, { scan: null, observations: [] }, now);
   mocks.row = { id: 23, candidateId: 1, repo: "acme/demo", firstAttemptId: 11, firstDecision: "approve", firstConfidence: 0.99,
     firstModel: "first-model", generationKey: "d".repeat(64), fallbackForId: 19, provider: "abcllm", model: "second-model" } as SecondReview;
-  mocks.claim.mockResolvedValue({ kind: "claimed", attempt: { id: 11, attemptNumber: 1 } });
+  mocks.claim.mockResolvedValue({ kind: "claimed", attempt: { id: 11, attemptNumber: 1 },
+    receipt: { attemptId: 11, origin: "fresh", ownership: { kind: "legacy", stageEpoch: 1, job: context("crawl-agent-review").lease } } });
   mocks.recordFirst.mockResolvedValue({ applied: false, state: "succeeded" });
   mocks.external.mockRejectedValue(new Error("raw_model_adapter_reached"));
 });
@@ -65,7 +67,11 @@ it.each(["abcllm", "claude-cli", "grok-cli"] as const)("routes AI1 %s through fi
   expect(mocks.external).not.toHaveBeenCalled();
   expect(h.fixture).toHaveBeenCalledTimes(1);
   expect(h.ledger.reserve).toHaveBeenCalledWith(h.run, expect.objectContaining({ stage: "first", candidateId: 1, firstAttemptId: 11, provider, model: "first-model" }));
-  expect(mocks.recordFirst).toHaveBeenCalledWith(expect.objectContaining({ attempt: { id: 11, attemptNumber: 1 }, outcome: expect.objectContaining({ decision: "approve" }) }));
+  expect(mocks.recordFirst).toHaveBeenCalledWith(expect.objectContaining({
+    receipt: { attemptId: 11, origin: "fresh", ownership: { kind: "legacy", stageEpoch: 1, job: context("crawl-agent-review").lease } },
+    outcome: expect.objectContaining({ decision: "approve" }),
+  }));
+  expect(mocks.recordFirst.mock.calls[0][0]).not.toHaveProperty("attempt");
   expect(h.events).toEqual(["settled", "writer"]);
 });
 

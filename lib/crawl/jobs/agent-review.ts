@@ -7,7 +7,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { judgeStoredDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, handOffExhaustedFirstReviews } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
@@ -32,6 +32,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("AI review requires a valid worker job lease");
+  if (!await canStartLegacyAgentReview(lease)) {
+    ctx.log("crawl.agent_review_skipped", { reason: "stage_inactive" });
+    return { done: false };
+  }
   const reviewer = firstReviewer(settings);
   if (!reviewer) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const { provider: reviewProvider, model } = reviewer;
@@ -51,7 +55,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   let next = 0, admitted = 0, progress = 0, stopped = false;
   const canStart = () => !stopped && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
   const processCandidate = async (candidate: typeof candidates[number]) => {
-    if (!isReviewCandidate(candidate)) return;
+    if (!isReviewCandidate(candidate) || !await canStartLegacyAgentReview(lease, candidate.id)) return;
     const document = await loadReviewDocument(candidate.repo, lease);
     if (!document) return;
     const input = await loadReviewInput(candidate, document, settings);
@@ -80,14 +84,14 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       && !input.snapshot.evidenceSummary.eligible ? input.snapshot.evidenceSummary.reason : null;
     const provider = hardReason || evidenceHold ? "rules" : reviewProvider;
     if (!canStart()) return;
-    const context = { candidate, document, settings, input, lease };
-    const claim = await claimAgentReview({ ...context, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+    const context = { candidate, document, settings, input };
+    const claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
     if (claim.kind === "skipped") {
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
       return;
     }
     if (!canStart()) {
-      if (claim.kind === "claimed") await recordAgentReview({ ...context, attempt: claim.attempt,
+      await recordAgentReview({ ...context, receipt: claim.receipt,
         error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
       return;
     }
@@ -102,7 +106,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         decision: "needs_review", reason: `개발 근거 확인이 필요합니다 (${evidenceHold}). 현재 수집 내용만으로 승인하거나 부적격으로 확정하지 않습니다.`,
         evidenceIds: ["product", ...input.snapshot.evidence.slice(0, 8).map(item => item.id)],
       } : claim.attempt.outcome ?? undefined;
-      const recorded = await recordAgentReview({ ...context, attempt: claim.attempt, outcome,
+      const recorded = await recordAgentReview({ ...context, receipt: claim.receipt, outcome,
         ruleRejection: hardReason ? { reason: hardReason, ...(existing ? { existingSlug: existing.slug, existingStatus: existing.status } : {}) } : undefined });
       if (recorded.state === "succeeded") progress++;
       if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
@@ -127,7 +131,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
       if (!result.ok) stopped = true;
       const recorded = await recordAgentReview({
-        ...context, attempt: claim.attempt,
+        ...context, receipt: claim.receipt,
         ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
           error: result.error, usage: result.usage,
           retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),

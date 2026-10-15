@@ -31,10 +31,13 @@ beforeEach(async () => {
   await admin`TRUNCATE second_reviews, crawl_review_attempts, crawl_candidates, crawl_documents,
     crawl_frontier, jobs, crawl_settings, operations_observations RESTART IDENTITY CASCADE`;
 });
-afterEach(async () => { await release?.(); release = undefined; });
+afterEach(async () => {
+  await release?.(); release = undefined;
+  await admin`UPDATE pipeline_stage_modes SET mode='legacy', draining_from=NULL, epoch=1, writer_contract_version=0`;
+});
 afterAll(async () => { await admin?.end({ timeout: 3 }); });
 
-async function prepare() {
+async function prepare(stageMode?: "items" | "draining") {
   const settings = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "enforce" as const,
     firstReview: { provider: "abcllm" as const, model: "fixture-first" },
     secondReview: { ...structuredClone(DEFAULT_CRAWL_SETTINGS.secondReview), enabled: true,
@@ -59,6 +62,8 @@ async function prepare() {
     inputs: [{ candidateId: candidate.id, inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash,
       readyAt: reference.toISOString(), stratum: "new", reReview: false }],
     limits: { maxCalls: 8, maxTokens: 800, perCallTokenUpperBound: 100, maxDurationMs: 120_000, concurrency: 2 } };
+  if (stageMode) await admin`UPDATE pipeline_stage_modes SET mode=${stageMode},
+    draining_from=${stageMode === "draining" ? "legacy" : null}, writer_contract_version=1 WHERE stage='ai1'`;
   const owned = await getReplayHandlerIdentityPath(); release = owned.release;
   const database = await openVerifiedReplayHandlerDatabase(owned.identityPath, {});
   const inputs = [{ candidateId: candidate.id, input }];
@@ -66,6 +71,15 @@ async function prepare() {
   finally { await database.close(); }
   return { ...owned, manifest, inputs, candidate };
 }
+
+it.each(["items", "draining"] as const)("rejects untracked %s stage state before certified execution", async mode => {
+  const value = await prepare(mode);
+  const fixture = vi.fn();
+  await expect(runCertifiedFixtureReviewReplay({ ...value, fixture })).rejects.toThrow("unsupported_replay_stage_state");
+  expect(fixture).not.toHaveBeenCalled();
+  const [runs] = await admin`SELECT count(*)::int AS count FROM pipeline_replay.capacity_runs`;
+  expect(runs.count).toBe(0);
+});
 
 it("seals actual two-stage fixture work only after all writers finish and authenticates the complete DB readback", async () => {
   const value = await prepare();

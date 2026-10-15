@@ -9,7 +9,8 @@ import { withReviewFixtureTransport, type ReviewFixtureCallback } from "@/lib/cr
 import { assertReplayDatabaseScopeIdentity, currentReplayDb, withReplayDatabaseScope } from "@/lib/db/replay-scope";
 import { runJob, type RunResult } from "@/lib/jobs/runner";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash, parseCapacityManifest, type CapacityManifest } from "./pipeline-capacity";
-import { openVerifiedReplayHandlerDatabase } from "./pipeline-replay-database";
+import { assertVerifiedReplayHandlerDatabase, openVerifiedReplayHandlerDatabase,
+  verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "./pipeline-replay-database";
 import { ReplayLedger } from "./pipeline-replay-ledger";
 import { withReplayFinalScope } from "./pipeline-replay-final";
 import { replayQuiescenceProof, withReplayExecutionScope } from "./pipeline-replay-execution";
@@ -26,6 +27,23 @@ export type FixtureReviewReplayOptions = {
   budgetMs?: number;
   signal?: AbortSignal;
 };
+
+/** This profile certifies only the original legacy fixture path. Stage/item
+ * projection and authority are not journaled yet, so other states fail closed. */
+async function assertLegacyReplayStages(database: VerifiedReplayDatabase): Promise<void> {
+  assertVerifiedReplayHandlerDatabase(database);
+  await database.client.begin(async tx => {
+    await verifyReplayDatabaseSession(tx, database);
+    for (const stage of ["fetch", "ai1", "ai2"]) {
+      const [row] = await tx`SELECT mode, draining_from, epoch, writer_contract_version
+        FROM public.pipeline_stage_modes WHERE stage=${stage} FOR SHARE`;
+      if (!row || row.mode !== "legacy" || row.draining_from !== null || Number(row.epoch) !== 1
+        || Number(row.writer_contract_version) !== 0) throw new Error("unsupported_replay_stage_state");
+    }
+    const items = await tx`SELECT work_key FROM public.pipeline_item_leases LIMIT 1 FOR SHARE`;
+    if (items.length) throw new Error("unsupported_replay_stage_state");
+  });
+}
 
 async function assertReplaySettings(manifest: CapacityManifest): Promise<void> {
   const settings = await getSettings();
@@ -57,6 +75,7 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
   const database = await openVerifiedReplayHandlerDatabase(identityPath, {});
   let wallDeadline: ReturnType<typeof setTimeout> | undefined;
   try {
+    await assertLegacyReplayStages(database);
     const ledger = new ReplayLedger(database);
     const run = await ledger.prepare(manifest, inputs);
     const deadline = new AbortController();
@@ -74,6 +93,7 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
             tokenUpperBound: manifest.limits.perCallTokenUpperBound }, async () => {
             for (const name of names) {
               // Read through the verified scope before every claim; no transaction spans inference.
+              await assertLegacyReplayStages(database);
               await assertReplaySettings(manifest);
               const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
                 { requestedOnly: true, budgetMs, signal });
@@ -114,6 +134,7 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
   const database = await openVerifiedReplayHandlerDatabase(identityPath, {});
   let wallDeadline: ReturnType<typeof setTimeout> | undefined;
   try {
+    await assertLegacyReplayStages(database);
     const ledger = new ReplayLedger(database);
     const run = await ledger.prepareCertified(manifest, inputs, { runner: { jobs: names, budgetMs }, quality });
     const deadline = new AbortController();
@@ -133,6 +154,7 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
               tokenUpperBound: manifest.limits.perCallTokenUpperBound }, async () => {
               for (const name of names) {
                 if (signal.aborted) break;
+                await assertLegacyReplayStages(database);
                 await assertReplaySettings(manifest);
                 const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
                   { requestedOnly: true, budgetMs, signal });
@@ -148,6 +170,7 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
       await ledger.drain(run);
       await ledger.fenceWriters(run);
     }
+    await assertLegacyReplayStages(database);
     await ledger.seal(run, replayQuiescenceProof(run));
     const artifact = await loadVerifiedReplayArtifact(database, run.runId);
     return { runId: run.runId, jobs, artifact, diagnostics: reportVerifiedReplayArtifact(artifact) };
