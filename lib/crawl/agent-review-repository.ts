@@ -144,6 +144,12 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }
 
+/** Read-only measurement projection of the exact publication approval gate. */
+export function secondReviewApprovalPredicate(settings: CrawlSettings): SQL {
+  return secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
+    settings.secondReview.voters, settings.secondReview.fallbacks ?? []);
+}
+
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
   if (settings.reviewMode !== "enforce") return sql`true`;
   return sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (

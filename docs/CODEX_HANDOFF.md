@@ -1,3 +1,146 @@
+# 2026-10-15 16:45 KST — PR01a 구현·최종 로컬 검증 완료 / 제출 준비
+
+## Current objective
+
+사용자가 승인한 PR00–17 순차 실행을 계속한다. PR00은 main8020dca로 M3/mini13앱 배포 완료다.
+현재 PR01a의 현재 검수 세대 스냅샷·오프라인 비교·격리 DB admission 구현을 마쳤다.
+PR01b 실제 runner/사전 예산·준비·최종 전이 장부는 아직 미구현이며 원래 PR01 전체 완료가 아니다.
+
+## Completed work / modified files
+
+작업 위치 `/Users/jr/Desktop/projects/nomorevibe-pipeline-pr01`, branch
+`codex/pipeline-pr01-capacity-20261015`, base `8020dcae2e69f64922d71e8469fc86a5495399dc`.
+아직 이 단계의 commit/push/PR/배포는 전이다. root X 브랜치·사용자 untracked는 그대로다.
+
+- `lib/operations/pipeline-capacity.ts`: strict artifact, 현재 적용된 자동 최종 세대·신규 후보별 중복 제거,
+  별도 reReview/repeat, 필수 AI2 마지막 시각·p50/p95, 품질·준비·호출·예산 진단, fail-closed replay admission.
+- `lib/operations/pipeline-capacity-repository.ts`: primary read-only/repeatable-read snapshot,
+  실제 current input/policy/model/actor/appliedAttemptId 결합, 기존 발행 gate SQL 재사용.
+- `lib/crawl/agent-review-repository.ts`: 기존 SQL을 읽기 측정에 노출하는 wrapper만 추가, writer/gate 동작 불변.
+- `scripts/{measure,export}-pipeline-capacity.ts`: report/compare/replay-plan와 명시 local test DB export,
+  history cohort filter, mode0600 exclusive 파일. replay는 미구현 고정 오류로 거절한다.
+- `lib/operations/pipeline-capacity-cli.ts`: schema/DB/FS의 비밀·입력 노출을 막는 고정 오류 경계.
+- `scripts/test-database.ts`: postgres.js 첫@/다중 host URL 해석 차이 우회 차단.
+  `scripts/report-review-latency.ts`: 기존 로그는 best-effort telemetry이며 최종 처리량·speedup은 null로 표시.
+- `tests/pipeline-capacity{,-export,-cli}.test.ts`, `tests/integration/pipeline-capacity.test.ts` 추가.
+- 상세 계획3파일, roadmap, PR00 배포 기록과
+  `docs/operations/2026-10-15-pipeline-pr01a-validation.md`에 실제 결과·사용법·한계를 기록했다.
+
+## Key decisions / failed approaches
+
+정확한 export는 전체 normalized 설정 hash로 묶고, 비교용 hash는 reviewConcurrency만 제외한다.
+JSON 출처 표시는 인증 증거가 아니다. 모든 성능 판정은 incomplete/as_of_snapshot_only/unverified다.
+발행 cleanup 이후 AI2 행으로 과거 gate를 복원할 수 없으며 실제 회귀로 검증했다.
+현재 입력 재계산은 기존 함수의 현재 시각을 사용하므로 고정 기준 시각 replay도 아직 아니다.
+규칙·복사 재사용·사람/미적용·부분·만료·재심사는 신규 최종 처리량에서 제외한다.
+AI1 거절은 승인용 AI2를 요구하지 않는다. published 상태 투영은 읽기 전용 시각 계산에 한정한다.
+
+실제 RED→GREEN: 초기 missing module과52행동 assertion, 발행 gate/거절 AI2/history cohort/model binding,
+재심사와 repeat 구분2건, URL 파서 우회3건, 두 CLI schema canary 노출 포함 전용18건.
+원격 DB/client를 구성하지 않고 URL 차이를 입증했다. 독립 최종 review에서 차단 문제 없음.
+
+## Test commands and actual results
+
+- `npm test`:263파일/2,633PASS (최종 URL·오류 경계 수정 후).
+- 아래 전용 DB 관련4파일 통합:62PASS (최종 수정 후).
+- `npx next typegen`, `npx tsc --noEmit`, `npm run check:i18n`, `npm run lint`, diff 검사PASS.
+  기존 vendor `_ctx` lint 경고1, Vite native-config 경고가 남아 있다.
+- `DATABASE_URL=postgres://build:build@localhost:5432/build npm run build`:PASS;
+  기존 agent-review dynamic spawn tracing 경고. 이 build는 최종 offline URL·오류 수정 직전이다.
+- bundle PASS(home148.7/product159.0/launch136.2KB br), Python deploy23PASS.
+- local DB: 컨테이너 `nomorevibe-pipeline-pr01-test-db-20261015`, 127.0.0.1:55452/nomorevibe_test만 사용.
+  local image pgvector/pgvector:pg17 digest ac08538c…/PostgreSQL17.11; CI 고정0.8.6-pg17와 구분한다.
+- 실모델/30분 부하·운영 DB write·공개 발행·migration·PR01a 배포는 실행하지 않았다. DDL 없음.
+
+## Remaining work / exact next commands
+
+1. 명시 파일 commit/push/PR 생성, 최신 base의 check·quality·통합3shard 실제 성공 후 병합한다.
+2. PR01b의 provider별 강제 상한·사전 호출/토큰 예약·고정 시각·준비/최종 전이 장부를 상세 계획 후 구현한다.
+   PR01b 합격 전 PR02 새 consumer를 활성화하지 않는다.
+3. PR00 근거 helper는 이미 새8020dca crawler의 단일PID358로 재개했다. restore/start를 다시 하지 않는다.
+   마지막 확인07:26Z saved5372/새29건 DB유효29/오류0, due45228출처/22940제품, held339.
+   원래 만료2026-10-17T03:22:09.892Z/max10000/I/O1/180s 및 pause/예산을 보존한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01
+git diff --check
+git fetch origin main
+git status --short
+# 아래 integration은 전용 container가 켜진 경우에만 실행한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55452/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/pipeline-capacity.test.ts tests/integration/review-publication-gate.test.ts tests/integration/review-handoffs.test.ts tests/integration/agent-review-records.test.ts
+# 로컬 검증 후 전용 DB를 stop한다. rm/volume 삭제는 필요 없다.
+docker stop nomorevibe-pipeline-pr01-test-db-20261015
+gh pr list --head codex/pipeline-pr01-capacity-20261015 --json number,url,state
+CATCHUP_TRANSPORT_APPROVED=1 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/persistent/server-wrapper.py status
+```
+
+---
+
+# 2026-10-15 16:28 KST — PR00 운영 13앱 배포 완료 / PR01a 구현·검증 중
+
+## Current objective
+
+사용자가 “진행하자 / 이어서 해”로 승인한 PR 순차 실행을 계속한다. PR00은 실제 운영 배포를 완료했다.
+현재 별도 worktree의 PR01a(현재 영속 검수 스냅샷·오프라인 비교·격리 admission 계약)를 검증 중이다.
+원래 PR01의 실제 모델 replay/사전 예산 장부/최종 전이 이력은 PR01b로 분리했으며 아직 구현·성능 합격이 아니다.
+
+## Completed work / modified files
+
+- main8020dca의 CI38695981729 전체 quality/통합3shard/check/worker·web image 성공 확인.
+- detached /Users/jr/Desktop/projects/nomorevibe-release-8020dca에서 공통 배포 plan/run 실제exit0.
+  publisher/reviewer/crawler 각 mini→M3, web mini→M3의8앱 모두 동일target digest·runtime healthy.
+  역할별 readiness/progress 정상, 공개 health의 두 web릴리스와 HTML purge 확인.
+- 별도 Git-source maintenance2/text2/scheduler1도 mini→M3·scheduler마지막으로 배포했다.
+  최종 verify exit0:5앱6컨테이너 모두 healthy/기대replicas(스케줄러2/2), runtime537파일씩 target과일치.
+  Dokploy commit metadata는없어 Git checkout 자체·dependency/toolchain provenance까지 입증한 것은 아니다.
+- 배포 snapshot(비밀포함·0600·Git금지): /private/tmp/nomorevibe-release-8020dca-20261015-0719.json,
+  source5전체설정 /private/tmp/nomorevibe-pr00-source5-20261015/snapshot.json.
+- 근거helper oldPID35683을07:15:06Z 한 번 SIGTERM/drain, zerohelper 확인 뒤23파일최종export.
+  새 crawler release검증 뒤23/23restore·4공식export확인·단일PID358재개.
+  07:26:54Z cycle216/attempted5580/saved5372. 새 저장29건/29현재입력·DB유효/오류0.
+  원215cyclehistory byte-exactprefix와 만료2026-10-17T03:22:09.892Z/max10000/I/O1/budget180s 보존.
+  새 restore/start 금지: 이미 단일재개완료. private proof는 ~/.config/nomorevibe/backlog-recovery/2026-10-15/pr00-helper-handoff/final-handoff-summary.json.
+- PR01a worktree /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01,
+  branch codex/pipeline-pr01-capacity-20261015, base8020dca. 아직 commit/push/PR 없음.
+  신규 capacity core/repository/report·exportCLI/unit·integration, gate read-only wrapper,
+  상세계획2파일과 latency telemetry표시를 작성 중이다. root X브랜치/untracked는 그대로다.
+
+## Key decisions / tests / failed approaches
+
+공유gate SQL을 그대로 재사용하며 현재input/model/policy/사람판단/appliedAttemptId를 검증한다.
+AI1 reject는 approval-onlyAI2를 요구하지 않는다. 복사재사용·규칙·사람hold·재심사·표를 최종신규처리량에서 뺀다.
+전체 normalized설정hash를 사용한다(기존reviewPolicyHash는 AI2/model설정누락).
+스냅샷은 현재행뿐이고 발행뒤cleanup/사람변경 전의 과거완료를 재구성하지 못한다.
+따라서 offline상태는 as_of_snapshot_only/unverified, real-model성능·예산합격은 항상incomplete다.
+실제replay실행은명시거절, localtestDB admission만검증한다. 공공/운영상태write없음, DDL없음.
+
+실행한 검증: source5비공개helper18offlinePASS+각구문검사PASS; 기존catchup41Node/6PythonPASS.
+PR01a DB전용127.0.0.1:55452/nomorevibe_test: 초기6PASS, 발행stategate실패RED→수정후3파일40PASS,
+AI1reject필드RED→8PASS. CLI unsafeDB4RED→4PASS. 현재입력과거historyexport RED를관측해cohortfilter수정중.
+순수contract worker는64focusedPASS/typegenPASS를보고했으며최종전체검증은아직전이다.
+초기RED의 missingmodule/import실패와 실제assertionRED를구분한다. Viteconfig warning기존상태.
+
+## Remaining work / exact next commands
+
+1. PR01a 마지막 focused·실제localexport·타입/lint/fullunit/관련integration/build를마친다.
+2. 독립diff검토·validation/roadmap/handoff동기화후명시파일commit/push/PR. 최신basecheck없이병합금지.
+3. PR01b 실제runner/강제providerbounds/사전예약/전이·ready장부를구현한후PR02로간다.
+4. 적체는45228출처/22940제품(07:26Z),held339로아직남음. 기존helper는계속하며pause/quota/기한을임의변경하지않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01
+git status --short
+npx vitest run tests/pipeline-capacity.test.ts tests/pipeline-capacity-export.test.ts tests/review-pipeline-observability.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55452/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/pipeline-capacity.test.ts tests/integration/review-publication-gate.test.ts tests/integration/review-handoffs.test.ts
+npx next typegen
+npx tsc --noEmit
+# 전체 unit/build/check는 아직 미실행. 이 전용DB 이외에 integration을 실행하지 않는다.
+CATCHUP_TRANSPORT_APPROVED=1 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup/persistent/server-wrapper.py status
+```
+
+
+---
+
 # 2026-10-15 — PR 단위 실행 승인·계획 작성·PR00 격리 검증
 
 ## Current objective / completed work
