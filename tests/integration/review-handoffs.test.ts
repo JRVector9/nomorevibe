@@ -9,6 +9,7 @@ import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-rev
 import { getJobState } from "@/lib/jobs/runner";
 import { ensureSchema } from "./setup";
 import { tryAcquireRole } from "@/lib/jobs/role-leader";
+import { withLegacySecondReviewJob, admitSecondReviewFixture } from "./second-review-receipt-fixtures";
 beforeAll(ensureSchema);
 beforeEach(async () => {
   for (const table of [secondReviews, crawlReviewAttempts, crawlCandidates, crawlDocuments, crawlSettings, jobs]) await db.delete(table);
@@ -91,18 +92,25 @@ it.each(["approve", "reject"])("second %s signals publication only for an approv
   await enqueueSecondReviews(context.settings);
   const [row] = await db.select().from(secondReviews);
   expect(row).toBeDefined();
-  await recordSecondReview(row.id, { ok: true, decision, confidence: .95, reason: "fixture", model: row.model!, provider: row.provider!, status: "agreed" });
-  expect(Boolean(await getJobState("crawl-publish"))).toBe(decision === "approve");
-  await recordSecondReview(row.id, { ok: true, decision, confidence: .95, reason: "fixture", model: row.model!, provider: row.provider!, status: "agreed" });
-  if (decision === "approve") expect((await getJobState("crawl-publish"))?.requestedVersion).toBe(1);
+  await withLegacySecondReviewJob(async lease => {
+    const receipt = await admitSecondReviewFixture(row.id, lease);
+    const result = { ok: true as const, decision, confidence: .95, reason: "fixture", model: row.model!, provider: row.provider!, status: "agreed" as const };
+    await recordSecondReview({ receipt, result });
+    expect(Boolean(await getJobState("crawl-publish"))).toBe(decision === "approve");
+    expect(await recordSecondReview({ receipt, result })).toEqual({ state: "not_pending" });
+    if (decision === "approve") expect((await getJobState("crawl-publish"))?.requestedVersion).toBe(1);
+  });
 });
 it("a created fallback wakes second review without publishing", async () => {
   const context = await first(); await recordAgentReview({ ...context, outcome });
   await enqueueSecondReviews(context.settings);
   const [row] = await db.select().from(secondReviews);
-  const before = (await getJobState("second-review"))!.requestedVersion;
-  await recordSecondReview(row.id, { ok: false, error: "timeout", model: row.model!, provider: row.provider! });
-  expect((await getJobState("second-review"))?.requestedVersion).toBe(before + 1);
+  await withLegacySecondReviewJob(async lease => {
+    const receipt = await admitSecondReviewFixture(row.id, lease);
+    const before = (await getJobState("second-review"))!.requestedVersion;
+    await recordSecondReview({ receipt, result: { ok: false, error: "timeout", model: row.model!, provider: row.provider! } });
+    expect((await getJobState("second-review"))?.requestedVersion).toBe(before + 1);
+  });
   expect(await getJobState("crawl-publish")).toBeUndefined();
   expect(await db.select().from(secondReviews)).toHaveLength(2);
 });

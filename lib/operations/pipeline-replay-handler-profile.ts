@@ -15,7 +15,7 @@ const tables: readonly Policy[] = [
   { name: "agent_repository_observations", select: true, update: ["id"], immutable: true },
   { name: "pipeline_stage_modes", select: true, update: ["stage"], immutable: true },
   { name: "pipeline_item_leases", select: true, update: ["work_key"], immutable: true },
-  { name: "products", select: true },
+  { name: "products", select: true, update: ["id"], immutable: true },
   { name: "crawl_candidates", select: true, update: ["state", "reason", "decided_by", "signals", "updated_at"] },
   { name: "crawl_review_attempts", select: true, insert: true,
     update: ["state", "error_code", "completed_at", "retry_after", "outcome", "input_tokens", "output_tokens", "cost_usd"] },

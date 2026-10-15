@@ -5,7 +5,8 @@ import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, cr
 import * as crawl from "@/lib/crawl/repository";
 import { changeReviewMode, getSettings, saveSettings } from "@/lib/crawl/settings";
 import { claimAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
-import { enqueueSecondReviews, recordSecondReview, closeSettledSecondReviews } from "@/lib/crawl/second-review";
+import { enqueueSecondReviews, closeSettledSecondReviews } from "@/lib/crawl/second-review";
+import { recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 import { reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { fullReviewPolicyHash, comparisonReviewPolicyHash, reportCapacityRun, type CapacityArtifact } from "@/lib/operations/pipeline-capacity";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -47,7 +48,7 @@ async function fixture(voters = ["second-a", "second-b"], decision: "approve" | 
 }
 async function approve(id: number) {
   const [row] = await db.select().from(secondReviews).where(eq(secondReviews.id, id));
-  await recordSecondReview(id, { ok: true, decision: "approve", confidence: .95, reason: "Verified product",
+  await recordSecondReviewFixture(id, { ok: true, decision: "approve", confidence: .95, reason: "Verified product",
     model: row.model!, provider: row.provider!, status: "agreed" });
 }
 async function snapshot(f: Awaited<ReturnType<typeof fixture>>) {
@@ -78,7 +79,7 @@ it("retains a failed primary's configured fallback slot and uses its durable suc
   const f = await fixture(["second-a"]);
   await enqueueSecondReviews(f.settings);
   const [root] = await db.select().from(secondReviews);
-  await recordSecondReview(root.id, { ok: false, error: "timeout", model: root.model!, provider: root.provider! });
+  await recordSecondReviewFixture(root.id, { ok: false, error: "timeout", model: root.model!, provider: root.provider! });
   const rows = await db.select().from(secondReviews);
   const backup = rows.find(row => row.fallbackForId === root.id)!;
   expect(backup).toBeDefined();
@@ -92,7 +93,7 @@ it("keeps dissent as a human hold and refuses a new input's stale success", asyn
   const f = await fixture(["second-a"]);
   await enqueueSecondReviews(f.settings);
   const [row] = await db.select().from(secondReviews);
-  await recordSecondReview(row.id, { ok: true, decision: "reject", confidence: .95, reason: "Not a product",
+  await recordSecondReviewFixture(row.id, { ok: true, decision: "reject", confidence: .95, reason: "Not a product",
     model: row.model!, provider: row.provider!, status: "needs_human" });
   expect((await snapshot(f)).generations[0]).toMatchObject({ candidateState: "needs_review", secondGateSatisfied: false });
   await db.update(crawlDocuments).set({ pageMeta: { title: "Completely different app", description: "changed" } });

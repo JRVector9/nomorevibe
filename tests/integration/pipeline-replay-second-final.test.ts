@@ -11,6 +11,7 @@ import { runFixtureReviewReplay } from "@/lib/operations/pipeline-replay-runner"
 import { withReviewFixtureTransport, type ReviewFixtureCallback } from "@/lib/crawl/review-fixture-transport";
 import { closeSettledSecondReviews, publishedInputHash, recordSecondReview } from "@/lib/crawl/second-review";
 import { loadLockedSecondReviewInput, secondReviewGeneration } from "@/lib/crawl/second-review-input";
+import { admitLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { assertReplayDatabaseScopeIdentity, withReplayDatabaseScope } from "@/lib/db/replay-scope";
 import { withReviewReplayContext } from "@/lib/crawl/review-replay-context";
 import type { JobLease } from "@/lib/jobs/control";
@@ -24,6 +25,7 @@ import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
 
 const reference = new Date("2001-11-01T00:00:00.000Z");
+const publishedSlug = "pr04b-second-final-published-sample";
 const settings: CrawlSettings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: "enforce", reviewConcurrency: 2,
   firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
   secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: true, sampleRate: 0,
@@ -46,12 +48,21 @@ beforeAll(async () => {
   ({ identityPath, release } = await getReplayHandlerIdentityPath());
   admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
 });
-afterAll(async () => { await admin?.end({ timeout: 3 }); await release?.(); });
+afterAll(async () => {
+  try { await cleanFixtureProduct(); }
+  finally { await admin?.end({ timeout: 3 }); await release?.(); }
+});
 beforeEach(async () => {
+  await cleanFixtureProduct();
   await admin`TRUNCATE pipeline_replay.capacity_transitions, pipeline_replay.capacity_calls,
     pipeline_replay.capacity_inputs, pipeline_replay.capacity_runs CASCADE`;
   await admin`TRUNCATE second_reviews, crawl_review_attempts, crawl_candidates, crawl_frontier, jobs RESTART IDENTITY CASCADE`;
 });
+
+async function cleanFixtureProduct() {
+  await admin`DELETE FROM products WHERE slug = ${publishedSlug}`;
+  await admin`DELETE FROM cdn_purges WHERE slug = ${publishedSlug}`;
+}
 
 async function prepare() {
   const [candidate] = await db.insert(crawlCandidates).values({ repo: document.repo, productUrl: document.productUrl,
@@ -89,19 +100,46 @@ it("records one final only after every mandatory AI2 slot approves", async () =>
 });
 
 it("binds a successful fallback to its original slot and ignores duplicate completion", async () => {
-  const value = await prepare();
-  const result = await runFixtureReviewReplay({ identityPath, manifest: value.manifest, inputs: value.inputs,
-    jobs: ["crawl-agent-review", "second-review", "second-review"], fixture: async call => {
-      if (call.request.stage === "second" && call.request.model === settings.secondReview.voters[1].model)
-        return { result: { ok: false, error: "model_unavailable" }, receipt: { inputTokens: 0, outputTokens: 0 } };
-      return approve(call);
-    } });
-  expect(result.jobs.map(row => row.result.status)).toEqual(["completed", "completed", "completed"]);
+  const value = await prepare(), database = await openVerifiedReplayHandlerDatabase(identityPath, {});
+  const ledger = new ReplayLedger(database);
+  try {
+    const run = await ledger.prepare(value.manifest, value.inputs);
+    await ledger.start(run);
+    try {
+      await withReplayDatabaseScope(identityPath, () => {
+        assertReplayDatabaseScopeIdentity(database);
+        return withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(run, () =>
+          withReviewFixtureTransport({ ledger, run, inputs: value.inputs,
+            tokenUpperBound: value.manifest.limits.perCallTokenUpperBound,
+            fullReviewPolicyHash: value.manifest.fullReviewPolicyHash, fixture: async call => {
+              if (call.request.stage === "second" && call.request.model === settings.secondReview.voters[1].model)
+                return { result: { ok: false, error: "model_unavailable" }, receipt: { inputTokens: 0, outputTokens: 0 } };
+              return approve(call);
+            } }, async () => {
+            expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true })).status).toBe("completed");
+            expect((await runJob("second-review", secondReviewCandidates, { requestedOnly: true })).status).toBe("completed");
+            expect((await runJob<null>("second-review", async ctx => {
+              if (!ctx.lease) throw new Error("second_review_fixture_job_missing");
+              const [fallback] = await admin`SELECT id FROM second_reviews WHERE candidate_id = ${value.candidate.id}
+                AND fallback_for_id IS NOT NULL AND status = 'pending'`;
+              expect(fallback).toBeDefined();
+              const admission = await admitLegacySecondReview(fallback.id, ctx.lease);
+              if (admission.kind !== "admitted") throw new Error(`fallback_admission_${admission.kind}`);
+              const outcome = await secondReviewCandidates(ctx);
+              const before = await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`;
+              // The original receipt is replayed before this actual job acknowledges completion.
+              expect(await recordSecondReview({ receipt: admission.receipt, result: { ok: true, decision: "approve",
+                confidence: .99, reason: "duplicate", model: admission.row.model!, provider: admission.row.provider! } }))
+                .toEqual({ state: "not_pending" });
+              expect(await admin`SELECT * FROM pipeline_replay.capacity_transitions ORDER BY seq`).toEqual(before);
+              return outcome;
+            }, { requestedOnly: true })).status).toBe("completed");
+          })));
+      });
+    } finally { await ledger.drain(run); }
+  } finally { await database.close(); }
   const [fallback] = await admin`SELECT * FROM second_reviews WHERE fallback_for_id IS NOT NULL`;
   expect(fallback).toMatchObject({ status: "agreed", model: "qwen3-coder:30b" });
-  expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions WHERE kind = 'final'`).toHaveLength(1);
-  await recordSecondReview(fallback.id, { ok: true, decision: "approve", confidence: .99, reason: "duplicate", model: fallback.model,
-    provider: fallback.provider, status: "agreed" });
   expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions WHERE kind = 'final'`).toHaveLength(1);
 });
 
@@ -137,7 +175,11 @@ it("records superseded AI2 results after a human decision without creating a fin
 });
 
 it("persists published sample fallback results and their outbox without a first attempt or final", async () => {
-  const value = await prepare(), slug = "published-sample";
+  const value = await prepare(), slug = publishedSlug;
+  await admin`INSERT INTO products (slug, url, repo_url, name, tagline, description, category, status, source,
+    verify_token, edit_token_hash) VALUES (${slug}, ${value.candidate.productUrl}, ${`https://github.com/${value.candidate.repo}`},
+    'Published task tracker', 'Manage tasks', 'A deployed task tracker', 'Dev', 'seeded', 'crawler',
+    'pr04b-second-final-fixture', ${"a".repeat(64)})`;
   await admin`UPDATE crawl_candidates SET state = 'published', published_slug = ${slug}, decided_at = ${reference}
     WHERE id = ${value.candidate.id}`;
   await admin`INSERT INTO second_reviews (candidate_id, repo, published_slug, trigger, provider, model,
@@ -260,9 +302,8 @@ async function runWithHeldSecondLease(value: Awaited<ReturnType<typeof prepare>>
           tokenUpperBound: value.manifest.limits.perCallTokenUpperBound, fullReviewPolicyHash: value.manifest.fullReviewPolicyHash }, async () => {
           const first = await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true });
           const second = await runJob<null>("second-review", async ctx => {
-            const outcome = await secondReviewCandidates(ctx);
-            await afterSecond();
-            return outcome;
+            try { return await secondReviewCandidates(ctx); }
+            finally { await afterSecond(); }
           }, { requestedOnly: true });
           return { jobs: [{ result: first }, { result: second }] };
         })));
@@ -306,7 +347,10 @@ it("waits before domain locks when cleanup owns an AI2 row and waits for its lea
     await expectPrefixWait(cleanupPid);
     releaseJob.resolve();
     await blocking; await cleanup;
-    expect((await running).jobs.every(row => row.result.status === "completed")).toBe(true);
+    const results = (await running).jobs.map(row => row.result);
+    expect(results[0].status).toBe("completed");
+    // Editing the dispatched row's immutable model invalidates the original receipt.
+    expect(results[1]).toMatchObject({ status: "failed", error: "invalid_second_review_receipt" });
     expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions WHERE kind = 'final'`).toHaveLength(0);
     expect(await admin`SELECT status, resolution FROM second_reviews WHERE model = 'removed-model'`)
       .toEqual([{ status: "resolved", resolution: "model_removed" }]);

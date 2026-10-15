@@ -12,6 +12,7 @@ import { closeSettledSecondReviews, enqueueSecondReviews, recordSecondReview } f
 import { loadSecondReviewInput } from "@/lib/crawl/second-review-input";
 import { withReviewReplayContext } from "@/lib/crawl/review-replay-context";
 import { ensureSchema } from "./setup";
+import { admitSecondReviewFixture, withLegacySecondReviewJob } from "./second-review-receipt-fixtures";
 
 const referenceTime = new Date("2001-11-01T00:00:00.000Z");
 const approve = { decision: "approve" as const, confidence: 0.95, reason: "A usable application", evidenceIds: ["product"] };
@@ -43,12 +44,11 @@ async function fixture(fetchedAt = new Date(referenceTime.getTime() - 1_000), co
     commitSha: "a".repeat(40), detectorVersion: DEFAULT_CRAWL_SETTINGS.agentEvidence.detectorVersion,
     scopeHash: "0".repeat(64), state: "complete", startedAt: referenceTime, completedAt });
   const lease = { name: "crawl-agent-review", token: "clock-first", requestedVersion: 1 };
-  const secondLease = { name: "second-review", token: "clock-second", requestedVersion: 1 };
-  await db.insert(jobs).values([lease, secondLease].map(row => ({ name: row.name, leaseToken: row.token,
-    requestedVersion: 1, lockedAt: new Date() })));
+  await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token,
+    requestedVersion: 1, lockedAt: new Date() });
   const settings = await getSettings();
   const input = await scope(() => loadReviewInput(candidate, document, settings));
-  return { candidate, document, settings, input, lease, secondLease, provider: "abcllm", model: "first" };
+  return { candidate, document, settings, input, lease, provider: "abcllm", model: "first" };
 }
 
 it("agrees across reference SQL selection, locked AI1/AI2 writers and the exact required-slot gate", async () => {
@@ -68,17 +68,20 @@ it("agrees across reference SQL selection, locked AI1/AI2 writers and the exact 
     const current = { ...context, candidate };
     expect(await claimAgentReview(current)).toMatchObject({ kind: "reused", attempt: { id: claim.attempt.id } });
     expect(await listReviewCandidates(context.settings)).toEqual([]);
-    expect(await enqueueSecondReviews(context.settings, new Date(), context.secondLease)).toBe(2);
-    expect(await closeSettledSecondReviews(new Date(), context.secondLease)).toBe(0);
-    const votes = await db.select().from(secondReviews).orderBy(secondReviews.id);
     const gate = () => db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(context.settings));
     expect(await gate()).toEqual([]);
-    for (const [index, vote] of votes.entries()) {
-      expect(await loadSecondReviewInput(vote)).toEqual(context.input);
-      await recordSecondReview(vote.id, { ok: true, decision: "approve", confidence: 0.95,
-        reason: "Independent approval", model: vote.model!, provider: "abcllm", status: "agreed" }, new Date(), context.secondLease);
-      expect((await gate()).map(row => row.id)).toEqual(index === 0 ? [] : [candidate.id]);
-    }
+    await withLegacySecondReviewJob(async secondLease => {
+      expect(await enqueueSecondReviews(context.settings, new Date(), secondLease)).toBe(2);
+      expect(await closeSettledSecondReviews(new Date(), secondLease)).toBe(0);
+      const votes = await db.select().from(secondReviews).orderBy(secondReviews.id);
+      for (const [index, vote] of votes.entries()) {
+        expect(await loadSecondReviewInput(vote)).toEqual(context.input);
+        const receipt = await admitSecondReviewFixture(vote.id, secondLease);
+        await recordSecondReview({ receipt, result: { ok: true, decision: "approve", confidence: 0.95,
+          reason: "Independent approval", model: vote.model!, provider: "abcllm", status: "agreed" }, now: new Date() });
+        expect((await gate()).map(row => row.id)).toEqual(index === 0 ? [] : [candidate.id]);
+      }
+    });
     expect(await db.transaction(tx => assertReviewApproval(tx, current))).toMatchObject({ id: claim.attempt.id });
     const [stored] = await db.select().from(crawlReviewAttempts);
     expect(stored.completedAt!.getTime()).toBeGreaterThanOrEqual(wallBefore);
@@ -132,14 +135,16 @@ it("closes reference-expired AI2 work with a real resolution timestamp", async (
     const first = await claimAgentReview(context);
     if (first.kind === "skipped") throw new Error(first.reason);
     await recordAgentReview({ ...context, receipt: first.receipt, outcome: approve });
-    expect(await enqueueSecondReviews(context.settings, new Date(), context.secondLease)).toBe(2);
-    await db.update(crawlReviewAttempts).set({ validUntil: referenceTime });
-    const wallBefore = Date.now();
-    expect(await closeSettledSecondReviews(new Date(), context.secondLease)).toBe(2);
-    for (const row of await db.select().from(secondReviews)) {
-      expect(row).toMatchObject({ status: "resolved", resolution: "superseded" });
-      expect(row.resolvedAt!.getTime()).toBeGreaterThanOrEqual(wallBefore);
-    }
+    await withLegacySecondReviewJob(async secondLease => {
+      expect(await enqueueSecondReviews(context.settings, new Date(), secondLease)).toBe(2);
+      await db.update(crawlReviewAttempts).set({ validUntil: referenceTime });
+      const wallBefore = Date.now();
+      expect(await closeSettledSecondReviews(new Date(), secondLease)).toBe(2);
+      for (const row of await db.select().from(secondReviews)) {
+        expect(row).toMatchObject({ status: "resolved", resolution: "superseded" });
+        expect(row.resolvedAt!.getTime()).toBeGreaterThanOrEqual(wallBefore);
+      }
+    });
   });
 });
 

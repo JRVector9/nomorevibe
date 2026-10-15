@@ -1,5 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
@@ -11,8 +12,10 @@ import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
-import { firstReviewProviderPredicate, loadLockedSecondReviewInput, loadSecondReviewInput, secondReviewGeneration } from "./second-review-input";
-import { assertJobLease, requestJob, type JobLease } from "@/lib/jobs/control";
+import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGeneration } from "./second-review-input";
+import { assertSecondReviewOwnership, finishSecondReviewOwnership, secondReviewBinding, type SecondReviewReceipt } from "./second-review-ownership";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
@@ -489,37 +492,60 @@ export async function pendingSecondReviews(limit: number) {
   return db.select().from(secondReviews).where(eq(secondReviews.status, "pending")).orderBy(desc(sql`${secondReviews.fallbackForId} is not null`), secondReviews.id).limit(limit);
 }
 
-export async function recordSecondReview(id: number, result:
-  | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status: "agreed" | "needs_human" }
-  | { ok: false; error: string; detail?: string; model: string; provider: SecondReviewProvider }, now = new Date(), lease?: JobLease): Promise<void> {
-  if (!result.ok && result.error === "cancelled") return;
+export type SecondReviewResult =
+  | { ok: true; decision: string; confidence: number | null; reason: string; model: string; provider: SecondReviewProvider; status?: "agreed" | "needs_human" }
+  | { ok: false; error: string; detail?: string; model: string; provider: SecondReviewProvider };
+export type SecondReviewWriteResult =
+  | { state: "recorded" }
+  | { state: "input_changed"; reason: "context_invalid" | "binding_changed" }
+  | { state: "not_pending" }
+  | { state: "cancelled" };
+
+export async function recordSecondReview(input: {
+  receipt: SecondReviewReceipt; result: SecondReviewResult; now?: Date;
+}): Promise<SecondReviewWriteResult> {
+  const { receipt, result, now = new Date() } = input;
+  if (!receipt?.binding) throw new Error("invalid_second_review_receipt");
+  if (receipt.ownership?.kind === "item" && currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  const id = receipt.binding.secondReviewId;
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
-  let committed = false;
-  await db.transaction(async tx => {
+  const written = await db.transaction<SecondReviewWriteResult>(async tx => {
+    const stages = await lockPipelineInputStages(tx);
     await lockReplaySecondReviewMutation(tx);
-    const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
-    if (!original || original.status !== "pending") return;
-    const locked = currentReplayDb() ? await loadLockedSecondReviewInput(original, tx) : undefined;
-    const input = locked === undefined ? await loadSecondReviewInput(original, tx) : locked?.input;
-    const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id)).for("update");
-    if (!row || row.status !== "pending" || row.generationKey !== original.generationKey) return;
-    const finalWrite = locked && row.firstAttemptId ? await prepareReplayFinalWrite(tx, {
-      stage: "second", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
-      input: locked.input, settings: locked.settings,
-    }) : undefined;
-    if (lease) await assertJobLease(tx, lease, "update");
-    if (!input || row.model !== result.model || row.provider !== result.provider) {
+    const current = await lockSecondReviewDomain(tx, id);
+    const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
+    if (!row) throw new Error("invalid_second_review_receipt");
+    await assertSecondReviewOwnership(tx, stages.ai2, receipt, row);
+    if (row.model !== result.model || row.provider !== result.provider) throw new Error("invalid_second_review_result_identity");
+    if (row.status !== "pending") {
+      await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+      return { state: "not_pending" };
+    }
+    if (!result.ok && result.error === "cancelled") {
+      await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+      return { state: "cancelled" };
+    }
+    if (!current) {
       const changed = await tx.update(secondReviews).set({status: "resolved", resolution: "superseded", resolvedAt: now})
-        .where(eq(secondReviews.id, id)).returning({ id: secondReviews.id, candidateId: secondReviews.candidateId });
+        .where(and(eq(secondReviews.id, id), eq(secondReviews.status, "pending"))).returning({ id: secondReviews.id, candidateId: secondReviews.candidateId });
+      if (receipt.ownership.kind === "legacy") await assertJobLeaseAtWallTime(tx, receipt.ownership.job, "update");
       if (changed.length) await recordReplaySecondReviewTransition(tx, { kind: "superseded",
         secondReviewIds: changed.map(row => row.id), candidateIds: changed.map(row => row.candidateId) });
-      return;
+      await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+      return { state: "input_changed", reason: "context_invalid" };
     }
-    const [saved] = locked ? [] : await tx.select().from(crawlSettings).limit(1);
-    const settings = locked?.settings ?? mergeWithDefaults(saved?.values);
+    if (!isDeepStrictEqual(secondReviewBinding(current), receipt.binding)) {
+      await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+      return { state: "input_changed", reason: "binding_changed" };
+    }
+    const finalWrite = receipt.ownership.kind === "legacy" && row.firstAttemptId ? await prepareReplayFinalWrite(tx, {
+      stage: "second", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
+      input: current.input, settings: current.settings,
+    }) : undefined;
+    const settings = current.settings;
     const agreeAt = settings.secondReview.agreeAt;
     if (!result.ok && result.error !== "input_too_large" && row.failureCount + 1 < MAX_SECOND_REVIEW_FAILURES) {
-      // The candidate lock from loadSecondReviewInput serializes allocation across primary slots.
+      // The domain candidate lock serializes allocation across primary slots.
       const attempted = await tx.select({model: secondReviews.model}).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
       const excluded = [...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
@@ -535,12 +561,13 @@ export async function recordSecondReview(id: number, result:
         await tx.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: now,
           reviewedAt: now, failureCount: row.failureCount + 1, errorCode: result.error.slice(0, 60),
           errorDetail: result.detail?.slice(0, 80) ?? null }).where(eq(secondReviews.id, id));
+        if (receipt.ownership.kind === "legacy") await assertJobLeaseAtWallTime(tx, receipt.ownership.job, "update");
         requests.push(await requestJob("second-review", tx));
-        committed = true;
         if (finalWrite) await recordReplayFinalWrite(tx, finalWrite, requests);
         else await recordReplaySecondReviewTransition(tx, { kind: "review_write",
           secondReviewIds: [row.id], candidateIds: [row.candidateId] }, requests);
-        return;
+        await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+        return { state: "recorded" };
       }
     }
     const status = result.ok
@@ -560,12 +587,9 @@ export async function recordSecondReview(id: number, result:
           secondReason: row.failureCount + 1 >= MAX_SECOND_REVIEW_FAILURES
             ? "모델 심사가 3회 실패했습니다. 자동 재시도를 종료했으므로 직접 확인해주세요." : null })
       .where(eq(secondReviews.id, id));
-    committed = true;
-    if (row.trigger === "ai_approved" && result.ok && result.decision === "approve" && status === "agreed")
-      requests.push(await requestJob("crawl-publish", tx));
     /*
      * 두 모델 승인 관문에서 2차가 승인하지 않았다 — 발행을 멈추고 사람에게 넘긴다(2026-09-19).
-     * 후보는 loadSecondReviewInput 이 이 트랜잭션에서 잠갔다. 사유는 AI 심사가 다시 집지 않는 것으로 둔다 —
+     * 후보는 domain loader가 이 트랜잭션에서 잠갔다. 사유는 AI 심사가 다시 집지 않는 것으로 둔다 —
      * 다시 집으면 1차가 같은 승인을 되풀이해 "승인됐지만 발행은 막힌" 상태에 갇힌다.
      */
     if (row.trigger === "ai_approved" && status === "needs_human") {
@@ -577,13 +601,21 @@ export async function recordSecondReview(id: number, result:
           .where(eq(crawlCandidates.id, candidate.id));
       }
     }
+    // Serialize the legacy job before its own fallback request can need UPDATE;
+    // final ownership is checked again after every outbox/recorder wait.
+    if (receipt.ownership.kind === "legacy") await assertJobLeaseAtWallTime(tx, receipt.ownership.job, "update");
+    if (row.trigger === "ai_approved" && result.ok && result.decision === "approve" && status === "agreed")
+      requests.push(await requestJob("crawl-publish", tx));
     if (finalWrite) await recordReplayFinalWrite(tx, finalWrite, requests);
     else await recordReplaySecondReviewTransition(tx, { kind: "review_write",
       secondReviewIds: [row.id], candidateIds: [row.candidateId] }, requests);
+    await finishSecondReviewOwnership(tx, stages.ai2, receipt);
+    return { state: "recorded" };
   });
-  if (committed) emitPipelineEvent("committed", { stage: "second", secondReviewId: id, ok: result.ok });
+  if (written.state === "recorded") emitPipelineEvent("committed", { stage: "second", secondReviewId: id, ok: result.ok });
   for (const request of requests) emitPipelineEvent("requested", { stage: "second", secondReviewId: id,
     nextJob: request.job, requestedVersion: request.requestedVersion });
+  return written;
 }
 
 export type SecondReviewFailure = { provider: string | null; model: string | null; errorCode: string; count: number };

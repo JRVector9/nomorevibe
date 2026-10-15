@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import postgres from "postgres";
 import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import * as replay from "@/lib/operations/pipeline-replay-database";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayIdentityPath } from "./replay-setup";
@@ -9,6 +10,7 @@ import { withReplayDatabaseScope } from "@/lib/db/replay-scope";
 import { db } from "@/lib/db";
 import { claimItemLease, lockItemStage, readItemStage, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemBindingHash, type Ai1ItemBinding, type ItemLease } from "@/lib/jobs/items/types";
+import { lockProductGeneration } from "@/lib/domain/products/generation";
 
 type HandlerApi = typeof replay & {
   provisionReplayHandlerProfile(options: { databaseUrl: string; identityPath: string; acknowledgeDedicatedCluster: boolean; env?: Record<string, string> }): Promise<unknown>;
@@ -24,6 +26,10 @@ const binding: Ai1ItemBinding = { stage: "ai1", candidateId: 90901, inputHash: "
   reviewer: { provider: "abcllm", model: "profile-test" } };
 const owner = { instanceId: "profile-item-owner", bootId: "00000000-0000-4000-8000-000000090901" };
 let itemLease: ItemLease;
+const productSlug = `replay-profile-product-${randomUUID()}`;
+let productId: number, productSnapshot: postgres.JSONValue;
+let originalProducts: { row: postgres.JSONValue }[];
+let originalPurges: { row: postgres.JSONValue }[];
 const quoted = () => `"${role}"`;
 const provision = () => api.provisionReplayHandlerProfile({ databaseUrl: TEST_DATABASE_URL, identityPath,
   acknowledgeDedicatedCluster: true, env: {} });
@@ -33,6 +39,15 @@ beforeAll(async () => {
   baseline = await replay.openVerifiedReplayDatabase(identityPath, {}); role = baseline.identity.roleName;
   admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
   await admin.unsafe(await readFile("scripts/sql/pipeline-replay-ledger.sql", "utf8"));
+  originalProducts = await admin`SELECT to_jsonb(p) AS row FROM public.products p ORDER BY id`;
+  originalPurges = await admin`SELECT to_jsonb(p) AS row FROM public.cdn_purges p ORDER BY id`;
+  const [product] = await admin`INSERT INTO public.products
+    (slug, url, repo_url, name, tagline, description, category, status, source, verify_token, edit_token_hash, created_at, updated_at)
+    VALUES (${productSlug}, ${`https://${productSlug}.example`}, ${`https://github.com/profile/${productSlug}`},
+      'Replay generation fixture', 'Profile lock fixture', 'Immutable replay product', 'Dev', 'seeded', 'crawler',
+      'profile-fixture', ${"a".repeat(64)}, '2026-10-16 01:02:03.123456', '2026-10-16 01:02:03.654321') RETURNING id`;
+  productId = product.id;
+  [{ row: productSnapshot }] = await admin`SELECT to_jsonb(p) AS row FROM public.products p WHERE id = ${productId}`;
   [originalStage] = await admin<typeof originalStage[]>`SELECT mode, draining_from, epoch::text, writer_contract_version
     FROM public.pipeline_stage_modes WHERE stage = 'ai1'`;
   await admin`UPDATE public.pipeline_stage_modes SET mode = 'items', draining_from = NULL, writer_contract_version = 1 WHERE stage = 'ai1'`;
@@ -60,16 +75,35 @@ beforeAll(async () => {
   database = await api.openVerifiedReplayHandlerDatabase(identityPath, {});
 });
 afterAll(async () => {
-  await database?.close(); await baseline?.close();
-  try {
-    if (installed) await removeReplayHandlerTestProfile(identityPath);
-    if (originalStage) {
-      await admin`DELETE FROM public.pipeline_item_leases WHERE stage = 'ai1' AND work_key IN ('ai1:90901', 'ai1:90902')`;
+  const errors: unknown[] = [];
+  const cleanup = async (task: () => Promise<unknown>) => {
+    try { await task(); } catch (error) { errors.push(error); }
+  };
+  await cleanup(async () => { await database?.close(); });
+  await cleanup(async () => { await baseline?.close(); });
+  if (installed) await cleanup(() => removeReplayHandlerTestProfile(identityPath));
+  if (productId) {
+    await cleanup(async () => {
+      const [current] = await admin`SELECT to_jsonb(p) AS row FROM public.products p WHERE id = ${productId}`;
+      expect(current?.row).toEqual(productSnapshot);
+    });
+    await cleanup(async () => { await admin`DELETE FROM public.products WHERE id = ${productId} AND slug = ${productSlug}`; });
+    await cleanup(async () => { await admin`DELETE FROM public.cdn_purges WHERE slug = ${productSlug}`; });
+    await cleanup(async () => {
+      expect(await admin`SELECT to_jsonb(p) AS row FROM public.products p ORDER BY id`).toEqual(originalProducts);
+      expect(await admin`SELECT to_jsonb(p) AS row FROM public.cdn_purges p ORDER BY id`).toEqual(originalPurges);
+    });
+  }
+  if (originalStage) {
+    await cleanup(async () => { await admin`DELETE FROM public.pipeline_item_leases WHERE stage = 'ai1' AND work_key IN ('ai1:90901', 'ai1:90902')`; });
+    await cleanup(async () => {
       await admin`UPDATE public.pipeline_stage_modes SET mode = ${originalStage.mode}, draining_from = ${originalStage.draining_from},
         epoch = ${originalStage.epoch}, writer_contract_version = ${originalStage.writer_contract_version} WHERE stage = 'ai1'`;
-    }
-    await release?.();
-  } finally { await admin?.end({ timeout: 3 }); }
+    });
+  }
+  await cleanup(async () => { await release?.(); });
+  await cleanup(async () => { await admin?.end({ timeout: 3 }); });
+  if (errors.length) throw new AggregateError(errors, "replay_handler_profile_fixture_cleanup_failed");
 });
 
 it("permits restricted-role stage row locks and authentic transaction guards", async () => {
@@ -90,6 +124,40 @@ it("permits restricted-role live-item SHARE and UPDATE locks", async () => {
     expect(await tx`SELECT work_key FROM public.pipeline_item_leases WHERE stage = 'ai1' AND work_key = 'ai1:90901' FOR SHARE`).toHaveLength(1);
     expect(await tx`SELECT work_key FROM public.pipeline_item_leases WHERE stage = 'ai1' AND work_key = 'ai1:90901' FOR UPDATE`).toHaveLength(1);
   });
+});
+
+it("locks the actual published product generation without changing its row", async () => {
+  expect(await database.client`SELECT id FROM public.products WHERE id = ${productId} AND slug = ${productSlug}`).toHaveLength(1);
+  await withReplayDatabaseScope(identityPath, () => db.transaction(async tx => {
+    expect(await lockProductGeneration(tx, productId, productSlug)).toBe(true);
+    expect(await lockProductGeneration(tx, productId, `${productSlug}-stale`)).toBe(false);
+  }));
+  const [after] = await admin`SELECT to_jsonb(p) AS row FROM public.products p WHERE id = ${productId}`;
+  expect(after.row).toEqual(productSnapshot);
+});
+
+it("grants only the product id UPDATE column needed by row locks", async () => {
+  const [privileges] = await database.client`SELECT has_table_privilege(current_user, 'public.products', 'UPDATE') AS table_update,
+    has_column_privilege(current_user, 'public.products', 'id', 'UPDATE') AS id_update,
+    has_column_privilege(current_user, 'public.products', 'name', 'UPDATE') AS name_update`;
+  expect(privileges).toEqual({ table_update: false, id_update: true, name_update: false });
+});
+
+it.each(["matching", "empty"] as const)("rejects even %s product id no-op UPDATE statements", async kind => {
+  await expect(database.client`UPDATE public.products SET id = id WHERE id = ${productId} AND ${kind === "matching"}`)
+    .rejects.toThrow("replay_handler_source_immutable");
+  const [after] = await admin`SELECT to_jsonb(p) AS row FROM public.products p WHERE id = ${productId}`;
+  expect(after.row).toEqual(productSnapshot);
+});
+
+it("rejects a disabled product mutation guard before the published generation can be locked", async () => {
+  const guards = await admin`SELECT t.tgenabled FROM pg_trigger t
+    WHERE t.tgrelid = 'public.products'::regclass AND t.tgname = 'replay_handler_source_immutable'`;
+  expect(guards).toEqual([{ tgenabled: "A" }]);
+  await admin`ALTER TABLE public.products DISABLE TRIGGER replay_handler_source_immutable`;
+  try { await expect(replay.verifyReplayDatabaseSession(database.client, database)).rejects.toThrow("replay_database_privileges_rejected"); }
+  finally { await admin`ALTER TABLE public.products ENABLE ALWAYS TRIGGER replay_handler_source_immutable`; }
+  await replay.verifyReplayDatabaseSession(database.client, database);
 });
 
 it("keeps stage and item rows immutable despite row-lock UPDATE column grants", async () => {
@@ -276,14 +344,15 @@ it("rejects disabled immutable-source guards and privilege changes even when eff
   finally { await admin`REVOKE SELECT ON public.products FROM PUBLIC`; }
   await replay.verifyReplayDatabaseSession(database.client, database);
 });
-it("binds stage/item guard OIDs and exact immutable function definition", async () => {
+it("binds source/product/stage/item guard OIDs and exact immutable function definition", async () => {
   const guards = await admin`SELECT c.relname, t.oid::int AS trigger_oid, t.tgenabled, p.oid::int AS function_oid,
     pg_get_functiondef(p.oid) AS definition FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
     JOIN pg_proc p ON p.oid = t.tgfoid WHERE t.tgname = 'replay_handler_source_immutable' ORDER BY c.relname`;
-  expect(guards).toHaveLength(6);
+  expect(guards).toHaveLength(7);
   expect(guards.every(guard => guard.tgenabled === "A" && guard.function_oid === guards[0].function_oid)).toBe(true);
   expect(guards.map(guard => guard.relname)).toContain("pipeline_stage_modes");
   expect(guards.map(guard => guard.relname)).toContain("pipeline_item_leases");
+  expect(guards.map(guard => guard.relname)).toContain("products");
   try {
     await admin`CREATE OR REPLACE FUNCTION pipeline_replay.reject_handler_source_mutation() RETURNS trigger
       LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS 'BEGIN RETURN NULL; END'`;
