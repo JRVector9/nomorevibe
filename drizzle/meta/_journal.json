@@ -540,6 +540,13 @@
       "when": 1792900000000,
       "tag": "0076_korean_tagline_quality_rejections",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1793000000000,
+      "tag": "0077_pipeline_item_leases",
+      "breakpoints": true
     }
   ]
 }

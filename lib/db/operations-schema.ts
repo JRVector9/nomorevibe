@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean, index } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, integer, text, bigint, boolean, index, check, primaryKey, uuid } from 'drizzle-orm/pg-core';
+import type { ItemBinding, ItemStage, ItemStageMode } from '@/lib/jobs/items/types';
 
 /**
  * Cloudflare 에서 지울 제품 — 공개 제품이 내려가거나 지워지면 DB 트리거가 같은 트랜잭션에서 적는다(0057).
@@ -31,6 +32,46 @@ export const roleLeases = pgTable('role_leases', {
   leaseUntil: timestamp('lease_until').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+/** Inactive until PR03/04 install both legacy and item writer contracts; role election does not own these epochs. */
+export const pipelineStageModes = pgTable('pipeline_stage_modes', {
+  stage: varchar('stage', { length: 8 }).$type<ItemStage>().primaryKey(),
+  mode: varchar('mode', { length: 10 }).$type<ItemStageMode>().notNull().default('legacy'),
+  drainingFrom: varchar('draining_from', { length: 8 }).$type<'legacy' | 'items'>(),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(1),
+  writerContractVersion: integer('writer_contract_version').notNull().default(0),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('pipeline_stage_modes_stage_check', sql`${table.stage} in ('fetch','ai1','ai2')`),
+  check('pipeline_stage_modes_mode_check', sql`${table.mode} in ('legacy','draining','items')`),
+  check('pipeline_stage_modes_draining_check', sql`(${table.mode} = 'draining' and ${table.drainingFrom} is not null and ${table.drainingFrom} in ('legacy','items')) or (${table.mode} <> 'draining' and ${table.drainingFrom} is null)`),
+  check('pipeline_stage_modes_epoch_check', sql`${table.epoch} between 1 and 9007199254740991`),
+  check('pipeline_stage_modes_contract_check', sql`${table.writerContractVersion} >= 0`),
+]);
+
+/** Generic ownership only; domain rows and next-stage requests remain in their existing repositories. */
+export const pipelineItemLeases = pgTable('pipeline_item_leases', {
+  stage: varchar('stage', { length: 8 }).$type<ItemStage>().notNull().references(() => pipelineStageModes.stage),
+  workKey: varchar('work_key', { length: 80 }).notNull(),
+  binding: jsonb('binding').$type<ItemBinding>().notNull(),
+  bindingHash: varchar('binding_hash', { length: 64 }).notNull(),
+  ownerInstanceId: varchar('owner_instance_id', { length: 120 }),
+  ownerBootId: uuid('owner_boot_id'),
+  token: uuid('token'),
+  stageEpoch: bigint('stage_epoch', { mode: 'number' }).notNull().default(1),
+  itemEpoch: bigint('item_epoch', { mode: 'number' }).notNull().default(0),
+  leaseUntil: timestamp('lease_until', { withTimezone: true, precision: 3 }),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  primaryKey({ columns: [table.stage, table.workKey], name: 'pipeline_item_leases_pkey' }),
+  check('pipeline_item_leases_stage_check', sql`${table.stage} in ('fetch','ai1','ai2')`),
+  check('pipeline_item_leases_binding_check', sql`coalesce(jsonb_typeof(${table.binding}) = 'object' and ${table.binding}->>'stage' = ${table.stage} and ${table.workKey} = ${table.stage} || ':' || case ${table.stage} when 'fetch' then ${table.binding}->>'frontierId' when 'ai1' then ${table.binding}->>'candidateId' when 'ai2' then ${table.binding}->>'secondReviewId' end, false)`),
+  check('pipeline_item_leases_hash_check', sql`${table.bindingHash} ~ '^[a-f0-9]{64}$'`),
+  check('pipeline_item_leases_owner_check', sql`(${table.ownerInstanceId} is null and ${table.ownerBootId} is null and ${table.token} is null and ${table.leaseUntil} is null) or (${table.ownerInstanceId} is not null and char_length(btrim(${table.ownerInstanceId})) > 0 and ${table.ownerBootId} is not null and ${table.token} is not null and ${table.leaseUntil} is not null and ${table.itemEpoch} >= 1)`),
+  check('pipeline_item_leases_epoch_check', sql`${table.stageEpoch} between 1 and 9007199254740991 and ${table.itemEpoch} between 0 and 9007199254740991`),
+  index('pipeline_item_leases_expiry_idx').on(table.stage, table.leaseUntil, table.workKey).where(sql`${table.token} is not null`),
+]);
 
 export const operationsObservations = pgTable('operations_observations', {
   key: varchar('key', { length: 80 }).primaryKey(),
