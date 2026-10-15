@@ -13,7 +13,7 @@ import { secondReviewGeneration } from "@/lib/crawl/second-review-input";
 import { admitLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { dispatchReviewFixtureCall, withReviewFixtureTransport } from "@/lib/crawl/review-fixture-transport";
 import { withReviewReplayContext } from "@/lib/crawl/review-replay-context";
-import { assertReplayDatabaseScopeIdentity, withReplayDatabaseScope } from "@/lib/db/replay-scope";
+import { assertReplayDatabaseScopeIdentity, currentReplayDb, withReplayDatabaseScope } from "@/lib/db/replay-scope";
 import { runJob } from "@/lib/jobs/runner";
 import { JobLeaseLostError } from "@/lib/jobs/control";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -180,6 +180,7 @@ async function exercise(expire: boolean) {
   let run: ReplayRun | undefined, ledger: ReplayLedger | undefined;
   let before: Awaited<ReturnType<typeof writerSnapshot>> | undefined, after: typeof before;
   let writerError: unknown, writerResult: unknown, blockerProof: unknown;
+  let callbackError: unknown;
   try {
     database = await openVerifiedReplayHandlerDatabase(profile.identityPath, {}); ledger = new ReplayLedger(database);
     const inputs = [{ candidateId: value.candidate.id, input }];
@@ -194,6 +195,7 @@ async function exercise(expire: boolean) {
           tokenUpperBound: 100, fixture: async () => ({ result: { ok: true, outcome: { decision: "approve", confidence: .99,
             reason: "Working deployed application", evidenceIds: ["product"] }, usage: { inputTokens: 8, outputTokens: 2 } },
           receipt: { inputTokens: 8, outputTokens: 2 } }) }, () => runJob<null>("second-review", async ctx => {
+          try {
           if (!ctx.lease) throw new Error("actual_second_review_job_missing");
           const claim = await admitLegacySecondReview(value.vote.id, ctx.lease);
           if (claim.kind !== "admitted") throw new Error(`actual_second_review_admission_${claim.kind}`);
@@ -201,13 +203,10 @@ async function exercise(expire: boolean) {
             firstAttemptId: value.first.id, secondReviewId: value.vote.id, generationKey: value.vote.generationKey,
             vote: value.vote.id, provider: "abcllm", model: "second-model" }, input, { signal: ctx.signal });
           if (!answer?.ok) throw new Error("actual_second_review_fixture_success_missing");
-          if (expire) {
-            // The real claim has already committed. Change only its locked_at,
-            // through an actual guarded/journal transaction before the run holder.
-            await db.transaction(async tx => { await tx.update(jobs).set({
-              lockedAt: sql`clock_timestamp() - ${STALE_LOCK_MS - 500} * interval '1 millisecond'`,
-            }).where(eq(jobs.name, ctx.lease!.name)); });
-          }
+          const executor = currentReplayDb();
+          if (!executor) throw new Error("actual_replay_executor_missing");
+          const transactionDescriptor = Object.getOwnPropertyDescriptor(executor, "transaction");
+          const originalTransaction = executor.transaction;
           const entered = latch<number>(), unlock = latch();
           const holding = blocker.begin(async tx => {
             await tx`SELECT run_id FROM pipeline_replay.capacity_runs WHERE run_id=${replay.runId} FOR UPDATE`;
@@ -215,9 +214,29 @@ async function exercise(expire: boolean) {
           });
           const held = holding.then(() => null, error => error);
           let writing: Promise<void> | undefined;
+          let anchoredClock: { locked_at: string; expires_at: string; healthy: boolean } | undefined;
+          let interceptedTransactions = 0;
           try {
             const holderPid = await Promise.race([entered.promise, holding.then(() => { throw new Error("run holder ended before barrier"); })]);
             before = await writerSnapshot(replay, value.candidate.id);
+            // Unlike the original committed 500ms fixture, anchor this test's
+            // headroom after the real writer callback, in that same guarded TX.
+            // Domain loading/projection work cannot consume it before dispatch.
+            const anchoredTransaction: typeof executor.transaction = (write, config) => originalTransaction(async tx => {
+              interceptedTransactions++;
+              const written = await write(tx);
+              if (expire) {
+                const clocks = await tx.execute<{ locked_at: string; expires_at: string; healthy: boolean }>(sql`
+                  UPDATE jobs SET locked_at=clock_timestamp()-${STALE_LOCK_MS - 750} * interval '1 millisecond'
+                  WHERE name=${ctx.lease!.name} AND lease_token=${ctx.lease!.token}
+                  RETURNING locked_at::text, (locked_at+${STALE_LOCK_MS} * interval '1 millisecond')::text AS expires_at,
+                    locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS healthy`);
+                expect(clocks).toHaveLength(1);
+                anchoredClock = clocks[0]; expect(anchoredClock.healthy).toBe(true);
+              }
+              return written;
+            }, config);
+            Object.defineProperty(executor, "transaction", { configurable: true, writable: true, value: anchoredTransaction });
             writing = recordSecondReview({ receipt: claim.receipt, result: { ok: true, ...answer.outcome,
               confidence: answer.outcome.confidence ?? null, provider: "abcllm", model: "second-model" } })
               .then(result => { writerResult = result; }, error => { writerError = error; });
@@ -228,28 +247,48 @@ async function exercise(expire: boolean) {
                   AND ${holderPid}=ANY(pg_blocking_pids(a.pid)) AND a.query ILIKE '%capacity_runs%FOR UPDATE%'`;
               return waiters.length;
             }, { timeout: 2_000, interval: 10 }).toBe(1);
-            const [healthy] = await admin`SELECT locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS healthy
-              FROM jobs WHERE name='second-review'`;
+            expect(interceptedTransactions).toBe(1);
+            if (expire) expect(anchoredClock).toBeDefined();
+            const [healthy] = expire
+              ? await admin`SELECT clock_timestamp() < ${anchoredClock!.expires_at}::text::timestamp AS healthy,
+                  clock_timestamp()::text AS wall, ${anchoredClock!.expires_at}::text::timestamp::text AS expiry_readback`
+              : await admin`SELECT locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS healthy
+                  FROM jobs WHERE name='second-review'`;
+            blockerProof = { holderPid, waiters, anchoredClock, ...healthy, healthyAtWait: healthy.healthy };
+            if (expire) expect(healthy.expiry_readback).toBe(anchoredClock!.expires_at);
             expect(healthy.healthy).toBe(true);
             // The callback's domain/outbox changes are still uncommitted while
             // hooks.after is the actual blocked capacity_runs FOR UPDATE query.
             expect(await writerSnapshot(replay, value.candidate.id)).toEqual(before);
             if (expire) await expect.poll(async () => {
-              const [row] = await admin`SELECT locked_at < clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS expired
-                FROM jobs WHERE name='second-review'`; return row.expired;
+              const [row] = await admin`SELECT clock_timestamp() >= ${anchoredClock!.expires_at}::text::timestamp AS expired`;
+              return row.expired;
             }, { timeout: 5_000, interval: 10 }).toBe(true);
-            const [clock] = await admin`SELECT locked_at::text,clock_timestamp()::text AS wall,
-              locked_at < clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS expired FROM jobs WHERE name='second-review'`;
-            blockerProof = { holderPid, waiters, healthyAtWait: healthy.healthy, ...clock };
+            const [clock] = expire
+              ? await admin`SELECT clock_timestamp()::text AS wall,
+                  clock_timestamp() >= ${anchoredClock!.expires_at}::text::timestamp AS expired`
+              : await admin`SELECT locked_at::text,clock_timestamp()::text AS wall,
+                  locked_at < clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond' AS expired FROM jobs WHERE name='second-review'`;
+            blockerProof = { holderPid, waiters, healthyAtWait: healthy.healthy, fixture: "same_writer_tx_callback_end_750ms",
+              anchoredClock, healthyWallAtWait: healthy.wall, expiryReadback: healthy.expiry_readback, ...clock };
           } finally {
+            if (transactionDescriptor) Object.defineProperty(executor, "transaction", transactionDescriptor);
+            else Reflect.deleteProperty(executor, "transaction");
             unlock.resolve(); const holdingError = await held;
             if (writing) await writing;
             if (holdingError) throw holdingError;
           }
           after = await writerSnapshot(replay, value.candidate.id);
+          if (writerError) throw writerError;
           return { done: true };
+          } catch (error) { if (error !== writerError) callbackError = error; throw error; }
         }, { budgetMs: 110_000 }))));
     }));
+    if (callbackError) {
+      console.info("certified-final-wall-callback-error", { callbackError, writerError, writerResult, blockerProof, result });
+      throw callbackError;
+    }
+    if (!before || !after) throw new Error(`certified_writer_snapshot_missing:${JSON.stringify(result)}`);
     await ledger.closeAdmission(replay); await ledger.fenceWriters(replay);
     await ledger.seal(replay, replayQuiescenceProof(replay));
     const artifact = await readSealedReplayArtifact(database, replay.runId);

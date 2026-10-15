@@ -49,3 +49,18 @@ root 최종unit **280파일2,928PASS/9.43초 exit0** 및 whole tsc/전체lint(�
 B 역사적 first call은 actual AI2 call1/final0이라 **생성된 capacity_finals rollback 자체를 증명하지 않는다**. 전체 raw snapshot 불변과 domain/outbox/journal rollback이 해당 race의 증거다. C initial fixture bigint/NULL·max1 pool/endedTX 오류, inner assertion을 runJob이 삼킨 위양성, B 3초 headroom timeout은 행동 RED에서 제외했다. 모델 품질·timeout·인증·권한 gate 완화0이다.
 
 기본 legacy와 새 consumer 비활성을 유지한다. 한-item lifecycle(c1b), item B5(c2), PR05/07 durable physical-call admission/종료, provider identity/상한/취소·실제30분 baseline·2배·Oracle DR·운영 배포는 미완료다. 다음 작업 계약은 /tmp 읽기 노트 단계이며 아직 구현/새 PASS가 아니다.
+
+## PR443 CI 실패와 테스트 동기화 보강
+
+첫 feature head af4df25의 PR CI38793351252는 quality·통합1/2 SUCCESS, 통합3 **1FAIL/789PASS·기존TODO1**로 check FAILURE/image SKIP이었다. 원로그 `/tmp/nomorevibe-pr04c-wall-pr443-ci-failed-20261016.log`. 실제 정상 control에서 job locked_at→run-row wait 관측까지 약4.18초가 걸렸다. 기존 committed500ms headroom은 expensive 준비 전에 소진될 수 있고, waiter poll0 원assertion을 runJob이 catch한 뒤 afterundefined TypeError가 덮었다. 생산 최종wall source5개는 변경하지 않았다.
+
+root와 B가 테스트 한 파일만 보강하고 root 직접 리뷰했다. 실제 currentReplayDb executor transaction **단1회 pass-through**가 원 result writer callback을 끝까지 실행한 뒤 **같은 실제 TX의 자기 job name+token CAS**로 locked_at을 조정해750ms headroom/정확한 DBexpiry를 RETURNING한다. 기존 native after/실제 run-row holder/query·pg_blocking_pids·고정1초 locktimeout을 그대로 거친다. transaction descriptor는 finally에서 복원하고 holder/writer를 drain한다. actual callback 원오류는 외부에서 다시 검사하므로 TypeError가 가리지 않는다. holder 생성 뒤 try 밖에서 executor를 조회하던 정리 경계는 root 리뷰로 앞쪽 조회로 옮겼다.
+
+이 fixture는 앞의 committed500ms driver와 다른 **same-writer-TX callback-end anchor**다. 미커밋 job값을 admin이 읽었다고 주장하지 않고 RETURNING한 exact expiry와 실제 DBclock을 비교한다. timestamp parameter를 직접 `::timestamp`로 바인딩하면 driver OID serializer가 KST/µs를 변형했다. 첫 새driver1FAIL/control1PASS와 `/tmp/nomorevibe-pr04c-wall-ci-fixture-anchor-diagnostic-20261016.log`는 fixture SQL 실패로 행동RED에서 제외했다. `::text::timestamp`로 고정해 exact readback을 assert하며 정책/TTL/DBtimeout/gate는 변경0이다.
+
+최종 동일driver SHA **6bbc9186e47ac627c3ba0e8550bcaecc1d6cb6f6dd6d3d88cd739b12578df548**를 root가 oldsource05cedd17 임시WT로 복사하고 양쪽 hash를 직접 확인했다. 같은 전용55506 DB를 순차 사용했다.
+
+- oldsource 실제 **feature1FAIL/control1PASS·exit1/5.07초**: `/tmp/nomorevibe-pr04c-wall-ci-fixture-feature-red-20261016.log`. holder157→writer168 실제 capacity_runs FOR UPDATE wait. healthy wall19:38:54.977129, exact expiry/readback19:38:55.719991, unlock 전 wall19:38:55.731671 expired=true. oldwriter recorded·pending→agreed·publish[]→[1]·packets6→7/changes6→9/events12→14/head12→14 실제 commit으로 raw equality가 실패했다. 나중 runner 실패와 구분한다.
+- 현재 c1a 같은driver **2PASS·exit0/5.07초**: `/tmp/nomorevibe-pr04c-wall-ci-fixture-feature-green-20261016.log`. actual writer error stack이 execution.finalWall:135의 JobLeaseLostError이고 domain/outbox/journal full snapshot 불변·actual runJob failed를 확인했다. root가 원로그/driver를 직접 읽었다.
+
+전체 source unit2,928/DB2,112PASS와 build/정적의 앞 검증은 source가 동일한 상태에서 실행했으며, 마지막 이 fixture 변경 뒤 전체 DB를 다시 돌렸다고 주장하지 않는다. 최종 fixture의 필수 PR CI는 새 commit 뒤 재검증한다. item lifecycle/B5·운영 적용·2배/DR은 계속 별도다.
