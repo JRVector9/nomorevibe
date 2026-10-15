@@ -16,7 +16,7 @@ describe("pipeline item identity", () => {
       { ...firstBinding, workKey: "ai1:someone-else" }, { ...firstBinding, reviewer: { ...review.reviewer, model: "" } },
       { ...fetchBinding, claim: { ...fetchBinding.claim, nextAttemptAt: "2026-10-15T12:00:00.000001Z" } },
       { ...fetchBinding, claim: { ...fetchBinding.claim, attempts: -1 } },
-      { ...secondBinding, source: { kind: "published", slug: "published", firstAttemptId: 45 } },
+      { ...secondBinding, source: { kind: "published", slug: "published", productId: 46, firstAttemptId: 45 } },
       { ...secondBinding, vote: 999 },
     ]) expect(() => parseItemBinding(invalid), JSON.stringify(invalid)).toThrow();
   });
@@ -42,13 +42,28 @@ describe("pipeline item identity", () => {
   });
 
   it("requires the exact first or published source and the actual root vote", () => {
-    const published = parseItemBinding({ ...secondBinding, source: { kind: "published", slug: "published-product" } });
+    const published = parseItemBinding({ ...secondBinding, source: { kind: "published", slug: "published-product", productId: 46 } });
     expect(published.stage === "ai2" && published.source.kind).toBe("published");
     for (const invalid of [
-      { ...secondBinding, source: { kind: "first_attempt" } }, { ...secondBinding, source: { kind: "published", slug: "" } },
+      { ...secondBinding, source: { kind: "first_attempt" } }, { ...secondBinding, source: { kind: "published", slug: "", productId: 46 } },
       { ...secondBinding, fallbackForId: 34 }, { ...secondBinding, fallbackForId: 33, vote: 34 },
       { ...secondBinding, source: { kind: "first_attempt", firstAttemptId: 45, slug: "also-published" } },
     ]) expect(() => parseItemBinding(invalid)).toThrow();
+  });
+
+  it("requires a persisted product generation for a published source", () => {
+    expect(() => parseItemBinding({ ...secondBinding,
+      source: { kind: "published", slug: "recreated-product" } })).toThrow();
+    for (const productId of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, Infinity, "46", null]) {
+      expect(() => parseItemBinding({ ...secondBinding,
+        source: { kind: "published", slug: "recreated-product", productId } })).toThrow();
+    }
+    const original = parseItemBinding({ ...secondBinding,
+      source: { kind: "published", slug: "recreated-product", productId: 46 } });
+    const replacement = parseItemBinding({ ...secondBinding,
+      source: { kind: "published", slug: "recreated-product", productId: 47 } });
+    expect(itemWorkKey(replacement)).toBe(itemWorkKey(original));
+    expect(itemBindingHash(replacement)).not.toBe(itemBindingHash(original));
   });
 
   it("bounds owner identities and rejects incomplete or extra owner authority", () => {

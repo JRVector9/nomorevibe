@@ -102,12 +102,12 @@ it("passes the same explicit rule clock into access-mode resolution", () => {
 
 it("validates the AI2 generation at reference time while preserving first-attempt identity", async () => {
   const stored = document(), input = createReviewInput(candidate, stored, settings, { scan: null, observations: [] }, referenceTime);
-  const first = { id: 1, kind: "automatic", state: "succeeded", provider: "abcllm", model: "first",
+  const first = { id: 1, candidateId: candidate.id, kind: "automatic", state: "succeeded", provider: "abcllm", model: "first",
     inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash,
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, outcome: { decision: "approve" } } as CrawlReviewAttempt;
   const vote = { id: 1, candidateId: candidate.id, repo: candidate.repo, trigger: "ai_approved", publishedSlug: null,
     provider: "abcllm", model: "second", firstAttemptId: first.id, firstDecision: "approve", firstModel: "first",
-    generationKey: secondReviewGeneration(first.id, input, "ai_approved"), fallbackForId: null } as SecondReview;
+    inputHash: input.inputHash, generationKey: secondReviewGeneration(first.id, input, "ai_approved"), fallbackForId: null } as SecondReview;
   const current = { candidate, document: stored, settings, input, first };
   expect(secondReviewInputMatches(vote, current)).toBe(false);
   await withReviewReplayContext({ referenceTime }, async () => {
