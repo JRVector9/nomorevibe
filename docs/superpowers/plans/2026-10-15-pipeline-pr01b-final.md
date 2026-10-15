@@ -61,7 +61,7 @@ final unique `(run_id,candidate_id,input_hash,source_revision_hash,policy_hash)`
 - [x] unit 및 신규 실제 DB targeted 회귀를 실행하고 실패 원인을 수정한다.
 - [x] 담당 간 교차 읽기 리뷰 후 root 전체 diff를 목적/원자성/잠금/권한/중복 기준으로 리뷰한다.
 - [x] `npm test`, `npm run test:integration`, typegen/tsc/lint/i18n/build 및 diff 체크를 실행하고 실제 결과만 기록한다.
-- [ ] 정확한 파일만 commit/push/PR하고 최신 base 필수 CI 성공 뒤 exact-head merge한다. handoff와 PR별 현황 갱신.
+- [x] 정확한25파일을 commit/push/PR433, 최신 base664777d의 필수 CI 성공 뒤 head6d52bf5 exact-head squash merge(main4af0589). handoff와 PR별 현황 갱신.
 
 ## 검증 명령
 
