@@ -114,3 +114,5 @@ git diff --check
 고정source4개와unit2개·C통합test582행 동결. 원90초 actual1RED/control1PASS→같은2PASS91.31초를 root가 수용했고 heartbeat 구현을 해제·검증했다. A95unit/B48unit·25DB 회귀 및 양쪽 whole tsc/scopedlint0, 서로 읽기교차리뷰 추가P1/P2 0. C짧은행렬19PASS/원long1skip, 최종whole20·A읽기리뷰와 root전체gate는 진행 중이다. rootwholeunit2,985PASS/whole tsc·linter·i18n0. 실제 로그·실패 접근·제한은 validation 문서에 기록한다. 이 checkpoint는 전체DB/CI/운영 적용·itemB5·2배/DR 완료가 아니다.
 
 최종 root wholeDB181파일2,132PASS/기존TODO1·611.49초 actualexit0, unit2,985·정적/i18n/Python23/build/bundle0을 확인했다. C최종7e56 short순서관찰은 A/root읽기리뷰0 및 독립 awaitheartbeat삭제 mutant1FAIL→원본1PASS로 감도를확인했다. 원20PASS와마지막short검증은별개다. 담당DB readback/STOP 반환 완료, root 최신main통합/최종fixture·readback/STOP/Git·CI는이어간다.
+
+mainc7754651 정상통합뒤 source4/Ctest7e56 SHA동일·최종선행fixture2PASS5.79초와 root최종rawreadback/STOP/exited0을확인했다. root/세담당의 소유권은반환됐으며 미해결P1/P2 0이다. PR필수CI/normalmerge/mainCI·운영적용은아직별도다.
