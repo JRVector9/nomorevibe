@@ -1,3 +1,60 @@
+# 2026-10-15 — PR 단위 실행 승인·계획 작성·PR00 격리 검증
+
+## Current objective / completed work
+
+사용자가 “PR 단위 계획 세워서 진행하자”로 설계 후 구현 진행을 승인했다.
+`writing-plans`/`execute-plan`을 적용해 PR00–17의 독립 경계·의존성·검증·migration/rollback을
+`docs/superpowers/plans/2026-10-15-pipeline-pr-roadmap.md`에 작성했고 PR00 상세 추출 절차도 작성했다.
+세 서브에이전트(gpt-6.1-sol/xhigh)는 item/model writer 읽기 전용 검토, Oracle 경계 검토,
+PR00 격리 추출·테스트를 병렬 수행했다. 별도 새 운영 writer를 시작하지 않았다.
+
+PR00 worktree `/Users/jr/Desktop/projects/nomorevibe-pr00`, branch
+`codex/pipeline-pr00-evidence-progress-20261015`, origin/main/base `b55ac083`.
+기존 c5fcb0b/90a57fd의 fetch·evidence 관련4파일만 추출(+253/-7), X 변경은 제외했다.
+PR00 커밋49fcdd0을 push하고 https://github.com/JRVector9/nomorevibe/pull/427 을 생성했다. 필수 CI는 확인 중이며 main merge/배포는 아직 안 했다.
+
+## Modified files / key design decisions
+
+현재 workspace: 위 roadmap, `2026-10-15-pipeline-pr00-evidence-progress.md`, 전체 spec, 이 handoff.
+PR00 별도 workspace: `lib/net/fetch.ts`, `lib/jobs/products/evidence-refresh.ts`,
+`tests/link-evidence.test.ts`, `tests/evidence-refresh-continuation.test.ts`.
+
+공개 웹 검색 번역도 gateway를 부른다. reviewer4+text4=8을 현 시스템 전체 상한으로 부르던
+spec 문구를 초기 새 배정안으로 교정했다. 모든 transport/retry/chunk/fallback·웹 primary DB permit,
+예산 대기 시 failureCount 불변을 PR05에 명시했다. AI1 owner_changed/frontier 전체회수와
+AI2 enqueue/close/retry/orphan/admin writer까지 개별 소유권 전환 대상이다.
+현재2host readiness를 Oracle 준비 완료로 확장하지 않는다. 실제 host/release 귀속 readback을 요구한다.
+기존 pause/소개검수재개/keyword api-stop/예산/X10/Cloudflare80%/근거 helper 상한은 보존한다.
+
+## Test commands and actual results / failed approaches
+
+PR00 agent가 격리 worktree에서 실제 실행:
+
+- `npx vitest run tests/link-evidence.test.ts tests/evidence-refresh-continuation.test.ts tests/evidence-refresh-cancellation.test.ts tests/worker-runtime.test.ts`:4파일96PASS.
+- `npm test`:260파일2,547PASS.
+- `npx next typegen && npx tsc --noEmit`:exit0.
+- 해당4파일 ESLint:exit0. 전체 `npm run lint`:exit0, 기존 vendor `_ctx` 경고1.
+- `npm run build`:최종PASS, 기존 agent-review dynamic spawn tracing 경고1.
+- 첫 build는 외부 node_modules symlink가 Turbopack root 밖이라 실패. worktree에 실제 dependency 복사 후 동일 source로 PASS.
+- 부모 추가 실행: 전용 loopback55451 DB의 관련3파일38PASS, check:i18n/bundle PASS, Python deploy23PASS. 실모델 성능·운영 장애 시험·운영 migration/배포는 미실행.
+
+## Remaining work / exact next commands
+
+부모가 PR00 diff를 검토하고 빠진 공통 check를 실행한 뒤 결과 문서/명시적 파일 커밋·PR를 생성한다.
+설계/HTML/roadmap은 별도 docs PR로 공개해 X 브랜치의 다른 변경을 섞지 않는다.
+PR01 계수·격리 replay 다음, item/fence/공통 예산 검증 전 독립 consumer 활성화 금지.
+아직2배·Oracle 상시 신규업무·최종DR 달성/배포로 보고하지 않는다.
+
+```sh
+git -C /Users/jr/Desktop/projects/nomorevibe-pr00 diff --check
+git -C /Users/jr/Desktop/projects/nomorevibe-pr00 diff --stat
+sed -n '1,230p' docs/superpowers/plans/2026-10-15-pipeline-pr-roadmap.md
+gh pr list --state open --limit 20
+```
+
+
+---
+
 # 2026-10-15 12:56 KST — 키워드 두 동결 캠페인 완료, OSS 의미 오류로 단독 검수 중지
 
 ## Current objective
