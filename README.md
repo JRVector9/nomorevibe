@@ -86,11 +86,12 @@ npm run dev
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
 
 maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동시 확인이다.
-운영 처리량을 올릴 때는 `UPTIME_BATCH_SIZE=30`, `UPTIME_CONCURRENCY=4`부터 계측하고
-검증 뒤 상한 60/6까지 올린다. 같은 origin은 여전히 한 번에 하나만 열고 DB 기록은 직렬이다.
-자세한 단계와 6시간 backlog 확인은 운영 runbook을 따른다.
-2026-09-29 운영 maintenance 주·예비는 60/6으로 설정했고 5분 300건 저장을 확인했다.
-6시간 초과 대상의 장기 회복은 아직 관측 중이다.
+`UPTIME_BATCH_SIZE` 상한은 200, `UPTIME_CONCURRENCY` 상한은 16이며 현재 운영 설정은 150/12다.
+같은 origin은 한 번에 하나만 열고 DB 기록은 직렬이다. 같은 제품은 6시간에 한 번 확인한다.
+최근 관측에서 연속 실패가 10회 이상인 공개 웹사이트는 현재 제품·주소를 다시 검사해 자동으로 내리고,
+실제 실패 수·마지막 응답·확인 시각·처리 주체를 제품 기록과 운영 감사에 남긴다.
+주소 변경이나 과거 실패의 귀속이 불명확하면 다음 실패부터 새로 센다.
+정책과 실제 배포·처리 관측은 [자동 내림 운영 보고서](docs/operations/2026-10-15-uptime-auto-ban.md)를 따른다.
 
 통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
 작업 중인 데이터가 날아간다.
@@ -263,7 +264,7 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 | `crawl-judge` | 현재 기준으로 판정 | `crawl_candidates` (approved / rejected / needs_review) |
 | `crawl-agent-review` | 규칙 재확인 후 제한된 AI 심사 | `crawl_review_attempts`, enforce에서 유효한 후보 판정 |
 | `crawl-publish` | 통과한 후보를 목록에 올림 | `products` (status=seeded, source=crawler) |
-| `uptime-ping` | 등재된 제품이 아직 떠 있는지 확인 | `product_health` (기록만 — 목록은 안 건드린다) |
+| `uptime-ping` | 등재 제품 접속 확인·연속 실패 10회 이상 자동 내림 | `product_health`, `products`, 제품·운영 감사와 CDN purge 요청 |
 | `click-rollup` | 클릭 원천을 하루 단위로 굴리고 오래된 원천 정리 | `product_click_daily` |
 | `ranking-refresh` | 시즌 경계·쿨다운을 계산하고 공개 순위 스냅샷 갱신 | `ranking_seasons`, `ranking_entries` |
 | `product-evidence-refresh` | 공식 링크·저장소·업데이트·내부 보관 미디어 갱신 | `product_evidence_*`, `product_updates`, `product_media` |

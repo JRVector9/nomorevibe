@@ -1,158 +1,188 @@
-# 2026-10-15 10:21 KST — 접속 실패 자동 내림 구현·검증 완료 / 정상 PR 준비
+# 2026-10-15 11:16 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
 
 ## Current objective / authorization
 
-신규 GitHub·Show HN 발굴 중단을 유지하고 소개 검수를 포함한 자동 적체를 회복한다.
-병렬 서브에이전트·커밋·푸시·정상 PR·배포·마이그레이션은 이미 사용자 승인 범위다.
-모든 서브에이전트/Codex CLI는 `gpt-6.1-sol` / `xhigh`를 사용한다.
-사용자가 별도로 요청한 Grok CLI `grok-4.7` / `low` 조사·구현은 실제 완료했다.
-main은 최신 base 필수 CI와 정상 PR 병합을 요구한다. 직접 main push·force·bypass는 하지 않는다.
+신규 GitHub·Show HN 발굴 중단을 유지하며 소개 검수를 포함한 자동 적체를 회복한다.
+추가 지시인 접속 실패 10회 이상 제품 자동 내림과 기록 보존을 배포·실제 검증했다.
+병렬 agent·정상 PR·커밋·푸시·배포·마이그레이션은 사용자 승인 범위다.
+모든 agent/Codex CLI는 gpt-6.1-sol/xhigh. 별도 요청된 Grok CLI grok-4.7/low는 이전에 실제 완료했다.
+main은 최신 base의 필수 CI와 정상 PR을 요구한다. bypass/force/direct main push 금지.
 
-최신 추가 지시: “응답 10회 이상 거절된 건 전부 자동으로 내리고 기록”. optional async 질문에는
-아직 답이 없었다. 실제 공개 사이트 연속 접속 실패10+는534개, 현재 제품 재검수 reject10+ 및
-생성 품질 거절10+는 각각0개였다. root가 사이트 ‘응답 없음’으로 해석해 진행한다고 알렸다.
-사용자가 “결정해줘야할게 뭐야”라고 물어 필수 결정은 없고 이 기준으로 진행 중이라고 답했다.
-AI 거절·gateway 시도와 합산하지 않는다. 신규 자동내림 구현과 관련 검증은 완료했고 운영에는 아직 적용하지 않았다.
+## Current repository / deployment state
 
-## Completed work / deployed state
+- PR422 https://github.com/JRVector9/nomorevibe/pull/422 정상 squash main
+  `94b025ef0083190cf8bb24d87b2484edd4cc93cc`.
+  HEAD ac088b4의 PR CI38665430340, main CI38665835062 전체 check/이미지 실제 성공.
+- **첫기능배포 13앱/18컨테이너 모두94b025ef였음**(현재347은아래참고). 원본 게이트로 rollout session41128 exit0,
+  whole verify01:51:28.225UTC. 양 웹 public health ok/m3-web+mini-web,
+  source5앱 각537 tracked runtime파일 SHA 일치, schema journal77/qualityColumntrue/introNULL.
+  다섯 역할 각각 원본 readiness/progress gate 실제 통과. 임의 DB lease 변경 없음.
+- worker digest756d50ca111518d1650ce8a49e90d3e39969431db8dbb562fab5949ab8a5d0ff,
+  web digest34743c96173a727f09f0cf20377533d1a41c29267f7777ffde8d04e859020d5e.
+  원본 helper와 proofs: `/Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban`.
+  별도 HTML purge 실제ok(session86268 exit0).
+- **후속 PR423** https://github.com/JRVector9/nomorevibe/pull/423:
+  ba2fbdd07a97382fe2538c9d7508c7c8a3f19562의 PR CI38667723469 모두PASS 후01:54:20UTC 정상 squash.
+  새 main `347d647cc21a272e3e5b6acc1a0fd41f2190f173`, **main CI38668156608 전체검증·이미지 모두실제PASS**.
+  root는 이 main의 detached HEAD. 아래운영적용시각과구별한다.
+  target session21273실제exit0. worker0f19016253c951069551f8c4cc8cb03ceb6c0e84fb2f90b679f0568c6b61ce1f,
+  web16008a0db09f90351579d4d32d7631e239ea5d5af4df9da5f34930ff18ffe5de.
+  새helper plan session3721와 migrate session15595는 모두 exit0. 양서버 이미지 pull/사전검사, schema77/qualityColumntrue/introNULL/noDDL을 실제 확인했다.
+  마지막 순차 rollout session89922는02:05:46.439UTC시작→02:10:57.671UTC전체19단계verified/exit0.
+  **현재운영13앱/18컨테이너모두347d647**. source5앱각537hash일치/양웹healthok,
+  schema77/qualityColumntrue/introNULL보존. HTMLpurgeok/errors0, 최종5역할ready/전체progressok.
+  02:10:47.976 AI stagewaiting0/deferred88/providerErrors0/errorageNULL/backoff/alarmfalse 확인.
+- 후속 릴리스 새dir `/Users/jr/.config/nomorevibe/releases/2026-10-15-ai-not-found-monitoring`.
+  원본 release.py/failback.py/rollout.py만 복사했다. **94b 기준13앱 baseline capture 실제완료**
+  (session65473 exit0), 모든 앱healthy/18컨테이너/schema77/introNULL.
+  before.json을 덮거나 이전c8/b087 기준선을 재사용하지 않는다.
 
-- PR421 정상 squash 병합: https://github.com/JRVector9/nomorevibe/pull/421
-  main/runtime `c8f04245e44cb60573cbc2f8685d2f6c4b6f0407`.
-  PR HEAD aa8559f CI38656359171 및 main CI38656829668 실제 전체 필수 check/image publish 성공.
-- M3/mini 웹·scheduler·crawler/reviewer/publisher/text/maintenance 총13앱/18컨테이너 배포 완료.
-  whole verify exec62561 exit0, 최종 roles monitor exec60705 exit0 / 다섯 역할 M3 ready·progress ok.
-  SourceGit5앱 각536 tracked runtime 파일 SHA 일치. 양 웹 public health ok.
-  schema journal77/qualityColumntrue 확인, 이번 배포 DDL 없음, intro not_before=NULL.
-  worker digest8506b245745fbc8db08501aa7f48f07a74d17e2e1ddf91fdefd6c72913f450a7,
-  web digest4ee58be55846a88fa67382e0794fd2d6a43b54f3ebca0bb7abf43f59e0409e4b.
-- 근거 collector의 현재 identity/demand/limited coverage, audit 내부65초·외부70초,
-  search provider retry 및 한국어 숫자·언어 검사, Grok source 즉시 재개가 배포됐다.
-- audit defer는 reviewer actual65/70 runtime 확인 후09:08:49KST audit12183으로 정상 재개 완료.
-  old timeout 고정5개 각각 새 호출1회: approve4/reject1, attempts3→4, 공식 writer/history 보존.
-  마지막09:15 관측 재개후 성공29/실패0, 24초 초과 성공 저장2건. resume/apply 반복 금지.
-- 숫자 고정12개 각1회 실제 처리 완료:7건 통과 저장/5건 품질 보류(empty4/invented_number1).
-  network 고정17개 각1회 실제 생성 저장 완료:HTTP200 17/실패0/unknown0, attempts5→6,
-  current source/hash/revision/repair 보존·audit17행 확인. 생성 selector의 고정 cohort0.
-  새 키워드의 의미 검수는 정상 queue 대기이며 완료라고 주장하지 않는다. marker 삭제/재호출 금지.
-- Grok CLI1.0.52 actual session01a13cb0-ae94-76d2-ae5c-cacfba1fba78 / modelgrok-4.7 / effortlow.
-  source handler→runner→worker가 성공·실제 남은due·deadline소진·failed0·hold0일 때만 sleep1회 생략한다.
-  추가 steady 관측00:19:30~00:26:05.661UTC:395.661초/완료5틱/실행실패0,
-  failed0 뒤4~5ms/failed>0 뒤5~10초. 최근5m DB141·wall148, due50134.
-  즉시재개 동작만 확인했으며 장기 처리량 개선율은 미확정이다. 추가 Grok/성능관측 호출 불필요.
-- Cloudflare 실제 zone Free/Cache Reserve 비활성. 일반 CDN Free는 월별 초과 과금 allowance가 없어
-  가짜80% 과금/메모리 guard를 만들지 않았다. 별도 기존 Valkey를 양 웹6컨테이너가 사용한다.
-  좁은 zone CachePurge token은 Keychain/private600에 저장했고 양 publisher에 적용했다.
-  09:20:35KST 실제 CDN1895개 전부 confirmed/pending0/error0. 새 ban은 새 purge를 만들 예정이다.
-- 신규 발굴 crawl-seed/hn-show-seed not_before2100, runs8905/1681을 유지한다.
-  M3 LaunchDaemon com.nomorevibe.backlog-catchup이 PC와 독립적으로 정상 후속 요청을 한다.
-  stopAt2026-11-28T15:09:07.743408Z, 발굴 재개/disabled면 종료하며 발굴을 자동 재개하지 않는다.
-  job lease/attempt/cursor/성공시각을 직접 초기화하지 않는다.
-- 전체 적체는 아직 존재한다. 09:25 text 생성107/검수7900/Korean2602/이유번역11463,
-  소개 ready0/사람102, 근거 due 약5만. 고정 cohort 완료와 전체 소진을 구별한다.
+## Actual automatic bans / audits / CDN
 
-## Current implementation / owners / decisions
+보고서: docs/operations/2026-10-15-uptime-auto-ban.md.
+private fixed baseline dir: `/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban`.
+원본 `baseline-20261015T010815753392Z.json` 535개, floors ops12222/evidence5817/CDN1897 보존.
+최종 정책으로519eligible/16귀속불명. 01:54:19.990UTC 고정535 실제 재조회:
 
-branch `ops/uptime-auto-ban-20261015`, base c8f0424.
-계획: docs/superpowers/plans/2026-10-15-uptime-auto-ban.md.
+- 처음519 ID 집합과 실제 자동 banned519 ID 집합 정확히 일치, eligible_pending0.
+- 운영 감사519/제품 감사519/CDN등록519 모두 전체 metadata+동일 TX시각으로 연결.
+  두 감사 xmin 일치, 중복/고아/누락/invalid/CDN오류0. CDN은 갱신후 xmin 변화 허용.
+- 정상 uptime4회, runs52611/lastSuccess01:53:53.981UTC/error없음. 수동 접수/DB 상태 변경 없음.
+- 귀속불명16 ID는 이시각그대로seeded/URL·health·updatedAt불변이었다.
+  최종02:15:34.969UTC에는16중3개(nabi-markdown/wxsm/medialane-sdk)가정상ping에서실패1로새시작한것을확인했다.
+  각각404/연결실패0/연결실패0이며접속회복이라고주장하지않는다. 나머지13는귀속불명보호대기.
+- 이 관측에서 CDNpurged90/confirmed45. 이후01:56:07 전체 CDN 관측:
+  total2419/pending430(첫purge385+confirm45)/errors0. 새 정책519만의 완료 수와 혼동하지 않는다.
+- 공개 상세3개 product-23/threatscan-download/attenza를 실제curl GET해 모두404 확인.
+- source_refresh_capacity의 bounded4회 관측/보고서append는 완료했고 추가 조회를 중지했다.
+  최종 원본 after-release-20261015T015420377502Z.json, 동일ID/감사 로컬재검증파일 보존.
+  후속 운영 SHA 변경 시 observe.py expected-sha도 실제 새 SHA로 바꾼다.
+- 최종02:15:34.969UTC fixed535재관측+로컬검증: 최초519정확ID=정책banned519,
+  ops519/evidence519/CDN519/purged519/confirmed519, duplicates/누락/invalid/캐시오류0.
+  증거 after-release-20261015T021535380821Z.json / local-final-verification-20261015T021535Z.json.
+  전체CDN02:15:16에는pending0/confirmed2419/오류0, 이후정상신규요청과혼동하지않는다.
 
-- evidence_capacity_recovery: 새 uptime-auto-ban helper/job/health/repository URL 변경/sample writer,
-  새23개 통합 테스트 구현 완료. 전용DB55449 관련4파일60PASS/config7PASS/tsc·eslint·diff PASS.
-  threshold10, reason uptime_consecutive_failures, actor system:uptime,
-  operations action product-auto-ban-uptime / target=slug.
-- root: 관리자 action/ban reason/history 한국어 표시, docs/handoff, 통합 검증·PR·배포.
-  실제 admin activity 회귀 RED1/기존12pass→GREEN13pass(09:28), 새 action의 내리기 갈래/횟수/
-  마지막 HTTP/확인시각/처리자 표시를 검증했다. core 자동 내림 테스트를 대신하지 않는다.
-- separate_cache_server: 새 정책 독립 읽기 검토 완료, 최종 추가 P0/P1/P2없음. 직접 UI20PASS/diff PASS.
-  중요 지적: operationsAudit만0056 append-only 보장, productEvidenceAudit는 hard delete 때 지워질 수 있다.
-  따라서 전체 snapshot을 운영 audit에 같은 TX로 넣어야 한다. recordAdminAction 후커밋은 사용하지 않는다.
-- source_refresh_capacity: 신규 baseline freeze + 읽기 전용 observer 완료.
-  private dir /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban,
-  새 docs/operations/2026-10-15-uptime-auto-ban.md baseline/실제명령 기록완료.
-  10:08 고정535개(ops12222/evidence5817/CDN1897 floor), 최종정책 local재분류519eligible/16귀속불명.
-  root가 사용자에게16개는 새 관측부터 센다고 알렸다. 배포신호 전 추가운영조회/쓰기금지.
+02:07:24.816UTC 최초고정적체: source54526중saved19118/failed304/identitychanged9/removed0,
+agent14952중attempted1952/complete1841/partial111/never13000/error2,
+intro1548중completed1481/needs_editor67/failed0, 기존CDN1868모두confirmed.
+현재전체큐와고정cohort를혼동하지않고, 전체소진이라고주장하지않는다.
 
-정책 경계:
-- 200~399 성공 시 기존 연속 실패 초기화. 공개 website만9회 유지/10회부터 banned.
-- 기존 fresh10+도 정상 uptime job bounded batch/budget으로 처리한다. 오래된 결과는 정상 재확인.
-- lifecycle 잠금 아래 제품 id/slug/URL/public 상태·fresh6h health를 다시 확인한다.
-- status+product audit+append-only operations audit+기존0057 CDN trigger는 같은 트랜잭션.
-  failures/status/checkedAt/downSince/productId/url/policy/threshold/실제 처리시각을 보관한다.
-- 이미 차단됨/성공 회복/세대·URL 변경은 쓰기0, 중복 이력0. 제품 삭제나 가짜 humanDecision은 없다.
-- 최근 unban 뒤 같은 옛 관측으로 즉시 다시 내리지 않는다. 새 실패 관측 뒤 정상 정책을 적용한다.
-- health가 URL을 저장하지 않아 downSince 이후 제품 수정은 과거 실패 귀속불명으로 취급한다.
-  정상 job recordPing의 expectedURL CAS/신규 streak1, repo.update URL 변경 시 health 현재행 삭제,
-  옛 URL 본문 CAS/lock 대기 및 lease await 뒤 취소 rollback을 구현했다. daily 과거는 보존한다.
-  이름·소개·수동해제도 수정 시각을 바꾸므로 다음 실패부터1이 될 수 있는 보수적 한계가 있다.
-- 기존6h/동시성/batch/모델/신규발굴중단/직렬DB/lease 취소를 보존한다. 새 DDL은 계획하지 않는다.
+## Design decisions
 
-## Modified files / preservation
+- 사용자의 ‘응답10회 거절’은 현재 공개 사이트 연속 접속 실패로 해석한다고 안내했다.
+  AI 심사/생성 거절 및 gateway 시도와 합산하지 않는다. 필수 결정은 없다고 사용자에게 답했다.
+- 공개 seeded/verified, accessModewebsite, 연속실패10+, 최근6h/미래아님/성공아님/정상downSince.
+  성공200~399는 기존 실패 초기화. 기본 batch15/concurrency3, 운영150/12, 상한200/16 및6h 유지.
+- lifecycle 제품 id/slug/현재URL/public·health를 잠금 아래 재확인.
+  status+productEvidenceAudit+append-only operationsAudit+기존0057 CDN trigger 동일TX.
+  reason/policy uptime_consecutive_failures, actor system:uptime/actorKindtoken,
+  action product-auto-ban-uptime, threshold10, 실제count/status/time/id/URL/이전상태 snapshot 보존.
+  제품을 나중에 hard delete해도 운영 감사는 남는다. 가짜 humanDecision은 만들지 않는다.
+- URL 변경 현재health 무효화/일별과거보존, 옛URL응답·본문 CAS, 취소/lease await 뒤 rollback,
+  중복/기차단/최근unban의옛관측 재차단 방지. 직접 repo.update의실제URL변경시currenthealth삭제.
+- legacy health에URL이 없어 product.updatedAt>downSince면 귀속불명으로 다음실패부터1.
+  이름·소개·수동해제 수정도 영향을 받는 보수적 한계이며16개를 억지로 내리지 않는다.
+- PR423은 AI 집계 providerErrors/error-age FILTER2곳에서 정확한 not_found만 제외한다.
+  정상72h재확인 deferred/waiting/selector/worker/DB행/다른error·stage는 보존한다.
+  due가되면 미처리 no_progress 경보, unknown/auth/rate 실패는 upstream 경보를 유지한다.
 
-root UI4파일(activity/inbox/history/reason), tests/admin-activity.test.tsx, docs/handoff/새 plan.
-domain helper/health/product repository/crawl repository/uptime job/새integration23개도 변경했다.
-기존 agent-evidence-refresh 테스트의 naive SQL timestamp parse를 UTC 명시로 교정했다(정책코드 변경없음).
-이전 배포후 실제 결과 append3개 보고서도 포함할 예정이다:
-2026-10-15-backlog-published-audit.md / backlog-text-recovery.md / evidence-source-capacity.md.
-core agent 파일은 git status로 확인한다. 사용자 untracked PT/zip/assets/nomorevibe-final/
-prototypes/operations/mistake.md는 보존하고 stage하지 않는다.
+## Earlier recovery / persistent server work
 
-## Tests actually executed / failed approaches
+- 앞선 PR421 main/runtimec8f0424는 전체 CI/13앱 배포를 실제 완료했다.
+  collector identity/demand/limitedcoverage, audit65/70초, provider retry, Korean 숫자·언어,
+  실제 Grok CLI source 즉시재개 수정도 현재94b/347에 포함된다.
+- audit12183으로09:08:49KST 정상 재개 완료. 고정 timeout5개 각새호출1회 approve4/reject1,
+  numeric12개7저장/5품질보류, network17개HTTP200/새저장/기존counter·source·history보존.
+  **이 완료 cohort apply/resume/marker초기화 재실행 금지**. 후속 semantic queue는 별도다.
+- 전체 자동 적체는 아직 남는다. 10:28–10:32 읽기: 근거due49,486/시간저장1,889,
+  agent due14,640, 공개재검수자동43,627/판정387/terminal0, 검색생성373/검수7,817,
+  Korean 정상selector2,441/품질cap2,776, 제품번역363/backoff7/cap100,
+  이유번역pending11,380, 썸네일due3,243. 이 수치는 현재 전체소진을 뜻하지 않는다.
+  사람판단: 소개102/공개감사109/저장소35open+36delist후보/수집후보209(큐간중복가능, 합산금지).
+  Koreancap2,776/번역cap100을 needs_editor 사람판정 수로 해석하지 않는다.
+  AI시도상한1개는candidate114695 growthxai/output이다. 옛gateway_error3건/실질판정NULL,
+  현재prompt/rules2026-10-06.2/input/source/policy모두달라현재일치시도0. stale문서+상한표식으로자동경로제외.
+  공식추가근거수집0건/frontierdone/errorNULL/설정enabled를읽기확인했다.
+  evidence_capacity_recovery에게실행직전CAS재검증후공식requestCandidateEvidence1회+evidence-collect
+  token감사기록과정상후속관측을지시했다. 직접state/attempt/approval변경·모델직접호출·반복요청금지.
+  실제02:03:05.069UTC 공식1회 접수ok, evidence_refresh96108/operationsAudit12742
+  (actor system:backlog-catchup/token, evidence-collect). 02:05:02.192UTC 읽기에서
+  새원본문서02:03:11.125→judge02:03:29.872→complete scan197644→
+  현재규칙1차96109 approve(새attempt1/errorNULL)→2차126879 Qwen3.8 approve→
+  candidate published/passed, slug output/발행02:04:11.476를 실제확인했다.
+  옛gateway_error3개는보존. 02:06:19 제품46071/publicseeded/원repo·URL일치/메이커소개140자 교차확인.
+  소개검수행은없어통과라고세지않는다. 02:07:17 현재공식소개selector에서도비대상.
+  agent최종완료. readonly진단2건은없는컬럼42703rollback, 성공증거로사용안함.
+  private proof candidate114695-recovery/observe-20261015T020502283582Z.json.
+- GitHub/ShowHN신규발굴 not_before2100/runs8905·1681 유지, 소개 검수는해제/정상자동due0.
+  M3 LaunchDaemon com.nomorevibe.backlog-catchup이 PC독립적으로 정상후속요청을 한다.
+  02:13:53.735UTC loaded/enabled/allowed/apply/errorNULL/quotaBlockedfalse, statusage9.544초/tick3929 실제확인.
+  stopAt2026-11-28T15:09:07.743408Z/발굴재개·disabled시종료/발굴자동재개없음.
+- Cloudflare zoneFree/CacheReserveoff. 일반CDN에는 월초과과금 allowance가 없어 가짜80%guard없음.
+  기존별도Valkey를 양웹6컨테이너가 실제사용. 좁은CachePurge token은Keychain/private600,
+  양publisher적용보존. 원래1895CDN은09:20:35전부confirmed였고 신규ban의519는별도확인중이다.
 
-- c8f0424 기준 실제 전체 unit260파일2528pass, 전체integration146파일1590pass/1todo.
-  TypeScript/lint(기존warning1)/i18n/build/bundle3routes/Pythondeploy23pass, PR/mainCI 성공.
-- 누적 integration fixture 충돌은 readme-refresh의 candidate RESTART IDENTITY만 제거해 해결했다.
-  readme/admin 교차2회22pass 및 같은누적DB root전체4회차1590pass로 검증, audit행삭제/단언완화 없음.
-- provider oldtext fixture 누수/Response.json mock 계약/English month 숫자 오거절도 실제RED→GREEN 확인.
-- Grok generic-only 병렬안은 효과 없어서 코드 쓰기 전 중단하고 actual tick 자료로 재개했다.
-  최종CLI actual RED3→GREEN82unit/55integration/exit0; 통합후root검증/CI가 위 c8 결과다.
-- root audit resume 최초 default crawler(oldruntime) 실행은 deployed_deadline_not_verified로 쓰기0 차단.
-  explicit reviewer wrapper가 성공한 후 중복 실행하지 않는다.
-- 배포 API timeout/오류 뒤 실제 mutation 완료될 수 있어 readback 없이 재실행하지 않는다.
-  private failback helper normal/stop_timeout/start_timeout/wait_timeout 실제mock4pass+py_compile,
-  독립 후속검토 새 P0/P1/P2없음. c8 배포는 다섯역할 모두 already_ready라 실제failback stop 필요없었다.
-- 신규 core 실제 RED→GREEN: 초기6/9, URL reset/HTTP abort/lock-wait abort/old200 sample/legacy귀속 각RED확인.
-  동시 lock승자 배열순서 고정단언은 결과정렬+정확히1감사/purge로 수정했다.
-  lazy DB Proxy spy 대신 초기화된 실제 Drizzle 인스턴스를 spy하고, DBepoch-1초 Date-only fixture로
-  host/DB 수ms 경계를 피했다. 운영의 미래 관측 거절 조건은 유지한다.
-- root 첫 fullintegration exec20967(10:15:25/255.47초) 실제145파일PASS/2파일FAIL,
-  1608PASS/3FAIL/1todo. 당시 신규파일21개 snapshot의 clock/faultspy2개와 기존 source UTCparse1개였다.
-  마지막것은 KST에서 SQL timestamp text를 localparse해 정확히9시간 차이였다.
-  최종수정 뒤 root 같은DB55448 관련5파일99PASS(10:20:30/9.91초), 실패3개 포함 전부GREEN.
-  최종 전체 unit260파일2529PASS(10:20:45/9초), tsc/전체lint(기존warning1)/최종scopedlint/i18n PASS,
-  build exit0/bundle3routes PASS/Pythondeploy23PASS. 최종 전체CI는 정상 PR에서 실행할 차례다.
+## Modified files / owners / actual tests
+
+- PR422에 core6파일/신규통합23개, adminUI4파일/활동회귀, 기존UTCfixture교정, 관련docs가들어갔다.
+  feature 실제 최종root 전체unit260파일2529PASS/관련통합5파일99PASS,
+  agent관련4파일60PASS+config7PASS, tsc/lint/i18n/build/bundle3routes/Pythondeploy23PASS.
+  PR/main 전체CI도실제PASS. 독립최종review추가P0/P1/P2없음/UI20직접PASS.
+- PR423 production query1파일/통합1파일/unit1파일만변경. 실제RED2→통합2파일27PASS,
+  unit3파일31PASS/scopedlint/diff/Nexttypegen후tscPASS. 독립review추가P0/P1/P2없음/unit11직접PASS.
+  PR/main전체CI와웹·워커이미지모두실제PASS.
+- root 미커밋 docs5개: README.md / docs/CODEX_HANDOFF.md / 새자동내림운영보고서/
+  docs/operations/2026-10-15-ai-not-found-monitoring.md /
+  docs/operations/2026-10-14-backlog-catchup.md(후보1개정상회복·고정cohort재관측).
+  README의 오래된uptime상한과‘기록만’을현재정책으로교정했다.
+- source_refresh_capacity: 고정535/observer/actual519ID·audits·CDN보고서완료, idle.
+  separate_cache_server: 독립리뷰완료, idle. evidence_capacity_recovery: 후보1개공식회복·정상발행·소개selector교차확인완료, idle.
+- root DB55448, agent55449, Grok55450는별도. 새변경/실패없이광범위테스트반복불필요.
+  사용자 untracked PT/zip/assets/nomorevibe-final/prototypes/operations/mistake.md는stage하지않는다.
+
+## Failed approaches / limitations
+
+- feature 첫root fullintegration은1608PASS/3FAIL/1todo였다. 최종 전 신규clock/Proxyspy2개와
+  기존SQLnaiveDateparse(KST9h차이)1개를고쳐같은DB관련99PASS, 최종PR/main전체CI로확인했다.
+  실제DBepoch-1초 Date-only fixture 사용, 운영미래관측거절 유지. audit행삭제/단언완화없음.
+- PR423 첫tsc는미생성PageProps6오류 exit2, Nextlocal문서확인후typegen으로해결/tsc실제exit0.
+- 첫배포 session30616은 reviewer_monitor_gate_timeout exit1(01:40:07UTC)에서뒤단계중단.
+  모든role/schedulerready였지만 AI not_found90의 정상미래backoff가upstream_stalled로집계됐다.
+  01:43canonicalREADONLY proof가joblast_errorNULL/runnable0/not_found90전부미래임을확인했다.
+  새정상성공창에서 원본게이트가다시ok였고, 원본그대로재개해전체배포완료했다.
+- private예외prototype17offlinePASS였으나독립리뷰가missing계약/nested-stale P1을발견했다.
+  예외로배포한적없음. 단1번live읽기는fullprogressok분기였다. 설치하지않고
+  deployment_progress_gate.REJECTED.py+gate-prototype-not-used.txt로격리. 후속helper로복사안함.
+  별도strict백업도구현하지않았다. **원본게이트만사용**한다.
+- APItimeout뒤실제mutation될수있으므로readback없이맹목재실행금지. failback normal/stop/start/wait
+  timeoutmock4PASS와독립검토완료. 현재13앱은모든역할already_ready라실제stop/start불필요했다.
+- private 생성mjs 전체rg는거대embeddedbaseline을출력해잘렸다. 이후알려진짧은helper만읽는다.
+
+## Completed deployment / do not repeat
+
+mainCI38668156608/target/plan3721/migrate15595/rollout89922/전체13앱verify/HTMLpurge/5역할monitor 모두 실제완료.
+원본13앱 baseline과검증증거를보존한다. 완료된 target/plan/migrate/rollout 및cohort apply/resume는 재실행하지않는다.
+독립최종문서검토의 완료명령을다음작업으로오해할P2를이구분으로해결했다.
 
 ## Remaining work / exact next commands
 
-1. 구현/운영 baseline/독립 검토 및 root 관련 검증 완료. rootDB55448과 agentDB55449는 별도다.
-   테스트는 새변경/실패 없이 반복하지 않는다. baseline 덮지 않는다.
-2. 정상 PR/최신 base CI/병합/main 이미지 확인. 현재 새 변경은 아직 미커밋·미배포다.
-3. 새 private helper dir `releases/2026-10-15-uptime-auto-ban`에 이전 helper2개 복사 완료.
-   **새 현재c8 baseline13앱/18컨테이너 capture 실제완료**(exec82785exit0), schema77/introNULL.
-   이전 backlog-blockers helper의 옛 b087 baseline을 새 배포에 재사용하지 않는다.
-4. 아래 새helper target→plan→migrate(readonly/noDDL)→역할별mini/M3→양웹→scheduler→verify.
-   각 명령의 실제exit0와 role ready를 확인하고 다음 단계로 간다. Env/model/replica/발굴중단 보존.
-5. 신규코드 배포후 정상 uptime-ping 실제 처리/고정 cohort 변화/이력/purge 확인.
-   수동 DB status/lease/counter 조작은 하지 않는다. CDN 확인 전 purge완료라고 주장하지 않는다.
-6. 실제 결과를 새 보고서/handoff에 기록한다. 전체 자동 적체가 남으면 실제수치와 서버 지속처리 상태를 알린다.
+1. 원본535/최초보호16을보존한다. 3개는정상실패1부터시작,13개는미확인이다.
+   이13개의다음정상ping과새실패누적은향후관측대상이며지금수동으로강제하지않는다.
+2. 문서5개 후속은 docs/backlog-recovery-verification-20261015에서정상docs-onlyPR로기록한다.
+   최신base필수CI후병합하며상태는GitHub가정본이다. 운영codeSHA347d647는문서mainSHA와구별하고재배포하지않는다.
+3. 전체자동적체는서버에서계속처리중이다. source/agent/audit/번역의장기관측,
+   실제품질cap과사람판단을구별한다. 품질cap삭제/가짜완료금지. 신규발굴자동재개금지.
+
+필요할때의 **읽기전용 관측** 명령이다. 빈번한반복이나수동job접수는필요없다.
 
 ```sh
-git status --short --branch
-npx vitest run tests/admin-activity.test.tsx --silent
-# integration은 TEST_DATABASE_URL=...55448...을 지정하고 실행 (설정은 tests/integration/env.ts 확인)
-npx vitest run --config vitest.integration.config.ts tests/integration/uptime-auto-ban.test.ts tests/integration/uptime.test.ts --silent
-npx tsc --noEmit --pretty false --incremental false
-npm run lint
-npm run check:i18n
-git diff --check
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/release.py target <NEW_MAIN_SHA> <NEW_MAIN_CI_RUN>
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/release.py plan
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/release.py migrate
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/release.py roll <APP_KEY>
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/failback.py <ROLE>
-python3 /Users/jr/.config/nomorevibe/releases/2026-10-15-uptime-auto-ban/release.py verify
 python3 /Users/jr/.config/nomorevibe/cloudflare/2026-10-15/observe.py
 python3 /Users/jr/.config/nomorevibe/cloudflare/2026-10-15/finish_ops.py monitor
 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/run.py cohort-progress
+python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban/observe.py --baseline /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban/baseline-20261015T010815753392Z.json --phase after-release --app maintenance-m3 --expected-sha 347d647cc21a272e3e5b6acc1a0fd41f2190f173
+gh pr list --head docs/backlog-recovery-verification-20261015 --state all --json number,state,url,headRefOid,mergeCommit
+git diff --check
 ```
 
-Raw credentials/env/토큰/before.json은 출력하지 않는다. 이미 끝난 numeric/network/audit apply/resume는
-반복하지 않는다. UI를 새context에서 쓸 때 먼저 cua.rewriteDocumentation(); UI조작은CUA만.
+Raw credentials/env/토큰/before.json은 출력하지 않는다. 기존완료cohort apply/resume재실행금지.
+UI를새context에서쓰면먼저 cua.rewriteDocumentation(); UI조작은CUA만.
