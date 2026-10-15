@@ -225,7 +225,7 @@ it.each(["items", "draining"] as const)("legacy admission in %s performs no READ
   const beforeJobs = await nextJobs();
   await admin`UPDATE pipeline_stage_modes SET mode=${mode},draining_from=${mode === "draining" ? "legacy" : null},
     writer_contract_version=1 WHERE stage='ai1'`;
-  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(await tick()).toMatchObject({ status: "deferred", reason: "stage_blocked" });
   expect.soft(transport.readme).not.toHaveBeenCalled();
   for (const mock of [transport.cli, transport.gateway, transport.grok]) expect.soft(mock).not.toHaveBeenCalled();
   expect.soft(await candidateRow(context.candidate.id)).toEqual([context.candidate]);

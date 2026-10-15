@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 const mocks = vi.hoisted(() => ({dequeue:vi.fn(),defer:vi.fn(),repo:vi.fn(),save:vi.fn(),mark:vi.fn(),failed:vi.fn(),request:vi.fn()}));
-vi.mock("@/lib/crawl/repository", () => ({recoverAbandonedFrontier:async()=>0,handOffFailedSourceRefreshes:async()=>0,dequeue:mocks.dequeue,deferFrontier:mocks.defer,saveFetchedDocument:mocks.save,markFrontier:mocks.mark,markFailed:mocks.failed}));
+vi.mock("@/lib/crawl/repository", () => ({recoverAbandonedFrontier:async()=>0,handOffFailedSourceRefreshes:async()=>0,dequeueWithAdmission: async (...args: unknown[]) => ({kind:"ready",entries:await mocks.dequeue(...args)}),deferFrontier:mocks.defer,saveFetchedDocument:mocks.save,markFrontier:mocks.mark,markFailed:mocks.failed}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => ({enabled:true,judge:{docsGenerators:[]},discover:{queries:[],showHn:{enabled:true,priority:120}}})}));
 vi.mock("@/lib/crawl/github", () => ({getRepo:mocks.repo}));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.request}));

@@ -98,7 +98,8 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
               const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
                 { requestedOnly: true, budgetMs, signal });
               jobs.push({ name, result });
-              if (signal.aborted || result.status === "failed" || result.status === "skipped" && result.reason === "stopping") break;
+              if (signal.aborted || result.status === "failed" || result.status === "deferred"
+                || result.status === "skipped" && result.reason === "stopping") break;
             }
           })));
       });
@@ -159,7 +160,8 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
                 const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
                   { requestedOnly: true, budgetMs, signal });
                 jobs.push({ name, result });
-                if (signal.aborted || result.status === "failed" || result.status === "skipped" && result.reason === "stopping") break;
+                if (signal.aborted || result.status === "failed" || result.status === "deferred"
+                  || result.status === "skipped" && result.reason === "stopping") break;
               }
             })));
         } finally { await ledger.drain(run); }

@@ -154,6 +154,15 @@ it("drains and closes when a claimed job reports failure, without starting anoth
   expect(fake.drain).toHaveBeenCalledWith(run); expect(fake.close).toHaveBeenCalledTimes(1);
 });
 
+it("drains and closes after a stage-blocked deferred tick without consuming another review job", async () => {
+  fake.runJob.mockResolvedValueOnce({ status: "deferred", reason: "stage_blocked", durationMs: 1 });
+  const result = await runFixtureReviewReplay(options());
+  expect(fake.runJob).toHaveBeenCalledOnce();
+  expect(result.jobs).toEqual([{ name: "crawl-agent-review", result: { status: "deferred", reason: "stage_blocked", durationMs: 1 } }]);
+  expect(fake.drain).toHaveBeenCalledWith(run);
+  expect(fake.close).toHaveBeenCalledTimes(1);
+});
+
 it("drains admission and closes raw ownership after unexpected dispatch failure", async () => {
   fake.runJob.mockRejectedValueOnce(new Error("claim_failed"));
   await expect(runFixtureReviewReplay(options())).rejects.toThrow("claim_failed");

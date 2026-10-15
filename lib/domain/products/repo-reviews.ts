@@ -2,9 +2,10 @@ import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { productEvidenceAudit, productHealth, productRepoReviews, products, type ProductRepoReview, type RepoReviewAnswers,
   type RepoReviewDecision } from "@/lib/db/schema";
-import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { lockProductGeneration } from "./generation";
 import { repoGone, setStatusWithAudit } from "./repository";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "./repository";
 export { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "./repository";
 
@@ -101,20 +102,25 @@ export async function repoGoneDelistsLastDay(): Promise<number> {
 export async function delistGoneRepository(record: RepoReviewRecord & { slug: string }, lease?: JobLease):
   Promise<"delisted" | "operator_keep" | "skipped"> {
   return withJobLeaseWrite(lease, async (tx) => {
+    const done = async (result: "delisted" | "operator_keep" | "skipped") => {
+      if (lease) await assertJobLeaseAtWallTime(tx, lease);
+      return result;
+    };
+    await lockPipelineInputStages(tx);
     const [current] = await tx.select({ operatorDecision: productRepoReviews.operatorDecision }).from(productRepoReviews)
       .where(eq(productRepoReviews.productId, record.productId)).for("update");
     const upsert = (values: ReturnType<typeof reviewValues> & { operatorDecision?: "delist"; operatorBy?: string; operatorAt?: SQL }) => tx.insert(productRepoReviews)
       .values({ productId: record.productId, ...values })
       .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } });
-    if (current?.operatorDecision === "keep") { await upsert(reviewValues(record)); return "operator_keep"; }
-    if (!(await lockProductGeneration(tx, record.productId, record.slug))) return "skipped";
+    if (current?.operatorDecision === "keep") { await upsert(reviewValues(record)); return done("operator_keep"); }
+    if (!(await lockProductGeneration(tx, record.productId, record.slug))) return done("skipped");
     const [row] = await tx.select({ status: products.status, gone: sql<boolean>`${repoGone}` }).from(products).where(eq(products.id, record.productId));
-    if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return "skipped";
+    if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return done("skipped");
     const banned = await setStatusWithAudit({ id: record.productId, slug: record.slug, status: "banned", action: "admin.product.ban",
       actor: REPO_GONE_AUTO_ACTOR, reason: REPO_GONE_AUTO_REASON }, tx);
-    if (!banned) return "skipped";
+    if (!banned) return done("skipped");
     await upsert({ ...reviewValues(record), operatorDecision: "delist" as const, operatorBy: REPO_GONE_AUTO_ACTOR, operatorAt: sql`now()` });
-    return "delisted";
+    return done("delisted");
   });
 }
 
@@ -135,6 +141,7 @@ const STALE = "이미 처리했거나 바뀌었습니다. 새로고침해주세�
  */
 export async function decideRepoReview(input: { slug: string; decision: "keep" | "delist"; by: string }): Promise<RepoReviewOperatorResult> {
   return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
     const [row] = await tx.select({ id: products.id, status: products.status }).from(products)
       .innerJoin(productRepoReviews, eq(productRepoReviews.productId, products.id))
       .where(eq(products.slug, input.slug)).for("update", { of: productRepoReviews });

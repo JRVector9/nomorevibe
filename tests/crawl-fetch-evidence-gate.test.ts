@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/crawl/repository", () => ({
   recoverAbandonedFrontier: async () => 0, handOffFailedSourceRefreshes: async () => 0,
-  dequeue: mocks.dequeue, deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
+  dequeueWithAdmission: async (...args: unknown[]) => ({ kind: "ready", entries: await mocks.dequeue(...args) }), deferFrontier: mocks.defer, saveFetchedDocument: mocks.save,
   markFrontier: mocks.mark, markFailed: mocks.failed, recordJudgement: mocks.judge, getCandidate: mocks.candidate,
   SKIP_NOT_FOUND: "github_not_found", SKIP_EMPTY_REPOSITORY: "github_empty_repository",
 }));

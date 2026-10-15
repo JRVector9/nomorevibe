@@ -8,7 +8,8 @@ import type { AgentGitHubRequest } from '@/lib/domain/evidence/agents/collect';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { requeueAfterAdminEvidenceRefresh } from '@/lib/crawl/admin-review';
 import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
-import { assertJobLease, requestJob, type JobLease } from '@/lib/jobs/control';
+import { assertJobLeaseAtWallTime, requestJob, type JobLease } from '@/lib/jobs/control';
+import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
 import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 
@@ -136,8 +137,10 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
             await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
           }
           await db.transaction(async tx => {
-            await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() }).where(and(sql`lower(${crawlCandidates.repo}) = ${repositoryKey}`, eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.reason, 'ai_evidence_pending'), eq(crawlCandidates.decidedBy, 'auto')));
-            if (ctx.lease) await assertJobLease(tx, ctx.lease);
+            await lockPipelineInputStages(tx);
+            const reopened = await tx.update(crawlCandidates).set({ state: 'new', updatedAt: new Date() }).where(and(sql`lower(${crawlCandidates.repo}) = ${repositoryKey}`, eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.reason, 'ai_evidence_pending'), eq(crawlCandidates.decidedBy, 'auto'))).returning({ id: crawlCandidates.id });
+            if (reopened.length) await requestJob('crawl-judge', tx);
+            if (ctx.lease) await assertJobLeaseAtWallTime(tx, ctx.lease);
           });
         }
         if (result.errorCode === 'rate_limited' || (result.errorCode === 'unavailable' && result.retryAt)) {
@@ -183,6 +186,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
 async function releaseEvidencePendingCandidates(detectorVersion: string, lease?: JobLease) {
   if (detectorVersion !== AGENT_DETECTOR_VERSION) return;
   await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     const released = await tx.execute<{ id: number }>(sql`
     UPDATE crawl_candidates SET state = 'new', updated_at = now()
     WHERE id IN (
@@ -202,8 +206,8 @@ async function releaseEvidencePendingCandidates(detectorVersion: string, lease?:
     RETURNING id
   `);
   // 푼 것은 곧바로 판정한다 — 스케줄(5분)을 기다리지 않는다
-    if (lease) await assertJobLease(tx, lease);
     if (released.length > 0) await requestJob("crawl-judge", tx);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
   });
 }
 

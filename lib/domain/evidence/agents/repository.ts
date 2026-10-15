@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEvidence, productEvidenceSources, productLinks, type AgentRepositoryScan } from '@/lib/db/schema';
 import { withProductGeneration } from '@/lib/domain/products/generation';
-import { assertJobLease, type JobLease } from '@/lib/jobs/control';
+import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
+import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, InvalidAgentScanCursorError, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
 import { lockRepositoryAgentEvidence } from './lock';
@@ -82,6 +83,7 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     ...(result.state === 'complete' ? { limited: false, unavailableCommits: [] }
       : result.cursor?.coverageLimited ? { limited: true, unavailableCommits: result.cursor.unavailableCommits ?? [] } : {}) };
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
     // Complete immutable evidence can coexist with unfinished later discovery work.
     const [scan] = await tx.insert(agentRepositoryScans).values({
@@ -114,7 +116,7 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     if (result.repositoryFork === true) await tx.delete(agentRepositoryObservations).where(and(
       eq(agentRepositoryObservations.scanId, scan.id), sql`${agentRepositoryObservations.facts}->>'kind' = 'commit_attribution'`));
     for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     return scan;
   });
 }

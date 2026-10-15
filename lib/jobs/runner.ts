@@ -27,10 +27,12 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
-export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready" };
+export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
+  | { done: false; deferred: "stage_blocked"; cursor?: never; continuation?: never };
 export type RunResult =
   | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
+  | { status: "deferred"; reason: "stage_blocked"; durationMs: number }
   | { status: "failed"; error: string; durationMs: number };
 
 /**
@@ -139,6 +141,16 @@ export async function runJob<C>(
     const outcome = await handler(ctx);
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
+    if (outcome.deferred === "stage_blocked") {
+      // No work was acknowledged. Preserve producer signals, cursor, pause and
+      // historical success/error fields, including changes made during this tick.
+      const [row] = await db.update(jobs).set({ lockedAt: null, leaseToken: null })
+        .where(owned).returning({ name: jobs.name });
+      if (!row) throw new JobLeaseLostError();
+      const durationMs = Date.now() - startedAt;
+      logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs });
+      return { status: "deferred", reason: outcome.deferred, durationMs };
+    }
     const budgetMs = options.budgetMs ?? 25_000;
     const sourceReady = name === "product-evidence-refresh" && outcome.done === false
       && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;

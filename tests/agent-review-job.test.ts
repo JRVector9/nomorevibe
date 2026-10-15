@@ -275,7 +275,7 @@ it("cleans a claim instead of applying success received after shutdown", async (
 
 it("does not requeue, hand off, read README or call a provider when legacy stage admission is closed", async () => {
   mocks.canStart.mockResolvedValue(false);
-  await reviewCrawlCandidates(context());
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
   expect(mocks.requeue).not.toHaveBeenCalled();
   expect(mocks.handOff).not.toHaveBeenCalled();
   expect(mocks.list).not.toHaveBeenCalled();
@@ -285,13 +285,28 @@ it("does not requeue, hand off, read README or call a provider when legacy stage
 });
 
 it("checks candidate admission before README when a logical item is owned", async () => {
-  mocks.canStart.mockResolvedValueOnce(true).mockResolvedValue(false);
-  await reviewCrawlCandidates(context());
+  mocks.canStart.mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false });
   expect(mocks.canStart).toHaveBeenCalledWith(context().lease, 1);
   expect(mocks.document).not.toHaveBeenCalled();
   expect(mocks.readme).not.toHaveBeenCalled();
   expect(mocks.claim).not.toHaveBeenCalled();
   expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("defers the request when the global stage closes before candidate README admission", async () => {
+  mocks.canStart.mockResolvedValueOnce(true).mockResolvedValue(false);
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
+  expect(mocks.document).not.toHaveBeenCalled();
+  expect(mocks.claim).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("defers after an actual claim reports stage_inactive without recording a model failure", async () => {
+  mocks.claim.mockResolvedValue({ kind: "skipped", reason: "stage_inactive" });
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
 });
 
 it("settles the new running semantic reuse attempt when shutdown arrives during claim", async () => {

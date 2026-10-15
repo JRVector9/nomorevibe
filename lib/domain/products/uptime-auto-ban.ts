@@ -1,11 +1,12 @@
 import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { operationsAudit, productEvidenceAudit, productHealth, products } from "@/lib/db/schema";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { lockProductGeneration } from "./generation";
 import type { PingTarget } from "./health";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { setStatusWithAudit } from "./repository";
+import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
 export const UPTIME_AUTO_BAN_THRESHOLD = 10;
 const POLICY = "uptime_consecutive_failures";
@@ -44,6 +45,7 @@ type Controls = { lease?: JobLease; signal?: AbortSignal; hasBudget?: () => bool
 export async function autoBanUptimeProduct(target: PingTarget, controls: Controls = {}): Promise<boolean> {
   if (controls.signal?.aborted) return false;
   return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
     if (!(await lockProductGeneration(tx, target.id, target.slug))) return false;
     const [current] = await tx.select({
       previousStatus: products.status, failures: productHealth.failures, lastStatus: productHealth.status,
@@ -66,7 +68,7 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
         note: `사이트 연속 접속 실패 ${current.failures}회 · 마지막 HTTP ${current.lastStatus} · 확인 ${metadata.checkedAt} · 자동 내림` },
     });
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
-    if (controls.lease) await assertJobLease(tx, controls.lease);
+    if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     return true;
   });
