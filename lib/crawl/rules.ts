@@ -254,10 +254,10 @@ function holdSuspectedSpam(verdict: Verdict, document: Parameters<typeof spamSig
 export function accessFromDocument(document: {
   repo: string; repoMeta: Record<string, unknown>; productUrl: string | null;
   pageStatus: number | null; pageMeta: Record<string, unknown> | null; fetchedAt?: Date;
-}, settings: CrawlSettings) {
+}, settings: CrawlSettings, now = new Date()) {
   const verdict = document.fetchedAt
-    ? judgeStoredDocument({ ...document, fetchedAt: document.fetchedAt }, settings)
-    : judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings);
+    ? judgeStoredDocument({ ...document, fetchedAt: document.fetchedAt }, settings, now)
+    : judge(factsFromRepoMeta(document.repo, document.repoMeta), pageFactsFromDocument(document), settings, now);
   const facts = factsFromRepoMeta(document.repo, document.repoMeta);
   return productAccess({ repo: document.repo, stars: facts.stars, packageProof: facts.packageProof,
     productUrl: verdict.signals.accessMode === "installable" ? null : document.productUrl });

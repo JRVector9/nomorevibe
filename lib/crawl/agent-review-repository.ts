@@ -13,7 +13,8 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { candidateStarAutoApproval } from "./star-auto-approval";
-import { README_SAMPLE_LIMIT } from "./readme";
+import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
+import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired } from "./review-replay-context";
 import { judgeRevision } from "./rules";
 import { lockFrontierIdentity } from "./repository";
 import {
@@ -27,6 +28,8 @@ type Executor = typeof db | ProductTransaction;
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
 ): Promise<ReviewInput> {
+  if (storedReviewEvidenceRequired() && (typeof document.pageMeta?.readmeSample !== "string"
+    || document.pageMeta.readmeSampleVersion !== README_SAMPLE_VERSION)) throw new Error("replay_readme_evidence_missing");
   const [scan] = await executor.select().from(agentRepositoryScans).where(and(
     eq(agentRepositoryScans.repositoryKey, candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1);
@@ -55,9 +58,10 @@ async function currentReviewInput(tx: ProductTransaction, expected: {
     || !isDeepStrictEqual(candidate, expected.candidate) || !isDeepStrictEqual(document, expected.document)
     || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values), expected.settings)) return null;
   const input = await loadReviewInput(candidate, document, expected.settings, tx);
+  const now = reviewSemanticNow();
   return input.inputHash === expected.input.inputHash && input.sourceRevisionHash === expected.input.sourceRevisionHash
-    && input.validUntil > new Date() && document.fetchedAt <= new Date()
-    && (!input.source.scanCompletedAt || new Date(input.source.scanCompletedAt) <= new Date()) ? input : null;
+    && input.validUntil > now && document.fetchedAt <= now
+    && (!input.source.scanCompletedAt || new Date(input.source.scanCompletedAt) <= now) ? input : null;
 }
 
 /** Cheap current revision comparison used before LIMIT; final transactions also recompute inputHash. */
@@ -89,7 +93,7 @@ function matchingSource(settings: CrawlSettings): SQL {
       WHERE rd.repo = ${crawlCandidates.repo}
         AND rd.id::text = ${crawlReviewAttempts.source}->>'documentId'
         AND date_trunc('milliseconds', rd.fetched_at) = (${crawlReviewAttempts.source}->>'documentFetchedAt')::timestamp
-        AND rd.fetched_at <= now()
+        AND rd.fetched_at <= ${reviewSemanticNowSql()}
         AND rd.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
         AND rd.product_url IS NOT DISTINCT FROM ${crawlReviewAttempts.source}->>'productUrl'
         AND coalesce(${crawlReviewAttempts.snapshot}->'product'->>'readme', '') = btrim(left(
@@ -155,7 +159,7 @@ export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
   return sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
-    AND ${crawlReviewAttempts.validUntil} > now()
+    AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}
     AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
       settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
 }
@@ -167,7 +171,7 @@ export function starAutoApprovalPredicate(settings: CrawlSettings): SQL {
     AND EXISTS (SELECT 1 FROM ${crawlDocuments} popular
       WHERE popular.repo = ${crawlCandidates.repo}
         AND popular.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
-        AND popular.fetched_at <= now() AND popular.fetched_at > now() - interval '24 hours'
+        AND popular.fetched_at <= ${reviewSemanticNowSql()} AND popular.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours'
         AND popular.repo_meta->'private' = 'false'::jsonb
         AND popular.repo_meta->'fork' = 'false'::jsonb
         AND popular.repo_meta->'archived' = 'false'::jsonb
@@ -200,8 +204,8 @@ export async function requeueInvalidStarApprovals(settings: CrawlSettings, lease
       const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share");
       const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
       if (!isDeepStrictEqual(mergeWithDefaults(saved?.values), settings)) return false;
-      if (document && candidateStarAutoApproval(candidate, document, settings)) return false;
-      const now = new Date();
+      const now = reviewSemanticNow();
+      if (document && candidateStarAutoApproval(candidate, document, settings, now)) return false;
       const fresh = document && document.fetchedAt <= now
         && now.getTime() - document.fetchedAt.getTime() < 24 * 3600_000;
       if (!fresh) {
@@ -253,8 +257,8 @@ export async function requeueStaleReviewSources(
       sql`NOT EXISTS (SELECT 1 FROM crawl_documents review_document
         WHERE review_document.repo = ${crawlCandidates.repo}
           AND review_document.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
-          AND review_document.fetched_at <= now()
-          AND review_document.fetched_at > now() - interval '24 hours')`,
+          AND review_document.fetched_at <= ${reviewSemanticNowSql()}
+          AND review_document.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
       sql`NOT EXISTS (SELECT 1 FROM crawl_frontier blocked_frontier
         WHERE lower(blocked_frontier.repo) = lower(${crawlCandidates.repo})
           AND (blocked_frontier.repo <> ${crawlCandidates.repo} OR blocked_frontier.state IN ('pending', 'fetching')
@@ -304,12 +308,12 @@ export async function handOffExhaustedFirstReviews(
       not(starAutoApprovalPredicate(settings)),
       sql`EXISTS (SELECT 1 FROM ${crawlDocuments} d WHERE d.repo = ${crawlCandidates.repo}
         AND d.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
-        AND d.fetched_at <= now() AND d.fetched_at > now() - interval '24 hours')`,
+        AND d.fetched_at <= ${reviewSemanticNowSql()} AND d.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
       sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
         AND ${crawlReviewAttempts.state} IN ('failed', 'superseded')
         AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') >= ${MAX_REVIEW_ATTEMPTS}`,
       sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
-        AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > now())`,
+        AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
       .limit(Math.max(1, Math.min(100, limit))).for("update", { skipLocked: true });
     if (!rows.length) return 0;
@@ -319,7 +323,7 @@ export async function handOffExhaustedFirstReviews(
       if (!document) continue;
       await lockRepositoryAgentEvidence(tx, candidate.repo);
       const input = await loadReviewInput(candidate, document, settings, tx);
-      if (input.validUntil <= new Date()) continue;
+      if (input.validUntil <= reviewSemanticNow()) continue;
       const attempts = await tx.select().from(crawlReviewAttempts).where(and(
         eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
         activeReviewIdentity(settings), eq(crawlReviewAttempts.inputHash, input.inputHash),
@@ -327,7 +331,7 @@ export async function handOffExhaustedFirstReviews(
         eq(crawlReviewAttempts.policyHash, input.policyHash), eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
         eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
       )).for("share");
-      if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > new Date())) continue;
+      if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow())) continue;
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
         && attempt.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
@@ -369,7 +373,7 @@ export type ReviewCandidateOptions = {
 /** Shared by worker selection and uncapped operations queue counts. */
 export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
-  const scanFresh = sql`(fres.completed_at <= now() AND fres.completed_at > now() - interval '24 hours')`;
+  const scanFresh = sql`(fres.completed_at <= ${reviewSemanticNowSql()} AND fres.completed_at > ${reviewSemanticNowSql()} - interval '24 hours')`;
   return and(
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
     options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
@@ -386,13 +390,13 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
         ORDER BY fs.started_at DESC, fs.id DESC LIMIT 1) fres ON true
       WHERE fd.repo = ${crawlCandidates.repo}
         AND fd.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
-        AND fd.fetched_at <= now() AND fd.fetched_at > now() - interval '24 hours'
+        AND fd.fetched_at <= ${reviewSemanticNowSql()} AND fd.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours'
         AND ${options.staleScanOnly ? sql`fres.completed_at IS NOT NULL AND NOT ${scanFresh}`
           : sql`(fres.completed_at IS NULL OR ${scanFresh})`})`,
     sql`(${crawlCandidates.state} = 'approved' OR (${crawlCandidates.state} = 'needs_review'
       AND ${inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS])}))`,
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
-      AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > now()
+      AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}
       AND (${settings.reviewMode === "observe"}
         OR (${crawlCandidates.state} = 'approved' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve')
         OR (${crawlCandidates.state} = 'needs_review' AND ${crawlReviewAttempts.outcome}->>'decision' = 'needs_review')))`,
@@ -441,6 +445,7 @@ export async function claimAgentReview(input: ReviewContext & {
     const current = await currentReviewInput(tx, input);
     if (!current) return { kind: "skipped", reason: "input_changed" };
     const now = input.now ?? new Date();
+    const semanticNow = reviewSemanticNow(now);
     const rows = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
       or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
@@ -457,7 +462,7 @@ export async function claimAgentReview(input: ReviewContext & {
     }
     const same = rows.filter(row => row.inputHash === current.inputHash && row.sourceRevisionHash === current.sourceRevisionHash
       && row.provider === input.provider && row.model === input.model);
-    const success = same.find(row => row.state === "succeeded" && row.validUntil > now && row.outcome
+    const success = same.find(row => row.state === "succeeded" && row.validUntil > semanticNow && row.outcome
       && row.provider === input.provider);
     if (success) return { kind: "reused", attempt: success };
     const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
@@ -562,7 +567,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     return null;
   }
   if (input.candidate.signals?.starAutoApproval) {
-    const proof = candidateStarAutoApproval(input.candidate, input.document, input.settings);
+    const proof = candidateStarAutoApproval(input.candidate, input.document, input.settings, reviewSemanticNow());
     await assertJobLease(tx, input.lease);
     if (!proof || input.candidate.productUrl !== input.document.productUrl
       || input.candidate.signals.judgedRevision !== judgeRevision(input.document)) throw new ReviewApprovalChangedError();
@@ -582,11 +587,12 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),
     eq(crawlReviewAttempts.policyHash, current.policyHash),
     eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION), eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
-    sql`${crawlReviewAttempts.outcome}->>'decision' = 'approve'`, sql`${crawlReviewAttempts.validUntil} > now()`,
+    sql`${crawlReviewAttempts.outcome}->>'decision' = 'approve'`, sql`${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}`,
     input.approvalId ? eq(crawlReviewAttempts.id, input.approvalId) : undefined,
   )).orderBy(desc(crawlReviewAttempts.id)).limit(1).for("share");
   await assertJobLease(tx, input.lease);
-  if (!approval || current.validUntil <= new Date() || input.document.fetchedAt > new Date()
+  const now = reviewSemanticNow();
+  if (!approval || current.validUntil <= now || input.document.fetchedAt > now
     || input.input && input.input.inputHash !== current.inputHash) throw new ReviewApprovalChangedError();
   validateReviewOutcome(current, approval.outcome);
   // 발행 직전에 한 번 더 — 목록을 고른 뒤 2차 표가 반대로 바뀌었을 수 있다

@@ -12,6 +12,7 @@ import { linksOwnGithub } from "./github-links";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { repositoryUrl, type ProductAccessMode } from "@/lib/domain/products/access";
 import { packageProofOf, type PackageProof } from "./package-proof";
+import { reviewSemanticNow } from "./review-replay-context";
 
 /**
  * 심사 입력이 바뀌면 둘 다 올린다.
@@ -144,6 +145,7 @@ export function createReviewInput(
   evidence: { scan: AgentRepositoryScan | null; observations: ReviewEvidence[] },
   now = new Date(),
 ): ReviewInput {
+  now = reviewSemanticNow(now);
   const scan = evidence.scan;
   const fetchedAt = document.fetchedAt.getTime();
   const siteFresh = fetchedAt <= now.getTime() && fetchedAt + REVIEW_FRESH_MS > now.getTime();
@@ -172,7 +174,7 @@ export function createReviewInput(
        */
       pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
       url: candidate.productUrl,
-      accessMode: accessFromDocument({ ...document, productUrl: candidate.productUrl }, settings)?.mode ?? "website",
+      accessMode: accessFromDocument({ ...document, productUrl: candidate.productUrl }, settings, now)?.mode ?? "website",
       repositoryUrl: repositoryUrl(candidate.repo),
       topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
       language: limitedText(document.repoMeta.language, 100) || null,

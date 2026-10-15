@@ -102,8 +102,8 @@ git diff --check
 - [x] PR-00 필수check/quality/통합3shard PASS 후 main `94d2f9e`에 병합(06:58:46Z).
 - [x] PR-00 main8020dca를 M3·mini13앱에 배포, 실제digest/source·health/role progress·근거helper 단일인계 확인. [운영 기록](../../operations/2026-10-15-pipeline-pr00-rollout.md).
 - [x] PR-01a 현재영속스냅샷/오프라인비교·격리admission 구현과 로컬 unit2,633/관련integration62·타입/lint/build 검증 완료. [검증 기록](../../operations/2026-10-15-pipeline-pr01a-validation.md).
-- [ ] PR-01a 독립 PR 제출·최신base CI·병합.
-- [ ] PR-01b 실제replay/사전예산·준비·최종전이 장부. 원PR01 전체완료 전 PR02를 활성화하지 않는다.
+- [x] PR-01a [PR429](https://github.com/JRVector9/nomorevibe/pull/429) 최신base check 성공 후 main2ce8cff 병합. main CI38702607101 전체 성공 확인.
+- [ ] PR-01b 실제replay/사전예산·준비·최종전이 장부. 첫 격리 DB·기준 시각·fixture 호출 예약 구현/검증 중이다. [기록](../../operations/2026-10-15-pipeline-pr01b-validation.md). 실제 handler/준비·최종 전이·제공자 상한/실부하는 미완료이며 원PR01 전체완료 전 PR02를 활성화하지 않는다.
 - [ ] PR-02–17은 각 선행 합격 후 상세 계획·회귀·구현·검토·PR·migration/배포 증거 순서로 진행.
 
 이번 실행의 첫 결과는 PR-00이며, 최종2배/Oracle DR의 완료를 뜻하지 않는다.

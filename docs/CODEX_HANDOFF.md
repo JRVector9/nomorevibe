@@ -1,3 +1,96 @@
+# 2026-10-15 17:56 KST — PR01b 격리 기반 구현·로컬 검증 완료 / 제출 준비
+
+## Current objective
+
+승인된 PR00–17을 계속한다. PR01a/#429는 main2ce8cff 병합 및 main CI38702607101 전체 성공이다.
+현재 `/Users/jr/Desktop/projects/nomorevibe-pipeline-pr01b`, branch `codex/pipeline-pr01b-replay-20261015`에서
+격리 DB identity/권한·기준 시각·fixture 호출 예약 장부의 첫 구현을 마쳤다. 아직 commit/push/PR 전이다.
+원래 PR01 전체·실제 handler/최종·준비 전이·실모델·30분 비교·PR02 활성화는 미완료다.
+
+## Completed / modified files / decisions
+
+- `lib/operations/pipeline-replay-{database,ledger,transport}.ts`, `scripts/bootstrap-pipeline-replay.ts`,
+  `scripts/sql/pipeline-replay-ledger.sql`과 새 unit/integration/helper를 구현했다.
+  verified restricted local test session을 매 transaction 검증하고 durable 전체 call/token을 먼저 예약한다.
+  exact model/provider/input/정책 결합, 공유 concurrency≤4, 비용 환불 없음, dispatch CAS,
+  불명 usage·응답·저장 실패의 즉시 admission fence, 잠금 후 wall-clock 검사, 별도 연결의 run-start 배제를 검증했다.
+  이 fixture 장부는 최종 처리량을 인증하지 않으며 seal/resume API가 없다. 실제 provider 모드는 계속 차단한다.
+- `lib/crawl/review-replay-context.ts` 및 contract/rules/AI1 repository·job/README/AI2 input·repository의 freshness만
+  고정한다. 실제 lease/backoff/event 시간은 유지하고 저장 README 누락은 fetch 전에 거절한다.
+  `secondApproved` SQL은 byte-exact 동일하다. `pipeline-capacity.ts`에는 pure manifest parser만 추가했다.
+- 계획3파일·readiness·roadmap 및 `docs/operations/2026-10-15-pipeline-pr01b-validation.md`를 갱신했다.
+  운영 drizzle migration·제공자 호출·운영 쓰기·발행·배포는 하지 않았다. root X branch와 사용자 untracked 보존.
+
+## Tests / failed approaches
+
+- 최종 `npm test`:267파일/2669PASS. 전체 integration:151파일/1657PASS/기존TODO1,257.27초(마지막 예산 산술 회귀 전).
+  최종 수정 뒤 새55454의 boundary+ledger+clock3파일35PASS. typegen/tsc/lint/i18n/build/bundle/Python23/diffPASS.
+  lint 기존 vendor `_ctx` 경고1, 기존 spawn tracing/Vite config 경고가 있다.
+- 실제 RED→GREEN: ambient PGPORT/env:{} 우회, marker column UPDATE, SECURITY DEFINER,
+  drain 뒤 dispatch, 불명 기록 저장 실패 뒤 새 admission, lock wait 뒤 만료, canonical alias exact-route 우회,
+  planned token budget 산술. transport missing module RED7GREEN과 clock behavioral RED/SQL claim RED도 별도로 기록했다.
+  전체 장부 코드를 작성 전에 실행한 것으로 주장하지 않는다.
+- 55453은 기존 private identity를 명시 재사용,55454는 fresh bootstrap/owned cleanup/PUBLIC ACL 복구를 반복 검증했다.
+  두 parent-owned container만 사용했고 최종 검증 뒤 둘 다 stop했다. container/volume 삭제는 하지 않았다.
+- 독립 agent3개 검토 완료. provider agent는 `/Users/jr/Desktop/projects/abcLLM` clean fc0f972 소스 읽기 검토를 완료했다.
+  결과는 `docs/operations/2026-10-15-pipeline-pr01b-provider-audit.md`에 기록했다.
+  local checkout을 실제 serving revision으로 단정하지 않는다. metadata8192/32768 충돌 및 Qwen 옵션 제거 재시도/추정 usage/무시된 요청 필드를 소스에서 확인해 실제 호출은 아직 `unsupported_provider_budget`이다. 설정 저장소 질문은 로컬 발견으로 일부 해소됐다.
+
+## Remaining / exact commands
+
+1. 명시 파일 commit/push/PR, 최신 main base의 check·quality·통합3shard 성공 후 병합한다.
+2. abcLLM 소스 audit 결과를 보관하고 actual serving 상한/attempts/usage 계약을 확인한다. 모델/정책을 임의 변경하지 않는다.
+3. 다음 PR01b 단계는 기존 handler의 명시 DB/downstream 경계, 실제 writer transaction의 final·준비 전이와 별도 artifact다.
+   replay CLI는 비활성 유지, PR01 전체 합격 전 PR02 consumer 활성화 금지.
+4. PR00 운영 릴리스8020dca/13앱과 기존 근거 helper PID358은 이 단계에서 변경하지 않았다. restore/start 중복 금지.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01b
+git diff --check
+git status --short
+git fetch origin main
+# 명시 파일만 stage/commit/push, root X branch를 push하지 않는다.
+# 새 전용 DB에서 추가 회귀가 필요할 때만:
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55454/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/pipeline-replay-database.test.ts tests/integration/pipeline-replay-ledger.test.ts tests/integration/review-replay-clock.test.ts
+# 모든 검증 뒤 두 전용 DB를 stop한다. rm/volume 삭제 불필요.
+docker stop nomorevibe-pipeline-pr01b-test-db-20261015 nomorevibe-pipeline-pr01b-ci-test-db-20261015
+```
+
+---
+
+# 2026-10-15 — PR01b 구현 진행 / 아직 실모델·운영 활성화 없음
+
+## Current objective
+
+승인된 PR00–17을 계속한다. PR429/PR01a는 main `2ce8cff1190860b524c9a369f92d09732e2453e9`에 병합됐으며 main CI38702607101의 quality·통합3shard·check·두 image 작업 모두 성공을 확인했다. 현재 별도 worktree `/Users/jr/Desktop/projects/nomorevibe-pipeline-pr01b`, branch `codex/pipeline-pr01b-replay-20261015`에서 PR01b의 첫 격리 실행 기반을 구현 중이다. 원래 PR01 전체·2배 성능·PR02 활성화는 미완료다.
+
+## Completed / modified files / design
+
+- 상세 계획 `docs/superpowers/plans/2026-10-15-pipeline-pr01b-{database,clock,ledger}.md`와 readiness 문서를 작성했다.
+- DB agent가 `lib/operations/pipeline-replay-database.ts`, bootstrap CLI 및 unit/integration을 담당한다. private identity marker·제한 역할·매 transaction 검증을 사용하며 production singleton을 가져오지 않는다.
+- Clock agent가 AsyncLocalStorage 기준 시각·저장된 README만 사용하도록 기존 검수 freshness 경계를 수정 중이다. lease·재시도·실제 event 시간은 wall clock을 유지한다.
+- Parent는 isolated four-table 사전 호출/토큰 예약 장부와 fixture transport를 구현한다. 장부 테스트/구현은 이 기록 시점 아직 작성 전이다. 전체 비용 예약 후 callback, 불명확한 응답은 draining, 비용 환불 없음. 실제 provider는 `unsupported_provider_budget`으로 차단한다.
+- 실모델 capability 읽기 검토에서 AI1 context metadata가 32768/8192로 충돌했다. 실제 serving revision·총 토큰 강제 상한·숨은 retry/fallback·취소 계약은 미확인이다. 사용자에게 설정 저장소/서버 위치만 질문했고 답변과 독립적으로 구현을 계속한다. inference는 실행하지 않았다.
+
+## Tests / failed approaches
+
+DB agent 보고: unit 실제 RED9/9 후 GREEN9/9. 통합 테스트는 현재 agent가 실행 중이며 아직 결과를 주장하지 않는다. Parent 장부/통합 검증·전체 검증은 미실행이다. 메타데이터의 context_length나 manifest boolean만으로 실제 provider 상한을 인증할 수 없다.
+
+## Remaining / exact next commands
+
+전용 container `nomorevibe-pipeline-pr01b-test-db-20261015`, image `pgvector/pgvector:0.8.6-pg17`, 127.0.0.1:55453만 사용한다. DB agent가 현재 독점 테스트하며 parent는 반환받기 전 DB 쿼리를 하지 않는다. parent는 장부 테스트 RED→GREEN, clock/DB 통합·독립 리뷰·전체 검증 후 명시 파일만 commit/push/PR한다. 최신 base CI check 성공 후 병합한다. replay CLI는 계속 비활성화이며 운영 DB/공개 발행/배포/제공자 설정은 건드리지 않는다. 기존 근거 helper PID358은 중복 실행하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-pipeline-pr01b
+git status --short
+git diff --check
+# DB agent가 소유권 반환한 뒤에만 실행한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55453/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/pipeline-replay-database.test.ts tests/integration/pipeline-replay-ledger.test.ts
+# root X branch와 사용자 untracked는 push/add하지 않는다.
+```
+
+---
+
 # 2026-10-15 16:57 KST — PR429 제출 / CI 환경 회귀 재현·수정
 
 PR01a commit2d20bae를 push하고 https://github.com/JRVector9/nomorevibe/pull/429 를 생성했다.

@@ -12,6 +12,7 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
+import { reviewSemanticNow } from "./review-replay-context";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
@@ -27,6 +28,7 @@ export function secondReviewInputMatches(row: SecondReview, current: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput;
   first?: CrawlReviewAttempt | null; root?: SecondReview | null;
 }, now = new Date()): boolean {
+  now = reviewSemanticNow(now);
   const { candidate, document, settings, input, first, root } = current;
   const expected = row.trigger === "ai_approved" ? "approved" : "needs_review";
   if (candidate.repo !== row.repo || (row.publishedSlug
@@ -105,7 +107,7 @@ export async function loadSecondReviewInput(row: SecondReview, tx?: ProductTrans
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     if (!first || first.id !== row.firstAttemptId || first.inputHash !== input.inputHash
       || first.sourceRevisionHash !== input.sourceRevisionHash || first.outcome?.decision !== row.firstDecision
-      || first.model !== row.firstModel || input.validUntil <= new Date()) return null;
+      || first.model !== row.firstModel || input.validUntil <= reviewSemanticNow()) return null;
   }
   return secondReviewInputMatches(row, { candidate, document, settings, input, first, root }) ? input : null;
 }
