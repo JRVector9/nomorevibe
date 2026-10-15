@@ -5,6 +5,7 @@ import { MAX_REVIEW_INPUT_BYTES, REVIEW_FRESH_MS, reviewHash, type ReviewInput }
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 import { parseCapacityManifest, type CapacityManifest } from "./pipeline-capacity";
 import { assertVerifiedReplayDatabase, verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "./pipeline-replay-database";
+import { assertReplayQuiescence, currentReplayTransactionHooks, type ReplayQuiescenceProof } from "./pipeline-replay-execution";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/), positive = z.number().int().positive().safe();
 const callBase = { callId: z.string().min(1).max(160), candidateId: positive,
@@ -19,12 +20,15 @@ export type ReplayCallRequest = z.infer<typeof callSchema>;
 export type ReplayReceipt = { inputTokens: number; outputTokens: number } | null;
 const resultProofSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), outcomeHash: hash, decisionHash: hash }).strict(),
-  z.object({ ok: z.literal(false), outcomeHash: z.null(), decisionHash: z.null() }).strict(),
+  z.object({ ok: z.literal(false), outcomeHash: z.null(), decisionHash: z.null(),
+    error: z.enum(["not_configured", "input_too_large", "timeout", "cancelled", "output_too_large", "missing_cli", "auth",
+      "cli_error", "invalid_output", "max_turns", "budget", "rate_limited", "model_unavailable", "gateway_error"]).optional() }).strict(),
 ]);
 export type ReplayResultProof = z.infer<typeof resultProofSchema>;
 const runBrand: unique symbol = Symbol("ReplayRun");
 export type ReplayRun = Readonly<{ [runBrand]: true; runId: string }>;
-type RunIdentity = { ledger: ReplayLedger; database: VerifiedReplayDatabase; ownerId: string; manifest: CapacityManifest; admissionClosed: boolean };
+type RunIdentity = { ledger: ReplayLedger; database: VerifiedReplayDatabase; ownerId: string; manifest: CapacityManifest;
+  admissionClosed: boolean; writersFenced: boolean; certified: boolean };
 const runs = new WeakMap<object, RunIdentity>();
 class ReplayLedgerError extends Error { constructor(readonly code: string) { super(code); } }
 const fail = (code: string): never => { throw new ReplayLedgerError(code); };
@@ -41,10 +45,10 @@ export function replayFinalRunBinding(run: ReplayRun) {
   const identity = run && runs.get(run);
   ensure(identity, "replay_run_required");
   assertVerifiedReplayDatabase(identity.database);
-  return Object.freeze({ database: identity.database, ownerId: identity.ownerId,
+  return Object.freeze({ database: identity.database, ownerId: identity.ownerId, certified: identity.certified,
     manifest: structuredClone(identity.manifest),
     assertActive() {
-      ensure(runs.get(run) === identity && !identity.admissionClosed, "replay_final_scope_closed");
+      ensure(runs.get(run) === identity && !identity.writersFenced, "replay_final_scope_closed");
       assertVerifiedReplayDatabase(identity.database);
     } });
 }
@@ -80,15 +84,26 @@ export class ReplayLedger {
     const value = run && runs.get(run);
     ensure(value?.ledger === this, "replay_run_required"); return value;
   }
-  private async transaction<T>(load: (tx: Tx) => Promise<T>): Promise<T> {
+  private async transaction<T>(load: (tx: Tx) => Promise<T>, journalRun?: ReplayRun): Promise<T> {
     assertVerifiedReplayDatabase(this.database);
+    const hooks = journalRun && this.identity(journalRun).certified ? currentReplayTransactionHooks(this.database) : undefined;
+    let ticket: Awaited<ReturnType<NonNullable<typeof hooks>["before"]>>;
+    let committed = false;
     try {
-      return await this.database.client.begin(async tx => {
+      const result = await this.database.client.begin(async tx => {
         await verifyReplayDatabaseSession(tx, this.database);
-        return load(tx);
+        ticket = await hooks?.before(tx);
+        const result = await load(tx);
+        await hooks?.after(tx, ticket);
+        return result;
       }) as T;
+      committed = true;
+      await hooks?.commitAck(ticket); return result;
     } catch (error) {
+      if (!committed) hooks?.rollback(ticket);
       if (error instanceof ReplayLedgerError) throw error;
+      if (error instanceof Error && ["replay_review_kind_mismatch", "replay_readiness_explicit_first_reviewer_required"].includes(error.message))
+        throw new ReplayLedgerError(error.message);
       throw new ReplayLedgerError("replay_ledger_operation_failed");
     }
   }
@@ -98,8 +113,9 @@ export class ReplayLedger {
       WHERE run_id = ${run.runId} AND owner_id = ${identity.ownerId} FOR UPDATE`;
     ensure(row && row.manifest_hash === reviewHash(identity.manifest), "replay_run_identity_mismatch");
     // Clock projection in SELECT FOR UPDATE can be evaluated before waiting for a lock.
-    const [clock] = await tx`SELECT clock_timestamp() AS wall_now`;
-    return { ...row, wall_now: clock.wall_now };
+    const [clock] = await tx`SELECT clock_timestamp() AS wall_now,clock_timestamp()>=deadline_at AS deadline_elapsed
+      FROM pipeline_replay.capacity_runs WHERE run_id=${run.runId}`;
+    return { ...row, wall_now: clock.wall_now, deadline_elapsed: clock.deadline_elapsed };
   }
   private async event(tx: Tx, runId: string, kind: string, payload: Record<string, unknown> = {}) {
     const [row] = await tx`UPDATE pipeline_replay.capacity_runs SET event_seq = event_seq + 1 WHERE run_id = ${runId} RETURNING event_seq`;
@@ -123,17 +139,70 @@ export class ReplayLedger {
       await this.event(tx, manifest.runId, "prepared");
     });
     const run = Object.freeze({ [runBrand]: true as const, runId: manifest.runId });
-    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false }); return run;
+    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false,
+      writersFenced: false, certified: false }); return run;
+  }
+  async prepareCertified(value: unknown, inputs: { candidateId: number; input: ReviewInput }[], options: {
+    runner: { jobs: readonly ("crawl-agent-review" | "second-review")[]; budgetMs: number }; quality: unknown | null;
+  }): Promise<ReplayRun> {
+    const { replayQualitySchema, replayQualityDatasetHash } = await import("./pipeline-replay-artifact");
+    const runner = { jobs: [...options.runner.jobs], budgetMs: options.runner.budgetMs };
+    ensure(runner.jobs.length > 0 && runner.jobs.length <= 100 && runner.jobs.every(name => ['crawl-agent-review','second-review'].includes(name))
+      && Number.isSafeInteger(runner.budgetMs) && runner.budgetMs > 0 && runner.budgetMs <= 110_000, "invalid_replay_runner_options");
+    const quality = options.quality === null ? null : replayQualitySchema.parse(options.quality);
+    ensure(!quality || quality.datasetHash === replayQualityDatasetHash(quality), "replay_quality_mismatch");
+    const manifest = parseCapacityManifest(value), frozen = frozenInputs(manifest, inputs), ownerId = randomUUID();
+    ensure(Number.isSafeInteger(manifest.limits.maxCalls * manifest.limits.perCallTokenUpperBound)
+      && manifest.limits.maxCalls * manifest.limits.perCallTokenUpperBound <= manifest.limits.maxTokens, "invalid_replay_manifest");
+    await this.transaction(async tx => {
+      await tx`SELECT pg_advisory_xact_lock(1485803,2)`;
+      await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
+      const [active] = await tx`SELECT 1 FROM pipeline_replay.capacity_runs WHERE state IN ('running','draining') LIMIT 1`;
+      ensure(!active, "replay_active_run_exists");
+      const { captureReplayReadinessProjection } = await import("./pipeline-replay-readiness");
+      const initial = await captureReplayReadinessProjection(tx, manifest, frozen);
+      ensure(initial.initialStateHash === manifest.initialStateHash, "replay_initial_state_mismatch");
+      const { assertReplayInitialReviewKinds } = await import("./pipeline-replay-classification");
+      assertReplayInitialReviewKinds(initial.projection, manifest);
+      await tx`INSERT INTO pipeline_replay.capacity_runs (run_id,owner_id,manifest,manifest_hash,state,runner,quality,
+        initial_projection,current_projection,initial_state_hash,comparison_state_hash,captured_at)
+        VALUES (${manifest.runId},${ownerId},${tx.json(manifest)},${reviewHash(manifest)},'prepared',${tx.json(runner)},${quality === null ? null : tx.json(quality)},
+          ${tx.json(initial.projection)},${tx.json(initial.projection)},${initial.initialStateHash},${initial.comparisonStateHash},${initial.capturedAt}::text::timestamptz)`;
+      for (const item of frozen) await tx`INSERT INTO pipeline_replay.capacity_inputs
+        (run_id,candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash)
+        VALUES (${manifest.runId},${item.candidateId},${item.inputHash},${item.sourceRevisionHash},${tx.json(item.frozen)},${item.frozenHash})`;
+      const actual = await captureReplayReadinessProjection(tx, manifest);
+      ensure(actual.initialStateHash === initial.initialStateHash, "replay_initial_state_mismatch");
+      await this.event(tx, manifest.runId, "prepared");
+    });
+    const run = Object.freeze({ [runBrand]: true as const, runId: manifest.runId });
+    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false, writersFenced: false, certified: true });
+    return run;
+  }
+  async previewInitialState(value: unknown, inputs: { candidateId: number; input: ReviewInput }[]) {
+    const manifest = parseCapacityManifest(value), frozen = frozenInputs(manifest, inputs);
+    return this.transaction(async tx => {
+      await tx`SELECT pg_advisory_xact_lock(1485803,2)`;
+      await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
+      const { captureReplayReadinessProjection } = await import("./pipeline-replay-readiness");
+      return captureReplayReadinessProjection(tx, manifest, frozen);
+    });
   }
   async start(run: ReplayRun): Promise<void> {
     await this.transaction(async tx => {
       await tx`SELECT pg_advisory_xact_lock(1485803, 2)`;
+      if (this.identity(run).certified) await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
+      const current = this.identity(run).certified
+        ? await (await import("./pipeline-replay-readiness")).captureReplayReadinessProjection(tx, this.identity(run).manifest) : undefined;
       const row = await this.locked(tx, run);
       ensure(row.state === "prepared", "replay_run_state_mismatch");
       const [other] = await tx`SELECT 1 FROM pipeline_replay.capacity_runs WHERE state IN ('running','draining') LIMIT 1`;
       ensure(!other, "replay_active_run_exists");
-      await tx`UPDATE pipeline_replay.capacity_runs SET state = 'running', started_at = clock_timestamp(),
-        deadline_at = clock_timestamp() + ${this.identity(run).manifest.limits.maxDurationMs} * interval '1 millisecond' WHERE run_id = ${run.runId}`;
+      if (current) ensure(current.initialStateHash === row.initial_state_hash, "replay_initial_state_mismatch");
+      await tx`WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        UPDATE pipeline_replay.capacity_runs SET state = 'running', started_at = clock.at,
+        deadline_at = clock.at + ${this.identity(run).manifest.limits.maxDurationMs} * interval '1 millisecond'
+        FROM clock WHERE run_id = ${run.runId}`;
       await this.event(tx, run.runId, "started");
     });
   }
@@ -143,18 +212,23 @@ export class ReplayLedger {
       ensure(this.identity(run).manifest.mode === "fixtures", "unsupported_provider_budget");
     });
   }
+  private async closeRowAdmission(tx: Tx, run: ReplayRun): Promise<void> {
+    if (this.identity(run).certified) await tx`UPDATE pipeline_replay.capacity_runs SET state='draining',
+      admission_closed_at=coalesce(admission_closed_at,clock_timestamp()) WHERE run_id=${run.runId}`;
+    else await tx`UPDATE pipeline_replay.capacity_runs SET state='draining' WHERE run_id=${run.runId}`;
+  }
   private async admission(tx: Tx, run: ReplayRun, row: Row): Promise<string | null> {
     const identity = this.identity(run);
     if (identity.admissionClosed || row.state !== "running") {
       if (row.state === "running") {
-        await tx`UPDATE pipeline_replay.capacity_runs SET state = 'draining' WHERE run_id = ${run.runId}`;
+        await this.closeRowAdmission(tx, run);
         await this.event(tx, run.runId, "admission_closed");
       }
       return "replay_run_not_running";
     }
-    if (+row.wall_now >= +row.deadline_at) {
+    if (row.deadline_elapsed) {
       identity.admissionClosed = true;
-      await tx`UPDATE pipeline_replay.capacity_runs SET state = 'draining' WHERE run_id = ${run.runId}`;
+      await this.closeRowAdmission(tx, run);
       await this.event(tx, run.runId, "deadline"); return "replay_deadline_elapsed";
     }
     return null;
@@ -187,7 +261,7 @@ export class ReplayLedger {
       await this.event(tx, run.runId, "reserved", { callId: call.callId, tokenUpperBound: call.tokenUpperBound,
         ...(call.stage === "second" ? { secondReviewId: call.secondReviewId, generationKey: call.generationKey, vote: call.vote } : {}) });
       return null;
-    });
+    }, run);
     if (denial) fail(denial);
   }
   private async move(run: ReplayRun, callId: string, from: string, to: string): Promise<void> {
@@ -203,7 +277,7 @@ export class ReplayLedger {
         WHERE run_id = ${run.runId} AND call_id = ${callId} AND state = ${from} RETURNING call_id`;
       ensure(changed, "replay_call_state_mismatch");
       await this.event(tx, run.runId, to, { callId }); return null;
-    });
+    }, run);
     if (denial) fail(denial);
   }
   markDispatching(run: ReplayRun, callId: string) { return this.move(run, callId, "reserved", "dispatching"); }
@@ -228,13 +302,19 @@ export class ReplayLedger {
         input_tokens = ${receipt.inputTokens}, output_tokens = ${receipt.outputTokens}, result_ok = ${proof?.ok ?? null},
         result_hash = ${proof?.outcomeHash ?? null}, result_decision_hash = ${proof?.decisionHash ?? null}
         WHERE run_id = ${run.runId} AND call_id = ${callId}`;
+      if (this.identity(run).certified) {
+        const classification = proof?.ok === false ? proof.error === "cancelled" ? "cancelled"
+          : proof.error === "budget" ? "deferred" : proof.error ? "technical" : "unknown" : null;
+        await tx`UPDATE pipeline_replay.capacity_calls SET failure_class = ${classification}
+          WHERE run_id = ${run.runId} AND call_id = ${callId}`;
+      }
       await this.event(tx, run.runId, "settled", { callId }); return false;
-    });
+    }, run);
     if (uncertain) fail("replay_call_indeterminate");
   }
   private async uncertain(tx: Tx, run: ReplayRun, callId: string) {
     await tx`UPDATE pipeline_replay.capacity_calls SET state = 'indeterminate' WHERE run_id = ${run.runId} AND call_id = ${callId}`;
-    await tx`UPDATE pipeline_replay.capacity_runs SET state = 'draining' WHERE run_id = ${run.runId}`;
+    await this.closeRowAdmission(tx, run);
     await this.event(tx, run.runId, "indeterminate", { callId });
   }
   async markIndeterminate(run: ReplayRun, callId: string): Promise<void> {
@@ -245,18 +325,42 @@ export class ReplayLedger {
       const [call] = await tx`SELECT state FROM pipeline_replay.capacity_calls WHERE run_id = ${run.runId} AND call_id = ${callId} FOR UPDATE`;
       ensure(call && ["dispatching", "in_flight", "indeterminate"].includes(call.state), "replay_call_state_mismatch");
       if (call.state !== "indeterminate") await this.uncertain(tx, run, callId);
-    });
+    }, run);
   }
   async drain(run: ReplayRun): Promise<void> {
+    return this.closeAdmission(run);
+  }
+  async closeAdmission(run: ReplayRun): Promise<void> {
     this.identity(run).admissionClosed = true;
     await this.transaction(async tx => {
       const row = await this.locked(tx, run);
       ensure(["running", "draining"].includes(row.state), "replay_run_state_mismatch");
-      if (row.state === "running") {
-        await tx`UPDATE pipeline_replay.capacity_runs SET state = 'draining' WHERE run_id = ${run.runId}`;
+      if (row.state === "running" || this.identity(run).certified && !row.admission_closed_at) {
+        await this.closeRowAdmission(tx, run);
         await this.event(tx, run.runId, "draining");
       }
     });
+  }
+  async fenceWriters(run: ReplayRun): Promise<void> {
+    ensure(this.identity(run).certified && this.identity(run).admissionClosed, "replay_admission_not_closed");
+    await this.transaction(async tx => {
+      await tx`SELECT pg_advisory_xact_lock(1485803,2)`;
+      await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
+      const row = await this.locked(tx, run);
+      ensure(row.state === 'draining' && row.admission_closed_at && !row.writers_fenced_at, "replay_run_state_mismatch");
+      const [unresolved] = await tx`SELECT 1 FROM pipeline_replay.capacity_calls WHERE run_id = ${run.runId}
+        AND state NOT IN ('settled','cancelled_before_dispatch') LIMIT 1`;
+      ensure(!unresolved, "replay_calls_unresolved");
+      await tx`UPDATE pipeline_replay.capacity_runs SET writers_fenced_at = clock_timestamp() WHERE run_id = ${run.runId}`;
+      await this.event(tx, run.runId, "writers_fenced");
+    });
+    this.identity(run).writersFenced = true;
+  }
+  async seal(run: ReplayRun, proof: ReplayQuiescenceProof): Promise<void> {
+    ensure(this.identity(run).certified && this.identity(run).writersFenced, "replay_writers_not_fenced");
+    assertReplayQuiescence(run, proof);
+    const { sealReplayLedger } = await import("./pipeline-replay-execution");
+    await this.transaction(tx => sealReplayLedger(tx, run, this.identity(run).ownerId, proof));
   }
   async inspect(run: ReplayRun) {
     return this.transaction(async tx => {

@@ -19,28 +19,37 @@ const tables: readonly Policy[] = [
     update: ["state", "error_code", "completed_at", "retry_after", "outcome", "input_tokens", "output_tokens", "cost_usd"] },
   { name: "second_reviews", select: true, insert: true,
     update: ["status", "resolution", "resolved_at", "second_decision", "second_confidence", "second_reason", "failure_count", "reviewed_at", "error_code", "error_detail"] },
-  { name: "crawl_frontier", select: ["repo", "state", "updated_at"], insert: true,
+  { name: "crawl_frontier", select: true, insert: true,
     update: ["state", "attempts", "next_attempt_at", "last_error", "updated_at"] },
   { name: "jobs", select: true, insert: true,
     update: ["locked_at", "last_run_at", "updated_at", "lease_token", "runs", "requested_version", "worker_seen_at", "cursor", "processed_version", "not_before", "last_success_at", "last_error"] },
-  { name: "operations_observations", select: ["key"], insert: true, update: ["value", "observed_at"] },
+  { name: "operations_observations", select: true, insert: true, update: ["value", "observed_at"] },
   { schema: "pipeline_replay", name: "capacity_runs", select: true,
-    insert: ["run_id", "owner_id", "manifest", "manifest_hash", "state"],
-    update: ["state", "started_at", "deadline_at", "charged_calls", "charged_tokens", "event_seq"] },
+    insert: ["run_id", "owner_id", "manifest", "manifest_hash", "state", "initial_projection", "current_projection",
+      "initial_state_hash", "comparison_state_hash", "captured_at", "runner", "quality"],
+    update: ["state", "started_at", "deadline_at", "charged_calls", "charged_tokens", "event_seq",
+      "admission_closed_at", "writers_fenced_at", "sealed_at", "current_projection", "seal"] },
+  { schema: "pipeline_replay", name: "capacity_changes", select: true,
+    insert: ["run_id", "tx_key", "ordinal", "table_name", "operation", "old_row", "new_row"] },
+  { schema: "pipeline_replay", name: "capacity_transactions", select: true,
+    insert: ["run_id", "tx_key", "db_xid", "seq", "tx_started_at", "recorded_at", "changes"] },
+  { schema: "pipeline_replay", name: "capacity_commit_confirmations", select: true, insert: ["run_id", "tx_key"] },
   { schema: "pipeline_replay", name: "capacity_inputs", select: true,
     insert: ["run_id", "candidate_id", "input_hash", "source_revision_hash", "frozen_input", "frozen_hash"] },
   { schema: "pipeline_replay", name: "capacity_calls", select: true,
     insert: ["run_id", "call_id", "candidate_id", "first_attempt_id", "input_hash", "source_revision_hash", "stage",
       "second_review_id", "generation_key", "vote", "provider", "model", "request_hash", "token_upper_bound", "state"],
-    update: ["state", "dispatched_at", "settled_at", "input_tokens", "output_tokens", "result_ok", "result_hash", "result_decision_hash"] },
+    update: ["state", "dispatched_at", "settled_at", "input_tokens", "output_tokens", "result_ok", "result_hash", "result_decision_hash", "failure_class"] },
   { schema: "pipeline_replay", name: "capacity_finals", select: true,
     insert: ["run_id", "candidate_id", "input_hash", "source_revision_hash", "policy_hash", "seq",
       "first_attempt_id", "first_call_id", "decision", "second_witnesses"] },
-  { schema: "pipeline_replay", name: "capacity_transitions", select: [], insert: ["run_id", "seq", "kind", "payload"] },
+  { schema: "pipeline_replay", name: "capacity_transitions", select: true, insert: ["run_id", "seq", "kind", "payload"] },
 ];
 const sequences = ["crawl_review_attempts_id_seq", "second_reviews_id_seq", "crawl_frontier_id_seq"] as const;
-const profileVersion = "handlers-v3";
-const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences })).digest("hex");
+const journalTables = ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
+  "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"] as const;
+const profileVersion = "handlers-v4";
+const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences, journalTables })).digest("hex");
 const sourceGuard = "BEGIN RAISE EXCEPTION 'replay_handler_source_immutable' USING ERRCODE = '42501'; END";
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;
 export class ReplayHandlerProfileError extends Error {
@@ -196,6 +205,11 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
     }
   }
   for (const name of sequences) await tx.unsafe(`GRANT USAGE ON SEQUENCE public.${ident(name)} TO ${ident(identity.roleName)}`);
+  for (const relation of journalTables) {
+    await tx.unsafe(`CREATE TRIGGER replay_handler_change AFTER INSERT OR UPDATE OR DELETE ON ${relation}
+      FOR EACH ROW EXECUTE FUNCTION pipeline_replay.capture_handler_change()`);
+    await tx.unsafe(`ALTER TABLE ${relation} ENABLE ALWAYS TRIGGER replay_handler_change`);
+  }
   // Manifest is built by the owner but validates the runtime role's effective rights.
   // SET LOCAL only pins resolution while building the same snapshot used at runtime.
   await tx`SET LOCAL search_path = pg_catalog,pipeline_replay,public`;

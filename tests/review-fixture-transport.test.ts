@@ -63,7 +63,7 @@ describe("fixture model-call boundary", () => {
     const h = harness();
     h.fixture.mockResolvedValueOnce({ result: { ok: false, error: "auth" }, receipt });
     await transport.withReviewFixtureTransport(h, () => transport.dispatchReviewFixtureCall(binding, input(), {}));
-    expect(h.ledger.settle).toHaveBeenCalledWith(run, expect.any(String), receipt, { ok: false, outcomeHash: null, decisionHash: null });
+    expect(h.ledger.settle).toHaveBeenCalledWith(run, expect.any(String), receipt, { ok: false, outcomeHash: null, decisionHash: null, error: "auth" });
   });
 
   it("dispatches no fixture or reservation when already aborted", async () => {

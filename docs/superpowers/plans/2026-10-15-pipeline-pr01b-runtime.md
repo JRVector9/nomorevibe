@@ -52,7 +52,7 @@ typegen·tsc·lint·i18n·build·bundle·Python23·diff도 실제 PASS다.
 최초 DB 실패와 수정, 한계/후속은 [runtime 검증](../../operations/2026-10-15-pipeline-pr01b-runtime-validation.md)을 따른다.
 PR/CI·운영 적용은 [납품 상태](2026-10-15-pipeline-delivery-status.md)에 별도 기록한다.
 
-## 다음 b4 사전 읽기 검토 — 구현하지 않은 항목
+## b4 사전 읽기 검토 — PR432 CI 대기 당시 기록
 
 PR432 CI 대기 중 두 담당이 기존 AI1/AI2 writer를 읽기만 검토했다. 편집·DB·테스트 실행은 없었다.
 
@@ -70,4 +70,4 @@ PR432 CI 대기 중 두 담당이 기존 AI1/AI2 writer를 읽기만 검토했�
 - cleanup은 하나의 transaction이 아니다. 각 withJobLeaseWrite와 별도 human hold/close transaction에
   전이 recorder를 결합해야 한다. 기존 final 이력은 보존하고 다시 세지 않는다.
 
-이 항목의 구현·원자 rollback/두 연결 교착 회귀는 다음 PR에 남아 있다.
+위 내용은 당시 사전 검토 기록이다. 이후 PR433/main4af0589에서 원자 final과 실제 두 연결 잠금 회귀를 구현·검증하고 PR·main 전체 CI를 확인했다. 현재 남은 준비 coverage·artifact/seal은 [b5 계획](2026-10-15-pipeline-pr01b-coverage.md)을 따른다.

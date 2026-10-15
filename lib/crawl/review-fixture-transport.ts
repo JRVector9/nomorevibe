@@ -167,7 +167,7 @@ export async function dispatchReviewFixtureCall(value: ReviewFixtureCallBinding,
       await scope.ledger.settle(scope.run, request.callId, receipt, result.ok
         ? { ok: true, outcomeHash: reviewHash(result.outcome),
           decisionHash: reviewHash({ decision: result.outcome.decision, confidence: result.outcome.confidence ?? null, reason: result.outcome.reason }) }
-        : { ok: false, outcomeHash: null, decisionHash: null }); state = "settled"; check();
+        : { ok: false, outcomeHash: null, decisionHash: null, error: result.error }); state = "settled"; check();
       return result;
     } catch (error) {
       if (state === "reserved") await scope.ledger.cancelBeforeDispatch(scope.run, request.callId).catch(() => {});

@@ -111,7 +111,11 @@ AI1/AI2 담당도 전용 DB 정리를 확인했다. 세 이번 전용 container�
 ## 제출 checkpoint
 
 [PR433](https://github.com/JRVector9/nomorevibe/pull/433)을 생성했다. 최신 base는 `664777d`이며
-코드 commit은 `b470f13`이다. PR 필수 CI는 진행 중이다. CI 성공·main 병합·운영 적용을 미리 완료로 표시하지 않는다.
+코드 commit은 `b470f13`이다. [최종 PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는
+head `6d52bf51dae0df04bb25cce0b7273ae6c569afa9` / base `664777d`에서 quality·통합3shard·check 전체 SUCCESS다.
+실제 로그에서 unit2,781과 DB484+530+703=1,717 PASS/기존TODO1을 확인했다.
+`2026-10-15T12:16:32Z` main `4af058934cb71d888e7997e0fd5aad4df2f32f7e`로 exact-head squash merge했다.
+[main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다. 운영 적용은 별도 미검증이다.
 
 ## 후속과 재현
 

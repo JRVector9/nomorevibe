@@ -12,6 +12,8 @@ import { comparisonReviewPolicyHash, fullReviewPolicyHash, parseCapacityManifest
 import { openVerifiedReplayHandlerDatabase } from "./pipeline-replay-database";
 import { ReplayLedger } from "./pipeline-replay-ledger";
 import { withReplayFinalScope } from "./pipeline-replay-final";
+import { replayQuiescenceProof, withReplayExecutionScope } from "./pipeline-replay-execution";
+import { loadVerifiedReplayArtifact, reportVerifiedReplayArtifact, type ReplayArtifact } from "./pipeline-replay-artifact";
 
 export type ReplayReviewJobName = "crawl-agent-review" | "second-review";
 export type FixtureReviewReplayOptions = {
@@ -86,6 +88,69 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
       await ledger.drain(run);
     }
     return { runId: run.runId, jobs, diagnostics: await ledger.inspect(run) };
+  } finally {
+    try { await database.close(); }
+    finally { clearTimeout(wallDeadline); }
+  }
+}
+
+export type CertifiedFixtureReviewReplayOptions = FixtureReviewReplayOptions & {
+  /** Fixed before execution; omission preserves an explicit incomplete quality result. */
+  quality?: ReplayArtifact["initial"]["quality"];
+};
+
+/** Certified fixture evidence only. Provider admission remains closed. */
+export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureReviewReplayOptions) {
+  if (currentReplayDb()) throw new Error("replay_runner_scope_conflict");
+  const manifest = parseCapacityManifest(options.manifest);
+  if (manifest.mode !== "fixtures") throw new Error("unsupported_provider_budget");
+  const names = [...(options.jobs ?? ["crawl-agent-review", "second-review"])];
+  if (names.some(name => name !== "crawl-agent-review" && name !== "second-review")) throw new Error("replay_job_not_allowed");
+  const budgetMs = options.budgetMs ?? 110_000;
+  if (!names.length || names.length > 100 || !Number.isSafeInteger(budgetMs) || budgetMs <= 0
+    || budgetMs > 110_000 || typeof options.fixture !== "function") throw new Error("invalid_replay_runner_options");
+  const { identityPath, fixture, signal: callerSignal } = options;
+  const inputs = structuredClone(options.inputs), quality = structuredClone(options.quality ?? null);
+  const database = await openVerifiedReplayHandlerDatabase(identityPath, {});
+  let wallDeadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const ledger = new ReplayLedger(database);
+    const run = await ledger.prepareCertified(manifest, inputs, { runner: { jobs: names, budgetMs }, quality });
+    const deadline = new AbortController();
+    const signal = callerSignal ? AbortSignal.any([callerSignal, deadline.signal]) : deadline.signal;
+    wallDeadline = setTimeout(() => deadline.abort(), manifest.limits.maxDurationMs);
+    wallDeadline.unref();
+    await ledger.start(run);
+    const jobs: Array<{ name: ReplayReviewJobName; result: RunResult }> = [];
+    try {
+      // Execution outlives the owned DB scope: quiescence cannot be issued before
+      // runJob heartbeat, fixture callbacks and every guarded commit have settled.
+      await withReplayExecutionScope(run, () => withReplayDatabaseScope(identityPath, async () => {
+        assertReplayDatabaseScopeIdentity(database);
+        try {
+          await withReplayFinalScope(run, () => withReviewReplayContext({ referenceTime: new Date(manifest.referenceTime) }, () =>
+            withReviewFixtureTransport({ ledger, run, fixture, inputs, fullReviewPolicyHash: manifest.fullReviewPolicyHash,
+              tokenUpperBound: manifest.limits.perCallTokenUpperBound }, async () => {
+              for (const name of names) {
+                if (signal.aborted) break;
+                await assertReplaySettings(manifest);
+                const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
+                  { requestedOnly: true, budgetMs, signal });
+                jobs.push({ name, result });
+                if (signal.aborted || result.status === "failed" || result.status === "skipped" && result.reason === "stopping") break;
+              }
+            })));
+        } finally { await ledger.drain(run); }
+      }));
+    } finally {
+      // Failure also closes admission and durably fences writers, but cannot
+      // manufacture the private quiescence proof needed to seal evidence.
+      await ledger.drain(run);
+      await ledger.fenceWriters(run);
+    }
+    await ledger.seal(run, replayQuiescenceProof(run));
+    const artifact = await loadVerifiedReplayArtifact(database, run.runId);
+    return { runId: run.runId, jobs, artifact, diagnostics: reportVerifiedReplayArtifact(artifact) };
   } finally {
     try { await database.close(); }
     finally { clearTimeout(wallDeadline); }

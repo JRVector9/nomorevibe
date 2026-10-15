@@ -29,6 +29,9 @@ export async function removeReplayHandlerTestProfile(identityPath: string): Prom
       if (runtime.active || runtime.owned) throw new Error("replay_test_runtime_still_connected");
       for (const table of ["crawl_settings", "crawl_documents", "agent_repository_scans", "agent_repository_observations"])
         await tx.unsafe(`DROP TRIGGER replay_handler_source_immutable ON public.${table}`);
+      for (const table of ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
+        "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"])
+        await tx.unsafe(`DROP TRIGGER replay_handler_change ON ${table}`);
       await tx`DROP FUNCTION pipeline_replay.reject_handler_source_mutation()`;
       await tx`DROP TABLE pipeline_replay.handler_profile`;
       // The file schema validated this generated identifier, and ownership above is empty.

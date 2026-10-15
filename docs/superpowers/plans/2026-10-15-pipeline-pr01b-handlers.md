@@ -1,8 +1,8 @@
 # PR01b 다음 구현: 기존 검수 handler·writer의 격리 실행
 
 2026-10-15. PR430/main2c7a71c 뒤의 승인된 구현 계획이다. 1절은 #431/main9601e3b에 병합했고,
-2절은 [PR01b-3 runtime 계획](2026-10-15-pipeline-pr01b-runtime.md)에 따라 구현·검증 중이다.
-3절 final과4절 coverage/seal은 아직 미구현이다. 실제 납품 상태는
+2절은 PR432/main664777d에, 3절 atomic final은 PR433/main4af0589에 병합했고 PR·main CI가 모두 성공했다.
+4절 coverage/seal은 [b5 상세 계획](2026-10-15-pipeline-pr01b-coverage.md)으로 구체화했으며 아직 미구현이다. 실제 납품 상태는
 [PR별 개발·적용 현황](2026-10-15-pipeline-delivery-status.md)을 따른다.
 사용자가 승인한 PR00–17의 PR01 범위다. 실제 provider admission과2배 성능 판정은 계속 별도 선행 조건이다.
 모든 agent/codex CLI는 gpt-6.1-sol/xhigh. writing-plans/execute-plan/TDD로 진행한다.

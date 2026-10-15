@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 
-const fake = vi.hoisted(() => ({ open: vi.fn(), verify: vi.fn(), assert: vi.fn(), same: vi.fn(), traces: [] as string[] }));
+const fake = vi.hoisted(() => ({ open: vi.fn(), verify: vi.fn(), assert: vi.fn(), same: vi.fn(),
+  hooks: vi.fn(), before: vi.fn(), after: vi.fn(), commitAck: vi.fn(), rollback: vi.fn(), traces: [] as string[] }));
+vi.mock("@/lib/operations/pipeline-replay-execution", () => ({ currentReplayTransactionHooks: fake.hooks }));
 vi.mock("@/lib/operations/pipeline-replay-database", () => ({
   openVerifiedReplayHandlerDatabase: fake.open,
   assertVerifiedReplayHandlerDatabase: fake.assert,
@@ -43,6 +45,11 @@ beforeEach(() => {
   fake.open.mockImplementation(async (path: string) => handle(path));
   fake.assert.mockImplementation(() => {});
   fake.verify.mockImplementation(async (tx: { id: number }) => { fake.traces.push(`verify:${tx.id}`); });
+  fake.hooks.mockReturnValue({ before: fake.before, after: fake.after, commitAck: fake.commitAck, rollback: fake.rollback });
+  fake.before.mockResolvedValue(undefined);
+  fake.after.mockResolvedValue(undefined);
+  fake.commitAck.mockResolvedValue(undefined);
+  fake.rollback.mockResolvedValue(undefined);
 });
 afterEach(() => { Object.assign(globals, previous); vi.resetAllMocks(); fake.traces.length = 0; });
 
@@ -205,4 +212,49 @@ it("rejects inherited identity checks before consulting handles after scope exit
   release();
   await expect(child).rejects.toThrow("replay_database_scope_closed");
   expect(fake.same).not.toHaveBeenCalled();
+});
+
+it("flushes certified transaction facts before native commit and confirms only after commit resolves", async () => {
+  const ticket = Object.freeze({ transaction: "certified" });
+  fake.before.mockImplementation(async (tx: { id: number }) => { fake.traces.push(`before:${tx.id}`); return ticket; });
+  fake.after.mockImplementation(async (tx: { id: number }, received: unknown) => {
+    expect(received).toBe(ticket); fake.traces.push(`after:${tx.id}`);
+  });
+  fake.commitAck.mockImplementation(async (received: unknown) => {
+    expect(received).toBe(ticket); fake.traces.push("commit-confirmed");
+  });
+  await withReplayDatabaseScope("identity-a", () => db.transaction(async tx => { await tx.execute(sql`select 1`); }));
+  const commit = fake.traces.findIndex(row => row.startsWith("identity-a:commit:"));
+  expect(fake.before).toHaveBeenCalledTimes(1);
+  expect(fake.after).toHaveBeenCalledTimes(1);
+  expect(fake.traces.findIndex(row => row.startsWith("before:"))).toBeLessThan(fake.traces.findIndex(row => row.includes(":query:")));
+  expect(fake.traces.findIndex(row => row.startsWith("after:"))).toBeLessThan(commit);
+  expect(fake.traces.indexOf("commit-confirmed")).toBeGreaterThan(commit);
+  expect(fake.rollback).not.toHaveBeenCalled();
+});
+
+it("never confirms rolled-back writes and rolls back when the final journal flush fails", async () => {
+  const ticket = Object.freeze({ transaction: "will-rollback" });
+  fake.before.mockResolvedValue(ticket);
+  fake.after.mockRejectedValue(new Error("journal_flush_failed"));
+  await expect(withReplayDatabaseScope("identity-a", () => db.transaction(async tx => { await tx.execute(sql`select 1`); })))
+    .rejects.toThrow("journal_flush_failed");
+  expect(fake.traces.some(row => row.includes(":rollback:"))).toBe(true);
+  expect(fake.traces.some(row => row.includes(":commit:"))).toBe(false);
+  expect(fake.commitAck).not.toHaveBeenCalled();
+  expect(fake.rollback).toHaveBeenCalledWith(ticket);
+});
+
+it("passes the parent ticket to reject certified savepoints before child SQL", async () => {
+  const ticket = Object.freeze({ transaction: "outer" });
+  fake.before.mockImplementation(async (_tx: unknown, parent: unknown) => {
+    if (parent) throw new Error("replay_certified_savepoint_rejected");
+    return ticket;
+  });
+  await expect(withReplayDatabaseScope("identity-a", () => db.transaction(async tx => {
+    await tx.transaction(async inner => { await inner.execute(sql`select 1`); });
+  }))).rejects.toThrow("replay_certified_savepoint_rejected");
+  expect(fake.traces.some(row => row.includes(":query:"))).toBe(false);
+  expect(fake.commitAck).not.toHaveBeenCalled();
+  expect(fake.rollback).toHaveBeenCalledWith(ticket);
 });

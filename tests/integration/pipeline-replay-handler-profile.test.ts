@@ -103,6 +103,7 @@ it("rejects a private nonce or connection target swap even when public metadata 
 it("grants only fixed capacity ledger inserts and lifecycle updates", async () => {
   await database.client`SELECT frozen_input, frozen_hash FROM pipeline_replay.capacity_inputs LIMIT 1`;
   await database.client`SELECT * FROM pipeline_replay.capacity_finals LIMIT 1`;
+  await database.client`SELECT * FROM pipeline_replay.capacity_transitions LIMIT 1`;
   await database.client.begin(async tx => {
     await replay.verifyReplayDatabaseSession(tx, database);
     await tx`INSERT INTO pipeline_replay.capacity_runs (run_id, owner_id, manifest, manifest_hash, state)
@@ -115,7 +116,11 @@ it("grants only fixed capacity ledger inserts and lifecycle updates", async () =
     "UPDATE pipeline_replay.capacity_inputs SET frozen_input = '{}'",
     "UPDATE pipeline_replay.capacity_finals SET decision = 'reject'", "DELETE FROM pipeline_replay.capacity_finals",
     "INSERT INTO pipeline_replay.capacity_finals (run_id,candidate_id,input_hash,source_revision_hash,policy_hash,seq,first_attempt_id,first_call_id,decision,second_witnesses,at) VALUES ('profile-ledger',1,repeat('a',64),repeat('b',64),repeat('c',64),1,1,'fake','approve','[]',now())",
-    "SELECT * FROM pipeline_replay.capacity_transitions", "UPDATE pipeline_replay.capacity_transitions SET payload = '{}'",
+    "UPDATE pipeline_replay.capacity_transitions SET payload = '{}'",
+    "UPDATE pipeline_replay.capacity_runs SET initial_state_hash = repeat('b',64)",
+    "UPDATE pipeline_replay.capacity_transactions SET changes = '[]'", "DELETE FROM pipeline_replay.capacity_changes",
+    "UPDATE pipeline_replay.capacity_commit_confirmations SET confirmed_at = now()",
+    "INSERT INTO pipeline_replay.capacity_commit_confirmations (run_id,tx_key,confirmed_at) VALUES ('fake','00000000-0000-4000-8000-000000000001',now())",
     "INSERT INTO pipeline_replay.capacity_transitions (run_id, seq, at, kind, payload) VALUES ('profile-ledger', 2, now(), 'forbidden', '{}')",
     "UPDATE pipeline_replay.capacity_calls SET second_review_id = 2", "UPDATE pipeline_replay.capacity_calls SET request_hash = repeat('b',64)"])
     await expect(database.client.unsafe(query)).rejects.toMatchObject({ code: "42501" });
@@ -179,7 +184,7 @@ it("binds protected profile nonce and exact object OIDs instead of authenticatin
 });
 it("binds the fixed ledger version and complete column definitions", async () => {
   const [profile] = await admin`SELECT version FROM pipeline_replay.handler_profile`;
-  expect(profile.version).toBe("handlers-v3");
+  expect(profile.version).toBe("handlers-v4");
   await admin`ALTER TABLE pipeline_replay.capacity_calls ADD COLUMN extra_identity text`;
   try { await expect(replay.verifyReplayDatabaseSession(database.client, database)).rejects.toThrow("replay_database_privileges_rejected"); }
   finally { await admin`ALTER TABLE pipeline_replay.capacity_calls DROP COLUMN extra_identity`; }
@@ -192,6 +197,12 @@ it("rejects disabled immutable-source guards and privilege changes even when eff
   await admin`GRANT SELECT ON public.products TO PUBLIC`;
   try { await expect(replay.verifyReplayDatabaseSession(database.client, database)).rejects.toThrow("replay_database_privileges_rejected"); }
   finally { await admin`REVOKE SELECT ON public.products FROM PUBLIC`; }
+  await replay.verifyReplayDatabaseSession(database.client, database);
+});
+it("rejects a disabled mutation journal trigger before a handler can run unobserved", async () => {
+  await admin`ALTER TABLE public.jobs DISABLE TRIGGER replay_handler_change`;
+  try { await expect(api.openVerifiedReplayHandlerDatabase(identityPath, {})).rejects.toThrow("replay_database_privileges_rejected"); }
+  finally { await admin`ALTER TABLE public.jobs ENABLE ALWAYS TRIGGER replay_handler_change`; }
   await replay.verifyReplayDatabaseSession(database.client, database);
 });
 it("requires the original trusted admin for provisioning and refuses duplicate provisioning", async () => {
