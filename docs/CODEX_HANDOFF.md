@@ -107,7 +107,8 @@ python3 "$D/reconcile-current.py"
 
 ## Remaining work
 
-1. 세운영문서 diff-check/정상PR/최신base CI 반영을 마무리한다. 앱소스배포·DDL은 이번문서변경에 필요없다.
+1. 세운영문서는 정상PR426(https://github.com/JRVector9/nomorevibe/pull/426)으로 반영한다.
+   실제병합/필수CI상태는 아래 gh명령으로 조회한다. 앱소스배포·DDL은 이번문서변경에 필요없다.
 2. Grok 서버는 계속실행하며 upstreambackoff를 완료로 세지 않는다. 48h/10,000tick 제한·컨테이너재시작후상태를관측한다.
 3. 이후근거변경과원래대상밖profile생성은정상작업큐에서계속처리한다. 두완료manifest를덮거나무의미하게재실행하지않는다.
 4. OSS단독자동검수를재개하지않는다. API key/config/인증홈/private원문/사용자untracked산출물은커밋하지않는다.
@@ -119,6 +120,7 @@ D=/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/codex-keyword-catchup
 G=/Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/grok-sharded-source-catchup
 # 두pool/watcher는모두종료/완료/원복확인됐다. 재실행·재동결하지않는다.
 # 아래는읽기전용최신상태확인이다. OSS api-stop은제거하지않는다.
+gh pr view 426 --json state,mergedAt,mergeCommit,statusCheckRollup
 python3 "$D/reconcile-current.py"
 python3 "$D/round2/reconcile-current.py"
 CATCHUP_TRANSPORT_APPROVED=1 python3 "$G/persistent/server-wrapper.py" status
