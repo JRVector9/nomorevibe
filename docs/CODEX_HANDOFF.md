@@ -1,4 +1,4 @@
-# 2026-10-15 11:16 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
+# 2026-10-15 11:18 KST — 13앱 배포·519개 차단/감사/CDN 완료 / 전체자동적체 지속처리
 
 ## Current objective / authorization
 
@@ -50,7 +50,7 @@ private fixed baseline dir: `/Users/jr/.config/nomorevibe/backlog-recovery/2026-
 - 정상 uptime4회, runs52611/lastSuccess01:53:53.981UTC/error없음. 수동 접수/DB 상태 변경 없음.
 - 귀속불명16 ID는 이시각그대로seeded/URL·health·updatedAt불변이었다.
   최종02:15:34.969UTC에는16중3개(nabi-markdown/wxsm/medialane-sdk)가정상ping에서실패1로새시작한것을확인했다.
-  각각404/연결실패0/연결실패0이며접속회복이라고주장하지않는다. 나머지13는귀속불명보호대기.
+  각각404/연결실패0/연결실패0이며접속회복이라고주장하지않는다. 나머지13개는귀속불명보호대기.
 - 이 관측에서 CDNpurged90/confirmed45. 이후01:56:07 전체 CDN 관측:
   total2419/pending430(첫purge385+confirm45)/errors0. 새 정책519만의 완료 수와 혼동하지 않는다.
 - 공개 상세3개 product-23/threatscan-download/attenza를 실제curl GET해 모두404 확인.
@@ -140,6 +140,28 @@ intro1548중completed1481/needs_editor67/failed0, 기존CDN1868모두confirmed.
 - root DB55448, agent55449, Grok55450는별도. 새변경/실패없이광범위테스트반복불필요.
   사용자 untracked PT/zip/assets/nomorevibe-final/prototypes/operations/mistake.md는stage하지않는다.
 
+### Exact validation commands and actual results
+
+아래 명령은 main CI38668156608에서 실제 실행돼 성공했다(문서 후속 PR에서는 docs-only scope에 따라 생략한다).
+로컬과 CI 실행을 구별하며 같은 검사를 새로 실행했다고 주장하지 않는다.
+
+```sh
+npx next typegen
+npx tsc --noEmit
+npm run check:i18n
+npm run lint
+npm test
+python3 -m unittest tests/test_deploy_shared_images.py
+npm run build
+node scripts/bundle-size.mjs
+npm run test:integration -- --shard=1/3
+npm run test:integration -- --shard=2/3
+npm run test:integration -- --shard=3/3
+```
+
+문서 변경에서는 `git diff --check`와 `git diff --cached --check`를 실제 실행해 exit0을 확인했다.
+독립 문서 리뷰의 P2(완료 배포 명령의 다음 작업 오인)도 수정했다.
+
 ## Failed approaches / limitations
 
 - feature 첫root fullintegration은1608PASS/3FAIL/1todo였다. 최종 전 신규clock/Proxyspy2개와
@@ -168,7 +190,8 @@ mainCI38668156608/target/plan3721/migrate15595/rollout89922/전체13앱verify/HT
 
 1. 원본535/최초보호16을보존한다. 3개는정상실패1부터시작,13개는미확인이다.
    이13개의다음정상ping과새실패누적은향후관측대상이며지금수동으로강제하지않는다.
-2. 문서5개 후속은 docs/backlog-recovery-verification-20261015에서정상docs-onlyPR로기록한다.
+2. 문서5개 후속은 docs/backlog-recovery-verification-20261015의 정상docs-only
+   [PR424](https://github.com/JRVector9/nomorevibe/pull/424)에기록한다.
    최신base필수CI후병합하며상태는GitHub가정본이다. 운영codeSHA347d647는문서mainSHA와구별하고재배포하지않는다.
 3. 전체자동적체는서버에서계속처리중이다. source/agent/audit/번역의장기관측,
    실제품질cap과사람판단을구별한다. 품질cap삭제/가짜완료금지. 신규발굴자동재개금지.
@@ -180,7 +203,7 @@ python3 /Users/jr/.config/nomorevibe/cloudflare/2026-10-15/observe.py
 python3 /Users/jr/.config/nomorevibe/cloudflare/2026-10-15/finish_ops.py monitor
 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-14/run.py cohort-progress
 python3 /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban/observe.py --baseline /Users/jr/.config/nomorevibe/backlog-recovery/2026-10-15/uptime-auto-ban/baseline-20261015T010815753392Z.json --phase after-release --app maintenance-m3 --expected-sha 347d647cc21a272e3e5b6acc1a0fd41f2190f173
-gh pr list --head docs/backlog-recovery-verification-20261015 --state all --json number,state,url,headRefOid,mergeCommit
+gh pr view 424 --json state,url,headRefOid,mergeCommit,statusCheckRollup
 git diff --check
 ```
 
