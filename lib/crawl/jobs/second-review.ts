@@ -1,13 +1,11 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { getSettings } from "@/lib/crawl/settings";
-import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
-import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
-import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
+import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
-import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
+import { assertReviewFixtureSettings } from "../review-fixture-transport";
 
 /**
  * 한 틱에 함께 부르는 수와 틱의 길이.
@@ -67,7 +65,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
         // Dispatch uses the actual admitted row, never nullable queue defaults.
         const { provider, model } = row;
         if (!provider || !model) throw new Error("invalid_second_review_reviewer");
-        const limit = provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+        const limit = secondReviewTransportTimeoutMs(provider);
         /*
          * 남은 시간에 끝낼 수 없는 호출은 시작하지 않는다.
          *
@@ -82,14 +80,10 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
           firstAttemptId: row.firstAttemptId ?? undefined, generationKey: row.generationKey,
           provider, model, job: lease.name, runId: String(lease.requestedVersion) };
         if (row.createdAt) emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - row.createdAt.getTime() }, ctx.log);
-        const result = await measureReviewCall(telemetry, async () => (await dispatchReviewFixtureCall({ stage: "second",
+        const result = await measureReviewCall(telemetry, () => dispatchSecondReviewTransport({ stage: "second",
           candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
           generationKey: row.generationKey, vote: row.fallbackForId ?? row.id, provider, model }, input,
-        { timeoutMs: limit, signal: ctx.signal })) ?? (provider === "abcllm"
-          ? reviewWithGateway(input, { model, timeoutMs: limit, signal: ctx.signal })
-          : provider === "grok-cli"
-            ? reviewWithGrokCli(input, { model, timeoutMs: limit, signal: ctx.signal })
-            : reviewWithAgent(input, { model, timeoutMs: limit, signal: ctx.signal })), ctx.log);
+        { timeoutMs: limit, signal: ctx.signal }), ctx.log);
         if (ctx.signal?.aborted || !result.ok && result.error === "cancelled") {
           // The awaited transport has returned. Settle only this admitted owner;
           // cancellation is not a failed vote or permission for early reclaim.

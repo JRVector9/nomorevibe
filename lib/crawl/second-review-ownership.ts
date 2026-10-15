@@ -27,7 +27,11 @@ export type SecondReviewReceipt = Readonly<{
 export type SecondReviewClaim =
   | { kind: "admitted" | "claimed"; row: SecondReview; input: ReviewInput; receipt: SecondReviewReceipt }
   | { kind: "skipped"; reason: "stage_inactive" | "not_pending" | "input_changed" | "running" };
-type ItemReceipt = SecondReviewReceipt & { ownership: { kind: "item"; lease: Ai2ItemLease } };
+export type SecondReviewItemReceipt = SecondReviewReceipt & { ownership: { kind: "item"; lease: Ai2ItemLease } };
+type ItemReceipt = SecondReviewItemReceipt;
+export type SecondReviewItemDispatchObservation =
+  | { kind: "current"; row: SecondReview; input: ReviewInput }
+  | { kind: "stopped"; reason: "stage_inactive" | "not_pending" | "input_changed" };
 
 const positive = z.number().int().positive().safe();
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -221,6 +225,24 @@ export async function renewSecondReviewOwnership(receipt: ItemReceipt, ttlMs: nu
     if (!lease) return null;
     if (!isDeepStrictEqual(lease.binding, receipt.binding)) throw new Error("invalid_second_review_receipt");
     return lease as Ai2ItemLease;
+  });
+}
+
+/** A fresh observation before dispatch, not a durable external-call permit. */
+export async function observeSecondReviewItemDispatch(receipt: SecondReviewItemReceipt): Promise<SecondReviewItemDispatchObservation> {
+  rejectItemReplay();
+  validateReceipt(receipt);
+  if (receipt.ownership.kind !== "item") throw new Error("invalid_second_review_receipt");
+  return db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
+    const current = await lockSecondReviewDomain(tx, receipt.binding.secondReviewId);
+    const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, receipt.binding.secondReviewId));
+    if (!row) throw new Error("invalid_second_review_receipt");
+    await assertSecondReviewOwnership(tx, stages.ai2, receipt, row);
+    if (stage.mode !== "items" || stage.writerContractVersion < 1) return { kind: "stopped", reason: "stage_inactive" };
+    if (row.status !== "pending") return { kind: "stopped", reason: "not_pending" };
+    if (!current || !isDeepStrictEqual(secondReviewBinding(current), receipt.binding)) return { kind: "stopped", reason: "input_changed" };
+    return { kind: "current", row, input: current.input };
   });
 }
 
