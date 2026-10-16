@@ -226,17 +226,25 @@ async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: strin
   return !!blocked;
 }
 
-function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[]): Promise<ModelSlotResult> {
+function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[], crawl?: CrawlTaglineInput): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
-    const [original] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
+    let original: RequestRow | undefined;
+    if (crawl) {
+      const rows = await lockCrawlTaglineRequests(tx, checked.requestId, crawl);
+      original = rows.find(row => row.requestId === checked.requestId);
+      assertCrawlTaglineParent(crawl, rows.find(row => row.requestId === crawl.parent?.requestId));
+    } else {
+      const [found] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
+      original = found;
+    }
     if (original) {
       sameIdentity(original, checked);
       if (logicalKey !== null && original.logicalWorkKey !== logicalKey) fail("model_capacity_logical_work_mismatch");
       if (memberKeys && !isDeepStrictEqual(original.logicalMemberKeys, memberKeys)) fail("model_capacity_logical_work_mismatch");
     }
     await expireRequests(tx, state);
-    if (memberKeys && await (checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
+    if (memberKeys && await (crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
         : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
@@ -332,7 +340,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const profile = item.success ? item : textProfileModelDispatchSchema.safeParse(value);
   const reasonBinding = profile.success ? profile : reasonTranslationModelDispatchSchema.safeParse(value);
   const product = reasonBinding.success ? reasonBinding : productTranslationModelDispatchSchema.safeParse(value);
-  const bound = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
+  const korean = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
+  const bound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -348,7 +357,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
           ? "text_profile_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:reason:ko:")
             ? "reason_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-translate:")
               ? "product_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-tagline-ko:")
-                ? "product_tagline_ko_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+                ? "product_tagline_ko_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:crawl-tagline:")
+                  ? "crawl_tagline_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -1108,5 +1118,166 @@ export async function reconcileProductTaglineKoGatewayTerminal(terminal: Product
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
     await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
     return { kind: "settled" };
+  });
+}
+
+import { crawlTaglineMemberKeys, crawlTaglineLogicalWorkKey, crawlTaglineInputSchema, crawlTaglineInputHash,
+  crawlTaglineGenerationHash, crawlTaglineDispatchBindingSchema, crawlTaglineDispatchBindingHash,
+  crawlTaglineModelDispatchSchema, crawlTaglineGatewayTerminalEvidenceSchema,
+  type CrawlTaglineInput, type CrawlTaglineDispatchBinding, type CrawlTaglineModelDispatch,
+  type CrawlTaglineOutcome, type CrawlTaglineParent } from "./capacity";
+import type { CrawlTaglineGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+declare const crawlTaglineLockBrand: unique symbol;
+export type CrawlTaglineCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [crawlTaglineLockBrand]: true }>;
+export type CrawlTaglineContinuation = Readonly<{ generationHash: string;
+  first: CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>;
+  second: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
+const crawlTaglineLocks = new WeakMap<CrawlTaglineCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput; finished: boolean }>();
+function fixedCrawlTaglineIdentity(value: ModelCapacityRequestIdentity, input: CrawlTaglineInput): string {
+  const logical = crawlTaglineLogicalWorkKey(input);
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "crawl-tagline" || value.provider !== "abcllm"
+    || value.model !== input.model || value.workKey !== `${logical}:${crawlTaglineInputHash(input)}`) fail("invalid_crawl_tagline_capacity_identity");
+  return logical;
+}
+async function crawlTaglineFence(tx: ProductTransaction, input: CrawlTaglineInput, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND (
+      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+        AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${crawlTaglineMemberKeys(input.member)[0]}]::text[])
+      OR (${modelCapacityRequests.logicalWorkKey} = ${crawlTaglineLogicalWorkKey(input)}
+        AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled'))))
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-tagline'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+function crawlTaglineRowMatches(row: RequestRow | undefined, dispatch: CrawlTaglineModelDispatch): row is RequestRow {
+  return owned(row, dispatch) && row.logicalWorkKey === dispatch.binding.logicalWorkKey
+    && isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(dispatch.binding.member))
+    && row.routeId === dispatch.binding.routeId && row.provider === dispatch.binding.provider && row.model === dispatch.binding.model
+    && row.class === "background" && row.pool === "text"
+    && row.workKey === `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt && isDeepStrictEqual(row.dispatchBinding, dispatch.binding);
+}
+function storedCrawlTaglineEvidence(row: RequestRow | undefined) {
+  if (!row || row.state !== "settled" || !row.settledAt) return null;
+  const parsed = crawlTaglineGatewayTerminalEvidenceSchema.safeParse(row.terminalEvidence);
+  return parsed.success && crawlTaglineRowMatches(row, parsed.data.dispatch)
+    && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
+}
+function crawlTaglineParentMatches(first: NonNullable<ReturnType<typeof storedCrawlTaglineEvidence>>, input: CrawlTaglineInput): boolean {
+  return input.askOrdinal === 2 && input.parent !== null && first.dispatch.binding.askOrdinal === 1 && first.dispatch.binding.parent === null
+    && first.dispatch.requestId === input.parent.requestId && first.dispatch.bindingHash === input.parent.bindingHash
+    && first.responseHash === input.parent.responseHash && first.dispatch.binding.generationHash === crawlTaglineGenerationHash(input)
+    && first.outcome.ok && first.outcome.tagline === "";
+}
+async function lockCrawlTaglineRequests(tx: ProductTransaction, ownId: string, input: CrawlTaglineInput): Promise<RequestRow[]> {
+  return tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.requestId} = ${ownId}::uuid
+    OR ${modelCapacityRequests.requestId} = ${input.parent?.requestId ?? ownId}::uuid`)
+    .orderBy(asc(modelCapacityRequests.requestId)).for("update");
+}
+function assertCrawlTaglineParent(input: CrawlTaglineInput, parent: RequestRow | undefined): void {
+  if (input.askOrdinal === 1) return;
+  const evidence = storedCrawlTaglineEvidence(parent);
+  if (!evidence || !crawlTaglineParentMatches(evidence, input)) fail("crawl_tagline_parent_mismatch");
+}
+/** Stable target and phase identity belong to the first waiting INSERT. */
+export async function requestCrawlTaglineModelSlot(value: ModelCapacityRequest, input: CrawlTaglineInput): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = crawlTaglineInputSchema.parse(input);
+  return requestSlot(checked, fixedCrawlTaglineIdentity(checked, snapshot), crawlTaglineMemberKeys(snapshot.member), snapshot);
+}
+/** Control/request/parent UPDATE prefix precedes batch/role/stage/domain/job locks. */
+export async function lockCrawlTaglineModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput;
+}): Promise<CrawlTaglineCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const input = crawlTaglineInputSchema.parse(value.input), logical = fixedCrawlTaglineIdentity(identity, input);
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const rows = await lockCrawlTaglineRequests(tx, checked.requestId, input), row = rows.find(row => row.requestId === checked.requestId);
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(input.member))) return null;
+  assertCrawlTaglineParent(input, rows.find(row => row.requestId === input.parent?.requestId));
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await crawlTaglineFence(tx, input, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as CrawlTaglineCapacityDispatchLock;
+  crawlTaglineLocks.set(locked, { tx, row, identity, input, finished: false });
+  return locked;
+}
+export async function finishCrawlTaglineModelCapacityDispatch(tx: ProductTransaction, lock: CrawlTaglineCapacityDispatchLock,
+  value: CrawlTaglineDispatchBinding): Promise<CrawlTaglineModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = crawlTaglineLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_crawl_tagline_capacity_dispatch_lock");
+  const binding = crawlTaglineDispatchBindingSchema.parse(value);
+  const input = { member: binding.member, model: binding.model, askOrdinal: binding.askOrdinal, parent: binding.parent };
+  if (!isDeepStrictEqual(input, proof.input) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.role.instanceId !== proof.identity.owner.instanceId || binding.role.bootId !== proof.identity.owner.bootId)
+    fail("crawl_tagline_capacity_dispatch_binding_mismatch");
+  // The actual parent row was validated and UPDATE-locked by this same private TX capability.
+  proof.finished = true;
+  const bindingHash = crawlTaglineDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("crawl_tagline_model_reservation_lost");
+  const dispatch = crawlTaglineModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+export async function reconcileCrawlTaglineGatewayTerminal(terminal: CrawlTaglineGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readCrawlTaglineGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readCrawlTaglineGatewayTerminal(terminal);
+  if (!native) fail("invalid_crawl_tagline_gateway_terminal");
+  const evidence = crawlTaglineGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!crawlTaglineRowMatches(row, dispatch)) fail("crawl_tagline_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("crawl_tagline_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("crawl_tagline_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+/** Stored outcomes are business data. This never issues an opaque proof or releases capacity. */
+export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput, "member" | "model">): Promise<CrawlTaglineContinuation | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const snapshot = crawlTaglineInputSchema.parse({ member: value.member, model: value.model, askOrdinal: 1, parent: null });
+  const generationHash = crawlTaglineGenerationHash(snapshot);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("share");
+    if (!mutex) fail("model_capacity_control_missing");
+    const rows = await tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='crawl-tagline'
+      AND ${modelCapacityRequests.state}='settled' AND ${modelCapacityRequests.dispatchBinding}->>'kind'='crawl_tagline_gateway'
+      AND ${modelCapacityRequests.dispatchBinding}->>'generationHash'=${generationHash}`).orderBy(asc(modelCapacityRequests.queueOrdinal));
+    if (!rows.length) return null;
+    const phases = rows.map(row => storedCrawlTaglineEvidence(row));
+    if (phases.some(phase => !phase || phase.dispatch.binding.generationHash !== generationHash)) fail("crawl_tagline_continuation_mismatch");
+    const first = phases.filter(phase => phase!.dispatch.binding.askOrdinal === 1), second = phases.filter(phase => phase!.dispatch.binding.askOrdinal === 2);
+    if (first.length !== 1 || second.length > 1 || second.length && !crawlTaglineParentMatches(first[0]!, second[0]!.dispatch.binding))
+      fail("crawl_tagline_continuation_mismatch");
+    const data = (phase: NonNullable<typeof phases[number]>) => Object.freeze({ requestId: phase.dispatch.requestId,
+      bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash, outcome: Object.freeze(structuredClone(phase.outcome)) });
+    return Object.freeze({ generationHash, first: data(first[0]!), second: second[0] ? data(second[0]) : null });
   });
 }

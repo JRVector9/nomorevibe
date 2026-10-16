@@ -791,3 +791,87 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
   return { result: parseKoreanTaglines(content ?? "", snapshot.length), terminal };
 }
+
+import { crawlTaglineModelDispatchSchema, crawlTaglineGatewayTerminalEvidenceSchema, type CrawlTaglineModelDispatch,
+  type CrawlTaglineGatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { crawlTaglineServingContractHash, crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract,
+  type CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
+import { crawlTaglineGatewayWire, taglineHash, parseTagline, type TaglineEvidence, type TaglineResult } from "./tagline";
+
+export type PreparedCrawlTaglineGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string; sourceHash: string }>;
+export type CrawlTaglineGatewayTerminal = Readonly<{ kind: "crawl_tagline_gateway_terminal" }>;
+const crawlTaglineCalls = new WeakMap<PreparedCrawlTaglineGatewayCall, { wire: string;
+  contract: CrawlTaglineServingContract; timeoutMs: number; used: boolean; deadline?: AbortSignal }>();
+const crawlTaglineTerminals = new WeakMap<CrawlTaglineGatewayTerminal, CrawlTaglineGatewayTerminalEvidence>();
+function validCrawlTaglineEvidence(value: unknown): value is TaglineEvidence {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Object.keys(row).sort().join(",") === "language,name,pageText,pageTitle,readme,topics,url"
+    && typeof row.name === "string" && typeof row.pageText === "string" && typeof row.readme === "string"
+    && [row.url, row.language, row.pageTitle].every(field => field === null || typeof field === "string")
+    && Array.isArray(row.topics) && Array.from(row.topics).every(topic => typeof topic === "string");
+}
+/** Each physical ask owns one preparation; a caller descriptor never enables a deployment. */
+export function prepareCrawlTaglineGatewayCall(evidence: TaglineEvidence, options: { model: string; timeoutMs: number }):
+  PreparedCrawlTaglineGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validCrawlTaglineEvidence(snapshot) || !crawlTaglineServingContractSchema.shape.model.safeParse(model).success
+    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveCrawlTaglineServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = crawlTaglineServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = crawlTaglineGatewayWire(snapshot, model);
+  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: crawlTaglineServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, sourceHash: taglineHash(snapshot) });
+  crawlTaglineCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+export function readCrawlTaglineGatewayTerminal(value: unknown): CrawlTaglineGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? crawlTaglineTerminals.get(value as CrawlTaglineGatewayTerminal) ?? null : null;
+}
+export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence, dispatch: CrawlTaglineModelDispatch,
+  call: PreparedCrawlTaglineGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: TaglineResult; terminal: CrawlTaglineGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(evidence), state = crawlTaglineCalls.get(call);
+  const checked = crawlTaglineModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validCrawlTaglineEvidence(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("crawl_tagline_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (crawlTaglineGatewayWire(snapshot, call.model) !== state.wire || binding.member.sourceHash !== call.sourceHash
+    || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("crawl_tagline_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  state.deadline = deadline;
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
+      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  } finally { delete state.deadline; }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  const result = parseTagline(content ?? "", snapshot);
+  const terminal: CrawlTaglineGatewayTerminal = Object.freeze({ kind: "crawl_tagline_gateway_terminal" });
+  crawlTaglineTerminals.set(terminal, freeze(crawlTaglineGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "crawl_tagline_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed, outcome: result })));
+  return { result, terminal };
+}
