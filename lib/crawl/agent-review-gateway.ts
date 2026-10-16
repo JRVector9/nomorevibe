@@ -1,3 +1,9 @@
+import { createHash } from "node:crypto";
+import { fetch as nativeFetch } from "undici";
+import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
+  type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
+  type Ai1GatewayServingContract } from "./agent-review-serving-contract";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
@@ -106,6 +112,24 @@ function usageFrom(value: Record<string, unknown>): ReviewUsage {
   return { inputTokens: tokens(usage.prompt_tokens), outputTokens: tokens(usage.completion_tokens) };
 }
 
+function gatewayWire(model: string, serialized: string): string {
+  // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — CLI 쪽과 같은 처리다
+  const prompt = `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
+
+  return JSON.stringify({
+    // The gateway's default Gemma adapter summarizes and clips evidence/policy.
+    // Review decisions must use the exact snapshot whose hash we record.
+    context_strategy: "raw",
+    model, stream: false, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: "low",
+    chat_template_kwargs: { enable_thinking: false },
+    response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
+    messages: [
+      { role: "system", content: `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence.` },
+      { role: "user", content: prompt },
+    ],
+  });
+}
+
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<AgentReviewResult> {
@@ -115,8 +139,6 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   if (!key || !model) return { ok: false, error: "not_configured" };
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
-  // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — CLI 쪽과 같은 처리다
-  const prompt = `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
 
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS));
   const timeout = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
@@ -130,18 +152,7 @@ export async function reviewWithGateway(input: ReviewInput, options: {
     response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // The gateway's default Gemma adapter summarizes and clips evidence/policy.
-        // Review decisions must use the exact snapshot whose hash we record.
-        context_strategy: "raw",
-        model, stream: false, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: "low",
-        chat_template_kwargs: { enable_thinking: false },
-        response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
-        messages: [
-          { role: "system", content: `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence.` },
-          { role: "user", content: prompt },
-        ],
-      }),
+      body: gatewayWire(model, serialized),
       // 바깥 신호가 와도 제한 시간은 살아 있어야 한다 — 둘 중 먼저 오는 것으로 끊는다
       signal: timeout,
     });
@@ -154,6 +165,10 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   try {
     body = await response.text();
   } catch (error) { return { ok: false, error: failure(error) }; }
+  return gatewayResult(input, body);
+}
+
+function gatewayResult(input: ReviewInput, body: string): AgentReviewResult {
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return { ok: false, error: "output_too_large" };
   let envelope: Record<string, unknown>;
   try {
@@ -180,4 +195,121 @@ export async function reviewWithGateway(input: ReviewInput, options: {
       ? code : "schema_validation";
     return { ok: false, error: "invalid_output", detail, usage };
   }
+}
+export type PreparedAi1GatewayCall = Readonly<{ kind: "prepared"; wireHash: string; servingContractHash: string;
+  totalTokenBound: number; model: string; inputHash: string }>;
+export type Ai1GatewayTerminal = Readonly<{ kind: "ai1_gateway_terminal" }>;
+type Prepared = { wire: string; inputIdentity: string; contract: Ai1GatewayServingContract; timeoutMs: number; used: boolean };
+const preparedCalls = new WeakMap<PreparedAi1GatewayCall, Prepared>();
+const terminals = new WeakMap<Ai1GatewayTerminal, Ai1GatewayTerminalEvidence>();
+const dispatchedRequests = new Set<string>();
+const sha = (value: string) => createHash("sha256").update(value).digest("hex");
+function freeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/** No caller descriptor or injected request can enable a serving deployment. */
+export function prepareAi1GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
+  PreparedAi1GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!model || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveAi1GatewayServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = ai1GatewayServingContractSchema.parse(structuredClone(resolved));
+  const serialized = JSON.stringify(snapshot.snapshot);
+  if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  const wire = gatewayWire(model, serialized);
+  const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, inputHash: snapshot.inputHash });
+  preparedCalls.set(call, { wire, inputIdentity: sha(JSON.stringify(snapshot)), contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+
+/** Only the original native capability has evidence; JSON, copies and legacy results do not. */
+export function readAi1GatewayTerminal(value: unknown): Ai1GatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? terminals.get(value as Ai1GatewayTerminal) ?? null : null;
+}
+
+function nativeTerminal(body: string, contract: Ai1GatewayServingContract):
+  Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
+  if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+  if (!object(parsed) || Object.hasOwn(parsed, "error") || parsed.object !== "chat.completion"
+    || typeof parsed.id !== "string" || !parsed.id || !Number.isSafeInteger(parsed.created) || (parsed.created as number) < 0
+    || parsed.model !== contract.responseModel || !Array.isArray(parsed.choices) || parsed.choices.length !== 1) return null;
+  const choice = parsed.choices[0];
+  if (!object(choice) || choice.index !== 0 || !object(choice.message) || choice.message.role !== "assistant"
+    || (typeof choice.message.content !== "string" && choice.message.content !== null)) return null;
+  const finishReason = choice.finish_reason;
+  if (finishReason !== "stop" && finishReason !== "length" && finishReason !== "tool_calls"
+    && finishReason !== "function_call" && finishReason !== "content_filter") return null;
+  let actualUsage: Ai1GatewayTerminalEvidence["actualUsage"] = null;
+  if (parsed.usage_provenance === "upstream_reported" && object(parsed.usage)) {
+    const { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: totalTokens } = parsed.usage;
+    const safe = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+    if (safe(inputTokens) && safe(outputTokens) && safe(totalTokens)
+      && Number.isSafeInteger(inputTokens + outputTokens) && inputTokens + outputTokens === totalTokens) {
+      // A valid upstream counter beyond C contradicts the serving contract, rather than proving a cheap completion.
+      if (totalTokens > contract.totalTokenBound) return null;
+      actualUsage = { inputTokens, outputTokens, totalTokens };
+    }
+  }
+  return { finishReason, actualUsage, provenance: actualUsage ? "upstream_reported" : "unknown" };
+}
+
+export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch: Ai1ModelDispatch,
+  call: PreparedAi1GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: AgentReviewResult; terminal: Ai1GatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  // Capture all caller-owned values before the first await. Schema brands alone are not DB authority.
+  const state = preparedCalls.get(call), snapshot = structuredClone(input);
+  const checked = ai1ModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+    throw new Error("ai1_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (sha(JSON.stringify(snapshot)) !== state.inputIdentity || binding.inputHash !== call.inputHash
+    || binding.sourceRevisionHash !== snapshot.sourceRevisionHash || binding.reviewPolicyHash !== snapshot.policyHash
+    || binding.promptVersion !== snapshot.snapshot.policy.promptVersion || binding.rulesVersion !== snapshot.snapshot.policy.rulesVersion
+    || binding.model !== call.model || binding.wireHash !== call.wireHash || binding.servingContractHash !== call.servingContractHash
+    || binding.totalTokenBound !== call.totalTokenBound || binding.provider !== state.contract.provider
+    || binding.routeId !== state.contract.routeId || dispatchedRequests.has(owned.requestId)) throw new Error("ai1_gateway_call_mismatch");
+  state.used = true;
+  dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const failure = (error: unknown): ReviewFailure => {
+    const name = error instanceof Error ? error.name : "";
+    if (deadline.aborted) return "timeout";
+    return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
+  };
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* A nonterminal response never releases its charge. */ }
+      return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  // This deployment contract requires raw gateway finish+DONE validation before its JSON response.
+  // A generic HTTP200/EOF or a legacy callback is not that authority.
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
+  const terminal: Ai1GatewayTerminal = Object.freeze({ kind: "ai1_gateway_terminal" });
+  const evidence = ai1GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_gateway_terminal",
+    dispatch: owned, responseHash: sha(body), ...completed });
+  terminals.set(terminal, freeze(evidence));
+  return { result: gatewayResult(snapshot, body), terminal };
 }

@@ -7,14 +7,15 @@ import { getSettings } from "@/lib/crawl/settings";
 import { judgeStoredDocument } from "@/lib/crawl/rules";
 import { isReviewCandidate, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
-import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
+import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity } from "../agent-review-model-capacity";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -93,9 +94,16 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     const provider = hardReason || evidenceHold ? "rules" : reviewProvider;
     if (!canAdmit()) return;
     const context = { candidate, document, settings, input };
-    let claim: Awaited<ReturnType<typeof claimAgentReview>>;
+    let claim: ModelCapacityReviewClaim;
+    let prepared: PreparedAi1GatewayCall | undefined;
     try {
-      claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+      try {
+        claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+      } catch (error) {
+        if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
+        const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal });
+        claim = resumed.claim; prepared = resumed.call;
+      }
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;
       // The claim TX has rolled back. Stop new claims without cancelling any
@@ -110,6 +118,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       return;
     }
     if (!canStart()) {
+      if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch);
       await recordAgentReview({ ...context, receipt: claim.receipt,
         error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
       return;
@@ -143,10 +152,18 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
       if (!canStart()) controller.abort();
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
-      let result = await measureReviewCall(telemetry, async () => (await dispatchReviewFixtureCall({ stage: "first",
+      const dispatch = claim.dispatch;
+      const call = prepared;
+      let result = await measureReviewCall(telemetry, async () => {
+        if (dispatch) {
+          if (!call) throw new Error("ai1_model_prepared_call_missing");
+          return reviewAgentReviewModelCapacity(input, dispatch, call, options);
+        }
+        return (await dispatchReviewFixtureCall({ stage: "first",
         candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
         ? reviewWithGateway(input, options)
-        : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options)), ctx.log);
+        : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
+      }, ctx.log);
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
       if (!result.ok) stopped = true;
       const recorded = await recordAgentReview({

@@ -1,5 +1,9 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 추가 진행 — 2026-10-16 07:56 UTC
+
+AI1 PR05b3 source16은 ledger/native/runtime 실제범위검증·root직접/독립리뷰를완료해Git인수중이다. Runtime8 distinct는 분리실행으로PASS/전체반복0, root55559·60독립raw/capturedcatalog/연결0확인후정상retired했다. Productionresolverunsupported/defaultdisabled·2배미검증유지. PR469는필수CI/최신base guard뒤main9e133으로정상병합했고mainCI진행/배포0이며strictrestore46실패는그대로다. PR453dfa와PR47063d의CI는동일HTTP unread1timeoutFAIL을보존하고B가새임시WT/전용55561에서최소관측을준비한다. PR460d71필수CI성공. A PR06 defaultdisabled consumer최소계획·C text전caller계획을충돌없이후속개발한다. 수동전체테스트는모든PR개발뒤다. 정확SHA/실패/소유권/명령은CODEX_HANDOFF최상단.
+
 ## 추가 진행 — 2026-10-16 07:13 UTC
 
 PR460 recorder 지정case 최종2PASS/원형보존/독립리뷰0/root55557 정리까지 완료해 commit 준비다. HTTP는 C가 전용55558에서 관측·실패정산 두 fixture를 보완해 원 대상2PASS를 반환 중이며 기존 CI hang 해결은 미확정이다. PR14b는 초안PR469/head361704ef로 제출, 필수CI6+GG SUCCESS를 직접 확인했다. 실제 strict restore46 실패는 유지한다. AI1 실제 request→dispatch→terminal 구현을 ledger/schema와 native transport로 나누어 진행한다. 수동 전체 테스트는 모든 PR 개발 후이며 정확 상태·소유권·명령은 CODEX_HANDOFF 최상단을 따른다.
