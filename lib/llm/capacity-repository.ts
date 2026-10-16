@@ -1,3 +1,8 @@
+import { productTaglineKoMemberKeys, productTaglineKoLogicalWorkKey, productTaglineKoInputSchema,
+  productTaglineKoDispatchBindingSchema, productTaglineKoDispatchBindingHash, productTaglineKoModelDispatchSchema,
+  productTaglineKoGatewayTerminalEvidenceSchema, type ProductTaglineKoMember,
+  type ProductTaglineKoDispatchBinding, type ProductTaglineKoModelDispatch } from "./capacity";
+import type { ProductTaglineKoGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { productTranslationMemberKeys, productTranslationLogicalWorkKey, productTranslationInputSchema,
   productTranslationDispatchBindingSchema, productTranslationDispatchBindingHash, productTranslationModelDispatchSchema,
   productTranslationGatewayTerminalEvidenceSchema, type ProductTranslationMember,
@@ -232,7 +237,8 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     }
     await expireRequests(tx, state);
     if (memberKeys && await (checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
-      : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+      : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
+        : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
       ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
         ? textProfileFence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
@@ -325,7 +331,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const item = second.success ? second : ai1ItemModelDispatchSchema.safeParse(value);
   const profile = item.success ? item : textProfileModelDispatchSchema.safeParse(value);
   const reasonBinding = profile.success ? profile : reasonTranslationModelDispatchSchema.safeParse(value);
-  const bound = reasonBinding.success ? reasonBinding : productTranslationModelDispatchSchema.safeParse(value);
+  const product = reasonBinding.success ? reasonBinding : productTranslationModelDispatchSchema.safeParse(value);
+  const bound = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -340,7 +347,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
         ? "ai2_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:profile:")
           ? "text_profile_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:reason:ko:")
             ? "reason_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-translate:")
-              ? "product_translation_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+              ? "product_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-tagline-ko:")
+                ? "product_tagline_ko_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -975,6 +983,126 @@ export async function reconcileProductTranslationGatewayTerminal(terminal: Produ
       return { kind: "already_settled" };
     }
     if (row.state !== "dispatched" && row.state !== "indeterminate") fail("product_translation_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+
+function fixedProductTaglineKoIdentity(value: ModelCapacityRequestIdentity, members: readonly ProductTaglineKoMember[]): string {
+  const logical = productTaglineKoLogicalWorkKey(members);
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-tagline-ko"
+    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_product_tagline_ko_capacity_identity");
+  return logical;
+}
+async function productTaglineKoFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
+  const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-tagline-ko'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+/** Durable sorted membership belongs to the very first waiting INSERT. */
+export async function requestProductTaglineKoModelSlot(value: ModelCapacityRequest,
+  members: readonly ProductTaglineKoMember[]): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = productTaglineKoInputSchema.shape.members.parse(members);
+  return requestSlot(checked, fixedProductTaglineKoIdentity(checked, snapshot), productTaglineKoMemberKeys(snapshot));
+}
+
+declare const productTaglineKoLockBrand: unique symbol;
+export type ProductTaglineKoCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [productTaglineKoLockBrand]: true }>;
+const productTaglineKoLocks = new WeakMap<ProductTaglineKoCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; members: readonly ProductTaglineKoMember[]; finished: boolean }>();
+
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockProductTaglineKoModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; members: readonly ProductTaglineKoMember[];
+}): Promise<ProductTaglineKoCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const members = productTaglineKoInputSchema.shape.members.parse(value.members);
+  const logical = fixedProductTaglineKoIdentity(identity, members);
+  const state = await control(tx);
+  const snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys, productTaglineKoMemberKeys(members))) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+    && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch
+    || row.revision !== state.revision || row.policyHash !== state.policyHash
+    || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await productTaglineKoFence(tx, productTaglineKoMemberKeys(members), row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as ProductTaglineKoCapacityDispatchLock;
+  productTaglineKoLocks.set(locked, { tx, row, identity, members, finished: false });
+  return locked;
+}
+
+export async function finishProductTaglineKoModelCapacityDispatch(tx: ProductTransaction, lock: ProductTaglineKoCapacityDispatchLock,
+  value: ProductTaglineKoDispatchBinding): Promise<ProductTaglineKoModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = productTaglineKoLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_product_tagline_ko_capacity_dispatch_lock");
+  const binding = productTaglineKoDispatchBindingSchema.parse(value);
+  if (!isDeepStrictEqual(binding.members, proof.members) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || binding.model !== proof.identity.model
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.role.instanceId !== proof.identity.owner.instanceId
+    || binding.role.bootId !== proof.identity.owner.bootId) fail("product_tagline_ko_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = productTaglineKoDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("product_tagline_ko_model_reservation_lost");
+  const dispatch = productTaglineKoModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+
+export async function reconcileProductTaglineKoGatewayTerminal(terminal: ProductTaglineKoGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readProductTaglineKoGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readProductTaglineKoGatewayTerminal(terminal);
+  if (!native) fail("invalid_product_tagline_ko_gateway_terminal");
+  const evidence = productTaglineKoGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    // Completion uses the historical dispatch, not today's policy validity.
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
+      || !isDeepStrictEqual(row.logicalMemberKeys, productTaglineKoMemberKeys(dispatch.binding.members))
+      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
+      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
+      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("product_tagline_ko_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
+        fail("product_tagline_ko_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("product_tagline_ko_gateway_terminal_state_mismatch");
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
       terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();

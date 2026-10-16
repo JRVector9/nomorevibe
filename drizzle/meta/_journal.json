@@ -631,6 +631,13 @@
       "when": 1794086400001,
       "tag": "0089_model_capacity_product_translation_terminal",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1794086400002,
+      "tag": "0090_model_capacity_product_tagline_ko_terminal",
+      "breakpoints": true
     }
   ]
 }
