@@ -1,11 +1,12 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
 import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
-import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch,
+import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, type Ai1ItemModelDispatch,
   type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
 import type { PreparedAi1GatewayCall } from "./agent-review-gateway";
@@ -19,6 +20,7 @@ import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } f
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { claimItemLease, readItemStage, assertItemLease, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
+import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
@@ -564,6 +566,57 @@ type CapacityClaim = { reservation: ModelCapacityReservation; identity: ModelCap
   call: Pick<PreparedAi1GatewayCall, "model" | "inputHash" | "wireHash" | "servingContractHash" | "totalTokenBound"> };
 type ClaimAuthority = { kind: "legacy"; job: JobLease } | { kind: "item"; owner: ItemOwner; ttlMs: number };
 
+export type AgentReviewItemModelIntent = Readonly<{ context: ReviewDomainContext; provider: "abcllm"; model: string; owner: ItemOwner }>;
+/** Consistency data from a rolled-back fresh claim, never provider authority. */
+export class AgentReviewItemModelReservationRequired extends ModelCapacityDeferredError {
+  readonly intent: AgentReviewItemModelIntent;
+  constructor(value: AgentReviewItemModelIntent) {
+    super("reservation_required");
+    this.intent = snapshotItemModelIntent(value);
+  }
+}
+function snapshotItemModelIntent(value: AgentReviewItemModelIntent): AgentReviewItemModelIntent {
+  const snapshot = structuredClone(value);
+  const object = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v);
+  const sha = z.string().regex(/^[a-f0-9]{64}$/);
+  const checked = z.object({ context: z.object({ candidate: z.custom<CrawlCandidate>(object), document: z.custom<CrawlDocument>(object),
+    settings: z.custom<CrawlSettings>(object), input: z.object({ snapshot: z.custom<ReviewInput["snapshot"]>(object),
+      inputHash: sha, policyHash: sha, sourceRevisionHash: sha, source: z.custom<ReviewInput["source"]>(object), validUntil: z.date() }).strict() }).strict(),
+    provider: z.literal("abcllm"), model: z.string().min(1).max(160), owner: itemOwnerSchema }).strict().parse(snapshot);
+  z.number().int().positive().safe().parse(checked.context.candidate.id);
+  agentReviewBinding(checked.context.candidate.id, checked.context.input, { provider: checked.provider, model: checked.model });
+  // Strict validation must preserve the factory's full input JSON wire identity.
+  checked.context.input = snapshot.context.input;
+  const freeze = (v: object): void => { Object.values(v).forEach(child => {
+    if (child && typeof child === "object" && !Object.isFrozen(child)) freeze(child);
+  }); Object.freeze(v); };
+  freeze(checked);
+  return checked;
+}
+
+export type ItemModelCapacityReviewClaim = ReviewClaim & { dispatch?: Ai1ItemModelDispatch };
+type ItemCapacityClaim = CapacityClaim & { expected: AgentReviewItemModelIntent };
+/** Fixed consumer re-entry; control/request UPDATE precedes the shared S3/domain locks. */
+export async function claimConsumerItemAgentReviewWithModelReservation(input: {
+  expected: AgentReviewItemModelIntent; reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; call: PreparedAi1GatewayCall;
+}): Promise<ItemModelCapacityReviewClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const expected = snapshotItemModelIntent(input.expected);
+  const reservation = modelCapacityReservationSchema.parse(input.reservation), identity = modelCapacityRequestIdentitySchema.parse(input.identity);
+  const sha = z.string().regex(/^[a-f0-9]{64}$/);
+  const call = z.object({ kind: z.literal("prepared"), model: z.string().min(1).max(160), inputHash: sha,
+    wireHash: sha, servingContractHash: sha, totalTokenBound: z.number().int().positive().safe() }).strict().parse(input.call);
+  if (!isDeepStrictEqual(expected.owner, reservation.owner) || !isDeepStrictEqual(expected.owner, identity.owner))
+    throw new Error("invalid_agent_review_item_model_intent");
+  try { return await claimReview({ ...expected.context, provider: expected.provider, model: expected.model },
+    { kind: "item", owner: expected.owner, ttlMs: STALE_LOCK_MS }, { reservation, identity, call, expected }, true); }
+  catch (error) {
+    if (error instanceof HealthyLegacyReviewOwner) return { kind: "skipped", reason: "running" };
+    if (error instanceof Error && error.message === "ai1_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  }
+}
+
 /** Caller time is semantic/recording context; operational retry budgets use DB wall time. */
 async function reviewWallTime(tx: ProductTransaction): Promise<Date> {
   const [row] = await tx.execute<{ ms: number }>(sql`SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS ms`);
@@ -615,7 +668,9 @@ export async function claimConsumerItemAgentReview(input: ClaimContext & { owner
   }
 }
 
-async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim, consumer = false): Promise<ModelCapacityReviewClaim> {
+function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved: ItemCapacityClaim, consumer: true): Promise<ItemModelCapacityReviewClaim>;
+function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim, consumer?: boolean): Promise<ModelCapacityReviewClaim>;
+async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim | ItemCapacityClaim, consumer = false): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch }> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
   return onPrimary(() => db.transaction(async tx => {
     // currentReplayDb revalidates the private active verified handler scope.
@@ -638,6 +693,11 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       return { kind: "skipped", reason: "input_changed" };
     }
     const current = locked.input;
+    const configuredReviewer = reserved && "expected" in reserved ? firstReviewer(locked.settings) : null;
+    if (reserved && "expected" in reserved && (!isDeepStrictEqual(current, reserved.expected.context.input)
+      || !isDeepStrictEqual(locked, reserved.expected.context) || authority.kind !== "item"
+      || !isDeepStrictEqual(authority.owner, reserved.expected.owner) || !configuredReviewer
+      || configuredReviewer.provider !== input.provider || configuredReviewer.model !== input.model)) return { kind: "skipped", reason: "input_changed" };
     const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
     const rows = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, locked.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
@@ -671,7 +731,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
     const now = input.now ?? new Date();
     const wallNow = await reviewWallTime(tx);
     const semanticNow = reviewSemanticNow(now);
-    const claimed = async (): Promise<ModelCapacityReviewClaim> => {
+    const claimed = async (): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch }> => {
       const running = rows.find(row => row.state === "running");
       if (running) {
         if (running.leaseToken === token) return { kind: "skipped", reason: "running" };
@@ -685,7 +745,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         && row.provider === input.provider && row.model === input.model);
       const success = same.find(row => row.state === "succeeded" && row.validUntil > semanticNow && row.outcome
         && row.provider === input.provider);
-      const result = (attempt: CrawlReviewAttempt, origin: Ai1ReviewOrigin): ReviewClaim => ({
+      const result = (attempt: CrawlReviewAttempt, origin: Ai1ReviewOrigin): Exclude<ReviewClaim, { kind: "skipped" }> => ({
         kind: origin === "fresh" ? "claimed" : "reused", attempt, receipt: { attemptId: attempt.id, origin, ownership },
       });
       if (success) return result(success, "direct_reuse");
@@ -717,9 +777,11 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         const route = capacity.policy?.routes.find(route => route.routeId === "crawl-agent-review"
           && route.provider === input.provider && route.model === input.model);
         if (!route) throw new ModelCapacityDeferredError("unmapped");
-        const serving = authority.kind === "legacy" && input.provider === "abcllm"
+        const serving = (authority.kind === "legacy" || consumer) && input.provider === "abcllm"
           ? resolveAi1GatewayServingContract(input.model) : null;
         if (!serving) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        if (consumer && authority.kind === "item" && input.provider === "abcllm" && !reserved)
+          throw new AgentReviewItemModelReservationRequired({ context: locked, provider: "abcllm", model: input.model, owner: authority.owner });
         // Roll back any preceding supersede/item mutation before requesting a slot.
         if (!reserved) throw new ModelCapacityDeferredError("reservation_required");
         if (reserved.call.model !== input.model || reserved.call.inputHash !== current.inputHash
@@ -727,11 +789,12 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
           || reserved.call.totalTokenBound !== serving.totalTokenBound) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       }
       if (reserved && !reusable) {
-        if (authority.kind !== "legacy" || input.provider !== "abcllm" || !dispatchLock)
+        if (input.provider !== "abcllm" || !dispatchLock || authority.kind === "item" && (!consumer || !("expected" in reserved)))
           throw new Error("invalid_ai1_model_capacity_claim");
         // Jobs follow all domain/attempt/item waits. Finish rechecks reservation
         // DB wall time; the final held-job wall check below follows its event.
-        await assertAgentReviewJob(tx, authority.job);
+        if (authority.kind === "legacy") await assertAgentReviewJob(tx, authority.job);
+        else if (ownership.kind === "item") await assertItemLease(tx, stages.ai1, ownership.lease);
       }
       const [attempt] = await tx.insert(crawlReviewAttempts).values({
         candidateId: locked.candidate.id, kind: "automatic", state: "running",
@@ -745,7 +808,22 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       }).returning();
       const claim = result(attempt, reusable ? "semantic_reuse" : "fresh");
       if (reserved && !reusable) {
-        if (!dispatchLock || ownership.kind !== "legacy") throw new Error("invalid_ai1_model_capacity_claim");
+        if (!dispatchLock) throw new Error("invalid_ai1_model_capacity_claim");
+        if (ownership.kind === "item") {
+          if (!consumer || !("expected" in reserved) || attempt.state !== "running" || attempt.provider !== "abcllm"
+            || attempt.model !== input.model) throw new Error("invalid_ai1_model_capacity_claim");
+          await assertAgentReviewOwnership(tx, stages.ai1, claim.receipt, attempt, current);
+          const lease = ownership.lease;
+          const dispatch = await finishAi1ItemModelCapacityDispatch(tx, dispatchLock, {
+            kind: "ai1_item_gateway", version: 1, logicalWorkKey: `ai1:${locked.candidate.id}`, attemptId: attempt.id, review: binding,
+            item: { workKey: lease.workKey, owner: lease.owner, token: lease.token, stageEpoch: lease.stageEpoch,
+              itemEpoch: lease.itemEpoch, bindingHash: lease.bindingHash },
+            provider: "abcllm", model: input.model, routeId: "crawl-agent-review", wireHash: reserved.call.wireHash,
+            servingContractHash: reserved.call.servingContractHash, totalTokenBound: reserved.call.totalTokenBound,
+            chargedTokens: reserved.call.totalTokenBound,
+          });
+          return { ...claim, dispatch };
+        }
         const dispatch = await finishAi1ModelCapacityDispatch(tx, dispatchLock, {
           kind: "ai1_legacy_gateway", version: 1, logicalWorkKey: `ai1:${locked.candidate.id}`,
           candidateId: locked.candidate.id, attemptId: attempt.id, inputHash: current.inputHash,

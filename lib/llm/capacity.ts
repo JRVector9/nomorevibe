@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
+import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 
 const identity = (max: number) => z.string().min(1).max(max)
   .refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "invalid_identity");
@@ -151,6 +151,52 @@ export const ai2GatewayTerminalEvidenceSchema = z.object({
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_ai2_terminal_usage");
 export type Ai2GatewayTerminalEvidence = Readonly<z.infer<typeof ai2GatewayTerminalEvidenceSchema>>;
+
+/** Fixed AI1 item shape; only actual locked rows and the native verifier supply authority. */
+export const ai1ItemDispatchBindingSchema = z.object({
+  kind: z.literal("ai1_item_gateway"), version: z.literal(1), logicalWorkKey: identity(160), attemptId: positive,
+  review: itemBindingSchema.refine((value): value is Ai1ItemBinding => value.stage === "ai1", "invalid_ai1_item_review")
+    .transform(value => value as Ai1ItemBinding),
+  item: z.object({ workKey: identity(160), owner: itemOwnerSchema, token: z.uuid(),
+    stageEpoch: positive, itemEpoch: positive, bindingHash: sha64 }).strict(),
+  routeId: z.literal("crawl-agent-review"), provider: z.literal("abcllm"), model: identity(200),
+  wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
+}).strict()
+  .refine(value => value.logicalWorkKey === `ai1:${value.review.candidateId}`, "invalid_ai1_item_logical_work")
+  .refine(value => {
+    const review = itemBindingSchema.safeParse(value.review);
+    return review.success && review.data.stage === "ai1" && value.item.workKey === `ai1:${review.data.candidateId}`
+      && value.item.bindingHash === itemBindingHash(review.data);
+  }, "invalid_ai1_item_binding")
+  .refine(value => value.review.reviewer.provider === value.provider && value.review.reviewer.model === value.model,
+    "invalid_ai1_item_reviewer")
+  .refine(value => value.chargedTokens === value.totalTokenBound, "invalid_ai1_item_charge");
+type ParsedAi1ItemBinding = z.infer<typeof ai1ItemDispatchBindingSchema>;
+export type Ai1ItemDispatchBinding = Readonly<Omit<ParsedAi1ItemBinding, "review" | "item"> & {
+  review: Ai1ItemBinding; item: Readonly<Omit<ParsedAi1ItemBinding["item"], "owner"> & { owner: ItemOwner }>;
+}>;
+export function ai1ItemDispatchBindingHash(value: Ai1ItemDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(ai1ItemDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type Ai1ItemModelDispatch = ModelCapacityDispatch & Readonly<{ binding: Ai1ItemDispatchBinding; bindingHash: string }>;
+export const ai1ItemModelDispatchSchema = handleSchema.extend({ binding: ai1ItemDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_ai1_item_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.item.owner.instanceId
+    && value.owner.bootId === value.binding.item.owner.bootId, "invalid_ai1_item_dispatch_owner")
+  .transform(value => value as Ai1ItemModelDispatch);
+export const ai1ItemGatewayTerminalEvidenceSchema = z.object({
+  version: z.literal(1), kind: z.literal("ai1_item_gateway_terminal"), dispatch: ai1ItemModelDispatchSchema,
+  finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]), responseHash: sha64,
+  actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(),
+  provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported"
+    && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_ai1_item_terminal_usage");
+export type Ai1ItemGatewayTerminalEvidence = Readonly<z.infer<typeof ai1ItemGatewayTerminalEvidenceSchema>>;
 
 export type ModelSlotResult = { kind: "granted"; reservation: ModelCapacityReservation }
   | { kind: "deferred"; reason: "disabled" | "draining" | "unmapped" | "capacity" | "queue_full"
