@@ -3,19 +3,22 @@ import type postgres from 'postgres';
 import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { batchCanaryAnchorKey, batchCapabilitySchema, batchJobsForRole, batchPolicyHash, batchPolicySchema, batchResultReadbackSchema,
-  classifyBatchCandidateEvidence, type BatchCanaryCandidate } from '@/lib/jobs/batches';
+  classifyBatchCandidateEvidence, type BatchCanaryCandidate, BATCH_BOOTSTRAP_TTL_MS, batchBootstrapEligible, batchBootstrapGrantSchema,
+  type BatchBootstrapGrant } from '@/lib/jobs/batches';
 import { JOBS } from '@/lib/jobs/registry';
 import { runJob, type RunResult } from '@/lib/jobs/runner';
 import { releaseRole, tryAcquireRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { JOB_CATALOG, JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
-import { ORACLE_DB_PRINCIPALS, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from './oracle-db-profile';
+import { ORACLE_DB_PRINCIPALS, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_REFRESH_PRINCIPAL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from './oracle-db-profile';
+import { classifyOracleModelEvidence, type OracleModelEvidence, type OracleModelTick } from './oracle-model-evidence';
 
 /**
  * Operator canary for Oracle roles. Evidence comes from an actual stored job ACK and a domain readback of the rows that
  * tick wrote; it is written only through the separate attest principal, never by a worker heartbeat. Capability fields
- * are positive only when the live DB principal/privileges and HTTP permit participation are observed. No model-bound
- * evidence path exists yet, so model stays unknown and translation cannot become ready.
+ * are positive only when the live DB principal/privileges and HTTP permit participation are observed. Translation model
+ * evidence is positive only from the tick's own settled, serving-contract-bound capacity rows (oracle-model-evidence.ts);
+ * while every translation serving contract resolver returns null it stays unknown and translation cannot become ready.
  */
 export const ORACLE_CANARY_ROLES = ['translation', 'product-health', 'site-evidence', 'official-news'] as const;
 export type OracleCanaryRole = typeof ORACLE_CANARY_ROLES[number];
@@ -64,16 +67,27 @@ async function workerAuthority(role: OracleCanaryRole) {
     effectivePrivilegeHash: hash({ principal: row.principal, privileges: row.privileges }) };
 }
 
-async function control(tx: Tx, identity: OracleCanaryIdentity) {
+async function control(tx: Tx, identity: OracleCanaryIdentity, principals: readonly string[] = [ORACLE_DB_PRINCIPALS.attest]) {
   const [principal] = await tx`SELECT current_user AS name`;
-  if (principal.name !== ORACLE_DB_PRINCIPALS.attest) throw new Error('oracle_attest_principal_required');
+  if (!principals.includes(principal.name)) throw new Error('oracle_attest_principal_required');
   await tx`SET LOCAL TimeZone='UTC'`;
   const [row] = await tx`SELECT mode,epoch,policy,policy_hash AS "policyHash" FROM job_batch_control WHERE id=1 FOR SHARE`;
   const policy = batchPolicySchema.safeParse(row?.policy);
   if (!row || row.mode === 'draining' || !policy.success || batchPolicyHash(policy.data) !== row.policyHash || policy.data.release !== identity.release
     || !policy.data.instances.some(item => item.instanceId === identity.instanceId && item.host === HOST)) throw new Error('oracle_canary_batch_unavailable');
   const [clock] = await tx`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
-  return { epoch: Number(row.epoch), policyHash: String(row.policyHash), at: String(clock.at) };
+  return { mode: String(row.mode), epoch: Number(row.epoch), policyHash: String(row.policyHash), at: String(clock.at) };
+}
+
+/** Every capacity row this tick dispatched, in any state (the preflight uses the same predicate). */
+async function modelEvidence(tx: Tx, tick: OracleModelTick): Promise<OracleModelEvidence> {
+  const rows = await tx`SELECT request_id::text AS "requestId",state,route_id AS "routeId",provider,model,dispatch_binding AS "dispatchBinding",
+    dispatch_binding_hash AS "dispatchBindingHash",terminal_evidence AS "terminalEvidence",terminal_evidence_hash AS "terminalEvidenceHash",
+    to_char(settled_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "settledAt" FROM model_capacity_requests
+    WHERE route_id=${tick.job} AND owner_instance_id=${tick.instanceId} AND owner_boot_id::text=${tick.bootId}
+    AND dispatch_binding->'job'->>'name'=${tick.job} AND dispatch_binding->'job'->>'requestedVersion'=${String(tick.requestedVersion)}
+    ORDER BY request_id`;
+  return classifyOracleModelEvidence(tick, [...rows]);
 }
 
 async function httpParticipation(tx: Tx, identity: OracleCanaryIdentity, permits: boolean, window: Window, requireReleased: boolean) {
@@ -88,8 +102,8 @@ async function httpParticipation(tx: Tx, identity: OracleCanaryIdentity, permits
 }
 
 export type OracleCanaryAttestation = { ready: boolean; reason: string; job: string; requestedVersion: number; bootId: string;
-  domainReadbackHash: string; readbackRows: number; anchorInvalidated: boolean;
-  capability: { dbPrivileges: 'verified' | 'unknown'; http: 'verified' | 'unknown'; model: 'unknown' } };
+  domainReadbackHash: string; readbackRows: number; anchorInvalidated: boolean; modelEvidence?: string;
+  capability: { dbPrivileges: 'verified' | 'unknown'; http: 'verified' | 'unknown'; model: 'verified' | 'unknown' } };
 
 /** One attest-principal TX: read the actual ACK and its domain rows, write strict capability/result evidence, and
  * delete an existing PR10d anchor that is not valid for the new tuple (restart/epoch/readback change). */
@@ -117,9 +131,13 @@ export async function attestOracleCanary(input: { identity: OracleCanaryIdentity
     if (!rows.length) throw new Error('oracle_canary_domain_readback_empty');
     const domainReadbackHash = hash({ job, requestedVersion: result.requestedVersion, rows });
     const http = await httpParticipation(tx, identity, input.permits, window, HTTP_JOBS.has(job));
+    const model = identity.role === 'translation' ? await modelEvidence(tx, { job, instanceId: identity.instanceId, release: identity.release,
+      bootId: String(result.bootId), batchEpoch: Number(result.batchEpoch), requestedVersion: Number(result.requestedVersion),
+      recordedAt: String(result.recordedAt) }) : null;
     const capability = batchCapabilitySchema.parse({ host: HOST, release: identity.release, instanceId: identity.instanceId,
       dbPrivileges: worker.dbPrivileges, dbRole: worker.dbRole, effectivePrivilegeHash: worker.effectivePrivilegeHash,
-      http, model: 'unknown', observedAt: state.at });
+      http, model: model?.model ?? 'unknown', ...(model?.model === 'verified' ? { modelBoundEvidenceHash: model.modelBoundEvidenceHash } : {}),
+      observedAt: state.at });
     const [existing] = await tx`SELECT boot_id AS "bootId",host,release,policy_hash AS "policyHash",result_evidence AS "resultEvidence"
       FROM job_batch_candidates WHERE role=${identity.role} AND instance_id=${identity.instanceId} FOR UPDATE`;
     // Re-attesting the identical readback keeps its first observation, so a still-valid PR10d anchor stays bound to it.
@@ -149,7 +167,8 @@ export async function attestOracleCanary(input: { identity: OracleCanaryIdentity
     const { report } = classifyBatchCandidateEvidence({ candidate, controlEpoch: state.epoch, at,
       anchor: anchor && !anchorInvalidated ? anchor.value : undefined, latest: [{ key: resultKey, result }] });
     return { ...report, job, requestedVersion: Number(result.requestedVersion), bootId, domainReadbackHash, readbackRows: rows.length,
-      anchorInvalidated, capability: { dbPrivileges: capability.dbPrivileges, http: capability.http, model: 'unknown' as const } };
+      anchorInvalidated, ...(model ? { modelEvidence: model.reason } : {}),
+      capability: { dbPrivileges: capability.dbPrivileges, http: capability.http, model: capability.model } };
   }) as Promise<OracleCanaryAttestation>;
 }
 
@@ -198,21 +217,98 @@ export async function runOracleCanary(input: { identity: OracleCanaryIdentity; j
   return { before, run, after };
 }
 
-/** Capability-only re-observation: result evidence and the PR10d anchor are left exactly as stored. */
+/** Capability-only re-observation: result evidence and the PR10d anchor are left exactly as stored. The separate
+ * capability-only refresh principal (host timer) or the attest principal may run it. Translation model proof is never
+ * created here; an attest-written proof stays bound to the unchanged result evidence and is carried forward as stored. */
 export async function refreshOracleCapability(input: { identity: OracleCanaryIdentity; attest: postgres.Sql; permits: boolean }) {
   const worker = await workerAuthority(input.identity.role);
   return input.attest.begin(async tx => {
-    const state = await control(tx, input.identity);
-    const [candidate] = await tx`SELECT host,release,policy_hash AS "policyHash" FROM job_batch_candidates
+    const state = await control(tx, input.identity, [ORACLE_DB_PRINCIPALS.attest, ORACLE_REFRESH_PRINCIPAL]);
+    const [candidate] = await tx`SELECT host,release,policy_hash AS "policyHash",capability FROM job_batch_candidates
       WHERE role=${input.identity.role} AND instance_id=${input.identity.instanceId} FOR UPDATE`;
     if (!candidate || candidate.host !== HOST || candidate.release !== input.identity.release || candidate.policyHash !== state.policyHash)
       throw new Error('oracle_canary_candidate_identity_mismatch');
     const [since] = await tx`SELECT to_char((clock_timestamp()-interval '15 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
     const http = await httpParticipation(tx, input.identity, input.permits, { from: String(since.at), to: state.at }, false);
+    const stored = batchCapabilitySchema.safeParse(candidate.capability);
+    const model = input.identity.role === 'translation' && stored.success && stored.data.host === HOST && stored.data.release === input.identity.release
+      && stored.data.instanceId === input.identity.instanceId && stored.data.model === 'verified' && stored.data.modelBoundEvidenceHash
+      ? { model: 'verified' as const, modelBoundEvidenceHash: stored.data.modelBoundEvidenceHash } : { model: 'unknown' as const };
     const capability = batchCapabilitySchema.parse({ host: HOST, release: input.identity.release, instanceId: input.identity.instanceId,
       dbPrivileges: worker.dbPrivileges, dbRole: worker.dbRole, effectivePrivilegeHash: worker.effectivePrivilegeHash,
-      http, model: 'unknown', observedAt: state.at });
+      http, ...model, observedAt: state.at });
     await tx`UPDATE job_batch_candidates SET capability=${tx.json(capability)} WHERE role=${input.identity.role} AND instance_id=${input.identity.instanceId}`;
     return { dbPrivileges: capability.dbPrivileges, http: capability.http, model: capability.model, observedAt: state.at };
   });
+}
+
+export type OracleBootstrapGrant = { granted: boolean; reason: string; bootId: string; expiresAt?: string; grant?: BatchBootstrapGrant;
+  capability: { dbPrivileges: 'verified' | 'unknown'; http: 'verified' | 'unknown'; model: 'unknown' } };
+
+/**
+ * First-ever ACK for a role whose versioned job has no legacy parent (site-evidence: `seed` cannot exist). Versioned
+ * mode only, and only while this role instance has no batch-result, anchor or readback. One attest-principal TX observes
+ * the worker's live privileges and HTTP participation exactly as attest does; only when both are verified it writes that
+ * capability plus a single-boot grant that expires within BATCH_BOOTSTRAP_TTL_MS. Admission re-checks it at every claim.
+ */
+export async function grantOracleBootstrap(input: { identity: OracleCanaryIdentity; job: string; attest: postgres.Sql; permits: boolean;
+  bootId: string }): Promise<OracleBootstrapGrant> {
+  const { identity, job } = input;
+  if (!batchBootstrapEligible(identity.role) || !batchJobsForRole(identity.role, 'versioned').includes(job)) throw new Error('oracle_bootstrap_unsupported');
+  const worker = await workerAuthority(identity.role);
+  return input.attest.begin(async tx => {
+    const state = await control(tx, identity);
+    if (state.mode !== 'versioned') throw new Error('oracle_bootstrap_requires_versioned');
+    const keys = [batchCanaryAnchorKey(identity.role, identity.instanceId),
+      ...batchJobsForRole(identity.role, 'versioned').map(name => `batch-result:${identity.instanceId}:${name}`)];
+    const prior = await tx`SELECT key FROM operations_observations WHERE key IN ${tx(keys)} LIMIT 1`;
+    const [existing] = await tx`SELECT host,release,policy_hash AS "policyHash",result_evidence AS "resultEvidence"
+      FROM job_batch_candidates WHERE role=${identity.role} AND instance_id=${identity.instanceId} FOR UPDATE`;
+    if (prior.length || batchResultReadbackSchema.safeParse(existing?.resultEvidence).success) throw new Error('oracle_bootstrap_prior_evidence');
+    if (existing && (existing.host !== HOST || existing.release !== identity.release || existing.policyHash !== state.policyHash))
+      throw new Error('oracle_canary_candidate_identity_mismatch');
+    const [since] = await tx`SELECT to_char((clock_timestamp()-interval '15 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
+    const http = await httpParticipation(tx, identity, input.permits, { from: String(since.at), to: state.at }, false);
+    const capability = batchCapabilitySchema.parse({ host: HOST, release: identity.release, instanceId: identity.instanceId,
+      dbPrivileges: worker.dbPrivileges, dbRole: worker.dbRole, effectivePrivilegeHash: worker.effectivePrivilegeHash,
+      http, model: 'unknown', observedAt: state.at });
+    const summary = { dbPrivileges: capability.dbPrivileges, http: capability.http, model: 'unknown' as const };
+    if (capability.dbPrivileges !== 'verified' || capability.http !== 'verified') return { granted: false, reason: 'capability_unknown', bootId: input.bootId, capability: summary };
+    const grant = batchBootstrapGrantSchema.parse({ batchBootstrap: { version: 1, kind: 'first_ack_bootstrap', role: identity.role,
+      instanceId: identity.instanceId, host: HOST, bootId: input.bootId, release: identity.release, policyHash: state.policyHash,
+      controlEpoch: state.epoch, job, issuedAt: state.at, expiresAt: new Date(Date.parse(state.at) + BATCH_BOOTSTRAP_TTL_MS).toISOString() } });
+    if (existing) await tx`UPDATE job_batch_candidates SET capability=${tx.json(capability)},result_evidence=${tx.json(grant)}
+      WHERE role=${identity.role} AND instance_id=${identity.instanceId}`;
+    else await tx`INSERT INTO job_batch_candidates(role,instance_id,host,boot_id,release,policy_hash,capability,result_evidence)
+      VALUES(${identity.role},${identity.instanceId},${HOST},${input.bootId},${identity.release},${state.policyHash},${tx.json(capability)},${tx.json(grant)})`;
+    return { granted: true, reason: 'granted', bootId: input.bootId, expiresAt: grant.batchBootstrap.expiresAt, grant, capability: summary };
+  }) as Promise<OracleBootstrapGrant>;
+}
+
+/** Exact compare-and-clear of this grant only; a replaced grant or a newer readback is never touched. */
+export async function revokeOracleBootstrap(input: { identity: OracleCanaryIdentity; attest: postgres.Sql; grant: BatchBootstrapGrant }) {
+  return input.attest.begin(async tx => {
+    const [principal] = await tx`SELECT current_user AS name`;
+    if (principal.name !== ORACLE_DB_PRINCIPALS.attest) throw new Error('oracle_attest_principal_required');
+    const cleared = await tx`UPDATE job_batch_candidates SET result_evidence=NULL WHERE role=${input.identity.role}
+      AND instance_id=${input.identity.instanceId} AND result_evidence=${tx.json(input.grant)} RETURNING role`;
+    return cleared.length === 1;
+  });
+}
+
+/** grant -> elect the granted boot through normal admission + exactly one real tick -> revoke the grant. The ACK still
+ * needs `attest` and then `canary` (normal readiness) before the launcher can see a ready workload. */
+export async function runOracleBootstrap(input: { identity: OracleCanaryIdentity; job: string; attest: postgres.Sql; permits: boolean }) {
+  const grant = await grantOracleBootstrap({ ...input, bootId: randomUUID() });
+  if (!grant.granted || !grant.grant) return { grant: { granted: false, reason: grant.reason, capability: grant.capability }, run: null, revoked: false, acknowledged: false };
+  let run: RunResult | undefined, failure: unknown;
+  try { run = await runOracleCanaryTick(input.identity, input.job, grant.bootId); } catch (error) { failure = error; }
+  let revoked: boolean;
+  try { revoked = await revokeOracleBootstrap({ identity: input.identity, attest: input.attest, grant: grant.grant }); }
+  catch (cleanup) { if (failure !== undefined) throw new AggregateError([failure, cleanup], 'oracle_bootstrap_tick_and_revoke_failed'); throw cleanup; }
+  if (failure !== undefined) throw failure;
+  const [ack] = await input.attest`SELECT value->'batchResult'->>'bootId' AS "bootId" FROM operations_observations
+    WHERE key=${`batch-result:${input.identity.instanceId}:${input.job}`}`;
+  return { grant: { granted: true, reason: grant.reason, bootId: grant.bootId, expiresAt: grant.expiresAt, capability: grant.capability },
+    run: run!, revoked, acknowledged: ack?.bootId === grant.bootId };
 }

@@ -26,22 +26,25 @@ const RUNTIME: Record<string, TableGrant> = {
   job_batch_candidates: { select: true, insert: true, update: CANDIDATE_IDENTITY },
 };
 const HTTP: Record<string, TableGrant> = { http_origin_control: lock('id'), http_origin_hops: write, http_origin_events: { insert: true } };
+// `seed` elects the job's legacy parent role through tryAcquireRole, whose DR writer-fence gate reads this row FOR SHARE.
+// site-evidence has no legacy parent (it uses the versioned bootstrap), so it does not get this lock.
+const LEGACY_SEED: Record<string, TableGrant> = { dr_writer_fence: lock('id') };
 export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations', 'product_evidence_sources', 'evidence_source_claims',
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq'],
-    tables: { ...RUNTIME, ...HTTP, crawl_settings: read, news_items: { select: true, insert: true } } },
+    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, crawl_settings: read, news_items: { select: true, insert: true } } },
   // Raw-only uptime phase. Authoritative gate writes (auto-ban, health counters) are intentionally not granted.
   'product-health': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq'],
-    tables: { ...RUNTIME, ...HTTP, products: lock('id'), product_health: lock('slug'), uptime_control: lock('id'),
+    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, products: lock('id'), product_health: lock('slug'), uptime_control: lock('id'),
       uptime_gates: write, uptime_observations: { select: true, insert: true } } },
   'site-evidence': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'product_evidence_sources_id_seq'],
     tables: { ...RUNTIME, ...HTTP, products: lock('id'), evidence_settings: lock('id'), evidence_source_control: { select: true, update: ['cursor'] },
       evidence_source_claims: write, product_evidence_sources: write, product_links: read,
       product_refresh_requests: { select: true, update: ['progress', 'updated_at'] } } },
   translation: { statementTimeout: '60s', sequences: ['model_capacity_events_id_seq', 'model_capacity_requests_queue_ordinal_seq'],
-    tables: { ...RUNTIME, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
+    tables: { ...RUNTIME, ...LEGACY_SEED, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
       product_korean_taglines: write, product_translations: { select: true, update: true }, products: lock('id'), product_health: read,
       product_intro_checks: lock('product_id'), takedown_requests: lock('slug'), uptime_control: read, uptime_gates: read,
       uptime_observations: read, model_capacity_control: { select: true, update: ['cursor', 'updated_at'] },
@@ -52,13 +55,25 @@ export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   attest: { statementTimeout: '60s', sequences: [],
     tables: { job_batch_control: lock('id'), jobs: read, operations_observations: { select: true, delete: true },
       job_batch_candidates: { select: true, insert: true, update: ['capability', 'result_evidence'] },
-      http_origin_control: read, http_origin_hops: read, ...Object.fromEntries(ORACLE_RESULT_READBACK_TABLES.map(table => [table, read])) } },
+      http_origin_control: read, http_origin_hops: read, model_capacity_requests: read,
+      ...Object.fromEntries(ORACLE_RESULT_READBACK_TABLES.map(table => [table, read])) } },
 };
+/**
+ * Optional host refresh-timer principal (deploy/oracle/nomorevibe-core-refresh@.*, inactive by default). It may rewrite
+ * only the capability column: no result evidence, anchor, ACK, domain or model-ledger access. It is deliberately outside
+ * the approved worker/attest set, so least-privilege.sql is unchanged; refresh-principal.sql is applied only after the
+ * host-timer policy is approved.
+ */
+export const ORACLE_REFRESH_PRINCIPAL = 'nomorevibe_oracle_refresh';
+export const ORACLE_REFRESH_PROFILE: Profile = { statementTimeout: '10s', sequences: [],
+  tables: { job_batch_control: lock('id'), job_batch_candidates: { select: true, update: ['capability'] },
+    http_origin_control: read, http_origin_hops: read } };
 
 export type ConnectionLimit = number | `:${string}`;
 /** Ordered statements for one service. Passwords are never part of this output. */
-export function oracleDbGrantStatements(service: OracleDbService, options: { connectionLimit: ConnectionLimit }): string[] {
-  const name = ORACLE_DB_PRINCIPALS[service], profile = ORACLE_DB_PROFILES[service];
+export function oracleDbGrantStatements(service: OracleDbService | 'refresh', options: { connectionLimit: ConnectionLimit }): string[] {
+  const name = service === 'refresh' ? ORACLE_REFRESH_PRINCIPAL : ORACLE_DB_PRINCIPALS[service];
+  const profile = service === 'refresh' ? ORACLE_REFRESH_PROFILE : ORACLE_DB_PROFILES[service];
   const limit = options.connectionLimit;
   if (typeof limit === 'number' ? !Number.isSafeInteger(limit) || limit < 1 || limit > 64 : !/^:[a-z_]+$/.test(limit)) throw new Error('invalid_connection_limit');
   const statements = [`CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit}`,
@@ -83,6 +98,15 @@ export function renderOracleDbGrantSql(): string {
     '-- Then set each password interactively with \\password <role>. This file contains no secret and grants no migration/DDL right.',
     'BEGIN;', ...services.flatMap(service => ['', `-- ${service}`, ...oracleDbGrantStatements(service,
       { connectionLimit: `:${service.replace('-', '_')}_connections` }).map(statement => `${statement};`)]), '', 'COMMIT;', ''].join('\n');
+}
+/** The exact deploy/oracle/refresh-principal.sql text (optional host refresh timer only). */
+export function renderOracleRefreshGrantSql(): string {
+  return ['-- Generated from lib/runtime/oracle-db-profile.ts (ORACLE_REFRESH_PROFILE); tests fail if this file and the profile differ.',
+    '-- Optional. Apply only after the host capability-refresh timer policy is approved, after least-privilege.sql, for example:',
+    '--   psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f deploy/oracle/refresh-principal.sql',
+    '-- Then set the password interactively with \\password nomorevibe_oracle_refresh. It can rewrite only job_batch_candidates.capability.',
+    'BEGIN;', '', '-- refresh', ...oracleDbGrantStatements('refresh', { connectionLimit: ':refresh_connections' }).map(statement => `${statement};`),
+    '', 'COMMIT;', ''].join('\n');
 }
 
 export type PrivilegeRow = { schema: string; table: string; select: boolean; insert: boolean; update: boolean; delete: boolean;

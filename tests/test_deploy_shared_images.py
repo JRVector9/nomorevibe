@@ -621,5 +621,81 @@ class OracleOfflineRoutingTests(unittest.TestCase):
         self.assertFalse(self.offline.exists())
 
 
+
+class FleetInventoryTests(unittest.TestCase):
+    """PR11d: read-only coverage of all 13 production Dokploy apps plus connect-agent; `run` stays the same 8 apps."""
+
+    def setUp(self):
+        self.sha = 'b' * 40
+
+    def fleet(self, release_tag=None):
+        return {short: {'sourceType': 'docker' if short in release.APPS else 'github', 'applicationStatus': 'done', 'replicas': 1,
+                        'env': 'RELEASE_TAG=' + (release_tag or self.sha) + '\nSECRET_TOKEN=do-not-print\n', 'appName': 'service-' + short}
+                for short in release.KNOWN_APPS}
+
+    def test_catalog_covers_the_production_fleet_and_never_oracle_or_unregistered_split_roles(self):
+        self.assertEqual(release.ORDER, tuple(release.APPS))
+        self.assertEqual(len(release.APPS), 8)
+        self.assertEqual(sorted(release.GIT_BUILD_APPS), ['connect-agent-m3', 'maintenance-m3', 'maintenance-mini',
+                                                           'scheduler-m3', 'text-m3', 'text-mini'])
+        self.assertEqual(len(set(release.APPS) | set(release.GIT_BUILD_APPS)) - 1, 13)  # connect-agent is outside the 13
+        ids = [metadata[0] for metadata in release.KNOWN_APPS.values()]
+        self.assertEqual(len(ids), len(set(ids)))
+        for short in release.KNOWN_APPS:
+            self.assertFalse(any(word in short for word in ('oracle', 'translation', 'product-health', 'site-evidence', 'official-news')))
+
+    def test_inventory_reads_every_app_without_writes_or_secret_values(self):
+        client = FakeClient(self.fleet())
+        result = release.inventory(client, self.sha)
+        self.assertEqual(client.requests, [])
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (14, True, []))
+        self.assertEqual({short: row['deployedBy'] for short, row in result['apps'].items()},
+                         {short: 'run' if short in release.APPS else 'manual-git-build' for short in release.KNOWN_APPS})
+        self.assertNotIn('do-not-print', json.dumps(result))
+        self.assertEqual((result['splitRoleApps'], result['oracle']), ('none_registered', 'outside_dokploy'))
+
+    def test_a_lagging_git_build_app_or_missing_release_line_is_reported_incomplete(self):
+        apps = self.fleet()
+        apps['text-m3']['env'] = 'RELEASE_TAG=' + 'a' * 40 + '\n'
+        apps['scheduler-m3']['env'] = 'WORKER_ROLE=scheduler\n'
+        result = release.inventory(FakeClient(apps), self.sha)
+        self.assertFalse(result['complete'])
+        self.assertEqual(result['pending'], ['scheduler-m3', 'text-m3'])
+        with self.assertRaisesRegex(ValueError, 'invalid_release_sha'):
+            release.inventory(FakeClient(apps), 'main')
+
+    def test_dokploy_identity_is_checked_for_git_build_apps(self):
+        client = release.Dokploy('unused-key')
+        with patch.object(client, 'request', return_value={'applicationId': 'Pi0loosJrKsse_UQ0mln9', 'name': 'other-app',
+                                                          'serverId': release.M3[0], 'appName': 'app-text'}):
+            with self.assertRaisesRegex(ValueError, 'text-m3_identity_mismatch'):
+                client.app('text-m3')
+        with patch.object(client, 'request', return_value={'applicationId': 'Pi0loosJrKsse_UQ0mln9', 'name': 'nomorevibe-text-m3',
+                                                          'serverId': release.M3[0], 'appName': 'app-text'}):
+            self.assertEqual(client.app('text-m3')['name'], 'nomorevibe-text-m3')
+
+    def test_main_inventory_accepts_only_sha_and_exits_nonzero_when_incomplete(self):
+        for extra in (['--worker-image', 'x'], ['--snapshot', '/private/tmp/x.json'], ['--migration-verified'], []):
+            arguments = ['inventory'] + (['--sha', self.sha] if extra else []) + extra
+            with self.subTest(extra=extra), patch.object(release, 'run') as keychain, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    release.main(arguments)
+                keychain.assert_not_called()
+        apps = self.fleet()
+        apps['text-mini']['env'] = 'RELEASE_TAG=' + 'a' * 40 + '\n'
+        for fleet, code in ((self.fleet(), None), (apps, 2)):
+            output = io.StringIO()
+            with patch.object(release, 'run', return_value='operator-secret'), \
+                 patch.object(release, 'Dokploy', return_value=FakeClient(fleet)), redirect_stdout(output):
+                if code is None:
+                    release.main(['inventory', '--sha', self.sha])
+                else:
+                    with self.assertRaises(SystemExit) as caught:
+                        release.main(['inventory', '--sha', self.sha])
+                    self.assertEqual(caught.exception.code, code)
+            self.assertNotIn('operator-secret', output.getvalue())
+            self.assertEqual(json.loads(output.getvalue())['complete'], code is None)
+
+
 if __name__ == '__main__':
     unittest.main()

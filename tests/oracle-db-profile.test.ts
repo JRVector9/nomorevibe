@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, it } from 'vitest';
 import { ORACLE_DB_PRINCIPALS, ORACLE_DB_PROFILES, oracleDbGrantStatements, oracleDbPrivilegeMismatches, renderOracleDbGrantSql,
-  type OracleDbService, type PrivilegeRow } from '@/lib/runtime/oracle-db-profile';
+  type OracleDbService, type PrivilegeRow, ORACLE_REFRESH_PRINCIPAL, ORACLE_REFRESH_PROFILE, renderOracleRefreshGrantSql } from '@/lib/runtime/oracle-db-profile';
 
 const services = Object.keys(ORACLE_DB_PRINCIPALS) as OracleDbService[];
 function catalog(service: OracleDbService, extraTable?: string): PrivilegeRow[] {
@@ -47,4 +47,14 @@ it('never grants workers evidence updates, deletes or DDL, and keeps the atteste
   expect(Object.entries(attest).filter(([, grant]) => grant.insert || grant.update === true).map(([table]) => table)).toEqual(['job_batch_candidates']);
   expect(() => oracleDbGrantStatements('translation', { connectionLimit: 0 })).toThrow('invalid_connection_limit');
   expect(() => oracleDbGrantStatements('translation', { connectionLimit: ':x; DROP' as `:${string}` })).toThrow('invalid_connection_limit');
+});
+
+it('keeps the optional capability-only refresh principal out of the default SQL and identical to its own file', () => {
+  expect(readFileSync('deploy/oracle/refresh-principal.sql', 'utf8')).toBe(renderOracleRefreshGrantSql());
+  expect(renderOracleDbGrantSql()).not.toContain(ORACLE_REFRESH_PRINCIPAL);
+  expect(ORACLE_REFRESH_PROFILE.tables.job_batch_candidates).toEqual({ select: true, update: ['capability'] });
+  expect(Object.entries(ORACLE_REFRESH_PROFILE.tables).filter(([, grant]) => grant.insert || grant.delete || grant.update === true)).toEqual([]);
+  expect(Object.keys(ORACLE_REFRESH_PROFILE.tables).sort()).toEqual(['http_origin_control', 'http_origin_hops', 'job_batch_candidates', 'job_batch_control']);
+  // The attester gains only a read of the model ledger for translation model-bound readback.
+  expect(ORACLE_DB_PROFILES.attest.tables.model_capacity_requests).toEqual({ select: true });
 });
