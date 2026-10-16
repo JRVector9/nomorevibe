@@ -1,0 +1,15 @@
+{
+  "kind": "nomorevibe-oracle-native-release",
+  "version": 1,
+  "releaseSha": "<approved lowercase 40-hex source SHA>",
+  "platform": {"os": "linux", "arch": "arm64", "libc": "glibc"},
+  "batchContractVersion": 1,
+  "lockfileSha256": "<sha256 of prepared package-lock.json>",
+  "node": {"path": "runtime/bin/node", "version": "<approved exact v24.x.y>", "sha256": "<binary sha256>"},
+  "clis": {
+    "codex": {"path": "tools/bin/codex", "version": "0.153.4", "sha256": "<resolved file sha256>"},
+    "claude": {"path": "tools/bin/claude", "version": "2.1.263", "sha256": "<resolved file sha256>"},
+    "grok": {"path": "tools/bin/grok", "version": "1.0.46", "sha256": "<resolved file sha256>"}
+  },
+  "files": []
+}
