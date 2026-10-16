@@ -7,7 +7,7 @@ import { expect, it } from 'vitest';
 const active = new Set<number>();
 
 /** Actual read-only CLI. A forced stop remains an error; only close settles it. */
-async function healthCli(env: NodeJS.ProcessEnv) {
+async function healthCli(env: Partial<NodeJS.ProcessEnv>) {
   const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/worker-healthcheck.ts'], {
     cwd: resolve('.'), env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
   });

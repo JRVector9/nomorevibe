@@ -54,3 +54,9 @@ C 독립 리뷰와 root 직접 재검토에서 P2 두 건을 확인해 제출 �
 ## 남은 작업
 
 AI2 item-bound 양성 예약·native terminal, AI1 독립 소비자, 감사·소개 lane 공정성, 실제 provider 상한·종료, 호스트 총 자원 예산, 같은 품질의30분2배 측정, 운영 활성화와 Oracle 배치는 남아 있다. Source/domain lock이 item SKIP LOCKED 이전에 대기할 수 있으므로 모든 claim이 비차단이라고 주장하지 않는다. 현재 stage/사람 판단/기존 중단 설정·품질을 유지한다.
+
+## 제출 후 CI 품질 검사 보완
+
+Head8b6c8ee9의 CI38877009790에서 통합1·2·3은 모두 성공했지만 quality의 `npx tsc --noEmit`은 새 health test의 TS2345 한 건으로 실패했다. `healthCli`는 `{ ...process.env, ...env }`로 부분 override를 받는데 인자 타입을 완전한 `NodeJS.ProcessEnv`로 지정해 Next ambient의 필수 `NODE_ENV`와 충돌했다.
+
+Root는 원 test와 설치된 `next/types/global.d.ts`만 명시한 동일 scoped config로 TS2345 exit2를 재현했다. 인자 annotation 한 줄만 `Partial<NodeJS.ProcessEnv>`로 고친 뒤 같은 scoped tsc와 원파일 ESLint는 실제 exit0이다. 처음 /tmp config의 Node typeRoots 누락으로 발생한 setup 오류는 별도 로그로 보존하며 기능 RED에 세지 않는다. Runtime bytes·원it·기대·시간·다른12 source SHA는 그대로다. 이 타입 전용 수정으로 unit/native/DB·수동전체 검사를 반복하지 않았다. 증거는 `/tmp/nomorevibe-pr474-root-health-typecheck-{config,valid-red,green}-20261016.*`와 `...health-eslint-green...log`다. 새 변경 head의 필수 CI 결과는 별도 확인한다.
