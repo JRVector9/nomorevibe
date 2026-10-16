@@ -42,3 +42,13 @@ Runtime 전용55568도 root가 독립 READ ONLY REPEATABLE READ로 raw91표96행
 - 독립 리뷰: B ledger/runtime 및 최소fix·recovery, C native/compatibility 보고서. Root가 해당 원문과 소스 diff를 직접 읽었다. Coverage와 compatibility 두 문제는 후속 리뷰에서 추가 발견해 수정했다.
 
 실 provider serving identity·hard-C enforcement·원격 종료, 실제15초 renewal 장기 동작, 전 caller/text 연결, 검증된 replay의 새 native 지원, 실제30분 같은 품질2배·서버 전체 예산·Oracle 운영/DR는 남는다. 수동 전체 테스트는 모든 PR 개발이 끝난 뒤 실행한다. CI는 shard1에서 새 native 실제 파일→AI2 소비자→AI1 소비자를 먼저 실행하고 shared3에서 이 세 파일만 제외한다. 설치 Vitest filesOnly 목록과 실제 BaseSequencer로 205파일=3+68/67/67, 모든 기존 파일과 새 파일이 정확히 한 번 포함됨을 확인했다. 원 workflow inverse와 source15+parent12 및 기존688 SHA도 동일하다. 첫 목록 checker에서 기존473 text 파일을 예상 목록에서 빠뜨린 실패는 보존하고 고정 목록·원SHA 검사만 고쳤다. 파일 발견과 checker만 실행했으며 테스트 본문/DB는 실행하지 않았다. `/tmp/nomorevibe-pr05b5-root-ci-coverage-20261016.json`. 필수 새 head CI의 결과는 별도로 확인한다.
+
+## 제출 후 CI에서 발견한 기존 역할전환 테스트 순서
+
+초안 PR476/9ce18a58의 CI38886036021은 quality·scope·통합1·2·보안 검사가 성공했으나 통합3에서 기존 publisher standby 전환 한 사례가 실패했다(healthcheck status1, expected0). 해당 구간은 902 PASS/1 FAIL/1 TODO, 전체323.44초다. 원로그와 실패 구간을 보존했다. 당시 checker stderr와 health JSON은 원로그에 없어 구체적인 실행 원인을 확정하지 않는다.
+
+DB 역할 취득은 supervisor의 첫 heartbeat보다 먼저다. 기존 테스트에서 역할 취득 직후 실행하던 건강 검사 assertion을 이미 존재하는 worker-running 대기 뒤로 옮겼다. 원 assertion·대기 제한·운영 건강 검사·생산 코드는 보존했다. 실패했던 정확한 한 사례를 새 전용55569에서 실행해 1 PASS/5 skip(tests7.26초/총7.77초), 기존 active-child-required unit 한 사례1 PASS/16 skip, 해당 ESLint exit0을 확인했다. 원CI assertion failure를 보존하며 전체 검사나 무변경CI 재실행으로 확대하지 않았다.
+
+Root는 정확 컨테이너·단독 볼륨·이미지·localhost·메모리·범위·dummy 자격을 확인하고 빈 DB에 원86 migration hash/id를 대조했다. 실제 사례 후 역할 소유 해제·타 연결0을 확인하고 정상 STOP/exited0/OOMfalse 뒤 해당 컨테이너와 볼륨만 제거했다. 기존 fixture가 만든 jobs3/role1/observations4는 원형 기록했고 baseline exact 복귀로 주장하지 않는다. 증거: `/tmp/nomorevibe-pr476-root-role-health-static-proof-20261016.json`, `...final-proof...json`, `...pr476-root-role-health-db-cleanup...json`. 독립 읽기와 새 변경의 필수CI 결과는 별도로 기록한다.
+
+독립 B 읽기 리뷰 추가 P1/P2=0을 root가 전체 읽고 원198행 역변환 일치·대기/기대/생산 코드 보존을 확인했다. `/tmp/nomorevibe-pr476-b-role-health-review-20261016.md`. 이 최소 수정 후 새 head의 필수CI를 확인한다.
