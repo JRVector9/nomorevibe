@@ -14,7 +14,7 @@ import { writeKoreanTaglines, packTaglineBatch } from "@/lib/jobs/products/korea
 import { translateKoreanTaglinesWithModelCapacity } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { prepareProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
-import { batchPolicyHash } from "@/lib/jobs/batches";
+import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { jobsForRole } from "@/lib/jobs/catalog";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
@@ -122,6 +122,7 @@ async function performCleanup() {
     for (const name of managedJobs) await restore(tx, "jobs", "name", name);
     for (const name of [jobName]) await restore(tx, "operations_observations", "key", `job:${name}`);
     await restore(tx, "operations_observations", "key", `batch-result:${prefix}:${jobName}`);
+    await restore(tx, "operations_observations", "key", batchCanaryAnchorKey("translation", prefix));
     expect(await whole(tx)).toEqual(initial);
   }); ownProducts.clear();
 }
