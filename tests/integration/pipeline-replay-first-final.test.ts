@@ -35,6 +35,46 @@ const answer = (decision: ReviewOutcome["decision"]): ReviewFixtureCallback => a
 let admin: postgres.Sql, document: CrawlDocument, fork: CrawlDocument;
 let release: (() => Promise<void>) | undefined, serial = 0;
 
+function failureSummary(error: unknown): { sqlState: string; operation: string; relations: string[] } {
+  for (let depth = 0; error && typeof error === "object" && depth < 5; depth++) {
+    const current = error as { code?: unknown; query?: unknown; cause?: unknown };
+    if (typeof current.code === "string" && /^[A-Z0-9]{5}$/.test(current.code)) {
+      const query = typeof current.query === "string" ? current.query : "";
+      // Only fixed labels leave this function: provisioning SQL can contain passwords.
+      const operation = ["CREATE TRIGGER", "DROP TRIGGER", "ALTER TABLE", "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"]
+        .find(value => new RegExp(`^\\s*${value}\\b`, "i").test(query)) ?? "unknown";
+      const relations = operation === "unknown" ? [] : ["crawl_candidates", "crawl_review_attempts", "second_reviews",
+        "crawl_frontier", "jobs", "operations_observations", "crawl_settings", "crawl_documents", "products",
+        "agent_repository_scans", "agent_repository_observations", "pipeline_stage_modes", "pipeline_item_leases",
+        "pipeline_replay.identity", "pipeline_replay.handler_profile", "pipeline_replay.capacity_calls",
+        "pipeline_replay.capacity_runs", "pipeline_replay.capacity_finals", "pipeline_replay.capacity_transitions"]
+        .filter(name => new RegExp(`\\b(?:ON|INTO|FROM|UPDATE|TABLE)\\s+(?:public\\.)?${name.replaceAll(".", "\\.")}\\b`, "i")
+          .test(query.replaceAll('"', "")));
+      return { sqlState: current.code, operation, relations };
+    }
+    error = current.cause;
+  }
+  return { sqlState: "unknown", operation: "unknown", relations: [] };
+}
+async function fixturePhase<T>(phase: "prepare" | "run" | "release", operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    let activity: unknown = "unknown", diagnosticSqlState: string | undefined;
+    try {
+      const rows = await admin`WITH waiting AS (
+        SELECT pid, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+        WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0)
+        SELECT a.pid, a.state, a.wait_event_type, a.wait_event, pg_blocking_pids(a.pid) AS blockers
+        FROM pg_stat_activity a WHERE a.datname = current_database()
+          AND (a.pid IN (SELECT pid FROM waiting) OR a.pid IN (SELECT unnest(blockers) FROM waiting))
+        ORDER BY a.pid`;
+      if (rows.length) activity = [...rows];
+    } catch (diagnosticError) { diagnosticSqlState = failureSummary(diagnosticError).sqlState; }
+    console.error("first_final_fixture_failure", { phase, ...failureSummary(error), activity, diagnosticSqlState });
+    throw error;
+  }
+}
+
 beforeAll(async () => {
   ensureSchema();
   admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
@@ -53,10 +93,10 @@ beforeAll(async () => {
 beforeEach(async () => {
   await admin`TRUNCATE second_reviews, crawl_review_attempts, crawl_candidates, crawl_frontier, jobs RESTART IDENTITY CASCADE`;
 });
-afterEach(async () => { await release?.(); release = undefined; });
+afterEach(async () => { await fixturePhase("release", async () => { await release?.(); }); release = undefined; });
 afterAll(async () => { await admin?.end({ timeout: 3 }); });
 
-async function prepare(options: { settings?: CrawlSettings; source?: CrawlDocument; reused?: "same" | "source";
+async function prepareFixture(options: { settings?: CrawlSettings; source?: CrawlDocument; reused?: "same" | "source";
   beforeProvision?: (session: postgres.Sql) => Promise<void> } = {}) {
   const settings = options.settings ?? structuredClone(baseSettings), source = options.source ?? document;
   await db.insert(crawlSettings).values({ id: 1, values: settings }).onConflictDoUpdate({ target: crawlSettings.id, set: { values: settings } });
@@ -84,9 +124,12 @@ async function prepare(options: { settings?: CrawlSettings; source?: CrawlDocume
   await admin`INSERT INTO jobs (name, requested_version) VALUES ('crawl-agent-review', 1)`;
   return { candidate, input, manifest, settings, identityPath: identity.identityPath, inputs: [{ candidateId: candidate.id, input }] };
 }
+async function prepare(options: Parameters<typeof prepareFixture>[0] = {}) {
+  return fixturePhase("prepare", () => prepareFixture(options));
+}
 async function run(value: Awaited<ReturnType<typeof prepare>>, fixture = answer("approve")) {
-  return runFixtureReviewReplay({ identityPath: value.identityPath, manifest: value.manifest, inputs: value.inputs,
-    jobs: ["crawl-agent-review"], fixture });
+  return fixturePhase("run", () => runFixtureReviewReplay({ identityPath: value.identityPath, manifest: value.manifest, inputs: value.inputs,
+    jobs: ["crawl-agent-review"], fixture }));
 }
 async function finals() {
   const [table] = await admin`SELECT to_regclass('pipeline_replay.capacity_finals') AS name`;

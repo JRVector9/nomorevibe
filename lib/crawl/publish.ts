@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { nonProductPurpose } from './product-purpose';
 import { accessFromDocument } from "./rules";
 import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
@@ -261,7 +262,11 @@ export async function publishCandidate(
   // 상대 서버가 죽으면 목록이 깨지고, 이미지가 사후에 바뀔 수 있다.
   if (draft.ogImage) {
     // 발행 잡은 백그라운드다 — 전체 10초로 묶어 워커를 오래 붙잡지 않는다
-    const path = await cacheOgImage(draft.ogImage, slug, "background", lease);
+    const path = await cacheOgImage(draft.ogImage, slug, "background", lease).catch(error => {
+      // Publication already committed; the existing thumbnail worker can retry.
+      if (error instanceof HttpOriginPermitError) return null;
+      throw error;
+    });
     if (path) await products.setOgImage(slug, path, lease);
   }
 

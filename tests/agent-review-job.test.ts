@@ -323,3 +323,15 @@ it("settles the new running semantic reuse attempt when shutdown arrives during 
   expect(mocks.record.mock.calls[0][0]).not.toHaveProperty("lease");
   expect(mocks.record.mock.calls[0][0]).not.toHaveProperty("attempt");
 });
+
+it("README permit holds stop before an attempt or model dispatch", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const blocked = new HttpOriginPermitError("waiting_aborted");
+  mocks.readme.mockRejectedValue(blocked);
+  await expect(reviewCrawlCandidates(context())).rejects.toBe(blocked);
+  expect(mocks.claim).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.gateway).not.toHaveBeenCalled();
+  expect(mocks.saveReadme).not.toHaveBeenCalled();
+});

@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import {
@@ -61,7 +62,7 @@ export async function refreshProductEvidenceJob(
       const queued = await queueInitialProductEvidenceRefresh({ lease: ctx.lease, hasBudget: ctx.hasBudget });
       if (queued) ctx.log("evidence.initial_refresh_queued", queued);
     } catch (error) {
-      if (error instanceof JobLeaseLostError) throw error;
+      if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
       ctx.log("evidence.initial_refresh_queue_failed", { errorCode: refreshErrorCode(error) });
     }
   }
@@ -89,6 +90,7 @@ export async function refreshProductEvidenceJob(
           progress = next;
         },
       });
+      if (result.deferred === "http_origin_permit") throw new HttpOriginPermitError("unavailable");
       await saveProductRefreshProgress(request, progress, { now, lease: ctx.lease, result });
       if (result.sourcesFailed) counts.failed += 1;
       else if (result.complete) counts.succeeded += 1;
@@ -98,7 +100,7 @@ export async function refreshProductEvidenceJob(
       ctx.log("evidence.request_refresh", { productId: request.productId, requestedVersion: request.activeVersion,
         complete: result.complete, completedSources: progress.completedKeys.length });
     } catch (error) {
-      if (error instanceof JobLeaseLostError) throw error;
+      if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
       counts.failed += 1;
       const errorCode = refreshErrorCode(error);
       if (!(error instanceof ProductGenerationChangedError)) {
@@ -154,6 +156,7 @@ export async function refreshProductEvidenceJob(
           hasBudget: ctx.hasBudget,
           dependencies: sourceDependencies,
         });
+        if (result.deferred === "http_origin_permit") throw new HttpOriginPermitError("unavailable");
         if (result.sourcesFailed > 0) counts.failed += 1;
         else if (result.complete) counts.succeeded += 1;
         counts.factsChanged += result.factsChanged;
@@ -163,7 +166,7 @@ export async function refreshProductEvidenceJob(
         // repeated partial work cannot keep later products behind the same cursor.
         if (!result.complete && !ctx.hasBudget()) completedPage = false;
       } catch (error) {
-        if (error instanceof JobLeaseLostError) throw error;
+        if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
         counts.failed += 1;
         ctx.log("evidence.product_refresh_failed", {
           slug,

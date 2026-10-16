@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { getSettings } from "@/lib/crawl/settings";
 import { parseFeed } from "@/lib/domain/evidence/providers/feeds";
@@ -113,17 +114,21 @@ export async function refreshNews(
   let added = 0;
   let failed = 0;
   let unfinished = false;
+  let permitBlocked = false;
 
-  await Promise.all(Array.from({ length: CONCURRENCY }, async () => {
+  const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
     for (let source = queue.shift(); source; source = queue.shift()) {
-      if (!ctx.hasBudget()) {
+      if (permitBlocked || !ctx.hasBudget()) {
         unfinished = true;
         return;
       }
       const previous = cursor.sources[source.key];
       const now = new Date();
       const result = await collect(source, previous, request, now)
-        .catch((error: unknown): Collected => ({ ok: false, error: error instanceof Error ? error.message : "collect_failed", seen: previous?.seen }));
+        .catch((error: unknown): Collected => {
+          if (error instanceof HttpOriginPermitError) { permitBlocked = true; throw error; }
+          return { ok: false, error: error instanceof Error ? error.message : "collect_failed", seen: previous?.seen };
+        });
       const inserted = result.ok ? await insertNewsItems(result.candidates, settings.news.autoApprove, ctx.lease) : 0;
       added += inserted;
       if (!result.ok) failed += 1;
@@ -137,6 +142,10 @@ export async function refreshNews(
       };
     }
   }));
+
+  const failure = settled.find((result): result is PromiseRejectedResult => result.status === "rejected" && !(result.reason instanceof HttpOriginPermitError))
+    ?? settled.find(result => result.status === "rejected");
+  if (failure) throw failure.reason;
 
   ctx.log("news.refreshed", { added, failed, autoApprove: settings.news.autoApprove, unfinished });
   return { done: !unfinished, cursor };

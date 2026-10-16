@@ -189,3 +189,13 @@ it('훑는 사이 새 글이 올라와 페이지가 밀리면, 밀린 페이지�
   expect(new Set(enqueuedRepos()).size).toBe(301);
   expect(enqueuedRepos()).toContain('acme/r0');
 });
+
+it("permit holds propagate without source failure or cursor/enqueue consumption", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const blocked = new HttpOriginPermitError("waiting_aborted");
+  const ctx = context({ seenUntil: 100 });
+  await expect(seedFromShowHN(ctx, async () => { throw blocked; })).rejects.toBe(blocked);
+  expect(ctx.save).not.toHaveBeenCalled();
+  expect(mocks.enqueue).not.toHaveBeenCalled();
+  expect(ctx.log).not.toHaveBeenCalledWith("crawl.show_hn_failed", expect.anything());
+});
