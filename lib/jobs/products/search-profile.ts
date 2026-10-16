@@ -1,6 +1,8 @@
+import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
+import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { PROFILE_MODEL, profileEvidence, profileHash, writeKeywords } from "@/lib/domain/products/search-profile";
+import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 
 /**
@@ -44,6 +46,7 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search profile worker requires a job lease");
+  const roleLease = roleLeaseFromEnv("text", process.env);
   const controller = new AbortController();
   const signal = ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal;
   const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
@@ -75,7 +78,9 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
             }
             const calledAt = Date.now();
             const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
-            const result = await writeKeywords(evidence, { signal, timeoutMs });
+            const outcome = await writeKeywordsWithModelCapacity(task, lease, { signal, timeoutMs, roleLease });
+            if (outcome.kind === "skipped") return;
+            const result = outcome.result;
             if (signal.aborted) return;
             if (Date.now() - calledAt >= SLOW_CALL_MS) blocked = "slow";
             if (!result.ok) {
@@ -85,7 +90,9 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
                 blocked = "tick_budget";
                 return;
               }
-              if (!await recordProfileResult(task, lease, { kind: "failure", error: result.error })) return;
+              const failure = { kind: "failure" as const, error: result.error };
+              if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, failure, outcome.expectedProfile)
+                : recordProfileResult(task, lease, failure))) return;
               failed++;
               if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
                 if (++inARow >= 2) blocked = result.error;
@@ -93,7 +100,9 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             inARow = 0;
-            if (!await recordProfileResult(task, lease, { kind: "success", en: result.en, ko: result.ko, model: PROFILE_MODEL })) return;
+            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: PROFILE_MODEL };
+            if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, success, outcome.expectedProfile)
+              : recordProfileResult(task, lease, success))) return;
             written++;
           }
         } catch (error) {

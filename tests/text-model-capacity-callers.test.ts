@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { profileEvidence } from "@/lib/domain/products/search-profile";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -16,6 +17,12 @@ const mocks = vi.hoisted(() => ({ tagline: vi.fn(), profile: vi.fn(), verify: vi
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true }) }));
 vi.mock("@/lib/crawl/tagline", async (load) => ({ ...await load<typeof import("@/lib/crawl/tagline")>(), writeTagline: mocks.tagline }));
 vi.mock("@/lib/domain/products/search-profile", async (load) => ({ ...await load<typeof import("@/lib/domain/products/search-profile")>(), writeKeywords: mocks.profile }));
+vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
+  writeKeywordsWithModelCapacity: async (task: import("@/lib/domain/products/search-profiles").ProfileTask,
+    _lease: unknown, options: { timeoutMs: number; signal?: AbortSignal }) => ({
+    kind: "result", result: await mocks.profile(profileEvidence(task.product, task.reviewerNote), options),
+  }),
+}));
 vi.mock("@/lib/domain/products/search-verify", async (load) => ({ ...await load<typeof import("@/lib/domain/products/search-verify")>(),
   verifyKeywords: mocks.verify, verifyKeywordsInChunks: mocks.verify }));
 vi.mock("@/lib/crawl/translate", async (load) => ({ ...await load<typeof import("@/lib/crawl/translate")>(),

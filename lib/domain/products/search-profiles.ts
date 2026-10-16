@@ -1,8 +1,18 @@
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { reviewHash } from "@/lib/crawl/agent-review-contract";
+import { prepareTextProfileGatewayCall } from "@/lib/crawl/agent-review-gateway";
+import { textProfileInputSchema, textProfileInputHash, textProfileDispatchBindingSchema } from "@/lib/llm/capacity";
+import { lockModelCapacityCallerControl, lockTextProfileModelCapacityDispatch,
+  finishTextProfileModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
+import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
+import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onPrimary } from "@/lib/db";
 import { products, productSearchProfiles, type Product, type ProductSearchProfile } from "@/lib/db/schema";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
-import { keywordText, profileEvidence, profileHash } from "./search-profile";
+import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
+import { PROFILE_MODEL, keywordText, profileEvidence, profileHash } from "./search-profile";
 import { isProfileProviderError, MAX_PROFILE_ATTEMPTS as MAX_ATTEMPTS, profileGenerationRetryAllowedSql } from "./search-profile-retry";
 
 /**
@@ -37,18 +47,20 @@ export type ProfileTask = { product: ProductFields; profile: ProductSearchProfil
  * 갱신 요청은 모두 그보다 늦다 — 한 번 처리하면 맨 뒤로 가니 굶는 것이 없다. 전에는 id 큰 것부터라 계속 다시 바뀌는
  * 최근 제품들이 앞을 차지해, 9/24부터 기다린 갱신이 10/08에도 남아 있었다.
  */
+const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is null
+        or (${productSearchProfiles.errorCode} is not null
+            and ${profileGenerationRetryAllowedSql(productSearchProfiles.errorCode, productSearchProfiles.attempts)}
+            and (${productSearchProfiles.retryAt} is null or ${productSearchProfiles.retryAt} <= now()))
+        or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
+            or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`;
+
 export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products)
     .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
-      sql`(${productSearchProfiles.productId} is null
-        or (${productSearchProfiles.errorCode} is not null
-            and ${profileGenerationRetryAllowedSql(productSearchProfiles.errorCode, productSearchProfiles.attempts)}
-            and (${productSearchProfiles.retryAt} is null or ${productSearchProfiles.retryAt} <= now()))
-        or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
-            or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`,
+      profileGenerationDueSql(),
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
@@ -71,7 +83,9 @@ const sameProfile = (a: ProductSearchProfile | null | undefined, b: ProductSearc
  * 그사이 제품 글이 바뀌었거나(메이커 수정·재수집), 다른 워커가 먼저 적었거나, 이 잡의 리스를 잃었으면
  * 아무것도 적지 않는다. 리스 확인은 맨 마지막이다 — 잃었으면 적은 것 전부가 되돌려진다.
  */
-export async function recordProfileResult(task: ProfileTask, lease: JobLease, result: ProfileResult): Promise<boolean> {
+export async function recordProfileResult(task: ProfileTask, lease: JobLease, result: ProfileResult,
+  expected?: ProfileWriteExpectation): Promise<boolean> {
+  const capturedExpected = expected === undefined ? undefined : textProfileInputSchema.shape.profile.parse(structuredClone(expected));
   return db.transaction(async (tx) => {
     const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, task.product.id)).for("update");
     if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
@@ -81,6 +95,7 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
     const [current] = await tx.select().from(productSearchProfiles)
       .where(eq(productSearchProfiles.productId, product.id)).for("update");
     if (!sameProfile(current, task.profile)) return false;
+    if (capturedExpected && reviewHash(await currentProfileIdentity(tx, product.id)) !== reviewHash(capturedExpected)) return false;
 
     if (result.kind === "reuse") {
       if (!current || current.errorCode || current.sourceHash !== sourceHash) return false;
@@ -103,7 +118,7 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
           retryAt: providerError ? sql`now() + interval '30 minutes'`
             : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
     }
-    await assertJobLease(tx, lease);
+    await assertJobLeaseAtWallTime(tx, lease);
     return true;
   });
 }
@@ -236,4 +251,101 @@ export async function reconcileSearchProfileBatch(options: {
     });
   }
   return { ...counts, afterId: rows.at(-1)?.product.id ?? options.afterId ?? 0 };
+}
+
+export type ProfileWriteExpectation = import("@/lib/llm/capacity").TextProfileInput["profile"];
+export type ProfileModelIntent = Readonly<{ task: ProfileTask; evidence: import("./search-profile").ProfileEvidence;
+  input: import("@/lib/llm/capacity").TextProfileInput }>;
+export type ProfileModelPreparation = { kind: "disabled" } | { kind: "skipped" } | {
+  kind: "ready"; intent: ProfileModelIntent; call: import("@/lib/crawl/agent-review-gateway").PreparedTextProfileGatewayCall;
+  dispatch?: import("@/lib/llm/capacity").TextProfileModelDispatch;
+};
+async function currentProfileIdentity(tx: ProductTransaction, productId: number): Promise<ProfileWriteExpectation> {
+  const [raw] = await tx.execute<{ row: Record<string, unknown> | null }>(sql`SELECT
+    (SELECT to_jsonb(p) FROM product_search_profiles p WHERE p.product_id=${productId}) AS row`);
+  if (!raw) throw new Error("profile_identity_unavailable");
+  if (raw.row === null) return { kind: "absent" };
+  const sourceRevision = raw.row.source_revision, attempts = raw.row.attempts;
+  return textProfileInputSchema.shape.profile.parse({ kind: "present", rowIdentityHash: reviewHash(raw.row), sourceRevision, attempts });
+}
+async function assertTextRoleWall(tx: ProductTransaction, role: RoleLease): Promise<"primary" | "standby"> {
+  const [owned] = await tx.execute<{ owned: boolean; kind: "primary" | "standby" }>(sql`SELECT true AS owned, owner_kind AS kind FROM role_leases
+    WHERE role='text' AND owner_instance_id=${role.instanceId} AND owner_boot_id=${role.bootId}
+      AND owner_release=${role.release} AND epoch=${role.epoch} AND lease_until>clock_timestamp()`);
+  if (!owned?.owned || !["primary", "standby"].includes(owned.kind)) throw new Error("role_lease_lost");
+  return owned.kind;
+}
+function immutableProfileIntent<T>(value: T): T {
+  if (value && typeof value === "object") {
+    for (const child of Object.values(value)) immutableProfileIntent(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+/** Fixed domain path only. All provider I/O starts after this transaction resolves. */
+export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobLease,
+  options: { timeoutMs: number; roleLease?: import("@/lib/jobs/role-leader").RoleLease;
+    reserved?: { reservation: import("@/lib/llm/capacity").ModelCapacityReservation;
+      identity: import("@/lib/llm/capacity").ModelCapacityRequestIdentity;
+      expected: import("@/lib/llm/capacity").TextProfileInput;
+      call: import("@/lib/crawl/agent-review-gateway").PreparedTextProfileGatewayCall } },
+): Promise<ProfileModelPreparation> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const snapshot = structuredClone(task), job = structuredClone(lease), role = options.roleLease && structuredClone(options.roleLease);
+  const timeoutMs = options.timeoutMs, reserved = options.reserved && {
+    ...structuredClone({ reservation: options.reserved.reservation, identity: options.reserved.identity, expected: options.reserved.expected }),
+    call: options.reserved.call,
+  };
+  if (job.name !== "product-search-profile") throw new Error("invalid_profile_capacity_job");
+  return onPrimary(() => db.transaction(async tx => {
+    const lock = reserved ? await lockTextProfileModelCapacityDispatch(tx, {
+      reservation: reserved.reservation, identity: reserved.identity, productId: snapshot.product.id,
+    }) : null;
+    if (reserved && !lock) throw new ModelCapacityDeferredError("reservation_lost");
+    const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
+    if (control.mode === "disabled") return { kind: "disabled" };
+    if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
+    if (!control.policy?.routes.some(route => route.routeId === "product-search-profile" && route.provider === "abcllm"
+      && route.model === PROFILE_MODEL)) throw new ModelCapacityDeferredError("unmapped");
+    if (!role || role.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
+    const boundRole = textProfileDispatchBindingSchema.shape.role.parse({ role: role.role, instanceId: role.instanceId,
+      bootId: role.bootId, release: role.release, kind: role.kind, epoch: role.epoch,
+      batch: role.batchVersion === 1 ? { mode: "versioned", host: role.host, batchEpoch: role.batchEpoch } : { mode: "legacy" },
+    });
+    await assertJobBatchAdmission(tx, job.name, role);
+    await assertRoleLease(tx, role);
+    if (!await lockProductGeneration(tx, snapshot.product.id, snapshot.product.slug)) return { kind: "skipped" };
+    const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, snapshot.product.id));
+    if (!product || (product.status !== "seeded" && product.status !== "verified")) return { kind: "skipped" };
+    const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+    const evidence = profileEvidence(product, reviewerNote), evidenceHash = profileHash(evidence);
+    if (evidenceHash !== profileHash(profileEvidence(snapshot.product, snapshot.reviewerNote))) return { kind: "skipped" };
+    const [profile] = await tx.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id)).for("update");
+    if (!sameProfile(profile ?? null, snapshot.profile)) return { kind: "skipped" };
+    const [{ due }] = await tx.select({ due: profileGenerationDueSql() }).from(products)
+      .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id)).where(eq(products.id, product.id));
+    if (!due || profile && !profile.errorCode && profile.sourceHash === evidenceHash
+      && (!profile.needsRefresh || profile.keywordsEn.length + profile.keywordsKo.length > 0)) return { kind: "skipped" };
+    const input = textProfileInputSchema.parse({ productId: product.id, slug: product.slug, evidenceHash,
+      profile: await currentProfileIdentity(tx, product.id), model: PROFILE_MODEL });
+    if (reserved && (textProfileInputHash(input) !== textProfileInputHash(reserved.expected)
+      || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId)) return { kind: "skipped" };
+    const call = prepareTextProfileGatewayCall(evidence, { model: PROFILE_MODEL, timeoutMs });
+    if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
+    if (reserved && (call.wireHash !== reserved.call.wireHash || call.servingContractHash !== reserved.call.servingContractHash
+      || call.totalTokenBound !== reserved.call.totalTokenBound || call.model !== reserved.call.model)) return { kind: "skipped" };
+    const actualKind = await assertTextRoleWall(tx, role);
+    await assertJobLeaseAtWallTime(tx, job, "update");
+    const intent = immutableProfileIntent({ task: { product, profile: profile ?? null, reviewerNote }, evidence, input });
+    if (!reserved || !lock) return { kind: "ready", intent, call };
+    const binding = textProfileDispatchBindingSchema.parse({ kind: "text_profile_gateway", version: 1, ...input,
+      inputHash: textProfileInputHash(input), logicalWorkKey: `text:profile:${product.id}`,
+      provider: "abcllm", routeId: "product-search-profile", role: { ...boundRole, kind: actualKind }, job,
+      wireHash: call.wireHash, servingContractHash: call.servingContractHash,
+      totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound });
+    const dispatch = await finishTextProfileModelCapacityDispatch(tx, lock, binding);
+    await assertTextRoleWall(tx, role);
+    await assertJobLeaseAtWallTime(tx, job, "update");
+    return { kind: "ready", intent, call, dispatch };
+  }));
 }

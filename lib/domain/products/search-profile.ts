@@ -142,31 +142,35 @@ export function keywordText(en: readonly string[], ko: readonly string[]): strin
   return text || null;
 }
 
-export async function writeKeywords(evidence: ProfileEvidence, options: {
-  timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
-}): Promise<KeywordResult> {
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? PROFILE_MODEL });
+export function profileGatewayWire(evidence: ProfileEvidence, model: string): string {
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
-  let body: string;
-  try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
+  return JSON.stringify({
         context_strategy: "raw",
         // 한글이 토큰을 많이 먹는다 — 키워드 16개가 250토큰 안팎이었고 300에서 두 건이 잘렸다
-        model: options.model ?? PROFILE_MODEL, stream: false, temperature: 0, max_tokens: 500,
+        model: model, stream: false, temperature: 0, max_tokens: 500,
         reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user", content: `<untrusted_evidence_json>\n${prompt}\n</untrusted_evidence_json>` },
         ],
-      }),
+      });
+}
+
+export async function writeKeywords(evidence: ProfileEvidence, options: {
+  timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
+}): Promise<KeywordResult> {
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { ok: false, error: "no_key" };
+  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? PROFILE_MODEL });
+  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  let body: string;
+  try {
+    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: profileGatewayWire(evidence, options.model ?? PROFILE_MODEL),
       signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
     });
     if (!response.ok) {
@@ -176,6 +180,10 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
   } catch (error) {
     return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
   }
+  return parseProfileGatewayBody(body, evidence.name);
+}
+
+export function parseProfileGatewayBody(body: string, productName: string): KeywordResult {
   // A complete HTTP response with malformed JSON/schema is output failure, not
   // transport failure. Only typed provider errors may bypass the attempt cap.
   try {
@@ -187,7 +195,7 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
       ? (choice as Record<string, unknown>).message : null;
     const content = message && typeof message === "object" && !Array.isArray(message)
       ? (message as Record<string, unknown>).content : null;
-    return typeof content === "string" ? parseKeywords(content, evidence.name) : { ok: false, error: "invalid_output" };
+    return typeof content === "string" ? parseKeywords(content, productName) : { ok: false, error: "invalid_output" };
   } catch {
     return { ok: false, error: "invalid_output" };
   }

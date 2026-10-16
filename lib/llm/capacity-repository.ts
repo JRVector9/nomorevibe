@@ -1,3 +1,6 @@
+import { textProfileDispatchBindingSchema, textProfileDispatchBindingHash, textProfileModelDispatchSchema,
+  textProfileGatewayTerminalEvidenceSchema, type TextProfileDispatchBinding, type TextProfileModelDispatch } from "./capacity";
+import type { TextProfileGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { ai1ItemDispatchBindingSchema, ai1ItemDispatchBindingHash, ai1ItemModelDispatchSchema,
   ai1ItemGatewayTerminalEvidenceSchema, type Ai1ItemDispatchBinding, type Ai1ItemModelDispatch } from "@/lib/llm/capacity";
 import { randomUUID } from "node:crypto";
@@ -218,7 +221,8 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null): 
     }
     await expireRequests(tx, state);
     if (logicalKey !== null && await (logicalKey.startsWith("ai2:")
-      ? ai2Fence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+      ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
+        ? textProfileFence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
       live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, checked.requestId));
@@ -305,7 +309,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const first = ai1ModelDispatchSchema.safeParse(value);
   const second = first.success ? first : ai2ModelDispatchSchema.safeParse(value);
-  const bound = second.success ? second : ai1ItemModelDispatchSchema.safeParse(value);
+  const item = second.success ? second : ai1ItemModelDispatchSchema.safeParse(value);
+  const bound = item.success ? item : textProfileModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -317,7 +322,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
     if (!owned(row, checked)) return false;
     if (row.logicalWorkKey !== null && (!bound.success || row.dispatchBindingHash !== bound.data.bindingHash
       || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.logicalWorkKey?.startsWith("ai2:")
-        ? "ai2_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+        ? "ai2_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:profile:")
+          ? "text_profile_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -597,6 +603,121 @@ export async function reconcileAi1ItemGatewayTerminal(terminal: Ai1ItemGatewayTe
       return { kind: "already_settled" };
     }
     if (row.state !== "dispatched" && row.state !== "indeterminate") fail("ai1_item_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+function fixedTextProfileIdentity(value: ModelCapacityRequestIdentity, productId: number): string {
+  const logical = `text:profile:${productId}`;
+  if (!Number.isSafeInteger(productId) || productId < 1 || value.class !== "background" || value.pool !== "text"
+    || value.routeId !== "product-search-profile" || value.provider !== "abcllm"
+    || !value.workKey.startsWith(`${logical}:`) || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1)))
+    fail("invalid_text_profile_capacity_identity");
+  return logical;
+}
+async function textProfileFence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-profile'
+      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+/** Logical fence is present in the original waiting INSERT, never patched after grant. */
+export async function requestTextProfileModelSlot(value: ModelCapacityRequest, productId: number): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value);
+  return requestSlot(checked, fixedTextProfileIdentity(checked, productId));
+}
+
+declare const textProfileLockBrand: unique symbol;
+export type TextProfileCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [textProfileLockBrand]: true }>;
+const textProfileLocks = new WeakMap<TextProfileCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; productId: number; finished: boolean }>();
+
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockTextProfileModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; productId: number;
+}): Promise<TextProfileCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity), productId = value.productId;
+  fixedTextProfileIdentity(identity, productId);
+  const state = await control(tx);
+  const snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== `text:profile:${productId}`) fail("model_capacity_logical_work_mismatch");
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+    && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch
+    || row.revision !== state.revision || row.policyHash !== state.policyHash
+    || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await textProfileFence(tx, `text:profile:${productId}`, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as TextProfileCapacityDispatchLock;
+  textProfileLocks.set(locked, { tx, row, identity, productId, finished: false });
+  return locked;
+}
+
+export async function finishTextProfileModelCapacityDispatch(tx: ProductTransaction, lock: TextProfileCapacityDispatchLock,
+  value: TextProfileDispatchBinding): Promise<TextProfileModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = textProfileLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_text_profile_capacity_dispatch_lock");
+  const binding = textProfileDispatchBindingSchema.parse(value);
+  if (binding.productId !== proof.productId || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || binding.model !== proof.identity.model
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.role.instanceId !== proof.identity.owner.instanceId
+    || binding.role.bootId !== proof.identity.owner.bootId) fail("text_profile_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = textProfileDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("text_profile_model_reservation_lost");
+  const dispatch = textProfileModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+
+export async function reconcileTextProfileGatewayTerminal(terminal: TextProfileGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readTextProfileGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readTextProfileGatewayTerminal(terminal);
+  if (!native) fail("invalid_text_profile_gateway_terminal");
+  const evidence = textProfileGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    // Completion uses the historical dispatch, not today's policy validity.
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
+      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
+      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
+      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("text_profile_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
+        fail("text_profile_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("text_profile_gateway_terminal_state_mismatch");
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
       terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();

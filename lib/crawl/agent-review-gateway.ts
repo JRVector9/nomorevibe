@@ -455,3 +455,88 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   ai1ItemTerminals.set(terminal, freeze(evidence));
   return { result: gatewayResult(snapshot, body), terminal };
 }
+
+
+import { textProfileModelDispatchSchema, textProfileGatewayTerminalEvidenceSchema,
+  type TextProfileModelDispatch, type TextProfileGatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { textProfileServingContractHash, textProfileServingContractSchema, resolveTextProfileServingContract,
+  type TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
+import { profileGatewayWire, parseProfileGatewayBody, profileHash,
+  type ProfileEvidence, type KeywordResult } from "@/lib/domain/products/search-profile";
+
+export type PreparedTextProfileGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string; evidenceHash: string }>;
+export type TextProfileGatewayTerminal = Readonly<{ kind: "text_profile_gateway_terminal" }>;
+const textProfileCalls = new WeakMap<PreparedTextProfileGatewayCall, { wire: string; evidenceIdentity: string;
+  contract: TextProfileServingContract; timeoutMs: number; used: boolean }>();
+const textProfileTerminals = new WeakMap<TextProfileGatewayTerminal, TextProfileGatewayTerminalEvidence>();
+function validProfileEvidence(value: ProfileEvidence): boolean {
+  const required = ["name", "url", "category", "topics", "tagline", "pageText", "readme"];
+  return !!value && typeof value === "object" && !Array.isArray(value)
+    && required.every(key => typeof (value as unknown as Record<string, unknown>)[key] === "string")
+    && Object.keys(value).every(key => [...required, "description", "reviewerNote", "evidenceLevel"].includes(key))
+    && (value.description === undefined || typeof value.description === "string")
+    && (value.reviewerNote === undefined || typeof value.reviewerNote === "string")
+    && (value.evidenceLevel === "thin" || value.evidenceLevel === "rich");
+}
+/** A caller flag, descriptor or injected request never enables a serving deployment. */
+export function prepareTextProfileGatewayCall(evidence: ProfileEvidence, options: { model: string; timeoutMs: number }):
+  PreparedTextProfileGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validProfileEvidence(snapshot) || !model || !process.env.ABCLLM_API_KEY?.trim()
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveTextProfileServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = textProfileServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = profileGatewayWire(snapshot, model), evidenceIdentity = profileHash(snapshot);
+  const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: textProfileServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, evidenceHash: evidenceIdentity });
+  textProfileCalls.set(call, { wire, evidenceIdentity, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+export function readTextProfileGatewayTerminal(value: unknown): TextProfileGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? textProfileTerminals.get(value as TextProfileGatewayTerminal) ?? null : null;
+}
+export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence, dispatch: TextProfileModelDispatch,
+  call: PreparedTextProfileGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: KeywordResult; terminal: TextProfileGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(evidence), state = textProfileCalls.get(call);
+  const checked = textProfileModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validProfileEvidence(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("text_profile_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (profileHash(snapshot) !== state.evidenceIdentity || binding.evidenceHash !== call.evidenceHash
+    || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("text_profile_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
+      return { result: { ok: false, error: response.status === 404 ? "model_unavailable"
+        : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  const terminal: TextProfileGatewayTerminal = Object.freeze({ kind: "text_profile_gateway_terminal" });
+  textProfileTerminals.set(terminal, freeze(textProfileGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "text_profile_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
+  return { result: parseProfileGatewayBody(body, snapshot.name), terminal };
+}
