@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import postgres from 'postgres';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { batchPolicyHash } from '@/lib/jobs/batches';
+import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
 import { ORACLE_DB_PRINCIPALS, ORACLE_REFRESH_PRINCIPAL, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
@@ -464,3 +464,63 @@ it('bootstraps a first-ever site-evidence ACK only through an attest grant, then
   const { output: ready } = await run('preflight');
   expect((ready.preflight as { workload: Record<string, unknown> }).workload).toMatchObject({ ready: true, job: 'product-site-evidence-refresh' });
 }, 120_000);
+
+// PR11e. FIXTURE control changes only, as above; every row is restored by afterAll.
+it('0098: a worker principal cannot insert candidate evidence, while the heartbeat shape and the attest principal still insert', async () => {
+  const id = instance('product-health'), hash = batchPolicyHash(policy);
+  const keyed = (columns: string, values: string) => `INSERT INTO public.job_batch_candidates(role,instance_id,host,boot_id,release,policy_hash${columns}) `
+    + `VALUES ('product-health','${id}','oracle-osaka-smoke','forged','${release}','${hash}'${values}) ON CONFLICT DO NOTHING`;
+  const fresh = `INSERT INTO public.job_batch_candidates(role,instance_id,host,boot_id,release,policy_hash,capability,result_evidence) `
+    + `VALUES ('product-health','${prefix}-forged','oracle-osaka-smoke','forged','${release}','${hash}','{"dbPrivileges":"verified"}','{"batchBootstrap":{}}')`;
+  const worker = [keyed(',capability', `,'{"dbPrivileges":"verified"}'`), keyed(',result_evidence', `,'{"batchBootstrap":{}}'`), fresh, keyed('', '')];
+  const before = await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c ORDER BY role,instance_id`;
+  const { output } = await child('product-health', { ...io('product-health', 'negatives'), negatives: worker });
+  expect(output.principal).toBe(ORACLE_DB_PRINCIPALS['product-health']);
+  // The trigger fires before the conflict check, so even a no-op conflicting row cannot carry evidence; the heartbeat shape still inserts.
+  expect(output.negatives).toEqual({ [worker[0]]: '42501', [worker[1]]: '42501', [worker[2]]: '42501', [worker[3]]: 'allowed' });
+  const attest = [keyed(',capability,result_evidence', `,'{}','{}'`)];
+  const { output: attested } = await child('attest', { role: 'product-health', jobs: [], httpBase: base, bootId: randomUUID(), negatives: attest, mode: 'negatives' }, 'attest', 'product-health');
+  expect(attested.principal).toBe(ORACLE_DB_PRINCIPALS.attest);
+  expect(attested.negatives).toEqual({ [attest[0]]: 'allowed' });
+  expect(await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c ORDER BY role,instance_id`).toEqual(before);
+}, 60_000);
+
+it('re-opens a product-health instance whose every result is older than 24 hours only through an attest re-canary grant', async () => {
+  const id = instance('product-health'), run = (mode: string) => child('product-health', io('product-health', mode));
+  await useControlPolicy(policy, httpPolicy);
+  await admin`UPDATE uptime_control SET sources=${admin.json([{ host: 'oracle-osaka-smoke', instanceId: id, region: 'ap-osaka-1' }])} WHERE id=1`;
+  // Public-form fixture URLs are never contacted; a fresh loopback product is each tick's only uptime target.
+  await admin`UPDATE products SET access_mode='installable' WHERE slug LIKE ${`${prefix}-%`} AND access_mode='website'`;
+  // FIXTURE time travel only: every stored result of this instance (batch-result rows and any anchor result) moves 25 hours back.
+  const stale = admin`to_jsonb(to_char((clock_timestamp()-interval '25 hours') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))`;
+  expect((await admin`UPDATE operations_observations SET value=jsonb_set(value,'{batchResult,recordedAt}',${stale}) WHERE key LIKE ${`batch-result:${id}:%`} RETURNING key`).length).toBe(1);
+  await admin`UPDATE operations_observations SET value=jsonb_set(value,'{batchCanary,result,recordedAt}',${stale}) WHERE key=${batchCanaryAnchorKey('product-health', id)}`;
+  // The gap: no fresh ACK can exist, so the strict paths refuse and nothing elects the instance by itself.
+  expect((await run('attest')).output).toMatchObject({ message: expect.stringContaining('oracle_canary_result_stale') });
+  expect((await run('canary')).output).toMatchObject({ message: expect.stringContaining('oracle_canary_result_stale') });
+  expect((await child('product-health', io('product-health', 'heartbeat'))).output).toMatchObject({ elected: false });
+  expect(((await run('preflight')).output.preflight as { workload: { ready: boolean } }).workload.ready).toBe(false);
+  await product(`${prefix}-stale-a`, `${base}/site/${prefix}-stale-a`);
+  const { code, output } = await run('recanary');
+  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+  expect(code).toBe(0);
+  const recanary = output.recanary as { grant: { granted: boolean; reason: string; bootId: string }; run: { status: string }; revoked: boolean; acknowledged: boolean };
+  expect(recanary).toMatchObject({ grant: { granted: true, reason: 'recanary_granted' }, run: { status: 'completed' }, revoked: true, acknowledged: true });
+  const [control] = await admin`SELECT epoch FROM job_batch_control WHERE id=1`;
+  const [ack] = await admin`SELECT value->'batchResult' AS result, (value->'batchResult'->>'recordedAt')::timestamptz > clock_timestamp()-interval '5 minutes' AS fresh
+    FROM operations_observations WHERE key=${`batch-result:${id}:uptime-ping`}`;
+  expect(ack).toMatchObject({ fresh: true, result: { role: 'product-health', instanceId: id, bootId: recanary.grant.bootId, batchEpoch: Number(control.epoch), count: 1 } });
+  const [granted] = await admin`SELECT capability,result_evidence AS "resultEvidence" FROM job_batch_candidates WHERE role='product-health' AND instance_id=${id}`;
+  expect(granted.resultEvidence).toBeNull();
+  expect(granted.capability).toMatchObject({ dbRole: ORACLE_DB_PRINCIPALS['product-health'], dbPrivileges: 'verified', http: 'verified' });
+  // The first new ACK ends the grant path; from here only the normal attest -> canary path makes the launch preflight ready.
+  const { output: refused } = await run('recanary');
+  expect(refused.recanary).toMatchObject({ grant: { granted: false, reason: 'recanary_prior_fresh' }, run: null });
+  expect(((await run('preflight')).output.preflight as { workload: { ready: boolean } }).workload.ready).toBe(false);
+  expect((await run('attest')).output.attest).toMatchObject({ ready: true, readbackRows: 1 });
+  await product(`${prefix}-stale-b`, `${base}/site/${prefix}-stale-b`);
+  const canary = (await run('canary')).output.canary as { before: Canary; run: { status: string }; after: Canary };
+  expect(canary.before).toMatchObject({ ready: true }); expect(canary.run.status).toBe('completed');
+  expect(canary.after).toMatchObject({ ready: true, readbackRows: 1 });
+  expect(((await run('preflight')).output.preflight as { workload: Record<string, unknown> }).workload).toMatchObject({ ready: true, job: 'uptime-ping' });
+}, 180_000);

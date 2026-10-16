@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { batchCanaryAnchorKey, batchCapabilitySchema, batchJobsForRole, batchPolicyHash, batchPolicySchema, batchResultReadbackSchema,
   classifyBatchCandidateEvidence, type BatchCanaryCandidate, BATCH_BOOTSTRAP_TTL_MS, batchBootstrapEligible, batchBootstrapGrantSchema,
-  type BatchBootstrapGrant } from '@/lib/jobs/batches';
+  type BatchBootstrapGrant, batchRecanaryGrantSchema, classifyBatchRecanary, type BatchRecanaryGrant } from '@/lib/jobs/batches';
 import { JOBS } from '@/lib/jobs/registry';
 import { runJob, type RunResult } from '@/lib/jobs/runner';
 import { releaseRole, tryAcquireRole, type RoleLease } from '@/lib/jobs/role-leader';
@@ -286,7 +286,7 @@ export async function grantOracleBootstrap(input: { identity: OracleCanaryIdenti
 }
 
 /** Exact compare-and-clear of this grant only; a replaced grant or a newer readback is never touched. */
-export async function revokeOracleBootstrap(input: { identity: OracleCanaryIdentity; attest: postgres.Sql; grant: BatchBootstrapGrant }) {
+export async function revokeOracleBootstrap(input: { identity: OracleCanaryIdentity; attest: postgres.Sql; grant: BatchBootstrapGrant | BatchRecanaryGrant }) {
   return input.attest.begin(async tx => {
     const [principal] = await tx`SELECT current_user AS name`;
     if (principal.name !== ORACLE_DB_PRINCIPALS.attest) throw new Error('oracle_attest_principal_required');
@@ -306,6 +306,73 @@ export async function runOracleBootstrap(input: { identity: OracleCanaryIdentity
   let revoked: boolean;
   try { revoked = await revokeOracleBootstrap({ identity: input.identity, attest: input.attest, grant: grant.grant }); }
   catch (cleanup) { if (failure !== undefined) throw new AggregateError([failure, cleanup], 'oracle_bootstrap_tick_and_revoke_failed'); throw cleanup; }
+  if (failure !== undefined) throw failure;
+  const [ack] = await input.attest`SELECT value->'batchResult'->>'bootId' AS "bootId" FROM operations_observations
+    WHERE key=${`batch-result:${input.identity.instanceId}:${input.job}`}`;
+  return { grant: { granted: true, reason: grant.reason, bootId: grant.bootId, expiresAt: grant.expiresAt, capability: grant.capability },
+    run: run!, revoked, acknowledged: ack?.bootId === grant.bootId };
+}
+
+export type OracleRecanaryGrant = { granted: boolean; reason: string; bootId: string; expiresAt?: string; grant?: BatchRecanaryGrant;
+  capability: { dbPrivileges: 'verified' | 'unknown'; http: 'verified' | 'unknown'; model: 'verified' | 'unknown' } };
+
+/**
+ * Stale-result re-canary (classifyBatchRecanary): for a role instance whose every stored result is older than the readiness limit,
+ * where `attest` and `canary` refuse the stale result and no boot can be elected. Versioned mode only. One attest-principal TX
+ * observes the worker's live privilege profile and HTTP participation exactly like `bootstrap` (a translation model proof is only
+ * carried forward as stored, exactly like `refresh`) and writes that capability plus a single-boot grant only when
+ * classifyBatchRecanary accepts it with the DB clock. Admission re-checks it at every claim; the first new ACK ends it.
+ */
+export async function grantOracleRecanary(input: { identity: OracleCanaryIdentity; job: string; attest: postgres.Sql; permits: boolean;
+  bootId: string }): Promise<OracleRecanaryGrant> {
+  const { identity, job } = input;
+  if (!batchJobsForRole(identity.role, 'versioned').includes(job)) throw new Error('oracle_canary_job_unsupported');
+  const worker = await workerAuthority(identity.role);
+  return input.attest.begin(async tx => {
+    const state = await control(tx, identity);
+    if (state.mode !== 'versioned') throw new Error('oracle_recanary_requires_versioned');
+    const anchorKey = batchCanaryAnchorKey(identity.role, identity.instanceId);
+    const rows = await tx`SELECT key,value FROM operations_observations WHERE key IN ${tx([anchorKey,
+      ...batchJobsForRole(identity.role, 'versioned').map(name => `batch-result:${identity.instanceId}:${name}`)])}`;
+    const [existing] = await tx`SELECT host,release,policy_hash AS "policyHash",capability FROM job_batch_candidates
+      WHERE role=${identity.role} AND instance_id=${identity.instanceId} FOR UPDATE`;
+    if (existing && (existing.host !== HOST || existing.release !== identity.release || existing.policyHash !== state.policyHash))
+      throw new Error('oracle_canary_candidate_identity_mismatch');
+    const [since] = await tx`SELECT to_char((clock_timestamp()-interval '15 minutes') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
+    const http = await httpParticipation(tx, identity, input.permits, { from: String(since.at), to: state.at }, false);
+    const stored = batchCapabilitySchema.safeParse(existing?.capability);
+    const model = identity.role === 'translation' && stored.success && stored.data.host === HOST && stored.data.release === identity.release
+      && stored.data.instanceId === identity.instanceId && stored.data.model === 'verified' && stored.data.modelBoundEvidenceHash
+      ? { model: 'verified' as const, modelBoundEvidenceHash: stored.data.modelBoundEvidenceHash } : { model: 'unknown' as const };
+    const capability = batchCapabilitySchema.parse({ host: HOST, release: identity.release, instanceId: identity.instanceId,
+      dbPrivileges: worker.dbPrivileges, dbRole: worker.dbRole, effectivePrivilegeHash: worker.effectivePrivilegeHash, http, ...model, observedAt: state.at });
+    const grant = batchRecanaryGrantSchema.parse({ batchRecanary: { version: 1, kind: 'stale_result_recanary', role: identity.role,
+      instanceId: identity.instanceId, host: HOST, bootId: input.bootId, release: identity.release, policyHash: state.policyHash,
+      controlEpoch: state.epoch, job, issuedAt: state.at, expiresAt: new Date(Date.parse(state.at) + BATCH_BOOTSTRAP_TTL_MS).toISOString() } });
+    const verdict = classifyBatchRecanary({ candidate: { role: identity.role, instanceId: identity.instanceId, host: HOST, bootId: input.bootId,
+      release: identity.release, policyHash: state.policyHash, capability, resultEvidence: grant }, controlEpoch: state.epoch, at: Date.parse(state.at),
+      anchor: rows.find(row => row.key === anchorKey)?.value,
+      latest: rows.filter(row => row.key !== anchorKey).map(row => ({ key: String(row.key), result: row.value?.batchResult })) });
+    const summary = { dbPrivileges: capability.dbPrivileges, http: capability.http, model: capability.model };
+    if (!verdict.ready) return { granted: false, reason: verdict.reason, bootId: input.bootId, capability: summary };
+    if (existing) await tx`UPDATE job_batch_candidates SET capability=${tx.json(capability)},result_evidence=${tx.json(grant)}
+      WHERE role=${identity.role} AND instance_id=${identity.instanceId}`;
+    else await tx`INSERT INTO job_batch_candidates(role,instance_id,host,boot_id,release,policy_hash,capability,result_evidence)
+      VALUES(${identity.role},${identity.instanceId},${HOST},${input.bootId},${identity.release},${state.policyHash},${tx.json(capability)},${tx.json(grant)})`;
+    return { granted: true, reason: verdict.reason, bootId: input.bootId, expiresAt: grant.batchRecanary.expiresAt, grant, capability: summary };
+  }) as Promise<OracleRecanaryGrant>;
+}
+
+/** grant -> elect the granted boot through normal admission + exactly one real tick -> revoke the grant. The new ACK still needs
+ * `attest` and then `canary` (normal readiness, which also replaces the stale anchor) before the launcher can see a ready workload. */
+export async function runOracleRecanary(input: { identity: OracleCanaryIdentity; job: string; attest: postgres.Sql; permits: boolean }) {
+  const grant = await grantOracleRecanary({ ...input, bootId: randomUUID() });
+  if (!grant.granted || !grant.grant) return { grant: { granted: false, reason: grant.reason, capability: grant.capability }, run: null, revoked: false, acknowledged: false };
+  let run: RunResult | undefined, failure: unknown;
+  try { run = await runOracleCanaryTick(input.identity, input.job, grant.bootId); } catch (error) { failure = error; }
+  let revoked: boolean;
+  try { revoked = await revokeOracleBootstrap({ identity: input.identity, attest: input.attest, grant: grant.grant }); }
+  catch (cleanup) { if (failure !== undefined) throw new AggregateError([failure, cleanup], 'oracle_recanary_tick_and_revoke_failed'); throw cleanup; }
   if (failure !== undefined) throw failure;
   const [ack] = await input.attest`SELECT value->'batchResult'->>'bootId' AS "bootId" FROM operations_observations
     WHERE key=${`batch-result:${input.identity.instanceId}:${input.job}`}`;

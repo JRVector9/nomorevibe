@@ -14,10 +14,11 @@ import { observe, observeService } from '@/lib/operations/observations';
 import { readOracleRuntimePreflight } from '@/lib/runtime/oracle-preflight';
 import type { BatchRole } from '@/lib/jobs/batches';
 import postgres from 'postgres';
-import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick } from '@/lib/runtime/oracle-canary';
+import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick,
+  runOracleRecanary } from '@/lib/runtime/oracle-canary';
 
 type Input = { role: BatchRole | 'scheduler'; jobs: string[]; httpBase: string; bootId: string; negatives: string[];
-  mode?: 'role' | 'canary' | 'attest' | 'refresh' | 'preflight' | 'heartbeat' | 'negatives' | 'seed' | 'bootstrap' };
+  mode?: 'role' | 'canary' | 'attest' | 'refresh' | 'preflight' | 'heartbeat' | 'negatives' | 'seed' | 'bootstrap' | 'recanary' };
 const input = JSON.parse(process.env.ORACLE_DRIVER_INPUT ?? '{}') as Input;
 const instanceId = process.env.SERVICE_INSTANCE_ID!, release = process.env.RELEASE_TAG!;
 const failure = (error: unknown) => {
@@ -65,6 +66,7 @@ async function main() {
       if (input.mode === 'seed') result.seed = await runOracleLegacySeedTick(identity, input.jobs[0], input.bootId);
       if (input.mode === 'canary') result.canary = await runOracleCanary({ identity, job: input.jobs[0], attest, permits });
       if (input.mode === 'bootstrap') result.bootstrap = await runOracleBootstrap({ identity, job: input.jobs[0], attest, permits });
+      if (input.mode === 'recanary') result.recanary = await runOracleRecanary({ identity, job: input.jobs[0], attest, permits });
       if (input.mode === 'attest') result.attest = await attestOracleCanary({ identity, job: input.jobs[0], attest, permits, anchor: 'if_stale' });
       if (input.mode === 'refresh') result.refresh = await refreshOracleCapability({ identity, attest, permits });
       if (input.mode === 'preflight') result.preflight = await readOracleRuntimePreflight({ role: input.role });

@@ -148,6 +148,7 @@ export const modelCapacityRequests = pgTable('model_capacity_requests', {
   uniqueIndex('model_capacity_requests_live_work_idx').on(table.ownerInstanceId, table.ownerBootId, table.workKey).where(sql`${table.state} in ('waiting','reserved','dispatched','indeterminate')`),
   index('model_capacity_requests_waiting_idx').on(table.class, table.queueOrdinal).where(sql`${table.state} = 'waiting'`),
   index('model_capacity_requests_active_idx').on(table.providerBudgetId, table.groupId, table.pool).where(sql`${table.state} in ('reserved','dispatched','indeterminate')`),
+  index('model_capacity_requests_job_readback_idx').on(table.routeId, table.ownerInstanceId, sql`(dispatch_binding->'job'->>'requestedVersion')`),
 ]);
 
 /** 0078 statement triggers reject UPDATE/DELETE, including zero rows, and TRUNCATE. */

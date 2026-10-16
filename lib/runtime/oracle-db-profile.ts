@@ -25,6 +25,7 @@ const RUNTIME: Record<string, TableGrant> = {
   job_batch_control: lock('id'), jobs: write, operations_observations: write, role_leases: write,
   dr_writer_fence: lock('id'), dr_process_group_events: { select: true, insert: true },
   // Drizzle names every column (DEFAULT) on INSERT, so INSERT cannot be column-limited; UPDATE (the heartbeat upsert) is.
+  // Migration 0098's BEFORE INSERT trigger keeps that INSERT evidence-free: non-NULL capability/result_evidence needs UPDATE on that column.
   job_batch_candidates: { select: true, insert: true, update: CANDIDATE_IDENTITY },
 };
 const HTTP: Record<string, TableGrant> = { http_origin_control: lock('id'), http_origin_hops: write, http_origin_events: { insert: true } };

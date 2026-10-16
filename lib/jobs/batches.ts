@@ -51,6 +51,8 @@ const resultSchema = z.object({ role:z.enum(BATCH_ROLES),batchEpoch:z.number().i
 }).strict();
 export const batchResultReadbackSchema=z.object({job:z.string().min(1),instanceId:z.string().min(1),host:z.enum(BATCH_HOSTS),release:z.string().min(1),requestedVersion:z.number().int().positive(),domainReadbackHash:z.string().regex(/^[0-9a-f]{64}$/),observedAt:z.iso.datetime({offset:true})}).strict();
 export type BatchResultEvidence = z.infer<typeof resultSchema>;
+/** classifyBatchReadiness 의 결과 나이 한도. stale re-canary(classifyBatchRecanary)도 같은 값으로만 판정한다. */
+export const BATCH_RESULT_MAX_AGE_MS = 24 * 60 * 60_000;
 export function classifyBatchReadiness(input: {role: BatchRole; host: BatchHost; instanceId: string; release: string; at: number; evidence: unknown; result: unknown; readback?:unknown}) {
   const capability = batchCapabilitySchema.safeParse(input.evidence);
   if (!capability.success || capability.data.host !== input.host || capability.data.instanceId !== input.instanceId || capability.data.release !== input.release ||
@@ -62,7 +64,7 @@ export function classifyBatchReadiness(input: {role: BatchRole; host: BatchHost;
   if (!result.success || result.data.host !== input.host || result.data.instanceId !== input.instanceId || result.data.release !== input.release ||
     !batchJobsForRole(input.role, 'versioned').includes(result.data.job)) return { ready: false, reason: 'result_unknown' } as const;
   const resultAge = input.at - Date.parse(result.data.recordedAt);
-  if (!Number.isFinite(resultAge) || resultAge < 0 || resultAge > 24 * 60 * 60_000) return { ready: false, reason: 'result_stale' } as const;
+  if (!Number.isFinite(resultAge) || resultAge < 0 || resultAge > BATCH_RESULT_MAX_AGE_MS) return { ready: false, reason: 'result_stale' } as const;
   const readback=batchResultReadbackSchema.safeParse(input.readback);
   if(!readback.success || readback.data.job!==result.data.job || readback.data.instanceId!==input.instanceId || readback.data.host!==input.host || readback.data.release!==input.release || readback.data.requestedVersion!==result.data.requestedVersion || Date.parse(readback.data.observedAt)<Date.parse(result.data.recordedAt) || Date.parse(readback.data.observedAt)>input.at) return {ready:false,reason:'result_unverified'} as const;
   return { ready: true, reason: 'ready' } as const;
@@ -143,4 +145,50 @@ export function classifyBatchBootstrap(input: { candidate: BatchCanaryCandidate;
     release: candidate.release, at: input.at, evidence: candidate.capability, result: null });
   if (capability.reason !== 'result_unknown') return capability;
   return { ready: true, reason: 'bootstrap_granted' } as const;
+}
+
+/**
+ * Stale-result re-canary (PR11e). Readiness never accepts a result older than BATCH_RESULT_MAX_AGE_MS and the PR10d anchor keeps
+ * its original ACK, so once every stored result of a role instance is that old nothing can elect it, and `attest`/`canary` refuse
+ * the stale result: no fresh ACK can ever be produced. An operator (attest principal) grant reopens exactly one boot for at most
+ * BATCH_BOOTSTRAP_TTL_MS under the same exact identity binding and capability checks as the first-ACK bootstrap, and only while
+ * every stored result (batch-result rows and the anchor's result) is still stale: the first new ACK ends it. Nothing renews it
+ * automatically and it never makes launch readiness positive; the new ACK still needs `attest` and `canary`.
+ */
+export const batchRecanaryGrantSchema = z.object({ batchRecanary: z.object({ version: z.literal(1), kind: z.literal('stale_result_recanary'),
+  role: z.enum(BATCH_ROLES), instanceId: z.string().min(1).max(48), host: z.enum(BATCH_HOSTS), bootId: z.string().min(1).max(36),
+  release: z.string().min(1).max(120), policyHash: z.string().regex(/^[0-9a-f]{64}$/), controlEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  job: z.string().min(1).max(120), issuedAt: z.iso.datetime({ offset: true }), expiresAt: z.iso.datetime({ offset: true }) }).strict() }).strict();
+export type BatchRecanaryGrant = z.infer<typeof batchRecanaryGrantSchema>;
+/** Newest recordedAt of every stored result of this role instance: null when none exists, undefined when any stored row is unreadable. */
+function newestPriorResultAt(role: BatchRole, instanceId: string, anchor: unknown, latest: readonly {key:string;result:unknown}[]): number | null | undefined {
+  const names = batchJobsForRole(role, 'versioned'), times: number[] = [];
+  const read = (value: unknown, key?: string) => {
+    const result = resultSchema.safeParse(value);
+    if (!result.success || result.data.instanceId !== instanceId || !names.includes(result.data.job)
+      || (key !== undefined && key !== `batch-result:${instanceId}:${result.data.job}`) || !Number.isFinite(Date.parse(result.data.recordedAt))) return false;
+    times.push(Date.parse(result.data.recordedAt)); return true;
+  };
+  if (anchor !== undefined) { const stored = batchCanaryAnchorSchema.safeParse(anchor); if (!stored.success || !read(stored.data.batchCanary.result)) return undefined; }
+  for (const row of latest) if (!read(row.result, row.key)) return undefined;
+  return times.length ? Math.max(...times) : null;
+}
+export function classifyBatchRecanary(input: { candidate: BatchCanaryCandidate; controlEpoch: number; at: number; anchor: unknown;
+  latest: readonly {key:string;result:unknown}[] }) {
+  const { candidate } = input, parsed = batchRecanaryGrantSchema.safeParse(candidate.resultEvidence);
+  if (!parsed.success) return { ready: false, reason: 'recanary_grant_absent' } as const;
+  const grant = parsed.data.batchRecanary, issued = Date.parse(grant.issuedAt), expires = Date.parse(grant.expiresAt);
+  if (grant.role !== candidate.role || grant.instanceId !== candidate.instanceId || grant.host !== candidate.host || grant.bootId !== candidate.bootId
+    || grant.release !== candidate.release || grant.policyHash !== candidate.policyHash || grant.controlEpoch !== input.controlEpoch
+    || !batchJobsForRole(candidate.role, 'versioned').includes(grant.job)) return { ready: false, reason: 'recanary_grant_mismatch' } as const;
+  if (!(issued <= input.at && input.at < expires && expires - issued <= BATCH_BOOTSTRAP_TTL_MS)) return { ready: false, reason: 'recanary_grant_expired' } as const;
+  const prior = newestPriorResultAt(candidate.role, candidate.instanceId, input.anchor, input.latest);
+  if (prior === null) return { ready: false, reason: 'recanary_prior_absent' } as const;
+  if (prior === undefined) return { ready: false, reason: 'recanary_prior_unknown' } as const;
+  if (!(input.at - prior > BATCH_RESULT_MAX_AGE_MS)) return { ready: false, reason: 'recanary_prior_fresh' } as const;
+  // Exactly the normal capability checks (translation keeps its model proof requirement), as for the first-ACK bootstrap.
+  const capability = classifyBatchReadiness({ role: candidate.role, host: candidate.host, instanceId: candidate.instanceId,
+    release: candidate.release, at: input.at, evidence: candidate.capability, result: null });
+  if (capability.reason !== 'result_unknown') return capability;
+  return { ready: true, reason: 'recanary_granted' } as const;
 }

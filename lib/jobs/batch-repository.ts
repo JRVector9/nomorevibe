@@ -5,7 +5,7 @@ import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
   batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole,
-  batchBootstrapEligible, batchBootstrapGrantSchema, classifyBatchBootstrap } from './batches';
+  batchBootstrapEligible, batchBootstrapGrantSchema, classifyBatchBootstrap, batchRecanaryGrantSchema, classifyBatchRecanary } from './batches';
 import { STALE_LOCK_MS } from './lease';
 import type { RoleCandidate, RoleLease } from './role-leader';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
@@ -36,6 +36,9 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
     return instance && policy.release === lease.release ? { role: lease.role, host: instance.host,
       instanceId: lease.instanceId, bootId: lease.bootId, release: lease.release, batchEpoch: row.epoch } : null;
   }
+  // versioned claim·결과 관문도 DR fence 를 본다(acquire/renew 와 같은 판정). batch lock 다음, 역할·후보 행보다 먼저.
+  // 이 SHARE lock 은 commit 까지 남아 fence UPDATE 와 직렬화된다: fence 뒤에 commit 되는 versioned claim·결과는 없다.
+  if (!await writerSiteActive(tx)) throw new JobBatchBlockedError();
   if (row.writerContractVersion < 1 || !lease || lease.batchVersion !== 1 || lease.batchEpoch !== row.epoch ||
     !batchJobsForRole(lease.role,'versioned').includes(name)) throw new JobBatchBlockedError();
   const policy = checkedPolicy(row), instance = policy.instances.find(item => item.instanceId === lease.instanceId);
@@ -89,9 +92,17 @@ async function candidateEvidence(tx: ProductTransaction, candidate: BatchCanaryC
 async function candidateReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
   return (await candidateEvidence(tx,{...candidate,role:candidate.role as BatchRole,host:candidate.host as BatchHost},now,controlEpoch)).report.ready;
 }
-/** Separate first-ACK path (classifyBatchBootstrap); normal candidates never reach the extra read. */
+/** Separate operator-grant paths: first ACK (classifyBatchBootstrap) and stale-result re-canary (classifyBatchRecanary).
+ * Normal candidates never reach the extra read. */
 async function bootstrapReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
   const role = candidate.role as BatchRole;
+  if (batchRecanaryGrantSchema.safeParse(candidate.resultEvidence).success) {
+    const anchorKey = batchCanaryAnchorKey(role,candidate.instanceId);
+    const rows = await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,
+      [anchorKey,...batchJobsForRole(role,'versioned').map(name => `batch-result:${candidate.instanceId}:${name}`)]));
+    return classifyBatchRecanary({candidate:{...candidate,role,host:candidate.host as BatchHost},controlEpoch,at:now.getTime(),
+      anchor:rows.find(row=>row.key===anchorKey)?.value,latest:rows.filter(row=>row.key!==anchorKey).map(row=>({key:row.key,result:row.value.batchResult}))}).ready;
+  }
   if (!batchBootstrapEligible(role) || !batchBootstrapGrantSchema.safeParse(candidate.resultEvidence).success) return false;
   const [prior] = await tx.select({key:operationsObservations.key}).from(operationsObservations).where(inArray(operationsObservations.key,
     [batchCanaryAnchorKey(role,candidate.instanceId),...batchJobsForRole(role,'versioned').map(name => `batch-result:${candidate.instanceId}:${name}`)])).limit(1);
@@ -144,7 +155,7 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
       if (await candidateReadiness(tx,row,now,control.epoch)) ready.push(row);
     }
     ready.sort((a,b) => batchHostOrder(candidate.role).indexOf(a.host as BatchHost)-batchHostOrder(candidate.role).indexOf(b.host as BatchHost) || a.instanceId.localeCompare(b.instanceId));
-    // A bootstrap grant elects only its own exact boot, and only while no candidate of the role is normally ready.
+    // A bootstrap or re-canary grant elects only its own exact boot, and only while no candidate of the role is normally ready.
     const own = candidates.find(row => row.instanceId === candidate.instanceId && row.bootId === candidate.bootId && row.release === policy.release && row.host === instance.host);
     const bootstrap = !ready.length && Boolean(own) && await bootstrapReadiness(tx,own!,now,control.epoch);
     if (!bootstrap && (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId)) return null;
