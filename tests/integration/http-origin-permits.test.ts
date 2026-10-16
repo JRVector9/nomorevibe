@@ -8,6 +8,7 @@ import { writeFile } from 'node:fs/promises';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 const client = postgres(TEST_DATABASE_URL, { max: 1 });
+const evidencePrefix = `/tmp/nomorevibe-pr454-c-http-terminal-${process.pid}-20261016`;
 const policy = { version: 1, instanceHosts: { 'http-c-one': 'oracle-osaka-smoke', 'http-c-two': 'oracle-osaka-smoke', 'http-c-three': 'm3', 'http-c-four': 'oracle-osaka-smoke' } };
 const children = new Set<ChildProcess>();
 const work = new Set<Promise<unknown>>();
@@ -60,12 +61,12 @@ beforeAll(() => exercise((async()=>{
   original=(original as {row:unknown}).row;
   expect(await client`SELECT id FROM http_origin_hops WHERE instance_id IN ('http-c-one','http-c-two','http-c-three','http-c-four','http-c-unknown')`).toHaveLength(0);
   foreign=await foreignHttp(client);baseline=await whole();
-  await writeFile('/tmp/nomorevibe-pr07b-c-foreign-before-20261016.json',JSON.stringify({foreign,whole:baseline},null,2));
+  await writeFile(`${evidencePrefix}-before.json`,JSON.stringify({foreign,whole:baseline},null,2));
 })()));
 afterEach(cleanup);
 afterAll(async()=>{
   const errors:unknown[]=[];
-  for(const step of [()=>cleanup(),async()=>{const after=await whole();await writeFile('/tmp/nomorevibe-pr07b-c-foreign-after-20261016.json',JSON.stringify({foreign:await foreignHttp(client),whole:after},null,2));expect(after).toEqual(baseline);},()=>client.end()])try{await step();}catch(error){errors.push(error);}
+  for(const step of [()=>cleanup(),async()=>{const after=await whole();await writeFile(`${evidencePrefix}-after.json`,JSON.stringify({foreign:await foreignHttp(client),whole:after},null,2));expect(after).toEqual(baseline);},()=>client.end()])try{await step();}catch(error){errors.push(error);}
   if(errors.length)throw new AggregateError(errors);
 });
 
@@ -73,13 +74,41 @@ async function child(url: string, enabled: boolean, instance: string, api: 'safe
   const p = fork('tests/integration/fixtures/http-origin-worker.ts', [], { execArgv: ['--import','tsx'], stdio: ['ignore','pipe','pipe','ipc'],
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ALLOW_PRIVATE_URLS: '1', HTTP_ORIGIN_PERMITS: enabled ? '1':'0', SERVICE_INSTANCE_ID: instance, HTTP_TEST_URL: url, HTTP_TEST_API: api, ...extra } });
   children.add(p);
-  track(once(p,'exit'));
+  const exited = track(once(p,'exit'));
+  const trace=(phase:string)=>{if(process.env.HTTP_FIXTURE_TRACE==='1')console.log(JSON.stringify({phase,pid:p.pid,instance,api,at:performance.now()}));};
+  trace('spawned');
   let stderr = ''; p.stderr?.on('data', value => { stderr += value; });
-  const messages: unknown[] = [];
-  p.on('message', m => { messages.push(m); });
-  await new Promise<void>((resolve,reject) => { p.once('message', () => resolve()); p.once('error',reject); p.once('exit', code => { if(code) reject(new Error(stderr)); }); });
-  const result = track(new Promise<Record<string, unknown>>((resolve,reject) => { p.on('message', m => { const v=m as Record<string,unknown>; if(v.kind==='result'||v.kind==='error') resolve(v); }); p.once('error',reject); p.once('exit', () => { children.delete(p); if(!messages.some(m => ['result','error'].includes((m as {kind:string}).kind))) reject(new Error(stderr)); }); }));
-  return { start: () => p.send({kind:'start'}), send:(kind:string)=>p.connected && p.send({kind}), result, headers:()=>new Promise<Record<string,unknown>>(resolve=>{const found=messages.find(m=>(m as {kind:string}).kind==='headers');if(found)resolve(found as Record<string,unknown>);else p.on('message',m=>{if((m as {kind:string}).kind==='headers')resolve(m as Record<string,unknown>);});}) };
+  let readyReceived=false,terminalReceived=false;
+  let resolveReady!:()=>void,rejectReady!:(error:Error)=>void;
+  const ready=new Promise<void>((resolve,reject)=>{resolveReady=resolve;rejectReady=reject;});
+  let resolveResult!:(value:Record<string,unknown>)=>void,rejectResult!:(error:Error)=>void;
+  const result=track(new Promise<Record<string,unknown>>((resolve,reject)=>{resolveResult=resolve;rejectResult=reject;}));
+  let resolveHeaders!:(value:Record<string,unknown>)=>void,rejectHeaders!:(error:Error)=>void;
+  const headers=new Promise<Record<string,unknown>>((resolve,reject)=>{resolveHeaders=resolve;rejectHeaders=reject;});
+  // Capped/negative workers need not request headers; keep their terminal rejection observed.
+  void headers.catch(()=>{});
+  p.on('message',message=>{
+    const value=message as Record<string,unknown>;
+    trace(`ipc:${value.kind}`);
+    if(value.kind==='ready'){readyReceived=true;resolveReady();}
+    else if(value.kind==='headers')resolveHeaders(value);
+    else if(value.kind==='result'||value.kind==='error'){
+      terminalReceived=true;resolveResult(value);
+      const error=value.kind==='error'
+        ? Object.assign(new Error(String(value.message)),{name:String(value.name)})
+        : new Error('HTTP fixture completed without response headers');
+      rejectReady(error);rejectHeaders(error);
+    }
+  });
+  p.once('error',error=>{trace('process:error');children.delete(p);rejectReady(error);rejectResult(error);rejectHeaders(error);});
+  p.once('exit',(code,signal)=>{
+    trace(`exit:${code}:${signal}`);
+    children.delete(p);
+    const error=new Error(stderr || `HTTP fixture exited ${readyReceived?'before response headers':'before ready'} (code=${code}, signal=${signal})`);
+    rejectReady(error);rejectHeaders(error);if(!terminalReceived)rejectResult(error);
+  });
+  await ready;
+  return {start:()=>{trace('send:start');p.send({kind:'start'});},send:(kind:string)=>{trace(`send:${kind}`);return p.connected && p.send({kind});},result,exited,headers:()=>headers};
 }
 async function pair(enabled: boolean) {
   await client`UPDATE http_origin_control SET mode='open',policy=${client.json(policy)},policy_hash=${createHash('sha256').update(JSON.stringify({version:1,instanceHosts:Object.fromEntries(Object.entries(policy.instanceHosts).sort(([a],[b])=>a<b?-1:a>b?1:0))})).digest('hex')} WHERE id=1`;
@@ -258,4 +287,46 @@ it('a rejected real reader cancellation remains indeterminate even after native 
     if(old.instance===undefined)delete process.env.SERVICE_INSTANCE_ID;else process.env.SERVICE_INSTANCE_ID=old.instance;
   }
   if(errors.length)throw new AggregateError(errors);
+});
+
+it('headers waiting rejects the actual worker terminal error after unknown-instance failure and exit',async()=>{
+  await openPolicy();let calls=0;
+  const endpoint=await opened((_req,res)=>{calls++;res.end('unexpected');});
+  const errors:unknown[]=[];
+  let run:Awaited<ReturnType<typeof child>>|undefined;
+  let observed:Promise<void>|undefined;
+  const headers:{state:string;error?:unknown}={state:'pending'};
+  try{
+    run=await child(endpoint.url,true,'http-c-unknown','safe',{HTTP_TEST_HOLD:'1'});
+    observed=run.headers().then(()=>{headers.state='resolved';},error=>{headers.state='rejected';headers.error=error;});
+    run.start();
+    const result=await run.result;
+    expect(result).toMatchObject({kind:'error',name:'HttpOriginPermitError',message:'HttpOriginPermitError: http_origin_permit_configuration'});
+    expect(await run.exited).toEqual([0,null]);
+    expect(calls).toBe(0);
+    expect(await client`SELECT id FROM http_origin_hops WHERE instance_id='http-c-unknown'`).toHaveLength(0);
+    console.log(JSON.stringify({proof:'actual-worker-error-and-exit',result,exitCode:0,headersState:headers.state,dispatches:calls}));
+    expect(headers.state).toBe('rejected');
+    expect(headers.error).toMatchObject({name:result.name,message:result.message});
+  }catch(error){errors.push(error);}
+  finally{
+    run?.send('consume');
+    for(const step of [async()=>{if(run)await Promise.allSettled([run.result,run.exited]);},async()=>{if(headers.state!=='pending')await observed;},()=>endpoint.close()])try{await step();}catch(error){errors.push(error);}
+  }
+  if(errors.length)throw new AggregateError(errors);
+});
+
+it('startup rejects an actual clean worker exit before ready',async()=>{
+  const startup:{state:string;error?:unknown}={state:'pending'};
+  const before=new Set(children);
+  const observed=child('http://127.0.0.1:1/',true,'http-c-one','safe',{HTTP_TEST_EXIT_BEFORE_READY:'1'}).then(()=>{startup.state='resolved';},error=>{startup.state='rejected';startup.error=error;});
+  const spawned=[...children].filter(p=>!before.has(p));
+  expect(spawned).toHaveLength(1);
+  try{
+    expect(await once(spawned[0],'exit')).toEqual([0,null]);
+    console.log(JSON.stringify({proof:'actual-worker-exit-before-ready',exitCode:0,startupState:startup.state}));
+    expect(startup.state).toBe('rejected');
+    expect(startup.error).toBeInstanceOf(Error);
+    expect(String(startup.error)).toContain('before ready');
+  }finally{if(startup.state!=='pending')await observed;}
 });
