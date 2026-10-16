@@ -62,13 +62,15 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     fixture.contract = { version: 1, protocol: "abcllm-search-verify-total-bound-v1", routeId: "product-search-verify", provider: "abcllm",
       model, responseModel: "served-verify", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 8192 };
-    watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close")); http.closeAllConnections(); }, 2000);
     await run({ bodies, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
     fixture.contract = null;
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
+      // 클라이언트 작업이 모두 끝난 뒤에만 남은 연결을 정리한다(기존 driver 관례). watchdog은 teardown 구간만 잰다.
+      watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close")); }, 2000);
+      http.closeAllConnections();
       const close = http.listening ? new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())) : Promise.resolve();
       for (const result of await Promise.allSettled([close, ...responses])) if (result.status === "rejected") errors.push(result.reason);
     } finally { clearTimeout(watchdog); }
