@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "tenancy": "surfguide",
+  "region": "ap-osaka-1",
+  "instance": "osaka-smoke",
+  "tenancyOcid": "<approved full tenancy OCID; placeholder is rejected>",
+  "instanceOcid": "<approved full instance OCID; placeholder is rejected>"
+}
