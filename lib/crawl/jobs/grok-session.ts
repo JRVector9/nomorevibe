@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { getSettings } from "@/lib/crawl/settings";
 import { grokAuthPath, grokFailure, runGrokCli, type GrokCliRun } from "@/lib/crawl/agent-review-grok";
 import { observe } from "@/lib/operations/observations";
@@ -29,6 +30,8 @@ export async function checkGrokSession(ctx: JobContext<null>, deps: { run?: Grok
     .filter((item) => item.provider === "grok-cli");
   if (uses.length === 0) { ctx.log("crawl.grok_session_skipped", { reason: "no_grok_cli_in_settings" }); return { done: true }; }
   const model = uses[0].model;
+  // 공통 모델 슬롯이 open·draining 이면 부르지 않고 미룬다 — 관측을 남기지 않으므로 마지막 확인 시각이 그대로다
+  await assertCliModelAdmission({ routeId: "grok-session-check", provider: "grok-cli", model });
   const authPath = grokAuthPath();
   const authFile = await stat(authPath).then((info) => ({ exists: true, modifiedAt: info.mtime.toISOString() })).catch(() => ({ exists: false, modifiedAt: null }));
   const directory = await mkdtemp(path.join(os.tmpdir(), "nomorevibe-grok-session-"));

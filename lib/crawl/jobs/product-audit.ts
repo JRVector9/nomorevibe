@@ -1,4 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
@@ -73,7 +75,9 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
   const ceiling = campaign.provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   let reviewed = 0, failed = 0, noSource = 0;
   let down: string | null = null;
-  const canStart = () => !down && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
+  // 한 자리가 공통 모델 슬롯에서 미뤄지면 다른 자리도 새 호출을 시작하지 않는다 — 이미 시작한 호출은 끝까지 기다린다
+  let deferred = false;
+  const canStart = () => !down && !deferred && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
 
   // 자리마다 다음 것을 집어 묻는다. 한 호출이 실패해도 그 자리는 다음 것으로 넘어간다
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -86,6 +90,14 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
         noSource += 1;
         await markAuditNoSource(item.id, lease);
         continue;
+      }
+      // open·draining 이면 부르지 않고 미룬다 — 감사 시도 행을 넣지 않으므로 시도 횟수·재시도 시각이 그대로다
+      try {
+        await assertCliModelAdmission({ routeId: "product-audit", provider: campaign.provider === "abcllm" ? "abcllm" : "claude-cli",
+          model: campaign.model });
+      } catch (error) {
+        if (error instanceof ModelCapacityDeferredError) deferred = true;
+        throw error;
       }
       const callStartedAt = new Date();
       const controller = new AbortController();
@@ -121,8 +133,11 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
   }));
 
   ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource });
-  const failure = settled.find((result) => result.status === "rejected");
+  const failures = settled.filter((result) => result.status === "rejected");
+  const failure = failures.find((result) => !(result.reason instanceof ModelCapacityDeferredError));
   if (failure) throw failure.reason;
   if (down) throw new Error(`product_audit_reviewer_unavailable:${down}`);
+  // 슬롯에서 미뤘다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다
+  if (failures.length) throw failures[0].reason;
   return { done: false };
 }

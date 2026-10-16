@@ -1,5 +1,6 @@
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introEvidence } from "@/lib/domain/products/intro-check";
 import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/lib/domain/products/intro-checks";
 
@@ -33,6 +34,8 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       ctx.log("intro_check.done", { ...counts, drained: true });
       return { done: true };
     }
+    // 공통 모델 슬롯이 open·draining 이면 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
+    await assertCliModelAdmission({ routeId: "product-intro-check", provider: "claude-cli", model: INTRO_CHECK_MODEL });
     const result = await checkIntros(tasks.map((task) => ({
       slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product),
     })), { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), run, signal: ctx.signal });

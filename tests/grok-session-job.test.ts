@@ -6,6 +6,10 @@ import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/operations/observations", () => ({ observe: vi.fn() }));
+// These job units do not open a database; open/draining admission is covered by cli-model-capacity-callers.test.ts.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "grok-session-check", token: "t", requestedVersion: 1 } });
 const grokSettings = (): CrawlSettings => ({ ...DEFAULT_CRAWL_SETTINGS, enabled: true,
