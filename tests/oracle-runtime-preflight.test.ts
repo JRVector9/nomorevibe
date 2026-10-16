@@ -179,7 +179,7 @@ it('rejects invalid arguments through the actual native CLI without a database e
   const { resolve } = await import('node:path');
   const child = spawnSync(process.execPath, ['--import', resolve('node_modules/tsx/dist/loader.mjs'),
     resolve('scripts/worker-oracle-preflight.ts'), '--role=unsupported'], {
-    cwd: process.cwd(), env: { PATH: process.env.PATH }, encoding: 'utf8', timeout: 3000,
+    cwd: process.cwd(), env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV }, encoding: 'utf8', timeout: 3000,
   });
   expect(child.error).toBeUndefined(); expect(child.signal).toBeNull(); expect(child.status).toBe(78);
   expect(child.stdout).toBe(''); expect(child.stderr).toBe('{"code":"oracle_runtime_preflight_failed"}\n');

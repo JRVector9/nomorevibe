@@ -26,3 +26,9 @@ Oracle용 실행 전 검증 entry가 없어서 현재 배치·후보·업무 완
 ## 남은 검증
 
 실제 PostgreSQL에서 새 catalog SQL·권한/RLS/row lock·DB wall·rollback은 아직 실행하지 않았다. 실제 Oracle ARM/runtime provenance·최소권한 profile·host 전체 DB/HTTP 예산·번역 physical slot·업무 canary와 scheduler 독립 실행도 남는다. Mock 입력으로 이 gate를 올리지 않는다. 신규 owned DB/운영DB/SSH/배포/provider/activation0, 전체 수동 검증은 모든 PR 개발 뒤다.
+
+## 2026-10-16 CI 타입 오류 후속
+
+PR478 첫 CI38900448343은 통합 세 shard/scope/GitGuardian SUCCESS이나 quality TypeScript에서 TS2769로 실패했다. 실제 raw job log SHA8807be7eb8195e85005e788e63c735cc0e703c46c54c8486ba6cccdcd6533cb3에 새 native CLI test의 env에 Next가 요구하는 NODE_ENV 누락을 확인했다. Root가 실제 Next global 선언을 scoped tsconfig의 files에 직접 포함해 같은 TS2769를 exit2 재현했다. 첫 include 시도는 node_modules exclude 때문에 선언을 로드하지 않아 exit0이었으므로 실패재현으로 집계하지 않는다.
+
+테스트 child에 기존 process.env.NODE_ENV만 전달하는 한 줄을 고쳤다. DB 환경은 여전히 전달하지 않고 원 인수·timeout·출력/exit 기대를 보존했다. 동일 scoped TypeScript exit0, 영향 native CLI1 PASS/25skip(283ms), 해당 ESLint exit0이다. Production2파일과 다른 원본은 unchanged이며 운영/실DB/Oracle/provider/activation0이다. 원 CI 실패/실제 RED를 보존하고 변경된 commit만 push한다. 원로그 `/tmp/nomorevibe-pr478-root-quality116971179965-20261016.log`, 재현/해결 `...root-type-red-with-ambient...log`, `...root-type-green...log`, `...root-native-green...log`를 따른다.
