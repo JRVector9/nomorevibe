@@ -13,7 +13,7 @@ export const CanonicalSourceBindingSchema = z.strictObject({
   policyHash: sha, sourceRevision: sha.nullable(), requestVersion: z.number().int().positive().max(2_147_483_647).nullable(),
 });
 export type CanonicalSourceBinding = z.infer<typeof CanonicalSourceBindingSchema>;
-export const SourceJobSchema = z.strictObject({ name: z.literal("product-evidence-refresh"), token: z.string().min(1).max(120), requestedVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
+export const SourceJobSchema = z.strictObject({ name: z.enum(["product-evidence-refresh", "product-site-evidence-refresh"]), token: z.string().min(1).max(120), requestedVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
 export const CanonicalSourceLeaseSchema = z.strictObject({
   binding: CanonicalSourceBindingSchema, bindingHash: sha, owner: SourceOwnerSchema, token: z.uuid(),
   epoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), controlEpoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),

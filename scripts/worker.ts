@@ -73,7 +73,7 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-star-observation') return { ...options, budgetMs: 40_000 };
   // AI 제작 근거 단계 — GraphQL 묶음을 30초 안에서 열고 마지막 묶음·두 번째 질의(각 10초 상한)와 기록까지(ai-level-refresh.ts)
   if (name === 'ai-level-refresh') return { ...options, budgetMs: 55_000 };
-  if (name === 'product-evidence-refresh') return { ...options, budgetMs: 55_000 };
+  if (name === 'product-evidence-refresh' || name === 'product-site-evidence-refresh') return { ...options, budgetMs: 55_000 };
   if (name === 'product-intro-check') return { ...options, budgetMs: 110_000 };
   // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다
   if (name === 'second-review') return { ...options, budgetMs: 110_000 };
@@ -112,7 +112,8 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
   let ticks = 0, failures = 0, nextIndex = 0;
-  const sourceLane = options.role === "crawler" && names.length === 1 && names[0] === "product-evidence-refresh";
+  const sourceLane = names.length === 1 && ((options.role === "crawler" && names[0] === "product-evidence-refresh")
+    || (options.role === "site-evidence" && names[0] === "product-site-evidence-refresh"));
   while (!options.signal?.aborted) {
     ticks++;
     let sourceContinued = false;
