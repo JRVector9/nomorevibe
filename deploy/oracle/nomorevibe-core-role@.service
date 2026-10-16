@@ -1,4 +1,4 @@
-# Inactive template. The launcher exits78 until the actual preflight is integrated.
+# Template. The launcher exits78 unless release/runtime/budget/OCI identity/runtime preflight are all verified.
 [Unit]
 Description=NoMoreVibe Oracle role %i
 Wants=network-online.target

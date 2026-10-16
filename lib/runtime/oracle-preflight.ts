@@ -7,6 +7,7 @@ import { batchJobsForRole, batchPolicyHash, batchPolicySchema, classifyBatchRead
 import { assertJobBatchAdmission, JobBatchBlockedError, lockJobBatch } from '@/lib/jobs/batch-repository';
 import { assertRoleLease, roleLeaseFromEnv, RoleLeaseLostError } from '@/lib/jobs/role-leader';
 import { serviceInstanceId } from '@/lib/operations/instance';
+import { ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from '@/lib/runtime/oracle-db-profile';
 
 const target = z.object({ role: z.enum(['translation', 'site-evidence', 'official-news', 'product-health', 'scheduler']) }).strict();
 type Check = { status: 'verified' | 'unknown' | 'rejected'; reason: string; hash?: string };
@@ -77,33 +78,19 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
     const [rawSession] = await tx.execute(sql`SELECT clock_timestamp()::text AS at, current_user AS principal,
       session_user AS "sessionPrincipal", pg_is_in_recovery() AS replica,
       current_setting('transaction_read_only')='on' AS "readOnly",
-      (r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
-        OR current_user<>session_user OR has_database_privilege(current_user,current_database(),'CREATE')
-        OR EXISTS(SELECT 1 FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'
-          AND has_schema_privilege(current_user,n.oid,'CREATE'))
-        OR EXISTS(SELECT 1 FROM pg_roles p WHERE p.oid<>r.oid AND pg_has_role(current_user,p.oid,'MEMBER')
-          AND (p.rolsuper OR p.rolcreatedb OR p.rolcreaterole OR p.rolreplication OR p.rolbypassrls))) AS unsafe,
+      ${ORACLE_UNSAFE_AUTHORITY_SQL} AS unsafe,
       extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS "statementMs",
       extract(epoch FROM current_setting('lock_timeout')::interval)*1000 AS "lockMs",
       extract(epoch FROM current_setting('idle_in_transaction_session_timeout')::interval)*1000 AS "idleMs",
-      (SELECT coalesce(jsonb_agg(jsonb_build_object('schema',n.nspname,'table',c.relname,
-        'select',has_table_privilege(current_user,c.oid,'SELECT'),'insert',has_table_privilege(current_user,c.oid,'INSERT'),
-        'update',has_table_privilege(current_user,c.oid,'UPDATE'),'delete',has_table_privilege(current_user,c.oid,'DELETE'),
-        'rls',c.relrowsecurity,'forceRls',c.relforcerowsecurity,
-        'columns',(SELECT coalesce(jsonb_agg(jsonb_build_object('name',a.attname,
-          'select',has_column_privilege(current_user,c.oid,a.attnum,'SELECT'),
-          'insert',has_column_privilege(current_user,c.oid,a.attnum,'INSERT'),
-          'update',has_column_privilege(current_user,c.oid,a.attnum,'UPDATE')) ORDER BY a.attnum),'[]'::jsonb)
-          FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),
-        'policies',(SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.policyname),'[]'::jsonb)
-          FROM pg_policies p WHERE p.schemaname=n.nspname AND p.tablename=c.relname)) ORDER BY n.nspname,c.relname),'[]'::jsonb)
-        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-        WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind IN ('r','p','v','m','f')) AS privileges
+      ${ORACLE_PRIVILEGE_CATALOG_SQL} AS privileges
       FROM pg_roles r WHERE r.rolname=current_user`);
     const session = sessionSchema.parse(rawSession), at = Date.parse(session.at);
     if (!Number.isFinite(at)) throw new Error('oracle_preflight_database_clock_invalid');
-    report.checks.database = { ...unknown('approved_privilege_profile_unavailable'),
-      hash: hash({ principal: session.principal, privileges: session.privileges }) };
+    const privilegeHash = hash({ principal: session.principal, privileges: session.privileges });
+    // Only an exact match with the approved least-privilege profile is positive; anything else stays unknown.
+    report.checks.database = oracleDbPrivilegeMismatches(role, session.principal, session.privileges).length
+      ? { ...unknown('approved_privilege_profile_unavailable'), hash: privilegeHash }
+      : { status: 'verified', reason: 'approved_privilege_profile_matches', hash: privilegeHash };
     if (session.unsafe || session.readOnly || session.replica || session.principal !== session.sessionPrincipal) {
       report.checks.database = { status: 'rejected', reason: 'database_authority_rejected' };
       report.workload.reason = 'database_rejected'; return report;
@@ -124,8 +111,10 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       report.workload.reason = 'candidate_unknown'; return report;
     }
     const names = batchJobsForRole(role, 'versioned');
+    // A JS array inside sql`` expands to a row ($1,$2), which ANY() rejects (42809) on real PostgreSQL.
+    const observationKeys = [batchCanaryAnchorKey(role,instance),...names.map(name => `batch-result:${instance}:${name}`)];
     const observations = await tx.execute<{ key: string; value: unknown }>(sql`SELECT key,value FROM operations_observations
-      WHERE key=ANY(${[batchCanaryAnchorKey(role,instance),...names.map(name => `batch-result:${instance}:${name}`)]}) ORDER BY key`);
+      WHERE key IN (${sql.join(observationKeys.map(key => sql`${key}`), sql`,`)}) ORDER BY key`);
     report.workload.reason = 'canary_unknown';
     const anchorKey=batchCanaryAnchorKey(role,instance), anchor=observations.find(row=>row.key===anchorKey);
     const selected=classifyBatchCandidateEvidence({candidate:{...candidate.data,role,host:'oracle-osaka-smoke'},controlEpoch:control.epoch,

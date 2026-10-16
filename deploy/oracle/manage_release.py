@@ -152,6 +152,11 @@ def _verify_release(path):
     return manifest
 
 
+def verify_installed_release(path):
+    """Read-only full catalog/hash/mode check of one installed release directory."""
+    return _verify_release(Path(path))
+
+
 def stage_release(root, path, expected_hash, expected_host, observed_host):
     validate_host(expected_host, observed_host)
     _base(root)
@@ -184,6 +189,8 @@ def stage_release(root, path, expected_hash, expected_host, observed_host):
                         target.symlink_to(row['target'])
                 (temporary / 'release.json').write_bytes(json_bytes(manifest))
                 (temporary / 'release.json').chmod(0o444)
+                # mkdtemp is private0700; the nonroot service account must traverse the published tree.
+                temporary.chmod(0o755)
                 _sync_directory(temporary)
                 os.rename(temporary, destination)
                 _sync_directory(destination.parent)
