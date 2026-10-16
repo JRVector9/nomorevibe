@@ -1,5 +1,23 @@
 # 수집·검수 2배와 세 서버 운영 — PR Implementation Plan
 
+## 추가 진행 — 2026-10-16 12:16 UTC 병렬 후속·host runtime 취합
+
+PR476(57b336b6)·PR477(db4e061d)의 최신 필수 CI는 모두 성공했고 아직 병합·배포하지 않았다. 같은 db4e061d에서 text profile 양성 호출 계약, Oracle TS preflight, 고정 DDL 구조 검증을 세 agent가 분리 구현 중이다. 수동 전체 검증은 모든 PR 개발 뒤다.
+
+Root가 기존 PR470 host DB runtime을 최신 PR477 부모와 정상 merge 준비했다. 충돌은 공유 handoff와 supervisor test mock 구성뿐이다. 최신 supervisor 원문 전체를 보존하고 원 host 테스트2를 같은 spawn mock에 연결했다. Partial EventEmitter의 TS2345를 보존한 뒤 OS process를 띄우지 않는 실제 ChildProcess fixture로만 보완했다. Supervisor 파일19 PASS, 보완 후 해당 host2 PASS/17skip, scoped TypeScript·ESLint exit0다. Production7은 Git 3-way 결과 그대로이며 최신 base의 다른2054 tracked 파일은 byteexact다. 현재 취합 미커밋/미push이며 source proof `/tmp/nomorevibe-pr470-root-latest-source-protection-20261016.json`을 따른다.
+
+현재 운영/실 provider/SSH/activation0·active owned DB0다. 실제 Oracle 가동·최소권한·host 전체 합계·모델 physical slot·DR 복제/fencing·동일품질2배는 아직 확인하지 않았다. 이번 단위 검증으로 위 운영 gate를 올리지 않는다.
+
+## 추가 진행 — 2026-10-16 11:33 UTC
+
+현재 AI1 item-native 구현·범위 검증·직접/교차 리뷰·취합을 마쳤다. Feature1cca9c07→최신476 부모57b336b6 정상 merge **db4e061de821df80de65dd413ccf970146c6faa0**, 정상push/remoteexact/clean, 초안 [PR477](https://github.com/JRVector9/nomorevibe/pull/477)(base476) 제출완료다. Source14·CI/README exact, 원563tests는 부모의 의도된 role-worker-process fixture72332fdb/search-profile fixture10cd4379만 반영했다. 비공유2065 unionexact/source충돌0이며 공유4만canonical로정리했다. Root postmerge checker가 처음 role-worker.test.ts로 경로를 추측해 거절한 실패는 실제원proof/git incoming의 role-worker-process.test.ts로수정/소스변경0 보존이다. 제출proof `/tmp/nomorevibe-pr05b6-root-{feature-commit,postmerge,push,submission}-20261016.json`.
+
+11:33UTC 실제read에서 PR476 새head57b336b6/CI38894143169, PR477 headdb4e061d/CI38894460466 모두scope·GitGuardian SUCCESS, quality/통합1·2·3 진행중이다. 전체CI성공/병합/배포 주장은 하지 않는다. 두PR status 원JSON `/tmp/nomorevibe-pr{476,477}-root-status-20261016.json`. PR476 이전CI38888262146 search1FAIL과전CI rolehealth1FAIL은 원형보존, 새변경push만수행/무변경rerun0이다.
+
+이번 단계 실제검증은 AI1 ledger6 최초PASS/runtime8distinct PASS(2RED→동일2GREEN+미실행6firstPASS), scoped정적0, root55570/71 독립raw91표97행/journal87·captured정의/ACL·연결0과정상정리다. Fullpgclass false와 원 delta/comparator실패는11:28/validation대로보존했다. PR476 search mock1hunk는 exact1PASS/26skip 및root55572독립agent=root91표103행·기존own5표7행잔류원형/정상정리다. 전체수동0/운영DB·SSH·실provider·activation0. 현재activeDB0, 다음55573미예약이다. 세agent는소유권을반환했고추가source/SQL실행0이다.
+
+남은목표/실패원형/modifiedfiles/정확다음명령은 CODEX_HANDOFF 11:33UTC를따른다. 전체미완료·운영미적용이며모든PR뒤수동전체방침은그대로다.
+
 ## 추가 진행 — 2026-10-16 11:30 UTC
 
 PR476 검색 mock 최소fix+검증문서+공유4를 정상 commit/push **57b336b64280203155ac8aa74ac319971036e8e2**했다. Exactremote/clean·PRbody exact를 확인했고 새CI38894143169는 시작/대기중이며 전체성공 미주장이다. 첫 push는 정상 완료 후 즉시 PRview가 옛head여서 assert실패했고, 이후읽기에서 새head를확인해 body만갱신했다. 재push/무변경rerun0, 원실패보존이다. Proof `/tmp/nomorevibe-pr476-root-search-profile-{commit,push}-20261016.json`.

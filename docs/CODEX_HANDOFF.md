@@ -1,5 +1,84 @@
 # 2026-10-16 파이프라인 개발 인계
 
+## 추가 진행 — 2026-10-16 12:16 UTC 병렬 후속·host runtime 취합
+
+PR476(57b336b6)·PR477(db4e061d)의 최신 필수 CI는 모두 성공했고 아직 병합·배포하지 않았다. 같은 db4e061d에서 text profile 양성 호출 계약, Oracle TS preflight, 고정 DDL 구조 검증을 세 agent가 분리 구현 중이다. 수동 전체 검증은 모든 PR 개발 뒤다.
+
+Root가 기존 PR470 host DB runtime을 최신 PR477 부모와 정상 merge 준비했다. 충돌은 공유 handoff와 supervisor test mock 구성뿐이다. 최신 supervisor 원문 전체를 보존하고 원 host 테스트2를 같은 spawn mock에 연결했다. Partial EventEmitter의 TS2345를 보존한 뒤 OS process를 띄우지 않는 실제 ChildProcess fixture로만 보완했다. Supervisor 파일19 PASS, 보완 후 해당 host2 PASS/17skip, scoped TypeScript·ESLint exit0다. Production7은 Git 3-way 결과 그대로이며 최신 base의 다른2054 tracked 파일은 byteexact다. 현재 취합 미커밋/미push이며 source proof `/tmp/nomorevibe-pr470-root-latest-source-protection-20261016.json`을 따른다.
+
+현재 운영/실 provider/SSH/activation0·active owned DB0다. 실제 Oracle 가동·최소권한·host 전체 합계·모델 physical slot·DR 복제/fencing·동일품질2배는 아직 확인하지 않았다. 이번 단위 검증으로 위 운영 gate를 올리지 않는다.
+
+수정 파일: root의 PR470 취합은 기존 production7·test5·기존 validation과 공유4만 허용한다. 원 test body/원 journal/다른 source는 보존했다. Agent A는 원 text callers test에 import1+고정mock6줄, search-job-budget test에 고정mock5줄만 경계 적응하도록 exact patch를 root가 읽고 승인했다. 모든 원 it/expect/lane/시간/leaf mock을 보존하며 별도 NEW coordinator/actual 검증은 유지한다. B NEW3 전체를 직접 읽었고 CLI 종료를 기존 end({timeout:5})로 제한할 P2 한 건을 전달했다. C는 현재 추가열과 historical context를 혼동하지 않도록 원20 relation의 고정 column declarations를 같은 temp context에 재구성한다. Historical context 누락/원46은 unknown·실패 그대로다.
+
+다음 명령: `git -C /Users/jr/Desktop/projects/nomorevibe-host-db-runtime diff db4e061de821df80de65dd413ccf970146c6faa0 --stat` 및 root source proof 확인→독립 읽기 리뷰→normal merge commit/push와 PR470 base를 최신477로 정리한다. 세 새 WT agent의 freeze report/정확 SHA를 읽고 필요 최소 fresh local DB만 별도 할당한다(다음55573 미배정). 원사용자 source/Git/push는 그대로이며 이 handoff만 동기화한다.
+
+## 최신 후속 — 2026-10-16 12:09 UTC 병렬 구현 진행
+
+세 agent는 동일 base db4e061d의 분리 WT에서 실제 구현 중이다. Root가 A API 미니계획(`/tmp/nomorevibe-pr05b7-a-implementation-api-20261016.md`), B 초기64행 계획, C 구현계획(`/tmp/nomorevibe-pr14c-c-implementation-plan-20261016.md`)을 전체 읽고 각 좁은 소유권을 승인했다. 추가 통상 승인을 기다리지 말고 구현을 계속하도록 전달했다. B의 확정 NEW3는 `lib/runtime/oracle-preflight.ts`, `scripts/worker-oracle-preflight.ts`, `tests/oracle-runtime-preflight.test.ts`다. C NEW3는 12:00 기록 그대로이며 historical46 실패/누락 context unknown을 유지한다.
+
+Root base tree 체크포인트 `/tmp/nomorevibe-parallel-remaining-root-base-tree-20261016.json`: 실제 Git tracked2069/test568의 mode/blob을 기록했다. 새 소스 취합 때 각 명시 소유권 이외 원문 보호에 사용한다. Open PR 그래프 `/tmp/nomorevibe-root-open-pipeline-pr-graph-20261016.json`, #470 incoming 분석 `/tmp/nomorevibe-root-host-runtime-incoming-20261016.json`에 보존했다. 현재 base에 #470 실제 host pool startup wiring이 포함됐다고 주장하지 않는다. Oracle aggregate budget은 미확인이다.
+
+Agent 보고(아직 root 독립 재검증 전): A shape9/ledger protocol12/native14가 각각 실제 미구현 Assertion RED 후 동일 GREEN이며 원로그를 `/tmp/nomorevibe-pr05b7-a-*`에 보존, runtime/domain/0087 작성 중이다. B는 신규 canary ACK case1 Assertion RED와 caller ready 거절 control1 PASS를 확보하고 NEW3 구현 중이다. C는 fixed45 DDL의 native typed tree/probe를 작성 중이며 원46을 지우지 않는다. Root는 이번 후속에서 테스트를 새로 실행하지 않았다. 운영/real provider/SSH/activation0, active owned DB0/다음55573 미배정이다.
+
+다음은 각 frozen source/driver를 직접 읽고 scoped 결과를 확인한 뒤 독립 교차 리뷰, 필요 시 새 owned local DB만 할당하고 root 독립 readback/정상 정리, 별도 draft PR 취합이다. Root만 Git/CI/README/공유4를 편집한다. 전체 수동 test/build/typegen은 모든 PR 개발 뒤다. 원사용자 WT source/Git/push는 보존하고 handoff만 동기화했다.
+
+## 최신 후속 — 2026-10-16 12:00 UTC 병렬 후속 구현 시작
+
+사용자가 남은작업을 서브에이전트 병렬로 진행하라고 지시했다. Root가 실제 GitHub를 읽어 PR476(57b336b6/CI38894143169)·PR477(db4e061d/CI38894460466)의 scope/quality/통합1·2·3/check/GitGuardian 전부 SUCCESS를 확인했다(image 둘 SKIP). 원실패/무변경rerun0·미병합/미배포다. Proof `/tmp/nomorevibe-pr{476,477}-root-status-resume-20261016.json`. 원사용자WT HEADb1fb8dd/source/Git/push와untracked는보존, handoff만동기화한다. 전체수동은사용자지시대로모든PR개발뒤다.
+
+같은 base db4e061de821df80de65dd413ccf970146c6faa0에서 root가 새 clean WT3개를 만들고 기존node_modules만symlink했다. Allocation `/tmp/nomorevibe-parallel-remaining-root-allocation-20261016.json`. 세 기존agent gpt-6.1-sol/xhigh에 분리 배정했고 모두 실제구현인가(통상세부결정 추가root허가대기불필요)다.
+
+- A `/root/pr01_final_ai1`: WT `/Users/jr/Desktop/projects/nomorevibe-text-profile-native`, branch `codex/pipeline-pr05b7-text-profile-native-20261016`. PR05b7 전체 product-search-profile positive vertical의ledger/native/runtime11 production+newtest4 독점. `drizzle/0087_model_capacity_text_profile_terminal.sql`/journal 단독예약. 기존 text keyword role이며 translation으로위장0. 원wire/parser/quality/lane2/no_key/reuse/disabled·다른6route거절보존, waiting INSERT textlogicalfence·realrole/job/rawµs/finalDBwall/commit뒤native1/historicalsettle뒤원writer. 원AI1/AI2·기존tests보호. 이전A/B계획전체를승인구현계약으로사용한다. 기존 caller unit boundarymock 최소적응은exactdiff를먼저root보고. actualdriver전체root읽기전DB0, 다음55573아직미배정이다.
+- B `/root/pr01_final_ai2`: WT `/Users/jr/Desktop/projects/nomorevibe-oracle-runtime-preflight`, branch `codex/pipeline-pr11b-runtime-preflight-20261016`. 기존PR11/task3의 TS runtime preflight를 실제 batch/readiness/domain ACK근거에 연결하는 좁은 독립slice. Oracle전용script/새lib leaf/새test만독점, 공통jobs/runner/schema/capacity/CI는편집0. `/tmp/nomorevibe-pr11-task3-ts-preflight-contract-b-20261016.md`및PR11현소스대조→정확파일/API미니계획보고→TDD인가. osaka-smoke/ap-osaka-1 고정, suppliedboolean/heartbeat로ready올림0·운영실가동주장0.
+- C `/root/provider_contract_evidence`: WT `/Users/jr/Desktop/projects/nomorevibe-oracle-dr-ddl`, branch `codex/pipeline-pr14c-ddl-verification-20261016`. NEW scripts/ops/oracle-dr/{ddl_verification.py,ddl_probe.sql}, NEW tests/test_oracle_dr_ddl.py 독점, 새runbook은/tmp. 원restore5 source불변. 원46(설정1/CHECK37/partial7/trigger1) 실패보존, fixedPG17.11 native typedcontext 검증만좁게구현하고missing historicalcontext/unknownnode/binding/collation은unknown유지. 원자료목록·context와probe준비를계속진행하며진행불가면구체evidence보고. jitALTER/restore/reseed/drop/create/임의DSN·SQL0, actual verifier는root별도할당+전체SQL읽기뒤다.
+
+세agent 공통 Git/CI/README/공유4/handoff/기존validation편집0(root소유), 전체수동test/build/typegen·운영SSH/DB/실provider/activation0. 필요한scopeunit/정적·localhostnative만, meaningfulAssertionRED→동일GREEN와원실패보존, 새driver/최종patch·SHA·API·한계반환을요청했다. 현재운영변경0/activeownedDB0/retired55570·71·72재접속0이다.
+
+Root 다음: 각mini계획/변경파일응답을직접읽어충돌영역확정→코드·actualdriver직접리뷰→필요최소freshDB할당/독립readback·정상정리→독립교차리뷰→각source보존normalcommit/push/draftPR/필수CI. 정확현황은 `collaboration.list_agents`와각/tmp보고, `git -C <각WT> status --short`로확인한다. 기본DB생성/cleanup helper와원시험금지·wholecatalogfalse원형정책은11:33아래를따른다. 구현이끝나도실제Oracle운영/호스트전체예산·remoteC/원격종료·복제/fencing/RPO/RTO·최종같은품질2배/24h미완료를구분한다.
+
+## 최신 후속 — 2026-10-16 11:33 UTC
+
+현재 AI1 item-native 구현·범위 검증·직접/교차 리뷰·취합을 마쳤다. Feature1cca9c07→최신476 부모57b336b6 정상 merge **db4e061de821df80de65dd413ccf970146c6faa0**, 정상push/remoteexact/clean, 초안 [PR477](https://github.com/JRVector9/nomorevibe/pull/477)(base476) 제출완료다. Source14·CI/README exact, 원563tests는 부모의 의도된 role-worker-process fixture72332fdb/search-profile fixture10cd4379만 반영했다. 비공유2065 unionexact/source충돌0이며 공유4만canonical로정리했다. Root postmerge checker가 처음 role-worker.test.ts로 경로를 추측해 거절한 실패는 실제원proof/git incoming의 role-worker-process.test.ts로수정/소스변경0 보존이다. 제출proof `/tmp/nomorevibe-pr05b6-root-{feature-commit,postmerge,push,submission}-20261016.json`.
+
+11:33UTC 실제read에서 PR476 새head57b336b6/CI38894143169, PR477 headdb4e061d/CI38894460466 모두scope·GitGuardian SUCCESS, quality/통합1·2·3 진행중이다. 전체CI성공/병합/배포 주장은 하지 않는다. 두PR status 원JSON `/tmp/nomorevibe-pr{476,477}-root-status-20261016.json`. PR476 이전CI38888262146 search1FAIL과전CI rolehealth1FAIL은 원형보존, 새변경push만수행/무변경rerun0이다.
+
+이번 단계 실제검증은 AI1 ledger6 최초PASS/runtime8distinct PASS(2RED→동일2GREEN+미실행6firstPASS), scoped정적0, root55570/71 독립raw91표97행/journal87·captured정의/ACL·연결0과정상정리다. Fullpgclass false와 원 delta/comparator실패는11:28/validation대로보존했다. PR476 search mock1hunk는 exact1PASS/26skip 및root55572독립agent=root91표103행·기존own5표7행잔류원형/정상정리다. 전체수동0/운영DB·SSH·실provider·activation0. 현재activeDB0, 다음55573미예약이다. 세agent는소유권을반환했고추가source/SQL실행0이다.
+
+현재목표는여전히 PR00–17 전체개발/같은품질2배/Oracle osaka-smoke 상시번역·등록후관리·최종DR다. 완료한 slice를 전체완료로올리지않는다. 첫후속 text positive는 실제번역잡이아닌 기존text role의 product-search-profile keyword생성 한경로다. 읽기계획 `/tmp/nomorevibe-pr05b7-b-text-positive-plan-20261016.md`와 A검토 `/tmp/nomorevibe-pr05b7-a-text-positive-implementation-review-20261016.md`를root전체읽었다. waiting INSERT부터 text logicalfence, realrole/job authority/rawµs profile identity, 원wire/parser/lane2/writer보존·최종DBwall이필요하다. 계획은구현/PASS가아니고 새WT·0087·55573예약0이다. 다른6caller의batch member/sequence/web-owner gap과실번역3role·Oracle·remotehardC/hostaggregate/strictrestore46/최종실30분2배·모든PR뒤수동전체·24h관측은여전히남는다.
+
+변경파일(이번AI1 feature21): 아래source14 및 `.github/workflows/ci.yml`, `README.md`, `docs/operations/2026-10-16-pipeline-pr05b6-ai1-item-native-validation.md`, 공용문서4다. PR476후속은 `tests/integration/search-profile.test.ts`+기존AI2validation+공용4 총6files였다.
+
+- `drizzle/0086_model_capacity_ai1_item_terminal.sql`
+- `drizzle/meta/_journal.json`
+- `lib/crawl/agent-review-gateway.ts`
+- `lib/crawl/agent-review-item-lifecycle.ts`
+- `lib/crawl/agent-review-model-capacity.ts`
+- `lib/crawl/agent-review-repository.ts`
+- `lib/db/operations-schema.ts`
+- `lib/llm/capacity-repository.ts`
+- `lib/llm/capacity.ts`
+- `tests/agent-review-gateway-capacity.test.ts`
+- `tests/agent-review-item-model-capacity.test.ts`
+- `tests/integration/agent-review-item-model-capacity.test.ts`
+- `tests/integration/model-capacity-ai1-item-terminal.test.ts`
+- `tests/model-capacity-ai1-item-terminal.test.ts`
+
+실행명령/결과: actual argv와원로그는 A최종보고/remaining6-command JSON, C first6-log/exit에보존했다. `node /tmp/nomorevibe-pr05b6-root-ci-verify-20261016.mjs`는 correctedfilesOnly+BaseSequencer207=4+68/68/67 정확1회/source14/원563exact를actualexit0으로확인했으며본문·SQL0이다. Root14guard→`node /tmp/nomorevibe-pr05b6-root-runtime-db-readback-20261016.mjs root-final` actual0→savedJSON독립비교(physicalfalse 원형)→`python3 /tmp/nomorevibe-owned-db-cleanup-20261016.py /tmp/nomorevibe-pr05b6-ai1-runtime-a-db-owned-20261016.json pr05b6-ai1-runtime-root` 정상exit0로55571을정리했다. RetiredDB 재접속0/테스트반복0.
+
+실패접근: root optional Vitest --json 뒤 testpath가 출력파일로해석되어4files덮임은정확복원/원JSON·실패guard보존/currentSHAexact로닫혔다. 원시험본문/SQL실행0이며옛6exit0을목록성공에사용하지않았다. Root물리catalogwholeequality 첫FAIL은pages/tuples+frozenxid delta로false를그대로보존했고정규화/복구DML0이다. 즉시postpush PRhead가옛값이라assertFAIL한뒤후속read로새head확인/bodyonly갱신했으며재push/rerun0이다. Root guessed excluded testpath 두checker실패는실제manifest/원proof로수정했으며testsource편집0이다.
+
+정확다음읽기명령:
+
+```sh
+gh pr view 476 --repo JRVector9/nomorevibe --json headRefOid,statusCheckRollup
+gh pr view 477 --repo JRVector9/nomorevibe --json headRefOid,statusCheckRollup
+gh run view 38894143169 --repo JRVector9/nomorevibe --json headSha,status,conclusion
+gh run view 38894460466 --repo JRVector9/nomorevibe --json headSha,status,conclusion
+cat /tmp/nomorevibe-pr05b7-a-text-positive-implementation-review-20261016.md
+```
+
+CI가실패하면해당원log/window를보존·원인분석후최소수정만하고무변경rerun0. 다음구현은root가AI1통합HEAD db4e061d 기반새WT/0087/배타lane API를먼저고정한뒤할당한다. 공용ledger5/native3/runtime3+새test4의영역분리계획을따르되원test덮기0, 새actualdriver전체root읽기전DB0, productionresolvernull유지다. 아직새WT생성명령은실행하지않았다. 원사용자WT HEADb1fb8dd/source/Git/push는그대로이며canonicalhandoff만동기화했다. 모든전체수동test는사용자지시대로모든PR개발이끝난뒤다.
+
 ## 최신 후속 — 2026-10-16 11:30 UTC
 
 PR476 검색 mock 최소fix+검증문서+공유4를 정상 commit/push **57b336b64280203155ac8aa74ac319971036e8e2**했다. Exactremote/clean·PRbody exact를 확인했고 새CI38894143169는 시작/대기중이며 전체성공 미주장이다. 첫 push는 정상 완료 후 즉시 PRview가 옛head여서 assert실패했고, 이후읽기에서 새head를확인해 body만갱신했다. 재push/무변경rerun0, 원실패보존이다. Proof `/tmp/nomorevibe-pr476-root-search-profile-{commit,push}-20261016.json`.
