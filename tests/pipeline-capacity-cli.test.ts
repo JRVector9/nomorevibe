@@ -72,3 +72,42 @@ it("export keeps the explicit test database guard before parsing or importing DB
   expect(child.stderr.trim()).toBe("explicit_TEST_DATABASE_URL_required");
   expect(child.stdout).toBe("");
 });
+
+it.each([false, true])("replay report diagnostics require explicit opt-in (%s) without changing the fixed failure", enabled => {
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$|TEST_DATABASE_URL$|NODE_OPTIONS$|NOMOREVIBE_REPLAY_DIAGNOSTICS$)/.test(key)));
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+    import { reportVerifiedReplayArtifact } from './lib/operations/pipeline-replay-artifact.ts';
+    import { formatCapacityCliError } from './lib/operations/pipeline-capacity-cli.ts';
+    const cpuUsage = process.cpuUsage.bind(process);
+    let cpuSamples = 0;
+    process.cpuUsage = previous => { cpuSamples++; return cpuUsage(previous); };
+    try { reportVerifiedReplayArtifact({}); }
+    catch (error) {
+      process.stdout.write(JSON.stringify({ cpuSamples, name: error.name, message: error.message }));
+      process.stderr.write(formatCapacityCliError(error) + '\\n');
+      process.exitCode = 1;
+    }
+  `], {
+    cwd: process.cwd(), encoding: "utf8", timeout: 10_000,
+    env: { ...env, NODE_ENV: "test", CI: "true", ...(enabled ? { NOMOREVIBE_REPLAY_DIAGNOSTICS: "1" } : {}) },
+  });
+  expect(child.error).toBeUndefined();
+  expect(child.status).toBe(1);
+  expect(child.signal).toBeNull();
+  expect(JSON.parse(child.stdout)).toEqual({ cpuSamples: enabled ? 2 : 0,
+    name: "Error", message: "verified_replay_artifact_required" });
+  if (!enabled) {
+    expect(child.stderr).toBe("capacity_operation_failed\n");
+    return;
+  }
+  const lines = child.stderr.trimEnd().split("\n");
+  expect(lines).toHaveLength(3);
+  expect(JSON.parse(lines[0])).toEqual({ event: "certified_replay_report_subphase", ordinal: 1,
+    phase: "report.clone", state: "begin" });
+  expect(JSON.parse(lines[1])).toEqual({ event: "certified_replay_report_subphase", ordinal: 1,
+    phase: "report.clone", state: "reject", wallMs: expect.any(Number), userMs: expect.any(Number), systemMs: expect.any(Number) });
+  for (const key of ["wallMs", "userMs", "systemMs"])
+    expect(JSON.parse(lines[1])[key]).toBeGreaterThanOrEqual(0);
+  expect(lines[2]).toBe("capacity_operation_failed");
+});

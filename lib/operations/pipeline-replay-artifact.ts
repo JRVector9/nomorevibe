@@ -8,6 +8,67 @@ import { ReplayReadinessProjectionSchema, ReplayReadinessJournalSchema, readines
 import { ReplayCombinedExecutionSchema, ReplayMixedJournalSchema, replayMixedProjectionHashes, reduceReplayMixedCoverage, validateReplayItemEvidence } from "./pipeline-replay-item-execution";
 import { classifyReplayInitialCandidates } from "./pipeline-replay-classification";
 
+type ReportDiagnosticPhase = "report.clone" | "report.classify" | "report.coverage";
+type ReportDiagnostic = { ordinal: number; phase: ReportDiagnosticPhase; wall: number; cpu: NodeJS.CpuUsage };
+let reportDiagnosticOrdinal = 0;
+let reportDiagnosticWrites = 0, reportDiagnosticAwaitingError = false,
+  reportDiagnosticErrorGeneration = 0, reportDiagnosticListening = false;
+function reportDiagnosticDetach(): void {
+  try {
+    if (reportDiagnosticListening && reportDiagnosticWrites === 0 && !reportDiagnosticAwaitingError) {
+      process.stderr.removeListener("error", reportDiagnosticSinkError);
+      reportDiagnosticListening = false;
+    }
+  } catch { /* Sink bookkeeping cannot affect replay validation. */ }
+}
+function reportDiagnosticSinkError(): void {
+  try { reportDiagnosticErrorGeneration++; reportDiagnosticAwaitingError = false; reportDiagnosticDetach(); }
+  catch { /* Preserve the original replay result or rejection. */ }
+}
+function writeReportDiagnostic(line: string): void {
+  try {
+    if (!reportDiagnosticListening) {
+      const max = process.stderr.getMaxListeners();
+      if (max > 0 && process.stderr.listenerCount("error") >= max) return;
+      process.stderr.on("error", reportDiagnosticSinkError); reportDiagnosticListening = true;
+    }
+    reportDiagnosticWrites++;
+    const generation = reportDiagnosticErrorGeneration;
+    let completed = false;
+    const complete = (error?: Error | null): void => {
+      try {
+        if (completed) return;
+        completed = true; reportDiagnosticWrites--;
+        // Writable callback errors precede its error event; retain one shared
+        // guard until that event, or use the generation if it already arrived.
+        if (error && generation === reportDiagnosticErrorGeneration) reportDiagnosticAwaitingError = true;
+        reportDiagnosticDetach();
+      } catch { /* The asynchronous callback must also be best effort. */ }
+    };
+    try { process.stderr.write(line, complete); } catch { complete(); }
+  } catch { /* Neither synchronous nor asynchronous sink errors replace replay errors. */ }
+}
+// Fixed verified-report diagnostics. CPU is process-wide; payloads and artifact
+// byte sizes are not serialized again just to measure them.
+function beginReportDiagnostic(phase: ReportDiagnosticPhase): ReportDiagnostic | undefined {
+  try {
+    if (process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS !== "1") return undefined;
+    const sample = { ordinal: ++reportDiagnosticOrdinal, phase, wall: performance.now(), cpu: process.cpuUsage() };
+    writeReportDiagnostic(JSON.stringify({ event: "certified_replay_report_subphase", ordinal: sample.ordinal, phase, state: "begin" }) + "\n");
+    return sample;
+  } catch { return undefined; }
+}
+function finishReportDiagnostic(sample: ReportDiagnostic | undefined, state: "end" | "reject",
+  counts: Record<string, number> = {}): void {
+  try {
+    if (!sample) return;
+    const cpu = process.cpuUsage(sample.cpu);
+    writeReportDiagnostic(JSON.stringify({ event: "certified_replay_report_subphase", ordinal: sample.ordinal,
+      phase: sample.phase, state, wallMs: Math.round((performance.now() - sample.wall) * 1_000) / 1_000,
+      userMs: cpu.user / 1_000, systemMs: cpu.system / 1_000, ...counts }) + "\n");
+  } catch { /* Diagnostics cannot replace the original result or rejection. */ }
+}
+
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const text = z.string().min(1).max(160).refine(value => value === value.trim());
 const integer = z.number().int().nonnegative().safe(), positive = integer.positive();
@@ -191,77 +252,102 @@ function distribution(values: number[]) {
 }
 
 function report(artifact: ReplayAnyArtifact, authenticity: "unverified" | "verified") {
-  const { run, manifest, initial } = artifact, start = time(run.startedAt), end = time(run.admissionClosedAt);
-  const projection = artifact.version === 2 ? artifact.initial.projection.domain : artifact.initial.projection;
-  const initialClassification = classifyReplayInitialCandidates(projection as ReplayReadinessProjection, manifest);
-  const reviewKinds = new Map(initialClassification.map(row => [row.candidateId, row.kind]));
-  const journal = new Map(artifact.journal.map(row => [row.seq, row]));
-  const commits = new Map(artifact.readiness.transactions.map(row => [row.txKey, row.confirmedAt]));
-  const committedAt = (row: ReplayArtifactFinal) => {
-    const txKey = journal.get(row.seq)?.txKey;
-    return txKey ? commits.get(txKey) ?? null : null;
-  };
-  const unconfirmedFinals = artifact.finals.filter(row => !committedAt(row)).length;
-  const finals = artifact.finals.filter(row => committedAt(row) && time(committedAt(row)!) > start && time(committedAt(row)!) <= end)
-    .sort((a, b) => Number(time(committedAt(a)!) - time(committedAt(b)!)) || a.seq - b.seq);
-  const candidates = new Map<number, ReplayArtifactFinal>();
-  let reReviewGenerations = 0, unclassifiedGenerations = 0;
-  for (const row of finals) {
-    if (reviewKinds.get(row.candidateId) === "reReview") { reReviewGenerations++; continue; }
-    if (reviewKinds.get(row.candidateId) !== "new") { unclassifiedGenerations++; continue; }
-    if (!candidates.has(row.candidateId)) candidates.set(row.candidateId, row);
+  let diagnostic: ReportDiagnostic | undefined;
+  try {
+    const { run, manifest, initial } = artifact, start = time(run.startedAt), end = time(run.admissionClosedAt);
+    const projection = artifact.version === 2 ? artifact.initial.projection.domain : artifact.initial.projection;
+    diagnostic = authenticity === "verified" ? beginReportDiagnostic("report.classify") : undefined;
+    const initialClassification = classifyReplayInitialCandidates(projection as ReplayReadinessProjection, manifest);
+    finishReportDiagnostic(diagnostic, "end", { candidates: initialClassification.length, universe: projection.universe.length });
+    diagnostic = undefined;
+    const reviewKinds = new Map(initialClassification.map(row => [row.candidateId, row.kind]));
+    const journal = new Map(artifact.journal.map(row => [row.seq, row]));
+    const commits = new Map(artifact.readiness.transactions.map(row => [row.txKey, row.confirmedAt]));
+    const committedAt = (row: ReplayArtifactFinal) => {
+      const txKey = journal.get(row.seq)?.txKey;
+      return txKey ? commits.get(txKey) ?? null : null;
+    };
+    const unconfirmedFinals = artifact.finals.filter(row => !committedAt(row)).length;
+    const finals = artifact.finals.filter(row => committedAt(row) && time(committedAt(row)!) > start && time(committedAt(row)!) <= end)
+      .sort((a, b) => Number(time(committedAt(a)!) - time(committedAt(b)!)) || a.seq - b.seq);
+    const candidates = new Map<number, ReplayArtifactFinal>();
+    let reReviewGenerations = 0, unclassifiedGenerations = 0;
+    for (const row of finals) {
+      if (reviewKinds.get(row.candidateId) === "reReview") { reReviewGenerations++; continue; }
+      if (reviewKinds.get(row.candidateId) !== "new") { unclassifiedGenerations++; continue; }
+      if (!candidates.has(row.candidateId)) candidates.set(row.candidateId, row);
+    }
+    const completed = artifact.calls.filter(row => row.state === "settled");
+    const usageKnown = completed.every(row => row.inputTokens !== null && row.outputTokens !== null);
+    const sum = (values: number[]) => { const total = values.reduce((a, b) => a + b, 0);
+      if (!Number.isSafeInteger(total)) throw new Error("replay_artifact_usage_overflow"); return total; };
+    const chargedTokens = sum(artifact.calls.map(row => row.tokenUpperBound));
+    const inputTokens = usageKnown ? sum(completed.map(row => row.inputTokens!)) : null;
+    const outputTokens = usageKnown ? sum(completed.map(row => row.outputTokens!)) : null;
+    const totalTokens = inputTokens === null || outputTokens === null ? null : sum([inputTokens, outputTokens]);
+    const classificationKnown = completed.every(row => row.resultOk === true || row.resultOk === false
+      && row.failureClass !== null && row.failureClass !== "unknown");
+    const technical = completed.filter(row => row.resultOk === false && row.failureClass === "technical").length;
+    const cancelled = completed.filter(row => row.resultOk === false && ["cancelled", "deferred"].includes(row.failureClass ?? "")).length;
+    const judged = new Map(finals.map(row => [key(row), row.decision]));
+    let evaluated = 0, wrongApprovals = 0, wrongRejections = 0;
+    for (const label of initial.quality?.labels ?? []) {
+      const decision = judged.get(key(label)); if (!decision) continue;
+      evaluated++; wrongApprovals += Number(decision === "approve" && label.expected === "reject");
+      wrongRejections += Number(decision === "reject" && label.expected === "approve");
+    }
+    const qualityComplete = Boolean(initial.quality && initial.quality.labels.length === initial.quality.cohort.length
+      && evaluated === initial.quality.cohort.length);
+    diagnostic = authenticity === "verified" ? beginReportDiagnostic("report.coverage") : undefined;
+    const readiness = artifact.version === 2 ? reduceReplayMixedCoverage(artifact.initial, artifact.readiness,
+      { from: run.startedAt, until: run.admissionClosedAt }) : reduceReplayReadinessCoverage(artifact.initial,
+      artifact.readiness, { from: run.startedAt, until: run.admissionClosedAt });
+    finishReportDiagnostic(diagnostic, "end", { packets: artifact.readiness.transactions.length,
+      events: artifact.journal.length, calls: artifact.calls.length, finals: artifact.finals.length,
+      intervals: readiness.intervals.length });
+    diagnostic = undefined;
+    const certifiedReady = new Map((readiness.readyAtByInput ?? []).map(row => [key(row), row.at]));
+    // A later readiness confirmation is an upper bound, so subtracting it would
+    // understate latency. Only readiness certified at the window start is exact.
+    const latencyEvidenceComplete = [...candidates.values()].every(row => certifiedReady.has(key(row))
+      && time(certifiedReady.get(key(row))!) <= start);
+    const latencies = latencyEvidenceComplete ? [...candidates.values()].map(row =>
+      Number(time(committedAt(row)!) - time(certifiedReady.get(key(row))!)) / 1000) : [];
+    return { runId: run.runId, evidence: "sealed_replay_ledger" as const, authenticity,
+      mode: manifest.mode, budgetEvidence: "unverified" as const, durationMs: Number(end - start) / 1000,
+      finalCandidates: candidates.size, finalGenerations: finals.length, reReviewGenerations,
+      repeatGenerations: finals.length - reReviewGenerations - unclassifiedGenerations - candidates.size,
+      unclassifiedGenerations, classificationComplete: initialClassification.every(row => row.kind !== "unknown"), initialClassification,
+      unconfirmedFinals, outsideWindowFinals: artifact.finals.length - finals.length - unconfirmedFinals,
+      finalPerHour: candidates.size / (Number(end - start) / 1000) * 3_600_000,
+      endToEndMs: distribution(latencies), latencyEvidenceComplete,
+      readiness: readiness.coverage, readinessIntervals: readiness.intervals,
+      calls: { charged: artifact.calls.length, completed: completed.length, cancelledBeforeDispatch: artifact.calls.length - completed.length,
+        failed: classificationKnown ? technical : null, cancelled: classificationKnown ? cancelled : null,
+        technicalFailureRate: classificationKnown && completed.length > cancelled ? technical / (completed.length - cancelled) : null,
+        classificationKnown, inputTokens, outputTokens },
+      recordedBudget: { chargedTokens, callsWithinLimit: artifact.calls.length <= manifest.limits.maxCalls,
+        reservedTokensWithinLimit: chargedTokens <= manifest.limits.maxTokens,
+        actualTokensWithinLimit: totalTokens === null ? null : totalTokens <= manifest.limits.maxTokens },
+      quality: { complete: qualityComplete, status: !qualityComplete ? "incomplete" as const
+        : wrongApprovals || wrongRejections ? "failed" as const : "passed" as const,
+        evaluated, expected: initial.quality?.cohort.length ?? 0, wrongApprovals, wrongRejections,
+        datasetHash: initial.quality?.datasetHash ?? null } };
+  } catch (error) {
+    finishReportDiagnostic(diagnostic, "reject");
+    throw error;
   }
-  const completed = artifact.calls.filter(row => row.state === "settled");
-  const usageKnown = completed.every(row => row.inputTokens !== null && row.outputTokens !== null);
-  const sum = (values: number[]) => { const total = values.reduce((a, b) => a + b, 0);
-    if (!Number.isSafeInteger(total)) throw new Error("replay_artifact_usage_overflow"); return total; };
-  const chargedTokens = sum(artifact.calls.map(row => row.tokenUpperBound));
-  const inputTokens = usageKnown ? sum(completed.map(row => row.inputTokens!)) : null;
-  const outputTokens = usageKnown ? sum(completed.map(row => row.outputTokens!)) : null;
-  const totalTokens = inputTokens === null || outputTokens === null ? null : sum([inputTokens, outputTokens]);
-  const classificationKnown = completed.every(row => row.resultOk === true || row.resultOk === false
-    && row.failureClass !== null && row.failureClass !== "unknown");
-  const technical = completed.filter(row => row.resultOk === false && row.failureClass === "technical").length;
-  const cancelled = completed.filter(row => row.resultOk === false && ["cancelled", "deferred"].includes(row.failureClass ?? "")).length;
-  const judged = new Map(finals.map(row => [key(row), row.decision]));
-  let evaluated = 0, wrongApprovals = 0, wrongRejections = 0;
-  for (const label of initial.quality?.labels ?? []) {
-    const decision = judged.get(key(label)); if (!decision) continue;
-    evaluated++; wrongApprovals += Number(decision === "approve" && label.expected === "reject");
-    wrongRejections += Number(decision === "reject" && label.expected === "approve");
-  }
-  const qualityComplete = Boolean(initial.quality && initial.quality.labels.length === initial.quality.cohort.length
-    && evaluated === initial.quality.cohort.length);
-  const readiness = artifact.version === 2 ? reduceReplayMixedCoverage(artifact.initial, artifact.readiness,
-    { from: run.startedAt, until: run.admissionClosedAt }) : reduceReplayReadinessCoverage(artifact.initial,
-    artifact.readiness, { from: run.startedAt, until: run.admissionClosedAt });
-  const certifiedReady = new Map((readiness.readyAtByInput ?? []).map(row => [key(row), row.at]));
-  // A later readiness confirmation is an upper bound, so subtracting it would
-  // understate latency. Only readiness certified at the window start is exact.
-  const latencyEvidenceComplete = [...candidates.values()].every(row => certifiedReady.has(key(row))
-    && time(certifiedReady.get(key(row))!) <= start);
-  const latencies = latencyEvidenceComplete ? [...candidates.values()].map(row =>
-    Number(time(committedAt(row)!) - time(certifiedReady.get(key(row))!)) / 1000) : [];
-  return { runId: run.runId, evidence: "sealed_replay_ledger" as const, authenticity,
-    mode: manifest.mode, budgetEvidence: "unverified" as const, durationMs: Number(end - start) / 1000,
-    finalCandidates: candidates.size, finalGenerations: finals.length, reReviewGenerations,
-    repeatGenerations: finals.length - reReviewGenerations - unclassifiedGenerations - candidates.size,
-    unclassifiedGenerations, classificationComplete: initialClassification.every(row => row.kind !== "unknown"), initialClassification,
-    unconfirmedFinals, outsideWindowFinals: artifact.finals.length - finals.length - unconfirmedFinals,
-    finalPerHour: candidates.size / (Number(end - start) / 1000) * 3_600_000,
-    endToEndMs: distribution(latencies), latencyEvidenceComplete,
-    readiness: readiness.coverage, readinessIntervals: readiness.intervals,
-    calls: { charged: artifact.calls.length, completed: completed.length, cancelledBeforeDispatch: artifact.calls.length - completed.length,
-      failed: classificationKnown ? technical : null, cancelled: classificationKnown ? cancelled : null,
-      technicalFailureRate: classificationKnown && completed.length > cancelled ? technical / (completed.length - cancelled) : null,
-      classificationKnown, inputTokens, outputTokens },
-    recordedBudget: { chargedTokens, callsWithinLimit: artifact.calls.length <= manifest.limits.maxCalls,
-      reservedTokensWithinLimit: chargedTokens <= manifest.limits.maxTokens,
-      actualTokensWithinLimit: totalTokens === null ? null : totalTokens <= manifest.limits.maxTokens },
-    quality: { complete: qualityComplete, status: !qualityComplete ? "incomplete" as const
-      : wrongApprovals || wrongRejections ? "failed" as const : "passed" as const,
-      evaluated, expected: initial.quality?.cohort.length ?? 0, wrongApprovals, wrongRejections,
-      datasetHash: initial.quality?.datasetHash ?? null } };
 }
 export function reportReplayArtifact(value: unknown) { return report(parseReplayArtifact(value), "unverified"); }
-export function reportVerifiedReplayArtifact(value: VerifiedReplayArtifact) { return report(replayArtifactFromVerified(value), "verified"); }
+export function reportVerifiedReplayArtifact(value: VerifiedReplayArtifact) {
+  const diagnostic = beginReportDiagnostic("report.clone");
+  let artifact: ReplayAnyArtifact;
+  try {
+    artifact = replayArtifactFromVerified(value);
+    finishReportDiagnostic(diagnostic, "end");
+  } catch (error) {
+    finishReportDiagnostic(diagnostic, "reject");
+    throw error;
+  }
+  return report(artifact, "verified");
+}

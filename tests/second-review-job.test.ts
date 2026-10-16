@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
@@ -214,4 +215,46 @@ it.each(["input_changed", "not_pending", "cancelled"])("does not count writer %s
   expect(mocks.review).toHaveBeenCalledTimes(1);
   expect(mocks.record).toHaveBeenCalledTimes(1);
   expect(ctx.log).toHaveBeenCalledWith("crawl.second_reviewed", expect.objectContaining({ reviewed: 0, failed: 0, deferred: 1 }));
+});
+
+it("returns typed model defer without recording an admission refusal as a failed vote", async () => {
+  mocks.admit.mockRejectedValue(new ModelCapacityDeferredError("draining"));
+  expect(await secondReviewCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.record).not.toHaveBeenCalled();
+  expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("settles an admitted lane after another fresh admission defers and starts no later claims", async () => {
+  const input = { snapshot: {} }, receipt = Object.freeze({ admittedVoteId: 7 });
+  let entered!: () => void, release!: () => void;
+  const dispatched = new Promise<void>(resolve => { entered = resolve; });
+  const result = new Promise<unknown>(resolve => { release = () => resolve({ ok: true,
+    outcome: { decision: "approve", confidence: .99, reason: "application" } }); });
+  mocks.pending.mockResolvedValue(Array.from({ length: 6 }, (_, index) => row({ id: index + 7 })));
+  mocks.admit.mockImplementation(async (id: number) => {
+    if (id === 7) return { kind: "admitted", row: row(), input, receipt };
+    await dispatched;
+    throw new ModelCapacityDeferredError("provider_contract_unavailable");
+  });
+  mocks.review.mockImplementation(() => { entered(); return result; });
+  const pending = secondReviewCandidates(context());
+  void pending.catch(() => {});
+  try { await dispatched; await vi.waitFor(() => expect(mocks.admit).toHaveBeenCalledTimes(4)); }
+  finally { release(); await Promise.allSettled([pending]); }
+  expect(await pending).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.admit).toHaveBeenCalledTimes(4);
+  expect(mocks.review).toHaveBeenCalledOnce();
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith({ receipt,
+    result: expect.objectContaining({ ok: true, provider: "claude-cli", model: "opus" }) });
+});
+
+it("preserves a genuine lane error ahead of model defer after all lanes settle", async () => {
+  const original = new Error("actual admission database failure");
+  mocks.pending.mockResolvedValue([row(), row({ id: 8 })]);
+  mocks.admit.mockImplementation(async (id: number) => {
+    if (id === 7) throw new ModelCapacityDeferredError("unmapped");
+    throw original;
+  });
+  await expect(secondReviewCandidates(context())).rejects.toBe(original);
+  expect(mocks.record).not.toHaveBeenCalled();
 });
