@@ -10,7 +10,7 @@ export function withDbDeadline<T>(deadlineAt: number, load: () => Promise<T>): P
   return dbDeadlineScope.run(deadline, load);
 }
 
-const ROLE_POOL_MAX = { web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
+const ROLE_POOL_MAX = { translation:3, "product-health":3, "site-evidence":3, "official-news":3, web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;

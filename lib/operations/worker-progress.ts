@@ -1,3 +1,4 @@
+import { batchJobsForRole, type BatchRole } from '@/lib/jobs/batches';
 import type { ThroughputStage } from "./throughput-model";
 import { JOB_CATALOG, lanesForRole, type JobRole } from "@/lib/jobs/catalog";
 import { isPausedJob } from "@/lib/jobs/status";
@@ -26,7 +27,7 @@ export function parseAgentProviderFailure(value: unknown): AgentProviderFailure 
 /** IPC/observation metadata contains only catalog names and finite clocks, never arbitrary job payloads. */
 export function parseRuntimeLanes(value: unknown, role: string): RuntimeLane[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 16) return null;
-  const allowed = new Set(JOB_CATALOG.filter(job => job.role === role).map(job => job.name));
+  const allowed = new Set([...batchJobsForRole(role as BatchRole,"legacy"),...batchJobsForRole(role as BatchRole,"versioned")]);
   const names = new Set<string>(), jobs = new Set<string>();
   const clock = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= Date.now() + 60_000;
   const result: RuntimeLane[] = [];
@@ -51,8 +52,8 @@ export function parseRuntimeLanes(value: unknown, role: string): RuntimeLane[] |
   return result;
 }
 
-export function laneForJob(role: JobRole, job: string): string {
-  return lanesForRole(role).find(lane => lane.includes(job))?.[0] ?? job;
+export function laneForJob(role: BatchRole, job: string): string {
+  return lanesForRole(role as JobRole).find(lane => lane.includes(job))?.[0] ?? job;
 }
 
 export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progressMs: number; jobMs: number }): string | null {

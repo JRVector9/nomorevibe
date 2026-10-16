@@ -1,4 +1,5 @@
 /** Primary/standby candidate. Only the elected process starts the existing supervisor. */
+import { BATCH_ROLES, BATCH_HOSTS, type BatchHost } from '@/lib/jobs/batches';
 import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -46,11 +47,14 @@ export function parseRoleWorkerArgs(args: string[], env: Readonly<Record<string,
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7);
   const kind = args.find(arg => arg.startsWith('--kind='))?.slice(7);
   const instanceId = serviceInstanceId(env);
-  if ((role !== 'crawler' && role !== 'reviewer' && role !== 'publisher' && role !== 'maintenance' && role !== 'text') || (kind !== 'primary' && kind !== 'standby') ||
+  const batch = env.JOB_BATCH_VERSION;
+  const host = env.PHYSICAL_HOST;
+  if (!BATCH_ROLES.includes(role as RoleCandidate['role']) || (batch !== undefined && (batch !== '1' || !BATCH_HOSTS.includes(host as BatchHost))) ||
+      (!batch && ['translation','product-health','site-evidence','official-news'].includes(role ?? '')) || (kind !== 'primary' && kind !== 'standby') ||
       args.length !== 2 || !instanceId || !env.RELEASE_TAG || env.RELEASE_TAG.length > 120) {
     throw new Error('Usage: role-worker.ts --role=crawler|reviewer|publisher|maintenance|text --kind=primary|standby; SERVICE_INSTANCE_ID and RELEASE_TAG required');
   }
-  return { role, kind, instanceId, release: env.RELEASE_TAG, bootId: randomUUID() };
+  return { ...(batch ? {batchVersion:1 as const,host:host as BatchHost} : {}), role:role as RoleCandidate['role'], kind, instanceId, release: env.RELEASE_TAG, bootId: randomUUID() };
 }
 
 export function roleCandidateObservationKey(candidate: RoleCandidate): string {
@@ -148,6 +152,7 @@ async function main() {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
       acquire: tryAcquireRole, renew: renewRole, release: releaseRole,
       checkProgress: async role => {
+        if (candidate.batchVersion === 1) return false;
         // These roles have a single lane and retain their existing specialized progress policy.
         if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
         const report = await readWorkerProgress();
@@ -166,6 +171,11 @@ async function main() {
         process.env.ROLE_LEASE_BOOT_ID = lease.bootId;
         process.env.ROLE_LEASE_RELEASE = lease.release;
         process.env.ROLE_LEASE_EPOCH = String(lease.epoch);
+        if (lease.batchVersion === 1) {
+          process.env.ROLE_LEASE_BATCH_VERSION = '1';
+          process.env.ROLE_LEASE_BATCH_EPOCH = String(lease.batchEpoch);
+          process.env.ROLE_LEASE_HOST = lease.host;
+        }
         return superviseWorker(lease.role, { signal, closeDbOnExit: false });
       },
     });

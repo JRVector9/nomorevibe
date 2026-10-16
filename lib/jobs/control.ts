@@ -2,8 +2,10 @@ import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { isJobName, JOB_CATALOG, jobsForRole, type JobRole } from "./catalog";
+import { isJobName, JOB_CATALOG } from "./catalog";
 import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
+import { batchPendingNames } from "./batch-repository";
+import { batchJobsForRole, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
@@ -53,9 +55,11 @@ export async function markWorkerSeen(names: string[]): Promise<void> {
 
 export async function markSchedulerSeen(): Promise<void> { await markWorkerSeen(["heartbeat"]); }
 
-export async function pendingJobNames(role: JobRole): Promise<string[]> {
+export async function pendingJobNames(role: BatchRole): Promise<string[]> {
+  const names = await batchPendingNames(role);
+  if (!names.length) return [];
   const rows = await db.select({ name: jobs.name }).from(jobs).where(and(
-    inArray(jobs.name, jobsForRole(role)), sql`${jobs.requestedVersion} > ${jobs.processedVersion}`,
+    inArray(jobs.name, names), sql`${jobs.requestedVersion} > ${jobs.processedVersion}`,
     or(isNull(jobs.notBefore), sql`${jobs.notBefore} <= now()`),
     or(isNull(jobs.lockedAt), sql`${jobs.lockedAt} < now() - ${STALE_LOCK_MS} * interval '1 millisecond'`),
   ));
@@ -63,9 +67,9 @@ export async function pendingJobNames(role: JobRole): Promise<string[]> {
 }
 
 /** A healthy in-flight job may take longer than the progress sample interval. */
-export async function hasActiveRoleJob(role: JobRole): Promise<boolean> {
+export async function hasActiveRoleJob(role: BatchRole): Promise<boolean> {
   const [row] = await db.select({ name: jobs.name }).from(jobs).where(and(
-    inArray(jobs.name, jobsForRole(role)),
+    inArray(jobs.name, [...new Set([...batchJobsForRole(role,"legacy"),...batchJobsForRole(role,"versioned")])]),
     sql`${jobs.leaseToken} is not null`,
     sql`${jobs.lockedAt} >= now() - ${STALE_LOCK_MS} * interval '1 millisecond'`,
   )).limit(1);

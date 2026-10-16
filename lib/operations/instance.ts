@@ -7,6 +7,7 @@ export const SERVICE_ROLES = [
   "text",
   "maintenance",
   "connect-agent",
+  "translation", "product-health", "site-evidence", "official-news",
 ] as const;
 
 export type ServiceRole = (typeof SERVICE_ROLES)[number];

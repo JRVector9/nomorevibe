@@ -561,6 +561,13 @@
       "when": 1793200000000,
       "tag": "0079_http_origin_permits",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1793500000000,
+      "tag": "0082_job_batches",
+      "breakpoints": true
     }
   ]
 }

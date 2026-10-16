@@ -1,4 +1,5 @@
 /** Read-only local health check: no DB queries, provider requests, or AI invocations. */
+import { BATCH_ROLES } from '@/lib/jobs/batches';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { DEFAULT_HEALTH_PATH, type WorkerHealth } from './worker-supervisor';
@@ -16,7 +17,7 @@ export function workerIsHealthy(value: unknown, now = Date.now(), role?: string)
 export function roleCandidateIsHealthy(candidate: unknown, worker: unknown, now = Date.now(), role?: string): boolean {
   if (!candidate || typeof candidate !== 'object') return false;
   const value = candidate as Record<string, unknown>;
-  if ((role && value.role !== role) || !['crawler', 'reviewer', 'publisher', 'maintenance', 'text'].includes(String(value.role)) ||
+  if ((role && value.role !== role) || !(BATCH_ROLES as readonly string[]).includes(String(value.role)) ||
       !['primary', 'standby'].includes(String(value.kind)) ||
       typeof value.instanceId !== 'string' || typeof value.bootId !== 'string' ||
       typeof value.pid !== 'number' || !Number.isSafeInteger(value.pid) || value.pid < 1 ||

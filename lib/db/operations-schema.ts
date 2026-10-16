@@ -211,3 +211,32 @@ export const githubCollectorApps = pgTable('github_collector_apps', {
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
 });
+
+/** Additive, disabled by default. A draining transition changes no live job/item owner. */
+export const jobBatchControl = pgTable('job_batch_control', {
+  id: integer('id').primaryKey().notNull(),
+  mode: varchar('mode', { length: 12 }).$type<'legacy' | 'draining' | 'versioned'>().notNull().default('legacy'),
+  drainingFrom: varchar('draining_from', { length: 12 }).$type<'legacy' | 'versioned'>(),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(1),
+  writerContractVersion: integer('writer_contract_version').notNull().default(0),
+  policy: jsonb('policy'), policyHash: varchar('policy_hash', { length: 64 }),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+},table=>[
+  check('job_batch_control_id_check',sql`${table.id}=1`),
+  check('job_batch_control_mode_check',sql`${table.mode} IN ('legacy','draining','versioned')`),
+  check('job_batch_control_epoch_check',sql`${table.epoch} BETWEEN 1 AND 9007199254740991`),
+  check('job_batch_control_writer_contract_version_check',sql`${table.writerContractVersion}>=0`),
+  check('job_batch_control_drain_check',sql`(${table.mode}='draining' AND ${table.drainingFrom} IS NOT NULL AND ${table.drainingFrom} IN ('legacy','versioned')) OR (${table.mode}<>'draining' AND ${table.drainingFrom} IS NULL)`),
+  check('job_batch_control_policy_check',sql`(${table.policy} IS NULL AND ${table.policyHash} IS NULL) OR (${table.policy} IS NOT NULL AND ${table.policyHash} IS NOT NULL AND ${table.policyHash} ~ '^[0-9a-f]{64}$')`),
+]);
+export const jobBatchCandidates = pgTable('job_batch_candidates', {
+  role: varchar('role', { length: 30 }).notNull(), instanceId: varchar('instance_id', { length: 48 }).notNull(),
+  host: varchar('host', { length: 24 }).notNull(), bootId: varchar('boot_id', { length: 36 }).notNull(),
+  release: varchar('release', { length: 120 }).notNull(), policyHash: varchar('policy_hash', { length: 64 }).notNull(),
+  capability: jsonb('capability'), resultEvidence: jsonb('result_evidence'),
+  observedAt: timestamp('observed_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [primaryKey({columns:[table.role,table.instanceId]}),
+  check('job_batch_candidates_role_check',sql`${table.role} IN ('crawler','reviewer','publisher','text','maintenance','translation','product-health','site-evidence','official-news')`),
+  check('job_batch_candidates_host_check',sql`${table.host} IN ('m3','mini','oracle-osaka-smoke')`),
+  check('job_batch_candidates_policy_hash_check',sql`${table.policyHash} ~ '^[0-9a-f]{64}$'`),
+]);

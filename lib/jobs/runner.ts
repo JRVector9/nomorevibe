@@ -1,13 +1,15 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { assertReplayJobAdmission } from "@/lib/operations/pipeline-replay-execution";
-import { JobLeaseLostError, requestJob, type JobLease } from "./control";
+import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "./control";
 import { STALE_LOCK_MS } from "./lease";
-import { JOB_CATALOG } from "./catalog";
+import { assertJobBatchAdmission, batchResultObservation, JobBatchBlockedError, type BatchExecutionIdentity } from "./batch-repository";
 import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 
@@ -27,12 +29,13 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
+export type JobDeferredReason = "stage_blocked" | "http_origin_permit";
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
-  | { done: false; deferred: "stage_blocked"; cursor?: never; continuation?: never };
+  | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
 export type RunResult =
   | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
-  | { status: "deferred"; reason: "stage_blocked"; durationMs: number }
+  | { status: "deferred"; reason: JobDeferredReason; durationMs: number }
   | { status: "failed"; error: string; durationMs: number };
 
 /**
@@ -63,13 +66,15 @@ export async function runJob<C>(
   if (options.signal?.aborted) return { status: "skipped", reason: "stopping" };
   const startedAt = Date.now();
   const token = randomUUID();
-  if (options.roleLease && JOB_CATALOG.find(job => job.name === name)?.role !== options.roleLease.role) {
-    throw new Error('job_role_mismatch');
-  }
+  let batchIdentity: BatchExecutionIdentity | null = null;
   let claimed: { cursor: unknown; requestedVersion: number } | undefined;
   try {
     [claimed] = await db.transaction(async tx => {
       await assertReplayJobAdmission(tx);
+      // currentReplayDb revalidates the private verified DB/scope brand. Fixed v5/v6
+      // replay profiles have an explicit legacy job-batch contract, independent of item mode.
+      // Ordinary runtime callers always acquire the batch lock in this same claim TX.
+      if (!currentReplayDb()) batchIdentity = await assertJobBatchAdmission(tx, name, options.roleLease);
       if (options.roleLease) await assertRoleLease(tx, options.roleLease);
       await tx.insert(jobs).values({ name }).onConflictDoNothing();
       return tx.update(jobs).set({
@@ -90,7 +95,7 @@ export async function runJob<C>(
       )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
     });
   } catch (error) {
-    if (error instanceof RoleLeaseLostError) return { status: 'skipped', reason: 'stopping' };
+    if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError) return { status: 'skipped', reason: 'stopping' };
     throw error;
   }
   if (!claimed) {
@@ -138,14 +143,25 @@ export async function runJob<C>(
     },
   };
   try {
-    const outcome = await handler(ctx);
+    let outcome: JobOutcome<C>;
+    try { outcome = await handler(ctx); } catch (error) {
+      if (!(error instanceof HttpOriginPermitError)) throw error;
+      outcome = { done: false, deferred: "http_origin_permit" };
+    }
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
-    if (outcome.deferred === "stage_blocked") {
+    if (outcome.deferred) {
       // No work was acknowledged. Preserve producer signals, cursor, pause and
       // historical success/error fields, including changes made during this tick.
-      const [row] = await db.update(jobs).set({ lockedAt: null, leaseToken: null })
-        .where(owned).returning({ name: jobs.name });
+      const release = async (tx: typeof db | ProductTransaction) => {
+        return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
+          .where(owned).returning({ name: jobs.name });
+      };
+      const [row] = outcome.deferred === "http_origin_permit"
+        ? await db.transaction(async tx => {
+          await assertJobLeaseAtWallTime(tx, lease, "update");
+          return release(tx);
+        }) : await release(db);
       if (!row) throw new JobLeaseLostError();
       const durationMs = Date.now() - startedAt;
       logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs });
@@ -186,9 +202,20 @@ export async function runJob<C>(
       if (!row) throw new JobLeaseLostError();
       sourceContinuation = sourceReady && row.pendingReady === true;
       const observedAt = new Date();
-      const value = { requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
+      const batchResult = batchResultObservation(batchIdentity, name, events, lease.requestedVersion);
+      let batchRecordedAt: string | undefined;
+      if (batchResult) {
+        const [clock] = await tx.execute<{at:string}>(sql`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`);
+        batchRecordedAt = clock.at;
+      }
+      const value = { ...(batchResult ? {batchResult:{...batchResult,recordedAt:batchRecordedAt}} : {}), requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
       await tx.insert(operationsObservations).values({key:`job:${name}`,value,observedAt})
         .onConflictDoUpdate({target:operationsObservations.key,set:{value,observedAt}});
+      if (batchResult) {
+        const key = `batch-result:${batchResult.instanceId}:${name}`;
+        await tx.insert(operationsObservations).values({key,value:{batchResult:{...batchResult,recordedAt:batchRecordedAt}},observedAt})
+          .onConflictDoUpdate({target:operationsObservations.key,set:{value:{batchResult:{...batchResult,recordedAt:batchRecordedAt}},observedAt}});
+      }
       // A single dependency, committed with the successful rollup tick.
       if (name === "click-rollup" && outcome.done) await requestJob("ranking-refresh", tx);
     });
