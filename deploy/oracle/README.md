@@ -53,6 +53,26 @@ The root must be an absolute caller-owned **offline** directory, never `/` or an
 
 If work and cleanup both fail, Python exceptions preserve both through `BaseExceptionGroup`. The CLI returns a fixed diagnostic and nonzero status without echoing source paths, host values or arbitrary exception text; in-process callers receive original exceptions. No service is stopped/restarted automatically after an error.
 
+The shared deployment helper also exposes explicit offline actions. These branch before Keychain, Dokploy, GitHub and SSH access:
+
+```sh
+python3 scripts/ops/deploy_shared_images.py oracle-plan \
+  --sha "$APPROVED_RELEASE_SHA" --archive "$ARCHIVE_PATH" \
+  --archive-sha256 "$APPROVED_ARCHIVE_SHA256" \
+  --expected-host "$APPROVED_HOST_RECORD" --observed-host "$RECORDED_HOST_READBACK"
+python3 scripts/ops/deploy_shared_images.py oracle-install \
+  --sha "$APPROVED_RELEASE_SHA" --archive "$ARCHIVE_PATH" \
+  --archive-sha256 "$APPROVED_ARCHIVE_SHA256" --staging-root "$OWN_OFFLINE_ROOT" \
+  --expected-host "$APPROVED_HOST_RECORD" --observed-host "$RECORDED_HOST_READBACK"
+python3 scripts/ops/deploy_shared_images.py oracle-rollback \
+  --sha "$APPROVED_OLDER_SHA" --archive "$APPROVED_OLDER_ARCHIVE_PATH" \
+  --archive-sha256 "$APPROVED_OLDER_ARCHIVE_SHA256" --staging-root "$OWN_OFFLINE_ROOT" \
+  --expected-current "$RECORDED_CURRENT_SHA" \
+  --expected-host "$APPROVED_HOST_RECORD" --observed-host "$RECORDED_HOST_READBACK"
+```
+
+`oracle-plan` accepts no staging/current arguments. `oracle-install` stages the approved archive and switches the offline current link; subsequent installs also require `--expected-current`. `oracle-rollback` always requires the exact current SHA and verifies or reconstructs the explicitly approved older target. A failed switch can leave a verified staged cache while preserving the old current link. All three report `readiness: unverified` and `activationAllowed: false`; they do not install units/env files or start a runtime.
+
 ## Unit and environment templates
 
 `render_units(cpu_quota_percent, memory_bytes, tasks)` in `manage_release.py` requires three explicit positive integer allocations; there are no measured defaults. Its raw `.slice` input contains required placeholders and is **not directly installable**. Rendering is a pure operation and does not write `/etc` or call systemd. A rendered numeric budget is configuration, not evidence of observed CPU/RSS/heartbeat or DB capacity.

@@ -1,6 +1,6 @@
 # PR11 Task1/2 — inactive offline validation
 
-This records the Python/offline foundation only. Task1's first item—root integration of PR07–10/main and final API/file ownership—is **not complete**. No Task3 TypeScript preflight or common deployment-helper change is included. All services remain inactive and the launcher unconditionally rejects with exit78.
+This records the Python/offline foundation and the shared helper's explicit offline actions. Task1's final PR07–10 API/runtime intake and Task3 TypeScript preflight are **not complete**. All services remain inactive and the launcher unconditionally rejects with exit78.
 
 ## Implemented scope
 
@@ -52,4 +52,16 @@ The archive is now copied in bounded chunks to a private anonymous snapshot whil
 
 Report `/tmp/nomorevibe-pr11-b-artifact-boundary-fix-20261016.md`, patch `/tmp/nomorevibe-pr11-b-artifact-boundary-final-20261016.patch`. Root read the full final patch/negative drivers directly. Final manager SHA `ac2324ffd8e7f74ef5933a496de070f1f2f533734ae590922f235d13719483a1`, driver SHA `75afa3353aca8c1668a7dad0694f14d7c969493e39922470456936fbde1f8932`. No remaining confirmed P1/P2 in this inactive scope. README now states Python3.11+ prerequisite; actual Oracle Python/ARM/systemd/CLI/native provenance/runtime preflight remain unverified.
 
-This remains only the offline Task1/2 foundation. Task1 final main/API intake and Task3 TypeScript/helper wiring are incomplete. No operational activation, SSH, DB, provider, or real artifact build was performed. Manual whole-project tests and comprehensive builds remain deferred until all PR development is complete.
+This remains an offline foundation. Task1 final API intake and Task3 TypeScript/runtime wiring are incomplete. No operational activation, SSH, DB, provider, or real artifact build was performed. Manual whole-project tests and comprehensive builds remain deferred until all PR development is complete.
+
+## Explicit shared-helper actions
+
+`scripts/ops/deploy_shared_images.py` now routes `oracle-plan`, `oracle-install` and `oracle-rollback` before the legacy Keychain/Dokploy/GitHub/SSH prelude. It reuses the frozen native inspect/stage/current-CAS implementation and requires approved archive/hash/SHA/host records. Mutation is restricted to a caller-owned offline root. Rollback requires the exact current SHA. Readiness remains unverified and activation false; native payload, units, env, DB and services are never started by these actions.
+
+The runnable new-integration baseline retained the Keychain prelude: one behavioral assertion failed and one normal offline A→B→A control passed (0.054s). After removing those two prelude lines from the Oracle branch, the same two bodies/assertions passed (0.046s). This baseline failure was an unfinished new integration, not an observed production incident. Final changed-range Oracle tests: **9 PASS/0.286s/exit0**; four original legacy controls: **4 PASS/0.003s/exit0**; two-file py_compile: exit0. No whole Python/Oracle/project suite or build was rerun. The first added CLI negative expected FileNotFoundError while the frozen manager raises ValueError; that fixture-only failure is preserved separately and is not another feature RED.
+
+Root read the complete source diff, added test bodies, conformance and raw logs. C independently reviewed the helper/native boundary without execution; no confirmed P1/P2 remains in this inactive scope. Legacy main parser→EOF bytes, APPS/ORDER/restore behavior and original23 test bodies are preserved. Reports: `/tmp/nomorevibe-pr11-task3-b-final-report-20261016.md`, `...task3-c-readonly-review-20261016.md`. Frozen helper SHA `dc75764682946eaeb6577dd223ac32cea832cdd8dcf8e4149932aa04e6da43aa`, test SHA `3ea17c5f4cf6ffb9ed64ad4495a5104f3a2e42a109996ced53fcfb214ca4bbdc`.
+
+Required automatic CI now explicitly runs `tests/test_oracle_runtime.py` in a separate Python process after the existing shared-helper driver. This closes its previous missing direct CI entry without changing required checks or running a manual whole suite. Its new CI result is pending; previous changed-range results are not a claim that every combined Python case has already passed.
+
+The subsequent TS plan `/tmp/nomorevibe-pr11-task3-ts-preflight-contract-b-20261016.md` reuses actual batch admission/readiness and successful domain ACK readback. Actual host/ownership, approved principal/effective grants/RLS/timeouts, initial genuine domain canary and aggregate pool enforcement remain missing. Supplied records/booleans, installation and heartbeat cannot fill those gaps.

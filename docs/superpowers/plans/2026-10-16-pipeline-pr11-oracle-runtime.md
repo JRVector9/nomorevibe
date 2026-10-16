@@ -99,8 +99,8 @@ PR08 evidence 파일/0081, PR09 health/0080, PR10 catalog/role/runner/control/00
 
 ### Task 3 — preflight와 helper의 명시 Oracle 경로
 
-- [ ] Python helper 테스트에서 Oracle 미선택 시 기존 APPS/ORDER/13앱 관련 가정·Dokploy 접근/restore 순서 불변을 확인한다. Oracle action은 macOS Keychain/Dokploy 전체 env 조회 전에 별도 분기한다.
-- [ ] 별도 Oracle `plan/install/rollback` 동작은 SHA/native archive/host manifest를 필수로 받아 관리 도구에 위임한다. `--worker-image`에 native 경로를 가장하거나 일반 `run`에 Oracle를 암묵 추가하지 않는다.
+- [x] Python helper의 Oracle 미선택 원형/APPS·ORDER/restore와 legacy4control을 확인했다. Oracle action은 Keychain/Dokploy 전체 env 조회 전에 별도 분기한다. 실제13앱 전부의 자동배포 지원을 뜻하지 않는다.
+- [x] 명시 `oracle-plan/install/rollback`은 SHA/native archive/hash/host records를 필수로 받아 기존 offline 관리 도구에 위임한다. actual신규baseline1RED+control→동일2GREEN/영향9PASS·legacy4PASS/compile0, root·C읽기리뷰완료. live 설치/활성화는 지원하지 않는다.
 - [ ] TypeScript preflight unknown/잘못된 host·release·privilege·expired canary·비참여 budget·site adapter 부재·legacy contract0에 대해 새 claim/false-ready0 테스트를 작성한 뒤 구현한다.
 - [ ] DB 필요 검증은 **root가 새 전용 DB를 배정한 뒤** 수행한다. 두 scheduler·producer pause/request 보존, 현재 role/item owner 비간섭, restricted 역할 grant·readiness fail-closed를 실제 회귀로 검증한다. 다른 555xx/운영 DB를 사용하지 않는다.
 
