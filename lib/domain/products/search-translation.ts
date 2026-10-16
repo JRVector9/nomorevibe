@@ -6,6 +6,7 @@ import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PR
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
 
 /**
@@ -108,13 +109,15 @@ export async function planSearch(texts: readonly string[]): Promise<SearchPlan> 
  * 번역을 붙이자 3위였다. 한국어 정답 질의 26개 중 나머지는 순위가 같았다. 옮긴 말은 캐시에 남아 처음 한 번만
  * 게이트웨이를 부른다(지금 1.4~1.7초).
  */
-async function translateDetectedQuery(raw: string): Promise<string | null> {
+type QueryTranslation = { kind: "translated"; text: string } | { kind: "unavailable" } | { kind: "deferred" };
+
+async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
   const sourceLocale = searchQuerySourceLocale(raw);
-  if (!sourceLocale) return null;
+  if (!sourceLocale) return { kind: "unavailable" };
   try {
     const hash = queryTranslationKey(raw);
     const cached = await cachedTranslation(hash);
-    if (cached) return cached;
+    if (cached) return { kind: "translated", text: cached };
 
     const result = sourceLocale === "ko" ? await translateQueryToEnglish(raw, TIMEOUT_MS)
       : await translateChineseQueryToEnglish(raw, sourceLocale, TIMEOUT_MS);
@@ -127,14 +130,15 @@ async function translateDetectedQuery(raw: string): Promise<string | null> {
     ));
     if (!result.ok) {
       logger.warn("search.translate_failed", { error: result.error });
-      return null;
+      return { kind: "unavailable" };
     }
     logger.info("search.translated", { keywords: result.keywords });
-    return result.keywords;
+    return { kind: "translated", text: result.keywords };
   } catch (error) {
+    if (error instanceof ModelCapacityDeferredError) return { kind: "deferred" };
     // 번역은 덤이다 — 번역 쪽이 죽어도 검색은 사용자가 친 말로 그대로 돈다
     logger.warn("search.translate_unavailable", { error });
-    return null;
+    return { kind: "unavailable" };
   }
 }
 
@@ -163,8 +167,9 @@ export async function resolveSearchQuery(query: string | undefined, options: { w
   if (!raw) return { queries: [], translated: null };
   const wait = options.waitForTranslation ?? true;
   const sourceLocale = searchQuerySourceLocale(raw);
-  const stored = !sourceLocale ? null : wait ? await translateDetectedQuery(raw) : await storedTranslation(raw);
-  const translationPending = !wait && sourceLocale !== null && stored === null;
+  const result = sourceLocale && wait ? await translateDetectedQuery(raw) : null;
+  const stored = !sourceLocale ? null : wait ? result?.kind === "translated" ? result.text : null : await storedTranslation(raw);
+  const translationPending = result?.kind === "deferred" || !wait && sourceLocale !== null && stored === null;
   // 영어로 옮기면 엉뚱한 것이 걸리는 한국식 영어는 정해 둔 영어 말로도 찾는다(translate.ts QUERY_EXPANSIONS)
   const phrases = [...new Set([...(stored ? queryTranslationPhrases(stored) : []), ...(sourceLocale === "ko" ? queryExpansions(raw) : [])])];
   const translated = phrases.length ? phrases.join(" / ") : null;

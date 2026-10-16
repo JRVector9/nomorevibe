@@ -273,11 +273,11 @@ it("cleans a claim instead of applying success received after shutdown", async (
 });
 
 
-it("does not requeue, hand off, read README or call a provider when legacy stage admission is closed", async () => {
+it("runs bounded controllers but does not read README or call a provider when legacy stage admission is closed", async () => {
   mocks.canStart.mockResolvedValue(false);
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
-  expect(mocks.requeue).not.toHaveBeenCalled();
-  expect(mocks.handOff).not.toHaveBeenCalled();
+  expect(mocks.requeue).toHaveBeenCalledExactlyOnceWith(mocks.settings, context().lease, 20);
+  expect(mocks.handOff).toHaveBeenCalledExactlyOnceWith(mocks.settings, context().lease, 20);
   expect(mocks.list).not.toHaveBeenCalled();
   expect(mocks.document).not.toHaveBeenCalled();
   expect(mocks.readme).not.toHaveBeenCalled();
@@ -334,4 +334,49 @@ it("README permit holds stop before an attempt or model dispatch", async () => {
   expect(mocks.review).not.toHaveBeenCalled();
   expect(mocks.gateway).not.toHaveBeenCalled();
   expect(mocks.saveReadme).not.toHaveBeenCalled();
+});
+
+// Admission waiting is a job request outcome, not a model failure/cancellation.
+it("defers a fresh capacity refusal without a result writer or model dispatch", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
+});
+it("stops new admission while settling an already running lane without aborting it", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  let start!: () => void, release!: (value: unknown) => void, refused!: () => void;
+  const started = new Promise<void>(resolve => { start = resolve; });
+  const pending = new Promise(resolve => { release = resolve; });
+  const refusal = new Promise<void>(resolve => { refused = resolve; });
+  let signal: AbortSignal | undefined, settled = false;
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }, { ...candidate(), id: 3 }]);
+  mocks.claim.mockImplementation(async ({ candidate: selected }) => {
+    if (selected.id === 1) return { kind: "claimed", attempt: { id: 1, attemptNumber: 1 }, receipt: receipt() };
+    await started; refused(); throw new ModelCapacityDeferredError("draining");
+  });
+  mocks.review.mockImplementation(async (_input, options) => { signal = options.signal; start(); return pending; });
+  const running = reviewCrawlCandidates(context());
+  void running.then(() => { settled = true; }, () => { settled = true; });
+  try {
+    await refusal;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(signal?.aborted).toBe(false);
+    expect(settled).toBe(false);
+  } finally {
+    release({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
+    await Promise.allSettled([running]);
+  }
+  expect(await running).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "approve" }) }));
+});
+it("preserves a genuine lane failure after settling a concurrent capacity refusal", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  const original = new Error("actual domain failure");
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }]);
+  mocks.claim.mockImplementation(async ({ candidate: selected }) => {
+    throw selected.id === 1 ? new ModelCapacityDeferredError("unmapped") : original;
+  });
+  await expect(reviewCrawlCandidates(context())).rejects.toBe(original);
 });

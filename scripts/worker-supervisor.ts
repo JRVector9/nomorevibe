@@ -5,6 +5,8 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { observeService } from '../lib/operations/observations';
+import { consumerHealthPath, supervisorHealthPath } from './consumer-health';
+export { consumerHealthPath, supervisorHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
 import type { RuntimeHeartbeat } from './worker';
 import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
@@ -21,7 +23,6 @@ export type WorkerHealth = {
   lanes?: RuntimeLane[];
   laneLimits?: Pick<SupervisorLimits, 'progressMs' | 'jobMs'>;
 };
-export const DEFAULT_HEALTH_PATH = '/tmp/nomorevibe-worker-health.json';
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
   translation:180_000, 'product-health':600_000, 'site-evidence':180_000, 'official-news':600_000,
   scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 180_000, maintenance: 600_000,
@@ -108,15 +109,24 @@ export function childExitCode(current: number, code: number | null, state: {
 }
 
 /** No internal respawn: exiting lets the container restart policy recreate the whole process tree. */
+export function supervisorCommand(role: RuntimeRole, options: { once?: boolean; consumer?: 'ai1' | 'ai2' } = {}): string[] {
+  if (options.consumer !== undefined && (!['ai1', 'ai2'].includes(options.consumer) || role !== 'reviewer')) throw new Error('invalid_item_consumer_role');
+  const command = options.consumer === 'ai1' ? ['scripts/pipeline-first-consumer.ts'] : options.consumer === 'ai2' ? ['scripts/pipeline-consumer.ts', '--stage=ai2']
+    : role === 'scheduler' ? ['scripts/scheduler.ts'] : ['scripts/worker.ts', `--role=${role}`];
+  if (options.once) command.push('--once');
+  return command;
+}
+
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
-  signal?: AbortSignal; closeDbOnExit?: boolean;
+  signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: 'ai1' | 'ai2';
 } = {}): Promise<number> {
   assertHostDbEntry(process.env, { kind: role === 'scheduler' ? 'scheduler-parent' : 'role-parent', role });
   const limits = options.limits ?? supervisorLimits(role);
-  const healthPath = options.healthPath ?? process.env.WORKER_HEALTH_PATH ?? DEFAULT_HEALTH_PATH;
-  const command = role === 'scheduler' ? ['scripts/scheduler.ts'] : ['scripts/worker.ts', `--role=${role}`];
-  if (options.once) command.push('--once');
+  const healthPath = supervisorHealthPath(options);
+  const consumerPath = options.consumer !== undefined ? consumerHealthPath() : null;
+  if (consumerPath && resolve(healthPath) !== resolve(consumerPath)) throw new Error('invalid_item_consumer_health_path');
+  const command = supervisorCommand(role, options);
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
     cwd: resolve('.'), env: hostDbChildEnvironment(process.env, role),
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
@@ -221,12 +231,14 @@ export async function superviseWorker(role: RuntimeRole, options: {
 async function main() {
   const args = process.argv.slice(2);
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7) as RuntimeRole;
+  const consumer = args.includes('--consumer=ai1') ? 'ai1' : args.includes('--consumer=ai2') ? 'ai2' : undefined;
   if (!Object.hasOwn(JOB_LIMIT_MS, role) ||
       args.filter(arg => arg.startsWith('--role=')).length !== 1 ||
-      args.some(arg => arg !== '--once' && arg !== `--role=${role}`)) {
+      args.filter(arg => arg.startsWith('--consumer=')).length > 1 || consumer && role !== 'reviewer' ||
+      args.some(arg => arg !== '--once' && arg !== `--role=${role}` && arg !== '--consumer=ai2' && arg !== '--consumer=ai1')) {
     throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--once]');
   }
-  process.exitCode = await superviseWorker(role, { once: args.includes('--once') });
+  process.exitCode = await superviseWorker(role, { once: args.includes('--once'), consumer });
 }
 if (process.argv[1] && /^worker-supervisor\.[cm]?[jt]s$/.test(basename(process.argv[1]))) {
   void main().catch(() => { console.error('worker supervisor failed; check role/environment configuration'); process.exitCode = 1; });

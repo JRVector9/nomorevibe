@@ -14,6 +14,7 @@ import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
 import { MAX_SECOND_REVIEW_FAILURES, SECOND_REVIEW_RETRY_MS, SECOND_REVIEW_TRANSIENT_ERRORS, TRANSIENT_RETRY_MS } from "./second-review";
 import type { CrawlSettings } from "./settings-schema";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 export type AdmissionStage = { key: "fetch" | "judge" | "first" | "second" | "publish"; waiting: number; oldestMinutes: number | null };
 export type DiscoveryAdmissionSnapshot = { recentNew: number; stages: AdmissionStage[]; secondWindowLimited: boolean;
@@ -31,7 +32,7 @@ export const DISCOVERY_NEW_ALLOWANCE = 100;
 const SECOND_WINDOW = 1_000;
 const SNAPSHOT_MS = 3_000;
 
-class DiscoveryAdmissionDeadlineError extends Error {
+export class DiscoveryAdmissionDeadlineError extends Error {
   constructor() { super("discovery_admission_deadline"); }
 }
 
@@ -56,14 +57,15 @@ export function discoveryAdmission(snapshot: DiscoveryAdmissionSnapshot, previou
     : throttled ? Math.max(1, DISCOVERY_NEW_ALLOWANCE - snapshot.recentNew) : Infinity };
 }
 
-/** One bounded, read-only snapshot per seed tick. Second votes are a validated lower bound, never a historical count. */
-export async function readDiscoveryAdmission(settings: CrawlSettings, now = new Date()): Promise<DiscoveryAdmissionSnapshot> {
-  const deadlineAt = Date.now() + SNAPSHOT_MS;
-  let expired = false;
-  let partial: DiscoveryAdmissionSnapshot = { recentNew: 0, stages: [], secondWindowLimited: false };
-  const checkDeadline = () => { if (expired || Date.now() >= deadlineAt) throw new DiscoveryAdmissionDeadlineError(); };
-  const incomplete = (): DiscoveryAdmissionSnapshot => ({ ...partial, stages: partial.stages.map(stage => ({ ...stage })),
-    secondWindowLimited: true, timedOut: true });
+type ReadState = { expired: boolean; partial: DiscoveryAdmissionSnapshot };
+const emptyReadState = (): ReadState => ({ expired: false, partial: { recentNew: 0, stages: [], secondWindowLimited: false } });
+const incompleteRead = (state: ReadState): DiscoveryAdmissionSnapshot => ({ ...state.partial,
+  stages: state.partial.stages.map(stage => ({ ...stage })), secondWindowLimited: true, timedOut: true });
+
+/** Plain reads and pure semantic checks only. The caller owns transaction settlement. */
+async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings, now: Date, deadlineAt: number,
+  state: ReadState): Promise<DiscoveryAdmissionSnapshot> {
+  const checkDeadline = () => { if (state.expired || Date.now() >= deadlineAt) throw new DiscoveryAdmissionDeadlineError(); };
   const at = sql`${now.toISOString()}::timestamp`;
   const available = (name: string) => sql`not exists(select 1 from ${jobs} where ${jobs.name} = ${name} and ${jobs.notBefore} > ${at})`;
   const age = (column: SQL) => sql`extract(epoch from (${at} - min(${column}))) / 60`;
@@ -77,9 +79,6 @@ export async function readDiscoveryAdmission(settings: CrawlSettings, now = new 
   const readyAt = sql`greatest(${secondReviews.createdAt}, case when ${secondReviews.errorCode} is not null then ${secondReviews.reviewedAt}
     + (case when ${inArray(secondReviews.errorCode, SECOND_REVIEW_TRANSIENT_ERRORS)} then ${TRANSIENT_RETRY_MS}
       else ${SECOND_REVIEW_RETRY_MS} end)::integer * interval '1 millisecond' end)`;
-  const operation = withDbDeadline(deadlineAt, () => db.transaction(async tx => {
-    checkDeadline();
-    await tx.execute(sql`set local statement_timeout = '3s'`);
     checkDeadline();
     // Reuse one absolute deadline. Awaited reads get only the remaining statement/lock
     // budget; SET LOCAL works with PgBouncer and preserves the session on cancellation.
@@ -99,7 +98,7 @@ export async function readDiscoveryAdmission(settings: CrawlSettings, now = new 
       sql`${crawlFrontier.discoveredAt} > ${at} - ${DISCOVERY_NEW_WINDOW_MS} * interval '1 millisecond' and ${crawlFrontier.discoveredAt} <= ${at}`,
       isNull(crawlFrontier.aliasOf), sql`${crawlFrontier.signal} not in ('review-source-refresh', 'star-auto-source-refresh', 'admin-evidence-refresh')`,
     )));
-    partial.recentNew = Number(recent?.count ?? 0);
+    state.partial.recentNew = Number(recent?.count ?? 0);
     const stages = await read(() => tx.execute<{ key: AdmissionStage["key"]; waiting: number; oldest: number | null }>(sql`
       select 'fetch' as key, count(*)::int as waiting, ${age(sql`greatest(${crawlFrontier.discoveredAt}, ${crawlFrontier.nextAttemptAt})`)} as oldest
       from ${crawlFrontier} where ${crawlFrontier.state} in ('pending', 'fetching') and ${crawlFrontier.nextAttemptAt} <= ${at}
@@ -123,7 +122,7 @@ export async function readDiscoveryAdmission(settings: CrawlSettings, now = new 
     const result: DiscoveryAdmissionSnapshot = { recentNew: Number(recent?.count ?? 0), secondWindowLimited: false,
       secondVoteWindowLimited: false, secondObservationLimited: false, secondUnvalidated: 0, secondUnvalidatedOldestMinutes: null, timedOut: false,
       stages: stages.map(row => ({ key: row.key, waiting: Number(row.waiting), oldestMinutes: row.oldest === null ? null : Math.max(0, Number(row.oldest)) })) };
-    partial = result;
+    state.partial = result;
     const second: AdmissionStage = { key: "second", waiting: 0, oldestMinutes: null };
     result.stages.push(second);
     if (!settings.secondReview.enabled) return result;
@@ -231,18 +230,35 @@ export async function readDiscoveryAdmission(settings: CrawlSettings, now = new 
     }
     checkDeadline();
     return result;
+}
+
+/** A mutable caller must await this body, then commit/roll back its own transaction; never race it. */
+export function readDiscoveryAdmissionInTransaction(tx: ProductTransaction, settings: CrawlSettings, now: Date,
+  deadlineAt: number): Promise<DiscoveryAdmissionSnapshot> {
+  return readAdmissionRows(tx, settings, now, deadlineAt, emptyReadState());
+}
+
+/** One bounded, read-only snapshot per seed tick. Preserve its existing telemetry deadline. */
+export async function readDiscoveryAdmission(settings: CrawlSettings, now = new Date()): Promise<DiscoveryAdmissionSnapshot> {
+  const deadlineAt = Date.now() + SNAPSHOT_MS;
+  const state = emptyReadState();
+  const checkDeadline = () => { if (state.expired || Date.now() >= deadlineAt) throw new DiscoveryAdmissionDeadlineError(); };
+  const operation = withDbDeadline(deadlineAt, () => db.transaction(async tx => {
+    checkDeadline();
+    await tx.execute(sql`set local statement_timeout = '3s'`);
+    checkDeadline();
+    return readAdmissionRows(tx, settings, now, deadlineAt, state);
   }, { accessMode: "read only", isolationLevel: "repeatable read" })).catch(error => {
-    if (error instanceof DiscoveryAdmissionDeadlineError || databaseReadTimedOut(error) || expired || Date.now() >= deadlineAt) return incomplete();
+    if (error instanceof DiscoveryAdmissionDeadlineError || databaseReadTimedOut(error) || state.expired || Date.now() >= deadlineAt) return incompleteRead(state);
     throw error;
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<DiscoveryAdmissionSnapshot>(resolve => {
-    timer = setTimeout(() => { expired = true; resolve(incomplete()); }, Math.max(0, deadlineAt - Date.now()));
+    timer = setTimeout(() => { state.expired = true; resolve(incompleteRead(state)); }, Math.max(0, deadlineAt - Date.now()));
     timer.unref?.();
   });
   try {
-    // Only read-only work races. A sent statement can still settle/roll back after
-    // the response, under its remaining server budget; it cannot start a later query.
+    // Only read-only work races. A sent statement still settles under the remaining server budget.
     return await Promise.race([operation, timeout]);
   } finally { clearTimeout(timer); }
 }

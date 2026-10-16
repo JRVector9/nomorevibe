@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { needsKorean, parseTranslations, textHash, translateToKorean } from "@/lib/crawl/translate";
 
+// These legacy transport units do not open a database; actual disabled SQL is covered separately.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
+
 const EN = "The URL serves a documentation site for a Ruby gem installed via `gem install archunit` (product.pageText).";
 
 describe("needsKorean — 옮길 글인가", () => {

@@ -93,8 +93,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Check AI1 native item flow against the fresh test database
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
+      - name: Check AI2 native item flow against the fresh test database
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
+      - name: Check AI2 consumer against the fresh test database
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/pipeline-consumer.test.ts
+      - name: Check AI1 consumer after the restored AI2 row baseline
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
       # Each runner owns a separate Postgres service; files within a shard stay serial.
-      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3
+      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts
 
   check:
     needs: [scope, quality, integration]

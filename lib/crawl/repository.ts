@@ -1,6 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isReviewCandidate, REVIEW_RETRIABLE_REASONS } from "./agent-review-contract";
-import { and, asc, desc, eq, inArray, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import {
@@ -30,6 +30,7 @@ import { assertFetchJob, assertFetchOwnership, fetchClaimPredicate, finishFetchO
   type FetchClaim, type FetchItemLease } from "./fetch-ownership";
 import { lockAdminEvidenceRefreshCompletion, applyAdminEvidenceRefreshCompletion } from "./evidence-refresh-completion";
 export type { FetchClaim } from "./fetch-ownership";
+import { lockSourceBufferAdmission, sourceBufferRefreshPredicate, SourceBufferReadDeferredError } from "./source-buffer";
 
 /** 크롤 파이프라인 데이터 접근 — 파이프라인 바깥에서 이 테이블들을 직접 만지지 않는다 */
 
@@ -129,7 +130,7 @@ export async function recoverAbandonedFrontier(lease: JobLease): Promise<number>
   });
 }
 
-export type FetchDequeueResult = { kind: "stage_blocked" } | { kind: "ready"; entries: FetchClaim[] };
+export type FetchDequeueResult = { kind: "stage_blocked" } | { kind: "buffer_blocked" } | { kind: "ready"; entries: FetchClaim[] };
 
 /** Compatibility for callers that consume only claims, without acknowledging a job signal. */
 export async function dequeue(limit: number, now: Date | undefined, lease: JobLease): Promise<FetchClaim[]> {
@@ -147,6 +148,7 @@ export async function dequeueWithAdmission(limit: number, now: Date | undefined,
     const guard = await lockItemStage(tx, "fetch");
     const stage = await readItemStage(tx, guard);
     if (stage.mode !== "legacy") return { kind: "stage_blocked" };
+    const buffer = await lockSourceBufferAdmission(tx);
     const locked = await tx
       .select({ id: crawlFrontier.id })
       .from(crawlFrontier)
@@ -154,17 +156,24 @@ export async function dequeueWithAdmission(limit: number, now: Date | undefined,
         and(
           inArray(crawlFrontier.state, ["pending", "fetching"]),
           lte(crawlFrontier.nextAttemptAt, at),
+          buffer?.blocked ? sourceBufferRefreshPredicate() : undefined,
         ),
       )
       .orderBy(desc(crawlFrontier.priority), asc(crawlFrontier.nextAttemptAt))
       .limit(limit)
       .for("update", { skipLocked: true });
 
-    if (locked.length === 0) return { kind: "ready", entries: [] };
+    if (locked.length === 0) {
+      if (buffer) await assertFetchJob(tx, lease);
+      return buffer?.blocked ? { kind: "buffer_blocked" } : { kind: "ready", entries: [] };
+    }
 
     const available: number[] = [];
     for (const row of locked) if (!await hasLiveFetchItem(tx, row.id)) available.push(row.id);
-    if (!available.length) return { kind: "ready", entries: [] };
+    if (!available.length) {
+      if (buffer) await assertFetchJob(tx, lease);
+      return buffer?.blocked ? { kind: "buffer_blocked" } : { kind: "ready", entries: [] };
+    }
     const claimedRows = await tx
       .update(crawlFrontier)
       .set({
@@ -183,9 +192,15 @@ export async function dequeueWithAdmission(limit: number, now: Date | undefined,
     await assertFetchJob(tx, lease);
     return { kind: "ready", entries: claimedRows.map(row => ({ ...row,
       ownership: { kind: "legacy" as const, stageEpoch: stage.epoch, job: lease } })) };
+  }).catch(async (error): Promise<FetchDequeueResult> => {
+    if (!(error instanceof SourceBufferReadDeferredError)) throw error;
+    // Only after the failed claim TX has actually rolled back. This authenticates
+    // the blocked caller without attempting any source write in an aborted TX.
+    await db.transaction(tx => assertFetchJob(tx, lease));
+    return { kind: "buffer_blocked" };
   });
 
-  if (result.kind === "stage_blocked") return result;
+  if (result.kind !== "ready") return result;
   // RETURNING은 순서를 보장하지 않는다 — 갱신된 순서로 나올 뿐이다.
   // 무엇을 꺼낼지는 SQL이 정하고, 어떤 순서로 처리할지는 여기서 확정한다.
   result.entries.sort(
@@ -207,30 +222,39 @@ function claimed(claim: FrontierClaim) {
 
 /** Additive, intentionally not connected to the production consumer. */
 export async function claimFetchItem({ owner, ttlMs }: { owner: ItemOwner; ttlMs: number }): Promise<FetchClaim | null> {
-  const candidates = await db.select({ id: crawlFrontier.id }).from(crawlFrontier).where(and(
-    inArray(crawlFrontier.state, ["pending", "fetching"]), lte(crawlFrontier.nextAttemptAt, sql`clock_timestamp()`)))
-    .orderBy(desc(crawlFrontier.priority), asc(crawlFrontier.nextAttemptAt), asc(crawlFrontier.id)).limit(100);
-  for (const candidate of candidates) {
+  const visited: number[] = [];
+  for (let turn = 0; turn < 100; turn++) {
     const result = await db.transaction(async tx => {
       const guard = await lockItemStage(tx, "fetch");
       const stage = await readItemStage(tx, guard);
-      if (stage.mode !== "items" || stage.writerContractVersion < 1) return null;
-      const [row] = await tx.select().from(crawlFrontier).where(and(eq(crawlFrontier.id, candidate.id),
-        inArray(crawlFrontier.state, ["pending", "fetching"]), lte(crawlFrontier.nextAttemptAt, sql`clock_timestamp()`)))
-        .for("update", { skipLocked: true });
-      if (!row) return null;
+      if (stage.mode !== "items" || stage.writerContractVersion < 1) return { id: null, claim: null };
+      const buffer = await lockSourceBufferAdmission(tx);
+      // Filter before LIMIT, so blocked new discoveries cannot hide existing refresh work.
+      const [row] = await tx.select().from(crawlFrontier).where(and(
+        inArray(crawlFrontier.state, ["pending", "fetching"]), lte(crawlFrontier.nextAttemptAt, sql`clock_timestamp()`),
+        visited.length ? notInArray(crawlFrontier.id, visited) : undefined,
+        buffer?.blocked ? sourceBufferRefreshPredicate() : undefined))
+        .orderBy(desc(crawlFrontier.priority), asc(crawlFrontier.nextAttemptAt), asc(crawlFrontier.id))
+        .limit(1).for("update", { skipLocked: true });
+      if (!row) return { id: null, claim: null };
       const [clock] = await tx.execute<{ next: string }>(sql`SELECT to_char(date_trunc('milliseconds', clock_timestamp() AT TIME ZONE 'UTC') + interval '10 minutes',
         'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS next`);
       const binding: FetchItemBinding = { stage: "fetch", frontierId: row.id, repo: row.repo,
         claim: { attempts: row.attempts + 1, nextAttemptAt: clock.next } };
       const lease = await claimItemLease(tx, guard, binding, owner, ttlMs);
-      if (!lease) return null;
+      if (!lease) return { id: row.id, claim: null };
       const [claimedRow] = await tx.update(crawlFrontier).set({ state: "fetching", attempts: binding.claim.attempts,
         nextAttemptAt: new Date(binding.claim.nextAttemptAt), updatedAt: sql`clock_timestamp()` })
         .where(eq(crawlFrontier.id, row.id)).returning();
-      return { ...claimedRow, ownership: { kind: "item" as const, lease: lease as FetchItemLease } };
+      return { id: row.id, claim: { ...claimedRow, ownership: { kind: "item" as const, lease: lease as FetchItemLease } } };
+    }).catch(error => {
+      if (error instanceof SourceBufferReadDeferredError) return { id: null, claim: null };
+      throw error;
     });
-    if (result) return result;
+    if (result.claim) return result.claim;
+    if (result.id === null) break;
+    // A failed logical slot ends its short TX before trying another domain row.
+    visited.push(result.id);
   }
   return null;
 }

@@ -6,6 +6,7 @@ import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, 
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { assertReviewFixtureSettings } from "../review-fixture-transport";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 /**
  * 한 틱에 함께 부르는 수와 틱의 길이.
@@ -35,27 +36,35 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Second review requires a valid worker job lease");
-  if (!await canStartLegacySecondReview(lease)) {
-    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
-    return { done: false, deferred: "stage_blocked" };
-  }
   const enqueued = await enqueueSecondReviews(settings, undefined, lease);
   const closed = await closeSettledSecondReviews(undefined, lease);
   const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
   await retryFailedSecondReviews(undefined, lease);
+  if (!await canStartLegacySecondReview(lease)) {
+    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
+    return { done: false, deferred: "stage_blocked" };
+  }
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let reviewed = 0, failed = 0, deferred = 0;
   const visited = new Set<number>();
-  let stopped = false, stageBlocked = false;
+  let stopped = false, stageBlocked = false, modelDeferred = false;
 
   const settled = await Promise.allSettled(Array.from({ length: CONCURRENT }, async () => {
     try {
       for (let hint = queue.shift(); hint; hint = queue.shift()) {
-        if (stopped || stageBlocked || ctx.signal?.aborted || visited.has(hint.id)) continue;
+        if (stopped || stageBlocked || modelDeferred || ctx.signal?.aborted || visited.has(hint.id)) continue;
         if (!ctx.hasBudget()) { deferred++; continue; }
         visited.add(hint.id);
-        const admission = await admitLegacySecondReview(hint.id, lease);
+        let admission: Awaited<ReturnType<typeof admitLegacySecondReview>>;
+        try { admission = await admitLegacySecondReview(hint.id, lease); }
+        catch (error) {
+          if (!(error instanceof ModelCapacityDeferredError)) throw error;
+          modelDeferred = true;
+          deferred++;
+          ctx.log("crawl.second_review_deferred", { reason: error.reason });
+          continue;
+        }
         if (admission.kind === "skipped") {
           if (admission.reason === "stage_inactive") stageBlocked = true;
           deferred++;
@@ -114,6 +123,7 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   // A budget-exhausted lane may not have reached row admission. This is a stage
   // observation, not a durable barrier between preflight and external dispatch.
   if (stageBlocked || !await canStartLegacySecondReview(lease)) return { done: false, deferred: "stage_blocked" };
+  if (modelDeferred) return { done: false, deferred: "model_capacity" };
   if (reviewed && !failed && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await pendingSecondReviews(1);
     if (ready.some(row => !visited.has(row.id))) return { done: false, continuation: "ready" };

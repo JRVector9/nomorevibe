@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import type { CrawlDocument } from "@/lib/db/schema";
 
 /**
@@ -161,6 +162,7 @@ export async function writeTagline(evidence: TaglineEvidence, options: {
 }): Promise<TaglineResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
+  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? TAGLINE_MODEL });
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   try {

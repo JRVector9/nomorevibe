@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
 /**
  * 검색 키워드 — 모델이 제품의 글을 읽고 사람들이 칠 말을 한·영으로 적는다.
@@ -146,6 +147,7 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
 }): Promise<KeywordResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
+  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? PROFILE_MODEL });
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));

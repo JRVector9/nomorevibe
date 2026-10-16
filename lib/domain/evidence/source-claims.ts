@@ -5,7 +5,9 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { evidenceSourceClaims, evidenceSourceControl } from "@/lib/db/evidence-source-claims-schema";
 import { productEvidenceSources, productRefreshRequests } from "@/lib/db/schema";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
-import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
+import { assertJobBatchAdmission, JobBatchBlockedError, lockJobBatch } from "@/lib/jobs/batch-repository";
+import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
 import { lockCanonicalContext } from "./source-context";
 import { CanonicalSourceBindingSchema, CanonicalSourceLeaseSchema, SourceJobSchema, SourceOwnerSchema, SOURCE_LANES,
   sourceRefreshKey, canonicalSourcePolicyHash, type CanonicalSourceLease, type SourceOwner } from "./source-contract";
@@ -16,6 +18,7 @@ import { recomputeRepositoryRelationships } from "./providers/github";
 import { upsertObservedSource } from "./repository";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { fetchCapped } from "@/lib/net/fetch";
+import { requestEvidenceRefreshJobs } from "./refresh-requests";
 
 function supported() { if (currentReplayDb()) throw new Error("evidence_source_replay_unsupported"); }
 const TTL = 90_000;
@@ -26,17 +29,23 @@ function receipt(row: typeof evidenceSourceClaims.$inferSelect): CanonicalSource
     controlEpoch: row.controlEpoch, leaseUntil: row.leaseUntil, job: row.job });
 }
 async function assertOwner(tx: ProductTransaction, lease: CanonicalSourceLease, allowExpired = false) {
-  const [row] = await tx.select({ row: evidenceSourceClaims, live: sql<boolean>`${evidenceSourceClaims.leaseUntil}>clock_timestamp()` })
+  await tx.select({ id: evidenceSourceClaims.productId })
     .from(evidenceSourceClaims).where(eq(evidenceSourceClaims.productId, lease.binding.productId)).for("update");
+  const [row] = await tx.select({ row: evidenceSourceClaims, live: sql<boolean>`${evidenceSourceClaims.leaseUntil}>clock_timestamp()`,
+    leaseUntilText: sql<string>`${evidenceSourceClaims.leaseUntil}::text` })
+    .from(evidenceSourceClaims).where(eq(evidenceSourceClaims.productId, lease.binding.productId));
   if (!row || row.row.token !== lease.token || row.row.instanceId !== lease.owner.instanceId || row.row.bootId !== lease.owner.bootId
     || row.row.epoch !== lease.epoch || row.row.controlEpoch !== lease.controlEpoch || row.row.bindingHash !== lease.bindingHash
     || reviewHash(row.row.binding) !== lease.bindingHash || reviewHash(lease.binding) !== lease.bindingHash
     || reviewHash(row.row.job) !== reviewHash(lease.job) || (!allowExpired && !row.live)) throw lost();
-  return row.row;
+  return row;
 }
-async function finalAuthority(tx: ProductTransaction, lease: CanonicalSourceLease) {
+async function finalAuthority(tx: ProductTransaction, lease: CanonicalSourceLease, lockedExpiry?: string) {
   if (lease.job) await assertJobLeaseAtWallTime(tx, lease.job, "update");
-  const [row] = await tx.execute<{ live: boolean }>(sql`select lease_until>clock_timestamp() as live from evidence_source_claims where product_id=${lease.binding.productId}`);
+  // The private text is read from the authenticated row after FOR UPDATE, never from a caller Date.
+  const [row] = await tx.execute<{ live: boolean }>(lockedExpiry === undefined
+    ? sql`select lease_until>clock_timestamp() as live from evidence_source_claims where product_id=${lease.binding.productId}`
+    : sql`select ${lockedExpiry}::text::timestamptz>clock_timestamp() as live`);
   if (!row?.live) throw lost();
 }
 async function clear(tx: ProductTransaction, lease: CanonicalSourceLease, outcome: string, nextAttemptAt: Date) {
@@ -92,12 +101,20 @@ async function isDue(tx: ProductTransaction, context: NonNullable<Awaited<Return
   if (!force && !changed && !producerDue && old && !clock.claimDue) return false;
   return Boolean(force || changed || !context.stored || context.stored.sourceUrl!==context.product.url || clock.sourceDue);
 }
-export async function claimCanonicalEvidenceSource(input: { owner: SourceOwner; productId?: number; job?: JobLease }): Promise<CanonicalSourceLease | null> {
+export async function claimCanonicalEvidenceSource(input: { owner: SourceOwner; productId?: number; job?: JobLease; roleLease?: RoleLease }): Promise<CanonicalSourceLease | null> {
   supported(); const owner = SourceOwnerSchema.parse(structuredClone(input.owner));
   const productId = input.productId;
   const job = input.job ? SourceJobSchema.parse({ ...input.job }) : null;
+  const roleLease = input.roleLease ? structuredClone(input.roleLease) : undefined;
   if (productId !== undefined && (!Number.isSafeInteger(productId) || productId <= 0)) throw new Error("invalid evidence source target");
   return onPrimary(() => db.transaction(async tx => {
+    const batch = await lockJobBatch(tx);
+    const site = job?.name === "product-site-evidence-refresh";
+    if ((site && (batch.mode !== "versioned" || roleLease?.role !== "site-evidence" || roleLease.batchVersion !== 1))
+      || (!site && batch.mode !== "legacy")
+      || (roleLease && (owner.instanceId !== roleLease.instanceId || owner.bootId !== roleLease.bootId))) throw new JobBatchBlockedError();
+    await assertJobBatchAdmission(tx, job?.name ?? "product-evidence-refresh", roleLease);
+    if (roleLease) await assertRoleLease(tx, roleLease);
     const [control] = await tx.select().from(evidenceSourceControl).where(eq(evidenceSourceControl.id, 1)).for("update");
     if (!control?.enabled) return null;
     const [settingsRow] = await tx.select().from(evidenceSettings).where(eq(evidenceSettings.id, 1));
@@ -127,6 +144,8 @@ export async function claimCanonicalEvidenceSource(input: { owner: SourceOwner; 
       leaseUntil: sql`date_trunc('milliseconds',clock_timestamp())+${TTL}*interval '1 millisecond'`, updatedAt: sql`clock_timestamp()` };
     const [written] = await tx.insert(evidenceSourceClaims).values(values).onConflictDoUpdate({ target: evidenceSourceClaims.productId, set: values }).returning();
     await finalAuthority(tx, receipt(written));
+    // Admission already holds this role row; recheck the site role wall after every source/job wait.
+    if (roleLease) await assertRoleLease(tx, roleLease);
     return receipt(written);
   }));
 }
@@ -138,7 +157,9 @@ export async function renewCanonicalEvidenceSource(value: CanonicalSourceLease):
     const [row] = await tx.update(evidenceSourceClaims).set({ leaseUntil: sql`date_trunc('milliseconds',clock_timestamp())+${TTL}*interval '1 millisecond'`,
       updatedAt: sql`clock_timestamp()` }).where(and(eq(evidenceSourceClaims.productId, lease.binding.productId),
         sql`${evidenceSourceClaims.leaseUntil}>clock_timestamp()`)).returning();
-    return row ? receipt(row) : null;
+    if (!row) return null;
+    await finalAuthority(tx, lease);
+    return receipt(row);
   }));
 }
 export async function abandonCanonicalEvidenceSource(value: CanonicalSourceLease): Promise<void> {
@@ -146,29 +167,35 @@ export async function abandonCanonicalEvidenceSource(value: CanonicalSourceLease
   await onPrimary(() => db.transaction(async tx => {
     await tx.select().from(evidenceSourceControl).where(eq(evidenceSourceControl.id, 1)).for("share");
     await assertOwner(tx, lease, true);
-    if (lease.job) await assertJobLeaseAtWallTime(tx, lease.job, "update");
     await clear(tx, lease, "deferred", new Date(0));
+    if (lease.job) await assertJobLeaseAtWallTime(tx, lease.job, "update");
   }));
 }
 export type CanonicalSourceResult = { state: "recorded" | "failed" | "input_changed" | "incomplete"; factsChanged: number };
-export async function recordCanonicalEvidenceSource(value: CanonicalSourceLease, result: CanonicalCollection): Promise<CanonicalSourceResult> {
+export async function recordCanonicalEvidenceSource(value: CanonicalSourceLease, result: CanonicalCollection,
+  options: { signal?: AbortSignal } = {}): Promise<CanonicalSourceResult> {
   supported(); const lease = CanonicalSourceLeaseSchema.parse(structuredClone(value));
   result = CanonicalCollectionSchema.parse(structuredClone(result));
+  const signal = options.signal;
+  const assertNotAborted = () => { if (signal?.aborted) throw signal.reason ?? new DOMException("canonical source cancelled", "AbortError"); };
+  assertNotAborted();
   return onPrimary(() => db.transaction(async tx => {
     const [control] = await tx.select().from(evidenceSourceControl).where(eq(evidenceSourceControl.id, 1)).for("update");
     const context = await lockCanonicalContext(tx, lease.binding.productId);
-    await assertOwner(tx, lease);
+    const owned = await assertOwner(tx, lease);
     const current = context && CanonicalSourceBindingSchema.parse(context.binding);
     if (!control?.enabled || control.epoch !== lease.controlEpoch || !context || context.product.accessMode !== "website" || !["seeded", "verified"].includes(context.product.status)
       || reviewHash(current) !== lease.bindingHash) {
-      await finalAuthority(tx, lease); await clear(tx, lease, "input_changed", new Date(0));
+      await clear(tx, lease, "input_changed", new Date(0));
+      await finalAuthority(tx, lease, owned.leaseUntilText); assertNotAborted();
       return { state: "input_changed", factsChanged: 0 };
     }
     const [clock] = await tx.execute<{ at: string }>(sql`select clock_timestamp()::text as at`);
     const now = new Date(clock.at), key = sourceRefreshKey(lease.binding);
     let next = new Date(now.getTime() + context.settings.linkCheckHours * 3600000);
     if (result.state === "incomplete") {
-      await finalAuthority(tx, lease); await clear(tx, lease, "incomplete", new Date(now.getTime() + 60000));
+      await clear(tx, lease, "incomplete", new Date(now.getTime() + 60000));
+      await finalAuthority(tx, lease, owned.leaseUntilText); assertNotAborted();
       return { state: "incomplete", factsChanged: 0 };
     }
     const attempts = result.state === "failed" ? (context.stored?.sourceUrl === lease.binding.sourceUrl ? context.stored.attempts : 0) + 1 : 0;
@@ -185,15 +212,14 @@ export async function recordCanonicalEvidenceSource(value: CanonicalSourceLease,
       else progress.retryAfterByKey[key] = next.toISOString();
       await tx.update(productRefreshRequests).set({ progress, updatedAt: now }).where(eq(productRefreshRequests.productId, lease.binding.productId));
     }
-    if (lease.job) await assertJobLeaseAtWallTime(tx, lease.job, "update");
-    await requestJob("product-evidence-refresh", tx);
-    await finalAuthority(tx, lease);
+    await requestEvidenceRefreshJobs(tx);
     await clear(tx, lease, result.state, next);
     await tx.update(evidenceSourceControl).set({ cursor: (control.cursor + 1) % SOURCE_LANES.length }).where(eq(evidenceSourceControl.id, 1));
+    await finalAuthority(tx, lease, owned.leaseUntilText); assertNotAborted();
     return { state: result.state === "ok" ? "recorded" : "failed", factsChanged: result.state === "ok" && reviewHash(context.stored?.normalizedFacts ?? null) !== reviewHash(result.facts) ? 1 : 0 };
   }));
 }
-export async function executeCanonicalEvidenceSource(input: { owner: SourceOwner; productId?: number; job?: JobLease; signal?: AbortSignal;
+export async function executeCanonicalEvidenceSource(input: { owner: SourceOwner; productId?: number; job?: JobLease; roleLease?: RoleLease; signal?: AbortSignal;
   deadlineAt?: number; fetch?: typeof fetchCapped }): Promise<CanonicalSourceResult | { state: "idle"; factsChanged: 0 }> {
   const lease = await claimCanonicalEvidenceSource(input);
   if (!lease) return { state: "idle", factsChanged: 0 };
@@ -201,7 +227,7 @@ export async function executeCanonicalEvidenceSource(input: { owner: SourceOwner
     const stored = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, lease.binding.slug),
       eq(productEvidenceSources.kind, "documentation"), eq(productEvidenceSources.sourceKey, "canonical_site")) });
     const result = await collectCanonicalSite(lease.binding.sourceUrl, stored, input);
-    return await recordCanonicalEvidenceSource(lease, result);
+    return await recordCanonicalEvidenceSource(lease, result, { signal: input.signal });
   } catch (error) {
     try { await abandonCanonicalEvidenceSource(lease); } catch (cleanup) { throw new AggregateError([error, cleanup], "canonical source failed and cleanup rejected"); }
     throw error;

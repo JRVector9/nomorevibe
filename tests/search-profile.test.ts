@@ -2,6 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanKeywords, keywordText, parseKeywords, profileEvidence, writeKeywords } from "@/lib/domain/products/search-profile";
 import { canRetryProfileGeneration } from "@/lib/domain/products/search-profile-retry";
 
+// These legacy transport units do not open a database; actual disabled SQL is covered separately.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
+
 const product = {
   name: "Coche", url: "https://coche.test", category: "Productivity", tagline: "Shopping list", description: "Shopping list",
   searchTopics: null, searchPageText: null, searchReadme: "A local-first shopping list that syncs across devices. ".repeat(10),

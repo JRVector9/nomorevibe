@@ -2,7 +2,8 @@
 import { BATCH_ROLES } from '@/lib/jobs/batches';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { DEFAULT_HEALTH_PATH, type WorkerHealth } from './worker-supervisor';
+import { consumerHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
+import type { WorkerHealth } from './worker-supervisor';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 
 export function workerIsHealthy(value: unknown, now = Date.now(), role?: string): boolean {
@@ -30,9 +31,14 @@ export function roleCandidateIsHealthy(candidate: unknown, worker: unknown, now 
 }
 if (process.argv[1] && /^worker-healthcheck\.[cm]?[jt]s$/.test(basename(process.argv[1]))) {
   try {
+    const consumerPath = consumerHealthPath();
     const rolePath = process.env.ROLE_HEALTH_PATH ?? DEFAULT_ROLE_HEALTH_PATH;
     const workerPath = process.env.WORKER_HEALTH_PATH ?? DEFAULT_HEALTH_PATH;
-    if (existsSync(rolePath)) {
+    if (consumerPath !== null) {
+      const value: unknown = JSON.parse(readFileSync(consumerPath, 'utf8'));
+      process.exitCode = (process.env.WORKER_ROLE === undefined || process.env.WORKER_ROLE === 'reviewer') &&
+        workerIsHealthy(value, Date.now(), 'reviewer') ? 0 : 1;
+    } else if (existsSync(rolePath)) {
       const candidate: unknown = JSON.parse(readFileSync(rolePath, 'utf8'));
       let worker: unknown = null;
       if (existsSync(workerPath)) worker = JSON.parse(readFileSync(workerPath, 'utf8'));
