@@ -1,0 +1,90 @@
+import { z } from 'zod';
+
+const hosts = ['m3', 'mini', 'oracle-osaka-smoke'] as const;
+const roles = ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', 'translation', 'product-health', 'site-evidence', 'official-news'] as const;
+const count = z.number().int().min(0).max(2);
+export const HostDbBudgetSchema = z.strictObject({
+  version: z.literal(1), host: z.enum(hosts), release: z.string().min(1).max(120),
+  roles: z.array(z.enum(roles)).max(roles.length).refine(value => new Set(value).size === value.length),
+  schedulerReplicas: count, webReplicas: count, webReadReplica: z.boolean(),
+  monitor: z.boolean(), connectAgent: z.boolean(),
+  preflightProcesses: z.number().int().min(0).max(1), migrationProcesses: z.number().int().min(0).max(1),
+  rolloutCopies: z.union([z.literal(1), z.literal(2)]),
+}).refine(value => !value.webReadReplica || value.webReplicas > 0);
+export type HostDbBudget = z.infer<typeof HostDbBudgetSchema>;
+type WorkerRole = typeof roles[number];
+type ProcessKind = 'role-parent' | 'worker' | 'scheduler-parent' | 'scheduler-worker' | 'web' | 'monitor' | 'connect-agent' | 'preflight' | 'migration';
+export type HostDbProcessBudget = { kind: ProcessKind; role: string; count: number; primaryMax: number; readMax: number };
+const identity = { host: z.enum(hosts), release: z.string().min(1).max(120), replica: z.number().int().min(1).max(2), copy: z.union([z.literal(1), z.literal(2)]) };
+const ProcessSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ ...identity, kind: z.literal('role-parent'), role: z.enum(roles) }),
+  z.strictObject({ ...identity, kind: z.literal('worker'), role: z.enum(roles) }),
+  z.strictObject({ ...identity, kind: z.literal('scheduler-parent'), role: z.literal('scheduler') }),
+  z.strictObject({ ...identity, kind: z.literal('scheduler-worker'), role: z.literal('scheduler') }),
+  z.strictObject({ ...identity, kind: z.literal('web'), role: z.literal('web') }),
+  z.strictObject({ ...identity, kind: z.literal('monitor'), role: z.literal('monitor') }),
+  z.strictObject({ ...identity, kind: z.literal('connect-agent'), role: z.literal('connect-agent') }),
+  z.strictObject({ ...identity, kind: z.literal('preflight'), role: z.literal('preflight') }),
+  z.strictObject({ ...identity, kind: z.literal('migration'), role: z.literal('migration') }),
+]);
+const OptionsSchema = z.discriminatedUnion('mode', [
+  z.strictObject({ mode: z.literal('disabled') }),
+  z.strictObject({ mode: z.literal('enabled'), policy: HostDbBudgetSchema, process: ProcessSchema,
+    overrides: z.strictObject({ max: z.number().int().positive().optional(), readMax: z.number().int().positive().optional() }).optional() }),
+]);
+const unverified = { enforcement: 'unknown', ready: false, activationAllowed: false } as const;
+const workerMax: Record<WorkerRole, number> = {
+  crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3,
+  translation: 3, 'product-health': 3, 'site-evidence': 3, 'official-news': 3,
+};
+
+function processBudgets(policy: HostDbBudget): HostDbProcessBudget[] {
+  const processes: HostDbProcessBudget[] = [];
+  const add = (kind: ProcessKind, role: string, count: number, primaryMax: number, readMax = 0) => {
+    if (count > 0) processes.push({ kind, role, count, primaryMax, readMax });
+  };
+  for (const role of roles.filter(role => policy.roles.includes(role))) {
+    // Supervisor/observations/role heartbeat run in this same parent process.
+    add('role-parent', role, policy.rolloutCopies, 1);
+    add('worker', role, policy.rolloutCopies, workerMax[role]);
+  }
+  const copies = policy.rolloutCopies;
+  add('scheduler-parent', 'scheduler', policy.schedulerReplicas * copies, 1);
+  add('scheduler-worker', 'scheduler', policy.schedulerReplicas * copies, 2);
+  add('web', 'web', policy.webReplicas * copies, 8, policy.webReadReplica ? 4 : 0);
+  add('monitor', 'monitor', Number(policy.monitor) * copies, 1);
+  add('connect-agent', 'connect-agent', Number(policy.connectAgent) * copies, 1);
+  // CLI counts already describe their declared simultaneous overlap.
+  add('preflight', 'preflight', policy.preflightProcesses, 1);
+  add('migration', 'migration', policy.migrationProcesses, 1);
+  return processes;
+}
+
+/** Pure declared client catalog. It neither opens a pool nor attests a physical host. */
+export function hostDbBudgetCatalog(value: unknown) {
+  const policy = HostDbBudgetSchema.parse(value);
+  const processes = processBudgets(policy);
+  const primaryClients = processes.reduce((total, row) => total + row.count * row.primaryMax, 0);
+  const replicaClients = processes.reduce((total, row) => total + row.count * row.readMax, 0);
+  return { host: policy.host, release: policy.release, processes, primaryClients, replicaClients, totalClients: primaryClients + replicaClients, ...unverified };
+}
+
+/** Disabled preserves the exact caller object; this module has no runtime importer yet. */
+export function resolveHostDbPoolConfig<T extends { role: string; max: number }>(original: T, input: unknown = { mode: 'disabled' }): {
+  config: Omit<T, 'max'> & { max: number }; readMax: number | undefined;
+  enforcement: 'unknown'; ready: false; activationAllowed: false;
+} {
+  const options = OptionsSchema.parse(input);
+  if (options.mode === 'disabled') return { config: original, readMax: undefined, ...unverified };
+  const { policy, process, overrides } = options;
+  const row = processBudgets(policy).find(row => row.role === process.role && row.kind === process.kind);
+  const copies = process.kind === 'preflight' || process.kind === 'migration' ? 1 : policy.rolloutCopies;
+  if (process.host !== policy.host || process.release !== policy.release || original.role !== process.role ||
+      !row || process.copy > copies || process.replica > row.count / copies) {
+    throw new Error('host_db_process_not_declared');
+  }
+  const max = overrides?.max ?? row.primaryMax;
+  const readMax = overrides?.readMax ?? row.readMax;
+  if (max > row.primaryMax || readMax > row.readMax) throw new Error('host_db_pool_quota_exceeded');
+  return { config: { ...original, max }, readMax, ...unverified };
+}
