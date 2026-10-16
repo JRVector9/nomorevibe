@@ -61,7 +61,7 @@ it("restores the owned schema, role, identity file and PUBLIC ACLs when beforePr
   expect(identity).toBeUndefined();
 });
 
-it("restores bootstrap resources after an actual CREATE TRIGGER lock timeout", async () => {
+it("restores bootstrap resources after an actual profile target lock timeout", async () => {
   const baseline = await databaseState();
   const blocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
   let unlock!: () => void, locked!: () => void, blockerPid: number | undefined;
@@ -84,7 +84,7 @@ it("restores bootstrap resources after an actual CREATE TRIGGER lock timeout", a
     const deadline = Date.now() + 3_000;
     while (!observed && !error && Date.now() < deadline) {
       const [wait] = await admin`SELECT EXISTS (SELECT 1 FROM pg_stat_activity
-        WHERE query LIKE 'CREATE TRIGGER replay_handler_change%ON public.crawl_candidates%'
+        WHERE query LIKE 'LOCK TABLE %"public"."crawl_candidates"% IN SHARE ROW EXCLUSIVE MODE'
           AND ${blockerPid!} = ANY(pg_blocking_pids(pid)) AND wait_event_type = 'Lock') AS observed`;
       observed = wait.observed;
       if (!observed) await new Promise(resolve => setTimeout(resolve, 10));
@@ -92,8 +92,8 @@ it("restores bootstrap resources after an actual CREATE TRIGGER lock timeout", a
     expect(observed).toBe(true);
     await setup;
     expect(error).toMatchObject({ code: "55P03" });
-    expect((error as postgres.PostgresError).query).toContain("CREATE TRIGGER replay_handler_change");
-    expect((error as postgres.PostgresError).query).toContain("public.crawl_candidates");
+    expect((error as postgres.PostgresError).query).toMatch(/^LOCK TABLE .+ IN SHARE ROW EXCLUSIVE MODE$/);
+    expect((error as postgres.PostgresError).query).toContain('"public"."crawl_candidates"');
     expect(await databaseState()).toEqual(baseline);
     await expect(access(bootstrap!.identityPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(dirname(bootstrap!.identityPath))).rejects.toMatchObject({ code: "ENOENT" });
