@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
 import { and, eq } from "drizzle-orm";
-import { productEvidenceSources, productLinks } from "@/lib/db/schema";
-import { withProductGeneration } from "@/lib/domain/products/generation";
+import { productEvidenceSources, productLinks, products } from "@/lib/db/schema";
+import { lockProductGeneration, type ProductTransaction, withProductGeneration } from "@/lib/domain/products/generation";
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import {
   githubRequest,
@@ -489,13 +489,17 @@ function repositoryLinksCanonicalSite(
 
 /** A site-only refresh can update the relationship without re-fetching a fresh repository. */
 export async function recomputeRepositoryRelationships(slug: string, productId: number, lease?: JobLease,
-  options: Pick<RefreshDependencies, "hasBudget" | "deadlineAt" | "signal"> = {}): Promise<void> {
+  options: Pick<RefreshDependencies, "hasBudget" | "deadlineAt" | "signal"> & { transaction?: ProductTransaction } = {}): Promise<void> {
   const hasBudget = () => (options.hasBudget?.() ?? true) && !options.signal?.aborted && Date.now() < (options.deadlineAt ?? Infinity);
   if (!hasBudget()) return;
-  const identity = await findProductEvidenceIdentity(slug);
+  const executor = options.transaction ?? db;
+  if (options.transaction && !(await lockProductGeneration(options.transaction, productId, slug))) return;
+  const identity = options.transaction
+    ? (await options.transaction.select({ id: products.id, url: products.url }).from(products).where(eq(products.id, productId)))[0]
+    : await findProductEvidenceIdentity(slug);
   if (!hasBudget()) return;
   if (!identity || identity.id !== productId) return;
-  const rows = await db.select({ source: productEvidenceSources }).from(productEvidenceSources)
+  const rows = await executor.select({ source: productEvidenceSources }).from(productEvidenceSources)
     .innerJoin(productLinks, and(eq(productLinks.slug, productEvidenceSources.slug), eq(productLinks.kind, "repository"),
       eq(productLinks.normalizedKey, productEvidenceSources.sourceKey), eq(productLinks.visible, true)))
     .where(and(eq(productEvidenceSources.slug, slug), eq(productEvidenceSources.kind, "repository")));
@@ -505,8 +509,8 @@ export async function recomputeRepositoryRelationships(slug: string, productId: 
     const facts = previousGitHubRepositoryFacts(source.normalizedFacts);
     if (!facts) continue;
     const [makerDeclared, siteLinksRepository] = await Promise.all([
-      isMakerLinkDeclared({ slug, kind: "repository", normalizedKey: source.sourceKey }),
-      siteObservedRepository({ slug, repositoryKey: source.sourceKey }),
+      isMakerLinkDeclared({ slug, kind: "repository", normalizedKey: source.sourceKey }, executor),
+      siteObservedRepository({ slug, repositoryKey: source.sourceKey }, executor),
     ]);
     if (!hasBudget()) return;
     const readmePath = `/repos/${source.sourceKey}/readme`;
@@ -518,14 +522,16 @@ export async function recomputeRepositoryRelationships(slug: string, productId: 
     const relationship = unknownReadmeHost && !siteLinksRepository && connected(facts) ? facts.relationshipState
       : relationshipState({ makerDeclared, siteLinksRepository, repositoryLinksCanonicalSite: repositoryLinksSite, previouslyConnected: connected(facts) });
     if (facts.relationshipState === relationship) continue;
-    await withProductGeneration(slug, productId, async tx => {
+    const update = async (tx: ProductTransaction) => {
       if (!hasBudget()) return;
       const [latest] = await tx.select({ facts: productEvidenceSources.normalizedFacts }).from(productEvidenceSources).where(eq(productEvidenceSources.id, source.id));
       if (!hasBudget()) return;
       if (latest?.facts) await tx.update(productEvidenceSources).set({ normalizedFacts: { ...latest.facts, relationshipState: relationship } })
         .where(eq(productEvidenceSources.id, source.id));
-      if (lease) await assertJobLease(tx, lease);
-    });
+      if (lease && !options.transaction) await assertJobLease(tx, lease);
+    };
+    if (options.transaction) await update(options.transaction);
+    else await withProductGeneration(slug, productId, update);
   }
 }
 
