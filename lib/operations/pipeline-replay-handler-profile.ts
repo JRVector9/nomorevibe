@@ -51,7 +51,16 @@ const sequences = ["crawl_review_attempts_id_seq", "second_reviews_id_seq", "cra
 const journalTables = ["public.crawl_candidates", "public.crawl_review_attempts", "public.second_reviews", "public.crawl_frontier",
   "public.jobs", "public.operations_observations", "pipeline_replay.capacity_calls"] as const;
 const profileVersion = "handlers-v5";
-const policyHash = createHash("sha256").update(JSON.stringify({ version: profileVersion, tables, sequences, journalTables })).digest("hex");
+export type ReplayHandlerProfileVersion = "handlers-v5" | "handlers-v6-item";
+function policy(version: ReplayHandlerProfileVersion) {
+  const selected = version === "handlers-v5" ? tables : tables.map(table => table.name === "pipeline_item_leases"
+    ? { name: table.name, select: true as const, insert: true as const,
+      update: ["binding", "binding_hash", "owner_instance_id", "owner_boot_id", "token", "stage_epoch", "item_epoch", "lease_until", "updated_at"] } : table);
+  const journal = version === "handlers-v5" ? [...journalTables] : [...journalTables, "public.pipeline_stage_modes", "public.pipeline_item_leases"];
+  return { tables: selected, journal, hash: createHash("sha256").update(JSON.stringify({ version,
+    tables: selected, sequences, journalTables: journal })).digest("hex") };
+}
+const itemGuard = "BEGIN IF NEW.stage <> 'ai2' THEN RAISE EXCEPTION 'replay_handler_item_stage_rejected' USING ERRCODE = '42501'; END IF; RETURN NEW; END";
 const sourceGuard = "BEGIN RAISE EXCEPTION 'replay_handler_source_immutable' USING ERRCODE = '42501'; END";
 const ident = (name: string) => `"${name.replace(/"/g, '""')}"`;
 export class ReplayHandlerProfileError extends Error {
@@ -101,8 +110,8 @@ async function objects(session: Session, identity: ReplayDatabaseIdentity): Prom
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','f','S')
     ORDER BY n.nspname, c.relname`;
 }
-function assertObjectPolicy(rows: ObjectRow[], identity: ReplayDatabaseIdentity): ObjectRow[] {
-  const expected = new Map<string, Policy>(tables.map(table => [`${table.schema ?? "public"}.${table.name}`, table]));
+function assertObjectPolicy(rows: ObjectRow[], identity: ReplayDatabaseIdentity, version: ReplayHandlerProfileVersion): ObjectRow[] {
+  const expected = new Map<string, Policy>(policy(version).tables.map(table => [`${table.schema ?? "public"}.${table.name}`, table]));
   expected.set("pipeline_replay.identity", { name: "identity", select: true });
   expected.set("pipeline_replay.handler_profile", { name: "handler_profile", select: true });
   const allowed: ObjectRow[] = [];
@@ -136,9 +145,9 @@ function assertObjectPolicy(rows: ObjectRow[], identity: ReplayDatabaseIdentity)
   if (expected.size || allowed.filter(row => row.kind === "S").length !== sequences.length) reject("replay_database_privileges_rejected");
   return allowed;
 }
-async function binding(session: Session, identity: ReplayDatabaseIdentity): Promise<postgres.JSONValue> {
+async function binding(session: Session, identity: ReplayDatabaseIdentity, version: ReplayHandlerProfileVersion): Promise<postgres.JSONValue> {
   const rows = assertObjectPolicy((await objects(session, identity)).map(row => ({ ...row,
-    columns: json(row.columns) as Column[], binding: json(row.binding) })), identity);
+    columns: json(row.columns) as Column[], binding: json(row.binding) })), identity, version);
   const schemas = await session`
     SELECT n.oid::int AS oid, n.nspname AS name, n.nspowner::int AS owner, n.nspacl::text AS acl
     FROM pg_catalog.pg_namespace n WHERE n.nspname IN ('public', 'pipeline_replay') ORDER BY n.nspname`;
@@ -181,7 +190,8 @@ function json(value: unknown): postgres.JSONValue {
   try { return JSON.parse(value); } catch { return reject("replay_database_privileges_rejected"); }
 }
 
-export async function provisionHandlerProfile(tx: postgres.TransactionSql, identity: ReplayDatabaseIdentity): Promise<void> {
+export async function provisionHandlerProfile(tx: postgres.TransactionSql, identity: ReplayDatabaseIdentity, version: ReplayHandlerProfileVersion = profileVersion): Promise<void> {
+  const selected = policy(version);
   const [existing] = await tx`SELECT pg_catalog.to_regclass('pipeline_replay.handler_profile') IS NOT NULL AS present`;
   if (existing.present) reject("replay_handler_profile_already_provisioned");
   await tx`CREATE TABLE pipeline_replay.handler_profile (singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
@@ -192,7 +202,7 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
   await tx.unsafe(`GRANT USAGE ON SCHEMA public TO ${ident(identity.roleName)}`);
   await tx.unsafe(`CREATE FUNCTION pipeline_replay.reject_handler_source_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS '${sourceGuard.replace(/'/g, "''")}'`);
   await tx`REVOKE ALL ON FUNCTION pipeline_replay.reject_handler_source_mutation() FROM PUBLIC`;
-  for (const table of tables) {
+  for (const table of selected.tables) {
     const relation = `${table.schema ?? "public"}.${ident(table.name)}`, target = ident(identity.roleName);
     const grants = [];
     if (table.select === true) grants.push("SELECT");
@@ -206,8 +216,15 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
       await tx.unsafe(`ALTER TABLE ${relation} ENABLE ALWAYS TRIGGER replay_handler_source_immutable`);
     }
   }
+  if (version === "handlers-v6-item") {
+    await tx.unsafe(`CREATE FUNCTION pipeline_replay.guard_handler_item_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path=pg_catalog AS '${itemGuard.replace(/'/g, "''")}'`);
+    await tx`REVOKE ALL ON FUNCTION pipeline_replay.guard_handler_item_mutation() FROM PUBLIC`;
+    await tx`CREATE TRIGGER replay_handler_item_stage BEFORE INSERT OR UPDATE ON public.pipeline_item_leases
+      FOR EACH ROW EXECUTE FUNCTION pipeline_replay.guard_handler_item_mutation()`;
+    await tx`ALTER TABLE public.pipeline_item_leases ENABLE ALWAYS TRIGGER replay_handler_item_stage`;
+  }
   for (const name of sequences) await tx.unsafe(`GRANT USAGE ON SEQUENCE public.${ident(name)} TO ${ident(identity.roleName)}`);
-  for (const relation of journalTables) {
+  for (const relation of selected.journal) {
     await tx.unsafe(`CREATE TRIGGER replay_handler_change AFTER INSERT OR UPDATE OR DELETE ON ${relation}
       FOR EACH ROW EXECUTE FUNCTION pipeline_replay.capture_handler_change()`);
     await tx.unsafe(`ALTER TABLE ${relation} ENABLE ALWAYS TRIGGER replay_handler_change`);
@@ -215,9 +232,9 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
   // Manifest is built by the owner but validates the runtime role's effective rights.
   // SET LOCAL only pins resolution while building the same snapshot used at runtime.
   await tx`SET LOCAL search_path = pg_catalog,pipeline_replay,public`;
-  const manifest = await binding(tx, identity);
+  const manifest = await binding(tx, identity, version);
   await tx`INSERT INTO pipeline_replay.handler_profile (version, nonce, database_oid, schema_oid, role_oid, owner_oid, policy_hash, manifest)
-    VALUES (${profileVersion}, ${identity.nonce}, ${identity.databaseOid}, ${identity.schemaOid}, ${identity.roleOid}, ${identity.ownerOid}, ${policyHash}, ${tx.json(manifest)})`;
+    VALUES (${version}, ${identity.nonce}, ${identity.databaseOid}, ${identity.schemaOid}, ${identity.roleOid}, ${identity.ownerOid}, ${selected.hash}, ${tx.json(manifest)})`;
 }
 export async function verifyHandlerProfile(session: Session, identity: ReplayDatabaseIdentity): Promise<void> {
   let rows;
@@ -227,9 +244,9 @@ export async function verifyHandlerProfile(session: Session, identity: ReplayDat
       JOIN pg_catalog.pg_class c ON c.oid = 'pipeline_replay.handler_profile'::regclass`;
   } catch { return reject("replay_database_identity_mismatch"); }
   const row = rows[0];
-  if (rows.length !== 1 || row.version !== profileVersion || row.nonce !== identity.nonce || row.database_oid !== identity.databaseOid
+  if (rows.length !== 1 || !["handlers-v5", "handlers-v6-item"].includes(row.version) || row.nonce !== identity.nonce || row.database_oid !== identity.databaseOid
     || row.schema_oid !== identity.schemaOid || row.role_oid !== identity.roleOid || row.owner_oid !== identity.ownerOid
     || row.marker_owner !== identity.ownerOid || row.marker_kind !== "r" || row.marker_rls) reject("replay_database_identity_mismatch");
-  if (row.policy_hash !== policyHash || !isDeepStrictEqual(await binding(session, identity), json(row.manifest)))
+  if (row.policy_hash !== policy(row.version).hash || !isDeepStrictEqual(await binding(session, identity, row.version), json(row.manifest)))
     reject("replay_database_privileges_rejected");
 }

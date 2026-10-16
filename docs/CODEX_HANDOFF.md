@@ -1,43 +1,97 @@
-# 2026-10-16 최신 인계 — PR07a 구현·회귀 GREEN / 검증 정책 변경
+# 2026-10-16 최신 인계 — PR452 제출·PR04c2/PR09/PR07c 병렬 개발
 
-## 최우선 사용자 지시
+## 최신 추가 상태 — 이전 시점 기록보다 우선
 
-**앞으로 수동 전체 테스트는 남은 모든 PR 개발이 끝난 뒤 통합 단계에서 실행한다. PR별로는 변경 범위 회귀와 필요한 정적 검사만 한다.** 전체 unit/전체 DB/종합 테스트을 PR마다 반복하지 않는다. 이미 실행한 결과와 실패는 보존한다. GitHub의 필수 병합 CI는 저장소 규칙대로 유지한다. 이 지시는 아래 이전 계획의 PR별 전체 검사 지시보다 우선하며 A/B/C 모두 전달받았다.
+**후속 정산:** PR452는 필수CI38827295535 전부 SUCCESS 뒤 exact head로 정상 squash 병합했다. mergedAt `2026-10-16T00:11:48Z`, main `37f0542b362850e729a3153c5845a3e2bbbbad10`. 새 main CI38828090183도 필수check·웹/워커image 전부 SUCCESS를 직접 확인했다. 운영 배포0. A PR09는 최종18파일 root 반환(unit24/신규DB21/관련89/정적 실제PASS), B PR04c2도 source20파일 root 반환(DB14/관련180/정적 실제PASS). root SHA 대조: A18 전부 일치, B20 중 driver 외19개 일치·driver만 root가 baseline capture 전 cleanup DML 생략 guard4행을 추가했다. 이후 기존legacy1control만1PASS/13skip8.24초, 해당eslint/diff0. 앞선14 전체를 재실행했다고 주장하지 않는다. B는 PR09 읽기 교차 리뷰, A는 새 PR08 구현, C는 PR07c 구현으로 계속 병렬 작업한다.
 
-전체 PR00–17 병렬 개발 objective는 active다. 최신 사용자 질문은 병렬 진행과 이전 대비 차이에 대한 상태 요청이었고, 검증 정책만 변경했으며 개발 취소가 아니다. root가 오케스트레이터/직접 리뷰/Git 담당이고 모든 서브에이전트는 gpt-6.1-sol/xhigh다.
+root는 B의 production/최종driver/원로그를 직접 리뷰했고 추가 production P1/P2를 확인하지 않았다. 독립 readback counts0·stagesµs·ACL은 담당 최종과 exact 일치했다. exact55521 정상STOP/exited0/OOMfalse→own container/volume만 제거 actual0이다(`/tmp/nomorevibe-pr04c2-root-final-readback-20261016.json`, `...root-cleanup...json`). **55521도 재접속/재생성 금지.** A 새55524는 name/vol/port부재·pinnedimage/loopback/768m/pg_isready 실제0 확인 후 배정: name`nomorevibe-pr08-source-claims-a-20261016`/fullID`a03b450f8c1222cb5517ec3a54c08e237bb6aba913f392fb05be595166322be6`/volume동이름-data, metadata`/tmp/nomorevibe-pr08-source-claims-a-db-owned-20261016.json`. PR07c root typegen actual0도 제공했다.
 
-## 현재 작업과 실제 결과
+A 새 PR08 WT `/Users/jr/Desktop/projects/nomorevibe-source-claims`, branch `codex/pipeline-pr08-source-claims-20261016`, base37f0542b/node_modules symlink 준비. source별 claim·GitHub quota와 canonical 분리·CAS/공정배분/defaultdisabled, migration 필요시0081 전용 배정. DB는 아직 배정0(필요시 새55524). C가 PR07c에서 `lib/domain/evidence/refresh.ts`와 `lib/jobs/products/evidence-refresh.ts`의 partial typed defer/ACK 미소모를 먼저 닫으므로 A는 두 파일 읽기·설계만 하고 C 반환 전 편집0이다. B PR09 교차 리뷰는 읽기만/DB0/테스트0, 결과 `/tmp/nomorevibe-pr09-b-readonly-review-20261016.md` 예정.
 
-- WT `/Users/jr/Desktop/projects/nomorevibe-http-settlement`, branch `codex/pipeline-pr07a-http-settlement-20261016`, base `99a9cefcd9c82dcc86441b798332137a3604fe36`. 원본 X branch Git/source는 바꾸지 않고 handoff만 동기화한다.
-- PR07a production 변경은 `lib/net/fetch.ts` 하나, 동결 SHA `d69349eb88a6e1262d688879e8497538576594889d25569b4d506aea7ca19fac`. 취소 호출 전에 상태를 고정하고 실제 reader.cancel Promise·진행 중 read가 정산된 뒤에만 process-local origin을 반환한다. abort의 일부 본문을 정상 성공으로 저장하지 않고 원 signal.reason을 보존한다. 취소 실패면 점유 유지, redirect 다음 hop0, prefix/too_large/HTTP 원결과 유지. multi-host/실제 socket 종료/Oracle/2배 증거가 아니다.
-- C 원 테스트 `tests/net-fetch-settlement.test.ts` 249행 SHA `7613611d2215277b13ecd3557162226166e306dd5e6988fa1522f8583aef7edf`: 실제 원 source에서 4 Assertion FAIL/3 control PASS.
-- B 독립 원 테스트 `tests/net-fetch-settlement-adversarial.test.ts` 220행 SHA `44afb66a1e0731e87626652b643d6272e32c5d5971720e466afa6cbbb559b0a0`: 실제 8 Assertion FAIL/2 control PASS. root가 원 두 driver와 로그를 완독·수용한 뒤 C source 편집을 허용했다. 두 driver는 원 byte 그대로다.
-- C 같은 원17 PASS/111ms, 기존 관련4파일48 PASS/427ms, scoped lint exit0. B 독립 같은10 PASS/112ms, 합17 PASS/114ms 및 diff/함수 문맥 교차 리뷰 완료, 추가 P1/P2 0. A/B/C 모두 완료·파일 소유권 root 반환. A도 동결 source를 독립 읽기 리뷰해 추가 P1/P2 0을 반환했다. root도 full diff와 fetch.ts 전체를 읽었다.
-- 사용자 정책 변경 전에 root가 실제 실행한 전체 unit **294파일 3,757 PASS/15.83초**, lint exit0(기존 vendor `_ctx` warning1), i18n exit0, next typegen exit0 후 tsc exit0. **이전 C tsc exit2는 미생성 PageProps6개**였으며 source 수정 없이 typegen으로 해소했다.
-- root 전체 build **exit1**: 외부 WT node_modules를 가리키는 symlink를 Turbopack filesystem root가 거부했다. 앱 compile PASS가 아니며 종합 build/bundle은 새 사용자 정책에 따라 최종 통합 단계로 남긴다. 설정/의존성 변경 또는 재실행0. 새 DB/원격 HTTP/provider/운영 DDL/배포0.
+- 사용자 지시 재확인: **수동 전체 테스트는 모든 PR 개발 후 최종 통합 단계에서만 한다.** 현재 PR별 변경 범위 회귀·필요 정적 검사와 저장소 필수 GitHub CI만 유지한다. 아래 과거 전체 검사 결과는 재실행을 뜻하지 않는다.
+- **PR07b [PR452](https://github.com/JRVector9/nomorevibe/pull/452)** 제출·push 완료. source `d33848eabe62e607e1bedd3869afb678a006b9d9`, 최신 mainf93 정상 통합 head `e1c7c1adf3498ec8b62fdf0891da8df1c26cb254`. 3개 공용 문서만 충돌했고 최신 root 문서로 통합, production/driver/SQL SHA 불변과 diff check0 확인. CI **38827295535** 진행 중: scope/quality/integration1·3 SUCCESS, integration2 진행 중을 직접 읽었다. 운영 migration0079/활성화/배포0.
+- C의 PR07b DB **55520은 root 독립 raw readback·정상STOP·exited0/OOMfalse 뒤 own container/volume 제거 완료**다. 재접속/재생성 금지. 상세 증거는 아래 PR07b 절과 `/tmp/nomorevibe-pr07b-root-cleanup-20261016.json`.
+- **A PR09**: 신규 실제 DB21/21 PASS3.63초, 관련 기존4파일89 PASS16.41초, tsc/scopedlint actual0 보고. 같은 시각/같은 origin의 상충 성공·실패가 행 순서에 의존하는 정책 경계 actual1RED/16control→보수적 tie-negative 최소 수정 후 정책17+config7=24PASS, 신규21도 다시PASS. root는 계획/production/schema/SQL/diff를 읽었고 typegen actual0을 제공했다. 마지막 fixture 복원 captured flag와 정적 확인 뒤 freeze 예정. 최종 전체 테스트는 하지 않았다.
+- **B PR04c2**: C 읽기 교차 리뷰의 mutable caller lease/request 문제를 실제 barrier로 **2 Assertion RED→같은2 PASS10.80초** 재현·수정. 등록/해제 lease 및 예약 request를 첫 await 전에 strict 동기 snapshot하며 기존 request schema를 재사용한다. 추가 strict artifact packet binding 실제1RED→같은1PASS15.51초: authority와 실제 reservation INSERT의 callId/hash/bound 및 tx kind/seq/key/time을 결합했다. v6 immutable/비AI2 DML 차단 및 mixed fence 관련3case PASS10.26초. 최종 변경 파일14case/관련180unit/정적·readback·freeze 정산 중이다. 새 migration/authority API/활성화0. C 교차 리뷰 `/tmp/nomorevibe-pr04c2-ai2-item-journal-c-readonly-review-20261016.md`는 root도 직접 읽었다.
+- **C는 PR07b 소유권 반환 및 B 읽기 리뷰 완료 후 PR07c 실제 caller defer로 이동**했다. WT `/Users/jr/Desktop/projects/nomorevibe-http-deferred-callers`, branch `codex/pipeline-pr07c-http-deferred-callers-20261016`, basee1c7c1a. HTTP permit 대기가 site failure/attempt/backoff로 저장되지 않도록 domain og/register/verify/readme, thumbnail/news/repo-review catch, 중앙 runner/route503, crawl fetch ACK와 post-commit optional OG를 연결한다. 등록·발행이 이미 성공했다면 그 성공/editToken을 보존한다. 새 queue/schema/model/limits0, A/B 파일/Git/운영 변경0.
+- C 새 전용 DB **55523**: `nomorevibe-pr07c-http-deferred-c-20261016`, fullID `76635cd3d6d96730741d8612645eb56ce43e4db572c0ceb2d16ae6dbd471a6b9`, volume `nomorevibe-pr07c-http-deferred-c-20261016-data`, scope `pipeline-pr07c-http-deferred-20261016`. root가 name/volume/port 부재·pinned image 확인 후 loopback/768m 생성·pg_isready actual0. URL `postgres://nomorevibe:nomorevibe@127.0.0.1:55523/nomorevibe_test`, metadata `/tmp/nomorevibe-pr07c-http-deferred-c-db-owned-20261016.json`. C만 사용하며 정산 후 root가 exact own 자원만 정리한다.
+- root 직접 확인: 원 NoMoreVibe HEADb1fb8dd/기존 untracked 보존, tracked diff는 handoff뿐이다. 아래 A/B/C 예전 진행 상태는 이 최신 추가 상태보다 우선하지 않는다.
 
-정확한 원로그: `/tmp/nomorevibe-pr07a-{c-initial-red,b-baseline-red,c-original-17-green,c-existing-related-green,b-frozen10-green,b-combined17-green,root-typegen,root-tsc,root-unit,root-lint,root-i18n,root-build}-20261016.log`. C 보고 `/tmp/nomorevibe-pr07a-c-final-report-20261016.md`, B `/tmp/nomorevibe-pr07a-b-final-review-20261016.md`. 고정 계획 `docs/superpowers/plans/2026-10-16-pipeline-pr07a-http-settlement.md`에 새 검증 정책을 반영했다.
+다음 명령은 `gh run view 38827295535 --repo JRVector9/nomorevibe --json headSha,status,conclusion,jobs`로 같은 필수 CI 결과 확인, A/B source freeze 후 최종 diff/실제 로그 직접 리뷰, 각 소유 DB readback·정상 정리, 최신 main 정상 통합·다음 코드 PR 제출이다. C는 새55523만 사용한다. **소스 소유권 반환 전 agent 파일/Git 편집 및 수동 전체 suite/build 실행 금지.**
 
-## 실서버 후속 조사·남은 일
+## 현재 목표와 사용자 검증 정책
 
-A가 exact M3 source와 공식 mlx-lm v0.31.3 `server.py`의 byte/SHA 일치를 확인했다. upstream revision `ed1fca4cef15a824c5f1702c80f70b4cffc8e4dd`, source SHA `cdfcb4ac848636f9927851a0ec7a951584526530cb7832ba58049e4a9144db8b`, MIT. root는 `/tmp/nomorevibe-pr01b6b-upstream-source-pin-a-20261016.md` 전체를 읽었다. 공식 GET3은200이며 tag 원문+revision metadata를 받았고 immutable commit URL GET는 아직0이다. 정확한 Git metadata anchor는 모두 없었다. 실제 운영 source를 고친 것이 아니며 managed pin+좁은 patch를 다음 개발에 쓸 수 있다. 최소 guard는 full tokenize 직후 batch/single의 pre-cache/pre-ctx에서 positive integer resolved M/non-spec/P+M+1≤C를 검사한다. 실제 C·serving 적용·tokenizer canary·native baseline은 미완료다.
+PR00–17의 남은 수집→검수 개선, Oracle 상시 번역·근거·uptime 및 장애 인계를 끝까지 진행한다. 목표는 active이며 개발 취소/전체 완료가 아니다. root는 오케스트레이터·직접 코드 리뷰·Git 담당, 서브에이전트 전원 `gpt-6.1-sol/xhigh`다.
 
-PR04c 다음 실제 item TX/journal/최종 authority→mixed coverage/strict seal→비활성 독립 소비자 기능 범위는 `/tmp/nomorevibe-pr04c2-next-functional-scope-b-20261016.md`를 root가 완독했다. 기존 기반을 반복 구현하지 않는다. 다음 PR07b는 공유 DB 장부+고정 undici per-hop adapter+safeFetch/fetchCapped 실제 연결+actual DB/loopback을 함께 검증한다. 현재 PR07a만으로 그 기능이 끝났다고 하지 않는다.
+**최신 사용자 지시: 수동 전체 테스트는 남은 모든 PR 개발이 끝난 뒤 통합 단계에서 실행한다. PR마다 변경 범위 회귀와 필요한 정적 검사만 한다.** 기존 실제 결과·실패는 보존하고 저장소 필수 GitHub 병합 CI는 유지한다. PR별 전체 unit/전체 DB/종합 build 반복을 하지 않는다. 이 지시는 아래 이전 계획보다 우선하며 AGENTS/roadmap/담당 A·B·C에 반영했다.
 
-PR07a는 A/B/root 리뷰·실제 operations/진행 장부까지 완료했다. 다음은 정확한 파일 commit/push/PR→필수 CI 후 exact-head 정상 병합이다. 새 검증 정책을 AGENTS.md에도 기록했다. 수동 전체 테스트는 더 실행하지 않는다. PR01 native30분/PR04itemB5/PR05전caller/PR06독립소비·2배/PR07–11 Oracle상시번역·근거·uptime/PR14–17 DR·24h는 남아 있다. Oracle는 정확히 surfguide/ap-osaka-1/osaka-smoke다. Supa SSH 계정 optional질문 pending으로 계정 추정/반복 질문/정책 우회0.
+## 이번 완료와 수정 파일
+
+- **NoMoreVibe PR451**: 정상 squash 병합 `2026-10-15T23:37:21Z`, main `f93b8d638d4f58405e62f9b11ce1b58c117ad1e0`. PR CI38823740327 필수 check SUCCESS 뒤 exact head69512b92/latest base99a9/MERGEABLE/CLEAN을 직접 확인해 병합했다. **main CI38824682495도 scope·quality·통합3구간·check·웹/워커 image 전체 SUCCESS를 직접 확인했다.** JSON `/tmp/nomorevibe-pr07a-root-main-ci-38824682495-20261016.json`. 운영 배포 증거는 아니다.
+- **abcLLM 관리 MLX 제한 구현**: `/Users/jr/Desktop/projects/abcLLM-mlx-total-bound`, branch `codex/serving-mlx-total-bound-20261016`, basefc0f972. 실제 commit28147df와 metadata11bbda5를 push하고 [PR2](https://github.com/JRVector9/abcLLM/pull/2)를 제출했다. exact head `11bbda5ae999ca59d70beef6e00d9bdc6a73b804`, OPEN/MERGEABLE/CLEAN, GitGuardian SUCCESS를 직접 확인했다. main 병합/운영 배포0.
+- MLX 변경은 고정 upstream `server.py`+MIT, `total_bound.patch`, `build_release.py`, 한 회귀 파일, 상세 plan/runbook, exact patch whitespace용 `.gitattributes` 총8파일이다. root가 patch/builder/원 driver/추가 회귀/recipe/실제 로그를 직접 읽고 반환된 7파일의 SHA·크기를 대조했다. 새 코드 finding0. 최종 source hash는 `/tmp/abcllm-mlx-total-bound-a-final-hashes-20261016.json`, 인계 `/tmp/abcllm-mlx-total-bound-a-handoff-20261016.md`다. root는 이후 runbook 리뷰 기록과 `.gitattributes`만 추가했다.
+- root 공용 문서의 PR451 병합/mainCI, 테스트 정책, 새 병렬 작업 상태는 다음 실제 코드 PR에 취합한다. 원 X branch Git/source와 abcLLM 원 main/HEAD는 변경하지 않고 이 handoff만 원 NoMoreVibe에 동기화한다.
+
+## 설계 결정과 실제 검증
+
+관리 MLX release는 공식0.31.3/revision `ed1fca4cef15a824c5f1702c80f70b4cffc8e4dd` 원문 SHA `cdfcb4ac848636f9927851a0ec7a951584526530cb7832ba58049e4a9144db8b`를 보존한다. 실제 batch/single full tokenize 직후 positive integer C/M, actual draft is None, **P+M+1≤C**를 검사한다. prompt/출력상한/모델/템플릿/sampling 변경0. 기존 model/tokenizer load는 검사보다 앞설 수 있다. builder는 새 source tree에만 zero-fuzz patch와 SHA 검증을 적용하고 manifest를 마지막에 쓴다. 기존 설치/launch 쓰기0. patched server SHA `74bd70054e1631cc3f5d6a533a9ed0973a0c46c8c82937cc6ba1fe613adad343`.
+
+MLX 실제 담당 실행: `/Users/jr/Desktop/projects/abcLLM/backend/.venv/bin/python -m pytest -q backend/serving/tests/test_mlx_total_bound.py`에서 원 source **39 FAIL/11 control PASS → 같은50 PASS → 최종68 PASS/0.42초**, Python compile4 PASS. 원 driver functions/classes/decorators AST 동일 확인. root는 원 로그·source를 확인했으며 별도 재실행이라고 주장하지 않는다. MLX/GPU import/실추론/운영 C 선택/30분 baseline은 아직0이다.
+
+첫 staged whitespace 검사는 unified patch의 필수 빈 context 공간을 표시했다. exact patch 경로의 `blank-at-eol` 검사만 `.gitattributes`에서 제외했고 이후 전체 base diff/staged diff check actual0이다. 코드·patch SHA는 변경하지 않았다. 이전 PR07a 전체 build 실패는 외부 node_modules symlink의 Turbopack root 거부이며 재실행0, CI clean-install build는 SUCCESS다.
+
+## 현재 병렬 작업 — 소스 소유권 유지
+
+- **A `/root/pr01_final_ai1` → PR09**: `/Users/jr/Desktop/projects/nomorevibe-uptime-observations`, branch `codex/pipeline-pr09-uptime-observations-20261016`, basef93b8d63. MLX7파일 소유권 반환 뒤 새 기능으로 이동했다. raw observationID/6h slot/URL·세대·시각/host·region 멱등 CAS, Oracle 지역 실패·네트워크 증거 공백 hold, authoritative counter/daily 및 기존3회목록숨김/10회내림/sweep/final gate 보호를 defaultdisabled로 구현한다. **migration0080 전용 배정**. C의0079/fetch/evidence 수정0, root 공용 docs/Git0. 상세계획·원RED→구현→같은GREEN을 자율 진행한다. 아직 완료/PASS 주장은 없다.
+- **B `/root/pr01_final_ai2` → PR04c2**: `/Users/jr/Desktop/projects/nomorevibe-ai2-item-journal`, branch `codex/pipeline-pr04c2-ai2-item-journal-20261016`, base69512b92. actual AI1legacy→AI2item owner/boot/token/epoch/binding/callID→동일TX ordinal OLD/NEW→full gate/coverage/strict seal v2/handlers-v6-item을 구현 중. v1/v5 보존, 기존 장부 재사용/새 migration0. 원 legacy seal1PASS+새 mixed unsupported1FAIL을 기능 미지원 RED로 보존했고 같은2case **2PASS/21.62초**까지 실제 통과했다. 추가 post-flush expiry whole rollback 등을 검증 중이며 아직 freeze 전이다. SQL text cast 누락·순환 import·추가 case timeout은 별도 실패 로그로 보존, 기능 RED와 구분한다.
+- **C `/root/provider_contract_evidence` → PR07b**: `/Users/jr/Desktop/projects/nomorevibe-shared-http`, branch `codex/pipeline-pr07b-shared-http-20261016`, base69512b92. **migration0079 전용 소유**. defaultdisabled/DB0, fixed physical-host mapping, origin1/Oracle 합2, 실제 undici native dispatch+reader/cancel 정산, 양 production API 연결, typed defer를 구현 중이다. 원 실제 두 child/API peak2(expected1) Assertion RED→같은2 GREEN. 확장15/16 DB gate 및 관련103 unit/static를 보고했으나 마지막 수정 전 결과다. root는 production 전체/SQL/plan을 직접 읽고 아래 결함들을 전달했다.
+
+C가 닫은 root finding: rawfetch native error의 정상 종료 증거를 무시해 영구 pin하던 경로, upstream999 Response wrapper의 status 유실, control mutex 대기가100ms caller deadline을 넘겨350ms에도 반환되지 않는 문제. control은 실제 warmed RED→NOWAIT+signal poll 같은 GREEN을 확보했다. **마지막 추가 수정 중**: enabled에서 기존 process-local queue를 우회해 DB origin queue만 사용(typed defer 일관성), cancel rejection이 cancelFailed guard/current read 정산을 우회해 release하지 않도록 stickyunknown 보존. 실제 수정 이후 최종 changed-range/static/readback/freeze 보고를 받아 root 직접 리뷰해야 한다. 새 positive-proof callback/TTL force release0.
+
+## PR07b 최종 납품·root 검토와 DB 정리
+
+C는 source/test/docs 소유권을 반환하고 B의 read-only 교차 리뷰로 이동했다. 최종 실제 DB/loopback18PASS16.75초, 관련unit103PASS805ms(마지막 독립cancelbranch수정전, 최종18에포함), tsc/scopedlint actual0. root가production/SQL/전체261행+30행driver/caller회귀/계획/최종보고/원로그를직접읽었고추가finding0. 최종fetch4d69efc5…76e45/permits27bc981c…ceb4c/driver845ef0d7…4c97a/0079SQL8f5d1a54…16d17 실제해시일치다.
+
+root독립readback actual0:82publictable rawbaselineexact/원stageµs보존/legacy1contract0/control disablednull/hops0/events0/otherconn0/ALWAYS guards. exactCcontainer 정상STOP후exited0/OOMfalse 및foreignvolume0확인→owncontainer/volume만제거했다. **55520도재접속/재생성금지**다. `/tmp/nomorevibe-pr07b-root-final-readback-20261016.{json,log}`, `...root-cleanup...json`. 최종보고 `/tmp/nomorevibe-pr07b-c-final-report-20261016.md` 및 repo운영문서에전체caller/미완료activation조건이있다. root는sourcecommit/최신main정상통합/공용문서/PR을취합중이다. 운영DDL/활성/배포0.
+
+A PR09는 원기존API3FAIL/disabledcontrol1PASS→같은4GREEN을확보하고확장중이다. root가상세계획/원REDlog직접읽었고typegen actual0을제공했다. B는최종음성·postflushexpiry감도회귀중이며source freeze전이다. 위 '구현중'기록은진행이력으로보존한다.
+
+## 전용 DB와 운영 경계
+
+모든 DB는 root가 port/name/volume 부재와 pinned image를 확인한 뒤 새로 생성한 loopback 테스트 전용이다. image `pgvector/pgvector@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f`, 각768m, pg_isready actual0. 담당 외 접속0. DockerVM available 약2.3GB/98%여서 ENOSPC면 로그 보존 후 멈추고 다른 자원 prune0.
+
+| 담당/URL port | exact container/fullID | own volume |
+| --- | --- | --- |
+| C 55520 | nomorevibe-pr07b-shared-http-c-20261016 / 46f733e0037ffcd5ee4cf8aa858cbd2eb625a23ae8fbf53c25ea02bbe72b80a1 | nomorevibe-pr07b-shared-http-c-20261016-data |
+| B 55521 | nomorevibe-pr04c2-item-journal-b-20261016 / bf524cbf5196fde2264ddd13b9f96436f5c0e7252ffdbfb5796c34575cc4a94d | nomorevibe-pr04c2-item-journal-b-20261016-data |
+| A 55522 | nomorevibe-pr09-uptime-a-20261016 / 2e73ddb89337aed226db29be849a395e4c36c31afa1a8e187b7a22177da5aeac | nomorevibe-pr09-uptime-a-20261016-data |
+
+URL 공통 `postgres://nomorevibe:nomorevibe@127.0.0.1:<port>/nomorevibe_test`. 원 metadata `/tmp/nomorevibe-parallel-pr04c2-pr07b-db-owned-20261016.json`, `/tmp/nomorevibe-pr09-uptime-a-db-owned-20261016.txt`. 담당이 테스트 정산/freeze를 보고한 뒤 root가 raw µs/ACL/control/connections readback→exact ID 정상STOP→exited0/OOMfalse/foreignref0 확인→own container/volume만 정리한다. **정리된55515–19 재접속/재생성 금지.**
+
+모든 새 기능은 운영 비활성이다. 마지막 운영8020dca/legacy epoch1 contract0, 신규 GitHub·HN 발굴 중단/소개 검수 재개/사람판단/검색어 api-stop/X 하루10 gate 보존. Oracle는 정확히 `surfguide / ap-osaka-1 / osaka-smoke`다. 기존 M3·mini13앱 구조를 단일 crawler였다고 설명하지 않는다. Supa SSH 계정 optional 질문은 pending이며 계정 추정/반복 질문/정책 우회0.
+
+## 남은 작업과 다음 정확한 명령
+
+1. B/C 최종 source freeze/실제 범위 회귀/정적/DB 복원 보고를 받아 전체 diff를 root 직접 리뷰하고 필요할 때만 새 finding 회귀를 실행한다. B/C는69512기반이라 source commit 뒤 최신 mainf93를 정상 통합한다. A0080 journal은 C0079 병합 뒤 root가 통합한다. source/Git 동시수정0.
+2. 실제 코드 PR에 공용 진행 문서를 취합해 feature push/PR→필수CI→exact head 정상병합→main CI/image를 각각 기록한다. 자동 운영 배포/DDL/소비자 활성화0.
+3. PR01 실제 bounded native30분/실제 C·모델 identity, PR05 전체 caller, PR06 독립 소비·2배, PR08 출처별 근거, PR10–11 세 서버·Oracle 상시 실업무, PR12–17 buffer/admin/DR/24h는 아직 남았다. abcLLM PR1 raw contract와 PR2 bounded artifact는 OPEN/운영 미적용이다.
 
 ```sh
-cd /Users/jr/Desktop/projects/nomorevibe-http-settlement
+cd /Users/jr/Desktop/projects/nomorevibe-ai2-item-journal
 git status --short --branch
-# A 리뷰 반환 확인. 변경/새 finding 없으면 원17/48 또는 전체suite를 다시 돌리지 않는다.
-# 필요할 때만 변경 범위 회귀/정적 검사를 실행한다.
-git diff --check
-# root만 정확한 파일 commit/push/PR. 필수 CI는 유지하고 운영 배포/DDL/새consumer 활성화는 이 단계에서 하지 않는다.
+git diff --stat
+cd /Users/jr/Desktop/projects/nomorevibe-shared-http
+git status --short --branch
+git diff --stat
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-observations
+git status --short --branch
+gh pr view 2 --repo JRVector9/abcLLM --json state,headRefOid,mergeable,mergeStateStatus,statusCheckRollup
+gh run view 38824682495 --repo JRVector9/nomorevibe --json status,conclusion,jobs
+# 담당 소유권 반환 전 source/Git 편집 금지. 변경/새finding 없이 회귀/전체suite 반복0.
+# 모든 PR 개발 후 통합 단계에서만 roadmap의 수동 전체 검증 명령 실행.
 ```
 
-이전 phase의 저장소/PR450·abcLLM PR1·실서버·실패/정리 증거는 아래 이력과 `/tmp/nomorevibe-CODEX_HANDOFF-before-pr07a-green-20261016.md`에 보존한다. 아래의 '지금 RED/소스 편집0' 및 완료 담당 상태는 과거 기록으로 위 최신 인계가 우선한다.
-
----
+이전 PR451/PR450/abcLLM PR1의 실제 source/test/실패/운영 조사 이력은 아래에 보존한다. 아래 과거 시점의 OPEN·진행 중 표시는 위 최신 상태보다 우선하지 않는다.
 
 # 2026-10-16 — PR450 검증 완료 / abcLLM raw 검수 PR1 제출
 

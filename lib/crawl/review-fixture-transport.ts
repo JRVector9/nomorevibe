@@ -7,6 +7,7 @@ import { fullReviewPolicyHash as settingsHash } from "@/lib/operations/pipeline-
 import { MAX_REVIEW_INPUT_BYTES, REVIEW_FRESH_MS, reviewHash, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import type { AgentReviewResult } from "./agent-review";
 import { storedReviewEvidenceRequired } from "./review-replay-context";
+import { reserveSecondReviewItemReplayCall, type SecondReviewItemReceipt } from "./second-review-ownership";
 import type { CrawlSettings } from "./settings-schema";
 
 const positive = z.number().int().positive().safe();
@@ -114,7 +115,7 @@ function validReceipt(receipt: ReplayReceipt, bound: number): boolean {
 
 /** Undefined is allowed solely for ordinary workers, before their unchanged provider branch. */
 export async function dispatchReviewFixtureCall(value: ReviewFixtureCallBinding, input: ReviewInput,
-  options: { timeoutMs?: number; signal?: AbortSignal }): Promise<AgentReviewResult | undefined> {
+  options: { timeoutMs?: number; signal?: AbortSignal; itemReceipt?: SecondReviewItemReceipt }): Promise<AgentReviewResult | undefined> {
   const scope = fixtureTransport.getStore();
   if (!scope) {
     if (storedReviewEvidenceRequired() || currentReplayDb()) throw new Error("replay_fixture_transport_required");
@@ -144,7 +145,9 @@ export async function dispatchReviewFixtureCall(value: ReviewFixtureCallBinding,
     let state: "none" | "reserved" | "dispatching" | "in_flight" | "settled" = "none", callbackStarted = false;
     try {
       await scope.ledger.fixtureMode(scope.run); check();
-      await scope.ledger.reserve(scope.run, request); state = "reserved"; check();
+      if (options.itemReceipt) await reserveSecondReviewItemReplayCall(options.itemReceipt, request);
+      else await scope.ledger.reserve(scope.run, request);
+      state = "reserved"; check();
       await scope.ledger.markDispatching(scope.run, request.callId); state = "dispatching"; check();
       await scope.ledger.markInFlight(scope.run, request.callId); state = "in_flight"; check();
       let abort!: () => void;

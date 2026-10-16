@@ -8,6 +8,8 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { assertItemLease, claimItemLease, readItemStage, releaseItemLease, renewItemLease, type ItemStageGuard } from "@/lib/jobs/items/repository";
 import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type ItemLease, type ItemOwner } from "@/lib/jobs/items/types";
+import { assertReplayJobAdmission, assertReplayItemExecutionAllowed, registerReplayItemFinalAuthority, registerReplayItemRelease, reserveReplayItemCall } from "@/lib/operations/pipeline-replay-execution";
+import type { ReplayCallRequest } from "@/lib/operations/pipeline-replay-ledger";
 import { recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { reviewHash, reviewPolicyHash, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import type { ReviewInput } from "./agent-review-contract";
@@ -79,7 +81,7 @@ function assertOriginalRow(receipt: SecondReviewReceipt, row: SecondReview): voi
 }
 
 function rejectItemReplay(): void {
-  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  if (currentReplayDb()) assertReplayItemExecutionAllowed();
 }
 
 async function assertSecondReviewJob(tx: ProductTransaction, job: JobLease): Promise<void> {
@@ -130,6 +132,7 @@ export async function assertSecondReviewOwnership(tx: ProductTransaction, guard:
   const [persisted] = await tx.select({ binding: pipelineItemLeases.binding }).from(pipelineItemLeases)
     .where(and(eq(pipelineItemLeases.stage, "ai2"), eq(pipelineItemLeases.workKey, receipt.ownership.lease.workKey)));
   if (!persisted || !isDeepStrictEqual(persisted.binding, receipt.binding)) throw new Error("invalid_second_review_receipt");
+  await registerReplayItemFinalAuthority(tx, receipt.ownership.lease);
 }
 
 /** Only after external work has settled and all writes/outbox waits ended.
@@ -139,7 +142,11 @@ export async function finishSecondReviewOwnership(tx: ProductTransaction, guard:
   if (receipt?.ownership?.kind === "item") rejectItemReplay();
   validateReceipt(receipt);
   const stage = await ai2Stage(tx, guard);
-  if (receipt.ownership.kind === "item") { await releaseItemLease(tx, guard, receipt.ownership.lease); return; }
+  if (receipt.ownership.kind === "item") {
+    await registerReplayItemFinalAuthority(tx, receipt.ownership.lease);
+    await releaseItemLease(tx, guard, receipt.ownership.lease);
+    await registerReplayItemRelease(tx, receipt.ownership.lease); return;
+  }
   if (stage.epoch !== receipt.ownership.stageEpoch || !(stage.mode === "legacy"
     || stage.mode === "draining" && stage.drainingFrom === "legacy")) throw new Error("second_review_ownership_lost");
   await assertSecondReviewJob(tx, receipt.ownership.job);
@@ -174,7 +181,10 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
     const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
       || authority.kind === "item" && stage.writerContractVersion < 1) return { kind: "skipped", reason: "stage_inactive" };
-    if (currentReplayDb()) await tx.execute(sql`select pg_advisory_xact_lock(1485803, 3)`);
+    if (currentReplayDb()) {
+      if (authority.kind === "item") await assertReplayJobAdmission(tx);
+      await tx.execute(sql`select pg_advisory_xact_lock(1485803, 3)`);
+    }
     const [original] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
     const context = await lockSecondReviewDomain(tx, id);
     const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, id));
@@ -204,6 +214,7 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
       const lease = await claimItemLease(tx, stages.ai2, binding, authority.owner, authority.ttlMs);
       if (!lease) return { kind: "skipped", reason: "running" };
       await assertItemLease(tx, stages.ai2, lease);
+      await registerReplayItemFinalAuthority(tx, lease);
       ownership = { kind: "item", lease: lease as Ai2ItemLease };
     }
     return { kind: authority.kind === "legacy" ? "admitted" : "claimed", row, input: context.input,
@@ -224,6 +235,7 @@ export async function renewSecondReviewOwnership(receipt: ItemReceipt, ttlMs: nu
     const lease = await renewItemLease(tx, stages.ai2, receipt.ownership.lease, ttlMs);
     if (!lease) return null;
     if (!isDeepStrictEqual(lease.binding, receipt.binding)) throw new Error("invalid_second_review_receipt");
+    await registerReplayItemFinalAuthority(tx, lease);
     return lease as Ai2ItemLease;
   });
 }
@@ -263,4 +275,20 @@ export function secondReviewBinding(ctx: SecondReviewDomainContext): Ai2ItemBind
     vote: row.fallbackForId ?? row.id, fallbackForId: row.fallbackForId });
   if (binding.stage !== "ai2") throw new Error("invalid_second_review_binding");
   return binding;
+}
+
+/** Replay call admission reuses the current domain and actual persisted owner.
+ * The private execution ticket, not this receipt value, authorizes the ledger. */
+export async function reserveSecondReviewItemReplayCall(receipt: SecondReviewItemReceipt, request: ReplayCallRequest): Promise<void> {
+  assertReplayItemExecutionAllowed();
+  validateReceipt(receipt);
+  await db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    const current = await lockSecondReviewDomain(tx, receipt.binding.secondReviewId);
+    const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, receipt.binding.secondReviewId));
+    if (!row || row.status !== "pending" || !current || !isDeepStrictEqual(secondReviewBinding(current), receipt.binding))
+      throw new Error("replay_item_call_binding_mismatch");
+    await assertSecondReviewOwnership(tx, stages.ai2, receipt, row);
+    await reserveReplayItemCall(tx, receipt.ownership.lease, request);
+  });
 }
