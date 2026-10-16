@@ -94,6 +94,34 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Check product translation ledger against the fresh test database
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
+      - name: Check product translation dispatch after the restored ledger baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
+      - name: Check Korean tagline ledger after the restored product translation baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/product-tagline-ko-capacity-ledger.test.ts
+      - name: Check Korean tagline dispatch after the restored ledger baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/korean-tagline-capacity-dispatch.test.ts
+      - name: Check reason translation ledger against the fresh test database
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
+      - name: Check reason translation dispatch after the restored ledger baseline
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
       - name: Check text profile dispatch against the fresh test database
         if: matrix.shard == 1
         run: npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
@@ -110,7 +138,7 @@ jobs:
         if: matrix.shard == 1
         run: npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
       # Each runner owns a separate Postgres service; files within a shard stay serial.
-      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts
+      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts
 
   check:
     needs: [scope, quality, integration]

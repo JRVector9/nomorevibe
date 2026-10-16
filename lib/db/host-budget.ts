@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 const hosts = ['m3', 'mini', 'oracle-osaka-smoke'] as const;
 const roles = ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', 'translation', 'product-health', 'site-evidence', 'official-news'] as const;
+const reviewerConsumers = ['ai1', 'ai2'] as const;
 const count = z.number().int().min(0).max(2);
 export const HostDbBudgetSchema = z.strictObject({
   version: z.literal(1), host: z.enum(hosts), release: z.string().min(1).max(120),
@@ -10,15 +11,17 @@ export const HostDbBudgetSchema = z.strictObject({
   monitor: z.boolean(), connectAgent: z.boolean(),
   preflightProcesses: z.number().int().min(0).max(1), migrationProcesses: z.number().int().min(0).max(1),
   rolloutCopies: z.union([z.literal(1), z.literal(2)]),
+  reviewerConsumers: z.array(z.enum(reviewerConsumers)).max(2).refine(value => new Set(value).size === value.length).optional(),
 }).refine(value => !value.webReadReplica || value.webReplicas > 0);
 export type HostDbBudget = z.infer<typeof HostDbBudgetSchema>;
 type WorkerRole = typeof roles[number];
+export type HostDbReviewerConsumer = 'legacy' | 'ai1' | 'ai2';
 export type HostDbProcessKind = 'role-parent' | 'worker' | 'scheduler-parent' | 'scheduler-worker' | 'web' | 'monitor' | 'connect-agent' | 'preflight' | 'migration';
-export type HostDbProcessBudget = { kind: HostDbProcessKind; role: string; count: number; primaryMax: number; readMax: number };
+export type HostDbProcessBudget = { kind: HostDbProcessKind; role: string; count: number; primaryMax: number; readMax: number; consumer?: typeof reviewerConsumers[number] };
 const identity = { host: z.enum(hosts), release: z.string().min(1).max(120), replica: z.number().int().min(1).max(2), copy: z.union([z.literal(1), z.literal(2)]) };
 const ProcessSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ ...identity, kind: z.literal('role-parent'), role: z.enum(roles) }),
-  z.strictObject({ ...identity, kind: z.literal('worker'), role: z.enum(roles) }),
+  z.strictObject({ ...identity, kind: z.literal('role-parent'), role: z.enum(roles), consumer: z.enum(['legacy', 'ai1', 'ai2']).optional() }),
+  z.strictObject({ ...identity, kind: z.literal('worker'), role: z.enum(roles), consumer: z.enum(['legacy', 'ai1', 'ai2']).optional() }),
   z.strictObject({ ...identity, kind: z.literal('scheduler-parent'), role: z.literal('scheduler') }),
   z.strictObject({ ...identity, kind: z.literal('scheduler-worker'), role: z.literal('scheduler') }),
   z.strictObject({ ...identity, kind: z.literal('web'), role: z.literal('web') }),
@@ -26,7 +29,7 @@ const ProcessSchema = z.discriminatedUnion('kind', [
   z.strictObject({ ...identity, kind: z.literal('connect-agent'), role: z.literal('connect-agent') }),
   z.strictObject({ ...identity, kind: z.literal('preflight'), role: z.literal('preflight') }),
   z.strictObject({ ...identity, kind: z.literal('migration'), role: z.literal('migration') }),
-]);
+]).refine(value => !('consumer' in value) || value.role === 'reviewer');
 const OptionsSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('disabled') }),
   z.strictObject({ mode: z.literal('enabled'), policy: HostDbBudgetSchema, process: ProcessSchema,
@@ -40,13 +43,18 @@ const workerMax: Record<WorkerRole, number> = {
 
 function processBudgets(policy: HostDbBudget): HostDbProcessBudget[] {
   const processes: HostDbProcessBudget[] = [];
-  const add = (kind: HostDbProcessKind, role: string, count: number, primaryMax: number, readMax = 0) => {
-    if (count > 0) processes.push({ kind, role, count, primaryMax, readMax });
+  const add = (kind: HostDbProcessKind, role: string, count: number, primaryMax: number, readMax = 0,
+    consumer?: typeof reviewerConsumers[number]) => {
+    if (count > 0) processes.push({ kind, role, count, primaryMax, readMax, ...(consumer ? { consumer } : {}) });
   };
   for (const role of roles.filter(role => policy.roles.includes(role))) {
     // Supervisor/observations/role heartbeat run in this same parent process.
     add('role-parent', role, policy.rolloutCopies, 1);
     add('worker', role, policy.rolloutCopies, workerMax[role]);
+  }
+  for (const consumer of reviewerConsumers.filter(value => policy.reviewerConsumers?.includes(value))) {
+    add('role-parent', 'reviewer', policy.rolloutCopies, 1, 0, consumer);
+    add('worker', 'reviewer', policy.rolloutCopies, workerMax.reviewer, 0, consumer);
   }
   const copies = policy.rolloutCopies;
   add('scheduler-parent', 'scheduler', policy.schedulerReplicas * copies, 1);
@@ -77,7 +85,8 @@ export function resolveHostDbPoolConfig<T extends { role: string; max: number }>
   const options = OptionsSchema.parse(input);
   if (options.mode === 'disabled') return { config: original, readMax: undefined, ...unverified };
   const { policy, process, overrides } = options;
-  const row = processBudgets(policy).find(row => row.role === process.role && row.kind === process.kind);
+  const row = processBudgets(policy).find(row => row.role === process.role && row.kind === process.kind
+    && reviewerConsumer(row) === reviewerConsumer(process));
   const copies = process.kind === 'preflight' || process.kind === 'migration' ? 1 : policy.rolloutCopies;
   if (process.host !== policy.host || process.release !== policy.release || original.role !== process.role ||
       !row || process.copy > copies || process.replica > row.count / copies) {
@@ -110,18 +119,25 @@ function runtimeOptions(env: HostDbEnvironment) {
 }
 
 /** Trusted declarations are checked here; they do not attest process identity or host-wide enforcement. */
-export function assertHostDbEntry(env: HostDbEnvironment, expected: { kind: HostDbProcessKind; role: string }): void {
+function reviewerConsumer(value: { role: string; consumer?: HostDbReviewerConsumer }) {
+  return value.role === 'reviewer' ? value.consumer ?? 'legacy' : undefined;
+}
+export function assertHostDbEntry(env: HostDbEnvironment, expected: {
+  kind: HostDbProcessKind; role: string; consumer?: HostDbReviewerConsumer;
+}): void {
   const options = runtimeOptions(env);
   if (options.mode === 'disabled') return;
-  if (options.process.kind !== expected.kind || options.process.role !== expected.role) throw new Error('host_db_entry_mismatch');
+  if (options.process.kind !== expected.kind || options.process.role !== expected.role
+      || expected.consumer !== undefined && expected.role !== 'reviewer'
+      || reviewerConsumer(options.process) !== reviewerConsumer(expected)) throw new Error('host_db_entry_mismatch');
   resolveHostDbPoolConfig({ role: expected.role, max: 1 }, options);
 }
 
-export function hostDbChildEnvironment(env: NodeJS.ProcessEnv, role: string): NodeJS.ProcessEnv;
-export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): Record<string, string | undefined>;
-export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): Record<string, string | undefined> {
+export function hostDbChildEnvironment(env: NodeJS.ProcessEnv, role: string, consumer?: HostDbReviewerConsumer): NodeJS.ProcessEnv;
+export function hostDbChildEnvironment(env: HostDbEnvironment, role: string, consumer?: HostDbReviewerConsumer): Record<string, string | undefined>;
+export function hostDbChildEnvironment(env: HostDbEnvironment, role: string, consumer?: HostDbReviewerConsumer): Record<string, string | undefined> {
   const parentKind = role === 'scheduler' ? 'scheduler-parent' : 'role-parent';
-  assertHostDbEntry(env, { kind: parentKind, role });
+  assertHostDbEntry(env, { kind: parentKind, role, consumer });
   const options = runtimeOptions(env);
   return { ...env, WORKER_ROLE: role, ...(options.mode === 'enabled' ? {
     HOST_DB_BUDGET: JSON.stringify({ ...options, process: { ...options.process,

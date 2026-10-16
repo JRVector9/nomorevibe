@@ -209,6 +209,10 @@ export async function provisionHandlerProfile(tx: postgres.TransactionSql, ident
   await tx.unsafe(`GRANT USAGE ON SCHEMA public TO ${ident(identity.roleName)}`);
   await tx.unsafe(`CREATE FUNCTION pipeline_replay.reject_handler_source_mutation() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS '${sourceGuard.replace(/'/g, "''")}'`);
   await tx`REVOKE ALL ON FUNCTION pipeline_replay.reject_handler_source_mutation() FROM PUBLIC`;
+  // Acquire each fixed trigger target before GRANT updates its catalog row.
+  const triggerRelations = [...new Set([...selected.journal, ...selected.tables.filter(table => table.immutable)
+    .map(table => `${table.schema ?? "public"}.${table.name}`)])].sort();
+  await tx.unsafe(`LOCK TABLE ${triggerRelations.map(name => name.split(".").map(ident).join(".")).join(", ")} IN SHARE ROW EXCLUSIVE MODE`);
   for (const table of selected.tables) {
     const relation = `${table.schema ?? "public"}.${ident(table.name)}`, target = ident(identity.roleName);
     const grants = [];

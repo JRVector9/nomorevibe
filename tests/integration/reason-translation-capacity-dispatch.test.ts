@@ -11,7 +11,7 @@ import { runJob, type JobContext } from '@/lib/jobs/runner';
 import { requestJob, type JobLease } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
-import { batchPolicyHash } from '@/lib/jobs/batches';
+import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
 import { requestReasonTranslationModelSlot, cancelReservedModelSlot } from '@/lib/llm/capacity-repository';
 import { modelCapacityPolicyHash, reasonTranslationLogicalWorkKey, reasonTranslationInputHash,
   type ModelCapacityPolicy, type ModelCapacityRequest } from '@/lib/llm/capacity';
@@ -104,7 +104,7 @@ async function performCleanup() {
     await restore(tx, 'model_capacity_control', 'id', 1); await restore(tx, 'job_batch_control', 'id', 1);
     for (const name of ['text','translation']) await restore(tx, 'role_leases', 'role', name);
     for (const name of managedJobs) await restore(tx, 'jobs', 'name', name);
-    const observations = await tx`SELECT key FROM operations_observations WHERE key=${`job:${jobName}`} OR key=${`batch-result:${prefix}:${jobName}`} ORDER BY key FOR UPDATE`;
+    const observations = await tx`SELECT key FROM operations_observations WHERE key=${`job:${jobName}`} OR key=${`batch-result:${prefix}:${jobName}`} OR key=${batchCanaryAnchorKey('translation',prefix)} ORDER BY key FOR UPDATE`;
     for (const { key } of observations) await restore(tx, 'operations_observations', 'key', key);
     expect(await whole(tx)).toEqual(initial);
   });
