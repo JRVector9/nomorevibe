@@ -23,6 +23,7 @@ export const searchSortSchema = z.enum(["relevance", "recent"]).describe(
 export const SHOW_HN_SIGNAL = "Show HN";
 
 const discoverSchema = z.object({
+  sourceBuffer: z.object({ enabled: z.boolean() }).strict().default({ enabled: false }),
   /** 켜져 있는 검색 신호. 신호별 수율을 비교하려면 개별로 끌 수 있어야 한다 */
   queries: z
     .array(
@@ -448,6 +449,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {
+    sourceBuffer: { enabled: false },
     queries: [
       { label: "Claude 커밋 트레일러", kind: "commits", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
       // 실측으로 켰다. 표본 132개에서 통과율 23%로 Claude 신호(19%)보다 높았고,

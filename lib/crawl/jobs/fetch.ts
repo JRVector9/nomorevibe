@@ -74,6 +74,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   while (ctx.hasBudget()) {
     const admission = await crawl.dequeueWithAdmission(BATCH, undefined, ctx.lease);
     if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
+    if (admission.kind === "buffer_blocked") return { done: false, deferred: "source_buffer" };
     const entries = admission.entries;
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
@@ -95,6 +96,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   // no input; an inactive stage must still preserve its pending job request.
   const admission = await crawl.dequeueWithAdmission(0, undefined, ctx.lease);
   if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
+  if (admission.kind === "buffer_blocked") return { done: false, deferred: "source_buffer" };
   ctx.log("crawl.fetched", { ...tally, drained: false });
   return { done: false };
 }

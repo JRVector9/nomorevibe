@@ -738,3 +738,5 @@ export * from './http-origin-schema';
 export * from "./product-uptime-schema";
 
 export * from "./evidence-source-claims-schema";
+
+export * from "./source-buffer-schema";
