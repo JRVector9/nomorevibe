@@ -105,6 +105,8 @@ it("collects one required-AI2 approval from real rows in a read-only snapshot wi
   const before = await rows();
   const artifact = await collect(await window());
   expect(await rows()).toBe(before);
+  const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: unknown[] };
+  expect(artifact.schema).toEqual({ appliedMigrations: journal.entries.length, absentTables: [] });
   expect(artifact.database).toEqual({ target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read",
     replicaCaughtUp: null, writeXidAssigned: false });
   expect(artifact.identity).toMatchObject({ reviewMode: "enforce", secondGateRequired: true, inputPolicyHash: reviewPolicyHash(settings),
@@ -190,6 +192,8 @@ it("succeeds under a SELECT-only database role, proving the collector issues no 
     const range = await window();
     const [asReader, asOwner] = [await collect(range, "primary", reader), await collect(range)];
     expect(asReader.attempts).toEqual(asOwner.attempts);
+    // 마이그레이션 장부를 읽을 권한이 없으면 오류 대신 미상(null)으로 남긴다.
+    expect([asReader.schema.appliedMigrations, asOwner.schema.appliedMigrations === null]).toEqual([null, false]);
     expect(reportLiveCapacityWindow(asReader).finals.newCandidates).toBe(1);
   } finally { await client.end({ timeout: 5 }); }
 });

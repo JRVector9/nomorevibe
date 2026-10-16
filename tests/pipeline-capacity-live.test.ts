@@ -10,7 +10,7 @@ const hash = "a".repeat(64), other = "b".repeat(64), WINDOW = 1_800_000;
 const at = (ms: number) => new Date(Date.UTC(2026, 9, 17) + ms).toISOString();
 const identity = (model: string) => ({ provider: "abcllm" as const, model, canonicalModel: model });
 function artifact(duration = WINDOW): LiveCapacityArtifact {
-  return { version: 1, scope: "live_window", runId: "live-a", revision: "9e13341",
+  return { version: 1, scope: "live_window", runId: "live-a", revision: "9e13341", schema: { appliedMigrations: 82, absentTables: [] },
     window: { startedAt: at(0), endedAt: at(duration), durationMs: duration, collectedAt: at(duration + 60_000), collectedAfterEndMs: 60_000 },
     database: { target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read", replicaCaughtUp: null, writeXidAssigned: false },
     identity: { promptVersion: "p1", rulesVersion: "r1", inputPolicyHash: hash, comparisonPolicyHash: hash, fullReviewPolicyHash: hash,
@@ -237,6 +237,30 @@ describe("live window judgement", () => {
 });
 
 describe("live artifact validation", () => {
+  it("accepts a 0076 production schema as fixed legacy/disabled without changing judgement identity", () => {
+    const before = windowWith(10, { ai2Calls: 90 });
+    before.schema = { appliedMigrations: 77, absentTables: ["pipeline_stage_modes", "pipeline_item_leases", "model_capacity_control"] };
+    before.stageModes = (["ai1", "ai2", "fetch"] as const).map(stage => ({ stage, mode: "legacy" as const, epoch: 1, changedSinceStart: false }));
+    before.modelCapacity = { mode: "disabled", changedSinceStart: false };
+    expect(reportLiveCapacityWindow(before)).toMatchObject({ evidenceIssues: [], schema: { appliedMigrations: 77 } });
+    const after = windowWith(20, { ai2Calls: 80 });
+    after.stageModes = [{ stage: "ai1", mode: "items", epoch: 2, changedSinceStart: false }];
+    expect(judge(before, after)).toMatchObject({ status: "passed", reasons: [] });
+  });
+  it.each([
+    (value: LiveCapacityArtifact) => { value.stageModes = [{ stage: "ai1", mode: "items", epoch: 1, changedSinceStart: false }]; },
+    (value: LiveCapacityArtifact) => { value.stageModes = []; },
+    (value: LiveCapacityArtifact) => { value.modelCapacity = { mode: "open", changedSinceStart: false }; },
+    (value: LiveCapacityArtifact) => { value.modelCapacity = null; },
+    (value: LiveCapacityArtifact) => { value.schema.absentTables = ["pipeline_item_leases", "pipeline_item_leases"]; },
+  ])("rejects modes that an absent table could not have produced #%#", mutate => {
+    const value = windowWith(1);
+    value.schema.absentTables = ["pipeline_stage_modes", "pipeline_item_leases", "model_capacity_control"];
+    value.stageModes = (["ai1", "ai2", "fetch"] as const).map(stage => ({ stage, mode: "legacy" as const, epoch: 1, changedSinceStart: false }));
+    expect(() => parseLiveCapacityArtifact(value)).not.toThrow();
+    mutate(value);
+    expect(() => parseLiveCapacityArtifact(value)).toThrow("live_artifact_mismatch");
+  });
   it.each([
     (value: LiveCapacityArtifact) => { value.window.durationMs = WINDOW - 1; },
     (value: LiveCapacityArtifact) => { value.window.collectedAt = at(WINDOW - 1); },

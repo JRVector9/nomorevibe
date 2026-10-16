@@ -1,4 +1,4 @@
-import { and, asc, sql, type SQL } from "drizzle-orm";
+import { and, sql, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { crawlCandidates } from "@/lib/db/schema";
@@ -7,7 +7,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "@
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
-import { LIVE_MAX_WINDOW_MS, LIVE_MIN_WINDOW_MS, LIVE_ROW_LIMIT, parseLiveCapacityArtifact,
+import { LIVE_MAX_WINDOW_MS, LIVE_MIN_WINDOW_MS, LIVE_OPTIONAL_TABLES, LIVE_ROW_LIMIT, parseLiveCapacityArtifact,
   type LiveCapacityArtifact } from "./pipeline-capacity-live";
 
 type Database = PostgresJsDatabase<typeof schema>;
@@ -47,6 +47,13 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     ensure(session.in_recovery === (target === "replica"), "live_target_mismatch");
     ensure(Number(session.collected_after_end_ms) >= 0, "live_window_not_finished");
 
+    // 0077·0078 이전 운영 스키마: 테이블이 없으면 그 기능은 배포 전이다(legacy·disabled·item lease 없음).
+    const [tables] = await query(sql`select ${sql.raw(LIVE_OPTIONAL_TABLES.map(name => `to_regclass('public.${name}') is not null as ${name}`).join(", "))},
+      exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'drizzle'
+        and c.relname = '__drizzle_migrations' and has_schema_privilege(n.oid, 'USAGE') and has_table_privilege(c.oid, 'SELECT')) as migrations_readable`);
+    const absentTables = LIVE_OPTIONAL_TABLES.filter(name => tables[name] !== true);
+    const [migrations] = tables.migrations_readable
+      ? await query(sql`select count(*)::int as applied from drizzle.__drizzle_migrations`) : [];
     const [stored] = await query(sql`select values, ${offset(sql`updated_at`)} as updated_ms from crawl_settings where id = 1`);
     const settings = mergeWithDefaults(stored?.values);
     ensure(settings.firstReview, "live_first_reviewer_unpinned");
@@ -100,7 +107,9 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
       from chain`);
 
     // 구간 시작 전부터 지금까지 아무것도 바뀌지 않았고 지금도 준비된 후보는 구간 내내 준비 대기였다(고갈 아님의 증인).
-    const witnesses = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates).where(and(
+    const noLeases = absentTables.includes("pipeline_item_leases") ? sql`with pipeline_item_leases (stage, work_key, token, lease_until, updated_at) as (
+      select null::varchar, null::varchar, null::uuid, null::timestamptz, null::timestamptz where false) ` : sql``;
+    const witnesses = await query(sql`${noLeases}select ${crawlCandidates.id} as id from ${crawlCandidates} where ${and(
       reviewCandidatePredicate(settings, { readyOnly: true }),
       sql`${crawlCandidates.updatedAt} <= ${start}`,
       sql`not exists (select 1 from crawl_documents d where d.repo = ${crawlCandidates.repo} and d.fetched_at > ${start})`,
@@ -111,11 +120,13 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
           or w.retry_after > ${start} or (w.state = 'succeeded' and w.valid_until > ${start})))`,
       sql`not exists (select 1 from pipeline_item_leases l where l.stage = 'ai1'
         and l.work_key = 'ai1:' || ${crawlCandidates.id}::text and l.updated_at > ${startTz})`,
-    )).orderBy(asc(crawlCandidates.id)).limit(1000);
+    )} order by ${crawlCandidates.id} limit 1000`);
 
-    const stageModes = await query(sql`select stage, mode, epoch::float8 as epoch, updated_at > ${startTz} as changed
-      from pipeline_stage_modes order by stage`);
-    const [capacity] = await query(sql`select mode, updated_at > ${startTz} as changed from model_capacity_control where id = 1`);
+    const stageModes = absentTables.includes("pipeline_stage_modes")
+      ? (["ai1", "ai2", "fetch"] as const).map(stage => ({ stage, mode: "legacy", epoch: 1, changed: false }))
+      : await query(sql`select stage, mode, epoch::float8 as epoch, updated_at > ${startTz} as changed from pipeline_stage_modes order by stage`);
+    const [capacity] = absentTables.includes("model_capacity_control") ? [{ mode: "disabled", changed: false }]
+      : await query(sql`select mode, updated_at > ${startTz} as changed from model_capacity_control where id = 1`);
     // products_repository_identity_idx 와 같은 정규화로 같은 저장소의 다른 제품을 찾는다.
     const [duplicates] = await query(sql`select count(*)::int as count from products p
       where p.source = 'crawler' and p.repo_url is not null and p.created_at > ${start} and p.created_at <= ${end}
@@ -127,6 +138,7 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
 
     const nullableNumber = (value: unknown) => value === null || value === undefined ? null : Number(value);
     return parseLiveCapacityArtifact({ version: 1, scope: "live_window", runId: options.runId, revision: options.revision,
+      schema: { appliedMigrations: migrations?.applied ?? null, absentTables },
       window: { startedAt, endedAt, durationMs: Number(session.duration_ms), collectedAt: session.collected_at,
         collectedAfterEndMs: Number(session.collected_after_end_ms) },
       database: { target, inRecovery: session.in_recovery, readOnly: true, isolation: "repeatable read",
@@ -151,7 +163,7 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
       candidates: candidates.map(row => ({ id: row.id, state: row.state, decidedBy: row.decided_by ?? null,
         appliedAttemptId: nullableNumber(row.applied_attempt_id) })),
       ai2Calls: { chains: ai2.chains, calls: ai2.calls, failed: ai2.failed, unattributedChains: ai2.unattributed_chains },
-      readiness: { witnesses: witnesses.length, sampleCandidateIds: witnesses.slice(0, 20).map(row => row.id) },
+      readiness: { witnesses: witnesses.length, sampleCandidateIds: witnesses.slice(0, 20).map(row => Number(row.id)) },
       safety: { duplicatePublications: duplicates.count, humanDecisionOverrides: "unverified", leaseViolations: "unverified" },
       budget: { status: "unverified" }, quality: null });
   }, { isolationLevel: "repeatable read", accessMode: "read only" });

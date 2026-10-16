@@ -6,6 +6,8 @@ import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 export const LIVE_MIN_WINDOW_MS = 1_800_000;
 export const LIVE_MAX_WINDOW_MS = 86_400_000;
 export const LIVE_ROW_LIMIT = 100_000;
+/** 0076 운영 스키마에는 없는 테이블. 없으면 stage=legacy, 모델 슬롯=disabled, item lease 없음으로 고정한다. */
+export const LIVE_OPTIONAL_TABLES = ["pipeline_stage_modes", "pipeline_item_leases", "model_capacity_control"] as const;
 
 const text = z.string().min(1).max(160).refine(value => value === value.trim(), "trimmed_text_required");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -32,6 +34,7 @@ const label = z.object({ candidateId: positive, inputHash: hash, expected: z.enu
 export const liveCapacityLabelsSchema = z.array(label).min(1).max(100_000);
 export const liveCapacityArtifactSchema = z.object({
   version: z.literal(1), scope: z.literal("live_window"), runId: text, revision: z.string().regex(/^[a-f0-9]{7,40}$/),
+  schema: z.object({ appliedMigrations: integer.nullable(), absentTables: z.array(z.enum(LIVE_OPTIONAL_TABLES)).max(3) }).strict(),
   window: z.object({ startedAt: date, endedAt: date, durationMs: positive.max(LIVE_MAX_WINDOW_MS),
     collectedAt: date, collectedAfterEndMs: integer }).strict(),
   database: z.object({ target: z.enum(["primary", "replica"]), inRecovery: z.boolean(), readOnly: z.literal(true),
@@ -80,6 +83,13 @@ export function parseLiveCapacityArtifact(value: unknown): LiveCapacityArtifact 
   ensure([first, ...second, ...fallbacks].every(row => canonicalReviewModel(row.model) === row.canonicalModel)
     && unique(second, row => row.canonicalModel) && unique(fallbacks, row => row.canonicalModel)
     && unique(artifact.stageModes, row => row.stage), "live_artifact_mismatch");
+  // 없는 테이블은 구간 중 바뀔 수 없다: 고정값 외의 모드·변경 표시는 위조로 본다.
+  const absent = new Set(artifact.schema.absentTables);
+  ensure(absent.size === artifact.schema.absentTables.length
+    && (!absent.has("pipeline_stage_modes") || artifact.stageModes.length === 3
+      && artifact.stageModes.every(row => row.mode === "legacy" && row.epoch === 1 && !row.changedSinceStart))
+    && (!absent.has("model_capacity_control") || artifact.modelCapacity?.mode === "disabled"
+      && !artifact.modelCapacity.changedSinceStart), "live_artifact_mismatch");
   ensure(unique(artifact.attempts, row => row.id) && unique(artifact.votes, row => row.id)
     && unique(artifact.candidates, row => row.id), "live_artifact_mismatch");
   const attempts = new Set(artifact.attempts.map(row => row.id)), candidates = new Set(artifact.candidates.map(row => row.id));
@@ -197,7 +207,7 @@ export function reportLiveCapacityWindow(value: unknown) {
   if (!artifact.readiness.witnesses) evidenceIssues.push("readiness_unproven");
   if (clockAnomalies) evidenceIssues.push("clock_anomaly");
   const ai2 = artifact.ai2Calls;
-  return { runId: artifact.runId, scope: "live_window" as const, durationMs: duration, database: artifact.database,
+  return { runId: artifact.runId, scope: "live_window" as const, durationMs: duration, database: artifact.database, schema: artifact.schema,
     identityKey: JSON.stringify({ promptVersion: fixed.promptVersion, rulesVersion: fixed.rulesVersion,
       inputPolicyHash: fixed.inputPolicyHash, comparisonPolicyHash: fixed.comparisonPolicyHash, reviewMode: fixed.reviewMode,
       secondGateRequired: fixed.secondGateRequired, models: { first: comparableModel(fixed.models.first),
