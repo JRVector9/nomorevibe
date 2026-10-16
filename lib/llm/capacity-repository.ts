@@ -6,9 +6,9 @@ import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import {
   modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
-  modelCapacityReservationSchema, parseModelCapacityPolicy,
+  modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
   type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason,
-  type ModelCapacityRequest, type ModelCapacityReservation, type ModelSlotResult,
+  type ModelCapacityRequest, type ModelCapacityRequestIdentity, type ModelCapacityReservation, type ModelSlotResult,
 } from "./capacity";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
@@ -113,7 +113,7 @@ async function event(tx: ProductTransaction, row: RequestRow, kind: ModelCapacit
     revision: row.revision, policyHash: row.policyHash, fromState, toState, reason });
 }
 
-function sameIdentity(row: RequestRow, value: ModelCapacityRequest): void {
+function sameIdentity(row: RequestRow, value: ModelCapacityRequestIdentity): void {
   if (row.workKey !== value.workKey || row.ownerInstanceId !== value.owner.instanceId
     || row.ownerBootId !== value.owner.bootId || row.class !== value.class || row.pool !== value.pool
     || row.routeId !== value.routeId || row.provider !== value.provider || row.model !== value.model) {
@@ -141,6 +141,24 @@ async function expireReservation(tx: ProductTransaction, row: RequestRow): Promi
   if (!expired) return false;
   await event(tx, expired, "reservation_expired", "reserved", "withdrawn");
   return true;
+}
+
+/** Readback only, including expired or old-policy rows. Re-poll through
+ * requestModelSlot for a current reservation; this never grants or expires work. */
+export async function findOwnPendingModelRequest(value: ModelCapacityRequestIdentity): Promise<
+  { requestId: string; state: "waiting" | "reserved" | "dispatched" | "indeterminate" } | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestIdentitySchema.parse(value);
+  return transaction(async tx => {
+    await control(tx, "share");
+    const [row] = await tx.select().from(modelCapacityRequests).where(and(
+      eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
+      eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
+      sql`${modelCapacityRequests.state} in ('waiting','reserved','dispatched','indeterminate')`)).limit(1);
+    if (!row || row.state === "withdrawn") return null;
+    sameIdentity(row, checked);
+    return { requestId: row.requestId, state: row.state };
+  });
 }
 
 export async function requestModelSlot(value: ModelCapacityRequest): Promise<ModelSlotResult> {
