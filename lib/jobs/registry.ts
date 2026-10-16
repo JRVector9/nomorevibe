@@ -23,6 +23,7 @@ import { refreshRankings } from "@/lib/jobs/products/ranking-refresh";
 import { refreshAgentEvidenceJob } from "@/lib/jobs/products/agent-evidence-refresh";
 import { refreshAiLevelsJob } from "@/lib/jobs/products/ai-level-refresh";
 import { refreshProductEvidenceJob } from "@/lib/jobs/products/evidence-refresh";
+import { refreshSiteEvidenceJob } from "@/lib/jobs/products/site-evidence-refresh";
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { observeProductStars } from "@/lib/jobs/products/star-observation";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
@@ -104,6 +105,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 외부 근거와 내부 미디어를 bounded batch로 갱신한다 */
   "product-evidence-refresh": refreshProductEvidenceJob,
+  "product-site-evidence-refresh": refreshSiteEvidenceJob,
   "agent-evidence-refresh": refreshAgentEvidenceJob,
   "ai-level-refresh": refreshAiLevelsJob,
   "product-stars-refresh": refreshProductStars,

@@ -1,7 +1,7 @@
 import { and, asc, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { products, productEvidenceAudit, productEvidenceSources, productMediaDeclarations } from "@/lib/db/schema";
+import { jobs, products, productEvidenceAudit, productEvidenceSources, productMediaDeclarations } from "@/lib/db/schema";
 import {
   productRefreshRequests,
   type ProductRefreshProgress,
@@ -17,6 +17,16 @@ import {
 import { requestJob, assertJobLease, type JobLease } from "@/lib/jobs/control";
 import { sourceRefreshKey } from "./source-contract";
 import type { ProductEvidenceRefreshResult } from "./refresh";
+
+/** Fixed old/new wakeups. Take both job rows in this order before either outbox write. */
+export async function requestEvidenceRefreshJobs(tx: ProductTransaction): Promise<void> {
+  const names = ["product-evidence-refresh", "product-site-evidence-refresh"] as const;
+  for (const name of names) {
+    await tx.insert(jobs).values({ name }).onConflictDoNothing();
+    await tx.select({ name: jobs.name }).from(jobs).where(eq(jobs.name, name)).for("update");
+  }
+  for (const name of names) await requestJob(name, tx);
+}
 
 const requestSchema = z.object({
   slug: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/),
@@ -96,7 +106,7 @@ export async function queueProductRefresh(
       action: value.force ? "admin.evidence.refresh.queue" : "maker.refresh.queue",
       metadata: { productId, requestedVersion, force, coalesced: current?.requestedVersion === requestedVersion },
     });
-    await requestJob("product-evidence-refresh", tx);
+    await requestEvidenceRefreshJobs(tx);
     return { productId, requestedVersion, status: "queued" };
   };
   if (transaction) {

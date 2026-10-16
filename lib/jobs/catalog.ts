@@ -1,13 +1,14 @@
 /** Metadata only: importing this from the web must not load executable collectors. */
 export type JobRole = "crawler" | "reviewer" | "publisher" | "text" | "maintenance";
 export const JOB_ROLES: readonly JobRole[] = ["crawler", "reviewer", "publisher", "text", "maintenance"];
+export type CatalogRole = JobRole | "scheduler" | "site-evidence";
 
 /**
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
 export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars";
-export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; intervalMs: number | null; lane?: JobLane }[] = [
+export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
    * 검색 쿼터는 토큰 단위(30회/분 = 시간당 1,800페이지)라 워커를 늘려도 늘지 않는다.
@@ -107,6 +108,7 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
    */
   { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
+  { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)
   { name: "agent-evidence-refresh", role: "crawler", intervalMs: 60_000, lane: "scan" },
   /**
@@ -129,13 +131,13 @@ export const JOB_CATALOG: readonly { name: string; role: JobRole | "scheduler"; 
 export const JOB_NAMES = JOB_CATALOG.map(job => job.name);
 export function isJobName(name: string): boolean { return JOB_NAMES.includes(name); }
 export function jobsForRole(role: JobRole): string[] {
-  return JOB_CATALOG.filter(job => job.role === role).map(job => job.name);
+  return JOB_CATALOG.filter(job => job.role === role && job.batchVersion !== 1).map(job => job.name);
 }
 /** 역할의 잡을 줄마다 — 기본 줄이 먼저, 각 줄 안은 카탈로그 차례. 빈 줄은 없다 */
 export function lanesForRole(role: JobRole): string[][] {
   const lanes = new Map<JobLane, string[]>([["main", []]]);
   for (const job of JOB_CATALOG) {
-    if (job.role !== role) continue;
+    if (job.role !== role || job.batchVersion === 1) continue;
     const lane = job.lane ?? "main";
     lanes.set(lane, [...(lanes.get(lane) ?? []), job.name]);
   }

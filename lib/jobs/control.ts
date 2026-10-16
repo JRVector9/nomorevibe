@@ -4,7 +4,7 @@ import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isJobName, JOB_CATALOG } from "./catalog";
 import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
-import { batchPendingNames } from "./batch-repository";
+import { batchPendingNames, lockJobBatch } from "./batch-repository";
 import { batchJobsForRole, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
 
@@ -26,9 +26,11 @@ export async function requestJob(name: string, tx: ProductTransaction | typeof d
 /** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */
 export async function requestDueJobs(): Promise<number> {
   return db.transaction(async tx => {
+    const batch = await lockJobBatch(tx);
     let count = 0;
     for (const job of JOB_CATALOG) {
       if (job.intervalMs === null) continue;
+      if (job.batchVersion === 1 && (batch.mode !== 'versioned' || batch.writerContractVersion < 1)) continue;
       await tx.insert(jobs).values({ name: job.name }).onConflictDoNothing();
       const duration = sql`${job.intervalMs} * interval '1 millisecond'`;
       const [due] = await tx.update(jobs).set({

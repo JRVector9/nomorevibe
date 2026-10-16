@@ -22,11 +22,14 @@ async function product() {
 }
 const complete = { sourcesAttempted: 1, sourcesFailed: 0, factsChanged: 0, eventsInserted: 0, mediaInserted: 0, complete: true };
 
-it("atomically queues maker refresh, audit and job without forcing recent media", async () => {
+it("atomically queues maker refresh, audit and both fixed wakeups without forcing recent media", async () => {
   const row = await product();
   await queueMakerRefresh({ slug: row.slug, productId: row.id, actor: "maker:test" });
   expect(await getProductRefreshRequest(row.slug)).toMatchObject({ requestedVersion: 1, completedVersion: 0, force: false });
-  expect(await db.select().from(jobs)).toMatchObject([{ name: "product-evidence-refresh", requestedVersion: 1 }]);
+  expect(await db.select({ name: jobs.name, requestedVersion: jobs.requestedVersion }).from(jobs).orderBy(jobs.name)).toEqual([
+    { name: "product-evidence-refresh", requestedVersion: 1 },
+    { name: "product-site-evidence-refresh", requestedVersion: 1 },
+  ]);
   expect(await db.select().from(productEvidenceAudit)).toMatchObject([{ action: "maker.refresh.queue", actor: "maker:test" }]);
 });
 
