@@ -1,5 +1,19 @@
 # 수집·검수 2배와 세 서버 운영 — PR Implementation Plan
 
+## 후속 확인 — 2026-10-16 05:12 UTC
+
+Main714fae의필수6+두image전체SUCCESS확인(운영배포증거아님). Sharedreviewbase712ad0b는main714정상merge/push·기존77sourceSHA보존이며미활성이다. PR12 fixture는실제selector/heldowner/외부완료3RED→GREEN과최종원3GREEN·정적0/root독립90표10행/catalog/84journal exact로로컬11fe2160에인수했다. PR462recorderfixture는actual2PASS/기존strict·다른32본문보존/root독립rawexact로로컬f688e4d8에인수했다. PR13패널13px교정관련9PASS로로컬5b47c3ec에인수했다. 모두최신의존parent갱신/push후새CI확인예정이다.
+
+PR460/461의이전integration3은20분최대실행시간으로cancelled/checkFAIL,PR462는integration1FAIL+같은integration3cancelled다. 첫HTTPnative대기원인A조사중/미확정이며제한이나기대를완화하지않았다. AI2 admission은nonempty7PASS후root가TXcommit전소유Set등록P2를추가발견해C가새전용55544/동일test1파일로보완중이다. B는다음PR05b2의양성permit→실provider dispatch연결을읽기계획중이다. PR453고정phase계측새CI최종판정대기,실제C/종료/독립consumer/OracleliveDR/전체2배미완료다. 수동전체테스트는모든PR개발뒤수행한다. 최신세부사항은CODEX_HANDOFF.md를따른다.
+
+## 최신 확인 — 2026-10-16 04:45 UTC 이후
+
+이 절이 아래 시점별 기록보다 우선한다. PR459 offline Oracle는 필수 CI/최신 base·고정 head 검증 뒤 main714fae23으로 병합했고 운영 배포는 하지 않았다. 새 main CI38852285410은 진행 중이다. PR453은 profile 개선 뒤에도 item5 timeout으로 실패해 고정 phase 계측을 진행한다. PR460/461/462는 선행 의존 초안이며 PR462의 별도 recorder-wait assertion1도 미해결이다.
+
+PR12a 원본 공급 버퍼는 변경 범위 unit30 및 actual10+별도1, root 코드리뷰·DB 독립readback/정리 뒤 [초안PR463](https://github.com/JRVector9/nomorevibe/pull/463)으로 제출했다. 기본 비활성/R:null이며 실제2배를 뜻하지 않는다. 보안 scanner의 고정 forged-token 음성fixture 경고는 조사·최소수정 중이다. PR13 관리자 관측은 독립리뷰의 정책 hash P2를 최소보강했고 unit/UI16PASS·정적0·SQL불변, root 인수 중이다. PR05b1 AI2 fresh admission은 source2/tests2와15 actual 경계의 분리GREEN을 반환해 root 리뷰 중이다.
+
+새 PR들의 검토 base는 최신 PR461/462를 정상 merge한 `codex/pipeline-review-stack-20261016`이다. main/운영 적용과 구분한다. 전체 unit/전체DB/build 수동 실행은 모든 PR 개발 후에만 진행하며 필수 자동 CI는 유지한다. 정확한 소유권·명령·실패는 [CODEX_HANDOFF](../../CODEX_HANDOFF.md)를 따른다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. 이 저장소에서는 사용 가능한 `execute-plan` 절차를 적용하고 모든 agent/CLI는 `gpt-6.1-sol` / `xhigh`를 사용한다.
 
 **Goal:** 같은 심사 품질·모델·예산에서 고유 최종 검수량을 2배로 높이고, 세 서버가 같은 종류의 업무를 지원하며 osaka-smoke가 평소에도 실제 번역·등록 후 관리를 수행하게 한다.

@@ -127,6 +127,15 @@ export type CertifiedFixtureReviewReplayOptions = FixtureReviewReplayOptions & {
 export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureReviewReplayOptions) {
   return runCertifiedReviewReplay(options, false);
 }
+type CertifiedDiagnosticPhase = "scope" | "seal" | "readback" | "report";
+let certifiedDiagnosticInvocation = 0;
+/** Fixed fixture diagnostics only. No caller callback, proof or runtime admission. */
+function emitCertifiedPhase(invocation: number, items: boolean, phase: CertifiedDiagnosticPhase, state: "begin" | "end" | "reject"): void {
+  try {
+    process.stderr.write(JSON.stringify({ event: "certified_replay_phase", invocation, kind: items ? "item" : "legacy", phase, state,
+      monotonicMs: Math.round(performance.now() * 1_000) / 1_000 }) + "\n");
+  } catch { /* Diagnostics cannot replace the original result or rejection. */ }
+}
 async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOptions, items: boolean) {
   if (currentReplayDb()) throw new Error("replay_runner_scope_conflict");
   const manifest = parseCapacityManifest(options.manifest);
@@ -138,6 +147,8 @@ async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOpt
     || budgetMs > 110_000 || typeof options.fixture !== "function") throw new Error("invalid_replay_runner_options");
   const { identityPath, fixture, signal: callerSignal } = options;
   const inputs = structuredClone(options.inputs), quality = structuredClone(options.quality ?? null);
+  const diagnosticInvocation = ++certifiedDiagnosticInvocation;
+  let diagnosticPhase: CertifiedDiagnosticPhase | undefined;
   const database = await openVerifiedReplayHandlerDatabase(identityPath, {});
   let wallDeadline: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -154,6 +165,8 @@ async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOpt
     try {
       // Execution outlives the owned DB scope: quiescence cannot be issued before
       // runJob heartbeat, fixture callbacks and every guarded commit have settled.
+      diagnosticPhase = "scope";
+      emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "begin");
       await withReplayExecutionScope(run, () => withReplayDatabaseScope(identityPath, async () => {
         assertReplayDatabaseScopeIdentity(database);
         try {
@@ -186,6 +199,8 @@ async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOpt
             })));
         } finally { await ledger.drain(run); }
       }));
+      emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "end");
+      diagnosticPhase = undefined;
     } finally {
       // Failure also closes admission and durably fences writers, but cannot
       // manufacture the private quiescence proof needed to seal evidence.
@@ -193,9 +208,23 @@ async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOpt
       await ledger.fenceWriters(run);
     }
     if (!items) await assertLegacyReplayStages(database);
+    diagnosticPhase = "seal";
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "begin");
     await ledger.seal(run, replayQuiescenceProof(run));
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "end");
+    diagnosticPhase = "readback";
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "begin");
     const artifact = await loadVerifiedReplayArtifact(database, run.runId);
-    return { runId: run.runId, jobs, artifact, diagnostics: reportVerifiedReplayArtifact(artifact) };
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "end");
+    diagnosticPhase = "report";
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "begin");
+    const diagnostics = reportVerifiedReplayArtifact(artifact);
+    emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "end");
+    diagnosticPhase = undefined;
+    return { runId: run.runId, jobs, artifact, diagnostics };
+  } catch (error) {
+    if (diagnosticPhase) emitCertifiedPhase(diagnosticInvocation, items, diagnosticPhase, "reject");
+    throw error;
   } finally {
     try { await database.close(); }
     finally { clearTimeout(wallDeadline); }
