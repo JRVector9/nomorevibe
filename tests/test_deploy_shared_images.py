@@ -5,11 +5,12 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -426,6 +427,198 @@ class ReleaseSafetyTests(unittest.TestCase):
             self.assertEqual(client.requests, ['application.saveEnvironment',
                                                'application.saveDockerProvider', 'application.deploy'])
             gate.assert_called_once_with(client, 'publisher-mini', previous, 'old')
+
+
+class OracleOfflineRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        fixture_spec = importlib.util.spec_from_file_location(
+            'oracle_runtime_fixtures', SOURCE.parents[2] / 'tests/test_oracle_runtime.py')
+        self.fixtures = importlib.util.module_from_spec(fixture_spec)
+        with patch.object(sys, 'path', sys.path[:]):
+            fixture_spec.loader.exec_module(self.fixtures)
+        self.prepared = self.fixtures.prepared(self.root / 'prepared')
+        self.expected = self.root / 'expected-host.json'
+        self.observed = self.root / 'observed-host.json'
+        self.expected.write_text(json.dumps(self.fixtures.HOST))
+        self.observed.write_text(json.dumps(self.fixtures.HOST))
+        self.sha = 'a' * 40
+        self.archive, self.digest = self.build(self.sha)
+        self.offline = self.root / 'offline'
+        self.legacy_run = self.enterContext(patch.object(release, 'run', return_value='unused-key'))
+        self.dokploy = self.enterContext(patch.object(release, 'Dokploy'))
+
+    def build(self, sha):
+        archive = self.root / (sha + '.tar.gz')
+        with patch.object(self.fixtures.builder, 'runtime_platform', return_value=self.fixtures.RUNTIME):
+            result = self.fixtures.builder.build_release(self.prepared, archive, sha, 'v24.19.0')
+        return archive, result['archiveSha256']
+
+    def arguments(self, action='oracle-plan', sha=None, archive=None, digest=None):
+        return [action, '--sha', sha or self.sha, '--archive', str(archive or self.archive),
+                '--archive-sha256', digest or self.digest, '--expected-host', str(self.expected),
+                '--observed-host', str(self.observed)]
+
+    def invoke(self, arguments):
+        output = io.StringIO()
+        with redirect_stdout(output):
+            release.main(arguments)
+        return json.loads(output.getvalue())
+
+    def test_oracle_plan_delegates_before_any_keychain_or_dokploy_access(self):
+        before = sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*'))
+        result = self.invoke(self.arguments())
+        self.assertEqual(result, {'action': 'oracle-plan', 'releaseSha': self.sha, 'files': 14,
+                                  'readiness': 'unverified', 'activationAllowed': False})
+        self.assertEqual(sorted(str(path.relative_to(self.root)) for path in self.root.rglob('*')), before)
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_install_and_explicit_rollback_use_actual_offline_current_cas(self):
+        sentinel = self.offline / 'opt/nomorevibe-x/status'
+        sentinel.parent.mkdir(parents=True)
+        sentinel.write_bytes(b'existing-X-state')
+        first = self.invoke(self.arguments('oracle-install') + ['--staging-root', str(self.offline)])
+        self.assertEqual(first['previous'], None)
+        self.assertEqual(first['current'], self.sha)
+        other_sha = 'b' * 40
+        other, other_digest = self.build(other_sha)
+        second = self.invoke(self.arguments('oracle-install', other_sha, other, other_digest) +
+                             ['--staging-root', str(self.offline), '--expected-current', self.sha])
+        self.assertEqual(second['previous'], self.sha)
+        self.assertEqual(second['current'], other_sha)
+        rollback = self.invoke(self.arguments('oracle-rollback') +
+                               ['--staging-root', str(self.offline), '--expected-current', other_sha])
+        self.assertEqual(rollback['current'], self.sha)
+        self.assertEqual(os.readlink(self.offline / 'opt/nomorevibe-core/current'), 'releases/' + self.sha)
+        for result in (first, second, rollback):
+            self.assertFalse(result['activationAllowed'])
+            self.assertEqual(result['readiness'], 'unverified')
+        self.assertEqual(sentinel.read_bytes(), b'existing-X-state')
+        staged_launcher = self.offline / f'opt/nomorevibe-core/releases/{self.sha}/deploy/oracle/launch.py'
+        self.assertEqual(staged_launcher.read_bytes(), (self.fixtures.SOURCE / 'launch.py').read_bytes())
+
+    def test_oracle_rejects_missing_cross_family_and_abbreviated_arguments_before_io(self):
+        valid = self.arguments()
+        without_host = valid[:valid.index('--expected-host')]
+        cases = [without_host, valid + ['--worker-image', self.archive.as_posix()],
+                 valid + ['--snapshot', str(self.offline)], valid + ['--app', 'web-m3'],
+                 valid + ['--migration-verified'], valid + ['--staging-root', str(self.offline)],
+                 valid + ['--expected-current', self.sha],
+                 self.arguments('oracle-install'),
+                 self.arguments('oracle-rollback') + ['--staging-root', str(self.offline)],
+                 [part if part != '--archive-sha256' else '--archive-sha' for part in valid],
+                 ['plan', '--archive', str(self.archive)]]
+        for arguments in cases:
+            with self.subTest(arguments=arguments), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as caught:
+                    release.main(arguments)
+                self.assertEqual(caught.exception.code, 2)
+                self.assertFalse(self.offline.exists())
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_identity_and_archive_errors_leave_offline_tree_absent(self):
+        base = self.arguments('oracle-install') + ['--staging-root', str(self.offline)]
+        for boundary in ('sha', 'host', 'archive'):
+            with self.subTest(boundary=boundary):
+                arguments = base[:]
+                if boundary == 'sha':
+                    arguments[arguments.index('--sha') + 1] = 'f' * 40
+                elif boundary == 'host':
+                    self.observed.write_text(json.dumps({**self.fixtures.HOST, 'instance': 'onetwoday'}))
+                else:
+                    self.archive.write_bytes(self.archive.read_bytes() + b'changed')
+                try:
+                    with self.assertRaises(ValueError):
+                        release.main(arguments)
+                    self.assertFalse(self.offline.exists())
+                finally:
+                    self.observed.write_text(json.dumps(self.fixtures.HOST))
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_missing_or_stale_current_preserves_pointer_and_verified_stage(self):
+        self.invoke(self.arguments('oracle-install') + ['--staging-root', str(self.offline)])
+        base = self.offline / 'opt/nomorevibe-core'
+        original = (base / f'releases/{self.sha}/release.json').read_bytes()
+        other_sha = 'b' * 40
+        other, digest = self.build(other_sha)
+        for current in (None, 'c' * 40):
+            arguments = self.arguments('oracle-install', other_sha, other, digest) + ['--staging-root', str(self.offline)]
+            if current is not None:
+                arguments += ['--expected-current', current]
+            with self.subTest(current=current), self.assertRaisesRegex(ValueError, 'current_release_changed'):
+                release.main(arguments)
+            self.assertEqual(os.readlink(base / 'current'), 'releases/' + self.sha)
+            self.assertEqual((base / f'releases/{self.sha}/release.json').read_bytes(), original)
+            self.assertTrue((base / f'releases/{other_sha}').is_dir())
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_rollback_reconstructs_missing_approved_target_without_guessing(self):
+        self.invoke(self.arguments('oracle-install') + ['--staging-root', str(self.offline)])
+        other_sha = 'b' * 40
+        other, digest = self.build(other_sha)
+        self.invoke(self.arguments('oracle-install', other_sha, other, digest) +
+                    ['--staging-root', str(self.offline), '--expected-current', self.sha])
+        base = self.offline / 'opt/nomorevibe-core'
+        shutil.rmtree(base / f'releases/{self.sha}')
+        result = self.invoke(self.arguments('oracle-rollback') +
+                             ['--staging-root', str(self.offline), '--expected-current', other_sha])
+        self.assertEqual(result['previous'], other_sha)
+        self.assertEqual(result['current'], self.sha)
+        self.assertTrue((base / f'releases/{self.sha}/package.json').is_file())
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_refuses_live_root_and_ancestor_excluded_namespace(self):
+        excluded = self.root / 'nomorevibe-x'
+        excluded.mkdir()
+        (excluded / 'child').mkdir()
+        (excluded / 'sentinel').write_bytes(b'preserved')
+        alias = self.root / 'alias'
+        alias.symlink_to(excluded, target_is_directory=True)
+        before = sorted(str(path.relative_to(excluded)) for path in excluded.rglob('*'))
+        for destination in (Path('/'), alias / 'child'):
+            with self.subTest(destination=destination), self.assertRaisesRegex(ValueError, 'offline_staging_root_required'):
+                release.main(self.arguments('oracle-install') + ['--staging-root', str(destination)])
+        self.assertEqual(sorted(str(path.relative_to(excluded)) for path in excluded.rglob('*')), before)
+        self.assertEqual((excluded / 'sentinel').read_bytes(), b'preserved')
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_native_error_identity_and_cleanup_group_propagate_to_inprocess_caller(self):
+        _, manager = release.oracle_modules()
+        original, cleanup = OSError('private-read-detail'), OSError('private-close-detail')
+        combined = BaseExceptionGroup('original-and-cleanup', [original, cleanup])
+        for error in (original, combined):
+            with self.subTest(error=type(error).__name__), patch.object(manager, 'inspect_archive', side_effect=error):
+                with self.assertRaises(Exception) as caught:
+                    release.main(self.arguments())
+                self.assertIs(caught.exception, error)
+        self.assertFalse(self.offline.exists())
+        self.legacy_run.assert_not_called()
+        self.dokploy.assert_not_called()
+
+    def test_oracle_cli_loads_fixed_repository_manager_and_returns_only_safe_error_fields(self):
+        private_archive = self.root / 'private-credential-detail.tar.gz'
+        arguments = self.arguments()
+        arguments[arguments.index('--archive') + 1] = str(private_archive)
+        command = [sys.executable, str(SOURCE), *arguments]
+        failed = subprocess.run(command, cwd=self.root, capture_output=True, text=True, timeout=5)
+        self.assertEqual(failed.returncode, 1)
+        self.assertEqual(json.loads(failed.stdout), {'error': 'ValueError', 'code': 'oracle_offline_release_failed',
+                                                   'readiness': 'unverified', 'activationAllowed': False})
+        self.assertNotIn('private-credential-detail', failed.stdout + failed.stderr)
+        self.assertEqual(failed.stderr, '')
+        planned = subprocess.run([sys.executable, str(SOURCE), *self.arguments()], cwd=self.root,
+                                 capture_output=True, text=True, timeout=5)
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        self.assertFalse(json.loads(planned.stdout)['activationAllowed'])
+        self.assertFalse(self.offline.exists())
 
 
 if __name__ == '__main__':

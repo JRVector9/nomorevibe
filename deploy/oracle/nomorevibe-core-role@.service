@@ -1,0 +1,33 @@
+# Inactive template. The launcher exits78 until the actual preflight is integrated.
+[Unit]
+Description=NoMoreVibe Oracle role %i
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=nomorevibe-core
+Group=nomorevibe-core
+Slice=nomorevibe-core.slice
+WorkingDirectory=/opt/nomorevibe-core/current
+EnvironmentFile=/etc/nomorevibe-core/%i.env
+Environment=HOME=/var/lib/nomorevibe-core/%i
+Environment=ROLE_HEALTH_PATH=/run/nomorevibe-core/%i/role-health.json
+Environment=WORKER_HEALTH_PATH=/run/nomorevibe-core/%i/worker-health.json
+ExecStart=/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --role=%i
+StateDirectory=nomorevibe-core/%i
+RuntimeDirectory=nomorevibe-core/%i
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+KillMode=mixed
+TimeoutStopSec=60s
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target
