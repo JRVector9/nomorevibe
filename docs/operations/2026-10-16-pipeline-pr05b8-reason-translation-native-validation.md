@@ -33,3 +33,7 @@ Root가 반환 뒤 같은 readback을 독립 실행해 raw90표10행+journal89·
 ## CI 편성
 
 최신 부모480/0f148c5e 취합 뒤 신규 actual 두 파일을 기존 선행5개보다 먼저 개별 실행하도록 CI/README를 갱신했다. 설치된 Vitest의 filesOnly list와 BaseSequencer를 실제 읽어211개=선행7개+68/68/68, 모든 파일 정확1회 및 README3개 shard 명령 일치를 확인했다. 이 검증은 test body/setup/SQL을 실행하지 않는다. 원 workflow의 지정 추가분을 역변환하면 whole bytes exact다. Proof `/tmp/nomorevibe-pr05b8-root-ci-coverage-20261016.json`; 수동 전체 테스트는 모든 PR 개발 뒤 실행한다. 최신 upstream profile 잠금 후속은 다음 정상 부모 merge로 취합한다.
+
+## CI 전용 주소 명시 후속
+
+최초 PR481 CI38912118079 통합1은 새 ledger beforeAll의 `process.env.TEST_DATABASE_URL === TEST_DATABASE_URL` 조건에서 중단됐다. CI는 기존 setup의 기본 localhost55435를 사용하지만 명시 env는 없었고4개 case는 전부 미실행이다. 원 로그 `/tmp/nomorevibe-pr481-root-integration1-117010349927-20261016.log`를 보존했다. 최초 선행 ledger step에 실제 서비스의 TEST_DATABASE_URL을 명시하고 README의 두 기본 명령도 같은 주소를 명시했다. Driver와 production17파일·assertion·DB guard·timeout은 전혀 변경하지 않았다. YAML env/서비스 주소 및 승인된 추가분 역변환 whole bytes를 정적으로 확인하며 실제 새 CI 결과는 별도 gate다. 무변경 rerun이나 새 로컬 DB 테스트는 하지 않았다. 기존 filesOnly211 편성/순서/대상은 그대로다.

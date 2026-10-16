@@ -96,6 +96,8 @@ jobs:
       - run: npm ci
       - name: Check reason translation ledger against the fresh test database
         if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
         run: npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
       - name: Check reason translation dispatch after the restored ledger baseline
         if: matrix.shard == 1

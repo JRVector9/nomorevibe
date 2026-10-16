@@ -100,7 +100,7 @@ maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동�
 docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
-npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
 npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
@@ -139,7 +139,7 @@ npx next typegen
 npx tsc --noEmit
 npm run lint
 npm test
-npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
 npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
