@@ -1,6 +1,16 @@
 import { expect, it } from 'vitest';
 import { jobsForRole } from '@/lib/jobs/catalog';
-import { batchJobsForRole, batchHostOrder, classifyBatchReadiness, batchPolicySchema } from '@/lib/jobs/batches';
+import { batchJobsForRole, batchLanesForRole, batchRoleForJob, batchHostOrder, classifyBatchReadiness, batchPolicySchema } from '@/lib/jobs/batches';
+
+it('routes only the canonical job to the versioned site role and keeps legacy/draining closed', () => {
+  expect(batchJobsForRole('site-evidence', 'versioned')).toEqual(['product-site-evidence-refresh']);
+  expect(batchLanesForRole('site-evidence', 'versioned')).toEqual([['product-site-evidence-refresh']]);
+  expect(batchRoleForJob('product-site-evidence-refresh')).toBe('site-evidence');
+  expect(batchJobsForRole('site-evidence', 'legacy')).toEqual([]);
+  expect(batchJobsForRole('site-evidence', 'draining')).toEqual([]);
+  expect(batchJobsForRole('crawler', 'versioned')).toContain('product-evidence-refresh');
+  expect(batchJobsForRole('crawler', 'versioned')).not.toContain('product-site-evidence-refresh');
+});
 
 function publisherReadinessInput() {
   const host = 'm3' as const;
@@ -45,7 +55,7 @@ it('preserves legacy roles and separates only the three translation jobs in vers
   expect(batchJobsForRole('maintenance', 'versioned')).not.toContain('uptime-ping');
   expect(batchJobsForRole('product-health', 'versioned')).toEqual(['uptime-ping']);
   expect(batchJobsForRole('official-news', 'versioned')).toEqual(['news-refresh']);
-  expect(batchJobsForRole('site-evidence', 'versioned')).toEqual([]);
+  expect(batchJobsForRole('site-evidence', 'versioned')).toEqual(['product-site-evidence-refresh']);
   expect(batchJobsForRole('translation', 'draining')).toEqual([]);
 });
 it('uses fixed physical host rankings rather than primary boolean or alphabetic instance names', () => {

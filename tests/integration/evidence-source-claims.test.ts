@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { evidenceSettings, jobs, productEvidenceSources, products } from "@/lib/db/schema";
 import { refreshSiteFingerprint } from "@/lib/domain/evidence/providers/site-fingerprint";
 import { runJob } from "@/lib/jobs/runner";
+import { jobsForRole } from "@/lib/jobs/catalog";
+import { tryAcquireRole, releaseRole, type RoleLease } from "@/lib/jobs/role-leader";
 import type { JobLease } from "@/lib/jobs/control";
 import { evidenceSourceClaims, evidenceSourceControl } from "@/lib/db/evidence-source-claims-schema";
 import { productRefreshRequests, productLinks } from "@/lib/db/schema";
@@ -19,21 +21,81 @@ const prefix = `pr08-${randomUUID().slice(0, 8)}`;
 const owned: string[] = [];
 const ownedIds: number[]=[];
 const universe = new Map<string, unknown>();
-const tables=["products","product_evidence_sources","product_links","product_refresh_requests","evidence_source_claims","evidence_source_control","evidence_settings","jobs","operations_observations","cdn_purges"];
+const tables=["products","product_evidence_sources","product_links","product_refresh_requests","evidence_source_claims","evidence_source_control","evidence_settings","jobs","operations_observations","cdn_purges","role_leases"];
 async function rawTable(table:string){return (await db.execute(sql`select coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text),'[]'::jsonb) as rows from ${sql.identifier(table)} t`))[0].rows;}
 const active = new Set<Promise<unknown>>();
 function track<T>(promise: Promise<T>) { active.add(promise); return promise; }
 async function drain() { const work = [...active]; await Promise.allSettled(work); work.forEach(p => active.delete(p)); }
 function it(name: string, body: () => Promise<void>) { actualIt(name, () => track(body())); }
 const snapshots = new Map<string, Record<string, unknown> | undefined>();
+const sourceJobs = ["product-evidence-refresh", "product-site-evidence-refresh"];
+const crawlerJobs = jobsForRole("crawler");
+type RawRole = Record<string, unknown>;
+let sourceOwner: { lease: RoleLease; before?: RawRole; acquired?: RawRole; released?: RawRole } | undefined;
+let ownerCleanup: Promise<void> | undefined;
 let cleanup: Promise<void> | undefined;
+async function assertCrawlerVacant() {
+  const [role] = await db.execute(sql`select owner_instance_id is not null and lease_until>clock_timestamp() as live
+    from role_leases where role='crawler'`);
+  expect(role?.live ?? false).toBe(false);
+  const rows = await db.select({ token: jobs.leaseToken }).from(jobs).where(inArray(jobs.name, crawlerJobs));
+  expect(rows.every(row => row.token === null)).toBe(true);
+}
+async function restoreSourceOwner() {
+  const state = sourceOwner;
+  if (!state) return;
+  if (!state.released) {
+    const [current] = await db.execute(sql`select to_jsonb(t) as row from role_leases t where role='crawler'`);
+    const ownedRow = current?.row as RawRole | undefined;
+    expect(ownedRow).toMatchObject({ owner_instance_id: state.lease.instanceId, owner_boot_id: state.lease.bootId,
+      owner_release: state.lease.release, owner_kind: state.lease.kind, epoch: state.lease.epoch });
+    if (state.acquired) expect(ownedRow).toEqual(state.acquired);
+    const siblings = await db.select({ token: jobs.leaseToken }).from(jobs).where(inArray(jobs.name, crawlerJobs));
+    expect(siblings.every(row => row.token === null)).toBe(true);
+    expect(await releaseRole(state.lease)).toBe(true);
+    const [released] = await db.execute(sql`select to_jsonb(t) as row from role_leases t where role='crawler'`);
+    const row = released?.row as RawRole;
+    expect(row).toEqual({ ...ownedRow, owner_instance_id: null, owner_boot_id: null, owner_kind: null,
+      primary_boots: [], lease_until: row.lease_until, updated_at: row.updated_at });
+    expect(row.lease_until).toBe(row.updated_at);
+    state.released = row;
+  }
+  const released = state.released;
+  await db.transaction(async tx => {
+    const [locked] = await tx.execute(sql`select to_jsonb(t) as row from role_leases t where role='crawler' for update`);
+    expect(locked?.row).toEqual(released);
+    const siblings = await tx.select({ token: jobs.leaseToken }).from(jobs).where(inArray(jobs.name, crawlerJobs)).for("share");
+    expect(siblings.every(row => row.token === null)).toBe(true);
+    if (state.before) {
+      const fields = sql.join(Object.keys(state.before).filter(field => field !== "role")
+        .map(field => sql`${sql.identifier(field)}=x.${sql.identifier(field)}`), sql`, `);
+      const restored = await tx.execute(sql`update role_leases t set ${fields}
+        from jsonb_populate_record(null::role_leases, ${JSON.stringify(state.before)}::text::jsonb) x
+        where t.role='crawler' and to_jsonb(t)=${JSON.stringify(released)}::text::jsonb returning to_jsonb(t) as row`);
+      expect(restored).toHaveLength(1); expect(restored[0].row).toEqual(state.before);
+    } else {
+      const removed = await tx.execute(sql`delete from role_leases t where t.role='crawler'
+        and to_jsonb(t)=${JSON.stringify(released)}::text::jsonb returning t.role`);
+      expect(removed).toHaveLength(1);
+    }
+    const [all] = await tx.execute(sql`select coalesce(jsonb_agg(to_jsonb(t) order by to_jsonb(t)::text),'[]'::jsonb) as rows from role_leases t`);
+    expect(all.rows).toEqual(universe.get("role_leases"));
+  });
+  sourceOwner = undefined;
+}
+async function cleanupSourceOwner() {
+  if (ownerCleanup) return ownerCleanup;
+  const work = restoreSourceOwner(); ownerCleanup = work;
+  try { await work; } finally { if (ownerCleanup === work) ownerCleanup = undefined; }
+}
 async function save(table: string, key: string, value: string | number) {
   const [row] = await db.execute(sql`select to_jsonb(t) as row from ${sql.identifier(table)} t where ${sql.identifier(key)}=${value}`);
-  snapshots.set(table, row?.row as Record<string, unknown> | undefined);
+  snapshots.set(JSON.stringify([table, key, value]), row?.row as Record<string, unknown> | undefined);
 }
 async function restore(table: string, key: string, value: string | number) {
-  if (!snapshots.has(table)) return;
-  const original = snapshots.get(table), name = sql.identifier(table), id = sql.identifier(key);
+  const snapshotKey = JSON.stringify([table, key, value]);
+  if (!snapshots.has(snapshotKey)) return;
+  const original = snapshots.get(snapshotKey), name = sql.identifier(table), id = sql.identifier(key);
   if (!original) { await db.execute(sql`delete from ${name} where ${id}=${value}`); return; }
   const fields = sql.join(Object.keys(original).filter(field => field !== key).map(field => sql`${sql.identifier(field)}=x.${sql.identifier(field)}`), sql`, `);
   await db.execute(sql`update ${name} set ${fields} from jsonb_populate_record(null::${name}, ${JSON.stringify(original)}::jsonb) x where ${name}.${id}=${value}`);
@@ -80,6 +142,7 @@ async function waitForHolderReady(ready: Promise<void>, holder: Promise<unknown>
 beforeAll(() => track((async () => {
   ensureSchema();
   for(const table of tables) universe.set(table,await rawTable(table));
+  await assertCrawlerVacant();
   // Global existing consumer tests must not visit foreign product/request demand.
   // Only the selector fields are suspended; all original raw fields are checked/restored.
   suspendedProducts.push(...(universe.get("products") as Record<string,unknown>[]).filter(row=>["seeded","verified"].includes(row.status as string)));
@@ -88,14 +151,25 @@ beforeAll(() => track((async () => {
   for(const row of suspendedRequests) await db.update(productRefreshRequests).set({nextAttemptAt:new Date("9999-01-01T00:00:00Z")}).where(eq(productRefreshRequests.productId,row.product_id as number));
   await save("evidence_source_control", "id", 1);
   await save("evidence_settings", "id", 1);
-  await save("jobs", "name", "product-evidence-refresh");
-  await save("operations_observations", "key", "job:product-evidence-refresh");
+  for (const name of sourceJobs) {
+    await save("jobs", "name", name);
+    await save("operations_observations", "key", `job:${name}`);
+  }
   await db.insert(evidenceSettings).values({ id: 1, values: {} }).onConflictDoUpdate({ target: evidenceSettings.id, set: { values: {} } });
   await db.update(jobs).set({ lockedAt: null, leaseToken: null, notBefore: null }).where(eq(jobs.name, "product-evidence-refresh"));
 })()));
-afterEach(async () => { await drain(); vi.restoreAllMocks(); vi.unstubAllEnvs(); await db.update(evidenceSettings).set({values:{}}).where(eq(evidenceSettings.id,1)); await db.update(evidenceSourceControl).set({ enabled: false, epoch: 1, cursor: 0 }).where(eq(evidenceSourceControl.id, 1)); });
+afterEach(async () => { await drain(); await allSteps([
+  () => track(cleanupSourceOwner()),
+  async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); },
+  async () => { if (snapshots.has(JSON.stringify(["evidence_settings", "id", 1])))
+    await db.update(evidenceSettings).set({values:{}}).where(eq(evidenceSettings.id,1)); },
+  async () => { if (snapshots.has(JSON.stringify(["evidence_source_control", "id", 1])))
+    await db.update(evidenceSourceControl).set({ enabled: false, epoch: 1, cursor: 0 }).where(eq(evidenceSourceControl.id, 1)); },
+]); });
 afterAll(() => cleanup ??= (async () => {
   await drain(); await allSteps([
+    () => track(cleanupSourceOwner()),
+    async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); },
     () => restore("evidence_source_control", "id", 1),
     async () => { if (owned.length) {
       if (ownedIds.length) { await db.delete(evidenceSourceClaims).where(inArray(evidenceSourceClaims.productId, ownedIds));
@@ -105,8 +179,8 @@ afterAll(() => cleanup ??= (async () => {
       await db.delete(products).where(inArray(products.slug, owned));
     } },
     () => restore("evidence_settings", "id", 1),
-    () => restore("jobs", "name", "product-evidence-refresh"),
-    () => restore("operations_observations", "key", "job:product-evidence-refresh"),
+    ...sourceJobs.map(name => () => restore("jobs", "name", name)),
+    ...sourceJobs.map(name => () => restore("operations_observations", "key", `job:${name}`)),
     ()=>restoreSuspended("products","id",["status"],suspendedProducts),
     ()=>restoreSuspended("product_refresh_requests","product_id",["next_attempt_at"],suspendedRequests),
     ()=>restoreFixturePurges(),
@@ -292,32 +366,46 @@ it("a stale product checkpoint cannot erase independently committed canonical re
  expect(current.completedVersion).toBe(0);
 });
 
-function configureSourceOwner() {
- for(const [key,value] of Object.entries({ROLE_LEASE_ROLE:"crawler",ROLE_LEASE_INSTANCE_ID:owner.instanceId,ROLE_LEASE_BOOT_ID:owner.bootId,
- ROLE_LEASE_RELEASE:"test",ROLE_LEASE_EPOCH:"1"})) vi.stubEnv(key,value);
+async function configureSourceOwner() {
+ expect(sourceOwner).toBeUndefined();
+ const before = (universe.get("role_leases") as RawRole[]).find(row => row.role === "crawler");
+ const [current] = await db.execute(sql`select to_jsonb(t) as row from role_leases t where role='crawler'`);
+ expect(current?.row).toEqual(before);
+ await assertCrawlerVacant();
+ const lease = await tryAcquireRole({ role: "crawler", ...owner, release: prefix, kind: "primary" });
+ if (!lease) throw new Error("source_fixture_role_unavailable");
+ sourceOwner = { lease, before };
+ const [acquired] = await db.execute(sql`select to_jsonb(t) as row from role_leases t where role='crawler'`);
+ sourceOwner.acquired = acquired?.row as RawRole | undefined;
+ expect(sourceOwner.acquired).toMatchObject({ owner_instance_id: lease.instanceId, owner_boot_id: lease.bootId,
+  owner_release: lease.release, owner_kind: lease.kind, epoch: lease.epoch });
+ for(const [key,value] of Object.entries({ROLE_LEASE_ROLE:lease.role,ROLE_LEASE_INSTANCE_ID:lease.instanceId,ROLE_LEASE_BOOT_ID:lease.bootId,
+  ROLE_LEASE_RELEASE:lease.release,ROLE_LEASE_EPOCH:String(lease.epoch),ROLE_LEASE_BATCH_VERSION:undefined,
+  ROLE_LEASE_BATCH_EPOCH:undefined,ROLE_LEASE_HOST:undefined})) vi.stubEnv(key,value);
+ return lease;
 }
 it("existing actual job uses a source lane even when the product GitHub request is not due",async()=>{
- await enabled(); configureSourceOwner(); const row=await target();
+ await enabled(); const roleLease=await configureSourceOwner(); const row=await target();
  await db.update(products).set({createdAt:new Date("1900-01-01")}).where(eq(products.id,row.productId));
  await db.insert(productRefreshRequests).values({productId:row.productId,slug:row.slug,actor:"admin:test",force:true,activeVersion:1,activeForce:true,
  nextAttemptAt:new Date(Date.now()+86400000),progress:{completedKeys:[],retryAfterByKey:{github:new Date(Date.now()+86400000).toISOString()}}});
  const net=await import("@/lib/net/fetch"); vi.spyOn(net,"fetchCapped").mockImplementation(async url=>response(url));
  const {refreshProductEvidenceJob}=await import("@/lib/jobs/products/evidence-refresh");
  const github=vi.fn();
- expect((await runJob<{afterSlug?:string;requestTurn?:boolean}>("product-evidence-refresh",ctx=>refreshProductEvidenceJob(ctx,{github}))).status).toBe("completed");
+ expect((await runJob<{afterSlug?:string;requestTurn?:boolean}>("product-evidence-refresh",ctx=>refreshProductEvidenceJob(ctx,{github}),{roleLease})).status).toBe("completed");
  expect(github).not.toHaveBeenCalled();
  expect((await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug,row.slug)))[0]).toMatchObject({state:"ok"});
  const [request]=await db.select().from(productRefreshRequests).where(eq(productRefreshRequests.productId,row.productId));
  expect(request).toMatchObject({activeVersion:1,completedVersion:0});expect(request.progress.completedKeys).toHaveLength(1);
 });
 it("actual runner typed defer preserves cursor, consumed version and failure history",async()=>{
- await enabled(); configureSourceOwner(); const row=await target();
+ await enabled(); const roleLease=await configureSourceOwner(); const row=await target();
  await db.update(products).set({createdAt:new Date("1800-01-01")}).where(eq(products.id,row.productId));
  await db.update(jobs).set({cursor:{afterSlug:"previous"},lastError:"original",notBefore:null}).where(eq(jobs.name,"product-evidence-refresh"));
  const net=await import("@/lib/net/fetch");vi.spyOn(net,"fetchCapped").mockRejectedValue(new HttpOriginPermitError("unavailable"));
  const before=(await db.select().from(jobs).where(eq(jobs.name,"product-evidence-refresh")))[0];
  const {refreshProductEvidenceJob}=await import("@/lib/jobs/products/evidence-refresh");
- expect(await runJob("product-evidence-refresh",refreshProductEvidenceJob)).toMatchObject({status:"deferred",reason:"http_origin_permit"});
+ expect(await runJob("product-evidence-refresh",refreshProductEvidenceJob,{roleLease})).toMatchObject({status:"deferred",reason:"http_origin_permit"});
  const after=(await db.select().from(jobs).where(eq(jobs.name,"product-evidence-refresh")))[0];
  expect(after).toMatchObject({cursor:before.cursor,processedVersion:before.processedVersion,lastError:before.lastError,lastSuccessAt:before.lastSuccessAt,notBefore:before.notBefore,leaseToken:null});
  expect(after.requestedVersion).toBeGreaterThan(after.processedVersion);

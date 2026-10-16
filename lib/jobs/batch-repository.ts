@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
-import { jobBatchControl, jobBatchCandidates, jobs, operationsObservations, pipelineItemLeases, roleLeases } from '@/lib/db/schema';
+import { evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchCandidates, jobs, operationsObservations, pipelineItemLeases, roleLeases } from '@/lib/db/schema';
+import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
   classifyBatchReadiness, type BatchHost, type BatchMode, type BatchRole } from './batches';
@@ -25,7 +26,8 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
   const row = await lockJobBatch(tx);
   if (row.mode === 'draining') throw new JobBatchBlockedError();
   if (row.mode === 'legacy') {
-    if (lease?.batchVersion || (lease && !batchJobsForRole(lease.role,'legacy').includes(name))) throw new JobBatchBlockedError();
+    if (JOB_CATALOG.some(job => job.name === name && job.batchVersion === 1) || lease?.batchVersion ||
+      (lease && !batchJobsForRole(lease.role,'legacy').includes(name))) throw new JobBatchBlockedError();
     // Optional operator policy only adds execution provenance, never activates a role.
     if (!lease || !row.policy) return null;
     const policy = checkedPolicy(row), instance = policy.instances.find(item => item.instanceId === lease.instanceId);
@@ -62,6 +64,7 @@ function resultCount(name: string, events: Array<{event:string;counts:Record<str
     'crawl-fetch':['crawl.fetched','fetched'], 'second-review':['crawl.second_reviewed','reviewed'],
     'crawl-publish':['crawl.publish_done','published'], 'product-search-profile':['search_profile.done','written'],
     'click-rollup':['clicks.rolled','rows'], 'uptime-ping':['uptime.checked','alive'],
+    'product-site-evidence-refresh':['evidence.site_refresh_batch','succeeded'],
   };
   const key = keys[name];
   if (!key) return 0;
@@ -162,13 +165,21 @@ export async function completeJobBatchTransition(target: Exclude<BatchMode,'drai
     if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
     if (row.mode !== 'draining' || target === row.drainingFrom) throw new Error('job_batch_transition_invalid');
     if (target === 'versioned') checkedPolicy(row);
+    // Existing renew/result TXs start with this control lock and may later need
+    // a job row. Wait here before roles/jobs so neither a pending renew nor an
+    // opposite source->job lock order can be hidden by the old expiry snapshot.
+    const [sourceControl] = await tx.select({id:evidenceSourceControl.id}).from(evidenceSourceControl)
+      .where(eq(evidenceSourceControl.id,1)).for('update');
+    if (!sourceControl) throw new Error('evidence_source_control_missing');
     await tx.select({role:roleLeases.role}).from(roleLeases).orderBy(roleLeases.role).for('update');
     await tx.select({name:jobs.name}).from(jobs).orderBy(jobs.name).for('update');
     // Wall time is evaluated again after all job-row waits.
     const [active] = await tx.select({name:jobs.name}).from(jobs).where(sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`).limit(1);
     const [item] = await tx.select({key:pipelineItemLeases.workKey}).from(pipelineItemLeases).where(sql`${pipelineItemLeases.token} is not null AND ${pipelineItemLeases.leaseUntil}>clock_timestamp()`).limit(1);
     const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
-    if (active || item || role) throw new Error('job_batch_not_drained');
+    const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
+      .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
+    if (active || item || role || source) throw new Error('job_batch_not_drained');
     const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
       .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
     if (!updated) throw new Error('job_batch_epoch_exhausted');
