@@ -1,3 +1,4 @@
+vi.mock("@/lib/domain/evidence/source-control", () => ({ canonicalSourceMode: async () => false }));
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_EVIDENCE_SETTINGS } from "@/lib/domain/evidence/settings";
 import type { ProductRefreshProgress } from "@/lib/db/product-evidence-schema";

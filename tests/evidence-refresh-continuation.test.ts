@@ -1,3 +1,4 @@
+vi.mock("@/lib/domain/evidence/source-control", () => ({ canonicalSourceMode: async () => false }));
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JobLeaseLostError } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";

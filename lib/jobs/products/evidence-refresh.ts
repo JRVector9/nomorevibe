@@ -1,3 +1,6 @@
+import { canonicalSourceMode } from "@/lib/domain/evidence/source-control";
+import { executeCanonicalEvidenceSource } from "@/lib/domain/evidence/source-claims";
+import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
@@ -43,6 +46,21 @@ export async function refreshProductEvidenceJob(
     eventsInserted: 0,
     mediaInserted: 0,
   };
+  // Existing consumer only. Source mode has a separately owned durable lane;
+  // GitHub/request-level retry deadlines never control canonical admission.
+  if (await canonicalSourceMode()) {
+    const owner = roleLeaseFromEnv("crawler", process.env);
+    if (!owner || !ctx.lease) throw new Error("evidence_source_owner_required");
+    for (let turn = 0; turn < 4 && ctx.hasBudget() && !ctx.signal?.aborted && Date.now() < deadlineAt; turn++) {
+      const result = await executeCanonicalEvidenceSource({ owner: { instanceId: owner.instanceId, bootId: owner.bootId },
+        job: ctx.lease, signal: ctx.signal, deadlineAt });
+      if (result.state === "idle") break;
+      if (result.state === "recorded" || result.state === "failed") {
+        counts.attempted++; counts.factsChanged += result.factsChanged;
+        if (result.state === "recorded") counts.succeeded++; else counts.failed++;
+      }
+    }
+  }
   let afterSlug = ctx.cursor?.afterSlug;
   let providerHold = false;
   const providerHolds = new Set(["rate_limited", "auth_unavailable", "quota", "cooldown", "backoff"]);

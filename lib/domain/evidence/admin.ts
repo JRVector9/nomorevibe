@@ -65,6 +65,7 @@ export async function saveEvidenceSettingsValue(
   const actor = actorSchema.parse(actorInput);
   const now = new Date();
   await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('evidence-settings-policy'))`);
     await tx.insert(evidenceSettings).values({
       id: 1,
       values,

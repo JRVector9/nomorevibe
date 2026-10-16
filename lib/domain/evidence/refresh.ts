@@ -1,3 +1,4 @@
+import { canonicalSourceMode } from "./source-control";
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { isDeepStrictEqual } from "node:util";
 import { createHash } from "node:crypto";
@@ -339,14 +340,14 @@ export async function dueEvidenceProductSlugs(input: {
 }
 
 async function canonicalSiteSources(slug: string, now: Date, force: boolean, progress?: ProductRefreshProgress,
-  hasBudget: () => boolean = () => true): Promise<DeclaredEvidenceSource[]> {
+  hasBudget: () => boolean = () => true, includeUnobserved = false): Promise<DeclaredEvidenceSource[]> {
   if (!hasBudget()) return [];
   const product = await db.query.products.findFirst({ where: eq(products.slug, slug), columns: { id: true, url: true } });
   if (!hasBudget() || !product) return [];
   const stored = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, slug),
     eq(productEvidenceSources.provider, "product_site"), eq(productEvidenceSources.sourceKey, "canonical_site")) });
   if (!hasBudget()) return [];
-  if (!stored) {
+  if (!stored && !includeUnobserved) {
     const repository = await db.query.productLinks.findFirst({ where: and(eq(productLinks.slug, slug), eq(productLinks.kind, "repository"), eq(productLinks.visible, true)) });
     if (!hasBudget() || !repository) return [];
   }
@@ -698,9 +699,10 @@ export async function refreshProductEvidence(
     completedKeys: [...options.progress.completedKeys], retryAfterByKey: { ...options.progress.retryAfterByKey },
   } : undefined;
   const force = options.force ?? false;
+  const sourceMode = await canonicalSourceMode();
   const [declared, site, media] = await Promise.all([
     declaredSources(slug, now, force, progress),
-    !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget) : [],
+    sourceMode || !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget, sourceMode) : [],
     mediaSources(slug, now, force, settings, progress),
   ]);
   if (!hasBudget()) return stopped();
@@ -735,7 +737,7 @@ export async function refreshProductEvidence(
     // Re-read declarations so an edit during external I/O remains pending in this request.
     const [currentDeclared, currentSite, currentMedia] = await Promise.all([
       declaredSources(slug, now, force, progress),
-      !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget) : [],
+      sourceMode || !dependencies.github || dependencies.siteFingerprint ? canonicalSiteSources(slug, now, force, progress, hasBudget, sourceMode) : [],
       mediaSources(slug, now, force, settings, progress),
     ]);
     if (!hasBudget()) return finish(true);
@@ -758,6 +760,9 @@ export async function refreshProductEvidence(
   for (const source of sources) {
     const key = evidenceRefreshKey(source);
     if (completed.has(key) || waiting(key)) continue;
+    if (sourceMode && source.kind === "documentation" && source.sourceKey === "canonical_site") {
+      totals.complete = false; totals.nextAttemptAt = now; continue;
+    }
     if (source.retryAt && source.retryAt > now) {
       // Force bypasses normal freshness intervals, never an upstream failure/cooldown.
       if (progress) await persist(key, source.retryAt);
@@ -805,6 +810,9 @@ export async function refreshProductEvidence(
         return finish(true);
       }
       if (error instanceof ProductGenerationChangedError || error instanceof JobLeaseLostError) throw error;
+      // Canonical's writer already owns failure persistence/CAS. A rejected
+      // original result must not fall through into a receipt-less failure write.
+      if (source.kind === "documentation" && source.sourceKey === "canonical_site") throw error;
       totals.sourcesFailed += 1;
       if (!hardStopped()) await markSourceFailure(source, now, settings, "collection_failed", dependencies.lease);
       retry = retryAt(now, source.attempts + 1, settings);

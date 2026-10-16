@@ -15,6 +15,7 @@ import {
   withProductGeneration,
 } from "@/lib/domain/products/generation";
 import { requestJob, assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { sourceRefreshKey } from "./source-contract";
 import type { ProductEvidenceRefreshResult } from "./refresh";
 
 const requestSchema = z.object({
@@ -152,6 +153,14 @@ export async function saveProductRefreshProgress(
     if (options.lease) await assertJobLease(tx, options.lease);
     if (!current || current.activeVersion !== request.activeVersion || request.activeVersion === null) {
       throw new Error("product refresh request changed");
+    }
+    // A source worker may have completed canonical evidence since this product
+    // collector copied its checkpoint. Preserve only the current URL's key.
+    const [product] = await tx.select({ url: products.url }).from(products).where(eq(products.id, request.productId));
+    const canonicalKey = product && sourceRefreshKey({ kind: "documentation", sourceKey: "canonical_site", sourceUrl: product.url });
+    if (canonicalKey && current.progress.completedKeys.includes(canonicalKey) && !progress.completedKeys.includes(canonicalKey)) {
+      progress = { completedKeys: [...progress.completedKeys, canonicalKey], retryAfterByKey: { ...progress.retryAfterByKey } };
+      delete progress.retryAfterByKey[canonicalKey];
     }
     const complete = options.result?.complete === true && !options.error;
     const { result } = options;
