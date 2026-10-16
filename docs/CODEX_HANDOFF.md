@@ -6,7 +6,7 @@
 
 ### AI1 PR05b3 — 개발·범위 검증·독립 리뷰·root DB 정리 완료, Git 인수 중
 
-WT `/Users/jr/Desktop/projects/nomorevibe-ai1-capacity-runtime`, branch `codex/pipeline-pr05b3-ai1-capacity-runtime-20261016`, HEAD3c0a0deb961e64d63e73ab13bd07dd9c4c47907c, source16+새검증문서 미커밋이다. Root가 ledger/native/runtime 전부 직접 읽었고 A/B 독립 추가P1/P2=0, 마지막 C 추가4 hunk도 A가 최종a82c101c 재검토/원본문 byte보존 확인했다. `/tmp/nomorevibe-pr05b3-a-native-runtime-final-review-20261016.md` 마지막절까지 root 읽음.
+WT `/Users/jr/Desktop/projects/nomorevibe-ai1-capacity-runtime`, branch `codex/pipeline-pr05b3-ai1-capacity-runtime-20261016`, 로컬 통합HEAD **0cc5a50ec2b8f1319316809d936a4bd38b78cb3e**다. Source16/새검증문서/canonical4를770221fb05e06673ef7aa074560a35bcf2cd80c8로 정상commit하고 최신453dfa를796c8045, main9e133을0cc5a50e로 정상merge했다. 각각 다른비공유2023/2028 SHA를보호했고 push/초안PR 제출이남았다. Root가 ledger/native/runtime 전부 직접 읽었고 A/B 독립 추가P1/P2=0, 마지막 C 추가4 hunk도 A가 최종a82c101c 재검토/원본문 byte보존 확인했다. `/tmp/nomorevibe-pr05b3-a-native-runtime-final-review-20261016.md` 마지막절까지 root 읽음.
 
 - A ledger7파일: capacity.ts/repository.ts, operations-schema.ts, migration0084+_journal, terminal unit/integration. Pure11의 scaffold3AssertionRED+8controls→동일11PASS. 실제PG durable CHECK 필수field누락RED→동일input보강GREEN. 첫migration0084 SHA4a09cd1362e45faf2381df3c2a561916fb9e050ea46e3a1ede29b6608a376a54. Actual8PASS/tests1.34초 total1.93초; POSTcount1줄 추가 후 native1만PASS/7skip/total1.30초; scopedTSC/ESLint0. 최종보고 `/tmp/nomorevibe-pr05b3-a-ledger-final-report-20261016.md`, final7sha JSON.
 - B native3파일: gateway.ts/new serving-contract.ts/new gateway-capacity.test.ts. Runnable10AssertionRED+17controls→27PASS, actualabort/awaitmutation 추가 후 최종29PASS/scoped0. 실제undici POST1/redirectmanual/retry0/complete envelope/privateWeakMap terminal, legacy wire/parser10conformance exact. Production resolver는 계속null/unsupported. 최종 `/tmp/nomorevibe-pr05b3-b-native-final-report-20261016.md`/3SHA.
@@ -33,7 +33,7 @@ WT `/Users/jr/Desktop/projects/nomorevibe-ai1-capacity-runtime`, branch `codex/p
 
 A predicate 중간22P02/보조snapshot정렬, C nonUUIDfixture/보조contract_version KeyError/late42883, root manifest list/object reader오류를 setup실패로원로그보존했고 기능RED로계상0. No forced release/TTLunknown회수/timeout증가/품질완화/운영활성화.
 
-1. AI1 A7/B3/C6 SHA검사→root검증문서+canonical4만추가→보호된기존source가안바뀐것확인→정상commit. 최신453dfa/main9e133을 정상merge하고 shared4는canonical본만선택, 고유source16SHA보존. Base467 초안PR로실제Git인수·push/remoteexact·필수CI만실행. 아직커밋/PR완료라고하지않는다.
+1. AI1 로컬commit770/최신HTTPmerge796/mainmerge0cc의 source16SHA와clean을다시guard→기록4문서commit→정상push/remoteexact→base467 초안PR 제출. `/tmp/nomorevibe-pr05b3-root-local-intake-20261016.json`, `...pr05b3-http-rival-root-parent-adoption...json`, `...pr05b3-main9e133-root-parent-adoption...json`. 필수CI만유지하고수동전체재실행0.
 2. `python3 /tmp/nomorevibe-root-protected-stack-merge-20261016.py <WT> <expectedHEAD> <parentHEAD> <phase>`는 비공유overlap을사전거절한다. Source충돌이면멈추고구체hunk리뷰; forcepush0. 기존base3c0의최종recordercasea982를이전형태로되돌리지않는다.
 3. B actualpermit4diff/정적/원callbackconformance를root가읽고지정3관측만승인. Failure/실제close/raw원복각각보존, 실험용production계측을운영fix로인수0. 원CI원인확정전merge0.
 4. PR06 A 최소구현을별도WT/배타파일계약으로진행하고 C text계획과충돌없이실제개발. PR05 전caller/AI2/text terminal, 독립consumer/실제30분2배, sourcebuffer운영제어, hostaggregate/PgBouncer/roster/principal/heartbeat, OracleARM/live/scale/replication/fencing/externalcalldrain24h/adminbrowser가남는다. PR14c typed settings/DDL 검증은읽기계획만이며 strict46해결구현미승인.
