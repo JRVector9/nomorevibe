@@ -237,14 +237,19 @@ export function cliFailure(output: Record<string, unknown>): ReviewFailure {
   return "cli_error";
 }
 
+/** stdin 프롬프트 — 공통 모델 슬롯 경로(05c-4)도 이 글을 그대로 쓴다 */
+export function reviewCliPrompt(serialized: string): string {
+  // Escape angle brackets so an adversarial string cannot end the evidence delimiter.
+  return `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
+}
+
 export async function reviewWithAgent(input: ReviewInput, options: { model?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
   const model = options.model ?? reviewModel();
   if (!model || reviewModel({ CRAWL_REVIEW_MODEL: model }) !== model) return { ok: false, error: "not_configured" };
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
-  // Escape angle brackets so an adversarial string cannot end the evidence delimiter.
-  const prompt = `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
+  const prompt = reviewCliPrompt(serialized);
   if (Buffer.byteLength(prompt, "utf8") > MAX_REVIEW_INPUT_BYTES + 256) return { ok: false, error: "input_too_large" };
   let result: ReviewCliResult;
   try {

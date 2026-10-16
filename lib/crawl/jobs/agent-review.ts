@@ -4,7 +4,8 @@ import { loadReviewDocument } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim } from "@/lib/crawl/agent-review-repository";
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
+  type CliModelCapacityReviewClaim } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -14,6 +15,8 @@ import { prepareAgentReview } from "../agent-review-preparation";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity } from "../agent-review-model-capacity";
+import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
+import type { PreparedReviewCliCall } from "../review-cli-call";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -77,15 +80,23 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     }
     if (!canAdmit()) return;
     const context = { candidate, document, settings, input };
-    let claim: ModelCapacityReviewClaim;
+    let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
     let prepared: PreparedAi1GatewayCall | undefined;
+    // CLI 심사자(05c-4)는 같은 되감은 claim 에서 CLI coordinator 로 간다. gateway·disabled 경로는 그대로다.
+    let cli: { capacity: typeof import("../review-cli-model-capacity"); call: PreparedReviewCliCall } | undefined;
     try {
       try {
         claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
-        const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal });
-        claim = resumed.claim; prepared = resumed.call;
+        if (provider === "claude-cli" || provider === "grok-cli") {
+          const capacity = await import("../review-cli-model-capacity");
+          const resumed = await capacity.claimAgentReviewCliModelCapacity({ ...context, lease, provider, model, timeoutMs: ceiling, signal: ctx.signal });
+          claim = resumed.claim; cli = { capacity, call: resumed.call };
+        } else {
+          const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal });
+          claim = resumed.claim; prepared = resumed.call;
+        }
       }
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;
@@ -101,7 +112,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       return;
     }
     if (!canStart()) {
-      if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch);
+      // CLI 는 spawn 하지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
+      if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
+      else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch);
       await recordAgentReview({ ...context, receipt: claim.receipt,
         error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
       return;
@@ -133,9 +146,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       const dispatch = claim.dispatch;
       const call = prepared;
       let result = await measureReviewCall(telemetry, async () => {
+        // CLI 제한 시간은 준비한 호출에 묶여 spawn 부터 센다. 틱 여유는 바로 위 canStart 가 spawn 직전에 다시 본다.
+        if (dispatch && cli) return cli.capacity.reviewCliModelCapacity(input, dispatch as CliModelDispatch, cli.call, { signal: controller.signal });
         if (dispatch) {
           if (!call) throw new Error("ai1_model_prepared_call_missing");
-          return reviewAgentReviewModelCapacity(input, dispatch, call, options);
+          return reviewAgentReviewModelCapacity(input, dispatch as Ai1ModelDispatch, call, options);
         }
         return (await dispatchReviewFixtureCall({ stage: "first",
         candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
