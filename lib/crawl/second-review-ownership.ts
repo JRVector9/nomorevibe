@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { and, eq, inArray, or, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { pipelineItemLeases, secondReviews, type SecondReview } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -18,6 +18,8 @@ import { parseItemBinding, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomainContext } from "./second-review-input";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
+import { lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
 export type SecondReviewReceipt = Readonly<{
@@ -177,7 +179,10 @@ export async function claimItemSecondReview(id: number, owner: ItemOwner, ttlMs:
 async function claimReview(id: number, authority: { kind: "legacy"; job: JobLease }
   | { kind: "item"; owner: ItemOwner; ttlMs: number }): Promise<SecondReviewClaim> {
   positive.parse(id);
-  return db.transaction(async tx => {
+  return onPrimary(() => db.transaction(async tx => {
+    // Only an active verified replay scope preserves its fixed fixture grants.
+    // Ordinary fresh admission takes the real control before S3/domain locks.
+    const capacity = currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
       || authority.kind === "item" && stage.writerContractVersion < 1) return { kind: "skipped", reason: "stage_inactive" };
@@ -217,9 +222,18 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
       await registerReplayItemFinalAuthority(tx, lease);
       ownership = { kind: "item", lease: lease as Ai2ItemLease };
     }
+    if (capacity && capacity.mode !== "disabled") {
+      if (capacity.mode === "draining") throw new ModelCapacityDeferredError("draining");
+      const route = capacity.policy?.routes.find(route => route.routeId === "second-review"
+        && route.provider === binding.reviewer.provider && route.model === binding.reviewer.model);
+      if (!route) throw new ModelCapacityDeferredError("unmapped");
+      // No adapter yet proves provider termination. Roll back the whole claim,
+      // including any item token/epoch issued above; existing receipts still settle.
+      throw new ModelCapacityDeferredError("provider_contract_unavailable");
+    }
     return { kind: authority.kind === "legacy" ? "admitted" : "claimed", row, input: context.input,
       receipt: { binding, rowIdentityHash: rowIdentityHash(row), ownership } };
-  });
+  }));
 }
 
 export async function renewSecondReviewOwnership(receipt: ItemReceipt, ttlMs: number): Promise<Ai2ItemLease | null> {
