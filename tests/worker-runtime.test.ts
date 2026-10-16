@@ -8,6 +8,26 @@ function runtimeGate() {
   return { promise, release };
 }
 
+it('re-polls the single site-evidence lane only after an actual runner continuation', async () => {
+  const controller = new AbortController();
+  let polls = 0;
+  const sleeps: number[] = [];
+  await runWorker({ role: 'site-evidence', signal: controller.signal }, {
+    names: ['product-site-evidence-refresh'], lanes: [['product-site-evidence-refresh']],
+    seen: async () => {},
+    pending: async () => ++polls === 1 ? ['product-site-evidence-refresh'] : [],
+    run: async () => ({ status: 'completed', done: false, sourceContinuation: true }),
+    sleep: async ms => { sleeps.push(ms); controller.abort(); },
+  });
+  expect(polls).toBe(2);
+  expect(sleeps).toEqual([5_000]);
+});
+
+it('gives the site-only source lane the same bounded evidence budget', () => {
+  const options = { requestedOnly: true as const, signal: new AbortController().signal };
+  expect(jobRunOptions('product-site-evidence-refresh', options)).toEqual({ ...options, budgetMs: 55_000 });
+});
+
 it.each(['legacy', 'versioned'] as const)('keeps the production %s crawler fetch lane progressing while evidence is held', async mode => {
   const controller = new AbortController();
   const entered = runtimeGate();

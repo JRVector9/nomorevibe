@@ -30,7 +30,7 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
-export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity";
+export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity" | "source_buffer";
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
   | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
 export type RunResult =
@@ -159,7 +159,7 @@ export async function runJob<C>(
         return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
           .where(owned).returning({ name: jobs.name });
       };
-      const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity"
+      const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"
         ? await db.transaction(async tx => {
           await assertJobLeaseAtWallTime(tx, lease, "update");
           return release(tx);
@@ -170,7 +170,7 @@ export async function runJob<C>(
       return { status: "deferred", reason: outcome.deferred, durationMs };
     }
     const budgetMs = options.budgetMs ?? 25_000;
-    const sourceReady = name === "product-evidence-refresh" && outcome.done === false
+    const sourceReady = ["product-evidence-refresh", "product-site-evidence-refresh"].includes(name) && outcome.done === false
       && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;
     const reviewReady = outcome.continuation === "ready"
       && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted;
