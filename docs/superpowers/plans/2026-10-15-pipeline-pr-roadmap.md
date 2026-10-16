@@ -1,8 +1,12 @@
 # 수집·검수 2배와 세 서버 운영 — PR Implementation Plan
 
-## 추가 진행 — 2026-10-16 08:52 UTC
+## 추가 진행 — 2026-10-16 09:31 UTC
 
-TextPhaseA18파일은9215a1f9→최신471parentmerge1e84bb09로정상push/초안PR473제출·remoteexact/clean·A독립리뷰P1/P2=0, actual3분리PASS/root55564정상정리까지완료다. PR06a는독립리뷰P2 once상한(새120vs96RED→최소1조건후관련3PASS)을고쳤고consumer healthchecker 경로/rolecandidate P2도4파일로보강했다(새4AssertionRED→동일6+인접3=9PASS/실제CLI5close/정적0). 최종13SHA를root직접검토해정상commit/초안제출준비다. HTTP는native100ms postfire-GC에서만source소실/취소누락을실제재현하고privateWeakMap대조만정상TimeoutError/child3close를확인했다(전체harness1보존, CI원인확정0). 원453보존·진단472병합금지/새별도WT에서최소deadline보존수정중이다. ActiveDB0·다음새55565. 전체미완료·수동전체는모든PR개발뒤·운영activation0, 정확SHA/수정파일/실패/모델·검증한계/다음명령은CODEX_HANDOFF최상단.
+HTTP 최소 deadline 수정을 원 PR453에 취합·최신main 정상병합해 head5e0626de로 push했다. 새 CI38879708210 필수6+GG 모두SUCCESS를 직접확인, 병합/배포는 아직0이다. PR474 typefix42710 quality통과/통합3실패는 원로그미확인·무변경rerun0. AI1 독립consumer frozen12/실제8최초PASS/root55566 독립확인·정상정리/B 독립추가P1/P2=0, root CI목록202=2+67/67/66 검증 후 초안PR 취합중이다. Catalog rawdelta/최초checker실패는 보존한다. AI2 native B3 동결(21+기존AI1exact2PASS), C ledger7/0085분해본 검토·B독립리뷰 중/DB0, A runtime5의 frozen17GREEN/실제driver작성중이다. activeDB0/다음55567, 전체미완료·운영activation0·수동전체는 모든PR개발뒤 유지. 정확SHA·실패·수정파일·다음명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 09:12 UTC
+
+추가완료: PR474 type-only 보완 정상push42710f2e·C독립읽기완료, HTTP 원unread1 최초PASS/6.48초·root55565 독립raw88표90행/journal82 exact 및 정상sequence delta보존·정상정리완료다. 최초root guard의 축약ID 비교실패와 조기readback은별도기록/수정guard10일치다. 새AI2 item-native WT8a34e1b6에서 C ledger0085/B native3파일 배타개발을 시작했다. PR474 quality의 원TS2345를 Next ambient 포함 scoped 검사로 재현하고 helper의 부분 env annotation 한line만 수정해 같은 tsc/eslint0을 확인했다. Runtime/원it/다른12파일 불변·독립읽기 뒤 정상push 예정이다. AI2 독립 소비자 최종13파일은 정상commit/최신471parentmerge8b6c8ee9·정상push/초안PR474로 제출했다. 새CI 통합1·2·3 SUCCESS, quality FAIL 원인을 C가 원로그로 분석한다. TextPhaseA 초안PR473/1e84bb09는 quality·통합1·2 SUCCESS/통합3FAIL 원로그 분석 중이다. PR471/565의 role fixture24 PASS와 HTTP unread1FAIL·899PASS/TODO1을 root 확인했다. HTTP 최소 WeakMap 수정보존3파일은 실제 원source 유효2AssertionRED/대조1PASS→동일3GREEN·conditional2PASS·범위정적0, root+C 독립읽기 P1/P2=0이며 CI 원인확정은 아니다. B에게 새55565 전용DB를 배정해 원 unread1만 최초 검증한다. A는 별도AI1 consumer WT/base474에서 승인된 실제 개발 중(DB0). 진단472 병합금지/운영activation0/전체미완료/수동전체는 모든PR개발뒤를 유지한다. 정확SHA·실패·수정파일·DB소유권·다음명령은CODEX_HANDOFF 최상단에 기록했다.
 
 ## 추가 진행 — 2026-10-16 08:35 UTC
 

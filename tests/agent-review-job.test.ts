@@ -273,11 +273,11 @@ it("cleans a claim instead of applying success received after shutdown", async (
 });
 
 
-it("does not requeue, hand off, read README or call a provider when legacy stage admission is closed", async () => {
+it("runs bounded controllers but does not read README or call a provider when legacy stage admission is closed", async () => {
   mocks.canStart.mockResolvedValue(false);
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
-  expect(mocks.requeue).not.toHaveBeenCalled();
-  expect(mocks.handOff).not.toHaveBeenCalled();
+  expect(mocks.requeue).toHaveBeenCalledExactlyOnceWith(mocks.settings, context().lease, 20);
+  expect(mocks.handOff).toHaveBeenCalledExactlyOnceWith(mocks.settings, context().lease, 20);
   expect(mocks.list).not.toHaveBeenCalled();
   expect(mocks.document).not.toHaveBeenCalled();
   expect(mocks.readme).not.toHaveBeenCalled();

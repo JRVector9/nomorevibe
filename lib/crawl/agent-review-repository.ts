@@ -10,15 +10,15 @@ import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, typ
 import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
 import type { PreparedAi1GatewayCall } from "./agent-review-gateway";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
-  agentRepositoryScans, agentRepositoryObservations,
+  agentRepositoryScans, agentRepositoryObservations, jobs,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
-import { claimItemLease, readItemStage, assertItemLease, releaseItemLease } from "@/lib/jobs/items/repository";
-import type { ItemOwner } from "@/lib/jobs/items/types";
+import { claimItemLease, readItemStage, assertItemLease, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
+import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
@@ -30,7 +30,7 @@ import { firstReviewer } from "./agent-review";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
 import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired } from "./review-replay-context";
-import { judgeRevision } from "./rules";
+import { judgeRevision, judgeStoredDocument } from "./rules";
 import { lockFrontierIdentity } from "./repository";
 import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
@@ -80,6 +80,69 @@ async function lockCurrentReviewInput(tx: ProductTransaction, expected: ReviewDo
     && input.validUntil > now && document.fetchedAt <= now
     && (!input.source.scanCompletedAt || new Date(input.source.scanCompletedAt) <= now)
     ? { candidate, document, settings, input } : null;
+}
+
+/** Read-only preparation hint. Claim and writer re-read these exact rows under locks. */
+export async function loadFirstReviewConsumerContext(candidateId: number): Promise<
+  { kind: "current"; context: ReviewDomainContext } | { kind: "skipped"; reason: string }
+> {
+  if (!Number.isSafeInteger(candidateId) || candidateId < 1) throw new Error("invalid_agent_review_candidate");
+  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  return onPrimary(async () => {
+    const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidateId));
+    const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+    const settings = mergeWithDefaults(saved?.values);
+    if (!settings.enabled || settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
+    if (!candidate || !isReviewCandidate(candidate)) return { kind: "skipped", reason: "input_changed" };
+    const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo));
+    if (!document || typeof document.pageMeta?.readmeSample !== "string"
+      || document.pageMeta.readmeSampleVersion !== README_SAMPLE_VERSION)
+      return { kind: "skipped", reason: "source_not_prepared" };
+    const input = await loadReviewInput(candidate, document, settings);
+    if (input.validUntil <= reviewSemanticNow()) return { kind: "skipped", reason: "input_changed" };
+    return { kind: "current", context: { candidate, document, settings, input } };
+  });
+}
+
+/** Original item receipt remains authoritative across renewals and current-source changes. */
+export async function observeAgentReviewItemDispatch(context: ReviewDomainContext, receipt: Ai1ReviewReceipt): Promise<
+  { kind: "current" } | { kind: "changed" }
+> {
+  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  if (receipt.ownership.kind !== "item") throw new Error("invalid_agent_review_receipt");
+  return onPrimary(() => db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    const current = await lockCurrentReviewInput(tx, context);
+    const [attempt] = await tx.select().from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.id, receipt.attemptId), eq(crawlReviewAttempts.candidateId, context.candidate.id),
+    )).for("update");
+    if (!attempt) throw new Error("invalid_agent_review_receipt");
+    await assertAgentReviewOwnership(tx, stages.ai1, receipt, attempt, context.input);
+    return { kind: current ? "current" : "changed" };
+  }));
+}
+
+export async function renewAgentReviewItemOwnership(context: ReviewDomainContext, receipt: Ai1ReviewReceipt,
+  ttlMs: number): Promise<Ai1ItemLease | null> {
+  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  if (receipt.ownership.kind !== "item") throw new Error("invalid_agent_review_receipt");
+  const lease = receipt.ownership.lease;
+  return onPrimary(() => db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    await lockCurrentReviewInput(tx, context);
+    const [attempt] = await tx.select().from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.id, receipt.attemptId), eq(crawlReviewAttempts.candidateId, context.candidate.id),
+    )).for("update");
+    if (!attempt) throw new Error("invalid_agent_review_receipt");
+    // Generic renewal returns null on actual ownership loss. Validate the original
+    // attempt/binding while allowing that operational refusal to stay null.
+    try { await assertAgentReviewOwnership(tx, stages.ai1, receipt, attempt, context.input); }
+    catch (error) {
+      if (error instanceof Error && error.message === "item_lease_lost") return null;
+      throw error;
+    }
+    return await renewItemLease(tx, stages.ai1, lease, ttlMs) as Ai1ItemLease | null;
+  }));
 }
 
 /** Cheap current revision comparison used before LIMIT; final transactions also recompute inputHash. */
@@ -339,7 +402,7 @@ export async function handOffExhaustedFirstReviews(
   if (!settings.enabled || settings.reviewMode !== "enforce") return 0;
   return db.transaction(async tx => {
     const stages = await lockPipelineInputStages(tx);
-    if ((await readItemStage(tx, stages.ai1)).mode !== "legacy") return 0;
+    await readItemStage(tx, stages.ai1);
     const rows = await tx.select().from(crawlCandidates).where(and(
       or(eq(crawlCandidates.state, "approved"), and(eq(crawlCandidates.state, "needs_review"),
         inArray(crawlCandidates.reason, [...REVIEW_RETRIABLE_REASONS]))), eq(crawlCandidates.decidedBy, "auto"),
@@ -537,7 +600,22 @@ export async function claimItemAgentReview(input: ClaimContext & { owner: ItemOw
   return claimReview(input, { kind: "item", owner: input.owner, ttlMs: input.ttlMs });
 }
 
-async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim): Promise<ModelCapacityReviewClaim> {
+class HealthyLegacyReviewOwner extends Error {}
+
+/** Fixed ordinary consumer entry; fresh model work never falls through to legacy transport. */
+export async function claimConsumerItemAgentReview(input: ClaimContext & { owner: ItemOwner; ttlMs: number }): Promise<ReviewClaim> {
+  if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
+  const owner = itemOwnerSchema.parse(input.owner);
+  const context = structuredClone({ candidate: input.candidate, document: input.document, settings: input.settings,
+    input: input.input, provider: input.provider, model: input.model, now: input.now });
+  try { return await claimReview(context, { kind: "item", owner, ttlMs: input.ttlMs }, undefined, true); }
+  catch (error) {
+    if (error instanceof HealthyLegacyReviewOwner) return { kind: "skipped", reason: "running" };
+    throw error;
+  }
+}
+
+async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim, consumer = false): Promise<ModelCapacityReviewClaim> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
   return onPrimary(() => db.transaction(async tx => {
     // currentReplayDb revalidates the private active verified handler scope.
@@ -577,6 +655,17 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       const lease = await claimItemLease(tx, stages.ai1, binding, authority.owner, authority.ttlMs);
       if (!lease) return { kind: "skipped", reason: "running" };
       ownership = { kind: "item", lease: lease as Ai1ItemLease };
+    }
+    if (consumer) {
+      // Jobs follow attempts/items. Check every running attempt, not only the
+      // bounded reuse history. Roll back the tentative item CAS for a healthy
+      // legacy owner even after an operator changed the stage mode.
+      await tx.select({ name: jobs.name }).from(jobs).where(eq(jobs.name, "crawl-agent-review")).for("share");
+      const [live] = await tx.select({ name: jobs.name }).from(jobs).where(and(eq(jobs.name, "crawl-agent-review"),
+        sql`${jobs.leaseToken} IS NOT NULL AND ${jobs.lockedAt} >= clock_timestamp() - interval '90 seconds'`,
+        sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} active WHERE active.candidate_id = ${locked.candidate.id}
+          AND active.kind = 'automatic' AND active.state = 'running' AND active.lease_token = ${jobs.leaseToken})`));
+      if (live) throw new HealthyLegacyReviewOwner();
     }
     const token = ownership.kind === "legacy" ? ownership.job.token : ownership.lease.token;
     const now = input.now ?? new Date();
@@ -621,6 +710,8 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
           return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
         }),
       } : undefined;
+      if (consumer && !reusable && input.provider !== "rules" && capacity?.mode === "disabled")
+        throw new ModelCapacityDeferredError("disabled");
       if (!reusable && input.provider !== "rules" && capacity && capacity.mode !== "disabled") {
         if (capacity.mode === "draining") throw new ModelCapacityDeferredError("draining");
         const route = capacity.policy?.routes.find(route => route.routeId === "crawl-agent-review"
@@ -677,12 +768,23 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
   }));
 }
 
-export async function recordAgentReview(input: ReviewDomainContext & {
+type RecordAgentReviewInput = ReviewDomainContext & {
   receipt: Ai1ReviewReceipt; outcome?: ReviewOutcome; error?: string; retryAfter?: Date; now?: Date;
   usage?: { inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null };
   /** Server-side rules only; never populated from the model response. */
   ruleRejection?: { reason: DecisionReason; existingSlug?: string; existingStatus?: ProductStatus };
-}): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
+};
+export function recordAgentReview(input: RecordAgentReviewInput): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
+  return recordReview(input, false);
+}
+
+/** Server-only hold: recomputed under the same current-domain/item writer locks. */
+export function recordConsumerSuspectedSpam(input: ReviewDomainContext & { receipt: Ai1ReviewReceipt }): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
+  if (input.receipt.ownership.kind !== "item") throw new Error("invalid_agent_review_receipt");
+  return recordReview(input, true);
+}
+
+async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): Promise<{ applied: boolean; state: "succeeded" | "failed" | "superseded" }> {
   if (!input.receipt || !input.receipt.ownership) throw new Error("invalid_agent_review_receipt");
   if (input.receipt.ownership.kind === "item" && currentReplayDb()) throw new Error("replay_item_execution_unsupported");
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
@@ -724,20 +826,26 @@ export async function recordAgentReview(input: ReviewDomainContext & {
       await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: reusable ? "succeeded" as const : "failed" as const };
     }
-    const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : input.outcome ?? attempt.outcome);
+    const spam = spamHold ? judgeStoredDocument(locked.document, locked.settings, reviewSemanticNow(),
+      locked.settings.agentEvidence.enforceEligibility ? { relationship: current.snapshot.relationship,
+        scanState: current.snapshot.scanState, observations: current.snapshot.evidence.map(evidence => evidence.observation) } : undefined) : null;
+    if (spamHold && (attempt.provider !== "rules" || spam?.reason !== "suspected_spam"))
+      throw new Error("agent_review_spam_hold_changed");
+    const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : spamHold ? { decision: "needs_review", reason: "스팸·악성 의심은 사람이 확인해야 합니다.", evidenceIds: ["product"] } : input.outcome ?? attempt.outcome);
     const ruleRejection = attempt.provider === "rules" && outcome.decision === "reject" ? input.ruleRejection : undefined;
     if (owns) await tx.update(crawlReviewAttempts).set({ state: "succeeded", outcome, completedAt: now, errorCode: null,
       inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
-    const applied = locked.settings.reviewMode === "enforce";
+    const applied = spamHold || locked.settings.reviewMode === "enforce";
     const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
-      reason: ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
+      reason: spamHold ? "suspected_spam" : ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
       decidedBy: "auto", updatedAt: now,
       signals: { ...kept, agentReviewAttemptId: attempt.id,
+        ...(spamHold && spam ? { suspectedSpam: spam.signals.suspectedSpam } : {}),
         ...(ruleRejection?.existingSlug ? { existingSlug: ruleRejection.existingSlug, existingStatus: ruleRejection.existingStatus } : {}),
-        ...(outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
+        ...(spamHold && spam ? { stoppedAt: spam.signals.stoppedAt } : outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
     }).where(eq(crawlCandidates.id, locked.candidate.id));
     // Preserve existing observe fanout, and avoid a duplicate handoff for applied history.
     if (owns || applied && locked.candidate.signals?.agentReviewAttemptId !== attempt.id) {
