@@ -37,6 +37,8 @@ import {
   ai2DispatchBindingSchema, ai2DispatchBindingHash, ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2DispatchBinding, type Ai2ModelDispatch,
 } from "./capacity";
+import { ModelCapacityDeferredError } from "./capacity-deferred";
+import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
 const fail = (code: string): never => { throw new Error(code); };
@@ -65,7 +67,11 @@ export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
 /** Standalone primary read; the transaction has settled before transport starts.
  * This never expires requests, grants a reservation or appends an event. */
 export async function readModelCapacityCallerControl() {
-  return transaction(tx => lockModelCapacityCallerControl(tx));
+  const snapshot = await transaction(tx => lockModelCapacityCallerControl(tx));
+  // Every disabled-transport choice (coordinator, text/CLI admission) reads here. A background
+  // consumer lane never takes that uncapped path, even if open flips to disabled mid-tick.
+  if (snapshot.mode === "disabled" && slotOnlyModelCapacity()) throw new ModelCapacityDeferredError("disabled");
+  return snapshot;
 }
 
 function callerControlSnapshot(row: Control) {
