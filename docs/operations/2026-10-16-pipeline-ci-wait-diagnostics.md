@@ -1,5 +1,29 @@
 # HTTP 대기·replay 비용 진단 — 2026-10-16
 
+## 후속 보완 — 명시 opt-in과 원 CLI 계약
+
+새 CI38857266461의 integration1은 duplicate export의 원 code1/killedfalse/signalnull/fixed error가 같지만,
+무조건 출력한 새 subphase6줄이 기존 exact stderr 기대와 충돌해 실패했다. Root가 기본 CLI 계약을 유지하도록
+execution 측정과 verified report 측정을 `NOMOREVIBE_REPLAY_DIAGNOSTICS=1`일 때만 실행하게 보완했다.
+기본값은 CPU/timestamp 샘플·subphase출력0이다. Sink guard/SQL/검증/timeout·원 coverage assertion은 유지했다.
+Item-journal fixture는 beforeAll에서 원 env를 저장하고 opt-in하며 기존 pending/cleanup/admin.end 뒤 finally에서
+원 유무/값을 복원한다. 이 복원은 source로 확인했고 afterAll env의 별도 runtime 관측은 추가하지 않았다.
+
+Native child의 실제 public 거절 경로로 새2case를 고정했다. 구 source는 default CPU2≠0의 실제1AssertionFAIL+
+opt-in control1PASS, 보완 뒤 동일2+기존 CLI18 합20PASS였다. 변경4파일 scoped tsc/eslint exit0이다.
+새55551 원coverage1PASS/5skip(6.87초)은 default subphase0 및 원 exactCLI stderr/출력 bytes를 확인했고,
+원legacy/item2PASS/12skip(8.30초)은 opt-in56records=28begin/end쌍/reject0을 확인했다. 각1회 실행이며 전체 재검증은 아니다.
+
+55551 최종은 원 coverage의 자기10행 잔류로 raw8→18/whole exact=false다. Root 독립 readback은 agent final과
+exact이고 원8행을 보존했으며 journal82/default/stage raw exact·replayrole/schema0·items0·타연결0이었다.
+Raw catalog는16관계+DB ACL NULL→명시default 차이로 false, effective catalog만 exact다. Strict 비교 exit1을
+원형 복구 PASS로 바꾸지 않았다. 수동 DML/정규화0, 정상STOP/exited0/OOMfalse 뒤 자기container/volume만 정리했다.
+55515–51은 모두 retired다. 실행 원문은 `/tmp/nomorevibe-pr453-a-diagnostics-optin-report-20261016.md`,
+`...pr453-a-optin-actual3-report...md`, `...pr453-optin-root-independent-proof...json`과 cleanup proof를 따른다.
+
+같은 CI의 integration3은 취소로 종료했다. 새 subphase 원자료의 첫 지연은 별도 분석 중이며 local3PASS를
+전체 CI 성공으로 쓰지 않는다. 반복 schema 구성 제거의 검증은 [별도 기록](2026-10-16-pipeline-replay-schema-reuse-validation.md)을 따른다.
+
 CI에서 멈추는 첫 await와 replay seal/report의 비용을 구분하기 위한 계측이다. 운영 처리량 개선이나 기존 CI 실패 해결을 뜻하지 않는다. SQL·업무 판정·권한·검증 횟수·시간 제한은 유지했다.
 
 ## 실제 실패와 변경

@@ -83,7 +83,10 @@ function writeExecutionDiagnostic(line: string): void {
 // Fixed diagnostics only. Process CPU includes other concurrent work; it is not
 // per-query CPU or authority. No projection serialization or row values here.
 function captureExecutionMeasurement(): ExecutionMeasurement | undefined {
-  try { return { wall: performance.now(), cpu: process.cpuUsage() }; } catch { return undefined; }
+  try {
+    if (process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS !== "1") return undefined;
+    return { wall: performance.now(), cpu: process.cpuUsage() };
+  } catch { return undefined; }
 }
 function beginExecutionDiagnostic(phase: ExecutionDiagnosticPhase): ExecutionDiagnostic | undefined {
   try {

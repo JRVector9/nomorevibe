@@ -52,6 +52,7 @@ function writeReportDiagnostic(line: string): void {
 // byte sizes are not serialized again just to measure them.
 function beginReportDiagnostic(phase: ReportDiagnosticPhase): ReportDiagnostic | undefined {
   try {
+    if (process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS !== "1") return undefined;
     const sample = { ordinal: ++reportDiagnosticOrdinal, phase, wall: performance.now(), cpu: process.cpuUsage() };
     writeReportDiagnostic(JSON.stringify({ event: "certified_replay_report_subphase", ordinal: sample.ordinal, phase, state: "begin" }) + "\n");
     return sample;
