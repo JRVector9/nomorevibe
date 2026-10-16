@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
@@ -114,9 +115,14 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
             written++;
             if (saved.released) released++;
           }
-        } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
+        } catch (error) {
+          if (error instanceof ModelCapacityDeferredError) blocked ||= "model_capacity";
+          else { blocked = "result_write_failed"; controller.abort(); }
+          throw error;
+        }
       }));
-      const failure = settled.find(result => result.status === "rejected");
+      const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
+      const failure = failures.find(result => !(result.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
       if (blocked) {
         ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });

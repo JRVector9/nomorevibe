@@ -1,4 +1,5 @@
 import type { ProfileEvidence } from "./search-profile";
+import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
 /**
  * 검색 키워드 검수 — 다른 모델이 근거와 대조해 뒷받침되지 않는 키워드를 고른다.
@@ -140,6 +141,7 @@ export async function verifyKeywords(item: VerifyItem, options: {
 }): Promise<VerifyResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
+  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? VERIFY_MODEL });
   // 꺾쇠를 막아 두어야 근거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const body = JSON.stringify({ evidence: item.evidence, keywords: item.keywords }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));

@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
 import { parseTagline, taglineEvidence, taglineHash, tidyTagline, writeTagline, type TaglineEvidence } from "@/lib/crawl/tagline";
 
+// These legacy transport units do not open a database; actual disabled SQL is covered separately.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
+
 const evidence = (over: Partial<TaglineEvidence> = {}): TaglineEvidence => ({
   name: "Sho't Right", url: "https://shotright.test", topics: [], language: "TypeScript",
   pageTitle: "Sho't Right", pageText: "바를 등록하면 손님이 찾을 수 있습니다. ".repeat(10), readme: "", ...over,
