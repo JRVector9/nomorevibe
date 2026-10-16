@@ -7,11 +7,13 @@ No secret or raw Dokploy application response is written to stdout.
 
 import argparse
 import hashlib
+import importlib
 import json
 import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -625,7 +627,71 @@ def restore(client, snapshot_path, short, token):
     return check_app_deployed(client, short, previous, previous_id)
 
 
+ORACLE_ACTIONS = ('oracle-plan', 'oracle-install', 'oracle-rollback')
+
+
+def oracle_modules():
+    directory = Path(__file__).resolve().parents[2] / 'deploy/oracle'
+    previous = sys.path[:]
+    try:
+        sys.path.insert(0, str(directory))
+        modules = []
+        for name in ('release_contract', 'manage_release'):
+            module = importlib.import_module(name)
+            if Path(module.__file__).resolve() != (directory / (name + '.py')).resolve():
+                raise RuntimeError('oracle_module_path_mismatch')
+            modules.append(module)
+        return tuple(modules)
+    finally:
+        sys.path[:] = previous
+
+
+def oracle_main(argv):
+    parser = argparse.ArgumentParser(description='Verify or switch an inactive caller-owned offline Oracle release.', allow_abbrev=False)
+    parser.add_argument('action', choices=ORACLE_ACTIONS)
+    parser.add_argument('--sha', required=True)
+    parser.add_argument('--archive', required=True, type=Path)
+    parser.add_argument('--archive-sha256', required=True)
+    parser.add_argument('--expected-host', required=True, type=Path)
+    parser.add_argument('--observed-host', required=True, type=Path)
+    parser.add_argument('--staging-root', type=Path)
+    parser.add_argument('--expected-current')
+    args = parser.parse_args(argv)
+    if args.action == 'oracle-plan' and (args.staging_root is not None or args.expected_current is not None):
+        parser.error('oracle-plan does not accept --staging-root or --expected-current')
+    if args.action != 'oracle-plan' and args.staging_root is None:
+        parser.error('--staging-root is required for oracle-install/oracle-rollback')
+    if args.action == 'oracle-rollback' and args.expected_current is None:
+        parser.error('--expected-current is required for oracle-rollback')
+    contract, manager = oracle_modules()
+    contract.sha(args.sha, 40)
+    if args.expected_current is not None:
+        contract.sha(args.expected_current, 40)
+    hosts = (contract.load_json(args.expected_host.read_bytes()), contract.load_json(args.observed_host.read_bytes()))
+    contract.validate_host(*hosts)
+    manifest = manager.inspect_archive(args.archive, args.archive_sha256)
+    if manifest['releaseSha'] != args.sha:
+        raise ValueError('oracle_release_sha_mismatch')
+    result = {'action': args.action, 'releaseSha': args.sha, 'readiness': 'unverified', 'activationAllowed': False}
+    if args.action == 'oracle-plan':
+        result['files'] = len(manifest['files'])
+    else:
+        manager.stage_release(args.staging_root, args.archive, args.archive_sha256, *hosts)
+        result.update(manager.switch_release(args.staging_root, args.sha, args.expected_current, *hosts))
+    print(json.dumps(result))
+
+
 def main(argv=None):
+    actual = sys.argv[1:] if argv is None else argv
+    if actual and actual[0] in ORACLE_ACTIONS:
+        if argv is None:
+            try:
+                return oracle_main(actual)
+            except Exception as error:
+                print(json.dumps({'error': type(error).__name__, 'code': 'oracle_offline_release_failed',
+                                  'readiness': 'unverified', 'activationAllowed': False}))
+                raise SystemExit(1) from error
+        return oracle_main(actual)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('plan', 'run', 'restore'))
     parser.add_argument('--sha')
