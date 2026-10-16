@@ -1,7 +1,16 @@
-import { expect, it } from 'vitest';
-import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { dbPoolConfig } from '@/lib/db/pool';
+import { expect, it, vi } from 'vitest';
+import { childExitCode, superviseWorker, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
+
+const runtime = vi.hoisted(() => ({ spawn: vi.fn(), observe: vi.fn(async () => {}) }));
+vi.mock('node:child_process', () => ({ spawn: runtime.spawn }));
+vi.mock('@/lib/operations/observations', () => ({ observeService: runtime.observe }));
 
 const limits = supervisorLimits('crawler', {});
 const health: WorkerHealth = {
@@ -102,5 +111,41 @@ it('requires an explicit local origin and bounds read-only measurement load', ()
   expect(parseCapacityArgs(['--origin=http://127.0.0.1:3200'])).toEqual({ origin: 'http://127.0.0.1:3200', paths: ['/'], rps: 1, durationSeconds: 30, maxInflight: 2 });
   for (const args of [[], ['--origin=https://github.com'], ['--origin=http://localhost', '--paths=//github.com'], ['--origin=http://localhost', '--paths=/api/register'], ['--origin=http://localhost', '--paths=/a/../api/register'], ['--origin=http://localhost', '--paths=/go/product'], ['--origin=http://localhost', '--rps=21']]) {
     expect(() => parseCapacityArgs(args)).toThrow();
+  }
+});
+
+
+it.each(['crawler', 'scheduler'] as const)('uses the production supervisor spawn to transfer the %s parent identity into its child', async role => {
+  const directory = mkdtempSync(join(tmpdir(), 'host-db-supervisor-'));
+  const child = Object.assign(new EventEmitter(), { pid: undefined, kill: vi.fn() });
+  runtime.spawn.mockReset().mockReturnValue(child);
+  const parent = { kind: role === 'scheduler' ? 'scheduler-parent' : 'role-parent', role,
+    host: 'm3', release: 'r1', replica: 1, copy: 2 };
+  const budget = { mode: 'enabled', policy: { version: 1, host: 'm3', release: 'r1', roles: ['crawler'],
+    schedulerReplicas: 1, webReplicas: 0, webReadReplica: false, monitor: false, connectAgent: false,
+    preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: 2 }, process: parent };
+  vi.stubEnv('HOST_DB_BUDGET', JSON.stringify(budget));
+  vi.stubEnv('WORKER_ROLE', role); vi.stubEnv('PHYSICAL_HOST', 'm3'); vi.stubEnv('RELEASE_TAG', 'r1');
+  vi.stubEnv('DB_POOL_MAX', undefined);
+  let running: Promise<number> | undefined;
+  try {
+    expect(dbPoolConfig().max).toBe(1);
+    running = superviseWorker(role, { once: true, closeDbOnExit: false, healthPath: join(directory, 'health.json') });
+    expect(runtime.spawn).toHaveBeenCalledOnce();
+    const [executable, args, options] = runtime.spawn.mock.calls[0];
+    expect(executable).toBe(process.execPath);
+    expect(args).toEqual(['--import', 'tsx', ...(role === 'scheduler' ? ['scripts/scheduler.ts'] : ['scripts/worker.ts', '--role=crawler']), '--once']);
+    const childEnv = options.env as NodeJS.ProcessEnv;
+    expect(JSON.parse(childEnv.HOST_DB_BUDGET!)).toEqual({ ...budget,
+      process: { ...parent, kind: role === 'scheduler' ? 'scheduler-worker' : 'worker' } });
+    expect(dbPoolConfig(childEnv).max).toBe(role === 'scheduler' ? 2 : 4);
+    expect(JSON.parse(process.env.HOST_DB_BUDGET!).process).toEqual(parent);
+    child.emit('exit', 0);
+    expect(await running).toBe(0);
+  } finally {
+    child.emit('exit', 1);
+    await running?.catch(() => {});
+    vi.unstubAllEnvs();
+    rmSync(directory, { recursive: true, force: true });
   }
 });

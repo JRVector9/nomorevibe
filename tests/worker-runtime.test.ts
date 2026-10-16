@@ -1,3 +1,7 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
 import { batchJobsForRole, batchLanesForRole } from '@/lib/jobs/batches';
@@ -368,4 +372,68 @@ it('reports the longest-running job across lanes with its own start time — the
   resolvers.get('ai-level-refresh')!();
   await work;
   expect(reports.at(-1)?.[0]).toBe('idle');
+});
+
+
+async function runBudgetEntry(script: string, args: string[], env: NodeJS.ProcessEnv) {
+  const child = spawn(process.execPath, ['--import', 'tsx', script, ...args], {
+    cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  let heartbeats = 0;
+  let stderr = '';
+  let closed = false;
+  child.stdout?.resume();
+  child.stderr?.on('data', data => { stderr = (stderr + String(data)).slice(-4096); });
+  child.on('message', value => { if ((value as { type?: string })?.type === 'runtime.heartbeat') heartbeats += 1; });
+  const settled = new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', code => { closed = true; resolve(code); });
+  });
+  const actualClose = new Promise<void>(resolve => { child.once('close', () => resolve()); });
+  const timeout = setTimeout(() => child.kill('SIGTERM'), 4000);
+  const killTimeout = setTimeout(() => child.kill('SIGKILL'), 5000);
+  try { return { code: await settled, heartbeats, stderr }; }
+  finally {
+    if (!closed) child.kill('SIGTERM');
+    await actualClose;
+    clearTimeout(timeout);
+    clearTimeout(killTimeout);
+  }
+}
+
+it('rejects a wrong declared entry before real CLI heartbeats, role observations or supervisor spawn', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'host-db-entry-'));
+  const env = { ...process.env, DATABASE_URL: undefined, READ_DATABASE_URL: undefined, NODE_OPTIONS: undefined,
+    WORKER_ROLE: 'crawler', PHYSICAL_HOST: 'm3', RELEASE_TAG: 'r1', SERVICE_INSTANCE_ID: 'host-budget-test',
+    ROLE_HEALTH_PATH: join(directory, 'role.json'), WORKER_HEALTH_PATH: join(directory, 'worker.json') };
+  const policy = { version: 1, host: 'm3', release: 'r1', roles: ['crawler'], schedulerReplicas: 1,
+    webReplicas: 1, webReadReplica: false, monitor: false, connectAgent: false,
+    preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: 1 };
+  try {
+    for (const [script, args, role, kind] of [
+      ['scripts/worker.ts', ['--role=crawler', '--once'], 'crawler', 'role-parent'],
+      ['scripts/scheduler.ts', ['--once'], 'scheduler', 'scheduler-parent'],
+      ['scripts/role-worker.ts', ['--role=crawler', '--kind=primary'], 'crawler', 'worker'],
+      ['scripts/worker-supervisor.ts', ['--role=crawler', '--once'], 'crawler', 'worker'],
+    ] as const) {
+      const result = await runBudgetEntry(script, [...args], { ...env, WORKER_ROLE: role,
+        HOST_DB_BUDGET: JSON.stringify({ mode: 'enabled', policy,
+          process: { kind, role, host: 'm3', release: 'r1', replica: 1, copy: 1 } }) });
+      expect(result.code).toBe(1);
+      expect(result.heartbeats).toBe(0);
+      expect(result.stderr).toMatch(/failed; check/);
+      expect(existsSync(env.ROLE_HEALTH_PATH)).toBe(false);
+      expect(existsSync(env.WORKER_HEALTH_PATH)).toBe(false);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('keeps the disabled real worker entry and its original IPC lifecycle reachable', async () => {
+  const result = await runBudgetEntry('scripts/worker.ts', ['--role=crawler', '--once'], {
+    ...process.env, DATABASE_URL: undefined, READ_DATABASE_URL: undefined, NODE_OPTIONS: undefined,
+    HOST_DB_BUDGET: '{"mode":"disabled"}',
+  });
+  // No DATABASE_URL is supplied: only the pre-existing IPC lifecycle is exercised, no DB/socket/job.
+  expect(result.code).toBe(1);
+  expect(result.heartbeats).toBeGreaterThan(0);
 });

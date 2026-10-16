@@ -13,8 +13,8 @@ export const HostDbBudgetSchema = z.strictObject({
 }).refine(value => !value.webReadReplica || value.webReplicas > 0);
 export type HostDbBudget = z.infer<typeof HostDbBudgetSchema>;
 type WorkerRole = typeof roles[number];
-type ProcessKind = 'role-parent' | 'worker' | 'scheduler-parent' | 'scheduler-worker' | 'web' | 'monitor' | 'connect-agent' | 'preflight' | 'migration';
-export type HostDbProcessBudget = { kind: ProcessKind; role: string; count: number; primaryMax: number; readMax: number };
+export type HostDbProcessKind = 'role-parent' | 'worker' | 'scheduler-parent' | 'scheduler-worker' | 'web' | 'monitor' | 'connect-agent' | 'preflight' | 'migration';
+export type HostDbProcessBudget = { kind: HostDbProcessKind; role: string; count: number; primaryMax: number; readMax: number };
 const identity = { host: z.enum(hosts), release: z.string().min(1).max(120), replica: z.number().int().min(1).max(2), copy: z.union([z.literal(1), z.literal(2)]) };
 const ProcessSchema = z.discriminatedUnion('kind', [
   z.strictObject({ ...identity, kind: z.literal('role-parent'), role: z.enum(roles) }),
@@ -40,7 +40,7 @@ const workerMax: Record<WorkerRole, number> = {
 
 function processBudgets(policy: HostDbBudget): HostDbProcessBudget[] {
   const processes: HostDbProcessBudget[] = [];
-  const add = (kind: ProcessKind, role: string, count: number, primaryMax: number, readMax = 0) => {
+  const add = (kind: HostDbProcessKind, role: string, count: number, primaryMax: number, readMax = 0) => {
     if (count > 0) processes.push({ kind, role, count, primaryMax, readMax });
   };
   for (const role of roles.filter(role => policy.roles.includes(role))) {
@@ -69,7 +69,7 @@ export function hostDbBudgetCatalog(value: unknown) {
   return { host: policy.host, release: policy.release, processes, primaryClients, replicaClients, totalClients: primaryClients + replicaClients, ...unverified };
 }
 
-/** Disabled preserves the exact caller object; this module has no runtime importer yet. */
+/** Disabled preserves the exact caller object; declared quotas remain unverified evidence. */
 export function resolveHostDbPoolConfig<T extends { role: string; max: number }>(original: T, input: unknown = { mode: 'disabled' }): {
   config: Omit<T, 'max'> & { max: number }; readMax: number | undefined;
   enforcement: 'unknown'; ready: false; activationAllowed: false;
@@ -87,4 +87,56 @@ export function resolveHostDbPoolConfig<T extends { role: string; max: number }>
   const readMax = overrides?.readMax ?? row.readMax;
   if (max > row.primaryMax || readMax > row.readMax) throw new Error('host_db_pool_quota_exceeded');
   return { config: { ...original, max }, readMax, ...unverified };
+}
+
+
+type HostDbEnvironment = Readonly<Record<string, string | undefined>>;
+const RuntimeOptionsSchema = z.discriminatedUnion('mode', [
+  z.strictObject({ mode: z.literal('disabled') }),
+  z.strictObject({ mode: z.literal('enabled'), policy: HostDbBudgetSchema, process: ProcessSchema }),
+]);
+
+/** Startup configuration; changing it requires a process restart, not singleton reconfiguration. */
+function runtimeOptions(env: HostDbEnvironment) {
+  const raw = env.HOST_DB_BUDGET;
+  if (raw === undefined) return { mode: 'disabled' as const };
+  try {
+    if (Buffer.byteLength(raw, 'utf8') > 16 * 1024) throw new Error();
+    const options = RuntimeOptionsSchema.parse(JSON.parse(raw));
+    if (options.mode === 'enabled' && (env.WORKER_ROLE !== options.process.role ||
+        env.PHYSICAL_HOST !== options.process.host || env.RELEASE_TAG !== options.process.release)) throw new Error();
+    return options;
+  } catch { throw new Error('host_db_budget_invalid'); }
+}
+
+/** Trusted declarations are checked here; they do not attest process identity or host-wide enforcement. */
+export function assertHostDbEntry(env: HostDbEnvironment, expected: { kind: HostDbProcessKind; role: string }): void {
+  const options = runtimeOptions(env);
+  if (options.mode === 'disabled') return;
+  if (options.process.kind !== expected.kind || options.process.role !== expected.role) throw new Error('host_db_entry_mismatch');
+  resolveHostDbPoolConfig({ role: expected.role, max: 1 }, options);
+}
+
+export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): NodeJS.ProcessEnv {
+  const parentKind = role === 'scheduler' ? 'scheduler-parent' : 'role-parent';
+  assertHostDbEntry(env, { kind: parentKind, role });
+  const options = runtimeOptions(env);
+  return { ...env, WORKER_ROLE: role, ...(options.mode === 'enabled' ? {
+    HOST_DB_BUDGET: JSON.stringify({ ...options, process: { ...options.process,
+      kind: role === 'scheduler' ? 'scheduler-worker' : 'worker' } }),
+  } : {}) };
+}
+
+/** Shared by config derivation and the actual driver factory; no authority is returned. */
+export function resolveHostDbRuntimePoolConfig<T extends { role: string; max: number }>(original: T,
+  env: HostDbEnvironment, purpose: 'primary' | 'read', explicitMax?: number): T {
+  const options = runtimeOptions(env);
+  if (options.mode === 'disabled') return original;
+  if (purpose !== 'primary' && purpose !== 'read') throw new Error('host_db_pool_purpose_invalid');
+  if (explicitMax !== undefined && (!Number.isSafeInteger(explicitMax) || explicitMax < 1)) throw new Error('host_db_pool_quota_exceeded');
+  const resolved = resolveHostDbPoolConfig(original, options);
+  const quota = purpose === 'primary' ? resolved.config.max : resolved.readMax;
+  if (!quota) throw new Error('host_db_read_pool_not_declared');
+  if (explicitMax !== undefined && explicitMax > quota) throw new Error('host_db_pool_quota_exceeded');
+  return { ...original, max: explicitMax ?? quota };
 }
