@@ -8,6 +8,7 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { httpOriginPolicyHash, httpOriginPolicySchema, HttpOriginPermitError } from './http-origin-policy';
 import { httpDispatcher, nativeHttpFetch } from './http-transport';
 import type { CappedRequest } from './fetch';
+import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
 const bootId = randomUUID();
 const RESERVATION_MS = 5000;
@@ -41,6 +42,8 @@ async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
   for (;;) {
     if (signal.aborted) throw new HttpOriginPermitError('waiting_aborted');
     const hop = await transaction(async tx => {
+      // DR fence가 첫 lock이다(seal/open-permits와 같은 fence→control 순서). fenced DB(옛 primary·승격 전 사본)는 새 외부 hop을 내주지 않는다.
+      if (!await writerSiteActive(tx)) throw new HttpOriginPermitError('unavailable');
       const state = await control(tx,true);
       if (state.mode !== 'open') throw new HttpOriginPermitError('unavailable');
       const host = state.policy.instanceHosts[instanceId];
@@ -65,6 +68,7 @@ function exact(hop: Hop) { return sql`id=${hop.id}::uuid AND token=${hop.token}:
   AND boot_id=${hop.boot_id}::uuid AND host_id=${hop.host_id} AND origin=${hop.origin} AND epoch=${hop.epoch} AND revision=${hop.revision} AND policy_hash=${hop.policy_hash}`; }
 async function begin(hop: Hop, signal: AbortSignal): Promise<void> {
   await transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new HttpOriginPermitError('authority_lost');
     const state=await control(tx);
     if (signal.aborted || state.mode!=='open' || Number(state.epoch)!==Number(hop.epoch) || Number(state.revision)!==Number(hop.revision)
       || state.policy_hash!==hop.policy_hash || state.policy.instanceHosts[hop.instance_id]!==hop.host_id) throw new HttpOriginPermitError('authority_lost');

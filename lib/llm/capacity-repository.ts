@@ -1856,3 +1856,43 @@ export async function reconcileCliProcessTerminal(terminal: CliProcessTerminal):
     return { kind: "settled" };
   });
 }
+
+import { z } from "zod";
+import { modelDispatchReleaseEvidenceSchema, type ModelCapacityOwner, type ModelDispatchReleaseEvidence } from "./capacity";
+/** 회수 판정에 넘기는 잠긴 행의 사실. 시각은 이 TX 의 DB clock(UTC, ms)이다. dispatchAt 은 dispatched_at 또는 첫 dispatch_started event. */
+export type ModelDispatchReleaseCandidate = Readonly<{ requestId: string; owner: ModelCapacityOwner; state: "dispatched" | "indeterminate";
+  providerBudgetId: string; dispatchAt: string | null; bindingHash: string | null; now: string; oldGeneration: boolean }>;
+export type ModelDispatchReleaseResult = { kind: "released"; evidence: ModelDispatchReleaseEvidence } | { kind: "blocked"; reason: string }
+  | { kind: "not_active" };
+/**
+ * D11·DR 회수 hook. caller TX 안에서 control UPDATE → request UPDATE 를 잡은 뒤 verify 가 같은 TX·같은 DB clock 으로 종료 근거를 다시
+ * 평가한다. 근거가 이 행(요청·owner·상태·dispatch 시각·binding)과 이 시각에 묶일 때만 withdrawn 으로 바꾸고 같은 근거를 행과
+ * dispatch_released event 에 남긴다. TTL·owner 죽음·정책 변경은 근거 kind 에 없다. caller 의 fence/promotion lock 은 이 호출보다 먼저다.
+ */
+export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, requestId: string,
+  verify: (candidate: ModelDispatchReleaseCandidate) => Promise<ModelDispatchReleaseEvidence | { blocked: string }>): Promise<ModelDispatchReleaseResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const id = z.uuid().parse(requestId);
+  const state = await control(tx);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, id)).for("update");
+  if (!row || (row.state !== "dispatched" && row.state !== "indeterminate")) return { kind: "not_active" };
+  const iso = (value: unknown) => sql`to_char((${value}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const [clock] = await tx.execute<{ dispatch_at: string | null; now: string }>(sql`SELECT ${iso(sql`coalesce(r.dispatched_at, (SELECT min(e.created_at)
+    FROM model_capacity_events e WHERE e.request_id = r.request_id AND e.kind = 'dispatch_started'))`)} AS dispatch_at, ${iso(sql`clock_timestamp()`)} AS now
+    FROM model_capacity_requests r WHERE r.request_id = ${row.requestId}::uuid`);
+  const owner = Object.freeze({ instanceId: row.ownerInstanceId, bootId: row.ownerBootId });
+  const verdict = await verify(Object.freeze({ requestId: row.requestId, owner, state: row.state, providerBudgetId: row.providerBudgetId,
+    dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, now: clock.now,
+    oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash }));
+  if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
+  const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
+  if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId
+    || evidence.fromState !== row.state || evidence.dispatchAt !== clock.dispatch_at || evidence.bindingHash !== row.dispatchBindingHash
+    || evidence.evaluatedAt !== clock.now || evidence.kind === "dr_call_drain" && (evidence.scope !== `model:${row.providerBudgetId}`
+      || row.epoch === state.epoch && row.revision === state.revision && row.policyHash === state.policyHash)) fail("model_capacity_release_evidence_mismatch");
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence, terminalEvidenceHash: reviewHash(evidence),
+    updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
+  if (!changed) fail("model_capacity_release_state_changed");
+  await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
+  return { kind: "released", evidence };
+}
