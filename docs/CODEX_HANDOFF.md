@@ -1,4 +1,40 @@
+# 2026-10-16 최신 인계 — 전체 수동 테스트 최종 통합 정책 / PR453 CI 조사
+
+이 절이 아래 과거 진행 상태보다 우선한다. 사용자 최신 지시: **수동 전체 테스트는 모든 PR 개발이 끝난 뒤 통합 단계에서만 실행한다.** PR별 변경 범위 회귀·필요 정적 검사와 필수 GitHub CI는 유지한다. root와 A/B/C 병렬 개발은 계속한다.
+
+- PR453 exact head `4c922dfc6f46ac657b47474eba953878919f8cfc` / CI38833138711: scope·integration2·GitGuardian SUCCESS, quality·integration1 FAILURE, integration3 진행 중을 직접 확인했다. 병합하지 않았다. B가 완료된 실패 job 로그를 읽고 원인·최소 수정범위를 조사 중이며 source/Git/DB 변경은 아직 맡기지 않았다.
+- PR09 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-observations`: source commit `4e83cd0e618953e9798b4a3a20431d698c55c812`, main37f0542b 정상 merge 중. handoff/delivery/schema/journal4개 충돌 내용은 해결했으나 아직 stage/merge commit 전이다. schema 두 export 보존, journal0079→0080 순서81개. 전용55522 안에 새 `nomorevibe_pr09_migration_test`를 만들어 최종 full migrator와 재실행 모두 실제 exit0; `/tmp/nomorevibe-pr09-root-{fresh-migration,migration-rerun}-20261016.log`. 이는 전체 테스트가 아니라 마이그레이션 충돌 통합 확인이다. 새 DB readback·기존 DB 최종 비교·정상 cleanup/Git 정산이 남았다.
+- PR07c B fixture 한 파일 수정 완료·root 반환: `tests/integration/http-permit-deferred-requests.test.ts` SHA `ba4b75a3fbe183d2f386f5b01b8697ffc27926917e0cf76f0ab6272b0859ac15`. 실제 JSON restore22023 Assertion RED1→`$1::text::jsonb` 한 곳 수정→영향2PASS/7skip1.15초, tsc/scoped lint0. 82table rawµs/ACL/catalog/schema/roles/settings exact·다른 연결0, 55523 실행권 반환. 보고 `/tmp/nomorevibe-pr07c-b-news-restore-final-report-20261016.md`.
+- root가 A의 기존 fingerprint integration **두 case만** 정산 계약에 맞춘 predecessor patch(`/tmp/nomorevibe-pr08-site-settlement-predecessor-20261016.patch`, SHA `ec0bb416aaaae31e76cef1cbc21aae05742cf7eaed41f4c2250b284cdc856900`)를 PR07c WT에 적용했다. 아직 root 실행하지 않았다. **그 기존 test는 beforeEach resetTables()/delete jobs 전역 fixture이며 afterAll 복원이 없다. 55523의 exact baseline 위에서 실행 금지.** local guard는 DB명이 nomorevibe_test여야 하므로 별도 fresh owned loopback DB/container에서 이 범위만 검증한다. 다른 DB/과거 삭제 자원 재사용0.
+- A PR08 source-only freeze, 최종 fixture 추가 assertion 확인/문서·SHA·readback 보고 중이다. 실제 관련4DBfiles63PASS5.62초, unit8files105PASS·tsc/lint0 보고. global job selector fixture 간섭을 status/nextAttemptAt suspend→raw exact복원으로 닫았으며 fixture 실패를 기능 RED로 세지 않았다. own55524 유지.
+- C PR10은 own55525에서 actual draining/versioned claim2 Assertion RED+legacy control1→동일3GREEN, 관련66unit 및 확장 actual6GREEN을 보고했다. normal claim은 batch SHARE, verified fixed replay만 재검증한 legacy 예외. site-evidence adapter 미연결은 readiness unknown/활성 불가다. root가 C10 WT next typegen 실제 exit0을 실행했다. transition/선출/expiry/replay 범위 계속 개발한다.
+- C07c predecessor7파일 중 runner SHA `0eae48bc217c6893e653cab8c3266c95087815c9f98715d96042bf114fbdde1a`를 A08에는 읽기·실행 전용, C10에는 batch admission 변경 소유권으로 전달했다. C07c 원소스는 root 소유다. 각 후속 PR은 PR07c 통합을 포함해야 한다.
+- C55525 exact container `0e1545e68d31461f9f6e357e9abfe7ab6a63454450ca3e81ffc15fb54fc20036`/name`nomorevibe-pr10-role-batches-c-20261016`/동명-data volume/metadata`/tmp/nomorevibe-pr10-role-batches-c-db-owned-20261016.json`. A55524/C55525만 담당 사용, root55522/55523 정산 중. 이미 삭제한55515–21 재접속·재생성0. 다른 Docker 자원 prune0.
+
+다음 명령/조치:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-observations
+git status --short
+# 새0080 migration readback/기존55522 최종 비교→exact own STOP/exited0/OOMfalse/volume 정리→문서 갱신→충돌4파일 stage→merge commit.
+cd /Users/jr/Desktop/projects/nomorevibe-ai2-item-journal
+gh run view 38833138711 --json headSha,status,conclusion,jobs
+# 실패 원인을 읽고 변경 범위 회귀만. 실패 CI를 무시하거나 branch protection을 낮추지 않는다.
+cd /Users/jr/Desktop/projects/nomorevibe-http-deferred-callers
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55523/nomorevibe_test node /tmp/nomorevibe-pr07c-c-readback-20261016.mjs readback
+# 이55523에서 global resetTables fingerprint fixture 실행0. root 전체 diff/실제 로그/SHA 검토 후 별도 격리 범위 검증 및 Git 정산.
+```
+
+원 X branch/HEAD `b1fb8dd54910cd55d334129f86cf670fdfa1225b`는 이 handoff만 동기화한다. 운영 배포·운영 DDL·추론·새 consumer 활성화0, 전체 goal 미완료다.
+
+---
+
 # 2026-10-16 최신 인계 — PR452 제출·PR04c2/PR09/PR07c 병렬 개발
+
+## 최신 정산 추가 — PR09/PR07c 원 DB 정상 제거
+
+root가 PR09 기존55522의 stages rawµs·disabled control·ALWAYS guard·잔류/다른 연결0을 B 최종 JSON과 exact 비교했다. 새 migration DB의81개 journal/0080 SQL hash/default disabled/ALWAYS guard/empty facts도 확인했다. `/tmp/nomorevibe-pr09-root-{final-readback,fresh-migration-readback}-20261016.json`.
+
+PR07c55523은 root가 82table raw/ACL/catalog/settings exact readback exit0을 직접 실행했다. 두 exact own container는 정상STOP→exited0/OOMfalse→own volume 참조0 확인 후 삭제 exit0; `/tmp/nomorevibe-{pr09,pr07c}-root-cleanup-20261016.json`. **55522·55523도 재접속/재생성 금지**다. 첫 cleanup guard는 docker ps 기본 shortID/fullID 비교 불일치로 쓰기 전에 멈췄고 --no-trunc 확인 후 실행했다. foreign prune0.
 
 ## 최신 추가 상태 — 이전 시점 기록보다 우선
 

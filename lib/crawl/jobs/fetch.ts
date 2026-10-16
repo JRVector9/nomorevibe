@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 import { fetchPage } from "@/lib/net/fetch";
@@ -296,6 +297,7 @@ async function fetchEntry(
     try {
       page = await visit(homepage, settings.judge.docsGenerators, oneAtATime);
     } catch (error) {
+      if (error instanceof HttpOriginPermitError) return { kind: "deferred" };
       /**
        * 일시 페이지 오류와 본문 단절은 이 항목만의 실패다. 잡 전체로
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를

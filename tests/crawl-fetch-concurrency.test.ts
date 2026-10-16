@@ -161,3 +161,15 @@ it("한 항목의 본문 수신 실패는 그 항목의 실패로 끝나고 나�
   expect(mocks.save).toHaveBeenCalledTimes(2);
   expect(mocks.defer).not.toHaveBeenCalled();
 });
+
+it("공유 HTTP permit 대기는 페이지 실패나 시도 소모로 적지 않고 원 claim을 반납한다", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const own = entry(91);
+  mocks.dequeue.mockResolvedValueOnce([own]).mockResolvedValue([]);
+  mocks.repo.mockResolvedValue({ ok: true, value: { homepage: "https://permit-wait.test" } });
+  mocks.page.mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
+  expect(await fetchCrawlDocuments(context())).toEqual({ done: false });
+  expect(mocks.failed).not.toHaveBeenCalled();
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.defer).toHaveBeenCalledExactlyOnceWith([own], undefined);
+});
