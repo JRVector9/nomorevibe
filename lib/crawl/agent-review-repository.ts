@@ -3,8 +3,12 @@ import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
-import { lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch,
+  type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
+import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
+import type { PreparedAi1GatewayCall } from "./agent-review-gateway";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
@@ -492,6 +496,9 @@ export async function canStartLegacyAgentReview(lease: JobLease, candidateId?: n
 export type ReviewClaim = { kind: "claimed" | "reused"; attempt: CrawlReviewAttempt; receipt: Ai1ReviewReceipt }
   | { kind: "skipped"; reason: string };
 type ClaimContext = ReviewDomainContext & { provider: string; model: string; now?: Date };
+export type ModelCapacityReviewClaim = ReviewClaim & { dispatch?: Ai1ModelDispatch };
+type CapacityClaim = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
+  call: Pick<PreparedAi1GatewayCall, "model" | "inputHash" | "wireHash" | "servingContractHash" | "totalTokenBound"> };
 type ClaimAuthority = { kind: "legacy"; job: JobLease } | { kind: "item"; owner: ItemOwner; ttlMs: number };
 
 /** Caller time is semantic/recording context; operational retry budgets use DB wall time. */
@@ -504,19 +511,45 @@ export function claimAgentReview(input: ClaimContext & { lease: JobLease }): Pro
   return claimReview(input, { kind: "legacy", job: input.lease });
 }
 
+/** Fixed legacy route only. The opaque capacity lock belongs to this same TX;
+ * no SHARE-to-UPDATE upgrade or standalone dispatch transaction is used. */
+export function claimAgentReviewWithModelReservation(input: ClaimContext & { lease: JobLease } & CapacityClaim): Promise<ModelCapacityReviewClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const reservation = modelCapacityReservationSchema.parse(input.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(input.identity);
+  const call = Object.freeze({ model: input.call.model, inputHash: input.call.inputHash, wireHash: input.call.wireHash,
+    servingContractHash: input.call.servingContractHash, totalTokenBound: input.call.totalTokenBound });
+  const context = structuredClone({ candidate: input.candidate, document: input.document, settings: input.settings,
+    input: input.input, provider: input.provider, model: input.model, now: input.now });
+  const job = Object.freeze({ name: input.lease.name, token: input.lease.token, requestedVersion: input.lease.requestedVersion });
+  return claimReview(context, { kind: "legacy", job }, { reservation, identity, call }).catch(error => {
+    // Only this fixed final-CAS refusal is expected waiting. The outer domain
+    // transaction has already rolled back; SQL/binding/authority errors stay raw.
+    if (error instanceof Error && error.message === "ai1_model_reservation_lost")
+      throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  });
+}
+
 /** Inactive adapter only. Item provenance is not part of the legacy replay certificate. */
 export async function claimItemAgentReview(input: ClaimContext & { owner: ItemOwner; ttlMs: number }): Promise<ReviewClaim> {
   if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
   return claimReview(input, { kind: "item", owner: input.owner, ttlMs: input.ttlMs });
 }
 
-async function claimReview(input: ClaimContext, authority: ClaimAuthority): Promise<ReviewClaim> {
+async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim): Promise<ModelCapacityReviewClaim> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
   return onPrimary(() => db.transaction(async tx => {
     // currentReplayDb revalidates the private active verified handler scope.
     // Fixed replay profiles keep their existing legacy fixture contract/grants;
     // ordinary claims always read the control before the S3/domain prefix.
-    const capacity = currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
+    let dispatchLock: Ai1CapacityDispatchLock | null = null;
+    if (reserved) {
+      dispatchLock = await lockAi1ModelCapacityDispatch(tx, { reservation: reserved.reservation,
+        identity: reserved.identity, candidateId: input.candidate.id });
+      if (!dispatchLock) return { kind: "skipped", reason: "reservation_lost" };
+    }
+    const capacity = dispatchLock ? dispatchLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx);
     const stage = await readItemStage(tx, stages.ai1);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
@@ -549,7 +582,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority): Prom
     const now = input.now ?? new Date();
     const wallNow = await reviewWallTime(tx);
     const semanticNow = reviewSemanticNow(now);
-    const claimed = async (): Promise<ReviewClaim> => {
+    const claimed = async (): Promise<ModelCapacityReviewClaim> => {
       const running = rows.find(row => row.state === "running");
       if (running) {
         if (running.leaseToken === token) return { kind: "skipped", reason: "running" };
@@ -593,9 +626,21 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority): Prom
         const route = capacity.policy?.routes.find(route => route.routeId === "crawl-agent-review"
           && route.provider === input.provider && route.model === input.model);
         if (!route) throw new ModelCapacityDeferredError("unmapped");
-        // No serving adapter currently proves actual provider termination.
-        // Throw out of this TX, rolling back any preceding supersede/item claim.
-        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        const serving = authority.kind === "legacy" && input.provider === "abcllm"
+          ? resolveAi1GatewayServingContract(input.model) : null;
+        if (!serving) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        // Roll back any preceding supersede/item mutation before requesting a slot.
+        if (!reserved) throw new ModelCapacityDeferredError("reservation_required");
+        if (reserved.call.model !== input.model || reserved.call.inputHash !== current.inputHash
+          || reserved.call.servingContractHash !== ai1GatewayServingContractHash(serving)
+          || reserved.call.totalTokenBound !== serving.totalTokenBound) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      }
+      if (reserved && !reusable) {
+        if (authority.kind !== "legacy" || input.provider !== "abcllm" || !dispatchLock)
+          throw new Error("invalid_ai1_model_capacity_claim");
+        // Jobs follow all domain/attempt/item waits. Finish rechecks reservation
+        // DB wall time; the final held-job wall check below follows its event.
+        await assertAgentReviewJob(tx, authority.job);
       }
       const [attempt] = await tx.insert(crawlReviewAttempts).values({
         candidateId: locked.candidate.id, kind: "automatic", state: "running",
@@ -607,7 +652,22 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority): Prom
         outcome: copiedOutcome ? validateReviewOutcome(current, copiedOutcome) : null,
         leaseToken: token, validUntil: current.validUntil, startedAt: now,
       }).returning();
-      return result(attempt, reusable ? "semantic_reuse" : "fresh");
+      const claim = result(attempt, reusable ? "semantic_reuse" : "fresh");
+      if (reserved && !reusable) {
+        if (!dispatchLock || ownership.kind !== "legacy") throw new Error("invalid_ai1_model_capacity_claim");
+        const dispatch = await finishAi1ModelCapacityDispatch(tx, dispatchLock, {
+          kind: "ai1_legacy_gateway", version: 1, logicalWorkKey: `ai1:${locked.candidate.id}`,
+          candidateId: locked.candidate.id, attemptId: attempt.id, inputHash: current.inputHash,
+          sourceRevisionHash: current.sourceRevisionHash, reviewPolicyHash: current.policyHash,
+          promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "abcllm", model: input.model,
+          routeId: "crawl-agent-review", stageEpoch: stage.epoch, wireHash: reserved.call.wireHash,
+          servingContractHash: reserved.call.servingContractHash, totalTokenBound: reserved.call.totalTokenBound,
+          chargedTokens: reserved.call.totalTokenBound, job: { name: "crawl-agent-review", token: ownership.job.token,
+            requestedVersion: ownership.job.requestedVersion },
+        });
+        return { ...claim, dispatch };
+      }
+      return claim;
     };
     const result = await claimed();
     if (ownership.kind === "legacy") await assertAgentReviewJob(tx, ownership.job);

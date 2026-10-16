@@ -1,14 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
+import type { Ai1GatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import {
   modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
   modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
   type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason,
   type ModelCapacityRequest, type ModelCapacityRequestIdentity, type ModelCapacityReservation, type ModelSlotResult,
+  ai1DispatchBindingSchema, ai1DispatchBindingHash, ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
+  type Ai1DispatchBinding, type Ai1ModelDispatch,
 } from "./capacity";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
@@ -32,7 +37,10 @@ type Control = Awaited<ReturnType<typeof control>>;
  * The caller acquires this prefix before stage/domain/item/job locks. */
 export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
-  const row = await control(tx, "share");
+  return callerControlSnapshot(await control(tx, "share"));
+}
+
+function callerControlSnapshot(row: Control) {
   if (!["disabled", "open", "draining"].includes(row.mode)
     || !Number.isSafeInteger(row.epoch) || row.epoch < 1
     || !Number.isSafeInteger(row.revision) || row.revision < 1
@@ -108,9 +116,10 @@ async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
 }
 
 async function event(tx: ProductTransaction, row: RequestRow, kind: ModelCapacityEventKind,
-  fromState: RequestRow["state"] | null, toState: RequestRow["state"], reason: ModelCapacityIndeterminateReason | null = null) {
+  fromState: RequestRow["state"] | null, toState: RequestRow["state"], reason: ModelCapacityIndeterminateReason | null = null,
+  evidence: unknown = null) {
   await tx.insert(modelCapacityEvents).values({ requestId: row.requestId, kind, epoch: row.epoch,
-    revision: row.revision, policyHash: row.policyHash, fromState, toState, reason });
+    revision: row.revision, policyHash: row.policyHash, fromState, toState, reason, evidence });
 }
 
 function sameIdentity(row: RequestRow, value: ModelCapacityRequestIdentity): void {
@@ -155,7 +164,7 @@ export async function findOwnPendingModelRequest(value: ModelCapacityRequestIden
       eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
       eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
       sql`${modelCapacityRequests.state} in ('waiting','reserved','dispatched','indeterminate')`)).limit(1);
-    if (!row || row.state === "withdrawn") return null;
+    if (!row || row.state === "withdrawn" || row.state === "settled") return null;
     sameIdentity(row, checked);
     return { requestId: row.requestId, state: row.state };
   });
@@ -164,11 +173,41 @@ export async function findOwnPendingModelRequest(value: ModelCapacityRequestIden
 export async function requestModelSlot(value: ModelCapacityRequest): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value);
+  return requestSlot(checked, null);
+}
+
+/** Fixed AI1 logical fence starts with the original waiting INSERT, not dispatch. */
+export async function requestAi1ModelSlot(value: ModelCapacityRequest, candidateId: number): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value);
+  fixedAi1Identity(checked, candidateId);
+  return requestSlot(checked, `ai1:${candidateId}`);
+}
+
+function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: number): void {
+  if (!Number.isSafeInteger(candidateId) || candidateId < 1 || value.class !== "first" || value.pool !== "reviewer"
+    || value.routeId !== "crawl-agent-review" || value.provider !== "abcllm") fail("invalid_ai1_capacity_identity");
+}
+
+async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-agent-review'
+      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+
+function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
     const [original] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
-    if (original) sameIdentity(original, checked);
+    if (original) {
+      sameIdentity(original, checked);
+      if (logicalKey !== null && original.logicalWorkKey !== logicalKey) fail("model_capacity_logical_work_mismatch");
+    }
     await expireRequests(tx, state);
+    if (logicalKey !== null && await ai1Fence(tx, logicalKey, checked.requestId)) return { kind: "deferred", reason: "capacity" };
     const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
       live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, checked.requestId));
@@ -202,6 +241,7 @@ export async function requestModelSlot(value: ModelCapacityRequest): Promise<Mod
         class: checked.class, pool: checked.pool, routeId: checked.routeId, provider: checked.provider,
         model: checked.model, providerBudgetId: route.providerBudgetId, groupId: route.groupId,
         epoch: state.epoch, revision: state.revision, policyHash: state.policyHash!, state: "waiting",
+        logicalWorkKey: logicalKey,
         queueUntil: sql`clock_timestamp() + ${state.policy.queueTtlMs} * interval '1 millisecond'` }).returning();
       await event(tx, waiting, "queued", null, "waiting");
     }
@@ -222,6 +262,7 @@ export async function beginModelDispatch(value: ModelCapacityReservation): Promi
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (row && await expireReservation(tx, row)) return { kind: "ownership_lost" };
+    if (row?.logicalWorkKey !== null && row?.logicalWorkKey !== undefined) fail("ai1_bound_dispatch_required");
     if (!owned(row, checked) || row.state !== "reserved" || state.mode !== "open" || row.epoch !== state.epoch
       || row.revision !== state.revision || row.policyHash !== state.policyHash) return { kind: "ownership_lost" };
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", updatedAt: sql`clock_timestamp()` })
@@ -251,18 +292,115 @@ export async function cancelReservedModelSlot(value: ModelCapacityReservation): 
 export async function markModelDispatchIndeterminate(value: ModelCapacityDispatch,
   reason: ModelCapacityIndeterminateReason): Promise<boolean> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
-  const checked = modelCapacityDispatchSchema.parse(value);
+  const bound = ai1ModelDispatchSchema.safeParse(value);
+  const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
+    owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
+    policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
   if (!["transport_unknown", "local_abort", "process_exit", "commit_unknown"].includes(reason)) fail("invalid_model_capacity_reason");
   return transaction(async tx => {
     const state = await control(tx);
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (!owned(row, checked)) return false;
+    if (row.logicalWorkKey !== null && (!bound.success || row.dispatchBindingHash !== bound.data.bindingHash
+      || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail("ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
     await event(tx, changed, "dispatch_indeterminate", "dispatched", "indeterminate", reason);
     return true;
+  });
+}
+
+declare const ai1LockBrand: unique symbol;
+export type Ai1CapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [ai1LockBrand]: true }>;
+const ai1Locks = new WeakMap<Ai1CapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; candidateId: number; finished: boolean }>();
+
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockAi1ModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; candidateId: number;
+}): Promise<Ai1CapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity), candidateId = value.candidateId;
+  fixedAi1Identity(identity, candidateId);
+  const state = await control(tx);
+  const snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== `ai1:${candidateId}`) fail("model_capacity_logical_work_mismatch");
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+    && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch
+    || row.revision !== state.revision || row.policyHash !== state.policyHash
+    || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await ai1Fence(tx, `ai1:${candidateId}`, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as Ai1CapacityDispatchLock;
+  ai1Locks.set(locked, { tx, row, identity, candidateId, finished: false });
+  return locked;
+}
+
+/** The fixed domain caller proves the current candidate/input/attempt/job before
+ * this final reservation CAS. A locked reservation alone is not domain proof. */
+export async function finishAi1ModelCapacityDispatch(tx: ProductTransaction, lock: Ai1CapacityDispatchLock,
+  value: Ai1DispatchBinding): Promise<Ai1ModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = ai1Locks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_ai1_capacity_dispatch_lock");
+  const binding = ai1DispatchBindingSchema.parse(value);
+  if (binding.candidateId !== proof.candidateId || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || binding.model !== proof.identity.model) fail("ai1_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = ai1DispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("ai1_model_reservation_lost");
+  const dispatch = ai1ModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+
+/** Only a native terminal issued by the fixed gateway can settle a bound call.
+ * Actual completion remains valid after job expiry or policy/mode changes. */
+export async function reconcileAi1GatewayTerminal(terminal: Ai1GatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readAi1GatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readAi1GatewayTerminal(terminal);
+  if (!native) fail("invalid_ai1_gateway_terminal");
+  const evidence = ai1GatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    // Completion uses the historical dispatch, not today's policy validity.
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
+      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
+      || row.model !== dispatch.binding.model || row.class !== "first" || row.pool !== "reviewer"
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("ai1_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
+        fail("ai1_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("ai1_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
   });
 }
