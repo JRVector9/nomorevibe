@@ -1,5 +1,95 @@
 import { expect, it, vi } from 'vitest';
 import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
+import { batchJobsForRole, batchLanesForRole } from '@/lib/jobs/batches';
+
+function runtimeGate() {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
+
+it.each(['legacy', 'versioned'] as const)('keeps the production %s crawler fetch lane progressing while evidence is held', async mode => {
+  const controller = new AbortController();
+  const entered = runtimeGate();
+  const release = runtimeGate();
+  let fetchFinished = false;
+  let evidenceFinished = false;
+  const work = runWorker({ role: 'crawler', once: true, signal: controller.signal }, {
+    names: batchJobsForRole('crawler', mode), lanes: batchLanesForRole('crawler', mode),
+    seen: async () => {}, pending: async () => ['crawl-fetch', 'ai-level-refresh'],
+    run: async name => {
+      if (name === 'ai-level-refresh') {
+        entered.release();
+        await release.promise;
+        evidenceFinished = true;
+      } else if (name === 'crawl-fetch') {
+        await entered.promise;
+        fetchFinished = true;
+      }
+      return { status: 'completed' };
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(fetchFinished).toBe(true));
+    expect(evidenceFinished).toBe(false);
+  } finally {
+    controller.abort();
+    entered.release();
+    release.release();
+    await work;
+  }
+});
+
+it('keeps the production translation batch serial while its first call is held', async () => {
+  const controller = new AbortController();
+  const entered = runtimeGate();
+  const release = runtimeGate();
+  const started: string[] = [];
+  const names = batchJobsForRole('translation', 'versioned');
+  const work = runWorker({ role: 'translation', once: true, signal: controller.signal }, {
+    names, lanes: batchLanesForRole('translation', 'versioned'),
+    seen: async () => {}, pending: async () => names,
+    run: async name => {
+      started.push(name);
+      if (name === 'reason-translate') { entered.release(); await release.promise; }
+      return { status: 'completed' };
+    },
+  });
+  try {
+    await entered.promise;
+    await Promise.resolve();
+    expect(started).toEqual(['reason-translate']);
+    release.release();
+    await work;
+    expect(started).toEqual(['reason-translate', 'product-tagline-ko', 'product-translate']);
+  } finally {
+    controller.abort();
+    release.release();
+    await work;
+  }
+});
+
+it('re-polls the production versioned crawler source lane before sleeping after a verified continuation', async () => {
+  const controller = new AbortController();
+  const sleeping = runtimeGate();
+  let sourcePolls = 0;
+  let ran = false;
+  const work = runWorker({ role: 'crawler', signal: controller.signal }, {
+    names: batchJobsForRole('crawler', 'versioned'), lanes: batchLanesForRole('crawler', 'versioned'),
+    seen: async names => { if (names.includes('product-evidence-refresh')) sourcePolls += 1; },
+    pending: async () => ran ? [] : ['product-evidence-refresh'],
+    run: async () => { ran = true; return { status: 'completed', done: false, sourceContinuation: true }; },
+    sleep: async () => { await sleeping.promise; },
+  });
+  try {
+    await vi.waitFor(() => expect(sourcePolls).toBe(2));
+    expect(ran).toBe(true);
+  } finally {
+    controller.abort();
+    sleeping.release();
+    await work;
+  }
+});
 
 it('gives product audit a finite budget for its sixty-second call and keeps cancellation', () => {
   const signal = new AbortController().signal;

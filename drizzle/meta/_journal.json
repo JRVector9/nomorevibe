@@ -575,6 +575,13 @@
       "when": 1793400000000,
       "tag": "0081_evidence_source_claims",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1793500000000,
+      "tag": "0082_job_batches",
+      "breakpoints": true
     }
   ]
 }

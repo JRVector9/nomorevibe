@@ -1,6 +1,6 @@
 /** Role-specific consumer. Scheduling belongs to scheduler.ts, never this poll loop. */
 import { basename } from 'node:path';
-import { JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
+import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
 
@@ -22,7 +22,7 @@ export type RuntimeHeartbeat = {
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
-type WorkerOptions = { role: JobRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
+type WorkerOptions = { role: BatchRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
   /** 한 프로세스 안에서 동시에 도는 줄(catalog lanesForRole) — 없으면 names 한 줄 */
@@ -208,11 +208,11 @@ export async function withRuntimeProcess<T>(
 export function parseWorkerArgs(args: string[]) {
   const roleArg = args.find(arg => arg.startsWith('--role='));
   const role = roleArg?.slice('--role='.length);
-  const roles: readonly string[] = JOB_ROLES;
+  const roles: readonly string[] = BATCH_ROLES;
   if (!role || !roles.includes(role) || args.filter(arg => arg.startsWith('--role=')).length !== 1) {
     throw new Error('Usage: worker.ts --role=crawler|reviewer|publisher|text|maintenance [--once] [--interval-seconds=1..60]');
   }
-  return { ...parseLoopArgs(args.filter(arg => arg !== roleArg), 5), role: role as JobRole };
+  return { ...parseLoopArgs(args.filter(arg => arg !== roleArg), 5), role: role as BatchRole };
 }
 
 export function parseLoopArgs(args: string[], defaultSeconds: number) {
@@ -231,14 +231,14 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole, lanesForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
+    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
       import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
     const result = await runWorker({ ...options, signal }, {
-      names: jobsForRole(options.role),
-      lanes: lanesForRole(options.role),
+      names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
+      lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
       pending: () => pendingJobNames(options.role),
       seen: markWorkerSeen,
       run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),

@@ -1,17 +1,21 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { jobs, roleLeases } from '@/lib/db/schema';
-import { jobsForRole, type JobRole } from './catalog';
+import { jobsForRole, JOB_ROLES, type JobRole } from './catalog';
+import { BATCH_HOSTS, type BatchRole, type BatchHost } from './batches';
+import { acquireBatchRole, lockJobBatch, releaseBatchRole, renewBatchRole } from './batch-repository';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 
 export type RoleCandidate = {
-  role: JobRole;
+  role: BatchRole;
   instanceId: string;
   bootId: string;
   release: string;
   kind: 'primary' | 'standby';
+  batchVersion?: 1;
+  host?: BatchHost;
 };
-export type RoleLease = RoleCandidate & { epoch: number };
+export type RoleLease = RoleCandidate & { epoch: number; batchEpoch?: number };
 export class RoleLeaseLostError extends Error {
   constructor() { super('role_lease_lost'); }
 }
@@ -19,20 +23,27 @@ export class RoleLeaseLostError extends Error {
 const leaseDuration = sql`now() + interval '45 seconds'`;
 
 /** Legacy single workers have no role token; an incomplete token is never accepted. */
-export function roleLeaseFromEnv(role: JobRole, env: Readonly<Record<string, string | undefined>>): RoleLease | undefined {
+export function roleLeaseFromEnv(role: BatchRole, env: Readonly<Record<string, string | undefined>>): RoleLease | undefined {
   const fields = [env.ROLE_LEASE_ROLE, env.ROLE_LEASE_INSTANCE_ID, env.ROLE_LEASE_BOOT_ID,
     env.ROLE_LEASE_RELEASE, env.ROLE_LEASE_EPOCH];
   if (fields.every(value => value === undefined)) return undefined;
   const epoch = Number(env.ROLE_LEASE_EPOCH);
   if (env.ROLE_LEASE_ROLE !== role || !env.ROLE_LEASE_INSTANCE_ID || !env.ROLE_LEASE_BOOT_ID ||
       !env.ROLE_LEASE_RELEASE || !Number.isSafeInteger(epoch) || epoch < 1) throw new Error('invalid_role_lease_environment');
-  return { role, instanceId: env.ROLE_LEASE_INSTANCE_ID, bootId: env.ROLE_LEASE_BOOT_ID,
+  const batch = env.ROLE_LEASE_BATCH_VERSION;
+  const batchEpoch = Number(env.ROLE_LEASE_BATCH_EPOCH);
+  if (batch !== undefined && (batch !== '1' || !BATCH_HOSTS.includes(env.ROLE_LEASE_HOST as BatchHost) || !Number.isSafeInteger(batchEpoch) || batchEpoch < 1)) throw new Error('invalid_role_lease_environment');
+  if (!batch && !JOB_ROLES.includes(role as JobRole)) throw new Error('invalid_role_lease_environment');
+  return { ...(batch ? {batchVersion:1 as const,host:env.ROLE_LEASE_HOST as BatchHost,batchEpoch} : {}), role, instanceId: env.ROLE_LEASE_INSTANCE_ID, bootId: env.ROLE_LEASE_BOOT_ID,
     release: env.ROLE_LEASE_RELEASE, epoch, kind: 'primary' };
 }
 
 /** Serialize election with token revocation; result writers lock only their job row. */
 export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLease | null> {
+  if (candidate.batchVersion === 1) return acquireBatchRole(candidate);
+  if (!JOB_ROLES.includes(candidate.role as JobRole)) return null;
   return db.transaction(async tx => {
+    if ((await lockJobBatch(tx)).mode !== 'legacy') return null;
     await tx.insert(roleLeases).values({ role: candidate.role }).onConflictDoNothing();
     const [current] = await tx.select().from(roleLeases)
       .where(eq(roleLeases.role, candidate.role)).for('update');
@@ -67,7 +78,7 @@ export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLeas
       epoch: sql`${roleLeases.epoch} + 1`, leaseUntil: leaseDuration, updatedAt: sql`now()`,
     }).where(eq(roleLeases.role, candidate.role)).returning({ epoch: roleLeases.epoch });
     // A superseded runner must not save a cursor or a late result after this commits.
-    for (const name of jobsForRole(candidate.role)) {
+    for (const name of jobsForRole(candidate.role as JobRole)) {
       await tx.update(jobs).set({ leaseToken: null, lockedAt: null })
         .where(and(eq(jobs.name, name), sql`${jobs.leaseToken} is not null`));
     }
@@ -76,17 +87,30 @@ export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLeas
 }
 
 export async function renewRole(lease: RoleLease): Promise<boolean> {
-  const [row] = await db.update(roleLeases).set({ leaseUntil: leaseDuration, updatedAt: sql`now()` })
-    .where(and(eq(roleLeases.role, lease.role), eq(roleLeases.ownerInstanceId, lease.instanceId),
-      eq(roleLeases.ownerBootId, lease.bootId), eq(roleLeases.ownerRelease, lease.release),
-      eq(roleLeases.epoch, lease.epoch), gt(roleLeases.leaseUntil, sql`now()`)))
-    .returning({ role: roleLeases.role });
-  return Boolean(row);
+  if (lease.batchVersion === 1) return renewBatchRole(lease);
+  return db.transaction(async tx=> {
+    const batch=await lockJobBatch(tx);
+    if (batch.mode !== 'legacy' && !(batch.mode === 'draining' && batch.drainingFrom === 'legacy')) return false;
+    await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
+    const [row] = await tx.update(roleLeases).set({ leaseUntil: sql`clock_timestamp()+interval '45 seconds'`, updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(roleLeases.role, lease.role), eq(roleLeases.ownerInstanceId, lease.instanceId),
+        eq(roleLeases.ownerBootId, lease.bootId), eq(roleLeases.ownerRelease, lease.release),
+        eq(roleLeases.epoch, lease.epoch), gt(roleLeases.leaseUntil, sql`clock_timestamp()`)))
+      .returning({ role: roleLeases.role });
+    return Boolean(row);
+  });
 }
 
 /** Called after a successful graceful drain. A crash must wait for expiry instead. */
 export async function releaseRole(lease: RoleLease): Promise<boolean> {
+  if (lease.batchVersion === 1) return releaseBatchRole(lease);
   return db.transaction(async tx => {
+    const batch = await lockJobBatch(tx);
+    if (batch.mode === 'versioned') return false;
+    if (batch.mode === 'draining') {
+      const [active] = await tx.select({name: jobs.name}).from(jobs).where(and(sql`${jobs.name} = any(${jobsForRole(lease.role as JobRole)})`,sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp() - interval '90 seconds'`)).limit(1);
+      if (active) return false;
+    }
     const [owned] = await tx.select().from(roleLeases).where(and(
       eq(roleLeases.role, lease.role), eq(roleLeases.ownerInstanceId, lease.instanceId),
       eq(roleLeases.ownerBootId, lease.bootId), eq(roleLeases.epoch, lease.epoch),
@@ -95,7 +119,7 @@ export async function releaseRole(lease: RoleLease): Promise<boolean> {
     await tx.update(roleLeases).set({ ownerInstanceId: null, ownerBootId: null, ownerKind: null,
       primaryBoots: lease.kind === 'primary' ? [] : owned.primaryBoots,
       leaseUntil: sql`now()`, updatedAt: sql`now()` }).where(eq(roleLeases.role, lease.role));
-    for (const name of jobsForRole(lease.role)) await tx.update(jobs).set({ leaseToken: null, lockedAt: null })
+    for (const name of jobsForRole(lease.role as JobRole)) await tx.update(jobs).set({ leaseToken: null, lockedAt: null })
       .where(and(eq(jobs.name, name), sql`${jobs.leaseToken} is not null`));
     return true;
   });
@@ -103,6 +127,12 @@ export async function releaseRole(lease: RoleLease): Promise<boolean> {
 
 /** Take this lock before claiming a job; takeover obtains UPDATE on the same row. */
 export async function assertRoleLease(tx: ProductTransaction, lease: RoleLease): Promise<void> {
+  if (lease.batchVersion === 1) {
+    await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('share');
+    const [owned] = await tx.select({role:roleLeases.role}).from(roleLeases).where(and(eq(roleLeases.role,lease.role),eq(roleLeases.ownerInstanceId,lease.instanceId),eq(roleLeases.ownerBootId,lease.bootId),eq(roleLeases.ownerRelease,lease.release),eq(roleLeases.epoch,lease.epoch),sql`${roleLeases.leaseUntil}>clock_timestamp()`));
+    if (!owned) throw new RoleLeaseLostError();
+    return;
+  }
   const [row] = await tx.select({ role: roleLeases.role }).from(roleLeases).where(and(
     eq(roleLeases.role, lease.role), eq(roleLeases.ownerInstanceId, lease.instanceId),
     eq(roleLeases.ownerBootId, lease.bootId), eq(roleLeases.ownerRelease, lease.release),

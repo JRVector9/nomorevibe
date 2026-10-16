@@ -2,16 +2,18 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fake = vi.hoisted(() => ({
   scope: vi.fn(), transaction: vi.fn(), update: vi.fn(), role: vi.fn(),
-  traces: [] as string[], heartbeat: undefined as Promise<unknown> | undefined,
+  batch:vi.fn(), traces: [] as string[], heartbeat: undefined as Promise<unknown> | undefined,
 }));
 vi.mock("@/lib/db/replay-scope", () => ({ currentReplayDb: fake.scope }));
 vi.mock("@/lib/db", () => ({ db: { transaction: fake.transaction, update: fake.update } }));
 vi.mock("@/lib/jobs/role-leader", () => ({ assertRoleLease: fake.role, RoleLeaseLostError: class extends Error {} }));
+vi.mock("@/lib/jobs/batch-repository",()=>({assertJobBatchAdmission:fake.batch,batchResultObservation:()=>null,JobBatchBlockedError:class extends Error{}}));
 vi.mock("@/lib/observability/logger", () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
 import { runJob } from "@/lib/jobs/runner";
 
 beforeEach(() => {
   fake.scope.mockReturnValue({});
+  fake.batch.mockResolvedValue(null);
   fake.transaction.mockImplementation(async (work: (tx: unknown) => Promise<unknown>) => {
     fake.traces.push("transaction");
     return work({
@@ -60,6 +62,7 @@ it("does not change ordinary jobs outside a replay database scope", async () => 
   fake.scope.mockReturnValue(undefined);
   await expect(runJob("crawl-fetch", async () => ({ done: true }))).resolves.toMatchObject({ status: "completed" });
   expect(fake.transaction).toHaveBeenCalledTimes(2);
+  expect(fake.batch).toHaveBeenCalledOnce();
 });
 
 it.each([false, true])("awaits an in-flight real heartbeat before finishing (handler throws=%s)", async failure => {

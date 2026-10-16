@@ -193,3 +193,11 @@ it('does not restart an active standby from the primary progress policy', async 
     expect(await running).toBe(0);
   } finally { vi.useRealTimers(); }
 });
+
+it('requires explicit version and fixed host for the new separated roles',()=>{
+  const args=['--role=translation','--kind=primary'];
+  const env={SERVICE_INSTANCE_ID:'oracle-translation',RELEASE_TAG:'r1'};
+  expect(()=>parseRoleWorkerArgs(args,env)).toThrow();
+  expect(()=>parseRoleWorkerArgs(args,{...env,JOB_BATCH_VERSION:'1',PHYSICAL_HOST:'onetwoday'})).toThrow();
+  expect(parseRoleWorkerArgs(args,{...env,JOB_BATCH_VERSION:'1',PHYSICAL_HOST:'oracle-osaka-smoke'})).toMatchObject({role:'translation',batchVersion:1,host:'oracle-osaka-smoke'});
+});

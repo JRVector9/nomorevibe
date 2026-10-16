@@ -550,7 +550,11 @@ it("checks actual job wall time after waiting and rolls every write back", async
   expect(result).toMatchObject({ status: "failed", error: "job_lease_lost" });
 });
 
-it("rolls back invalidation when a nondeferred replay recorder wait outlives the actual job", async () => {
+it("rolls back invalidation when the actual job expires between its first check and nondeferred recorder completion", async () => {
+  const { vi } = await import("vitest");
+  const replayFinal = await import("@/lib/operations/pipeline-replay-final");
+  const { STALE_LOCK_MS } = await import("@/lib/jobs/lease");
+  const actualRecorder = replayFinal.recordReplaySecondReviewTransition;
   const value = await fixture(), reference = new Date(), policy = settings();
   const reviewer = (model: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) =>
     ({ ...model, canonicalModel: canonicalReviewModel(model.model) });
@@ -572,9 +576,43 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
     connection: { application_name: "pr04-foundation-run-blocker", statement_timeout: 8_000 } });
   const release = barrier(), locked = barrier<number>();
   let blocking: Promise<unknown> | undefined;
+  let attempt: Promise<PromiseSettledResult<SecondReviewClaim>> | undefined;
   let admission: PromiseSettledResult<SecondReviewClaim> | undefined;
   let run: Awaited<ReturnType<ReplayLedger["prepare"]>> | undefined;
+  let job: JobLease | undefined, expiry: string | undefined;
+  let recorderCalls = 0, anchorRows = 0, healthy = false, expired = false, recorderCompleted = false, actualBlocked = false;
+  let recorderFailure: unknown, primaryFailure: unknown;
+  let restoreRecorder: (() => void) | undefined;
   try {
+    const recorder = vi.spyOn(replayFinal, "recordReplaySecondReviewTransition");
+    restoreRecorder = () => recorder.mockRestore();
+    recorder.mockImplementation(async (tx, binding, requests) => {
+      if (binding.kind !== "superseded" || binding.secondReviewIds?.length !== 1
+        || binding.secondReviewIds[0] !== value.row.id) return actualRecorder(tx, binding, requests);
+      recorderCalls++;
+      try {
+        if (!job) throw new Error("recorder_fixture_job_missing");
+        const [current] = await tx.execute<{ healthy: boolean }>(sql`SELECT
+          locked_at > clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond' AS healthy
+          FROM jobs WHERE name=${job.name} AND lease_token=${job.token}`);
+        healthy = current?.healthy === true;
+        expect(healthy).toBe(true);
+        // The actual first job check already passed. This same-TX fixture anchor,
+        // unlike the preceding test, does not wait for natural expiry under the run lock.
+        const anchored = await tx.execute<{ expiry: string; expired: boolean }>(sql`UPDATE jobs
+          SET locked_at=clock_timestamp() - ${STALE_LOCK_MS + 1} * interval '1 millisecond'
+          WHERE name=${job.name} AND lease_token=${job.token}
+          RETURNING (locked_at + ${STALE_LOCK_MS} * interval '1 millisecond')::text AS expiry,
+            locked_at < clock_timestamp() - ${STALE_LOCK_MS} * interval '1 millisecond' AS expired`);
+        anchorRows = anchored.length;
+        expiry = anchored[0]?.expiry;
+        expired = anchored[0]?.expired === true;
+        expect(anchorRows).toBe(1);
+        expect(expired).toBe(true);
+        await actualRecorder(tx, binding, requests);
+        recorderCompleted = true;
+      } catch (error) { recorderFailure = error; throw error; }
+    });
     database = await openVerifiedReplayHandlerDatabase(profile.identityPath, {});
     ledger = new ReplayLedger(database);
     run = await ledger.prepare(manifest, [{ candidateId: value.candidate.id, input: value.input }]);
@@ -585,13 +623,13 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
       const [backend] = await tx`SELECT pg_backend_pid() AS pid`;
       locked.resolve(backend.pid); await release.promise;
     });
-    const holder = await locked.promise;
+    const holder = await Promise.race([locked.promise, blocking.then(() => { throw new Error("run holder ended before ready"); })]);
     const result = await withReplayDatabaseScope(profile.identityPath, () =>
       withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(run!, () =>
         runJob<null>("second-review", async ctx => {
           if (!ctx.lease) throw new Error("actual job lease missing");
-          await admin`UPDATE jobs SET locked_at=clock_timestamp()-interval '89 seconds' WHERE name='second-review'`;
-          const attempt = admitLegacySecondReview(value.row.id, ctx.lease).then(
+          job = ctx.lease;
+          attempt = admitLegacySecondReview(value.row.id, ctx.lease).then(
             answer => ({ status: "fulfilled" as const, value: answer }), reason => ({ status: "rejected" as const, reason }));
           try {
             await until(async () => {
@@ -599,27 +637,40 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
                 WHERE query ILIKE '%capacity_runs%' AND ${holder}=ANY(pg_blocking_pids(pid))) AS blocked`;
               return waiting.blocked;
             }, "actual nondeferred recorder waits for run row");
-            await until(async () => {
-              const [job] = await observer`SELECT locked_at < clock_timestamp()-interval '90 seconds' AS expired
-                FROM jobs WHERE name='second-review'`;
-              return job.expired;
-            }, "actual job expires during recorder wait");
+            actualBlocked = true;
+            expect(recorderCalls).toBe(1);
+            expect(anchorRows).toBe(1);
+            if (!expiry) throw new Error("recorder_fixture_expiry_missing");
+            const [clock] = await observer`SELECT clock_timestamp() > ${expiry}::text::timestamp AS expired`;
+            expect(clock.expired).toBe(true);
           } finally { release.resolve(); await blocking; }
           admission = await attempt;
+          // The anchor rolls back with invalidation. Propagate the real writer
+          // error; the committed job timestamp is intentionally still healthy.
+          if (admission.status === "rejected") throw admission.reason;
           return { done: true };
         }))));
+    expect(recorderFailure).toBeUndefined();
+    expect({ recorderCalls, anchorRows, healthy, expired, recorderCompleted, actualBlocked }).toEqual({
+      recorderCalls: 1, anchorRows: 1, healthy: true, expired: true, recorderCompleted: true, actualBlocked: true });
     expect(result).toMatchObject({ status: "failed", error: "job_lease_lost" });
     expect(admission?.status).toBe("rejected");
     if (admission?.status === "rejected") expect(admission.reason).toHaveProperty("message", "job_lease_lost");
     expect(await snapshot(value.row.id)).toEqual(before);
     expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions
       WHERE run_id=${run.runId} AND kind='second_review_superseded'`).toEqual([]);
-  } finally {
+  } catch (error) { primaryFailure = error; throw error; }
+  finally {
     release.resolve();
-    try { await blocking; if (run && ledger) await ledger.drain(run); }
-    finally {
-      try { await database?.close(); }
-      finally { try { await runBlocker.end({ timeout: 3 }); } finally { await profile.release(); } }
-    }
+    const cleanupErrors: unknown[] = [];
+    const pending = await Promise.allSettled([blocking, attempt]);
+    for (const outcome of pending) if (outcome.status === "rejected") cleanupErrors.push(outcome.reason);
+    try { restoreRecorder?.(); } catch (error) { cleanupErrors.push(error); }
+    try { if (run && ledger) await ledger.drain(run); } catch (error) { cleanupErrors.push(error); }
+    try { await database?.close(); } catch (error) { cleanupErrors.push(error); }
+    try { await runBlocker.end({ timeout: 3 }); } catch (error) { cleanupErrors.push(error); }
+    try { await profile.release(); } catch (error) { cleanupErrors.push(error); }
+    if (cleanupErrors.length) throw new AggregateError(primaryFailure === undefined ? cleanupErrors : [primaryFailure, ...cleanupErrors],
+      "recorder_fixture_cleanup_failed");
   }
 });
