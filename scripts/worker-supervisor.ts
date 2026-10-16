@@ -13,6 +13,7 @@ import type { RuntimeHeartbeat } from './worker';
 import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
 import type { BatchRole } from '../lib/jobs/batches';
+import type { ProcessGroupRecorder } from '../lib/operations/dr/repository';
 export type RuntimeRole = 'scheduler' | BatchRole;
 export type SupervisorLimits = { heartbeatMs: number; progressMs: number; jobMs: number; drainMs: number };
 export type WorkerHealth = {
@@ -94,6 +95,14 @@ function signalGroup(child: ChildProcess, signal: NodeJS.Signals) {
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
   }
 }
+/** D11 기록이 DB 대기로 슈퍼바이저 종료·spawn 판단을 붙잡지 않게 한다. 늦게 commit 된 기록도 사실(의도·관측한 종료)만 담는다. */
+const PROCESS_GROUP_RECORD_MS = 10_000;
+function bounded<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([work, new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('process_group_record_timeout')), PROCESS_GROUP_RECORD_MS); timer.unref?.(); })])
+    .finally(() => clearTimeout(timer));
+}
 function groupExists(child: ChildProcess) {
   if (!child.pid) return false;
   if (process.platform === 'win32') return child.exitCode === null && child.signalCode === null;
@@ -122,6 +131,8 @@ export function supervisorCommand(role: RuntimeRole, options: { once?: boolean; 
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
   signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: 'ai1' | 'ai2';
+  /** D11: role-worker boot 의 프로세스 그룹 근거 기록기. 없으면(직접 실행·scheduler·consumer) 기존 순서 그대로다. */
+  processGroup?: ProcessGroupRecorder;
 } = {}): Promise<number> {
   assertHostDbEntry(process.env, { kind: role === 'scheduler' ? 'scheduler-parent' : 'role-parent', role,
     ...(options.consumer !== undefined ? { consumer: options.consumer } : {}) });
@@ -146,10 +157,23 @@ export async function superviseWorker(role: RuntimeRole, options: {
       options.signal?.removeEventListener('abort', cancel);
     }
   }
+  // D11: spawn 전에 의도를 commit 한다. 기록하지 못하면 spawn 하지 않는다(fail closed) — 의도 없는 child 가 장부 행을 dispatch 하면
+  // 그 행이 '가능한 모든 child 가 끝났다'는 근거로 잘못 회수될 수 있기 때문이다. 그룹 종료 증명은 kill(-pgid) 가 있는 플랫폼에서만 쓴다.
+  const group = process.platform === 'win32' ? undefined : options.processGroup;
+  const spawnRecord = group ? await bounded(group.intent()).catch(() => null) : undefined;
+  if (group && !spawnRecord) {
+    console.log(JSON.stringify({ event: 'supervisor.spawn_intent_failed', role, at: new Date().toISOString() }));
+    if (!sharedHost) await host.stop();
+    return 1;
+  }
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
     cwd: resolve('.'), env: hostDbChildEnvironment(process.env, role, options.consumer),
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
+  // spawned 기록 실패는 child 를 멈추지 않는다(가용성). 그 경우 이 child 의 종료는 기록하지 않으므로 이후 행은 D11 로 회수되지 않는다.
+  const spawned = group && spawnRecord && child.pid ? bounded(group.spawned(spawnRecord, child.pid)).then(() => true, () => {
+    console.log(JSON.stringify({ event: 'supervisor.process_group_spawn_unrecorded', role, at: new Date().toISOString() })); return false; })
+    : Promise.resolve(false);
   const started = Date.now();
   const bootId = randomUUID();
   let lastObserved = 0, observationPending = false;
@@ -212,6 +236,10 @@ export async function superviseWorker(role: RuntimeRole, options: {
       const deadline = Date.now() + 5_000;
       while (groupExists(child) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
       if (groupExists(child)) { exitCode = 1; log('supervisor.group_cleanup_incomplete'); }
+      // D11: 그룹 SIGKILL 뒤 ESRCH 를 직접 본 경우에만 종료를 기록한다. 기록기도 같은 TX 안에서 다시 ESRCH 를 확인한다.
+      else if (group && spawnRecord && child.pid && await spawned) {
+        await bounded(group.exited(spawnRecord, child.pid)).catch(() => log('supervisor.process_group_exit_unrecorded'));
+      }
       health = { ...health, status: exitCode === 0 ? 'stopping' : 'failed', updatedAt: Date.now() };
       try { writeHealth(healthPath, health); } catch { exitCode = 1; }
       process.removeListener('SIGINT', onSignal);

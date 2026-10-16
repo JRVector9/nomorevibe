@@ -7,6 +7,7 @@ import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRol
   batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole } from './batches';
 import { STALE_LOCK_MS } from './lease';
 import type { RoleCandidate, RoleLease } from './role-leader';
+import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
 export class JobBatchBlockedError extends Error { constructor() { super('job_batch_blocked'); } }
 export type BatchExecutionIdentity = { role: BatchRole; host: BatchHost; instanceId: string; bootId: string; release: string; batchEpoch: number };
@@ -104,6 +105,8 @@ async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCa
 export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease | null> {
   const candidate = batchCandidateSchema.parse(value);
   return onPrimary(async () => { try { return await db.transaction(async tx => {
+    // DR fence가 첫 lock이다(legacy tryAcquireRole과 같은 순서). fenced DB에서는 역할을 얻지 않는다.
+    if (!await writerSiteActive(tx)) return null;
     const control = await lockJobBatch(tx);
     if (control.mode !== 'versioned' || control.writerContractVersion < 1 || candidate.batchVersion !== 1) return null;
     const policy = checkedPolicy(control), instance = policy.instances.find(item => item.instanceId === candidate.instanceId);
@@ -146,6 +149,7 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
 export async function renewBatchRole(value: RoleLease): Promise<boolean> {
   const lease = batchLeaseSchema.parse(value);
   return onPrimary(() => db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) return false;
     const control = await lockJobBatch(tx);
     if ((control.mode !== 'versioned' && !(control.mode === 'draining' && control.drainingFrom === 'versioned')) || lease.batchEpoch !== control.epoch) return false;
     await tx.select().from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');

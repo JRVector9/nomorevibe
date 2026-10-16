@@ -20,8 +20,10 @@ type Profile = { tables: Record<string, TableGrant>; sequences: readonly string[
 const read: TableGrant = { select: true }, write: TableGrant = { select: true, insert: true, update: true };
 const lock = (key: string): TableGrant => ({ select: true, update: [key] });
 const CANDIDATE_IDENTITY = ['host', 'boot_id', 'release', 'policy_hash', 'observed_at'] as const;
+// dr_writer_fence: 역할·HTTP permit 관문의 첫 SHARE lock. dr_process_group_events: role-worker 의 D11 기록(append-only, UPDATE 없음).
 const RUNTIME: Record<string, TableGrant> = {
   job_batch_control: lock('id'), jobs: write, operations_observations: write, role_leases: write,
+  dr_writer_fence: lock('id'), dr_process_group_events: { select: true, insert: true },
   // Drizzle names every column (DEFAULT) on INSERT, so INSERT cannot be column-limited; UPDATE (the heartbeat upsert) is.
   job_batch_candidates: { select: true, insert: true, update: CANDIDATE_IDENTITY },
 };
@@ -30,17 +32,17 @@ export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
-  'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq'],
+  'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq', 'dr_process_group_events_id_seq'],
     tables: { ...RUNTIME, ...HTTP, crawl_settings: read, news_items: { select: true, insert: true } } },
   // Raw-only uptime phase. Authoritative gate writes (auto-ban, health counters) are intentionally not granted.
-  'product-health': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq'],
+  'product-health': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'dr_process_group_events_id_seq'],
     tables: { ...RUNTIME, ...HTTP, products: lock('id'), product_health: lock('slug'), uptime_control: lock('id'),
       uptime_gates: write, uptime_observations: { select: true, insert: true } } },
-  'site-evidence': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'product_evidence_sources_id_seq'],
+  'site-evidence': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'product_evidence_sources_id_seq', 'dr_process_group_events_id_seq'],
     tables: { ...RUNTIME, ...HTTP, products: lock('id'), evidence_settings: lock('id'), evidence_source_control: { select: true, update: ['cursor'] },
       evidence_source_claims: write, product_evidence_sources: write, product_links: read,
       product_refresh_requests: { select: true, update: ['progress', 'updated_at'] } } },
-  translation: { statementTimeout: '60s', sequences: ['model_capacity_events_id_seq', 'model_capacity_requests_queue_ordinal_seq'],
+  translation: { statementTimeout: '60s', sequences: ['model_capacity_events_id_seq', 'model_capacity_requests_queue_ordinal_seq', 'dr_process_group_events_id_seq'],
     tables: { ...RUNTIME, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
       product_korean_taglines: write, product_translations: { select: true, update: true }, products: lock('id'), product_health: read,
       product_intro_checks: lock('product_id'), takedown_requests: lock('slug'), uptime_control: read, uptime_gates: read,

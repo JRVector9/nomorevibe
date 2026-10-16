@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { dbIdentitySchema, identity, positiveEpoch, type DbIdentity } from '@/lib/operations/dr/epoch';
 import { EVIDENCE_KINDS, promotionPlanSchema, type EvidenceKind, type PromotionPlan } from '@/lib/operations/dr/promotion';
 import type { ReclaimPolicy } from '@/lib/operations/dr/call-drain';
+import type { ReclaimPolicyWithReference } from '@/lib/operations/dr/reclaim';
 
 export type PromotionCliCommand =
   | { command: 'identity' }
@@ -17,13 +18,17 @@ export type PromotionCliCommand =
   | { command: 'status'; promotionId: string }
   | { command: 'promote'; apply: boolean; promotionId: string; operator: string }
   | { command: 'open-permits'; apply: boolean; promotionId: string; target: 'http' | 'model'; operator: string }
-  | { command: 'process-reclaim-report'; instanceId: string; bootId: string; policies: Map<string, ReclaimPolicy> };
+  | { command: 'process-reclaim-report'; instanceId: string; bootId: string; policies: Map<string, ReclaimPolicy> }
+  | { command: 'process-reclaim'; apply: boolean; instanceId: string; bootId: string; operator: string; policies: Map<string, ReclaimPolicyWithReference> }
+  | { command: 'release-drained'; apply: boolean; promotionId: string; operator: string };
 
 const ALLOWED: Record<PromotionCliCommand['command'], readonly string[]> = {
   identity: [], 'fence-old': ['expect-lineage', 'expect-epoch', 'expect-db', 'operator', 'apply'], seal: ['plan', 'apply'],
   'record-evidence': ['promotion', 'kind', 'subject', 'payload', 'operator', 'apply'], status: ['promotion'],
   promote: ['promotion', 'operator', 'apply'], 'open-permits': ['promotion', 'target', 'operator', 'apply'],
   'process-reclaim-report': ['instance', 'boot', 'deadline', 'client-bound', 'skew-ms'],
+  'process-reclaim': ['instance', 'boot', 'deadline', 'client-bound', 'skew-ms', 'reference', 'operator', 'apply'],
+  'release-drained': ['promotion', 'operator', 'apply'],
 };
 const REPEATABLE = new Set(['deadline', 'client-bound']);
 const fail = (code: string): never => { throw new Error(code); };
@@ -48,6 +53,23 @@ export function parsePromotionCliArgs(args: readonly string[], readFile: (path: 
     try { return JSON.parse(readFile(one(key))) as unknown; } catch { return fail(`dr_cli_invalid_${key}_file`); }
   };
   const operator = () => identity(120).parse(one('operator')), promotionId = () => z.uuid().parse(one('promotion'));
+  const reclaimPolicies = () => {
+    const skewBoundMs = options.has('skew-ms') ? z.number().int().min(1).max(600_000).parse(Number(one('skew-ms'))) : 1_000;
+    const policies = new Map<string, ReclaimPolicy>();
+    for (const value of options.get('deadline') ?? []) {
+      const at = value.lastIndexOf(':');
+      if (at < 1) fail('dr_cli_invalid_deadline');
+      const budget = identity(120).parse(value.slice(0, at)), ms = z.number().int().min(1).max(86_400_000).parse(Number(value.slice(at + 1)));
+      if (policies.has(budget)) fail('dr_cli_invalid_deadline');
+      policies.set(budget, { termination: 'provider_bound', hardDeadlineMs: ms, skewBoundMs });
+    }
+    for (const value of options.get('client-bound') ?? []) {
+      const budget = identity(120).parse(value);
+      if (policies.has(budget)) fail('dr_cli_invalid_deadline');
+      policies.set(budget, { termination: 'client_bound', hardDeadlineMs: null, skewBoundMs });
+    }
+    return policies;
+  };
   switch (name) {
     case 'identity': return { command: name };
     case 'fence-old': {
@@ -63,23 +85,15 @@ export function parsePromotionCliArgs(args: readonly string[], readFile: (path: 
     case 'status': return { command: name, promotionId: promotionId() };
     case 'promote': return { command: name, apply, promotionId: promotionId(), operator: operator() };
     case 'open-permits': return { command: name, apply, promotionId: promotionId(), target: z.enum(['http', 'model']).parse(one('target')), operator: operator() };
-    case 'process-reclaim-report': {
-      const skewBoundMs = options.has('skew-ms') ? z.number().int().min(1).max(600_000).parse(Number(one('skew-ms'))) : 1_000;
-      const policies = new Map<string, ReclaimPolicy>();
-      for (const value of options.get('deadline') ?? []) {
-        const at = value.lastIndexOf(':');
-        if (at < 1) fail('dr_cli_invalid_deadline');
-        const budget = identity(120).parse(value.slice(0, at)), ms = z.number().int().min(1).max(86_400_000).parse(Number(value.slice(at + 1)));
-        if (policies.has(budget)) fail('dr_cli_invalid_deadline');
-        policies.set(budget, { termination: 'provider_bound', hardDeadlineMs: ms, skewBoundMs });
-      }
-      for (const value of options.get('client-bound') ?? []) {
-        const budget = identity(120).parse(value);
-        if (policies.has(budget)) fail('dr_cli_invalid_deadline');
-        policies.set(budget, { termination: 'client_bound', hardDeadlineMs: null, skewBoundMs });
-      }
-      return { command: name, instanceId: identity(120).parse(one('instance')), bootId: z.uuid().parse(one('boot')), policies };
+    case 'process-reclaim-report':
+      return { command: name, instanceId: identity(120).parse(one('instance')), bootId: z.uuid().parse(one('boot')), policies: reclaimPolicies() };
+    case 'process-reclaim': {
+      // 회수는 장부를 바꾸므로 정책 출처(reference)와 운영자를 근거에 남긴다. 기본 dry-run.
+      const reference = identity(400).parse(one('reference'));
+      const policies = new Map([...reclaimPolicies()].map(([budget, policy]) => [budget, { ...policy, reference }]));
+      return { command: name, apply, instanceId: identity(120).parse(one('instance')), bootId: z.uuid().parse(one('boot')), operator: operator(), policies };
     }
+    case 'release-drained': return { command: name, apply, promotionId: promotionId(), operator: operator() };
   }
 }
 
@@ -133,6 +147,17 @@ export async function promotionCliMain(args: readonly string[], io: Io = { stdin
         return out(result, result.kind === 'blocked');
       }
       case 'process-reclaim-report': return out(await repository.readProcessReclaimReport({ instanceId: command.instanceId, bootId: command.bootId }, command.policies));
+      case 'process-reclaim': {
+        const { releaseProcessExitedDispatches } = await import('@/lib/operations/dr/reclaim');
+        const result = await releaseProcessExitedDispatches({ owner: { instanceId: command.instanceId, bootId: command.bootId },
+          policies: command.policies, operator: command.operator }, command.apply);
+        return out(result, result.rows.some(row => !row.released));
+      }
+      case 'release-drained': {
+        const { releaseDrainedDispatches } = await import('@/lib/operations/dr/reclaim');
+        const result = await releaseDrainedDispatches(command, command.apply);
+        return out(result, result.rows.some(row => !row.released));
+      }
       default: return fail('dr_cli_unknown_command');
     }
   } finally {
