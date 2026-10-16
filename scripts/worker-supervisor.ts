@@ -1,3 +1,4 @@
+import { assertHostDbEntry, hostDbChildEnvironment } from '@/lib/db/host-budget';
 /** Container PID 1's child supervisor: a healthy event loop is not proof of job progress. */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, renameSync } from 'node:fs';
@@ -120,13 +121,14 @@ export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
   signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: 'ai1' | 'ai2';
 } = {}): Promise<number> {
+  assertHostDbEntry(process.env, { kind: role === 'scheduler' ? 'scheduler-parent' : 'role-parent', role });
   const limits = options.limits ?? supervisorLimits(role);
   const healthPath = supervisorHealthPath(options);
   const consumerPath = options.consumer !== undefined ? consumerHealthPath() : null;
   if (consumerPath && resolve(healthPath) !== resolve(consumerPath)) throw new Error('invalid_item_consumer_health_path');
   const command = supervisorCommand(role, options);
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
-    cwd: resolve('.'), env: { ...process.env, WORKER_ROLE: role },
+    cwd: resolve('.'), env: hostDbChildEnvironment(process.env, role),
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
   const started = Date.now();
