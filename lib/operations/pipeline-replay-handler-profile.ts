@@ -94,7 +94,11 @@ async function objects(session: Session, identity: ReplayDatabaseIdentity): Prom
         'update', has_column_privilege(${identity.roleOid}::oid, c.oid, a.attnum, 'UPDATE'),
         'references', has_column_privilege(${identity.roleOid}::oid, c.oid, a.attnum, 'REFERENCES')) ORDER BY a.attnum)
         FROM pg_catalog.pg_attribute a WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped), '[]'::jsonb) ELSE '[]'::jsonb END AS columns,
-      jsonb_build_object('oid', c.oid::int, 'owner', c.relowner::int, 'kind', c.relkind, 'acl', c.relacl::text,
+      CASE WHEN (n.nspname = 'public' AND c.relname IN (SELECT pg_catalog.jsonb_array_elements_text(${JSON.stringify([
+        ...tables.filter(table => !table.schema).map(table => table.name), ...sequences])}::text::jsonb)))
+        OR (n.nspname = 'pipeline_replay' AND c.relname IN (SELECT pg_catalog.jsonb_array_elements_text(${JSON.stringify([
+          ...tables.filter(table => table.schema === 'pipeline_replay').map(table => table.name), 'identity', 'handler_profile'])}::text::jsonb)))
+      THEN jsonb_build_object('oid', c.oid::int, 'owner', c.relowner::int, 'kind', c.relkind, 'acl', c.relacl::text,
         'rls', c.relrowsecurity, 'forceRls', c.relforcerowsecurity,
         'columns', coalesce((SELECT jsonb_agg(jsonb_build_object('number', a.attnum, 'name', a.attname,
           'type', a.atttypid::int, 'typeMod', a.atttypmod, 'acl', a.attacl::text, 'notNull', a.attnotnull,
@@ -105,7 +109,7 @@ async function objects(session: Session, identity: ReplayDatabaseIdentity): Prom
           'definition', pg_catalog.pg_get_triggerdef(t.oid), 'functionOid', p.oid::int, 'functionOwner', p.proowner::int,
           'functionAcl', p.proacl::text, 'functionDefinition', pg_catalog.pg_get_functiondef(p.oid)) ORDER BY t.oid)
           FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
-          WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '[]'::jsonb)) AS binding
+          WHERE t.tgrelid = c.oid AND NOT t.tgisinternal), '[]'::jsonb)) ELSE NULL END AS binding
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p','v','m','f','S')
     ORDER BY n.nspname, c.relname`;
@@ -178,10 +182,13 @@ async function binding(session: Session, identity: ReplayDatabaseIdentity, versi
         WHERE n.nspname IN ('public', 'pipeline_replay') AND p.prosecdef) AS triggers`;
   if (!safe?.path || !safe.role || !safe.schema_grants || !safe.schema_permissions || !safe.schemas || !safe.functions || !safe.triggers || schemas.length !== 2
     || database.oid !== identity.databaseOid || database.owner !== identity.ownerOid) reject("replay_database_privileges_rejected");
-  for (const row of rows.filter(row => row.schema_name === "public" && row.kind !== "S")) {
-    const [resolved] = await session`SELECT pg_catalog.to_regclass(${row.name})::oid::int AS oid`;
-    if (resolved.oid !== row.oid) reject("replay_database_privileges_rejected");
-  }
+  const publicTables = rows.filter(row => row.schema_name === "public" && row.kind !== "S");
+  const resolved = await session<{ name: string; oid: number | null }[]>`
+    SELECT name, pg_catalog.to_regclass(name)::oid::int AS oid
+    FROM pg_catalog.jsonb_array_elements_text(${JSON.stringify(tables.filter(table => !table.schema).map(table => table.name))}::text::jsonb) AS names(name)`;
+  const resolvedOids = new Map(resolved.map(row => [row.name, row.oid]));
+  if (resolved.length !== publicTables.length || resolvedOids.size !== publicTables.length
+    || publicTables.some(row => resolvedOids.get(row.name) !== row.oid)) reject("replay_database_privileges_rejected");
   return { database: JSON.parse(JSON.stringify(database)), schemas: JSON.parse(JSON.stringify(schemas)),
     objects: rows.map(row => ({ name: `${row.schema_name}.${row.name}`, binding: row.binding })) };
 }
