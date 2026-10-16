@@ -1,5 +1,17 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 추가 진행 — 2026-10-16 06:31 UTC
+
+PR453529d4199 CI38860739876의필수scope/quality/통합3/check/GG전체SUCCESS확인、최신main반영후재확인남음。PR460은3349f20c로부모normalmerge/push/고유57+incoming7SHA보존。PR468readonlyDR는필수CI/최신base/고정head확인뒤main7f34c475정상병합、mainCI진행/운영배포0。PR10b source7+tests5검증·root독립DB정리뒤C발견fixtureP2두helper를DB0로보강중(55552retired)。PR14bactualdump/restorechild0이나DB설정1+DDLdeparse45의엄격대조실패를유지、재dump0/남은negative1만승인。A55553/54독점、B는PR05positivecaller읽기계획。전체수동테스트는모든PR뒤、실제2배/Oracle운영DR는미완료。정확명령·실패·소유권은CODEX_HANDOFF최상단。
+
+## 추가 진행 — 2026-10-16 06:23 UTC
+
+PR453 진단opt-in·strictschema재사용 변경을 root직접/C독립리뷰와 범위 unit/actual3 후 **529d4199**로normalpush/remote확인했다. 실제CI성공과성능2배는미확인이다. 새CI분석상HTTP최초pending은headers뒤 rival.result이며PGbackend원인미확정이다. 모델요청재발견PR467/readonlyDR PR468은초안제출완료. B는실제DBpool/childentryquota7source와actual3PASS뒤정산중(55552), A는localdump→restore전용5파일개발/actual2 scope(55553/54)다. Retired55515–51/수동전체테스트는모든PR뒤/운영·consumer·실모델·DR활성화0. Root가최신453을460에고유57SHA보존normalmerge할예정이며정확head·파일·命令/한계는CODEX_HANDOFF최상단을따른다.
+
+## 추가 진행 — 2026-10-16 06:15 UTC
+
+모델요청 재발견 PR467(5f943280/base465)과 PG17 readonly logicalDR PR468(aa0c3182/main)을 초안으로push/제출했다. 직접·독립리뷰/범위회귀/root독립DB정리완료이며양성provider/실제Oracle복원·승격은후속이다. PR453의CLI진단opt-in·row-schema구성재사용6source는원coverage1+legacy/itempair2 모두PASS/원기대불변으로로컬인수했고C최종리뷰뒤push예정이다. 실제wholeRaw는원fixture자기10행잔류+ACL표현차이로false를보존했다. B는별도WT에서기존host DB budget을실제pool/부모자식entry에연결하는7source를개발하고A는PR14b local복원rehearsal을읽기계획한다. C는opt-in독립review와새CIfirstwait를분석한다. 55515–51모두retired/활성DB0/다음새55552. 수동전체검증은모든PR개발뒤이며운영/consumer/실모델/DR활성화0. 정확head·소유권·원실패·다음명령은CODEX_HANDOFF최상단을따른다.
+
 ## 추가 진행 — 2026-10-16 05:38 UTC
 
 AI2 접수 제어는 초안PR465/head898960a7로 제출했고 A독립최종리뷰P1/P2=0이다. 원본공급버퍼는 oldPR463과전체tracked tree가exact인 대체초안PR466/efbd38dc로제출해GitGuardian SUCCESS확인, oldPR463과branch/history는보존했다. HTTPfixedtrace actual2PASS/18skip와root독립raw/catalogexact/정상cleanup을확인했다. 현재A는pending모델요청sameID재개helper, B는replay seal/report 비용계측, C는PR14a read-only logicalDR inventory를충돌없는파일에서개발한다. 활성전용DB55547/48/49, retired55515–46이다. 전체수동테스트는모든PR개발뒤수행하며운영/양성provider/DR활성화0. 실제CI실패·명령·정확head·소유권은 CODEX_HANDOFF 최상단이우선한다.
