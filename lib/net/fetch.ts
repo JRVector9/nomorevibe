@@ -76,11 +76,22 @@ export type CappedFetchResult =
     }
   | CappedFetchFailure;
 
+// Temporary diagnosis only: fixed IPC metadata, never authority or awaited work.
+function permitProbe(phase: "request.enter" | "request.import_done", aborted: boolean): void {
+  try { if (process.connected) process.send?.({ kind: "permit_probe", phase, aborted }, () => {}); }
+  catch { /* Observation cannot replace the request result. */ }
+}
+
 async function defaultRequest(
   url: string,
   init: Parameters<CappedRequest>[1],
 ): Promise<Response> {
-  if (sharedHttpEnabled()) return (await import("./origin-permits")).requestOriginHop(url, init);
+  if (sharedHttpEnabled()) {
+    permitProbe("request.enter", init.signal.aborted);
+    const permits = await import("./origin-permits");
+    permitProbe("request.import_done", init.signal.aborted);
+    return permits.requestOriginHop(url, init);
+  }
   return (await nativeHttpFetch(url, { ...init, dispatcher: legacyHttpDispatcher() })) as unknown as Response;
 }
 

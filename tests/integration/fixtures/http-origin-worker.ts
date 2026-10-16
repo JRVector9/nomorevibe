@@ -2,6 +2,25 @@
 import { fetchCapped, safeFetch, readBodyCapped } from '../../../lib/net/fetch';
 import type postgres from 'postgres';
 function phase(value: string): void { try { if (process.connected) process.send?.({ kind: 'phase', phase: value }, () => {}); } catch { /* Diagnostics do not replace the original result. */ } }
+// Temporary observation: only the timeout100 capped rival receives bounded GC.
+function probe(phase: string, fields: Record<string, string | number | boolean>): void {
+  try { if (process.connected) process.send?.({ kind: 'permit_probe', phase, ...fields }, () => {}); }
+  catch { /* Diagnostics do not replace the result. */ }
+}
+function startProbeGc(): () => void {
+  if (process.env.HTTP_TEST_GC !== '1' || process.env.HTTP_TEST_API !== 'capped' || process.env.HTTP_TEST_TIMEOUT !== '100') return () => {};
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (!gc) throw new Error('http_fixture_gc_unavailable');
+  let gcCount = 0;
+  const timer = setInterval(() => {
+    gcCount++;
+    probe('worker.gc.begin', { gcCount });
+    gc();
+    probe('worker.gc.end', { gcCount });
+    if (gcCount === 8) clearInterval(timer);
+  }, 10);
+  return () => clearInterval(timer);
+}
 void (async()=>{
 const parent = process.env.HTTP_TEST_PARENT_PID;
 if (!parent || !/^[1-9][0-9]*$/.test(parent)) throw new Error('http_fixture_parent_identity');
@@ -20,13 +39,16 @@ if (process.env.HTTP_TEST_OBSERVE_TIMEOUT === '1') {
 }
 if(process.env.HTTP_TEST_EXIT_BEFORE_READY==='1'){process.disconnect?.();return;}
 if(process.env.HTTP_TEST_WARM==='1') await import('../../../lib/net/origin-permits');
+probe('worker.runtime', { node: process.versions.node, platform: process.platform, arch: process.arch, gcExposed: typeof (globalThis as { gc?: () => void }).gc === 'function', observerEnabled: process.env.HTTP_TEST_OBSERVE_TIMEOUT === '1' });
 process.send?.({ kind: 'ready' });
 process.once('message', async () => {
   phase('worker.start_received');
   let fetched = false;
   const abort=new AbortController();
   process.on('message', m=>{if((m as {kind:string}).kind==='abort')abort.abort(new Error('fixture abort'));});
+  let stopProbeGc: (() => void) | undefined;
   try {
+    stopProbeGc = startProbeGc();
     const url = process.env.HTTP_TEST_URL!;
     phase('worker.fetch.begin');
     if (process.env.HTTP_TEST_API === 'capped') {
@@ -45,6 +67,7 @@ process.once('message', async () => {
     phase(fetched ? 'worker.body.reject' : 'worker.fetch.reject');
     process.send?.({ kind: 'error', name: error instanceof Error ? error.name : '', message: String(error) });
   } finally {
+    stopProbeGc?.();
     phase('worker.pg_end.begin');
     try { await (globalThis as unknown as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); phase('worker.pg_end.end'); }
     catch (error) { phase('worker.pg_end.reject'); throw error; }

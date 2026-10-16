@@ -35,11 +35,21 @@ async function control(tx: ProductTransaction, nowait=false) {
 async function event(tx: ProductTransaction, id: string, kind: string) {
   await tx.execute(sql`INSERT INTO http_origin_events(hop_id,kind) VALUES(${id}::uuid,${kind})`);
 }
+// Temporary diagnosis only: bounded fixed fields, no signal/row/error payloads.
+function permitProbe(phase: 'reserve.enter' | 'reserve.first_tx_done' | 'reserve.tx_reject' | 'reserve.delay_enter' | 'reserve.first_delay_done' | 'reserve.delay_reject' | 'reserve.aborted' | 'reserve.done' | 'native.enter',
+  aborted: boolean, loopCount = 0, outcome?: 'no_grant' | 'control_busy' | 'grant'): void {
+  try { if (process.connected) process.send?.({ kind: 'permit_probe', phase, aborted, loopCount, ...(outcome ? { outcome } : {}) }, () => {}); }
+  catch { /* Observation cannot replace the original result. */ }
+}
 async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
+  permitProbe('reserve.enter', signal.aborted);
+  let loopCount = 0;
   const instanceId = process.env.SERVICE_INSTANCE_ID;
   if (!instanceId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(instanceId)) throw new HttpOriginPermitError('configuration');
   for (;;) {
-    if (signal.aborted) throw new HttpOriginPermitError('waiting_aborted');
+    loopCount++;
+    if (signal.aborted) { permitProbe('reserve.aborted', true, loopCount); throw new HttpOriginPermitError('waiting_aborted'); }
+    let controlBusy = false;
     const hop = await transaction(async tx => {
       const state = await control(tx,true);
       if (state.mode !== 'open') throw new HttpOriginPermitError('unavailable');
@@ -56,9 +66,12 @@ async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
       const [row] = await tx.execute<Hop>(sql`INSERT INTO http_origin_hops(id,token,instance_id,boot_id,host_id,origin,epoch,revision,policy_hash,state,reserved_until)
         VALUES(${randomUUID()}::uuid,${randomUUID()}::uuid,${instanceId},${bootId}::uuid,${host},${origin},${state.epoch},${state.revision},${state.policy_hash},'reserved',clock_timestamp()+${RESERVATION_MS}*interval '1 millisecond') RETURNING *`);
       await event(tx,row.id,'reserved'); return row;
-    }).catch(error=>{if(error instanceof ControlBusy)return null;throw error;});
-    if (hop) return hop;
-    try { await delay(50,undefined,{signal}); } catch { throw new HttpOriginPermitError('waiting_aborted'); }
+    }).catch(error=>{if(error instanceof ControlBusy){controlBusy=true;return null;}permitProbe('reserve.tx_reject',signal.aborted,loopCount);throw error;});
+    if (loopCount === 1) permitProbe('reserve.first_tx_done', signal.aborted, loopCount, hop ? 'grant' : controlBusy ? 'control_busy' : 'no_grant');
+    if (hop) { permitProbe('reserve.done', signal.aborted, loopCount); return hop; }
+    if (loopCount === 1) permitProbe('reserve.delay_enter', signal.aborted, loopCount);
+    try { await delay(50,undefined,{signal}); if (loopCount === 1) permitProbe('reserve.first_delay_done', signal.aborted, loopCount); }
+    catch { permitProbe('reserve.delay_reject', signal.aborted, loopCount); throw new HttpOriginPermitError('waiting_aborted'); }
   }
 }
 function exact(hop: Hop) { return sql`id=${hop.id}::uuid AND token=${hop.token}::uuid AND instance_id=${hop.instance_id}
@@ -118,7 +131,7 @@ export async function requestOriginHop(url: string, init: Parameters<CappedReque
     }
   }
   let response: Response;
-  try { response=await nativeHttpFetch(url,{...init,dispatcher:new HopDispatcher()}) as unknown as Response; }
+  try { permitProbe('native.enter',init.signal.aborted); response=await nativeHttpFetch(url,{...init,dispatcher:new HopDispatcher()}) as unknown as Response; }
   catch(error) {
     fetchSettled=true;bodySettled=true;
     // A synchronous/pre-dispatch rejection has no native terminal witness.

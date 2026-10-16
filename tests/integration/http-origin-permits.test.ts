@@ -25,8 +25,24 @@ const fixtureTracePhases = new Set([
   'unread.unchanged_hop_checked.begin', 'unread.unchanged_hop_checked.end', 'unread.drain_update.begin', 'unread.drain_update.end',
   'unread.held_result_checked.begin', 'unread.held_result_checked.end', 'unread.release_row_checked.begin', 'unread.release_row_checked.end',
   'unread.endpoint_close.begin', 'unread.endpoint_close.end',
+  'request.enter', 'request.import_done', 'reserve.enter', 'reserve.first_tx_done', 'reserve.tx_reject',
+  'reserve.delay_enter', 'reserve.first_delay_done', 'reserve.delay_reject', 'reserve.aborted', 'reserve.done', 'native.enter',
+  'worker.runtime', 'worker.gc.begin', 'worker.gc.end',
 ] as const);
 type FixtureTracePhase = typeof fixtureTracePhases extends Set<infer Phase> ? Phase : never;
+type PermitProbeFields = { aborted?: boolean; loopCount?: number; outcome?: 'no_grant' | 'control_busy' | 'grant'; gcCount?: number; node?: string; platform?: 'darwin' | 'linux'; arch?: 'arm64' | 'x64'; gcExposed?: boolean; observerEnabled?: boolean };
+const permitProbePhases = new Set(['request.enter', 'request.import_done', 'reserve.enter', 'reserve.first_tx_done', 'reserve.tx_reject', 'reserve.delay_enter', 'reserve.first_delay_done', 'reserve.delay_reject', 'reserve.aborted', 'reserve.done', 'native.enter', 'worker.runtime', 'worker.gc.begin', 'worker.gc.end']);
+function permitProbeFields(value: Record<string, unknown>): PermitProbeFields {
+  const fields: PermitProbeFields = {};
+  for (const key of ['aborted', 'gcExposed', 'observerEnabled'] as const) if (typeof value[key] === 'boolean') fields[key] = value[key];
+  for (const key of ['loopCount', 'gcCount'] as const) if (Number.isSafeInteger(value[key]) && Number(value[key]) >= 0 && Number(value[key]) <= 1_000_000) fields[key] = Number(value[key]);
+  if (value.outcome === 'no_grant' || value.outcome === 'control_busy' || value.outcome === 'grant') fields.outcome = value.outcome;
+  if (typeof value.node === 'string' && /^24\.[0-9]{1,3}\.[0-9]{1,3}$/.test(value.node)) fields.node = value.node;
+  if (value.platform === 'darwin' || value.platform === 'linux') fields.platform = value.platform;
+  if (value.arch === 'arm64' || value.arch === 'x64') fields.arch = value.arch;
+  return fields;
+}
+
 let fixtureTraceWrites = 0, fixtureTraceAwaitingError = false, fixtureTraceErrorGeneration = 0, fixtureTraceListening = false;
 function fixtureTraceDetach(): void {
   try {
@@ -40,10 +56,10 @@ function fixtureTraceSinkError(): void {
   try { fixtureTraceErrorGeneration++; fixtureTraceAwaitingError = false; fixtureTraceDetach(); }
   catch { /* Never replace the original fixture error. */ }
 }
-function fixtureTrace(phase: FixtureTracePhase | null, pid: number | null = process.pid, sample?: { closed: boolean; backends: { pgPid: number; state: string | null; waitType: string | null; waitEvent: string | null; blockers: number[] }[] }): void {
+function fixtureTrace(phase: FixtureTracePhase | null, pid: number | null = process.pid, sample?: { closed: boolean; backends: { pgPid: number; state: string | null; waitType: string | null; waitEvent: string | null; blockers: number[] }[] }, probe?: PermitProbeFields): void {
   try {
     if (!(process.env.CI === 'true' || process.env.HTTP_FIXTURE_TRACE === '1') || phase === null || !fixtureTracePhases.has(phase)) return;
-    const line = JSON.stringify({ phase, pid: typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 ? pid : null, monotonicMs: performance.now(), ...(phase === 'child.pg_wait_sample' ? sample : undefined) }) + '\n';
+    const line = JSON.stringify({ phase, pid: typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 ? pid : null, monotonicMs: performance.now(), ...(phase === 'child.pg_wait_sample' ? sample : undefined), ...(permitProbePhases.has(phase) ? probe : undefined) }) + '\n';
     if (!fixtureTraceListening) {
       const max = process.stderr.getMaxListeners();
       if (max > 0 && process.stderr.listenerCount('error') >= max) return;
@@ -200,7 +216,7 @@ afterAll(async()=>{
 
 async function child(url: string, enabled: boolean, instance: string, api: 'safe'|'capped', extra: Record<string,string>={}) {
   if (failingDrain) throw new Error('http_fixture_child_after_failed_drain');
-  const p = fork('tests/integration/fixtures/http-origin-worker.ts', [], { execArgv: ['--import','tsx'], stdio: ['ignore','pipe','pipe','ipc'],
+  const p = fork('tests/integration/fixtures/http-origin-worker.ts', [], { execArgv: ['--import','tsx', ...(process.env.HTTP_TEST_GC === '1' ? ['--expose-gc'] : [])], stdio: ['ignore','pipe','pipe','ipc'],
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ALLOW_PRIVATE_URLS: '1', HTTP_ORIGIN_PERMITS: enabled ? '1':'0', SERVICE_INSTANCE_ID: instance, HTTP_TEST_URL: url, HTTP_TEST_API: api, HTTP_TEST_PARENT_PID: String(process.pid), ...extra } });
   children.add(p);
   const exited = track(once(p,'exit'));
@@ -249,6 +265,7 @@ async function child(url: string, enabled: boolean, instance: string, api: 'safe
   void headers.catch(()=>{});
   p.on('message',message=>{
     const value=message as Record<string,unknown>;
+    if(value.kind === 'permit_probe' && typeof value.phase === 'string' && permitProbePhases.has(value.phase)) fixtureTrace(value.phase as FixtureTracePhase, p.pid ?? null, undefined, permitProbeFields(value));
     if (value.kind === 'phase' && typeof value.phase === 'string' && fixtureTracePhases.has(value.phase as FixtureTracePhase)) trace(value.phase as FixtureTracePhase);
     trace(value.kind==='ready'?'child.ready':value.kind==='headers'?'child.headers':value.kind==='result'?'child.result':value.kind==='error'?'child.error':null);
     if(value.kind==='ready'){readyReceived=true;resolveReady();}
