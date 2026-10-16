@@ -40,6 +40,7 @@ switch (mode) {
   case "flood": { record(); hang(); await write(process.stdout, "x".repeat(80_000)); break; }
   case "stderr-only": { await readStdin(); record(); await write(process.stderr, "fatal: fake failure\n"); process.exitCode = 2; break; }
   case "empty": { await readStdin(); record(); break; }
+  case "version": { record(); await write(process.stdout, `${process.env.FAKE_CLI_VERSION ?? "fake 0.0.0"}\n`); break; }
   case "grandchild-hold": {
     // 손자가 stdout·stderr pipe 를 물려받아 쥐고 SIGTERM 도 무시한다 — 부모가 끝나도 close 가 오지 않는다.
     const child = grandchild({ code: "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)", spawn: { stdio: ["ignore", "inherit", "inherit"] } });
