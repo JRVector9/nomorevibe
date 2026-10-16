@@ -59,17 +59,9 @@ export async function refreshSiteFingerprint(
   if (cached && stored?.lastModified) headers["If-Modified-Since"] = stored.lastModified;
   const read = (headers: Record<string, string>) => {
     if (!hasBudget()) return Promise.resolve(null);
-    const pending = fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
-    if (!signal) return pending;
-    // DNS preflight may not support cancellation. Race only the read, never a DB
-    // write; pass the same signal to prevent a late preflight from starting HTTP.
-    return new Promise<Awaited<typeof pending> | null>((resolve, reject) => {
-      const cleanup = () => signal.removeEventListener("abort", stopped);
-      const stopped = () => { cleanup(); resolve(null); };
-      signal.addEventListener("abort", stopped, { once: true });
-      if (signal.aborted) stopped();
-      pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
-    });
+    // Await the real request: aborting a permit wait must retain its deferred
+    // error, rather than racing it into generic budget exhaustion.
+    return fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
   };
   let result = await read(headers);
   if (!result || !hasBudget()) return "budget_exhausted";

@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { fetchPage, readBodyCapped, safeFetch } from "@/lib/net/fetch";
 import { extractPageMeta, extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
@@ -45,7 +46,8 @@ export async function openProductPage(url: string): Promise<RepoReviewPage> {
     }
     return { status, finalUrl, title: extractPageMeta(html, finalUrl).title ?? "", text: extractTextSample(html) ?? "",
       githubLinks: extractGithubLinks(html, finalUrl), complete };
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpOriginPermitError) throw error;
     // 본문을 못 읽어도 응답 코드는 안다 — 링크를 못 본 것이지 링크가 없는 것은 아니다
     return { status, finalUrl: fetched.finalUrl, title: "", text: "", githubLinks: [], complete: false };
   }

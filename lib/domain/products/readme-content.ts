@@ -1,5 +1,7 @@
 import "server-only";
 
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
+
 import { createMemo, memoKey } from "@/lib/cache/memo";
 import { sharedStore } from "@/lib/cache/shared";
 import { githubRequest } from "@/lib/crawl/github";
@@ -76,12 +78,10 @@ async function readContent(repository: GithubRepositoryName, deadline: number, s
 
 async function readWithinBudget(repository: GithubRepositoryName): Promise<ReadmeContent> {
   const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => { controller.abort(); reject(new Error("readme_timeout")); }, README_TIMEOUT_MS);
-  });
+  const timer = setTimeout(() => controller.abort(), README_TIMEOUT_MS);
   try {
-    return await Promise.race([readContent(repository, Date.now() + README_TIMEOUT_MS, controller.signal), timeout]);
+    // Let the actual request settle so an aborted permit wait retains its type.
+    return await readContent(repository, Date.now() + README_TIMEOUT_MS, controller.signal);
   } finally { clearTimeout(timer); }
 }
 
@@ -95,6 +95,7 @@ export async function getReadmeContent(repoUrl: string): Promise<ReadmeContentRe
       // Collector quota/cooldown writes must stay on the primary even inside a public read scope.
       return await contents.get(key, () => onPrimary(() => readWithinBudget(repository)));
     } catch (error) {
+      if (error instanceof HttpOriginPermitError) throw error;
       return error instanceof ReadmeLoadError ? error.result : { state: "unavailable", sourceUrl: originalUrl(null, repository) };
     }
   });
