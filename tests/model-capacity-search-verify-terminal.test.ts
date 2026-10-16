@@ -114,7 +114,7 @@ describe("0092 additive DDL", () => {
     for (const [name, predicate] of after) expect(predicate.startsWith(`(${before.get(name)}) OR (coalesce(`)).toBe(true);
     expect(migration).toContain("CREATE UNIQUE INDEX model_capacity_requests_search_verify_step_idx ON model_capacity_requests ((dispatch_binding->>'generationHash'), (dispatch_binding->'execution'), (dispatch_binding->'step')) WHERE dispatch_binding->>'kind'='search_verify_gateway' AND state IN ('dispatched','indeterminate','settled');");
     expect(migration).not.toMatch(/\b(GRANT|REVOKE|CREATE TABLE|ADD COLUMN|CREATE FUNCTION|TRIGGER|UPDATE |DELETE |INSERT )/);
-    const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")).entries.at(-1);
+    const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")).entries.find((entry: { tag: string }) => entry.tag === "0092_model_capacity_search_verify_terminal");
     expect(journal).toEqual({ idx: 92, version: "7", when: 1794086400004, tag: "0092_model_capacity_search_verify_terminal", breakpoints: true });
   });
 });
