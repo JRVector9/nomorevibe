@@ -72,3 +72,11 @@ Root 독립 readback은 모든 counts0·원 stage µs·ACL을 담당 최종 JSON
 첫 PR453 CI38833138711 quality에서4suite 수집 실패를 확인했다. readiness→settings→db→replay-scope→execution의 eager item-execution import가 readiness 초기화 전에 schema.extend를 호출하는 실제 순환이었다. B가 동일4suite 로컬 collection4FAIL/0tests→runtime4exports를 필요한 async5지점 dynamic import로 이동→동일521PASS/12.48초를 확인했다. strict artifact/mixed2files42PASS/1.29초, tsc/scopedlint0이다. production execution 한 파일6hunk만 변경, 나머지본문·SQL/권한/정책/기존test는 byte동일이다. 최종 execution SHA `3b384abf1dced84622ba9babddcb0ddd9c9f757bc1aaf8fb09d9a0fce869a817`.
 
 원 CI integration1은 reporter source-map 오류가 원 child 오류를 가려 원인미확정이다. 별도 새55527에서 같은 CLI1case만 실제1PASS/5skip14.97초 확인했고 필수CI 재검증을 기다린다. root는 diff/보고/로그를 직접 읽고 독립82table data/rawµs readback·roles/functions/triggers/schema/columns/settings exact를 확인했다. ACL NULL→명시default 표현차이는 그대로 보존했으며 whole raw exact로 주장하지 않는다. exact own 정상STOP/exited0/OOMfalse/container+volume 제거 완료. report `/tmp/nomorevibe-pr453-b-cycle-fix-final-report-20261016.md`, root `/tmp/nomorevibe-pr453-root-cycle-{readback,cleanup}-20261016.json`. 전체수동suite 반복0/운영활성0.
+
+## 최신 CI timeout 관측을 위한 test-local 진단
+
+CI38836817519는 첫 legacy v1을 포함한 journal6case가20초 timeout이고 같은 파일의 manual/control8개는 성공했다. 새55530의 기존 legacy1 단독은1PASS/13skip8.91초·PG blocker0였으므로 실제CI 최초정지와원인은 미재현이다. root는 agent와독립readback exact/잔류8종0/otherconn0을확인후55530을 정상STOP/exited0/OOMfalse/ownvolume제거했다.
+
+기존fixture await를 고정 stderr begin/end/reject로 관측하는 한파일 최소진단을 추가했다. 쿼리·자격증명·env·오류원문은출력하지않고 SQLSTATE와고정 operation/relation만 허용한다. native API Promise를 그대로 반환하고 Drizzle lazy query3개는 async factory에서1회만 assimilate한다. prepare의 track/lifecycle·SQL·권한·timeout·기대는 바꾸지 않았다. AST 정규화 대조에서 원14test/78expect/82SQL/6runner인자/31imports 동일, scoped ESLint/TypeScript actualexit0이다. root도 전체diff/요약경계/실행정산구조를직접읽었다.
+
+새진단 자체의 DB실행·Vitest·stderr 실제가시성은 이번에 검증하지 않았고 CI 원인해결로기록하지않는다. `/tmp/nomorevibe-pr453-a-permanent-diagnostic-report-20261016.md`, `...diagnostic-conformance...json`, `...permanent-diagnostic-checks...json`에정확결과를보존했다. driver SHA988e188608c952091be7d1ae960ac28f9786e7774098e3746f784da5b25f410f. 수동전체검사는 모든PR개발종료후 최종통합에서만진행한다.

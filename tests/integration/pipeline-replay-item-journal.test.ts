@@ -41,6 +41,57 @@ let sentinelId: number, sentinelItem: postgres.Row[] | undefined;
 let originalForeign: postgres.Row[], originalDocuments: postgres.Row[], originalVotes: postgres.Row[], originalObservations: postgres.Row[], originalItems: postgres.Row[];
 let originalSettings: postgres.Row[], originalJobs: postgres.Row[], originalStages: postgres.Row[], foreign: postgres.Row[];
 const work = new Set<Promise<unknown>>();
+type DiagnosticPhase = "prepare.candidate_insert" | "prepare.document_insert" | "prepare.settings_upsert"
+  | "prepare.jobs_delete" | "prepare.job_request_insert" | "prepare.profile_identity"
+  | "prepare.handler_database_open" | "prepare.preview_legacy" | "prepare.preview_item"
+  | "prepare.preview_database_close" | "run.certified_legacy" | "run.certified_item"
+  | "fixture.result_return" | "cleanup.work_settle" | "cleanup.profile_release" | "after_all.admin_end";
+let diagnosticSeq = 0;
+const diagnosticStarted = Date.now();
+function failureSummary(error: unknown): { sqlState: string; operation: string; relations: string[] } {
+  try {
+    for (let depth = 0; error && typeof error === "object" && depth < 5; depth++) {
+      const current = error as { code?: unknown; query?: unknown; cause?: unknown };
+      const code = current.code;
+      if (typeof code === "string" && /^[A-Z0-9]{5}$/.test(code)) {
+        const value = current.query, query = typeof value === "string" ? value : "";
+        // Provisioning errors can contain passwords; only fixed labels leave this function.
+        const operation = ["CREATE TRIGGER", "DROP TRIGGER", "ALTER TABLE", "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE"]
+          .find(label => new RegExp(`^\\s*${label}\\b`, "i").test(query)) ?? "unknown";
+        const relations = operation === "unknown" ? [] : ["crawl_candidates", "crawl_review_attempts", "second_reviews",
+          "crawl_frontier", "jobs", "operations_observations", "crawl_settings", "crawl_documents", "products",
+          "agent_repository_scans", "agent_repository_observations", "pipeline_stage_modes", "pipeline_item_leases",
+          "pipeline_replay.identity", "pipeline_replay.handler_profile", "pipeline_replay.capacity_calls",
+          "pipeline_replay.capacity_runs", "pipeline_replay.capacity_finals", "pipeline_replay.capacity_transitions"]
+          .filter(name => new RegExp(`\\b(?:ON|INTO|FROM|UPDATE|TABLE)\\s+(?:public\\.)?${name.replaceAll(".", "\\.")}\\b`, "i")
+            .test(query.replaceAll('"', "")));
+        return { sqlState: code, operation, relations };
+      }
+      error = current.cause;
+    }
+  } catch { /* A diagnostic getter must not replace the original rejection. */ }
+  return { sqlState: "unknown", operation: "unknown", relations: [] };
+}
+function emitPhase(seq: number, phase: DiagnosticPhase, state: "begin" | "end" | "reject",
+  failure?: ReturnType<typeof failureSummary>): void {
+  try {
+    process.stderr.write(JSON.stringify({ event: "item_journal_fixture_phase", seq, phase, state,
+      elapsedMs: Date.now() - diagnosticStarted, ...(failure ? { failure } : {}) }) + "\n");
+  } catch { /* Diagnostic output must not alter fixture work or its original error. */ }
+}
+function observe<T extends Promise<unknown> | undefined>(phase: DiagnosticPhase, load: () => T): T {
+  const seq = ++diagnosticSeq;
+  emitPhase(seq, phase, "begin");
+  try {
+    const pending = load();
+    if (pending === undefined) emitPhase(seq, phase, "end");
+    else void pending.then(() => emitPhase(seq, phase, "end"), error => emitPhase(seq, phase, "reject", failureSummary(error)));
+    return pending;
+  } catch (error) {
+    emitPhase(seq, phase, "reject", failureSummary(error));
+    throw error;
+  }
+}
 function track<T>(promise: Promise<T>): Promise<T> {
   work.add(promise); void promise.then(() => work.delete(promise), () => work.delete(promise)); return promise;
 }
@@ -77,9 +128,9 @@ let cleanup: Promise<void> | undefined;
 function cleanupCase(): Promise<void> {
   if (cleanup) return cleanup;
   const pending = (async () => {
-  await settle();
+  await observe("cleanup.work_settle", settle);
   if (!baselineCaptured) return;
-  await release?.(); release = undefined;
+  await observe("cleanup.profile_release", () => release?.()); release = undefined;
   if (sentinelItem) {
     expect(await admin`SELECT to_jsonb(t) AS row FROM pipeline_item_leases t WHERE stage='ai2' AND work_key=${`ai2:${1_000_000_000 + sentinelId}`}`).toEqual(sentinelItem);
     await admin`DELETE FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${1_000_000_000 + sentinelId}`}`;
@@ -137,7 +188,7 @@ afterAll(async () => {
       expect(await tx`SELECT to_jsonb(t) AS row FROM jobs t WHERE name IN ('crawl-agent-review','second-review','crawl-publish') ORDER BY name`).toEqual(originalJobs);
       expect(await tx`SELECT to_jsonb(t) AS row FROM pipeline_stage_modes t ORDER BY stage`).toEqual(originalStages);
     });
-  } finally { await admin?.end({ timeout: 3 }); }
+  } finally { await observe("after_all.admin_end", () => admin?.end({ timeout: 3 })); }
 });
 
 async function prepare(items: boolean, extra: { voters?: string[]; fallback?: boolean } = {}) {
@@ -147,18 +198,19 @@ async function prepare(items: boolean, extra: { voters?: string[]; fallback?: bo
       voters: (extra.voters ?? ["fixture-second"]).map(model => ({ provider: "abcllm" as const, model })),
       fallbacks: extra.fallback ? [{ provider: "abcllm" as const, model: "fixture-fallback" }] : [], sampleRate: 0 } };
   const repo = `${prefix}/${randomUUID().slice(0, 8)}`;
-  const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl: `https://${prefix}.example`,
-    state: "approved", reason: "passed", decidedBy: "auto", judgedAt: reference, updatedAt: reference }).returning();
-  const [document] = await db.insert(crawlDocuments).values({ repo, productUrl: candidate.productUrl,
+  // Drizzle queries are lazy thenables: assimilate each once before observing the native Promise.
+  const [candidate] = await observe("prepare.candidate_insert", async () => db.insert(crawlCandidates).values({ repo, productUrl: `https://${prefix}.example`,
+    state: "approved", reason: "passed", decidedBy: "auto", judgedAt: reference, updatedAt: reference }).returning());
+  const [document] = await observe("prepare.document_insert", async () => db.insert(crawlDocuments).values({ repo, productUrl: candidate.productUrl,
     fetchedAt: new Date(+reference - 1_000), pageStatus: 200,
     repoMeta: { description: "An online task tracker", homepage: candidate.productUrl, fork: false, private: false,
       archived: false, owner: { type: "User" }, stargazers_count: 10, pushed_at: new Date(+reference - 10_000).toISOString() },
     pageMeta: { title: "Task tracker", description: "Manage projects and tasks in your browser",
       textSample: "Create projects and manage tasks in the application.", readmeSample: "An online task tracker",
-      readmeSampleVersion: README_SAMPLE_VERSION } }).returning();
-  await db.insert(crawlSettings).values({ id: 1, values: settings }).onConflictDoUpdate({ target: crawlSettings.id, set: { values: settings } });
-  await admin`DELETE FROM jobs WHERE name IN ('crawl-agent-review','second-review','crawl-publish')`;
-  await admin`INSERT INTO jobs(name,requested_version) VALUES('crawl-agent-review',1)`;
+      readmeSampleVersion: README_SAMPLE_VERSION } }).returning());
+  await observe("prepare.settings_upsert", async () => db.insert(crawlSettings).values({ id: 1, values: settings }).onConflictDoUpdate({ target: crawlSettings.id, set: { values: settings } }));
+  await observe("prepare.jobs_delete", () => admin`DELETE FROM jobs WHERE name IN ('crawl-agent-review','second-review','crawl-publish')`);
+  await observe("prepare.job_request_insert", () => admin`INSERT INTO jobs(name,requested_version) VALUES('crawl-agent-review',1)`);
   if (items) {
     await admin`UPDATE pipeline_stage_modes SET mode='items',epoch=2,writer_contract_version=1 WHERE stage='ai2'`;
     // Structural foreign/released history, never an issued authority or live proof.
@@ -181,25 +233,25 @@ async function prepare(items: boolean, extra: { voters?: string[]; fallback?: bo
     inputs: [{ candidateId: candidate.id, inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash,
       readyAt: reference.toISOString(), stratum: "new", reReview: false }],
     limits: { maxCalls: 8, maxTokens: 800, perCallTokenUpperBound: 100, maxDurationMs: 120_000, concurrency: 2 } };
-  const owned = await (items ? getReplayItemHandlerIdentityPath() : getReplayHandlerIdentityPath()); release = owned.release;
-  const database = await openVerifiedReplayHandlerDatabase(owned.identityPath, {}), inputs = [{ candidateId: candidate.id, input }];
-  try { manifest.initialStateHash = (await (items ? new ReplayLedger(database).previewItemInitialState(manifest, inputs)
+  const owned = await observe("prepare.profile_identity", () => items ? getReplayItemHandlerIdentityPath() : getReplayHandlerIdentityPath()); release = owned.release;
+  const database = await observe("prepare.handler_database_open", () => openVerifiedReplayHandlerDatabase(owned.identityPath, {})), inputs = [{ candidateId: candidate.id, input }];
+  try { manifest.initialStateHash = (await observe(items ? "prepare.preview_item" : "prepare.preview_legacy", () => items ? new ReplayLedger(database).previewItemInitialState(manifest, inputs)
     : new ReplayLedger(database).previewInitialState(manifest, inputs))).initialStateHash; }
-  finally { await database.close(); }
+  finally { await observe("prepare.preview_database_close", () => database.close()); }
   return { identityPath: owned.identityPath, manifest, inputs, candidate, settings };
 }
-const fixture = async () => ({ result: { ok: true as const, outcome: { decision: "approve" as const, confidence: .99,
+const fixture = () => observe("fixture.result_return", async () => ({ result: { ok: true as const, outcome: { decision: "approve" as const, confidence: .99,
   reason: "An online task tracker", evidenceIds: ["product"] }, usage: { inputTokens: 8, outputTokens: 2 } },
-  receipt: { inputTokens: 8, outputTokens: 2 } });
+  receipt: { inputTokens: 8, outputTokens: 2 } }));
 
 it("preserves genuine legacy v1 fixture certification", async () => {
-  const value = await prepare(false), result = await track(runCertifiedFixtureReviewReplay({ ...value, fixture }));
+  const value = await prepare(false), result = await track(observe("run.certified_legacy", () => runCertifiedFixtureReviewReplay({ ...value, fixture })));
   expect(result.diagnostics.finalCandidates).toBe(1);
   expect(replayArtifactFromVerified(result.artifact)).toMatchObject({ version: 1, run: { profile: "handlers-v5" } });
 });
 
 it("certifies actual AI1 legacy then AI2 item work with persisted owner journal and a strict seal", async () => {
-  const value = await prepare(true), result = await track(runCertifiedItemFixtureReviewReplay({ ...value, fixture }));
+  const value = await prepare(true), result = await track(observe("run.certified_item", () => runCertifiedItemFixtureReviewReplay({ ...value, fixture })));
   const artifact = replayArtifactFromVerified(result.artifact);
   expect(artifact).toMatchObject({ version: 2, run: { profile: "handlers-v6-item" } });
   expect(result.diagnostics.finalCandidates).toBe(1);
@@ -215,7 +267,7 @@ it("certifies actual AI1 legacy then AI2 item work with persisted owner journal 
 
 it("keeps the full independent two-slot gate and historical released owners", async () => {
   const value = await prepare(true, { voters: ["fixture-second", "fixture-third"] });
-  const result = await track(runCertifiedItemFixtureReviewReplay({ ...value, fixture }));
+  const result = await track(observe("run.certified_item", () => runCertifiedItemFixtureReviewReplay({ ...value, fixture })));
   const artifact = replayArtifactFromVerified(result.artifact);
   expect(artifact.calls).toHaveLength(3);
   expect(artifact.finals[0].secondWitnesses).toHaveLength(2);
@@ -246,8 +298,8 @@ it("keeps the full independent two-slot gate and historical released owners", as
 
 it("settles a cancelled item call without inventing a final", async () => {
   const value = await prepare(true);
-  const result = await track(runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.stage === "first"
-    ? fixture() : { result: { ok: false, error: "cancelled" }, receipt: { inputTokens: 0, outputTokens: 0 } } }));
+  const result = await track(observe("run.certified_item", () => runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.stage === "first"
+    ? fixture() : { result: { ok: false, error: "cancelled" }, receipt: { inputTokens: 0, outputTokens: 0 } } })));
   const artifact = replayArtifactFromVerified(result.artifact);
   expect(artifact.calls).toHaveLength(2);
   expect(artifact.finals).toHaveLength(0);
@@ -257,8 +309,8 @@ it("settles a cancelled item call without inventing a final", async () => {
 
 it("binds an actual failed root and independently claimed fallback to the final", async () => {
   const value = await prepare(true, { fallback: true });
-  const result = await track(runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.model === "fixture-second"
-    ? { result: { ok: false, error: "timeout" }, receipt: { inputTokens: 0, outputTokens: 0 } } : fixture() }));
+  const result = await track(observe("run.certified_item", () => runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.model === "fixture-second"
+    ? { result: { ok: false, error: "timeout" }, receipt: { inputTokens: 0, outputTokens: 0 } } : fixture() })));
   const artifact = replayArtifactFromVerified(result.artifact);
   expect(artifact.calls).toHaveLength(3);
   expect(artifact.finals).toHaveLength(1);
@@ -394,8 +446,8 @@ it("rejects a fresh item claim after authentic admission closes", async () => {
 
 it("rejects a duplicated callId authority masking another terminal cancelled call even with no final", async () => {
   const value = await prepare(true, { voters: ["fixture-second", "fixture-third"] });
-  const result = await track(runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.stage === "first" ? fixture()
-    : { result: { ok: false, error: "cancelled" }, receipt: { inputTokens: 0, outputTokens: 0 } } }));
+  const result = await track(observe("run.certified_item", () => runCertifiedItemFixtureReviewReplay({ ...value, fixture: async call => call.request.stage === "first" ? fixture()
+    : { result: { ok: false, error: "cancelled" }, receipt: { inputTokens: 0, outputTokens: 0 } } })));
   const artifact = replayArtifactFromVerified(result.artifact);
   expect(artifact.finals).toHaveLength(0);
   expect(artifact.calls.filter(row => row.stage === "second")).toHaveLength(2);
