@@ -37,6 +37,84 @@ const latestProof = new WeakMap<ReplayRun, ReplayQuiescenceProof>();
 const enteredRuns = new WeakSet<ReplayRun>();
 function ensure(value: unknown, code: string): asserts value { if (!value) throw new Error(code); }
 
+type ExecutionDiagnosticPhase = "journal.prepare" | "journal.packets" | "journal.final_check"
+  | "seal.journal" | "seal.event_write" | "seal.artifact_content" | "seal.strict_parse" | "seal.final_update";
+type ExecutionMeasurement = { wall: number; cpu: NodeJS.CpuUsage };
+type ExecutionDiagnostic = ExecutionMeasurement & { ordinal: number; phase: ExecutionDiagnosticPhase };
+type PacketDiagnosticTotals = { count: number; wallMs: number; userMs: number; systemMs: number };
+let executionDiagnosticOrdinal = 0;
+let executionDiagnosticWrites = 0, executionDiagnosticAwaitingError = false,
+  executionDiagnosticErrorGeneration = 0, executionDiagnosticListening = false;
+function executionDiagnosticDetach(): void {
+  try {
+    if (executionDiagnosticListening && executionDiagnosticWrites === 0 && !executionDiagnosticAwaitingError) {
+      process.stderr.removeListener("error", executionDiagnosticSinkError);
+      executionDiagnosticListening = false;
+    }
+  } catch { /* Sink bookkeeping cannot affect replay validation. */ }
+}
+function executionDiagnosticSinkError(): void {
+  try { executionDiagnosticErrorGeneration++; executionDiagnosticAwaitingError = false; executionDiagnosticDetach(); }
+  catch { /* Preserve the original replay result or rejection. */ }
+}
+function writeExecutionDiagnostic(line: string): void {
+  try {
+    if (!executionDiagnosticListening) {
+      const max = process.stderr.getMaxListeners();
+      if (max > 0 && process.stderr.listenerCount("error") >= max) return;
+      process.stderr.on("error", executionDiagnosticSinkError); executionDiagnosticListening = true;
+    }
+    executionDiagnosticWrites++;
+    const generation = executionDiagnosticErrorGeneration;
+    let completed = false;
+    const complete = (error?: Error | null): void => {
+      try {
+        if (completed) return;
+        completed = true; executionDiagnosticWrites--;
+        // Writable callback errors precede its error event; retain one shared
+        // guard until that event, or use the generation if it already arrived.
+        if (error && generation === executionDiagnosticErrorGeneration) executionDiagnosticAwaitingError = true;
+        executionDiagnosticDetach();
+      } catch { /* The asynchronous callback must also be best effort. */ }
+    };
+    try { process.stderr.write(line, complete); } catch { complete(); }
+  } catch { /* Neither synchronous nor asynchronous sink errors replace replay errors. */ }
+}
+// Fixed diagnostics only. Process CPU includes other concurrent work; it is not
+// per-query CPU or authority. No projection serialization or row values here.
+function captureExecutionMeasurement(): ExecutionMeasurement | undefined {
+  try {
+    if (process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS !== "1") return undefined;
+    return { wall: performance.now(), cpu: process.cpuUsage() };
+  } catch { return undefined; }
+}
+function beginExecutionDiagnostic(phase: ExecutionDiagnosticPhase): ExecutionDiagnostic | undefined {
+  try {
+    const measurement = captureExecutionMeasurement(); if (!measurement) return undefined;
+    const sample = { ...measurement, ordinal: ++executionDiagnosticOrdinal, phase };
+    writeExecutionDiagnostic(JSON.stringify({ event: "certified_replay_execution_subphase", ordinal: sample.ordinal, phase, state: "begin" }) + "\n");
+    return sample;
+  } catch { return undefined; }
+}
+function finishExecutionDiagnostic(sample: ExecutionDiagnostic | undefined, state: "end" | "reject",
+  counts: Record<string, number | string> = {}): void {
+  try {
+    if (!sample) return;
+    const cpu = process.cpuUsage(sample.cpu);
+    writeExecutionDiagnostic(JSON.stringify({ event: "certified_replay_execution_subphase", ordinal: sample.ordinal,
+      phase: sample.phase, state, wallMs: Math.round((performance.now() - sample.wall) * 1_000) / 1_000,
+      userMs: cpu.user / 1_000, systemMs: cpu.system / 1_000, ...counts }) + "\n");
+  } catch { /* Diagnostics cannot replace the original result or rejection. */ }
+}
+function addPacketMeasurement(total: PacketDiagnosticTotals, sample: ExecutionMeasurement | undefined): void {
+  try {
+    if (!sample) return;
+    const cpu = process.cpuUsage(sample.cpu);
+    total.count++; total.wallMs += performance.now() - sample.wall;
+    total.userMs += cpu.user / 1_000; total.systemMs += cpu.system / 1_000;
+  } catch { /* A failed sample cannot change journal validation. */ }
+}
+
 /** Only a DB-certified opaque run can install the transaction journal context. */
 export async function withReplayExecutionScope<T>(run: ReplayRun, load: () => Promise<T>): Promise<T> {
   ensure(!executions.getStore(), "replay_execution_scope_conflict");
@@ -470,56 +548,81 @@ async function artifactContent(tx: Raw, runId: string) {
 }
 
 async function validateJournal(tx: Raw, runId: string): Promise<void> {
-  const [unresolved] = await tx`SELECT 1 FROM pipeline_replay.capacity_calls WHERE run_id=${runId}
+  let diagnostic = beginExecutionDiagnostic("journal.prepare");
+  const reads: PacketDiagnosticTotals = { count: 0, wallMs: 0, userMs: 0, systemMs: 0 };
+  const reductions: PacketDiagnosticTotals = { count: 0, wallMs: 0, userMs: 0, systemMs: 0 };
+  let packetCount = 0, changeCount = 0, maxChanges = 0;
+  let packetStep: "none" | "read" | "reduce" = "none", packetSample: ExecutionMeasurement | undefined;
+  const packetCounts = () => ({ packets: packetCount, changes: changeCount, maxChanges, packetStep,
+    readCount: reads.count, readWallMs: reads.wallMs, readUserMs: reads.userMs, readSystemMs: reads.systemMs,
+    reduceCount: reductions.count, reduceWallMs: reductions.wallMs, reduceUserMs: reductions.userMs, reduceSystemMs: reductions.systemMs });
+  try {
+    const [unresolved] = await tx`SELECT 1 FROM pipeline_replay.capacity_calls WHERE run_id=${runId}
     AND state NOT IN ('settled','cancelled_before_dispatch') LIMIT 1`;
-  ensure(!unresolved, "replay_calls_unresolved");
-  const [missing] = await tx`SELECT 1 FROM pipeline_replay.capacity_transactions t
+    ensure(!unresolved, "replay_calls_unresolved");
+    const [missing] = await tx`SELECT 1 FROM pipeline_replay.capacity_transactions t
     LEFT JOIN pipeline_replay.capacity_commit_confirmations c ON c.run_id=t.run_id AND c.tx_key=t.tx_key
     WHERE t.run_id=${runId} AND c.tx_key IS NULL LIMIT 1`;
-  ensure(!missing, "replay_commit_unconfirmed");
-  const [orphan] = await tx`SELECT 1 FROM pipeline_replay.capacity_changes c LEFT JOIN pipeline_replay.capacity_transactions t
+    ensure(!missing, "replay_commit_unconfirmed");
+    const [orphan] = await tx`SELECT 1 FROM pipeline_replay.capacity_changes c LEFT JOIN pipeline_replay.capacity_transactions t
     ON t.run_id=c.run_id AND t.tx_key=c.tx_key WHERE c.run_id=${runId} AND t.tx_key IS NULL LIMIT 1`;
-  ensure(!orphan, "replay_journal_binding_mismatch");
-  const [run] = await tx`SELECT initial_projection,current_projection,event_seq,manifest,manifest_hash
+    ensure(!orphan, "replay_journal_binding_mismatch");
+    const [run] = await tx`SELECT initial_projection,current_projection,event_seq,manifest,manifest_hash
     FROM pipeline_replay.capacity_runs WHERE run_id=${runId}`;
-  ensure(run && reviewHash(run.manifest) === run.manifest_hash, "replay_journal_binding_mismatch");
-  const [invalidPacket] = await tx`SELECT 1 FROM pipeline_replay.capacity_transactions t
+    ensure(run && reviewHash(run.manifest) === run.manifest_hash, "replay_journal_binding_mismatch");
+    const [invalidPacket] = await tx`SELECT 1 FROM pipeline_replay.capacity_transactions t
     LEFT JOIN pipeline_replay.capacity_transitions e ON e.run_id=t.run_id AND e.seq=t.seq
     WHERE t.run_id=${runId} AND (e.seq IS NULL OR e.kind<>'transaction' OR e.tx_key IS DISTINCT FROM t.tx_key::text
       OR e.at<>t.recorded_at OR t.tx_started_at>t.recorded_at) LIMIT 1`;
-  const [orphanConfirmation] = await tx`SELECT 1 FROM pipeline_replay.capacity_commit_confirmations c
+    const [orphanConfirmation] = await tx`SELECT 1 FROM pipeline_replay.capacity_commit_confirmations c
     LEFT JOIN pipeline_replay.capacity_transactions t ON t.run_id=c.run_id AND t.tx_key=c.tx_key
     WHERE c.run_id=${runId} AND (t.tx_key IS NULL OR c.confirmed_at<t.recorded_at) LIMIT 1`;
-  const [invalidFinal] = await tx`SELECT 1 FROM pipeline_replay.capacity_transitions e
+    const [invalidFinal] = await tx`SELECT 1 FROM pipeline_replay.capacity_transitions e
     LEFT JOIN pipeline_replay.capacity_finals f ON f.run_id=e.run_id AND f.seq=e.seq
     WHERE e.run_id=${runId} AND e.kind='final' AND f.seq IS NULL LIMIT 1`;
-  ensure(!invalidPacket && !orphanConfirmation && !invalidFinal, "replay_journal_binding_mismatch");
-  const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
-  const { applyReplayMixedChanges, ReplayCombinedExecutionSchema, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
-  const items = run.initial_projection.kind === "pipeline-replay-combined-state";
-  let projection = items ? ReplayCombinedExecutionSchema.parse(run.initial_projection) : ReplayReadinessProjectionSchema.parse(run.initial_projection);
-  const frozen = await tx`SELECT candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash
+    ensure(!invalidPacket && !orphanConfirmation && !invalidFinal, "replay_journal_binding_mismatch");
+    const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
+    const { applyReplayMixedChanges, ReplayCombinedExecutionSchema, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
+    const items = run.initial_projection.kind === "pipeline-replay-combined-state";
+    let projection = items ? ReplayCombinedExecutionSchema.parse(run.initial_projection) : ReplayReadinessProjectionSchema.parse(run.initial_projection);
+    const frozen = await tx`SELECT candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash
     FROM pipeline_replay.capacity_inputs WHERE run_id=${runId} ORDER BY candidate_id,input_hash,source_revision_hash`;
-  const actualInputs = frozen.map(row => ({ candidateId: Number(row.candidate_id), inputHash: row.input_hash,
-    sourceRevisionHash: row.source_revision_hash, frozenInput: row.frozen_input, frozenHash: row.frozen_hash }));
-  const domain = "domain" in projection ? projection.domain : projection;
-  const expectedInputs = domain.universe.map(({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }) =>
-    ({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }));
-  ensure(reviewHash(actualInputs) === reviewHash(expectedInputs), "replay_journal_binding_mismatch");
-  const packets = await tx`SELECT tx_key,changes FROM pipeline_replay.capacity_transactions WHERE run_id=${runId} ORDER BY seq`;
-  for (const packet of packets) {
-    const actual = await tx`SELECT ordinal,table_name,operation,old_row,new_row FROM pipeline_replay.capacity_changes
+    const actualInputs = frozen.map(row => ({ candidateId: Number(row.candidate_id), inputHash: row.input_hash,
+      sourceRevisionHash: row.source_revision_hash, frozenInput: row.frozen_input, frozenHash: row.frozen_hash }));
+    const domain = "domain" in projection ? projection.domain : projection;
+    const expectedInputs = domain.universe.map(({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }) =>
+      ({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }));
+    ensure(reviewHash(actualInputs) === reviewHash(expectedInputs), "replay_journal_binding_mismatch");
+    const packets = await tx`SELECT tx_key,changes FROM pipeline_replay.capacity_transactions WHERE run_id=${runId} ORDER BY seq`;
+    packetCount = packets.length;
+    finishExecutionDiagnostic(diagnostic, "end", { packets: packetCount, frozenInputs: frozen.length });
+    diagnostic = beginExecutionDiagnostic("journal.packets");
+    for (const packet of packets) {
+      packetStep = "read"; packetSample = captureExecutionMeasurement();
+      const actual = await tx`SELECT ordinal,table_name,operation,old_row,new_row FROM pipeline_replay.capacity_changes
       WHERE run_id=${runId} AND tx_key=${packet.tx_key} ORDER BY ordinal`;
-    const changes = actual.map(item => (items ? ReplayMixedChangeSchema : ReplayReadinessChangeSchema).parse({ ...item, ordinal: Number(item.ordinal) }));
-    ensure(reviewHash(changes) === reviewHash(packet.changes), "replay_journal_binding_mismatch");
-    projection = items ? applyReplayMixedChanges(projection, changes) : applyReplayChanges(projection as import("./pipeline-replay-readiness").ReplayReadinessProjection, changes as import("./pipeline-replay-readiness").ReplayReadinessChange[]);
-  }
-  ensure(reviewHash(projection) === reviewHash(run.current_projection), "replay_journal_binding_mismatch");
-  const [counts] = await tx`SELECT count(*) AS count,min(seq) AS min,max(seq) AS max FROM pipeline_replay.capacity_transitions WHERE run_id=${runId}`;
-  ensure(Number(counts.count) === Number(run.event_seq) && Number(counts.min) === 1
-    && Number(counts.max) === Number(run.event_seq), "replay_sequence_mismatch");
-}
+      addPacketMeasurement(reads, packetSample); packetSample = undefined;
+      changeCount += actual.length; maxChanges = Math.max(maxChanges, actual.length);
+      packetStep = "reduce"; packetSample = captureExecutionMeasurement();
+      const changes = actual.map(item => (items ? ReplayMixedChangeSchema : ReplayReadinessChangeSchema).parse({ ...item, ordinal: Number(item.ordinal) }));
+      ensure(reviewHash(changes) === reviewHash(packet.changes), "replay_journal_binding_mismatch");
+      projection = items ? applyReplayMixedChanges(projection, changes) : applyReplayChanges(projection as import("./pipeline-replay-readiness").ReplayReadinessProjection, changes as import("./pipeline-replay-readiness").ReplayReadinessChange[]);
+      addPacketMeasurement(reductions, packetSample); packetSample = undefined; packetStep = "none";
+    }
+    finishExecutionDiagnostic(diagnostic, "end", packetCounts());
+    diagnostic = beginExecutionDiagnostic("journal.final_check");
+    ensure(reviewHash(projection) === reviewHash(run.current_projection), "replay_journal_binding_mismatch");
+    const [counts] = await tx`SELECT count(*) AS count,min(seq) AS min,max(seq) AS max FROM pipeline_replay.capacity_transitions WHERE run_id=${runId}`;
+    ensure(Number(counts.count) === Number(run.event_seq) && Number(counts.min) === 1
+      && Number(counts.max) === Number(run.event_seq), "replay_sequence_mismatch");
 
+    finishExecutionDiagnostic(diagnostic, "end", { events: Number(counts.count) });
+  } catch (error) {
+    if (packetSample) addPacketMeasurement(packetStep === "read" ? reads : reductions, packetSample);
+    finishExecutionDiagnostic(diagnostic, "reject", packetCounts());
+    throw error;
+  }
+}
 /** Called solely by the authentic ledger after its opaque quiescence proof is checked. */
 export async function sealReplayLedger(tx: Raw, run: ReplayRun, ownerId: string, proof: ReplayQuiescenceProof): Promise<void> {
   assertReplayQuiescence(run, proof);
@@ -528,23 +631,39 @@ export async function sealReplayLedger(tx: Raw, run: ReplayRun, ownerId: string,
   const [row] = await tx`SELECT state,writers_fenced_at FROM pipeline_replay.capacity_runs
     WHERE run_id=${run.runId} AND owner_id=${ownerId}::uuid FOR UPDATE`;
   ensure(row?.state === "draining" && row.writers_fenced_at, "replay_writers_not_fenced");
-  await validateJournal(tx, run.runId);
-  const [head] = await tx`UPDATE pipeline_replay.capacity_runs SET event_seq=event_seq+1
+  let diagnostic = beginExecutionDiagnostic("seal.journal");
+  try {
+    await validateJournal(tx, run.runId);
+    finishExecutionDiagnostic(diagnostic, "end");
+    diagnostic = beginExecutionDiagnostic("seal.event_write");
+    const [head] = await tx`UPDATE pipeline_replay.capacity_runs SET event_seq=event_seq+1
     WHERE run_id=${run.runId} RETURNING event_seq`;
-  await tx`INSERT INTO pipeline_replay.capacity_transitions(run_id,seq,kind,payload)
+    await tx`INSERT INTO pipeline_replay.capacity_transitions(run_id,seq,kind,payload)
     VALUES (${run.runId},${head.event_seq},'sealed','{}'::jsonb)`;
-  await tx`UPDATE pipeline_replay.capacity_runs SET sealed_at=(SELECT at FROM pipeline_replay.capacity_transitions
+    await tx`UPDATE pipeline_replay.capacity_runs SET sealed_at=(SELECT at FROM pipeline_replay.capacity_transitions
     WHERE run_id=${run.runId} AND seq=${head.event_seq}) WHERE run_id=${run.runId}`;
-  const { row: state, content } = await artifactContent(tx, run.runId);
-  const { parseReplayArtifact, replayArtifactSchema, replayItemArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
-  const parsedContent = (content.version === 2 ? replayItemArtifactSchema : replayArtifactSchema).omit({ seal: true }).parse(content);
-  const seal = { headSeq: Number(state.event_seq), manifestHash: reviewHash(parsedContent.manifest),
-    initialStateHash: parsedContent.initial.initialStateHash, comparisonStateHash: parsedContent.initial.comparisonStateHash,
-    contentHash: replayArtifactContentHash(parsedContent) };
-  parseReplayArtifact({ ...parsedContent, seal });
-  await tx`UPDATE pipeline_replay.capacity_runs SET state='sealed',seal=${JSON.stringify(seal)}::text::jsonb WHERE run_id=${run.runId}`;
-}
+    finishExecutionDiagnostic(diagnostic, "end");
+    diagnostic = beginExecutionDiagnostic("seal.artifact_content");
+    const { row: state, content } = await artifactContent(tx, run.runId);
+    finishExecutionDiagnostic(diagnostic, "end", { packets: content.readiness.transactions.length,
+      events: content.journal.length, calls: content.calls.length, finals: content.finals.length });
+    diagnostic = beginExecutionDiagnostic("seal.strict_parse");
+    const { parseReplayArtifact, replayArtifactSchema, replayItemArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
+    const parsedContent = (content.version === 2 ? replayItemArtifactSchema : replayArtifactSchema).omit({ seal: true }).parse(content);
+    const seal = { headSeq: Number(state.event_seq), manifestHash: reviewHash(parsedContent.manifest),
+      initialStateHash: parsedContent.initial.initialStateHash, comparisonStateHash: parsedContent.initial.comparisonStateHash,
+      contentHash: replayArtifactContentHash(parsedContent) };
+    parseReplayArtifact({ ...parsedContent, seal });
+    finishExecutionDiagnostic(diagnostic, "end");
+    diagnostic = beginExecutionDiagnostic("seal.final_update");
+    await tx`UPDATE pipeline_replay.capacity_runs SET state='sealed',seal=${JSON.stringify(seal)}::text::jsonb WHERE run_id=${run.runId}`;
 
+    finishExecutionDiagnostic(diagnostic, "end");
+  } catch (error) {
+    finishExecutionDiagnostic(diagnostic, "reject");
+    throw error;
+  }
+}
 /** A fixed DB readback verifies the protected seal; artifact JSON cannot authorize this read. */
 export async function readSealedReplayArtifact(database: VerifiedReplayDatabase, runId: string): Promise<unknown> {
   assertVerifiedReplayHandlerDatabase(database);
