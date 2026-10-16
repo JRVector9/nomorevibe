@@ -15,6 +15,8 @@ import { clearAllMemos } from "@/lib/cache/memo";
 const DEV_ONLY = ["ALLOW_PRIVATE_URLS", "NEXT_PUBLIC_SITE_URL"];
 
 for (const name of DEV_ONLY) delete process.env[name];
+// 운영 serving 계약 설정이 셸에 떠 있으면 resolver 가 null 이 아니게 된다 — 필요한 테스트는 스스로 값을 세운다
+delete process.env.ABCLLM_SERVING_CONTRACTS;
 
 // 공개 화면의 짧은 읽기 캐시(lib/cache/memo.ts)는 모듈에 남는다 — 앞 테스트의 값을 다음 테스트가 받지 않게
 beforeEach(() => clearAllMemos());

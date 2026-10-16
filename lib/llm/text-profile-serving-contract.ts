@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { startupGatewayServingContracts } from "./gateway-serving-contract-config";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const textProfileServingContractSchema = z.object({
@@ -16,6 +17,6 @@ export type TextProfileServingContract = Readonly<z.infer<typeof textProfileServ
 export function textProfileServingContractHash(value: TextProfileServingContract): string {
   return createHash("sha256").update(JSON.stringify(textProfileServingContractSchema.parse(value))).digest("hex");
 }
-/** Local code support is not evidence of a deployed bounded serving route. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- No deployment is enabled.
-export function resolveTextProfileServingContract(_model: string): TextProfileServingContract | null { return null; }
+const configured = startupGatewayServingContracts("product-search-profile", textProfileServingContractSchema);
+/** 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS 에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
+export function resolveTextProfileServingContract(model: string): TextProfileServingContract | null { return configured.get(model) ?? null; }
