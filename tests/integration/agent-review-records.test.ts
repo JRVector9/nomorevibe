@@ -1,5 +1,5 @@
-import { beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
@@ -9,15 +9,91 @@ import { loadReviewInput, claimAgentReview, recordAgentReview,
   reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 
-beforeAll(() => ensureSchema());
+const managedJobs = ["crawl-agent-review", "crawl-fetch", "crawl-publish", "second-review"];
+// These replacements are made explicitly by the immutable test bodies below.
+const fixtureTokens = new Set(["review-owner", "new-owner", "owner-1", "owner-2", "owner-3", "owner-4"]);
+type RawJob = Record<string, unknown>;
+type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+let originalJobs: RawJob[] | undefined;
+let preparedJobs: RawJob[] = [];
+let jobsPrepared = false;
+let cleaningJobs: Promise<void> | undefined;
+async function rawJobs(tx: typeof db | Transaction = db): Promise<RawJob[]> {
+  const [row] = await tx.execute<{ rows: RawJob[] }>(sql`SELECT coalesce(jsonb_agg(to_jsonb(j) ORDER BY name),'[]'::jsonb) AS rows FROM jobs j`);
+  return row.rows;
+}
+async function prepareJobs() {
+  if (!originalJobs || jobsPrepared) throw new Error("review_fixture_jobs_not_restored");
+  preparedJobs = await db.transaction(async tx => {
+    await tx.execute(sql`SELECT name FROM jobs WHERE ${inArray(jobs.name, managedJobs)} ORDER BY name FOR UPDATE`);
+    const [active] = await tx.execute<{ live: boolean }>(sql`SELECT EXISTS(SELECT 1 FROM jobs WHERE ${inArray(jobs.name, managedJobs)}
+      AND lease_token IS NOT NULL AND locked_at>=clock_timestamp()-interval '90 seconds') AS live`);
+    if (active.live) throw new Error("review_fixture_foreign_job_owner");
+    expect(await rawJobs(tx)).toEqual(originalJobs);
+    const reset = { requestedVersion: 0, processedVersion: 0, nextScheduledAt: null, notBefore: null,
+      leaseToken: null, workerSeenAt: null, cursor: null, lockedAt: null, lastRunAt: null,
+      lastSuccessAt: null, lastError: null, runs: 0, updatedAt: sql`now()` };
+    for (const name of managedJobs) {
+      const original = originalJobs!.find(row => row.name === name);
+      const changed = original
+        ? await tx.update(jobs).set(reset).where(sql`${jobs.name}=${name}
+            AND to_jsonb(${jobs})=${JSON.stringify(original)}::text::jsonb`).returning({ name: jobs.name })
+        : await tx.insert(jobs).values({ name, ...reset }).onConflictDoNothing().returning({ name: jobs.name });
+      expect(changed).toHaveLength(1);
+    }
+    return (await rawJobs(tx)).filter(row => managedJobs.includes(row.name as string));
+  });
+  jobsPrepared = true;
+}
+async function restoreJobsOnce() {
+  if (!jobsPrepared || !originalJobs) return;
+  await db.transaction(async tx => {
+    await tx.execute(sql`SELECT name FROM jobs WHERE ${inArray(jobs.name, managedJobs)} ORDER BY name FOR UPDATE`);
+    const current = await rawJobs(tx);
+    expect(current.filter(row => !managedJobs.includes(row.name as string)))
+      .toEqual(originalJobs!.filter(row => !managedJobs.includes(row.name as string)));
+    for (const name of managedJobs) {
+      const row = current.find(value => value.name === name);
+      // Do not remove a real runner or a replacement owner not issued by this fixture.
+      if (!row || row.runs !== 0 || row.last_run_at !== null || row.worker_seen_at !== null
+        || row.not_before !== null || row.next_scheduled_at !== null || row.last_success_at !== null
+        || row.last_error !== null || row.cursor !== null
+        || row.lease_token !== null && (name !== "crawl-agent-review" || !fixtureTokens.has(row.lease_token as string))) {
+        throw new Error("review_fixture_job_owner_changed");
+      }
+      const original = originalJobs!.find(value => value.name === name);
+      const changed = original
+        ? await tx.execute(sql`UPDATE jobs j SET (requested_version,processed_version,next_scheduled_at,not_before,lease_token,
+            worker_seen_at,cursor,locked_at,last_run_at,last_success_at,last_error,runs,updated_at)=
+            (r.requested_version,r.processed_version,r.next_scheduled_at,r.not_before,r.lease_token,r.worker_seen_at,
+            r.cursor,r.locked_at,r.last_run_at,r.last_success_at,r.last_error,r.runs,r.updated_at)
+            FROM jsonb_populate_record(NULL::jobs,${JSON.stringify(original)}::text::jsonb) r
+            WHERE j.name=${name} AND to_jsonb(j)=${JSON.stringify(row)}::text::jsonb RETURNING j.name`)
+        : await tx.execute(sql`DELETE FROM jobs j WHERE name=${name}
+            AND to_jsonb(j)=${JSON.stringify(row)}::text::jsonb RETURNING name`);
+      expect(changed).toHaveLength(1);
+    }
+    expect(await rawJobs(tx)).toEqual(originalJobs);
+  });
+  jobsPrepared = false;
+  preparedJobs = [];
+}
+async function restoreJobs() {
+  if (cleaningJobs) return cleaningJobs;
+  const pending = restoreJobsOnce(); cleaningJobs = pending;
+  try { await pending; } finally { if (cleaningJobs === pending) cleaningJobs = undefined; }
+}
+beforeAll(async () => { ensureSchema(); originalJobs = await rawJobs(); });
 beforeEach(async () => {
+  await prepareJobs();
   await db.delete(crawlReviewAttempts);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
   await db.delete(crawlSettings);
-  await db.delete(jobs);
 });
+afterEach(restoreJobs);
+afterAll(restoreJobs);
 const outcome = { decision: "approve" as const, reason: "A deployed service", evidenceIds: ["product"] };
 async function fixture(mode: "observe" | "enforce" = "observe") {
   await saveSettings({ enabled: true }, "test");
@@ -30,7 +106,12 @@ async function fixture(mode: "observe" | "enforce" = "observe") {
   await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 2000) });
   await crawl.recordJudgement({ repo: "owner/review-app", productUrl: "https://review.example", state: "approved", reason: "passed", decidedBy: "auto" });
   const lease = { name: "crawl-agent-review", token: "review-owner", requestedVersion: 1 };
-  await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date(), requestedVersion: 1 });
+  const prepared = preparedJobs.find(row => row.name === lease.name);
+  if (!prepared) throw new Error("review_fixture_job_not_prepared");
+  const issued = await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: new Date(), requestedVersion: 1 })
+    .onConflictDoUpdate({ target: jobs.name, set: { leaseToken: lease.token, lockedAt: new Date(), requestedVersion: 1 },
+      setWhere: sql`to_jsonb(${jobs})=${JSON.stringify(prepared)}::text::jsonb` }).returning({ name: jobs.name });
+  expect(issued).toHaveLength(1);
   const candidate = (await crawl.getCandidate("owner/review-app"))!;
   const document = (await crawl.getDocument(candidate.repo))!;
   const settings = await getSettings();
