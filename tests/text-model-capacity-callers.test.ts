@@ -16,6 +16,13 @@ const mocks = vi.hoisted(() => ({ tagline: vi.fn(), profile: vi.fn(), verify: vi
   cache: vi.fn(), cacheWrite: vi.fn(), primary: vi.fn(), log: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true }) }));
 vi.mock("@/lib/crawl/tagline", async (load) => ({ ...await load<typeof import("@/lib/crawl/tagline")>(), writeTagline: mocks.tagline }));
+vi.mock("@/lib/crawl/tagline-model-capacity", () => ({
+  writeCrawlTaglineWithModelCapacity: async (task: import("@/lib/crawl/taglines").TaglineTask, _lease: unknown,
+    options: { timeoutMs: number; signal?: AbortSignal }) => ({ kind: "result", askOrdinal: 1,
+    result: await mocks.tagline((await import("@/lib/crawl/tagline")).taglineEvidence(task.candidate.repo, task.document),
+      { signal: options.signal, timeoutMs: options.timeoutMs }),
+  }),
+}));
 vi.mock("@/lib/domain/products/search-profile", async (load) => ({ ...await load<typeof import("@/lib/domain/products/search-profile")>(), writeKeywords: mocks.profile }));
 vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
   writeKeywordsWithModelCapacity: async (task: import("@/lib/domain/products/search-profiles").ProfileTask,
