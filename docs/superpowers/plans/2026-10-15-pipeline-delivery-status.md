@@ -1,5 +1,49 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 추가 진행 — 2026-10-16 06:57 UTC
+
+PR453789의 새 CI는 HTTP rival.result/cleanup 미정산으로 통합3/check 실패해 병합을 보류했다. PR460의 별도 실패도 원로그 분석했고, C가 내부 정지 관측 계획을 검토한다. PR14b local restore 도구는 collation guard 실제2RED→same2PASS/독립 리뷰0/root55556 정리 뒤6d55f993로 로컬 commit했다. 실제 strict46 실패는 유지한다. B는 새55557에서 검수 recorder fixture1+control1만 검증하고 A는 AI1 실제 dispatch/terminal 계약을 준비한다. Root migration0084 예약/0083은 sourcebuffer 전용이다. 전체 수동 테스트는 모든 PR 개발 뒤, 운영 활성화0이다. 정확 상태·한계·명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:47 UTC
+
+PR453은 최신 main 반영 후78963fc3로 정상 push했고 새 필수 CI 확인 중이다. Main7f34c475 CI 필수6+두 image SUCCESS를 확인했다. PR460 새 CI 통합1·3은 실패했으며 TTL/lock_timeout 경합 fixture를 B가 검토한다. PR10b host DB quota source7/tests5/validation1은 root commit e0142201·아직 미push다. Child helper 실제 RED→GREEN 및 A 독립 리뷰0까지 완료했다. PR14b는 실제 dump/restore 명령 성공과 strict mismatch46 실패를 구분하며 source/target root 독립 확인 후55553·54 정상 정리했다. C는 새55556에서 collation 검사 누락을 최소3파일로 보완하고 A는 PR14c 후속 설계를 검토한다. 수동 전체 테스트는 모든 PR 개발 후다. 정확한 source/실패/소유권/명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:31 UTC
+
+PR453529d4199 CI38860739876의필수scope/quality/통합3/check/GG전체SUCCESS확인、최신main반영후재확인남음。PR460은3349f20c로부모normalmerge/push/고유57+incoming7SHA보존。PR468readonlyDR는필수CI/최신base/고정head확인뒤main7f34c475정상병합、mainCI진행/운영배포0。PR10b source7+tests5검증·root독립DB정리뒤C발견fixtureP2두helper를DB0로보강중(55552retired)。PR14bactualdump/restorechild0이나DB설정1+DDLdeparse45의엄격대조실패를유지、재dump0/남은negative1만승인。A55553/54독점、B는PR05positivecaller읽기계획。전체수동테스트는모든PR뒤、실제2배/Oracle운영DR는미완료。정확명령·실패·소유권은CODEX_HANDOFF최상단。
+
+## 추가 진행 — 2026-10-16 06:23 UTC
+
+PR453 진단opt-in·strictschema재사용 변경을 root직접/C독립리뷰와 범위 unit/actual3 후 **529d4199**로normalpush/remote확인했다. 실제CI성공과성능2배는미확인이다. 새CI분석상HTTP최초pending은headers뒤 rival.result이며PGbackend원인미확정이다. 모델요청재발견PR467/readonlyDR PR468은초안제출완료. B는실제DBpool/childentryquota7source와actual3PASS뒤정산중(55552), A는localdump→restore전용5파일개발/actual2 scope(55553/54)다. Retired55515–51/수동전체테스트는모든PR뒤/운영·consumer·실모델·DR활성화0. Root가최신453을460에고유57SHA보존normalmerge할예정이며정확head·파일·命令/한계는CODEX_HANDOFF최상단을따른다.
+
+## 추가 진행 — 2026-10-16 06:15 UTC
+
+모델요청 재발견 PR467(5f943280/base465)과 PG17 readonly logicalDR PR468(aa0c3182/main)을 초안으로push/제출했다. 직접·독립리뷰/범위회귀/root독립DB정리완료이며양성provider/실제Oracle복원·승격은후속이다. PR453의CLI진단opt-in·row-schema구성재사용6source는원coverage1+legacy/itempair2 모두PASS/원기대불변으로로컬인수했고C최종리뷰뒤push예정이다. 실제wholeRaw는원fixture자기10행잔류+ACL표현차이로false를보존했다. B는별도WT에서기존host DB budget을실제pool/부모자식entry에연결하는7source를개발하고A는PR14b local복원rehearsal을읽기계획한다. C는opt-in독립review와새CIfirstwait를분석한다. 55515–51모두retired/활성DB0/다음새55552. 수동전체검증은모든PR개발뒤이며운영/consumer/실모델/DR활성화0. 정확head·소유권·원실패·다음명령은CODEX_HANDOFF최상단을따른다.
+
+## 추가 진행 — 2026-10-16 05:38 UTC
+
+AI2 접수 제어는 초안PR465/head898960a7로 제출했고 A독립최종리뷰P1/P2=0이다. 원본공급버퍼는 oldPR463과전체tracked tree가exact인 대체초안PR466/efbd38dc로제출해GitGuardian SUCCESS확인, oldPR463과branch/history는보존했다. HTTPfixedtrace actual2PASS/18skip와root독립raw/catalogexact/정상cleanup을확인했다. 현재A는pending모델요청sameID재개helper, B는replay seal/report 비용계측, C는PR14a read-only logicalDR inventory를충돌없는파일에서개발한다. 활성전용DB55547/48/49, retired55515–46이다. 전체수동테스트는모든PR개발뒤수행하며운영/양성provider/DR활성화0. 실제CI실패·명령·정확head·소유권은 CODEX_HANDOFF 최상단이우선한다.
+
+## 후속 확인 — 2026-10-16 05:25 UTC
+
+PR460–464의 완료 수정은 최신 부모를 정상 반영해 push했고, shared review base는 `51396916`이다. AI2 접수 제어는 nonempty fixture 및 TX commit 뒤 key 소유 등록 회귀 보강·root 독립 readback/정상 정리 뒤 [초안 PR465](https://github.com/JRVector9/nomorevibe/pull/465), head `898960a7`로 제출했다. 상세 검증은 PR05b1 validation과 최신 CODEX_HANDOFF를 따른다. 운영 활성화·양성 provider dispatch는0이다.
+
+PR460/461/462의 최신 quality·통합1/2 SUCCESS, 통합3 진행 중이며 PR464 font 수정 후 quality SUCCESS다. PR463은 현재 source에서 제거한 과거 commit의 고정 음성 UUID 때문에 GitGuardian FAILURE가 남는다. PR453 새 CI는 통합3이20분 한도로 cancelled; legacy report10.290초·item5 seal reject와 같은 구간 PG idle-in-TX timeout을 관측했으나 단일 원인 확정은 아니다. A는 HTTP 고정 trace 한 파일, B는 seal/report 최소 subphase 계측, C는 양성 dispatch 계획의 두 P2 보완을 병렬 진행한다. 55515–45는 모두 retired/활성DB0이다. 수동 전체 검증은 모든 PR 개발 뒤 수행하며 CI 우회·제한 완화·운영 배포는 하지 않았다.
+
+## 후속 확인 — 2026-10-16 05:12 UTC
+
+Main714fae의필수6+두image전체SUCCESS확인(운영배포증거아님). Sharedreviewbase712ad0b는main714정상merge/push·기존77sourceSHA보존이며미활성이다. PR12 fixture는실제selector/heldowner/외부완료3RED→GREEN과최종원3GREEN·정적0/root독립90표10행/catalog/84journal exact로로컬11fe2160에인수했다. PR462recorderfixture는actual2PASS/기존strict·다른32본문보존/root독립rawexact로로컬f688e4d8에인수했다. PR13패널13px교정관련9PASS로로컬5b47c3ec에인수했다. 모두최신의존parent갱신/push후새CI확인예정이다.
+
+PR460/461의이전integration3은20분최대실행시간으로cancelled/checkFAIL,PR462는integration1FAIL+같은integration3cancelled다. 첫HTTPnative대기원인A조사중/미확정이며제한이나기대를완화하지않았다. AI2 admission은nonempty7PASS후root가TXcommit전소유Set등록P2를추가발견해C가새전용55544/동일test1파일로보완중이다. B는다음PR05b2의양성permit→실provider dispatch연결을읽기계획중이다. PR453고정phase계측새CI최종판정대기,실제C/종료/독립consumer/OracleliveDR/전체2배미완료다. 수동전체테스트는모든PR개발뒤수행한다. 최신세부사항은CODEX_HANDOFF.md를따른다.
+
+## 최신 확인 — 2026-10-16 04:45 UTC 이후
+
+이 절이 아래 시점별 기록보다 우선한다. PR459 offline Oracle는 필수 CI/최신 base·고정 head 검증 뒤 main714fae23으로 병합했고 운영 배포는 하지 않았다. 새 main CI38852285410은 진행 중이다. PR453은 profile 개선 뒤에도 item5 timeout으로 실패해 고정 phase 계측을 진행한다. PR460/461/462는 선행 의존 초안이며 PR462의 별도 recorder-wait assertion1도 미해결이다.
+
+PR12a 원본 공급 버퍼는 변경 범위 unit30 및 actual10+별도1, root 코드리뷰·DB 독립readback/정리 뒤 [초안PR463](https://github.com/JRVector9/nomorevibe/pull/463)으로 제출했다. 기본 비활성/R:null이며 실제2배를 뜻하지 않는다. 보안 scanner의 고정 forged-token 음성fixture 경고는 조사·최소수정 중이다. PR13 관리자 관측은 독립리뷰의 정책 hash P2를 최소보강했고 unit/UI16PASS·정적0·SQL불변, root 인수 중이다. PR05b1 AI2 fresh admission은 source2/tests2와15 actual 경계의 분리GREEN을 반환해 root 리뷰 중이다.
+
+새 PR들의 검토 base는 최신 PR461/462를 정상 merge한 `codex/pipeline-review-stack-20261016`이다. main/운영 적용과 구분한다. 전체 unit/전체DB/build 수동 실행은 모든 PR 개발 후에만 진행하며 필수 자동 CI는 유지한다. 정확한 소유권·명령·실패는 [CODEX_HANDOFF](../../CODEX_HANDOFF.md)를 따른다.
+
 승인된 [PR00–17 로드맵](2026-10-15-pipeline-pr-roadmap.md)의 납품 상태를 기록한다.
 PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안의 검토 경계다.
 전체 요구와 합격 기준은 [설계](../specs/2026-10-15-pipeline-two-times-design.md)를 따른다.
@@ -148,3 +192,17 @@ Oracle가 설치됐거나 standby라는 이유로 PR11·16·17을 완료 처리�
 2026-10-16 최신 인수: PR455 c5c24108 안전한 test-local 진단 추가 후 필수 CI38838284085 전부 SUCCESS, PR456 초안 ceb4598/CI38837610041도 전부 SUCCESS이며 선행 PR455 뒤 인수한다. PR453 c49276c1/CI38836817519 journal6case 시간초과는 원인 미확정이다. A 새55530 legacy1 단독1PASS/13skip8.91초·원SHA복원·DB실행권 반환, PR10/v6 읽기 불일치0는 실제 통합 PASS와 구분한다. PR11 offline15파일은 B3경계 actualRED→동일GREEN/최종5PASS·compile0 후 root직접리뷰/local6c90ffb, 실제runtime미완료. C는 별도HTTP fixture terminal미정산2건 actualRED→2GREEN·인접단독PASS 후 동결중이며 원mainCI최초원인미확정이다. B는 inactive host-budget 독립읽기리뷰만 진행한다. 수동전체unit/전체DB/종합build는 모든PR개발후 최종통합단계에서만 실행한다.
 
 PR455는 exacthead c5c24108/최신base/필수CI38838284085 성공 guard 후 2026-10-16T02:17:01Z main06643dd로 정상squash 병합했다. main CI38839627532는 진행 중이다. PR10b pure3파일은 root/B 읽기 P1/P2 0·실제기록 인수 후 locald43d110, 실제wiring/enforcement미완료. C HTTPfixture2파일 반환 후 root4SHA·85table raw/catalog/default/stage exact 확인·55529정상정리, A legacy1반환도 root exact readback/55530정상정리했다. 두DB 모두 재접속금지. A는 CI최초await 진단안, B는 Python Oracle helper 최소범위 계획만 병렬진행한다. 전체수동검사는 모든PR개발뒤만이다.
+
+2026-10-16 이번 phase: PR455 main06643dd의 CI38839627532/worker·web images 모두 SUCCESS. PR456은 선행main 정상merge/원source24파일 byte동일로 head03ec96a·ready/CI38840023683 진행. HTTP fixture 실제terminal2경계 수정은 PR457(head9fc9406/CI38840424622), inactive host-budget pure는 PR458(head27f3089/CI38840481559)로 제출했다. PR10 source24파일은 root/C/B해시와 actualdriver리뷰 후 local670e38a, 선행통합/0082migration/v6단일회귀는 남았다. A의 PR453한파일진단, B의 Oraclehelper두파일, C의 PR05 inventory를 충돌없이 병렬배정했다. 수동전체suite/전체DB/종합build는 실행0·모든PR개발후 최종통합만이다.
+
+최신 후속: PR457은 exacthead/최신base/필수CI38840424622 성공 guard 후 main971fa17로 정상squash했다(main CI38841551791 진행). PR456 latestCI38840023683은 HTTP원6case timeout cascade로통합3/check실패, rawlog보존·sourceclaim원인단정0. PR453 safephase진단+main066 head1920700/CI38840988782진행. PR10은 선행PR08/PR453/main971을 정상통합한 localcc43a1d이며 A가전용55531의83journal migration/rerun과원v6단일case만검증중이다. PR11 Pythonhelper는9scope+4legacyPASS/compile0/root·C읽기P1/P2 0, TS계획은실제host/privilege/canary/budget gaps를명시한다. 수동전체검사는 모든PR개발뒤 최종통합한번으로유지한다.
+
+이번 최신 후속: main971fa17의 CI38841551791·worker/web image 모두SUCCESS 확인. PR456e5aec02/CI38842619945, PR4588cd7852/CI38842691101, PR4534c7c2bdd/CI38842830252는 ownsource변경없이최신main인수/push했다. PR10 integratedcc43은 새55531에서83journal migration/rerun0·원v6단일1PASS/13skip13.44초, root raw90table92row/agentafter exact 및 wholebeforeACL17표현차이false를기록후정상삭제했다. PR11 helper9/legacy4/compile0와독립리뷰를인수해 offline초안459로제출했으며 TS/runtime는미완료다. A/B는새site-adapterWT에서source와runtime를배타병렬개발중이고 C는PR05최소연결설계읽기다. 수동전체suite·전체DB·종합build실행0, 모든PR개발뒤최종통합으로유지한다.
+
+현재 최신: PR456은exactheade5aec02·필수CI38842619945/최신base971성공guard후main d7640df로정상squash(03:05:29Z)했다. PR458은새main정상인수888f1ce/CI38844114868진행. 초안PR459offline873038f/CI38843249759, 초안PR460role5146f5e/CI38843474538를제출했다. PR4534c7CI38842830252는HTTP성공/item5timeout, PR460통합1은전역drain1case거절이남아원로그보존·가드완화0. A는새55532에서siteactualdriver, C는새55533에서AI1admission actual2RED+disabledcontrol이후구현, B는반환source8파일(17+72PASS/scoped정적0)후PR453반복SQL읽기조사다. 두DB반환전root접속0. 수동전체검사는모든PR개발뒤로유지한다.
+
+
+2026-10-16 site/admission 인수: PR456 main CI38843767154·images SUCCESS, PR458 exacthead888f1ce/필수CI38844114868 성공후 main2a227dd 정상squash(03:21Z). site20파일은 actual role2+site8의 분리10PASS·unit52/후속runtime10·root89table raw/capturedcatalog exact/독립리뷰 P1/P2 0로동결됐다. AI1admission source5/tests3은 원3GREEN/unit38/확장11분리GREEN/genuine1GREEN; fixture foreignitem 소유권P2는 ownItemKeys 최소보강(원15본문exact/해당eslint0/DB재실행0). 둘다local/운영비활성이다. PR453 원pair 각1회2PASS/7.115·9.479초로CI지연미재현, 검증SQL과후단CPU를함께측정하고검증의미를보존하는profile두SQL만후속개선중이다. PR460 통합1은직전records fixture의healthy AI1job 미정리구체경로를확인했고전체CI실패를보존한다. PR459 통합3HTTP8실패도미해결이다. 전체수동테스트는모든PR개발후최종통합단계에서만진행한다. 최신세부소유권/merge중단/DB55535는CODEX_HANDOFF를따른다.
+
+
+2026-10-16 최신 취합: site/AI1 admission은 역할분리 PR460에 의존하는 초안 PR461/462로 제출했다. PR453 profile SQL 두경계 개선은 old/new실제32항목·원2case와독립리뷰를통과하여source인수중이며CI지연해결은미확정이다. PR460 fixture의실제잠금잔류원인을좁은pair로재현/수정했고, 독립리뷰의absent→concurrentowner경쟁도실제RED후보강중이다. Oracle초안PR459는최신main2a정상adoption/head67f35d7. PR12 sourcebuffer(A,defaultdisabled/R:null)와PR13 관리자현재제어상태(C)는분리WT에서병렬구현중이다. 수동전체unit/전체DB/종합build는모든PR개발이끝난뒤만실행한다. 상세소유권/정확명령은CODEX_HANDOFF.md.

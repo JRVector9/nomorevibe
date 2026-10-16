@@ -1,5 +1,21 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 추가 진행 — 2026-10-16 06:57 UTC
+
+PR453789의 새 CI는 HTTP rival.result/cleanup 미정산으로 통합3/check 실패해 병합을 보류했다. PR460의 별도 실패도 원로그 분석했고, C가 내부 정지 관측 계획을 검토한다. PR14b local restore 도구는 collation guard 실제2RED→same2PASS/독립 리뷰0/root55556 정리 뒤6d55f993로 로컬 commit했다. 실제 strict46 실패는 유지한다. B는 새55557에서 검수 recorder fixture1+control1만 검증하고 A는 AI1 실제 dispatch/terminal 계약을 준비한다. Root migration0084 예약/0083은 sourcebuffer 전용이다. 전체 수동 테스트는 모든 PR 개발 뒤, 운영 활성화0이다. 정확 상태·한계·명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:47 UTC
+
+PR453은 최신 main 반영 후78963fc3로 정상 push했고 새 필수 CI 확인 중이다. Main7f34c475 CI 필수6+두 image SUCCESS를 확인했다. PR460 새 CI 통합1·3은 실패했으며 TTL/lock_timeout 경합 fixture를 B가 검토한다. PR10b host DB quota source7/tests5/validation1은 root commit e0142201·아직 미push다. Child helper 실제 RED→GREEN 및 A 독립 리뷰0까지 완료했다. PR14b는 실제 dump/restore 명령 성공과 strict mismatch46 실패를 구분하며 source/target root 독립 확인 후55553·54 정상 정리했다. C는 새55556에서 collation 검사 누락을 최소3파일로 보완하고 A는 PR14c 후속 설계를 검토한다. 수동 전체 테스트는 모든 PR 개발 후다. 정확한 source/실패/소유권/명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:31 UTC
+
+PR453529d4199 CI38860739876의필수scope/quality/통합3/check/GG전체SUCCESS확인、최신main반영후재확인남음。PR460은3349f20c로부모normalmerge/push/고유57+incoming7SHA보존。PR468readonlyDR는필수CI/최신base/고정head확인뒤main7f34c475정상병합、mainCI진행/운영배포0。PR10b source7+tests5검증·root독립DB정리뒤C발견fixtureP2두helper를DB0로보강중(55552retired)。PR14bactualdump/restorechild0이나DB설정1+DDLdeparse45의엄격대조실패를유지、재dump0/남은negative1만승인。A55553/54독점、B는PR05positivecaller읽기계획。전체수동테스트는모든PR뒤、실제2배/Oracle운영DR는미완료。정확명령·실패·소유권은CODEX_HANDOFF최상단。
+
+## 추가 진행 — 2026-10-16 06:23 UTC
+
+PR453 진단opt-in·strictschema재사용 변경을 root직접/C독립리뷰와 범위 unit/actual3 후 **529d4199**로normalpush/remote확인했다. 실제CI성공과성능2배는미확인이다. 새CI분석상HTTP최초pending은headers뒤 rival.result이며PGbackend원인미확정이다. 모델요청재발견PR467/readonlyDR PR468은초안제출완료. B는실제DBpool/childentryquota7source와actual3PASS뒤정산중(55552), A는localdump→restore전용5파일개발/actual2 scope(55553/54)다. Retired55515–51/수동전체테스트는모든PR뒤/운영·consumer·실모델·DR활성화0. Root가최신453을460에고유57SHA보존normalmerge할예정이며정확head·파일·命令/한계는CODEX_HANDOFF최상단을따른다.
+
 2026-10-16 KST. [고정 계획](../superpowers/plans/2026-10-16-pipeline-pr07a-http-settlement.md)을 따라 실제 기존 HTTP 호출을 수정했다. base `99a9cefcd9c82dcc86441b798332137a3604fe36`, 작업 branch `codex/pipeline-pr07a-http-settlement-20261016`다.
 
 ## 변경 결과
@@ -61,3 +77,9 @@ root가 [PR CI38823740327](https://github.com/JRVector9/nomorevibe/actions/runs/
 최신 origin/main99a9cefc·동일 head69512b92·MERGEABLE/CLEAN·필수check SUCCESS를 확인하고 `gh pr merge 451 --squash --match-head-commit 69512b92a05065e66bd3323c4ed102994b53b1a6`을 실제 실행했다(exit0). 병합 시각은 **2026-10-15T23:37:21Z**, main **f93b8d638d4f58405e62f9b11ce1b58c117ad1e0**다. [main CI38824682495](https://github.com/JRVector9/nomorevibe/actions/runs/38824682495)가 이 SHA로 진행 중임을 직접 확인했다. 전체main check/image 및 운영 적용 완료로 세지 않는다.
 
 후속 같은 run 관측에서 scope·quality·통합3구간·필수check·웹/워커 image **전체 SUCCESS**를 직접 확인했다. 최종 JSON은 `/tmp/nomorevibe-pr07a-root-main-ci-38824682495-20261016.json`이다. 위 진행 중 문장은 이전 관측이다. image 생성은 운영 배포 증거가 아니며 이 단계의 수동 전체 테스트 재실행은 없다.
+
+
+2026-10-16 site/admission 인수: PR456 main CI38843767154·images SUCCESS, PR458 exacthead888f1ce/필수CI38844114868 성공후 main2a227dd 정상squash(03:21Z). site20파일은 actual role2+site8의 분리10PASS·unit52/후속runtime10·root89table raw/capturedcatalog exact/독립리뷰 P1/P2 0로동결됐다. AI1admission source5/tests3은 원3GREEN/unit38/확장11분리GREEN/genuine1GREEN; fixture foreignitem 소유권P2는 ownItemKeys 최소보강(원15본문exact/해당eslint0/DB재실행0). 둘다local/운영비활성이다. PR453 원pair 각1회2PASS/7.115·9.479초로CI지연미재현, 검증SQL과후단CPU를함께측정하고검증의미를보존하는profile두SQL만후속개선중이다. PR460 통합1은직전records fixture의healthy AI1job 미정리구체경로를확인했고전체CI실패를보존한다. PR459 통합3HTTP8실패도미해결이다. 전체수동테스트는모든PR개발후최종통합단계에서만진행한다. 최신세부소유권/merge중단/DB55535는CODEX_HANDOFF를따른다.
+
+
+2026-10-16 최신 취합: site/AI1 admission은 역할분리 PR460에 의존하는 초안 PR461/462로 제출했다. PR453 profile SQL 두경계 개선은 old/new실제32항목·원2case와독립리뷰를통과하여source인수중이며CI지연해결은미확정이다. PR460 fixture의실제잠금잔류원인을좁은pair로재현/수정했고, 독립리뷰의absent→concurrentowner경쟁도실제RED후보강중이다. Oracle초안PR459는최신main2a정상adoption/head67f35d7. PR12 sourcebuffer(A,defaultdisabled/R:null)와PR13 관리자현재제어상태(C)는분리WT에서병렬구현중이다. 수동전체unit/전체DB/종합build는모든PR개발이끝난뒤만실행한다. 상세소유권/정확명령은CODEX_HANDOFF.md.
