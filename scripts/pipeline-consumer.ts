@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { itemOwnerSchema } from '@/lib/jobs/items/types';
+import { assertHostDbEntry } from '@/lib/db/host-budget';
 
 export function parsePipelineConsumerArgs(args: string[]): { stage: 'ai2'; once: boolean } {
   if (args.filter(arg => arg === '--stage=ai2').length !== 1 || args.filter(arg => arg === '--once').length > 1
@@ -12,6 +13,7 @@ export async function runPipelineConsumer(args: string[], env: Readonly<Record<s
   // Default-off exits before importing the queue, DB or runtime collectors.
   if (version === undefined) return { state: 'disabled' as const };
   if (version !== '1') throw new Error('invalid_pipeline_item_consumer_version');
+  assertHostDbEntry(env, { kind: 'worker', role: 'reviewer', consumer: 'ai2' });
   const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, bootId: randomUUID() });
   const [{ withRuntimeProcess }, { runSecondReviewConsumer }] = await Promise.all([
     import('./worker'), import('@/lib/crawl/consumers/second'),
