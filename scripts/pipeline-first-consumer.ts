@@ -4,6 +4,7 @@ import { itemOwnerSchema } from '@/lib/jobs/items/types';
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { supervisorHealthPath } from './consumer-health';
 import { assertHostDbEntry } from '@/lib/db/host-budget';
+import { assertHostBudgetEntrySupported } from '@/lib/operations/host-budget';
 
 export function parsePipelineFirstConsumerArgs(args: string[]): { once: boolean } {
   if (args.filter(arg => arg === '--once').length > 1 || args.some(arg => arg !== '--once'))
@@ -15,6 +16,7 @@ export async function runPipelineFirstConsumer(args: string[], env: Readonly<Rec
   if (version === undefined) return { state: 'disabled' as const };
   if (version !== '1') throw new Error('invalid_pipeline_item_consumer_version');
   assertHostDbEntry(env, { kind: 'worker', role: 'reviewer', consumer: 'ai1' });
+  assertHostBudgetEntrySupported(env);
   supervisorHealthPath({ consumer: 'ai1' }, env);
   const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, bootId: randomUUID() });
   if (owner.instanceId !== serviceInstanceId(env)) throw new Error('invalid_item_consumer_service_instance');

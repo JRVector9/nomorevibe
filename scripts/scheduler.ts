@@ -39,12 +39,19 @@ async function main() {
   const options = parseLoopArgs(process.argv.slice(2), 10);
   assertHostDbEntry(process.env, { kind: 'scheduler-worker', role: 'scheduler' });
   await withRuntimeProcess('scheduler', async (signal, report) => {
-    const { requestDueJobs, markSchedulerSeen } = await import('@/lib/jobs/control');
-    const result = await runScheduler({ ...options, signal }, {
-      requestDue: requestDueJobs, seen: markSchedulerSeen, report, log: runtimeLog,
-    });
-    runtimeLog('scheduler.stopped', result);
-    if (options.once && result.failures) process.exitCode = 1;
+    const [{ requestDueJobs, markSchedulerSeen }, { startHostBudget }] = await Promise.all([
+      import('@/lib/jobs/control'), import('@/lib/operations/host-budget-runtime')]);
+    // host 장부 자리가 없는 틱은 DB 를 쓰지 않고 건너뛴다. 비활성이면 항상 ready 다
+    const host = startHostBudget(process.env);
+    try {
+      if (host.enabled) await host.settled;
+      const result = await runScheduler({ ...options, signal }, {
+        requestDue: () => host.ready() ? requestDueJobs() : Promise.resolve(0),
+        seen: () => host.ready() ? markSchedulerSeen() : Promise.resolve(), report, log: runtimeLog,
+      });
+      runtimeLog('scheduler.stopped', result);
+      if (options.once && result.failures) process.exitCode = 1;
+    } finally { await host.stop(); }
   });
 }
 

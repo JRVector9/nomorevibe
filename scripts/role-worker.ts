@@ -15,6 +15,7 @@ import { readTextProgress, textProgressStalled } from '@/lib/operations/text-pro
 import { hasActiveRoleJob } from '@/lib/jobs/control';
 import { laneForJob } from '@/lib/operations/worker-progress';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
+import { startHostBudget } from '@/lib/operations/host-budget-runtime';
 
 type Dependencies = {
   acquire: typeof tryAcquireRole;
@@ -127,6 +128,8 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
 async function main() {
   const candidate = parseRoleWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
+  // host 장부 자리가 없으면 선출에 나서지 않고 standby 로 남는다(자식·일감을 띄우지 않음)
+  const host = startHostBudget(process.env);
   const controller = new AbortController();
   let phase: 'standby' | 'active' | 'stopping' = 'standby';
   let epoch: number | null = null;
@@ -152,7 +155,7 @@ async function main() {
   record();
   try {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
-      acquire: tryAcquireRole, renew: renewRole, release: releaseRole,
+      acquire: value => host.ready() ? tryAcquireRole(value) : Promise.resolve(null), renew: renewRole, release: releaseRole,
       checkProgress: async role => {
         if (candidate.batchVersion === 1) return false;
         // These roles have a single lane and retain their existing specialized progress policy.
@@ -186,6 +189,7 @@ async function main() {
     clearInterval(observationTimer);
     process.removeListener('SIGINT', stop);
     process.removeListener('SIGTERM', stop);
+    await host.stop();
     const client = (globalThis as {pgClient?: {end: (options: {timeout:number}) => Promise<void>}}).pgClient;
     await client?.end({timeout: 5});
   }
