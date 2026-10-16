@@ -1,5 +1,21 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 추가 진행 — 2026-10-16 08:52 UTC
+
+TextPhaseA18파일은9215a1f9→최신471parentmerge1e84bb09로정상push/초안PR473제출·remoteexact/clean·A독립리뷰P1/P2=0, actual3분리PASS/root55564정상정리까지완료다. PR06a는독립리뷰P2 once상한(새120vs96RED→최소1조건후관련3PASS)을고쳤고consumer healthchecker 경로/rolecandidate P2도4파일로보강했다(새4AssertionRED→동일6+인접3=9PASS/실제CLI5close/정적0). 최종13SHA를root직접검토해정상commit/초안제출준비다. HTTP는native100ms postfire-GC에서만source소실/취소누락을실제재현하고privateWeakMap대조만정상TimeoutError/child3close를확인했다(전체harness1보존, CI원인확정0). 원453보존·진단472병합금지/새별도WT에서최소deadline보존수정중이다. ActiveDB0·다음새55565. 전체미완료·수동전체는모든PR개발뒤·운영activation0, 정확SHA/수정파일/실패/모델·검증한계/다음명령은CODEX_HANDOFF최상단.
+
+## 추가 진행 — 2026-10-16 08:35 UTC
+
+AI1 PR471의 실제role 없는 fixture2FAIL은 한test파일 최소수정 뒤 지정2PASS, root55563 독립raw91표95행/capturedcatalog/권한/연결0 확인·정상정리완료다. HTTP 진단PR472는 원unread1FAIL·862PASS/TODO1, rival의 실제263회 no_grant/delay 후 callerabort 정산을 관측해 단일await hang 가설을 배제했다. Timeout source 수명 원인은 아직미증명/진단branch 병합금지다. PR06a 소비자는 actual8 distinct PASS와root55562 정리 뒤 fresh DB 전제를 CI필수첫파일+전체shard exactexclude로 보장(201파일 정확1회 목록검증/실CI미주장)해 인수준비다. C text PhaseA는 unit범위PASS, actual첫실행 JSON cast setup23514를 원형보존했고 최소6cast 수정뒤disabled1PASS/나머지미실행2만 진행중이다. 운영활성화0·수동전체검사는모든PR개발뒤·전체목표미완료다. 정확SHA/수정파일/실패/DB소유권/다음명령은CODEX_HANDOFF최상단.
+
+## 추가 진행 — 2026-10-16 08:18 UTC
+
+AI1 PR471은 quality/통합1·2성공, 통합3에서기존HTTPunread와actualrole취득없는sourcefixture2건으로FAIL이다. 별도초안PR472/head0911ea01은HTTP내부phase의CI진단전용으로병합·배포금지/원453보존/시간·assertion불변이다. Local3변형각1PASS와root55561독립raw/capturedcatalog확인·정상retire를완료했다. A PR06a consumer는unit92PASS/정적0후새55562 actual첫case의ownvote정리fixture실패를보존·수정분리검증중이다. C text7route failclosed/typeddefer PhaseA는실제21AssertionRED→동일35PASS, actualdriver작성중/DB0이다. 운영비활성·수동전체검사는모든PR개발뒤·전체목표미완료유지. 정확SHA/오류/DB소유권/다음명령은CODEX_HANDOFF최상단.
+
+## 추가 진행 — 2026-10-16 08:04 UTC
+
+AI1 PR05b3는 초안PR471/head7981d2d3로push·제출했다. 범위실제검증/독립리뷰/rootDB정리완료·필수CI진행/운영비활성이다. PR469병합main9e133은필수6+두imageCI전체SUCCESS/배포0이며strictrestore46실패는유지한다. A는새PR06a WT에서defaultdisabled AI2독립consumer를실제개발하고C는textcapacity계획을읽기작성한다. B는55561에서원HTTP1case의OFF/GC/ON각1회관측중이며local결과를CI원인해결로해석하지않는다. 정확SHA/소유권/다음명령은CODEX_HANDOFF최상단. 수동전체테스트는모든PR개발뒤다.
+
 ## 추가 진행 — 2026-10-16 07:56 UTC
 
 AI1 PR05b3 source16은 ledger/native/runtime 실제범위검증·root직접/독립리뷰를완료해770221fb로commit했고 최신HTTP/main9e133을정상merge한로컬0cc5a50e에서push/초안PR제출을준비한다. Runtime8 distinct는 분리실행으로PASS/전체반복0, root55559·60독립raw/capturedcatalog/연결0확인후정상retired했다. Productionresolverunsupported/defaultdisabled·2배미검증유지. PR469는필수CI/최신base guard뒤main9e133으로정상병합했고mainCI진행/배포0이며strictrestore46실패는그대로다. PR453dfa와PR47063d의CI는동일HTTP unread1timeoutFAIL을보존하고B가새임시WT/전용55561에서최소관측을준비한다. PR460d71필수CI성공. A PR06 defaultdisabled consumer최소계획·C text전caller계획을충돌없이후속개발한다. 수동전체테스트는모든PR개발뒤다. 정확SHA/실패/소유권/명령은CODEX_HANDOFF최상단.

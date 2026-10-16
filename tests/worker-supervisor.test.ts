@@ -1,13 +1,56 @@
-import { expect, it } from 'vitest';
-import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { expect, it, vi } from 'vitest';
+import * as childProcess from 'node:child_process';
+import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, superviseWorker, supervisorCommand, supervisorHealthPath, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
+
+vi.mock('node:child_process', async importOriginal => ({
+  ...await importOriginal<typeof import('node:child_process')>(), spawn: vi.fn(),
+}));
 
 const limits = supervisorLimits('crawler', {});
 const health: WorkerHealth = {
   role: 'crawler', pid: 1, childPid: 2, updatedAt: 1_000, lastHeartbeatAt: 1_000, lastProgressAt: 1_000,
   state: 'idle', currentJob: null, jobStartedAt: null, status: 'running',
 };
+it('selects the fixed AI2 consumer only for an explicit reviewer child', () => {
+  expect(supervisorCommand('reviewer', { consumer: 'ai2', once: true })).toEqual(['scripts/pipeline-consumer.ts', '--stage=ai2', '--once']);
+  expect(supervisorCommand('reviewer')).toEqual(['scripts/worker.ts', '--role=reviewer']);
+  expect(supervisorCommand('scheduler', { once: true })).toEqual(['scripts/scheduler.ts', '--once']);
+  expect(() => supervisorCommand('crawler', { consumer: 'ai2' })).toThrow();
+});
+it('requires a dedicated AI2 consumer service identity and protects the legacy health file before spawn', () => {
+  const options = { consumer: 'ai2' as const }, env = { SERVICE_INSTANCE_ID: 'ai2-consumer-m3-1' };
+  expect(supervisorHealthPath(options, env)).toBe('/tmp/nomorevibe-ai2-consumer-health.json');
+  for (const id of [undefined, '', 'reviewer-m3', 'ai2-consumer-', 'ai2-consumer-unsafe/path', 'ai2-consumer-' + 'a'.repeat(49)]) {
+    expect(() => supervisorHealthPath(options, { SERVICE_INSTANCE_ID: id })).toThrow();
+  }
+  expect(() => supervisorHealthPath({ ...options, healthPath: '/tmp/nomorevibe-worker-health.json' }, env)).toThrow();
+  expect(() => supervisorHealthPath(options, { ...env, WORKER_HEALTH_PATH: '/tmp/./nomorevibe-worker-health.json' })).toThrow();
+  expect(supervisorHealthPath({ ...options, healthPath: '/tmp/ai2-specific.json' }, env)).toBe('/tmp/ai2-specific.json');
+  expect(supervisorHealthPath({}, {})).toBe('/tmp/nomorevibe-worker-health.json');
+  expect(supervisorHealthPath({}, { WORKER_HEALTH_PATH: '/tmp/legacy-custom.json' })).toBe('/tmp/legacy-custom.json');
+});
+it('rejects an AI2 consumer options-only health override before spawning any child', async () => {
+  vi.stubEnv('SERVICE_INSTANCE_ID', 'ai2-consumer-test');
+  vi.stubEnv('WORKER_HEALTH_PATH', '/tmp/ai2-from-env.json');
+  const spawned = vi.mocked(childProcess.spawn).mockImplementation(() => { throw new Error('unexpected_child_spawn'); });
+  try {
+    await expect(superviseWorker('reviewer', { consumer: 'ai2', healthPath: '/tmp/ai2-from-options.json' }))
+      .rejects.toThrow('invalid_item_consumer_health_path');
+    expect(spawned).not.toHaveBeenCalled();
+  } finally { spawned.mockReset(); vi.unstubAllEnvs(); }
+});
+it('accepts matching AI2 consumer env and option paths through configuration validation', async () => {
+  vi.stubEnv('SERVICE_INSTANCE_ID', 'ai2-consumer-test');
+  vi.stubEnv('WORKER_HEALTH_PATH', '/tmp/ai2-matching.json');
+  const stoppedAtSpawn = new Error('test_spawn_boundary');
+  const spawned = vi.mocked(childProcess.spawn).mockImplementation(() => { throw stoppedAtSpawn; });
+  try {
+    await expect(superviseWorker('reviewer', { consumer: 'ai2', healthPath: '/tmp/./ai2-matching.json' })).rejects.toBe(stoppedAtSpawn);
+    expect(spawned).toHaveBeenCalledTimes(1);
+  } finally { spawned.mockReset(); vi.unstubAllEnvs(); }
+});
 it('distinguishes idle observation, event-loop failure, and a stalled running job', () => {
   expect(stalledReason(health, 6_000, limits)).toBeNull();
   expect(stalledReason(health, 32_000, limits)).toBe('heartbeat_timeout');

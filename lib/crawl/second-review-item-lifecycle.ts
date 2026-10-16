@@ -2,7 +2,7 @@ import { z } from "zod";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import type { AgentReviewResult } from "./agent-review";
-import { claimItemSecondReview, observeSecondReviewItemDispatch, renewSecondReviewOwnership, type SecondReviewItemReceipt } from "./second-review-ownership";
+import { claimConsumerItemSecondReview, claimItemSecondReview, observeSecondReviewItemDispatch, renewSecondReviewOwnership, type SecondReviewItemReceipt } from "./second-review-ownership";
 import { recordSecondReview, type SecondReviewWriteResult } from "./second-review";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "./second-review-transport";
 
@@ -10,14 +10,26 @@ export type SecondReviewItemOutcome =
   | { state: "skipped"; reason: "stage_inactive" | "not_pending" | "input_changed" | "running" | "aborted" }
   | SecondReviewWriteResult;
 
+export async function executeSecondReviewConsumerItem(input: {
+  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+}): Promise<SecondReviewItemOutcome> {
+  return executeItem(input, 'consumer');
+}
+
 /** Inactive single-item adapter. No registry or worker consumes this entrypoint. */
 export async function executeSecondReviewItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
 }): Promise<SecondReviewItemOutcome> {
+  return executeItem(input, 'compatibility');
+}
+
+async function executeItem(input: {
+  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+}, purpose: 'consumer' | 'compatibility'): Promise<SecondReviewItemOutcome> {
   const { secondReviewId, owner: ownerValue, signal: callerSignal } = input;
   const id = z.number().int().positive().safe().parse(secondReviewId), owner = itemOwnerSchema.parse(ownerValue);
   if (callerSignal?.aborted) return { state: "skipped", reason: "aborted" };
-  const claimed = await claimItemSecondReview(id, owner, STALE_LOCK_MS);
+  const claimed = await (purpose === 'consumer' ? claimConsumerItemSecondReview : claimItemSecondReview)(id, owner, STALE_LOCK_MS);
   if (claimed.kind === "skipped") return { state: "skipped", reason: claimed.reason };
   if (claimed.kind !== "claimed" || claimed.receipt.ownership.kind !== "item") throw new Error("invalid_second_review_item_claim");
   const receipt = claimed.receipt as SecondReviewItemReceipt;

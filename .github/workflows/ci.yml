@@ -93,8 +93,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Check AI2 consumer against the fresh test database
+        if: matrix.shard == 1
+        run: npm run test:integration -- tests/integration/pipeline-consumer.test.ts
       # Each runner owns a separate Postgres service; files within a shard stay serial.
-      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3
+      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts
 
   check:
     needs: [scope, quality, integration]

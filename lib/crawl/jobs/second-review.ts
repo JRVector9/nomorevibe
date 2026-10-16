@@ -36,14 +36,14 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Second review requires a valid worker job lease");
-  if (!await canStartLegacySecondReview(lease)) {
-    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
-    return { done: false, deferred: "stage_blocked" };
-  }
   const enqueued = await enqueueSecondReviews(settings, undefined, lease);
   const closed = await closeSettledSecondReviews(undefined, lease);
   const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
   await retryFailedSecondReviews(undefined, lease);
+  if (!await canStartLegacySecondReview(lease)) {
+    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
+    return { done: false, deferred: "stage_blocked" };
+  }
   const queue = [...await pendingSecondReviews(FETCH)];
   const remaining = () => TICK_MS - (Date.now() - startedAt);
   let reviewed = 0, failed = 0, deferred = 0;
