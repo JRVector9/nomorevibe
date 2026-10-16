@@ -1,4 +1,6 @@
 import { assertHostDbEntry, hostDbChildEnvironment } from '@/lib/db/host-budget';
+import { assertHostBudgetEntrySupported } from '@/lib/operations/host-budget';
+import { currentHostBudget, startHostBudget, waitForHostBudget } from '@/lib/operations/host-budget-runtime';
 /** Container PID 1's child supervisor: a healthy event loop is not proof of job progress. */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { writeFileSync, renameSync } from 'node:fs';
@@ -128,6 +130,22 @@ export async function superviseWorker(role: RuntimeRole, options: {
   const consumerPath = options.consumer !== undefined ? consumerHealthPath() : null;
   if (consumerPath && resolve(healthPath) !== resolve(consumerPath)) throw new Error('invalid_item_consumer_health_path');
   const command = supervisorCommand(role, options);
+  // AI1/AI2 consumer 는 host 장부에 참여하지 않으므로 켜진 설정에서 시작하지 않는다
+  if (options.consumer !== undefined) assertHostBudgetEntrySupported(process.env);
+  const sharedHost = currentHostBudget(), host = sharedHost ?? startHostBudget(process.env);
+  // host 장부 자리를 얻기 전에는 자식(DB pool·일감)을 띄우지 않는다. 비활성은 기다림 없이 기존 순서 그대로다
+  if (host.enabled && !host.ready()) {
+    console.log(JSON.stringify({ event: 'supervisor.host_budget_wait', role, at: new Date().toISOString() }));
+    const waiting = new AbortController(), cancel = () => waiting.abort();
+    process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      if (!await waitForHostBudget(host, waiting.signal)) { if (!sharedHost) await host.stop(); return 0; }
+    } finally {
+      process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel);
+      options.signal?.removeEventListener('abort', cancel);
+    }
+  }
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
     cwd: resolve('.'), env: hostDbChildEnvironment(process.env, role, options.consumer),
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
@@ -200,6 +218,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
       process.removeListener('SIGTERM', onSignal);
       options.signal?.removeEventListener('abort', onAbort);
       log('supervisor.stopped', { exitCode });
+      if (!sharedHost) await host.stop();
       const client=(globalThis as unknown as {pgClient?:{end:(options:{timeout:number})=>Promise<void>}}).pgClient;
       if(options.closeDbOnExit !== false && client)await client.end({timeout:1}).catch(()=>{});
       resolveResult(exitCode);

@@ -133,6 +133,14 @@ export function assertHostDbEntry(env: HostDbEnvironment, expected: {
   resolveHostDbPoolConfig({ role: expected.role, max: 1 }, options);
 }
 
+/** host 합계 장부용 선언(같은 strict 검증). 비활성은 null 이며 실제 물리 합계를 증명하지 않는다 */
+export function hostDbRuntimeDeclaration(env: HostDbEnvironment) {
+  const options = runtimeOptions(env);
+  if (options.mode === 'disabled') return null;
+  const { config, readMax } = resolveHostDbPoolConfig({ role: options.process.role, max: 1 }, options);
+  return { policy: options.policy, process: options.process, primaryMax: config.max, readMax: readMax ?? 0 };
+}
+
 export function hostDbChildEnvironment(env: NodeJS.ProcessEnv, role: string, consumer?: HostDbReviewerConsumer): NodeJS.ProcessEnv;
 export function hostDbChildEnvironment(env: HostDbEnvironment, role: string, consumer?: HostDbReviewerConsumer): Record<string, string | undefined>;
 export function hostDbChildEnvironment(env: HostDbEnvironment, role: string, consumer?: HostDbReviewerConsumer): Record<string, string | undefined> {

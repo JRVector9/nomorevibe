@@ -31,6 +31,8 @@ type WorkerDependencies = {
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
   run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean }>;
+  /** host 합계 예산(lib/operations/host-budget-runtime.ts). 없으면 기존처럼 바로 실행한다 */
+  admit?: (name: string) => Promise<{ admitted: true; release: () => Promise<void> } | { admitted: false; reason: string }>;
   sleep?: typeof interruptibleSleep;
   report?: RuntimeReport;
   log?: typeof runtimeLog;
@@ -127,6 +129,13 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
       for (const name of ordered) {
         if (options.signal?.aborted) break;
         if (!pending.has(name)) continue;
+        // 한도를 넘으면 claim 전에 미룬다 — 잡 요청·cursor·attempt 는 그대로 남고 다음 틱에 다시 본다
+        const admission = dependencies.admit
+          ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
+        if (admission && !admission.admitted) {
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason: admission.reason });
+          continue;
+        }
         report('running', name);
         try {
           const result = await dependencies.run(name, { requestedOnly: true, signal: options.signal });
@@ -141,6 +150,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
         } finally {
           nextIndex = (names.indexOf(name) + 1) % names.length;
           report('polling');
+          if (admission?.admitted) await admission.release().catch(() => {});
         }
       }
     } catch {
@@ -234,21 +244,28 @@ async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
+    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
-      import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'),
+      import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
-    const result = await runWorker({ ...options, signal }, {
-      names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
-      lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
-      pending: () => pendingJobNames(options.role),
-      seen: markWorkerSeen,
-      run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
-      report, log: runtimeLog,
-    });
-    runtimeLog('worker.stopped', { role: options.role, ...result });
-    if (options.once && result.failures) process.exitCode = 1;
+    // 감독이 이 잡을 끊는 한도(job+drain)까지 번역 slot 을 지킨다 — 같은 env 로 부모가 쓰는 값이다
+    const limits = supervisorLimits(options.role, process.env);
+    const host = startHostBudget(process.env, { holdMs: limits.jobMs + limits.drainMs });
+    try {
+      if (host.enabled) await host.settled;
+      const result = await runWorker({ ...options, signal }, {
+        names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
+        lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
+        pending: () => pendingJobNames(options.role),
+        seen: markWorkerSeen,
+        run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
+        ...(host.enabled ? { admit: host.admit } : {}),
+        report, log: runtimeLog,
+      });
+      runtimeLog('worker.stopped', { role: options.role, ...result });
+      if (options.once && result.failures) process.exitCode = 1;
+    } finally { await host.stop(); }
   });
 }
 
