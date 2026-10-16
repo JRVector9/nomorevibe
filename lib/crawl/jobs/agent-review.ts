@@ -14,6 +14,7 @@ import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -52,8 +53,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     : reviewProvider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
-  let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false;
+  let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false, modelDeferred = false;
   const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
+  const canAdmit = () => !modelDeferred && canStart();
   const processCandidate = async (candidate: typeof candidates[number]) => {
     if (!isReviewCandidate(candidate)) return;
     if (!await canStartLegacyAgentReview(lease, candidate.id)) {
@@ -89,9 +91,19 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     const evidenceHold = !hardReason && settings.agentEvidence.enforceEligibility
       && !input.snapshot.evidenceSummary.eligible ? input.snapshot.evidenceSummary.reason : null;
     const provider = hardReason || evidenceHold ? "rules" : reviewProvider;
-    if (!canStart()) return;
+    if (!canAdmit()) return;
     const context = { candidate, document, settings, input };
-    const claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+    let claim: Awaited<ReturnType<typeof claimAgentReview>>;
+    try {
+      claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+    } catch (error) {
+      if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      // The claim TX has rolled back. Stop new claims without cancelling any
+      // already admitted lane; all real work settles before returning deferred.
+      modelDeferred = true;
+      ctx.log("crawl.agent_review_deferred", { reason: error.reason });
+      return;
+    }
     if (claim.kind === "skipped") {
       if (claim.reason === "stage_inactive") stageBlocked = true;
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
@@ -158,7 +170,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   };
   const lanes = Array.from({ length: concurrency }, async () => {
     try {
-      while (next < candidates.length && admitted < MAX_STARTS && canStart()) {
+      while (next < candidates.length && admitted < MAX_STARTS && canAdmit()) {
         const candidate = candidates[next++];
         if (visited.has(candidate.id)) continue;
         visited.add(candidate.id);
@@ -175,6 +187,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
+  if (modelDeferred) return { done: false, deferred: "model_capacity" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };

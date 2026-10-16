@@ -1,8 +1,10 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
+import { lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
@@ -510,7 +512,11 @@ export async function claimItemAgentReview(input: ClaimContext & { owner: ItemOw
 
 async function claimReview(input: ClaimContext, authority: ClaimAuthority): Promise<ReviewClaim> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
-  return db.transaction(async tx => {
+  return onPrimary(() => db.transaction(async tx => {
+    // currentReplayDb revalidates the private active verified handler scope.
+    // Fixed replay profiles keep their existing legacy fixture contract/grants;
+    // ordinary claims always read the control before the S3/domain prefix.
+    const capacity = currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx);
     const stage = await readItemStage(tx, stages.ai1);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
@@ -582,6 +588,15 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority): Prom
           return current.snapshot.evidence.find(item => old && reviewHash(item.observation) === reviewHash(old.observation))?.id ?? id;
         }),
       } : undefined;
+      if (!reusable && input.provider !== "rules" && capacity && capacity.mode !== "disabled") {
+        if (capacity.mode === "draining") throw new ModelCapacityDeferredError("draining");
+        const route = capacity.policy?.routes.find(route => route.routeId === "crawl-agent-review"
+          && route.provider === input.provider && route.model === input.model);
+        if (!route) throw new ModelCapacityDeferredError("unmapped");
+        // No serving adapter currently proves actual provider termination.
+        // Throw out of this TX, rolling back any preceding supersede/item claim.
+        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      }
       const [attempt] = await tx.insert(crawlReviewAttempts).values({
         candidateId: locked.candidate.id, kind: "automatic", state: "running",
         inputHash: current.inputHash, policyHash: current.policyHash, sourceRevisionHash: current.sourceRevisionHash,
@@ -599,7 +614,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority): Prom
     else if (result.kind === "skipped") await releaseItemLease(tx, stages.ai1, ownership.lease);
     else await assertItemLease(tx, stages.ai1, ownership.lease);
     return result;
-  });
+  }));
 }
 
 export async function recordAgentReview(input: ReviewDomainContext & {

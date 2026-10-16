@@ -1,4 +1,5 @@
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -29,7 +30,7 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
-export type JobDeferredReason = "stage_blocked" | "http_origin_permit";
+export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity";
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
   | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
 export type RunResult =
@@ -145,8 +146,9 @@ export async function runJob<C>(
   try {
     let outcome: JobOutcome<C>;
     try { outcome = await handler(ctx); } catch (error) {
-      if (!(error instanceof HttpOriginPermitError)) throw error;
-      outcome = { done: false, deferred: "http_origin_permit" };
+      if (error instanceof HttpOriginPermitError) outcome = { done: false, deferred: "http_origin_permit" };
+      else if (error instanceof ModelCapacityDeferredError) outcome = { done: false, deferred: "model_capacity" };
+      else throw error;
     }
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
@@ -157,7 +159,7 @@ export async function runJob<C>(
         return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
           .where(owned).returning({ name: jobs.name });
       };
-      const [row] = outcome.deferred === "http_origin_permit"
+      const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity"
         ? await db.transaction(async tx => {
           await assertJobLeaseAtWallTime(tx, lease, "update");
           return release(tx);
