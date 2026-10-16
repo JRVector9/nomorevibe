@@ -4,7 +4,7 @@
 PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안의 검토 경계다.
 전체 요구와 합격 기준은 [설계](../specs/2026-10-15-pipeline-two-times-design.md)를 따른다.
 
-**검증 정책 — 2026-10-16 사용자 지시:** PR별로 변경 범위 회귀와 필요한 정적 검사만 실행한다. 수동 전체 테스트·전체 DB·종합 테스트은 남은 모든 PR 개발 후 통합 단계에서 실행하며 PR마다 반복하지 않는다. 기존 실제 결과/실패와 필수 GitHub 병합 CI는 유지한다.
+**검증 정책 — 2026-10-16 사용자 지시:** PR별로 변경 범위 회귀와 필요한 정적 검사만 실행한다. 수동 전체 테스트·전체 DB·종합 빌드는 남은 모든 PR 개발 후 통합 단계에서 실행하며 PR마다 반복하지 않는다. 기존 실제 결과/실패와 필수 GitHub 병합 CI는 유지한다.
 
 ## 현재 확인된 결과
 
@@ -37,6 +37,7 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR01b6 gateway 보강** | **병렬 구현·직접/교차 리뷰·로컬 검증·PR 제출 완료** | [abcLLM PR1](https://github.com/JRVector9/abcLLM/pull/1), head `1ca85c4f`; OPEN, main 미병합 | 운영 미적용 | 기존 raw 원문 보존·옵션 변경 재POST 제거·실제 terminal/DONE·usage provenance. 원15RED/7control→22GREEN 뒤 교차 리뷰 P2의2RED→최종24GREEN. root 전체153PASS/1.69초·compile/diff0. 기존 품질/모델/출력 한도 유지. engine hard total cap·native baseline·2배는 별도 미완료 |
 | **PR04c-2a-4–17** | 남은 writer inventory 검토 완료 | 미병합 | 비활성 | item B5 인증·durable 외부 종료 및 후속 로드맵이 남음. 아래는 예정 검증이며 PASS 기록이 아님 |
 | **PR07a** HTTP 본문 취소·origin 정산 | **병렬 구현·직접/교차 리뷰·변경 범위 검증·필수 CI·정상 병합 완료** | [#451](https://github.com/JRVector9/nomorevibe/pull/451), main `f93b8d63`; PR CI38823740327/main CI38824682495 및 두 image SUCCESS | 운영 미적용 | [계획](2026-10-16-pipeline-pr07a-http-settlement.md)·[실제 검증](../../operations/2026-10-16-pipeline-pr07a-http-settlement-validation.md). 원 C4/B8 Assertion RED→동일17GREEN·기존관련48PASS. B 독립10/합17PASS, A/B/root 리뷰 추가 P1/P2 0. 사용자 지시 전 root unit3757·typegen/tsc/lint/i18n actual0, 전체 build는 외부 node_modules symlink 제한 exit1. 종합 검증은 최종 통합 단계. 공유 permit/Oracle/2배 증거 아님 |
+| **PR07b** DB 공통 HTTP permit | **구현·root 직접 리뷰·범위 검증·필수 CI·정상 병합 완료** | [#452](https://github.com/JRVector9/nomorevibe/pull/452), main `37f0542b`; PR CI38827295535/main CI38828090183 및 두 image SUCCESS | disabled·운영 미적용 | [실제 계약·검증](../../operations/2026-10-16-shared-http-permits.md). 실제 두 process peak RED→GREEN, DB/loopback18·관련unit103·정적 PASS. fixed origin1/Oracle합2·native/body/cancel 정산, root raw readback·own55520 정상 정리. 전 caller defer·crash reconciliation·실host/활성화는 남음 |
 
 PR433은 `2026-10-15T12:16:32Z` main4af0589로 병합했다. [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
 
@@ -53,11 +54,14 @@ PR429–444를 위한 운영 migration·provider 설정 변경·공개 발행·�
 
 ## 최신 병렬 개발 — 2026-10-16
 
-- abcLLM 관리 MLX 전체 token bound는 [PR2](https://github.com/JRVector9/abcLLM/pull/2), head11bbda5 OPEN/MERGEABLE/CLEAN·GitGuardian SUCCESS다. 원 source39FAIL/11control→같은50PASS→변경 범위68PASS/0.42초, compile4PASS·root 직접 리뷰/해시 대조 완료. 고정 upstream+MIT/patch/새 release builder를 납품했으며 실제 C·serving·배포·baseline은 남았다. gateway [PR1](https://github.com/JRVector9/abcLLM/pull/1)도 운영 미적용이다.
-- B는 actual AI1legacy→AI2item TX ordinal/journal/coverage/strictseal을 구현 중이다. 원 mixed 새 기능 미지원 RED 뒤 같은2case2PASS 및 확장6PASS를 실제 보고했다. 늦은 writer 만료·원자 rollback 등 최종 검증/리뷰·PR은 아직 남았다.
-- C는 PR07b의 migration0079/공통 origin1·Oracle합2/실 native+body 정산/양 API/typed defer를 구현 중이다. root source 리뷰에서 찾은 deadline·일반 network 정산·status 보존·cancel rejection 및 이중 로컬 대기 경계를 닫은 뒤 최종 범위 회귀와 리뷰를 받는다.
-- 완료된 MLX 담당 A는 PR09의 raw 멱등 관측·지역 실패 hold·3/10회 및 sweep/final 정책 입력 보호로 이동했다. migration0080을 전용 배정했고 별도 WT/DB55522에서 defaultdisabled로 개발한다.
-- root는 각 담당의 실제 코드/로그를 직접 리뷰하고 소유권 반환 뒤 Git/공용 문서를 취합한다. 수동 전체 테스트는 모든 PR 개발 후 통합 단계에 실행한다. 위 새 기능의 운영 배포/활성화/Oracle 실제 가동/2배 달성은 아직 없다.
+- abcLLM managed MLX bound [PR2](https://github.com/JRVector9/abcLLM/pull/2)와 raw gateway [PR1](https://github.com/JRVector9/abcLLM/pull/1)은 OPEN·로컬 검증/리뷰 완료·운영 미적용이다. 실제 C·serving canary·30분 baseline은 남았다.
+- AI1legacy→AI2item journal/coverage/strictseal [PR453](https://github.com/JRVector9/nomorevibe/pull/453): 원DB14/unit180/정적 및 root/교차 리뷰 후 제출. 첫 CI quality의 import 순환을 동일4suite 로컬 collection4RED→521PASS, strict42PASS·정적0으로 최소 수정했다. CI integration1 reporter에 가려진 원 오류는 미확정이며 해당 CLI1case는 새DB에서 PASS했다. 수정 head의 필수 CI를 다시 확인한다. 새55527은 root 독립 data raw readback/ACL 표현차이 기록·정상 cleanup 완료다.
+- HTTP caller 대기 처리 [PR455](https://github.com/JRVector9/nomorevibe/pull/455): source`eacc77a`/최신main 통합`9d649c55`·CI38836281314, root 직접/독립 리뷰·관련unit221+16/실제runner8·fixture영향2/기존fingerprint7·정적 통과 후 제출, 필수CI 대기. producer/cursor/pause/history·이미 저장된 등록/발행 성공을 보존한다. 원55523 raw82table exact·새55526 known fixture readback/정상 cleanup 완료. 운영 비활성이다.
+- uptime raw/지역 hold/3회·10회 보호 [PR454](https://github.com/JRVector9/nomorevibe/pull/454): source`4e83cd0`/main 통합`84d79a4`, 신규DB21/관련89/unit24·리뷰후영향5·정적 PASS.0079→0080 fresh migration/재실행/readback 및 root 정상 cleanup 완료. 필수CI 성공 후 PR454 병합/main6cabb005, mainCI38835756288 HTTP fixture6실패/check실패/images skipped로 원인조사 필요. 지역 정책 보정/Oracle 실제 canary/활성화는 남았다.
+- PR08 출처별 claim은 A 최종동결·root 반환, 관련DB63/최종신규22/unit105·정적 PASS. GitHub quota와 canonical 분리·소유권/현재입력 CAS·실패 cooldown/부분진행/all-required를 보존한다. B 독립리뷰 actual renew/holder2RED→영향4GREEN·정적0·84table 원복 확인. root 최종리뷰/0080·0081 통합 fresh migration/Git은 남았다.
+- PR10은 C가 versioned batch/9role·호스트순위·verified replay 예외를 구현했고 실제DB17/관련unit108·정적0/whole raw readback을 보고했다. 최종반환/55525 root exactreadback·정상cleanup 완료, root/B 직접리뷰 중이다. PR08 site-only adapter 미연결과 전체host pool/CPU·실제승인저장/권한/provider canary는 unknown/활성 금지다.
+- A는 새 native ARM/glibc Oracle runtime PR11 계획 작성 중이다. 정확한 surfguide/ap-osaka-1/osaka-smoke, 독립scheduler·nonroot release·least privilege·고정SHA rollback을 기존X/Mautic백업과 분리한다. source/운영/SSH/모델 실행0.
+- root는 소유권 반환 후 Git/통합/직접 리뷰를 담당한다. 모든 수동 전체 테스트는 남은 모든 PR 개발 후 통합 단계에서만 실행하고, 각 PR은 변경범위 회귀와 필요 정적 검사·필수 CI를 유지한다. 운영 배포·새 consumer 활성·Oracle 실제 가동·2배 달성은 아직 없다.
 
 ## PR01의 다음 검토 단위
 
@@ -136,3 +140,11 @@ Oracle가 설치됐거나 standby라는 이유로 PR11·16·17을 완료 처리�
 ## PR05a 착수 — 2026-10-16
 
 [비활성 공통 모델 슬롯 계약](2026-10-16-pipeline-pr05a-model-capacity.md)을 고정하고 세 담당에게 배타 파일을 배정했다. 기본 disabled·기존 caller 연결0이며 strict policy/DDL, repository, 독립 unit/DB검증을 병렬 개발한다. 실제 baseline RED/검증/PR 제출은 진행 단계이며 PR05 전체 완료·운영 상한·실모델 종료·성능2배를 주장하지 않는다.
+
+2026-10-16 후속: PR453 최신main 통합c49276c1/CI38836817519 진행. PR455 최신9d649c55 CI38836281314의 first-final human 잠금timeout1실패를 A가 새55528에서 해당2case만 조사한다. PR08 sourcecc2c650/main통합f93adbd,82journal fresh migration·재실행·readback0 및84table exact/정상55524 cleanup완료, 선행PR455때문에 draft제출예정. PR10 B는 versionedcrawler lane직렬화/publisher모델증거누락 후보2개의 actual회귀·최소수정중. PR11 Python15파일23PASS/원6AST+6PASS/compile0로반환·root리뷰전, 실제runtime미완료. C는 별도pure host-budget3파일개발, 실제enforcement unknown유지. 수동전체검사는 모든PR개발뒤로유지한다.
+
+후속 인수: PR08은 [초안456](https://github.com/JRVector9/nomorevibe/pull/456)/headceb4598로제출·필수CI진행. PR10 B 후보2개는 actual4RED→7GREEN/영향30PASS·tsc0·lint오류0(경고1)로수정반환됐으며 root최종통합검토중이다. PR10b pure3파일은14PASS/scoped정적0로반환·root읽기완료, 실제pool연결/enforcement unknown. PR11은 root15파일직접읽기후B독립리뷰중. A는 first-final 원2casePASS/CI원인미확정이라실패단계만진단보강, C는mainHTTP6실패읽기조사중이다. 수동전체검사·종합build는모든PR개발종료뒤만진행한다.
+
+2026-10-16 최신 인수: PR455 c5c24108 안전한 test-local 진단 추가 후 필수 CI38838284085 전부 SUCCESS, PR456 초안 ceb4598/CI38837610041도 전부 SUCCESS이며 선행 PR455 뒤 인수한다. PR453 c49276c1/CI38836817519 journal6case 시간초과는 원인 미확정이다. A 새55530 legacy1 단독1PASS/13skip8.91초·원SHA복원·DB실행권 반환, PR10/v6 읽기 불일치0는 실제 통합 PASS와 구분한다. PR11 offline15파일은 B3경계 actualRED→동일GREEN/최종5PASS·compile0 후 root직접리뷰/local6c90ffb, 실제runtime미완료. C는 별도HTTP fixture terminal미정산2건 actualRED→2GREEN·인접단독PASS 후 동결중이며 원mainCI최초원인미확정이다. B는 inactive host-budget 독립읽기리뷰만 진행한다. 수동전체unit/전체DB/종합build는 모든PR개발후 최종통합단계에서만 실행한다.
+
+PR455는 exacthead c5c24108/최신base/필수CI38838284085 성공 guard 후 2026-10-16T02:17:01Z main06643dd로 정상squash 병합했다. main CI38839627532는 진행 중이다. PR10b pure3파일은 root/B 읽기 P1/P2 0·실제기록 인수 후 locald43d110, 실제wiring/enforcement미완료. C HTTPfixture2파일 반환 후 root4SHA·85table raw/catalog/default/stage exact 확인·55529정상정리, A legacy1반환도 root exact readback/55530정상정리했다. 두DB 모두 재접속금지. A는 CI최초await 진단안, B는 Python Oracle helper 최소범위 계획만 병렬진행한다. 전체수동검사는 모든PR개발뒤만이다.

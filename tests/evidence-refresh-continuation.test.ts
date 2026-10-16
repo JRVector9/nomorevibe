@@ -1,3 +1,4 @@
+vi.mock("@/lib/domain/evidence/source-control", () => ({ canonicalSourceMode: async () => false }));
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { JobLeaseLostError } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -327,4 +328,22 @@ it("propagates lease loss instead of requesting another tick", async () => {
   const run = context({ deadlineAt, now: () => deadlineAt, budget: () => true });
 
   await expect(refreshProductEvidenceJob(run.ctx, { now: () => new Date(0) })).rejects.toThrow("job_lease_lost");
+});
+
+it.each(["due", "request"] as const)("%s evidence permit holds cannot consume failure, backoff or job ACK", async lane => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  mocks.due.mockResolvedValue(["alpha"]);
+  mocks.refresh.mockResolvedValue({ ...ok, complete: false, sourcesAttempted: 0, deferred: "http_origin_permit" });
+  if (lane === "request") {
+    const request = { slug: "alpha", productId: 1, requestedVersion: 1, activeVersion: 1, activeForce: true,
+      progress: { completedKeys: [], retryAfterByKey: {} } };
+    mocks.dueRequests.mockResolvedValue([request]);
+    mocks.begin.mockResolvedValue(request);
+  }
+  const run = context({ deadlineAt: Date.now() + 25_000, now: Date.now });
+  await expect(refreshProductEvidenceJob(run.ctx)).rejects.toBeInstanceOf(HttpOriginPermitError);
+  expect(mocks.refresh).toHaveBeenCalledTimes(1);
+  expect(mocks.saveProgress).not.toHaveBeenCalled();
+  expect(run.logs.some(log => log.event === "evidence.product_refresh_failed")).toBe(false);
+  expect(run.saved.some(cursor => cursor.afterSlug === "alpha")).toBe(false);
 });

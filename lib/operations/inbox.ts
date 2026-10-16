@@ -1,3 +1,4 @@
+import { uptimeNegativeAllowed } from "@/lib/domain/products/uptime-negative-gate";
 import { and, asc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
@@ -89,7 +90,9 @@ async function downPreview(): Promise<InboxItem[]> {
   const rows = await db.select({ slug: products.slug, name: products.name, failures: productHealth.failures, code: productHealth.status,
     since: iso(productHealth.downSince) })
     .from(productHealth).innerJoin(products, eq(products.slug, productHealth.slug))
-    .where(and(gte(productHealth.failures, DOWN_THRESHOLD), isNotNull(productHealth.downSince), LISTED))
+    .where(and(gte(productHealth.failures, DOWN_THRESHOLD), isNotNull(productHealth.downSince),
+      uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+        checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status }), LISTED))
     .orderBy(asc(productHealth.downSince), asc(products.slug)).limit(INBOX_PREVIEW);
   return rows.map((row) => ({ id: row.slug, name: row.name, since: row.since,
     why: `${count(row.failures)}회 연속 실패 · ${row.code === 0 ? "연결 안 됨" : `응답 ${row.code}`}` }));

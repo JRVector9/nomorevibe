@@ -168,7 +168,7 @@ it("공유 HTTP permit 대기는 페이지 실패나 시도 소모로 적지 않
   mocks.dequeue.mockResolvedValueOnce([own]).mockResolvedValue([]);
   mocks.repo.mockResolvedValue({ ok: true, value: { homepage: "https://permit-wait.test" } });
   mocks.page.mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
-  expect(await fetchCrawlDocuments(context())).toEqual({ done: false });
+  expect(await fetchCrawlDocuments(context())).toEqual({ done: false, deferred: "http_origin_permit" });
   expect(mocks.failed).not.toHaveBeenCalled();
   expect(mocks.save).not.toHaveBeenCalled();
   expect(mocks.defer).toHaveBeenCalledExactlyOnceWith([own], undefined);

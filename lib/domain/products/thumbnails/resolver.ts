@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import {fetchCapped,type CappedFetchResult}from'@/lib/net/fetch';
 import{githubOwnerFromRepositoryUrl}from'@/lib/domain/products/github-owner';
 import{siteHints,manifestIcons,repositoryImages,imageUrl,type SiteImageHints}from'./candidates';
@@ -11,7 +12,7 @@ export async function resolveThumbnail(input:ThumbnailInput,options:{request?:Re
  const request=options.request??fetchCapped,total=Date.now()+28_000;let stage=total;const errors:string[]=[];const tried=new Set<string>();
  const get=async(url:string,maxBytes:number)=>{
   const remaining=Math.min(stage,total)-Date.now();if(remaining<=0||options.signal?.aborted)return null;
-  try{const signal=AbortSignal.timeout(Math.max(1,Math.min(remaining,3000)));const r=await request(url,{maxBytes,timeoutMs:3000,signal:options.signal?AbortSignal.any([signal,options.signal]):signal});if(!r.ok){if(errors.length<12)errors.push(r.reason);return null;}return r;}catch{if(errors.length<12)errors.push('fetch_error');return null;}
+  try{const signal=AbortSignal.timeout(Math.max(1,Math.min(remaining,3000)));const r=await request(url,{maxBytes,timeoutMs:3000,signal:options.signal?AbortSignal.any([signal,options.signal]):signal});if(!r.ok){if(errors.length<12)errors.push(r.reason);return null;}return r;}catch(error){if(error instanceof HttpOriginPermitError)throw error;if(errors.length<12)errors.push('fetch_error');return null;}
  };
  const tryImage=async(url:string|null,kind:ThumbnailKind):Promise<ThumbnailResult|null>=>{
   if(!url||tried.has(url))return null;tried.add(url);const r=await get(url,5*1024*1024);if(!r)return null;

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({ transaction: vi.fn(), source: vi.fn(), upsert:
 vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction } }));
 vi.mock("@/lib/domain/evidence/repository", () => ({ findObservedSource: mocks.source, upsertObservedSource: mocks.upsert }));
 vi.mock("@/lib/domain/evidence/settings-store", () => ({ currentEvidenceSettings: mocks.settings }));
+vi.mock("@/lib/domain/evidence/source-context", () => ({ assertCanonicalInput: vi.fn(), captureCanonicalInput: vi.fn(async()=>({status:"verified",accessMode:"website",updatedAt:"2026-10-16 00:00:00"})) }));
 vi.mock("@/lib/net/fetch", () => ({ fetchCapped: vi.fn() }));
 
 const { refreshSiteFingerprint } = await import("@/lib/domain/evidence/providers/site-fingerprint");
@@ -64,4 +65,14 @@ it("lets an already started site success write settle after abort", async () => 
   mocks.upsert.mockImplementation(async () => { controller.abort(); });
   expect(await refreshSiteFingerprint(input, { now, signal: controller.signal, fetch: vi.fn().mockResolvedValue(response) })).toBe(true);
   expect(mocks.upsert).toHaveBeenCalledTimes(1);
+});
+
+it("an aborted permit wait keeps its deferred type instead of becoming generic budget exhaustion", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const controller = new AbortController();
+  const blocked = new HttpOriginPermitError("waiting_aborted");
+  const fetch = vi.fn(async () => { controller.abort(); throw blocked; });
+  await expect(refreshSiteFingerprint(input, { now, signal: controller.signal, fetch })).rejects.toBe(blocked);
+  expect(mocks.transaction).not.toHaveBeenCalled();
+  expect(mocks.upsert).not.toHaveBeenCalled();
 });
