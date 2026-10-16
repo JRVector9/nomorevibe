@@ -83,7 +83,7 @@ root의 PR460 main2a 정상merge는 공유docs2와 migration journal 충돌3개�
 - 직전 Docker99%/약1.67GB여유. foreignprune0, ENOSPC이면 원오류를 보존하고 중단한다.
 - 생성helper `/tmp/nomorevibe-root-owned-db-create-20261016.py`, 반환후 root독립readback→정상STOP/exited0/OOMfalse→자기container/volume만삭제helper `/tmp/nomorevibe-owned-db-cleanup-20261016.py`. 첫 metadataguard의 잘못된 com.nomorevibe.scope label은 DB접속전 KeyError로 중단하고 실제 nomorevibe.scope로 정정했다.
 
-## 次の正確な手順・残作業
+## 정확한 다음 단계·남은 작업
 
 1. PR460 main2a normalmerge/push완료. PR459도 최신main2a를 normalmerge하고 공유docs충돌은 canonical로 해결한다. 실패CI를 성공으로 덮지 않는다.
 2. site20source/tests+실증validation localcommit→최신PR460 normalmerge→의존draftPR제출. C8(최종driver만Aoverride)도root직접읽기/validation→localcommit→PR460의존draft제출. 두 runner패치는별도branch에서root순차통합한다.
@@ -106,3 +106,37 @@ gh run view 38842830252 --json headSha,status,conclusion
 ```
 
 이전상세/실패/원명령은 `/tmp/nomorevibe-CODEX_HANDOFF-before-site-admission-intake-20261016.md` 및과거phasebackup/각validation/agent보고에보존한다. 최신상태가과거진행중/삭제전명령보다우선한다.
+
+
+## 2026-10-16 이어서 진행 — 최신 상태가 위 진행중 기록보다 우선
+
+- PR461(site) 초안 제출: https://github.com/JRVector9/nomorevibe/pull/461, head `b63410cd3806ee789e7f37dcd58b8534adc2ca30`. PR462(AI1 admission) 초안 제출: https://github.com/JRVector9/nomorevibe/pull/462, head `9833b6840b2c8b2a16ac8722ddc6e9138cd0047f`. 둘 다 PR460 역할 branch에 의존한다. 원소스 해시를 보존한 정상 parent merge/push 완료. CI 각각38849429193/38849443076 진행 중.
+- main2a의 CI38845068192는 root가 jobs까지 읽어 scope/quality/통합3/check 및 worker/web 이미지 SUCCESS를 직접 확인했다. 운영 배포 증거로 확대하지 않는다.
+- PR460 head94db의 CI38848837209는 quality/통합2 SUCCESS, 통합1·3 FAILURE. 원 실패 로그를 보존하고 개별 원인을 확인한다.
+- B의 profile SQL 단독 변경을 반환받았다. 최종 `lib/operations/pipeline-replay-handler-profile.ts` SHA `e28855fa3e5eb1a4ccad44cd184a30e8a82648aed2fe53308c8f6b2985bf324d`. 실제 oldv5/v6 대조32항목 PASS, 원legacy/item 각1회2PASS, scoped tsc/eslint0. CI33–45초 지연 해결은 미확정. root와 C가 읽기리뷰 중이며 DB55535 실행권도 root에 반환됐다.
+- C의 PR460 고정4 jobs fixture 단독 변경도 반환됐다. 최종 `tests/integration/agent-review-records.test.ts` SHA `99789cafb9dad7e7a19e90792e20def8b4232f59bad268ca462b179c42d9955b`. 원20본문 byte 동일, 원records 마지막1→batchdrain1이 실제 PASS→FAIL로 재현되고 최소수정 후 같은 pair 각각 PASS. 별도 nonempty healthy sentinel·관리행µs control PASS, scoped tsc/eslint0. 새replacement fault는 미실행. root/B 독립리뷰 중. DB55536도 root 반환, 원driver가 남긴 domain/감사6table delta는 보존(whole raw exact false), jobs/stage/catalog/journal/default exact.
+- B55535/C55536 모두 추가 source/DB 접근 중단. root가 각 metadata/소유권 확인→독립 readback→정상STOP/exited0/OOMfalse→자기container/volume 삭제를 수행한다. 아직 삭제 완료를 주장하지 않는다.
+- A의 PR12 계획 `/tmp/nomorevibe-pr12-buffer-implementation-plan-a-20261016.md` 반환. 기존frontier를 재사용하고 신규 원본 선점만 default-disabled count/age gate로 제어한다. fetch 자체는 downstream 압력에서 제외, 기존문서/refresh는 LIMIT 전 bypass, R은 검증 전 null. migration번호/새WT 구현권은 아직 배정하지 않았다. A는 실제 TX lock순서/deadline 경계만 읽기 보완 리뷰 중.
+- root는 PR453 source 리뷰·DB readback/Git 취합, PR460 fixture 리뷰·취합, PR459 최신main adoption을 순차 수행한다. 전체 unit/전체DB/종합build는 모든 PR 개발 후만 실행한다.
+
+
+## 최신 병렬 개발 배정·PR453 취합
+
+PR453 profile SQL source를 root가 직접·C가 독립리뷰하여 추가P1/P2=0. 원base4c7c2bdd에 source+새검증문서만 local aa4b4280de4479d1b9e609e446ad1b7e00a480e9로 인수했다. 최신main2a 정상merge에서 공유docs2만 충돌했고 lib/tests/drizzle 고정21파일 SHA는 그대로다. canonical4문서로 해결한 뒤 정상merge/push한다. 최종source e28855fa…324d, old/new32PASS·원2casePASS·scopedstatic0·root독립readback효과권한동등/원raw85tables7행exact. 55535는정상STOP/exited0/OOMfalse/자기volume삭제완료·retired.
+
+PR459는 최신main2a를 소스충돌 없이 정상merge/push한 head67f35d726178eeb198c7acd268c8ba0f5bd4a874다. 원HTTP8FAIL은보존하며 새CI진행.
+
+PR460 fixture 독립B리뷰에서 absent row 검사 후 unconditional upsert가 concurrent 실제runner owner를 덮는 P2를 확인했다. B가55536을 인수하여 /tmp barrier+actual runJob으로 원경쟁을 AssertionRED 재현(새runner runs1/token→reset으로lease_lost)했고 최소 rawCAS UPDATE/absent DO NOTHING+RETURNING1로보강중이다. C원20본문/원pair 증거보존, 기존healthy/새replacement강제삭제0. root는B인수전55536독립readback을 완료하여Cfinal exact/known6domain-auditdelta만확인했다. 이제55536은B독점/root접속0.
+
+PR12a 구현A: 새 WT /Users/jr/Desktop/projects/nomorevibe-source-buffer, branch codex/pipeline-pr12-source-buffer-20261016, integratedbase5cddbd68e76c7be45885baeda7c080f60eb7093a. root가PR461+PR462 정상merge/runner양쪽hunk직접리뷰/비중복26sourceSHA보존. A가sourcebuffer/controller/fetch/repository/settings/runner와지정narrowtests단독소유. migration0083_source_buffer.sql/journal을독점배정. DB55537 name nomorevibe-pr12-source-buffer-a-20261016/idc91cd1a2dfa909e5e2f63623b5e0b5887d552b1490dee57a8f2332acc7a085ac/scope pipeline-pr12-source-buffer-20261016, metadata /tmp/nomorevibe-pr12-source-buffer-a-db-owned-20261016.json, loopback55537/pinned/768MiB. A반환전root접속0. 기존public3초readerwrapper유지, txbody만추출, mutablequery정산/rollback후ownreadtimeout만typeddefer, tail권한/job오류원throw.
+
+PR13 관리자읽기C: 새WT /Users/jr/Desktop/projects/nomorevibe-pipeline-admin-controls, branch codex/pipeline-pr13-control-status-20261016, 같은5cddbase. NEW operations/pipeline-control-status+unit, NEW admin/status/PipelineControlStatus서버표+unit, page.tsx의인증뒤Suspense slot만소유. 기존readyclassifier재사용/실모델C·R/hostaggregateenforcement·OracleDRunknown구분. 새활성화권한/가짜rate0. DB미배정/운영접속0. 전체검사는모든PR개발후만.
+
+
+## PR453 개선 제출·PR460 fixture 취합 완료
+
+PR453 profile 개선은 source aa4b4280 뒤 최신main2a와 canonical docs 충돌을 정상해결하여 **0d5bcb28c42269fdcdc74017e129f6460a4a545f**로push했다. lib/tests/drizzle 고정21SHA보존. PR본문/검증문서에 실제32대조/원2case·CI지연미확정을 기록했고 새필수CI진행중이다.
+
+PR460 최종 fixture는 B P2보강 후 SHA **27ab537a6be055877df9f8549c6deb61ea0215f2f482f8db8c2ea56e24b3feba**/430행이다. 동시actualrunJob 경쟁이 1AssertionRED→동일GREEN, 새ownerraw exact/setuprollback/genuine 정상defer정산 확인. 최종원records1PASS/19skip·scopedtsc/eslint0; C원pair·nonemptycontrol증거도보존. root직접리뷰 및독립readback에서 Bfinalexact/public89/jobs0/stageµs/catalog/journal/default exact·타연결0, 기존driver의6domain/auditdelta는보존해whole raw false. 55536 정상STOP/exited0/OOMfalse/자기container·volume삭제완료·retired. source+validation은 local2203df7fee19ff2cc361beced8f5bc6b252953fe로인수했다. 최신PR453 0d5b를 normalmerge하면서공유docs4만충돌, canonical4로해결후원source해시(승인profile1만e28855로변경)확인뒤push한다.
+
+현재 B는 AI2 legacy/item/fallback fresh admission의 실제경로/최소계획만읽기중이다. source/DB미배정/활성화0. A(PR12/55537), C(PR13/DB없음)는기존분리scope구현계속. **55515–36 모두retired**. 원본Xbranch는handoff외변경0. 전체수동검사는모든PR개발후만.
