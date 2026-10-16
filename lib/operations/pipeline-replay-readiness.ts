@@ -81,7 +81,7 @@ function normalizeRow(name: string, value: Row): Row {
   const dateColumns = table ? Object.values(getTableColumns(table)).filter(column => column.dataType === "date").map(column => column.name)
     : ["dispatched_at", "settled_at"];
   for (const column of dateColumns) if (row[column] !== null && row[column] !== undefined) row[column] = utc(row[column]);
-  (table ? rowSchema(table) : callRow).parse(row);
+  (table ? publicTableRows[name as keyof typeof publicTables].element : callRow).parse(row);
   return row;
 }
 function rowKey(name: string, row: Row): string {
