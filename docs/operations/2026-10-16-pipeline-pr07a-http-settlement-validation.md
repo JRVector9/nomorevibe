@@ -1,5 +1,9 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 추가 진행 — 2026-10-16 06:23 UTC
+
+PR453 진단opt-in·strictschema재사용 변경을 root직접/C독립리뷰와 범위 unit/actual3 후 **529d4199**로normalpush/remote확인했다. 실제CI성공과성능2배는미확인이다. 새CI분석상HTTP최초pending은headers뒤 rival.result이며PGbackend원인미확정이다. 모델요청재발견PR467/readonlyDR PR468은초안제출완료. B는실제DBpool/childentryquota7source와actual3PASS뒤정산중(55552), A는localdump→restore전용5파일개발/actual2 scope(55553/54)다. Retired55515–51/수동전체테스트는모든PR뒤/운영·consumer·실모델·DR활성화0. Root가최신453을460에고유57SHA보존normalmerge할예정이며정확head·파일·命令/한계는CODEX_HANDOFF최상단을따른다.
+
 2026-10-16 KST. [고정 계획](../superpowers/plans/2026-10-16-pipeline-pr07a-http-settlement.md)을 따라 실제 기존 HTTP 호출을 수정했다. base `99a9cefcd9c82dcc86441b798332137a3604fe36`, 작업 branch `codex/pipeline-pr07a-http-settlement-20261016`다.
 
 ## 변경 결과
