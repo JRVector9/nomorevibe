@@ -20,6 +20,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { claimItemLease, readItemStage, assertItemLease, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -981,6 +982,7 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
           .where(eq(crawlReviewAttempts.id, attempt.id));
         await recordReplayFirstReviewTransition(tx, { kind: "superseded", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
       }
+      await recordHumanDecisionRefused(tx, { stage: "ai1", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
       await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: "superseded" as const };
     }
@@ -1010,6 +1012,7 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
     const applied = spamHold || locked.settings.reviewMode === "enforce";
     const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
+    if (applied) await recordHumanDecisionOverride(tx, { stage: "ai1", candidateId: locked.candidate.id, firstAttemptId: attempt.id });
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
       reason: spamHold ? "suspected_spam" : ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
@@ -1029,6 +1032,9 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
     await recordReplayFinalWrite(tx, finalWrite, requests);
     await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
     return { applied, state: "succeeded" as const };
+  }).catch(async (error: unknown) => {
+    await recordLateWriteRefused({ stage: "ai1", candidateId: input.candidate.id, firstAttemptId: input.receipt.attemptId }, error);
+    throw error;
   });
   for (const request of requests) emitPipelineEvent("requested", { stage: "first", candidateId: input.candidate.id,
     firstAttemptId: input.receipt.attemptId, nextJob: request.job, requestedVersion: request.requestedVersion });

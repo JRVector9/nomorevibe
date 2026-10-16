@@ -5,6 +5,7 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { assertItemLease, readItemStage, releaseItemLease, type ItemStageGuard } from "@/lib/jobs/items/repository";
 import { itemBindingHash, itemWorkKey, parseItemBinding, type Ai1ItemBinding, type ItemLease } from "@/lib/jobs/items/types";
+import { recordLeaseViolation } from "@/lib/operations/pipeline-evidence-ledger";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 
 export type Ai1ReviewOrigin = "fresh" | "direct_reuse" | "semantic_reuse";
@@ -83,6 +84,10 @@ export async function assertAgentReviewOwnership(tx: ProductTransaction, guard: 
 /** Call only after external work has settled and all downstream job waits ended. */
 export async function finishAgentReviewOwnership(tx: ProductTransaction, guard: ItemStageGuard,
   receipt: Ai1ReviewReceipt): Promise<void> {
+  const { ownership } = receipt;
+  await recordLeaseViolation(tx, { stage: "ai1", firstAttemptId: receipt.attemptId }, ownership.kind === "item"
+    ? { kind: "item", stage: "ai1", workKey: ownership.lease.workKey, token: ownership.lease.token }
+    : { kind: "job", name: ownership.job.name, token: ownership.job.token });
   if (receipt.ownership.kind === "item") await releaseItemLease(tx, guard, receipt.ownership.lease);
   else await assertAgentReviewJob(tx, receipt.ownership.job);
 }

@@ -106,6 +106,22 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
         (count(*) filter (where not contained))::int as unattributed_chains
       from chain`);
 
+    // 0097 증거 장부. 기록 시작 marker가 구간 시작 이전일 때만 사람 판단 덮음·lease 위반·AI2 호출을 장부로 센다.
+    // 표가 없거나(배포 전) 읽을 권한이 없거나 marker가 늦으면 null — 판정은 그 칸을 미검증으로 둔다.
+    const endTz = sql`${endedAt}::timestamptz`;
+    const [ledgerTable] = await query(sql`select coalesce(has_table_privilege(to_regclass('public.pipeline_evidence_events'), 'SELECT'), false) as readable`);
+    const [marker] = ledgerTable.readable ? await query(sql`select to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as started_at,
+      created_at <= ${startTz} as covers from pipeline_evidence_events where kind = 'recorder_started'`) : [];
+    const [ledger] = marker?.covers ? await query(sql`select
+        count(*) filter (where kind = 'human_decision_overridden')::int as overrides,
+        count(*) filter (where kind = 'lease_violation')::int as lease_violations,
+        count(*) filter (where kind = 'human_decision_refused')::int as human_refusals,
+        count(*) filter (where kind = 'late_write_refused')::int as late_refusals,
+        count(distinct root_review_id) filter (where kind = 'ai2_attempt')::int as ai2_chains,
+        count(*) filter (where kind = 'ai2_attempt')::int as ai2_calls,
+        count(*) filter (where kind = 'ai2_attempt' and failed)::int as ai2_failed
+      from pipeline_evidence_events where created_at > ${startTz} and created_at <= ${endTz}`) : [];
+
     // 구간 시작 전부터 지금까지 아무것도 바뀌지 않았고 지금도 준비된 후보는 구간 내내 준비 대기였다(고갈 아님의 증인).
     const noLeases = absentTables.includes("pipeline_item_leases") ? sql`with pipeline_item_leases (stage, work_key, token, lease_until, updated_at) as (
       select null::varchar, null::varchar, null::uuid, null::timestamptz, null::timestamptz where false) ` : sql``;
@@ -162,9 +178,12 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
         reviewedMs: nullableNumber(row.reviewed_ms) })),
       candidates: candidates.map(row => ({ id: row.id, state: row.state, decidedBy: row.decided_by ?? null,
         appliedAttemptId: nullableNumber(row.applied_attempt_id) })),
-      ai2Calls: { chains: ai2.chains, calls: ai2.calls, failed: ai2.failed, unattributedChains: ai2.unattributed_chains },
+      ai2Calls: ledger ? { chains: ledger.ai2_chains, calls: ledger.ai2_calls, failed: ledger.ai2_failed, unattributedChains: 0 }
+        : { chains: ai2.chains, calls: ai2.calls, failed: ai2.failed, unattributedChains: ai2.unattributed_chains },
       readiness: { witnesses: witnesses.length, sampleCandidateIds: witnesses.slice(0, 20).map(row => Number(row.id)) },
-      safety: { duplicatePublications: duplicates.count, humanDecisionOverrides: "unverified", leaseViolations: "unverified" },
+      ledger: ledger ? { startedAt: marker.started_at, humanDecisionRefusals: ledger.human_refusals, lateWritesRefused: ledger.late_refusals } : null,
+      safety: { duplicatePublications: duplicates.count, humanDecisionOverrides: ledger?.overrides ?? "unverified",
+        leaseViolations: ledger?.lease_violations ?? "unverified" },
       budget: { status: "unverified" }, quality: null });
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 }

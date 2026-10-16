@@ -8,6 +8,7 @@ import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/pro
 import { findRepositoryProduct } from "@/lib/domain/products/repository-identity";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { recordAi2Attempt, recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
@@ -731,6 +732,7 @@ export async function recordSecondReview(input: {
       if (receipt.ownership.kind === "legacy") await assertJobLeaseAtWallTime(tx, receipt.ownership.job, "update");
       if (changed.length) await recordReplaySecondReviewTransition(tx, { kind: "superseded",
         secondReviewIds: changed.map(row => row.id), candidateIds: changed.map(row => row.candidateId) });
+      await recordHumanDecisionRefused(tx, { stage: "ai2", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id });
       await finishSecondReviewOwnership(tx, stages.ai2, receipt);
       return { state: "input_changed", reason: "context_invalid" };
     }
@@ -762,6 +764,8 @@ export async function recordSecondReview(input: {
         await tx.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: now,
           reviewedAt: now, failureCount: row.failureCount + 1, errorCode: result.error.slice(0, 60),
           errorDetail: result.detail?.slice(0, 80) ?? null }).where(eq(secondReviews.id, id));
+        await recordAi2Attempt(tx, { stage: "ai2", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id },
+          { rootReviewId: row.fallbackForId ?? row.id, failed: true, code: result.error });
         if (receipt.ownership.kind === "legacy") await assertJobLeaseAtWallTime(tx, receipt.ownership.job, "update");
         requests.push(await requestJob("second-review", tx));
         if (finalWrite) await recordReplayFinalWrite(tx, finalWrite, requests);
@@ -788,6 +792,8 @@ export async function recordSecondReview(input: {
           secondReason: row.failureCount + 1 >= MAX_SECOND_REVIEW_FAILURES
             ? "모델 심사가 3회 실패했습니다. 자동 재시도를 종료했으므로 직접 확인해주세요." : null })
       .where(eq(secondReviews.id, id));
+    await recordAi2Attempt(tx, { stage: "ai2", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id },
+      { rootReviewId: row.fallbackForId ?? row.id, failed: !result.ok, code: result.ok ? null : result.error });
     /*
      * 두 모델 승인 관문에서 2차가 승인하지 않았다 — 발행을 멈추고 사람에게 넘긴다(2026-09-19).
      * 후보는 domain loader가 이 트랜잭션에서 잠갔다. 사유는 AI 심사가 다시 집지 않는 것으로 둔다 —
@@ -797,6 +803,7 @@ export async function recordSecondReview(input: {
       const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId));
       if (candidate?.state === "approved" && candidate.decidedBy === "auto") {
         const detail = result.ok ? `${result.model} ${result.decision}: ${result.reason}` : `${result.model} 심사 3회 실패 (${result.error})`;
+        await recordHumanDecisionOverride(tx, { stage: "ai2", candidateId: candidate.id, firstAttemptId: row.firstAttemptId, secondReviewId: row.id });
         await tx.update(crawlCandidates).set({ state: "needs_review", reason: "second_review_split", updatedAt: now,
           signals: { ...(candidate.signals ?? {}), stoppedAt: { rule: "2차 심사", detail: detail.slice(0, 300) } } })
           .where(eq(crawlCandidates.id, candidate.id));
@@ -812,6 +819,9 @@ export async function recordSecondReview(input: {
       secondReviewIds: [row.id], candidateIds: [row.candidateId] }, requests);
     await finishSecondReviewOwnership(tx, stages.ai2, receipt);
     return { state: "recorded" };
+  }).catch(async (error: unknown) => {
+    await recordLateWriteRefused({ stage: "ai2", candidateId: receipt.binding.candidateId, secondReviewId: id }, error);
+    throw error;
   });
   if (written.state === "recorded") emitPipelineEvent("committed", { stage: "second", secondReviewId: id, ok: result.ok });
   for (const request of requests) emitPipelineEvent("requested", { stage: "second", secondReviewId: id,

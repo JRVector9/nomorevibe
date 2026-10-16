@@ -31,6 +31,9 @@ const vote = z.object({ id: positive, firstAttemptId: positive,
 const candidate = z.object({ id: positive, state: z.enum(["new", "approved", "rejected", "needs_review", "published"]),
   decidedBy: z.enum(["auto", "admin"]).nullable(), appliedAttemptId: positive.nullable() }).strict();
 const label = z.object({ candidateId: positive, inputHash: hash, expected: z.enum(["approve", "reject"]) }).strict();
+/** 0097 증거 장부. 기록 시작 marker가 구간 시작 이전일 때만 싣는다. 거부 건수는 가드가 작동한 참고값이다(위반 아님). */
+const ledger = z.object({ startedAt: date, humanDecisionRefusals: integer, lateWritesRefused: integer }).strict();
+const ledgerCount = z.union([z.literal("unverified"), integer]);
 export const liveCapacityLabelsSchema = z.array(label).min(1).max(100_000);
 export const liveCapacityArtifactSchema = z.object({
   version: z.literal(1), scope: z.literal("live_window"), runId: text, revision: z.string().regex(/^[a-f0-9]{7,40}$/),
@@ -50,9 +53,9 @@ export const liveCapacityArtifactSchema = z.object({
   candidates: z.array(candidate).max(LIVE_ROW_LIMIT),
   ai2Calls: z.object({ chains: integer, calls: integer, failed: integer, unattributedChains: integer }).strict(),
   readiness: z.object({ witnesses: integer, sampleCandidateIds: z.array(positive).max(20) }).strict(),
-  // 현재 DB 상태로 증명할 수 없는 항목은 JSON에서 검증됨으로 올릴 수 없다(증거 계약이 생기면 schema를 넓힌다).
-  safety: z.object({ duplicatePublications: integer, humanDecisionOverrides: z.literal("unverified"),
-    leaseViolations: z.literal("unverified") }).strict(),
+  ledger: ledger.nullable().optional(),
+  // 증명할 수 없는 항목은 JSON에서 검증됨으로 올릴 수 없다. 사람 판단 덮음·lease 위반은 ledger가 구간을 덮을 때만 수치다.
+  safety: z.object({ duplicatePublications: integer, humanDecisionOverrides: ledgerCount, leaseViolations: ledgerCount }).strict(),
   budget: z.object({ status: z.literal("unverified") }).strict(),
   quality: z.object({ datasetHash: hash, labels: liveCapacityLabelsSchema }).strict().nullable(),
 }).strict();
@@ -101,6 +104,12 @@ export function parseLiveCapacityArtifact(value: unknown): LiveCapacityArtifact 
   ensure(artifact.ai2Calls.failed <= artifact.ai2Calls.calls
     && artifact.readiness.sampleCandidateIds.length <= artifact.readiness.witnesses
     && unique(artifact.readiness.sampleCandidateIds, id => id), "live_artifact_mismatch");
+  // 장부가 덮은 구간만 수치를 싣고, 그때 AI2 호출은 호출 시각으로 귀속되므로 귀속 불가 사슬이 없다.
+  const covered = Boolean(artifact.ledger);
+  ensure(covered === (typeof artifact.safety.humanDecisionOverrides === "number")
+    && covered === (typeof artifact.safety.leaseViolations === "number")
+    && (!artifact.ledger || Date.parse(artifact.ledger.startedAt) <= Date.parse(window.startedAt)
+      && artifact.ai2Calls.unattributedChains === 0), "live_artifact_mismatch");
   if (artifact.quality) ensure(unique(artifact.quality.labels, labelKey)
     && liveLabelDatasetHash(artifact.quality.labels) === artifact.quality.datasetHash, "live_quality_mismatch");
   return artifact;
@@ -139,6 +148,7 @@ function gateTime(row: Attempt, votes: Vote[], published: boolean, fixed: LiveCa
 const comparableModel = (row: Identity) => ({ provider: row.provider, canonicalModel: row.canonicalModel });
 const pool = (rows: Identity[]) => rows.map(comparableModel).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
 type SafetyEvidence = { status: "unverified" } | { status: "verified"; count: number };
+const evidence = (value: number | "unverified"): SafetyEvidence => value === "unverified" ? { status: value } : { status: "verified", count: value };
 
 /** 구간 안에서 후보별 첫 최종만 센다. 재시도·중복 표·여러 세대는 완료량을 늘리지 않는다. */
 export function reportLiveCapacityWindow(value: unknown) {
@@ -228,8 +238,8 @@ export function reportLiveCapacityWindow(value: unknown) {
     quality: { complete: Boolean(artifact.quality && evaluated === artifact.quality.labels.length), evaluated,
       expected: artifact.quality?.labels.length ?? 0, wrongApprovals, wrongRejections, datasetHash: artifact.quality?.datasetHash ?? null },
     safety: { duplicatePublications: { status: "verified", count: artifact.safety.duplicatePublications } as SafetyEvidence,
-      humanDecisionOverrides: { status: artifact.safety.humanDecisionOverrides } as SafetyEvidence,
-      leaseViolations: { status: artifact.safety.leaseViolations } as SafetyEvidence },
+      humanDecisionOverrides: evidence(artifact.safety.humanDecisionOverrides), leaseViolations: evidence(artifact.safety.leaseViolations) },
+    ledger: artifact.ledger ?? null,
     budgetEvidence: artifact.budget.status as "unverified" | "verified", clockAnomalies, evidenceIssues };
 }
 export type LiveCapacityReport = ReturnType<typeof reportLiveCapacityWindow>;

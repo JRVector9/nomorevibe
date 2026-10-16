@@ -11,6 +11,7 @@ import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type 
 import { assertReplayJobAdmission, assertReplayItemExecutionAllowed, registerReplayItemFinalAuthority, registerReplayItemRelease, reserveReplayItemCall } from "@/lib/operations/pipeline-replay-execution";
 import type { ReplayCallRequest } from "@/lib/operations/pipeline-replay-ledger";
 import { recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { recordLeaseViolation } from "@/lib/operations/pipeline-evidence-ledger";
 import { reviewHash, reviewPolicyHash, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import type { ReviewInput } from "./agent-review-contract";
 import { firstReviewer } from "./agent-review";
@@ -239,6 +240,10 @@ export async function finishSecondReviewOwnership(tx: ProductTransaction, guard:
   receipt: SecondReviewReceipt): Promise<void> {
   if (receipt?.ownership?.kind === "item") rejectItemReplay();
   validateReceipt(receipt);
+  const { ownership, binding } = receipt;
+  await recordLeaseViolation(tx, { stage: "ai2", candidateId: binding.candidateId, secondReviewId: binding.secondReviewId },
+    ownership.kind === "item" ? { kind: "item", stage: "ai2", workKey: ownership.lease.workKey, token: ownership.lease.token }
+      : { kind: "job", name: ownership.job.name, token: ownership.job.token });
   const stage = await ai2Stage(tx, guard);
   if (receipt.ownership.kind === "item") {
     await registerReplayItemFinalAuthority(tx, receipt.ownership.lease);
