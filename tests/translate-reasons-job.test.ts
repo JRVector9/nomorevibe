@@ -7,6 +7,11 @@ vi.mock("@/lib/crawl/translations", () => ({
   untriedTranslations: mocks.untried, retryableTranslations: mocks.retry, recordWorkerTranslations: mocks.record,
 }));
 vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "[MLX] gpt-oss-120b", translateToKorean: mocks.translate }));
+vi.mock("@/lib/crawl/reason-translation-model-capacity", () => ({
+  translateReasonsWithModelCapacity: async (batch: { body: string }[], _lease: unknown,
+    options: { timeoutMs: number; signal?: AbortSignal }) => ({ kind: "disabled",
+    result: await mocks.translate(batch.map(item => item.body), options.timeoutMs, undefined, options.signal) }),
+}));
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "reason-translate", token: "t", requestedVersion: 1 } });
 const item = (hash: string, attempts = 0) => ({ hash, body: `English reason ${hash}`, attempts });
