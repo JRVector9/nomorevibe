@@ -9,7 +9,7 @@ export async function readJobBatchReadiness() {
     const [control] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1));
     if (!control) throw new Error('job_batch_control_missing');
     const policy=batchPolicySchema.safeParse(control.policy);
-    if (!policy.success || batchPolicyHash(policy.data)!==control.policyHash) return {mode:control.mode,epoch:control.epoch,ready:false,reason:'policy_unknown' as const,candidates:[]};
+    if (!policy.success || batchPolicyHash(policy.data)!==control.policyHash) return {mode:control.mode,epoch:control.epoch,policyHash:null,ready:false,reason:'policy_unknown' as const,candidates:[]};
     const [clock]=await tx.execute<{at:string}>(sql`SELECT clock_timestamp()::text AS at`);
     const candidates=await tx.select().from(jobBatchCandidates);
     const rows:Array<{role:string;instanceId:string;host:string;release:string;ready:boolean;reason:string}>=[];
@@ -28,6 +28,6 @@ export async function readJobBatchReadiness() {
       rows.push({role,instanceId:candidate.instanceId,host:candidate.host,release:candidate.release,...report});
     }
     const missing=BATCH_ROLES.flatMap(role=>BATCH_HOSTS.filter(host=>!rows.some(row=>row.role===role && row.host===host && row.ready)).map(host=>({role,host})));
-    return {mode:control.mode,epoch:control.epoch,ready:control.mode==='versioned' && missing.length===0,reason:'evidence' as const,candidates:rows,missing};
+    return {mode:control.mode,epoch:control.epoch,policyHash:control.policyHash,ready:control.mode==='versioned' && missing.length===0,reason:'evidence' as const,candidates:rows,missing};
   }));
 }
