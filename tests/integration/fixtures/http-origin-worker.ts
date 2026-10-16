@@ -2,6 +2,7 @@
 import { fetchCapped, safeFetch, readBodyCapped } from '../../../lib/net/fetch';
 import type postgres from 'postgres';
 void (async()=>{
+if(process.env.HTTP_TEST_EXIT_BEFORE_READY==='1'){process.disconnect?.();return;}
 if(process.env.HTTP_TEST_WARM==='1') await import('../../../lib/net/origin-permits');
 process.send?.({ kind: 'ready' });
 process.once('message', async () => {
