@@ -31,3 +31,9 @@ OID/type/typmod/cast/collation/상수 바이트/NULL/피연산자 순서·중복
 SQL 소유권 반환 후 Root가 같은 동결 helper로 독립 readback을 실행했다. baseline=담당=Root의 raw97행·captured catalog·managed controls·36 sequences가 byte exact이고 child·다른 연결0이다. source3는 그대로다. 전용 DB와 단독 volume을 정상 종료·폐기했다. `/tmp/nomorevibe-pr14c-root-numeric-final-db-proof-20261016.json` 및 `...pr14c-numeric-retry-root-cleanup...json`에 결과를 보존했다. 중간55576은 이름이 기존 guard에 맞지 않아 SQL0으로 폐기했고 guard를 완화하지 않았다.
 
 이45쌍 일치는 같은 새 환경에서 exported DDL을 재파싱한 결과다. 원 historical bindings는 여전히 미수집이며 databaseSettings의 `jit=off` 차이는 unsupported·미복구다. 원46개 차이·`historicalEquivalenceProved=false`와 최상위 DR 차단 상태를 유지한다. 필수 자동 CI와 실제 Oracle 운영·최종 전체 수동 검증은 별도다.
+
+## CI 타이밍 fixture 후속
+
+PR479 최초 CI38905247443은 통합 세 묶음 모두 성공했으나 기존 native timeout prefire 검증의 GC가 76.759→108.648ms로 원100ms 창을 넘어 quality가 실패했다. 원 TimeoutError와 실제 child 종료는 정상이며 실패 로그를 보존했다. Child의 prefire GC 예약만75→0ms로 앞당겼다. 원100ms timeout·250ms 대기·postfire150ms·유효창 및 회귀 assertion·production fetch 원문은 유지했다. 첫 event-loop yield 뒤 실제 GC를 실행한다.
+
+수정 후 원 실패 exact case 한 번은1 PASS/2skip(exit0)이다. 로컬 Darwin/Node24.18 결과이며 새 CI 성공을 대신하지 않는다. 원로그와 역치환 whole-byte proof는 `/tmp/nomorevibe-pr479-b-prefire-timer-final-proof-20261016.json`에 보존했다. 무변경 CI 재실행·성공 케이스 반복은 하지 않았다.
