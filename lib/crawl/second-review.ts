@@ -707,7 +707,6 @@ export async function recordSecondReview(input: {
 }): Promise<SecondReviewWriteResult> {
   const { receipt, result, now = new Date() } = input;
   if (!receipt?.binding) throw new Error("invalid_second_review_receipt");
-  if (receipt.ownership?.kind === "item" && currentReplayDb()) throw new Error("replay_item_execution_unsupported");
   const id = receipt.binding.secondReviewId;
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   const written = await db.transaction<SecondReviewWriteResult>(async tx => {
@@ -739,9 +738,10 @@ export async function recordSecondReview(input: {
       await finishSecondReviewOwnership(tx, stages.ai2, receipt);
       return { state: "input_changed", reason: "binding_changed" };
     }
-    const finalWrite = receipt.ownership.kind === "legacy" && row.firstAttemptId ? await prepareReplayFinalWrite(tx, {
+    const finalWrite = row.firstAttemptId ? await prepareReplayFinalWrite(tx, {
       stage: "second", candidateId: row.candidateId, firstAttemptId: row.firstAttemptId, secondReviewId: row.id,
       input: current.input, settings: current.settings,
+      ...(receipt.ownership.kind === "item" ? { itemLease: receipt.ownership.lease } : {}),
     }) : undefined;
     const settings = current.settings;
     const agreeAt = settings.secondReview.agreeAt;

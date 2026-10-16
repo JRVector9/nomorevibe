@@ -173,9 +173,18 @@ async function openReplayDatabase(path: string, env: Environment, handler: boole
 }
 
 /** Trusted owner upgrade in a dedicated local cluster. No grant policy is accepted from callers. */
-export async function provisionReplayHandlerProfile(options: {
+type HandlerProfileOptions = {
   databaseUrl: string; identityPath: string; acknowledgeDedicatedCluster: boolean; env?: Environment;
-}): Promise<ReplayDatabaseMetadata> {
+};
+export async function provisionReplayItemHandlerProfile(options: HandlerProfileOptions): Promise<ReplayDatabaseMetadata> {
+  return provisionReplayProfile(options, "handlers-v6-item");
+}
+export async function provisionReplayHandlerProfile(options: HandlerProfileOptions): Promise<ReplayDatabaseMetadata> {
+  return provisionReplayProfile(options, "handlers-v5");
+}
+async function provisionReplayProfile(options: {
+  databaseUrl: string; identityPath: string; acknowledgeDedicatedCluster: boolean; env?: Environment;
+}, version: "handlers-v5" | "handlers-v6-item"): Promise<ReplayDatabaseMetadata> {
   if (options.acknowledgeDedicatedCluster !== true) fail("dedicated_replay_cluster_required");
   assertReplayDatabaseTarget(options.databaseUrl, options.env ?? process.env); assertAmbientOverrides();
   const identity = await readReplayDatabaseIdentity(options.identityPath);
@@ -204,7 +213,7 @@ export async function provisionReplayHandlerProfile(options: {
         || marker.role_oid !== identity.roleOid || marker.actual_role_oid !== identity.roleOid
         || marker.owner_oid !== identity.ownerOid || marker.schema_owner !== identity.ownerOid || marker.marker_owner !== identity.ownerOid
         || marker.marker_kind !== "r" || marker.marker_rls || marker.nonce !== identity.nonce) fail("replay_database_identity_mismatch");
-      await provisionHandlerProfile(tx, identity);
+      await provisionHandlerProfile(tx, identity, version);
     });
     const checked = await openVerifiedReplayHandlerDatabase(options.identityPath, options.env ?? process.env);
     await checked.close(); return metadata(identity);

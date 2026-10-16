@@ -89,7 +89,8 @@ DECLARE replay_run text := current_setting('pipeline_replay.run_id', true);
 BEGIN
   IF replay_run IS NULL OR replay_run = '' OR replay_tx IS NULL OR replay_tx = '' THEN RETURN NULL; END IF;
   IF TG_TABLE_SCHEMA || '.' || TG_TABLE_NAME NOT IN ('public.crawl_candidates','public.crawl_review_attempts',
-    'public.second_reviews','public.crawl_frontier','public.jobs','public.operations_observations','pipeline_replay.capacity_calls')
+    'public.second_reviews','public.crawl_frontier','public.jobs','public.operations_observations','pipeline_replay.capacity_calls',
+    'public.pipeline_stage_modes','public.pipeline_item_leases')
     THEN RAISE EXCEPTION 'replay_journal_table_rejected'; END IF;
   next_ordinal := coalesce(nullif(current_setting('pipeline_replay.ordinal', true), ''), '0')::bigint + 1;
   PERFORM set_config('pipeline_replay.ordinal', next_ordinal::text, true);

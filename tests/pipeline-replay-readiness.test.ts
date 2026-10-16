@@ -44,6 +44,39 @@ it("counts an actual frozen first-review input using semantic reference rather t
   expect(result.second.modelReady).toBe(0);
 });
 
+it("revalidates mutable rows after valid and invalid calls without changing their input", () => {
+  const projection = readinessFixture(), job = projection.tables.jobs[0];
+  job.locked_at = "2026-10-15 21:00:00.123456+09:00";
+  projection.tables.jobs.unshift({ ...job, name: "z-foreign-job" });
+  const before = structuredClone(projection), canonical = applyReplayChanges(projection, []);
+  expect(canonical.tables.jobs.map(row => row.name)).toEqual(["crawl-agent-review", "z-foreign-job"]);
+  expect(canonical.tables.jobs[0].locked_at).toBe("2026-10-15T12:00:00.123456Z");
+  expect(projection).toEqual(before);
+  const originalHashes = readinessProjectionHashes(projection, wall);
+
+  delete job.requested_version;
+  const missing = structuredClone(projection);
+  expect(() => applyReplayChanges(projection, [])).toThrow();
+  expect(projection).toEqual(missing);
+  job.requested_version = 1;
+  job.extra_column = true;
+  const unknown = structuredClone(projection);
+  expect(() => readinessProjectionHashes(projection, wall)).toThrow();
+  expect(projection).toEqual(unknown);
+  delete job.extra_column;
+  expect(readinessProjectionHashes(projection, wall)).toEqual(originalHashes);
+
+  job.requested_version = Number.MAX_SAFE_INTEGER + 1;
+  const unsafe = structuredClone(projection);
+  expect(() => applyReplayChanges(projection, [])).toThrow("replay_readiness_unsafe_integer");
+  expect(projection).toEqual(unsafe);
+  job.requested_version = 2;
+  const changed = structuredClone(projection);
+  expect(applyReplayChanges(projection, []).tables.jobs[0].requested_version).toBe(2);
+  expect(readinessProjectionHashes(projection, wall)).not.toEqual(originalHashes);
+  expect(projection).toEqual(changed);
+});
+
 it("does not bridge an unconfirmed transaction that makes the only candidate ready", () => {
   const projection = readinessFixture(), before = { ...projection.tables.crawl_candidates[0], decided_by: "admin" };
   projection.tables.crawl_candidates[0] = before;

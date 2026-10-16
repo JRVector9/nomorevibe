@@ -11,12 +11,12 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/), positive = z.number().int().pos
 const callBase = { callId: z.string().min(1).max(160), candidateId: positive,
   inputHash: hash, sourceRevisionHash: hash, provider: z.string().min(1).max(160),
   model: z.string().min(1).max(160), requestHash: hash, tokenUpperBound: positive };
-const callSchema = z.discriminatedUnion("stage", [
+export const replayCallRequestSchema = z.discriminatedUnion("stage", [
   z.object({ ...callBase, stage: z.literal("first"), firstAttemptId: positive }).strict(),
   z.object({ ...callBase, stage: z.literal("second"), firstAttemptId: positive.nullable(), secondReviewId: positive,
     generationKey: z.string().min(1).max(160), vote: positive }).strict(),
 ]);
-export type ReplayCallRequest = z.infer<typeof callSchema>;
+export type ReplayCallRequest = z.infer<typeof replayCallRequestSchema>;
 export type ReplayReceipt = { inputTokens: number; outputTokens: number } | null;
 const resultProofSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), outcomeHash: hash, decisionHash: hash }).strict(),
@@ -28,7 +28,7 @@ export type ReplayResultProof = z.infer<typeof resultProofSchema>;
 const runBrand: unique symbol = Symbol("ReplayRun");
 export type ReplayRun = Readonly<{ [runBrand]: true; runId: string }>;
 type RunIdentity = { ledger: ReplayLedger; database: VerifiedReplayDatabase; ownerId: string; manifest: CapacityManifest;
-  admissionClosed: boolean; writersFenced: boolean; certified: boolean };
+  admissionClosed: boolean; writersFenced: boolean; certified: boolean; items: boolean };
 const runs = new WeakMap<object, RunIdentity>();
 class ReplayLedgerError extends Error { constructor(readonly code: string) { super(code); } }
 const fail = (code: string): never => { throw new ReplayLedgerError(code); };
@@ -45,8 +45,9 @@ export function replayFinalRunBinding(run: ReplayRun) {
   const identity = run && runs.get(run);
   ensure(identity, "replay_run_required");
   assertVerifiedReplayDatabase(identity.database);
-  return Object.freeze({ database: identity.database, ownerId: identity.ownerId, certified: identity.certified,
+  return Object.freeze({ database: identity.database, ownerId: identity.ownerId, certified: identity.certified, items: identity.items,
     manifest: structuredClone(identity.manifest),
+    reserveItemCall: (tx: Tx, call: ReplayCallRequest) => identity.ledger.reserveItemCall(tx, run, call),
     assertActive() {
       ensure(runs.get(run) === identity && !identity.writersFenced, "replay_final_scope_closed");
       assertVerifiedReplayDatabase(identity.database);
@@ -124,7 +125,7 @@ export class ReplayLedger {
   private async event(tx: Tx, runId: string, kind: string, payload: Record<string, unknown> = {}) {
     const [row] = await tx`UPDATE pipeline_replay.capacity_runs SET event_seq = event_seq + 1 WHERE run_id = ${runId} RETURNING event_seq`;
     await tx`INSERT INTO pipeline_replay.capacity_transitions (run_id, seq, kind, payload)
-      VALUES (${runId}, ${row.event_seq}, ${kind}, ${tx.json(payload as postgres.JSONValue)})`;
+      VALUES (${runId}, ${row.event_seq}, ${kind}, ${JSON.stringify(payload)}::text::jsonb)`;
   }
   async prepare(value: unknown, inputs: { candidateId: number; input: ReviewInput }[]): Promise<ReplayRun> {
     let manifest: CapacityManifest;
@@ -144,11 +145,17 @@ export class ReplayLedger {
     });
     const run = Object.freeze({ [runBrand]: true as const, runId: manifest.runId });
     runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false,
-      writersFenced: false, certified: false }); return run;
+      writersFenced: false, certified: false, items: false }); return run;
   }
+  async prepareCertifiedItems(value: unknown, inputs: { candidateId: number; input: ReviewInput }[], options: {
+    runner: { jobs: readonly ("crawl-agent-review" | "second-review")[]; budgetMs: number }; quality: unknown | null;
+  }): Promise<ReplayRun> { return this.prepareCertifiedRun(value, inputs, options, true); }
   async prepareCertified(value: unknown, inputs: { candidateId: number; input: ReviewInput }[], options: {
     runner: { jobs: readonly ("crawl-agent-review" | "second-review")[]; budgetMs: number }; quality: unknown | null;
-  }): Promise<ReplayRun> {
+  }): Promise<ReplayRun> { return this.prepareCertifiedRun(value, inputs, options, false); }
+  private async prepareCertifiedRun(value: unknown, inputs: { candidateId: number; input: ReviewInput }[], options: {
+    runner: { jobs: readonly ("crawl-agent-review" | "second-review")[]; budgetMs: number }; quality: unknown | null;
+  }, items: boolean): Promise<ReplayRun> {
     const { replayQualitySchema, replayQualityDatasetHash } = await import("./pipeline-replay-artifact");
     const runner = { jobs: [...options.runner.jobs], budgetMs: options.runner.budgetMs };
     ensure(runner.jobs.length > 0 && runner.jobs.length <= 100 && runner.jobs.every(name => ['crawl-agent-review','second-review'].includes(name))
@@ -164,10 +171,17 @@ export class ReplayLedger {
       const [active] = await tx`SELECT 1 FROM pipeline_replay.capacity_runs WHERE state IN ('running','draining') LIMIT 1`;
       ensure(!active, "replay_active_run_exists");
       const { captureReplayReadinessProjection } = await import("./pipeline-replay-readiness");
-      const initial = await captureReplayReadinessProjection(tx, manifest, frozen);
+      const [profile] = await tx`SELECT version FROM pipeline_replay.handler_profile`;
+      ensure(profile?.version === (items ? "handlers-v6-item" : "handlers-v5"), "replay_profile_execution_mismatch");
+      const initial = items ? await this.captureItems(tx, manifest, frozen) : await captureReplayReadinessProjection(tx, manifest, frozen);
       ensure(initial.initialStateHash === manifest.initialStateHash, "replay_initial_state_mismatch");
+      if (items) {
+        const stages = (initial.projection as import("./pipeline-replay-combined-capture").ReplayCombinedState).items.tables.pipeline_stage_modes;
+        ensure(stages.every(stage => stage.stage === "ai2" ? stage.mode === "items" && stage.writer_contract_version >= 1
+          : stage.mode === "legacy" && stage.draining_from === null && stage.writer_contract_version === 0), "unsupported_replay_stage_state");
+      }
       const { assertReplayInitialReviewKinds } = await import("./pipeline-replay-classification");
-      assertReplayInitialReviewKinds(initial.projection, manifest);
+      assertReplayInitialReviewKinds(items ? (initial.projection as import("./pipeline-replay-combined-capture").ReplayCombinedState).domain : initial.projection as import("./pipeline-replay-readiness").ReplayReadinessProjection, manifest);
       await tx`INSERT INTO pipeline_replay.capacity_runs (run_id,owner_id,manifest,manifest_hash,state,runner,quality,
         initial_projection,current_projection,initial_state_hash,comparison_state_hash,captured_at)
         VALUES (${manifest.runId},${ownerId},${tx.json(manifest)},${reviewHash(manifest)},'prepared',${tx.json(runner)},${quality === null ? null : tx.json(quality)},
@@ -175,13 +189,33 @@ export class ReplayLedger {
       for (const item of frozen) await tx`INSERT INTO pipeline_replay.capacity_inputs
         (run_id,candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash)
         VALUES (${manifest.runId},${item.candidateId},${item.inputHash},${item.sourceRevisionHash},${tx.json(item.frozen)},${item.frozenHash})`;
-      const actual = await captureReplayReadinessProjection(tx, manifest);
+      const actual = items ? await this.captureItems(tx, manifest) : await captureReplayReadinessProjection(tx, manifest);
       ensure(actual.initialStateHash === initial.initialStateHash, "replay_initial_state_mismatch");
       await this.event(tx, manifest.runId, "prepared");
     });
     const run = Object.freeze({ [runBrand]: true as const, runId: manifest.runId });
-    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false, writersFenced: false, certified: true });
+    runs.set(run, { ledger: this, database: this.database, ownerId, manifest, admissionClosed: false, writersFenced: false, certified: true, items });
     return run;
+  }
+  private async captureItems(tx: Tx, manifest: CapacityManifest, frozen?: ReturnType<typeof frozenInputs>) {
+    const { captureReplayReadinessProjection } = await import("./pipeline-replay-readiness");
+    const current = await captureReplayReadinessProjection(tx, manifest, frozen);
+    const { captureReplayItemState } = await import("./pipeline-replay-item-capture");
+    const { captureReplayCombinedState } = await import("./pipeline-replay-combined-capture");
+    const projection = frozen ? { kind: "pipeline-replay-combined-state" as const, version: 1 as const,
+      domain: current.projection, items: (await captureReplayItemState(tx)).state }
+      : (await captureReplayCombinedState(tx, manifest)).state;
+    ensure(reviewHash(projection.domain) === reviewHash(current.projection), "replay_initial_state_mismatch");
+    const { replayMixedProjectionHashes } = await import("./pipeline-replay-item-execution");
+    return { projection, capturedAt: current.capturedAt, ...replayMixedProjectionHashes(projection, current.capturedAt) };
+  }
+  async previewItemInitialState(value: unknown, inputs: { candidateId: number; input: ReviewInput }[]) {
+    const manifest = parseCapacityManifest(value), frozen = frozenInputs(manifest, inputs);
+    return this.transaction(async tx => {
+      await tx`SELECT pg_advisory_xact_lock(1485803,2)`;
+      await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
+      return this.captureItems(tx, manifest, frozen);
+    });
   }
   async previewInitialState(value: unknown, inputs: { candidateId: number; input: ReviewInput }[]) {
     const manifest = parseCapacityManifest(value), frozen = frozenInputs(manifest, inputs);
@@ -197,7 +231,8 @@ export class ReplayLedger {
       await tx`SELECT pg_advisory_xact_lock(1485803, 2)`;
       if (this.identity(run).certified) await tx`SELECT pg_advisory_xact_lock(1485803,4)`;
       const current = this.identity(run).certified
-        ? await (await import("./pipeline-replay-readiness")).captureReplayReadinessProjection(tx, this.identity(run).manifest) : undefined;
+        ? this.identity(run).items ? await this.captureItems(tx, this.identity(run).manifest)
+          : await (await import("./pipeline-replay-readiness")).captureReplayReadinessProjection(tx, this.identity(run).manifest) : undefined;
       const row = await this.locked(tx, run);
       ensure(row.state === "prepared", "replay_run_state_mismatch");
       const [other] = await tx`SELECT 1 FROM pipeline_replay.capacity_runs WHERE state IN ('running','draining') LIMIT 1`;
@@ -239,8 +274,14 @@ export class ReplayLedger {
   }
   async reserve(run: ReplayRun, value: ReplayCallRequest): Promise<void> {
     let call: ReplayCallRequest;
-    try { call = callSchema.parse(value); } catch { return fail("replay_call_binding_mismatch"); }
+    try { call = replayCallRequestSchema.parse(value); } catch { return fail("replay_call_binding_mismatch"); }
     const denial = await this.transaction(async tx => {
+      ensure(!(this.identity(run).items && call.stage === "second"), "replay_item_call_authority_required");
+      return this.reserveRaw(tx, run, call);
+    }, run);
+    if (denial) fail(denial);
+  }
+  private async reserveRaw(tx: Tx, run: ReplayRun, call: ReplayCallRequest) {
       const row = await this.locked(tx, run), manifest = this.identity(run).manifest;
       const denied = await this.admission(tx, run, row);
       if (denied) return denied;
@@ -265,11 +306,22 @@ export class ReplayLedger {
       await this.event(tx, run.runId, "reserved", { callId: call.callId, tokenUpperBound: call.tokenUpperBound,
         ...(call.stage === "second" ? { secondReviewId: call.secondReviewId, generationKey: call.generationKey, vote: call.vote } : {}) });
       return null;
-    }, run);
+  }
+  async reserveItemCall(tx: Tx, run: ReplayRun, call: ReplayCallRequest): Promise<void> {
+    ensure(this.identity(run).items && call.stage === "second", "replay_item_call_authority_required");
+    const { consumeReplayItemReservation } = await import("./pipeline-replay-execution");
+    const authority = consumeReplayItemReservation(tx, call.callId);
+    call = replayCallRequestSchema.parse(call);
+    const denial = await this.reserveRaw(tx, run, call);
     if (denial) fail(denial);
+    await this.event(tx, run.runId, "item_call_authority", authority);
   }
   private async move(run: ReplayRun, callId: string, from: string, to: string): Promise<void> {
     const denial = await this.transaction(async tx => {
+      if (this.identity(run).items && to !== "cancelled_before_dispatch") {
+        const { assertReplayItemCallDispatch } = await import("./pipeline-replay-execution");
+        await assertReplayItemCallDispatch(tx, run.runId, callId);
+      }
       const row = await this.locked(tx, run);
       if (to !== "cancelled_before_dispatch") {
         const denied = await this.admission(tx, run, row);
