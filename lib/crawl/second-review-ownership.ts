@@ -18,7 +18,11 @@ import { parseItemBinding, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomainContext } from "./second-review-input";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
-import { lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch } from "@/lib/llm/capacity";
+import { STALE_LOCK_MS } from "@/lib/jobs/lease";
+import { resolveAi2GatewayServingContract, ai2GatewayServingContractHash } from "./second-review-serving-contract";
+import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
@@ -36,6 +40,62 @@ type ItemReceipt = SecondReviewItemReceipt;
 export type SecondReviewItemDispatchObservation =
   | { kind: "current"; row: SecondReview; input: ReviewInput }
   | { kind: "stopped"; reason: "stage_inactive" | "not_pending" | "input_changed" };
+
+export type SecondReviewModelIntent = Readonly<{ binding: Ai2ItemBinding; rowIdentityHash: string;
+  failureCount: number; input: ReviewInput; owner: ItemOwner }>;
+export type SecondReviewModelClaim = SecondReviewClaim & { dispatch?: Ai2ModelDispatch };
+/** A rolled-back request for re-admission, never item or provider authority. */
+export class SecondReviewModelReservationRequired extends ModelCapacityDeferredError {
+  readonly intent: SecondReviewModelIntent;
+  constructor(value: SecondReviewModelIntent) {
+    super("reservation_required");
+    this.intent = snapshotModelIntent(value);
+  }
+}
+function snapshotModelIntent(value: SecondReviewModelIntent): SecondReviewModelIntent {
+  const snapshot = structuredClone(value);
+  const checked = z.object({ binding: itemBindingSchema, rowIdentityHash: z.string().regex(/^[a-f0-9]{64}$/),
+    failureCount: z.number().int().nonnegative().safe(), owner: itemOwnerSchema,
+    input: z.object({ snapshot: z.custom<ReviewInput["snapshot"]>(v => v !== null && typeof v === "object" && !Array.isArray(v)),
+      source: z.custom<ReviewInput["source"]>(v => v !== null && typeof v === "object" && !Array.isArray(v)),
+      inputHash: z.string().regex(/^[a-f0-9]{64}$/), policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+      sourceRevisionHash: z.string().regex(/^[a-f0-9]{64}$/), validUntil: z.date() }).strict(),
+  }).strict().parse(snapshot);
+  if (checked.binding.stage !== "ai2" || checked.binding.reviewer.provider !== "abcllm"
+    || checked.binding.inputHash !== checked.input.inputHash
+    || checked.binding.sourceRevisionHash !== checked.input.sourceRevisionHash)
+    throw new Error("invalid_second_review_model_intent");
+  // Native preparation binds the full input JSON, including factory key order.
+  // Validation above does not transform values; preserve that original wire identity.
+  checked.input = snapshot.input;
+  const freeze = (v: object): void => { Object.values(v).forEach(child => { if (child && typeof child === "object" && !Object.isFrozen(child)) freeze(child); }); Object.freeze(v); };
+  freeze(checked);
+  return checked as SecondReviewModelIntent;
+}
+
+type ModelReservation = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
+  call: PreparedAi2GatewayCall; expected: SecondReviewModelIntent };
+
+/** One outer TX owns the control UPDATE prefix, fresh item and dispatch event. */
+export async function claimSecondReviewItemWithModelReservation(input: ModelReservation & {
+  secondReviewId: number; owner: ItemOwner;
+}): Promise<SecondReviewModelClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const id = positive.parse(input.secondReviewId), owner = itemOwnerSchema.parse(input.owner);
+  const expected = snapshotModelIntent(input.expected), reservation = modelCapacityReservationSchema.parse(input.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(input.identity);
+  const call = z.object({ kind: z.literal("prepared"), wireHash: sha, servingContractHash: sha,
+    totalTokenBound: positive, model: z.string().min(1).max(160), inputHash: sha }).strict().parse(input.call);
+  if (expected.binding.secondReviewId !== id || !isDeepStrictEqual(expected.owner, owner)
+    || !isDeepStrictEqual(reservation.owner, owner) || !isDeepStrictEqual(identity.owner, owner))
+    throw new Error("invalid_second_review_model_intent");
+  try { return await claimReview(id, { kind: "item", owner, ttlMs: STALE_LOCK_MS, purpose: "consumer" },
+    { reservation, identity, call, expected }); }
+  catch (error) {
+    if (error instanceof Error && error.message === "ai2_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  }
+}
 
 const positive = z.number().int().positive().safe();
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -184,12 +244,15 @@ export function claimConsumerItemSecondReview(id: number, owner: ItemOwner, ttlM
 }
 
 async function claimReview(id: number, authority: { kind: "legacy"; job: JobLease }
-  | { kind: "item"; owner: ItemOwner; ttlMs: number; purpose?: "consumer" }): Promise<SecondReviewClaim> {
+  | { kind: "item"; owner: ItemOwner; ttlMs: number; purpose?: "consumer" }, reserved?: ModelReservation): Promise<SecondReviewModelClaim> {
   positive.parse(id);
   return onPrimary(() => db.transaction(async tx => {
     // Only an active verified replay scope preserves its fixed fixture grants.
     // Ordinary fresh admission takes the real control before S3/domain locks.
-    const capacity = currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
+    const dispatchLock = reserved ? await lockAi2ItemModelCapacityDispatch(tx, { reservation: reserved.reservation,
+      identity: reserved.identity, target: { candidateId: reserved.expected.binding.candidateId, vote: reserved.expected.binding.vote } }) : null;
+    if (reserved && !dispatchLock) throw new ModelCapacityDeferredError("reservation_lost");
+    const capacity = dispatchLock ? dispatchLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
       || authority.kind === "item" && stage.writerContractVersion < 1) return { kind: "skipped", reason: "stage_inactive" };
@@ -218,6 +281,18 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
       return { kind: "skipped", reason: "input_changed" };
     }
     const binding = secondReviewBinding(context);
+    if (reserved) {
+      if (authority.kind !== "item" || !isDeepStrictEqual(binding, reserved.expected.binding)
+        || rowIdentityHash(row) !== reserved.expected.rowIdentityHash || row.failureCount !== reserved.expected.failureCount
+        || !isDeepStrictEqual(context.input, reserved.expected.input)
+        || !isDeepStrictEqual(authority.owner, reserved.expected.owner)) return skipped("input_changed");
+      const serving = resolveAi2GatewayServingContract(binding.reviewer.model);
+      if (!serving || serving.model !== binding.reviewer.model || reserved.call.model !== binding.reviewer.model
+        || reserved.call.inputHash !== context.input.inputHash
+        || reserved.call.servingContractHash !== ai2GatewayServingContractHash(serving)
+        || reserved.call.totalTokenBound !== serving.totalTokenBound)
+        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+    }
     let ownership: SecondReviewReceipt["ownership"];
     if (authority.kind === "legacy") {
       ownership = { kind: "legacy", stageEpoch: stage.epoch, job: authority.job };
@@ -237,12 +312,31 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
       const route = capacity.policy?.routes.find(route => route.routeId === "second-review"
         && route.provider === binding.reviewer.provider && route.model === binding.reviewer.model);
       if (!route) throw new ModelCapacityDeferredError("unmapped");
-      // No adapter yet proves provider termination. Roll back the whole claim,
-      // including any item token/epoch issued above; existing receipts still settle.
-      throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      if (!reserved) {
+        if (authority.kind === "item" && authority.purpose === "consumer" && binding.reviewer.provider === "abcllm")
+          throw new SecondReviewModelReservationRequired({ binding, rowIdentityHash: rowIdentityHash(row),
+            failureCount: row.failureCount, input: context.input, owner: authority.owner });
+        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      }
+    }
+    let dispatch: Ai2ModelDispatch | undefined;
+    if (reserved) {
+      if (!dispatchLock || ownership.kind !== "item") throw new Error("invalid_second_review_model_claim");
+      const lease = ownership.lease;
+      await assertItemLease(tx, stages.ai2, lease);
+      dispatch = await finishAi2ItemModelCapacityDispatch(tx, dispatchLock, { kind: "ai2_item_gateway", version: 1,
+        logicalWorkKey: `ai2:${binding.candidateId}:${binding.vote}`, review: binding,
+        rowIdentityHash: rowIdentityHash(row), failureCount: row.failureCount, inputPolicyHash: context.input.policyHash,
+        item: { workKey: lease.workKey, owner: lease.owner, token: lease.token, stageEpoch: lease.stageEpoch,
+          itemEpoch: lease.itemEpoch, bindingHash: lease.bindingHash },
+        routeId: "second-review", provider: "abcllm", model: reserved.call.model, wireHash: reserved.call.wireHash,
+        servingContractHash: reserved.call.servingContractHash, totalTokenBound: reserved.call.totalTokenBound,
+        chargedTokens: reserved.call.totalTokenBound });
+      // Every dispatch/event wait precedes this last check of the original item.
+      await assertItemLease(tx, stages.ai2, lease);
     }
     return { kind: authority.kind === "legacy" ? "admitted" : "claimed", row, input: context.input,
-      receipt: { binding, rowIdentityHash: rowIdentityHash(row), ownership } };
+      receipt: { binding, rowIdentityHash: rowIdentityHash(row), ownership }, ...(dispatch ? { dispatch } : {}) };
   }));
 }
 
