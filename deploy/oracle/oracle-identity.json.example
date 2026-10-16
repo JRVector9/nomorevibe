@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "tenancy": "surfguide",
+  "region": "ap-osaka-1",
+  "instance": "osaka-smoke",
+  "tenancyOcid": "<approved full tenancy OCID; placeholder is rejected>",
+  "compartmentOcid": "<approved full compartment OCID, or the tenancy OCID for the root compartment>",
+  "instanceOcid": "<approved full instance OCID; placeholder is rejected>",
+  "shape": "<approved exact OCI shape name>"
+}

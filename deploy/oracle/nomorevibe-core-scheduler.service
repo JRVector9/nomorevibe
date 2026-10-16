@@ -1,4 +1,4 @@
-# Independent DB scheduler; this phase's launcher still exits78 before any producer call.
+# Independent DB scheduler; the launcher exits78 before any producer call unless every readiness check is verified.
 [Unit]
 Description=NoMoreVibe Oracle independent scheduler
 Wants=network-online.target
