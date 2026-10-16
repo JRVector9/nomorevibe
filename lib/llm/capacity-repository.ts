@@ -1,3 +1,8 @@
+import { reasonTranslationMemberKeys, reasonTranslationLogicalWorkKey, reasonTranslationInputSchema,
+  reasonTranslationDispatchBindingSchema, reasonTranslationDispatchBindingHash, reasonTranslationModelDispatchSchema,
+  reasonTranslationGatewayTerminalEvidenceSchema, type ReasonTranslationMember,
+  type ReasonTranslationDispatchBinding, type ReasonTranslationModelDispatch } from "./capacity";
+import type { ReasonTranslationGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { textProfileDispatchBindingSchema, textProfileDispatchBindingHash, textProfileModelDispatchSchema,
   textProfileGatewayTerminalEvidenceSchema, type TextProfileDispatchBinding, type TextProfileModelDispatch } from "./capacity";
 import type { TextProfileGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
@@ -211,16 +216,18 @@ async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: strin
   return !!blocked;
 }
 
-function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null): Promise<ModelSlotResult> {
+function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[]): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
     const [original] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
     if (original) {
       sameIdentity(original, checked);
       if (logicalKey !== null && original.logicalWorkKey !== logicalKey) fail("model_capacity_logical_work_mismatch");
+      if (memberKeys && !isDeepStrictEqual(original.logicalMemberKeys, memberKeys)) fail("model_capacity_logical_work_mismatch");
     }
     await expireRequests(tx, state);
-    if (logicalKey !== null && await (logicalKey.startsWith("ai2:")
+    if (memberKeys && await reasonTranslationFence(tx, memberKeys, checked.requestId)) return { kind: "deferred", reason: "capacity" };
+    if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
       ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
         ? textProfileFence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
@@ -256,7 +263,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null): 
         class: checked.class, pool: checked.pool, routeId: checked.routeId, provider: checked.provider,
         model: checked.model, providerBudgetId: route.providerBudgetId, groupId: route.groupId,
         epoch: state.epoch, revision: state.revision, policyHash: state.policyHash!, state: "waiting",
-        logicalWorkKey: logicalKey,
+        logicalWorkKey: logicalKey, ...(memberKeys ? { logicalMemberKeys: memberKeys } : {}),
         queueUntil: sql`clock_timestamp() + ${state.policy.queueTtlMs} * interval '1 millisecond'` }).returning();
       await event(tx, waiting, "queued", null, "waiting");
     }
@@ -310,7 +317,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const first = ai1ModelDispatchSchema.safeParse(value);
   const second = first.success ? first : ai2ModelDispatchSchema.safeParse(value);
   const item = second.success ? second : ai1ItemModelDispatchSchema.safeParse(value);
-  const bound = item.success ? item : textProfileModelDispatchSchema.safeParse(value);
+  const profile = item.success ? item : textProfileModelDispatchSchema.safeParse(value);
+  const bound = profile.success ? profile : reasonTranslationModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -323,7 +331,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
     if (row.logicalWorkKey !== null && (!bound.success || row.dispatchBindingHash !== bound.data.bindingHash
       || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.logicalWorkKey?.startsWith("ai2:")
         ? "ai2_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:profile:")
-          ? "text_profile_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+          ? "text_profile_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:reason:ko:")
+            ? "reason_translation_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -718,6 +727,126 @@ export async function reconcileTextProfileGatewayTerminal(terminal: TextProfileG
       return { kind: "already_settled" };
     }
     if (row.state !== "dispatched" && row.state !== "indeterminate") fail("text_profile_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+
+function fixedReasonTranslationIdentity(value: ModelCapacityRequestIdentity, members: readonly ReasonTranslationMember[]): string {
+  const logical = reasonTranslationLogicalWorkKey(members);
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "reason-translate"
+    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_reason_translation_capacity_identity");
+  return logical;
+}
+async function reasonTranslationFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
+  const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'reason-translate'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+/** Durable sorted membership belongs to the very first waiting INSERT. */
+export async function requestReasonTranslationModelSlot(value: ModelCapacityRequest,
+  members: readonly ReasonTranslationMember[]): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = reasonTranslationInputSchema.shape.members.parse(members);
+  return requestSlot(checked, fixedReasonTranslationIdentity(checked, snapshot), reasonTranslationMemberKeys(snapshot));
+}
+
+declare const reasonTranslationLockBrand: unique symbol;
+export type ReasonTranslationCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [reasonTranslationLockBrand]: true }>;
+const reasonTranslationLocks = new WeakMap<ReasonTranslationCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; members: readonly ReasonTranslationMember[]; finished: boolean }>();
+
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockReasonTranslationModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; members: readonly ReasonTranslationMember[];
+}): Promise<ReasonTranslationCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const members = reasonTranslationInputSchema.shape.members.parse(value.members);
+  const logical = fixedReasonTranslationIdentity(identity, members);
+  const state = await control(tx);
+  const snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys, reasonTranslationMemberKeys(members))) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+    && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch
+    || row.revision !== state.revision || row.policyHash !== state.policyHash
+    || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await reasonTranslationFence(tx, reasonTranslationMemberKeys(members), row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as ReasonTranslationCapacityDispatchLock;
+  reasonTranslationLocks.set(locked, { tx, row, identity, members, finished: false });
+  return locked;
+}
+
+export async function finishReasonTranslationModelCapacityDispatch(tx: ProductTransaction, lock: ReasonTranslationCapacityDispatchLock,
+  value: ReasonTranslationDispatchBinding): Promise<ReasonTranslationModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = reasonTranslationLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_reason_translation_capacity_dispatch_lock");
+  const binding = reasonTranslationDispatchBindingSchema.parse(value);
+  if (!isDeepStrictEqual(binding.members, proof.members) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || binding.model !== proof.identity.model
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.role.instanceId !== proof.identity.owner.instanceId
+    || binding.role.bootId !== proof.identity.owner.bootId) fail("reason_translation_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = reasonTranslationDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("reason_translation_model_reservation_lost");
+  const dispatch = reasonTranslationModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+
+export async function reconcileReasonTranslationGatewayTerminal(terminal: ReasonTranslationGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readReasonTranslationGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readReasonTranslationGatewayTerminal(terminal);
+  if (!native) fail("invalid_reason_translation_gateway_terminal");
+  const evidence = reasonTranslationGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    // Completion uses the historical dispatch, not today's policy validity.
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
+      || !isDeepStrictEqual(row.logicalMemberKeys, reasonTranslationMemberKeys(dispatch.binding.members))
+      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
+      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
+      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("reason_translation_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
+        fail("reason_translation_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("reason_translation_gateway_terminal_state_mismatch");
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
       terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();

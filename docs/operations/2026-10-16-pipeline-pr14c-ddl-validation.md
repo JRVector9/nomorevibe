@@ -37,3 +37,9 @@ SQL 소유권 반환 후 Root가 같은 동결 helper로 독립 readback을 실�
 PR479 최초 CI38905247443은 통합 세 묶음 모두 성공했으나 기존 native timeout prefire 검증의 GC가 76.759→108.648ms로 원100ms 창을 넘어 quality가 실패했다. 원 TimeoutError와 실제 child 종료는 정상이며 실패 로그를 보존했다. Child의 prefire GC 예약만75→0ms로 앞당겼다. 원100ms timeout·250ms 대기·postfire150ms·유효창 및 회귀 assertion·production fetch 원문은 유지했다. 첫 event-loop yield 뒤 실제 GC를 실행한다.
 
 수정 후 원 실패 exact case 한 번은1 PASS/2skip(exit0)이다. 로컬 Darwin/Node24.18 결과이며 새 CI 성공을 대신하지 않는다. 원로그와 역치환 whole-byte proof는 `/tmp/nomorevibe-pr479-b-prefire-timer-final-proof-20261016.json`에 보존했다. 무변경 CI 재실행·성공 케이스 반복은 하지 않았다.
+
+## Profile 잠금 순서 후속
+
+Prefire 수정 후 CI38907142332는 quality·통합1/2/scope/GitGuardian 성공, 통합3/check 실패다. 원 `pipeline-replay-item-journal` healthy foreign owner case는 profile 설치 중55P03으로 원 권한 assertion 전에 중단됐다. 실제 로그에서 autovacuum의 catalog→relation deadlock을 확인했으며 최종 second_reviews blocker는 관측하지 못했다. 원 로그 `/tmp/nomorevibe-pr479-root-integration3-116993530544-20261016.log`를 보존했다.
+
+고정14개 trigger target을 정렬·중복제거하고 원 target GRANT 전에 SHARE ROW EXCLUSIVE로 획득하는4줄만 추가했다. 기존 정책/권한/trigger/binding·timeout 원문은 역변환 whole-byte exact다. NEW `tests/pipeline-replay-handler-lock-order.test.ts`는 실제 provisioner가 첫 ACL에 도달하는 prefix에서 v5/v6 대상과 순서를 확인한다. 원소스2 AssertionFAIL→같은 driver2 PASS, scoped TypeScript/ESLint exit0이다. 기록 transaction은 PostgreSQL 권한·물리 잠금 성공을 증명하지 않는다. 실제 실패 통합 case·새 DB 실행은 하지 않았고 새 필수 CI는 후속 gate다. 모든 유지보수 대기가1초 이내이거나 원 실패가 완전히 해결됐다는 주장은 하지 않는다.

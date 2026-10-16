@@ -56,6 +56,20 @@ export function parseTranslations(content: string, sources: string[]): Translate
  */
 type ChatResult = { ok: true; content: string } | { ok: false; error: string };
 
+function chatWire(body: { system: string; user: string; maxTokens: number; temperature: number }, model: string): string {
+  return JSON.stringify({
+    model, stream: false, temperature: body.temperature, reasoning_effort: "low",
+    max_tokens: body.maxTokens,
+    messages: [{ role: "system", content: body.system }, { role: "user", content: body.user }],
+  });
+}
+
+/** The native reason path uses exactly the original ordered, non-raw request. */
+export function reasonTranslationGatewayWire(texts: readonly string[], model: string): string {
+  return chatWire({ system: SYSTEM, user: JSON.stringify(texts), temperature: 0.1,
+    maxTokens: Math.min(6_000, 400 + Math.ceil(texts.join("").length * 1.2)) }, model);
+}
+
 async function chat(
   body: { system: string; user: string; maxTokens: number; temperature: number;
     routeId: "reason-translate" | "product-tagline-ko" | "product-translate" | "search-query-translate" },
@@ -70,11 +84,7 @@ async function chat(
     const response = await request(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: TRANSLATE_MODEL, stream: false, temperature: body.temperature, reasoning_effort: "low",
-        max_tokens: body.maxTokens,
-        messages: [{ role: "system", content: body.system }, { role: "user", content: body.user }],
-      }),
+      body: chatWire(body, TRANSLATE_MODEL),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
