@@ -64,7 +64,12 @@ export async function requestTakedown(
 
   const trimmed = takedownReasonText(kind, reason?.trim().slice(0, MAX_REASON));
   const values = { slug, reason: trimmed, requestedAt: new Date(), requesterHash };
-  await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx): Promise<Result<{ slug: string }>> => {
+    if (!(await lockProductGeneration(tx, product.id, slug))) return fail({ kind: "not_found" });
+    const [locked] = await tx.select({ id: products.id, status: products.status, source: products.source, claimedAt: products.claimedAt })
+      .from(products).where(and(eq(products.id, product.id), eq(products.slug, slug)));
+    if (!locked || locked.status === "banned") return fail({ kind: "not_found" });
+    if (!isUnclaimed(locked)) return fail({ kind: "forbidden", message: "주인이 있는 제품입니다. 수정 키로 직접 삭제할 수 있습니다" });
     const [before] = await tx.select({ handledAt: takedownRequests.handledAt }).from(takedownRequests)
       .where(eq(takedownRequests.slug, slug)).for("update");
     // 같은 제품에 여러 번 오면 최신 요청 하나로 남긴다 — 큐가 같은 항목으로 차지 않게. 몇 번 왔는지와 지난 처리 결과만 남긴다
@@ -80,10 +85,11 @@ export async function requestTakedown(
         },
       });
     if (!before || before.handledAt !== null) await tx.insert(cdnPurges).values({ slug, reason: "takedown" });
+    return ok({ slug });
   });
 
-  logger.info("takedown.requested", { slug, url: product.url });
-  return ok({ slug });
+  if (result.ok) logger.info("takedown.requested", { slug, url: product.url });
+  return result;
 }
 
 /** 아직 사람이 보지 않은 요청 */

@@ -619,3 +619,93 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
   return { result: parseTranslations(content ?? "", snapshot), terminal };
 }
+
+import { productTranslationModelDispatchSchema, productTranslationGatewayTerminalEvidenceSchema, type ProductTranslationModelDispatch,
+  type ProductTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { productTranslationServingContractHash, productTranslationServingContractSchema, resolveProductTranslationServingContract,
+  type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
+import { productTranslationGatewayWire, type ProductTranslationGatewayItem } from "./translate";
+import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
+import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
+
+export type PreparedProductTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string }>;
+export type ProductTranslationGatewayTerminal = Readonly<{ kind: "product_translation_gateway_terminal" }>;
+const productTranslationCalls = new WeakMap<PreparedProductTranslationGatewayCall, { wire: string;
+  contract: ProductTranslationServingContract; timeoutMs: number; used: boolean; deadline?: AbortSignal }>();
+const productTranslationTerminals = new WeakMap<ProductTranslationGatewayTerminal, ProductTranslationGatewayTerminalEvidence>();
+function validProductTranslationItems(value: unknown): value is ProductTranslationGatewayItem[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 4 && Array.from(value).every(item =>
+    !!item && typeof item === "object" && !Array.isArray(item)
+    && Object.keys(item).sort().join(",") === "field,locale,name,text"
+    && typeof item.name === "string" && typeof item.text === "string" && !!item.text.trim()
+    && ["en", "zh-Hans", "zh-Hant"].includes(item.locale) && ["tagline", "description"].includes(item.field))
+    && value.reduce((count, item) => count + item.text.length, 0) <= 4000;
+}
+/** No descriptor or injected request enables a product serving deployment. */
+export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: { model: string; timeoutMs: number }):
+  PreparedProductTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validProductTranslationItems(snapshot) || !productTranslationServingContractSchema.shape.model.safeParse(model).success
+    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveProductTranslationServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = productTranslationServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = productTranslationGatewayWire(snapshot, model);
+  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: productTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
+  productTranslationCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+/** Only this original native terminal has immutable historical evidence. */
+export function readProductTranslationGatewayTerminal(value: unknown): ProductTranslationGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? productTranslationTerminals.get(value as ProductTranslationGatewayTerminal) ?? null : null;
+}
+export async function translateProductFieldsWithReservedGateway(items: readonly ProductTranslationGatewayItem[], dispatch: ProductTranslationModelDispatch,
+  call: PreparedProductTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: KoreanTaglineBatch; terminal: ProductTranslationGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(items), state = productTranslationCalls.get(call);
+  const checked = productTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 20_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validProductTranslationItems(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_translation_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (productTranslationGatewayWire(snapshot, call.model) !== state.wire || binding.members.length !== snapshot.length
+    || binding.members.some((member, index) => {
+      const item = snapshot[index];
+      return member.locale !== item.locale || member.field !== item.field || member.sourceHash !== productTranslationSourceHash({
+        id: member.productId, name: item.name, tagline: item.field === "tagline" ? item.text : "",
+        description: item.field === "description" ? item.text : "" }, item.field);
+    }) || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("product_translation_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  state.deadline = deadline;
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  } finally { delete state.deadline; }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  const terminal: ProductTranslationGatewayTerminal = Object.freeze({ kind: "product_translation_gateway_terminal" });
+  productTranslationTerminals.set(terminal, freeze(productTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "product_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  return { result: parseKoreanTaglines(content ?? "", snapshot.length), terminal };
+}
