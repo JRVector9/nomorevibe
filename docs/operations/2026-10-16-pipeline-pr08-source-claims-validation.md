@@ -54,3 +54,11 @@ Root는 claim/collection/context/control/contract/SQL/schema·기존 caller와 �
 Root 독립 읽기 `/tmp/nomorevibe-pr08-root-readback-20261016.mjs`는 원 baseline/B 최종과84table rawµs 전체 exact·catalog(relname/relacl) exact·stage raw exact·다른연결0을 확인했다(`/tmp/nomorevibe-pr08-root-final-readback-20261016.json`). 첫 읽기의 stage table명 오기 `pipeline_stage_control`은42P01/쓰기0/연결종료였고 실제 `pipeline_stage_modes`로 수정한 읽기가 exit0이다. 이는 기능 RED가 아니다.
 
 기본 disabled/epoch1/cursor0 유지. 운영배포·DDL·provider·새consumer·활성화0. 수동 전체검사는 모든 PR 개발 종료 후 통합단계에만 실행한다. 최종0080→0081 journal/fresh migration·선행 caller PR455 병합은 이어서 root가 확인한다.
+
+## 최종 journal 통합 검증
+
+Source commit `cc2c650e223310e111150dee992e0c3d6551ca52`, main6cabb005 정상 merge `f93adbd914639f56875405cc84df0e06ff255d5d`. schema additive exports와 journal idx80/0080→idx81/0081 충돌만 해결했다. own55524 별도 `nomorevibe_pr08_migration_test`에서 `MIGRATION_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55524/nomorevibe_pr08_migration_test node scripts/migrate.mjs` 실제 exit0, 동일 명령 재실행 exit0. 로그 `/tmp/nomorevibe-pr08-root-fresh-migration-20261016.log`, `/tmp/nomorevibe-pr08-root-migration-rerun-20261016.log`.
+
+독립 readback: journal82개/마지막0080·0081 SHA 일치, source disabled·epoch1·cursor0, uptime observations/gate disabled, append-only ALWAYS trigger2개, claims/observations0·다른연결0. `/tmp/nomorevibe-pr08-root-fresh-migration-readback-20261016.json`. 기존 작업DB84table rawµs/catalog/stages exact를 다시 확인한 뒤 정확 owncontainer 정상STOP/exited0/OOMfalse/container+exclusive volume제거0(`/tmp/nomorevibe-pr08-root-cleanup-20261016.json`). **55524 재접속·재생성 금지**. 이는 변경된 migration 순서의 검사이며 전체DBsuite를 실행한 것이 아니다. source/test unchanged 범위를 반복하지 않았다.
+
+PR455 caller defer 선행에 의존하여 초안으로 제출한다. PR455 필수CI first-final human lock timeout은 별도 새55528의 제한된 재현 조사 중이며 성공이라고 기록하지 않는다. 운영기능 활성화0.
