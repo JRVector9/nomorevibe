@@ -53,3 +53,7 @@ Captured catalog 전체는 exact가 아니다. Baseline 대비6관계, agent 대
 ## 남은 검증
 
 AI1 item-bound 양성 모델 예약·실제 native 종료·historical 정산, 실제 제공자 hard token bound, 전 caller 공정성, 장시간 갱신, 호스트 총 자원/DB/provider 예산, 같은 품질의30분2배 측정, Oracle 배치·DR와 운영 활성화는 남아 있다. 현재 source/domain lock이 item SKIP LOCKED 전에 대기할 수 있으므로 모든 claim이 비차단이라고 주장하지 않는다.
+
+## 제출 시 parent 인수
+
+Root가 최신 AI2 소비자 타입 보완42710과 HTTP 수정453/5e062를 정상 parent merge했다. 첫 보호 guard는 AI2 ownership/lifecycle 두 파일의 양쪽 변경을 발견해 merge 전에 거절했다. 두쪽 diff를 직접 읽고 각 파일의 Git3way 결과가 기존 consumer 쪽 전체 bytes와 같음을 확인한 뒤 병합했으며 source 충돌0/비공유2045파일 union exact다. 원 실패 guard와 별도 검토 proof를 보존한다. Source12와 CI/README 검증 결과는 그대로이며 parent 인수 뒤 수동 전체 검사를 반복하지 않았다.
