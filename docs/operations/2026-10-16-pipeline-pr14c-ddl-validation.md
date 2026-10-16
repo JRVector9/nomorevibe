@@ -43,3 +43,9 @@ PR479 최초 CI38905247443은 통합 세 묶음 모두 성공했으나 기존 na
 Prefire 수정 후 CI38907142332는 quality·통합1/2/scope/GitGuardian 성공, 통합3/check 실패다. 원 `pipeline-replay-item-journal` healthy foreign owner case는 profile 설치 중55P03으로 원 권한 assertion 전에 중단됐다. 실제 로그에서 autovacuum의 catalog→relation deadlock을 확인했으며 최종 second_reviews blocker는 관측하지 못했다. 원 로그 `/tmp/nomorevibe-pr479-root-integration3-116993530544-20261016.log`를 보존했다.
 
 고정14개 trigger target을 정렬·중복제거하고 원 target GRANT 전에 SHARE ROW EXCLUSIVE로 획득하는4줄만 추가했다. 기존 정책/권한/trigger/binding·timeout 원문은 역변환 whole-byte exact다. NEW `tests/pipeline-replay-handler-lock-order.test.ts`는 실제 provisioner가 첫 ACL에 도달하는 prefix에서 v5/v6 대상과 순서를 확인한다. 원소스2 AssertionFAIL→같은 driver2 PASS, scoped TypeScript/ESLint exit0이다. 기록 transaction은 PostgreSQL 권한·물리 잠금 성공을 증명하지 않는다. 실제 실패 통합 case·새 DB 실행은 하지 않았고 새 필수 CI는 후속 gate다. 모든 유지보수 대기가1초 이내이거나 원 실패가 완전히 해결됐다는 주장은 하지 않는다.
+
+### 기존 실제 실패 주입의 관측 지점 갱신
+
+잠금 순서 수정 뒤 CI38911891532 quality 성공, 통합1은 기존 setup-failure fixture1개가 실패했다(다른778 PASS). 원 실제55P03은 CREATE TRIGGER 이전의 새 LOCK TABLE에서 발생했으나 fixture는 이전 CREATE TRIGGER query만 기다렸다. 실제 서비스 로그에 고정14개 관계의 SHARE ROW EXCLUSIVE timeout이 기록돼 있으며 `/tmp/nomorevibe-pr479-root-integration1-117009597450-20261016.log`로 보존했다.
+
+해당 fixture의 명칭·pg_stat_activity query 관측·오류 query 기대만 실제 선행 LOCK TABLE/정확 quoted crawl_candidates/SRE mode로 변경했다. 원 실제 blocker PID의 pg_blocking_pids 확인, observed=true·55P03·bootstrap schema/role/PUBLIC ACL/파일·디렉터리 복구 assertion과1초 lock timeout/3초 관측창/cleanup 원문은 그대로다. 네 literal 역치환은 전체 기존 test bytes exact다. Production은 추가 변경하지 않았다. 새 local DB나 actual case는 실행하지 않았으며 새 필수 CI에서 물리 검증을 진행한다.
