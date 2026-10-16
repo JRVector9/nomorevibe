@@ -52,3 +52,11 @@ DB 역할 취득은 supervisor의 첫 heartbeat보다 먼저다. 기존 테스�
 Root는 정확 컨테이너·단독 볼륨·이미지·localhost·메모리·범위·dummy 자격을 확인하고 빈 DB에 원86 migration hash/id를 대조했다. 실제 사례 후 역할 소유 해제·타 연결0을 확인하고 정상 STOP/exited0/OOMfalse 뒤 해당 컨테이너와 볼륨만 제거했다. 기존 fixture가 만든 jobs3/role1/observations4는 원형 기록했고 baseline exact 복귀로 주장하지 않는다. 증거: `/tmp/nomorevibe-pr476-root-role-health-static-proof-20261016.json`, `...final-proof...json`, `...pr476-root-role-health-db-cleanup...json`. 독립 읽기와 새 변경의 필수CI 결과는 별도로 기록한다.
 
 독립 B 읽기 리뷰 추가 P1/P2=0을 root가 전체 읽고 원198행 역변환 일치·대기/기대/생산 코드 보존을 확인했다. `/tmp/nomorevibe-pr476-b-role-health-review-20261016.md`. 이 최소 수정 후 새 head의 필수CI를 확인한다.
+
+## 후속 CI의 병렬 검색 프로필 mock 순서
+
+PR476/1eeecd68의 새CI38888262146은 scope·quality·통합1·3·보안 검사가 성공했으나 통합2에서 기존 cross-language 검색 한 사례가 실패했다(746 PASS/1 FAIL). 두 작업이 각각 DB admission을 기다린 뒤 fetch하므로 기존 FIFO 응답 mock은 제품별 요청과 같은 순서를 보장하지 않는다. 실제 CI 요청 순서는 기록되지 않아 당시 두 응답의 교환 여부를 직접 인증하지는 않는다.
+
+해당 test mock 한 hunk만 실제 user 메시지의 고정 untrusted evidence JSON을 읽어 ClubSeason/Coche의 기존 응답에 연결했다. 알 수 없거나 잘못된 입력은 거절하며 기본 응답은 없다. 기존 두 assertion·나머지26개 사례·생산 동시성/품질/timeout은 보존했다. Root/C 독립 읽기 추가 P1/P2=0, 다른2062 tracked SHA 동일, 해당 ESLint·scoped TypeScript exit0이다. 실패한 정확한 한 사례를 새 전용55572에서 최초 실행해 1 PASS/26 skip(tests479ms/총1.18초/exit0)를 확인했다. 전체 재실행·무변경CI rerun은 하지 않았다.
+
+Root는 정확 Docker/source guard actual0 후 독립 READ ONLY로 agent=root raw/catalog 전체 JSON91표103행·타연결0을 확인했다. 기존 fixture가 남긴 own products2/profile2/job1/observation1/translation1을 원형 기록했으므로 baseline raw exact는 false다. 다른86표와 captured 정의·ACL·roles·trigger·journal86은 baseline과 같다. 제품 sequence1false→2true 외 추가 수동 reset/복구DML은 없으며 기존 resetTables 자체의 초기화는 그대로다. 정상 STOP/exited0/OOMfalse 후 해당 컨테이너와 볼륨만 제거했다. `/tmp/nomorevibe-pr476-root-search-profile-final-proof-20261016.json`, `...pr476-search-profile-root-db-cleanup...json`. 수정된 새 head의 필수 CI는 별도로 확인한다.
