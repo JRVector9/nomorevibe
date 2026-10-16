@@ -19,14 +19,17 @@ beforeEach(async () => {
 const source = () => db.query.productEvidenceSources.findFirst({ where: eq(productEvidenceSources.slug, INPUT.slug) });
 
 describe("canonical site cache", () => {
-  it("returns promptly when the fetch preflight aborts the signal synchronously", async () => {
+  it("awaits actual fetch settlement after a synchronous preflight abort", async () => {
     const controller = new AbortController();
-    const fetch = vi.fn(async () => { controller.abort(); return new Promise<never>(() => {}); });
-    const result = await Promise.race([
-      refreshSiteFingerprint(INPUT, { now: NOW, fetch, signal: controller.signal }),
-      new Promise(resolve => setTimeout(() => resolve("hung"), 150)),
-    ]);
-    expect(result).toBe("budget_exhausted");
+    let settle!: (value: { ok: false; reason: "timeout" }) => void;
+    const fetch = vi.fn(async () => { controller.abort(); return new Promise<{ ok: false; reason: "timeout" }>(resolve => { settle=resolve; }); });
+    let settled=false;
+    const work=refreshSiteFingerprint(INPUT, { now: NOW, fetch, signal: controller.signal }).finally(()=>{settled=true;});
+    await vi.waitFor(()=>expect(fetch).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+    settle({ok:false,reason:"timeout"});
+    expect(await Promise.race([work,new Promise(resolve=>setTimeout(()=>resolve("hung"),150))])).toBe("budget_exhausted");
+    await work;
     expect(await source()).toBeUndefined();
   });
 
@@ -58,7 +61,9 @@ describe("canonical site cache", () => {
   });
 
   it("bounds preflight and in-flight fetch by the shared deadline without recording a false site failure", async () => {
-    const fetch = vi.fn(async () => new Promise<never>(() => {}));
+    const fetch = vi.fn(async (_url: string, options: { signal?: AbortSignal }) => new Promise<{ ok: false; reason: "timeout" }>(resolve => {
+      options.signal!.addEventListener("abort", () => resolve({ ok: false, reason: "timeout" }), { once: true });
+    }));
     const started = Date.now();
     const result = await refreshSiteFingerprint(INPUT, { now: NOW, fetch, deadlineAt: started + 100 } as Parameters<typeof refreshSiteFingerprint>[1]);
     expect(result).toBe("budget_exhausted");

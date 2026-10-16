@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/observability/logger";
@@ -31,6 +32,13 @@ export function withRoute<C extends RouteContext = RouteContext>(
       res.headers.set("x-request-id", requestId);
       return res;
     } catch (error) {
+      if (error instanceof HttpOriginPermitError) {
+        logger.info("http.deferred", { ...base, status: 503, durationMs: Date.now() - startedAt });
+        return NextResponse.json(
+          { error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요.", request_id: requestId },
+          { status: 503, headers: { "x-request-id": requestId } },
+        );
+      }
       // 처리되지 않은 예외 — 원인을 로그에 남기고, 응답에는 내부 정보를 흘리지 않는다
       logger.error("http.unhandled", { ...base, durationMs: Date.now() - startedAt, error });
       return NextResponse.json(
