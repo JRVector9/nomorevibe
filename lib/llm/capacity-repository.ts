@@ -249,10 +249,12 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
       : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
-        : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+        : checked.routeId === "product-intro-check" ? introCheckFence(tx, memberKeys, checked.requestId)
+          : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
       ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
-        ? textProfileFence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+        ? textProfileFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("bg:")
+          ? cliKeyFence(tx, logicalKey, checked.routeId, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
       live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, checked.requestId));
@@ -346,7 +348,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const korean = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
   const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
-  const bound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
+  const websearchBound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
+  const bound = websearchBound.success ? websearchBound : cliModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -357,7 +360,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (!owned(row, checked)) return false;
     if (row.logicalWorkKey !== null && (!bound.success || row.dispatchBindingHash !== bound.data.bindingHash
-      || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.logicalWorkKey?.startsWith("ai2:")
+      || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.provider === "claude-cli" || row.provider === "grok-cli"
+      ? "cli_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("ai2:")
         ? "ai2_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:profile:")
           ? "text_profile_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:reason:ko:")
             ? "reason_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-translate:")
@@ -1658,4 +1662,197 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
   const evidence = stored[0]!;
   return Object.freeze({ kind: "settled" as const, requestId: evidence.dispatch.requestId, bindingHash: evidence.dispatch.bindingHash,
     responseHash: evidence.responseHash, model: evidence.dispatch.binding.model, outcome: Object.freeze(structuredClone(evidence.outcome)) });
+}
+
+import { cliDispatchBindingSchema, cliDispatchBindingHash, cliModelDispatchSchema, cliModelTerminalEvidenceSchema,
+  introCheckInputSchema, introCheckMemberKeys, introCheckLogicalWorkKey, grokSessionLogicalWorkKey,
+  type CliDispatchBinding, type CliModelDispatch, type IntroCheckMember } from "./capacity";
+import { cliProcessTerminalEvidenceSchema } from "./cli-serving-contract";
+import type { CliProcessTerminal } from "./cli-process-runner";
+/** CLI 호출이 묶이는 고정 대상. AI1·AI2 는 gateway 와 같은 논리 키를, 감사·소개 검수·Grok 세션은 background/reviewer 키를 쓴다. */
+export type CliTarget = Readonly<{ kind: "ai1"; candidateId: number }> | Readonly<{ kind: "ai2"; candidateId: number; vote: number }>
+  | Readonly<{ kind: "audit"; itemId: number }> | Readonly<{ kind: "intro"; members: readonly IntroCheckMember[] }>
+  | Readonly<{ kind: "grok-session"; instanceId: string }>;
+type FixedCli = Readonly<{ target: CliTarget; logical: string; memberKeys: string[] | null; kinds: readonly CliDispatchBinding["kind"][] }>;
+const CLI_TARGET_KEYS = { ai1: ["candidateId"], ai2: ["candidateId", "vote"], audit: ["itemId"], intro: ["members"], "grok-session": ["instanceId"] } as const;
+const CLI_FIXED = {
+  ai1: { class: "first", routeId: "crawl-agent-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai1_legacy_cli", "ai1_item_cli"] },
+  ai2: { class: "second", routeId: "second-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai2_item_cli"] },
+  audit: { class: "background", routeId: "product-audit", providers: ["claude-cli"], kinds: ["product_audit_cli"] },
+  intro: { class: "background", routeId: "product-intro-check", providers: ["claude-cli"], kinds: ["intro_check_cli"] },
+  "grok-session": { class: "background", routeId: "grok-session-check", providers: ["grok-cli"], kinds: ["grok_session_cli"] },
+} as const;
+const safeId = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+/** Snapshot the caller's target before any held lock; malformed targets fail before SQL. */
+function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): FixedCli {
+  const kind = raw?.kind, keys = Object.hasOwn(CLI_TARGET_KEYS, kind ?? "") ? CLI_TARGET_KEYS[kind] : null;
+  if (!keys || Object.keys(raw).length !== keys.length + 1 || keys.some(key => !Object.hasOwn(raw, key))) return fail("invalid_cli_capacity_identity");
+  let target: CliTarget, logical: string, memberKeys: string[] | null = null;
+  if (raw.kind === "intro") {
+    const members = introCheckInputSchema.shape.members.safeParse(raw.members);
+    if (!members.success) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "intro", members: Object.freeze(members.data) });
+    memberKeys = introCheckMemberKeys(members.data); logical = introCheckLogicalWorkKey(members.data);
+  } else if (raw.kind === "grok-session") {
+    if (raw.instanceId !== value.owner.instanceId) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "grok-session", instanceId: raw.instanceId }); logical = grokSessionLogicalWorkKey(raw.instanceId);
+  } else if (raw.kind === "ai2") {
+    if (!safeId(raw.candidateId) || !safeId(raw.vote)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "ai2", candidateId: raw.candidateId, vote: raw.vote }); logical = `ai2:${raw.candidateId}:${raw.vote}`;
+  } else if (raw.kind === "ai1") {
+    if (!safeId(raw.candidateId)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "ai1", candidateId: raw.candidateId }); logical = `ai1:${raw.candidateId}`;
+  } else {
+    if (!safeId(raw.itemId)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "audit", itemId: raw.itemId }); logical = `bg:audit:${raw.itemId}`;
+  }
+  const fixed = CLI_FIXED[target.kind];
+  // AI1 legacy 는 gateway 선례처럼 work key 를 묶지 않는다(item 은 finish 에서 item bindingHash 로 묶는다)
+  if (value.class !== fixed.class || value.pool !== "reviewer" || value.routeId !== fixed.routeId
+    || !(fixed.providers as readonly string[]).includes(value.provider) || target.kind !== "ai1" && (!value.workKey.startsWith(`${logical}:`)
+      || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1)))) return fail("invalid_cli_capacity_identity");
+  return Object.freeze({ target, logical, memberKeys, kinds: fixed.kinds });
+}
+/** Same-key active work, or an unbound call on the same route, blocks a background CLI target. */
+async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+/** Any overlapping intro member, or an unbound intro-check call, blocks the batch. */
+async function introCheckFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
+  const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = ${"product-intro-check"}
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+function cliFence(tx: ProductTransaction, fixed: FixedCli, ownId: string): Promise<boolean> {
+  return fixed.target.kind === "ai1" ? ai1Fence(tx, fixed.logical, ownId) : fixed.target.kind === "ai2" ? ai2Fence(tx, fixed.logical, ownId)
+    : fixed.target.kind === "intro" ? introCheckFence(tx, fixed.memberKeys!, ownId) : cliKeyFence(tx, fixed.logical, CLI_FIXED[fixed.target.kind].routeId, ownId);
+}
+/** The fixed CLI target is in the very first waiting INSERT; AI1/AI2 share the gateway key so either transport fences the other. */
+export async function requestCliModelSlot(value: ModelCapacityRequest, target: CliTarget): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), fixed = fixedCliIdentity(checked, target);
+  return requestSlot(checked, fixed.logical, fixed.memberKeys ?? undefined);
+}
+declare const cliLockBrand: unique symbol;
+export type CliCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>; readonly [cliLockBrand]: true }>;
+const cliLocks = new WeakMap<CliCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; fixed: FixedCli; finished: boolean }>();
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockCliModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; target: CliTarget;
+}): Promise<CliCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const fixed = fixedCliIdentity(identity, value.target);
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== fixed.logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys ?? null, fixed.memberKeys)) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await cliFence(tx, fixed, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as CliCapacityDispatchLock;
+  cliLocks.set(locked, { tx, row, identity, fixed, finished: false });
+  return locked;
+}
+/** The binding must be the target's own kind and fixed values; item kinds bind the item lease owner, others the exact input. */
+function cliBindingFits(binding: CliDispatchBinding, fixed: FixedCli, identity: ModelCapacityRequestIdentity, logical: string | null): boolean {
+  const target = fixed.target, ownerFits = (value: { instanceId: string; bootId: string }) =>
+    value.instanceId === identity.owner.instanceId && value.bootId === identity.owner.bootId;
+  if (!fixed.kinds.includes(binding.kind) || binding.logicalWorkKey !== logical || binding.logicalWorkKey !== fixed.logical
+    || binding.routeId !== identity.routeId || binding.provider !== identity.provider || binding.model !== identity.model) return false;
+  switch (binding.kind) {
+    case "ai1_legacy_cli": return target.kind === "ai1" && binding.candidateId === target.candidateId;
+    case "ai1_item_cli": return target.kind === "ai1" && binding.review.candidateId === target.candidateId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.item.bindingHash}` && ownerFits(binding.item.owner);
+    case "ai2_item_cli": return target.kind === "ai2" && binding.review.candidateId === target.candidateId && binding.review.vote === target.vote
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.item.bindingHash}` && ownerFits(binding.item.owner);
+    case "product_audit_cli": return target.kind === "audit" && binding.itemId === target.itemId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+    case "intro_check_cli": return target.kind === "intro" && isDeepStrictEqual(introCheckInputSchema.shape.members.parse(binding.members), target.members)
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+    case "grok_session_cli": return target.kind === "grok-session" && binding.instanceId === target.instanceId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+  }
+}
+/** The fixed domain caller proves its own rows/lease in this same TX before this final reservation CAS. */
+export async function finishCliModelCapacityDispatch(tx: ProductTransaction, lock: CliCapacityDispatchLock,
+  value: CliDispatchBinding): Promise<CliModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = cliLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_cli_capacity_dispatch_lock");
+  const binding = cliDispatchBindingSchema.parse(value);
+  if (!cliBindingFits(binding, proof.fixed, proof.identity, proof.row.logicalWorkKey)) fail("cli_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = cliDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("cli_model_reservation_lost");
+  const dispatch = cliModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+const CLI_KIND_CLASS: Record<CliDispatchBinding["kind"], RequestRow["class"]> = { ai1_legacy_cli: "first", ai1_item_cli: "first",
+  ai2_item_cli: "second", product_audit_cli: "background", intro_check_cli: "background", grok_session_cli: "background" };
+/** The historical dispatch rebuilt from the actual locked row; null unless every row column agrees with its immutable binding. */
+function cliRowDispatch(row: RequestRow | undefined): CliModelDispatch | null {
+  if (!row?.dispatchedAt || !row.token) return null;
+  const parsed = cliModelDispatchSchema.safeParse({ requestId: row.requestId, owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId },
+    token: row.token, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash, binding: row.dispatchBinding, bindingHash: row.dispatchBindingHash });
+  if (!parsed.success) return null;
+  const dispatch = parsed.data, binding = dispatch.binding;
+  const workKey = binding.kind === "ai1_legacy_cli" ? row.workKey : binding.kind === "ai1_item_cli" || binding.kind === "ai2_item_cli"
+    ? `${binding.logicalWorkKey}:${binding.item.bindingHash}` : `${binding.logicalWorkKey}:${binding.inputHash}`;
+  const memberKeys = binding.kind === "intro_check_cli" ? introCheckMemberKeys(binding.members) : null;
+  return row.logicalWorkKey === binding.logicalWorkKey && isDeepStrictEqual(row.logicalMemberKeys ?? null, memberKeys)
+    && row.routeId === binding.routeId && row.provider === binding.provider && row.model === binding.model
+    && row.class === CLI_KIND_CLASS[binding.kind] && row.pool === "reviewer" && row.workKey === workKey
+    && isDeepStrictEqual(row.dispatchBinding, binding) ? dispatch : null;
+}
+/**
+ * Only the runner's opaque terminal settles a CLI call — every ending (exited, killed, spawn_failed, not_started) is a physical end.
+ * Its request, transport and C must equal the historical dispatch; today's policy, mode, owner or job never block completion.
+ */
+export async function reconcileCliProcessTerminal(terminal: CliProcessTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readCliProcessTerminal } = await import("./cli-process-runner");
+  const native = readCliProcessTerminal(terminal);
+  if (!native) fail("invalid_cli_process_terminal");
+  const process = cliProcessTerminalEvidenceSchema.parse(native);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, process.requestId)).for("update");
+    const dispatch = cliRowDispatch(row);
+    if (!dispatch || process.totalTokenBound !== dispatch.binding.totalTokenBound
+      || !isDeepStrictEqual(process.transport, dispatch.binding.transport)) return fail("cli_process_terminal_binding_mismatch");
+    const evidence = cliModelTerminalEvidenceSchema.parse({ version: 1, kind: "cli_model_terminal", dispatch, process }), evidenceHash = reviewHash(evidence);
+    if (row!.state === "settled") {
+      if (row!.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row!.terminalEvidence, evidence)) fail("cli_process_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row!.state !== "dispatched" && row!.state !== "indeterminate") fail("cli_process_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row!.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row!.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
 }

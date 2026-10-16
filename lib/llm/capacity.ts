@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
+import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
 
 const identity = (max: number) => z.string().min(1).max(max)
   .refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "invalid_identity");
@@ -713,3 +714,130 @@ export const websearchQueryGatewayTerminalEvidenceSchema = z.object({ version: z
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_websearch_query_terminal_usage");
 export type WebsearchQueryGatewayTerminalEvidence = Readonly<z.infer<typeof websearchQueryGatewayTerminalEvidenceSchema>>;
+
+/**
+ * CLI 자식 프로세스 호출 kind(PR05c-3). 도메인 binding 은 각 gateway 선례와 같고, wire/serving 해시 대신 runner 가 실제 spawn 값으로
+ * 만든 transport 를 묶는다. AI1·AI2 는 gateway 와 같은 논리 키라 transport 가 달라도 한 후보·한 표에 활성 호출은 하나다.
+ * 모양·해시만 본다 — 행·도메인 권한은 잠근 DB 행이, 물리 종료는 runner 의 opaque terminal 만 준다. C 는 개수 한도에 쓰지 않는 증거다.
+ */
+const cliReviewerProvider = z.enum(["claude-cli", "grok-cli"]);
+const cliJob = <N extends string>(name: N) => z.object({ name: z.literal(name), token: z.uuid(),
+  requestedVersion: z.number().int().nonnegative().safe() }).strict();
+const cliCanonical = (value: unknown) => JSON.stringify(canonical(value));
+const cliTransportCharge = (value: { provider: string; model: string; transport: { provider: string; model: string };
+  totalTokenBound: number; chargedTokens: number }) => value.transport.provider === value.provider && value.transport.model === value.model
+  && value.chargedTokens === value.totalTokenBound;
+export const ai1LegacyCliDispatchBindingSchema = z.object({
+  kind: z.literal("ai1_legacy_cli"), version: z.literal(1), logicalWorkKey: identity(160),
+  candidateId: positive, attemptId: positive, inputHash: sha64, sourceRevisionHash: sha64, reviewPolicyHash: sha64,
+  promptVersion: identity(120), rulesVersion: identity(120), provider: cliReviewerProvider, model: identity(200),
+  routeId: z.literal("crawl-agent-review"), stageEpoch: positive, transport: cliTransportSchema,
+  totalTokenBound: positive, chargedTokens: positive, job: cliJob("crawl-agent-review"),
+}).strict().refine(value => value.logicalWorkKey === `ai1:${value.candidateId}`, "invalid_ai1_cli_logical_work")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
+export const ai1ItemCliDispatchBindingSchema = z.object({
+  kind: z.literal("ai1_item_cli"), version: z.literal(1), logicalWorkKey: identity(160), attemptId: positive,
+  review: ai1ItemDispatchBindingSchema.shape.review, item: ai1ItemDispatchBindingSchema.shape.item,
+  routeId: z.literal("crawl-agent-review"), provider: cliReviewerProvider, model: identity(200),
+  transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive,
+}).strict()
+  .refine(value => value.logicalWorkKey === `ai1:${value.review.candidateId}`, "invalid_ai1_cli_logical_work")
+  .refine(value => {
+    const review = itemBindingSchema.safeParse(value.review);
+    return review.success && review.data.stage === "ai1" && value.item.workKey === `ai1:${review.data.candidateId}`
+      && value.item.bindingHash === itemBindingHash(review.data);
+  }, "invalid_ai1_cli_item_binding")
+  .refine(value => value.review.reviewer.provider === value.provider && value.review.reviewer.model === value.model, "invalid_ai1_cli_reviewer")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
+export const ai2ItemCliDispatchBindingSchema = z.object({
+  kind: z.literal("ai2_item_cli"), version: z.literal(1), logicalWorkKey: identity(160),
+  review: ai2DispatchBindingSchema.shape.review, rowIdentityHash: sha64, failureCount: z.number().int().nonnegative().safe(),
+  inputPolicyHash: sha64, item: ai2DispatchBindingSchema.shape.item, routeId: z.literal("second-review"),
+  provider: cliReviewerProvider, model: identity(200), transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive,
+}).strict()
+  .refine(value => value.logicalWorkKey === `ai2:${value.review.candidateId}:${value.review.vote}`, "invalid_ai2_cli_logical_work")
+  .refine(value => {
+    const review = itemBindingSchema.safeParse(value.review);
+    return review.success && review.data.stage === "ai2" && value.item.workKey === `ai2:${review.data.secondReviewId}`
+      && value.item.bindingHash === itemBindingHash(review.data);
+  }, "invalid_ai2_cli_item_binding")
+  .refine(value => value.review.reviewer.provider === value.provider && value.review.reviewer.model === value.model, "invalid_ai2_cli_reviewer")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
+/** 감사 행 하나. 감사가 굳힌 provider·model·버전과의 일치와 attempts 자격은 호출자의 도메인 증명이다(장부는 모양만). */
+export const productAuditCliDispatchBindingSchema = z.object({
+  kind: z.literal("product_audit_cli"), version: z.literal(1), logicalWorkKey: identity(160), itemId: positive, campaignId: positive,
+  productId: positive, slug: identity(80), inputHash: sha64, promptVersion: identity(40), rulesVersion: identity(40),
+  attempts: z.number().int().nonnegative().safe(), provider: z.literal("claude-cli"), model: identity(200), routeId: z.literal("product-audit"),
+  transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive, job: cliJob("product-audit"),
+}).strict().refine(value => value.logicalWorkKey === `bg:audit:${value.itemId}`, "invalid_product_audit_cli_logical_work")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
+/** 소개 검수 묶음 1–10건. check 는 product_intro_checks 행 전체의 raw hash 이고 자격이 아니다. */
+export const introCheckMemberSchema = z.object({ productId: positive, slug: identity(80), sourceHash: sha64,
+  taglineSource: z.enum(["maker", "ai_page", "ai_readme", "ai_both", "ai_fixed", "editor"]),
+  check: z.discriminatedUnion("kind", [z.object({ kind: z.literal("absent") }).strict(),
+    z.object({ kind: z.literal("present"), rowIdentityHash: sha64, attempts: z.number().int().nonnegative().safe() }).strict()]),
+}).strict();
+export type IntroCheckMember = Readonly<z.infer<typeof introCheckMemberSchema>>;
+const introCheckTargetKey = (member: IntroCheckMember) => `intro:${member.productId}`;
+export const introCheckInputSchema = z.object({ members: z.array(introCheckMemberSchema).min(1).max(10)
+  .refine(members => new Set(members.map(introCheckTargetKey)).size === members.length, "duplicate_intro_check_member"),
+  model: identity(200) }).strict();
+export type IntroCheckInput = Readonly<{ members: readonly IntroCheckMember[]; model: string }>;
+export function introCheckMemberKeys(members: readonly IntroCheckMember[]): string[] {
+  return introCheckInputSchema.shape.members.parse(members).map(introCheckTargetKey).sort();
+}
+export function introCheckLogicalWorkKey(members: readonly IntroCheckMember[]): string {
+  return `bg:intro:${createHash("sha256").update(JSON.stringify(introCheckMemberKeys(members))).digest("hex")}`;
+}
+export function introCheckInputHash(value: IntroCheckInput): string {
+  const checked = introCheckInputSchema.parse(value);
+  return createHash("sha256").update(cliCanonical({ ...checked, members: [...checked.members].sort((a, b) => {
+    const left = introCheckTargetKey(a), right = introCheckTargetKey(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  }) })).digest("hex");
+}
+export const introCheckCliDispatchBindingSchema = introCheckInputSchema.extend({
+  kind: z.literal("intro_check_cli"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("claude-cli"), routeId: z.literal("product-intro-check"), transport: cliTransportSchema,
+  totalTokenBound: positive, chargedTokens: positive, job: cliJob("product-intro-check"),
+}).strict().refine(value => {
+  const checked = introCheckInputSchema.safeParse({ members: value.members, model: value.model });
+  return checked.success && value.logicalWorkKey === introCheckLogicalWorkKey(checked.data.members)
+    && value.inputHash === introCheckInputHash(checked.data);
+}, "invalid_intro_check_cli_binding").refine(cliTransportCharge, "invalid_cli_transport_charge");
+/** 인스턴스마다 Grok 로그인 파일 하나 — 같은 인스턴스의 세션 확인은 한 번에 하나다. */
+export const grokSessionInputSchema = z.object({ instanceId: identity(120), model: identity(200) }).strict();
+export type GrokSessionInput = Readonly<z.infer<typeof grokSessionInputSchema>>;
+export function grokSessionLogicalWorkKey(instanceId: string): string {
+  return `bg:grok-session:${createHash("sha256").update(identity(120).parse(instanceId)).digest("hex")}`;
+}
+export function grokSessionInputHash(value: GrokSessionInput): string {
+  return createHash("sha256").update(cliCanonical({ version: 1, kind: "grok_session_check", ...grokSessionInputSchema.parse(value) })).digest("hex");
+}
+export const grokSessionCliDispatchBindingSchema = grokSessionInputSchema.extend({
+  kind: z.literal("grok_session_cli"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("grok-cli"), routeId: z.literal("grok-session-check"), transport: cliTransportSchema,
+  totalTokenBound: positive, chargedTokens: positive, job: cliJob("grok-session-check"),
+}).strict().refine(value => value.logicalWorkKey === grokSessionLogicalWorkKey(value.instanceId)
+  && value.inputHash === grokSessionInputHash({ instanceId: value.instanceId, model: value.model }), "invalid_grok_session_cli_binding")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
+export const cliDispatchBindingSchema = z.discriminatedUnion("kind", [ai1LegacyCliDispatchBindingSchema, ai1ItemCliDispatchBindingSchema,
+  ai2ItemCliDispatchBindingSchema, productAuditCliDispatchBindingSchema, introCheckCliDispatchBindingSchema, grokSessionCliDispatchBindingSchema]);
+export type CliDispatchBinding = Readonly<z.infer<typeof cliDispatchBindingSchema>>;
+export function cliDispatchBindingHash(value: CliDispatchBinding): string {
+  return createHash("sha256").update(cliCanonical(cliDispatchBindingSchema.parse(value))).digest("hex");
+}
+export type CliModelDispatch = ModelCapacityDispatch & Readonly<{ binding: CliDispatchBinding; bindingHash: string }>;
+export const cliModelDispatchSchema = handleSchema.extend({ binding: cliDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(cliCanonical(value.binding)).digest("hex"), "invalid_cli_binding_hash")
+  .refine(value => value.binding.kind === "ai1_item_cli" || value.binding.kind === "ai2_item_cli"
+    ? value.owner.instanceId === value.binding.item.owner.instanceId && value.owner.bootId === value.binding.item.owner.bootId
+    : value.binding.kind !== "grok_session_cli" || value.owner.instanceId === value.binding.instanceId, "invalid_cli_dispatch_owner")
+  .transform(value => value as unknown as CliModelDispatch);
+/** 장부에 남는 정산 증거: 역사적 dispatch 와 runner 증거 원본. 저장된 JSON 은 정산 권한이 아니다 — opaque terminal 만 정산한다. */
+export const cliModelTerminalEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("cli_model_terminal"),
+  dispatch: cliModelDispatchSchema, process: cliProcessTerminalEvidenceSchema,
+}).strict().refine(value => value.process.requestId === value.dispatch.requestId
+  && value.process.totalTokenBound === value.dispatch.binding.totalTokenBound
+  && cliCanonical(value.process.transport) === cliCanonical(value.dispatch.binding.transport), "invalid_cli_terminal_dispatch");
+export type CliModelTerminalEvidence = Readonly<z.infer<typeof cliModelTerminalEvidenceSchema>>;
