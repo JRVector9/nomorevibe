@@ -1,5 +1,21 @@
 # 수집·검수 2배와 세 서버 운영 — PR Implementation Plan
 
+## 추가 진행 — 2026-10-16 07:13 UTC
+
+PR460 recorder 지정case 최종2PASS/원형보존/독립리뷰0/root55557 정리까지 완료해 commit 준비다. HTTP는 C가 전용55558에서 관측·실패정산 두 fixture를 보완해 원 대상2PASS를 반환 중이며 기존 CI hang 해결은 미확정이다. PR14b는 초안PR469/head361704ef로 제출, 필수CI6+GG SUCCESS를 직접 확인했다. 실제 strict restore46 실패는 유지한다. AI1 실제 request→dispatch→terminal 구현을 ledger/schema와 native transport로 나누어 진행한다. 수동 전체 테스트는 모든 PR 개발 후이며 정확 상태·소유권·명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:57 UTC
+
+PR453789의 새 CI는 HTTP rival.result/cleanup 미정산으로 통합3/check 실패해 병합을 보류했다. PR460의 별도 실패도 원로그 분석했고, C가 내부 정지 관측 계획을 검토한다. PR14b local restore 도구는 collation guard 실제2RED→same2PASS/독립 리뷰0/root55556 정리 뒤6d55f993로 로컬 commit했다. 실제 strict46 실패는 유지한다. B는 새55557에서 검수 recorder fixture1+control1만 검증하고 A는 AI1 실제 dispatch/terminal 계약을 준비한다. Root migration0084 예약/0083은 sourcebuffer 전용이다. 전체 수동 테스트는 모든 PR 개발 뒤, 운영 활성화0이다. 정확 상태·한계·명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:47 UTC
+
+PR453은 최신 main 반영 후78963fc3로 정상 push했고 새 필수 CI 확인 중이다. Main7f34c475 CI 필수6+두 image SUCCESS를 확인했다. PR460 새 CI 통합1·3은 실패했으며 TTL/lock_timeout 경합 fixture를 B가 검토한다. PR10b host DB quota source7/tests5/validation1은 root commit e0142201·아직 미push다. Child helper 실제 RED→GREEN 및 A 독립 리뷰0까지 완료했다. PR14b는 실제 dump/restore 명령 성공과 strict mismatch46 실패를 구분하며 source/target root 독립 확인 후55553·54 정상 정리했다. C는 새55556에서 collation 검사 누락을 최소3파일로 보완하고 A는 PR14c 후속 설계를 검토한다. 수동 전체 테스트는 모든 PR 개발 후다. 정확한 source/실패/소유권/명령은 CODEX_HANDOFF 최상단을 따른다.
+
+## 추가 진행 — 2026-10-16 06:31 UTC
+
+PR453529d4199 CI38860739876의필수scope/quality/통합3/check/GG전체SUCCESS확인、최신main반영후재확인남음。PR460은3349f20c로부모normalmerge/push/고유57+incoming7SHA보존。PR468readonlyDR는필수CI/최신base/고정head확인뒤main7f34c475정상병합、mainCI진행/운영배포0。PR10b source7+tests5검증·root독립DB정리뒤C발견fixtureP2두helper를DB0로보강중(55552retired)。PR14bactualdump/restorechild0이나DB설정1+DDLdeparse45의엄격대조실패를유지、재dump0/남은negative1만승인。A55553/54독점、B는PR05positivecaller읽기계획。전체수동테스트는모든PR뒤、실제2배/Oracle운영DR는미완료。정확명령·실패·소유권은CODEX_HANDOFF최상단。
+
 ## 추가 진행 — 2026-10-16 06:23 UTC
 
 PR453 진단opt-in·strictschema재사용 변경을 root직접/C독립리뷰와 범위 unit/actual3 후 **529d4199**로normalpush/remote확인했다. 실제CI성공과성능2배는미확인이다. 새CI분석상HTTP최초pending은headers뒤 rival.result이며PGbackend원인미확정이다. 모델요청재발견PR467/readonlyDR PR468은초안제출완료. B는실제DBpool/childentryquota7source와actual3PASS뒤정산중(55552), A는localdump→restore전용5파일개발/actual2 scope(55553/54)다. Retired55515–51/수동전체테스트는모든PR뒤/운영·consumer·실모델·DR활성화0. Root가최신453을460에고유57SHA보존normalmerge할예정이며정확head·파일·命令/한계는CODEX_HANDOFF최상단을따른다.
@@ -94,7 +110,7 @@ DR 조사·복원 준비(14)는 이들과 병렬로 진행할 수 있으나 실�
 
 ### migration·배포·rollback 공통 계약
 
-- 현 마지막 migration은 `0076_korean_tagline_quality_rejections.sql`이다. 새 번호는 PR의 **최신 main으로 갱신한 시점**에 하나씩 배정하고 Drizzle journal/snapshot과 함께 검증한다. 병렬 작업자가 같은 번호를 선점하지 않는다.
+- 2026-10-16 main7f34c475의 마지막 migration은 `0081_evidence_source_claims.sql`이다. 개발 stack의 `0082_job_batches.sql`은 PR460, `0083_source_buffer.sql`은 PR466 전용이며 root가 다음 AI1 dispatch/terminal companion에 `0084`를 예약했다. 새 번호는 최신 main·의존 stack을 확인한 root가 하나씩 배정하고 Drizzle journal/snapshot과 함께 검증한다. 병렬 작업자가 같은 번호를 선점하지 않는다.
 - schema 추가는 additive로 시작하고 기본 legacy/disabled를 유지한다. 새 consumer를 켜는 PR은 먼저 기존 claim 중단→inflight drain→mode/token 전환을 테스트한다. producer의 다음 단계 신호는 중단하지 않는다.
 - migration이 필요한 PR은 전용 테스트 DB의 재실행·이전 데이터 유지부터 확인한다. 운영에서는 drain→직접 PostgreSQL migration 종료0→한 역할 canary→다음 역할 순서다.
 - 권한/배치/역할/관측 schema 버전을 맞춘다. 런타임은 PgBouncer, migration은 직접 연결을 사용한다. 외부 HTTP/모델 응답 중 DB transaction/connection을 점유하지 않는다.
