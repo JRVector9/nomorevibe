@@ -8,6 +8,7 @@ import { and, desc, eq, inArray, isNotNull, isNull, like, ne, notInArray, or, sq
 import { db } from "@/lib/db";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
+import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import {
   products,
   crawlCandidates,
@@ -300,6 +301,8 @@ const SORTS = {
 export const notDown = sql`(not exists (
   select 1 from product_health h
   where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
+    and ${uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+      checkedAt: sql`h.checked_at`, failures: sql`h.failures`, status: sql`h.status` })}
 ) and not (${products.accessMode} <> 'website' and ${repoGone}))`;
 
 /**
@@ -308,7 +311,9 @@ export const notDown = sql`(not exists (
  */
 const isDown = sql`exists (
   select 1 from product_health h
-  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD} and h.down_since is not null
+  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
+    and ${uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+      checkedAt: sql`h.checked_at`, failures: sql`h.failures`, status: sql`h.status` })} and h.down_since is not null
 )`;
 
 /** ILIKE 의 % _ \ 는 글자 그대로 찾는다 — 앞뒤 공백은 떼고 100자까지 */
