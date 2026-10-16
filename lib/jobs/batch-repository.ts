@@ -4,7 +4,7 @@ import { evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchC
 import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
-  classifyBatchReadiness, type BatchHost, type BatchMode, type BatchRole } from './batches';
+  batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole } from './batches';
 import { STALE_LOCK_MS } from './lease';
 import type { RoleCandidate, RoleLease } from './role-leader';
 
@@ -42,7 +42,7 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
   await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
   const [candidate] = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,lease.role),eq(jobBatchCandidates.instanceId,lease.instanceId),eq(jobBatchCandidates.bootId,lease.bootId),eq(jobBatchCandidates.release,lease.release),eq(jobBatchCandidates.policyHash,row.policyHash!)));
   const [clock] = await tx.select({now:sql<string>`clock_timestamp()::text`}).from(jobBatchControl).where(eq(jobBatchControl.id,1));
-  if (!candidate || !await candidateReadiness(tx,candidate,new Date(clock.now))) throw new JobBatchBlockedError();
+  if (!candidate || !await candidateReadiness(tx,candidate,new Date(clock.now),row.epoch)) throw new JobBatchBlockedError();
   if (lease.role === 'translation') {
     const [busy] = await tx.select({name:jobs.name}).from(jobs).where(and(inArray(jobs.name,batchJobsForRole('translation','versioned')),sql`${jobs.name}<>${name}`,sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt}>=clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`)).limit(1);
     if (busy) throw new JobBatchBlockedError();
@@ -75,20 +75,34 @@ export function batchResultObservation(identity: BatchExecutionIdentity | null, 
   const count = resultCount(name,events);
   return identity && count > 0 ? { ...identity, job: name, count, requestedVersion: version } : null;
 }
-async function candidateReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date) {
-  const names = batchJobsForRole(candidate.role as BatchRole,'versioned');
-  if (!names.length) return false;
-  const observations = await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,names.map(name => `batch-result:${candidate.instanceId}:${name}`)));
-  return observations.some(observation => {
-    const result = observation.value.batchResult;
-    return classifyBatchReadiness({ role: candidate.role as BatchRole, host: candidate.host as BatchHost,
-      instanceId: candidate.instanceId, release: candidate.release, at: now.getTime(), evidence: candidate.capability, result,readback:candidate.resultEvidence }).ready;
-  });
+async function candidateEvidence(tx: ProductTransaction, candidate: BatchCanaryCandidate, now: Date, controlEpoch: number) {
+  const names = batchJobsForRole(candidate.role,'versioned'), anchorKey = batchCanaryAnchorKey(candidate.role,candidate.instanceId);
+  const observations = await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,
+    [anchorKey,...names.map(name => `batch-result:${candidate.instanceId}:${name}`)]));
+  const anchor=observations.find(row=>row.key===anchorKey);
+  return classifyBatchCandidateEvidence({candidate,controlEpoch,at:now.getTime(),anchor:anchor?.value,
+    latest:observations.filter(row=>row.key!==anchorKey).map(row=>({key:row.key,result:row.value.batchResult}))});
+}
+async function candidateReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
+  return (await candidateEvidence(tx,{...candidate,role:candidate.role as BatchRole,host:candidate.host as BatchHost},now,controlEpoch)).report.ready;
+}
+/** Only the successful acquirer pins an already operator-verified ACK. Never refresh an existing anchor. */
+async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCandidates.$inferSelect, controlEpoch: number) {
+  const candidate={...row,role:row.role as BatchRole,host:row.host as BatchHost};
+  const [clock]=await tx.execute<{at:string}>(sql`SELECT clock_timestamp()::text AS at`);
+  const evidence=await candidateEvidence(tx,candidate,new Date(clock.at),controlEpoch);
+  if(!evidence.report.ready) throw new JobBatchBlockedError();
+  if(evidence.anchorToPin) await tx.insert(operationsObservations).values({key:batchCanaryAnchorKey(candidate.role,candidate.instanceId),
+    value:evidence.anchorToPin,observedAt:sql`clock_timestamp()`}).onConflictDoNothing();
+  // Re-read after possible INSERT/unique-key wait. A foreign/changed anchor is never overwritten.
+  const [after]=await tx.execute<{at:string}>(sql`SELECT clock_timestamp()::text AS at`);
+  const checked=await candidateEvidence(tx,candidate,new Date(after.at),controlEpoch);
+  if(!checked.report.ready || checked.anchorToPin) throw new JobBatchBlockedError();
 }
 /** Candidate heartbeat cannot write capability or result evidence. Operator evidence is separately reviewed. */
 export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease | null> {
   const candidate = batchCandidateSchema.parse(value);
-  return onPrimary(() => db.transaction(async tx => {
+  return onPrimary(async () => { try { return await db.transaction(async tx => {
     const control = await lockJobBatch(tx);
     if (control.mode !== 'versioned' || control.writerContractVersion < 1 || candidate.batchVersion !== 1) return null;
     const policy = checkedPolicy(control), instance = policy.instances.find(item => item.instanceId === candidate.instanceId);
@@ -101,26 +115,31 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
     const [current] = await tx.select().from(roleLeases).where(eq(roleLeases.role,candidate.role)).for('update');
     const [clock] = await tx.select({now:sql<string>`clock_timestamp()::text`}).from(jobBatchControl).where(eq(jobBatchControl.id,1));
     const now = new Date(clock.now);
-    if (current.leaseUntil > now) return current.ownerInstanceId === candidate.instanceId && current.ownerBootId === candidate.bootId &&
-      current.ownerRelease === candidate.release ? {...candidate,epoch:current.epoch,batchEpoch:control.epoch} : null;
+    if (current.leaseUntil > now) {
+      if(current.ownerInstanceId !== candidate.instanceId || current.ownerBootId !== candidate.bootId || current.ownerRelease !== candidate.release) return null;
+      const [own]=await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,candidate.role),eq(jobBatchCandidates.instanceId,candidate.instanceId)));
+      await pinCandidateCanary(tx,own,control.epoch);
+      return {...candidate,epoch:current.epoch,batchEpoch:control.epoch};
+    }
     const candidates = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,candidate.role),eq(jobBatchCandidates.policyHash,control.policyHash!),
       sql`${jobBatchCandidates.observedAt} >= clock_timestamp() - interval '30 seconds'`));
     const ready = [];
     for (const row of candidates) {
       if (row.release !== policy.release || !policy.instances.some(item => item.instanceId === row.instanceId && item.host === row.host)) continue;
-      if (await candidateReadiness(tx,row,now)) ready.push(row);
+      if (await candidateReadiness(tx,row,now,control.epoch)) ready.push(row);
     }
     ready.sort((a,b) => batchHostOrder(candidate.role).indexOf(a.host as BatchHost)-batchHostOrder(candidate.role).indexOf(b.host as BatchHost) || a.instanceId.localeCompare(b.instanceId));
     if (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId) return null;
     const rank = batchHostOrder(candidate.role).indexOf(instance.host);
     if (rank > 0 && current.leaseUntil.getTime() + rank * 20_000 > now.getTime()) return null;
+    await pinCandidateCanary(tx,ready[0],control.epoch);
     // Election does not revoke either healthy jobs or independently owned item leases.
     const [claimed] = await tx.update(roleLeases).set({ownerInstanceId:candidate.instanceId,ownerBootId:candidate.bootId,
       ownerKind:candidate.kind,ownerRelease:candidate.release,epoch:sql`${roleLeases.epoch}+1`,leaseUntil:sql`clock_timestamp()+interval '45 seconds'`,updatedAt:sql`clock_timestamp()`})
       .where(and(eq(roleLeases.role,candidate.role),sql`${roleLeases.epoch}<9007199254740991`)).returning({epoch:roleLeases.epoch});
     if (!claimed) throw new Error('role_epoch_exhausted');
     return {...candidate,epoch:claimed.epoch,batchEpoch:control.epoch};
-  }));
+  }); } catch(error) { if(error instanceof JobBatchBlockedError) return null; throw error; } });
 }
 export async function renewBatchRole(value: RoleLease): Promise<boolean> {
   const lease = batchLeaseSchema.parse(value);

@@ -67,3 +67,46 @@ export function classifyBatchReadiness(input: {role: BatchRole; host: BatchHost;
   if(!readback.success || readback.data.job!==result.data.job || readback.data.instanceId!==input.instanceId || readback.data.host!==input.host || readback.data.release!==input.release || readback.data.requestedVersion!==result.data.requestedVersion || Date.parse(readback.data.observedAt)<Date.parse(result.data.recordedAt) || Date.parse(readback.data.observedAt)>input.at) return {ready:false,reason:'result_unverified'} as const;
   return { ready: true, reason: 'ready' } as const;
 }
+
+export type BatchCanaryCandidate = { role: BatchRole; instanceId: string; host: BatchHost; bootId: string; release: string; policyHash: string; capability: unknown; resultEvidence: unknown };
+export type BatchCanaryAnchor = { batchCanary: { version: 1; kind: 'verified_batch_canary'; candidateIdentityHash: string; readbackHash: string; result: BatchResultEvidence } };
+export type BatchCandidateEvidenceInput = { candidate: BatchCanaryCandidate; controlEpoch: number; at: number; anchor: unknown; latest: readonly {key:string;result:unknown}[] };
+export type BatchCandidateEvidence = { report: {ready:boolean;reason:string}; selectedResult?: BatchResultEvidence; anchorToPin?: BatchCanaryAnchor };
+export function batchCanaryAnchorKey(role: BatchRole, instanceId: string) {
+  return 'batch-canary:' + createHash('sha256').update(JSON.stringify([role,instanceId])).digest('hex');
+}
+const anchorIdentitySchema = z.object({ role:z.enum(BATCH_ROLES),instanceId:z.string().min(1).max(48),
+  host:z.enum(BATCH_HOSTS),bootId:z.string().min(1).max(36),release:z.string().min(1).max(120),
+  policyHash:z.string().regex(/^[0-9a-f]{64}$/),controlEpoch:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER) }).strict();
+export const batchCanaryAnchorSchema = z.object({batchCanary:z.object({version:z.literal(1),kind:z.literal('verified_batch_canary'),
+  candidateIdentityHash:z.string().regex(/^[0-9a-f]{64}$/),readbackHash:z.string().regex(/^[0-9a-f]{64}$/),result:resultSchema}).strict()}).strict();
+const canaryHash = (value:unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+
+/** A stored anchor preserves an already verified ACK; it never certifies fresh domain work. */
+export function classifyBatchCandidateEvidence(input: BatchCandidateEvidenceInput): BatchCandidateEvidence {
+  const {candidate} = input;
+  const identity = anchorIdentitySchema.safeParse({role:candidate.role,instanceId:candidate.instanceId,host:candidate.host,
+    bootId:candidate.bootId,release:candidate.release,policyHash:candidate.policyHash,controlEpoch:input.controlEpoch});
+  if(!identity.success) return {report:{ready:false,reason:'identity_mismatch'}};
+  const classify = (result:unknown) => classifyBatchReadiness({role:candidate.role,host:candidate.host,instanceId:candidate.instanceId,
+    release:candidate.release,at:input.at,evidence:candidate.capability,result,readback:candidate.resultEvidence});
+  const readback = batchResultReadbackSchema.safeParse(candidate.resultEvidence);
+  if(input.anchor !== undefined) {
+    const anchor=batchCanaryAnchorSchema.safeParse(input.anchor);
+    if(!anchor.success) return {report:{ready:false,reason:'anchor_invalid'}};
+    if(anchor.data.batchCanary.candidateIdentityHash!==canaryHash(identity.data)) return {report:{ready:false,reason:'anchor_identity_mismatch'}};
+    if(!readback.success || anchor.data.batchCanary.readbackHash!==canaryHash(readback.data)) return {report:{ready:false,reason:'anchor_readback_mismatch'}};
+    const report=classify(anchor.data.batchCanary.result);
+    return {report,...(report.ready ? {selectedResult:anchor.data.batchCanary.result} : {})};
+  }
+  let report: BatchCandidateEvidence['report'] = classify(null);
+  for(const row of input.latest) {
+    const result=resultSchema.safeParse(row.result);
+    if(!result.success || row.key!==`batch-result:${candidate.instanceId}:${result.data.job}` ||
+      !batchJobsForRole(candidate.role,'versioned').includes(result.data.job)) continue;
+    report=classify(result.data);
+    if(report.ready && readback.success) return {report,selectedResult:result.data,anchorToPin:{batchCanary:{version:1,kind:'verified_batch_canary',
+      candidateIdentityHash:canaryHash(identity.data),readbackHash:canaryHash(readback.data),result:result.data}}};
+  }
+  return {report};
+}
