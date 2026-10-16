@@ -1,7 +1,8 @@
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
+import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introEvidence } from "@/lib/domain/products/intro-check";
+import { checkIntrosWithModelCapacity } from "@/lib/domain/products/intro-check-model-capacity";
 import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/lib/domain/products/intro-checks";
 
 /**
@@ -34,11 +35,20 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       ctx.log("intro_check.done", { ...counts, drained: true });
       return { done: true };
     }
-    // 공통 모델 슬롯이 open·draining 이면 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
-    await assertCliModelAdmission({ routeId: "product-intro-check", provider: "claude-cli", model: INTRO_CHECK_MODEL });
-    const result = await checkIntros(tasks.map((task) => ({
-      slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product),
-    })), { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), run, signal: ctx.signal });
+    // 공통 모델 슬롯: disabled 면 원 호출 그대로. open 이고 CLI 계약이 있으면 슬롯을 얻어 부르고, 그 밖(draining·매핑·계약 없음)과
+    // 슬롯 대기는 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
+    const capacity = await backgroundCliPath("product-intro-check", INTRO_CHECK_MODEL);
+    const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
+    const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+    const native = capacity === "native" ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
+      // 슬롯을 얻은 뒤 띄우기 직전에 이 틱의 여유를 다시 본다(루프 조건과 같다)
+      beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= MIN_CALL_MS }) : null;
+    // 그사이 묶음이 바뀌었거나 여유가 모자라 띄우지 않았다 — 적지 않고 이 틱을 접는다
+    if (native && native.kind !== "result") {
+      ctx.log("intro_check.not_started", { ...counts, skipped: native.kind === "skipped" });
+      return { done: false };
+    }
+    const result = native ? native.result : await checkIntros(items, { timeoutMs, run, signal: ctx.signal });
     for (const task of tasks) {
       const judgement = result.ok ? result.judgements.get(task.product.slug) : undefined;
       // 답이 빠진 제품은 실패로 적는다 — 다음에 다시 본다

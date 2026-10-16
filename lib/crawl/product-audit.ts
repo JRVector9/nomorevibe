@@ -204,6 +204,24 @@ export async function markAuditNoSource(itemId: number, lease: JobLease): Promis
   });
 }
 
+/**
+ * 공통 슬롯 dispatch 의 도메인 증명(05c-5). 감사 행을 잠그고, 아직 답이 없고 시도가 남았으며 원본이 있는 같은 감사의 행인지,
+ * 감사가 돌고 있고 굳힌 제공자·모델·글 버전이 그대로인지, 입력을 읽은 제품이 이 행의 제품인지 본다. 아니면 null(묻지 않는다).
+ * attempts 는 그 시점의 사진이다 — 세는 규칙은 recordAuditResult 그대로다.
+ */
+export async function lockAuditDispatchItem(tx: ProductTransaction, value: { itemId: number; slug: string;
+  campaign: Pick<ProductAuditCampaign, "id" | "provider" | "model" | "promptVersion" | "rulesVersion"> }): Promise<{ productId: number; attempts: number } | null> {
+  const [item] = await tx.select().from(productAuditItems).where(eq(productAuditItems.id, value.itemId)).for("update");
+  if (!item || item.campaignId !== value.campaign.id || item.aiDecision || item.attempts >= MAX_REVIEW_ATTEMPTS || item.errorCode === "no_source") return null;
+  const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId)).for("share");
+  if (!campaign || campaign.status !== "running" || campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION
+    || campaign.promptVersion !== value.campaign.promptVersion || campaign.rulesVersion !== value.campaign.rulesVersion
+    || campaign.provider !== value.campaign.provider || campaign.model !== value.campaign.model) return null;
+  const [product] = await tx.select({ slug: products.slug, status: products.status }).from(products).where(eq(products.id, item.productId));
+  if (!product || product.slug !== value.slug || !(LISTED as readonly string[]).includes(product.status)) return null;
+  return { productId: item.productId, attempts: item.attempts };
+}
+
 export type AuditCall = { itemId: number; startedAt: Date; provider: string; model: string; input: ReviewInput };
 
 /**
