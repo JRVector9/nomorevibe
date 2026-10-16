@@ -1,5 +1,9 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 추가 진행 — 2026-10-16 10:13 UTC
+
+AI2 featureb19a05db→최신475 정상parentmerged29cc2c8 완료/비공유2059보호·source충돌0. CI/README는 fresh native→AI2consumer→AI1consumer→shared3에서exact3exclude로편성했고 설치Vitest filesOnly+BaseSequencer 실제목록205=3+68/67/67 정확1회 확인했다. 첫/tmpchecker의기존473 text파일누락FAIL을보존·고정예상목록/원SHA검사만보완, discovery/DB/테스트본문반복0이다. 초안PR 제출중/다음AI1itemnative 배타구현준비, 전체미완료·운영activation0·수동전체는모든PR개발뒤다. 정확기록은CODEX_HANDOFF최상단.
+
 ## 추가 진행 — 2026-10-16 10:09 UTC
 
 AI2 item-native 실제ledger6/runtime8 distinct 및 기존compat1 PASS, 원688회귀복원/신규468별도파일/단위범위58·21·18/범위정적0/독립리뷰 완료다. Root55567·68독립확인과정상정리완료(active0/다음55569). A DB 전체catalog exact=false와root시점9관계통계·frozenxid delta/최초comparatorFAIL은그대로보존하며 raw91표96행/journal86/권한·정의의기록된physical필드외동일/conn0를확인했다. PR475 최신33c5ed3d 필수CI전부SUCCESS다. AI2 validation·취합commit→최신parent보호merge→새actual CI 정확1회편성→초안PR 진행중이며전체미완료/운영activation0/수동전체는모든PR개발뒤다. 정확증거·실패·다음명령은 CODEX_HANDOFF 최상단.

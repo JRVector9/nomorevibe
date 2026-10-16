@@ -41,4 +41,4 @@ Runtime 전용55568도 root가 독립 READ ONLY REPEATABLE READ로 raw91표96행
 - 원본 회귀 복원: `/tmp/nomorevibe-pr05b5-root-actual-test-separation-20261016.json`.
 - 독립 리뷰: B ledger/runtime 및 최소fix·recovery, C native/compatibility 보고서. Root가 해당 원문과 소스 diff를 직접 읽었다. Coverage와 compatibility 두 문제는 후속 리뷰에서 추가 발견해 수정했다.
 
-실 provider serving identity·hard-C enforcement·원격 종료, 실제15초 renewal 장기 동작, 전 caller/text 연결, 검증된 replay의 새 native 지원, 실제30분 같은 품질2배·서버 전체 예산·Oracle 운영/DR는 남는다. 수동 전체 테스트는 모든 PR 개발이 끝난 뒤 실행한다. CI 편성은 최종 통합 후 새 파일이 기존 회귀와 함께 정확히 한 번 포함되는지 별도 확인한다.
+실 provider serving identity·hard-C enforcement·원격 종료, 실제15초 renewal 장기 동작, 전 caller/text 연결, 검증된 replay의 새 native 지원, 실제30분 같은 품질2배·서버 전체 예산·Oracle 운영/DR는 남는다. 수동 전체 테스트는 모든 PR 개발이 끝난 뒤 실행한다. CI는 shard1에서 새 native 실제 파일→AI2 소비자→AI1 소비자를 먼저 실행하고 shared3에서 이 세 파일만 제외한다. 설치 Vitest filesOnly 목록과 실제 BaseSequencer로 205파일=3+68/67/67, 모든 기존 파일과 새 파일이 정확히 한 번 포함됨을 확인했다. 원 workflow inverse와 source15+parent12 및 기존688 SHA도 동일하다. 첫 목록 checker에서 기존473 text 파일을 예상 목록에서 빠뜨린 실패는 보존하고 고정 목록·원SHA 검사만 고쳤다. 파일 발견과 checker만 실행했으며 테스트 본문/DB는 실행하지 않았다. `/tmp/nomorevibe-pr05b5-root-ci-coverage-20261016.json`. 필수 새 head CI의 결과는 별도로 확인한다.
