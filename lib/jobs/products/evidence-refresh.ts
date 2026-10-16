@@ -13,6 +13,8 @@ import {
 import { ProductGenerationChangedError } from "@/lib/domain/products/generation";
 import { beginProductRefresh, dueProductRefreshRequests, saveProductRefreshProgress } from "@/lib/domain/evidence/refresh-requests";
 import { JobLeaseLostError } from "@/lib/jobs/control";
+import { db, onPrimary } from "@/lib/db";
+import { JobBatchBlockedError, lockJobBatch } from "@/lib/jobs/batch-repository";
 
 export type EvidenceRefreshCursor = { afterSlug?: string; requestTurn?: boolean };
 export type EvidenceRefreshCounts = {
@@ -49,15 +51,24 @@ export async function refreshProductEvidenceJob(
   // Existing consumer only. Source mode has a separately owned durable lane;
   // GitHub/request-level retry deadlines never control canonical admission.
   if (await canonicalSourceMode()) {
-    const owner = roleLeaseFromEnv("crawler", process.env);
-    if (!owner || !ctx.lease) throw new Error("evidence_source_owner_required");
-    for (let turn = 0; turn < 4 && ctx.hasBudget() && !ctx.signal?.aborted && Date.now() < deadlineAt; turn++) {
-      const result = await executeCanonicalEvidenceSource({ owner: { instanceId: owner.instanceId, bootId: owner.bootId },
-        job: ctx.lease, signal: ctx.signal, deadlineAt });
-      if (result.state === "idle") break;
-      if (result.state === "recorded" || result.state === "failed") {
-        counts.attempted++; counts.factsChanged += result.factsChanged;
-        if (result.state === "recorded") counts.succeeded++; else counts.failed++;
+    const batch = await onPrimary(() => db.transaction(lockJobBatch));
+    if (batch.mode === "draining") return { done: false, deferred: "stage_blocked" };
+    if (batch.mode === "legacy") {
+      const owner = roleLeaseFromEnv("crawler", process.env);
+      if (!owner || !ctx.lease) throw new Error("evidence_source_owner_required");
+      try {
+        for (let turn = 0; turn < 4 && ctx.hasBudget() && !ctx.signal?.aborted && Date.now() < deadlineAt; turn++) {
+          const result = await executeCanonicalEvidenceSource({ owner: { instanceId: owner.instanceId, bootId: owner.bootId },
+            roleLease: owner, job: ctx.lease, signal: ctx.signal, deadlineAt });
+          if (result.state === "idle") break;
+          if (result.state === "recorded" || result.state === "failed") {
+            counts.attempted++; counts.factsChanged += result.factsChanged;
+            if (result.state === "recorded") counts.succeeded++; else counts.failed++;
+          }
+        }
+      } catch (error) {
+        if (error instanceof JobBatchBlockedError) return { done: false, deferred: "stage_blocked" };
+        throw error;
       }
     }
   }

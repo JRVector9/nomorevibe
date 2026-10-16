@@ -20,8 +20,7 @@ export function batchPolicyHash(value: BatchPolicy): string {
 const SPLIT_JOBS = {
   translation: ['reason-translate', 'product-tagline-ko', 'product-translate'],
   'product-health': ['uptime-ping'], 'official-news': ['news-refresh'],
-  // PR08's canonical-only adapter must be installed before this role can claim anything.
-  'site-evidence': [],
+  'site-evidence': ['product-site-evidence-refresh'],
 } satisfies Record<string, readonly string[]>;
 export function batchJobsForRole(role: BatchRole, mode: BatchMode): string[] {
   if (mode === 'draining' || !BATCH_ROLES.includes(role)) return [];

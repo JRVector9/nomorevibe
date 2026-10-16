@@ -3,6 +3,16 @@ import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { runWorker } from '@/scripts/worker';
 
+it('registers canonical site refresh only as a sixty-second version-one site-evidence job', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'product-site-evidence-refresh')).toEqual({
+    name: 'product-site-evidence-refresh', role: 'site-evidence', intervalMs: 60_000, batchVersion: 1,
+  });
+  for (const role of ['crawler', 'reviewer', 'publisher', 'text', 'maintenance'] as const) {
+    expect(jobsForRole(role)).not.toContain('product-site-evidence-refresh');
+    expect(lanesForRole(role).flat()).not.toContain('product-site-evidence-refresh');
+  }
+});
+
 it('GitHub 연동 재조회는 maintenance에서 15분마다 실행한다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'github-integration-reconcile')).toEqual({
     name: 'github-integration-reconcile', role: 'maintenance', intervalMs: 15 * 60_000,
