@@ -7,6 +7,18 @@ const FETCH_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2MB
 
+const cappedTimeoutSources = new WeakMap<AbortSignal, AbortSignal>();
+
+function cappedRequestSignal(caller: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!caller) return timeout;
+  const signal = AbortSignal.any([caller, timeout]);
+  // Native any follows sources lazily. Preserve an expired source through GC
+  // until the request/body's composite signal is no longer reachable.
+  cappedTimeoutSources.set(signal, timeout);
+  return signal;
+}
+
 /**
  * 외부 페이지에 보내는 기본 헤더.
  *
@@ -201,9 +213,7 @@ export async function fetchCapped(
     try {
       response = await request(current, {
         redirect: "manual",
-        signal: options.signal
-          ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS)])
-          : AbortSignal.timeout(options.timeoutMs ?? FETCH_TIMEOUT_MS),
+        signal: cappedRequestSignal(options.signal, options.timeoutMs ?? FETCH_TIMEOUT_MS),
         headers,
       });
     } catch (error) {
