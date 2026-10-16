@@ -3,6 +3,7 @@ import { batchPolicySchema, batchPolicyHash, BATCH_HOSTS, BATCH_ROLES } from '@/
 import { modelCapacityPolicySchema, modelCapacityPolicyHash } from '@/lib/llm/capacity';
 import { httpOriginPolicySchema, httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { UptimeSourcesSchema } from '@/lib/domain/products/uptime-policy';
+import { buildPipelineRuntimeStatus, type PipelineRuntimeStatus } from './pipeline-runtime-status';
 
 export type ControlMetric = { label: string; value: number | null };
 export type ControlReadback = { key: string; label: string; mode: string | null; epoch: number | null; revision: number | null;
@@ -10,7 +11,8 @@ export type ControlReadback = { key: string; label: string; mode: string | null;
 export type PipelineControlStatus = { observedAt: string | null; controls: ControlReadback[];
   stages: { stage: string; mode: string | null; epoch: number | null; contract: number | null; live: number | null; unsettled: number | null }[];
   backlog: ControlMetric[]; hosts: { host: string; roles: { role: string; ready: boolean; reason: string }[] }[];
-  owners: { role: string; instanceId: string | null; host: string | null; release: string | null; epoch: number | null; live: boolean | null }[] };
+  owners: { role: string; instanceId: string | null; host: string | null; release: string | null; epoch: number | null; live: boolean | null }[];
+  runtime: PipelineRuntimeStatus };
 const CONTROL_LABELS = { batch: '작업 배치', source: '사이트 근거', model: '공통 모델 슬롯', http: '공유 HTTP', uptime: '연결 관측' };
 const positive = z.number().int().positive().safe();
 const count = z.number().int().nonnegative().safe();
@@ -33,7 +35,7 @@ const ownersSchema = z.array(z.object({ role: z.string(), instanceId: z.string()
   epoch: count, live: z.boolean() }));
 const readinessSchema = z.object({ mode: z.enum(['legacy', 'draining', 'versioned']), epoch: positive, policyHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   candidates: z.array(z.object({ role: z.enum(BATCH_ROLES), host: z.enum(BATCH_HOSTS), instanceId: z.string(), release: z.string(),
-    ready: z.boolean(), reason: z.string() })) });
+    anchor: z.boolean().nullable().optional(), ready: z.boolean(), reason: z.string() })) });
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -47,7 +49,8 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
       epoch: null, revision: null, policy: 'unknown', metrics: [], note: '읽지 못했습니다.' })),
     stages: ['fetch', 'ai1', 'ai2'].map(stage => ({ stage, mode: null, epoch: null, contract: null, live: null, unsettled: null })),
     backlog: ['수집 대기', '수집 재시도 예약', '심사 대기', '요청 남은 작업'].map(label => metric(label, null)),
-    hosts: BATCH_HOSTS.map(host => ({ host, roles: BATCH_ROLES.map(role => ({ role, ready: false, reason: 'readback_unknown' })) })), owners: [] };
+    hosts: BATCH_HOSTS.map(host => ({ host, roles: BATCH_ROLES.map(role => ({ role, ready: false, reason: 'readback_unknown' })) })), owners: [],
+    runtime: buildPipelineRuntimeStatus(null, { at: null, batchMode: null, batchPolicy: null, readiness: null, owners: null }) };
   if (!clock.success) return result;
   const set = (key: keyof typeof CONTROL_LABELS, values: Partial<ControlReadback>) => Object.assign(result.controls.find(row => row.key === key)!, values);
   const batch = batchSchema.safeParse(input.batch);
@@ -78,7 +81,8 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
     set('model', { mode: valid || unset ? row.mode : null, epoch: row.epoch, revision: row.revision,
       policy: valid ? 'verified' : unset ? 'unset' : 'unknown',
       metrics: [metric('대기', row.waiting), metric('최장 대기(분)', age !== null && age >= 0 ? age : null), metric('예약', row.reserved),
-        metric('미정산', row.dispatched + row.indeterminate), metric('설정 상한', valid ? parsed.data.globalLimit : null)],
+        metric('미정산', row.dispatched + row.indeterminate), metric('dispatched', row.dispatched), metric('indeterminate', row.indeterminate),
+        metric('설정 상한', valid ? parsed.data.globalLimit : null)],
       note: '미정산은 dispatched + indeterminate입니다. 기한 지난 대기·예약도 정리 전에는 남습니다. 설정 상한은 실제 모델 제공용량을 인증하지 않습니다.' });
   }
   const http = httpSchema.safeParse(input.http);
@@ -100,7 +104,7 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
   }
   const backlog = backlogSchema.safeParse(input.backlog);
   if (backlog.success) result.backlog.forEach((row, i) => { row.value = [backlog.data.fetchReady, backlog.data.fetchBackoff, backlog.data.human, backlog.data.jobRequests][i]; });
-  const ready = readinessSchema.safeParse(readiness);
+  const ready = readinessSchema.safeParse(readiness), anchors = new Map<string, boolean | null>();
   if (ready.success && batch.success && ready.data.epoch === batch.data.epoch && ready.data.mode === batch.data.mode
     && ready.data.policyHash === batch.data.policyHash && batchPolicy) {
     for (const host of result.hosts) for (const role of host.roles) {
@@ -108,17 +112,22 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
       const matching = candidates.filter(row => row.release === batchPolicy!.release
         && batchPolicy!.instances.some(instance => instance.instanceId === row.instanceId && instance.host === row.host));
       const selected = matching.find(row => row.ready) ?? matching[0];
-      if (selected) Object.assign(role, { ready: selected.ready, reason: selected.reason });
+      if (selected) { Object.assign(role, { ready: selected.ready, reason: selected.reason }); anchors.set(`${host.host}:${role.role}`, selected.anchor ?? null); }
       else role.reason = candidates.length ? 'identity_mismatch' : 'candidate_missing';
     }
   }
   const owners = ownersSchema.safeParse(input.owners);
   if (owners.success) result.owners = owners.data.map(row => ({ ...row,
     host: batchPolicy?.instances.find(instance => instance.instanceId === row.instanceId)?.host ?? null }));
+  result.runtime = buildPipelineRuntimeStatus(input, { at: clock.data, batchMode: result.controls.find(row => row.key === 'batch')!.mode, batchPolicy,
+    readiness: result.hosts.flatMap(host => host.roles.map(role => ({ host: host.host, role: role.role, reason: role.reason,
+      anchor: anchors.get(`${host.host}:${role.role}`) ?? null }))),
+    owners: owners.success ? result.owners.map(row => ({ role: row.role, host: row.host, live: row.live === true })) : null });
   return result;
 }
 
-/** One primary statement for control/ledger readback; no locks or runtime admission. */
+/** One primary statement for control/ledger readback; no locks or runtime admission.
+ * PR13b: host-slot 장부·provider budget 별 모델 슬롯·DR writer fence·Oracle 후보도 같은 문장·같은 DB 시계로 읽는다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
   const [{ db, onPrimary }, { sql }, { readJobBatchReadiness }] = await Promise.all([
     import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'),
@@ -165,7 +174,26 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             'human',(SELECT count(*) FROM crawl_candidates WHERE state='needs_review'),
             'jobRequests',(SELECT count(*) FROM jobs WHERE requested_version>processed_version)),
           'owners', coalesce((SELECT jsonb_agg(jsonb_build_object('role',role,'instanceId',owner_instance_id,'release',owner_release,
-            'epoch',epoch,'live',owner_instance_id IS NOT NULL AND lease_until>c.at::timestamp) ORDER BY role) FROM role_leases),'[]'::jsonb)
+            'epoch',epoch,'live',owner_instance_id IS NOT NULL AND lease_until>c.at::timestamp) ORDER BY role) FROM role_leases),'[]'::jsonb),
+          'hostSlots', jsonb_build_object('atMs',(extract(epoch FROM c.at)*1000)::float8,
+            'rows',coalesce((SELECT jsonb_agg(jsonb_build_object('key',key,'value',value) ORDER BY key) FROM operations_observations WHERE key LIKE 'host-slot:%'),'[]'::jsonb)),
+          'modelBudgets', coalesce((SELECT jsonb_agg(to_jsonb(b) ORDER BY b.budget) FROM (SELECT r.provider_budget_id AS budget,
+              count(*) FILTER (WHERE r.state='waiting') AS waiting, count(*) FILTER (WHERE r.state='reserved') AS reserved,
+              count(*) FILTER (WHERE r.state='reserved' AND r.reserved_until<=c.at) AS "expiredReserved",
+              count(*) FILTER (WHERE r.state='dispatched') AS dispatched, count(*) FILTER (WHERE r.state='indeterminate') AS indeterminate,
+              min(r.queued_at) FILTER (WHERE r.state='waiting') AS "oldestWaitingAt",
+              min(coalesce(r.dispatched_at,(SELECT min(e.created_at) FROM model_capacity_events e WHERE e.request_id=r.request_id AND e.kind='dispatch_started')))
+                FILTER (WHERE r.state IN ('dispatched','indeterminate')) AS "oldestUnsettledAt",
+              count(*) FILTER (WHERE r.state IN ('dispatched','indeterminate') AND r.dispatched_at IS NULL
+                AND NOT EXISTS (SELECT 1 FROM model_capacity_events e WHERE e.request_id=r.request_id AND e.kind='dispatch_started')) AS untimed
+            FROM model_capacity_requests r WHERE r.state IN ('waiting','reserved','dispatched','indeterminate') GROUP BY r.provider_budget_id) b),'[]'::jsonb),
+          'dr', (SELECT jsonb_build_object('state',f.state,'epoch',f.writer_epoch,'reason',f.reason,'updatedAt',f.updated_at,
+            'promoted',(SELECT count(*) FROM dr_promotions WHERE state='promoted'),
+            'sealed',coalesce((SELECT jsonb_agg(jsonb_build_object('id',p.promotion_id,'fromEpoch',p.from_epoch,'toEpoch',p.to_epoch,'sealedAt',p.sealed_at,
+              'evidence',(SELECT coalesce(jsonb_agg(DISTINCT e.kind ORDER BY e.kind),'[]'::jsonb) FROM dr_promotion_evidence e WHERE e.promotion_id=p.promotion_id))
+              ORDER BY p.sealed_at) FROM dr_promotions p WHERE p.state='sealed'),'[]'::jsonb)) FROM dr_writer_fence f WHERE f.id=1),
+          'oracleCandidates', coalesce((SELECT jsonb_agg(jsonb_build_object('role',role,'instanceId',instance_id,'release',release,'capability',capability)
+            ORDER BY role,instance_id) FROM job_batch_candidates WHERE host='oracle-osaka-smoke'),'[]'::jsonb)
         ) AS snapshot FROM observation_clock c`);
       return row?.snapshot;
     }),
