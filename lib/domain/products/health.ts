@@ -9,7 +9,7 @@ import {
 import {
   findProductGenerationId,
   ProductGenerationChangedError,
-  withProductGeneration,
+  lockProductGeneration,
 } from "./generation";
 
 /**
@@ -34,7 +34,10 @@ export const DOWN_THRESHOLD = 3;
  */
 export { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
+import { uptimeControl } from "@/lib/db/product-uptime-schema";
+import { writeHealthResult } from "./health-record";
+import { uptimeNegativeAllowed } from "./uptime-negative-gate";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 
 export type PingTarget = { id: number; slug: string; url: string };
 
@@ -72,16 +75,14 @@ export async function recordPing(
   expectedUrl?: string,
   signal?: AbortSignal,
 ): Promise<void> {
-  const alive = status >= 200 && status < 400;
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
-  const successfulLatency = alive && latencyMs !== null
-    ? Math.max(0, Math.min(2_147_483_647, Math.round(latencyMs)))
-    : null;
-  const day = new Date(observedAt.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const productId = expectedProductId ?? await findProductGenerationId(slug);
   if (productId === null) throw new ProductGenerationChangedError();
 
-  await withProductGeneration(slug, productId, async (tx) => {
+  await db.transaction(async tx => {
+    const [policy] = await tx.select().from(uptimeControl).where(eq(uptimeControl.id, 1)).for("share");
+    if (policy?.gateEnabled) return;
+    if (!(await lockProductGeneration(tx, productId, slug))) throw new ProductGenerationChangedError();
     if (signal?.aborted) return;
     let resetStreak = false;
     if (expectedUrl !== undefined) {
@@ -97,47 +98,9 @@ export async function recordPing(
       resetStreak = current.resetStreak;
     }
     if (signal?.aborted) return;
-    await tx
-      .insert(productHealth)
-      .values({
-        slug,
-        checkedAt: observedAt,
-        status,
-        latencyMs: successfulLatency,
-        failures: alive ? 0 : 1,
-        downSince: alive ? null : observedAt,
-      })
-      .onConflictDoUpdate({
-        target: productHealth.slug,
-        set: {
-          checkedAt: observedAt,
-          status,
-          latencyMs: successfulLatency,
-          failures: alive ? sql`0` : resetStreak ? sql`1` : sql`${productHealth.failures} + 1`,
-          // 죽기 시작한 시각은 처음 실패한 때로 둔다 — 매번 갱신하면 얼마나 죽어 있었는지 잃는다
-          downSince: alive
-            ? sql`null`
-            : resetStreak ? observedAt : sql`coalesce(${productHealth.downSince}, ${observedAt.toISOString()}::timestamp)`,
-        },
-      });
-    await tx.insert(productHealthDaily).values({
-      slug,
-      day,
-      checks: 1,
-      successes: alive ? 1 : 0,
-      latencyTotalMs: successfulLatency ?? 0,
-      latencySamples: successfulLatency === null ? 0 : 1,
-    }).onConflictDoUpdate({
-      target: [productHealthDaily.slug, productHealthDaily.day],
-      set: {
-        checks: sql`${productHealthDaily.checks} + 1`,
-        successes: sql`${productHealthDaily.successes} + ${alive ? 1 : 0}`,
-        latencyTotalMs: sql`${productHealthDaily.latencyTotalMs} + ${successfulLatency ?? 0}`,
-        latencySamples: sql`${productHealthDaily.latencySamples} + ${successfulLatency === null ? 0 : 1}`,
-      },
-    });
+    await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
-    if (lease) await assertJobLease(tx, lease);
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
   });
 }
@@ -208,12 +171,14 @@ export async function healthFor(slugs: string[]): Promise<Map<string, HealthSign
       slug: productHealth.slug,
       failures: productHealth.failures,
       downSince: productHealth.downSince,
+      allowed: uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+        checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status }),
     })
-    .from(productHealth)
+    .from(productHealth).innerJoin(products, eq(products.slug, productHealth.slug))
     .where(inArray(productHealth.slug, slugs));
 
   return new Map(
-    rows.map((r) => [r.slug, { down: r.failures >= DOWN_THRESHOLD, since: r.downSince }]),
+    rows.map((r) => [r.slug, { down: r.failures >= DOWN_THRESHOLD && r.allowed, since: r.downSince }]),
   );
 }
 
@@ -221,6 +186,8 @@ export type DownProduct = ProductHealth & { name: string; url: string };
 
 const downWhere = () => and(
   gte(productHealth.failures, DOWN_THRESHOLD),
+  uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+    checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status }),
   isNotNull(productHealth.downSince),
   inArray(products.status, ["verified", "seeded"]),
 );

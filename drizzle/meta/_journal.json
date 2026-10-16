@@ -561,6 +561,13 @@
       "when": 1793200000000,
       "tag": "0079_http_origin_permits",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1793300000000,
+      "tag": "0080_uptime_observations",
+      "breakpoints": true
     }
   ]
 }
