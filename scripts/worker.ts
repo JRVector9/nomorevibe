@@ -1,3 +1,4 @@
+import { assertHostDbEntry } from '@/lib/db/host-budget';
 /** Role-specific consumer. Scheduling belongs to scheduler.ts, never this poll loop. */
 import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
@@ -231,6 +232,7 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
+  assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
   await withRuntimeProcess(options.role, async (signal, report) => {
     const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
