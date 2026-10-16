@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { beforeEach, expect, it, vi } from "vitest";
 import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 
@@ -85,4 +86,15 @@ it("한도에 걸리면 저장하지 않고 미루며, 다른 실패는 이 항�
   await run({ stargazers_count: 12 });
   expect(mocks.save).not.toHaveBeenCalled();
   expect(mocks.failed).toHaveBeenCalledWith(entry("maker/pdf-skill"), "패키지 확인 실패 — GitHub transport");
+});
+
+it("permit waits return the claim without ACK or failed-attempt writes", async () => {
+  mocks.page.mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
+  mocks.repo.mockResolvedValue({ ok: true, value: { homepage: "https://pdf-skill.app", stargazers_count: 12 } });
+  const claim = entry("maker/pdf-skill");
+  mocks.dequeue.mockResolvedValueOnce([claim]).mockResolvedValue([]);
+  expect(await fetchCrawlDocuments(context())).toEqual({ done: false, deferred: "http_origin_permit" });
+  expect(mocks.defer).toHaveBeenCalledWith([claim], undefined);
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.failed).not.toHaveBeenCalled();
 });

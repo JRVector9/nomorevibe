@@ -62,3 +62,7 @@ Source commit `cc2c650e223310e111150dee992e0c3d6551ca52`, main6cabb005 정상 me
 독립 readback: journal82개/마지막0080·0081 SHA 일치, source disabled·epoch1·cursor0, uptime observations/gate disabled, append-only ALWAYS trigger2개, claims/observations0·다른연결0. `/tmp/nomorevibe-pr08-root-fresh-migration-readback-20261016.json`. 기존 작업DB84table rawµs/catalog/stages exact를 다시 확인한 뒤 정확 owncontainer 정상STOP/exited0/OOMfalse/container+exclusive volume제거0(`/tmp/nomorevibe-pr08-root-cleanup-20261016.json`). **55524 재접속·재생성 금지**. 이는 변경된 migration 순서의 검사이며 전체DBsuite를 실행한 것이 아니다. source/test unchanged 범위를 반복하지 않았다.
 
 PR455 caller defer 선행에 의존하여 초안으로 제출한다. PR455 필수CI first-final human lock timeout은 별도 새55528의 제한된 재현 조사 중이며 성공이라고 기록하지 않는다. 운영기능 활성화0.
+
+## PR455 병합 후 최신 base 인수
+
+선행 PR455는 필수 CI38838284085 성공 후 main06643dd로 정상 병합했다. 이를 PR08에 정상 merge했다. 유일한 생산 충돌은 evidence-refresh job 맨 위의 기존 source-mode import3개이며 PR08 원 frozen 내용을 보존했다. 원 manifest의 lib/tests/drizzle24개는 모두 merge 전 PR08 HEAD와 byte 동일함을 확인했다. 새 동작 변경이나 local 테스트 반복은 없고 최신 base 필수 CI를 다시 확인한다. 수동 전체 검사는 모든 PR 개발 종료 뒤 최종 통합에서만 수행한다.
