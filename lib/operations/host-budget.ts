@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { hostDbBudgetCatalog, type HostDbBudget } from '@/lib/db/host-budget';
 import { batchJobsForRole } from '@/lib/jobs/batches';
+import { emergencyAdmissionConfig, type EmergencyAdmissionConfig } from './emergency-admission';
 
 /**
  * host 합계 예산(PR10e) — 같은 PHYSICAL_HOST 의 여러 프로세스가 합쳐서 넘지 않아야 하는 물리 한도.
@@ -30,9 +31,9 @@ export function hostBudgetEnforcement(env: Readonly<Record<string, string | unde
   } catch { throw new Error('host_budget_invalid'); }
 }
 
-/** 장부에 참여하지 않는 진입점은 켜진 설정을 조용히 무시하지 않고 거절한다 — 세지 않은 연결이 합계를 깨므로 */
+/** 장부에 참여하지 않는 진입점은 켜진 설정을 조용히 무시하지 않고 거절한다 — 세지 않은 연결이 합계를 깨므로(비상 admission 도 장부 위에서만 센다) */
 export function assertHostBudgetEntrySupported(env: Readonly<Record<string, string | undefined>>): void {
-  if (hostBudgetEnforcement(env).mode === 'enabled') throw new Error('host_budget_entry_unsupported');
+  if (hostBudgetEnforcement(env).mode === 'enabled' || emergencyAdmissionConfig(env).mode === 'enabled') throw new Error('host_budget_entry_unsupported');
 }
 
 /** 선언값: Oracle host 번역 실제 호출 합 1(로드맵 PR10 행, PR11 계획 80행). M3·mini 는 이 gate 로 세지 않는다 */
@@ -48,11 +49,16 @@ function canonical(value: unknown): unknown {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)
     .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]));
 }
-/** 같은 host 의 모든 프로세스가 같은 roster·한도여야 합계가 성립한다. release 는 rolling copy 번호로 구분하므로 뺀다 */
-export function hostBudgetShape(policy: HostDbBudget, pressure: HostPressureLimits): string {
+/**
+ * 같은 host 의 모든 프로세스가 같은 roster·한도여야 합계가 성립한다. release 는 rolling copy 번호로 구분하므로 뺀다.
+ * 비상 admission 예산도 host 합계라 켜졌으면 함께 묶는다(꺼져 있으면 PR10e shape 그대로).
+ */
+export function hostBudgetShape(policy: HostDbBudget, pressure: HostPressureLimits,
+  emergency?: Omit<Extract<EmergencyAdmissionConfig, { mode: 'enabled' }>, 'mode'>): string {
   const roster = { ...policy, release: null, roles: [...policy.roles].sort(), reviewerConsumers: policy.reviewerConsumers ? [...policy.reviewerConsumers].sort() : null };
   return createHash('sha256').update(JSON.stringify(canonical({ ledger: 1, roster, pressure,
-    translationCalls: HOST_TRANSLATION_CALLS[policy.host] ?? null }))).digest('hex');
+    translationCalls: HOST_TRANSLATION_CALLS[policy.host] ?? null,
+    emergency: emergency && { budget: emergency.budget, verifiedModelJobs: [...emergency.verifiedModelJobs].sort() } }))).digest('hex');
 }
 export function hostProcessIdentity(process: { kind: string; role: string; consumer?: string; replica: number; copy: number }): string {
   return `${process.kind}:${process.role}:${process.role === 'reviewer' ? process.consumer ?? 'legacy' : '-'}:${process.replica}:${process.copy}`;
@@ -65,10 +71,13 @@ const ProcessRowSchema = z.object({ type: z.literal('process'), ...common, ident
   rssBytes: z.number().min(0), eventLoopDelayMs: z.number().min(0), heartbeatGapMs: z.number().min(0), loadPerCpu: z.number().min(0) });
 const TranslationRowSchema = z.object({ type: z.literal('translation'), ...common, token: z.uuid(), job: z.string().min(1),
   owner: z.string().min(1), holdMs: z.number().int().positive() });
-const RowSchema = z.discriminatedUnion('type', [ProcessRowSchema, TranslationRowSchema]);
+/** 비상 admission 이 들인 잡 하나(PR16b). 번역 slot 과 같은 lease·hold·token 규칙이다 */
+const EmergencyRowSchema = TranslationRowSchema.extend({ type: z.literal('emergency') });
+const RowSchema = z.discriminatedUnion('type', [ProcessRowSchema, TranslationRowSchema, EmergencyRowSchema]);
 export type HostProcessRow = z.infer<typeof ProcessRowSchema>;
 export type HostTranslationRow = z.infer<typeof TranslationRowSchema>;
-export type HostLedgerRow = (HostProcessRow | HostTranslationRow) & { key: string };
+export type HostEmergencyRow = z.infer<typeof EmergencyRowSchema>;
+export type HostLedgerRow = (HostProcessRow | HostTranslationRow | HostEmergencyRow) & { key: string };
 export type HostDeferReason = 'host_slot_unconfirmed' | 'host_ledger_invalid' | 'host_policy_mismatch' | 'host_process_duplicate'
   | 'host_db_clients_exhausted' | 'host_http_unbound' | 'host_pressure_cpu' | 'host_pressure_rss' | 'host_pressure_event_loop'
   | 'host_pressure_heartbeat' | 'host_translation_busy' | 'host_budget_unavailable';
@@ -79,7 +88,8 @@ export function readHostLedger(host: HostDbBudget['host'], rows: readonly { key:
   const prefix = hostSlotPrefix(host), live: HostLedgerRow[] = [], expired: string[] = [];
   for (const row of rows) {
     const parsed = RowSchema.safeParse(row.value);
-    const index = row.key.startsWith(`${prefix}:t:`) ? row.key.slice(prefix.length + 3) : '';
+    const slot = `${prefix}:${parsed.data?.type === 'emergency' ? 'e' : 't'}:`;
+    const index = row.key.startsWith(slot) ? row.key.slice(slot.length) : '';
     if (!parsed.success || (parsed.data.type === 'process' ? row.key !== `${prefix}:p:${parsed.data.identity}` : !/^[1-9][0-9]*$/.test(index))) return { ok: false };
     if (parsed.data.leaseUntilMs <= nowMs) expired.push(row.key);
     else live.push({ ...parsed.data, key: row.key });

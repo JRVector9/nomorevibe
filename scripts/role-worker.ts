@@ -16,6 +16,7 @@ import { hasActiveRoleJob } from '@/lib/jobs/control';
 import { laneForJob } from '@/lib/operations/worker-progress';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 import { startHostBudget } from '@/lib/operations/host-budget-runtime';
+import { emergencyTakeoverGate } from '@/lib/operations/emergency-admission-runtime';
 import { processGroupRecorder } from '@/lib/operations/dr/repository';
 
 type Dependencies = {
@@ -131,6 +132,8 @@ async function main() {
   assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
   // host 장부 자리가 없으면 선출에 나서지 않고 standby 로 남는다(자식·일감을 띄우지 않음)
   const host = startHostBudget(process.env);
+  // 비상 admission 이 켜진 Oracle 은 recovering 동안 새 인계 역할을 가져가지 않는다(비활성이면 hook 없음)
+  const takeover = emergencyTakeoverGate(process.env);
   // D11: 이 boot(=모델 장부 owner)의 child 그룹마다 spawn 전 의도와 ESRCH 종료를 남긴다. 기록 실패 시 spawn 하지 않는다.
   const processGroup = processGroupRecorder({ instanceId: candidate.instanceId, bootId: candidate.bootId });
   const controller = new AbortController();
@@ -158,7 +161,7 @@ async function main() {
   record();
   try {
     process.exitCode = await runRoleCandidate(candidate, controller.signal, {
-      acquire: value => host.ready() ? tryAcquireRole(value) : Promise.resolve(null), renew: renewRole, release: releaseRole,
+      acquire: value => host.ready() ? tryAcquireRole(value, takeover) : Promise.resolve(null), renew: renewRole, release: releaseRole,
       checkProgress: async role => {
         if (candidate.batchVersion === 1) return false;
         // These roles have a single lane and retain their existing specialized progress policy.
