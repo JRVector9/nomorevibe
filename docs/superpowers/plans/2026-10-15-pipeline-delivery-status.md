@@ -36,7 +36,7 @@ PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안�
 | **PR05a** 비활성 공통 모델 슬롯 | **병렬 구현·직접/교차 리뷰·로컬/PR CI 완료·병합** | [#450](https://github.com/JRVector9/nomorevibe/pull/450), `99a9cefc`; PR CI38817812703/main CI38818744171 및 두 image SUCCESS | disabled·caller0·운영 미적용 | [고정 계약](2026-10-16-pipeline-pr05a-model-capacity.md)·[실제 검증](../../operations/2026-10-16-pipeline-pr05a-model-capacity-validation.md). 같은 pure baseline A3FAIL/5PASS·C3FAIL/85PASS→원8/88GREEN, 실제DB cap1→2grant RED→B16PASS/C원3GREEN. rootunit3740·lint/i18n/Python23 actual0. 최종 독립28/root결합44·tsc/build/bundle·readback/STOP actual0. PR필수CI 전체 SUCCESS 뒤 exact-head 정상병합. main CI·두 image 전체 SUCCESS 직접확인. 전체caller 상한/실모델 종료/2배 미확인 |
 | **PR01b6 gateway 보강** | **병렬 구현·직접/교차 리뷰·로컬 검증·PR 제출 완료** | [abcLLM PR1](https://github.com/JRVector9/abcLLM/pull/1), head `1ca85c4f`; OPEN, main 미병합 | 운영 미적용 | 기존 raw 원문 보존·옵션 변경 재POST 제거·실제 terminal/DONE·usage provenance. 원15RED/7control→22GREEN 뒤 교차 리뷰 P2의2RED→최종24GREEN. root 전체153PASS/1.69초·compile/diff0. 기존 품질/모델/출력 한도 유지. engine hard total cap·native baseline·2배는 별도 미완료 |
 | **PR04c-2a-4–17** | 남은 writer inventory 검토 완료 | 미병합 | 비활성 | item B5 인증·durable 외부 종료 및 후속 로드맵이 남음. 아래는 예정 검증이며 PASS 기록이 아님 |
-| **PR07a** HTTP 본문 취소·origin 정산 | **병렬 구현·직접/교차 리뷰·변경 범위 검증 완료** | 미제출 | 운영 미적용 | [계획](2026-10-16-pipeline-pr07a-http-settlement.md)·[실제 검증](../../operations/2026-10-16-pipeline-pr07a-http-settlement-validation.md). 원 C4/B8 Assertion RED→동일17GREEN·기존관련48PASS. B 독립10/합17PASS, A/B/root 리뷰 추가 P1/P2 0. 사용자 지시 전 root unit3757·typegen/tsc/lint/i18n actual0, 전체 build는 외부 node_modules symlink 제한 exit1. 종합 검증은 최종 통합 단계. 공유 permit/Oracle/2배 증거 아님 |
+| **PR07a** HTTP 본문 취소·origin 정산 | **병렬 구현·직접/교차 리뷰·변경 범위 검증·필수 CI·정상 병합 완료** | [#451](https://github.com/JRVector9/nomorevibe/pull/451), main `f93b8d63`; PR CI38823740327/main CI38824682495 및 두 image SUCCESS | 운영 미적용 | [계획](2026-10-16-pipeline-pr07a-http-settlement.md)·[실제 검증](../../operations/2026-10-16-pipeline-pr07a-http-settlement-validation.md). 원 C4/B8 Assertion RED→동일17GREEN·기존관련48PASS. B 독립10/합17PASS, A/B/root 리뷰 추가 P1/P2 0. 사용자 지시 전 root unit3757·typegen/tsc/lint/i18n actual0, 전체 build는 외부 node_modules symlink 제한 exit1. 종합 검증은 최종 통합 단계. 공유 permit/Oracle/2배 증거 아님 |
 
 PR433은 `2026-10-15T12:16:32Z` main4af0589로 병합했다. [PR CI38732534554](https://github.com/JRVector9/nomorevibe/actions/runs/38732534554)는 quality·통합3shard·check 모두 SUCCESS다. [main CI38733408567](https://github.com/JRVector9/nomorevibe/actions/runs/38733408567)는 quality·통합3shard·check·웹/워커 image 전체 SUCCESS다.
 
@@ -50,6 +50,14 @@ PR430은 `2026-10-15T09:04:44Z`, PR431은 `2026-10-15T09:54:08Z` 병합됐다. �
 image 생성 성공은 운영 적용 증거가 아니다. 마지막 확인된 운영 릴리스는 **`8020dca`**이며
 PR429–444를 위한 운영 migration·provider 설정 변경·공개 발행·수동 배포는 수행하지 않았다.
 실제 검수 모델·품질 gate·신규 GitHub/Show HN 발굴 중단·사람 판단·검색어 `api-stop`을 유지한다.
+
+## 최신 병렬 개발 — 2026-10-16
+
+- abcLLM 관리 MLX 전체 token bound는 [PR2](https://github.com/JRVector9/abcLLM/pull/2), head11bbda5 OPEN/MERGEABLE/CLEAN·GitGuardian SUCCESS다. 원 source39FAIL/11control→같은50PASS→변경 범위68PASS/0.42초, compile4PASS·root 직접 리뷰/해시 대조 완료. 고정 upstream+MIT/patch/새 release builder를 납품했으며 실제 C·serving·배포·baseline은 남았다. gateway [PR1](https://github.com/JRVector9/abcLLM/pull/1)도 운영 미적용이다.
+- B는 actual AI1legacy→AI2item TX ordinal/journal/coverage/strictseal을 구현 중이다. 원 mixed 새 기능 미지원 RED 뒤 같은2case2PASS 및 확장6PASS를 실제 보고했다. 늦은 writer 만료·원자 rollback 등 최종 검증/리뷰·PR은 아직 남았다.
+- C는 PR07b의 migration0079/공통 origin1·Oracle합2/실 native+body 정산/양 API/typed defer를 구현 중이다. root source 리뷰에서 찾은 deadline·일반 network 정산·status 보존·cancel rejection 및 이중 로컬 대기 경계를 닫은 뒤 최종 범위 회귀와 리뷰를 받는다.
+- 완료된 MLX 담당 A는 PR09의 raw 멱등 관측·지역 실패 hold·3/10회 및 sweep/final 정책 입력 보호로 이동했다. migration0080을 전용 배정했고 별도 WT/DB55522에서 defaultdisabled로 개발한다.
+- root는 각 담당의 실제 코드/로그를 직접 리뷰하고 소유권 반환 뒤 Git/공용 문서를 취합한다. 수동 전체 테스트는 모든 PR 개발 후 통합 단계에 실행한다. 위 새 기능의 운영 배포/활성화/Oracle 실제 가동/2배 달성은 아직 없다.
 
 ## PR01의 다음 검토 단위
 

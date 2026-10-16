@@ -287,3 +287,29 @@ it.each([
   expect(saveProgress).not.toHaveBeenCalled();
   expect(mocks.transaction).not.toHaveBeenCalled();
 });
+
+it("공유 HTTP permit 대기는 source 실패/재시도와 진행 완료를 기록하지 않는다", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const source = { productId: 1, slug: "test", kind: "support", sourceKey: "https://test.example/support", sourceUrl: "https://test.example/support",
+    sourceId: 1, attempts: 0, normalizedFacts: null, lastSuccessAt: null, nextAttemptAt: now, lastErrorCode: null };
+  mocks.select.mockImplementationOnce(() => rowsQuery([source]));
+  const saveProgress = vi.fn();
+  const refreshSource = vi.fn().mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
+  const result = await refreshProductEvidence("test", { now, force: true, progress: { completedKeys: [], retryAfterByKey: {} }, saveProgress,
+    dependencies: { refreshSource } });
+  expect(result).toMatchObject({ complete: false, sourcesAttempted: 0, sourcesFailed: 0, nextAttemptAt: now });
+  expect(mocks.generation).not.toHaveBeenCalled();
+  expect(saveProgress).toHaveBeenLastCalledWith({ completedKeys: [], retryAfterByKey: {} });
+});
+
+it("공유 HTTP permit 대기는 media 선언 실패/6시간 backoff를 기록하지 않는다", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  mocks.select.mockImplementationOnce(() => rowsQuery([])).mockImplementationOnce(() => rowsQuery([{ productId: 1, slug: "test", sourceUrl: "https://test.example/image.png", altText: null,
+    position: 0, declarationId: 9, declarationRevision: 1, nextAttemptAt: now }])).mockImplementationOnce(() => rowsQuery([]));
+  const saveProgress=vi.fn(),image=vi.fn().mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
+  const result=await refreshProductEvidence("test",{now,force:true,progress:{completedKeys:[],retryAfterByKey:{}},saveProgress,dependencies:{image}});
+  expect(image).toHaveBeenCalledOnce();
+  expect(result).toMatchObject({complete:false,sourcesAttempted:0,sourcesFailed:0,nextAttemptAt:now});
+  expect(mocks.transaction).not.toHaveBeenCalled();
+  expect(saveProgress).toHaveBeenLastCalledWith({completedKeys:[],retryAfterByKey:{}});
+});
