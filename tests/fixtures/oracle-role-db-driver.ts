@@ -14,10 +14,10 @@ import { observe, observeService } from '@/lib/operations/observations';
 import { readOracleRuntimePreflight } from '@/lib/runtime/oracle-preflight';
 import type { BatchRole } from '@/lib/jobs/batches';
 import postgres from 'postgres';
-import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleCanary, runOracleLegacySeedTick } from '@/lib/runtime/oracle-canary';
+import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick } from '@/lib/runtime/oracle-canary';
 
 type Input = { role: BatchRole | 'scheduler'; jobs: string[]; httpBase: string; bootId: string; negatives: string[];
-  mode?: 'role' | 'canary' | 'attest' | 'refresh' | 'preflight' | 'heartbeat' | 'negatives' | 'seed' };
+  mode?: 'role' | 'canary' | 'attest' | 'refresh' | 'preflight' | 'heartbeat' | 'negatives' | 'seed' | 'bootstrap' };
 const input = JSON.parse(process.env.ORACLE_DRIVER_INPUT ?? '{}') as Input;
 const instanceId = process.env.SERVICE_INSTANCE_ID!, release = process.env.RELEASE_TAG!;
 const failure = (error: unknown) => {
@@ -45,15 +45,26 @@ async function siteEvidence(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   return { done: false };
 }
 
+/** Canary/bootstrap ticks: the same fixture collection plus one real loopback GET through the shared origin permits,
+ * so the attest's strict released-hop requirement for the site job is met by actual participation, not by a seed. */
+async function siteEvidenceWithHttp(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  const response = await fetchCapped(`${input.httpBase}/site/${instanceId}`, { maxBytes: 65_536, timeoutMs: 5_000, signal: ctx.signal });
+  if (!response.ok || response.status !== 200) throw new Error('fixture_site_fetch_failed');
+  return siteEvidence(ctx);
+}
+
 async function main() {
   const result: Record<string, unknown> = { principal: (await db.execute<{ user: string }>(sql`SELECT current_user AS user`))[0].user };
   if (input.mode === 'negatives') { /* Only the statements below, under this principal. */ }
   else if (input.mode && input.mode !== 'role') {
     const identity = oracleCanaryIdentity(input.role, process.env), permits = process.env.HTTP_ORIGIN_PERMITS === '1';
     const attest = postgres(process.env.ORACLE_ATTEST_DATABASE_URL ?? '', { max: 1, prepare: false, onnotice: () => {} });
+    // Same fixed site collection as the role path: the real claim/record/admission run, the public URL is never fetched.
+    if (input.role === 'site-evidence') JOBS['product-site-evidence-refresh'] = siteEvidenceWithHttp as AnyJob;
     try {
       if (input.mode === 'seed') result.seed = await runOracleLegacySeedTick(identity, input.jobs[0], input.bootId);
       if (input.mode === 'canary') result.canary = await runOracleCanary({ identity, job: input.jobs[0], attest, permits });
+      if (input.mode === 'bootstrap') result.bootstrap = await runOracleBootstrap({ identity, job: input.jobs[0], attest, permits });
       if (input.mode === 'attest') result.attest = await attestOracleCanary({ identity, job: input.jobs[0], attest, permits, anchor: 'if_stale' });
       if (input.mode === 'refresh') result.refresh = await refreshOracleCapability({ identity, attest, permits });
       if (input.mode === 'preflight') result.preflight = await readOracleRuntimePreflight({ role: input.role });

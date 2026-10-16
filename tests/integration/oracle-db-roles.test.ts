@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { batchPolicyHash } from '@/lib/jobs/batches';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
-import { ORACLE_DB_PRINCIPALS, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
+import { ORACLE_DB_PRINCIPALS, ORACLE_REFRESH_PRINCIPAL, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 // Real PostgreSQL privileges. Capability/result rows seeded below are FIXTURE admission seeds that let the
@@ -63,7 +63,7 @@ async function restore(tx: postgres.TransactionSql) {
   for (const [table, trigger] of APPEND_ONLY) await tx.unsafe(`ALTER TABLE ${table} ENABLE ALWAYS TRIGGER ${trigger}`);
 }
 function child(service: OracleDbService, input: Record<string, unknown>, attestService: OracleDbService = 'attest', asRole?: Role,
-  instanceId?: string): Promise<{ code: number | null; output: Record<string, unknown> }> {
+  instanceId?: string, extraEnv: Record<string, string> = {}): Promise<{ code: number | null; output: Record<string, unknown> }> {
   const role = asRole ?? service as Role | 'scheduler';
   return new Promise((resolve, reject) => {
     const process_ = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/oracle-role-db-driver.ts'], {
@@ -71,7 +71,8 @@ function child(service: OracleDbService, input: Record<string, unknown>, attestS
       env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV ?? 'test', LOG_LEVEL: 'error', DATABASE_URL: principalUrl(service),
         DB_POOL_MAX: '3', WORKER_ROLE: role, SERVICE_INSTANCE_ID: instanceId ?? instance(role), RELEASE_TAG: release, JOB_BATCH_VERSION: '1',
         PHYSICAL_HOST: 'oracle-osaka-smoke', HTTP_ORIGIN_PERMITS: '1', ALLOW_PRIVATE_URLS: '1', ABCLLM_API_KEY: 'local-fixture-only',
-        ABCLLM_BASE_URL: `${base}/gateway`, ORACLE_ATTEST_DATABASE_URL: principalUrl(attestService), ORACLE_DRIVER_INPUT: JSON.stringify(input) },
+        ABCLLM_BASE_URL: `${base}/gateway`, ORACLE_ATTEST_DATABASE_URL: principalUrl(attestService), ORACLE_DRIVER_INPUT: JSON.stringify(input),
+        ...extraEnv },
     });
     let stdout = '', stderr = '';
     process_.stdout.on('data', data => { stdout += String(data); });
@@ -352,4 +353,114 @@ it('bootstraps a first-ever canary from one legacy-parent tick, then a versioned
   expect(canary.before).toMatchObject({ ready: true }); expect(canary.after).toMatchObject({ ready: true, readbackRows: 1 });
   const { output: ready } = await run('preflight');
   expect((ready.preflight as { workload: { ready: boolean } }).workload.ready).toBe(true);
+}, 120_000);
+
+// PR11d follow-ups. The previous case left FIXTURE control on its seeded policy; these cases set their own control rows.
+async function useControlPolicy(next: typeof policy, http: typeof httpPolicy) {
+  await admin`UPDATE job_batch_control SET mode='versioned',policy=${admin.json(next)},policy_hash=${batchPolicyHash(next)} WHERE id=1`;
+  await admin`UPDATE http_origin_control SET policy=${admin.json(http)},policy_hash=${httpOriginPolicyHash(http)} WHERE id=1`;
+}
+
+it('verifies PgBouncer-mode timeouts from the restricted role catalog and rejects an unbounded role-in-database override', async () => {
+  await useControlPolicy(policy, httpPolicy);
+  const pooled = () => child('product-health', io('product-health', 'preflight'), 'attest', undefined, undefined, { DB_POOLER_MODE: 'pgbouncer' });
+  const { output } = await pooled();
+  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+  // No startup timeouts are sent in pgbouncer mode: the values come only from ALTER ROLE ... SET in pg_db_role_setting.
+  expect((output.preflight as { checks: Record<string, unknown> }).checks.timeouts).toEqual({ status: 'verified', reason: 'role_server_timeouts_bounded' });
+  const [{ name }] = await admin`SELECT current_database() AS name`;
+  const principal = ORACLE_DB_PRINCIPALS['product-health'];
+  await admin.unsafe(`ALTER ROLE ${principal} IN DATABASE "${name}" SET idle_in_transaction_session_timeout = 0`);
+  try {
+    const { output: unbounded } = await pooled();
+    const preflight = unbounded.preflight as { checks: Record<string, unknown>; workload: { ready: boolean; reason: string } };
+    expect(preflight.checks.timeouts).toEqual({ status: 'rejected', reason: 'role_server_timeouts_unbounded' });
+    expect(preflight.workload).toEqual({ ready: false, reason: 'timeouts_rejected' });
+  } finally { await admin.unsafe(`ALTER ROLE ${principal} IN DATABASE "${name}" RESET idle_in_transaction_session_timeout`); }
+}, 60_000);
+
+it('keeps translation model evidence unknown while every translation serving contract is null', async () => {
+  const { output } = await child('translation', io('translation', 'attest'));
+  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+  // The attester reads the model ledger as itself (no 42501); legacy-capacity calls leave no bound row to verify.
+  expect(output.attest).toMatchObject({ ready: false, reason: 'capability_unknown', modelEvidence: 'model_readback_empty',
+    capability: { dbPrivileges: 'verified', model: 'unknown' } });
+  const [candidate] = await admin`SELECT capability FROM job_batch_candidates WHERE role='translation' AND instance_id=${instance('translation')}`;
+  expect(candidate.capability.model).toBe('unknown'); expect(candidate.capability).not.toHaveProperty('modelBoundEvidenceHash');
+  const { output: inspected } = await child('translation', io('translation', 'preflight'));
+  const preflight = inspected.preflight as { checks: Record<string, { status: string }>; workload: { ready: boolean } };
+  expect(preflight.workload.ready).toBe(false); expect(preflight.checks.model.status).toBe('unknown');
+}, 60_000);
+
+it('refreshes capability through the separate capability-only principal and refuses it for every other write', async () => {
+  const refreshUrl = new URL(TEST_DATABASE_URL); refreshUrl.username = ORACLE_REFRESH_PRINCIPAL; refreshUrl.password = password;
+  for (const statement of oracleDbGrantStatements('refresh', { connectionLimit: 2 })) await admin.unsafe(statement);
+  await admin.unsafe(`ALTER ROLE ${ORACLE_REFRESH_PRINCIPAL} PASSWORD '${password}'`);
+  try {
+    const before = await canaryState('product-health');
+    const env = { ORACLE_ATTEST_DATABASE_URL: refreshUrl.toString() };
+    const { output } = await child('product-health', io('product-health', 'refresh'), 'attest', undefined, undefined, env);
+    if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+    expect(output.refresh).toMatchObject({ dbPrivileges: 'verified', http: 'verified', model: 'unknown' });
+    const after = await canaryState('product-health');
+    expect(after.candidate.resultEvidence).toEqual(before.candidate.resultEvidence); expect(after.anchor).toEqual(before.anchor);
+    expect(after.candidate.bootId).toBe(before.candidate.bootId);
+    expect(Date.parse(after.candidate.capability.observedAt)).toBeGreaterThanOrEqual(Date.parse(before.candidate.capability.observedAt));
+    for (const mode of ['attest', 'canary']) {
+      const { output: refused } = await child('product-health', io('product-health', mode), 'attest', undefined, undefined, env);
+      expect(refused).toMatchObject({ message: expect.stringContaining('oracle_attest_principal_required') });
+    }
+    expect((await canaryState('product-health')).candidate.resultEvidence).toEqual(before.candidate.resultEvidence);
+    const negatives = ['UPDATE public.job_batch_candidates SET result_evidence=result_evidence WHERE false',
+      'UPDATE public.job_batch_candidates SET boot_id=boot_id WHERE false', "INSERT INTO public.job_batch_candidates(role) SELECT 'x' WHERE false",
+      'DELETE FROM public.job_batch_candidates WHERE false', 'DELETE FROM public.operations_observations WHERE false',
+      "INSERT INTO public.operations_observations(key,value) SELECT 'x','{}' WHERE false", 'UPDATE public.job_batch_control SET mode=mode WHERE false',
+      'SELECT 1 FROM public.model_capacity_requests LIMIT 1', 'SELECT 1 FROM public.jobs LIMIT 1', 'CREATE TABLE public.oracle_negative_probe(id integer)'];
+    const { output: denied } = await child('product-health', { ...io('product-health', 'negatives'), negatives }, 'attest', undefined, undefined,
+      { DATABASE_URL: refreshUrl.toString() });
+    expect(denied.principal).toBe(ORACLE_REFRESH_PRINCIPAL);
+    expect(denied.negatives).toEqual(Object.fromEntries(negatives.map(statement => [statement, '42501'])));
+  } finally {
+    await admin.unsafe(`DROP OWNED BY ${ORACLE_REFRESH_PRINCIPAL}`); await admin.unsafe(`DROP ROLE ${ORACLE_REFRESH_PRINCIPAL}`);
+  }
+}, 90_000);
+
+it('bootstraps a first-ever site-evidence ACK only through an attest grant, then a normal canary makes the preflight ready', async () => {
+  const boot = `${prefix}-boot`, booted = { ...policy, instances: [...policy.instances, { instanceId: boot, host: 'oracle-osaka-smoke' as const }] };
+  await useControlPolicy(booted, { version: 1, instanceHosts: { ...httpPolicy.instanceHosts, [boot]: 'oracle-osaka-smoke' } });
+  // Only the fixed public-form products below are due canonical sources; their URLs are never fetched (fixture collection).
+  await admin`UPDATE products SET access_mode='installable' WHERE slug LIKE ${`${prefix}-%`} AND access_mode='website'`;
+  await product(`${prefix}-boot-a`, `https://${prefix}-boot-a.example/`);
+  const run = (mode: string, role: Role = 'site-evidence') => child(role, io(role, mode), 'attest', undefined, boot);
+  const { output: legacyless } = await run('seed');
+  expect(legacyless).toMatchObject({ message: expect.stringContaining('oracle_canary_seed_unsupported') });
+  const { output: missing } = await run('attest');
+  expect(missing).toMatchObject({ message: expect.stringContaining('oracle_canary_result_missing') });
+  const { output: unsupported } = await run('bootstrap', 'product-health');
+  expect(unsupported).toMatchObject({ message: expect.stringContaining('oracle_bootstrap_unsupported') });
+  const { code, output } = await run('bootstrap');
+  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+  expect(code).toBe(0);
+  const bootstrap = output.bootstrap as { grant: { granted: boolean; bootId: string }; run: { status: string }; revoked: boolean; acknowledged: boolean };
+  expect(bootstrap).toMatchObject({ grant: { granted: true }, run: { status: 'completed' }, revoked: true, acknowledged: true });
+  const [control] = await admin`SELECT epoch FROM job_batch_control WHERE id=1`;
+  const [ack] = await admin`SELECT value->'batchResult' AS result FROM operations_observations WHERE key=${`batch-result:${boot}:product-site-evidence-refresh`}`;
+  expect(ack.result).toMatchObject({ role: 'site-evidence', host: 'oracle-osaka-smoke', instanceId: boot, bootId: bootstrap.grant.bootId,
+    batchEpoch: Number(control.epoch), count: 1 });
+  const [granted] = await admin`SELECT capability,result_evidence AS "resultEvidence" FROM job_batch_candidates WHERE role='site-evidence' AND instance_id=${boot}`;
+  expect(granted.resultEvidence).toBeNull();
+  expect(granted.capability).toMatchObject({ dbRole: ORACLE_DB_PRINCIPALS['site-evidence'], dbPrivileges: 'verified', http: 'verified' });
+  const { output: again } = await run('bootstrap');
+  expect(again).toMatchObject({ message: expect.stringContaining('oracle_bootstrap_prior_evidence') });
+  const { output: early } = await run('preflight');
+  expect((early.preflight as { workload: { ready: boolean } }).workload.ready).toBe(false); // the bootstrap ACK is not a launch canary
+  const { output: attested } = await run('attest');
+  expect(attested.attest).toMatchObject({ ready: true, anchorInvalidated: false, readbackRows: 1 });
+  await product(`${prefix}-boot-b`, `https://${prefix}-boot-b.example/`);
+  const { output: canaried } = await run('canary');
+  const canary = canaried.canary as { before: Canary; run: { status: string }; after: Canary };
+  expect(canary.before).toMatchObject({ ready: true }); expect(canary.run.status).toBe('completed');
+  expect(canary.after).toMatchObject({ ready: true, readbackRows: 1 }); expect(canary.after.bootId).not.toBe(bootstrap.grant.bootId);
+  const { output: ready } = await run('preflight');
+  expect((ready.preflight as { workload: Record<string, unknown> }).workload).toMatchObject({ ready: true, job: 'product-site-evidence-refresh' });
 }, 120_000);

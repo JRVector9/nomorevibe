@@ -36,6 +36,18 @@ READ_ONLY_MAINTENANCE = {
     'maintenance-mini': ('T6ATm-paaE03hfSsQX8-S', 'nomorevibe-maintenance-standby-mini', MINI, 'worker'),
     'maintenance-m3': ('7OlFqQdacbyQseQM72E7b', 'nomorevibe-maintenance-m3', M3, 'worker'),
 }
+# The other production Dokploy apps (AGENTS.md: 13 apps, plus connect-agent). They are git-build apps released one by
+# one (RELEASE_TAG + application.deploy, standby first); `run` never deploys them and `inventory` only reads them.
+# The versioned split roles (translation, product-health, site-evidence, official-news) have no M3/mini Dokploy app and
+# the Oracle runtime is outside Dokploy (oracle-* actions); an unregistered app is never guessed.
+GIT_BUILD_APPS = {
+    'text-mini': ('YwCZROZf_V0qgI1coMugP', 'nomorevibe-text-standby-mini', MINI, 'worker'),
+    'text-m3': ('Pi0loosJrKsse_UQ0mln9', 'nomorevibe-text-m3', M3, 'worker'),
+    **READ_ONLY_MAINTENANCE,
+    'scheduler-m3': ('uAjLU7MslLIGpORD9h6LQ', 'nomorevibe-scheduler-m3', M3, 'scheduler'),
+    'connect-agent-m3': ('xJK6CoRUOs_bpVVNmJDBF', 'nomorevibe-connect-agent-m3', M3, 'connect-agent'),
+}
+KNOWN_APPS = APPS | GIT_BUILD_APPS
 IMAGE_PREFIX = {
     'worker': 'ghcr.io/jrvector9/nomorevibe-worker@',
     'web': 'ghcr.io/jrvector9/nomorevibe-runtime-web@',
@@ -148,7 +160,7 @@ class Dokploy:
                 os.close(write_fd)
 
     def app(self, short):
-        app_id, expected_name, (server_id, _), kind = (APPS | READ_ONLY_MAINTENANCE)[short]
+        app_id, expected_name, (server_id, _), kind = KNOWN_APPS[short]
         app = self.request('application.one?applicationId=' + app_id)
         if (app.get('applicationId'), app.get('name'), app.get('serverId')) != (app_id, expected_name, server_id):
             raise ValueError(f'{short}_identity_mismatch')
@@ -159,7 +171,7 @@ class Dokploy:
         return app
 
     def latest(self, short):
-        rows = self.request('deployment.all?applicationId=' + (APPS | READ_ONLY_MAINTENANCE)[short][0])
+        rows = self.request('deployment.all?applicationId=' + KNOWN_APPS[short][0])
         if not rows:
             raise ValueError(f'{short}_missing_deployment')
         return rows[0]
@@ -627,6 +639,27 @@ def restore(client, snapshot_path, short, token):
     return check_app_deployed(client, short, previous, previous_id)
 
 
+def inventory(client, sha):
+    """Read-only release coverage of every known production Dokploy app. No write, deploy, SSH or secret output."""
+    if not re.fullmatch(r'[0-9a-f]{40}', sha or ''):
+        raise ValueError('invalid_release_sha')
+    apps = {}
+    for short in ORDER + tuple(GIT_BUILD_APPS):
+        app, latest = client.app(short), client.latest(short)
+        try:
+            current = setting(app.get('env'), 'RELEASE_TAG')
+        except ValueError:
+            current = None
+        apps[short] = {'deployedBy': 'run' if short in APPS else 'manual-git-build', 'sourceType': app.get('sourceType'),
+                       'applicationStatus': app.get('applicationStatus'), 'latestDeployment': latest.get('status'),
+                       'replicas': app.get('replicas'), 'releaseMatches': current == sha}
+    complete = all(row['releaseMatches'] and row['applicationStatus'] == 'done' and row['latestDeployment'] == 'done'
+                   for row in apps.values())
+    return {'targetRelease': sha, 'apps': apps, 'appCount': len(apps), 'complete': complete,
+            'pending': sorted(short for short, row in apps.items() if not row['releaseMatches']),
+            'splitRoleApps': 'none_registered', 'oracle': 'outside_dokploy'}
+
+
 ORACLE_ACTIONS = ('oracle-plan', 'oracle-install', 'oracle-rollback')
 
 
@@ -693,7 +726,7 @@ def main(argv=None):
                 raise SystemExit(1) from error
         return oracle_main(actual)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'run', 'restore'))
+    parser.add_argument('action', choices=('plan', 'run', 'restore', 'inventory'))
     parser.add_argument('--sha')
     parser.add_argument('--worker-image')
     parser.add_argument('--web-image')
@@ -706,11 +739,20 @@ def main(argv=None):
         parser.error('--snapshot is required for run/restore')
     if args.action == 'restore' and not args.app:
         parser.error('--app is required for restore')
-    if args.action != 'restore' and not all((args.sha, args.worker_image, args.web_image)):
+    if args.action == 'inventory' and (not args.sha or args.worker_image or args.web_image or args.snapshot or args.app
+                                       or args.migration_verified):
+        parser.error('inventory accepts only --sha')
+    if args.action not in ('restore', 'inventory') and not all((args.sha, args.worker_image, args.web_image)):
         parser.error('--sha, --worker-image, and --web-image are required for plan/run')
     key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
                '-s', 'dokploy-api-key', '-w'])
     client = Dokploy(key)
+    if args.action == 'inventory':
+        result = inventory(client, args.sha)
+        print(json.dumps(result), flush=True)
+        if not result['complete']:
+            raise SystemExit(2)
+        return
     if args.action == 'restore':
         print(json.dumps(restore(client, args.snapshot, args.app, run(['gh', 'auth', 'token']))))
         return

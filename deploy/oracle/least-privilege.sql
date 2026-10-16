@@ -161,6 +161,7 @@ GRANT UPDATE (capability, result_evidence) ON TABLE public.job_batch_candidates 
 GRANT SELECT ON TABLE public.job_batch_control TO nomorevibe_oracle_attest;
 GRANT UPDATE (id) ON TABLE public.job_batch_control TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.jobs TO nomorevibe_oracle_attest;
+GRANT SELECT ON TABLE public.model_capacity_requests TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.news_items TO nomorevibe_oracle_attest;
 GRANT SELECT, DELETE ON TABLE public.operations_observations TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.product_evidence_sources TO nomorevibe_oracle_attest;

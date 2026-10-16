@@ -468,5 +468,82 @@ class InstallUnitsTests(unittest.TestCase):
         self.assertFalse((Path(self.temp.name) / 'other').exists())
 
 
+
+class RefreshTimerTemplateTests(unittest.TestCase):
+    """PR11d: inactive capability refresh templates; nothing is enabled and the default install is unchanged."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / 'staging'
+        self.root.mkdir()
+        self.commands = []
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def runner(self, lookup):
+        def run(command, **options):
+            self.commands.append(command)
+            return subprocess.CompletedProcess(command, lookup if command[0] == 'getent' else 0)
+        return run
+
+    def test_templates_run_only_capability_refresh_as_a_separate_account_inside_the_expiry_window(self):
+        service = (SOURCE / 'nomorevibe-core-refresh@.service').read_text()
+        timer = (SOURCE / 'nomorevibe-core-refresh@.timer').read_text()
+        self.assertIn('\nType=oneshot\n', service)
+        self.assertIn('\nUser=nomorevibe-attest\n', service)
+        self.assertNotIn('User=nomorevibe-core', service)
+        self.assertIn('EnvironmentFile=/etc/nomorevibe-core/refresh.env\n', service)
+        exec_line = next(line for line in service.splitlines() if line.startswith('ExecStart='))
+        self.assertEqual(exec_line.split(' lib/runtime/oracle-canary-cli.ts ', 1)[1], 'refresh --role=%i')
+        self.assertIn('\nUnit=nomorevibe-core-refresh@%i.service\n', timer)
+        cadence = next(line for line in timer.splitlines() if line.startswith('OnUnitInactiveSec='))
+        self.assertEqual(cadence, 'OnUnitInactiveSec=5min')  # two retries inside the 15-minute capability expiry
+        self.assertIn('ORACLE_ATTEST_DATABASE_URL=\n', (SOURCE / 'refresh.env.example').read_text())
+
+    def test_staging_writes_inactive_refresh_templates_only_on_request_and_preserves_operator_env(self):
+        result = installer.install_units(self.root, 50, 1024 ** 3, 128, ['product-health', 'official-news'],
+                                         refresh_roles=['product-health'], runner=self.runner(0))
+        self.assertEqual((self.commands, result['commands'], result['enabled'], result['started'], result['timersEnabled']), ([], [], [], [], []))
+        self.assertFalse(result['activationAllowed'])
+        units = self.root / 'etc/systemd/system'
+        self.assertEqual(sorted(path.name for path in units.iterdir()),
+                         ['nomorevibe-core-refresh@.service', 'nomorevibe-core-refresh@.timer', 'nomorevibe-core-role@.service',
+                          'nomorevibe-core-scheduler.service', 'nomorevibe-core.slice'])
+        for path in units.iterdir():
+            self.assertEqual(path.stat().st_mode & 0o777, 0o644)
+        refresh = self.root / 'etc/nomorevibe-core/refresh.env'
+        self.assertEqual(refresh.stat().st_mode & 0o777, 0o600)
+        self.assertIn('ORACLE_ATTEST_DATABASE_URL=\n', refresh.read_text())
+        self.assertNotIn('WORKER_ROLE', refresh.read_text())
+        refresh.write_text('ORACLE_ATTEST_DATABASE_URL=operator-secret\n')
+        again = installer.install_units(self.root, 50, 1024 ** 3, 128, ['product-health'], refresh_roles=['product-health'])
+        self.assertEqual(refresh.read_text(), 'ORACLE_ATTEST_DATABASE_URL=operator-secret\n')
+        self.assertIn('etc/nomorevibe-core/refresh.env', again['preserved'])
+
+    def test_apply_creates_the_separate_account_and_never_enables_a_timer(self):
+        result = installer.install_units(self.root, 50, 1024 ** 3, 128, ['site-evidence'], refresh_roles=['site-evidence'],
+                                         apply=True, live_root=self.root, runner=self.runner(2))
+        self.assertEqual(self.commands, [
+            ['getent', 'passwd', 'nomorevibe-core'],
+            ['useradd', '--system', '--user-group', '--no-create-home', '--home-dir', '/var/lib/nomorevibe-core',
+             '--shell', '/usr/sbin/nologin', 'nomorevibe-core'],
+            ['getent', 'passwd', 'nomorevibe-attest'],
+            ['useradd', '--system', '--user-group', '--no-create-home', '--home-dir', '/var/lib/nomorevibe-attest',
+             '--shell', '/usr/sbin/nologin', 'nomorevibe-attest'],
+            ['systemctl', 'daemon-reload']])
+        self.assertFalse(any(word in command for command in self.commands for word in ('enable', 'start', '--now')))
+        self.assertEqual(result['timersEnabled'], [])
+
+    def test_refresh_roles_must_be_installed_split_roles_before_any_write(self):
+        other = Path(self.temp.name) / 'other'
+        for roles, refresh in ((['scheduler'], ['scheduler']), (['official-news'], ['product-health']),
+                               (['official-news'], ['official-news', 'official-news'])):
+            with self.subTest(refresh=refresh), self.assertRaises(ValueError):
+                installer.install_units(other, 50, 1024 ** 3, 128, roles, refresh_roles=refresh, runner=self.runner(0))
+        self.assertEqual(self.commands, [])
+        self.assertFalse(other.exists())
+
+
 if __name__ == '__main__':
     unittest.main()

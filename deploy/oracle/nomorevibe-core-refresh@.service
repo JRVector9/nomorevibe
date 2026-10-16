@@ -1,0 +1,25 @@
+# Inactive template (install_units.py --refresh-role writes it; nothing enables it). Capability-only re-observation:
+# the separate nomorevibe-attest account runs `refresh` with the capability-only DB principal from refresh.env. It never
+# runs canary/attest/seed/bootstrap and cannot write result evidence, anchors or model proof.
+[Unit]
+Description=NoMoreVibe Oracle capability refresh %i
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=nomorevibe-attest
+Group=nomorevibe-attest
+Slice=nomorevibe-core.slice
+WorkingDirectory=/opt/nomorevibe-core/current
+EnvironmentFile=/etc/nomorevibe-core/%i.env
+EnvironmentFile=/etc/nomorevibe-core/refresh.env
+Environment=HOME=/var/lib/nomorevibe-attest/%i
+ExecStart=/opt/nomorevibe-core/current/runtime/bin/node --import tsx lib/runtime/oracle-canary-cli.ts refresh --role=%i
+StateDirectory=nomorevibe-attest/%i
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+TimeoutStartSec=60s

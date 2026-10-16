@@ -32,3 +32,16 @@ it('refuses before any database connection without separate attest credentials, 
     expect(dependency.connect).not.toHaveBeenCalled();
   }
 });
+
+it('accepts bootstrap only with an explicit role and job and still refuses before any database connection', async () => {
+  for (const [args, values, identity, code] of [
+    [['bootstrap', '--role=site-evidence'], env, true, 'oracle_canary_arguments_invalid'],
+    [['bootstrap', '--role=site-evidence', '--job=product-site-evidence-refresh', '--skip-grant'], env, true, 'oracle_canary_arguments_invalid'],
+    [['bootstrap', '--role=site-evidence', '--job=product-site-evidence-refresh'], { ...env, ORACLE_ATTEST_DATABASE_URL: undefined }, true, 'oracle_canary_arguments_invalid'],
+    [['bootstrap', '--role=site-evidence', '--job=product-site-evidence-refresh'], env, false, 'oracle_identity_unverified'],
+  ] as Array<[string[], Record<string, string | undefined>, boolean, string]>) {
+    const dependency = deps(identity);
+    expect(await oracleCanaryMain(args, values, dependency)).toBe(78);
+    expect(dependency.lines).toEqual([JSON.stringify({ code })]); expect(dependency.connect).not.toHaveBeenCalled();
+  }
+});

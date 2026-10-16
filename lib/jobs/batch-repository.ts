@@ -4,7 +4,8 @@ import { evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchC
 import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
-  batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole } from './batches';
+  batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole,
+  batchBootstrapEligible, batchBootstrapGrantSchema, classifyBatchBootstrap } from './batches';
 import { STALE_LOCK_MS } from './lease';
 import type { RoleCandidate, RoleLease } from './role-leader';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
@@ -43,7 +44,8 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
   await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
   const [candidate] = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,lease.role),eq(jobBatchCandidates.instanceId,lease.instanceId),eq(jobBatchCandidates.bootId,lease.bootId),eq(jobBatchCandidates.release,lease.release),eq(jobBatchCandidates.policyHash,row.policyHash!)));
   const [clock] = await tx.select({now:sql<string>`clock_timestamp()::text`}).from(jobBatchControl).where(eq(jobBatchControl.id,1));
-  if (!candidate || !await candidateReadiness(tx,candidate,new Date(clock.now),row.epoch)) throw new JobBatchBlockedError();
+  if (!candidate || !(await candidateReadiness(tx,candidate,new Date(clock.now),row.epoch)
+    || await bootstrapReadiness(tx,candidate,new Date(clock.now),row.epoch))) throw new JobBatchBlockedError();
   if (lease.role === 'translation') {
     const [busy] = await tx.select({name:jobs.name}).from(jobs).where(and(inArray(jobs.name,batchJobsForRole('translation','versioned')),sql`${jobs.name}<>${name}`,sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt}>=clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`)).limit(1);
     if (busy) throw new JobBatchBlockedError();
@@ -86,6 +88,14 @@ async function candidateEvidence(tx: ProductTransaction, candidate: BatchCanaryC
 }
 async function candidateReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
   return (await candidateEvidence(tx,{...candidate,role:candidate.role as BatchRole,host:candidate.host as BatchHost},now,controlEpoch)).report.ready;
+}
+/** Separate first-ACK path (classifyBatchBootstrap); normal candidates never reach the extra read. */
+async function bootstrapReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
+  const role = candidate.role as BatchRole;
+  if (!batchBootstrapEligible(role) || !batchBootstrapGrantSchema.safeParse(candidate.resultEvidence).success) return false;
+  const [prior] = await tx.select({key:operationsObservations.key}).from(operationsObservations).where(inArray(operationsObservations.key,
+    [batchCanaryAnchorKey(role,candidate.instanceId),...batchJobsForRole(role,'versioned').map(name => `batch-result:${candidate.instanceId}:${name}`)])).limit(1);
+  return classifyBatchBootstrap({candidate:{...candidate,role,host:candidate.host as BatchHost},controlEpoch,at:now.getTime(),prior:Boolean(prior)}).ready;
 }
 /** Only the successful acquirer pins an already operator-verified ACK. Never refresh an existing anchor. */
 async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCandidates.$inferSelect, controlEpoch: number) {
@@ -134,10 +144,14 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
       if (await candidateReadiness(tx,row,now,control.epoch)) ready.push(row);
     }
     ready.sort((a,b) => batchHostOrder(candidate.role).indexOf(a.host as BatchHost)-batchHostOrder(candidate.role).indexOf(b.host as BatchHost) || a.instanceId.localeCompare(b.instanceId));
-    if (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId) return null;
+    // A bootstrap grant elects only its own exact boot, and only while no candidate of the role is normally ready.
+    const own = candidates.find(row => row.instanceId === candidate.instanceId && row.bootId === candidate.bootId && row.release === policy.release && row.host === instance.host);
+    const bootstrap = !ready.length && Boolean(own) && await bootstrapReadiness(tx,own!,now,control.epoch);
+    if (!bootstrap && (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId)) return null;
     const rank = batchHostOrder(candidate.role).indexOf(instance.host);
     if (rank > 0 && current.leaseUntil.getTime() + rank * 20_000 > now.getTime()) return null;
-    await pinCandidateCanary(tx,ready[0],control.epoch);
+    // There is no verified ACK to pin before the first one; the PR10d anchor starts with the later normal canary.
+    if (!bootstrap) await pinCandidateCanary(tx,ready[0],control.epoch);
     // Election does not revoke either healthy jobs or independently owned item leases.
     const [claimed] = await tx.update(roleLeases).set({ownerInstanceId:candidate.instanceId,ownerBootId:candidate.bootId,
       ownerKind:candidate.kind,ownerRelease:candidate.release,epoch:sql`${roleLeases.epoch}+1`,leaseUntil:sql`clock_timestamp()+interval '45 seconds'`,updatedAt:sql`clock_timestamp()`})

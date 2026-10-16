@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { jobsForRole, lanesForRole, JOB_ROLES, type JobRole } from './catalog';
+import { jobsForRole, lanesForRole, JOB_CATALOG, JOB_ROLES, type JobRole } from './catalog';
 export const BATCH_ROLES = [...JOB_ROLES, 'translation', 'product-health', 'site-evidence', 'official-news'] as const;
 export type BatchRole = typeof BATCH_ROLES[number];
 export type BatchMode = 'legacy' | 'draining' | 'versioned';
@@ -109,4 +109,38 @@ export function classifyBatchCandidateEvidence(input: BatchCandidateEvidenceInpu
       candidateIdentityHash:canaryHash(identity.data),readbackHash:canaryHash(readback.data),result:result.data}}};
   }
   return {report};
+}
+
+/**
+ * First-ever ACK bootstrap for a role whose versioned jobs have no legacy parent (today: site-evidence), so neither a
+ * legacy seed nor a prior canary can exist. An operator (attest principal) grant binds one exact boot/release/policy/
+ * epoch for at most BATCH_BOOTSTRAP_TTL_MS, the attested capability must already pass classifyBatchReadiness, and the
+ * caller must prove no batch-result or anchor exists for this role instance. It never makes launch readiness positive:
+ * the resulting ACK still needs the normal attest readback and a canary through classifyBatchCandidateEvidence.
+ */
+export const BATCH_BOOTSTRAP_TTL_MS = 10 * 60_000;
+export const batchBootstrapGrantSchema = z.object({ batchBootstrap: z.object({ version: z.literal(1), kind: z.literal('first_ack_bootstrap'),
+  role: z.enum(BATCH_ROLES), instanceId: z.string().min(1).max(48), host: z.enum(BATCH_HOSTS), bootId: z.string().min(1).max(36),
+  release: z.string().min(1).max(120), policyHash: z.string().regex(/^[0-9a-f]{64}$/), controlEpoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  job: z.string().min(1).max(120), issuedAt: z.iso.datetime({ offset: true }), expiresAt: z.iso.datetime({ offset: true }) }).strict() }).strict();
+export type BatchBootstrapGrant = z.infer<typeof batchBootstrapGrantSchema>;
+export function batchBootstrapEligible(role: BatchRole): boolean {
+  const names = batchJobsForRole(role, 'versioned');
+  return names.length > 0 && names.every(name => JOB_CATALOG.some(job => job.name === name && job.batchVersion === 1 && job.role === role));
+}
+export function classifyBatchBootstrap(input: { candidate: BatchCanaryCandidate; controlEpoch: number; at: number; prior: boolean }) {
+  const { candidate } = input, parsed = batchBootstrapGrantSchema.safeParse(input.candidate.resultEvidence);
+  if (!parsed.success) return { ready: false, reason: 'bootstrap_grant_absent' } as const;
+  const grant = parsed.data.batchBootstrap, issued = Date.parse(grant.issuedAt), expires = Date.parse(grant.expiresAt);
+  if (!batchBootstrapEligible(candidate.role) || grant.role !== candidate.role || grant.instanceId !== candidate.instanceId || grant.host !== candidate.host
+    || grant.bootId !== candidate.bootId || grant.release !== candidate.release || grant.policyHash !== candidate.policyHash
+    || grant.controlEpoch !== input.controlEpoch || !batchJobsForRole(candidate.role, 'versioned').includes(grant.job))
+    return { ready: false, reason: 'bootstrap_grant_mismatch' } as const;
+  if (!(issued <= input.at && input.at < expires && expires - issued <= BATCH_BOOTSTRAP_TTL_MS)) return { ready: false, reason: 'bootstrap_grant_expired' } as const;
+  if (input.prior) return { ready: false, reason: 'bootstrap_prior_evidence' } as const;
+  // Exactly the normal capability checks: with no result, a passing capability is the only way to reach result_unknown.
+  const capability = classifyBatchReadiness({ role: candidate.role, host: candidate.host, instanceId: candidate.instanceId,
+    release: candidate.release, at: input.at, evidence: candidate.capability, result: null });
+  if (capability.reason !== 'result_unknown') return capability;
+  return { ready: true, reason: 'bootstrap_granted' } as const;
 }
