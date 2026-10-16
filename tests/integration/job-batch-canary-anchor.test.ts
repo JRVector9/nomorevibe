@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { batchCanaryAnchorKey, batchPolicyHash, classifyBatchCandidateEvidence, type BatchCanaryCandidate } from '@/lib/jobs/batches';
-import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
+import { tryAcquireRole, releaseRole, renewRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { runJob } from '@/lib/jobs/runner';
 import { jobsForRole } from '@/lib/jobs/catalog';
 import { readJobBatchReadiness } from '@/lib/operations/job-batch-readiness';
@@ -179,7 +179,7 @@ it('rolls an actual anchor INSERT fault back with the complete owner acquisition
 
 it('rechecks the actual capability DBwall after a two-backend unique-key wait and rolls the owner back', exercise(async () => {
   await seedCanary();
-  await admin`UPDATE job_batch_candidates SET capability=jsonb_set(capability,'{observedAt}',to_jsonb(to_char(clock_timestamp()-interval '15 minutes'+interval '2 seconds' AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) WHERE role='translation' AND instance_id=${prefix}`;
+  await admin`UPDATE job_batch_candidates SET capability=jsonb_set(capability,'{observedAt}',to_jsonb(to_char((clock_timestamp()-interval '15 minutes'+interval '2 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) WHERE role='translation' AND instance_id=${prefix}`;
   const candidate = await snapshotCandidate();
   const [clock] = await admin`SELECT clock_timestamp()::text AS at`;
   const [latest] = await admin`SELECT value->'batchResult' AS result FROM operations_observations WHERE key=${resultKey}`;
@@ -210,7 +210,61 @@ it('rechecks the actual capability DBwall after a two-backend unique-key wait an
   } catch (error) { primary = error; }
   release.resolve(); await steps([async () => {
     const results = await Promise.allSettled(acquiring ? [holding, acquiring] : [holding]);
-    const errors = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected').map(result => result.reason);
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (errors.length) throw new AggregateError(errors, 'canary_barrier_operations_failed');
   }, () => holder.end({ timeout: 5 })], primary === undefined ? [] : [primary]);
 }), 20_000);
+
+
+it('preserves the same-owner lease on successful reacquisition and blocked pinning while renewal remains independently fenced', exercise(async () => {
+  await seedCanary(); const lease = await track(tryAcquireRole(identity)); expect(lease).not.toBeNull(); if (!lease) throw new Error('fixture_role_required');
+  const before = await admin`SELECT to_jsonb(r) AS row FROM role_leases r WHERE role='translation'`, anchor = await anchorRow();
+  expect(await track(tryAcquireRole(identity))).toEqual(lease);
+  expect(await admin`SELECT to_jsonb(r) AS row FROM role_leases r WHERE role='translation'`).toEqual(before);
+  await admin`UPDATE job_batch_candidates SET result_evidence=jsonb_set(result_evidence,'{domainReadbackHash}',to_jsonb(${'e'.repeat(64)}::text)) WHERE role='translation' AND instance_id=${prefix}`;
+  const candidate = await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c WHERE role='translation' AND instance_id=${prefix}`;
+  expect(await track(tryAcquireRole(identity))).toBeNull();
+  expect(await admin`SELECT to_jsonb(r) AS row FROM role_leases r WHERE role='translation'`).toEqual(before);
+  expect(await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c WHERE role='translation' AND instance_id=${prefix}`).toEqual(candidate);
+  expect(await anchorRow()).toEqual(anchor); expect(await track(renewRole(lease))).toBe(true);
+  expect(await tick(lease)).toMatchObject({ status: 'skipped', reason: 'stopping' });
+}), 20_000);
+
+it.each(['expired-owner', 'foreign-anchor'] as const)('fails closed after an actual same-owner INSERT wait: %s', mode => exercise(async () => {
+  await seedCanary(); const lease = await track(tryAcquireRole(identity)); expect(lease).not.toBeNull(); if (!lease) throw new Error('fixture_role_required');
+  const original = await anchorRow();
+  await admin`DELETE FROM operations_observations WHERE key=${anchorKey} AND value=${JSON.stringify(original.value)}::text::jsonb`;
+  const collision = structuredClone(original.value);
+  if (mode === 'foreign-anchor') collision.batchCanary.readbackHash = 'f'.repeat(64);
+  if (mode === 'expired-owner') await admin`UPDATE role_leases SET lease_until=clock_timestamp()+interval '2 seconds' WHERE role='translation'`;
+  const before = await admin`SELECT to_jsonb(r) AS row FROM role_leases r WHERE role='translation'`;
+  const candidate = await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c WHERE role='translation' AND instance_id=${prefix}`;
+  const holder = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: `${prefix}-owner-holder` } });
+  const ready = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
+  let acquiring: Promise<unknown> | undefined, primary: unknown;
+  const holding = track(holder.begin(async tx => {
+    const [pid] = await tx`SELECT pg_backend_pid() AS pid`;
+    await tx`INSERT INTO operations_observations(key,value) VALUES(${anchorKey},${JSON.stringify(collision)}::text::jsonb)`;
+    ready.resolve(pid.pid); await release.promise;
+  }));
+  try {
+    const holderPid = await Promise.race([ready.promise, holding.then(() => { throw new Error('fixture_holder_ended_before_ready'); })]);
+    acquiring = track(tryAcquireRole(identity)); let settled = false; void acquiring.then(() => { settled = true; }, () => { settled = true; });
+    await until(async () => {
+      if (settled) throw new Error('fixture_acquisition_ended_before_wait');
+      const rows = await admin`SELECT pid FROM pg_stat_activity WHERE ${holderPid}=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock'`;
+      if (rows.length) { expect(rows).toHaveLength(1); expect(rows[0].pid).not.toBe(holderPid); return true; } return false;
+    });
+    expect((await admin`SELECT lease_until>clock_timestamp() AS healthy FROM role_leases WHERE role='translation'`)[0].healthy).toBe(true);
+    if (mode === 'expired-owner') await until(async () => (await admin`SELECT lease_until<=clock_timestamp() AS expired FROM role_leases WHERE role='translation'`)[0].expired);
+    release.resolve(); await holding; expect(await acquiring).toBeNull();
+    expect(await admin`SELECT to_jsonb(r) AS row FROM role_leases r WHERE role='translation'`).toEqual(before);
+    expect(await admin`SELECT to_jsonb(c) AS row FROM job_batch_candidates c WHERE role='translation' AND instance_id=${prefix}`).toEqual(candidate);
+    expect((await anchorRow()).value).toEqual(collision);
+  } catch (error) { primary = error; }
+  release.resolve(); await steps([async () => {
+    const results = await Promise.allSettled(acquiring ? [holding, acquiring] : [holding]);
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'canary_owner_barrier_operations_failed');
+  }, () => holder.end({ timeout: 5 })], primary === undefined ? [] : [primary]);
+})(), 20_000);

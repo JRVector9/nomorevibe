@@ -98,6 +98,7 @@ async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCa
   const [after]=await tx.execute<{at:string}>(sql`SELECT clock_timestamp()::text AS at`);
   const checked=await candidateEvidence(tx,candidate,new Date(after.at),controlEpoch);
   if(!checked.report.ready || checked.anchorToPin) throw new JobBatchBlockedError();
+  return new Date(after.at);
 }
 /** Candidate heartbeat cannot write capability or result evidence. Operator evidence is separately reviewed. */
 export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease | null> {
@@ -118,7 +119,8 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
     if (current.leaseUntil > now) {
       if(current.ownerInstanceId !== candidate.instanceId || current.ownerBootId !== candidate.bootId || current.ownerRelease !== candidate.release) return null;
       const [own]=await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,candidate.role),eq(jobBatchCandidates.instanceId,candidate.instanceId)));
-      await pinCandidateCanary(tx,own,control.epoch);
+      const checkedAt=await pinCandidateCanary(tx,own,control.epoch);
+      if(current.leaseUntil<=checkedAt) throw new JobBatchBlockedError();
       return {...candidate,epoch:current.epoch,batchEpoch:control.epoch};
     }
     const candidates = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,candidate.role),eq(jobBatchCandidates.policyHash,control.policyHash!),
