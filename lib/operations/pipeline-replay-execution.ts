@@ -2,13 +2,19 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { sql } from "drizzle-orm";
+import { z } from "zod";
+import type { ItemLease } from "@/lib/jobs/items/types";
+import { itemBindingHash, itemBindingSchema, itemOwnerSchema } from "@/lib/jobs/items/types";
+import { canonicalReplayItemState } from "./pipeline-replay-item-state";
+import type { ReplayItemCallAuthoritySchema } from "./pipeline-replay-item-execution";
+import type { ReplayCallRequest } from "./pipeline-replay-ledger";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { JobLease } from "@/lib/jobs/control";
 import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { assertSameReplayHandlerDatabase, assertVerifiedReplayDatabase, assertVerifiedReplayHandlerDatabase,
   verifyReplayDatabaseSession, type VerifiedReplayDatabase } from "./pipeline-replay-database";
-import { replayFinalRunBinding, type ReplayRun } from "./pipeline-replay-ledger";
+import { replayCallRequestSchema, replayFinalRunBinding, type ReplayRun } from "./pipeline-replay-ledger";
 
 const brand: unique symbol = Symbol("ReplayTransactionTicket");
 export type ReplayTransactionTicket = Readonly<{ [brand]: true }>;
@@ -20,6 +26,8 @@ type Scope = { run: ReplayRun; binding: Binding; active: boolean; pending: Set<R
 type Ticket = { scope: Scope; tx: Raw; txKey: string; txStartedAt: string; dbXid: string;
   state: "open" | "flushing" | "flushed" | "finalized" | "confirmed" | "rolled_back";
   authorities: Map<string, string>; registering: number;
+  items: Map<string, { lease: import("zod").infer<typeof ReplayItemCallAuthoritySchema>["lease"]; released: boolean }>;
+  reservations: Map<string, import("zod").infer<typeof ReplayItemCallAuthoritySchema>>; preFlush: Array<() => Promise<void>>;
   callbacks: Array<(run: Record<string, unknown>, raw: Raw) => Promise<void>> };
 const executions = new AsyncLocalStorage<Scope>();
 const tickets = new WeakMap<ReplayTransactionTicket, Ticket>();
@@ -102,7 +110,7 @@ export function currentReplayTransactionHooks(database: VerifiedReplayDatabase):
       await tx`SELECT set_config('pipeline_replay.run_id', ${scope.run.runId}, true),
         set_config('pipeline_replay.tx_key', ${txKey}, true), set_config('pipeline_replay.ordinal', '0', true)`;
       tickets.set(token, { scope, tx, txKey, txStartedAt: clock.at, dbXid: clock.xid, state: "open",
-        authorities: new Map(), registering: 0, callbacks: [] });
+        authorities: new Map(), registering: 0, items: new Map(), reservations: new Map(), preFlush: [], callbacks: [] });
       keys.set(txKey, token); scope.pending.add(token); return token;
     },
     async after(tx, token) {
@@ -124,13 +132,36 @@ export function currentReplayTransactionHooks(database: VerifiedReplayDatabase):
       // Registration already acquired every relevant job lock in this TX.
       // No new row lock or verifier may follow this final wall-clock query.
       const authorities = JSON.stringify([...value.authorities].map(([name, token]) => ({ name, token })));
-      const [wall] = await tx`SELECT current_setting('pipeline_replay.tx_key',true) AS tx_key,
+      const items = JSON.stringify([...value.items.values()].map(item => ({ ...item.lease, released: item.released })));
+      const [wall] = await tx`WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS at), proof AS MATERIALIZED (SELECT current_setting('pipeline_replay.tx_key',true) AS tx_key,
         pg_current_xact_id()::text AS xid, NOT EXISTS (
           SELECT 1 FROM jsonb_to_recordset(${authorities}::text::jsonb) AS required(name text,token text)
           LEFT JOIN public.jobs j ON j.name=required.name
           WHERE j.lease_token IS DISTINCT FROM required.token
-            OR NOT coalesce(j.locked_at >= clock_timestamp()-${STALE_LOCK_MS} * interval '1 millisecond',false)
-        ) AS owned`;
+            OR NOT coalesce(j.locked_at >= (SELECT at FROM clock)-${STALE_LOCK_MS} * interval '1 millisecond',false)
+        ) AND NOT EXISTS (
+          SELECT 1 FROM jsonb_to_recordset(${items}::text::jsonb) AS required(work_key text,token text,owner_instance_id text,
+            owner_boot_id text,stage_epoch bigint,item_epoch bigint,binding_hash text,binding jsonb,lease_until text,released boolean)
+          LEFT JOIN public.pipeline_item_leases i ON i.stage='ai2' AND i.work_key=required.work_key
+          LEFT JOIN public.pipeline_stage_modes s ON s.stage='ai2'
+          WHERE i.work_key IS NULL OR s.epoch IS DISTINCT FROM required.stage_epoch OR s.writer_contract_version<1
+            OR NOT(s.mode='items' OR s.mode='draining' AND s.draining_from='items')
+            OR i.stage_epoch IS DISTINCT FROM required.stage_epoch OR i.item_epoch IS DISTINCT FROM required.item_epoch
+            OR i.binding_hash IS DISTINCT FROM required.binding_hash OR i.binding IS DISTINCT FROM required.binding
+            OR required.lease_until::timestamptz<=(SELECT at FROM clock)
+            OR CASE WHEN required.released THEN i.token IS NOT NULL OR i.owner_instance_id IS NOT NULL
+                OR i.owner_boot_id IS NOT NULL OR i.lease_until IS NOT NULL
+              ELSE i.token::text IS DISTINCT FROM required.token OR i.owner_instance_id IS DISTINCT FROM required.owner_instance_id
+                OR i.owner_boot_id::text IS DISTINCT FROM required.owner_boot_id OR i.lease_until<=(SELECT at FROM clock) END
+        ) AS owned), head AS (
+          UPDATE pipeline_replay.capacity_runs SET event_seq=event_seq+1 WHERE run_id=${value.scope.run.runId}
+            AND (SELECT owned FROM proof) AND jsonb_array_length(${items}::text::jsonb)>0 RETURNING event_seq
+        ), event AS (
+          INSERT INTO pipeline_replay.capacity_transitions(run_id,seq,kind,payload)
+          SELECT ${value.scope.run.runId},head.event_seq,'item_final_authority',jsonb_build_object(
+            'txKey',${value.txKey}::text,'checkedAt',to_char(clock.at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+            'items',${items}::text::jsonb) FROM head,clock RETURNING seq
+        ) SELECT proof.*,(SELECT seq FROM event) AS authority_seq FROM proof`;
       ensure(wall?.tx_key === value.txKey && wall.xid === value.dbXid, "replay_transaction_ticket_mismatch");
       if (!wall.owned) throw new JobLeaseLostError();
       ensure(value.state === "flushed" && value.scope.active && executions.getStore() === value.scope,
@@ -216,6 +247,145 @@ export async function assertReplayJobAdmission(tx: ProductTransaction): Promise<
   ensure(ticket?.scope === scope && ticket.state === "open" && row.admitted, "replay_job_admission_closed");
 }
 
+/** The ordinary item path remains unchanged. A replay requires this private,
+ * certified run kind, not a caller flag or a lease-shaped JSON value. */
+export function assertReplayItemExecutionAllowed(): void {
+  const scope = executions.getStore();
+  ensure(scope?.active && scope.binding.items, "replay_item_execution_unsupported");
+  scope.binding.assertActive();
+}
+
+async function itemTicket(tx: ProductTransaction): Promise<Ticket | undefined> {
+  const scope = executions.getStore(); if (!scope) return undefined;
+  assertReplayItemExecutionAllowed();
+  const challenge = randomUUID();
+  const [identity] = await tx.execute<{ tx_key: string; xid: string }>(sql`SELECT
+    set_config('pipeline_replay.item_authority_challenge',${challenge},true),
+    current_setting('pipeline_replay.tx_key',true) AS tx_key,pg_current_xact_id()::text AS xid`);
+  const token = identity && keys.get(identity.tx_key), value = token && tickets.get(token);
+  ensure(value?.scope === scope && value.state === "open" && value.dbXid === identity.xid, "replay_transaction_ticket_mismatch");
+  const [actual] = await value.tx`SELECT current_setting('pipeline_replay.item_authority_challenge',true) AS challenge,
+    current_setting('pipeline_replay.tx_key',true) AS tx_key,pg_current_xact_id()::text AS xid`;
+  ensure(actual.challenge === challenge && actual.tx_key === value.txKey && actual.xid === value.dbXid,
+    "replay_transaction_ticket_mismatch");
+  await value.tx`SELECT set_config('pipeline_replay.item_authority_challenge','',true)`;
+  ensure(value.state === "open" && scope.active && executions.getStore() === scope, "replay_transaction_ticket_mismatch");
+  return value;
+}
+
+async function actualItem(tx: Raw, workKey: string) {
+  const [row] = await tx`SELECT to_jsonb(i) AS value FROM public.pipeline_item_leases i WHERE stage='ai2' AND work_key=${workKey}`;
+  ensure(row, "item_lease_lost");
+  const stages = await tx`SELECT to_jsonb(s) AS value FROM public.pipeline_stage_modes s ORDER BY stage`;
+  return canonicalReplayItemState({ kind: "pipeline-replay-item-state", version: 1,
+    tables: { pipeline_stage_modes: stages.map(stage => stage.value), pipeline_item_leases: [row.value] } })
+    .tables.pipeline_item_leases[0];
+}
+
+function sameItemOwner(actual: Awaited<ReturnType<typeof actualItem>>, lease: ItemLease) {
+  return actual.stage === "ai2" && actual.work_key === lease.workKey && actual.token === lease.token
+    && actual.owner_instance_id === lease.owner.instanceId && actual.owner_boot_id === lease.owner.bootId
+    && actual.stage_epoch === lease.stageEpoch && actual.item_epoch === lease.itemEpoch
+    && actual.binding_hash === lease.bindingHash && actual.binding_hash === itemBindingHash(lease.binding)
+    && reviewHash(actual.binding) === reviewHash(lease.binding);
+}
+
+// This validates and copies caller identity only. The locked DB row grants authority.
+const itemLeaseSnapshotSchema = z.object({ stage: z.literal("ai2"), workKey: z.string().min(1),
+  binding: itemBindingSchema, bindingHash: z.string().regex(/^[a-f0-9]{64}$/), owner: itemOwnerSchema,
+  token: z.uuid(), stageEpoch: z.number().int().positive().safe(), itemEpoch: z.number().int().positive().safe(),
+  leaseUntil: z.date() }).strict();
+
+export async function registerReplayItemFinalAuthority(tx: ProductTransaction, lease: ItemLease): Promise<void> {
+  if (!executions.getStore()) return;
+  lease = itemLeaseSnapshotSchema.parse(structuredClone(lease));
+  const value = await itemTicket(tx); if (!value) return;
+  value.registering++;
+  try {
+    await value.tx`SELECT work_key FROM public.pipeline_item_leases WHERE stage='ai2' AND work_key=${lease.workKey} FOR UPDATE`;
+    const actual = await actualItem(value.tx, lease.workKey);
+    const [valid] = await value.tx`SELECT lease_until>clock_timestamp() AS alive FROM public.pipeline_item_leases
+      WHERE stage='ai2' AND work_key=${lease.workKey}`;
+    ensure(sameItemOwner(actual, lease) && valid?.alive, "item_lease_lost");
+    ensure(value.state === "open" && value.scope.active, "replay_transaction_ticket_mismatch");
+    value.items.set(lease.workKey, { lease: actual, released: false });
+  } finally { value.registering--; }
+}
+
+export async function registerReplayItemRelease(tx: ProductTransaction, lease: ItemLease): Promise<void> {
+  if (!executions.getStore()) return;
+  lease = itemLeaseSnapshotSchema.parse(structuredClone(lease));
+  const value = await itemTicket(tx); if (!value) return;
+  value.registering++;
+  try {
+  const previous = value.items.get(lease.workKey);
+  ensure(previous && sameItemOwner(previous.lease, lease), "replay_item_authority_required");
+  const current = await actualItem(value.tx, lease.workKey);
+  const [release] = await value.tx`SELECT old_row,new_row FROM pipeline_replay.capacity_changes
+    WHERE run_id=${value.scope.run.runId} AND tx_key=${value.txKey}::uuid AND table_name='pipeline_item_leases'
+      AND old_row->>'work_key'=${lease.workKey} AND old_row->>'token'=${lease.token}
+      AND new_row->>'token' IS NULL ORDER BY ordinal DESC LIMIT 1`;
+  ensure(release && current.token === null && current.owner_instance_id === null && current.owner_boot_id === null
+    && current.lease_until === null && current.item_epoch === lease.itemEpoch && current.stage_epoch === lease.stageEpoch
+    && current.binding_hash === lease.bindingHash, "replay_item_release_mismatch");
+  ensure(value.state === "open" && value.scope.active, "replay_transaction_ticket_mismatch");
+  previous.released = true;
+  } finally { value.registering--; }
+}
+
+export async function reserveReplayItemCall(tx: ProductTransaction, lease: ItemLease, request: ReplayCallRequest): Promise<void> {
+  lease = itemLeaseSnapshotSchema.parse(structuredClone(lease));
+  request = replayCallRequestSchema.parse(structuredClone(request));
+  await registerReplayItemFinalAuthority(tx, lease);
+  const { ReplayItemCallAuthoritySchema } = await import("./pipeline-replay-item-execution");
+  const value = await itemTicket(tx);
+  ensure(value && request.stage === "second" && lease.binding.stage === "ai2"
+    && request.firstAttemptId === (lease.binding.source.kind === "first_attempt" ? lease.binding.source.firstAttemptId : null)
+    && request.secondReviewId === lease.binding.secondReviewId && request.candidateId === lease.binding.candidateId
+    && request.generationKey === lease.binding.generationKey && request.vote === lease.binding.vote
+    && request.inputHash === lease.binding.inputHash && request.sourceRevisionHash === lease.binding.sourceRevisionHash
+    && request.provider === lease.binding.reviewer.provider && request.model === lease.binding.reviewer.model,
+    "replay_item_call_binding_mismatch");
+  const authority = ReplayItemCallAuthoritySchema.parse({ callId: request.callId, txKey: value.txKey,
+    lease: value.items.get(lease.workKey)!.lease });
+  ensure(!value.reservations.has(request.callId), "replay_call_id_reused");
+  value.reservations.set(request.callId, authority);
+  value.preFlush.push(() => value.scope.binding.reserveItemCall(value.tx, request));
+}
+
+export function consumeReplayItemReservation(tx: Raw, callId: string) {
+  const scope = executions.getStore();
+  assertReplayItemExecutionAllowed();
+  const value = [...scope!.pending].map(token => tickets.get(token)).find(ticket => ticket?.tx === tx);
+  ensure(value?.state === "flushing" && value.reservations.has(callId), "replay_item_call_authority_required");
+  const authority = value.reservations.get(callId)!; value.reservations.delete(callId);
+  return authority;
+}
+
+/** Native call transitions take their stage/item prefix before the run lock. */
+export async function assertReplayItemCallDispatch(tx: Raw, runId: string, callId: string): Promise<void> {
+  const [proof] = await tx`SELECT payload FROM pipeline_replay.capacity_transitions WHERE run_id=${runId}
+    AND kind='item_call_authority' AND payload->>'callId'=${callId}`;
+  if (!proof) {
+    const [call] = await tx`SELECT stage FROM pipeline_replay.capacity_calls WHERE run_id=${runId} AND call_id=${callId}`;
+    ensure(call?.stage === "first", "replay_item_call_authority_required"); return;
+  }
+  const { ReplayItemCallAuthoritySchema } = await import("./pipeline-replay-item-execution");
+  const authority = ReplayItemCallAuthoritySchema.parse(proof.payload), lease = authority.lease;
+  for (const stage of ["fetch", "ai1", "ai2"]) await tx`SELECT stage FROM public.pipeline_stage_modes WHERE stage=${stage} FOR SHARE`;
+  await tx`SELECT work_key FROM public.pipeline_item_leases WHERE stage='ai2' AND work_key=${lease.work_key} FOR UPDATE`;
+  const actual = await actualItem(tx, lease.work_key);
+  const [valid] = await tx`SELECT token::text=${lease.token} AND owner_instance_id=${lease.owner_instance_id}
+    AND owner_boot_id::text=${lease.owner_boot_id} AND stage_epoch=${lease.stage_epoch} AND item_epoch=${lease.item_epoch}
+    AND binding_hash=${lease.binding_hash} AND lease_until>clock_timestamp() AS owned
+    FROM public.pipeline_item_leases WHERE stage='ai2' AND work_key=${lease.work_key}`;
+  ensure(valid?.owned && reviewHash(actual.binding) === reviewHash(lease.binding), "item_lease_lost");
+  const scope = executions.getStore();
+  const ticket = scope && [...scope.pending].map(token => tickets.get(token)).find(value => value?.tx === tx);
+  ensure(ticket?.state === "open", "replay_transaction_ticket_mismatch");
+  ticket.items.set(lease.work_key, { lease: actual, released: false });
+}
+
 /** Domain observations have completed; defer only ledger writes until the outer common flush. */
 export async function deferReplayFinalWrite(tx: ProductTransaction,
   flush: (row: Record<string, unknown>, raw: Raw) => Promise<void>): Promise<boolean> {
@@ -229,14 +399,18 @@ export async function deferReplayFinalWrite(tx: ProductTransaction,
 
 async function flushReplayTransaction(value: Ticket): Promise<void> {
   const { tx, scope } = value;
-  const rawChanges = [...await tx`SELECT ordinal, table_name, operation, old_row, new_row
-    FROM pipeline_replay.capacity_changes WHERE run_id = ${scope.run.runId} AND tx_key = ${value.txKey}::uuid ORDER BY ordinal`];
-  const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
-  const changes = rawChanges.map(row => ReplayReadinessChangeSchema.parse({ ...row, ordinal: Number(row.ordinal) }));
   const [run] = await tx`SELECT * FROM pipeline_replay.capacity_runs WHERE run_id = ${scope.run.runId}
     AND owner_id = ${scope.binding.ownerId}::uuid FOR UPDATE`;
   ensure(run && ['running','draining'].includes(run.state) && !run.writers_fenced_at, "replay_writers_fenced");
-  const projection = applyReplayChanges(ReplayReadinessProjectionSchema.parse(run.current_projection), changes);
+  for (const reserve of value.preFlush) await reserve();
+  const rawChanges = [...await tx`SELECT ordinal, table_name, operation, old_row, new_row
+    FROM pipeline_replay.capacity_changes WHERE run_id = ${scope.run.runId} AND tx_key = ${value.txKey}::uuid ORDER BY ordinal`];
+  const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
+  const { applyReplayMixedChanges, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
+  const changes = rawChanges.map(row => (scope.binding.items ? ReplayMixedChangeSchema : ReplayReadinessChangeSchema)
+    .parse({ ...row, ordinal: Number(row.ordinal) }));
+  const projection = scope.binding.items ? applyReplayMixedChanges(run.current_projection, changes)
+    : applyReplayChanges(ReplayReadinessProjectionSchema.parse(run.current_projection), changes as import("./pipeline-replay-readiness").ReplayReadinessChange[]);
   const [event] = await tx`UPDATE pipeline_replay.capacity_runs SET event_seq = event_seq + 1,
     current_projection = ${JSON.stringify(projection)}::text::jsonb WHERE run_id = ${scope.run.runId} RETURNING event_seq`;
   const [clock] = await tx`INSERT INTO pipeline_replay.capacity_transitions (run_id,seq,kind,payload)
@@ -260,6 +434,8 @@ type JsonRow = Record<string, unknown>;
 async function artifactContent(tx: Raw, runId: string) {
   const [result] = await tx`SELECT to_jsonb(r) AS value FROM pipeline_replay.capacity_runs r WHERE run_id=${runId}`;
   const row = result?.value as JsonRow;
+  const { ReplayCombinedExecutionSchema } = await import("./pipeline-replay-item-execution");
+  const items = ReplayCombinedExecutionSchema.safeParse(row?.initial_projection).success;
   ensure(row?.initial_projection && row.initial_state_hash && row.writers_fenced_at && row.sealed_at, "replay_run_not_sealed");
   const journalRows = await tx`SELECT to_jsonb(e) AS value FROM pipeline_replay.capacity_transitions e WHERE run_id=${runId} ORDER BY seq`;
   const transactionRows = await tx`SELECT to_jsonb(t) || jsonb_build_object('confirmed_at',c.confirmed_at) AS value
@@ -268,7 +444,8 @@ async function artifactContent(tx: Raw, runId: string) {
   const callRows = await tx`SELECT to_jsonb(c) AS value FROM pipeline_replay.capacity_calls c WHERE run_id=${runId} ORDER BY call_id`;
   const finalRows = await tx`SELECT to_jsonb(f) AS value FROM pipeline_replay.capacity_finals f WHERE run_id=${runId} ORDER BY seq`;
   const journal = journalRows.map(({ value: item }) => ({ seq: Number(item.seq), at: utc(item.at), kind: item.kind,
-    txKey: item.tx_key, payloadHash: reviewHash(item.payload) }));
+    txKey: item.tx_key, payloadHash: reviewHash(item.payload),
+    ...(items ? { payload: item.payload } : {}) }));
   const transactions = transactionRows.map(({ value: item }) => ({ seq: Number(item.seq), txKey: item.tx_key,
     txStartedAt: utc(item.tx_started_at), recordedAt: utc(item.recorded_at), confirmedAt: nullableUtc(item.confirmed_at), changes: item.changes }));
   const calls = callRows.map(({ value: item }) => ({ callId: item.call_id, candidateId: Number(item.candidate_id),
@@ -282,8 +459,8 @@ async function artifactContent(tx: Raw, runId: string) {
   const finals = finalRows.map(({ value: item }) => ({ candidateId: Number(item.candidate_id), inputHash: item.input_hash,
     sourceRevisionHash: item.source_revision_hash, policyHash: item.policy_hash, seq: Number(item.seq), at: utc(item.at),
     firstAttemptId: Number(item.first_attempt_id), firstCallId: item.first_call_id, decision: item.decision, secondWitnesses: item.second_witnesses }));
-  return { row, content: { kind: "pipeline-replay-ledger" as const, version: 1 as const, manifest: row.manifest,
-    run: { runId, epoch: Number(row.epoch), profile: "handlers-v5" as const, state: "sealed" as const,
+  return { row, content: { kind: "pipeline-replay-ledger" as const, version: items ? 2 : 1, manifest: row.manifest,
+    run: { runId, epoch: Number(row.epoch), profile: items ? "handlers-v6-item" : "handlers-v5", state: "sealed" as const,
       startedAt: utc(row.started_at), deadlineAt: utc(row.deadline_at), admissionClosedAt: utc(row.admission_closed_at),
       writersFencedAt: utc(row.writers_fenced_at), sealedAt: utc(row.sealed_at),
       chargedCalls: Number(row.charged_calls), chargedTokens: Number(row.charged_tokens) },
@@ -318,21 +495,24 @@ async function validateJournal(tx: Raw, runId: string): Promise<void> {
     WHERE e.run_id=${runId} AND e.kind='final' AND f.seq IS NULL LIMIT 1`;
   ensure(!invalidPacket && !orphanConfirmation && !invalidFinal, "replay_journal_binding_mismatch");
   const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
-  let projection = ReplayReadinessProjectionSchema.parse(run.initial_projection);
+  const { applyReplayMixedChanges, ReplayCombinedExecutionSchema, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
+  const items = run.initial_projection.kind === "pipeline-replay-combined-state";
+  let projection = items ? ReplayCombinedExecutionSchema.parse(run.initial_projection) : ReplayReadinessProjectionSchema.parse(run.initial_projection);
   const frozen = await tx`SELECT candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash
     FROM pipeline_replay.capacity_inputs WHERE run_id=${runId} ORDER BY candidate_id,input_hash,source_revision_hash`;
   const actualInputs = frozen.map(row => ({ candidateId: Number(row.candidate_id), inputHash: row.input_hash,
     sourceRevisionHash: row.source_revision_hash, frozenInput: row.frozen_input, frozenHash: row.frozen_hash }));
-  const expectedInputs = projection.universe.map(({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }) =>
+  const domain = "domain" in projection ? projection.domain : projection;
+  const expectedInputs = domain.universe.map(({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }) =>
     ({ candidateId, inputHash, sourceRevisionHash, frozenInput, frozenHash }));
   ensure(reviewHash(actualInputs) === reviewHash(expectedInputs), "replay_journal_binding_mismatch");
   const packets = await tx`SELECT tx_key,changes FROM pipeline_replay.capacity_transactions WHERE run_id=${runId} ORDER BY seq`;
   for (const packet of packets) {
     const actual = await tx`SELECT ordinal,table_name,operation,old_row,new_row FROM pipeline_replay.capacity_changes
       WHERE run_id=${runId} AND tx_key=${packet.tx_key} ORDER BY ordinal`;
-    const changes = actual.map(item => ReplayReadinessChangeSchema.parse({ ...item, ordinal: Number(item.ordinal) }));
+    const changes = actual.map(item => (items ? ReplayMixedChangeSchema : ReplayReadinessChangeSchema).parse({ ...item, ordinal: Number(item.ordinal) }));
     ensure(reviewHash(changes) === reviewHash(packet.changes), "replay_journal_binding_mismatch");
-    projection = applyReplayChanges(projection, changes);
+    projection = items ? applyReplayMixedChanges(projection, changes) : applyReplayChanges(projection as import("./pipeline-replay-readiness").ReplayReadinessProjection, changes as import("./pipeline-replay-readiness").ReplayReadinessChange[]);
   }
   ensure(reviewHash(projection) === reviewHash(run.current_projection), "replay_journal_binding_mismatch");
   const [counts] = await tx`SELECT count(*) AS count,min(seq) AS min,max(seq) AS max FROM pipeline_replay.capacity_transitions WHERE run_id=${runId}`;
@@ -356,8 +536,8 @@ export async function sealReplayLedger(tx: Raw, run: ReplayRun, ownerId: string,
   await tx`UPDATE pipeline_replay.capacity_runs SET sealed_at=(SELECT at FROM pipeline_replay.capacity_transitions
     WHERE run_id=${run.runId} AND seq=${head.event_seq}) WHERE run_id=${run.runId}`;
   const { row: state, content } = await artifactContent(tx, run.runId);
-  const { parseReplayArtifact, replayArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
-  const parsedContent = replayArtifactSchema.omit({ seal: true }).parse(content);
+  const { parseReplayArtifact, replayArtifactSchema, replayItemArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
+  const parsedContent = (content.version === 2 ? replayItemArtifactSchema : replayArtifactSchema).omit({ seal: true }).parse(content);
   const seal = { headSeq: Number(state.event_seq), manifestHash: reviewHash(parsedContent.manifest),
     initialStateHash: parsedContent.initial.initialStateHash, comparisonStateHash: parsedContent.initial.comparisonStateHash,
     contentHash: replayArtifactContentHash(parsedContent) };
@@ -374,8 +554,8 @@ export async function readSealedReplayArtifact(database: VerifiedReplayDatabase,
     ensure(state?.state === 'sealed', "replay_run_not_sealed");
     await validateJournal(tx, runId);
     const { row, content } = await artifactContent(tx, runId);
-    const { parseReplayArtifact, replayArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
-    const parsed = replayArtifactSchema.parse({ ...content, seal: row.seal });
+    const { parseReplayArtifact, replayAnyArtifactSchema, replayArtifactContentHash } = await import("./pipeline-replay-artifact");
+    const parsed = replayAnyArtifactSchema.parse({ ...content, seal: row.seal });
     const { seal, ...sealedContent } = parsed;
     ensure(replayArtifactContentHash(sealedContent) === seal.contentHash, "replay_seal_content_mismatch");
     const artifact = parseReplayArtifact(parsed);

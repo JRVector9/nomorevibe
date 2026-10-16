@@ -1,9 +1,11 @@
+import { replayTimestampMicros } from "./pipeline-replay-timestamp";
 import { z } from "zod";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { capacityManifestSchema, parseCapacityManifest } from "./pipeline-capacity";
 import { assertVerifiedReplayHandlerDatabase, type VerifiedReplayDatabase } from "./pipeline-replay-database";
 import { ReplayReadinessProjectionSchema, ReplayReadinessJournalSchema, readinessProjectionHashes,
   reduceReplayReadinessCoverage, type ReplayReadinessProjection } from "./pipeline-replay-readiness";
+import { ReplayCombinedExecutionSchema, ReplayMixedJournalSchema, replayMixedProjectionHashes, reduceReplayMixedCoverage, validateReplayItemEvidence } from "./pipeline-replay-item-execution";
 import { classifyReplayInitialCandidates } from "./pipeline-replay-classification";
 
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -42,18 +44,21 @@ export const replayArtifactSchema = z.object({ kind: z.literal("pipeline-replay-
   seal: z.object({ headSeq: positive, manifestHash: hash, initialStateHash: hash,
     comparisonStateHash: hash, contentHash: hash }).strict(),
 }).strict();
+export const replayItemArtifactSchema = replayArtifactSchema.extend({ version: z.literal(2),
+  run: replayArtifactSchema.shape.run.extend({ profile: z.literal("handlers-v6-item") }).strict(),
+  initial: replayArtifactSchema.shape.initial.extend({ projection: ReplayCombinedExecutionSchema }).strict(),
+  journal: z.array(replayArtifactSchema.shape.journal.element.extend({ payload: z.json() }).strict()).min(1).max(2_000_000),
+  readiness: ReplayMixedJournalSchema,
+}).strict();
+export const replayAnyArtifactSchema = z.discriminatedUnion("version", [replayArtifactSchema, replayItemArtifactSchema]);
 export type ReplayArtifact = z.infer<typeof replayArtifactSchema>;
+export type ReplayAnyArtifact = z.infer<typeof replayAnyArtifactSchema>;
 export type ReplayArtifactCall = z.infer<typeof replayArtifactCallSchema>;
 export type ReplayArtifactFinal = z.infer<typeof replayArtifactFinalSchema>;
 const verifiedBrand: unique symbol = Symbol("VerifiedReplayArtifact");
 export type VerifiedReplayArtifact = Readonly<{ [verifiedBrand]: true }>;
-const verified = new WeakMap<object, ReplayArtifact>();
-/** PostgreSQL commit upper bounds must not be rounded down to JavaScript milliseconds. */
-export function replayTimestampMicros(value: string): bigint {
-  const match = timestamp.exec(value);
-  if (!match) throw new Error("invalid_replay_artifact");
-  return BigInt(Date.parse(`${match[1]}.000Z`)) * BigInt(1000) + BigInt(match[2].padEnd(6, "0"));
-}
+const verified = new WeakMap<object, ReplayAnyArtifact>();
+export { replayTimestampMicros } from "./pipeline-replay-timestamp";
 const time = replayTimestampMicros;
 const key = (value: { candidateId: number; inputHash: string; sourceRevisionHash: string }) =>
   `${value.candidateId}:${value.inputHash}:${value.sourceRevisionHash}`;
@@ -61,19 +66,20 @@ const ensure = (value: unknown): void => { if (!value) throw new Error("invalid_
 function unique<T>(rows: readonly T[], identity: (row: T) => string | number) {
   ensure(new Set(rows.map(identity)).size === rows.length);
 }
-export function replayArtifactContentHash(value: Omit<ReplayArtifact, "seal">): string { return reviewHash(value); }
+export function replayArtifactContentHash(value: Omit<ReplayAnyArtifact, "seal">): string { return reviewHash(value); }
 export function replayQualityDatasetHash(value: Pick<NonNullable<ReplayArtifact["initial"]["quality"]>, "cohort" | "labels">): string {
   return reviewHash({ cohort: [...value.cohort].sort((a, b) => key(a).localeCompare(key(b))),
     labels: [...value.labels].sort((a, b) => key(a).localeCompare(key(b))) });
 }
 
 /** Structural consistency is deliberately independent from provenance authentication. */
-export function parseReplayArtifact(value: unknown): ReplayArtifact {
+export function parseReplayArtifact(value: unknown): ReplayAnyArtifact {
   try {
-    const artifact = replayArtifactSchema.parse(value), { manifest, run, initial, seal } = artifact;
+    const artifact = replayAnyArtifactSchema.parse(value), { manifest, run, initial, seal } = artifact;
     parseCapacityManifest(manifest);
-    const projection = initial.projection as ReplayReadinessProjection;
-    const hashes = readinessProjectionHashes(projection, initial.capturedAt);
+    const projection = artifact.version === 2 ? artifact.initial.projection.domain : artifact.initial.projection;
+    const hashes = artifact.version === 2 ? replayMixedProjectionHashes(initial.projection, initial.capturedAt)
+      : readinessProjectionHashes(projection, initial.capturedAt);
     ensure(run.runId === manifest.runId && initial.initialStateHash === manifest.initialStateHash
       && hashes.initialStateHash === initial.initialStateHash && hashes.comparisonStateHash === initial.comparisonStateHash
       && seal.initialStateHash === initial.initialStateHash && seal.comparisonStateHash === initial.comparisonStateHash
@@ -156,6 +162,7 @@ export function parseReplayArtifact(value: unknown): ReplayArtifact {
     }
     const { seal: omitted, ...content } = artifact; void omitted;
     ensure(replayArtifactContentHash(content) === seal.contentHash);
+    if (artifact.version === 2) validateReplayItemEvidence(artifact);
     return artifact;
   } catch { throw new Error("invalid_replay_artifact"); }
 }
@@ -172,7 +179,7 @@ export async function loadVerifiedReplayArtifact(database: VerifiedReplayDatabas
   const handle = Object.freeze({ [verifiedBrand]: true as const });
   verified.set(handle, structuredClone(artifact)); return handle;
 }
-export function replayArtifactFromVerified(value: unknown): ReplayArtifact {
+export function replayArtifactFromVerified(value: unknown): ReplayAnyArtifact {
   const artifact = value && typeof value === "object" ? verified.get(value) : undefined;
   if (!artifact) throw new Error("verified_replay_artifact_required");
   return structuredClone(artifact);
@@ -183,9 +190,10 @@ function distribution(values: number[]) {
     p95: values[Math.ceil(values.length * .95) - 1] ?? null };
 }
 
-function report(artifact: ReplayArtifact, authenticity: "unverified" | "verified") {
+function report(artifact: ReplayAnyArtifact, authenticity: "unverified" | "verified") {
   const { run, manifest, initial } = artifact, start = time(run.startedAt), end = time(run.admissionClosedAt);
-  const initialClassification = classifyReplayInitialCandidates(initial.projection as ReplayReadinessProjection, manifest);
+  const projection = artifact.version === 2 ? artifact.initial.projection.domain : artifact.initial.projection;
+  const initialClassification = classifyReplayInitialCandidates(projection as ReplayReadinessProjection, manifest);
   const reviewKinds = new Map(initialClassification.map(row => [row.candidateId, row.kind]));
   const journal = new Map(artifact.journal.map(row => [row.seq, row]));
   const commits = new Map(artifact.readiness.transactions.map(row => [row.txKey, row.confirmedAt]));
@@ -224,7 +232,8 @@ function report(artifact: ReplayArtifact, authenticity: "unverified" | "verified
   }
   const qualityComplete = Boolean(initial.quality && initial.quality.labels.length === initial.quality.cohort.length
     && evaluated === initial.quality.cohort.length);
-  const readiness = reduceReplayReadinessCoverage({ ...initial, projection: initial.projection as ReplayReadinessProjection },
+  const readiness = artifact.version === 2 ? reduceReplayMixedCoverage(artifact.initial, artifact.readiness,
+    { from: run.startedAt, until: run.admissionClosedAt }) : reduceReplayReadinessCoverage(artifact.initial,
     artifact.readiness, { from: run.startedAt, until: run.admissionClosedAt });
   const certifiedReady = new Map((readiness.readyAtByInput ?? []).map(row => [key(row), row.at]));
   // A later readiness confirmation is an upper bound, so subtracting it would

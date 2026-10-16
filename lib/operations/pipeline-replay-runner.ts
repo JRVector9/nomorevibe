@@ -1,3 +1,6 @@
+import { randomUUID } from "node:crypto";
+import { executeSecondReviewItem } from "@/lib/crawl/second-review-item-lifecycle";
+import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, reopenOrphanedGateHolds, retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { reviewHash, reviewPolicyHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { firstReviewer } from "@/lib/crawl/agent-review";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
@@ -122,6 +125,9 @@ export type CertifiedFixtureReviewReplayOptions = FixtureReviewReplayOptions & {
 
 /** Certified fixture evidence only. Provider admission remains closed. */
 export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureReviewReplayOptions) {
+  return runCertifiedReviewReplay(options, false);
+}
+async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOptions, items: boolean) {
   if (currentReplayDb()) throw new Error("replay_runner_scope_conflict");
   const manifest = parseCapacityManifest(options.manifest);
   if (manifest.mode !== "fixtures") throw new Error("unsupported_provider_budget");
@@ -135,9 +141,10 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
   const database = await openVerifiedReplayHandlerDatabase(identityPath, {});
   let wallDeadline: ReturnType<typeof setTimeout> | undefined;
   try {
-    await assertLegacyReplayStages(database);
+    if (!items) await assertLegacyReplayStages(database);
     const ledger = new ReplayLedger(database);
-    const run = await ledger.prepareCertified(manifest, inputs, { runner: { jobs: names, budgetMs }, quality });
+    const run = await (items ? ledger.prepareCertifiedItems(manifest, inputs, { runner: { jobs: names, budgetMs }, quality })
+      : ledger.prepareCertified(manifest, inputs, { runner: { jobs: names, budgetMs }, quality }));
     const deadline = new AbortController();
     const signal = callerSignal ? AbortSignal.any([callerSignal, deadline.signal]) : deadline.signal;
     wallDeadline = setTimeout(() => deadline.abort(), manifest.limits.maxDurationMs);
@@ -155,11 +162,24 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
               tokenUpperBound: manifest.limits.perCallTokenUpperBound }, async () => {
               for (const name of names) {
                 if (signal.aborted) break;
-                await assertLegacyReplayStages(database);
+                if (!items) await assertLegacyReplayStages(database);
                 await assertReplaySettings(manifest);
-                const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
+                const result = await runJob<null>(name, name === "crawl-agent-review" ? reviewCrawlCandidates
+                  : items ? secondReviewItemControllers : secondReviewCandidates,
                   { requestedOnly: true, budgetMs, signal });
                 jobs.push({ name, result });
+                if (items && name === "second-review" && result.status === "completed" && !signal.aborted) {
+                  const owner = { instanceId: `replay:${run.runId}`, bootId: randomUUID() }, visited = new Set<number>();
+                  for (;;) {
+                    const queue = (await pendingSecondReviews(24)).filter(row => !visited.has(row.id));
+                    if (!queue.length || signal.aborted) break;
+                    for (const row of queue) {
+                      visited.add(row.id);
+                      if (signal.aborted) break;
+                      await executeSecondReviewItem({ secondReviewId: row.id, owner, signal });
+                    }
+                  }
+                }
                 if (signal.aborted || result.status === "failed" || result.status === "deferred"
                   || result.status === "skipped" && result.reason === "stopping") break;
               }
@@ -172,7 +192,7 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
       await ledger.drain(run);
       await ledger.fenceWriters(run);
     }
-    await assertLegacyReplayStages(database);
+    if (!items) await assertLegacyReplayStages(database);
     await ledger.seal(run, replayQuiescenceProof(run));
     const artifact = await loadVerifiedReplayArtifact(database, run.runId);
     return { runId: run.runId, jobs, artifact, diagnostics: reportVerifiedReplayArtifact(artifact) };
@@ -180,4 +200,20 @@ export async function runCertifiedFixtureReviewReplay(options: CertifiedFixtureR
     try { await database.close(); }
     finally { clearTimeout(wallDeadline); }
   }
+}
+
+/** Fixed mixed fixture entry. No scheduler or ordinary item consumer is installed. */
+export async function runCertifiedItemFixtureReviewReplay(options: CertifiedFixtureReviewReplayOptions) {
+  return runCertifiedReviewReplay(options, true);
+}
+
+async function secondReviewItemControllers(ctx: Parameters<typeof secondReviewCandidates>[0]) {
+  const settings = await getSettings();
+  if (!settings.enabled || !settings.secondReview.enabled) return { done: true };
+  if (!ctx.lease) throw new Error("second_review_job_required");
+  await enqueueSecondReviews(settings, undefined, ctx.lease);
+  await closeSettledSecondReviews(undefined, ctx.lease);
+  await reopenOrphanedGateHolds(settings, undefined, ctx.lease);
+  await retryFailedSecondReviews(undefined, ctx.lease);
+  return { done: true };
 }

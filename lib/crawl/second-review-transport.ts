@@ -4,6 +4,8 @@ import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "./agent-review-gat
 import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "./agent-review-grok";
 import { dispatchReviewFixtureCall, type ReviewFixtureCallBinding } from "./review-fixture-transport";
 
+import type { SecondReviewItemReceipt } from "./second-review-ownership";
+
 export type SecondReviewTransportBinding = Extract<ReviewFixtureCallBinding, { stage: "second" }>;
 
 export function secondReviewTransportTimeoutMs(provider: SecondReviewTransportBinding["provider"]): number {
@@ -12,7 +14,7 @@ export function secondReviewTransportTimeoutMs(provider: SecondReviewTransportBi
 }
 
 export async function dispatchSecondReviewTransport(binding: SecondReviewTransportBinding, input: ReviewInput,
-  options: { timeoutMs: number; signal?: AbortSignal }): Promise<AgentReviewResult> {
+  options: { timeoutMs: number; signal?: AbortSignal; itemReceipt?: SecondReviewItemReceipt }): Promise<AgentReviewResult> {
   const fixture = await dispatchReviewFixtureCall(binding, input, options);
   if (fixture !== undefined) return fixture;
   const adapterOptions = { model: binding.model, timeoutMs: options.timeoutMs, signal: options.signal };

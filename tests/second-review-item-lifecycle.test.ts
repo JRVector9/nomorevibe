@@ -98,7 +98,7 @@ it("observes again before dispatch and preserves the exact original receipt and 
   expect(mocks.observe).toHaveBeenCalledExactlyOnceWith(receipt);
   expect(mocks.dispatch).toHaveBeenCalledExactlyOnceWith({ stage: "second", candidateId: 11, firstAttemptId: 31,
     secondReviewId: 41, generationKey: "generation", vote: 41, provider: "abcllm", model: "second-model" },
-  observedInput, { timeoutMs: 60_000, signal: expect.any(AbortSignal) });
+  observedInput, { timeoutMs: 60_000, signal: expect.any(AbortSignal), itemReceipt: receipt });
   expect(mocks.record.mock.calls[0][0].receipt).toBe(receipt);
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith({ receipt,
     result: { ok: true, decision: "approve", confidence: 0.94, reason: "A task application", provider: row.provider, model: row.model } });

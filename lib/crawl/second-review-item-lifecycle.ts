@@ -52,7 +52,7 @@ export async function executeSecondReviewItem(input: {
       result = await dispatchSecondReviewTransport({ stage: "second", candidateId: row.candidateId,
         firstAttemptId: row.firstAttemptId, secondReviewId: row.id, generationKey: row.generationKey,
         vote: row.fallbackForId ?? row.id, provider, model }, reviewInput,
-      { timeoutMs: secondReviewTransportTimeoutMs(provider), signal });
+      { timeoutMs: secondReviewTransportTimeoutMs(provider), signal, itemReceipt: receipt });
     }
   } finally {
     // Caller abort never stops renewal before the actual transport has settled.

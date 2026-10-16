@@ -1,12 +1,12 @@
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { parseReplayArtifact, replayArtifactFromVerified, reportReplayArtifact, reportVerifiedReplayArtifact,
-  type ReplayArtifact, type VerifiedReplayArtifact } from "./pipeline-replay-artifact";
+  type ReplayAnyArtifact as ReplayArtifact, type VerifiedReplayArtifact } from "./pipeline-replay-artifact";
 
 /** Only these measured concurrency controls may vary; fallback and job ordering remain fixed. */
 function conditions(artifact: ReplayArtifact) {
   const { manifest, initial } = artifact;
   const { concurrency, ...limits } = manifest.limits; void concurrency;
-  return { mode: manifest.mode, cacheMode: manifest.cacheMode, referenceTime: manifest.referenceTime,
+  return { evidenceContract: { version: artifact.version, profile: artifact.run.profile }, mode: manifest.mode, cacheMode: manifest.cacheMode, referenceTime: manifest.referenceTime,
     inputPolicyHash: manifest.inputPolicyHash, comparisonPolicyHash: manifest.comparisonPolicyHash,
     comparisonStateHash: initial.comparisonStateHash, models: manifest.models, limits, runner: initial.runner,
     qualityDatasetHash: initial.quality?.datasetHash ?? null,

@@ -14,10 +14,11 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
 import { replayFinalRunBinding, type ReplayRun } from "./pipeline-replay-ledger";
-import { deferReplayFinalWrite } from "./pipeline-replay-execution";
+import type { ItemLease } from "@/lib/jobs/items/types";
+import { registerReplayItemFinalAuthority, deferReplayFinalWrite } from "./pipeline-replay-execution";
 
 type Binding = { stage: "first" | "second"; candidateId: number; firstAttemptId: number;
-  secondReviewId?: number; input: ReviewInput; settings: CrawlSettings };
+  secondReviewId?: number; itemLease?: ItemLease; input: ReviewInput; settings: CrawlSettings };
 type Requests = readonly { job: string; requestedVersion: number }[];
 type Scope = { run: ReplayRun; binding: ReturnType<typeof replayFinalRunBinding>;
   executor: NonNullable<ReturnType<typeof currentReplayDb>>; active: boolean };
@@ -111,7 +112,11 @@ export async function prepareReplayFinalWrite(tx: ProductTransaction, value: Bin
   ensure(positive(value.candidateId) && positive(value.firstAttemptId)
     && (value.stage === "first" || value.stage === "second" && positive(value.secondReviewId)), "replay_final_binding_mismatch");
   const binding = structuredClone(value), before = await observe(scope, tx, binding);
-  ensure(before.leaseAlive && (binding.stage !== "first" || before.first.state !== "running"
+  if (binding.itemLease) {
+    ensure(scope.binding.items && binding.stage === "second" && binding.itemLease.binding.stage === "ai2"
+      && binding.itemLease.binding.secondReviewId === binding.secondReviewId, "replay_final_binding_mismatch");
+    await registerReplayItemFinalAuthority(tx, binding.itemLease);
+  } else ensure(before.leaseAlive && (binding.stage !== "first" || before.first.state !== "running"
     || before.first.leaseToken === before.jobToken), "replay_final_lease_mismatch");
   if (binding.stage === "second") ensure(before.seconds.some(row => row.id === binding.secondReviewId
     && row.candidateId === binding.candidateId), "replay_final_binding_mismatch");
@@ -274,7 +279,8 @@ export async function recordReplayFinalWrite(tx: ProductTransaction, token: Repl
   ensure(same(firstIdentity(before.first), firstIdentity(after.first)) && before.candidate.repo === after.candidate.repo
     && before.candidate.productUrl === after.candidate.productUrl && +before.candidate.judgedAt! === +after.candidate.judgedAt!,
     "replay_final_binding_mismatch");
-  ensure(after.leaseAlive && after.jobToken === before.jobToken, "replay_final_lease_mismatch");
+  if (binding.itemLease) await registerReplayItemFinalAuthority(tx, binding.itemLease);
+  else ensure(after.leaseAlive && after.jobToken === before.jobToken, "replay_final_lease_mismatch");
   await assertWrittenResult(scope, tx, write, after);
   const evidence = await finalEvidence(scope, tx, write, after);
   const flush = async (run: Record<string, unknown>, target: ProductTransaction) => {
