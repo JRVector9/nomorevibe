@@ -19,14 +19,33 @@ function transaction<T>(load: (tx: ProductTransaction) => Promise<T>): Promise<T
   return onPrimary(() => db.transaction(load));
 }
 
-async function control(tx: ProductTransaction) {
-  const [row] = await tx.select().from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+async function control(tx: ProductTransaction, lock: "share" | "update" = "update") {
+  const [row] = await tx.select().from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for(lock);
   if (!row) return fail("model_capacity_control_missing");
   const policy = row.policy === null ? null : parseModelCapacityPolicy(row.policy);
   if (policy !== null && modelCapacityPolicyHash(policy) !== row.policyHash) fail("model_capacity_policy_hash_mismatch");
   return { ...row, policy };
 }
 type Control = Awaited<ReturnType<typeof control>>;
+
+/** Policy read for a short domain claim TX, never a permit or dispatch proof.
+ * The caller acquires this prefix before stage/domain/item/job locks. */
+export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const row = await control(tx, "share");
+  if (!["disabled", "open", "draining"].includes(row.mode)
+    || !Number.isSafeInteger(row.epoch) || row.epoch < 1
+    || !Number.isSafeInteger(row.revision) || row.revision < 1
+    || row.policy === null && (row.mode !== "disabled" || row.policyHash !== null)) {
+    throw new Error("model_capacity_control_invalid");
+  }
+  const policy = row.policy && Object.freeze({ ...row.policy,
+    providerLimits: Object.freeze(row.policy.providerLimits), groupLimits: Object.freeze(row.policy.groupLimits),
+    poolLimits: Object.freeze(row.policy.poolLimits), weights: Object.freeze(row.policy.weights),
+    routes: Object.freeze(row.policy.routes.map(route => Object.freeze(route))),
+  });
+  return Object.freeze({ mode: row.mode, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash, policy });
+}
 
 /** The control mutex serializes every runtime writer. Existing rows selected
  * together for expiry are locked in queue order; newly inserted rows are owned
