@@ -1,6 +1,7 @@
 import { normalizeTypedLink } from "../contracts";
 import { createHash } from "node:crypto";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertCanonicalInput, captureCanonicalInput } from "../source-context";
 
 export const SITE_FINGERPRINT_BYTES = 2 * 1024 * 1024;
 const SITE_FINGERPRINT_PARSER_VERSION = 1;
@@ -63,18 +64,21 @@ export async function refreshSiteFingerprint(
     // error, rather than racing it into generic budget exhaustion.
     return fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
   };
+  const original = await captureCanonicalInput(input);
   let result = await read(headers);
   if (!result || !hasBudget()) return "budget_exhausted";
   if (result.ok && result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl)) {
     result = await read({});
   }
   if (!result || !hasBudget()) return "budget_exhausted";
+  if (result.ok && result.status !== 304 && result.body.length >= SITE_FINGERPRINT_BYTES) return "budget_exhausted";
   const identity = { slug: input.slug, kind: "documentation", provider: "product_site", sourceKey: "canonical_site", sourceUrl: input.url };
   if (!result.ok || (result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl))) {
     const attempts = (sameUrl ? stored?.attempts ?? 0 : 0) + 1;
     const delayHours = Math.min(7 * 24, 6 * 2 ** Math.min(attempts - 1, settings.maxRetries - 1));
     const persisted = await withJobLeaseWrite(options.lease, async tx => {
       if (!hasBudget()) return false;
+      await assertCanonicalInput(tx, input, settings, original);
       await upsertObservedSource({ ...identity, state: "failed", lastFailureAt: now,
         attempts, lastErrorCode: `site_${result.ok ? "cacheless_304" : result.reason}`, nextAttemptAt: new Date(now.getTime() + delayHours * 3600000) }, tx, input.productId);
       return true;
@@ -88,6 +92,7 @@ export async function refreshSiteFingerprint(
   };
   const persisted = await withJobLeaseWrite(options.lease, async tx => {
     if (!hasBudget()) return false;
+    await assertCanonicalInput(tx, input, settings, original);
     await upsertObservedSource({ ...identity, state: "ok", normalizedFacts: facts,
       etag: result.headers.get("etag") ?? (result.status === 304 ? stored?.etag : null),
       lastModified: result.headers.get("last-modified") ?? (result.status === 304 ? stored?.lastModified : null),

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({ transaction: vi.fn(), source: vi.fn(), upsert:
 vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction } }));
 vi.mock("@/lib/domain/evidence/repository", () => ({ findObservedSource: mocks.source, upsertObservedSource: mocks.upsert }));
 vi.mock("@/lib/domain/evidence/settings-store", () => ({ currentEvidenceSettings: mocks.settings }));
+vi.mock("@/lib/domain/evidence/source-context", () => ({ assertCanonicalInput: vi.fn(), captureCanonicalInput: vi.fn(async()=>({status:"verified",accessMode:"website",updatedAt:"2026-10-16 00:00:00"})) }));
 vi.mock("@/lib/net/fetch", () => ({ fetchCapped: vi.fn() }));
 
 const { refreshSiteFingerprint } = await import("@/lib/domain/evidence/providers/site-fingerprint");
