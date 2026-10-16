@@ -60,3 +60,11 @@ Ledger foreign-TX proof 검증은 순차 실제 두 TX이며 동시 PID 경합 �
 실제 provider hard C·remote 종료·영속 native artifact·commit ACK 손실/원격 crash 복구·AI2/item/CLI/text 전 호출 연결·30분 동등 품질 성능 비교·운영 배포는 남아 있다. 승인 품질·모델을 변경하거나 불명 charge를 자동 해제하는 것으로 이 공백을 메우지 않는다.
 
 담당 최종 보고: `/tmp/nomorevibe-pr05b3-a-ledger-final-report-20261016.md`, `...b-native-final-report...md`, `...c-final-report...md`. Root 직접 리뷰와 별도로 B runtime 리뷰, A native/runtime 및 추가 fixture hunk 리뷰를 취합한다.
+
+## CI 후속: evidence-source 역할 fixture
+
+CI38870750032의 evidence-source 두 사례는 persisted role 취득 없이 ENV에 epoch1만 주입해 role_lease_lost로 실패했다. Test-only `evidence-source-claims.test.ts`에서 실제 tryAcquireRole 반환 lease를 ENV와 runJob에 동일하게 주고 실제 release 후 소유했던 행만 raw µs CAS로 복원한다. 원24case/기대/시간과 production16은 유지했다. 지정 두 사례를 한 번 실행해 2PASS/22skip(전체1.19초), 변경 범위 TypeScript/ESLint exit0이다. 나머지22나 전체 suite를 반복한 결과가 아니다.
+
+Root는 patch와 최종 보고를 직접 읽고55563 exact identity/image/scope/768MiB/loopback/solevolume/dummy/독점 guard 뒤 독립 읽기를 했다. Captured 전체는 agent final과 exact, baseline raw91표95행·권한·함수·트리거·catalog exact, 다른 연결0이다. 제품2/purge2/source1 정상 sequence 소비만 따로 보존했고 reset하지 않았다. 정상STOP/exited0/OOMfalse 확인 뒤 소유 container/volume만 정리했다. Existing-role UPDATE 복원 branch는 이번 fresh DB에서 미실행이며 HTTP unread20s 실패는 별도 미해결이다.
+
+원형·실행·독립증거는 `/tmp/nomorevibe-pr471-role-fixture-final-report-20261016.md`, `...root-independent-proof-20261016.json`, `...root-db-cleanup-20261016.json`에 있다.
