@@ -1,8 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import postgres from "postgres";
 import { writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { REVIEW_RETRIABLE_REASONS } from "@/lib/crawl/agent-review-contract";
 import { runJob } from "@/lib/jobs/runner";
 import { requestJob } from "@/lib/jobs/control";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
@@ -16,11 +19,14 @@ const prefix = "pr12-source-buffer";
 const names = ["crawl-fetch", "crawl-judge", "crawl-agent-review", "crawl-publish"];
 const observationKeys = ["crawl:source-buffer", ...names.map(name => `job:${name}`)];
 type Raw = Record<string, unknown>;
-let tables: string[] = [], baseline: Record<string, Raw[]>, catalog: unknown;
+let tables: string[] = [], baseline: Record<string, Raw[]>, originalBaseline: Record<string, Raw[]>, catalog: unknown;
 let preparing: Promise<void> | undefined;
 let setup: Promise<void> | undefined, cleaning: Promise<void> | undefined;
+const heldRows: { table: "crawl_frontier" | "crawl_candidates"; original: Raw; held: Raw }[] = [];
+const placeholders: Raw[] = [];
 const work = new Set<Promise<unknown>>(), frontierIds = new Set<number>(), documentIds = new Set<number>(), candidateIds = new Set<number>();
 const ownItemKeys = new Set<string>(), sourceRepos = new Set<string>(), jobTokens = new Set<string>();
+const ownInsertedJobs = new Set<string>();
 function track<T>(p: Promise<T>): Promise<T> { work.add(p); void p.catch(() => {}); return p; }
 async function drain() {
   const pending = [...work]; const settled = await Promise.allSettled(pending);
@@ -41,9 +47,21 @@ async function catalogSnapshot() {
 }
 async function restore(tx: postgres.TransactionSql, table: string, key: string, value: string | number) {
   const original = baseline[table].find(row => row[key] === value);
-  if (!original) { await tx.unsafe(`DELETE FROM "${table}" WHERE "${key}"=$1`, [value]); return; }
+  const [selected] = await tx.unsafe(`SELECT to_jsonb(t) AS value FROM "${table}" t WHERE "${key}"=$1 FOR UPDATE`, [value]);
+  const current = selected?.value as Raw | undefined;
+  if (isDeepStrictEqual(current, original)) return;
+  if (table === "jobs" && !original)
+    expect(ownInsertedJobs.has(String(value)), "unowned absent-baseline job must remain untouched").toBe(true);
+  if (table === "jobs" && current?.lease_token !== null && current?.lease_token !== undefined)
+    expect(jobTokens.has(String(current.lease_token)), "unknown replacement job must remain untouched").toBe(true);
+  expect(current, `missing managed row ${table}:${value}`).toBeDefined();
+  if (!original) {
+    const changed = await tx.unsafe(`DELETE FROM "${table}" t WHERE "${key}"=$1 AND to_jsonb(t)=$2::text::jsonb RETURNING "${key}"`, [value, JSON.stringify(current)]);
+    expect(changed).toHaveLength(1); return;
+  }
   const fields = Object.keys(original).filter(field => field !== key).map(field => `"${field}"`);
-  await tx.unsafe(`UPDATE "${table}" t SET (${fields.join(',')})=(${fields.map(field => `r.${field}`).join(',')}) FROM jsonb_populate_record(NULL::"${table}",$1::text::jsonb) r WHERE t."${key}"=$2`, [JSON.stringify(original), value]);
+  const changed = await tx.unsafe(`UPDATE "${table}" t SET (${fields.join(',')})=(${fields.map(field => `r.${field}`).join(',')}) FROM jsonb_populate_record(NULL::"${table}",$1::text::jsonb) r WHERE t."${key}"=$2 AND to_jsonb(t)=$3::text::jsonb RETURNING t."${key}"`, [JSON.stringify(original), value, JSON.stringify(current)]);
+  expect(changed).toHaveLength(1);
 }
 async function cleanupOnce() {
   await setup; await drain(); if (!baseline) return;
@@ -53,11 +71,7 @@ async function cleanupOnce() {
     if (documentIds.size) await tx`DELETE FROM crawl_documents WHERE id=ANY(${[...documentIds]}) AND repo LIKE ${prefix+'/%'}`;
     if (sourceRepos.size) await tx`DELETE FROM crawl_documents WHERE repo=ANY(${[...sourceRepos]})`;
     if (frontierIds.size) await tx`DELETE FROM crawl_frontier WHERE id=ANY(${[...frontierIds]}) AND repo LIKE ${prefix+'/%'}`;
-    for (const name of names) {
-      const [job] = await tx`SELECT lease_token FROM jobs WHERE name=${name}`;
-      if (job?.lease_token !== null && job?.lease_token !== undefined) expect(jobTokens.has(job.lease_token)).toBe(true);
-      await restore(tx, "jobs", "name", name);
-    }
+    for (const name of [...names].sort()) await restore(tx, "jobs", "name", name);
     for (const key of observationKeys) await restore(tx, "operations_observations", "key", key);
     await restore(tx, "crawl_settings", "id", 1);
     await restore(tx, "crawl_source_buffer_control", "id", 1);
@@ -65,6 +79,7 @@ async function cleanupOnce() {
     expect(await snapshot(tx)).toEqual(baseline);
   });
   candidateIds.clear(); documentIds.clear(); frontierIds.clear(); ownItemKeys.clear(); sourceRepos.clear(); jobTokens.clear();
+  ownInsertedJobs.clear();
   expect(await catalogSnapshot()).toEqual(catalog);
 }
 async function cleanup() {
@@ -72,27 +87,83 @@ async function cleanup() {
   const task = cleanupOnce(); cleaning = task;
   try { await task; } finally { if (cleaning === task) cleaning = undefined; }
 }
+async function restoreForeign() {
+  if (!baseline || !originalBaseline) return;
+  await client.begin(async tx => {
+    for (const row of placeholders) {
+      const changed = await tx`DELETE FROM crawl_candidates t WHERE id=${row.id as number}
+        AND to_jsonb(t)=${JSON.stringify(row)}::text::jsonb RETURNING id`;
+      expect(changed).toHaveLength(1);
+    }
+    for (const row of heldRows) {
+      const changed = await tx.unsafe(`UPDATE "${row.table}" t SET state=r.state
+        FROM jsonb_populate_record(NULL::"${row.table}",$1::text::jsonb) r
+        WHERE t.id=$2 AND to_jsonb(t)=$3::text::jsonb RETURNING t.id`, [JSON.stringify(row.original), row.original.id as number, JSON.stringify(row.held)]);
+      expect(changed).toHaveLength(1);
+    }
+    expect(await snapshot(tx)).toEqual(originalBaseline);
+  });
+  expect(await catalogSnapshot()).toEqual(catalog);
+}
 beforeAll(() => setup = (async () => {
   ensureSchema();
   tables = (await client`SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`).map(row => row.tablename);
-  baseline = await snapshot(); catalog = await catalogSnapshot();
+  const original = await snapshot(), originalCatalog = await catalogSnapshot();
   expect((await client`SELECT repo FROM crawl_frontier WHERE repo LIKE ${prefix+'/%'}`)).toHaveLength(0);
   expect((await client`SELECT repo FROM crawl_documents WHERE repo LIKE ${prefix+'/%'}`)).toHaveLength(0);
   expect((await client`SELECT repo FROM crawl_candidates WHERE repo LIKE ${prefix+'/%'}`)).toHaveLength(0);
   expect((await client`SELECT name FROM jobs WHERE lease_token IS NOT NULL AND locked_at>clock_timestamp()-interval '90 seconds' AND name=ANY(${names})`)).toHaveLength(0);
-  writeFileSync(`/tmp/nomorevibe-pr12-a-fixture-baseline-20261016.json`, JSON.stringify({ baseline, catalog }));
+  const suspended: typeof heldRows = [], inserted: Raw[] = [];
+  const isolated = await client.begin(async tx => {
+    // These file-local holds exclude foreign work from the actual global handler/selectors.
+    // Only state is changed; all original decisions, source bytes and stored microseconds survive.
+    for (const table of ["crawl_frontier", "crawl_candidates"] as const) for (const row of original[table]) {
+      const hold = table === "crawl_frontier" ? ["pending", "fetching"].includes(String(row.state))
+        : ["new", "approved"].includes(String(row.state)) || row.state === "needs_review"
+          && REVIEW_RETRIABLE_REASONS.some(reason => reason === row.reason);
+      if (!hold) continue;
+      const changed = await tx.unsafe(`UPDATE "${table}" t SET state=$1 WHERE id=$2 AND to_jsonb(t)=$3::text::jsonb RETURNING to_jsonb(t) AS value`,
+        [table === "crawl_frontier" ? "done" : "rejected", row.id as number, JSON.stringify(row)]);
+      expect(changed).toHaveLength(1);
+      suspended.push({ table, original: row, held: changed[0].value });
+    }
+    for (const document of original.crawl_documents) {
+      if (original.crawl_candidates.some(candidate => candidate.repo === document.repo)) continue;
+      // A NULL joined candidate is unconditionally judge-eligible; only absent repos get an owned placeholder.
+      const changed = await tx`INSERT INTO crawl_candidates(repo,state) VALUES(${String(document.repo)},'rejected')
+        ON CONFLICT(repo) DO NOTHING RETURNING to_jsonb(crawl_candidates) AS value`;
+      expect(changed).toHaveLength(1); inserted.push(changed[0].value);
+    }
+    return snapshot(tx);
+  });
+  originalBaseline = original; baseline = isolated; catalog = originalCatalog;
+  heldRows.push(...suspended); placeholders.push(...inserted);
+  writeFileSync(`/tmp/nomorevibe-pr12-b-fixture-baseline-20261016.json`, JSON.stringify({ originalBaseline, baseline, catalog, heldRows, placeholders }));
 })());
-beforeEach(() => preparing = (async () => {
+function prepareCase() { return preparing = (async () => {
   await cleanup(); mocks.repo.mockReset().mockResolvedValue({ ok: true, value: { homepage: null, id: 997731, stargazers_count: 1 } });
   const settings = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "off",
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: false, enforceEligibility: false },
     secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: false },
     discover: { ...DEFAULT_CRAWL_SETTINGS.discover, sourceBuffer: { enabled: true } } };
-  await client`INSERT INTO crawl_settings(id,values) VALUES(1,${JSON.stringify(settings)}::text::jsonb)
-    ON CONFLICT(id) DO UPDATE SET values=excluded.values`;
-  for (const name of names) await client`INSERT INTO jobs(name) VALUES(${name}) ON CONFLICT(name) DO UPDATE SET
-    not_before=NULL,locked_at=NULL,lease_token=NULL`;
-})());
+  const inserted = await client.begin(async tx => {
+    const insertedNames: string[] = [];
+    await tx`INSERT INTO crawl_settings(id,values) VALUES(1,${JSON.stringify(settings)}::text::jsonb)
+      ON CONFLICT(id) DO UPDATE SET values=excluded.values`;
+    for (const name of [...names].sort()) {
+      const original = baseline.jobs.find(row => row.name === name);
+      const changed = original
+        ? await tx`UPDATE jobs t SET not_before=NULL,locked_at=NULL,lease_token=NULL
+          WHERE name=${name} AND to_jsonb(t)=${JSON.stringify(original)}::text::jsonb RETURNING name`
+        : await tx`INSERT INTO jobs(name) VALUES(${name}) ON CONFLICT(name) DO NOTHING RETURNING name`;
+      expect(changed, `fixed job setup collision: ${name}`).toHaveLength(1);
+      if (!original) insertedNames.push(name);
+    }
+    return insertedNames;
+  });
+  inserted.forEach(name => ownInsertedJobs.add(name));
+})(); }
+beforeEach(prepareCase);
 afterEach(async () => {
   await Promise.allSettled([preparing]);
   await cleanup();
@@ -101,8 +172,10 @@ afterAll(async () => {
   const errors: unknown[] = [];
   const pending = await Promise.allSettled([setup, preparing]);
   for (const result of pending) if (result.status === "rejected") errors.push(result.reason);
-  try { await cleanup(); } catch (e) { errors.push(e); }
+  let cleaned = false;
+  try { await cleanup(); cleaned = true; } catch (e) { errors.push(e); }
   try { await drain(); } catch (e) { errors.push(e); }
+  if (cleaned) try { await restoreForeign(); } catch (e) { errors.push(e); }
   try { await client.end({ timeout: 2 }); } catch (e) { errors.push(e); }
   if (errors.length) throw new AggregateError(errors, "source_buffer_fixture_cleanup");
 });
@@ -298,7 +371,7 @@ it("applies the same gate before item LIMIT and preserves a healthy original ite
 it("rejects a forged job even when an active zero-size claim is blocked", () => track((async () => {
   await pressure(); const control = await client`SELECT to_jsonb(t) AS value FROM crawl_source_buffer_control t`;
   expect(await withFetch(async ctx => {
-    await expect(dequeueWithAdmission(0, undefined, { ...ctx.lease!, token: "0509482d-940a-4d29-99ac-d08b7f3ca461" })).rejects.toThrow();
+    await expect(dequeueWithAdmission(0, undefined, { ...ctx.lease!, token: randomUUID() })).rejects.toThrow();
     return { done: true };
   })).toMatchObject({ status: "completed" });
   expect(await client`SELECT to_jsonb(t) AS value FROM crawl_source_buffer_control t`).toEqual(control);

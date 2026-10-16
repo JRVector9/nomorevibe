@@ -49,3 +49,21 @@ npx tsc -p /tmp/nomorevibe-pr12-a-scoped-tsconfig-20261016.json --noEmit --incre
 ```
 
 고정 입력의 실제 지속 처리율/시간 버퍼, shard claim/TTL/24h 신선도, 독립 소비자, 운영 활성화, 관리자 실제 화면, end-to-end2배 성능은 후속 작업이다. 선행 PR453/460/461/462의 개발·CI·병합·운영 적용을 구분한다. 자동 필수 CI는 유지하며 이 검증 문서가 실패한 선행 CI를 대신하지 않는다.
+
+## 독립 리뷰 후 shared fixture 보완
+
+B의 독립 리뷰에서 생산 코드 추가 P1/P2는 없었고, 전역 selector의 기존 행 유입과 고정 job 소유권 정리에 fixture P2가 있었다. 해당 integration 파일만 보완했다. Foreign frontier/candidate는 selector에 필요한 state 한 열만 fullraw CAS로 잠시 제외하고 마지막에 원 µs로 복원한다. 후보가 없는 기존 문서는 원형을 변경하지 않고, 부재를 확인한 repo에만 자기 rejected placeholder를 만들며 ID/fullraw CAS로 정리한다. 중간 격리 baseline과 원 전체 baseline을 구분한다.
+
+고정 job 준비는 기존 행 fullraw CAS 또는 absent INSERT DO NOTHING/RETURNING1이다. Cleanup은 row lock과 unknown token 검사를 거쳐 fullraw CAS로만 복원한다. Root 추가 리뷰에서 setup 충돌 뒤 외부 job이 정상 완료해 token=NULL이면 행을 삭제할 수 있음을 찾아 보완했다. 실제 INSERT한 이름은 **TX commit resolve 후에만** 소유 Set에 등록하고, 미등록 absent-baseline 행은 token=NULL이어도 DML 전에 거절한다. Cleanup commit 뒤에만 등록을 해제한다. 임의 외부 writer와 모든 키 재사용 조합을 완전히 증명한 것으로 확대하지 않는다.
+
+실제 검증은 다음과 같다. 서로 다른 실행의 중복 case를 합산하지 않는다.
+
+- 원 driver+nonempty sentinel의 disabled1: 실제 getRepo1 기대/2 호출 Assertion RED. 보완 뒤 같은 sentinel의 disabled/pressure/forged 원3개 GREEN.
+- 별도 실제 INSERT+runJob이 owner를 유지하는 경쟁: 원 helper의 token 소실 Assertion RED → 같은 body GREEN.
+- Setup 충돌 후 외부 runJob 정상 완료/token=NULL 경계: c3fd helper의 외부 idle 행 삭제 Assertion RED → 같은 body GREEN(1.34초).
+- 최종 commit 추적 보강 뒤 nonempty 원3개: **3PASS/8skip,1.45초,exit0**. 단일 파일 scoped tsc/eslint도 실제0이다. 전체11/전체unit/전체DB/build/typegen 반복은 하지 않았다.
+- 원11개 feature tail은 음성 auth의 고정 forged token을 randomUUID로 바꾼 한 곳 외 byte exact이며 나머지11개 source/test/migration SHA는 동일하다. 최종 fixture SHA `aeaa281dd52d2d593c72d84cd00cccad25289c5ee7af29d8ea438bbdc98bfdd0`.
+
+GitGuardian의 단일 finding은 해당 forged 음성 fixture literal로 확인했다. 실제 token 발급·검증 코드를 읽어 분류했으며 운영 credential로 사용되는 값이 아니다. Literal 제거 후 이전 commit의 보안 check가 자동 해소되는지는 미확정이다. Ignore·보안 설정·check 우회는 하지 않았다.
+
+Root는 두 최종 diff와 실제 원로그·manifest를 직접 읽고55541을 독립 readback했다. Public90표/10행 raw·µs/catalog/OID/ACL/defaults/roles/triggers/84journal/타 연결0은 agent final 및 최초 baseline과 exact다. 정상 STOP/exited0/OOMfalse 후 자기 container/volume만 제거했다. **55541 retired: 재접속·재생성하지 않는다.** 근거는 `/tmp/nomorevibe-pr12-root-fixture-independent-proof-20261016.json`, `...pr12-root-fixture-cleanup...json`, `...pr12-b-fixture-fix-final...md`, `...pr12-b-inserted-key-final-report...md`이다. 초기 import/self-drain 및 patch 작성 오류는 별도 보존했고 기능 RED로 세지 않았다.
