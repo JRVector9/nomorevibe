@@ -2,9 +2,10 @@ import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
+import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { grokAuthPath, grokFailure, runGrokCli, type GrokCliRun } from "@/lib/crawl/agent-review-grok";
+import { grokSessionCliRun } from "@/lib/crawl/grok-session-model-capacity";
 import { observe } from "@/lib/operations/observations";
 import { serviceInstanceId } from "@/lib/operations/instance";
 
@@ -30,8 +31,10 @@ export async function checkGrokSession(ctx: JobContext<null>, deps: { run?: Grok
     .filter((item) => item.provider === "grok-cli");
   if (uses.length === 0) { ctx.log("crawl.grok_session_skipped", { reason: "no_grok_cli_in_settings" }); return { done: true }; }
   const model = uses[0].model;
-  // 공통 모델 슬롯이 open·draining 이면 부르지 않고 미룬다 — 관측을 남기지 않으므로 마지막 확인 시각이 그대로다
-  await assertCliModelAdmission({ routeId: "grok-session-check", provider: "grok-cli", model });
+  // 공통 모델 슬롯: disabled 면 원 호출 그대로. open 이고 CLI 계약이 있으면 이 인스턴스의 슬롯을 얻어 부르고, 그 밖과 슬롯 대기는
+  // 부르지 않고 미룬다 — 관측을 남기지 않으므로 마지막 확인 시각이 그대로다(오래 미뤄지면 토큰이 갱신 없이 만료될 수 있다, 설계 D3)
+  const capacity = await backgroundCliPath("grok-session-check", model);
+  if (capacity === "native" && !ctx.lease) throw new Error("Grok session check requires a job lease");
   const authPath = grokAuthPath();
   const authFile = await stat(authPath).then((info) => ({ exists: true, modifiedAt: info.mtime.toISOString() })).catch(() => ({ exists: false, modifiedAt: null }));
   const directory = await mkdtemp(path.join(os.tmpdir(), "nomorevibe-grok-session-"));
@@ -40,7 +43,7 @@ export async function checkGrokSession(ctx: JobContext<null>, deps: { run?: Grok
   try {
     const home = path.join(directory, "home");
     await mkdir(home);
-    const run = deps.run ?? runGrokCli;
+    const run = capacity === "native" && ctx.lease ? grokSessionCliRun(model, ctx.lease) : deps.run ?? runGrokCli;
     const outcome = await run(grokSessionArgs(model), { cwd: directory, env: { ...process.env, GROK_HOME: home, GROK_AUTH_PATH: authPath, RUST_LOG: "off", NO_COLOR: "1" },
       timeoutMs: GROK_SESSION_TIMEOUT_MS, signal: ctx.signal });
     if (outcome.kind !== "exit") result = { result: outcome.kind };

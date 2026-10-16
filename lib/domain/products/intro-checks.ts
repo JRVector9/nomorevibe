@@ -2,8 +2,11 @@ import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { productIntroChecks, products, productSearchProfiles, type Product, type ProductIntroCheck } from "@/lib/db/schema";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
-import { decideIntro, type IntroJudgement } from "./intro-check";
+import { decideIntro, introEvidence, type IntroJudgement } from "./intro-check";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { reviewHash } from "@/lib/crawl/agent-review-contract";
+import type { ProductTransaction } from "./generation";
+import type { IntroCheckMember } from "@/lib/llm/capacity";
 
 /**
  * 소개 검수의 대기열과 저장. 묻는 일(claude-cli)은 intro-check.ts 에 있다.
@@ -124,3 +127,30 @@ export async function recordIntroCheck(task: IntroTask, lease: JobLease, result:
 }
 
 export type IntroCheckRecordOutcome = "kept" | "replaced" | "needs_editor" | "failed" | null;
+
+/** 모델이 이 제품에 대해 받는 글 그대로(잡이 checkIntros 에 넘기는 항목)의 해시 */
+const introSourceHash = (product: ProductFields) =>
+  reviewHash({ slug: product.slug, intro: product.tagline, evidence: introEvidence(product) });
+
+/**
+ * 공통 슬롯 dispatch 의 도메인 증명(05c-5). 제품·검수 행을 id 순으로 잠그고 묶음의 구성원을 낸다 — 슬롯 요청 전과 dispatch TX 에서
+ * 같은 값이어야 한다. recordIntroCheck 가 버릴 묶음(주인·출처·소개가 바뀜, 잡이 읽은 뒤 검수 행이 생기거나 바뀜, 보낼 글이 달라짐)이면 null.
+ * check 는 검수 행 전체(to_jsonb)의 해시와 attempts — 자격이 아니라 그 시점의 사진이다. 시도·재시도 규칙은 recordIntroCheck 그대로다.
+ */
+export async function lockIntroCheckMembers(tx: ProductTransaction, tasks: readonly IntroTask[]): Promise<IntroCheckMember[] | null> {
+  const members = new Map<number, IntroCheckMember>();
+  for (const task of [...tasks].sort((a, b) => a.product.id - b.product.id)) {
+    const [product] = await tx.select({ ...FIELDS, source: products.source, claimedAt: products.claimedAt })
+      .from(products).where(eq(products.id, task.product.id)).for("update");
+    if (!product || (product.status !== "seeded" && product.status !== "verified") || product.source !== "crawler" || product.claimedAt
+      || product.tagline !== task.product.tagline || product.taglineSource !== task.product.taglineSource
+      || product.description !== task.product.description || introSourceHash(product) !== introSourceHash(task.product)) return null;
+    const [check] = await tx.execute<{ raw: Record<string, unknown> }>(sql`SELECT to_jsonb(c) AS raw FROM product_intro_checks c
+      WHERE product_id=${product.id} FOR UPDATE`);
+    const raw = check?.raw ?? null;
+    if ((raw === null) !== (task.check === null) || raw !== null && raw.attempts !== task.check!.attempts) return null;
+    members.set(product.id, { productId: product.id, slug: product.slug, sourceHash: introSourceHash(product), taglineSource: product.taglineSource,
+      check: raw ? { kind: "present", rowIdentityHash: reviewHash(raw), attempts: Number(raw.attempts) } : { kind: "absent" } });
+  }
+  return tasks.map(task => members.get(task.product.id)!);
+}
