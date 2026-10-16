@@ -23,6 +23,13 @@ export type RuntimeHeartbeat = {
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
+type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean };
+export type BackgroundConsumerLanes = {
+  names: readonly string[];
+  open: () => Promise<boolean>;
+  run: (name: string, options: RequestedRunOptions) => Promise<JobRunResult>;
+  request: (name: string) => Promise<unknown>;
+};
 type WorkerOptions = { role: BatchRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
@@ -33,6 +40,7 @@ type WorkerDependencies = {
   run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean }>;
   /** host 합계 예산(lib/operations/host-budget-runtime.ts). 없으면 기존처럼 바로 실행한다 */
   admit?: (name: string) => Promise<{ admitted: true; release: () => Promise<void> } | { admitted: false; reason: string }>;
+  consumer?: BackgroundConsumerLanes;
   sleep?: typeof interruptibleSleep;
   report?: RuntimeReport;
   log?: typeof runtimeLog;
@@ -93,8 +101,12 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
  */
 export async function runWorker(options: WorkerOptions, dependencies: WorkerDependencies) {
   const intervalMs = Math.max(1_000, Math.min(options.intervalMs ?? 5_000, 60_000));
-  const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)]).filter((names) => names.length > 0);
-  const states = lanes.map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
+  // 배경 consumer(PR06c)가 맡은 job 은 기존 줄에서 빼고 job 마다 따로 도는 줄을 준다. 이 역할이 돌리는 job 이 아니면 시작하지 않는다
+  const consumed = [...new Set(dependencies.consumer?.names ?? [])];
+  if (consumed.some(name => !dependencies.names.includes(name))) throw new Error('invalid_background_consumer_jobs');
+  const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)].filter(name => !consumed.includes(name)))
+    .filter((names) => names.length > 0);
+  const states = [...lanes, ...consumed.map(name => [name])].map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
     startedAt: null, pollStartedAt: null, lastProgressAt: Date.now() }));
   const emit = () => {
     const snapshot = states.map(lane => ({ ...lane, jobs: [...lane.jobs] }));
@@ -109,8 +121,64 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
       pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now };
     emit();
   };
-  const results = await Promise.all(lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))));
+  const results = await Promise.all([...lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))),
+    ...consumed.map((name, index) => runConsumerLane(options, dependencies, dependencies.consumer!, name, intervalMs, laneReport(lanes.length + index)))]);
   return { ticks: results.reduce((sum, result) => sum + result.ticks, 0), failures: results.reduce((sum, result) => sum + result.failures, 0) };
+}
+
+/** 남은 일이 있다고 끝난 틱 뒤 다음 틱까지의 짧은 간격 — 일감 없이 done:false 를 내는 틱이 DB 를 쉬지 않고 두드리지 않게 */
+const CONSUMER_REFILL_MS = 1_000;
+
+/**
+ * 배경 consumer 한 줄(PR06c). 기존 틱처럼 scheduler 의 다음 요청이나 같은 줄의 다른 job 을 기다리지 않고, 남은 일이 있으면 곧 다음 틱을 돈다.
+ *
+ * - 일감 권한은 기존 runJob 의 job lease 다(requestedOnly). 요청 없음·사람이 멈춤·재시도 유예·살아 있는 다른 주인의 잠금은 pending 이 거른다.
+ * - 공통 모델 슬롯이 open 일 때만 잡는다. 틱 안의 공정 배분(first/second/background 가중치)은 DB 장부 하나가 맡는다.
+ * - 빈 큐(done)·슬롯 미룸·실패·잠김에는 다시 요청하지 않고 기존 poll 간격으로 기다린다 — 빈 큐에서 모델을 부르지 않는다.
+ * - 종료 신호를 받으면 새 틱을 시작하지 않고, 진행 중 틱은 runJob 이 lease 를 놓을 때까지 기다린다(다시 요청하지 않음).
+ */
+async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDependencies, consumer: BackgroundConsumerLanes,
+  name: string, intervalMs: number, report: RuntimeReport) {
+  let ticks = 0, failures = 0;
+  while (!options.signal?.aborted) {
+    ticks++;
+    let refill = false;
+    report('polling');
+    try {
+      await dependencies.seen([name]);
+      if ((await dependencies.pending()).includes(name) && await consumer.open()) {
+        const admission = dependencies.admit
+          ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
+        if (admission && !admission.admitted) {
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason: admission.reason, consumer: true });
+        } else {
+          report('running', name);
+          try {
+            const result = await consumer.run(name, { requestedOnly: true, signal: options.signal });
+            if (result.status === 'failed') failures++;
+            refill = result.status === 'completed' && result.done === false;
+            dependencies.log?.('worker.job', { role: options.role, name, status: result.status, consumer: true });
+          } catch {
+            failures++;
+            dependencies.log?.('worker.job', { role: options.role, name, status: 'failed', consumer: true });
+          } finally {
+            report('polling');
+            if (admission?.admitted) await admission.release().catch(() => {});
+          }
+        }
+      }
+      refill &&= !options.once && !options.signal?.aborted;
+      if (refill) await consumer.request(name);
+    } catch {
+      refill = false;
+      failures++;
+      dependencies.log?.('worker.poll_failed', { role: options.role, name, consumer: true });
+    }
+    report('idle');
+    if (options.once || options.signal?.aborted) break;
+    await (dependencies.sleep ?? interruptibleSleep)(refill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
+  }
+  return { ticks, failures };
 }
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
@@ -244,11 +312,16 @@ async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits }] = await Promise.all([
+    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits },
+      { backgroundConsumerJobs, backgroundConsumerLanes }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
       import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),
+      import('@/lib/jobs/background-consumer'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
+    // 기본 비활성. 배경 dispatch 는 역할 lease 에 묶이므로 선출된 역할 워커에서만 켠다
+    const consumed = backgroundConsumerJobs(options.role, process.env);
+    if (consumed.length && !roleLease) throw new Error('background_consumer_role_lease_required');
     // 감독이 이 잡을 끊는 한도(job+drain)까지 번역 slot 을 지킨다 — 같은 env 로 부모가 쓰는 값이다
     const limits = supervisorLimits(options.role, process.env);
     const host = startHostBudget(process.env, { holdMs: limits.jobMs + limits.drainMs });
@@ -260,6 +333,8 @@ async function main() {
         pending: () => pendingJobNames(options.role),
         seen: markWorkerSeen,
         run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
+        ...(consumed.length ? { consumer: backgroundConsumerLanes(consumed,
+          (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease })) } : {}),
         ...(host.enabled ? { admit: host.admit } : {}),
         report, log: runtimeLog,
       });
