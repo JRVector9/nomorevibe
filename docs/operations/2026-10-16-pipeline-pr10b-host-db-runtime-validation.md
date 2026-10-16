@@ -63,3 +63,11 @@ root `/tmp/nomorevibe-pr10b-host-runtime-root-independent-proof-20261016.json`,
 `...pr10b-host-runtime-root-db-cleanup...json`에 실제 명령·exit·실패 접근·범위별 SHA를 보존했다.
 첫 READ 오류 우선순위/JSON 순서 assertion/scoped type 진단 및 C 첫 driver 전제 오류는 기능RED와 구분했다.
 수동 전체 unit/DB/build는 모든 PR 개발 뒤이며, 이 PR에서 운영DB/DDL/배포/SSH/실모델/consumer를 실행하지 않았다.
+
+## CI Next.js ambient environment type follow-up
+
+PR470 CI38866821534 quality failed with TS2741: the helper accepted a partial environment but promised NodeJS.ProcessEnv, whose Next.js global augmentation requires NODE_ENV. The exact one error was independently reproduced with a scoped TypeScript configuration including the installed Next global declaration, helper, supervisor and existing host-budget test. No whole typegen/build/suite was run manually.
+
+Two overloads now distinguish a complete NodeJS.ProcessEnv input (preserving its complete return type) from a partial record input. Runtime environment cloning is unchanged. The first Omit-based generic attempt failed scoped compilation because ProcessEnv's string index loses the declared NODE_ENV property through Omit; its failure log is preserved and excluded from GREEN. Final same scoped compilation and ESLint exit0, emitted JavaScript before/after byte-exact. No fake NODE_ENV value or cast was introduced.
+
+Evidence: /tmp/nomorevibe-pr470-root-ci38866821534-quality-20261016.log, /tmp/nomorevibe-pr470-root-nodeenv-red-20261016.log, /tmp/nomorevibe-pr470-root-nodeenv-omit-attempt-20261016.log, /tmp/nomorevibe-pr470-root-nodeenv-final-green-20261016.log, /tmp/nomorevibe-pr470-root-nodeenv-runtime-conformance-20261016.json. New mandatory CI remains pending at the corrected head.

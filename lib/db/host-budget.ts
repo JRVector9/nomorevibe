@@ -117,7 +117,9 @@ export function assertHostDbEntry(env: HostDbEnvironment, expected: { kind: Host
   resolveHostDbPoolConfig({ role: expected.role, max: 1 }, options);
 }
 
-export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): NodeJS.ProcessEnv {
+export function hostDbChildEnvironment(env: NodeJS.ProcessEnv, role: string): NodeJS.ProcessEnv;
+export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): Record<string, string | undefined>;
+export function hostDbChildEnvironment(env: HostDbEnvironment, role: string): Record<string, string | undefined> {
   const parentKind = role === 'scheduler' ? 'scheduler-parent' : 'role-parent';
   assertHostDbEntry(env, { kind: parentKind, role });
   const options = runtimeOptions(env);
