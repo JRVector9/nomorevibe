@@ -28,4 +28,6 @@ Runtime 원419행/helper 전체 읽기에서 event-fault 원인 assertion이 run
 
 55581 SQL 소유 반환 뒤 root의 독립 READ ONLY readback도 exit0: 원 public90표10행+drizzle/µs raw·captured semantic catalog/ACL/roles/default·journal90·ALWAYS·pg_sequence 구조와 담당자 final의 모든 sequence 값이 일치했고 타 연결0이다. Full pg_class는 migration2관계 통계 차이로 false/원인 미관측을 유지한다. 제품9/event28/request7/CDN10의 정상 sequence 증가를 reset하지 않았다. Root 정상 STOP/exited0/OOMfalse와 자기 container+solevolume 폐기 완료. Proof `/tmp/nomorevibe-pr05b9-root-runtime-final-db-proof-20261016.json`. 실제 PG 총12개 PASS와 native22/ledger19/runtime17 범위 검사는 서로 다른 증거다.
 
+최신 PR482 부모를 정상 merge한 뒤 source18 SHA가 모두 일치했고 실제 Next global을 포함한 이18파일의 범위 TypeScript가 exit0이었다. CI와 README의 세 재현 블록은 새 ledger/runtime 두 파일을 명시 localhost TEST_DATABASE_URL로 먼저 실행하고 원 일곱 파일을 이어서 실행하도록 편성했다. 설치된 Vitest filesOnly와 BaseSequencer로213파일=선행9+68/68/68의 모든 파일이 정확히1회 포함됨을 확인했다. 이 편성 검사는 test body/setup/SQL을 실행하지 않았다. Proof `/tmp/nomorevibe-pr05b9-root-ci-coverage-20261016.json`.
+
 다른 text 경로/실제 provider hard-C·완료/호스트 물리 합계/Oracle ARM 상시업무·복제/fencing/DR/같은품질2배·24시간 관측은 별도 gate다. 수동 전체 test/build/typegen은 모든 계획 PR 개발 뒤 실행한다. 운영DB·SSH·실provider·배포·활성화0이다.

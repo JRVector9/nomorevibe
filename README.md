@@ -100,6 +100,8 @@ maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동�
 docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
 npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
@@ -107,7 +109,7 @@ npm run test:integration -- tests/integration/agent-review-item-model-capacity.t
 npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts
+npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts
 ```
 
 DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로드와 같은 0.8.6 이다. 예전 `postgres:17` 컨테이너는
@@ -139,6 +141,8 @@ npx next typegen
 npx tsc --noEmit
 npm run lint
 npm test
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
 npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
 npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
@@ -146,17 +150,19 @@ npm run test:integration -- tests/integration/agent-review-item-model-capacity.t
 npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts  # 같은 전용 DB
+npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts  # 같은 전용 DB
 npm run build
 ```
 
 CI의 3개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
 같은 DB에서 묶음을 동시에 실행하면 테스트의 테이블 초기화가 서로 충돌한다.
-위 전체 재현도 처음에는 빈 전용 DB를 준비하고 사유 번역 ledger 파일, 사유 번역 호출 파일, 텍스트 profile 파일, AI1 native 항목 파일, AI2 native 항목 파일, AI2 소비자 파일, AI1 소비자 파일을 순서대로 실행한다.
-일곱 파일은 각 실행 뒤 같은 행 기준 상태를 복원하며 sequence의 정상 증가는 유지한다.
+위 전체 재현도 처음에는 빈 전용 DB를 준비하고 제품 번역 ledger 파일, 제품 번역 호출 파일, 사유 번역 ledger 파일, 사유 번역 호출 파일, 텍스트 profile 파일, AI1 native 항목 파일, AI2 native 항목 파일, AI2 소비자 파일, AI1 소비자 파일을 순서대로 실행한다.
+아홉 파일은 각 실행 뒤 같은 행 기준 상태를 복원하며 sequence의 정상 증가는 유지한다.
 일부 테스트가 남긴 데이터를 가진 DB에서 소비자 검증의 원형 보호 조건을 완화하지 않는다.
 
 ```bash
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
@@ -164,8 +170,8 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_te
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts
-# 2/3과 3/3은 각각 다른 포트의 별도 DB에서 같은 일곱 exclude를 지정한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts
+# 2/3과 3/3은 각각 다른 포트의 별도 DB에서 같은 아홉 exclude를 지정한다.
 ```
 
 ## 운영 배포와 상태 확인
