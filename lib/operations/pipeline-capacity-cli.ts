@@ -12,6 +12,10 @@ const fixedErrors = new Set([
   "invalid_generation_time", "call_mismatch", "conflicting_call", "quality_mismatch",
   "usage_total_overflow", "invalid_snapshot_candidates", "snapshot_policy_mismatch",
   "snapshot_model_mismatch", "snapshot_candidate_missing", "snapshot_row_limit",
+  "usage: pipeline-capacity-live collect RUN_ID START END primary|replica OUTPUT | report ARTIFACT | compare BASELINE CANDIDATE | label ARTIFACT LABELS OUTPUT",
+  "explicit_LIVE_CAPACITY_DATABASE_URL_required", "live_revision_unavailable", "live_window_invalid", "live_window_not_finished",
+  "live_target_mismatch", "live_transaction_not_read_only", "live_write_detected", "live_row_limit",
+  "live_first_reviewer_unpinned", "live_artifact_mismatch", "live_quality_mismatch", "live_quality_already_attached",
 ]);
 
 /** Never expose artifact values, file paths, database messages or nested causes. */
