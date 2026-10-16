@@ -11,6 +11,12 @@ vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
     kind: "result", result: await domain.writeKeywords({}, options),
   }),
 }));
+vi.mock("@/lib/domain/products/search-verify-model-capacity", () => ({
+  verifyKeywordsWithModelCapacity: async (_task: unknown, _lease: unknown,
+    options: { timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch }) => ({ kind: "result",
+    result: await (options.chunked ? domain.verifyKeywordsInChunks : domain.verifyKeywords)({}, { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }),
+  }),
+}));
 vi.mock("@/lib/domain/products/search-profile", () => ({
   PROFILE_MODEL: "generator", profileEvidence: () => ({}), profileHash: () => "hash",
   writeKeywords: domain.writeKeywords,

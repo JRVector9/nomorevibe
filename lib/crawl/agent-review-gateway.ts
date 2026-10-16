@@ -876,6 +876,95 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   return { result, terminal };
 }
 
+import { searchVerifyModelDispatchSchema, searchVerifyGatewayTerminalEvidenceSchema, type SearchVerifyModelDispatch,
+  type SearchVerifyGatewayTerminalEvidence, type SearchVerifyOutcome } from "@/lib/llm/capacity";
+import { searchVerifyServingContractHash, searchVerifyServingContractSchema, resolveSearchVerifyServingContract,
+  type SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
+import { searchVerifyGatewayWire, parseVerification, type VerifyItem, type VerifyResult } from "@/lib/domain/products/search-verify";
+
+export type PreparedSearchVerifyGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string; evidenceHash: string; keywordsHash: string }>;
+export type SearchVerifyGatewayTerminal = Readonly<{ kind: "search_verify_gateway_terminal" }>;
+const searchVerifyCalls = new WeakMap<PreparedSearchVerifyGatewayCall, { wire: string;
+  contract: SearchVerifyServingContract; timeoutMs: number; used: boolean }>();
+const searchVerifyTerminals = new WeakMap<SearchVerifyGatewayTerminal, SearchVerifyGatewayTerminalEvidence>();
+function validSearchVerifyItem(value: unknown): value is VerifyItem {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  return Object.keys(item).sort().join(",") === "evidence,keywords" && validProfileEvidence(item.evidence as ProfileEvidence)
+    && Array.isArray(item.keywords) && item.keywords.length >= 1 && Array.from(item.keywords).every(keyword => typeof keyword === "string");
+}
+/** One preparation per physical step; a caller descriptor or injected request never enables a deployment. */
+export function prepareSearchVerifyGatewayCall(item: VerifyItem, options: { model: string; timeoutMs: number }):
+  PreparedSearchVerifyGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validSearchVerifyItem(snapshot) || !searchVerifyServingContractSchema.shape.model.safeParse(model).success
+    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveSearchVerifyServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = searchVerifyServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = searchVerifyGatewayWire(snapshot, model);
+  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: searchVerifyServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, evidenceHash: profileHash(snapshot.evidence), keywordsHash: sha(JSON.stringify(snapshot.keywords)) });
+  searchVerifyCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+export function readSearchVerifyGatewayTerminal(value: unknown): SearchVerifyGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? searchVerifyTerminals.get(value as SearchVerifyGatewayTerminal) ?? null : null;
+}
+/** Exactly one POST. Original HTTP, outer-decoding (network) and content-parser (invalid_output) names are kept. */
+export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispatch: SearchVerifyModelDispatch,
+  call: PreparedSearchVerifyGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: VerifyResult; terminal: SearchVerifyGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(item), state = searchVerifyCalls.get(call);
+  const checked = searchVerifyModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 60_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validSearchVerifyItem(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("search_verify_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (searchVerifyGatewayWire(snapshot, call.model) !== state.wire || binding.member.evidenceHash !== call.evidenceHash
+    || profileHash(snapshot.evidence) !== call.evidenceHash || sha(JSON.stringify(snapshot.keywords)) !== call.keywordsHash
+    || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("search_verify_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
+      return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) {
+    // The legacy leaf mapped an undecodable body to network; a decoded but untrusted envelope has no terminal authority.
+    let decoded = true; try { JSON.parse(body); } catch { decoded = false; }
+    return { result: { ok: false, error: decoded ? "invalid_output" : "network" }, terminal: null };
+  }
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  let outcome: SearchVerifyOutcome;
+  try { outcome = { ok: true, removed: parseVerification(snapshot.keywords, content ?? "") }; }
+  catch { outcome = { ok: false, error: "invalid_output" }; }
+  const terminal: SearchVerifyGatewayTerminal = Object.freeze({ kind: "search_verify_gateway_terminal" });
+  searchVerifyTerminals.set(terminal, freeze(searchVerifyGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "search_verify_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed, outcome })));
+  return { result: outcome.ok ? { ok: true, unsupported: [...outcome.removed] } : { ok: false, error: "invalid_output" }, terminal };
+}
+
 import { websearchQueryModelDispatchSchema, websearchQueryGatewayTerminalEvidenceSchema, type WebsearchQueryModelDispatch,
   type WebsearchQueryGatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { websearchQueryServingContractHash, websearchQueryServingContractSchema, resolveWebsearchQueryServingContract,

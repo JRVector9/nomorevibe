@@ -647,6 +647,13 @@
       "breakpoints": true
     },
     {
+      "idx": 92,
+      "version": "7",
+      "when": 1794086400004,
+      "tag": "0092_model_capacity_search_verify_terminal",
+      "breakpoints": true
+    },
+    {
       "idx": 93,
       "version": "7",
       "when": 1794086400005,

@@ -246,6 +246,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     }
     await expireRequests(tx, state);
     if (memberKeys && await (crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : websearch ? websearchQueryFence(tx, websearch, checked.requestId)
+      : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
       : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
         : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
@@ -344,7 +345,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const product = reasonBinding.success ? reasonBinding : productTranslationModelDispatchSchema.safeParse(value);
   const korean = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
-  const bound = crawlBound.success ? crawlBound : websearchQueryModelDispatchSchema.safeParse(value);
+  const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
+  const bound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -361,8 +363,9 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
             ? "reason_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-translate:")
               ? "product_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-tagline-ko:")
                 ? "product_tagline_ko_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:crawl-tagline:")
-                  ? "crawl_tagline_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:websearch-query:")
-                    ? "websearch_query_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+                  ? "crawl_tagline_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:search-verify:")
+                    ? "search_verify_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:websearch-query:")
+                      ? "websearch_query_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -1284,6 +1287,231 @@ export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput
       bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash, outcome: Object.freeze(structuredClone(phase.outcome)) });
     return Object.freeze({ generationHash, first: data(first[0]!), second: second[0] ? data(second[0]) : null });
   });
+}
+
+import { searchVerifyMemberKeys, searchVerifyLogicalWorkKey, searchVerifyInputSchema, searchVerifyInputHash, searchVerifyGenerationHash,
+  searchVerifyDispatchBindingSchema, searchVerifyDispatchBindingHash, searchVerifyModelDispatchSchema,
+  searchVerifyGatewayTerminalEvidenceSchema, searchVerifyMemberSchema, nextSearchVerifyStep, firstSearchVerifyStep,
+  type SearchVerifyInput, type SearchVerifyDispatchBinding, type SearchVerifyModelDispatch, type SearchVerifyMember,
+  type SearchVerifyOutcome, type SearchVerifyParent, type SearchVerifyStep } from "./capacity";
+import type { SearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+declare const searchVerifyLockBrand: unique symbol;
+/** parentDeadlineAt is the stored shared deadline of a locked settled parent; null only for an execution's first step. */
+export type SearchVerifyCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  parentDeadlineAt: number | null; readonly [searchVerifyLockBrand]: true }>;
+export type SearchVerifyContinuation = Readonly<{ generationHash: string; nowMs: number; unresolved: boolean; nextExecution: number;
+  latest: Readonly<{ execution: number; deadlineAt: number; parent: SearchVerifyParent; next: SearchVerifyStep | "done" | "stop";
+    outcomes: readonly Readonly<{ step: SearchVerifyStep; outcome: SearchVerifyOutcome }>[] }> | null }>;
+const searchVerifyLocks = new WeakMap<SearchVerifyCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; input: SearchVerifyInput; parentDeadlineAt: number | null; finished: boolean }>();
+function fixedSearchVerifyIdentity(value: ModelCapacityRequestIdentity, input: SearchVerifyInput): string {
+  const logical = searchVerifyLogicalWorkKey(input);
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-search-verify" || value.provider !== "abcllm"
+    || value.model !== input.model || value.workKey !== `${logical}:${searchVerifyInputHash(input)}`) fail("invalid_search_verify_capacity_identity");
+  return logical;
+}
+/** Fixed product target fence from the first waiting INSERT; an exact step already dispatched or settled never repeats. */
+async function searchVerifyFence(tx: ProductTransaction, keys: readonly string[], logicalKey: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND (
+      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+        AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${keys[0]}]::text[])
+      OR (${modelCapacityRequests.logicalWorkKey} = ${logicalKey}
+        AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled'))))
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-verify'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+function searchVerifyRowMatches(row: RequestRow | undefined, dispatch: SearchVerifyModelDispatch): row is RequestRow {
+  return owned(row, dispatch) && row.logicalWorkKey === dispatch.binding.logicalWorkKey
+    && isDeepStrictEqual(row.logicalMemberKeys, searchVerifyMemberKeys(dispatch.binding.member))
+    && row.routeId === dispatch.binding.routeId && row.provider === dispatch.binding.provider && row.model === dispatch.binding.model
+    && row.class === "background" && row.pool === "text"
+    && row.workKey === `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt && isDeepStrictEqual(row.dispatchBinding, dispatch.binding);
+}
+function storedSearchVerifyEvidence(row: RequestRow | undefined) {
+  if (!row || row.state !== "settled" || !row.settledAt) return null;
+  const parsed = searchVerifyGatewayTerminalEvidenceSchema.safeParse(row.terminalEvidence);
+  return parsed.success && searchVerifyRowMatches(row, parsed.data.dispatch)
+    && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
+}
+type StoredSearchVerify = NonNullable<ReturnType<typeof storedSearchVerifyEvidence>>;
+/** The parent must be the immediately preceding step of the same generation and execution, sharing its deadline. */
+function searchVerifyParentMatches(parent: StoredSearchVerify, input: SearchVerifyInput): boolean {
+  const binding = parent.dispatch.binding;
+  return input.parent !== null && parent.dispatch.requestId === input.parent.requestId && parent.dispatch.bindingHash === input.parent.bindingHash
+    && parent.responseHash === input.parent.responseHash && binding.generationHash === searchVerifyGenerationHash(input)
+    && binding.execution === input.execution && isDeepStrictEqual(nextSearchVerifyStep(binding.member, binding.step, parent.outcome), input.step);
+}
+async function lockSearchVerifyRequests(tx: ProductTransaction, ownId: string, input: SearchVerifyInput): Promise<RequestRow[]> {
+  return tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.requestId} = ${ownId}::uuid
+    OR ${modelCapacityRequests.requestId} = ${input.parent?.requestId ?? ownId}::uuid`)
+    .orderBy(asc(modelCapacityRequests.requestId)).for("update");
+}
+/** Stable target and exact generation/execution/step identity belong to the first waiting INSERT. */
+export async function requestSearchVerifyModelSlot(value: ModelCapacityRequest, input: SearchVerifyInput): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = searchVerifyInputSchema.parse(input);
+  return requestSlot(checked, fixedSearchVerifyIdentity(checked, snapshot), searchVerifyMemberKeys(snapshot.member));
+}
+/** Control/request/parent UPDATE prefix precedes batch/role/product/profile/job locks. No nested TX. */
+export async function lockSearchVerifyModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; input: SearchVerifyInput;
+}): Promise<SearchVerifyCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const input = searchVerifyInputSchema.parse(value.input), logical = fixedSearchVerifyIdentity(identity, input);
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const rows = await lockSearchVerifyRequests(tx, checked.requestId, input), row = rows.find(row => row.requestId === checked.requestId);
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys, searchVerifyMemberKeys(input.member))) return null;
+  const parent = input.parent ? storedSearchVerifyEvidence(rows.find(row => row.requestId === input.parent?.requestId)) : null;
+  if (input.parent && (!parent || !searchVerifyParentMatches(parent, input))) fail("search_verify_parent_mismatch");
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await searchVerifyFence(tx, searchVerifyMemberKeys(input.member), logical, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const parentDeadlineAt = parent?.dispatch.binding.deadlineAt ?? null;
+  const locked = Object.freeze({ control: snapshot, parentDeadlineAt }) as SearchVerifyCapacityDispatchLock;
+  searchVerifyLocks.set(locked, { tx, row, identity, input, parentDeadlineAt, finished: false });
+  return locked;
+}
+export async function finishSearchVerifyModelCapacityDispatch(tx: ProductTransaction, lock: SearchVerifyCapacityDispatchLock,
+  value: SearchVerifyDispatchBinding): Promise<SearchVerifyModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = searchVerifyLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_search_verify_capacity_dispatch_lock");
+  const binding = searchVerifyDispatchBindingSchema.parse(value);
+  const input = { member: binding.member, model: binding.model, execution: binding.execution, step: binding.step, parent: binding.parent };
+  if (!isDeepStrictEqual(input, proof.input) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || proof.parentDeadlineAt !== null && binding.deadlineAt !== proof.parentDeadlineAt
+    || binding.role.instanceId !== proof.identity.owner.instanceId || binding.role.bootId !== proof.identity.owner.bootId)
+    fail("search_verify_capacity_dispatch_binding_mismatch");
+  // The actual settled parent row was validated and UPDATE-locked by this same private TX capability.
+  proof.finished = true;
+  const bindingHash = searchVerifyDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("search_verify_model_reservation_lost");
+  const dispatch = searchVerifyModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+/** Historical settlement uses the dispatch, not today's job, role, policy or deadline. */
+export async function reconcileSearchVerifyGatewayTerminal(terminal: SearchVerifyGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readSearchVerifyGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readSearchVerifyGatewayTerminal(terminal);
+  if (!native) fail("invalid_search_verify_gateway_terminal");
+  const evidence = searchVerifyGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!searchVerifyRowMatches(row, dispatch)) fail("search_verify_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("search_verify_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("search_verify_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+type SearchVerifyChain = { chain: StoredSearchVerify[]; next: SearchVerifyStep | "done" | "stop"; parent: SearchVerifyParent | null;
+  unresolved: { row: RequestRow; binding: SearchVerifyDispatchBinding }[] };
+/** Every execution of a generation must be one exact parent chain of settled rows plus at most its unresolved tail. */
+async function searchVerifyGeneration(tx: ProductTransaction, member: SearchVerifyMember, model: string, lock: boolean) {
+  const generationHash = searchVerifyGenerationHash({ member, model });
+  const query = tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='product-search-verify'
+    AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled') AND ${modelCapacityRequests.dispatchBinding}->>'kind'='search_verify_gateway'
+    AND ${modelCapacityRequests.dispatchBinding}->>'generationHash'=${generationHash}`).orderBy(asc(modelCapacityRequests.queueOrdinal));
+  const rows = lock ? await query.for("share") : await query;
+  const bindings = rows.map(row => searchVerifyDispatchBindingSchema.safeParse(row.dispatchBinding));
+  if (bindings.some((binding, index) => !binding.success || binding.data.generationHash !== generationHash
+    || rows[index].logicalWorkKey !== binding.data.logicalWorkKey || rows[index].workKey !== `${binding.data.logicalWorkKey}:${binding.data.inputHash}`
+    || rows[index].dispatchBindingHash !== searchVerifyDispatchBindingHash(binding.data))) fail("search_verify_continuation_mismatch");
+  const executions = new Map<number, SearchVerifyChain>();
+  for (const execution of [...new Set(bindings.map(binding => binding.data!.execution))].sort((a, b) => a - b)) {
+    const own = rows.map((row, index) => ({ row, binding: bindings[index].data! })).filter(entry => entry.binding.execution === execution);
+    const settled = own.filter(entry => entry.row.state === "settled").map(entry => storedSearchVerifyEvidence(entry.row));
+    if (settled.some(phase => !phase)) fail("search_verify_continuation_mismatch");
+    const chain: StoredSearchVerify[] = [], pending = [...settled as StoredSearchVerify[]];
+    let next: SearchVerifyStep | "done" | "stop" = firstSearchVerifyStep(member.mode), parent: SearchVerifyParent | null = null;
+    while (pending.length) {
+      const index = pending.findIndex(phase => isDeepStrictEqual(phase.dispatch.binding.step, next)
+        && isDeepStrictEqual(phase.dispatch.binding.parent, parent));
+      if (typeof next === "string" || index < 0) fail("search_verify_continuation_mismatch");
+      const [phase] = pending.splice(index, 1), binding = phase.dispatch.binding;
+      if (chain.length && binding.deadlineAt !== chain[0].dispatch.binding.deadlineAt) fail("search_verify_continuation_mismatch");
+      chain.push(phase); parent = { requestId: phase.dispatch.requestId, bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash };
+      next = nextSearchVerifyStep(binding.member, binding.step, phase.outcome);
+    }
+    executions.set(execution, { chain, next, parent, unresolved: own.filter(entry => entry.row.state !== "settled") });
+  }
+  return { generationHash, executions };
+}
+/** Stored parser outcomes are business data only. Any unresolved physical call of the target is reported, never skipped;
+ * every execution of the generation must be one exact parent chain. This never issues proof or releases capacity. */
+export async function readSearchVerifyContinuation(value: { member: SearchVerifyMember; model: string }): Promise<SearchVerifyContinuation> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const member = searchVerifyMemberSchema.parse(value.member);
+  const [key] = searchVerifyMemberKeys(member);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("share");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [clock] = await tx.execute<{ now: number }>(sql`SELECT (extract(epoch from clock_timestamp())*1000)::float8 AS now`);
+    const [active] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+      ${modelCapacityRequests.state} IN ('dispatched','indeterminate') AND (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${key}]::text[]
+        OR ${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-verify')`).limit(1);
+    const { generationHash, executions } = await searchVerifyGeneration(tx, member, value.model, false);
+    const nowMs = Math.floor(Number(clock.now)), ordinals = [...executions.keys()], last = ordinals.length ? executions.get(ordinals[ordinals.length - 1])! : null;
+    const latest: SearchVerifyContinuation["latest"] = last && last.chain.length && last.parent ? Object.freeze({ execution: ordinals[ordinals.length - 1],
+      deadlineAt: last.chain[0].dispatch.binding.deadlineAt, parent: Object.freeze(last.parent),
+      next: typeof last.next === "string" ? last.next : Object.freeze(structuredClone(last.next)),
+      outcomes: Object.freeze(last.chain.map(phase => Object.freeze({ step: Object.freeze(structuredClone(phase.dispatch.binding.step)),
+        outcome: Object.freeze(structuredClone(phase.outcome)) }))) }) : null;
+    return Object.freeze({ generationHash, nowMs, unresolved: !!active, latest,
+      nextExecution: ordinals.length ? ordinals[ordinals.length - 1] + 1 : 0 });
+  });
+}
+export type SearchVerifyResultChain = Readonly<{ kind: "done"; removed: readonly string[] } | { kind: "stop" | "open" | "unresolved" }>;
+/** Positive-writer ledger wall inside the caller's TX: control SHARE, then every row of the generation FOR SHARE.
+ * The execution must be the latest one, an exact settled parent chain sharing one deadline, optionally ending in one
+ * unresolved physical call that is its exact next step. A stored outcome is business data, never write authority. */
+export async function lockSearchVerifyResultChain(tx: ProductTransaction, value: { member: SearchVerifyMember; model: string;
+  execution: number }): Promise<SearchVerifyResultChain | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const member = searchVerifyMemberSchema.parse(value.member);
+  const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("share");
+  if (!mutex) fail("model_capacity_control_missing");
+  let generation: Awaited<ReturnType<typeof searchVerifyGeneration>>;
+  try { generation = await searchVerifyGeneration(tx, member, value.model, true); }
+  catch (error) { if (error instanceof Error && error.message === "search_verify_continuation_mismatch") return null; throw error; }
+  const ordinals = [...generation.executions.keys()], found = generation.executions.get(value.execution);
+  if (!found || ordinals[ordinals.length - 1] !== value.execution) return null;
+  if (found.unresolved.length) {
+    const [tail] = found.unresolved;
+    return found.unresolved.length === 1 && typeof found.next !== "string" && isDeepStrictEqual(tail.binding.step, found.next)
+      && isDeepStrictEqual(tail.binding.parent, found.parent) && (!found.chain.length || tail.binding.deadlineAt === found.chain[0].dispatch.binding.deadlineAt)
+      ? Object.freeze({ kind: "unresolved" as const }) : null;
+  }
+  if (!found.chain.length) return null;
+  if (found.next === "done") return Object.freeze({ kind: "done" as const,
+    removed: Object.freeze(found.chain.flatMap(phase => phase.outcome.ok ? phase.outcome.removed : [])) });
+  return Object.freeze({ kind: found.next === "stop" ? "stop" as const : "open" as const });
 }
 
 import { websearchQueryMemberKeys, websearchQueryLogicalWorkKey, websearchQueryInputSchema, websearchQueryInputHash,
