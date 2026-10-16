@@ -554,6 +554,13 @@
       "when": 1793100000000,
       "tag": "0078_model_capacity",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1793200000000,
+      "tag": "0079_http_origin_permits",
+      "breakpoints": true
     }
   ]
 }

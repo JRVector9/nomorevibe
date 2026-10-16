@@ -76,8 +76,10 @@ DR 조사·복원 준비(14)는 이들과 병렬로 진행할 수 있으나 실�
 
 ## PR별 검증 명령
 
-코드 PR의 공통 CI는 `.github/workflows/ci.yml`을 따른다. 변경 경계의 회귀를 먼저 실행한 뒤
-타입·lint·전체 unit·해당 DB integration·build를 확인한다. 단순 docs PR은 scope/diff/link 검증만 한다.
+**2026-10-16 사용자 추가 지시가 우선한다.** PR별 수동 검증은 변경 범위 회귀와 필요한 정적 검사만 실행한다.
+전체 unit·전체 DB·종합 테스트는 남은 모든 PR 개발 후 통합 단계에서 실행하며 PR마다 반복하지 않는다.
+코드 PR의 필수 GitHub CI는 `.github/workflows/ci.yml`과 저장소 병합 규칙을 유지한다.
+단순 docs PR은 scope/diff/link 검증만 한다. 아래 종합 명령은 최종 통합 단계용이다.
 테스트 DB 명령은 테이블을 비우므로 운영·개발 DB에 실행하지 않는다.
 
 ```sh
