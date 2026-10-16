@@ -554,3 +554,102 @@ export const crawlTaglineGatewayTerminalEvidenceSchema = z.object({ version: z.l
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_crawl_tagline_terminal_usage");
 export type CrawlTaglineGatewayTerminalEvidence = Readonly<z.infer<typeof crawlTaglineGatewayTerminalEvidenceSchema>>;
+
+/** Fixed search-verify generation and physical steps; shape/hash helpers never issue DB, native or business authority. */
+const searchVerifyCount = z.number().int().nonnegative().safe();
+export const searchVerifyMemberSchema = z.object({ productId: positive, slug: identity(80), evidenceHash: sha64,
+  profile: z.object({ rowIdentityHash: sha64, sourceRevision: searchVerifyCount, verifyAttempts: searchVerifyCount }).strict(),
+  keywordsHash: sha64, keywordCount: positive.max(4096), mode: z.enum(["full", "chunk"]), policyHash: sha64 }).strict();
+export type SearchVerifyMember = Readonly<Omit<z.infer<typeof searchVerifyMemberSchema>, "profile"> & {
+  profile: Readonly<z.infer<typeof searchVerifyMemberSchema>["profile"]> }>;
+export const searchVerifyStepSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("full") }).strict(),
+  z.object({ kind: z.literal("chunk"), chunk: searchVerifyCount.max(818) }).strict(),
+  z.object({ kind: z.literal("single"), chunk: searchVerifyCount.max(818), item: searchVerifyCount.max(4) }).strict()]);
+export type SearchVerifyStep = Readonly<z.infer<typeof searchVerifyStepSchema>>;
+export const searchVerifyParentSchema = z.object({ requestId: z.uuid(), bindingHash: sha64, responseHash: sha64 }).strict();
+export type SearchVerifyParent = Readonly<z.infer<typeof searchVerifyParentSchema>>;
+export const searchVerifyOutcomeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), removed: z.array(z.string().max(4096)).max(4096)
+    .refine(value => new Set(value).size === value.length, "duplicate_search_verify_removed") }).strict(),
+  z.object({ ok: z.literal(false), error: z.literal("invalid_output") }).strict(),
+]);
+export type SearchVerifyOutcome = Readonly<z.infer<typeof searchVerifyOutcomeSchema>>;
+const searchVerifyChunkSize = (count: number, chunk: number) => Math.min(5, count - chunk * 5);
+export function firstSearchVerifyStep(mode: SearchVerifyMember["mode"]): SearchVerifyStep {
+  return mode === "full" ? { kind: "full" } : { kind: "chunk", chunk: 0 };
+}
+function validSearchVerifyStep(member: SearchVerifyMember, step: SearchVerifyStep): boolean {
+  if (step.kind === "full") return member.mode === "full";
+  if (member.mode !== "chunk" || step.chunk * 5 >= member.keywordCount) return false;
+  return step.kind === "chunk" || searchVerifyChunkSize(member.keywordCount, step.chunk) > 1
+    && step.chunk * 5 + step.item < member.keywordCount;
+}
+/** Mirrors verifyKeywordsInChunks: only a parsed outcome advances; timeout, cancel and transport are never outcomes. */
+export function nextSearchVerifyStep(member: SearchVerifyMember, step: SearchVerifyStep, outcome: SearchVerifyOutcome): SearchVerifyStep | "done" | "stop" {
+  if (step.kind === "full") return outcome.ok ? "done" : "stop";
+  const size = searchVerifyChunkSize(member.keywordCount, step.chunk);
+  if (step.kind === "chunk" && !outcome.ok) return size > 1 ? { kind: "single", chunk: step.chunk, item: 0 } : "stop";
+  if (step.kind === "single" && !outcome.ok) return "stop";
+  if (step.kind === "single" && step.item + 1 < size) return { kind: "single", chunk: step.chunk, item: step.item + 1 };
+  return (step.chunk + 1) * 5 < member.keywordCount ? { kind: "chunk", chunk: step.chunk + 1 } : "done";
+}
+/** The exact keywords a step sends: full uses the original order, chunk mode the deduplicated list. */
+export function searchVerifyStepKeywords(keywords: readonly string[], step: SearchVerifyStep): string[] {
+  if (step.kind === "full") return [...keywords];
+  const chunk = keywords.slice(step.chunk * 5, step.chunk * 5 + 5);
+  return step.kind === "chunk" ? chunk : chunk.slice(step.item, step.item + 1);
+}
+const searchVerifyInputObject = z.object({ member: searchVerifyMemberSchema, model: identity(200), execution: searchVerifyCount.max(1_000_000),
+  step: searchVerifyStepSchema, parent: searchVerifyParentSchema.nullable() }).strict();
+export const searchVerifyInputSchema = searchVerifyInputObject.refine(value => validSearchVerifyStep(value.member, value.step)
+  && (value.parent === null) === (value.step.kind === "full" || value.step.kind === "chunk" && value.step.chunk === 0), "invalid_search_verify_step");
+export type SearchVerifyInput = Readonly<{ member: SearchVerifyMember; model: string; execution: number; step: SearchVerifyStep; parent: SearchVerifyParent | null }>;
+export function searchVerifyMemberKeys(member: SearchVerifyMember): string[] {
+  return [`search-verify:${searchVerifyMemberSchema.parse(member).productId}`];
+}
+export function searchVerifyGenerationHash(value: Pick<SearchVerifyInput, "member" | "model">): string {
+  const member = searchVerifyMemberSchema.parse(value.member), model = identity(200).parse(value.model);
+  return createHash("sha256").update(JSON.stringify(canonical({ version: 1, kind: "search_verify_generation", member, model }))).digest("hex");
+}
+export function searchVerifyLogicalWorkKey(value: SearchVerifyInput): string {
+  const checked = searchVerifyInputSchema.parse(value);
+  return `text:search-verify:${createHash("sha256").update(JSON.stringify(canonical({ version: 1,
+    generationHash: searchVerifyGenerationHash(checked), execution: checked.execution, step: checked.step }))).digest("hex")}`;
+}
+export function searchVerifyInputHash(value: SearchVerifyInput): string {
+  return createHash("sha256").update(JSON.stringify(canonical(searchVerifyInputSchema.parse(value)))).digest("hex");
+}
+export const searchVerifyDispatchBindingSchema = searchVerifyInputObject.extend({
+  kind: z.literal("search_verify_gateway"), version: z.literal(1), generationHash: sha64, logicalWorkKey: identity(160), inputHash: sha64,
+  deadlineAt: positive, provider: z.literal("abcllm"), routeId: z.literal("product-search-verify"), wireHash: sha64, servingContractHash: sha64,
+  totalTokenBound: positive, chargedTokens: positive,
+  job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-search-verify") }).strict(),
+  role: crawlTaglineDispatchBindingSchema.shape.role,
+}).strict().refine(value => {
+  const checked = searchVerifyInputSchema.safeParse({ member: value.member, model: value.model, execution: value.execution, step: value.step, parent: value.parent });
+  return checked.success && value.generationHash === searchVerifyGenerationHash(checked.data)
+    && value.logicalWorkKey === searchVerifyLogicalWorkKey(checked.data) && value.inputHash === searchVerifyInputHash(checked.data)
+    && value.chargedTokens === value.totalTokenBound;
+}, "invalid_search_verify_binding");
+export type SearchVerifyDispatchBinding = Readonly<Omit<z.infer<typeof searchVerifyDispatchBindingSchema>, keyof SearchVerifyInput> & SearchVerifyInput>;
+export function searchVerifyDispatchBindingHash(value: SearchVerifyDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(searchVerifyDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type SearchVerifyModelDispatch = ModelCapacityDispatch & Readonly<{ binding: SearchVerifyDispatchBinding; bindingHash: string }>;
+export const searchVerifyModelDispatchSchema = handleSchema.extend({ binding: searchVerifyDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_search_verify_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId && value.owner.bootId === value.binding.role.bootId,
+    "invalid_search_verify_dispatch_owner")
+  .transform(value => value as unknown as SearchVerifyModelDispatch);
+export const searchVerifyGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("search_verify_gateway_terminal"),
+  dispatch: searchVerifyModelDispatchSchema, finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]),
+  responseHash: sha64, actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(), provenance: z.enum(["upstream_reported", "unknown"]), outcome: searchVerifyOutcomeSchema,
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported" && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_search_verify_terminal_usage")
+  .refine(value => value.outcome.ok === false || value.dispatch.binding.step.kind === "full"
+    || value.outcome.removed.length <= (value.dispatch.binding.step.kind === "single" ? 1 : 5), "invalid_search_verify_terminal_outcome");
+export type SearchVerifyGatewayTerminalEvidence = Readonly<z.infer<typeof searchVerifyGatewayTerminalEvidenceSchema>>;
