@@ -734,3 +734,5 @@ export * from './github-issue-outbox-schema';
 export * from './product-star-observation-schema';
 
 export { githubWebhookEvents, githubIntegrationActions } from "./github-webhook-schema";
+
+export * from "./product-uptime-schema";

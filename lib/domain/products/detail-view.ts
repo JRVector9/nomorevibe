@@ -42,7 +42,7 @@ import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
 import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
-import { healthMetrics, DOWN_THRESHOLD } from "./health";
+import { healthMetrics, healthFor } from "./health";
 import { isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
@@ -505,12 +505,13 @@ async function activeRank(slug: string): Promise<ProductDetailView["rank"]> {
 }
 
 async function detailHealth(slug: string): Promise<ProductDetailView["health"]> {
-  const [metrics, current] = await Promise.all([
+  const [metrics, current, signals] = await Promise.all([
     healthMetrics([slug], 30),
     db.query.productHealth.findFirst({
       where: eq(productHealth.slug, slug),
       columns: { checkedAt: true, failures: true, status: true },
     }),
+    healthFor([slug]),
   ]);
   const metric = metrics.get(slug);
   return {
@@ -518,7 +519,7 @@ async function detailHealth(slug: string): Promise<ProductDetailView["health"]> 
     latencyMs: metric?.latencyMs ?? null,
     checkedAt: current?.checkedAt ?? null,
     lastCheckSucceeded: current ? current.status >= 200 && current.status < 400 : null,
-    down: (current?.failures ?? 0) >= DOWN_THRESHOLD,
+    down: signals.get(slug)?.down ?? false,
   };
 }
 
