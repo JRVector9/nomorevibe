@@ -1,8 +1,11 @@
+import { randomUUID } from "node:crypto";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { safeFetch, readBodyCapped, fetchPage } from "@/lib/net/fetch";
 import { extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/health";
+import { uptimeSlot } from "@/lib/domain/products/uptime-policy";
+import { uptimeObservationMode, uptimeObserverSource, nextUptimeObservationTargets, recordUptimeObservation } from "@/lib/domain/products/uptime-observations";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 
 /**
@@ -78,16 +81,19 @@ const BODY_BYTES = 256 * 1024;
 
 export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const capacity = uptimeCapacityConfig();
+  const observationMode = await uptimeObservationMode();
+  const source = observationMode.observationsEnabled ? uptimeObserverSource(observationMode.sources) : null;
+  const raw = source ? { source, gateEnabled: observationMode.gateEnabled } : null;
   const write = oneAtATime();
   let autoBanned = 0;
   let swept = 0;
-  const backlog = await nextUptimeAutoBanTargets(capacity.batch);
+  const backlog = raw?.source.host === "oracle-osaka-smoke" && !raw.gateEnabled ? [] : await nextUptimeAutoBanTargets(capacity.batch);
   for (const target of backlog) {
     if (ctx.signal?.aborted || !ctx.hasBudget()) break;
     swept++;
     if (await write(() => autoBanUptimeProduct(target, ctx))) autoBanned++;
   }
-  const targets = swept < capacity.batch && !ctx.signal?.aborted ? await nextToCheck(capacity.batch - swept) : [];
+  const targets = swept < capacity.batch && !ctx.signal?.aborted ? await (source ? nextUptimeObservationTargets(capacity.batch - swept, source) : nextToCheck(capacity.batch - swept)) : [];
   if (targets.length === 0) {
     ctx.log(backlog.length ? "uptime.checked" : "uptime.idle", { checked: 0, autoBanned });
     return { done: backlog.length === 0 };
@@ -107,7 +113,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
       for (const target of lane) {
         if (errors.length > 0 || ctx.signal?.aborted || !ctx.hasBudget()) return;
         try {
-          if (await ping(target, write, ctx, () => { autoBanned++; })) alive++;
+          if (await ping(target, write, ctx, () => { autoBanned++; }, raw)) alive++;
           else down++;
         } catch (error) {
           errors.push(error);
@@ -124,9 +130,10 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
 }
 
 /** 한 제품을 열어 보고 기록한다. 살아 있으면 true */
-async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void): Promise<boolean> {
+async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null): Promise<boolean> {
   // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
   // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
+  const observationStartedAt = new Date();
   const startedAt = performance.now();
   const fetched = await safeFetch(target.url, "background");
   const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
@@ -154,7 +161,16 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ct
   const observedAt = new Date();
   await write(async () => {
     if (ctx.signal?.aborted) return;
-    await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, ctx.lease, target.url, ctx.signal);
+    if (raw) {
+      if (!ctx.lease) throw new Error("uptime_job_required");
+      const result = await recordUptimeObservation({ observationId: randomUUID(), productId: target.id, slug: target.slug, url: target.url,
+        slot: uptimeSlot(observationStartedAt), startedAt: observationStartedAt, observedAt, source: raw.source,
+        kind: fetched ? "http" : "unknown", status, latencyMs: fetched ? latencyMs : null }, { lease: ctx.lease, signal: ctx.signal });
+      ctx.log("uptime.observation", { productId: target.id, host: raw.source.host, ...result });
+      if (result.state !== "applied") return;
+    } else {
+      await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, ctx.lease, target.url, ctx.signal);
+    }
     if (!up && await autoBanUptimeProduct(target, ctx)) onBanned();
     if (sample) await refreshTextSample(target.slug, sample, ctx.lease, target, ctx.signal).catch(() => {});
   });
