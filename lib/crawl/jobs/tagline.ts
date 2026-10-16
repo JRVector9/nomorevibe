@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
+import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 
 /**
@@ -55,11 +56,11 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
         return { done: true };
       }
 
-      let next = 0;
+      let next = 0, skipped = false;
       const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            if (skipped || blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
             const task = tasks[index];
             const { candidate, document, written: stored } = task;
             const evidence = taglineEvidence(candidate.repo, document);
@@ -87,17 +88,32 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
             }
 
             const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
-            let result = await ask();
+            let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+              { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            if (capacity.kind === "skipped") { skipped = true; return; }
+            let result = capacity.kind === "disabled" ? await ask() : capacity.result;
             /**
              * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
              * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
              * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
              */
-            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) result = await ask();
+            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS
+              && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
+              if (capacity.kind === "disabled") result = await ask();
+              else {
+                capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                  { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), previous: capacity });
+                if (capacity.kind === "skipped") { skipped = true; return; }
+                if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
+                result = capacity.result;
+              }
+            }
+            const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
+              ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
             if (signal.aborted) return;
             if (!result.ok) {
-              const saved = await recordTaglineResult(task, lease, { kind: "failure", error: result.error });
-              if (!saved.stored) return;
+              const saved = await save({ kind: "failure", error: result.error });
+              if (!saved.stored) { skipped = capacity.kind === "result"; return; }
               failed++;
               /**
                * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
@@ -109,8 +125,8 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
               continue;
             }
             inARow = 0;
-            const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: result.tagline, source: result.source, model: TAGLINE_MODEL });
-            if (!saved.stored) return;
+            const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: TAGLINE_MODEL });
+            if (!saved.stored) { skipped = capacity.kind === "result"; return; }
             if (!result.tagline) { empty++; continue; }
             written++;
             if (saved.released) released++;
@@ -124,6 +140,7 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
       const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       const failure = failures.find(result => !(result.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
+      if (skipped) return { done: false };
       if (blocked) {
         ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });
         return { done: true };
