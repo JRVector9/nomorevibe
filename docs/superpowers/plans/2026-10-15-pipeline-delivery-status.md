@@ -1,5 +1,9 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 추가 진행 — 2026-10-16 09:12 UTC
+
+추가완료: PR474 type-only 보완 정상push42710f2e·C독립읽기완료, HTTP 원unread1 최초PASS/6.48초·root55565 독립raw88표90행/journal82 exact 및 정상sequence delta보존·정상정리완료다. 최초root guard의 축약ID 비교실패와 조기readback은별도기록/수정guard10일치다. 새AI2 item-native WT8a34e1b6에서 C ledger0085/B native3파일 배타개발을 시작했다. PR474 quality의 원TS2345를 Next ambient 포함 scoped 검사로 재현하고 helper의 부분 env annotation 한line만 수정해 같은 tsc/eslint0을 확인했다. Runtime/원it/다른12파일 불변·독립읽기 뒤 정상push 예정이다. AI2 독립 소비자 최종13파일은 정상commit/최신471parentmerge8b6c8ee9·정상push/초안PR474로 제출했다. 새CI 통합1·2·3 SUCCESS, quality FAIL 원인을 C가 원로그로 분석한다. TextPhaseA 초안PR473/1e84bb09는 quality·통합1·2 SUCCESS/통합3FAIL 원로그 분석 중이다. PR471/565의 role fixture24 PASS와 HTTP unread1FAIL·899PASS/TODO1을 root 확인했다. HTTP 최소 WeakMap 수정보존3파일은 실제 원source 유효2AssertionRED/대조1PASS→동일3GREEN·conditional2PASS·범위정적0, root+C 독립읽기 P1/P2=0이며 CI 원인확정은 아니다. B에게 새55565 전용DB를 배정해 원 unread1만 최초 검증한다. A는 별도AI1 consumer WT/base474에서 승인된 실제 개발 중(DB0). 진단472 병합금지/운영activation0/전체미완료/수동전체는 모든PR개발뒤를 유지한다. 정확SHA·실패·수정파일·DB소유권·다음명령은CODEX_HANDOFF 최상단에 기록했다.
+
 ## 추가 진행 — 2026-10-16 08:35 UTC
 
 AI1 PR471의 실제role 없는 fixture2FAIL은 한test파일 최소수정 뒤 지정2PASS, root55563 독립raw91표95행/capturedcatalog/권한/연결0 확인·정상정리완료다. HTTP 진단PR472는 원unread1FAIL·862PASS/TODO1, rival의 실제263회 no_grant/delay 후 callerabort 정산을 관측해 단일await hang 가설을 배제했다. Timeout source 수명 원인은 아직미증명/진단branch 병합금지다. PR06a 소비자는 actual8 distinct PASS와root55562 정리 뒤 fresh DB 전제를 CI필수첫파일+전체shard exactexclude로 보장(201파일 정확1회 목록검증/실CI미주장)해 인수준비다. C text PhaseA는 unit범위PASS, actual첫실행 JSON cast setup23514를 원형보존했고 최소6cast 수정뒤disabled1PASS/나머지미실행2만 진행중이다. 운영활성화0·수동전체검사는모든PR개발뒤·전체목표미완료다. 정확SHA/수정파일/실패/DB소유권/다음명령은CODEX_HANDOFF최상단.
