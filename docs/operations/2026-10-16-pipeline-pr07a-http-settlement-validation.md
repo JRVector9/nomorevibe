@@ -1,5 +1,25 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 최신 후속 — 2026-10-16 13:05 UTC DDL 실제45쌍 확인·번역3 lane 구현
+
+수정 후 새55577 native 고정1회에서45쌍 모두 exported_ddl_structural_match/48frames/OID정수/child0/backend0/ROLLBACK관계0을 확인했다. Root 같은helper 독립readback0에서 baseline=agent=root raw97행/capturedcatalog/managed/36seq exact·conn0, 정상STOP/exited0/OOMfalse/solevolume폐기0이다. `/tmp/nomorevibe-pr14c-root-numeric-final-db-proof-20261016.json`, `...pr14c-numeric-retry-root-cleanup...json`. ActiveownedDB0, 다음55578미배정. 원46/settingsunsupported/historyunknown/strictRestorefalse/autoDRfalse는유지한다. C는SQL반환후PR05b8 runtime3+신규unit/actualdriver로배정해 A(native3)/B(ledger5)와3lane병렬실제개발을계속한다. A shapebaseline21AssertionFAIL/2controlPASS, Bshape7AssertionFAIL/3controlPASS→동일10GREEN 보고이며 rootfinal검토전이다. C NEW3/CIREADME/validation+공유4를rootfeaturecommit→최신478 보호parentmerge→새draft로제출하고 A text feature41169957도그부모를취합해fresh-firstCI/README뒤제출한다. 전체수동은모든PR뒤/운영0/전체목표미완료다.
+
+
+## 최신 후속 — 2026-10-16 13:01 UTC 번역 배치 병렬 구현·OID 출력 보완
+
+현재 목표는 PR00–17의 같은 품질 두 배 처리량과 독립 워커·Oracle 상시 번역/등록 후 관리/최종 DR이다. 전체 목표는 미완료이며 운영 배포·활성화는 이번 단계에서 하지 않는다. 사용자 요청대로 수동 전체 테스트는 모든 PR 개발 뒤에 실행한다. PR470/26c63ba1와 PR478/822328e5 최신 필수 CI는 모두 성공했다.
+
+완료: text profile 양성 경로17파일과 새 validation·공유4를 로컬 feature commit **41169957caddd6ffef82a7211da58c819b3ec9e2**로 저장했다. 실제8 distinct PASS는 7 PASS 뒤 EOF fixture의 원0048 reset 기대를 교정한 exact1 PASS의 합이며 전체8 재실행0이다. source/DB 소유권은 반환됐고55573/75 정상 폐기·active0이다. PR 제출 전 최신 C parent 취합과 fresh-first CI/README 편성이 남는다.
+
+C OID 출력 수정3파일은 SQL73367721/Python3d4bca1c/test20acabda로 동결했다. strict reader/원90정의·20열 선언을 유지하고 출력257위치에만 bigint를 적용했다. 원 native unknown invalid_oid는 보존했고 신규1+원 control2=3 PASS·범위 compile0이다. Root 독립 prefix 재구성211676bytes exact/A 추가P1/P2=0. 새55576은 root 이름이 좁은 ddl-verifier guard에 맞지 않아 **SQL0**로 정상 폐기했다(guard 완화0). 새 **55577**만 현재 활성 전용 DB: metadata `/tmp/nomorevibe-pr14c-ddl-numeric-retry-c-db-owned-20261016.json`, fullCID f73294a55f848566f5de36f330a95ffdb729f22d4a821014bcd67baa3205ea38. 새 helper/manifest 준비 중·아직SQL0이다. 원46/historyunknown/autoDRfalse 유지.
+
+병렬 PR05b8: root가 새 WT `/Users/jr/Desktop/projects/nomorevibe-reason-translation-native`를 위41169957에서 생성하고0088_model_capacity_reason_translation_terminal을 단독 예약했다. `/tmp/nomorevibe-pr05b8-root-base-tree-20261016.json`에 원2077파일 SHA를 보존했다. B는 ledger5+신규unit1, A는 native3+신규unit1을 배타 구현 중이며 runtime3/actual driver는 C 검증 반환 뒤 배정한다. 승인 계획 `/tmp/nomorevibe-reason-translate-b-positive-plan-20261016.md`, exact API `/tmp/nomorevibe-pr05b8-b-ledger-api-20261016.md`. 최초 waiting부터 정렬된 배치 멤버 교집합을 owner/boot/model과 무관하게 fence하고 한 배치 permit1/C1·원 wire/품질/캐시/재시도를 유지한다. production serving resolver null·실 provider0이다.
+
+수정 파일: C NEW3와 root CI/README/새 validation; 다음 번역 ledger5/native3와 신규unit2만 각 소유자가 수정한다. root만 Git/CI/README/공유4를 관리한다. 기존0084–87/원 journal88 prefix/다른 source·test 본문을 보존한다. 원 사용자WT source/Git/push/untracked는 보존하고 이 handoff만 동기화한다.
+
+다음 명령/순서: C가 새55577 helper·setup manifest를 반환하면 root가 전체/기계치환 diff와 고정 SHA를 읽은 뒤 initial-empty→명시55577 DATABASE_URL의 기존87 migration→baseline→고정 probe1→after를 순차 실행한다. SQL 반환 후 같은 helper의 `--phase root` 독립 readback→`python3 /tmp/nomorevibe-owned-db-cleanup-20261016.py /tmp/nomorevibe-pr14c-ddl-numeric-retry-c-db-owned-20261016.json pr14c-numeric-retry-root` 정상 정리. Source3 재확인/공유4 취합/C feature commit→보호 merge helper로822328e5 parent 취합→정상 push/새 draft, 이어 text WT에 C parent→fresh-first CI/README 편성·filesOnly exact coverage/범위정적→정상 push/새 draft. PR05b8은 부모 text 최종HEAD를 후속 정상 취합하며 현재 두 lane 구현을 계속한다. 운영 host aggregate/원격 hard-C·종료/실 Oracle ARM 권한·상시 업무/복제·fencing/RPO·RTO/최종 같은품질2배·24h는 남는다.
+
+
 ## 추가 진행 — 2026-10-16 12:27 UTC
 
 PR470은 최신477 정상 부모 취합을26c63ba1로push하고 base477로정리했다. Root/B독립리뷰추가P1/P2=0·원테스트본문보존·범위19+영향2/정적0이며새CI38900230544는진행중이다. Oracle inspection NEW3는root직접리뷰/종료P2보완/범위distinct26·정적0후최신470을정상취합해 [초안PR478](https://github.com/JRVector9/nomorevibe/pull/478)/aaa3e6c2(base470)로제출했다. 실제새SQL·Oracle운영증거는아직없고ready/activationfalse다. A의text profile positive actual경로와C의고정DDL검증은병렬구현중이다. 운영배포/활성화0·activeDB0/수동전체는모든PR개발뒤이며정확수정파일·실패·명령은CODEX_HANDOFF12:27을따른다.
