@@ -18,7 +18,8 @@ import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { tryAcquireRole, releaseRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { jobsForRole } from "@/lib/jobs/catalog";
-import { batchPolicyHash } from "@/lib/jobs/batches";
+import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
+import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 // fresh 전용 테스트 DB만 허용한다(setup이 localhost·nomorevibe_test를 강제). 이 파일은 reset/truncate하지 않는다.
@@ -66,8 +67,10 @@ async function cleanup() { if (!initialized) return;
     await tx`SELECT id FROM job_batch_control WHERE id=1 FOR UPDATE`;
     const [owner] = await tx`SELECT owner_instance_id FROM role_leases WHERE role='text' FOR UPDATE`;
     expect(owner?.owner_instance_id === null || owner?.owner_instance_id === prefix || !owner).toBe(true);
-    const locked = await tx`SELECT name,lease_token FROM jobs WHERE name=ANY(${managedJobs}::text[]) ORDER BY name FOR UPDATE`;
-    expect(locked.every(row => row.lease_token === null)).toBe(true);
+    // 일부러 만료시킨 lease는 token이 남는다. 살아 있는 holder만 없으면 된다(아래 restore가 baseline으로 되돌린다).
+    const locked = await tx`SELECT name,lease_token,locked_at<clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond' AS stale
+      FROM jobs WHERE name=ANY(${managedJobs}::text[]) ORDER BY name FOR UPDATE`;
+    expect(locked.every(row => row.lease_token === null || row.stale === true)).toBe(true);
     const requests = await tx`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal FOR UPDATE`;
     const ids = requests.map(({ row }) => { expect(boots.has(row.owner_boot_id)).toBe(true); expect(row.route_id).toBe(jobName); return row.request_id as string; });
     await tx`LOCK TABLE model_capacity_events IN ACCESS EXCLUSIVE MODE`;
@@ -92,7 +95,7 @@ async function cleanup() { if (!initialized) return;
       expect(await tx`DELETE FROM job_batch_candidates c WHERE role=${candidate.role} AND instance_id=${prefix} AND to_jsonb(c)=${JSON.stringify(candidate.row)}::text::jsonb RETURNING role`).toHaveLength(1);
     for (const [table, key, value] of [["model_capacity_control", "id", 1], ["job_batch_control", "id", 1], ["crawl_settings", "id", 1], ["role_leases", "role", "text"]] as const) await restore(tx, table, key, value);
     for (const name of managedJobs) await restore(tx, "jobs", "name", name);
-    for (const key of [`job:${jobName}`, `batch-result:${prefix}:reason-translate`]) await restore(tx, "operations_observations", "key", key);
+    for (const key of [`job:${jobName}`, `batch-result:${prefix}:${jobName}`, batchCanaryAnchorKey("text", prefix)]) await restore(tx, "operations_observations", "key", key);
     expect(await whole(tx)).toEqual(initial); // foreign rows 및 raw µs 전체 보존; sequence는 되감지 않는다.
   }); ownRepos.clear();
 }
@@ -132,7 +135,8 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
     await run({ bodies, setReply: next => { reply = next; } });
   } catch (error) { errors.push(error); }
   finally { serving.contract = null; const watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close_is_failure")); http.closeAllConnections(); }, 2000);
-    try { await steps([() => drain(work), () => new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())), () => drain(responses, true)], errors); }
+    // 기존 driver와 같이 클라이언트 작업이 모두 끝난 뒤에만 남은 연결을 정리한다(abort 뒤 undici가 빈 연결을 남길 수 있다).
+    try { await steps([() => drain(work), () => { http.closeAllConnections(); return new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())); }, () => drain(responses, true)], errors); }
     finally { clearTimeout(watchdog); }
     if (errors.length) throw new AggregateError(errors, "crawl_loopback_failed");
   }
@@ -196,11 +200,11 @@ it("admits actual versioned text role and job with explicit local operator readi
   const [clock] = await admin`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
   const capability = { host: "m3", instanceId: prefix, release: "crawl-local", observedAt: clock.at, dbPrivileges: "verified", dbRole: "local-fixture",
     effectivePrivilegeHash: "a".repeat(64), modelBoundEvidenceHash: "b".repeat(64), http: "verified", model: "verified" };
-  const result = { role: "text", batchEpoch: 1, job: "reason-translate", instanceId: prefix, host: "m3", release: "crawl-local", bootId: role.bootId,
+  const result = { role: "text", batchEpoch: 1, job: jobName, instanceId: prefix, host: "m3", release: "crawl-local", bootId: role.bootId,
     recordedAt: clock.at, count: 1, requestedVersion: 1 };
   const readback = { job: result.job, instanceId: prefix, host: "m3", release: "crawl-local", requestedVersion: 1, domainReadbackHash: "c".repeat(64), observedAt: clock.at };
   // 모델/운영 권한 증명이 아니라 local batch election 입력 fixture다.
-  await admin`INSERT INTO operations_observations(key,value) VALUES(${`batch-result:${prefix}:reason-translate`},${JSON.stringify({ batchResult: result })}::text::jsonb)`;
+  await admin`INSERT INTO operations_observations(key,value) VALUES(${`batch-result:${prefix}:${jobName}`},${JSON.stringify({ batchResult: result })}::text::jsonb)`;
   await admin`INSERT INTO job_batch_candidates(role,instance_id,host,boot_id,release,policy_hash,capability,result_evidence)
     VALUES('text',${prefix},'m3',${role.bootId},'crawl-local',${batchPolicyHash(batch)},${JSON.stringify(capability)}::text::jsonb,${JSON.stringify(readback)}::text::jsonb)`;
   await admin`UPDATE job_batch_control SET mode='versioned',writer_contract_version=1,policy=${JSON.stringify(batch)}::text::jsonb,policy_hash=${batchPolicyHash(batch)} WHERE id=1`;
