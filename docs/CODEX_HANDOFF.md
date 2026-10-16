@@ -1,5 +1,53 @@
 # 2026-10-16 파이프라인 개발 인계
 
+## 후속 진행 — 2026-10-16 05:38 UTC
+
+이 절이 아래 과거 기록보다 우선한다. 현재 목표는 승인된 PR00–17을 병렬 개발하고 root가 직접 리뷰·Git·취합하는 것이다. 전체 처리가2배라는 운영 합격·Oracle live/DR는 미완료다. **사용자 지시대로 수동 전체 테스트/전체DB/종합build/typegen 반복은 모든 PR 개발 뒤** 수행한다. 변경 범위의 의미 있는 회귀와 필수 자동 CI만 유지한다. 이 단계 운영 배포·DDL·실모델·consumer 활성화0이다. 모든 agent/CLI는 gpt-6.1-sol/xhigh다.
+
+### 이번 완료
+
+- AI2 새 접수 제어 [초안PR465](https://github.com/JRVector9/nomorevibe/pull/465), head `898960a7b5856b88d0112ae38f68d1e32a4a17a5`, base PR462 branch를 push/제출했다. source2/test2/validation1 exact이며 양성 provider 전송0이다. 기존 nonempty 지정7PASS와 마지막 rollback/외부완료행 보존 회귀2PASS/14skip(1.66초)는 별도 실행이다. root 독립 readback/정상 정리 및 A 최종 독립 리뷰 P1/P2=0 완료. validation `docs/operations/2026-10-16-pipeline-pr05b1-ai2-admission-validation.md`; `/tmp/nomorevibe-pr465-root-submission-proof-20261016.json`, `...pr465-a-independent-review...md`.
+- PR460–464의 완료 수정은 최신 부모를 정상 merge/push했다. head: PR460 `1511f9151a19dd16270272349f97f14622b944ad`, PR461 `42819183a72c24db7f1903ae9aabb07491291b58`, PR462 `c94e5e1c9c9793cf9b7d7a63f24bb43fedb27160`, PR464 `6297cdcaa8de2afee6e00c299a0833537f130f0f`. Shared review base는 `51396916e2a110feea7d24653bc3ca3acad79adc`이며 main 병합·활성화는 아니다. own source SHA 보존 proof는 각root-refresh-role JSON에 있다.
+- PR463 보안 검사는 현재 제거된 과거 commit37cedec의 음성 고정UUID(incident38272386)를 계속 탐지했다. force push/ignore/우회 없이 shared base513에서 검토된 최종 변경만 새1commit으로 옮겼다. **전체 tracked tree가 old a945bc9와 exact**인 [대체 초안PR466](https://github.com/JRVector9/nomorevibe/pull/466), head `efbd38dc9b31c6d4520f1708a6dbcf5b490db8e9`의 GitGuardian SUCCESS를 실제 확인했다. PR463은 superseded로 닫고 old branch/history/failure를 보존했다. 동일소스 수동테스트 반복0. `/tmp/nomorevibe-pr12-root-clean-range-proof-20261016.json`, `...pr466-root-gitguardian-proof...json`, `...pr463-root-superseded-proof...json`.
+- HTTP fixed trace 한 파일은 원SQL34/expect124/await145/업무AST·역제거bytes exact, sink12controls/scoped0이다. 새55546에서 `--silent=true` 원disabled1+unread1 **2PASS/18skip,6.91초**와 stderr56개/child4 exit/cleanup3쌍 정산을 관측했다. 최초 잘못된 --silent 옵션은 CLI실패/0test로 별도보존했다. root 독립87표8행/82journal/catalog·ACL/default exact/연결0 후 정상정리. 소스 `2ee39d557d66566689e51f4347434a63ab301d32f49369d3400eceb7a9396198`를 PR453 WT의 같은 test1파일로 byteexact 인수했다(아직commit/push전). CI 원인 해결 주장은0. `/tmp/nomorevibe-http-trace-a-focused-observation-20261016.md`, `...http-trace-root-independent-proof...json`, cleanup proof.
+
+### CI와 실패 조사
+
+main은 `714fae23281086903e4e908c1a67bea9197e304f`, CI38852285410의 필수6+두image SUCCESS 확인이며 운영배포가 아니다. PR460/461/462 최신 scope·quality·통합1/2 SUCCESS, 통합3 진행중까지 확인했다. PR464 font 수정 후 quality·통합1/2 SUCCESS, PR465/466은 별도 CI중이다. 최신 완료 판정은 다시 gh로 읽는다. 실패한 head를 병합하지 않는다.
+
+PR453 head320174d6 CI38853251422는 통합3이 실제20분 한도로 cancelled됐다.14case중6FAIL: legacy runner정상종료29.037초/순수report10.290초, item5개는scope종료뒤seal11.223–15.216초reject/readback·report미진입. 같은5구간PG idle-in-TX FATAL5가 있으나 PID/run 직접결합은없어유일원인미확정이다. 초기 projection17.6/19KB·후보5/문서5/표3으로작고 runtime packet/change수는아직미측정이다. 원자료 `/tmp/nomorevibe-pr453-b-fixed-phase-ci-analysis-20261016.md`와 원로그·summary·annotation 보존. 기존 HTTP 첫 unread/hook 대기는 fresh pair에서미재현이다. SQL·timeout·정책·검증횟수·캐시·기대완화0.
+
+### 병렬 진행·배타 소유
+
+1. A `/root/pr01_final_ai1`: `/Users/jr/Desktop/projects/nomorevibe-model-request-resume`, branch `codex/pipeline-pr05b2-model-request-resume-20261016`, base465898960a7. 소유 capacity.ts/repository.ts+새unit/integration4파일만. pending 요청을 exact owner+boot+work/전체tuple로 재발견하여 ID/state만 반환하고 기존 request API에서 같은ID 재poll한다. token/handle발급·caller연결·migration·terminalrelease0. 순수원15에서2AssertionRED/13control→동일15GREEN, actualhelper회귀중. 계획 `/tmp/nomorevibe-pr05b2-a-minimal-plan-20261016.md`; C 수정안 `...pr05b2-c-revised-minimal-plan...md`. 두 actual runJob의 singleton을 모델cap 경합으로 오인하지 않는다.
+2. B `/root/pr01_final_ai2`: `/Users/jr/Desktop/projects/nomorevibe-ai2-item-journal`, head320174d6. execution/artifact2파일 seal journal/read/reduce/strict parse와 report clone/classify/coverage 비용 계측. 추가SQL·parse·clone·payload재stringify0, 원SQL59/33업무함수AST/callorder·exports exact. asyncstderr 원실패가림 P2를 root가 발견해 single sinkguard로보완: actual2RED→같은2GREEN, 실제Writable포함20controlsGREEN, 최종scoped tsc/eslint실제exit0. frozen source execution `776f4a637b585ded5d85c589e7cf932360d327944a7ee00a3bdd56ca5f0f788f`, artifact `c49c4f6cd3c2c333d9ff21f691474264a3d5b8e93e4ce330011c14a38434ff94`. 새55547에서 원legacy1+첫item1 최초실행/비용수집중. A HTTP1파일의root추가수정과소유겹침0. B반환전rootGit/DB접속0.
+3. C `/root/provider_contract_evidence`: `/Users/jr/Desktop/projects/nomorevibe-oracle-dr-preflight`, branch `codex/pipeline-pr14a-logical-dr-preflight-20261016`, base main714fae. 신규 scripts/ops/oracle-dr/preflight.py,inventory.sql,report_contract.py + test_oracle_dr_preflight.py + 전용runbook5파일만. PG17고정readonly catalog/strict report/offline compare. 순수원3에서2AssertionRED/1controlPASS후구현중. 새55548에서승인된ownschema의PK+seq/noPK/FULL/partition/view/101초과relation만fixture로검증한다. 실제Oracle/복원/replication/승격0, readinessunknown/automaticDrAllowedfalse고정. localhostpsql없음은확인했고필요시/tmp exact-container Dockerpsql adapter허용(운영fallback제품코드추가0/TCP·host-native인증증거아님). 계획 `/tmp/nomorevibe-pr14a-c-logical-dr-preflight-plan-20261016.md`.
+
+### DB 소유권·다음 정확한 명령
+
+**55515–46 모두retired/재접속·재생성0.** active55547(B),55548(C),55549(A) 각각loopback127.0.0.1only/pinnedcf134/768MiB/name-data volume/root정리전용이다. metadata는 `/tmp/nomorevibe-replay-subphase-b-db-owned-20261016.json`, `/tmp/nomorevibe-oracle-dr-c-db-owned-20261016.json`, `/tmp/nomorevibe-model-resume-a-db-owned-20261016.json`이며 exactID/name/scope/image/port를항상assert한다. agent반환전root접속0, 외부DB/prune/ENOSPC회피삭제0.
+
+반환후sourceSHA/실패원문/실행결과직접검토→새root독립snapshot으로baseline/final raw/catalog/ACL/default/journal/연결0확인→`python3 /tmp/nomorevibe-owned-db-cleanup-20261016.py <metadata> <phase>` 정상STOP/exited0/OOMfalse/자기container·volume만삭제. PR453은B최종비용을읽고HTTPtrace와검증문서를함께인수·scopedsourceguard후push한다. 필요한상위PR460만부모갱신해CI원첫대기로그를받고나머지부모갱신은불필요반복하지않는다. 새resume/PR14a는root리뷰·독립확인뒤별도초안PR로제출한다.
+
+즉시상태명령: `gh pr view 465 --json headRefOid,statusCheckRollup`; `gh pr view 466 --json headRefOid,statusCheckRollup`; `gh run view 38854695701 --json status,conclusion,jobs`. canonical docs는이WT의4파일이며옛mergedbranchpush0. 원사용자WT branch `codex/x-osaka-smoke-20261015`/HEADb1fb8dd/source/Git/push는유지하고handoff만동기화한다. 남은실serving C/identity/terminal·30분baseline·독립consumer/2배·actualhostpool/Oraclelive·PR14복원/PR15–17fencing/24h검증은아직남아있다.
+
+## 후속 진행 — 2026-10-16 05:12 UTC
+
+이 절이 아래 과거 진행중 표기보다 최신이다. main714fae의 CI38852285410은 scope/quality/통합3/check/worker·web image **8개 모두SUCCESS**를 실제 jobs로 확인했다. 이미지 생성은 운영배포가 아니다. Shared review base는 main714를 normalmerge한 **712ad0b60d70ebab657167cb4df338b2f55527e3**으로 push했다(기존 source77 SHA 보존). 이 base 자체를 main에 병합하거나 운영활성화하지 않았다.
+
+- PR462 recorder fixture: PostgreSQL 서비스 로그의 실제 capacity_runs lock timeout을 원인으로 확인. 마지막case의 첫S3 holder/NOWAIT/token/samePID/잔여500ms 단1회anchor로 의도한 순서를 검증했다. 기존 strict assertion/다른32본문/생산4 SHA·TTL/lock/test제한 유지. actual2PASS/31skip·파일scoped정적0. root독립89표/9행/83journal rawexact, ACL표현차이16+DB로catalogfalse/exit1보존→55543정상폐기. source+validation 로컬 **f688e4d85d3f38fab422a1bd4107a91273bd2dc0**(아직parent갱신/push전).
+- PR12 fixture: nonempty selector/actualheldowner/외부완료tokenNULL3경계 각각실제RED→같은GREEN. foreign state만fullrawCAS hold/복원, orphan ownplaceholder, job rowlock+CAS, 실제INSERT commit뒤소유등록으로보완. 원11본문(randomUUID1예외)/다른11SHA유지. 최종원3GREEN/8skip·scoped0. root독립90표/10행/catalog/84journal exact/conn0→55541정상폐기. source+validation 로컬 **11fe21600351dabbaf2fdb46c54023a9be420e56**(아직parent갱신/push전). 원GG finding의head제거후해소여부미확정/ignore0.
+- PR13 UI: CI38852594264 quality의신규패널12px15곳위반을13px로만교정. 다른6SHAexact, 관련3파일9PASS/217ms. 로컬 **5b47c3ecef3b98152a1e037357052497f7eb54bf**(parent갱신/push전), 실제browser0.
+- AI2 admission C: nonempty fixture+managedjobs/관측키보존1파일교정66613979…eb18c에서지정7PASS/8skip21.79s·scoped0. root독립89표/9행/83journal+effectiveACL동등확인,rawcatalogfalse16+DB표현차이보존→55542정상폐기. root최종리뷰가Set등록이TXcommit앞이라부분rollback뒤새idle행삭제가능한P2발견. **C가55544전용/같은1파일로commit후등록+새actualregression1을보완중**이므로아직최종인수/PR없음.
+
+PR460 CI38850603405/PR46138850671756은integration3 **cancelled/checkFAIL**로종료했다. PR46238850700641은integration1실패와integration3cancelled다. Check annotations가3개모두 **maximum execution time20m0s**임을확인했다(단순concurrency취소아님). 공통http-origin-permits첫unread/nativeendcase후hook정산대기와후속60s실패가있으며최초어느await인지미확정이다. A가read-only조사중. 제한증가/기대약화/CI우회/무변경수동전체재실행0. PR453새38853251422는아직최종확인대기이며scope/quality/통합1·2SUCCESS까지읽었다. item원인해결완료주장0.
+
+현재동시작업: A `/root/pr01_final_ai1` CI HTTP읽기조사/DB0, B `/root/pr01_final_ai2` PR05b2양성permit-dispatch읽기계획/DB0, C `/root/provider_contract_evidence` AI2fixturecommit소유추적1파일/55544전용, rootGit/직접리뷰/통합·문서. **55515–43 retired, 재접속·재생성0**. active55544metadata `/tmp/nomorevibe-pr05b1-commit-c-db-owned-20261016.json`, exactID6130258d1d7e3b1020d49bad4c3d1124a439bcc69da7b17382f5852677dae517/name nomorevibe-pr05b1-commit-c-20261016/scope pipeline-pr05b1-commit-20261016/loopback55544/pinnedcf134/768MiB. C반환전root접속0.
+
+다음정확동작: root로컬f688/11fe/5b및고유SHA확인→PR460의PR453320parent인수→PR461/462부모갱신→sharedreviewbase최신두branch정상통합→PR463/464의sourceSHA보존부모갱신/push. 새PR05b1은C최종회귀/독립readback/정상cleanup후검증문서와4파일인수. 필수CI·GG의실제최종결과가모두성공하고actualmain최신일때만정상병합한다. 모든PR개발뒤수동전체통합검증/운영검증은별도남음.
+
+새검증문서: `docs/operations/2026-10-16-pipeline-pr05b-recorder-wait-validation.md`; PR12/PR13 validation에도이단계결과를추가했다. 실패접근은각/tmp최종보고에보존하고기능RED로세지않았다. 원사용자branch/source/Git/push는불변이며handoff만동기화한다.
+
 ## 현재 목표·사용자 지시
 
 PR00–17의 남은 개발을 병렬 진행하고 root가 직접 코드리뷰·Git·통합한다. 수집→최종 검수 처리량2배, Oracle 상시 번역·근거·uptime 및 최종 장애인계가 목표다. **전체 미완료이며 실처리2배·Oracle live/DR 완료를 주장하지 않는다.** 최신 사용자 `이어서 해`는 계속 진행 지시다.
@@ -19,7 +67,7 @@ canonical docs는 `/Users/jr/Desktop/projects/nomorevibe-http-settlement`의 han
 | PR07a/07b/07c·HTTP fixture | PR451/452/455/457 main병합 | 원CI/mainCI/images SUCCESS. 과거HTTPunit3757/관련DB·원2RED→2GREEN은각validation보존;이번전체반복0 |
 | PR09 uptime | PR454 main병합6cabb005 | 원actual21/관련89/unit24·정적0, 실제Oracle지역gate활성화0 |
 | PR08 source claims | PR456 maind7640dfb59c5e31ee5e7bee7a5d2aace7b7fbfb2 | CI38842619945/main38843767154·imagesSUCCESS,82journal/disabled/readback정리증거보존 |
-| PR04c2 AI2 journal | PR453 OPEN **0d5bcb28c42269fdcdc74017e129f6460a4a545f**/main2a인수 | 새CI38850309527 FAILURE: 통합3 item5×20s timeout 지속, 그 외 scope/quality/통합1·2SUCCESS. C가 읽기 전용 원인 조사 중 |
+| PR04c2 AI2 journal | PR453 OPEN **320174d6b980dcbf20b541d74c615134ffbb8eed**/main714인수 | 이전CI38850309527 item5×20s timeout FAILURE 보존. 고정phase2파일인수후 새CI38853251422 진행중/원인미확정 |
 | PR10 role batches | 초안PR460 **f235b64ac2bca301321f68f60a24a44e0bf06d42** | fixture2203df7+최신PR453 normalmerge,승인profile1외고정62SHA보존. 새CI38850603405진행중. 선행PR453미병합/actualhostenforcement·canary미완료 |
 | PR10c site evidence | 초안PR461 **01fa363f2336e4b64725826917d214c5e0338144** | base는PR460 branch. f235parent정상merge/고유20sourceSHAexact/push. 새CI38850671756 scope/quality/통합1·2SUCCESS, 통합3진행중. 실제role2+site8분리PASS,unit52/후속runtime10중복합산금지. default비활성 |
 | PR05b AI1 admission | 초안PR462 **db732d2fd2534bb6a55cfa661ae2a04ae8421e72** | PR460의존/f235parent정상merge/8SHAexact/push. 새CI38850700641 통합1FAILURE/원로그 아직 run진행으로 조회실패, 통합3진행중. 실제3GREEN·확장11분리GREEN/genuine1,fixtureP2최종driver보강후DB재실행0. 양성slot/dispatchgap미완료 |
@@ -66,7 +114,7 @@ WT `/Users/jr/Desktop/projects/nomorevibe-source-buffer`, branch `codex/pipeline
 
 실제 pure 원13AssertionRED+9controls→같은22GREEN, 기존 deadline/fetchbackpressure 포함 최종30PASS. actual pressure1AssertionRED/control1PASS→expanded10PASS, 후단57014 별도1PASS. refresh OR 괄호 누락이 완료 후보를 재선택한 실제1AssertionRED를 짧은 회귀로 분리해 수정했다. 최종 cleanup-error합산 보강 후 영향3case만3PASS/8skip; 최종11개 단일실행을 주장하지 않는다. scopedtsc/eslint0. whole tsc1회 기존 PageProps6+신규union1 진단 뒤 신규수정/scoped확인; typegen/whole반복0. hookselfwait143/JSONscalar/bigint/임시config없는next-env는 별도 setup진단.
 
-A 최종 readback: public90/raw10/84journal+0083hash/3stage legacy1contract0/관계catalog·ACL·roledefault·저장µs baseline exact, 자기 fault함수/trigger0·타clients0. `/tmp/nomorevibe-pr12-a-final-readback-20261016.{json,log}`. root 독립 readback도agent최종/전체baseline exact, 정상STOP/exited0/OOMfalse/자기volume삭제를완료했다(`...pr12-root-independent-readback-proof...json`, `...pr12-root-source-buffer-cleanup...json`). root직접코드리뷰뒤source37cedec→공통parent405cbf정상merge cc77c2175fc7c900e3dfbf5a4047b870bc4025ba/초안PR463 제출. source12SHA유지. PR463 GG FAILURE는test:301의고정forged-token UUID(Generic High Entropy/incident38272386)로C조사중이며실제credential아닌음성fixture근거확인;무시처리0/최소수정검토중. B독립리뷰대기.
+A 최종 readback: public90/raw10/84journal+0083hash/3stage legacy1contract0/관계catalog·ACL·roledefault·저장µs baseline exact, 자기 fault함수/trigger0·타clients0. `/tmp/nomorevibe-pr12-a-final-readback-20261016.{json,log}`. root 독립 readback도agent최종/전체baseline exact, 정상STOP/exited0/OOMfalse/자기volume삭제를완료했다(`...pr12-root-independent-readback-proof...json`, `...pr12-root-source-buffer-cleanup...json`). root직접코드리뷰뒤source37cedec→공통parent405cbf정상merge cc77c2175fc7c900e3dfbf5a4047b870bc4025ba/초안PR463 제출. source12SHA유지. PR463 GG FAILURE는test:301의고정forged-token UUID(Generic High Entropy/incident38272386)로C조사중이며실제credential아닌음성fixture근거확인;무시처리0/최소수정검토중. B독립리뷰생산추가P1/P2 0/fixtureP2 2건 확인후 승인된1testfile보완중. global foreign frontier/candidate의상태CAS hold/changed열µs복원,orphan doc에는사전부재확인+INSERT DONOTHING RETURNING1된자기rejected placeholder만허용→끝exactrawDELETE. actualsource변경0. fixedjobsCAS/unknownreplacement와forgedliteral randomUUID보강포함.55541nonempty원disabled1ActualRED expectedHTTP1/actual2+foreigndelta 재현/자기seed만정산후수정중.
 
 ### B `/root/pr01_final_ai2`: PR05b1 반환, PR12 읽기 독립리뷰 중
 
@@ -84,7 +132,7 @@ primary1SELECT로 control/장부, 기존 readiness는 별도 조회. mode/epoch/
 
 반환55538 root 독립조회 실제 exit0: baseline와Cfinal와root전체JSON exact/public89/raw9/catalog·ACL·83journal/default·jobs·stageµs exact/타clients0. proof `/tmp/nomorevibe-pr13-root-independent-readback-proof-20261016.json`. 정상STOP/exited0/OOMfalse/자기volume삭제 완료 `/tmp/nomorevibe-pr13-root-control-status-cleanup-20261016.json`; **55538 retired 재접속0**.
 
-C PR453읽기보고 `/tmp/nomorevibe-pr453-c-ci-timeout-investigation-20261016.md` 완료. verifier8SQL/성공guardedTX4회=32SQL, CI마지막fixture이후20.594–30.864초tail/v6 fullmixed재생과foreign행보존경로는확인했으나CI실제폭/병목미확정. A의2파일fixedphase계측계획승인,별도WT `/Users/jr/Desktop/projects/nomorevibe-pr453-fixed-phases`/branch `codex/pipeline-pr453-fixed-phases-20261016`/base0d5b/55540단독배정. private scope/seal/readback/report4phase+이미반환preview count/bytes,원14body/20초/SQL/params/ACK/검사빈도보존,원legacy1+첫item1각1회·scoped만. root는반환전55540접속0. C PR463조사완료: `...pr463-c-gitguardian-investigation...md`,exacttest:301고정forgedUUID(실제ctxlease에서token만치환)/GenericHighEntropy38272386/실제credential아님.원값노출·ignore0. C는현재AI2공유CI fixture보완계획중.
+C PR453읽기보고 `/tmp/nomorevibe-pr453-c-ci-timeout-investigation-20261016.md` 완료. verifier8SQL/성공guardedTX4회=32SQL, CI마지막fixture이후20.594–30.864초tail/v6 fullmixed재생과foreign행보존경로는확인했으나CI실제폭/병목미확정. A의2파일fixedphase계측계획승인,별도WT `/Users/jr/Desktop/projects/nomorevibe-pr453-fixed-phases`/branch `codex/pipeline-pr453-fixed-phases-20261016`/base0d5b/55540단독배정. private scope/seal/readback/report4phase+이미반환preview count/bytes,원14body/20초/SQL/params/ACK/검사빈도보존,원legacy1+첫item1각1회·scoped만. A source2반환후root직접diff/보고/conformance를읽고기존PR453에인수d796ced→main714정상merge320174d(45 sourceSHA보존)·push/새CI38853251422. root독립87표/8raw·82journal/default exact/agentfinal exact/타clients0. 기존16relation/datacl표현차이는catalogfalse/readbackexit1보존/추가effective비교0. 정상STOP/exited0/OOMfalse/자기volume삭제완료55540retired. repo검증 `docs/operations/2026-10-16-pipeline-pr04c2-fixed-phase-diagnostics.md`, intake `...pr453-root-fixed-phase-intake...json`/baseadoption`...pr453-root-base-adoption-714fae232810...json`/proof`...pr453-root-fixed-independent-proof...json`/cleanup`...pr453-root-fixed-phases-cleanup...json`. C PR463조사완료: `...pr463-c-gitguardian-investigation...md`,exacttest:301고정forgedUUID(실제ctxlease에서token만치환)/GenericHighEntropy38272386/실제credential아님.원값노출·ignore0. C는현재AI2공유CI fixture보완계획승인·55542단독개발중. integration1파일만/삭제없는candidate decided_by·vote상태CAShold/관리jobsrawCAS/초기·격리baseline구분/foreign model baselineexact·원feature기대보존. 원래3의전역length0만baselineexact표현변경허용. 생산3파일SHA동결/추가whole0. nonempty sentinel+원3/replacement1/영향replay2만 승인.
 
 PR05b1 B 최종: source2/tests2 동결, `/tmp/nomorevibe-pr05b1-ai2-admission-final-b-20261016.md`, `...pr05b1-ai2-final-manifest...json`. 원3actual/기존21unit/renew뒤suffix exact. 원drain/open2AssertionRED+disabledcontrol1→같은3GREEN;추가경계까지15distinct actual을분리필터로GREEN,최종cleanup영향1GREEN/unit24+replayboundary1/scopedtsc/eslint0. actualprimary2connectioncontrolwait→S3/candidate/job NOWAIT,producer/pauseµs,malformed/replay/root/fallback/item/inflight/lastjobwall포함. 최종public89/raw9/journal83/default/schema/role/triggerexact,타conn0. rawACL16+datacl의NULL→기본명시차이는유지/effectiveACL동일/수동복원0.55539실행권root반환,root55539독립readback도Bfinal/비교JSON exact(public89/raw9/83journal/타conn0),baseline raw정확/effectiveACL정확이며raw16관계+datacl차이를유지했다. owner/OID/functionbaseline미수집한계유지. 정상STOP/exited0/OOMfalse/자기volume삭제(`...pr05b1-root-independent-readback-proof...json`, `...pr05b1-root-ai2-admission-cleanup...json`),55539retired. C독립리뷰생산추가P1/P2 0,영구driver가전역6table[]/jobs부재를요구하는sharedCI P2발견→삭제없는selector/CAS원복계획중/인수PR보류. B는PR12독립리뷰로fixedjobssetup경쟁및foreignglobalconsumer fixture P2를발견해최소계획중.생산소스변경0.
 
@@ -92,20 +140,22 @@ PR05b1 B 최종: source2/tests2 동결, `/tmp/nomorevibe-pr05b1-ai2-admission-fi
 
 ## 테스트 DB 소유권 — 정상정리는 root만
 
-**55515–39 모두retired/재접속·재생성0.** 55539도root독립조회·정리완료retired,55540은A단독계측/반환준비중이다.모두root가exactID/name/image/label/loopback/mount/memory를확인,agent도재확인뒤사용한다.dummy계정nomorevibe/nomorevibe,DBnomorevibe_test,pinned `pgvector/pgvector@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f`,127.0.0.1only,768MiB(805306368).추가DB임의생성/foreignprune0,ENOSPC이면원오류보존/중단.
+**55515–40 모두retired/재접속·재생성0.** 55539/40도root독립조회·정리완료retired,55541은B/55542는C 단독fixture보완중이다.모두root가exactID/name/image/label/loopback/mount/memory를확인,agent도재확인뒤사용한다.dummy계정nomorevibe/nomorevibe,DBnomorevibe_test,pinned `pgvector/pgvector@sha256:cf134a767f474095eeba57e0117be8e568e011a63f33fbf252f14c9b760f8e6f`,127.0.0.1only,768MiB(805306368).추가DB임의생성/foreignprune0,ENOSPC이면원오류보존/중단.
 
 | 소유 | port·name(scope) | fullID·metadata |
 | --- | --- | --- |
 | retired |55537 `nomorevibe-pr12-source-buffer-a-20261016` (`pipeline-pr12-source-buffer-20261016`) |c91cd1a2dfa909e5e2f63623b5e0b5887d552b1490dee57a8f2332acc7a085ac; `/tmp/nomorevibe-pr12-source-buffer-a-db-owned-20261016.json` |
 | retired |55538 `nomorevibe-pr13-control-status-c-20261016` (`pipeline-pr13-control-status-20261016`) |f9111ec9843a3761930443a4e90368c800b33555e1df39862abaa5a36fb1fdfb; `/tmp/nomorevibe-pr13-control-status-c-db-owned-20261016.json` |
 | retired |55539 `nomorevibe-pr05b1-ai2-admission-b-20261016` (`pipeline-pr05b1-ai2-admission-20261016`) |f45ea3da51f40ead456b4e477f303d5e3fbbc30ea95af36ed2aa3d2c3a30d211; `/tmp/nomorevibe-pr05b1-ai2-admission-b-db-owned-20261016.json` |
-| A |55540 `nomorevibe-pr453-fixed-phases-a-20261016` (`pipeline-pr453-fixed-phases-20261016`) |4a33db52d825ee76de0505ee4ae0b95b3f979703f4c1998ff7862946871803e4; `/tmp/nomorevibe-pr453-fixed-phases-a-db-owned-20261016.json` |
+| retired |55540 `nomorevibe-pr453-fixed-phases-a-20261016` (`pipeline-pr453-fixed-phases-20261016`) |4a33db52d825ee76de0505ee4ae0b95b3f979703f4c1998ff7862946871803e4; `/tmp/nomorevibe-pr453-fixed-phases-a-db-owned-20261016.json` |
+| B |55541 `nomorevibe-pr12-fixture-b-20261016` (`pipeline-pr12-fixture-20261016`) |b9eded13da00242c5eafcc2989a4ef6650bc849e57f3ec3a05b7209595af2a9c; `/tmp/nomorevibe-pr12-fixture-b-db-owned-20261016.json` |
+| C |55542 `nomorevibe-pr05b1-fixture-c-20261016` (`pipeline-pr05b1-fixture-20261016`) |e3306a64c73fe15a99e03c507a806a528729c769f01de8ac9eacfeaff363ad1b; `/tmp/nomorevibe-pr05b1-fixture-c-db-owned-20261016.json` |
 
 각volume는name+`-data`,label key `nomorevibe.scope`.반환→root독립readback→정상STOP/exited0/OOMfalse→자기container/volume만삭제.helper `/tmp/nomorevibe-owned-db-cleanup-20261016.py <metadata> <phase>`.생성helper `/tmp/nomorevibe-root-owned-db-create-20261016.py`는추가배정시root만.TTL/age로외부실행종료를증명하지않는다.
 
 ## 다음 정확한 작업·명령
 
-1. A55540 원pair2PASS 뒤최종반환준비. root는진단2파일 직접리뷰/반환DB독립조회·정리후PR453에인수·최신main714정상merge. B PR12 fixture/C AI2 fixture 최소계획을읽고DB55541/42배정여부결정;아직미배정. PR13은초안PR464제출완료. PR463forgedliteral은무시없이randomUUID보강예정.
+1. B55541 PR12/C55542 AI2 fixture 보완·좁은검증 계속,반환전root DB접속0. PR13초안464 제출완료. PR453진단새CI38853251422 확인. A는별도PR462 recorderwait fixture의실제서버locktimeout원인조사완료후안전barrier계획만작성중(아직55543미배정).
 2. PR453 CI38850309527 통합3 동일item5 timeout FAILURE 원로그/phase summary 보존. C 조사 뒤 근거 있는 좁은 후속작업만 진행; 실패상태 merge0.PR459도readyCI가있으나실제host미완료/같은 base순서조정.
 3. PR460 f235CI38850603405: 원recordsdrain실패와profile지연을보강후결과확인.PR461/462는f235정상parent인수완료,새CI실제결과확인.
 4. A/C final을받으면f235/profile/fixtureparent를normalmerge하고 원ownedSHA보존.B는이미최신PR462base.sourcebuffer0083journal과registry/runner양hunk를root순차통합.canonicaldocs/validation를그PR에인수,옛masterbranchpush0.
@@ -120,8 +170,13 @@ gh pr view 461 --json headRefOid,baseRefName,statusCheckRollup
 gh pr view 462 --json headRefOid,baseRefName,statusCheckRollup
 cd /Users/jr/Desktop/projects/nomorevibe-oracle-runtime
 gh pr view 459 --json headRefOid,baseRefOid,isDraft,statusCheckRollup
-# 55540 A단독/반환후root독립정리.55515–39 retired접속0.55541/42 아직미배정.
+# 55515–40 retired접속0.55541 B/55542 C단독.55543 아직미배정.
 # allPR후에만 README/independent-workers-runbook의전체통합검증/배포절차.
 ```
 
 이전상세/수정파일/실패/원명령은 `/tmp/nomorevibe-CODEX_HANDOFF-before-pr12-pr13-parallel-20261016.md` 및그이전phasebackup,각repo validation·agent최종보고에보존한다.최신repository/실제test결과가대화기억보다우선한다.
+
+
+## PR462 recorder wait 실제 원인 조사
+
+A `/tmp/nomorevibe-pr462-a-recorder-wait-investigation-20261016.md`은CI38850700641 raw부록:41631–41635/server04:29:26.181/PID260에서capacity_runs tuple lock timeout을확인했다. 원fixture잔여job1000ms와genuine profile lock_timeout1000ms가경합해admission은원locktimeout으로abort/최종runJob별도ACK는job_lease_lost다. admission최종wall검사도달증거는아니므로:613기대완화0. 정확한release지연은미측정. A는S3첫잠금앞actualstageholder→기존jobSHARE전fresh500msanchor→stage release→actualrecorderwait/healthy확인→DBexpiry/capacityholderrelease의더통제된fixture계획을읽기로검토중. 아직새WT/55543/source/test0. 생산90sTTL/1slock_timeout/기대는변경하지않는다.
