@@ -1,5 +1,13 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 최신 확인 — 2026-10-16 04:45 UTC 이후
+
+이 절이 아래 시점별 기록보다 우선한다. PR459 offline Oracle는 필수 CI/최신 base·고정 head 검증 뒤 main714fae23으로 병합했고 운영 배포는 하지 않았다. 새 main CI38852285410은 진행 중이다. PR453은 profile 개선 뒤에도 item5 timeout으로 실패해 고정 phase 계측을 진행한다. PR460/461/462는 선행 의존 초안이며 PR462의 별도 recorder-wait assertion1도 미해결이다.
+
+PR12a 원본 공급 버퍼는 변경 범위 unit30 및 actual10+별도1, root 코드리뷰·DB 독립readback/정리 뒤 [초안PR463](https://github.com/JRVector9/nomorevibe/pull/463)으로 제출했다. 기본 비활성/R:null이며 실제2배를 뜻하지 않는다. 보안 scanner의 고정 forged-token 음성fixture 경고는 조사·최소수정 중이다. PR13 관리자 관측은 독립리뷰의 정책 hash P2를 최소보강했고 unit/UI16PASS·정적0·SQL불변, root 인수 중이다. PR05b1 AI2 fresh admission은 source2/tests2와15 actual 경계의 분리GREEN을 반환해 root 리뷰 중이다.
+
+새 PR들의 검토 base는 최신 PR461/462를 정상 merge한 `codex/pipeline-review-stack-20261016`이다. main/운영 적용과 구분한다. 전체 unit/전체DB/build 수동 실행은 모든 PR 개발 후에만 진행하며 필수 자동 CI는 유지한다. 정확한 소유권·명령·실패는 [CODEX_HANDOFF](../../CODEX_HANDOFF.md)를 따른다.
+
 승인된 [PR00–17 로드맵](2026-10-15-pipeline-pr-roadmap.md)의 납품 상태를 기록한다.
 PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안의 검토 경계다.
 전체 요구와 합격 기준은 [설계](../specs/2026-10-15-pipeline-two-times-design.md)를 따른다.
