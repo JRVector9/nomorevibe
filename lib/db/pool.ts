@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { resolveHostDbRuntimePoolConfig } from "./host-budget";
 
 const dbDeadlineScope = new AsyncLocalStorage<number>();
 /** Shortens cancellable pool wait in this operation; executing SQL is bounded server-side. */
@@ -35,7 +36,9 @@ function integerSetting(env: PoolEnvironment, key: string, fallback: number, min
   return value;
 }
 
-export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
+export function dbPoolConfig(env: PoolEnvironment = process.env, purpose: 'primary' | 'read' = 'primary'): DbPoolConfig {
+  const budgetEnv = env;
+  if (purpose === 'read') env = { ...env, DB_POOL_MAX: env.READ_DB_POOL_MAX ?? "4" };
   const role = env.WORKER_ROLE ?? "web";
   if (!Object.hasOwn(ROLE_POOL_MAX, role)) throw new Error("Invalid WORKER_ROLE for database pool");
   const selected = role as DbRole;
@@ -47,7 +50,7 @@ export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
   const statementMs = integerSetting(env, "DB_STATEMENT_TIMEOUT_MS", statementDefault, 100, 600_000);
   const lockMs = integerSetting(env, "DB_LOCK_TIMEOUT_MS", Math.min(5_000, statementMs), 100, 60_000);
   if (lockMs > statementMs) throw new Error("DB_LOCK_TIMEOUT_MS must not exceed DB_STATEMENT_TIMEOUT_MS");
-  return {
+  const original: DbPoolConfig = {
     role: selected,
     poolerMode,
     max: integerSetting(env, "DB_POOL_MAX", ROLE_POOL_MAX[selected], 1, 64),
@@ -57,6 +60,8 @@ export function dbPoolConfig(env: PoolEnvironment = process.env): DbPoolConfig {
     lockMs,
     lifetimeSeconds: integerSetting(env, "DB_MAX_LIFETIME_SECONDS", 1_800, 30, 86_400),
   };
+  const explicit = purpose === 'read' ? budgetEnv.READ_DB_POOL_MAX : budgetEnv.DB_POOL_MAX;
+  return resolveHostDbRuntimePoolConfig(original, budgetEnv, purpose, explicit === undefined ? undefined : original.max);
 }
 
 export function postgresClientOptions(config: DbPoolConfig) {
@@ -161,7 +166,9 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
 }
 
 /** Drizzle executes unsafe queries; postgres.begin also calls this exact object's unsafe for BEGIN. */
-export function createDbClient(connectionString: string, config: DbPoolConfig = dbPoolConfig()): ReturnType<typeof postgres> {
+export function createDbClient(connectionString: string, suppliedConfig?: DbPoolConfig, purpose: 'primary' | 'read' = 'primary'): ReturnType<typeof postgres> {
+  const config = suppliedConfig === undefined ? dbPoolConfig(process.env, purpose)
+    : resolveHostDbRuntimePoolConfig(suppliedConfig, process.env, purpose, suppliedConfig.max ?? NaN);
   const waiting: WaitingQueries = new Map();
   const tracked = new WeakSet<DriverConnection>();
   const trackConnection = (connection: DriverConnection) => {

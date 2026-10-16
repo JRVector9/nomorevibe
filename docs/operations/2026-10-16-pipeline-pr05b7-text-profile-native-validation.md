@@ -35,4 +35,6 @@ Root 독립 SELECT-only readback에서 공개90표10행·drizzle journal88·capt
 
 ## 운영과 남은 검증
 
-운영 DB/DDL/SSH/실 provider/배포/consumer 활성화0이다. 실제 Oracle ARM 상시 번역·원격 hard C/종료·host 전체 DB/HTTP 합계·남은 여섯 route·복제/fencing/RPO/RTO·같은 품질30분 두 배·24h 관측은 남는다. 전체 수동 테스트는 모든 PR 개발 뒤 실행한다. 필수 CI와 이 테스트 파일의 fresh-first 배치는 취합 단계에서 추가한다.
+운영 DB/DDL/SSH/실 provider/배포/consumer 활성화0이다. 실제 Oracle ARM 상시 번역·원격 hard C/종료·host 전체 DB/HTTP 합계·남은 여섯 route·복제/fencing/RPO/RTO·같은 품질30분 두 배·24h 관측은 남는다. 전체 수동 테스트는 모든 PR 개발 뒤 실행한다.
+
+최신 Oracle DDL·runtime 부모를 정상 취합한 뒤에도 동결17파일은 byte exact다. Next global 선언을 포함한 변경 범위 TypeScript는 exit0이었다. CI와 README 세 명령 묶음에서 새 profile 실제 검증을 빈 DB의 첫 순서로 추가하고, 뒤 shared3에서는 제외했다. 설치된 Vitest의 filesOnly 목록과 BaseSequencer로 전체209파일=선행5+shared68/68/68을 정확히 한 번씩 편성함을 확인했다. 이는 테스트 본문·setup·SQL을 실행하지 않은 편성 검증이다. `/tmp/nomorevibe-pr05b7-root-ci-coverage-20261016.json`. 필수 자동 CI 결과는 PR에서 별도로 확인한다.

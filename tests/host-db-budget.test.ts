@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { dbPoolConfig } from '@/lib/db/pool';
-import { HostDbBudgetSchema, hostDbBudgetCatalog, resolveHostDbPoolConfig } from '@/lib/db/host-budget';
+import { assertHostDbEntry, hostDbChildEnvironment, HostDbBudgetSchema, hostDbBudgetCatalog, resolveHostDbPoolConfig } from '@/lib/db/host-budget';
 
 const policy = {
   version: 1 as const, host: 'oracle-osaka-smoke' as const, release: 'release-1',
@@ -141,4 +141,81 @@ it('leaves a disabled caller READ configuration alone instead of returning a zer
   expect(result.config).toBe(legacy);
   expect(result.config.readMax).toBe(6);
   expect(result.readMax).toBeUndefined();
+});
+
+
+function runtimeEnvironment(process = parent, selectedPolicy: Omit<typeof policy, 'rolloutCopies'> & { rolloutCopies: 1 | 2 } = policy) {
+  return { WORKER_ROLE: process.role, PHYSICAL_HOST: process.host, RELEASE_TAG: process.release,
+    HOST_DB_BUDGET: JSON.stringify({ mode: 'enabled', policy: selectedPolicy, process }) };
+}
+
+it('checks the actual entry kind while preserving disabled legacy entry environments', () => {
+  expect(() => assertHostDbEntry({}, { kind: 'worker', role: 'crawler' })).not.toThrow();
+  expect(() => assertHostDbEntry({ HOST_DB_BUDGET: '{"mode":"disabled"}' }, { kind: 'worker', role: 'crawler' })).not.toThrow();
+  const env = runtimeEnvironment();
+  expect(() => assertHostDbEntry(env, { kind: 'role-parent', role: 'translation' })).not.toThrow();
+  for (const expected of [{ kind: 'worker' as const, role: 'translation' }, { kind: 'role-parent' as const, role: 'crawler' }]) {
+    expect(() => assertHostDbEntry(env, expected)).toThrow('host_db_entry_mismatch');
+  }
+});
+
+it('rejects malformed, oversized and extra runtime JSON without returning configuration contents', () => {
+  const marker = 'private-configuration-value';
+  const env = runtimeEnvironment();
+  for (const HOST_DB_BUDGET of ['', marker, 'null', '[]', JSON.stringify({ mode: 'disabled', marker }),
+    JSON.stringify({ ...JSON.parse(env.HOST_DB_BUDGET), overrides: { max: 1 } }),
+    JSON.stringify({ mode: 'disabled', marker: '한'.repeat(6000) }),
+    JSON.stringify({ ...JSON.parse(env.HOST_DB_BUDGET), process: { ...parent, kind: marker } })]) {
+    expect(() => assertHostDbEntry({ ...env, HOST_DB_BUDGET }, { kind: 'role-parent', role: 'translation' }))
+      .toThrowError(new Error('host_db_budget_invalid'));
+  }
+});
+
+it('requires the same host, release and role in the actual environment and policy', () => {
+  const env = runtimeEnvironment();
+  for (const patch of [{ WORKER_ROLE: undefined }, { WORKER_ROLE: 'crawler' }, { PHYSICAL_HOST: undefined },
+    { PHYSICAL_HOST: 'm3' }, { RELEASE_TAG: undefined }, { RELEASE_TAG: 'old' }]) {
+    expect(() => assertHostDbEntry({ ...env, ...patch }, { kind: 'role-parent', role: 'translation' }))
+      .toThrowError(new Error('host_db_budget_invalid'));
+  }
+  const mismatchedPolicy = { ...policy, release: 'other' };
+  expect(() => assertHostDbEntry(runtimeEnvironment(parent, mismatchedPolicy), { kind: 'role-parent', role: 'translation' }))
+    .toThrow('host_db_process_not_declared');
+});
+
+it('rejects undeclared replica/copy slots and roles before accepting the entry', () => {
+  for (const process of [{ ...parent, replica: 2 }, { ...parent, copy: 2 }, { ...parent, role: 'crawler' }]) {
+    expect(() => assertHostDbEntry(runtimeEnvironment(process), { kind: 'role-parent', role: process.role }))
+      .toThrow('host_db_process_not_declared');
+  }
+});
+
+it('preserves the full rolling identity and only changes the child kind during worker spawn', () => {
+  const process = { ...parent, copy: 2 as const };
+  const env = { ...runtimeEnvironment(process, { ...policy, rolloutCopies: 2 }), DB_POOL_WAIT_MS: '123', OTHER: 'retained' };
+  const before = structuredClone(env);
+  const child = hostDbChildEnvironment(env, 'translation');
+  const expected = { ...JSON.parse(env.HOST_DB_BUDGET), process: { ...process, kind: 'worker' } };
+  expect(JSON.parse(child.HOST_DB_BUDGET!)).toEqual(expected);
+  expect({ ...child, HOST_DB_BUDGET: env.HOST_DB_BUDGET }).toEqual(env);
+  expect(dbPoolConfig(child)).toMatchObject({ role: 'translation', max: 3, waitMs: 123 });
+  expect(env).toEqual(before);
+  expect(() => hostDbChildEnvironment(child, 'translation')).toThrow('host_db_entry_mismatch');
+});
+
+it('separates the scheduler parent quota from its child and preserves replica/copy identity', () => {
+  const selectedPolicy = { ...policy, schedulerReplicas: 2, rolloutCopies: 2 as const };
+  const process = { ...parent, kind: 'scheduler-parent', role: 'scheduler', replica: 2, copy: 2 as const };
+  const env = runtimeEnvironment(process, selectedPolicy);
+  expect(dbPoolConfig(env).max).toBe(1);
+  const child = hostDbChildEnvironment(env, 'scheduler');
+  expect(JSON.parse(child.HOST_DB_BUDGET!).process).toEqual({ ...process, kind: 'scheduler-worker' });
+  expect(dbPoolConfig(child).max).toBe(2);
+  expect(() => assertHostDbEntry(child, { kind: 'scheduler-parent', role: 'scheduler' })).toThrow('host_db_entry_mismatch');
+});
+
+it('preserves the original legacy child environment including its explicit max when disabled', () => {
+  const env = { WORKER_ROLE: 'web', DB_POOL_MAX: '7', CUSTOM: 'same', HOST_DB_BUDGET: '{"mode":"disabled"}' };
+  expect(hostDbChildEnvironment(env, 'crawler')).toEqual({ ...env, WORKER_ROLE: 'crawler' });
+  expect(env.WORKER_ROLE).toBe('web');
 });

@@ -1,3 +1,4 @@
+import { assertHostDbEntry } from '@/lib/db/host-budget';
 /** Primary/standby candidate. Only the elected process starts the existing supervisor. */
 import { BATCH_ROLES, BATCH_HOSTS, type BatchHost } from '@/lib/jobs/batches';
 import { randomUUID } from 'node:crypto';
@@ -125,6 +126,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
 
 async function main() {
   const candidate = parseRoleWorkerArgs(process.argv.slice(2));
+  assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
   const controller = new AbortController();
   let phase: 'standby' | 'active' | 'stopping' = 'standby';
   let epoch: number | null = null;
