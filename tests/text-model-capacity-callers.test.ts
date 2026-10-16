@@ -52,6 +52,7 @@ vi.mock("@/lib/domain/products/product-translation-model-capacity", () => ({
       text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })), options.timeoutMs, undefined, options.signal),
   }),
 }));
+vi.mock("@/lib/domain/products/search-query-model-capacity", () => ({ translateQueryWithModelCapacity: async () => ({ kind: "legacy" }) }));
 vi.mock("@/lib/crawl/translations", () => ({ recordTranslations: mocks.cacheWrite }));
 vi.mock("@/lib/db", () => ({ db: {
   select: () => ({ from: () => ({ where: mocks.cache }) }), execute: async () => [{ lexeme: "document" }],

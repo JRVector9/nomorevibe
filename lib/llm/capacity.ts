@@ -554,3 +554,63 @@ export const crawlTaglineGatewayTerminalEvidenceSchema = z.object({ version: z.l
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_crawl_tagline_terminal_usage");
 export type CrawlTaglineGatewayTerminalEvidence = Readonly<z.infer<typeof crawlTaglineGatewayTerminalEvidenceSchema>>;
+
+/** Fixed public-search query target. Only hashes of the raw query enter the ledger; no web/role/job lease is implied. */
+export const websearchQueryCacheSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absent") }).strict(),
+  z.object({ kind: z.literal("present"), rowIdentityHash: sha64, attempts: z.number().int().nonnegative().safe() }).strict(),
+]);
+export type WebsearchQueryCache = Readonly<z.infer<typeof websearchQueryCacheSchema>>;
+export const websearchQueryMemberSchema = z.object({ cacheKey: sha64, sourceLocale: z.enum(["ko", "zh-Hans", "zh-Hant"]),
+  queryHash: sha64, promptVersion: positive, glossaryVersion: positive.nullable(), cache: websearchQueryCacheSchema }).strict()
+  .refine(value => value.sourceLocale === "ko" || value.glossaryVersion === null, "invalid_websearch_query_glossary");
+export type WebsearchQueryMember = Readonly<z.infer<typeof websearchQueryMemberSchema>>;
+export const websearchQueryInputSchema = z.object({ member: websearchQueryMemberSchema, model: identity(200) }).strict();
+export type WebsearchQueryInput = Readonly<z.infer<typeof websearchQueryInputSchema>>;
+/** Active fence target excludes model, boot, raw-case and wire so none of them bypasses an unknown call. */
+export function websearchQueryMemberKeys(member: WebsearchQueryMember): string[] {
+  return [`websearch-query:${websearchQueryMemberSchema.parse(member).cacheKey}`];
+}
+export function websearchQueryLogicalWorkKey(member: WebsearchQueryMember): string {
+  return `text:websearch-query:${websearchQueryMemberSchema.parse(member).cacheKey}`;
+}
+export function websearchQueryInputHash(value: WebsearchQueryInput): string {
+  return createHash("sha256").update(JSON.stringify(canonical(websearchQueryInputSchema.parse(value)))).digest("hex");
+}
+export const websearchProcessOwnerSchema = z.object({ instanceId: identity(120), bootId: z.uuid(), release: identity(120) }).strict();
+export type WebsearchProcessOwner = Readonly<z.infer<typeof websearchProcessOwnerSchema>>;
+export const websearchQueryDispatchBindingSchema = websearchQueryInputSchema.extend({
+  kind: z.literal("websearch_query_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("abcllm"), routeId: z.literal("search-query-translate"), wireHash: sha64, servingContractHash: sha64,
+  totalTokenBound: positive, chargedTokens: positive, process: websearchProcessOwnerSchema,
+}).strict().refine(value => {
+  const checked = websearchQueryInputSchema.safeParse({ member: value.member, model: value.model });
+  return checked.success && value.logicalWorkKey === websearchQueryLogicalWorkKey(checked.data.member)
+    && value.inputHash === websearchQueryInputHash(checked.data) && value.chargedTokens === value.totalTokenBound;
+}, "invalid_websearch_query_binding");
+export type WebsearchQueryDispatchBinding = Readonly<z.infer<typeof websearchQueryDispatchBindingSchema>>;
+export function websearchQueryDispatchBindingHash(value: WebsearchQueryDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(websearchQueryDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type WebsearchQueryModelDispatch = ModelCapacityDispatch & Readonly<{ binding: WebsearchQueryDispatchBinding; bindingHash: string }>;
+export const websearchQueryModelDispatchSchema = handleSchema.extend({ binding: websearchQueryDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_websearch_query_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.process.instanceId && value.owner.bootId === value.binding.process.bootId,
+    "invalid_websearch_query_dispatch_owner")
+  .transform(value => value as unknown as WebsearchQueryModelDispatch);
+/** The original parser result only; transport/HTTP failures never become stored outcomes. */
+export const websearchQueryOutcomeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), keywords: z.string().min(1).max(131_072) }).strict(),
+  z.object({ ok: z.literal(false), error: z.literal("invalid_output") }).strict(),
+]);
+export type WebsearchQueryOutcome = Readonly<z.infer<typeof websearchQueryOutcomeSchema>>;
+export const websearchQueryGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("websearch_query_gateway_terminal"),
+  dispatch: websearchQueryModelDispatchSchema, finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]),
+  responseHash: sha64, actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(), provenance: z.enum(["upstream_reported", "unknown"]), outcome: websearchQueryOutcomeSchema,
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported" && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_websearch_query_terminal_usage");
+export type WebsearchQueryGatewayTerminalEvidence = Readonly<z.infer<typeof websearchQueryGatewayTerminalEvidenceSchema>>;

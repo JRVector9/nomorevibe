@@ -645,6 +645,13 @@
       "when": 1794086400003,
       "tag": "0091_model_capacity_crawl_tagline_terminal",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1794086400005,
+      "tag": "0093_model_capacity_websearch_query_terminal",
+      "breakpoints": true
     }
   ]
 }

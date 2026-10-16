@@ -8,6 +8,7 @@ import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
+import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
 
 /**
  * 한국어·확실한 중국어 검색어를 영어 낱말로 바꿔 같은 제품 색인에서 한 번 더 찾는다.
@@ -50,9 +51,15 @@ export function normalizeQuery(query: string): string {
 export function queryTranslationKey(query: string, targetLocale: Locale = "en"): string {
   if (!isLocale(targetLocale)) throw new Error("Invalid search translation target");
   const sourceLocale = searchQuerySourceLocale(query);
+  const { prompt, glossary } = queryTranslationPolicy(query, sourceLocale);
+  return textHash(JSON.stringify(["search-keywords-v3", sourceLocale, targetLocale, prompt, glossary, normalizeQuery(query)]));
+}
+
+/** 캐시 열쇠와 공통 슬롯 장부가 같은 지시문·용어표 판을 쓰게 한 곳에서 정한다 */
+function queryTranslationPolicy(query: string, sourceLocale: ReturnType<typeof searchQuerySourceLocale>) {
   const glossary = sourceLocale === "ko" && glossaryHints(normalizeQuery(query)) ? GLOSSARY_VERSION : null;
   const prompt = sourceLocale === "ko" ? QUERY_PROMPT_VERSION : CHINESE_QUERY_PROMPT_VERSION;
-  return textHash(JSON.stringify(["search-keywords-v3", sourceLocale, targetLocale, prompt, glossary, normalizeQuery(query)]));
+  return { prompt, glossary };
 }
 
 /** Input evidence, never the UI locale. Generic Han and Japanese without kana stay unknown. */
@@ -119,11 +126,16 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     const cached = await cachedTranslation(hash);
     if (cached) return { kind: "translated", text: cached };
 
-    const result = sourceLocale === "ko" ? await translateQueryToEnglish(raw, TIMEOUT_MS)
+    // 공통 슬롯이 켜져 있으면 그 길로만 부른다(장부·캐시 기록은 그 안에서 주 DB 로). 꺼져 있으면 legacy — 아래 원래 길 그대로다
+    const { prompt, glossary } = queryTranslationPolicy(raw, sourceLocale);
+    const reserved = await translateQueryWithModelCapacity({ query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt,
+      glossaryVersion: glossary }, TIMEOUT_MS);
+    if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
+    const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, TIMEOUT_MS)
       : await translateChineseQueryToEnglish(raw, sourceLocale, TIMEOUT_MS);
     // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
     // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
-    await onPrimary(() => recordTranslations(
+    if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
       [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
       TRANSLATE_MODEL,
       "en",
