@@ -1,5 +1,13 @@
 # 파이프라인 PR별 개발·적용 현황 — 2026-10-15
 
+## 최신 확인 — 2026-10-16 04:45 UTC 이후
+
+이 절이 아래 시점별 기록보다 우선한다. PR459 offline Oracle는 필수 CI/최신 base·고정 head 검증 뒤 main714fae23으로 병합했고 운영 배포는 하지 않았다. 새 main CI38852285410은 진행 중이다. PR453은 profile 개선 뒤에도 item5 timeout으로 실패해 고정 phase 계측을 진행한다. PR460/461/462는 선행 의존 초안이며 PR462의 별도 recorder-wait assertion1도 미해결이다.
+
+PR12a 원본 공급 버퍼는 변경 범위 unit30 및 actual10+별도1, root 코드리뷰·DB 독립readback/정리 뒤 [초안PR463](https://github.com/JRVector9/nomorevibe/pull/463)으로 제출했다. 기본 비활성/R:null이며 실제2배를 뜻하지 않는다. 보안 scanner의 고정 forged-token 음성fixture 경고는 조사·최소수정 중이다. PR13 관리자 관측은 독립리뷰의 정책 hash P2를 최소보강했고 unit/UI16PASS·정적0·SQL불변, root 인수 중이다. PR05b1 AI2 fresh admission은 source2/tests2와15 actual 경계의 분리GREEN을 반환해 root 리뷰 중이다.
+
+새 PR들의 검토 base는 최신 PR461/462를 정상 merge한 `codex/pipeline-review-stack-20261016`이다. main/운영 적용과 구분한다. 전체 unit/전체DB/build 수동 실행은 모든 PR 개발 후에만 진행하며 필수 자동 CI는 유지한다. 정확한 소유권·명령·실패는 [CODEX_HANDOFF](../../CODEX_HANDOFF.md)를 따른다.
+
 승인된 [PR00–17 로드맵](2026-10-15-pipeline-pr-roadmap.md)의 납품 상태를 기록한다.
 PR 번호·의존성은 유지하며, 아래 PR01 소단위는 원래 PR01 안의 검토 경계다.
 전체 요구와 합격 기준은 [설계](../specs/2026-10-15-pipeline-two-times-design.md)를 따른다.
@@ -159,3 +167,6 @@ PR455는 exacthead c5c24108/최신base/필수CI38838284085 성공 guard 후 2026
 
 
 2026-10-16 site/admission 인수: PR456 main CI38843767154·images SUCCESS, PR458 exacthead888f1ce/필수CI38844114868 성공후 main2a227dd 정상squash(03:21Z). site20파일은 actual role2+site8의 분리10PASS·unit52/후속runtime10·root89table raw/capturedcatalog exact/독립리뷰 P1/P2 0로동결됐다. AI1admission source5/tests3은 원3GREEN/unit38/확장11분리GREEN/genuine1GREEN; fixture foreignitem 소유권P2는 ownItemKeys 최소보강(원15본문exact/해당eslint0/DB재실행0). 둘다local/운영비활성이다. PR453 원pair 각1회2PASS/7.115·9.479초로CI지연미재현, 검증SQL과후단CPU를함께측정하고검증의미를보존하는profile두SQL만후속개선중이다. PR460 통합1은직전records fixture의healthy AI1job 미정리구체경로를확인했고전체CI실패를보존한다. PR459 통합3HTTP8실패도미해결이다. 전체수동테스트는모든PR개발후최종통합단계에서만진행한다. 최신세부소유권/merge중단/DB55535는CODEX_HANDOFF를따른다.
+
+
+2026-10-16 최신 취합: site/AI1 admission은 역할분리 PR460에 의존하는 초안 PR461/462로 제출했다. PR453 profile SQL 두경계 개선은 old/new실제32항목·원2case와독립리뷰를통과하여source인수중이며CI지연해결은미확정이다. PR460 fixture의실제잠금잔류원인을좁은pair로재현/수정했고, 독립리뷰의absent→concurrentowner경쟁도실제RED후보강중이다. Oracle초안PR459는최신main2a정상adoption/head67f35d7. PR12 sourcebuffer(A,defaultdisabled/R:null)와PR13 관리자현재제어상태(C)는분리WT에서병렬구현중이다. 수동전체unit/전체DB/종합build는모든PR개발이끝난뒤만실행한다. 상세소유권/정확명령은CODEX_HANDOFF.md.
