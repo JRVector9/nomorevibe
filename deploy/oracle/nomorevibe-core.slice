@@ -1,0 +1,11 @@
+# Template: render_units requires explicit measured numbers; this raw file is not installable.
+[Unit]
+Description=NoMoreVibe core aggregate Oracle budget
+
+[Slice]
+CPUAccounting=yes
+MemoryAccounting=yes
+TasksAccounting=yes
+CPUQuota=@MEASURED_CPU_QUOTA_PERCENT@%
+MemoryMax=@MEASURED_MEMORY_BYTES@
+TasksMax=@MEASURED_TASKS@
