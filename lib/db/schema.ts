@@ -735,3 +735,5 @@ export * from './product-star-observation-schema';
 
 export { githubWebhookEvents, githubIntegrationActions } from "./github-webhook-schema";
 export * from './http-origin-schema';
+
+export * from "./evidence-source-claims-schema";

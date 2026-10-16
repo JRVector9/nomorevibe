@@ -427,8 +427,8 @@ export async function isMakerLinkDeclared(input: {
   slug: string;
   kind: z.infer<typeof observedSourceSchema>["kind"];
   normalizedKey: string;
-}): Promise<boolean> {
-  const link = await db.query.productLinks.findFirst({
+}, executor: EvidenceExecutor = db): Promise<boolean> {
+  const link = await executor.query.productLinks.findFirst({
     where: and(
       eq(productLinks.slug, input.slug),
       eq(productLinks.kind, input.kind),
@@ -450,8 +450,8 @@ export async function findProductEvidenceIdentity(slug: string) {
 export async function siteObservedRepository(input: {
   slug: string;
   repositoryKey: string;
-}): Promise<boolean> {
-  const sources = await db.query.productEvidenceSources.findMany({
+}, executor: EvidenceExecutor = db): Promise<boolean> {
+  const sources = await executor.query.productEvidenceSources.findMany({
     where: and(
       eq(productEvidenceSources.slug, slugSchema.parse(input.slug)),
       eq(productEvidenceSources.provider, "product_site"),

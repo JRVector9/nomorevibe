@@ -1,6 +1,7 @@
 import { normalizeTypedLink } from "../contracts";
 import { createHash } from "node:crypto";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertCanonicalInput, captureCanonicalInput } from "../source-context";
 
 export const SITE_FINGERPRINT_BYTES = 2 * 1024 * 1024;
 const SITE_FINGERPRINT_PARSER_VERSION = 1;
@@ -59,30 +60,25 @@ export async function refreshSiteFingerprint(
   if (cached && stored?.lastModified) headers["If-Modified-Since"] = stored.lastModified;
   const read = (headers: Record<string, string>) => {
     if (!hasBudget()) return Promise.resolve(null);
-    const pending = fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
-    if (!signal) return pending;
-    // DNS preflight may not support cancellation. Race only the read, never a DB
-    // write; pass the same signal to prevent a late preflight from starting HTTP.
-    return new Promise<Awaited<typeof pending> | null>((resolve, reject) => {
-      const cleanup = () => signal.removeEventListener("abort", stopped);
-      const stopped = () => { cleanup(); resolve(null); };
-      signal.addEventListener("abort", stopped, { once: true });
-      if (signal.aborted) stopped();
-      pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
-    });
+    // Await the real request: aborting a permit wait must retain its deferred
+    // error, rather than racing it into generic budget exhaustion.
+    return fetch(input.url, { maxBytes: SITE_FINGERPRINT_BYTES, acceptNotModified: true, headers, signal });
   };
+  const original = await captureCanonicalInput(input);
   let result = await read(headers);
   if (!result || !hasBudget()) return "budget_exhausted";
   if (result.ok && result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl)) {
     result = await read({});
   }
   if (!result || !hasBudget()) return "budget_exhausted";
+  if (result.ok && result.status !== 304 && result.body.length >= SITE_FINGERPRINT_BYTES) return "budget_exhausted";
   const identity = { slug: input.slug, kind: "documentation", provider: "product_site", sourceKey: "canonical_site", sourceUrl: input.url };
   if (!result.ok || (result.status === 304 && (!cached || cached.finalUrl !== result.finalUrl))) {
     const attempts = (sameUrl ? stored?.attempts ?? 0 : 0) + 1;
     const delayHours = Math.min(7 * 24, 6 * 2 ** Math.min(attempts - 1, settings.maxRetries - 1));
     const persisted = await withJobLeaseWrite(options.lease, async tx => {
       if (!hasBudget()) return false;
+      await assertCanonicalInput(tx, input, settings, original);
       await upsertObservedSource({ ...identity, state: "failed", lastFailureAt: now,
         attempts, lastErrorCode: `site_${result.ok ? "cacheless_304" : result.reason}`, nextAttemptAt: new Date(now.getTime() + delayHours * 3600000) }, tx, input.productId);
       return true;
@@ -96,6 +92,7 @@ export async function refreshSiteFingerprint(
   };
   const persisted = await withJobLeaseWrite(options.lease, async tx => {
     if (!hasBudget()) return false;
+    await assertCanonicalInput(tx, input, settings, original);
     await upsertObservedSource({ ...identity, state: "ok", normalizedFacts: facts,
       etag: result.headers.get("etag") ?? (result.status === 304 ? stored?.etag : null),
       lastModified: result.headers.get("last-modified") ?? (result.status === 304 ? stored?.lastModified : null),
