@@ -1,6 +1,7 @@
-import { Agent, fetch as undiciFetch } from "undici";
-import { lookup as dnsLookup } from "node:dns";
-import { assertPublicUrl, isPrivateIp, allowPrivate } from "./ssrf";
+import { assertPublicUrl } from "./ssrf";
+import { nativeHttpFetch, legacyHttpDispatcher } from "./http-transport";
+import { sharedHttpEnabled, HttpOriginPermitError } from "./http-origin-policy";
+export { HttpOriginPermitError } from "./http-origin-policy";
 
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 5;
@@ -18,30 +19,6 @@ export const DEFAULT_HEADERS = {
   "user-agent": "NoMoreVibe/1.0 (+https://nomorevibe.app)",
   "accept-language": "en-US,en;q=0.9",
 } as const;
-
-/**
- * 연결 시점 DNS 검증 — 1차 검사와 실제 연결 사이에 레코드를 바꾸는 DNS 리바인딩을 차단한다.
- *
- * 주의: net.connect의 autoSelectFamily(Node 20+ 기본)는 lookup을 { all: true }로 호출하고
- * 주소 "배열"을 기대한다. 단일 주소 형태로만 응답하면 모든 연결이 ERR_INVALID_IP_ADDRESS로 실패한다.
- */
-const ssrfSafeAgent = new Agent({
-  connect: {
-    lookup(hostname, options, callback) {
-      dnsLookup(hostname, { all: true }, (err, addresses) => {
-        if (err) return callback(err, "", 4);
-        const list = Array.isArray(addresses) ? addresses : [];
-        if (list.length === 0 || list.some((a) => isPrivateIp(a.address))) {
-          return callback(new Error(`사설 IP 차단: ${hostname}`), "", 4);
-        }
-        if (options?.all) {
-          return (callback as unknown as (e: Error | null, a: typeof list) => void)(null, list);
-        }
-        callback(null, list[0].address, list[0].family);
-      });
-    },
-  },
-});
 
 export type FetchResult = { finalUrl: string; response: Response };
 
@@ -103,10 +80,8 @@ async function defaultRequest(
   url: string,
   init: Parameters<CappedRequest>[1],
 ): Promise<Response> {
-  return (await undiciFetch(url, {
-    ...init,
-    dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
-  })) as unknown as Response;
+  if (sharedHttpEnabled()) return (await import("./origin-permits")).requestOriginHop(url, init);
+  return (await nativeHttpFetch(url, { ...init, dispatcher: legacyHttpDispatcher() })) as unknown as Response;
 }
 
 function timedOut(error: unknown): boolean {
@@ -210,6 +185,7 @@ export async function fetchCapped(
   if (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0) {
     throw new Error("maxBytes must be a non-negative safe integer");
   }
+  if (options.request && sharedHttpEnabled()) throw new HttpOriginPermitError("custom_transport");
   const request = options.request ?? defaultRequest;
   const headers = {
     ...DEFAULT_HEADERS,
@@ -231,6 +207,7 @@ export async function fetchCapped(
         headers,
       });
     } catch (error) {
+      if (error instanceof HttpOriginPermitError) throw error;
       if (timedOut(error)) return { ok: false, reason: "timeout" };
       return { ok: false, reason: "http", status: 0 };
     }
@@ -267,6 +244,7 @@ export async function fetchCapped(
         body = await readBodyStrictlyCapped(response, options.maxBytes);
       }
     } catch (error) {
+      if (error instanceof HttpOriginPermitError) throw error;
       if (timedOut(error)) return { ok: false, reason: "timeout" };
       return { ok: false, reason: "http", status: 0 };
     }
@@ -429,15 +407,11 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive", op
     let res: Response;
     try {
       // 백그라운드는 hop마다 목적지 origin의 자리를 잡는다 (acquireOrigin 참고)
-      if (background) release = await acquireOrigin(new URL(current).origin, signal);
-      res = (await undiciFetch(current, {
-        redirect: "manual",
-        signal,
-        headers: DEFAULT_HEADERS,
-        dispatcher: allowPrivate() ? undefined : ssrfSafeAgent,
-      })) as unknown as Response;
+      if (background && !sharedHttpEnabled()) release = await acquireOrigin(new URL(current).origin, signal);
+      res = await defaultRequest(current, { redirect: "manual", signal, headers: DEFAULT_HEADERS });
     } catch (error) {
       release?.();
+      if (error instanceof HttpOriginPermitError) throw error;
       if (options.retryTransientErrors && !permanentTransportFailure(error)) {
         throw new PageFetchError(timedOut(error) ? "timeout" : "transport",
           error instanceof Error ? `${error.name}: ${error.message}` : String(error));
