@@ -1,5 +1,13 @@
 # 수집·검수 2배와 세 서버 운영 — PR Implementation Plan
 
+## 추가 진행 — 2026-10-16 09:54 UTC
+
+AI1 PR475/ce419b5d 필수 자동CI 전부 SUCCESS, 최신base 이후 문서 충돌 여부 확인이 남는다. AI2 PR474는 HTTP 정상parent를4373154d로 인수·push했고 새CI 통합3만 진행 중/나머지성공이다. C ledger55567 첫case 수정1PASS 후 case2 정책전환 fixture FAIL을 보존, 같은 정책과 실제두busy 예약으로 최소수정 승인/production 변경0. A runtime55568 실제 첫실행은 disabled1PASS·native positive1FAIL/미실행6, JSON 키 순서가 private identity를 바꾸는 source 결함을 확인해 최소수정+새 회귀만 승인했다. 원 fullraw 잔류를 보존하고 복구DML은 아직0이다. B는 다음 AI1 item-native 읽기계획 중. Active55567+55568/다음55569, 전체미완료·수동전체는 모든PR개발뒤·운영activation0. 정확 실패·증거·수정파일·다음 명령은 CODEX_HANDOFF 최상단.
+
+## 추가 진행 — 2026-10-16 09:42 UTC
+
+AI1 소비자 정상push/초안PR475/ce419b5d 제출완료, source12보존/실제8PASS/독립P1/P2=0·DB정리완료다. 새CI quality/scope/GG성공·통합진행중. C55567 actual첫case의BIGINT fixture2비교실패를보존·own1/3/1만정확복구검토중이며나머지5미실행이다. 첫/tmp복구는readonly Result배열prototype guard에서중지/DML0. A AI2runtime3독립추가productionP1/P2=0, DB전fixture JSON/CDN잔류검출2건과managedjob선거절보강중/DB0. PR453최신필수CI모두SUCCESS,474HTTPparent인수예정. Active55567/다음55568, 전체미완료·수동전체는모든PR개발뒤·운영activation0. 정확증거/실패/명령은 CODEX_HANDOFF 최상단.
+
 ## 추가 진행 — 2026-10-16 09:36 UTC
 
 HTTP PR453 최신head5e0626de 필수새CI 전부SUCCESS/병합·배포0다. PR474 원실패summary는 HTTPunread1만FAIL/899PASS·quality통과, 무변경rerun0이다. AI1 PR06b 실제8PASS/독립리뷰추가P1/P2=0·DB정리 뒤 feature39e71→최신474type정상merge776ae→HTTP453정상mergea2c7로취합했다. 최초2files overlapguard 거절을 보존하고 양쪽full diff/Git3way wholeleftexact 뒤만merge했으며 nonshared2045보호exact다. 새validation·초안PR 제출준비 중. C0085 root전체분해/strict역변환 검토 완료 후 새55567전용에서actual6최초범위 승인·B독립리뷰 병렬. A AI2runtime17+기존54PASS/driver작성중. Active55567만/다음55568. 전체미완료·운영activation0·수동전체는 모든PR개발뒤 유지, 정확SHA/실패/명령은 CODEX_HANDOFF 최상단.
