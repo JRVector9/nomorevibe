@@ -66,3 +66,9 @@ Root 최종 직접 검토: production 변경과 신규 mixed reducer/authority v
 Root 독립 readback은 모든 counts0·원 stage µs·ACL을 담당 최종 JSON과 exact 비교해 통과했다. `/tmp/nomorevibe-pr04c2-root-final-readback-20261016.json`. 타 연결0 뒤 exact55521 container를 정상STOP하여 exited0/OOMfalse를 확인하고 own container/volume만 제거했다(`/tmp/nomorevibe-pr04c2-root-cleanup-20261016.json`). 55521 재접속/재생성 및 다른 자원 prune은 하지 않는다.
 
 새 published/tokenless item 실제 fixture, 실제 wire COMMIT-ack loss 주입, 실 provider/native total-cap/terminal, durable 외부 종료, 모델 슬롯 전 caller 적용, 독립 consumer 운영 활성, 30분 baseline/2배 성능은 이번 실행으로 증명하지 않았다. 기존 provider unsupported guard·모델·quality·TTL·timeout은 완화하지 않았다. v1/v5와 v2/v6은 다른 비교 계약으로 식별되며 성능 합격으로 섞지 않는다. 전체 통합검사는 사용자 지시대로 나머지 PR 개발 종료 후 root가 수행한다. root는 최종 source/driver/원로그 직접 리뷰와 최신 main 정상 통합/Git/handoff 갱신을 담당한다.
+
+## 제출 후 CI import 수정
+
+첫 PR453 CI38833138711 quality에서4suite 수집 실패를 확인했다. readiness→settings→db→replay-scope→execution의 eager item-execution import가 readiness 초기화 전에 schema.extend를 호출하는 실제 순환이었다. B가 동일4suite 로컬 collection4FAIL/0tests→runtime4exports를 필요한 async5지점 dynamic import로 이동→동일521PASS/12.48초를 확인했다. strict artifact/mixed2files42PASS/1.29초, tsc/scopedlint0이다. production execution 한 파일6hunk만 변경, 나머지본문·SQL/권한/정책/기존test는 byte동일이다. 최종 execution SHA `3b384abf1dced84622ba9babddcb0ddd9c9f757bc1aaf8fb09d9a0fce869a817`.
+
+원 CI integration1은 reporter source-map 오류가 원 child 오류를 가려 원인미확정이다. 별도 새55527에서 같은 CLI1case만 실제1PASS/5skip14.97초 확인했고 필수CI 재검증을 기다린다. root는 diff/보고/로그를 직접 읽고 독립82table data/rawµs readback·roles/functions/triggers/schema/columns/settings exact를 확인했다. ACL NULL→명시default 표현차이는 그대로 보존했으며 whole raw exact로 주장하지 않는다. exact own 정상STOP/exited0/OOMfalse/container+volume 제거 완료. report `/tmp/nomorevibe-pr453-b-cycle-fix-final-report-20261016.md`, root `/tmp/nomorevibe-pr453-root-cycle-{readback,cleanup}-20261016.json`. 전체수동suite 반복0/운영활성0.

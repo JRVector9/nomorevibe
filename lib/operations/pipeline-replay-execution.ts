@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { ItemLease } from "@/lib/jobs/items/types";
 import { itemBindingHash, itemBindingSchema, itemOwnerSchema } from "@/lib/jobs/items/types";
 import { canonicalReplayItemState } from "./pipeline-replay-item-state";
-import { applyReplayMixedChanges, ReplayCombinedExecutionSchema, ReplayMixedChangeSchema, ReplayItemCallAuthoritySchema } from "./pipeline-replay-item-execution";
+import type { ReplayItemCallAuthoritySchema } from "./pipeline-replay-item-execution";
 import type { ReplayCallRequest } from "./pipeline-replay-ledger";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -337,6 +337,7 @@ export async function reserveReplayItemCall(tx: ProductTransaction, lease: ItemL
   lease = itemLeaseSnapshotSchema.parse(structuredClone(lease));
   request = replayCallRequestSchema.parse(structuredClone(request));
   await registerReplayItemFinalAuthority(tx, lease);
+  const { ReplayItemCallAuthoritySchema } = await import("./pipeline-replay-item-execution");
   const value = await itemTicket(tx);
   ensure(value && request.stage === "second" && lease.binding.stage === "ai2"
     && request.firstAttemptId === (lease.binding.source.kind === "first_attempt" ? lease.binding.source.firstAttemptId : null)
@@ -369,6 +370,7 @@ export async function assertReplayItemCallDispatch(tx: Raw, runId: string, callI
     const [call] = await tx`SELECT stage FROM pipeline_replay.capacity_calls WHERE run_id=${runId} AND call_id=${callId}`;
     ensure(call?.stage === "first", "replay_item_call_authority_required"); return;
   }
+  const { ReplayItemCallAuthoritySchema } = await import("./pipeline-replay-item-execution");
   const authority = ReplayItemCallAuthoritySchema.parse(proof.payload), lease = authority.lease;
   for (const stage of ["fetch", "ai1", "ai2"]) await tx`SELECT stage FROM public.pipeline_stage_modes WHERE stage=${stage} FOR SHARE`;
   await tx`SELECT work_key FROM public.pipeline_item_leases WHERE stage='ai2' AND work_key=${lease.work_key} FOR UPDATE`;
@@ -404,6 +406,7 @@ async function flushReplayTransaction(value: Ticket): Promise<void> {
   const rawChanges = [...await tx`SELECT ordinal, table_name, operation, old_row, new_row
     FROM pipeline_replay.capacity_changes WHERE run_id = ${scope.run.runId} AND tx_key = ${value.txKey}::uuid ORDER BY ordinal`];
   const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
+  const { applyReplayMixedChanges, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
   const changes = rawChanges.map(row => (scope.binding.items ? ReplayMixedChangeSchema : ReplayReadinessChangeSchema)
     .parse({ ...row, ordinal: Number(row.ordinal) }));
   const projection = scope.binding.items ? applyReplayMixedChanges(run.current_projection, changes)
@@ -431,6 +434,7 @@ type JsonRow = Record<string, unknown>;
 async function artifactContent(tx: Raw, runId: string) {
   const [result] = await tx`SELECT to_jsonb(r) AS value FROM pipeline_replay.capacity_runs r WHERE run_id=${runId}`;
   const row = result?.value as JsonRow;
+  const { ReplayCombinedExecutionSchema } = await import("./pipeline-replay-item-execution");
   const items = ReplayCombinedExecutionSchema.safeParse(row?.initial_projection).success;
   ensure(row?.initial_projection && row.initial_state_hash && row.writers_fenced_at && row.sealed_at, "replay_run_not_sealed");
   const journalRows = await tx`SELECT to_jsonb(e) AS value FROM pipeline_replay.capacity_transitions e WHERE run_id=${runId} ORDER BY seq`;
@@ -491,6 +495,7 @@ async function validateJournal(tx: Raw, runId: string): Promise<void> {
     WHERE e.run_id=${runId} AND e.kind='final' AND f.seq IS NULL LIMIT 1`;
   ensure(!invalidPacket && !orphanConfirmation && !invalidFinal, "replay_journal_binding_mismatch");
   const { applyReplayChanges, ReplayReadinessProjectionSchema, ReplayReadinessChangeSchema } = await import("./pipeline-replay-readiness");
+  const { applyReplayMixedChanges, ReplayCombinedExecutionSchema, ReplayMixedChangeSchema } = await import("./pipeline-replay-item-execution");
   const items = run.initial_projection.kind === "pipeline-replay-combined-state";
   let projection = items ? ReplayCombinedExecutionSchema.parse(run.initial_projection) : ReplayReadinessProjectionSchema.parse(run.initial_projection);
   const frozen = await tx`SELECT candidate_id,input_hash,source_revision_hash,frozen_input,frozen_hash
