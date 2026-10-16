@@ -32,6 +32,11 @@ export const modelCapacityRequestSchema = z.object({
 }).strict().refine(value => value.class === "background" || value.pool === "reviewer", "invalid_class_pool");
 export type ModelCapacityRequest = Readonly<z.infer<typeof modelCapacityRequestSchema>>;
 
+export const modelCapacityRequestIdentitySchema = z.object(modelCapacityRequestSchema.shape)
+  .omit({ requestId: true }).strict()
+  .refine(value => value.class === "background" || value.pool === "reviewer", "invalid_class_pool");
+export type ModelCapacityRequestIdentity = Readonly<z.infer<typeof modelCapacityRequestIdentitySchema>>;
+
 export const modelCapacityPolicySchema = z.object({
   version: z.literal(1), globalLimit: limit, providerLimits: limits, groupLimits: limits,
   poolLimits: z.object({ reviewer: limit, text: limit }).strict(),
