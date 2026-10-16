@@ -41,6 +41,8 @@ let sentinelId: number, sentinelItem: postgres.Row[] | undefined;
 let originalForeign: postgres.Row[], originalDocuments: postgres.Row[], originalVotes: postgres.Row[], originalObservations: postgres.Row[], originalItems: postgres.Row[];
 let originalSettings: postgres.Row[], originalJobs: postgres.Row[], originalStages: postgres.Row[], foreign: postgres.Row[];
 const work = new Set<Promise<unknown>>();
+let originalReplayDiagnostics: string | undefined;
+let replayDiagnosticsConfigured = false;
 type DiagnosticPhase = "prepare.candidate_insert" | "prepare.document_insert" | "prepare.settings_upsert"
   | "prepare.jobs_delete" | "prepare.job_request_insert" | "prepare.profile_identity"
   | "prepare.handler_database_open" | "prepare.preview_legacy" | "prepare.preview_item"
@@ -116,6 +118,9 @@ function track<T>(promise: Promise<T>): Promise<T> {
 async function settle() { await Promise.allSettled([...work]); }
 
 beforeAll(() => track((async () => {
+  originalReplayDiagnostics = process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS;
+  process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS = "1";
+  replayDiagnosticsConfigured = true;
   ensureSchema();
   admin = postgres(TEST_DATABASE_URL, { max: 2, prepare: false, onnotice: () => {} });
   originalSettings = await admin`SELECT to_jsonb(t) AS row FROM crawl_settings t ORDER BY id`;
@@ -206,7 +211,15 @@ afterAll(async () => {
       expect(await tx`SELECT to_jsonb(t) AS row FROM jobs t WHERE name IN ('crawl-agent-review','second-review','crawl-publish') ORDER BY name`).toEqual(originalJobs);
       expect(await tx`SELECT to_jsonb(t) AS row FROM pipeline_stage_modes t ORDER BY stage`).toEqual(originalStages);
     });
-  } finally { await observe("after_all.admin_end", () => admin?.end({ timeout: 3 })); }
+  } finally {
+    try { await observe("after_all.admin_end", () => admin?.end({ timeout: 3 })); }
+    finally {
+      if (replayDiagnosticsConfigured) {
+        if (originalReplayDiagnostics === undefined) delete process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS;
+        else process.env.NOMOREVIBE_REPLAY_DIAGNOSTICS = originalReplayDiagnostics;
+      }
+    }
+  }
 });
 
 async function prepare(items: boolean, extra: { voters?: string[]; fallback?: boolean } = {}) {

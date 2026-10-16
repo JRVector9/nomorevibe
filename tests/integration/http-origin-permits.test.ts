@@ -8,9 +8,67 @@ import { writeFile } from 'node:fs/promises';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 const client = postgres(TEST_DATABASE_URL, { max: 1 });
-const evidencePrefix = `/tmp/nomorevibe-pr454-c-http-terminal-${process.pid}-20261016`;
+const evidencePrefix = `/tmp/nomorevibe-http-rival-c-${process.pid}-20261016`;
 const policy = { version: 1, instanceHosts: { 'http-c-one': 'oracle-osaka-smoke', 'http-c-two': 'oracle-osaka-smoke', 'http-c-three': 'm3', 'http-c-four': 'oracle-osaka-smoke' } };
+const fixtureTracePhases = new Set([
+  'worker.start_received', 'worker.fetch.begin', 'worker.fetch.end', 'worker.fetch.reject', 'worker.body.reject',
+  'worker.pg_end.begin', 'worker.pg_end.end', 'worker.pg_end.reject', 'worker.disconnect.begin', 'worker.timeout_100.abort',
+  'child.disconnected', 'child.close', 'child.pg_wait_sample', 'child.pg_wait_sample_unknown', 'cleanup.failed_drain.begin', 'cleanup.failed_drain.end',
+  'cleanup.child_term', 'cleanup.child_kill', 'cleanup.settlement_deadline',
+  'child.spawned', 'child.ready', 'child.headers', 'child.result', 'child.error',
+  'child.process_error', 'child.exit', 'child.send_start', 'child.send_consume', 'child.send_cancel', 'child.send_abort',
+  'cleanup.exercises_work_settle.begin', 'cleanup.exercises_work_settle.end', 'unread.rejected',
+  'unread.policy_open.begin', 'unread.policy_open.end', 'unread.endpoint_open.begin', 'unread.endpoint_open.end',
+  'unread.held_ready.begin', 'unread.held_ready.end', 'unread.held_headers.begin', 'unread.held_headers.end',
+  'unread.original_hop.begin', 'unread.original_hop.end', 'unread.reservation_past.begin', 'unread.reservation_past.end',
+  'unread.rival_ready.begin', 'unread.rival_ready.end', 'unread.rival_result_checked.begin', 'unread.rival_result_checked.end',
+  'unread.unchanged_hop_checked.begin', 'unread.unchanged_hop_checked.end', 'unread.drain_update.begin', 'unread.drain_update.end',
+  'unread.held_result_checked.begin', 'unread.held_result_checked.end', 'unread.release_row_checked.begin', 'unread.release_row_checked.end',
+  'unread.endpoint_close.begin', 'unread.endpoint_close.end',
+] as const);
+type FixtureTracePhase = typeof fixtureTracePhases extends Set<infer Phase> ? Phase : never;
+let fixtureTraceWrites = 0, fixtureTraceAwaitingError = false, fixtureTraceErrorGeneration = 0, fixtureTraceListening = false;
+function fixtureTraceDetach(): void {
+  try {
+    if (fixtureTraceListening && fixtureTraceWrites === 0 && !fixtureTraceAwaitingError) {
+      process.stderr.removeListener('error', fixtureTraceSinkError);
+      fixtureTraceListening = false;
+    }
+  } catch { /* Diagnostic failures must not affect the exercise. */ }
+}
+function fixtureTraceSinkError(): void {
+  try { fixtureTraceErrorGeneration++; fixtureTraceAwaitingError = false; fixtureTraceDetach(); }
+  catch { /* Never replace the original fixture error. */ }
+}
+function fixtureTrace(phase: FixtureTracePhase | null, pid: number | null = process.pid, sample?: { closed: boolean; backends: { pgPid: number; state: string | null; waitType: string | null; waitEvent: string | null; blockers: number[] }[] }): void {
+  try {
+    if (!(process.env.CI === 'true' || process.env.HTTP_FIXTURE_TRACE === '1') || phase === null || !fixtureTracePhases.has(phase)) return;
+    const line = JSON.stringify({ phase, pid: typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 ? pid : null, monotonicMs: performance.now(), ...(phase === 'child.pg_wait_sample' ? sample : undefined) }) + '\n';
+    if (!fixtureTraceListening) {
+      const max = process.stderr.getMaxListeners();
+      if (max > 0 && process.stderr.listenerCount('error') >= max) return;
+      process.stderr.on('error', fixtureTraceSinkError); fixtureTraceListening = true;
+    }
+    fixtureTraceWrites++;
+    const generation = fixtureTraceErrorGeneration;
+    let completed = false;
+    const complete = (error?: Error | null): void => {
+      try {
+        if (completed) return;
+        completed = true; fixtureTraceWrites--;
+        // Writable reports callback errors before its error event. Retain the
+        // single guard until that event; also tolerate an already-seen event.
+        if (error && generation === fixtureTraceErrorGeneration) fixtureTraceAwaitingError = true;
+        fixtureTraceDetach();
+      } catch { /* The write callback must also be noexcept. */ }
+    };
+    try { process.stderr.write(line, complete); } catch { complete(); }
+  } catch { /* Trace output is best effort, including a failed stderr sink. */ }
+}
+
 const children = new Set<ChildProcess>();
+const childState = new Map<ChildProcess, { closed: Promise<void>; closedFlag: boolean; started: boolean; applicationName: string }>();
+let failingDrain = false;
 const work = new Set<Promise<unknown>>();
 const exercises = new Set<Promise<unknown>>();
 const exercise = <T>(p:Promise<T>):Promise<T>=>{exercises.add(p);void p.catch(()=>{});return p;};
@@ -35,15 +93,81 @@ async function whole() {
   return result;
 }
 let cleaning: Promise<void> | undefined;
-function cleanup(): Promise<void> {
+function cleanup(failed = false): Promise<void> {
   if(cleaning)return cleaning;
-  const pending=cleanOnce();cleaning=pending;
+  const pending=cleanOnce(failed);cleaning=pending;
   void pending.finally(()=>{if(cleaning===pending)cleaning=undefined;}).catch(()=>{});
   return pending;
 }
 const ownIds = new Set<string>();
-async function cleanOnce() {
-  const pending = [...exercises,...work]; await Promise.allSettled(pending); pending.forEach(p => {work.delete(p);exercises.delete(p);});
+// A failed body remains failed. These timers only make its own child drain observable;
+// neither a kill nor a child close proves that an HTTP permit can be released.
+async function drainChildren(): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  fixtureTrace('cleanup.failed_drain.begin');
+  await Promise.all([...children].map(async p => {
+    const state = childState.get(p);
+    if (!state) { errors.push(new Error('http_fixture_child_close_untracked')); return; }
+    const signal = (name: 'SIGTERM' | 'SIGKILL') => {
+      if (state.closedFlag) return;
+      fixtureTrace(name === 'SIGTERM' ? 'cleanup.child_term' : 'cleanup.child_kill', p.pid ?? null);
+      errors.push(new Error(`http_fixture_forced_termination_${name}`));
+      try { if (!p.kill(name)) errors.push(new Error('http_fixture_child_signal_not_sent')); }
+      catch (error) { errors.push(error); }
+    };
+    // Install both independently before any await, even if TERM is ignored.
+    const term = setTimeout(() => signal('SIGTERM'), 1000);
+    const kill = setTimeout(() => signal('SIGKILL'), 2000);
+    const sends: Promise<void>[] = [];
+    try {
+      if (state.started && p.connected) for (const kind of ['abort', 'consume']) {
+        const sent = new Promise<void>(resolve => {
+          try { p.send({ kind }, error => { if (error) errors.push(error); resolve(); }); }
+          catch (error) { errors.push(error); resolve(); }
+        });
+        sends.push(sent);
+      }
+      await state.closed;
+      await Promise.allSettled(sends);
+    } finally { clearTimeout(term); clearTimeout(kill); }
+  }));
+  fixtureTrace('cleanup.failed_drain.end');
+  return errors;
+}
+async function settleFixtureWork(failed: boolean): Promise<unknown[]> {
+  const errors: unknown[] = [];
+  const pending = [...exercises, ...work];
+  const settled = Promise.allSettled(pending);
+  fixtureTrace('cleanup.exercises_work_settle.begin');
+  if (failed) {
+    failingDrain = true;
+    errors.push(...await drainChildren());
+  } else {
+    // A terminal IPC result is not a closed process. A stalled close is a
+    // separate fixture failure, never a successful business result.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const completed = await Promise.race([settled.then(() => true), new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), 4000); })]);
+      if (!completed) {
+        fixtureTrace('cleanup.settlement_deadline');
+        errors.push(new Error('http_fixture_settlement_deadline'));
+        failingDrain = true;
+        errors.push(...await drainChildren());
+      }
+    } finally { if (timer) clearTimeout(timer); }
+  }
+  await settled;
+  fixtureTrace('cleanup.exercises_work_settle.end');
+  pending.forEach(p => { work.delete(p); exercises.delete(p); });
+  return errors;
+}
+async function cleanOnce(failed = false) {
+  const errors = await settleFixtureWork(failed);
+  // No mutation is permitted before every observed child actually closes.
+  if (children.size) throw new AggregateError([...errors, new Error('http_fixture_child_not_closed')]);
+  try {
+  const labels = [...childState.values()].map(state => state.applicationName);
+  if (labels.length) expect(await client`SELECT pid FROM pg_stat_activity WHERE application_name=ANY(${labels}::text[]) AND pid<>pg_backend_pid()`).toHaveLength(0);
   await client.begin(async tx => {
     await tx`SELECT id FROM http_origin_control WHERE id=1 FOR UPDATE`;
     for (const row of await tx`SELECT id FROM http_origin_hops WHERE instance_id IN ('http-c-one','http-c-two','http-c-three','http-c-four','http-c-unknown')`) ownIds.add(row.id);
@@ -54,6 +178,9 @@ async function cleanOnce() {
     expect(await foreignHttp(tx)).toEqual(foreign);
   });
   ownIds.clear();
+  childState.clear(); failingDrain = false;
+  } catch (error) { errors.push(error); }
+  if (errors.length) throw new AggregateError(errors);
 }
 beforeAll(() => exercise((async()=>{
   ensureSchema();
@@ -63,7 +190,8 @@ beforeAll(() => exercise((async()=>{
   foreign=await foreignHttp(client);baseline=await whole();
   await writeFile(`${evidencePrefix}-before.json`,JSON.stringify({foreign,whole:baseline},null,2));
 })()));
-afterEach(cleanup);
+// Installed Vitest classifies the body (including its timeout) before afterEach.
+afterEach(ctx => cleanup(ctx.task.result?.state === 'fail'));
 afterAll(async()=>{
   const errors:unknown[]=[];
   for(const step of [()=>cleanup(),async()=>{const after=await whole();await writeFile(`${evidencePrefix}-after.json`,JSON.stringify({foreign:await foreignHttp(client),whole:after},null,2));expect(after).toEqual(baseline);},()=>client.end()])try{await step();}catch(error){errors.push(error);}
@@ -71,12 +199,44 @@ afterAll(async()=>{
 });
 
 async function child(url: string, enabled: boolean, instance: string, api: 'safe'|'capped', extra: Record<string,string>={}) {
+  if (failingDrain) throw new Error('http_fixture_child_after_failed_drain');
   const p = fork('tests/integration/fixtures/http-origin-worker.ts', [], { execArgv: ['--import','tsx'], stdio: ['ignore','pipe','pipe','ipc'],
-    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ALLOW_PRIVATE_URLS: '1', HTTP_ORIGIN_PERMITS: enabled ? '1':'0', SERVICE_INSTANCE_ID: instance, HTTP_TEST_URL: url, HTTP_TEST_API: api, ...extra } });
+    env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, ALLOW_PRIVATE_URLS: '1', HTTP_ORIGIN_PERMITS: enabled ? '1':'0', SERVICE_INSTANCE_ID: instance, HTTP_TEST_URL: url, HTTP_TEST_API: api, HTTP_TEST_PARENT_PID: String(process.pid), ...extra } });
   children.add(p);
   const exited = track(once(p,'exit'));
-  const trace=(phase:string)=>{if(process.env.HTTP_FIXTURE_TRACE==='1')console.log(JSON.stringify({phase,pid:p.pid,instance,api,at:performance.now()}));};
-  trace('spawned');
+  const applicationName = `nvm-http-fixture-${process.pid}-${p.pid}`;
+  let resolveClosed!: () => void;
+  const closed = track(new Promise<void>(resolve => { resolveClosed = resolve; }));
+  const state = { closed, closedFlag: false, started: false, applicationName };
+  childState.set(p, state);
+  p.stdout?.resume();
+  p.once('disconnect', () => fixtureTrace('child.disconnected', p.pid ?? null));
+  p.once('close', () => { state.closedFlag = true; children.delete(p); fixtureTrace('child.close', p.pid ?? null); resolveClosed(); });
+  // This separate read-only connection observes only this exact child's label.
+  // It does not wrap a query, alter the original pool, or observe row/query data.
+  let sampleTimer: ReturnType<typeof setTimeout> | undefined;
+  let sampleStarted = false;
+  let scheduleSample!: (delay: number) => void;
+  const sampled = track(new Promise<void>(resolve => {
+    scheduleSample = delay => { sampleTimer = setTimeout(() => {
+      sampleStarted = true;
+      const observer = postgres(TEST_DATABASE_URL, { max: 1, connect_timeout: 1,
+        connection: { application_name: `nvm-http-observer-${process.pid}`, statement_timeout: 1000, lock_timeout: 100 } });
+      void (async () => {
+        try {
+          const rows = await observer`SELECT pid, state, wait_event_type, wait_event, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE application_name=${applicationName} ORDER BY pid`;
+          fixtureTrace('child.pg_wait_sample', p.pid ?? null, { closed: state.closedFlag,
+            backends: rows.map(row => ({ pgPid: row.pid, state: row.state, waitType: row.wait_event_type, waitEvent: row.wait_event, blockers: row.blockers })) });
+        } catch { fixtureTrace('child.pg_wait_sample_unknown', p.pid ?? null); }
+        finally { try { await observer.end(); } catch { fixtureTrace('child.pg_wait_sample_unknown', p.pid ?? null); } resolve(); }
+      })();
+    }, delay); };
+    void closed.then(() => { if (sampleTimer) clearTimeout(sampleTimer); if (!sampleStarted) resolve(); });
+  }));
+  // If sampling already started, retain its actual query/end work through close.
+  void sampled;
+  const trace=(phase:FixtureTracePhase|null)=>fixtureTrace(phase,p.pid??null);
+  trace('child.spawned');
   let stderr = ''; p.stderr?.on('data', value => { stderr += value; });
   let readyReceived=false,terminalReceived=false;
   let resolveReady!:()=>void,rejectReady!:(error:Error)=>void;
@@ -89,9 +249,10 @@ async function child(url: string, enabled: boolean, instance: string, api: 'safe
   void headers.catch(()=>{});
   p.on('message',message=>{
     const value=message as Record<string,unknown>;
-    trace(`ipc:${value.kind}`);
+    if (value.kind === 'phase' && typeof value.phase === 'string' && fixtureTracePhases.has(value.phase as FixtureTracePhase)) trace(value.phase as FixtureTracePhase);
+    trace(value.kind==='ready'?'child.ready':value.kind==='headers'?'child.headers':value.kind==='result'?'child.result':value.kind==='error'?'child.error':null);
     if(value.kind==='ready'){readyReceived=true;resolveReady();}
-    else if(value.kind==='headers')resolveHeaders(value);
+    else if(value.kind==='headers'){if(api==='safe' && extra.HTTP_TEST_HOLD==='1')scheduleSample(0);resolveHeaders(value);}
     else if(value.kind==='result'||value.kind==='error'){
       terminalReceived=true;resolveResult(value);
       const error=value.kind==='error'
@@ -100,15 +261,14 @@ async function child(url: string, enabled: boolean, instance: string, api: 'safe
       rejectReady(error);rejectHeaders(error);
     }
   });
-  p.once('error',error=>{trace('process:error');children.delete(p);rejectReady(error);rejectResult(error);rejectHeaders(error);});
+  p.once('error',error=>{trace('child.process_error');rejectReady(error);rejectResult(error);rejectHeaders(error);});
   p.once('exit',(code,signal)=>{
-    trace(`exit:${code}:${signal}`);
-    children.delete(p);
+    trace('child.exit');
     const error=new Error(stderr || `HTTP fixture exited ${readyReceived?'before response headers':'before ready'} (code=${code}, signal=${signal})`);
     rejectReady(error);rejectHeaders(error);if(!terminalReceived)rejectResult(error);
   });
   await ready;
-  return {start:()=>{trace('send:start');p.send({kind:'start'});},send:(kind:string)=>{trace(`send:${kind}`);return p.connected && p.send({kind});},result,exited,headers:()=>headers};
+  return {start:()=>{state.started = true;if(!(api==='safe' && extra.HTTP_TEST_HOLD==='1'))scheduleSample(500);trace('child.send_start');p.send({kind:'start'});},send:(kind:string)=>{trace(kind==='consume'?'child.send_consume':kind==='cancel'?'child.send_cancel':kind==='abort'?'child.send_abort':null);return p.connected && p.send({kind});},result,exited,headers:()=>headers};
 }
 async function pair(enabled: boolean) {
   await client`UPDATE http_origin_control SET mode='open',policy=${client.json(policy)},policy_hash=${createHash('sha256').update(JSON.stringify({version:1,instanceHosts:Object.fromEntries(Object.entries(policy.instanceHosts).sort(([a],[b])=>a<b?-1:a>b?1:0))})).digest('hex')} WHERE id=1`;
@@ -193,17 +353,17 @@ it.each(['safe','capped'] as const)('redirect hops of enabled %s use separate na
   if(errors.length)throw new AggregateError(errors);
 });
 it('a native-ended but unread response retains its charge past the reservation deadline and across drain/epoch changes',async()=>{
-  await openPolicy();const e=await opened((_q,res)=>res.end('retained'));const errors:unknown[]=[];let held:Awaited<ReturnType<typeof child>>|undefined;
+  fixtureTrace('unread.policy_open.begin');await openPolicy();fixtureTrace('unread.policy_open.end');fixtureTrace('unread.endpoint_open.begin');const e=await opened((_q,res)=>res.end('retained'));fixtureTrace('unread.endpoint_open.end');const errors:unknown[]=[];let held:Awaited<ReturnType<typeof child>>|undefined;
   try{
-    held=await child(e.url,true,'http-c-one','safe',{HTTP_TEST_HOLD:'1'});held.start();await held.headers();
-    const [first]=await client`SELECT to_jsonb(h) AS row FROM http_origin_hops h WHERE instance_id='http-c-one'`;expect(first.row.state).toBe('dispatched');
-    await until(async()=>{const [v]=await client`SELECT clock_timestamp()>reserved_until AS past FROM http_origin_hops WHERE id=${first.row.id}::uuid`;return v.past;},'original reservation deadline');
-    const rival=await child(e.url,true,'http-c-two','capped',{HTTP_TEST_TIMEOUT:'100'});rival.start();expect(await rival.result).toMatchObject({kind:'error',name:'HttpOriginPermitError'});
-    const [before]=await client`SELECT to_jsonb(h) AS row FROM http_origin_hops h WHERE id=${first.row.id}::uuid`;expect(before.row).toEqual(first.row);
-    await client`UPDATE http_origin_control SET mode='draining',epoch=epoch+1 WHERE id=1`;
-    held.send('consume');expect(await held.result).toMatchObject({kind:'result',value:'retained'});
-    expect((await client`SELECT state,token,boot_id FROM http_origin_hops WHERE id=${first.row.id}::uuid`)[0]).toMatchObject({state:'released',token:first.row.token,boot_id:first.row.boot_id});
-  }catch(error){errors.push(error);}finally{held?.send('consume');try{await e.close();}catch(error){errors.push(error);}}
+    fixtureTrace('unread.held_ready.begin');held=await child(e.url,true,'http-c-one','safe',{HTTP_TEST_HOLD:'1'});fixtureTrace('unread.held_ready.end');held.start();fixtureTrace('unread.held_headers.begin');await held.headers();fixtureTrace('unread.held_headers.end');
+    fixtureTrace('unread.original_hop.begin');const [first]=await client`SELECT to_jsonb(h) AS row FROM http_origin_hops h WHERE instance_id='http-c-one'`;expect(first.row.state).toBe('dispatched');fixtureTrace('unread.original_hop.end');
+    fixtureTrace('unread.reservation_past.begin');await until(async()=>{const [v]=await client`SELECT clock_timestamp()>reserved_until AS past FROM http_origin_hops WHERE id=${first.row.id}::uuid`;return v.past;},'original reservation deadline');fixtureTrace('unread.reservation_past.end');
+    fixtureTrace('unread.rival_ready.begin');const rival=await child(e.url,true,'http-c-two','capped',{HTTP_TEST_TIMEOUT:'100'});fixtureTrace('unread.rival_ready.end');rival.start();fixtureTrace('unread.rival_result_checked.begin');expect(await rival.result).toMatchObject({kind:'error',name:'HttpOriginPermitError'});fixtureTrace('unread.rival_result_checked.end');
+    fixtureTrace('unread.unchanged_hop_checked.begin');const [before]=await client`SELECT to_jsonb(h) AS row FROM http_origin_hops h WHERE id=${first.row.id}::uuid`;expect(before.row).toEqual(first.row);fixtureTrace('unread.unchanged_hop_checked.end');
+    fixtureTrace('unread.drain_update.begin');await client`UPDATE http_origin_control SET mode='draining',epoch=epoch+1 WHERE id=1`;fixtureTrace('unread.drain_update.end');
+    held.send('consume');fixtureTrace('unread.held_result_checked.begin');expect(await held.result).toMatchObject({kind:'result',value:'retained'});fixtureTrace('unread.held_result_checked.end');
+    fixtureTrace('unread.release_row_checked.begin');expect((await client`SELECT state,token,boot_id FROM http_origin_hops WHERE id=${first.row.id}::uuid`)[0]).toMatchObject({state:'released',token:first.row.token,boot_id:first.row.boot_id});fixtureTrace('unread.release_row_checked.end');
+  }catch(error){fixtureTrace('unread.rejected');errors.push(error);}finally{held?.send('consume');try{fixtureTrace('unread.endpoint_close.begin');await e.close();fixtureTrace('unread.endpoint_close.end');}catch(error){errors.push(error);}}
   if(errors.length)throw new AggregateError(errors);
 });
 it('reader cancellation waits for native socket termination, releases once, and allows a same-origin follower',async()=>{
