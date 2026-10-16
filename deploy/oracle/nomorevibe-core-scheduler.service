@@ -1,0 +1,32 @@
+# Independent DB scheduler; this phase's launcher still exits78 before any producer call.
+[Unit]
+Description=NoMoreVibe Oracle independent scheduler
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=nomorevibe-core
+Group=nomorevibe-core
+Slice=nomorevibe-core.slice
+WorkingDirectory=/opt/nomorevibe-core/current
+EnvironmentFile=/etc/nomorevibe-core/scheduler.env
+Environment=HOME=/var/lib/nomorevibe-core/scheduler
+Environment=WORKER_HEALTH_PATH=/run/nomorevibe-core/scheduler/worker-health.json
+ExecStart=/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --role=scheduler
+StateDirectory=nomorevibe-core/scheduler
+RuntimeDirectory=nomorevibe-core/scheduler
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+KillMode=mixed
+TimeoutStopSec=60s
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target

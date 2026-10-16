@@ -92,6 +92,24 @@ function observe<T extends Promise<unknown> | undefined>(phase: DiagnosticPhase,
     throw error;
   }
 }
+type PreviewProjection = Awaited<ReturnType<ReplayLedger["previewInitialState"] | ReplayLedger["previewItemInitialState"]>>["projection"];
+function emitPreviewSize(items: boolean, projection: PreviewProjection): void {
+  try {
+    const started = performance.now();
+    const domain = "domain" in projection ? projection.domain : projection;
+    const tables = ["crawl_settings", "crawl_candidates", "crawl_documents", "crawl_review_attempts", "second_reviews",
+      "agent_repository_scans", "agent_repository_observations", "products", "crawl_frontier", "jobs", "operations_observations", "capacity_calls"] as const;
+    const rows = Object.fromEntries(tables.map(name => [name, domain.tables[name].length]));
+    const itemRows = "items" in projection ? { stages: projection.items.tables.pipeline_stage_modes.length,
+      items: projection.items.tables.pipeline_item_leases.length } : null;
+    const jsonBytes = Buffer.byteLength(JSON.stringify(projection), "utf8");
+    process.stderr.write(JSON.stringify({ event: "item_journal_preview_size", kind: items ? "item" : "legacy",
+      rows, universe: domain.universe.length, itemRows, jsonBytes, measurementMs: Math.round((performance.now() - started) * 1_000) / 1_000 }) + "\n");
+  } catch {
+    try { process.stderr.write(JSON.stringify({ event: "item_journal_preview_size", kind: items ? "item" : "legacy", unknown: true }) + "\n"); }
+    catch { /* Size diagnostics cannot alter the original preview/hash or cleanup. */ }
+  }
+}
 function track<T>(promise: Promise<T>): Promise<T> {
   work.add(promise); void promise.then(() => work.delete(promise), () => work.delete(promise)); return promise;
 }
@@ -235,8 +253,12 @@ async function prepare(items: boolean, extra: { voters?: string[]; fallback?: bo
     limits: { maxCalls: 8, maxTokens: 800, perCallTokenUpperBound: 100, maxDurationMs: 120_000, concurrency: 2 } };
   const owned = await observe("prepare.profile_identity", () => items ? getReplayItemHandlerIdentityPath() : getReplayHandlerIdentityPath()); release = owned.release;
   const database = await observe("prepare.handler_database_open", () => openVerifiedReplayHandlerDatabase(owned.identityPath, {})), inputs = [{ candidateId: candidate.id, input }];
-  try { manifest.initialStateHash = (await observe(items ? "prepare.preview_item" : "prepare.preview_legacy", () => items ? new ReplayLedger(database).previewItemInitialState(manifest, inputs)
-    : new ReplayLedger(database).previewInitialState(manifest, inputs))).initialStateHash; }
+  try {
+    const preview = await observe(items ? "prepare.preview_item" : "prepare.preview_legacy", () => items ? new ReplayLedger(database).previewItemInitialState(manifest, inputs)
+      : new ReplayLedger(database).previewInitialState(manifest, inputs));
+    manifest.initialStateHash = preview.initialStateHash;
+    emitPreviewSize(items, preview.projection);
+  }
   finally { await observe("prepare.preview_database_close", () => database.close()); }
   return { identityPath: owned.identityPath, manifest, inputs, candidate, settings };
 }
