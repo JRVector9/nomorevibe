@@ -5,6 +5,7 @@ import { jobsForRole, JOB_ROLES, type JobRole } from './catalog';
 import { BATCH_HOSTS, type BatchRole, type BatchHost } from './batches';
 import { acquireBatchRole, lockJobBatch, releaseBatchRole, renewBatchRole } from './batch-repository';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
+import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
 export type RoleCandidate = {
   role: BatchRole;
@@ -43,6 +44,8 @@ export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLeas
   if (candidate.batchVersion === 1) return acquireBatchRole(candidate);
   if (!JOB_ROLES.includes(candidate.role as JobRole)) return null;
   return db.transaction(async tx => {
+    // DR fence가 첫 lock이다. fenced DB(옛 primary·승격 전 복원본)에서는 역할을 얻지 않는다.
+    if (!await writerSiteActive(tx)) return null;
     if ((await lockJobBatch(tx)).mode !== 'legacy') return null;
     await tx.insert(roleLeases).values({ role: candidate.role }).onConflictDoNothing();
     const [current] = await tx.select().from(roleLeases)
@@ -89,6 +92,7 @@ export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLeas
 export async function renewRole(lease: RoleLease): Promise<boolean> {
   if (lease.batchVersion === 1) return renewBatchRole(lease);
   return db.transaction(async tx=> {
+    if (!await writerSiteActive(tx)) return false;
     const batch=await lockJobBatch(tx);
     if (batch.mode !== 'legacy' && !(batch.mode === 'draining' && batch.drainingFrom === 'legacy')) return false;
     await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
