@@ -65,3 +65,13 @@ it("lets an already started site success write settle after abort", async () => 
   expect(await refreshSiteFingerprint(input, { now, signal: controller.signal, fetch: vi.fn().mockResolvedValue(response) })).toBe(true);
   expect(mocks.upsert).toHaveBeenCalledTimes(1);
 });
+
+it("an aborted permit wait keeps its deferred type instead of becoming generic budget exhaustion", async () => {
+  const { HttpOriginPermitError } = await import("@/lib/net/http-origin-policy");
+  const controller = new AbortController();
+  const blocked = new HttpOriginPermitError("waiting_aborted");
+  const fetch = vi.fn(async () => { controller.abort(); throw blocked; });
+  await expect(refreshSiteFingerprint(input, { now, signal: controller.signal, fetch })).rejects.toBe(blocked);
+  expect(mocks.transaction).not.toHaveBeenCalled();
+  expect(mocks.upsert).not.toHaveBeenCalled();
+});

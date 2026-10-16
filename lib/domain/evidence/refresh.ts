@@ -152,6 +152,7 @@ type CollectedEvidenceSourceResult = EvidenceSourceResult & {
 };
 
 export type ProductEvidenceRefreshResult = EvidenceSourceResult & {
+  deferred?: "http_origin_permit";
   sourcesAttempted: number;
   sourcesFailed: number;
   complete: boolean;
@@ -798,7 +799,11 @@ export async function refreshProductEvidence(
         factsChanged: result.factsChanged, eventsInserted: result.eventsInserted, mediaInserted: result.mediaInserted,
       });
     } catch (error) {
-      if (error instanceof HttpOriginPermitError) { totals.sourcesAttempted -= 1; return finish(true); }
+      if (error instanceof HttpOriginPermitError) {
+        totals.sourcesAttempted -= 1;
+        totals.deferred = "http_origin_permit";
+        return finish(true);
+      }
       if (error instanceof ProductGenerationChangedError || error instanceof JobLeaseLostError) throw error;
       totals.sourcesFailed += 1;
       if (!hardStopped()) await markSourceFailure(source, now, settings, "collection_failed", dependencies.lease);
@@ -836,7 +841,11 @@ export async function refreshProductEvidence(
         outcome: "succeeded", httpClass: "ok", factsChanged: 0, eventsInserted: 0, mediaInserted: result.mediaInserted,
       });
     } catch (error) {
-      if (error instanceof HttpOriginPermitError) { totals.sourcesAttempted -= 1; return finish(true); }
+      if (error instanceof HttpOriginPermitError) {
+        totals.sourcesAttempted -= 1;
+        totals.deferred = "http_origin_permit";
+        return finish(true);
+      }
       if (error instanceof ProductGenerationChangedError) throw error;
       totals.sourcesFailed += 1;
       retry = new Date(now.getTime() + 6 * 60 * 60 * 1_000);

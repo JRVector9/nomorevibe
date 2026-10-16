@@ -1,3 +1,4 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { safeFetch, readBodyCapped, type FetchMode } from "@/lib/net/fetch";
 import * as repo from "./repository";
 import type { JobLease } from "@/lib/jobs/control";
@@ -31,7 +32,8 @@ export async function cacheOgImage(imageUrl: string, slug: string, mode: FetchMo
 
     await repo.putOgImage(slug, type, buf, lease);
     return `/api/og-cache/${slug}`;
-  } catch {
+  } catch (error) {
+    if (error instanceof HttpOriginPermitError) throw error;
     return null;
   }
 }

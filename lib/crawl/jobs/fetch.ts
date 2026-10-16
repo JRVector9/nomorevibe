@@ -80,7 +80,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
       return { done: true };
     }
 
-    const { retryAt, pauseReason, deferred } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally);
+    const { retryAt, pauseReason, deferred, permitBlocked } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally);
+    if (permitBlocked) return { done: false, deferred: "http_origin_permit" };
     if (retryAt) {
       ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
         { fetched: tally.fetched, resetAt: retryAt.toISOString() });
@@ -115,12 +116,13 @@ async function fetchBatch(
   evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
   tally: Tally,
-): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null; deferred: boolean }> {
+): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null; deferred: boolean; permitBlocked: boolean }> {
   // 여러 칸이 함께 고치는 상태라 한 객체에 둔다
   const batch = {
     next: 0,
     stopped: false,
     deferred: false,
+    permitBlocked: false,
     retryAt: null as Date | null,
     pauseReason: null as "rate_limited" | "auth_unavailable" | null,
     /** 시작은 했지만 끝내지 못해 그대로 돌려줄 것 — 한도·예산 대기는 실패한 시도가 아니다 */
@@ -150,9 +152,10 @@ async function fetchBatch(
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
           batch.pauseReason = outcome.reason;
           batch.giveBack.add(started.entry);
-        } else if (outcome.kind === "deferred") {
+        } else if (outcome.kind === "deferred" || outcome.kind === "permit_deferred") {
           batch.stopped = true;
           batch.deferred = true;
+          if (outcome.kind === "permit_deferred") batch.permitBlocked = true;
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "fetched") {
           tally.fetched++;
@@ -178,12 +181,12 @@ async function fetchBatch(
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
-  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason, deferred: batch.deferred };
+  return { retryAt: batch.retryAt, pauseReason: batch.pauseReason, deferred: batch.deferred, permitBlocked: batch.permitBlocked };
 }
 
 type EntryOutcome =
   | { kind: "fetched"; needsJudgement: boolean }
-  | { kind: "skipped" | "failed" | "lost" | "deferred" | "gated" }
+  | { kind: "skipped" | "failed" | "lost" | "deferred" | "permit_deferred" | "gated" }
   | { kind: "paused"; reason: "rate_limited" | "auth_unavailable"; retryAt: Date };
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
@@ -297,7 +300,7 @@ async function fetchEntry(
     try {
       page = await visit(homepage, settings.judge.docsGenerators, oneAtATime);
     } catch (error) {
-      if (error instanceof HttpOriginPermitError) return { kind: "deferred" };
+      if (error instanceof HttpOriginPermitError) return { kind: "permit_deferred" };
       /**
        * 일시 페이지 오류와 본문 단절은 이 항목만의 실패다. 잡 전체로
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를

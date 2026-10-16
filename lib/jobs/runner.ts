@@ -1,11 +1,13 @@
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { assertReplayJobAdmission } from "@/lib/operations/pipeline-replay-execution";
-import { JobLeaseLostError, requestJob, type JobLease } from "./control";
+import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "./control";
 import { STALE_LOCK_MS } from "./lease";
 import { JOB_CATALOG } from "./catalog";
 import { PAUSED_AFTER_MS } from "./status";
@@ -27,12 +29,13 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
+export type JobDeferredReason = "stage_blocked" | "http_origin_permit";
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
-  | { done: false; deferred: "stage_blocked"; cursor?: never; continuation?: never };
+  | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
 export type RunResult =
   | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
-  | { status: "deferred"; reason: "stage_blocked"; durationMs: number }
+  | { status: "deferred"; reason: JobDeferredReason; durationMs: number }
   | { status: "failed"; error: string; durationMs: number };
 
 /**
@@ -138,14 +141,25 @@ export async function runJob<C>(
     },
   };
   try {
-    const outcome = await handler(ctx);
+    let outcome: JobOutcome<C>;
+    try { outcome = await handler(ctx); } catch (error) {
+      if (!(error instanceof HttpOriginPermitError)) throw error;
+      outcome = { done: false, deferred: "http_origin_permit" };
+    }
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
-    if (outcome.deferred === "stage_blocked") {
+    if (outcome.deferred) {
       // No work was acknowledged. Preserve producer signals, cursor, pause and
       // historical success/error fields, including changes made during this tick.
-      const [row] = await db.update(jobs).set({ lockedAt: null, leaseToken: null })
-        .where(owned).returning({ name: jobs.name });
+      const release = async (tx: typeof db | ProductTransaction) => {
+        return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
+          .where(owned).returning({ name: jobs.name });
+      };
+      const [row] = outcome.deferred === "http_origin_permit"
+        ? await db.transaction(async tx => {
+          await assertJobLeaseAtWallTime(tx, lease, "update");
+          return release(tx);
+        }) : await release(db);
       if (!row) throw new JobLeaseLostError();
       const durationMs = Date.now() - startedAt;
       logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs });
