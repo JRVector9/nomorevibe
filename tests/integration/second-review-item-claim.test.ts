@@ -570,10 +570,12 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
   let ledger: ReplayLedger | undefined;
   const runBlocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
     connection: { application_name: "pr04-foundation-run-blocker", statement_timeout: 8_000 } });
-  const release = barrier(), locked = barrier<number>();
-  let blocking: Promise<unknown> | undefined;
+  const release = barrier(), locked = barrier<number>(), releaseStage = barrier(), stageLocked = barrier<number>();
+  let blocking: Promise<unknown> | undefined, stageBlocking: Promise<unknown> | undefined;
+  let attempt: Promise<PromiseSettledResult<SecondReviewClaim>> | undefined;
   let admission: PromiseSettledResult<SecondReviewClaim> | undefined;
   let run: Awaited<ReturnType<ReplayLedger["prepare"]>> | undefined;
+  const errors: unknown[] = [];
   try {
     database = await openVerifiedReplayHandlerDatabase(profile.identityPath, {});
     ledger = new ReplayLedger(database);
@@ -585,26 +587,76 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
       const [backend] = await tx`SELECT pg_backend_pid() AS pid`;
       locked.resolve(backend.pid); await release.promise;
     });
-    const holder = await locked.promise;
+    const holder = await Promise.race([locked.promise, blocking.then(() => { throw new Error("run holder ended before release"); })]);
     const result = await withReplayDatabaseScope(profile.identityPath, () =>
       withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(run!, () =>
         runJob<null>("second-review", async ctx => {
           if (!ctx.lease) throw new Error("actual job lease missing");
-          await admin`UPDATE jobs SET locked_at=clock_timestamp()-interval '89 seconds' WHERE name='second-review'`;
-          const attempt = admitLegacySecondReview(value.row.id, ctx.lease).then(
-            answer => ({ status: "fulfilled" as const, value: answer }), reason => ({ status: "rejected" as const, reason }));
+          const job = ctx.lease;
           try {
+            // Admission has completed its native replay verification when it
+            // reaches this first S3 row, before it can hold the job SHARE.
+            stageBlocking = admin.begin(async tx => {
+              await tx`SELECT stage FROM pipeline_stage_modes WHERE stage='fetch' FOR UPDATE`;
+              const [backend] = await tx`SELECT pg_backend_pid() AS pid`;
+              stageLocked.resolve(backend.pid); await releaseStage.promise;
+            });
+            const stageHolder = await Promise.race([stageLocked.promise,
+              stageBlocking.then(() => { throw new Error("stage holder ended before release"); })]);
+            attempt = admitLegacySecondReview(value.row.id, job).then(
+              answer => ({ status: "fulfilled" as const, value: answer }), reason => ({ status: "rejected" as const, reason }));
+            let waiterPid: number | undefined;
             await until(async () => {
-              const [waiting] = await observer`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
-                WHERE query ILIKE '%capacity_runs%' AND ${holder}=ANY(pg_blocking_pids(pid))) AS blocked`;
-              return waiting.blocked;
+              const waiting = await observer`SELECT pid FROM pg_stat_activity
+                WHERE datname=current_database() AND usesysid=${database!.identity.roleOid}::oid
+                  AND query ILIKE '%pipeline_stage_modes%' AND query ILIKE '%for share%'
+                  AND ${stageHolder}=ANY(pg_blocking_pids(pid))`;
+              expect(waiting.length).toBeLessThanOrEqual(1);
+              waiterPid = waiting[0]?.pid;
+              return waiterPid !== undefined;
+            }, "actual admission waits on first S3 stage before the job lock");
+            if (waiterPid === undefined) throw new Error("actual admission waiter missing");
+            const admissionPid = waiterPid;
+            // observer is a separate client: admin's only connection owns the
+            // stage holder. NOWAIT proves the job has no conflicting SHARE yet.
+            const anchor = await observer.begin(async tx => {
+              const [ownedJob] = await tx`SELECT lease_token FROM jobs WHERE name='second-review' FOR UPDATE NOWAIT`;
+              expect(ownedJob?.lease_token).toBe(job.token);
+              const anchored = await tx`UPDATE jobs SET locked_at=clock_timestamp()-interval '89.5 seconds'
+                WHERE name='second-review' AND lease_token=${job.token}
+                RETURNING to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS anchor_wall,
+                  to_char((locked_at+interval '90 seconds') AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS expires_at`;
+              expect(anchored).toHaveLength(1);
+              return anchored[0];
+            });
+            releaseStage.resolve(); await stageBlocking;
+            // No job UPDATE follows stage release. The same genuine admission
+            // must reach the recorder while its one DB-clock anchor is live.
+            let recorderWait: Record<string, unknown> | undefined;
+            await until(async () => {
+              const [waiting] = await observer`SELECT a.pid,
+                j.locked_at >= clock_timestamp()-interval '90 seconds' AS healthy,
+                extract(epoch FROM (j.locked_at+interval '90 seconds'-clock_timestamp()))*1000 AS remaining_ms
+                FROM pg_stat_activity a JOIN jobs j ON j.name='second-review'
+                WHERE a.pid=${admissionPid} AND a.usesysid=${database!.identity.roleOid}::oid
+                  AND a.query ILIKE '%capacity_runs%' AND a.wait_event_type='Lock'
+                  AND ${holder}=ANY(pg_blocking_pids(a.pid))`;
+              if (!waiting) return false;
+              expect(waiting.healthy).toBe(true);
+              recorderWait = waiting;
+              return true;
             }, "actual nondeferred recorder waits for run row");
             await until(async () => {
               const [job] = await observer`SELECT locked_at < clock_timestamp()-interval '90 seconds' AS expired
                 FROM jobs WHERE name='second-review'`;
               return job.expired;
             }, "actual job expires during recorder wait");
-          } finally { release.resolve(); await blocking; }
+            console.info("REPLAY_RECORDER_WAIT_PROOF", { waiterPid, stageHolder, runHolder: holder,
+              jobNowaitAcquired: true, anchor, recorderWait });
+          } finally {
+            releaseStage.resolve(); release.resolve();
+            await Promise.allSettled([stageBlocking, blocking, attempt]);
+          }
           admission = await attempt;
           return { done: true };
         }))));
@@ -614,12 +666,17 @@ it("rolls back invalidation when a nondeferred replay recorder wait outlives the
     expect(await snapshot(value.row.id)).toEqual(before);
     expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions
       WHERE run_id=${run.runId} AND kind='second_review_superseded'`).toEqual([]);
-  } finally {
-    release.resolve();
-    try { await blocking; if (run && ledger) await ledger.drain(run); }
-    finally {
-      try { await database?.close(); }
-      finally { try { await runBlocker.end({ timeout: 3 }); } finally { await profile.release(); } }
+  } catch (error) { errors.push(error); }
+  finally {
+    releaseStage.resolve(); release.resolve();
+    for (const settled of await Promise.allSettled([stageBlocking, blocking, attempt])) {
+      if (settled.status === "rejected") errors.push(settled.reason);
+    }
+    for (const cleanup of [() => run && ledger ? ledger.drain(run) : undefined, () => database?.close(),
+      () => runBlocker.end({ timeout: 3 }), () => profile.release()]) {
+      try { await cleanup(); } catch (error) { errors.push(error); }
     }
   }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length) throw new AggregateError(errors, "recorder_wait_fixture_cleanup_failed", { cause: errors[0] });
 });
