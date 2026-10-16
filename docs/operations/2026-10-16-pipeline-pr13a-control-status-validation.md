@@ -33,3 +33,9 @@ npx eslint lib/operations/job-batch-readiness.ts lib/operations/pipeline-control
 새 전용DB를 별도 배정한 뒤에만 `TEST_DATABASE_URL="$OWN_TEST_DATABASE_URL" npx vitest run --config vitest.integration.config.ts tests/integration/pipeline-control-status.test.ts`를 사용한다. retired55538은 예시 실행 대상이 아니다.
 
 선행PR453/460/461/462, 실제 관리자 접속·운영 규모 조회 비용/실principal/canary, 고유 최종 완료·처리율은 별도 검증이다. 전체 unit/전체DB/build는 모든 PR 개발 뒤 수행한다. 운영 배포·Oracle 가동이나2배 달성을 주장하지 않는다.
+
+## CI typography 보완 — root 직접 인수
+
+PR464 head9b7a3fc의 CI38852594264 quality는 신규 패널의 `text-[12px]` 15곳 때문에 기존 min-font-size/UI contract 두 검사가 실패했다. 원 로그 `/tmp/nomorevibe-pr464-root-quality-failed-20261016.log`를 보존했다. 표시용 class만 기존 최소13px로 바꿨으며 전후 component 바이트가 이15곳 치환만 다르고 나머지6개 source/test SHA는 원 최종manifest와 exact다. 테스트·기능 기대·인증·SQL·runtime·DB는 변경하지 않았다.
+
+실제 `npx vitest run tests/min-font-size.test.ts tests/ui-contract.test.ts tests/pipeline-control-status-ui.test.tsx`는 **3파일/9PASS,217ms,exit0**였다. 로그 `/tmp/nomorevibe-pr464-root-typography-green-20261016.log`. CI의 실제 원2FAIL→이 범위 GREEN이며 전체 unit/build/DB/실제 브라우저를 재실행한 결과로 확대하지 않는다. 표시 class만 변경했으므로 별도 테스트 추가나 전체 타입 검사는 하지 않았다.
