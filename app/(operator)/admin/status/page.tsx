@@ -14,6 +14,8 @@ import { jobStatusLabel } from "@/lib/jobs/status";
 import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
+import { PipelineControlStatus } from "./PipelineControlStatus";
+import { readPipelineControlStatus } from "@/lib/operations/pipeline-control-status";
 import { CrawlerActivity } from "./CrawlerActivity";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { pipelineFlow } from "@/lib/operations/pipeline";
@@ -97,6 +99,10 @@ function CardPending({ span, label }: { span: string; label: string }) {
  * 아래 조각들은 따로 흘려보낸다(2026-10-08 UX 감사 ADM-35) — 머리 칩과 조치할 일을 먼저 그리고, 느린 집계는 오는 대로 채운다.
  * 각 조각은 실패하면 그 칸만 비운다.
  */
+
+async function PipelineControlSlot() {
+  return <PipelineControlStatus status={await readPipelineControlStatus()} />;
+}
 
 async function KpiSlot({ derived }: { derived: DerivedStatus }) {
   const hourly = await hourlyThroughput().catch(warn("operations.hourly_unavailable"));
@@ -416,6 +422,7 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} /></Suspense>
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
       </div>
+      <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}

@@ -1,0 +1,15 @@
+# Inactive template. Capability evidence expires 15 minutes after observedAt; a 5-minute cadence leaves two retries
+# inside one window. Enabling it is an explicit operator decision (README "Capability refresh policy").
+[Unit]
+Description=NoMoreVibe Oracle capability refresh timer %i
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+AccuracySec=30s
+RandomizedDelaySec=30s
+Persistent=false
+Unit=nomorevibe-core-refresh@%i.service
+
+[Install]
+WantedBy=timers.target

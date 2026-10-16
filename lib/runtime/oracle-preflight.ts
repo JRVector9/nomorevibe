@@ -8,6 +8,7 @@ import { assertJobBatchAdmission, JobBatchBlockedError, lockJobBatch } from '@/l
 import { assertRoleLease, roleLeaseFromEnv, RoleLeaseLostError } from '@/lib/jobs/role-leader';
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from '@/lib/runtime/oracle-db-profile';
+import { classifyOracleModelEvidence } from '@/lib/runtime/oracle-model-evidence';
 
 const target = z.object({ role: z.enum(['translation', 'site-evidence', 'official-news', 'product-health', 'scheduler']) }).strict();
 type Check = { status: 'verified' | 'unknown' | 'rejected'; reason: string; hash?: string };
@@ -20,7 +21,34 @@ export type OracleRuntimePreflightReport = {
 };
 const sessionSchema = z.object({ at: z.string().datetime({ offset: true }).or(z.string().min(1)), principal: z.string().min(1),
   sessionPrincipal: z.string().min(1), unsafe: z.boolean(), readOnly: z.boolean(), replica: z.boolean(),
-  statementMs: z.coerce.number().finite(), lockMs: z.coerce.number().finite(), idleMs: z.coerce.number().finite(), privileges: z.unknown() }).strict();
+  statementMs: z.coerce.number().finite(), lockMs: z.coerce.number().finite(), idleMs: z.coerce.number().finite(), privileges: z.unknown(),
+  roleSettings: z.unknown().optional() }).strict();
+type Timeouts = { statementMs: number; lockMs: number; idleMs: number };
+const bounded = (value: Timeouts) => value.statementMs > 0 && value.statementMs <= 60000 && value.lockMs > 0 && value.lockMs <= 5000
+  && value.lockMs <= value.statementMs && value.idleMs > 0 && value.idleMs <= 60000;
+const TIMEOUT_KEYS: Record<string, keyof Timeouts> = { statement_timeout: 'statementMs', lock_timeout: 'lockMs', idle_in_transaction_session_timeout: 'idleMs' };
+const UNIT_MS: Record<string, number> = { us: 0.001, ms: 1, s: 1000, min: 60_000, h: 3_600_000, d: 86_400_000 };
+/**
+ * Role-specific server defaults from pg_db_role_setting rows of current_user ({database, config}). Every new PgBouncer
+ * server connection of this role starts with them; ALTER ROLE ... IN DATABASE wins over ALTER ROLE. A missing key or an
+ * unparseable value returns null (unknown), never a guess. Database-wide or config-file values are not role evidence.
+ */
+export function oracleRoleTimeouts(value: unknown): Timeouts | null {
+  if (!Array.isArray(value)) return null;
+  const rows = value as { database?: unknown; config?: unknown }[], found: Partial<Timeouts> = {};
+  if (rows.some(row => !row || typeof row.database !== 'boolean' || !Array.isArray(row.config))) return null;
+  for (const row of [...rows].sort((a, b) => Number(b.database) - Number(a.database))) {
+    for (const item of row.config as unknown[]) {
+      if (typeof item !== 'string') return null;
+      const field = TIMEOUT_KEYS[item.slice(0, item.indexOf('='))];
+      if (!field || found[field] !== undefined) continue;
+      const match = /^(\d{1,12})(us|ms|s|min|h|d)?$/.exec(item.slice(item.indexOf('=') + 1));
+      if (!match) return null;
+      found[field] = Number(match[1]) * UNIT_MS[match[2] ?? 'ms'];
+    }
+  }
+  return found.statementMs !== undefined && found.lockMs !== undefined && found.idleMs !== undefined ? found as Timeouts : null;
+}
 const candidateSchema = z.object({ role: z.string(), instanceId: z.string(), host: z.string(), bootId: z.string().min(1),
   release: z.string(), policyHash: z.string(), capability: z.unknown(), resultEvidence: z.unknown() }).strict();
 const object = (value: unknown): Record<string, unknown> | null =>
@@ -82,7 +110,10 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       extract(epoch FROM current_setting('statement_timeout')::interval)*1000 AS "statementMs",
       extract(epoch FROM current_setting('lock_timeout')::interval)*1000 AS "lockMs",
       extract(epoch FROM current_setting('idle_in_transaction_session_timeout')::interval)*1000 AS "idleMs",
-      ${ORACLE_PRIVILEGE_CATALOG_SQL} AS privileges
+      ${ORACLE_PRIVILEGE_CATALOG_SQL} AS privileges,
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('database',s.setdatabase<>0,'config',to_jsonb(s.setconfig)) ORDER BY s.setdatabase),'[]'::jsonb)
+        FROM pg_db_role_setting s WHERE s.setrole=r.oid
+        AND s.setdatabase IN (0,(SELECT d.oid FROM pg_database d WHERE d.datname=current_database()))) AS "roleSettings"
       FROM pg_roles r WHERE r.rolname=current_user`);
     const session = sessionSchema.parse(rawSession), at = Date.parse(session.at);
     if (!Number.isFinite(at)) throw new Error('oracle_preflight_database_clock_invalid');
@@ -95,10 +126,14 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       report.checks.database = { status: 'rejected', reason: 'database_authority_rejected' };
       report.workload.reason = 'database_rejected'; return report;
     }
-    if (env.DB_POOLER_MODE === 'pgbouncer') report.checks.timeouts = unknown('pooler_server_settings_unverified');
-    else if (session.statementMs > 0 && session.statementMs <= 60000 && session.lockMs > 0 && session.lockMs <= 5000
-      && session.lockMs <= session.statementMs && session.idleMs > 0 && session.idleMs <= 60000)
-      report.checks.timeouts = { status: 'verified', reason: 'effective_session_timeouts_bounded' };
+    // PgBouncer reuses server connections, so this transaction's values alone are not evidence: the role's catalog
+    // defaults (what every server connection starts with) and the effective values here must both be bounded.
+    const pooled = env.DB_POOLER_MODE === 'pgbouncer', server = pooled ? oracleRoleTimeouts(session.roleSettings) : null;
+    if (pooled && !server) report.checks.timeouts = unknown('pooler_server_settings_unverified');
+    else if (server && !bounded(server)) { report.checks.timeouts = { status: 'rejected', reason: 'role_server_timeouts_unbounded' };
+      report.workload.reason = 'timeouts_rejected'; return report; }
+    else if (bounded(session))
+      report.checks.timeouts = { status: 'verified', reason: server ? 'role_server_timeouts_bounded' : 'effective_session_timeouts_bounded' };
     else { report.checks.timeouts = { status: 'rejected', reason: 'effective_session_timeouts_unbounded' };
       report.workload.reason = 'timeouts_rejected'; return report; }
     const [rawCandidate] = await tx.execute(sql`SELECT role,instance_id AS "instanceId",host,boot_id AS "bootId",
@@ -132,6 +167,21 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       report.workload = { ready: true, reason: 'ready', job: String(result.job),
         evidenceHash: hash({ policyHash: control.policyHash, capability: candidate.data.capability, result, readback: candidate.data.resultEvidence }) };
       break;
+    }
+    const tick = selected.selectedResult;
+    if (report.workload.ready && role === 'translation' && tick) {
+      // Independent re-read of the attested tick's capacity rows against this release's serving contract resolvers.
+      const rows = await tx.execute(sql`SELECT request_id::text AS "requestId",state,route_id AS "routeId",provider,model,
+        dispatch_binding AS "dispatchBinding",dispatch_binding_hash AS "dispatchBindingHash",terminal_evidence AS "terminalEvidence",
+        terminal_evidence_hash AS "terminalEvidenceHash",to_char(settled_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "settledAt"
+        FROM model_capacity_requests WHERE route_id=${tick.job} AND owner_instance_id=${instance} AND owner_boot_id::text=${tick.bootId}
+        AND dispatch_binding->'job'->>'name'=${tick.job} AND dispatch_binding->'job'->>'requestedVersion'=${String(tick.requestedVersion)}
+        ORDER BY request_id`);
+      const model = classifyOracleModelEvidence({ job: tick.job, instanceId: instance, release: report.releaseSha!, bootId: tick.bootId,
+        batchEpoch: tick.batchEpoch, requestedVersion: tick.requestedVersion, recordedAt: tick.recordedAt }, [...rows]);
+      report.checks.model = model.model !== 'verified' ? unknown(model.reason)
+        : object(candidate.data.capability)?.modelBoundEvidenceHash !== model.modelBoundEvidenceHash ? unknown('model_bound_evidence_mismatch')
+          : { status: 'verified', reason: 'model_bound_readback_matches', hash: model.modelBoundEvidenceHash };
     }
     if (report.workload.ready && lease) {
       try {

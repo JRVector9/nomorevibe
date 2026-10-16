@@ -69,6 +69,26 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--import", "tsx", "scripts/watch-failover-readiness.ts"]
 
+FROM node:24-alpine AS emergency-web
+# 비상 최소 웹/관리자(PR16) — runner 와 같은 builder 산출물(같은 deploymentId·서버 액션 키)만 담는다.
+# 수집기·모델 CLI·잡 코드는 없고, 일정 관리(scheduler)는 Oracle native release 의 launcher 관문 아래에서 따로 돈다.
+# HOSTNAME 을 고정해야 Docker 가 넣는 컨테이너 이름 대신 모든 주소에서 듣고 아래 loopback health 가 닿는다.
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001 -G nodejs && apk add --no-cache tini
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]
+
 # Keep the default final target as the web image for existing docker build callers.
 FROM node:24-alpine AS runner
 WORKDIR /app

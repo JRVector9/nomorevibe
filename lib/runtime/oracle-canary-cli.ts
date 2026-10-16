@@ -2,15 +2,17 @@
  * Operator entry for the Oracle canary. Run on osaka-smoke with the role's worker env file (DATABASE_URL is the role's
  * least-privilege principal) plus ORACLE_ATTEST_DATABASE_URL for the separate attest principal, e.g.
  *   node --import tsx lib/runtime/oracle-canary-cli.ts canary --role=official-news --job=news-refresh
- * Commands: canary (attest latest -> one elected real tick -> attest it), attest (latest ACK only), refresh (capability only),
- * seed (first-ever ACK: one real tick under the drained legacy parent role while job_batch_control is legacy).
+ * Commands: canary (attest latest -> one elected real tick -> attest it), attest (latest ACK only), refresh (capability only;
+ * the attest or the separate capability-only refresh principal), seed (first-ever ACK: one real tick under the drained legacy
+ * parent role while job_batch_control is legacy), bootstrap (first-ever ACK of a role without a legacy parent, i.e.
+ * site-evidence: versioned only, one attest-granted single-boot tick, grant revoked afterwards; then attest + canary).
  * The OCI identity record must match IMDS first; there is no flag that skips it.
  */
 import { spawnSync } from 'node:child_process';
 import { basename } from 'node:path';
 import postgres from 'postgres';
 import { randomUUID } from 'node:crypto';
-import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleCanary, runOracleLegacySeedTick } from './oracle-canary';
+import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick } from './oracle-canary';
 
 const APPROVED_IDENTITY = '/etc/nomorevibe-core/oracle-identity.json';
 type Dependencies = { identity: () => boolean; connect: (url: string) => postgres.Sql; write: (line: string) => void };
@@ -28,7 +30,7 @@ export async function oracleCanaryMain(args: readonly string[], env: Readonly<Re
   const value = (name: string) => options.find(option => option.startsWith(`--${name}=`))?.slice(name.length + 3);
   const role = value('role') ?? '', job = value('job') ?? '';
   const expected = command === 'refresh' ? 1 : 2;
-  if (!['canary', 'attest', 'refresh', 'seed'].includes(command ?? '') || options.length !== expected || !role || (command !== 'refresh' && !job)
+  if (!['canary', 'attest', 'refresh', 'seed', 'bootstrap'].includes(command ?? '') || options.length !== expected || !role || (command !== 'refresh' && !job)
     || !env.ORACLE_ATTEST_DATABASE_URL || env.ORACLE_ATTEST_DATABASE_URL === env.DATABASE_URL) {
     dependencies.write(JSON.stringify({ code: 'oracle_canary_arguments_invalid' })); return 78;
   }
@@ -41,6 +43,10 @@ export async function oracleCanaryMain(args: readonly string[], env: Readonly<Re
     if (command === 'seed') {
       const run = await runOracleLegacySeedTick(identity, job, randomUUID());
       dependencies.write(JSON.stringify({ seed: run })); return run.status === 'completed' ? 0 : 2;
+    }
+    if (command === 'bootstrap') {
+      const result = await runOracleBootstrap({ identity, job, attest, permits });
+      dependencies.write(JSON.stringify({ bootstrap: result })); return result.acknowledged ? 0 : 2;
     }
     if (command === 'refresh') { dependencies.write(JSON.stringify({ refresh: await refreshOracleCapability({ identity, attest, permits }) })); return 0; }
     if (command === 'attest') {

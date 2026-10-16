@@ -16,6 +16,7 @@ import { hasActiveRoleJob } from '@/lib/jobs/control';
 import { laneForJob } from '@/lib/operations/worker-progress';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 import { startHostBudget } from '@/lib/operations/host-budget-runtime';
+import { processGroupRecorder } from '@/lib/operations/dr/repository';
 
 type Dependencies = {
   acquire: typeof tryAcquireRole;
@@ -130,6 +131,8 @@ async function main() {
   assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
   // host 장부 자리가 없으면 선출에 나서지 않고 standby 로 남는다(자식·일감을 띄우지 않음)
   const host = startHostBudget(process.env);
+  // D11: 이 boot(=모델 장부 owner)의 child 그룹마다 spawn 전 의도와 ESRCH 종료를 남긴다. 기록 실패 시 spawn 하지 않는다.
+  const processGroup = processGroupRecorder({ instanceId: candidate.instanceId, bootId: candidate.bootId });
   const controller = new AbortController();
   let phase: 'standby' | 'active' | 'stopping' = 'standby';
   let epoch: number | null = null;
@@ -181,7 +184,7 @@ async function main() {
           process.env.ROLE_LEASE_BATCH_EPOCH = String(lease.batchEpoch);
           process.env.ROLE_LEASE_HOST = lease.host;
         }
-        return superviseWorker(lease.role, { signal, closeDbOnExit: false });
+        return superviseWorker(lease.role, { signal, closeDbOnExit: false, processGroup });
       },
     });
   } finally {

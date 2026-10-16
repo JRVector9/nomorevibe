@@ -675,6 +675,13 @@
       "breakpoints": true
     },
     {
+      "idx": 96,
+      "version": "7",
+      "when": 1794086400008,
+      "tag": "0096_model_capacity_dispatch_release",
+      "breakpoints": true
+    },
+    {
       "idx": 97,
       "version": "7",
       "when": 1794086400009,
