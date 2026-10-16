@@ -26,14 +26,16 @@ function track<T>(promise: Promise<T>) { active.add(promise); return promise; }
 async function drain() { const work = [...active]; await Promise.allSettled(work); work.forEach(p => active.delete(p)); }
 function it(name: string, body: () => Promise<void>) { actualIt(name, () => track(body())); }
 const snapshots = new Map<string, Record<string, unknown> | undefined>();
+const sourceJobs = ["product-evidence-refresh", "product-site-evidence-refresh"];
 let cleanup: Promise<void> | undefined;
 async function save(table: string, key: string, value: string | number) {
   const [row] = await db.execute(sql`select to_jsonb(t) as row from ${sql.identifier(table)} t where ${sql.identifier(key)}=${value}`);
-  snapshots.set(table, row?.row as Record<string, unknown> | undefined);
+  snapshots.set(JSON.stringify([table, key, value]), row?.row as Record<string, unknown> | undefined);
 }
 async function restore(table: string, key: string, value: string | number) {
-  if (!snapshots.has(table)) return;
-  const original = snapshots.get(table), name = sql.identifier(table), id = sql.identifier(key);
+  const snapshotKey = JSON.stringify([table, key, value]);
+  if (!snapshots.has(snapshotKey)) return;
+  const original = snapshots.get(snapshotKey), name = sql.identifier(table), id = sql.identifier(key);
   if (!original) { await db.execute(sql`delete from ${name} where ${id}=${value}`); return; }
   const fields = sql.join(Object.keys(original).filter(field => field !== key).map(field => sql`${sql.identifier(field)}=x.${sql.identifier(field)}`), sql`, `);
   await db.execute(sql`update ${name} set ${fields} from jsonb_populate_record(null::${name}, ${JSON.stringify(original)}::jsonb) x where ${name}.${id}=${value}`);
@@ -88,8 +90,10 @@ beforeAll(() => track((async () => {
   for(const row of suspendedRequests) await db.update(productRefreshRequests).set({nextAttemptAt:new Date("9999-01-01T00:00:00Z")}).where(eq(productRefreshRequests.productId,row.product_id as number));
   await save("evidence_source_control", "id", 1);
   await save("evidence_settings", "id", 1);
-  await save("jobs", "name", "product-evidence-refresh");
-  await save("operations_observations", "key", "job:product-evidence-refresh");
+  for (const name of sourceJobs) {
+    await save("jobs", "name", name);
+    await save("operations_observations", "key", `job:${name}`);
+  }
   await db.insert(evidenceSettings).values({ id: 1, values: {} }).onConflictDoUpdate({ target: evidenceSettings.id, set: { values: {} } });
   await db.update(jobs).set({ lockedAt: null, leaseToken: null, notBefore: null }).where(eq(jobs.name, "product-evidence-refresh"));
 })()));
@@ -105,8 +109,8 @@ afterAll(() => cleanup ??= (async () => {
       await db.delete(products).where(inArray(products.slug, owned));
     } },
     () => restore("evidence_settings", "id", 1),
-    () => restore("jobs", "name", "product-evidence-refresh"),
-    () => restore("operations_observations", "key", "job:product-evidence-refresh"),
+    ...sourceJobs.map(name => () => restore("jobs", "name", name)),
+    ...sourceJobs.map(name => () => restore("operations_observations", "key", `job:${name}`)),
     ()=>restoreSuspended("products","id",["status"],suspendedProducts),
     ()=>restoreSuspended("product_refresh_requests","product_id",["next_attempt_at"],suspendedRequests),
     ()=>restoreFixturePurges(),

@@ -168,7 +168,7 @@ export async function runJob<C>(
       return { status: "deferred", reason: outcome.deferred, durationMs };
     }
     const budgetMs = options.budgetMs ?? 25_000;
-    const sourceReady = name === "product-evidence-refresh" && outcome.done === false
+    const sourceReady = ["product-evidence-refresh", "product-site-evidence-refresh"].includes(name) && outcome.done === false
       && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;
     const reviewReady = outcome.continuation === "ready"
       && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted;
