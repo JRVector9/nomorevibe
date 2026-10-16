@@ -4,6 +4,8 @@ import { operationsAudit, productEvidenceAudit, productHealth, products } from "
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { lockProductGeneration } from "./generation";
 import type { PingTarget } from "./health";
+import { uptimeControl } from "@/lib/db/product-uptime-schema";
+import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
@@ -17,6 +19,8 @@ function eligibleObservation() {
     inArray(products.status, ["verified", "seeded"]),
     eq(products.accessMode, "website"),
     gte(productHealth.failures, UPTIME_AUTO_BAN_THRESHOLD),
+    uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+      checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status }),
     isNotNull(productHealth.downSince),
     sql`${productHealth.status} not between 200 and 399`,
     sql`${productHealth.checkedAt} between now() - ${RECHECK_AFTER_MINUTES} * interval '1 minute' and now()`,
@@ -46,9 +50,10 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
   if (controls.signal?.aborted) return false;
   return db.transaction(async tx => {
     await lockPipelineInputStages(tx);
+    await tx.select().from(uptimeControl).where(eq(uptimeControl.id, 1)).for("share");
     if (!(await lockProductGeneration(tx, target.id, target.slug))) return false;
     const [current] = await tx.select({
-      previousStatus: products.status, failures: productHealth.failures, lastStatus: productHealth.status,
+      productUpdatedAt: sql<string>`${products.updatedAt}::text`, previousStatus: products.status, failures: productHealth.failures, lastStatus: productHealth.status,
       checkedAt: productHealth.checkedAt, downSince: productHealth.downSince,
     }).from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
       .where(and(eq(products.id, target.id), eq(products.slug, target.slug), eq(products.url, target.url), eligibleObservation()))
@@ -68,6 +73,13 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
         note: `사이트 연속 접속 실패 ${current.failures}회 · 마지막 HTTP ${current.lastStatus} · 확인 ${metadata.checkedAt} · 자동 내림` },
     });
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
+    if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
+    if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
+    const [final] = await tx.select({ allowed: uptimeNegativeAllowed({ id: sql`${target.id}`, url: sql`${target.url}`,
+      updatedAt: sql`${current.productUpdatedAt}::timestamp`, checkedAt: sql`product_health.checked_at`,
+      failures: sql`product_health.failures`, status: sql`product_health.status` }) })
+      .from(productHealth).where(eq(productHealth.slug, target.slug));
+    if (!final?.allowed) throw new Error("uptime_observation_hold");
     if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     return true;
