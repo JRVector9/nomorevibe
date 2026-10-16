@@ -30,7 +30,7 @@ export type JobContext<C> = {
    */
   signal?: AbortSignal;
 };
-export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity";
+export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity" | "source_buffer";
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
   | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
 export type RunResult =
@@ -159,7 +159,7 @@ export async function runJob<C>(
         return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
           .where(owned).returning({ name: jobs.name });
       };
-      const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity"
+      const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"
         ? await db.transaction(async tx => {
           await assertJobLeaseAtWallTime(tx, lease, "update");
           return release(tx);
