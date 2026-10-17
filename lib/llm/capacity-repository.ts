@@ -40,6 +40,12 @@ export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
   return callerControlSnapshot(await control(tx, "share"));
 }
 
+/** Standalone primary read; the transaction has settled before transport starts.
+ * This never expires requests, grants a reservation or appends an event. */
+export async function readModelCapacityCallerControl() {
+  return transaction(tx => lockModelCapacityCallerControl(tx));
+}
+
 function callerControlSnapshot(row: Control) {
   if (!["disabled", "open", "draining"].includes(row.mode)
     || !Number.isSafeInteger(row.epoch) || row.epoch < 1

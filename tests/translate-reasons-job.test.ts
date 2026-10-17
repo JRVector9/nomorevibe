@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { packBatch, translateReasons } from "@/lib/crawl/jobs/translate-reasons";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 const mocks = vi.hoisted(() => ({ untried: vi.fn(), retry: vi.fn(), record: vi.fn(), translate: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({
@@ -10,6 +11,15 @@ vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "[MLX] gpt-oss-120b",
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "reason-translate", token: "t", requestedVersion: 1 } });
 const item = (hash: string, attempts = 0) => ({ hash, body: `English reason ${hash}`, attempts });
 const original = process.env.ABCLLM_API_KEY;
+
+it("capacity admission preserves the pending reason and consumes no attempt or write", async () => {
+  const deferred = new ModelCapacityDeferredError("provider_contract_unavailable");
+  mocks.untried.mockResolvedValue([item("capacity")]);
+  mocks.translate.mockRejectedValue(deferred);
+  await expect(translateReasons(context())).rejects.toBe(deferred);
+  expect(mocks.record).not.toHaveBeenCalled();
+  expect(mocks.translate).toHaveBeenCalledTimes(1);
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
