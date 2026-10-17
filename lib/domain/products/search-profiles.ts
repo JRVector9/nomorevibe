@@ -39,6 +39,11 @@ type ProductFields = Pick<Product, keyof typeof FIELDS>;
 const REVIEWER_NOTE = sql<string | null>`(select a.ai_reason from product_audit_items a
   where a.product_id = products.id and a.ai_reason is not null order by a.id desc limit 1)`;
 
+/** 갱신 대기의 기준 시각 — 메모가 지은 뒤에 바뀌었으면 그 판정 시각, 아니면 마지막으로 손댄 때. 글이 바뀐 때는 기록이 없다 */
+const REFRESH_SINCE = sql`case when ${productSearchProfiles.needsRefresh} then greatest(${productSearchProfiles.updatedAt},
+  (select a.reviewed_at from product_audit_items a where a.product_id = products.id and a.ai_reason is not null order by a.id desc limit 1))
+  else ${productSearchProfiles.updatedAt} end`;
+
 export type ProfileTask = { product: ProductFields; profile: ProductSearchProfile | null; reviewerNote: string | null };
 
 /**
@@ -53,6 +58,10 @@ export type ProfileTask = { product: ProductFields; profile: ProductSearchProfil
  * 이미 지은 것은 마지막으로 손댄 지(updated_at) 오래된 것부터다. 트리거는 updated_at 을 건드리지 않아 그 뒤에 들어온
  * 갱신 요청은 모두 그보다 늦다 — 한 번 처리하면 맨 뒤로 가니 굶는 것이 없다. 전에는 id 큰 것부터라 계속 다시 바뀌는
  * 최근 제품들이 앞을 차지해, 9/24부터 기다린 갱신이 10/08에도 남아 있었다.
+ *
+ * 단, 감사 메모가 바뀌어 기다리는 것은 그 판정 시각(reviewed_at)부터 센다(REFRESH_SINCE). 감사가 공개분 전체를 다시 돌면
+ * (2026-10-14 감사 #4, 시간당 240건) 오래전에 지은 제품이 방금 바뀐 메모로 맨 앞에 끼어들어, 먼저 기다리던 갱신이
+ * 감사가 끝날 때까지 밀렸다(2026-10-17 프로드: 27시간 기다린 7786 앞에 방금 감사한 12238, 대기 2,300건).
  */
 const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is null
         or (${productSearchProfiles.errorCode} is not null
@@ -71,7 +80,7 @@ export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
-      ${productSearchProfiles.updatedAt}, ${products.id} desc`)
+      ${REFRESH_SINCE}, ${products.id} desc`)
     .limit(limit);
   return rows.map((row) => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }));
 }
