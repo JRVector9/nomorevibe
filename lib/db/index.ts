@@ -39,11 +39,11 @@ function getReadDb(): Db | null {
   const url = process.env.READ_DATABASE_URL;
   if (!url) return (globalForDb.readDb = null);
   const config = {
-    ...dbPoolConfig({ ...process.env, DB_POOL_MAX: process.env.READ_DB_POOL_MAX ?? "4" }),
+    ...dbPoolConfig(process.env, "read"),
     poolerMode: "direct" as const,
     applicationName: "nomorevibe:web-replica",
   };
-  return (globalForDb.readDb = drizzle(createDbClient(url, config), { schema }));
+  return (globalForDb.readDb = drizzle(createDbClient(url, config, "read"), { schema }));
 }
 
 const replicaScope = new AsyncLocalStorage<Db>();

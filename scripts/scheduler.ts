@@ -1,3 +1,4 @@
+import { assertHostDbEntry } from '@/lib/db/host-budget';
 /** Records due requests in PostgreSQL. No web, job handler, or external crawler calls. */
 import { basename } from 'node:path';
 import { interruptibleSleep, parseLoopArgs, runtimeLog, withRuntimeProcess, type RuntimeReport } from './worker';
@@ -36,6 +37,7 @@ export async function runScheduler(options: SchedulerOptions, dependencies: Sche
 
 async function main() {
   const options = parseLoopArgs(process.argv.slice(2), 10);
+  assertHostDbEntry(process.env, { kind: 'scheduler-worker', role: 'scheduler' });
   await withRuntimeProcess('scheduler', async (signal, report) => {
     const { requestDueJobs, markSchedulerSeen } = await import('@/lib/jobs/control');
     const result = await runScheduler({ ...options, signal }, {
