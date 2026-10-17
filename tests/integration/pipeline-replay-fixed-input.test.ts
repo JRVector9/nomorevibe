@@ -14,7 +14,7 @@ import { crawlCandidates, crawlDocuments, crawlSettings, jobs } from "@/lib/db/s
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 
 /** 가짜 게이트웨이(loopback)와 테스트용 serving 계약. 운영 resolver는 그대로 null이며 이 파일 안에서만 대체한다. */
-const fake = vi.hoisted(() => ({ origin: "", contracts: false, requests: [] as { model: string; repo: string }[] }));
+const fake = vi.hoisted(() => ({ origin: "", contracts: false, requests: [] as { model: string; repo: string }[], delayMs: 20 }));
 const contract = (routeId: string, model: string) => ({ version: 1 as const, protocol: "abcllm-raw-total-bound-v1" as const, routeId, provider: "abcllm" as const,
   model, responseModel: model, deploymentRevision: "replay-fixture", endpoint: `${fake.origin}/v1/chat/completions`, totalTokenBound: 40_000 });
 vi.mock("@/lib/crawl/agent-review-serving-contract", async load => ({ ...await load<typeof import("@/lib/crawl/agent-review-serving-contract")>(),
@@ -69,7 +69,7 @@ beforeAll(async () => {
       fake.requests.push({ model: request.model, repo });
       const decision = request.model === SECOND || repo.includes("/good-") ? "approve" : "reject";
       setTimeout(() => { res.setHeader("content-type", "application/json");
-        res.end(reply(request.model, { decision, reason: "Replay fixture decision", evidenceIds: ["product"], confidence: 0.95 }, fake.requests.length)); }, 20);
+        res.end(reply(request.model, { decision, reason: "Replay fixture decision", evidenceIds: ["product"], confidence: 0.95 }, fake.requests.length)); }, fake.delayMs);
     });
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
@@ -98,7 +98,7 @@ async function restoreControls() {
   await db.execute(sql`update model_capacity_control set mode = ${original.capacity.mode}, policy = ${original.capacity.policy ? JSON.stringify(original.capacity.policy) : null}::jsonb,
     policy_hash = ${original.capacity.policy_hash}, updated_at = ${original.capacity.updated_at} where id = 1`);
 }
-beforeEach(async () => { await wipe(); await restoreControls(); fake.contracts = false; fake.requests.length = 0; });
+beforeEach(async () => { await wipe(); await restoreControls(); fake.contracts = false; fake.requests.length = 0; fake.delayMs = 20; });
 afterAll(async () => {
   await wipe(); await restoreControls(); await db.delete(crawlSettings);
   for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -152,9 +152,9 @@ const manifest = (sha: string, mode: "legacy" | "items", patch: Record<string, u
   limits: { maxCalls: 60, maxTokens: 60 * 40_000, perCallTokenUpperBound: 40_000, maxWallMs: 120_000 },
   ...(mode === "items" ? { items: { ai1Consumers: 1, ai2Consumers: 1, capacityPolicy: policy } } : {}), ...patch });
 const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.origin, ABCLLM_API_KEY: "replay-fixture-key" });
-const run = (artifact: Awaited<ReturnType<typeof exported>>, value: Record<string, unknown>) => modules.runner.runFixedInputReplay({
+const run = (artifact: Awaited<ReturnType<typeof exported>>, value: Record<string, unknown>, timing = TIMING) => modules.runner.runFixedInputReplay({
   manifest: value, artifact: artifact.artifact, artifactSha256: artifact.sha, manifestSha256: modules.fixed.sha256(JSON.stringify(value)),
-  revision: "abcdef1", env: env(), timing: TIMING });
+  revision: "abcdef1", env: env(), timing });
 
 it("records the 0097 marker before the window and proves the legacy budget from the meter; items stay unverified (PR01b-9)", async () => {
   const source = await exported();
@@ -254,3 +254,60 @@ it("refuses item consumers before loading or any call while the serving resolver
   expect(fake.requests).toEqual([]);
   await db.delete(crawlDocuments).where(eq(crawlDocuments.repo, "other/existing"));
 }, 120_000);
+
+// 구간 끝 drain: 정지 신호는 새 claim·새 호출만 막고, 구간 안에서 이미 보낸 호출은 drain 상한 안에서 upstream이 끝나 usage가 남는다.
+// 가짜 게이트웨이가 모든 답을 구간(12초)보다 늦게(20초) 주므로 첫 호출들이 구간 끝에 반드시 진행 중이다.
+// 그 수는 legacy가 심사 동시 수(reviewConcurrency 2), items가 AI1 consumer 하나의 호출 1건이다.
+const HELD = { durationMs: 12_000, budget: { maxConcurrentCalls: 8 } };
+it("drains legacy calls in flight at the window end into the budget, never into finals, and cuts what outlives the drain limit", async () => {
+  const source = await exported();
+  fake.delayMs = 20_000;
+  const legacy = await run(source, manifest(source.sha, "legacy", HELD)), calls = legacy.meter.calls;
+  expect(fake.requests.length).toBe(2);
+  expect(calls).toBe(2);
+  expect(legacy).toMatchObject({ stop: { reason: "window_end", drainExceeded: false }, budget: { declaredConcurrentCalls: 8, callsAtStop: calls },
+    windowEndDrain: { limitMs: TIMING.drainMs, inFlightAtStop: calls, cutAtLimit: 0, meterStop: null, accounting: "drain_calls_in_budget_not_in_finals" },
+    meter: { refused: 0, indeterminate: 0, upstreamFailed: 0, upstreamReportedCalls: calls, upstreamReportedTokens: 1_240 * calls },
+    writes: { products: 0, publishRuns: 0 }, failures: [] });
+  const report = modules.fixed.reportFixedInputRun(legacy);
+  expect(report.budget).toEqual({ status: "verified", source: "replay_meter", calls, chargedTokens: 1_240 * calls, reportedCalls: calls,
+    boundCalls: 0, concurrency: { limit: 8, peak: legacy.meter.maxInFlight } });
+  // drain 중 끝난 답은 워커가 이미 놓았다. 구간 안 최종·처리량은 0이다.
+  expect(report.finals).toMatchObject({ newCandidates: 0 });
+  expect(report.evidenceIssues).not.toContain("replay_calls_refused");
+
+  await wipe(); fake.requests.length = 0;
+  const cut = await run(source, manifest(source.sha, "legacy", HELD), { ...TIMING, drainMs: 2_000 }), cutCalls = cut.meter.calls;
+  expect(cutCalls).toBe(2);
+  expect(cut).toMatchObject({ stop: { reason: "window_end" }, windowEndDrain: { limitMs: 2_000, inFlightAtStop: cutCalls, cutAtLimit: cutCalls },
+    meter: { indeterminate: cutCalls, upstreamReportedCalls: 0, chargedTokens: 40_000 * cutCalls } });
+  expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "replay_meter",
+    issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
+}, 300_000);
+
+it("applies the same window-end drain rule to item consumers", async () => {
+  const source = await exported();
+  fake.contracts = true; fake.delayMs = 20_000;
+  const items = await run(source, manifest(source.sha, "items", HELD)), calls = items.meter.calls;
+  expect(fake.requests.length).toBe(1);
+  expect(calls).toBe(1);
+  expect(items).toMatchObject({ stop: { reason: "window_end", drainExceeded: false }, budget: { callsAtStop: calls },
+    windowEndDrain: { limitMs: TIMING.drainMs, inFlightAtStop: calls, cutAtLimit: 0, meterStop: null },
+    meter: { refused: 0, indeterminate: 0, upstreamReportedCalls: calls, upstreamReportedTokens: 1_240 * calls }, writes: { products: 0, publishRuns: 0 } });
+  const report = modules.fixed.reportFixedInputRun(items);
+  expect(report.finals).toMatchObject({ newCandidates: 0 });
+  // consumer가 놓은 호출이라 장부는 실제 usage 대신 C(40,000)로 센다 — items의 drain 호출은 계량기 usage보다 보수적으로 잡힌다.
+  expect([...await db.execute(sql`select r.state, r.terminal_evidence->'actualUsage' as usage, (r.dispatch_binding->>'totalTokenBound')::int as bound
+    from model_capacity_events e join model_capacity_requests r on r.request_id = e.request_id
+    where e.kind = 'dispatch_started' and e.created_at > ${items.window.startedAt}::timestamptz`)]).toEqual([{ state: "indeterminate", usage: null, bound: 40_000 }]);
+  // 짧은 시험 구간이라 장부 budget은 첫 시험과 같은 이유로만 미검증이다(drain 이유는 없다).
+  expect(report.budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
+    issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified"] });
+
+  await wipe(); fake.requests.length = 0;
+  const cut = await run(source, manifest(source.sha, "items", HELD), { ...TIMING, drainMs: 2_000 }), cutCalls = cut.meter.calls;
+  expect(cutCalls).toBe(1);
+  expect(cut).toMatchObject({ windowEndDrain: { limitMs: 2_000, inFlightAtStop: cutCalls, cutAtLimit: cutCalls }, meter: { indeterminate: cutCalls } });
+  expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
+    issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified", "replay_drain_calls_cut"] });
+}, 300_000);

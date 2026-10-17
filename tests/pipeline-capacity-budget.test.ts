@@ -121,6 +121,14 @@ describe("replay meter budget evidence", () => {
     expect(issues(replayLedgerBudget({ status: "unverified", source: "model_capacity_ledger", issues: ["model_capacity_not_open"] },
       { calls: 3, maxInFlight: 2 }, 3))).toEqual(["model_capacity_not_open"]);
   });
+  it("leaves both modes unverified when the window-end drain limit cut a call", () => {
+    expect(meterBudgetEvidence({ ...meter, drainCut: 0 })).toMatchObject({ status: "verified", calls: 10 });
+    expect(meterBudgetEvidence({ ...meter, reportedCalls: 9, drainCut: 1 })).toEqual({ status: "unverified", source: "replay_meter",
+      issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
+    const verified = ledgerBudgetEvidence(ledger());
+    expect(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0)).toEqual(verified);
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 1))).toEqual(["replay_drain_calls_cut"]);
+  });
 });
 
 const verifiedBudget = (calls: number, chargedTokens: number, limit = 4): BudgetEvidence =>
