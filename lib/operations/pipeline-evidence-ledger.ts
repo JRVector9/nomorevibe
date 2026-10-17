@@ -72,10 +72,16 @@ export async function recordLateWriteRefused(subject: Subject, error: unknown): 
   catch { /* 거부 이력은 참고값이다 — 호출자는 원래 오류를 그대로 던진다 */ }
 }
 
+/** 기록 시작 marker를 남긴다. 이미 있으면 그대로 두고 false다(운영자 CLI가 새로 남겼을 때만 작업 로그를 쓴다). */
+export async function insertEvidenceRecorderMarker(executor: Executor, input: { revision: string; operator: string }): Promise<boolean> {
+  const inserted = await executor.execute(sql`insert into pipeline_evidence_events (kind, revision, operator)
+    values ('recorder_started', ${input.revision}, ${input.operator}) on conflict (kind) where kind = 'recorder_started' do nothing returning id`);
+  return inserted.length > 0;
+}
+
 /** 모든 쓰기 프로세스가 이 기록기를 실행한다고 운영자가 확인한 뒤 한 번 남긴다. 이미 있으면 그대로 둔다. */
 export async function startEvidenceRecorder(executor: Executor, input: { revision: string; operator: string }): Promise<{ startedAt: string }> {
-  await executor.execute(sql`insert into pipeline_evidence_events (kind, revision, operator)
-    values ('recorder_started', ${input.revision}, ${input.operator}) on conflict (kind) where kind = 'recorder_started' do nothing`);
+  await insertEvidenceRecorderMarker(executor, input);
   const [row] = await executor.execute<{ started_at: string }>(sql`select to_char(created_at at time zone 'utc',
     'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as started_at from pipeline_evidence_events where kind = 'recorder_started'`);
   return { startedAt: row.started_at };

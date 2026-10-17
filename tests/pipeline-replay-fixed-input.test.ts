@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { assertIsolatedReplayDatabase, attachFixedInputLabels, compareFixedInputRuns, fixedInputSetHash, formatFixedInputCliError,
+import { assertIsolatedReplayDatabase, attachFixedInputLabels, compareFixedInputRuns, fixedInputRunConditions, fixedInputSetHash, formatFixedInputCliError,
   parseFixedInputArtifact, parseFixedInputRunManifest, reportFixedInputRun, sha256, type FixedInputRunResult } from "@/lib/operations/pipeline-replay-fixed-input";
 import { installReplayEgressGuard, startReplayModelMeter } from "@/lib/operations/pipeline-replay-model-meter";
 
@@ -164,14 +164,17 @@ describe("model meter and egress guard", () => {
   });
 });
 
-/** 30분 구간·준비 증인·강제 모드의 최소 결과. 거절 결정은 AI2 관문 없이 AI1 완료가 곧 최종이다. */
+/**
+ * 30분 구간·준비 증인·강제 모드의 최소 결과. 거절 결정은 AI2 관문 없이 AI1 완료가 곧 최종이다.
+ * F1: 세대는 구간 전체에 고르게 퍼지고(기준선 워커 공백 검사), manifest 비교 대상과 replay 출처를 싣는다.
+ */
 function result(options: { runId: string; mode: "legacy" | "items"; finals: number; items?: number; readyMs?: number }): FixedInputRunResult {
-  const start = "2026-10-20T00:00:00.000Z", end = "2026-10-20T00:30:00.000Z";
-  const items = Array.from({ length: options.items ?? 40 }, (_, index) => ({ ordinal: index + 1, inputHash: H(`input-${index + 1}`) }));
+  const start = "2026-10-20T00:00:00.000Z", end = "2026-10-20T00:30:00.000Z", step = options.finals ? Math.floor(1_790_000 / options.finals) : 0;
+  const items = Array.from({ length: options.items ?? 80 }, (_, index) => ({ ordinal: index + 1, inputHash: H(`input-${index + 1}`) }));
   const attempts = Array.from({ length: options.finals }, (_, index) => ({ id: index + 1, candidateId: index + 1, inputHash: H(`input-${index + 1}`),
     state: "succeeded" as const, failure: null, provider: "abcllm", model: "[MLX] gpt-oss-120b", policyHash: H("policy"), promptVersion: "p",
     rulesVersion: "r", reusedFromAttemptId: null, decision: "reject" as const, reReview: false, readyMs: options.readyMs ?? -3_600_000,
-    startedMs: 1_000 + index * 10_000, completedMs: 1_500 + index * 10_000, inputTokens: 18_000, outputTokens: 80 }));
+    startedMs: 1_000 + index * step, completedMs: 1_500 + index * step, inputTokens: 18_000, outputTokens: 80 }));
   return { version: 1, scope: "fixed_input_replay_run", runId: options.runId, mode: options.mode, revision: "abcdef1", artifactSha256: H("artifact"),
     manifestSha256: H(options.runId), inputSetHash: fixedInputSetHash(items), inputs: { loaded: items.length, items, excluded: { notReviewable: 0, inputDrift: 0 } },
     window: { anchorAt: "2026-10-19T23:55:00.000Z", startedAt: start, endedAt: end, durationMs: 1_800_000, collectionStartedAt: start },
@@ -179,10 +182,11 @@ function result(options: { runId: string; mode: "legacy" | "items"; finals: numb
     meter: { calls: options.finals, refused: 0, upstreamFailed: 0, indeterminate: 0, maxInFlight: 2, usageKnownCalls: options.finals,
       reportedInputTokens: 18_000 * options.finals, reportedOutputTokens: 80 * options.finals, chargedTokens: 18_080 * options.finals,
       egressRejected: 0, models: [{ model: "[MLX] gpt-oss-120b", calls: options.finals }], usageProvenance: "reported_unverified" },
-    writes: { products: 0, publishRuns: 0 }, failures: [],
+    writes: { products: 0, publishRuns: 0 }, failures: [], conditions: fixedInputRunConditions(parseFixedInputRunManifest(manifest())),
     live: { version: 1, scope: "live_window", runId: options.runId, revision: "abcdef1", schema: { appliedMigrations: 93, absentTables: [] },
       window: { startedAt: start, endedAt: end, durationMs: 1_800_000, collectedAt: "2026-10-20T00:31:00.000Z", collectedAfterEndMs: 60_000 },
       database: { target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read", replicaCaughtUp: null, writeXidAssigned: false },
+      source: { kind: "replay", database: REPLAY_DB },
       identity: { promptVersion: "p", rulesVersion: "r", inputPolicyHash: H("policy"), comparisonPolicyHash: H("comparison"), fullReviewPolicyHash: H("full"),
         reviewMode: "enforce", secondGateRequired: true, concurrency: 2, settingsUpdatedMs: -300_000,
         models: { first: { provider: "abcllm", model: "[MLX] gpt-oss-120b", canonicalModel: "gpt-oss-120b" },
@@ -194,33 +198,35 @@ function result(options: { runId: string; mode: "legacy" | "items"; finals: numb
       ai2Calls: { chains: 0, calls: 0, failed: 0, unattributedChains: 0 }, readiness: { witnesses: 5, sampleCandidateIds: [] },
       safety: { duplicatePublications: 0, humanDecisionOverrides: "unverified", leaseViolations: "unverified" }, budget: { status: "unverified" }, quality: null } };
 }
+const REPLAY_DB = { systemIdentifier: "7400000000000000009", databaseOid: "16390", databaseName: "nomorevibe_test" };
 describe("fixed-input report and judgment", () => {
   it("measures replay latency from AI1 start and applies the live 2x rule with replay evidence", () => {
-    const baseline = result({ runId: "legacy-a", mode: "legacy", finals: 10 }), candidate = result({ runId: "items-a", mode: "items", finals: 25 });
+    const baseline = result({ runId: "legacy-a", mode: "legacy", finals: 30 }), candidate = result({ runId: "items-a", mode: "items", finals: 75 });
     expect(reportFixedInputRun(baseline).latencyMs.endToEnd.p95).toBe(500);
     const compared = compareFixedInputRuns(baseline, candidate);
     expect(compared).toMatchObject({ performance: "passed", quality: "incomplete", safety: "incomplete", status: "incomplete", ratio: 2.5,
       numericThresholds: { doubled: true, latencyNotWorse: true, technicalFailureWithinOnePoint: true }, modes: { baseline: "legacy", candidate: "items" } });
-    expect(compared.reasons).toEqual(expect.arrayContaining(["quality_unverified", "human_decision_override_unverified", "lease_violation_unverified",
-      "budget_evidence_unverified"]));
-    expect(compared.labelTemplate).toHaveLength(10);
+    // F1: replay에는 사람 결정이 없어 그 칸은 not_applicable이다(이전에는 human_decision_override_unverified로 남았다).
+    expect(compared.reasons).toEqual(expect.arrayContaining(["quality_unverified", "lease_violation_unverified", "budget_evidence_unverified"]));
+    expect(compared.reasons).not.toContain("human_decision_override_unverified");
+    expect(compared.labelTemplate).toHaveLength(30);
     const labels = compared.labelTemplate.map(row => ({ ...row, expected: "reject" as const }));
     const labeled = compareFixedInputRuns(attachFixedInputLabels(baseline, labels), attachFixedInputLabels(candidate, labels));
     expect(labeled).toMatchObject({ performance: "passed", quality: "passed", status: "incomplete" });
     expect(() => attachFixedInputLabels(baseline, [{ candidateId: 99, inputHash: H("input-99"), expected: "reject" }])).toThrow("replay_label_unknown_input");
   });
   it("never compares different input sets, early stops, public writes or a non-legacy baseline", () => {
-    const baseline = result({ runId: "legacy-a", mode: "legacy", finals: 10 });
-    const other = result({ runId: "items-b", mode: "items", finals: 25, items: 39 });
+    const baseline = result({ runId: "legacy-a", mode: "legacy", finals: 30 });
+    const other = result({ runId: "items-b", mode: "items", finals: 75, items: 79 });
     expect(compareFixedInputRuns(baseline, other)).toMatchObject({ performance: "incomplete", status: "incomplete" });
     expect(compareFixedInputRuns(baseline, other).reasons).toContain("replay_input_set_mismatch");
-    const stopped = { ...result({ runId: "items-c", mode: "items", finals: 25 }), stop: { reason: "call_cap", atOffsetMs: 900_000, drainMs: 0, drainExceeded: false } };
+    const stopped = { ...result({ runId: "items-c", mode: "items", finals: 75 }), stop: { reason: "call_cap", atOffsetMs: 900_000, drainMs: 0, drainExceeded: false } };
     expect(compareFixedInputRuns(baseline, stopped).reasons).toContain("replay_stopped_early");
-    const written = { ...result({ runId: "items-d", mode: "items", finals: 25 }), writes: { products: 1, publishRuns: 0 } };
+    const written = { ...result({ runId: "items-d", mode: "items", finals: 75 }), writes: { products: 1, publishRuns: 0 } };
     expect(compareFixedInputRuns(baseline, written).reasons).toContain("replay_public_write_detected");
-    expect(compareFixedInputRuns(result({ runId: "items-e", mode: "items", finals: 10 }), result({ runId: "items-f", mode: "items", finals: 25 })).reasons)
+    expect(compareFixedInputRuns(result({ runId: "items-e", mode: "items", finals: 30 }), result({ runId: "items-f", mode: "items", finals: 75 })).reasons)
       .toContain("replay_baseline_not_legacy");
-    expect(compareFixedInputRuns(baseline, result({ runId: "items-g", mode: "items", finals: 19 }))).toMatchObject({ performance: "failed", status: "failed" });
+    expect(compareFixedInputRuns(baseline, result({ runId: "items-g", mode: "items", finals: 59 }))).toMatchObject({ performance: "failed", status: "failed" });
   });
   it("rejects a result whose input set hash or ordinals do not match", () => {
     const base = result({ runId: "legacy-a", mode: "legacy", finals: 3 });
@@ -273,11 +279,14 @@ describe("fixed-input artifact and CLI boundary", () => {
   });
 });
 
-/** PR01b-9: 0097 장부가 구간을 덮고 안전 지표가 0이며, legacy는 계량기·items는 장부로 budget을 증명한 결과. */
+/**
+ * PR01b-9: 0097 장부가 구간을 덮고 안전 지표가 0이며, legacy는 계량기·items는 장부로 budget을 증명한 결과.
+ * F1: items도 장부 심사 한도(4)와 같은 공통 동시 예산을 manifest에 선언한다.
+ */
 function proven(options: { runId: string; mode: "legacy" | "items"; finals: number }): FixedInputRunResult {
   const value = result(options), { finals } = options;
   value.meter = { ...value.meter, upstreamReportedCalls: finals, upstreamReportedTokens: 18_080 * finals };
-  value.budget = { declaredConcurrentCalls: options.mode === "legacy" ? 4 : null, callsAtStop: finals };
+  value.budget = { declaredConcurrentCalls: 4, callsAtStop: finals };
   value.live = { ...value.live, ledger: { startedAt: "2026-10-19T23:00:00.000Z", humanDecisionRefusals: 0, lateWritesRefused: 0 },
     safety: { duplicatePublications: 0, humanDecisionOverrides: 0, leaseViolations: 0 },
     budget: options.mode === "items" ? { status: "verified", source: "model_capacity_ledger", calls: finals, chargedTokens: 18_080 * finals,
@@ -290,31 +299,31 @@ function labeledPair(baseline: FixedInputRunResult, candidate: FixedInputRunResu
 }
 describe("fixed-input budget evidence (PR01b-9)", () => {
   it("proves a legacy baseline from the meter and an item candidate from the ledger, and can pass end to end", () => {
-    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-a", mode: "legacy", finals: 10 }), proven({ runId: "items-a", mode: "items", finals: 25 }));
-    expect(reportFixedInputRun(baseline).budget).toEqual({ status: "verified", source: "replay_meter", calls: 10, chargedTokens: 180_800,
-      reportedCalls: 10, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
-    expect(reportFixedInputRun(candidate).budget).toMatchObject({ status: "verified", source: "model_capacity_ledger", calls: 25 });
+    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-a", mode: "legacy", finals: 30 }), proven({ runId: "items-a", mode: "items", finals: 75 }));
+    expect(reportFixedInputRun(baseline).budget).toEqual({ status: "verified", source: "replay_meter", calls: 30, chargedTokens: 542_400,
+      reportedCalls: 30, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
+    expect(reportFixedInputRun(candidate).budget).toMatchObject({ status: "verified", source: "model_capacity_ledger", calls: 75 });
     expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "passed", performance: "passed", quality: "passed", safety: "passed",
       budgetEvidence: "verified", budget: { status: "passed", ratios: { callsPerFinal: 1, tokensPerFinal: 1 } }, reasons: [] });
   });
   it.each([
-    ["the declared common budget", (base: FixedInputRunResult) => { base.budget = { declaredConcurrentCalls: null, callsAtStop: 10 }; }, ["concurrency_limit_undeclared"]],
-    ["upstream usage on one baseline call", (base: FixedInputRunResult) => { base.meter.upstreamReportedCalls = 9; }, ["usage_unreported_without_bound"]],
+    ["the declared common budget", (base: FixedInputRunResult) => { base.budget = { declaredConcurrentCalls: null, callsAtStop: 30 }; }, ["concurrency_limit_undeclared"]],
+    ["upstream usage on one baseline call", (base: FixedInputRunResult) => { base.meter.upstreamReportedCalls = 29; }, ["usage_unreported_without_bound"]],
     // 이전 결과에는 정지 순간 호출 수도 선언 한도도 없다.
     ["the budget record of an old result", (base: FixedInputRunResult) => { delete base.budget; }, ["concurrency_limit_undeclared", "replay_budget_unrecorded"]],
   ] as const)("is incomplete when only %s is missing", (_name, mutate, issues) => {
-    const base = proven({ runId: "legacy-a", mode: "legacy", finals: 10 }); mutate(base);
+    const base = proven({ runId: "legacy-a", mode: "legacy", finals: 30 }); mutate(base);
     expect(reportFixedInputRun(base).budget).toEqual({ status: "unverified", source: "replay_meter", issues });
-    const [baseline, candidate] = labeledPair(base, proven({ runId: "items-a", mode: "items", finals: 25 }));
+    const [baseline, candidate] = labeledPair(base, proven({ runId: "items-a", mode: "items", finals: 75 }));
     expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", performance: "passed", quality: "passed", safety: "passed",
       reasons: ["budget_evidence_unverified"] });
   });
   it("cross-checks item ledger evidence against the meter and refuses inconsistent budget records", () => {
-    const items = proven({ runId: "items-a", mode: "items", finals: 25 });
-    items.meter = { ...items.meter, calls: 26 }; items.budget = { declaredConcurrentCalls: null, callsAtStop: 26 };
+    const items = proven({ runId: "items-a", mode: "items", finals: 75 });
+    items.meter = { ...items.meter, calls: 76 }; items.budget = { declaredConcurrentCalls: 4, callsAtStop: 76 };
     expect(reportFixedInputRun(items).budget).toMatchObject({ status: "unverified", issues: ["meter_calls_outside_ledger"] });
-    expect(() => reportFixedInputRun({ ...items, budget: { declaredConcurrentCalls: null, callsAtStop: 27 } })).toThrow("fixed_input_result_mismatch");
-    expect(() => reportFixedInputRun({ ...items, meter: { ...items.meter, upstreamReportedCalls: 27 } })).toThrow("fixed_input_result_mismatch");
+    expect(() => reportFixedInputRun({ ...items, budget: { declaredConcurrentCalls: 4, callsAtStop: 77 } })).toThrow("fixed_input_result_mismatch");
+    expect(() => reportFixedInputRun({ ...items, meter: { ...items.meter, upstreamReportedCalls: 77 } })).toThrow("fixed_input_result_mismatch");
     expect(() => parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 0 } }))).toThrow();
     expect(parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 4 } })).budget).toEqual({ maxConcurrentCalls: 4 });
   });
@@ -325,43 +334,107 @@ const drain = (patch: Partial<NonNullable<FixedInputRunResult["windowEndDrain"]>
   limitMs: 180_000, inFlightAtStop: 2, cutAtLimit: 0, waitedMs: 18_000, meterStop: null, accounting: "drain_calls_in_budget_not_in_finals", ...patch });
 describe("window-end drain budget", () => {
   it("counts calls that finished during the drain in the budget but never as finals", () => {
-    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
-    // 정지 순간 진행 중이던 2건이 drain 안에 끝나 usage가 남았다. 최종·처리량은 구간 안 10건 그대로다.
-    legacy.meter = { ...legacy.meter, calls: 12, usageKnownCalls: 12, upstreamReportedCalls: 12, upstreamReportedTokens: 18_080 * 12 };
-    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 12 }; legacy.windowEndDrain = drain();
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 30 });
+    // 정지 순간 진행 중이던 6건이 drain 안에 끝나 usage가 남았다. 최종·처리량은 구간 안 30건 그대로다.
+    legacy.meter = { ...legacy.meter, calls: 36, usageKnownCalls: 36, upstreamReportedCalls: 36, upstreamReportedTokens: 18_080 * 36 };
+    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 36 }; legacy.windowEndDrain = drain();
     const report = reportFixedInputRun(legacy);
-    expect(report.finals.newCandidates).toBe(10);
-    expect(report.budget).toEqual({ status: "verified", source: "replay_meter", calls: 12, chargedTokens: 18_080 * 12,
-      reportedCalls: 12, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
+    expect(report.finals.newCandidates).toBe(30);
+    expect(report.budget).toEqual({ status: "verified", source: "replay_meter", calls: 36, chargedTokens: 18_080 * 36,
+      reportedCalls: 36, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
     expect(report.replay.windowEndDrain).toEqual(drain());
     expect(report.evidenceIssues).not.toContain("replay_calls_refused");
-    // drain 호출만큼 최종당 호출·토큰이 그 실행에 불리하게(크게) 잡힌다: 기준선 12/10, 후보 25/25.
-    const [baseline, candidate] = labeledPair(legacy, proven({ runId: "items-a", mode: "items", finals: 25 }));
+    // drain 호출만큼 최종당 호출·토큰이 그 실행에 불리하게(크게) 잡힌다: 기준선 36/30, 후보 75/75.
+    const [baseline, candidate] = labeledPair(legacy, proven({ runId: "items-a", mode: "items", finals: 75 }));
     expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "passed", budgetEvidence: "verified",
-      budget: { status: "passed", baseline: { calls: 12, finals: 10, callsPerFinal: 1.2 }, candidate: { calls: 25, finals: 25, callsPerFinal: 1 } } });
+      budget: { status: "passed", baseline: { calls: 36, finals: 30, callsPerFinal: 1.2 }, candidate: { calls: 75, finals: 75, callsPerFinal: 1 } } });
   });
   it("keeps the budget unverified in both modes when the drain limit cut a call", () => {
-    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
-    legacy.meter = { ...legacy.meter, calls: 12, indeterminate: 1, usageKnownCalls: 11, upstreamReportedCalls: 11, upstreamReportedTokens: 18_080 * 11 };
-    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 12 }; legacy.windowEndDrain = drain({ cutAtLimit: 1 });
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 30 });
+    legacy.meter = { ...legacy.meter, calls: 36, indeterminate: 1, usageKnownCalls: 35, upstreamReportedCalls: 35, upstreamReportedTokens: 18_080 * 35 };
+    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 36 }; legacy.windowEndDrain = drain({ cutAtLimit: 1 });
     expect(reportFixedInputRun(legacy).budget).toEqual({ status: "unverified", source: "replay_meter",
       issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
     // 장부는 끊긴 호출을 C로 세어 verified로 두지만, legacy와 같은 규칙으로 미검증이다(완화 금지).
-    const items = proven({ runId: "items-a", mode: "items", finals: 25 });
+    const items = proven({ runId: "items-a", mode: "items", finals: 75 });
     items.meter = { ...items.meter, indeterminate: 1 }; items.windowEndDrain = drain({ inFlightAtStop: 1, cutAtLimit: 1 });
     expect(reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger", issues: ["replay_drain_calls_cut"] });
-    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-b", mode: "legacy", finals: 10 }), items);
+    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-b", mode: "legacy", finals: 30 }), items);
     expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", reasons: ["budget_evidence_unverified"] });
   });
   it("flags a meter cap reached during the drain and refuses inconsistent drain records", () => {
-    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 30 });
     expect(reportFixedInputRun({ ...legacy, windowEndDrain: drain({ meterStop: "per_call_bound_exceeded" }) }).evidenceIssues)
       .toContain("replay_drain_meter_stop");
     for (const patch of [{ windowEndDrain: drain({ cutAtLimit: 3 }) }, { windowEndDrain: drain({ cutAtLimit: 1 }) },
-      { windowEndDrain: drain({ inFlightAtStop: 11 }) }, { stop: { ...legacy.stop, reason: "call_cap" as const }, windowEndDrain: drain() }])
+      { windowEndDrain: drain({ inFlightAtStop: 31 }) }, { stop: { ...legacy.stop, reason: "call_cap" as const }, windowEndDrain: drain() }])
       expect(() => reportFixedInputRun({ ...legacy, ...patch })).toThrow("fixed_input_result_mismatch");
     // 이전 결과(drain 기록 없음)는 그대로 읽고 판정도 바뀌지 않는다.
     expect(reportFixedInputRun(legacy).replay.windowEndDrain).toBeNull();
-    expect(reportFixedInputRun(legacy).budget).toMatchObject({ status: "verified", calls: 10 });
+    expect(reportFixedInputRun(legacy).budget).toMatchObject({ status: "verified", calls: 30 });
+  });
+});
+
+describe("F1 replay verdict integrity: exact reasons", () => {
+  const pair = () => labeledPair(proven({ runId: "legacy-a", mode: "legacy", finals: 30 }), proven({ runId: "items-a", mode: "items", finals: 75 }));
+  it.each([
+    ["replay_upstream_mismatch", (value: FixedInputRunResult) => { value.conditions = { ...value.conditions!, upstream: "https://other-gateway.example" }; }],
+    ["replay_conditions_mismatch", (value: FixedInputRunResult) => { value.conditions = { ...value.conditions!, limits: { ...value.conditions!.limits, maxCalls: 799 } }; }],
+    ["replay_conditions_mismatch", (value: FixedInputRunResult) => { value.conditions = { ...value.conditions!,
+      secondReviewFallbacks: [{ provider: "abcllm", model: "backup" }] }; }],
+    ["replay_conditions_unrecorded", (value: FixedInputRunResult) => { delete value.conditions; }],
+    ["artifact_source_unrecorded", (value: FixedInputRunResult) => { delete value.live.source; }],
+    ["artifact_source_not_replay", (value: FixedInputRunResult) => { value.live.source = { kind: "live", database: REPLAY_DB }; }],
+  ])("is incomplete with only %s", (reason, mutate) => {
+    const [baseline, candidate] = pair(); mutate(candidate);
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", performance: "incomplete", reasons: [reason] });
+  });
+  it("does not require two isolated replay databases to be the same database", () => {
+    const [baseline, candidate] = pair(); candidate.live.source = { kind: "replay", database: { ...REPLAY_DB, systemIdentifier: "7400000000000000010" } };
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "passed", reasons: [] });
+  });
+  it("rejects a recorded upstream that is not a normalized secret-free origin", () => {
+    const [baseline] = pair();
+    for (const upstream of ["https://user:pw@abcllm-api.brut.bot", "https://abcllm-api.brut.bot/v1", "http://abcllm-api.brut.bot", "https://abcllm-api.brut.bot/?k=1"])
+      expect(() => reportFixedInputRun({ ...baseline, conditions: { ...baseline.conditions!, upstream } })).toThrow("fixed_input_result_mismatch");
+  });
+  it("judges quality only when both label samples are exactly the labelTemplate", () => {
+    const baseline = proven({ runId: "legacy-a", mode: "legacy", finals: 30 }), candidate = proven({ runId: "items-a", mode: "items", finals: 75 });
+    const template = compareFixedInputRuns(baseline, candidate).labelTemplate.map(row => ({ ...row, expected: "reject" as const }));
+    // 같은 표본(같은 hash)이지만 labelTemplate 일부만 라벨했다.
+    const partial = template.slice(1);
+    expect(compareFixedInputRuns(attachFixedInputLabels(baseline, partial), attachFixedInputLabels(candidate, partial)))
+      .toMatchObject({ status: "incomplete", quality: "incomplete", performance: "passed", reasons: ["quality_label_template_mismatch"] });
+    // 템플릿 밖(후보에만 있는 최종)을 섞은 라벨은 기준선에 붙일 수는 있어도(포함 입력) 기준선 최종이 아니라 평가 불가다.
+    const extra = [...template, { candidateId: 40, inputHash: H("input-40"), expected: "reject" as const }];
+    expect(compareFixedInputRuns(attachFixedInputLabels(baseline, extra), attachFixedInputLabels(candidate, extra)).quality).toBe("incomplete");
+    // 표본이 다르면 같은 템플릿 크기여도 판정하지 않는다.
+    const flipped = template.map((row, index) => index ? row : { ...row, expected: "approve" as const });
+    expect(compareFixedInputRuns(attachFixedInputLabels(baseline, template), attachFixedInputLabels(candidate, flipped)))
+      .toMatchObject({ quality: "incomplete", reasons: ["quality_label_set_mismatch"] });
+  });
+  it("marks unobservable replay safety slots not_applicable but keeps an observed nonzero count failing", () => {
+    const [baseline, candidate] = pair();
+    expect(reportFixedInputRun(candidate).safety).toEqual({ duplicatePublications: { status: "not_applicable" },
+      humanDecisionOverrides: { status: "not_applicable" }, leaseViolations: { status: "verified", count: 0 } });
+    const overridden = structuredClone(candidate); overridden.live.safety = { ...overridden.live.safety, humanDecisionOverrides: 1 };
+    expect(compareFixedInputRuns(baseline, overridden)).toMatchObject({ status: "failed", safety: "failed", reasons: ["human_decision_override_detected"] });
+    const uncovered = structuredClone(candidate);
+    uncovered.live = { ...uncovered.live, ledger: null, safety: { duplicatePublications: 0, humanDecisionOverrides: "unverified", leaseViolations: "unverified" },
+      budget: { status: "unverified" } };
+    expect(reportFixedInputRun(uncovered).safety).toEqual({ duplicatePublications: { status: "not_applicable" },
+      humanDecisionOverrides: { status: "not_applicable" }, leaseViolations: { status: "unverified" } });
+  });
+  it("keeps the item budget unverified when the manifest declaration differs from the ledger policy limit", () => {
+    const items = proven({ runId: "items-a", mode: "items", finals: 75 }); items.budget = { declaredConcurrentCalls: 8, callsAtStop: 75 };
+    expect(reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger", issues: ["concurrency_limit_declaration_mismatch"] });
+    items.budget = { declaredConcurrentCalls: null, callsAtStop: 75 };
+    expect(reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger", issues: ["concurrency_limit_undeclared"] });
+  });
+  it("does not pass a legacy baseline declared with a different common budget", () => {
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 30 }); legacy.budget = { declaredConcurrentCalls: 8, callsAtStop: 30 };
+    const [baseline, candidate] = labeledPair(legacy, proven({ runId: "items-a", mode: "items", finals: 75 }));
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", budget: { status: "incomplete", reasons: ["budget_limit_mismatch"] },
+      reasons: ["budget_limit_mismatch"] });
   });
 });

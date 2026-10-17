@@ -6,14 +6,15 @@ import { parseModelCapacityPolicy, type ModelCapacityPolicy } from "@/lib/llm/ca
  * 1. 귀속 완전성: 시도·사용량 기록에 나타난 구간 안 모델 호출이 모두 장부(모델 슬롯 장부, replay면 계량기)에 있다.
  * 2. 호출당 과금 상한: upstream_reported이고 기존 검사(정수·합 일치·C 이하)를 통과한 실제 사용량, 아니면 그 호출의 전체 C.
  *    C도 없으면 unverified다. 추정치로 C보다 낮게 세지 않는다.
- * 3. 동시 예산 준수: 구간 동안 선언된 공통 슬롯 한도를 넘은 순간이 없다.
- * 비교는 둘 다 verified일 때만 한다. 고유 최종당 호출 수·과금 토큰이 각각 기준선 이하(허용 오차 0)이고 선언 한도가 기준선 이하면 통과다.
+ * 3. 동시 예산 준수: 구간 동안 실제로 관측한 동시 호출(peak)이 선언된 공통 슬롯 한도를 넘은 순간이 없다.
+ * 비교는 둘 다 verified일 때만 한다. 고유 최종당 호출 수·과금 토큰이 각각 기준선 이하(허용 오차 0)이고, 두 실행의 선언 한도가 같고,
+ * 후보가 관측한 peak가 기준선 선언 한도 이하면 통과다. 선언 한도가 다르면 비교 불가(후보 한도가 더 크면 실패)다.
  */
 export const BUDGET_ISSUES = ["budget_evidence_absent", "model_capacity_absent", "model_capacity_unreadable", "model_capacity_not_open",
   "model_capacity_changed_since_window_start", "capacity_policy_invalid", "capacity_policy_changed", "ledger_row_limit", "ledger_inconsistent",
   "unattributed_ai1_calls", "ai2_call_records_unverified", "unattributed_ai2_calls", "token_bound_missing", "concurrency_limit_exceeded",
   "concurrency_limit_undeclared", "usage_unreported_without_bound", "recorded_calls_exceed_meter", "meter_calls_outside_ledger",
-  "replay_budget_unrecorded", "replay_calls_after_stop", "replay_drain_calls_cut"] as const;
+  "replay_budget_unrecorded", "replay_calls_after_stop", "replay_drain_calls_cut", "concurrency_limit_declaration_mismatch"] as const;
 export type BudgetIssue = typeof BUDGET_ISSUES[number];
 const integer = z.number().int().nonnegative().safe();
 const source = z.enum(["model_capacity_ledger", "replay_meter"]);
@@ -166,9 +167,11 @@ export function meterBudgetEvidence(input: { calls: number; maxInFlight: number;
 /**
  * item replay: 장부 증거를 그대로 쓰되 계량기와 맞춘다. 계량기 호출이 장부 호출보다 많거나 구간 정지 뒤 호출이 있으면 미검증이다.
  * 구간 끝 drain 상한에서 끊은 호출이 있으면 장부가 그 호출을 C로 세더라도 legacy와 같은 규칙으로 미검증이다.
+ * F1: manifest가 선언한 공통 동시 예산이 없거나 장부 정책의 심사 한도와 다르면 미검증이다(legacy 기준선과 같은 선언 한도로 비교한다).
+ * 관측 peak는 장부 reviewer 점유와 계량기 최대 동시 호출 중 큰 값이다.
  */
 export function replayLedgerBudget(ledger: BudgetEvidence, meter: { calls: number; maxInFlight: number }, callsAtStop: number | null,
-  drainCut = 0): BudgetEvidence {
+  drainCut: number, declared: number | null): BudgetEvidence {
   const issues: BudgetIssue[] = ledger.status === "verified" ? [] : "issues" in ledger ? [...ledger.issues] : ["budget_evidence_absent"];
   if (callsAtStop === null) issues.push("replay_budget_unrecorded");
   else if (callsAtStop !== meter.calls) issues.push("replay_calls_after_stop");
@@ -176,8 +179,11 @@ export function replayLedgerBudget(ledger: BudgetEvidence, meter: { calls: numbe
   if (ledger.status === "verified") {
     if (meter.calls > ledger.calls) issues.push("meter_calls_outside_ledger");
     if (meter.maxInFlight > ledger.concurrency.limit) issues.push("concurrency_limit_exceeded");
+    if (declared === null) issues.push("concurrency_limit_undeclared");
+    else if (declared !== ledger.concurrency.limit) issues.push("concurrency_limit_declaration_mismatch");
   }
-  return issues.length ? unverified("model_capacity_ledger", issues) : ledger;
+  if (issues.length || ledger.status !== "verified") return unverified("model_capacity_ledger", issues);
+  return { ...ledger, concurrency: { limit: ledger.concurrency.limit, peak: Math.max(ledger.concurrency.peak, meter.maxInFlight) } };
 }
 
 type Check = "passed" | "failed" | "incomplete";
@@ -189,7 +195,8 @@ const ratio = (after: number | null | undefined, before: number | null | undefin
   after === null || after === undefined || !before ? null : after / before;
 /**
  * 비교 조건이 같고(comparable) 양쪽 증거가 verified일 때만 판정한다. 경계는 BigInt 교차곱으로 정확히 잰다(토큰 곱은 2^53을 넘을 수 있다).
- * 비율은 통과 여부와 상관없이 남긴다.
+ * 비율은 통과 여부와 상관없이 남긴다. 동시 예산은 실제 관측 peak로 본다: 후보 peak가 기준선 선언 한도를 넘으면 실패, 선언 한도가 다르면
+ * 같은 예산 비교가 아니므로 통과시키지 않는다(후보 한도가 크면 실패, 작으면 비교 불가).
  */
 export function judgeBudget(baseline: { budget: BudgetEvidence; finals: number }, candidate: { budget: BudgetEvidence; finals: number },
   comparable: boolean) {
@@ -199,8 +206,12 @@ export function judgeBudget(baseline: { budget: BudgetEvidence; finals: number }
   if (!before || !after) { reasons.push("budget_evidence_unverified"); return result("incomplete"); }
   if (!before.finals || !after.finals) { reasons.push("budget_per_final_unavailable"); return result("incomplete"); }
   const within = (a: number, b: number) => BigInt(a) * BigInt(before.finals) <= BigInt(b) * BigInt(after.finals);
-  if (!within(after.calls, before.calls)) reasons.push("budget_calls_per_final_exceeded");
-  if (!within(after.chargedTokens, before.chargedTokens)) reasons.push("budget_tokens_per_final_exceeded");
-  if (after.limit > before.limit) reasons.push("budget_limit_exceeds_baseline");
-  return result(!comparable ? "incomplete" : reasons.length ? "failed" : "passed");
+  const failures: string[] = [], peak = candidate.budget.status === "verified" ? candidate.budget.concurrency.peak : 0;
+  if (!within(after.calls, before.calls)) failures.push("budget_calls_per_final_exceeded");
+  if (!within(after.chargedTokens, before.chargedTokens)) failures.push("budget_tokens_per_final_exceeded");
+  if (after.limit > before.limit) failures.push("budget_limit_exceeds_baseline");
+  if (peak > before.limit) failures.push("budget_peak_exceeds_baseline_limit");
+  if (after.limit < before.limit) reasons.push("budget_limit_mismatch");
+  reasons.push(...failures);
+  return result(!comparable ? "incomplete" : failures.length ? "failed" : reasons.length ? "incomplete" : "passed");
 }

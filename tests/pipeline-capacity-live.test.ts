@@ -3,16 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { attachLiveCapacityLabels, compareLiveCapacityRuns, judgeLiveCapacity, liveLabelDatasetHash, parseLiveCapacityArtifact,
-  reportLiveCapacityWindow, type LiveCapacityArtifact, type LiveCapacityReport } from "@/lib/operations/pipeline-capacity-live";
+import { attachLiveCapacityLabels, compareLiveCapacityRuns, judgeLiveCapacity, LIVE_MAX_BASELINE_IDLE_MS, LIVE_MIN_BASELINE_FINALS, LIVE_MIN_QUALITY_LABELS,
+  liveLabelDatasetHash, parseLiveCapacityArtifact, reportLiveCapacityWindow, type LiveCapacityArtifact, type LiveCapacityReport } from "@/lib/operations/pipeline-capacity-live";
 
 const hash = "a".repeat(64), other = "b".repeat(64), WINDOW = 1_800_000;
 const at = (ms: number) => new Date(Date.UTC(2026, 9, 17) + ms).toISOString();
 const identity = (model: string) => ({ provider: "abcllm" as const, model, canonicalModel: model });
+/** F1: 운영 수집기가 남기는 출처(같은 DB). */
+const DB = { systemIdentifier: "7400000000000000001", databaseOid: "16384", databaseName: "nomorevibe" };
 function artifact(duration = WINDOW): LiveCapacityArtifact {
   return { version: 1, scope: "live_window", runId: "live-a", revision: "9e13341", schema: { appliedMigrations: 82, absentTables: [] },
     window: { startedAt: at(0), endedAt: at(duration), durationMs: duration, collectedAt: at(duration + 60_000), collectedAfterEndMs: 60_000 },
     database: { target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read", replicaCaughtUp: null, writeXidAssigned: false },
+    source: { kind: "live", database: DB },
     identity: { promptVersion: "p1", rulesVersion: "r1", inputPolicyHash: hash, comparisonPolicyHash: hash, fullReviewPolicyHash: hash,
       reviewMode: "enforce", secondGateRequired: true, concurrency: 2, settingsUpdatedMs: -3_600_000,
       models: { first: identity("first"), second: [identity("second")], fallbacks: [identity("backup")] } },
@@ -39,9 +42,10 @@ function add(value: LiveCapacityArtifact, candidateId: number, options: Options 
     secondDecision: "approve", reviewedMs: gateMs });
   return value.attempts.at(-1)!;
 }
+/** F1: 최종이 구간 전체에 고르게 퍼진다(기준선 워커 공백 검사를 넘는 정상 구간). */
 function windowWith(finals: number, options: { duration?: number; latency?: number; ai2Calls?: number; ai2Failed?: number } = {}) {
-  const value = artifact(options.duration);
-  for (let id = 1; id <= finals; id++) add(value, id, { latency: options.latency });
+  const value = artifact(options.duration), duration = options.duration ?? WINDOW;
+  for (let id = 1; id <= finals; id++) add(value, id, { latency: options.latency, completedMs: Math.round(duration * id / (finals + 1)) });
   value.ai2Calls = { chains: options.ai2Calls ?? 0, calls: options.ai2Calls ?? 0, failed: options.ai2Failed ?? 0, unattributedChains: 0 };
   return value;
 }
@@ -50,13 +54,17 @@ const verified = (report: LiveCapacityReport): LiveCapacityReport => ({ ...repor
   budget: { status: "verified", source: "model_capacity_ledger", calls: 3 * report.finals.newCandidates, chargedTokens: 3_000 * report.finals.newCandidates,
     reportedCalls: 3 * report.finals.newCandidates, boundCalls: 0, concurrency: { limit: 4, peak: 2 } },
   safety: { ...report.safety, humanDecisionOverrides: { status: "verified", count: 0 }, leaseViolations: { status: "verified", count: 0 } } });
-function labeled(value: LiveCapacityArtifact, wrong = 0) {
-  return attachLiveCapacityLabels(value, value.attempts.filter(row => row.decision === "approve" || row.decision === "reject")
+/** sample을 주면 그 후보만 라벨한다(F1: 두 실행은 같은 라벨 표본이어야 품질을 판정한다). 정답은 그 실행의 판정, 앞 wrong건만 반대다. */
+function labeled(value: LiveCapacityArtifact, wrong = 0, sample?: ReadonlySet<number>) {
+  return attachLiveCapacityLabels(value, value.attempts.filter(row => (row.decision === "approve" || row.decision === "reject")
+    && (!sample || sample.has(row.candidateId)))
     .map((row, index) => ({ candidateId: row.candidateId, inputHash: row.inputHash,
       expected: index < wrong ? (row.decision === "approve" ? "reject" : "approve") : row.decision! as "approve" | "reject" })));
 }
+/** 기준선의 최종 후보 전부를 두 실행 공통 라벨 표본으로 쓴다. */
+const sampleOf = (value: LiveCapacityArtifact) => new Set(value.attempts.map(row => row.candidateId));
 const judge = (before: LiveCapacityArtifact, after: LiveCapacityArtifact) =>
-  judgeLiveCapacity(verified(reportLiveCapacityWindow(labeled(before))), verified(reportLiveCapacityWindow(labeled(after))));
+  judgeLiveCapacity(verified(reportLiveCapacityWindow(labeled(before))), verified(reportLiveCapacityWindow(labeled(after, 0, sampleOf(before)))));
 
 describe("live window report", () => {
   it("counts one final per candidate despite duplicate votes, fallback chains and repeated generations", () => {
@@ -159,27 +167,28 @@ describe("live window report", () => {
 
 describe("live window judgement", () => {
   it("passes only when every measured condition and every evidence slot is verified", () => {
-    const result = judge(windowWith(10, { ai2Calls: 90 }), windowWith(20, { ai2Calls: 80 }));
+    const result = judge(windowWith(30, { ai2Calls: 90 }), windowWith(60, { ai2Calls: 80 }));
     expect(result).toMatchObject({ status: "passed", performance: "passed", quality: "passed", safety: "passed",
       budgetEvidence: "verified", ratio: 2, reasons: [] });
   });
   it("keeps artifacts incomplete while budget and safety evidence are unverified, yet computes every threshold", () => {
-    const result = compareLiveCapacityRuns(labeled(windowWith(10, { ai2Calls: 90 })), labeled(windowWith(20, { ai2Calls: 80 })));
+    const before = windowWith(30, { ai2Calls: 90 });
+    const result = compareLiveCapacityRuns(labeled(before), labeled(windowWith(60, { ai2Calls: 80 }), 0, sampleOf(before)));
     expect(result).toMatchObject({ status: "incomplete", performance: "passed", quality: "passed", safety: "incomplete",
       budgetEvidence: "unverified", numericThresholds: { doubled: true, latencyNotWorse: true, technicalFailureWithinOnePoint: true } });
     expect(result.reasons.sort()).toEqual(["budget_evidence_unverified", "human_decision_override_unverified", "lease_violation_unverified"]);
-    expect(compareLiveCapacityRuns(windowWith(10), windowWith(20)).reasons).toContain("quality_unverified");
+    expect(compareLiveCapacityRuns(windowWith(30), windowWith(60)).reasons).toContain("quality_unverified");
   });
-  it.each([[20, "passed"], [19, "failed"]] as const)("treats exactly 2.0x as the throughput boundary (%i finals → %s)", (finals, status) => {
-    expect(judge(windowWith(10, { ai2Calls: 90 }), windowWith(finals, { ai2Calls: 80 })).status).toBe(status);
+  it.each([[60, "passed"], [59, "failed"]] as const)("treats exactly 2.0x as the throughput boundary (%i finals → %s)", (finals, status) => {
+    expect(judge(windowWith(30, { ai2Calls: 90 }), windowWith(finals, { ai2Calls: 80 })).status).toBe(status);
   });
   it("normalizes throughput by each SQL-measured window length", () => {
     const longer = { duration: 2 * WINDOW, ai2Calls: 60 };
-    expect(judge(windowWith(10, { ai2Calls: 90 }), windowWith(40, longer)).numericThresholds.doubled).toBe(true);
-    expect(judge(windowWith(10, { ai2Calls: 90 }), windowWith(39, longer))).toMatchObject({ status: "failed", reasons: ["throughput_below_2x"] });
+    expect(judge(windowWith(30, { ai2Calls: 90 }), windowWith(120, longer)).numericThresholds.doubled).toBe(true);
+    expect(judge(windowWith(30, { ai2Calls: 90 }), windowWith(119, longer))).toMatchObject({ status: "failed", reasons: ["throughput_below_2x"] });
   });
   it.each([[10_000, "passed"], [10_001, "failed"]] as const)("rejects any p95 regression (%i ms → %s)", (latency, status) => {
-    const result = judge(windowWith(10, { ai2Calls: 90 }), windowWith(20, { ai2Calls: 80, latency }));
+    const result = judge(windowWith(30, { ai2Calls: 90 }), windowWith(60, { ai2Calls: 80, latency }));
     expect(result.status).toBe(status);
     if (status === "failed") expect(result.reasons).toEqual(["latency_p95_worse"]);
   });
@@ -189,19 +198,19 @@ describe("live window judgement", () => {
     [{ ai2Calls: 90, ai2Failed: 1 }, { ai2Calls: 180, ai2Failed: 4 }, true],
     [{ ai2Calls: 90, ai2Failed: 1 }, { ai2Calls: 180, ai2Failed: 5 }, false],
   ])("allows at most the baseline technical failure rate plus one point (%j → %j)", (before, after, within) => {
-    const result = judge(windowWith(10, before), windowWith(20, after));
+    const result = judge(windowWith(30, before), windowWith(60, after));
     expect(result.numericThresholds.technicalFailureWithinOnePoint).toBe(within);
     expect(result.status).toBe(within ? "passed" : "failed");
   });
   it.each([[WINDOW, "passed"], [WINDOW - 1, "incomplete"]] as const)("requires a window of at least 30 minutes (%i ms → %s)", (duration, status) => {
-    const short = windowWith(20, { duration, ai2Calls: 80 });
-    const result = judge(windowWith(10, { ai2Calls: 90 }), short);
+    const short = windowWith(60, { duration, ai2Calls: 80 });
+    const result = judge(windowWith(30, { ai2Calls: 90 }), short);
     expect(result.status).toBe(status);
     if (status === "incomplete") expect(result).toMatchObject({ performance: "incomplete", reasons: ["window_under_30_minutes"] });
   });
   it("never certifies a window whose ready queue was not proven non-empty", () => {
-    const after = windowWith(40, { ai2Calls: 80 }); after.readiness = { witnesses: 0, sampleCandidateIds: [] };
-    expect(judge(windowWith(10, { ai2Calls: 90 }), after)).toMatchObject({ status: "incomplete", performance: "incomplete",
+    const after = windowWith(120, { ai2Calls: 80 }); after.readiness = { witnesses: 0, sampleCandidateIds: [] };
+    expect(judge(windowWith(30, { ai2Calls: 90 }), after)).toMatchObject({ status: "incomplete", performance: "incomplete",
       numericThresholds: { doubled: true }, reasons: ["readiness_unproven"] });
   });
   it.each([
@@ -210,27 +219,34 @@ describe("live window judgement", () => {
     (value: LiveCapacityArtifact) => { value.identity.comparisonPolicyHash = other; },
     (value: LiveCapacityArtifact) => { value.identity.models.second = [identity("second"), identity("second-b")]; },
   ])("does not compare mismatched model/policy/input identity #%#", mutate => {
-    const after = windowWith(20, { ai2Calls: 80 }); mutate(after);
-    expect(judge(windowWith(10, { ai2Calls: 90 }), after)).toMatchObject({ status: "incomplete", reasons: expect.arrayContaining(["conditions_mismatch"]) });
+    const after = windowWith(60, { ai2Calls: 80 }); mutate(after);
+    expect(judge(windowWith(30, { ai2Calls: 90 }), after)).toMatchObject({ status: "incomplete", reasons: expect.arrayContaining(["conditions_mismatch"]) });
   });
   it("allows the experiment variables: concurrency, stage mode, capacity mode and gateway aliases", () => {
-    const after = windowWith(20, { ai2Calls: 80 });
+    const after = windowWith(60, { ai2Calls: 80 });
     after.identity.concurrency = 4; after.identity.fullReviewPolicyHash = other;
     after.stageModes = [{ stage: "ai1", mode: "items", epoch: 2, changedSinceStart: false }];
     after.modelCapacity = { mode: "open", changedSinceStart: false };
     after.identity.models.first = { provider: "abcllm", model: "[MLX] first", canonicalModel: "first" };
-    expect(judge(windowWith(10, { ai2Calls: 90 }), after)).toMatchObject({ status: "passed", concurrency: { baseline: 2, candidate: 4 } });
+    expect(judge(windowWith(30, { ai2Calls: 90 }), after)).toMatchObject({ status: "passed", concurrency: { baseline: 2, candidate: 4 } });
   });
   it("fails quality regressions and safety violations even when other evidence is incomplete", () => {
-    const before = reportLiveCapacityWindow(labeled(windowWith(10, { ai2Calls: 90 })));
-    const worse = reportLiveCapacityWindow(labeled(windowWith(20, { ai2Calls: 80 }), 1));
+    // F1: 두 실행은 같은 정답 라벨 표본을 쓴다. 후보가 표본 후보 하나를 기준선과 달리(틀리게) 판정했다.
+    const truth = labeled(windowWith(30, { ai2Calls: 90 })), regressed = windowWith(60, { ai2Calls: 80 });
+    regressed.attempts[0].decision = "reject";
+    const before = reportLiveCapacityWindow(truth);
+    const worse = reportLiveCapacityWindow(attachLiveCapacityLabels(regressed, truth.quality!.labels));
     expect(judgeLiveCapacity(before, worse)).toMatchObject({ status: "failed", quality: "failed" });
     expect(judgeLiveCapacity(before, worse).reasons).toContain("wrong_decisions_increased");
-    const duplicated = windowWith(20, { ai2Calls: 80 }); duplicated.safety.duplicatePublications = 1;
-    expect(compareLiveCapacityRuns(windowWith(10), duplicated)).toMatchObject({ status: "failed", safety: "failed" });
-    // 같은 비율의 오판은 증가가 아니다(표본 크기가 달라도 교차곱으로 비교).
-    expect(judgeLiveCapacity(verified(reportLiveCapacityWindow(labeled(windowWith(10, { ai2Calls: 90 }), 1))),
-      verified(reportLiveCapacityWindow(labeled(windowWith(20, { ai2Calls: 80 }), 2)))).quality).toBe("passed");
+    const duplicated = windowWith(60, { ai2Calls: 80 }); duplicated.safety.duplicatePublications = 1;
+    expect(compareLiveCapacityRuns(windowWith(30), duplicated)).toMatchObject({ status: "failed", safety: "failed" });
+    // F1: 같은 표본의 같은 오판 수는 증가가 아니다. 표본이 다르면(이전: 표본 크기가 달라도 교차곱 비교) 품질을 판정하지 않는다.
+    const oneWrong = labeled(windowWith(30, { ai2Calls: 90 }), 1);
+    expect(judgeLiveCapacity(verified(reportLiveCapacityWindow(oneWrong)),
+      verified(reportLiveCapacityWindow(attachLiveCapacityLabels(windowWith(60, { ai2Calls: 80 }), oneWrong.quality!.labels)))).quality).toBe("passed");
+    expect(judgeLiveCapacity(verified(reportLiveCapacityWindow(labeled(windowWith(30, { ai2Calls: 90 }), 1))),
+      verified(reportLiveCapacityWindow(labeled(windowWith(60, { ai2Calls: 80 }), 2))))).toMatchObject({ quality: "incomplete",
+      reasons: expect.arrayContaining(["quality_label_set_mismatch"]) });
   });
   it("reports a baseline without finals as incomplete rather than infinite speedup", () => {
     expect(judgeLiveCapacity(verified(reportLiveCapacityWindow(windowWith(0, { ai2Calls: 90 }))),
@@ -241,12 +257,12 @@ describe("live window judgement", () => {
 
 describe("live artifact validation", () => {
   it("accepts a 0076 production schema as fixed legacy/disabled without changing judgement identity", () => {
-    const before = windowWith(10, { ai2Calls: 90 });
+    const before = windowWith(30, { ai2Calls: 90 });
     before.schema = { appliedMigrations: 77, absentTables: ["pipeline_stage_modes", "pipeline_item_leases", "model_capacity_control"] };
     before.stageModes = (["ai1", "ai2", "fetch"] as const).map(stage => ({ stage, mode: "legacy" as const, epoch: 1, changedSinceStart: false }));
     before.modelCapacity = { mode: "disabled", changedSinceStart: false };
     expect(reportLiveCapacityWindow(before)).toMatchObject({ evidenceIssues: [], schema: { appliedMigrations: 77 } });
-    const after = windowWith(20, { ai2Calls: 80 });
+    const after = windowWith(60, { ai2Calls: 80 });
     after.stageModes = [{ stage: "ai1", mode: "items", epoch: 2, changedSinceStart: false }];
     expect(judge(before, after)).toMatchObject({ status: "passed", reasons: [] });
   });
@@ -289,6 +305,90 @@ describe("live artifact validation", () => {
     expect(() => parseLiveCapacityArtifact({ ...value, quality: { ...value.quality!, datasetHash: other } })).toThrow("live_quality_mismatch");
     expect(reportLiveCapacityWindow(attachLiveCapacityLabels(windowWith(2), [{ candidateId: 99, inputHash: hash, expected: "approve" }])).quality)
       .toMatchObject({ complete: false, evaluated: 0, expected: 1 });
+  });
+});
+
+/** F1: 장부·budget·안전이 artifact 안에서 모두 증명된 운영 구간(수집기 출력 모양 그대로). */
+function provenWindow(finals: number, options: Parameters<typeof windowWith>[1] = {}) {
+  const value = windowWith(finals, options);
+  value.modelCapacity = { mode: "open", changedSinceStart: false };
+  value.ledger = { startedAt: at(-3_600_000), humanDecisionRefusals: 0, lateWritesRefused: 0 };
+  value.safety = { duplicatePublications: 0, humanDecisionOverrides: 0, leaseViolations: 0 };
+  value.budget = { status: "verified", source: "model_capacity_ledger", calls: 3 * finals, chargedTokens: 3_000 * finals, reportedCalls: 3 * finals,
+    boundCalls: 0, concurrency: { limit: 4, peak: 2 } };
+  return value;
+}
+const compareProven = (before: LiveCapacityArtifact, after: LiveCapacityArtifact) =>
+  compareLiveCapacityRuns(labeled(before), labeled(after, 0, sampleOf(before)));
+describe("F1 verdict integrity: exact reasons", () => {
+  it("passes end to end only from proven artifacts of one database with one shared label sample", () => {
+    expect(compareProven(provenWindow(30, { ai2Calls: 90 }), provenWindow(60, { ai2Calls: 80 })))
+      .toMatchObject({ status: "passed", performance: "passed", quality: "passed", safety: "passed", budgetEvidence: "verified", reasons: [] });
+  });
+  it.each([
+    ["artifact_source_unrecorded", (value: LiveCapacityArtifact) => { delete value.source; }],
+    ["artifact_source_not_live", (value: LiveCapacityArtifact) => { value.source = { kind: "replay", database: DB }; }],
+    ["live_database_mismatch", (value: LiveCapacityArtifact) => { value.source = { kind: "live", database: { ...DB, databaseOid: "16385" } }; }],
+    ["live_database_mismatch", (value: LiveCapacityArtifact) => { value.source = { kind: "live", database: { ...DB, systemIdentifier: "7400000000000000002" } }; }],
+    ["live_database_identity_unknown", (value: LiveCapacityArtifact) => { value.source = { kind: "live", database: null }; }],
+  ])("refuses a live comparison with %s", (reason, mutate) => {
+    const after = provenWindow(60, { ai2Calls: 80 }); mutate(after);
+    expect(compareProven(provenWindow(30, { ai2Calls: 90 }), after)).toMatchObject({ status: "incomplete", performance: "incomplete", reasons: [reason] });
+  });
+  it("rejects a forged source", () => {
+    const value = windowWith(1);
+    for (const source of [{ kind: "live", database: { ...DB, systemIdentifier: "0" } }, { kind: "live", database: { ...DB, url: "postgres://x" } },
+      { kind: "other", database: DB }, { kind: "live" }]) {
+      expect(() => parseLiveCapacityArtifact({ ...value, source })).toThrow();
+    }
+  });
+  it("judges quality only on one shared label sample of at least 30 labels", () => {
+    const before = provenWindow(30, { ai2Calls: 90 }), after = provenWindow(60, { ai2Calls: 80 });
+    expect(compareLiveCapacityRuns(labeled(before), labeled(after))).toMatchObject({ status: "incomplete", quality: "incomplete",
+      performance: "passed", reasons: ["quality_label_set_mismatch"] });
+    const few = new Set([...sampleOf(before)].slice(0, LIVE_MIN_QUALITY_LABELS - 1));
+    expect(compareLiveCapacityRuns(labeled(before, 0, few), labeled(after, 0, few))).toMatchObject({ status: "incomplete", quality: "incomplete",
+      reasons: ["quality_labels_below_minimum"] });
+    // 표본이 작아도 같은 표본의 퇴행은 실패다.
+    const truth = labeled(before, 0, few), regressed = structuredClone(after); regressed.attempts[0].decision = "reject";
+    expect(compareLiveCapacityRuns(truth, attachLiveCapacityLabels(regressed, truth.quality!.labels)))
+      .toMatchObject({ status: "failed", quality: "failed", reasons: ["wrong_decisions_increased"] });
+  });
+  it.each([[LIVE_MIN_BASELINE_FINALS, "passed"], [LIVE_MIN_BASELINE_FINALS - 1, "incomplete"]] as const)(
+    "needs at least the minimum unique baseline finals (%i → %s)", (finals, status) => {
+      const result = compareProven(provenWindow(finals, { ai2Calls: 90 }), provenWindow(2 * finals, { ai2Calls: 80 }));
+      expect(result.status).toBe(status);
+      if (status === "incomplete") expect(result.reasons).toEqual(["baseline_finals_below_minimum", "quality_labels_below_minimum"]);
+    });
+  it.each([[LIVE_MAX_BASELINE_IDLE_MS, "passed"], [LIVE_MAX_BASELINE_IDLE_MS + 1, "incomplete"]] as const)(
+    "refuses a baseline whose AI1 workers sat idle longer than the limit (%i ms → %s)", (idle, status) => {
+      // 기준선 30세대를 [0, 끝 − idle] 안에 고르게 다시 놓는다: 마지막 AI1 완료 뒤 구간 끝까지 idle ms 동안 호출이 없다.
+      const before = provenWindow(30, { ai2Calls: 90 });
+      before.attempts.forEach((row, index) => {
+        const completedMs = Math.round((WINDOW - idle) * (index + 1) / 30);
+        Object.assign(row, { readyMs: completedMs + 1_000 - 10_000, startedMs: completedMs - 1_000, completedMs });
+        before.votes[index].reviewedMs = completedMs + 1_000;
+      });
+      expect(reportLiveCapacityWindow(before).activity.maxIdleMs).toBe(idle);
+      const result = compareProven(before, provenWindow(60, { ai2Calls: 80 }));
+      expect(result.status).toBe(status);
+      if (status === "incomplete") expect(result.reasons).toEqual(["baseline_worker_idle"]);
+    });
+  it.each([[5, "passed"], [6, "incomplete"]] as const)("refuses a baseline above 5%% technical failures (%i of 100 calls → %s)", (failed, status) => {
+    // 기준선 AI1 30 + AI2 70 = 100호출. 후보는 같은 실패 수에 호출이 많아 '기준+1%p' 안이다.
+    const before = provenWindow(30, { ai2Calls: 70, ai2Failed: failed }), after = provenWindow(60, { ai2Calls: 140, ai2Failed: failed });
+    const result = compareProven(before, after);
+    expect(result.status).toBe(status);
+    if (status === "incomplete") expect(result.reasons).toEqual(["baseline_failure_rate_above_cap"]);
+  });
+  it("lets not_applicable safety neither block nor count as a violation, while a detected count still fails", () => {
+    const before = verified(reportLiveCapacityWindow(labeled(windowWith(30, { ai2Calls: 90 }))));
+    const after = verified(reportLiveCapacityWindow(labeled(windowWith(60, { ai2Calls: 80 }), 0, sampleOf(windowWith(30)))));
+    const absent = { status: "not_applicable" as const };
+    expect(judgeLiveCapacity(before, { ...after, safety: { ...after.safety, humanDecisionOverrides: absent, duplicatePublications: absent } }))
+      .toMatchObject({ status: "passed", safety: "passed" });
+    expect(judgeLiveCapacity(before, { ...after, safety: { ...after.safety, humanDecisionOverrides: absent, leaseViolations: { status: "verified", count: 1 } } }))
+      .toMatchObject({ status: "failed", safety: "failed", reasons: ["lease_violation_detected"] });
   });
 });
 
