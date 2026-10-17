@@ -42,7 +42,7 @@ async function main() {
       gcStartMs = at();
       try { globalThis.gc!(); } catch { gcFailure = true; }
       finally { gcEndMs = at(); }
-    }, mode === "prefire" ? 75 : 150);
+    }, mode === "prefire" ? 0 : 150);
     // The source may fire and then be collected before Node's first lazy refresh.
     // No abort observer, signal getter, or source deref runs during this wait.
     await delay(250);

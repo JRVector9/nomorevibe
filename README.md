@@ -110,6 +110,9 @@ npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.t
 DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로드와 같은 0.8.6 이다. 예전 `postgres:17` 컨테이너는
 마이그레이션 0059 에서 `extension "vector" is not available` 로 멈춘다 — 이미지만 바꿔 다시 만든다(같은 볼륨을 붙이면 데이터는 남는다).
 
+고정 exported DDL 비교기의 범위 검증은 `python3 -B -m unittest discover -s tests -p test_oracle_dr_ddl.py`로 실행한다.
+실제 DB probe는 별도 전용 DB의 명시적 identity가 필요하며 [DDL 검증 기록](docs/operations/2026-10-16-pipeline-pr14c-ddl-validation.md)을 따른다.
+
 ## GitHub CI와 변경 절차
 
 main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
