@@ -881,6 +881,26 @@ describe("evidence product detail components", () => {
     expect(uncounted).not.toContain("개 모두 보기");
     expect(renderToStaticMarkup(<RelatedRow category="Productivity" items={[]} total={3} />)).toBe("");
   });
+
+  it("falls back to the category's default list without claiming 8-hour growth", () => {
+    const item = (slug: string): ProductListItem => ({
+      slug, name: slug, tagline: `${slug} does things`, taglineSource: "maker", category: "Productivity",
+      builder: null, builderClaim: "guessed", stack: [], ogImage: null, makerName: null,
+      repoUrl: `https://github.com/acme/${slug}`, listedAt: new Date("2026-10-02T00:00:00Z"), status: "seeded",
+      unclaimed: true, stars: 990, starsAt: new Date("2026-10-02T00:00:00Z"), starsPrevious: 980,
+      starsPreviousAt: new Date("2026-10-01T00:00:00Z"),
+    });
+    // 8시간 회차로 채우지 못한 줄 — 같은 분야의 다른 공개 프로젝트를 보이되 '지금 뜨는'·8시간 기준이라 하지 않는다
+    const html = renderToStaticMarkup(<RelatedRow category="Productivity" items={[item("alpha")]} total={null} basis="category" />);
+    expect(html).toContain("생산성 분야의 다른 프로젝트");
+    expect(html).toContain("AI로 제작 · 최근 등록순");
+    expect(html).not.toContain("지금 뜨는");
+    expect(html).not.toContain("8시간");
+    // '모두 보기'는 같은 기본 목록(AI로 제작·최근 등록순)으로 간다
+    expect(html).toContain('href="/c/productivity"');
+    expect(textOf(html)).toContain("모두 보기 ›");
+    expect(html).toContain('href="/p/alpha"');
+  });
 });
 
 

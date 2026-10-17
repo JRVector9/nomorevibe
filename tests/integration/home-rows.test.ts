@@ -136,8 +136,10 @@ describe("상세 뷰모델", () => {
     // The detail now uses completed 8-hour observations, never legacy daily averages.
     // These products have no observation runs, so they cannot claim a live rising rank.
     expect(detail.risingRank).toBeNull();
+    // 회차가 없으면 분야 기본 목록(AI로 제작)으로 채운다 — g1 은 AI 근거가 없어 들지 않고, 급상승 수도 세지 않는다
     expect(detail.related).toEqual([]);
-    expect(detail.relatedTotal).toBe(0);
+    expect(detail.relatedBasis).toBe("category");
+    expect(detail.relatedTotal).toBeNull();
     expect(detail.readmeExcerpt).toContain("FEX-Emu");
     // AI 제작 근거 단계 검사 전 — 상세는 '대기 중'이라고 말한다
     expect(detail.aiLevel).toEqual({ checked: false, level: null });
