@@ -697,5 +697,164 @@ class FleetInventoryTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())['complete'], code is None)
 
 
+CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
+
+
+class ConsumerAppRegistrationTests(unittest.TestCase):
+    """PR06e: AI1/AI2 consumer apps are known by name only; an empty Dokploy ID is refused, never guessed; `run` is unchanged without --consumer."""
+
+    def setUp(self):
+        self.old_sha, self.new_sha = 'a' * 40, 'b' * 40
+        self.old_worker = release.IMAGE_PREFIX['worker'] + 'sha256:' + 'c' * 64
+        self.old_web = release.IMAGE_PREFIX['web'] + 'sha256:' + 'd' * 64
+        self.target = release.validate_target(self.new_sha, release.IMAGE_PREFIX['worker'] + 'sha256:' + 'e' * 64,
+                                              release.IMAGE_PREFIX['web'] + 'sha256:' + 'f' * 64)
+
+    def registered(self):
+        """Fixture IDs only — the real Dokploy apps do not exist yet."""
+        return patch.dict(release.CONSUMER_APPS, {short: ('fixture-' + short, 'nomorevibe-' + short, metadata[2], metadata[3])
+                                                  for short, metadata in release.CONSUMER_APPS.items()})
+
+    def apps(self):
+        apps = ReleaseSafetyTests.apps(self)
+        for short in CONSUMERS:
+            apps[short] = dict(apps['reviewer-m3'], appName='service-' + short)
+        return apps
+
+    def test_consumer_apps_are_unregistered_and_outside_the_existing_fleet(self):
+        self.assertEqual(tuple(release.CONSUMER_APPS), CONSUMERS)
+        for short, (app_id, name, server, kind) in release.CONSUMER_APPS.items():
+            self.assertEqual((app_id, name, kind), ('', '', 'worker'))
+            self.assertEqual(server, release.MINI if short.endswith('-mini') else release.M3)
+            self.assertNotIn(short, release.KNOWN_APPS)
+        self.assertEqual(release.release_order(), release.ORDER)
+
+    def test_an_unregistered_consumer_is_refused_before_any_dokploy_request(self):
+        client = release.Dokploy('unused-key')
+        with patch.object(client, 'request') as request:
+            for short in CONSUMERS:
+                with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
+                    client.app(short)
+                with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
+                    client.latest(short)
+            request.assert_not_called()
+        with self.assertRaisesRegex(ValueError, 'ai3-consumer-m3_unknown_app'):
+            release.app_metadata('ai3-consumer-m3')
+        with self.assertRaisesRegex(ValueError, 'ai1-consumer-mini_app_unregistered'):
+            release.consumer_apps(['ai1'])
+
+    def test_main_refuses_unregistered_or_misused_consumer_targets_before_keychain(self):
+        base = ['--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
+        for arguments, error in ((['plan'] + base + ['--consumer', 'ai2'], 'ai2-consumer-mini_app_unregistered'),
+                                 (['run'] + base + ['--snapshot', '/private/tmp/x.json', '--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
+                                 (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'ai1-consumer-m3'], 'ai1-consumer-m3_app_unregistered')):
+            with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy:
+                with self.assertRaisesRegex(ValueError, error):
+                    release.main(arguments)
+                keychain.assert_not_called()
+                dokploy.assert_not_called()
+        for arguments in (['plan'] + base + ['--consumer', 'ai1', '--consumer', 'ai1'], ['plan'] + base + ['--consumer', 'ai3'],
+                          ['inventory', '--sha', self.new_sha, '--consumer', 'ai1'],
+                          ['restore', '--snapshot', '/private/tmp/x.json', '--app', 'reviewer-m3', '--consumer', 'ai1']):
+            with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    release.main(arguments)
+                keychain.assert_not_called()
+
+    def test_inventory_lists_unregistered_consumers_without_counting_them_and_covers_registered_ones(self):
+        fleet = {short: {'sourceType': 'docker', 'applicationStatus': 'done', 'replicas': 1, 'env': 'RELEASE_TAG=' + self.new_sha + '\n'}
+                 for short in tuple(release.KNOWN_APPS) + CONSUMERS}
+        result = release.inventory(FakeClient(fleet), self.new_sha)
+        self.assertEqual((result['appCount'], result['complete']), (14, True))
+        self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'unregistered'))
+        fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
+        with self.registered():
+            result = release.inventory(FakeClient(fleet), self.new_sha)
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (18, False, ['ai2-consumer-m3']))
+        self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'registered'))
+        self.assertEqual({short: result['apps'][short]['deployedBy'] for short in CONSUMERS}, dict.fromkeys(CONSUMERS, 'run'))
+
+    def test_registered_consumer_identity_is_checked_like_an_image_worker(self):
+        with self.registered():
+            client = release.Dokploy('unused-key')
+            identity = {'applicationId': 'fixture-ai1-consumer-m3', 'name': 'nomorevibe-ai1-consumer-m3', 'serverId': release.M3[0],
+                        'appName': 'app-ai1', 'dockerBuildStage': 'worker'}
+            with patch.object(client, 'request', return_value=identity):
+                self.assertEqual(client.app('ai1-consumer-m3')['name'], 'nomorevibe-ai1-consumer-m3')
+            for drift in ({'name': 'nomorevibe-reviewer-m3'}, {'serverId': release.MINI[0]}, {'dockerBuildStage': 'runner'}):
+                with self.subTest(drift=drift), patch.object(client, 'request', return_value=dict(identity, **drift)):
+                    with self.assertRaisesRegex(ValueError, 'ai1-consumer-m3_identity_mismatch'):
+                        client.app('ai1-consumer-m3')
+
+    def test_baseline_includes_only_selected_consumers_with_the_same_release_image_and_single_replica(self):
+        apps = self.apps()
+        with self.registered(), patch.object(release, 'probe', return_value={'ready': True}) as probe:
+            state = release.baseline(FakeClient(apps), self.target, ('ai1-consumer-mini', 'ai1-consumer-m3'))
+            self.assertEqual(tuple(state['apps']), release.ORDER[:4] + ('ai1-consumer-mini', 'ai1-consumer-m3') + release.ORDER[4:])
+            self.assertEqual([call.args[0] for call in probe.call_args_list], list(state['apps']))
+            for key, value, error in (('env', 'RELEASE_TAG=' + '9' * 40 + '\n', 'ai1-consumer-m3_baseline_release_mismatch'),
+                                      ('replicas', 2, 'ai1-consumer-m3_baseline_not_ready'),
+                                      ('dockerImage', self.old_web, 'ai1-consumer-m3_baseline_not_ready')):
+                broken = self.apps()
+                broken['ai1-consumer-m3'][key] = value
+                with self.subTest(key=key), self.assertRaisesRegex(ValueError, error):
+                    release.baseline(FakeClient(broken), self.target, ('ai1-consumer-mini', 'ai1-consumer-m3'))
+        with patch.object(release, 'probe', return_value={'ready': True}):
+            self.assertEqual(tuple(release.baseline(FakeClient(self.apps()), self.target)['apps']), release.ORDER)
+
+    def test_run_deploys_selected_consumers_right_after_the_reviewer_pair_before_its_gate(self):
+        steps = []
+        with self.registered(), patch.object(release, 'save_snapshot'), \
+             patch.object(release, 'stage_and_deploy', side_effect=lambda _c, short, _t, _k, _p: steps.append(short) or {'app': short}), \
+             patch.object(release, 'monitor_gate', side_effect=lambda _c, role: steps.append('gate:' + role) or {'role': role}), \
+             patch.object(release, 'public_gate', return_value={}), patch.object(release, 'purge_html', return_value={}), \
+             redirect_stdout(io.StringIO()):
+            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', CONSUMERS)
+        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *CONSUMERS,
+                                 'gate:reviewer', 'crawler-mini', 'crawler-m3', 'gate:crawler', 'web-mini', 'web-m3'])
+
+    def test_stage_and_restore_use_the_consumer_app_id_and_worker_image(self):
+        class ConsumerClient(FakeClient):
+            def request(self, path, payload=None):
+                self.requests.append((path, payload and payload['applicationId']))
+                if path == 'application.saveEnvironment':
+                    self.apps['ai2-consumer-mini'].update(env=payload['env'])
+                elif path == 'application.saveDockerProvider':
+                    self.apps['ai2-consumer-mini']['dockerImage'] = payload['dockerImage']
+        apps = self.apps()
+        previous = {'sha': self.old_sha, 'worker': self.old_worker, 'web': self.old_web}
+        with self.registered(), patch.object(release, 'check_app_deployed', return_value={'app': 'ai2-consumer-mini'}) as gate:
+            client = ConsumerClient(apps)
+            release.stage_and_deploy(client, 'ai2-consumer-mini', self.target, 'token', previous)
+            self.assertEqual(client.requests, [(path, 'fixture-ai2-consumer-mini') for path in
+                                               ('application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy')])
+            self.assertEqual((apps['ai2-consumer-mini']['dockerImage'], release.setting(apps['ai2-consumer-mini']['env'], 'RELEASE_TAG')),
+                             (self.target['worker'], self.new_sha))
+            gate.assert_called_once_with(client, 'ai2-consumer-mini', self.target, 'old')
+            with tempfile.TemporaryDirectory() as directory:
+                path = str(Path(directory) / 'snapshot.json')
+                original = dict(apps['ai2-consumer-mini'], dockerImage=self.old_worker, env='RELEASE_TAG=' + self.old_sha + '\n')
+                release.save_snapshot(path, self.target, {'previous': previous, 'apps': {'ai2-consumer-mini': original}})
+                client.requests.clear()
+                release.restore(client, path, 'ai2-consumer-mini', 'token')
+            self.assertEqual([request[1] for request in client.requests], ['fixture-ai2-consumer-mini'] * 3)
+            self.assertEqual(apps['ai2-consumer-mini']['dockerImage'], self.old_worker)
+
+    def test_main_plan_passes_selected_consumers_to_baseline_and_prints_their_order(self):
+        apps = self.apps()
+        state = {'apps': apps, 'previous': {'sha': self.old_sha, 'worker': self.old_worker, 'web': self.old_web}}
+        output = io.StringIO()
+        with self.registered(), patch.object(release, 'run', side_effect=['operator-secret', self.new_sha, '']), \
+             patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+             patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state) as baseline, \
+             patch.object(release, 'github_integration_preflight', return_value={}), patch.object(release, 'monitor_gate'), \
+             patch.object(release, 'pre_pull'), redirect_stdout(output):
+            release.main(['plan', '--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web'],
+                          '--consumer', 'ai2'])
+        self.assertEqual(baseline.call_args.args[2], ('ai2-consumer-mini', 'ai2-consumer-m3'))
+        self.assertEqual(json.loads(output.getvalue())['plan'],
+                         list(release.ORDER[:4]) + ['ai2-consumer-mini', 'ai2-consumer-m3'] + list(release.ORDER[4:]))
+
+
 if __name__ == '__main__':
     unittest.main()

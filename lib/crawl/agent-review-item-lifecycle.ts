@@ -19,6 +19,8 @@ export type FirstReviewConsumerOutcome = { state: 'skipped'; reason: string }
 /** Fixed item lane; model admission rolls back before reserving physical capacity. */
 export async function executeFirstReviewConsumerItem(input: {
   candidateId: number; owner: ItemOwner; signal?: AbortSignal;
+  /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목(규칙·재사용·취소 전)은 부르지 않는다 */
+  onProviderResult?: (result: AgentReviewResult) => void;
 }): Promise<FirstReviewConsumerOutcome> {
   const candidateId = z.number().int().positive().safe().parse(input.candidateId);
   const owner = itemOwnerSchema.parse(input.owner), { signal } = input;
@@ -94,6 +96,7 @@ export async function executeFirstReviewConsumerItem(input: {
   } finally {
     stopping = true; cancelDelay?.(); await heartbeat;
   }
+  if (result) input.onProviderResult?.(result);
   if (renewalFailure) {
     if (result && !result.ok) throw new AggregateError([result, renewalFailure.error], 'ai1_item_model_result_renewal_failed');
     throw renewalFailure.error;

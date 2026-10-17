@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { itemOwnerSchema } from '@/lib/jobs/items/types';
 import { assertHostDbEntry } from '@/lib/db/host-budget';
-import { assertHostBudgetEntrySupported } from '@/lib/operations/host-budget';
+import { createProviderCircuits, providerCircuitConfig } from '@/lib/llm/provider-circuit-breaker';
 
 export function parsePipelineConsumerArgs(args: string[]): { stage: 'ai2'; once: boolean } {
   if (args.filter(arg => arg === '--stage=ai2').length !== 1 || args.filter(arg => arg === '--once').length > 1
@@ -15,13 +15,20 @@ export async function runPipelineConsumer(args: string[], env: Readonly<Record<s
   if (version === undefined) return { state: 'disabled' as const };
   if (version !== '1') throw new Error('invalid_pipeline_item_consumer_version');
   assertHostDbEntry(env, { kind: 'worker', role: 'reviewer', consumer: 'ai2' });
-  assertHostBudgetEntrySupported(env);
   const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, bootId: randomUUID() });
-  const [{ withRuntimeProcess }, { runSecondReviewConsumer }] = await Promise.all([
-    import('./worker'), import('@/lib/crawl/consumers/second'),
+  const circuit = providerCircuitConfig(env);
+  const [{ withRuntimeProcess }, { runSecondReviewConsumer }, { startHostBudget }, { supervisorLimits }] = await Promise.all([
+    import('./worker'), import('@/lib/crawl/consumers/second'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),
   ]);
-  const result = await withRuntimeProcess('reviewer', (signal, report) =>
-    runSecondReviewConsumer({ owner, signal, report, once: options.once }));
+  const result = await withRuntimeProcess('reviewer', async (signal, report) => {
+    // worker 와 같은 host 장부 자리(PR10e). 감독이 item 을 끊는 한도(job+drain)까지 비상 slot 을 지킨다. 비활성이면 DB·타이머 없이 기존 그대로다
+    const limits = supervisorLimits('reviewer', env), host = startHostBudget(env, { holdMs: limits.jobMs + limits.drainMs });
+    try {
+      if (host.enabled) await host.settled;
+      return await runSecondReviewConsumer({ owner, signal, report, once: options.once, ...(host.enabled ? { admit: host.admit } : {}),
+        ...(circuit.mode === 'enabled' ? { circuits: createProviderCircuits(circuit) } : {}) });
+    } finally { await host.stop(); }
+  });
   return { state: 'stopped' as const, ...result };
 }
 if (process.argv[1] && /^pipeline-consumer\.[cm]?[jt]s$/.test(basename(process.argv[1]))) {

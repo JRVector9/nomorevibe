@@ -48,6 +48,40 @@ GIT_BUILD_APPS = {
     'connect-agent-m3': ('xJK6CoRUOs_bpVVNmJDBF', 'nomorevibe-connect-agent-m3', M3, 'connect-agent'),
 }
 KNOWN_APPS = APPS | GIT_BUILD_APPS
+# AI1/AI2 independent consumer apps (PR06e): the shared worker image running `worker-supervisor.ts --role=reviewer --consumer=ai1|ai2`,
+# one replica each. The Dokploy apps do not exist yet, so ID and name are empty; an empty target is refused before any action, never guessed.
+# `plan`/`run` release only the pairs chosen with --consumer, right after the reviewer pair; without it the 8-app release is unchanged.
+CONSUMER_APPS = {
+    'ai1-consumer-mini': ('', '', MINI, 'worker'),
+    'ai1-consumer-m3': ('', '', M3, 'worker'),
+    'ai2-consumer-mini': ('', '', MINI, 'worker'),
+    'ai2-consumer-m3': ('', '', M3, 'worker'),
+}
+
+
+def app_metadata(short):
+    metadata = KNOWN_APPS.get(short) or CONSUMER_APPS.get(short)
+    if metadata is None:
+        raise ValueError(f'{short}_unknown_app')
+    if not metadata[0] or not metadata[1]:
+        raise ValueError(f'{short}_app_unregistered')
+    return metadata
+
+
+def consumer_apps(consumers):
+    """Apps of the chosen consumers, standby host first; any unregistered app is refused before Keychain or Dokploy."""
+    selected = tuple(f'{consumer}-consumer-{host}' for consumer in consumers for host in ('mini', 'm3'))
+    for short in selected:
+        app_metadata(short)
+    return selected
+
+
+def release_order(consumers=()):
+    """Image release order: chosen consumer apps follow the reviewer pair; with none it is exactly ORDER."""
+    split = ORDER.index('reviewer-m3') + 1
+    return ORDER[:split] + tuple(consumers) + ORDER[split:]
+
+
 IMAGE_PREFIX = {
     'worker': 'ghcr.io/jrvector9/nomorevibe-worker@',
     'web': 'ghcr.io/jrvector9/nomorevibe-runtime-web@',
@@ -160,18 +194,18 @@ class Dokploy:
                 os.close(write_fd)
 
     def app(self, short):
-        app_id, expected_name, (server_id, _), kind = KNOWN_APPS[short]
+        app_id, expected_name, (server_id, _), kind = app_metadata(short)
         app = self.request('application.one?applicationId=' + app_id)
         if (app.get('applicationId'), app.get('name'), app.get('serverId')) != (app_id, expected_name, server_id):
             raise ValueError(f'{short}_identity_mismatch')
-        if short in APPS and app.get('dockerBuildStage') != ('worker' if kind == 'worker' else 'runner'):
+        if (short in APPS or short in CONSUMER_APPS) and app.get('dockerBuildStage') != ('worker' if kind == 'worker' else 'runner'):
             raise ValueError(f'{short}_identity_mismatch')
         if not re.fullmatch(r'[a-z0-9-]+', app.get('appName') or ''):
             raise ValueError(f'{short}_invalid_service_name')
         return app
 
     def latest(self, short):
-        rows = self.request('deployment.all?applicationId=' + KNOWN_APPS[short][0])
+        rows = self.request('deployment.all?applicationId=' + app_metadata(short)[0])
         if not rows:
             raise ValueError(f'{short}_missing_deployment')
         return rows[0]
@@ -334,8 +368,8 @@ def replicas_allowed(kind, replicas):
 
 
 def probe(short, app, target, expected='any'):
-    kind = APPS[short][3]
-    raw = ssh_python(APPS[short][2][1], REMOTE_PROBE, app['appName'], target[kind],
+    _, _, (_, host), kind = app_metadata(short)
+    raw = ssh_python(host, REMOTE_PROBE, app['appName'], target[kind],
                      target['sha'], kind, str(expected))
     return json.loads(raw)
 
@@ -355,7 +389,7 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
         if app.get('applicationStatus') == 'error' or latest.get('status') == 'error':
             raise RuntimeError(f'{short}_deployment_error')
         if latest.get('deploymentId') != previous_id and app.get('applicationStatus') == 'done' and latest.get('status') == 'done':
-            if app.get('sourceType') != 'docker' or app.get('dockerImage') != target[APPS[short][3]] or setting(app.get('env'), 'RELEASE_TAG') != target['sha']:
+            if app.get('sourceType') != 'docker' or app.get('dockerImage') != target[app_metadata(short)[3]] or setting(app.get('env'), 'RELEASE_TAG') != target['sha']:
                 raise RuntimeError(f'{short}_configuration_drift')
             try:
                 evidence = probe(short, app, target, app.get('replicas'))
@@ -417,15 +451,15 @@ def main_sha_and_token(target):
     return run(['gh', 'auth', 'token'])
 
 
-def baseline(client, target):
+def baseline(client, target, consumers=()):
     apps = {}
     release = None
     old_images = {}
     web_key = None
-    for short in ORDER:
+    for short in release_order(consumers):
         app = client.app(short)
         latest = client.latest(short)
-        kind = APPS[short][3]
+        kind = app_metadata(short)[3]
         current_release = setting(app.get('env'), 'RELEASE_TAG')
         current_image = app.get('dockerImage')
         if (app.get('sourceType') != 'docker' or app.get('applicationStatus') != 'done' or
@@ -450,7 +484,7 @@ def baseline(client, target):
     if release == target['sha']:
         raise ValueError('target_release_already_running')
     previous = {'sha': release, **old_images}
-    for short in ORDER:
+    for short in release_order(consumers):
         if not probe(short, apps[short], previous).get('ready'):
             raise ValueError(f'{short}_baseline_runtime_not_ready')
     return {'apps': apps, 'previous': previous}
@@ -480,7 +514,7 @@ def save_snapshot(path, target, state):
 
 def stage_and_deploy(client, short, target, token, previous):
     app = client.app(short)
-    kind = APPS[short][3]
+    app_id, _, _, kind = app_metadata(short)
     if (app.get('applicationStatus') != 'done' or app.get('autoDeploy') is not False or
             app.get('dockerImage') != previous[kind] or
             setting(app.get('env'), 'RELEASE_TAG') != previous['sha'] or
@@ -493,11 +527,11 @@ def stage_and_deploy(client, short, target, token, previous):
         env = replace_setting(env, 'NEXT_DEPLOYMENT_ID', target['sha'])
         build_args = replace_setting(build_args, 'NEXT_DEPLOYMENT_ID', target['sha'])
     client.request('application.saveEnvironment', {
-        'applicationId': APPS[short][0], 'env': env, 'buildArgs': build_args,
+        'applicationId': app_id, 'env': env, 'buildArgs': build_args,
         'buildSecrets': app.get('buildSecrets'), 'createEnvFile': app.get('createEnvFile') is True,
     })
     client.request('application.saveDockerProvider', {
-        'applicationId': APPS[short][0], 'dockerImage': target[kind],
+        'applicationId': app_id, 'dockerImage': target[kind],
         'username': 'JRVector9' if kind == 'web' else None,
         'password': token if kind == 'web' else None,
         'registryUrl': 'ghcr.io' if kind == 'web' else None,
@@ -511,7 +545,7 @@ def stage_and_deploy(client, short, target, token, previous):
     if kind == 'web' and (setting(configured.get('env'), 'NEXT_DEPLOYMENT_ID') != target['sha'] or
                           setting(configured.get('buildArgs'), 'NEXT_DEPLOYMENT_ID') != target['sha']):
         raise RuntimeError(f'{short}_saved_web_deployment_id_mismatch')
-    client.request('application.deploy', {'applicationId': APPS[short][0]})
+    client.request('application.deploy', {'applicationId': app_id})
     return check_app_deployed(client, short, target, previous_id)
 
 
@@ -584,12 +618,13 @@ def purge_html():
             os.close(write_fd)
 
 
-def deploy(client, target, token, state, snapshot):
+def deploy(client, target, token, state, snapshot, consumers=()):
     save_snapshot(snapshot, target, state)
     print(json.dumps({'snapshot': snapshot, 'preflight': 'passed'}), flush=True)
     try:
         for role in ('publisher', 'reviewer', 'crawler'):
-            for short in (role + '-mini', role + '-m3'):
+            # Chosen consumer apps run reviewer code, so they follow the reviewer pair and precede its gate.
+            for short in (role + '-mini', role + '-m3') + (tuple(consumers) if role == 'reviewer' else ()):
                 print(json.dumps(stage_and_deploy(client, short, target, token,
                                                   state['previous'])), flush=True)
             print(json.dumps(monitor_gate(client, role)), flush=True)
@@ -609,11 +644,11 @@ def restore(client, snapshot_path, short, token):
     if not path.is_absolute() or path.stat().st_mode & 0o077:
         raise ValueError('snapshot_permissions_or_path_invalid')
     snapshot = json.loads(path.read_text())
-    if short not in APPS or short not in snapshot.get('apps', {}):
+    if short not in APPS and short not in CONSUMER_APPS or short not in snapshot.get('apps', {}):
         raise ValueError('app_missing_from_snapshot')
     original = snapshot['apps'][short]
     current = client.app(short)
-    kind = APPS[short][3]
+    app_id, _, _, kind = app_metadata(short)
     previous = snapshot['previous']
     if (current['appName'] != original['appName'] or current.get('sourceType') != 'docker' or
             current.get('dockerImage') not in (previous[kind], snapshot['target'][kind]) or
@@ -621,12 +656,12 @@ def restore(client, snapshot_path, short, token):
         raise ValueError(f'{short}_restore_preflight_mismatch')
     previous_id = client.latest(short)['deploymentId']
     client.request('application.saveEnvironment', {
-        'applicationId': APPS[short][0], 'env': original['env'],
+        'applicationId': app_id, 'env': original['env'],
         'buildArgs': original.get('buildArgs'), 'buildSecrets': original.get('buildSecrets'),
         'createEnvFile': original.get('createEnvFile') is True,
     })
     client.request('application.saveDockerProvider', {
-        'applicationId': APPS[short][0], 'dockerImage': previous[kind],
+        'applicationId': app_id, 'dockerImage': previous[kind],
         'username': 'JRVector9' if kind == 'web' else None,
         'password': token if kind == 'web' else None,
         'registryUrl': 'ghcr.io' if kind == 'web' else None,
@@ -635,7 +670,7 @@ def restore(client, snapshot_path, short, token):
     if (configured.get('dockerImage') != previous[kind] or
             setting(configured.get('env'), 'RELEASE_TAG') != previous['sha']):
         raise RuntimeError(f'{short}_restore_configuration_mismatch')
-    client.request('application.deploy', {'applicationId': APPS[short][0]})
+    client.request('application.deploy', {'applicationId': app_id})
     return check_app_deployed(client, short, previous, previous_id)
 
 
@@ -644,19 +679,22 @@ def inventory(client, sha):
     if not re.fullmatch(r'[0-9a-f]{40}', sha or ''):
         raise ValueError('invalid_release_sha')
     apps = {}
-    for short in ORDER + tuple(GIT_BUILD_APPS):
+    # Unregistered consumer apps are listed, not counted: they may not exist in Dokploy yet.
+    registered = tuple(short for short, metadata in CONSUMER_APPS.items() if metadata[0] and metadata[1])
+    for short in ORDER + tuple(GIT_BUILD_APPS) + registered:
         app, latest = client.app(short), client.latest(short)
         try:
             current = setting(app.get('env'), 'RELEASE_TAG')
         except ValueError:
             current = None
-        apps[short] = {'deployedBy': 'run' if short in APPS else 'manual-git-build', 'sourceType': app.get('sourceType'),
+        apps[short] = {'deployedBy': 'run' if short in APPS or short in CONSUMER_APPS else 'manual-git-build', 'sourceType': app.get('sourceType'),
                        'applicationStatus': app.get('applicationStatus'), 'latestDeployment': latest.get('status'),
                        'replicas': app.get('replicas'), 'releaseMatches': current == sha}
     complete = all(row['releaseMatches'] and row['applicationStatus'] == 'done' and row['latestDeployment'] == 'done'
                    for row in apps.values())
     return {'targetRelease': sha, 'apps': apps, 'appCount': len(apps), 'complete': complete,
             'pending': sorted(short for short, row in apps.items() if not row['releaseMatches']),
+            'consumerApps': {short: 'registered' if short in registered else 'unregistered' for short in CONSUMER_APPS},
             'splitRoleApps': 'none_registered', 'oracle': 'outside_dokploy'}
 
 
@@ -731,7 +769,9 @@ def main(argv=None):
     parser.add_argument('--worker-image')
     parser.add_argument('--web-image')
     parser.add_argument('--snapshot', help='required for run/restore; absolute path outside Git checkout')
-    parser.add_argument('--app', choices=ORDER, help='app to restore from the snapshot')
+    parser.add_argument('--app', choices=ORDER + tuple(CONSUMER_APPS), help='app to restore from the snapshot')
+    parser.add_argument('--consumer', action='append', choices=('ai1', 'ai2'), default=[],
+                        help='plan/run: also release this registered consumer pair right after the reviewer pair')
     parser.add_argument('--migration-verified', action='store_true',
                         help='assert any DB migration/schema change was applied before rollout')
     args = parser.parse_args(argv)
@@ -744,6 +784,12 @@ def main(argv=None):
         parser.error('inventory accepts only --sha')
     if args.action not in ('restore', 'inventory') and not all((args.sha, args.worker_image, args.web_image)):
         parser.error('--sha, --worker-image, and --web-image are required for plan/run')
+    if args.consumer and (args.action not in ('plan', 'run') or len(set(args.consumer)) != len(args.consumer)):
+        parser.error('--consumer is only for plan/run and may not repeat')
+    # An unregistered consumer target is refused before Keychain or Dokploy.
+    consumers = consumer_apps(args.consumer)
+    if args.action == 'restore' and args.app in CONSUMER_APPS:
+        app_metadata(args.app)
     key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
                '-s', 'dokploy-api-key', '-w'])
     client = Dokploy(key)
@@ -760,7 +806,7 @@ def main(argv=None):
     token = main_sha_and_token(target)
     if run(['git', 'rev-parse', 'HEAD']) != target['sha']:
         raise ValueError('local_checkout_not_target_main')
-    state = baseline(client, target)
+    state = baseline(client, target, consumers)
     integration = github_integration_preflight(client, state['apps'])
     changed = run(['git', 'diff', '--name-only', state['previous']['sha'], target['sha'],
                    '--', 'drizzle', 'lib/db/schema.ts', 'scripts/migrate.mjs'])
@@ -769,10 +815,10 @@ def main(argv=None):
     monitor_gate(client, 'crawler')
     pre_pull(target, token, setting(state['apps']['web-m3']['env'],
                                     'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
-    print(json.dumps({'plan': list(ORDER), 'currentRelease': state['previous']['sha'],
+    print(json.dumps({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
                       'targetRelease': target['sha'], 'githubIntegration': integration}), flush=True)
     if args.action == 'run':
-        deploy(client, target, token, state, args.snapshot)
+        deploy(client, target, token, state, args.snapshot, consumers)
 
 
 if __name__ == '__main__':

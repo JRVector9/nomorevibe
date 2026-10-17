@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { fetch as nativeFetch } from "undici";
+import { fetch as undiciFetch } from "undici";
+import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
@@ -11,6 +12,8 @@ import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolve
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
+/** 공통 슬롯 경로의 모든 gateway 전송. 배경 consumer 줄 범위 안에서만 전송 결과를 그 줄의 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
+const nativeFetch = (...args: Parameters<typeof undiciFetch>) => observeProviderTransport(undiciFetch(...args), args[1]?.signal);
 
 /**
  * 사내 게이트웨이(abcllm)로 보는 심사.
