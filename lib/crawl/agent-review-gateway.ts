@@ -5,7 +5,8 @@ import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-en
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
-  type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence } from "@/lib/llm/capacity";
+  type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence,
+  gatewayNotStartedEvidenceSchema, type GatewayNotStartedEvidence } from "@/lib/llm/capacity";
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
 import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract,
@@ -221,6 +222,62 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+/**
+ * fetch 를 한 번도 부르지 않고 닫은 AI1·AI1 item·AI2 호출의 증인(CLI D5 not_started 의 게이트웨이판). one-use 준비 호출을 이 자리에서
+ * 쓴 것으로 닫으므로 같은 dispatch 는 다시 보낼 수 없다. 이 원본 객체만 정산 근거다 — JSON·사본은 아니다.
+ * fetch 를 부른 뒤(연결 전 실패 포함)는 전송 여부를 여기서 증명하지 않는다 — 그 호출은 지금처럼 indeterminate 로 남는다.
+ */
+export type GatewayNotStarted = Readonly<{ kind: "gateway_not_started" }>;
+const notStartedTerminals = new WeakMap<GatewayNotStarted, GatewayNotStartedEvidence>();
+export function readGatewayNotStarted(value: unknown): GatewayNotStartedEvidence | null {
+  return value && typeof value === "object" ? notStartedTerminals.get(value as GatewayNotStarted) ?? null : null;
+}
+function issueNotStarted(dispatch: Ai1ModelDispatch | Ai1ItemModelDispatch | Ai2ModelDispatch): GatewayNotStarted {
+  const terminal: GatewayNotStarted = Object.freeze({ kind: "gateway_not_started" });
+  notStartedTerminals.set(terminal, freeze(gatewayNotStartedEvidenceSchema.parse({ version: 1, kind: "gateway_not_started", dispatch })));
+  return terminal;
+}
+/** dispatch binding 이 이 준비 호출의 wire·계약·C 를 그대로 묶었는가(입력 원문 대조는 실제 전송 경로가 한다) */
+function sameCall(call: PreparedAi1GatewayCall | PreparedAi2GatewayCall, contract: { provider: string; routeId: string },
+  binding: { model: string; wireHash: string; servingContractHash: string; totalTokenBound: number; provider: string; routeId: string },
+  inputHash: string): boolean {
+  return inputHash === call.inputHash && binding.model === call.model && binding.wireHash === call.wireHash
+    && binding.servingContractHash === call.servingContractHash && binding.totalTokenBound === call.totalTokenBound
+    && binding.provider === contract.provider && binding.routeId === contract.routeId;
+}
+/** 전송 전에 포기한 AI1 dispatch(틱 여유 부족 등). 준비 호출이 이미 쓰였으면 null — 그때는 실제 전송 결과만 근거다 */
+export function settleAi1GatewayNotStarted(call: PreparedAi1GatewayCall, dispatch: Ai1ModelDispatch): GatewayNotStarted | null {
+  const state = preparedCalls.get(call);
+  if (state?.used) return null;
+  const checked = ai1ModelDispatchSchema.safeParse(structuredClone(dispatch));
+  if (!state || !checked.success || !sameCall(call, state.contract, checked.data.binding, checked.data.binding.inputHash)
+    || dispatchedRequests.has(checked.data.requestId)) throw new Error("ai1_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(checked.data.requestId);
+  return issueNotStarted(checked.data);
+}
+/** 전송 전에 포기한 AI1 item dispatch(현재 아님·소유 상실). AI1 legacy 와 같은 one-use 준비를 쓴다 */
+export function settleAi1ItemGatewayNotStarted(call: PreparedAi1GatewayCall, dispatch: Ai1ItemModelDispatch): GatewayNotStarted | null {
+  const state = preparedCalls.get(call);
+  if (state?.used) return null;
+  const checked = ai1ItemModelDispatchSchema.safeParse(structuredClone(dispatch));
+  if (!state || !checked.success || !sameCall(call, state.contract, checked.data.binding, checked.data.binding.review.inputHash)
+    || checked.data.binding.review.reviewer.model !== call.model || checked.data.binding.review.reviewer.provider !== state.contract.provider
+    || dispatchedRequests.has(checked.data.requestId)) throw new Error("ai1_item_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(checked.data.requestId);
+  return issueNotStarted(checked.data);
+}
+/** 전송 전에 포기한 AI2 dispatch(현재 아님·소유 상실) */
+export function settleAi2GatewayNotStarted(call: PreparedAi2GatewayCall, dispatch: Ai2ModelDispatch): GatewayNotStarted | null {
+  const state = preparedAi2Calls.get(call);
+  if (state?.used) return null;
+  const checked = ai2ModelDispatchSchema.safeParse(structuredClone(dispatch));
+  if (!state || !checked.success || !sameCall(call, state.contract, checked.data.binding, checked.data.binding.review.inputHash)
+    || checked.data.binding.review.reviewer.model !== call.model || checked.data.binding.review.reviewer.provider !== state.contract.provider
+    || dispatchedAi2Requests.has(checked.data.requestId)) throw new Error("ai2_gateway_call_mismatch");
+  state.used = true; dispatchedAi2Requests.add(checked.data.requestId);
+  return issueNotStarted(checked.data);
+}
+
 /** No caller descriptor or injected request can enable a serving deployment. */
 export function prepareAi1GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
   PreparedAi1GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
@@ -281,7 +338,7 @@ function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, 
 
 export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch: Ai1ModelDispatch,
   call: PreparedAi1GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: AgentReviewResult; terminal: Ai1GatewayTerminal | null }> {
+  Promise<{ result: AgentReviewResult; terminal: Ai1GatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   // Capture all caller-owned values before the first await. Schema brands alone are not DB authority.
   const state = preparedCalls.get(call), snapshot = structuredClone(input);
@@ -299,13 +356,15 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   state.used = true;
   dispatchedRequests.add(owned.requestId);
   const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
     if (deadline.aborted) return "timeout";
     return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
   };
+  // 이미 끝난 신호로는 fetch 를 부르지 않는다(undici 도 보내지 않고 같은 사유로 거절했다) — 부르지 않은 전송은 0 이 증명된다
+  if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
@@ -363,7 +422,7 @@ export function readAi2GatewayTerminal(value: unknown): Ai2GatewayTerminalEviden
 
 export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch: Ai2ModelDispatch,
   call: PreparedAi2GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: AgentReviewResult; terminal: Ai2GatewayTerminal | null }> {
+  Promise<{ result: AgentReviewResult; terminal: Ai2GatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const state = preparedAi2Calls.get(call), snapshot = structuredClone(input);
   const checked = ai2ModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -381,13 +440,15 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   state.used = true;
   dispatchedAi2Requests.add(owned.requestId);
   const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
     if (deadline.aborted) return "timeout";
     return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
   };
+  // 이미 끝난 신호로는 fetch 를 부르지 않는다 — 부르지 않은 전송은 0 이 증명된다
+  if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
@@ -421,7 +482,7 @@ export function readAi1ItemGatewayTerminal(value: unknown): Ai1ItemGatewayTermin
 /** AI1 legacy and item entries consume the same private preparation exactly once. */
 export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispatch: Ai1ItemModelDispatch,
   call: PreparedAi1GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: AgentReviewResult; terminal: Ai1ItemGatewayTerminal | null }> {
+  Promise<{ result: AgentReviewResult; terminal: Ai1ItemGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const state = preparedCalls.get(call), snapshot = structuredClone(input);
   const checked = ai1ItemModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -439,13 +500,15 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   state.used = true;
   dispatchedRequests.add(owned.requestId);
   const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
     if (deadline.aborted) return "timeout";
     return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
   };
+  // 이미 끝난 신호로는 fetch 를 부르지 않는다 — 부르지 않은 전송은 0 이 증명된다
+  if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",

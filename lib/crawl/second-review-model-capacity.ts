@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { ai2ModelDispatchSchema, modelCapacityRequestIdentitySchema, type Ai2ModelDispatch } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedModelSlot,
-  markModelDispatchIndeterminate, reconcileAi2GatewayTerminal } from '@/lib/llm/capacity-repository';
+  markModelDispatchIndeterminate, reconcileAi2GatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
+import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { itemBindingHash } from '@/lib/jobs/items/types';
-import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, type PreparedAi2GatewayCall } from './agent-review-gateway';
+import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted, type PreparedAi2GatewayCall } from './agent-review-gateway';
 import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, type SecondReviewModelClaim } from './second-review-ownership';
 import type { ReviewInput } from './agent-review-contract';
 import type { AgentReviewResult } from './agent-review';
@@ -46,9 +47,15 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
   return { claim, call };
 }
 
-/** A committed dispatch without a verified terminal retains its full C charge. */
-export function abandonSecondReviewModelCapacity(dispatch: Ai2ModelDispatch): Promise<boolean> {
-  return markModelDispatchIndeterminate(dispatch, 'local_abort');
+/** A committed dispatch without a verified terminal retains its full C charge. 준비 호출을 받으면(아직 미사용) 전송 0 으로
+ * not_started 정산해 표 키·슬롯을 남기지 않는다(CLI D5 의 게이트웨이판). 증명이 없거나 정산하지 못하면 점유를 유지한다. */
+export async function abandonSecondReviewModelCapacity(dispatch: Ai2ModelDispatch, call?: PreparedAi2GatewayCall): Promise<boolean> {
+  let unsent: GatewayNotStarted | null = null;
+  try { unsent = call ? settleAi2GatewayNotStarted(call, dispatch) : null; } catch { unsent = null; }
+  if (!unsent) return markModelDispatchIndeterminate(dispatch, 'local_abort');
+  try { await reconcileGatewayNotStarted(unsent); }
+  catch (error) { await markUnsettledDispatch(dispatch); throw error; }
+  return true;
 }
 
 /** Historical physical settlement precedes cancellation/current business writing. */
@@ -65,8 +72,10 @@ export async function reviewSecondReviewModelCapacity(input: ReviewInput, dispat
   }
   try {
     if (response.terminal) await reconcileAi2GatewayTerminal(response.terminal);
+    else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
+    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai2_model_result_cleanup_failed');
     throw cleanup;
   }

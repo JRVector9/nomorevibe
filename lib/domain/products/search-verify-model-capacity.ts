@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileSearchVerifyGatewayTerminal, readSearchVerifyContinuation } from "@/lib/llm/capacity-repository";
+import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, firstSearchVerifyStep, nextSearchVerifyStep, searchVerifyStepKeywords,
   searchVerifyLogicalWorkKey, searchVerifyInputHash, type SearchVerifyInput, type SearchVerifyParent, type SearchVerifyStep } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -109,6 +110,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
       else if (!await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
         throw new Error("search_verify_dispatch_not_marked");
     } catch (cleanup) {
+      if (native.terminal) await markUnsettledDispatch(dispatch);
       if (!native.result.ok) throw new AggregateError([native.result, cleanup], "search_verify_result_cleanup_failed");
       throw cleanup;
     }

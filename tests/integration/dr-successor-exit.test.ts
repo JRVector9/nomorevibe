@@ -114,12 +114,25 @@ beforeAll(async () => {
     finally { await client.end({ timeout: 5 }); }
   } finally { rmSync(partial, { recursive: true, force: true }); }
   before0101 = await constraintDefs("step", [...PRESERVED, ...UNTOUCHED]);
+  // step 은 0101 직후 상태로 비교한다(journal 은 tag 로 찾는다). 뒤 migration 이 같은 CHECK 를 whole-left 로 넓혀도
+  // "0101 은 지정한 CHECK 외에는 건드리지 않는다"는 이 테스트의 의도는 그대로다.
+  const through = journal.entries.slice(0, journal.entries.findIndex(entry => entry.tag === "0101_dr_process_group_successor_exit") + 1);
+  expect(through.at(-1)?.tag).toBe("0101_dr_process_group_successor_exit");
   for (const side of ["ledger", "step"] as const) {
-    const client = postgres(urlOf(side), { max: 1, onnotice: () => {} });
-    try { await client.unsafe("set statement_timeout = 0"); await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") }); }
-    finally { await client.end({ timeout: 5 }); }
+    const entries = side === "step" ? through : journal.entries;
+    const folder = side === "step" ? mkdtempSync(path.join(tmpdir(), "0101-through-")) : path.join(root, "drizzle");
+    try {
+      if (side === "step") {
+        mkdirSync(path.join(folder, "meta"));
+        for (const entry of through) copyFileSync(path.join(root, "drizzle", `${entry.tag}.sql`), path.join(folder, `${entry.tag}.sql`));
+        writeFileSync(path.join(folder, "meta/_journal.json"), JSON.stringify({ ...JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")), entries: through }));
+      }
+      const client = postgres(urlOf(side), { max: 1, onnotice: () => {} });
+      try { await client.unsafe("set statement_timeout = 0"); await migrate(drizzle(client), { migrationsFolder: folder }); }
+      finally { await client.end({ timeout: 5 }); }
+    } finally { if (side === "step") rmSync(folder, { recursive: true, force: true }); }
     const [applied] = await pool(side)<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    expect(applied.count).toBe(journal.entries.length);
+    expect(applied.count).toBe(entries.length);
   }
   await pool("ledger")`UPDATE model_capacity_control SET mode = 'open', policy = ${JSON.stringify(policy)}::text::jsonb, policy_hash = ${modelCapacityPolicyHash(policy)} WHERE id = 1`;
   console.info("pr15f_migrations", { journal: journal.entries.length });

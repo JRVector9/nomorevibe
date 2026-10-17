@@ -7,6 +7,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
   lockCliModelCapacityDispatch, finishCliModelCapacityDispatch, type CliCapacityDispatchLock } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { NATIVE_TERMINAL_FAILURE, nativeTerminalFailure } from "@/lib/llm/provider-circuit-breaker";
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, type Ai1ItemModelDispatch,
   type CliModelDispatch, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
@@ -417,7 +418,8 @@ export async function handOffExhaustedFirstReviews(
         AND d.fetched_at <= ${reviewSemanticNowSql()} AND d.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
       sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
         AND ${crawlReviewAttempts.state} IN ('failed', 'superseded')
-        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') >= ${MAX_REVIEW_ATTEMPTS}`,
+        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
+        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) >= ${MAX_REVIEW_ATTEMPTS}`,
       sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
         AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
@@ -443,7 +445,7 @@ export async function handOffExhaustedFirstReviews(
       )).for("share");
       if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow())) continue;
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
-        && attempt.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
+        && attempt.errorCode !== "owner_changed" && attempt.errorCode !== NATIVE_TERMINAL_FAILURE).length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
     const unowned: number[] = [];
     for (const candidateId of exhausted) if (!await hasLiveAgentReviewItem(tx, candidateId)) unowned.push(candidateId);
@@ -517,7 +519,8 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > clock_timestamp())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')
-      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed') < ${MAX_REVIEW_ATTEMPTS}`,
+      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
+      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) < ${MAX_REVIEW_ATTEMPTS}`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
       AND ${crawlReviewAttempts.state} = 'superseded'
       AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
@@ -811,8 +814,9 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         kind: origin === "fresh" ? "claimed" : "reused", attempt, receipt: { attemptId: attempt.id, origin, ownership },
       });
       if (success) return result(success, "direct_reuse");
+      // native 게이트웨이 계약 위반은 모델 실패가 아니다 — 기록·재시도 대기는 그대로 두고 시도 수로만 세지 않는다
       const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
-        && row.errorCode !== "owner_changed").length;
+        && row.errorCode !== "owner_changed" && row.errorCode !== NATIVE_TERMINAL_FAILURE).length;
       const ownerChanges = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed"
         && row.completedAt !== null && row.completedAt.getTime() > wallNow.getTime() - 24 * 60 * 60_000).length;
       if (ownerChanges >= 3) return { kind: "skipped", reason: "infrastructure_interruptions_exhausted" };
@@ -943,6 +947,8 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
 
 type RecordAgentReviewInput = ReviewDomainContext & {
   receipt: Ai1ReviewReceipt; outcome?: ReviewOutcome; error?: string; retryAfter?: Date; now?: Date;
+  /** 실패 결과의 고정 진단 코드. native 게이트웨이 계약 위반(NATIVE_TERMINAL_FAILURE)만 별도 errorCode 로 적는다 */
+  detail?: string;
   usage?: { inputTokens?: number | null; outputTokens?: number | null; costUsd?: number | null };
   /** Server-side rules only; never populated from the model response. */
   ruleRejection?: { reason: DecisionReason; existingSlug?: string; existingStatus?: ProductStatus };
@@ -993,7 +999,8 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
     const finalWrite = await prepareReplayFinalWrite(tx, { stage: "first", candidateId: locked.candidate.id,
       firstAttemptId: attempt.id, input: current, settings: locked.settings });
     if (input.error) {
-      if (owns) await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: input.error.slice(0, 120),
+      const errorCode = nativeTerminalFailure({ ok: false, error: input.error, detail: input.detail }) ? NATIVE_TERMINAL_FAILURE : input.error;
+      if (owns) await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: errorCode.slice(0, 120),
         retryAfter: input.retryAfter ?? new Date((await reviewWallTime(tx)).getTime() + 60_000), completedAt: now })
         .where(eq(crawlReviewAttempts.id, attempt.id));
       await recordReplayFinalWrite(tx, finalWrite, requests);

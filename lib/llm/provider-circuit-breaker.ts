@@ -30,10 +30,20 @@ export function providerCircuitConfig(env: Readonly<Record<string, string | unde
  */
 const PROVIDER_DOWN: ReadonlySet<string> = new Set(["timeout", "gateway_error", "rate_limited", "budget", "not_configured", "auth",
   "missing_cli", "model_unavailable", "no_key", "rate_limit", "network"]);
-type ProviderResult = { ok: boolean; error?: string };
+/**
+ * native AI1·AI2 게이트웨이가 계약(응답 envelope·terminal: responseModel·error 키·chat.completion 모양 등)을 어긴 응답의 detail
+ * (agent-review-gateway). 결과 모양은 기존 invalid_output 그대로지만 모델 판정 실패가 아니라 게이트웨이 쪽 기술 오류다 —
+ * 회로에는 provider 장애로 세고 AI1 시도 수로는 세지 않는다. 내용이 판정이 아닌 것(invalid_json·schema 등)은 그대로 판정 오류다.
+ */
+export const NATIVE_TERMINAL_FAILURE = "invalid_native_terminal";
+type ProviderResult = { ok: boolean; error?: string; detail?: string };
+export function nativeTerminalFailure(result: ProviderResult): boolean {
+  return !result.ok && result.error === "invalid_output" && result.detail === NATIVE_TERMINAL_FAILURE;
+}
 export type ProviderOutcome = "up" | "down" | "none";
 export function providerOutcome(result: ProviderResult): ProviderOutcome {
   if (result.ok) return "up";
+  if (nativeTerminalFailure(result)) return "down";
   return typeof result.error === "string" && (PROVIDER_DOWN.has(result.error) || /^http_5\d\d$/.test(result.error)) ? "down" : "none";
 }
 
