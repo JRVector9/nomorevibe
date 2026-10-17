@@ -24,6 +24,7 @@ import { pipelineFlow } from "@/lib/operations/pipeline";
 import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
+import { catalogJobsForBatch } from "@/lib/jobs/batches";
 import { ATTENTION_HISTORY_KEY, attentionAcks, readAttentionHistory, recordAttentionSample } from "@/lib/operations/attention";
 import { webWritable } from "@/lib/operations/dr/web-gate";
 import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
@@ -465,7 +466,8 @@ export default async function StatusPage() {
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
         data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}
         reviewMode={settings.reviewMode} enabled={settings.enabled}
-        jobs={JOB_NAMES.map(name => {
+        // 지금 batch 상태에서 돌지 않는 versioned 전용 잡은 생존 띠·실행 요청에 올리지 않는다(실패로 보이고 요청해도 안 돈다)
+        jobs={catalogJobsForBatch(inputs.jobBatch).map(({ name }) => {
           const job = derived.states.get(name);
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
             lastSuccessAt: job?.lastSuccessAt?.toISOString() ?? null, nextScheduledAt: job?.nextScheduledAt?.toISOString() ?? null,

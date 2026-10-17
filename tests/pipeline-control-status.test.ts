@@ -90,6 +90,16 @@ describe('unknown boundaries', () => {
     expect(status.owners[0]).toMatchObject({ live: true, epoch: 11 });
     expect(status.hosts.find(row => row.host === 'm3')?.roles.every(row => !row.ready)).toBe(true);
   });
+  it('keeps the host table when an Oracle scheduler candidate sits in the candidate list', () => {
+    // readJobBatchReadiness 는 batch 역할 밖 후보(Oracle scheduler 의 role 'scheduler')를 identity_mismatch 행으로 함께 낸다
+    const scheduler = { role: 'scheduler', instanceId: 'oracle-scheduler', host: 'oracle-osaka-smoke', release: 'release-one',
+      anchor: null, ready: false, reason: 'identity_mismatch' };
+    const status = buildPipelineControlStatus(fixture(), { ...readiness, candidates: [
+      ...readiness.candidates.map(row => ({ ...row, ready: true, reason: 'ready' })), scheduler] });
+    expect(status.hosts.find(row => row.host === 'oracle-osaka-smoke')?.roles.find(row => row.role === 'official-news')).toMatchObject({ ready: true, reason: 'ready' });
+    expect(status.hosts.flatMap(row => row.roles).some(row => row.reason === 'readback_unknown')).toBe(false);
+    expect(status.hosts.flatMap(row => row.roles).some(row => row.role === 'scheduler')).toBe(false);
+  });
   it('does not select one duplicate stage row or convert invalid clock/counters into zero', () => {
     const raw = fixture();
     raw.stages.push({ ...raw.stages[0] });

@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
+import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { isPausedJob } from "@/lib/jobs/status";
 import { downProductCount, DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { getEvidenceStatusSummary } from "@/lib/domain/evidence/admin";
@@ -46,6 +47,8 @@ export type ActionInputs = {
   settingsApply: SettingsApply | null;
   ops: Awaited<ReturnType<typeof operationsData>>;
   jobStates: Awaited<ReturnType<typeof listJobStates>>;
+  /** 지금 batch 상태 — versioned 전용 잡(Oracle 분리 역할)을 일정·목록에서 가른다 */
+  jobBatch: Awaited<ReturnType<typeof readJobBatchMode>>;
   evidenceSummary: Awaited<ReturnType<typeof getEvidenceStatusSummary>>;
   downCount: number;
   overview: Awaited<ReturnType<typeof humanQueueOverview>>;
@@ -68,8 +71,8 @@ const warn = (event: string) => (error: unknown) => {
 
 /** 조치할 일과 머리말 칩이 읽는 것 — 서로 기다릴 까닭이 없어 한꺼번에 띄운다 */
 export async function loadActionInputs(settings: CrawlSettings): Promise<ActionInputs> {
-  const [ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply] = await Promise.all([
-    operationsData(), listJobStates(), getEvidenceStatusSummary(new Date()), downProductCount(),
+  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply] = await Promise.all([
+    operationsData(), listJobStates(), readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     humanQueueOverview(settings), recentSecondReviewFailures(),
     pipelineThroughput(settings).catch(warn("operations.throughput_unavailable")),
@@ -82,7 +85,7 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     modelServerHealth().catch(warn("operations.model_servers_unavailable")),
     readSettingsApply().catch(warn("operations.settings_apply_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers };
+  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers };
 }
 
 /** 조치할 일과 화면 조각이 함께 쓰는 판단 — 웹 인스턴스, 워커 진행, 검색 점검, GitHub 한도, AI 연결 */
@@ -113,7 +116,7 @@ export function deriveStatus(inputs: ActionInputs) {
   return {
     ageMs, states, web, healthObservation, health, quota, agentInstance,
     agent: agentInstance?.value as AgentStatus | undefined,
-    workerProgress: throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt)) : null,
+    workerProgress: throughput ? buildWorkerProgress(throughput, jobStates, ops.observations, new Date(ops.fetchedAt), inputs.jobBatch) : null,
   };
 }
 

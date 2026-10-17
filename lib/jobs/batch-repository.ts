@@ -67,6 +67,13 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
   return { role: lease.role, host: instance.host, instanceId: lease.instanceId, bootId: lease.bootId,
     release: lease.release, batchEpoch: row.epoch };
 }
+/** 잠그지 않는 batch 상태 읽기 — 진행 판정·관리자 목록이 지금 일정·실행이 있는 잡을 고를 때(catalogJobsForBatch) 쓴다 */
+export async function readJobBatchMode() {
+  const [row] = await db.select({ mode: jobBatchControl.mode, writerContractVersion: jobBatchControl.writerContractVersion })
+    .from(jobBatchControl).where(eq(jobBatchControl.id,1));
+  if (!row) throw new Error('job_batch_control_missing');
+  return row;
+}
 export async function batchPendingNames(role: BatchRole): Promise<string[]> {
   return onPrimary(async () => {
     const [row] = await db.select().from(jobBatchControl).where(eq(jobBatchControl.id,1));

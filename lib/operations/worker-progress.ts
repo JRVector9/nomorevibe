@@ -1,6 +1,6 @@
-import { batchJobsForRole, type BatchRole } from '@/lib/jobs/batches';
+import { batchJobsForRole, catalogJobsForBatch, type BatchRole } from '@/lib/jobs/batches';
 import type { ThroughputStage } from "./throughput-model";
-import { JOB_CATALOG, lanesForRole, type JobRole } from "@/lib/jobs/catalog";
+import { lanesForRole, type JobRole } from "@/lib/jobs/catalog";
 import { isPausedJob } from "@/lib/jobs/status";
 
 export type RuntimeLane = {
@@ -114,8 +114,11 @@ export function classifyScheduler(
   jobs: Array<{ name: string; nextScheduledAt: Date | null; notBefore: Date | null }>,
   observed: boolean,
   now: Date,
+  batch: { mode: string; writerContractVersion: number },
 ): SchedulerProgress {
-  const intervals = new Map(JOB_CATALOG.filter(job => job.intervalMs !== null)
+  // 지금 batch 상태에서 scheduler 가 일정을 미는 잡만 본다(requestDueJobs 의 scheduledJobs 와 같은 기준).
+  // legacy 에서도 근거 새로 고침이 versioned 전용 잡 행을 요청해 두므로, 그 행의 빈 예약을 '예약 모름'으로 세지 않는다.
+  const intervals = new Map(catalogJobsForBatch(batch).filter(job => job.intervalMs !== null)
     .map(job => [job.name, job.intervalMs!]));
   const relevant = jobs.filter(job => intervals.has(job.name) &&
     !(job.name === "product-intro-check" && job.notBefore && job.notBefore > now));

@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { classifyLiveness, classifyScheduler, classifyStage } from "@/lib/operations/worker-progress";
 
 const now = new Date("2026-09-28T09:30:00.000Z");
+const legacy = { mode: "legacy", writerContractVersion: 0 };
 const stage = { key: "fetch" as const, enabled: true, waiting: 4, oldestMinutes: 8,
   completed5m: 0, progress5m: 0, errors5m: 0 };
 
@@ -80,17 +81,34 @@ it("classifies eligible publisher work without restarting for held or newly appr
 
 it("uses overdue scheduled requests rather than zero new records to detect scheduler failure", () => {
   const overdue = { name: "crawl-fetch", nextScheduledAt: new Date(now.getTime() - 2 * 60_000 - 1_000), notBefore: null };
-  expect(classifyScheduler([overdue], true, now).reason).toBe("scheduler_missed");
-  expect(classifyScheduler([overdue], false, now).reason).toBe("scheduler_missed");
-  expect(classifyScheduler([{ ...overdue, nextScheduledAt: new Date(now.getTime() + 60_000) }], true, now).reason)
+  expect(classifyScheduler([overdue], true, now, legacy).reason).toBe("scheduler_missed");
+  expect(classifyScheduler([overdue], false, now, legacy).reason).toBe("scheduler_missed");
+  expect(classifyScheduler([{ ...overdue, nextScheduledAt: new Date(now.getTime() + 60_000) }], true, now, legacy).reason)
     .toBe("scheduled");
-  expect(classifyScheduler([{ ...overdue, nextScheduledAt: null }], true, now).reason).toBe("unknown_schedule");
-  expect(classifyScheduler([{ name: "heartbeat", nextScheduledAt: null, notBefore: null }], true, now).reason)
+  expect(classifyScheduler([{ ...overdue, nextScheduledAt: null }], true, now, legacy).reason).toBe("unknown_schedule");
+  expect(classifyScheduler([{ name: "heartbeat", nextScheduledAt: null, notBefore: null }], true, now, legacy).reason)
     .toBe("unknown_schedule");
-  expect(classifyScheduler([{ ...overdue, nextScheduledAt: new Date(now.getTime() + 60_000) }], false, now).reason)
+  expect(classifyScheduler([{ ...overdue, nextScheduledAt: new Date(now.getTime() + 60_000) }], false, now, legacy).reason)
     .toBe("worker_missing");
   expect(classifyScheduler([{ name: "product-intro-check", nextScheduledAt: overdue.nextScheduledAt,
-    notBefore: new Date("2100-01-01T00:00:00Z") }], true, now).reason).toBe("unknown_schedule");
+    notBefore: new Date("2100-01-01T00:00:00Z") }], true, now, legacy).reason).toBe("unknown_schedule");
+});
+
+it("judges only the jobs the scheduler schedules in the current batch mode", () => {
+  const fetch = { name: "crawl-fetch", nextScheduledAt: new Date(now.getTime() + 60_000), notBefore: null };
+  // legacy 에서도 근거 새로 고침이 요청해 두는 versioned 전용 잡 행 — scheduler 는 일정을 만들지 않는다
+  const site = { name: "product-site-evidence-refresh", nextScheduledAt: null, notBefore: null };
+  const versioned = { mode: "versioned", writerContractVersion: 1 };
+  expect(classifyScheduler([fetch, site], true, now, legacy).reason).toBe("scheduled");
+  expect(classifyScheduler([fetch, site], true, now, { mode: "draining", writerContractVersion: 1 }).reason).toBe("scheduled");
+  expect(classifyScheduler([fetch, site], true, now, { mode: "versioned", writerContractVersion: 0 }).reason).toBe("scheduled");
+  // versioned 로 돌던 때의 지난 예약이 남아 있어도 legacy 로 돌아온 뒤에는 놓친 일정이 아니다
+  const stale = { ...site, nextScheduledAt: new Date(now.getTime() - 10 * 60_000) };
+  expect(classifyScheduler([fetch, stale], true, now, legacy)).toMatchObject({ reason: "scheduled", overdueJobs: [] });
+  // versioned 에서는 같은 행이 판정 대상이다
+  expect(classifyScheduler([fetch, site], true, now, versioned).reason).toBe("unknown_schedule");
+  expect(classifyScheduler([fetch, stale], true, now, versioned))
+    .toMatchObject({ reason: "scheduler_missed", overdueJobs: ["product-site-evidence-refresh"] });
 });
 
 it("reports a missing worker independently of an empty queue", () => {

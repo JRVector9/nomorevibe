@@ -4,7 +4,9 @@ import postgres from "postgres";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { categoryDecisions, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlSettings, operationsObservations,
-  products, productLinks, productEvidenceSources, agentRepositoryScans, repositoryAiLevels, jobs } from "@/lib/db/schema";
+  products, productLinks, productEvidenceSources, agentRepositoryScans, repositoryAiLevels, jobs, jobBatchControl } from "@/lib/db/schema";
+import { requestDueJobs } from "@/lib/jobs/control";
+import { requestEvidenceRefreshJobs } from "@/lib/domain/evidence/refresh-requests";
 import { saveSettings } from "@/lib/crawl/settings";
 import { buildWorkerProgress, progressRepositoryKeySql, readWorkerProgress } from "@/lib/operations/worker-progress-query";
 import { observeService } from "@/lib/operations/observations";
@@ -16,6 +18,8 @@ import { roleHasUnexplainedStall } from "@/scripts/role-worker";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { combineMonitorStatus } from "@/lib/operations/failover-monitor";
 import { runMonitorCycle } from "@/scripts/watch-failover-readiness";
+
+const legacyBatch = { mode: "legacy", writerContractVersion: 0 };
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
@@ -259,7 +263,7 @@ it("preserves lane polling clocks and scopes active job suppression to the same 
       { name: "ai-level-refresh", jobs: ["ai-level-refresh"], state: "running", currentJob: "ai-level-refresh",
         startedAt: now.getTime() - 10_000, pollStartedAt: null, lastProgressAt: now.getTime() - 10_000 },
     ] }, observedAt: now },
-  ], now);
+  ], now, legacyBatch);
   expect(report.lanes).toEqual(expect.arrayContaining([expect.objectContaining({ role: "crawler", reason: "lane_poll_timeout",
     pollAgeMs: 100_000, restartEligible: true })]));
   expect(report.activeJobs).toEqual(["ai-level-refresh"]);
@@ -372,7 +376,7 @@ it("keeps healthy leased work out of two external down samples without hiding ti
       key: `service:${role}:test`, observedAt: now, value: role === "crawler" ? { status: "running", state: "running",
         currentJob: "product-evidence-refresh", jobStartedAt: started.getTime(), ...(legacy ? {} : { lanes: [lane, ...(extraLane ? [extraLane] : [])] }) }
         : { status: "running" },
-    })), now, [{ ...stage, errors5m }]);
+    })), now, legacyBatch, [{ ...stage, errors5m }]);
   };
   const push = vi.fn(), record = vi.fn();
   const ready = { overall: "ok", measuredAt: started.toISOString(), roles: [], release: "test" } as never;
@@ -394,13 +398,32 @@ it("keeps healthy leased work out of two external down samples without hiding ti
   expect(providerAlarm.stages[0]).toMatchObject({ reason: "upstream_stalled", alarm: true, restartEligible: false });
 });
 
+it("keeps a legacy evidence refresh's versioned-only wakeup out of the scheduler verdict", async () => {
+  // 운영 결함 재현: legacy 에서 근거 새로 고침이 product-site-evidence-refresh 행을 요청하지만 scheduler 는 그 일정을 만들지 않는다
+  await requestDueJobs();
+  await db.transaction(tx => requestEvidenceRefreshJobs(tx));
+  const [site] = await db.select().from(jobs).where(eq(jobs.name, "product-site-evidence-refresh"));
+  expect(site).toMatchObject({ nextScheduledAt: null, requestedVersion: 1 });
+  await observeService("scheduler", { status: "running" });
+  expect((await readWorkerProgress()).scheduler).toMatchObject({ reason: "scheduled", alarm: false, overdueJobs: [] });
+  const [batch] = await db.select().from(jobBatchControl).where(eq(jobBatchControl.id, 1));
+  try {
+    // versioned 계약에서는 같은 빈 예약이 판정 대상이다(이 판정이 batch 상태를 실제로 읽는지)
+    await db.update(jobBatchControl).set({ mode: "versioned", writerContractVersion: 1 }).where(eq(jobBatchControl.id, 1));
+    expect((await readWorkerProgress()).scheduler.reason).toBe("unknown_schedule");
+  } finally {
+    await db.update(jobBatchControl).set({ mode: batch.mode, writerContractVersion: batch.writerContractVersion })
+      .where(eq(jobBatchControl.id, 1));
+  }
+});
+
 it("reports publisher, text, and maintenance liveness separately", () => {
   const now = new Date();
   const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [] }, [], [
     { key: 'service:publisher:pub', value: { status: 'running' }, observedAt: now },
     { key: 'service:text:txt', value: { status: 'running' }, observedAt: now },
     { key: 'service:maintenance:mt', value: { status: 'running' }, observedAt: now },
-  ], now);
+  ], now, legacyBatch);
   expect(report.liveness.filter(row => ['publisher', 'text', 'maintenance'].includes(row.role)))
     .toMatchObject([{ role: 'publisher', reason: 'present' }, { role: 'maintenance', reason: 'present' },
       { role: 'text', reason: 'present' }]);

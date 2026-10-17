@@ -33,8 +33,10 @@ const uptimeSchema = z.object({ observationsEnabled: z.boolean(), gateEnabled: z
 const backlogSchema = z.object({ fetchReady: count, fetchBackoff: count, human: count, jobRequests: count });
 const ownersSchema = z.array(z.object({ role: z.string(), instanceId: z.string().nullable(), release: z.string().nullable(),
   epoch: count, live: z.boolean() }));
+// 후보 표에는 batch 역할 밖의 후보도 있다(Oracle scheduler 의 role 'scheduler' — identity_mismatch 행). 그 한 행 때문에
+// 표 전체를 못 읽지 않도록 role 은 글자로 받고, host 표는 batch 역할 행만 골라 쓴다.
 const readinessSchema = z.object({ mode: z.enum(['legacy', 'draining', 'versioned']), epoch: positive, policyHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
-  candidates: z.array(z.object({ role: z.enum(BATCH_ROLES), host: z.enum(BATCH_HOSTS), instanceId: z.string(), release: z.string(),
+  candidates: z.array(z.object({ role: z.string(), host: z.enum(BATCH_HOSTS), instanceId: z.string(), release: z.string(),
     anchor: z.boolean().nullable().optional(), ready: z.boolean(), reason: z.string() })) });
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
