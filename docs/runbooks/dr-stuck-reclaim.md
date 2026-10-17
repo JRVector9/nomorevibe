@@ -5,6 +5,8 @@ TTL·owner 죽음·재시작·정책 변경·drain으로 풀리지 않는다. �
 `scripts/ops/dr/promotion.ts`의 `reclaim-report`(읽기 전용)와 `reclaim`(기본 dry-run, `--apply`)을 다룬다.
 주기 job은 없고 운영자가 손으로만 실행한다. 이 문서의 운영 단계는 **모두 사용자 승인 뒤** 실행한다.
 
+증상별 readback SQL(S1–S9)·provider 정책 선언 근거·하지 말 것·남는 한계는 보조 문서 [`docs/operations/2026-10-17-dr-reclaim-runbook.md`](../operations/2026-10-17-dr-reclaim-runbook.md)에 있다.
+
 ## 먼저 알아야 할 것
 
 1. **시간 경과는 근거가 아니다.** 근거는 두 가지뿐이다.
