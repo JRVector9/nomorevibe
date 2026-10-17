@@ -24,6 +24,7 @@ import { README_SAMPLE_VERSION } from "./readme";
 import type { ReadmeRefreshResult } from "./readme-refresh";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { claimItemLease, lockItemStage, readItemStage } from "@/lib/jobs/items/repository";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import type { ItemOwner, FetchItemBinding } from "@/lib/jobs/items/types";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { assertFetchJob, assertFetchOwnership, fetchClaimPredicate, finishFetchOwnership, hasLiveFetchItem,
@@ -225,6 +226,8 @@ export async function claimFetchItem({ owner, ttlMs }: { owner: ItemOwner; ttlMs
   const visited: number[] = [];
   for (let turn = 0; turn < 100; turn++) {
     const result = await db.transaction(async tx => {
+      // DR writer fence 가 첫 lock 이다(seal 의 fence UPDATE → … → item 과 같은 순서). fenced DB 는 claim 하지 않고 훑기도 멈춘다
+      if (!await writerSiteActive(tx)) return { id: null, claim: null };
       const guard = await lockItemStage(tx, "fetch");
       const stage = await readItemStage(tx, guard);
       if (stage.mode !== "items" || stage.writerContractVersion < 1) return { id: null, claim: null };
