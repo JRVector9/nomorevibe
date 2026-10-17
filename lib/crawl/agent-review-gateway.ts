@@ -397,3 +397,61 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   ai2Terminals.set(terminal, freeze(evidence));
   return { result: gatewayResult(snapshot, body), terminal };
 }
+
+
+import { ai1ItemModelDispatchSchema, ai1ItemGatewayTerminalEvidenceSchema,
+  type Ai1ItemModelDispatch, type Ai1ItemGatewayTerminalEvidence } from "@/lib/llm/capacity";
+export type Ai1ItemGatewayTerminal = Readonly<{ kind: "ai1_item_gateway_terminal" }>;
+const ai1ItemTerminals = new WeakMap<Ai1ItemGatewayTerminal, Ai1ItemGatewayTerminalEvidence>();
+
+/** Only this original native item terminal proves its historical dispatch. */
+export function readAi1ItemGatewayTerminal(value: unknown): Ai1ItemGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? ai1ItemTerminals.get(value as Ai1ItemGatewayTerminal) ?? null : null;
+}
+
+/** AI1 legacy and item entries consume the same private preparation exactly once. */
+export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispatch: Ai1ItemModelDispatch,
+  call: PreparedAi1GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: AgentReviewResult; terminal: Ai1ItemGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const state = preparedCalls.get(call), snapshot = structuredClone(input);
+  const checked = ai1ItemModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+    throw new Error("ai1_item_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding, review = binding.review;
+  if (sha(JSON.stringify(snapshot)) !== state.inputIdentity || review.inputHash !== call.inputHash
+    || review.sourceRevisionHash !== snapshot.sourceRevisionHash || review.policyHash !== snapshot.policyHash
+    || review.promptVersion !== snapshot.snapshot.policy.promptVersion || review.rulesVersion !== snapshot.snapshot.policy.rulesVersion
+    || review.reviewer.model !== call.model || review.reviewer.provider !== state.contract.provider
+    || binding.model !== call.model || binding.wireHash !== call.wireHash || binding.servingContractHash !== call.servingContractHash
+    || binding.totalTokenBound !== call.totalTokenBound || binding.provider !== state.contract.provider
+    || binding.routeId !== state.contract.routeId || dispatchedRequests.has(owned.requestId)) throw new Error("ai1_item_gateway_call_mismatch");
+  state.used = true;
+  dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const failure = (error: unknown): ReviewFailure => {
+    const name = error instanceof Error ? error.name : "";
+    if (deadline.aborted) return "timeout";
+    return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
+  };
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown physical completion retains the original full charge. */ }
+      return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
+  const terminal: Ai1ItemGatewayTerminal = Object.freeze({ kind: "ai1_item_gateway_terminal" });
+  const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_item_gateway_terminal",
+    dispatch: owned, responseHash: sha(body), ...completed });
+  ai1ItemTerminals.set(terminal, freeze(evidence));
+  return { result: gatewayResult(snapshot, body), terminal };
+}

@@ -1,3 +1,5 @@
+import { ai1ItemDispatchBindingSchema, ai1ItemDispatchBindingHash, ai1ItemModelDispatchSchema,
+  ai1ItemGatewayTerminalEvidenceSchema, type Ai1ItemDispatchBinding, type Ai1ItemModelDispatch } from "@/lib/llm/capacity";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
@@ -5,7 +7,7 @@ import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import type { Ai1GatewayTerminal, Ai2GatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import {
   modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
@@ -302,7 +304,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   reason: ModelCapacityIndeterminateReason): Promise<boolean> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const first = ai1ModelDispatchSchema.safeParse(value);
-  const bound = first.success ? first : ai2ModelDispatchSchema.safeParse(value);
+  const second = first.success ? first : ai2ModelDispatchSchema.safeParse(value);
+  const bound = second.success ? second : ai1ItemModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -534,6 +537,66 @@ export async function reconcileAi2GatewayTerminal(terminal: Ai2GatewayTerminal):
       return { kind: "already_settled" };
     }
     if (row.state !== "dispatched" && row.state !== "indeterminate") fail("ai2_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+/** Item caller proves actual fresh attempt and item in this same TX. Shares the original AI1 lock. */
+export async function finishAi1ItemModelCapacityDispatch(tx: ProductTransaction, lock: Ai1CapacityDispatchLock,
+  value: Ai1ItemDispatchBinding): Promise<Ai1ItemModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = ai1Locks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_ai1_capacity_dispatch_lock");
+  const binding = ai1ItemDispatchBindingSchema.parse(value);
+  if (binding.review.candidateId !== proof.candidateId || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || binding.model !== proof.identity.model
+    || `${binding.logicalWorkKey}:${binding.item.bindingHash}` !== proof.identity.workKey
+    || binding.item.owner.instanceId !== proof.identity.owner.instanceId
+    || binding.item.owner.bootId !== proof.identity.owner.bootId) fail("ai1_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = ai1ItemDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("ai1_model_reservation_lost");
+  const dispatch = ai1ItemModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+
+
+/** Fixed native item verifier only; historical settlement does not depend on current item liveness. */
+export async function reconcileAi1ItemGatewayTerminal(terminal: Ai1ItemGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readAi1ItemGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readAi1ItemGatewayTerminal(terminal);
+  if (!native) fail("invalid_ai1_item_gateway_terminal");
+  const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    // Completion uses the historical dispatch, not today's policy validity.
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
+      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
+      || row.model !== dispatch.binding.model || row.class !== "first" || row.pool !== "reviewer"
+      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.item.bindingHash}`
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("ai1_item_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
+        fail("ai1_item_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("ai1_item_gateway_terminal_state_mismatch");
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
       terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
