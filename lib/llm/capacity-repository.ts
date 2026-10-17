@@ -40,6 +40,7 @@ import {
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
+import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
 const fail = (code: string): never => { throw new Error(code); };
@@ -368,7 +369,7 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
   if (!["transport_unknown", "local_abort", "process_exit", "commit_unknown"].includes(reason)) fail("invalid_model_capacity_reason");
-  return transaction(async tx => {
+  const marked = await transaction(async tx => {
     const state = await control(tx);
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
@@ -390,6 +391,25 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
     await event(tx, changed, "dispatch_indeterminate", "dispatched", "indeterminate", reason);
     return true;
+  });
+  // PR15d: 이 프로세스가 같은 호출의 게이트웨이 로컬 종료를 직접 봤으면(MODEL_CAPACITY_LOCAL_END 일 때만 생김) 사실로 남긴다. 해제는 아니다.
+  // 기록 실패는 indeterminate 결과를 바꾸지 않는다 — 회수 근거가 없을 뿐이고 점유·C 는 그대로다.
+  const witness = marked ? takeGatewayLocalEnd(checked.requestId) : null;
+  if (witness) await recordModelDispatchLocalEnd(checked, bound.success ? bound.data.bindingHash : null, witness).catch(() => {});
+  return marked;
+}
+
+/** 소유 handle 이 잠긴 행과 같고 행이 indeterminate 일 때만, 요청당 한 번 dispatch_local_ended 사실을 쓴다(lock 순서: fence → control → 행).
+ * 두 번째 기록은 0099 부분 unique index 에서 조용히 빠진다. 대상 없는 ON CONFLICT 라 events SELECT 권한이 없는 최소권한 principal 도 쓸 수 있다. */
+async function recordModelDispatchLocalEnd(checked: ModelCapacityDispatch, bindingHash: string | null, witness: GatewayLocalEnd): Promise<void> {
+  await transaction(async tx => {
+    await control(tx);
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+    if (!owned(row, checked) || row.state !== "indeterminate" || row.dispatchBindingHash !== bindingHash || witness.requestId !== row.requestId) return;
+    await tx.insert(modelCapacityEvents).values({ requestId: row.requestId, kind: "dispatch_local_ended", epoch: row.epoch, revision: row.revision,
+      policyHash: row.policyHash, fromState: "indeterminate", toState: "indeterminate", reason: null, evidence: gatewayLocalEndFactSchema.parse({ version: 1,
+        kind: "gateway_local_end", requestId: row.requestId, owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId },
+        bindingHash: row.dispatchBindingHash, dispatches: witness.dispatches, terminals: witness.terminals }) }).onConflictDoNothing();
   });
 }
 
@@ -1872,10 +1892,13 @@ export async function reconcileCliProcessTerminal(terminal: CliProcessTerminal):
 }
 
 import { z } from "zod";
-import { modelDispatchReleaseEvidenceSchema, type ModelCapacityOwner, type ModelDispatchReleaseEvidence } from "./capacity";
-/** 회수 판정에 넘기는 잠긴 행의 사실. 시각은 이 TX 의 DB clock(UTC, ms)이다. dispatchAt 은 dispatched_at 또는 첫 dispatch_started event. */
+import { modelDispatchReleaseEvidenceSchema, gatewayLocalEndFactSchema, type ModelCapacityOwner, type ModelDispatchReleaseEvidence } from "./capacity";
+/** owner 가 남긴 게이트웨이 로컬 종료 사실(dispatch_local_ended). endedAt 은 그 event 의 DB clock(기록 시각 ≥ 실제 로컬 종료)이다. */
+export type ModelDispatchLocalEnd = Readonly<{ endedAt: string; owner: ModelCapacityOwner; bindingHash: string | null; dispatches: number; terminals: number }>;
+/** 회수 판정에 넘기는 잠긴 행의 사실. 시각은 이 TX 의 DB clock(UTC, ms)이다. dispatchAt 은 dispatched_at 또는 첫 dispatch_started event.
+ * localEnd 는 indeterminate 행에 남은 owner 의 로컬 종료 사실(없으면 null). */
 export type ModelDispatchReleaseCandidate = Readonly<{ requestId: string; owner: ModelCapacityOwner; state: "dispatched" | "indeterminate";
-  providerBudgetId: string; dispatchAt: string | null; bindingHash: string | null; now: string; oldGeneration: boolean }>;
+  providerBudgetId: string; dispatchAt: string | null; bindingHash: string | null; now: string; oldGeneration: boolean; localEnd?: ModelDispatchLocalEnd | null }>;
 export type ModelDispatchReleaseResult = { kind: "released"; evidence: ModelDispatchReleaseEvidence } | { kind: "blocked"; reason: string }
   | { kind: "not_active" };
 /**
@@ -1895,15 +1918,25 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     FROM model_capacity_events e WHERE e.request_id = r.request_id AND e.kind = 'dispatch_started'))`)} AS dispatch_at, ${iso(sql`clock_timestamp()`)} AS now
     FROM model_capacity_requests r WHERE r.request_id = ${row.requestId}::uuid`);
   const owner = Object.freeze({ instanceId: row.ownerInstanceId, bootId: row.ownerBootId });
+  // 행 lock 뒤에 읽는다. 사실 event 는 append-only·요청당 하나이고 같은 행 lock 아래에서만 쓰인다.
+  const [fact] = row.state === "indeterminate" ? await tx.execute<{ evidence: unknown; at: string }>(sql`SELECT evidence, ${iso(sql`created_at`)} AS at
+    FROM model_capacity_events WHERE request_id = ${row.requestId}::uuid AND kind = 'dispatch_local_ended'`) : [];
+  const parsedFact = fact ? gatewayLocalEndFactSchema.parse(fact.evidence) : null;
+  const localEnd = fact && parsedFact ? Object.freeze({ endedAt: fact.at, owner: Object.freeze({ ...parsedFact.owner }), bindingHash: parsedFact.bindingHash,
+    dispatches: parsedFact.dispatches, terminals: parsedFact.terminals }) : null;
   const verdict = await verify(Object.freeze({ requestId: row.requestId, owner, state: row.state, providerBudgetId: row.providerBudgetId,
     dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, now: clock.now,
-    oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash }));
+    oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash, localEnd }));
   if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
   const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
   if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId
     || evidence.fromState !== row.state || evidence.dispatchAt !== clock.dispatch_at || evidence.bindingHash !== row.dispatchBindingHash
     || evidence.evaluatedAt !== clock.now || evidence.kind === "dr_call_drain" && (evidence.scope !== `model:${row.providerBudgetId}`
       || row.epoch === state.epoch && row.revision === state.revision && row.policyHash === state.policyHash)) fail("model_capacity_release_evidence_mismatch");
+  // local_call_ended 는 이 행에 남은 같은 owner·binding 의 로컬 종료 사실과 그 기록 시각에만 묶인다.
+  if (evidence.kind === "local_call_ended" && (row.state !== "indeterminate" || !localEnd || evidence.endedAt !== localEnd.endedAt
+    || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
+    || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence, terminalEvidenceHash: reviewHash(evidence),
     updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
   if (!changed) fail("model_capacity_release_state_changed");

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { itemOwnerSchema } from '@/lib/jobs/items/types';
 import { assertHostDbEntry } from '@/lib/db/host-budget';
 import { createProviderCircuits, providerCircuitConfig } from '@/lib/llm/provider-circuit-breaker';
+import { processGroupBootFor } from '@/lib/operations/dr/process-owner-env';
 
 export function parsePipelineConsumerArgs(args: string[]): { stage: 'ai2'; once: boolean } {
   if (args.filter(arg => arg === '--stage=ai2').length !== 1 || args.filter(arg => arg === '--once').length > 1
@@ -15,7 +16,9 @@ export async function runPipelineConsumer(args: string[], env: Readonly<Record<s
   if (version === undefined) return { state: 'disabled' as const };
   if (version !== '1') throw new Error('invalid_pipeline_item_consumer_version');
   assertHostDbEntry(env, { kind: 'worker', role: 'reviewer', consumer: 'ai2' });
-  const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, bootId: randomUUID() });
+  // D11: 슈퍼바이저가 이 consumer instance 로 spawn 의도를 기록했으면 그 boot 가 item(=장부) owner 다. 아니면 새 boot(근거 없는 owner).
+  const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID,
+    bootId: processGroupBootFor(env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, env) ?? randomUUID() });
   const circuit = providerCircuitConfig(env);
   const [{ withRuntimeProcess }, { runSecondReviewConsumer }, { startHostBudget }, { supervisorLimits }] = await Promise.all([
     import('./worker'), import('@/lib/crawl/consumers/second'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),

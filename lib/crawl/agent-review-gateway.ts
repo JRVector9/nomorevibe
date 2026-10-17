@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
+import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
@@ -12,8 +13,9 @@ import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolve
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
-/** 공통 슬롯 경로의 모든 gateway 전송. 배경 consumer 줄 범위 안에서만 전송 결과를 그 줄의 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
-const nativeFetch = (...args: Parameters<typeof undiciFetch>) => observeProviderTransport(undiciFetch(...args), args[1]?.signal);
+/** 공통 슬롯 경로의 모든 gateway 전송: 로컬 종료 증인(PR15d)을 거치고, 배경 consumer 줄 범위 안에서만 전송 결과를 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
+const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>) =>
+  observeProviderTransport(localEndGatewayFetch(requestId, ...args), args[1]?.signal);
 
 /**
  * 사내 게이트웨이(abcllm)로 보는 심사.
@@ -306,7 +308,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   };
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* A nonterminal response never releases its charge. */ }
@@ -388,7 +390,7 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   };
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown native completion keeps its original charge. */ }
@@ -446,7 +448,7 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   };
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown physical completion retains the original full charge. */ }
@@ -529,7 +531,7 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
@@ -616,7 +618,7 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -707,7 +709,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -790,7 +792,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -874,7 +876,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -957,7 +959,7 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -1047,7 +1049,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   state.deadline = deadline;
   let body: string, status: number;
   try {
-    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (!response.ok) {

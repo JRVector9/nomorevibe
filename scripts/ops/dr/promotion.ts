@@ -20,7 +20,9 @@ export type PromotionCliCommand =
   | { command: 'open-permits'; apply: boolean; promotionId: string; target: 'http' | 'model'; operator: string }
   | { command: 'process-reclaim-report'; instanceId: string; bootId: string; policies: Map<string, ReclaimPolicy> }
   | { command: 'process-reclaim'; apply: boolean; instanceId: string; bootId: string; operator: string; policies: Map<string, ReclaimPolicyWithReference> }
-  | { command: 'release-drained'; apply: boolean; promotionId: string; operator: string };
+  | { command: 'release-drained'; apply: boolean; promotionId: string; operator: string }
+  | { command: 'reclaim-report'; skewBoundMs: number; policies: Map<string, ReclaimPolicy> }
+  | { command: 'reclaim'; apply: boolean; skewBoundMs: number; operator: string; reference: string; policies: Map<string, ReclaimPolicyWithReference> };
 
 const ALLOWED: Record<PromotionCliCommand['command'], readonly string[]> = {
   identity: [], 'fence-old': ['expect-lineage', 'expect-epoch', 'expect-db', 'operator', 'apply'], seal: ['plan', 'apply'],
@@ -29,6 +31,9 @@ const ALLOWED: Record<PromotionCliCommand['command'], readonly string[]> = {
   'process-reclaim-report': ['instance', 'boot', 'deadline', 'client-bound', 'skew-ms'],
   'process-reclaim': ['instance', 'boot', 'deadline', 'client-bound', 'skew-ms', 'reference', 'operator', 'apply'],
   'release-drained': ['promotion', 'operator', 'apply'],
+  // PR15d: DR 밖 전역 회수. 보고는 읽기 전용, 회수는 근거 있는 행만(모델: 프로세스 그룹 종료·owner 의 로컬 종료, HTTP: 프로세스 그룹 종료).
+  'reclaim-report': ['deadline', 'client-bound', 'skew-ms'],
+  reclaim: ['deadline', 'client-bound', 'skew-ms', 'reference', 'operator', 'apply'],
 };
 const REPEATABLE = new Set(['deadline', 'client-bound']);
 const fail = (code: string): never => { throw new Error(code); };
@@ -53,6 +58,8 @@ export function parsePromotionCliArgs(args: readonly string[], readFile: (path: 
     try { return JSON.parse(readFile(one(key))) as unknown; } catch { return fail(`dr_cli_invalid_${key}_file`); }
   };
   const operator = () => identity(120).parse(one('operator')), promotionId = () => z.uuid().parse(one('promotion'));
+  // reclaimPolicies 와 같은 기본값(1초). HTTP hop(client_bound)에도 같은 skew 를 쓴다.
+  const skewMs = () => options.has('skew-ms') ? z.number().int().min(1).max(600_000).parse(Number(one('skew-ms'))) : 1_000;
   const reclaimPolicies = () => {
     const skewBoundMs = options.has('skew-ms') ? z.number().int().min(1).max(600_000).parse(Number(one('skew-ms'))) : 1_000;
     const policies = new Map<string, ReclaimPolicy>();
@@ -94,6 +101,12 @@ export function parsePromotionCliArgs(args: readonly string[], readFile: (path: 
       return { command: name, apply, instanceId: identity(120).parse(one('instance')), bootId: z.uuid().parse(one('boot')), operator: operator(), policies };
     }
     case 'release-drained': return { command: name, apply, promotionId: promotionId(), operator: operator() };
+    case 'reclaim-report': return { command: name, skewBoundMs: skewMs(), policies: reclaimPolicies() };
+    case 'reclaim': {
+      const reference = identity(400).parse(one('reference'));
+      return { command: name, apply, skewBoundMs: skewMs(), operator: operator(), reference,
+        policies: new Map([...reclaimPolicies()].map(([budget, policy]) => [budget, { ...policy, reference }])) };
+    }
   }
 }
 
@@ -157,6 +170,17 @@ export async function promotionCliMain(args: readonly string[], io: Io = { stdin
         const { releaseDrainedDispatches } = await import('@/lib/operations/dr/reclaim');
         const result = await releaseDrainedDispatches(command, command.apply);
         return out(result, result.rows.some(row => !row.released));
+      }
+      case 'reclaim-report': {
+        const { readReclaimReport } = await import('@/lib/operations/dr/reclaim');
+        return out(await readReclaimReport(command.policies, command.skewBoundMs));
+      }
+      case 'reclaim': {
+        // 모델 장부와 HTTP permit 은 각자 짧은 TX 다(각각 dry-run 이면 ROLLBACK). 근거 없는 행이 하나라도 남으면 blocked(exit 3)로 알린다.
+        const { releaseEvidencedDispatches, releaseProcessExitedHops } = await import('@/lib/operations/dr/reclaim');
+        const model = await releaseEvidencedDispatches({ policies: command.policies, operator: command.operator }, command.apply);
+        const http = await releaseProcessExitedHops({ skewBoundMs: command.skewBoundMs, reference: command.reference, operator: command.operator }, command.apply);
+        return out({ model, http }, [...model.rows, ...http.rows].some(row => !row.released));
       }
       default: return fail('dr_cli_unknown_command');
     }

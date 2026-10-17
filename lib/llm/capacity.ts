@@ -21,7 +21,8 @@ export type ModelCapacityPool = z.infer<typeof capacityPool>;
 export type ModelCapacityMode = "disabled" | "open" | "draining";
 export type ModelCapacityState = "waiting" | "reserved" | "dispatched" | "indeterminate" | "withdrawn" | "settled";
 export type ModelCapacityEventKind = "queued" | "reserved" | "dispatch_started" | "reservation_cancelled"
-  | "reservation_expired" | "wait_expired" | "policy_changed" | "dispatch_indeterminate" | "dispatch_settled" | "dispatch_released";
+  | "reservation_expired" | "wait_expired" | "policy_changed" | "dispatch_indeterminate" | "dispatch_settled" | "dispatch_released"
+  | "dispatch_local_ended";
 export type ModelCapacityIndeterminateReason = "transport_unknown" | "local_abort" | "process_exit" | "commit_unknown";
 export type ModelCapacityEventReason = ModelCapacityIndeterminateReason;
 
@@ -848,10 +849,13 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
   fromState: z.enum(["dispatched", "indeterminate"]), dispatchAt: isoMillis.nullable(), bindingHash: sha64.nullable(),
   notBefore: isoMillis, evaluatedAt: isoMillis, operator: identity(120) };
 /**
- * D11·DR 회수 근거. dispatched/indeterminate 는 TTL·owner 죽음·정책 변경으로 풀리지 않는다(PR05a). 아래 둘만 근거다.
+ * D11·DR 회수 근거. dispatched/indeterminate 는 TTL·owner 죽음·정책 변경으로 풀리지 않는다(PR05a). 아래 셋만 근거다.
  * - process_group_exit: 이 행을 dispatch 할 수 있었던 모든 child 그룹의 ESRCH 기록 + (provider_bound 면) 증명된 기한 경과.
  * - dr_call_drain: 승격(writerEpoch)의 call-drain 이 이 budget scope 에서 drained.
+ * - local_call_ended(PR15d): 살아 있는 owner 가 게이트웨이 호출의 로컬 종료를 같은 owner handle 로 남긴 indeterminate 행 + (provider_bound 면)
+ *   그 기록 시각부터 증명된 기한 경과. 로컬 종료는 provider 생성 종료가 아니다 — 기한 없는 provider_bound 는 풀지 않는다.
  * 시각은 모두 회수 TX 의 DB clock 이고 같은 값이 행 terminal_evidence 와 dispatch_released event 에 남는다. 저장된 JSON 은 권한이 아니다.
+ * 회수는 점유만 푼다: dispatch binding(chargedTokens = C)은 그대로이고 정산(settled)·사용량 증거를 만들지 않는다.
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
   z.object({ ...releaseBase, kind: z.literal("process_group_exit"), dispatchAt: isoMillis,
@@ -861,6 +865,17 @@ export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
       .min(1).max(4096) }).strict(),
   z.object({ ...releaseBase, kind: z.literal("dr_call_drain"), promotionId: z.uuid(), writerEpoch: positive,
     scope: z.string().regex(/^model:[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/) }).strict(),
+  z.object({ ...releaseBase, kind: z.literal("local_call_ended"), fromState: z.literal("indeterminate"), dispatchAt: isoMillis,
+    termination: z.enum(["client_bound", "provider_bound"]), hardDeadlineMs: z.number().int().min(1).max(86_400_000).nullable(),
+    skewBoundMs: z.number().int().min(1).max(600_000), reference: identity(400), endedAt: isoMillis,
+    localEnd: z.object({ dispatches: positive.max(4096), terminals: positive.max(4096) }).strict() }).strict(),
 ]).refine(value => value.notBefore <= value.evaluatedAt, "release_not_due")
-  .refine(value => value.kind !== "process_group_exit" || (value.termination === "client_bound") === (value.hardDeadlineMs === null), "invalid_release_deadline");
+  .refine(value => value.kind !== "process_group_exit" || (value.termination === "client_bound") === (value.hardDeadlineMs === null), "invalid_release_deadline")
+  .refine(value => value.kind !== "local_call_ended" || (value.termination === "client_bound") === (value.hardDeadlineMs === null)
+    && value.endedAt <= value.notBefore && value.localEnd.dispatches === value.localEnd.terminals, "invalid_local_call_end");
+/** owner 가 남긴 게이트웨이 로컬 종료 사실(dispatch_local_ended event). 해제가 아니다 — indeterminate 점유는 그대로다. */
+export const gatewayLocalEndFactSchema = z.object({ version: z.literal(1), kind: z.literal("gateway_local_end"), requestId: z.uuid(),
+  owner: modelCapacityOwnerSchema, bindingHash: sha64.nullable(), dispatches: positive.max(4096), terminals: positive.max(4096) }).strict()
+  .refine(value => value.dispatches === value.terminals, "invalid_gateway_local_end");
+export type GatewayLocalEndFact = Readonly<z.infer<typeof gatewayLocalEndFactSchema>>;
 export type ModelDispatchReleaseEvidence = Readonly<z.infer<typeof modelDispatchReleaseEvidenceSchema>>;

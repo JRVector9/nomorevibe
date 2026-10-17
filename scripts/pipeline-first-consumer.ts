@@ -5,6 +5,7 @@ import { serviceInstanceId } from '@/lib/operations/instance';
 import { supervisorHealthPath } from './consumer-health';
 import { assertHostDbEntry } from '@/lib/db/host-budget';
 import { createProviderCircuits, providerCircuitConfig } from '@/lib/llm/provider-circuit-breaker';
+import { processGroupBootFor } from '@/lib/operations/dr/process-owner-env';
 
 export function parsePipelineFirstConsumerArgs(args: string[]): { once: boolean } {
   if (args.filter(arg => arg === '--once').length > 1 || args.some(arg => arg !== '--once'))
@@ -17,7 +18,9 @@ export async function runPipelineFirstConsumer(args: string[], env: Readonly<Rec
   if (version !== '1') throw new Error('invalid_pipeline_item_consumer_version');
   assertHostDbEntry(env, { kind: 'worker', role: 'reviewer', consumer: 'ai1' });
   supervisorHealthPath({ consumer: 'ai1' }, env);
-  const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, bootId: randomUUID() });
+  // D11: 슈퍼바이저가 이 consumer instance 로 spawn 의도를 기록했으면 그 boot 가 item(=장부) owner 다. 아니면 새 boot(근거 없는 owner).
+  const owner = itemOwnerSchema.parse({ instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID,
+    bootId: processGroupBootFor(env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID, env) ?? randomUUID() });
   if (owner.instanceId !== serviceInstanceId(env)) throw new Error('invalid_item_consumer_service_instance');
   const circuit = providerCircuitConfig(env);
   const [{ withRuntimeProcess }, { runFirstReviewConsumer }, { startHostBudget }, { supervisorLimits }] = await Promise.all([
