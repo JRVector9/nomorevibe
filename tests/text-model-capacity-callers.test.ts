@@ -5,6 +5,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
+import { displayProjectName } from "@/lib/domain/products/display-name";
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
@@ -31,8 +32,18 @@ vi.mock("@/lib/crawl/translate", async (load) => ({ ...await load<typeof import(
 vi.mock("@/lib/crawl/taglines", () => ({ pendingTaglines: mocks.tagTasks, recordTaglineResult: mocks.tagWrite }));
 vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: mocks.profiles, pendingVerifications: mocks.verifications,
   recordProfileResult: mocks.profileWrite, recordVerificationResult: mocks.verifyWrite }));
-vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async () => [], pendingKoreanTaglines: mocks.koreanTasks,
+vi.mock("@/lib/domain/products/korean-taglines", async load => ({
+  ...await load<typeof import("@/lib/domain/products/korean-taglines")>(), homeListSlugs: async () => [], pendingKoreanTaglines: mocks.koreanTasks,
   recordKoreanTaglines: mocks.koreanWrite }));
+vi.mock("@/lib/domain/products/korean-tagline-model-capacity", () => ({
+  translateKoreanTaglinesWithModelCapacity: async (tasks: readonly import("@/lib/domain/products/korean-taglines").KoreanTaglineTask[],
+    _home: readonly string[], _lease: unknown, options: { timeoutMs: number; signal?: AbortSignal }) => {
+    const { koreanTaglineSource } = await import("@/lib/domain/products/korean-taglines");
+    return { kind: "result", result: await mocks.korean(tasks.map(task => ({
+      name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task),
+    })), options.timeoutMs, undefined, options.signal) };
+  },
+}));
 vi.mock("@/lib/domain/products/translations", () => ({ pendingProductTranslations: mocks.productTasks, recordProductTranslations: mocks.productWrite }));
 vi.mock("@/lib/domain/products/product-translation-model-capacity", () => ({
   translateProductFieldsWithModelCapacity: async (tasks: readonly import("@/lib/domain/products/translations").ProductTranslationTask[],

@@ -1,8 +1,9 @@
+import { translateKoreanTaglinesWithModelCapacity } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { TRANSLATE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
+import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
-import { checkKoreanTagline, leadClause } from "@/lib/domain/products/korean-tagline";
-import { homeListSlugs, pendingKoreanTaglines, recordKoreanTaglines, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
+import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
+import { homeListSlugs, pendingKoreanTaglines, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -29,13 +30,7 @@ const SLOW_CALL_MS = 35_000;
 /** 이만큼 실패·버림이 쌓인 소개는 혼자 보낸다 — 그것 하나가 옆의 멀쩡한 소개까지 끌고 실패하지 않게 */
 const SOLO_ATTEMPTS = 2;
 
-/** 이렇게 버려진 소개는 다음부터 앞 문장만 보낸다 — 같은 긴 입력을 다시 보내면 같은 이유로 또 버려진다 */
-const SHORTEN_AFTER = new Set(["rejected:too_long", "rejected:empty"]);
-
-/** 모델에 보낼 소개 — 보통은 지금 소개 그대로, 길어서 버려진 적이 있으면 앞 문장(leadClause). 검사도 이 글을 원문으로 본다 */
-export function taglineSource(task: KoreanTaglineTask): string {
-  return task.lastError && SHORTEN_AFTER.has(task.lastError) ? leadClause(task.tagline) : task.tagline;
-}
+export { taglineSource };
 
 /** 앞에서부터 개수·글자 수 한도까지 — 차례(새 제품·홈 먼저)를 지킨다 */
 export function packTaglineBatch(tasks: KoreanTaglineTask[]): KoreanTaglineTask[] {
@@ -79,7 +74,9 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       const calledAt = Date.now();
       const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
       const items = batch.map((task) => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
-      const result = await translateTaglinesToKorean(items, timeoutMs, undefined, signal);
+      const outcome = await translateKoreanTaglinesWithModelCapacity(batch, homeSlugs, lease, { timeoutMs, signal });
+      if (outcome.kind === "skipped") return { done: false };
+      const result = outcome.result;
       if (signal.aborted) return { done: false };
       // 틱 끝이라 짧아진 제한에 걸린 것은 소개 탓이 아니다 — 시도로 세지 않고 다음 틱에 다시
       if (!result.ok && result.error === "timeout" && timeoutMs < CALL_MS) {
@@ -92,7 +89,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         return { task, result: checked.ok ? { kind: "success", line: checked.line, model: TRANSLATE_MODEL }
           : { kind: "failure", error: `rejected:${checked.reason}`, model: TRANSLATE_MODEL } };
       });
-      await recordKoreanTaglines(entries, lease);
+      const stored = outcome.expectation ? await recordKoreanTaglines(entries, lease, outcome.expectation) : await recordKoreanTaglines(entries, lease);
+      if (outcome.expectation && stored !== entries.length) return { done: false };
       for (const { result: entry } of entries) {
         if (entry.kind === "success") written++;
         else if (entry.error.startsWith("rejected:")) rejected[entry.error.slice(9)] = (rejected[entry.error.slice(9)] ?? 0) + 1;

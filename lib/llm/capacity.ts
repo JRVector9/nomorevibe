@@ -414,3 +414,67 @@ export const productTranslationGatewayTerminalEvidenceSchema = z.object({ versio
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_product_translation_terminal_usage");
 export type ProductTranslationGatewayTerminalEvidence = Readonly<z.infer<typeof productTranslationGatewayTerminalEvidenceSchema>>;
+
+/** Fixed Korean tagline shapes. Raw cache counts are not eligibility or native authority. */
+export const productTaglineKoCacheSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absent") }).strict(),
+  z.object({ kind: z.literal("present"), rowIdentityHash: sha64, attempts: z.number().int().nonnegative().safe(),
+    qualityRejections: z.number().int().nonnegative().safe() }).strict(),
+]);
+export type ProductTaglineKoCache = Readonly<z.infer<typeof productTaglineKoCacheSchema>>;
+export const productTaglineKoMemberSchema = z.object({ productId: positive, slug: identity(80),
+  sourceIdentityHash: sha64, sourceHash: sha64, cache: productTaglineKoCacheSchema }).strict();
+export type ProductTaglineKoMember = Readonly<Omit<z.infer<typeof productTaglineKoMemberSchema>, "cache"> & { cache: ProductTaglineKoCache }>;
+const productTaglineKoTargetKey = (member: ProductTaglineKoMember) => `product-tagline-ko:${member.productId}`;
+export const productTaglineKoInputSchema = z.object({ members: z.array(productTaglineKoMemberSchema).min(1).max(8)
+  .refine(members => new Set(members.map(productTaglineKoTargetKey)).size === members.length, "duplicate_product_tagline_ko_member"),
+  model: identity(200) }).strict();
+export type ProductTaglineKoInput = Readonly<{ members: readonly ProductTaglineKoMember[]; model: string }>;
+export function productTaglineKoMemberKeys(members: readonly ProductTaglineKoMember[]): string[] {
+  return productTaglineKoInputSchema.shape.members.parse(members).map(productTaglineKoTargetKey).sort();
+}
+export function productTaglineKoLogicalWorkKey(members: readonly ProductTaglineKoMember[]): string {
+  return `text:product-tagline-ko:${createHash("sha256").update(JSON.stringify(productTaglineKoMemberKeys(members))).digest("hex")}`;
+}
+export function productTaglineKoInputHash(value: ProductTaglineKoInput): string {
+  const checked = productTaglineKoInputSchema.parse(value);
+  return createHash("sha256").update(JSON.stringify(canonical({ ...checked, members: [...checked.members].sort((a, b) => {
+    const left = productTaglineKoTargetKey(a), right = productTaglineKoTargetKey(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  }) }))).digest("hex");
+}
+export const productTaglineKoDispatchBindingSchema = productTaglineKoInputSchema.extend({
+  kind: z.literal("product_tagline_ko_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("abcllm"), routeId: z.literal("product-tagline-ko"), wireHash: sha64, servingContractHash: sha64,
+  totalTokenBound: positive, chargedTokens: positive,
+  job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-tagline-ko") }).strict(),
+  role: reasonTranslationDispatchBindingSchema.shape.role,
+}).strict().refine(value => {
+  const checked = productTaglineKoInputSchema.safeParse({ members: value.members, model: value.model });
+  return checked.success && value.logicalWorkKey === productTaglineKoLogicalWorkKey(checked.data.members)
+    && value.inputHash === productTaglineKoInputHash(checked.data) && value.chargedTokens === value.totalTokenBound;
+}, "invalid_product_tagline_ko_binding");
+export type ProductTaglineKoDispatchBinding = Readonly<Omit<z.infer<typeof productTaglineKoDispatchBindingSchema>, "members"> & {
+  members: readonly ProductTaglineKoMember[] }>;
+export function productTaglineKoDispatchBindingHash(value: ProductTaglineKoDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(productTaglineKoDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type ProductTaglineKoModelDispatch = ModelCapacityDispatch & Readonly<{ binding: ProductTaglineKoDispatchBinding; bindingHash: string }>;
+export const productTaglineKoModelDispatchSchema = handleSchema.extend({ binding: productTaglineKoDispatchBindingSchema,
+  bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_product_tagline_ko_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId && value.owner.bootId === value.binding.role.bootId,
+    "invalid_product_tagline_ko_dispatch_owner")
+  .transform(value => value as unknown as ProductTaglineKoModelDispatch);
+export const productTaglineKoGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1),
+  kind: z.literal("product_tagline_ko_gateway_terminal"), dispatch: productTaglineKoModelDispatchSchema,
+  finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]), responseHash: sha64,
+  actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(), provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported"
+    && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_product_tagline_ko_terminal_usage");
+export type ProductTaglineKoGatewayTerminalEvidence = Readonly<z.infer<typeof productTaglineKoGatewayTerminalEvidenceSchema>>;

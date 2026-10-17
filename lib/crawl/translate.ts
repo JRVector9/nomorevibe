@@ -117,15 +117,28 @@ const TAGLINE_SYSTEM = [
   "입력과 같은 개수의 문자열로 된 JSON 배열 하나만 출력한다.",
 ].join(" ");
 
-export async function translateTaglinesToKorean(
-  items: { name: string; tagline: string }[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
-): Promise<KoreanTaglineBatch> {
-  const result = await chat({
-    routeId: "product-tagline-ko",
+export type ProductTaglineKoGatewayItem = Readonly<{ name: string; tagline: string }>;
+function productTaglineKoChatBody(items: readonly ProductTaglineKoGatewayItem[]) {
+  return {
+    routeId: "product-tagline-ko" as const,
     system: TAGLINE_SYSTEM, user: JSON.stringify(items), temperature: 0.1,
     // 한글은 토큰을 많이 먹는다 — 한 줄에 150토큰을 넉넉히 잡는다(검색 키워드 16개가 250토큰 안팎이었다)
     maxTokens: Math.min(3_000, 600 + items.length * 150),
-  }, timeoutMs, request, signal);
+  };
+}
+/** Exact original ordered Korean tagline request, without raw/schema/thinking additions. */
+export function productTaglineKoGatewayWire(items: readonly ProductTaglineKoGatewayItem[], model: string): string {
+  return chatWire(productTaglineKoChatBody(items), model);
+}
+/** Actual display name and actually shortened source; original product identity stays separate. */
+export function productTaglineKoSourceHash(item: ProductTaglineKoGatewayItem): string {
+  return createHash("sha256").update(JSON.stringify(["product-tagline-ko-wire-v1", item.name, item.tagline])).digest("hex");
+}
+
+export async function translateTaglinesToKorean(
+  items: { name: string; tagline: string }[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
+): Promise<KoreanTaglineBatch> {
+  const result = await chat(productTaglineKoChatBody(items), timeoutMs, request, signal);
   return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
 }
 
