@@ -86,7 +86,7 @@ export async function executeFirstReviewConsumerItem(input: {
         && isDeepStrictEqual(dispatch.binding.review, agentReviewBinding(context.candidate.id, context.input,
           { provider: prepared.provider, model: prepared.model })))
         result = await capacity.reviewAgentReviewItemModelCapacity(context.input, dispatch, call, { timeoutMs: 60_000, signal: transportSignal });
-      else await capacity.abandonAgentReviewItemModelCapacity(dispatch);
+      else await capacity.abandonAgentReviewItemModelCapacity(dispatch, call);
     } else if (cli) {
       const binding = cli.dispatch.binding;
       if (current && !transportSignal.aborted && !stopClaims?.aborted && binding.kind === 'ai1_item_cli' && binding.attemptId === receipt.attemptId
@@ -106,7 +106,7 @@ export async function executeFirstReviewConsumerItem(input: {
   if (!current || transportSignal.aborted || result && !result.ok && result.error === 'cancelled') return cancelled();
   if (result) return recordAgentReview({ ...context, receipt, ...(result.ok
     ? { outcome: result.outcome, usage: result.usage }
-    : { error: result.error, usage: result.usage, retryAfter: new Date(Date.now() + retryDelay()) }) });
+    : { error: result.error, detail: result.detail, usage: result.usage, retryAfter: new Date(Date.now() + retryDelay()) }) });
   if (dispatch || cli) return cancelled();
   if (prepared.spam) return recordConsumerSuspectedSpam({ ...context, receipt });
   return recordAgentReview({ ...context, receipt, outcome: prepared.outcome ?? claim.attempt.outcome ?? undefined,

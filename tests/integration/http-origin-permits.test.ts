@@ -449,6 +449,39 @@ it('a rejected real reader cancellation remains indeterminate even after native 
   if(errors.length)throw new AggregateError(errors);
 });
 
+// R4: 실제 undici 는 본문 중 기한(abort)에 native 요청을 먼저 끝내고(onResponseError) 본문 스트림을 오류로 닫는다. 그 뒤의 reader.cancel 은
+// 거절되지만 리더는 이미 끝났고 native 종료도 보였다 — 끝난 요청을 indeterminate 로 남기지 않고 released 로 정산한다.
+// (리더가 살아 있는 채 취소가 거절되는 경우는 위 테스트대로 indeterminate 를 유지한다.)
+it('a real mid-body deadline abort settles released once the reader and native dispatch both ended, and a follower enters',async()=>{
+  await openPolicy();
+  const {safeFetch}=await import('@/lib/net/fetch');
+  const old={flag:process.env.HTTP_ORIGIN_PERMITS,instance:process.env.SERVICE_INSTANCE_ID};process.env.HTTP_ORIGIN_PERMITS='1';process.env.SERVICE_INSTANCE_ID='http-c-one';
+  const globals=globalThis as unknown as {pgClient?:ReturnType<typeof postgres>;db?:unknown};const previousClient=globals.pgClient,previousDb=globals.db;
+  const deadline=new AbortController(),realTimeout=AbortSignal.timeout.bind(AbortSignal);
+  let timeouts=0;const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(()=>++timeouts===1?deadline.signal:realTimeout(2000));
+  let calls=0;const open=new Set<ServerResponse>();
+  const e=await opened((_q,res)=>{if(++calls===1){res.writeHead(200);res.write('held');open.add(res);res.once('close',()=>open.delete(res));}else res.end('next');});
+  const errors:unknown[]=[];
+  try{
+    const held=await track(safeFetch(e.url,'background'));expect(held?.response.status).toBe(200);
+    const [hop]=await client`SELECT id,state FROM http_origin_hops WHERE instance_id='http-c-one'`;expect(hop.state).toBe('dispatched');
+    const reading=track(held!.response.text().then(()=>null,(error:unknown)=>error));
+    deadline.abort(new DOMException('held body deadline','TimeoutError'));
+    expect(await reading).toMatchObject({name:'TimeoutError'});
+    await until(async()=>(await client`SELECT state FROM http_origin_hops WHERE id=${hop.id}::uuid`)[0].state!=='dispatched','mid-body abort settlement');
+    expect((await client`SELECT state FROM http_origin_hops WHERE id=${hop.id}::uuid`)[0].state).toBe('released');
+    expect((await client`SELECT kind FROM http_origin_events WHERE hop_id=${hop.id}::uuid ORDER BY id`).map(row=>row.kind)).toEqual(['reserved','dispatched','released']);
+    const next=await track(safeFetch(e.url,'background'));
+    expect(next?.response.status).toBe(200);expect(await next!.response.text()).toBe('next');expect(calls).toBe(2);
+  }catch(error){errors.push(error);}finally{
+    timeout.mockRestore();
+    for(const step of [async()=>{for(const res of open)res.destroy();await e.close();},async()=>{if(globals.pgClient!==previousClient){await globals.pgClient?.end();globals.pgClient=previousClient;globals.db=previousDb;}}])try{await step();}catch(error){errors.push(error);}
+    if(old.flag===undefined)delete process.env.HTTP_ORIGIN_PERMITS;else process.env.HTTP_ORIGIN_PERMITS=old.flag;
+    if(old.instance===undefined)delete process.env.SERVICE_INSTANCE_ID;else process.env.SERVICE_INSTANCE_ID=old.instance;
+  }
+  if(errors.length)throw new AggregateError(errors);
+});
+
 it('headers waiting rejects the actual worker terminal error after unknown-instance failure and exit',async()=>{
   await openPolicy();let calls=0;
   const endpoint=await opened((_req,res)=>{calls++;res.end('unexpected');});

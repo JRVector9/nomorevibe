@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
@@ -175,7 +175,9 @@ it("records the 0097 marker before the window and proves the legacy budget from 
   // 이 시험 구간은 30분보다 짧아 수집이 marker보다 앞에서 시작한다 — 장부 미적용으로 남는다.
   expect(legacy.live.ledger).toBeNull();
 
-  // items: 적재가 슬롯 모드를 열고 grant마다 control 갱신 시각이 바뀌어, 장부 budget은 '시작 뒤 바뀜'으로 미검증이다.
+  // items: 이 시험 구간은 30분보다 짧아 수집 시작(끝−30분)이 적재보다 앞선다. 적재가 슬롯 모드를 연 갱신 시각이 수집 구간 안이라 '시작 뒤 바뀜',
+  // 이 실행이 남긴 marker도 수집 시작 뒤라 AI2 호출 기록이 미검증이다(grant는 #524 이후 control.cursor만 쓴다). 실제 runner·수집기로
+  // verified가 되는 경로는 파일 끝 F1 시험이 보인다.
   await wipe(); fake.requests.length = 0; fake.contracts = true;
   const items = await run(source, manifest(source.sha, "items", { budget: { maxConcurrentCalls: 8 } }));
   expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events where kind = 'recorder_started'`)).toEqual([{ count: 1 }]);
@@ -312,3 +314,79 @@ it("applies the same window-end drain rule to item consumers", async () => {
   expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
     issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified", "replay_drain_calls_cut"] });
 }, 300_000);
+
+it("refuses an artifact whose README sample is another code version before loading or any call (F1)", async () => {
+  const source = await exported();
+  // 다른 코드 판의 표본이면 심사 잡이 README를 명시 dispatcher로 새로 받아 egress 관문·계량기 밖으로 나간다.
+  const stale = structuredClone(source.artifact);
+  stale.inputs[0].document.pageMeta = { ...stale.inputs[0].document.pageMeta, readmeSampleVersion: "2020-01-01.1" };
+  const sha = modules.fixed.sha256(JSON.stringify(stale));
+  await expect(run({ artifact: stale, sha }, manifest(sha, "legacy"))).rejects.toThrow("replay_readme_sample_version_mismatch");
+  expect(fake.requests).toEqual([]);
+  expect(await db.select().from(crawlCandidates)).toEqual([]);
+  expect(await db.select().from(crawlDocuments)).toEqual([]);
+}, 120_000);
+
+// F1 #10: #524 이후 grant는 control.cursor만 쓰므로 실제 runner·수집기로 items budget이 verified가 될 수 있다. 운영과 다른 것은 짧은 시험
+// 구간의 수집 시작(끝−30분)이 적재·실행보다 앞선다는 점뿐이라, 운영자가 미리 남긴 marker(2시간 전)와 '모드·정책은 구간 시작 전부터 그대로'
+// 전제(적재가 연 모드의 갱신 시각을 이틀 전으로, 통합 budget 시험의 backdateControl과 같다)만 픽스처로 둔다. 호출·장부·계량기·수집은 실제 경로다.
+// 지울 수 없는 모델 슬롯 장부에 앞 시험들의 호출이 섞이지 않게 새 DB에서 돈다.
+describe("item replay budget through the real runner and collector (F1)", () => {
+  const fresh = { name: `${own.name}_items`, client: undefined as postgres.Sql | undefined, created: false,
+    saved: undefined as { db?: unknown; pgClient?: unknown } | undefined };
+  beforeAll(async () => {
+    const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+    try { await admin.unsafe(`CREATE DATABASE ${fresh.name}`); fresh.created = true; } finally { await admin.end({ timeout: 5 }); }
+    const url = new URL(TEST_DATABASE_URL); url.pathname = `/${fresh.name}`;
+    fresh.client = postgres(url.toString(), { max: 8, onnotice: () => {} });
+    await fresh.client.unsafe("set statement_timeout = 0");
+    await migrate(drizzle(fresh.client), { migrationsFolder: path.join(fileURLToPath(new URL("../..", import.meta.url)), "drizzle") });
+    const g = globalThis as { db?: unknown; pgClient?: unknown };
+    fresh.saved = { db: g.db, pgClient: g.pgClient }; g.pgClient = fresh.client; g.db = drizzle(fresh.client, { schema });
+  }, 600_000);
+  afterAll(async () => {
+    const g = globalThis as { db?: unknown; pgClient?: unknown };
+    g.db = fresh.saved?.db; g.pgClient = fresh.saved?.pgClient;
+    await fresh.client?.end({ timeout: 5 });
+    if (!fresh.created) return;
+    const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+    try { await admin.unsafe(`DROP DATABASE IF EXISTS ${fresh.name} WITH (FORCE)`); } finally { await admin.end({ timeout: 5 }); }
+  }, 120_000);
+
+  it("verifies the item budget from the model slot ledger cross-checked with the meter under the declared common budget", async () => {
+    const source = await exported();
+    await db.execute(sql`insert into pipeline_evidence_events (kind, revision, operator, created_at)
+      values ('recorder_started', 'abcdef1', 'f1-fixture', clock_timestamp() - interval '2 hours')`);
+    fake.contracts = true;
+    const backdated = (async () => {
+      for (let tick = 0; tick < 1_200; tick++) {
+        const [row] = await db.execute<{ mode: string }>(sql`select mode from model_capacity_control where id = 1`);
+        if (row.mode === "open") {
+          await db.execute(sql`update model_capacity_control set updated_at = clock_timestamp() - interval '2 days' where id = 1`);
+          return true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      return false;
+    })();
+    // 정책 심사 한도 min(전체 2, reviewer 2) = 2와 같은 공통 동시 예산을 선언한다.
+    const items = await run(source, manifest(source.sha, "items", { budget: { maxConcurrentCalls: 2 } }));
+    expect(await backdated).toBe(true);
+    expect(items).toMatchObject({ mode: "items", stop: { reason: "window_end" }, writes: { products: 0, publishRuns: 0 }, failures: [],
+      budget: { declaredConcurrentCalls: 2, callsAtStop: 10 }, conditions: { upstream: fake.origin, secondReviewFallbacks: null },
+      meter: { calls: 10, refused: 0, egressRejected: 0, indeterminate: 0, upstreamReportedCalls: 10, upstreamReportedTokens: 12_400 } });
+    expect(items.live.source).toMatchObject({ kind: "replay", database: { databaseName: fresh.name } });
+    expect(items.live.ledger).not.toBeNull();
+    expect(items.live.modelCapacity).toEqual({ mode: "open", changedSinceStart: false });
+    const report = modules.fixed.reportFixedInputRun(items);
+    expect(report.budget).toMatchObject({ status: "verified", source: "model_capacity_ledger", calls: 10, chargedTokens: 12_400, reportedCalls: 10,
+      boundCalls: 0, concurrency: { limit: 2 } });
+    const peak = report.budget.status === "verified" ? report.budget.concurrency.peak : -1;
+    expect(peak).toBeGreaterThanOrEqual(Math.max(1, items.meter.maxInFlight));
+    expect(peak).toBeLessThanOrEqual(2);
+    // 같은 실행에서 선언이 정책 한도와 다르면(4) 같은 장부라도 미검증이다.
+    const declaredWrong = { ...items, budget: { declaredConcurrentCalls: 4, callsAtStop: 10 } };
+    expect(modules.fixed.reportFixedInputRun(declaredWrong).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
+      issues: ["concurrency_limit_declaration_mismatch"] });
+  }, 300_000);
+});

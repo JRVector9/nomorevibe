@@ -6,6 +6,7 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { observeService } from '../lib/operations/observations';
+import { networkRoutesField } from '../lib/db/network-route';
 import { consumerHealthPath, supervisorHealthPath } from './consumer-health';
 export { consumerHealthPath, supervisorHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
 import type { RuntimeHeartbeat } from './worker';
@@ -13,7 +14,7 @@ import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/op
 
 import type { BatchRole } from '../lib/jobs/batches';
 import type { ProcessGroupRecorder, ProcessOwner } from '../lib/operations/dr/repository';
-import { processGroupOwnerEnvironment } from '../lib/operations/dr/process-owner-env';
+import { processGroupOwnerEnvironment, processGroupRecordingEnabled } from '../lib/operations/dr/process-owner-env';
 export type RuntimeRole = 'scheduler' | BatchRole;
 export type SupervisorLimits = { heartbeatMs: number; progressMs: number; jobMs: number; drainMs: number };
 export type WorkerHealth = {
@@ -156,7 +157,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
       options.signal?.removeEventListener('abort', cancel);
     }
   }
-  // D11: spawn 전에 의도를 commit 한다. 기록하지 못하면 spawn 하지 않는다(fail closed) — 의도 없는 child 가 장부 행을 dispatch 하면
+  // D11(기록기는 PROCESS_GROUP_RECORDING=1 일 때만 넘어온다): spawn 전에 의도를 commit 한다. 기록하지 못하면 spawn 하지 않는다(fail closed) — 의도 없는 child 가 장부 행을 dispatch 하면
   // 그 행이 '가능한 모든 child 가 끝났다'는 근거로 잘못 회수될 수 있기 때문이다. 그룹 종료 증명은 kill(-pgid) 가 있는 플랫폼에서만 쓴다.
   const group = process.platform === 'win32' ? undefined : options.processGroup;
   const spawnRecord = group ? await bounded(group.intent()).catch(() => null) : undefined;
@@ -191,7 +192,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const publish = () => {
       if (!observationPending && Date.now() - lastObserved >= 15_000) {
         lastObserved = Date.now(); observationPending = true;
-        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss })
+        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss, ...networkRoutesField() })
           .catch(() => {}).finally(() => { observationPending = false; });
       }
       health.updatedAt = Date.now();
@@ -218,7 +219,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const onSignal = () => stop('shutdown_requested', true);
     const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
       ? 'shutdown_requested' : options.signal?.reason === 'progress_stalled'
-        ? 'progress_stalled' : 'role_lease_lost', true);
+        ? 'progress_stalled' : options.signal?.reason === 'batch_admission_blocked' ? 'batch_admission_blocked' : 'role_lease_lost', true);
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
@@ -285,6 +286,11 @@ export function consumerProcessOwner(consumer: 'ai1' | 'ai2' | undefined, env: R
   return owner;
 }
 
+/** D11 기본 꺼짐: PROCESS_GROUP_RECORDING=1 일 때만 켜진 consumer 의 기록 owner 를 만든다. 꺼져 있으면 null — DB 를 거치지 않고 spawn 한다(8020dca 와 같다). */
+export function recordedConsumerOwner(consumer: 'ai1' | 'ai2' | undefined, env: Readonly<Record<string, string | undefined>>): ProcessOwner | null {
+  return consumer !== undefined && processGroupRecordingEnabled(env) ? consumerProcessOwner(consumer, env) : null;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7) as RuntimeRole;
@@ -295,7 +301,7 @@ async function main() {
       args.some(arg => arg !== '--once' && arg !== `--role=${role}` && arg !== '--consumer=ai2' && arg !== '--consumer=ai1')) {
     throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--once]');
   }
-  const owner = consumerProcessOwner(consumer, process.env);
+  const owner = recordedConsumerOwner(consumer, process.env);
   const processGroup = owner ? (await import('../lib/operations/dr/repository')).processGroupRecorder(owner) : undefined;
   process.exitCode = await superviseWorker(role, { once: args.includes('--once'), consumer, ...(processGroup ? { processGroup } : {}) });
 }

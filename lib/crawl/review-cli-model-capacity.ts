@@ -4,6 +4,7 @@ import { cliModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestI
   type ModelCapacityRequestIdentity, type ModelSlotResult } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestCliModelSlot, cancelReservedModelSlot, markModelDispatchIndeterminate,
   reconcileCliProcessTerminal, type CliTarget } from '@/lib/llm/capacity-repository';
+import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
@@ -139,6 +140,7 @@ export async function reviewCliModelCapacity(input: ReviewInput, dispatch: CliMo
     if (response.terminal) await reconcileCliProcessTerminal(response.terminal);
     else await markModelDispatchIndeterminate(dispatch, response.indeterminate ?? 'transport_unknown');
   } catch (cleanup) {
+    if (response.terminal) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'cli_model_result_cleanup_failed');
     throw cleanup;
   }
@@ -152,6 +154,7 @@ export async function abandonCliModelCapacity(dispatch: CliModelDispatch, call: 
   const terminal = await settleReviewCliNotStarted(call, dispatch).catch(() => null);
   await releaseReviewCliCall(call);
   if (!terminal) return markModelDispatchIndeterminate(dispatch, reason);
-  await reconcileCliProcessTerminal(terminal);
+  try { await reconcileCliProcessTerminal(terminal); }
+  catch (error) { await markUnsettledDispatch(dispatch); throw error; }
   return true;
 }

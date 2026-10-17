@@ -13,6 +13,17 @@ import { writerSiteActive } from '@/lib/operations/dr/epoch';
 export class JobBatchBlockedError extends Error { constructor() { super('job_batch_blocked'); } }
 export type BatchExecutionIdentity = { role: BatchRole; host: BatchHost; instanceId: string; bootId: string; release: string; batchEpoch: number };
 
+/**
+ * 역할 선출·갱신 TX 의 짧은 상한(DR fence 확인 바로 다음 문장). pgbouncer transaction 모드는 연결 시작 값으로 timeout 을 넘길 수 없어(lib/db/pool.ts)
+ * 행 lock 을 쥔 채 남은 TX 가 있으면 선출이 끝없이 기다렸다. TX 안에서만(set_config is_local) 걸고, 이미 더 짧은 값은 늘리지 않는다(feedback 경로와 같은 least).
+ * lock 5초·statement 10초: lease 45초·갱신 10초 간격 안에서 lock 을 기다리는 문장(≤4개)이 모두 실패로 끝나 다음 갱신·선출이 새로 판단한다.
+ */
+export const ROLE_TX_LOCK_TIMEOUT_MS = 5_000, ROLE_TX_STATEMENT_TIMEOUT_MS = 10_000;
+export async function boundRoleTransaction(tx: ProductTransaction): Promise<void> {
+  await tx.execute(sql`SELECT set_config(name, (CASE WHEN setting::bigint = 0 THEN cap ELSE least(setting::bigint, cap) END)::text || 'ms', true)
+    FROM (SELECT name, setting, CASE name WHEN 'lock_timeout' THEN ${ROLE_TX_LOCK_TIMEOUT_MS}::bigint ELSE ${ROLE_TX_STATEMENT_TIMEOUT_MS}::bigint END AS cap
+      FROM pg_settings WHERE name IN ('statement_timeout', 'lock_timeout')) s`);
+}
 /** All runtime admissions take this before role/job locks. Existing writers retain their own tokens. */
 export async function lockJobBatch(tx: ProductTransaction) {
   const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('share');
@@ -128,6 +139,7 @@ export async function acquireBatchRole(value: RoleCandidate, takeover?: RoleTake
   return onPrimary(async () => { try { return await db.transaction(async tx => {
     // DR fence가 첫 lock이다(legacy tryAcquireRole과 같은 순서). fenced DB에서는 역할을 얻지 않는다.
     if (!await writerSiteActive(tx)) return null;
+    await boundRoleTransaction(tx);
     const control = await lockJobBatch(tx);
     if (control.mode !== 'versioned' || control.writerContractVersion < 1 || candidate.batchVersion !== 1) return null;
     const policy = checkedPolicy(control), instance = policy.instances.find(item => item.instanceId === candidate.instanceId);
@@ -176,6 +188,7 @@ export async function renewBatchRole(value: RoleLease): Promise<boolean> {
   const lease = batchLeaseSchema.parse(value);
   return onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return false;
+    await boundRoleTransaction(tx);
     const control = await lockJobBatch(tx);
     if ((control.mode !== 'versioned' && !(control.mode === 'draining' && control.drainingFrom === 'versioned')) || lease.batchEpoch !== control.epoch) return false;
     await tx.select().from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
@@ -183,6 +196,28 @@ export async function renewBatchRole(value: RoleLease): Promise<boolean> {
       .where(and(eq(roleLeases.role,lease.role),eq(roleLeases.ownerInstanceId,lease.instanceId),eq(roleLeases.ownerBootId,lease.bootId),
         eq(roleLeases.ownerRelease,lease.release),eq(roleLeases.epoch,lease.epoch),sql`${roleLeases.leaseUntil}>clock_timestamp()`)).returning({role:roleLeases.role});
     return Boolean(row);
+  }));
+}
+/**
+ * 선출된 versioned lease 의 claim 관문 중 readiness(capability·결과·anchor·bootstrap/re-canary grant)만 읽는다. 잠그지 않는 짧은 읽기 TX 다.
+ * 갱신은 readiness 를 보지 않으므로(lease 유지가 claim 권한이 아니다) 결과가 24시간을 넘거나 capability 가 만료돼 모든 claim 이 막혀도 lease 는 남는다.
+ * role-worker 는 이것으로 그 상태를 찾아 lease 를 놓는다. versioned 가 아니거나(draining 포함) control epoch 가 바뀌었으면 null(판정 대상 아님 — 갱신이 따로 본다).
+ */
+export async function batchLeaseAdmission(value: RoleLease): Promise<{ ready: boolean; reason: string } | null> {
+  const lease = batchLeaseSchema.parse(value);
+  return onPrimary(() => db.transaction(async tx => {
+    await boundRoleTransaction(tx);
+    const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1));
+    if (!row || row.mode !== 'versioned' || lease.batchEpoch !== row.epoch || !row.policyHash) return null;
+    const [candidate] = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,lease.role),eq(jobBatchCandidates.instanceId,lease.instanceId),
+      eq(jobBatchCandidates.bootId,lease.bootId),eq(jobBatchCandidates.release,lease.release),eq(jobBatchCandidates.policyHash,row.policyHash)));
+    if (!candidate) return { ready: false, reason: 'candidate_missing' };
+    const [clock] = await tx.select({now:sql<string>`clock_timestamp()::text`}).from(jobBatchControl).where(eq(jobBatchControl.id,1));
+    const now = new Date(clock.now);
+    // assertJobBatchAdmission 과 같은 술어: 정상 readiness, 아니면 운영자 bootstrap/re-canary grant
+    const evidence = await candidateEvidence(tx,{...candidate,role:candidate.role as BatchRole,host:candidate.host as BatchHost},now,row.epoch);
+    if (evidence.report.ready || !await bootstrapReadiness(tx,candidate,now,row.epoch)) return evidence.report;
+    return { ready: true, reason: 'grant' };
   }));
 }
 export async function releaseBatchRole(value: RoleLease): Promise<boolean> {

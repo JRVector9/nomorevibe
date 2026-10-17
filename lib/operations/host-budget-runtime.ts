@@ -124,7 +124,8 @@ export function startHostBudget(env: Readonly<Record<string, string | undefined>
     const token = randomUUID();
     try {
       const slot = await onPrimary(() => db.transaction(async tx => {
-        // DR fence 가 첫 lock 이다(역할 선출과 같은 순서). 그다음 host anchor 를 잠근다
+        // 비상 admission 이 켜졌을 때만 DR fence(readEmergencyState 의 SHARE lock)가 첫 lock 이고 그다음 host anchor 를 잠근다.
+        // 꺼져 있으면 fence 를 읽지 않고 host anchor 가 첫 lock 이다(fenced DB 의 claim 은 runner 의 claim TX 가 fence 를 보고 막는다).
         const state = emergency.mode === 'enabled' ? await readEmergencyState(tx, host) : null;
         const { nowMs, ledger } = await lockedLedger(tx, host);
         if (!ledger.ok) return { reason: 'host_ledger_invalid' as const };

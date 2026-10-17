@@ -3,6 +3,7 @@ import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileWebsearchQueryGatewayTerminal } from "@/lib/llm/capacity-repository";
+import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { websearchProcessOwner } from "@/lib/llm/websearch-process-owner";
@@ -84,6 +85,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
     if (native.terminal) await reconcileWebsearchQueryGatewayTerminal(native.terminal);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, "transport_unknown")) throw new Error("websearch_query_dispatch_not_marked");
   } catch (cleanup) {
+    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "websearch_query_result_cleanup_failed");
     throw cleanup;
   }

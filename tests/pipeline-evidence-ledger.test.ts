@@ -7,12 +7,16 @@ import { JobLeaseLostError } from "@/lib/jobs/lease";
 const hash = "a".repeat(64), WINDOW = 1_800_000;
 const at = (ms: number) => new Date(Date.UTC(2026, 9, 17) + ms).toISOString();
 const identity = (model: string) => ({ provider: "abcllm" as const, model, canonicalModel: model });
-/** 구간 안에서 AI1 승인 + 필수 AI2 승인으로 끝난 후보 finals개. ledger를 주면 0097 장부가 구간을 덮은 수집본이다. */
+/**
+ * 구간 안에서 AI1 승인 + 필수 AI2 승인으로 끝난 후보 finals개. ledger를 주면 0097 장부가 구간을 덮은 수집본이다.
+ * F1: 최종은 구간 전체에 고르게 퍼지고(기준선 워커 공백 검사) 같은 운영 DB 출처를 싣는다.
+ */
 function liveWindow(finals: number, ledger?: { startedMs?: number; overrides?: number; leaseViolations?: number; ai2Calls?: number }) {
   const value: LiveCapacityArtifact = { version: 1, scope: "live_window", runId: "ledger", revision: "9e13341",
     schema: { appliedMigrations: 97, absentTables: [] },
     window: { startedAt: at(0), endedAt: at(WINDOW), durationMs: WINDOW, collectedAt: at(WINDOW + 60_000), collectedAfterEndMs: 60_000 },
     database: { target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read", replicaCaughtUp: null, writeXidAssigned: false },
+    source: { kind: "live", database: { systemIdentifier: "7400000000000000001", databaseOid: "16384", databaseName: "nomorevibe" } },
     identity: { promptVersion: "p1", rulesVersion: "r1", inputPolicyHash: hash, comparisonPolicyHash: hash, fullReviewPolicyHash: hash,
       reviewMode: "enforce", secondGateRequired: true, concurrency: 2, settingsUpdatedMs: -3_600_000,
       models: { first: identity("first"), second: [identity("second")], fallbacks: [] } },
@@ -23,12 +27,13 @@ function liveWindow(finals: number, ledger?: { startedMs?: number; overrides?: n
     safety: { duplicatePublications: 0, humanDecisionOverrides: "unverified", leaseViolations: "unverified" },
     budget: { status: "unverified" }, quality: null };
   for (let id = 1; id <= finals; id++) {
+    const completedMs = Math.round(WINDOW * id / (finals + 1));
     value.candidates.push({ id, state: "approved", decidedBy: "auto", appliedAttemptId: id * 10 });
     value.attempts.push({ id: id * 10, candidateId: id, inputHash: hash, state: "succeeded", failure: null, provider: "abcllm",
       model: "first", policyHash: hash, promptVersion: "p1", rulesVersion: "r1", reusedFromAttemptId: null, decision: "approve",
-      reReview: false, readyMs: 990_000, startedMs: 999_000, completedMs: 1_000_000, inputTokens: 1, outputTokens: 1 });
+      reReview: false, readyMs: completedMs - 10_000, startedMs: completedMs - 1_000, completedMs, inputTokens: 1, outputTokens: 1 });
     value.votes.push({ id: id * 100, firstAttemptId: id * 10, status: "agreed", settledElsewhere: false, fallback: false,
-      provider: "abcllm", model: "second", slotProvider: "abcllm", slotModel: "second", secondDecision: "approve", reviewedMs: 1_001_000 });
+      provider: "abcllm", model: "second", slotProvider: "abcllm", slotModel: "second", secondDecision: "approve", reviewedMs: completedMs + 1_000 });
   }
   value.ai2Calls = { chains: finals, calls: ledger?.ai2Calls ?? finals, failed: 0, unattributedChains: 0 };
   if (ledger) {
@@ -78,7 +83,7 @@ describe("evidence ledger in live artifacts", () => {
 
 describe("evidence ledger in the judgement", () => {
   it("passes safety when both windows are covered with zero violations, leaving only budget evidence missing", () => {
-    const result = compareLiveCapacityRuns(liveWindow(10, {}), liveWindow(20, {}));
+    const result = compareLiveCapacityRuns(liveWindow(30, {}), liveWindow(60, {}));
     expect(result).toMatchObject({ safety: "passed", performance: "passed", status: "incomplete", budgetEvidence: "unverified" });
     expect(result.reasons).not.toContain("human_decision_override_unverified");
     expect(result.reasons).not.toContain("lease_violation_unverified");
@@ -88,12 +93,12 @@ describe("evidence ledger in the judgement", () => {
     [{ overrides: 1 }, "human_decision_override_detected"],
     [{ leaseViolations: 2 }, "lease_violation_detected"],
   ])("fails a covered candidate window with recorded violations (%j)", (counts, reason) => {
-    const result = compareLiveCapacityRuns(liveWindow(10, {}), liveWindow(20, counts));
+    const result = compareLiveCapacityRuns(liveWindow(30, {}), liveWindow(60, counts));
     expect(result).toMatchObject({ status: "failed", safety: "failed" });
     expect(result.reasons).toContain(reason);
   });
   it("keeps a candidate window recorded before the marker incomplete", () => {
-    const result = judgeLiveCapacity(reportLiveCapacityWindow(liveWindow(10, {})), reportLiveCapacityWindow(liveWindow(20)));
+    const result = judgeLiveCapacity(reportLiveCapacityWindow(liveWindow(30, {})), reportLiveCapacityWindow(liveWindow(60)));
     expect(result.safety).toBe("incomplete");
     expect(result.reasons).toEqual(expect.arrayContaining(["human_decision_override_unverified", "lease_violation_unverified"]));
   });

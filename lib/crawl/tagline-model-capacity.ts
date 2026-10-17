@@ -4,6 +4,7 @@ import { TAGLINE_MODEL, taglineEvidence, type TaglineResult } from "./tagline";
 import { prepareCrawlTaglineGatewayCall, writeTaglineWithReservedGateway, readCrawlTaglineGatewayTerminal } from "./agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestCrawlTaglineModelSlot,
   readCrawlTaglineContinuation, cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileCrawlTaglineGatewayTerminal } from "@/lib/llm/capacity-repository";
+import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, crawlTaglineInputHash, crawlTaglineLogicalWorkKey, type CrawlTaglineParent } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
@@ -85,6 +86,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("crawl_tagline_dispatch_not_marked");
   } catch (cleanup) {
+    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "crawl_tagline_result_cleanup_failed");
     throw cleanup;
   }

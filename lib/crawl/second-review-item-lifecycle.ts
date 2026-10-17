@@ -98,7 +98,7 @@ async function executeItem(input: {
           && admitted.review.sourceRevisionHash === reviewInput.sourceRevisionHash && admitted.inputPolicyHash === reviewInput.policyHash)
           result = await capacity.reviewSecondReviewModelCapacity(reviewInput, dispatch, call,
             { timeoutMs: secondReviewTransportTimeoutMs(provider), signal });
-        else await capacity.abandonSecondReviewModelCapacity(dispatch);
+        else await capacity.abandonSecondReviewModelCapacity(dispatch, call);
       } else if (cli) {
         // gateway 와 같은 확인: 같은 원 행·실패 수·입력일 때만 실행하고, 아니면 spawn 없이 not_started 로 닫는다
         const admitted = cli.dispatch.binding;
@@ -113,7 +113,7 @@ async function executeItem(input: {
       { timeoutMs: secondReviewTransportTimeoutMs(provider), signal, itemReceipt: receipt });
     } else if (dispatch) {
       if (!capacity) throw new Error("ai2_model_dispatch_missing");
-      await capacity.abandonSecondReviewModelCapacity(dispatch);
+      await capacity.abandonSecondReviewModelCapacity(dispatch, call);
     } else if (cli) await cli.capacity.abandonCliModelCapacity(cli.dispatch, cli.call);
   } finally {
     // Caller abort never stops renewal before the actual transport has settled.

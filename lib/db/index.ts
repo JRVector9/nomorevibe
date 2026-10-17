@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type postgres from "postgres";
 import { logger } from "@/lib/observability/logger";
+import { fallbackHostEnv } from "./network-route";
 import { createDbClient, dbPoolConfig } from "./pool";
 import { createReplicaRouter, REPLICA_LAG_QUERY } from "./replica";
 import { currentReplayDb } from "./replay-scope";
@@ -23,7 +24,7 @@ function getDb(): Db {
   if (!connectionString) {
     throw new Error("DATABASE_URL 환경변수가 설정되지 않았습니다");
   }
-  const client = globalForDb.pgClient ?? createDbClient(connectionString);
+  const client = globalForDb.pgClient ?? createDbClient(connectionString, undefined, "primary", fallbackHostEnv("DATABASE_FALLBACK_HOST"));
   const instance = drizzle(client, { schema });
   globalForDb.pgClient = client;
   globalForDb.db = instance;
@@ -43,7 +44,7 @@ function getReadDb(): Db | null {
     poolerMode: "direct" as const,
     applicationName: "nomorevibe:web-replica",
   };
-  return (globalForDb.readDb = drizzle(createDbClient(url, config, "read"), { schema }));
+  return (globalForDb.readDb = drizzle(createDbClient(url, config, "read", fallbackHostEnv("READ_DATABASE_FALLBACK_HOST")), { schema }));
 }
 
 const replicaScope = new AsyncLocalStorage<Db>();
@@ -51,6 +52,7 @@ type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type TransactionPrelude = (tx: Transaction) => Promise<void>;
 type PreludeScope = { prelude: TransactionPrelude; refusal?: { error: unknown } };
 const preludeScope = new AsyncLocalStorage<PreludeScope>();
+const setupScope = new AsyncLocalStorage<TransactionPrelude>();
 const SINGLE_WRITES = new Set<PropertyKey>(["insert", "update", "delete"]);
 
 /** db.query.* / db.insert(...) 등을 첫 접근 시점에 초기화해서 넘긴다 — onReplica 안에서는 복제본을 */
@@ -74,10 +76,19 @@ export function withTransactionPrelude<T>(prelude: TransactionPrelude, load: () 
   return preludeScope.run({ prelude }, load);
 }
 
+/**
+ * 이 범위에서 연 prelude TX 는 setup 을 prelude 보다 먼저 실행한다 — 호출자의 문장·lock 기한이 prelude 의 첫 lock 대기(웹 fence SHARE)에도
+ * 걸리게. prelude 범위 밖(워커·읽기 전용 TX)에서는 아무것도 하지 않는다 — 그때는 호출자가 TX 첫 문장으로 같은 설정을 한다.
+ */
+export function withTransactionSetup<T>(setup: TransactionPrelude, load: () => Promise<T>): Promise<T> {
+  return setupScope.run(setup, load);
+}
+
 function preludedTransaction(primary: Db, scope: PreludeScope): Db["transaction"] {
   return ((load: (tx: Transaction) => Promise<unknown>, config?: Parameters<Db["transaction"]>[1]) => config?.accessMode === "read only"
     ? primary.transaction(load, config)
     : primary.transaction(async tx => {
+      await setupScope.getStore()?.(tx);
       try { await scope.prelude(tx); } catch (error) { scope.refusal ??= { error }; throw error; }
       return load(tx);
     }, config)) as Db["transaction"];

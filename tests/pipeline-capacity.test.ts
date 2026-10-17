@@ -252,6 +252,8 @@ it.each(["postgres://a:b@remote/nomorevibe_test", "postgres://a:b@localhost/prod
 });
 it("rejects host overrides, inconsistent URLs and exceeded or invalid reservation bounds", () => {
   expect(() => validateReplayPlan(final().manifest, localUrl, { PGHOST: "remote" })).toThrow("database_override_rejected");
+  for (const key of ["DATABASE_FALLBACK_HOST", "READ_DATABASE_FALLBACK_HOST"])
+    expect(() => validateReplayPlan(final().manifest, localUrl, { [key]: "100.99.209.55:6432" })).toThrow("database_override_rejected");
   expect(() => validateReplayPlan(final().manifest, localUrl, { DATABASE_URL: "other" })).toThrow("database_url_mismatch");
   const value = final(); value.manifest.limits.maxTokens--;
   expect(() => validateReplayPlan(value.manifest, localUrl, {})).toThrow("planned_token_budget_exceeded");

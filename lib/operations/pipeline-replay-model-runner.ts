@@ -4,13 +4,14 @@ import { db } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { LIVE_MIN_WINDOW_MS, parseLiveCapacityArtifact } from "./pipeline-capacity-live";
 import { collectLiveCapacityWindow } from "./pipeline-capacity-live-repository";
 import { startEvidenceRecorder } from "./pipeline-evidence-ledger";
-import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, parseFixedInputArtifact, parseFixedInputRunManifest, parseFixedInputRunResult,
-  type FixedInputArtifact, type FixedInputRunResult, type FixedInputTiming } from "./pipeline-replay-fixed-input";
+import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, fixedInputRunConditions, parseFixedInputArtifact, parseFixedInputRunManifest,
+  parseFixedInputRunResult, type FixedInputArtifact, type FixedInputRunResult, type FixedInputTiming } from "./pipeline-replay-fixed-input";
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
 import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain, type ReplayMeterStop } from "./pipeline-replay-model-meter";
 
@@ -42,6 +43,10 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
   // 게이트웨이 모듈은 이 값을 그대로 이어 붙인다. origin만 같고 경로·슬래시가 붙으면 egress 관문이 모든 호출을 막는다.
   ensure((env.ABCLLM_BASE_URL?.trim() || DEFAULT_GATEWAY) === manifest.upstream, "replay_upstream_mismatch");
   ensure(env.ABCLLM_API_KEY?.trim(), "replay_api_key_missing");
+  // 심사 잡은 README 표본이 없거나 판이 다르면 원본 옆 표본을 새로 받는다(lib/crawl/jobs/review-document.ts). 그 요청은 명시 dispatcher로
+  // 나가 egress 관문·계량기를 거치지 않는다. 이 코드 판과 다른 표본이 하나라도 있으면 실행 전에 거절한다(F1).
+  ensure(artifact.inputs.every(row => typeof row.document.pageMeta?.readmeSample === "string"
+    && row.document.pageMeta.readmeSampleVersion === README_SAMPLE_VERSION), "replay_readme_sample_version_mismatch");
   const blocked: string[] = [];
   if (manifest.items) {
     const routes = manifest.items.capacityPolicy.routes, mapped = (routeId: string, model: string) =>
@@ -163,7 +168,7 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
   while (Date.parse(await dbClockIso()) < Date.parse(collectionEnd)) await sleep(200);
   let live;
   try { live = await collectLiveCapacityWindow(db, { runId: manifest.runId, revision: options.revision, startedAt: collectionStart,
-    endedAt: collectionEnd, target: "primary" }); }
+    endedAt: collectionEnd, target: "primary", source: "replay" }); }
   catch { throw new Error("replay_live_collection_failed"); }
   const ordinals = await fixedInputOrdinals(load.ordinalByRepo), map = (id: number) => {
     const ordinal = ordinals.get(id); ensure(ordinal, "replay_candidate_unmapped"); return ordinal;
@@ -183,5 +188,5 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     budget: { declaredConcurrentCalls: manifest.budget?.maxConcurrentCalls ?? null, callsAtStop: halted.calls ?? meterStats.calls },
     ...(windowDrain ? { windowEndDrain: { limitMs: Math.max(0, halted.deadline - halted.at), ...windowDrain, meterStop: halted.meterStop,
       accounting: "drain_calls_in_budget_not_in_finals" as const } } : {}),
-    writes: await fixedInputWrites(), failures: [...new Set(failures)], live });
+    writes: await fixedInputWrites(), failures: [...new Set(failures)], conditions: fixedInputRunConditions(manifest), live });
 }

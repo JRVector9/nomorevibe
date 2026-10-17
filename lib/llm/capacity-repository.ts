@@ -25,7 +25,8 @@ import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
+import { gatewayNotStartedEvidenceSchema } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import {
   modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
@@ -687,6 +688,44 @@ export async function reconcileAi1ItemGatewayTerminal(terminal: Ai1ItemGatewayTe
       terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
     await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+/**
+ * fetch 를 부르지 않고 닫은 AI1·AI1 item·AI2 dispatch 의 정산(CLI D5 not_started 의 게이트웨이판, 0102). 게이트웨이 모듈이 낸 원본 증인만 받는다.
+ * 같은 owner handle·binding 의 dispatched 행만 settled 로 바꾼다 — indeterminate 는 전송 여부를 이미 모른다는 기록이라 받지 않는다.
+ * 점유만 끝나고 binding 의 C 는 그대로다(사용량 증거 없음). 역사적 dispatch 로 정산하므로 지금의 정책·mode·job 은 막지 않는다.
+ */
+export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readGatewayNotStarted } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readGatewayNotStarted(terminal);
+  if (!native) fail("invalid_gateway_not_started");
+  const evidence = gatewayNotStartedEvidenceSchema.parse(native), dispatch = evidence.dispatch, binding = dispatch.binding;
+  const evidenceHash = reviewHash(evidence);
+  const expected = binding.kind === "ai1_legacy_gateway" ? { class: "first", workKey: null }
+    : { class: binding.kind === "ai2_item_gateway" ? "second" : "first", workKey: `${binding.logicalWorkKey}:${binding.item.bindingHash}` };
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
+      .where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests)
+      .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch) || row.logicalWorkKey !== binding.logicalWorkKey || row.routeId !== binding.routeId
+      || row.provider !== binding.provider || row.model !== binding.model || row.class !== expected.class || row.pool !== "reviewer"
+      || expected.workKey !== null && row.workKey !== expected.workKey
+      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
+      || !isDeepStrictEqual(row.dispatchBinding, binding)) fail("gateway_not_started_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("gateway_not_started_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched") fail("gateway_not_started_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", "dispatched", "settled", null, evidence);
     return { kind: "settled" };
   });
 }

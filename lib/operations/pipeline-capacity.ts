@@ -270,6 +270,8 @@ export function validateReplayPlan(value: unknown, databaseUrl: string,
   } catch { /* Fixed error below; never print credentials. */ }
   ensure(local, "local_test_database_required");
   ensure(!["PGHOST", "PGHOSTADDR", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"].some(key => Boolean(env[key])), "database_override_rejected");
+  // DATABASE_FALLBACK_HOST 는 lib/db 의 새 연결을 다른 주소로 보낼 수 있다(lib/db/network-route.ts)
+  ensure(!env.DATABASE_FALLBACK_HOST && !env.READ_DATABASE_FALLBACK_HOST, "database_override_rejected");
   ensure(!env.DATABASE_URL || env.DATABASE_URL === databaseUrl, "database_url_mismatch");
   ensure(!env.READ_DATABASE_URL, "replica_database_rejected");
   const bound = manifest.limits.maxCalls * manifest.limits.perCallTokenUpperBound;

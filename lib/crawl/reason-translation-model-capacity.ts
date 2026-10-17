@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileReasonTranslationGatewayTerminal } from '@/lib/llm/capacity-repository';
+import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, modelCapacityRequestIdentitySchema } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { TRANSLATE_MODEL, textHash, translateToKorean, type TranslateResult } from './translate';
@@ -84,6 +85,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     if (response.terminal) await reconcileReasonTranslationGatewayTerminal(response.terminal);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
+    if (response.terminal) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'reason_translation_result_cleanup_failed');
     throw cleanup;
   }

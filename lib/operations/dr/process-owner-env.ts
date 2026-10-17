@@ -20,3 +20,15 @@ export function processGroupBootFor(instanceId: string | null | undefined, env: 
   const owner = ownerSchema.safeParse({ instanceId: env[INSTANCE], bootId: env[BOOT] });
   return owner.success && instanceId !== undefined && instanceId !== null && owner.data.instanceId === instanceId ? owner.data.bootId : null;
 }
+
+/**
+ * PROCESS_GROUP_RECORDING: D11 프로세스 그룹 기록(spawn 전 의도 commit·ESRCH 종료) 스위치. 미설정/`0`=꺼짐, `1`=켜짐, 다른 값은 설정 오류다.
+ * 꺼져 있으면 슈퍼바이저는 DB 를 거치지 않고 spawn 한다(8020dca 와 같다). 그 boot 의 장부 행·HTTP hop 은 group 근거가 없어
+ * reclaim-report 에서 unproven(`owner_not_opened_before_dispatch`)으로 남는다. 켜지면 기록하지 못할 때 spawn 하지 않는다(fail closed).
+ */
+export function processGroupRecordingEnabled(env: Readonly<Record<string, string | undefined>>): boolean {
+  const value = env.PROCESS_GROUP_RECORDING;
+  if (value === undefined || value === "0") return false;
+  if (value === "1") return true;
+  throw new Error("invalid_process_group_recording");
+}

@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { consumerHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
 import type { WorkerHealth } from './worker-supervisor';
-import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
+import { DEFAULT_ROLE_HEALTH_PATH, ROLE_STUCK_UNHEALTHY_MS } from './role-health';
 
 export function workerIsHealthy(value: unknown, now = Date.now(), role?: string): boolean {
   if (!value || typeof value !== 'object') return false;
@@ -24,6 +24,9 @@ export function roleCandidateIsHealthy(candidate: unknown, worker: unknown, now 
       typeof value.pid !== 'number' || !Number.isSafeInteger(value.pid) || value.pid < 1 ||
       typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) ||
       now < value.updatedAt || now - value.updatedAt >= 20_000) return false;
+  // DB 실패 연속·끝나지 않는 호출·claim 막힘이 한도를 넘었으면 unhealthy. 다른 owner 가 lease 를 쥐어 null 을 받는 정상 standby 는 해당 없다.
+  if ((['dbFailingSince', 'dbPendingSince', 'admissionBlockedSince'] as const).some(key => typeof value[key] === 'number'
+    && (!Number.isFinite(value[key]) || now - (value[key] as number) >= ROLE_STUCK_UNHEALTHY_MS))) return false;
   if (value.phase === 'standby') return value.epoch === null;
   if (value.phase === 'active') return Number.isSafeInteger(value.epoch) &&
     workerIsHealthy(worker, now, value.role as string);

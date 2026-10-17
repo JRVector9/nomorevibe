@@ -215,3 +215,46 @@ it("runs the collect CLI against an explicit database URL and writes a private a
     expect(run("collect", "cli-run", start, end, "replica", join(directory, "replica.json")).stderr.trim()).toBe("live_target_mismatch");
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
+
+it("collects a generation finished before the window once its required AI2 vote lands inside it, and records the source database (F1)", async () => {
+  const settings = await configure(["second-a"]);
+  await witness(settings);
+  // 구간(40분) 시작 전에 끝난 AI1 승인 — 구간 안의 AI2 승인으로만 관련 세대가 된다(합집합의 두 번째 범위).
+  const early = await review("live/early", settings);
+  const ago = (minutes: number) => sql`to_char((now() at time zone 'utc') - ${minutes} * interval '1 minute', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  await db.execute(sql`update crawl_review_attempts set started_at = (now() at time zone 'utc') - interval '50 minutes',
+    completed_at = (now() at time zone 'utc') - interval '49 minutes',
+    source = (source - 'scanCompletedAt') || jsonb_build_object('documentFetchedAt', ${ago(52)}, 'candidateJudgedAt', ${ago(51)})
+    where id = ${early.attempt.id}`);
+  const inside = await review("live/inside", settings, { decision: "reject" });
+  await enqueueSecondReviewsFixture(settings);
+  const votes = await db.select().from(secondReviews).orderBy(asc(secondReviews.id));
+  expect(votes.map(row => row.firstAttemptId)).toEqual([early.attempt.id]);
+  for (const vote of votes) await approveVote(vote.id);
+  const artifact = await collect(await window());
+  expect(artifact.attempts.map(row => row.id)).toEqual([early.attempt.id, inside.attempt.id].sort((a, b) => a - b));
+  expect(artifact.votes.map(row => row.id)).toEqual(votes.map(row => row.id));
+  expect(artifact.candidates.map(row => row.id)).toEqual([early.candidate.id, inside.candidate.id].sort((a, b) => a - b));
+  expect(reportLiveCapacityWindow(artifact).finals).toMatchObject({ newCandidates: 2, approvals: 1, rejections: 1 });
+  const [identity] = [...await db.execute(sql`select (select system_identifier::text from pg_control_system()) as system_identifier,
+    (select oid::text from pg_database where datname = current_database()) as database_oid, current_database() as database_name`)] as Record<string, string>[];
+  expect(artifact.source).toEqual({ kind: "live", database: { systemIdentifier: identity.system_identifier, databaseOid: identity.database_oid,
+    databaseName: identity.database_name } });
+});
+
+it("records the same source identity under a SELECT-only role (F1)", async () => {
+  const settings = await configure(["second-a"]);
+  await witness(settings);
+  await review("live/rejected", settings, { decision: "reject" });
+  await db.execute(sql.raw(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${READER}') THEN
+    CREATE ROLE ${READER} LOGIN PASSWORD 'reader'; END IF; END $$`));
+  await db.execute(sql.raw(`GRANT USAGE ON SCHEMA public TO ${READER}; GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${READER}`));
+  const url = new URL(TEST_DATABASE_URL); url.username = READER; url.password = "reader";
+  const client = postgres(url.toString(), { max: 1 });
+  try {
+    const range = await window();
+    const [asReader, asOwner] = [await collect(range, "primary", drizzle(client, { schema })), await collect(range)];
+    expect(asReader.source).toEqual(asOwner.source);
+    expect(asOwner.source?.database).not.toBeNull();
+  } finally { await client.end({ timeout: 5 }); }
+});

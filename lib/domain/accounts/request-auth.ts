@@ -70,7 +70,9 @@ export async function requirePublicMutation(request: Request): Promise<PublicUse
 }
 
 export function publicAuthErrorResponse(error: unknown): Response {
-  // fenced DB: 쓰기 전에 거절한다 — 기존 "이용 불가" 코드에 503·Retry-After(웹훅은 5xx 라 GitHub 가 실패 전달로 남겨 다시 보낸다)
+  // fenced DB: 쓰기 전에 거절한다 — 기존 "이용 불가" 코드에 503·Retry-After. GitHub 는 실패한 webhook 을 자동으로 다시 보내지 않는다
+  // (https://docs.github.com/en/webhooks/using-webhooks/handling-failed-webhook-deliveries). 5xx 는 실패 전달로 남아 3일 안에 수동·API 로
+  // 다시 보낼 수 있을 뿐이다. 놓친 해지는 15분 주기 github-integration-reconcile 이 설치·권한·선택을 다시 확인해 반영한다(lib/domain/github-webhooks/reconcile.ts).
   if (error instanceof DrWriterFencedError) {
     return Response.json({ error: "public_auth_unavailable" }, { status: 503, headers: { ...PUBLIC_PRIVATE_HEADERS, "Retry-After": WEB_FENCED_RETRY_AFTER } });
   }

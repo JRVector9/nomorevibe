@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { z, ZodError } from "zod";
 import { modelCapacityPolicySchema } from "@/lib/llm/capacity";
 import { formatCapacityCliError } from "./pipeline-capacity-cli";
 import { meterBudgetEvidence, replayLedgerBudget, type BudgetEvidence } from "./pipeline-capacity-budget";
-import { attachLiveCapacityLabels, judgeLiveCapacity, liveCapacityArtifactSchema, liveCapacityLabelsSchema, LIVE_MIN_WINDOW_MS,
+import { artifactSourceIssues, attachLiveCapacityLabels, judgeLiveCapacity, liveCapacityArtifactSchema, liveCapacityLabelsSchema, LIVE_MIN_WINDOW_MS,
   reportLiveCapacityWindow, type LiveCapacityArtifact, type LiveCapacityReport } from "./pipeline-capacity-live";
 
 /**
@@ -101,6 +102,8 @@ export function assertIsolatedReplayDatabase(databaseUrl: string | undefined, en
   } catch { /* 고정 오류만 낸다 — 자격 증명을 출력하지 않는다. */ }
   ensure(local, "local_test_database_required");
   ensure(!OVERRIDES.some(key => Boolean(env[key])), "database_override_rejected");
+  // DATABASE_FALLBACK_HOST 는 lib/db 의 새 연결을 다른 주소로 보낼 수 있다(lib/db/network-route.ts)
+  ensure(!env.DATABASE_FALLBACK_HOST && !env.READ_DATABASE_FALLBACK_HOST, "database_override_rejected");
   ensure(!env.DATABASE_URL || env.DATABASE_URL === databaseUrl, "database_url_mismatch");
   ensure(!env.READ_DATABASE_URL, "replica_database_rejected");
   ensure(!env.MIGRATION_DATABASE_URL && !env.VALKEY_URL, "external_service_url_rejected");
@@ -130,9 +133,23 @@ export const fixedInputRunManifestSchema = z.object({
   /** 두 실행에 똑같이 적용하는 2차 대체 모델 고정. 없으면 artifact 설정 그대로다. */
   secondReviewFallbacks: z.array(reviewer).max(2).optional(),
   items: z.object({ ai1Consumers: positive.max(16), ai2Consumers: positive.max(16), capacityPolicy: modelCapacityPolicySchema }).strict().optional(),
-  /** PR01b-9: 두 실행에 같은 값으로 선언하는 공통 동시 호출 예산. 계량기 최대 동시 호출이 이 값을 넘으면 budget 미검증이다(강제하지 않는다). */
+  /**
+   * PR01b-9: 두 실행에 같은 값으로 선언하는 공통 동시 호출 예산. 계량기 최대 동시 호출이 이 값을 넘으면 budget 미검증이다(강제하지 않는다).
+   * items 실행은 이 값이 모델 슬롯 정책의 심사 한도 min(전체, reviewer)와 같아야 budget이 검증된다(F1).
+   */
   budget: z.object({ maxConcurrentCalls: positive.max(256) }).strict().optional(),
 }).strict();
+/** F1: 결과에 남기는 manifest의 비교 대상. 두 실행이 같아야 비교한다(runId·mode·items·budget은 실험 변수거나 budget 판정이 따로 본다). */
+const runConditionsSchema = z.object({ upstream: z.string().min(1).max(200), durationMs: positive.max(3 * 3_600_000),
+  limits: z.object({ maxCalls: positive.max(100_000), maxTokens: positive, perCallTokenUpperBound: positive.max(1_000_000),
+    maxWallMs: positive.max(6 * 3_600_000) }).strict(),
+  secondReviewFallbacks: z.array(reviewer).max(2).nullable() }).strict();
+export type FixedInputRunConditions = z.infer<typeof runConditionsSchema>;
+/** 정규화된 manifest(upstream은 이미 자격 증명·경로 없는 origin)에서 비교 대상만 뽑는다. */
+export function fixedInputRunConditions(manifest: FixedInputRunManifest): FixedInputRunConditions {
+  return { upstream: manifest.upstream, durationMs: manifest.durationMs, limits: manifest.limits,
+    secondReviewFallbacks: manifest.secondReviewFallbacks ?? null };
+}
 export type FixedInputRunManifest = z.infer<typeof fixedInputRunManifestSchema>;
 export type FixedInputTiming = { minimumWindowMs: number; leadMs: number; drainMs: number; collectMs: number };
 export const FIXED_INPUT_TIMING: FixedInputTiming = Object.freeze({ minimumWindowMs: LIVE_MIN_WINDOW_MS, leadMs: FIXED_INPUT_LEAD_MS,
@@ -175,6 +192,8 @@ export const fixedInputRunResultSchema = z.object({
     accounting: z.literal("drain_calls_in_budget_not_in_finals") }).strict().optional(),
   writes: z.object({ products: integer, publishRuns: integer }).strict(),
   failures: z.array(z.string().min(1).max(120)).max(32),
+  /** F1: 이전 결과에는 없다(그 결과끼리는 비교 불가로 남는다). */
+  conditions: runConditionsSchema.optional(),
   live: liveCapacityArtifactSchema,
 }).strict();
 export type FixedInputRunResult = z.infer<typeof fixedInputRunResultSchema>;
@@ -191,6 +210,10 @@ export function parseFixedInputRunResult(value: unknown): FixedInputRunResult {
     && (meter.upstreamReportedCalls ?? 0) <= meter.calls && (!budget || budget.callsAtStop <= meter.calls), "fixed_input_result_mismatch");
   ensure(!drain || result.stop.reason === "window_end" && drain.cutAtLimit <= drain.inFlightAtStop && drain.cutAtLimit <= meter.indeterminate
     && drain.inFlightAtStop <= (budget?.callsAtStop ?? meter.calls), "fixed_input_result_mismatch");
+  // upstream은 manifest 관문과 같은 정규화 origin이어야 한다(자격 증명·경로·질의가 섞인 값은 위조로 본다).
+  let upstream: string | null = null;
+  try { upstream = result.conditions ? upstreamOrigin(result.conditions.upstream) : null; } catch { /* 아래에서 거부한다. */ }
+  ensure(!result.conditions || upstream === result.conditions.upstream, "fixed_input_result_mismatch");
   return result;
 }
 
@@ -212,7 +235,19 @@ export function reportFixedInputRun(value: unknown): LiveCapacityReport & { repl
   if (result.failures.length) issues.push("replay_worker_failed");
   if (!result.inputs.items.length) issues.push("replay_inputs_empty");
   const budget = replayBudget(result, report);
-  return { ...report, budgetEvidence: budget.status, budget, evidenceIssues: [...new Set(issues)], replay: replaySummary(result) };
+  return { ...report, budgetEvidence: budget.status, budget, safety: replaySafety(report.safety), evidenceIssues: [...new Set(issues)],
+    replay: replaySummary(result) };
+}
+/**
+ * F1: 격리 replay에는 사람 결정도 발행도 없다(공개 쓰기는 replay_public_write_detected가 따로 막는다). 관측 대상이 없는 두 칸의 0·미검증은
+ * 'verified 0'이 아니라 not_applicable이다 — 통과 증거로 세지 않는다. 0이 아닌 수가 관측되면 그대로 verified(→ failed)로 둔다.
+ * lease 위반은 replay 워커에도 관측 대상이라 0097 장부가 구간을 덮을 때만 verified다(그대로 둔다).
+ */
+function replaySafety(safety: LiveCapacityReport["safety"]): LiveCapacityReport["safety"] {
+  const absent = (evidence: LiveCapacityReport["safety"]["duplicatePublications"]) =>
+    evidence.status === "verified" && evidence.count > 0 ? evidence : { status: "not_applicable" as const };
+  return { duplicatePublications: absent(safety.duplicatePublications), humanDecisionOverrides: absent(safety.humanDecisionOverrides),
+    leaseViolations: safety.leaseViolations };
 }
 /**
  * PR01b-9 budget. legacy 격리 DB에는 모델 슬롯 장부가 없으므로 계량기를 호출 장부로 쓰고(모든 호출 upstream usage·선언 한도 필요),
@@ -221,15 +256,24 @@ export function reportFixedInputRun(value: unknown): LiveCapacityReport & { repl
  */
 function replayBudget(result: FixedInputRunResult, report: LiveCapacityReport): BudgetEvidence {
   const { meter } = result, callsAtStop = result.budget?.callsAtStop ?? null, drainCut = result.windowEndDrain?.cutAtLimit ?? 0;
-  if (result.mode === "items") return replayLedgerBudget(result.live.budget, meter, callsAtStop, drainCut);
+  const declared = result.budget?.declaredConcurrentCalls ?? null;
+  if (result.mode === "items") return replayLedgerBudget(result.live.budget, meter, callsAtStop, drainCut, declared);
   return meterBudgetEvidence({ calls: meter.calls, maxInFlight: meter.maxInFlight, reportedCalls: meter.upstreamReportedCalls,
-    reportedTokens: meter.upstreamReportedTokens, declared: result.budget?.declaredConcurrentCalls ?? null, callsAtStop, recordedCalls: report.calls.total,
-    drainCut });
+    reportedTokens: meter.upstreamReportedTokens, declared, callsAtStop, recordedCalls: report.calls.total, drainCut });
 }
 function replaySummary(result: FixedInputRunResult) {
   return { mode: result.mode, artifactSha256: result.artifactSha256, inputSetHash: result.inputSetHash, included: result.inputs.items.length,
     excluded: result.inputs.excluded, window: result.window, stop: result.stop, meter: result.meter, budget: result.budget ?? null,
-    windowEndDrain: result.windowEndDrain ?? null, writes: result.writes, failures: result.failures };
+    windowEndDrain: result.windowEndDrain ?? null, writes: result.writes, failures: result.failures, conditions: result.conditions ?? null };
+}
+/** F1: 두 실행의 manifest 비교 대상(upstream·구간·상한·대체 모델)이 같아야 한다. 기록이 없으면(이전 결과) 비교하지 않는다. */
+function conditionIssues(baseline: FixedInputRunResult, candidate: FixedInputRunResult): string[] {
+  const a = baseline.conditions, b = candidate.conditions;
+  if (!a || !b) return ["replay_conditions_unrecorded"];
+  const { upstream: left, ...restA } = a, { upstream: right, ...restB } = b, issues: string[] = [];
+  if (left !== right) issues.push("replay_upstream_mismatch");
+  if (!isDeepStrictEqual(restA, restB)) issues.push("replay_conditions_mismatch");
+  return issues;
 }
 
 /** 후보 하나만 남긴 부분 artifact로 같은 최종 규칙을 다시 적용해 최종 후보 목록을 얻는다(표본 라벨 대상). */
@@ -257,7 +301,10 @@ export function attachFixedInputLabels(resultValue: unknown, labelsValue: unknow
   return parseFixedInputRunResult({ ...result, live: attachLiveCapacityLabels(result.live, labels) });
 }
 
-/** PR17 기준을 그대로 적용한다. 같은 artifact·같은 포함 입력 집합이 아니면 수치와 무관하게 비교 불가다. */
+/**
+ * PR17 기준을 그대로 적용한다. 같은 artifact·같은 포함 입력 집합·같은 manifest 비교 대상(upstream 포함)·replay 출처가 아니면
+ * 수치와 무관하게 비교 불가다. 품질은 두 실행의 라벨이 모두 labelTemplate(두 실행 공통 최종) 그대로일 때만 판정한다.
+ */
 export function compareFixedInputRuns(baselineValue: unknown, candidateValue: unknown) {
   const baselineResult = parseFixedInputRunResult(baselineValue), candidateResult = parseFixedInputRunResult(candidateValue);
   const baseline = reportFixedInputRun(baselineResult), candidate = reportFixedInputRun(candidateResult);
@@ -265,10 +312,16 @@ export function compareFixedInputRuns(baselineValue: unknown, candidateValue: un
   if (baselineResult.artifactSha256 !== candidateResult.artifactSha256) shared.push("replay_artifact_mismatch");
   if (baselineResult.inputSetHash !== candidateResult.inputSetHash) shared.push("replay_input_set_mismatch");
   if (baselineResult.mode !== "legacy") shared.push("replay_baseline_not_legacy");
-  const judged = judgeLiveCapacity({ ...baseline, evidenceIssues: [...baseline.evidenceIssues, ...shared] }, candidate);
-  const after = new Map(fixedInputFinals(candidateResult).map(row => [`${row.candidateId}:${row.inputHash}`, row]));
-  const labelTemplate = fixedInputFinals(baselineResult).filter(row => after.has(`${row.candidateId}:${row.inputHash}`))
+  shared.push(...conditionIssues(baselineResult, candidateResult), ...artifactSourceIssues(baseline.source, candidate.source, "replay"));
+  const key = (row: { candidateId: number; inputHash: string }) => `${row.candidateId}:${row.inputHash}`;
+  const after = new Map(fixedInputFinals(candidateResult).map(row => [key(row), row]));
+  const labelTemplate = fixedInputFinals(baselineResult).filter(row => after.has(key(row)))
     .map(row => ({ candidateId: row.candidateId, inputHash: row.inputHash }));
+  const template = new Set(labelTemplate.map(key));
+  const sampled = (result: FixedInputRunResult) => !result.live.quality
+    || result.live.quality.labels.length === template.size && result.live.quality.labels.every(row => template.has(key(row)));
+  const judged = judgeLiveCapacity({ ...baseline, evidenceIssues: [...baseline.evidenceIssues, ...shared] }, candidate,
+    sampled(baselineResult) && sampled(candidateResult) ? [] : ["quality_label_template_mismatch"]);
   return { ...judged, modes: { baseline: baselineResult.mode, candidate: candidateResult.mode }, baseline, candidate, labelTemplate };
 }
 
@@ -279,7 +332,7 @@ const fixedErrors = new Set([
   "replay_cli_provider_unsupported", "replay_upstream_mismatch", "replay_api_key_missing", "consumer_mode_blocked", "replay_load_exceeded_lead",
   "replay_inputs_empty", "replay_candidate_unmapped", "replay_label_unknown_input", "replay_runner_scope_conflict",
   "fixed_input_export_window_invalid", "fixed_input_first_reviewer_unpinned", "fixed_input_population_limit", "fixed_input_export_write_detected",
-  "replay_live_collection_failed",
+  "replay_live_collection_failed", "replay_readme_sample_version_mismatch",
 ]);
 /** 값·경로·DB 메시지·원인을 내보내지 않는다. 공용 capacity 오류 코드는 그 형식기로 넘긴다. */
 export function formatFixedInputCliError(error: unknown): string {

@@ -188,3 +188,29 @@ it.each(['crawler', 'scheduler'] as const)('uses the production supervisor spawn
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+it('adds only the network route labels to the worker observation when a fallback host is configured (2026-10-17)', async () => {
+  const { observeService } = await import('@/lib/operations/observations');
+  const { registerRoute } = await import('@/lib/db/network-route');
+  const globals = globalThis as { nomorevibeNetworkRoutes?: unknown };
+  const directory = mkdtempSync(join(tmpdir(), 'route-supervisor-'));
+  const observed = async (register: boolean) => {
+    globals.nomorevibeNetworkRoutes = undefined;
+    if (register) registerRoute('primary', () => 'lan');
+    const child = Object.assign(new childProcess.ChildProcess(), { pid: undefined, kill: vi.fn() });
+    vi.mocked(childProcess.spawn).mockReset().mockReturnValue(child);
+    vi.mocked(observeService).mockClear();
+    const running = superviseWorker('crawler', { once: true, closeDbOnExit: false, healthPath: join(directory, `health-${register}.json`) });
+    const value = vi.mocked(observeService).mock.calls[0]?.[1];
+    child.emit('exit', 0);
+    await running;
+    return value;
+  };
+  try {
+    expect(await observed(false)).not.toHaveProperty('networkRoutes');
+    expect(await observed(true)).toMatchObject({ role: 'crawler', networkRoutes: { primary: 'lan' } });
+  } finally {
+    globals.nomorevibeNetworkRoutes = undefined;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

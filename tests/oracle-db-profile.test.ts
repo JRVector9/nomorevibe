@@ -9,7 +9,11 @@ function catalog(service: OracleDbService, extraTable?: string): PrivilegeRow[] 
   return tables.map(table => {
     const grant = ORACLE_DB_PROFILES[service].tables[table] ?? {};
     const column = (kind: 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as readonly string[]).includes(name);
-    const names = ['id', 'slug', 'product_id', 'cursor', 'updated_at', 'progress', 'host', 'boot_id', 'release', 'policy_hash', 'observed_at', 'capability', 'result_evidence', 'mode'];
+    const names = ['id', 'slug', 'product_id', 'cursor', 'updated_at', 'progress', 'host', 'boot_id', 'release', 'policy_hash', 'observed_at', 'capability', 'result_evidence', 'mode',
+      // F4: column-limited runtime tables (jobs, role_leases, operations_observations)
+      'name', 'requested_version', 'processed_version', 'next_scheduled_at', 'not_before', 'lease_token', 'worker_seen_at', 'locked_at', 'last_run_at',
+      'last_success_at', 'last_error', 'runs', 'role', 'owner_instance_id', 'owner_boot_id', 'owner_kind', 'owner_release', 'epoch', 'primary_boots',
+      'quarantine_until', 'lease_until', 'key', 'value'];
     return { schema: 'public', table, select: Boolean(grant.select), insert: grant.insert === true, update: grant.update === true, delete: Boolean(grant.delete),
       columns: names.map(name => ({ name, select: Boolean(grant.select), insert: column('insert', name), update: column('update', name) })) };
   });
@@ -57,4 +61,19 @@ it('keeps the optional capability-only refresh principal out of the default SQL 
   expect(Object.keys(ORACLE_REFRESH_PROFILE.tables).sort()).toEqual(['http_origin_control', 'http_origin_hops', 'job_batch_candidates', 'job_batch_control']);
   // The attester gains only a read of the model ledger for translation model-bound readback.
   expect(ORACLE_DB_PROFILES.attest.tables.model_capacity_requests).toEqual({ select: true });
+});
+
+it('lets translation read the HTTP control row and never lets a worker rewrite a runtime key column', () => {
+  // host 합계 예산 장부 갱신·비상 admission 판정이 읽는다(scheduler 와 같은 SELECT 만)
+  expect(ORACLE_DB_PROFILES.translation.tables.http_origin_control).toEqual({ select: true });
+  const keys = { jobs: 'name', role_leases: 'role', operations_observations: 'key' } as const;
+  for (const service of services.filter(service => service !== 'attest')) {
+    for (const [table, key] of Object.entries(keys)) {
+      const grant = ORACLE_DB_PROFILES[service].tables[table];
+      if (!grant) continue;
+      expect(grant.update, `${service}.${table}`).toBeInstanceOf(Array);
+      expect(grant.update as readonly string[], `${service}.${table}`).not.toContain(key);
+    }
+  }
+  expect(ORACLE_DB_PROFILES.scheduler.tables.operations_observations).toEqual({ select: true, insert: true, update: ['value', 'observed_at'] });
 });
