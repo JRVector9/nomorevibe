@@ -2,7 +2,8 @@
 import { BATCH_ROLES } from '@/lib/jobs/batches';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { consumerHealthPath, DEFAULT_HEALTH_PATH, type WorkerHealth } from './worker-supervisor';
+import { consumerHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
+import type { WorkerHealth } from './worker-supervisor';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 
 export function workerIsHealthy(value: unknown, now = Date.now(), role?: string): boolean {
