@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseVerification, verifyKeywords, verifyKeywordsInChunks, type VerifyItem } from "@/lib/domain/products/search-verify";
 
+// These legacy transport units do not open a database; actual disabled SQL is covered separately.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
+
 const evidence = { name: "Academy", url: "https://a.test", category: "Sports", topics: "", tagline: "Bonos de clases", pageText: "", readme: "", evidenceLevel: "thin" as const };
 const item: VerifyItem = { evidence, keywords: ["sports academy management", "membership bonuses", "보너스 관리"] };
 const answer = (checks: object[]) => JSON.stringify({ product: "Sports academy software", checks });
