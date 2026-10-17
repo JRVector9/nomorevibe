@@ -610,6 +610,13 @@
       "when": 1793900000000,
       "tag": "0086_model_capacity_ai1_item_terminal",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0087_model_capacity_text_profile_terminal",
+      "breakpoints": true
     }
   ]
 }

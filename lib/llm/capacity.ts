@@ -230,3 +230,56 @@ export function modelCapacityClassCycle(policy: ModelCapacityPolicy): ModelCapac
   const parsed = parseModelCapacityPolicy(policy);
   return capacityClass.options.flatMap(kind => Array<ModelCapacityClass>(parsed.weights[kind]).fill(kind));
 }
+
+/** Fixed search-profile snapshot; raw row hash includes every column and timestamp microsecond. */
+export const textProfileInputSchema = z.object({ productId: positive, slug: identity(80), evidenceHash: sha64,
+  profile: z.discriminatedUnion("kind", [z.object({ kind: z.literal("absent") }).strict(),
+    z.object({ kind: z.literal("present"), rowIdentityHash: sha64,
+      sourceRevision: z.number().int().nonnegative().safe(), attempts: z.number().int().nonnegative().safe() }).strict()]),
+  model: identity(200),
+}).strict();
+export type TextProfileInput = Readonly<z.infer<typeof textProfileInputSchema>>;
+export function textProfileInputHash(value: TextProfileInput): string {
+  return createHash("sha256").update(JSON.stringify(canonical(textProfileInputSchema.parse(value)))).digest("hex");
+}
+export const textProfileDispatchBindingSchema = textProfileInputSchema.extend({
+  kind: z.literal("text_profile_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("abcllm"), routeId: z.literal("product-search-profile"), wireHash: sha64,
+  servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
+  job: z.object({ name: z.literal("product-search-profile"), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
+  role: z.object({ role: z.literal("text"), instanceId: identity(120), bootId: z.uuid(), release: identity(120),
+    kind: z.enum(["primary", "standby"]), epoch: positive,
+    batch: z.discriminatedUnion("mode", [z.object({ mode: z.literal("legacy") }).strict(),
+      z.object({ mode: z.literal("versioned"), host: z.enum(["m3", "mini", "oracle-osaka-smoke"]), batchEpoch: positive }).strict()]),
+  }).strict(),
+}).strict()
+  .refine(value => value.logicalWorkKey === `text:profile:${value.productId}`, "invalid_text_profile_logical_work")
+  .refine(value => {
+    const input = textProfileInputSchema.safeParse({ productId: value.productId, slug: value.slug,
+      evidenceHash: value.evidenceHash, profile: value.profile, model: value.model });
+    return input.success && value.inputHash === textProfileInputHash(input.data);
+  }, "invalid_text_profile_input_hash")
+  .refine(value => value.chargedTokens === value.totalTokenBound, "invalid_text_profile_charge");
+export type TextProfileDispatchBinding = Readonly<z.infer<typeof textProfileDispatchBindingSchema>>;
+export function textProfileDispatchBindingHash(value: TextProfileDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(textProfileDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type TextProfileModelDispatch = ModelCapacityDispatch & Readonly<{ binding: TextProfileDispatchBinding; bindingHash: string }>;
+export const textProfileModelDispatchSchema = handleSchema.extend({ binding: textProfileDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_text_profile_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId
+    && value.owner.bootId === value.binding.role.bootId, "invalid_text_profile_dispatch_owner")
+  .transform(value => value as TextProfileModelDispatch);
+export const textProfileGatewayTerminalEvidenceSchema = z.object({
+  version: z.literal(1), kind: z.literal("text_profile_gateway_terminal"), dispatch: textProfileModelDispatchSchema,
+  finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]), responseHash: sha64,
+  actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(),
+  provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported"
+    && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_text_profile_terminal_usage");
+export type TextProfileGatewayTerminalEvidence = Readonly<z.infer<typeof textProfileGatewayTerminalEvidenceSchema>>;

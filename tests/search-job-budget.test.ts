@@ -6,6 +6,11 @@ const domain = vi.hoisted(() => ({
   writeKeywords: vi.fn(), verifyKeywords: vi.fn(), verifyKeywordsInChunks: vi.fn(),
 }));
 vi.mock("@/lib/domain/products/search-profiles", () => domain);
+vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
+  writeKeywordsWithModelCapacity: async (_task: unknown, _lease: unknown, options: { timeoutMs: number; signal?: AbortSignal }) => ({
+    kind: "result", result: await domain.writeKeywords({}, options),
+  }),
+}));
 vi.mock("@/lib/domain/products/search-profile", () => ({
   PROFILE_MODEL: "generator", profileEvidence: () => ({}), profileHash: () => "hash",
   writeKeywords: domain.writeKeywords,
