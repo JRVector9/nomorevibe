@@ -56,6 +56,7 @@ jobs:
       - run: python3 -m unittest tests/test_deploy_shared_images.py
       - run: python3 -m unittest tests/test_oracle_runtime.py
       - run: python3 -m unittest tests/test_oracle_activation.py
+      - run: python3 -m unittest tests/test_oracle_activation_check.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_ddl.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_replication.py
       - run: npm run build
