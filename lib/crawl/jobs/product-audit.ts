@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
+import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
@@ -131,6 +132,8 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
       if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
         || (!result.ok && result.error === "cancelled")) return;
+      // 게이트웨이 감사는 전송 단계(observeProviderTransport)가 이미 알린다 — 두 번 세지 않게 CLI 결과만
+      if (campaign.provider !== "abcllm") reportProviderOutcome(result);
       const call = { itemId: item.id, startedAt: callStartedAt, provider: campaign.provider, model: campaign.model, input };
       if (result.ok) {
         reviewed += 1;
