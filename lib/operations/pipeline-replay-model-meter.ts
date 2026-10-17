@@ -1,3 +1,4 @@
+import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Agent, Dispatcher, getGlobalDispatcher, request, setGlobalDispatcher } from "undici";
@@ -162,9 +163,18 @@ class ReplayEgressGuard extends Dispatcher {
 /**
  * 전역 fetch(undici·Node 내장 공용 dispatcher)를 replay 동안 가둔다. 반환한 함수가 원래 dispatcher를 되돌린다.
  * DB 드라이버(net 소켓)와 계량기 자신의 upstream 연결(전용 Agent)은 영향을 받지 않는다.
+ * F1: 명시 dispatcher(SSRF Agent 등)로 보낸 요청은 전역 관문을 거치지 않는다. undici가 요청마다 내는 진단 채널로 그 요청을 보고
+ * 계량기·허용 upstream이 아닌 origin이면 rejected로 센다(막지는 못한다 — 결과에 replay_egress_rejected가 붙어 비교 불가가 된다).
  */
+const REQUEST_CREATED = "undici:request:create";
 export function installReplayEgressGuard(allowed: string, meter: ReplayModelMeter, rejected: () => void): () => Promise<void> {
   const previous = getGlobalDispatcher(), agent = new Agent();
+  const observe = (message: unknown) => {
+    let origin = "";
+    try { origin = new URL(String((message as { request?: { origin?: unknown } } | null)?.request?.origin)).origin; } catch { /* 아래에서 센다. */ }
+    if (origin !== allowed && origin !== meter.origin) rejected();
+  };
+  subscribe(REQUEST_CREATED, observe);
   setGlobalDispatcher(new ReplayEgressGuard(allowed, meter.origin, agent, rejected));
-  return async () => { setGlobalDispatcher(previous); await agent.close(); };
+  return async () => { setGlobalDispatcher(previous); unsubscribe(REQUEST_CREATED, observe); await agent.close(); };
 }

@@ -6,13 +6,16 @@ import { reviewCandidatePredicate, secondGateRequired } from "@/lib/crawl/agent-
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
+import { readDatabaseIdentity } from "./dr/epoch";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
 import { ledgerBudgetEvidence, type LedgerBudgetInput } from "./pipeline-capacity-budget";
 import { LIVE_MAX_WINDOW_MS, LIVE_MIN_WINDOW_MS, LIVE_OPTIONAL_TABLES, LIVE_ROW_LIMIT, parseLiveCapacityArtifact,
   type LiveCapacityArtifact } from "./pipeline-capacity-live";
 
 type Database = PostgresJsDatabase<typeof schema>;
-export type LiveCapacityOptions = { runId: string; revision: string; startedAt: string; endedAt: string; target: "primary" | "replica" };
+/** source: 운영 수집(CLI)은 live, 격리 replay 실행기는 replay. 비교가 종류·DB 식별자를 검사한다(F1). */
+export type LiveCapacityOptions = { runId: string; revision: string; startedAt: string; endedAt: string; target: "primary" | "replica";
+  source?: "live" | "replay" };
 type Row = Record<string, unknown>;
 
 function canonicalDate(value: string): boolean {
@@ -26,8 +29,8 @@ function ensure(condition: unknown, code: string): asserts condition { if (!cond
  * 운영 시각 열은 시간대 없는 UTC 벽시계라 모든 경과를 SQL에서 구간 시작 기준 ms로 잰다(JS Date 해석 금지).
  */
 export async function collectLiveCapacityWindow(database: Database, options: LiveCapacityOptions): Promise<LiveCapacityArtifact> {
-  const { startedAt, endedAt, target } = options;
-  ensure(canonicalDate(startedAt) && canonicalDate(endedAt) && ["primary", "replica"].includes(target)
+  const { startedAt, endedAt, target } = options, kind = options.source ?? "live";
+  ensure(canonicalDate(startedAt) && canonicalDate(endedAt) && ["primary", "replica"].includes(target) && ["live", "replay"].includes(kind)
     && Date.parse(endedAt) - Date.parse(startedAt) >= LIVE_MIN_WINDOW_MS
     && Date.parse(endedAt) - Date.parse(startedAt) <= LIVE_MAX_WINDOW_MS, "live_window_invalid");
   return database.transaction(async tx => {
@@ -47,6 +50,9 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     ensure(session.read_only === "on" && session.isolation === "repeatable read", "live_transaction_not_read_only");
     ensure(session.in_recovery === (target === "replica"), "live_target_mismatch");
     ensure(Number(session.collected_after_end_ms) >= 0, "live_window_not_finished");
+    // 출처(F1): DR과 같은 비밀 아닌 DB 식별자. 물리 복제본은 primary와 같다. 함수 권한이 없으면 오류 대신 미상(null)으로 둔다.
+    const [control] = await query(sql`select has_function_privilege('pg_catalog.pg_control_system()', 'EXECUTE') as readable`);
+    const databaseIdentity = control.readable === true ? await readDatabaseIdentity(tx) : null;
 
     // 0077·0078 이전 운영 스키마: 테이블이 없으면 그 기능은 배포 전이다(legacy·disabled·item lease 없음).
     const [tables] = await query(sql`select ${sql.raw(LIVE_OPTIONAL_TABLES.map(name => `to_regclass('public.${name}') is not null as ${name}`).join(", "))},
@@ -61,10 +67,12 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     const model = (row: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) =>
       ({ provider: row.provider, model: row.model, canonicalModel: canonicalReviewModel(row.model) });
 
-    // 구간 안에서 끝났거나, 구간 안의 AI2 표로 최종이 될 수 있는 자동 AI1 세대.
-    const relevant = sql`a.kind = 'automatic' and a.completed_at <= ${end} and (a.completed_at > ${start} or exists (
-      select 1 from second_reviews r where r.first_attempt_id = a.id and r.trigger = 'ai_approved'
-        and r.reviewed_at > ${start} and r.reviewed_at <= ${end}))`;
+    // 구간 안에서 끝났거나, 구간 안의 AI2 표로 최종이 될 수 있는 자동 AI1 세대. 상관 EXISTS를 OR로 묶으면(first_attempt_id 인덱스 없음)
+    // 계획기가 표 절반을 예상해 전체를 훑고, 해시가 work_mem을 넘으면 행마다 second_reviews를 다시 훑는다. 두 범위를 한 번씩만 훑어
+    // 합집합을 만들고, 뒤 질의(표·후보·장부 밖 AI1)는 그 id만 기본 키로 다시 읽는다(F1, migration 없음).
+    const relevant = sql`a.kind = 'automatic' and a.completed_at <= ${end} and a.id in (
+      select x.id from crawl_review_attempts x where x.kind = 'automatic' and x.completed_at > ${start} and x.completed_at <= ${end}
+      union select r.first_attempt_id from second_reviews r where r.trigger = 'ai_approved' and r.reviewed_at > ${start} and r.reviewed_at <= ${end})`;
     const limit = LIVE_ROW_LIMIT + 1;
     const attempts = await query(sql`select a.id, a.candidate_id, a.input_hash, a.state, a.provider, a.model, a.policy_hash,
         a.prompt_version, a.rules_version, a.reused_from_attempt_id, a.outcome->>'decision' as decision,
@@ -75,22 +83,25 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
           (a.source->>'scanCompletedAt')::timestamptz at time zone 'utc', (a.source->>'candidateJudgedAt')::timestamptz at time zone 'utc')`)} as ready_ms,
         ${offset(sql`a.started_at`)} as started_ms, ${offset(sql`a.completed_at`)} as completed_ms, a.input_tokens, a.output_tokens
       from crawl_review_attempts a where ${relevant} order by a.id limit ${limit}`);
+    ensure(attempts.length <= LIVE_ROW_LIMIT, "live_row_limit");
+    // 한 text 인자로 넘긴다(인자 개수 상한 없음). 빈 목록은 빈 배열이 되어 아무 행도 고르지 않는다.
+    const idList = (values: Iterable<unknown>) => sql`string_to_array(${[...new Set([...values].map(Number))].join(",")}, ',')::int[]`;
+    const relevantIds = idList(attempts.map(row => row.id));
     const votes = await query(sql`select g.id, g.first_attempt_id, g.status, coalesce(g.resolution = 'decided_elsewhere', false) as settled_elsewhere,
         g.fallback_for_id is not null as fallback, g.provider, g.model, coalesce(root.provider, g.provider) as slot_provider,
         coalesce(root.model, g.model) as slot_model,
         case when g.second_decision in ('approve', 'reject', 'needs_review') then g.second_decision end as second_decision,
         ${offset(sql`g.reviewed_at`)} as reviewed_ms
       from second_reviews g left join second_reviews root on root.id = g.fallback_for_id
-      where g.trigger = 'ai_approved' and g.published_slug is null
-        and g.first_attempt_id in (select a.id from crawl_review_attempts a where ${relevant})
+      where g.trigger = 'ai_approved' and g.published_slug is null and g.first_attempt_id = any(${relevantIds})
       order by g.id limit ${limit}`);
     const applied = sql`c.signals->'agentReviewAttemptId'`;
     const candidates = await query(sql`select c.id, c.state, case when c.decided_by in ('auto', 'admin') then c.decided_by end as decided_by,
         case when jsonb_typeof(${applied}) = 'number' and (${applied})::text::numeric between 1 and 9007199254740991
           and (${applied})::text::numeric = trunc((${applied})::text::numeric) then (${applied})::text::float8 end as applied_attempt_id
-      from crawl_candidates c where c.id in (select a.candidate_id from crawl_review_attempts a where ${relevant})
+      from crawl_candidates c where c.id = any(${idList(attempts.map(row => row.candidate_id))})
       order by c.id limit ${limit}`);
-    ensure(attempts.length <= LIVE_ROW_LIMIT && votes.length <= LIVE_ROW_LIMIT && candidates.length <= LIVE_ROW_LIMIT, "live_row_limit");
+    ensure(votes.length <= LIVE_ROW_LIMIT && candidates.length <= LIVE_ROW_LIMIT, "live_row_limit");
 
     // AI2 행은 재시도마다 덮어쓰인다. fallback 사슬 전체가 구간 안에서 생기고 끝난 경우만 호출 수를 확정한다.
     const [ai2] = await query(sql`with chain as (
@@ -169,7 +180,7 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
       budgetInput.calls = calls.length <= LIVE_ROW_LIMIT ? calls.map(row => ({ bound: row.bound, usage: row.usage })) : null;
       // 보고서가 AI1 호출로 세는 시도(구간 안 종료·모델·재사용 아님·취소 아님) 중 장부 dispatch가 없는 것.
       const [ai1] = await query(sql`select count(*)::int as count from crawl_review_attempts a
-        where ${relevant} and a.completed_at > ${start} and a.provider is distinct from 'rules' and a.reused_from_attempt_id is null
+        where a.id = any(${relevantIds}) and a.completed_at > ${start} and a.provider is distinct from 'rules' and a.reused_from_attempt_id is null
           and a.state in ('succeeded', 'failed') and not (a.state = 'failed' and coalesce(a.error_code in ('cancelled', 'deferred'), false))
           and not exists (select 1 from model_capacity_requests r where r.route_id = 'crawl-agent-review'
             and r.dispatch_binding->>'attemptId' = a.id::text)`);
@@ -216,6 +227,7 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
         collectedAfterEndMs: Number(session.collected_after_end_ms) },
       database: { target, inRecovery: session.in_recovery, readOnly: true, isolation: "repeatable read",
         replicaCaughtUp: session.replica_caught_up ?? null, writeXidAssigned: false },
+      source: { kind, database: databaseIdentity },
       identity: { promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, inputPolicyHash: reviewPolicyHash(settings),
         comparisonPolicyHash: comparisonReviewPolicyHash(settings), fullReviewPolicyHash: fullReviewPolicyHash(settings),
         reviewMode: settings.reviewMode, secondGateRequired: secondGateRequired(settings), concurrency: settings.reviewConcurrency,

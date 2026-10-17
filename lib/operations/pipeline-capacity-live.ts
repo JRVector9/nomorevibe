@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
+import { dbIdentitySchema } from "./dr/epoch";
 import { budgetEvidenceConsistent, budgetEvidenceSchema, judgeBudget } from "./pipeline-capacity-budget";
 
 /** PR17 고정 기준: 30분 이상 구간, 최종 고유 완료 2.0배, p95 악화 없음, 기술 실패 +1%p 이하. */
@@ -9,6 +10,19 @@ export const LIVE_MAX_WINDOW_MS = 86_400_000;
 export const LIVE_ROW_LIMIT = 100_000;
 /** 0076 운영 스키마에는 없는 테이블. 없으면 stage=legacy, 모델 슬롯=disabled, item lease 없음으로 고정한다. */
 export const LIVE_OPTIONAL_TABLES = ["pipeline_stage_modes", "pipeline_item_leases", "model_capacity_control"] as const;
+/**
+ * 기준선 건전성 하한(F1). 하나라도 못 미치면 비교 불가(incomplete)다 — 판정을 느슨하게 하는 값이 아니다.
+ * - 고유 최종 30건: Poisson 근사에서 기준선이 그 수로 관측됐을 때 실제 1.5배인 후보가 2.0배로 보일 확률이 10건 12%, 30건 2%다
+ *   (기준선도 우연이면 28%·13%). 하한은 충분조건이 아니라 이보다 작은 표본을 아예 판정하지 않는 바닥이다.
+ * - 라벨 30건: 잘못 승인 비율 10%인 후보가 표본에서 0건으로 보일 확률이 10건이면 35%, 30건이면 4%다. 라벨은 두 실행이 같은 표본이다.
+ * - 워커 공백 5분: legacy 심사 잡 주기 60초 + 게이트웨이 시간 제한 60초 + 같은 줄 AI2 틱 예산 110초보다 길다. 준비 증인이 있는데
+ *   AI1 호출이 이보다 오래 없으면 워커가 멈춘 구간이다.
+ * - 기술 실패율 5%: 기준선이 망가진 구간이면 '기준+1%p' 비교가 무의미해진다.
+ */
+export const LIVE_MIN_BASELINE_FINALS = 30;
+export const LIVE_MIN_QUALITY_LABELS = 30;
+export const LIVE_MAX_BASELINE_IDLE_MS = 300_000;
+export const LIVE_MAX_BASELINE_FAILURE_PERCENT = 5;
 
 const text = z.string().min(1).max(160).refine(value => value === value.trim(), "trimmed_text_required");
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -35,6 +49,11 @@ const label = z.object({ candidateId: positive, inputHash: hash, expected: z.enu
 /** 0097 증거 장부. 기록 시작 marker가 구간 시작 이전일 때만 싣는다. 거부 건수는 가드가 작동한 참고값이다(위반 아님). */
 const ledger = z.object({ startedAt: date, humanDecisionRefusals: integer, lateWritesRefused: integer }).strict();
 const ledgerCount = z.union([z.literal("unverified"), integer]);
+/**
+ * F1 출처: 수집기가 남긴 출처 종류와 비밀 아닌 DB 식별자(DR과 같은 system_identifier·database oid·이름, 함수 권한이 없으면 null).
+ * 없으면(이전 artifact) 비교는 incomplete다.
+ */
+const source = z.object({ kind: z.enum(["live", "replay"]), database: dbIdentitySchema.nullable() }).strict();
 export const liveCapacityLabelsSchema = z.array(label).min(1).max(100_000);
 export const liveCapacityArtifactSchema = z.object({
   version: z.literal(1), scope: z.literal("live_window"), runId: text, revision: z.string().regex(/^[a-f0-9]{7,40}$/),
@@ -43,6 +62,7 @@ export const liveCapacityArtifactSchema = z.object({
     collectedAt: date, collectedAfterEndMs: integer }).strict(),
   database: z.object({ target: z.enum(["primary", "replica"]), inRecovery: z.boolean(), readOnly: z.literal(true),
     isolation: z.literal("repeatable read"), replicaCaughtUp: z.boolean().nullable(), writeXidAssigned: z.literal(false) }).strict(),
+  source: source.optional(),
   identity: z.object({ promptVersion: text, rulesVersion: text, inputPolicyHash: hash, comparisonPolicyHash: hash,
     fullReviewPolicyHash: hash, reviewMode: z.enum(["off", "observe", "enforce"]), secondGateRequired: z.boolean(),
     concurrency: positive, settingsUpdatedMs: offset.nullable(),
@@ -65,6 +85,7 @@ export type LiveCapacityArtifact = z.infer<typeof liveCapacityArtifactSchema>;
 type Attempt = LiveCapacityArtifact["attempts"][number];
 type Vote = LiveCapacityArtifact["votes"][number];
 type Identity = z.infer<typeof identity>;
+export type LiveCapacitySource = z.infer<typeof source>;
 
 function ensure(condition: unknown, code: string): asserts condition { if (!condition) throw new Error(code); }
 function unique<T>(rows: T[], key: (row: T) => number | string): boolean { return new Set(rows.map(key)).size === rows.length; }
@@ -153,7 +174,8 @@ function gateTime(row: Attempt, votes: Vote[], published: boolean, fixed: LiveCa
 }
 const comparableModel = (row: Identity) => ({ provider: row.provider, canonicalModel: row.canonicalModel });
 const pool = (rows: Identity[]) => rows.map(comparableModel).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-type SafetyEvidence = { status: "unverified" } | { status: "verified"; count: number };
+/** not_applicable: 그 실행에 관측 대상이 없다(replay의 사람 결정·발행). 통과 증거로 세지 않고, 0이 아닌 관측은 그대로 verified로 둔다. */
+type SafetyEvidence = { status: "unverified" } | { status: "verified"; count: number } | { status: "not_applicable" };
 const evidence = (value: number | "unverified"): SafetyEvidence => value === "unverified" ? { status: value } : { status: "verified", count: value };
 
 /** 구간 안에서 후보별 첫 최종만 센다. 재시도·중복 표·여러 세대는 완료량을 늘리지 않는다. */
@@ -213,6 +235,14 @@ export function reportLiveCapacityWindow(value: unknown) {
     evaluated++; wrongApprovals += Number(actual === "approve" && row.expected === "reject");
     wrongRejections += Number(actual === "reject" && row.expected === "approve");
   }
+  // 워커 가동 연속성: 모델을 부른 AI1 세대(규칙·재사용 제외)의 [시작, 끝]이 덮지 못한 가장 긴 구간 안 공백.
+  let idle = 0, covered = 0;
+  for (const [from, to] of artifact.attempts.filter(row => row.provider !== "rules" && row.reusedFromAttemptId === null
+    && row.completedMs !== null && row.startedMs <= row.completedMs).map(row => [Math.max(0, row.startedMs), Math.min(duration, row.completedMs!)])
+    .filter(([from, to]) => from <= to).sort((a, b) => a[0] - b[0])) {
+    idle = Math.max(idle, from - covered); covered = Math.max(covered, to);
+  }
+  idle = Math.max(idle, duration - covered);
   const evidenceIssues: string[] = [];
   if (duration < LIVE_MIN_WINDOW_MS) evidenceIssues.push("window_under_30_minutes");
   if (fixed.reviewMode !== "enforce") evidenceIssues.push("review_mode_not_enforce");
@@ -224,6 +254,7 @@ export function reportLiveCapacityWindow(value: unknown) {
   if (clockAnomalies) evidenceIssues.push("clock_anomaly");
   const ai2 = artifact.ai2Calls;
   return { runId: artifact.runId, scope: "live_window" as const, durationMs: duration, database: artifact.database, schema: artifact.schema,
+    source: artifact.source ?? null, activity: { maxIdleMs: idle },
     identityKey: JSON.stringify({ promptVersion: fixed.promptVersion, rulesVersion: fixed.rulesVersion,
       inputPolicyHash: fixed.inputPolicyHash, comparisonPolicyHash: fixed.comparisonPolicyHash, reviewMode: fixed.reviewMode,
       secondGateRequired: fixed.secondGateRequired, models: { first: comparableModel(fixed.models.first),
@@ -251,13 +282,36 @@ export function reportLiveCapacityWindow(value: unknown) {
 export type LiveCapacityReport = ReturnType<typeof reportLiveCapacityWindow>;
 type Check = "passed" | "failed" | "incomplete";
 
+/** 기준선 구간 건전성(F1). 표본 하한·워커 가동 연속성·절대 기술 실패율 상한 중 하나라도 못 미치면 그 기준선으로는 판정하지 않는다. */
+function baselineHealthIssues(report: LiveCapacityReport): string[] {
+  const issues: string[] = [];
+  if (report.finals.newCandidates < LIVE_MIN_BASELINE_FINALS) issues.push("baseline_finals_below_minimum");
+  if (report.activity.maxIdleMs > LIVE_MAX_BASELINE_IDLE_MS) issues.push("baseline_worker_idle");
+  if (report.calls.total && 100 * report.calls.failed > LIVE_MAX_BASELINE_FAILURE_PERCENT * report.calls.total) issues.push("baseline_failure_rate_above_cap");
+  return issues;
+}
+/**
+ * 출처 검사(F1). 두 artifact 모두 출처가 있고 기대한 종류여야 한다. 운영 구간은 같은 DB(system_identifier·oid·이름)에서 수집했어야 한다
+ * (물리 복제본은 primary와 같다).
+ * replay는 실행마다 격리 DB가 다르므로 종류만 본다(격리는 실행 관문이 확인한다).
+ */
+export function artifactSourceIssues(baseline: LiveCapacitySource | null, candidate: LiveCapacitySource | null, kind: "live" | "replay"): string[] {
+  if (!baseline || !candidate) return ["artifact_source_unrecorded"];
+  if (baseline.kind !== kind || candidate.kind !== kind) return [`artifact_source_not_${kind}`];
+  if (kind === "replay") return [];
+  if (!baseline.database || !candidate.database) return ["live_database_identity_unknown"];
+  const [a, b] = [baseline.database, candidate.database];
+  return a.systemIdentifier === b.systemIdentifier && a.databaseOid === b.databaseOid && a.databaseName === b.databaseName ? [] : ["live_database_mismatch"];
+}
+
 /**
  * 모든 조건이 실제로 충족될 때만 passed. 비교 불가(구간·고갈·조건 불일치)는 수치와 무관하게 incomplete,
  * 품질 퇴행·안전 위반은 증거가 불완전해도 failed다. 경계는 정수 교차곱으로 정확히 비교한다.
  */
-export function judgeLiveCapacity(baseline: LiveCapacityReport, candidate: LiveCapacityReport) {
+export function judgeLiveCapacity(baseline: LiveCapacityReport, candidate: LiveCapacityReport, qualityIssues: readonly string[] = []) {
   const reasons = new Set<string>([...baseline.evidenceIssues, ...candidate.evidenceIssues]);
   if (baseline.identityKey !== candidate.identityKey) reasons.add("conditions_mismatch");
+  for (const issue of baselineHealthIssues(baseline)) reasons.add(issue);
   const comparable = reasons.size === 0;
   const before = baseline.finals.newCandidates, after = candidate.finals.newCandidates;
   const doubled = before ? after * baseline.durationMs >= 2 * before * candidate.durationMs : null;
@@ -274,17 +328,22 @@ export function judgeLiveCapacity(baseline: LiveCapacityReport, candidate: LiveC
   else if (!technicalFailureWithinOnePoint) reasons.add("technical_failure_rate_exceeded");
   const numeric = [doubled, latencyNotWorse, technicalFailureWithinOnePoint];
   const performance: Check = !comparable || numeric.includes(null) ? "incomplete" : numeric.includes(false) ? "failed" : "passed";
+  // 품질은 두 실행이 같은 라벨 표본(같은 dataset hash)일 때만 비교한다. 같은 표본의 퇴행은 표본이 작아도 failed,
+  // 퇴행이 없으면 호출자가 준 표본 문제(replay labelTemplate 불일치)와 표본 하한을 모두 넘어야 passed다.
   let quality: Check = "incomplete";
-  if (!baseline.quality.complete || !candidate.quality.complete) reasons.add("quality_unverified");
-  else {
-    const a = baseline.quality, b = candidate.quality;
-    quality = b.wrongApprovals * a.evaluated <= a.wrongApprovals * b.evaluated
-      && b.wrongRejections * a.evaluated <= a.wrongRejections * b.evaluated ? "passed" : "failed";
-    if (quality === "failed") reasons.add("wrong_decisions_increased");
-  }
+  const a = baseline.quality, b = candidate.quality;
+  if (!a.complete || !b.complete) reasons.add("quality_unverified");
+  else if (a.datasetHash !== b.datasetHash) reasons.add("quality_label_set_mismatch");
+  else if (!(b.wrongApprovals * a.evaluated <= a.wrongApprovals * b.evaluated && b.wrongRejections * a.evaluated <= a.wrongRejections * b.evaluated)) {
+    quality = "failed"; reasons.add("wrong_decisions_increased");
+  } else if (qualityIssues.length) for (const issue of qualityIssues) reasons.add(issue);
+  else if (a.evaluated < LIVE_MIN_QUALITY_LABELS) reasons.add("quality_labels_below_minimum");
+  else quality = "passed";
+  // not_applicable은 그 실행에 관측 대상이 없다는 표시라 막지도 통과 증거로 세지도 않는다(replay 전용, reportFixedInputRun이 정한다).
   let safety: Check = "passed";
   for (const [name, evidence] of [["duplicate_publication", candidate.safety.duplicatePublications],
     ["human_decision_override", candidate.safety.humanDecisionOverrides], ["lease_violation", candidate.safety.leaseViolations]] as const) {
+    if (evidence.status === "not_applicable") continue;
     if (evidence.status === "unverified") { reasons.add(`${name}_unverified`); if (safety === "passed") safety = "incomplete"; }
     else if (evidence.count) { reasons.add(`${name}_detected`); safety = "failed"; }
   }
@@ -301,7 +360,9 @@ export function judgeLiveCapacity(baseline: LiveCapacityReport, candidate: LiveC
     concurrency: { baseline: baseline.concurrency, candidate: candidate.concurrency } };
 }
 
+/** 운영 구간 비교. 두 artifact 모두 운영 수집기가 같은 DB에서 남긴 live 출처여야 한다(replay 결과의 live 부분을 넣으면 비교 불가). */
 export function compareLiveCapacityRuns(baselineValue: unknown, candidateValue: unknown) {
   const baseline = reportLiveCapacityWindow(baselineValue), candidate = reportLiveCapacityWindow(candidateValue);
-  return { ...judgeLiveCapacity(baseline, candidate), baseline, candidate };
+  const issues = artifactSourceIssues(baseline.source, candidate.source, "live");
+  return { ...judgeLiveCapacity({ ...baseline, evidenceIssues: [...baseline.evidenceIssues, ...issues] }, candidate), baseline, candidate };
 }

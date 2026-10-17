@@ -112,22 +112,31 @@ describe("replay meter budget evidence", () => {
     expect(meterBudgetEvidence({ ...meter, ...patch })).toEqual({ status: "unverified", source: "replay_meter", issues: expected });
   });
   it("keeps the ledger evidence for item replays and cross-checks the meter", () => {
+    // F1: items도 manifest의 공통 동시 예산(심사 한도 min(전체 4, reviewer 2) = 2)을 같은 값으로 선언해야 한다.
     const verified = ledgerBudgetEvidence(ledger());
-    expect(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3)).toEqual(verified);
-    expect(issues(replayLedgerBudget(verified, { calls: 4, maxInFlight: 2 }, 4))).toEqual(["meter_calls_outside_ledger"]);
-    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 3 }, 3))).toEqual(["concurrency_limit_exceeded"]);
-    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 2))).toEqual(["replay_calls_after_stop"]);
-    expect(issues(replayLedgerBudget({ status: "unverified" }, { calls: 3, maxInFlight: 2 }, null))).toEqual(["budget_evidence_absent", "replay_budget_unrecorded"]);
+    expect(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0, 2)).toEqual(verified);
+    expect(issues(replayLedgerBudget(verified, { calls: 4, maxInFlight: 2 }, 4, 0, 2))).toEqual(["meter_calls_outside_ledger"]);
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 3 }, 3, 0, 2))).toEqual(["concurrency_limit_exceeded"]);
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 2, 0, 2))).toEqual(["replay_calls_after_stop"]);
+    expect(issues(replayLedgerBudget({ status: "unverified" }, { calls: 3, maxInFlight: 2 }, null, 0, 2))).toEqual(["budget_evidence_absent", "replay_budget_unrecorded"]);
     expect(issues(replayLedgerBudget({ status: "unverified", source: "model_capacity_ledger", issues: ["model_capacity_not_open"] },
-      { calls: 3, maxInFlight: 2 }, 3))).toEqual(["model_capacity_not_open"]);
+      { calls: 3, maxInFlight: 2 }, 3, 0, 2))).toEqual(["model_capacity_not_open"]);
+  });
+  it("requires the item replay to declare the same common concurrency budget as its ledger policy, and reports the larger observed peak", () => {
+    const verified = ledgerBudgetEvidence(ledger());
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0, null))).toEqual(["concurrency_limit_undeclared"]);
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0, 4))).toEqual(["concurrency_limit_declaration_mismatch"]);
+    // 장부 reviewer 점유가 1이어도 계량기가 동시 2를 봤으면 관측 peak는 2다.
+    const quiet = { ...verified, concurrency: { limit: 2, peak: 1 } } as BudgetEvidence;
+    expect(replayLedgerBudget(quiet, { calls: 3, maxInFlight: 2 }, 3, 0, 2)).toMatchObject({ status: "verified", concurrency: { limit: 2, peak: 2 } });
   });
   it("leaves both modes unverified when the window-end drain limit cut a call", () => {
     expect(meterBudgetEvidence({ ...meter, drainCut: 0 })).toMatchObject({ status: "verified", calls: 10 });
     expect(meterBudgetEvidence({ ...meter, reportedCalls: 9, drainCut: 1 })).toEqual({ status: "unverified", source: "replay_meter",
       issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
     const verified = ledgerBudgetEvidence(ledger());
-    expect(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0)).toEqual(verified);
-    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 1))).toEqual(["replay_drain_calls_cut"]);
+    expect(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 0, 2)).toEqual(verified);
+    expect(issues(replayLedgerBudget(verified, { calls: 3, maxInFlight: 2 }, 3, 1, 2))).toEqual(["replay_drain_calls_cut"]);
   });
 });
 
@@ -157,6 +166,16 @@ describe("budget judgement", () => {
     const result = judgeBudget({ budget: verifiedBudget(2, 6_000_000_000_000_001), finals: 2 }, { budget: verifiedBudget(1, 9_000_000_000_000_002), finals: 3 }, true);
     expect(result.reasons).toEqual(["budget_tokens_per_final_exceeded"]);
   });
+  it("compares observed peaks against one shared declared limit (F1)", () => {
+    // 선언 한도가 다르면 같은 예산 비교가 아니다: 후보 한도가 더 작아도 통과시키지 않는다(비교 불가), 더 크면 실패다.
+    expect(judgeBudget({ budget: verifiedBudget(30, 30_000, 8), finals: 10 }, { budget: verifiedBudget(60, 60_000, 4), finals: 20 }, true))
+      .toMatchObject({ status: "incomplete", reasons: ["budget_limit_mismatch"] });
+    const wider = { ...verifiedBudget(60, 60_000, 6), concurrency: { limit: 6, peak: 5 } } as BudgetEvidence;
+    expect(judgeBudget({ budget: verifiedBudget(30, 30_000, 4), finals: 10 }, { budget: wider, finals: 20 }, true))
+      .toMatchObject({ status: "failed", reasons: ["budget_limit_exceeds_baseline", "budget_peak_exceeds_baseline_limit"] });
+    const full = { ...verifiedBudget(60, 60_000, 4), concurrency: { limit: 4, peak: 4 } } as BudgetEvidence;
+    expect(judgeBudget({ budget: verifiedBudget(30, 30_000, 4), finals: 10 }, { budget: full, finals: 20 }, true)).toMatchObject({ status: "passed", reasons: [] });
+  });
   it("stays incomplete without verified evidence or finals on either side", () => {
     expect(judgeBudget({ budget: { status: "unverified" }, finals: 10 }, { budget: verifiedBudget(60, 60_000), finals: 20 }, true))
       .toMatchObject({ status: "incomplete", reasons: ["budget_evidence_unverified"], baseline: null });
@@ -168,15 +187,20 @@ describe("budget judgement", () => {
 const WINDOW = 1_800_000, hash = "a".repeat(64);
 const at = (ms: number) => new Date(Date.UTC(2026, 9, 17) + ms).toISOString();
 const model = (name: string) => ({ provider: "abcllm" as const, model: name, canonicalModel: name });
-/** 장부가 구간을 덮은 열린 모델 슬롯 구간. finals건 모두 AI1 거절로 최종이 되고, 최종 하나당 호출 1·토큰 1,000을 쓴다. */
+/**
+ * 장부가 구간을 덮은 열린 모델 슬롯 구간. finals건 모두 AI1 거절로 최종이 되고, 최종 하나당 호출 1·토큰 1,000을 쓴다.
+ * F1: 최종은 구간 전체에 고르게 퍼지고(기준선 워커 공백 검사), 같은 운영 DB 출처를 싣는다.
+ */
 function window(finals: number, stage: "legacy" | "items"): LiveCapacityArtifact {
+  const step = Math.floor(WINDOW / (finals + 1));
   const attempts = Array.from({ length: finals }, (_, index) => ({ id: index + 1, candidateId: index + 1, inputHash: hash, state: "succeeded" as const,
     failure: null, provider: "abcllm", model: "first", policyHash: hash, promptVersion: "p1", rulesVersion: "r1", reusedFromAttemptId: null,
-    decision: "reject" as const, reReview: false, readyMs: 1_000 + index * 1_000, startedMs: 2_000 + index * 1_000, completedMs: 3_000 + index * 1_000,
+    decision: "reject" as const, reReview: false, readyMs: (index + 1) * step - 2_000, startedMs: (index + 1) * step - 1_000, completedMs: (index + 1) * step,
     inputTokens: 990, outputTokens: 10 }));
   return { version: 1, scope: "live_window", runId: `live-${stage}`, revision: "9e13341", schema: { appliedMigrations: 97, absentTables: [] },
     window: { startedAt: at(0), endedAt: at(WINDOW), durationMs: WINDOW, collectedAt: at(WINDOW + 60_000), collectedAfterEndMs: 60_000 },
     database: { target: "primary", inRecovery: false, readOnly: true, isolation: "repeatable read", replicaCaughtUp: null, writeXidAssigned: false },
+    source: { kind: "live", database: { systemIdentifier: "7400000000000000001", databaseOid: "16384", databaseName: "nomorevibe" } },
     identity: { promptVersion: "p1", rulesVersion: "r1", inputPolicyHash: hash, comparisonPolicyHash: hash, fullReviewPolicyHash: hash,
       reviewMode: "enforce", secondGateRequired: true, concurrency: stage === "items" ? 4 : 2, settingsUpdatedMs: -3_600_000,
       models: { first: model("first"), second: [model("second")], fallbacks: [] } },
@@ -190,12 +214,13 @@ function window(finals: number, stage: "legacy" | "items"): LiveCapacityArtifact
     budget: { status: "verified", source: "model_capacity_ledger", calls: finals, chargedTokens: 1_000 * finals, reportedCalls: finals, boundCalls: 0,
       concurrency: { limit: 4, peak: 2 } }, quality: null };
 }
+/** F1: 두 실행은 같은 라벨 표본(기준선 최종 30건)을 쓴다. */
 const labeled = (value: LiveCapacityArtifact) => attachLiveCapacityLabels(value,
-  value.attempts.map(row => ({ candidateId: row.candidateId, inputHash: row.inputHash, expected: "reject" as const })));
+  value.attempts.slice(0, 30).map(row => ({ candidateId: row.candidateId, inputHash: row.inputHash, expected: "reject" as const })));
 
 describe("live judgement from collected artifacts", () => {
   it("can pass end to end once budget, safety, quality and readiness are all proven", () => {
-    const result = compareLiveCapacityRuns(labeled(window(10, "legacy")), labeled(window(20, "items")));
+    const result = compareLiveCapacityRuns(labeled(window(30, "legacy")), labeled(window(60, "items")));
     expect(result).toMatchObject({ status: "passed", performance: "passed", quality: "passed", safety: "passed", budgetEvidence: "verified",
       budget: { status: "passed", ratios: { callsPerFinal: 1, tokensPerFinal: 1 } }, reasons: [] });
   });
@@ -208,16 +233,16 @@ describe("live judgement from collected artifacts", () => {
     ["the quality sample", (value: LiveCapacityArtifact) => { value.quality = null; }, "quality_unverified"],
     ["the readiness witness", (value: LiveCapacityArtifact) => { value.readiness = { witnesses: 0, sampleCandidateIds: [] }; }, "readiness_unproven"],
   ] as const)("is incomplete when only %s is missing", (_name, mutate, reason) => {
-    const after = labeled(window(20, "items")); mutate(after);
-    const result = compareLiveCapacityRuns(labeled(window(10, "legacy")), after);
+    const after = labeled(window(60, "items")); mutate(after);
+    const result = compareLiveCapacityRuns(labeled(window(30, "legacy")), after);
     expect(result.status).toBe("incomplete");
     expect(result.reasons).toContain(reason);
   });
   it("fails a candidate that spends one more call per final than the baseline", () => {
-    const after = labeled(window(20, "items"));
-    after.budget = { status: "verified", source: "model_capacity_ledger", calls: 21, chargedTokens: 20_000, reportedCalls: 21, boundCalls: 0,
+    const after = labeled(window(60, "items"));
+    after.budget = { status: "verified", source: "model_capacity_ledger", calls: 61, chargedTokens: 60_000, reportedCalls: 61, boundCalls: 0,
       concurrency: { limit: 4, peak: 2 } };
-    expect(compareLiveCapacityRuns(labeled(window(10, "legacy")), after)).toMatchObject({ status: "failed", budget: { status: "failed" },
+    expect(compareLiveCapacityRuns(labeled(window(30, "legacy")), after)).toMatchObject({ status: "failed", budget: { status: "failed" },
       reasons: ["budget_calls_per_final_exceeded"] });
   });
   it("rejects verified budget evidence the artifact itself contradicts", () => {

@@ -31,10 +31,27 @@
 | 기술 실패율(≤기준+1%p) | `*.calls.technicalFailureRate`, `numericThresholds.technicalFailureWithinOnePoint` | | | |
 | 종합 | `status`, `reasons` | | | |
 
+비교 불가(`incomplete`) 조건(F1, 수치와 무관):
+
+- 기준선 건전성(`lib/operations/pipeline-capacity-live.ts` 상수): 기준선 고유 최종 30건 이상(`baseline_finals_below_minimum`),
+  AI1 호출 공백 5분 이하(`baseline_worker_idle`, `*.activity.maxIdleMs`), 기준선 기술 실패율 5% 이하(`baseline_failure_rate_above_cap`).
+- 출처(`*.source`): 운영 `compare`는 두 artifact 모두 `kind: live`이고 같은 DB(system_identifier·database oid·이름)여야 한다
+  (`artifact_source_unrecorded`·`artifact_source_not_live`·`live_database_mismatch`·`live_database_identity_unknown`). replay 결과의 `live`를
+  떼어 운영 `compare`에 넣으면 비교 불가다. replay `compare`는 두 결과 모두 `kind: replay`(`artifact_source_not_replay`)여야 한다.
+- replay 조건(`conditions`): upstream origin·구간·호출/토큰/벽시간 상한·2차 대체 모델이 같아야 한다(`replay_upstream_mismatch`·
+  `replay_conditions_mismatch`, 기록 없는 이전 결과는 `replay_conditions_unrecorded`).
+- replay 실행 전 거절: README 표본 판이 이 코드와 다른 입력이 있으면 `run`·`preflight`가 `replay_readme_sample_version_mismatch`로 멈춘다
+  (심사 잡이 표본을 새로 받으면 명시 dispatcher라 계량기 밖으로 나간다). 실행 중 계량기 밖 HTTP 요청은 `egressRejected`로 세어 비교 불가다.
+
 ## 2. 품질 표본
 
 출처: `compare` 출력의 `labelTemplate`로 표본을 뽑고, 사람 라벨을 `label RESULT LABELS OUTPUT`으로 붙인 뒤 다시 `compare`.
 표본 크기·라벨러·선정 방식은 사용자 결정이다(미정).
+
+판정 규칙(F1): 두 실행에 **같은 라벨 파일**을 붙인다. 표본(후보·입력 해시·정답)이 다르면 `quality_label_set_mismatch`, replay는 라벨이
+`labelTemplate` 전체와 정확히 같아야 하고(일부·초과는 `quality_label_template_mismatch`), 라벨 30건 미만은 `quality_labels_below_minimum`
+으로 비교 불가다. 같은 표본에서 오판이 늘면 표본 크기와 무관하게 `failed`다. 서로 다른 두 운영 구간은 다른 후보를 처리하므로 같은 표본을
+만들 수 없다 — 운영 `compare`의 품질은 `incomplete`로 남고, 품질 비교는 같은 입력을 쓰는 replay로 한다(운영 구간용 별도 규칙은 미정).
 
 | 항목 | 출처 필드 | 기준 | 후보 |
 | --- | --- | --- | --- |
@@ -49,6 +66,12 @@
 출처: `compare` 출력의 `budgetEvidence`. 현재 코드에서는 항상 `unverified`라 종합 판정이 `incomplete`에 머문다
 (PR01b-9 lane에서 "budget verified" 정의·생성기를 다루는 중). 정의 또는 합격 기준에서 뺄지는 사용자 결정이다.
 
+동시 예산 규칙(F1): 두 실행의 선언 한도(`budget.concurrency.limit`)가 같아야 비교한다(후보가 작으면 `budget_limit_mismatch`로 비교 불가,
+크면 `budget_limit_exceeds_baseline`로 실패). 후보가 실제로 관측한 동시 호출(`peak`)이 기준선 선언 한도를 넘으면 `budget_peak_exceeds_baseline_limit`
+로 실패다. legacy 기준선의 peak는 계량기 최대 동시 호출, items의 peak는 장부 reviewer 점유와 계량기 중 큰 값이다. items manifest의
+`budget.maxConcurrentCalls`는 모델 슬롯 정책 `min(globalLimit, poolLimits.reviewer)`와 같아야 budget이 검증된다
+(`concurrency_limit_undeclared`·`concurrency_limit_declaration_mismatch`). 두 manifest에 같은 값을 선언한다.
+
 | 항목 | 출처 | 값 |
 | --- | --- | --- |
 | budget 증거 | `budgetEvidence` | |
@@ -59,6 +82,14 @@
 
 격리 판정은 `compare`의 `safety`, 운영 관측은 `pipeline-rollout-report.ts report`의 `safety`·`violations`에서 온다.
 0097 증거 장부의 기록 시작 marker가 구간 시작보다 앞서야 사람 결정 덮음·lease 위반이 `verified`가 된다. 아니면 `unverified`다.
+격리 replay에는 사람 결정·발행이 없어 사람 결정 덮음·중복 발행 칸은 `not_applicable`이다(F1, 통과 증거로 세지 않는다). 0이 아닌 수가
+관측되면 그대로 `failed`이고, replay lease 위반은 장부가 구간을 덮어야 `verified`다.
+
+기록 시작 marker(F1): 모든 쓰기 프로세스가 0097 기록기를 포함한 revision으로 돈다고 확인한 뒤, 측정 구간 시작 **전**에 운영자가 한 번 남긴다.
+`PIPELINE_CONTROL_DATABASE_URL=... node --import tsx scripts/ops/pipeline-evidence-marker.ts --revision=<배포 SHA> --operator=<이름>`은
+dry-run(읽기 전용)으로 현재 marker를 보여 주고, 같은 명령에 `--execute`를 붙이면 writer fence(fenced DB면 거절)를 확인한 한 TX에서 marker와
+관리자 작업 로그(`pipeline-evidence-recorder-start`)를 남긴다. marker는 지울 수 없고 하나뿐이라 이미 있으면 그대로 두고(`inserted: false`)
+작업 로그도 쓰지 않는다. 출력의 `marker.startedAt`이 수집할 구간 시작보다 앞서는지 확인한다.
 
 | 항목 | 격리 replay | 30분 canary | 24시간 |
 | --- | --- | --- | --- |
