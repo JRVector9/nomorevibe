@@ -2,13 +2,15 @@ import { randomUUID } from 'node:crypto';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { ai1ModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, ai1ItemModelDispatchSchema, type Ai1ItemModelDispatch } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestAi1ModelSlot, cancelReservedModelSlot,
-  markModelDispatchIndeterminate, reconcileAi1GatewayTerminal, reconcileAi1ItemGatewayTerminal } from '@/lib/llm/capacity-repository';
+  markModelDispatchIndeterminate, reconcileAi1GatewayTerminal, reconcileAi1ItemGatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
+import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
 import { agentReviewBinding } from './agent-review-ownership';
 import { claimAgentReviewWithModelReservation, AgentReviewItemModelReservationRequired, claimConsumerItemAgentReviewWithModelReservation, type ItemModelCapacityReviewClaim, type ReviewDomainContext, type ModelCapacityReviewClaim } from './agent-review-repository';
-import { prepareAi1GatewayCall, reviewWithReservedAi1Gateway, reviewWithReservedAi1ItemGateway, type PreparedAi1GatewayCall } from './agent-review-gateway';
+import { prepareAi1GatewayCall, reviewWithReservedAi1Gateway, reviewWithReservedAi1ItemGateway, settleAi1GatewayNotStarted,
+  settleAi1ItemGatewayNotStarted, type GatewayNotStarted, type PreparedAi1GatewayCall } from './agent-review-gateway';
 import type { AgentReviewResult } from './agent-review';
 import type { ReviewInput } from './agent-review-contract';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
@@ -49,8 +51,22 @@ export async function claimAgentReviewItemModelCapacity(intent: AgentReviewItemM
   return { claim, call };
 }
 
-export function abandonAgentReviewItemModelCapacity(dispatch: Ai1ItemModelDispatch): Promise<boolean> {
-  return markModelDispatchIndeterminate(dispatch, 'local_abort');
+/** 전송 전에 포기한 item dispatch. 준비 호출을 받으면(아직 미사용) 전송 0 으로 not_started 정산하고, 아니면 지금처럼 indeterminate 로 둔다 */
+export function abandonAgentReviewItemModelCapacity(dispatch: Ai1ItemModelDispatch, call?: PreparedAi1GatewayCall): Promise<boolean> {
+  return abandonUnsent(dispatch, call && (() => settleAi1ItemGatewayNotStarted(call, dispatch)));
+}
+
+/**
+ * fetch 를 부르지 않은 dispatch 의 포기(CLI D5 의 게이트웨이판). one-use 준비 호출이 아직 쓰이지 않았다는 것이 전송 0 의 증명이라
+ * not_started 로 정산해 슬롯·후보 키를 남기지 않는다. 증명이 없거나(준비 호출 없음·이미 쓰임·대조 실패) 정산하지 못하면 점유를 유지한다.
+ */
+async function abandonUnsent(dispatch: Ai1ModelDispatch | Ai1ItemModelDispatch, settle?: () => GatewayNotStarted | null): Promise<boolean> {
+  let unsent: GatewayNotStarted | null = null;
+  try { unsent = settle?.() ?? null; } catch { unsent = null; }
+  if (!unsent) return markModelDispatchIndeterminate(dispatch, 'local_abort');
+  try { await reconcileGatewayNotStarted(unsent); }
+  catch (error) { await markUnsettledDispatch(dispatch); throw error; }
+  return true;
 }
 
 /** Original historical terminal settlement finishes before current business writing. */
@@ -67,8 +83,10 @@ export async function reviewAgentReviewItemModelCapacity(input: ReviewInput, dis
   }
   try {
     if (response.terminal) await reconcileAi1ItemGatewayTerminal(response.terminal);
+    else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
+    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai1_item_model_result_cleanup_failed');
     throw cleanup;
   }
@@ -114,9 +132,9 @@ export async function claimAgentReviewModelCapacity(input: Context): Promise<{ c
   return { claim, call };
 }
 
-/** A committed dispatch with no started transport has no fabricated terminal. */
-export function abandonAgentReviewModelCapacity(dispatch: Ai1ModelDispatch): Promise<boolean> {
-  return markModelDispatchIndeterminate(dispatch, 'local_abort');
+/** A committed dispatch with no started transport has no fabricated terminal. 준비 호출을 받으면(아직 미사용) 전송 0 으로 not_started 정산한다 */
+export function abandonAgentReviewModelCapacity(dispatch: Ai1ModelDispatch, call?: PreparedAi1GatewayCall): Promise<boolean> {
+  return abandonUnsent(dispatch, call && (() => settleAi1GatewayNotStarted(call, dispatch)));
 }
 
 /** Physical terminal reconciliation precedes the job's cancellation/current-input
@@ -134,8 +152,10 @@ export async function reviewAgentReviewModelCapacity(input: ReviewInput, dispatc
   }
   try {
     if (response.terminal) await reconcileAi1GatewayTerminal(response.terminal);
+    else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
+    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai1_model_result_cleanup_failed');
     throw cleanup;
   }

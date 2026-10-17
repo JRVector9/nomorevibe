@@ -3,6 +3,7 @@ import { TRANSLATE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translat
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTaglineKoGatewayTerminal } from "@/lib/llm/capacity-repository";
+import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, productTaglineKoInputHash, productTaglineKoLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { displayProjectName } from "./display-name";
@@ -81,6 +82,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("product_tagline_ko_dispatch_not_marked");
   } catch (cleanup) {
+    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "product_tagline_ko_result_cleanup_failed");
     throw cleanup;
   }

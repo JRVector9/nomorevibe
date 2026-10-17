@@ -100,6 +100,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       }
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      // 이 후보의 앞선 호출이 아직 dispatched/indeterminate 다 — 이 후보만 건너뛴다. 틱 전체를 미루면 목록 맨 앞에 남은 한 건이
+      // 매 틱 다른 후보까지 막는다. claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
+      if (error.reason === "dispatched") {
+        ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: "dispatched" });
+        return;
+      }
       // The claim TX has rolled back. Stop new claims without cancelling any
       // already admitted lane; all real work settles before returning deferred.
       modelDeferred = true;
@@ -112,9 +118,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       return;
     }
     if (!canStart()) {
-      // CLI 는 spawn 하지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
+      // CLI 는 spawn 하지 않은, gateway 는 fetch 를 부르지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
       if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
-      else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch);
+      else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch, prepared);
       await recordAgentReview({ ...context, receipt: claim.receipt,
         error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
       return;
@@ -162,7 +168,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       const recorded = await recordAgentReview({
         ...context, receipt: claim.receipt,
         ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
-          error: result.error, usage: result.usage,
+          error: result.error, detail: result.detail, usage: result.usage,
           retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
         }),
       });

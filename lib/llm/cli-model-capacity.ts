@@ -10,6 +10,7 @@ import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { modelCapacityOwnerSchema, type CliDispatchBinding, type CliModelDispatch, type ModelCapacityRequestIdentity } from "./capacity";
 import { cancelReservedModelSlot, findOwnPendingModelRequest, finishCliModelCapacityDispatch, lockCliModelCapacityDispatch,
   markModelDispatchIndeterminate, readModelCapacityCallerControl, reconcileCliProcessTerminal, requestCliModelSlot, type CliTarget } from "./capacity-repository";
+import { markUnsettledDispatch } from "./capacity-unsettled";
 import { resolveCliServingContract } from "./cli-serving-contract";
 import { prepareCliCall, readCliProcessTerminal, runReservedCliCall, settleCliNotStarted, type CliCallInput, type CliCallOutcome,
   type CliProcessResult, type PreparedCliCall } from "./cli-process-runner";
@@ -112,7 +113,8 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
   if (signal?.aborted || !work.beforeSpawn()) {
     const terminal = settleCliNotStarted(call, ref);
     if (!terminal) throw new Error("cli_model_call_already_used");
-    await reconcileCliProcessTerminal(terminal);
+    try { await reconcileCliProcessTerminal(terminal); }
+    catch (error) { await markUnsettledDispatch(dispatch); throw error; }
     return { kind: "not_started" };
   }
   let outcome: CliCallOutcome;
@@ -124,8 +126,10 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
     throw error;
   }
   // 물리 종료가 업무 기록보다 먼저 정산된다. close 를 못 본 호출(자손이 pipe 를 쥠)은 terminal 없이 점유를 유지한다
-  if (outcome.terminal) await reconcileCliProcessTerminal(outcome.terminal);
-  else if (!await markModelDispatchIndeterminate(dispatch, outcome.indeterminate)) throw new Error("cli_model_dispatch_not_marked");
+  if (outcome.terminal) {
+    try { await reconcileCliProcessTerminal(outcome.terminal); }
+    catch (error) { await markUnsettledDispatch(dispatch); throw error; }
+  } else if (!await markModelDispatchIndeterminate(dispatch, outcome.indeterminate)) throw new Error("cli_model_dispatch_not_marked");
   return readCliProcessTerminal(outcome.terminal)?.ending === "not_started" ? { kind: "not_started" } : { kind: "ran", result: outcome.result };
 }
 

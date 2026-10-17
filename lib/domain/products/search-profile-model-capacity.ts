@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
+import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { textProfileInputHash, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { prepareProfileModelDispatch, type ProfileTask, type ProfileWriteExpectation } from "./search-profiles";
@@ -63,6 +64,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
     else if (!await markModelDispatchIndeterminate(dispatch, captured.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("text_profile_dispatch_not_marked");
   } catch (error) {
+    if (native.terminal) await markUnsettledDispatch(dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, error], "profile result and terminal recording failed");
     throw error;
   }

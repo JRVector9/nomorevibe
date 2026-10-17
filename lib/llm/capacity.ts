@@ -842,6 +842,14 @@ export const cliModelTerminalEvidenceSchema = z.object({ version: z.literal(1), 
   && value.process.totalTokenBound === value.dispatch.binding.totalTokenBound
   && cliCanonical(value.process.transport) === cliCanonical(value.dispatch.binding.transport), "invalid_cli_terminal_dispatch");
 export type CliModelTerminalEvidence = Readonly<z.infer<typeof cliModelTerminalEvidenceSchema>>;
+/**
+ * 게이트웨이 fetch 를 한 번도 부르지 않고 닫은 AI1·AI1 item·AI2 dispatch(CLI D5 not_started 의 게이트웨이판). one-use 준비 호출이 아직
+ * 쓰이지 않았다는 것이 전송 0 의 증명이다. 정산은 점유만 끝낸다 — dispatch binding(chargedTokens = C)은 그대로이고 사용량 증거는 없다.
+ * 저장된 JSON 은 권한이 아니다 — 게이트웨이 모듈이 낸 원본 증인만 정산한다.
+ */
+export const gatewayNotStartedEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("gateway_not_started"),
+  dispatch: z.union([ai1ModelDispatchSchema, ai1ItemModelDispatchSchema, ai2ModelDispatchSchema]) }).strict();
+export type GatewayNotStartedEvidence = Readonly<z.infer<typeof gatewayNotStartedEvidenceSchema>>;
 
 const isoMillis = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
   .refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value, "invalid_timestamp");
