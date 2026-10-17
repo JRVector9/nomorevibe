@@ -1,5 +1,274 @@
 # 2026-10-16 파이프라인 개발 인계
 
+## 재개 — 2026-10-17 01:30 KST (Claude 오케스트레이터)
+
+사용자 지시로 오케스트레이터가 Claude로 바뀌었다. 이후 작업은 Claude 직접 + Claude 서브에이전트(opus/xhigh, 10-17 01:40 이전에 띄운 5개만 high)로 한다. 아래 "단계 마감" 절의 gpt-6.1-sol 규칙은 그 이전 것이다.
+운영 DB·SSH·배포·실 provider·activation은 이번에도 0이다. 원 사용자 WT는 이 파일만 갱신했다.
+
+### 완료 (push·draft PR, 실제 실행 결과)
+
+| PR | 브랜치 / HEAD | 실제 검증 |
+| --- | --- | --- |
+| [#484](https://github.com/JRVector9/nomorevibe/pull/484) PR10d canary anchor (base #483) | codex/pipeline-pr10d-batch-canary-continuation-20261017 / 97ee3803 | unit 8파일 130 PASS, scoped tsc·eslint 0. 실제 DB(fresh): canary-anchor 7/7, job-batches 17/17, site-evidence-job 10/10, reason dispatch 9/9. CI 전체 PASS |
+| [#485](https://github.com/JRVector9/nomorevibe/pull/485) PR05b10 한국어 소개 (base #484) | codex/pipeline-pr05b10-product-tagline-ko-native-20261016 / edec6188 | unit 43 PASS. 실제 DB: ko ledger 4/4, ko dispatch 8/8(이전 실패 case2·미실행6 포함). CI 전체 PASS |
+| [#486](https://github.com/JRVector9/nomorevibe/pull/486) PR05b11 crawl 소개 (base #485) | codex/pipeline-pr05b11-crawl-tagline-native-20261016 / c216d3e7 | unit 7파일 140 PASS, scoped tsc 0. 실제 DB(fresh): crawl ledger 8/8, crawl dispatch 14/14, 기존 crawl-tagline 10/10, reason ledger 4/4. CI 진행 중 |
+
+- PR10d 결함: 성공 ACK마다 batch-result가 덮여 유일 canary의 다음 admission이 막혔다. (role,instance)별 검증 ACK anchor로 해결. **운영 영향:** 재시작(새 bootId)·control epoch 변경·readback 교체 뒤에는 operator가 anchor(`batch-canary:<sha256>`)를 지우고 새 readback을 써야 열린다.
+- PR10d lane이 같은 owner lease 만료(pin 대기 중) 결함을 추가로 찾아 고쳤다.
+- 실제 DB driver 이식성 규칙: 고정 포트/URL guard 금지, beforeAll에서 ensureSchema, journal 개수 하드코딩 금지. crawl 두 driver를 이 규칙대로 고쳤다.
+- crawl runtime driver fixture 수정 3건: versioned readiness가 text 역할 밖의 reason-translate를 쓰던 것 → crawl-tagline, cleanup guard는 살아 있는 holder만 막음, loopback teardown은 기존 driver처럼 drain 뒤 closeAllConnections.
+
+### 추가 완료 (02:50 KST)
+
+| PR | 브랜치 / 기반 | 실제 검증 |
+| --- | --- | --- |
+| [#487](https://github.com/JRVector9/nomorevibe/pull/487) PR05b12 search-verify (base #486) | codex/pipeline-pr05b12-search-verify-native-20261017 | unit 9파일 142(서브 39파일 738), tsc·eslint 0. 실제 DB: crawl 8·14, search-verify dispatch 8/8(writer ledger 변조 RED→GREEN), 기존 search-verify 13/13 |
+| [#488](https://github.com/JRVector9/nomorevibe/pull/488) PR05b13 websearch-query (base #487) | codex/pipeline-pr05b13-websearch-query-native-20261017 | 0092 병합 뒤 0093·schema·journal 재생성(0092 predicate whole-left exact, 생성기 scratchpad merge/build-0093-on-0092.py). unit 61파일 1049, tsc·eslint 0. 실제 DB 7파일 전부 PASS |
+| [#489](https://github.com/JRVector9/nomorevibe/pull/489) PR01b-6 운영 구간 측정·2배 판정 (base main, 독립) | codex/pipeline-pr01b6-live-capacity-measurement-20261017 | unit 56+142, 실제 DB 7+16(SELECT 전용 role 수집·INSERT 거부). budget·사람 판단 덮음·lease 위반 증거 계약이 없어 지금은 passed 불가(의도) |
+
+| [#490](https://github.com/JRVector9/nomorevibe/pull/490) PR05c-1 CLI admission (base #486, #487과 형제) | codex/pipeline-pr05c1-cli-admission-20261017 | unit RED23→GREEN39, 영향 16파일 210. 실제 DB: HEAD 코드 13 실패 → 17/17, 기존 포함 64 PASS |
+
+- 운영 baseline 수집: 사용자 승인(03:00 KST). 운영 DB는 migration 77개(0076)라 model_capacity_control·pipeline_item_leases·pipeline_stage_modes가 없다 → 수집기 0076 대응을 측정 담당에 요청, 끝나면 root가 직전 30분 구간을 primary(PgBouncer, 키체인 nomorevibe-production-database-url, DB_POOLER_MODE=pgbouncer)로 읽기 전용 수집.
+- **운영 baseline 결과(03:45 KST):** 수집기 0076 대응(dea4f7ec, production 결함 1건 수정) 후 16:13–16:43Z primary 수집 성공했으나 시도·표·최종 0, 증인 0 → readiness_unproven. 운영 심사의 마지막 활동은 2026-10-15 14:03 UTC(일별 AI1: 10-13 5,104 / 10-14 1,129 / 10-15 6 / 이후 0). 신규 발굴 중단 + 적체 소진으로 흐름이 없다. 무효 artifact `/private/tmp/nmv-capacity-baseline-20261017.json`(0600)은 기록용으로만 남김.
+- **사용자 결정: 고정 입력 replay**로 2배 판정. PR01b-7 담당(WT nomorevibe-fixed-input-replay, base 스택 머리 #488 + #489 병합 3e1d8b5d, DB 55606) 실행 가능성 조사·export·격리 runner·상한 manifest 구현 중. 실제 모델 호출·운영 export는 계획/상한 확인 뒤 root 실행.
+- [#491](https://github.com/JRVector9/nomorevibe/pull/491) PR05c-2 CLI process runner(base #486, 새 파일만): 가짜 CLI 12모드 29/29, mutant 6 검출, legacy와 byte 동일.
+- 05c-1 메모: 감사 캠페인 provider가 grok-cli여도 job은 Claude CLI(reviewAgent)를 부르는 기존 특이점이 있다(admission은 실제 transport 기준). 별도 결정 필요.
+- 0093처럼 CHECK를 통째로 재생성하는 migration은 직전 migration 병합 뒤 반드시 다시 생성한다. DDL 테스트는 journal 마지막 항목(`.at(-1)`)이 아니라 tag로 찾는다(0092 테스트 수정함).
+- 측정 도구 root 메모: 2배·p95는 신규 최종만, "고정 입력"은 정책·버전·모델 identity 고정으로 해석(운영 구간은 같은 후보 집합일 수 없음), 품질 표본 크기·추출은 미정(사용자 결정), settings 아무 변경이나 구간 무효(보수적).
+
+### 진행 중 추가 (04:00 KST, 모두 opus/xhigh, base 6b79bb5d = #488 머리)
+
+- PR05c-3 CLI ledger + migration **0094**(when …006, 0093 predicate whole-left 보존): WT nomorevibe-cli-ledger(+#490·#491 병합 2b74ab19), DB 55607
+- PR15 DR 승격·epoch fencing·call-drain·D11 indeterminate 회수: WT nomorevibe-dr-promotion, 필요 시 migration **0095**(새 테이블만, when …007), DB 55608·55609
+- PR10e host 물리 합계 예산 강제: WT nomorevibe-host-budget, DB 55610 (migration 없음 원칙)
+- 계속 진행 중: PR11c Oracle 활성화(55599), PR01b-7 고정 입력 replay(55606), 스택 CI 실패 조사(55601)
+
+### 스택 병합 시작 (05:30 KST, 사용자 결정: 아래부터 차례로 merge commit)
+
+- 조사: /tmp/nomorevibe-stack-ci-forensics-20261017.md. 원인 3가지 — CI 성능(#453 529d4199), **HTTP timeout source GC 결함(eb865207, main·운영 배포본 8020dca에도 같은 코드)**, evidence fixture(#471 565fe797).
+- **#453 병합 완료** → main `f8b8f60a`(merge commit). HTTP 결함 수정이 main에 들어감. 중복 hotfix #492와 진단용 #472는 닫음.
+- 병합은 배포를 일으키지 않음: 배포는 deploy_shared_images.py에 SHA 고정으로만, git 빌드 앱 autoDeploy 꺼짐.
+- #460: main 병합(725c366d) push·ready, CI 대기. #461: #460 병합 + 565fe797 테스트 이식(ed456d67, 로컬 evidence 24/24·site-evidence 10/10) — 미push. #462: #460 병합, recorder 테스트 충돌은 #460 버전(e5e6cf31)으로 정리(root 결정: 같은 테스트의 나중 수정이 스택 전체에서 green) — 미push, 로컬 33+15 PASS.
+- #460 첫 CI: integration 3개 PASS, quality에서 `tests/net-fetch-timeout-source.test.ts` prefire 1건이 `windowValid:false`(강제 GC가 100ms 안에 끝나야 하는 측정 전제, 전체 unit 부하에서 늦음 — 나머지 결과 속성은 기대와 일치). main f8b8f60a CI는 같은 테스트 PASS. 실패 job만 재실행. **후속:** 이 fixture의 100ms prefire 창이 CI 부하에 취약하다.
+- 순서(forensics): #460 → #461·#462 → #465 → #467 → #466(0083, #471보다 먼저) → #471 → #473 → #474 … #491, 이후 새 PR들. #464는 하위 스택 뒤 main 기준으로 재정렬.
+
+### 운영 반영 (08:10 KST, 사용자 승인)
+- **운영 DB migration 0077–0082 적용**(prod.sh migrate, main bfe89a90 worktree nomorevibe-main-deploy): applied 77→83, 새 테이블 15개, 제어값 기본(model capacity disabled, job batch legacy, http disabled, stage 3행).
+- **text 앱 배포**(prod.sh에 사용자 허용으로 text-mini·set-release 추가): text-mini(예비) → text(M3) RELEASE_TAG=bfe89a90, 주 m3-text epoch 38 release bfe89a90 유지, text 작업 9개 배포 후 정상·오류 0, 키워드 생성 ~240/h. #500(키워드 대기열 순서) 운영 반영. 나머지 12개 앱은 8020dca(혼합 상태, 사용자 승인).
+- abcLLM 조사: PR1/PR2 OPEN·충돌 없음, 백엔드 autoDeploy:true(병합=배포). 번역 4경로는 PR1만으로 계약 미충족 → **사용자 결정: abcLLM PR3(opt-in 엄격 종료·출처)**, 배포는 canary 계획부터. PR3는 Cursor가 abcLLM-pr3-nonraw-terminal WT(PR1 브랜치 기반)에서 구현 중.
+- 새 PR: #502 PR14d, #503 PR16, #504 PR06c, #505 PR15b(0096), #506 PR13b(#464 포함), #507 PR11d(base의 dr_writer_fence grant 누락 결함 수정), #508 PR09b(Cursor). 모두 base codex/pipeline-integration-20261017.
+- 병합 자동화 재개: #467→#466→#471→#473→#474→…→#488 (land-2.log).
+
+### 최종 검토 (2026-10-17 16:40 KST~, 사용자 지시: A 통합 감사 + 병렬 코드리뷰 + 개선 검증, root 총괄·최종 보고)
+- 대상 3d274e07 = main(b0cf2ff2) + #530. 공통 맥락 /tmp/nomorevibe-review-context-20261017.md. 읽기 전용 WT nomorevibe-review-main, 검증 WT nomorevibe-verify-main(node_modules APFS 복제).
+- A: PR 상태 전수·닫힌 PR 내용 포함 여부·원격 브랜치 미병합 커밋·WT 미커밋·journal/CI 목록/grant SQL/문서 경로 정합성·인계 후속 대조.
+- R1 lib/llm·lib/crawl, R2 DR·Oracle·jobs·runtime·deploy·migration, R3 측정·replay·운영 도구, R4 웹·도메인·net·db·worker 진입점(오늘 role.acquire_unknown 장애 포함).
+- V: lint·typegen+tsc·전체 unit·next build·전체 integration(CI 방식)·python·**운영 스키마 덤프(읽기 전용)로 migration 0083–0101 리허설**·기본 env legacy 경로 확인.
+- 병행: LAN 우선 DB fallback 서브에이전트, p95 조정 실험 서브에이전트, #530 병합 대기.
+
+### 운영 반영 2차 (2026-10-17 21:28 KST~, 사용자 승인 "운영 반영 진행해")
+- 사전(읽기): 운영 DB 0082(83행), 바뀔 파이프라인 표 10개 전부 0행·진행 중 요청/lease/batch 0(drain 대상 없음), WAL 아카이브 실패 0, 웹 계정 `nomorevibe`가 drizzle 표 SELECT 가능(새 health 503 위험 없음).
+- 백업(로컬, 0600): 스크래치패드 `prod-backup-20261017/` — 전체 스키마(90표) `schema-pre-0083.dump`, 파이프라인 표 10개 데이터 `data-pipeline-pre-0083.dump`, `drizzle-migrations-pre-0083.dump`. pg_restore 목록 확인.
+- **migration 0083–0102 적용**(nomorevibe-main-deploy를 553a8e52로, `prod.sh migrate`): exit 0, 12:29:35→44Z, 103행·마지막 created_at 1794086400014. 기본값 확인: writer fence active, model capacity disabled, job batch legacy, source buffer 차단 없음, 미검증 제약 0. 옛 코드에서 사이트 health 200.
+- lease 정리: 장애 뒤 crawler·reviewer·maintenance를 mini 예비가 잡고 있었다(standby_active → 배포 도구 사전 관문이 멈춤). mini 예비 셋 scale 0 → M3 주가 lease 회수(epoch +1) → scale 1.
+- git 빌드 앱 6개 **553a8e52 완료**(스크래치 `git_rollout.py`, 앱마다 배포 done + 새 릴리스 관측·lease 확인): text-mini → text → maintenance-mini → maintenance → scheduler(2복제본) → connect-agent(classifyReady true). maintenance(M3) 첫 배포는 Swarm "No such container"로 **이전 spec(RELEASE_TAG 8020dca)으로 자동 롤백**됐는데 Dokploy는 done — 로컬 `:latest`는 새 이미지라 새 코드+옛 표시였다. lease 릴리스 확인이 잡았고 재배포로 정상.
+- CI 39032190549 전체 성공, 이미지 worker `sha256:489882330aa6…c963`, web `sha256:a6963030a463…5ed8`.
+- **공통 이미지 8개 보류(21:50 KST)**: `plan`이 `crawler_monitor_gate_timeout`. 다섯 역할 readiness·scheduler는 ok, 유일한 경보는 crawler 근거 단계(product-evidence-refresh) `upstream_stalled`(waiting 6·최장 4.2일, deferred 596, providerErrors 602, errors5m>0). 원인: 외부 사이트 영구 오류(site_too_large·site_http·GitHub not_found)가 backoff 재시도마다 시간당 16~21건 실패 → 3시간 중 errors5m=0인 시간 28.5%뿐. 배포 전부터 있던 상태(crawler 옛 코드). 10-15 PR423(AI 근거 not_found 제외)과 같은 부류. 관문 시간 초과 뒤 같은 관문을 다시 기다리는 진행 스크립트는 자동 모드 검사가 거부 → 사용자 결정 대기.
+- 사용자 허용("재대기 스크립트 허용")으로 스크래치 `shared_release.py`(원 도구 함수·순서, 관문 시간 초과 때 알람이 근거 경보뿐이면 같은 관문 재대기, 30분 한도): 22:04 사전 관문은 원 조건 통과(12:59Z 근거 성공 직후) → 선반입·스냅숏 `/private/tmp/nomorevibe-release-553a8e52.json` → **publisher 쌍 553a8e52** → publisher 관문 30분 동안 매번 같은 근거 경보만, 한도로 정지.
+- **진짜 원인**: classifyStage가 `errors = max(providerErrors, errors5m)` — 누적 개별 오류(관문 집계 600, 표 전체 3,036: GitHub not_found 1,782·site_http 895·site_too_large 245·unsafe 58·timeout 42 등, 전체 91,715 중 88,679 정상)가 남아 있으면 **최근 5분 근거 성공이 있을 때만** 통과. 대기 6건이라 성공이 수 시간에 1번 → 상시 경보. 새 코드도 같은 식. 사용자 결정 "둘 다 진행": ① 이번 배포는 이 경보 하나만 제외(다른 조건 그대로 + 근거 잡 2분 내 실행·잡 오류 없음 확인) ② 판정식 수정 PR(서브에이전트, WT nomorevibe-evidence-progress, 브랜치 fix/evidence-progress-per-item-errors-20261017) + 대기 6건 정체 조사.
+- ① 스크래치 `shared_resume.py`: publisher 쌍 probe 재확인 → reviewer 쌍 → crawler 쌍 → 웹 mini(2)·M3(4) → 공개 health 두 웹 553a8e52 → HTML purge ok. **23:24 KST 완료.**
+- **최종 확인(23:25 KST)**: inventory 14앱 전부 553a8e52(complete), lease 5개 M3 주·예비 5개 standby 모두 553a8e52, scheduler 2복제본 553a8e52, connect-agent 553a8e52, DB migration 103, 제어값 기본(capacity disabled·batch legacy·fence active·source buffer 차단 없음·stage 3개 legacy·요청/lease/batch 0), 최근 15분 잡 오류 0·5분 성공 27, `/` 200·`/api/health` 200, 관리자 주소(ADMIN_ORIGIN=Tailscale) `/admin/login` 200·`/admin` 307. 공개 도메인 `/admin` 404는 설계(ingress 비밀 헤더).
+- ② [#534](https://github.com/JRVector9/nomorevibe/pull/534)(서브에이전트, root 리뷰): 근거·제작 근거 집계에서 출처별 재시도 대기 실패를 공급자 오류에서 제외(계정 단위 rate_limited·auth_unavailable·잡 커서 스캔 전 실패는 유지), 대기 6건 원인 = sslip.io·nip.io 주소 제품의 사이트 관측 저장이 safeHttpUrl 에 거절돼 매분 던지며 저장소 출처까지 막음 → 저장 불가 주소는 사이트 출처 생략. CI 39042362138 전체 통과. 사용자가 `!`로 ready+squash 병합 → **main c41b5110**(main CI 39043948091 전체 성공, worker `sha256:35b036c6…1532`, web `sha256:6fedc426…9bca`). DB·카탈로그·설정 변경 없음.
+- **c41b5110 운영 반영(2026-10-18 00:12–00:33 KST, 사용자 지시 "병합하고 배포까지")**: git 빌드 6앱(`git_rollout_3.log`, 롤백 없음) → 공통 8앱(`shared_release_excl.py`, 스냅숏 `/private/tmp/nomorevibe-release-c41b5110.json`; publisher·reviewer·crawler 관문은 옛 판정식이라 승인한 근거 경보 제외 적용). crawler 교체 직후 막혔던 6건 전부 GitHub 근거 수집 성공(15:32–15:33Z, 다음 확인 10-21).
+- **최종 확인(00:35 KST)**: inventory 14앱 c41b5110 complete, lease 5개 M3 주 c41b5110, **원래 관문 조건 그대로 ok**(failover·readiness·progress 모두 ok — 근거 단계 progressing·waiting 0·providerErrors 0), 최근 15분 잡 오류 0·5분 성공 29, 공개 health 두 웹 c41b5110, HTML purge ok. 이후 배포는 원래 도구(`deploy_shared_images.py run`) 그대로 쓰면 된다.
+- 남은 것: Tailscale 키 만료 끄기(사용자), abcLLM PR1/PR3, 실모델 2배 판정, sslip.io·nip.io 주소 제품 6개 공개 유지 여부(근거가 새로 보임), 출처 claim 모드 켜기 전 `selectTarget` 같은 수정 필요(#534 문서).
+
+### LAN fallback 환경변수 적용 (2026-10-18 00:37–00:54 KST, 사용자 지시 "LAN fallback 환경변수 적용 진행해")
+- runbook `docs/runbooks/db-lan-fallback.md` **선택지 B**(사용자 결정 "Tailscale 우선 + LAN fallback"): 비밀 URL은 그대로, 한 줄씩만 추가. 14앱 `DATABASE_FALLBACK_HOST=192.168.50.18:6432`, web-mini `READ_DATABASE_FALLBACK_HOST=192.168.50.248:5432`, 웹 둘 `VALKEY_FALLBACK_HOST=192.168.50.18:6380`(web-m3 읽기 복제본은 pg_hba가 192.168.139.2를 거절해 제외). Oracle 그대로.
+- 스크래치 `fallback_env.py`(show/apply: 저장 → 배포 → done, 저장 후 URL·RELEASE_TAG·이미지 불변 확인) + `fallback_rollout.py`(runbook 순서, Swarm spec의 fallback 줄·Running 확인 → 활성 워커 관측 networkRoutes.primary=tailscale·lease M3 주 / 웹 health).
+- **함정 2개**: (1) publisher 주 재시작 중 **같은 릴리스의 mini 예비가 lease를 가져감**(epoch 123, 스스로 안 놓음) — 예비 scale 0 → M3 주 회수(124) → 1. 이후 M3 역할 앱은 예비 0 → 주 적용·확인 → 예비 1로 자동화. (2) scheduler-m3 Swarm "No such container" → **rollback_completed**(spec에 fallback 없음, Dokploy는 done) — release_git.py 로 같은 SHA 재배포 → update completed.
+- **최종 확인(00:55 KST)**: 14앱 Swarm spec에 fallback 줄·전 태스크 Running·롤백 없음, lease 5개 M3 주·예비 5개 standby(전부 c41b5110), 웹 health `networkRoutes` mini `{primary,valkey,read}: tailscale`·M3 `{primary,valkey}: tailscale`, 원래 배포 관문 ok, 최근 15분 잡 오류 0. fallback 로그: web-m3 복제본 1곳 `cache.valkey_fallback_opened route=lan`(15:43:42Z, 웹 4대 동시 기동 순간 Tailscale 새 연결이 1초 안에 안 열림 — 설계대로), DB fallback 0. DB 쪽 6432 LAN 출발 연결(M3 15·mini 18)은 같은 PgBouncer를 쓰는 다른 서비스와 구분 불가.
+- 남은 관측(runbook 5): 하루 동안 `db.connection_fallback`·`cache.valkey_fallback_opened` 빈도, health dbLatencyMs. 실제 Tailscale 끊김 상황의 넘어감은 아직 실측 안 함(drill 미실시).
+
+### 최종 상태 (2026-10-17 21:25 KST)
+- **#533 병합 → main 553a8e52.** 파이프라인 개편 개발 전부가 main에 있다: 스택 #467–#488, 통합 #527(#490–#526), #528–#531, 다른 세션의 #532, 최종 리뷰 수정·LAN fallback #533. migration 0000–0102.
+- 열린 PR: nomorevibe #292·#208(파이프라인 무관), abcLLM #1–#4(병합=배포, 승인 대기).
+- 운영: 사이트 정상(health 200). 운영 DB 0082, 앱 8020dca/bfe89a90 그대로 — **0083–0102 적용과 배포는 사용자 승인 대기**(백업 → drain → migrate → 이미지, health가 migration 미적용이면 503).
+- 사용자 조치 대기: Tailscale 서버 노드 Disable key expiry(v9-storage 10-19 만료), GitGuardian 오탐 2건(#509 lease 토큰 문자열, #533 테스트 redis URL) 무시 처리.
+
+### 최종 검토 결과 2차·수정 통합 (2026-10-17 19:00 KST)
+- **V 전체 검증(3d274e07)**: lint 오류 0·tsc 0·unit 5,350·**통합 252파일 2,753(CI 방식 3 shard, 실패·flake 0)**·python 161·next build·bundle 통과. **운영 스키마 덤프 리허설: 0083–0101 19개 exit 0(~1초), drift 0, whole-left 확인**, 기본 env legacy 대표 잡 4종 202건 통과.
+- **내부망 fallback 조사 핵심**: etcd 3대(v9-primary·v9-replica·9mini)와 Patroni가 Tailscale 주소만 써서, 키 만료 때 Primary가 02:17Z에 스스로 강등(DCS 접근 불가) → 앱 fallback만으로는 그 5시간을 못 막음. 사용자 결정: **Tailscale 키 만료 끄기**(콘솔, 사용자 조치) + 앱은 **Tailscale 우선 + LAN fallback**(실측: 컨테이너 LAN 새 연결 약 +400ms, M3 컨테이너 출발 192.168.139.2는 pg_hba 5432 거절, 6432·6380은 허용).
+- **p95 조사**: items p95 악화는 AI2 인계의 5초 polling 두 단계 꼬리(고정 지연에서만, 지연 분산 시 items p95가 더 좋음). #530 뒤 legacy budget verified 확인. **passed를 막는 직접 원인은 budget 회계 비대칭**(구간 끝 호출: legacy 실제 usage vs items C) → F5에서 양쪽 동일 규칙(계량기 usage 1:1 증명 시 그 값, 아니면 C)으로 수정 중. 권장 설정 4 AI1 + 4 AI2, 동시 한도 8.
+- 수정 5개 커밋: F1 deaee24f(판정 무결성), F2 cd9c59ff(게이트웨이, **0102**, DR 테스트 step-DB 비교), F3 2ba300b1(웹·net: safeFetch 누수·health migration 확인·로그아웃), F4 0b431cdf(D11 opt-in·role-worker 회복·배포 migration 확인·Oracle 권한), LAN fallback fdef4fe2.
+- **통합 PR [#533](https://github.com/JRVector9/nomorevibe/pull/533)**(integration-5): health route 충돌 해결(migration 확인 + networkRoutes), health-route 테스트 fixture. 로컬 tsc 0·unit 5,479·migration 103·핵심 통합 14파일 통과(oracle-db-roles는 단독 17 통과, 연속 시 앞 파일 lease로 skip — 기존 순서 의존). land.sh로 CI 대기 후 병합.
+- **다른 세션의 [#532](https://github.com/JRVector9/nomorevibe/pull/532)**(draft, 11:22Z): AI2 인계 polling 5초→1초 + replay 구간 끝 items consumer drain(진행 중 호출 실제 usage 정산). 가짜 게이트웨이 450: items p95 38.43s(legacy 41.2s보다 좋음)·budget 통과 → p95·budget 비대칭을 함께 해결. 같은 문제의 F5는 중복이라 중단(변경 없음). #532는 #533과 lib/crawl lifecycle·scripts/worker.ts·replay runner에서 충돌 예상 → #533 병합 뒤 그 세션이 main 병합 필요.
+- **#532는 다른 쪽에서 main에 먼저 병합됨(a794abc9).** 그래서 #533 병합이 scripts/worker.ts 충돌로 거절 → integration-5에 main 병합(`stageRefill`(#532)·`failed`(F4) 둘 다 유지, 3557fe90). 이 트리는 미리 검증한 #532+#533 합본(9e7aa3a0)과 동일: unit 416파일 5,486, 핵심 통합 9파일(consumer·replay·회로·not_started) 통과. land.sh로 CI 대기.
+- #533 첫 CI: integration 3 shard pass, quality는 tests/ssrf.test.ts 실제 DNS flake → 재실행 pass. GitGuardian은 tests/db-network-route.test.ts의 테스트 자리표시 redis URL(비밀번호 `pw` 등) 오탐 — 필수 체크 아님, 대시보드 무시 처리 필요(사용자).
+- 실수 기록: #533 병합이 실패했는데 land-2.log에 "MERGED #533"을 잘못 남겼다가 지움.
+- 실수 기록: health 충돌 해결 때 Write가 거부된 상태로 충돌 표시가 든 파일을 커밋 → push 전에 발견해 amend.
+
+### 최종 검토 결과 1차 (2026-10-17 17:30 KST)
+- main 452ea656(#530·#531 병합). **A 통합 감사**: 코드 누락 0(닫힌 34·squash 34 대조), journal 0000–0101·CI 18개·grant SQL·문서 참조 정합. #523 고유 runbook 내용은 #531로 옮김. 열린 PR: nomorevibe #292·#208(무관), abcLLM #1–#4(승인 대기).
+- **R1(모델 슬롯·게이트웨이)**: P0·P1 없음. P2: 전송 전 포기 gateway dispatch가 indeterminate로 슬롯·후보 고착, envelope 불일치가 invalid_output으로 시도 소진, 0077·0078·0095도 legacy 선행 조건(배포 순서). P3 6건.
+- **R3(측정·운영 도구)**: 2배 판정 거짓 통과 구멍 P2 3건(라벨 표본 동일성·실제 동시 예산·upstream 동일성 미검사), live 수집기 상관 EXISTS 성능 P2, marker 운영 CLI 없음·replay safety 거짓 verified·최소 표본 없음 P3.
+- **R4(웹·net·worker)**: **P1 기본 env 회귀 — safeFetch origin 자리 영구 누수(실제 undici 모의 실험 확인)**, P1 D11 기록 항상 켜짐·fail-closed spawn, **0095 없이 배포 시 웹 쓰기·선출 전부 실패인데 health 200(가드 없음)**, P1 role-worker 획득 오류 미기록·standby 영구 healthy(오늘 5h 정지 경로), 로그아웃 DB 의존, GitHub webhook 재전송 전제 오류.
+- **R2(DR·Oracle·migration)**: migration 0083–0101을 운영 0082에 순서대로 적용 안전(한 TX, 작은/빈 표만 lock, whole-left·NULL 안전 문자열 대조). P1 D11 항상 켜짐(R4와 동일), P2 0095 선배포 방지 장치가 플래그뿐, P2 versioned 역할 24h anchor 뒤 조용히 정지, P2 translation profile http_origin_control SELECT 누락, P2 거대 CHECK(최대 31만 자) 비용 측정 필요, P3 Oracle 권한 과다·journal when 미래 시각 함정·문서 불일치.
+- F4(워커·D11·선출·DR·Oracle, WT nomorevibe-fix-worker, 0103 배정, 55668): D11 기본 꺼짐 플래그, role-worker 오류 기록·연속 실패 health 격상·SET LOCAL timeout, deploy helper migration 기계 확인, versioned stale anchor 감지, translation grant, 권한 축소, CHECK 비용 측정, journal when 검사.
+- 수정 lane(opus/xhigh): F1 판정 무결성(WT nomorevibe-fix-verdict, 55665), F2 모델 슬롯·게이트웨이(nomorevibe-fix-gateway, 0102 배정, 55666), F3 웹·net(nomorevibe-fix-webnet, 55667). role-worker·D11·선출·pool은 R2 결과 뒤 F4.
+
+### 운영 장애 복구 (2026-10-17 16:25–16:31 KST, 사용자 승인 "2번 재인증")
+- V9-Replica·Primary에서 `sudo tailscale login --timeout=15m`(LAN 경유: M3 → Replica → Primary) → 사용자 승인 → IP 유지(100.85.113.10·100.99.209.55), 새 키 만료 2027-04-15.
+- 부작용 복원: `tailscale login`이 prefs를 초기화(RunSSH=false·Hostname 빈 값·AutoUpdate check) → `tailscale set --ssh=true --hostname=V9-Replica|V9-Primary --auto-update=true`로 이전 값 복원(Replica 로그의 이전 Prefs 기준, Primary는 오늘 오전 Tailscale SSH 읽기가 됐던 근거).
+- 웹은 자동 복구(/api/health m3-web·mini-web ok). **워커는 5시간째 `role.acquire_unknown` 반복**(heartbeat 쓰기는 됨, 오류 내용 미기록) → 사용자 승인으로 M3 워커 5개 `docker service update --force`(reviewer app-copy-primary-hard-drive, crawler app-generate-haptic-card, publisher app-program-multi-byte-pixel, text nomorevibe-text-m3, maintenance app-navigate-neural-system). 직후 5역할 lease 확보(crawler·maintenance·reviewer = mini 예비, publisher·text = M3), 5분간 jobs 성공 21·키워드 4, health 200.
+- 남은 확인: 같은 V9 DB를 쓰는 M3·mini의 다른 프로젝트 서비스(abctradecoin·onetwoday·mynie 등)도 5시간 끊겼음 — nomorevibe 범위 밖, 사용자에게 알림. Tailscale 콘솔 Disable key expiry 권장(v9-storage 키 만료 10-19).
+- **사용자 지시: M3·9mini는 내부망(LAN) 우선, 실패 시 Tailscale fallback, Oracle은 Tailscale.** 서브에이전트(opus/xhigh): 읽기 전용 점검(pg_hba·PgBouncer LAN 허용, 컨테이너 LAN/Tailscale 새 연결 지연) + 코드(DB 주·읽기·Valkey fallback, health 경로 표시, 기본 동작 불변) + 운영 반영 계획. WT nomorevibe-db-lan-fallback(base main b0cf2ff2), 55658.
+
+### 2배 판정 가짜 게이트웨이 결과·p95 조사 (2026-10-17 16:20 KST)
+- headless 세션 완료(정리 끝, /tmp/nmv-2x-replay-output, 계획 /tmp/nmv-2x-plan.md). **450건: legacy 176 최종/시 → items 728/시(ratio 4.14), 안전 0건 verified, items budget verified(611 호출·990,200 토큰, peak 8/8), 그러나 p95 42.0s → 44.9s로 `latency_p95_worse` → status failed.** 기준선 budget 미검증은 #530으로 해결.
+- #528 병합(a3041042). #529·#530 순차 병합 중.
+- 서브에이전트(opus/xhigh): p95 원인 단계별 분해, #530 코드로 450건 legacy·items 재실행(기준선 budget verified 확인), capacityPolicy·consumer 수 변형 2–4개 실험(코드 수정 없음, replay 동시 2개 이하·부하 10 이하에서만) → /tmp/nomorevibe-2xtune-report.md. WT nomorevibe-2x-tuning(detached #530 head), 55654–55657.
+
+### 마무리 PR (2026-10-17 16:30 KST)
+- [#528](https://github.com/JRVector9/nomorevibe/pull/528) seed 테스트 시계 고정(첫 CI quality는 worker-runtime 다중 spawn 테스트가 CI 부하로 5s 초과 — 로컬 0.8–1.0s, 한도 변경 없이 재실행), [#529](https://github.com/JRVector9/nomorevibe/pull/529) PR15f(0101, 통합 30 passed), [#530](https://github.com/JRVector9/nomorevibe/pull/530) replay 구간 끝 drain budget(통합 20 passed). land.sh로 #528 → #529 → #530 순차 병합 중.
+- CI flake 조사 종결(코드 변경 0): 두 실패 모두 main에 이미 들어간 수정이 빠진 옛 병합 커밋에서 남. 55P03 = autovacuum과 provisioning의 역순 대기(345f28d2 LOCK TABLE 선행으로 해결, 결정적 재현 RED 5/5 → HEAD 25/25), role-worker-process = heartbeat 경쟁(1eeecd68로 해결, RED 3/12 → HEAD 5/5). 남는 위험: lock_timeout 1000ms = deadlock_timeout 1s라 autovacuum이 1초 넘게 걸리면 LOCK TABLE에서 55P03 가능(실측 최대 144ms, 제품 값은 그대로).
+
+### PR15f 충돌 전 boot 회수 (2026-10-17 16:10 KST)
+- 서브에이전트 완료(WT nomorevibe-crash-reclaim, **0101**: dr_process_group_events detail 열 + method CHECK whole-left + `pgid_esrch_by_successor`, 기본 꺼짐 `PROCESS_GROUP_SUCCESSOR_PROBE`). **증명 가능한 경우만 구현**: 같은 커널 boot·같은 PID namespace에서 후속 boot가 옛 pgid ESRCH를 직접 관측(Oracle systemd unit 재시작). M3·mini Docker 컨테이너 사망·호스트 재부팅은 근거 없음 → 결정 필요((a) Docker die event 기록 구성요소 (b) 운영자 서명 근거 (c) 수동·DR 경로만). 설계 /tmp/nomorevibe-pr15f-design-20261017.md.
+- root: oracle-scheduler-canary 통합 테스트 fixture가 "0100만 뺀 journal"로 직전 상태를 만들어 0101이 있으면 migrator가 0100을 건너뜀 → 0100의 idx를 tag로 찾아 그 앞 항목만 남기도록 수정(하드코딩 대신 tag 조회). unit 10파일 75 통과, 통합은 부하 하락 뒤 실행 중.
+
+### 기준선 budget drain 수정·부하 사고 (2026-10-17 16:00 KST)
+- 서브에이전트 완료: replay 구간 끝에 새 claim·새 호출만 막고 계량기 drain(정지+drainMs, maxWallMs 안)으로 진행 중 호출의 usage를 기록(WT nomorevibe-replay-drain-budget, 7파일). 최종·처리량·p95는 구간 안 그대로, drain 호출은 budget에만(보수적 비대칭, `windowEndDrain.accounting`). drain 상한에서 끊기면 legacy·items 모두 unverified(`replay_drain_calls_cut`). 구간 끝 뒤 새 호출은 계량기가 거부(`replay_calls_refused`). root 재실행 unit 151, 통합은 부하 하락 뒤 실행 중.
+- 남은 비대칭(후속 후보): items consumer는 구간 끝에 호출을 놓아 장부가 C로 청구 → 후보가 불리. 고치려면 job·consumer의 "claim 중단"과 "진행 중 호출 끊기" 신호 분리 필요.
+- **부하 사고**: CI flake 서브에이전트가 CI 부하 근사로 `yes` 14개(+컨테이너 4)를 띄워 부하 평균 154(06:5xZ). root 지시로 06:53Z 종료, 이후 부하 프로세스 ≤4·5분 이내·즉시 정리 규칙. **이 시간대(대략 06:45–07:05Z)에 돈 headless 세션의 450건 replay 측정은 CPU 경합으로 왜곡됐을 수 있다.**
+
+### main 통합 완료 (2026-10-17 15:45 KST, 06:45Z)
+- **#527 병합 → main 740b2cfd**: 파이프라인 개편 draft PR 전부(#490–#526, #523 제외) + migration 0094–0100. CI 전부 pass(GitGuardian은 테스트 문자열 오탐, 필수 아님). 병합은 배포를 일으키지 않음(autoDeploy는 connect-agent만).
+- 포함된 PR 34개 닫음(각 PR 머리 커밋이 main 조상임을 확인, 아닌 9개는 끝 커밋 내용을 개별 대조: fence grant는 main에 다른 형태로 있음, 0670c200 있음, c62c6c93은 main closeAllConnections와 중복, #497 새 내용 없음). #523은 #519의 e7a8b8c4와 중복으로 닫음.
+- 빠졌던 seed 테스트 시계 고정(91a0fbfe)은 [#528](https://github.com/JRVector9/nomorevibe/pull/528)로 main에 옮기는 중.
+- 남은 열린 PR: #528, 옛 #292·#208(파이프라인 무관).
+
+### 운영 장애 (2026-10-17 11:16 KST~, 15:50 KST 확인)
+- **V9-Primary·V9-Replica Tailscale 노드 키 만료**(Replica 02:13:43Z, Primary 02:16:33Z → NeedsLogin). 웹·워커는 DB(100.99.209.55:6432)·읽기 DB(100.85.113.10:5432)·Valkey를 Tailscale 주소로 써서 사이트 전체 DB 불가: `/api/health` 503, 홈 "불러오지 못했습니다", 상세 500, 관리자 로그인 실패(로그인 POST가 비밀번호 전에 주 DB rateLimit 쓰기). 11:16 이후 운영 커밋 0. DB·PgBouncer는 LAN(192.168.50.18/.248)에서 정상, 복제 streaming.
+- 배포 무관: 진행 중 배포 없음, main 병합 뒤 배포 없음, autoDeploy는 connect-agent만(마지막 10-14). Dokploy(deploy.brut.bot)도 Tailscale 주소라 접속 불가(컨테이너는 healthy).
+- 복구안(사용자 승인 대기): ① Tailscale 콘솔 Disable key expiry ② LAN 경로로 각 서버 `sudo tailscale login` 후 승인 URL. 확인: IP 유지, /api/health 200, lease·복제본·Valkey 재연결. LAN env 우회(13앱 재배포)는 비권장.
+- #527은 원인 확인 전 자동 병합을 멈췄다가, 배포 무관 확인 후 재개.
+
+### 남은 작업 일괄 진행 (2026-10-17 15:30 KST, 사용자 지시 "claude 너가 직접 서브에이전트 opus5.5 xhigh로 남은 작업 전부")
+- Cursor는 쓰지 않는다(Opus 월 한도 소진). Claude 서브에이전트(opus/xhigh)로 진행, 개수 제한 해제.
+- **통합 PR [#527](https://github.com/JRVector9/nomorevibe/pull/527)** integration-4 → main: integration-3 + main + #524(#518·#509) #516 #521 #517 #522 #519 #520 #525 #526. #523은 #519 브랜치의 docs/runbooks/dr-stuck-reclaim.md(e7a8b8c4)와 중복이라 제외. 충돌: journal 합집합(scratchpad resolve-journal.py), gateway 예약 호출 = PR15d gatewayFetch + PR06e 회로 관측 + PR05d strict 헤더, consumer = PR06e + PR15d boot owner. 로컬: tsc 0, 전체 unit 404파일 5,338, 새 DB migration 101=journal 101. land.sh로 CI 대기 후 병합.
+- migration 순서 0094→0100(#495·#496·#505·#509·#513·#519·#526). 운영 DB는 0082.
+- 서브에이전트(opus/xhigh): ① replay 구간 끝 drain budget 수정(방식 a: 새 claim만 막고 진행 중 호출은 drain 안에서 usage 기록, WT nomorevibe-replay-drain-budget, base integration-4, 55652) ② CI flake 원인 제거(model-capacity-adversarial 55P03·role-worker-process, WT nomorevibe-ci-deflake, 55650) ③ 컨테이너 전체 종료·OOM 뒤 회수 증거 설계(증명 불가면 설계만, WT nomorevibe-crash-reclaim, 0101 배정, 55653).
+- headless 2배 세션(pid 4130)은 legacy/items 450건 replay 진행 중 — 결과 /tmp/nmv-2x-replay-output, 계획 /tmp/nmv-2x-plan.md.
+
+### 검토 (2026-10-17 15:10 KST, 06:10Z)
+- **스택 병합 완료**: #467–#488 전부 main 병합(마지막 #488 00ca04d4, 02:46Z), main CI success. main migration은 0093까지, 운영 DB는 0082.
+- **Cursor Opus 월 한도 소진**(11/2 재설정): C8·C13b·C14가 중간에 멈춤. C8·C13b는 다른 Claude 세션이 이어서 #525(PR15e 웹 fence)·#526(PR11g Oracle scheduler, 0100)으로 완료(CI 전부 pass). C14(CI flake) 미완(WT nomorevibe-ci-deflake, 1파일).
+- 다른 세션이 #509→#518→#524 base 병합 push(CI pass), #524에 오프라인 CLI 테스트 per-test timeout 5s→20s(테스트 전용, 저장소 다른 multi-spawn CLI 테스트와 같은 값).
+- **별도 headless Claude 세션(14:08 KST~, pid 4130) 2배 판정 작업 중**: /tmp/nmv-2x-replay(#509+#518+#524+#497 로컬 결합, push 안 함), 가짜 게이트웨이 replay — A/A failed(ratio 1, 정상 대조), legacyA vs items ratio 1.33(가짜 게이트웨이 조건) + readiness_unproven·quality_unverified·기준선 budget unverified → incomplete. 결과 /tmp/nmv-2x-replay-output, 계획 /tmp/nmv-2x-plan.md 작성 예정. migration 전역 순서 0094→0100, migrator가 순서 어긋난 항목을 건너뛰므로 #519(0099)가 #526(0100)보다 먼저.
+- **남은 draft**: base가 이미 병합된 1단(#490·#491·#493 → base #486, #494·#495·#496·#497 → base #488)은 main으로 재지정 후 순차 병합 필요, 그 위 #499·#501, integration 계열 #502–#526. migration 0094(#495)·0095(#496)·0096(#505)·0097(#509)·0098(#513)·0099(#519)·0100(#526).
+
+### 진행 (2026-10-17 08:30 KST, 23:30Z)
+- 스택 병합 land-2: **#467 병합(5cb4904d)**, #466부터 계속(scratchpad land-2.log).
+- Cursor C2 PR01b-8 판정 증거 장부(0097) → root 리뷰(lease 판정식이 실제 가드와 같은 clock_timestamp 기준임 확인)·새 컨테이너 재실행(unit 96, 실제 DB 95+63 passed) → **draft [#509](https://github.com/JRVector9/nomorevibe/pull/509)** (base integration). 배포는 0097 먼저, marker는 모든 쓰기 앱 교체 후.
+- **#466 병합(9137ae9d)**. #471에서 문서 4개 충돌로 멈춤 → main 쪽이 상위집합임을 확인하고 main 판으로 해결(d706ec9b). land.sh에 docs/ 한정 자동 해결(main 블록 + 우리 쪽에만 있는 줄, docs 밖 충돌은 STOP) 추가 후 #471부터 재개.
+- **draft [#510](https://github.com/JRVector9/nomorevibe/pull/510) PR05c-6**(Cursor C4): `CLI_SERVING_CONTRACTS` + reviewer 시작 시 `--version` probe(D7). root 재실행 unit 10파일 109 passed. cliVersion·Grok C 실측은 운영 승인 필요.
+- **draft [#511](https://github.com/JRVector9/nomorevibe/pull/511) PR05d**: `ABCLLM_SERVING_CONTRACTS`로 9개 resolver, 번역 4경로 PR3 opt-in 헤더 + 응답 `usage_provenance` 필수(root 하드닝 지시). root 재실행 unit 214, 실제 DB 10 passed. 둘 다 base integration-2.
+- **#471 병합(14ac88b5)**, #473 문서 충돌 자동 해결(main 대비 줄 추가만 확인) 후 CI 중.
+- **draft [#512](https://github.com/JRVector9/nomorevibe/pull/512) PR16b** 비상 admission 배선(기본 꺼짐)·선출 takeover gate·embedding parity 도구. root 재실행 unit 93, 실제 DB 42. 대기 시간 근사(max(0, now−last_run_at−interval)) root 승인.
+- **draft [#513](https://github.com/JRVector9/nomorevibe/pull/513) PR11e(0098)** versioned admission fence(결함), candidates 증거 INSERT 트리거, stale recanary grant, readback 인덱스. root 재실행 unit 87, 실제 DB 52. **0097을 먼저/함께 적용**(journal 순서). legacy fence 제외는 hot path 부하로 root 승인, ACK TX·item lease claim은 PR15c에 전달.
+- **abcLLM draft [#4](https://github.com/JRVector9/abcLLM/pull/4)** canary runbook + dry-run 점검 스크립트(base PR2). root 재실행 pytest 62 passed. 모든 운영 단계·mini 단독 배포 예외는 사용자 승인.
+- 재고 조사 결과 /tmp/nomorevibe-remaining-inventory-20261017.md: 2배 판정을 막는 미배정 공백 = budget 증거 없음(판정이 passed 불가), 운영자 제어 도구 없음, DR 밖 stuck slot/permit 회수 없음(PR07 포함), capacity open 전역 스위치, circuit breaker 없음. 새 migration은 **0099**부터.
+- **root 결정 — budget verified 정의(보수적, 사용자가 바꿀 수 있음):** 구간의 모든 모델 호출이 장부에 귀속(장부 밖 0), 호출당 실제 usage(upstream_reported) 없으면 전체 C로 계산, 선언된 동시 예산 초과 순간 0 — 셋 다 증명될 때만 verified. 비교는 고유 최종당 호출 수·과금 토큰이 각각 baseline 이하(허용 오차 0).
+- **draft [#514](https://github.com/JRVector9/nomorevibe/pull/514) PR13c** 관리자 단계별 처리 지표(고유 완료·실제 호출·재사용·AI2 표·대기). root 재실행 unit 51, 실제 DB 5, eslint 0. 미계산 항목 채우는 방식은 (a) 주기 집계 → observations 제안(결정 대기).
+- **#473 integration(2) 실패 원인**: search-profile "번역 없이" 테스트가 병렬 처리 두 제품의 gateway 호출 순서를 가정(mockResolvedValueOnce). #473 admission의 await로 순서가 흔들림(로컬 전체 파일 6회 중 2–4회 실패, main 4/4 통과). 요청 본문으로 답하는 mock으로 고침(e2cc7066, 기대값 불변, 6/6 통과) 후 #473부터 병합 재개.
+- **draft [#515](https://github.com/JRVector9/nomorevibe/pull/515) PR15c** fence를 runJob claim(legacy 포함)·requestDueJobs·source claim·모델 장부 control()의 첫 lock으로. root 재실행 unit 200, 실제 DB 60. **#513보다 먼저/함께 병합**(아니면 control→fence 순서 deadlock), 0095 전 배포 금지. D11 위치 이동·legacy fence 유지 root 승인.
+- **통합 브랜치 integration-3**(codex/pipeline-integration-3-20261017, 9c92f983, push): integration-2 + #515 → #513 → #509(journal 0097을 0098 앞에 삽입) → #510 → #511 → #512 → #514. 충돌은 journal 1건뿐, batch-repository(#512+#513)·oracle-db-profile(#515+#513) 자동 병합. 검증: 영향 unit 20파일 282, 새 DB(migration 99개) 실제 DB 9파일 74 전부 통과, grant SQL renderer 동일성 4 통과. 이후 lane은 integration-3 기준.
+- **운영 키워드 대기열 확인(#500 배포 ~1h 뒤, 00:13Z 읽기 전용):** 생성 241/h(직전 1h 240), 오류 0. 공개 대상 needs_refresh 2,345건(+banned 222는 대상 아님), 배포 코드 순서로 재현한 맨 앞 since=10-09 23:20(id 27695 등). 지난 1h 생성 234건 중 감사 메모가 있는 것은 18건이고 그 메모 시각이 23:29–00:00(최근)이라 FIFO 진행 여부가 불분명 → 20–30분 뒤 맨 앞 id 처리 여부로 재확인(scratchpad kw-queue-check.txt).
+- Cursor C7 PR11f Oracle 종단 활성화·DR runbook(WT nomorevibe-oracle-runbook, base integration-3, 새 문서 1개 + 선택 점검 스크립트).
+- **사용자 지시(09:20 KST): 새 작업부터 Claude 서브에이전트는 동시 1개만, 나머지는 전부 Cursor 서브에이전트에 배정.** 진행 중 Claude 4개(PR01b-9·PR06e·PR17a·PR15d)는 끝날 때까지 두고, 빈자리는 Cursor로 채운다.
+- **draft [#516](https://github.com/JRVector9/nomorevibe/pull/516) PR06e**(base #512) provider circuit breaker(기본 꺼짐)·consumer host 예산 참여·deploy helper consumer 자리. root 재실행 unit 196, python 46, 실제 DB 37(한 DB 연속 실행 순서 오염 없음). enforcement 켤 때 consumer instance→host 매핑 필수.
+- **draft [#517](https://github.com/JRVector9/nomorevibe/pull/517) PR17a** 읽기 전용 24h 관측·DR drill RPO/RTO·슬롯 유휴/포화 적분·rollout 보고서 골격. root 재실행 unit 16, 실제 DB 4. 24h 합격 수치·적분 정의는 사용자 결정.
+- Cursor 새 lane(사용자 지시대로 Claude 대신): C8 PR15e 웹 쓰기 fence 관문·item lease/ACK fence(WT nomorevibe-web-fence, base integration-3, 55644), C9 CI 순서 오염(pipeline-replay-fixed-input 장부 잔류) 격리(WT nomorevibe-ci-isolation, 55645, ci.yml·README 테스트 절만 허용), C10 PR06f 배경 CLI 줄 breaker 보고(WT nomorevibe-cli-breaker, base #516, 55646). 실행 중 Cursor 5개(C6·C7·C8·C9·C10), Claude 2개(PR01b-9·PR15d).
+- **#474·#475 병합.** #476에서 search-profile 테스트 충돌(브랜치에 이미 더 엄격한 증거 JSON 기반 mock 있음) → 충돌 hunk만 브랜치 쪽, main의 #500 테스트는 유지(처음 `checkout --ours`로 main 테스트 1개가 빠진 것을 발견해 merge-file로 다시 합침, 28 passed ×3) → 병합 커밋 c7196cb6, #476부터 재개.
+- **키워드 대기열 #500 효과 확인(00:46Z, 읽기 전용):** 00:13Z 맨 앞 5건(27695 등)이 00:13Z에 처리됨. 33분 동안 맨 앞 since 10-09 23:20 → 10-15 04:25로 전진(FIFO 정상). 대기 2,345 → 2,339(감사 #4 유입 ≈ 처리 ~240/h, 사용자 결정대로 처리량 유지).
+- **draft PR 추가:** [#518](https://github.com/JRVector9/nomorevibe/pull/518) PR01b-9 budget 증거(base #509, root 재실행 unit 144·실제 DB 20) — 남은 차단: grantOne이 control.updated_at 갱신(C11에서 수정 중). [#519](https://github.com/JRVector9/nomorevibe/pull/519) PR15d 증거 기반 회수(0099, base #515, root 재실행 unit 114·실제 DB 50). [#520](https://github.com/JRVector9/nomorevibe/pull/520) PR11f Oracle 종단 runbook(B1–B6 차단·D1–D13 결정 정리). [#521](https://github.com/JRVector9/nomorevibe/pull/521) PR06f 배경 CLI breaker 보고(base #516).
+- C9(CI 오염)는 PR01b-9가 replay 통합 테스트를 파일 전용 DB로 옮겨 같은 문제를 해결해 중단(exit 143). 새 Cursor lane: C11 control.updated_at 의미 고정(base #518, 55647), C12 회수 runbook·shared-http-permits 갱신(base #519), C13 Oracle scheduler preflight B3(base integration-3, 55649). C6b(PR06d 안전 관문 후속)·C8(PR15e) 진행 중.
+- **사용자 지시(09:55 KST):** 개발·병합 완료까지 계속 감시, 한도가 다되면 Cursor로 이어서. heartbeat 기반 자동 전환 watchdog은 자동 모드 검사가 거부 → 대리 프롬프트 scratchpad/cursor/orchestrator.md만 준비(사용자가 실행하거나 권한 허용 필요).
+- **#477 병합, #470 CI integration(1) 실패**: model-capacity-adversarial `55P03 lock timeout`(CREATE TRIGGER on crawl_review_attempts). 로컬 단독 3/3 통과, main의 #475 병합 CI도 role-worker-process 타이밍으로 실패 → CI 부하 flake로 판단. land.sh에 "integration shard만 실패하면 1회 재실행, 두 번째 실패는 STOP" 추가 후 #470부터 재개. flake 원인 제거는 Cursor C14(WT nomorevibe-ci-deflake, base main, 55650, 기대값·timeout 완화 금지).
+- **draft [#522](https://github.com/JRVector9/nomorevibe/pull/522) PR06d** 운영자 제어 CLI(stage·capacity·HTTP·batch, dry-run 기본, compare-and-set, 관리자 로그) + canary runbook. root 리뷰로 후속(C6b): items 전환이 stage를 멈추게 하면 기본 거절, capacity open 판정은 실제 쓰는 조합만. root 재실행 unit 130, 실제 DB 54. **AI2 canary와 capacity open은 한 작업 창**(legacy AI2 job은 open이면 항상 미룸).
+- **draft [#523](https://github.com/JRVector9/nomorevibe/pull/523)** 회수 runbook·shared-http-permits 갱신(base #519, 문서 SQL 10블록 실제 DB 확인). 새 한계 발견: 그룹 종료 증거는 supervisor `finish()`만 남김 → 컨테이너 전체 종료·OOM이면 그 행·hop 영구 잔류(새 boot가 이전 boot 종료를 증명하는 설계 필요 — 사용자/root 결정 목록).
+- **#470 병합(12a07b83, integration 1회 재실행 후 통과).** **draft [#524](https://github.com/JRVector9/nomorevibe/pull/524)**(base #518) grant는 cursor만, control.updated_at은 모드·정책 변경에만 → 2배 판정의 budget 차단 해소. PR01b-9 첫 it가 결함을 기대값으로 적고 있어 고친 동작으로 바꿈(root 판단, 미병합 PR). root 재실행 unit 678, 실제 DB 58. #522 전환 함수는 updated_at을 씀(확인).
+- **PR11g(B3 Oracle scheduler)**: C13 조사 — 미구현(의도된 차단 아님), 증거 저장소가 없어 migration 필요. coexistence 증명 시험만 커밋(1f30511b, Oracle 1 + M3 2 scheduler 동시 due 34건 각 1회, fenced 0건, root 재실행 2/2). **root 결정**: 0100 추가형 migration(role CHECK에 scheduler, whole-left 보존), scheduler profile에 후보 행 권한, preflight 단위 시험 100–104행은 동작 변경 대상이라 수정 허용, 재시작마다 새 canary. 후속 C13b 진행 중(같은 WT, 55649). env 예시의 JOB_BATCH_VERSION 누락·enforcement 시 http_origin_control 읽기 권한도 함께.
+- 새 lane: Claude PR15d DR 밖 stuck slot/permit 회수(**0099**, WT nomorevibe-dr-reclaim, base #515, 55642).
+- 후속 후보(미배정): 웹 쓰기 site 단위 읽기 전용 관문·runner ACK/item lease claim fence(PR15c 8번), pipeline-replay-fixed-input의 장부 잔류로 인한 CI 순서 오염(PR15c 7번), product-audit abcllm native(감사 provider 결정 필요), Oracle 종단 활성화 runbook.
+- 새 lane: Claude PR17a 보고 도구(24h 수집기·RPO/RTO·슬롯 유휴/포화 적분·rollout 문서 골격, WT nomorevibe-report-tools, 55640, pipeline-capacity-live*·관리자 화면 수정 금지).
+- 새 lane: Claude PR01b-9 판정 완성(WT nomorevibe-verdict-budget, #509+integration-2, 55637), Claude PR06e circuit breaker·consumer host 예산·deploy helper consumer 등록 준비(WT nomorevibe-runtime-safety, base #512, 55638), Cursor C6 PR06d 운영자 제어 CLI + runbook(WT nomorevibe-control-cli, 55639). 계속: Claude PR15c(55629)·PR13c(55630). PR15d(DR 밖 회수, 0099)는 PR15c 병합 뒤.
+
+### 병렬 개발 배정 (09:00 KST) — 기준 통합 브랜치 codex/pipeline-integration-20261017 6ff166b1(#488 + #494·#495·#499·#501·#496·#493·#497)
+Claude 서브에이전트(opus/xhigh): PR06c 배경 consumer(55618), PR13b 관리자 운영 상태(55619), PR14d 논리 복제 도구(55620·55621), PR15b DR 후속(**0096**, 55622), PR11d Oracle 후속(55623), PR16 비상 운영 골격(55624), abcLLM PR1/PR2 상태 조사(읽기 전용).
+Cursor 서브에이전트(사용자 지시: `cursor-agent -p --trust --sandbox enabled --model 'claude-opus-5-5[context=1m,effort=xhigh,fast=false]'`, `--force`는 자동 모드 검사가 거부): PR09b uptime raw→gate 전환 도구(WT nomorevibe-uptime-gate-tool, 55625), PR01b-8 판정 증거 이력 장부(**0097**, WT nomorevibe-measure-evidence, 55626). 보고서는 각 WT `.agent-report.md`.
+지시 준수 점검: scratchpad agent-audit.sh <WT> <base> <허용경로> — 커밋 없음·범위·공유문서·원 WT·잔여 컨테이너·push 여부.
+병합 자동화: scratchpad land.sh — #498 → #500 진행 중, 이후 운영 migration 0077–0082 + text 배포(prod.sh set-release 추가, 사용자 승인).
+추가 PR: #498 flaky 수정, #500 키워드 대기열 순서(진단 정정: 버그 아님, 감사 #4 재감사가 updated_at 순서를 앞지름; 처리량은 사용자 결정으로 그대로), #501 PR05c-4 AI1/AI2 CLI.
+
+### 병합 진행 (07:10 KST)
+- 병합 완료: #453(f8b8f60a), #460(e4bf0268), #461(b38b57b4). #462: main 병합(3fa1dd70) 후 quality flake 재실행 중.
+- **flaky 수정 [#498](https://github.com/JRVector9/nomorevibe/pull/498)** (main 대상): timeout-source prefire 창(windowValid)이 깨진 표본은 최대 5번 재측정, 기준 불변(강제 창 밖 음성 대조 → 5표본 후 실패 확인).
+- [#499](https://github.com/JRVector9/nomorevibe/pull/499) PR05c-5 배경 CLI 연결(base #495): unit 356, 실제 DB 81, 변이 12. CI fresh-first 추가.
+- **운영 검색 키워드 이상(읽기 전용 확인, 06:45):** 공개 43,341건 임베딩·프로필 100%, 검수 98%, 각 단계 ~250/h. 그러나 needs_refresh 2,304건 중 2,200건이 attempts 0으로 최대 20일(9/27~) 정체 — 선택 쿼리 맨 앞인데 처리·실패 기록 모두 없음(head-of-line). 검수 model_unavailable 101, 생성 몰릴 때 검수 급감(경합). 진단 서브에이전트(읽기 전용, 수정안은 fix/search-profile-stuck-refresh-20261017 WT, DB 55617) 진행 중 → /tmp/nomorevibe-search-profile-stuck-20261017.md.
+
+### 신규 PR (05:20 KST)
+#493 PR11c Oracle 활성화(preflight 42809 결함 수정 포함), #494 PR10e host 예산, #495 PR05c-3 CLI ledger 0094, #496 PR15 DR(0095, 코드보다 migration 먼저), #497 PR01b-7 고정 입력 replay(legacy만 지금 실행 가능, items는 resolver 필요). 진행: 05c-4 AI1/AI2 CLI 연결(55613), 05c-5 감사·소개·grok 연결(55614).
+
+### root 결정 (2026-10-17)
+
+- search-verify 부분 재개: 원 shared 60초 deadline 안에서만. 슬롯 대기 중 deadline이 지나면 부분 결과 폐기·attempt/실패 기록 0·다음 tick 새 execution. unknown permit은 해제하지 않음.
+- websearch-query 슬롯 대기: 지금의 translationPending 경로로 즉시 deferred. polling·cache-only 전환 없음.
+- crawl runtime 6논점은 /tmp/nomorevibe-pr05b11-lane-c-report-20261017.md 설계 결정과 같다(disabled는 원 legacy 그대로, positive 행 비소비).
+- migration 번호: 0092 search-verify(when …004), 0093 websearch-query(when …005).
+
+### 진행 중 (서브에이전트, 커밋 전 root 리뷰)
+
+- PR05b12 search-verify: WT nomorevibe-search-verify-native (base 8ccddcde), DB 55591
+- PR05b13 websearch-query: WT nomorevibe-websearch-query-native (base 8ccddcde), DB 55592
+- PR01b-6 운영 구간 측정·2배 판정: WT nomorevibe-capacity-measurement (origin/main 기반 독립), DB 55598
+- PR11c Oracle 활성화 코드(launcher gate, OCI IMDS identity, 최소권한 GRANT, systemd 설치, genuine canary entry): WT nomorevibe-oracle-activation (base c216d3e7), DB 55599
+- PR05c CLI 호출(Claude/Grok/codex CLI, intro-check, product-audit) 슬롯 연결 설계(읽기 전용) → /tmp/nomorevibe-pr05c-cli-design-20261017.md
+
+### PR05b13 websearch-query 반환 (01:50 KST, 미커밋·root 리뷰 완료)
+
+- 실제 DB: 새 ledger driver 10/10, crawl ledger 회귀 8/8, search-translation-replica·catalog-search-ranking 11/11. 영향 unit 56파일 976 PASS, scoped tsc·eslint 0.
+- **통합 주의:** 0093은 CHECK 5개를 "(0091 원본) OR (websearch)"로 재생성한다. 0092(search-verify) 병합 뒤 `/tmp/nomorevibe-pr05b13-build-ddl-20261017.py`로 baseline=병합 schema, 비교 대상=0092, journal 길이를 맞춰 다시 만들어야 한다. operations-schema.ts도 같은 제약에서 충돌한다.
+- disabled 경로는 사용자 노출 동작 동일(미캐시 번역마다 primary control 읽기 1회 추가, 한국어 선례와 같음).
+- positive 모드 한정(현재 resolver null이라 운영 도달 불가) 차이 — 활성화 전 재검토: timeout/HTTP 오류는 indeterminate(full C)로 남아 그 질의는 ledger가 정리될 때까지 원문 검색만 한다(원래는 다음 검색에 재시도). 2xx≠200·128KB 초과·계약 불일치는 invalid_output. 3xx 미추종. CLI 스크립트는 SERVICE_INSTANCE_ID+RELEASE_TAG 필요.
+
+### PR05b12 search-verify 반환 (02:20 KST, 미커밋)
+
+- 실제 DB 첫 실행이 production SQL 결함(eligibility 쿼리 alias, "missing FROM-clause entry")을 잡아 수정 → driver 7/7, crawl ledger 8/8, 기존 search-verify integration 13/13. 영향 unit 39파일 738 PASS, scoped tsc·eslint 0.
+- deadline: 첫 step dispatch 때 DB 시각으로 고정, 이후 step은 parent와 같은 deadlineAt(ledger lock이 강제). 만료 뒤 다음 tick은 prefix 폐기·새 execution(step 0). 진행 중 만료는 `expired`로 기록 0·tick 종료.
+- root 수정 요청(진행 중): positive writer가 ledger chain을 다시 읽지 않던 점 → writer TX 안에서 control SHARE 뒤 execution 전 step 행 settled·hash·parent·deadline·합성 결과 대조 추가.
+- 활성화 전 재검토: 만료된 execution의 자기 waiting 행이 queueTtl까지 제품을 fence(withdraw API 필요), envelope 불신 시 chunk 모드 singleton fallback 없음(legacy와 다름).
+
+### PR05c CLI 설계 확정 (02:00 KST)
+
+설계: /tmp/nomorevibe-pr05c-cli-design-20261017.md (사본 ~/.codex/checkpoints/nomorevibe/). CLI 호출 7곳 중 admission 있는 곳은 AI1·AI2뿐.
+root 결정: D1 CLI 계약값 전 open 금지 / D2 classify(codex·connect-agent)는 범위 밖, connect-agent Claude 구독이 reviewer와 같은지 확인 필요 /
+D3 grok-session은 native kind·background 최소 가중 / D4 detached:false 유지 / D5 spawn 전 포기·spawn 실패는 not_started로 settle /
+D6 C는 증거만(Claude 공식, Grok·codex declared bound는 계약 PR에서 실측) / D7 cliVersion 고정, 업그레이드=계약 PR / D8 providerBudgetId는 계정 단위 /
+D9 intro-check·audit·grok-session은 background·reviewer / D10 05c-3 migration은 0092·0093 뒤 / D11 indeterminate 회수는 PR15 call-drain.
+진행: 05c-1 admission(WT nomorevibe-cli-admission, DB 55600), 05c-2 process runner(WT nomorevibe-cli-process-runner) — 둘 다 opus/xhigh, base c216d3e7.
+
+### 남은 작업 정리
+
+전체 표는 `/tmp/nomorevibe-gap-analysis-20261017.md`. 요점:
+- 운영 배포는 PR00뿐, 운영 DB는 0076. 0077–0081 main, 0082–0091 스택.
+- 스택 아래쪽 #461·#462·#464–#467·#471·#473은 integration(3)이 10-16 05:14Z 실행에서 cancelled(시간 초과) 후 재실행된 적 없음. #461·#462 실패 job 재실행 요청함(01:20 KST). 위쪽 #474–#486은 PASS.
+- serving resolver 전부 null → capacity를 open으로 바꾸면 전 경로가 대기한다. 실값은 abcLLM PR1/PR2(다른 저장소, OPEN) 병합·배포가 선행.
+- 2배 판정 불가: baseline 없음, 비교 함수가 passed를 낼 수 없게 고정. PR01b-6에서 해결 중. 운영 baseline 수집은 사용자 승인 필요.
+- PR15(DR 승격/fencing)·PR16·PR17은 코드 0. PR14d(논리 복제 도구)도 남음.
+- git 빌드 앱 4개는 autoDeploy 꺼짐(10-05 기록) — main 병합만으로 배포되지 않는 것으로 기록돼 있으나 병합 전 Dokploy에서 다시 확인할 것.
+
 ## 단계 마감 — 2026-10-17 00:25 KST 사용자 요청에 따라 동결
 
 현재 구현 단계를 마감했다. 서브에이전트3개 전부 정산·추가자동작업 중단, 실행중 명령/child/server/SQL소유0, root-owned DB0. 전체 PR00–17/같은품질2배/Oracle osaka-smoke 상시번역·등록후관리·최종DR는 아직 미완료다. 운영DB·SSH·실provider·배포·activation0, 수동 전체test/build/typegen은모든PR개발뒤다.
