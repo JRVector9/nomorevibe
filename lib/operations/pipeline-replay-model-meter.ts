@@ -7,6 +7,7 @@ export type ReplayMeterLimits = { maxCalls: number; maxTokens: number; perCallTo
 export type ReplayMeterStop = "call_cap" | "token_cap" | "per_call_bound_exceeded";
 export type ReplayMeterStats = { calls: number; refused: number; upstreamFailed: number; indeterminate: number; maxInFlight: number;
   usageKnownCalls: number; reportedInputTokens: number; reportedOutputTokens: number; chargedTokens: number; egressRejected: number;
+  upstreamReportedCalls: number; upstreamReportedTokens: number;
   models: { model: string; calls: number }[]; usageProvenance: "reported_unverified" };
 export type ReplayModelMeter = { readonly origin: string; stats(): ReplayMeterStats; close(): Promise<void> };
 
@@ -30,6 +31,16 @@ function usage(bytes: Buffer): { input: number; output: number } | null {
     return safe(input) && safe(output) && Number.isSafeInteger(input + output) ? { input, output } : null;
   } catch { return null; }
 }
+/** budget 증거(PR01b-9)용: native terminal과 같은 규칙 — usage_provenance=upstream_reported, 정수 셋, 입력+출력=합. */
+function upstreamReportedTotal(bytes: Buffer): number | null {
+  try {
+    const value = JSON.parse(bytes.toString("utf8")) as { usage_provenance?: unknown; usage?: Record<string, unknown> };
+    const safe = (count: unknown): count is number => typeof count === "number" && Number.isSafeInteger(count) && count >= 0;
+    const { prompt_tokens: input, completion_tokens: output, total_tokens: total } = value?.usage ?? {};
+    return value?.usage_provenance === "upstream_reported" && safe(input) && safe(output) && safe(total)
+      && Number.isSafeInteger(input + output) && input + output === total ? total : null;
+  } catch { return null; }
+}
 
 /**
  * 실모델 호출의 사전 상한. 호출마다 호출당 상한만큼 토큰을 먼저 예약하고, 끝나면 응답의 usage(게이트웨이 보고값 —
@@ -41,7 +52,7 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
   const { upstream, limits, onStop } = options;
   const upstreamAgent = new Agent({ connections: 64 });
   const stats = { calls: 0, refused: 0, upstreamFailed: 0, indeterminate: 0, maxInFlight: 0, usageKnownCalls: 0,
-    reportedInputTokens: 0, reportedOutputTokens: 0, chargedTokens: 0, egressRejected: 0 };
+    reportedInputTokens: 0, reportedOutputTokens: 0, chargedTokens: 0, egressRejected: 0, upstreamReportedCalls: 0, upstreamReportedTokens: 0 };
   const models = new Map<string, number>();
   let inFlight = 0, stopped = false;
   const stop = (reason: ReplayMeterStop) => { if (!stopped) { stopped = true; onStop(reason); } };
@@ -77,6 +88,8 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
       const bytes = await body(response.body, MAX_RESPONSE_BYTES);
       if (!bytes) { stats.indeterminate++; return reply(res, 502, '{"error":"replay_response_too_large"}'); }
       const counted = response.statusCode === 200 ? usage(bytes) : null;
+      const reported = response.statusCode === 200 ? upstreamReportedTotal(bytes) : null;
+      if (reported !== null) { stats.upstreamReportedCalls++; stats.upstreamReportedTokens += reported; }
       if (counted) {
         stats.usageKnownCalls++; stats.reportedInputTokens += counted.input; stats.reportedOutputTokens += counted.output;
         charge = counted.input + counted.output;

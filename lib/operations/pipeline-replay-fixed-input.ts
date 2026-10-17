@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z, ZodError } from "zod";
 import { modelCapacityPolicySchema } from "@/lib/llm/capacity";
 import { formatCapacityCliError } from "./pipeline-capacity-cli";
+import { meterBudgetEvidence, replayLedgerBudget, type BudgetEvidence } from "./pipeline-capacity-budget";
 import { attachLiveCapacityLabels, judgeLiveCapacity, liveCapacityArtifactSchema, liveCapacityLabelsSchema, LIVE_MIN_WINDOW_MS,
   reportLiveCapacityWindow, type LiveCapacityArtifact, type LiveCapacityReport } from "./pipeline-capacity-live";
 
@@ -129,6 +130,8 @@ export const fixedInputRunManifestSchema = z.object({
   /** 두 실행에 똑같이 적용하는 2차 대체 모델 고정. 없으면 artifact 설정 그대로다. */
   secondReviewFallbacks: z.array(reviewer).max(2).optional(),
   items: z.object({ ai1Consumers: positive.max(16), ai2Consumers: positive.max(16), capacityPolicy: modelCapacityPolicySchema }).strict().optional(),
+  /** PR01b-9: 두 실행에 같은 값으로 선언하는 공통 동시 호출 예산. 계량기 최대 동시 호출이 이 값을 넘으면 budget 미검증이다(강제하지 않는다). */
+  budget: z.object({ maxConcurrentCalls: positive.max(256) }).strict().optional(),
 }).strict();
 export type FixedInputRunManifest = z.infer<typeof fixedInputRunManifestSchema>;
 export type FixedInputTiming = { minimumWindowMs: number; leadMs: number; drainMs: number; collectMs: number };
@@ -157,7 +160,11 @@ export const fixedInputRunResultSchema = z.object({
     atOffsetMs: offset, drainMs: integer, drainExceeded: z.boolean() }).strict(),
   meter: z.object({ calls: integer, refused: integer, upstreamFailed: integer, indeterminate: integer, maxInFlight: integer,
     usageKnownCalls: integer, reportedInputTokens: integer, reportedOutputTokens: integer, chargedTokens: integer, egressRejected: integer,
+    // PR01b-9 이전 결과에는 없다(그 결과의 budget은 미검증으로 남는다).
+    upstreamReportedCalls: integer.optional(), upstreamReportedTokens: integer.optional(),
     models: z.array(z.object({ model: text, calls: integer }).strict()).max(32), usageProvenance: z.literal("reported_unverified") }).strict(),
+  /** PR01b-9: manifest가 선언한 공통 동시 예산과, 구간 정지 순간까지 계량기가 보낸 호출 수. */
+  budget: z.object({ declaredConcurrentCalls: positive.max(256).nullable(), callsAtStop: integer }).strict().optional(),
   writes: z.object({ products: integer, publishRuns: integer }).strict(),
   failures: z.array(z.string().min(1).max(120)).max(32),
   live: liveCapacityArtifactSchema,
@@ -171,6 +178,9 @@ export function parseFixedInputRunResult(value: unknown): FixedInputRunResult {
     && live.runId === result.runId && live.window.endedAt === result.window.endedAt
     && live.window.startedAt === result.window.collectionStartedAt
     && live.candidates.every(row => ordinals.has(row.id)), "fixed_input_result_mismatch");
+  const { meter, budget } = result;
+  ensure((meter.upstreamReportedCalls === undefined) === (meter.upstreamReportedTokens === undefined)
+    && (meter.upstreamReportedCalls ?? 0) <= meter.calls && (!budget || budget.callsAtStop <= meter.calls), "fixed_input_result_mismatch");
   return result;
 }
 
@@ -190,11 +200,23 @@ export function reportFixedInputRun(value: unknown): LiveCapacityReport & { repl
   if (result.writes.products || result.writes.publishRuns) issues.push("replay_public_write_detected");
   if (result.failures.length) issues.push("replay_worker_failed");
   if (!result.inputs.items.length) issues.push("replay_inputs_empty");
-  return { ...report, evidenceIssues: [...new Set(issues)], replay: replaySummary(result) };
+  const budget = replayBudget(result, report);
+  return { ...report, budgetEvidence: budget.status, budget, evidenceIssues: [...new Set(issues)], replay: replaySummary(result) };
+}
+/**
+ * PR01b-9 budget. legacy 격리 DB에는 모델 슬롯 장부가 없으므로 계량기를 호출 장부로 쓰고(모든 호출 upstream usage·선언 한도 필요),
+ * DB 기록이 센 구간 호출이 계량기 호출보다 많으면 계량기 밖 호출로 본다. items는 수집기가 낸 장부 증거에 계량기를 맞춘다.
+ */
+function replayBudget(result: FixedInputRunResult, report: LiveCapacityReport): BudgetEvidence {
+  const { meter } = result, callsAtStop = result.budget?.callsAtStop ?? null;
+  if (result.mode === "items") return replayLedgerBudget(result.live.budget, meter, callsAtStop);
+  return meterBudgetEvidence({ calls: meter.calls, maxInFlight: meter.maxInFlight, reportedCalls: meter.upstreamReportedCalls,
+    reportedTokens: meter.upstreamReportedTokens, declared: result.budget?.declaredConcurrentCalls ?? null, callsAtStop, recordedCalls: report.calls.total });
 }
 function replaySummary(result: FixedInputRunResult) {
   return { mode: result.mode, artifactSha256: result.artifactSha256, inputSetHash: result.inputSetHash, included: result.inputs.items.length,
-    excluded: result.inputs.excluded, window: result.window, stop: result.stop, meter: result.meter, writes: result.writes, failures: result.failures };
+    excluded: result.inputs.excluded, window: result.window, stop: result.stop, meter: result.meter, budget: result.budget ?? null,
+    writes: result.writes, failures: result.failures };
 }
 
 /** 후보 하나만 남긴 부분 artifact로 같은 최종 규칙을 다시 적용해 최종 후보 목록을 얻는다(표본 라벨 대상). */
