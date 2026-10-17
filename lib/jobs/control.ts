@@ -24,16 +24,22 @@ export async function requestJob(name: string, tx: ProductTransaction | typeof d
   return { job: name, status: "queued" as const, requestedVersion: row.requestedVersion };
 }
 
+/** requestDueJobs 가 이 batch 상태에서 일정을 미는 정기 잡. Oracle scheduler attest 도 같은 목록을 읽어 본다 */
+export function scheduledJobs(batch: { mode: string; writerContractVersion: number }) {
+  return JOB_CATALOG.filter(job => job.intervalMs !== null
+    && (job.batchVersion !== 1 || (batch.mode === 'versioned' && batch.writerContractVersion >= 1)));
+}
+
 /** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */
-export async function requestDueJobs(): Promise<number> {
+export async function requestDueJobs(
+  acknowledge?: (tx: ProductTransaction, tick: { batchEpoch: number; requested: number }) => Promise<void>,
+): Promise<number> {
   return db.transaction(async tx => {
     // DR writer fence가 첫 lock이다(seal의 fence UPDATE → batch → jobs와 같은 순서). fenced DB의 scheduler는 정기 요청을 만들지 않는다.
     if (!await writerSiteActive(tx)) return 0;
     const batch = await lockJobBatch(tx);
     let count = 0;
-    for (const job of JOB_CATALOG) {
-      if (job.intervalMs === null) continue;
-      if (job.batchVersion === 1 && (batch.mode !== 'versioned' || batch.writerContractVersion < 1)) continue;
+    for (const job of scheduledJobs(batch)) {
       await tx.insert(jobs).values({ name: job.name }).onConflictDoNothing();
       const duration = sql`${job.intervalMs} * interval '1 millisecond'`;
       const [due] = await tx.update(jobs).set({
@@ -48,6 +54,8 @@ export async function requestDueJobs(): Promise<number> {
       )).returning({ name: jobs.name });
       if (due) count++;
     }
+    // Oracle scheduler canary 의 ACK: fence 를 지나 이 요청과 함께 commit 된 tick 에만 남는다
+    await acknowledge?.(tx, { batchEpoch: batch.epoch, requested: count });
     return count;
   });
 }

@@ -3,7 +3,8 @@
 
 Checks run in a fixed order and stop at the first result that is not verified: installed release, runtime
 account/platform, host budget, OCI identity, then the existing runtime preflight (batch, DB authority,
-timeouts and PR10d canary). Any unknown or rejected result exits78. No flag, environment variable,
+timeouts and the PR10d canary, or for the scheduler its attested tick canary of the current boot). Any unknown or
+rejected result exits78. No flag, environment variable,
 supplied receipt or local marker can skip a check. Database election and per-claim admission still apply
 after start; this gate never writes DB state.
 """
@@ -146,7 +147,8 @@ def check_preflight(role, env, release, release_sha, runner):
              'preflight', 'preflight_rejected')
     for name in REQUIRED_PREFLIGHT + (('model',) if role in MODEL_ROLES else ()):
         _require(checks[name].get('status') == 'verified', 'preflight', f'{name}_unverified')
-    # Admission exists only after election; the elected process re-checks it at every claim.
+    # Admission exists only after election; the elected process re-checks it at every claim. The scheduler claims
+    # nothing: its workload is ready only for the boot an attested canary tick recorded, which every restart replaces.
     _require(type(workload) is dict and workload.get('ready') is True, 'preflight', 'workload_unverified')
     return report
 

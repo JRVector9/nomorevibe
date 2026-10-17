@@ -9,6 +9,7 @@ import { assertRoleLease, roleLeaseFromEnv, RoleLeaseLostError } from '@/lib/job
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from '@/lib/runtime/oracle-db-profile';
 import { classifyOracleModelEvidence } from '@/lib/runtime/oracle-model-evidence';
+import { classifyOracleSchedulerEvidence, oracleSchedulerResultKey } from '@/lib/runtime/oracle-scheduler-evidence';
 
 const target = z.object({ role: z.enum(['translation', 'site-evidence', 'official-news', 'product-health', 'scheduler']) }).strict();
 type Check = { status: 'verified' | 'unknown' | 'rejected'; reason: string; hash?: string };
@@ -86,8 +87,8 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
   report.checks.identity = { status: 'verified', reason: 'configured_identity_matches' };
   if (process.platform !== 'linux' || process.arch !== 'arm64' || !/^v24\./.test(process.version))
     report.checks.runtime = { status: 'rejected', reason: 'runtime_platform_mismatch' };
-  if (role === 'scheduler') { report.workload.reason = 'scheduler_canary_unavailable'; return report; }
-  const lease = roleLeaseFromEnv(role, env);
+  // The scheduler claims no job: no role lease, election or per-claim admission (PR11g).
+  const lease = role === 'scheduler' ? null : roleLeaseFromEnv(role, env);
   if (lease && (lease.batchVersion !== 1 || lease.host !== 'oracle-osaka-smoke' || lease.instanceId !== instance || lease.release !== report.releaseSha)) {
     report.workload.reason = 'role_identity_mismatch'; return report;
   }
@@ -144,6 +145,16 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       || candidate.data.host !== 'oracle-osaka-smoke' || candidate.data.release !== report.releaseSha
       || candidate.data.policyHash !== control.policyHash || lease && (lease.batchEpoch !== control.epoch || lease.bootId !== candidate.data.bootId)) {
       report.workload.reason = 'candidate_unknown'; return report;
+    }
+    if (role === 'scheduler') {
+      // Attest-written evidence of this candidate row's current boot (the boot the scheduler records before its first tick).
+      const [ack] = await tx.execute<{ value: unknown }>(sql`SELECT value FROM operations_observations WHERE key=${oracleSchedulerResultKey(instance)}`);
+      const result = object(ack?.value)?.schedulerResult;
+      const classified = classifyOracleSchedulerEvidence({ instanceId: instance, release: report.releaseSha!, principal: session.principal,
+        controlEpoch: control.epoch, at, candidate: candidate.data, result });
+      report.workload = classified.ready ? { ready: true, reason: 'ready', evidenceHash: hash({ policyHash: control.policyHash,
+        capability: candidate.data.capability, result, readback: candidate.data.resultEvidence }) } : classified;
+      return report;
     }
     const names = batchJobsForRole(role, 'versioned');
     // A JS array inside sql`` expands to a row ($1,$2), which ANY() rejects (42809) on real PostgreSQL.

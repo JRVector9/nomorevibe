@@ -14,8 +14,9 @@ import { observe, observeService } from '@/lib/operations/observations';
 import { readOracleRuntimePreflight } from '@/lib/runtime/oracle-preflight';
 import type { BatchRole } from '@/lib/jobs/batches';
 import postgres from 'postgres';
-import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick,
-  runOracleRecanary } from '@/lib/runtime/oracle-canary';
+import { attestOracleCanary, attestOracleSchedulerCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary,
+  runOracleLegacySeedTick, runOracleRecanary, runOracleSchedulerCanary } from '@/lib/runtime/oracle-canary';
+import { oracleSchedulerIdentity } from '@/lib/runtime/oracle-scheduler-evidence';
 
 type Input = { role: BatchRole | 'scheduler'; jobs: string[]; httpBase: string; bootId: string; negatives: string[];
   mode?: 'role' | 'canary' | 'attest' | 'refresh' | 'preflight' | 'heartbeat' | 'negatives' | 'seed' | 'bootstrap' | 'recanary' };
@@ -57,7 +58,16 @@ async function siteEvidenceWithHttp(ctx: JobContext<null>): Promise<JobOutcome<n
 async function main() {
   const result: Record<string, unknown> = { principal: (await db.execute<{ user: string }>(sql`SELECT current_user AS user`))[0].user };
   if (input.mode === 'negatives') { /* Only the statements below, under this principal. */ }
-  else if (input.mode && input.mode !== 'role') {
+  else if (input.mode && input.mode !== 'role' && input.role === 'scheduler') {
+    // PR11g scheduler canary paths (tests/integration/oracle-scheduler-canary.test.ts): same functions the operator CLI calls.
+    const identity = oracleSchedulerIdentity(process.env);
+    const attest = postgres(process.env.ORACLE_ATTEST_DATABASE_URL ?? '', { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      if (input.mode === 'canary') result.canary = await runOracleSchedulerCanary({ identity, attest });
+      if (input.mode === 'attest') result.attest = await attestOracleSchedulerCanary({ identity, attest });
+      if (input.mode === 'preflight') result.preflight = await readOracleRuntimePreflight({ role: 'scheduler' });
+    } finally { await attest.end({ timeout: 5 }); }
+  } else if (input.mode && input.mode !== 'role') {
     const identity = oracleCanaryIdentity(input.role, process.env), permits = process.env.HTTP_ORIGIN_PERMITS === '1';
     const attest = postgres(process.env.ORACLE_ATTEST_DATABASE_URL ?? '', { max: 1, prepare: false, onnotice: () => {} });
     // Same fixed site collection as the role path: the real claim/record/admission run, the public URL is never fetched.

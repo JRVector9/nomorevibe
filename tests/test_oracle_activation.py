@@ -367,6 +367,22 @@ class LauncherGateTests(unittest.TestCase):
         self.assert_closed('preflight', 'workload_unverified', role='scheduler')
         self.assertEqual(launch.role_command('scheduler', self.release)[1][-2:], ['scripts/worker-supervisor.ts', '--role=scheduler'])
 
+    def test_scheduler_starts_only_with_the_canary_of_its_current_boot(self):
+        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-scheduler.service\n')
+        self.env.update(WORKER_ROLE='scheduler', HOST_DB_BUDGET=self.budget('scheduler'))
+        # PR11g preflight reasons: a restart (new boot), another batch epoch, stale evidence or no attested tick stay closed.
+        for reason in ('result_boot_mismatch', 'result_epoch_mismatch', 'result_stale', 'capability_stale', 'result_unknown', 'candidate_unknown'):
+            self.preflight = (78, json.dumps(report('scheduler', workload={'ready': False, 'reason': reason})).encode())
+            with self.subTest(reason=reason):
+                self.assert_closed('preflight', 'workload_unverified', role='scheduler')
+        self.preflight = (78, json.dumps(report('scheduler', checks__database={'status': 'unknown', 'reason': 'approved_privilege_profile_unavailable'},
+                                                workload={'ready': True, 'reason': 'ready', 'evidenceHash': 'd' * 64})).encode())
+        self.assert_closed('preflight', 'database_unverified', role='scheduler')
+        self.preflight = (78, json.dumps(report('scheduler', workload={'ready': True, 'reason': 'ready', 'evidenceHash': 'd' * 64})).encode())
+        (node, argv), _ = self.gate(role='scheduler')
+        self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=scheduler'])
+        self.assertEqual(self.runs[-1][0][-1], '--role=scheduler')
+
     def test_cli_has_no_bypass_and_keeps_the_fixed_failure_contract(self):
         env = {**os.environ, **self.env, 'ORACLE_RUNTIME_ENABLED': '1', 'ORACLE_LAUNCH_FORCE': '1'}
         result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--role', 'official-news'],
@@ -467,6 +483,23 @@ class InstallUnitsTests(unittest.TestCase):
         self.assertEqual(self.commands, [])
         self.assertFalse((Path(self.temp.name) / 'other').exists())
 
+
+
+class SchedulerTemplateTests(unittest.TestCase):
+    """PR11g: scheduler env template and the operator documentation of its canary."""
+
+    def test_scheduler_env_declares_the_batch_contract_and_keeps_the_host_ledger_inactive(self):
+        lines = (SOURCE / 'scheduler.env.example').read_text().splitlines()
+        self.assertIn('JOB_BATCH_VERSION=1', lines)
+        self.assertIn('HTTP_ORIGIN_PERMITS=0', lines)
+        # An empty HOST_BUDGET_ENFORCEMENT is invalid JSON (host_budget_invalid); the template never assigns it.
+        self.assertFalse(any(line.startswith('HOST_BUDGET_ENFORCEMENT=') for line in lines))
+
+    def test_readme_documents_the_scheduler_canary_and_its_restart_rule(self):
+        text = (SOURCE / 'README.md').read_text()
+        self.assertNotIn('the scheduler preflight has no canary', text)
+        self.assertIn('`canary --role=scheduler`', text)
+        self.assertIn('every restart needs a new `canary`', text)
 
 
 class RefreshTimerTemplateTests(unittest.TestCase):

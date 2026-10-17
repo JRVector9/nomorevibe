@@ -8,14 +8,16 @@
  * site-evidence: versioned only, one attest-granted single-boot tick, grant revoked afterwards; then attest + canary), recanary (a role
  * instance whose every stored result is older than 24 hours, so attest/canary refuse it: versioned only, the same single-boot grant
  * flow; then attest + canary).
+ * The scheduler (scheduler.env, no --job) accepts only canary (record a new boot -> one real tick with its ACK -> attest it) and attest.
  * The OCI identity record must match IMDS first; there is no flag that skips it.
  */
 import { spawnSync } from 'node:child_process';
 import { basename } from 'node:path';
 import postgres from 'postgres';
 import { randomUUID } from 'node:crypto';
-import { attestOracleCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary, runOracleLegacySeedTick,
-  runOracleRecanary } from './oracle-canary';
+import { attestOracleCanary, attestOracleSchedulerCanary, oracleCanaryIdentity, refreshOracleCapability, runOracleBootstrap, runOracleCanary,
+  runOracleLegacySeedTick, runOracleRecanary, runOracleSchedulerCanary, type OracleCanaryIdentity } from './oracle-canary';
+import { oracleSchedulerIdentity, type OracleSchedulerIdentity } from './oracle-scheduler-evidence';
 
 const APPROVED_IDENTITY = '/etc/nomorevibe-core/oracle-identity.json';
 type Dependencies = { identity: () => boolean; connect: (url: string) => postgres.Sql; write: (line: string) => void };
@@ -32,17 +34,29 @@ export async function oracleCanaryMain(args: readonly string[], env: Readonly<Re
   const [command, ...options] = args;
   const value = (name: string) => options.find(option => option.startsWith(`--${name}=`))?.slice(name.length + 3);
   const role = value('role') ?? '', job = value('job') ?? '';
-  const expected = command === 'refresh' ? 1 : 2;
-  if (!['canary', 'attest', 'refresh', 'seed', 'bootstrap', 'recanary'].includes(command ?? '') || options.length !== expected || !role || (command !== 'refresh' && !job)
+  const scheduler = role === 'scheduler';
+  const expected = command === 'refresh' || scheduler ? 1 : 2;
+  if (!(scheduler ? ['canary', 'attest'] : ['canary', 'attest', 'refresh', 'seed', 'bootstrap', 'recanary']).includes(command ?? '')
+    || options.length !== expected || !role || (command !== 'refresh' && !scheduler && !job)
     || !env.ORACLE_ATTEST_DATABASE_URL || env.ORACLE_ATTEST_DATABASE_URL === env.DATABASE_URL) {
     dependencies.write(JSON.stringify({ code: 'oracle_canary_arguments_invalid' })); return 78;
   }
-  let identity;
-  try { identity = oracleCanaryIdentity(role, env); } catch { dependencies.write(JSON.stringify({ code: 'oracle_canary_identity_invalid' })); return 78; }
+  let target: { scheduler: true; identity: OracleSchedulerIdentity } | { scheduler: false; identity: OracleCanaryIdentity };
+  try { target = scheduler ? { scheduler, identity: oracleSchedulerIdentity(env) } : { scheduler, identity: oracleCanaryIdentity(role, env) }; }
+  catch { dependencies.write(JSON.stringify({ code: 'oracle_canary_identity_invalid' })); return 78; }
   if (!dependencies.identity()) { dependencies.write(JSON.stringify({ code: 'oracle_identity_unverified' })); return 78; }
   const attest = dependencies.connect(env.ORACLE_ATTEST_DATABASE_URL);
   const permits = env.HTTP_ORIGIN_PERMITS === '1';
   try {
+    if (target.scheduler) {
+      if (command === 'attest') {
+        const result = await attestOracleSchedulerCanary({ identity: target.identity, attest });
+        dependencies.write(JSON.stringify({ attest: result })); return result.ready ? 0 : 2;
+      }
+      const result = await runOracleSchedulerCanary({ identity: target.identity, attest });
+      dependencies.write(JSON.stringify({ canary: result })); return result.after?.ready ? 0 : 2;
+    }
+    const { identity } = target;
     if (command === 'seed') {
       const run = await runOracleLegacySeedTick(identity, job, randomUUID());
       dependencies.write(JSON.stringify({ seed: run })); return run.status === 'completed' ? 0 : 2;
