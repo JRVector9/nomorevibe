@@ -6,6 +6,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { setAutomaticUpdateVisibility } from "@/lib/domain/evidence/admin";
 import { queueProductRefresh } from "@/lib/domain/evidence/refresh-requests";
 import { recordAdminAction } from "@/lib/operations/admin-log";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
 const updateSchema = z.object({
@@ -25,7 +26,7 @@ function paths(slug: string) {
   revalidatePath("/admin/status");
 }
 
-export async function forceProductRefresh(
+export const forceProductRefresh = webWriteAction(async function forceProductRefresh(
   _previous: ProductEvidenceActionState,
   form: FormData,
 ): Promise<ProductEvidenceActionState> {
@@ -46,7 +47,7 @@ export async function forceProductRefresh(
       error: error instanceof Error ? error.message : String(error) });
     return { issues: ["갱신 요청을 접수하지 못했습니다. 잠시 후 다시 시도해주세요."] };
   }
-}
+});
 
 async function changeAutomaticUpdate(
   visible: boolean,
@@ -78,16 +79,16 @@ async function changeAutomaticUpdate(
   return { ok: true };
 }
 
-export async function hideAutomaticUpdate(
+export const hideAutomaticUpdate = webWriteAction(async function hideAutomaticUpdate(
   previous: ProductEvidenceActionState,
   form: FormData,
 ) {
   return await changeAutomaticUpdate(false, previous, form);
-}
+});
 
-export async function restoreAutomaticUpdate(
+export const restoreAutomaticUpdate = webWriteAction(async function restoreAutomaticUpdate(
   previous: ProductEvidenceActionState,
   form: FormData,
 ) {
   return await changeAutomaticUpdate(true, previous, form);
-}
+});

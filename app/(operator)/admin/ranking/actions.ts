@@ -7,6 +7,7 @@ import {
   schedulePolicy,
 } from "@/lib/domain/ranking/policies";
 import { recordAdminAction } from "@/lib/operations/admin-log";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type RankingPolicyActionState = {
   ok?: true;
@@ -14,7 +15,7 @@ export type RankingPolicyActionState = {
   warnings?: string[];
 } | null;
 
-export async function saveRankingPolicy(
+export const saveRankingPolicy = webWriteAction(async function saveRankingPolicy(
   _previous: RankingPolicyActionState,
   form: FormData,
 ): Promise<RankingPolicyActionState> {
@@ -36,13 +37,13 @@ export async function saveRankingPolicy(
 
   revalidatePath("/admin/ranking");
   return { ok: true, warnings: result.warnings };
-}
+});
 
-export async function cancelRankingPolicy(): Promise<void> {
+export const cancelRankingPolicy = webWriteAction(async function cancelRankingPolicy(): Promise<void> {
   const admin = await currentAdmin();
   if (!admin) return;
 
   await cancelScheduledPolicy(admin.login);
   await recordAdminAction(admin.login, { action: "ranking-cancel", target: "ranking_policy" });
   revalidatePath("/admin/ranking");
-}
+});

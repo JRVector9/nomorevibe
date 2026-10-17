@@ -6,8 +6,9 @@ import { revalidatePath } from "next/cache";
 import { adminLocalLoginEnabled, adminOrigin, authSecret, currentAdmin, LOCAL_ADMIN_LOGIN } from "@/lib/auth/admin";
 import { reviewFeedback } from "@/lib/domain/feedback/review";
 import { FeedbackError } from "@/lib/domain/feedback/contract";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
-export async function reviewFeedbackAction(form: FormData): Promise<void> {
+export const reviewFeedbackAction = webWriteAction(async function reviewFeedbackAction(form: FormData): Promise<void> {
   const admin = await currentAdmin();
   if (!admin) throw new Error("unauthorized");
   const secret = authSecret();
@@ -29,10 +30,10 @@ export async function reviewFeedbackAction(form: FormData): Promise<void> {
   revalidatePath("/admin/inbox");
   revalidatePath("/admin/github-integrations");
   revalidatePath(`/feedback/${id}`);
-}
+});
 
 export type FeedbackReviewActionState = { ok?: true; error?: string } | null;
-export async function reviewFeedbackFormAction(_previous: FeedbackReviewActionState, form: FormData): Promise<FeedbackReviewActionState> {
+export const reviewFeedbackFormAction = webWriteAction(async function reviewFeedbackFormAction(_previous: FeedbackReviewActionState, form: FormData): Promise<FeedbackReviewActionState> {
   try {
     await reviewFeedbackAction(form);
     return { ok: true };
@@ -42,4 +43,4 @@ export async function reviewFeedbackFormAction(_previous: FeedbackReviewActionSt
         ? "대상과 처리 사유를 확인해주세요." : "댓글 또는 공개할 제품을 찾을 수 없습니다." };
     return { error: "처리하지 못했습니다. 로그인 상태를 확인하고 다시 시도해주세요." };
   }
-}
+});

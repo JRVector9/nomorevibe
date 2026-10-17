@@ -47,15 +47,41 @@ function getReadDb(): Db | null {
 }
 
 const replicaScope = new AsyncLocalStorage<Db>();
+type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type TransactionPrelude = (tx: Transaction) => Promise<void>;
+type PreludeScope = { prelude: TransactionPrelude; refusal?: { error: unknown } };
+const preludeScope = new AsyncLocalStorage<PreludeScope>();
+const SINGLE_WRITES = new Set<PropertyKey>(["insert", "update", "delete"]);
 
 /** db.query.* / db.insert(...) 등을 첫 접근 시점에 초기화해서 넘긴다 — onReplica 안에서는 복제본을 */
 export const db = new Proxy({} as Db, {
   get(_target, prop, receiver) {
     const replayDb = currentReplayDb();
+    const scope = !replayDb && !replicaScope.getStore() ? preludeScope.getStore() : undefined;
+    if (scope?.refusal && SINGLE_WRITES.has(prop)) throw scope.refusal.error;
+    if (scope && prop === "transaction") return preludedTransaction(getDb(), scope);
     return replayDb ? Reflect.get(replayDb, prop, replayDb)
       : Reflect.get(replicaScope.getStore() ?? getDb(), prop, receiver);
   },
 });
+
+/**
+ * 이 범위에서 연 주 DB top-level 트랜잭션은 prelude 를 첫 문장으로 실행한다(웹 쓰기의 DR fence 첫 lock).
+ * 읽기 전용 TX(FOR SHARE 를 걸 수 없다)·복제본·replay 는 그대로다. 단일 문장 쓰기는 prelude 를 타지 않지만,
+ * prelude 가 한 번 거절한 범위에서는 뒤이은 insert/update/delete 도 같은 오류로 막는다(거절을 받은 catch 의 실패 기록 등).
+ */
+export function withTransactionPrelude<T>(prelude: TransactionPrelude, load: () => Promise<T>): Promise<T> {
+  return preludeScope.run({ prelude }, load);
+}
+
+function preludedTransaction(primary: Db, scope: PreludeScope): Db["transaction"] {
+  return ((load: (tx: Transaction) => Promise<unknown>, config?: Parameters<Db["transaction"]>[1]) => config?.accessMode === "read only"
+    ? primary.transaction(load, config)
+    : primary.transaction(async tx => {
+      try { await scope.prelude(tx); } catch (error) { scope.refusal ??= { error }; throw error; }
+      return load(tx);
+    }, config)) as Db["transaction"];
+}
 
 const router = createReplicaRouter<Db>({
   replica: getReadDb,

@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { revokePublicSession } from "@/lib/domain/accounts/repository";
 import { publicAuthErrorResponse, PUBLIC_PRIVATE_HEADERS, requestCookie, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
 import { PUBLIC_SESSION_COOKIE, publicSessionCookieOptions } from "@/lib/domain/accounts/session";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function POST(request: Request) {
+export const POST = webWriteRoute(async (request: Request) => {
   try {
     await requirePublicMutation(request);
     await revokePublicSession(requestCookie(request, PUBLIC_SESSION_COOKIE)!);
@@ -13,4 +14,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return publicAuthErrorResponse(error);
   }
-}
+}, publicAuthErrorResponse);

@@ -11,6 +11,7 @@ import { listGatewayModels } from '@/lib/crawl/agent-review-gateway';
 import { sameReviewModel } from '@/lib/crawl/review-model-identity';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
+import { webWriteAction } from '@/lib/operations/dr/web-gate';
 import { MAX_BULK_DECISIONS, type DecidedCandidate, type RequeueState } from './contract';
 import { CLAUDE_MODELS, GROK_MODELS, parseVoterValue } from './voters';
 
@@ -27,7 +28,7 @@ const TAGLINE_MAX = 200;
  * 페이지를 열어 본 사람이 한 줄 적어 두면 발행이 그 줄로 올린다(products.tagline_source = editor, 화면에 "직접 요약"으로 밝힌다).
  * 적은 줄은 모델이 다시 짓지 않는다.
  */
-export async function approveWithTagline(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+export const approveWithTagline = webWriteAction(async function approveWithTagline(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const repo = String(form.get('repo') ?? '');
@@ -51,8 +52,8 @@ export async function approveWithTagline(_previous: ReviewActionState, form: For
   if (!result.ok) return { error: result.message };
   revalidatePath('/admin/review');
   return { message: `소개를 적고 승인했습니다. 발행 잡이 이 줄로 올립니다.` };
-}
-export async function collectCandidateEvidence(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+});
+export const collectCandidateEvidence = webWriteAction(async function collectCandidateEvidence(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const repo = String(form.get('repo') ?? '');
@@ -68,8 +69,8 @@ export async function collectCandidateEvidence(_previous: ReviewActionState, for
   revalidatePath('/admin/review');
   revalidatePath('/admin/status');
   return { message: result.message };
-}
-export async function setReviewMode(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+});
+export const setReviewMode = webWriteAction(async function setReviewMode(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const mode = String(form.get('mode') ?? '');
@@ -89,7 +90,7 @@ export async function setReviewMode(_previous: ReviewActionState, form: FormData
   revalidatePath('/admin');
   revalidatePath('/admin/status');
   return { message: '리뷰 모드와 변경 사유를 기록했습니다.' };
-}
+});
 
 /**
  * 지금 기준으로는 보류가 아닌 후보를 규칙 판정으로 되돌린다.
@@ -97,19 +98,19 @@ export async function setReviewMode(_previous: ReviewActionState, form: FormData
  * 지우거나 대신 결정하지 않는다 — 규칙이 다시 가르도록 큐에 올려놓을 뿐이다.
  */
 // useActionState 가 (이전 상태, 폼)을 넘기지만 이 액션은 입력이 없다 — 큐 전체가 대상이다
-export async function requeueResolved(): Promise<RequeueState> {
+export const requeueResolved = webWriteAction(async function requeueResolved(): Promise<RequeueState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
   const result = await requeueResolvedCandidates(admin.login);
   revalidatePath("/admin/review");
   revalidatePath("/admin/status");
   return { ok: result.requeued, scanned: result.scanned, byReason: result.byReason };
-}
+});
 
 /**
  * 공개된 제품을 2차가 제품이 아니라고 본 것 — 사람이 내리거나 그대로 둔다. 자동으로 내리지 않는다.
  */
-export async function resolvePublishedSecondReview(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+export const resolvePublishedSecondReview = webWriteAction(async function resolvePublishedSecondReview(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const id = Number(form.get('id'));
@@ -122,14 +123,14 @@ export async function resolvePublishedSecondReview(_previous: ReviewActionState,
   revalidatePath('/admin/review');
   revalidatePath('/admin/products');
   return changed ? { message: decision === 'ban' ? '내렸습니다.' : '그대로 둡니다.' } : { error: '이미 처리됐거나 화면이 오래됐습니다. 새로고침해주세요.' };
-}
+});
 
 /**
  * 2차 표를 바로 바꾼다 — Grok 한도가 바닥나거나 게이트웨이 모델이 내려가면 큰 설정 폼을 다시 저장하지 않고 여기서 고른다.
  * 표는 하나만 세운다. 대체(fallbacks)·기준값은 그대로 둔다. 바꾸면 옛 표의 대기 행은 다음 2차 잡이 닫는다(model_removed).
  * 기록은 설정 저장이 같은 트랜잭션에서 남긴다(settings-save, 바뀐 값 전과 후).
  */
-export async function switchSecondVoter(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
+export const switchSecondVoter = webWriteAction(async function switchSecondVoter(_previous: ReviewActionState, form: FormData): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const choice = parseVoterValue(form.get('voter'));
@@ -149,7 +150,7 @@ export async function switchSecondVoter(_previous: ReviewActionState, form: Form
   revalidatePath('/admin');
   revalidatePath('/admin/status');
   return { message: `2차 표를 ${choice.model} 로 바꿨습니다. 다음 2차 잡(1분 안)부터 이 모델이 봅니다.` };
-}
+});
 
 /**
  * 방금 내린 승인·거부를 되돌린다 — 결정 뒤 알림의 "되돌리기(10초)"가 부른다(2026-10-08 UX 감사 ADM-12).
@@ -157,7 +158,7 @@ export async function switchSecondVoter(_previous: ReviewActionState, form: Form
  * 결정한 뒤 아무 일도 없었을 때만 이전 상태로 돌린다(undoAdminDecision). 발행 워커가 이미 올렸거나 상태를 바꿨으면
  * 그 사유를 돌려준다. 되돌린 것은 같은 트랜잭션에서 작업 로그에 새 줄로 남고, 못 한 것은 여기서 실패로 남긴다.
  */
-export async function undoCandidateDecisions(targets: DecidedCandidate[]): Promise<ReviewActionState> {
+export const undoCandidateDecisions = webWriteAction(async function undoCandidateDecisions(targets: DecidedCandidate[]): Promise<ReviewActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   // 화면 밖에서 만든 요청도 같은 모양만 받는다
@@ -179,4 +180,4 @@ export async function undoCandidateDecisions(targets: DecidedCandidate[]): Promi
   if (!failures.length) return { message: `${restored.toLocaleString('ko-KR')}건을 결정 앞 상태로 되돌렸습니다.` };
   if (list.length === 1) return { error: failures[0].message };
   return { error: `${failures.length}건은 되돌리지 못했습니다(${restored}건은 되돌림) — ${failures[0].repo}: ${failures[0].message}` };
-}
+});

@@ -3,6 +3,7 @@ import { submitFeedback } from "@/lib/domain/feedback/submit";
 import { FeedbackError, readFeedbackJson } from "@/lib/domain/feedback/contract";
 import { PublicAuthError, publicAuthErrorResponse, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
 import { productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
+import { WEB_FENCED_RETRY_AFTER, webWriteRoute } from "@/lib/operations/dr/web-gate";
 
 const headers = { "Cache-Control": "private, no-store" };
 type Context = { params: Promise<{ slug: string }> };
@@ -13,7 +14,7 @@ export async function GET(_request: Request, context: Context) {
   return Response.json(await listProductFeedbackWithTotal(slug), { headers });
 }
 
-export async function POST(request: Request, context: Context) {
+export const POST = webWriteRoute(async (request: Request, context: Context) => {
   if (!productFeedbackEnabled()) return Response.json({ error: "feedback_disabled" }, { status: 404, headers });
   try {
     const user = await requirePublicMutation(request);
@@ -27,4 +28,4 @@ export async function POST(request: Request, context: Context) {
     if (error instanceof FeedbackError) return Response.json({ error: error.code }, { status: error.status, headers });
     return Response.json({ error: "feedback_unavailable" }, { status: 503, headers });
   }
-}
+}, () => Response.json({ error: "feedback_unavailable" }, { status: 503, headers: { ...headers, "Retry-After": WEB_FENCED_RETRY_AFTER } }));

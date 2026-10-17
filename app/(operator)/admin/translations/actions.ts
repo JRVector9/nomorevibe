@@ -7,6 +7,7 @@ import { adminLocalLoginEnabled, adminOrigin, authSecret, currentAdmin, LOCAL_AD
 import { ProductTranslationAdminError, retryProductTranslation } from "@/lib/domain/products/translation-admin";
 import { isProductTranslationField } from "@/lib/domain/products/translation-policy";
 import type { ProductTranslationLocale } from "@/lib/db/schema";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type TranslationActionState = { ok?: true; error?: string; kind?: "retry" | "new_source" } | null;
 
@@ -16,7 +17,7 @@ function field(form: FormData, name: string): string {
   return values[0];
 }
 
-export async function retryTranslationAction(_previous: TranslationActionState, form: FormData): Promise<TranslationActionState> {
+export const retryTranslationAction = webWriteAction(async function retryTranslationAction(_previous: TranslationActionState, form: FormData): Promise<TranslationActionState> {
   try {
     const admin = await currentAdmin();
     if (!admin) throw new Error("unauthorized");
@@ -46,4 +47,4 @@ export async function retryTranslationAction(_previous: TranslationActionState, 
         ? "보류·재시도 대기·시도 상한을 확인해주세요. 현재는 재요청할 수 없습니다." : "대상과 재요청 사유를 확인해주세요." };
     return { error: "재요청하지 못했습니다. 로그인 상태를 확인하고 다시 시도해주세요." };
   }
-}
+});

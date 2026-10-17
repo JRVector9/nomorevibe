@@ -12,6 +12,7 @@ import { markClaimInvited } from "@/lib/domain/products/claim-invite";
 import { decideRepoReview } from "@/lib/domain/products/repo-reviews";
 import { logger } from "@/lib/observability/logger";
 import { recordAdminAction, recordAdminActions, type AdminLogEntry } from "@/lib/operations/admin-log";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { isBanReason } from "./products/ban-reasons";
 import { MAX_BULK_DECISIONS, parseSelection, type BulkReviewState, type ReviewDecisionState } from "./review/contract";
 
@@ -36,7 +37,7 @@ function num(value: FormDataEntryValue | null): number {
  * middleware가 /admin을 막지만 서버 액션은 별도 진입점이므로 자격을 다시 확인한다 —
  * 액션은 URL 없이도 호출될 수 있다.
  */
-export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promise<SaveState> {
+export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings(_prev: SaveState, form: FormData): Promise<SaveState> {
   const admin = await currentAdmin();
   if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
 
@@ -130,7 +131,7 @@ export async function saveCrawlSettings(_prev: SaveState, form: FormData): Promi
 
   revalidatePath("/admin");
   return { ok: true, version: settingsFormVersion(result.settings) };
-}
+});
 
 export type ReviewState = { error?: string } | null;
 
@@ -158,7 +159,7 @@ function defaultDecisionNote(code: DecisionReasonCode): string {
  * 성공하면 알림과 되돌리기(undoCandidateDecisions)가 쓸 결정 기록 id 와 이전 상태를 돌려준다(ADM-12).
  * 전에는 성공이 null 이었다 — 실패만 보던 화면은 그대로 error 만 보면 된다.
  */
-export async function decideCrawlCandidate(_prev: ReviewDecisionState | ReviewState, form: FormData): Promise<ReviewDecisionState> {
+export const decideCrawlCandidate = webWriteAction(async function decideCrawlCandidate(_prev: ReviewDecisionState | ReviewState, form: FormData): Promise<ReviewDecisionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -187,7 +188,7 @@ export async function decideCrawlCandidate(_prev: ReviewDecisionState | ReviewSt
 
   revalidatePath("/admin/review");
   return { ok: true, repo, decision, attemptId: result.attemptId, previous: result.previous };
-}
+});
 
 /**
  * 여러 후보를 같은 사유로 한 번에 결정한다.
@@ -199,7 +200,7 @@ export async function decideCrawlCandidate(_prev: ReviewDecisionState | ReviewSt
  * 보내므로 그중 하나라도 그 사이에 바뀌었으면 그 건만 거절되고 나머지는 처리된다.
  * 처리한 건은 decided 로 돌려준다 — 알림의 되돌리기가 그 목록을 그대로 되돌린다.
  */
-export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormData): Promise<BulkReviewState> {
+export const decideCrawlCandidates = webWriteAction(async function decideCrawlCandidates(_prev: BulkReviewState, form: FormData): Promise<BulkReviewState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -240,7 +241,7 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
   logger.info("admin.review_bulk", { login: admin.login, decision, ok: decided.length, failed: failures.length });
   revalidatePath("/admin/review");
   return { ok: decided.length, failures, decided };
-}
+});
 
 /**
  * 내려달라는 요청 처리.
@@ -248,7 +249,7 @@ export async function decideCrawlCandidates(_prev: BulkReviewState, form: FormDa
  * 내릴 때 행을 지우지 않고 banned로 둔다 — 지우면 수집기가 다음 바퀴에 같은 URL을 다시
  * 주워 온다. 유스케이스가 그렇게 하고, 여기서는 자격 확인과 파싱만 한다.
  */
-export async function resolveTakedownRequest(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export const resolveTakedownRequest = webWriteAction(async function resolveTakedownRequest(_prev: ReviewState, form: FormData): Promise<ReviewState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -269,7 +270,7 @@ export async function resolveTakedownRequest(_prev: ReviewState, form: FormData)
 
   revalidateTakedownViews();
   return null;
-}
+});
 
 /** 요청 처리 결과가 보이는 곳 — 처리 화면, 심사 큐 띠, 운영센터 조치, 메뉴 배지(레이아웃) */
 function revalidateTakedownViews() {
@@ -283,7 +284,7 @@ export type BulkTakedownState = { error?: string; done?: number; failed?: { slug
 const MAX_BULK_TAKEDOWNS = 100;
 
 /** 여러 건 한 번에 내리거나 둔다 — 처리 화면의 체크박스·묶음 머리에서 */
-export async function resolveTakedownRequests(_prev: BulkTakedownState, form: FormData): Promise<BulkTakedownState> {
+export const resolveTakedownRequests = webWriteAction(async function resolveTakedownRequests(_prev: BulkTakedownState, form: FormData): Promise<BulkTakedownState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
   const action = String(form.get("action") ?? "");
@@ -300,7 +301,7 @@ export async function resolveTakedownRequests(_prev: BulkTakedownState, form: Fo
   logger.info("admin.takedown_bulk", { login: admin.login, action, done: result.done.length, failed: result.failed.length });
   revalidateTakedownViews();
   return { done: result.done.length, failed: result.failed };
-}
+});
 
 /**
  * 기준을 코드 기본값으로 되돌린다.
@@ -308,7 +309,7 @@ export async function resolveTakedownRequests(_prev: BulkTakedownState, form: Fo
  * 판정 규칙을 고쳐도 저장된 설정이 있으면 그 값이 이긴다. 배포 환경이 옛 기준으로 도는 것을
  * 손으로 고치게 두지 않는다. 수집 스위치는 건드리지 않는다.
  */
-export async function resetCrawlSettings(): Promise<SaveState> {
+export const resetCrawlSettings = webWriteAction(async function resetCrawlSettings(): Promise<SaveState> {
   const admin = await currentAdmin();
   if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
 
@@ -321,7 +322,7 @@ export async function resetCrawlSettings(): Promise<SaveState> {
   logger.info("admin.settings_reset", { login: admin.login });
   revalidatePath("/admin");
   return { ok: true };
-}
+});
 
 /**
  * 제품 차단·해제.
@@ -334,7 +335,7 @@ export async function resetCrawlSettings(): Promise<SaveState> {
  */
 export type ProductBanState = { error?: string; ok?: true; message?: string } | null;
 
-export async function setProductBan(_prev: ProductBanState, form: FormData): Promise<ProductBanState> {
+export const setProductBan = webWriteAction(async function setProductBan(_prev: ProductBanState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -358,7 +359,7 @@ export async function setProductBan(_prev: ProductBanState, form: FormData): Pro
   revalidatePath("/admin/products");
   revalidatePath(`/admin/products/${slug}`);
   return { ok: true, message: action === "ban" ? "차단했습니다" : "차단을 풀었습니다" };
-}
+});
 
 /**
  * 저장소가 사라진 웹사이트의 2단계 판정(product_repo_reviews)을 운영자가 정한다 — 유지 또는 내리기.
@@ -366,7 +367,7 @@ export async function setProductBan(_prev: ProductBanState, form: FormData): Pro
  * 내리기는 위 차단과 같은 길이다(setStatusWithAudit 'admin.product.ban' — 행은 남고 되돌릴 수 있다). 결정은 같은
  * 트랜잭션에 적는다. 한 번에 한 제품 — AI 판정은 사람이 하나씩 보고 정한다(감사 내리기와 같다).
  */
-export async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ProductBanState> {
+export const decideRepoReviewAction = webWriteAction(async function decideRepoReviewAction(_prev: ReviewState, form: FormData): Promise<ProductBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -384,7 +385,7 @@ export async function decideRepoReviewAction(_prev: ReviewState, form: FormData)
   revalidatePath("/admin/products");
   // 알림(ADM-12)이 쓸 결과 — 내린 것은 알림의 '되돌리기'가 setProductBan 해제로 되돌린다
   return { ok: true, message: decision === "keep" ? "유지했습니다" : "내렸습니다" };
-}
+});
 
 /**
  * 재검수에서 걸린 것을 한 번에 내린다.
@@ -396,7 +397,7 @@ export async function decideRepoReviewAction(_prev: ReviewState, form: FormData)
  */
 export type BulkBanState = { error?: string; ok?: number; failures?: string[] } | null;
 
-export async function banProducts(_prev: BulkBanState, form: FormData): Promise<BulkBanState> {
+export const banProducts = webWriteAction(async function banProducts(_prev: BulkBanState, form: FormData): Promise<BulkBanState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -425,7 +426,7 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
   revalidatePath("/admin/products");
   revalidatePath("/admin/products/recheck");
   return { ok, failures };
-}
+});
 
 /**
  * 클레임 초대를 보냈다고 표시한다.
@@ -433,7 +434,7 @@ export async function banProducts(_prev: BulkBanState, form: FormData): Promise<
  * 보내는 것은 운영자가 GitHub에서 직접 한다(미리 채운 새 이슈 링크). 여기서는 두 번 보내지
  * 않도록 시각만 남긴다.
  */
-export async function markClaimInvite(_prev: ReviewState, form: FormData): Promise<ReviewState> {
+export const markClaimInvite = webWriteAction(async function markClaimInvite(_prev: ReviewState, form: FormData): Promise<ReviewState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "권한이 없습니다. 다시 로그인해주세요." };
 
@@ -447,4 +448,4 @@ export async function markClaimInvite(_prev: ReviewState, form: FormData): Promi
   logger.info("admin.claim_invited", { slug, login: admin.login });
   revalidatePath("/admin/products");
   return null;
-}
+});

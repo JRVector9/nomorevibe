@@ -66,6 +66,12 @@ export async function lockWriterFence(tx: Pick<ProductTransaction, "execute">, m
   return fenceFromRow(row);
 }
 
+/** 잠그지 않는 읽기 — 웹 캐시 관문용이다(요청마다 행 lock·multixact를 만들지 않는다). 쓰기 TX의 관문은 lockWriterFence다. */
+export async function readWriterFence(tx: Pick<ProductTransaction, "execute">): Promise<WriterFence> {
+  const [row] = await tx.execute<FenceRow>(sql`SELECT lineage_id::text, writer_epoch, state, reason, fenced_db, promotion_id::text FROM dr_writer_fence WHERE id = 1`);
+  return fenceFromRow(row);
+}
+
 /** role 선출/갱신 관문: fenced DB에서는 어떤 background writer도 역할을 얻거나 유지하지 않는다. */
 export async function writerSiteActive(tx: Pick<ProductTransaction, "execute">): Promise<boolean> {
   return (await lockWriterFence(tx, "share")).state === "active";

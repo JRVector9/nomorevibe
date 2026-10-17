@@ -4,8 +4,9 @@ import { hashSessionToken, PUBLIC_SESSION_COOKIE } from "@/lib/domain/accounts/s
 import { GITHUB_NONCE_COOKIE, githubNonceCookieOptions } from "@/lib/domain/github-user/authorization";
 import { completeMakerGithubInstallation, feedbackOAuthConfig, requireMakerGithubEnabled } from "@/lib/domain/github-installations/authorization";
 import { GithubInstallationError } from "@/lib/domain/github-installations/credentials";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function GET(request: Request) {
+export const GET = webWriteRoute(async (request: Request) => {
   try {
     requireMakerGithubEnabled();
     const session = await getPublicSession(request);
@@ -29,4 +30,8 @@ export async function GET(request: Request) {
     response.headers.set("Referrer-Policy", "no-referrer");
     return response;
   }
-}
+}, error => {
+  const response = publicAuthErrorResponse(error);
+  response.headers.set("Referrer-Policy", "no-referrer");
+  return response;
+});

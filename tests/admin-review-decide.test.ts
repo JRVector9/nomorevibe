@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * 심사 결정 서버 액션 — 거부 사유는 화면이 아니라 서버가 막고(ADM-11), 성공하면 알림·되돌리기가 쓸 값을 돌려준다(ADM-12).
  */
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), override: vi.fn(), undo: vi.fn(), record: vi.fn(), records: vi.fn(), revalidate: vi.fn() }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidate }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("@/lib/crawl/admin-review", async (original) => ({

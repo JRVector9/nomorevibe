@@ -3,6 +3,7 @@ import { startEmailLogin } from "@/lib/domain/accounts/email-login";
 import { publicAuthErrorResponse, PublicAuthError, PUBLIC_PRIVATE_HEADERS, readLoginJson, requestCookie, requireLoginMutation, requirePublicAuthEnabled, requirePublicOrigin } from "@/lib/domain/accounts/request-auth";
 import { csrfForToken, isOpaqueToken, LOGIN_NONCE_COOKIE, loginNonceCookieOptions, newPublicSession } from "@/lib/domain/accounts/session";
 import { trustedClientIp } from "@/lib/rate-limit";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
 /** The pre-authentication nonce is independent from both user and admin sessions. */
 export async function GET(request: Request) {
@@ -20,7 +21,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export const POST = webWriteRoute(async (request: Request) => {
   try {
     const browserNonce = requireLoginMutation(request);
     const input = await readLoginJson(request);
@@ -31,4 +32,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return publicAuthErrorResponse(error);
   }
-}
+}, publicAuthErrorResponse);
