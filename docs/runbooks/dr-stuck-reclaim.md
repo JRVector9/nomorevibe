@@ -25,8 +25,10 @@ TTL·owner 죽음·재시작·정책 변경·drain으로 풀리지 않는다. �
 3. **회수는 점유만 푼다.** 모델 행은 `withdrawn`이 되고 `terminal_evidence`와 `dispatch_released` event에 같은 근거가 남는다.
    dispatch binding의 청구량(chargedTokens = C)은 그대로이고 `settled`·사용량 증거는 만들지 않는다.
    HTTP hop은 `released`(`settled_at` 기록)가 되고 `http_origin_events`의 `released` 사건 `evidence`에 근거가 남는다. 근거는 append-only이고 행·hop마다 하나다.
-4. **group 근거를 남기는 프로세스는 정해져 있다.** role-worker가 띄운 child와 켜진(`PIPELINE_ITEM_CONSUMER_VERSION=1`) AI1/AI2 consumer 슈퍼바이저의 child뿐이다.
-   웹처럼 기록기가 없는 프로세스의 행·hop은 group 근거가 없다(`owner_not_opened_before_dispatch`).
+4. **group 근거를 남기는 프로세스는 정해져 있다.** `PROCESS_GROUP_RECORDING=1`(미설정/`0`=꺼짐 — 기본, 다른 값은 시작 실패)인 role-worker가 띄운 child와,
+   같은 flag가 켜진 AI1/AI2 consumer(`PIPELINE_ITEM_CONSUMER_VERSION=1`) 슈퍼바이저의 child뿐이다. 켜지면 spawn 전에 의도를 commit하고 기록하지 못하면 spawn하지 않는다(fail closed).
+   꺼져 있으면 슈퍼바이저는 DB를 거치지 않고 spawn하고(8020dca와 같다) child env에 owner를 넘기지 않는다 — 그 boot의 행·hop은 근거가 없어
+   `reclaim-report`에서 `unproven`/`owner_not_opened_before_dispatch`로 남는다. 웹처럼 기록기가 없는 프로세스의 행·hop도 같다.
    슈퍼바이저가 함께 죽으면(컨테이너 제거·host 정지 등) `group_exited`가 남지 않아 그 boot의 행은 `spawn_not_exited:<seq>`로 계속 남는다.
    예외는 7의 후속 관측뿐이다.
 5. **로컬 종료 사실은 좁다.** `MODEL_CAPACITY_LOCAL_END=1`인 프로세스의 reserved 게이트웨이 호출(`lib/crawl/agent-review-gateway.ts`)이
@@ -35,7 +37,8 @@ TTL·owner 죽음·재시작·정책 변경·drain으로 풀리지 않는다. �
    로컬 종료는 provider 쪽 생성 종료가 아니라서 2의 정책 판정을 따로 거친다.
 6. **HTTP hop owner는 `SERVICE_INSTANCE_ID`다.** child는 슈퍼바이저가 넘긴 owner instance(`PROCESS_GROUP_OWNER_INSTANCE_ID`)가 자기 `SERVICE_INSTANCE_ID`와 같을 때만
    그 boot를 hop에 쓴다. 다르면 새 boot라 그 hop은 group 근거를 갖지 못한다(아래 열린 결정).
-7. **후속 관측(PR15f, 기본 꺼짐).** role-worker에 `PROCESS_GROUP_SUCCESSOR_PROBE=1`(미설정/`0`=꺼짐, 다른 값은 시작 실패)을 주면,
+7. **후속 관측(PR15f, 기본 꺼짐).** role-worker에 `PROCESS_GROUP_RECORDING=1`과 함께 `PROCESS_GROUP_SUCCESSOR_PROBE=1`(미설정/`0`=꺼짐, 다른 값은 시작 실패,
+   기록 없이 켜면 `process_group_successor_probe_requires_recording`으로 시작 실패)을 주면,
    그 boot는 `owner_opened`에 자기 attestation(`/proc/sys/kernel/random/boot_id`, `/proc/self/ns/pid` inode)을 남기고 boot 직후 한 번
    같은 `SERVICE_INSTANCE_ID`의 옛 boot 중 **attestation 두 값이 모두 같은** boot의 `spawned` 기록마다 종료가 없으면 `kill(-pid,0)`을 직접 호출해
    ESRCH일 때만 그 옛 owner의 `group_exited`(`method=pgid_esrch_by_successor`, `detail`=관측 boot·커널·namespace)를 남긴다. 살아 있으면(EPERM 포함) 쓰지 않는다.
@@ -79,7 +82,7 @@ printf '%s' "$DR_DATABASE_URL" | node --import tsx scripts/ops/dr/promotion.ts r
 | `unproven` reason | 의미 |
 |---|---|
 | `dispatch_time_unknown` | 모델 행에 `dispatched_at`도 `dispatch_started` event도 없음 |
-| `owner_not_opened_before_dispatch` | 그 owner의 `owner_opened`가 없거나 dispatch 뒤(기록기 없는 프로세스) |
+| `owner_not_opened_before_dispatch` | 그 owner의 `owner_opened`가 없거나 dispatch 뒤(기록기 없는 프로세스, `PROCESS_GROUP_RECORDING` 꺼진 boot 포함 — 기본값) |
 | `spawn_sequence_gap` | spawn 의도 번호 공백(기록 유실) |
 | `no_spawn_before_dispatch` | dispatch 시각까지 기록된 의도 없음 |
 | `spawn_not_exited:<seq>` | 그 child 그룹의 종료 기록 없음(살아 있거나 슈퍼바이저가 기록하지 못함) |
@@ -126,9 +129,9 @@ printf '%s' "$DR_DATABASE_URL" | node --import tsx scripts/ops/dr/promotion.ts r
    ```
 
 2. **코드 배포(`MODEL_CAPACITY_LOCAL_END` 미설정).** 꺼져 있으면 게이트웨이 호출은 원래 undici fetch 그대로이고 로컬 종료 사실을 남기지 않는다. 바뀌는 것은 둘이다.
-   - 기록하는 슈퍼바이저의 child env에 `PROCESS_GROUP_OWNER_INSTANCE_ID`·`PROCESS_GROUP_OWNER_BOOT_ID`가 붙고, 같은 instance면 child의 HTTP hop·consumer item(장부) owner가 그 boot를 쓴다.
-   - 켜진 AI1/AI2 consumer 슈퍼바이저가 spawn 전에 `dr_process_group_events`에 의도를 기록한다. 기록하지 못하면 child를 띄우지 않고 exit 1이다(`supervisor.spawn_intent_failed` 로그).
-     배포 뒤 consumer가 child를 정상으로 띄우는지 확인한다.
+   - `PROCESS_GROUP_RECORDING=1`인 슈퍼바이저만(기본 꺼짐): child env에 `PROCESS_GROUP_OWNER_INSTANCE_ID`·`PROCESS_GROUP_OWNER_BOOT_ID`가 붙고, 같은 instance면 child의 HTTP hop·consumer item(장부) owner가 그 boot를 쓴다.
+   - 같은 flag가 켜진 role-worker·AI1/AI2 consumer 슈퍼바이저가 spawn 전에 `dr_process_group_events`에 의도를 기록한다. 기록하지 못하면 child를 띄우지 않고 exit 1이다(`supervisor.spawn_intent_failed` 로그, 재시작 정책이 다시 띄운다).
+     켜기 전 확인: DB 경로가 끊기면 켜진 프로세스는 새 child를 띄우지 못한다(꺼져 있으면 DB 없이 띄운다). 켠 뒤 child를 정상으로 띄우는지 확인한다.
 3. **회수는 운영자 수동 CLI만.** 위 순서대로, 사용자 승인 뒤에만 실행한다.
 4. **`MODEL_CAPACITY_LOCAL_END=1`은 0099를 확인한 뒤 웹과 워커 모두에 켠다.** 게이트웨이 모델 호출은 웹(검색어 번역 등)과 워커 양쪽에서 일어나고, 켠 프로세스의 호출만 사실을 남긴다.
    미설정/`0`=꺼짐, `1`=켜짐이다. 다른 값(`true` 등)이면 게이트웨이 fetch가 요청을 보내기 전에 `invalid_model_capacity_local_end`로 throw하고,
@@ -139,7 +142,7 @@ printf '%s' "$DR_DATABASE_URL" | node --import tsx scripts/ops/dr/promotion.ts r
    method CHECK를 drop/add(0095 술어 whole-left + `pgid_esrch_by_successor`)하며 새 `dr_process_group_events_detail_check`를 만든다(작은 표 ACCESS EXCLUSIVE·재검증).
    1과 같은 drain 절차로 한 번 실행한다. 이 코드의 `reclaim-report`/`reclaim`은 `detail` 열을 읽으므로 **0101이 먼저**다(기록기는 flag가 꺼져 있으면 예전과 같은 INSERT).
    Oracle 최소 권한은 표 전체 SELECT/INSERT라 grant는 그대로지만 열이 늘어 preflight/canary의 privilege catalog hash가 바뀐다 — 기존 migration 뒤 절차대로 canary를 다시 기록한다.
-   그 뒤 Oracle role unit env 파일에 `PROCESS_GROUP_SUCCESSOR_PROBE=1`을 넣고 unit을 하나씩 재시작한다. 켠 뒤 시작한 boot부터 attestation이 남는다.
+   그 뒤 Oracle role unit env 파일에 `PROCESS_GROUP_RECORDING=1`과 `PROCESS_GROUP_SUCCESSOR_PROBE=1`을 함께 넣고 unit을 하나씩 재시작한다. 켠 뒤 시작한 boot부터 attestation이 남는다.
 
    ```sql
    -- 1행이면 0101 적용됨

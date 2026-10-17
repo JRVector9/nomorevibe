@@ -441,6 +441,69 @@ print(json.dumps(reports))
 '''
 
 
+# Production migration state, read-only. It runs inside the running crawler-m3 container (the container monitor_gate already execs
+# into) with that container's own DATABASE_URL, so no database secret reaches this Mac. READ ONLY transaction, 5s statement limit,
+# no write. The probed `when` is a bound parameter. drizzle's migrator applies a journal entry only when its `when` is above the
+# newest applied created_at, so the applied count and the latest entry's hash are checked too (a lower `when` is skipped silently).
+MIGRATION_STATE_SCRIPT = (
+    "import postgres from 'postgres';"
+    "const sql=postgres(process.env.DATABASE_URL,{max:1,prepare:false,connect_timeout:10,onnotice:()=>{}});"
+    "try{const [row]=await sql.begin('read only',async tx=>{await tx`SET LOCAL statement_timeout='5s'`;"
+    "return tx`SELECT count(*)::int AS applied,max(created_at)::text AS latest,(SELECT hash FROM drizzle.__drizzle_migrations "
+    "WHERE created_at=${process.argv[1]}::bigint ORDER BY id DESC LIMIT 1) AS hash FROM drizzle.__drizzle_migrations`;});"
+    "console.log(JSON.stringify(row));}finally{await sql.end({timeout:5});}")
+REMOTE_MIGRATIONS = r'''import subprocess,sys
+service,when,script=sys.argv[1:]
+ids=subprocess.run(['docker','ps','--filter','name='+service,'--format','{{.ID}}'],
+                   capture_output=True,text=True,check=True).stdout.strip().splitlines()
+if len(ids)!=1: raise SystemExit('migration_check_container_count')
+result=subprocess.run(['docker','exec',ids[0],'node','--input-type=module','-e',script,when],capture_output=True,text=True,timeout=40)
+if result.returncode: raise SystemExit('migration_check_failed')
+print(result.stdout.strip().splitlines()[-1])
+'''
+
+
+def git_blob(sha, path):
+    """Exact committed bytes (no strip): drizzle hashes the whole migration file."""
+    result = subprocess.run(['git', 'show', f'{sha}:{path}'], capture_output=True, timeout=45)
+    if result.returncode:
+        raise RuntimeError(f'command_failed:git:{result.returncode}')
+    return result.stdout
+
+
+def migration_journal(sha):
+    journal = json.loads(git_blob(sha, 'drizzle/meta/_journal.json'))
+    entries = journal.get('entries') if isinstance(journal, dict) else None
+    if not isinstance(entries, list) or not entries:
+        raise ValueError('migration_journal_invalid')
+    whens = [entry.get('when') if isinstance(entry, dict) else None for entry in entries]
+    if any(type(when) is not int for when in whens) or any(later <= earlier for earlier, later in zip(whens, whens[1:])):
+        raise ValueError('migration_journal_not_increasing')
+    latest = entries[-1]
+    if not isinstance(latest.get('tag'), str) or not re.fullmatch(r'[0-9]{4}_[a-z0-9_]+', latest['tag']):
+        raise ValueError('migration_journal_invalid')
+    return {'count': len(entries), 'when': latest['when'], 'tag': latest['tag'],
+            'hash': hashlib.sha256(git_blob(sha, f"drizzle/{latest['tag']}.sql")).hexdigest()}
+
+
+def migration_gate(client, sha):
+    """Refuse a release whose journal is not applied in production. An unreadable state is a refusal, never a pass."""
+    journal = migration_journal(sha)
+    try:
+        app = client.app('crawler-m3')
+        state = json.loads(ssh_python(M3[1], REMOTE_MIGRATIONS, app['appName'], str(journal['when']), MIGRATION_STATE_SCRIPT, timeout=60))
+    except (RuntimeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
+        raise ValueError('database_migration_state_unknown') from error
+    latest, applied = state.get('latest') if isinstance(state, dict) else None, state.get('applied') if isinstance(state, dict) else None
+    if not isinstance(latest, str) or not re.fullmatch(r'[0-9]{1,19}', latest) or type(applied) is not int:
+        raise ValueError('database_migration_state_unknown')
+    if int(latest) < journal['when'] or applied < journal['count']:
+        raise ValueError('database_migrations_not_applied')
+    if state.get('hash') != journal['hash']:
+        raise ValueError('database_migration_hash_mismatch')
+    return {'migrations': 'applied', 'latestTag': journal['tag'], 'applied': applied}
+
+
 def main_sha_and_token(target):
     if run(['gh', 'api', 'user', '--jq', '.login']) != 'JRVector9':
         raise ValueError('github_account_mismatch')
@@ -773,7 +836,8 @@ def main(argv=None):
     parser.add_argument('--consumer', action='append', choices=('ai1', 'ai2'), default=[],
                         help='plan/run: also release this registered consumer pair right after the reviewer pair')
     parser.add_argument('--migration-verified', action='store_true',
-                        help='assert any DB migration/schema change was applied before rollout')
+                        help='assert any DB migration/schema change was applied before rollout; the helper then also '
+                             'reads the production migration journal (read-only) and refuses if it is behind or unreadable')
     args = parser.parse_args(argv)
     if args.action in ('run', 'restore') and not args.snapshot:
         parser.error('--snapshot is required for run/restore')
@@ -812,11 +876,14 @@ def main(argv=None):
                    '--', 'drizzle', 'lib/db/schema.ts', 'scripts/migrate.mjs'])
     if changed and not args.migration_verified:
         raise ValueError('database_changes_require_migration_verified')
+    # The operator assertion alone is not proof: a release with DB changes also needs the applied production journal.
+    migrations = migration_gate(client, target['sha']) if changed else None
     monitor_gate(client, 'crawler')
     pre_pull(target, token, setting(state['apps']['web-m3']['env'],
                                     'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
     print(json.dumps({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
-                      'targetRelease': target['sha'], 'githubIntegration': integration}), flush=True)
+                      'targetRelease': target['sha'], 'githubIntegration': integration,
+                      **({'databaseMigrations': migrations} if migrations else {})}), flush=True)
     if args.action == 'run':
         deploy(client, target, token, state, args.snapshot, consumers)
 

@@ -6,6 +6,13 @@ import { lastSettingsRead } from '@/lib/crawl/settings-version';
 import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
 import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
+import { dbErrorFields } from '@/lib/db/error-fields';
+
+/** poll·tick 실패 로그 필드: 오류 code(SQLSTATE 등)·이름·잘린 message(SQL·params 제외)와 이 줄의 연속 실패 수 */
+function failureFields(error: unknown, consecutiveFailures: number) {
+  const detail = dbErrorFields(error);
+  return { code: detail.code, errorName: detail.name, message: detail.message, consecutiveFailures };
+}
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
 export type RuntimeHeartbeat = {
@@ -143,10 +150,10 @@ const CONSUMER_REFILL_MS = 1_000;
  */
 async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDependencies, consumer: BackgroundConsumerLanes,
   name: string, intervalMs: number, report: RuntimeReport) {
-  let ticks = 0, failures = 0;
+  let ticks = 0, failures = 0, streak = 0;
   while (!options.signal?.aborted) {
     ticks++;
-    let refill = false;
+    let refill = false, failed = false;
     report('polling');
     try {
       await dependencies.seen([name]);
@@ -167,9 +174,9 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
             if (result.status === 'failed') failures++;
             refill = result.status === 'completed' && result.done === false;
             dependencies.log?.('worker.job', { role: options.role, name, status: result.status, consumer: true });
-          } catch {
-            failures++;
-            dependencies.log?.('worker.job', { role: options.role, name, status: 'failed', consumer: true });
+          } catch (error) {
+            failures++; failed = true;
+            dependencies.log?.('worker.job', { role: options.role, name, status: 'failed', consumer: true, ...failureFields(error, ++streak) });
           } finally {
             circuit?.done();
             report('polling');
@@ -179,11 +186,12 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
       }
       refill &&= !options.once && !options.signal?.aborted;
       if (refill) await consumer.request(name);
-    } catch {
+    } catch (error) {
       refill = false;
-      failures++;
-      dependencies.log?.('worker.poll_failed', { role: options.role, name, consumer: true });
+      failures++; failed = true;
+      dependencies.log?.('worker.poll_failed', { role: options.role, name, consumer: true, ...failureFields(error, ++streak) });
     }
+    if (!failed) streak = 0;
     report('idle');
     if (options.once || options.signal?.aborted) break;
     await (dependencies.sleep ?? interruptibleSleep)(refill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
@@ -192,12 +200,12 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
 }
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
-  let ticks = 0, failures = 0, nextIndex = 0;
+  let ticks = 0, failures = 0, nextIndex = 0, streak = 0;
   const sourceLane = names.length === 1 && ((options.role === "crawler" && names[0] === "product-evidence-refresh")
     || (options.role === "site-evidence" && names[0] === "product-site-evidence-refresh"));
   while (!options.signal?.aborted) {
     ticks++;
-    let sourceContinued = false;
+    let sourceContinued = false, failed = false;
     report('polling');
     try {
       await dependencies.seen(names);
@@ -222,19 +230,20 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
             sourceContinued = true;
           }
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
-        } catch {
-          failures++;
-          dependencies.log?.('worker.job', { role: options.role, name, status: 'failed' });
+        } catch (error) {
+          failures++; failed = true;
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'failed', ...failureFields(error, ++streak) });
         } finally {
           nextIndex = (names.indexOf(name) + 1) % names.length;
           report('polling');
           if (admission?.admitted) await admission.release().catch(() => {});
         }
       }
-    } catch {
-      failures++;
-      dependencies.log?.('worker.poll_failed', { role: options.role });
+    } catch (error) {
+      failures++; failed = true;
+      dependencies.log?.('worker.poll_failed', { role: options.role, ...failureFields(error, ++streak) });
     }
+    if (!failed) streak = 0;
     report('idle');
     if (options.once || options.signal?.aborted) break;
     if (sourceContinued) continue;

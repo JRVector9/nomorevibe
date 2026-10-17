@@ -856,5 +856,114 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
                          list(release.ORDER[:4]) + ['ai2-consumer-mini', 'ai2-consumer-m3'] + list(release.ORDER[4:]))
 
 
+class MigrationGateTests(unittest.TestCase):
+    """F4: a release with DB changes is refused unless the production journal is mechanically confirmed (read-only)."""
+
+    def setUp(self):
+        self.sql = b'CREATE TABLE x (id int);\n--> statement-breakpoint\nSELECT 1;\n'
+        self.journal = {'entries': [{'idx': 0, 'when': 1000, 'tag': '0000_first'}, {'idx': 1, 'when': 2000, 'tag': '0001_second'}]}
+        self.digest = __import__('hashlib').sha256(self.sql).hexdigest()
+
+    def blobs(self, journal=None):
+        files = {'drizzle/meta/_journal.json': json.dumps(journal or self.journal).encode(), 'drizzle/0001_second.sql': self.sql}
+        return patch.object(release, 'git_blob', side_effect=lambda _sha, path: files[path])
+
+    def test_journal_hashes_the_exact_committed_bytes_and_requires_strictly_increasing_when(self):
+        with self.blobs():
+            self.assertEqual(release.migration_journal('b' * 40), {'count': 2, 'when': 2000, 'tag': '0001_second', 'hash': self.digest})
+        for entries in ([{'when': 2000, 'tag': '0000_a'}, {'when': 2000, 'tag': '0001_b'}], [{'when': 3000, 'tag': '0000_a'}, {'when': 2000, 'tag': '0001_b'}],
+                        [{'when': '2000', 'tag': '0001_b'}], []):
+            with self.subTest(entries=entries), self.blobs({'entries': entries}), self.assertRaisesRegex(ValueError, 'migration_journal_'):
+                release.migration_journal('b' * 40)
+
+    def gate(self, state=None, error=None):
+        client = FakeClient({'crawler-m3': {'appName': 'app-crawler'}})
+        probe = patch.object(release, 'ssh_python', side_effect=error) if error else \
+            patch.object(release, 'ssh_python', return_value=json.dumps(state))
+        with self.blobs(), probe as remote:
+            try:
+                return release.migration_gate(client, 'b' * 40)
+            finally:
+                if remote.call_args:
+                    self.assertEqual(remote.call_args.args[:5], (release.M3[1], release.REMOTE_MIGRATIONS, 'app-crawler', '2000', release.MIGRATION_STATE_SCRIPT))
+
+    def test_gate_passes_only_when_latest_applied_count_and_hash_match(self):
+        self.assertEqual(self.gate({'applied': 2, 'latest': '2000', 'hash': self.digest}),
+                         {'migrations': 'applied', 'latestTag': '0001_second', 'applied': 2})
+        # An already applied newer migration (DB ahead of code) is still compatible.
+        self.assertEqual(self.gate({'applied': 3, 'latest': '3000', 'hash': self.digest})['applied'], 3)
+        for state, code in (({'applied': 1, 'latest': '1000', 'hash': None}, 'database_migrations_not_applied'),
+                            ({'applied': 1, 'latest': '3000', 'hash': None}, 'database_migrations_not_applied'),
+                            ({'applied': 2, 'latest': '2000', 'hash': 'f' * 64}, 'database_migration_hash_mismatch'),
+                            ({'applied': 2, 'latest': None, 'hash': None}, 'database_migration_state_unknown'),
+                            ({'applied': '2', 'latest': '2000', 'hash': self.digest}, 'database_migration_state_unknown'),
+                            ([], 'database_migration_state_unknown')):
+            with self.subTest(state=state), self.assertRaisesRegex(ValueError, code):
+                self.gate(state)
+
+    def test_gate_refuses_when_the_state_cannot_be_read(self):
+        for error in (RuntimeError('command_failed:ssh:255'), subprocess.TimeoutExpired('ssh', 60), json.JSONDecodeError('x', 'y', 0)):
+            with self.subTest(error=type(error).__name__), self.assertRaisesRegex(ValueError, 'database_migration_state_unknown'):
+                self.gate(error=error)
+
+    def test_remote_probe_is_a_bound_read_only_query(self):
+        script = release.MIGRATION_STATE_SCRIPT
+        self.assertIn("sql.begin('read only'", script)
+        self.assertIn("SET LOCAL statement_timeout='5s'", script)
+        self.assertIn('${process.argv[1]}::bigint', script)
+        self.assertIsNone(re.search(r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT)\b', script, re.I))
+        self.assertNotIn('{', release.REMOTE_MIGRATIONS.replace('{{.ID}}', ''))
+
+    def main_with_changes(self, gate):
+        test = ReleaseSafetyTests('test_replace_setting_requires_one_line')
+        test.setUp()
+        apps = test.apps()
+        state = {'apps': apps, 'previous': {'sha': test.old_sha, 'worker': test.old_worker, 'web': test.old_web}}
+        args = ['plan', '--sha', test.new_sha, '--worker-image', test.target['worker'], '--web-image', test.target['web'], '--migration-verified']
+        output = io.StringIO()
+        with patch.object(release, 'run', side_effect=['operator-secret', test.new_sha, 'drizzle/0102_next.sql']), \
+             patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+             patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state), \
+             patch.object(release, 'github_integration_preflight', return_value={}), patch.object(release, 'migration_gate', **gate) as checked, \
+             patch.object(release, 'monitor_gate') as monitor, patch.object(release, 'pre_pull') as pull, redirect_stdout(output):
+            try:
+                release.main(args)
+            finally:
+                self.assertEqual(checked.call_args.args[1], test.new_sha)
+                self.calls = (monitor.call_count, pull.call_count)
+        return json.loads(output.getvalue())
+
+    def test_main_with_db_changes_checks_the_journal_before_any_gate_pull_or_deploy(self):
+        with self.assertRaisesRegex(ValueError, 'database_migrations_not_applied'):
+            self.main_with_changes({'side_effect': ValueError('database_migrations_not_applied')})
+        self.assertEqual(self.calls, (0, 0))
+        result = self.main_with_changes({'return_value': {'migrations': 'applied', 'latestTag': '0102_next', 'applied': 103}})
+        self.assertEqual(self.calls, (1, 1))
+        self.assertEqual(result['databaseMigrations'], {'migrations': 'applied', 'latestTag': '0102_next', 'applied': 103})
+
+    @unittest.skipUnless(os.environ.get('TEST_DATABASE_URL'), 'needs a local migrated test database (TEST_DATABASE_URL)')
+    def test_probe_script_reads_the_real_drizzle_journal_and_matches_the_committed_hash(self):
+        root = Path(__file__).resolve().parents[1]
+        journal = release.migration_journal('HEAD')
+
+        def local_probe(_host, _source, _service, when, script, timeout=None, url=os.environ['TEST_DATABASE_URL']):
+            result = subprocess.run(['node', '--input-type=module', '-e', script, when], cwd=root, capture_output=True, text=True, timeout=60,
+                                    env={**os.environ, 'DATABASE_URL': url})
+            if result.returncode:
+                raise RuntimeError('local_probe_failed')
+            return result.stdout.strip().splitlines()[-1]
+        client = FakeClient({'crawler-m3': {'appName': 'local'}})
+        with patch.object(release, 'ssh_python', side_effect=local_probe):
+            self.assertEqual(release.migration_gate(client, 'HEAD'), {'migrations': 'applied', 'latestTag': journal['tag'], 'applied': journal['count']})
+            # A code journal ahead of the database (an unapplied newer entry) is refused.
+            ahead = {**journal, 'when': journal['when'] + 1, 'count': journal['count'] + 1}
+            with patch.object(release, 'migration_journal', return_value=ahead), self.assertRaisesRegex(ValueError, 'database_migrations_not_applied'):
+                release.migration_gate(client, 'HEAD')
+        unreachable = 'postgres://nomorevibe:nomorevibe@127.0.0.1:9/nomorevibe_test'
+        with patch.object(release, 'ssh_python', side_effect=lambda *args, **kwargs: local_probe(*args[:5], url=unreachable)), \
+             self.assertRaisesRegex(ValueError, 'database_migration_state_unknown'):
+            release.migration_gate(client, 'HEAD')
+
+
 if __name__ == '__main__':
     unittest.main()

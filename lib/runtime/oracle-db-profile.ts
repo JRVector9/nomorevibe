@@ -6,7 +6,11 @@ import { sql } from 'drizzle-orm';
  * The same table renders deploy/oracle/least-privilege.sql and verifies a session's effective privileges, so the
  * operator SQL and the runtime check cannot drift. Lock-only tables get UPDATE on their primary key column because
  * PostgreSQL requires UPDATE on at least one column for FOR UPDATE/SHARE; no other column of those tables is writable.
+ * That key UPDATE is a residual right (singleton controls have CHECK id=1, but products.id, product_health.slug,
+ * takedown_requests.slug, product_intro_checks.product_id and evidence_settings.id could be rewritten); closing it needs a trigger.
  * Workers can update only candidate identity columns: capability/result_evidence updates belong to the attest principal.
+ * Runtime tables (jobs, role_leases, operations_observations) are column-limited to the non-key columns the runtime writes;
+ * their INSERT stays table-wide because Drizzle names every column.
  */
 export type OracleDbService = 'translation' | 'product-health' | 'site-evidence' | 'official-news' | 'scheduler' | 'attest';
 export const ORACLE_DB_PRINCIPALS: Record<OracleDbService, string> = {
@@ -20,9 +24,18 @@ type Profile = { tables: Record<string, TableGrant>; sequences: readonly string[
 const read: TableGrant = { select: true }, write: TableGrant = { select: true, insert: true, update: true };
 const lock = (key: string): TableGrant => ({ select: true, update: [key] });
 const CANDIDATE_IDENTITY = ['host', 'boot_id', 'release', 'policy_hash', 'observed_at'] as const;
-// dr_writer_fence: 역할·HTTP permit 관문의 첫 SHARE lock. dr_process_group_events: role-worker 의 D11 기록(append-only, UPDATE 없음).
+// Key columns (jobs.name, role_leases.role, operations_observations.key) are never rewritten by the runtime.
+const JOB_STATE = ['requested_version', 'processed_version', 'next_scheduled_at', 'not_before', 'lease_token', 'worker_seen_at', 'cursor',
+  'locked_at', 'last_run_at', 'last_success_at', 'last_error', 'runs', 'updated_at'] as const;
+const ROLE_LEASE_STATE = ['owner_instance_id', 'owner_boot_id', 'owner_kind', 'owner_release', 'epoch', 'primary_boots', 'quarantine_until',
+  'lease_until', 'updated_at'] as const;
+const jobsWrite: TableGrant = { select: true, insert: true, update: JOB_STATE };
+const observationsWrite: TableGrant = { select: true, insert: true, update: ['value', 'observed_at'] };
+// dr_writer_fence: 모든 역할 선출·갱신(legacy·versioned)·HTTP permit 관문의 첫 SHARE lock. dr_process_group_events: role-worker 의 D11 기록
+// (PROCESS_GROUP_RECORDING=1 일 때만, append-only, UPDATE 없음). 그 INSERT 는 owner 를 제한하지 않는다(다른 instance 의 근거를 쓸 수 있음 — 남은 위험).
 const RUNTIME: Record<string, TableGrant> = {
-  job_batch_control: lock('id'), jobs: write, operations_observations: write, role_leases: write,
+  job_batch_control: lock('id'), jobs: jobsWrite, operations_observations: observationsWrite,
+  role_leases: { select: true, insert: true, update: ROLE_LEASE_STATE },
   dr_writer_fence: lock('id'), dr_process_group_events: { select: true, insert: true },
   // Drizzle names every column (DEFAULT) on INSERT, so INSERT cannot be column-limited; UPDATE (the heartbeat upsert) is.
   // Migration 0098's BEFORE INSERT trigger keeps that INSERT evidence-free: non-NULL capability/result_evidence needs UPDATE on that column.
@@ -30,7 +43,8 @@ const RUNTIME: Record<string, TableGrant> = {
 };
 const HTTP: Record<string, TableGrant> = { http_origin_control: lock('id'), http_origin_hops: write, http_origin_events: { insert: true } };
 // `seed` elects the job's legacy parent role through tryAcquireRole, whose DR writer-fence gate reads this row FOR SHARE.
-// site-evidence has no legacy parent (it uses the versioned bootstrap), so it does not get this lock.
+// RUNTIME already grants the same lock to every worker (versioned acquire/renew read the fence too), so this entry only
+// documents the seed dependency; site-evidence (no legacy parent) has the identical grant through RUNTIME.
 const LEGACY_SEED: Record<string, TableGrant> = { dr_writer_fence: lock('id') };
 export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations', 'product_evidence_sources', 'evidence_source_claims',
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
@@ -46,8 +60,9 @@ export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
     tables: { ...RUNTIME, ...HTTP, products: lock('id'), evidence_settings: lock('id'), evidence_source_control: { select: true, update: ['cursor'] },
       evidence_source_claims: write, product_evidence_sources: write, product_links: read,
       product_refresh_requests: { select: true, update: ['progress', 'updated_at'] } } },
+  // http_origin_control: host 합계 예산(HOST_BUDGET_ENFORCEMENT) 장부 갱신과 비상 admission 판정이 읽기만 한다(번역은 HTTP permit 을 쓰지 않는다).
   translation: { statementTimeout: '60s', sequences: ['model_capacity_events_id_seq', 'model_capacity_requests_queue_ordinal_seq', 'dr_process_group_events_id_seq'],
-    tables: { ...RUNTIME, ...LEGACY_SEED, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
+    tables: { ...RUNTIME, ...LEGACY_SEED, http_origin_control: read, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
       product_korean_taglines: write, product_translations: { select: true, update: true }, products: lock('id'), product_health: read,
       product_intro_checks: lock('product_id'), takedown_requests: lock('slug'), uptime_control: read, uptime_gates: read,
       uptime_observations: read, model_capacity_control: { select: true, update: ['cursor', 'updated_at'] },
@@ -56,7 +71,7 @@ export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   // PR11g: 후보 행은 다른 worker 와 같은 권한(boot 기록·preflight 읽기, 증거 열 쓰기 없음). http_origin_control 은
   // HOST_BUDGET_ENFORCEMENT 장부 갱신이 읽기만 한다(scheduler 는 HTTP 를 보내지 않는다).
   scheduler: { statementTimeout: '10s', sequences: [],
-    tables: { dr_writer_fence: lock('id'), job_batch_control: lock('id'), jobs: write, operations_observations: write,
+    tables: { dr_writer_fence: lock('id'), job_batch_control: lock('id'), jobs: jobsWrite, operations_observations: observationsWrite,
       job_batch_candidates: RUNTIME.job_batch_candidates, http_origin_control: read } },
   // Operator evidence writer: never used by a worker process or heartbeat.
   attest: { statementTimeout: '60s', sequences: [],
