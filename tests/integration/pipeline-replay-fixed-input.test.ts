@@ -296,10 +296,11 @@ it("applies the same window-end drain rule to item consumers", async () => {
     meter: { refused: 0, indeterminate: 0, upstreamReportedCalls: calls, upstreamReportedTokens: 1_240 * calls }, writes: { products: 0, publishRuns: 0 } });
   const report = modules.fixed.reportFixedInputRun(items);
   expect(report.finals).toMatchObject({ newCandidates: 0 });
-  // consumer가 놓은 호출이라 장부는 실제 usage 대신 C(40,000)로 센다 — items의 drain 호출은 계량기 usage보다 보수적으로 잡힌다.
+  // consumer는 구간 끝에 새 claim만 멈추고 진행 중 호출의 답을 받는다 — 장부가 C(40,000) 대신 실제 usage로 정산한다.
   expect([...await db.execute(sql`select r.state, r.terminal_evidence->'actualUsage' as usage, (r.dispatch_binding->>'totalTokenBound')::int as bound
     from model_capacity_events e join model_capacity_requests r on r.request_id = e.request_id
-    where e.kind = 'dispatch_started' and e.created_at > ${items.window.startedAt}::timestamptz`)]).toEqual([{ state: "indeterminate", usage: null, bound: 40_000 }]);
+    where e.kind = 'dispatch_started' and e.created_at > ${items.window.startedAt}::timestamptz`)])
+    .toEqual([{ state: "settled", usage: { inputTokens: 1_200, outputTokens: 40, totalTokens: 1_240 }, bound: 40_000 }]);
   // 짧은 시험 구간이라 장부 budget은 첫 시험과 같은 이유로만 미검증이다(drain 이유는 없다).
   expect(report.budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
     issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified"] });

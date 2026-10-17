@@ -265,7 +265,8 @@ it('opens after consecutive gateway failures, claims nothing while open, and clo
       setReply(response => { response.end(JSON.stringify(envelope(JSON.stringify(verdict)))); });
       await vi.waitFor(async () => { for (const id of held) expect((await vote(id)).status).toBe('agreed'); }, { timeout: 15_000, interval: 100 });
     } finally { abort.abort(); }
-    expect(await running).toEqual({ attempted: 4, recorded: 4, skipped: 0, deferred: 4 });
+    // 빈 큐 재확인이 1초라 열린 동안 미룸 차례가 세 번(t0 직후 1초, +5초, +5초 뒤 half-open) — 표 2개씩 6, claim·POST 는 없다
+    expect(await running).toEqual({ attempted: 4, recorded: 4, skipped: 0, deferred: 6 });
     expect(posts).toHaveLength(4);
     expect(logs.map(row => row.event)).toEqual(['provider_circuit.opened', 'provider_circuit.half_open', 'provider_circuit.closed']);
     for (const row of rows.slice(0, 2)) expect(await vote(row.id)).toEqual({ status: 'failed', failure_count: 1, error_code: 'gateway_error' });

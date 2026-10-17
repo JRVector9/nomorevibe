@@ -141,6 +141,40 @@ it('backs off a typed model refusal and resumes past that hint without a hot loo
   expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5]);
   expect(mocks.sleep).toHaveBeenNthCalledWith(1, 5_000, abort.signal); expect(mocks.record).not.toHaveBeenCalled();
 });
+it('re-polls an empty AI2 queue after 1s while a model deferral still waits 5s', async () => {
+  const abort = new AbortController();
+  mocks.pages = [[]];
+  mocks.sleep.mockImplementation(async () => { abort.abort(); });
+  await runSecondReviewConsumer({ owner: owner(), signal: abort.signal });
+  expect(mocks.sleep).toHaveBeenCalledExactlyOnceWith(1_000, abort.signal);
+});
+it('stopClaims ends the loop and blocks new claims while the in-flight item keeps only the cancel signal', async () => {
+  const cancel = new AbortController(), stopClaims = new AbortController(), sent = gate<typeof success>();
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }]];
+  mocks.claim.mockImplementation(async (id: number) => ({ kind: 'claimed', row: { ...row, id }, receipt }));
+  mocks.dispatch.mockImplementationOnce(async () => { stopClaims.abort(); return sent.promise; });
+  const running = runSecondReviewConsumer({ owner: owner(), signal: cancel.signal, stopClaims: stopClaims.signal });
+  await vi.waitFor(() => expect(mocks.dispatch).toHaveBeenCalledTimes(1));
+  const options = mocks.dispatch.mock.calls[0][2] as { signal: AbortSignal };
+  expect(options.signal.aborted).toBe(false);
+  sent.resolve(success);
+  expect(await running).toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4]); expect(mocks.sleep).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: expect.objectContaining({ ok: true }) }));
+});
+it('stopClaims before the item starts skips it without a claim', async () => {
+  const stopClaims = new AbortController(); stopClaims.abort();
+  expect(await executeSecondReviewConsumerItem({ secondReviewId: 4, owner: owner(), stopClaims: stopClaims.signal }))
+    .toEqual({ state: 'skipped', reason: 'aborted' });
+  expect(mocks.claim).not.toHaveBeenCalled();
+});
+it('stopClaims after the claim but before dispatch cancels without sending', async () => {
+  const stopClaims = new AbortController();
+  mocks.claim.mockImplementation(async (id: number) => { stopClaims.abort(); return { kind: 'claimed', row: { ...row, id }, receipt }; });
+  await executeSecondReviewConsumerItem({ secondReviewId: 4, owner: owner(), stopClaims: stopClaims.signal });
+  expect(mocks.dispatch).not.toHaveBeenCalled();
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ result: expect.objectContaining({ ok: false, error: 'cancelled' }) }));
+});
 it('preserves a genuine claim error instead of converting it to model defer', async () => {
   const original = new Error('actual database failure'); mocks.pages = [[{ id: 4, fallback: false }]];
   mocks.claim.mockRejectedValue(original);

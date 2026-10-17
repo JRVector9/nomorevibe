@@ -19,6 +19,8 @@ export type SecondReviewItemOutcome =
 
 export async function executeSecondReviewConsumerItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+  /** 새 claim·dispatch 만 막는 신호(replay 구간 끝). 이미 보낸 호출은 signal 이 끊기 전까지 끝까지 받는다 */
+  stopClaims?: AbortSignal;
   /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목은 부르지 않는다 */
   onProviderResult?: (result: AgentReviewResult) => void;
 }): Promise<SecondReviewItemOutcome> {
@@ -33,11 +35,11 @@ export async function executeSecondReviewItem(input: {
 }
 
 async function executeItem(input: {
-  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal; onProviderResult?: (result: AgentReviewResult) => void;
+  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal; stopClaims?: AbortSignal; onProviderResult?: (result: AgentReviewResult) => void;
 }, purpose: 'consumer' | 'compatibility'): Promise<SecondReviewItemOutcome> {
-  const { secondReviewId, owner: ownerValue, signal: callerSignal } = input;
+  const { secondReviewId, owner: ownerValue, signal: callerSignal, stopClaims } = input;
   const id = z.number().int().positive().safe().parse(secondReviewId), owner = itemOwnerSchema.parse(ownerValue);
-  if (callerSignal?.aborted) return { state: "skipped", reason: "aborted" };
+  if (callerSignal?.aborted || stopClaims?.aborted) return { state: "skipped", reason: "aborted" };
   let claimed: SecondReviewModelClaim | SecondReviewCliModelClaim, capacity: typeof import("./second-review-model-capacity") | undefined;
   let dispatch: Ai2ModelDispatch | undefined, call: PreparedAi2GatewayCall | undefined;
   // CLI 표(05c-4): 고정 CLI 의도 class 만 CLI coordinator 로 간다. 슬롯 deferred 는 아래 기록 전에 던져진다.
@@ -86,7 +88,7 @@ async function executeItem(input: {
   let result: AgentReviewResult | undefined;
   try {
     const observed = await observeSecondReviewItemDispatch(receipt);
-    if (observed.kind === "current" && !signal.aborted) {
+    if (observed.kind === "current" && !signal.aborted && !stopClaims?.aborted) {
       const { row, input: reviewInput } = observed;
       if (dispatch) {
         if (!capacity || !call) throw new Error("ai2_model_dispatch_missing");

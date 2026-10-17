@@ -32,21 +32,24 @@ async function hints(cursor: Cursor | null) {
 }
 export async function runFirstReviewConsumer(input: {
   owner: ItemOwner; signal?: AbortSignal; once?: boolean; report?: RuntimeReport;
+  /** 새 hint·claim 만 멈추는 신호. 이미 보낸 호출은 signal 이 끊을 때까지 끝낸다(replay 구간 끝 drain). 없으면 signal 과 같다 */
+  stopClaims?: AbortSignal;
   /** host 합계 장부(PR10e). 없으면 기존처럼 바로 claim 한다 */
   admit?: (job: string) => Promise<HostAdmission>;
   /** provider 회로(PR06e). AI1 은 1차 심사자가 하나라 줄 하나(ai1)로 센다 */
   circuits?: ProviderCircuits;
 }): Promise<{ attempted: number; recorded: number; skipped: number; deferred: number }> {
-  const owner = itemOwnerSchema.parse(input.owner), { signal, once, report } = input;
+  const owner = itemOwnerSchema.parse(input.owner), { signal, once, report, stopClaims } = input;
+  const halt = stopClaims ? AbortSignal.any([stopClaims, ...(signal ? [signal] : [])]) : signal;
   if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
   const result = { attempted: 0, recorded: 0, skipped: 0, deferred: 0 };
   let cursor: Cursor | null = null, pages = 0;
-  while (!signal?.aborted) {
+  while (!halt?.aborted) {
     report?.('polling');
     const queue = await hints(cursor);
     let deferred = false, completed = false;
     for (const hint of queue) {
-      if (signal?.aborted) break;
+      if (halt?.aborted) break;
       // claim 전 관문: 회로가 열렸거나 host 예산이 모자라면 claim·실패 기록 없이 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
       const circuit = input.circuits?.admit('ai1');
       const host = circuit?.admitted === false || !input.admit ? null
@@ -60,7 +63,7 @@ export async function runFirstReviewConsumer(input: {
       result.attempted++; report?.('running', 'crawl-agent-review', Date.now());
       try {
         const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal,
-          ...(circuit?.admitted ? { onProviderResult: circuit.record } : {}) });
+          ...(stopClaims ? { stopClaims } : {}), ...(circuit?.admitted ? { onProviderResult: circuit.record } : {}) });
         if (written.state === 'succeeded') { result.recorded++; completed = true; }
         else result.skipped++;
       } catch (error) {
@@ -75,10 +78,10 @@ export async function runFirstReviewConsumer(input: {
     pages++;
     const end = queue.length < PAGE_SIZE;
     if (end && !deferred && !completed) cursor = null;
-    if (signal?.aborted || once && (end || deferred || pages >= MAX_PAGES)) break;
+    if (halt?.aborted || once && (end || deferred || pages >= MAX_PAGES)) break;
     if (completed && !once) pages = 0;
     if (end && !completed || deferred || pages >= MAX_PAGES) {
-      report?.('idle'); await interruptibleSleep(IDLE_MS, signal); pages = 0;
+      report?.('idle'); await interruptibleSleep(IDLE_MS, halt); pages = 0;
     }
   }
   return result;
