@@ -8,6 +8,7 @@ import { mergeWithDefaults } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { LIVE_MIN_WINDOW_MS, parseLiveCapacityArtifact } from "./pipeline-capacity-live";
 import { collectLiveCapacityWindow } from "./pipeline-capacity-live-repository";
+import { startEvidenceRecorder } from "./pipeline-evidence-ledger";
 import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, parseFixedInputArtifact, parseFixedInputRunManifest, parseFixedInputRunResult,
   type FixedInputArtifact, type FixedInputRunResult, type FixedInputTiming } from "./pipeline-replay-fixed-input";
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
@@ -60,7 +61,7 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
 }
 
 /**
- * 격리 DB에서 고정 입력을 한 모드로 실모델 심사한다. 순서: 관문 → 적재 → 구간 시작까지 대기 → 계량기·egress 가둠 →
+ * 격리 DB에서 고정 입력을 한 모드로 실모델 심사한다. 순서: 관문 → 적재 → 0097 기록 시작 marker → 구간 시작까지 대기 → 계량기·egress 가둠 →
  * 운영과 같은 scheduler·reviewer 워커(두 심사 잡만)와, item 모드면 AI1·AI2 consumer → 구간 끝 또는 상한에 정지 →
  * 진행 중 호출 정리 → 운영 구간과 같은 수집기로 읽기 전용 수집. 발행·공개 상태·외부 반영 잡은 돌리지 않는다.
  */
@@ -80,16 +81,23 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
   const load = await loadFixedInputs({ artifact, settings, mode: manifest.mode, capacityPolicy: manifest.items?.capacityPolicy });
   ensure(load.items.length, "replay_inputs_empty");
   const startedAt = plus(load.anchorAt, timing.leadMs), endedAt = plus(startedAt, manifest.durationMs);
+  // PR01b-9: 격리 DB(위 관문 통과)에만, 모든 워커·호출보다 먼저 기록 시작 marker를 남긴다. 그래야 구간 안의 사람 결정 덮음·lease 위반·
+  // AI2 호출이 0097 장부에 쌓이고 수집기가 그 구간을 verified로 셀 수 있다. 아래 lead 검사가 marker도 구간 시작 전임을 보장한다.
+  await startEvidenceRecorder(db, { revision: options.revision, operator: "pipeline-replay" });
   // 두 실행이 같은 lead를 써야 구간 시작의 근거 나이가 같다. 적재가 늦으면 실행하지 않는다.
   ensure(Date.parse(await dbClockIso()) < Date.parse(startedAt), "replay_load_exceeded_lead");
   for (let now = await dbClockIso(); Date.parse(now) < Date.parse(startedAt); now = await dbClockIso())
     await sleep(Math.min(1_000, Date.parse(startedAt) - Date.parse(now)));
 
   const controller = new AbortController(), signal = controller.signal, failures: string[] = [];
-  const halted: { reason: FixedInputRunResult["stop"]["reason"] | null; at: number } = { reason: null, at: 0 };
-  let guardRejected = 0;
-  const stop = (value: FixedInputRunResult["stop"]["reason"]) => { if (!halted.reason) { halted.reason = value; halted.at = Date.now(); controller.abort(); } };
+  const halted: { reason: FixedInputRunResult["stop"]["reason"] | null; at: number; calls: number | null } = { reason: null, at: 0, calls: null };
+  let guardRejected = 0, meterCalls = () => 0;
+  // 정지 순간까지 보낸 호출 수를 남긴다(그 뒤에 나간 호출이 있으면 budget 구간이 흐려지므로 미검증이 된다).
+  const stop = (value: FixedInputRunResult["stop"]["reason"]) => {
+    if (!halted.reason) { halted.reason = value; halted.at = Date.now(); halted.calls = meterCalls(); controller.abort(); }
+  };
   const meter = await startReplayModelMeter({ upstream: manifest.upstream, limits: manifest.limits, onStop: (value: ReplayMeterStop) => stop(value) });
+  meterCalls = () => meter.stats().calls;
   const release = installReplayEgressGuard(manifest.upstream, meter, () => { guardRejected++; });
   const savedCli = { CLAUDE_CLI: process.env.CLAUDE_CLI, GROK_CLI: process.env.GROK_CLI };
   process.env.CLAUDE_CLI = BLOCKED_CLI; process.env.GROK_CLI = BLOCKED_CLI;
@@ -149,5 +157,6 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     // 정지 시각은 이 프로세스 시계, 구간 시작은 DB 시계다(수십 ms 차이는 진단용으로만 쓴다).
     stop: { reason: stopReason, atOffsetMs: Math.round(halted.at - Date.parse(startedAt)), drainMs, drainExceeded: drainMs > timing.drainMs },
     meter: { ...meterStats, egressRejected: meterStats.egressRejected + guardRejected },
+    budget: { declaredConcurrentCalls: manifest.budget?.maxConcurrentCalls ?? null, callsAtStop: halted.calls ?? meterStats.calls },
     writes: await fixedInputWrites(), failures: [...new Set(failures)], live });
 }

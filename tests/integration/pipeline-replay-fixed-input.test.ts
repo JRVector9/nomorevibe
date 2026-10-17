@@ -1,7 +1,14 @@
+import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, jobs } from "@/lib/db/schema";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
@@ -32,6 +39,25 @@ function reply(model: string, content: Record<string, unknown>, index: number) {
     choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(content) }, finish_reason: "stop" }],
     usage: { prompt_tokens: 1_200, completion_tokens: 40, total_tokens: 1_240 }, usage_provenance: "upstream_reported" });
 }
+// PR01b-9: replay가 격리 DB에 0097 기록 시작 marker(지울 수 없다)를 남긴다. 공유 test DB에 남으면 다른 파일의 전체 DB 비교·기록이 바뀌므로
+// 이 파일은 자기 DB에서 돈다. 격리 관문은 그대로 TEST_DATABASE_URL(loopback·nomorevibe_test)을 검사하고, 전역 클라이언트만 이 DB를 가리킨다.
+const own = { name: `nomorevibe_test_pr01b9_replay_${randomBytes(6).toString("hex")}`, client: undefined as postgres.Sql | undefined, created: false };
+beforeAll(async () => {
+  const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+  try { await admin.unsafe(`CREATE DATABASE ${own.name}`); own.created = true; } finally { await admin.end({ timeout: 5 }); }
+  const url = new URL(TEST_DATABASE_URL); url.pathname = `/${own.name}`;
+  own.client = postgres(url.toString(), { max: 8, onnotice: () => {} });
+  await own.client.unsafe("set statement_timeout = 0");
+  await migrate(drizzle(own.client), { migrationsFolder: path.join(fileURLToPath(new URL("../..", import.meta.url)), "drizzle") });
+  const g = globalThis as { db?: unknown; pgClient?: unknown }; g.pgClient = own.client; g.db = drizzle(own.client, { schema });
+}, 600_000);
+afterAll(async () => {
+  const g = globalThis as { db?: unknown; pgClient?: unknown }; delete g.db; delete g.pgClient;
+  await own.client?.end({ timeout: 5 });
+  if (!own.created) return;
+  const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+  try { await admin.unsafe(`DROP DATABASE IF EXISTS ${own.name} WITH (FORCE)`); } finally { await admin.end({ timeout: 5 }); }
+}, 120_000);
 beforeAll(async () => {
   ensureSchema();
   server = createServer((req, res) => {
@@ -129,6 +155,33 @@ const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.orig
 const run = (artifact: Awaited<ReturnType<typeof exported>>, value: Record<string, unknown>) => modules.runner.runFixedInputReplay({
   manifest: value, artifact: artifact.artifact, artifactSha256: artifact.sha, manifestSha256: modules.fixed.sha256(JSON.stringify(value)),
   revision: "abcdef1", env: env(), timing: TIMING });
+
+it("records the 0097 marker before the window and proves the legacy budget from the meter; items stay unverified (PR01b-9)", async () => {
+  const source = await exported();
+  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events`)).toEqual([{ count: 0 }]);
+  const legacy = await run(source, manifest(source.sha, "legacy", { budget: { maxConcurrentCalls: 8 } }));
+  const [marker] = await db.execute<{ at: string; revision: string; operator: string }>(sql`select revision, operator,
+    to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at from pipeline_evidence_events where kind = 'recorder_started'`);
+  // 적재(anchor) 뒤·구간 시작 전에 이 실행이 남겼다. 30분 실행에서는 수집 시작 = 구간 시작이라 장부가 구간을 덮는다.
+  expect(marker).toMatchObject({ revision: "abcdef1", operator: "pipeline-replay" });
+  expect([Date.parse(marker.at) >= Date.parse(legacy.window.anchorAt), Date.parse(marker.at) < Date.parse(legacy.window.startedAt)]).toEqual([true, true]);
+  // 구간 안 AI2 호출 4건이 격리 DB의 0097 장부에 쌓였다(전에는 replay에서 아무것도 기록하지 않았다).
+  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events
+    where kind = 'ai2_attempt' and created_at > ${legacy.window.startedAt}::timestamptz`)).toEqual([{ count: 4 }]);
+  expect(legacy.budget).toEqual({ declaredConcurrentCalls: 8, callsAtStop: 10 });
+  expect(legacy.meter).toMatchObject({ calls: 10, upstreamReportedCalls: 10, upstreamReportedTokens: 12_400 });
+  expect(modules.fixed.reportFixedInputRun(legacy).budget).toEqual({ status: "verified", source: "replay_meter", calls: 10, chargedTokens: 12_400,
+    reportedCalls: 10, boundCalls: 0, concurrency: { limit: 8, peak: legacy.meter.maxInFlight } });
+  // 이 시험 구간은 30분보다 짧아 수집이 marker보다 앞에서 시작한다 — 장부 미적용으로 남는다.
+  expect(legacy.live.ledger).toBeNull();
+
+  // items: 적재가 슬롯 모드를 열고 grant마다 control 갱신 시각이 바뀌어, 장부 budget은 '시작 뒤 바뀜'으로 미검증이다.
+  await wipe(); fake.requests.length = 0; fake.contracts = true;
+  const items = await run(source, manifest(source.sha, "items", { budget: { maxConcurrentCalls: 8 } }));
+  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events where kind = 'recorder_started'`)).toEqual([{ count: 1 }]);
+  expect(modules.fixed.reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
+    issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified"] });
+}, 300_000);
 
 it("exports only reproducible model-reviewed inputs and replays legacy then item consumers to one judgment", async () => {
   const source = await exported();

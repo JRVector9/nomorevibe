@@ -148,7 +148,8 @@ async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
         eq(modelCapacityRequests.state, "waiting"), sql`${modelCapacityRequests.queueUntil} > clock_timestamp()`)).returning();
     if (!changed) continue;
     await event(tx, changed, "reserved", "waiting", "reserved");
-    await tx.update(modelCapacityControl).set({ cursor: (position + 1) % cycle.length, updatedAt: sql`clock_timestamp()` })
+    // updated_at은 모드·정책이 바뀐 시각이다(판정 수집기가 구간 중 변경으로 읽는다). cursor 진행은 그 시각을 바꾸지 않는다.
+    await tx.update(modelCapacityControl).set({ cursor: (position + 1) % cycle.length })
       .where(eq(modelCapacityControl.id, 1));
     return;
   }

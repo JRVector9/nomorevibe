@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
+import { budgetEvidenceConsistent, budgetEvidenceSchema, judgeBudget } from "./pipeline-capacity-budget";
 
 /** PR17 고정 기준: 30분 이상 구간, 최종 고유 완료 2.0배, p95 악화 없음, 기술 실패 +1%p 이하. */
 export const LIVE_MIN_WINDOW_MS = 1_800_000;
@@ -56,7 +57,8 @@ export const liveCapacityArtifactSchema = z.object({
   ledger: ledger.nullable().optional(),
   // 증명할 수 없는 항목은 JSON에서 검증됨으로 올릴 수 없다. 사람 판단 덮음·lease 위반은 ledger가 구간을 덮을 때만 수치다.
   safety: z.object({ duplicatePublications: integer, humanDecisionOverrides: ledgerCount, leaseViolations: ledgerCount }).strict(),
-  budget: z.object({ status: z.literal("unverified") }).strict(),
+  // PR01b-9: 모델 슬롯 장부가 세 조건을 모두 증명할 때만 verified다(pipeline-capacity-budget). 이전 artifact의 {status:"unverified"}도 받는다.
+  budget: budgetEvidenceSchema,
   quality: z.object({ datasetHash: hash, labels: liveCapacityLabelsSchema }).strict().nullable(),
 }).strict();
 export type LiveCapacityArtifact = z.infer<typeof liveCapacityArtifactSchema>;
@@ -110,6 +112,10 @@ export function parseLiveCapacityArtifact(value: unknown): LiveCapacityArtifact 
     && covered === (typeof artifact.safety.leaseViolations === "number")
     && (!artifact.ledger || Date.parse(artifact.ledger.startedAt) <= Date.parse(window.startedAt)
       && artifact.ai2Calls.unattributedChains === 0), "live_artifact_mismatch");
+  // 장부 budget은 열린 모드가 구간 내내 그대로이고 0097 장부가 구간을 덮을 때만 수집기가 verified로 낸다. 계량기 증거는 replay 보고에만 있다.
+  const { budget } = artifact;
+  ensure(budgetEvidenceConsistent(budget) && (budget.status === "unverified" || budget.source === "model_capacity_ledger"
+    && artifact.modelCapacity?.mode === "open" && !artifact.modelCapacity.changedSinceStart && covered), "live_artifact_mismatch");
   if (artifact.quality) ensure(unique(artifact.quality.labels, labelKey)
     && liveLabelDatasetHash(artifact.quality.labels) === artifact.quality.datasetHash, "live_quality_mismatch");
   return artifact;
@@ -240,7 +246,7 @@ export function reportLiveCapacityWindow(value: unknown) {
     safety: { duplicatePublications: { status: "verified", count: artifact.safety.duplicatePublications } as SafetyEvidence,
       humanDecisionOverrides: evidence(artifact.safety.humanDecisionOverrides), leaseViolations: evidence(artifact.safety.leaseViolations) },
     ledger: artifact.ledger ?? null,
-    budgetEvidence: artifact.budget.status as "unverified" | "verified", clockAnomalies, evidenceIssues };
+    budgetEvidence: artifact.budget.status, budget: artifact.budget, clockAnomalies, evidenceIssues };
 }
 export type LiveCapacityReport = ReturnType<typeof reportLiveCapacityWindow>;
 type Check = "passed" | "failed" | "incomplete";
@@ -282,13 +288,16 @@ export function judgeLiveCapacity(baseline: LiveCapacityReport, candidate: LiveC
     if (evidence.status === "unverified") { reasons.add(`${name}_unverified`); if (safety === "passed") safety = "incomplete"; }
     else if (evidence.count) { reasons.add(`${name}_detected`); safety = "failed"; }
   }
-  const budgetVerified = baseline.budgetEvidence === "verified" && candidate.budgetEvidence === "verified";
-  if (!budgetVerified) reasons.add("budget_evidence_unverified");
-  const status: Check = quality === "failed" || safety === "failed" || performance === "failed" ? "failed"
-    : performance === "passed" && quality === "passed" && safety === "passed" && budgetVerified ? "passed" : "incomplete";
+  // 보고서의 두 칸이 모두 verified여야 한다. 고유 최종당 호출·과금 토큰과 선언 한도를 기준선과 비교한다(허용 오차 0).
+  const verified = (report: LiveCapacityReport) => report.budgetEvidence === "verified" ? report.budget : { status: "unverified" as const };
+  const budget = judgeBudget({ budget: verified(baseline), finals: before }, { budget: verified(candidate), finals: after }, comparable);
+  for (const reason of budget.reasons) reasons.add(reason);
+  const budgetVerified = budget.baseline !== null && budget.candidate !== null;
+  const status: Check = quality === "failed" || safety === "failed" || performance === "failed" || budget.status === "failed" ? "failed"
+    : performance === "passed" && quality === "passed" && safety === "passed" && budget.status === "passed" ? "passed" : "incomplete";
   return { status, reasons: [...reasons], ratio: before ? after * baseline.durationMs / (before * candidate.durationMs) : null,
     numericThresholds: { doubled, latencyNotWorse, technicalFailureWithinOnePoint }, performance, quality, safety,
-    budgetEvidence: budgetVerified ? "verified" as const : "unverified" as const,
+    budgetEvidence: budgetVerified ? "verified" as const : "unverified" as const, budget,
     concurrency: { baseline: baseline.concurrency, candidate: candidate.concurrency } };
 }
 

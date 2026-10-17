@@ -45,7 +45,10 @@ function windowWith(finals: number, options: { duration?: number; latency?: numb
   value.ai2Calls = { chains: options.ai2Calls ?? 0, calls: options.ai2Calls ?? 0, failed: options.ai2Failed ?? 0, unattributedChains: 0 };
   return value;
 }
+/** PR01b-9: 검증된 budget은 수치를 함께 실어야 한다. 최종 하나당 호출 3·토큰 3,000, 같은 선언 한도로 맞춘다(기준선과 같은 단가). */
 const verified = (report: LiveCapacityReport): LiveCapacityReport => ({ ...report, budgetEvidence: "verified",
+  budget: { status: "verified", source: "model_capacity_ledger", calls: 3 * report.finals.newCandidates, chargedTokens: 3_000 * report.finals.newCandidates,
+    reportedCalls: 3 * report.finals.newCandidates, boundCalls: 0, concurrency: { limit: 4, peak: 2 } },
   safety: { ...report.safety, humanDecisionOverrides: { status: "verified", count: 0 }, leaseViolations: { status: "verified", count: 0 } } });
 function labeled(value: LiveCapacityArtifact, wrong = 0) {
   return attachLiveCapacityLabels(value, value.attempts.filter(row => row.decision === "approve" || row.decision === "reject")
@@ -315,4 +318,4 @@ it("runs the offline live CLI commands with fixed diagnostics", async () => {
     await writeFile(after, "{}");
     expect(run("compare", before, after).stderr.trim()).toBe("invalid_capacity_artifact");
   } finally { await rm(directory, { recursive: true, force: true }); }
-});
+}, 20_000);

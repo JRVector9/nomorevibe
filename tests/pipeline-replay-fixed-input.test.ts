@@ -53,22 +53,23 @@ describe("model meter and egress guard", () => {
     while (releases.length) await releases.pop()!();
     while (servers.length) await new Promise<void>(resolve => servers.pop()!.close(() => resolve()));
   });
-  async function upstream(usage: (index: number) => unknown) {
+  async function upstream(usage: (index: number) => unknown, extra: (index: number) => Record<string, unknown> = () => ({})) {
     const seen: string[] = [];
     const server = createServer((req, res) => {
       let body = ""; req.on("data", chunk => { body += chunk; });
       req.on("end", () => {
         seen.push(`${req.method} ${req.url} ${req.headers.authorization ?? ""} ${body}`);
         res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ object: "chat.completion", usage: usage(seen.length) }));
+        res.end(JSON.stringify({ object: "chat.completion", usage: usage(seen.length), ...extra(seen.length) }));
       });
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
     servers.push(server);
     return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
   }
-  async function meter(limits: { maxCalls: number; maxTokens: number; perCallTokenUpperBound: number }, usage: (index: number) => unknown) {
-    const target = await upstream(usage), stops: string[] = [];
+  async function meter(limits: { maxCalls: number; maxTokens: number; perCallTokenUpperBound: number }, usage: (index: number) => unknown,
+    extra?: (index: number) => Record<string, unknown>) {
+    const target = await upstream(usage, extra), stops: string[] = [];
     const started = await startReplayModelMeter({ upstream: target.origin, limits, onStop: reason => stops.push(reason) });
     let rejected = 0;
     const release = installReplayEgressGuard(target.origin, started, () => { rejected++; });
@@ -102,6 +103,16 @@ describe("model meter and egress guard", () => {
     expect((await call()).status).toBe(200);
     expect(stops).toEqual(["per_call_bound_exceeded"]);
     expect(started.stats().chargedTokens).toBe(110);
+  });
+  it("counts upstream-reported usage only with the native provenance and consistent totals (PR01b-9)", async () => {
+    const usage = [{ prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 }, { prompt_tokens: 30, completion_tokens: 10, total_tokens: 41 },
+      { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 }, { prompt_tokens: 30, completion_tokens: 10 }];
+    const provenance = ["upstream_reported", "upstream_reported", "gateway_estimated", "upstream_reported"];
+    const { started, call } = await meter({ maxCalls: 10, maxTokens: 1_000, perCallTokenUpperBound: 100 }, index => usage[index - 1],
+      index => ({ usage_provenance: provenance[index - 1] }));
+    for (let index = 0; index < 4; index++) expect((await call()).status).toBe(200);
+    expect(started.stats()).toMatchObject({ calls: 4, usageKnownCalls: 4, chargedTokens: 160, upstreamReportedCalls: 1, upstreamReportedTokens: 40,
+      usageProvenance: "reported_unverified" });
   });
   it("rejects every other origin, method and path in-process before any connection", async () => {
     const { target, call, rejected } = await meter({ maxCalls: 10, maxTokens: 1_000, perCallTokenUpperBound: 100 }, () => undefined);
@@ -222,5 +233,52 @@ describe("fixed-input artifact and CLI boundary", () => {
     const child = cli(directory => ["export", "2026-10-13T00:00:00.000Z", "2026-10-14T00:00:00.000Z", "s", "10", join(directory, "out.json")], {});
     expect(child.status).toBe(1);
     expect(child.stderr.trim()).toBe("explicit_FIXED_INPUT_SOURCE_DATABASE_URL_required");
+  });
+});
+
+/** PR01b-9: 0097 장부가 구간을 덮고 안전 지표가 0이며, legacy는 계량기·items는 장부로 budget을 증명한 결과. */
+function proven(options: { runId: string; mode: "legacy" | "items"; finals: number }): FixedInputRunResult {
+  const value = result(options), { finals } = options;
+  value.meter = { ...value.meter, upstreamReportedCalls: finals, upstreamReportedTokens: 18_080 * finals };
+  value.budget = { declaredConcurrentCalls: options.mode === "legacy" ? 4 : null, callsAtStop: finals };
+  value.live = { ...value.live, ledger: { startedAt: "2026-10-19T23:00:00.000Z", humanDecisionRefusals: 0, lateWritesRefused: 0 },
+    safety: { duplicatePublications: 0, humanDecisionOverrides: 0, leaseViolations: 0 },
+    budget: options.mode === "items" ? { status: "verified", source: "model_capacity_ledger", calls: finals, chargedTokens: 18_080 * finals,
+      reportedCalls: finals, boundCalls: 0, concurrency: { limit: 4, peak: 2 } } : value.live.budget };
+  return value;
+}
+function labeledPair(baseline: FixedInputRunResult, candidate: FixedInputRunResult) {
+  const labels = compareFixedInputRuns(baseline, candidate).labelTemplate.map(row => ({ ...row, expected: "reject" as const }));
+  return [attachFixedInputLabels(baseline, labels), attachFixedInputLabels(candidate, labels)] as const;
+}
+describe("fixed-input budget evidence (PR01b-9)", () => {
+  it("proves a legacy baseline from the meter and an item candidate from the ledger, and can pass end to end", () => {
+    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-a", mode: "legacy", finals: 10 }), proven({ runId: "items-a", mode: "items", finals: 25 }));
+    expect(reportFixedInputRun(baseline).budget).toEqual({ status: "verified", source: "replay_meter", calls: 10, chargedTokens: 180_800,
+      reportedCalls: 10, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
+    expect(reportFixedInputRun(candidate).budget).toMatchObject({ status: "verified", source: "model_capacity_ledger", calls: 25 });
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "passed", performance: "passed", quality: "passed", safety: "passed",
+      budgetEvidence: "verified", budget: { status: "passed", ratios: { callsPerFinal: 1, tokensPerFinal: 1 } }, reasons: [] });
+  });
+  it.each([
+    ["the declared common budget", (base: FixedInputRunResult) => { base.budget = { declaredConcurrentCalls: null, callsAtStop: 10 }; }, ["concurrency_limit_undeclared"]],
+    ["upstream usage on one baseline call", (base: FixedInputRunResult) => { base.meter.upstreamReportedCalls = 9; }, ["usage_unreported_without_bound"]],
+    // 이전 결과에는 정지 순간 호출 수도 선언 한도도 없다.
+    ["the budget record of an old result", (base: FixedInputRunResult) => { delete base.budget; }, ["concurrency_limit_undeclared", "replay_budget_unrecorded"]],
+  ] as const)("is incomplete when only %s is missing", (_name, mutate, issues) => {
+    const base = proven({ runId: "legacy-a", mode: "legacy", finals: 10 }); mutate(base);
+    expect(reportFixedInputRun(base).budget).toEqual({ status: "unverified", source: "replay_meter", issues });
+    const [baseline, candidate] = labeledPair(base, proven({ runId: "items-a", mode: "items", finals: 25 }));
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", performance: "passed", quality: "passed", safety: "passed",
+      reasons: ["budget_evidence_unverified"] });
+  });
+  it("cross-checks item ledger evidence against the meter and refuses inconsistent budget records", () => {
+    const items = proven({ runId: "items-a", mode: "items", finals: 25 });
+    items.meter = { ...items.meter, calls: 26 }; items.budget = { declaredConcurrentCalls: null, callsAtStop: 26 };
+    expect(reportFixedInputRun(items).budget).toMatchObject({ status: "unverified", issues: ["meter_calls_outside_ledger"] });
+    expect(() => reportFixedInputRun({ ...items, budget: { declaredConcurrentCalls: null, callsAtStop: 27 } })).toThrow("fixed_input_result_mismatch");
+    expect(() => reportFixedInputRun({ ...items, meter: { ...items.meter, upstreamReportedCalls: 27 } })).toThrow("fixed_input_result_mismatch");
+    expect(() => parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 0 } }))).toThrow();
+    expect(parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 4 } })).budget).toEqual({ maxConcurrentCalls: 4 });
   });
 });
