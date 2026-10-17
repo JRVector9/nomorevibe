@@ -322,6 +322,26 @@ describe("검색 키워드 잡", () => {
     expect((await pendingProfiles(10)).map((task) => task.product.id)).toEqual([thin, rich, waited, recent]);
   });
 
+  it("감사가 공개분을 다시 돌아도 방금 바뀐 메모가 먼저 기다린 갱신을 앞지르지 않는다", async () => {
+    const waiting = await seed("waiting");
+    const edited = await seed("edited");
+    const swept = await seed("swept");
+    gateway.mockResolvedValue(answer(["grocery list"], ["장보기"]));
+    await tick();
+    const [campaign] = await db.insert(productAuditCampaigns).values({ startedBy: "test", reason: "test", promptVersion: "v1", rulesVersion: "v1", provider: "test", model: "test" }).returning();
+    // 이틀 전에 지었고 20시간 전 감사로 메모가 바뀌어 기다리는 중
+    await db.insert(productAuditItems).values({ campaignId: campaign.id, productId: waiting, slug: "waiting", aiReason: "Older note", reviewedAt: sql`now() - interval '20 hours'` });
+    // 한 시간 전에 지었고 그 뒤 글이 바뀜(바뀐 때는 모른다)
+    await db.update(products).set({ tagline: "changed" }).where(eq(products.id, edited));
+    // 20일 전에 지었고 방금 감사로 메모가 바뀜
+    await db.insert(productAuditItems).values({ campaignId: campaign.id, productId: swept, slug: "swept", aiReason: "Sweep note", reviewedAt: sql`now()` });
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '2 days'` }).where(eq(productSearchProfiles.productId, waiting));
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '1 hour'` }).where(eq(productSearchProfiles.productId, edited));
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now() - interval '20 days'` }).where(eq(productSearchProfiles.productId, swept));
+
+    expect((await pendingProfiles(10)).map((task) => task.product.id)).toEqual([waiting, edited, swept]);
+  });
+
   it("공개되지 않은 제품은 짓지 않는다", async () => {
     await seed("hidden", { status: "banned" });
     await tick();
