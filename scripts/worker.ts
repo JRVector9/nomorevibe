@@ -3,6 +3,7 @@ import { assertHostDbEntry } from '@/lib/db/host-budget';
 import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
+import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
@@ -269,6 +270,8 @@ export async function withRuntimeProcess<T>(
   timer.unref();
   heartbeat();
   try {
+    // CLI 계약은 이 probe 를 마친 프로세스에서만 열린다(D7) — reviewer 만 CLI 모델을 부른다
+    if (role === 'reviewer') for (const status of await probeCliServingContracts()) runtimeLog('cli_contract.probe', status);
     return await execute(controller.signal, report);
   } finally {
     // Keep heartbeat reporting while the pool drains; stop accepting another tick immediately.
