@@ -53,8 +53,11 @@ export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
       uptime_observations: read, model_capacity_control: { select: true, update: ['cursor', 'updated_at'] },
       model_capacity_requests: write, model_capacity_events: { insert: true } } },
   // requestDueJobs의 첫 lock(DR writer fence SHARE). fenced DB의 scheduler는 정기 요청을 만들지 않는다.
+  // PR11g: 후보 행은 다른 worker 와 같은 권한(boot 기록·preflight 읽기, 증거 열 쓰기 없음). http_origin_control 은
+  // HOST_BUDGET_ENFORCEMENT 장부 갱신이 읽기만 한다(scheduler 는 HTTP 를 보내지 않는다).
   scheduler: { statementTimeout: '10s', sequences: [],
-    tables: { dr_writer_fence: lock('id'), job_batch_control: lock('id'), jobs: write, operations_observations: write } },
+    tables: { dr_writer_fence: lock('id'), job_batch_control: lock('id'), jobs: write, operations_observations: write,
+      job_batch_candidates: RUNTIME.job_batch_candidates, http_origin_control: read } },
   // Operator evidence writer: never used by a worker process or heartbeat.
   attest: { statementTimeout: '60s', sequences: [],
     tables: { job_batch_control: lock('id'), jobs: read, operations_observations: { select: true, delete: true },

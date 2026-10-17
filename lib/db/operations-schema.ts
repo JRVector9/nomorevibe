@@ -263,7 +263,7 @@ export const jobBatchCandidates = pgTable('job_batch_candidates', {
   capability: jsonb('capability'), resultEvidence: jsonb('result_evidence'),
   observedAt: timestamp('observed_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
 }, table => [primaryKey({columns:[table.role,table.instanceId]}),
-  check('job_batch_candidates_role_check',sql`${table.role} IN ('crawler','reviewer','publisher','text','maintenance','translation','product-health','site-evidence','official-news')`),
+  check('job_batch_candidates_role_check',sql`(${table.role} IN ('crawler','reviewer','publisher','text','maintenance','translation','product-health','site-evidence','official-news')) OR ${table.role} = 'scheduler'`),
   check('job_batch_candidates_host_check',sql`${table.host} IN ('m3','mini','oracle-osaka-smoke')`),
   check('job_batch_candidates_policy_hash_check',sql`${table.policyHash} ~ '^[0-9a-f]{64}$'`),
 ]);

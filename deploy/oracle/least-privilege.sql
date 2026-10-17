@@ -144,6 +144,9 @@ ALTER ROLE nomorevibe_oracle_scheduler SET idle_in_transaction_session_timeout =
 GRANT USAGE ON SCHEMA public TO nomorevibe_oracle_scheduler;
 GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_scheduler;
 GRANT UPDATE (id) ON TABLE public.dr_writer_fence TO nomorevibe_oracle_scheduler;
+GRANT SELECT ON TABLE public.http_origin_control TO nomorevibe_oracle_scheduler;
+GRANT SELECT, INSERT ON TABLE public.job_batch_candidates TO nomorevibe_oracle_scheduler;
+GRANT UPDATE (host, boot_id, release, policy_hash, observed_at) ON TABLE public.job_batch_candidates TO nomorevibe_oracle_scheduler;
 GRANT SELECT ON TABLE public.job_batch_control TO nomorevibe_oracle_scheduler;
 GRANT UPDATE (id) ON TABLE public.job_batch_control TO nomorevibe_oracle_scheduler;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.jobs TO nomorevibe_oracle_scheduler;
