@@ -1,5 +1,4 @@
 import { assertHostDbEntry, hostDbChildEnvironment } from '@/lib/db/host-budget';
-import { assertHostBudgetEntrySupported } from '@/lib/operations/host-budget';
 import { currentHostBudget, startHostBudget, waitForHostBudget } from '@/lib/operations/host-budget-runtime';
 /** Container PID 1's child supervisor: a healthy event loop is not proof of job progress. */
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -141,8 +140,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
   const consumerPath = options.consumer !== undefined ? consumerHealthPath() : null;
   if (consumerPath && resolve(healthPath) !== resolve(consumerPath)) throw new Error('invalid_item_consumer_health_path');
   const command = supervisorCommand(role, options);
-  // AI1/AI2 consumer 는 host 장부에 참여하지 않으므로 켜진 설정에서 시작하지 않는다
-  if (options.consumer !== undefined) assertHostBudgetEntrySupported(process.env);
+  // AI1/AI2 consumer 감독도 같은 장부 자리(role-parent:reviewer:<consumer>)를 얻는다 — 자식 consumer 는 자기 worker 자리로 item 마다 admit 한다(PR06e)
   const sharedHost = currentHostBudget(), host = sharedHost ?? startHostBudget(process.env);
   // host 장부 자리를 얻기 전에는 자식(DB pool·일감)을 띄우지 않는다. 비활성은 기다림 없이 기존 순서 그대로다
   if (host.enabled && !host.ready()) {

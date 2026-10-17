@@ -4,6 +4,9 @@ import { currentReplayDb } from '@/lib/db/replay-scope';
 import { crawlCandidates, crawlReviewAttempts } from '@/lib/db/schema';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
+import { logger } from '@/lib/observability/logger';
+import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { getSettings } from '../settings';
 import { reviewCandidatePredicate } from '../agent-review-repository';
@@ -29,6 +32,10 @@ async function hints(cursor: Cursor | null) {
 }
 export async function runFirstReviewConsumer(input: {
   owner: ItemOwner; signal?: AbortSignal; once?: boolean; report?: RuntimeReport;
+  /** host 합계 장부(PR10e). 없으면 기존처럼 바로 claim 한다 */
+  admit?: (job: string) => Promise<HostAdmission>;
+  /** provider 회로(PR06e). AI1 은 1차 심사자가 하나라 줄 하나(ai1)로 센다 */
+  circuits?: ProviderCircuits;
 }): Promise<{ attempted: number; recorded: number; skipped: number; deferred: number }> {
   const owner = itemOwnerSchema.parse(input.owner), { signal, once, report } = input;
   if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
@@ -40,16 +47,30 @@ export async function runFirstReviewConsumer(input: {
     let deferred = false, completed = false;
     for (const hint of queue) {
       if (signal?.aborted) break;
+      // claim 전 관문: 회로가 열렸거나 host 예산이 모자라면 claim·실패 기록 없이 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
+      const circuit = input.circuits?.admit('ai1');
+      const host = circuit?.admitted === false || !input.admit ? null
+        : await input.admit('crawl-agent-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const }));
+      if (circuit?.admitted === false || host?.admitted === false) {
+        if (circuit?.admitted) circuit.done();
+        if (host?.admitted === false) logger.info('pipeline_consumer.deferred', { stage: 'ai1', reason: host.reason });
+        result.deferred++; deferred = true; break;
+      }
       cursor = hint;
       result.attempted++; report?.('running', 'crawl-agent-review', Date.now());
       try {
-        const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal });
+        const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal,
+          ...(circuit?.admitted ? { onProviderResult: circuit.record } : {}) });
         if (written.state === 'succeeded') { result.recorded++; completed = true; }
         else result.skipped++;
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
         result.deferred++; deferred = true; break;
-      } finally { report?.('idle'); }
+      } finally {
+        if (circuit?.admitted) circuit.done();
+        if (host?.admitted) await host.release().catch(() => {});
+        report?.('idle');
+      }
     }
     pages++;
     const end = queue.length < PAGE_SIZE;

@@ -19,6 +19,8 @@ export type SecondReviewItemOutcome =
 
 export async function executeSecondReviewConsumerItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+  /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목은 부르지 않는다 */
+  onProviderResult?: (result: AgentReviewResult) => void;
 }): Promise<SecondReviewItemOutcome> {
   return executeItem(input, 'consumer');
 }
@@ -31,7 +33,7 @@ export async function executeSecondReviewItem(input: {
 }
 
 async function executeItem(input: {
-  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+  secondReviewId: number; owner: ItemOwner; signal?: AbortSignal; onProviderResult?: (result: AgentReviewResult) => void;
 }, purpose: 'consumer' | 'compatibility'): Promise<SecondReviewItemOutcome> {
   const { secondReviewId, owner: ownerValue, signal: callerSignal } = input;
   const id = z.number().int().positive().safe().parse(secondReviewId), owner = itemOwnerSchema.parse(ownerValue);
@@ -117,6 +119,7 @@ async function executeItem(input: {
     cancelDelay?.();
     await heartbeat;
   }
+  if (result) input.onProviderResult?.(result);
   if (renewalFailure) throw renewalFailure.error;
   if (!result || signal.aborted || !result.ok && result.error === "cancelled") return cancelled();
   return recordSecondReview({ receipt, result: result.ok
