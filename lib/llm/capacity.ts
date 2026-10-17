@@ -349,3 +349,68 @@ export const reasonTranslationGatewayTerminalEvidenceSchema = z.object({ version
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_reason_translation_terminal_usage");
 export type ReasonTranslationGatewayTerminalEvidence = Readonly<z.infer<typeof reasonTranslationGatewayTerminalEvidenceSchema>>;
+
+/** Fixed demanded targets. Shape/hash helpers never authenticate a product or demand row. */
+export const productTranslationMemberSchema = z.object({ productId: positive, slug: identity(80),
+  locale: z.enum(["en", "zh-Hans", "zh-Hant"]), field: z.enum(["tagline", "description"]), sourceHash: sha64,
+  demand: z.object({ rowIdentityHash: sha64, attempts: z.number().int().nonnegative().max(3).safe() }).strict(),
+}).strict();
+type ParsedProductTranslationMember = z.infer<typeof productTranslationMemberSchema>;
+export type ProductTranslationMember = Readonly<Omit<ParsedProductTranslationMember, "demand"> & {
+  demand: Readonly<ParsedProductTranslationMember["demand"]> }>;
+const productTranslationTargetKey = (member: ProductTranslationMember) =>
+  `product-translate:${member.productId}:${member.locale}:${member.field}`;
+export const productTranslationInputSchema = z.object({ members: z.array(productTranslationMemberSchema).min(1).max(4)
+  .refine(members => new Set(members.map(productTranslationTargetKey)).size === members.length, "duplicate_product_translation_member"),
+  model: identity(200) }).strict();
+export type ProductTranslationInput = Readonly<{ members: readonly ProductTranslationMember[]; model: string }>;
+export function productTranslationMemberKeys(members: readonly ProductTranslationMember[]): string[] {
+  return productTranslationInputSchema.shape.members.parse(members)
+    .map(productTranslationTargetKey).sort();
+}
+export function productTranslationLogicalWorkKey(members: readonly ProductTranslationMember[]): string {
+  return `text:product-translate:${createHash("sha256").update(JSON.stringify(productTranslationMemberKeys(members))).digest("hex")}`;
+}
+export function productTranslationInputHash(value: ProductTranslationInput): string {
+  const checked = productTranslationInputSchema.parse(value);
+  return createHash("sha256").update(JSON.stringify(canonical({ ...checked, members: [...checked.members].sort((a, b) => {
+    const left = productTranslationTargetKey(a), right = productTranslationTargetKey(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  }) }))).digest("hex");
+}
+export const productTranslationDispatchBindingSchema = productTranslationInputSchema.extend({
+  kind: z.literal("product_translation_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("abcllm"), routeId: z.literal("product-translate"), wireHash: sha64, servingContractHash: sha64,
+  totalTokenBound: positive, chargedTokens: positive,
+  job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-translate") }).strict(),
+  role: reasonTranslationDispatchBindingSchema.shape.role,
+}).strict().refine(value => {
+  const checked = productTranslationInputSchema.safeParse({ members: value.members, model: value.model });
+  return checked.success && value.logicalWorkKey === productTranslationLogicalWorkKey(checked.data.members)
+    && value.inputHash === productTranslationInputHash(checked.data) && value.chargedTokens === value.totalTokenBound;
+}, "invalid_product_translation_binding");
+export type ProductTranslationDispatchBinding = Readonly<Omit<z.infer<typeof productTranslationDispatchBindingSchema>, "members"> & {
+  members: readonly ProductTranslationMember[] }>;
+export function productTranslationDispatchBindingHash(value: ProductTranslationDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(productTranslationDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type ProductTranslationModelDispatch = ModelCapacityDispatch & Readonly<{ binding: ProductTranslationDispatchBinding; bindingHash: string }>;
+export const productTranslationModelDispatchSchema = handleSchema.extend({ binding: productTranslationDispatchBindingSchema,
+  bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_product_translation_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId && value.owner.bootId === value.binding.role.bootId,
+    "invalid_product_translation_dispatch_owner")
+  .transform(value => value as unknown as ProductTranslationModelDispatch);
+export const productTranslationGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1),
+  kind: z.literal("product_translation_gateway_terminal"), dispatch: productTranslationModelDispatchSchema,
+  finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]), responseHash: sha64,
+  actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(),
+  provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported"
+    && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_product_translation_terminal_usage");
+export type ProductTranslationGatewayTerminalEvidence = Readonly<z.infer<typeof productTranslationGatewayTerminalEvidenceSchema>>;

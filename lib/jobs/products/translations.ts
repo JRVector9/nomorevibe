@@ -1,4 +1,5 @@
-import { TRANSLATE_MODEL, translateProductFields } from "@/lib/crawl/translate";
+import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
 import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
@@ -31,8 +32,9 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       chars += text.length;
     }
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    const response = await translateProductFields(batch.map((task) => ({ name: task.source.name, locale: task.locale,
-      field: task.field, text: translationSourceText(task.source, task.field) })), 20_000, fetch, signal);
+    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: 20_000, signal });
+    if (outcome.kind === "skipped") return { done: true };
+    const response = outcome.result;
     if (ctx.signal?.aborted) return { done: false };
     // Account for calls aborted by the tick budget. The final lease check in
     // recordProductTranslations rolls back writes if ownership was actually lost.
@@ -42,7 +44,8 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       return { task, result: checked.ok ? { ok: true, text: checked.text, model: TRANSLATE_MODEL }
         : { ok: false, error: `rejected:${checked.reason}`, model: TRANSLATE_MODEL } };
     });
-    const stored = await recordProductTranslations(entries, ctx.lease);
+    const stored = await (outcome.expectation ? recordProductTranslations(entries, ctx.lease, outcome.expectation)
+      : recordProductTranslations(entries, ctx.lease));
     ctx.log("product_translation.tick", { demanded: batch.length, stored,
       accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error });
     return { done: true };

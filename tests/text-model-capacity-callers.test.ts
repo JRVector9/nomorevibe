@@ -34,6 +34,13 @@ vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: mocks
 vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async () => [], pendingKoreanTaglines: mocks.koreanTasks,
   recordKoreanTaglines: mocks.koreanWrite }));
 vi.mock("@/lib/domain/products/translations", () => ({ pendingProductTranslations: mocks.productTasks, recordProductTranslations: mocks.productWrite }));
+vi.mock("@/lib/domain/products/product-translation-model-capacity", () => ({
+  translateProductFieldsWithModelCapacity: async (tasks: readonly import("@/lib/domain/products/translations").ProductTranslationTask[],
+    _lease: unknown, options: { timeoutMs: number; signal?: AbortSignal }) => ({ kind: "result",
+    result: await mocks.product(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
+      text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })), options.timeoutMs, undefined, options.signal),
+  }),
+}));
 vi.mock("@/lib/crawl/translations", () => ({ recordTranslations: mocks.cacheWrite }));
 vi.mock("@/lib/db", () => ({ db: {
   select: () => ({ from: () => ({ where: mocks.cache }) }), execute: async () => [{ lexeme: "document" }],
