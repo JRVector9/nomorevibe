@@ -457,3 +457,16 @@ it('keeps the disabled real worker entry and its original IPC lifecycle reachabl
   expect(result.code).toBe(1);
   expect(result.heartbeats).toBeGreaterThan(0);
 });
+
+it('re-ticks the reviewer lane after 1s only when second-review is stage-blocked by AI2 item mode', async () => {
+  const sleeps: number[] = [];
+  for (const result of [{ status: 'deferred', reason: 'stage_blocked' }, { status: 'deferred', reason: 'model_capacity' }, { status: 'completed' }]) {
+    const controller = new AbortController();
+    await runWorker({ role: 'reviewer', signal: controller.signal }, {
+      names: ['crawl-agent-review', 'second-review'], seen: async () => {}, pending: async () => ['crawl-agent-review', 'second-review'],
+      run: async name => name === 'second-review' ? result : { status: 'deferred', reason: 'stage_blocked' },
+      sleep: async ms => { sleeps.push(ms); controller.abort(); },
+    });
+  }
+  expect(sleeps).toEqual([1_000, 5_000, 5_000]);
+});

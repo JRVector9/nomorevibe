@@ -19,19 +19,21 @@ export type FirstReviewConsumerOutcome = { state: 'skipped'; reason: string }
 /** Fixed item lane; model admission rolls back before reserving physical capacity. */
 export async function executeFirstReviewConsumerItem(input: {
   candidateId: number; owner: ItemOwner; signal?: AbortSignal;
+  /** 새 claim·dispatch 만 막는 신호(replay 구간 끝). 이미 보낸 호출은 signal 이 끊기 전까지 끝까지 받는다 */
+  stopClaims?: AbortSignal;
   /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목(규칙·재사용·취소 전)은 부르지 않는다 */
   onProviderResult?: (result: AgentReviewResult) => void;
 }): Promise<FirstReviewConsumerOutcome> {
   const candidateId = z.number().int().positive().safe().parse(input.candidateId);
-  const owner = itemOwnerSchema.parse(input.owner), { signal } = input;
-  if (signal?.aborted) return { state: 'skipped', reason: 'aborted' };
+  const owner = itemOwnerSchema.parse(input.owner), { signal, stopClaims } = input;
+  if (signal?.aborted || stopClaims?.aborted) return { state: 'skipped', reason: 'aborted' };
   const loaded = await loadFirstReviewConsumerContext(candidateId);
   if (loaded.kind === 'skipped') return { state: 'skipped', reason: loaded.reason };
   const context = loaded.context;
   const reviewer = firstReviewer(context.settings);
   if (!reviewer) throw new Error('1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다');
   const prepared = await prepareAgentReview(context, reviewer);
-  if (signal?.aborted) return { state: 'skipped', reason: 'aborted' };
+  if (signal?.aborted || stopClaims?.aborted) return { state: 'skipped', reason: 'aborted' };
   let claim: ItemModelCapacityReviewClaim | CliModelCapacityReviewClaim, capacity: typeof import('./agent-review-model-capacity') | undefined;
   let dispatch: Ai1ItemModelDispatch | undefined, call: PreparedAi1GatewayCall | undefined;
   // CLI 심사자(05c-4): 고정 CLI 의도 class 만 CLI coordinator 로 간다
@@ -80,14 +82,14 @@ export async function executeFirstReviewConsumerItem(input: {
     current = (await observeAgentReviewItemDispatch(context, receipt)).kind === 'current';
     if (dispatch) {
       if (!capacity || !call) throw new Error('ai1_item_model_dispatch_missing');
-      if (current && !transportSignal.aborted && dispatch.binding.attemptId === receipt.attemptId
+      if (current && !transportSignal.aborted && !stopClaims?.aborted && dispatch.binding.attemptId === receipt.attemptId
         && isDeepStrictEqual(dispatch.binding.review, agentReviewBinding(context.candidate.id, context.input,
           { provider: prepared.provider, model: prepared.model })))
         result = await capacity.reviewAgentReviewItemModelCapacity(context.input, dispatch, call, { timeoutMs: 60_000, signal: transportSignal });
       else await capacity.abandonAgentReviewItemModelCapacity(dispatch, call);
     } else if (cli) {
       const binding = cli.dispatch.binding;
-      if (current && !transportSignal.aborted && binding.kind === 'ai1_item_cli' && binding.attemptId === receipt.attemptId
+      if (current && !transportSignal.aborted && !stopClaims?.aborted && binding.kind === 'ai1_item_cli' && binding.attemptId === receipt.attemptId
         && isDeepStrictEqual(binding.review, agentReviewBinding(context.candidate.id, context.input,
           { provider: prepared.provider, model: prepared.model })))
         result = await cli.capacity.reviewCliModelCapacity(context.input, cli.dispatch, cli.call, { signal: transportSignal });
