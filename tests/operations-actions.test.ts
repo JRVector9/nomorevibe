@@ -4,6 +4,7 @@ vi.mock('next/cache',()=>({revalidatePath:vi.fn()}));
 vi.mock('@/lib/auth/admin',()=>({currentAdmin:mocks.admin}));
 vi.mock('@/lib/operations/agent-client',()=>({agentRequest:mocks.agent}));
 vi.mock('@/lib/db',()=>({db:{insert:()=>({values:mocks.audit})}}));
+vi.mock('@/lib/operations/dr/web-gate',async original=>({...await original<typeof import('@/lib/operations/dr/web-gate')>(),assertWebWritable:async()=>{},webWriteAction:<F>(action:F)=>action})); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 lib/db mock 에는 onPrimary 가 없다)
 import { codexOperation } from '@/app/(operator)/admin/status/actions';
 beforeEach(()=>{vi.clearAllMocks();});
 

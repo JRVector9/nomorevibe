@@ -25,6 +25,7 @@ import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operati
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { ATTENTION_HISTORY_KEY, attentionAcks, readAttentionHistory, recordAttentionSample } from "@/lib/operations/attention";
+import { webWritable } from "@/lib/operations/dr/web-gate";
 import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
@@ -390,8 +391,10 @@ export default async function StatusPage() {
   rememberCriticalCount(actions);
   const history = ops.observations.find((row) => row.key === ATTENTION_HISTORY_KEY);
   const split = splitActions(actions, { samples: readAttentionHistory(history?.value), acks, now: new Date(now) });
-  // 24시간 변화를 재려고 한 시간에 한 번 수를 남긴다 — 응답을 보낸 뒤에
-  after(() => recordAttentionSample(actionCounts(actions)).catch(warn("operations.attention_sample_failed")));
+  // 24시간 변화를 재려고 한 시간에 한 번 수를 남긴다 — 응답을 보낸 뒤에. fenced DB 에는 남기지 않는다(캐시 관문만)
+  after(async () => {
+    if (await webWritable()) await recordAttentionSample(actionCounts(actions)).catch(warn("operations.attention_sample_failed"));
+  });
 
   const { agent, web, quota, health, healthObservation } = derived;
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({

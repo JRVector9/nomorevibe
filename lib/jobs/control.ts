@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isJobName, JOB_CATALOG } from "./catalog";
@@ -7,12 +8,14 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
 import { batchPendingNames, lockJobBatch } from "./batch-repository";
 import { batchJobsForRole, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
-import { writerSiteActive } from "@/lib/operations/dr/epoch";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
 export { JobLeaseLostError } from "./lease";
 
-/** This is a job signal, not a payload queue. Caller transactions preserve request atomicity. */
+/** This is a job signal, not a payload queue. Caller transactions preserve request atomicity.
+ * DR writer fence 를 여기서 잡지 않는다 — 호출자 TX 가 도메인·jobs 행을 잡은 뒤 부르므로(jobs → fence) seal 의
+ * fence UPDATE → jobs 와 교착한다. fence 는 호출자 TX 의 첫 lock 이 맡는다(worker: withJobLeaseWrite·runJob, 웹: web-gate). */
 export async function requestJob(name: string, tx: ProductTransaction | typeof db = db) {
   if (!isJobName(name)) throw new Error("unknown_job");
   const [row] = await tx.insert(jobs).values({ name, requestedVersion: 1 })
@@ -106,6 +109,9 @@ export async function assertJobLeaseAtWallTime(tx: ProductTransaction, lease: Jo
 /** Keep a worker side effect and its job-token check in one commit. */
 export function withJobLeaseWrite<T>(lease: JobLease | undefined, write: (tx: ProductTransaction) => Promise<T>): Promise<T> {
   return db.transaction(async tx => {
+    // worker 쓰기(lease)는 DR writer fence 가 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서). lease 없는 웹 호출은
+    // 웹 쓰기 관문(web-gate)이, 격리 replay DB 는 runJob claim 처럼 fence 없이 간다.
+    if (lease && !currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const result = await write(tx);
     if (lease) await assertJobLease(tx, lease);
     return result;

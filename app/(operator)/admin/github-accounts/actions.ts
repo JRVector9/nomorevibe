@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { saveGitHubCollectorAccount, setGitHubCollectorAccountEnabled } from "@/lib/crawl/github-accounts";
 import { saveGitHubCollectorApp, setGitHubCollectorAppEnabled } from "@/lib/crawl/github-apps";
 import { recordAdminAction } from "@/lib/operations/admin-log";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type TokenActionState = { ok?: string; error?: string } | null;
 const messages: Record<string, string> = {
@@ -19,7 +20,7 @@ const messages: Record<string, string> = {
   github_app_installation_missing: "그 설치(Installation ID)를 찾을 수 없습니다. App 을 계정에 설치했는지, 번호가 맞는지 확인하세요.",
 };
 
-export async function saveCollectorToken(_previous: TokenActionState, form: FormData): Promise<TokenActionState> {
+export const saveCollectorToken = webWriteAction(async function saveCollectorToken(_previous: TokenActionState, form: FormData): Promise<TokenActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "관리자 로그인이 필요합니다." };
   const token = form.get("token");
@@ -37,9 +38,9 @@ export async function saveCollectorToken(_previous: TokenActionState, form: Form
       ok: false, error: error instanceof Error ? error.message : "unknown" });
     return { error: error instanceof Error ? messages[error.message] ?? "토큰 저장에 실패했습니다. 운영 로그를 확인하세요." : "토큰 저장에 실패했습니다." };
   }
-}
+});
 
-export async function toggleCollectorAccount(form: FormData): Promise<void> {
+export const toggleCollectorAccount = webWriteAction(async function toggleCollectorAccount(form: FormData): Promise<void> {
   const admin = await currentAdmin();
   if (!admin) throw new Error("unauthorized");
   const userId = Number(form.get("userId"));
@@ -47,10 +48,10 @@ export async function toggleCollectorAccount(form: FormData): Promise<void> {
   const enabled = form.get("enabled") === "true";
   await setGitHubCollectorAccountEnabled(userId, enabled, admin.login);
   revalidatePath("/admin/github-accounts");
-}
+});
 
 /** GitHub App 등록 — 같은 계정이어도 설치마다 한도가 따로다. 개인 키는 확인 뒤 암호화해 두고, 원문은 어디에도 남기지 않는다 */
-export async function saveCollectorApp(_previous: TokenActionState, form: FormData): Promise<TokenActionState> {
+export const saveCollectorApp = webWriteAction(async function saveCollectorApp(_previous: TokenActionState, form: FormData): Promise<TokenActionState> {
   const admin = await currentAdmin();
   if (!admin) return { error: "관리자 로그인이 필요합니다." };
   const appId = Number(form.get("appId"));
@@ -68,13 +69,13 @@ export async function saveCollectorApp(_previous: TokenActionState, form: FormDa
       ok: false, error: error instanceof Error ? error.message : "unknown" });
     return { error: error instanceof Error ? messages[error.message] ?? "App 저장에 실패했습니다. 운영 로그를 확인하세요." : "App 저장에 실패했습니다." };
   }
-}
+});
 
-export async function toggleCollectorApp(form: FormData): Promise<void> {
+export const toggleCollectorApp = webWriteAction(async function toggleCollectorApp(form: FormData): Promise<void> {
   const admin = await currentAdmin();
   if (!admin) throw new Error("unauthorized");
   const installationId = Number(form.get("installationId"));
   if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("invalid_installation_id");
   await setGitHubCollectorAppEnabled(installationId, form.get("enabled") === "true", admin.login);
   revalidatePath("/admin/github-accounts");
-}
+});

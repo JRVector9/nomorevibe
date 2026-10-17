@@ -5,6 +5,8 @@ import { PublicAuthError } from "./errors";
 import { getSessionUser } from "./repository";
 import { csrfForToken, isOpaqueToken, LOGIN_NONCE_COOKIE, matchesSecretHash, PUBLIC_SESSION_COOKIE } from "./session";
 import { safePublicReturnUrl } from "@/lib/i18n/routing";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
+import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 
 export { PublicAuthError } from "./errors";
 export type { PublicUser } from "@/lib/db/public-user-schema";
@@ -68,6 +70,10 @@ export async function requirePublicMutation(request: Request): Promise<PublicUse
 }
 
 export function publicAuthErrorResponse(error: unknown): Response {
+  // fenced DB: 쓰기 전에 거절한다 — 기존 "이용 불가" 코드에 503·Retry-After(웹훅은 5xx 라 GitHub 가 실패 전달로 남겨 다시 보낸다)
+  if (error instanceof DrWriterFencedError) {
+    return Response.json({ error: "public_auth_unavailable" }, { status: 503, headers: { ...PUBLIC_PRIVATE_HEADERS, "Retry-After": WEB_FENCED_RETRY_AFTER } });
+  }
   const failure = error instanceof PublicAuthError ? error : new PublicAuthError(500, "public_auth_unavailable");
   return Response.json({ error: failure.code }, { status: failure.status, headers: PUBLIC_PRIVATE_HEADERS });
 }

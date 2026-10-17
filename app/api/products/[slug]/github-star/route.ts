@@ -2,6 +2,7 @@ import { getPublicSession, PUBLIC_PRIVATE_HEADERS, PublicAuthError, publicAuthEr
 import { requireGithubStarEnabled } from "@/lib/domain/github-user/config";
 import { getGithubStarStatus, writeGithubStar } from "@/lib/domain/github-stars/service";
 import { StarProviderRateLimit, StarWriteFailure } from "@/lib/domain/github-stars/contract";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
 type Context = { params: Promise<{ slug: string }> };
 function errorResponse(error: unknown): Response {
@@ -19,10 +20,10 @@ export async function GET(request: Request, context: Context): Promise<Response>
     return Response.json(await getGithubStarStatus((await context.params).slug, session.user.id), { headers: PUBLIC_PRIVATE_HEADERS });
   } catch (error) { return errorResponse(error); }
 }
-export async function PUT(request: Request, context: Context): Promise<Response> {
+export const PUT = webWriteRoute(async (request: Request, context: Context): Promise<Response> => {
   try {
     requireGithubStarEnabled();
     const user = await requirePublicMutation(request);
     return Response.json(await writeGithubStar((await context.params).slug, user.id, await readLoginJson(request)), { headers: PUBLIC_PRIVATE_HEADERS });
   } catch (error) { return errorResponse(error); }
-}
+}, errorResponse);

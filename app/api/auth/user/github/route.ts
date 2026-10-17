@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { getPublicSession, publicAuthErrorResponse, PUBLIC_PRIVATE_HEADERS, readLoginJson, requireLoginMutation, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
 import { GITHUB_NONCE_COOKIE, githubNonceCookieOptions, requireGithubStarEnabled, startGithubAuthorization } from "@/lib/domain/github-user/authorization";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function POST(request: Request) {
+export const POST = webWriteRoute(async (request: Request) => {
   try {
     requireGithubStarEnabled();
     const session = await getPublicSession(request);
@@ -14,4 +15,4 @@ export async function POST(request: Request) {
     response.cookies.set(GITHUB_NONCE_COOKIE, result.browserNonce, githubNonceCookieOptions());
     return response;
   } catch (error) { return publicAuthErrorResponse(error); }
-}
+}, publicAuthErrorResponse);

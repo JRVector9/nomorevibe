@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { saveEvidenceSettingsValue } from "@/lib/domain/evidence/admin";
 import { evidenceSettingsSchema } from "@/lib/domain/evidence/settings";
 import { recordAdminAction } from "@/lib/operations/admin-log";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type EvidenceActionState = {
   ok?: true;
@@ -22,7 +23,7 @@ const FIELDS = {
   starDigestPercent: "별 증가율",
 } as const;
 
-export async function saveEvidenceSettings(
+export const saveEvidenceSettings = webWriteAction(async function saveEvidenceSettings(
   _previous: EvidenceActionState,
   form: FormData,
 ): Promise<EvidenceActionState> {
@@ -51,4 +52,4 @@ export async function saveEvidenceSettings(
   revalidatePath("/admin/evidence");
   revalidatePath("/admin/status");
   return { ok: true };
-}
+});

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   setAutomaticUpdateVisibility: vi.fn(),
 }));
 
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({
   notFound: vi.fn(() => { throw new Error("not-found"); }),

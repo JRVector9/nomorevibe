@@ -1,6 +1,7 @@
 import { createHmac, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("server-only", () => ({}));
 
 it("loads maintenance dependencies in a plain Node worker without React export conditions", () => {

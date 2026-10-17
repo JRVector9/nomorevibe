@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings } from "@/lib/crawl/settings";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type CategoryActionState = { ok?: true; issues?: string[] } | null;
 
@@ -18,7 +19,7 @@ function lines(value: FormDataEntryValue | null): string[] {
  * 화면에 있는 카테고리만 보내고 나머지는 저장된 값을 유지한다 (saveSettings가 병합한다).
  * 서버 액션은 URL 없이 호출될 수 있으므로 proxy와 별개로 자격을 다시 확인한다.
  */
-export async function saveCategoryDefinitions(
+export const saveCategoryDefinitions = webWriteAction(async function saveCategoryDefinitions(
   _previous: CategoryActionState,
   form: FormData,
 ): Promise<CategoryActionState> {
@@ -44,4 +45,4 @@ export async function saveCategoryDefinitions(
 
   revalidatePath("/admin/categories");
   return { ok: true };
-}
+});

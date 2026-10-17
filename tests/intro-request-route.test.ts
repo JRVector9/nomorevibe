@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(), request: vi.fn(), takedown: vi.fn(),
 }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: mocks.rateLimit, clientIp: () => "203.0.113.9", trustedClientIp: () => "203.0.113.9",
 }));

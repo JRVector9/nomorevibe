@@ -8,6 +8,7 @@ import { fixIntroFromRequest, isIntroRequestOutcome, resolveIntroRequest } from 
 import { LIMITS } from '@/lib/domain/products/limits';
 import { logger } from '@/lib/observability/logger';
 import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
+import { webWriteAction } from '@/lib/operations/dr/web-gate';
 
 export type AuditActionState = { error?: string; message?: string } | null;
 /** 묶어 내리기 결과 — 화면이 알림으로 요약한다 */
@@ -21,7 +22,7 @@ const UNAUTHORIZED = { error: '권한이 없습니다. 다시 로그인해주세
  * 없어도 요청은 손으로 만들 수 있다. 1차 심사 글의 실측 정확도는 85%다(2026-09-18 홀드아웃,
  * 결정한 26건 중 22건). 여러 건을 한 번에 내리면 모델이 틀린 몫이 사람 눈을 거치지 않고 같이 내려간다.
  */
-export async function decideAuditFinding(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+export const decideAuditFinding = webWriteAction(async function decideAuditFinding(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const items = form.getAll('item');
@@ -41,10 +42,10 @@ export async function decideAuditFinding(_previous: AuditActionState, form: Form
   revalidatePath('/admin/audit');
   revalidatePath('/admin/products');
   return { message: decision === 'remove' ? '내렸습니다.' : '그대로 둡니다.' };
-}
+});
 
 /** 새 감사를 연다. 아무것도 내리지 않는다 — 사람이 볼 새 목록을 만들 뿐이다 */
-export async function startAudit(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+export const startAudit = webWriteAction(async function startAudit(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const reason = String(form.get('reason') ?? '');
@@ -59,10 +60,10 @@ export async function startAudit(_previous: AuditActionState, form: FormData): P
   revalidatePath('/admin/audit');
   revalidatePath('/admin/status');
   return { message: `${result.enrolled.toLocaleString('ko-KR')}건을 올렸습니다. 유지 판정으로 뺀 것 ${result.keptSkipped.toLocaleString('ko-KR')}건.` };
-}
+});
 
 /** 진행 중인 감사를 멈춘다. 지금까지 찾은 것은 그대로 남는다 */
-export async function cancelAudit(): Promise<AuditActionState> {
+export const cancelAudit = webWriteAction(async function cancelAudit(): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const cancelled = await cancelProductAudit();
@@ -71,7 +72,7 @@ export async function cancelAudit(): Promise<AuditActionState> {
   logger.info('admin.product_audit_cancelled', { cancelled, login: admin.login });
   revalidatePath('/admin/audit');
   return cancelled ? { message: '중단했습니다.' } : { error: '진행 중인 감사가 없습니다.' };
-}
+});
 
 /**
  * 묶어 내리기(ADM-07) — 사람이 이름을 훑고 확인한 묶음을 한 번에 내린다. 최대 GROUP_REMOVE_MAX 건.
@@ -79,7 +80,7 @@ export async function cancelAudit(): Promise<AuditActionState> {
  * 한 건씩 내리기와 같은 길을 한 건마다 탄다(removeAuditedProducts). 화면이 보낸 것을 그대로 믿지 않는다 —
  * 확신 문턱·주인 없음·아직 아무도 손대지 않음을 잠근 뒤 다시 보고, 맞지 않는 것은 건너뛴다.
  */
-export async function removeAuditGroup(form: FormData): Promise<AuditGroupResult> {
+export const removeAuditGroup = webWriteAction(async function removeAuditGroup(form: FormData): Promise<AuditGroupResult> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const ids = form.getAll('item').map(Number);
@@ -98,14 +99,14 @@ export async function removeAuditGroup(form: FormData): Promise<AuditGroupResult
   revalidatePath('/admin/audit');
   revalidatePath('/admin/products');
   return { removed: result.removed.length, failed: result.failed.length };
-}
+});
 
 /**
  * 멈춘 감사(심사 글이 바뀜)를 중단하고 지금 글로 새 감사를 연다 — 화면의 기본 버튼 하나(ADM-15).
  * 닫기와 열기는 한 트랜잭션이다(startProductAudit replacing): 새 감사를 열 수 없으면 멈춘 감사도 그대로고, 두 번 눌러도
  * 방금 연 새 감사를 닫지 않는다. 성공하면 중단과 시작을 작업 로그에 각각 남긴다.
  */
-export async function restartStalledAudit(form: FormData): Promise<AuditActionState> {
+export const restartStalledAudit = webWriteAction(async function restartStalledAudit(form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const campaignId = Number(form.get('campaign'));
@@ -122,7 +123,7 @@ export async function restartStalledAudit(form: FormData): Promise<AuditActionSt
   revalidatePath('/admin/audit');
   revalidatePath('/admin/status');
   return { message: `감사 #${campaignId}을 닫고 #${result.campaignId}을 열었습니다 — ${result.enrolled.toLocaleString('ko-KR')}건.` };
-}
+});
 
 /** 요청 번호 — 폼이 하나만 싣는다 */
 function requestId(form: FormData): number | null {
@@ -135,7 +136,7 @@ function requestId(form: FormData): number | null {
  * 소개 수정 요청의 소개 고치기(UX-18) — 요청을 보고 새 한 줄을 적는다. 그 제품의 처리 전 요청을 모두 '고침'으로 닫고,
  * 고치기 전·후 소개를 작업 로그에 남긴다. 검색 노출과 CDN 은 건드리지 않는다(내려달라는 요청과 다른 길).
  */
-export async function fixIntroRequest(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+export const fixIntroRequest = webWriteAction(async function fixIntroRequest(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const id = requestId(form);
@@ -154,10 +155,10 @@ export async function fixIntroRequest(_previous: AuditActionState, form: FormDat
   revalidatePath('/admin/products');
   revalidatePath(`/p/${fixed.slug}`);
   return { message: fixed.closed.length > 1 ? `소개를 고치고 요청 ${fixed.closed.length}건을 닫았습니다.` : '소개를 고쳤습니다.' };
-}
+});
 
 /** 소개 수정 요청의 처리함·둠 — 소개는 그대로 두고 요청 하나에 결과만 적는다 */
-export async function resolveIntroRequestAction(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
+export const resolveIntroRequestAction = webWriteAction(async function resolveIntroRequestAction(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
   if (!admin) return UNAUTHORIZED;
   const id = requestId(form);
@@ -172,4 +173,4 @@ export async function resolveIntroRequestAction(_previous: AuditActionState, for
   logger.info('admin.intro_request_resolved', { slug: done.slug, id, outcome, login: admin.login });
   revalidatePath('/admin/audit');
   return { message: outcome === 'fixed' ? '처리함으로 닫았습니다.' : '두었습니다.' };
-}
+});

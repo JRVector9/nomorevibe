@@ -3,6 +3,7 @@ import { GithubInstallationError } from "@/lib/domain/github-installations/crede
 import { requireMakerEditPermission, requireMakerGithubEnabled } from "@/lib/domain/github-installations/authorization";
 import { disableProductGithubBinding, getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
 import type { GithubProductBinding } from "@/lib/db/github-binding-schema";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
 type Context = { params: Promise<{ slug: string }> };
 function view(binding: GithubProductBinding | null) {
@@ -20,7 +21,7 @@ export async function GET(request: Request, context: Context) {
   } catch (error) { return publicAuthErrorResponse(error); }
 }
 
-export async function PUT(request: Request, context: Context) {
+export const PUT = webWriteRoute(async (request: Request, context: Context) => {
   try {
     requireMakerGithubEnabled();
     await requirePublicMutation(request);
@@ -31,4 +32,4 @@ export async function PUT(request: Request, context: Context) {
     if (Object.keys(input).some(key => !["enabled", "expectedRevision"].includes(key)) || input.enabled !== false || typeof input.expectedRevision !== "number" || !Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) throw new GithubInstallationError(400, "github_invalid_request");
     return Response.json({ binding: view(await disableProductGithubBinding(product.id, "maker_disabled", input.expectedRevision, { editTokenHash: product.editTokenHash, productRepoUrl: product.repoUrl })) }, { headers: PUBLIC_PRIVATE_HEADERS });
   } catch (error) { return publicAuthErrorResponse(error); }
-}
+}, publicAuthErrorResponse);

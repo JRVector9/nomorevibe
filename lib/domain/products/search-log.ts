@@ -4,6 +4,7 @@ import { searchQueries } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { normalizeQuery } from "./search-translation";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { webWritable } from "@/lib/operations/dr/web-gate";
 
 /**
  * 검색 질의 기록.
@@ -23,7 +24,8 @@ export async function recordSearch(entry: {
   startedAt: Date;
 }): Promise<void> {
   const query = entry.query.trim().slice(0, MAX_QUERY);
-  if (!query) return;
+  // fenced DB 에는 남기지 않는다(캐시 관문만)
+  if (!query || !await webWritable()) return;
   const durationMs = Date.now() - entry.startedAt.getTime();
   try {
     await db.insert(searchQueries).values({

@@ -2,6 +2,8 @@ import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/observability/logger";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
+import { runWebWrite, WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 
 /**
  * 라우트 에러 경계.
@@ -15,6 +17,8 @@ import { logger } from "@/lib/observability/logger";
 // params를 쓰지 않는 핸들러도 시그니처는 이 형태를 유지해야 한다.
 export type RouteContext = { params: Promise<Record<string, string>> };
 type Handler<C extends RouteContext> = (req: Request, ctx: C) => Promise<Response>;
+/** 이 밖의 메서드는 쓰기다 — fenced DB 에서는 handler 전에 거절하고, 쓰기 TX 마다 fence 를 첫 lock 으로 둔다(web-gate) */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function withRoute<C extends RouteContext = RouteContext>(
   name: string,
@@ -26,7 +30,7 @@ export function withRoute<C extends RouteContext = RouteContext>(
     const base = { requestId, route: name, method: req.method };
 
     try {
-      const res = await handler(req, ctx);
+      const res = SAFE_METHODS.has(req.method) ? await handler(req, ctx) : await runWebWrite(() => handler(req, ctx));
       const level = res.status >= 500 ? "error" : res.status >= 400 ? "warn" : "info";
       logger[level]("http.request", { ...base, status: res.status, durationMs: Date.now() - startedAt });
       res.headers.set("x-request-id", requestId);
@@ -37,6 +41,13 @@ export function withRoute<C extends RouteContext = RouteContext>(
         return NextResponse.json(
           { error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요.", request_id: requestId },
           { status: 503, headers: { "x-request-id": requestId } },
+        );
+      }
+      if (error instanceof DrWriterFencedError) {
+        logger.warn("http.writer_fenced", { ...base, status: 503, reason: error.reason, durationMs: Date.now() - startedAt });
+        return NextResponse.json(
+          { error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요.", request_id: requestId },
+          { status: 503, headers: { "x-request-id": requestId, "Retry-After": WEB_FENCED_RETRY_AFTER } },
         );
       }
       // 처리되지 않은 예외 — 원인을 로그에 남기고, 응답에는 내부 정보를 흘리지 않는다
