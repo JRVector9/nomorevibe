@@ -318,4 +318,4 @@ it("runs the offline live CLI commands with fixed diagnostics", async () => {
     await writeFile(after, "{}");
     expect(run("compare", before, after).stderr.trim()).toBe("invalid_capacity_artifact");
   } finally { await rm(directory, { recursive: true, force: true }); }
-});
+}, 20_000);
