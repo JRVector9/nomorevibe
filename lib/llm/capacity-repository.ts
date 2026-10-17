@@ -226,7 +226,8 @@ async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: strin
   return !!blocked;
 }
 
-function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[], crawl?: CrawlTaglineInput): Promise<ModelSlotResult> {
+function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, memberKeys?: string[], crawl?: CrawlTaglineInput,
+  websearch?: WebsearchQueryInput): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
     let original: RequestRow | undefined;
@@ -244,7 +245,8 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       if (memberKeys && !isDeepStrictEqual(original.logicalMemberKeys, memberKeys)) fail("model_capacity_logical_work_mismatch");
     }
     await expireRequests(tx, state);
-    if (memberKeys && await (crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
+    if (memberKeys && await (crawl ? crawlTaglineFence(tx, crawl, checked.requestId) : websearch ? websearchQueryFence(tx, websearch, checked.requestId)
+      : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
       : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
         : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
@@ -343,7 +345,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const product = reasonBinding.success ? reasonBinding : productTranslationModelDispatchSchema.safeParse(value);
   const korean = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
-  const bound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
+  const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
+  const bound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -361,7 +364,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
               ? "product_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-tagline-ko:")
                 ? "product_tagline_ko_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:crawl-tagline:")
                   ? "crawl_tagline_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:search-verify:")
-                    ? "search_verify_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
+                    ? "search_verify_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:websearch-query:")
+                      ? "websearch_query_capacity_dispatch_binding_mismatch" : "ai1_capacity_dispatch_binding_mismatch");
     if (row.state === "indeterminate") return true;
     if (row.state !== "dispatched") return false;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
@@ -1508,4 +1512,150 @@ export async function lockSearchVerifyResultChain(tx: ProductTransaction, value:
   if (found.next === "done") return Object.freeze({ kind: "done" as const,
     removed: Object.freeze(found.chain.flatMap(phase => phase.outcome.ok ? phase.outcome.removed : [])) });
   return Object.freeze({ kind: found.next === "stop" ? "stop" as const : "open" as const });
+}
+
+import { websearchQueryMemberKeys, websearchQueryLogicalWorkKey, websearchQueryInputSchema, websearchQueryInputHash,
+  websearchQueryDispatchBindingSchema, websearchQueryDispatchBindingHash, websearchQueryModelDispatchSchema,
+  websearchQueryGatewayTerminalEvidenceSchema, type WebsearchQueryInput, type WebsearchQueryDispatchBinding,
+  type WebsearchQueryModelDispatch, type WebsearchQueryOutcome } from "./capacity";
+import type { WebsearchQueryGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+declare const websearchQueryLockBrand: unique symbol;
+export type WebsearchQueryCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
+  readonly [websearchQueryLockBrand]: true }>;
+/** Settled outcome is business data for the same cache snapshot only; it never issues an opaque proof or releases capacity. */
+export type WebsearchQueryContinuation = { kind: "none" } | { kind: "blocked" }
+  | Readonly<{ kind: "settled"; requestId: string; bindingHash: string; responseHash: string; model: string; outcome: WebsearchQueryOutcome }>;
+const websearchQueryLocks = new WeakMap<WebsearchQueryCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput; finished: boolean }>();
+function fixedWebsearchQueryIdentity(value: ModelCapacityRequestIdentity, input: WebsearchQueryInput): string {
+  const logical = websearchQueryLogicalWorkKey(input.member);
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "search-query-translate" || value.provider !== "abcllm"
+    || value.model !== input.model || value.workKey !== `${logical}:${websearchQueryInputHash(input)}`) fail("invalid_websearch_query_capacity_identity");
+  return logical;
+}
+/** Another owner's active member, an unconsumed settled call for the same cache snapshot, or an unbound same-route call blocks. */
+async function websearchQueryFence(tx: ProductTransaction, input: WebsearchQueryInput, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND (
+      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+        AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${websearchQueryMemberKeys(input.member)[0]}]::text[])
+      OR (${modelCapacityRequests.logicalWorkKey} = ${websearchQueryLogicalWorkKey(input.member)} AND ${modelCapacityRequests.state} = 'settled'
+        AND ${modelCapacityRequests.dispatchBinding}->>'kind' = 'websearch_query_gateway'
+        AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache' = ${JSON.stringify(input.member.cache)}::text::jsonb)))
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'search-query-translate'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+function websearchQueryRowMatches(row: RequestRow | undefined, dispatch: WebsearchQueryModelDispatch): row is RequestRow {
+  return owned(row, dispatch) && row.logicalWorkKey === dispatch.binding.logicalWorkKey
+    && isDeepStrictEqual(row.logicalMemberKeys, websearchQueryMemberKeys(dispatch.binding.member))
+    && row.routeId === dispatch.binding.routeId && row.provider === dispatch.binding.provider && row.model === dispatch.binding.model
+    && row.class === "background" && row.pool === "text"
+    && row.workKey === `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt && isDeepStrictEqual(row.dispatchBinding, dispatch.binding);
+}
+function storedWebsearchQueryEvidence(row: RequestRow | undefined) {
+  if (!row || row.state !== "settled" || !row.settledAt) return null;
+  const parsed = websearchQueryGatewayTerminalEvidenceSchema.safeParse(row.terminalEvidence);
+  return parsed.success && websearchQueryRowMatches(row, parsed.data.dispatch)
+    && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
+}
+/** The fixed cache target is in the very first waiting INSERT. */
+export async function requestWebsearchQueryModelSlot(value: ModelCapacityRequest, input: WebsearchQueryInput): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = websearchQueryInputSchema.parse(input);
+  return requestSlot(checked, fixedWebsearchQueryIdentity(checked, snapshot), websearchQueryMemberKeys(snapshot.member), undefined, snapshot);
+}
+/** Control/request UPDATE prefix precedes the query cache lock. No nested TX. */
+export async function lockWebsearchQueryModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput;
+}): Promise<WebsearchQueryCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const input = websearchQueryInputSchema.parse(value.input), logical = fixedWebsearchQueryIdentity(identity, input);
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys, websearchQueryMemberKeys(input.member))) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await websearchQueryFence(tx, input, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as WebsearchQueryCapacityDispatchLock;
+  websearchQueryLocks.set(locked, { tx, row, identity, input, finished: false });
+  return locked;
+}
+export async function finishWebsearchQueryModelCapacityDispatch(tx: ProductTransaction, lock: WebsearchQueryCapacityDispatchLock,
+  value: WebsearchQueryDispatchBinding): Promise<WebsearchQueryModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = websearchQueryLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_websearch_query_capacity_dispatch_lock");
+  const binding = websearchQueryDispatchBindingSchema.parse(value);
+  if (!isDeepStrictEqual({ member: binding.member, model: binding.model }, proof.input) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.process.instanceId !== proof.identity.owner.instanceId || binding.process.bootId !== proof.identity.owner.bootId)
+    fail("websearch_query_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = websearchQueryDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("websearch_query_model_reservation_lost");
+  const dispatch = websearchQueryModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+/** Historical settlement and the bounded parser outcome commit together, independent of today's policy or owner. */
+export async function reconcileWebsearchQueryGatewayTerminal(terminal: WebsearchQueryGatewayTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readWebsearchQueryGatewayTerminal } = await import("@/lib/crawl/agent-review-gateway");
+  const native = readWebsearchQueryGatewayTerminal(terminal);
+  if (!native) fail("invalid_websearch_query_gateway_terminal");
+  const evidence = websearchQueryGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!websearchQueryRowMatches(row, dispatch)) fail("websearch_query_gateway_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("websearch_query_gateway_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") fail("websearch_query_gateway_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+/** Reads, inside the caller's primary TX, the settled outcome for exactly this cache snapshot. Any unresolved physical call
+ * for the same target blocks reuse; duplicate or forged stored evidence fails closed. */
+export async function readWebsearchQueryContinuation(tx: ProductTransaction, value: WebsearchQueryInput): Promise<WebsearchQueryContinuation> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const input = websearchQueryInputSchema.parse(value), [memberKey] = websearchQueryMemberKeys(input.member);
+  await control(tx, "share");
+  const [active] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${memberKey}]::text[] AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'search-query-translate'
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  if (active) return { kind: "blocked" };
+  const rows = await tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='search-query-translate'
+    AND ${modelCapacityRequests.state}='settled' AND ${modelCapacityRequests.logicalWorkKey}=${websearchQueryLogicalWorkKey(input.member)}
+    AND ${modelCapacityRequests.dispatchBinding}->>'kind'='websearch_query_gateway'
+    AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache'=${JSON.stringify(input.member.cache)}::text::jsonb`)
+    .orderBy(asc(modelCapacityRequests.queueOrdinal));
+  if (!rows.length) return { kind: "none" };
+  const stored = rows.map(row => storedWebsearchQueryEvidence(row));
+  if (rows.length !== 1 || !stored[0] || stored[0].dispatch.binding.member.cacheKey !== input.member.cacheKey
+    || !isDeepStrictEqual(stored[0].dispatch.binding.member.cache, input.member.cache)) fail("websearch_query_continuation_mismatch");
+  const evidence = stored[0]!;
+  return Object.freeze({ kind: "settled" as const, requestId: evidence.dispatch.requestId, bindingHash: evidence.dispatch.bindingHash,
+    responseHash: evidence.responseHash, model: evidence.dispatch.binding.model, outcome: Object.freeze(structuredClone(evidence.outcome)) });
 }

@@ -964,3 +964,91 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     kind: "search_verify_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed, outcome })));
   return { result: outcome.ok ? { ok: true, unsupported: [...outcome.removed] } : { ok: false, error: "invalid_output" }, terminal };
 }
+
+import { websearchQueryModelDispatchSchema, websearchQueryGatewayTerminalEvidenceSchema, type WebsearchQueryModelDispatch,
+  type WebsearchQueryGatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { websearchQueryServingContractHash, websearchQueryServingContractSchema, resolveWebsearchQueryServingContract,
+  type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { parseQueryTranslation, websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "./translate";
+
+export type PreparedWebsearchQueryGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"] }>;
+export type WebsearchQueryGatewayTerminal = Readonly<{ kind: "websearch_query_gateway_terminal" }>;
+export type WebsearchQueryGatewayResult = { ok: true; keywords: string } | { ok: false; error: string };
+const websearchQueryCalls = new WeakMap<PreparedWebsearchQueryGatewayCall, { wire: string;
+  contract: WebsearchQueryServingContract; timeoutMs: number; used: boolean; deadline?: AbortSignal }>();
+const websearchQueryTerminals = new WeakMap<WebsearchQueryGatewayTerminal, WebsearchQueryGatewayTerminalEvidence>();
+function validWebsearchQueryInput(value: unknown): value is WebsearchQueryGatewayInput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return Object.keys(row).sort().join(",") === "query,sourceLocale" && typeof row.query === "string" && !!row.query
+    && row.query === row.query.trim() && ["ko", "zh-Hans", "zh-Hant"].includes(String(row.sourceLocale));
+}
+/** One physical query POST per preparation; a caller descriptor never enables a deployment. */
+export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInput, options: { model: string; timeoutMs: number }):
+  PreparedWebsearchQueryGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validWebsearchQueryInput(snapshot) || !websearchQueryServingContractSchema.shape.model.safeParse(model).success
+    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveWebsearchQueryServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = websearchQueryServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = websearchQueryGatewayWire(snapshot, model);
+  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
+    totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale });
+  websearchQueryCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+export function readWebsearchQueryGatewayTerminal(value: unknown): WebsearchQueryGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? websearchQueryTerminals.get(value as WebsearchQueryGatewayTerminal) ?? null : null;
+}
+/** Original chat error names stay: 404 is http_404, outer JSON decoding is network, the content parser is invalid_output. */
+export async function translateQueryWithReservedGateway(input: WebsearchQueryGatewayInput, dispatch: WebsearchQueryModelDispatch,
+  call: PreparedWebsearchQueryGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: WebsearchQueryGatewayResult; terminal: WebsearchQueryGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(input), state = websearchQueryCalls.get(call);
+  const checked = websearchQueryModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 8_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validWebsearchQueryInput(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("websearch_query_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding;
+  if (websearchQueryGatewayWire(snapshot, call.model) !== state.wire || sha(snapshot.query) !== call.queryHash
+    || binding.member.queryHash !== call.queryHash || binding.member.sourceLocale !== snapshot.sourceLocale
+    || snapshot.sourceLocale !== call.sourceLocale || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("websearch_query_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  state.deadline = deadline;
+  let body: string, status: number;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (!response.ok) {
+      try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    status = response.status; body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  } finally { delete state.deadline; }
+  // The original response.json() failure was caught as "network"; it is not a content-parser failure.
+  try { JSON.parse(body); } catch { return { result: { ok: false, error: "network" }, terminal: null }; }
+  const completed = status === 200 ? nativeTerminal(body, state.contract) : null;
+  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  const keywords = parseQueryTranslation(content ?? "");
+  const result: WebsearchQueryGatewayResult = keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
+  const terminal: WebsearchQueryGatewayTerminal = Object.freeze({ kind: "websearch_query_gateway_terminal" });
+  websearchQueryTerminals.set(terminal, freeze(websearchQueryGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "websearch_query_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed,
+    outcome: keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" } })));
+  return { result, terminal };
+}
