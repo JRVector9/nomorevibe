@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { PROFILE_MODEL, profileEvidence, profileHash, writeKeywords } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 
@@ -95,9 +96,14 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
             if (!await recordProfileResult(task, lease, { kind: "success", en: result.en, ko: result.ko, model: PROFILE_MODEL })) return;
             written++;
           }
-        } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
+        } catch (error) {
+          if (error instanceof ModelCapacityDeferredError) blocked ||= "model_capacity";
+          else { blocked = "result_write_failed"; controller.abort(); }
+          throw error;
+        }
       }));
-      const failure = settled.find((item) => item.status === "rejected");
+      const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
+      const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
       if (blocked === "tick_budget") {
         ctx.log("search_profile.budget_deferred", { written, reused, failed });

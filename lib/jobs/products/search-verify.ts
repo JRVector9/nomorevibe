@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { profileEvidence } from "@/lib/domain/products/search-profile";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks } from "@/lib/domain/products/search-verify";
@@ -76,9 +77,14 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             verified++;
             removed += result.unsupported.length;
           }
-        } catch (error) { blocked = "result_write_failed"; controller.abort(); throw error; }
+        } catch (error) {
+          if (error instanceof ModelCapacityDeferredError) blocked ||= "model_capacity";
+          else { blocked = "result_write_failed"; controller.abort(); }
+          throw error;
+        }
       }));
-      const failure = settled.find((item) => item.status === "rejected");
+      const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
+      const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
       if (blocked === "tick_budget") {
         ctx.log("search_verify.budget_deferred", { verified, removed, failed });
