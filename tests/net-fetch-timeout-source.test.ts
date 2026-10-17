@@ -76,14 +76,20 @@ for (const [mode, title] of [
   ["after-headers", "retains the timeout source across GC after response headers"],
 ] as const) {
   it(title, async () => {
-    const result = await probe(mode);
-    console.info(JSON.stringify({ kind: "timeout_source_probe", mode, ...result }));
-    // The native process has closed before assertions can fail or cleanup starts.
-    expect({ ...result, packet: undefined }).toEqual({
-      packet: undefined, fatal: false, processError: false, actualClose: true,
-      childPid: expect.any(Number),
-      exitCode: 0, exitSignal: null, watchdogSent: false, termSent: false, killSent: false,
-    });
+    // GC 시점이 계획한 창(prefire면 timeout 전) 안에 들어온 표본만 이 시나리오를 시험한다.
+    // CI 부하로 창이 깨진 표본은 결론이 없으므로 다시 잰다. 판정 기준은 그대로이고, 다섯 번 모두 깨지면 실패한다.
+    let result!: Awaited<ReturnType<typeof probe>>;
+    for (let sample = 1; sample <= 5; sample++) {
+      result = await probe(mode);
+      console.info(JSON.stringify({ kind: "timeout_source_probe", mode, sample, ...result }));
+      // The native process has closed before assertions can fail or cleanup starts.
+      expect({ ...result, packet: undefined }).toEqual({
+        packet: undefined, fatal: false, processError: false, actualClose: true,
+        childPid: expect.any(Number),
+        exitCode: 0, exitSignal: null, watchdogSent: false, termSent: false, killSent: false,
+      });
+      if (result.packet?.windowValid) break;
+    }
     expect(result.packet).toMatchObject({
       kind: "result", requestCount: 1, windowValid: true, gcCount: 1, gcFailure: false,
       watchdogUsed: false, observedWatchdogReason: false, observerListenersAdded: 0, nativeMethodsUnchanged: true,
