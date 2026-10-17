@@ -104,7 +104,7 @@ async function budget() {
   return { budget: artifact.budget, modelCapacity: artifact.modelCapacity };
 }
 
-it("counts real AI1 dispatches, yet a grant's cursor write already marks the control row changed (PR01b-9 blocker)", async () => {
+it("counts real AI1 dispatches and a grant's cursor write no longer marks the control row changed", async () => {
   // 0097 기록 시작은 구간보다 2시간 앞선다(운영자가 미리 남긴 marker를 흉내 낸다). AI2 호출 기록이 구간을 덮는다.
   await client!`INSERT INTO pipeline_evidence_events (kind, revision, operator, created_at)
     VALUES ('recorder_started', '9e13341', 'pr01b9-root', clock_timestamp() - interval '2 hours')`;
@@ -121,9 +121,9 @@ it("counts real AI1 dispatches, yet a grant's cursor write already marks the con
     a.state AS attempt_state FROM model_capacity_requests r JOIN crawl_review_attempts a ON a.id::text = r.dispatch_binding->>'attemptId' ORDER BY a.id`;
   expect(rows.map(row => [row.state, row.total, row.attempt_state])).toEqual([["settled", 120, "succeeded"], ["settled", 120, "succeeded"],
     ["settled", 120, "succeeded"]]);
-  // 실제 grant는 control.cursor와 updated_at을 함께 쓴다. 그래서 열린 모드의 어느 구간도 '시작 뒤 바뀜'으로 보이고 budget이 막힌다.
-  expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: true },
-    budget: { status: "unverified", source: "model_capacity_ledger", issues: ["model_capacity_changed_since_window_start"] } });
+  // grant는 control.cursor만 쓴다(updated_at은 모드·정책 변경 시각). PR01b-9 때는 grant가 updated_at도 써서 이 구간이 막혔다.
+  expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: false }, budget: { status: "verified",
+    source: "model_capacity_ledger", calls: 3, chargedTokens: 360, reportedCalls: 3, boundCalls: 0, concurrency: { limit: 1, peak: 1 } } });
 }, 120_000);
 
 it("verifies the same window once the control row is unchanged since its start, without writing", async () => {
@@ -134,6 +134,23 @@ it("verifies the same window once the control row is unchanged since its start, 
   expect(await client!`SELECT (SELECT count(*) FROM model_capacity_events)::int AS events, (SELECT count(*) FROM pipeline_evidence_events)::int AS ledger`)
     .toEqual(before);
 });
+
+it("verifies the open window after more real grants without backdating, since a grant only advances the cursor", async () => {
+  const control = async () => (await client!`SELECT xmin::text AS version, updated_at FROM model_capacity_control WHERE id=1`)[0];
+  const before = await control();
+  for (let index = 11; index <= 12; index++) await source(index);
+  for (let tick = 0; tick < 8; tick++) {
+    const [{ count }] = await client!`SELECT count(*)::int AS count FROM crawl_review_attempts WHERE state <> 'running'`;
+    if (count === 5) break;
+    await requestJob("crawl-agent-review");
+    await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role! });
+  }
+  // 두 grant가 control 행을 다시 썼지만(cursor) 모드·정책 변경 시각은 그대로다.
+  const after = await control();
+  expect([after.version !== before.version, after.updated_at]).toEqual([true, before.updated_at]);
+  expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: false }, budget: { status: "verified",
+    source: "model_capacity_ledger", calls: 5, chargedTokens: 600, reportedCalls: 5, boundCalls: 0, concurrency: { limit: 1, peak: 1 } } });
+}, 120_000);
 
 it("stays unverified for one recorded AI2 call that no ledger dispatch covers", async () => {
   await db.transaction(tx => recordAi2Attempt(tx, { stage: "ai2", secondReviewId: 999 }, { rootReviewId: 999, failed: true, code: "timeout" }));
@@ -168,4 +185,13 @@ it("stays unverified for a generic dispatch on a review route that carries no bo
   await backdateControl();
   expect((await budget()).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
     issues: ["unattributed_ai1_calls", "unattributed_ai2_calls", "token_bound_missing"] });
+});
+
+it("still marks the window changed when the mode changes during it, even back to open", async () => {
+  // 운영자 전환처럼 모드를 바꾸는 쓰기는 updated_at도 함께 쓴다. 수집 시점 모드가 다시 open이어도 구간 중 바뀐 것으로 본다.
+  await client!`UPDATE model_capacity_control SET mode='draining',updated_at=clock_timestamp() WHERE id=1`;
+  await client!`UPDATE model_capacity_control SET mode='open',updated_at=clock_timestamp() WHERE id=1`;
+  expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: true }, budget: { status: "unverified",
+    source: "model_capacity_ledger", issues: ["model_capacity_changed_since_window_start", "unattributed_ai1_calls",
+      "unattributed_ai2_calls", "token_bound_missing"] } });
 });
