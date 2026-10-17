@@ -326,6 +326,19 @@ it('retains full C after EOF and fences a new boot from another POST or failed c
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
   });
 }));
+it('retains full C when an opted-in strict terminal response lacks the PR3 usage_provenance', exercise(async () => {
+  const item = await seed(); await server(async ({ bodies, setReply }) => {
+    // 운영 값이 아니다 — PR3 opt-in 표시만 더한 로컬 fixture 계약이다
+    serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' };
+    const headers: unknown[] = [];
+    setReply(response => { headers.push(response.req.headers['x-abcllm-strict-terminal']);
+      response.end(JSON.stringify({ ...replyBody(), usage_provenance: undefined })); });
+    expect(await tick()).toMatchObject({ status: 'completed', done: false }); expect(bodies).toHaveLength(1); expect(headers).toEqual(['1']);
+    const [unknown] = await admin`SELECT state,dispatch_binding,terminal_evidence FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(unknown.state).toBe('indeterminate'); expect(unknown.dispatch_binding.chargedTokens).toBe(8000); expect(unknown.terminal_evidence).toBeNull();
+    expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${item.hash}`)[0]).toMatchObject({ status: 'failed', translated: null });
+  });
+}));
 it('admits the actual versioned translation role and records an actual local stored-result ACK', exercise(async () => {
   const item = await seed(); await server(async ({ bodies }) => {
     const policy = { version: 1 as const, release: role.release, instances: [{ instanceId: prefix, host: 'oracle-osaka-smoke' as const }] };

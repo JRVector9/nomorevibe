@@ -241,8 +241,8 @@ export function readAi1GatewayTerminal(value: unknown): Ai1GatewayTerminalEviden
   return value && typeof value === "object" ? terminals.get(value as Ai1GatewayTerminal) ?? null : null;
 }
 
-function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">):
-  Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
+function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">
+  & { strictTerminalOptIn?: string }): Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(body); } catch { return null; }
@@ -256,6 +256,10 @@ function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, 
   const finishReason = choice.finish_reason;
   if (finishReason !== "stop" && finishReason !== "length" && finishReason !== "tool_calls"
     && finishReason !== "function_call" && finishReason !== "content_filter") return null;
+  // PR3 엄격 terminal 을 요청한 호출은 그 응답(usage_provenance 세 값 중 하나)이어야 한다. 헤더를 무시한 게이트웨이가
+  // EOF 에서 합성한 "stop" 은 terminal 이 아니다. 값의 쓰임은 아래 기존 규칙 그대로다(upstream_reported 만 실제 usage 후보).
+  if (contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN && parsed.usage_provenance !== "upstream_reported"
+    && parsed.usage_provenance !== "gateway_estimated" && parsed.usage_provenance !== "missing_or_invalid") return null;
   let actualUsage: Ai1GatewayTerminalEvidence["actualUsage"] = null;
   if (parsed.usage_provenance === "upstream_reported" && object(parsed.usage)) {
     const { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: totalTokens } = parsed.usage;
@@ -547,6 +551,14 @@ import { reasonTranslationModelDispatchSchema, reasonTranslationGatewayTerminalE
 import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, resolveReasonTranslationServingContract,
   type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
 import { reasonTranslationGatewayWire, parseTranslations, textHash, type TranslateResult } from "./translate";
+import { ABCLLM_STRICT_TERMINAL_HEADER, ABCLLM_STRICT_TERMINAL_OPT_IN } from "@/lib/llm/gateway-serving-contract-config";
+/**
+ * 번역 4경로(non-raw wire)의 native 호출만: 계약이 abcLLM PR3 엄격 terminal opt-in 이면 그 헤더를 "1" 로 붙인다.
+ * 본문·wireHash 는 그대로다. opt-in 여부는 계약 hash(servingContractHash)가 binding 에 묶는다. legacy 경로는 쓰지 않는다.
+ */
+function strictTerminalHeaders(contract: { strictTerminalOptIn?: string }): Record<string, string> {
+  return contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN ? { [ABCLLM_STRICT_TERMINAL_HEADER]: "1" } : {};
+}
 export type PreparedReasonTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; sourceHashes: readonly string[] }>;
 export type ReasonTranslationGatewayTerminal = Readonly<{ kind: "reason_translation_gateway_terminal" }>;
@@ -602,7 +614,8 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   let body: string;
   try {
     const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -692,7 +705,8 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   let body: string;
   try {
     const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -774,7 +788,8 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   let body: string;
   try {
     const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1030,7 +1045,8 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   let body: string, status: number;
   try {
     const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      body: state.wire, signal: combined });
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
