@@ -701,6 +701,13 @@
       "when": 1794086400011,
       "tag": "0099_dispatch_local_end_hop_reclaim",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1794086400012,
+      "tag": "0100_job_batch_candidates_scheduler_role",
+      "breakpoints": true
     }
   ]
 }

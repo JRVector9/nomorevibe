@@ -9,9 +9,13 @@ import { JOBS } from '@/lib/jobs/registry';
 import { runJob, type RunResult } from '@/lib/jobs/runner';
 import { releaseRole, tryAcquireRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { JOB_CATALOG, JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
+import { scheduledJobs } from '@/lib/jobs/control';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
 import { ORACLE_DB_PRINCIPALS, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_REFRESH_PRINCIPAL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from './oracle-db-profile';
 import { classifyOracleModelEvidence, type OracleModelEvidence, type OracleModelTick } from './oracle-model-evidence';
+import { recordOracleSchedulerBoot, runOracleSchedulerTick } from './oracle-scheduler';
+import { classifyOracleSchedulerEvidence, oracleSchedulerCapabilitySchema, oracleSchedulerReadbackSchema, oracleSchedulerResultKey,
+  oracleSchedulerResultSchema, type OracleSchedulerIdentity, type OracleSchedulerResult } from './oracle-scheduler-evidence';
 
 /**
  * Operator canary for Oracle roles. Evidence comes from an actual stored job ACK and a domain readback of the rows that
@@ -57,7 +61,7 @@ async function domainReadback(tx: Tx, job: string, instanceId: string, window: W
 }
 
 /** Same principal/catalog/hash as the runtime preflight, read through the worker's own connection. */
-async function workerAuthority(role: OracleCanaryRole) {
+async function workerAuthority(role: OracleCanaryRole | 'scheduler') {
   const [row] = await db.execute<{ principal: string; sessionPrincipal: string; unsafe: boolean; privileges: unknown }>(sql`SELECT current_user AS principal,
     session_user AS "sessionPrincipal", ${ORACLE_UNSAFE_AUTHORITY_SQL} AS unsafe, ${ORACLE_PRIVILEGE_CATALOG_SQL} AS privileges
     FROM pg_roles r WHERE r.rolname=current_user`);
@@ -67,16 +71,18 @@ async function workerAuthority(role: OracleCanaryRole) {
     effectivePrivilegeHash: hash({ principal: row.principal, privileges: row.privileges }) };
 }
 
-async function control(tx: Tx, identity: OracleCanaryIdentity, principals: readonly string[] = [ORACLE_DB_PRINCIPALS.attest]) {
+async function control(tx: Tx, identity: Pick<OracleCanaryIdentity, 'instanceId' | 'release'>, principals: readonly string[] = [ORACLE_DB_PRINCIPALS.attest]) {
   const [principal] = await tx`SELECT current_user AS name`;
   if (!principals.includes(principal.name)) throw new Error('oracle_attest_principal_required');
   await tx`SET LOCAL TimeZone='UTC'`;
-  const [row] = await tx`SELECT mode,epoch,policy,policy_hash AS "policyHash" FROM job_batch_control WHERE id=1 FOR SHARE`;
+  const [row] = await tx`SELECT mode,epoch,writer_contract_version AS "writerContractVersion",policy,policy_hash AS "policyHash"
+    FROM job_batch_control WHERE id=1 FOR SHARE`;
   const policy = batchPolicySchema.safeParse(row?.policy);
   if (!row || row.mode === 'draining' || !policy.success || batchPolicyHash(policy.data) !== row.policyHash || policy.data.release !== identity.release
     || !policy.data.instances.some(item => item.instanceId === identity.instanceId && item.host === HOST)) throw new Error('oracle_canary_batch_unavailable');
   const [clock] = await tx`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`;
-  return { mode: String(row.mode), epoch: Number(row.epoch), policyHash: String(row.policyHash), at: String(clock.at) };
+  return { mode: String(row.mode), epoch: Number(row.epoch), writerContractVersion: Number(row.writerContractVersion),
+    policyHash: String(row.policyHash), at: String(clock.at) };
 }
 
 /** Every capacity row this tick dispatched, in any state (the preflight uses the same predicate). */
@@ -215,6 +221,62 @@ export async function runOracleCanary(input: { identity: OracleCanaryIdentity; j
   if (run.status !== 'completed') return { before, run, after: null };
   const after = await attestOracleCanary({ ...input, anchor: 'always' });
   return { before, run, after };
+}
+
+export type OracleSchedulerAttestation = { ready: boolean; reason: string; bootId: string; requested: number; readbackRows: number;
+  domainReadbackHash: string; capability: { dbPrivileges: 'verified' | 'unknown' } };
+
+/**
+ * Scheduler counterpart of attestOracleCanary (PR11g). One attest-principal TX reads the scheduler's stored tick ACK (written inside
+ * the requestDueJobs transaction, so it exists only for a tick that passed the DR writer fence and committed) and the schedule rows:
+ * every job requestDueJobs schedules in this batch state must be scheduled after that tick's instant. It then writes strict
+ * capability/result evidence into the scheduler candidate row, whose boot_id is the boot that recorded itself before its first tick.
+ */
+export async function attestOracleSchedulerCanary(input: { identity: OracleSchedulerIdentity; attest: postgres.Sql }): Promise<OracleSchedulerAttestation> {
+  const { identity } = input;
+  const worker = await workerAuthority('scheduler');
+  return input.attest.begin(async tx => {
+    const state = await control(tx, identity);
+    const [observation] = await tx`SELECT value->'schedulerResult' AS result FROM operations_observations WHERE key=${oracleSchedulerResultKey(identity.instanceId)}`;
+    const parsed = oracleSchedulerResultSchema.safeParse(observation?.result);
+    if (!parsed.success || parsed.data.instanceId !== identity.instanceId || parsed.data.host !== HOST || parsed.data.release !== identity.release)
+      throw new Error('oracle_canary_result_missing');
+    const result: OracleSchedulerResult = parsed.data;
+    const age = Date.parse(state.at) - Date.parse(result.recordedAt);
+    if (!Number.isFinite(age) || age < 0 || age > RESULT_MAX_AGE_MS) throw new Error('oracle_canary_result_stale');
+    const [existing] = await tx`SELECT boot_id AS "bootId",host,release,policy_hash AS "policyHash" FROM job_batch_candidates
+      WHERE role='scheduler' AND instance_id=${identity.instanceId} FOR UPDATE`;
+    if (!existing || existing.host !== HOST || existing.release !== identity.release || existing.policyHash !== state.policyHash)
+      throw new Error('oracle_canary_candidate_identity_mismatch');
+    // jobs.next_scheduled_at is naive; control() set this TX to UTC, like every other readback here.
+    const names = scheduledJobs(state).map(job => job.name);
+    const rows = await tx`SELECT name,next_scheduled_at::timestamptz > ${result.tickAt}::timestamptz AS advanced,
+      to_char(next_scheduled_at,'YYYY-MM-DD"T"HH24:MI:SS.US') AS "nextScheduledAt" FROM jobs WHERE name IN ${tx(names)} ORDER BY name`;
+    if (rows.length !== names.length || rows.some(row => row.advanced !== true)) throw new Error('oracle_scheduler_readback_unverified');
+    const domainReadbackHash = hash({ tickAt: result.tickAt, rows: rows.map(row => [row.name, row.nextScheduledAt]) });
+    const capability = oracleSchedulerCapabilitySchema.parse({ kind: 'oracle_scheduler', host: HOST, instanceId: identity.instanceId,
+      release: identity.release, dbPrivileges: worker.dbPrivileges, dbRole: worker.dbRole, effectivePrivilegeHash: worker.effectivePrivilegeHash,
+      observedAt: state.at });
+    const readback = oracleSchedulerReadbackSchema.parse({ kind: 'oracle_scheduler_tick', host: HOST, instanceId: identity.instanceId,
+      release: identity.release, bootId: result.bootId, batchEpoch: result.batchEpoch, recordedAt: result.recordedAt, jobs: rows.length,
+      domainReadbackHash, observedAt: state.at });
+    await tx`UPDATE job_batch_candidates SET capability=${tx.json(capability)},result_evidence=${tx.json(readback)}
+      WHERE role='scheduler' AND instance_id=${identity.instanceId}`;
+    const report = classifyOracleSchedulerEvidence({ instanceId: identity.instanceId, release: identity.release, principal: worker.dbRole,
+      controlEpoch: state.epoch, at: Date.parse(state.at), candidate: { bootId: String(existing.bootId), capability, resultEvidence: readback }, result });
+    return { ...report, bootId: String(existing.bootId), requested: result.requested, readbackRows: rows.length, domainReadbackHash,
+      capability: { dbPrivileges: capability.dbPrivileges } };
+  }) as Promise<OracleSchedulerAttestation>;
+}
+
+/** Record a new scheduler boot -> one real tick with its ACK -> attest that tick. The launched scheduler records its own new boot
+ * before its first tick, so this evidence no longer matches afterwards: every restart needs a new canary. */
+export async function runOracleSchedulerCanary(input: { identity: OracleSchedulerIdentity; attest: postgres.Sql }) {
+  const bootId = randomUUID();
+  await recordOracleSchedulerBoot(input.identity, bootId);
+  const tick = await runOracleSchedulerTick(input.identity, bootId);
+  if (!tick) return { bootId, tick: null, after: null };
+  return { bootId, tick, after: await attestOracleSchedulerCanary(input) };
 }
 
 /** Capability-only re-observation: result evidence and the PR10d anchor are left exactly as stored. The separate
