@@ -92,6 +92,29 @@ async function finish(hop: Hop, settled: boolean): Promise<void> {
   });
 }
 
+async function lockControlRow(tx: ProductTransaction): Promise<{ mode: string; has_policy: boolean }> {
+  if (currentReplayDb()) throw new HttpOriginPermitError('replay_unsupported');
+  const [row] = await tx.execute<{ mode: string; has_policy: boolean }>(sql`SELECT mode,policy IS NOT NULL AS has_policy FROM http_origin_control WHERE id=1 FOR UPDATE`);
+  if (!row) throw new Error('http_origin_control_missing');
+  return row;
+}
+/** Operator write at TX entry (after the fence). Never while open; revision+1 so earlier reservations cannot begin. Charged hops stay charged. */
+export async function setHttpOriginPolicy(tx: ProductTransaction, value: unknown): Promise<void> {
+  const row = await lockControlRow(tx);
+  if (row.mode === 'open') throw new Error('http_origin_transition_invalid');
+  const policy = httpOriginPolicySchema.parse(value);
+  const updated = await tx.execute(sql`UPDATE http_origin_control SET policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${httpOriginPolicyHash(policy)},
+    revision=revision+1,updated_at=clock_timestamp() WHERE id=1 AND revision<9007199254740991 RETURNING id`);
+  if (updated.length !== 1) throw new Error('http_origin_revision_exhausted');
+}
+/** disabled ⇄ draining ⇄ open only. Outside disabled a policy must exist (0079 CHECK). */
+export async function setHttpOriginMode(tx: ProductTransaction, mode: 'disabled' | 'draining' | 'open'): Promise<void> {
+  const row = await lockControlRow(tx);
+  if ((row.mode === 'draining') === (mode === 'draining')) throw new Error('http_origin_transition_invalid');
+  if (mode !== 'disabled' && !row.has_policy) throw new Error('http_origin_policy_missing');
+  await tx.execute(sql`UPDATE http_origin_control SET mode=${mode},updated_at=clock_timestamp() WHERE id=1`);
+}
+
 /** No caller-supplied transport/proof: owns the real undici dispatch and reader. */
 export async function requestOriginHop(url: string, init: Parameters<CappedRequest>[1]): Promise<Response> {
   const hop=await reserve(new URL(url).origin,init.signal);

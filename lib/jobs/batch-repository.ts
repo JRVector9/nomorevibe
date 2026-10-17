@@ -191,37 +191,60 @@ export async function releaseBatchRole(value: RoleLease): Promise<boolean> {
   }));
 }
 export async function beginJobBatchDrain() {
-  return onPrimary(() => db.transaction(async tx => {
-    const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
-    if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
-    if (row.mode === 'draining') throw new Error('job_batch_transition_invalid');
-    await tx.update(jobBatchControl).set({mode:'draining',drainingFrom:row.mode,updatedAt:sql`clock_timestamp()`}).where(eq(jobBatchControl.id,1));
-  }));
+  return onPrimary(() => db.transaction(async tx => { await beginJobBatchDrainIn(tx); }));
+}
+/** Same transition inside a caller TX whose first lock is this control row. */
+export async function beginJobBatchDrainIn(tx: ProductTransaction) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
+  if (row.mode === 'draining') throw new Error('job_batch_transition_invalid');
+  const [updated] = await tx.update(jobBatchControl).set({mode:'draining',drainingFrom:row.mode,updatedAt:sql`clock_timestamp()`}).where(eq(jobBatchControl.id,1)).returning();
+  return updated;
 }
 export async function completeJobBatchTransition(target: Exclude<BatchMode,'draining'>) {
-  return onPrimary(() => db.transaction(async tx => {
-    const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
-    if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
-    if (row.mode !== 'draining' || target === row.drainingFrom) throw new Error('job_batch_transition_invalid');
-    if (target === 'versioned') checkedPolicy(row);
-    // Existing renew/result TXs start with this control lock and may later need
-    // a job row. Wait here before roles/jobs so neither a pending renew nor an
-    // opposite source->job lock order can be hidden by the old expiry snapshot.
-    const [sourceControl] = await tx.select({id:evidenceSourceControl.id}).from(evidenceSourceControl)
-      .where(eq(evidenceSourceControl.id,1)).for('update');
-    if (!sourceControl) throw new Error('evidence_source_control_missing');
-    await tx.select({role:roleLeases.role}).from(roleLeases).orderBy(roleLeases.role).for('update');
-    await tx.select({name:jobs.name}).from(jobs).orderBy(jobs.name).for('update');
-    // Wall time is evaluated again after all job-row waits.
-    const [active] = await tx.select({name:jobs.name}).from(jobs).where(sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`).limit(1);
-    const [item] = await tx.select({key:pipelineItemLeases.workKey}).from(pipelineItemLeases).where(sql`${pipelineItemLeases.token} is not null AND ${pipelineItemLeases.leaseUntil}>clock_timestamp()`).limit(1);
-    const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
-    const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
-      .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
-    if (active || item || role || source) throw new Error('job_batch_not_drained');
-    const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
-      .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
-    if (!updated) throw new Error('job_batch_epoch_exhausted');
-    return updated;
-  }));
+  return onPrimary(() => db.transaction(tx => completeJobBatchTransitionIn(tx,target)));
+}
+export async function completeJobBatchTransitionIn(tx: ProductTransaction, target: Exclude<BatchMode,'draining'>) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
+  if (row.mode !== 'draining' || target === row.drainingFrom) throw new Error('job_batch_transition_invalid');
+  if (target === 'versioned') checkedPolicy(row);
+  // Existing renew/result TXs start with this control lock and may later need
+  // a job row. Wait here before roles/jobs so neither a pending renew nor an
+  // opposite source->job lock order can be hidden by the old expiry snapshot.
+  const [sourceControl] = await tx.select({id:evidenceSourceControl.id}).from(evidenceSourceControl)
+    .where(eq(evidenceSourceControl.id,1)).for('update');
+  if (!sourceControl) throw new Error('evidence_source_control_missing');
+  await tx.select({role:roleLeases.role}).from(roleLeases).orderBy(roleLeases.role).for('update');
+  await tx.select({name:jobs.name}).from(jobs).orderBy(jobs.name).for('update');
+  // Wall time is evaluated again after all job-row waits.
+  const [active] = await tx.select({name:jobs.name}).from(jobs).where(sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`).limit(1);
+  const [item] = await tx.select({key:pipelineItemLeases.workKey}).from(pipelineItemLeases).where(sql`${pipelineItemLeases.token} is not null AND ${pipelineItemLeases.leaseUntil}>clock_timestamp()`).limit(1);
+  const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
+  const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
+    .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
+  if (active || item || role || source) throw new Error('job_batch_not_drained');
+  const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
+    .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
+  if (!updated) throw new Error('job_batch_epoch_exhausted');
+  return updated;
+}
+/** Operator policy write. Legacy only: versioned elections and candidates are bound to the current hash. */
+export async function setJobBatchPolicy(tx: ProductTransaction, value: unknown) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row) throw new Error('job_batch_control_missing');
+  if (row.mode !== 'legacy') throw new Error('job_batch_transition_invalid');
+  const policy = batchPolicySchema.parse(value);
+  const [updated] = await tx.update(jobBatchControl).set({policy,policyHash:batchPolicyHash(policy),updatedAt:sql`clock_timestamp()`})
+    .where(eq(jobBatchControl.id,1)).returning();
+  return updated;
+}
+/** Operator attestation for versioned writers. Legacy only, one step up, never lowered. */
+export async function bumpJobBatchContract(tx: ProductTransaction) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row) throw new Error('job_batch_control_missing');
+  if (row.mode !== 'legacy') throw new Error('job_batch_transition_invalid');
+  const [updated] = await tx.update(jobBatchControl).set({writerContractVersion:row.writerContractVersion+1,updatedAt:sql`clock_timestamp()`})
+    .where(eq(jobBatchControl.id,1)).returning();
+  return updated;
 }

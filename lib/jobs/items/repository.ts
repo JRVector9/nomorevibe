@@ -156,7 +156,7 @@ export async function releaseItemLease(tx: ProductTransaction, guard: ItemStageG
   if (!row) fail("item_lease_lost");
 }
 
-async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
+async function lockControlRow(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
   if (itemTransactions.has(tx)) return fail("item_stage_lock_order");
   // Deny-only transaction-local marker also covers a child adapter object.
   // It grants no authority and does not defend against trusted raw SQL changes.
@@ -167,8 +167,23 @@ async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promi
     .from(pipelineStageModes).where(eq(pipelineStageModes.stage, stage)).for("update");
   if (!row) return fail("item_stage_missing");
   await assertStageLockContext(tx, row.txId);
+  return row;
+}
+
+async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
+  const row = await lockControlRow(tx, stage);
   if (row.writerContractVersion < 1) return fail("item_stage_contract_required");
   return row;
+}
+
+/** Operator attestation that every writer honors the stage lock. Legacy only, one step up, never lowered. */
+export async function bumpStageWriterContract(tx: ProductTransaction, stage: ItemStage): Promise<StageState> {
+  const row = await lockControlRow(tx, stage);
+  if (row.mode !== "legacy") return fail("item_stage_transition_invalid");
+  const [bumped] = await tx.update(pipelineStageModes).set({ writerContractVersion: row.writerContractVersion + 1, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(pipelineStageModes.stage, stage), sql`pg_current_xact_id()::text = ${row.txId}`)).returning();
+  if (!bumped) return fail("item_stage_transaction_required");
+  return bumped;
 }
 
 /** Control APIs must run at transaction entry, before any domain/item lock.

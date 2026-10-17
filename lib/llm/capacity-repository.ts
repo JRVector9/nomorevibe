@@ -1902,3 +1902,30 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
   await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
   return { kind: "released", evidence };
 }
+
+import type { ModelCapacityMode } from "./capacity";
+/**
+ * 운영자 control 쓰기(PR06d). caller TX 가 fence 다음 첫 lock 으로 부른다. 장부 행은 건드리지 않는다 — dispatched/indeterminate 는 그대로 점유한다.
+ * 정책은 open 이 아닐 때만 바꾸고 revision 을 올린다(옛 대기는 다음 poll 에서 policy_changed 로 거둬진다).
+ */
+export async function setModelCapacityPolicy(tx: ProductTransaction, value: unknown) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const state = await control(tx);
+  if (state.mode === "open") fail("model_capacity_transition_invalid");
+  const policy = parseModelCapacityPolicy(value);
+  const [row] = await tx.update(modelCapacityControl).set({ policy, policyHash: modelCapacityPolicyHash(policy),
+    revision: sql`${modelCapacityControl.revision} + 1`, cursor: 0, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityControl.id, 1), sql`${modelCapacityControl.revision} < 9007199254740991`)).returning();
+  if (!row) fail("model_capacity_revision_exhausted");
+  return row;
+}
+/** mode 는 draining 을 거쳐서만 오간다(disabled ⇄ draining ⇄ open). disabled 밖은 정책이 있어야 한다. */
+export async function setModelCapacityMode(tx: ProductTransaction, mode: ModelCapacityMode) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const state = await control(tx);
+  if ((state.mode === "draining") === (mode === "draining")) fail("model_capacity_transition_invalid");
+  if (mode !== "disabled" && !state.policy) fail("model_capacity_policy_missing");
+  const [row] = await tx.update(modelCapacityControl).set({ mode, updatedAt: sql`clock_timestamp()` })
+    .where(eq(modelCapacityControl.id, 1)).returning();
+  return row;
+}
