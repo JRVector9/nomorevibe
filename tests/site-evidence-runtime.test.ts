@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { assertJobBatchAdmission, batchResultObservation, completeJobBatchTransition, JobBatchBlockedError } from '@/lib/jobs/batch-repository';
 import { requestDueJobs } from '@/lib/jobs/control';
 import { classifyBatchReadiness } from '@/lib/jobs/batches';
+vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), writerSiteActive: async () => true })); // PR15c: fence는 dr-fence-paths 테스트가 본다(이 fixture의 lock 순서 불변)
 
 const state = vi.hoisted(() => ({ mode: 'legacy', contract: 0, sourceBusy: false, transitions: 0,
   inserted: [] as string[], order: [] as string[] }));

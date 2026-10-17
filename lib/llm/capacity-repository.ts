@@ -37,6 +37,10 @@ import {
   ai2DispatchBindingSchema, ai2DispatchBindingHash, ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2DispatchBinding, type Ai2ModelDispatch,
 } from "./capacity";
+import { ModelCapacityDeferredError } from "./capacity-deferred";
+import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
+import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
 const fail = (code: string): never => { throw new Error(code); };
@@ -46,12 +50,15 @@ function transaction<T>(load: (tx: ProductTransaction) => Promise<T>): Promise<T
   return onPrimary(() => db.transaction(load));
 }
 
+/** DR writer fence가 첫 lock이다(seal의 fence UPDATE → control UPDATE와 같은 순서; control → fence는 그 UPDATE와 교착한다).
+ * fenced DB(옛 primary·승격 전 사본)는 admission을 닫는다: draining으로 보며, 원래 transport로 가는 disabled로도 내려가지 않는다. */
 async function control(tx: ProductTransaction, lock: "share" | "update" = "update") {
+  const fenced = !await writerSiteActive(tx);
   const [row] = await tx.select().from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for(lock);
   if (!row) return fail("model_capacity_control_missing");
   const policy = row.policy === null ? null : parseModelCapacityPolicy(row.policy);
   if (policy !== null && modelCapacityPolicyHash(policy) !== row.policyHash) fail("model_capacity_policy_hash_mismatch");
-  return { ...row, policy };
+  return { ...row, mode: fenced ? "draining" as const : row.mode, policy, fenced };
 }
 type Control = Awaited<ReturnType<typeof control>>;
 
@@ -65,14 +72,18 @@ export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
 /** Standalone primary read; the transaction has settled before transport starts.
  * This never expires requests, grants a reservation or appends an event. */
 export async function readModelCapacityCallerControl() {
-  return transaction(tx => lockModelCapacityCallerControl(tx));
+  const snapshot = await transaction(tx => lockModelCapacityCallerControl(tx));
+  // Every disabled-transport choice (coordinator, text/CLI admission) reads here. A background
+  // consumer lane never takes that uncapped path, even if open flips to disabled mid-tick.
+  if (snapshot.mode === "disabled" && slotOnlyModelCapacity()) throw new ModelCapacityDeferredError("disabled");
+  return snapshot;
 }
 
 function callerControlSnapshot(row: Control) {
   if (!["disabled", "open", "draining"].includes(row.mode)
     || !Number.isSafeInteger(row.epoch) || row.epoch < 1
     || !Number.isSafeInteger(row.revision) || row.revision < 1
-    || row.policy === null && (row.mode !== "disabled" || row.policyHash !== null)) {
+    || row.policy === null && (row.mode !== "disabled" && !row.fenced || row.policyHash !== null)) { // fenced는 policy 없이도 draining
     throw new Error("model_capacity_control_invalid");
   }
   const policy = row.policy && Object.freeze({ ...row.policy,
@@ -87,6 +98,7 @@ function callerControlSnapshot(row: Control) {
  * together for expiry are locked in queue order; newly inserted rows are owned
  * by this transaction before it can select one older waiting request. */
 async function expireRequests(tx: ProductTransaction, state: Control): Promise<void> {
+  if (state.fenced) return; // fenced DB: owner 자신의 정산(cancel·indeterminate)만 쓰고 남의 행 만료 정리는 하지 않는다
   const due = await tx.select().from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.state} = 'reserved' AND ${modelCapacityRequests.reservedUntil} <= clock_timestamp())
     OR (${modelCapacityRequests.state} = 'waiting' AND (${modelCapacityRequests.queueUntil} <= clock_timestamp()
@@ -137,7 +149,8 @@ async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
         eq(modelCapacityRequests.state, "waiting"), sql`${modelCapacityRequests.queueUntil} > clock_timestamp()`)).returning();
     if (!changed) continue;
     await event(tx, changed, "reserved", "waiting", "reserved");
-    await tx.update(modelCapacityControl).set({ cursor: (position + 1) % cycle.length, updatedAt: sql`clock_timestamp()` })
+    // updated_at은 모드·정책이 바뀐 시각이다(판정 수집기가 구간 중 변경으로 읽는다). cursor 진행은 그 시각을 바꾸지 않는다.
+    await tx.update(modelCapacityControl).set({ cursor: (position + 1) % cycle.length })
       .where(eq(modelCapacityControl.id, 1));
     return;
   }
@@ -230,6 +243,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
   websearch?: WebsearchQueryInput): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
+    if (state.fenced) return { kind: "deferred", reason: "draining" }; // fenced: 만료 정리·대기 행·예약을 쓰지 않는다
     let original: RequestRow | undefined;
     if (crawl) {
       const rows = await lockCrawlTaglineRequests(tx, checked.requestId, crawl);
@@ -249,10 +263,12 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
       : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
-        : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+        : checked.routeId === "product-intro-check" ? introCheckFence(tx, memberKeys, checked.requestId)
+          : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
       ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
-        ? textProfileFence(tx, logicalKey, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
+        ? textProfileFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("bg:")
+          ? cliKeyFence(tx, logicalKey, checked.routeId, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     const [existing] = await tx.select({ ...getTableColumns(modelCapacityRequests),
       live: sql<boolean>`${modelCapacityRequests.reservedUntil} > clock_timestamp()` }).from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, checked.requestId));
@@ -304,6 +320,7 @@ export async function beginModelDispatch(value: ModelCapacityReservation): Promi
   const checked = modelCapacityReservationSchema.parse(value);
   return transaction(async tx => {
     const state = await control(tx);
+    if (state.fenced) return { kind: "ownership_lost" }; // fenced: dispatch도 만료 정리도 쓰지 않는다
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (row && await expireReservation(tx, row)) return { kind: "ownership_lost" };
@@ -346,18 +363,20 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const korean = product.success ? product : productTaglineKoModelDispatchSchema.safeParse(value);
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
   const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
-  const bound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
+  const websearchBound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
+  const bound = websearchBound.success ? websearchBound : cliModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
   if (!["transport_unknown", "local_abort", "process_exit", "commit_unknown"].includes(reason)) fail("invalid_model_capacity_reason");
-  return transaction(async tx => {
+  const marked = await transaction(async tx => {
     const state = await control(tx);
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (!owned(row, checked)) return false;
     if (row.logicalWorkKey !== null && (!bound.success || row.dispatchBindingHash !== bound.data.bindingHash
-      || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.logicalWorkKey?.startsWith("ai2:")
+      || !isDeepStrictEqual(row.dispatchBinding, bound.data.binding))) fail(row.provider === "claude-cli" || row.provider === "grok-cli"
+      ? "cli_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("ai2:")
         ? "ai2_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:profile:")
           ? "text_profile_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:reason:ko:")
             ? "reason_translation_capacity_dispatch_binding_mismatch" : row.logicalWorkKey?.startsWith("text:product-translate:")
@@ -372,6 +391,25 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
       .where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
     await event(tx, changed, "dispatch_indeterminate", "dispatched", "indeterminate", reason);
     return true;
+  });
+  // PR15d: 이 프로세스가 같은 호출의 게이트웨이 로컬 종료를 직접 봤으면(MODEL_CAPACITY_LOCAL_END 일 때만 생김) 사실로 남긴다. 해제는 아니다.
+  // 기록 실패는 indeterminate 결과를 바꾸지 않는다 — 회수 근거가 없을 뿐이고 점유·C 는 그대로다.
+  const witness = marked ? takeGatewayLocalEnd(checked.requestId) : null;
+  if (witness) await recordModelDispatchLocalEnd(checked, bound.success ? bound.data.bindingHash : null, witness).catch(() => {});
+  return marked;
+}
+
+/** 소유 handle 이 잠긴 행과 같고 행이 indeterminate 일 때만, 요청당 한 번 dispatch_local_ended 사실을 쓴다(lock 순서: fence → control → 행).
+ * 두 번째 기록은 0099 부분 unique index 에서 조용히 빠진다. 대상 없는 ON CONFLICT 라 events SELECT 권한이 없는 최소권한 principal 도 쓸 수 있다. */
+async function recordModelDispatchLocalEnd(checked: ModelCapacityDispatch, bindingHash: string | null, witness: GatewayLocalEnd): Promise<void> {
+  await transaction(async tx => {
+    await control(tx);
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+    if (!owned(row, checked) || row.state !== "indeterminate" || row.dispatchBindingHash !== bindingHash || witness.requestId !== row.requestId) return;
+    await tx.insert(modelCapacityEvents).values({ requestId: row.requestId, kind: "dispatch_local_ended", epoch: row.epoch, revision: row.revision,
+      policyHash: row.policyHash, fromState: "indeterminate", toState: "indeterminate", reason: null, evidence: gatewayLocalEndFactSchema.parse({ version: 1,
+        kind: "gateway_local_end", requestId: row.requestId, owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId },
+        bindingHash: row.dispatchBindingHash, dispatches: witness.dispatches, terminals: witness.terminals }) }).onConflictDoNothing();
   });
 }
 
@@ -1658,4 +1696,277 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
   const evidence = stored[0]!;
   return Object.freeze({ kind: "settled" as const, requestId: evidence.dispatch.requestId, bindingHash: evidence.dispatch.bindingHash,
     responseHash: evidence.responseHash, model: evidence.dispatch.binding.model, outcome: Object.freeze(structuredClone(evidence.outcome)) });
+}
+
+import { cliDispatchBindingSchema, cliDispatchBindingHash, cliModelDispatchSchema, cliModelTerminalEvidenceSchema,
+  introCheckInputSchema, introCheckMemberKeys, introCheckLogicalWorkKey, grokSessionLogicalWorkKey,
+  type CliDispatchBinding, type CliModelDispatch, type IntroCheckMember } from "./capacity";
+import { cliProcessTerminalEvidenceSchema } from "./cli-serving-contract";
+import type { CliProcessTerminal } from "./cli-process-runner";
+/** CLI 호출이 묶이는 고정 대상. AI1·AI2 는 gateway 와 같은 논리 키를, 감사·소개 검수·Grok 세션은 background/reviewer 키를 쓴다. */
+export type CliTarget = Readonly<{ kind: "ai1"; candidateId: number }> | Readonly<{ kind: "ai2"; candidateId: number; vote: number }>
+  | Readonly<{ kind: "audit"; itemId: number }> | Readonly<{ kind: "intro"; members: readonly IntroCheckMember[] }>
+  | Readonly<{ kind: "grok-session"; instanceId: string }>;
+type FixedCli = Readonly<{ target: CliTarget; logical: string; memberKeys: string[] | null; kinds: readonly CliDispatchBinding["kind"][] }>;
+const CLI_TARGET_KEYS = { ai1: ["candidateId"], ai2: ["candidateId", "vote"], audit: ["itemId"], intro: ["members"], "grok-session": ["instanceId"] } as const;
+const CLI_FIXED = {
+  ai1: { class: "first", routeId: "crawl-agent-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai1_legacy_cli", "ai1_item_cli"] },
+  ai2: { class: "second", routeId: "second-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai2_item_cli"] },
+  audit: { class: "background", routeId: "product-audit", providers: ["claude-cli"], kinds: ["product_audit_cli"] },
+  intro: { class: "background", routeId: "product-intro-check", providers: ["claude-cli"], kinds: ["intro_check_cli"] },
+  "grok-session": { class: "background", routeId: "grok-session-check", providers: ["grok-cli"], kinds: ["grok_session_cli"] },
+} as const;
+const safeId = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+/** Snapshot the caller's target before any held lock; malformed targets fail before SQL. */
+function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): FixedCli {
+  const kind = raw?.kind, keys = Object.hasOwn(CLI_TARGET_KEYS, kind ?? "") ? CLI_TARGET_KEYS[kind] : null;
+  if (!keys || Object.keys(raw).length !== keys.length + 1 || keys.some(key => !Object.hasOwn(raw, key))) return fail("invalid_cli_capacity_identity");
+  let target: CliTarget, logical: string, memberKeys: string[] | null = null;
+  if (raw.kind === "intro") {
+    const members = introCheckInputSchema.shape.members.safeParse(raw.members);
+    if (!members.success) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "intro", members: Object.freeze(members.data) });
+    memberKeys = introCheckMemberKeys(members.data); logical = introCheckLogicalWorkKey(members.data);
+  } else if (raw.kind === "grok-session") {
+    if (raw.instanceId !== value.owner.instanceId) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "grok-session", instanceId: raw.instanceId }); logical = grokSessionLogicalWorkKey(raw.instanceId);
+  } else if (raw.kind === "ai2") {
+    if (!safeId(raw.candidateId) || !safeId(raw.vote)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "ai2", candidateId: raw.candidateId, vote: raw.vote }); logical = `ai2:${raw.candidateId}:${raw.vote}`;
+  } else if (raw.kind === "ai1") {
+    if (!safeId(raw.candidateId)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "ai1", candidateId: raw.candidateId }); logical = `ai1:${raw.candidateId}`;
+  } else {
+    if (!safeId(raw.itemId)) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "audit", itemId: raw.itemId }); logical = `bg:audit:${raw.itemId}`;
+  }
+  const fixed = CLI_FIXED[target.kind];
+  // AI1 legacy 는 gateway 선례처럼 work key 를 묶지 않는다(item 은 finish 에서 item bindingHash 로 묶는다)
+  if (value.class !== fixed.class || value.pool !== "reviewer" || value.routeId !== fixed.routeId
+    || !(fixed.providers as readonly string[]).includes(value.provider) || target.kind !== "ai1" && (!value.workKey.startsWith(`${logical}:`)
+      || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1)))) return fail("invalid_cli_capacity_identity");
+  return Object.freeze({ target, logical, memberKeys, kinds: fixed.kinds });
+}
+/** Same-key active work, or an unbound call on the same route, blocks a background CLI target. */
+async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+/** Any overlapping intro member, or an unbound intro-check call, blocks the batch. */
+async function introCheckFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
+  const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = ${"product-intro-check"}
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+  return !!blocked;
+}
+function cliFence(tx: ProductTransaction, fixed: FixedCli, ownId: string): Promise<boolean> {
+  return fixed.target.kind === "ai1" ? ai1Fence(tx, fixed.logical, ownId) : fixed.target.kind === "ai2" ? ai2Fence(tx, fixed.logical, ownId)
+    : fixed.target.kind === "intro" ? introCheckFence(tx, fixed.memberKeys!, ownId) : cliKeyFence(tx, fixed.logical, CLI_FIXED[fixed.target.kind].routeId, ownId);
+}
+/** The fixed CLI target is in the very first waiting INSERT; AI1/AI2 share the gateway key so either transport fences the other. */
+export async function requestCliModelSlot(value: ModelCapacityRequest, target: CliTarget): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityRequestSchema.parse(value), fixed = fixedCliIdentity(checked, target);
+  return requestSlot(checked, fixed.logical, fixed.memberKeys ?? undefined);
+}
+declare const cliLockBrand: unique symbol;
+export type CliCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>; readonly [cliLockBrand]: true }>;
+const cliLocks = new WeakMap<CliCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; fixed: FixedCli; finished: boolean }>();
+/** This UPDATE prefix must precede all stage/domain/item/job locks. No nested TX. */
+export async function lockCliModelCapacityDispatch(tx: ProductTransaction, value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; target: CliTarget;
+}): Promise<CliCapacityDispatchLock | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const fixed = fixedCliIdentity(identity, value.target);
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== fixed.logical) fail("model_capacity_logical_work_mismatch");
+  if (!isDeepStrictEqual(row.logicalMemberKeys ?? null, fixed.memberKeys)) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== "reserved" || state.mode !== "open" || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await cliFence(tx, fixed, row.requestId)) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until > clock_timestamp() AS live
+    FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const locked = Object.freeze({ control: snapshot }) as CliCapacityDispatchLock;
+  cliLocks.set(locked, { tx, row, identity, fixed, finished: false });
+  return locked;
+}
+/** The binding must be the target's own kind and fixed values; item kinds bind the item lease owner, others the exact input. */
+function cliBindingFits(binding: CliDispatchBinding, fixed: FixedCli, identity: ModelCapacityRequestIdentity, logical: string | null): boolean {
+  const target = fixed.target, ownerFits = (value: { instanceId: string; bootId: string }) =>
+    value.instanceId === identity.owner.instanceId && value.bootId === identity.owner.bootId;
+  if (!fixed.kinds.includes(binding.kind) || binding.logicalWorkKey !== logical || binding.logicalWorkKey !== fixed.logical
+    || binding.routeId !== identity.routeId || binding.provider !== identity.provider || binding.model !== identity.model) return false;
+  switch (binding.kind) {
+    case "ai1_legacy_cli": return target.kind === "ai1" && binding.candidateId === target.candidateId;
+    case "ai1_item_cli": return target.kind === "ai1" && binding.review.candidateId === target.candidateId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.item.bindingHash}` && ownerFits(binding.item.owner);
+    case "ai2_item_cli": return target.kind === "ai2" && binding.review.candidateId === target.candidateId && binding.review.vote === target.vote
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.item.bindingHash}` && ownerFits(binding.item.owner);
+    case "product_audit_cli": return target.kind === "audit" && binding.itemId === target.itemId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+    case "intro_check_cli": return target.kind === "intro" && isDeepStrictEqual(introCheckInputSchema.shape.members.parse(binding.members), target.members)
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+    case "grok_session_cli": return target.kind === "grok-session" && binding.instanceId === target.instanceId
+      && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+  }
+}
+/** The fixed domain caller proves its own rows/lease in this same TX before this final reservation CAS. */
+export async function finishCliModelCapacityDispatch(tx: ProductTransaction, lock: CliCapacityDispatchLock,
+  value: CliDispatchBinding): Promise<CliModelDispatch> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const proof = cliLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_cli_capacity_dispatch_lock");
+  const binding = cliDispatchBindingSchema.parse(value);
+  if (!cliBindingFits(binding, proof.fixed, proof.identity, proof.row.logicalWorkKey)) fail("cli_capacity_dispatch_binding_mismatch");
+  proof.finished = true;
+  const bindingHash = cliDispatchBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
+    dispatchBindingHash: bindingHash, dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, proof.row.requestId), eq(modelCapacityRequests.state, "reserved"),
+      eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) fail("cli_model_reservation_lost");
+  const dispatch = cliModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+  return dispatch;
+}
+const CLI_KIND_CLASS: Record<CliDispatchBinding["kind"], RequestRow["class"]> = { ai1_legacy_cli: "first", ai1_item_cli: "first",
+  ai2_item_cli: "second", product_audit_cli: "background", intro_check_cli: "background", grok_session_cli: "background" };
+/** The historical dispatch rebuilt from the actual locked row; null unless every row column agrees with its immutable binding. */
+function cliRowDispatch(row: RequestRow | undefined): CliModelDispatch | null {
+  if (!row?.dispatchedAt || !row.token) return null;
+  const parsed = cliModelDispatchSchema.safeParse({ requestId: row.requestId, owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId },
+    token: row.token, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash, binding: row.dispatchBinding, bindingHash: row.dispatchBindingHash });
+  if (!parsed.success) return null;
+  const dispatch = parsed.data, binding = dispatch.binding;
+  const workKey = binding.kind === "ai1_legacy_cli" ? row.workKey : binding.kind === "ai1_item_cli" || binding.kind === "ai2_item_cli"
+    ? `${binding.logicalWorkKey}:${binding.item.bindingHash}` : `${binding.logicalWorkKey}:${binding.inputHash}`;
+  const memberKeys = binding.kind === "intro_check_cli" ? introCheckMemberKeys(binding.members) : null;
+  return row.logicalWorkKey === binding.logicalWorkKey && isDeepStrictEqual(row.logicalMemberKeys ?? null, memberKeys)
+    && row.routeId === binding.routeId && row.provider === binding.provider && row.model === binding.model
+    && row.class === CLI_KIND_CLASS[binding.kind] && row.pool === "reviewer" && row.workKey === workKey
+    && isDeepStrictEqual(row.dispatchBinding, binding) ? dispatch : null;
+}
+/**
+ * Only the runner's opaque terminal settles a CLI call — every ending (exited, killed, spawn_failed, not_started) is a physical end.
+ * Its request, transport and C must equal the historical dispatch; today's policy, mode, owner or job never block completion.
+ */
+export async function reconcileCliProcessTerminal(terminal: CliProcessTerminal): Promise<{ kind: "settled" | "already_settled" }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const { readCliProcessTerminal } = await import("./cli-process-runner");
+  const native = readCliProcessTerminal(terminal);
+  if (!native) fail("invalid_cli_process_terminal");
+  const process = cliProcessTerminalEvidenceSchema.parse(native);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, process.requestId)).for("update");
+    const dispatch = cliRowDispatch(row);
+    if (!dispatch || process.totalTokenBound !== dispatch.binding.totalTokenBound
+      || !isDeepStrictEqual(process.transport, dispatch.binding.transport)) return fail("cli_process_terminal_binding_mismatch");
+    const evidence = cliModelTerminalEvidenceSchema.parse({ version: 1, kind: "cli_model_terminal", dispatch, process }), evidenceHash = reviewHash(evidence);
+    if (row!.state === "settled") {
+      if (row!.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row!.terminalEvidence, evidence)) fail("cli_process_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row!.state !== "dispatched" && row!.state !== "indeterminate") fail("cli_process_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence,
+      terminalEvidenceHash: evidenceHash, settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityRequests.requestId, row!.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row!.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+import { z } from "zod";
+import { modelDispatchReleaseEvidenceSchema, gatewayLocalEndFactSchema, type ModelCapacityOwner, type ModelDispatchReleaseEvidence } from "./capacity";
+/** owner 가 남긴 게이트웨이 로컬 종료 사실(dispatch_local_ended). endedAt 은 그 event 의 DB clock(기록 시각 ≥ 실제 로컬 종료)이다. */
+export type ModelDispatchLocalEnd = Readonly<{ endedAt: string; owner: ModelCapacityOwner; bindingHash: string | null; dispatches: number; terminals: number }>;
+/** 회수 판정에 넘기는 잠긴 행의 사실. 시각은 이 TX 의 DB clock(UTC, ms)이다. dispatchAt 은 dispatched_at 또는 첫 dispatch_started event.
+ * localEnd 는 indeterminate 행에 남은 owner 의 로컬 종료 사실(없으면 null). */
+export type ModelDispatchReleaseCandidate = Readonly<{ requestId: string; owner: ModelCapacityOwner; state: "dispatched" | "indeterminate";
+  providerBudgetId: string; dispatchAt: string | null; bindingHash: string | null; now: string; oldGeneration: boolean; localEnd?: ModelDispatchLocalEnd | null }>;
+export type ModelDispatchReleaseResult = { kind: "released"; evidence: ModelDispatchReleaseEvidence } | { kind: "blocked"; reason: string }
+  | { kind: "not_active" };
+/**
+ * D11·DR 회수 hook. caller TX 안에서 control UPDATE → request UPDATE 를 잡은 뒤 verify 가 같은 TX·같은 DB clock 으로 종료 근거를 다시
+ * 평가한다. 근거가 이 행(요청·owner·상태·dispatch 시각·binding)과 이 시각에 묶일 때만 withdrawn 으로 바꾸고 같은 근거를 행과
+ * dispatch_released event 에 남긴다. TTL·owner 죽음·정책 변경은 근거 kind 에 없다. caller 의 fence/promotion lock 은 이 호출보다 먼저다.
+ */
+export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, requestId: string,
+  verify: (candidate: ModelDispatchReleaseCandidate) => Promise<ModelDispatchReleaseEvidence | { blocked: string }>): Promise<ModelDispatchReleaseResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const id = z.uuid().parse(requestId);
+  const state = await control(tx);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, id)).for("update");
+  if (!row || (row.state !== "dispatched" && row.state !== "indeterminate")) return { kind: "not_active" };
+  const iso = (value: unknown) => sql`to_char((${value}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const [clock] = await tx.execute<{ dispatch_at: string | null; now: string }>(sql`SELECT ${iso(sql`coalesce(r.dispatched_at, (SELECT min(e.created_at)
+    FROM model_capacity_events e WHERE e.request_id = r.request_id AND e.kind = 'dispatch_started'))`)} AS dispatch_at, ${iso(sql`clock_timestamp()`)} AS now
+    FROM model_capacity_requests r WHERE r.request_id = ${row.requestId}::uuid`);
+  const owner = Object.freeze({ instanceId: row.ownerInstanceId, bootId: row.ownerBootId });
+  // 행 lock 뒤에 읽는다. 사실 event 는 append-only·요청당 하나이고 같은 행 lock 아래에서만 쓰인다.
+  const [fact] = row.state === "indeterminate" ? await tx.execute<{ evidence: unknown; at: string }>(sql`SELECT evidence, ${iso(sql`created_at`)} AS at
+    FROM model_capacity_events WHERE request_id = ${row.requestId}::uuid AND kind = 'dispatch_local_ended'`) : [];
+  const parsedFact = fact ? gatewayLocalEndFactSchema.parse(fact.evidence) : null;
+  const localEnd = fact && parsedFact ? Object.freeze({ endedAt: fact.at, owner: Object.freeze({ ...parsedFact.owner }), bindingHash: parsedFact.bindingHash,
+    dispatches: parsedFact.dispatches, terminals: parsedFact.terminals }) : null;
+  const verdict = await verify(Object.freeze({ requestId: row.requestId, owner, state: row.state, providerBudgetId: row.providerBudgetId,
+    dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, now: clock.now,
+    oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash, localEnd }));
+  if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
+  const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
+  if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId
+    || evidence.fromState !== row.state || evidence.dispatchAt !== clock.dispatch_at || evidence.bindingHash !== row.dispatchBindingHash
+    || evidence.evaluatedAt !== clock.now || evidence.kind === "dr_call_drain" && (evidence.scope !== `model:${row.providerBudgetId}`
+      || row.epoch === state.epoch && row.revision === state.revision && row.policyHash === state.policyHash)) fail("model_capacity_release_evidence_mismatch");
+  // local_call_ended 는 이 행에 남은 같은 owner·binding 의 로컬 종료 사실과 그 기록 시각에만 묶인다.
+  if (evidence.kind === "local_call_ended" && (row.state !== "indeterminate" || !localEnd || evidence.endedAt !== localEnd.endedAt
+    || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
+    || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence, terminalEvidenceHash: reviewHash(evidence),
+    updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
+  if (!changed) fail("model_capacity_release_state_changed");
+  await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
+  return { kind: "released", evidence };
+}
+
+import type { ModelCapacityMode } from "./capacity";
+/**
+ * 운영자 control 쓰기(PR06d). caller TX 가 fence 다음 첫 lock 으로 부른다. 장부 행은 건드리지 않는다 — dispatched/indeterminate 는 그대로 점유한다.
+ * 정책은 open 이 아닐 때만 바꾸고 revision 을 올린다(옛 대기는 다음 poll 에서 policy_changed 로 거둬진다).
+ */
+export async function setModelCapacityPolicy(tx: ProductTransaction, value: unknown) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const state = await control(tx);
+  if (state.mode === "open") fail("model_capacity_transition_invalid");
+  const policy = parseModelCapacityPolicy(value);
+  const [row] = await tx.update(modelCapacityControl).set({ policy, policyHash: modelCapacityPolicyHash(policy),
+    revision: sql`${modelCapacityControl.revision} + 1`, cursor: 0, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityControl.id, 1), sql`${modelCapacityControl.revision} < 9007199254740991`)).returning();
+  if (!row) fail("model_capacity_revision_exhausted");
+  return row;
+}
+/** mode 는 draining 을 거쳐서만 오간다(disabled ⇄ draining ⇄ open). disabled 밖은 정책이 있어야 한다. */
+export async function setModelCapacityMode(tx: ProductTransaction, mode: ModelCapacityMode) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const state = await control(tx);
+  if ((state.mode === "draining") === (mode === "draining")) fail("model_capacity_transition_invalid");
+  if (mode !== "disabled" && !state.policy) fail("model_capacity_policy_missing");
+  const [row] = await tx.update(modelCapacityControl).set({ mode, updatedAt: sql`clock_timestamp()` })
+    .where(eq(modelCapacityControl.id, 1)).returning();
+  return row;
 }

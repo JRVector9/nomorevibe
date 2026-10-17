@@ -12,6 +12,10 @@ vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIE
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
   loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
+// These job units do not open a database; open/draining admission is covered by cli-model-capacity-callers.test.ts.
+vi.mock("@/lib/llm/capacity-repository", () => ({
+  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
+}));
 
 const verdict = { ok: true, outcome: { decision: "approve", reason: "Usable app", confidence: 0.9, evidenceIds: ["product"] } };
 const context = (over: Partial<JobContext<null>> = {}): JobContext<null> => ({ cursor: null, save: vi.fn(),

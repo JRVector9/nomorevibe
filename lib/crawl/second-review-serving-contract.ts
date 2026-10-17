@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { startupGatewayServingContracts } from "@/lib/llm/gateway-serving-contract-config";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const ai2GatewayServingContractSchema = z.object({
@@ -20,8 +21,6 @@ export function ai2GatewayServingContractHash(value: Ai2GatewayServingContract):
   return createHash("sha256").update(JSON.stringify(ai2GatewayServingContractSchema.parse(value))).digest("hex");
 }
 
-/** No serving deployment has yet supplied the required total-bound/terminal evidence. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- No model can enable the empty deployment allowlist.
-export function resolveAi2GatewayServingContract(_model: string): Ai2GatewayServingContract | null {
-  return null;
-}
+const configured = startupGatewayServingContracts("second-review", ai2GatewayServingContractSchema);
+/** 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS 에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
+export function resolveAi2GatewayServingContract(model: string): Ai2GatewayServingContract | null { return configured.get(model) ?? null; }

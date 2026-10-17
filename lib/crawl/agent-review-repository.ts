@@ -4,12 +4,14 @@ import { z } from "zod";
 import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
-import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
+import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
+  lockCliModelCapacityDispatch, finishCliModelCapacityDispatch, type CliCapacityDispatchLock } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, type Ai1ItemModelDispatch,
-  type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
+  type CliModelDispatch, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
 import type { PreparedAi1GatewayCall } from "./agent-review-gateway";
+import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract, type ReviewCliProvider } from "./review-cli-call";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
   agentRepositoryScans, agentRepositoryObservations, jobs,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
@@ -18,6 +20,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { assertJobLease, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { claimItemLease, readItemStage, assertItemLease, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -565,6 +568,10 @@ export type ModelCapacityReviewClaim = ReviewClaim & { dispatch?: Ai1ModelDispat
 type CapacityClaim = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
   call: Pick<PreparedAi1GatewayCall, "model" | "inputHash" | "wireHash" | "servingContractHash" | "totalTokenBound"> };
 type ClaimAuthority = { kind: "legacy"; job: JobLease } | { kind: "item"; owner: ItemOwner; ttlMs: number };
+/** CLI 호출(05c-4)의 값 사본 — 실행 권한은 prepared 객체에만 있다 */
+type CliCapacityClaim = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; call: z.infer<typeof reviewCliCallRefSchema> };
+export type CliModelCapacityReviewClaim = ReviewClaim & { dispatch?: CliModelDispatch };
+const isCliClaim = (value: CapacityClaim | CliCapacityClaim): value is CliCapacityClaim => (value.call as { kind?: unknown }).kind === "prepared_cli";
 
 export type AgentReviewItemModelIntent = Readonly<{ context: ReviewDomainContext; provider: "abcllm"; model: string; owner: ItemOwner }>;
 /** Consistency data from a rolled-back fresh claim, never provider authority. */
@@ -575,14 +582,26 @@ export class AgentReviewItemModelReservationRequired extends ModelCapacityDeferr
     this.intent = snapshotItemModelIntent(value);
   }
 }
-function snapshotItemModelIntent(value: AgentReviewItemModelIntent): AgentReviewItemModelIntent {
+export type AgentReviewItemCliModelIntent = Readonly<{ context: ReviewDomainContext; provider: ReviewCliProvider; model: string; owner: ItemOwner }>;
+/** CLI 심사자의 같은 되감은 consumer 요청(05c-4). gateway 의도와 다른 고정 class 라 서로의 coordinator 로 넘어가지 않는다. */
+export class AgentReviewItemCliModelReservationRequired extends ModelCapacityDeferredError {
+  readonly intent: AgentReviewItemCliModelIntent;
+  constructor(value: AgentReviewItemCliModelIntent) {
+    super("reservation_required");
+    this.intent = snapshotItemModelIntent(value, z.enum(["claude-cli", "grok-cli"]));
+  }
+}
+function snapshotItemModelIntent(value: AgentReviewItemModelIntent): AgentReviewItemModelIntent;
+function snapshotItemModelIntent(value: AgentReviewItemCliModelIntent, provider: z.ZodType<ReviewCliProvider>): AgentReviewItemCliModelIntent;
+function snapshotItemModelIntent(value: AgentReviewItemModelIntent | AgentReviewItemCliModelIntent,
+  provider: z.ZodType<string> = z.literal("abcllm")): AgentReviewItemModelIntent | AgentReviewItemCliModelIntent {
   const snapshot = structuredClone(value);
   const object = (v: unknown): boolean => v !== null && typeof v === "object" && !Array.isArray(v);
   const sha = z.string().regex(/^[a-f0-9]{64}$/);
   const checked = z.object({ context: z.object({ candidate: z.custom<CrawlCandidate>(object), document: z.custom<CrawlDocument>(object),
     settings: z.custom<CrawlSettings>(object), input: z.object({ snapshot: z.custom<ReviewInput["snapshot"]>(object),
       inputHash: sha, policyHash: sha, sourceRevisionHash: sha, source: z.custom<ReviewInput["source"]>(object), validUntil: z.date() }).strict() }).strict(),
-    provider: z.literal("abcllm"), model: z.string().min(1).max(160), owner: itemOwnerSchema }).strict().parse(snapshot);
+    provider, model: z.string().min(1).max(160), owner: itemOwnerSchema }).strict().parse(snapshot);
   z.number().int().positive().safe().parse(checked.context.candidate.id);
   agentReviewBinding(checked.context.candidate.id, checked.context.input, { provider: checked.provider, model: checked.model });
   // Strict validation must preserve the factory's full input JSON wire identity.
@@ -591,7 +610,7 @@ function snapshotItemModelIntent(value: AgentReviewItemModelIntent): AgentReview
     if (child && typeof child === "object" && !Object.isFrozen(child)) freeze(child);
   }); Object.freeze(v); };
   freeze(checked);
-  return checked;
+  return checked as AgentReviewItemModelIntent | AgentReviewItemCliModelIntent;
 }
 
 export type ItemModelCapacityReviewClaim = ReviewClaim & { dispatch?: Ai1ItemModelDispatch };
@@ -613,6 +632,26 @@ export async function claimConsumerItemAgentReviewWithModelReservation(input: {
   catch (error) {
     if (error instanceof HealthyLegacyReviewOwner) return { kind: "skipped", reason: "running" };
     if (error instanceof Error && error.message === "ai1_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  }
+}
+type CliItemCapacityClaim = CliCapacityClaim & { expected: AgentReviewItemCliModelIntent };
+/** CLI consumer re-entry(05c-4) — gateway 와 같은 순서: control/request UPDATE 가 S3/domain 잠금보다 앞선다. */
+export async function claimConsumerItemAgentReviewWithCliModelReservation(input: {
+  expected: AgentReviewItemCliModelIntent; reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
+  call: z.infer<typeof reviewCliCallRefSchema>;
+}): Promise<CliModelCapacityReviewClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const expected = snapshotItemModelIntent(input.expected, z.enum(["claude-cli", "grok-cli"]));
+  const reservation = modelCapacityReservationSchema.parse(input.reservation), identity = modelCapacityRequestIdentitySchema.parse(input.identity);
+  const call = reviewCliCallRefSchema.parse(input.call);
+  if (!isDeepStrictEqual(expected.owner, reservation.owner) || !isDeepStrictEqual(expected.owner, identity.owner))
+    throw new Error("invalid_agent_review_item_model_intent");
+  try { return await claimReview({ ...expected.context, provider: expected.provider, model: expected.model },
+    { kind: "item", owner: expected.owner, ttlMs: STALE_LOCK_MS }, { reservation, identity, call, expected }, true); }
+  catch (error) {
+    if (error instanceof HealthyLegacyReviewOwner) return { kind: "skipped", reason: "running" };
+    if (error instanceof Error && error.message === "cli_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
     throw error;
   }
 }
@@ -647,6 +686,21 @@ export function claimAgentReviewWithModelReservation(input: ClaimContext & { lea
   });
 }
 
+/** CLI 심사자의 고정 legacy 경로(05c-4). 같은 TX 가 CLI 잠금·attempt·dispatch 를 함께 commit 한다. */
+export function claimAgentReviewWithCliModelReservation(input: ClaimContext & { lease: JobLease } & CliCapacityClaim): Promise<CliModelCapacityReviewClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const reservation = modelCapacityReservationSchema.parse(input.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(input.identity);
+  const call = reviewCliCallRefSchema.parse(input.call);
+  const context = structuredClone({ candidate: input.candidate, document: input.document, settings: input.settings,
+    input: input.input, provider: input.provider, model: input.model, now: input.now });
+  const job = Object.freeze({ name: input.lease.name, token: input.lease.token, requestedVersion: input.lease.requestedVersion });
+  return claimReview(context, { kind: "legacy", job }, { reservation, identity, call }).catch(error => {
+    if (error instanceof Error && error.message === "cli_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  });
+}
+
 /** Inactive adapter only. Item provenance is not part of the legacy replay certificate. */
 export async function claimItemAgentReview(input: ClaimContext & { owner: ItemOwner; ttlMs: number }): Promise<ReviewClaim> {
   if (currentReplayDb()) throw new Error("replay_item_execution_unsupported");
@@ -669,20 +723,28 @@ export async function claimConsumerItemAgentReview(input: ClaimContext & { owner
 }
 
 function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved: ItemCapacityClaim, consumer: true): Promise<ItemModelCapacityReviewClaim>;
+function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved: CliCapacityClaim | CliItemCapacityClaim, consumer?: boolean): Promise<CliModelCapacityReviewClaim>;
 function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim, consumer?: boolean): Promise<ModelCapacityReviewClaim>;
-async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim | ItemCapacityClaim, consumer = false): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch }> {
+async function claimReview(input: ClaimContext, authority: ClaimAuthority, reserved?: CapacityClaim | ItemCapacityClaim | CliCapacityClaim | CliItemCapacityClaim,
+  consumer = false): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch | CliModelDispatch }> {
   if (!input.settings.enabled || input.settings.reviewMode === "off") return { kind: "skipped", reason: "disabled" };
   return onPrimary(() => db.transaction(async tx => {
     // currentReplayDb revalidates the private active verified handler scope.
     // Fixed replay profiles keep their existing legacy fixture contract/grants;
     // ordinary claims always read the control before the S3/domain prefix.
-    let dispatchLock: Ai1CapacityDispatchLock | null = null;
-    if (reserved) {
+    let dispatchLock: Ai1CapacityDispatchLock | null = null, cliLock: CliCapacityDispatchLock | null = null;
+    const cli = reserved && isCliClaim(reserved) ? reserved : null;
+    if (cli) {
+      // CLI 는 gateway 와 같은 논리 키(ai1:<후보>)다 — 장부가 transport 를 넘어 한 후보에 활성 호출 하나만 둔다
+      cliLock = await lockCliModelCapacityDispatch(tx, { reservation: cli.reservation, identity: cli.identity,
+        target: { kind: "ai1", candidateId: input.candidate.id } });
+      if (!cliLock) return { kind: "skipped", reason: "reservation_lost" };
+    } else if (reserved) {
       dispatchLock = await lockAi1ModelCapacityDispatch(tx, { reservation: reserved.reservation,
         identity: reserved.identity, candidateId: input.candidate.id });
       if (!dispatchLock) return { kind: "skipped", reason: "reservation_lost" };
     }
-    const capacity = dispatchLock ? dispatchLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
+    const capacity = dispatchLock ? dispatchLock.control : cliLock ? cliLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx);
     const stage = await readItemStage(tx, stages.ai1);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
@@ -731,7 +793,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
     const now = input.now ?? new Date();
     const wallNow = await reviewWallTime(tx);
     const semanticNow = reviewSemanticNow(now);
-    const claimed = async (): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch }> => {
+    const claimed = async (): Promise<ReviewClaim & { dispatch?: Ai1ModelDispatch | Ai1ItemModelDispatch | CliModelDispatch }> => {
       const running = rows.find(row => row.state === "running");
       if (running) {
         if (running.leaseToken === token) return { kind: "skipped", reason: "running" };
@@ -779,17 +841,25 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         if (!route) throw new ModelCapacityDeferredError("unmapped");
         const serving = (authority.kind === "legacy" || consumer) && input.provider === "abcllm"
           ? resolveAi1GatewayServingContract(input.model) : null;
-        if (!serving) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        // CLI 심사자는 계약이 있을 때만 slot 으로 간다. 운영 resolver 는 null 이라 지금은 그대로 미룬다(05c-1 과 같은 결과).
+        const cliServing = (authority.kind === "legacy" || consumer) && isReviewCliProvider(input.provider)
+          ? reviewCliServingContract("crawl-agent-review", input.provider, input.model) : null;
+        if (!serving && !cliServing) throw new ModelCapacityDeferredError("provider_contract_unavailable");
         if (consumer && authority.kind === "item" && input.provider === "abcllm" && !reserved)
           throw new AgentReviewItemModelReservationRequired({ context: locked, provider: "abcllm", model: input.model, owner: authority.owner });
+        if (consumer && authority.kind === "item" && cliServing && isReviewCliProvider(input.provider) && !reserved)
+          throw new AgentReviewItemCliModelReservationRequired({ context: locked, provider: input.provider, model: input.model, owner: authority.owner });
         // Roll back any preceding supersede/item mutation before requesting a slot.
         if (!reserved) throw new ModelCapacityDeferredError("reservation_required");
-        if (reserved.call.model !== input.model || reserved.call.inputHash !== current.inputHash
+        if (cli ? !cliServing || cli.call.provider !== input.provider || cli.call.model !== input.model || cli.call.routeId !== "crawl-agent-review"
+          || cli.call.inputHash !== current.inputHash || !reviewCliContractMatches(cli.call, cliServing)
+          : !serving || isCliClaim(reserved) || reserved.call.model !== input.model || reserved.call.inputHash !== current.inputHash
           || reserved.call.servingContractHash !== ai1GatewayServingContractHash(serving)
           || reserved.call.totalTokenBound !== serving.totalTokenBound) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       }
       if (reserved && !reusable) {
-        if (input.provider !== "abcllm" || !dispatchLock || authority.kind === "item" && (!consumer || !("expected" in reserved)))
+        if ((cli ? !cliLock || cli.call.provider !== input.provider : input.provider !== "abcllm" || !dispatchLock)
+          || authority.kind === "item" && (!consumer || !("expected" in reserved)))
           throw new Error("invalid_ai1_model_capacity_claim");
         // Jobs follow all domain/attempt/item waits. Finish rechecks reservation
         // DB wall time; the final held-job wall check below follows its event.
@@ -807,7 +877,32 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         leaseToken: token, validUntil: current.validUntil, startedAt: now,
       }).returning();
       const claim = result(attempt, reusable ? "semantic_reuse" : "fresh");
-      if (reserved && !reusable) {
+      if (cli && !reusable) {
+        if (!cliLock) throw new Error("invalid_ai1_model_capacity_claim");
+        const charge = { routeId: "crawl-agent-review" as const, provider: cli.call.provider, model: input.model, transport: cli.call.transport,
+          totalTokenBound: cli.call.totalTokenBound, chargedTokens: cli.call.totalTokenBound };
+        if (ownership.kind === "item") {
+          if (!consumer || !("expected" in cli) || attempt.state !== "running" || attempt.provider !== cli.call.provider
+            || attempt.model !== input.model) throw new Error("invalid_ai1_model_capacity_claim");
+          await assertAgentReviewOwnership(tx, stages.ai1, claim.receipt, attempt, current);
+          const lease = ownership.lease;
+          const dispatch = await finishCliModelCapacityDispatch(tx, cliLock, {
+            kind: "ai1_item_cli", version: 1, logicalWorkKey: `ai1:${locked.candidate.id}`, attemptId: attempt.id, review: binding,
+            item: { workKey: lease.workKey, owner: lease.owner, token: lease.token, stageEpoch: lease.stageEpoch,
+              itemEpoch: lease.itemEpoch, bindingHash: lease.bindingHash }, ...charge,
+          });
+          return { ...claim, dispatch };
+        }
+        const dispatch = await finishCliModelCapacityDispatch(tx, cliLock, {
+          kind: "ai1_legacy_cli", version: 1, logicalWorkKey: `ai1:${locked.candidate.id}`,
+          candidateId: locked.candidate.id, attemptId: attempt.id, inputHash: current.inputHash,
+          sourceRevisionHash: current.sourceRevisionHash, reviewPolicyHash: current.policyHash,
+          promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, stageEpoch: stage.epoch, ...charge,
+          job: { name: "crawl-agent-review", token: ownership.job.token, requestedVersion: ownership.job.requestedVersion },
+        });
+        return { ...claim, dispatch };
+      }
+      if (reserved && !isCliClaim(reserved) && !reusable) {
         if (!dispatchLock) throw new Error("invalid_ai1_model_capacity_claim");
         if (ownership.kind === "item") {
           if (!consumer || !("expected" in reserved) || attempt.state !== "running" || attempt.provider !== "abcllm"
@@ -887,6 +982,7 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
           .where(eq(crawlReviewAttempts.id, attempt.id));
         await recordReplayFirstReviewTransition(tx, { kind: "superseded", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
       }
+      await recordHumanDecisionRefused(tx, { stage: "ai1", candidateId: attempt.candidateId, firstAttemptId: attempt.id });
       await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: "superseded" as const };
     }
@@ -916,6 +1012,7 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
     const applied = spamHold || locked.settings.reviewMode === "enforce";
     const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
+    if (applied) await recordHumanDecisionOverride(tx, { stage: "ai1", candidateId: locked.candidate.id, firstAttemptId: attempt.id });
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
       reason: spamHold ? "suspected_spam" : ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
@@ -935,6 +1032,9 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
     await recordReplayFinalWrite(tx, finalWrite, requests);
     await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
     return { applied, state: "succeeded" as const };
+  }).catch(async (error: unknown) => {
+    await recordLateWriteRefused({ stage: "ai1", candidateId: input.candidate.id, firstAttemptId: input.receipt.attemptId }, error);
+    throw error;
   });
   for (const request of requests) emitPipelineEvent("requested", { stage: "first", candidateId: input.candidate.id,
     firstAttemptId: input.receipt.attemptId, nextJob: request.job, requestedVersion: request.requestedVersion });

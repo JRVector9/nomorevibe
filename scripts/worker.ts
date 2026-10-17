@@ -3,7 +3,9 @@ import { assertHostDbEntry } from '@/lib/db/host-budget';
 import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
+import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
+import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 
 export type RuntimeState = 'idle' | 'polling' | 'running' | 'stopping';
 export type RuntimeHeartbeat = {
@@ -23,6 +25,15 @@ export type RuntimeHeartbeat = {
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
+type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean };
+export type BackgroundConsumerLanes = {
+  names: readonly string[];
+  open: () => Promise<boolean>;
+  run: (name: string, options: RequestedRunOptions) => Promise<JobRunResult>;
+  request: (name: string) => Promise<unknown>;
+  /** provider 회로(PR06e). 줄(job)마다 센다 — 틱 안 gateway 전송 결과가 쌓인다. 없으면 기존 그대로 */
+  circuits?: ProviderCircuits;
+};
 type WorkerOptions = { role: BatchRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
@@ -31,6 +42,9 @@ type WorkerDependencies = {
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
   run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean }>;
+  /** host 합계 예산(lib/operations/host-budget-runtime.ts). 없으면 기존처럼 바로 실행한다 */
+  admit?: (name: string) => Promise<{ admitted: true; release: () => Promise<void> } | { admitted: false; reason: string }>;
+  consumer?: BackgroundConsumerLanes;
   sleep?: typeof interruptibleSleep;
   report?: RuntimeReport;
   log?: typeof runtimeLog;
@@ -91,8 +105,12 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
  */
 export async function runWorker(options: WorkerOptions, dependencies: WorkerDependencies) {
   const intervalMs = Math.max(1_000, Math.min(options.intervalMs ?? 5_000, 60_000));
-  const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)]).filter((names) => names.length > 0);
-  const states = lanes.map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
+  // 배경 consumer(PR06c)가 맡은 job 은 기존 줄에서 빼고 job 마다 따로 도는 줄을 준다. 이 역할이 돌리는 job 이 아니면 시작하지 않는다
+  const consumed = [...new Set(dependencies.consumer?.names ?? [])];
+  if (consumed.some(name => !dependencies.names.includes(name))) throw new Error('invalid_background_consumer_jobs');
+  const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)].filter(name => !consumed.includes(name)))
+    .filter((names) => names.length > 0);
+  const states = [...lanes, ...consumed.map(name => [name])].map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
     startedAt: null, pollStartedAt: null, lastProgressAt: Date.now() }));
   const emit = () => {
     const snapshot = states.map(lane => ({ ...lane, jobs: [...lane.jobs] }));
@@ -107,8 +125,70 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
       pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now };
     emit();
   };
-  const results = await Promise.all(lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))));
+  const results = await Promise.all([...lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))),
+    ...consumed.map((name, index) => runConsumerLane(options, dependencies, dependencies.consumer!, name, intervalMs, laneReport(lanes.length + index)))]);
   return { ticks: results.reduce((sum, result) => sum + result.ticks, 0), failures: results.reduce((sum, result) => sum + result.failures, 0) };
+}
+
+/** 남은 일이 있다고 끝난 틱 뒤 다음 틱까지의 짧은 간격 — 일감 없이 done:false 를 내는 틱이 DB 를 쉬지 않고 두드리지 않게 */
+const CONSUMER_REFILL_MS = 1_000;
+
+/**
+ * 배경 consumer 한 줄(PR06c). 기존 틱처럼 scheduler 의 다음 요청이나 같은 줄의 다른 job 을 기다리지 않고, 남은 일이 있으면 곧 다음 틱을 돈다.
+ *
+ * - 일감 권한은 기존 runJob 의 job lease 다(requestedOnly). 요청 없음·사람이 멈춤·재시도 유예·살아 있는 다른 주인의 잠금은 pending 이 거른다.
+ * - 공통 모델 슬롯이 open 일 때만 잡는다. 틱 안의 공정 배분(first/second/background 가중치)은 DB 장부 하나가 맡는다.
+ * - 빈 큐(done)·슬롯 미룸·실패·잠김에는 다시 요청하지 않고 기존 poll 간격으로 기다린다 — 빈 큐에서 모델을 부르지 않는다.
+ * - 종료 신호를 받으면 새 틱을 시작하지 않고, 진행 중 틱은 runJob 이 lease 를 놓을 때까지 기다린다(다시 요청하지 않음).
+ */
+async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDependencies, consumer: BackgroundConsumerLanes,
+  name: string, intervalMs: number, report: RuntimeReport) {
+  let ticks = 0, failures = 0;
+  while (!options.signal?.aborted) {
+    ticks++;
+    let refill = false;
+    report('polling');
+    try {
+      await dependencies.seen([name]);
+      if ((await dependencies.pending()).includes(name) && await consumer.open()) {
+        // 회로가 열렸으면 틱(job claim)을 시작하지 않는다 — job 요청·cursor·항목 실패 수는 그대로 남고 다음 poll 에 다시 본다
+        const circuit = consumer.circuits?.admit(name);
+        const admission = circuit?.admitted === false ? null : dependencies.admit
+          ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
+        if (circuit?.admitted === false || admission && !admission.admitted) {
+          if (circuit?.admitted) circuit.done();
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred',
+            reason: circuit?.admitted === false ? circuit.reason : admission?.admitted === false ? admission.reason : null, consumer: true });
+        } else {
+          report('running', name);
+          try {
+            const tick = () => consumer.run(name, { requestedOnly: true, signal: options.signal });
+            const result = await (circuit ? withProviderOutcome(circuit.record, tick) : tick());
+            if (result.status === 'failed') failures++;
+            refill = result.status === 'completed' && result.done === false;
+            dependencies.log?.('worker.job', { role: options.role, name, status: result.status, consumer: true });
+          } catch {
+            failures++;
+            dependencies.log?.('worker.job', { role: options.role, name, status: 'failed', consumer: true });
+          } finally {
+            circuit?.done();
+            report('polling');
+            if (admission?.admitted) await admission.release().catch(() => {});
+          }
+        }
+      }
+      refill &&= !options.once && !options.signal?.aborted;
+      if (refill) await consumer.request(name);
+    } catch {
+      refill = false;
+      failures++;
+      dependencies.log?.('worker.poll_failed', { role: options.role, name, consumer: true });
+    }
+    report('idle');
+    if (options.once || options.signal?.aborted) break;
+    await (dependencies.sleep ?? interruptibleSleep)(refill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
+  }
+  return { ticks, failures };
 }
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
@@ -127,6 +207,13 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
       for (const name of ordered) {
         if (options.signal?.aborted) break;
         if (!pending.has(name)) continue;
+        // 한도를 넘으면 claim 전에 미룬다 — 잡 요청·cursor·attempt 는 그대로 남고 다음 틱에 다시 본다
+        const admission = dependencies.admit
+          ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
+        if (admission && !admission.admitted) {
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason: admission.reason });
+          continue;
+        }
         report('running', name);
         try {
           const result = await dependencies.run(name, { requestedOnly: true, signal: options.signal });
@@ -141,6 +228,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
         } finally {
           nextIndex = (names.indexOf(name) + 1) % names.length;
           report('polling');
+          if (admission?.admitted) await admission.release().catch(() => {});
         }
       }
     } catch {
@@ -191,6 +279,8 @@ export async function withRuntimeProcess<T>(
   timer.unref();
   heartbeat();
   try {
+    // CLI 계약은 이 probe 를 마친 프로세스에서만 열린다(D7) — reviewer 만 CLI 모델을 부른다
+    if (role === 'reviewer') for (const status of await probeCliServingContracts()) runtimeLog('cli_contract.probe', status);
     return await execute(controller.signal, report);
   } finally {
     // Keep heartbeat reporting while the pool drains; stop accepting another tick immediately.
@@ -234,21 +324,38 @@ async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
   await withRuntimeProcess(options.role, async (signal, report) => {
-    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }] = await Promise.all([
+    const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits },
+      { backgroundConsumerJobs, backgroundConsumerLanes }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
-      import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'),
+      import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),
+      import('@/lib/jobs/background-consumer'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
-    const result = await runWorker({ ...options, signal }, {
-      names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
-      lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
-      pending: () => pendingJobNames(options.role),
-      seen: markWorkerSeen,
-      run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
-      report, log: runtimeLog,
-    });
-    runtimeLog('worker.stopped', { role: options.role, ...result });
-    if (options.once && result.failures) process.exitCode = 1;
+    // 기본 비활성. 배경 dispatch 는 역할 lease 에 묶이므로 선출된 역할 워커에서만 켠다
+    const consumed = backgroundConsumerJobs(options.role, process.env);
+    if (consumed.length && !roleLease) throw new Error('background_consumer_role_lease_required');
+    // provider 회로는 배경 consumer 줄에만 건다(기존 틱 줄은 그대로). consumer 가 꺼져 있으면 설정을 읽지 않는다
+    const circuit = consumed.length ? providerCircuitConfig(process.env) : { mode: 'disabled' as const };
+    // 감독이 이 잡을 끊는 한도(job+drain)까지 번역 slot 을 지킨다 — 같은 env 로 부모가 쓰는 값이다
+    const limits = supervisorLimits(options.role, process.env);
+    const host = startHostBudget(process.env, { holdMs: limits.jobMs + limits.drainMs });
+    try {
+      if (host.enabled) await host.settled;
+      const result = await runWorker({ ...options, signal }, {
+        names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
+        lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
+        pending: () => pendingJobNames(options.role),
+        seen: markWorkerSeen,
+        run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
+        ...(consumed.length ? { consumer: { ...backgroundConsumerLanes(consumed,
+          (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease })),
+          ...(circuit.mode === 'enabled' ? { circuits: createProviderCircuits(circuit) } : {}) } } : {}),
+        ...(host.enabled ? { admit: host.admit } : {}),
+        report, log: runtimeLog,
+      });
+      runtimeLog('worker.stopped', { role: options.role, ...result });
+      if (options.once && result.failures) process.exitCode = 1;
+    } finally { await host.stop(); }
   });
 }
 

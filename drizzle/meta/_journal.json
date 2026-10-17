@@ -659,6 +659,55 @@
       "when": 1794086400005,
       "tag": "0093_model_capacity_websearch_query_terminal",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1794086400006,
+      "tag": "0094_model_capacity_cli_process_terminal",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1794086400007,
+      "tag": "0095_dr_writer_fence",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1794086400008,
+      "tag": "0096_model_capacity_dispatch_release",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1794086400009,
+      "tag": "0097_pipeline_evidence_history",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1794086400010,
+      "tag": "0098_oracle_activation_gaps",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1794086400011,
+      "tag": "0099_dispatch_local_end_hop_reclaim",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1794086400012,
+      "tag": "0100_job_batch_candidates_scheduler_role",
+      "breakpoints": true
     }
   ]
 }

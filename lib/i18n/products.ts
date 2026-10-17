@@ -8,6 +8,7 @@ import { readProductTranslations, requestProductTranslations, selectProductTrans
 import type { ProductTranslationSelection } from "@/lib/domain/products/translation-policy";
 import { PRODUCT_TRANSLATION_DEMAND_LIMIT } from "@/lib/domain/products/translation-policy";
 import { logger } from "@/lib/observability/logger";
+import { webWritable } from "@/lib/operations/dr/web-gate";
 
 type PublicTranslationProduct = {
   id?: number; name: string; translationName?: string; tagline: string; description?: string;
@@ -33,6 +34,8 @@ function requestVisibleTranslations(ids: readonly number[], locale: Locale, fiel
   if (demand.scheduled || !demand.fields.size) return;
   demand.scheduled = true;
   after(async () => {
+    // fenced DB 에는 번역 수요를 쓰지 않는다(캐시 관문만 — 목록마다 fence 행을 잠그지 않는다)
+    if (!await webWritable()) return;
     // Keep description demand exclusive to products whose descriptions are visible.
     const groups = new Map<string, { ids: number[]; fields: ProductTranslationField[] }>();
     for (const [id, requested] of demand.fields) {

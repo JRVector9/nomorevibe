@@ -58,6 +58,7 @@ describe("feedback contract", () => {
 
 const requestMocks = vi.hoisted(() => ({ mutation: vi.fn(), session: vi.fn(), submit: vi.fn(), productList: vi.fn(), mine: vi.fn(),
   lookup: vi.fn(), admin: vi.fn(), review: vi.fn(), headerList: vi.fn() }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/domain/accounts/request-auth", () => {
   class PublicAuthError extends Error { constructor(public status: number, public code: string) { super(code); } }

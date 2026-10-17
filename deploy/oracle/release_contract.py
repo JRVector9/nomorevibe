@@ -15,6 +15,9 @@ REQUIRED = ROOT_FILES | {'lib/jobs/catalog.ts', 'scripts/role-worker.ts',
                         'node_modules/tsx/package.json', 'runtime/bin/node',
                         'deploy/oracle/launch.py',
                         *(f'tools/bin/{name}' for name in CLI_VERSIONS)}
+# The launcher imports only these release-local stdlib modules.
+LAUNCHER_FILES = ('deploy/oracle/launch.py', 'deploy/oracle/release_contract.py',
+                  'deploy/oracle/manage_release.py', 'deploy/oracle/oci_identity.py')
 MAX_FILES = 200_000
 MAX_BYTES = 2 * 1024 ** 3
 MAX_ARCHIVE_BYTES = 512 * 1024 ** 2
@@ -43,7 +46,7 @@ def payload_path(value):
         raise ValueError('invalid_payload_path')
     if any(part.startswith('.env') or part in ('.git', '.npmrc', 'credentials.json', 'auth.json') for part in path.parts):
         raise ValueError('forbidden_payload_path')
-    if path.parts[0] == 'deploy' and value not in ('deploy', 'deploy/oracle', 'deploy/oracle/launch.py'):
+    if path.parts[0] == 'deploy' and value not in ('deploy', 'deploy/oracle', *LAUNCHER_FILES):
         raise ValueError('forbidden_payload_path')
     return value
 

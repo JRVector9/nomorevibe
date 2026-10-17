@@ -66,6 +66,10 @@ export function assessUptimeObservation(observation: UptimeObservation, evidence
   const network = healthy(observation.source.host);
   if (network.failures >= 3) return "broad_network_failure";
   if (network.successes < 2) return "network_evidence_missing";
+  // 다른 지역이 같은 주소를 열었다면 이 실패는 지역 문제일 수 있다. 같은 결과의 peer가 있어도 충돌은 hold다.
+  if (near.some(row => row.productId === observation.productId && row.url === observation.url
+    && row.host !== observation.source.host && row.region !== observation.source.region
+    && row.kind === "http" && row.status >= 200 && row.status < 400)) return "regional_conflict";
   if (observation.source.host === "oracle-osaka-smoke" || observation.kind !== "http" || observation.status === 403) {
     const peer = near.find(row => row.productId === observation.productId && row.url === observation.url
       && row.host !== observation.source.host && row.region !== observation.source.region

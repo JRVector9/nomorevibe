@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { startupGatewayServingContracts } from "./gateway-serving-contract-config";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const searchVerifyServingContractSchema = z.object({
@@ -18,6 +19,6 @@ export type SearchVerifyServingContract = Readonly<z.infer<typeof searchVerifySe
 export function searchVerifyServingContractHash(value: SearchVerifyServingContract): string {
   return createHash("sha256").update(JSON.stringify(searchVerifyServingContractSchema.parse(value))).digest("hex");
 }
-/** No bounded search-verify serving deployment is enabled. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- No deployment is enabled.
-export function resolveSearchVerifyServingContract(_model: string): SearchVerifyServingContract | null { return null; }
+const configured = startupGatewayServingContracts("product-search-verify", searchVerifyServingContractSchema);
+/** 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS 에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
+export function resolveSearchVerifyServingContract(model: string): SearchVerifyServingContract | null { return configured.get(model) ?? null; }

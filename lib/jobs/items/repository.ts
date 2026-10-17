@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq, getTableColumns, isNull, or, sql } from "drizzle-orm";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { pipelineItemLeases, pipelineStageModes } from "@/lib/db/schema";
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { itemBindingHash, itemOwnerSchema, itemWorkKey, parseItemBinding,
   type ItemBinding, type ItemLease, type ItemOwner, type ItemStage } from "./types";
 
@@ -71,7 +73,7 @@ async function lockLease(tx: ProductTransaction, lease: ItemLease): Promise<bool
   return Boolean(row);
 }
 
-/** First lock in every item transaction: stage SHARE, then caller domain, item,
+/** First lock in every item transaction after the DR writer fence: stage SHARE, then caller domain, item,
  * and finally jobs/outbox. Await every repository call before committing the
  * caller transaction. Never keep it across external calls. */
 export async function lockItemStage(tx: ProductTransaction, stage: ItemStage): Promise<ItemStageGuard> {
@@ -93,13 +95,17 @@ export async function readItemStage(tx: ProductTransaction, guard: ItemStageGuar
   return guardedStage(tx, guard, identity.stage);
 }
 
-/** A changed binding still competes for the same logical work slot. */
+/** A changed binding still competes for the same logical work slot.
+ * The caller transaction takes the DR writer fence before the stage lock (ledger control or claimFetchItem). */
 export async function claimItemLease(tx: ProductTransaction, guard: ItemStageGuard, value: ItemBinding,
   ownerValue: ItemOwner, ttlMs: number): Promise<ItemLease | null> {
   const binding = parseItemBinding(value), owner = itemOwnerSchema.parse(ownerValue);
   const stage = await guardedStage(tx, guard, binding.stage);
   validTtl(ttlMs);
   if (stage.mode !== "items" || stage.writerContractVersion < 1) return null;
+  // 같은 TX 가 이미 잡은 fence SHARE 의 재확인이라 기다리지 않는다. fenced DB 는 새 item 소유권을 내주지 않는다
+  // (AI1 의 재사용·rules claim 은 장부 draining 판정 전에 lease 를 commit 할 수 있었다). 격리 replay DB 는 fence 권한이 없다.
+  if (!currentReplayDb() && !await writerSiteActive(tx)) return null;
   const workKey = itemWorkKey(binding), bindingHash = itemBindingHash(binding);
   // Serializes absent-row inserts without waiting on a unique-index conflict.
   // Hash collisions conservatively skip work rather than admit a second owner.
@@ -156,7 +162,7 @@ export async function releaseItemLease(tx: ProductTransaction, guard: ItemStageG
   if (!row) fail("item_lease_lost");
 }
 
-async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
+async function lockControlRow(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
   if (itemTransactions.has(tx)) return fail("item_stage_lock_order");
   // Deny-only transaction-local marker also covers a child adapter object.
   // It grants no authority and does not defend against trusted raw SQL changes.
@@ -167,8 +173,23 @@ async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promi
     .from(pipelineStageModes).where(eq(pipelineStageModes.stage, stage)).for("update");
   if (!row) return fail("item_stage_missing");
   await assertStageLockContext(tx, row.txId);
+  return row;
+}
+
+async function lockControlStage(tx: ProductTransaction, stage: ItemStage): Promise<StageState & { txId: string }> {
+  const row = await lockControlRow(tx, stage);
   if (row.writerContractVersion < 1) return fail("item_stage_contract_required");
   return row;
+}
+
+/** Operator attestation that every writer honors the stage lock. Legacy only, one step up, never lowered. */
+export async function bumpStageWriterContract(tx: ProductTransaction, stage: ItemStage): Promise<StageState> {
+  const row = await lockControlRow(tx, stage);
+  if (row.mode !== "legacy") return fail("item_stage_transition_invalid");
+  const [bumped] = await tx.update(pipelineStageModes).set({ writerContractVersion: row.writerContractVersion + 1, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(pipelineStageModes.stage, stage), sql`pg_current_xact_id()::text = ${row.txId}`)).returning();
+  if (!bumped) return fail("item_stage_transaction_required");
+  return bumped;
 }
 
 /** Control APIs must run at transaction entry, before any domain/item lock.

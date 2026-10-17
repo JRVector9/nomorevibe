@@ -4,8 +4,9 @@ import { hashSessionToken, PUBLIC_SESSION_COOKIE } from "@/lib/domain/accounts/s
 import { GITHUB_NONCE_COOKIE, githubNonceCookieOptions } from "@/lib/domain/github-user/authorization";
 import { GithubInstallationError } from "@/lib/domain/github-installations/credentials";
 import { requireMakerGithubEnabled, startMakerGithubAuthorization } from "@/lib/domain/github-installations/authorization";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function POST(request: Request) {
+export const POST = webWriteRoute(async (request: Request) => {
   try {
     requireMakerGithubEnabled();
     const user = await requirePublicMutation(request);
@@ -20,4 +21,4 @@ export async function POST(request: Request) {
     response.cookies.set(GITHUB_NONCE_COOKIE, result.browserNonce, githubNonceCookieOptions());
     return response;
   } catch (error) { return publicAuthErrorResponse(error); }
-}
+}, publicAuthErrorResponse);

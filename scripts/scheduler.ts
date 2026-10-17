@@ -35,16 +35,40 @@ export async function runScheduler(options: SchedulerOptions, dependencies: Sche
   return { ticks, failures, requested };
 }
 
+type SchedulerBoot = { record: () => Promise<void>; recorded: () => boolean };
+/**
+ * host 장부 자리가 없는 틱은 DB 를 쓰지 않고 건너뛴다(비활성이면 항상 ready). Oracle scheduler(boot 있음)는 첫 틱 전에
+ * 이 boot 를 후보 행에 기록하고, 기록되기 전에는 요청을 만들지 않는다. M3/mini(boot=null)는 기존 순서 그대로다.
+ */
+export function gatedSchedulerTick(host: { ready: () => boolean }, boot: SchedulerBoot | null,
+  control: Pick<SchedulerDependencies, 'seen' | 'requestDue'>): Pick<SchedulerDependencies, 'seen' | 'requestDue'> {
+  return {
+    seen: async () => {
+      if (!host.ready()) return;
+      await boot?.record();
+      await control.seen();
+    },
+    requestDue: () => host.ready() && (!boot || boot.recorded()) ? control.requestDue() : Promise.resolve(0),
+  };
+}
+
 async function main() {
   const options = parseLoopArgs(process.argv.slice(2), 10);
   assertHostDbEntry(process.env, { kind: 'scheduler-worker', role: 'scheduler' });
   await withRuntimeProcess('scheduler', async (signal, report) => {
-    const { requestDueJobs, markSchedulerSeen } = await import('@/lib/jobs/control');
-    const result = await runScheduler({ ...options, signal }, {
-      requestDue: requestDueJobs, seen: markSchedulerSeen, report, log: runtimeLog,
-    });
-    runtimeLog('scheduler.stopped', result);
-    if (options.once && result.failures) process.exitCode = 1;
+    const [{ requestDueJobs, markSchedulerSeen }, { startHostBudget }, { oracleSchedulerBoot }] = await Promise.all([
+      import('@/lib/jobs/control'), import('@/lib/operations/host-budget-runtime'), import('@/lib/runtime/oracle-scheduler')]);
+    // Oracle 은 재시작마다 새 boot 다 — 저장된 canary 증거와 더는 맞지 않아 다음 기동에는 새 canary 가 필요하다
+    const boot = process.env.PHYSICAL_HOST === 'oracle-osaka-smoke' ? oracleSchedulerBoot(process.env) : null;
+    const host = startHostBudget(process.env);
+    try {
+      if (host.enabled) await host.settled;
+      const result = await runScheduler({ ...options, signal }, {
+        ...gatedSchedulerTick(host, boot, { requestDue: () => requestDueJobs(), seen: markSchedulerSeen }), report, log: runtimeLog,
+      });
+      runtimeLog('scheduler.stopped', result);
+      if (options.once && result.failures) process.exitCode = 1;
+    } finally { await host.stop(); }
   });
 }
 

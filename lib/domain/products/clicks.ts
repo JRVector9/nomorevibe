@@ -16,6 +16,7 @@ import { productVisitorHash } from "@/lib/domain/products/visitors";
 import { rateLimit } from "@/lib/rate-limit";
 import { logger } from "@/lib/observability/logger";
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { webWritable } from "@/lib/operations/dr/web-gate";
 
 /**
  * 아웃바운드 클릭.
@@ -69,6 +70,8 @@ export function visitorId(cookie: string | undefined): string {
  */
 export async function recordClick(slug: string, visitor: string): Promise<void> {
   try {
+    // fenced DB 에는 세지 않는다(캐시 관문만 — 클릭마다 fence 행을 잠그지 않는다)
+    if (!await webWritable()) return;
     const hash = productVisitorHash(slug, visitor);
     if (!hash) {
       logger.warn("visit.hash_unavailable", { slug });

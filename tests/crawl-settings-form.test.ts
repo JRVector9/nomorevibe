@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // 폼과 서버 액션을 같이 본다 — 빈 행을 그리는 쪽과 버리는 쪽이 어긋나면 신호가 늘지 않는다
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 // 떠날 때 묻는 확인 창이 라우터로 이동한다 — 정적 그리기에는 라우터가 없다
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));

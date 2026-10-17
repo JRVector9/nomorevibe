@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isJobName, JOB_CATALOG } from "./catalog";
@@ -7,11 +8,14 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
 import { batchPendingNames, lockJobBatch } from "./batch-repository";
 import { batchJobsForRole, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
 export { JobLeaseLostError } from "./lease";
 
-/** This is a job signal, not a payload queue. Caller transactions preserve request atomicity. */
+/** This is a job signal, not a payload queue. Caller transactions preserve request atomicity.
+ * DR writer fence 를 여기서 잡지 않는다 — 호출자 TX 가 도메인·jobs 행을 잡은 뒤 부르므로(jobs → fence) seal 의
+ * fence UPDATE → jobs 와 교착한다. fence 는 호출자 TX 의 첫 lock 이 맡는다(worker: withJobLeaseWrite·runJob, 웹: web-gate). */
 export async function requestJob(name: string, tx: ProductTransaction | typeof db = db) {
   if (!isJobName(name)) throw new Error("unknown_job");
   const [row] = await tx.insert(jobs).values({ name, requestedVersion: 1 })
@@ -23,14 +27,22 @@ export async function requestJob(name: string, tx: ProductTransaction | typeof d
   return { job: name, status: "queued" as const, requestedVersion: row.requestedVersion };
 }
 
+/** requestDueJobs 가 이 batch 상태에서 일정을 미는 정기 잡. Oracle scheduler attest 도 같은 목록을 읽어 본다 */
+export function scheduledJobs(batch: { mode: string; writerContractVersion: number }) {
+  return JOB_CATALOG.filter(job => job.intervalMs !== null
+    && (job.batchVersion !== 1 || (batch.mode === 'versioned' && batch.writerContractVersion >= 1)));
+}
+
 /** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */
-export async function requestDueJobs(): Promise<number> {
+export async function requestDueJobs(
+  acknowledge?: (tx: ProductTransaction, tick: { batchEpoch: number; requested: number }) => Promise<void>,
+): Promise<number> {
   return db.transaction(async tx => {
+    // DR writer fence가 첫 lock이다(seal의 fence UPDATE → batch → jobs와 같은 순서). fenced DB의 scheduler는 정기 요청을 만들지 않는다.
+    if (!await writerSiteActive(tx)) return 0;
     const batch = await lockJobBatch(tx);
     let count = 0;
-    for (const job of JOB_CATALOG) {
-      if (job.intervalMs === null) continue;
-      if (job.batchVersion === 1 && (batch.mode !== 'versioned' || batch.writerContractVersion < 1)) continue;
+    for (const job of scheduledJobs(batch)) {
       await tx.insert(jobs).values({ name: job.name }).onConflictDoNothing();
       const duration = sql`${job.intervalMs} * interval '1 millisecond'`;
       const [due] = await tx.update(jobs).set({
@@ -45,6 +57,8 @@ export async function requestDueJobs(): Promise<number> {
       )).returning({ name: jobs.name });
       if (due) count++;
     }
+    // Oracle scheduler canary 의 ACK: fence 를 지나 이 요청과 함께 commit 된 tick 에만 남는다
+    await acknowledge?.(tx, { batchEpoch: batch.epoch, requested: count });
     return count;
   });
 }
@@ -103,6 +117,9 @@ export async function assertJobLeaseAtWallTime(tx: ProductTransaction, lease: Jo
 /** Keep a worker side effect and its job-token check in one commit. */
 export function withJobLeaseWrite<T>(lease: JobLease | undefined, write: (tx: ProductTransaction) => Promise<T>): Promise<T> {
   return db.transaction(async tx => {
+    // worker 쓰기(lease)는 DR writer fence 가 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서). lease 없는 웹 호출은
+    // 웹 쓰기 관문(web-gate)이, 격리 replay DB 는 runJob claim 처럼 fence 없이 간다.
+    if (lease && !currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const result = await write(tx);
     if (lease) await assertJobLease(tx, lease);
     return result;

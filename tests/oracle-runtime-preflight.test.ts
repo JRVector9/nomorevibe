@@ -99,8 +99,54 @@ it('snapshots process authority before the first await and preserves the origina
 });
 it('leaves scheduler capability unknown without creating a role or producer request', async () => {
   const report = await readOracleRuntimePreflight({ role: 'scheduler' });
-  expect(report.workload.reason).toBe('scheduler_canary_unavailable'); expect(report.ready).toBe(false);
-  expect(io.transaction).not.toHaveBeenCalled();
+  expect(report.workload).toEqual({ ready: false, reason: 'candidate_unknown' }); expect(report.ready).toBe(false);
+  expect(io.transaction).toHaveBeenCalledOnce(); expect(io.admission).not.toHaveBeenCalled(); expect(io.role).not.toHaveBeenCalled();
+});
+// PR11g: scheduler 는 선출·anchor 가 없다. attest 가 쓴 후보 증거와 scheduler 의 tick ACK 를 boot·epoch·신선도로 묶는다.
+type SchedulerEvidence = { row: Record<string, unknown> & { capability: Record<string, unknown> | null; resultEvidence: Record<string, unknown> | null };
+  ack: Record<string, unknown> | null };
+function schedulerEvidence(): SchedulerEvidence {
+  const state: SchedulerEvidence = {
+    row: { role: 'scheduler', instanceId, host: 'oracle-osaka-smoke', bootId: 'boot', release, policyHash: control.policyHash,
+      capability: { kind: 'oracle_scheduler', host: 'oracle-osaka-smoke', instanceId, release, dbPrivileges: 'verified', dbRole: 'oracle_runtime',
+        effectivePrivilegeHash: 'b'.repeat(64), observedAt: '2026-10-16T11:59:00Z' },
+      resultEvidence: { kind: 'oracle_scheduler_tick', instanceId, host: 'oracle-osaka-smoke', release, bootId: 'boot', batchEpoch: 3,
+        recordedAt: '2026-10-16T11:59:40Z', jobs: 34, domainReadbackHash: 'c'.repeat(64), observedAt: '2026-10-16T11:59:50Z' } },
+    ack: { role: 'scheduler', instanceId, host: 'oracle-osaka-smoke', release, bootId: 'boot', batchEpoch: 3, requested: 0,
+      tickAt: '2026-10-16T11:59:39.900Z', recordedAt: '2026-10-16T11:59:40Z' },
+  };
+  io.execute.mockImplementation(async () => {
+    const call = io.execute.mock.calls.length;
+    return call === 1 ? [session] : call === 2 ? [state.row] : state.ack ? [{ value: { schedulerResult: state.ack } }] : [];
+  });
+  return state;
+}
+it('makes the scheduler workload ready only from attested evidence of its current boot and batch epoch', async () => {
+  schedulerEvidence();
+  const report = await readOracleRuntimePreflight({ role: 'scheduler' });
+  expect(report.workload).toMatchObject({ ready: true, reason: 'ready' }); expect(report.workload.evidenceHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(report.ready).toBe(false); expect(report.activationAllowed).toBe(false);
+  expect(report.checks.admission.status).toBe('unknown'); expect(io.admission).not.toHaveBeenCalled(); expect(io.role).not.toHaveBeenCalled();
+});
+it.each([
+  ['no attested evidence', (state: SchedulerEvidence) => { state.row.capability = null; state.row.resultEvidence = null; }, 'capability_unknown'],
+  ['no stored tick ACK', (state: SchedulerEvidence) => { state.ack = null; }, 'result_unknown'],
+  ['the ACK of a previous boot after a restart', (state: SchedulerEvidence) => { state.row.bootId = 'restarted'; }, 'result_boot_mismatch'],
+  ['an ACK of another batch epoch', (state: SchedulerEvidence) => { state.ack!.batchEpoch = 2; state.row.resultEvidence!.batchEpoch = 2; }, 'result_epoch_mismatch'],
+  ['an ACK just over 24 hours old', (state: SchedulerEvidence) => {
+    state.ack!.recordedAt = '2026-10-15T11:59:59.999Z'; state.row.resultEvidence!.recordedAt = '2026-10-15T11:59:59.999Z'; }, 'result_stale'],
+  ['capability just over 15 minutes old', (state: SchedulerEvidence) => { state.row.capability!.observedAt = '2026-10-16T11:44:59.999Z'; }, 'capability_stale'],
+  ['capability of another principal', (state: SchedulerEvidence) => { state.row.capability!.dbRole = 'nomorevibe'; }, 'capability_unknown'],
+  ['a readback of another tick', (state: SchedulerEvidence) => { state.row.resultEvidence!.recordedAt = '2026-10-16T11:59:41Z'; }, 'result_unverified'],
+] as const)('keeps the scheduler workload unknown with %s', async (_, change, reason) => {
+  change(schedulerEvidence());
+  const report = await readOracleRuntimePreflight({ role: 'scheduler' });
+  expect(report.workload).toEqual({ ready: false, reason }); expect(io.admission).not.toHaveBeenCalled();
+});
+it('accepts a scheduler ACK exactly 24 hours old', async () => {
+  const state = schedulerEvidence();
+  state.ack!.recordedAt = '2026-10-15T12:00:00Z'; state.row.resultEvidence!.recordedAt = '2026-10-15T12:00:00Z';
+  expect((await readOracleRuntimePreflight({ role: 'scheduler' })).workload).toMatchObject({ ready: true, reason: 'ready' });
 });
 it('preserves the original inspection and pool-drain failures together', async () => {
   const { oraclePreflightMain } = await import('@/scripts/worker-oracle-preflight');

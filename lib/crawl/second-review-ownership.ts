@@ -11,6 +11,7 @@ import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type 
 import { assertReplayJobAdmission, assertReplayItemExecutionAllowed, registerReplayItemFinalAuthority, registerReplayItemRelease, reserveReplayItemCall } from "@/lib/operations/pipeline-replay-execution";
 import type { ReplayCallRequest } from "@/lib/operations/pipeline-replay-ledger";
 import { recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
+import { recordLeaseViolation } from "@/lib/operations/pipeline-evidence-ledger";
 import { reviewHash, reviewPolicyHash, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "./agent-review-contract";
 import type { ReviewInput } from "./agent-review-contract";
 import { firstReviewer } from "./agent-review";
@@ -18,12 +19,15 @@ import { parseItemBinding, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomainContext } from "./second-review-input";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
-import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch } from "@/lib/llm/capacity-repository";
-import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch } from "@/lib/llm/capacity";
+import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
+  lockCliModelCapacityDispatch, finishCliModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch,
+  type CliModelDispatch } from "@/lib/llm/capacity";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { resolveAi2GatewayServingContract, ai2GatewayServingContractHash } from "./second-review-serving-contract";
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract } from "./review-cli-call";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
 export type SecondReviewReceipt = Readonly<{
@@ -52,7 +56,15 @@ export class SecondReviewModelReservationRequired extends ModelCapacityDeferredE
     this.intent = snapshotModelIntent(value);
   }
 }
-function snapshotModelIntent(value: SecondReviewModelIntent): SecondReviewModelIntent {
+/** CLI 표(05c-4)의 같은 되감은 요청. gateway 의도와 다른 고정 class 라 서로의 coordinator 로 넘어가지 않는다. */
+export class SecondReviewCliModelReservationRequired extends ModelCapacityDeferredError {
+  readonly intent: SecondReviewModelIntent;
+  constructor(value: SecondReviewModelIntent) {
+    super("reservation_required");
+    this.intent = snapshotModelIntent(value, "cli");
+  }
+}
+function snapshotModelIntent(value: SecondReviewModelIntent, transport: "gateway" | "cli" = "gateway"): SecondReviewModelIntent {
   const snapshot = structuredClone(value);
   const checked = z.object({ binding: itemBindingSchema, rowIdentityHash: z.string().regex(/^[a-f0-9]{64}$/),
     failureCount: z.number().int().nonnegative().safe(), owner: itemOwnerSchema,
@@ -61,7 +73,8 @@ function snapshotModelIntent(value: SecondReviewModelIntent): SecondReviewModelI
       inputHash: z.string().regex(/^[a-f0-9]{64}$/), policyHash: z.string().regex(/^[a-f0-9]{64}$/),
       sourceRevisionHash: z.string().regex(/^[a-f0-9]{64}$/), validUntil: z.date() }).strict(),
   }).strict().parse(snapshot);
-  if (checked.binding.stage !== "ai2" || checked.binding.reviewer.provider !== "abcllm"
+  if (checked.binding.stage !== "ai2" || (transport === "cli" ? !isReviewCliProvider(checked.binding.reviewer.provider)
+    : checked.binding.reviewer.provider !== "abcllm")
     || checked.binding.inputHash !== checked.input.inputHash
     || checked.binding.sourceRevisionHash !== checked.input.sourceRevisionHash)
     throw new Error("invalid_second_review_model_intent");
@@ -75,6 +88,11 @@ function snapshotModelIntent(value: SecondReviewModelIntent): SecondReviewModelI
 
 type ModelReservation = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
   call: PreparedAi2GatewayCall; expected: SecondReviewModelIntent };
+type CliModelReservation = { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
+  call: z.infer<typeof reviewCliCallRefSchema>; expected: SecondReviewModelIntent };
+export type SecondReviewCliModelClaim = SecondReviewClaim & { dispatch?: CliModelDispatch };
+const isCliReservation = (value: ModelReservation | CliModelReservation): value is CliModelReservation =>
+  (value.call as { kind?: unknown }).kind === "prepared_cli";
 
 /** One outer TX owns the control UPDATE prefix, fresh item and dispatch event. */
 export async function claimSecondReviewItemWithModelReservation(input: ModelReservation & {
@@ -93,6 +111,25 @@ export async function claimSecondReviewItemWithModelReservation(input: ModelRese
     { reservation, identity, call, expected }); }
   catch (error) {
     if (error instanceof Error && error.message === "ai2_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  }
+}
+
+/** CLI 표(05c-4)의 고정 consumer 재진입. 한 바깥 TX 가 CLI 잠금 prefix·새 item·dispatch event 를 함께 가진다. */
+export async function claimSecondReviewItemWithCliModelReservation(input: CliModelReservation & {
+  secondReviewId: number; owner: ItemOwner;
+}): Promise<SecondReviewCliModelClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const id = positive.parse(input.secondReviewId), owner = itemOwnerSchema.parse(input.owner);
+  const expected = snapshotModelIntent(input.expected, "cli"), reservation = modelCapacityReservationSchema.parse(input.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(input.identity), call = reviewCliCallRefSchema.parse(input.call);
+  if (expected.binding.secondReviewId !== id || !isDeepStrictEqual(expected.owner, owner)
+    || !isDeepStrictEqual(reservation.owner, owner) || !isDeepStrictEqual(identity.owner, owner))
+    throw new Error("invalid_second_review_model_intent");
+  try { return await claimReview(id, { kind: "item", owner, ttlMs: STALE_LOCK_MS, purpose: "consumer" },
+    { reservation, identity, call, expected }); }
+  catch (error) {
+    if (error instanceof Error && error.message === "cli_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
     throw error;
   }
 }
@@ -203,6 +240,10 @@ export async function finishSecondReviewOwnership(tx: ProductTransaction, guard:
   receipt: SecondReviewReceipt): Promise<void> {
   if (receipt?.ownership?.kind === "item") rejectItemReplay();
   validateReceipt(receipt);
+  const { ownership, binding } = receipt;
+  await recordLeaseViolation(tx, { stage: "ai2", candidateId: binding.candidateId, secondReviewId: binding.secondReviewId },
+    ownership.kind === "item" ? { kind: "item", stage: "ai2", workKey: ownership.lease.workKey, token: ownership.lease.token }
+      : { kind: "job", name: ownership.job.name, token: ownership.job.token });
   const stage = await ai2Stage(tx, guard);
   if (receipt.ownership.kind === "item") {
     await registerReplayItemFinalAuthority(tx, receipt.ownership.lease);
@@ -243,16 +284,24 @@ export function claimConsumerItemSecondReview(id: number, owner: ItemOwner, ttlM
   return claimReview(id, { kind: "item", owner: identity, ttlMs: ttl, purpose: "consumer" });
 }
 
-async function claimReview(id: number, authority: { kind: "legacy"; job: JobLease }
-  | { kind: "item"; owner: ItemOwner; ttlMs: number; purpose?: "consumer" }, reserved?: ModelReservation): Promise<SecondReviewModelClaim> {
+type ClaimAuthority = { kind: "legacy"; job: JobLease } | { kind: "item"; owner: ItemOwner; ttlMs: number; purpose?: "consumer" };
+function claimReview(id: number, authority: ClaimAuthority, reserved: CliModelReservation): Promise<SecondReviewCliModelClaim>;
+function claimReview(id: number, authority: ClaimAuthority, reserved?: ModelReservation): Promise<SecondReviewModelClaim>;
+async function claimReview(id: number, authority: ClaimAuthority,
+  reserved?: ModelReservation | CliModelReservation): Promise<SecondReviewClaim & { dispatch?: Ai2ModelDispatch | CliModelDispatch }> {
   positive.parse(id);
   return onPrimary(() => db.transaction(async tx => {
     // Only an active verified replay scope preserves its fixed fixture grants.
     // Ordinary fresh admission takes the real control before S3/domain locks.
-    const dispatchLock = reserved ? await lockAi2ItemModelCapacityDispatch(tx, { reservation: reserved.reservation,
-      identity: reserved.identity, target: { candidateId: reserved.expected.binding.candidateId, vote: reserved.expected.binding.vote } }) : null;
-    if (reserved && !dispatchLock) throw new ModelCapacityDeferredError("reservation_lost");
-    const capacity = dispatchLock ? dispatchLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
+    const cli = reserved && isCliReservation(reserved) ? reserved : null;
+    const target = reserved ? { candidateId: reserved.expected.binding.candidateId, vote: reserved.expected.binding.vote } : null;
+    // CLI 는 gateway 와 같은 표 키(ai2:<후보>:<vote>)다 — 장부가 transport·예비모델을 넘어 한 표에 활성 호출 하나만 둔다
+    const dispatchLock = reserved && !cli ? await lockAi2ItemModelCapacityDispatch(tx, { reservation: reserved.reservation,
+      identity: reserved.identity, target: target! }) : null;
+    const cliLock = cli ? await lockCliModelCapacityDispatch(tx, { reservation: cli.reservation, identity: cli.identity,
+      target: { kind: "ai2", ...target! } }) : null;
+    if (reserved && !dispatchLock && !cliLock) throw new ModelCapacityDeferredError("reservation_lost");
+    const capacity = dispatchLock ? dispatchLock.control : cliLock ? cliLock.control : currentReplayDb() ? null : await lockModelCapacityCallerControl(tx);
     const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
     if (stage.mode !== (authority.kind === "legacy" ? "legacy" : "items")
       || authority.kind === "item" && stage.writerContractVersion < 1) return { kind: "skipped", reason: "stage_inactive" };
@@ -286,12 +335,19 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
         || rowIdentityHash(row) !== reserved.expected.rowIdentityHash || row.failureCount !== reserved.expected.failureCount
         || !isDeepStrictEqual(context.input, reserved.expected.input)
         || !isDeepStrictEqual(authority.owner, reserved.expected.owner)) return skipped("input_changed");
-      const serving = resolveAi2GatewayServingContract(binding.reviewer.model);
-      if (!serving || serving.model !== binding.reviewer.model || reserved.call.model !== binding.reviewer.model
-        || reserved.call.inputHash !== context.input.inputHash
-        || reserved.call.servingContractHash !== ai2GatewayServingContractHash(serving)
-        || reserved.call.totalTokenBound !== serving.totalTokenBound)
-        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      if (cli) {
+        const contract = reviewCliServingContract("second-review", binding.reviewer.provider, binding.reviewer.model);
+        if (!contract || cli.call.routeId !== "second-review" || cli.call.provider !== binding.reviewer.provider
+          || cli.call.model !== binding.reviewer.model || cli.call.inputHash !== context.input.inputHash || !reviewCliContractMatches(cli.call, contract))
+          throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      } else {
+        const gateway = reserved as ModelReservation, serving = resolveAi2GatewayServingContract(binding.reviewer.model);
+        if (!serving || serving.model !== binding.reviewer.model || gateway.call.model !== binding.reviewer.model
+          || gateway.call.inputHash !== context.input.inputHash
+          || gateway.call.servingContractHash !== ai2GatewayServingContractHash(serving)
+          || gateway.call.totalTokenBound !== serving.totalTokenBound)
+          throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      }
     }
     let ownership: SecondReviewReceipt["ownership"];
     if (authority.kind === "legacy") {
@@ -316,11 +372,29 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
         if (authority.kind === "item" && authority.purpose === "consumer" && binding.reviewer.provider === "abcllm")
           throw new SecondReviewModelReservationRequired({ binding, rowIdentityHash: rowIdentityHash(row),
             failureCount: row.failureCount, input: context.input, owner: authority.owner });
+        // CLI 표는 계약이 있을 때만 slot 으로 간다. 운영 resolver 는 null 이라 지금은 그대로 미룬다(05c-1 과 같은 결과).
+        if (authority.kind === "item" && authority.purpose === "consumer"
+          && reviewCliServingContract("second-review", binding.reviewer.provider, binding.reviewer.model))
+          throw new SecondReviewCliModelReservationRequired({ binding, rowIdentityHash: rowIdentityHash(row),
+            failureCount: row.failureCount, input: context.input, owner: authority.owner });
         throw new ModelCapacityDeferredError("provider_contract_unavailable");
       }
     }
-    let dispatch: Ai2ModelDispatch | undefined;
-    if (reserved) {
+    let dispatch: Ai2ModelDispatch | CliModelDispatch | undefined;
+    if (cli) {
+      if (!cliLock || ownership.kind !== "item") throw new Error("invalid_second_review_model_claim");
+      const lease = ownership.lease;
+      await assertItemLease(tx, stages.ai2, lease);
+      dispatch = await finishCliModelCapacityDispatch(tx, cliLock, { kind: "ai2_item_cli", version: 1,
+        logicalWorkKey: `ai2:${binding.candidateId}:${binding.vote}`, review: binding,
+        rowIdentityHash: rowIdentityHash(row), failureCount: row.failureCount, inputPolicyHash: context.input.policyHash,
+        item: { workKey: lease.workKey, owner: lease.owner, token: lease.token, stageEpoch: lease.stageEpoch,
+          itemEpoch: lease.itemEpoch, bindingHash: lease.bindingHash },
+        routeId: "second-review", provider: cli.call.provider, model: cli.call.model, transport: cli.call.transport,
+        totalTokenBound: cli.call.totalTokenBound, chargedTokens: cli.call.totalTokenBound });
+      // Every dispatch/event wait precedes this last check of the original item.
+      await assertItemLease(tx, stages.ai2, lease);
+    } else if (reserved && !isCliReservation(reserved)) {
       if (!dispatchLock || ownership.kind !== "item") throw new Error("invalid_second_review_model_claim");
       const lease = ownership.lease;
       await assertItemLease(tx, stages.ai2, lease);

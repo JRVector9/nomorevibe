@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 const mock = vi.hoisted(() => ({ fetchPage: vi.fn(), safeFetch: vi.fn(), readBodyCapped: vi.fn(),
   findByUrl: vi.fn(), findBySlug: vi.fn(), insert: vi.fn(), nextAvailableSlug: vi.fn(), setOgImage: vi.fn(), putOgImage: vi.fn(), markVerified: vi.fn(), requestJob: vi.fn() }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mock.fetchPage, safeFetch: mock.safeFetch, readBodyCapped: mock.readBodyCapped }));
 vi.mock("@/lib/net/ssrf", () => ({ allowPrivate: () => false, assertPublicUrl: async () => ({ ok: true }) }));
 vi.mock("@/lib/domain/products/repository", () => mock);

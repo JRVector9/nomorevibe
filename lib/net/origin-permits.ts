@@ -8,8 +8,11 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { httpOriginPolicyHash, httpOriginPolicySchema, HttpOriginPermitError } from './http-origin-policy';
 import { httpDispatcher, nativeHttpFetch } from './http-transport';
 import type { CappedRequest } from './fetch';
+import { writerSiteActive } from '@/lib/operations/dr/epoch';
+import { processGroupBootFor } from '@/lib/operations/dr/process-owner-env';
 
-const bootId = randomUUID();
+// D11: 슈퍼바이저가 이 instance 로 기록한 프로세스 그룹 owner 의 boot 면 그 그룹의 종료(ESRCH)가 이 프로세스 hop 의 회수 근거가 된다. 없으면 새 boot.
+const bootId = processGroupBootFor(process.env.SERVICE_INSTANCE_ID, process.env) ?? randomUUID();
 const RESERVATION_MS = 5000;
 class ControlBusy extends Error {}
 function lockBusy(error: unknown): boolean {
@@ -41,6 +44,8 @@ async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
   for (;;) {
     if (signal.aborted) throw new HttpOriginPermitError('waiting_aborted');
     const hop = await transaction(async tx => {
+      // DR fence가 첫 lock이다(seal/open-permits와 같은 fence→control 순서). fenced DB(옛 primary·승격 전 사본)는 새 외부 hop을 내주지 않는다.
+      if (!await writerSiteActive(tx)) throw new HttpOriginPermitError('unavailable');
       const state = await control(tx,true);
       if (state.mode !== 'open') throw new HttpOriginPermitError('unavailable');
       const host = state.policy.instanceHosts[instanceId];
@@ -65,6 +70,7 @@ function exact(hop: Hop) { return sql`id=${hop.id}::uuid AND token=${hop.token}:
   AND boot_id=${hop.boot_id}::uuid AND host_id=${hop.host_id} AND origin=${hop.origin} AND epoch=${hop.epoch} AND revision=${hop.revision} AND policy_hash=${hop.policy_hash}`; }
 async function begin(hop: Hop, signal: AbortSignal): Promise<void> {
   await transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new HttpOriginPermitError('authority_lost');
     const state=await control(tx);
     if (signal.aborted || state.mode!=='open' || Number(state.epoch)!==Number(hop.epoch) || Number(state.revision)!==Number(hop.revision)
       || state.policy_hash!==hop.policy_hash || state.policy.instanceHosts[hop.instance_id]!==hop.host_id) throw new HttpOriginPermitError('authority_lost');
@@ -86,6 +92,29 @@ async function finish(hop: Hop, settled: boolean): Promise<void> {
       WHERE ${exact(hop)} AND state IN ('dispatched','indeterminate') AND state<>${state} RETURNING id`);
     if(changed.length) await event(tx,hop.id,state);
   });
+}
+
+async function lockControlRow(tx: ProductTransaction): Promise<{ mode: string; has_policy: boolean }> {
+  if (currentReplayDb()) throw new HttpOriginPermitError('replay_unsupported');
+  const [row] = await tx.execute<{ mode: string; has_policy: boolean }>(sql`SELECT mode,policy IS NOT NULL AS has_policy FROM http_origin_control WHERE id=1 FOR UPDATE`);
+  if (!row) throw new Error('http_origin_control_missing');
+  return row;
+}
+/** Operator write at TX entry (after the fence). Never while open; revision+1 so earlier reservations cannot begin. Charged hops stay charged. */
+export async function setHttpOriginPolicy(tx: ProductTransaction, value: unknown): Promise<void> {
+  const row = await lockControlRow(tx);
+  if (row.mode === 'open') throw new Error('http_origin_transition_invalid');
+  const policy = httpOriginPolicySchema.parse(value);
+  const updated = await tx.execute(sql`UPDATE http_origin_control SET policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${httpOriginPolicyHash(policy)},
+    revision=revision+1,updated_at=clock_timestamp() WHERE id=1 AND revision<9007199254740991 RETURNING id`);
+  if (updated.length !== 1) throw new Error('http_origin_revision_exhausted');
+}
+/** disabled ⇄ draining ⇄ open only. Outside disabled a policy must exist (0079 CHECK). */
+export async function setHttpOriginMode(tx: ProductTransaction, mode: 'disabled' | 'draining' | 'open'): Promise<void> {
+  const row = await lockControlRow(tx);
+  if ((row.mode === 'draining') === (mode === 'draining')) throw new Error('http_origin_transition_invalid');
+  if (mode !== 'disabled' && !row.has_policy) throw new Error('http_origin_policy_missing');
+  await tx.execute(sql`UPDATE http_origin_control SET mode=${mode},updated_at=clock_timestamp() WHERE id=1`);
 }
 
 /** No caller-supplied transport/proof: owns the real undici dispatch and reader. */

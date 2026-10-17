@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { startupGatewayServingContracts } from "./gateway-serving-contract-config";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const crawlTaglineServingContractSchema = z.object({
@@ -18,6 +19,6 @@ export type CrawlTaglineServingContract = Readonly<z.infer<typeof crawlTaglineSe
 export function crawlTaglineServingContractHash(value: CrawlTaglineServingContract): string {
   return createHash("sha256").update(JSON.stringify(crawlTaglineServingContractSchema.parse(value))).digest("hex");
 }
-/** No bounded crawl-tagline serving deployment is enabled. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- No deployment is enabled.
-export function resolveCrawlTaglineServingContract(_model: string): CrawlTaglineServingContract | null { return null; }
+const configured = startupGatewayServingContracts("crawl-tagline", crawlTaglineServingContractSchema);
+/** 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS 에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
+export function resolveCrawlTaglineServingContract(model: string): CrawlTaglineServingContract | null { return configured.get(model) ?? null; }

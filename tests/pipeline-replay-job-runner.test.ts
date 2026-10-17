@@ -5,6 +5,7 @@ const fake = vi.hoisted(() => ({
   batch:vi.fn(), traces: [] as string[], heartbeat: undefined as Promise<unknown> | undefined,
 }));
 vi.mock("@/lib/db/replay-scope", () => ({ currentReplayDb: fake.scope }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), writerSiteActive: async () => true })); // PR15c: fence는 dr-fence-paths 테스트가 본다(이 fixture의 tx 순서 불변)
 vi.mock("@/lib/db", () => ({ db: { transaction: fake.transaction, update: fake.update } }));
 vi.mock("@/lib/jobs/role-leader", () => ({ assertRoleLease: fake.role, RoleLeaseLostError: class extends Error {} }));
 vi.mock("@/lib/jobs/batch-repository",()=>({assertJobBatchAdmission:fake.batch,batchResultObservation:()=>null,JobBatchBlockedError:class extends Error{}}));

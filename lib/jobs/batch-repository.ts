@@ -4,9 +4,11 @@ import { evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchC
 import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
-  batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole } from './batches';
+  batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole,
+  batchBootstrapEligible, batchBootstrapGrantSchema, classifyBatchBootstrap, batchRecanaryGrantSchema, classifyBatchRecanary } from './batches';
 import { STALE_LOCK_MS } from './lease';
-import type { RoleCandidate, RoleLease } from './role-leader';
+import type { RoleCandidate, RoleLease, RoleTakeoverGate } from './role-leader';
+import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
 export class JobBatchBlockedError extends Error { constructor() { super('job_batch_blocked'); } }
 export type BatchExecutionIdentity = { role: BatchRole; host: BatchHost; instanceId: string; bootId: string; release: string; batchEpoch: number };
@@ -34,6 +36,9 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
     return instance && policy.release === lease.release ? { role: lease.role, host: instance.host,
       instanceId: lease.instanceId, bootId: lease.bootId, release: lease.release, batchEpoch: row.epoch } : null;
   }
+  // versioned claim·결과 관문도 DR fence 를 본다(acquire/renew 와 같은 판정). batch lock 다음, 역할·후보 행보다 먼저.
+  // 이 SHARE lock 은 commit 까지 남아 fence UPDATE 와 직렬화된다: fence 뒤에 commit 되는 versioned claim·결과는 없다.
+  if (!await writerSiteActive(tx)) throw new JobBatchBlockedError();
   if (row.writerContractVersion < 1 || !lease || lease.batchVersion !== 1 || lease.batchEpoch !== row.epoch ||
     !batchJobsForRole(lease.role,'versioned').includes(name)) throw new JobBatchBlockedError();
   const policy = checkedPolicy(row), instance = policy.instances.find(item => item.instanceId === lease.instanceId);
@@ -42,7 +47,8 @@ export async function assertJobBatchAdmission(tx: ProductTransaction, name: stri
   await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
   const [candidate] = await tx.select().from(jobBatchCandidates).where(and(eq(jobBatchCandidates.role,lease.role),eq(jobBatchCandidates.instanceId,lease.instanceId),eq(jobBatchCandidates.bootId,lease.bootId),eq(jobBatchCandidates.release,lease.release),eq(jobBatchCandidates.policyHash,row.policyHash!)));
   const [clock] = await tx.select({now:sql<string>`clock_timestamp()::text`}).from(jobBatchControl).where(eq(jobBatchControl.id,1));
-  if (!candidate || !await candidateReadiness(tx,candidate,new Date(clock.now),row.epoch)) throw new JobBatchBlockedError();
+  if (!candidate || !(await candidateReadiness(tx,candidate,new Date(clock.now),row.epoch)
+    || await bootstrapReadiness(tx,candidate,new Date(clock.now),row.epoch))) throw new JobBatchBlockedError();
   if (lease.role === 'translation') {
     const [busy] = await tx.select({name:jobs.name}).from(jobs).where(and(inArray(jobs.name,batchJobsForRole('translation','versioned')),sql`${jobs.name}<>${name}`,sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt}>=clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`)).limit(1);
     if (busy) throw new JobBatchBlockedError();
@@ -86,6 +92,22 @@ async function candidateEvidence(tx: ProductTransaction, candidate: BatchCanaryC
 async function candidateReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
   return (await candidateEvidence(tx,{...candidate,role:candidate.role as BatchRole,host:candidate.host as BatchHost},now,controlEpoch)).report.ready;
 }
+/** Separate operator-grant paths: first ACK (classifyBatchBootstrap) and stale-result re-canary (classifyBatchRecanary).
+ * Normal candidates never reach the extra read. */
+async function bootstrapReadiness(tx: ProductTransaction, candidate: typeof jobBatchCandidates.$inferSelect, now: Date, controlEpoch: number) {
+  const role = candidate.role as BatchRole;
+  if (batchRecanaryGrantSchema.safeParse(candidate.resultEvidence).success) {
+    const anchorKey = batchCanaryAnchorKey(role,candidate.instanceId);
+    const rows = await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,
+      [anchorKey,...batchJobsForRole(role,'versioned').map(name => `batch-result:${candidate.instanceId}:${name}`)]));
+    return classifyBatchRecanary({candidate:{...candidate,role,host:candidate.host as BatchHost},controlEpoch,at:now.getTime(),
+      anchor:rows.find(row=>row.key===anchorKey)?.value,latest:rows.filter(row=>row.key!==anchorKey).map(row=>({key:row.key,result:row.value.batchResult}))}).ready;
+  }
+  if (!batchBootstrapEligible(role) || !batchBootstrapGrantSchema.safeParse(candidate.resultEvidence).success) return false;
+  const [prior] = await tx.select({key:operationsObservations.key}).from(operationsObservations).where(inArray(operationsObservations.key,
+    [batchCanaryAnchorKey(role,candidate.instanceId),...batchJobsForRole(role,'versioned').map(name => `batch-result:${candidate.instanceId}:${name}`)])).limit(1);
+  return classifyBatchBootstrap({candidate:{...candidate,role,host:candidate.host as BatchHost},controlEpoch,at:now.getTime(),prior:Boolean(prior)}).ready;
+}
 /** Only the successful acquirer pins an already operator-verified ACK. Never refresh an existing anchor. */
 async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCandidates.$inferSelect, controlEpoch: number) {
   const candidate={...row,role:row.role as BatchRole,host:row.host as BatchHost};
@@ -101,9 +123,11 @@ async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCa
   return new Date(after.at);
 }
 /** Candidate heartbeat cannot write capability or result evidence. Operator evidence is separately reviewed. */
-export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease | null> {
+export async function acquireBatchRole(value: RoleCandidate, takeover?: RoleTakeoverGate): Promise<RoleLease | null> {
   const candidate = batchCandidateSchema.parse(value);
   return onPrimary(async () => { try { return await db.transaction(async tx => {
+    // DR fence가 첫 lock이다(legacy tryAcquireRole과 같은 순서). fenced DB에서는 역할을 얻지 않는다.
+    if (!await writerSiteActive(tx)) return null;
     const control = await lockJobBatch(tx);
     if (control.mode !== 'versioned' || control.writerContractVersion < 1 || candidate.batchVersion !== 1) return null;
     const policy = checkedPolicy(control), instance = policy.instances.find(item => item.instanceId === candidate.instanceId);
@@ -131,10 +155,15 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
       if (await candidateReadiness(tx,row,now,control.epoch)) ready.push(row);
     }
     ready.sort((a,b) => batchHostOrder(candidate.role).indexOf(a.host as BatchHost)-batchHostOrder(candidate.role).indexOf(b.host as BatchHost) || a.instanceId.localeCompare(b.instanceId));
-    if (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId) return null;
+    // A bootstrap or re-canary grant elects only its own exact boot, and only while no candidate of the role is normally ready.
+    const own = candidates.find(row => row.instanceId === candidate.instanceId && row.bootId === candidate.bootId && row.release === policy.release && row.host === instance.host);
+    const bootstrap = !ready.length && Boolean(own) && await bootstrapReadiness(tx,own!,now,control.epoch);
+    if (!bootstrap && (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId)) return null;
     const rank = batchHostOrder(candidate.role).indexOf(instance.host);
     if (rank > 0 && current.leaseUntil.getTime() + rank * 20_000 > now.getTime()) return null;
-    await pinCandidateCanary(tx,ready[0],control.epoch);
+    if (takeover && !await takeover(tx, candidate.role)) return null;
+    // There is no verified ACK to pin before the first one; the PR10d anchor starts with the later normal canary.
+    if (!bootstrap) await pinCandidateCanary(tx,ready[0],control.epoch);
     // Election does not revoke either healthy jobs or independently owned item leases.
     const [claimed] = await tx.update(roleLeases).set({ownerInstanceId:candidate.instanceId,ownerBootId:candidate.bootId,
       ownerKind:candidate.kind,ownerRelease:candidate.release,epoch:sql`${roleLeases.epoch}+1`,leaseUntil:sql`clock_timestamp()+interval '45 seconds'`,updatedAt:sql`clock_timestamp()`})
@@ -146,6 +175,7 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
 export async function renewBatchRole(value: RoleLease): Promise<boolean> {
   const lease = batchLeaseSchema.parse(value);
   return onPrimary(() => db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) return false;
     const control = await lockJobBatch(tx);
     if ((control.mode !== 'versioned' && !(control.mode === 'draining' && control.drainingFrom === 'versioned')) || lease.batchEpoch !== control.epoch) return false;
     await tx.select().from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
@@ -173,37 +203,60 @@ export async function releaseBatchRole(value: RoleLease): Promise<boolean> {
   }));
 }
 export async function beginJobBatchDrain() {
-  return onPrimary(() => db.transaction(async tx => {
-    const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
-    if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
-    if (row.mode === 'draining') throw new Error('job_batch_transition_invalid');
-    await tx.update(jobBatchControl).set({mode:'draining',drainingFrom:row.mode,updatedAt:sql`clock_timestamp()`}).where(eq(jobBatchControl.id,1));
-  }));
+  return onPrimary(() => db.transaction(async tx => { await beginJobBatchDrainIn(tx); }));
+}
+/** Same transition inside a caller TX whose first lock is this control row. */
+export async function beginJobBatchDrainIn(tx: ProductTransaction) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
+  if (row.mode === 'draining') throw new Error('job_batch_transition_invalid');
+  const [updated] = await tx.update(jobBatchControl).set({mode:'draining',drainingFrom:row.mode,updatedAt:sql`clock_timestamp()`}).where(eq(jobBatchControl.id,1)).returning();
+  return updated;
 }
 export async function completeJobBatchTransition(target: Exclude<BatchMode,'draining'>) {
-  return onPrimary(() => db.transaction(async tx => {
-    const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
-    if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
-    if (row.mode !== 'draining' || target === row.drainingFrom) throw new Error('job_batch_transition_invalid');
-    if (target === 'versioned') checkedPolicy(row);
-    // Existing renew/result TXs start with this control lock and may later need
-    // a job row. Wait here before roles/jobs so neither a pending renew nor an
-    // opposite source->job lock order can be hidden by the old expiry snapshot.
-    const [sourceControl] = await tx.select({id:evidenceSourceControl.id}).from(evidenceSourceControl)
-      .where(eq(evidenceSourceControl.id,1)).for('update');
-    if (!sourceControl) throw new Error('evidence_source_control_missing');
-    await tx.select({role:roleLeases.role}).from(roleLeases).orderBy(roleLeases.role).for('update');
-    await tx.select({name:jobs.name}).from(jobs).orderBy(jobs.name).for('update');
-    // Wall time is evaluated again after all job-row waits.
-    const [active] = await tx.select({name:jobs.name}).from(jobs).where(sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`).limit(1);
-    const [item] = await tx.select({key:pipelineItemLeases.workKey}).from(pipelineItemLeases).where(sql`${pipelineItemLeases.token} is not null AND ${pipelineItemLeases.leaseUntil}>clock_timestamp()`).limit(1);
-    const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
-    const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
-      .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
-    if (active || item || role || source) throw new Error('job_batch_not_drained');
-    const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
-      .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
-    if (!updated) throw new Error('job_batch_epoch_exhausted');
-    return updated;
-  }));
+  return onPrimary(() => db.transaction(tx => completeJobBatchTransitionIn(tx,target)));
+}
+export async function completeJobBatchTransitionIn(tx: ProductTransaction, target: Exclude<BatchMode,'draining'>) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row || row.writerContractVersion < 1) throw new Error('job_batch_contract_required');
+  if (row.mode !== 'draining' || target === row.drainingFrom) throw new Error('job_batch_transition_invalid');
+  if (target === 'versioned') checkedPolicy(row);
+  // Existing renew/result TXs start with this control lock and may later need
+  // a job row. Wait here before roles/jobs so neither a pending renew nor an
+  // opposite source->job lock order can be hidden by the old expiry snapshot.
+  const [sourceControl] = await tx.select({id:evidenceSourceControl.id}).from(evidenceSourceControl)
+    .where(eq(evidenceSourceControl.id,1)).for('update');
+  if (!sourceControl) throw new Error('evidence_source_control_missing');
+  await tx.select({role:roleLeases.role}).from(roleLeases).orderBy(roleLeases.role).for('update');
+  await tx.select({name:jobs.name}).from(jobs).orderBy(jobs.name).for('update');
+  // Wall time is evaluated again after all job-row waits.
+  const [active] = await tx.select({name:jobs.name}).from(jobs).where(sql`${jobs.leaseToken} is not null AND ${jobs.lockedAt} >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'`).limit(1);
+  const [item] = await tx.select({key:pipelineItemLeases.workKey}).from(pipelineItemLeases).where(sql`${pipelineItemLeases.token} is not null AND ${pipelineItemLeases.leaseUntil}>clock_timestamp()`).limit(1);
+  const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
+  const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
+    .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
+  if (active || item || role || source) throw new Error('job_batch_not_drained');
+  const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
+    .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
+  if (!updated) throw new Error('job_batch_epoch_exhausted');
+  return updated;
+}
+/** Operator policy write. Legacy only: versioned elections and candidates are bound to the current hash. */
+export async function setJobBatchPolicy(tx: ProductTransaction, value: unknown) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row) throw new Error('job_batch_control_missing');
+  if (row.mode !== 'legacy') throw new Error('job_batch_transition_invalid');
+  const policy = batchPolicySchema.parse(value);
+  const [updated] = await tx.update(jobBatchControl).set({policy,policyHash:batchPolicyHash(policy),updatedAt:sql`clock_timestamp()`})
+    .where(eq(jobBatchControl.id,1)).returning();
+  return updated;
+}
+/** Operator attestation for versioned writers. Legacy only, one step up, never lowered. */
+export async function bumpJobBatchContract(tx: ProductTransaction) {
+  const [row] = await tx.select().from(jobBatchControl).where(eq(jobBatchControl.id,1)).for('update');
+  if (!row) throw new Error('job_batch_control_missing');
+  if (row.mode !== 'legacy') throw new Error('job_batch_transition_invalid');
+  const [updated] = await tx.update(jobBatchControl).set({writerContractVersion:row.writerContractVersion+1,updatedAt:sql`clock_timestamp()`})
+    .where(eq(jobBatchControl.id,1)).returning();
+  return updated;
 }

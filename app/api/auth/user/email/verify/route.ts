@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { verifyEmailLogin } from "@/lib/domain/accounts/email-login";
 import { publicAuthErrorResponse, PublicAuthError, PUBLIC_PRIVATE_HEADERS, readLoginJson, requestCookie, requireLoginMutation } from "@/lib/domain/accounts/request-auth";
 import { LOGIN_NONCE_COOKIE, loginNonceCookieOptions, PUBLIC_SESSION_COOKIE, publicSessionCookieOptions } from "@/lib/domain/accounts/session";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function POST(request: Request) {
+export const POST = webWriteRoute(async (request: Request) => {
   try {
     const browserNonce = requireLoginMutation(request);
     const input = await readLoginJson(request);
@@ -16,4 +17,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return publicAuthErrorResponse(error);
   }
-}
+}, publicAuthErrorResponse);

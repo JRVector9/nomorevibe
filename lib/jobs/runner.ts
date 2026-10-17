@@ -13,6 +13,7 @@ import { STALE_LOCK_MS } from "./lease";
 import { assertJobBatchAdmission, batchResultObservation, JobBatchBlockedError, type BatchExecutionIdentity } from "./batch-repository";
 import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -75,7 +76,12 @@ export async function runJob<C>(
       // currentReplayDb revalidates the private verified DB/scope brand. Fixed v5/v6
       // replay profiles have an explicit legacy job-batch contract, independent of item mode.
       // Ordinary runtime callers always acquire the batch lock in this same claim TX.
-      if (!currentReplayDb()) batchIdentity = await assertJobBatchAdmission(tx, name, options.roleLease);
+      // DR writer fence가 그 앞의 첫 lock이다(seal의 fence UPDATE → batch → role → jobs와 같은 순서). fenced DB는 새 job을 claim하지 않는다.
+      // 격리 replay DB는 batch admission처럼 fence도 건너뛴다(고정 handler profile에 fence 권한이 없다).
+      if (!currentReplayDb()) {
+        if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+        batchIdentity = await assertJobBatchAdmission(tx, name, options.roleLease);
+      }
       if (options.roleLease) await assertRoleLease(tx, options.roleLease);
       await tx.insert(jobs).values({ name }).onConflictDoNothing();
       return tx.update(jobs).set({
@@ -96,7 +102,7 @@ export async function runJob<C>(
       )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
     });
   } catch (error) {
-    if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError) return { status: 'skipped', reason: 'stopping' };
+    if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError || error instanceof DrWriterFencedError) return { status: 'skipped', reason: 'stopping' };
     throw error;
   }
   if (!claimed) {
@@ -161,6 +167,8 @@ export async function runJob<C>(
       };
       const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"
         ? await db.transaction(async tx => {
+          // DR writer fence 가 이 release TX 의 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서). fenced DB 에는 쓰지 않는다
+          if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
           await assertJobLeaseAtWallTime(tx, lease, "update");
           return release(tx);
         }) : await release(db);
@@ -176,6 +184,9 @@ export async function runJob<C>(
       && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted;
     let sourceContinuation = false;
     await db.transaction(async tx => {
+      // DR writer fence 가 ACK TX 의 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서; jobs → fence 는 그 UPDATE 와 교착한다).
+      // handler 가 도는 사이 fence 됐으면 ACK·결과 관측을 commit 하지 않는다. 격리 replay DB 는 claim 처럼 건너뛴다.
+      if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
       const [row] = await tx.update(jobs).set({
         // done은 "지금 할 일이 없다", cursor는 "내 상태"다. 둘을 묶으면 이어서 훑어야 하는
         // 작업이 완료를 알릴 때마다 진행 위치를 잃는다. 커서를 명시하면 그것을 따르고,
@@ -226,6 +237,11 @@ export async function runJob<C>(
     return { status: "completed", done: outcome.done, durationMs, ...(sourceContinuation ? { sourceContinuation: true as const } : {}) };
   } catch (error) {
     await stopHeartbeat();
+    // fenced DB: 실패 기록도 쓰기다. lease 는 두고(seal 이 회수하거나 만료된다) 멈춘다 — claim 거절과 같은 결과
+    if (error instanceof DrWriterFencedError) {
+      logger.info("job.writer_fenced", { job: name, durationMs: Date.now() - startedAt });
+      return { status: "skipped", reason: "stopping" };
+    }
     // PostgreSQL rejects NUL even in diagnostic text. A failed error write used to
     // leave the lease locked and hide the original failure from operations.
     const message = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "\\0");

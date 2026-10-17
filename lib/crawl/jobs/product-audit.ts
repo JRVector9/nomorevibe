@@ -1,4 +1,9 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
+import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
+import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
+import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
@@ -73,7 +78,9 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
   const ceiling = campaign.provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   let reviewed = 0, failed = 0, noSource = 0;
   let down: string | null = null;
-  const canStart = () => !down && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
+  // 한 자리가 공통 모델 슬롯에서 미뤄지면 다른 자리도 새 호출을 시작하지 않는다 — 이미 시작한 호출은 끝까지 기다린다
+  let deferred = false;
+  const canStart = () => !down && !deferred && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
 
   // 자리마다 다음 것을 집어 묻는다. 한 호출이 실패해도 그 자리는 다음 것으로 넘어간다
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -87,8 +94,21 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
         await markAuditNoSource(item.id, lease);
         continue;
       }
+      // open·draining 이면 부르지 않고 미룬다 — 감사 시도 행을 넣지 않으므로 시도 횟수·재시도 시각이 그대로다.
+      // Claude CLI 는 계약이 있으면 공통 슬롯을 얻어 부른다. 게이트웨이(abcllm)는 native 종료 근거가 없어 open 이면 늘 미룬다
+      let capacity: "legacy" | "native" = "legacy";
+      try {
+        if (campaign.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: campaign.model });
+        else capacity = await backgroundCliPath("product-audit", campaign.model);
+      } catch (error) {
+        if (error instanceof ModelCapacityDeferredError) deferred = true;
+        throw error;
+      }
       const callStartedAt = new Date();
       const controller = new AbortController();
+      // 슬롯을 얻은 뒤 띄우기 직전에 이 자리의 시작 조건을 다시 본다
+      const native = capacity === "native"
+        ? auditCliModelCapacity({ campaign, item, input, lease, beforeSpawn: () => canStart() && !controller.signal.aborted }) : null;
       const abort = () => controller.abort();
       ctx.signal?.addEventListener("abort", abort, { once: true });
       const ownershipPoll = setInterval(() => { if (!ctx.hasBudget() || remaining() <= 0) controller.abort(); }, 250);
@@ -99,14 +119,21 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
         const options = { model: campaign.model, timeoutMs: ceiling, signal: controller.signal };
         result = campaign.provider === "abcllm"
           ? await reviewWithGateway(input, options)
-          : await reviewWithAgent(input, options);
+          : await reviewWithAgent(input, native ? { ...options, run: native.run } : options);
       } finally {
         clearInterval(ownershipPoll);
         ctx.signal?.removeEventListener("abort", abort);
       }
+      // 슬롯 미룸은 다른 자리의 새 시작도 멈춘다. 건너뜀·띄우지 않음은 parser 에 cancelled 로 보여 아래에서 기록 없이 끝난다
+      try { native?.settled(); } catch (error) {
+        if (error instanceof ModelCapacityDeferredError) deferred = true;
+        throw error;
+      }
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
       if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
         || (!result.ok && result.error === "cancelled")) return;
+      // 게이트웨이 감사는 전송 단계(observeProviderTransport)가 이미 알린다 — 두 번 세지 않게 CLI 결과만
+      if (campaign.provider !== "abcllm") reportProviderOutcome(result);
       const call = { itemId: item.id, startedAt: callStartedAt, provider: campaign.provider, model: campaign.model, input };
       if (result.ok) {
         reviewed += 1;
@@ -121,8 +148,11 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
   }));
 
   ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource });
-  const failure = settled.find((result) => result.status === "rejected");
+  const failures = settled.filter((result) => result.status === "rejected");
+  const failure = failures.find((result) => !(result.reason instanceof ModelCapacityDeferredError));
   if (failure) throw failure.reason;
   if (down) throw new Error(`product_audit_reviewer_unavailable:${down}`);
+  // 슬롯에서 미뤘다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다
+  if (failures.length) throw failures[0].reason;
   return { done: false };
 }

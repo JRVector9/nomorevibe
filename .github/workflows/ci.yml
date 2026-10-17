@@ -55,7 +55,10 @@ jobs:
       - run: npm test
       - run: python3 -m unittest tests/test_deploy_shared_images.py
       - run: python3 -m unittest tests/test_oracle_runtime.py
+      - run: python3 -m unittest tests/test_oracle_activation.py
+      - run: python3 -m unittest tests/test_oracle_activation_check.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_ddl.py
+      - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_replication.py
       - run: npm run build
         env:
           DATABASE_URL: postgres://build:build@localhost:5432/build
@@ -134,6 +137,21 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
         run: npm run test:integration -- tests/integration/model-capacity-websearch-query-ledger.test.ts
+      - name: Check CLI process ledger after the restored websearch baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/model-capacity-cli-ledger.test.ts
+      - name: Check background CLI capacity callers after the restored CLI ledger baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/cli-background-model-capacity.test.ts
+      - name: Check AI1 and AI2 CLI capacity dispatch after the restored CLI ledger baseline
+        if: matrix.shard == 1
+        env:
+          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+        run: npm run test:integration -- tests/integration/review-cli-capacity-dispatch.test.ts
       - name: Check reason translation ledger against the fresh test database
         if: matrix.shard == 1
         env:
@@ -158,7 +176,7 @@ jobs:
         if: matrix.shard == 1
         run: npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
       # Each runner owns a separate Postgres service; files within a shard stay serial.
-      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts
+      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts --exclude tests/integration/model-capacity-cli-ledger.test.ts --exclude tests/integration/cli-background-model-capacity.test.ts --exclude tests/integration/review-cli-capacity-dispatch.test.ts
 
   check:
     needs: [scope, quality, integration]

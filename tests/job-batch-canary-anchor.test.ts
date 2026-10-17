@@ -129,7 +129,7 @@ it.each([0, 2000])('returns the same owner only while its original lease is stil
     return Object.assign(promise, { from: () => promise, where: () => promise, for: () => promise });
   });
   const tx = { select, insert: vi.fn(() => ({ values: () => ({ onConflictDoNothing: async () => {}, onConflictDoUpdate: async () => {} }) })),
-    update: vi.fn(), execute: vi.fn().mockResolvedValueOnce([{ at: new Date(at).toISOString() }])
+    update: vi.fn(), execute: vi.fn().mockResolvedValueOnce([{ lineage_id: '6d7f0f53-4d39-4b9d-a5a6-3a4a8f0c1b11', writer_epoch: 1, state: 'active', reason: null, fenced_db: null, promotion_id: null }]).mockResolvedValueOnce([{ at: new Date(at).toISOString() }])
       .mockResolvedValueOnce([{ at: new Date(at + waitMs).toISOString() }]) };
   acquisition.transaction.mockImplementationOnce((body: (tx: unknown) => Promise<unknown>) => body(tx));
   const { acquireBatchRole } = await import('@/lib/jobs/batch-repository');

@@ -140,19 +140,24 @@ export async function reviewWithGrokCli(input: ReviewInput, options: { model: st
         cwd: directory, env, timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? GROK_REVIEW_TIMEOUT_MS, GROK_REVIEW_TIMEOUT_MS)), signal: options.signal,
       });
     } catch { return { ok: false, error: "cli_error" }; }
-    if (result.kind !== "exit") return { ok: false, error: result.kind };
-    let output: Record<string, unknown>;
-    try {
-      const start = result.stdout.indexOf("{");
-      const parsed: unknown = JSON.parse(start >= 0 ? result.stdout.slice(start) : result.stdout);
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_envelope");
-      output = parsed as Record<string, unknown>;
-    } catch { return { ok: false, error: result.code === 0 ? "invalid_output" : grokFailure(result.stdout, result.stderr) }; }
-    const usage = usageFrom(output);
-    if (result.code !== 0) return { ok: false, error: grokFailure(result.stdout, result.stderr), usage };
-    try {
-      const value = output.structuredOutput ?? JSON.parse(typeof output.text === "string" ? output.text : "");
-      return { ok: true, outcome: validateReviewOutcome(input, value), usage };
-    } catch { return { ok: false, error: "invalid_output", usage }; }
+    return grokReviewResult(input, result);
   } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+/** 실행 결과 해석 — 공통 모델 슬롯 경로(05c-4)도 같은 parser·validator 를 쓴다 */
+export function grokReviewResult(input: ReviewInput, result: GrokCliResult): AgentReviewResult {
+  if (result.kind !== "exit") return { ok: false, error: result.kind };
+  let output: Record<string, unknown>;
+  try {
+    const start = result.stdout.indexOf("{");
+    const parsed: unknown = JSON.parse(start >= 0 ? result.stdout.slice(start) : result.stdout);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("invalid_envelope");
+    output = parsed as Record<string, unknown>;
+  } catch { return { ok: false, error: result.code === 0 ? "invalid_output" : grokFailure(result.stdout, result.stderr) }; }
+  const usage = usageFrom(output);
+  if (result.code !== 0) return { ok: false, error: grokFailure(result.stdout, result.stderr), usage };
+  try {
+    const value = output.structuredOutput ?? JSON.parse(typeof output.text === "string" ? output.text : "");
+    return { ok: true, outcome: validateReviewOutcome(input, value), usage };
+  } catch { return { ok: false, error: "invalid_output", usage }; }
 }

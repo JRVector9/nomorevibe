@@ -6,8 +6,9 @@ import { githubStarAppConfig } from "@/lib/domain/github-user/config";
 import { consumeGithubAuthFlow } from "@/lib/domain/github-user/repository";
 import { DEFAULT_LOCALE } from "@/lib/i18n/locales";
 import { localePath, pathLocale, safePublicReturnUrl } from "@/lib/i18n/routing";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
-export async function GET(request: Request) {
+export const GET = webWriteRoute(async (request: Request) => {
   let consumedReturnTo: string | undefined;
   try {
     requireGithubStarEnabled();
@@ -42,4 +43,4 @@ export async function GET(request: Request) {
     response.cookies.set(GITHUB_NONCE_COOKIE, "", { ...githubNonceCookieOptions(), maxAge: 0 });
     return response;
   }
-}
+}, publicAuthErrorResponse);
