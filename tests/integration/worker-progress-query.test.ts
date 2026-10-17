@@ -162,6 +162,64 @@ it("detects changed canonical sites and alerts on old provider failures without 
   expect(await evidence()).toMatchObject({ reason: "paused", alarm: false, restartEligible: false });
 });
 
+it("keeps per-source failures in scheduled backoff out of provider stalls without hiding due work or provider-wide failures", async () => {
+  const now = new Date();
+  const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
+  const later = new Date(now.getTime() + 24 * 60 * 60_000);
+  const created = ago(3 * 24 * 60);
+  // 2026-10-17 운영 모양: 대기는 비었고 출처마다 다른 실패가 각자 재시도 시각을 기다린다
+  const failures = [["missing", "repository", "github", "not_found"], ["blocked", "repository", "github", "http_403"],
+    ["broken", "repository", "github", "collection_failed"], ["heavy", "documentation", "product_site", "site_too_large"]] as const;
+  for (const [slug, kind, provider, code] of failures) {
+    await publicProduct(slug, now, { createdAt: created, updatedAt: created });
+    if (kind === "repository") await db.insert(productLinks).values({ slug, kind, declarationSource: "maker",
+      url: `https://github.com/acme/${slug}`, normalizedKey: `acme/${slug}`, createdAt: created, updatedAt: created });
+    await db.insert(productEvidenceSources).values({ slug, kind, provider, state: "failed", lastErrorCode: code,
+      sourceKey: kind === "repository" ? `acme/${slug}` : "canonical_site",
+      sourceUrl: kind === "repository" ? `https://github.com/acme/${slug}` : `https://${slug}.example`,
+      lastFailureAt: ago(24 * 60), nextAttemptAt: later, createdAt: created });
+  }
+  await observeService("crawler", { status: "running" });
+  const evidence = async () => (await readWorkerProgress(now)).stages.find(row => row.stage === "evidence")!;
+  expect(await evidence()).toMatchObject({ waiting: 0, deferred: 4, errors5m: 0, providerErrors: 0, providerErrorMinutes: null,
+    reason: "backoff", alarm: false, restartEligible: false });
+
+  // 재시도 시각이 지났는데 45분째 시도조차 없는 출처는 여전히 경보다
+  await db.update(productEvidenceSources).set({ nextAttemptAt: ago(45) }).where(eq(productEvidenceSources.slug, "broken"));
+  expect(await evidence()).toMatchObject({ waiting: 1, oldestMinutes: 45, deferred: 3, errors5m: 0, providerErrors: 0,
+    reason: "no_progress", alarm: true, restartEligible: true });
+  // 오래된 기한 대기에 최근 시도가 실패만 하면 공급자 정체로 본다(재시작 대상 아님)
+  await db.update(productEvidenceSources).set({ lastFailureAt: ago(1) }).where(eq(productEvidenceSources.slug, "missing"));
+  expect(await evidence()).toMatchObject({ waiting: 1, errors5m: 1, providerErrors: 0,
+    reason: "upstream_stalled", alarm: true, restartEligible: false });
+
+  await db.update(productEvidenceSources).set({ nextAttemptAt: later, lastFailureAt: ago(24 * 60) });
+  for (const code of ["rate_limited", "auth_unavailable"]) {
+    // 계정 단위 한도·인증 실패는 재시도 예정이어도 공급자 장애다
+    await db.update(productEvidenceSources).set({ lastErrorCode: code }).where(eq(productEvidenceSources.slug, "blocked"));
+    expect(await evidence()).toMatchObject({ waiting: 0, deferred: 4, errors5m: 0, providerErrors: 1,
+      providerErrorMinutes: 3 * 24 * 60, reason: "upstream_stalled", alarm: true, restartEligible: false });
+  }
+});
+
+it("keeps per-repository agent scan failures in backoff out of provider stalls but retains rate limits", async () => {
+  const now = new Date();
+  const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
+  await saveSettings({ agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: true } }, "test");
+  await publicProduct("agent-gone", now, { repoUrl: "https://github.com/acme/agent-gone",
+    createdAt: ago(3 * 24 * 60), updatedAt: ago(3 * 24 * 60) });
+  await db.insert(agentRepositoryScans).values({ repositoryKey: "acme/agent-gone", githubRepositoryId: BigInt(7),
+    commitSha: "c".repeat(40), detectorVersion: AGENT_DETECTOR_VERSION, scope: "", scopeHash: "c".repeat(64), state: "failed",
+    lastErrorCode: "unavailable", startedAt: ago(24 * 60), completedAt: ago(24 * 60), nextAttemptAt: new Date(now.getTime() + 60 * 60_000) });
+  await observeService("crawler", { status: "running" });
+  const agent = async () => (await readWorkerProgress(now)).stages.find(row => row.stage === "agent-evidence")!;
+  expect(await agent()).toMatchObject({ waiting: 0, deferred: 1, errors5m: 0, providerErrors: 0, providerErrorMinutes: null,
+    reason: "backoff", alarm: false, restartEligible: false });
+  await db.update(agentRepositoryScans).set({ lastErrorCode: "rate_limited" });
+  expect(await agent()).toMatchObject({ waiting: 0, deferred: 1, providerErrors: 1, providerErrorMinutes: 24 * 60,
+    reason: "upstream_stalled", alarm: true, restartEligible: false });
+});
+
 it("distinguishes partial agent progress from completed scans and includes unseen current AI-level demand", async () => {
   const now = new Date();
   const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);

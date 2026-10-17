@@ -46,7 +46,7 @@ import {
 } from "./providers/links";
 import { upsertObservedSource } from "./repository";
 import { insertUpdateCandidates } from "./updates";
-import { normalizeTypedLink } from "./contracts";
+import { normalizeTypedLink, safeHttpUrl } from "./contracts";
 import { syncRepositoryLink } from "./repository-link-sync";
 import { queueProductRefresh } from "./refresh-requests";
 import { assertJobLease, JobLeaseLostError, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
@@ -344,6 +344,9 @@ async function canonicalSiteSources(slug: string, now: Date, force: boolean, pro
   if (!hasBudget()) return [];
   const product = await db.query.products.findFirst({ where: eq(products.slug, slug), columns: { id: true, url: true } });
   if (!hasBudget() || !product) return [];
+  // 출처 기록이 거절하는 주소(sslip.io 같은 사설 DNS 별칭)는 관측을 남길 수 없다. 사이트를 먼저 시도하면
+  // 매번 기록 단계에서 던져 같은 제품의 다른 출처까지 영영 막으므로 사이트 출처가 없는 것으로 본다.
+  if (!safeHttpUrl.safeParse(product.url).success) return [];
   const stored = await db.query.productEvidenceSources.findFirst({ where: and(eq(productEvidenceSources.slug, slug),
     eq(productEvidenceSources.provider, "product_site"), eq(productEvidenceSources.sourceKey, "canonical_site")) });
   if (!hasBudget()) return [];

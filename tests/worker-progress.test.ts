@@ -55,6 +55,19 @@ it.each(["authentication_failed", "rate_limited", "unknown"])("retains aged AI f
     .toMatchObject({ reason: "backoff", alarm: false, restartEligible: false });
 });
 
+it.each([
+  // 2026-10-17 운영 모양(수정 후 집계): 대기 0, 출처별 실패만 재시도 예정 → 정상 대기
+  ["per-source backoff only", { waiting: 0, oldestMinutes: null, deferred: 594, providerErrors: 0, providerErrorMinutes: null }, null, "backoff", false],
+  ["per-source failure just recorded", { waiting: 0, oldestMinutes: null, deferred: 594, errors5m: 2, providerErrors: 0, providerErrorMinutes: null }, null, "upstream_or_job_error", false],
+  ["due work never attempted", { waiting: 6, oldestMinutes: 6158, deferred: 594, providerErrors: 0, providerErrorMinutes: null }, null, "no_progress", true],
+  ["due work while recent attempts fail", { waiting: 6, oldestMinutes: 6158, deferred: 594, errors5m: 2, providerErrors: 0, providerErrorMinutes: null }, null, "upstream_stalled", true],
+  ["account-wide limit in backoff", { waiting: 0, oldestMinutes: null, deferred: 594, providerErrors: 1, providerErrorMinutes: 120 }, null, "upstream_stalled", true],
+  ["job failure with aged due work", { waiting: 6, oldestMinutes: 120, deferred: 0, providerErrors: 0, providerErrorMinutes: null }, "authentication_failed", "upstream_stalled", true],
+] as const)("classifies evidence sources by provider-wide failures, not per-source backoff: %s", (_name, input, lastError, reason, alarm) => {
+  const evidence = { ...stage, key: "evidence" as const, ...input };
+  expect(classifyStage(evidence, lastError ? { notBefore: null, lastError } : null, true, now)).toMatchObject({ reason, alarm });
+});
+
 it("classifies eligible publisher work without restarting for held or newly approved candidates", () => {
   const publish = { ...stage, key: "publish" as const, oldestMinutes: 11 };
   expect(classifyStage(publish, null, true, now)).toMatchObject({

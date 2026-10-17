@@ -23,6 +23,15 @@ const jobForStage: Record<ProgressStageKey, string> = { fetch: "crawl-fetch", ju
 export type WorkerLaneProgress = { role: string; name: string; jobs: string[]; state: string; currentJob: string | null;
   startedAt: number | null; pollStartedAt: number | null; lastProgressAt: number; pollAgeMs: number | null;
   progressAgeMs: number; reason: string | null; alarm: boolean; restartEligible: boolean };
+// 출처·저장소마다 다음 재시도 시각을 받은 개별 실패(없는 저장소, 사이트 HTTP 오류, 시간 초과 등)는 공급자 장애가 아니다.
+// 재시도 예정이어도 공급자 장애로 세는 것은 GitHub 계정 단위 실패뿐이다 — 한도·인증 403/401은 수집기가 이 코드로 바꾼다.
+// 기한이 지난 개별 실패는 대기(waiting)로 남아 정체 경보가 맡고, 최근 5분 실패는 errors5m 이 맡는다.
+const EVIDENCE_PROVIDER_FAILURE_CODES = ["rate_limited", "auth_unavailable"];
+// 제작 근거 스캔의 'unavailable' 은 없는 저장소와 인증 실패를 함께 담아 저장소별 실패로 본다.
+// 인증·한도로 스캔을 시작조차 못 하면 잡 커서의 공급자 실패(job_failure)로 남아 계속 경보한다.
+const AGENT_PROVIDER_FAILURE_CODES = ["rate_limited"];
+const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${value}`), sql`, `);
+
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
   stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
   /** Optional for readers/fixtures written before lane metadata was introduced. */
@@ -135,7 +144,9 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
           s.completed_at, CASE WHEN ${preScanFailure} THEN ${failure?.lastFailureAt ?? null}::timestamp ELSE s.started_at END AS started_at,
           s.file_count, s.request_count,
           CASE WHEN ${preScanFailure} THEN ${failure?.firstFailureAt ?? null}::timestamp
-            ELSE greatest(d.created_at, s.completed_at) END AS error_since
+            ELSE greatest(d.created_at, s.completed_at) END AS error_since,
+          -- 잡 커서가 기록한 스캔 전 공급자 실패는 저장소별 재시도 대기가 아니다
+          coalesce(${preScanFailure}, false) AS job_failure
         FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)
       ), ai_current AS MATERIALIZED (
         -- Avoid one long-key index probe per target when demand cardinality is underestimated.
@@ -165,8 +176,8 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
         count(*) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'budget_exhausted'
           AND failure_at > ${at} - interval '5 minutes' AND failure_at <= ${at})::int AS errors,
         count(*) FILTER (WHERE due_at > ${at} AND error_code IS NOT NULL)::int AS deferred,
-        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'budget_exhausted')::int AS provider_errors,
-        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'budget_exhausted'))) / 60 AS error_age
+        count(*) FILTER (WHERE error_code IN (${sqlTextList(EVIDENCE_PROVIDER_FAILURE_CODES)}))::int AS provider_errors,
+        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE error_code IN (${sqlTextList(EVIDENCE_PROVIDER_FAILURE_CODES)})))) / 60 AS error_age
       FROM source_targets
       UNION ALL SELECT 'agent-evidence', count(*) FILTER (WHERE due_at <= ${at})::int,
         extract(epoch FROM (${at} - min(due_at) FILTER (WHERE due_at <= ${at}))) / 60,
@@ -176,8 +187,8 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
         count(*) FILTER (WHERE error_code IS NOT NULL AND error_code NOT IN ('budget_exhausted','alias_recheck_required')
           AND started_at > ${at} - interval '5 minutes' AND started_at <= ${at})::int,
         count(*) FILTER (WHERE due_at > ${at} AND (state = 'partial' OR error_code IS NOT NULL))::int,
-        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code NOT IN ('budget_exhausted','alias_recheck_required'))::int,
-        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE error_code IS NOT NULL AND error_code NOT IN ('budget_exhausted','alias_recheck_required')))) / 60
+        count(*) FILTER (WHERE job_failure OR error_code IN (${sqlTextList(AGENT_PROVIDER_FAILURE_CODES)}))::int,
+        extract(epoch FROM (${at} - min(error_since) FILTER (WHERE job_failure OR error_code IN (${sqlTextList(AGENT_PROVIDER_FAILURE_CODES)})))) / 60
       FROM agent_targets
       UNION ALL SELECT 'ai-level', count(*) FILTER (WHERE due_at <= ${at})::int,
         extract(epoch FROM (${at} - min(due_at) FILTER (WHERE due_at <= ${at}))) / 60,

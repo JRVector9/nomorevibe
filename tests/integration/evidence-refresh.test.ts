@@ -250,6 +250,36 @@ describe("bounded product evidence refresh", () => {
     expect(siteFingerprint).not.toHaveBeenCalled();
   });
 
+  it("collects a due repository when the product URL can never be stored as canonical site evidence", async () => {
+    // 2026-10-17 운영: sslip.io·nip.io 주소 제품 6개는 사이트 관측 저장이 safeHttpUrl 에 거절돼
+    // 매 틱 저장소 출처보다 먼저 실패했고, 저장소 출처는 기록 없이 며칠째 기한 대기로 남았다
+    await product("ip-alias");
+    await replaceMakerLinks({ slug: "ip-alias", actor: "maker:test", links: [{ kind: "repository", url: "https://github.com/owner/repo" }] });
+    await db.update(products).set({ url: "https://demo.1-2-3-4.sslip.io" }).where(eq(products.slug, "ip-alias"));
+    await upsertObservedSource({ slug: "ip-alias", kind: "repository", provider: "github", sourceKey: "owner/repo",
+      state: "failed", attempts: 3, lastErrorCode: "collection_failed", lastFailureAt: new Date(NOW.getTime() - 2 * 86400000),
+      nextAttemptAt: new Date(NOW.getTime() - 86400000) });
+    expect(await dueEvidenceProductSlugs({ now: NOW, limit: 20, settings: DEFAULT_EVIDENCE_SETTINGS })).toEqual(["ip-alias"]);
+    const fetch = vi.fn(async () => ({ ok: true as const, status: 200, finalUrl: "https://demo.1-2-3-4.sslip.io", headers: new Headers(),
+      body: Buffer.from("<p>Product</p>") }));
+    const request = vi.fn(async (path: string) => ({ ok: true as const, status: 200 as const, etag: '"e"', lastModified: null, link: null,
+      value: path === "/repos/owner/repo" ? { html_url: "https://github.com/owner/repo", full_name: "owner/repo", created_at: NOW.toISOString(),
+        pushed_at: null, updated_at: NOW.toISOString(), stargazers_count: 1, forks_count: 0,
+        private: false, archived: false, fork: false, homepage: null, license: null }
+        : path.endsWith("/readme") ? { encoding: "base64", content: Buffer.from("readme").toString("base64") }
+          : path.endsWith("/languages") ? {} : [] }));
+    const { ctx, logs } = context();
+    await refreshProductEvidenceJob(ctx, { now: () => NOW,
+      github: (input, options) => refreshGitHubEvidence(input, { ...options, request }),
+      siteFingerprint: (input, options) => refreshSiteFingerprint(input, { ...options, fetch }) });
+    expect(logs.filter(row => row.event === "evidence.product_refresh_failed")).toEqual([]);
+    expect(fetch).not.toHaveBeenCalled();
+    const sources = await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug, "ip-alias"));
+    expect(sources.map(source => source.sourceKey)).toEqual(["owner/repo"]);
+    expect(sources[0]).toMatchObject({ state: "ok", lastErrorCode: null, attempts: 0, lastSuccessAt: NOW });
+    expect(sources[0].nextAttemptAt.getTime()).toBeGreaterThan(NOW.getTime());
+  });
+
   it("selects due products in bounded cursor order and isolates a failed product", async () => {
     for (const slug of ["alpha", "beta", "gamma"]) {
       await product(slug);
