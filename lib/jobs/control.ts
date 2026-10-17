@@ -7,6 +7,7 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
 import { batchPendingNames, lockJobBatch } from "./batch-repository";
 import { batchJobsForRole, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 
 export type JobLease = { name: string; token: string; requestedVersion: number };
 export { JobLeaseLostError } from "./lease";
@@ -26,6 +27,8 @@ export async function requestJob(name: string, tx: ProductTransaction | typeof d
 /** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */
 export async function requestDueJobs(): Promise<number> {
   return db.transaction(async tx => {
+    // DR writer fence가 첫 lock이다(seal의 fence UPDATE → batch → jobs와 같은 순서). fenced DB의 scheduler는 정기 요청을 만들지 않는다.
+    if (!await writerSiteActive(tx)) return 0;
     const batch = await lockJobBatch(tx);
     let count = 0;
     for (const job of JOB_CATALOG) {
