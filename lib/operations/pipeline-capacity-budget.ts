@@ -13,7 +13,7 @@ export const BUDGET_ISSUES = ["budget_evidence_absent", "model_capacity_absent",
   "model_capacity_changed_since_window_start", "capacity_policy_invalid", "capacity_policy_changed", "ledger_row_limit", "ledger_inconsistent",
   "unattributed_ai1_calls", "ai2_call_records_unverified", "unattributed_ai2_calls", "token_bound_missing", "concurrency_limit_exceeded",
   "concurrency_limit_undeclared", "usage_unreported_without_bound", "recorded_calls_exceed_meter", "meter_calls_outside_ledger",
-  "replay_budget_unrecorded", "replay_calls_after_stop"] as const;
+  "replay_budget_unrecorded", "replay_calls_after_stop", "replay_drain_calls_cut"] as const;
 export type BudgetIssue = typeof BUDGET_ISSUES[number];
 const integer = z.number().int().nonnegative().safe();
 const source = z.enum(["model_capacity_ledger", "replay_meter"]);
@@ -146,9 +146,10 @@ export function ledgerBudgetEvidence(input: LedgerBudgetInput): BudgetEvidence {
  * legacy 고정 입력 replay: 장부가 없으므로 계량기(모든 모델 egress가 지나는 유일한 길)를 호출 장부로 쓴다.
  * 계량기는 호출별 C를 모른다 — 모든 호출이 upstream_reported usage를 받아야만 2를 증명한다. 동시 한도는 manifest가 선언한 값이다.
  * recordedCalls는 DB 시도·사용량 기록이 센 구간 호출 수로, 계량기 호출 수를 넘으면 계량기 밖 호출이 있었다는 뜻이다.
+ * calls는 구간 안에서 보낸 모든 호출이다 — 구간 끝 drain 안에 끝난 호출도 들어간다. drainCut은 drain 상한에서 끊은 호출 수다.
  */
 export function meterBudgetEvidence(input: { calls: number; maxInFlight: number; reportedCalls: number | undefined; reportedTokens: number | undefined;
-  declared: number | null; callsAtStop: number | null; recordedCalls: number }): BudgetEvidence {
+  declared: number | null; callsAtStop: number | null; recordedCalls: number; drainCut?: number }): BudgetEvidence {
   const issues: BudgetIssue[] = [];
   if (input.callsAtStop === null || input.reportedCalls === undefined || input.reportedTokens === undefined) issues.push("replay_budget_unrecorded");
   if (input.callsAtStop !== null && input.callsAtStop !== input.calls) issues.push("replay_calls_after_stop");
@@ -156,16 +157,22 @@ export function meterBudgetEvidence(input: { calls: number; maxInFlight: number;
   else if (input.maxInFlight > input.declared) issues.push("concurrency_limit_exceeded");
   if (input.reportedCalls !== undefined && input.reportedCalls !== input.calls) issues.push("usage_unreported_without_bound");
   if (input.recordedCalls > input.calls) issues.push("recorded_calls_exceed_meter");
+  if (input.drainCut) issues.push("replay_drain_calls_cut");
   if (issues.length || input.declared === null || input.reportedTokens === undefined) return unverified("replay_meter", issues);
   return { status: "verified", source: "replay_meter", calls: input.calls, chargedTokens: input.reportedTokens, reportedCalls: input.calls,
     boundCalls: 0, concurrency: { limit: input.declared, peak: input.maxInFlight } };
 }
 
-/** item replay: 장부 증거를 그대로 쓰되 계량기와 맞춘다. 계량기 호출이 장부 호출보다 많거나 구간 정지 뒤 호출이 있으면 미검증이다. */
-export function replayLedgerBudget(ledger: BudgetEvidence, meter: { calls: number; maxInFlight: number }, callsAtStop: number | null): BudgetEvidence {
+/**
+ * item replay: 장부 증거를 그대로 쓰되 계량기와 맞춘다. 계량기 호출이 장부 호출보다 많거나 구간 정지 뒤 호출이 있으면 미검증이다.
+ * 구간 끝 drain 상한에서 끊은 호출이 있으면 장부가 그 호출을 C로 세더라도 legacy와 같은 규칙으로 미검증이다.
+ */
+export function replayLedgerBudget(ledger: BudgetEvidence, meter: { calls: number; maxInFlight: number }, callsAtStop: number | null,
+  drainCut = 0): BudgetEvidence {
   const issues: BudgetIssue[] = ledger.status === "verified" ? [] : "issues" in ledger ? [...ledger.issues] : ["budget_evidence_absent"];
   if (callsAtStop === null) issues.push("replay_budget_unrecorded");
   else if (callsAtStop !== meter.calls) issues.push("replay_calls_after_stop");
+  if (drainCut) issues.push("replay_drain_calls_cut");
   if (ledger.status === "verified") {
     if (meter.calls > ledger.calls) issues.push("meter_calls_outside_ledger");
     if (meter.maxInFlight > ledger.concurrency.limit) issues.push("concurrency_limit_exceeded");

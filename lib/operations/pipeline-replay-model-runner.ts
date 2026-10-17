@@ -12,7 +12,7 @@ import { startEvidenceRecorder } from "./pipeline-evidence-ledger";
 import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, parseFixedInputArtifact, parseFixedInputRunManifest, parseFixedInputRunResult,
   type FixedInputArtifact, type FixedInputRunResult, type FixedInputTiming } from "./pipeline-replay-fixed-input";
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
-import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterStop } from "./pipeline-replay-model-meter";
+import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain, type ReplayMeterStop } from "./pipeline-replay-model-meter";
 
 const DEFAULT_GATEWAY = "https://abcllm-api.brut.bot";
 /** 같은 reviewer 역할 워커지만 고정 입력 밖(소개 검수·발행분 감사·판정)을 부르는 잡은 돌리지 않는다. 기준선을 낮추지 않는 쪽이다. */
@@ -64,6 +64,8 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
  * 격리 DB에서 고정 입력을 한 모드로 실모델 심사한다. 순서: 관문 → 적재 → 0097 기록 시작 marker → 구간 시작까지 대기 → 계량기·egress 가둠 →
  * 운영과 같은 scheduler·reviewer 워커(두 심사 잡만)와, item 모드면 AI1·AI2 consumer → 구간 끝 또는 상한에 정지 →
  * 진행 중 호출 정리 → 운영 구간과 같은 수집기로 읽기 전용 수집. 발행·공개 상태·외부 반영 잡은 돌리지 않는다.
+ * 구간 끝(두 모드 같다): 정지 신호와 계량기가 새 claim·새 호출을 막고, 계량기에 이미 보낸 호출은 drain 상한(벽시간 안) 안에서 upstream이
+ * 끝나 usage를 남긴다(budget에 센다). 워커는 그 답을 받지 않으므로 최종·처리량·p95는 구간 안 그대로다. 상한을 넘긴 호출은 끊는다.
  */
 export async function runFixedInputReplay(options: { manifest: unknown; artifact: FixedInputArtifact; artifactSha256: string;
   manifestSha256: string; revision: string; env?: Env; timing?: FixedInputTiming }): Promise<FixedInputRunResult> {
@@ -90,20 +92,29 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     await sleep(Math.min(1_000, Date.parse(startedAt) - Date.parse(now)));
 
   const controller = new AbortController(), signal = controller.signal, failures: string[] = [];
-  const halted: { reason: FixedInputRunResult["stop"]["reason"] | null; at: number; calls: number | null } = { reason: null, at: 0, calls: null };
-  let guardRejected = 0, meterCalls = () => 0;
+  const halted: { reason: FixedInputRunResult["stop"]["reason"] | null; at: number; calls: number | null; deadline: number;
+    drain: Promise<ReplayMeterDrain> | null; meterStop: ReplayMeterStop | null } = { reason: null, at: 0, calls: null, deadline: 0, drain: null, meterStop: null };
+  let guardRejected = 0, meterCalls = () => 0, drainMeter: ((deadlineAt: number) => Promise<ReplayMeterDrain>) | null = null;
   // 정지 순간까지 보낸 호출 수를 남긴다(그 뒤에 나간 호출이 있으면 budget 구간이 흐려지므로 미검증이 된다).
+  // 구간 끝이면 신호보다 먼저 계량기를 drain으로 돌린다: 이후 호출은 거부하고, 진행 중 호출은 호출자가 끊겨도 상한까지 끝나게 둔다.
   const stop = (value: FixedInputRunResult["stop"]["reason"]) => {
-    if (!halted.reason) { halted.reason = value; halted.at = Date.now(); halted.calls = meterCalls(); controller.abort(); }
+    if (halted.reason) return;
+    halted.reason = value; halted.at = Date.now(); halted.calls = meterCalls();
+    if (value === "window_end" && drainMeter) {
+      halted.deadline = Math.min(halted.at + timing.drainMs, startedHost + manifest.limits.maxWallMs); halted.drain = drainMeter(halted.deadline);
+    }
+    controller.abort();
   };
-  const meter = await startReplayModelMeter({ upstream: manifest.upstream, limits: manifest.limits, onStop: (value: ReplayMeterStop) => stop(value) });
-  meterCalls = () => meter.stats().calls;
+  // drain 중 계량기 상한(호출당 상한 위반 등)은 정지 사유를 바꾸지 않고 drain 기록에 남긴다(보고서가 비교 불가로 표시한다).
+  const meter = await startReplayModelMeter({ upstream: manifest.upstream, limits: manifest.limits,
+    onStop: (value: ReplayMeterStop) => { if (halted.reason === "window_end") halted.meterStop ??= value; else stop(value); } });
+  meterCalls = () => meter.stats().calls; drainMeter = deadlineAt => meter.drain(deadlineAt);
   const release = installReplayEgressGuard(manifest.upstream, meter, () => { guardRejected++; });
   const savedCli = { CLAUDE_CLI: process.env.CLAUDE_CLI, GROK_CLI: process.env.GROK_CLI };
   process.env.CLAUDE_CLI = BLOCKED_CLI; process.env.GROK_CLI = BLOCKED_CLI;
   const windowTimer = setTimeout(() => stop("window_end"), Math.max(0, Date.parse(endedAt) - Date.parse(await dbClockIso())));
   const wallTimer = setTimeout(() => stop("wall_cap"), Math.max(0, startedHost + manifest.limits.maxWallMs - Date.now()));
-  let drainMs = 0;
+  let drainMs = 0, windowDrain: ReplayMeterDrain | null = null;
   try {
     const guarded = (name: string, task: () => Promise<unknown>) => task().catch(() => { failures.push(`${name}_failed`); stop("worker_failed"); });
     const names = [...REPLAY_JOBS];
@@ -126,6 +137,8 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     const drainStarted = Date.now();
     await Promise.allSettled(tasks);
     drainMs = Date.now() - drainStarted;
+    // 정지와 함께 시작한 계량기 drain(구간 끝만)을 마저 기다린다. 상한에서 끊으므로 drain 한도·벽시간을 넘지 않는다.
+    if (halted.drain) windowDrain = await halted.drain;
   } finally {
     clearTimeout(windowTimer); clearTimeout(wallTimer);
     for (const [key, value] of Object.entries(savedCli)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
@@ -158,5 +171,7 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     stop: { reason: stopReason, atOffsetMs: Math.round(halted.at - Date.parse(startedAt)), drainMs, drainExceeded: drainMs > timing.drainMs },
     meter: { ...meterStats, egressRejected: meterStats.egressRejected + guardRejected },
     budget: { declaredConcurrentCalls: manifest.budget?.maxConcurrentCalls ?? null, callsAtStop: halted.calls ?? meterStats.calls },
+    ...(windowDrain ? { windowEndDrain: { limitMs: Math.max(0, halted.deadline - halted.at), ...windowDrain, meterStop: halted.meterStop,
+      accounting: "drain_calls_in_budget_not_in_finals" as const } } : {}),
     writes: await fixedInputWrites(), failures: [...new Set(failures)], live });
 }

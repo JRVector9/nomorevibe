@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { assertIsolatedReplayDatabase, attachFixedInputLabels, compareFixedInputRuns, fixedInputSetHash, formatFixedInputCliError,
   parseFixedInputArtifact, parseFixedInputRunManifest, reportFixedInputRun, sha256, type FixedInputRunResult } from "@/lib/operations/pipeline-replay-fixed-input";
 import { installReplayEgressGuard, startReplayModelMeter } from "@/lib/operations/pipeline-replay-model-meter";
@@ -53,14 +53,15 @@ describe("model meter and egress guard", () => {
     while (releases.length) await releases.pop()!();
     while (servers.length) await new Promise<void>(resolve => servers.pop()!.close(() => resolve()));
   });
-  async function upstream(usage: (index: number) => unknown, extra: (index: number) => Record<string, unknown> = () => ({})) {
+  async function upstream(usage: (index: number) => unknown, extra: (index: number) => Record<string, unknown> = () => ({}), delayMs = 0) {
     const seen: string[] = [];
     const server = createServer((req, res) => {
       let body = ""; req.on("data", chunk => { body += chunk; });
       req.on("end", () => {
         seen.push(`${req.method} ${req.url} ${req.headers.authorization ?? ""} ${body}`);
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({ object: "chat.completion", usage: usage(seen.length), ...extra(seen.length) }));
+        const index = seen.length, answer = () => { if (res.destroyed) return; res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ object: "chat.completion", usage: usage(index), ...extra(index) })); };
+        if (delayMs) setTimeout(answer, delayMs).unref(); else answer();
       });
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
@@ -68,13 +69,14 @@ describe("model meter and egress guard", () => {
     return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen };
   }
   async function meter(limits: { maxCalls: number; maxTokens: number; perCallTokenUpperBound: number }, usage: (index: number) => unknown,
-    extra?: (index: number) => Record<string, unknown>) {
-    const target = await upstream(usage, extra), stops: string[] = [];
+    extra?: (index: number) => Record<string, unknown>, delayMs = 0) {
+    const target = await upstream(usage, extra, delayMs), stops: string[] = [];
     const started = await startReplayModelMeter({ upstream: target.origin, limits, onStop: reason => stops.push(reason) });
     let rejected = 0;
     const release = installReplayEgressGuard(target.origin, started, () => { rejected++; });
     releases.push(async () => { await release(); await started.close(); });
-    const call = () => fetch(`${target.origin}/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer k" }, body: '{"model":"m"}' });
+    const call = (signal?: AbortSignal) => fetch(`${target.origin}/v1/chat/completions`, { method: "POST", headers: { authorization: "Bearer k" },
+      body: '{"model":"m"}', signal });
     return { target, started, stops, call, rejected: () => rejected };
   }
   it("forwards through the meter, stops at the call cap and never sends the refused call upstream", async () => {
@@ -124,6 +126,41 @@ describe("model meter and egress guard", () => {
     expect(other.seen).toEqual([]); expect(target.seen).toEqual([]);
     expect(rejected()).toBe(4);
     expect((await call()).status).toBe(200);
+  });
+  // 구간 끝 drain: 호출자(워커)는 정지 신호로 끊어도, 이미 보낸 호출은 drain 상한까지 upstream이 끝나 usage가 남는다.
+  const reported = () => ({ prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 }), native = () => ({ usage_provenance: "upstream_reported" });
+  async function dropped(started: Awaited<ReturnType<typeof meter>>["started"], call: (signal?: AbortSignal) => Promise<Response>) {
+    const caller = new AbortController(), pending = call(caller.signal).then(() => "answered", (error: Error) => error.name);
+    await vi.waitFor(() => expect(started.stats().calls).toBe(1));
+    return { caller, pending };
+  }
+  it("cuts a call its caller dropped mid-window at once (no drain)", async () => {
+    const { started, call } = await meter({ maxCalls: 10, maxTokens: 1_000, perCallTokenUpperBound: 100 }, reported, native, 1_500);
+    const { caller, pending } = await dropped(started, call);
+    caller.abort();
+    expect(await pending).toBe("AbortError");
+    await vi.waitFor(() => expect(started.stats()).toMatchObject({ calls: 1, indeterminate: 1, upstreamReportedCalls: 0, chargedTokens: 100 }));
+  });
+  it("lets a call in flight at the window end finish upstream within the drain limit, records its usage and sends no new call", async () => {
+    const { target, started, call } = await meter({ maxCalls: 10, maxTokens: 1_000, perCallTokenUpperBound: 100 }, reported, native, 300);
+    const { caller, pending } = await dropped(started, call);
+    const drained = started.drain(Date.now() + 5_000); caller.abort();
+    expect(await pending).toBe("AbortError");
+    expect(await drained).toMatchObject({ inFlightAtStop: 1, cutAtLimit: 0 });
+    expect(started.stats()).toMatchObject({ calls: 1, indeterminate: 0, upstreamFailed: 0, usageKnownCalls: 1, upstreamReportedCalls: 1,
+      upstreamReportedTokens: 40, chargedTokens: 40, refused: 0 });
+    // 구간 끝 뒤 새 호출은 upstream으로 보내지 않고 거부로 센다(결과에 replay_calls_refused가 붙는다).
+    expect((await call()).status).toBe(503);
+    expect(target.seen).toHaveLength(1);
+    expect(started.stats()).toMatchObject({ calls: 1, refused: 1 });
+  });
+  it("cuts a call still running at the drain limit as indeterminate", async () => {
+    const { started, call } = await meter({ maxCalls: 10, maxTokens: 1_000, perCallTokenUpperBound: 100 }, reported, native, 3_000);
+    const { caller, pending } = await dropped(started, call);
+    const drained = started.drain(Date.now() + 200); caller.abort();
+    expect(await pending).toBe("AbortError");
+    expect(await drained).toMatchObject({ inFlightAtStop: 1, cutAtLimit: 1 });
+    expect(started.stats()).toMatchObject({ calls: 1, indeterminate: 1, upstreamReportedCalls: 0, chargedTokens: 100 });
   });
 });
 
@@ -280,5 +317,51 @@ describe("fixed-input budget evidence (PR01b-9)", () => {
     expect(() => reportFixedInputRun({ ...items, meter: { ...items.meter, upstreamReportedCalls: 27 } })).toThrow("fixed_input_result_mismatch");
     expect(() => parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 0 } }))).toThrow();
     expect(parseFixedInputRunManifest(manifest({ budget: { maxConcurrentCalls: 4 } })).budget).toEqual({ maxConcurrentCalls: 4 });
+  });
+});
+
+/** 구간 끝 drain 기록: 정지 순간 계량기에 진행 중이던 호출과, drain 상한까지 끝나지 않아 끊은 호출. */
+const drain = (patch: Partial<NonNullable<FixedInputRunResult["windowEndDrain"]>> = {}): NonNullable<FixedInputRunResult["windowEndDrain"]> => ({
+  limitMs: 180_000, inFlightAtStop: 2, cutAtLimit: 0, waitedMs: 18_000, meterStop: null, accounting: "drain_calls_in_budget_not_in_finals", ...patch });
+describe("window-end drain budget", () => {
+  it("counts calls that finished during the drain in the budget but never as finals", () => {
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
+    // 정지 순간 진행 중이던 2건이 drain 안에 끝나 usage가 남았다. 최종·처리량은 구간 안 10건 그대로다.
+    legacy.meter = { ...legacy.meter, calls: 12, usageKnownCalls: 12, upstreamReportedCalls: 12, upstreamReportedTokens: 18_080 * 12 };
+    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 12 }; legacy.windowEndDrain = drain();
+    const report = reportFixedInputRun(legacy);
+    expect(report.finals.newCandidates).toBe(10);
+    expect(report.budget).toEqual({ status: "verified", source: "replay_meter", calls: 12, chargedTokens: 18_080 * 12,
+      reportedCalls: 12, boundCalls: 0, concurrency: { limit: 4, peak: 2 } });
+    expect(report.replay.windowEndDrain).toEqual(drain());
+    expect(report.evidenceIssues).not.toContain("replay_calls_refused");
+    // drain 호출만큼 최종당 호출·토큰이 그 실행에 불리하게(크게) 잡힌다: 기준선 12/10, 후보 25/25.
+    const [baseline, candidate] = labeledPair(legacy, proven({ runId: "items-a", mode: "items", finals: 25 }));
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "passed", budgetEvidence: "verified",
+      budget: { status: "passed", baseline: { calls: 12, finals: 10, callsPerFinal: 1.2 }, candidate: { calls: 25, finals: 25, callsPerFinal: 1 } } });
+  });
+  it("keeps the budget unverified in both modes when the drain limit cut a call", () => {
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
+    legacy.meter = { ...legacy.meter, calls: 12, indeterminate: 1, usageKnownCalls: 11, upstreamReportedCalls: 11, upstreamReportedTokens: 18_080 * 11 };
+    legacy.budget = { declaredConcurrentCalls: 4, callsAtStop: 12 }; legacy.windowEndDrain = drain({ cutAtLimit: 1 });
+    expect(reportFixedInputRun(legacy).budget).toEqual({ status: "unverified", source: "replay_meter",
+      issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
+    // 장부는 끊긴 호출을 C로 세어 verified로 두지만, legacy와 같은 규칙으로 미검증이다(완화 금지).
+    const items = proven({ runId: "items-a", mode: "items", finals: 25 });
+    items.meter = { ...items.meter, indeterminate: 1 }; items.windowEndDrain = drain({ inFlightAtStop: 1, cutAtLimit: 1 });
+    expect(reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger", issues: ["replay_drain_calls_cut"] });
+    const [baseline, candidate] = labeledPair(proven({ runId: "legacy-b", mode: "legacy", finals: 10 }), items);
+    expect(compareFixedInputRuns(baseline, candidate)).toMatchObject({ status: "incomplete", reasons: ["budget_evidence_unverified"] });
+  });
+  it("flags a meter cap reached during the drain and refuses inconsistent drain records", () => {
+    const legacy = proven({ runId: "legacy-a", mode: "legacy", finals: 10 });
+    expect(reportFixedInputRun({ ...legacy, windowEndDrain: drain({ meterStop: "per_call_bound_exceeded" }) }).evidenceIssues)
+      .toContain("replay_drain_meter_stop");
+    for (const patch of [{ windowEndDrain: drain({ cutAtLimit: 3 }) }, { windowEndDrain: drain({ cutAtLimit: 1 }) },
+      { windowEndDrain: drain({ inFlightAtStop: 11 }) }, { stop: { ...legacy.stop, reason: "call_cap" as const }, windowEndDrain: drain() }])
+      expect(() => reportFixedInputRun({ ...legacy, ...patch })).toThrow("fixed_input_result_mismatch");
+    // 이전 결과(drain 기록 없음)는 그대로 읽고 판정도 바뀌지 않는다.
+    expect(reportFixedInputRun(legacy).replay.windowEndDrain).toBeNull();
+    expect(reportFixedInputRun(legacy).budget).toMatchObject({ status: "verified", calls: 10 });
   });
 });

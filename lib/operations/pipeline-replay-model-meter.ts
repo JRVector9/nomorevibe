@@ -9,7 +9,14 @@ export type ReplayMeterStats = { calls: number; refused: number; upstreamFailed:
   usageKnownCalls: number; reportedInputTokens: number; reportedOutputTokens: number; chargedTokens: number; egressRejected: number;
   upstreamReportedCalls: number; upstreamReportedTokens: number;
   models: { model: string; calls: number }[]; usageProvenance: "reported_unverified" };
-export type ReplayModelMeter = { readonly origin: string; stats(): ReplayMeterStats; close(): Promise<void> };
+/** 구간 끝 drain 결과: 정지 순간 진행 중이던 호출 수, drain 상한까지 끝나지 않아 끊은 호출 수, 기다린 시간. */
+export type ReplayMeterDrain = { inFlightAtStop: number; cutAtLimit: number; waitedMs: number };
+export type ReplayModelMeter = { readonly origin: string; stats(): ReplayMeterStats;
+  /**
+   * 구간 끝: 이후 새 호출은 upstream으로 보내지 않고 거부로 센다. 이미 보낸 호출은 호출자(워커)가 끊어도 deadlineAt까지 upstream이 끝나게 두어
+   * usage를 남긴다. 그때까지 끝나지 않은 호출은 끊는다(indeterminate, 예약 전체 청구). 진행 중 호출이 모두 정리된 뒤 돌아온다.
+   */
+  drain(deadlineAt: number): Promise<ReplayMeterDrain>; close(): Promise<void> };
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024, MAX_RESPONSE_BYTES = 4 * 1024 * 1024, UPSTREAM_TIMEOUT_MS = 10 * 60_000;
 
@@ -54,7 +61,8 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
   const stats = { calls: 0, refused: 0, upstreamFailed: 0, indeterminate: 0, maxInFlight: 0, usageKnownCalls: 0,
     reportedInputTokens: 0, reportedOutputTokens: 0, chargedTokens: 0, egressRejected: 0, upstreamReportedCalls: 0, upstreamReportedTokens: 0 };
   const models = new Map<string, number>();
-  let inFlight = 0, stopped = false;
+  let inFlight = 0, stopped = false, draining = false, cutting = false, cut = 0;
+  const active = new Set<AbortController>(), idle: (() => void)[] = [];
   const stop = (reason: ReplayMeterStop) => { if (!stopped) { stopped = true; onStop(reason); } };
   const reply = (res: ServerResponse, status: number, payload: Buffer | string, type = "application/json") => {
     if (res.writableEnded || res.destroyed) return;
@@ -65,6 +73,8 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
     if (req.method !== "POST" || req.url !== FIXED_INPUT_UPSTREAM_PATH) { stats.egressRejected++; return reply(res, 404, '{"error":"replay_route_rejected"}'); }
     const payload = await body(req, MAX_REQUEST_BYTES);
     if (!payload) { stats.refused++; return reply(res, 413, '{"error":"replay_request_too_large"}'); }
+    // 구간 끝 뒤 새 호출은 보내지 않는다. 거부로 세므로 결과에 replay_calls_refused가 붙는다.
+    if (draining) { stats.refused++; return reply(res, 503, '{"error":"replay_window_ended"}'); }
     // 예약: 호출 수와 (정산된 토큰 + 진행 중 예약 + 이번 예약)이 상한 안이어야 보낸다.
     if (stopped || stats.calls + 1 > limits.maxCalls) { stats.refused++; stop("call_cap"); return reply(res, 503, '{"error":"replay_cap_reached"}'); }
     if (stats.chargedTokens + (inFlight + 1) * limits.perCallTokenUpperBound > limits.maxTokens) {
@@ -78,8 +88,9 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
     } catch { /* 본문 판정은 게이트웨이와 심사 코드가 한다. */ }
     if (models.size < 32 || models.has(model)) models.set(model, (models.get(model) ?? 0) + 1);
     if (stats.calls >= limits.maxCalls) stop("call_cap");
-    const abort = new AbortController(), closed = () => { if (!res.writableEnded) abort.abort(); };
-    res.once("close", closed);
+    // 구간 안에서 호출자가 끊으면 바로 끊는다. drain 중에는 호출자가 끊어도 upstream이 끝나게 둔다(usage를 남긴다).
+    const abort = new AbortController(), closed = () => { if (!res.writableEnded && !draining) abort.abort(); };
+    res.once("close", closed); active.add(abort);
     let charge = limits.perCallTokenUpperBound;
     try {
       const response = await request(`${upstream}${FIXED_INPUT_UPSTREAM_PATH}`, { method: "POST", dispatcher: upstreamAgent,
@@ -100,12 +111,13 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
       reply(res, response.statusCode, bytes, typeof type === "string" ? type : "application/json");
     } catch {
       // 끊긴 호출은 upstream이 계속 일했는지 알 수 없다. 예약 전체를 그대로 청구한다.
-      if (abort.signal.aborted) stats.indeterminate++; else stats.upstreamFailed++;
+      if (abort.signal.aborted) { stats.indeterminate++; if (cutting) cut++; } else stats.upstreamFailed++;
       reply(res, 502, '{"error":"replay_upstream_failed"}');
     } finally {
-      res.off("close", closed);
+      res.off("close", closed); active.delete(abort);
       inFlight--; stats.chargedTokens += charge;
       if (stats.chargedTokens >= limits.maxTokens) stop("token_cap");
+      if (!inFlight) for (const resolve of idle.splice(0)) resolve();
     }
   };
   const server = createServer((req, res) => { void handle(req, res).catch(() => reply(res, 500, '{"error":"replay_meter_failed"}')); });
@@ -114,6 +126,15 @@ export async function startReplayModelMeter(options: { upstream: string; limits:
   return {
     origin,
     stats: () => ({ ...stats, models: [...models].map(([model, calls]) => ({ model, calls })), usageProvenance: "reported_unverified" }),
+    drain: async deadlineAt => {
+      draining = true;
+      const startedAt = Date.now(), inFlightAtStop = inFlight, settled = () => new Promise<void>(resolve => { if (inFlight) idle.push(resolve); else resolve(); });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const limit = new Promise<"limit">(resolve => { timer = setTimeout(() => resolve("limit"), Math.max(0, deadlineAt - Date.now())); });
+      if (await Promise.race([settled(), limit]) === "limit") { cutting = true; for (const abort of active) abort.abort(); await settled(); }
+      clearTimeout(timer);
+      return { inFlightAtStop, cutAtLimit: cut, waitedMs: Date.now() - startedAt };
+    },
     close: async () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
       await upstreamAgent.close();
