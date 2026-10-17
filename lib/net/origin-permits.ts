@@ -157,6 +157,9 @@ export async function requestOriginHop(url: string, init: Parameters<CappedReque
   fetchSettled=true;
   if(!response.body) {bodySettled=true;await settle();return response;}
   const reader=response.body.getReader();
+  // 리더가 이미 끝났나(닫힘·오류). 실제 undici 는 본문 중 abort 에 native 요청을 먼저 끝내고 본문을 오류로 닫아, 그 뒤의 취소가 거절된다(R4)
+  let readerEnded=false;
+  void reader.closed.then(()=>{readerEnded=true;},()=>{readerEnded=true;});
   let reading: Promise<ReadableStreamReadResult<Uint8Array>>|undefined;
   let cancellation: Promise<void>|undefined;
   let cancelling=false,aborted=false;
@@ -168,7 +171,13 @@ export async function requestOriginHop(url: string, init: Parameters<CappedReque
     const current=reading;
     cancellation=Promise.resolve().then(()=>reader.cancel(reason)).then(async()=>{
       await current?.catch(()=>{});bodySettled=true;detach();await settle();
-    },async error=>{cancelFailed=true;detach();await current?.catch(()=>{});await finish(hop,false).catch(()=>{});throw error;});
+    },async error=>{
+      detach();await current?.catch(()=>{});
+      // 끝난 리더의 거절은 본문 정산이다 — native 종료가 모두 보이면 released, 아직이면 그때까지 indeterminate(뒤의 native 종료가 정산한다).
+      // 리더가 살아 있는 채 거절됐으면 모른다 — 점유를 그대로 남긴다(sticky).
+      if(readerEnded){bodySettled=true;if(pending.size || nativeUnknown)await finish(hop,false).catch(()=>{});await settle();throw error;}
+      cancelFailed=true;await finish(hop,false).catch(()=>{});throw error;
+    });
     void cancellation.catch(()=>{});return cancellation;
   };
   const onAbort=()=>{aborted=true;void cancel(init.signal.reason);controller.error(init.signal.reason);};

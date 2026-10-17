@@ -78,10 +78,14 @@ async function readContent(repository: GithubRepositoryName, deadline: number, s
 
 async function readWithinBudget(repository: GithubRepositoryName): Promise<ReadmeContent> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), README_TIMEOUT_MS);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // 8초 상한은 신호를 받지 않는 GitHub 호출까지 묶는다(8020dca). 기한에는 먼저 abort 하고 상한 거절은 다음 차례로 미룬다 —
+  // abort 에 곧바로 끝나는 실제 요청(공유 permit 대기의 HttpOriginPermitError 등)은 그 결과와 형식을 그대로 낸다.
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { controller.abort(); timer = setTimeout(() => reject(new Error("readme_timeout")), 0); }, README_TIMEOUT_MS);
+  });
   try {
-    // Let the actual request settle so an aborted permit wait retains its type.
-    return await readContent(repository, Date.now() + README_TIMEOUT_MS, controller.signal);
+    return await Promise.race([readContent(repository, Date.now() + README_TIMEOUT_MS, controller.signal), timeout]);
   } finally { clearTimeout(timer); }
 }
 

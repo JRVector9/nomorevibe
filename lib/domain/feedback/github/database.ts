@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db, onPrimary } from "@/lib/db";
+import { db, onPrimary, withTransactionSetup } from "@/lib/db";
 import { dbPoolConfig, withDbDeadline } from "@/lib/db/pool";
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import type { FeedbackTransaction } from "../repository";
@@ -43,5 +43,6 @@ export function feedbackDatabaseWrite<T>(lease: JobLease | undefined, write: (tx
   // connect timeout, so stop pool assignment early enough to reserve it.
   const acquisitionMargin = dbPoolConfig().connectSeconds * 1000 + 250;
   if (deadlineAt - Date.now() <= acquisitionMargin) return Promise.reject(new FeedbackDatabaseDeadlineError());
-  return withDbDeadline(deadlineAt - acquisitionMargin, transaction);
+  // 웹 쓰기 범위의 prelude(fence SHARE)도 이 기한 안에서 기다리게 — 기한을 prelude 보다 먼저 건다
+  return withDbDeadline(deadlineAt - acquisitionMargin, () => withTransactionSetup(tx => setFeedbackTransactionDeadline(tx, deadlineAt), transaction));
 }

@@ -58,7 +58,10 @@ it("fetchCapped retains the redirect status and sends no next hop when cancellat
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-it("a failed final body cancellation keeps a background follower outside the same origin", async () => {
+// 기본 경로(HTTP_ORIGIN_PERMITS 꺼짐)의 자리는 프로세스 안의 예절 줄이다. 취소 실패에 자리를 남기면 실제 undici(기한에
+// 본문을 먼저 오류로 만들어 취소가 늘 거절된다)에서 그 origin 이 영영 막힌다(R4, tests/net-fetch-undici-abort.test.ts).
+// 그래서 실패한 취소도 정산이 끝난 뒤 자리를 놓는다(8020dca 와 같은 반납). 정산 전에 놓지 않는 것은 위 정산 테스트들이 본다.
+it("a failed final body cancellation still settles and then frees the default-path origin for a follower", async () => {
   const failure = new Error("final cancellation failed");
   request.mockResolvedValueOnce(new Response(bodyWithFailedCancel(failure)))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
@@ -66,15 +69,11 @@ it("a failed final body cancellation keeps a background follower outside the sam
   expect(fetched).not.toBeNull();
   await expect(track(fetched!.response.body!.cancel())).rejects.toBe(failure);
 
-  let followerDone = false;
-  const follower = track(safeFetch("https://b-final-failure.test/second", "background")).then(value => {
-    followerDone = true;
-    return value;
-  });
+  const follower = track(safeFetch("https://b-final-failure.test/second", "background"));
   try {
-    await turn();
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(followerDone).toBe(false);
+    expect((await follower)?.response.status).toBe(204);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls[1][0]).toBe("https://b-final-failure.test/second");
   } finally {
     for (const deadline of deadlines) deadline.abort(new Error("fixture follower cleanup"));
     await follower;
@@ -176,43 +175,34 @@ it("fetchCapped retains too_large instead of HTTP zero after an oversized chunk 
   expect(request).toHaveBeenCalledTimes(1);
 });
 
-it("a failed retryable HTTP cleanup does not admit the next background request", async () => {
+it("a failed retryable HTTP cleanup keeps its original error and frees the default-path origin after cleanup", async () => {
   request.mockResolvedValueOnce(new Response(bodyWithFailedCancel(new Error("retry cleanup failed")), {
     status: 429,
   })).mockResolvedValueOnce(new Response(null, { status: 204 }));
   await expect(track(safeFetch("https://b-retry-slot.test/first", "background", {
     retryTransientErrors: true,
   }))).rejects.toMatchObject({ name: "PageFetchError", reason: "http", status: 429 });
-  let completed = false;
-  const follower = track(safeFetch("https://b-retry-slot.test/second", "background").then(result => {
-    completed = true;
-    return result;
-  }));
+  const follower = track(safeFetch("https://b-retry-slot.test/second", "background"));
   try {
-    await turn();
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(completed).toBe(false);
+    expect((await follower)?.response.status).toBe(204);
+    expect(request).toHaveBeenCalledTimes(2);
   } finally {
     for (const deadline of deadlines) deadline.abort(new Error("fixture retry follower cleanup"));
     await follower;
   }
 });
 
-it("a failed background redirect keeps its origin occupied as well as stopping the redirect chain", async () => {
+it("a failed background redirect cleanup stops the redirect chain and frees the default-path origin after cleanup", async () => {
   request.mockResolvedValueOnce(new Response(bodyWithFailedCancel(new Error("redirect slot cleanup failed")), {
     status: 301, headers: { location: "https://b-redirect-slot-next.test/next" },
   })).mockResolvedValue(new Response(null, { status: 204 }));
   const first = await track(safeFetch("https://b-redirect-slot.test/first", "background"));
-  let completed = false;
-  const follower = track(safeFetch("https://b-redirect-slot.test/second", "background").then(result => {
-    completed = true;
-    return result;
-  }));
+  const follower = track(safeFetch("https://b-redirect-slot.test/second", "background"));
   try {
-    await turn();
     expect(first).toBeNull();
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(completed).toBe(false);
+    expect((await follower)?.response.status).toBe(204);
+    // 사슬은 멈췄다(리다이렉트 대상으로 가지 않았다) — 두 번째 요청은 뒤따른 요청이다
+    expect(request.mock.calls.map(([url]) => url)).toEqual(["https://b-redirect-slot.test/first", "https://b-redirect-slot.test/second"]);
   } finally {
     for (const deadline of deadlines) deadline.abort(new Error("fixture redirect follower cleanup"));
     await follower;

@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ transaction: vi.fn(), assertLease: vi.fn(), execute: vi.fn() }));
 vi.mock("server-only", () => ({}));
-vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction }, onPrimary: (work: () => Promise<unknown>) => work() }));
+vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction }, onPrimary: (work: () => Promise<unknown>) => work(),
+  // 웹 쓰기 범위 밖(이 fixture 의 worker 경로)에서 setup 은 TX 에 아무것도 하지 않는다 — 그대로 통과(R4 fixture 만)
+  withTransactionSetup: (_setup: unknown, work: () => Promise<unknown>) => work() }));
 vi.mock("@/lib/db/pool", () => ({ dbPoolConfig: () => ({ connectSeconds: 1 }), withDbDeadline: (_deadline: number, work: () => Promise<unknown>) => work() }));
 vi.mock("@/lib/jobs/control", () => ({ assertJobLease: mocks.assertLease,
   withJobLeaseWrite: (lease: unknown, write: (tx: unknown) => Promise<unknown>) => mocks.transaction(async (tx: unknown) => {

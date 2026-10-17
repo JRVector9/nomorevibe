@@ -2,6 +2,7 @@ import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { logger } from "@/lib/observability/logger";
+import { adminIngressAllowed, isAdminProtectedPath } from "@/lib/auth/admin-access";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import { runWebWrite, WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 
@@ -19,10 +20,18 @@ export type RouteContext = { params: Promise<Record<string, string>> };
 type Handler<C extends RouteContext> = (req: Request, ctx: C) => Promise<Response>;
 /** 이 밖의 메서드는 쓰기다 — fenced DB 에서는 handler 전에 거절하고, 쓰기 TX 마다 fence 를 첫 lock 으로 둔다(web-gate) */
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+/** DB 에 쓰지 않는 쓰기 메서드(쿠키만 지우는 관리자 로그아웃) — fence·DB 를 거치지 않는다. DB 에 쓰는 route 에 주지 않는다 */
+export type RouteOptions = { dbWrite?: false };
+
+/** 관리자 경로는 비관리자 ingress 에 fence·DB 상태(503·500)를 드러내지 않는다 — proxy 와 같은 판정으로 404 가 먼저다 */
+function adminIngressRefused(req: Request): boolean {
+  return isAdminProtectedPath(new URL(req.url).pathname) && !adminIngressAllowed(req.headers);
+}
 
 export function withRoute<C extends RouteContext = RouteContext>(
   name: string,
   handler: (req: Request, ctx: C) => Promise<Response>,
+  options: RouteOptions = {},
 ): Handler<C> {
   return async (req, ctx) => {
     const requestId = randomUUID();
@@ -30,7 +39,9 @@ export function withRoute<C extends RouteContext = RouteContext>(
     const base = { requestId, route: name, method: req.method };
 
     try {
-      const res = SAFE_METHODS.has(req.method) ? await handler(req, ctx) : await runWebWrite(() => handler(req, ctx));
+      const res = SAFE_METHODS.has(req.method) || options.dbWrite === false ? await handler(req, ctx)
+        : adminIngressRefused(req) ? new NextResponse(null, { status: 404, headers: { "Cache-Control": "private, no-store" } })
+        : await runWebWrite(() => handler(req, ctx));
       const level = res.status >= 500 ? "error" : res.status >= 400 ? "warn" : "info";
       logger[level]("http.request", { ...base, status: res.status, durationMs: Date.now() - startedAt });
       res.headers.set("x-request-id", requestId);

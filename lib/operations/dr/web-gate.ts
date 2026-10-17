@@ -1,5 +1,6 @@
 import { createMemo } from "@/lib/cache/memo";
 import { db, onPrimary, withTransactionPrelude } from "@/lib/db";
+import { withDbDeadline } from "@/lib/db/pool";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { DrWriterFencedError, readWriterFence, writerSiteActive } from "./epoch";
 
@@ -18,9 +19,23 @@ export const WEB_FENCE_TTL_MS = 5_000;
 /** fenced 거절 응답의 Retry-After(초) — 승격·복구는 분 단위다 */
 export const WEB_FENCED_RETRY_AFTER = "60";
 
+/** fence 읽기 상한. 같은 열쇠의 읽기는 공유되므로(memo pending) 매달린 연결 하나가 /go·hot path·쓰기 관문을 함께 붙잡았다(R4) */
+export const WEB_FENCE_READ_TIMEOUT_MS = 2_000;
+
 const fence = createMemo<boolean>({ ttlMs: WEB_FENCE_TTL_MS, max: 1 });
-/** 행이 없거나 깨졌으면 던진다(fail-closed). 실패는 담지 않아 다음 요청이 다시 읽는다. */
-const siteActive = () => fence.get("active", () => onPrimary(async () => (await readWriterFence(db)).state === "active"));
+/** 행이 없거나 깨졌거나 상한 안에 못 읽으면 던진다(fail-closed). 실패는 담지 않아 다음 요청이 다시 읽는다. */
+const siteActive = () => fence.get("active", readFenceWithinBound);
+
+async function readFenceWithinBound(): Promise<boolean> {
+  // pool 대기도 같은 기한에 끊는다(상한이 지난 읽기가 줄에 쌓이지 않게). 이미 보낸 문장은 연결의 statement_timeout 이 끝낸다
+  const read = withDbDeadline(Date.now() + WEB_FENCE_READ_TIMEOUT_MS, () => onPrimary(async () => (await readWriterFence(db)).state === "active"));
+  void read.catch(() => {});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("dr_writer_fence_read_timeout")), WEB_FENCE_READ_TIMEOUT_MS);
+  });
+  try { return await Promise.race([read, bound]); } finally { clearTimeout(timer); }
+}
 
 export async function assertWebWritable(): Promise<void> {
   if (!await siteActive()) throw new DrWriterFencedError("site_fenced");

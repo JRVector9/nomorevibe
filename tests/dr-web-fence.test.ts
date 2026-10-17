@@ -100,6 +100,36 @@ it("cache gate fails closed on a missing or invalid fence row and never caches t
   expect(fake.calls).toEqual(["db:fence-read", "db:fence-read", "db:fence-read", "db:fence-read"]);
 });
 
+// R4: 공유 대기(memo pending) 때문에 매달린 fence 읽기 하나가 /go·hot path 와 쓰기 관문을 함께 붙잡았다 — 읽기에 상한을 둔다.
+it("a hung fence read is bounded: hot paths skip, writes are refused, and the next request reads again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  const gate = await import("@/lib/operations/dr/web-gate");
+  let hang!: (rows: unknown[]) => void;
+  fakeDb.execute.mockImplementationOnce(async () => {
+    fake.calls.push("db:fence-read");
+    return new Promise<unknown[]>(resolve => { hang = resolve; });
+  });
+  /** 결과를 상자에 담는다 — 상한이 지난 뒤(타이머 진행 + 실제 setImmediate 한 바퀴) 아직 비어 있으면 매달린 것이다 */
+  const observe = <T>(work: Promise<T>) => {
+    const box: { state: "pending" | "fulfilled" | "rejected"; value?: T; error?: unknown } = { state: "pending" };
+    work.then(value => Object.assign(box, { state: "fulfilled", value }), (error: unknown) => Object.assign(box, { state: "rejected", error }));
+    return box;
+  };
+  try {
+    const skipped = observe(gate.webWritable()), refused = observe(gate.assertWebWritable());
+    await vi.advanceTimersByTimeAsync(2_000);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(skipped).toEqual({ state: "fulfilled", value: false });
+    expect(refused).toMatchObject({ state: "rejected", error: { message: "dr_writer_fence_read_timeout" } });
+    // 매달린 읽기를 다음 요청이 물려받지 않는다 — 새로 읽는다
+    expect(await gate.webWritable()).toBe(true);
+    expect(fake.calls).toEqual(["db:fence-read", "db:fence-read"]);
+  } finally {
+    hang?.([activeRow]);
+    vi.useRealTimers();
+  }
+});
+
 it("runWebWrite: a fenced cache refuses before the handler; otherwise every primary write TX inside takes the fence SHARE first", async () => {
   const gate = await import("@/lib/operations/dr/web-gate");
   const { db } = await import("@/lib/db");
@@ -179,7 +209,9 @@ it("withRoute: write methods on a fenced site get 503 + Retry-After before the h
   expect(raced.headers.get("retry-after")).toBe("60");
 });
 
-it("public routes: a fenced site answers the existing unavailable code with 503 + Retry-After; webhooks get 5xx so GitHub can redeliver", async () => {
+// GitHub 는 실패한 webhook 을 자동으로 다시 보내지 않는다(docs.github.com/en/webhooks/using-webhooks/handling-failed-webhook-deliveries) —
+// 5xx 는 GitHub 에 실패 전달로 남아(3일 안 수동·API 재전송 가능) 수신하지 않은 것이 보이고, 놓친 해지는 15분 reconcile 이 다시 확인한다.
+it("public routes: a fenced site answers the existing unavailable code with 503 + Retry-After; webhooks get 5xx and record nothing", async () => {
   const { publicAuthErrorResponse } = await import("@/lib/domain/accounts/request-auth");
   const mapped = publicAuthErrorResponse(new DrWriterFencedError("site_fenced"));
   expect(mapped.status).toBe(503);
@@ -244,6 +276,69 @@ it("hot paths skip their write on a fenced site and keep serving: click and sear
   expect(fake.rateLimit).toHaveBeenCalledOnce();
   expect(fake.calls).toEqual(["db:fence-read", "db:insert", "db:insert"]);
   vi.unstubAllEnvs();
+});
+
+// R4: 관리자 로그아웃은 서명 쿠키만 지운다 — fence·DB 를 거치지 않는다. 관리자 쓰기 경로는 비관리자 ingress 에 404 가 먼저다(proxy 와 같은 판정).
+const ADMIN = "https://admin.nomorevibe.test", INGRESS = "pr15e-admin-ingress-secret-0123456789abcdef";
+const adminRequest = (pathname: string, method: string, ingress: boolean) => new Request(`${ADMIN}${pathname}`, { method,
+  headers: { origin: ADMIN, ...(ingress ? { "x-nmv-admin-ingress-token": INGRESS } : {}) } });
+
+it("admin logout only clears the signed cookie: no fence or DB read, even on a fenced site or without the fence row", async () => {
+  quiet();
+  vi.stubEnv("ADMIN_ORIGIN", ADMIN);
+  vi.stubEnv("ADMIN_INGRESS_SECRET", INGRESS);
+  try {
+    const { POST } = await import("@/app/api/auth/logout/route");
+    for (const rows of [[fencedRow], []]) {
+      fake.siteRows = rows;
+      fake.calls.length = 0;
+      const res = await POST(adminRequest("/api/auth/logout", "POST", true), { params: Promise.resolve({}) });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(`${ADMIN}/admin/login`);
+      expect(res.headers.get("set-cookie")).toContain("nmv_admin=;");
+      expect(fake.calls).toEqual([]);
+    }
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it("admin write routes answer a non-admin ingress 404 before the fence: a fenced or broken DB is not revealed", async () => {
+  quiet();
+  vi.stubEnv("ADMIN_ORIGIN", ADMIN);
+  vi.stubEnv("ADMIN_INGRESS_SECRET", INGRESS);
+  try {
+    const password = await import("@/app/api/auth/password/route");
+    const ban = await import("@/app/api/admin/products/[slug]/route");
+    const logout = await import("@/app/api/auth/logout/route");
+    const routes = [["/api/auth/password", "POST", password.POST], ["/api/admin/products/x", "DELETE", ban.DELETE],
+      ["/api/auth/logout", "POST", logout.POST]] as const;
+    for (const rows of [[fencedRow], []]) {
+      fake.siteRows = rows;
+      fake.calls.length = 0;
+      for (const [pathname, method, route] of routes) {
+        const res = await route(adminRequest(pathname, method, false), { params: Promise.resolve({ slug: "x" }) });
+        expect(res.status, `${method} ${pathname}`).toBe(404);
+        // 관문이 만든 404 는 proxy 와 같은 private, no-store 다(로그아웃은 handler 의 기존 404 그대로)
+        if (pathname !== "/api/auth/logout") expect(res.headers.get("cache-control"), `${method} ${pathname}`).toBe("private, no-store");
+      }
+      expect(fake.calls).toEqual([]);
+    }
+    // 관리자 ingress 면 기존 관문 그대로다 — fenced 는 handler 전에 503
+    const { clearAllMemos } = await import("@/lib/cache/memo");
+    clearAllMemos();
+    fake.siteRows = [fencedRow];
+    for (const [pathname, method, route] of routes.slice(0, 2)) {
+      expect((await route(adminRequest(pathname, method, true), { params: Promise.resolve({ slug: "x" }) })).status, `${method} ${pathname}`).toBe(503);
+    }
+    expect(fake.recordAdminAction).not.toHaveBeenCalled();
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it("only the admin logout opts out of the write gate (dbWrite: false)", () => {
+  const root = path.resolve(__dirname, "..");
+  const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
+  const optedOut = walk(path.join(root, "app")).filter(file => /\.(ts|tsx)$/.test(file) && readFileSync(file, "utf8").includes("dbWrite: false"));
+  expect(optedOut.map(file => path.relative(root, file))).toEqual([path.join("app", "api", "auth", "logout", "route.ts")]);
 });
 
 /** 새 action·route 가 관문을 빠뜨리지 않게: 쓰기 진입점은 모두 webWriteAction / withRoute / webWriteRoute 를 지난다. */
