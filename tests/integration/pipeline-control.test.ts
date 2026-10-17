@@ -352,7 +352,7 @@ it("judges capacity open only on the (route, provider, model) combinations the s
     await client.begin(async tx => {
       await tx`DELETE FROM crawl_settings`;
       for (const row of saved) await tx`INSERT INTO crawl_settings (id, "values", updated_by, updated_at)
-        VALUES (${row.id}, ${row.values}::jsonb, ${row.updated_by}, ${row.updated_at}::timestamp)`;
+        VALUES (${row.id}, ${row.values}::text::jsonb, ${row.updated_by}, ${row.updated_at}::text::timestamp)`;
     });
   }
   expect(await readSettings()).toEqual(saved);
