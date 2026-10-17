@@ -708,6 +708,13 @@
       "when": 1794086400012,
       "tag": "0100_job_batch_candidates_scheduler_role",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1794086400013,
+      "tag": "0101_dr_process_group_successor_exit",
+      "breakpoints": true
     }
   ]
 }

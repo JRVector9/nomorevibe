@@ -70,13 +70,13 @@ const sqlState = async (query: Promise<unknown>) => query.then(() => "allowed", 
 
 beforeAll(async () => {
   ensureSchema();
-  const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")) as { entries: { tag: string }[] };
+  const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")) as { entries: { idx: number; tag: string }[] };
   expect(journal.entries.map(entry => entry.tag)).toEqual(expect.arrayContaining(["0082_job_batches", "0098_oracle_activation_gaps", MIGRATION]));
-  // 0100 직전 상태: 같은 migration 파일들에서 journal 만 0100 을 뺀 사본.
+  // 0100 직전 상태: 같은 migration 파일들에서 journal 만 0100 과 그 뒤 항목을 뺀 사본(뒤 항목이 먼저 적용되면 migrator 가 0100 을 건너뛴다).
   folder = mkdtempSync(path.join(tmpdir(), "nmv-pr11g-"));
   cpSync(path.join(root, "drizzle"), folder, { recursive: true });
   writeFileSync(path.join(folder, "meta/_journal.json"),
-    JSON.stringify({ ...journal, entries: journal.entries.filter(entry => entry.tag !== MIGRATION) }));
+    JSON.stringify({ ...journal, entries: journal.entries.filter(entry => entry.idx < journal.entries.find(item => item.tag === MIGRATION)!.idx) }));
   const shared = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
   try {
     // 남아 있던 같은 이름 role 은 이 파일 소유가 아니므로 쓰지도 지우지도 않는다.

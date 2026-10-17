@@ -17,7 +17,8 @@ import { laneForJob } from '@/lib/operations/worker-progress';
 import { DEFAULT_ROLE_HEALTH_PATH } from './role-health';
 import { startHostBudget } from '@/lib/operations/host-budget-runtime';
 import { emergencyTakeoverGate } from '@/lib/operations/emergency-admission-runtime';
-import { processGroupRecorder } from '@/lib/operations/dr/repository';
+import { processGroupRecorder, type ProcessGroupRecorder, type ProcessOwner } from '@/lib/operations/dr/repository';
+import { readProcessAttestation, successorProbeEnabled, type ProcessAttestation } from '@/lib/operations/dr/process-attestation';
 
 type Dependencies = {
   acquire: typeof tryAcquireRole;
@@ -127,6 +128,16 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
   return 0;
 }
 
+/**
+ * D11 기록기. PR15f: PROCESS_GROUP_SUCCESSOR_PROBE=1(기본 꺼짐)이고 이 boot 의 커널 boot·PID namespace 를 읽을 수 있을 때만 attestation 을 남기고,
+ * supervisor 와 함께 죽은 같은 instance 옛 boot 의 child 그룹 종료(ESRCH)를 직접 관측할 수 있다. 잘못된 flag 값은 읽기 전에 거절한다.
+ */
+export function roleWorkerProcessGroup(owner: ProcessOwner, env: Readonly<Record<string, string | undefined>>,
+  read: () => ProcessAttestation | null = () => readProcessAttestation()): { recorder: ProcessGroupRecorder; attestation: ProcessAttestation | null } {
+  const attestation = successorProbeEnabled(env) ? read() : null;
+  return { recorder: processGroupRecorder(owner, { attestation }), attestation };
+}
+
 async function main() {
   const candidate = parseRoleWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
@@ -135,7 +146,11 @@ async function main() {
   // 비상 admission 이 켜진 Oracle 은 recovering 동안 새 인계 역할을 가져가지 않는다(비활성이면 hook 없음)
   const takeover = emergencyTakeoverGate(process.env);
   // D11: 이 boot(=모델 장부 owner)의 child 그룹마다 spawn 전 의도와 ESRCH 종료를 남긴다. 기록 실패 시 spawn 하지 않는다.
-  const processGroup = processGroupRecorder({ instanceId: candidate.instanceId, bootId: candidate.bootId });
+  const processGroup = roleWorkerProcessGroup({ instanceId: candidate.instanceId, bootId: candidate.bootId }, process.env).recorder;
+  // PR15f: 켜져 있으면 boot 직후 한 번 옛 boot 그룹을 관측한다. 선출·spawn 과 독립이고 실패해도 기존 동작 그대로다(그 행은 근거 없이 남는다).
+  if (processGroup.probePredecessors) void processGroup.probePredecessors()
+    .then(result => runtimeLog('role.process_group_successor_probe', { role: candidate.role, recorded: result.recorded.length, alive: result.alive }),
+      () => runtimeLog('role.process_group_successor_probe_failed', { role: candidate.role }));
   const controller = new AbortController();
   let phase: 'standby' | 'active' | 'stopping' = 'standby';
   let epoch: number | null = null;
