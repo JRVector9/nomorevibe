@@ -21,7 +21,7 @@ const read: TableGrant = { select: true }, write: TableGrant = { select: true, i
 const lock = (key: string): TableGrant => ({ select: true, update: [key] });
 const CANDIDATE_IDENTITY = ['host', 'boot_id', 'release', 'policy_hash', 'observed_at'] as const;
 const RUNTIME: Record<string, TableGrant> = {
-  job_batch_control: lock('id'), jobs: write, operations_observations: write, role_leases: write,
+  job_batch_control: lock('id'), jobs: write, operations_observations: write, role_leases: write, dr_writer_fence: lock('id'),
   // Drizzle names every column (DEFAULT) on INSERT, so INSERT cannot be column-limited; UPDATE (the heartbeat upsert) is.
   job_batch_candidates: { select: true, insert: true, update: CANDIDATE_IDENTITY },
 };

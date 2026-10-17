@@ -82,16 +82,17 @@ it('다음 주기는 지난 주기가 덮은 끝에서 시작한다 — 겹치�
   mocks.settings!.discover.windowDays = 3;
   mocks.search.mockResolvedValue(page([]));
 
-  // 6일 전까지 덮어 둔 상태에서 재개
+  // 6일 전까지 덮어 둔 상태에서 재개 — 초 경계를 넘어도 기대값이 어긋나지 않게 한 번만 잰다
+  const coveredTo = at(6);
   let cursor = (await seedFrontier(context())).cursor!;
-  cursor = {...cursor, waiting:true, retryAt:undefined, cycleWindow:{from:at(9), to:at(6)}};
+  cursor = {...cursor, waiting:true, retryAt:undefined, cycleWindow:{from:at(9), to:coveredTo}};
   mocks.search.mockClear();
 
   for (let tick = 0; tick < 3; tick++) cursor = (await seedFrontier(context(cursor))).cursor ?? cursor;
 
   const searched = ranges();
   // 덮은 끝(6일 전)에서 시작하고, 조각이 빈틈없이 이어진다
-  expect(searched[0].split('..')[0]).toBe(at(6));
+  expect(searched[0].split('..')[0]).toBe(coveredTo);
   for (let i = 1; i < searched.length; i++) {
     expect(searched[i].split('..')[0]).toBe(searched[i-1].split('..')[1]);
   }
