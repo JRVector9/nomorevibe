@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
+import { networkRoutesField } from '@/lib/db/network-route';
 import { logger } from '@/lib/observability/logger';
 import { EXPECTED_MIGRATION, healthIdentity, schemaReadiness } from '@/lib/operations/health';
 
@@ -16,6 +17,7 @@ export async function GET() {
       status: 'error',
       db: 'unavailable',
       ...healthIdentity(),
+      ...networkRoutesField(),
     }, { status: 503, headers });
   }
   const dbLatencyMs = Date.now() - startedAt;
@@ -29,6 +31,7 @@ export async function GET() {
       schema,
       expectedMigration: EXPECTED_MIGRATION.tag,
       ...healthIdentity(),
+      ...networkRoutesField(),
     }, { status: 503, headers });
   }
   return Response.json({
@@ -36,5 +39,7 @@ export async function GET() {
     db: 'ok',
     ...healthIdentity(),
     dbLatencyMs,
+    // DATABASE_FALLBACK_HOST 등을 둔 곳만 — 경로 이름(lan/tailscale)만, 주소 없음
+    ...networkRoutesField(),
   }, { headers });
 }

@@ -32,7 +32,8 @@ it("rejects ambient database overrides without exposing values", async () => {
   const loaded = await api(); expect(loaded.assertReplayDatabaseTarget).toBeTypeOf("function");
   const guard = loaded.assertReplayDatabaseTarget;
   for (const env of [{ PGHOST: "private_canary" }, { PGOPTIONS: "private_canary" }, { PGSSLMODE: "private_canary" },
-    { READ_DATABASE_URL: "private_canary" }, { MIGRATION_DATABASE_URL: "private_canary" }, { DATABASE_URL: "private_canary" }])
+    { READ_DATABASE_URL: "private_canary" }, { MIGRATION_DATABASE_URL: "private_canary" }, { DATABASE_URL: "private_canary" },
+    { DATABASE_FALLBACK_HOST: "private_canary" }, { READ_DATABASE_FALLBACK_HOST: "private_canary" }])
     expect(() => guard(identity().databaseUrl, env)).toThrow("replay_database_override_rejected");
   expect(driverImport).not.toHaveBeenCalled();
 });

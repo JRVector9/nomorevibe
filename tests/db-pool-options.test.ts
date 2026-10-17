@@ -149,3 +149,48 @@ it('rejects a missing max in an explicit configuration rather than treating it a
   expect(() => createDbClient('postgres://not-used', explicit)).toThrowError(new Error('host_db_pool_quota_exceeded'));
   expect(driver.create).not.toHaveBeenCalled();
 });
+
+describe('LAN/Tailscale fallback host (2026-10-17)', () => {
+  const URL_LAN = 'postgres://u:s3cret@192.168.50.18:6432/nomorevibe';
+
+  it('adds only a socket factory to otherwise identical driver options', () => {
+    const config = dbPoolConfig({ WORKER_ROLE: 'crawler', DB_POOLER_MODE: 'pgbouncer' });
+    createDbClient(URL_LAN, config, 'primary', '100.99.209.55:6432');
+    const [url, options] = driver.create.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(url).toBe(URL_LAN);
+    const { socket, ...rest } = options;
+    expect(socket).toBeTypeOf('function');
+    expect(rest).toEqual(postgresClientOptions(config));
+  });
+
+  it('rejects an invalid fallback or a multi-host URL before driver construction', () => {
+    const config = dbPoolConfig({ WORKER_ROLE: 'crawler' });
+    expect(() => createDbClient(URL_LAN, config, 'primary', '100.99.209.55')).toThrow('Invalid DATABASE_FALLBACK_HOST: expected host:port');
+    expect(() => createDbClient('postgres://u:s3cret@a:1,b:2/nomorevibe', config, 'primary', '100.99.209.55:6432'))
+      .toThrow('Invalid DATABASE_URL: fallback needs one host:port');
+    expect(() => createDbClient(URL_LAN, config, 'read', 'replica')).toThrow('Invalid READ_DATABASE_FALLBACK_HOST: expected host:port');
+    expect(driver.create).not.toHaveBeenCalled();
+  });
+
+  it('wires DATABASE_FALLBACK_HOST and READ_DATABASE_FALLBACK_HOST into the lazy factories only when set', async () => {
+    vi.resetModules();
+    const globals = globalThis as { pgClient?: unknown; db?: unknown; readDb?: unknown };
+    const before = { pgClient: globals.pgClient, db: globals.db, readDb: globals.readDb };
+    delete globals.pgClient; delete globals.db; delete globals.readDb;
+    vi.stubEnv('WORKER_ROLE', 'web');
+    vi.stubEnv('DATABASE_URL', URL_LAN);
+    vi.stubEnv('DATABASE_FALLBACK_HOST', '100.99.209.55:6432');
+    vi.stubEnv('READ_DATABASE_URL', 'postgres://u:s3cret@192.168.50.248:5432/nomorevibe');
+    vi.stubEnv('READ_DATABASE_FALLBACK_HOST', '');
+    try {
+      const { db, onReplica } = await import('@/lib/db');
+      db.select();
+      const primary = driver.create.mock.calls[0] as unknown as [string, Record<string, unknown>];
+      expect(primary[1].socket).toBeTypeOf('function');
+      await onReplica(async () => 'read').catch(() => undefined);
+      const read = driver.create.mock.calls[1] as unknown as [string, Record<string, unknown>];
+      expect(read[0]).toBe('postgres://u:s3cret@192.168.50.248:5432/nomorevibe');
+      expect(read[1]).not.toHaveProperty('socket');
+    } finally { Object.assign(globals, before); }
+  });
+});
