@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { drizzle } from "drizzle-orm/postgres-js";
 import type postgres from "postgres";
 import { logger } from "@/lib/observability/logger";
+import { fallbackHostEnv } from "./network-route";
 import { createDbClient, dbPoolConfig } from "./pool";
 import { createReplicaRouter, REPLICA_LAG_QUERY } from "./replica";
 import { currentReplayDb } from "./replay-scope";
@@ -23,7 +24,7 @@ function getDb(): Db {
   if (!connectionString) {
     throw new Error("DATABASE_URL 환경변수가 설정되지 않았습니다");
   }
-  const client = globalForDb.pgClient ?? createDbClient(connectionString);
+  const client = globalForDb.pgClient ?? createDbClient(connectionString, undefined, "primary", fallbackHostEnv("DATABASE_FALLBACK_HOST"));
   const instance = drizzle(client, { schema });
   globalForDb.pgClient = client;
   globalForDb.db = instance;
@@ -43,7 +44,7 @@ function getReadDb(): Db | null {
     poolerMode: "direct" as const,
     applicationName: "nomorevibe:web-replica",
   };
-  return (globalForDb.readDb = drizzle(createDbClient(url, config, "read"), { schema }));
+  return (globalForDb.readDb = drizzle(createDbClient(url, config, "read", fallbackHostEnv("READ_DATABASE_FALLBACK_HOST")), { schema }));
 }
 
 const replicaScope = new AsyncLocalStorage<Db>();

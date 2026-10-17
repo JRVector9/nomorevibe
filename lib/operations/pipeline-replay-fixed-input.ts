@@ -101,6 +101,8 @@ export function assertIsolatedReplayDatabase(databaseUrl: string | undefined, en
   } catch { /* 고정 오류만 낸다 — 자격 증명을 출력하지 않는다. */ }
   ensure(local, "local_test_database_required");
   ensure(!OVERRIDES.some(key => Boolean(env[key])), "database_override_rejected");
+  // DATABASE_FALLBACK_HOST 는 lib/db 의 새 연결을 다른 주소로 보낼 수 있다(lib/db/network-route.ts)
+  ensure(!env.DATABASE_FALLBACK_HOST && !env.READ_DATABASE_FALLBACK_HOST, "database_override_rejected");
   ensure(!env.DATABASE_URL || env.DATABASE_URL === databaseUrl, "database_url_mismatch");
   ensure(!env.READ_DATABASE_URL, "replica_database_rejected");
   ensure(!env.MIGRATION_DATABASE_URL && !env.VALKEY_URL, "external_service_url_rejected");

@@ -22,6 +22,8 @@ describe("isolated replay database guard", () => {
     }
     expect(() => assertIsolatedReplayDatabase(undefined, {})).toThrow("explicit_TEST_DATABASE_URL_required");
     expect(() => assertIsolatedReplayDatabase(LOCAL, { PGHOST: "db.example.com" })).toThrow("database_override_rejected");
+    for (const key of ["DATABASE_FALLBACK_HOST", "READ_DATABASE_FALLBACK_HOST"])
+      expect(() => assertIsolatedReplayDatabase(LOCAL, { [key]: "100.99.209.55:6432" })).toThrow("database_override_rejected");
     expect(() => assertIsolatedReplayDatabase(LOCAL, { DATABASE_URL: "postgres://u:p@db.example.com/nomorevibe" })).toThrow("database_url_mismatch");
     expect(() => assertIsolatedReplayDatabase(LOCAL, { READ_DATABASE_URL: "postgres://replica" })).toThrow("replica_database_rejected");
     expect(() => assertIsolatedReplayDatabase(LOCAL, { VALKEY_URL: "redis://cache" })).toThrow("external_service_url_rejected");

@@ -40,12 +40,14 @@ const handlers = new WeakSet<object>();
 export function assertReplayDatabaseTarget(url: string, env: Environment = process.env): void {
   try { assertLocalTestDatabase(url); } catch { fail("local_test_database_required"); }
   if (Object.entries(env).some(([key, value]) => key.startsWith("PG") && Boolean(value))
-    || env.READ_DATABASE_URL || env.MIGRATION_DATABASE_URL || env.DATABASE_URL && env.DATABASE_URL !== url)
+    || env.READ_DATABASE_URL || env.MIGRATION_DATABASE_URL || env.DATABASE_URL && env.DATABASE_URL !== url
+    || env.DATABASE_FALLBACK_HOST || env.READ_DATABASE_FALLBACK_HOST)
     fail("replay_database_override_rejected");
 }
 function assertAmbientOverrides(): void {
   if (Object.entries(process.env).some(([key, value]) => key.startsWith("PG") && Boolean(value))
-    || process.env.READ_DATABASE_URL || process.env.MIGRATION_DATABASE_URL) fail("replay_database_override_rejected");
+    || process.env.READ_DATABASE_URL || process.env.MIGRATION_DATABASE_URL
+    || process.env.DATABASE_FALLBACK_HOST || process.env.READ_DATABASE_FALLBACK_HOST) fail("replay_database_override_rejected");
 }
 function metadata(identity: ReplayDatabaseIdentity): ReplayDatabaseMetadata {
   const { databaseUrl, nonce, ...publicIdentity } = identity; void databaseUrl; void nonce;

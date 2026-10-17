@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
+import { networkRoutesField } from '@/lib/db/network-route';
 import { healthIdentity } from '@/lib/operations/health';
 
 export const dynamic = 'force-dynamic';
@@ -15,12 +16,15 @@ export async function GET() {
       db: 'ok',
       ...healthIdentity(),
       dbLatencyMs: Date.now() - startedAt,
+      // DATABASE_FALLBACK_HOST 등을 둔 곳만 — 경로 이름(lan/tailscale)만, 주소 없음
+      ...networkRoutesField(),
     }, { headers });
   } catch {
     return Response.json({
       status: 'error',
       db: 'unavailable',
       ...healthIdentity(),
+      ...networkRoutesField(),
     }, { status: 503, headers });
   }
 }

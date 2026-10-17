@@ -1,6 +1,7 @@
 import postgres from "postgres";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveHostDbRuntimePoolConfig } from "./host-budget";
+import { postgresFallbackSocket } from "./network-route";
 
 const dbDeadlineScope = new AsyncLocalStorage<number>();
 /** Shortens cancellable pool wait in this operation; executing SQL is bounded server-side. */
@@ -165,10 +166,19 @@ function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
   return value;
 }
 
-/** Drizzle executes unsafe queries; postgres.begin also calls this exact object's unsafe for BEGIN. */
-export function createDbClient(connectionString: string, suppliedConfig?: DbPoolConfig, purpose: 'primary' | 'read' = 'primary'): ReturnType<typeof postgres> {
+/**
+ * Drizzle executes unsafe queries; postgres.begin also calls this exact object's unsafe for BEGIN.
+ * fallbackHost(host:port)를 주면 새 TCP 연결마다 URL 의 주소부터, 안 열리면 그 주소로(lib/db/network-route.ts) — 연결 대기는
+ * 먼저 주소 1초 + connect_timeout 까지 늘 수 있다. 없으면 드라이버 옵션이 지금과 같다.
+ */
+export function createDbClient(connectionString: string, suppliedConfig?: DbPoolConfig, purpose: 'primary' | 'read' = 'primary',
+  fallbackHost?: string): ReturnType<typeof postgres> {
   const config = suppliedConfig === undefined ? dbPoolConfig(process.env, purpose)
     : resolveHostDbRuntimePoolConfig(suppliedConfig, process.env, purpose, suppliedConfig.max ?? NaN);
+  const options = postgresClientOptions(config);
+  // postgres.js 3.4.9 는 `socket` 을 문서(README "Custom socket")로만 받고 타입에는 없다
+  const driverOptions: typeof options & { socket?: ReturnType<typeof postgresFallbackSocket> } = fallbackHost === undefined
+    ? options : { ...options, socket: postgresFallbackSocket(purpose, connectionString, fallbackHost) };
   const waiting: WaitingQueries = new Map();
   const tracked = new WeakSet<DriverConnection>();
   const trackConnection = (connection: DriverConnection) => {
@@ -183,7 +193,7 @@ export function createDbClient(connectionString: string, suppliedConfig?: DbPool
       return connect.call(this, query);
     };
   };
-  const client = postgres(connectionString, postgresClientOptions(config));
+  const client = postgres(connectionString, driverOptions);
   client.unsafe = new Proxy(client.unsafe, {
     apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting, trackConnection),
   });

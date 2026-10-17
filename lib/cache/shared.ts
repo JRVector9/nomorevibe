@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { deserialize, serialize } from "node:v8";
 import { createClient, RESP_TYPES } from "redis";
 import { logger } from "@/lib/observability/logger";
+import { fallbackHostEnv, networkRoute, parseFallbackHost, registerRoute, valkeyFallbackUrl } from "@/lib/db/network-route";
 
 export type SharedStore = {
   /** 만료 전 값만 준다. 없거나 실패하면 null — 던지지 않는다 */
@@ -74,9 +75,7 @@ export function createSharedStore(deps: {
   };
 }
 
-const globalForShared = globalThis as unknown as { valkey?: ReturnType<typeof connect> | null };
-
-function connect(url: string) {
+export function openValkey(url: string) {
   const client = createClient({
     url,
     disableOfflineQueue: true,
@@ -93,14 +92,48 @@ function connect(url: string) {
   return client;
 }
 
-/** VALKEY_URL 이 있는 웹에서만 — 연결이 서기 전에는 없는 것처럼 군다 */
-function valkey(): SharedClient | null {
-  if (globalForShared.valkey === undefined) {
-    const url = process.env.VALKEY_URL?.trim();
-    globalForShared.valkey = url ? connect(url) : null;
+type RoutedClient = { isReady: boolean; on(event: "error", listener: (error: unknown) => void): unknown };
+
+/**
+ * VALKEY_URL 의 주소로 먼저 연다. VALKEY_FALLBACK_HOST 가 있으면, 먼저 연결이 실패했을 때만(그 연결의 error) 같은 계정으로 대신 주소에
+ * 둘째 연결을 연다(lib/db/network-route.ts). 명령은 준비된 쪽 하나로만 — 먼저 연결이 다시 서면(node-redis 가 스스로 다시 붙인다)
+ * 그쪽으로 돌아간다. 실패한 명령은 다른 쪽으로 다시 보내지 않는다(읽기는 DB 로 간다). 대신 주소가 없으면 지금과 같은 연결 하나.
+ */
+export function createValkeyRoutes<C extends RoutedClient>(url: string, fallbackHost: string | undefined, open: (url: string) => C) {
+  if (fallbackHost === undefined) {
+    const only = open(url);
+    return { client: () => only.isReady ? only : null };
   }
-  const client = globalForShared.valkey;
-  return client?.isReady ? client as unknown as SharedClient : null;
+  const fallbackUrl = valkeyFallbackUrl(url, fallbackHost);
+  const routes = { preferred: networkRoute(new URL(url).hostname), fallback: networkRoute(parseFallbackHost("VALKEY_FALLBACK_HOST", fallbackHost).host) };
+  const preferred = open(url);
+  let fallback: C | null = null;
+  preferred.on("error", () => {
+    if (fallback) return;
+    fallback = open(fallbackUrl);
+    logger.warn("cache.valkey_fallback_opened", { route: routes.fallback, preferred: routes.preferred });
+  });
+  const pick = () => preferred.isReady ? preferred : fallback?.isReady ? fallback : null;
+  registerRoute("valkey", () => { const client = pick(); return client === null ? null : client === preferred ? routes.preferred : routes.fallback; });
+  return { client: pick };
+}
+
+const globalForShared = globalThis as unknown as { valkeyRoutes?: { client(): ReturnType<typeof openValkey> | null } | null };
+
+/** VALKEY_URL 이 있는 웹에서만 — 연결이 서기 전에는 없는 것처럼 군다. 대신 주소 설정이 틀리면 캐시를 끈다(읽기는 DB 로) */
+function valkey(): SharedClient | null {
+  if (globalForShared.valkeyRoutes === undefined) {
+    const url = process.env.VALKEY_URL?.trim();
+    const fallbackHost = fallbackHostEnv("VALKEY_FALLBACK_HOST");
+    try {
+      globalForShared.valkeyRoutes = url ? createValkeyRoutes(url, fallbackHost, openValkey) : null;
+    } catch (error) {
+      if (fallbackHost === undefined) throw error;
+      logger.error("cache.valkey_config_invalid", { error });
+      globalForShared.valkeyRoutes = null;
+    }
+  }
+  return (globalForShared.valkeyRoutes?.client() ?? null) as unknown as SharedClient | null;
 }
 
 export const sharedStore: SharedStore = createSharedStore({

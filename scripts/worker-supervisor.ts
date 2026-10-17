@@ -6,6 +6,7 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { observeService } from '../lib/operations/observations';
+import { networkRoutesField } from '../lib/db/network-route';
 import { consumerHealthPath, supervisorHealthPath } from './consumer-health';
 export { consumerHealthPath, supervisorHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
 import type { RuntimeHeartbeat } from './worker';
@@ -191,7 +192,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const publish = () => {
       if (!observationPending && Date.now() - lastObserved >= 15_000) {
         lastObserved = Date.now(); observationPending = true;
-        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss })
+        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss, ...networkRoutesField() })
           .catch(() => {}).finally(() => { observationPending = false; });
       }
       health.updatedAt = Date.now();
