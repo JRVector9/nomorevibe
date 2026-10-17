@@ -16,6 +16,8 @@ import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { PipelineControlStatus } from "./PipelineControlStatus";
 import { readPipelineControlStatus } from "@/lib/operations/pipeline-control-status";
+import { PipelineCompletions } from "./PipelineCompletions";
+import { readPipelineCompletions } from "@/lib/operations/pipeline-completions";
 import { CrawlerActivity } from "./CrawlerActivity";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { pipelineFlow } from "@/lib/operations/pipeline";
@@ -102,6 +104,11 @@ function CardPending({ span, label }: { span: string; label: string }) {
 
 async function PipelineControlSlot() {
   return <PipelineControlStatus status={await readPipelineControlStatus()} />;
+}
+
+/** PR13c 처리 지표 — 복제본에서 따로 센다. 못 읽으면 칸마다 미확인으로 남는다 */
+async function PipelineCompletionsSlot() {
+  return <PipelineCompletions status={await readPipelineCompletions()} />;
 }
 
 async function KpiSlot({ derived }: { derived: DerivedStatus }) {
@@ -423,6 +430,7 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
       </div>
       <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
+      <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
