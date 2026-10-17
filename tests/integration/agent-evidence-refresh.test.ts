@@ -123,8 +123,9 @@ it.each(['new', 'needs_review', 'approved', 'nonpublic', 'missing', 'partial', '
     if (kind === 'new' || kind === 'needs_review' || kind === 'approved')
       await db.insert(crawlCandidates).values({ repo: 'acme/background', state: kind });
     if (kind === 'nonpublic') await listProduct('private-demand', 'acme/background');
+    // 저장소별 스캔 오류(timeout)는 공급자 장애가 아니다 — 기한이 지난 대기로만 센다
     expect((await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence'))
-      .toMatchObject({ waiting: 1, providerErrors: kind === 'error' ? 1 : 0 });
+      .toMatchObject({ waiting: 1, providerErrors: 0 });
     await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
     expect(spies.refresh.mock.calls.map(([input]) => input.repositoryKey)).toEqual(['acme/background']);
   });
@@ -138,8 +139,9 @@ it('honors persisted failure backoff with active demand and a long background in
   const scan = (await completeScan('acme/background', '81'))!;
   const retryAt = new Date(Date.now() + 3600_000);
   await db.update(agentRepositoryScans).set({ lastErrorCode: 'timeout', nextAttemptAt: retryAt }).where(eq(agentRepositoryScans.id, scan.id));
+  // 재시도 예정인 저장소별 실패는 미뤄 둔 일감일 뿐 공급자 장애로 세지 않는다
   expect((await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence'))
-    .toMatchObject({ waiting: 0, deferred: 1, providerErrors: 1 });
+    .toMatchObject({ waiting: 0, deferred: 1, providerErrors: 0 });
   await refreshAgentEvidenceJob(context(), { request: emptyRepository([]) });
   expect(spies.refresh).not.toHaveBeenCalled();
   expect((await getLatestRepositoryAgentScan('acme/background'))?.nextAttemptAt).toEqual(retryAt);
