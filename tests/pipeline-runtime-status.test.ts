@@ -6,8 +6,13 @@ import { batchPolicyHash } from '@/lib/jobs/batches';
 import { modelCapacityPolicyHash } from '@/lib/llm/capacity';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 
-const reads = vi.hoisted(() => ({ execute: vi.fn(), readiness: vi.fn(), primary: vi.fn() }));
-vi.mock('@/lib/db', () => ({ db: { execute: reads.execute }, onPrimary: (load: () => Promise<unknown>) => { reads.primary(); return load(); } }));
+const reads = vi.hoisted(() => ({ execute: vi.fn(), readiness: vi.fn(), primary: vi.fn(), replica: vi.fn(), transaction: vi.fn(), setLocal: vi.fn() }));
+// R4 fixture: 읽기 전용 TX 안의 SET LOCAL(문장 상한)은 따로 받는다 — execute 는 스냅숏 한 문장 그대로다
+vi.mock('@/lib/db', () => ({ db: { execute: reads.execute,
+  transaction: async (load: (tx: unknown) => Promise<unknown>, config?: unknown) => { reads.transaction(config); return load({ execute: (query: { queryChunks?: unknown }) =>
+    JSON.stringify(query.queryChunks ?? query).includes('SET LOCAL') ? reads.setLocal(query) : reads.execute(query) }); } },
+  onPrimary: (load: () => Promise<unknown>) => { reads.primary(); return load(); },
+  onReplica: (load: () => Promise<unknown>) => { reads.replica(); return load(); } }));
 vi.mock('@/lib/operations/job-batch-readiness', () => ({ readJobBatchReadiness: reads.readiness }));
 
 const at = '2026-10-16T12:00:00.000Z', now = Date.parse(at);

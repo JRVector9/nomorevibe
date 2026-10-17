@@ -325,8 +325,10 @@ export async function acquireOrigin(origin: string, signal: AbortSignal): Promis
  *
  * 헤더에서 놓으면 같은 서버로 모인 세 요청의 본문이 동시에 흘러, 동시 요청을 막는 서버에서
  * 200·429·429가 났다(codex 재현). 본문이 끝나거나·취소되거나·오류가 나면 놓는다.
- * 기한은 본문 취소를 요청한다. 진행 중 read와 실제 취소가 정산된 뒤에만 자리를 놓고,
- * 취소가 실패하면 자리를 유지한다.
+ * 기한은 본문 취소를 요청한다. 진행 중 read와 실제 취소가 정산된 뒤에 자리를 놓는다 — 취소가 거절돼도
+ * 정산 뒤에는 놓는다. 실제 undici 는 기한에 본문을 먼저 오류로 만들어 그 뒤의 취소가 늘 거절되고,
+ * 거절에 자리를 남기면 그 origin 의 background 요청이 프로세스가 끝날 때까지 막혔다(R4). 이 자리는
+ * 프로세스 안의 예절 줄이라 외부 증거 없이 놓아도 된다(공유 permit 은 origin-permits 가 따로 정산한다).
  */
 function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSignal): Response {
   // 본문을 가질 수 없는 상태 코드는 새 Response로 감쌀 수 없다 — 곧장 놓는다
@@ -354,10 +356,10 @@ function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSi
     const pendingRead = reading;
     // Install the shared Promise before calling cancel: it can wake a pending
     // read before its underlying cancellation has finished.
-    cancellation = Promise.resolve().then(() => reader.cancel(reason)).then(async () => {
-      await pendingRead?.catch(() => {});
-      finish();
-    });
+    const settled = async () => { await pendingRead?.catch(() => {}); finish(); };
+    // 거절도 정산이다 — 자리를 놓고 원래 거절은 부른 쪽에 그대로 준다
+    cancellation = Promise.resolve().then(() => reader.cancel(reason))
+      .then(settled, async (error: unknown) => { await settled(); throw error; });
     void cancellation.catch(() => {});
     return cancellation;
   };
@@ -431,14 +433,17 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive", op
 
     if (options.retryTransientErrors && (res.status === 408 || res.status === 429 || res.status >= 500 && res.status <= 599)) {
       const retryAt = retryAfterAt(res.headers.get("retry-after"));
-      if (await cancelUnusedBody(res)) release?.();
+      // 정리가 끝나면(실패여도) 자리를 놓는다 — 원래 상태·Retry-After 는 그대로
+      await cancelUnusedBody(res);
+      release?.();
       throw new PageFetchError("http", `HTTP ${res.status}`, res.status, retryAt);
     }
 
     // Some origins return nonstandard codes (e.g. 999). Preserve that failure
     // status without passing it to the stricter Response constructor below.
     if (res.status < 200 || res.status > 599) {
-      if (await cancelUnusedBody(res)) release?.();
+      await cancelUnusedBody(res);
+      release?.();
       return { finalUrl: current, response: res };
     }
 
@@ -446,9 +451,11 @@ export async function safeFetch(url: string, mode: FetchMode = "interactive", op
       const location = res.headers.get("location");
       if (location) {
         // 따라갈 응답의 본문은 읽지 않는다. 닫지 않으면 연결이 풀로 돌아가지 않는다.
-        // 다음 hop 전에 자리를 놓아야 같은 서버로 돌아오는 사슬이 스스로를 기다리지 않는다
-        if (!await cancelUnusedBody(res)) return null;
+        // 다음 hop 전에 자리를 놓아야 같은 서버로 돌아오는 사슬이 스스로를 기다리지 않는다.
+        // 정리가 실패하면 다음 hop 은 보내지 않지만, 자리는 정리가 끝난 뒤 놓는다
+        const cleaned = await cancelUnusedBody(res);
         release?.();
+        if (!cleaned) return null;
         try {
           current = new URL(location, current).toString();
         } catch {

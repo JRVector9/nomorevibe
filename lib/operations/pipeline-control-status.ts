@@ -126,15 +126,18 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
   return result;
 }
 
-/** One primary statement for control/ledger readback; no locks or runtime admission.
- * PR13b: host-slot 장부·provider budget 별 모델 슬롯·DR writer fence·Oracle 후보도 같은 문장·같은 DB 시계로 읽는다. */
+/** One read-only statement for control/ledger readback; no locks or runtime admission.
+ * PR13b: host-slot 장부·provider budget 별 모델 슬롯·DR writer fence·Oracle 후보도 같은 문장·같은 DB 시계로 읽는다.
+ * 방금 쓴 값이 필요 없는 관리자 집계(약 30개 count)라 복제본에서 읽는다(밀리거나 닿지 않으면 주 DB, lib/db/replica.ts).
+ * 읽기 전용 TX 의 문장 상한으로 주 DB 로 넘어가도 오래 붙잡지 않고, 읽지 못하면 화면은 '읽지 못했습니다'에 남기고 로그를 남긴다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
-  const [{ db, onPrimary }, { sql }, { readJobBatchReadiness }] = await Promise.all([
-    import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'),
+  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }] = await Promise.all([
+    import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'), import('@/lib/observability/logger'),
   ]);
   const [snapshot, readiness] = await Promise.allSettled([
-    onPrimary(async () => {
-      const [row] = await db.execute<{ snapshot: unknown }>(sql`
+    onReplica(() => db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '10s'`);
+      const [row] = await tx.execute<{ snapshot: unknown }>(sql`
         WITH observation_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
         SELECT jsonb_build_object(
           'at', c.at,
@@ -196,9 +199,11 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             ORDER BY role,instance_id) FROM job_batch_candidates WHERE host='oracle-osaka-smoke'),'[]'::jsonb)
         ) AS snapshot FROM observation_clock c`);
       return row?.snapshot;
-    }),
+    }, { accessMode: 'read only' })),
     readJobBatchReadiness(),
   ]);
+  if (snapshot.status === 'rejected') logger.warn('operations.control_status_read_failed', { part: 'snapshot', error: snapshot.reason });
+  if (readiness.status === 'rejected') logger.warn('operations.control_status_read_failed', { part: 'readiness', error: readiness.reason });
   return buildPipelineControlStatus(snapshot.status === 'fulfilled' ? snapshot.value : null,
     readiness.status === 'fulfilled' ? readiness.value : null);
 }

@@ -182,7 +182,7 @@ it("fenced site: write routes answer 503 + Retry-After, actions throw, hot paths
   expect(res.headers.get("retry-after")).toBe("60");
   expect(await res.json()).toMatchObject({ error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요." });
   await expect(requestOperation("news-refresh")).rejects.toBeInstanceOf(fence.DrWriterFencedError);
-  // GitHub webhook: 5xx 라 GitHub 가 실패 전달로 남긴다(다시 보낼 수 있다). 서명 검증·수신 기록 전에 끝난다
+  // GitHub webhook: 5xx 라 GitHub 에 실패 전달로 남는다(자동 재전송은 없다 — 3일 안 수동·API 재전송만, 놓친 해지는 15분 reconcile). 서명 검증·수신 기록 전에 끝난다
   const hook = await feedbackWebhook(new Request("https://nomorevibe.test/api/github/webhooks/feedback", { method: "POST", body: "{}" }));
   expect(hook.status).toBe(503);
   expect(hook.headers.get("retry-after")).toBe("60");

@@ -4,8 +4,13 @@ import { buildPipelineControlStatus, readPipelineControlStatus } from '@/lib/ope
 import { batchPolicyHash, BATCH_ROLES } from '@/lib/jobs/batches';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 
-const reads = vi.hoisted(() => ({ execute: vi.fn(), readiness: vi.fn(), primary: vi.fn() }));
-vi.mock('@/lib/db', () => ({ db: { execute: reads.execute }, onPrimary: (load: () => Promise<unknown>) => { reads.primary(); return load(); } }));
+const reads = vi.hoisted(() => ({ execute: vi.fn(), readiness: vi.fn(), primary: vi.fn(), replica: vi.fn(), transaction: vi.fn(), setLocal: vi.fn() }));
+// R4 fixture: 읽기 전용 TX 안의 SET LOCAL(문장 상한)은 따로 받는다 — execute 는 스냅숏 한 문장 그대로다
+vi.mock('@/lib/db', () => ({ db: { execute: reads.execute,
+  transaction: async (load: (tx: unknown) => Promise<unknown>, config?: unknown) => { reads.transaction(config); return load({ execute: (query: { queryChunks?: unknown }) =>
+    JSON.stringify(query.queryChunks ?? query).includes('SET LOCAL') ? reads.setLocal(query) : reads.execute(query) }); } },
+  onPrimary: (load: () => Promise<unknown>) => { reads.primary(); return load(); },
+  onReplica: (load: () => Promise<unknown>) => { reads.replica(); return load(); } }));
 vi.mock('@/lib/operations/job-batch-readiness', () => ({ readJobBatchReadiness: reads.readiness }));
 
 const at = '2026-10-16T12:00:00.000Z';
@@ -96,13 +101,14 @@ describe('unknown boundaries', () => {
 });
 
 
-describe('primary read-only loader', () => {
+describe('replica-first read-only loader', () => {
   it('uses one statement for DB clock/control/ledger counts and existing readiness separately', async () => {
     reads.execute.mockReset().mockResolvedValue([{ snapshot: fixture() }]);
     reads.readiness.mockReset().mockResolvedValue(readiness);
-    reads.primary.mockClear();
+    reads.replica.mockClear();
     const status = await readPipelineControlStatus();
-    expect(reads.primary).toHaveBeenCalledOnce();
+    // R4: 주 DB(onPrimary) → 복제본 우선(onReplica). 밀리거나 닿지 않으면 router 가 주 DB 로 읽는다
+    expect(reads.replica).toHaveBeenCalledOnce();
     expect(reads.execute).toHaveBeenCalledOnce();
     expect(reads.readiness).toHaveBeenCalledOnce();
     const query = new PgDialect().sqlToQuery(reads.execute.mock.calls[0][0]).sql;
@@ -129,6 +135,36 @@ describe('primary read-only loader', () => {
     expect(status.observedAt).toBeNull();
     expect(status.backlog.every(row => row.value === null)).toBe(true);
     expect(status.hosts.every(host => host.roles.every(role => !role.ready))).toBe(true);
+  });
+});
+
+// R4: 관리자 제어 상태 패널은 약 30개 count 를 주 DB 에서 상한·실패 기록 없이 읽었다 — 복제본 우선, 읽기 전용 TX + 문장 상한, 실패 로그.
+describe('bounded replica-first loader', () => {
+  it('reads on the replica in a read-only transaction whose statement bound precedes the snapshot', async () => {
+    reads.execute.mockReset().mockResolvedValue([{ snapshot: fixture() }]);
+    reads.readiness.mockReset().mockResolvedValue(readiness);
+    for (const spy of [reads.primary, reads.replica, reads.transaction, reads.setLocal]) spy.mockClear();
+    const status = await readPipelineControlStatus();
+    expect(status.observedAt).toBe(at);
+    expect(reads.replica).toHaveBeenCalledOnce();
+    expect(reads.primary).not.toHaveBeenCalled();
+    expect(reads.transaction).toHaveBeenCalledWith({ accessMode: 'read only' });
+    expect(reads.setLocal).toHaveBeenCalledOnce();
+    expect(new PgDialect().sqlToQuery(reads.setLocal.mock.calls[0][0]).sql).toBe("SET LOCAL statement_timeout = '10s'");
+    expect(reads.setLocal.mock.invocationCallOrder[0]).toBeLessThan(reads.execute.mock.invocationCallOrder[0]);
+  });
+  it('logs a failed snapshot or readiness read without rendering the error', async () => {
+    reads.execute.mockReset().mockRejectedValue(new Error('canceling statement due to statement timeout'));
+    reads.readiness.mockReset().mockRejectedValue(new Error('readiness-never-render'));
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const status = await readPipelineControlStatus();
+      const events = out.mock.calls.map(([line]) => JSON.parse(String(line))).filter(row => row.event === 'operations.control_status_read_failed');
+      expect(events.map(row => [row.level, row.part])).toEqual([['warn', 'snapshot'], ['warn', 'readiness']]);
+      expect(events[0].error).toMatchObject({ message: 'canceling statement due to statement timeout' });
+      expect(status.observedAt).toBeNull();
+      expect(JSON.stringify(status)).not.toContain('readiness-never-render');
+    } finally { out.mockRestore(); }
   });
 });
 
