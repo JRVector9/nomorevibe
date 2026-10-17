@@ -66,6 +66,7 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
  * 진행 중 호출 정리 → 운영 구간과 같은 수집기로 읽기 전용 수집. 발행·공개 상태·외부 반영 잡은 돌리지 않는다.
  * 구간 끝(두 모드 같다): 정지 신호와 계량기가 새 claim·새 호출을 막고, 계량기에 이미 보낸 호출은 drain 상한(벽시간 안) 안에서 upstream이
  * 끝나 usage를 남긴다(budget에 센다). 워커는 그 답을 받지 않으므로 최종·처리량·p95는 구간 안 그대로다. 상한을 넘긴 호출은 끊는다.
+ * item consumer는 새 claim만 멈추고 이미 보낸 호출의 답을 drain 상한까지 받아 장부에 정산한다. 그 기록은 구간 뒤라 최종에 들지 않는다.
  */
 export async function runFixedInputReplay(options: { manifest: unknown; artifact: FixedInputArtifact; artifactSha256: string;
   manifestSha256: string; revision: string; env?: Env; timing?: FixedInputTiming }): Promise<FixedInputRunResult> {
@@ -92,6 +93,10 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     await sleep(Math.min(1_000, Date.parse(startedAt) - Date.parse(now)));
 
   const controller = new AbortController(), signal = controller.signal, failures: string[] = [];
+  // item consumer 는 두 신호를 받는다: claims 는 정지 순간 새 claim·dispatch 를 막고, consumerCancel 은 진행 중 호출을 끊는다.
+  // 구간 끝에는 consumerCancel 을 drain 상한까지 미뤄, 이미 보낸 호출이 terminal(usage)을 장부에 정산하게 한다(아니면 local_abort 로 C 청구).
+  const claims = new AbortController(), consumerCancel = new AbortController();
+  let consumerCancelTimer: ReturnType<typeof setTimeout> | undefined;
   const halted: { reason: FixedInputRunResult["stop"]["reason"] | null; at: number; calls: number | null; deadline: number;
     drain: Promise<ReplayMeterDrain> | null; meterStop: ReplayMeterStop | null } = { reason: null, at: 0, calls: null, deadline: 0, drain: null, meterStop: null };
   let guardRejected = 0, meterCalls = () => 0, drainMeter: ((deadlineAt: number) => Promise<ReplayMeterDrain>) | null = null;
@@ -100,9 +105,11 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
   const stop = (value: FixedInputRunResult["stop"]["reason"]) => {
     if (halted.reason) return;
     halted.reason = value; halted.at = Date.now(); halted.calls = meterCalls();
+    claims.abort();
     if (value === "window_end" && drainMeter) {
       halted.deadline = Math.min(halted.at + timing.drainMs, startedHost + manifest.limits.maxWallMs); halted.drain = drainMeter(halted.deadline);
-    }
+      consumerCancelTimer = setTimeout(() => consumerCancel.abort(), Math.max(0, halted.deadline - Date.now()));
+    } else consumerCancel.abort();
     controller.abort();
   };
   // drain 중 계량기 상한(호출당 상한 위반 등)은 정지 사유를 바꾸지 않고 drain 기록에 남긴다(보고서가 비교 불가로 표시한다).
@@ -128,19 +135,22 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     if (consumers && manifest.items) {
       const [{ runFirstReviewConsumer }, { runSecondReviewConsumer }] = consumers, tag = randomUUID().slice(0, 8);
       for (let index = 0; index < manifest.items.ai1Consumers; index++) tasks.push(guarded("ai1_consumer", () =>
-        runFirstReviewConsumer({ owner: { instanceId: `replay-${tag}-ai1-${index + 1}`, bootId: randomUUID() }, signal })));
+        runFirstReviewConsumer({ owner: { instanceId: `replay-${tag}-ai1-${index + 1}`, bootId: randomUUID() },
+          signal: consumerCancel.signal, stopClaims: claims.signal })));
       for (let index = 0; index < manifest.items.ai2Consumers; index++) tasks.push(guarded("ai2_consumer", () =>
-        runSecondReviewConsumer({ owner: { instanceId: `replay-${tag}-ai2-${index + 1}`, bootId: randomUUID() }, signal })));
+        runSecondReviewConsumer({ owner: { instanceId: `replay-${tag}-ai2-${index + 1}`, bootId: randomUUID() },
+          signal: consumerCancel.signal, stopClaims: claims.signal })));
     }
     await new Promise<void>(resolve => signal.aborted ? resolve() : signal.addEventListener("abort", () => resolve(), { once: true }));
     // 진행 중 호출·기록은 신호를 받고 스스로 끝난다. DB 연결을 닫거나 수집하기 전에 모두 기다린다.
     const drainStarted = Date.now();
     await Promise.allSettled(tasks);
+    clearTimeout(consumerCancelTimer); consumerCancel.abort();
     drainMs = Date.now() - drainStarted;
     // 정지와 함께 시작한 계량기 drain(구간 끝만)을 마저 기다린다. 상한에서 끊으므로 drain 한도·벽시간을 넘지 않는다.
     if (halted.drain) windowDrain = await halted.drain;
   } finally {
-    clearTimeout(windowTimer); clearTimeout(wallTimer);
+    clearTimeout(windowTimer); clearTimeout(wallTimer); clearTimeout(consumerCancelTimer);
     for (const [key, value] of Object.entries(savedCli)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await release();
     await meter.close();

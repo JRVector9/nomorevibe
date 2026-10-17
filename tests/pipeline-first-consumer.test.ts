@@ -56,6 +56,22 @@ it('strict target/owner and pre-aborted caller do not claim', async () => {
   await expect(executeFirstReviewConsumerItem({ candidateId: 4, owner: { ...owner(), extra: true } as ReturnType<typeof owner> })).rejects.toThrow();
   expect(mocks.claim).not.toHaveBeenCalled();
 });
+it('stopClaims before the item or after preparation does not claim', async () => {
+  const stopped = new AbortController(); stopped.abort();
+  expect(await executeFirstReviewConsumerItem({ candidateId: 4, owner: owner(), stopClaims: stopped.signal })).toEqual({ state: 'skipped', reason: 'aborted' });
+  const late = new AbortController();
+  mocks.prepare.mockImplementationOnce(async () => { late.abort(); return { provider: 'rules', model: 'rules-version', outcome, spam: false }; });
+  expect(await executeFirstReviewConsumerItem({ candidateId: 4, owner: owner(), stopClaims: late.signal })).toEqual({ state: 'skipped', reason: 'aborted' });
+  expect(mocks.claim).not.toHaveBeenCalled();
+});
+it('stopClaims ends the AI1 loop after the current item without a backoff', async () => {
+  const cancel = new AbortController(), stopClaims = new AbortController();
+  mocks.pages = [[hint(4), hint(5)]];
+  mocks.record.mockImplementationOnce(async () => { stopClaims.abort(); return { applied: true, state: 'succeeded' }; });
+  expect(await runFirstReviewConsumer({ owner: owner(), signal: cancel.signal, stopClaims: stopClaims.signal }))
+    .toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
+  expect(mocks.load.mock.calls.map(call => call[0])).toEqual([4]); expect(mocks.sleep).not.toHaveBeenCalled(); expect(cancel.signal.aborted).toBe(false);
+});
 it('launches one fixed reviewer runtime with a fresh boot and matching observation identity', async () => {
   await runPipelineFirstConsumer(['--once'], { PIPELINE_ITEM_CONSUMER_VERSION: '1',
     PIPELINE_ITEM_CONSUMER_INSTANCE_ID: owner().instanceId, SERVICE_INSTANCE_ID: owner().instanceId });

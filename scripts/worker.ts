@@ -25,7 +25,7 @@ export type RuntimeHeartbeat = {
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
-type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean };
+type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean; reason?: string };
 export type BackgroundConsumerLanes = {
   names: readonly string[];
   open: () => Promise<boolean>;
@@ -41,7 +41,7 @@ type WorkerDependencies = {
   lanes?: readonly (readonly string[])[];
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
-  run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean }>;
+  run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean; reason?: string }>;
   /** host 합계 예산(lib/operations/host-budget-runtime.ts). 없으면 기존처럼 바로 실행한다 */
   admit?: (name: string) => Promise<{ admitted: true; release: () => Promise<void> } | { admitted: false; reason: string }>;
   consumer?: BackgroundConsumerLanes;
@@ -197,7 +197,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
     || (options.role === "site-evidence" && names[0] === "product-site-evidence-refresh"));
   while (!options.signal?.aborted) {
     ticks++;
-    let sourceContinued = false;
+    let sourceContinued = false, stageRefill = false;
     report('polling');
     try {
       await dependencies.seen(names);
@@ -221,6 +221,9 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           if (sourceLane && result.status === 'completed' && result.done === false && result.sourceContinuation === true) {
             sourceContinued = true;
           }
+          // AI2 가 item 모드면 이 잡은 AI2 행 올리기·닫기만 하고 stage_blocked 로 끝난다(요청은 그대로 남는다).
+          // AI1 consumer 가 쓴 승인이 다음 틱을 기다리지 않도록 줄을 짧게 다시 돈다.
+          if (name === 'second-review' && result.status === 'deferred' && result.reason === 'stage_blocked') stageRefill = true;
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
         } catch {
           failures++;
@@ -238,7 +241,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
     report('idle');
     if (options.once || options.signal?.aborted) break;
     if (sourceContinued) continue;
-    await (dependencies.sleep ?? interruptibleSleep)(intervalMs, options.signal);
+    await (dependencies.sleep ?? interruptibleSleep)(stageRefill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
   }
   return { ticks, failures };
 }
