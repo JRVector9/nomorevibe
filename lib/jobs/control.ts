@@ -3,10 +3,10 @@ import { db } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { jobs } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { isJobName, JOB_CATALOG } from "./catalog";
+import { isJobName } from "./catalog";
 import { JobLeaseLostError, STALE_LOCK_MS } from "./lease";
 import { batchPendingNames, lockJobBatch } from "./batch-repository";
-import { batchJobsForRole, type BatchRole } from "./batches";
+import { batchJobsForRole, catalogJobsForBatch, type BatchRole } from "./batches";
 import { registerReplayJobFinalAuthority } from "@/lib/operations/pipeline-replay-execution";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 
@@ -29,8 +29,7 @@ export async function requestJob(name: string, tx: ProductTransaction | typeof d
 
 /** requestDueJobs 가 이 batch 상태에서 일정을 미는 정기 잡. Oracle scheduler attest 도 같은 목록을 읽어 본다 */
 export function scheduledJobs(batch: { mode: string; writerContractVersion: number }) {
-  return JOB_CATALOG.filter(job => job.intervalMs !== null
-    && (job.batchVersion !== 1 || (batch.mode === 'versioned' && batch.writerContractVersion >= 1)));
+  return catalogJobsForBatch(batch).filter(job => job.intervalMs !== null);
 }
 
 /** Coalesce scheduled signals and advance from the scheduled instant, not handler completion. */

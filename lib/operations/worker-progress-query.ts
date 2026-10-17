@@ -4,6 +4,7 @@ import { operationsObservations } from "@/lib/db/schema";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
+import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
@@ -54,6 +55,7 @@ export function buildWorkerProgress(
   jobs: ProgressJob[],
   observations: Array<{ key: string; value: Record<string, unknown>; observedAt: Date | string }>,
   now: Date,
+  batch: { mode: string; writerContractVersion: number },
   evidence: ProgressStageInput[] = [],
 ): WorkerProgressReport {
   const instances = serviceInstancesFromObservations(observations);
@@ -107,7 +109,7 @@ export function buildWorkerProgress(
     }
     return healthyRun ? { ...stage, reason: "running" as const, alarm: false, restartEligible: false } : stage;
   });
-  const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now);
+  const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now, batch);
   const alarm = liveness.some(row => row.alarm) || stages.some(row => row.alarm) || lanes.some(row => row.alarm) || scheduler.alarm;
   const unknown = stages.some(row => row.reason === "unknown_age") || scheduler.reason === "unknown_schedule";
   return { measuredAt: throughput.measuredAt, overall: alarm ? "alarm" as const : unknown ? "unknown" as const : "ok" as const,
@@ -211,7 +213,7 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
 }
 
 export async function readWorkerProgress(now = new Date()) {
-  const [settings, jobs] = await Promise.all([getSettings(), listJobStates()]);
+  const [settings, jobs, batch] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode()]);
   const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
   const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
@@ -227,5 +229,5 @@ export async function readWorkerProgress(now = new Date()) {
     return retry && Number.isFinite(retry.getTime()) && retry > now && (!job.notBefore || retry > job.notBefore)
       ? { ...job, notBefore: retry } : job;
   });
-  return buildWorkerProgress(throughput, withBackoff, observations, now, evidence);
+  return buildWorkerProgress(throughput, withBackoff, observations, now, batch, evidence);
 }

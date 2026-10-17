@@ -36,6 +36,10 @@ export function batchLanesForRole(role: BatchRole, mode: BatchMode): string[][] 
   return lanesForRole(role as JobRole).map(lane => lane.filter(name => selected.has(name))).filter(lane => lane.length > 0);
 }
 export function batchRoleForJob(name: string): BatchRole | undefined { return BATCH_ROLES.find(role => batchJobsForRole(role, 'versioned').includes(name)); }
+/** 이 batch 상태에서 일정·실행이 있는 카탈로그 잡. batchVersion 1 잡은 versioned 계약에서만 — scheduler·진행 판정·관리자 목록이 같은 기준을 쓴다 */
+export function catalogJobsForBatch(batch: { mode: string; writerContractVersion: number }) {
+  return JOB_CATALOG.filter(job => job.batchVersion !== 1 || (batch.mode === 'versioned' && batch.writerContractVersion >= 1));
+}
 export function batchHostOrder(role: BatchRole): readonly BatchHost[] {
   if (!JOB_ROLES.includes(role as JobRole)) return ['oracle-osaka-smoke', 'm3', 'mini'];
   return role === 'crawler' ? ['mini', 'm3', 'oracle-osaka-smoke'] : ['m3', 'mini', 'oracle-osaka-smoke'];
