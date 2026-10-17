@@ -283,3 +283,69 @@ export const textProfileGatewayTerminalEvidenceSchema = z.object({
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_text_profile_terminal_usage");
 export type TextProfileGatewayTerminalEvidence = Readonly<z.infer<typeof textProfileGatewayTerminalEvidenceSchema>>;
+
+/** Fixed ordered reason members. Hash helpers validate shape, never DB ownership. */
+export const reasonTranslationMemberSchema = z.object({ sourceHash: sha64,
+  cache: z.discriminatedUnion("kind", [z.object({ kind: z.literal("absent") }).strict(),
+    z.object({ kind: z.literal("present"), rowIdentityHash: sha64,
+      attempts: z.number().int().nonnegative().safe() }).strict()]),
+}).strict();
+export type ReasonTranslationMember = Readonly<z.infer<typeof reasonTranslationMemberSchema>>;
+const reasonMembersSchema = z.array(reasonTranslationMemberSchema).min(1).max(4)
+  .refine(value => new Set(value.map(member => member.sourceHash)).size === value.length, "duplicate_reason_translation_member");
+export const reasonTranslationInputSchema = z.object({ members: reasonMembersSchema,
+  model: identity(200) }).strict();
+export type ReasonTranslationInput = Readonly<Omit<z.infer<typeof reasonTranslationInputSchema>, "members"> & {
+  members: readonly ReasonTranslationMember[] }>;
+export function reasonTranslationMemberKeys(members: readonly ReasonTranslationMember[]): string[] {
+  return reasonTranslationInputSchema.shape.members.parse(members).map(member => `ko:${member.sourceHash}`).sort();
+}
+export function reasonTranslationLogicalWorkKey(members: readonly ReasonTranslationMember[]): string {
+  return `text:reason:ko:${createHash("sha256").update(JSON.stringify(reasonTranslationMemberKeys(members))).digest("hex")}`;
+}
+export function reasonTranslationInputHash(value: ReasonTranslationInput): string {
+  const checked = reasonTranslationInputSchema.parse(value);
+  return createHash("sha256").update(JSON.stringify(canonical({ ...checked,
+    members: [...checked.members].sort((a, b) => a.sourceHash < b.sourceHash ? -1 : a.sourceHash > b.sourceHash ? 1 : 0) }))).digest("hex");
+}
+const reasonRoleIdentity = { instanceId: identity(120), bootId: z.uuid(), release: identity(120),
+  kind: z.enum(["primary", "standby"]), epoch: positive };
+export const reasonTranslationDispatchBindingSchema = reasonTranslationInputSchema.extend({
+  kind: z.literal("reason_translation_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  provider: z.literal("abcllm"), routeId: z.literal("reason-translate"), wireHash: sha64, servingContractHash: sha64,
+  totalTokenBound: positive, chargedTokens: positive,
+  job: z.object({ name: z.literal("reason-translate"), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
+  role: z.discriminatedUnion("role", [z.object({ ...reasonRoleIdentity, role: z.literal("text"),
+    batch: z.object({ mode: z.literal("legacy") }).strict() }).strict(),
+    z.object({ ...reasonRoleIdentity, role: z.literal("translation"), batch: z.object({ mode: z.literal("versioned"),
+      host: z.enum(["m3", "mini", "oracle-osaka-smoke"]), batchEpoch: positive }).strict() }).strict()]),
+}).strict().refine(value => {
+  const checked = reasonTranslationInputSchema.safeParse({ members: value.members, model: value.model });
+  return checked.success && value.logicalWorkKey === reasonTranslationLogicalWorkKey(checked.data.members)
+    && value.inputHash === reasonTranslationInputHash(checked.data) && value.chargedTokens === value.totalTokenBound;
+}, "invalid_reason_translation_binding");
+export type ReasonTranslationDispatchBinding = Readonly<Omit<z.infer<typeof reasonTranslationDispatchBindingSchema>, "members"> & {
+  members: readonly ReasonTranslationMember[] }>;
+export function reasonTranslationDispatchBindingHash(value: ReasonTranslationDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(reasonTranslationDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type ReasonTranslationModelDispatch = ModelCapacityDispatch & Readonly<{ binding: ReasonTranslationDispatchBinding; bindingHash: string }>;
+export const reasonTranslationModelDispatchSchema = handleSchema.extend({ binding: reasonTranslationDispatchBindingSchema,
+  bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_reason_translation_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId && value.owner.bootId === value.binding.role.bootId,
+    "invalid_reason_translation_dispatch_owner")
+  .transform(value => value as unknown as ReasonTranslationModelDispatch);
+export const reasonTranslationGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1),
+  kind: z.literal("reason_translation_gateway_terminal"), dispatch: reasonTranslationModelDispatchSchema,
+  finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]), responseHash: sha64,
+  actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(),
+  provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported"
+    && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_reason_translation_terminal_usage");
+export type ReasonTranslationGatewayTerminalEvidence = Readonly<z.infer<typeof reasonTranslationGatewayTerminalEvidenceSchema>>;

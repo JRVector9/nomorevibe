@@ -1,11 +1,25 @@
 import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db, onReplica } from "@/lib/db";
+import { db, onReplica, onPrimary } from "@/lib/db";
 import { createMemo } from "@/lib/cache/memo";
 import { sharedStore } from "@/lib/cache/shared";
-import { textTranslations } from "@/lib/db/schema";
+import { roleLeases, textTranslations } from "@/lib/db/schema";
 import { needsKorean, textHash } from "./translate";
+import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
+import { reviewHash } from './agent-review-contract';
+import { assertJobLeaseAtWallTime } from '@/lib/jobs/control';
+import { assertJobBatchAdmission } from '@/lib/jobs/batch-repository';
+import { RoleLeaseLostError, type RoleLease } from '@/lib/jobs/role-leader';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { lockModelCapacityCallerControl, lockReasonTranslationModelCapacityDispatch,
+  finishReasonTranslationModelCapacityDispatch } from '@/lib/llm/capacity-repository';
+import { modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, reasonTranslationInputSchema,
+  reasonTranslationDispatchBindingSchema, reasonTranslationLogicalWorkKey, reasonTranslationInputHash,
+  type ReasonTranslationMember, type ReasonTranslationModelDispatch, type ReasonTranslationDispatchBinding,
+  type ModelCapacityReservation, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
+import type { PreparedReasonTranslationGatewayCall } from './agent-review-gateway';
 
 /**
  * 번역해 둘 글과 번역해 둔 글.
@@ -93,7 +107,12 @@ export async function recordTranslations(results: TranslationResult[], model: st
   await writeTranslations(db, results, model, targetLang);
 }
 /** Worker callers cannot omit their lease. */
-export async function recordWorkerTranslations(results: TranslationResult[], model: string, lease: JobLease) {
+export function recordWorkerTranslations(results: TranslationResult[], model: string, lease: JobLease): Promise<void>;
+export function recordWorkerTranslations(results: TranslationResult[], model: string, lease: JobLease,
+  expectation: ReasonTranslationWriteExpectation): Promise<number>;
+export async function recordWorkerTranslations(results: TranslationResult[], model: string, lease: JobLease,
+  expectation?: ReasonTranslationWriteExpectation): Promise<void | number> {
+  if (expectation) return writeReservedReasonTranslations(results, model, lease, expectation);
   await db.transaction(async tx => {
     await writeTranslations(tx, results, model, "ko");
     await assertJobLease(tx, lease);
@@ -190,4 +209,174 @@ async function countTranslationProgress(): Promise<TranslationProgress> {
   return { total, done, failed, pending: total - done, lastHour: Number(row?.last_hour ?? 0),
     lastSecondsAgo: row?.last_ago === null || row?.last_ago === undefined ? null : Number(row.last_ago),
     failures: failed > 0 ? await failureBreakdown() : [], measuredAt };
+}
+
+/** A positive call retains the exact cache snapshot through its final writer.
+ * The object itself is a private, one-use module capability, not a caller flag. */
+export type ReasonTranslationWriteExpectation = Readonly<{ kind: 'reason_translation_write' }>;
+type CacheRow = Record<string, unknown>;
+type ReasonRole = ReasonTranslationDispatchBinding['role'];
+type CacheSnapshot = { sourceHash: string; raw: CacheRow | null; attempts: number };
+const reasonWrites = new WeakMap<ReasonTranslationWriteExpectation, {
+  lease: JobLease; role: ReasonRole; model: string; rows: CacheSnapshot[]; used: boolean;
+}>();
+class ReasonTranslationChanged extends Error { constructor() { super('reason_translation_input_changed'); } }
+
+/** Fixed batch validation runs before the first asynchronous read. */
+export function snapshotReasonTranslationBatch(value: readonly PendingTranslation[]): PendingTranslation[] {
+  const rows = z.array(z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), body: z.string(),
+    attempts: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict()).min(1).max(4).parse(structuredClone(value));
+  if (new Set(rows.map(row => row.hash)).size !== rows.length
+    || rows.some(row => textHash(row.body) !== row.hash)
+    || rows.length > 1 && (rows.some(row => row.attempts >= 3) || rows.reduce((n, row) => n + row.body.length, 0) > 1600))
+    throw new Error('invalid_reason_translation_batch');
+  return rows;
+}
+function snapshotReasonJob(value: JobLease): JobLease {
+  return z.object({ name: z.literal('reason-translate'), token: z.string().uuid(),
+    requestedVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict().parse(structuredClone(value));
+}
+function roleFromLease(lease: RoleLease, kind: 'primary' | 'standby'): ReasonRole {
+  const owner = { instanceId: lease.instanceId, bootId: lease.bootId, release: lease.release, kind, epoch: lease.epoch };
+  if (lease.role === 'text' && lease.batchVersion === undefined) return { ...owner, role: 'text', batch: { mode: 'legacy' } };
+  if (lease.role === 'translation' && lease.batchVersion === 1 && lease.host && lease.batchEpoch)
+    return { ...owner, role: 'translation', batch: { mode: 'versioned', host: lease.host, batchEpoch: lease.batchEpoch } };
+  throw new ModelCapacityDeferredError('owner_unavailable');
+}
+async function lockReasonRole(tx: ProductTransaction, lease: RoleLease): Promise<ReasonRole> {
+  const [row] = await tx.select().from(roleLeases).where(eq(roleLeases.role, lease.role)).for('share');
+  // ENV has no owner-kind field. Match its entire actual identity, and preserve
+  // the locked DB owner kind; never manufacture standby/primary authority.
+  if (!row || row.ownerInstanceId !== lease.instanceId || row.ownerBootId !== lease.bootId
+    || row.ownerRelease !== lease.release || row.epoch !== lease.epoch
+    || (row.ownerKind !== 'primary' && row.ownerKind !== 'standby')) throw new RoleLeaseLostError();
+  const role = roleFromLease(lease, row.ownerKind);
+  await assertReasonRoleWall(tx, role);
+  return role;
+}
+async function assertReasonRoleWall(tx: ProductTransaction, role: ReasonRole): Promise<void> {
+  const [row] = await tx.select({ role: roleLeases.role }).from(roleLeases).where(and(
+    eq(roleLeases.role, role.role), eq(roleLeases.ownerInstanceId, role.instanceId),
+    eq(roleLeases.ownerBootId, role.bootId), eq(roleLeases.ownerRelease, role.release),
+    eq(roleLeases.ownerKind, role.kind), eq(roleLeases.epoch, role.epoch),
+    sql`${roleLeases.leaseUntil} > clock_timestamp()`));
+  if (!row) throw new RoleLeaseLostError();
+}
+async function lockReasonCache(tx: ProductTransaction, batch: PendingTranslation[], currentSource: boolean): Promise<CacheSnapshot[]> {
+  const rows: CacheSnapshot[] = [];
+  for (const item of [...batch].sort((a, b) => a.hash.localeCompare(b.hash))) {
+    if (currentSource) {
+      const [source] = await tx.execute<{ present: boolean }>(sql`SELECT EXISTS (
+        SELECT 1 FROM (${UNIQUE_SOURCES}) u WHERE u.hash = ${item.hash} AND u.body = ${item.body}
+      ) AS present`);
+      if (!source?.present) throw new ReasonTranslationChanged();
+    }
+    const [row] = await tx.execute<{ raw: CacheRow; due: boolean }>(sql`
+      SELECT to_jsonb(t) AS raw, (t.status = 'failed' AND (t.retry_at IS NULL OR t.retry_at <= clock_timestamp())) AS due
+      FROM text_translations t WHERE t.source_hash = ${item.hash} AND t.target_lang = 'ko' FOR UPDATE`);
+    if (currentSource && (row && !row.due || Number(row?.raw.attempts ?? 0) !== item.attempts)) throw new ReasonTranslationChanged();
+    rows.push({ sourceHash: item.hash, raw: row?.raw ?? null, attempts: Number(row?.raw.attempts ?? 0) });
+  }
+  return rows;
+}
+function memberSnapshots(batch: PendingTranslation[], rows: CacheSnapshot[]): ReasonTranslationMember[] {
+  return batch.map(item => {
+    const row = rows.find(row => row.sourceHash === item.hash)!;
+    return { sourceHash: item.hash, cache: row.raw === null ? { kind: 'absent' as const }
+      : { kind: 'present' as const, rowIdentityHash: reviewHash(row.raw), attempts: row.attempts } };
+  });
+}
+type ReasonPreparationOptions = { roleLease: RoleLease; call: PreparedReasonTranslationGatewayCall;
+  reserved?: { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; members: readonly ReasonTranslationMember[]; role: ReasonRole } };
+type ReasonPreparation = { kind: 'disabled' } | { kind: 'skipped' }
+  | { kind: 'ready'; members: ReasonTranslationMember[]; role: ReasonRole }
+  | { kind: 'ready'; dispatch: ReasonTranslationModelDispatch; expectation: ReasonTranslationWriteExpectation };
+
+/** No connection spans queue waiting or native transport. The reserved variant
+ * uses the private control/request UPDATE prefix before batch/role/cache/job. */
+export async function prepareReasonTranslationDispatch(value: readonly PendingTranslation[], job: JobLease,
+  valueOptions: ReasonPreparationOptions): Promise<ReasonPreparation> {
+  const batch = snapshotReasonTranslationBatch(value), lease = snapshotReasonJob(job);
+  const roleLease = structuredClone(valueOptions.roleLease), call = valueOptions.call;
+  const reserved = valueOptions.reserved && { reservation: modelCapacityReservationSchema.parse(valueOptions.reserved.reservation),
+    identity: modelCapacityRequestIdentitySchema.parse(valueOptions.reserved.identity),
+    members: reasonTranslationInputSchema.shape.members.parse(valueOptions.reserved.members),
+    role: structuredClone(valueOptions.reserved.role) };
+  let writer: Parameters<typeof reasonWrites.set>[1] | undefined;
+  try {
+    const result = await onPrimary(() => db.transaction(async tx => {
+      const locked = reserved ? await lockReasonTranslationModelCapacityDispatch(tx, reserved) : null;
+      if (reserved && !locked) throw new ModelCapacityDeferredError('reservation_lost');
+      const control = locked?.control ?? await lockModelCapacityCallerControl(tx);
+      if (!reserved && control.mode === 'disabled') return { kind: 'disabled' } as const;
+      if (control.mode !== 'open') throw new ModelCapacityDeferredError(control.mode === 'draining' ? 'draining' : 'disabled');
+      if (!control.policy?.routes.some(route => route.routeId === 'reason-translate' && route.provider === 'abcllm' && route.model === call.model))
+        throw new ModelCapacityDeferredError('unmapped');
+      await assertJobBatchAdmission(tx, 'reason-translate', roleLease);
+      const role = await lockReasonRole(tx, roleLease);
+      const rows = await lockReasonCache(tx, batch, true), members = memberSnapshots(batch, rows);
+      await assertJobLeaseAtWallTime(tx, lease, 'update');
+      if (!reserved) { await assertReasonRoleWall(tx, role); return { kind: 'ready', members, role } as const; }
+      if (!isDeepStrictEqual(role, reserved.role) || !isDeepStrictEqual(members, reserved.members)) throw new ReasonTranslationChanged();
+      const binding = reasonTranslationDispatchBindingSchema.parse({ kind: 'reason_translation_gateway', version: 1,
+        members, model: call.model, logicalWorkKey: reasonTranslationLogicalWorkKey(members),
+        inputHash: reasonTranslationInputHash({ members, model: call.model }), provider: 'abcllm', routeId: 'reason-translate',
+        wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound,
+        chargedTokens: call.totalTokenBound, job: lease, role });
+      const dispatch = await finishReasonTranslationModelCapacityDispatch(tx, locked!, binding);
+      await assertReasonRoleWall(tx, role); await assertJobLeaseAtWallTime(tx, lease, 'update');
+      writer = { lease, role, model: call.model, rows, used: false };
+      return { kind: 'ready', dispatch } as const;
+    }));
+    if (result.kind === 'ready' && 'dispatch' in result) {
+      const expectation = Object.freeze({ kind: 'reason_translation_write' as const });
+      reasonWrites.set(expectation, writer!); // Only after actual commit ACK.
+      return { ...result, expectation };
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof ReasonTranslationChanged) return { kind: 'skipped' };
+    if (error instanceof Error && error.message === 'reason_translation_model_reservation_lost')
+      throw new ModelCapacityDeferredError('reservation_lost');
+    throw error;
+  }
+}
+
+async function writeReservedReasonTranslations(value: TranslationResult[], model: string, job: JobLease,
+  expectation: ReasonTranslationWriteExpectation): Promise<number> {
+  const proof = reasonWrites.get(expectation), results = structuredClone(value), lease = snapshotReasonJob(job);
+  if (!proof || proof.used || !isDeepStrictEqual(lease, proof.lease) || model !== proof.model
+    || results.length !== proof.rows.length || new Set(results.map(row => row.hash)).size !== results.length
+    || results.some(row => !proof.rows.some(expected => expected.sourceHash === row.hash)
+      || row.translated !== null && typeof row.translated !== 'string' || row.error !== undefined && typeof row.error !== 'string'))
+    throw new Error('invalid_reason_translation_write_expectation');
+  proof.used = true;
+  try {
+    return await onPrimary(() => db.transaction(async tx => {
+      await tx.select({ role: roleLeases.role }).from(roleLeases).where(eq(roleLeases.role, proof.role.role)).for('share');
+      await assertReasonRoleWall(tx, proof.role);
+      const current = await lockReasonCache(tx, results.map(row => ({ hash: row.hash, body: '', attempts: 0 })), false);
+      if (!isDeepStrictEqual(current, proof.rows)) throw new ReasonTranslationChanged();
+      await assertJobLeaseAtWallTime(tx, lease, 'update');
+      for (const result of [...results].sort((a, b) => a.hash.localeCompare(b.hash))) {
+        const expected = proof.rows.find(row => row.sourceHash === result.hash)!, done = result.translated !== null;
+        const error = done ? null : (result.error ?? 'invalid_output').slice(0, 60);
+        const changed = expected.raw === null
+          ? await tx.execute(sql`INSERT INTO text_translations
+              (source_hash,target_lang,status,translated,model,attempts,error_code,retry_at,updated_at)
+              VALUES (${result.hash},'ko',${done ? 'done' : 'failed'},${result.translated},${model},1,${error},
+                CASE WHEN ${done} THEN NULL ELSE now()+interval '5 minutes' END,now())
+              ON CONFLICT (source_hash,target_lang) DO NOTHING RETURNING source_hash`)
+          : await tx.execute(sql`UPDATE text_translations t SET status=${done ? 'done' : 'failed'},
+              translated=CASE WHEN ${done} THEN ${result.translated} ELSE t.translated END,model=${model},
+              attempts=t.attempts+1,error_code=${error},updated_at=now(),
+              retry_at=CASE WHEN ${done} THEN NULL ELSE now()+least(interval '24 hours',interval '5 minutes'*power(2,t.attempts)) END
+              WHERE t.source_hash=${result.hash} AND t.target_lang='ko'
+                AND to_jsonb(t)=${JSON.stringify(expected.raw)}::text::jsonb RETURNING source_hash`);
+        if (changed.length !== 1) throw new ReasonTranslationChanged();
+      }
+      await assertReasonRoleWall(tx, proof.role); await assertJobLeaseAtWallTime(tx, lease, 'update');
+      return results.length;
+    }));
+  } catch (error) { if (error instanceof ReasonTranslationChanged) return 0; throw error; }
 }

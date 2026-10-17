@@ -540,3 +540,82 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     kind: "text_profile_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   return { result: parseProfileGatewayBody(body, snapshot.name), terminal };
 }
+
+
+import { reasonTranslationModelDispatchSchema, reasonTranslationGatewayTerminalEvidenceSchema,
+  type ReasonTranslationModelDispatch, type ReasonTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
+import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, resolveReasonTranslationServingContract,
+  type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
+import { reasonTranslationGatewayWire, parseTranslations, textHash, type TranslateResult } from "./translate";
+export type PreparedReasonTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+  servingContractHash: string; totalTokenBound: number; model: string; sourceHashes: readonly string[] }>;
+export type ReasonTranslationGatewayTerminal = Readonly<{ kind: "reason_translation_gateway_terminal" }>;
+const reasonTranslationCalls = new WeakMap<PreparedReasonTranslationGatewayCall, { wire: string;
+  sourceHashes: string[]; contract: ReasonTranslationServingContract; timeoutMs: number; used: boolean }>();
+const reasonTranslationTerminals = new WeakMap<ReasonTranslationGatewayTerminal, ReasonTranslationGatewayTerminalEvidence>();
+function validReasonTexts(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 4 && Array.from(value).every(text => typeof text === "string")
+    && new Set(value.map(textHash)).size === value.length;
+}
+/** No caller flag or descriptor enables a reason serving deployment. */
+export function prepareReasonTranslationGatewayCall(texts: readonly string[], options: { model: string; timeoutMs: number }):
+  PreparedReasonTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!validReasonTexts(snapshot) || !reasonTranslationServingContractSchema.shape.model.safeParse(model).success
+    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveReasonTranslationServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = reasonTranslationServingContractSchema.parse(structuredClone(resolved));
+  if (contract.model !== model) return unsupported;
+  const wire = reasonTranslationGatewayWire(snapshot, model), sourceHashes = snapshot.map(textHash);
+  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: reasonTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, sourceHashes: [...sourceHashes] });
+  reasonTranslationCalls.set(call, { wire, sourceHashes, contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+export function readReasonTranslationGatewayTerminal(value: unknown): ReasonTranslationGatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? reasonTranslationTerminals.get(value as ReasonTranslationGatewayTerminal) ?? null : null;
+}
+export async function translateWithReservedReasonGateway(texts: readonly string[], dispatch: ReasonTranslationModelDispatch,
+  call: PreparedReasonTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: TranslateResult; terminal: ReasonTranslationGatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(texts), state = reasonTranslationCalls.get(call);
+  const checked = reasonTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  if (!state || state.used || !checked.success || !validReasonTexts(snapshot)
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("reason_translation_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding, sourceHashes = snapshot.map(textHash);
+  if (JSON.stringify(sourceHashes) !== JSON.stringify(state.sourceHashes)
+    || JSON.stringify(binding.members.map(member => member.sourceHash)) !== JSON.stringify(state.sourceHashes)
+    || binding.model !== call.model || binding.wireHash !== call.wireHash
+    || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
+    || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
+    || dispatchedRequests.has(owned.requestId)) throw new Error("reason_translation_gateway_call_mismatch");
+  state.used = true; dispatchedRequests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
+      return { result: { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) {
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+  }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
+  const terminal: ReasonTranslationGatewayTerminal = Object.freeze({ kind: "reason_translation_gateway_terminal" });
+  reasonTranslationTerminals.set(terminal, freeze(reasonTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
+    kind: "reason_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
+  const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
+  return { result: parseTranslations(content ?? "", snapshot), terminal };
+}
