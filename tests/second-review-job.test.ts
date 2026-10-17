@@ -181,13 +181,23 @@ it("requires a real worker job lease before controller work", async () => {
   expect(mocks.review).not.toHaveBeenCalled();
 });
 
-it("returns stage_blocked before controllers even with no remaining budget", async () => {
+it("returns stage_blocked after controllers without legacy dispatch even with no remaining budget", async () => {
   mocks.canStart.mockResolvedValue(false);
   expect(await secondReviewCandidates({ ...context(), hasBudget: () => false }))
     .toEqual({ done: false, deferred: "stage_blocked" });
-  expect(mocks.enqueue).not.toHaveBeenCalled();
+  expect(mocks.enqueue).toHaveBeenCalledOnce();
   expect(mocks.admit).not.toHaveBeenCalled();
   expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it('runs existing controllers in items or draining mode without starting legacy dispatch', async () => {
+  mocks.canStart.mockResolvedValue(false);
+  expect(await secondReviewCandidates({ ...context(), hasBudget: () => false })).toEqual({ done: false, deferred: 'stage_blocked' });
+  expect(mocks.enqueue).toHaveBeenCalledExactlyOnceWith(mocks.settings, undefined, context().lease);
+  expect(mocks.close).toHaveBeenCalledExactlyOnceWith(undefined, context().lease);
+  expect(mocks.reopen).toHaveBeenCalledExactlyOnceWith(mocks.settings, undefined, context().lease);
+  expect(mocks.retry).toHaveBeenCalledExactlyOnceWith(undefined, context().lease);
+  expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.admit).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
 });
 
 it("dispatches the admitted row and input and passes the same receipt unchanged", async () => {

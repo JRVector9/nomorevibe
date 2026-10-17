@@ -176,8 +176,15 @@ export async function claimItemSecondReview(id: number, owner: ItemOwner, ttlMs:
   return claimReview(id, { kind: "item", owner, ttlMs });
 }
 
+/** Ordinary consumer only: the compatibility/replay entry cannot waive its cap. */
+export function claimConsumerItemSecondReview(id: number, owner: ItemOwner, ttlMs: number): Promise<SecondReviewClaim> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const identity = itemOwnerSchema.parse(owner), ttl = z.number().int().min(1).max(3_600_000).safe().parse(ttlMs);
+  return claimReview(id, { kind: "item", owner: identity, ttlMs: ttl, purpose: "consumer" });
+}
+
 async function claimReview(id: number, authority: { kind: "legacy"; job: JobLease }
-  | { kind: "item"; owner: ItemOwner; ttlMs: number }): Promise<SecondReviewClaim> {
+  | { kind: "item"; owner: ItemOwner; ttlMs: number; purpose?: "consumer" }): Promise<SecondReviewClaim> {
   positive.parse(id);
   return onPrimary(() => db.transaction(async tx => {
     // Only an active verified replay scope preserves its fixed fixture grants.
@@ -221,6 +228,9 @@ async function claimReview(id: number, authority: { kind: "legacy"; job: JobLeas
       await assertItemLease(tx, stages.ai2, lease);
       await registerReplayItemFinalAuthority(tx, lease);
       ownership = { kind: "item", lease: lease as Ai2ItemLease };
+    }
+    if (authority.kind === "item" && authority.purpose === "consumer" && capacity?.mode === "disabled") {
+      throw new ModelCapacityDeferredError("disabled");
     }
     if (capacity && capacity.mode !== "disabled") {
       if (capacity.mode === "draining") throw new ModelCapacityDeferredError("draining");
