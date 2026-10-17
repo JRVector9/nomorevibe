@@ -35,7 +35,7 @@ import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { getRepositoryAgentEvidence, getLatestRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
 import { presentObservedAgentFacts, type ObservedAgentFactView } from "@/lib/domain/evidence/agents/view";
 import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
-import type { AiLevel } from "@/lib/domain/evidence/ai-level-labels";
+import { AI_FILTER_LEVELS, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { getRepositoryAiLevel } from "@/lib/domain/evidence/ai-level-store";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
@@ -43,7 +43,7 @@ import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import type { EvidenceSettings } from "@/lib/domain/evidence/settings";
 import { parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { healthMetrics, healthFor } from "./health";
-import { isUnclaimed, type ProductListItem } from "./view";
+import { getPublicList, isUnclaimed, type ProductListItem } from "./view";
 import { indexingFields } from "./indexing";
 import { taglineKoField } from "./korean-tagline";
 import { productTranslationEligibilityField } from "./translations";
@@ -212,8 +212,10 @@ export type ProductDetailView = {
   freshness: FreshnessView[];
   /** Same completed 8-hour observation used by the home strip and browse tab. */
   risingRank: number | null;
-  /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 */
+  /** 같은 분야에서 지금 뜨는, 자기 자신 제외, 최대 5 — 8시간 회차로 못 채우면 같은 분야 기본 목록(relatedBasis) */
   related: ProductListItem[];
+  /** growth = 완료된 8시간 회차 급상승, category = 분야 기본 목록(AI로 제작·최근 등록순)으로 채움 */
+  relatedBasis: "growth" | "category";
   relatedTotal?: number | null;
   /** README 첫 문단들 — 소개가 한 줄뿐일 때 상세 본문이 된다 */
   readmeExcerpt: string | null;
@@ -738,6 +740,15 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
   };
   const currentProduct = await findPublicProduct(slug);
   if (!currentProduct || currentProduct.id !== product.id) return null;
+  const growthRelated = relatedPage?.items.filter((item) => item.slug !== slug).slice(0, 5) ?? [];
+  /*
+   * 8시간 회차로 채우지 못하면(회차 누락·기준 회차 없음·조회 실패·그 분야에서 뜨는 것이 자기뿐) 줄 전체가 사라졌다 —
+   * 2026-10-17 16시 회차가 빠져 16시간 동안 모든 상세에서 없었다. 그때는 '모두 보기'가 여는 분야 기본 목록
+   * (AI로 제작·최근 등록순, 공개 목록과 같은 조건)의 앞부분으로 채운다. 급상승이라 하지 않고 수도 세지 않는다.
+   */
+  const related = growthRelated.length > 0 ? growthRelated
+    : (await getPublicList(6, { category: product.category as Category, aiLevels: AI_FILTER_LEVELS.made, sort: "recent" })
+      .catch(() => [])).filter((item) => item.slug !== slug).slice(0, 5);
 
   return {
     product: currentProduct,
@@ -765,8 +776,9 @@ export async function getProductDetail(slugInput: string): Promise<ProductDetail
     freshness: sources.map((source) => sourceFreshness(source, settings, now)),
     risingRank: risingPage?.items.some((item) => item.slug === slug)
       ? risingPage.items.findIndex((item) => item.slug === slug) + 1 : null,
-    related: relatedPage?.items.filter((item) => item.slug !== slug).slice(0, 5) ?? [],
-    relatedTotal: relatedPage?.total ?? null,
+    related,
+    relatedBasis: growthRelated.length > 0 ? "growth" : "category",
+    relatedTotal: growthRelated.length > 0 ? relatedPage?.total ?? null : null,
     readmeExcerpt: readmeExcerpt(readmeRow?.readme ?? null, currentProduct.tagline),
     aiLevel: { checked: aiLevel.checked, level: aiLevel.level },
   };

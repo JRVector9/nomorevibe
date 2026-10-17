@@ -184,7 +184,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         </aside>
       </div>
 
-      <RelatedRow category={product.category} items={related} total={risingTotal} />
+      <RelatedRow category={product.category} items={related} total={risingTotal} basis={detail.relatedBasis} />
     </main></I18nProvider>
   );
 }

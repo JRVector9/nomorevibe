@@ -147,6 +147,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "related.note": "GitHub star growth between the latest completed 8-hour observations",
   "related.all": "View all",
   "related.count": "View all {count}",
+  "related.otherTitle": "More in {category}",
+  "related.otherNote": "Made with AI · Recently listed",
   "feedback.title": "Comments",
   "feedback.defaultTitle": "Comment",
   "feedback.kind.bug": "Bug",

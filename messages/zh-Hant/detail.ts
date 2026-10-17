@@ -147,6 +147,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "related.note": "依最近已完成的 8 小時觀測回合間的 GitHub 星號增量排序",
   "related.all": "檢視全部",
   "related.count": "檢視全部 {count} 個",
+  "related.otherTitle": "{category} 分類的其他專案",
+  "related.otherNote": "使用AI製作 · 最新收錄",
   "feedback.title": "留言",
   "feedback.defaultTitle": "留言",
   "feedback.kind.bug": "問題",

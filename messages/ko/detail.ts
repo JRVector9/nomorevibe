@@ -144,6 +144,8 @@ export const detail = {
   "related.note": "최근 완료된 8시간 회차 사이 GitHub 스타 증가량 순",
   "related.all": "모두 보기",
   "related.count": "{count}개 모두 보기",
+  "related.otherTitle": "{category} 분야의 다른 프로젝트",
+  "related.otherNote": "AI로 제작 · 최근 등록순",
   "feedback.title": "댓글",
   "feedback.defaultTitle": "댓글",
   "feedback.kind.bug": "오류",
