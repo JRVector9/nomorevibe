@@ -524,3 +524,17 @@ it('re-opens a product-health instance whose every result is older than 24 hours
   expect(canary.after).toMatchObject({ ready: true, readbackRows: 1 });
   expect(((await run('preflight')).output.preflight as { workload: Record<string, unknown> }).workload).toMatchObject({ ready: true, job: 'uptime-ping' });
 }, 180_000);
+
+it('F4: no worker principal can rewrite a runtime key column, and translation can read the HTTP control row', async () => {
+  const keyRewrites = ['UPDATE public.jobs SET name=name WHERE false', 'UPDATE public.role_leases SET role=role WHERE false',
+    'UPDATE public.operations_observations SET key=key WHERE false'];
+  const httpRead = 'SELECT mode FROM public.http_origin_control WHERE id=1';
+  for (const role of [...ROLES, 'scheduler'] as const) {
+    const reads = role === 'translation' ? [httpRead] : [];
+    const { code, output } = await child(role, { role, jobs: [], httpBase: base, bootId: randomUUID(), negatives: [...keyRewrites, ...reads], mode: 'negatives' });
+    if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
+    expect(code).toBe(0);
+    expect(output.negatives, role).toEqual({ ...Object.fromEntries(keyRewrites.map(statement => [statement, '42501'])),
+      ...Object.fromEntries(reads.map(statement => [statement, 'allowed'])) });
+  }
+}, 120_000);

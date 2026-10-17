@@ -25,7 +25,8 @@
 
 ### 근거가 생기는 프로세스와 생기지 않는 프로세스
 
-- 생긴다: `scripts/role-worker.ts`(운영 다섯 역할)의 child. role-worker는 boot마다 기록기를 만들어 supervisor에 넘긴다(`scripts/role-worker.ts:134-135`, `:187`). 켜진 AI1/AI2 consumer(`PIPELINE_ITEM_CONSUMER_VERSION=1`)의 child도 기록한다(`scripts/worker-supervisor.ts:281-302`). supervisor는 기록한 owner를 child env `PROCESS_GROUP_OWNER_INSTANCE_ID`/`PROCESS_GROUP_OWNER_BOOT_ID`로만 넘긴다(`scripts/worker-supervisor.ts:170-173`, `lib/operations/dr/process-owner-env.ts:9`).
+- **기록은 `PROCESS_GROUP_RECORDING=1`일 때만 켜진다(기본 꺼짐, 리뷰 R2·R4 반영).** 꺼진 boot의 행·hop은 `owner_not_opened_before_dispatch`(unproven)로 남는다.
+- 생긴다(켜졌을 때): `scripts/role-worker.ts`(운영 다섯 역할)의 child. role-worker는 boot마다 기록기를 만들어 supervisor에 넘긴다(`scripts/role-worker.ts:134-135`, `:187`). 켜진 AI1/AI2 consumer(`PIPELINE_ITEM_CONSUMER_VERSION=1`)의 child도 기록한다(`scripts/worker-supervisor.ts:281-302`). supervisor는 기록한 owner를 child env `PROCESS_GROUP_OWNER_INSTANCE_ID`/`PROCESS_GROUP_OWNER_BOOT_ID`로만 넘긴다(`scripts/worker-supervisor.ts:170-173`, `lib/operations/dr/process-owner-env.ts:9`).
 - HTTP hop은 그 프로세스의 `SERVICE_INSTANCE_ID`가 기록 owner instance와 같을 때만 그 boot를 쓴다. 다르면 새 boot라 근거가 없다(`lib/net/origin-permits.ts:14-15`, `lib/operations/dr/process-owner-env.ts:19-22`). consumer의 기록 owner instance는 `PIPELINE_ITEM_CONSUMER_INSTANCE_ID`이므로 두 값이 같아야 한다. 이 일치를 강제할지는 PR519에서 미결이다.
 - 생기지 않는다: 웹 프로세스, scheduler, supervisor 직접 실행, role-worker parent 자신의 호출. 이 행·hop은 영구히 `owner_not_opened_before_dispatch`로 남는다.
 - 종료가 기록되지 않는 경우(행이 `spawn_not_exited:N`으로 남는다):

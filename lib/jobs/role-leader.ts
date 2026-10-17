@@ -1,9 +1,9 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
-import { db } from '@/lib/db';
+import { db, onPrimary } from '@/lib/db';
 import { jobs, roleLeases } from '@/lib/db/schema';
 import { jobsForRole, JOB_ROLES, type JobRole } from './catalog';
 import { BATCH_HOSTS, type BatchRole, type BatchHost } from './batches';
-import { acquireBatchRole, lockJobBatch, releaseBatchRole, renewBatchRole } from './batch-repository';
+import { acquireBatchRole, boundRoleTransaction, lockJobBatch, releaseBatchRole, renewBatchRole } from './batch-repository';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
@@ -48,6 +48,7 @@ export async function tryAcquireRole(candidate: RoleCandidate, takeover?: RoleTa
   return db.transaction(async tx => {
     // DR fence가 첫 lock이다. fenced DB(옛 primary·승격 전 복원본)에서는 역할을 얻지 않는다.
     if (!await writerSiteActive(tx)) return null;
+    await boundRoleTransaction(tx);
     if ((await lockJobBatch(tx)).mode !== 'legacy') return null;
     await tx.insert(roleLeases).values({ role: candidate.role }).onConflictDoNothing();
     const [current] = await tx.select().from(roleLeases)
@@ -96,6 +97,7 @@ export async function renewRole(lease: RoleLease): Promise<boolean> {
   if (lease.batchVersion === 1) return renewBatchRole(lease);
   return db.transaction(async tx=> {
     if (!await writerSiteActive(tx)) return false;
+    await boundRoleTransaction(tx);
     const batch=await lockJobBatch(tx);
     if (batch.mode !== 'legacy' && !(batch.mode === 'draining' && batch.drainingFrom === 'legacy')) return false;
     await tx.select({role:roleLeases.role}).from(roleLeases).where(eq(roleLeases.role,lease.role)).for('update');
@@ -146,4 +148,23 @@ export async function assertRoleLease(tx: ProductTransaction, lease: RoleLease):
     eq(roleLeases.epoch, lease.epoch), gt(roleLeases.leaseUntil, sql`now()`),
   )).for('share');
   if (!row) throw new RoleLeaseLostError();
+}
+
+export type RoleLockHolder = { pid: number; applicationName: string | null; state: string | null; waitEventType: string | null;
+  xactAgeSeconds: number | null; blockedBy: number[]; relations: string[] };
+/** 선출·갱신이 lock 오류(55P03 등)로 끝난 뒤 한 번 읽는 진단: 선출 표를 잡은 다른 세션과 그 세션을 막는 pid. 쿼리 본문·값은 읽지 않는다. */
+export async function readRoleLockHolders(): Promise<RoleLockHolder[]> {
+  return onPrimary(() => db.transaction(async tx => {
+    await boundRoleTransaction(tx);
+    const rows = await tx.execute<{ pid: number; application_name: string | null; state: string | null; wait_event_type: string | null;
+      xact_age_s: number | null; blocked_by: number[]; relations: string[] }>(sql`SELECT a.pid, a.application_name, a.state, a.wait_event_type,
+        floor(extract(epoch FROM clock_timestamp() - a.xact_start))::int AS xact_age_s, pg_blocking_pids(a.pid) AS blocked_by,
+        array_agg(DISTINCT c.relname::text ORDER BY c.relname::text) AS relations
+      FROM pg_locks l JOIN pg_class c ON c.oid = l.relation JOIN pg_stat_activity a ON a.pid = l.pid
+      WHERE c.relnamespace = 'public'::regnamespace AND a.pid <> pg_backend_pid()
+        AND c.relname IN ('dr_writer_fence', 'job_batch_control', 'role_leases', 'job_batch_candidates', 'jobs')
+      GROUP BY a.pid, a.application_name, a.state, a.wait_event_type, a.xact_start ORDER BY a.xact_start NULLS LAST LIMIT 10`);
+    return Array.from(rows).map(row => ({ pid: Number(row.pid), applicationName: row.application_name, state: row.state, waitEventType: row.wait_event_type,
+      xactAgeSeconds: row.xact_age_s === null ? null : Number(row.xact_age_s), blockedBy: (row.blocked_by ?? []).map(Number), relations: row.relations ?? [] }));
+  }));
 }
