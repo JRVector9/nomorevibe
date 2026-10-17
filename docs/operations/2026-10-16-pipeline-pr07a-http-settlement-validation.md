@@ -1,5 +1,9 @@
 # PR07a HTTP 본문 정산 — 실제 검증 기록
 
+## 추가 진행 — 2026-10-16 12:27 UTC
+
+PR470은 최신477 정상 부모 취합을26c63ba1로push하고 base477로정리했다. Root/B독립리뷰추가P1/P2=0·원테스트본문보존·범위19+영향2/정적0이며새CI38900230544는진행중이다. Oracle inspection NEW3는root직접리뷰/종료P2보완/범위distinct26·정적0후최신470을정상취합해 [초안PR478](https://github.com/JRVector9/nomorevibe/pull/478)/aaa3e6c2(base470)로제출했다. 실제새SQL·Oracle운영증거는아직없고ready/activationfalse다. A의text profile positive actual경로와C의고정DDL검증은병렬구현중이다. 운영배포/활성화0·activeDB0/수동전체는모든PR개발뒤이며정확수정파일·실패·명령은CODEX_HANDOFF12:27을따른다.
+
 ## 추가 진행 — 2026-10-16 12:16 UTC 병렬 후속·host runtime 취합
 
 PR476(57b336b6)·PR477(db4e061d)의 최신 필수 CI는 모두 성공했고 아직 병합·배포하지 않았다. 같은 db4e061d에서 text profile 양성 호출 계약, Oracle TS preflight, 고정 DDL 구조 검증을 세 agent가 분리 구현 중이다. 수동 전체 검증은 모든 PR 개발 뒤다.
