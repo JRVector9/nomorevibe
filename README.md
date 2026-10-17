@@ -100,9 +100,10 @@ maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동�
 docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
+npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts
+npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts
 ```
 
 DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로드와 같은 0.8.6 이다. 예전 `postgres:17` 컨테이너는
@@ -113,8 +114,9 @@ DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로�
 main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
 변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 타입 생성·TypeScript·lint·
 단위 테스트·빌드와 PostgreSQL 통합 테스트 3개 묶음을 병렬 실행한다. 묶음마다 별도 runner와
-전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. AI2 독립 소비자 검증은
-빈 전용 DB가 필요하므로 1번 묶음에서 먼저 필수 실행하고, 뒤 세 묶음에서는 그 파일만 제외한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
+전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. 1번 묶음은 빈 DB에서
+AI2 native 항목 흐름, AI2 소비자, AI1 소비자를 차례로 필수 실행한다. 각 파일은 원 행 기준 상태를
+복원하며, 뒤의 세 묶음은 이 세 파일을 제외해 모든 통합 파일을 정확히 한 번 실행한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
 서로 다른 PR은 별도로 실행한다. 코드 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
 main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
 올린다. 웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
@@ -130,23 +132,25 @@ npx next typegen
 npx tsc --noEmit
 npm run lint
 npm test
+npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts  # 같은 전용 DB
+npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts  # 같은 전용 DB
 npm run build
 ```
 
 CI의 3개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
 같은 DB에서 묶음을 동시에 실행하면 테스트의 테이블 초기화가 서로 충돌한다.
-위 전체 재현도 처음에는 빈 전용 DB를 준비하고 AI2 소비자 파일, AI1 소비자 파일을 각각 순서대로 실행한다.
-두 파일은 각 실행 뒤 같은 행 기준 상태를 복원하며 sequence의 정상 증가는 유지한다.
+위 전체 재현도 처음에는 빈 전용 DB를 준비하고 AI2 native 항목 파일, AI2 소비자 파일, AI1 소비자 파일을 순서대로 실행한다.
+세 파일은 각 실행 뒤 같은 행 기준 상태를 복원하며 sequence의 정상 증가는 유지한다.
 일부 테스트가 남긴 데이터를 가진 DB에서 소비자 검증의 원형 보호 조건을 완화하지 않는다.
 
 ```bash
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-consumer.test.ts
 TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts
-# 2/3과 3/3은 각각 다른 포트의 별도 DB에서 같은 두 exclude를 지정한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts
+# 2/3과 3/3은 각각 다른 포트의 별도 DB에서 같은 세 exclude를 지정한다.
 ```
 
 ## 운영 배포와 상태 확인

@@ -221,10 +221,18 @@ describe("검색 키워드 잡", () => {
   it("한국어로 영어 제품을, 영어로 한국어 제품을 찾는다 — 번역 없이", async () => {
     await seed("coche", { name: "Coche", tagline: "Local-first shopping list", description: "Local-first shopping list" });
     await seed("club-season", { name: "Club Season", tagline: "스쿼드를 만들고 리그를 오르는 축구 클럽 매니저", description: "스쿼드를 만들고 리그를 오르는 축구 클럽 매니저" });
-    // 두 제품은 병렬로 처리돼 호출 순서가 정해져 있지 않다 — 요청 본문의 제품으로 답을 고른다
-    gateway.mockImplementation(async (_url: unknown, init?: RequestInit) => String(init?.body ?? "").includes("Local-first shopping list")
-      ? answer(["grocery list"], ["장보기 목록"])
-      : answer(["soccer club manager", "football manager game"], ["축구 매니저 게임"]));
+    gateway.mockImplementation(async (_url: unknown, options?: RequestInit) => {
+      if (typeof options?.body !== "string") throw new Error("unexpected_search_profile_body");
+      const body = JSON.parse(options.body);
+      const user = body.messages.find((message: { role: string }) => message.role === "user")?.content;
+      const prefix = "<untrusted_evidence_json>\n", suffix = "\n</untrusted_evidence_json>";
+      if (typeof user !== "string" || !user.startsWith(prefix) || !user.endsWith(suffix))
+        throw new Error("unexpected_search_profile_evidence_envelope");
+      const evidence = JSON.parse(user.slice(prefix.length, -suffix.length));
+      if (evidence?.name === "Club Season") return answer(["soccer club manager", "football manager game"], ["축구 매니저 게임"]);
+      if (evidence?.name === "Coche") return answer(["grocery list"], ["장보기 목록"]);
+      throw new Error("unexpected_search_profile_product");
+    });
     await tick();
 
     // 번역을 부르지 않게 키를 뗀다 — 색인의 키워드만으로 찾혀야 한다

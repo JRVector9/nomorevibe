@@ -121,13 +121,14 @@ it.each(['crawler', 'publisher', 'maintenance', 'text'] as const)(
       const [row] = await db.select().from(roleLeases).where(eq(roleLeases.role, role));
       return row?.ownerInstanceId === `test-${role}-standby` ? row : null;
     }, 30_000);
-    expect(checkStandby().status).toBe(0);
+    // Election precedes the supervisor's first heartbeat; active health requires both.
     await until(async () => {
       try {
         const health = JSON.parse(await readFile(standbyHealth, 'utf8')) as { status: string };
         return health.status === 'running' ? health : null;
       } catch { return null; }
     }, 30_000);
+    expect(checkStandby().status).toBe(0);
     const standbyExit = new Promise<number | null>(resolve => standby!.child.once('exit', resolve));
     standby.child.kill('SIGTERM');
     expect(await standbyExit, standby.output()).toBe(0);

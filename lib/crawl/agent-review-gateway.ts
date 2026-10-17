@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { fetch as nativeFetch } from "undici";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
+  ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
+  type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
   type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
+import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract,
+  type Ai2GatewayServingContract } from "./second-review-serving-contract";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
@@ -237,7 +241,7 @@ export function readAi1GatewayTerminal(value: unknown): Ai1GatewayTerminalEviden
   return value && typeof value === "object" ? terminals.get(value as Ai1GatewayTerminal) ?? null : null;
 }
 
-function nativeTerminal(body: string, contract: Ai1GatewayServingContract):
+function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">):
   Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return null;
   let parsed: unknown;
@@ -311,5 +315,85 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   const evidence = ai1GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   terminals.set(terminal, freeze(evidence));
+  return { result: gatewayResult(snapshot, body), terminal };
+}
+
+
+export type PreparedAi2GatewayCall = Readonly<{ kind: "prepared"; wireHash: string; servingContractHash: string;
+  totalTokenBound: number; model: string; inputHash: string }>;
+export type Ai2GatewayTerminal = Readonly<{ kind: "ai2_gateway_terminal" }>;
+type PreparedAi2 = { wire: string; inputIdentity: string; contract: Ai2GatewayServingContract; timeoutMs: number; used: boolean };
+const preparedAi2Calls = new WeakMap<PreparedAi2GatewayCall, PreparedAi2>();
+const ai2Terminals = new WeakMap<Ai2GatewayTerminal, Ai2GatewayTerminalEvidence>();
+const dispatchedAi2Requests = new Set<string>();
+
+/** No caller descriptor or callback can approve an AI2 serving deployment. */
+export function prepareAi2GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
+  PreparedAi2GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS;
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!model || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  const resolved = resolveAi2GatewayServingContract(model);
+  if (!resolved) return unsupported;
+  const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
+  const serialized = JSON.stringify(snapshot.snapshot);
+  if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  const wire = gatewayWire(model, serialized);
+  const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: ai2GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, inputHash: snapshot.inputHash });
+  preparedAi2Calls.set(call, { wire, inputIdentity: sha(JSON.stringify(snapshot)), contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+
+/** Only the original native AI2 capability has historical evidence. */
+export function readAi2GatewayTerminal(value: unknown): Ai2GatewayTerminalEvidence | null {
+  return value && typeof value === "object" ? ai2Terminals.get(value as Ai2GatewayTerminal) ?? null : null;
+}
+
+export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch: Ai2ModelDispatch,
+  call: PreparedAi2GatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
+  Promise<{ result: AgentReviewResult; terminal: Ai2GatewayTerminal | null }> {
+  assertLiveReviewAdapterAllowed();
+  const state = preparedAi2Calls.get(call), snapshot = structuredClone(input);
+  const checked = ai2ModelDispatchSchema.safeParse(structuredClone(dispatch));
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+    throw new Error("ai2_gateway_call_mismatch");
+  const owned = checked.data, binding = owned.binding, review = binding.review;
+  if (sha(JSON.stringify(snapshot)) !== state.inputIdentity || review.inputHash !== call.inputHash
+    || review.sourceRevisionHash !== snapshot.sourceRevisionHash || binding.inputPolicyHash !== snapshot.policyHash
+    || review.promptVersion !== snapshot.snapshot.policy.promptVersion || review.rulesVersion !== snapshot.snapshot.policy.rulesVersion
+    || review.reviewer.model !== call.model || review.reviewer.provider !== state.contract.provider
+    || binding.model !== call.model || binding.wireHash !== call.wireHash || binding.servingContractHash !== call.servingContractHash
+    || binding.totalTokenBound !== call.totalTokenBound || binding.provider !== state.contract.provider
+    || binding.routeId !== state.contract.routeId || dispatchedAi2Requests.has(owned.requestId)) throw new Error("ai2_gateway_call_mismatch");
+  state.used = true;
+  dispatchedAi2Requests.add(owned.requestId);
+  const key = process.env.ABCLLM_API_KEY?.trim();
+  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null };
+  const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const failure = (error: unknown): ReviewFailure => {
+    const name = error instanceof Error ? error.name : "";
+    if (deadline.aborted) return "timeout";
+    return name === "TimeoutError" ? "timeout" : name === "AbortError" ? "cancelled" : "gateway_error";
+  };
+  let body: string;
+  try {
+    const response = await nativeFetch(state.contract.endpoint, { method: "POST", redirect: "manual",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    if (response.status !== 200) {
+      try { await response.body?.cancel(); } catch { /* Unknown native completion keeps its original charge. */ }
+      return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
+    }
+    body = await response.text();
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  const completed = nativeTerminal(body, state.contract);
+  if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
+  const terminal: Ai2GatewayTerminal = Object.freeze({ kind: "ai2_gateway_terminal" });
+  const evidence = ai2GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai2_gateway_terminal",
+    dispatch: owned, responseHash: sha(body), ...completed });
+  ai2Terminals.set(terminal, freeze(evidence));
   return { result: gatewayResult(snapshot, body), terminal };
 }
