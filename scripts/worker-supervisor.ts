@@ -13,7 +13,8 @@ import type { RuntimeHeartbeat } from './worker';
 import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
 import type { BatchRole } from '../lib/jobs/batches';
-import type { ProcessGroupRecorder } from '../lib/operations/dr/repository';
+import type { ProcessGroupRecorder, ProcessOwner } from '../lib/operations/dr/repository';
+import { processGroupOwnerEnvironment } from '../lib/operations/dr/process-owner-env';
 export type RuntimeRole = 'scheduler' | BatchRole;
 export type SupervisorLimits = { heartbeatMs: number; progressMs: number; jobMs: number; drainMs: number };
 export type WorkerHealth = {
@@ -167,7 +168,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
     return 1;
   }
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
-    cwd: resolve('.'), env: hostDbChildEnvironment(process.env, role, options.consumer),
+    // D11: 기록한 owner 를 child env 로만 넘긴다 — child 의 장부 행·HTTP hop 이 이 그룹 근거와 같은 owner 가 된다.
+    cwd: resolve('.'), env: { ...hostDbChildEnvironment(process.env, role, options.consumer), ...(group?.owner ? processGroupOwnerEnvironment(group.owner) : {}) },
     detached: process.platform !== 'win32', stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
   });
   // spawned 기록 실패는 child 를 멈추지 않는다(가용성). 그 경우 이 child 의 종료는 기록하지 않으므로 이후 행은 D11 로 회수되지 않는다.
@@ -276,6 +278,15 @@ export async function superviseWorker(role: RuntimeRole, options: {
   });
 }
 
+/** D11(PR15d): 켜진 AI1/AI2 consumer child 는 item owner(consumer instance, 이 boot)로 장부 행을 만든다. 그 owner 로 spawn 의도·종료를 남긴다.
+ * 기본 비활성 consumer·scheduler·직접 실행은 기록하지 않는다(DB 를 건드리지 않고 기존 순서 그대로). */
+export function consumerProcessOwner(consumer: 'ai1' | 'ai2' | undefined, env: Readonly<Record<string, string | undefined>>): ProcessOwner | null {
+  if (consumer === undefined || env.PIPELINE_ITEM_CONSUMER_VERSION !== '1') return null;
+  const owner = { instanceId: env.PIPELINE_ITEM_CONSUMER_INSTANCE_ID ?? '', bootId: randomUUID() };
+  processGroupOwnerEnvironment(owner); // 모양이 틀린 instance 는 기록 전에 거절한다(child 도 같은 값으로는 시작하지 못한다)
+  return owner;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7) as RuntimeRole;
@@ -286,7 +297,9 @@ async function main() {
       args.some(arg => arg !== '--once' && arg !== `--role=${role}` && arg !== '--consumer=ai2' && arg !== '--consumer=ai1')) {
     throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--once]');
   }
-  process.exitCode = await superviseWorker(role, { once: args.includes('--once'), consumer });
+  const owner = consumerProcessOwner(consumer, process.env);
+  const processGroup = owner ? (await import('../lib/operations/dr/repository')).processGroupRecorder(owner) : undefined;
+  process.exitCode = await superviseWorker(role, { once: args.includes('--once'), consumer, ...(processGroup ? { processGroup } : {}) });
 }
 if (process.argv[1] && /^worker-supervisor\.[cm]?[jt]s$/.test(basename(process.argv[1]))) {
   void main().catch(() => { console.error('worker supervisor failed; check role/environment configuration'); process.exitCode = 1; });

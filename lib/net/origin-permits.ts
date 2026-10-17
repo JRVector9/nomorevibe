@@ -9,8 +9,10 @@ import { httpOriginPolicyHash, httpOriginPolicySchema, HttpOriginPermitError } f
 import { httpDispatcher, nativeHttpFetch } from './http-transport';
 import type { CappedRequest } from './fetch';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
+import { processGroupBootFor } from '@/lib/operations/dr/process-owner-env';
 
-const bootId = randomUUID();
+// D11: 슈퍼바이저가 이 instance 로 기록한 프로세스 그룹 owner 의 boot 면 그 그룹의 종료(ESRCH)가 이 프로세스 hop 의 회수 근거가 된다. 없으면 새 boot.
+const bootId = processGroupBootFor(process.env.SERVICE_INSTANCE_ID, process.env) ?? randomUUID();
 const RESERVATION_MS = 5000;
 class ControlBusy extends Error {}
 function lockBusy(error: unknown): boolean {

@@ -89,3 +89,39 @@ export function evaluateProcessReclaim(events: readonly ProcessGroupEvent[], dis
   const notBeforeMs = local.lastExitAtMs + (policy.termination === "provider_bound" ? policy.hardDeadlineMs! : 0) + policy.skewBoundMs;
   return nowMs >= notBeforeMs ? { reclaimable: true, notBeforeMs } : { reclaimable: false, reason: "waiting", notBeforeMs };
 }
+
+/** PR15d: owner 가 남긴 게이트웨이 로컬 종료(같은 DB clock 의 기록 시각) + (provider_bound면) 증명된 기한 + skew. TTL 은 쓰지 않는다. */
+export function evaluateLocalEndReclaim(endedAtMs: number, policy: ReclaimPolicy, nowMs: number):
+  { reclaimable: true; notBeforeMs: number } | { reclaimable: false; reason: string; notBeforeMs: number | null } {
+  if (policy.termination === "provider_bound" && !policy.hardDeadlineMs) return { reclaimable: false, reason: "provider_deadline_unknown", notBeforeMs: null };
+  const notBeforeMs = endedAtMs + (policy.termination === "provider_bound" ? policy.hardDeadlineMs! : 0) + policy.skewBoundMs;
+  return nowMs >= notBeforeMs ? { reclaimable: true, notBeforeMs } : { reclaimable: false, reason: "waiting", notBeforeMs };
+}
+
+export type ModelReclaimFacts = Readonly<{ state: "dispatched" | "indeterminate"; dispatchAtMs: number | null; bindingHash: string | null;
+  owner: Readonly<{ instanceId: string; bootId: string }>; events: readonly ProcessGroupEvent[];
+  localEnd: Readonly<{ endedAtMs: number; owner: Readonly<{ instanceId: string; bootId: string }>; bindingHash: string | null }> | null }>;
+export type ModelReclaimJudgement = Readonly<{ status: "reclaimable" | "waiting" | "policy_blocked" | "unproven";
+  evidence: "process_group_exit" | "local_call_ended" | null; reason: string | null; notBeforeMs: number | null }>;
+/**
+ * 행 하나의 회수 판정(보고·실행 공통). 근거가 먼저다: 프로세스 그룹 종료(ESRCH) 또는 indeterminate 행에 같은 owner·binding 이 남긴 로컬 종료.
+ * 근거가 없으면 정책과 무관하게 unproven 이다. 근거가 있으면 provider 정책(없으면 provider_bound·기한 미상)으로 기한을 보고, 둘 다 있으면 먼저 오는 쪽을 쓴다.
+ */
+export function judgeModelReclaim(facts: ModelReclaimFacts, policy: ReclaimPolicy | undefined, nowMs: number): ModelReclaimJudgement {
+  const unproven = (reason: string): ModelReclaimJudgement => ({ status: "unproven", evidence: null, reason, notBeforeMs: null });
+  if (facts.dispatchAtMs === null) return unproven("dispatch_time_unknown");
+  const group = evaluateLocalCallEnded(facts.events, facts.dispatchAtMs), local = facts.localEnd;
+  const localReason = !local ? null : facts.state !== "indeterminate" ? "local_end_state_mismatch"
+    : local.owner.instanceId !== facts.owner.instanceId || local.owner.bootId !== facts.owner.bootId ? "local_end_owner_mismatch"
+      : local.bindingHash !== facts.bindingHash ? "local_end_binding_mismatch" : null;
+  const proofs: { evidence: "process_group_exit" | "local_call_ended"; endedAtMs: number }[] = [];
+  if (group.ended) proofs.push({ evidence: "process_group_exit", endedAtMs: group.lastExitAtMs });
+  if (local && !localReason) proofs.push({ evidence: "local_call_ended", endedAtMs: local.endedAtMs });
+  if (!proofs.length) return unproven(localReason ?? (group.ended ? "unknown" : group.reason));
+  const rule = policy ?? { termination: "provider_bound" as const, hardDeadlineMs: null, skewBoundMs: 1 };
+  const results = proofs.map(proof => ({ evidence: proof.evidence, result: evaluateLocalEndReclaim(proof.endedAtMs, rule, nowMs) }));
+  const due = results.filter(item => item.result.notBeforeMs !== null).sort((a, b) => a.result.notBeforeMs! - b.result.notBeforeMs!)[0];
+  if (!due) return { status: "policy_blocked", evidence: results[0].evidence, reason: "provider_deadline_unknown", notBeforeMs: null };
+  return due.result.reclaimable ? { status: "reclaimable", evidence: due.evidence, reason: null, notBeforeMs: due.result.notBeforeMs }
+    : { status: "waiting", evidence: due.evidence, reason: "waiting", notBeforeMs: due.result.notBeforeMs };
+}

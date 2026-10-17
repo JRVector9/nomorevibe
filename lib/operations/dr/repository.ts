@@ -233,12 +233,15 @@ export async function recordGroupExited(ownerValue: ProcessOwner, spawn: { seq: 
 export type SpawnRecord = Readonly<{ seq: number; runId: string }>;
 /** worker-supervisor가 child마다 쓰는 D11 기록기. intent가 commit되지 않으면 spawn하지 않고, exited는 그룹 SIGKILL 뒤에만 부른다. */
 export type ProcessGroupRecorder = Readonly<{ intent: () => Promise<SpawnRecord>; spawned: (spawn: SpawnRecord, pid: number) => Promise<void>;
-  exited: (spawn: SpawnRecord, pid: number) => Promise<void> }>;
+  exited: (spawn: SpawnRecord, pid: number) => Promise<void>;
+  /** 기록 owner. 슈퍼바이저가 child env 로만 넘겨 child 의 장부 행·HTTP hop 이 같은 owner 로 남게 한다(PR15d). */
+  owner?: ProcessOwner }>;
 /** role-worker boot 하나(=모델 장부 owner)의 기록기. owner_opened는 첫 intent 직전에 한 번 쓴다 — 이 boot의 장부 행은 child가 생긴 뒤에만 생긴다. */
 export function processGroupRecorder(ownerValue: ProcessOwner): ProcessGroupRecorder {
   const owner = processOwnerSchema.parse(ownerValue);
   let opened: Promise<void> | null = null;
   return Object.freeze({
+    owner,
     intent: async () => {
       opened ??= openProcessGroupOwner(owner).catch(error => { opened = null; throw error; });
       await opened;
