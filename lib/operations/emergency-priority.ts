@@ -70,7 +70,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
 };
 
 /** 실측 뒤 명시하는 값만 받는다(기본값 없음, host-budget 와 같은 원칙). 제어 단계는 이 예산 밖이다 — heartbeat 여유 */
-const budgetSchema = z.strictObject({ jobs: z.number().int().min(0).max(64), modelJobs: z.number().int().min(0).max(64),
+export const budgetSchema = z.strictObject({ jobs: z.number().int().min(0).max(64), modelJobs: z.number().int().min(0).max(64),
   httpJobs: z.number().int().min(0).max(64), agingMs: z.number().int().min(1).max(86_400_000) });
 const dueSchema = z.array(z.strictObject({ job: z.string().min(1).max(120), overdueMs: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }))
   .max(256).refine((rows) => new Set(rows.map((row) => row.job)).size === rows.length);

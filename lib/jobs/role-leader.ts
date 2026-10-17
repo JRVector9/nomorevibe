@@ -17,6 +17,8 @@ export type RoleCandidate = {
   host?: BatchHost;
 };
 export type RoleLease = RoleCandidate & { epoch: number; batchEpoch?: number };
+/** 선출 TX 안에서 새 취득(만료된 역할)만 막는 hook — false 면 이번 선출에 나서지 않는다. 이미 쥔 역할의 재확인에는 부르지 않는다 */
+export type RoleTakeoverGate = (tx: ProductTransaction, role: BatchRole) => Promise<boolean>;
 export class RoleLeaseLostError extends Error {
   constructor() { super('role_lease_lost'); }
 }
@@ -40,8 +42,8 @@ export function roleLeaseFromEnv(role: BatchRole, env: Readonly<Record<string, s
 }
 
 /** Serialize election with token revocation; result writers lock only their job row. */
-export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLease | null> {
-  if (candidate.batchVersion === 1) return acquireBatchRole(candidate);
+export async function tryAcquireRole(candidate: RoleCandidate, takeover?: RoleTakeoverGate): Promise<RoleLease | null> {
+  if (candidate.batchVersion === 1) return acquireBatchRole(candidate, takeover);
   if (!JOB_ROLES.includes(candidate.role as JobRole)) return null;
   return db.transaction(async tx => {
     // DR fence가 첫 lock이다. fenced DB(옛 primary·승격 전 복원본)에서는 역할을 얻지 않는다.
@@ -66,6 +68,7 @@ export async function tryAcquireRole(candidate: RoleCandidate): Promise<RoleLeas
       if (current.ownerRelease !== candidate.release) return null;
       if (current.ownerInstanceId && current.leaseUntil.getTime() + 20_000 > now.getTime()) return null;
     }
+    if (takeover && !await takeover(tx, candidate.role)) return null;
     const recentBoots = current.primaryBoots.filter(boot => boot.at > now.getTime() - 5 * 60_000);
     if (candidate.kind === 'primary' && current.ownerInstanceId === candidate.instanceId &&
         current.ownerBootId !== candidate.bootId && recentBoots.length >= 3) {

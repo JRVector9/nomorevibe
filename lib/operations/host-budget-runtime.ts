@@ -1,17 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { availableParallelism, loadavg } from 'node:os';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
-import { and, eq, inArray, like, sql } from 'drizzle-orm';
+import { and, inArray, like, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { hostDbRuntimeDeclaration } from '@/lib/db/host-budget';
 import { operationsObservations } from '@/lib/db/schema';
+import { embeddingReadiness } from '@/lib/domain/products/embedding';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
+import { emergencyAdmissionConfig, emergencyJobDecision, type EmergencyAdmissionDeferReason } from './emergency-admission';
+import { readEmergencyJobs, readEmergencyState } from './emergency-admission-runtime';
 import { hostBudgetEnforcement, hostBudgetShape, hostPressureDecision, hostProcessDecision, hostProcessIdentity, hostSlotPrefix,
-  hostTranslationCap, readHostLedger, type HostDeferReason, type HostProcessRow, type HostTranslationRow } from './host-budget';
+  hostTranslationCap, readHostLedger, type HostDeferReason, type HostEmergencyRow, type HostProcessRow, type HostTranslationRow } from './host-budget';
 import { serviceInstanceId } from './instance';
 
-export type HostAdmission = { admitted: true; release: () => Promise<void> } | { admitted: false; reason: HostDeferReason };
+export type HostAdmission = { admitted: true; release: () => Promise<void> } | { admitted: false; reason: HostDeferReason | EmergencyAdmissionDeferReason };
 export type HostBudgetRuntime = {
   enabled: boolean; settled: Promise<void>; ready: () => boolean;
   admit: (job: string) => Promise<HostAdmission>; stop: () => Promise<void>;
@@ -51,10 +54,15 @@ async function lockedLedger(tx: ProductTransaction, host: Host) {
  * HOST_BUDGET_ENFORCEMENT 가 없으면 DB·타이머 없이 기존 동작 그대로다. 켜지면 HOST_DB_BUDGET 선언 identity 로
  * 장부 자리를 얻고 갱신하며, admit 은 자리·HTTP 장부 결합·host 압박·번역 slot 을 보고 새 일감만 미룬다.
  * holdMs 는 감독이 잡을 끊는 한도(job+drain)다. 번역 slot 은 그보다 먼저 만료되지 않아 끊긴 소유자와 겹치지 않는다.
+ * EMERGENCY_ADMISSION(PR16b, Oracle 만)이 켜지면 같은 장부 TX 에서 비상 모드를 판정해 full·recovering·hold 일 때
+ * planEmergencyAdmission 이 들인 잡만 비상 slot(:e:n)을 잡고 claim 한다. 정상·부분 장애에서는 기존 판정 그대로다.
  */
 export function startHostBudget(env: Readonly<Record<string, string | undefined>> = process.env,
   options: { holdMs?: number; leaseMs?: number; renewMs?: number } = {}): HostBudgetRuntime {
   const enforcement = hostBudgetEnforcement(env);
+  const emergency = emergencyAdmissionConfig(env);
+  // 비상 예산은 host 장부 위에서만 센다 — 장부 없이 켜진 설정을 조용히 무시하지 않는다
+  if (enforcement.mode === 'disabled' && emergency.mode === 'enabled') throw new Error('emergency_admission_invalid');
   if (enforcement.mode === 'disabled') return DISABLED;
   if (current) throw new Error('host_budget_already_started');
   const { holdMs, leaseMs = HOST_BUDGET_LEASE_MS, renewMs = HOST_BUDGET_RENEW_MS } = options;
@@ -64,13 +72,14 @@ export function startHostBudget(env: Readonly<Record<string, string | undefined>
     || holdMs !== undefined && (!Number.isSafeInteger(holdMs) || holdMs < 1)) throw new Error('host_budget_invalid');
   const { policy, process: identity, primaryMax, readMax } = declaration;
   const host = policy.host, prefix = hostSlotPrefix(host), bootId = randomUUID(), owner = hostProcessIdentity(identity);
-  const self = { key: `${prefix}:p:${owner}`, bootId, shape: hostBudgetShape(policy, enforcement.pressure), primaryMax, readMax };
+  const self = { key: `${prefix}:p:${owner}`, bootId, primaryMax, readMax,
+    shape: hostBudgetShape(policy, enforcement.pressure, emergency.mode === 'enabled' ? emergency : undefined) };
   const delay = monitorEventLoopDelay({ resolution: 20 });
   delay.enable();
   let validUntil = 0, lastRenewal: number | null = null, stopped = false, httpBound = false;
   let failure: HostDeferReason = 'host_slot_unconfirmed', pressure: HostDeferReason | null = null;
   let renewing: Promise<void> | null = null;
-  const deny = (reason: HostDeferReason): HostAdmission => ({ admitted: false, reason });
+  const deny = (reason: HostDeferReason | EmergencyAdmissionDeferReason): HostAdmission => ({ admitted: false, reason });
   // 로컬 유효 기간은 갱신 요청을 보낸 시각(단조 시계)부터 잰다 — DB 가 적은 만료보다 늦지 않다
   const ready = () => !stopped && performance.now() < validUntil;
   const renew = (): Promise<void> => renewing ??= (async () => {
@@ -88,9 +97,9 @@ export function startHostBudget(env: Readonly<Record<string, string | undefined>
         const row: HostProcessRow = { type: 'process', bootId, shape: self.shape, identity: owner, pid: process.pid, release: identity.release,
           primaryMax, readMax, leaseUntilMs: nowMs + leaseMs, renewedAtMs: nowMs, ...telemetry };
         await upsert(tx, self.key, row);
-        // 진행 중 번역은 끊지 않는다 — 소유 프로세스가 살아 있는 동안 slot 도 함께 연장한다
+        // 진행 중 번역·비상 잡은 끊지 않는다 — 소유 프로세스가 살아 있는 동안 slot 도 함께 연장한다
         for (const { key, ...held } of ledger.live) {
-          if (held.type === 'translation' && held.bootId === bootId) await upsert(tx, key, { ...held, leaseUntilMs: nowMs + leaseMs + held.holdMs });
+          if (held.type !== 'process' && held.bootId === bootId) await upsert(tx, key, { ...held, leaseUntilMs: nowMs + leaseMs + held.holdMs });
         }
         const [control] = await tx.execute<{ mode: string; policy: unknown; policy_hash: string | null }>(
           sql`SELECT mode, policy, policy_hash FROM http_origin_control WHERE id=1`);
@@ -110,28 +119,49 @@ export function startHostBudget(env: Readonly<Record<string, string | undefined>
     if (!httpBound) return deny('host_http_unbound');
     if (pressure) return deny(pressure);
     const cap = hostTranslationCap(host, job);
-    if (cap === null) return admitted;
+    if (cap === null && emergency.mode === 'disabled') return admitted;
     if (holdMs === undefined) return deny('host_budget_unavailable');
     const token = randomUUID();
     try {
       const slot = await onPrimary(() => db.transaction(async tx => {
+        // DR fence 가 첫 lock 이다(역할 선출과 같은 순서). 그다음 host anchor 를 잠근다
+        const state = emergency.mode === 'enabled' ? await readEmergencyState(tx, host) : null;
         const { nowMs, ledger } = await lockedLedger(tx, host);
         if (!ledger.ok) return { reason: 'host_ledger_invalid' as const };
         const reason = hostProcessDecision(ledger.live, self, policy)
           ?? (ledger.live.some(row => row.key === self.key && row.bootId === bootId) ? null : 'host_slot_unconfirmed' as const);
         if (reason) return { reason };
-        const held = new Set(ledger.live.filter(row => row.type === 'translation').map(row => row.key));
-        const key = Array.from({ length: cap }, (_, index) => `${prefix}:t:${index + 1}`).find(candidate => !held.has(candidate));
-        if (!key || held.size >= cap) return { reason: 'host_translation_busy' as const };
-        const row: HostTranslationRow = { type: 'translation', bootId, shape: self.shape, token, job, owner, holdMs, leaseUntilMs: nowMs + leaseMs + holdMs };
-        await upsert(tx, key, row);
-        return { reason: null, key };
+        // 판정을 모두 마친 뒤에만 쓴다 — 하나라도 미루면 아무 slot 도 남기지 않는다
+        const rows: { key: string; value: HostTranslationRow | HostEmergencyRow }[] = [];
+        if (state && emergency.mode === 'enabled') {
+          const emergencySlots = ledger.live.filter(row => row.type === 'emergency');
+          const processes = ledger.live.filter((row): row is HostProcessRow & { key: string } => row.type === 'process');
+          const decision = emergencyJobDecision({ mode: state.mode, job, rows: await readEmergencyJobs(tx, state.heldRoles, job),
+            slots: emergencySlots.map(row => row.job), config: emergency, embedding: embeddingReadiness(env).mode,
+            hostPressure: hostPressureDecision(processes, nowMs, enforcement.pressure), nowMs });
+          if (decision.active && !decision.decision.admitted) return { reason: `emergency_${decision.decision.reason}` as EmergencyAdmissionDeferReason };
+          if (decision.active && decision.slot) {
+            const held = new Set(emergencySlots.map(row => row.key));
+            const key = Array.from({ length: emergency.budget.jobs }, (_, index) => `${prefix}:e:${index + 1}`).find(candidate => !held.has(candidate));
+            if (!key) return { reason: 'emergency_budget_jobs' as const };
+            rows.push({ key, value: { type: 'emergency', bootId, shape: self.shape, token, job, owner, holdMs, leaseUntilMs: nowMs + leaseMs + holdMs } });
+          }
+        }
+        if (cap !== null) {
+          const held = new Set(ledger.live.filter(row => row.type === 'translation').map(row => row.key));
+          const key = Array.from({ length: cap }, (_, index) => `${prefix}:t:${index + 1}`).find(candidate => !held.has(candidate));
+          if (!key || held.size >= cap) return { reason: 'host_translation_busy' as const };
+          rows.push({ key, value: { type: 'translation', bootId, shape: self.shape, token, job, owner, holdMs, leaseUntilMs: nowMs + leaseMs + holdMs } });
+        }
+        for (const row of rows) await upsert(tx, row.key, row.value);
+        return { reason: null, keys: rows.map(row => row.key) };
       }));
       if (slot.reason) return deny(slot.reason);
-      const key = slot.key;
+      const keys = slot.keys;
+      if (!keys.length) return admitted;
       // 해제 실패는 숨기지 않고 만료까지 자리를 지킨다(보수적). 남의 slot 은 token 이 달라 지우지 않는다
       return { admitted: true, release: () => onPrimary(() => db.delete(operationsObservations)
-        .where(and(eq(operationsObservations.key, key), sql`${operationsObservations.value}->>'token' = ${token}`))).then(() => {}, () => {}) };
+        .where(and(inArray(operationsObservations.key, keys), sql`${operationsObservations.value}->>'token' = ${token}`))).then(() => {}, () => {}) };
     } catch { return deny('host_budget_unavailable'); }
   };
 

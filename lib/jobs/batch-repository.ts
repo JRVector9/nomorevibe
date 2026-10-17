@@ -7,7 +7,7 @@ import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRol
   batchCanaryAnchorKey, classifyBatchCandidateEvidence, type BatchCanaryCandidate, type BatchHost, type BatchMode, type BatchRole,
   batchBootstrapEligible, batchBootstrapGrantSchema, classifyBatchBootstrap, batchRecanaryGrantSchema, classifyBatchRecanary } from './batches';
 import { STALE_LOCK_MS } from './lease';
-import type { RoleCandidate, RoleLease } from './role-leader';
+import type { RoleCandidate, RoleLease, RoleTakeoverGate } from './role-leader';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 
 export class JobBatchBlockedError extends Error { constructor() { super('job_batch_blocked'); } }
@@ -123,7 +123,7 @@ async function pinCandidateCanary(tx: ProductTransaction, row: typeof jobBatchCa
   return new Date(after.at);
 }
 /** Candidate heartbeat cannot write capability or result evidence. Operator evidence is separately reviewed. */
-export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease | null> {
+export async function acquireBatchRole(value: RoleCandidate, takeover?: RoleTakeoverGate): Promise<RoleLease | null> {
   const candidate = batchCandidateSchema.parse(value);
   return onPrimary(async () => { try { return await db.transaction(async tx => {
     // DR fence가 첫 lock이다(legacy tryAcquireRole과 같은 순서). fenced DB에서는 역할을 얻지 않는다.
@@ -161,6 +161,7 @@ export async function acquireBatchRole(value: RoleCandidate): Promise<RoleLease 
     if (!bootstrap && (ready[0]?.instanceId !== candidate.instanceId || ready[0]?.bootId !== candidate.bootId)) return null;
     const rank = batchHostOrder(candidate.role).indexOf(instance.host);
     if (rank > 0 && current.leaseUntil.getTime() + rank * 20_000 > now.getTime()) return null;
+    if (takeover && !await takeover(tx, candidate.role)) return null;
     // There is no verified ACK to pin before the first one; the PR10d anchor starts with the later normal canary.
     if (!bootstrap) await pinCandidateCanary(tx,ready[0],control.epoch);
     // Election does not revoke either healthy jobs or independently owned item leases.
