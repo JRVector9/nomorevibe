@@ -13,6 +13,7 @@ import { STALE_LOCK_MS } from "./lease";
 import { assertJobBatchAdmission, batchResultObservation, JobBatchBlockedError, type BatchExecutionIdentity } from "./batch-repository";
 import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -75,7 +76,12 @@ export async function runJob<C>(
       // currentReplayDb revalidates the private verified DB/scope brand. Fixed v5/v6
       // replay profiles have an explicit legacy job-batch contract, independent of item mode.
       // Ordinary runtime callers always acquire the batch lock in this same claim TX.
-      if (!currentReplayDb()) batchIdentity = await assertJobBatchAdmission(tx, name, options.roleLease);
+      // DR writer fence가 그 앞의 첫 lock이다(seal의 fence UPDATE → batch → role → jobs와 같은 순서). fenced DB는 새 job을 claim하지 않는다.
+      // 격리 replay DB는 batch admission처럼 fence도 건너뛴다(고정 handler profile에 fence 권한이 없다).
+      if (!currentReplayDb()) {
+        if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+        batchIdentity = await assertJobBatchAdmission(tx, name, options.roleLease);
+      }
       if (options.roleLease) await assertRoleLease(tx, options.roleLease);
       await tx.insert(jobs).values({ name }).onConflictDoNothing();
       return tx.update(jobs).set({
@@ -96,7 +102,7 @@ export async function runJob<C>(
       )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
     });
   } catch (error) {
-    if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError) return { status: 'skipped', reason: 'stopping' };
+    if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError || error instanceof DrWriterFencedError) return { status: 'skipped', reason: 'stopping' };
     throw error;
   }
   if (!claimed) {

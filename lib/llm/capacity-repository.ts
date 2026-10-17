@@ -39,6 +39,7 @@ import {
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
 const fail = (code: string): never => { throw new Error(code); };
@@ -48,12 +49,15 @@ function transaction<T>(load: (tx: ProductTransaction) => Promise<T>): Promise<T
   return onPrimary(() => db.transaction(load));
 }
 
+/** DR writer fence가 첫 lock이다(seal의 fence UPDATE → control UPDATE와 같은 순서; control → fence는 그 UPDATE와 교착한다).
+ * fenced DB(옛 primary·승격 전 사본)는 admission을 닫는다: draining으로 보며, 원래 transport로 가는 disabled로도 내려가지 않는다. */
 async function control(tx: ProductTransaction, lock: "share" | "update" = "update") {
+  const fenced = !await writerSiteActive(tx);
   const [row] = await tx.select().from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for(lock);
   if (!row) return fail("model_capacity_control_missing");
   const policy = row.policy === null ? null : parseModelCapacityPolicy(row.policy);
   if (policy !== null && modelCapacityPolicyHash(policy) !== row.policyHash) fail("model_capacity_policy_hash_mismatch");
-  return { ...row, policy };
+  return { ...row, mode: fenced ? "draining" as const : row.mode, policy, fenced };
 }
 type Control = Awaited<ReturnType<typeof control>>;
 
@@ -78,7 +82,7 @@ function callerControlSnapshot(row: Control) {
   if (!["disabled", "open", "draining"].includes(row.mode)
     || !Number.isSafeInteger(row.epoch) || row.epoch < 1
     || !Number.isSafeInteger(row.revision) || row.revision < 1
-    || row.policy === null && (row.mode !== "disabled" || row.policyHash !== null)) {
+    || row.policy === null && (row.mode !== "disabled" && !row.fenced || row.policyHash !== null)) { // fenced는 policy 없이도 draining
     throw new Error("model_capacity_control_invalid");
   }
   const policy = row.policy && Object.freeze({ ...row.policy,
@@ -93,6 +97,7 @@ function callerControlSnapshot(row: Control) {
  * together for expiry are locked in queue order; newly inserted rows are owned
  * by this transaction before it can select one older waiting request. */
 async function expireRequests(tx: ProductTransaction, state: Control): Promise<void> {
+  if (state.fenced) return; // fenced DB: owner 자신의 정산(cancel·indeterminate)만 쓰고 남의 행 만료 정리는 하지 않는다
   const due = await tx.select().from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.state} = 'reserved' AND ${modelCapacityRequests.reservedUntil} <= clock_timestamp())
     OR (${modelCapacityRequests.state} = 'waiting' AND (${modelCapacityRequests.queueUntil} <= clock_timestamp()
@@ -236,6 +241,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
   websearch?: WebsearchQueryInput): Promise<ModelSlotResult> {
   return transaction(async tx => {
     const state = await control(tx);
+    if (state.fenced) return { kind: "deferred", reason: "draining" }; // fenced: 만료 정리·대기 행·예약을 쓰지 않는다
     let original: RequestRow | undefined;
     if (crawl) {
       const rows = await lockCrawlTaglineRequests(tx, checked.requestId, crawl);
@@ -312,6 +318,7 @@ export async function beginModelDispatch(value: ModelCapacityReservation): Promi
   const checked = modelCapacityReservationSchema.parse(value);
   return transaction(async tx => {
     const state = await control(tx);
+    if (state.fenced) return { kind: "ownership_lost" }; // fenced: dispatch도 만료 정리도 쓰지 않는다
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (row && await expireReservation(tx, row)) return { kind: "ownership_lost" };

@@ -8,6 +8,7 @@ import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { assertJobBatchAdmission, JobBatchBlockedError, lockJobBatch } from "@/lib/jobs/batch-repository";
 import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { lockCanonicalContext } from "./source-context";
 import { CanonicalSourceBindingSchema, CanonicalSourceLeaseSchema, SourceJobSchema, SourceOwnerSchema, SOURCE_LANES,
   sourceRefreshKey, canonicalSourcePolicyHash, type CanonicalSourceLease, type SourceOwner } from "./source-contract";
@@ -108,6 +109,9 @@ export async function claimCanonicalEvidenceSource(input: { owner: SourceOwner; 
   const roleLease = input.roleLease ? structuredClone(input.roleLease) : undefined;
   if (productId !== undefined && (!Number.isSafeInteger(productId) || productId <= 0)) throw new Error("invalid evidence source target");
   return onPrimary(() => db.transaction(async tx => {
+    // DR writer fence가 첫 lock이다(seal의 fence UPDATE → … → source claim과 같은 순서). fenced DB는 새 출처(외부 fetch)를 내주지 않는다.
+    // 거절은 기존 admission 거절과 같은 typed error라 호출자가 stage_blocked로 미룬다(커서·요청 보존).
+    if (!await writerSiteActive(tx)) throw new JobBatchBlockedError();
     const batch = await lockJobBatch(tx);
     const site = job?.name === "product-site-evidence-refresh";
     if ((site && (batch.mode !== "versioned" || roleLease?.role !== "site-evidence" || roleLease.batchVersion !== 1))

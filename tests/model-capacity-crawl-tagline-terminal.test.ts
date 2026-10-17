@@ -103,6 +103,7 @@ describe("fixed crawl-tagline shape and canonical phase identity", () => {
 const recording = vi.hoisted(() => ({ transaction: vi.fn(), replay: vi.fn(), terminal: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: { transaction: recording.transaction }, onPrimary: (load: () => unknown) => load() }));
 vi.mock("@/lib/db/replay-scope", () => ({ currentReplayDb: recording.replay }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), writerSiteActive: async () => true })); // PR15c: fence는 dr-fence-paths 테스트가 본다(이 fixture의 tx 순서 불변)
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ readCrawlTaglineGatewayTerminal: recording.terminal }));
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { modelCapacityControl, modelCapacityRequests } from "@/lib/db/schema";

@@ -203,6 +203,46 @@ it("a restored ledger accepts copied tokens until seal, then rejects every copie
   await expect(permits.openHttpPermitsAfterDrain({ promotionId: state.plan.promotionId, operator }, true)).rejects.toThrow("dr_promotion_not_active");
 }, 60_000);
 
+it("D11: reclaims only calls whose whole possible process group has recorded ESRCH evidence", async () => {
+  use("primary");
+  const owner = { instanceId: inst.d11, bootId: randomUUID() };
+  await expect(repo.recordSpawnIntent(owner)).rejects.toThrow("dr_process_owner_not_opened");
+  await repo.openProcessGroupOwner(owner);
+  const spawnRecord = await repo.recordSpawnIntent(owner);
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+  const pid = child.pid!;
+  try {
+    await repo.recordSpawned(owner, spawnRecord, pid);
+    const slot = await ledger.requestModelSlot(request(owner, "d11"));
+    if (slot.kind !== "granted") throw new Error("fixture_d11_slot");
+    const begun = await ledger.beginModelDispatch(slot.reservation);
+    if (begun.kind !== "dispatched") throw new Error("fixture_d11_dispatch");
+    await expect(repo.recordGroupExited(owner, spawnRecord, pid)).rejects.toThrow("dr_process_group_alive");
+    const unexited = await repo.readProcessReclaimReport(owner, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
+    expect(unexited.rows).toMatchObject([{ requestId: begun.dispatch.requestId, reclaimable: false, reason: "spawn_not_exited:1" }]);
+    process.kill(-pid, "SIGKILL");
+    for (let attempt = 0; attempt < 100 && !repo.processGroupGone(pid); attempt++) await sleep(50);
+    expect(repo.processGroupGone(pid)).toBe(true);
+    await repo.recordGroupExited(owner, spawnRecord, pid);
+    await sleep(20);
+    const report = await repo.readProcessReclaimReport(owner, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
+    expect(report.rows).toMatchObject([{ requestId: begun.dispatch.requestId, state: "dispatched", reclaimable: true, reason: null }]);
+    expect((await repo.readProcessReclaimReport(owner, new Map())).rows).toMatchObject([{ reclaimable: false, reason: "provider_deadline_unknown" }]);
+    const older = await repo.readProcessReclaimReport(ownerModel, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
+    expect(older.rows.map(row => [row.requestId, row.reclaimable, row.reason]).sort()).toEqual(
+      [[state.dispatched, false, "owner_not_opened_before_dispatch"], [state.indeterminate, false, "owner_not_opened_before_dispatch"]].sort());
+    // 보고는 읽기 전용이다. 장부 해제 hook이 없으므로 행은 그대로 dispatched다.
+    expect((await pool("primary")`SELECT state FROM model_capacity_requests WHERE request_id = ${begun.dispatch.requestId}`)[0].state).toBe("dispatched");
+  } finally { if (!repo.processGroupGone(pid)) process.kill(-pid, "SIGKILL"); }
+  const plan = path.join(mkdtempSync(path.join(tmpdir(), "pr15-cli-")), "plan.json");
+  try {
+    writeFileSync(plan, JSON.stringify({ ...state.plan, promotionId: randomUUID() }));
+    const sealOld = await cli(["seal", `--plan=${plan}`, "--database-url-stdin"], "primary");
+    expect(sealOld.code).toBe(1);
+    expect(JSON.parse(sealOld.stderr)).toEqual({ code: "dr_database_identity_mismatch" });
+  } finally { rmSync(path.dirname(plan), { recursive: true, force: true }); }
+}, 60_000);
+
 it("fences the old primary one way: old writers lose roles there and it can never be promoted in place", async () => {
   use("primary");
   const want = { lineageId: state.lineage, writerEpoch: 1, db: state.pDb, operator };
@@ -301,44 +341,4 @@ it("reopens HTTP only after settling old hops; keeps model permits closed while 
     .toEqual([{ state: "dispatched" }, { state: "indeterminate" }]);
   expect((await pool("restored")`SELECT mode FROM model_capacity_control`)[0].mode).toBe("draining");
   expect(await ledger.requestModelSlot(request({ instanceId: inst.next, bootId: randomUUID() }, "after"))).toEqual({ kind: "deferred", reason: "draining" });
-}, 60_000);
-
-it("D11: reclaims only calls whose whole possible process group has recorded ESRCH evidence", async () => {
-  use("primary");
-  const owner = { instanceId: inst.d11, bootId: randomUUID() };
-  await expect(repo.recordSpawnIntent(owner)).rejects.toThrow("dr_process_owner_not_opened");
-  await repo.openProcessGroupOwner(owner);
-  const spawnRecord = await repo.recordSpawnIntent(owner);
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
-  const pid = child.pid!;
-  try {
-    await repo.recordSpawned(owner, spawnRecord, pid);
-    const slot = await ledger.requestModelSlot(request(owner, "d11"));
-    if (slot.kind !== "granted") throw new Error("fixture_d11_slot");
-    const begun = await ledger.beginModelDispatch(slot.reservation);
-    if (begun.kind !== "dispatched") throw new Error("fixture_d11_dispatch");
-    await expect(repo.recordGroupExited(owner, spawnRecord, pid)).rejects.toThrow("dr_process_group_alive");
-    const unexited = await repo.readProcessReclaimReport(owner, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
-    expect(unexited.rows).toMatchObject([{ requestId: begun.dispatch.requestId, reclaimable: false, reason: "spawn_not_exited:1" }]);
-    process.kill(-pid, "SIGKILL");
-    for (let attempt = 0; attempt < 100 && !repo.processGroupGone(pid); attempt++) await sleep(50);
-    expect(repo.processGroupGone(pid)).toBe(true);
-    await repo.recordGroupExited(owner, spawnRecord, pid);
-    await sleep(20);
-    const report = await repo.readProcessReclaimReport(owner, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
-    expect(report.rows).toMatchObject([{ requestId: begun.dispatch.requestId, state: "dispatched", reclaimable: true, reason: null }]);
-    expect((await repo.readProcessReclaimReport(owner, new Map())).rows).toMatchObject([{ reclaimable: false, reason: "provider_deadline_unknown" }]);
-    const older = await repo.readProcessReclaimReport(ownerModel, new Map([["acct", { termination: "client_bound", hardDeadlineMs: null, skewBoundMs: 1 }]]));
-    expect(older.rows.map(row => [row.requestId, row.reclaimable, row.reason]).sort()).toEqual(
-      [[state.dispatched, false, "owner_not_opened_before_dispatch"], [state.indeterminate, false, "owner_not_opened_before_dispatch"]].sort());
-    // 보고는 읽기 전용이다. 장부 해제 hook이 없으므로 행은 그대로 dispatched다.
-    expect((await pool("primary")`SELECT state FROM model_capacity_requests WHERE request_id = ${begun.dispatch.requestId}`)[0].state).toBe("dispatched");
-  } finally { if (!repo.processGroupGone(pid)) process.kill(-pid, "SIGKILL"); }
-  const plan = path.join(mkdtempSync(path.join(tmpdir(), "pr15-cli-")), "plan.json");
-  try {
-    writeFileSync(plan, JSON.stringify({ ...state.plan, promotionId: randomUUID() }));
-    const sealOld = await cli(["seal", `--plan=${plan}`, "--database-url-stdin"], "primary");
-    expect(sealOld.code).toBe(1);
-    expect(JSON.parse(sealOld.stderr)).toEqual({ code: "dr_database_identity_mismatch" });
-  } finally { rmSync(path.dirname(plan), { recursive: true, force: true }); }
 }, 60_000);

@@ -5,6 +5,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 const mocks = vi.hoisted(() => ({ lock: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: {}, onPrimary: (load: () => unknown) => load() }));
 vi.mock("@/lib/db/replay-scope", () => ({ currentReplayDb: () => undefined }));
+vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), writerSiteActive: async () => true })); // PR15c: fence는 dr-fence-paths 테스트가 본다(이 fixture의 tx 순서 불변)
 import { lockModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits: { account: 1 }, groupLimits: { engine: 1 },
   poolLimits: { reviewer: 1, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 4,
