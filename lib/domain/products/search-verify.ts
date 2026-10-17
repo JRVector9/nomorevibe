@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { ProfileEvidence } from "./search-profile";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
@@ -50,6 +51,25 @@ const SYSTEM = [
 ].join(" ");
 
 export type VerifyItem = { evidence: ProfileEvidence; keywords: string[] };
+/** Verifier policy identity for durable step continuation: prompt, output bound and the five-keyword chunk rule. */
+export const SEARCH_VERIFY_POLICY_HASH = createHash("sha256")
+  .update(JSON.stringify({ version: 1, system: SYSTEM, maxTokens: MAX_TOKENS, chunk: 5 })).digest("hex");
+/** Original verifier request bytes. The legacy leaf and the reserved native path send this exact body. */
+export function searchVerifyGatewayWire(item: VerifyItem, model: string): string {
+  // 꺾쇠를 막아 두어야 근거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
+  const body = JSON.stringify({ evidence: item.evidence, keywords: item.keywords }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  return JSON.stringify({
+    // 기본 어댑터는 근거를 요약해 버린다 — 키워드 짓기와 같은 이유로 원문을 그대로 보낸다
+    context_strategy: "raw",
+    model, stream: false, temperature: 0, max_tokens: MAX_TOKENS,
+    reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>` },
+    ],
+  });
+}
 export type VerifyResult = { ok: true; unsupported: string[] } | { ok: false; error: string };
 /** Retry only: same strict parser and model, sequential chunks, one shared deadline, no partial success. */
 export async function verifyKeywordsInChunks(item: VerifyItem, options: {
@@ -142,24 +162,13 @@ export async function verifyKeywords(item: VerifyItem, options: {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
   await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? VERIFY_MODEL });
-  // 꺾쇠를 막아 두어야 근거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
-  const body = JSON.stringify({ evidence: item.evidence, keywords: item.keywords }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  const wire = searchVerifyGatewayWire(item, options.model ?? VERIFY_MODEL);
   const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
   try {
     const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // 기본 어댑터는 근거를 요약해 버린다 — 키워드 짓기와 같은 이유로 원문을 그대로 보낸다
-        context_strategy: "raw",
-        model: options.model ?? VERIFY_MODEL, stream: false, temperature: 0, max_tokens: MAX_TOKENS,
-        reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>` },
-        ],
-      }),
+      body: wire,
       signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
     });
     if (!response.ok) {

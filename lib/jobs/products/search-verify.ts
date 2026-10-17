@@ -1,8 +1,8 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { profileEvidence } from "@/lib/domain/products/search-profile";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
-import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks } from "@/lib/domain/products/search-verify";
+import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
+import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 
 /**
  * 검색 키워드 검수 — 지은 키워드를 게이트웨이의 Qwen3.8 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
@@ -52,12 +52,12 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
             const task = tasks[index];
             const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
-            const verify = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "")
-              ? verifyKeywordsInChunks : verifyKeywords;
-            const result = await verify({
-              evidence: profileEvidence(task.product, task.reviewerNote),
-              keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo],
-            }, { request, signal, timeoutMs });
+            const chunked = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "");
+            const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked });
+            if (outcome.kind === "skipped") return;
+            // The original shared deadline ended while waiting for a permit: no attempt or failure, next tick starts anew.
+            if (outcome.kind === "expired") { blocked ||= "deadline_expired"; return; }
+            const result = outcome.result;
             if (signal.aborted) return;
             if (!result.ok) {
               // A shorter deadline comes from this tick's remaining time, not the product.
@@ -66,14 +66,18 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
                 blocked = "tick_budget";
                 return;
               }
-              if (await recordVerificationResult(task, lease, { kind: "failure", error: result.error })) failed++;
+              const failure = { kind: "failure" as const, error: result.error };
+              if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
+                : recordVerificationResult(task, lease, failure))) failed++;
               if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
                 if (++inARow >= 2) blocked = result.error;
               }
               continue;
             }
             inARow = 0;
-            if (!await recordVerificationResult(task, lease, { kind: "success", removed: result.unsupported, model: VERIFY_MODEL })) continue;
+            const success = { kind: "success" as const, removed: result.unsupported, model: VERIFY_MODEL };
+            if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
+              : recordVerificationResult(task, lease, success))) continue;
             verified++;
             removed += result.unsupported.length;
           }
@@ -86,6 +90,10 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
       const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
       const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
+      if (blocked === "deadline_expired") {
+        ctx.log("search_verify.deadline_deferred", { verified, removed, failed });
+        return { done: false };
+      }
       if (blocked === "tick_budget") {
         ctx.log("search_verify.budget_deferred", { verified, removed, failed });
         return { done: false };

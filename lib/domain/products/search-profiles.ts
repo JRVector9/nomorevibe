@@ -5,7 +5,14 @@ import { textProfileInputSchema, textProfileInputHash, textProfileDispatchBindin
 import { lockModelCapacityCallerControl, lockTextProfileModelCapacityDispatch,
   finishTextProfileModelCapacityDispatch } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
+import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { z } from "zod";
+import { searchVerifyMemberSchema, searchVerifyDispatchBindingSchema, searchVerifyGenerationHash, searchVerifyLogicalWorkKey,
+  searchVerifyInputHash, searchVerifyStepKeywords } from "@/lib/llm/capacity";
+import { lockSearchVerifyModelCapacityDispatch, finishSearchVerifyModelCapacityDispatch, lockSearchVerifyResultChain } from "@/lib/llm/capacity-repository";
+import { SEARCH_VERIFY_POLICY_HASH, VERIFY_MODEL } from "./search-verify";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { and, eq, gt, inArray, sql } from "drizzle-orm";
@@ -164,7 +171,9 @@ export type VerificationResult =
  * 그사이 키워드를 다시 지었거나(원본이 바뀌어 옛 키워드에 대한 검수다), 다른 워커가 먼저 적었거나,
  * 이 잡의 리스를 잃었으면 아무것도 적지 않는다. 리스 확인은 맨 마지막이다.
  */
-export async function recordVerificationResult(task: ProfileTask, lease: JobLease, result: VerificationResult): Promise<boolean> {
+export async function recordVerificationResult(task: ProfileTask, lease: JobLease, result: VerificationResult,
+  expectation?: SearchVerifyWriteExpectation): Promise<boolean> {
+  if (expectation !== undefined) return writeReservedVerificationResult(task, lease, result, expectation);
   return db.transaction(async (tx) => {
     const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, task.product.id)).for("update");
     if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
@@ -356,5 +365,190 @@ export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobL
     await assertTextRoleWall(tx, role);
     await assertJobLeaseAtWallTime(tx, job, "update");
     return { kind: "ready", intent, call, dispatch };
+  }));
+}
+
+/** Fixed verifier eligibility: the same predicate as pendingVerifications, read from the locked row. */
+const verificationDueSql = () => sql`not ${productSearchProfiles.needsRefresh} and ${productSearchProfiles.errorCode} is null and ${productSearchProfiles.verifiedAt} is null
+  and jsonb_array_length(${productSearchProfiles.keywordsEn}) + jsonb_array_length(${productSearchProfiles.keywordsKo}) > 0
+  and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}
+  and (${productSearchProfiles.verifyRetryAt} is null or ${productSearchProfiles.verifyRetryAt} <= now())`;
+export type SearchVerifyWriteExpectation = Readonly<{ kind: "search_verify_write" }>;
+type VerifyRole = import("@/lib/llm/capacity").SearchVerifyDispatchBinding["role"];
+type VerifyMember = import("@/lib/llm/capacity").SearchVerifyMember;
+const verifyWrites = new WeakMap<SearchVerifyWriteExpectation, { job: JobLease; role: VerifyRole; model: string;
+  productId: number; member: VerifyMember; used: boolean; execution?: number }>();
+/** Binds the one execution whose ledger chain the writer must re-verify. Once only; this is not write authority. */
+export function sealSearchVerifyWriteExpectation(expectation: SearchVerifyWriteExpectation, execution: number): void {
+  const proof = verifyWrites.get(expectation);
+  if (!proof || proof.used || proof.execution !== undefined || !Number.isSafeInteger(execution) || execution < 0)
+    throw new Error("invalid_search_verify_write_expectation");
+  proof.execution = execution;
+}
+class SearchVerifyChanged extends Error { constructor() { super("search_verify_input_changed"); } }
+export type SearchVerifyPreparation = { kind: "disabled" } | { kind: "skipped" } | { kind: "expired" }
+  | { kind: "ready"; member: VerifyMember; role: VerifyRole; expectation: SearchVerifyWriteExpectation }
+  | { kind: "ready"; dispatch: import("@/lib/llm/capacity").SearchVerifyModelDispatch };
+async function lockVerifyRole(tx: ProductTransaction, lease: RoleLease): Promise<VerifyRole> {
+  const [row] = await tx.execute<{ raw: Record<string, unknown> }>(sql`SELECT to_jsonb(r) AS raw FROM role_leases r WHERE role=${lease.role} FOR SHARE`);
+  const raw = row?.raw;
+  if (!raw || raw.owner_instance_id !== lease.instanceId || raw.owner_boot_id !== lease.bootId || raw.owner_release !== lease.release
+    || raw.epoch !== lease.epoch || !["primary", "standby"].includes(String(raw.owner_kind))) throw new RoleLeaseLostError();
+  const role = searchVerifyDispatchBindingSchema.shape.role.parse({ role: lease.role, instanceId: lease.instanceId, bootId: lease.bootId,
+    release: lease.release, kind: raw.owner_kind, epoch: lease.epoch,
+    batch: lease.batchVersion === 1 ? { mode: "versioned", host: lease.host, batchEpoch: lease.batchEpoch } : { mode: "legacy" } });
+  await verifyRoleWall(tx, role);
+  return role;
+}
+async function verifyRoleWall(tx: ProductTransaction, role: VerifyRole): Promise<void> {
+  const [row] = await tx.execute<{ live: boolean }>(sql`SELECT EXISTS (SELECT 1 FROM role_leases WHERE role=${role.role}
+    AND owner_instance_id=${role.instanceId} AND owner_boot_id=${role.bootId} AND owner_release=${role.release}
+    AND owner_kind=${role.kind} AND epoch=${role.epoch} AND lease_until>clock_timestamp()) AS live`);
+  if (!row?.live) throw new RoleLeaseLostError();
+}
+async function finalVerifyWall(tx: ProductTransaction, role: VerifyRole, job: JobLease,
+  dispatch?: import("@/lib/llm/capacity").SearchVerifyModelDispatch): Promise<void> {
+  await assertJobLeaseAtWallTime(tx, job, "update");
+  await verifyRoleWall(tx, role);
+  if (!dispatch) return;
+  const [wall] = await tx.execute<{ live: boolean }>(sql`SELECT EXISTS (SELECT 1 FROM model_capacity_requests
+    WHERE request_id=${dispatch.requestId}::uuid AND token=${dispatch.token}::uuid AND state='dispatched'
+      AND owner_instance_id=${dispatch.owner.instanceId} AND owner_boot_id=${dispatch.owner.bootId}::uuid
+      AND epoch=${dispatch.epoch} AND revision=${dispatch.revision} AND policy_hash=${dispatch.policyHash}
+      AND dispatch_binding_hash=${dispatch.bindingHash} AND dispatch_binding=${JSON.stringify(dispatch.binding)}::text::jsonb
+      AND reserved_until>clock_timestamp()) AS live`);
+  if (!wall?.live) throw new Error("search_verify_model_reservation_lost");
+}
+type SearchVerifyPreparationOptions = { roleLease: RoleLease; keywords: readonly string[]; mode: "full" | "chunk";
+  call?: import("@/lib/crawl/agent-review-gateway").PreparedSearchVerifyGatewayCall;
+  reserved?: { reservation: import("@/lib/llm/capacity").ModelCapacityReservation; identity: import("@/lib/llm/capacity").ModelCapacityRequestIdentity;
+    input: import("@/lib/llm/capacity").SearchVerifyInput; role: VerifyRole; remainingMs: number } };
+/** Initial read and every reserved physical step share these domain checks; only the fixed ledger prefix differs.
+ * The shared deadline is fixed at the first step and never reset: a later step past it is expired, not timed out. */
+export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease: JobLease,
+  valueOptions: SearchVerifyPreparationOptions): Promise<SearchVerifyPreparation> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const snapshot = structuredClone(task), job = structuredClone(lease), roleLease = structuredClone(valueOptions.roleLease);
+  const keywords = z.array(z.string()).min(1).parse(structuredClone(valueOptions.keywords)), mode = valueOptions.mode;
+  const reserved = valueOptions.reserved && structuredClone(valueOptions.reserved), call = valueOptions.call;
+  if (job.name !== "product-search-verify") throw new Error("invalid_search_verify_capacity_job");
+  if (reserved && !call) throw new Error("search_verify_call_required");
+  let writer: Parameters<typeof verifyWrites.set>[1] | undefined;
+  try {
+    const prepared = await onPrimary(() => db.transaction(async (tx): Promise<SearchVerifyPreparation> => {
+      const lock = reserved ? await lockSearchVerifyModelCapacityDispatch(tx, reserved) : null;
+      if (reserved && !lock) throw new ModelCapacityDeferredError("reservation_lost");
+      const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
+      if (!reserved && control.mode === "disabled") return { kind: "disabled" };
+      if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
+      if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm"
+        && route.model === VERIFY_MODEL)) throw new ModelCapacityDeferredError("unmapped");
+      if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
+      await assertJobBatchAdmission(tx, job.name, roleLease);
+      const role = await lockVerifyRole(tx, roleLease);
+      if (!await lockProductGeneration(tx, snapshot.product.id, snapshot.product.slug)) throw new SearchVerifyChanged();
+      const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, snapshot.product.id));
+      if (!product || (product.status !== "seeded" && product.status !== "verified")) throw new SearchVerifyChanged();
+      const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+      const evidence = profileEvidence(product, reviewerNote), evidenceHash = profileHash(evidence);
+      if (evidenceHash !== profileHash(profileEvidence(snapshot.product, snapshot.reviewerNote))) throw new SearchVerifyChanged();
+      const [current] = await tx.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id)).for("update");
+      const [state] = await tx.execute<{ row: Record<string, unknown>; due: boolean }>(sql`SELECT to_jsonb(product_search_profiles) AS row,
+        (${verificationDueSql()}) AS due FROM product_search_profiles WHERE product_id=${product.id}`);
+      if (!current || !state?.due || !snapshot.profile || !sameProfile(current, snapshot.profile)) throw new SearchVerifyChanged();
+      const input = [...current.keywordsEn, ...current.keywordsKo];
+      if (!isDeepStrictEqual(input, keywords) || mode !== (["invalid_output", "timeout"].includes(current.verifyError ?? "") ? "chunk" : "full"))
+        throw new SearchVerifyChanged();
+      const member = searchVerifyMemberSchema.parse({ productId: product.id, slug: product.slug, evidenceHash,
+        profile: { rowIdentityHash: reviewHash(state.row), sourceRevision: current.sourceRevision, verifyAttempts: current.verifyAttempts },
+        keywordsHash: reviewHash(input), keywordCount: mode === "chunk" ? new Set(input).size : input.length, mode, policyHash: SEARCH_VERIFY_POLICY_HASH });
+      const [clock] = await tx.execute<{ now: number }>(sql`SELECT (extract(epoch from clock_timestamp())*1000)::float8 AS now`);
+      const nowMs = Math.floor(Number(clock.now));
+      if (!reserved) {
+        await finalVerifyWall(tx, role, job);
+        writer = { job, role, model: VERIFY_MODEL, productId: product.id, member, used: false };
+        return { kind: "ready", member, role, expectation: Object.freeze({ kind: "search_verify_write" as const }) };
+      }
+      if (!isDeepStrictEqual(member, reserved.input.member) || reserved.input.model !== VERIFY_MODEL || !isDeepStrictEqual(role, reserved.role)
+        || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId) throw new SearchVerifyChanged();
+      const sent = searchVerifyStepKeywords(mode === "chunk" ? [...new Set(input)] : input, reserved.input.step);
+      if (call!.model !== VERIFY_MODEL || call!.evidenceHash !== evidenceHash
+        || call!.keywordsHash !== createHash("sha256").update(JSON.stringify(sent)).digest("hex")) throw new SearchVerifyChanged();
+      const deadlineAt = lock!.parentDeadlineAt ?? nowMs + Math.max(1, Math.floor(reserved.remainingMs));
+      if (nowMs >= deadlineAt) return { kind: "expired" };
+      const value = reserved.input;
+      const binding = searchVerifyDispatchBindingSchema.parse({ ...value, kind: "search_verify_gateway", version: 1,
+        generationHash: searchVerifyGenerationHash(value), logicalWorkKey: searchVerifyLogicalWorkKey(value), inputHash: searchVerifyInputHash(value),
+        deadlineAt, provider: "abcllm", routeId: "product-search-verify", wireHash: call!.wireHash, servingContractHash: call!.servingContractHash,
+        totalTokenBound: call!.totalTokenBound, chargedTokens: call!.totalTokenBound, job, role });
+      const dispatch = await finishSearchVerifyModelCapacityDispatch(tx, lock!, binding);
+      await finalVerifyWall(tx, role, job, dispatch);
+      return { kind: "ready", dispatch };
+    }));
+    if (prepared.kind === "ready" && "expectation" in prepared) verifyWrites.set(prepared.expectation, writer!); // only after commit acknowledgement
+    return prepared;
+  } catch (error) {
+    if (error instanceof SearchVerifyChanged) return { kind: "skipped" };
+    if (error instanceof Error && error.message === "search_verify_model_reservation_lost") throw new ModelCapacityDeferredError("reservation_lost");
+    throw error;
+  }
+}
+
+/** One-use positive writer: raw profile row CAS (every column and microsecond), current text role and job wall, original attempts/backoff. */
+async function writeReservedVerificationResult(value: ProfileTask, job: JobLease, valueResult: VerificationResult,
+  expectation: SearchVerifyWriteExpectation): Promise<boolean> {
+  const proof = verifyWrites.get(expectation), task = structuredClone(value), lease = structuredClone(job), result = structuredClone(valueResult);
+  if (!proof || proof.used || proof.execution === undefined || !isDeepStrictEqual(lease, proof.job) || task.product.id !== proof.productId
+    || result.kind === "success" && (result.model !== proof.model || !Array.isArray(result.removed))
+    || result.kind === "failure" && typeof result.error !== "string" || !["success", "failure"].includes(result.kind))
+    throw new Error("invalid_search_verify_write_expectation");
+  proof.used = true;
+  const execution = proof.execution;
+  return onPrimary(() => db.transaction(async tx => {
+    // Stored/returned results are not authority: the settled ledger chain of the sealed execution must produce exactly this result.
+    const chain = await lockSearchVerifyResultChain(tx, { member: proof.member, model: proof.model, execution });
+    if (!(result.kind === "success" ? chain?.kind === "done" && isDeepStrictEqual([...chain.removed], result.removed)
+      : result.error === "invalid_output" ? chain?.kind === "stop" || chain?.kind === "unresolved"
+        : result.error === "timeout" ? chain?.kind === "open" || chain?.kind === "unresolved" : chain?.kind === "unresolved")) return false;
+    await tx.execute(sql`SELECT role FROM role_leases WHERE role=${proof.role.role} FOR SHARE`);
+    await verifyRoleWall(tx, proof.role);
+    const [product] = await tx.select(FIELDS).from(products).where(eq(products.id, proof.productId)).for("update");
+    if (!product || (product.status !== "seeded" && product.status !== "verified")) return false;
+    const [current] = await tx.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id)).for("update");
+    const [state] = await tx.execute<{ row: Record<string, unknown> | null }>(sql`SELECT
+      (SELECT to_jsonb(p) FROM product_search_profiles p WHERE p.product_id=${product.id}) AS row`);
+    if (!current || !state?.row || reviewHash(state.row) !== proof.member.profile.rowIdentityHash) return false;
+    const [{ reviewerNote }] = await tx.select({ reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, product.id));
+    const sourceHash = profileHash(profileEvidence(product, reviewerNote));
+    if (sourceHash !== current.sourceHash) {
+      await tx.update(productSearchProfiles).set({ needsRefresh: true,
+        sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1`, attempts: 0, errorCode: null, retryAt: null,
+      }).where(eq(productSearchProfiles.productId, product.id));
+      await finalVerifyWall(tx, proof.role, lease);
+      return false;
+    }
+    if (sourceHash !== proof.member.evidenceHash) return false;
+    if (result.kind === "success") {
+      const removed = new Set(result.removed);
+      await tx.update(productSearchProfiles).set({
+        verifiedAt: sql`now()`, removedKeywords: [...removed], verifyModel: result.model,
+        verifyError: null, verifyRetryAt: null, verifyAttempts: sql`${productSearchProfiles.verifyAttempts} + 1`,
+      }).where(eq(productSearchProfiles.productId, product.id));
+      await tx.update(products).set({
+        searchKeywords: keywordText(current.keywordsEn.filter((k) => !removed.has(k)), current.keywordsKo.filter((k) => !removed.has(k))),
+      }).where(eq(products.id, product.id));
+    } else {
+      const code = result.error.slice(0, 60);
+      const limited = isProfileProviderError(code);
+      await tx.update(productSearchProfiles).set({
+        verifyError: code,
+        updatedAt: sql`now()`,
+        verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,
+        verifyRetryAt: limited ? sql`now() + interval '30 minutes'`
+          : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.verifyAttempts}))`,
+      }).where(eq(productSearchProfiles.productId, product.id));
+    }
+    await finalVerifyWall(tx, proof.role, lease);
+    return true;
   }));
 }

@@ -31,6 +31,13 @@ vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
     kind: "result", result: await mocks.profile(profileEvidence(task.product, task.reviewerNote), options),
   }),
 }));
+vi.mock("@/lib/domain/products/search-verify-model-capacity", () => ({
+  verifyKeywordsWithModelCapacity: async (task: import("@/lib/domain/products/search-profiles").ProfileTask, _lease: unknown,
+    options: { timeoutMs: number; signal?: AbortSignal; request?: typeof fetch }) => ({ kind: "result",
+    result: await mocks.verify({ evidence: profileEvidence(task.product, task.reviewerNote), keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo] },
+      { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }),
+  }),
+}));
 vi.mock("@/lib/domain/products/search-verify", async (load) => ({ ...await load<typeof import("@/lib/domain/products/search-verify")>(),
   verifyKeywords: mocks.verify, verifyKeywordsInChunks: mocks.verify }));
 vi.mock("@/lib/crawl/translate", async (load) => ({ ...await load<typeof import("@/lib/crawl/translate")>(),
