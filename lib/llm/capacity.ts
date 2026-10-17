@@ -478,3 +478,79 @@ export const productTaglineKoGatewayTerminalEvidenceSchema = z.object({ version:
     && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_product_tagline_ko_terminal_usage");
 export type ProductTaglineKoGatewayTerminalEvidence = Readonly<z.infer<typeof productTaglineKoGatewayTerminalEvidenceSchema>>;
+
+/** Fixed crawl phases; shape/hash helpers never issue DB or native authority. */
+export const crawlTaglineCacheSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("absent") }).strict(),
+  z.object({ kind: z.literal("present"), rowIdentityHash: sha64, attempts: z.number().int().nonnegative().safe() }).strict(),
+]);
+export type CrawlTaglineCache = Readonly<z.infer<typeof crawlTaglineCacheSchema>>;
+export const crawlTaglineMemberSchema = z.object({ candidateId: positive, repo: identity(200), sourceHash: sha64,
+  candidateRowIdentityHash: sha64, documentRowIdentityHash: sha64, cache: crawlTaglineCacheSchema }).strict();
+export type CrawlTaglineMember = Readonly<z.infer<typeof crawlTaglineMemberSchema>>;
+export const crawlTaglineParentSchema = z.object({ requestId: z.uuid(), bindingHash: sha64, responseHash: sha64 }).strict();
+export type CrawlTaglineParent = Readonly<z.infer<typeof crawlTaglineParentSchema>>;
+const crawlTaglineInputObject = z.object({ member: crawlTaglineMemberSchema, model: identity(200),
+  askOrdinal: z.union([z.literal(1), z.literal(2)]), parent: crawlTaglineParentSchema.nullable() }).strict();
+export const crawlTaglineInputSchema = crawlTaglineInputObject.refine(value =>
+  (value.askOrdinal === 1) === (value.parent === null), "invalid_crawl_tagline_parent");
+export type CrawlTaglineInput = Readonly<z.infer<typeof crawlTaglineInputSchema>>;
+export function crawlTaglineMemberKeys(member: CrawlTaglineMember): string[] {
+  return [`crawl-tagline:${crawlTaglineMemberSchema.parse(member).candidateId}`];
+}
+export function crawlTaglineGenerationHash(value: Pick<CrawlTaglineInput, "member" | "model">): string {
+  const member = crawlTaglineMemberSchema.parse(value.member), model = identity(200).parse(value.model);
+  const { candidateId, repo, sourceHash, cache } = member;
+  return createHash("sha256").update(JSON.stringify(canonical({ version: 1, kind: "crawl_tagline_generation",
+    candidateId, repo, sourceHash, model, cache }))).digest("hex");
+}
+function crawlTaglinePhaseKey(generationHash: string, askOrdinal: 1 | 2): string {
+  return `text:crawl-tagline:${createHash("sha256").update(JSON.stringify(canonical({ version: 1, generationHash, askOrdinal }))).digest("hex")}`;
+}
+export function crawlTaglineLogicalWorkKey(value: CrawlTaglineInput): string {
+  const checked = crawlTaglineInputSchema.parse(value);
+  return crawlTaglinePhaseKey(crawlTaglineGenerationHash(checked), checked.askOrdinal);
+}
+export function crawlTaglineInputHash(value: CrawlTaglineInput): string {
+  return createHash("sha256").update(JSON.stringify(canonical(crawlTaglineInputSchema.parse(value)))).digest("hex");
+}
+export const crawlTaglineDispatchBindingSchema = crawlTaglineInputObject.extend({
+  kind: z.literal("crawl_tagline_gateway"), version: z.literal(1), generationHash: sha64,
+  logicalWorkKey: identity(160), inputHash: sha64, provider: z.literal("abcllm"), routeId: z.literal("crawl-tagline"),
+  wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
+  job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("crawl-tagline") }).strict(),
+  role: z.object({ ...reasonRoleIdentity, role: z.literal("text"), batch: z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("legacy") }).strict(), z.object({ mode: z.literal("versioned"),
+      host: z.enum(["m3", "mini", "oracle-osaka-smoke"]), batchEpoch: positive }).strict(),
+  ]) }).strict(),
+}).strict().refine(value => {
+  const checked = crawlTaglineInputSchema.safeParse({ member: value.member, model: value.model, askOrdinal: value.askOrdinal, parent: value.parent });
+  return checked.success && value.generationHash === crawlTaglineGenerationHash(checked.data)
+    && value.logicalWorkKey === crawlTaglineLogicalWorkKey(checked.data) && value.inputHash === crawlTaglineInputHash(checked.data)
+    && value.chargedTokens === value.totalTokenBound;
+}, "invalid_crawl_tagline_binding");
+export type CrawlTaglineDispatchBinding = Readonly<z.infer<typeof crawlTaglineDispatchBindingSchema>>;
+export function crawlTaglineDispatchBindingHash(value: CrawlTaglineDispatchBinding): string {
+  return createHash("sha256").update(JSON.stringify(canonical(crawlTaglineDispatchBindingSchema.parse(value)))).digest("hex");
+}
+export type CrawlTaglineModelDispatch = ModelCapacityDispatch & Readonly<{ binding: CrawlTaglineDispatchBinding; bindingHash: string }>;
+export const crawlTaglineModelDispatchSchema = handleSchema.extend({ binding: crawlTaglineDispatchBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === createHash("sha256").update(JSON.stringify(canonical(value.binding))).digest("hex"),
+    "invalid_crawl_tagline_binding_hash")
+  .refine(value => value.owner.instanceId === value.binding.role.instanceId && value.owner.bootId === value.binding.role.bootId,
+    "invalid_crawl_tagline_dispatch_owner")
+  .transform(value => value as unknown as CrawlTaglineModelDispatch);
+export const crawlTaglineOutcomeSchema = z.discriminatedUnion("ok", [
+  z.object({ ok: z.literal(true), tagline: z.string().max(200), source: z.enum(["page", "readme", "both"]) }).strict(),
+  z.object({ ok: z.literal(false), error: z.literal("invalid_output") }).strict(),
+]);
+export type CrawlTaglineOutcome = Readonly<z.infer<typeof crawlTaglineOutcomeSchema>>;
+export const crawlTaglineGatewayTerminalEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("crawl_tagline_gateway_terminal"),
+  dispatch: crawlTaglineModelDispatchSchema, finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]),
+  responseHash: sha64, actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(), provenance: z.enum(["upstream_reported", "unknown"]), outcome: crawlTaglineOutcomeSchema,
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported" && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_crawl_tagline_terminal_usage");
+export type CrawlTaglineGatewayTerminalEvidence = Readonly<z.infer<typeof crawlTaglineGatewayTerminalEvidenceSchema>>;

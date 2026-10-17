@@ -157,28 +157,34 @@ export function parseTagline(content: string, evidence: TaglineEvidence): Taglin
   return { ok: true, tagline: tidyTagline(String(value)), source };
 }
 
+/** The original ordered wire, shared without changing its prompt or evidence bytes. */
+export function crawlTaglineGatewayWire(evidence: TaglineEvidence, model: string): string {
+  // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
+  const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  return JSON.stringify({
+    context_strategy: "raw",
+    model, stream: false, temperature: 0, max_tokens: 400,
+    reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
+    response_format: { type: "json_schema", json_schema: { name: "tagline", schema: SCHEMA } },
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: `<untrusted_evidence_json>\n${prompt}\n</untrusted_evidence_json>` },
+    ],
+  });
+}
+
 export async function writeTagline(evidence: TaglineEvidence, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<TaglineResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
   await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? TAGLINE_MODEL });
-  // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
-  const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  const wire = crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL);
   try {
     const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        context_strategy: "raw",
-        model: options.model ?? TAGLINE_MODEL, stream: false, temperature: 0, max_tokens: 400,
-        reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
-        response_format: { type: "json_schema", json_schema: { name: "tagline", schema: SCHEMA } },
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: `<untrusted_evidence_json>\n${prompt}\n</untrusted_evidence_json>` },
-        ],
-      }),
+      body: wire,
       signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, options.timeoutMs))]) : AbortSignal.timeout(Math.max(1, options.timeoutMs)),
     });
     if (!response.ok) {
