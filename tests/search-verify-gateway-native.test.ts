@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
+import type { Socket } from "node:net";
 import { afterEach, expect, it, vi } from "vitest";
 import { parseVerification, verifyKeywords, type VerifyItem } from "@/lib/domain/products/search-verify";
 import { profileHash } from "@/lib/domain/products/search-profile";
@@ -49,13 +50,15 @@ function send(...args: Parameters<typeof verifyKeywordsWithReservedGateway>) {
   const pending = verifyKeywordsWithReservedGateway(...args); requests.add(pending); void pending.catch(() => {}); return pending;
 }
 async function server(run: (state: { bodies: string[]; reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>) {
-  const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
+  const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [], unused = new Set<Socket>();
   let reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope(answer(item().keywords, ["membership bonuses"])))); };
   const http = createServer((request, response) => {
+    unused.delete(request.socket);
     const closed = new Promise<void>(resolve => response.once("close", resolve));
     const pending = (async () => { let body = ""; for await (const part of request) body += part.toString(); bodies.push(body); reply(response); await closed; })();
     responses.add(pending); void pending.catch(() => {});
   });
+  http.on("connection", socket => { unused.add(socket); socket.once("close", () => unused.delete(socket)); });
   let failed = false, original: unknown, watchdog: ReturnType<typeof setTimeout> | undefined;
   try {
     await new Promise<void>((resolve, reject) => { http.once("error", reject); http.listen(0, "127.0.0.1", resolve); });
@@ -69,6 +72,8 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     fixture.contract = null;
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
+      // 중단된 소켓을 다시 잇는 undici 풀이 요청 없이 남긴 예비 연결은 server.close()가 유휴로 치지 않으므로 호출이 끝난 뒤 닫는다.
+      for (const socket of unused) socket.destroy();
       const close = http.listening ? new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())) : Promise.resolve();
       for (const result of await Promise.allSettled([close, ...responses])) if (result.status === "rejected") errors.push(result.reason);
     } finally { clearTimeout(watchdog); }
