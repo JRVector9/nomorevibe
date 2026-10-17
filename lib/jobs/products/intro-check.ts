@@ -1,6 +1,7 @@
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
+import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introEvidence } from "@/lib/domain/products/intro-check";
 import { checkIntrosWithModelCapacity } from "@/lib/domain/products/intro-check-model-capacity";
 import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/lib/domain/products/intro-checks";
@@ -57,6 +58,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       const recorded = await recordIntroCheck(task, lease, outcome);
       if (recorded) counts[recorded]++;
     }
+    reportProviderOutcome(result);
     if (!result.ok && STOP.has(result.error)) {
       ctx.log("intro_check.blocked", { ...counts, error: result.error });
       return { done: true };

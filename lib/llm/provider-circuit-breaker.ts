@@ -95,10 +95,14 @@ export function createProviderCircuits(config: Extract<ProviderCircuitConfig, { 
   } };
 }
 
-/** 배경 consumer 줄의 한 틱 안에서만 gateway 전송 결과를 그 줄의 회로에 알린다(capacity-consumer-scope 와 같은 범위 표시) */
+/** 배경 consumer 줄의 한 틱 안에서만 gateway 전송 결과·CLI 호출 결과를 그 줄의 회로에 알린다(capacity-consumer-scope 와 같은 범위 표시) */
 const outcomeScope = new AsyncLocalStorage<(result: ProviderResult) => void>();
 export function withProviderOutcome<T>(record: (result: ProviderResult) => void, run: () => Promise<T>): Promise<T> {
   return outcomeScope.run(record, run);
+}
+/** 배경 CLI 줄(소개 검수·Claude 감사)이 판정한 CLI 결과(PR06f). 범위 밖이면 아무것도 하지 않는다 */
+export function reportProviderOutcome(result: ProviderResult): void {
+  outcomeScope.getStore()?.(result);
 }
 /**
  * 전송 단계 결과(응답 상태·연결 실패·deadline). 범위 밖이면 같은 Promise 를 그대로 돌려준다 — 기존 호출 그대로다.
