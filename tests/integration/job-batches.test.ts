@@ -7,7 +7,7 @@ import { db } from '@/lib/db';
 import { runJob } from '@/lib/jobs/runner';
 import { jobsForRole } from '@/lib/jobs/catalog';
 import { requestJob } from '@/lib/jobs/control';
-import { batchPolicyHash } from '@/lib/jobs/batches';
+import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 const client = postgres(TEST_DATABASE_URL,{max:2});
@@ -19,7 +19,7 @@ let baseline: Record<string,unknown[]>;
 const ownItemKeys=new Set<string>();
 let setup:Promise<void>|undefined;
 let cleaning:Promise<void>|undefined;
-const ownObservationKeys = [...names.map(name=>`job:${name}`),...['pr10-oracle','pr10-m3','pr10-mini'].flatMap(id=>names.map(name=>`batch-result:${id}:${name}`))];
+const ownObservationKeys = [...['pr10-oracle','pr10-m3','pr10-mini'].map(id=>batchCanaryAnchorKey('translation',id)),...names.map(name=>`job:${name}`),...['pr10-oracle','pr10-m3','pr10-mini'].flatMap(id=>names.map(name=>`batch-result:${id}:${name}`))];
 const tables = ['jobs','role_leases','job_batch_control','job_batch_candidates','pipeline_item_leases','pipeline_stage_modes','operations_observations'] as const;
 const policy = {version:1 as const,release:'pr10-test',instances:[{instanceId:'pr10-oracle',host:'oracle-osaka-smoke' as const},{instanceId:'pr10-m3',host:'m3' as const},{instanceId:'pr10-mini',host:'mini' as const}]};
 async function snapshot() {

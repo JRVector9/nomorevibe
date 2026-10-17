@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
-import { batchJobsForRole, batchPolicyHash, batchPolicySchema, classifyBatchReadiness } from '@/lib/jobs/batches';
+import { batchJobsForRole, batchPolicyHash, batchPolicySchema, classifyBatchReadiness, classifyBatchCandidateEvidence, batchCanaryAnchorKey } from '@/lib/jobs/batches';
 import { assertJobBatchAdmission, JobBatchBlockedError, lockJobBatch } from '@/lib/jobs/batch-repository';
 import { assertRoleLease, roleLeaseFromEnv, RoleLeaseLostError } from '@/lib/jobs/role-leader';
 import { serviceInstanceId } from '@/lib/operations/instance';
@@ -125,9 +125,14 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
     }
     const names = batchJobsForRole(role, 'versioned');
     const observations = await tx.execute<{ key: string; value: unknown }>(sql`SELECT key,value FROM operations_observations
-      WHERE key=ANY(${names.map(name => `batch-result:${instance}:${name}`)}) ORDER BY key`);
+      WHERE key=ANY(${[batchCanaryAnchorKey(role,instance),...names.map(name => `batch-result:${instance}:${name}`)]}) ORDER BY key`);
     report.workload.reason = 'canary_unknown';
-    for (const observation of observations) {
+    const anchorKey=batchCanaryAnchorKey(role,instance), anchor=observations.find(row=>row.key===anchorKey);
+    const selected=classifyBatchCandidateEvidence({candidate:{...candidate.data,role,host:'oracle-osaka-smoke'},controlEpoch:control.epoch,
+      at,anchor:anchor?.value,latest:observations.filter(row=>row.key!==anchorKey).map(row=>({key:row.key,result:object(row.value)?.batchResult}))});
+    if(!selected.report.ready) report.workload.reason=selected.report.reason;
+    const selectedObservations=selected.selectedResult ? [{key:`batch-result:${instance}:${selected.selectedResult.job}`,value:{batchResult:selected.selectedResult}}] : [];
+    for (const observation of selectedObservations) {
       const result = object(object(observation.value)?.batchResult), capability = object(candidate.data.capability);
       if (!result || !names.includes(String(result.job)) || observation.key !== `batch-result:${instance}:${result.job}`
         || result.role !== role || result.bootId !== candidate.data.bootId || result.batchEpoch !== control.epoch

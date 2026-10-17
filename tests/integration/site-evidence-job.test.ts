@@ -8,7 +8,7 @@ import { runJob } from '@/lib/jobs/runner';
 import { requestJob, type JobLease, JobLeaseLostError } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { beginJobBatchDrain, completeJobBatchTransition } from '@/lib/jobs/batch-repository';
-import { batchPolicyHash, classifyBatchReadiness } from '@/lib/jobs/batches';
+import { batchCanaryAnchorKey, batchPolicyHash, classifyBatchReadiness } from '@/lib/jobs/batches';
 import { refreshSiteEvidenceJob } from '@/lib/jobs/products/site-evidence-refresh';
 import { refreshProductEvidenceJob, type EvidenceRefreshCursor } from '@/lib/jobs/products/evidence-refresh';
 import { claimCanonicalEvidenceSource, renewCanonicalEvidenceSource, recordCanonicalEvidenceSource,
@@ -38,7 +38,7 @@ let tables: string[] = [], baseline: Record<string, Record<string, unknown>[]>, 
 let setup: Promise<void> | undefined, cleaning: Promise<void> | undefined;
 const owned: Array<{ productId: number; slug: string; url: string }> = [];
 const claimKeys = new Set<number>(), requestKeys = new Set<number>();
-const observationKeys = [`job:${oldJob}`, `job:${siteJob}`, `batch-result:${prefix}:${siteJob}`];
+const observationKeys = [batchCanaryAnchorKey('site-evidence',prefix),`job:${oldJob}`, `job:${siteJob}`, `batch-result:${prefix}:${siteJob}`];
 const managed: Array<[string, string, string | number]> = [
   ['job_batch_control', 'id', 1], ['evidence_source_control', 'id', 1], ['evidence_settings', 'id', 1],
   ...names.map(name => ['jobs', 'name', name] as [string, string, string]),

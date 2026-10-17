@@ -1,7 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { jobBatchCandidates, jobBatchControl, operationsObservations } from '@/lib/db/schema';
-import { batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_HOSTS, BATCH_ROLES, classifyBatchReadiness, type BatchHost, type BatchRole } from '@/lib/jobs/batches';
+import { batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_HOSTS, BATCH_ROLES, classifyBatchCandidateEvidence, batchCanaryAnchorKey, type BatchHost, type BatchRole } from '@/lib/jobs/batches';
 
 /** Read-only evidence report. Neither installation nor a heartbeat creates capability/canary evidence. */
 export async function readJobBatchReadiness() {
@@ -20,10 +20,11 @@ export async function readJobBatchReadiness() {
         rows.push({role:candidate.role,instanceId:candidate.instanceId,host:candidate.host,release:candidate.release,ready:false,reason:'identity_mismatch'});continue;
       }
       const names=batchJobsForRole(role,'versioned');
-      const observations=names.length ? await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,names.map(name=>`batch-result:${candidate.instanceId}:${name}`))) : [];
-      const reports=[null,...observations.map(row=>row.value.batchResult)].map(result=>classifyBatchReadiness({role,instanceId:candidate.instanceId,
-        host:candidate.host as BatchHost,release:candidate.release,at:new Date(clock.at).getTime(),evidence:candidate.capability,result,readback:candidate.resultEvidence}));
-      const report=reports.find(row=>row.ready) ?? reports.at(-1)!;
+      const anchorKey=batchCanaryAnchorKey(role,candidate.instanceId);
+      const observations=await tx.select().from(operationsObservations).where(inArray(operationsObservations.key,[anchorKey,...names.map(name=>`batch-result:${candidate.instanceId}:${name}`)]));
+      const anchor=observations.find(row=>row.key===anchorKey);
+      const {report}=classifyBatchCandidateEvidence({candidate:{...candidate,role,host:candidate.host as BatchHost},controlEpoch:control.epoch,
+        at:new Date(clock.at).getTime(),anchor:anchor?.value,latest:observations.filter(row=>row.key!==anchorKey).map(row=>({key:row.key,result:row.value.batchResult}))});
       rows.push({role,instanceId:candidate.instanceId,host:candidate.host,release:candidate.release,...report});
     }
     const missing=BATCH_ROLES.flatMap(role=>BATCH_HOSTS.filter(host=>!rows.some(row=>row.role===role && row.host===host && row.ready)).map(host=>({role,host})));
