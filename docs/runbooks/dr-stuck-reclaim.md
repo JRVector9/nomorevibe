@@ -10,7 +10,9 @@ TTL·owner 죽음·재시작·정책 변경·drain으로 풀리지 않는다. �
 1. **시간 경과는 근거가 아니다.** 근거는 두 가지뿐이다.
    - `process_group_exit`(모델·HTTP): 행 owner(instance, boot)의 `dr_process_group_events`에서 `owner_opened`가 dispatch보다 앞서고,
      spawn 의도 번호에 공백이 없고, dispatch 시각까지 의도가 기록된 모든 child가 `spawned`와 `group_exited`를 가진다.
-     `group_exited`는 슈퍼바이저가 그룹 SIGKILL 뒤 ESRCH를 직접 본 경우에만 쓴다. 기준 시각은 마지막 `group_exited`다.
+     `group_exited`는 슈퍼바이저가 그룹 SIGKILL 뒤 ESRCH를 직접 본 경우(`method=pgid_esrch_after_sigkill`), 또는 0101(PR15f) 뒤
+     같은 instance의 후속 boot가 같은 커널 boot·같은 PID namespace에서 ESRCH를 직접 본 경우(`method=pgid_esrch_by_successor`, 아래 7)에만 쓴다.
+     기준 시각은 마지막 `group_exited`다.
    - `local_call_ended`(모델만, 0099): `indeterminate` 행에 같은 owner·dispatch binding이 남긴 `dispatch_local_ended` 사실. 기준 시각은 그 사실의 기록 시각(DB clock)이다.
 2. **근거가 있어도 provider 정책을 따른다.** `notBefore` = 기준 시각 + (provider_bound면 hard deadline D) + skew.
    - `--client-bound=<budget>`: 호출한 프로세스 쪽 연결이 끝나면 provider 점유도 끝나는 budget에만 쓴다.
@@ -24,12 +26,23 @@ TTL·owner 죽음·재시작·정책 변경·drain으로 풀리지 않는다. �
 4. **group 근거를 남기는 프로세스는 정해져 있다.** role-worker가 띄운 child와 켜진(`PIPELINE_ITEM_CONSUMER_VERSION=1`) AI1/AI2 consumer 슈퍼바이저의 child뿐이다.
    웹처럼 기록기가 없는 프로세스의 행·hop은 group 근거가 없다(`owner_not_opened_before_dispatch`).
    슈퍼바이저가 함께 죽으면(컨테이너 제거·host 정지 등) `group_exited`가 남지 않아 그 boot의 행은 `spawn_not_exited:<seq>`로 계속 남는다.
+   예외는 7의 후속 관측뿐이다.
 5. **로컬 종료 사실은 좁다.** `MODEL_CAPACITY_LOCAL_END=1`인 프로세스의 reserved 게이트웨이 호출(`lib/crawl/agent-review-gateway.ts`)이
    `indeterminate`로 표시될 때, fetch가 끝나고 시작된 native dispatch(1개 이상)가 모두 종료 callback(`onResponseEnd`/`onResponseError`)을 냈을 때만 남는다.
    기록 실패는 무시되고 그 행은 근거 없이 점유를 유지한다. `dispatched`로 남은 행에는 생기지 않는다.
    로컬 종료는 provider 쪽 생성 종료가 아니라서 2의 정책 판정을 따로 거친다.
 6. **HTTP hop owner는 `SERVICE_INSTANCE_ID`다.** child는 슈퍼바이저가 넘긴 owner instance(`PROCESS_GROUP_OWNER_INSTANCE_ID`)가 자기 `SERVICE_INSTANCE_ID`와 같을 때만
    그 boot를 hop에 쓴다. 다르면 새 boot라 그 hop은 group 근거를 갖지 못한다(아래 열린 결정).
+7. **후속 관측(PR15f, 기본 꺼짐).** role-worker에 `PROCESS_GROUP_SUCCESSOR_PROBE=1`(미설정/`0`=꺼짐, 다른 값은 시작 실패)을 주면,
+   그 boot는 `owner_opened`에 자기 attestation(`/proc/sys/kernel/random/boot_id`, `/proc/self/ns/pid` inode)을 남기고 boot 직후 한 번
+   같은 `SERVICE_INSTANCE_ID`의 옛 boot 중 **attestation 두 값이 모두 같은** boot의 `spawned` 기록마다 종료가 없으면 `kill(-pid,0)`을 직접 호출해
+   ESRCH일 때만 그 옛 owner의 `group_exited`(`method=pgid_esrch_by_successor`, `detail`=관측 boot·커널·namespace)를 남긴다. 살아 있으면(EPERM 포함) 쓰지 않는다.
+   - 성립하는 곳: Oracle systemd unit(컨테이너 없이 호스트 PID namespace)이 같은 커널에서 재시작한 경우(프로세스 crash·OOM kill·`systemctl restart`).
+   - 성립하지 않는 곳: M3·mini Docker Swarm(재시작마다 새 컨테이너·새 PID namespace라 보통 두 값이 다르다 — 기록하지 않을 뿐 해가 없다),
+     호스트·Docker VM 재부팅(커널 boot가 바뀜), 켜기 전에 시작한 boot(attestation 없음).
+   - 판정은 후속 관측 종료가 옛 owner의 attestation과 같은 커널·namespace에서 나왔을 때만 센다(아니면 `exit_unverified:<seq>`).
+     같은 seq를 슈퍼바이저가 이미 남겼으면 후속 boot는 쓰지 않는다. 결과는 로그 `role.process_group_successor_probe`(recorded·alive 수) 한 줄이다.
+   - 한계는 D11과 같다: 자손이 `setsid`/`setpgid`로 그룹을 떠나면 놓친다. `/proc`가 커널 사실이 아닌 환경(gVisor 등)·같은 boot_id 커널이 둘 뜨는 VM 메모리 복제는 가정 밖이다.
 
 ## 실행 환경
 
@@ -69,6 +82,7 @@ printf '%s' "$DR_DATABASE_URL" | node --import tsx scripts/ops/dr/promotion.ts r
 | `no_spawn_before_dispatch` | dispatch 시각까지 기록된 의도 없음 |
 | `spawn_not_exited:<seq>` | 그 child 그룹의 종료 기록 없음(살아 있거나 슈퍼바이저가 기록하지 못함) |
 | `spawned_record_missing:<seq>` / `exit_mismatch:<seq>` | spawned·종료 기록이 의도와 맞지 않음 |
+| `exit_unverified:<seq>` | 후속 boot가 남긴 종료(`pgid_esrch_by_successor`)가 옛 owner의 attestation과 다른 커널·namespace의 것이거나 옛 owner에 attestation이 없음 |
 | `local_end_state_mismatch` / `local_end_owner_mismatch` / `local_end_binding_mismatch` | 로컬 종료 사실이 `dispatched` 행에 있거나 다른 owner·binding의 것 |
 
 ## reclaim (기본 dry-run)
@@ -119,13 +133,26 @@ printf '%s' "$DR_DATABASE_URL" | node --import tsx scripts/ops/dr/promotion.ts r
    호출부는 이를 일반 전송 실패(`network`·`gateway_error`)로 받아 그 행을 `indeterminate`로 표시한다. 사실도 남지 않아 호출마다 근거 없는 점유가 쌓이므로 값이 정확히 `1`인지 확인한다.
    0099 전에는 `dispatch_local_ended`가 kind CHECK에 막히고 그 오류는 삼켜져 근거가 생기지 않는다.
    다시 끄면 새 사실만 멈추고, 이미 남은 사실은 append-only로 남아 `reclaim`이 계속 근거로 쓴다.
+5. **0101(PR15f) 적용 → 코드 → Oracle에만 `PROCESS_GROUP_SUCCESSOR_PROBE=1`.** 0101은 `dr_process_group_events`에 nullable `detail` 열을 더하고
+   method CHECK를 drop/add(0095 술어 whole-left + `pgid_esrch_by_successor`)하며 새 `dr_process_group_events_detail_check`를 만든다(작은 표 ACCESS EXCLUSIVE·재검증).
+   1과 같은 drain 절차로 한 번 실행한다. 이 코드의 `reclaim-report`/`reclaim`은 `detail` 열을 읽으므로 **0101이 먼저**다(기록기는 flag가 꺼져 있으면 예전과 같은 INSERT).
+   Oracle 최소 권한은 표 전체 SELECT/INSERT라 grant는 그대로지만 열이 늘어 preflight/canary의 privilege catalog hash가 바뀐다 — 기존 migration 뒤 절차대로 canary를 다시 기록한다.
+   그 뒤 Oracle role unit env 파일에 `PROCESS_GROUP_SUCCESSOR_PROBE=1`을 넣고 unit을 하나씩 재시작한다. 켠 뒤 시작한 boot부터 attestation이 남는다.
+
+   ```sql
+   -- 1행이면 0101 적용됨
+   SELECT conname FROM pg_constraint WHERE conname = 'dr_process_group_events_detail_check';
+   ```
 
 ## 열린 결정
 
 - **AI2 consumer instance id 일치 강제 여부.** AI1 consumer(`scripts/pipeline-first-consumer.ts`)는 `PIPELINE_ITEM_CONSUMER_INSTANCE_ID`가 `SERVICE_INSTANCE_ID`와 다르면
   시작하지 않는다(`invalid_item_consumer_service_instance`). AI2 consumer(`scripts/pipeline-consumer.ts`)는 강제하지 않는다.
   두 값이 다르면 AI2 child의 장부 행은 기록된 boot를 쓰지만 HTTP hop은 새 boot를 받아 group 근거로 회수되지 않는다. 강제할지는 아직 정하지 않았다.
+- **M3·mini 컨테이너 사망·호스트 재부팅(PR15f 범위 밖).** 컨테이너 안에서는 옛 PID namespace의 소멸이나 "같은 기계"를 증명할 수단이 없다.
+  Docker `die` event를 기록하는 신뢰 구성요소, 운영자 서명 근거, Oracle IMDS instance OCID + boot_id 변경 중 무엇을 쓸지 정하지 않았다.
 
 ## 이 도구가 증명하지 않는 것
 
-provider 쪽 생성 종료·실제 사용량, 운영자가 선언한 D·client_bound의 사실성(reference는 기록만 한다), 슈퍼바이저가 기록하지 못한 종료, 기록기 없는 프로세스의 호출 종료.
+provider 쪽 생성 종료·실제 사용량, 운영자가 선언한 D·client_bound의 사실성(reference는 기록만 한다), 슈퍼바이저도 후속 boot도 기록하지 못한 종료
+(다른 커널·다른 PID namespace에서 다시 뜬 경우 포함), 기록기 없는 프로세스의 호출 종료, `setsid`로 그룹을 떠난 자손.

@@ -9,6 +9,7 @@ import { dbNowIso, identity, lockWriterFence, readDatabaseIdentity, sameDatabase
 import { contentHash, evaluatePromotion, parseEvidence, promotionPlanHash, promotionPlanSchema, sealSnapshotSchema,
   EVIDENCE_KINDS, type EvidenceKind, type EvidenceRecord, type PromotionEvaluation, type PromotionPlan, type PromotionRecord } from "./promotion";
 import { evaluateProcessReclaim, type ProcessGroupEvent, type ReclaimPolicy } from "./call-drain";
+import { processAttestationSchema, SUCCESSOR_EXIT_METHOD, type ProcessAttestation } from "./process-attestation";
 
 const fail = (code: string): never => { throw new Error(code); };
 /** DR 쓰기는 항상 primary의 짧은 자체 TX다. replay scope에서는 열지 않는다. */
@@ -184,9 +185,12 @@ export function processGroupGone(pid: number): boolean {
 }
 /** role-worker boot마다 child보다 먼저 한 번. 이 기록 이전에 dispatch된 행은 이 근거로 회수하지 않는다.
  * 멱등이다(commit 결과를 모른 재시도가 첫 기록 시각을 바꾸지 않는다). */
-export async function openProcessGroupOwner(ownerValue: ProcessOwner): Promise<void> {
-  const owner = processOwnerSchema.parse(ownerValue);
-  await drTransaction(tx => tx.execute(sql`INSERT INTO dr_process_group_events (owner_instance_id, owner_boot_id, kind, seq)
+export async function openProcessGroupOwner(ownerValue: ProcessOwner, attestationValue: ProcessAttestation | null = null): Promise<void> {
+  const owner = processOwnerSchema.parse(ownerValue), attestation = attestationValue === null ? null : processAttestationSchema.parse(attestationValue);
+  // PR15f: attestation(이 boot 의 커널·PID namespace)은 owner_opened 와 같은 행이다. 없으면 detail 열을 쓰지 않는다(0101 전 DB 와 같은 INSERT).
+  await drTransaction(tx => tx.execute(attestation ? sql`INSERT INTO dr_process_group_events (owner_instance_id, owner_boot_id, kind, seq, detail)
+    VALUES (${owner.instanceId}, ${owner.bootId}::uuid, 'owner_opened', 0, ${JSON.stringify(attestation)}::text::jsonb)
+    ON CONFLICT (owner_instance_id, owner_boot_id, kind, seq) DO NOTHING` : sql`INSERT INTO dr_process_group_events (owner_instance_id, owner_boot_id, kind, seq)
     VALUES (${owner.instanceId}, ${owner.bootId}::uuid, 'owner_opened', 0)
     ON CONFLICT (owner_instance_id, owner_boot_id, kind, seq) DO NOTHING`));
 }
@@ -230,33 +234,79 @@ export async function recordGroupExited(ownerValue: ProcessOwner, spawn: { seq: 
   });
 }
 
+export type SuccessorExit = Readonly<{ bootId: string; seq: number; runId: string; pid: number }>;
+export type SuccessorProbeResult = Readonly<{ recorded: SuccessorExit[]; alive: number }>;
+/**
+ * PR15f: supervisor 가 child 와 함께 죽어(컨테이너·OOM·unit 재시작) group_exited 를 남기지 못한 옛 boot 의 child 그룹을, 같은 instance 의 후속 boot 가
+ * 직접 kill(-pgid,0)=ESRCH 로 관측해 그 옛 owner 의 group_exited 로 남긴다. 대상은 attestation 이 이 boot 와 같은(같은 커널 boot·같은 PID namespace)
+ * 옛 owner 의 spawned 기록 중 종료가 없는 것뿐이다. 살아 있거나(EPERM 포함) 다른 namespace 면 쓰지 않는다. 시간 경과는 근거가 아니다.
+ * 이 boot 가 같은 attestation 으로 owner_opened 를 먼저 commit 했어야 한다. 같은 instance 의 관측자끼리는 advisory lock 으로 직렬화한다.
+ */
+export async function recordSuccessorExits(ownerValue: ProcessOwner, attestationValue: ProcessAttestation,
+  probe: (pid: number) => boolean = processGroupGone): Promise<SuccessorProbeResult> {
+  const owner = processOwnerSchema.parse(ownerValue), attestation = processAttestationSchema.parse(attestationValue);
+  const attested = JSON.stringify(attestation);
+  return drTransaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${JSON.stringify(["dr_process_group_successor", owner.instanceId])}, 0))`);
+    const [self] = await tx.execute(sql`SELECT 1 FROM dr_process_group_events WHERE owner_instance_id = ${owner.instanceId} AND owner_boot_id = ${owner.bootId}::uuid
+      AND kind = 'owner_opened' AND detail = ${attested}::text::jsonb`);
+    if (!self) fail("dr_process_owner_not_attested");
+    const candidates = await tx.execute<{ boot_id: string; seq: number; run_id: string; pid: number }>(sql`
+      SELECT s.owner_boot_id::text AS boot_id, s.seq, s.run_id::text AS run_id, s.pid FROM dr_process_group_events s
+      JOIN dr_process_group_events o ON o.owner_instance_id = s.owner_instance_id AND o.owner_boot_id = s.owner_boot_id AND o.kind = 'owner_opened'
+      WHERE s.owner_instance_id = ${owner.instanceId} AND s.owner_boot_id <> ${owner.bootId}::uuid AND s.kind = 'spawned' AND o.detail = ${attested}::text::jsonb
+        AND NOT EXISTS (SELECT 1 FROM dr_process_group_events x WHERE x.owner_instance_id = s.owner_instance_id AND x.owner_boot_id = s.owner_boot_id
+          AND x.kind = 'group_exited' AND x.seq = s.seq)
+      ORDER BY s.id LIMIT 4096`);
+    const recorded: SuccessorExit[] = [];
+    let alive = 0;
+    const detail = JSON.stringify({ version: 1, observerBootId: owner.bootId, kernelBootId: attestation.kernelBootId, pidNamespace: attestation.pidNamespace });
+    for (const row of candidates) {
+      const pid = Number(row.pid);
+      // 관측 직후에만 쓴다. 같은 seq 를 옛 supervisor 가 늦게라도 남겼으면 그 기록을 그대로 둔다.
+      if (!probe(pid)) { alive++; continue; }
+      const inserted = await tx.execute(sql`INSERT INTO dr_process_group_events (owner_instance_id, owner_boot_id, kind, seq, run_id, pid, method, detail)
+        VALUES (${owner.instanceId}, ${row.boot_id}::uuid, 'group_exited', ${Number(row.seq)}, ${row.run_id}::uuid, ${pid}, ${SUCCESSOR_EXIT_METHOD}, ${detail}::text::jsonb)
+        ON CONFLICT (owner_instance_id, owner_boot_id, kind, seq) DO NOTHING RETURNING seq`);
+      if (inserted.length === 1) recorded.push({ bootId: row.boot_id, seq: Number(row.seq), runId: row.run_id, pid });
+    }
+    return { recorded, alive };
+  });
+}
+
 export type SpawnRecord = Readonly<{ seq: number; runId: string }>;
 /** worker-supervisor가 child마다 쓰는 D11 기록기. intent가 commit되지 않으면 spawn하지 않고, exited는 그룹 SIGKILL 뒤에만 부른다. */
 export type ProcessGroupRecorder = Readonly<{ intent: () => Promise<SpawnRecord>; spawned: (spawn: SpawnRecord, pid: number) => Promise<void>;
   exited: (spawn: SpawnRecord, pid: number) => Promise<void>;
   /** 기록 owner. 슈퍼바이저가 child env 로만 넘겨 child 의 장부 행·HTTP hop 이 같은 owner 로 남게 한다(PR15d). */
-  owner?: ProcessOwner }>;
-/** role-worker boot 하나(=모델 장부 owner)의 기록기. owner_opened는 첫 intent 직전에 한 번 쓴다 — 이 boot의 장부 행은 child가 생긴 뒤에만 생긴다. */
-export function processGroupRecorder(ownerValue: ProcessOwner): ProcessGroupRecorder {
+  owner?: ProcessOwner;
+  /** PR15f: attestation 이 있을 때만. owner_opened(attestation 포함)를 먼저 commit 한 뒤 같은 instance 의 옛 boot 그룹 종료를 관측한다. */
+  probePredecessors?: () => Promise<SuccessorProbeResult> }>;
+/** role-worker boot 하나(=모델 장부 owner)의 기록기. owner_opened는 첫 intent(또는 PR15f 후속 관측) 직전에 한 번 쓴다 — 이 boot의 장부 행은 child가 생긴 뒤에만 생긴다. */
+export function processGroupRecorder(ownerValue: ProcessOwner, options: { attestation?: ProcessAttestation | null } = {}): ProcessGroupRecorder {
   const owner = processOwnerSchema.parse(ownerValue);
+  const attestation = options.attestation ? processAttestationSchema.parse(options.attestation) : null;
   let opened: Promise<void> | null = null;
+  const open = () => (opened ??= openProcessGroupOwner(owner, attestation).catch(error => { opened = null; throw error; }));
   return Object.freeze({
     owner,
     intent: async () => {
-      opened ??= openProcessGroupOwner(owner).catch(error => { opened = null; throw error; });
-      await opened;
+      await open();
       return recordSpawnIntent(owner);
     },
     spawned: (spawn: SpawnRecord, pid: number) => recordSpawned(owner, spawn, pid),
     exited: (spawn: SpawnRecord, pid: number) => recordGroupExited(owner, spawn, pid),
+    ...(attestation ? { probePredecessors: async () => { await open(); return recordSuccessorExits(owner, attestation); } } : {}),
   });
 }
 /** owner의 근거 행 전체(기록 순서). 시각은 같은 DB clock, ms 절삭이다. */
 export async function readProcessGroupEvents(tx: ProductTransaction, owner: ProcessOwner): Promise<ProcessGroupEvent[]> {
-  return Array.from(await tx.execute<{ kind: ProcessGroupEvent["kind"]; seq: number; run_id: string | null; pid: number | null; at: string }>(sql`
-    SELECT kind, seq, run_id::text, pid, ${sql.raw(`to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`)} AS at FROM dr_process_group_events
+  return Array.from(await tx.execute<{ kind: ProcessGroupEvent["kind"]; seq: number; run_id: string | null; pid: number | null; at: string;
+    method: string | null; detail: unknown }>(sql`
+    SELECT kind, seq, run_id::text, pid, ${sql.raw(`to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`)} AS at, method, detail FROM dr_process_group_events
     WHERE owner_instance_id = ${owner.instanceId} AND owner_boot_id = ${owner.bootId}::uuid ORDER BY id`))
-    .map(row => ({ kind: row.kind, seq: Number(row.seq), runId: row.run_id, pid: row.pid === null ? null : Number(row.pid), recordedAtMs: Date.parse(row.at) }));
+    .map(row => ({ kind: row.kind, seq: Number(row.seq), runId: row.run_id, pid: row.pid === null ? null : Number(row.pid), recordedAtMs: Date.parse(row.at),
+      method: row.method, detail: row.detail }));
 }
 
 export type ProcessReclaimRow = Readonly<{ requestId: string; state: "dispatched" | "indeterminate"; providerBudgetId: string; dispatchAt: string | null;
