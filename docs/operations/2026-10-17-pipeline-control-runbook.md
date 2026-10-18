@@ -267,6 +267,7 @@ node --import tsx scripts/ops/pipeline-control.ts batch contract --expect-contra
 ```
 
 8-3 전역 정지: scheduler·모든 워커·consumer 앱을 멈추거나(Dokploy stop, 별도 승인) lease가 끝나기를 기다린다(role 45초, job 90초, item 최대 1시간, source claim, 제작 근거 claim 120초). `status`의 `[batch] live jobs=0 roles=0 items=0 sources=0 agent_claims=0`을 확인한다.
+- `agent_claims`는 **참고값**이다. source claim과 달리 batch complete가 제작 근거 control을 잠그지 않고 한 번 읽기만 하며, consumer는 batch draining을 보지 않는다. consumer(M3 앱·Oracle unit)가 도는 동안에는 거의 늘 0이 아니어서 complete가 `batch_not_drained`로 막히고, 0으로 통과해도 다음 순간 새 claim이 생길 수 있다. 이 검사가 consumer를 멈춰 주지 않는다 — 위처럼 consumer를 먼저 멈춘다(또는 `agent-scan drain`).
 
 ```sh
 # 8-4 legacy → draining
