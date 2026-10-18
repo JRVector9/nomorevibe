@@ -59,6 +59,7 @@ import { ScrollTable } from "../components/ScrollTable";
 import { actionCounts, buildActions, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
 import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./render-reads";
 import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
+import { FlowDetailSlot } from "./FlowDetail";
 import { flowVerdict, otherModelSlots } from "./flow-model";
 import { OPS_FRESH_COOKIE } from "./fresh";
 
@@ -493,6 +494,8 @@ export default async function StatusPage() {
     <div className="ops-flow-detail">
       <FlowSideCells variant="tab" {...flowSlot} />
       <p className="ops-v8-note">전체 현황의 레일 옆 칸과 같은 내용입니다 · 1,180px 이하 화면에서는 여기서 봅니다</p>
+      {/* 소스 → 심사 흐름 → 보강, 노드 상세 · 장부 쉬운 말 요약 · 모델 자리 전체 · 미룬 이유(v8 PR6) */}
+      <Suspense fallback={<p className="ops-v8-note" aria-busy="true">흐름 상세를 읽는 중…</p>}><FlowDetailSlot {...flowSlot} /></Suspense>
     </div>
   );
 

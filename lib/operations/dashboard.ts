@@ -100,6 +100,8 @@ const firstModelCall = sql`${crawlReviewAttempts.kind} = 'automatic' AND ${crawl
   AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'cancelled'`;
 /** 끝난 2차 표 — 실패한 표는 결정이 없다 */
 const voted = sql`${secondReviews.secondDecision} IS NOT NULL AND ${secondReviews.errorCode} IS NULL`;
+/** 운영센터 v8 흐름 상세의 모델 자리 표가 모델 카드와 같은 기준으로 세게 — 1차 호출·끝난 2차 표 */
+export { firstModelCall as FIRST_MODEL_CALL_SQL, voted as SECOND_VOTED_SQL };
 
 /**
  * 지금 목록에 있고 since 이후에 만든 제품.

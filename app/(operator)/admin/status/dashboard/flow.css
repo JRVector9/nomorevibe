@@ -85,3 +85,50 @@
 .ops-v8-model-more>.dash-pill{flex:none;padding:0 7px}
 .ops-v8-model-more>a{min-width:0;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:700px){.ops-v8-model-more{display:none}}
+
+/*
+ * 흐름 상세 탭의 노드·상세·표(v8 PR6) — 새 탭에만 있다. 글자는 13px 아래로 내리지 않는다.
+ * 노드는 누르는 단추라 안에 문단·제목을 두지 않고 줄 단위 span 으로 쌓는다.
+ */
+.ops-flow-detail{display:flex;flex-direction:column;gap:14px}
+.ops-flow-lane{display:flex;flex-direction:column;gap:8px;min-width:0}
+.ops-center .ops-flow-lane-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin:0;font-size:15px;font-weight:700}
+.ops-flow-lane-h>span{font-size:13px;font-weight:500;color:var(--color-fg-3)}
+.ops-flow-grid{display:grid;gap:8px;min-width:0}
+.ops-flow-sources{grid-template-columns:repeat(3,minmax(0,1fr))}
+.ops-flow-chain,.ops-flow-enrich{grid-template-columns:repeat(6,minmax(0,1fr))}
+@media (max-width:1180px){.ops-flow-chain,.ops-flow-enrich{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:760px){.ops-flow-sources,.ops-flow-chain,.ops-flow-enrich{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.ops-center button.ops-flow-node{display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;min-height:0;padding:9px 11px;border-radius:10px;
+  border:1px solid var(--color-line);background:var(--color-bg-card);font-size:13px;font-weight:400;text-align:left;color:var(--color-fg)}
+.ops-center button.ops-flow-node:hover{background:var(--color-bg-soft)}
+.ops-center button.ops-flow-node[aria-pressed=true]{border-color:var(--color-accent);box-shadow:inset 0 0 0 1px var(--color-accent)}
+.ops-flow-node[data-tone=warn]{background:color-mix(in srgb,var(--color-warn) 7%,var(--color-bg-card))}
+.ops-flow-node[data-tone=bad]{background:color-mix(in srgb,var(--color-down) 7%,var(--color-bg-card))}
+.ops-flow-node>span{display:block;min-width:0}
+.ops-flow-node .hd{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.ops-flow-node .nm{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ops-flow-node .big{font-size:20px;font-weight:650;line-height:1.2;font-variant-numeric:tabular-nums}
+.ops-center .ops-flow-node .big small{display:inline;margin:0 0 0 4px;font-size:13px;font-weight:500;color:var(--color-fg-3)}
+.ops-flow-node .dash-spark{height:22px;margin:0}
+.ops-flow-node .io{color:var(--color-fg-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ops-flow-node .ms{display:flex;flex-direction:column;gap:3px}
+.ops-flow-node .m{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0}
+.ops-flow-node .m>b{font-weight:500;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ops-flow-node .m>.dash-pill{flex:none}
+.ops-flow-panel{min-width:0}
+.ops-flow-detail-in{display:flex;flex-direction:column;gap:10px;border:1px solid var(--color-accent);border-radius:12px;background:var(--color-bg-card);padding:14px 16px}
+.ops-flow-detail-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+@media (max-width:1180px){.ops-flow-detail-grid{grid-template-columns:minmax(0,1fr)}}
+.ops-center .ops-flow-detail-in h3{margin:0 0 6px;font-size:13px;font-weight:650}
+.ops-flow-detail-in h3>span{font-weight:500;color:var(--color-fg-3)}
+.ops-center .ops-flow-line{margin:6px 0 0;font-size:13px;line-height:1.6;color:var(--color-fg-2)}
+.ops-flow-jobs{list-style:none;margin:6px 0 0;padding:0;display:grid;gap:4px;font-size:13px;color:var(--color-fg-2)}
+.ops-flow-jobs b{font-weight:600;color:var(--color-fg)}
+.ops-flow-code{font-family:var(--font-mono);font-size:13px;color:var(--color-fg-3)}
+.ops-flow-error{color:var(--color-down)}
+.ops-flow-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+@media (max-width:1180px){.ops-flow-two{grid-template-columns:minmax(0,1fr)}}
+.ops-flow-ref{display:block;font-size:13px;color:var(--color-fg-3)}
+.ops-flow-model{font-family:var(--font-mono);white-space:nowrap}
+.ops-flow-grey{color:var(--color-fg-3)}

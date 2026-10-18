@@ -29,7 +29,7 @@ export type ReplicaCacheOptions = {
  * 보류는 이 렌더에만 보이고, 아직 유효한 값을 지우지 않는다. 열쇠가 바뀌면(이번 시 범위 등) 새로 센다. 같은 열쇠는 동시에 한 번만 읽는다.
  */
 export function replicaCache<T extends { at: string }>(options: ReplicaCacheOptions) {
-  const clock = options.now ?? Date.now;
+  const clock = options.now ?? (() => Date.now());
   let entry: { key: string; expiresAt: number; result: ReplicaRead<T> } | null = null;
   let inflight: { key: string; promise: Promise<ReplicaRead<T>> } | null = null;
   const starts: number[] = [];

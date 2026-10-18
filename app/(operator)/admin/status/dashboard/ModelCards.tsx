@@ -15,7 +15,8 @@ export const slotTitle = (slot: Pick<ModelSlot, "stage" | "label">) =>
 export type ConnectionProbe = { provider: "claude" | "codex" | "grok"; result: string | null; checkedAt: string | null };
 const PROBE_LABEL = { claude: "Claude", codex: "Codex", grok: "Grok" } as const;
 
-function tone(row: ModelHealth): { tone: "ok" | "warn" | "bad"; text: string } {
+/** 모델 자리 알약의 색 — 흐름 상세의 모델 자리 표(v8)도 같은 규칙을 쓴다 */
+export function modelTone(row: Pick<ModelHealth, "key" | "calls1h" | "failed1h" | "agreement1h">): { tone: "ok" | "warn" | "bad"; text: string } {
   if (row.calls1h === 0) return { tone: "ok", text: "호출 없음" };
   const failRate = row.failed1h / row.calls1h;
   if (row.key === "second" && row.agreement1h !== null && row.agreement1h < 0.7) return { tone: "warn", text: `일치 ${Math.round(row.agreement1h * 100)}%` };
@@ -38,7 +39,7 @@ export function ModelCards({ rows, probes, others = [] }: { rows: ModelHealth[];
       <div className="dash-card-h"><h2>모델 연결 · 최근 1시간</h2><small>호출 · 실패 · 평균</small></div>
       <div className="dash-models">
         {rows.map((row) => {
-          const state = tone(row);
+          const state = modelTone(row);
           return (
             <div key={row.key} className="dash-model">
               <span className="role">{row.label}</span>

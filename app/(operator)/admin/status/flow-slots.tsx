@@ -24,7 +24,7 @@ export const evidenceFor = cache((inputs: ActionInputs, fresh: boolean): Promise
   }));
 
 /** 레일 옆 칸과 흐름 상세 탭이 같은 렌더에서 나눔을 한 번만 받게(인스턴스 캐시 60초와 별개) */
-const sourceSplitOnce = cache(() => readSourceSplit());
+export const sourceSplitOnce = cache(() => readSourceSplit());
 
 export async function SourceCellSlot({ inputs }: Pick<FlowSlotProps, "inputs">) {
   const split = await sourceSplitOnce();
