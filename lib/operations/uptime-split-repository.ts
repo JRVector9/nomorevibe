@@ -37,13 +37,14 @@ export function uptimeSplitReadbackSql(at: SQL): SQL {
         'claimed', count(*) FILTER (WHERE q.state = 'claimed' AND q.lease_until > ${at}),
         'submitted', count(*) FILTER (WHERE q.state = 'submitted'),
         'submittedOldestMinutes', ${minutesSince(at, sql`min(q.submitted_at)`)},
-        'confirm', count(*) FILTER (WHERE q.confirm_class IS NOT NULL),
-        'confirmOldestMinutes', ${minutesSince(at, sql`min(q.confirm_requested_at)`)},
+        -- 재확인 대기도 공개 website 제품만 센다 — 대기 중 비공개가 된 제품은 claim 조건에서 빠져 confirm 칸이 영영 남는다(review F9)
+        'confirm', count(*) FILTER (WHERE q.confirm_class IS NOT NULL AND q.listed),
+        'confirmOldestMinutes', ${minutesSince(at, sql`min(q.confirm_requested_at) FILTER (WHERE q.confirm_class IS NOT NULL AND q.listed)`)},
         'applied5m', count(*) FILTER (WHERE q.last_applied_at > ${at} - interval '5 minutes' AND q.last_applied_at <= ${at}),
         'missingRows', (SELECT count(*) FROM products p WHERE p.status IN ('verified', 'seeded') AND p.access_mode = 'website'
           AND NOT EXISTS (SELECT 1 FROM uptime_claims m WHERE m.product_id = p.id)))
       FROM (SELECT uc.state, uc.lease_until, uc.submitted_at, uc.confirm_class, uc.confirm_requested_at, uc.last_applied_at,
-          ${eligibleSince} AS since,
+          ${eligibleSince} AS since, p.status IN ('verified', 'seeded') AND p.access_mode = 'website' AS listed,
           p.status IN ('verified', 'seeded') AND p.access_mode = 'website'
             AND (uc.state = 'idle' OR (uc.state = 'claimed' AND uc.lease_until <= ${at})) AND ${eligibleSince} <= ${at} AS due
         FROM uptime_claims uc JOIN products p ON p.id = uc.product_id LEFT JOIN product_health h ON h.slug = p.slug) q),

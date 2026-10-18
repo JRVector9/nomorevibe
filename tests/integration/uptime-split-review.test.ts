@@ -375,3 +375,18 @@ describe("F6 claims 와 batch versioned 의 상호 배제", () => {
     expect((await raw`select mode, epoch::int as epoch from uptime_split_control where id = 1`)[0]).toMatchObject({ mode: "legacy", epoch });
   });
 });
+
+describe("F9 재확인 대기 지표", () => {
+  it("재확인 요청 중 비공개가 된 제품은 대기 수·최장에서 빠진다", async () => {
+    const [kept, hidden] = [await product("confirm-kept"), await product("confirm-hidden")];
+    for (const [target, minutes] of [[kept, 5], [hidden, 120]] as const) {
+      await db.execute(sql`update uptime_claims set confirm_class = 'home', confirm_reason = 'timeout:0',
+        confirm_requested_at = clock_timestamp() - ${minutes} * interval '1 minute' where product_id = ${target.id}`);
+    }
+    await db.execute(sql`update products set status = 'banned' where id = ${hidden.id}`);
+    const { queue } = await readUptimeSplitReadback(db);
+    expect(queue.confirm).toBe(1);
+    expect(queue.confirmOldestMinutes).toBeGreaterThan(4.9);
+    expect(queue.confirmOldestMinutes).toBeLessThan(6);
+  });
+});
