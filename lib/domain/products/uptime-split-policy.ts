@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
+import { isUnknownUptimeStatus } from "./health-record";
 import { UptimeHostSchema, uptimeSlot, type UptimeDisposition, type UptimeObservation, type UptimeSource } from "./uptime-policy";
 
 /**
@@ -11,6 +12,8 @@ import { UptimeHostSchema, uptimeSlot, type UptimeDisposition, type UptimeObserv
  * - probe(Oracle) 실패는 절대 세지 않는다. 차단기가 닫혀 있으면 home 재확인을 요청하고, 열려 있으면 풀로 되돌린다.
  * - home 실패도 그 host 차단기가 닫혀 있고 이번 묶음이 광역 실패 모양이 아닐 때만 센다. 세지 않은 home 실패는 legacy 광역 보류와 같이
  *   판정 보류다 — 확인 시각만 넘긴다(writeHealthHeld, 연속 실패가 자동 내림 기준 이상이면 시각도 그대로).
+ * - 봇·로그인 차단 응답(401·403·429·999)은 살았는지 알 수 없다(legacy recordPing 과 같은 목록). home 이 보면 세지도 끊지도 않고 확인 시각·응답 코드만
+ *   남긴다(writeHealthUnknown). probe 가 보면 다른 실패처럼 home 재확인을 요청한다. 차단기 비율에서는 legacy 광역 비율처럼 실패 쪽에 센다.
  * - 숨김 3회·내림 10회·최종 commit 보호는 기존 함수(notDown·autoBanUptimeProduct)가 그대로 맡는다. 여기서는 카운터를 누가 올리는지만 정한다.
  */
 
@@ -308,7 +311,7 @@ export type UptimeSplitReason =
   | "product_missing" | "product_unlisted" | "url_changed" | "product_changed" | "clock" | "older_observation"
   | "minimum_interval"
   | "split_success" | "split_confirm_success" | "probe_breaker_open" | "split_confirm_required" | "split_broad_failure"
-  | "split_counted" | "split_confirmed";
+  | "split_counted" | "split_confirmed" | "split_unknown";
 
 /** uptime_claims 를 state='idle', token·lease_until NULL 로 돌릴 때 쓸 값. token·epoch 는 CAS 조건이다(바뀌었으면 쓰지 않는다). */
 export type UptimeClaimUpdate = {
@@ -323,9 +326,11 @@ export type UptimeClaimUpdate = {
  * - counted: writeHealthResult 를 이 행에 차례로 적용한 결과와 같다(성공 또는 센 실패, 일일 집계에 더한다).
  * - held: writeHealthHeld 와 같다 — 판정 보류. 확인 시각만 넘기고 연속 실패·첫 실패 시각·응답 코드·지연·일일 집계는 그대로다
  *   (status 는 행이 없는 새 제품에만 쓴다). failures·downSince 는 쓴 뒤에도 그대로인 값이다.
+ * - unknown: writeHealthUnknown 과 같다 — 살았는지 알 수 없는 응답. 확인 시각·응답 코드만 쓰고 지연은 비운다. 연속 실패·첫 실패 시각·
+ *   일일 집계는 그대로다.
  */
 export type UptimeHealthWrite = {
-  kind: "counted" | "held";
+  kind: "counted" | "held" | "unknown";
   slug: string; checkedAt: Date; status: number; latencyMs: number | null; failures: number; downSince: Date | null; alive: boolean; day: string;
 };
 /** uptime_observations 행(observationId = claim token). 해시·revision 은 저장소가 붙인다 */
@@ -341,6 +346,8 @@ export type UptimeWindowIncrement = UptimeHostCounts & { host: UptimeHost; bucke
 export type UptimeSplitBatch = { decisions: UptimeSplitDecision[]; windows: UptimeWindowIncrement[]; breakers: UptimeHostBreaker[] };
 
 const isAlive = (result: UptimeSplitResult) => result.kind === "http" && result.status >= 200 && result.status < 400;
+/** 봇·로그인 차단 응답 — legacy recordPing 과 같은 목록(UPTIME_UNKNOWN_STATUSES). 999 는 home 결과에만 그대로 온다(제출 칸은 unknown/0) */
+const isUnknown = (result: UptimeSplitResult) => result.kind === "http" && isUnknownUptimeStatus(result.status);
 
 function assertInput(input: UptimeSplitInput) {
   const { claim, result } = input;
@@ -361,6 +368,13 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
     downSince: alive ? null : !health || reset ? result.observedAt : health.downSince ?? result.observedAt };
 }
 
+/** 알 수 없는 응답(writeHealthUnknown 과 같다) */
+function unknownWrite(input: UptimeSplitInput, product: UptimeProductSnapshot): UptimeHealthWrite {
+  const { health, result } = input;
+  return { kind: "unknown", slug: product.slug, checkedAt: result.observedAt, status: result.status, latencyMs: null, alive: false,
+    day: uptimeHealthDay(result.observedAt), failures: health?.failures ?? 0, downSince: health?.downSince ?? null };
+}
+
 /** 판정 보류(writeHealthHeld 와 같다). 연속 실패가 자동 내림 기준 이상인 행은 확인 시각도 넘기지 않으므로 null 이다 */
 function heldWrite(input: UptimeSplitInput, product: UptimeProductSnapshot): UptimeHealthWrite | null {
   const { health, result } = input;
@@ -372,7 +386,8 @@ function heldWrite(input: UptimeSplitInput, product: UptimeProductSnapshot): Upt
 /**
  * 묶음 적용 판정(design-uptime §3.2 표). 입력 순서대로 결정을 돌려준다. 같은 제품이 두 번 오면 거부한다(제품당 claim 1행).
  * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale(15분 미룸) / 4 더 새 health → stale /
- * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 판정 보류 / 10 home 실패 → 반영.
+ * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9a home 알 수 없는 응답 → 확인 시각·응답 코드만 /
+ * 9 home 실패·광역 → 판정 보류 / 10 home 실패 → 반영. probe 의 알 수 없는 응답(401·403·429, 999 는 unknown/0)은 7·8 의 실패와 같다.
  */
 export function decideSplitResults(inputs: readonly UptimeSplitInput[], context: UptimeSplitContext): UptimeSplitBatch {
   const { control, wall } = context;
@@ -445,7 +460,7 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
 
   for (const { index, input, entry, product } of candidates) {
     const { claim, result } = input;
-    const alive = isAlive(result), home = entry.class === "home", confirmed = home && claim.confirmClass === "home";
+    const alive = isAlive(result), unknown = !alive && isUnknown(result), home = entry.class === "home", confirmed = home && claim.confirmClass === "home";
     // raw 표는 HTTP 100..599 만 담는다 — 비표준 상태는 raw 에만 unknown/0 으로 남기고 정식 기록(health)에는 그대로 쓴다(UPTIME_HTTP_STATUS_MAX)
     const standard = result.kind !== "http" || uptimeStandardHttpStatus(result.status);
     const observation: UptimeObservation = { observationId: result.token, productId: claim.productId, slug: product.slug, url: product.url,
@@ -461,11 +476,18 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
         health: healthWrite(input, product, true), textSample: home,
         raw: confirmed ? { observation, disposition: "applied", reason } : null };
     } else if (!home) {
+      // probe 실패는 세지 않는다. 알 수 없는 응답(Oracle 주소가 막혔을 수 있다)도 같다 — home 이 다시 보고, 열리면 지역 충돌로 남는다
       decisions[index] = countable.get(entry.host)
         ? { ...settle(input, "confirm_requested", "split_confirm_required", { dueAt: wall, confirmClass: "home",
           confirmReason: `${result.kind}:${result.status}`, confirmRequestedAt: wall }),
           raw: { observation, disposition: "raw_only", reason: "split_confirm_required" } }
         : settle(input, "returned", "probe_breaker_open");
+    } else if (unknown) {
+      // home 이 본 봇·로그인 차단 응답 — legacy(recordPing → writeHealthUnknown)와 같다. 세지도 끊지도 않고 확인 시각·응답 코드만 남긴다.
+      // legacy 는 광역 보류 틱에도 바로 쓰므로 차단기와 무관하다(차단기 재료에서는 위 counts 가 실패 쪽에 센다 — legacy 비율과 같다).
+      // 재확인 요청도 이 확인으로 끝난다(지역 충돌은 성공일 때만 센다)
+      decisions[index] = { ...settle(input, "applied", "split_unknown", { dueAt: next, ...cleared, lastApplied: { at: wall, host: entry.host } }),
+        health: unknownWrite(input, product), raw: { observation, disposition: "applied", reason: "split_unknown" } };
     } else if (!countable.get(entry.host)) {
       // 판정 보류 — legacy 광역 보류(uptime.ts, writeHealthHeld)와 같은 의미다. 확인은 했으므로 확인 시각만 넘겨 다른 제품처럼 6시간 뒤
       // 차례에 둔다(시각을 그대로 두면 legacy 의 래칫처럼 같은 사이트를 거듭 연다). 재확인 요청도 이 확인으로 끝난다 — 6시간 안의 다음 확인은

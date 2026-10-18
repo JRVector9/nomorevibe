@@ -45,8 +45,13 @@
 11. **제출은 probe(Oracle)만 한다.** home 결과는 home 잡이 적용기에 직접 넘긴다. 적용기는 home host·class 로 적힌 제출 행을 판정하지 않고 버린다
    (`submitted_not_probe`, due 그대로) — Oracle 계정의 열 UPDATE 권한으로 "home 이 본 실패" 를 위조해도 세지 않는다. 그래서 consumer 를 home 항목으로
    돌리는 방식(A4 "두 번째 home consumer")은 지원하지 않는다(consumer 는 `home_unsupported` 로 쉬고, 제출 API 도 home instance 를 거절한다).
-12. **비표준 HTTP 상태**(100..599 밖, 예: LinkedIn 999)는 legacy 와 같은 값·같은 의미로 기록한다 — `product_health.status` 에 999 그대로, 실패.
+12. **비표준 HTTP 상태**(100..599 밖, 예: LinkedIn 999·600)는 legacy 와 같은 값·같은 의미로 기록한다 — `product_health.status` 에 그대로.
    100..599 만 담는 `uptime_observations`·제출 칸에만 `unknown/0` 으로 남는다(Oracle 이 본 999 는 `unknown:0` 재확인 요청이 된다).
+   **봇·로그인 차단 응답(401·403·429·999)** 은 legacy(#551 F7)와 같이 살았는지 알 수 없는 응답이다. home 이 보면 세지도 끊지도 않고 확인 시각·
+   응답 코드만 남긴다(`split_unknown`, 일일 집계 없음, 자동 내림 확인 안 함 — sweep 도 마지막 응답이 이 목록이면 고르지 않는다). Oracle 이 보면
+   다른 실패처럼 home 재확인을 요청한다. 차단기 비율(묶음·창)에서는 legacy 광역 비율처럼 실패 쪽에 센다. 그 밖의 비표준 상태(600 등)는 실패다.
+   목록은 `health-record.ts` `UPTIME_UNKNOWN_STATUSES` 하나다 — legacy(`recordPing`)와 적용기(판정 `unknown` → `writeHealthUnknowns`)가 같이 쓰고,
+   한쪽 의미만 바뀌면 적용기가 `uptime_split_health_mismatch` 로 틱을 되돌린다(쌍둥이 시험 `uptime-split-twin.test.ts` 가 막는다).
    한 건의 결과 모양이 틀리면(`uptime.split_result_invalid`) 그 건만 반영에서 빠지고 TTL 뒤 다시 잡힌다.
 13. **host 시계.** home 잡·Oracle consumer 는 claim 전마다 host−DB 시계 차를 잰다. 20초를 넘으면 claim·확인을 쉰다(home: 이벤트
    `uptime.split_clock_skew`, consumer: 쉼 사유 `clock_skew`·관측 키 `clockSkewMs`). 그래도 ±30초 밖으로 판정된 결과(`clock`)는 due 를 15분 미룬다.

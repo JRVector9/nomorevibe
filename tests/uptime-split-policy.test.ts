@@ -282,12 +282,51 @@ describe("decideSplitResults — design §3.2 table", () => {
     expect(one(input({ status: 404, host: "mini", health: { failures: 9, downSince: since } }))).toMatchObject({ health: { failures: 10 } });
   });
   it("row 10 home confirm of an Oracle failure counts as split_confirmed and clears the confirm", () => {
-    const value = input({ status: 403, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) },
+    // home 이 본 403 은 알 수 없는 응답이라 세지 않는다(아래 9a) — 센 실패의 예는 503 이다
+    const value = input({ status: 503, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) },
       health: { failures: 1, downSince: new Date("2026-10-18T21:00:00Z") } });
     expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_confirmed", health: { failures: 2 },
       claim: { confirmClass: null, confirmReason: null, confirmRequestedAt: null, conflictCount: 0 },
       raw: { disposition: "applied", reason: "split_confirmed" } });
   });
+  it.each([401, 403, 429, 999])("row 9a home %s is unknown like legacy: not counted nor reset, checked time and status only, no daily, due 6h", status => {
+    const since = new Date("2026-10-18T09:00:00Z");
+    const value = input({ status, health: { failures: 3, downSince: since } });
+    expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_unknown", textSample: false,
+      health: { kind: "unknown", status, failures: 3, downSince: since, alive: false, latencyMs: null, checkedAt: at(-49_000) },
+      claim: { dueAt: at(-49_000 + UPTIME_RECHECK_MS), confirmClass: null, conflictCount: 0, lastApplied: { at: wall, host: "m3" } },
+      raw: { disposition: "applied", reason: "split_unknown",
+        observation: status === 999 ? { kind: "unknown", status: 0, latencyMs: null } : { kind: "http", status } } });
+    // 제품이 바뀌어도 이어 붙이거나 1 로 다시 세지 않는다(writeHealthUnknown 은 연속 실패를 보지 않는다). 새 제품은 실패 0 행
+    expect(one(input({ status, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 10:00:00" } })))
+      .toMatchObject({ health: { kind: "unknown", failures: 9, downSince: since } });
+    expect(one(input({ status, health: null }))).toMatchObject({ health: { kind: "unknown", failures: 0, downSince: null, status } });
+  });
+  it("row 9a home unknown on a confirm row ends the confirm without a regional conflict", () => {
+    const value = input({ status: 403, claim: { confirmClass: "home", confirmReason: "timeout:0", confirmRequestedAt: at(-2 * MIN), conflictCount: 2 },
+      health: { failures: 1, downSince: new Date("2026-10-18T21:00:00Z") } });
+    expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_unknown", health: { kind: "unknown", failures: 1 },
+      claim: { confirmClass: null, confirmReason: null, confirmRequestedAt: null, conflictCount: 2, affinityHomeUntil: null } });
+  });
+  it("row 9a unknown counts as failure for the breaker ratio (like legacy) but is still written while real failures are held", () => {
+    // 30건 중 403 7건 + 연결 실패 3건 = 10/30 > 30% → 열린다. legacy 틱 보류도 (실패 + 알 수 없음) / 확인 수로 본다
+    const rows = [...Array.from({ length: 7 }, () => input({ status: 403 })), ...failures("m3", 3, 23)];
+    const batch = decideSplitResults(rows, context());
+    expect(batch.breakers).toEqual([expect.objectContaining({ host: "m3", state: "open", reason: "batch_ratio", ratio: 10 / 30 })]);
+    expect(batch.windows).toEqual([{ host: "m3", bucket: wall, checks: 30, failures: 10, transport: 3 }]);
+    expect(batch.decisions.slice(0, 7).every(row => row.reason === "split_unknown" && row.health?.kind === "unknown")).toBe(true);
+    expect(batch.decisions.slice(7, 10).every(row => row.reason === "split_broad_failure" && row.health?.kind === "held")).toBe(true);
+    // 403 만 9건이면 9/30 = 30% — 초과가 아니라 실패 1건을 센다
+    const nine = decideSplitResults([...Array.from({ length: 8 }, () => input({ status: 403 })), ...failures("m3", 1, 22)], context());
+    expect(nine.breakers[0].state).toBe("closed");
+    expect(nine.decisions[8]).toMatchObject({ reason: "split_counted", health: { kind: "counted", failures: 1 } });
+  });
+  it.each([[401, "http", "http:401"], [429, "http", "http:429"], [0, "unknown", "unknown:0"]] as const)(
+    "row 8 probe %s/%s (bot or login block, 999 arrives as unknown/0) is a probe failure: never counted, home confirm", (status, kind, reason) => {
+      const value = input({ host: "oracle-osaka-smoke", status, kind, health: { failures: 2, downSince: new Date("2026-10-18T00:00:00Z") } });
+      expect(one(value)).toMatchObject({ outcome: "confirm_requested", reason: "split_confirm_required", health: null,
+        claim: { confirmClass: "home", confirmReason: reason } });
+    });
   it("Oracle-only blocks never hide: four 6h cycles of Oracle 403 + home success leave failures at 0", () => {
     let health: UptimeHealthSnapshot = { checkedAt: new Date("2026-10-18T00:00:00Z"), failures: 0, downSince: null };
     for (let cycle = 0; cycle < 4; cycle++) {

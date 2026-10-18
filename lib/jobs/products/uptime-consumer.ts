@@ -43,7 +43,9 @@ type Pacing = { maxPerHour: number; batch: number; concurrency: number };
 
 /**
  * 본문을 읽지 않는 확인. 생존은 최종 응답 상태로만 본다(legacy 와 같은 safeFetch background: hop 마다 SSRF 검사, 리다이렉트 5번, 전체 10초).
- * 연결 실패·차단·한도 초과는 unknown/0 이다. 100..599 밖의 비표준 상태도 결과 모양에 담을 수 없어 unknown/0 으로 둔다(실패로 보는 것은 같다).
+ * 연결 실패·차단·한도 초과는 unknown/0 이다. 100..599 밖의 비표준 상태(예: 999)도 결과 모양(제출 칸 CHECK)에 담을 수 없어 unknown/0 으로 둔다.
+ * 적용기는 probe 의 성공 아닌 결과를 무엇이든 세지 않고 home 재확인을 요청한다 — 봇·로그인 차단 응답(401·403·429·999)도 같다. home 이 다시 봐서
+ * 그 응답이면 legacy 처럼 알 수 없는 응답으로 쓴다(세지도 끊지도 않음, uptime-split-policy).
  */
 export async function checkUptimeUrl(url: string): Promise<UptimeCheck> {
   const startedAt = new Date(), started = performance.now();

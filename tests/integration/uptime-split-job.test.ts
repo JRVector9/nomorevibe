@@ -144,7 +144,7 @@ describe("claims 모드 틱", () => {
       expect(await rawRows(row.slug)).toMatchObject([{ host: "m3", disposition: "observation_hold", reason: "split_broad_failure" }]);
     }
     for (const row of rows.slice(10)) expect(await claimRow(row.id)).toMatchObject({ last_outcome: "split_success" });
-    expect(events.find(row => row.event === "uptime.broad_failure_held")?.fields).toEqual({ attempted: 30, down: 10 });
+    expect(events.find(row => row.event === "uptime.broad_failure_held")?.fields).toEqual({ attempted: 30, down: 10, unknown: 0 });
     const readback = await readUptimeSplitReadback(db);
     expect(readback.breakers).toMatchObject([{ host: "m3", state: "open", reason: "batch_ratio" }]);
     expect(readback.outcomes1h).toMatchObject({ split_broad_failure: 10, split_success: 20 });

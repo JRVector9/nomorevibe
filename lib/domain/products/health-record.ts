@@ -155,3 +155,25 @@ export async function writeHealthUnknown(tx: ProductTransaction, input: { slug: 
     .values({ slug: input.slug, checkedAt: input.observedAt, status: input.status, latencyMs: null, failures: 0, downSince: null })
     .onConflictDoUpdate({ target: productHealth.slug, set: { checkedAt: input.observedAt, status: input.status, latencyMs: null } });
 }
+
+/**
+ * writeHealthUnknown 을 서로 다른 slug 여러 개에 한 번에 적용한다(split claims 적용기, 문장 1개). 결과는 writeHealthUnknown 을 하나씩
+ * 적용한 것과 같다 — 확인 시각·마지막 응답 코드만 쓰고 지연은 비운다. 연속 실패·첫 실패 시각·일일 집계는 그대로, 새 제품은 실패 0 행이다.
+ * caller 가 제품 세대·health 행을 먼저 잠근다. 돌려주는 값은 slug 별 연속 실패 수다(caller 가 판정과 맞춰 본다).
+ */
+export async function writeHealthUnknowns(tx: ProductTransaction, inputs: readonly { slug: string; status: number; observedAt: Date }[]): Promise<Map<string, number>> {
+  if (inputs.length === 0) return new Map();
+  if (new Set(inputs.map(input => input.slug)).size !== inputs.length) throw new TypeError("health_results_duplicate_slug");
+  const rows = inputs.map(({ slug, status, observedAt }) => {
+    if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
+    return { slug, status, observed_at: observedAt.toISOString() };
+  });
+  const written = await tx.execute<{ slug: string; failures: number }>(sql`
+    insert into ${productHealth} (slug, checked_at, status, latency_ms, failures, down_since)
+    select r.slug, r.observed_at, r.status, null, 0, null
+    from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as r(slug varchar, status integer, observed_at timestamp)
+    on conflict (slug) do update set checked_at = excluded.checked_at, status = excluded.status, latency_ms = null
+    returning slug, failures`);
+  if (written.length !== rows.length) throw new Error("health_results_write_mismatch");
+  return new Map(Array.from(written, row => [row.slug, Number(row.failures)]));
+}

@@ -7,7 +7,7 @@ import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
-import { writeHealthHelds, writeHealthResults } from "./health-record";
+import { writeHealthHelds, writeHealthResults, writeHealthUnknowns } from "./health-record";
 import { autoBanUptimeProduct, UPTIME_AUTO_BAN_THRESHOLD } from "./uptime-auto-ban";
 import { lockUptimeSplitControl, UptimeOwnResultSchema, type UptimeResult } from "./uptime-claims";
 import { closedUptimeBreaker, decideSplitResults, splitResetStreak, uptimeWindowSince, type UptimeHealthSnapshot, type UptimeHost,
@@ -146,10 +146,11 @@ export async function applyUptimeResults(input: {
     // claim 행이 없거나(제품 삭제) 이번 제출 행과 겹친 home 결과는 그 회차를 잃은 것이다
     const decisions = [...batch.decisions, ...ownIds.filter(id => !locked.has(id)).map(lostDecision)];
 
-    // 정식 기록: legacy 의 기록 함수(writeHealthResult·writeHealthHeld)와 같은 의미의 집합 쓰기. 판정(kind)이 어느 기록인지 정하고,
+    // 정식 기록: legacy 의 기록 함수(writeHealthResult·writeHealthHeld·writeHealthUnknown)와 같은 의미의 집합 쓰기. 판정(kind)이 어느 기록인지 정하고,
     // 연속 실패를 다시 셀지는 판정과 같은 함수로 정한다. 쓴 뒤의 연속 실패가 판정과 다르면 두 쪽 의미가 갈린 것이라 전부 되돌린다
     const counted = decisions.filter(decision => decision.health?.kind === "counted");
     const held = decisions.filter(decision => decision.health?.kind === "held");
+    const unknown = decisions.filter(decision => decision.health?.kind === "unknown");
     const failures = await writeHealthResults(tx, counted.map(decision => {
       const health = decision.health!, value = inputById.get(decision.productId)!;
       return { slug: health.slug, status: health.status, latencyMs: health.latencyMs, observedAt: health.checkedAt,
@@ -157,8 +158,10 @@ export async function applyUptimeResults(input: {
     }));
     const heldFailures = await writeHealthHelds(tx, held.map(decision => ({ slug: decision.health!.slug, status: decision.health!.status,
       observedAt: decision.health!.checkedAt })));
+    const unknownFailures = await writeHealthUnknowns(tx, unknown.map(decision => ({ slug: decision.health!.slug, status: decision.health!.status,
+      observedAt: decision.health!.checkedAt })));
     const differs = (rows: UptimeSplitDecision[], written: Map<string, number>) => rows.some(decision => written.get(decision.health!.slug) !== decision.health!.failures);
-    if (differs(counted, failures) || differs(held, heldFailures)) throw new Error("uptime_split_health_mismatch");
+    if (differs(counted, failures) || differs(held, heldFailures) || differs(unknown, unknownFailures)) throw new Error("uptime_split_health_mismatch");
     const raw = decisions.flatMap(decision => decision.raw ? [decision.raw] : []).map(({ observation, disposition, reason }) => ({
       observationId: observation.observationId, productId: observation.productId, slug: observation.slug, url: observation.url,
       urlHash: reviewHash(observation.url), slot: observation.slot, startedAt: observation.startedAt, observedAt: observation.observedAt,
@@ -227,7 +230,7 @@ export async function applyUptimeResults(input: {
     const health = decision.health, product = applied.products.get(decision.productId);
     if (!health || !product) continue;
     const target = { id: product.id, slug: product.slug, url: product.url };
-    // 자동 내림은 센 실패만 부른다(판정 보류는 legacy 처럼 내림을 확인하지 않는다)
+    // 자동 내림은 센 실패만 부른다(판정 보류·알 수 없는 응답은 legacy 처럼 내림을 확인하지 않는다)
     if (health.kind === "counted" && !health.alive && health.failures >= UPTIME_AUTO_BAN_THRESHOLD) {
       try {
         if (await autoBanUptimeProduct(target, { lease, signal, hasBudget: input.hasBudget })) autoBanned++;

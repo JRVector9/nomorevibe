@@ -3,7 +3,8 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, productEvidenceAudit, products } from "@/lib/db/schema";
-import { writeHealthHeld, writeHealthHelds, writeHealthResult, writeHealthResults, type HealthResultInput } from "@/lib/domain/products/health-record";
+import { writeHealthHeld, writeHealthHelds, writeHealthResult, writeHealthResults, writeHealthUnknown, writeHealthUnknowns,
+  type HealthResultInput } from "@/lib/domain/products/health-record";
 import { downProducts, recordPing } from "@/lib/domain/products/health";
 import { notDown } from "@/lib/domain/products/repository";
 import { autoBanUptimeProduct } from "@/lib/domain/products/uptime-auto-ban";
@@ -439,6 +440,31 @@ describe("묶음 쓰기", () => {
     // 기준 이상이라 건드리지 않은 행은 돌려주지 않는다 — 적용기가 판정과 맞춰 본다
     expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-h2-new`, 0], [`u1b-${TAG}-h2-nine`, 9], [`u1b-${TAG}-h2-sick`, 2]]);
     await expect(db.transaction(tx => writeHealthHelds(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
+  });
+
+  it("writeHealthUnknowns equals writeHealthUnknown applied one by one (checked time·status only, streak and daily untouched)", async () => {
+    const observedAt = new Date("2026-10-18T15:00:01.234Z");
+    const rows = (prefix: string) => [
+      { slug: `${prefix}-new`, status: 403, observedAt },
+      { slug: `${prefix}-sick`, status: 999, observedAt },
+      { slug: `${prefix}-ten`, status: 429, observedAt },
+    ];
+    for (const prefix of [`u1b-${TAG}-k1`, `u1b-${TAG}-k2`]) {
+      for (const [slug, failures] of [["sick", 2], ["ten", 10]] as const) {
+        await db.execute(sql`insert into product_health (slug, checked_at, status, latency_ms, failures, down_since)
+          values (${`${prefix}-${slug}`}, '2026-10-18 10:00:00.123456', 500, 77, ${failures}, '2026-10-17 09:00:00.654321')`);
+      }
+    }
+    for (const input of rows(`u1b-${TAG}-k1`)) await db.transaction(tx => writeHealthUnknown(tx, input));
+    const written = await db.transaction(tx => writeHealthUnknowns(tx, rows(`u1b-${TAG}-k2`)));
+    for (const slug of ["new", "sick", "ten"]) {
+      expect(await healthRow(`u1b-${TAG}-k2-${slug}`)).toEqual(await healthRow(`u1b-${TAG}-k1-${slug}`));
+      expect(await dailyRows(`u1b-${TAG}-k2-${slug}`)).toEqual([]);
+    }
+    expect(await healthRow(`u1b-${TAG}-k2-sick`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 999, failures: 2,
+      down_since: "2026-10-17 09:00:00.654321", latency_ms: null });
+    expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-k2-new`, 0], [`u1b-${TAG}-k2-sick`, 2], [`u1b-${TAG}-k2-ten`, 10]]);
+    await expect(db.transaction(tx => writeHealthUnknowns(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
   });
 
   it("home's live result refreshes the stored first-screen text; Oracle results never do", async () => {

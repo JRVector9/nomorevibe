@@ -232,6 +232,8 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
 
   let alive = 0;
   let down = 0;
+  /** 봇·로그인 차단 응답(401·403·429·999) — 적용기가 legacy 처럼 세지 않고 확인 시각·응답 코드만 쓴다 */
+  let unknown = 0;
   const results: UptimeOwnResult[] = [];
   /** 결과 모양이 틀린 claim(예: 확인 중 host 시계가 뒤로 감). 한 건이 틱 전체의 반영을 막지 않게 건별로 거른다 */
   const invalid = new Set<number>();
@@ -242,6 +244,7 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
     if (UptimeOwnResultSchema.safeParse(result).success) results.push({ ...result, textSample: check.textSample });
     else invalid.add(ticket.productId);
     if (check.up) alive++;
+    else if (isUnknownUptimeStatus(check.status)) unknown++;
     else down++;
   });
   if (invalid.size > 0) ctx.log("uptime.split_result_invalid", { invalid: invalid.size });
@@ -254,7 +257,7 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
       for (const result of results) settled.add(result.productId);
       autoBanned += own.autoBanned;
       const held = own.reasons.split_broad_failure ?? 0;
-      if (held > 0) ctx.log("uptime.broad_failure_held", { attempted: results.length, down: held });
+      if (held > 0) ctx.log("uptime.broad_failure_held", { attempted: results.length, down: held, unknown });
     } catch (error) {
       errors.push(error);
     }
@@ -270,7 +273,7 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   }
   if (errors.length > 0) throw errors[0];
 
-  ctx.log("uptime.checked", { alive, down, autoBanned });
+  ctx.log("uptime.checked", { alive, down, unknown, autoBanned });
   return { done: false };
 }
 

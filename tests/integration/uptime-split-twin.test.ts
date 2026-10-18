@@ -155,4 +155,44 @@ describe("legacy ↔ claims 쌍둥이", () => {
     expect(claims.outcomes["dead-0"]).toBe("split_broad_failure");
     expect(claims.outcomes.unbanned).toBe("split_broad_failure");
   });
+
+  // F7(401·403·429·999 미집계)는 legacy(recordPing → writeHealthUnknown)와 claims(판정 unknown → writeHealthUnknowns)가 같은 목록·같은 기록을
+  // 써야 한다. 한쪽만 바뀌면 판정과 쓴 값이 달라 적용기가 uptime_split_health_mismatch 로 틱 전체를 되돌린다 — 그러면 claims 틱(pingProducts)이
+  // 던져 이 시험이 실패한다.
+  it("봇·로그인 차단 응답(401·403·429·999)은 두 경로 모두 세지도 끊지도 않고 확인 시각·응답 코드만 남긴다 — 숨김·내림도 같다(F7, F1 999)", async () => {
+    const { snapshots, claims } = await twin([
+      ...many("ok", 30, { response: 200 }),
+      { name: "u403", response: 403 },
+      { name: "u401", health: { failures: 3, status: 503 }, response: 401 },
+      { name: "u429", health: { failures: 9, status: 503 }, response: 429 },
+      { name: "u999", health: { failures: 1, status: 503 }, response: 999 },
+      { name: "fresh403", health: null, response: 403 },
+      { name: "unbanned403", health: { failures: 10, status: 503 }, response: 403 },
+      { name: "f404", response: 404 },
+    ]);
+    expect(snapshots.u403).toEqual({ failures: 0, status: 403, latency: "none", checked: "advanced", downSince: "none",
+      daily: { checks: 0, successes: 0, latencySamples: 0 }, hidden: false, productStatus: "seeded" });
+    expect(snapshots.u401).toMatchObject({ failures: 3, status: 401, downSince: "same", hidden: true, daily: { checks: 0 } });
+    expect(snapshots.u429).toMatchObject({ failures: 9, status: 429, productStatus: "seeded" });
+    expect(snapshots.u999).toMatchObject({ failures: 1, status: 999, downSince: "same" });
+    expect(snapshots.fresh403).toMatchObject({ failures: 0, status: 403, downSince: "none" });
+    // 연속 실패 10회 행도 시각·응답 코드는 넘어가지만 자동 내림 sweep 이 고르지 않는다(마지막 응답이 차단 응답)
+    expect(snapshots.unbanned403).toMatchObject({ failures: 10, status: 403, checked: "advanced", productStatus: "seeded" });
+    expect(snapshots.f404).toMatchObject({ failures: 1, daily: { checks: 1 } });
+    for (const name of ["u403", "u401", "u429", "u999", "fresh403", "unbanned403"]) expect(claims.outcomes[name]).toBe("split_unknown");
+    expect(claims.events.find(row => row.event === "uptime.checked")?.fields).toMatchObject({ alive: 30, down: 1, unknown: 6 });
+  });
+
+  it("광역 비율에서 알 수 없는 응답은 실패 쪽이다 — 30건 중 403 7 + 503 3 이면 503 은 판정 보류, 403 은 그대로 기록한다", async () => {
+    const { snapshots, legacy, claims } = await twin([
+      ...many("ok", 20, { response: 200 }),
+      ...many("blocked", 7, { response: 403 }),
+      ...many("down", 3, { health: { failures: 1, status: 503 }, response: 503 }),
+    ]);
+    expect(snapshots["down-0"]).toMatchObject({ failures: 1, checked: "advanced", downSince: "same", daily: { checks: 0 } });
+    expect(snapshots["blocked-0"]).toMatchObject({ failures: 0, status: 403, checked: "advanced", daily: { checks: 0 } });
+    expect(legacy.events.find(row => row.event === "uptime.broad_failure_held")?.fields).toEqual({ attempted: 30, down: 3, unknown: 7 });
+    expect(claims.outcomes["down-0"]).toBe("split_broad_failure");
+    expect(claims.outcomes["blocked-0"]).toBe("split_unknown");
+  });
 });
