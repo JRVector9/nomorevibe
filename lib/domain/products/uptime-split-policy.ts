@@ -26,6 +26,11 @@ export type UptimeBreakerState = (typeof UPTIME_BREAKER_STATES)[number];
 
 /** host 시계를 믿는 폭. 시작이 claim 보다, 관측이 적용 시각보다 이만큼 넘게 어긋나면 stale clock 이다(제출 CAS 와 같은 값). */
 export const UPTIME_SPLIT_CLOCK_SKEW_MS = 30_000;
+/**
+ * 확인을 시작하기 전에 잰 host−DB 시계 차가 이만큼 넘으면 claim·확인을 쉰다(home 잡·Oracle consumer). 결과가 위 폭에 걸려 버려질
+ * 확인으로 사이트를 두드리지 않는다. 재는 오차(왕복의 절반)와 묶음이 도는 동안의 흐름을 위해 폭보다 10초 좁게 둔다.
+ */
+export const UPTIME_SPLIT_CLOCK_GUARD_MS = UPTIME_SPLIT_CLOCK_SKEW_MS - 10_000;
 /** home 광역 실패를 보류한 제품을 다시 볼 때까지 */
 export const UPTIME_SPLIT_HOLD_MS = 15 * 60_000;
 /** 정식 확인 간격. legacy(nextToCheck)와 같은 6시간이다 */
@@ -351,7 +356,7 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
 
 /**
  * 묶음 적용 판정(design-uptime §3.2 표). 입력 순서대로 결정을 돌려준다. 같은 제품이 두 번 오면 거부한다(제품당 claim 1행).
- * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale / 4 더 새 health → stale /
+ * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale(15분 미룸) / 4 더 새 health → stale /
  * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 보류 / 10 home 실패 → 반영.
  */
 export function decideSplitResults(inputs: readonly UptimeSplitInput[], context: UptimeSplitContext): UptimeSplitBatch {
@@ -394,7 +399,8 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
       decisions[index] = settle(input, "stale", "product_changed"); return;
     }
     if (!uptimeSplitClockValid({ claimedAt: claim.claimedAt, startedAt: result.startedAt, observedAt: result.observedAt, wall })) {
-      decisions[index] = settle(input, "stale", "clock"); return;
+      // 시계가 틀린 host 의 결과다 — 바로 다시 due 로 두면 다음 틱·묶음이 같은 사이트를 또 연다(review F5). 보류처럼 15분 미룬다
+      decisions[index] = settle(input, "stale", "clock", { dueAt: new Date(wall.getTime() + UPTIME_SPLIT_HOLD_MS) }); return;
     }
     if (health && health.checkedAt.getTime() >= result.observedAt.getTime()) {
       decisions[index] = settle(input, "stale", "older_observation", { dueAt: new Date(health.checkedAt.getTime() + UPTIME_RECHECK_MS) }); return;

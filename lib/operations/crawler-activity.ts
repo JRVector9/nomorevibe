@@ -77,6 +77,7 @@ const EVENTS: Record<string, { label: string; fields: string[]; error?: boolean;
   "uptime.split_applied": { label: "응답 점검 제출분 반영", fields: ["remote", "applied", "held", "confirmRequested", "returned", "stale", "lost"] },
   "uptime.split_blocked": { label: "응답 점검 분담 확인 멈춤", fields: ["breakerOpen", "unconfigured", "fenced"], error: true },
   "uptime.split_result_invalid": { label: "응답 점검 결과 모양 오류", fields: ["invalid"], error: true },
+  "uptime.split_clock_skew": { label: "응답 점검 시계 어긋남(확인 쉼)", fields: ["skewMs"], error: true },
   "news.refreshed": { label: "소식 수집 결과", fields: ["added", "failed", "autoApprove", "unfinished"] },
   "thumbnail.refreshed": { label: "이미지 수집 결과", fields: ["examined", "filled", "defaults", "skipped", "failed"] },
   "repo_review.idle": { label: "저장소 재확인 대상 없음", fields: ["reviewed"] },

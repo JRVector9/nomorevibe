@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { downProductCount } from "@/lib/domain/products/health";
@@ -9,11 +9,12 @@ import { claimUptimeProducts, releaseUptimeClaims, submitUptimeResults } from "@
 import type { JobLease } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";
 import { pingProducts } from "@/lib/jobs/products/uptime";
+import { runUptimeConsumer } from "@/lib/jobs/products/uptime-consumer";
 import { readUptimeSplitReadback, readUptimeSplitStage } from "@/lib/operations/uptime-split-repository";
 import { classifyStage } from "@/lib/operations/worker-progress";
 import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from "@/lib/runtime/oracle-db-profile";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
-import { claimRow, clearSplitState, dbNow, healthRow, nextCycle, OWNERS, product, rawRows, result, setSplit, takeJobLease,
+import { claimRow, clearSplitState, dbNow, healthRow, nextCycle, OWNERS, POLICY, product, rawRows, result, setSplit, takeJobLease,
   type FixtureProduct } from "./uptime-split-fixture";
 
 /*
@@ -251,5 +252,46 @@ describe("F3 제출 출처", () => {
     expect(await submitUptimeResults({ owner: OWNERS.m3, results: [result(ticket, { status: 0, kind: "network" })] }))
       .toMatchObject({ kind: "blocked", reason: "source_unconfigured" });
     expect(await claimRow(target.id)).toMatchObject({ state: "claimed" });
+  });
+});
+
+describe("F5 host 시계 차", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it("home 시계가 DB 보다 60초 앞서면 claim·확인을 쉬고 오류 이벤트를 남긴다 — 같은 제품을 매 틱 다시 열지 않는다", async () => {
+    const rows = await products("skew-home", 10);
+    respond(new Map());
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(Date.now() + 60_000));
+    const events: Logged[] = [];
+    for (let n = 0; n < 3; n++) await pingProducts(tick(events));
+    vi.useRealTimers();
+    expect(http.safeFetch).not.toHaveBeenCalled();
+    for (const row of rows) expect(await claimRow(row.id)).toMatchObject({ state: "idle", token: null, last_outcome: null });
+    const skews = events.filter(row => row.event === "uptime.split_clock_skew");
+    expect(skews).toHaveLength(3);
+    expect(Number(skews[0].fields?.skewMs)).toBeGreaterThan(55_000);
+  });
+
+  it("Oracle 시계가 60초 늦으면 consumer 는 claim 하지 않고 쉰다(clock_skew) — 매 묶음 lost·되돌림·재확인 고리가 없다", async () => {
+    const fast = { ...POLICY, hosts: POLICY.hosts.map(host => host.class === "probe" ? { ...host, maxPerHour: 20_000, batch: 5, concurrency: 5 } : host) };
+    await setSplit("claims", fast);
+    const rows = await products("skew-oracle", 5);
+    const check = vi.fn();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(Date.now() - 60_000));
+    const totals = { batches: 0, claimed: 0, checked: 0 };
+    for (let n = 0; n < 3; n++) {
+      const summary = await runUptimeConsumer({ owner: OWNERS.oracle, once: true, check, physicalHost: "oracle-osaka-smoke" });
+      totals.batches += summary.batches; totals.claimed += summary.claimed; totals.checked += summary.checked;
+    }
+    vi.useRealTimers();
+    expect(totals).toEqual({ batches: 0, claimed: 0, checked: 0 });
+    expect(check).not.toHaveBeenCalled();
+    for (const row of rows) expect(await claimRow(row.id)).toMatchObject({ state: "idle", epoch: 0 });
+    const [observed] = await db.execute<{ value: { reason: string; clockSkewMs: number } }>(sql`
+      select value from operations_observations where key = ${`uptime-consumer:${OWNERS.oracle.instanceId}`}`);
+    expect(observed.value.reason).toBe("clock_skew");
+    expect(observed.value.clockSkewMs).toBeLessThan(-55_000);
   });
 });

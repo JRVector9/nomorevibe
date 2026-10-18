@@ -80,6 +80,17 @@ export async function readUptimeSplitControl(): Promise<UptimeSplitControl> {
   return parseUptimeSplitControl({ mode: row.mode, epoch: row.epoch, policy: row.policy, policyHash: row.policyHash });
 }
 
+/**
+ * 이 host 시계 − DB 시계(ms). DB clock_timestamp 를 한 번 읽고 왕복의 가운데와 비교한다(오차는 왕복 시간의 절반 이내).
+ * home 잡·consumer 가 확인을 시작하기 전에 재서 UPTIME_SPLIT_CLOCK_GUARD_MS 를 넘으면 쉰다. 표를 읽지 않아 권한이 필요 없다
+ */
+export async function measureUptimeClockSkew(): Promise<number> {
+  supported();
+  const before = Date.now();
+  const [row] = await db.execute<{ ms: number }>(sql`select (extract(epoch from clock_timestamp()) * 1000)::float8 as ms`);
+  return (before + Date.now()) / 2 - Number(row.ms);
+}
+
 // products.url 의 scheme://host[:port] (소문자). 두 claim 의 비교는 언제나 이 같은 식으로 하므로 JS URL.origin 과 달라도 된다
 const originOf = (url: ReturnType<typeof sql>) =>
   sql`coalesce(lower(substring(${url} from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+')), ${url})`;

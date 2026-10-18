@@ -9,9 +9,9 @@ import { uptimeSlot } from "@/lib/domain/products/uptime-policy";
 import { uptimeObservationMode, uptimeObserverSource, nextUptimeObservationTargets, recordUptimeObservation } from "@/lib/domain/products/uptime-observations";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 import { applyUptimeResults, type UptimeApplySummary, type UptimeOwnResult } from "@/lib/domain/products/uptime-apply";
-import { claimUptimeProducts, readUptimeSplitControl, releaseUptimeClaims, syncUptimeClaimRows, UptimeOwnResultSchema,
+import { claimUptimeProducts, measureUptimeClockSkew, readUptimeSplitControl, releaseUptimeClaims, syncUptimeClaimRows, UptimeOwnResultSchema,
   type UptimeClaimTicket } from "@/lib/domain/products/uptime-claims";
-import { UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FAILURE_RATIO, uptimeSplitHostEntry } from "@/lib/domain/products/uptime-split-policy";
+import { UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FAILURE_RATIO, UPTIME_SPLIT_CLOCK_GUARD_MS, uptimeSplitHostEntry } from "@/lib/domain/products/uptime-split-policy";
 import { serviceInstanceId } from "@/lib/operations/instance";
 import { checkUptime, runOriginLanes } from "./uptime-check";
 
@@ -168,7 +168,8 @@ function appliedCounts(summary: UptimeApplySummary) {
 /**
  * split claims 모드 한 틱(design-uptime §7.1, U1b 호출 순서). 정식 기록은 모두 묶음 적용기(applyUptimeResults)가 쓴다.
  * 1) 제출분 반영 — 결과가 없어도 틱마다 불러 차단기를 시간에 따라 진행시킨다(open → probing).
- * 2) 내림 적체 sweep(legacy 와 같다) 3) 새 공개 제품의 claim 행 4) home claim(재확인 요청 먼저)
+ * 2) 내림 적체 sweep(legacy 와 같다) 3) 새 공개 제품의 claim 행 4) home claim(재확인 요청 먼저) — 이 host 시계가 DB 와 20초 넘게
+ *    어긋나 있으면 claim·확인을 쉰다
  * 5) 확인(legacy 와 같은 HTTP·본문·서버 직렬) 6) 틱의 결과를 한 번에 반영 — 묶음 광역 규칙이 성공까지 포함한 틱 전체를 본다
  *    (나눠 넣으면 실패만 모인 묶음이 언제나 광역으로 보이거나, 30건에 영영 못 닿는다).
  * 7) 반영하지 못한(열지 않았거나 적용이 실패한) claim 은 풀로 돌려준다 — 다음 틱이 바로 다시 가져간다. 결과 모양이 틀린 건은
@@ -200,6 +201,12 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   const entry = instanceId && control.policy ? uptimeSplitHostEntry(control.policy, instanceId) : null;
   if (!instanceId || !entry || entry.class !== "home") {
     ctx.log("uptime.split_blocked", { unconfigured: 1 });
+    return { done: false };
+  }
+  // 이 host 시계가 DB 와 크게 어긋나 있으면 결과가 모두 stale clock 이 된다 — 확인을 쉬고 오류 이벤트로 알린다(반영·sweep 은 했다)
+  const skew = await measureUptimeClockSkew();
+  if (Math.abs(skew) > UPTIME_SPLIT_CLOCK_GUARD_MS) {
+    ctx.log("uptime.split_clock_skew", { skewMs: Math.round(skew) });
     return { done: false };
   }
   const owner = { instanceId, bootId: BOOT_ID };

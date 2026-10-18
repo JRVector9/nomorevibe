@@ -188,9 +188,9 @@ describe("decideSplitResults — design §3.2 table", () => {
     ["start before claim −30s", { result: { startedAt: at(-90_001) } }],
     ["observed after wall +30s", { result: { observedAt: at(30_001) } }],
     ["observed before start", { result: { startedAt: at(-40_000), observedAt: at(-41_000) } }],
-  ])("row 3 clock (%s): stale, due unchanged", (_name, shape) => {
+  ])("row 3 clock (%s): stale, due 15 minutes later (the same site is not reopened every tick)", (_name, shape) => {
     const value = input({ host: "oracle-osaka-smoke", status: 403, ...shape });
-    expect(one(value)).toMatchObject({ outcome: "stale", reason: "clock", health: null, raw: null, claim: { dueAt: value.claim.dueAt } });
+    expect(one(value)).toMatchObject({ outcome: "stale", reason: "clock", health: null, raw: null, claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS) } });
   });
   it("row 4 older: health already at or after this observation", () => {
     const observed = at(-49_000);
