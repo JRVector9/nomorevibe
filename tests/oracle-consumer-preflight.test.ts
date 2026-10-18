@@ -89,8 +89,9 @@ it('closes the workload on a profile drift, unsafe authority, unbounded timeouts
 it('refuses a replay scope and unregistered consumers before database work', async () => {
   io.replay.mockReturnValue({});
   expect((await inspectOracleConsumer(spec)).workload.reason).toBe('replay_unsupported');
-  // 등록부·DB 프로필·준비 확인 셋이 다 있어야 한다. 지금 실제 등록은 비어 있다
-  for (const consumer of ['ai1', 'agent-scan', 'uptime', 'crawler']) await expect(readOracleConsumerPreflight({ consumer })).rejects.toThrow('invalid_oracle_preflight_input');
+  // 등록부·DB 프로필·준비 확인 셋이 다 있어야 한다. 실제 등록은 uptime(U2) 하나다 — 입력을 받아 들이고 replay 에서는 DB 전에 닫힌다
+  for (const consumer of ['ai1', 'agent-scan', 'crawler']) await expect(readOracleConsumerPreflight({ consumer })).rejects.toThrow('invalid_oracle_preflight_input');
+  expect((await readOracleConsumerPreflight({ consumer: 'uptime' })).workload.reason).toBe('replay_unsupported');
   await expect(readOracleConsumerPreflight({ consumer: 'ai1', ready: true })).rejects.toThrow('invalid_oracle_preflight_input');
   ORACLE_CONSUMER_DB_PROFILES.ai1 = db; ORACLE_CONSUMER_READINESS.ai1 = io.readiness;
   try {

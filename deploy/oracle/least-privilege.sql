@@ -191,4 +191,23 @@ GRANT SELECT ON TABLE public.product_translations TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.text_translations TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.uptime_observations TO nomorevibe_oracle_attest;
 
+-- consumer uptime
+CREATE ROLE nomorevibe_oracle_uptime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :uptime_connections;
+ALTER ROLE nomorevibe_oracle_uptime SET statement_timeout = '10s';
+ALTER ROLE nomorevibe_oracle_uptime SET lock_timeout = '5s';
+ALTER ROLE nomorevibe_oracle_uptime SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE nomorevibe_oracle_uptime SET timezone = 'UTC';
+GRANT USAGE ON SCHEMA public TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_uptime;
+GRANT UPDATE (id) ON TABLE public.dr_writer_fence TO nomorevibe_oracle_uptime;
+GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_uptime;
+GRANT UPDATE (value, observed_at) ON TABLE public.operations_observations TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.product_health TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.products TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.uptime_claims TO nomorevibe_oracle_uptime;
+GRANT UPDATE (state, epoch, control_epoch, token, owner_instance_id, owner_boot_id, host, host_class, lease_until, claimed_at, claim_slug, claim_url, origin, claim_slot, result_started_at, result_observed_at, result_kind, result_status, result_latency_ms, submitted_at, updated_at) ON TABLE public.uptime_claims TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.uptime_host_breakers TO nomorevibe_oracle_uptime;
+GRANT SELECT ON TABLE public.uptime_split_control TO nomorevibe_oracle_uptime;
+GRANT UPDATE (id) ON TABLE public.uptime_split_control TO nomorevibe_oracle_uptime;
+
 COMMIT;

@@ -20,6 +20,8 @@ export type ConsumerSpec = {
 export const CONSUMERS = {
   ai1: { role: 'reviewer', command: ['scripts/pipeline-first-consumer.ts'], workerMax: 3 },
   ai2: { role: 'reviewer', command: ['scripts/pipeline-consumer.ts', '--stage=ai2'], workerMax: 3 },
+  // split-v1 제품 연결 확인(design-uptime §7.2). 부모는 uptime-ping 잡과 같은 maintenance. 자식 pool 2 = 제출(직렬) 1 + claim·제어 읽기·관측 1
+  uptime: { role: 'maintenance', command: ['scripts/uptime-consumer.ts'], workerMax: 2 },
 } as const satisfies Record<string, ConsumerSpec>;
 export type ConsumerName = keyof typeof CONSUMERS;
 
