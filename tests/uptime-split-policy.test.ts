@@ -236,17 +236,33 @@ describe("decideSplitResults — design §3.2 table", () => {
         claim: { dueAt: wall, confirmClass: "home", confirmReason: reason, confirmRequestedAt: wall, lastApplied: null },
         raw: { disposition: "raw_only", reason: "split_confirm_required", observation: { source: { host: "oracle-osaka-smoke", region: "ap-osaka-1" } } } });
     });
-  it("row 9 home failure while the home breaker is open: held 15 minutes, confirm kept, observation_hold raw", () => {
+  it("row 9 home failure while the home breaker is open: judgement held like legacy (checked time only, due 6h), the confirm ends, observation_hold raw", () => {
     const value = input({ status: 500, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) } });
     const open = breaker("m3", { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "window_ratio", ratio: 0.5 });
-    expect(one(value, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", health: null,
-      claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS), confirmClass: "home", confirmReason: "http:403" },
+    expect(one(value, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", textSample: false,
+      health: { kind: "held", checkedAt: at(-49_000), failures: 0, downSince: null, alive: false, latencyMs: null, status: 500 },
+      claim: { dueAt: at(-49_000 + UPTIME_RECHECK_MS), confirmClass: null, confirmReason: null, confirmRequestedAt: null, lastApplied: null },
       raw: { disposition: "observation_hold", reason: "split_broad_failure" } });
+  });
+  it("row 9 held keeps the streak and first failure time; a new product gets a 0-failure row; at the auto-ban threshold nothing is written (15 minutes)", () => {
+    const open = breaker("m3", { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "window_ratio", ratio: 0.5 });
+    const since = new Date("2026-10-18T09:00:00Z");
+    expect(one(input({ kind: "network", health: { failures: 2, downSince: since } }), { breakers: [open] }))
+      .toMatchObject({ outcome: "held", health: { kind: "held", failures: 2, downSince: since, status: 0 } });
+    // 제품이 바뀌어 센다면 1 로 다시 셀 실패도 보류면 그대로다(writeHealthHeld 는 연속 실패를 보지 않는다)
+    expect(one(input({ status: 503, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 10:00:00" } }), { breakers: [open] }))
+      .toMatchObject({ health: { kind: "held", failures: 9, downSince: since } });
+    expect(one(input({ status: 503, health: null }), { breakers: [open] })).toMatchObject({ health: { kind: "held", failures: 0, downSince: null, status: 503 } });
+    const unbanned = input({ status: 404, health: { failures: 10, downSince: since },
+      claim: { confirmClass: "home", confirmReason: "http:404", confirmRequestedAt: at(-2 * MIN) } });
+    expect(one(unbanned, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", health: null,
+      claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS), confirmClass: "home" }, raw: { disposition: "observation_hold" } });
   });
   it("row 9 home batch shaped like a broad failure (≥30, >30%): failures held, successes still applied, breaker opens", () => {
     const rows = failures("m3", 10, 30);
     const batch = decideSplitResults(rows, context());
-    expect(batch.decisions.slice(0, 10).every(row => row.outcome === "held" && row.reason === "split_broad_failure" && row.health === null)).toBe(true);
+    expect(batch.decisions.slice(0, 10).every(row => row.outcome === "held" && row.reason === "split_broad_failure"
+      && row.health?.kind === "held" && row.health.failures === 0 && row.claim?.dueAt.getTime() === at(-49_000 + UPTIME_RECHECK_MS).getTime())).toBe(true);
     expect(batch.decisions.slice(10).every(row => row.outcome === "applied" && row.health?.failures === 0)).toBe(true);
     expect(batch.breakers).toEqual([{ ...closedUptimeBreaker("m3", policy), state: "open", openedAt: wall, probeAfter: at(10 * MIN),
       reason: "batch_ratio", ratio: 10 / 30 }]);
@@ -290,7 +306,7 @@ describe("decideSplitResults — design §3.2 table", () => {
     const open = (host: UptimeHost) => breaker(host, { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "batch_ratio", ratio: 1 });
     const batch = decideSplitResults([input({ status: 500 }), input({ host: "oracle-osaka-smoke", status: 500 })],
       context({ breakers: [open("m3"), open("oracle-osaka-smoke")] }));
-    expect(batch.decisions.map(row => [row.outcome, row.health])).toEqual([["held", null], ["returned", null]]);
+    expect(batch.decisions.map(row => [row.outcome, row.health?.kind ?? null, row.health?.failures ?? null])).toEqual([["held", "held", 0], ["returned", null, null]]);
   });
   it("rejects a duplicate product and malformed results instead of guessing", () => {
     const value = input();

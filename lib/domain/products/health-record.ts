@@ -113,6 +113,27 @@ export async function writeHealthHeld(tx: ProductTransaction, input: { slug: str
 }
 
 /**
+ * writeHealthHeld 를 서로 다른 slug 여러 개에 한 번에 적용한다(split claims 적용기, 문장 1개). 결과는 writeHealthHeld 를 하나씩 적용한 것과 같다 —
+ * 있는 행은 확인 시각만(연속 실패가 자동 내림 기준 미만일 때만), 없는 행은 실패 0 으로 만든다. caller 가 제품 세대·health 행을 먼저 잠근다.
+ * 돌려주는 값은 쓴 행의 slug 별 연속 실패 수다(기준 이상이라 건드리지 않은 행은 빠진다 — caller 가 판정과 맞춰 본다).
+ */
+export async function writeHealthHelds(tx: ProductTransaction, inputs: readonly { slug: string; status: number; observedAt: Date }[]): Promise<Map<string, number>> {
+  if (inputs.length === 0) return new Map();
+  if (new Set(inputs.map(input => input.slug)).size !== inputs.length) throw new TypeError("health_results_duplicate_slug");
+  const rows = inputs.map(({ slug, status, observedAt }) => {
+    if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
+    return { slug, status, observed_at: observedAt.toISOString() };
+  });
+  const written = await tx.execute<{ slug: string; failures: number }>(sql`
+    insert into ${productHealth} (slug, checked_at, status, latency_ms, failures, down_since)
+    select r.slug, r.observed_at, r.status, null, 0, null
+    from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as r(slug varchar, status integer, observed_at timestamp)
+    on conflict (slug) do update set checked_at = excluded.checked_at where ${productHealth.failures} < ${UPTIME_AUTO_BAN_THRESHOLD}
+    returning slug, failures`);
+  return new Map(Array.from(written, row => [row.slug, Number(row.failures)]));
+}
+
+/**
  * 살아 있는 사이트도 봇·로그인 차단 때문에 돌려주는 응답 — 살았는지 알 수 없다(legacy recordPing·자동 내림 sweep·uptime 잡이 같은 목록을 쓴다).
  * 2026-10-19 운영: 응답 없는 공개 제품 440개 중 17개(429 8·403 5·401 3·999 1, 999는 LinkedIn 류의 비표준 코드).
  * 404·접속 실패(0)·402·5xx·그 밖의 4xx는 지금처럼 실패로 센다. raw 관측(PR09, 꺼져 있음)의 적용은 regional-v1 판정대로

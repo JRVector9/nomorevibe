@@ -22,6 +22,9 @@
 4. **home 광역 기준은 legacy 와 같다**: 한 틱(묶음) 30건 이상에서 실패가 30% 초과면 그 실패를 세지 않는다. claims 에서는 여기에 더해 그 host 차단기가
    열려(기본 10분) 다음 틱부터 확인을 쉬고(반영·sweep 은 계속), cool-down 뒤 30건만 시험해 5% 이하면 닫는다. 그래서 policy 의
    `batchMin`·`batchOpenRatio` 는 30·0.3 이어야 하고 도구가 다른 값을 거절한다(`policy_batch_rule_differs_from_legacy`).
+   세지 않은 home 실패(`split_broad_failure`)는 legacy 광역 보류와 같은 **판정 보류**다 — 확인 시각만 넘기고(연속 실패·응답 코드·첫 실패 시각·
+   일일 집계 그대로) 다른 제품처럼 6시간 뒤 차례에 둔다. 재확인 요청도 그 확인으로 끝난다. 연속 실패가 10 이상인 행(관리자가 풀어 준 제품)은
+   확인 시각도 그대로 두고(자동 내림 최신성·관리자 해제 비교 기준) 15분 뒤 다시 본다.
 5. **`minChecks` 는 100 이하**(`policy_min_checks_above:100`). 200 이면 Oracle 1,000건/시간(10분 약 167건)에서 창 규칙이 영영 열리지 않는다.
    **probe `maxPerHour` 합계는 5,000 이하**(`policy_probe_rate_above:5000`). 제출분은 home 적용기가 1분 틱마다 100건만 반영해(시간당 최대 6,000)
    그보다 빨리 내면 `submitted` 가 쌓이기만 한다.

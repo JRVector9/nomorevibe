@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { RECHECK_AFTER_MINUTES } from "./health-freshness";
+import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
 import { UptimeHostSchema, uptimeSlot, type UptimeDisposition, type UptimeObservation, type UptimeSource } from "./uptime-policy";
 
 /**
@@ -9,7 +9,8 @@ import { UptimeHostSchema, uptimeSlot, type UptimeDisposition, type UptimeObserv
  *
  * - 성공은 어느 host 것이든 반영한다(어디선가 열리면 살아 있다).
  * - probe(Oracle) 실패는 절대 세지 않는다. 차단기가 닫혀 있으면 home 재확인을 요청하고, 열려 있으면 풀로 되돌린다.
- * - home 실패도 그 host 차단기가 닫혀 있고 이번 묶음이 광역 실패 모양이 아닐 때만 센다.
+ * - home 실패도 그 host 차단기가 닫혀 있고 이번 묶음이 광역 실패 모양이 아닐 때만 센다. 세지 않은 home 실패는 legacy 광역 보류와 같이
+ *   판정 보류다 — 확인 시각만 넘긴다(writeHealthHeld, 연속 실패가 자동 내림 기준 이상이면 시각도 그대로).
  * - 숨김 3회·내림 10회·최종 commit 보호는 기존 함수(notDown·autoBanUptimeProduct)가 그대로 맡는다. 여기서는 카운터를 누가 올리는지만 정한다.
  */
 
@@ -31,7 +32,7 @@ export const UPTIME_SPLIT_CLOCK_SKEW_MS = 30_000;
  * 확인으로 사이트를 두드리지 않는다. 재는 오차(왕복의 절반)와 묶음이 도는 동안의 흐름을 위해 폭보다 10초 좁게 둔다.
  */
 export const UPTIME_SPLIT_CLOCK_GUARD_MS = UPTIME_SPLIT_CLOCK_SKEW_MS - 10_000;
-/** home 광역 실패를 보류한 제품을 다시 볼 때까지 */
+/** home 광역 실패를 보류했지만 확인 시각을 넘기지 못한 제품(연속 실패가 자동 내림 기준 이상)·시계가 틀린 결과를 다시 볼 때까지 */
 export const UPTIME_SPLIT_HOLD_MS = 15 * 60_000;
 /** 정식 확인 간격. legacy(nextToCheck)와 같은 6시간이다 */
 export const UPTIME_RECHECK_MS = RECHECK_AFTER_MINUTES * 60_000;
@@ -317,8 +318,14 @@ export type UptimeClaimUpdate = {
   /** null 이면 last_applied_* 를 그대로 둔다 */
   lastApplied: { at: Date; host: UptimeHost } | null;
 };
-/** product_health 에 쓸 값(writeHealthResult 를 이 행에 차례로 적용한 결과와 같다)과 product_health_daily 에 더할 날짜 */
+/**
+ * product_health 에 쓸 값과 product_health_daily 에 더할 날짜. kind 는 legacy 의 어느 기록과 같은지다.
+ * - counted: writeHealthResult 를 이 행에 차례로 적용한 결과와 같다(성공 또는 센 실패, 일일 집계에 더한다).
+ * - held: writeHealthHeld 와 같다 — 판정 보류. 확인 시각만 넘기고 연속 실패·첫 실패 시각·응답 코드·지연·일일 집계는 그대로다
+ *   (status 는 행이 없는 새 제품에만 쓴다). failures·downSince 는 쓴 뒤에도 그대로인 값이다.
+ */
 export type UptimeHealthWrite = {
+  kind: "counted" | "held";
   slug: string; checkedAt: Date; status: number; latencyMs: number | null; failures: number; downSince: Date | null; alive: boolean; day: string;
 };
 /** uptime_observations 행(observationId = claim token). 해시·revision 은 저장소가 붙인다 */
@@ -349,15 +356,23 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
   const { health, result } = input;
   const latencyMs = alive && result.latencyMs !== null ? Math.max(0, Math.min(2_147_483_647, Math.round(result.latencyMs))) : null;
   const reset = splitResetStreak(health, product.updatedAt);
-  return { slug: product.slug, checkedAt: result.observedAt, status: result.status, latencyMs, alive, day: uptimeHealthDay(result.observedAt),
+  return { kind: "counted", slug: product.slug, checkedAt: result.observedAt, status: result.status, latencyMs, alive, day: uptimeHealthDay(result.observedAt),
     failures: alive ? 0 : !health || reset ? 1 : health.failures + 1,
     downSince: alive ? null : !health || reset ? result.observedAt : health.downSince ?? result.observedAt };
+}
+
+/** 판정 보류(writeHealthHeld 와 같다). 연속 실패가 자동 내림 기준 이상인 행은 확인 시각도 넘기지 않으므로 null 이다 */
+function heldWrite(input: UptimeSplitInput, product: UptimeProductSnapshot): UptimeHealthWrite | null {
+  const { health, result } = input;
+  if (health && health.failures >= UPTIME_AUTO_BAN_THRESHOLD) return null;
+  return { kind: "held", slug: product.slug, checkedAt: result.observedAt, status: result.status, latencyMs: null, alive: false,
+    day: uptimeHealthDay(result.observedAt), failures: health?.failures ?? 0, downSince: health?.downSince ?? null };
 }
 
 /**
  * 묶음 적용 판정(design-uptime §3.2 표). 입력 순서대로 결정을 돌려준다. 같은 제품이 두 번 오면 거부한다(제품당 claim 1행).
  * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale(15분 미룸) / 4 더 새 health → stale /
- * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 보류 / 10 home 실패 → 반영.
+ * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 판정 보류 / 10 home 실패 → 반영.
  */
 export function decideSplitResults(inputs: readonly UptimeSplitInput[], context: UptimeSplitContext): UptimeSplitBatch {
   const { control, wall } = context;
@@ -452,8 +467,14 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
           raw: { observation, disposition: "raw_only", reason: "split_confirm_required" } }
         : settle(input, "returned", "probe_breaker_open");
     } else if (!countable.get(entry.host)) {
-      decisions[index] = { ...settle(input, "held", "split_broad_failure", { dueAt: new Date(wall.getTime() + UPTIME_SPLIT_HOLD_MS) }),
-        raw: { observation, disposition: "observation_hold", reason: "split_broad_failure" } };
+      // 판정 보류 — legacy 광역 보류(uptime.ts, writeHealthHeld)와 같은 의미다. 확인은 했으므로 확인 시각만 넘겨 다른 제품처럼 6시간 뒤
+      // 차례에 둔다(시각을 그대로 두면 legacy 의 래칫처럼 같은 사이트를 거듭 연다). 재확인 요청도 이 확인으로 끝난다 — 6시간 안의 다음 확인은
+      // minimum_interval 로 버려질 뿐이다. 연속 실패가 자동 내림 기준 이상이면 그 행의 확인 시각은 내림 최신성·관리자 해제 비교의 기준이라
+      // 넘기지 않고(writeHealthHeld 와 같다) 지금처럼 15분 뒤 다시 본다
+      const held = heldWrite(input, product);
+      decisions[index] = { ...settle(input, "held", "split_broad_failure", held ? { dueAt: next, ...cleared }
+        : { dueAt: new Date(wall.getTime() + UPTIME_SPLIT_HOLD_MS) }),
+        health: held, raw: { observation, disposition: "observation_hold", reason: "split_broad_failure" } };
     } else {
       const reason = confirmed ? "split_confirmed" : "split_counted";
       decisions[index] = { ...settle(input, "applied", reason, { dueAt: next, ...cleared, lastApplied: { at: wall, host: entry.host } }),
