@@ -50,6 +50,18 @@ export function oracleRoleTimeouts(value: unknown): Timeouts | null {
   }
   return found.statementMs !== undefined && found.lockMs !== undefined && found.idleMs !== undefined ? found as Timeouts : null;
 }
+/**
+ * PgBouncer reuses server connections, so a pooled transaction's own values alone are not evidence: the role's catalog
+ * defaults (what every server connection starts with) and the effective values here must both be bounded.
+ * Shared by the role and consumer preflights; a rejected result closes the workload.
+ */
+export function oracleTimeoutsCheck(pooled: boolean, roleSettings: unknown, effective: Timeouts): Check {
+  const server = pooled ? oracleRoleTimeouts(roleSettings) : null;
+  if (pooled && !server) return { status: 'unknown', reason: 'pooler_server_settings_unverified' };
+  if (server && !bounded(server)) return { status: 'rejected', reason: 'role_server_timeouts_unbounded' };
+  if (bounded(effective)) return { status: 'verified', reason: server ? 'role_server_timeouts_bounded' : 'effective_session_timeouts_bounded' };
+  return { status: 'rejected', reason: 'effective_session_timeouts_unbounded' };
+}
 const candidateSchema = z.object({ role: z.string(), instanceId: z.string(), host: z.string(), bootId: z.string().min(1),
   release: z.string(), policyHash: z.string(), capability: z.unknown(), resultEvidence: z.unknown() }).strict();
 const object = (value: unknown): Record<string, unknown> | null =>
@@ -127,16 +139,8 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
       report.checks.database = { status: 'rejected', reason: 'database_authority_rejected' };
       report.workload.reason = 'database_rejected'; return report;
     }
-    // PgBouncer reuses server connections, so this transaction's values alone are not evidence: the role's catalog
-    // defaults (what every server connection starts with) and the effective values here must both be bounded.
-    const pooled = env.DB_POOLER_MODE === 'pgbouncer', server = pooled ? oracleRoleTimeouts(session.roleSettings) : null;
-    if (pooled && !server) report.checks.timeouts = unknown('pooler_server_settings_unverified');
-    else if (server && !bounded(server)) { report.checks.timeouts = { status: 'rejected', reason: 'role_server_timeouts_unbounded' };
-      report.workload.reason = 'timeouts_rejected'; return report; }
-    else if (bounded(session))
-      report.checks.timeouts = { status: 'verified', reason: server ? 'role_server_timeouts_bounded' : 'effective_session_timeouts_bounded' };
-    else { report.checks.timeouts = { status: 'rejected', reason: 'effective_session_timeouts_unbounded' };
-      report.workload.reason = 'timeouts_rejected'; return report; }
+    report.checks.timeouts = oracleTimeoutsCheck(env.DB_POOLER_MODE === 'pgbouncer', session.roleSettings, session);
+    if (report.checks.timeouts.status === 'rejected') { report.workload.reason = 'timeouts_rejected'; return report; }
     const [rawCandidate] = await tx.execute(sql`SELECT role,instance_id AS "instanceId",host,boot_id AS "bootId",
       release,policy_hash AS "policyHash",capability,result_evidence AS "resultEvidence"
       FROM job_batch_candidates WHERE role=${role} AND instance_id=${instance}`);

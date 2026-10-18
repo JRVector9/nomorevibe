@@ -20,7 +20,8 @@ export const ORACLE_DB_PRINCIPALS: Record<OracleDbService, string> = {
 };
 type Columns = readonly string[];
 type TableGrant = { select?: true; insert?: true | Columns; update?: true | Columns; delete?: true };
-type Profile = { tables: Record<string, TableGrant>; sequences: readonly string[]; statementTimeout: '10s' | '60s' };
+export type OracleDbProfile = { tables: Record<string, TableGrant>; sequences: readonly string[]; statementTimeout: '10s' | '60s' };
+type Profile = OracleDbProfile;
 const read: TableGrant = { select: true }, write: TableGrant = { select: true, insert: true, update: true };
 const lock = (key: string): TableGrant => ({ select: true, update: [key] });
 const CANDIDATE_IDENTITY = ['host', 'boot_id', 'release', 'policy_hash', 'observed_at'] as const;
@@ -91,16 +92,35 @@ export const ORACLE_REFRESH_PROFILE: Profile = { statementTimeout: '10s', sequen
   tables: { job_batch_control: lock('id'), job_batch_candidates: { select: true, update: ['capability'] },
     http_origin_control: read, http_origin_hops: read } };
 
+/**
+ * Oracle consumer principals (건 단위 일꾼: claim 으로 같은 큐를 나눠 맡고 역할 lease·batch 를 쓰지 않는다). The key is the consumer
+ * name in lib/runtime/consumer-registry.ts; E5(agent-scan)·U2(uptime) add their entries together with the tables they use.
+ * A consumer profile never holds ORACLE_CONSUMER_FORBIDDEN_TABLES (role lease, batch, job and AI item authority), and its generated SQL
+ * pins the role default timezone to UTC: operational timestamp columns are timezone-less UTC (design R8).
+ */
+export type OracleConsumerDbProfile = { principal: string; profile: OracleDbProfile };
+export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {};
+export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
+
 export type ConnectionLimit = number | `:${string}`;
 /** Ordered statements for one service. Passwords are never part of this output. */
 export function oracleDbGrantStatements(service: OracleDbService | 'refresh', options: { connectionLimit: ConnectionLimit }): string[] {
   const name = service === 'refresh' ? ORACLE_REFRESH_PRINCIPAL : ORACLE_DB_PRINCIPALS[service];
   const profile = service === 'refresh' ? ORACLE_REFRESH_PROFILE : ORACLE_DB_PROFILES[service];
-  const limit = options.connectionLimit;
+  return grantStatements(name, profile, options.connectionLimit, []);
+}
+/** Same statement shape plus `SET timezone = 'UTC'`; the principal must be a new nomorevibe_oracle_* name. */
+export function oracleConsumerGrantStatements(consumer: OracleConsumerDbProfile, options: { connectionLimit: ConnectionLimit }): string[] {
+  const taken = [...Object.values(ORACLE_DB_PRINCIPALS), ORACLE_REFRESH_PRINCIPAL];
+  if (!/^nomorevibe_oracle_[a-z][a-z_]{0,40}$/.test(consumer.principal) || taken.includes(consumer.principal)) throw new Error('invalid_consumer_principal');
+  if (ORACLE_CONSUMER_FORBIDDEN_TABLES.some(table => Object.hasOwn(consumer.profile.tables, table))) throw new Error('consumer_runtime_authority_forbidden');
+  return grantStatements(consumer.principal, consumer.profile, options.connectionLimit, [`ALTER ROLE ${consumer.principal} SET timezone = 'UTC'`]);
+}
+function grantStatements(name: string, profile: Profile, limit: ConnectionLimit, settings: string[]): string[] {
   if (typeof limit === 'number' ? !Number.isSafeInteger(limit) || limit < 1 || limit > 64 : !/^:[a-z_]+$/.test(limit)) throw new Error('invalid_connection_limit');
   const statements = [`CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit}`,
     `ALTER ROLE ${name} SET statement_timeout = '${profile.statementTimeout}'`, `ALTER ROLE ${name} SET lock_timeout = '5s'`,
-    `ALTER ROLE ${name} SET idle_in_transaction_session_timeout = '60s'`, `GRANT USAGE ON SCHEMA public TO ${name}`];
+    `ALTER ROLE ${name} SET idle_in_transaction_session_timeout = '60s'`, ...settings, `GRANT USAGE ON SCHEMA public TO ${name}`];
   for (const [table, grant] of Object.entries(profile.tables).sort(([a], [b]) => a < b ? -1 : 1)) {
     const whole = [grant.select && 'SELECT', grant.insert === true && 'INSERT', grant.update === true && 'UPDATE', grant.delete && 'DELETE'].filter(Boolean);
     if (whole.length) statements.push(`GRANT ${whole.join(', ')} ON TABLE public.${table} TO ${name}`);
@@ -119,7 +139,11 @@ export function renderOracleDbGrantSql(): string {
     '--   psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v translation_connections=N ... -f deploy/oracle/least-privilege.sql',
     '-- Then set each password interactively with \\password <role>. This file contains no secret and grants no migration/DDL right.',
     'BEGIN;', ...services.flatMap(service => ['', `-- ${service}`, ...oracleDbGrantStatements(service,
-      { connectionLimit: `:${service.replace('-', '_')}_connections` }).map(statement => `${statement};`)]), '', 'COMMIT;', ''].join('\n');
+      { connectionLimit: `:${service.replace('-', '_')}_connections` }).map(statement => `${statement};`)]),
+    // Consumer sections follow the role services; with no registered consumer the text is unchanged.
+    ...Object.entries(ORACLE_CONSUMER_DB_PROFILES).sort(([a], [b]) => a < b ? -1 : 1).flatMap(([consumer, profile]) => ['', `-- consumer ${consumer}`,
+      ...oracleConsumerGrantStatements(profile!, { connectionLimit: `:${consumer.replaceAll('-', '_')}_connections` }).map(statement => `${statement};`)]),
+    '', 'COMMIT;', ''].join('\n');
 }
 /** The exact deploy/oracle/refresh-principal.sql text (optional host refresh timer only). */
 export function renderOracleRefreshGrantSql(): string {
@@ -135,9 +159,16 @@ export type PrivilegeRow = { schema: string; table: string; select: boolean; ins
   columns: { name: string; select: boolean; insert: boolean; update: boolean }[] };
 /** Exact comparison of the live catalog with the approved profile. Any extra or missing right is a mismatch. */
 export function oracleDbPrivilegeMismatches(service: OracleDbService, principal: string, value: unknown): string[] {
-  if (principal !== ORACLE_DB_PRINCIPALS[service]) return ['principal'];
+  return privilegeMismatches(ORACLE_DB_PRINCIPALS[service], ORACLE_DB_PROFILES[service], principal, value);
+}
+/** The same exact comparison for a consumer principal. */
+export function oracleConsumerPrivilegeMismatches(consumer: OracleConsumerDbProfile, principal: string, value: unknown): string[] {
+  return privilegeMismatches(consumer.principal, consumer.profile, principal, value);
+}
+function privilegeMismatches(expected: string, profile: Profile, principal: string, value: unknown): string[] {
+  if (principal !== expected) return ['principal'];
   if (!Array.isArray(value)) return ['catalog'];
-  const profile = ORACLE_DB_PROFILES[service], seen = new Set<string>(), mismatches: string[] = [];
+  const seen = new Set<string>(), mismatches: string[] = [];
   for (const row of value as PrivilegeRow[]) {
     const grant: TableGrant = row?.schema === 'public' ? profile.tables[row.table] ?? {} : {};
     seen.add(`${row?.schema}.${row?.table}`);

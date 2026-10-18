@@ -2,7 +2,8 @@
 import { BATCH_ROLES } from '@/lib/jobs/batches';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
-import { consumerHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
+import { consumerHealthPath, DEFAULT_HEALTH_PATH, instanceConsumer } from './consumer-health';
+import { consumerSpec } from '../lib/runtime/consumer-registry';
 import type { WorkerHealth } from './worker-supervisor';
 import { DEFAULT_ROLE_HEALTH_PATH, ROLE_STUCK_UNHEALTHY_MS } from './role-health';
 
@@ -38,9 +39,11 @@ if (process.argv[1] && /^worker-healthcheck\.[cm]?[jt]s$/.test(basename(process.
     const rolePath = process.env.ROLE_HEALTH_PATH ?? DEFAULT_ROLE_HEALTH_PATH;
     const workerPath = process.env.WORKER_HEALTH_PATH ?? DEFAULT_HEALTH_PATH;
     if (consumerPath !== null) {
+      // consumer 감독은 등록부의 부모 역할로 건강을 쓴다(AI1/AI2 는 reviewer)
+      const role = consumerSpec(instanceConsumer()!)!.role;
       const value: unknown = JSON.parse(readFileSync(consumerPath, 'utf8'));
-      process.exitCode = (process.env.WORKER_ROLE === undefined || process.env.WORKER_ROLE === 'reviewer') &&
-        workerIsHealthy(value, Date.now(), 'reviewer') ? 0 : 1;
+      process.exitCode = (process.env.WORKER_ROLE === undefined || process.env.WORKER_ROLE === role) &&
+        workerIsHealthy(value, Date.now(), role) ? 0 : 1;
     } else if (existsSync(rolePath)) {
       const candidate: unknown = JSON.parse(readFileSync(rolePath, 'utf8'));
       let worker: unknown = null;
