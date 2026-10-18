@@ -14,6 +14,12 @@ import type { ProgressStageInput } from "./worker-progress";
  * Oracle 광역 장애가 재확인 요청으로만 이어진다.
  */
 export const UPTIME_SPLIT_MAX_MIN_CHECKS = 100;
+/**
+ * probe(Oracle) maxPerHour 합계 상한. 제출분은 home 잡의 적용기가 틱(1분)마다 UPTIME_APPLY_SUBMITTED_MAX(100)건만 반영하므로
+ * 시간당 최대 6,000건이다. 그보다 빨리 제출하면 submitted 가 쌓이고 그 행은 다시 claim 될 수 없어 적용 지연만 커진다(review F10).
+ * 틱이 가끔 늦거나 건너뛰는 것(실측 시간당 약 58.5틱)을 빼고 5,000 으로 둔다. 운영 계획의 최종 3,500/h 는 그 안이다.
+ */
+export const UPTIME_SPLIT_MAX_PROBE_PER_HOUR = 5_000;
 
 const OPERATOR = /^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,119}$/;
 const FLAGS = new Set(["execute", "json"]);
@@ -208,6 +214,8 @@ export type UptimeSplitPlan = { command: UptimeSplitTransition["name"]; target: 
 /** 정책 값 검사 — 스키마 밖의 운영 규칙(U1a·U0 와 맞춘 값) */
 function policyRules(policy: UptimeSplitPolicy, blocked: string[]) {
   if (policy.breaker.minChecks > UPTIME_SPLIT_MAX_MIN_CHECKS) blocked.push(`policy_min_checks_above:${UPTIME_SPLIT_MAX_MIN_CHECKS}`);
+  const probeRate = policy.hosts.filter(entry => entry.class === "probe").reduce((sum, entry) => sum + (entry.maxPerHour ?? 0), 0);
+  if (probeRate > UPTIME_SPLIT_MAX_PROBE_PER_HOUR) blocked.push(`policy_probe_rate_above:${UPTIME_SPLIT_MAX_PROBE_PER_HOUR}`);
   // home 광역 보류는 legacy 틱 보류(PR-0b)와 같은 기준이어야 한다 — 전환이 보호 강도를 바꾸지 않게
   if (policy.breaker.batchMin !== UPTIME_BROAD_FAILURE_MIN_CHECKS || policy.breaker.batchOpenRatio !== UPTIME_BROAD_FAILURE_RATIO) {
     blocked.push(`policy_batch_rule_differs_from_legacy:${UPTIME_BROAD_FAILURE_MIN_CHECKS}/${UPTIME_BROAD_FAILURE_RATIO}`);

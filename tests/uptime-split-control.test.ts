@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { uptimeSplitPolicyHash, type UptimeSplitPolicy } from "@/lib/domain/products/uptime-split-policy";
+import { UPTIME_APPLY_SUBMITTED_MAX } from "@/lib/domain/products/uptime-apply";
 import { formatUptimeSplitResult, formatUptimeSplitStatus, heldHomeHosts, parseUptimeSplitArgs, planUptimeSplit, stuckHomeBreaker, uptimeExclusionError,
-  uptimeSplitDatabaseUrl, uptimeSplitNote, uptimeSplitStageInput, type UptimeSplitReadback, type UptimeSplitSnapshot, type UptimeSplitTransition } from "@/lib/operations/uptime-split";
+  uptimeSplitDatabaseUrl, uptimeSplitNote, uptimeSplitStageInput, UPTIME_SPLIT_MAX_PROBE_PER_HOUR, type UptimeSplitReadback, type UptimeSplitSnapshot, type UptimeSplitTransition } from "@/lib/operations/uptime-split";
 import { classifyStage } from "@/lib/operations/worker-progress";
 
 const audit = ["--operator=jr", "--reason=u1c unit"];
@@ -89,6 +90,18 @@ describe("uptime split plan", () => {
     expect(policy({ ...POLICY, breaker: { ...POLICY.breaker, batchOpenRatio: 0.5 } }).blocked).toEqual(["policy_batch_rule_differs_from_legacy:30/0.3"]);
     expect(planUptimeSplit(transition("policy", "--file=p.json", "--expect-epoch=3", "--expect-policy-hash=none"), snapshot(), POLICY).blocked)
       .toEqual([`expect_policy_hash_mismatch:${HASH}`, "policy_unchanged"]);
+  });
+  it("caps the summed probe rate below what the applier can apply (100 submitted per 1-minute tick)", () => {
+    expect(UPTIME_SPLIT_MAX_PROBE_PER_HOUR).toBeLessThan(UPTIME_APPLY_SUBMITTED_MAX * 60);
+    const probe = (maxPerHour: number) => ({ host: "oracle-osaka-smoke" as const, instanceId: `oracle-${maxPerHour}`, region: "ap-osaka-1",
+      class: "probe" as const, maxPerHour, batch: 40, concurrency: 4 });
+    const policy = (hosts: UptimeSplitPolicy["hosts"]) => planUptimeSplit(transition("policy", "--file=p.json", "--expect-epoch=3",
+      "--expect-policy-hash=none"), snapshot({}, readback({}, { policy: null, policyHash: null })), { ...POLICY, hosts: [...POLICY.hosts, ...hosts] }).blocked;
+    expect(policy([probe(3_500)])).toEqual([]);
+    expect(policy([probe(5_000)])).toEqual([]);
+    expect(policy([probe(6_000)])).toEqual(["policy_probe_rate_above:5000"]);
+    // 합계로 본다
+    expect(policy([probe(3_000), probe(2_500)])).toEqual(["policy_probe_rate_above:5000"]);
   });
   it("in claims mode a policy change must keep every recent runner home and PR09 off, and drops in-flight claims", () => {
     const back = readback({}, { mode: "claims" });
