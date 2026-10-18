@@ -114,6 +114,11 @@ export const uptimeSplitReadbackSchema = z.object({
   outcomes1h: z.record(z.string(), count),
   /** 최근 1시간 host 별 정식 반영 수 */
   applied1h: z.record(z.string(), count),
+  /**
+   * maintenance 역할 임대의 주인(SERVICE_INSTANCE_ID) — 지금 home 확인을 맡은 instance 다. 오래 열림 경보는 이 instance 의 host 차단기만 본다
+   * (역할이 다른 home 으로 넘어가면 옛 host 차단기는 시험할 사람이 없어 열린 채 남는다). 없으면(옛 모양) 오래 열림 경보를 내지 않는다
+   */
+  maintenanceOwner: z.string().nullable().optional(),
 }).strict();
 export type UptimeSplitReadback = z.infer<typeof uptimeSplitReadbackSchema>;
 
@@ -134,39 +139,63 @@ export function storedUptimeSplitPolicy(control: UptimeSplitReadback["control"])
   return parsed.success && uptimeSplitPolicyHash(parsed.data) === control.policyHash ? { state: "verified", policy: parsed.data } : { state: "invalid" };
 }
 
-/** 차단기가 열려 쉬는 중인 home host(probe_after 전). 잡은 이 host 로 확인하지 않는다 — 멈춤이 아니라 의도한 대기다 */
+/**
+ * home 차단기가 이만큼 넘게 열린 채(open·probing)면 의도한 대기가 아니라 경보다. cool-down 은 10·20·40·60분으로 늘어나므로
+ * 한 번 열려 시험이 한두 번 실패한 정도는 넘고, 시험이 계속 실패하는 장애(또는 표본 문제)는 잡는다.
+ */
+export const UPTIME_SPLIT_BREAKER_ALARM_MINUTES = 60;
+
+/** 지금 확인을 맡은 home host(maintenance 역할 임대 주인의 policy host)의 차단기가 오래 열려 있으면 그 host 와 열린 분 수 */
+export function stuckHomeBreaker(readback: UptimeSplitReadback): { host: string; minutes: number } | null {
+  const stored = storedUptimeSplitPolicy(readback.control);
+  if (readback.control.mode !== "claims" || stored.state !== "verified" || !readback.maintenanceOwner) return null;
+  const entry = stored.policy.hosts.find(host => host.instanceId === readback.maintenanceOwner && host.class === "home");
+  const row = entry ? readback.breakers.find(breaker => breaker.host === entry.host) : undefined;
+  if (!row || row.state === "closed" || row.openedAt === null) return null;
+  const minutes = (Date.parse(readback.at) - Date.parse(row.openedAt)) / 60_000;
+  return minutes >= UPTIME_SPLIT_BREAKER_ALARM_MINUTES ? { host: row.host, minutes } : null;
+}
+
+/** 차단기가 열려 쉬는 중인 home host(probe_after 전). 잡은 이 host 로 확인하지 않는다 — 멈춤이 아니라 의도한 대기다(오래 열림은 빼고) */
 export function heldHomeHosts(readback: UptimeSplitReadback): string[] {
   const stored = storedUptimeSplitPolicy(readback.control);
   if (readback.control.mode !== "claims" || stored.state !== "verified") return [];
   const home = new Set(stored.policy.hosts.filter(entry => entry.class === "home").map(entry => entry.host));
-  const at = Date.parse(readback.at);
-  return readback.breakers.filter(row => home.has(row.host) && row.state === "open" && row.probeAfter !== null && Date.parse(row.probeAfter) > at)
-    .map(row => row.host);
+  const at = Date.parse(readback.at), stuck = stuckHomeBreaker(readback)?.host;
+  return readback.breakers.filter(row => home.has(row.host) && row.host !== stuck && row.state === "open" && row.probeAfter !== null
+    && Date.parse(row.probeAfter) > at).map(row => row.host);
 }
 
 /**
  * claims 모드의 응답 점검 진행(worker progress 의 uptime 단계). legacy 면 null — 지금 관문·감시가 보는 것은 바뀌지 않는다.
  * 대기 = 가져갈 수 있는 due + 반영 안 된 제출, 최장 = 그 둘 중 오래된 것, 진행 = 최근 5분 정식 반영.
  * home 차단기가 열려 쉬는 중이면 held(재시작으로 고칠 수 없는 의도한 대기)다.
+ * 확인을 맡은 home 의 차단기가 오래 열려 있으면(stuckHomeBreaker) 의도한 대기가 아니다 — 그 host 의 실패를 세지 못하고 home 전용 제품
+ * (재확인 요청·실패 중·home 고정)을 보지 못한다. Oracle 성공 반영이 진행을 채워도 감춰지지 않게 진행을 0 으로 보고 경보(upstream_stalled,
+ * 재시작 대상 아님)로 낸다 — 재시작은 host 네트워크를 고치지 못하고, 다시 선출된 같은 host 가 시험하기 전에 또 재시작하는 고리만 만든다.
  */
 export function uptimeSplitStageInput(readback: UptimeSplitReadback): ProgressStageInput | null {
   if (readback.control.mode !== "claims") return null;
   const q = readback.queue, waiting = q.due + q.submitted;
   const ages = [q.due > 0 ? q.dueOldestMinutes : null, q.submitted > 0 ? q.submittedOldestMinutes : null].filter((value): value is number => value !== null);
-  return { key: "uptime", enabled: true, waiting, oldestMinutes: waiting > 0 && ages.length ? Math.max(...ages) : null,
+  const stage: ProgressStageInput = { key: "uptime", enabled: true, waiting, oldestMinutes: waiting > 0 && ages.length ? Math.max(...ages) : null,
     completed5m: q.applied5m, progress5m: q.applied5m, errors5m: null, held: heldHomeHosts(readback).length > 0 };
+  const stuck = stuckHomeBreaker(readback);
+  return stuck ? { ...stage, progress5m: 0, held: false, providerErrors: 1, providerErrorMinutes: stuck.minutes } : stage;
 }
 
 const BREAKER_WORDS: Record<string, string> = { closed: "닫힘", open: "열림", probing: "시험 중" };
 const clock = (iso: string | null) => iso ? iso.slice(11, 16) : "-";
-/** 운영 화면·CLI 한 줄 — host 별 차단기와 최근 1시간 판정 사유 */
+/** 운영 화면·CLI 한 줄 — host 별 차단기와 최근 1시간 판정 사유. 확인을 맡은 home 이 오래 열려 있으면 앞에 경보를 붙인다 */
 export function uptimeSplitNote(readback: UptimeSplitReadback): string {
   const breakers = readback.breakers.length ? readback.breakers.map(row => `${row.host} ${BREAKER_WORDS[row.state] ?? row.state}`
     + (row.state === "closed" ? "" : `(${row.reason ?? "-"}${row.ratio === null ? "" : ` ${row.ratio.toFixed(2)}`}`
       + `${row.state === "open" ? `, 시험 ${clock(row.probeAfter)} UTC` : `, 받은 ${row.probeChecks}·실패 ${row.probeFailures}`})`)).join(" · ")
     : "모두 닫힘";
   const reasons = Object.entries(readback.outcomes1h).sort(([, a], [, b]) => b - a).slice(0, 6).map(([reason, n]) => `${reason} ${n}`).join(" · ");
-  return `차단기: ${breakers} | 최근 1시간 판정: ${reasons || "없음"}`;
+  const stuck = stuckHomeBreaker(readback);
+  const alarm = stuck ? `경보: 확인을 맡은 ${stuck.host} 차단기가 ${Math.round(stuck.minutes)}분째 열려 있음 | ` : "";
+  return `${alarm}차단기: ${breakers} | 최근 1시간 판정: ${reasons || "없음"}`;
 }
 
 // ---- 판정 ----

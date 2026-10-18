@@ -54,7 +54,9 @@ export function uptimeSplitReadbackSql(at: SQL): SQL {
     'outcomes1h', coalesce((SELECT jsonb_object_agg(o.last_outcome, o.n) FROM (SELECT last_outcome, count(*) AS n FROM uptime_claims
         WHERE last_outcome IS NOT NULL AND updated_at > ${at} - interval '1 hour' GROUP BY last_outcome) o), '{}'::jsonb),
     'applied1h', coalesce((SELECT jsonb_object_agg(a.host, a.n) FROM (SELECT last_applied_host AS host, count(*) AS n FROM uptime_claims
-        WHERE last_applied_host IS NOT NULL AND last_applied_at > ${at} - interval '1 hour' GROUP BY last_applied_host) a), '{}'::jsonb))`;
+        WHERE last_applied_host IS NOT NULL AND last_applied_at > ${at} - interval '1 hour' GROUP BY last_applied_host) a), '{}'::jsonb),
+    -- 지금 home 확인을 맡은 instance(legacy batch 의 maintenance 역할 임대 주인). 오래 열림 경보가 이 instance 의 host 차단기만 본다
+    'maintenanceOwner', (SELECT r.owner_instance_id FROM role_leases r WHERE r.role = 'maintenance'))`;
 }
 
 /** 장부만 읽는다(한 문장). 배포 관문·운영 상태용 — executor 는 주 DB 또는 읽기 TX 다 */

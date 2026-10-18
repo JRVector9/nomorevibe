@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { uptimeSplitPolicyHash, type UptimeSplitPolicy } from "@/lib/domain/products/uptime-split-policy";
-import { formatUptimeSplitResult, formatUptimeSplitStatus, heldHomeHosts, parseUptimeSplitArgs, planUptimeSplit, uptimeExclusionError,
-  uptimeSplitDatabaseUrl, uptimeSplitStageInput, type UptimeSplitReadback, type UptimeSplitSnapshot, type UptimeSplitTransition } from "@/lib/operations/uptime-split";
+import { formatUptimeSplitResult, formatUptimeSplitStatus, heldHomeHosts, parseUptimeSplitArgs, planUptimeSplit, stuckHomeBreaker, uptimeExclusionError,
+  uptimeSplitDatabaseUrl, uptimeSplitNote, uptimeSplitStageInput, type UptimeSplitReadback, type UptimeSplitSnapshot, type UptimeSplitTransition } from "@/lib/operations/uptime-split";
 import { classifyStage } from "@/lib/operations/worker-progress";
 
 const audit = ["--operator=jr", "--reason=u1c unit"];
@@ -140,6 +140,21 @@ describe("uptime split progress", () => {
     expect(classifyStage({ ...stalled, progress5m: 30, completed5m: 30 }, null, true, now)).toMatchObject({ reason: "progressing", alarm: false });
     // 막 쌓인 일은 5분까지 데우는 중이다
     expect(classifyStage(uptimeSplitStageInput(claims({ due: 3, dueOldestMinutes: 2 }))!, null, true, now).reason).toBe("warming_up");
+  });
+  it("alarms (without restart) when the running home's breaker has been open for an hour, even while Oracle applies keep progress up", () => {
+    const opened = (minutes: number) => ({ ...open("m3", "2026-10-19T03:20:00.000Z"), openedAt: new Date(now.getTime() - minutes * 60_000).toISOString() });
+    const stuck = { ...claims({ due: 500, dueOldestMinutes: 20, applied5m: 300 }, [opened(61)]), maintenanceOwner: "m3-maintenance" };
+    expect(stuckHomeBreaker(stuck)).toEqual({ host: "m3", minutes: 61 });
+    expect(heldHomeHosts(stuck)).toEqual([]);
+    expect(uptimeSplitStageInput(stuck)).toMatchObject({ progress5m: 0, completed5m: 300, held: false, providerErrors: 1, providerErrorMinutes: 61 });
+    expect(classifyStage(uptimeSplitStageInput(stuck)!, null, true, now)).toMatchObject({ reason: "upstream_stalled", alarm: true, restartEligible: false });
+    expect(uptimeSplitNote(stuck)).toMatch(/^경보: 확인을 맡은 m3 차단기가 61분째 열려 있음/);
+    // 59분은 아직 의도한 대기, 역할이 mini 로 넘어갔거나 주인을 모르면 m3 차단기는 경보가 아니다
+    expect(stuckHomeBreaker({ ...stuck, breakers: [opened(59)] })).toBeNull();
+    expect(classifyStage(uptimeSplitStageInput({ ...stuck, breakers: [opened(59)] })!, null, true, now)).toMatchObject({ reason: "progressing" });
+    expect(stuckHomeBreaker({ ...stuck, maintenanceOwner: "mini-maintenance-standby" })).toBeNull();
+    expect(stuckHomeBreaker({ ...stuck, maintenanceOwner: undefined })).toBeNull();
+    expect(stuckHomeBreaker({ ...stuck, breakers: [{ ...opened(90), state: "closed" }] })).toBeNull();
   });
 });
 

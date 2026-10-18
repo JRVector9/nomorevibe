@@ -1,11 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { applyUptimeResults } from "@/lib/domain/products/uptime-apply";
+import { claimUptimeProducts, releaseUptimeClaims, submitUptimeResults } from "@/lib/domain/products/uptime-claims";
 import type { JobLease } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";
 import { pingProducts } from "@/lib/jobs/products/uptime";
+import { readUptimeSplitReadback, readUptimeSplitStage } from "@/lib/operations/uptime-split-repository";
+import { classifyStage } from "@/lib/operations/worker-progress";
 import { ensureSchema, resetTables } from "./setup";
-import { claimRow, clearSplitState, healthRow, OWNERS, product, rawRows, setSplit, takeJobLease, type FixtureProduct } from "./uptime-split-fixture";
+import { claimRow, clearSplitState, dbNow, healthRow, OWNERS, product, rawRows, result, setSplit, takeJobLease,
+  type FixtureProduct } from "./uptime-split-fixture";
 
 /*
  * 독립 리뷰(review-uptime.md) 발견의 회귀 테스트(실제 DB). HTTP 만 가짜다. 각 describe 가 발견 하나다.
@@ -64,6 +69,7 @@ afterAll(async () => {
   await db.execute(sql`delete from uptime_host_breakers`);
   await db.execute(sql`delete from uptime_host_windows`);
   await db.execute(sql`update jobs set lease_token = null, locked_at = null where name = 'uptime-ping'`);
+  await db.execute(sql`delete from role_leases where role = 'maintenance'`);
 });
 
 describe("F1 비표준 HTTP 상태", () => {
@@ -114,5 +120,72 @@ describe("F1 비표준 HTTP 상태", () => {
     http.safeFetch.mockClear();
     await pingProducts(tick());
     expect(fetchedUrls()).not.toContain(broken.url);
+  });
+});
+
+describe("F2 home 차단기 시험 표본", () => {
+  async function breaker() {
+    const [row] = await db.execute<{ state: string; cool_down_ms: number; probe_checks: number; probe_failures: number }>(sql`
+      select state, cool_down_ms, probe_checks, probe_failures from uptime_host_breakers where host = 'm3'`);
+    return row ?? null;
+  }
+
+  it("Oracle 이 만든 재확인 요청(실제로 죽은 사이트)이 있어도 시험은 건강한 제품만 열어 닫히고, 닫힌 뒤 재확인을 먼저 센다", async () => {
+    // 죽은 제품 4개(어디서 보든 실패) — due 가 일러 Oracle 이 먼저 가져간다
+    const dead: FixtureProduct[] = [];
+    for (let i = 0; i < 4; i++) dead.push(await product(`dead-${i}`, { dueMinutes: -30 }));
+    const alive: FixtureProduct[] = [];
+    for (let i = 0; i < 80; i++) alive.push(await product(`alive-${i}`, { dueMinutes: -5 }));
+    const deadUrls = new Set(dead.map(row => row.url));
+    respond(new Map(dead.map(row => [row.url, null])));
+
+    const batch = await claimUptimeProducts({ owner: OWNERS.oracle, limit: 40 });
+    if (batch.kind !== "claimed") throw new Error(`oracle_blocked:${batch.reason}`);
+    const mine = batch.claims.filter(ticket => deadUrls.has(ticket.url));
+    expect(mine).toHaveLength(4);
+    await submitUptimeResults({ owner: OWNERS.oracle, results: mine.map(ticket => result(ticket, { status: 0, kind: "network" })) });
+    await releaseUptimeClaims({ owner: OWNERS.oracle, claims: batch.claims.filter(ticket => !deadUrls.has(ticket.url)) });
+    expect((await applyUptimeResults({ lease })).outcomes.confirm_requested).toBe(4);
+
+    // 앞선 home 광역 장애로 m3 차단기가 열렸고 cool-down 이 막 끝났다
+    await db.execute(sql`insert into uptime_host_breakers (host, state, opened_at, probe_after, cool_down_ms, reason, ratio)
+      values ('m3', 'open', clock_timestamp() - interval '11 minutes', clock_timestamp() - interval '1 second', 600000, 'batch_ratio', 0.8)`);
+    await pingProducts(tick());
+    // 시험 30건은 건강한 제품만 — 죽은 재확인 요청은 열지 않았다
+    expect(http.safeFetch).toHaveBeenCalledTimes(30);
+    expect(fetchedUrls().some(url => deadUrls.has(url))).toBe(false);
+    expect(await breaker()).toMatchObject({ state: "closed", cool_down_ms: 600_000 });
+    for (const row of dead) expect(await claimRow(row.id)).toMatchObject({ confirm_class: "home" });
+
+    // 닫힌 뒤 틱은 재확인 요청을 먼저 가져가 실제로 죽은 사이트를 센다
+    http.safeFetch.mockClear();
+    await pingProducts(tick());
+    for (const row of dead) {
+      expect(await healthRow(row.slug)).toMatchObject({ failures: 1 });
+      expect(await claimRow(row.id)).toMatchObject({ confirm_class: null, last_outcome: "split_confirmed" });
+    }
+    expect(await breaker()).toMatchObject({ state: "closed" });
+  });
+
+  it("확인을 맡은 home 의 차단기가 60분 넘게 열려 있으면 Oracle 반영이 진행을 채워도 경보(재시작 대상 아님)다", async () => {
+    await product("stuck-due", { dueMinutes: -90 });
+    await db.execute(sql`insert into role_leases (role, owner_instance_id, lease_until) values ('maintenance', ${OWNERS.m3.instanceId},
+      (clock_timestamp() at time zone 'UTC') + interval '45 seconds')
+      on conflict (role) do update set owner_instance_id = excluded.owner_instance_id, lease_until = excluded.lease_until`);
+    // probing 에서 다시 열려도 처음 연 시각(61분 전)을 이어 간다
+    await db.execute(sql`insert into uptime_host_breakers (host, state, opened_at, probe_after, cool_down_ms, reason, ratio)
+      values ('m3', 'open', clock_timestamp() - interval '61 minutes', clock_timestamp() + interval '20 minutes', 2400000, 'probe_ratio', 0.1)`);
+    // Oracle 성공 반영이 5분 진행을 채운 상태
+    await db.execute(sql`update uptime_claims set last_applied_at = clock_timestamp() - interval '1 minute', last_applied_host = 'oracle-osaka-smoke'
+      where product_id = (select min(product_id) from uptime_claims)`);
+    const readback = await readUptimeSplitReadback(db);
+    expect(readback.maintenanceOwner).toBe(OWNERS.m3.instanceId);
+    expect(readback.queue.applied5m).toBe(1);
+    const stage = (await readUptimeSplitStage(db))!;
+    expect(classifyStage(stage, null, true, await dbNow())).toMatchObject({ stage: "uptime", reason: "upstream_stalled", alarm: true, restartEligible: false });
+
+    // 역할이 다른 home(mini)으로 넘어갔으면 m3 차단기는 시험할 사람이 없을 뿐이다 — 경보가 아니다
+    await db.execute(sql`update role_leases set owner_instance_id = ${OWNERS.mini.instanceId} where role = 'maintenance'`);
+    expect(classifyStage((await readUptimeSplitStage(db))!, null, true, await dbNow())).toMatchObject({ reason: "progressing", alarm: false });
   });
 });

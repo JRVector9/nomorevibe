@@ -229,6 +229,7 @@ function openBreaker(breaker: UptimeHostBreaker, wall: Date, coolDownMs: number,
  * 이번 묶음을 더한 뒤의 차단기. closed 는 창·묶음 비율로 연다. probing 은 probeSize 건을 받으면 실패율 probeCloseRatio 이하일 때 닫고,
  * 그 비율을 넘을 수밖에 없게 되면 바로 cool-down 을 두 배로(최대 maxCoolDownMinutes) 늘려 다시 연다. open 은 시간이 지나야 바뀐다.
  * probe 는 probing 이 된 뒤 claim 된 결과의 수다(그 전에 나간 결과는 회복 근거가 아니다).
+ * opened_at 은 이번 열림 구간의 시작이다 — probing 에서 다시 열려도 처음 연 시각을 이어 간다(오래 열림 경보가 그 시각부터 잰다).
  */
 export function settleUptimeBreaker(breaker: UptimeHostBreaker, policy: UptimeSplitPolicy,
   counts: { window: UptimeHostCounts; batch: UptimeHostCounts; probe: UptimeHostCounts }, wall: Date): UptimeHostBreaker {
@@ -241,7 +242,8 @@ export function settleUptimeBreaker(breaker: UptimeHostBreaker, policy: UptimeSp
   const probeChecks = breaker.probeChecks + counts.probe.checks, probeFailures = breaker.probeFailures + counts.probe.failures;
   const ratio = probeChecks === 0 ? 0 : probeFailures / probeChecks;
   if (probeFailures > config.probeCloseRatio * config.probeSize) {
-    return openBreaker(breaker, wall, Math.min(breaker.coolDownMs * 2, config.maxCoolDownMinutes * 60_000), "probe_ratio", ratio);
+    const reopened = openBreaker(breaker, wall, Math.min(breaker.coolDownMs * 2, config.maxCoolDownMinutes * 60_000), "probe_ratio", ratio);
+    return { ...reopened, openedAt: breaker.openedAt ?? wall };
   }
   if (probeChecks >= config.probeSize) {
     return { ...breaker, state: "closed", probeAfter: null, coolDownMs: base, reason: null, ratio, probeChecks: 0, probeFailures: 0 };

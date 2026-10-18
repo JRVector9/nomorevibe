@@ -87,7 +87,7 @@ const originOf = (url: ReturnType<typeof sql>) =>
 /**
  * 이 owner 의 host·class(policy 의 instance 매핑)로 due 제품을 최대 limit 건 claim 한다. probe 는 policy 의 batch 를 넘지 않는다.
  * home 은 재확인 요청(confirm)을 먼저 가져간다. probe 는 실패 중·home 고정(affinity) 제품과 재확인 요청을 가져가지 않는다.
- * 차단기가 열려 있으면 가져가지 않고, probing 이면 probeSize 에서 이미 받은 수·나가 있는 수를 뺀 만큼만 가져간다.
+ * 차단기가 열려 있으면 가져가지 않고, probing 이면 probeSize 에서 이미 받은 수·나가 있는 수를 뺀 만큼만, 실패 중·재확인 요청이 아닌 제품만 가져간다.
  * 아무것도 쓰지 않는 거절은 blocked 로 돌려준다(fenced DB·legacy·policy 에 없는 instance·차단기).
  */
 export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limit: number }): Promise<UptimeClaimBatch> {
@@ -118,6 +118,10 @@ export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limi
     if (allowance === 0) return { kind: "blocked", reason: "breaker_open", controlEpoch: control.epoch };
 
     const probe = entry.class !== HOME_CLASS;
+    // 차단기 시험(probing) 표본은 이 host 네트워크가 돌아왔는지 보는 것이다 — 실패 중인 제품·재확인 요청(대개 실제로 죽은 사이트)이 섞이면
+    // 사이트의 죽음이 host 장애로 보여 시험이 매번 실패하고 영영 닫히지 않는다(review F2). 그래서 probing 동안은 건강하다고 알려진 제품
+    // (연속 실패 0, 재확인 요청 아님)만 가져간다. home 고정(affinity) 제품은 home 에서 열렸던 제품이라 표본에 든다
+    const healthyOnly = probe || breaker.state === "probing";
     // 1) 후보를 잠근다(다른 owner 가 잡은 행은 건너뛴다). origin advisory lock 은 고른 행에서만 시도한다(기다리지 않는다)
     const picked = await tx.execute<{ product_id: number; slug: string; url: string; origin: string; locked: boolean }>(sql`
       with cand as materialized (
@@ -129,8 +133,8 @@ export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limi
           -- legacy 쓰기와 겹쳐도 낭비하지 않는다. 재확인 요청은 정식 반영이 없었으므로 이 조건을 건너뛴다
           and (c.confirm_class is not null or h.checked_at is null
             or h.checked_at <= (${wall.toISOString()}::timestamptz at time zone 'UTC') - ${RECHECK_AFTER_MINUTES} * interval '1 minute')
-          and (${!probe} or (c.confirm_class is null and coalesce(h.failures, 0) = 0
-            and coalesce(c.affinity_home_until, '-infinity') <= ${wall.toISOString()}::timestamptz))
+          and (${!healthyOnly} or (c.confirm_class is null and coalesce(h.failures, 0) = 0))
+          and (${!probe} or coalesce(c.affinity_home_until, '-infinity') <= ${wall.toISOString()}::timestamptz)
           and (c.confirm_class is null or c.confirm_class = ${entry.class})
           and not exists (select 1 from uptime_claims o where o.state = 'claimed' and o.lease_until > clock_timestamp()
             and o.owner_instance_id <> ${owner.instanceId} and o.origin = ${originOf(sql`p.url`)})

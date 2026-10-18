@@ -341,7 +341,8 @@ describe("host breaker — open·probe·close", () => {
     const rows = failures("oracle-osaka-smoke", 2, 5).map(row => ({ ...row, claim: { ...row.claim, claimedAt: at(-50_000) },
       result: { ...row.result, startedAt: at(-45_000), observedAt: at(-44_000) } }));
     const batch = decideSplitResults(rows, context({ breakers: [probing] }));
-    expect(batch.breakers[0]).toEqual({ ...probing, state: "open", openedAt: wall, probeAfter: at(20 * MIN), coolDownMs: 20 * MIN,
+    // opened_at 은 이번 열림 구간의 시작 그대로다(오래 열림 경보가 처음 연 시각부터 잰다)
+    expect(batch.breakers[0]).toEqual({ ...probing, state: "open", openedAt: at(-20 * MIN), probeAfter: at(20 * MIN), coolDownMs: 20 * MIN,
       reason: "probe_ratio", ratio: 2 / 5, probeChecks: 0, probeFailures: 0 });
     expect(batch.decisions.slice(0, 2).every(row => row.outcome === "returned")).toBe(true);
     const capped = settleUptimeBreaker({ ...probing, coolDownMs: 40 * MIN }, policy,
