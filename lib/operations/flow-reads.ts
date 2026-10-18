@@ -10,6 +10,7 @@ import type { ModelSlot } from "./stage-registry";
 import type { ReplicaRead } from "./replica-hold";
 import { buildWorkerProgress, evidenceProgress, withProviderBackoff } from "./worker-progress-query";
 import { parseAgentProviderFailure, type ProgressStageInput, type StageProgress } from "./worker-progress";
+import { agentScanByClaims, readAgentScanMode, type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
 
 /**
  * 운영센터 개편 v8 의 새 숫자 — 지금 화면에 없던 수만 여기서 읽는다. 지금 있는 숫자는 지금처럼 렌더마다 읽는다(render-reads.ts).
@@ -54,7 +55,7 @@ export function readSourceSplit(now = new Date()): Promise<ReplicaRead<SourceSpl
 export type EvidenceVerdicts = { at: string; stages: StageProgress[] };
 
 /** 근거 CTE 는 무겁다(3초 상한) — 20초 캐시, 새로고침이 건너뛰어도 인스턴스당 1분에 3번까지 */
-const evidenceCache = replicaCache<{ at: string; rows: ProgressStageInput[] }>({
+const evidenceCache = replicaCache<{ at: string; rows: ProgressStageInput[]; agentScan: AgentScanModeState }>({
   event: "operations.evidence_verdicts_unavailable", ttlMs: 20_000, bypass: true, perMinute: 3,
 });
 
@@ -76,12 +77,16 @@ export async function readEvidenceVerdicts(input: {
   const key = JSON.stringify([settings.agentEvidence.enabled, settings.agentEvidence.backgroundRefreshDays, skipUnseen, failure]);
   const read = await evidenceCache(key, async (replica) => {
     const [clock] = await replica.execute<{ at: string }>(sql`SELECT ${DB_CLOCK_SQL} AS at`);
-    return { at: clock.at, rows: await evidenceProgress(replica, settings, new Date(clock.at), skipUnseen, failure) };
+    // 제작 근거 스캔이 claim 표(consumer)로 돌면 그 표로 센다 — 잡 커서의 스캔 전 실패는 legacy 스캔의 것이다
+    const agentScan = await readAgentScanMode(replica);
+    const agentClaims = agentScanByClaims(agentScan);
+    return { at: clock.at, agentScan,
+      rows: await evidenceProgress(replica, settings, new Date(clock.at), skipUnseen, agentClaims ? null : failure, agentClaims) };
   }, input.fresh);
   if (!read.ok) return read;
   // 판정은 렌더마다 지금 잡 상태로 한다(재시도 보정·일시 중지·워커 생존) — 숫자만 캐시에서 온다
   const report = buildWorkerProgress({ measuredAt: read.value.at, stages: [] }, withProviderBackoff(jobs, now), input.observations, now,
-    input.batch ?? { mode: "legacy", writerContractVersion: 0 }, read.value.rows);
+    input.batch ?? { mode: "legacy", writerContractVersion: 0 }, read.value.rows, read.value.agentScan);
   return { ok: true, value: { at: read.value.at, stages: report.stages } };
 }
 

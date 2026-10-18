@@ -12,7 +12,7 @@ const n = (value: number) => value.toLocaleString("ko-KR");
 export const PROGRESS: Record<StageProgress["reason"], string> = {
   paused: "설정상 중지", no_work: "일감 없음", progressing: "진행 중", running: "작업 실행 중", backoff: "재시도 대기",
   upstream_or_job_error: "오류 확인", upstream_stalled: "반복 오류", unknown_age: "시각 미확인", warming_up: "판별 대기",
-  worker_missing: "워커 끊김", no_progress: "진행 없음", manual_attention: "사람 확인",
+  worker_missing: "워커 끊김", no_progress: "진행 없음", manual_attention: "사람 확인", consumer_missing: "소비자 끊김",
 };
 const roleOf = (key: string) => key === "fetch" ? "crawler" : key === "publish" ? "publisher" : "reviewer";
 

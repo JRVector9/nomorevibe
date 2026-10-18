@@ -64,7 +64,7 @@ const STATUS: ModelRouteStatus = {
     { stage: "ai1", mode: "legacy", drainingFrom: null, epoch: 1, contract: 1, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0 },
     { stage: "ai2", mode: "draining", drainingFrom: "legacy", epoch: 4, contract: 1, live: 2, unsettled: 1, legacyJobLive: true, consumers: 2 },
   ],
-  batch: { mode: "draining", drainingFrom: "legacy", epoch: 2, contract: 1, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0 },
+  batch: { mode: "draining", drainingFrom: "legacy", epoch: 2, contract: 1, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
   capacity: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, waiting: 0, reserved: 0, dispatched: 0, indeterminate: 0, oldGeneration: 3 },
 };
 

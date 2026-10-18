@@ -25,6 +25,8 @@ export type ControlStage = typeof CONTROL_STAGES[number];
 const MODES = {
   stage: ["legacy", "draining", "items"], capacity: ["disabled", "draining", "open"],
   http: ["disabled", "draining", "open"], batch: ["legacy", "draining", "versioned"],
+  // 제작 근거 스캔(agent_scan_control, 0104) — stage 와 같은 뜻의 legacy·draining·items
+  "agent-scan": ["legacy", "draining", "items"],
 } as const;
 type Area = keyof typeof MODES;
 
@@ -41,6 +43,9 @@ const SPECS = {
   "batch contract": ["expect-contract", "expect-epoch"],
   "batch drain": ["from-mode", "expect-epoch"],
   "batch complete": ["draining-from", "to", "expect-epoch"],
+  "agent-scan contract": ["expect-contract", "expect-epoch"],
+  "agent-scan drain": ["from-mode", "expect-epoch"],
+  "agent-scan complete": ["draining-from", "to", "expect-epoch"],
 } as const;
 export type TransitionName = keyof typeof SPECS;
 const FLAGS = new Set(["execute", "json", "allow-deferred-routes", "allow-stalled-stage"]);
@@ -49,7 +54,8 @@ const OPERATOR = /^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,119}$/;
 export type ControlOptions = { stage: ControlStage; to: string; fromMode: string; drainingFrom: string; file: string;
   expectEpoch: number; expectRevision: number; expectContract: number; expectPolicyHash: string | null; operator: string; reason: string };
 export type ControlCommand =
-  | { name: "status"; json: boolean }
+  /** area 가 있으면 그 칸만 보인다(`agent-scan status`) */
+  | { name: "status"; json: boolean; area?: "agent-scan" }
   | { name: TransitionName; area: Area; execute: boolean; json: boolean; allowDeferredRoutes: boolean; allowStalledStage: boolean;
     options: Partial<ControlOptions> };
 export type TransitionCommand = Extract<ControlCommand, { area: Area }>;
@@ -63,14 +69,15 @@ const integer = (value: string, min: number, code: string) => {
 /** --key=value와 값 없는 flag만 받는다. 모르는·중복 옵션과 URL 인자는 거절한다(DB URL은 환경변수로만). */
 export function parsePipelineControlArgs(args: readonly string[]): ControlCommand {
   if (args.some(arg => arg.includes("://"))) fail("pipeline_control_url_argument_rejected");
-  const status = args[0] === "status";
+  const areaStatus = args[0] === "agent-scan" && args[1] === "status";
+  const status = args[0] === "status" || areaStatus;
   const name = status ? "status" : `${args[0]} ${args[1]}`;
   if (!status && !Object.hasOwn(SPECS, name)) fail("pipeline_control_unknown_command");
   const required: readonly string[] = status ? [] : [...SPECS[name as TransitionName], "operator", "reason"];
   const allowed = new Set([...required, "json", ...(status ? [] : ["execute"]), ...(name === "capacity mode" ? ["allow-deferred-routes"] : []),
     ...(name === "stage complete" ? ["allow-stalled-stage"] : [])]);
   const values = new Map<string, string>(), flags = new Set<string>();
-  for (const arg of args.slice(status ? 1 : 2)) {
+  for (const arg of args.slice(args[0] === "status" ? 1 : 2)) {
     const match = /^--([a-z-]+)(?:=([^\n]*))?$/.exec(arg);
     if (!match || !allowed.has(match[1])) fail("pipeline_control_unknown_option");
     const [, key, value] = match;
@@ -78,7 +85,7 @@ export function parsePipelineControlArgs(args: readonly string[]): ControlComman
     if (values.has(key) || flags.has(key)) fail("pipeline_control_duplicate_option");
     if (FLAGS.has(key)) flags.add(key); else values.set(key, value);
   }
-  if (status) return { name: "status", json: flags.has("json") };
+  if (status) return { name: "status", json: flags.has("json"), ...(areaStatus ? { area: "agent-scan" as const } : {}) };
   for (const key of required) if (!values.has(key)) fail(`pipeline_control_missing_${key.replace(/-/g, "_")}`);
   const area = args[0] as Area, options: Partial<ControlOptions> = {};
   const mode = (key: string) => {
@@ -133,7 +140,17 @@ export const controlSnapshotSchema = z.object({
   capacity: z.object({ ...controlRow("capacity"), waiting: count, oldGeneration: count }).strict(),
   http: z.object(controlRow("http")).strict(),
   batch: z.object({ mode: z.enum(MODES.batch), drainingFrom: z.enum(["legacy", "versioned"]).nullable(), epoch, contract: count,
-    policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count }).strict(),
+    policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count,
+    liveAgentClaims: count }).strict(),
+  /**
+   * 제작 근거 스캔 control 과 claim 표. live·unsettled 는 전환 가드와 같은 조건(lease_until 대 DB 시계, 시간대 없는 UTC)이다.
+   * legacyJobLive 는 legacy 스캔을 할 수 있는 agent-evidence-refresh 틱(legacy 의 틱, draining(from legacy) 에서는 drain 전에 시작한 틱)이 살아 있는가.
+   * queue 는 priority 별 지금 잡을 수 있는 행(도래했고 저장소 backoff 가 지났고 살아 있는 claim 이 아님) 수와 그중 가장 오래 기다린 분.
+   */
+  agentScan: z.object({ mode: z.enum(MODES["agent-scan"]), drainingFrom: z.enum(["legacy", "items"]).nullable(), epoch, contract: count,
+    live: count, unsettled: count, legacyJobLive: z.boolean(), consumers: count,
+    queue: z.array(z.object({ priority: z.number().int().min(0).max(9), waiting: count, oldestMinutes: z.number().nonnegative().nullable() }).strict()),
+  }).strict(),
   recentInstances: z.array(z.string()),
   /** crawl_settings.values 원문(행이 없으면 null). 워커와 같은 mergeWithDefaults로 읽는다 */
   reviewSettings: z.unknown(),
@@ -330,6 +347,34 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     return plan(target, `${c.mode} → open`, { routes });
   }
 
+  if (command.area === "agent-scan") {
+    const a = snapshot.agentScan, target = "agent_scan_control";
+    expect("epoch", o.expectEpoch, a.epoch);
+    if (command.name === "agent-scan contract") {
+      expect("contract", o.expectContract, a.contract);
+      if (a.mode !== "legacy") blocked.push("agent_scan_transition_invalid");
+      return plan(target, `writer_contract ${a.contract} → ${a.contract + 1}`);
+    }
+    if (a.contract < 1) blocked.push("agent_scan_contract_required");
+    if (command.name === "agent-scan drain") {
+      expect("mode", o.fromMode, a.mode);
+      if (o.fromMode === "draining") blocked.push("agent_scan_transition_invalid");
+      if (o.fromMode === "legacy" && a.consumers === 0) warnings.push("consumer_heartbeat_missing:agent-scan");
+      // draining 동안 legacy 잡은 새 스캔을 시작하지 않고(컨트롤러만), consumer 는 claim 하지 않는다
+      warnings.push("agent_scan_paused_until_complete");
+      return plan(target, `${a.mode} → draining (epoch ${a.epoch} 유지)`);
+    }
+    expect("mode", "draining", a.mode);
+    expect("draining_from", o.drainingFrom, a.drainingFrom);
+    if (o.to === "draining") blocked.push("agent_scan_transition_invalid");
+    if (a.live > 0) blocked.push(`agent_scan_not_drained:${a.live}`);
+    if (o.to === "items" && a.consumers === 0) warnings.push("consumer_heartbeat_missing:agent-scan");
+    if (a.drainingFrom === "legacy" && a.legacyJobLive) warnings.push("legacy_job_in_flight:agent-scan");
+    if (o.to === a.drainingFrom) warnings.push("drain_cancelled");
+    if (a.unsettled > 0) warnings.push(`expired_unsettled_claims:${a.unsettled}`);
+    return plan(target, `draining(from ${a.drainingFrom ?? "-"}) → ${o.to}, epoch ${a.epoch} → ${a.epoch + 1}`);
+  }
+
   const b = snapshot.batch, target = "job_batch_control";
   expect("epoch", o.expectEpoch, b.epoch);
   const policyValid = (() => { const parsed = batchPolicySchema.safeParse(b.policy); return parsed.success && batchPolicyHash(parsed.data) === b.policyHash; })();
@@ -345,8 +390,8 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     return plan(target, `writer_contract ${b.contract} → ${b.contract + 1}`);
   }
   if (b.contract < 1) blocked.push("batch_contract_required");
-  const quiet = `jobs=${b.liveJobs},roles=${b.liveRoles},items=${b.liveItems},sources=${b.liveSources}`;
-  const busy = b.liveJobs + b.liveRoles + b.liveItems + b.liveSources > 0;
+  const quiet = `jobs=${b.liveJobs},roles=${b.liveRoles},items=${b.liveItems},sources=${b.liveSources},agent_claims=${b.liveAgentClaims}`;
+  const busy = b.liveJobs + b.liveRoles + b.liveItems + b.liveSources + b.liveAgentClaims > 0;
   if (command.name === "batch drain") {
     expect("mode", o.fromMode, b.mode);
     if (o.fromMode === "draining") blocked.push("batch_transition_invalid");
@@ -391,7 +436,13 @@ function areaLines(snapshot: ControlSnapshot, area: Area | "all"): string[] {
   if (area === "all" || area === "batch") {
     const b = snapshot.batch;
     lines.push(`[batch] mode=${b.mode} from=${b.drainingFrom ?? "-"} epoch=${b.epoch} contract=${b.contract} policy=${policyLabel(b.policy, b.policyHash)}`
-      + ` live jobs=${b.liveJobs} roles=${b.liveRoles} items=${b.liveItems} sources=${b.liveSources}`);
+      + ` live jobs=${b.liveJobs} roles=${b.liveRoles} items=${b.liveItems} sources=${b.liveSources} agent_claims=${b.liveAgentClaims}`);
+  }
+  if (area === "all" || area === "agent-scan") {
+    const a = snapshot.agentScan;
+    lines.push(`[agent-scan] mode=${a.mode} from=${a.drainingFrom ?? "-"} epoch=${a.epoch} contract=${a.contract} live=${a.live}`
+      + ` unsettled=${a.unsettled} legacy_job=${a.legacyJobLive ? "live" : "idle"} consumers=${a.consumers}`,
+    ...table(["priority", "waiting", "oldest_min"], a.queue.map(row => [row.priority, row.waiting, row.oldestMinutes])));
   }
   return lines;
 }
@@ -404,10 +455,12 @@ export function statusRouteContracts(snapshot: ControlSnapshot, models: ModelEnv
     usedModelRoutes(snapshot, models));
 }
 
-/** 사람이 읽는 출력. --json이면 이 대신 결과 JSON 한 줄을 쓴다. */
-export function formatControlStatus(snapshot: ControlSnapshot, models: ModelEnv | null = null): string {
+/** 사람이 읽는 출력. --json이면 이 대신 결과 JSON 한 줄을 쓴다. area 를 주면 그 칸만(`agent-scan status`). */
+export function formatControlStatus(snapshot: ControlSnapshot, models: ModelEnv | null = null, area?: "agent-scan"): string {
+  const header = `DB 시각 ${snapshot.now}  fence=${snapshot.fence.state}(writer epoch ${snapshot.fence.writerEpoch})`;
+  if (area) return [header, ...areaLines(snapshot, area), ""].join("\n");
   const routes = statusRouteContracts(snapshot, models);
-  return [`DB 시각 ${snapshot.now}  fence=${snapshot.fence.state}(writer epoch ${snapshot.fence.writerEpoch})`, ...areaLines(snapshot, "all"),
+  return [header, ...areaLines(snapshot, "all"),
     "[capacity routes] open이면 serving·unused 밖은 모두 미뤄진다(unused = 지금 설정·env가 부르지 않는 조합, 정보)", ...routeLines(routes), ""].join("\n");
 }
 export function formatControlResult(result: ControlResult): string {

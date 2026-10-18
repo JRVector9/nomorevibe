@@ -20,7 +20,8 @@ const SNAPSHOT: ControlSnapshot = { now: "2026-10-18T00:44:02.000Z", fence: { st
   stages: [stage("ai1"), stage("ai2", { mode: "draining", drainingFrom: "legacy", live: 2, legacyJobLive: true, consumers: 1 })],
   capacity: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, waiting: 0, reserved: 0, dispatched: 0, indeterminate: 0, oldGeneration: 0 },
   http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
-  batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 3, liveRoles: 5, liveItems: 0, liveSources: 0 },
+  batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 3, liveRoles: 5, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
+  agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
   recentInstances: [], reviewSettings: { firstReview: { provider: "abcllm", model: "ai1-gw" } }, auditCampaign: null };
 
 beforeEach(() => { vi.clearAllMocks(); });
