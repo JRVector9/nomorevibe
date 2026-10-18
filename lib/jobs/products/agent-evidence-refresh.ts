@@ -13,6 +13,7 @@ import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
 import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 import { readGitHubCoreHeadroom } from '@/lib/crawl/github-headroom';
+import { collectorScope } from '@/lib/crawl/github-secret';
 import { readAgentScanMode } from '@/lib/domain/evidence/agents/claim-control';
 import { fillAgentScanQueue } from '@/lib/domain/evidence/agents/claims';
 import { agentCoverageRevisionSql } from '@/lib/domain/evidence/agents/coverage';
@@ -162,12 +163,15 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   let attempted = 0;
   const more = (): JobOutcome<AgentEvidenceRefreshCursor> => ({ done: false, cursor: cursor(), ...(attempted > 0 ? { continuation: 'ready' as const } : {}) });
   const collect = async (): Promise<JobOutcome<AgentEvidenceRefreshCursor>> => {
+    // 이 프로세스가 실제로 쓰는 수집 자격(G1 서버별 범위). 여유 관문은 consumer 와 같은 범위만 센다 — 다른 서버 몫으로 뺀 설치의
+    // 남은 한도를 더하면 이 서버 자격을 25% 아래까지 쓴다. 값이 틀리면 첫 요청 전에 틱이 실패한다(어차피 모든 요청이 실패한다)
+    const scope = collectorScope();
     for (const row of work) {
       if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return more();
       // 틱 도중 drain 이 시작되면 새 스캔을 시작하지 않는다 — 이미 시작한 스캔만 draining(from legacy) 관문을 지나 기록된다
       if ((await readAgentScanMode(db)).mode !== 'legacy') return more();
       // GitHub 여유 관문 — 남은 core 가 적으면 먼저 도는 수집(원본·AI 단계)에 한도를 남기고 다음 정기 틱에 다시 본다
-      const headroom = await readGitHubCoreHeadroom();
+      const headroom = await readGitHubCoreHeadroom(Date.now(), scope);
       if (headroom?.low) {
         ctx.log('agent_evidence.github_headroom_low', { remaining: headroom.remaining, limit: headroom.limit });
         return { done: false, cursor: cursor() };
