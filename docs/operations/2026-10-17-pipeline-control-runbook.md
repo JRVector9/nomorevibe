@@ -353,6 +353,8 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 
 - 컨트롤러 틱은 잡 커서에서 새 제품 몫의 자리(`afterNewProduct`)만 남기고 legacy 스캔의 공급자 대기·스캔 전 실패 기록은 지운다. 운영센터 `agent-evidence` 단계는 items·draining(from items)에서 claim 표로 센다: 대기·최장 대기는 claim의 `due_at`과 저장소별 `retry_after` 중 늦은 쪽, 처리·오류는 최신 스캔(스캔 행이 없는 실패는 claim 행의 실패 기록)이다.
 - items·draining에서 이 단계는 crawler 자동 재시작 대상이 아니다(재시작해도 consumer 문제는 고쳐지지 않는다). items인데 consumer 관측이 2분 넘게 없으면 단계 판정이 `consumer_missing`(소비자 끊김) 경보다.
+- **잡 멈춤은 items에서도 스캔을 멈춘다.** 운영자가 `agent-evidence-refresh`를 멈추면(`jobs.not_before` 먼 미래, 1년 넘게) 컨트롤러 틱이 멈추고, consumer의 claim도 `paused`로 쉰다(30초마다 다시 본다. Oracle 계정은 jobs 권한 없이 0105 보기 `agent_scan_job_schedule`로 그 값만 읽는다). 이미 맡은 저장소는 기록을 마친다. 운영센터는 '설정상 중지'이고 `consumer_missing` 경보를 내지 않는다. 다시 열면(`not_before` 비움) 30초 안에 이어 맡는다. 스캔을 멈추는 다른 방법은 `agent-scan drain`, `agentEvidence.enabled=false`, consumer 정지다.
+- **비상(PR16 full·recovering·hold)에서 이 잡은 `suspended`지만 consumer는 비상 판정을 스스로 읽지 못한다** — 판정이 role_leases·http_origin_control을 읽는데 consumer 계정에는 그 권한이 없고, Oracle consumer는 host 장부(HOST_BUDGET_ENFORCEMENT)를 켜지 않는다. 비상으로 들어가면 위 잡 멈춤으로 모든 consumer를 멈추거나 Oracle에서 `systemctl stop nomorevibe-core-consumer@agent-scan`을 한다.
 - `status`의 `[agent-scan]`: `live`(lease_until 전 claim), `unsettled`(기한 지난 미정산), `legacy_job`(drain 전에 시작한 잡 틱이 살아 있으면 `live`), `consumers`(2분 안 consumer 관측 수), 그리고 priority별 `waiting`(지금 잡을 수 있는 행: 도래했고 backoff가 지났고 살아 있는 claim이 아님)·`oldest_min`. priority: 0 관리자 추가 수집 · 1 1차 심사 대기 · 2 스캔 없는 공개 제품 · 3 스캔 없는 후보 · 4 이어 하기 · 5 정기 · 6 오류 반복.
 
 사전 확인(설계 §8 S3–S5, 각각 별도 승인):

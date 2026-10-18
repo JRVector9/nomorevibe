@@ -1,4 +1,4 @@
--- FX-E: Oracle 계정(nomorevibe_oracle_*)이 닿는 행을 좁힌다.
+-- FX-E: Oracle 계정(nomorevibe_oracle_*)이 닿는 행을 좁히고, 제작 근거 consumer 가 jobs 권한 없이 잡 멈춤을 읽게 한다.
 -- 기존 열·CHECK·권한은 그대로다. 표 소유 역할(M3·mini 웹·워커가 쓰는 계정, migration 계정)은 RLS 를 우회하고, 소유자가 아닌 계정도
 -- 모든 행 허용 정책(true)을 받는다. RESTRICTIVE 정책은 이름이 nomorevibe_oracle_ 로 시작하는 계정에만 조건을 건다(계정은 NOINHERIT·
 -- current_user = session_user 를 preflight 가 확인한다). 정책은 다른 표를 읽지 않는다 — 읽으면 모든 계정에 그 표 SELECT 가 필요해진다.
@@ -29,3 +29,8 @@ CREATE POLICY github_collector_apps_all_rows ON github_collector_apps AS PERMISS
 CREATE POLICY github_collector_apps_oracle_principals ON github_collector_apps AS RESTRICTIVE FOR ALL TO PUBLIC
  USING (NOT starts_with(current_user::text, 'nomorevibe_oracle_') OR current_user::text = ANY (oracle_principals))
  WITH CHECK (NOT starts_with(current_user::text, 'nomorevibe_oracle_') OR current_user::text = ANY (oracle_principals));
+--> statement-breakpoint
+-- 3) 제작 근거 consumer 의 claim 이 잡 멈춤(jobs.not_before 먼 미래, 운영자 정지)을 따른다. consumer 계정은 jobs 권한이 없으므로
+--    그 잡의 not_before 하나만 보이는 보기를 둔다(보기 소유자 권한으로 읽는다).
+CREATE VIEW agent_scan_job_schedule WITH (security_barrier) AS
+ SELECT not_before FROM jobs WHERE name = 'agent-evidence-refresh';

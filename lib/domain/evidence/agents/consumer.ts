@@ -17,8 +17,8 @@ import { collectRepositoryAgentScan, getLatestRepositoryAgentScan } from './repo
  *
  * 한 바퀴: 공급자 대기(rate_limited·인증 대기의 retryAt) → GitHub 여유 관문(이 프로세스가 쓰는 자격의 core 남은 비율) → host 장부 admit
  * → claim(5번째마다 priority 를 무시하고 오래 기다린 것부터 — 뒤 순위가 굶지 않게) → 수집(collect 상한 그대로: 요청 12·20초·요청당 8초)
- * → 기록. claim·기록·포기의 권한·lock·시계는 claims.ts 가 정한다. 모드가 items 가 아니거나 설정이 꺼졌거나 탐지기 버전이 다르면
- * claim 이 idle 을 돌려주고 여기서는 30초 쉰다(GitHub 를 부르지 않는다).
+ * → 기록. claim·기록·포기의 권한·lock·시계는 claims.ts 가 정한다. 모드가 items 가 아니거나 설정이 꺼졌거나 탐지기 버전이 다르거나
+ * 운영자가 agent-evidence-refresh 잡을 멈췄으면 claim 이 idle 을 돌려주고 여기서는 30초 쉰다(GitHub 를 부르지 않는다).
  *
  * 포기: 종료 신호·예산 소진·claim 뒤 60초(AGENT_SCAN_RECORD_CUTOFF_MS)가 지나면 쓰지 않고 푼다 — 시계·실패 수는 그대로다.
  * 수집·기록 중 예외는 같은 저장소가 큐 맨 앞에서 곧바로 다시 잡히지 않게 retry_after 를 15분 미뤄 푼다. 소유를 잃은 기록(lease_lost)은
@@ -59,7 +59,7 @@ export type AgentScanConsumerInput = {
 };
 
 const emptyStats = (): AgentScanConsumerStats => ({ claimed: 0, recorded: { complete: 0, partial: 0, failed: 0, cached: 0 }, abandoned: 0,
-  leaseLost: 0, errors: 0, deferred: { quota: 0, host: 0, rateLimited: 0, mode: 0, disabled: 0, detector: 0, fenced: 0 }, idleEmpty: 0, githubRequests: 0 });
+  leaseLost: 0, errors: 0, deferred: { quota: 0, host: 0, rateLimited: 0, mode: 0, disabled: 0, detector: 0, paused: 0, fenced: 0 }, idleEmpty: 0, githubRequests: 0 });
 /** claim 순서: 1..(N-1)번째는 priority, N번째는 due */
 export function agentScanClaimOrder(attempt: number): 'priority' | 'due' {
   return attempt % AGENT_SCAN_DUE_EVERY === AGENT_SCAN_DUE_EVERY - 1 ? 'due' : 'priority';

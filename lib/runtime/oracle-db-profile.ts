@@ -120,6 +120,8 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
       agent_repository_observations: { select: true, insert: true, delete: true },
       crawl_discovery_evidence: read, crawl_settings: read,
+      // 잡 멈춤(agent-evidence-refresh 의 not_before)만 보이는 보기(0105). claim 이 운영자 정지를 따른다 — jobs 권한은 없다
+      agent_scan_job_schedule: read,
       // 행은 RLS(0105)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다
       github_collector_apps: { select: true, update: ['core_quota', 'quota_observed_at'] },
       // 행은 RLS(0105)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.

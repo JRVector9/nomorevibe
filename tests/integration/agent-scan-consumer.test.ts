@@ -204,6 +204,26 @@ it('judges the cache by the claim (DB) clock so a host clock behind the DB scans
   expect(await nextClaimSeconds(key)).toBeGreaterThan(60);
 }, 30_000);
 
+it('follows the job pause: a paused agent-evidence-refresh keeps consumers idle without GitHub until it is resumed', async () => {
+  await queue([{ key: 'acme/paused-1' }]);
+  await toItems();
+  // 운영자의 잡 멈춤(not_before 먼 미래) — legacy 에서 스캔을 멈추는 그 값이다
+  await db.execute(sql`INSERT INTO jobs (name, not_before) VALUES ('agent-evidence-refresh', '2100-01-01')
+    ON CONFLICT (name) DO UPDATE SET not_before = excluded.not_before`);
+  try {
+    const paths: string[] = [];
+    // 고치기 전: claim 이 잡 멈춤을 보지 않아 계속 스캔했다
+    const paused = await runAgentScanConsumer({ owner: owner('paused'), once: true, request: fakeGitHub(paths) });
+    expect(paused).toMatchObject({ claimed: 0, deferred: { paused: 1 } });
+    expect(paths).toEqual([]);
+    expect(await claimRow('acme/paused-1')).toMatchObject({ epoch: 0, token: null });
+    // 잡을 다시 열면(not_before 비움) 이어서 맡는다
+    await db.execute(sql`UPDATE jobs SET not_before = NULL WHERE name = 'agent-evidence-refresh'`);
+    const resumed = await runAgentScanConsumer({ owner: owner('resumed'), once: true, request: fakeGitHub(paths) });
+    expect(resumed).toMatchObject({ claimed: 1, recorded: { complete: 1 } });
+  } finally { await db.execute(sql`DELETE FROM jobs WHERE name = 'agent-evidence-refresh'`); }
+});
+
 it('abandons the claim without writing when shutdown interrupts the scan', async () => {
   await queue([{ key: 'acme/stop-1' }, { key: 'acme/stop-2' }]);
   await toItems();

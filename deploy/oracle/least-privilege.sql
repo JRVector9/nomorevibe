@@ -205,6 +205,7 @@ GRANT SELECT, INSERT ON TABLE public.agent_repository_scans TO nomorevibe_oracle
 GRANT UPDATE (coverage, state, cursor, request_count, file_count, started_at, completed_at, last_error_code, next_attempt_at) ON TABLE public.agent_repository_scans TO nomorevibe_oracle_agent_scan;
 GRANT SELECT ON TABLE public.agent_scan_control TO nomorevibe_oracle_agent_scan;
 GRANT UPDATE (id) ON TABLE public.agent_scan_control TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.agent_scan_job_schedule TO nomorevibe_oracle_agent_scan;
 GRANT SELECT ON TABLE public.crawl_discovery_evidence TO nomorevibe_oracle_agent_scan;
 GRANT SELECT ON TABLE public.crawl_settings TO nomorevibe_oracle_agent_scan;
 GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_agent_scan;
