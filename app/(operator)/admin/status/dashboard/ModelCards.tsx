@@ -1,9 +1,16 @@
+import Link from "next/link";
 import type { ModelHealth } from "@/lib/operations/dashboard";
+import type { ModelSlot } from "@/lib/operations/stage-registry";
+import { ACTION_LINKS } from "../action-links";
 import { CodexReconnectButton } from "./CodexReconnect";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 /** 게이트웨이 모델 이름 앞의 실행기 표시("[MLX] ", "[supa] ")는 떼고 보인다 — 전체 이름은 title 로(ADM-28) */
 export const modelName = (model: string) => model.replace(/^\[[^\]]*\]\s*/, "");
+
+/** 단계 · 자리 이름 — "2차 · 투표 2"(운영센터 v8 의 모델 자리 이름) */
+export const slotTitle = (slot: Pick<ModelSlot, "stage" | "label">) =>
+  slot.stage === "first" ? `1차 · ${slot.label}` : slot.stage === "second" ? `2차 · ${slot.label}` : slot.label;
 
 export type ConnectionProbe = { provider: "claude" | "codex" | "grok"; result: string | null; checkedAt: string | null };
 const PROBE_LABEL = { claude: "Claude", codex: "Codex", grok: "Grok" } as const;
@@ -23,7 +30,9 @@ function tone(row: ModelHealth): { tone: "ok" | "warn" | "bad"; text: string } {
  * 실패율이 10%를 넘거나 2차 일치율이 70% 아래면 카드 색이 바뀐다. 2026-10-02 실측: 2차 투표자 일치 53% 는
  * 숫자로만 있었고 화면엔 "대기 N건"만 있었다.
  */
-export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: ConnectionProbe[] }) {
+export function ModelCards({ rows, probes, others = [] }: { rows: ModelHealth[]; probes: ConnectionProbe[];
+  /** 네 줄 밖의 모델 자리(v8) — 한 줄로 이름만 적고 흐름 상세 탭으로 보낸다. 숫자·색은 그 탭의 자리 전체 표에 있다 */
+  others?: Pick<ModelSlot, "key" | "stage" | "label">[] }) {
   return (
     <section id="models" className="dash-card dash-4" aria-label="모델 연결">
       <div className="dash-card-h"><h2>모델 연결 · 최근 1시간</h2><small>호출 · 실패 · 평균</small></div>
@@ -41,6 +50,13 @@ export function ModelCards({ rows, probes }: { rows: ModelHealth[]; probes: Conn
           );
         })}
       </div>
+      {others.length > 0 && (
+        <div className="ops-v8-model-more">
+          <span className="role">그 밖의 자리 {others.length}개<i className="ops-v8-new">새</i></span>
+          <span className="dash-pill">참고</span>
+          <Link href={ACTION_LINKS.flow} title={others.map(slotTitle).join(" · ")}>{others.map(slotTitle).join(" · ")} → 흐름 상세</Link>
+        </div>
+      )}
       {probes.length > 0 && (
         <div className="dash-chips" style={{ marginTop: 10 }}>
           {probes.map((probe) => (

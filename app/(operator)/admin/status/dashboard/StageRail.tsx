@@ -8,8 +8,8 @@ import { ACTION_LINKS } from "../action-links";
 
 type Liveness = ReturnType<typeof classifyLiveness>;
 const n = (value: number) => value.toLocaleString("ko-KR");
-// 워커 진행 판정(worker-progress)을 한 칸에 들어가게 짧게
-const PROGRESS: Record<StageProgress["reason"], string> = {
+// 워커 진행 판정(worker-progress)을 한 칸에 들어가게 짧게 — 흐름 상세·판정 알약(v8)도 같은 글자를 쓴다
+export const PROGRESS: Record<StageProgress["reason"], string> = {
   paused: "설정상 중지", no_work: "일감 없음", progressing: "진행 중", running: "작업 실행 중", backoff: "재시도 대기",
   upstream_or_job_error: "오류 확인", upstream_stalled: "반복 오류", unknown_age: "시각 미확인", warming_up: "판별 대기",
   worker_missing: "워커 끊김", no_progress: "진행 없음", manual_attention: "사람 확인",
@@ -17,7 +17,7 @@ const PROGRESS: Record<StageProgress["reason"], string> = {
 const roleOf = (key: string) => key === "fetch" ? "crawler" : key === "publish" ? "publisher" : "reviewer";
 
 /** 단계 아래 줄 — 워커가 살아 있고 지금 무엇을 하는지. 옛 처리량 띠의 runtimeState 와 같은 판단. */
-function worker(stage: ThroughputStage, signal: StageProgress | undefined, liveness: Liveness[] | undefined): { text: string; alarm: boolean } {
+export function worker(stage: ThroughputStage, signal: StageProgress | undefined, liveness: Liveness[] | undefined): { text: string; alarm: boolean } {
   const live = liveness?.find((row) => row.role === roleOf(stage.key));
   if (live?.reason === "worker_missing") return { text: "워커 관측 끊김", alarm: true };
   if (live?.reason === "restart_loop") return { text: "워커 반복 재시작", alarm: true };
@@ -26,7 +26,10 @@ function worker(stage: ThroughputStage, signal: StageProgress | undefined, liven
   return { text: live ? "워커 정상" : "워커 미관측", alarm: false };
 }
 
-function age(minutes: number | null, waiting: number): string {
+/** 단계 칸의 색 — 정체·워커 경보는 빨강, 적체·사람 몫은 주황(판정 알약·흐름 상세도 같은 규칙) */
+export const railTone = (status: string, manual: number, alarm: boolean) => status === "stalled" || alarm ? "bad" : status === "backlog" || manual > 0 ? "warn" : undefined;
+
+export function age(minutes: number | null, waiting: number): string {
   if (minutes === null) return waiting === 0 ? "대기 없음" : "시각 미확인";
   if (minutes < 1) return "1분 미만";
   if (minutes < 60) return `${Math.floor(minutes)}분`;
@@ -55,7 +58,6 @@ export function StageRail({ snapshot, flow, human, signals, liveness }: {
     const row = flow.stages.find((stage) => stage.key === key);
     return row && row.entered !== null && row.left !== null ? `24시간 들어옴 ${n(row.entered)} · 나감 ${n(row.left)}` : undefined;
   };
-  const tone = (status: string, manual: number, alarm: boolean) => status === "stalled" || alarm ? "bad" : status === "backlog" || manual > 0 ? "warn" : undefined;
   const bottleneck = flow.stages.find((stage) => stage.key === flow.bottleneck);
   return (
     <section className="dash-card dash-8" aria-label="파이프라인">
@@ -64,7 +66,7 @@ export function StageRail({ snapshot, flow, human, signals, liveness }: {
         {stages.map((stage) => {
           const state = worker(stage, signals?.find((row) => row.stage === stage.key), liveness);
           return (
-            <li key={stage.key} data-tone={tone(stage.status, stage.manualAttention ?? 0, state.alarm)} title={flowNote(stage.key)}>
+            <li key={stage.key} data-tone={railTone(stage.status, stage.manualAttention ?? 0, state.alarm)} title={flowNote(stage.key)}>
               <span className="t">{stage.label}</span>
               <span className="n">{n(stage.waiting)}</span>
               <span className="s">{stage.waiting > 0 ? `최장 ${age(stage.oldestMinutes, stage.waiting)}`

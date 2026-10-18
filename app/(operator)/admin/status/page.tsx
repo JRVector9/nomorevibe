@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
@@ -15,18 +16,15 @@ import { getCurrentSeason, RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { PipelineControlStatus } from "./PipelineControlStatus";
-import { readPipelineControlStatus } from "@/lib/operations/pipeline-control-status";
 import { PipelineCompletions } from "./PipelineCompletions";
 import { ModelRouteContracts } from "./ModelRouteContracts";
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
 import { sourceBufferCsrf } from "./source-buffer-csrf";
-import { readPipelineCompletions } from "@/lib/operations/pipeline-completions";
 import { CrawlerActivity } from "./CrawlerActivity";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
-import { pipelineFlow } from "@/lib/operations/pipeline";
-import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operations/dashboard";
+import { signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { catalogJobsForBatch } from "@/lib/jobs/batches";
@@ -59,6 +57,10 @@ import { SearchHealthPanel } from "./SearchHealthPanel";
 import { ScrollToHash } from "../ScrollToHash";
 import { ScrollTable } from "../components/ScrollTable";
 import { actionCounts, buildActions, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
+import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./render-reads";
+import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
+import { flowVerdict, otherModelSlots } from "./flow-model";
+import { OPS_FRESH_COOKIE } from "./fresh";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -111,7 +113,7 @@ function CardPending({ span, label }: { span: string; label: string }) {
  */
 
 async function PipelineControlSlot() {
-  return <PipelineControlStatus status={await readPipelineControlStatus()} />;
+  return <PipelineControlStatus status={await controlStatusOnce()} />;
 }
 
 /** 모델 경로 계약·전환 진행(ops-v8 PR8) — 운영 CLI status 와 같은 readback 을 복제본에서만. 못 읽으면 보류 */
@@ -121,16 +123,16 @@ async function ModelRouteSlot() {
 
 /** PR13c 처리 지표 — 복제본에서 따로 센다. 못 읽으면 칸마다 미확인으로 남는다 */
 async function PipelineCompletionsSlot() {
-  return <PipelineCompletions status={await readPipelineCompletions()} />;
+  return <PipelineCompletions status={await completionsOnce()} />;
 }
 
 async function KpiSlot({ derived }: { derived: DerivedStatus }) {
-  const hourly = await hourlyThroughput().catch(warn("operations.hourly_unavailable"));
+  const hourly = await hourlyOnce().catch(warn("operations.hourly_unavailable"));
   return <KpiStrip series={hourly} textPending={derived.health?.pendingGeneration ?? null} verifyPending={derived.health?.pendingVerification ?? null} />;
 }
 
 async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus }) {
-  const flow = await pipelineFlow();
+  const flow = await flowOnce();
   return <StageRail snapshot={inputs.throughput} flow={flow} human={inputs.overview}
     signals={derived.workerProgress?.stages} liveness={derived.workerProgress?.liveness} />;
 }
@@ -391,6 +393,8 @@ export default async function StatusPage() {
   if (!admin) redirect("/admin/login");
 
   const settings = await getSettings();
+  // 수동 새로고침(5초 쿠키)이면 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts) — 지금 숫자는 원래 렌더마다 읽는다
+  const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   // 조치할 일과 머리 칩에 드는 것만 기다린다 — 나머지는 아래 Suspense 조각이 따로 센다
   const [inputs, acks] = await Promise.all([loadActionInputs(settings),
     attentionAcks().catch((error) => { warn("operations.attention_acks_unavailable")(error); return new Map(); })]);
@@ -423,6 +427,9 @@ export default async function StatusPage() {
     result: !grok ? null : derived.ageMs(grok.observedAt) > 5 * 3_600_000 ? "오래됨" : typeof grok.value.result === "string" ? grok.value.result : null });
   const roleRows = roles?.roles ?? null;
   const scheduler = roles?.scheduler ?? null;
+  // 판정 알약(v8) — 조치와 같은 동기 입력만으로 센다. 새 쿼리가 없어 첫 그림을 기다리게 하지 않는다
+  const verdict = flowVerdict({ split, throughput: inputs.throughput, workerProgress: derived.workerProgress, human: overview });
+  const flowSlot = { inputs, derived, actions, fresh };
 
   /*
    * 전체 현황 — 지금 조치 · 쌓인 일 · 사람 확인 한 줄, 그다음 지표.
@@ -443,12 +450,14 @@ export default async function StatusPage() {
       <div className="ops-phone-rest">
         <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} /></Suspense>
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
+        {/* 레일 오른쪽의 빈 4칸(1,181px 이상) — 들어오는 곳·발행 후 보강·설정 전환(v8). 레일 높이 안, 칸마다 따로 흐른다 */}
+        <FlowSideCells variant="rail" {...flowSlot} />
       </div>
       <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
       <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
-        {models ? <ModelCards rows={models} probes={probes} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
+        {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
         <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
         <Suspense fallback={<CardPending span="dash-12" label="오늘 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
@@ -479,9 +488,19 @@ export default async function StatusPage() {
     </div>
   );
 
+  // 흐름 상세 탭(v8) — 레일 옆 칸과 같은 칸을 맨 위에(좁은 화면에서도 여기서 본다)
+  const flowDetail = (
+    <div className="ops-flow-detail">
+      <FlowSideCells variant="tab" {...flowSlot} />
+      <p className="ops-v8-note">전체 현황의 레일 옆 칸과 같은 내용입니다 · 1,180px 이하 화면에서는 여기서 봅니다</p>
+    </div>
+  );
+
   return (
     <main className="pb-10">
       <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
+        verdict={verdict} flow={flowDetail}
+        enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}
         crawlers={<CrawlerActivity report={buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
           roles: roleRows, throughput: inputs.throughput, now: new Date(now) })}/>}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
