@@ -166,6 +166,10 @@ describe("pipeline control plan", () => {
       agent({ mode: "items", epoch: 2, contract: 1 })).blocked).toEqual(["expect_mode_mismatch:items", "expect_draining_from_mismatch:none"]);
     expect(planPipelineControl(transition("agent-scan", "complete", "--draining-from=legacy", "--to=draining", "--expect-epoch=1"),
       agent(draining)).blocked).toEqual(["agent_scan_transition_invalid"]);
+    // legacy 로 끝내면 writer contract 를 0 으로 내린다고 알린다 — 다시 items 로 가려면 contract 부터 다시 한다
+    const back = planPipelineControl(transition("agent-scan", "complete", "--draining-from=items", "--to=legacy", "--expect-epoch=2"),
+      agent({ mode: "draining", drainingFrom: "items", epoch: 2, contract: 1 }));
+    expect([back.blocked, back.warnings, back.change]).toEqual([[], ["agent_scan_contract_reset"], "draining(from items) → legacy, epoch 2 → 3, writer_contract 1 → 0"]);
   });
 
   it("formats a readable status and result", () => {

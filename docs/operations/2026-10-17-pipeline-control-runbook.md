@@ -68,6 +68,7 @@
 | `legacy_job_in_flight:agent-scan` | drain 전에 시작한 `agent-evidence-refresh` 틱이 아직 살아 있다. 지금 items로 끝내면 그 틱이 쓰려던 스캔 1건은 관문에서 버려지고 다시 처리된다 |
 | `expired_unsettled_claims:<n>` | 기한 지난 미정산 저장소 claim(누구든 다시 맡을 수 있다). complete를 막지 않는다 |
 | `drain_cancelled` | 출발 mode로 되돌아간다(epoch는 오른다) |
+| `agent_scan_contract_reset` | `agent-scan complete --to=legacy`는 writer contract를 0으로 내린다. 다시 items로 가려면 모든 스캔 writer의 release를 확인하고 11-1부터 한다 |
 | `expired_unsettled_leases:<n>` | 기한 지난 미정산 item lease. complete를 막지 않는다 |
 | `old_generation_held:<n>` | 이전 epoch·revision·policy로 잡힌 active 장부 행. 정산될 때까지 새 admission은 `policy_changed`로 미뤄진다 |
 | `unsettled_dispatch_kept:<n>` | disabled로 가도 dispatched·indeterminate 행은 그대로 점유로 남는다 |
@@ -394,7 +395,11 @@ node --import tsx scripts/ops/pipeline-control.ts agent-scan complete --draining
 
 - `A1` = 그 시점 epoch(11-4 뒤라면 A+1). legacy로 바로 갈 수 없다(`expect_mode_mismatch`).
 - **코드를 이전 SHA로 되돌릴 때의 순서(중요):** 이전 release에는 모드 관문이 없다. 그래서 **먼저** 위 순서로 control을 `legacy`로 돌리고, **consumer 앱(M3 Dokploy)과 Oracle unit을 멈춘 뒤에** 앱을 이전 SHA로 재배포한다. items 상태에서 옛 crawler가 돌면 consumer와 같은 저장소를 겹쳐 쓰고 스캔 커서가 뒤로 돈다. control 행과 claim 표는 남아 있어도 옛 코드에는 무해하다.
-- drain을 취소하려면 출발 mode로 complete한다(`--draining-from=items --to=items`, `drain_cancelled`, epoch +1). epoch는 되돌리지 않고 contract는 내리지 않는다.
+  - `deploy_shared_images.py restore --app crawler-*|agent-scan-consumer-*`와 `plan|run`은 되돌릴(배포할) SHA에 관문(`assertLegacyAgentScanWrite`)이 없으면 운영 `agent_scan_control.mode`를 읽기 전용으로 읽어(reviewer-m3 → publisher-m3 → crawler-m3 컨테이너 순, migration 확인과 같은 방식) `legacy`(또는 0104 전)가 아니면 Dokploy를 바꾸기 전에 `agent_scan_ungated_release_while_<mode>`로 거절한다. 읽지 못하면 `agent_scan_mode_unknown`으로 거절한다. 관문이 있는 SHA는 읽지 않고 통과한다.
+  - **pipeline-control CLI를 돌리는 컨테이너(maintenance, git 빌드)는 control이 `legacy`가 될 때까지 되돌리지 않는다.** 관문 release보다 옛 SHA에는 `agent-scan` 명령이 없어 items를 끌 수단이 사라진다.
+  - git 빌드 앱(text·maintenance)도 G1 제외 변수(`GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS`)를 아는 release여야 한다. 옛 SHA로 되돌리면 Oracle 몫 설치를 함께 써 한도가 겹친다.
+- drain을 취소하려면 출발 mode로 complete한다(`--draining-from=items --to=items`, `drain_cancelled`, epoch +1). epoch는 되돌리지 않는다.
+- **legacy로 끝내면 writer contract가 0이 된다**(`agent_scan_contract_reset`). legacy 동안 앱을 관문 없는 옛 SHA로 되돌렸을 수 있으므로, 다시 items로 갈 때는 `deploy_shared_images.py inventory --sha=<관문 release>`로 모든 앱(crawler M3·mini 포함)이 관문 release 이상인지 확인한 뒤 11-1부터 다시 한다. items 쪽 drain 취소(`--to=items`)는 contract를 그대로 둔다.
 
 ```sql
 -- 제작 근거 스캔 control·claim(시각은 시간대 없는 UTC)

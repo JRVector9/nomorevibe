@@ -372,7 +372,10 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     if (a.drainingFrom === "legacy" && a.legacyJobLive) warnings.push("legacy_job_in_flight:agent-scan");
     if (o.to === a.drainingFrom) warnings.push("drain_cancelled");
     if (a.unsettled > 0) warnings.push(`expired_unsettled_claims:${a.unsettled}`);
-    return plan(target, `draining(from ${a.drainingFrom ?? "-"}) → ${o.to}, epoch ${a.epoch} → ${a.epoch + 1}`);
+    // legacy 로 끝내면 writer contract 를 0 으로 내린다 — 다시 items 로 가려면 writer release 를 다시 확인하고 contract 부터 한다
+    if (o.to === "legacy") warnings.push("agent_scan_contract_reset");
+    return plan(target, `draining(from ${a.drainingFrom ?? "-"}) → ${o.to}, epoch ${a.epoch} → ${a.epoch + 1}`
+      + (o.to === "legacy" ? `, writer_contract ${a.contract} → 0` : ""));
   }
 
   const b = snapshot.batch, target = "job_batch_control";

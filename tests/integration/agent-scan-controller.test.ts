@@ -370,7 +370,10 @@ it('plans agent-scan commands in dry-run without writing, then moves legacy → 
   expect([direct.status, direct.out?.plan.blocked]).toEqual([3, ['expect_mode_mismatch:items', 'expect_draining_from_mismatch:none']]);
   expect(cli('agent-scan', 'drain', '--from-mode=items', `--expect-epoch=${epoch + 1}`, ...audit, '--execute').status).toBe(0);
   expect(cli('agent-scan', 'complete', '--draining-from=items', '--to=legacy', `--expect-epoch=${epoch + 1}`, ...audit, '--execute').status).toBe(0);
-  expect(await control()).toMatchObject({ mode: 'legacy', drainingFrom: null, epoch: epoch + 2, writerContractVersion: 1 });
+  // legacy 로 돌아오면 writer contract 는 0 이다 — 다시 items 로 가려면 운영자가 writer release 를 다시 확인하고 올린다(리뷰 P2-7)
+  expect(await control()).toMatchObject({ mode: 'legacy', drainingFrom: null, epoch: epoch + 2, writerContractVersion: 0 });
+  const again = cli('agent-scan', 'drain', '--from-mode=legacy', `--expect-epoch=${epoch + 2}`, ...audit, '--execute');
+  expect([again.status, again.out?.plan.blocked]).toEqual([3, ['agent_scan_contract_required']]);
 }, 180_000);
 
 it('refuses an agent-scan transition whose control row changed while it waited for the row lock', async () => {

@@ -71,7 +71,10 @@ async function contractedForTransition(tx: ProductTransaction): Promise<AgentSca
   return row;
 }
 
-/** 모든 스캔 writer 가 관문을 가진 release 라는 운영자 확인. legacy 에서만, 한 칸씩 올리고 내리지 않는다 */
+/**
+ * 모든 스캔 writer 가 관문을 가진 release 라는 운영자 확인. legacy 에서만 한 칸씩 올린다. legacy 로 돌아오면 0 으로 내린다
+ * (completeAgentScanTransition) — legacy 동안 앱을 관문 없는 옛 SHA 로 되돌렸을 수 있어 items 로 다시 갈 때 다시 확인한다.
+ */
 export async function bumpAgentScanContract(tx: ProductTransaction): Promise<AgentScanControlRow> {
   const row = await lockForTransition(tx);
   if (row.mode !== 'legacy') fail('agent_scan_transition_invalid');
@@ -89,7 +92,10 @@ export async function beginAgentScanDrain(tx: ProductTransaction): Promise<Agent
   return draining;
 }
 
-/** 강제 회수 없음: live claim 이 하나라도 있으면 끝내지 않는다. epoch+1 이라 옛 control epoch 의 claim 기록은 모두 거절된다 */
+/**
+ * 강제 회수 없음: live claim 이 하나라도 있으면 끝내지 않는다. epoch+1 이라 옛 control epoch 의 claim 기록은 모두 거절된다.
+ * legacy 로 끝내면 writer contract 를 0 으로 둔다 — 다시 items 로 가려면 운영자가 모든 writer release 를 다시 확인해 올린다(리뷰 P2-7).
+ */
 export async function completeAgentScanTransition(tx: ProductTransaction, target: 'legacy' | 'items'): Promise<AgentScanControlRow> {
   const row = await contractedForTransition(tx);
   if (row.mode !== 'draining' || !['legacy', 'items'].includes(target)) fail('agent_scan_transition_invalid');
@@ -98,7 +104,8 @@ export async function completeAgentScanTransition(tx: ProductTransaction, target
     .where(sql`${agentRepositoryClaims.token} IS NOT NULL AND ${agentRepositoryClaims.leaseUntil} > ${AGENT_SCAN_UTC_NOW}`).limit(1);
   if (live) fail('agent_scan_not_drained');
   if (row.epoch >= Number.MAX_SAFE_INTEGER) fail('agent_scan_epoch_exhausted');
-  const [complete] = await tx.update(agentScanControl).set({ mode: target, drainingFrom: null, epoch: row.epoch + 1, updatedAt: AGENT_SCAN_UTC_NOW })
+  const [complete] = await tx.update(agentScanControl).set({ mode: target, drainingFrom: null, epoch: row.epoch + 1,
+    ...(target === 'legacy' ? { writerContractVersion: 0 } : {}), updatedAt: AGENT_SCAN_UTC_NOW })
     .where(eq(agentScanControl.id, 1)).returning();
   return complete;
 }
