@@ -10,7 +10,11 @@ import type { JobLease } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { runUptimeConsumer } from "@/lib/jobs/products/uptime-consumer";
-import { readUptimeSplitReadback, readUptimeSplitStage } from "@/lib/operations/uptime-split-repository";
+import { batchPolicyHash } from "@/lib/jobs/batches";
+import { parsePipelineControlArgs, type TransitionCommand } from "@/lib/operations/pipeline-control";
+import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
+import { parseUptimeSplitArgs, type UptimeSplitTransition } from "@/lib/operations/uptime-split";
+import { readUptimeSplitReadback, readUptimeSplitStage, runUptimeSplitControl } from "@/lib/operations/uptime-split-repository";
 import { classifyStage } from "@/lib/operations/worker-progress";
 import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from "@/lib/runtime/oracle-db-profile";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
@@ -293,5 +297,81 @@ describe("F5 host 시계 차", () => {
       select value from operations_observations where key = ${`uptime-consumer:${OWNERS.oracle.instanceId}`}`);
     expect(observed.value.reason).toBe("clock_skew");
     expect(observed.value.clockSkewMs).toBeLessThan(-55_000);
+  });
+});
+
+describe("F6 claims 와 batch versioned 의 상호 배제", () => {
+  const raw = postgres(TEST_DATABASE_URL, { max: 2, onnotice: () => {} });
+  const audit = ["--operator=fxu-test", "--reason=review F6"];
+  const BATCH_POLICY = { version: 1 as const, release: "fxu-test", instances: [{ instanceId: "fxu-m3-maintenance", host: "m3" as const }] };
+  let batchBefore: Record<string, unknown>;
+  const batchRow = async () => (await raw`select mode, draining_from, epoch::int as epoch from job_batch_control where id = 1`)[0];
+  const control = (...args: string[]) => parsePipelineControlArgs([...args, ...audit]) as TransitionCommand;
+  const split = (...args: string[]) => parseUptimeSplitArgs([...args, ...audit]) as UptimeSplitTransition;
+  const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+  beforeAll(async () => {
+    [batchBefore] = await raw`select to_jsonb(b) as row from job_batch_control b where id = 1`;
+  });
+  beforeEach(async () => {
+    // legacy·계약 1·유효한 batch policy — 판정이 split 말고는 막을 것이 없는 출발점
+    await raw`update job_batch_control set mode = 'legacy', draining_from = null, writer_contract_version = 1,
+      policy = ${JSON.stringify(BATCH_POLICY)}::text::jsonb, policy_hash = ${batchPolicyHash(BATCH_POLICY)} where id = 1`;
+  });
+  afterAll(async () => {
+    const row = (batchBefore as { row: Record<string, unknown> }).row;
+    await raw`update job_batch_control set mode = ${row.mode as string}, draining_from = ${row.draining_from as string | null},
+      writer_contract_version = ${row.writer_contract_version as number}, policy = ${row.policy === null ? null : JSON.stringify(row.policy)}::text::jsonb,
+      policy_hash = ${row.policy_hash as string | null} where id = 1`;
+    await raw.end({ timeout: 5 });
+  });
+
+  it("claims 동안 batch drain(legacy→)·complete(→versioned)을 거절한다", async () => {
+    const { epoch } = await batchRow();
+    const drain = await runPipelineControl(db, control("batch", "drain", "--from-mode=legacy", `--expect-epoch=${epoch}`, "--execute"));
+    expect(drain).toMatchObject({ executed: false, blocked: true, plan: { blocked: ["uptime_split_claims_active"] } });
+    await raw`update job_batch_control set mode = 'draining', draining_from = 'legacy' where id = 1`;
+    const complete = await runPipelineControl(db, control("batch", "complete", "--draining-from=legacy", "--to=versioned", `--expect-epoch=${epoch}`, "--execute"));
+    expect(complete.plan.blocked).toContain("uptime_split_claims_active");
+    expect(await batchRow()).toMatchObject({ mode: "draining", epoch });
+  });
+
+  it("경합: batch drain 실행이 commit 안 된 split claims 전환을 기다렸다가 잠근 뒤 다시 판정해 쓰지 않는다", async () => {
+    await setSplit("legacy");
+    const { epoch } = await batchRow();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const holder = raw.begin(async tx => {
+      await tx`update uptime_split_control set mode = 'claims', epoch = epoch + 1 where id = 1`;
+      await gate;
+    });
+    await pause(100);
+    // 처음 읽기(dry-run 판정)는 commit 전 legacy 를 본다 → 실행 TX 는 split SHARE 에서 기다린다
+    const running = runPipelineControl(db, control("batch", "drain", "--from-mode=legacy", `--expect-epoch=${epoch}`, "--execute"));
+    await pause(300);
+    release();
+    await holder;
+    const result = await running;
+    expect(result).toMatchObject({ executed: false, blocked: true, plan: { blocked: ["uptime_split_claims_active"] } });
+    expect(await batchRow()).toMatchObject({ mode: "legacy", epoch });
+  });
+
+  it("경합: split claims 실행이 commit 안 된 batch drain 을 기다렸다가 잠근 뒤 다시 판정해 쓰지 않는다", async () => {
+    const epoch = await setSplit("legacy");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const holder = raw.begin(async tx => {
+      await tx`update job_batch_control set mode = 'draining', draining_from = 'legacy' where id = 1`;
+      await gate;
+    });
+    await pause(100);
+    const running = runUptimeSplitControl(db, split("mode", "--to=claims", "--from-mode=legacy", `--expect-epoch=${epoch}`, "--execute"));
+    await pause(300);
+    release();
+    await holder;
+    const result = await running;
+    expect(result).toMatchObject({ executed: false, blocked: true });
+    expect(result.plan.blocked).toContain("batch_mode_not_legacy:draining");
+    expect((await raw`select mode, epoch::int as epoch from uptime_split_control where id = 1`)[0]).toMatchObject({ mode: "legacy", epoch });
   });
 });

@@ -21,7 +21,7 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}): ControlSnapshot {
     http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
     batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
     agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
-    recentInstances: [], reviewSettings: null, auditCampaign: null, ...overrides };
+    recentInstances: [], uptimeSplitMode: "legacy", reviewSettings: null, auditCampaign: null, ...overrides };
 }
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { abcllm: 4 }, groupLimits: { gateway: 4 },
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 30_000,
@@ -140,6 +140,22 @@ describe("pipeline control plan", () => {
     const claimed = snapshot({ batch: { ...draining.batch, liveJobs: 0, liveAgentClaims: 2 } });
     expect(planPipelineControl(transition("batch", "complete", "--draining-from=legacy", "--to=versioned", "--expect-epoch=1"), claimed).blocked)
       .toEqual(["batch_not_drained:jobs=0,roles=0,items=0,sources=0,agent_claims=2"]);
+  });
+
+  it("refuses a batch transition toward versioned while uptime split is in claims (uptime-ping would move to the product-health role)", () => {
+    const batchPolicy = { version: 1 as const, release: "r1", instances: [{ instanceId: "m3-text", host: "m3" as const }] };
+    const ready = snapshot({ uptimeSplitMode: "claims", batch: { ...snapshot().batch, contract: 1, policy: batchPolicy, policyHash: batchPolicyHash(batchPolicy) } });
+    expect(planPipelineControl(transition("batch", "drain", "--from-mode=legacy", "--expect-epoch=1"), ready).blocked)
+      .toEqual(["uptime_split_claims_active"]);
+    expect(planPipelineControl(transition("batch", "drain", "--from-mode=legacy", "--expect-epoch=1"), { ...ready, uptimeSplitMode: "legacy" }).blocked).toEqual([]);
+    const draining = { ...ready, batch: { ...ready.batch, mode: "draining" as const, drainingFrom: "legacy" as const } };
+    expect(planPipelineControl(transition("batch", "complete", "--draining-from=legacy", "--to=versioned", "--expect-epoch=1"), draining).blocked)
+      .toEqual(["uptime_split_claims_active"]);
+    // versioned 에서 legacy 로 돌아가는 길은 막지 않는다
+    const back = { ...ready, batch: { ...ready.batch, mode: "versioned" as const } };
+    expect(planPipelineControl(transition("batch", "drain", "--from-mode=versioned", "--expect-epoch=1"), back).blocked).toEqual([]);
+    expect(planPipelineControl(transition("batch", "complete", "--draining-from=versioned", "--to=legacy", "--expect-epoch=1"),
+      { ...draining, batch: { ...draining.batch, drainingFrom: "versioned" as const } }).blocked).toEqual([]);
   });
 
   it("moves the agent scan control only through a contract and draining, and completes only without a live claim", () => {

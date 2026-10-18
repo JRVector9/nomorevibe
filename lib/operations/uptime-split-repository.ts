@@ -1,7 +1,7 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
-import { operationsAudit } from "@/lib/db/schema";
+import { jobBatchControl, operationsAudit } from "@/lib/db/schema";
 import { uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { adminAuditRow } from "./admin-log";
@@ -99,7 +99,7 @@ export function readUptimeSplitSnapshot(database: Database): Promise<UptimeSplit
 class Rejected extends Error { constructor(readonly plan: UptimeSplitPlan, readonly snapshot: UptimeSplitSnapshot) { super("uptime_split_rejected"); } }
 
 /**
- * 기본 dry-run: 읽기 전용 readback과 계획만 낸다. --execute면 한 TX에서 fence(share) → uptime_control(share) → split 행(update)을 잡고
+ * 기본 dry-run: 읽기 전용 readback과 계획만 낸다. --execute면 한 TX에서 fence(share) → uptime_control(share) → split 행(update) → job_batch_control(share)을 잡고
  * 잠근 상태로 같은 계획을 다시 세워 기대 상태(compare-and-set)를 확인한 뒤 split 행(epoch+1)과 관리자 작업 로그를 함께 commit한다.
  * uptime_control 을 split 보다 먼저 잡는다 — 0103 트리거가 split 을 claims 로 쓸 때 같은 행을 SHARE 로 잡고, PR09 전환(uptime-gate)은
  * uptime_control → split 순서로 잡으므로 순서가 같아 교착하지 않는다. 계획·CAS·트리거 어느 쪽이든 거절되면 TX 전체가 rollback된다.
@@ -114,6 +114,8 @@ export async function runUptimeSplitControl(database: Database, command: UptimeS
       await lockWriterFence(tx, "share");
       await tx.execute(sql`SELECT id FROM uptime_control WHERE id = 1 FOR SHARE`);
       await tx.select({ id: uptimeSplitControl.id }).from(uptimeSplitControl).where(eq(uptimeSplitControl.id, 1)).for("update");
+      // batch mode 판정(claims 는 legacy 에서만)을 commit 까지 유효하게 — pipeline-control batch 전환은 split(share) → batch(update) 순서로 잡는다
+      await tx.select({ id: jobBatchControl.id }).from(jobBatchControl).where(eq(jobBatchControl.id, 1)).for("share");
       const locked = await snapshotIn(tx);
       const checked = planUptimeSplit(command, locked, policyFile);
       if (checked.blocked.length) throw new Rejected(checked, locked);
