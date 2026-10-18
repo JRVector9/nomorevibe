@@ -92,7 +92,7 @@ python3 scripts/ops/deploy_shared_images.py inventory --sha "$APPROVED_RELEASE_S
 | --- | --- | --- | --- |
 | D1 | Oracle capability refresh 정책: A(Oracle host timer, 별도 `nomorevibe_oracle_refresh` principal) 또는 B(M3/mini 원격 실행). 정하지 않으면 선출된 역할은 15분 안에 claim을 멈춘다. | 2, 4 | `deploy/oracle/README.md:112-124`, `lib/jobs/batches.ts:61-62` |
 | D2 | `nomorevibe-core.slice`의 CPUQuota %·MemoryMax bytes·TasksMax(실측 뒤 명시, 기본값 없음) | 3 | `deploy/oracle/manage_release.py:18-28` |
-| D3 | 역할별 DB connection limit(psql 변수 7개 — consumer `agent-scan` 포함)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
+| D3 | 역할별 DB connection limit(psql 변수 8개 — consumer `agent-scan`·`uptime` 포함)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
 | D4 | `HOST_BUDGET_ENFORCEMENT` 압박 한도 4개(maxLoadPerCpu·maxHostRssBytes·maxEventLoopDelayMs·maxHeartbeatGapMs) | 3, 8 | `lib/operations/host-budget.ts:12-32` |
 | D5 | 비상 예산 값 `{jobs, modelJobs, httpJobs, agingMs}`과 `verifiedModelJobs` 목록(빈 목록도 명시) | 8 | `lib/operations/emergency-admission.ts:14-35`, `lib/operations/emergency-priority.ts:73-74` |
 | D6 | 비상 독립 provider(번역·심사 등)와 비용 상한 | 5, 8 | `/tmp/nomorevibe-pr16-emergency-design-20261017.md` 5장 |
@@ -193,6 +193,7 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/
 - **비밀번호 보관 위치(값은 쓰지 않는다):**
   - 각 worker principal: 해당 역할 env 파일 `/etc/nomorevibe-core/<role>.env`의 `DATABASE_URL`(root 0600).
   - consumer principal `nomorevibe_oracle_agent_scan`: `/etc/nomorevibe-core/consumer-agent-scan.env`의 `DATABASE_URL`(root 0600).
+  - consumer principal `nomorevibe_oracle_uptime`: `/etc/nomorevibe-core/consumer-uptime.env`의 `DATABASE_URL`(root 0600).
   - refresh principal: `/etc/nomorevibe-core/refresh.env`의 `ORACLE_ATTEST_DATABASE_URL`(root 0600, refresh unit 전용 계정 `nomorevibe-attest`가 쓴다).
   - attest principal: worker 계정이 읽을 수 없는 곳(D12). 역할 env 파일에 넣지 않는다.
   - Oracle에서 붙는 경로(PgBouncer auth 설정, pg_hba의 Oracle 주소 허용)는 저장소에 없다. **확인 필요.**
@@ -221,7 +222,7 @@ SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'mo
 
   기대값:
   - 6개 role 모두 `rolcanlogin=t`이고 super·createdb·createrole·replication·bypassrls·inherit는 `f`다. `rolconfig`에 `statement_timeout`(scheduler 10s, 나머지 60s), `lock_timeout=5s`, `idle_in_transaction_session_timeout=60s`가 있다.
-  - consumer role `nomorevibe_oracle_agent_scan`도 같고, `rolconfig`에 `statement_timeout=10s`와 `TimeZone=UTC`가 더 있다. 최종 판정은 consumer preflight(`worker-oracle-preflight.ts --consumer=agent-scan`)의 `checks.database = verified`다.
+  - consumer role `nomorevibe_oracle_agent_scan`·`nomorevibe_oracle_uptime`도 같고, `rolconfig`에 `statement_timeout=10s`와 `TimeZone=UTC`가 더 있다. 최종 판정은 각 consumer preflight(`worker-oracle-preflight.ts --consumer=agent-scan`·`--consumer=uptime`)의 `checks.database = verified`다.
   - fence: translation·product-health·site-evidence·official-news·scheduler는 `fence_select=t`, `fence_lock=t`, `fence_update_all=f`. attest는 셋 다 `f`.
   - `capability_update`·`evidence_update`: worker 4개와 scheduler는 `f`, attest는 `t`.
   - 트리거 `job_batch_candidates_evidence_insert_guard`(`tgenabled=O`)와 인덱스 1행.

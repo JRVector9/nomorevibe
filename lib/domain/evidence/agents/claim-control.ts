@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm';
 import { agentRepositoryClaims, agentScanControl } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
+import { consumerInstancePrefix } from '@/lib/runtime/consumer-registry';
 
 /**
  * 제작 근거 스캔의 모드(agent_scan_control, 0104). pipeline_stage_modes 와 같은 뜻이다(lib/jobs/items/repository.ts).
@@ -26,10 +27,10 @@ export async function lockAgentScanControl(tx: ProductTransaction, strength: 'sh
 }
 
 /**
- * 제작 근거 스캔 consumer 의 SERVICE_INSTANCE_ID 접두(consumer 등록부 consumerInstancePrefix('agent-scan')와 같다).
+ * 제작 근거 스캔 consumer 의 SERVICE_INSTANCE_ID 접두(consumer 등록부 값 — 'agent-scan-consumer-').
  * 감독이 15초마다 service:crawler:<이 접두><자리> 를 남긴다 — 운영센터 consumer_missing 과 pipeline-control status 가 센다.
  */
-export const AGENT_SCAN_CONSUMER_PREFIX = 'agent-scan-consumer-';
+export const AGENT_SCAN_CONSUMER_PREFIX = consumerInstancePrefix('agent-scan');
 export type AgentScanModeState = Pick<AgentScanControlRow, 'mode' | 'drainingFrom'>;
 /** 잠그지 않고 읽는 지금 모드 — 잡의 갈래(legacy 스캔·컨트롤러)와 진행 표시만 쓴다. 쓰기 권한은 각 TX 의 관문이 다시 본다 */
 export async function readAgentScanMode(executor: { execute: ProductTransaction['execute'] }): Promise<AgentScanModeState> {
