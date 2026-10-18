@@ -1,0 +1,230 @@
+{
+  "transactions": [
+    {
+      "config": {
+        "accessMode": "read only"
+      },
+      "statements": [
+        {
+          "sql": "SET LOCAL jit = off",
+          "params": []
+        },
+        {
+          "sql": "SET LOCAL statement_timeout = '3s'",
+          "params": []
+        },
+        {
+          "sql": "\n      WITH public_products AS MATERIALIZED (\n    SELECT slug, url, repo_url, created_at, updated_at FROM products WHERE status IN ('seeded','verified')\n  ), source_targets AS (\n    SELECT greatest(l.created_at, s.created_at, s.next_attempt_at) AS due_at,\n      CASE WHEN s.source_url = l.url THEN s.last_success_at END AS success_at,\n      CASE WHEN s.source_url = l.url THEN s.last_failure_at END AS failure_at,\n      CASE WHEN s.source_url = l.url THEN s.last_error_code END AS error_code,\n      CASE WHEN s.source_url = l.url THEN s.state END AS state,\n      greatest(l.created_at, s.created_at, s.last_success_at) AS error_since\n    FROM public_products p JOIN product_links l ON l.slug = p.slug AND l.visible\n    LEFT JOIN product_evidence_sources s ON s.slug = l.slug AND s.kind = l.kind AND s.source_key = l.normalized_key\n    UNION ALL\n    SELECT CASE WHEN s.id IS NOT NULL AND s.source_url IS DISTINCT FROM p.url THEN p.updated_at\n        ELSE greatest(p.created_at, s.created_at, s.next_attempt_at) END,\n      CASE WHEN s.source_url = p.url THEN s.last_success_at END,\n      CASE WHEN s.source_url = p.url THEN s.last_failure_at END,\n      CASE WHEN s.source_url = p.url THEN s.last_error_code END,\n      CASE WHEN s.source_url = p.url THEN s.state END,\n      greatest(p.created_at, s.created_at, s.last_success_at)\n    FROM public_products p JOIN product_evidence_sources s ON s.slug = p.slug\n      AND s.provider = 'product_site' AND s.source_key = 'canonical_site'\n  ), agent_inputs AS MATERIALIZED (\n        -- Avoid parallel sorted finalization over long keys under the database locale.\n        SELECT coalesce(CASE WHEN repo_url ~ '^https://github[.]com/[^/]+/[^/#?]+/?$'\n    AND right(lower(rtrim(repo_url, '/')), 4) <> '.git'\n    THEN lower(rtrim(substring(repo_url from 20), '/')) END, lower(substring(repo_url from '^https://github[.]com/([^/]+/[^/#?]+?)([.]git)?/?$'))) AS repository_key, created_at,\n          status NOT IN ('seeded','verified') AS requires_daily\n        FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'\n        UNION ALL SELECT lower(repo), updated_at, true FROM crawl_candidates WHERE state IN ('new','needs_review','approved')\n      ), agent_demand AS (\n        SELECT repository_key, min(created_at) AS created_at, bool_or(requires_daily) AS requires_daily\n        FROM agent_inputs GROUP BY repository_key\n      ), latest_agent AS (\n        SELECT DISTINCT ON (s.repository_key) s.* FROM agent_repository_scans s JOIN agent_demand d USING (repository_key)\n        WHERE scope = '' AND detector_version = $1\n        ORDER BY s.repository_key, started_at DESC, id DESC\n      ), agent_targets AS (\n        SELECT greatest(d.created_at,\n          s.next_attempt_at) AS due_at, s.state,\n          coalesce(s.last_error_code, CASE WHEN d.repository_key = $2\n    AND (s.id IS NULL OR s.started_at <= $3::timestamp) THEN $4 END) AS error_code,\n          s.completed_at, CASE WHEN d.repository_key = $5\n    AND (s.id IS NULL OR s.started_at <= $6::timestamp) THEN $7::timestamp ELSE s.started_at END AS started_at,\n          s.file_count, s.request_count,\n          CASE WHEN d.repository_key = $8\n    AND (s.id IS NULL OR s.started_at <= $9::timestamp) THEN $10::timestamp\n            ELSE greatest(d.created_at, s.completed_at) END AS error_since,\n          -- 잡 커서가 기록한 스캔 전 공급자 실패는 저장소별 재시도 대기가 아니다\n          coalesce(d.repository_key = $11\n    AND (s.id IS NULL OR s.started_at <= $12::timestamp), false) AS job_failure\n        FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)\n      ), ai_current AS MATERIALIZED (\n        -- Avoid one long-key index probe per target when demand cardinality is underestimated.\n        SELECT repository_key, rules_version, next_check_at, checked_at, last_error\n        FROM repository_ai_levels WHERE rules_version = $13\n      ), ai_public AS MATERIALIZED (\n        -- Reuse normalization across the projection, NULL filter and unseen-idle lookup.\n        SELECT coalesce(CASE WHEN repo_url ~ '^https://github[.]com/[^/]+/[^/#?]+/?$'\n    AND right(lower(rtrim(repo_url, '/')), 4) <> '.git'\n    THEN lower(rtrim(substring(repo_url from 20), '/')) END, substring(regexp_replace(regexp_replace(lower(rtrim(repo_url, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')\n        from '^https://github[.]com/([^/]+/[^/#?]+)$')) AS repository_key, created_at FROM public_products\n      ), ai_demand AS (\n        SELECT repository_key, min(created_at) AS created_at FROM (\n          SELECT p.repository_key, p.created_at FROM ai_public p\n          LEFT JOIN ai_current seen ON seen.repository_key = p.repository_key\n          WHERE NOT $14 OR seen.repository_key IS NOT NULL\n          UNION ALL SELECT lower(repo), updated_at FROM crawl_candidates\n            WHERE state IN ('new','needs_review','approved') AND repo ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'\n        ) d WHERE repository_key IS NOT NULL GROUP BY repository_key\n      ), ai_targets AS (\n        SELECT greatest(d.created_at, r.next_check_at) AS due_at, r.checked_at, r.last_error AS error_code,\n          greatest(d.created_at, r.checked_at) AS error_since\n        FROM ai_demand d LEFT JOIN ai_current r ON r.repository_key = d.repository_key AND r.rules_version = $15\n      )\n      SELECT 'evidence' AS key,\n        count(*) FILTER (WHERE due_at <= $16::timestamp)::int AS waiting,\n        extract(epoch FROM ($17::timestamp - min(due_at) FILTER (WHERE due_at <= $18::timestamp))) / 60 AS oldest,\n        count(*) FILTER (WHERE success_at > $19::timestamp - interval '5 minutes' AND success_at <= $20::timestamp)::int AS completed,\n        count(*) FILTER (WHERE success_at > $21::timestamp - interval '5 minutes' AND success_at <= $22::timestamp)::int AS progress,\n        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'budget_exhausted'\n          AND failure_at > $23::timestamp - interval '5 minutes' AND failure_at <= $24::timestamp)::int AS errors,\n        count(*) FILTER (WHERE due_at > $25::timestamp AND error_code IS NOT NULL)::int AS deferred,\n        count(*) FILTER (WHERE error_code IN ($26, $27))::int AS provider_errors,\n        extract(epoch FROM ($28::timestamp - min(error_since) FILTER (WHERE error_code IN ($29, $30)))) / 60 AS error_age\n      FROM source_targets\n      UNION ALL SELECT 'agent-evidence', count(*) FILTER (WHERE due_at <= $31::timestamp)::int,\n        extract(epoch FROM ($32::timestamp - min(due_at) FILTER (WHERE due_at <= $33::timestamp))) / 60,\n        count(*) FILTER (WHERE state = 'complete' AND error_code IS NULL AND completed_at > $34::timestamp - interval '5 minutes' AND completed_at <= $35::timestamp)::int,\n        count(*) FILTER (WHERE state IN ('partial','complete') AND error_code IS NULL AND (file_count > 0 OR request_count > 0)\n          AND started_at > $36::timestamp - interval '5 minutes' AND started_at <= $37::timestamp)::int,\n        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code NOT IN ('budget_exhausted','alias_recheck_required')\n          AND started_at > $38::timestamp - interval '5 minutes' AND started_at <= $39::timestamp)::int,\n        count(*) FILTER (WHERE due_at > $40::timestamp AND (state = 'partial' OR error_code IS NOT NULL))::int,\n        count(*) FILTER (WHERE job_failure OR error_code IN ($41))::int,\n        extract(epoch FROM ($42::timestamp - min(error_since) FILTER (WHERE job_failure OR error_code IN ($43)))) / 60\n      FROM agent_targets\n      UNION ALL SELECT 'ai-level', count(*) FILTER (WHERE due_at <= $44::timestamp)::int,\n        extract(epoch FROM ($45::timestamp - min(due_at) FILTER (WHERE due_at <= $46::timestamp))) / 60,\n        count(*) FILTER (WHERE error_code IS NULL AND checked_at > $47::timestamp - interval '5 minutes' AND checked_at <= $48::timestamp)::int,\n        count(*) FILTER (WHERE error_code IS NULL AND checked_at > $49::timestamp - interval '5 minutes' AND checked_at <= $50::timestamp)::int,\n        0, count(*) FILTER (WHERE due_at > $51::timestamp AND error_code IS NOT NULL)::int,\n        -- Repository absence has a normal 72h recheck; retain its deferred demand without claiming a provider outage.\n        count(*) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'not_found')::int,\n        extract(epoch FROM ($52::timestamp - min(error_since) FILTER (WHERE error_code IS NOT NULL AND error_code <> 'not_found'))) / 60\n      FROM ai_targets\n    ",
+          "params": [
+            "2026-09-14.1",
+            "acme/tool",
+            "2026-09-30T23:55:00.000Z",
+            "rate_limited",
+            "acme/tool",
+            "2026-09-30T23:55:00.000Z",
+            "2026-09-30T23:55:00.000Z",
+            "acme/tool",
+            "2026-09-30T23:55:00.000Z",
+            "2026-09-30T23:40:00.000Z",
+            "acme/tool",
+            "2026-09-30T23:55:00.000Z",
+            "2026-10-10.2",
+            true,
+            "2026-10-10.2",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "rate_limited",
+            "auth_unavailable",
+            "2026-10-01T00:00:00.000Z",
+            "rate_limited",
+            "auth_unavailable",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "rate_limited",
+            "2026-10-01T00:00:00.000Z",
+            "rate_limited",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z",
+            "2026-10-01T00:00:00.000Z"
+          ],
+          "typings": [
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none",
+            "none"
+          ]
+        }
+      ]
+    }
+  ],
+  "report": {
+    "measuredAt": "2026-10-01T00:00:00.000Z",
+    "overall": "alarm",
+    "stages": [
+      {
+        "role": "crawler",
+        "stage": "evidence",
+        "reason": "progressing",
+        "alarm": false,
+        "restartEligible": false,
+        "manualAttention": 0,
+        "job": "product-evidence-refresh",
+        "lane": "product-evidence-refresh",
+        "waiting": 7,
+        "oldestMinutes": 125.5,
+        "completed5m": 3,
+        "progress5m": 3,
+        "errors5m": 1,
+        "deferred": 2,
+        "providerErrors": 1,
+        "providerErrorMinutes": 40.25
+      },
+      {
+        "role": "crawler",
+        "stage": "agent-evidence",
+        "reason": "backoff",
+        "alarm": false,
+        "restartEligible": false,
+        "manualAttention": 0,
+        "job": "agent-evidence-refresh",
+        "lane": "agent-evidence-refresh",
+        "waiting": 4,
+        "oldestMinutes": 0,
+        "completed5m": 0,
+        "progress5m": 0,
+        "errors5m": 0,
+        "deferred": 1,
+        "providerErrors": 0,
+        "providerErrorMinutes": null
+      },
+      {
+        "role": "crawler",
+        "stage": "ai-level",
+        "reason": "no_progress",
+        "alarm": true,
+        "restartEligible": true,
+        "manualAttention": 0,
+        "job": "ai-level-refresh",
+        "lane": "ai-level-refresh",
+        "waiting": 3,
+        "oldestMinutes": 12,
+        "completed5m": 0,
+        "progress5m": 0,
+        "errors5m": null,
+        "deferred": 0,
+        "providerErrors": 0,
+        "providerErrorMinutes": null
+      }
+    ],
+    "scheduler": {
+      "role": "scheduler",
+      "reason": "scheduled",
+      "alarm": false,
+      "overdueJobs": []
+    },
+    "liveness": [
+      {
+        "role": "scheduler",
+        "reason": "present",
+        "alarm": false
+      },
+      {
+        "role": "crawler",
+        "reason": "present",
+        "alarm": false
+      },
+      {
+        "role": "reviewer",
+        "reason": "present",
+        "alarm": false
+      },
+      {
+        "role": "publisher",
+        "reason": "present",
+        "alarm": false
+      },
+      {
+        "role": "maintenance",
+        "reason": "present",
+        "alarm": false
+      },
+      {
+        "role": "text",
+        "reason": "present",
+        "alarm": false
+      }
+    ],
+    "lanes": [],
+    "activeJobs": []
+  }
+}

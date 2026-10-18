@@ -6,8 +6,11 @@
  * 쿼리 값이 받는 화면에 실제로 있는지, page.tsx 가 여기 밖의 주소를 쓰지 않는지 본다.
  */
 
-/** 운영센터 탭(?tab=) — 첫 화면이 overview. diagnostics(진단)는 옛 접힌 "상세 지표"(ADM-16) */
-export const STATUS_TABS = ["overview", "jobs", "crawlers", "ai", "manual", "diagnostics"] as const;
+/**
+ * 운영센터 탭(?tab=) — 첫 화면이 overview. diagnostics(진단)는 옛 접힌 "상세 지표"(ADM-16).
+ * flow(흐름 상세)는 운영센터 개편 v8 의 새 탭이다 — 기존 탭의 자리·순서가 그대로이게 맨 끝(진단 뒤)에 붙인다.
+ */
+export const STATUS_TABS = ["overview", "jobs", "crawlers", "ai", "manual", "diagnostics", "flow"] as const;
 export type StatusTab = typeof STATUS_TABS[number];
 
 /** 작업 흐름 탭에서 그 작업의 상세 창을 연 채로 */
@@ -21,6 +24,8 @@ export const ACTION_LINKS = {
   collectorSettings: "/admin#signals",
   ai: "/admin/status?tab=ai",
   manual: "/admin/status?tab=manual",
+  /** 흐름 상세 탭(v8) — 소스 → 심사 → 발행 → 보강, 모델 자리 전체 */
+  flow: "/admin/status?tab=flow",
   roles: "/admin/status#roles",
   models: "/admin/status#models",
   /** 직접 판단 구간, 오래 기다린 것부터 */

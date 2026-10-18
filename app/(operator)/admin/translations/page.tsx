@@ -7,7 +7,10 @@ import { productTranslationAdminQueue, productTranslationAdminSummary } from "@/
 import { isProductTranslationField, PRODUCT_TRANSLATION_MAX_ATTEMPTS } from "@/lib/domain/products/translation-policy";
 import type { ProductTranslationLocale, ProductTranslationStatus } from "@/lib/db/schema";
 import { formatDetailTime } from "@/lib/format/time";
+import { readJobBatchMode } from "@/lib/jobs/batch-repository";
+import { readReplicaOrHold } from "@/lib/operations/replica-hold";
 import { TranslationRetryForm } from "./TranslationRetryForm";
+import { translationOwnerText } from "./owner";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robots: { index: false, follow: false } };
@@ -35,14 +38,17 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   const field = isProductTranslationField(params.field) ? params.field : undefined;
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
   const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
-  const [queue, summary] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary()]);
+  // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 까닭과 함께 보류, 주 DB 로 넘기지 않는다)
+  const [queue, summary, batch] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
+    readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode())]);
+  const owner = translationOwnerText(batch.ok ? { ok: true, value: batch.value.mode } : batch);
   const next = new URLSearchParams({ state, q });
   if (locale) next.set("locale", locale);
   if (field) next.set("field", field);
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
   return <main className="mx-auto max-w-5xl space-y-5 p-5">
     <h1 className="text-[22px] font-semibold">공개 번역</h1>
-    <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. 모델 호출은 기존 text 워커만 수행합니다.</p>
+    <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. {owner.page}</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-[13px]">
       <caption className="pb-2 text-left text-fg-2">저장 상태 집계입니다. 현재 공개 준비 여부는 아래 원문 일치·보류 상태를 함께 확인하세요. 소진·재시도 대기는 실패 건수에 포함됩니다.</caption>
       <thead><tr>{["언어·항목", "대기", "저장됨", "실패", "4회 소진", "재시도 대기", "현재 보류", "최고령 실패", "마지막 저장"].map((label) => <th key={label} className="px-2 py-2 font-semibold">{label}</th>)}</tr></thead>
@@ -74,7 +80,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
           <p className="whitespace-pre-wrap break-words">저장본: {entry.text ?? "없음"}</p>
         </div>
       </details>
-      {entry.recovery && <TranslationRetryForm item={entry} csrfToken={csrfToken} expiresAt={admin.exp} />}
+      {entry.recovery && <TranslationRetryForm item={entry} csrfToken={csrfToken} expiresAt={admin.exp} accepted={owner.accepted} />}
     </section>)}
     {queue.nextCursor && <Link prefetch={false} href={`/admin/translations?${next}`} className="inline-block min-h-11 py-3 text-[14px] underline">다음 기록</Link>}
   </main>;

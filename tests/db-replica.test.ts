@@ -111,3 +111,81 @@ describe("복제 지연 측정", () => {
     expect(text).toContain("now() - pg_last_xact_replay_timestamp()");
   });
 });
+
+/**
+ * 운영센터 새 숫자는 복제본에서만 읽는다(운영센터 v8 PR3). 복제본이 없거나·내려갔거나·밀렸거나·취소되면
+ * 주 DB 로 넘기지 않고 "보류"를 돌려준다 — 근거 CTE·7일 훑기가 주 DB 에서 돌지 않게.
+ * 지연·장애 상태는 read 와 함께 쓴다(지연 확인은 10초마다 한 번).
+ */
+describe("복제본 전용 읽기", () => {
+  it("평소에는 복제본 실행기를 넘겨 읽고 값을 돌려준다", async () => {
+    const s = setup();
+    const load = vi.fn(async (db: string) => `read:${db}`);
+    expect(await s.router.readOnly(load)).toEqual({ ok: true, value: "read:replica-db" });
+    expect(s.scope).toHaveBeenCalledTimes(1);
+    expect(load).toHaveBeenCalledWith("replica-db");
+  });
+
+  it("10초 넘게 밀렸으면 읽지 않고 보류한다 — 주 DB 로 넘기지 않는다", async () => {
+    const s = setup({ lag: 11 });
+    const load = vi.fn();
+    expect(await s.router.readOnly(load)).toEqual({ ok: false, reason: "lagging" });
+    expect(load).not.toHaveBeenCalled();
+    expect(s.scope).not.toHaveBeenCalled();
+  });
+
+  it("연결이 안 되면 보류하고 30초 동안 복제본을 건너뛴다 — read 도 같이 건너뛴다", async () => {
+    const s = setup({ scopeError: err("wrapped", err("ECONNREFUSED")) });
+    expect(await s.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "down" });
+    expect(s.warn).toHaveBeenCalledWith("db.replica_unavailable", expect.objectContaining({ kind: "down" }));
+    expect(await s.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "down" });
+    await s.router.read(s.load);
+    expect(s.where).toEqual(["primary"]);
+    expect(s.scope).toHaveBeenCalledTimes(1);
+  });
+
+  it("복제 충돌로 취소되면(40001) 다시 읽지 않고 보류한다", async () => {
+    const s = setup({ scopeError: err("40001") });
+    expect(await s.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "conflict" });
+    expect(s.where).toEqual([]);
+    expect(s.warn).toHaveBeenCalledWith("db.replica_unavailable", expect.objectContaining({ kind: "conflict" }));
+  });
+
+  it("복제본에 쓰려 했으면 보류하고 버그로 남긴다", async () => {
+    const s = setup({ scopeError: err("25006") });
+    expect(await s.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "readonly" });
+    expect(s.warn).toHaveBeenCalledWith("db.replica_write_attempt", expect.objectContaining({ kind: "readonly" }));
+  });
+
+  it("지연 확인이 실패해도 보류한다", async () => {
+    const s = setup({ lag: err("wrapped", err("ECONNREFUSED")) });
+    expect(await s.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "down" });
+    const t = setup({ lag: new Error("boom") });
+    expect(await t.router.readOnly(vi.fn())).toEqual({ ok: false, reason: "lagging" });
+  });
+
+  it("다른 오류는 그대로 던진다", async () => {
+    const s = setup({ scopeError: err("42P01") });
+    await expect(s.router.readOnly(vi.fn())).rejects.toThrow("42P01");
+  });
+
+  it("복제본 설정이 없으면(워커·로컬·통합 테스트·DR) 보류한다", async () => {
+    const load = vi.fn();
+    const router = createReplicaRouter<string>({ replica: () => null, scope: vi.fn(), lagSeconds: vi.fn(), warn: vi.fn() });
+    expect(await router.readOnly(load)).toEqual({ ok: false, reason: "no_replica" });
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it("readReplicaOnly 는 READ_DATABASE_URL 이 없으면 읽지 않고 보류한다", async () => {
+    const before = process.env.READ_DATABASE_URL;
+    delete process.env.READ_DATABASE_URL;
+    try {
+      const { readReplicaOnly } = await import("@/lib/db");
+      const load = vi.fn();
+      expect(await readReplicaOnly(load)).toEqual({ ok: false, reason: "no_replica" });
+      expect(load).not.toHaveBeenCalled();
+    } finally {
+      if (before !== undefined) process.env.READ_DATABASE_URL = before;
+    }
+  });
+});

@@ -194,6 +194,41 @@ export async function changeReviewMode(input: {
   });
 }
 
+/**
+ * 원본 공급 조절(source buffer, PR12a)을 켜고 끈다 — discover.sourceBuffer.enabled 하나만(ops-v8 PR8, 전에는 SQL 로만 바꿨다).
+ *
+ * 다른 설정 쓰기와 같은 잠금 순서(stage → 설정 행 FOR UPDATE)로, 잠근 행에서 화면이 본 값(expectedEnabled)과 견준다
+ * (compare-and-set). 다르면 쓰지 않고 실패 줄만 남긴다. 저장된 설정이 깨져 기본값으로 읽혔으면 쓰지 않는다 — 스위치 하나가
+ * 나머지 설정을 기본값으로 덮으면 안 된다. 판정 상태(crawl_source_buffer_control)는 수집 잡만 쓴다 — 여기서는 건드리지 않는다.
+ * 검색 주기 해시(seed configHash)는 신호·정렬·기간만 보므로 이 값을 바꿔도 탐색 주기가 처음부터 다시 돌지 않는다.
+ */
+export async function setSourceBufferEnabled(input: { enabled: boolean; expectedEnabled: boolean; actor: string; reason: string }):
+  Promise<{ ok: true } | { ok: false; issues: string[] }> {
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+    const current = mergeWithDefaults(row.values);
+    const before = current.discover.sourceBuffer.enabled;
+    const audit = (ok: boolean, error: string | null) => adminAuditRow(input.actor, { action: "source-buffer", target: "crawl_settings",
+      detail: { before, after: ok ? input.enabled : before, expected: input.expectedEnabled, requested: input.enabled, reason: input.reason }, ok, error });
+    // 깨진 행은 기본값 객체 그대로 돌아온다(mergeWithDefaults) — 읽지 못한 것으로 본다
+    if (current === DEFAULT_CRAWL_SETTINGS) {
+      await tx.insert(operationsAudit).values(await audit(false, "settings_unreadable"));
+      return { ok: false, issues: ["저장된 크롤 설정을 읽지 못해 바꾸지 않았습니다. 설정 화면을 먼저 확인해 주세요."] };
+    }
+    if (before !== input.expectedEnabled) {
+      await tx.insert(operationsAudit).values(await audit(false, "stale_state"));
+      return { ok: false, issues: ["그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 값을 확인한 뒤 다시 해 주세요."] };
+    }
+    const values = crawlSettingsSchema.parse({ ...current, discover: { ...current.discover, sourceBuffer: { enabled: input.enabled } } });
+    await tx.update(crawlSettings).set({ values, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
+    logger.info("crawl.source_buffer_set", { updatedBy: input.actor, before, after: input.enabled });
+    await tx.insert(operationsAudit).values(await audit(true, null));
+    return { ok: true };
+  });
+}
+
 /** 누가 언제 바꿨는지 (화면 표시용) */
 export async function getSettingsMeta(): Promise<{ updatedBy: string | null; updatedAt: Date } | null> {
   const row = await db.query.crawlSettings.findFirst({ where: eq(crawlSettings.id, ROW_ID) });

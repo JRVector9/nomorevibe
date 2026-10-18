@@ -4,7 +4,7 @@ import type postgres from "postgres";
 import { logger } from "@/lib/observability/logger";
 import { fallbackHostEnv } from "./network-route";
 import { createDbClient, dbPoolConfig } from "./pool";
-import { createReplicaRouter, REPLICA_LAG_QUERY } from "./replica";
+import { createReplicaRouter, REPLICA_LAG_QUERY, type ReplicaOnlyResult } from "./replica";
 import { currentReplayDb } from "./replay-scope";
 import * as schema from "./schema";
 
@@ -108,6 +108,16 @@ const router = createReplicaRouter<Db>({
 export function onReplica<T>(load: () => Promise<T>): Promise<T> {
   if (currentReplayDb()) return load();
   return router.read(load);
+}
+
+/**
+ * 운영센터 새 숫자만 복제본에서 — 복제본이 없거나·내려갔거나·10초 넘게 밀렸거나·취소되면(40001) 주 DB 로 넘기지 않고
+ * 보류를 돌려준다(lib/db/replica.ts). load 는 복제본 실행기를 받고, 그 안의 `db` 도 복제본을 가리킨다.
+ * 재생(replay) 범위에는 복제본이 없다 — 재생 DB 밖으로 읽지 않게 보류한다.
+ */
+export function readReplicaOnly<T>(load: (replica: Db) => Promise<T>): Promise<ReplicaOnlyResult<T>> {
+  if (currentReplayDb()) return Promise.resolve({ ok: false, reason: "no_replica" });
+  return router.readOnly(load);
 }
 
 /** 복제본 안에서 이 읽기만 주 DB 로 — 복제본이 아직 갖추지 못한 것(확장 등)을 읽을 때 */

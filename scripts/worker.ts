@@ -55,7 +55,15 @@ type WorkerDependencies = {
   sleep?: typeof interruptibleSleep;
   report?: RuntimeReport;
   log?: typeof runtimeLog;
+  /** claim 전 admission 미룸(host 예산·provider 회로)을 미룬 이유 관측(defer:<job>)에 알린다. 실패해도 줄은 그대로 돈다 */
+  deferred?: (name: string, reason: string) => Promise<void>;
 };
+
+/** 미룬 이유 관측은 줄의 성공·실패에 들지 않는다 */
+async function noteDeferred(dependencies: WorkerDependencies, name: string, reason: string | null) {
+  if (!reason) return;
+  try { await dependencies.deferred?.(name, reason); } catch { /* 관측 실패는 poll 실패가 아니다 */ }
+}
 
 export function interruptibleSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -164,8 +172,9 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
           ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
         if (circuit?.admitted === false || admission && !admission.admitted) {
           if (circuit?.admitted) circuit.done();
-          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred',
-            reason: circuit?.admitted === false ? circuit.reason : admission?.admitted === false ? admission.reason : null, consumer: true });
+          const reason = circuit?.admitted === false ? circuit.reason : admission?.admitted === false ? admission.reason : null;
+          dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason, consumer: true });
+          await noteDeferred(dependencies, name, reason);
         } else {
           report('running', name);
           try {
@@ -220,6 +229,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           ? await dependencies.admit(name).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' })) : null;
         if (admission && !admission.admitted) {
           dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason: admission.reason });
+          await noteDeferred(dependencies, name, admission.reason);
           continue;
         }
         report('running', name);
@@ -337,10 +347,10 @@ async function main() {
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
   await withRuntimeProcess(options.role, async (signal, report) => {
     const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits },
-      { backgroundConsumerJobs, backgroundConsumerLanes }] = await Promise.all([
+      { backgroundConsumerJobs, backgroundConsumerLanes }, { recordJobDeferral }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
       import('@/lib/jobs/runner'), import('@/lib/jobs/role-leader'), import('@/lib/operations/host-budget-runtime'), import('./worker-supervisor'),
-      import('@/lib/jobs/background-consumer'),
+      import('@/lib/jobs/background-consumer'), import('@/lib/jobs/deferral-observation'),
     ]);
     const roleLease = roleLeaseFromEnv(options.role, process.env);
     // 기본 비활성. 배경 dispatch 는 역할 lease 에 묶이므로 선출된 역할 워커에서만 켠다
@@ -358,12 +368,14 @@ async function main() {
         lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
         pending: () => pendingJobNames(options.role),
         seen: markWorkerSeen,
-        run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease }),
+        run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease,
+          onDeferred: reason => recordJobDeferral(name, reason) }),
         ...(consumed.length ? { consumer: { ...backgroundConsumerLanes(consumed,
-          (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease })),
+          (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease,
+            onDeferred: reason => recordJobDeferral(name, reason) })),
           ...(circuit.mode === 'enabled' ? { circuits: createProviderCircuits(circuit) } : {}) } } : {}),
         ...(host.enabled ? { admit: host.admit } : {}),
-        report, log: runtimeLog,
+        report, log: runtimeLog, deferred: recordJobDeferral,
       });
       runtimeLog('worker.stopped', { role: options.role, ...result });
       if (options.once && result.failures) process.exitCode = 1;

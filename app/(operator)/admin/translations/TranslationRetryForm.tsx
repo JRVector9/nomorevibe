@@ -4,9 +4,11 @@ import { useActionState } from "react";
 import type { ProductTranslationAdminItem } from "@/lib/domain/products/translation-admin";
 import { retryTranslationAction } from "./actions";
 
-export function TranslationRetryForm({ item, csrfToken, expiresAt }: {
+export function TranslationRetryForm({ item, csrfToken, expiresAt, accepted }: {
   item: Pick<ProductTranslationAdminItem, "productId" | "locale" | "field" | "sourceHash" | "currentSourceHash" | "attempts" | "retryAt" | "updatedAt" | "recovery">;
   csrfToken: string; expiresAt: number;
+  /** 접수 뒤 문구 — 모델 호출 담당은 작업 배치 방식에 따라 다르다(owner.ts) */
+  accepted: string;
 }) {
   const [state, action, pending] = useActionState(retryTranslationAction, null);
   const fields = { productId: item.productId, locale: item.locale, field: item.field, expectedStatus: "failed",
@@ -18,6 +20,6 @@ export function TranslationRetryForm({ item, csrfToken, expiresAt }: {
     <button disabled={pending || state?.ok} className="min-h-11 rounded-lg border border-line px-4 text-[14px] disabled:opacity-50">
       {pending ? "접수 중" : item.recovery === "new_source" ? "현재 원문으로 한 건 접수" : "상한 내 한 건 재요청"}
     </button>
-    <p aria-live="polite" className={`text-[13px] ${state?.error ? "text-down" : "text-fg-2"}`}>{state?.error ?? (state?.ok ? "접수했습니다. 기존 text 워커가 처리합니다." : "")}</p>
+    <p aria-live="polite" className={`text-[13px] ${state?.error ? "text-down" : "text-fg-2"}`}>{state?.error ?? (state?.ok ? accepted : "")}</p>
   </form>;
 }
