@@ -218,15 +218,25 @@ describe("조치 계약 — 키·급·숫자·단위·제목·설명·가는 곳
 });
 
 describe("지금 조치 · 쌓인 일 나누기 계약", () => {
-  it("쌓인 일 열쇠는 이 열한 개다", () => {
+  it("쌓인 일 열쇠는 이 열두 개다 — x-status 는 운영센터 v8 PR9(X 보고)가 더했다", () => {
     expect([...BACKLOG_KEYS].sort()).toEqual([
       "audit", "audit-stalled", "evidence-backlog", "health-overdue", "held", "intro", "repo-coverage", "repo-gone", "review", "second", "spam-auto-ban",
+      "x-status",
     ]);
   });
 
   it("쌓인 일 열쇠마다 buildActions 가 세우는 줄이 있다 — 죽은 열쇠가 없다", () => {
-    const keys = new Set(build(calmInputs(), brokenWorkerProgress()).map((item) => item.key));
-    for (const key of BACKLOG_KEYS) expect(keys.has(key), key).toBe(true);
+    // x-status 줄은 받는 주소가 켜져 있고(비밀 설정) 보고가 끊기거나 깨졌을 때만 선다 — 여기서는 깨진 보고 한 줄을 더한다
+    vi.stubEnv("X_STATUS_REPORT_SECRET", "x".repeat(40));
+    try {
+      const inputs = calmInputs();
+      const withX: ActionInputs = { ...inputs, ops: { ...inputs.ops, observations: [...inputs.ops.observations,
+        { key: "x-status", value: {}, observedAt: new Date(ACTION_NOW.getTime() - 3_600_000).toISOString() }] } };
+      const keys = new Set(build(withX, brokenWorkerProgress()).map((item) => item.key));
+      for (const key of BACKLOG_KEYS) expect(keys.has(key), key).toBe(true);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("critical·쌓인 일 열쇠가 아닌 것은 지금 조치, 나머지는 쌓인 일 — 급한 것부터, 같은 급은 넣은 차례", () => {

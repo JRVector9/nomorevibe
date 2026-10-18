@@ -53,7 +53,8 @@ function recordingExecutor(log: Log) {
 }
 
 vi.mock("@/lib/db", () => ({ db: { ...recordingExecutor(fixture.primary.transactions),
-  select: () => ({ from: async () => fixture.observations }) } }));
+  // 관문의 관측 읽기는 미룬 이유(defer:<job>) 줄을 빼고 읽는다(운영센터 v8 PR4) — 조건만 붙고 결과는 같다
+  select: () => ({ from: () => Object.assign(Promise.resolve(fixture.observations), { where: async () => fixture.observations }) }) } }));
 vi.mock("@/lib/crawl/settings", async () => {
   const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
   return { getSettings: async () => ({ ...DEFAULT_CRAWL_SETTINGS, agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: true } }) };
