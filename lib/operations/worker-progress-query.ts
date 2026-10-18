@@ -5,6 +5,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
+import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
@@ -218,7 +219,7 @@ export async function readWorkerProgress(now = new Date()) {
   const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
   const [throughput, observations, evidence] = await Promise.all([
-    pipelineThroughput(settings, now), db.select().from(operationsObservations),
+    pipelineThroughput(settings, now), db.select().from(operationsObservations).where(WITHOUT_JOB_DEFERRALS),
     evidenceProgress(settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(), parseAgentProviderFailure(agentCursor?.providerFailure)),
   ]);
   // Agent/AI collectors carry provider reset times in their existing cursor rather than job.notBefore.

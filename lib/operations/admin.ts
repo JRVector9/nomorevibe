@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 import { jobs, operationsObservations, operationsAudit, categoryDecisions } from '@/lib/db/schema';
 import { JOB_NAMES } from '@/lib/jobs/catalog';
 import { requestJob } from '@/lib/jobs/control';
+import { WITHOUT_JOB_DEFERRALS } from '@/lib/jobs/deferral-observation';
 import { serviceInstancesFromObservations } from './instance';
 import { adminAuditRow } from './admin-log';
 export async function requestAdminJob(name:string,actor:string) {
@@ -19,7 +20,7 @@ export async function requestAdminJob(name:string,actor:string) {
 }
 export async function operationsData() {
   const start=Date.now();
-  const observations=await db.select().from(operationsObservations);
+  const observations=await db.select().from(operationsObservations).where(WITHOUT_JOB_DEFERRALS);
   const dbLatencyMs=Date.now()-start;
   const [audit,held]=await Promise.all([
     db.select().from(operationsAudit).orderBy(desc(operationsAudit.createdAt)).limit(20),
