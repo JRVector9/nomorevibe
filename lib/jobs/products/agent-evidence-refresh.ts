@@ -14,7 +14,8 @@ import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/oper
 import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 import { readGitHubCoreHeadroom } from '@/lib/crawl/github-headroom';
 
-export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string; providerFailure?: AgentProviderFailure };
+/** afterNewProduct: 새 공개 제품 몫이 마지막으로 본 제품 id — 일반 대기의 afterRepository 와 따로 간다 */
+export type AgentEvidenceRefreshCursor = { afterRepository?: string; afterNewProduct?: number; retryAfter?: string; providerFailure?: AgentProviderFailure };
 /**
  * 1차 심사를 스캔 때문에 기다리는 레포를 한 틱에 몇 개까지 일반 대기보다 먼저 보는가.
  *
@@ -25,14 +26,31 @@ export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?
  */
 export const REVIEW_SCAN_SHARE = 2;
 /**
- * 이어 할 스캔(최대 3개) → 1차 심사를 기다리는 레포(최대 REVIEW_SCAN_SHARE개) → 이름순 일반 대기.
- * 앞의 둘은 커서를 옮기지 않는다 — 일반 대기의 자리는 그대로 남는다.
+ * 한 번도 스캔하지 않은 공개 제품의 레포를 한 틱에 몇 개까지 일반 대기보다 먼저 보는가.
+ *
+ * 이름순 일반 대기로는 새 제품의 차례가 하루 넘게 걸려, 2026-10-18 발굴 재개 뒤 새 공개 제품 702개 중 597개가
+ * 스캔 전이었다. 제품 id 순으로 한 번씩만 앞에 세운다(커서 afterNewProduct) — 저장소가 사라져 스캔 행이 끝내
+ * 생기지 않는 제품(프로드 not_found 70개)이 매 틱 몫을 차지하지 않게. 그런 제품은 일반 대기에서 다시 본다.
  */
-export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[], reviewWaiting: string[] = []) {
-  const ahead = new Set([...duePartial.slice(0, 3), ...reviewWaiting.slice(0, REVIEW_SCAN_SHARE)]);
-  return [...ahead].map(repositoryKey => ({ repositoryKey, advanceCursor: false }))
+export const NEW_PRODUCT_SCAN_SHARE = 2;
+type AgentRefreshWork = { repositoryKey: string; advanceCursor: boolean; newProductId?: number };
+/**
+ * 이어 할 스캔(최대 3개) → 1차 심사를 기다리는 레포(최대 REVIEW_SCAN_SHARE개) → 새 공개 제품(최대 NEW_PRODUCT_SCAN_SHARE개) → 이름순 일반 대기.
+ * 앞의 셋은 일반 대기의 커서를 옮기지 않는다 — 일반 대기의 자리는 그대로 남는다.
+ */
+export function prioritizeAgentRefreshDemand(duePartial: string[], repositories: string[], reviewWaiting: string[] = [],
+  newProducts: { id: number; repositoryKey: string }[] = []): AgentRefreshWork[] {
+  const shared = newProducts.slice(0, NEW_PRODUCT_SCAN_SHARE);
+  const productIds = new Map(shared.map(row => [row.repositoryKey, row.id]));
+  const ahead = new Set([...duePartial.slice(0, 3), ...reviewWaiting.slice(0, REVIEW_SCAN_SHARE), ...shared.map(row => row.repositoryKey)]);
+  return [...ahead].map((repositoryKey): AgentRefreshWork => {
+    const newProductId = productIds.get(repositoryKey);
+    return newProductId === undefined ? { repositoryKey, advanceCursor: false } : { repositoryKey, advanceCursor: false, newProductId };
+  })
     .concat(repositories.filter(key => !ahead.has(key)).map(repositoryKey => ({ repositoryKey, advanceCursor: true })));
 }
+/** 제품 repo_url 에서 레포를 뽑는다 — 일반 대기의 제품 쪽 수요와 같은 식 */
+const productRepositoryKey = sql`lower(regexp_replace(product.repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1'))`;
 /**
  * 한 틱의 마감. 스캔 한 건은 따로 20초 상한(collect.ts)이고 새 저장소는 마감 8초 전까지만 시작하므로 틱 하나가 스캔 4~6건을 한다.
  * 20초일 때는 틱이 15초 안팎에 끝나고 다음 일정(1분)을 기다려 scan 줄이 시간의 4분의 3을 놀았다(2026-10-19 프로드 시간당 약 65건).
@@ -45,7 +63,11 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   if (!settings.agentEvidence.enabled) { ctx.log('agent_evidence.disabled'); return { done: true }; }
   let afterRepository = ctx.cursor?.afterRepository ?? '';
   let providerFailure = parseAgentProviderFailure(ctx.cursor?.providerFailure);
-  const cursor = (): AgentEvidenceRefreshCursor => ({ afterRepository, ...(providerFailure ? { providerFailure } : {}) });
+  const savedNewProduct = ctx.cursor?.afterNewProduct;
+  let afterNewProduct = typeof savedNewProduct === 'number' && Number.isSafeInteger(savedNewProduct) && savedNewProduct > 0 ? savedNewProduct : 0;
+  // 일반 대기를 다 돌아 afterRepository 를 비울 때도 새 제품 몫의 자리와 스캔 전 실패 기록은 남긴다
+  const retained = (): AgentEvidenceRefreshCursor => ({ ...(afterNewProduct ? { afterNewProduct } : {}), ...(providerFailure ? { providerFailure } : {}) });
+  const cursor = (): AgentEvidenceRefreshCursor => ({ afterRepository, ...retained() });
   // Merge product and candidate demand. Only public GitHub owner/repo identities enter the collector.
   const demand = sql`
       SELECT repository_key, bool_or(requires_daily) AS requires_daily FROM (
@@ -78,6 +100,8 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       ORDER BY repository_key, started_at DESC, id DESC
     ) latest JOIN (${demand}) demand USING (repository_key)
     WHERE latest.state IN ('partial', 'complete') AND latest.next_attempt_at <= now()
+      -- 실패로 끝난 스캔은 앞자리를 차지하지 않는다 — 기한이 되면 일반 대기에서 본다(재시도 간격은 저장할 때 늘어난다)
+      AND (latest.last_error_code IS NULL OR latest.last_error_code = 'alias_recheck_required')
       AND (latest.last_error_code = 'alias_recheck_required'
         OR jsonb_array_length(coalesce(latest.cursor->'pendingTrees', '[]'::jsonb)) > 0
         OR jsonb_array_length(coalesce(latest.cursor->'pendingBlobs', '[]'::jsonb)) > 0
@@ -112,8 +136,17 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       AND (latest.id IS NULL OR latest.next_attempt_at <= now())
     GROUP BY 1 ORDER BY min(latest.started_at) NULLS FIRST, 1 LIMIT ${REVIEW_SCAN_SHARE}
   `);
+  // 새 공개 제품 몫(NEW_PRODUCT_SCAN_SHARE) — 이 탐지기 버전의 스캔이 하나도 없는 공개 제품을 id 순으로
+  const newProducts = await db.execute<{ id: number; repository_key: string }>(sql`
+    SELECT product.id, ${productRepositoryKey} AS repository_key FROM products product
+    WHERE product.id > ${afterNewProduct} AND product.status IN ('seeded', 'verified')
+      AND product.repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
+      AND NOT EXISTS (SELECT 1 FROM agent_repository_scans scan WHERE scan.repository_key = ${productRepositoryKey}
+        AND scan.scope = '' AND scan.detector_version = ${AGENT_DETECTOR_VERSION})
+    ORDER BY product.id LIMIT ${NEW_PRODUCT_SCAN_SHARE}
+  `);
   const work = prioritizeAgentRefreshDemand(partial.map(row => row.repository_key), rows.map(row => row.repository_key),
-    reviewWaiting.map(row => row.repository_key));
+    reviewWaiting.map(row => row.repository_key), newProducts.map(row => ({ id: Number(row.id), repositoryKey: row.repository_key })));
   /**
    * 남은 일이 있어 멈춘 틱만 이어 하기를 알린다(runner 가 ACK 에서 다시 요청하고 worker 가 1초 뒤 다시 돈다).
    * 빈 큐·완주·공급자 대기(retryAfter)·예산 미룸·GitHub 여유 부족에는 알리지 않는다 — 정기 일정(1분)을 기다린다.
@@ -173,10 +206,11 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
         ctx.log('agent_evidence.failed', { repositoryKey, errorCode: error instanceof Error ? error.name : 'unknown' });
       }
       if (row.advanceCursor) afterRepository = repositoryKey;
+      if (row.newProductId !== undefined) afterNewProduct = Math.max(afterNewProduct, row.newProductId);
       await ctx.save(cursor());
     }
     // A completed traversal resets its position while retaining an unresolved pre-scan failure.
-    return rows.length < 10 ? { done: true, ...(providerFailure ? { cursor: { providerFailure } } : {}) } : more();
+    return rows.length < 10 ? { done: true, ...(Object.keys(retained()).length ? { cursor: retained() } : {}) } : more();
   };
   const outcome = await collect();
   // 제품 연결은 스캔과 따로 돈다. 앞에서 예산이 끊겨도 매 틱 돌아 굶지 않는다 (GitHub를 쓰지 않는다)
@@ -250,8 +284,6 @@ function latestScan(repositoryKey: SQL) {
  * 붙인 뒤에는 다시 골리지 않아야 매 틱 같은 제품을 되붙이지 않는다.
  */
 async function attachPendingScans(ctx: JobContext<AgentEvidenceRefreshCursor>) {
-  // 일반 대기의 제품 쪽 수요와 같은 식으로 repo_url 에서 레포를 뽑는다
-  const productRepositoryKey = sql`lower(regexp_replace(product.repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1'))`;
   // 제품마다 붙일 수 있는 레포 근거(보이는 레포 링크 + 그 근거 행) 중 최신 스캔을 가리키는 것이 있는가.
   // 없으면 NULL(붙일 곳이 없다), 있는데 아무것도 안 가리키면 false(붙일 차례다).
   // EXISTS·NOT EXISTS 두 번으로 쓰면 플래너가 링크×근거 조인을 통째로 들고 제품마다 훑는다 —

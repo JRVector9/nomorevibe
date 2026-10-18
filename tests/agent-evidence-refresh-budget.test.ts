@@ -8,7 +8,7 @@ import { AGENT_EVIDENCE_TICK_MS, refreshAgentEvidenceJob } from '@/lib/jobs/prod
 beforeEach(() => { mocks.execute.mockReset(); mocks.refresh.mockReset(); mocks.headroom.mockReset(); mocks.headroom.mockResolvedValue(null); });
 afterEach(() => vi.useRealTimers());
 it('retains the repository pagination position when the budget expires before a scan can be persisted', async () => {
-  // 재개 대상 → 일반 대기 → (스캔 뒤) 제품 연결 대기 → 근거 대기 후보 풀기 순으로 조회한다
+  // 재개 대상 → 일반 대기 → 새 공개 제품 → (스캔 뒤) 제품 연결 대기 순으로 조회한다(근거 대기 후보 풀기는 설정 버전이 없어 건너뛴다)
   mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ repository_key: 'kiaquila/capsule-zero' }])
     .mockResolvedValueOnce([]).mockResolvedValueOnce([]);
   mocks.refresh.mockResolvedValue({ scan: null, observations: [], cached: false, errorCode: 'budget_exhausted', retryAt: null });
@@ -60,9 +60,9 @@ it.each([
   expect(retained).not.toHaveProperty('state');
 });
 
-/** 재개 대상 → 일반 대기 → (스캔 뒤) 제품 연결 대기 순으로 조회한다 */
+/** 재개 대상 → 일반 대기 → 새 공개 제품 → (스캔 뒤) 제품 연결 대기 순으로 조회한다 */
 const queue = (general: string[]) => mocks.execute.mockResolvedValueOnce([])
-  .mockResolvedValueOnce(general.map(repository_key => ({ repository_key }))).mockResolvedValueOnce([]);
+  .mockResolvedValueOnce(general.map(repository_key => ({ repository_key }))).mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 const scanResult = { scan: { id: 1, state: 'partial', startedAt: new Date() }, observations: [], cached: false, errorCode: null, retryAt: null };
 const tick = (overrides: Partial<{ cursor: object | null; hasBudget: () => boolean }> = {}) =>
   refreshAgentEvidenceJob({ cursor: null, save: vi.fn(), log: vi.fn(), hasBudget: () => true, ...overrides });

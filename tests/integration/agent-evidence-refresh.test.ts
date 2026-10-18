@@ -86,7 +86,7 @@ it('keeps missing, incomplete, failed, limited and future confirmations on their
   const rows = await db.execute<{ name: string; next_attempt_at: string | null; due_at: string | null; default_due_at: string | null }>(sql`
     WITH input AS (SELECT * FROM jsonb_to_recordset(${JSON.stringify(inputs)}::jsonb) AS row(
       name text, state text, last_error_code text, cursor jsonb, coverage jsonb,
-      completed_at timestamp, next_attempt_at timestamp, requires_daily boolean))
+      started_at timestamp, completed_at timestamp, next_attempt_at timestamp, requires_daily boolean))
     SELECT name, next_attempt_at::text,
       (${agentRefreshDueAtSql(sql`input`, sql`requires_daily`, 90, sql`${at.toISOString()}::timestamp`)})::text AS due_at,
       (${agentRefreshDueAtSql(sql`input`, sql`requires_daily`, 1, sql`${at.toISOString()}::timestamp`)})::text AS default_due_at

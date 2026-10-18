@@ -1,7 +1,11 @@
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, githubCollectorAccounts, githubCollectorApps, jobs, operationsObservations } from '@/lib/db/schema';
+import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, githubCollectorAccounts, githubCollectorApps, jobs, operationsObservations, products } from '@/lib/db/schema';
+import { getLatestRepositoryAgentScan, saveRepositoryAgentScan } from '@/lib/domain/evidence/agents/repository';
+import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
+import type { CollectCursor, CollectResult } from '@/lib/domain/evidence/agents/collect';
+import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
 import { saveSettings } from '@/lib/crawl/settings';
 import { refreshAgentEvidenceJob, type AgentEvidenceRefreshCursor } from '@/lib/jobs/products/agent-evidence-refresh';
 import type { GitHubHttpResult } from '@/lib/crawl/github';
@@ -25,12 +29,13 @@ beforeEach(async () => {
 });
 afterAll(clearCollectors);
 
-/** 저장소마다 다른 GitHub id 를 주고 파일이 없는 공개 저장소를 그리는 GitHub. 불린 경로를 남긴다 */
-function repositories(paths: string[] = []) {
-  const ids = new Map<string, number>();
+/** 저장소마다 다른 GitHub id 를 주고 파일이 없는 공개 저장소를 그리는 GitHub. 불린 경로를 남긴다. gone 에 든 저장소는 404 다 */
+function repositories(paths: string[] = [], fixed: Record<string, number> = {}, gone: string[] = []) {
+  const ids = new Map<string, number>(Object.entries(fixed));
   return async <T>(path: string): Promise<GitHubHttpResult<T>> => {
     paths.push(path);
     const key = path.split('/').slice(2, 4).join('/');
+    if (gone.includes(key)) return { ok: false, error: { kind: 'not_found' } };
     if (!ids.has(key)) ids.set(key, 1_000 + ids.size);
     const value = path.includes('/git/trees/') ? { tree: [], truncated: false }
       : path.includes('/commits/') ? { sha: 'a'.repeat(40), commit: { tree: { sha: 'b'.repeat(40) } } }
@@ -105,4 +110,123 @@ it('starts no scan while total GitHub core headroom is below a quarter, then res
   await db.update(githubCollectorApps).set({ coreQuota: { limit: 5_000, used: 4_600, remaining: 400, reset: resetIn(-1) } });
   expect(await tick(repositories(paths))).toMatchObject({ status: 'completed', done: true });
   expect(scannedKeys()).toEqual(['acme/r00', 'acme/r01', 'acme/r02']);
+});
+
+const HEAD = 'c'.repeat(40);
+const cursorFor = (repositoryKey: string, repositoryId: string, patch: Partial<CollectCursor> = {}): CollectCursor => ({ repositoryId, repositoryKey,
+  commitSha: HEAD, detectorVersion: AGENT_DETECTOR_VERSION, scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [], ...patch });
+const scanOf = (repositoryKey: string, repositoryId: string, patch: Partial<CollectResult> = {}): CollectResult => ({ repositoryId, repositoryKey,
+  commitSha: HEAD, scope: '', state: 'partial', observations: [], requestCount: 12, fileCount: 0, errorCode: null, retryAt: null,
+  cursor: cursorFor(repositoryKey, repositoryId), ...patch });
+/** 범위 제한으로 끝나 더 볼 것이 없는 partial (collect.ts 가 남기는 모양) */
+const limitedScan = (repositoryKey: string, repositoryId: string) =>
+  scanOf(repositoryKey, repositoryId, { cursor: cursorFor(repositoryKey, repositoryId, { coverageLimited: true }) });
+/** 남은 트리가 있는 partial */
+const pendingScan = (repositoryKey: string, repositoryId: string, errorCode: CollectResult['errorCode'] = null) =>
+  scanOf(repositoryKey, repositoryId, { errorCode, cursor: cursorFor(repositoryKey, repositoryId, { pendingTrees: [{ path: 'src', sha: 'd'.repeat(40) }] }) });
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
+const publicProduct = async (slug: string, repositoryKey: string, status: 'seeded' | 'verified' = 'seeded') => (await db.insert(products).values({
+  slug, url: `https://${slug}.example`, name: slug, tagline: 'test', description: 'test', category: 'Dev', verifyToken: `token-${slug}`,
+  editTokenHash: 'a'.repeat(64), repoUrl: `https://github.com/${repositoryKey}`, status, createdAt: daysAgo(200) }).returning())[0];
+const context = (cursor: AgentEvidenceRefreshCursor | null = null) => ({ cursor, save: async () => {}, hasBudget: () => true, log: () => {} });
+
+it('doubles the retry delay while the same scan keeps failing, caps it at seven days and resets after a success', async () => {
+  const failing = pendingScan('acme/flaky', '41', 'unavailable');
+  let at = new Date('2026-10-19T00:00:00Z');
+  const delays: number[] = [];
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const scan = (await saveRepositoryAgentScan(failing, at))!;
+    delays.push((scan.nextAttemptAt.getTime() - at.getTime()) / 60_000);
+    at = scan.nextAttemptAt; // 다음 시도는 기한에 한다
+  }
+  expect(delays).toEqual([15, 30, 60, 120, 240, 480, 960, 1_920, 3_840, 7_680, 10_080, 10_080]);
+  expect(await db.select().from(agentRepositoryScans)).toHaveLength(1);
+  // 성공하면 저장된 기본 시계(이어 하기 1분)로 돌아가고, 다음 실패는 다시 15분부터다
+  const resumed = (await saveRepositoryAgentScan(pendingScan('acme/flaky', '41'), at))!;
+  expect(resumed.nextAttemptAt.getTime() - at.getTime()).toBe(60_000);
+  at = resumed.nextAttemptAt;
+  expect((await saveRepositoryAgentScan(failing, at))!.nextAttemptAt.getTime() - at.getTime()).toBe(15 * 60_000);
+});
+
+it('keeps provider waits on their own clock and out of the doubling', async () => {
+  let at = new Date('2026-10-19T00:00:00Z');
+  for (let attempt = 0; attempt < 3; attempt++) at = (await saveRepositoryAgentScan(pendingScan('acme/flaky', '41', 'timeout'), at))!.nextAttemptAt;
+  // 한도 대기(rate_limited)는 GitHub 이 준 시각 그대로다 — 저장소 탓이 아니다
+  const resetAt = new Date(at.getTime() + 7 * 60_000);
+  const limited = (await saveRepositoryAgentScan({ ...pendingScan('acme/flaky', '41', 'rate_limited'), retryAt: resetAt }, at))!;
+  expect(limited.nextAttemptAt).toEqual(resetAt);
+  // 인증 대기(retryAt 이 있는 unavailable)도 그 시각을 따른다
+  const authAt = new Date(resetAt.getTime() + 3 * 60_000);
+  expect((await saveRepositoryAgentScan({ ...pendingScan('acme/flaky', '41', 'unavailable'), retryAt: authAt }, resetAt))!.nextAttemptAt).toEqual(authAt);
+});
+
+it('keeps failed partial scans out of the resume slots and retries them from the general queue when due', async () => {
+  await db.insert(crawlCandidates).values([{ repo: 'acme/clean' }, { repo: 'acme/failing' }]);
+  await saveRepositoryAgentScan(pendingScan('acme/clean', '51'), daysAgo(1));
+  await saveRepositoryAgentScan(pendingScan('acme/failing', '52', 'unavailable'), daysAgo(1));
+  const request = repositories([], { 'acme/clean': 51, 'acme/failing': 52 });
+  // 일반 대기는 커서 뒤에 아무것도 없다 — 앞자리(이어 하기)만 본다
+  await refreshAgentEvidenceJob(context({ afterRepository: 'zzz/last' }), { request });
+  expect(scannedKeys()).toEqual(['acme/clean']);
+  spies.refresh.mockClear();
+  await refreshAgentEvidenceJob(context(), { request });
+  expect(scannedKeys()).toEqual(['acme/failing']);
+  expect(await getLatestRepositoryAgentScan('acme/failing')).toMatchObject({ state: 'complete', lastErrorCode: null });
+});
+
+it('rescans coverage-limited public repositories on the background interval and counts the same demand as the job', async () => {
+  await saveSettings({ enabled: false, agentEvidence: { enabled: true, backgroundRefreshDays: 90 } }, 'test');
+  await publicProduct('settled', 'acme/settled');
+  await saveRepositoryAgentScan(limitedScan('acme/settled', '61'), daysAgo(2));
+  await publicProduct('expired', 'acme/expired', 'verified');
+  await saveRepositoryAgentScan(limitedScan('acme/expired', '62'), daysAgo(91));
+  // 후보가 원하는 저장소는 범위 제한이어도 지금처럼 매일 본다
+  // 앱 시각으로 지난 시각을 준다 — DB 기본값(now())은 로컬 Docker 시계가 앞서면 읽는 시각보다 늦어 아직 대기가 아니다
+  await db.insert(crawlCandidates).values({ repo: 'acme/candidate', state: 'needs_review', updatedAt: daysAgo(3) });
+  await saveRepositoryAgentScan(limitedScan('acme/candidate', '63'), daysAgo(2));
+  await publicProduct('complete', 'acme/complete');
+  await saveRepositoryAgentScan(scanOf('acme/complete', '64', { state: 'complete', cursor: null }), daysAgo(2));
+  await publicProduct('unscanned', 'acme/unscanned');
+  await publicProduct('failing', 'acme/failing');
+  await saveRepositoryAgentScan(pendingScan('acme/failing', '66', 'unavailable'), new Date(Date.now() - 60_000));
+  const settled = await getLatestRepositoryAgentScan('acme/settled');
+  // 저장된 시계는 그대로(하루 뒤)다 — 다시 보는 때만 배경 주기로 미룬다
+  expect(settled!.nextAttemptAt.getTime()).toBeLessThan(Date.now());
+
+  const progress = (await readWorkerProgress()).stages.find(stage => stage.stage === 'agent-evidence');
+  // 실패 재시도(acme/failing)만 재시도 예약이다. 범위 제한 partial 은 complete 처럼 주기를 기다린다
+  expect(progress).toMatchObject({ waiting: 3, deferred: 1 });
+  await refreshAgentEvidenceJob(context(), { request: repositories() });
+  expect(scannedKeys().sort()).toEqual(['acme/candidate', 'acme/expired', 'acme/unscanned']);
+  expect(await getLatestRepositoryAgentScan('acme/settled')).toMatchObject({ id: settled!.id, nextAttemptAt: settled!.nextAttemptAt });
+});
+
+it('scans never-scanned public products in id order ahead of the sweep, once each, and keeps that place across traversals', async () => {
+  const gone = await publicProduct('gone', 'acme/gone');
+  const first = await publicProduct('first', 'zeta/first');
+  const second = await publicProduct('second', 'zeta/second', 'verified');
+  // 비공개 제품과 이미 스캔한 제품은 몫에 들지 않는다
+  await db.insert(products).values({ slug: 'private', url: 'https://private.example', name: 'private', tagline: 'test', description: 'test',
+    category: 'Dev', verifyToken: 'token-private', editTokenHash: 'a'.repeat(64), repoUrl: 'https://github.com/zeta/private' });
+  await publicProduct('scanned', 'zeta/scanned');
+  await saveRepositoryAgentScan(scanOf('zeta/scanned', '71', { state: 'complete', cursor: null }), new Date(Date.now() - 60_000));
+  const request = repositories([], {}, ['acme/gone']);
+  // 일반 대기는 커서 뒤에 아무것도 없다 — 새 제품 몫만 돈다
+  const firstTick = await refreshAgentEvidenceJob(context({ afterRepository: 'zzz/last' }), { request });
+  expect(scannedKeys()).toEqual(['acme/gone', 'zeta/first']);
+  expect(firstTick.cursor).toMatchObject({ afterNewProduct: first.id });
+  spies.refresh.mockClear();
+  // 저장소가 사라져 스캔 행이 생기지 않은 제품은 몫에서 다시 고르지 않는다
+  await refreshAgentEvidenceJob(context({ afterRepository: 'zzz/last', afterNewProduct: first.id }), { request });
+  expect(scannedKeys()).toEqual(['zeta/second']);
+  expect(await getLatestRepositoryAgentScan('acme/gone')).toBeNull();
+  expect(gone.id).toBeLessThan(first.id);
+
+  // 일반 대기를 다 돌아 처음으로 돌아가도 새 제품 몫의 자리는 남는다
+  spies.refresh.mockClear();
+  await db.insert(jobs).values({ name: 'agent-evidence-refresh', cursor: { afterRepository: '', afterNewProduct: second.id } });
+  expect(await tick(request)).toMatchObject({ status: 'completed', done: true });
+  // 일반 대기는 그대로 모든 수요를 돈다 — 사라진 저장소와 비공개 제품(매일 보는 수요)도 여기서 본다
+  expect(scannedKeys()).toEqual(['acme/gone', 'zeta/private']);
+  expect((await job()).cursor).toMatchObject({ afterNewProduct: second.id });
 });
