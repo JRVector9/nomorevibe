@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
+import { uptimeHostBreakers, uptimeSplitControl } from '@/lib/db/product-uptime-schema';
 import { currentReplayDb } from '@/lib/db/replay-scope';
+import { parseUptimeSplitControl, uptimeSplitHostEntry, type UptimeSplitControl } from '@/lib/domain/products/uptime-split-policy';
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { consumerInstancePrefix, consumerSpec, type ConsumerParentRole } from '@/lib/runtime/consumer-registry';
 import { ORACLE_CONSUMER_DB_PROFILES, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleConsumerPrivilegeMismatches,
@@ -23,8 +25,27 @@ export type OracleConsumerTx = Parameters<Parameters<typeof db.transaction>[0]>[
 /** consumer 별 준비 확인. 같은 repeatable read 트랜잭션에서 읽기만 한다. 확인할 수 없으면 unknown, 틀렸으면 rejected 다 */
 export type OracleConsumerReadiness = (tx: OracleConsumerTx, context: { consumer: string; instanceId: string; principal: string })
   => Promise<{ status: 'verified' | 'unknown' | 'rejected'; reason: string }>;
+/**
+ * uptime(design-uptime §7.3 2): split 이 claims 이고 정책에 이 instance 가 Oracle probe 로 있어야 연다. 공유 HTTP permit 이 켜진 프로세스는
+ * 거절한다(§4 — uptime 은 permit 밖이다). 차단기 표는 읽을 수 있는지만 본다(열려 있으면 consumer 가 claim 없이 쉰다).
+ */
+async function uptimeReadiness(tx: OracleConsumerTx, { instanceId }: { instanceId: string }): Promise<{ status: 'verified' | 'unknown' | 'rejected'; reason: string }> {
+  const permits = process.env.HTTP_ORIGIN_PERMITS;
+  if (permits !== undefined && permits !== '0') return { status: 'rejected', reason: 'http_origin_permits_enabled' };
+  const [row] = await tx.select().from(uptimeSplitControl).where(eq(uptimeSplitControl.id, 1));
+  if (!row) return { status: 'unknown', reason: 'split_control_missing' };
+  let control: UptimeSplitControl;
+  try { control = parseUptimeSplitControl({ mode: row.mode, epoch: row.epoch, policy: row.policy, policyHash: row.policyHash }); }
+  catch { return { status: 'rejected', reason: 'split_control_invalid' }; }
+  if (control.mode !== 'claims' || !control.policy) return { status: 'unknown', reason: 'split_mode_legacy' };
+  const entry = uptimeSplitHostEntry(control.policy, instanceId);
+  if (!entry) return { status: 'unknown', reason: 'instance_not_in_split_policy' };
+  if (entry.host !== 'oracle-osaka-smoke' || entry.class !== 'probe') return { status: 'rejected', reason: 'instance_not_oracle_probe' };
+  await tx.select({ host: uptimeHostBreakers.host }).from(uptimeHostBreakers).where(eq(uptimeHostBreakers.host, entry.host));
+  return { status: 'verified', reason: 'split_claims_probe_ready' };
+}
 /** 이름별 준비 확인. E5(agent-scan)·U2(uptime)가 더한다. 없는 consumer 는 Oracle 에서 열리지 않는다 */
-export const ORACLE_CONSUMER_READINESS: Partial<Record<string, OracleConsumerReadiness>> = {};
+export const ORACLE_CONSUMER_READINESS: Partial<Record<string, OracleConsumerReadiness>> = { uptime: uptimeReadiness };
 export type OracleConsumerSpec = { consumer: string; role: ConsumerParentRole; db: OracleConsumerDbProfile; readiness: OracleConsumerReadiness };
 
 type CheckName = 'identity' | 'runtime' | 'host' | 'release' | 'database' | 'timeouts' | 'timezone' | 'budget' | 'consumer'

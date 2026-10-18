@@ -3,7 +3,7 @@ import { nativeHttpFetch, legacyHttpDispatcher } from "./http-transport";
 import { sharedHttpEnabled, HttpOriginPermitError } from "./http-origin-policy";
 export { HttpOriginPermitError } from "./http-origin-policy";
 
-const FETCH_TIMEOUT_MS = 10_000;
+export const FETCH_TIMEOUT_MS = 10_000;
 const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2MB
 

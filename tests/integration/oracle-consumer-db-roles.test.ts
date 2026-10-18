@@ -35,6 +35,8 @@ function child(target: Target, negatives: string[], extraEnv: Record<string, str
       env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV ?? 'test', LOG_LEVEL: 'error', DATABASE_URL: principalUrl(target),
         DB_POOL_MAX: '2', WORKER_ROLE: target.role, SERVICE_INSTANCE_ID: `${target.consumer}-consumer-b0`, RELEASE_TAG: release,
         PHYSICAL_HOST: 'oracle-osaka-smoke', TZ: 'UTC', DB_POOLER_MODE: 'direct',
+        // direct 모드의 세션 timeout 은 클라이언트 pool 값이다. 부모 역할 기본(maintenance 120초)은 preflight 가 거절하므로 계정 값(10초)에 맞춘다
+        DB_STATEMENT_TIMEOUT_MS: '10000',
         ORACLE_DRIVER_INPUT: JSON.stringify({ consumer: target.consumer, role: target.role, ...(target.fixture ? { profile: target.db } : {}), negatives }),
         ...extraEnv },
     });
