@@ -157,3 +157,27 @@ it('appends registered consumer sections to the operator SQL and keeps every reg
     expect(oracleConsumerGrantStatements(profile!, { connectionLimit: 4 }).join('\n')).not.toMatch(/\b(CREATE ON|ALL PRIVILEGES|TRUNCATE|SUPERUSER |CREATEROLE |BYPASSRLS )/);
   }
 });
+
+it('lets the uptime consumer read only the products columns its claim needs (no verify_token or edit_token_hash)', () => {
+  const uptime = ORACLE_CONSUMER_DB_PROFILES.uptime!;
+  const statements = oracleConsumerGrantStatements(uptime, { connectionLimit: 4 });
+  expect(statements).toContain('GRANT SELECT (id, slug, url, status, access_mode) ON TABLE public.products TO nomorevibe_oracle_uptime');
+  expect(statements.filter(line => / ON TABLE public\.products /.test(line))).toHaveLength(1);
+  // 실제 카탈로그 모양: 표 단위 SELECT 없음, 열 단위로 다섯 열만
+  const listed = Object.values(uptime.profile.tables).flatMap(grant => (['select', 'insert', 'update'] as const)
+    .flatMap(kind => Array.isArray(grant[kind]) ? grant[kind] as readonly string[] : []));
+  const names = [...new Set([...listed, 'verify_token', 'edit_token_hash', 'due_at', 'key'])];
+  const exact: PrivilegeRow[] = Object.entries(uptime.profile.tables).map(([table, grant]) => {
+    const column = (kind: 'select' | 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as readonly string[]).includes(name);
+    return { schema: 'public', table, select: grant.select === true, insert: grant.insert === true, update: grant.update === true, delete: Boolean(grant.delete),
+      columns: names.map(name => ({ name, select: column('select', name), insert: column('insert', name), update: column('update', name) })) };
+  });
+  expect(oracleConsumerPrivilegeMismatches(uptime, uptime.principal, exact)).toEqual([]);
+  const products = (change: (row: PrivilegeRow) => PrivilegeRow) => exact.map(row => row.table === 'products' ? change(row) : row);
+  expect(oracleConsumerPrivilegeMismatches(uptime, uptime.principal, products(row => ({ ...row, select: true })))).toEqual(['public.products']);
+  expect(oracleConsumerPrivilegeMismatches(uptime, uptime.principal, products(row => ({ ...row,
+    columns: row.columns.map(item => item.name === 'verify_token' ? { ...item, select: true } : item) })))).toEqual(['public.products']);
+  // 필요한 열이 카탈로그에 없으면(이름이 바뀜 등) 맞지 않는다
+  expect(oracleConsumerPrivilegeMismatches(uptime, uptime.principal, products(row => ({ ...row,
+    columns: row.columns.filter(item => item.name !== 'access_mode') })))).toEqual(['public.products']);
+});

@@ -248,6 +248,15 @@ describe("F3 제출 출처", () => {
     expect(await downProductCount()).toBe(0);
   });
 
+  it("F11: Oracle principal 은 products 에서 claim 이 쓰는 열만 읽는다(verify_token·edit_token_hash 못 읽음)", async () => {
+    const target = await product("columns");
+    expect(await oracle`select id, slug, url, status, access_mode from products where id = ${target.id}`).toHaveLength(1);
+    for (const column of ["verify_token", "edit_token_hash", "*"]) {
+      const error = await oracle.unsafe(`select ${column} from products limit 1`).then(() => null, (value: unknown) => value as { code?: string });
+      expect(error?.code, column).toBe("42501");
+    }
+  });
+
   it("home instance 는 제출할 수 없다(home 결과는 잡이 적용기에 직접 넘긴다)", async () => {
     const target = await product("home-submit");
     const batch = await claimUptimeProducts({ owner: OWNERS.m3, limit: 5 });

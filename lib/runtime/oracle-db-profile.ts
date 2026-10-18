@@ -19,7 +19,8 @@ export const ORACLE_DB_PRINCIPALS: Record<OracleDbService, string> = {
   scheduler: 'nomorevibe_oracle_scheduler', attest: 'nomorevibe_oracle_attest',
 };
 type Columns = readonly string[];
-type TableGrant = { select?: true; insert?: true | Columns; update?: true | Columns; delete?: true };
+/** select 가 열 목록이면 그 열만 읽는다(GRANT SELECT (열…)) — 표 전체 SELECT 는 같은 행의 비밀 열(products.verify_token 등)까지 연다 */
+type TableGrant = { select?: true | Columns; insert?: true | Columns; update?: true | Columns; delete?: true };
 export type OracleDbProfile = { tables: Record<string, TableGrant>; sequences: readonly string[]; statementTimeout: '10s' | '60s' };
 type Profile = OracleDbProfile;
 const read: TableGrant = { select: true }, write: TableGrant = { select: true, insert: true, update: true };
@@ -99,6 +100,9 @@ export const ORACLE_REFRESH_PROFILE: Profile = { statementTimeout: '10s', sequen
  * pins the role default timezone to UTC: operational timestamp columns are timezone-less UTC (design R8).
  */
 export type OracleConsumerDbProfile = { principal: string; profile: OracleDbProfile };
+// split-v1 claim(lib/domain/products/uptime-claims.ts)이 읽는 products 열 — 공개 website 여부와 확인할 주소뿐이다.
+// 표 전체 SELECT 는 verify_token·edit_token_hash 같은 비밀 열까지 연다(review F11)
+const UPTIME_PRODUCT_READ = ['id', 'slug', 'url', 'status', 'access_mode'] as const;
 // split-v1 claim·제출·되돌림(lib/domain/products/uptime-claims.ts)이 쓰는 uptime_claims 열. due·confirm·affinity·충돌·적용 기록은 home 적용기만 쓴다
 const UPTIME_CLAIM_WRITE = ['state', 'epoch', 'control_epoch', 'token', 'owner_instance_id', 'owner_boot_id', 'host', 'host_class', 'lease_until',
   'claimed_at', 'claim_slug', 'claim_url', 'origin', 'claim_slot', 'result_started_at', 'result_observed_at', 'result_kind', 'result_status',
@@ -125,9 +129,12 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       rate_limits: { select: true, insert: true, update: ['reset_at'] },
       operations_observations: observationsWrite } } },
   // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
+  // 열 권한으로 닫지 못하는 남은 위험(트리거·RLS = migration 이 필요): claim 이 host·host_class 를 쓰므로 home 으로 적힌 제출 행을 만들 수 있다
+  // (적용기가 판정하지 않는다 — submitted_not_probe), lock 용 UPDATE(id) 로 제어 행을 idle-in-transaction 60초까지 쥘 수 있다,
+  // operations_observations 키를 가리지 않는다(다른 Oracle 역할과 같은 패턴)
   uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
     tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },
-      uptime_host_breakers: read, products: read, product_health: read, operations_observations: observationsWrite } } },
+      uptime_host_breakers: read, products: { select: UPTIME_PRODUCT_READ }, product_health: read, operations_observations: observationsWrite } } },
 };
 export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
 
@@ -151,8 +158,9 @@ function grantStatements(name: string, profile: Profile, limit: ConnectionLimit,
     `ALTER ROLE ${name} SET statement_timeout = '${profile.statementTimeout}'`, `ALTER ROLE ${name} SET lock_timeout = '5s'`,
     `ALTER ROLE ${name} SET idle_in_transaction_session_timeout = '60s'`, ...settings, `GRANT USAGE ON SCHEMA public TO ${name}`];
   for (const [table, grant] of Object.entries(profile.tables).sort(([a], [b]) => a < b ? -1 : 1)) {
-    const whole = [grant.select && 'SELECT', grant.insert === true && 'INSERT', grant.update === true && 'UPDATE', grant.delete && 'DELETE'].filter(Boolean);
+    const whole = [grant.select === true && 'SELECT', grant.insert === true && 'INSERT', grant.update === true && 'UPDATE', grant.delete && 'DELETE'].filter(Boolean);
     if (whole.length) statements.push(`GRANT ${whole.join(', ')} ON TABLE public.${table} TO ${name}`);
+    if (Array.isArray(grant.select)) statements.push(`GRANT SELECT (${grant.select.join(', ')}) ON TABLE public.${table} TO ${name}`);
     if (Array.isArray(grant.insert)) statements.push(`GRANT INSERT (${grant.insert.join(', ')}) ON TABLE public.${table} TO ${name}`);
     if (Array.isArray(grant.update)) statements.push(`GRANT UPDATE (${grant.update.join(', ')}) ON TABLE public.${table} TO ${name}`);
   }
@@ -201,11 +209,11 @@ function privilegeMismatches(expected: string, profile: Profile, principal: stri
   for (const row of value as PrivilegeRow[]) {
     const grant: TableGrant = row?.schema === 'public' ? profile.tables[row.table] ?? {} : {};
     seen.add(`${row?.schema}.${row?.table}`);
-    const column = (kind: 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as Columns).includes(name);
-    const exact = row && row.select === Boolean(grant.select) && row.insert === (grant.insert === true) && row.update === (grant.update === true)
+    const column = (kind: 'select' | 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as Columns).includes(name);
+    const exact = row && row.select === (grant.select === true) && row.insert === (grant.insert === true) && row.update === (grant.update === true)
       && row.delete === Boolean(grant.delete) && Array.isArray(row.columns)
-      && row.columns.every(item => item.select === Boolean(grant.select) && item.insert === column('insert', item.name) && item.update === column('update', item.name))
-      && (['insert', 'update'] as const).every(kind => !Array.isArray(grant[kind]) || (grant[kind] as Columns).every(name => row.columns.some(item => item.name === name)));
+      && row.columns.every(item => item.select === column('select', item.name) && item.insert === column('insert', item.name) && item.update === column('update', item.name))
+      && (['select', 'insert', 'update'] as const).every(kind => !Array.isArray(grant[kind]) || (grant[kind] as Columns).every(name => row.columns.some(item => item.name === name)));
     if (!exact) mismatches.push(`${row?.schema}.${row?.table}`);
   }
   for (const table of Object.keys(profile.tables)) if (!seen.has(`public.${table}`)) mismatches.push(`public.${table}`);

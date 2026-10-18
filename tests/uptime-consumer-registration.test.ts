@@ -66,7 +66,9 @@ it('gives the uptime principal claim/submit columns and reads only — no author
   const { tables } = profile.profile;
   expect(Object.keys(tables).sort()).toEqual(['dr_writer_fence', 'operations_observations', 'product_health', 'products', 'uptime_claims',
     'uptime_host_breakers', 'uptime_split_control']);
-  for (const table of ['product_health', 'products', 'uptime_host_breakers']) expect(tables[table], table).toEqual({ select: true });
+  for (const table of ['product_health', 'uptime_host_breakers']) expect(tables[table], table).toEqual({ select: true });
+  // products 는 claim 이 읽는 열만 — verify_token·edit_token_hash 같은 비밀 열은 읽지 못한다(review F11)
+  expect(tables.products).toEqual({ select: ['id', 'slug', 'url', 'status', 'access_mode'] });
   for (const table of ['dr_writer_fence', 'uptime_split_control']) expect(tables[table], table).toEqual({ select: true, update: ['id'] });
   const claims = tables.uptime_claims;
   expect(claims.insert).toBeUndefined(); expect(claims.delete).toBeUndefined();
