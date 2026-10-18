@@ -1,13 +1,16 @@
-/** Inspection-only Oracle entry; it never starts a worker or scheduler. */
+/** Inspection-only Oracle entry; it never starts a worker, consumer or scheduler. */
 import { readOracleRuntimePreflight } from '@/lib/runtime/oracle-preflight';
+import { readOracleConsumerPreflight } from '@/lib/runtime/oracle-consumer-preflight';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
 export async function oraclePreflightMain(args: readonly string[]): Promise<number> {
   let failed = false, original: unknown;
   try {
-    if (args.length !== 1 || !args[0].startsWith('--role=')) throw new Error('invalid_oracle_preflight_arguments');
-    const report = await readOracleRuntimePreflight({ role: args[0].slice(7) });
+    // --role=<역할> 은 versioned 역할 점검, --consumer=<이름> 은 batch 없이 도는 consumer 점검(launch.py --consumer)이다
+    if (args.length !== 1 || !args[0].startsWith('--role=') && !args[0].startsWith('--consumer=')) throw new Error('invalid_oracle_preflight_arguments');
+    const report = args[0].startsWith('--role=') ? await readOracleRuntimePreflight({ role: args[0].slice(7) })
+      : await readOracleConsumerPreflight({ consumer: args[0].slice(11) });
     process.stdout.write(`${JSON.stringify(report)}\n`);
     return 78;
   } catch (error) { failed = true; original = error; throw error; }

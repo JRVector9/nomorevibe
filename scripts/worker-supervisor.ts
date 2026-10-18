@@ -13,6 +13,7 @@ import type { RuntimeHeartbeat } from './worker';
 import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
 import type { BatchRole } from '../lib/jobs/batches';
+import { consumerSpec, type ConsumerName } from '../lib/runtime/consumer-registry';
 import type { ProcessGroupRecorder, ProcessOwner } from '../lib/operations/dr/repository';
 import { processGroupOwnerEnvironment, processGroupRecordingEnabled } from '../lib/operations/dr/process-owner-env';
 export type RuntimeRole = 'scheduler' | BatchRole;
@@ -121,17 +122,18 @@ export function childExitCode(current: number, code: number | null, state: {
 }
 
 /** No internal respawn: exiting lets the container restart policy recreate the whole process tree. */
-export function supervisorCommand(role: RuntimeRole, options: { once?: boolean; consumer?: 'ai1' | 'ai2' } = {}): string[] {
-  if (options.consumer !== undefined && (!['ai1', 'ai2'].includes(options.consumer) || role !== 'reviewer')) throw new Error('invalid_item_consumer_role');
-  const command = options.consumer === 'ai1' ? ['scripts/pipeline-first-consumer.ts'] : options.consumer === 'ai2' ? ['scripts/pipeline-consumer.ts', '--stage=ai2']
-    : role === 'scheduler' ? ['scripts/scheduler.ts'] : ['scripts/worker.ts', `--role=${role}`];
+export function supervisorCommand(role: RuntimeRole, options: { once?: boolean; consumer?: ConsumerName } = {}): string[] {
+  // consumer 의 자식 명령은 등록부(lib/runtime/consumer-registry.ts)의 고정 인자뿐이다. 부모 역할이 다르면 띄우지 않는다
+  const spec = options.consumer === undefined ? undefined : consumerSpec(options.consumer);
+  if (options.consumer !== undefined && spec?.role !== role) throw new Error('invalid_item_consumer_role');
+  const command = spec ? [...spec.command] : role === 'scheduler' ? ['scripts/scheduler.ts'] : ['scripts/worker.ts', `--role=${role}`];
   if (options.once) command.push('--once');
   return command;
 }
 
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
-  signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: 'ai1' | 'ai2';
+  signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: ConsumerName;
   /** D11: role-worker boot 의 프로세스 그룹 근거 기록기. 없으면(직접 실행·scheduler·consumer) 기존 순서 그대로다. */
   processGroup?: ProcessGroupRecorder;
 } = {}): Promise<number> {
@@ -142,7 +144,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
   const consumerPath = options.consumer !== undefined ? consumerHealthPath() : null;
   if (consumerPath && resolve(healthPath) !== resolve(consumerPath)) throw new Error('invalid_item_consumer_health_path');
   const command = supervisorCommand(role, options);
-  // AI1/AI2 consumer 감독도 같은 장부 자리(role-parent:reviewer:<consumer>)를 얻는다 — 자식 consumer 는 자기 worker 자리로 item 마다 admit 한다(PR06e)
+  // consumer 감독도 같은 장부 자리(role-parent:<역할>:<consumer>)를 얻는다 — 자식 consumer 는 자기 worker 자리로 item 마다 admit 한다(PR06e)
   const sharedHost = currentHostBudget(), host = sharedHost ?? startHostBudget(process.env);
   // host 장부 자리를 얻기 전에는 자식(DB pool·일감)을 띄우지 않는다. 비활성은 기다림 없이 기존 순서 그대로다
   if (host.enabled && !host.ready()) {
@@ -294,14 +296,15 @@ export function recordedConsumerOwner(consumer: 'ai1' | 'ai2' | undefined, env: 
 async function main() {
   const args = process.argv.slice(2);
   const role = args.find(arg => arg.startsWith('--role='))?.slice(7) as RuntimeRole;
-  const consumer = args.includes('--consumer=ai1') ? 'ai1' : args.includes('--consumer=ai2') ? 'ai2' : undefined;
+  const consumers = args.filter(arg => arg.startsWith('--consumer=')), consumer = consumers[0]?.slice(11) as ConsumerName | undefined;
   if (!Object.hasOwn(JOB_LIMIT_MS, role) ||
       args.filter(arg => arg.startsWith('--role=')).length !== 1 ||
-      args.filter(arg => arg.startsWith('--consumer=')).length > 1 || consumer && role !== 'reviewer' ||
-      args.some(arg => arg !== '--once' && arg !== `--role=${role}` && arg !== '--consumer=ai2' && arg !== '--consumer=ai1')) {
-    throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--once]');
+      consumers.length > 1 || consumer !== undefined && consumerSpec(consumer)?.role !== role ||
+      args.some(arg => arg !== '--once' && arg !== `--role=${role}` && arg !== consumers[0])) {
+    throw new Error('Usage: worker-supervisor.ts --role=scheduler|crawler|reviewer|publisher|text|maintenance [--consumer=<name>] [--once]');
   }
-  const owner = recordedConsumerOwner(consumer, process.env);
+  // D11 기록은 AI1/AI2 consumer 만 한다(item 장부 owner). 다른 consumer 는 기록 없이 기존 순서 그대로 spawn 한다
+  const owner = recordedConsumerOwner(consumer === 'ai1' || consumer === 'ai2' ? consumer : undefined, process.env);
   const processGroup = owner ? (await import('../lib/operations/dr/repository')).processGroupRecorder(owner) : undefined;
   process.exitCode = await superviseWorker(role, { once: args.includes('--once'), consumer, ...(processGroup ? { processGroup } : {}) });
 }
