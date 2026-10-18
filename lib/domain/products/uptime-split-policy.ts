@@ -39,6 +39,18 @@ export const UPTIME_WINDOW_BUCKET_MS = 60_000;
  */
 export const UPTIME_BROAD_FAILURE_MIN_CHECKS = 30;
 export const UPTIME_BROAD_FAILURE_RATIO = 0.3;
+/**
+ * home 결과가 담을 수 있는 HTTP 상태 상한. safeFetch 는 100..599 밖의 비표준 상태(예: LinkedIn 999)를 그대로 돌려주고, legacy(recordPing)는
+ * 그것을 product_health.status 에 그대로 쓰고 실패로 센다(2xx·3xx 만 성공). split 의 정식 기록도 같은 값·같은 의미(실패)로 쓴다 —
+ * 알 수 없음(unknown/0)으로 바꾸면 상태별 규칙(예: 차단성 응답을 따로 다루는 규칙)이 legacy 와 claims 에서 달라진다.
+ * 100..599 만 담는 표(uptime_claims 제출 칸, uptime_observations)에는 담을 수 없어 그 표에만 unknown/0 으로 남긴다(Oracle consumer 와 같다).
+ * HTTP 상태 줄은 세 자리라 999 가 끝이다.
+ */
+export const UPTIME_HTTP_STATUS_MAX = 999;
+/** uptime_claims·uptime_observations CHECK 가 받는 표준 범위 */
+export function uptimeStandardHttpStatus(status: number): boolean {
+  return Number.isInteger(status) && status >= 100 && status <= 599;
+}
 const DAY_MS = 24 * 60 * 60_000;
 const KST_OFFSET_MS = 9 * 60 * 60_000;
 const LISTED = new Set(["verified", "seeded"]);
@@ -316,7 +328,7 @@ const isAlive = (result: UptimeSplitResult) => result.kind === "http" && result.
 
 function assertInput(input: UptimeSplitInput) {
   const { claim, result } = input;
-  const statusOk = result.kind === "http" ? Number.isInteger(result.status) && result.status >= 100 && result.status <= 599 : result.status === 0;
+  const statusOk = result.kind === "http" ? Number.isInteger(result.status) && result.status >= 100 && result.status <= UPTIME_HTTP_STATUS_MAX : result.status === 0;
   if (!Number.isSafeInteger(claim.productId) || claim.productId < 1 || !statusOk
     || !["http", "timeout", "dns", "network", "unknown"].includes(result.kind)
     || (result.latencyMs !== null && !(Number.isFinite(result.latencyMs) && result.latencyMs >= 0))
@@ -406,9 +418,12 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
   for (const { index, input, entry, product } of candidates) {
     const { claim, result } = input;
     const alive = isAlive(result), home = entry.class === "home", confirmed = home && claim.confirmClass === "home";
+    // raw 표는 HTTP 100..599 만 담는다 — 비표준 상태는 raw 에만 unknown/0 으로 남기고 정식 기록(health)에는 그대로 쓴다(UPTIME_HTTP_STATUS_MAX)
+    const standard = result.kind !== "http" || uptimeStandardHttpStatus(result.status);
     const observation: UptimeObservation = { observationId: result.token, productId: claim.productId, slug: product.slug, url: product.url,
       slot: uptimeSlot(result.startedAt), startedAt: result.startedAt, observedAt: result.observedAt,
-      source: { host: entry.host, instanceId: entry.instanceId, region: entry.region }, kind: result.kind, status: result.status, latencyMs: result.latencyMs };
+      source: { host: entry.host, instanceId: entry.instanceId, region: entry.region },
+      kind: standard ? result.kind : "unknown", status: standard ? result.status : 0, latencyMs: standard ? result.latencyMs : null };
     const next = new Date(result.observedAt.getTime() + UPTIME_RECHECK_MS);
     const cleared = { confirmClass: null, confirmReason: null, confirmRequestedAt: null } as const;
     if (alive) {

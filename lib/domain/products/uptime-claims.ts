@@ -8,7 +8,7 @@ import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch
 import type { ProductTransaction } from "./generation";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { advanceUptimeBreaker, closedUptimeBreaker, parseUptimeSplitControl, uptimeClaimAllowance, uptimeSplitHostEntry,
-  UPTIME_SPLIT_CLOCK_SKEW_MS, type UptimeBreakerState, type UptimeHost, type UptimeHostBreaker, type UptimeHostClass,
+  UPTIME_HTTP_STATUS_MAX, UPTIME_SPLIT_CLOCK_SKEW_MS, type UptimeBreakerState, type UptimeHost, type UptimeHostBreaker, type UptimeHostClass,
   type UptimeSplitControl } from "./uptime-split-policy";
 
 /**
@@ -35,18 +35,24 @@ export const UptimeClaimOwnerSchema = z.strictObject({
 });
 export type UptimeClaimOwner = z.infer<typeof UptimeClaimOwnerSchema>;
 
-/** 결과 한 건(제출·적용 공통 모양). 시작·관측은 확인한 host 의 시계다 */
-export const UptimeResultSchema = z.strictObject({
+const resultSchema = (maxHttpStatus: number) => z.strictObject({
   productId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), token: z.uuid(),
   epoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   startedAt: z.date(), observedAt: z.date(),
-  kind: z.enum(["http", "timeout", "dns", "network", "unknown"]), status: z.number().int().min(0).max(599),
+  kind: z.enum(["http", "timeout", "dns", "network", "unknown"]), status: z.number().int().min(0).max(maxHttpStatus),
   latencyMs: z.number().int().min(0).max(2_147_483_647).nullable(),
 }).superRefine((value, ctx) => {
   if (!Number.isFinite(value.startedAt.getTime()) || !Number.isFinite(value.observedAt.getTime()) || value.observedAt < value.startedAt
     || (value.kind === "http" ? value.status < 100 : value.status !== 0)) ctx.addIssue({ code: "custom", message: "uptime_result_invalid" });
 });
+/** 결과 한 건(제출·적용 공통 모양). 시작·관측은 확인한 host 의 시계다. 제출분은 claim 행 CHECK 와 같이 HTTP 100..599 만 담는다 */
+export const UptimeResultSchema = resultSchema(599);
 export type UptimeResult = z.infer<typeof UptimeResultSchema>;
+/**
+ * home 이 직접 연 결과(적용기 own). 제출 행에 담지 않으므로 비표준 HTTP 상태(예: 999)도 그대로 받는다 — legacy recordPing 이
+ * product_health.status 에 999 를 실패로 그대로 쓰는 것과 같은 의미다(UPTIME_HTTP_STATUS_MAX, uptime-split-policy.ts).
+ */
+export const UptimeOwnResultSchema = resultSchema(UPTIME_HTTP_STATUS_MAX);
 
 export type UptimeClaimTicket = {
   productId: number; slug: string; url: string; token: string; epoch: number;
