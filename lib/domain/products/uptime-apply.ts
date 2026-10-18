@@ -129,7 +129,7 @@ export async function applyUptimeResults(input: {
     const inputs: UptimeSplitInput[] = [];
     for (const row of remoteRows) {
       const product = productById.get(row.productId) ?? null;
-      inputs.push({ claim: row, product, health: product ? healthBySlug.get(product.slug) ?? null : null,
+      inputs.push({ claim: row, product, health: product ? healthBySlug.get(product.slug) ?? null : null, submitted: true,
         result: { token: row.token!, epoch: row.epoch, startedAt: row.resultStartedAt!, observedAt: row.resultObservedAt!,
           kind: row.resultKind!, status: row.resultStatus!, latencyMs: row.resultLatencyMs } });
     }

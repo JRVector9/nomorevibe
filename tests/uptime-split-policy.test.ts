@@ -153,6 +153,15 @@ describe("decideSplitResults — design §3.2 table", () => {
   ])("row 1 source_unconfigured: %s", (_name, claim) => {
     expect(one(input({ host: "oracle-osaka-smoke", claim }))).toMatchObject({ outcome: "discarded", reason: "source_unconfigured", health: null });
   });
+  it("row 1 submitted_not_probe: a submitted row written as home is never judged (only the home job's own results count)", () => {
+    const forged = { ...input({ host: "m3", kind: "network", claim: { state: "submitted" } }), submitted: true };
+    expect(one(forged)).toMatchObject({ outcome: "discarded", reason: "submitted_not_probe", health: null, raw: null,
+      claim: { dueAt: forged.claim.dueAt, lastOutcome: "submitted_not_probe", lastApplied: null } });
+    expect(one({ ...input({ host: "m3", status: 200, claim: { state: "submitted" } }), submitted: true })).toMatchObject({ outcome: "discarded" });
+    // 같은 home 결과라도 잡이 직접 연 것(own)은 센다. probe 의 제출 행은 그대로 판정한다
+    expect(one(input({ host: "m3", kind: "network" }))).toMatchObject({ outcome: "applied", reason: "split_counted" });
+    expect(one({ ...input({ host: "oracle-osaka-smoke", kind: "network" }), submitted: true })).toMatchObject({ outcome: "confirm_requested" });
+  });
   it("row 1 legacy without policy: leftover submitted rows go idle", () => {
     const batch = decideSplitResults([input({ host: "oracle-osaka-smoke" })], context({ control: { mode: "legacy", epoch: 6, policy: null, policyHash: null } }));
     expect(batch.decisions[0]).toMatchObject({ outcome: "discarded", reason: "mode_legacy" });

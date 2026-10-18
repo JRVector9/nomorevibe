@@ -201,6 +201,8 @@ it.each([
   ['an instance missing from the policy', control({ policy: { ...policy(), hosts: [policy().hosts[0]] } }), {}, 'source_unconfigured'],
   ['a home entry without pacing', control({ policy: { ...policy(), hosts: [policy().hosts[0],
     { host: 'm3', instanceId: ORACLE, region: 'kr-home', class: 'home' }] } }), {}, 'pacing_unconfigured'],
+  ['a home entry with pacing (home results are applied by the home job, never submitted)', control({ policy: { ...policy(), hosts: [policy().hosts[0],
+    { host: 'm3', instanceId: ORACLE, region: 'kr-home', class: 'home', maxPerHour: 1000, batch: 40, concurrency: 4 }] } }), {}, 'home_unsupported'],
   ['a policy that moved this instance to another host', control(), { physicalHost: 'm3' }, 'host_mismatch'],
 ])('does not claim under %s', async (_name, value, extra, reason) => {
   io.read.mockResolvedValue(value);

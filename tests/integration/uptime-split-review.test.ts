@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
+import postgres from "postgres";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { downProductCount } from "@/lib/domain/products/health";
 import { applyUptimeResults } from "@/lib/domain/products/uptime-apply";
 import { claimUptimeProducts, releaseUptimeClaims, submitUptimeResults } from "@/lib/domain/products/uptime-claims";
 import type { JobLease } from "@/lib/jobs/control";
@@ -8,8 +11,9 @@ import type { JobContext } from "@/lib/jobs/runner";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import { readUptimeSplitReadback, readUptimeSplitStage } from "@/lib/operations/uptime-split-repository";
 import { classifyStage } from "@/lib/operations/worker-progress";
-import { ensureSchema, resetTables } from "./setup";
-import { claimRow, clearSplitState, dbNow, healthRow, OWNERS, product, rawRows, result, setSplit, takeJobLease,
+import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from "@/lib/runtime/oracle-db-profile";
+import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
+import { claimRow, clearSplitState, dbNow, healthRow, nextCycle, OWNERS, product, rawRows, result, setSplit, takeJobLease,
   type FixtureProduct } from "./uptime-split-fixture";
 
 /*
@@ -187,5 +191,65 @@ describe("F2 home 차단기 시험 표본", () => {
     // 역할이 다른 home(mini)으로 넘어갔으면 m3 차단기는 시험할 사람이 없을 뿐이다 — 경보가 아니다
     await db.execute(sql`update role_leases set owner_instance_id = ${OWNERS.mini.instanceId} where role = 'maintenance'`);
     expect(classifyStage((await readUptimeSplitStage(db))!, null, true, await dbNow())).toMatchObject({ reason: "progressing", alarm: false });
+  });
+});
+
+describe("F3 제출 출처", () => {
+  const PROFILE = ORACLE_CONSUMER_DB_PROFILES.uptime!;
+  const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+  let oracle: ReturnType<typeof postgres>;
+  const drop = async () => {
+    if ((await admin`select 1 from pg_roles where rolname = ${PROFILE.principal}`).length === 0) return;
+    await admin.unsafe(`DROP OWNED BY ${PROFILE.principal}`);
+    await admin.unsafe(`DROP ROLE ${PROFILE.principal}`);
+  };
+  beforeAll(async () => {
+    await drop();
+    // 운영 least-privilege.sql 과 같은 문장으로 만든 Oracle uptime principal
+    for (const statement of oracleConsumerGrantStatements(PROFILE, { connectionLimit: 4 })) await admin.unsafe(statement);
+    const password = randomUUID();
+    await admin.unsafe(`ALTER ROLE ${PROFILE.principal} PASSWORD '${password}'`);
+    const url = new URL(TEST_DATABASE_URL);
+    url.username = PROFILE.principal; url.password = password;
+    oracle = postgres(url.toString(), { max: 1, onnotice: () => {} });
+  });
+  afterAll(async () => {
+    await oracle?.end({ timeout: 5 });
+    await drop();
+    await admin.end({ timeout: 5 });
+  });
+
+  it("Oracle principal 이 home(m3) 실패 제출 행을 써도 적용기는 판정하지 않는다 — 세 번 위조해도 숨김이 없다", async () => {
+    const target = await product("victim");
+    // 정책에 있는 home instance·host m3·home 으로 "연결 실패" 제출 행을 한 문장으로 만든다(principal 의 열 UPDATE 권한 안)
+    const forge = () => oracle`update uptime_claims c set state = 'submitted', epoch = c.epoch + 1,
+        control_epoch = (select epoch from uptime_split_control where id = 1), token = gen_random_uuid(),
+        owner_instance_id = ${OWNERS.m3.instanceId}, owner_boot_id = gen_random_uuid(), host = 'm3', host_class = 'home',
+        claimed_at = clock_timestamp() - interval '5 seconds', claim_slug = p.slug, claim_url = p.url,
+        origin = lower(substring(p.url from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+')),
+        result_started_at = clock_timestamp() - interval '4 seconds', result_observed_at = clock_timestamp() - interval '3 seconds',
+        result_kind = 'network', result_status = 0, result_latency_ms = null, lease_until = null,
+        submitted_at = clock_timestamp(), updated_at = clock_timestamp()
+      from products p where p.id = c.product_id and c.product_id = ${target.id} returning c.product_id`;
+    for (let round = 1; round <= 3; round++) {
+      expect(await forge()).toHaveLength(1);
+      const summary = await applyUptimeResults({ lease });
+      expect(summary).toMatchObject({ remote: 1, outcomes: { discarded: 1, applied: 0 }, reasons: { submitted_not_probe: 1 } });
+      expect(await healthRow(target.slug)).toMatchObject({ failures: 0 });
+      expect(await claimRow(target.id)).toMatchObject({ state: "idle", last_outcome: "submitted_not_probe" });
+      await nextCycle(target);
+    }
+    expect(await rawRows(target.slug)).toEqual([]);
+    expect(await downProductCount()).toBe(0);
+  });
+
+  it("home instance 는 제출할 수 없다(home 결과는 잡이 적용기에 직접 넘긴다)", async () => {
+    const target = await product("home-submit");
+    const batch = await claimUptimeProducts({ owner: OWNERS.m3, limit: 5 });
+    if (batch.kind !== "claimed") throw new Error(`home_blocked:${batch.reason}`);
+    const ticket = batch.claims.find(claim => claim.productId === target.id)!;
+    expect(await submitUptimeResults({ owner: OWNERS.m3, results: [result(ticket, { status: 0, kind: "network" })] }))
+      .toMatchObject({ kind: "blocked", reason: "source_unconfigured" });
+    expect(await claimRow(target.id)).toMatchObject({ state: "claimed" });
   });
 });

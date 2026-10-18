@@ -33,7 +33,7 @@ const SLICE_MS = 30_000;
 export const UPTIME_CONSUMER_LEASE_MARGIN_MS = FETCH_TIMEOUT_MS + SUBMIT_EVERY_MS + 5_000;
 
 export type UptimeCheck = Pick<UptimeResult, "startedAt" | "observedAt" | "kind" | "status" | "latencyMs"> & { elapsedMs: number };
-export type UptimeConsumerIdle = "mode_legacy" | "source_unconfigured" | "pacing_unconfigured" | "host_mismatch"
+export type UptimeConsumerIdle = "mode_legacy" | "source_unconfigured" | "pacing_unconfigured" | "home_unsupported" | "host_mismatch"
   | "site_fenced" | "breaker_open" | "empty";
 export type UptimeConsumerSummary = { batches: number; claimed: number; checked: number; accepted: number; lost: number; released: number };
 type Claimed = Extract<UptimeClaimBatch, { kind: "claimed" }>;
@@ -62,7 +62,7 @@ export function uptimeConsumerInterval(maxPerHour: number): number {
 export function uptimeConsumerClaimLimit(batch: number, ttlMs: number, intervalMs: number): number {
   return Math.max(1, Math.min(batch, Math.floor((ttlMs - UPTIME_CONSUMER_LEASE_MARGIN_MS) / intervalMs) + 1));
 }
-/** probe 는 schema 가 셋 다 요구한다. home 항목도 이 consumer 로 돌리려면 셋 다 있어야 한다(상한 없이 돌지 않는다) */
+/** probe 는 schema 가 셋 다 요구한다. 셋이 없으면 돌지 않는다(상한 없이 돌지 않는다). home 항목은 이 consumer 로 돌지 않는다(home_unsupported) */
 function pacingOf(entry: UptimeSplitHost): Pacing | null {
   const { maxPerHour, batch, concurrency } = entry;
   return maxPerHour !== undefined && batch !== undefined && concurrency !== undefined ? { maxPerHour, batch, concurrency } : null;
@@ -269,6 +269,8 @@ export async function runUptimeConsumer(input: {
     const pacing = pacingOf(entry);
     view.host = entry.host; view.class = entry.class; view.pacing = pacing;
     if (!pacing) return rest("pacing_unconfigured");
+    // 제출은 probe 만 판정된다(적용기는 home 으로 적힌 제출 행을 버린다) — home 결과는 home 잡이 직접 반영한다. 확인해도 버려질 요청을 보내지 않는다
+    if (entry.class !== "probe") return rest("home_unsupported");
     if (input.physicalHost !== undefined && input.physicalHost !== entry.host) return rest("host_mismatch");
     const intervalMs = uptimeConsumerInterval(pacing.maxPerHour);
     await pace.ready(intervalMs, signal, () => report?.("idle"));

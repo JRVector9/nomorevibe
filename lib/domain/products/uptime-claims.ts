@@ -177,7 +177,8 @@ function breakerFromJson(row: Record<string, unknown>): UptimeHostBreaker {
 }
 
 /**
- * 확인 결과를 제출한다(state claimed → submitted). token·epoch·owner(instance·boot)·지금 control epoch 가 맞고 host 시계가
+ * 확인 결과를 제출한다(state claimed → submitted). policy 에 probe 로 적힌 instance 만 제출한다.
+ * token·epoch·owner(instance·boot)·지금 control epoch 가 맞고 host 시계가
  * ±30초 안인 것만 받는다. 받지 않은 것은 lost 다 — 다시 claim 됐거나, epoch 이 바뀌었거나, 이미 제출했다.
  * 만료됐어도 아직 다른 owner 가 가져가지 않았으면 token 이 같으므로 받는다(행 lock 으로 claim 과 제출 중 먼저 commit 한 쪽만 이긴다).
  */
@@ -191,7 +192,8 @@ export async function submitUptimeResults(input: { owner: UptimeClaimOwner; resu
     if (!await writerSiteActive(tx)) return { kind: "blocked", reason: "site_fenced", controlEpoch: null };
     const control = await lockUptimeSplitControl(tx);
     if (control.mode !== "claims" || !control.policy) return { kind: "blocked", reason: "mode_legacy", controlEpoch: control.epoch };
-    if (!uptimeSplitHostEntry(control.policy, owner.instanceId)) return { kind: "blocked", reason: "source_unconfigured", controlEpoch: control.epoch };
+    // 제출은 probe 만 한다 — home 결과는 home 잡이 적용기에 직접 넘긴다(적용기는 probe 가 아닌 제출 행을 판정하지 않는다)
+    if (uptimeSplitHostEntry(control.policy, owner.instanceId)?.class !== "probe") return { kind: "blocked", reason: "source_unconfigured", controlEpoch: control.epoch };
     if (results.length === 0) return { kind: "submitted", controlEpoch: control.epoch, accepted: [], lost: [] };
     const rows = results.map(result => ({ product_id: result.productId, token: result.token, epoch: result.epoch,
       started_at: result.startedAt.toISOString(), observed_at: result.observedAt.toISOString(), kind: result.kind,

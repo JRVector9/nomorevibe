@@ -280,7 +280,9 @@ export type UptimeClaimSnapshot = {
 export type UptimeProductSnapshot = { id: number; slug: string; url: string; status: string; accessMode: string; updatedAt: string };
 /** 잠근 product_health 행(없으면 null) */
 export type UptimeHealthSnapshot = { checkedAt: Date; failures: number; downSince: Date | null };
-export type UptimeSplitInput = { claim: UptimeClaimSnapshot; result: UptimeSplitResult; product: UptimeProductSnapshot | null; health: UptimeHealthSnapshot | null };
+export type UptimeSplitInput = { claim: UptimeClaimSnapshot; result: UptimeSplitResult; product: UptimeProductSnapshot | null; health: UptimeHealthSnapshot | null;
+  /** 제출 행(state submitted)에서 읽은 결과면 참. home 잡이 직접 연 결과(own)는 거짓이다 */
+  submitted?: boolean };
 export type UptimeSplitContext = {
   control: UptimeSplitControl;
   /** PR09 uptime_control. split 동안 둘 다 거짓이어야 한다(0103 트리거가 강제) */
@@ -296,7 +298,7 @@ export type UptimeSplitContext = {
 export type UptimeSplitOutcome = "lost" | "discarded" | "stale" | "held" | "applied" | "returned" | "confirm_requested";
 export type UptimeSplitReason =
   | "claim_lost"
-  | "mode_legacy" | "uptime_control_enabled" | "control_epoch" | "source_unconfigured"
+  | "mode_legacy" | "uptime_control_enabled" | "control_epoch" | "source_unconfigured" | "submitted_not_probe"
   | "product_missing" | "product_unlisted" | "url_changed" | "product_changed" | "clock" | "older_observation"
   | "minimum_interval"
   | "split_success" | "split_confirm_success" | "probe_breaker_open" | "split_confirm_required" | "split_broad_failure"
@@ -349,7 +351,7 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
 
 /**
  * 묶음 적용 판정(design-uptime §3.2 표). 입력 순서대로 결정을 돌려준다. 같은 제품이 두 번 오면 거부한다(제품당 claim 1행).
- * 1 control epoch·mode·PR09·policy 출처 → 버림 / 2 제품 변경 → stale / 3 시계 → stale / 4 더 새 health → stale /
+ * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale / 4 더 새 health → stale /
  * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 보류 / 10 home 실패 → 반영.
  */
 export function decideSplitResults(inputs: readonly UptimeSplitInput[], context: UptimeSplitContext): UptimeSplitBatch {
@@ -380,7 +382,10 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
     const discard = control.mode !== "claims" ? "mode_legacy"
       : context.uptimeControl.observationsEnabled || context.uptimeControl.gateEnabled ? "uptime_control_enabled"
         : claim.controlEpoch !== control.epoch ? "control_epoch"
-          : !entry || entry.host !== claim.host || entry.class !== claim.hostClass ? "source_unconfigured" : null;
+          : !entry || entry.host !== claim.host || entry.class !== claim.hostClass ? "source_unconfigured"
+            // home 실패로 셀 수 있는 것은 home 잡이 직접 연 결과(own)뿐이다. 제출 행은 probe(Oracle)만 낸다 — home host·class 로 적힌 제출 행은
+            // 제출 권한(uptime_claims 열 UPDATE)만 가진 주체가 쓴 것이라 판정하지 않는다(review F3: 위조한 home 실패가 숨김·내림까지 갔다)
+            : input.submitted && entry.class !== "probe" ? "submitted_not_probe" : null;
     if (discard || !entry) { decisions[index] = settle(input, "discarded", discard ?? "source_unconfigured"); return; }
     if (!product) { decisions[index] = settle(input, "stale", "product_missing"); return; }
     if (!LISTED.has(product.status) || product.accessMode !== "website") { decisions[index] = settle(input, "stale", "product_unlisted"); return; }
