@@ -57,6 +57,7 @@ const EVENTS: Record<string, { label: string; fields: string[]; error?: boolean;
   "agent_evidence.attach_failed": { label: "개발 AI 근거 연결 오류", fields: [], error: true },
   "agent_evidence.deferred": { label: "개발 AI 조사 재시도 대기", fields: [], waiting: true },
   "agent_evidence.disabled": { label: "개발 AI 수집 설정 꺼짐", fields: [] },
+  "agent_evidence.github_headroom_low": { label: "개발 AI 조사 GitHub 잔량 부족", fields: ["remaining", "limit"], waiting: true },
   "ai_level.tick": { label: "AI 단계 확인 결과", fields: ["checked", "due", "verified", "restUsed"] },
   "ai_level.rate_limited": { label: "AI 단계 공급자 한도 대기", fields: [], waiting: true },
   "ai_level.graphql_low": { label: "AI 단계 공급자 잔량 부족", fields: ["remaining"], waiting: true },

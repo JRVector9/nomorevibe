@@ -12,6 +12,7 @@ import { assertJobLeaseAtWallTime, requestJob, type JobLease } from '@/lib/jobs/
 import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
 import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
+import { readGitHubCoreHeadroom } from '@/lib/crawl/github-headroom';
 
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?: string; providerFailure?: AgentProviderFailure };
 /**
@@ -19,7 +20,7 @@ export type AgentEvidenceRefreshCursor = { afterRepository?: string; retryAfter?
  *
  * 틱 하나가 스캔 1~4개를 하므로(2026-10 프로드 시간당 약 60개) 둘이면 밀린 것을 반나절쯤에 비우고,
  * 그 뒤에는 대개 비어 일반 대기가 틱을 거의 다 쓴다. 상한이 없으면 밀린 수백 개가 끝날 때까지
- * 일반 대기가 멈춘다. 한 틱의 일은 시간(20초)과 스캔당 요청 상한으로 묶여 있어 GitHub 호출은 늘지 않고,
+ * 일반 대기가 멈춘다. 한 틱의 일은 시간(AGENT_EVIDENCE_TICK_MS)과 스캔당 요청 상한으로 묶여 있어 GitHub 호출은 늘지 않고,
  * 무엇을 먼저 보느냐만 바뀐다.
  */
 export const REVIEW_SCAN_SHARE = 2;
@@ -32,8 +33,14 @@ export function prioritizeAgentRefreshDemand(duePartial: string[], repositories:
   return [...ahead].map(repositoryKey => ({ repositoryKey, advanceCursor: false }))
     .concat(repositories.filter(key => !ahead.has(key)).map(repositoryKey => ({ repositoryKey, advanceCursor: true })));
 }
+/**
+ * 한 틱의 마감. 스캔 한 건은 따로 20초 상한(collect.ts)이고 새 저장소는 마감 8초 전까지만 시작하므로 틱 하나가 스캔 4~6건을 한다.
+ * 20초일 때는 틱이 15초 안팎에 끝나고 다음 일정(1분)을 기다려 scan 줄이 시간의 4분의 3을 놀았다(2026-10-19 프로드 시간당 약 65건).
+ * worker 의 틱 예산(55초, scripts/worker.ts)보다 짧다.
+ */
+export const AGENT_EVIDENCE_TICK_MS = 50_000;
 export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefreshCursor>, dependencies: { request?: AgentGitHubRequest } = {}): Promise<JobOutcome<AgentEvidenceRefreshCursor>> {
-  const deadlineAt = Date.now() + 20_000;
+  const deadlineAt = Date.now() + AGENT_EVIDENCE_TICK_MS;
   const settings = await getSettings();
   if (!settings.agentEvidence.enabled) { ctx.log('agent_evidence.disabled'); return { done: true }; }
   let afterRepository = ctx.cursor?.afterRepository ?? '';
@@ -107,9 +114,23 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   `);
   const work = prioritizeAgentRefreshDemand(partial.map(row => row.repository_key), rows.map(row => row.repository_key),
     reviewWaiting.map(row => row.repository_key));
+  /**
+   * 남은 일이 있어 멈춘 틱만 이어 하기를 알린다(runner 가 ACK 에서 다시 요청하고 worker 가 1초 뒤 다시 돈다).
+   * 빈 큐·완주·공급자 대기(retryAfter)·예산 미룸·GitHub 여유 부족에는 알리지 않는다 — 정기 일정(1분)을 기다린다.
+   * 이 틱에서 아무 저장소도 보지 못했으면(수요 조회만으로 시간을 다 썼으면) 알리지 않는다 — DB 를 쉬지 않고 두드리지 않게.
+   */
+  let attempted = 0;
+  const more = (): JobOutcome<AgentEvidenceRefreshCursor> => ({ done: false, cursor: cursor(), ...(attempted > 0 ? { continuation: 'ready' as const } : {}) });
   const collect = async (): Promise<JobOutcome<AgentEvidenceRefreshCursor>> => {
     for (const row of work) {
-      if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return { done: false, cursor: cursor() };
+      if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return more();
+      // GitHub 여유 관문 — 남은 core 가 적으면 먼저 도는 수집(원본·AI 단계)에 한도를 남기고 다음 정기 틱에 다시 본다
+      const headroom = await readGitHubCoreHeadroom();
+      if (headroom?.low) {
+        ctx.log('agent_evidence.github_headroom_low', { remaining: headroom.remaining, limit: headroom.limit });
+        return { done: false, cursor: cursor() };
+      }
+      attempted++;
       const repositoryKey = row.repositoryKey;
       try {
         const result = await refreshRepositoryAgentEvidence({ repositoryKey, hasBudget: ctx.hasBudget, request: dependencies.request, deadlineAt, lease: ctx.lease });
@@ -155,8 +176,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
       await ctx.save(cursor());
     }
     // A completed traversal resets its position while retaining an unresolved pre-scan failure.
-    return rows.length < 10 ? { done: true, ...(providerFailure ? { cursor: { providerFailure } } : {}) }
-      : { done: false, cursor: cursor() };
+    return rows.length < 10 ? { done: true, ...(providerFailure ? { cursor: { providerFailure } } : {}) } : more();
   };
   const outcome = await collect();
   // 제품 연결은 스캔과 따로 돈다. 앞에서 예산이 끊겨도 매 틱 돌아 굶지 않는다 (GitHub를 쓰지 않는다)
