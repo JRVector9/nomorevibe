@@ -1,6 +1,7 @@
 import { Panel } from '@/components/Panel';
 import { formatDetailTime } from '@/lib/format/time';
 import type { ModelRouteStatus } from '@/lib/operations/model-route-status';
+import { replicaHoldText, type ReplicaRead } from '@/lib/operations/replica-hold';
 import type { RouteStatus } from '@/lib/operations/pipeline-control';
 import { ScrollTable } from '../components/ScrollTable';
 
@@ -16,14 +17,15 @@ const mode = (value: string | null) => value === null ? '—' : MODES[value] ?? 
 
 /**
  * 모델 경로 계약 · 전환 진행(ops-v8 PR8) — 운영 CLI status 와 같은 readback·판정을 보기만 한다(lib/operations/model-route-status.ts).
- * 복제본에서만 읽고, 못 읽으면 "보류"다. 바꾸는 단추는 없다 — 전환은 운영 CLI 로만 한다.
+ * 복제본에서만 읽고, 못 읽으면 까닭과 함께 "보류"다. 바꾸는 단추는 없다 — 전환은 운영 CLI 로만 한다.
  */
-export function ModelRouteContracts({ status }: { status: ModelRouteStatus | null }) {
-  if (!status) return (
+export function ModelRouteContracts({ status: read }: { status: ReplicaRead<ModelRouteStatus> }) {
+  if (!read.ok) return (
     <Panel title="모델 경로 계약 · 전환 진행" actions={<span className="text-[13px] text-fg-3">새 · 보류</span>}>
-      <p className="text-[13px] text-fg-2">보류 — 복제본에서 읽지 못했습니다(복제본 없음·10초 넘게 밀림·취소·오류). 주 DB 로 넘기지 않습니다.</p>
+      <p className="text-[13px] text-fg-2">보류 — {replicaHoldText(read.reason)}. 주 DB 로 넘기지 않습니다.</p>
     </Panel>
   );
+  const status = read.value;
   const counts = (Object.keys(ROUTE_STATUS) as RouteStatus[]).map(key => [key, status.routes.filter(row => row.status === key).length] as const)
     .filter(([, count]) => count > 0);
   const { batch, capacity } = status;

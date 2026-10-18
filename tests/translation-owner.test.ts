@@ -15,24 +15,25 @@ describe("공개 번역 모델 호출 담당", () => {
   });
 
   it("기존 방식이면 지금 글 그대로다", () => {
-    expect(translationOwnerText("legacy")).toEqual({ page: "모델 호출은 기존 text 워커만 수행합니다.",
+    expect(translationOwnerText({ ok: true, value: "legacy" })).toEqual({ page: "모델 호출은 기존 text 워커만 수행합니다.",
       accepted: "접수했습니다. 기존 text 워커가 처리합니다." });
   });
 
   it("분리 방식이면 분리 번역 역할을 코드 이름과 함께 적는다", () => {
-    const text = translationOwnerText("versioned");
+    const text = translationOwnerText({ ok: true, value: "versioned" });
     expect(text.page).toBe("모델 호출은 분리 번역 역할(translation)만 수행합니다.");
     expect(text.accepted).toBe("접수했습니다. 분리 번역 역할(translation)이 처리합니다.");
     expect(text.page).not.toContain("text 워커");
   });
 
   it("비우는 중이면 맡은 역할이 없다고 적는다", () => {
-    expect(translationOwnerText("draining").page).toBe("작업 배치를 비우는 중(draining)이라 지금은 모델 호출을 맡은 역할이 없습니다.");
+    expect(translationOwnerText({ ok: true, value: "draining" }).page).toBe("작업 배치를 비우는 중(draining)이라 지금은 모델 호출을 맡은 역할이 없습니다.");
   });
 
-  it("작업 배치를 읽지 못했으면 보류다 — 기존 글로 짐작하지 않는다", () => {
-    const text = translationOwnerText(null);
-    expect(text.page).toContain("보류");
+  it("작업 배치를 읽지 못했으면 까닭과 함께 보류다 — 기존 글로 짐작하지 않는다", () => {
+    const text = translationOwnerText({ ok: false, reason: "lagging" });
+    expect(text.page).toBe("모델 호출 담당은 확인 보류입니다 — 복제본이 10초 넘게 밀렸습니다.");
+    expect(translationOwnerText({ ok: false, reason: "error" }).page).toContain("읽다가 실패했습니다");
     expect(text.page).not.toContain("text 워커");
     expect(text.accepted).not.toContain("text 워커");
   });

@@ -69,15 +69,16 @@ const STATUS: ModelRouteStatus = {
 };
 
 describe("모델 경로 계약 · 전환 진행 칸", () => {
-  it("복제본에서 못 읽었으면 보류다 — 표나 0을 그리지 않는다", () => {
-    const html = renderToStaticMarkup(<ModelRouteContracts status={null} />);
-    expect(html).toContain("보류");
+  it("복제본에서 못 읽었으면 까닭과 함께 보류다 — 표나 0을 그리지 않는다", () => {
+    const html = renderToStaticMarkup(<ModelRouteContracts status={{ ok: false, reason: "no_replica" }} />);
+    expect(html).toContain("보류 — 복제본 설정이 없습니다");
+    expect(renderToStaticMarkup(<ModelRouteContracts status={{ ok: false, reason: "error" }} />)).toContain("보류 — 읽다가 실패했습니다");
     expect(html).toContain("주 DB 로 넘기지 않습니다");
     expect(html).not.toContain("<table");
   });
 
   it("경로마다 계약 유무를 쉬운 말(코드)로, 단계마다 비우기 진행·소비자 생존을 보인다", () => {
-    const html = renderToStaticMarkup(<ModelRouteContracts status={STATUS} />);
+    const html = renderToStaticMarkup(<ModelRouteContracts status={{ ok: true, value: STATUS }} />);
     expect(html).toContain("2026-10-18 09:44:02 KST");
     expect(html).toContain("계약 있음(serving) 1 · 계약 없음(no_contract) 1 · 모름(unknown) 1 · 지금 안 씀(unused) 1");
     expect(html).toContain("crawl-agent-review");
@@ -92,7 +93,7 @@ describe("모델 경로 계약 · 전환 진행 칸", () => {
   });
 
   it("작업 배치를 비우는 중에 남은 실행이 있으면 마칠 수 없다고 적는다", () => {
-    const html = renderToStaticMarkup(<ModelRouteContracts status={{ ...STATUS, batch: { ...STATUS.batch, liveJobs: 2 } }} />);
+    const html = renderToStaticMarkup(<ModelRouteContracts status={{ ok: true, value: { ...STATUS, batch: { ...STATUS.batch, liveJobs: 2 } } }} />);
     expect(html).toContain("모두 0이 되어야 전환을 마칠 수 있습니다");
   });
 });

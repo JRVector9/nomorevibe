@@ -5,10 +5,10 @@ import { redirect } from "next/navigation";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { productTranslationAdminQueue, productTranslationAdminSummary } from "@/lib/domain/products/translation-admin";
 import { isProductTranslationField, PRODUCT_TRANSLATION_MAX_ATTEMPTS } from "@/lib/domain/products/translation-policy";
-import { readReplicaOnly } from "@/lib/db";
 import type { ProductTranslationLocale, ProductTranslationStatus } from "@/lib/db/schema";
 import { formatDetailTime } from "@/lib/format/time";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
+import { readReplicaOrHold } from "@/lib/operations/replica-hold";
 import { TranslationRetryForm } from "./TranslationRetryForm";
 import { translationOwnerText } from "./owner";
 
@@ -38,10 +38,10 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   const field = isProductTranslationField(params.field) ? params.field : undefined;
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
   const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
-  // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 보류, 주 DB 로 넘기지 않는다)
+  // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 까닭과 함께 보류, 주 DB 로 넘기지 않는다)
   const [queue, summary, batch] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
-    readReplicaOnly(readJobBatchMode).catch(() => null)]);
-  const owner = translationOwnerText(batch?.mode ?? null);
+    readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode())]);
+  const owner = translationOwnerText(batch.ok ? { ok: true, value: batch.value.mode } : batch);
   const next = new URLSearchParams({ state, q });
   if (locale) next.set("locale", locale);
   if (field) next.set("field", field);

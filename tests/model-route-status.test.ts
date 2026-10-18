@@ -4,7 +4,8 @@ import type { ControlSnapshot, ModelEnv } from "@/lib/operations/pipeline-contro
 const mocks = vi.hoisted(() => ({
   readReplicaOnly: vi.fn(), onReplica: vi.fn(), onPrimary: vi.fn(), readControlSnapshot: vi.fn(), warn: vi.fn(),
 }));
-vi.mock("@/lib/db", () => ({ db: { marker: "db-proxy" }, readReplicaOnly: mocks.readReplicaOnly, onReplica: mocks.onReplica, onPrimary: mocks.onPrimary }));
+const REPLICA = { marker: "replica" };
+vi.mock("@/lib/db", () => ({ db: { marker: "primary-proxy" }, readReplicaOnly: mocks.readReplicaOnly, onReplica: mocks.onReplica, onPrimary: mocks.onPrimary }));
 vi.mock("@/lib/operations/pipeline-control-repository", () => ({ readControlSnapshot: mocks.readControlSnapshot }));
 vi.mock("@/lib/observability/logger", () => ({ logger: { warn: mocks.warn, info: vi.fn(), error: vi.fn() } }));
 
@@ -30,26 +31,27 @@ beforeEach(() => { vi.clearAllMocks(); });
  */
 describe("모델 경로 계약 읽기", () => {
   it("CLI 와 같은 readback 을 복제본 전용으로만 읽는다", async () => {
-    mocks.readReplicaOnly.mockImplementation(async (load: () => Promise<unknown>) => load());
+    mocks.readReplicaOnly.mockImplementation(async (load: (replica: unknown) => Promise<unknown>) => ({ ok: true, value: await load(REPLICA) }));
     mocks.readControlSnapshot.mockResolvedValue(SNAPSHOT);
     const status = await readModelRouteStatus(MODELS);
     expect(mocks.readReplicaOnly).toHaveBeenCalledTimes(1);
-    expect(mocks.readControlSnapshot).toHaveBeenCalledWith({ marker: "db-proxy" });
+    expect(mocks.readControlSnapshot).toHaveBeenCalledWith(REPLICA);
     expect(mocks.onReplica).not.toHaveBeenCalled();
     expect(mocks.onPrimary).not.toHaveBeenCalled();
-    expect(status).toEqual({ at: SNAPSHOT.now, routes: statusRouteContracts(SNAPSHOT, MODELS), stages: SNAPSHOT.stages,
-      batch: SNAPSHOT.batch, capacity: SNAPSHOT.capacity });
+    expect(status).toEqual({ ok: true, value: { at: SNAPSHOT.now, routes: statusRouteContracts(SNAPSHOT, MODELS), stages: SNAPSHOT.stages,
+      batch: SNAPSHOT.batch, capacity: SNAPSHOT.capacity } });
   });
 
-  it("복제본에서 못 읽으면 null 이다", async () => {
-    mocks.readReplicaOnly.mockResolvedValue(null);
-    expect(await readModelRouteStatus(MODELS)).toBeNull();
+  it("복제본에서 못 읽으면 그 까닭으로 보류한다", async () => {
+    mocks.readReplicaOnly.mockResolvedValue({ ok: false, reason: "lagging" });
+    expect(await readModelRouteStatus(MODELS)).toEqual({ ok: false, reason: "lagging" });
     expect(mocks.readControlSnapshot).not.toHaveBeenCalled();
   });
 
-  it("읽다 실패하면 null 이고 남긴다", async () => {
-    mocks.readReplicaOnly.mockRejectedValue(new Error("42P01"));
-    expect(await readModelRouteStatus(MODELS)).toBeNull();
+  it("복제본에서 읽다 던진 오류(문장 시간 초과 57014 등)도 보류로 돌려주고 남긴다", async () => {
+    mocks.readReplicaOnly.mockImplementation(async (load: (replica: unknown) => Promise<unknown>) => ({ ok: true, value: await load(REPLICA) }));
+    mocks.readControlSnapshot.mockRejectedValue(Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" }));
+    expect(await readModelRouteStatus(MODELS)).toEqual({ ok: false, reason: "error" });
     expect(mocks.warn).toHaveBeenCalledWith("operations.model_routes_unavailable", expect.anything());
   });
 
