@@ -1,4 +1,5 @@
 import { dbErrorFields } from '@/lib/db/error-fields';
+import { replicaFailure } from '@/lib/db/replica';
 import { readGitHubCoreHeadroom } from '@/lib/crawl/github-headroom';
 import { collectorScope } from '@/lib/crawl/github-secret';
 import { recordJobDeferral } from '@/lib/jobs/deferral-observation';
@@ -22,7 +23,8 @@ import { collectRepositoryAgentScan, getLatestRepositoryAgentScan } from './repo
  *
  * 포기: 종료 신호·예산 소진·claim 뒤 60초(AGENT_SCAN_RECORD_CUTOFF_MS)가 지나면 쓰지 않고 푼다 — 시계·실패 수는 그대로다.
  * 수집·기록 중 예외는 같은 저장소가 큐 맨 앞에서 곧바로 다시 잡히지 않게 retry_after 를 15분 미뤄 푼다. 소유를 잃은 기록(lease_lost)은
- * 아무것도 쓰지 않았으므로 경고만 남기고 다음으로 간다.
+ * 아무것도 쓰지 않았으므로 경고만 남기고 다음으로 간다. 저장소 탓이 아닌 오류(수집 자격 없음·DB 일시 오류, agentScanSystemicError)는
+ * 저장소를 미루지 않고 그대로 푼 뒤 consumer 전체가 60초 쉰다 — 자격이 없는 동안 30초마다 저장소 하나씩 15분 밀리지 않게.
  *
  * 쉬는 시간은 모두 60초 이하다 — 쉬기 전에 감독에게 idle 을 알려 progress 한도(90초) 안에 든다.
  */
@@ -30,19 +32,23 @@ export const AGENT_SCAN_JOB = 'agent-evidence-refresh';
 export const AGENT_SCAN_CONCURRENCY_MAX = 4;
 /** 이만큼의 claim 마다 한 번은 order 'due'(priority 무시) — 정기 도래(5)·오류 반복(6)도 앞으로 나아간다 */
 export const AGENT_SCAN_DUE_EVERY = 5;
-export const AGENT_SCAN_WAIT_MS = { empty: 10_000, mode: 30_000, quota: 60_000, host: 5_000, error: 30_000 } as const;
+export const AGENT_SCAN_WAIT_MS = { empty: 10_000, mode: 30_000, quota: 60_000, host: 5_000, error: 30_000, systemic: 60_000 } as const;
 /** 처리 중 예외로 푼 저장소를 다시 잡기까지 */
 export const AGENT_SCAN_ERROR_RETRY_MS = 15 * 60_000;
 /** 공급자 한도가 다시 열릴 시각을 모를 때(잡의 retryAfter 와 같은 15분) */
 const RATE_LIMIT_FALLBACK_MS = 15 * 60_000;
 const OBSERVE_EVERY_MS = 60_000;
 const DEFERRAL_NAME = 'agent-scan';
+/** DB 가 잠시 안 되는 SQLSTATE: 연결(08)·자원(53)·운영자 개입·시간 초과(57)·직렬화·교착(40)·잠금 대기(55P03)·읽기 전용(25006) */
+const SYSTEMIC_DB_CODE = /^(08|53|57|40)[0-9A-Z]{3}$|^(55P03|25006)$/;
+/** lib/crawl/github.ts 가 쓸 수집 자격이 하나도 없을 때 던지는 말 */
+const NO_COLLECTOR_TOKENS = 'GitHub 수집 토큰이 없습니다';
 
 type IdleCounts = Record<Exclude<AgentScanIdleReason, 'empty'>, number>;
 export type AgentScanConsumerStats = {
   claimed: number; recorded: Record<AgentScanRecordOutcome, number>; abandoned: number; leaseLost: number; errors: number;
-  /** 새 claim 을 하지 않은 횟수: 여유 관문·host 장부·공급자 대기, claim 이 돌려준 idle 이유(empty 는 idleEmpty) */
-  deferred: { quota: number; host: number; rateLimited: number } & IdleCounts;
+  /** 새 claim 을 하지 않은 횟수: 여유 관문·host 장부·공급자 대기·저장소 탓 아닌 오류 뒤 쉼, claim 이 돌려준 idle 이유(empty 는 idleEmpty) */
+  deferred: { quota: number; host: number; rateLimited: number; systemic: number } & IdleCounts;
   idleEmpty: number;
   /** 수집이 쓴 GitHub 요청 수(기록·포기 모두) */
   githubRequests: number;
@@ -59,7 +65,7 @@ export type AgentScanConsumerInput = {
 };
 
 const emptyStats = (): AgentScanConsumerStats => ({ claimed: 0, recorded: { complete: 0, partial: 0, failed: 0, cached: 0 }, abandoned: 0,
-  leaseLost: 0, errors: 0, deferred: { quota: 0, host: 0, rateLimited: 0, mode: 0, disabled: 0, detector: 0, paused: 0, fenced: 0 }, idleEmpty: 0, githubRequests: 0 });
+  leaseLost: 0, errors: 0, deferred: { quota: 0, host: 0, rateLimited: 0, systemic: 0, mode: 0, disabled: 0, detector: 0, paused: 0, fenced: 0 }, idleEmpty: 0, githubRequests: 0 });
 /** claim 순서: 1..(N-1)번째는 priority, N번째는 due */
 export function agentScanClaimOrder(attempt: number): 'priority' | 'due' {
   return attempt % AGENT_SCAN_DUE_EVERY === AGENT_SCAN_DUE_EVERY - 1 ? 'due' : 'priority';
@@ -68,6 +74,15 @@ const errorCode = (error: unknown) => {
   const fields = dbErrorFields(error);
   return fields.code ?? (/^[a-z][a-z0-9_]{0,59}$/.test(fields.message) ? fields.message : fields.name);
 };
+/**
+ * 저장소 탓이 아닌 오류 — 이 프로세스의 수집 자격이 없거나(토큰 0개·비밀키 없음·범위 오류) DB 가 잠시 안 된다. 어느 저장소를 잡아도 같으므로
+ * 저장소를 미루지 않고 consumer 전체가 쉰다. 그 밖의 예외(관측 검증 실패·깨진 응답 등)는 저장소 탓으로 보고 그 저장소만 15분 미룬다.
+ */
+export function agentScanSystemicError(error: unknown): boolean {
+  if (replicaFailure(error) !== null) return true;
+  const { code, message } = dbErrorFields(error);
+  return code !== null && SYSTEMIC_DB_CODE.test(code) || message.startsWith('github_collector_') || message.startsWith(NO_COLLECTOR_TOKENS);
+}
 
 export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promise<AgentScanConsumerStats> {
   const owner = itemOwnerSchema.parse(input.owner), { signal, once, report } = input;
@@ -77,7 +92,8 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
   const scope = collectorScope();
   const stats = emptyStats(), bootedAt = Date.now();
   const running = new Map<number, number>();
-  let pausedUntil = 0, attempts = 0, observedAt = 0, observing: Promise<void> | null = null;
+  // pausedUntil: 공급자 대기(진행 판정이 backoff 로 읽는다) · haltedUntil: 저장소 탓 아닌 오류 뒤 쉼(고쳐야 할 일이라 경보로 남긴다)
+  let pausedUntil = 0, haltedUntil = 0, attempts = 0, observedAt = 0, observing: Promise<void> | null = null;
   const last: { claimAt: number | null; recordAt: number | null; idle: string | null; error: string | null } = { claimAt: null, recordAt: null, idle: null, error: null };
 
   // 일꾼이 여럿이면 감독에게는 합쳐 알린다 — 도는 스캔이 있으면 가장 오래 돈 것의 시작(job_timeout 이 그것으로 잰다)
@@ -88,6 +104,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
   };
   const snapshot = () => ({ instanceId: owner.instanceId, bootId: owner.bootId, bootedAt, concurrency, release: process.env.RELEASE_TAG ?? 'unknown',
     ...structuredClone(stats), running: running.size, pausedUntil: pausedUntil > Date.now() ? new Date(pausedUntil).toISOString() : null,
+    haltedUntil: haltedUntil > Date.now() ? new Date(haltedUntil).toISOString() : null,
     lastClaimAt: last.claimAt && new Date(last.claimAt).toISOString(), lastRecordAt: last.recordAt && new Date(last.recordAt).toISOString(),
     lastIdleReason: last.idle, lastErrorCode: last.error });
   // 관측(agent-scan:<instance>)은 1분에 한 번. 실패해도 일은 계속한다
@@ -119,7 +136,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
       // 기록하고 지난 기한이 그대로 남아 같은 저장소를 쉬지 않고 다시 잡는다
       result = await collectRepositoryAgentScan({ repositoryKey: lease.repositoryKey, hasBudget: () => !signal?.aborted,
         ...(input.request ? { request: input.request } : {}), ...(signal ? { signal } : {}) }, latest, new Date(lease.claimedAt));
-    } catch (error) { await release(lease, AGENT_SCAN_ERROR_RETRY_MS); throw error; }
+    } catch (error) { await release(lease, agentScanSystemicError(error) ? undefined : AGENT_SCAN_ERROR_RETRY_MS); throw error; }
     if (result) stats.githubRequests += result.requestCount;
     // 공급자 한도·인증 대기는 저장소 탓이 아니다 — 기록은 하고(시계는 claims.ts), 이 프로세스의 새 claim 을 그 시각까지 멈춘다
     if (result && (result.errorCode === 'rate_limited' || result.errorCode === 'unavailable' && result.retryAt))
@@ -136,12 +153,22 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
         stats.leaseLost++; logger.warn('agent_scan.lease_lost', { repositoryKey: lease.repositoryKey, epoch: lease.epoch, controlEpoch: lease.controlEpoch });
         return;
       }
-      await release(lease, AGENT_SCAN_ERROR_RETRY_MS); throw error;
+      await release(lease, agentScanSystemicError(error) ? undefined : AGENT_SCAN_ERROR_RETRY_MS); throw error;
     }
+  };
+  /** 오류 뒤 쉬는 시간. 저장소 탓이 아니면 모든 일꾼이 함께 쉰다 */
+  const afterError = (error: unknown) => {
+    if (!agentScanSystemicError(error)) return AGENT_SCAN_WAIT_MS.error;
+    haltedUntil = Math.max(haltedUntil, Date.now() + AGENT_SCAN_WAIT_MS.systemic);
+    return AGENT_SCAN_WAIT_MS.systemic;
   };
 
   /** 한 바퀴. 쉬어야 하면 그 시간(ms), 저장소 하나를 처리했으면 null */
   const step = async (slot: number): Promise<number | null> => {
+    if (haltedUntil > Date.now()) {
+      stats.deferred.systemic++; last.idle = 'systemic_error'; deferred('systemic_error');
+      return Math.min(haltedUntil - Date.now(), AGENT_SCAN_WAIT_MS.systemic);
+    }
     if (pausedUntil > Date.now()) {
       stats.deferred.rateLimited++; last.idle = 'rate_limited'; deferred('rate_limited');
       return Math.min(pausedUntil - Date.now(), AGENT_SCAN_WAIT_MS.quota);
@@ -172,7 +199,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
       return null;
     } catch (error) {
       failed(error, repositoryKey);
-      return AGENT_SCAN_WAIT_MS.error;
+      return afterError(error);
     } finally {
       if (host?.admitted) await host.release().catch(() => {});
     }
@@ -182,7 +209,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
     while (!signal?.aborted) {
       void observeNow();
       let pause: number | null;
-      try { pause = await step(slot); } catch (error) { failed(error, null); pause = AGENT_SCAN_WAIT_MS.error; }
+      try { pause = await step(slot); } catch (error) { failed(error, null); pause = afterError(error); }
       if (pause === null) continue;
       if (once) return;
       await wait(pause);
