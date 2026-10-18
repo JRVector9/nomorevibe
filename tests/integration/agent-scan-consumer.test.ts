@@ -1,7 +1,7 @@
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryClaims, agentRepositoryScans, agentScanControl, crawlSettings, githubCollectorAccounts, githubCollectorApps,
@@ -11,6 +11,7 @@ import { saveSettings } from '@/lib/crawl/settings';
 import { AGENT_SCAN_PRIORITY } from '@/lib/domain/evidence/agents/claims';
 import { beginAgentScanDrain, bumpAgentScanContract, completeAgentScanTransition } from '@/lib/domain/evidence/agents/claim-control';
 import { runAgentScanConsumer } from '@/lib/domain/evidence/agents/consumer';
+import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import { jobDeferralKey } from '@/lib/jobs/deferral-observation';
 import { seal } from '@/lib/operations/credential-vault';
 import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from '@/lib/runtime/oracle-db-profile';
@@ -174,6 +175,33 @@ it('a renamed repository whose scan lands on the old-name row backs off instead 
   expect(await nextClaimSeconds('neworg/repo-7')).toBeGreaterThan(14 * 60);
   expect(await scansOf('neworg/repo-7')).toEqual([]);
   expect(await scansOf('oldorg/repo-7')).toMatchObject([{ lastErrorCode: 'alias_recheck_required' }]);
+}, 30_000);
+
+it('judges the cache by the claim (DB) clock so a host clock behind the DB scans once instead of spinning on cached records', async () => {
+  const key = 'acme/skew-1', scopeHash = createHash('sha256').update(JSON.stringify('')).digest('hex');
+  // 최신 스캔(다른 head)과 claim 이 DB 시계로 2초 전에 도래했다. 후보 수요라 매일 주기(next_attempt_at 그대로)
+  await db.execute(sql`INSERT INTO agent_repository_scans (github_repository_id, repository_key, commit_sha, detector_version, scope, scope_hash,
+      state, request_count, file_count, coverage, started_at, completed_at, next_attempt_at)
+    VALUES (1001, ${key}, ${'e'.repeat(40)}, ${AGENT_DETECTOR_VERSION}, '', ${scopeHash}, 'complete', 3, 0, '{}'::jsonb,
+      (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 day', (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 day',
+      (clock_timestamp() AT TIME ZONE 'UTC') - interval '2 seconds')`);
+  await db.execute(sql`INSERT INTO agent_repository_claims (repository_key, priority, requires_daily, due_at)
+    VALUES (${key}, ${AGENT_SCAN_PRIORITY.regular}, true, (clock_timestamp() AT TIME ZONE 'UTC') - interval '2 seconds')`);
+  await toItems();
+  const paths: string[] = [], controller = new AbortController();
+  // host 시계를 DB 보다 5초 늦춘다(Date 만 — 타이머는 실제)
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  let stats: Awaited<ReturnType<typeof runAgentScanConsumer>>;
+  try {
+    vi.setSystemTime(Date.now() - 5_000);
+    const timer = setTimeout(() => controller.abort(), 2_000);
+    stats = await runAgentScanConsumer({ owner: owner('skew'), signal: controller.signal, request: fakeGitHub(paths, { delayMs: 5 }) });
+    clearTimeout(timer);
+  } finally { vi.useRealTimers(); }
+  // 고치기 전: host 시계로는 아직 볼 때가 아니라 cached 를 수백 번 기록하며 같은 저장소를 다시 잡았다
+  expect(stats).toMatchObject({ claimed: 1, recorded: { cached: 0, complete: 1 }, errors: 0 });
+  expect(metadataCalls(paths, key)).toBe(1);
+  expect(await nextClaimSeconds(key)).toBeGreaterThan(60);
 }, 30_000);
 
 it('abandons the claim without writing when shutdown interrupts the scan', async () => {

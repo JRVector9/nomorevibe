@@ -115,8 +115,10 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
     let result: CollectResult | null;
     try {
       const latest = await getLatestRepositoryAgentScan(lease.repositoryKey);
+      // 캐시 판단은 claim 시각(DB 시계)으로 한다 — claim 도래(due_at)도 DB 시계라, host 시계가 늦으면 "아직 볼 때가 아님"(cached)을
+      // 기록하고 지난 기한이 그대로 남아 같은 저장소를 쉬지 않고 다시 잡는다
       result = await collectRepositoryAgentScan({ repositoryKey: lease.repositoryKey, hasBudget: () => !signal?.aborted,
-        ...(input.request ? { request: input.request } : {}), ...(signal ? { signal } : {}) }, latest, new Date());
+        ...(input.request ? { request: input.request } : {}), ...(signal ? { signal } : {}) }, latest, new Date(lease.claimedAt));
     } catch (error) { await release(lease, AGENT_SCAN_ERROR_RETRY_MS); throw error; }
     if (result) stats.githubRequests += result.requestCount;
     // 공급자 한도·인증 대기는 저장소 탓이 아니다 — 기록은 하고(시계는 claims.ts), 이 프로세스의 새 claim 을 그 시각까지 멈춘다
