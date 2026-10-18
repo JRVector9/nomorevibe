@@ -66,7 +66,7 @@ export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progr
 
 export type ProgressReason = "paused" | "no_work" | "progressing" | "running" | "backoff" |
   "upstream_or_job_error" | "upstream_stalled" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention";
-export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level";
+export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level" | "uptime";
 /** 보강 근거 단계 이름 — 새 화면 요소에 "쉬운 말(코드)"로 쓴다(운영센터 v8). 지금 화면 글자는 그대로 둔다 */
 export const EVIDENCE_STAGE_LABELS = {
   evidence: "제품 근거(evidence)",
@@ -75,11 +75,20 @@ export const EVIDENCE_STAGE_LABELS = {
 } as const satisfies Record<Extract<ProgressStageKey, "evidence" | "agent-evidence" | "ai-level">, string>;
 export type ProgressStageInput = Omit<Pick<ThroughputStage, "key" | "enabled" | "waiting" | "oldestMinutes" | "completed5m" | "progress5m" | "errors5m" | "manualAttention">, "key"> & {
   key: ProgressStageKey; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
+  /** 일감이 있어도 정책이 일부러 쉬게 한 상태(응답 점검 split 의 home 차단기 열림) — 재시작으로 고칠 수 없는 대기다 */
+  held?: boolean;
 };
-export type StageProgress = { role: "crawler" | "reviewer" | "publisher"; stage: ProgressStageKey;
+export type StageProgress = { role: "crawler" | "reviewer" | "publisher" | "maintenance"; stage: ProgressStageKey;
   reason: ProgressReason; alarm: boolean; restartEligible?: boolean; manualAttention?: number;
   job?: string; lane?: string; waiting?: number; oldestMinutes?: number | null; completed5m?: number;
-  progress5m?: number | null; errors5m?: number | null; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null };
+  progress5m?: number | null; errors5m?: number | null; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
+  held?: boolean };
+
+/** 단계를 처리하는 역할 — 응답 점검(uptime, split claims 모드에서만 보고)은 maintenance 다 */
+export function progressStageRole(key: ProgressStageKey): StageProgress["role"] {
+  return ["fetch", "evidence", "agent-evidence", "ai-level"].includes(key) ? "crawler" : key === "publish" ? "publisher"
+    : key === "uptime" ? "maintenance" : "reviewer";
+}
 
 export function classifyStage(
   stage: ProgressStageInput,
@@ -97,11 +106,12 @@ export function classifyStage(
   else if ((stage.providerErrorMinutes ?? stage.oldestMinutes ?? 0) >= 30 && errors > 0) reason = "upstream_stalled";
   else if (job?.notBefore && job.notBefore > now) reason = "backoff";
   else if (errors > 0) reason = "upstream_or_job_error";
+  else if (stage.held) reason = "backoff";
   else if (stage.waiting === 0 && deferred > 0) reason = "backoff";
   else if (stage.oldestMinutes === null) reason = "unknown_age";
   else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : stage.key === "publish" ? 10 : 5)) reason = "warming_up";
   else reason = observed ? "no_progress" : "worker_missing";
-  return { role: ["fetch", "evidence", "agent-evidence", "ai-level"].includes(stage.key) ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer", stage: stage.key,
+  return { role: progressStageRole(stage.key), stage: stage.key,
     reason, alarm: reason === "no_progress" || reason === "worker_missing" || reason === "upstream_stalled",
     restartEligible: reason === "no_progress", manualAttention: stage.manualAttention ?? 0 };
 }

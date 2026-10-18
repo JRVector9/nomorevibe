@@ -235,6 +235,16 @@ describe("safe bounded latest results", () => {
     expect(report.recent[0].events[0]).toEqual({ label: "응답 점검 광역 실패 보류", counts: { attempted: 50, down: 40 } });
   });
 
+  it("shows split claims applying submitted results and a breaker that stops home checks", () => {
+    const report = build({ observations: [observation("job:uptime-ping", { events: [
+      { event: "uptime.split_applied", counts: { remote: 12, applied: 9, held: 0, confirmRequested: 3, returned: 0, stale: 0, lost: 0, discarded: 0 } },
+      { event: "uptime.split_blocked", counts: { breakerOpen: 1, unconfigured: 0, fenced: 0 } },
+    ] })] });
+    expect(report.recent[0]).toMatchObject({ name: "uptime-ping", errorEvents: 1, outcome: "event-errors" });
+    expect(report.recent[0].events.map(event => event.label)).toEqual(["응답 점검 제출분 반영", "응답 점검 분담 확인 멈춤"]);
+    expect(report.recent[0].events[0].counts).toMatchObject({ remote: 12, applied: 9, confirmRequested: 3 });
+  });
+
   it("preserves independent request errors beside an authoritative zero failed-item total", () => {
     const report = build({ observations: [observation("job:product-evidence-refresh", { events: [
       { event: "evidence.initial_refresh_queue_failed", counts: {} },

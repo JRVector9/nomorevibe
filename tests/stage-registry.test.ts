@@ -78,7 +78,7 @@ describe("단계 표", () => {
     expect(throughputKeys).toEqual(["fetch", "judge", "first", "second", "publish"]);
     const stage = (key: string) => ({ key, enabled: true, waiting: 0, oldestMinutes: null, completed5m: 0, progress5m: 0, errors5m: 0 });
     const report = buildWorkerProgress({ measuredAt: new Date(0).toISOString(), stages: throughputKeys.map(stage) } as unknown as ThroughputSnapshot,
-      [], [], new Date(0), { mode: "legacy", writerContractVersion: 0 }, ["evidence", "agent-evidence", "ai-level"].map(stage) as never);
+      [], [], new Date(0), { mode: "legacy", writerContractVersion: 0 }, ["evidence", "agent-evidence", "ai-level", "uptime"].map(stage) as never);
     const watched = new Map(report.stages.map((row) => [row.stage, row.job]));
     const progress = PIPELINE_STAGES.flatMap((row) => row.progressKey ? [[row.progressKey, row.jobs[0]] as const] : []);
     expect(new Map(progress)).toEqual(watched);

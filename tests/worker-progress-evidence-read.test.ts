@@ -37,6 +37,8 @@ const fixture = vi.hoisted(() => {
     observations: ["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"]
       .map(role => ({ key: `service:${role}:test`, value: { status: "running" }, observedAt: NOW })),
     primary: { transactions: [] as Array<{ config: unknown; statements: SQL[] }> },
+    // 응답 점검 분담(0103) 장부는 근거와 따로 읽는다 — 기본은 legacy(관문에 uptime 단계 없음)
+    split: { mode: "legacy" as "legacy" | "claims" },
   };
 });
 
@@ -62,6 +64,13 @@ vi.mock("@/lib/crawl/settings", async () => {
 vi.mock("@/lib/jobs/runner", () => ({ listJobStates: async () => fixture.jobs }));
 vi.mock("@/lib/jobs/batch-repository", () => ({ readJobBatchMode: async () => ({ mode: "legacy", writerContractVersion: 0 }) }));
 vi.mock("@/lib/operations/throughput", () => ({ pipelineThroughput: async () => ({ measuredAt: fixture.NOW.toISOString(), stages: [] }) }));
+vi.mock("@/lib/operations/uptime-split-repository", async () => {
+  const { uptimeSplitStageInput } = await import("@/lib/operations/uptime-split");
+  return { readUptimeSplitStage: async () => fixture.split.mode === "legacy" ? null : uptimeSplitStageInput({ at: fixture.NOW.toISOString(),
+    control: { mode: "claims", epoch: 2, policy: null, policyHash: null }, uptimeControl: { observationsEnabled: false, gateEnabled: false },
+    queue: { due: 6, dueOldestMinutes: 9, claimed: 2, submitted: 0, submittedOldestMinutes: null, confirm: 0, confirmOldestMinutes: null,
+      applied5m: 40, missingRows: 0 }, breakers: [], outcomes1h: {}, applied1h: {} }) };
+});
 
 const dialect = new PgDialect();
 const plain = (log: Log) => log.map(entry => ({ config: entry.config ?? null,
@@ -85,6 +94,19 @@ describe("배포 관문 근거 읽기", () => {
     fixture.primary.transactions.length = 0;
     const report = JSON.parse(JSON.stringify(await readWorkerProgress(fixture.NOW)));
     expect({ transactions: plain(fixture.primary.transactions), report }).toEqual(golden);
+  });
+
+  it("split claims 모드면 근거 읽기는 그대로 두고 응답 점검(maintenance) 단계만 더한다", async () => {
+    fixture.primary.transactions.length = 0;
+    fixture.split.mode = "claims";
+    try {
+      const report = JSON.parse(JSON.stringify(await readWorkerProgress(fixture.NOW)));
+      expect(plain(fixture.primary.transactions)).toEqual(golden.transactions);
+      expect(report.stages.slice(0, golden.report.stages.length)).toEqual(golden.report.stages);
+      expect(report.stages.slice(golden.report.stages.length)).toEqual([{ role: "maintenance", stage: "uptime", reason: "progressing",
+        alarm: false, restartEligible: false, manualAttention: 0, job: "uptime-ping", lane: "uptime-ping", waiting: 6, oldestMinutes: 9,
+        completed5m: 40, progress5m: 40, errors5m: null, held: false }]);
+    } finally { fixture.split.mode = "legacy"; }
   });
 
   it("주입한 실행기에도 관문과 같은 SQL·설정을 보내고, 주 DB 는 건드리지 않는다", async () => {

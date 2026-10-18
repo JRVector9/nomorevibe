@@ -77,7 +77,9 @@ export const PIPELINE_STAGES = Object.freeze([
   stage({ key: "reason-translate", group: "enrichment", label: "사유 번역", code: "reason-translate", jobs: ["reason-translate"], role: "text", headline: true }),
   stage({ key: "audit", group: "enrichment", label: "발행분 감사", code: "product-audit", jobs: ["product-audit"], role: "reviewer", headline: true }),
   stage({ key: "stars", group: "enrichment", label: "저장소·스타", code: "product-stars-refresh", jobs: ["product-stars-refresh"], role: "crawler", headline: true }),
-  stage({ key: "uptime", group: "enrichment", label: "응답 점검", code: "uptime-ping", jobs: ["uptime-ping"], role: "maintenance", headline: true }),
+  // 진행 판정(worker-progress uptime)은 split claims 모드(0103 제품 단위 분담)에서만 나온다 — legacy 는 maintenance 생존·줄로 본다
+  stage({ key: "uptime", group: "enrichment", label: "응답 점검", code: "uptime-ping", jobs: ["uptime-ping"], role: "maintenance", headline: true,
+    progressKey: "uptime" }),
   stage({ key: "intro-check", group: "enrichment", label: "소개 검수", code: "product-intro-check", jobs: ["product-intro-check"], role: "reviewer", headline: true }),
   // 12칸 밖의 보강 — 카탈로그에 있는 나머지 발행 후 잡
   stage({ key: "tagline-ko", group: "enrichment", label: "한국어 소개", code: "product-tagline-ko", jobs: ["product-tagline-ko"], role: "text" }),

@@ -4,6 +4,7 @@ import { modelCapacityPolicySchema, modelCapacityPolicyHash } from '@/lib/llm/ca
 import { httpOriginPolicySchema, httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { UptimeSourcesSchema } from '@/lib/domain/products/uptime-policy';
 import { buildPipelineRuntimeStatus, type PipelineRuntimeStatus } from './pipeline-runtime-status';
+import { storedUptimeSplitPolicy, uptimeSplitNote, uptimeSplitReadbackSchema } from './uptime-split';
 
 export type ControlMetric = { label: string; value: number | null };
 export type ControlReadback = { key: string; label: string; mode: string | null; epoch: number | null; revision: number | null;
@@ -13,7 +14,8 @@ export type PipelineControlStatus = { observedAt: string | null; controls: Contr
   backlog: ControlMetric[]; hosts: { host: string; roles: { role: string; ready: boolean; reason: string }[] }[];
   owners: { role: string; instanceId: string | null; host: string | null; release: string | null; epoch: number | null; live: boolean | null }[];
   runtime: PipelineRuntimeStatus };
-const CONTROL_LABELS = { batch: '작업 배치', source: '사이트 근거', model: '공통 모델 슬롯', http: '공유 HTTP', uptime: '연결 관측' };
+const CONTROL_LABELS = { batch: '작업 배치', source: '사이트 근거', model: '공통 모델 슬롯', http: '공유 HTTP', uptime: '연결 관측',
+  uptimeSplit: '응답 점검 분담' };
 const positive = z.number().int().positive().safe();
 const count = z.number().int().nonnegative().safe();
 const timestamp = z.iso.datetime({ offset: true });
@@ -104,6 +106,20 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
       metrics: [metric('원시 관측', row.rawOnly), metric('판정 보류', row.held), metric('적용 기록', row.applied), metric('설정 관측지', row.sources.length)],
       note: '누적 관측 결과입니다. 원시 관측만으로 제품 실패나 Oracle 장애복구를 판정하지 않습니다.' });
   }
+  // split-v1(0103): mode·epoch·policy 와 claim 장부. 마감 지남 = home 이 지금 가져갈 수 있는 수, 제출 대기 = 반영 안 된 Oracle 등 결과
+  const split = uptimeSplitReadbackSchema.safeParse(input.uptimeSplit);
+  if (split.success) {
+    const row = split.data, stored = storedUptimeSplitPolicy(row.control), q = row.queue;
+    const age = (value: number | null) => value === null ? null : Math.round(value);
+    set('uptimeSplit', { mode: stored.state === 'invalid' && row.control.mode === 'claims' ? null : row.control.mode, epoch: row.control.epoch,
+      policy: stored.state === 'verified' ? 'verified' : stored.state === 'unset' ? 'unset' : 'unknown',
+      metrics: [metric('마감 지남', q.due), metric('최장 지남(분)', q.due ? age(q.dueOldestMinutes) : 0), metric('제출 대기', q.submitted),
+        metric('제출 최장(분)', q.submitted ? age(q.submittedOldestMinutes) : 0), metric('재확인 대기', q.confirm),
+        metric('재확인 최장(분)', q.confirm ? age(q.confirmOldestMinutes) : 0), metric('확인 중', q.claimed), metric('5분 반영', q.applied5m),
+        metric('claim 행 없음', q.missingRows)],
+      note: row.control.mode === 'claims' ? uptimeSplitNote(row)
+        : `기존 방식으로 확인합니다(claim 장부는 읽기만). ${uptimeSplitNote(row)}` });
+  }
   const backlog = backlogSchema.safeParse(input.backlog);
   if (backlog.success) result.backlog.forEach((row, i) => { row.value = [backlog.data.fetchReady, backlog.data.fetchBackoff, backlog.data.human, backlog.data.jobRequests][i]; });
   const ready = readinessSchema.safeParse(readiness), anchors = new Map<string, boolean | null>();
@@ -133,8 +149,9 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
  * 방금 쓴 값이 필요 없는 관리자 집계(약 30개 count)라 복제본에서 읽는다(밀리거나 닿지 않으면 주 DB, lib/db/replica.ts).
  * 읽기 전용 TX 의 문장 상한으로 주 DB 로 넘어가도 오래 붙잡지 않고, 읽지 못하면 화면은 '읽지 못했습니다'에 남기고 로그를 남긴다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
-  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }] = await Promise.all([
+  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql }] = await Promise.all([
     import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'), import('@/lib/observability/logger'),
+    import('./uptime-split-repository'),
   ]);
   const [snapshot, readiness] = await Promise.allSettled([
     onReplica(() => db.transaction(async tx => {
@@ -173,6 +190,7 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             'held',(SELECT count(*) FROM uptime_observations WHERE disposition='observation_hold'),
             'applied',(SELECT count(*) FROM uptime_observations WHERE disposition='applied'),
             'latestAt',(SELECT max(observed_at) FROM uptime_observations)) FROM uptime_control WHERE id=1),
+          'uptimeSplit', ${uptimeSplitReadbackSql(sql`c.at`)},
           'backlog', jsonb_build_object(
             'fetchReady',(SELECT count(*) FROM crawl_frontier WHERE state='pending' AND next_attempt_at<=c.at::timestamp),
             'fetchBackoff',(SELECT count(*) FROM crawl_frontier WHERE state='pending' AND next_attempt_at>c.at::timestamp),
