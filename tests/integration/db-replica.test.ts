@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
+import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { evidenceProgress } from "@/lib/operations/worker-progress-query";
 import { TEST_DATABASE_URL, ensureSchema } from "./setup";
 
 /**
@@ -18,7 +20,7 @@ afterAll(() => {
   globalForDb.readDb = undefined;
 });
 
-const { db, onReplica } = await import("@/lib/db");
+const { db, onReplica, readReplicaOnly } = await import("@/lib/db");
 const appName = async () => (await db.execute<{ name: string }>(sql`select current_setting('application_name') as name`))[0].name;
 
 describe("복제본 읽기 연결", () => {
@@ -33,5 +35,23 @@ describe("복제본 읽기 연결", () => {
 
   it("복제본이 아닌 DB 에서도 지연 확인이 통과한다(따라잡음 = 0)", async () => {
     expect(await onReplica(async () => 1)).toBe(1);
+  });
+});
+
+/** 복제본 전용 읽기(운영센터 v8 PR3) — 테스트 DB 를 복제본 자리에 넘기는 fixture 로 본다 */
+describe("복제본 전용 읽기 연결", () => {
+  it("readReplicaOnly 는 복제본 풀에서 읽고, 넘긴 실행기도 복제본 풀이다", async () => {
+    const result = await readReplicaOnly(async replica => [await appName(),
+      (await replica.execute<{ name: string }>(sql`select current_setting('application_name') as name`))[0].name]);
+    expect(result).toEqual({ ok: true, value: ["nomorevibe:web-replica", "nomorevibe:web-replica"] });
+    expect(await appName()).not.toBe("nomorevibe:web-replica");
+  });
+
+  it("근거 읽기는 주 DB 실행기(관문)와 복제본 실행기에서 같은 결과를 낸다", async () => {
+    const now = new Date();
+    const gate = await evidenceProgress(db, DEFAULT_CRAWL_SETTINGS, now, false, null);
+    expect(gate.map(row => row.key)).toEqual(["evidence", "agent-evidence", "ai-level"]);
+    expect(await readReplicaOnly(replica => evidenceProgress(replica, DEFAULT_CRAWL_SETTINGS, now, false, null)))
+      .toEqual({ ok: true, value: gate });
   });
 });

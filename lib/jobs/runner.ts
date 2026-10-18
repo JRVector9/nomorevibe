@@ -57,8 +57,13 @@ const PAUSED = sql`${jobs.notBefore} > now() + ${PAUSED_AFTER_MS} * interval '1 
 export async function runJob<C>(
   name: string,
   handler: (ctx: JobContext<C>) => Promise<JobOutcome<C>>,
-  options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal; roleLease?: RoleLease } = {},
+  options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal; roleLease?: RoleLease;
+    /** 미룬 이유 관측(defer:<job>, lib/jobs/deferral-observation.ts). 결과·lease·일정에는 끼어들지 않고, 실패해도 무시한다 */
+    onDeferred?: (reason: JobDeferredReason | "batch_blocked") => Promise<void> } = {},
 ): Promise<RunResult> {
+  const noteDeferred = async (reason: JobDeferredReason | "batch_blocked") => {
+    try { await options.onDeferred?.(reason); } catch { /* 관측 실패는 틱 결과를 바꾸지 않는다 */ }
+  };
   // Dedicated replay scopes consume only these two existing review handlers.
   // Check before even a stopping return, and before role leadership or a DB claim.
   if (currentReplayDb()) {
@@ -102,6 +107,7 @@ export async function runJob<C>(
       )).returning({ cursor: jobs.cursor, requestedVersion: jobs.requestedVersion });
     });
   } catch (error) {
+    if (error instanceof JobBatchBlockedError) await noteDeferred("batch_blocked");
     if (error instanceof RoleLeaseLostError || error instanceof JobBatchBlockedError || error instanceof DrWriterFencedError) return { status: 'skipped', reason: 'stopping' };
     throw error;
   }
@@ -175,6 +181,7 @@ export async function runJob<C>(
       if (!row) throw new JobLeaseLostError();
       const durationMs = Date.now() - startedAt;
       logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs });
+      await noteDeferred(outcome.deferred);
       return { status: "deferred", reason: outcome.deferred, durationMs };
     }
     const budgetMs = options.budgetMs ?? 25_000;

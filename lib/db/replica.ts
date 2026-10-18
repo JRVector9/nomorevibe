@@ -7,6 +7,9 @@
  * - 복제 적용과 부딪혀 취소된 읽기(40001)는 주 DB 로 한 번 더. 복제본에 쓰기를 시도했다면(25006) 주 DB 로 하되 버그로 남긴다.
  * - 10초마다 복제가 밀렸는지 본다 — 스트리밍이 끊겨 10초 넘게 밀렸으면 쓰지 않는다. 내린 제품을 Cloudflare 가
  *   두 번째로 지운 뒤(60초) 옛 값을 다시 채우지 않게 하려는 것이다.
+ *
+ * readOnly 는 주 DB 로 넘기지 않는다(운영센터 v8 새 숫자) — 위 경우마다 읽지 않고 보류와 그 까닭을 돌려준다.
+ * 근거 CTE·7일 훑기 같은 무거운 표시용 집계가 복제본 장애 때 주 DB 에서 돌지 않게 하려는 것이다.
  */
 
 import { sql } from "drizzle-orm";
@@ -49,9 +52,15 @@ export const REPLICA_COOLDOWN_MS = 30_000;
 export const LAG_CHECK_MS = 10_000;
 export const MAX_LAG_SECONDS = 10;
 
-export type ReplicaRouter = {
+/** 복제본 전용 읽기를 보류한 까닭 — no_replica: 복제본 설정 없음(워커·로컬·통합 테스트·DR), lagging: 10초 넘게 밀림·지연 확인 실패 */
+export type ReplicaOnlyUnavailable = "no_replica" | "lagging" | ReplicaFailure;
+export type ReplicaOnlyResult<T> = { ok: true; value: T } | { ok: false; reason: ReplicaOnlyUnavailable };
+
+export type ReplicaRouter<Db = unknown> = {
   /** 복제본에서 읽고, 안 되면 주 DB 로 */
   read<T>(load: () => Promise<T>): Promise<T>;
+  /** 복제본에서만 읽는다 — 안 되면 주 DB 로 넘기지 않고 보류. load 는 복제본 실행기를 받는다 */
+  readOnly<T>(load: (db: Db) => Promise<T>): Promise<ReplicaOnlyResult<T>>;
 };
 
 export function createReplicaRouter<Db>(deps: {
@@ -63,7 +72,7 @@ export function createReplicaRouter<Db>(deps: {
   lagSeconds: (db: Db) => Promise<number>;
   warn: (event: string, fields: Record<string, unknown>) => void;
   now?: () => number;
-}): ReplicaRouter {
+}): ReplicaRouter<Db> {
   const now = deps.now ?? Date.now;
   let downUntil = 0;
   let lagCheckedAt = -Infinity;
@@ -101,6 +110,26 @@ export function createReplicaRouter<Db>(deps: {
         if (kind === "down") downUntil = now() + REPLICA_COOLDOWN_MS;
         deps.warn(kind === "readonly" ? "db.replica_write_attempt" : "db.replica_fallback", { kind, error });
         return load();
+      }
+    },
+    async readOnly(load) {
+      const db = deps.replica();
+      if (!db) return { ok: false, reason: "no_replica" };
+      if (now() < downUntil) return { ok: false, reason: "down" };
+      if (now() - lagCheckedAt >= LAG_CHECK_MS) {
+        checking ??= checkLag(db).finally(() => { checking = null; });
+        await checking;
+      }
+      if (now() < downUntil) return { ok: false, reason: "down" };
+      if (!lagOk) return { ok: false, reason: "lagging" };
+      try {
+        return { ok: true, value: await deps.scope(db, () => load(db)) };
+      } catch (error) {
+        const kind = replicaFailure(error);
+        if (!kind) throw error;
+        if (kind === "down") downUntil = now() + REPLICA_COOLDOWN_MS;
+        deps.warn(kind === "readonly" ? "db.replica_write_attempt" : "db.replica_unavailable", { kind, error });
+        return { ok: false, reason: kind };
       }
     },
   };

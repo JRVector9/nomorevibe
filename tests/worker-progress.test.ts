@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { classifyLiveness, classifyScheduler, classifyStage } from "@/lib/operations/worker-progress";
+import { classifyLiveness, classifyScheduler, classifyStage, EVIDENCE_STAGE_LABELS } from "@/lib/operations/worker-progress";
 
 const now = new Date("2026-09-28T09:30:00.000Z");
 const legacy = { mode: "legacy", writerContractVersion: 0 };
@@ -117,4 +117,12 @@ it("reports a missing worker independently of an empty queue", () => {
   expect(classifyLiveness("crawler", new Date(now.getTime() - 44_000), now).reason).toBe("present");
   expect(classifyLiveness("reviewer", null, now).reason).toBe("worker_missing");
   expect(classifyLiveness("crawler", new Date(now.getTime() - 5_000), now, 3).reason).toBe("restart_loop");
+});
+
+it("names evidence stages in plain Korean with the code name alongside", () => {
+  expect(Object.keys(EVIDENCE_STAGE_LABELS)).toEqual(["evidence", "agent-evidence", "ai-level"]);
+  for (const [key, label] of Object.entries(EVIDENCE_STAGE_LABELS)) {
+    expect(label).toMatch(/^[가-힣A-Z][가-힣A-Z ]*[가-힣]\(([a-z-]+)\)$/);
+    expect(label.endsWith(`(${key})`)).toBe(true);
+  }
 });

@@ -398,10 +398,15 @@ function areaLines(snapshot: ControlSnapshot, area: Area | "all"): string[] {
 const routeLines = (routes: readonly RouteContract[]) =>
   table(["route", "provider", "model", "status"], routes.map(row => [row.routeId, row.provider, row.model, row.status]));
 
+/** status 의 route 판정 — 저장된 슬롯 정책(hash 가 맞을 때만)과 AI2 mode 로. CLI status 와 관리자 화면(model-route-status.ts)이 같이 쓴다 */
+export function statusRouteContracts(snapshot: ControlSnapshot, models: ModelEnv | null): RouteContract[] {
+  return modelRouteContracts(storedCapacityPolicy(snapshot), snapshot.stages.find(row => row.stage === "ai2")?.mode ?? null,
+    usedModelRoutes(snapshot, models));
+}
+
 /** 사람이 읽는 출력. --json이면 이 대신 결과 JSON 한 줄을 쓴다. */
 export function formatControlStatus(snapshot: ControlSnapshot, models: ModelEnv | null = null): string {
-  const routes = modelRouteContracts(storedCapacityPolicy(snapshot), snapshot.stages.find(row => row.stage === "ai2")?.mode ?? null,
-    usedModelRoutes(snapshot, models));
+  const routes = statusRouteContracts(snapshot, models);
   return [`DB 시각 ${snapshot.now}  fence=${snapshot.fence.state}(writer epoch ${snapshot.fence.writerEpoch})`, ...areaLines(snapshot, "all"),
     "[capacity routes] open이면 serving·unused 밖은 모두 미뤄진다(unused = 지금 설정·env가 부르지 않는 조합, 정보)", ...routeLines(routes), ""].join("\n");
 }
