@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNotNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { operationsAudit, productEvidenceAudit, productHealth, products } from "@/lib/db/schema";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
@@ -7,6 +7,7 @@ import type { PingTarget } from "./health";
 import { uptimeControl } from "@/lib/db/product-uptime-schema";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
+import { UPTIME_UNKNOWN_STATUSES } from "./health-record";
 import { setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
@@ -24,6 +25,8 @@ function eligibleObservation() {
       checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status }),
     isNotNull(productHealth.downSince),
     sql`${productHealth.status} not between 200 and 399`,
+    // 봇·로그인 차단 응답(401·403·429·999)은 살았는지 알 수 없다 — 마지막 관측이 그것이면 내리지 않는다
+    notInArray(productHealth.status, [...UPTIME_UNKNOWN_STATUSES]),
     sql`${productHealth.checkedAt} between now() - ${RECHECK_AFTER_MINUTES} * interval '1 minute' and now()`,
     sql`${productHealth.downSince} <= ${productHealth.checkedAt}`,
     // Historical health has no URL column. A newer product change requires a normal recheck first.
