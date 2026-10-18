@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { productHealth, productHealthDaily } from "@/lib/db/schema";
 import type { ProductTransaction } from "./generation";
+import { UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
 
 /** 내부 write primitive: caller가 현재 제품/정책/권한을 먼저 검증해야 한다. */
 export async function writeHealthResult(tx: ProductTransaction, input: {
@@ -51,4 +52,20 @@ export async function writeHealthResult(tx: ProductTransaction, input: {
       },
     });
 
+}
+
+/**
+ * 판정 보류 — 이 서버 쪽 광역 실패로 보고 세지 않은 확인(uptime.ts). caller가 먼저 검증하는 것은 writeHealthResult와 같다.
+ * 확인은 했으므로 확인 시각만 넘겨 다른 제품처럼 6시간 뒤 차례가 오게 한다. 연속 실패·죽기 시작한 시각·마지막 응답 코드·
+ * 지연·일별 집계는 그대로라 숨김·자동 내림이 이 기록으로 바뀌지 않는다. 행이 없는 새 제품은 실패 0인 행으로 만든다(응답 코드는 본 그대로).
+ *
+ * 연속 실패가 자동 내림 기준 이상인 행은 건드리지 않는다. 그 행의 확인 시각은 자동 내림의 최신성(6시간)·관리자 해제
+ * 시각 비교 기준이라, 보류한 관측이 그 창을 다시 열면 안 된다. 그런 공개 행은 관리자가 풀어 준 경우뿐이라 드물고
+ * 다음 틱이 다시 본다.
+ */
+export async function writeHealthHeld(tx: ProductTransaction, input: { slug: string; status: number; observedAt: Date }): Promise<void> {
+  await tx.insert(productHealth)
+    .values({ slug: input.slug, checkedAt: input.observedAt, status: input.status, latencyMs: null, failures: 0, downSince: null })
+    .onConflictDoUpdate({ target: productHealth.slug, set: { checkedAt: input.observedAt },
+      setWhere: sql`${productHealth.failures} < ${UPTIME_AUTO_BAN_THRESHOLD}` });
 }

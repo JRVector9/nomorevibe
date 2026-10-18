@@ -35,7 +35,7 @@ export const DOWN_THRESHOLD = 3;
 export { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { uptimeControl } from "@/lib/db/product-uptime-schema";
-import { writeHealthResult } from "./health-record";
+import { writeHealthHeld, writeHealthResult } from "./health-record";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 
@@ -64,7 +64,10 @@ export async function nextToCheck(limit: number): Promise<PingTarget[]> {
     .limit(limit);
 }
 
-/** 확인 결과 기록. 2xx·3xx면 살아 있는 것으로 본다 */
+/**
+ * 확인 결과 기록. 2xx·3xx면 살아 있는 것으로 본다.
+ * held면 판정을 보류한다(광역 실패 보류, uptime.ts) — 같은 검증을 거쳐 확인 시각만 넘긴다(writeHealthHeld).
+ */
 export async function recordPing(
   slug: string,
   status: number,
@@ -74,6 +77,7 @@ export async function recordPing(
   lease?: JobLease,
   expectedUrl?: string,
   signal?: AbortSignal,
+  held = false,
 ): Promise<void> {
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
   const productId = expectedProductId ?? await findProductGenerationId(slug);
@@ -101,7 +105,8 @@ export async function recordPing(
       resetStreak = current.resetStreak;
     }
     if (signal?.aborted) return;
-    await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
+    if (held) await writeHealthHeld(tx, { slug, status, observedAt });
+    else await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");

@@ -6,11 +6,12 @@ import { lockProductGeneration } from "./generation";
 import type { PingTarget } from "./health";
 import { uptimeControl } from "@/lib/db/product-uptime-schema";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
-import { RECHECK_AFTER_MINUTES } from "./health-freshness";
+import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
 import { setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 
-export const UPTIME_AUTO_BAN_THRESHOLD = 10;
+// 보류 기록(health-record)이 같은 경계를 보는데 health → repository 순환을 피하려고 잎 모듈에 둔다
+export { UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
 const POLICY = "uptime_consecutive_failures";
 
 /** Compare original DB timestamps: JS millisecond rounding must not reopen an older observation. */
