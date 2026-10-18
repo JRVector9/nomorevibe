@@ -1,3 +1,5 @@
+import { consumerOfInstance } from "@/lib/runtime/consumer-registry";
+
 export const SERVICE_ROLES = [
   "app",
   "scheduler",
@@ -63,15 +65,23 @@ export function serviceInstancesFromObservations<
   return instances.filter((row) => row.instanceId !== 'legacy' || !scopedRoles.has(row.role));
 }
 
-/** 역할의 가장 최근 관측. 인스턴스 키(service:<role>:<id>)든 예전 키(<role>)든 같이 본다 */
-export function latestServiceInstance<T extends { role: ServiceRole; observedAt: unknown }>(
+/**
+ * consumer(건 단위 일꾼, 예: ai1-consumer-m3)는 부모 역할 키(service:<role>:<name>-consumer-*)로 관측되지만 역할 lease 를 갖지 않는다.
+ * 그 관측은 역할 생존의 근거가 아니다 — 역할 워커가 죽어도 consumer 가 살아 있으면 역할이 살아 보이면 안 된다.
+ */
+export function isConsumerServiceInstance(instanceId: string | undefined): boolean {
+  return consumerOfInstance(instanceId) !== null;
+}
+
+/** 역할의 가장 최근 관측. 인스턴스 키(service:<role>:<id>)든 예전 키(<role>)든 같이 본다. consumer 인스턴스는 뺀다 */
+export function latestServiceInstance<T extends { role: ServiceRole; observedAt: unknown; instanceId?: string }>(
   rows: T[],
   role: ServiceRole,
 ): T | undefined {
   const time = (row: T) => row.observedAt instanceof Date
     ? row.observedAt.getTime()
     : new Date(row.observedAt as string | number).getTime();
-  return rows.filter((row) => row.role === role).sort((a, b) => time(b) - time(a))[0];
+  return rows.filter((row) => row.role === role && !isConsumerServiceInstance(row.instanceId)).sort((a, b) => time(b) - time(a))[0];
 }
 
 export function staleServiceInstanceCount<T extends { observedAt: unknown }>(
@@ -113,17 +123,19 @@ function replaces(live: Record<string, unknown>, old: Record<string, unknown>) {
  * 서비스 키는 지워지지 않는다. scheduler 복제본은 컨테이너 이름이 키에 들어가 재배포마다 키가 새로 생기고(운영 66개),
  * 예비가 잠깐 일한 역할은 예비 키가 남는다 — 그 옛 키가 1시간 동안 "일부 관측 지연"을 냈다.
  * 살아 있어야 할 자리(LIVE_SLOTS)보다 지금 관측이 적으면, 모자란 수만큼 가장 최근에 본 옛 인스턴스는 빠진 인스턴스일 수 있어 남긴다.
+ * consumer 인스턴스는 역할 자리를 채우지도, 이어받지도, 이어받히지도 않는다(isConsumerServiceInstance).
  */
-export function supersededServiceInstanceKeys<T extends { key: string; role: ServiceRole; value: Record<string, unknown>; observedAt: unknown }>(
+export function supersededServiceInstanceKeys<T extends { key: string; role: ServiceRole; value: Record<string, unknown>; observedAt: unknown; instanceId?: string }>(
   rows: T[],
   now: number,
   freshnessMs = 45_000,
 ): Set<string> {
   const superseded = new Set<string>();
-  for (const role of new Set(rows.map((row) => row.role))) {
+  const workers = rows.filter((row) => !isConsumerServiceInstance(row.instanceId));
+  for (const role of new Set(workers.map((row) => row.role))) {
     const slots = LIVE_SLOTS[role];
     if (!slots) continue;
-    const mine = rows.filter((row) => row.role === role);
+    const mine = workers.filter((row) => row.role === role);
     const isFresh = (row: T) => Number.isFinite(observedTime(row.observedAt)) && now - observedTime(row.observedAt) <= freshnessMs;
     const fresh = mine.filter(isFresh);
     const stale = mine.filter((row) => !isFresh(row)).sort((a, b) => (observedTime(b.observedAt) || 0) - (observedTime(a.observedAt) || 0));

@@ -7,14 +7,20 @@ import re
 
 
 CLI_VERSIONS = {'codex': '0.153.4', 'claude': '2.1.263', 'grok': '1.0.46'}
+# Release profiles. The original contract (no 'profile' key) pins the three CLIs and may run roles and consumers.
+# A consumer-only release declares 'profile': 'consumer' explicitly: no CLI pins and no tools/ entry at all, and the
+# launcher starts only consumers from it. Nothing is inferred from a missing binary.
+CONSUMER_PROFILE = 'consumer'
 PLATFORM = {'os': 'linux', 'arch': 'arm64', 'libc': 'glibc'}
 ROOTS = {'lib', 'scripts', 'drizzle', 'node_modules', 'runtime', 'tools', 'deploy'}
 ROOT_FILES = {'package.json', 'package-lock.json', 'tsconfig.json'}
-REQUIRED = ROOT_FILES | {'lib/jobs/catalog.ts', 'scripts/role-worker.ts',
-                        'scripts/worker-supervisor.ts', 'scripts/scheduler.ts',
-                        'node_modules/tsx/package.json', 'runtime/bin/node',
-                        'deploy/oracle/launch.py',
-                        *(f'tools/bin/{name}' for name in CLI_VERSIONS)}
+CONSUMER_REQUIRED = ROOT_FILES | {'lib/jobs/catalog.ts', 'scripts/role-worker.ts',
+                                 'scripts/worker-supervisor.ts', 'scripts/scheduler.ts',
+                                 'node_modules/tsx/package.json', 'runtime/bin/node',
+                                 'deploy/oracle/launch.py'}
+REQUIRED = CONSUMER_REQUIRED | {f'tools/bin/{name}' for name in CLI_VERSIONS}
+MANIFEST_KEYS = ('kind', 'version', 'releaseSha', 'platform', 'batchContractVersion',
+                 'lockfileSha256', 'node', 'clis', 'files')
 # The launcher imports only these release-local stdlib modules.
 LAUNCHER_FILES = ('deploy/oracle/launch.py', 'deploy/oracle/release_contract.py',
                   'deploy/oracle/manage_release.py', 'deploy/oracle/oci_identity.py')
@@ -87,9 +93,16 @@ def file_hash(path):
     return result.hexdigest()
 
 
+def release_profile(manifest):
+    """'consumer' only when declared; every other validated manifest is the full (CLI-pinned) contract."""
+    return CONSUMER_PROFILE if manifest.get('profile') == CONSUMER_PROFILE else 'full'
+
+
 def validate_manifest(value):
-    exact(value, ('kind', 'version', 'releaseSha', 'platform', 'batchContractVersion',
-                  'lockfileSha256', 'node', 'clis', 'files'))
+    consumer = type(value) is dict and 'profile' in value
+    exact(value, MANIFEST_KEYS + (('profile',) if consumer else ()))
+    if consumer and value['profile'] != CONSUMER_PROFILE:
+        raise ValueError('invalid_release_profile')
     if (value['kind'] != 'nomorevibe-oracle-native-release'
             or type(value['version']) is not int or value['version'] != 1
             or type(value['batchContractVersion']) is not int or value['batchContractVersion'] != 1):
@@ -120,8 +133,10 @@ def validate_manifest(value):
         if path in files:
             raise ValueError('duplicate_release_file')
         files[path] = row
-    if not REQUIRED <= set(files):
+    if not (CONSUMER_REQUIRED if consumer else REQUIRED) <= set(files):
         raise ValueError('missing_release_file')
+    if consumer and any(PurePosixPath(path).parts[0] == 'tools' for path in files):
+        raise ValueError('consumer_release_tools_forbidden')
     for path, row in files.items():
         if any(str(parent) in files for parent in PurePosixPath(path).parents if str(parent) != '.'):
             raise ValueError('invalid_release_parent')
@@ -143,8 +158,9 @@ def validate_manifest(value):
     binary(value['node'], 'runtime/bin/node')
     if type(value['node']['version']) is not str or not re.fullmatch(r'v24\.[0-9]+\.[0-9]+', value['node']['version']):
         raise ValueError('invalid_node_pin')
-    exact(value['clis'], CLI_VERSIONS)
-    for name, version in CLI_VERSIONS.items():
+    pins = {} if consumer else CLI_VERSIONS
+    exact(value['clis'], pins)
+    for name, version in pins.items():
         binary(value['clis'][name], f'tools/bin/{name}')
         if value['clis'][name]['version'] != version:
             raise ValueError('invalid_cli_pin')
