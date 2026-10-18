@@ -238,6 +238,11 @@ export const githubCollectorApps = pgTable('github_collector_apps', {
   quotaObservedAt: timestamp('quota_observed_at'),
   createdAt: timestamp('created_at').notNull().defaultNow(),
   updatedAt: timestamp('updated_at').notNull().defaultNow(),
+  /**
+   * 이 설치를 읽을 수 있는 Oracle 계정(nomorevibe_oracle_*) 이름(0105). RLS 가 Oracle 계정의 행을 여기에 든 설치로 좁힌다 — 다른 서버 몫
+   * 설치의 개인 키 암호문을 읽지 못한다. 운영자가 Oracle 계정을 만들 때 넣는다. 관리자 등록(upsert)은 이 열을 바꾸지 않는다.
+   */
+  oraclePrincipals: text('oracle_principals').array().notNull().default(sql`'{}'`),
 });
 
 /** Additive, disabled by default. A draining transition changes no live job/item owner. */

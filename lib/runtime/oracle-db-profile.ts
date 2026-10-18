@@ -120,8 +120,10 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
       agent_repository_observations: { select: true, insert: true, delete: true },
       crawl_discovery_evidence: read, crawl_settings: read,
+      // 행은 RLS(0105)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다
       github_collector_apps: { select: true, update: ['core_quota', 'quota_observed_at'] },
-      // 키 범위로 줄일 수 없다(웹 로그인 제한 키와 같은 표) — 남은 위험(설계 R13). GitHub 쿨다운은 INSERT·reset_at 갱신만 한다
+      // 행은 RLS(0105)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.
+      // GitHub 쿨다운은 INSERT·reset_at 갱신만 한다. 2차 제한 전역 키(github:quota:secondary:global)는 M3 와 함께 쓴다(남은 위험)
       rate_limits: { select: true, insert: true, update: ['reset_at'] },
       operations_observations: observationsWrite } } },
   // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
