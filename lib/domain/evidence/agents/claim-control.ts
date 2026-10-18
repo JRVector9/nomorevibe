@@ -31,6 +31,12 @@ export async function lockAgentScanControl(tx: ProductTransaction, strength: 'sh
  * 감독이 15초마다 service:crawler:<이 접두><자리> 를 남긴다 — 운영센터 consumer_missing 과 pipeline-control status 가 센다.
  */
 export const AGENT_SCAN_CONSUMER_PREFIX = consumerInstancePrefix('agent-scan');
+/**
+ * consumer 가 살아 있다고 보는 기준 — 감독 관측(15초마다)의 상태가 running·starting 이고 2분 안이다. 운영센터 consumer_missing 과
+ * pipeline-control status 의 consumers 가 같은 기준으로 센다(크래시 루프 중인 consumer 를 살아 있다고 세지 않는다).
+ */
+export const AGENT_SCAN_CONSUMER_HEARTBEAT_MS = 120_000;
+export const AGENT_SCAN_CONSUMER_LIVE_STATUSES = ['running', 'starting'] as const;
 export type AgentScanModeState = Pick<AgentScanControlRow, 'mode' | 'drainingFrom'>;
 /** 잠그지 않고 읽는 지금 모드 — 잡의 갈래(legacy 스캔·컨트롤러)와 진행 표시만 쓴다. 쓰기 권한은 각 TX 의 관문이 다시 본다 */
 export async function readAgentScanMode(executor: { execute: ProductTransaction['execute'] }): Promise<AgentScanModeState> {

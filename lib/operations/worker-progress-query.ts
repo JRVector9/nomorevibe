@@ -11,7 +11,8 @@ import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { agentLimitedSettledSql, agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
 import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand";
-import { AGENT_SCAN_CONSUMER_PREFIX, agentScanByClaims, readAgentScanMode, type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
+import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, agentScanByClaims, readAgentScanMode,
+  type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
@@ -35,8 +36,8 @@ const EVIDENCE_PROVIDER_FAILURE_CODES = ["rate_limited", "auth_unavailable"];
 // 인증·한도로 스캔을 시작조차 못 하면 잡 커서의 공급자 실패(job_failure)로 남아 계속 경보한다.
 const AGENT_PROVIDER_FAILURE_CODES = ["rate_limited"];
 const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${value}`), sql`, `);
-/** consumer 생존 판정 — pipeline-control status 의 consumers 와 같은 2분 */
-const CONSUMER_HEARTBEAT_MS = 120_000;
+/** consumer 생존 판정 — pipeline-control status 의 consumers 와 같은 기준(claim-control.ts) */
+const CONSUMER_HEARTBEAT_MS = AGENT_SCAN_CONSUMER_HEARTBEAT_MS;
 
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
   stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
@@ -75,7 +76,7 @@ export function buildWorkerProgress(
   const isObserved = (role: "scheduler" | "crawler" | "reviewer" | "publisher" | "maintenance") =>
     liveness.some(row => row.role === role && !row.alarm);
   const agentScanConsumerAlive = instances.some(row => row.role === "crawler" && row.instanceId.startsWith(AGENT_SCAN_CONSUMER_PREFIX)
-    && (row.value.status === "running" || row.value.status === "starting")
+    && (AGENT_SCAN_CONSUMER_LIVE_STATUSES as readonly unknown[]).includes(row.value.status)
     && now.getTime() - new Date(row.observedAt as string | Date).getTime() <= CONSUMER_HEARTBEAT_MS);
   const states = new Map(jobs.map(job => [job.name, job]));
   const agentScanPause = agentScan && agentScan.mode !== "legacy" ? agentScanProviderPause(observations, now) : null;

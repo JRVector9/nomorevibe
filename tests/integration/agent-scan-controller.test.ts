@@ -376,6 +376,20 @@ it('plans agent-scan commands in dry-run without writing, then moves legacy → 
   expect([again.status, again.out?.plan.blocked]).toEqual([3, ['agent_scan_contract_required']]);
 }, 180_000);
 
+it('counts status consumers with the same rule as consumer_missing: running or starting within two minutes', async () => {
+  const consumers = () => cli('agent-scan', 'status').out?.snapshot.agentScan.consumers;
+  const put = (key: string, status: string, secondsAgo: number) => db.insert(operationsObservations)
+    .values({ key, value: { status }, observedAt: new Date(Date.now() - secondsAgo * 1_000) });
+  // 크래시 루프(failed)·정지 중(stopping)인 consumer 는 일하지 않는다 — 고치기 전: 상태와 무관하게 세어 1 로 보였다
+  await put('service:crawler:agent-scan-consumer-crash', 'failed', 5);
+  await put('service:crawler:agent-scan-consumer-stop', 'stopping', 5);
+  await put('service:crawler:agent-scan-consumer-old', 'running', 180);
+  expect(consumers()).toBe(0);
+  await put('service:crawler:agent-scan-consumer-m3', 'running', 5);
+  await put('service:crawler:agent-scan-consumer-oracle', 'starting', 60);
+  expect(consumers()).toBe(2);
+}, 60_000);
+
 it('refuses an agent-scan transition whose control row changed while it waited for the row lock', async () => {
   await inTx(tx => bumpAgentScanContract(tx));
   const { epoch } = await control(), auditBefore = await auditMax();
