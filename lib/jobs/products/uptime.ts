@@ -38,6 +38,12 @@ import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/pro
  * 요청은 늘지 않는다 — 밀린 몫을 빨리 따라잡을 뿐이다.
  *
  * 커서가 없다. 확인한 지 오래된 것부터 가져오므로 확인 시각 자체가 진행 지점이다.
+ *
+ * 2026-10-19 연속 실패 카운터가 매번 1로 돌아가던 버그(health.ts recordPing)를 고치면서 광역 실패 보류를 넣었다.
+ * 이 잡이 본 실패는 이 서버(M3)에서 본 것이라, 이 서버의 네트워크·DNS가 끊기면 공개 제품 전체가 한꺼번에
+ * 실패로 세어져 숨겨진다. 그래서 실패 기록만 틱 끝까지 모아 두고, 한 틱에 BROAD_FAILURE_MIN_ATTEMPTS건 이상
+ * 확인했는데 실패가 BROAD_FAILURE_RATE를 넘으면 그 틱의 실패는 쓰지 않는다. 성공은 바로 쓴다.
+ * 쓰지 않은 제품은 확인 시각이 그대로라 가장 오래된 채로 남아 다음 틱이 다시 본다.
  */
 
 /**
@@ -54,6 +60,13 @@ const DEFAULT_BATCH = 15;
  * maintenance 풀(3) 안에 든다. 기록까지 동시에 하면 3 + 1 = 4로 풀을 넘는다.
  */
 const DEFAULT_CONCURRENCY = 3;
+
+/**
+ * 광역 실패 보류 기준. 평소 하루 실패는 확인의 0.6~1.8%다(2026-10-14~18) — 한 틱의 30%를 넘는 실패는
+ * 사이트가 아니라 이 서버 쪽 문제로 본다. 표본이 너무 작으면 몇 건만 죽어도 비율이 튀므로 30건부터 판단한다.
+ */
+const BROAD_FAILURE_MIN_ATTEMPTS = 30;
+const BROAD_FAILURE_RATE = 0.3;
 
 function capacitySetting(env: Readonly<Record<string, string | undefined>>, key: string, fallback: number, max: number) {
   const raw = env[key];
@@ -102,6 +115,8 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   let alive = 0;
   let down = 0;
   const errors: unknown[] = [];
+  /** legacy 실패 기록 — 틱 끝에 광역 실패인지 본 뒤 쓴다 */
+  const failures: Array<() => Promise<void>> = [];
   const lanes = byOrigin(targets);
 
   /**
@@ -113,7 +128,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
       for (const target of lane) {
         if (errors.length > 0 || ctx.signal?.aborted || !ctx.hasBudget()) return;
         try {
-          if (await ping(target, write, ctx, () => { autoBanned++; }, raw)) alive++;
+          if (await ping(target, write, ctx, () => { autoBanned++; }, raw, record => { failures.push(record); })) alive++;
           else down++;
         } catch (error) {
           errors.push(error);
@@ -122,6 +137,21 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
       }
     }
   }));
+
+  // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 쓴다(성공과 같다). 첫 쓰기 실패에서 멈추고 나머지는 다음 틱이 다시 본다
+  const attempted = alive + down;
+  if (failures.length > 0 && attempted >= BROAD_FAILURE_MIN_ATTEMPTS && failures.length / attempted > BROAD_FAILURE_RATE) {
+    ctx.log("uptime.broad_failure_held", { attempted, down: failures.length });
+  } else {
+    for (const record of failures) {
+      try {
+        await write(record);
+      } catch (error) {
+        errors.push(error);
+        break;
+      }
+    }
+  }
   if (errors.length > 0) throw errors[0];
 
   ctx.log("uptime.checked", { alive, down, autoBanned });
@@ -130,7 +160,7 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
 }
 
 /** 한 제품을 열어 보고 기록한다. 살아 있으면 true */
-async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null): Promise<boolean> {
+async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null, deferFailure: (record: () => Promise<void>) => void): Promise<boolean> {
   // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
   // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
   const observationStartedAt = new Date();
@@ -159,7 +189,7 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ct
   }
 
   const observedAt = new Date();
-  await write(async () => {
+  const record = async () => {
     if (ctx.signal?.aborted) return;
     if (raw) {
       if (!ctx.lease) throw new Error("uptime_job_required");
@@ -173,7 +203,10 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ct
     }
     if (!up && await autoBanUptimeProduct(target, ctx)) onBanned();
     if (sample) await refreshTextSample(target.slug, sample, ctx.lease, target, ctx.signal).catch(() => {});
-  });
+  };
+  // legacy 실패는 바로 쓰지 않는다 — 광역 실패 보류(pingProducts). raw 관측 모드는 관측 사실을 그대로 남긴다(광역 판정은 gate의 regional-v1 몫)
+  if (!up && !raw) deferFailure(record);
+  else await write(record);
   return up;
 }
 
