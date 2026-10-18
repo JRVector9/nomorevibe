@@ -154,7 +154,8 @@ async function finalAuthority(tx: ProductTransaction, leaseUntilText: string) {
  * 만료, 모드 아님, DR fence) 'agent_scan_lease_lost' 로 아무것도 쓰지 않는다.
  *
  * 시계: 스캔 행의 started_at 은 claim 시각(DB 시계)이다. 성공하면 실패 수·retry_after 를 비우고 due_at 을 방금 쓴 최신 스캔으로 다시 잰다
- * (큐 채우기와 같은 식). 스캔 행이 없는 저장소 실패(처음 보는 저장소의 metadata 404 등)는 retry_after 를 15분×2^(n−1), 7일 상한으로 미룬다.
+ * (큐 채우기와 같은 식). 스캔 행이 없는 저장소 실패(처음 보는 저장소의 metadata 404 등)와 다른 이름 행에 묶인 스캔(alias_conflict)은
+ * retry_after 를 15분×2^(n−1), 7일 상한으로 미룬다.
  */
 export async function recordAgentRepositoryScan(value: AgentScanLease, result: CollectResult | null): Promise<AgentScanRecord> {
   supported();
@@ -173,7 +174,7 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
     const owned = await lockOwnedClaim(tx, lease);
     const settings = await readCrawlSettings(tx);
     if (settings.agentEvidence.detectorVersion !== lease.binding.detectorVersion || lease.binding.detectorVersion !== AGENT_DETECTOR_VERSION) throw lost();
-    let scan: { id: number; state: string } | null = null;
+    let scan: { id: number; state: string; repositoryKey: string } | null = null;
     if (result) {
       // 같은 identity 잠금 아래에서 읽은 최신 행에 묶는다(legacy refresh 의 변환과 같은 규칙)
       const persisted = persistableAgentScanResult(result, await getLatestRepositoryAgentScan(lease.repositoryKey, '', tx));
@@ -181,8 +182,14 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
         scan = await writeRepositoryAgentScanIn(tx, persisted, validatedAgentObservations(persisted), owned.claimedAt);
       }
     }
-    const kind = !result ? 'cached' : scan ? 'scan' : 'scanless';
+    // 이름이 바뀐 저장소: 같은 GitHub id·head 의 옛 이름 행에 묶였다(writeRepositoryAgentScanIn 의 별칭 충돌 — 옛 이름 행은 alias_recheck_required).
+    // 이 이름으로는 최신 스캔이 생기지 않아 기한을 스캔에서 잴 수 없다 — 그대로 두면 지난 due 로 곧바로 다시 잡혀 쉬지 않고 돈다.
+    // 저장소 실패처럼 실패 수를 올리고 retry_after 를 15분×2^(n−1)(7일 상한)로 미룬다. legacy 는 이름순 커서가 지나가 한 바퀴에 한 번 본다.
+    const aliased = !!scan && scan.repositoryKey !== lease.repositoryKey;
+    const kind = !result ? 'cached' : scan && !aliased ? 'scan' : 'scanless';
     const outcome: AgentScanRecordOutcome = !result ? 'cached' : code ? 'failed' : scan?.state === 'complete' ? 'complete' : 'partial';
+    const failureCode = aliased ? 'alias_conflict' : repositoryFailure ? code : null;
+    const counted = failureCode !== null;
     const keepFailure = providerWait || kind === 'cached';
     const due = agentRefreshDueAtSql(sql`latest`, sql`c.requires_daily`, settings.agentEvidence.backgroundRefreshDays, sql`clock.at`);
     const retryAt = result?.retryAt ? result.retryAt.toISOString() : null;
@@ -193,11 +200,12 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
         due_at = CASE WHEN ${kind !== 'scanless'} THEN coalesce((SELECT ${due} FROM (${latestScanSql(sql`c.repository_key`)}) latest), c.due_at)
           ELSE c.due_at END,
         retry_after = CASE WHEN ${kind !== 'scanless'} THEN NULL
-          WHEN ${repositoryFailure} THEN clock.at + least(interval '7 days', interval '15 minutes' * power(2, least(c.failure_streak, 10)))
+          WHEN ${counted} THEN greatest(clock.at + least(interval '7 days', interval '15 minutes' * power(2, least(c.failure_streak, 10))),
+            coalesce(${retryAt}::timestamp, clock.at))
           ELSE greatest(clock.at, coalesce(${retryAt}::timestamp, clock.at + interval '15 minutes')) END,
-        failure_streak = CASE WHEN ${repositoryFailure} THEN least(c.failure_streak + 1, 1000000) WHEN ${keepFailure} THEN c.failure_streak ELSE 0 END,
-        first_failure_at = CASE WHEN ${repositoryFailure} THEN coalesce(c.first_failure_at, clock.at) WHEN ${keepFailure} THEN c.first_failure_at ELSE NULL END,
-        last_error_code = CASE WHEN ${repositoryFailure} THEN ${code} WHEN ${keepFailure} THEN c.last_error_code ELSE NULL END
+        failure_streak = CASE WHEN ${counted} THEN least(c.failure_streak + 1, 1000000) WHEN ${keepFailure} THEN c.failure_streak ELSE 0 END,
+        first_failure_at = CASE WHEN ${counted} THEN coalesce(c.first_failure_at, clock.at) WHEN ${keepFailure} THEN c.first_failure_at ELSE NULL END,
+        last_error_code = CASE WHEN ${counted} THEN ${failureCode} WHEN ${keepFailure} THEN c.last_error_code ELSE NULL END
       FROM clock WHERE c.repository_key = ${lease.repositoryKey} AND c.token = ${lease.token}::uuid
       RETURNING c.failure_streak, to_char(c.due_at, ${ISO}) AS due_at, to_char(c.retry_after, ${ISO}) AS retry_after`);
     if (!row) throw lost();

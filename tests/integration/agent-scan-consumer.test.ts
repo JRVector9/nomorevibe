@@ -147,6 +147,35 @@ it('defers claims while GitHub headroom is low and pauses after a provider rate 
   expect(await claimRow('acme/next-2')).toMatchObject({ epoch: 0 });
 }, 30_000);
 
+/** 기록 뒤 claim 이 곧바로 다시 도래하지 않는다 — greatest(due_at, retry_after) 가 DB 시계로 지금보다 뒤다 */
+async function nextClaimSeconds(key: string): Promise<number> {
+  const [{ seconds }] = await db.execute<{ seconds: string }>(sql`SELECT extract(epoch FROM greatest(due_at, coalesce(retry_after, due_at))
+    - (clock_timestamp() AT TIME ZONE 'UTC'))::text AS seconds FROM agent_repository_claims WHERE repository_key = ${key}`);
+  return Number(seconds);
+}
+
+it('a renamed repository whose scan lands on the old-name row backs off instead of being re-claimed at once', async () => {
+  // 옛 이름으로 한 번 스캔해 (GitHub id 1007, head C) 행을 만든다. 옛 이름은 수요에서 빠졌다(gone)
+  await queue([{ key: 'oldorg/repo-7' }]);
+  await toItems();
+  await runAgentScanConsumer({ owner: owner('old'), once: true, request: fakeGitHub([]) });
+  expect(await scansOf('oldorg/repo-7')).toHaveLength(1);
+  await db.update(agentRepositoryClaims).set({ state: 'gone' }).where(eq(agentRepositoryClaims.repositoryKey, 'oldorg/repo-7'));
+  // 같은 id·head 의 새 이름이 새 후보로 들어온다 — 스캔은 옛 이름 행에 묶이고(별칭 재확인) 새 이름으로는 최신 스캔이 없다
+  await queue([{ key: 'neworg/repo-7', priority: AGENT_SCAN_PRIORITY.newCandidate }]);
+  const paths: string[] = [], controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  const stats = await runAgentScanConsumer({ owner: owner('new'), signal: controller.signal, request: fakeGitHub(paths, { delayMs: 5 }) });
+  clearTimeout(timer);
+  // 한 번 보고 다음 기한까지 쉰다(고치기 전: 2초에 수십 번 같은 저장소를 다시 잡았다)
+  expect(metadataCalls(paths, 'neworg/repo-7')).toBe(1);
+  expect(stats).toMatchObject({ claimed: 1, errors: 0, leaseLost: 0 });
+  expect(await claimRow('neworg/repo-7')).toMatchObject({ token: null, epoch: 1, failureStreak: 1, lastErrorCode: 'alias_conflict' });
+  expect(await nextClaimSeconds('neworg/repo-7')).toBeGreaterThan(14 * 60);
+  expect(await scansOf('neworg/repo-7')).toEqual([]);
+  expect(await scansOf('oldorg/repo-7')).toMatchObject([{ lastErrorCode: 'alias_recheck_required' }]);
+}, 30_000);
+
 it('abandons the claim without writing when shutdown interrupts the scan', async () => {
   await queue([{ key: 'acme/stop-1' }, { key: 'acme/stop-2' }]);
   await toItems();
