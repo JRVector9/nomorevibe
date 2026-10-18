@@ -19,7 +19,8 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}): ControlSnapshot {
   return { now: "2026-10-17T00:00:00.000Z", fence: { state: "active", writerEpoch: 1 }, stages: [stage("ai1"), stage("ai2")],
     capacity: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, waiting: 0, reserved: 0, dispatched: 0, indeterminate: 0, oldGeneration: 0 },
     http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
-    batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0 },
+    batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
+    agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
     recentInstances: [], reviewSettings: null, auditCampaign: null, ...overrides };
 }
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { abcllm: 4 }, groupLimits: { gateway: 4 },
@@ -32,6 +33,10 @@ describe("pipeline control arguments", () => {
       name: "stage drain", area: "stage", execute: true, json: true, allowDeferredRoutes: false, allowStalledStage: false,
       options: { stage: "ai2", fromMode: "legacy", expectEpoch: 3, operator: "jr", reason: "pr06d unit" } });
     expect(parsePipelineControlArgs(["status", "--json"])).toEqual({ name: "status", json: true });
+    expect(parsePipelineControlArgs(["agent-scan", "status"])).toEqual({ name: "status", json: false, area: "agent-scan" });
+    expect(transition("agent-scan", "complete", "--draining-from=legacy", "--to=items", "--expect-epoch=1")).toEqual({
+      name: "agent-scan complete", area: "agent-scan", execute: false, json: false, allowDeferredRoutes: false, allowStalledStage: false,
+      options: { drainingFrom: "legacy", to: "items", expectEpoch: 1, operator: "jr", reason: "pr06d unit" } });
     expect(transition("batch", "policy", "--file=p.json", "--expect-epoch=1", "--expect-policy-hash=none").options.expectPolicyHash).toBeNull();
   });
 
@@ -53,6 +58,9 @@ describe("pipeline control arguments", () => {
     [["stage", "drain", "--stage=ai2", "--from-mode=legacy", "--expect-epoch=0", ...audit], "pipeline_control_invalid_expect_epoch"],
     [["http", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=1", "--allow-deferred-routes", ...audit], "pipeline_control_unknown_option"],
     [["status", "--url=postgres://x@h:1/db"], "pipeline_control_url_argument_rejected"],
+    [["agent-scan", "drain", "--from-mode=versioned", "--expect-epoch=1", ...audit], "pipeline_control_invalid_from_mode"],
+    [["agent-scan", "drain", "--stage=ai1", "--from-mode=legacy", "--expect-epoch=1", ...audit], "pipeline_control_unknown_option"],
+    [["agent-scan", "status", "--execute"], "pipeline_control_unknown_option"],
     [["stage", "contract", "--stage=ai1", "--expect-contract=0", "--expect-epoch=1", "--operator=jr", "--reason= padded"], "pipeline_control_invalid_reason"],
   ])("rejects %j", (args, code) => { expect(() => parsePipelineControlArgs(args)).toThrow(code); });
 
@@ -127,11 +135,46 @@ describe("pipeline control plan", () => {
     const draining = snapshot({ batch: { ...contracted.batch, mode: "draining", drainingFrom: "legacy", policy: batchPolicy,
       policyHash: batchPolicyHash(batchPolicy), liveJobs: 1 } });
     expect(planPipelineControl(transition("batch", "complete", "--draining-from=legacy", "--to=legacy", "--expect-epoch=1"), draining).blocked)
-      .toEqual(["batch_transition_invalid", "batch_not_drained:jobs=1,roles=0,items=0,sources=0"]);
+      .toEqual(["batch_transition_invalid", "batch_not_drained:jobs=1,roles=0,items=0,sources=0,agent_claims=0"]);
+    // 살아 있는 제작 근거 scan claim 도 전역 정지가 아니다(completeJobBatchTransition 과 같은 다섯 조건)
+    const claimed = snapshot({ batch: { ...draining.batch, liveJobs: 0, liveAgentClaims: 2 } });
+    expect(planPipelineControl(transition("batch", "complete", "--draining-from=legacy", "--to=versioned", "--expect-epoch=1"), claimed).blocked)
+      .toEqual(["batch_not_drained:jobs=0,roles=0,items=0,sources=0,agent_claims=2"]);
+  });
+
+  it("moves the agent scan control only through a contract and draining, and completes only without a live claim", () => {
+    const agent = (patch: Partial<ControlSnapshot["agentScan"]>) => snapshot({ agentScan: { ...snapshot().agentScan, ...patch } });
+    const contract = planPipelineControl(transition("agent-scan", "contract", "--expect-contract=0", "--expect-epoch=1"), agent({}));
+    expect([contract.target, contract.change, contract.blocked]).toEqual(["agent_scan_control", "writer_contract 0 → 1", []]);
+    expect(planPipelineControl(transition("agent-scan", "contract", "--expect-contract=0", "--expect-epoch=2"), agent({ mode: "items", contract: 1 })).blocked)
+      .toEqual(["expect_epoch_mismatch:1", "expect_contract_mismatch:1", "agent_scan_transition_invalid"]);
+    expect(planPipelineControl(transition("agent-scan", "drain", "--from-mode=legacy", "--expect-epoch=1"), agent({})).blocked)
+      .toEqual(["agent_scan_contract_required"]);
+    const drain = planPipelineControl(transition("agent-scan", "drain", "--from-mode=legacy", "--expect-epoch=1"), agent({ contract: 1 }));
+    expect([drain.blocked, drain.warnings, drain.change]).toEqual([[], ["consumer_heartbeat_missing:agent-scan", "agent_scan_paused_until_complete"],
+      "legacy → draining (epoch 1 유지)"]);
+    const draining = { mode: "draining" as const, drainingFrom: "legacy" as const, contract: 1 };
+    const busy = planPipelineControl(transition("agent-scan", "complete", "--draining-from=legacy", "--to=items", "--expect-epoch=1"),
+      agent({ ...draining, live: 2, unsettled: 3, legacyJobLive: true }));
+    expect([busy.blocked, busy.warnings]).toEqual([["agent_scan_not_drained:2"],
+      ["consumer_heartbeat_missing:agent-scan", "legacy_job_in_flight:agent-scan", "expired_unsettled_claims:3"]]);
+    const ready = planPipelineControl(transition("agent-scan", "complete", "--draining-from=legacy", "--to=items", "--expect-epoch=1"),
+      agent({ ...draining, consumers: 1 }));
+    expect([ready.blocked, ready.warnings, ready.change]).toEqual([[], [], "draining(from legacy) → items, epoch 1 → 2"]);
+    // 되돌리기도 draining 을 거친다 — items 에서 legacy 로 바로 갈 수 없다
+    expect(planPipelineControl(transition("agent-scan", "complete", "--draining-from=items", "--to=legacy", "--expect-epoch=2"),
+      agent({ mode: "items", epoch: 2, contract: 1 })).blocked).toEqual(["expect_mode_mismatch:items", "expect_draining_from_mismatch:none"]);
+    expect(planPipelineControl(transition("agent-scan", "complete", "--draining-from=legacy", "--to=draining", "--expect-epoch=1"),
+      agent(draining)).blocked).toEqual(["agent_scan_transition_invalid"]);
   });
 
   it("formats a readable status and result", () => {
     expect(formatControlStatus(snapshot())).toContain("[capacity routes]");
+    const queue = [{ priority: 0, waiting: 1, oldestMinutes: 2.5 }, { priority: 6, waiting: 0, oldestMinutes: null }];
+    const area = formatControlStatus(snapshot({ agentScan: { ...snapshot().agentScan, mode: "items", epoch: 2, contract: 1, live: 1, consumers: 2, queue } }), null, "agent-scan");
+    expect(area).toContain("[agent-scan] mode=items from=- epoch=2 contract=1 live=1 unsettled=0 legacy_job=idle consumers=2");
+    expect(area).toMatch(/priority\s+waiting\s+oldest_min\n0\s+1\s+2\.5\n6\s+0\s+-/);
+    expect(area).not.toContain("[capacity routes]");
     const plan = planPipelineControl(transition("stage", "contract", "--stage=ai1", "--expect-contract=1", "--expect-epoch=1"), snapshot());
     expect(formatControlResult({ command: "stage contract", dryRun: true, executed: false, blocked: false, plan, before: snapshot() }))
       .toContain("dry-run 허용");

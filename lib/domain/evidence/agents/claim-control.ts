@@ -26,6 +26,23 @@ export async function lockAgentScanControl(tx: ProductTransaction, strength: 'sh
 }
 
 /**
+ * 제작 근거 스캔 consumer 의 SERVICE_INSTANCE_ID 접두(consumer 등록부 consumerInstancePrefix('agent-scan')와 같다).
+ * 감독이 15초마다 service:crawler:<이 접두><자리> 를 남긴다 — 운영센터 consumer_missing 과 pipeline-control status 가 센다.
+ */
+export const AGENT_SCAN_CONSUMER_PREFIX = 'agent-scan-consumer-';
+export type AgentScanModeState = Pick<AgentScanControlRow, 'mode' | 'drainingFrom'>;
+/** 잠그지 않고 읽는 지금 모드 — 잡의 갈래(legacy 스캔·컨트롤러)와 진행 표시만 쓴다. 쓰기 권한은 각 TX 의 관문이 다시 본다 */
+export async function readAgentScanMode(executor: { execute: ProductTransaction['execute'] }): Promise<AgentScanModeState> {
+  const [row] = await executor.execute<{ mode: AgentScanMode; draining_from: AgentScanControlRow['drainingFrom'] }>(sql`
+    SELECT mode, draining_from FROM agent_scan_control WHERE id = 1`);
+  return row ? { mode: row.mode, drainingFrom: row.draining_from } : fail('agent_scan_control_missing');
+}
+/** consumer 가 claim 표로 스캔하는 모드(items, items 에서 비우는 중). 이때 진행은 잡 커서가 아니라 claim 표로 센다 */
+export function agentScanByClaims(state: AgentScanModeState): boolean {
+  return state.mode === 'items' || state.mode === 'draining' && state.drainingFrom === 'items';
+}
+
+/**
  * legacy 스캔 쓰기(잡의 refresh·backfill 스크립트가 타는 saveRepositoryAgentScan)의 관문. stage SHARE 다음, identity 전에 부른다.
  * items 로 넘어간 뒤 옛 경로가 쓰면 consumer 와 같은 저장소를 겹쳐 쓰고 커서가 뒤로 돈다 — 그래서 거절한다.
  */

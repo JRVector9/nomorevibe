@@ -58,6 +58,9 @@ const EVENTS: Record<string, { label: string; fields: string[]; error?: boolean;
   "agent_evidence.deferred": { label: "개발 AI 조사 재시도 대기", fields: [], waiting: true },
   "agent_evidence.disabled": { label: "개발 AI 수집 설정 꺼짐", fields: [] },
   "agent_evidence.github_headroom_low": { label: "개발 AI 조사 GitHub 잔량 부족", fields: ["remaining", "limit"], waiting: true },
+  // items 모드 컨트롤러 틱(GitHub 호출 없음) — 스캔은 consumer 가 맡는다
+  "agent_scan.queue_filled": { label: "개발 AI 조사 대기열 채우기", fields: ["upserted", "gone"] },
+  "agent_scan.admin_consumed": { label: "관리자 추가 수집 완료 처리", fields: ["consumed"] },
   "ai_level.tick": { label: "AI 단계 확인 결과", fields: ["checked", "due", "verified", "restUsed"] },
   "ai_level.rate_limited": { label: "AI 단계 공급자 한도 대기", fields: [], waiting: true },
   "ai_level.graphql_low": { label: "AI 단계 공급자 잔량 부족", fields: ["remaining"], waiting: true },

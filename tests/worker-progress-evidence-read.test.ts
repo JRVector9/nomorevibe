@@ -61,6 +61,10 @@ vi.mock("@/lib/crawl/settings", async () => {
 });
 vi.mock("@/lib/jobs/runner", () => ({ listJobStates: async () => fixture.jobs }));
 vi.mock("@/lib/jobs/batch-repository", () => ({ readJobBatchMode: async () => ({ mode: "legacy", writerContractVersion: 0 }) }));
+// 제작 근거 스캔 모드는 legacy — 관문 SQL·보고서가 claim 기반(E3) 전과 같아야 한다. items 쪽은 tests/integration/agent-scan-controller.test.ts
+vi.mock("@/lib/domain/evidence/agents/claim-control", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/domain/evidence/agents/claim-control")>(),
+  readAgentScanMode: async () => ({ mode: "legacy", drainingFrom: null }) }));
 vi.mock("@/lib/operations/throughput", () => ({ pipelineThroughput: async () => ({ measuredAt: fixture.NOW.toISOString(), stages: [] }) }));
 
 const dialect = new PgDialect();

@@ -2,7 +2,8 @@ import { eq, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { httpOriginControl } from "@/lib/db/http-origin-schema";
-import { jobBatchControl, modelCapacityControl, operationsAudit, pipelineStageModes } from "@/lib/db/schema";
+import { agentScanControl, jobBatchControl, modelCapacityControl, operationsAudit, pipelineStageModes } from "@/lib/db/schema";
+import { AGENT_SCAN_CONSUMER_PREFIX, beginAgentScanDrain, bumpAgentScanContract, completeAgentScanTransition } from "@/lib/domain/evidence/agents/claim-control";
 import { beginJobBatchDrainIn, bumpJobBatchContract, completeJobBatchTransitionIn, setJobBatchPolicy } from "@/lib/jobs/batch-repository";
 import { beginStageDrain, bumpStageWriterContract, completeStageTransition } from "@/lib/jobs/items/repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -16,7 +17,10 @@ import { controlSnapshotSchema, planPipelineControl, type ControlOptions, type C
 type Database = PostgresJsDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
-/** 한 문장·한 DB 시계. live는 각 전환 가드와 같은 조건이다(stage: lease_until, batch: completeJobBatchTransition의 네 조건). */
+/**
+ * 한 문장·한 DB 시계. live는 각 전환 가드와 같은 조건이다(stage: lease_until, batch: completeJobBatchTransition의 다섯 조건,
+ * agent-scan: completeAgentScanTransition 의 claim lease_until). claim 표의 시각은 시간대 없는 UTC 라 c.at 을 UTC 로 바꿔 비교한다.
+ */
 async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
   const [row] = await tx.execute<{ snapshot: unknown }>(sql`
     WITH c AS MATERIALIZED (SELECT clock_timestamp() AS at)
@@ -51,8 +55,28 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
           'liveJobs', (SELECT count(*) FROM jobs WHERE lease_token IS NOT NULL AND locked_at >= c.at - ${STALE_LOCK_MS} * interval '1 millisecond'),
           'liveRoles', (SELECT count(*) FROM role_leases WHERE owner_instance_id IS NOT NULL AND lease_until > c.at),
           'liveItems', (SELECT count(*) FROM pipeline_item_leases WHERE token IS NOT NULL AND lease_until > c.at),
-          'liveSources', (SELECT count(*) FROM evidence_source_claims WHERE token IS NOT NULL AND lease_until > c.at))
+          'liveSources', (SELECT count(*) FROM evidence_source_claims WHERE token IS NOT NULL AND lease_until > c.at),
+          'liveAgentClaims', (SELECT count(*) FROM agent_repository_claims WHERE token IS NOT NULL AND lease_until > c.at AT TIME ZONE 'UTC'))
         FROM job_batch_control b WHERE b.id = 1),
+      'agentScan', (SELECT jsonb_build_object('mode', a.mode, 'drainingFrom', a.draining_from, 'epoch', a.epoch, 'contract', a.writer_contract_version,
+          'live', (SELECT count(*) FROM agent_repository_claims r WHERE r.token IS NOT NULL AND r.lease_until > c.at AT TIME ZONE 'UTC'),
+          'unsettled', (SELECT count(*) FROM agent_repository_claims r WHERE r.token IS NOT NULL AND r.lease_until <= c.at AT TIME ZONE 'UTC'),
+          -- legacy 스캔을 할 수 있는 틱이 살아 있는가: legacy 의 틱, draining(from legacy) 에서는 drain 전에 시작한 틱.
+          -- drain 뒤에 시작한 틱과 items 의 틱은 컨트롤러다(GitHub 호출 없음). last_run_at 은 틱 시작(now(), 세션 시간대)이다
+          'legacyJobLive', EXISTS (SELECT 1 FROM jobs j WHERE j.name = 'agent-evidence-refresh'
+            AND j.lease_token IS NOT NULL AND j.locked_at >= c.at - ${STALE_LOCK_MS} * interval '1 millisecond'
+            AND (a.mode = 'legacy' OR a.mode = 'draining' AND a.draining_from = 'legacy'
+              AND j.last_run_at::timestamptz <= a.updated_at AT TIME ZONE 'UTC')),
+          -- consumer 감독은 15초마다 service:crawler:<SERVICE_INSTANCE_ID>를 남긴다
+          'consumers', (SELECT count(*) FROM operations_observations o WHERE o.key LIKE ${`service:crawler:${AGENT_SCAN_CONSUMER_PREFIX}%`}
+            AND o.observed_at >= localtimestamp - interval '2 minutes'),
+          'queue', coalesce((SELECT jsonb_agg(jsonb_build_object('priority', q.priority, 'waiting', q.waiting, 'oldestMinutes', q.oldest) ORDER BY q.priority)
+            FROM (SELECT r.priority, count(*) FILTER (WHERE r.ready) AS waiting,
+                round((extract(epoch FROM (c.at AT TIME ZONE 'UTC') - min(r.ready_at) FILTER (WHERE r.ready)) / 60)::numeric, 1) AS oldest
+              FROM (SELECT priority, greatest(due_at, retry_after) AS ready_at,
+                  greatest(due_at, retry_after) <= c.at AT TIME ZONE 'UTC' AND (token IS NULL OR lease_until <= c.at AT TIME ZONE 'UTC') AS ready
+                FROM agent_repository_claims WHERE state = 'active') r GROUP BY r.priority) q), '[]'::jsonb))
+        FROM agent_scan_control a WHERE a.id = 1),
       'recentInstances', coalesce((SELECT jsonb_agg(DISTINCT split_part(o.key, ':', 3) ORDER BY split_part(o.key, ':', 3))
         FROM operations_observations o WHERE o.key LIKE 'service:%:%' AND o.key NOT LIKE 'service:scheduler:%'
           AND o.observed_at >= localtimestamp - interval '24 hours'), '[]'::jsonb),
@@ -78,7 +102,7 @@ async function lockTarget(tx: Tx, command: TransitionCommand): Promise<void> {
   const stage = (command.options as ControlOptions).stage;
   if (command.area === "stage") await tx.select({ stage: pipelineStageModes.stage }).from(pipelineStageModes).where(eq(pipelineStageModes.stage, stage)).for("update");
   else {
-    const table = { capacity: modelCapacityControl, http: httpOriginControl, batch: jobBatchControl }[command.area];
+    const table = { capacity: modelCapacityControl, http: httpOriginControl, batch: jobBatchControl, "agent-scan": agentScanControl }[command.area];
     await tx.select({ id: table.id }).from(table).where(eq(table.id, 1)).for("update");
   }
 }
@@ -98,10 +122,14 @@ async function transition(tx: Tx, command: TransitionCommand, policyFile: unknow
     case "batch contract": await bumpJobBatchContract(tx); return;
     case "batch drain": await beginJobBatchDrainIn(tx); return;
     case "batch complete": await completeJobBatchTransitionIn(tx, o.to as "legacy" | "versioned"); return;
+    case "agent-scan contract": await bumpAgentScanContract(tx); return;
+    case "agent-scan drain": await beginAgentScanDrain(tx); return;
+    case "agent-scan complete": await completeAgentScanTransition(tx, o.to as "legacy" | "items"); return;
   }
 }
 
 function areaState(snapshot: ControlSnapshot, command: TransitionCommand): unknown {
+  if (command.area === "agent-scan") return snapshot.agentScan;
   if (command.area !== "stage") return snapshot[command.area];
   return snapshot.stages.find(row => row.stage === (command.options as ControlOptions).stage);
 }
