@@ -67,6 +67,8 @@ it.each(['legacy', 'versioned'] as const)('keeps the production %s crawler fetch
 it.each([
   ['legacy', 'product-search-verify', 'product-search-profile'], ['versioned', 'product-search-verify', 'product-search-profile'],
   ['legacy', 'product-search-profile', 'product-search-verify'], ['versioned', 'product-search-profile', 'product-search-verify'],
+  ['legacy', 'reason-translate', 'product-search-profile'], ['legacy', 'product-search-profile', 'reason-translate'],
+  ['legacy', 'reason-translate', 'product-search-verify'], ['legacy', 'product-search-verify', 'reason-translate'],
 ] as const)('keeps the production %s text lanes apart: a held %s does not block %s', async (mode, held, other) => {
   const controller = new AbortController();
   const entered = runtimeGate();
@@ -94,6 +96,35 @@ it.each([
   } finally {
     controller.abort();
     entered.release();
+    release.release();
+    await work;
+  }
+});
+
+it('keeps the production legacy text translation lane serial while its first call is held', async () => {
+  const controller = new AbortController();
+  const entered = runtimeGate();
+  const release = runtimeGate();
+  const started: string[] = [];
+  const translate = ['reason-translate', 'product-tagline-ko', 'product-translate'];
+  const work = runWorker({ role: 'text', once: true, signal: controller.signal }, {
+    names: batchJobsForRole('text', 'legacy'), lanes: batchLanesForRole('text', 'legacy'),
+    seen: async () => {}, pending: async () => translate,
+    run: async name => {
+      started.push(name);
+      if (name === 'reason-translate') { entered.release(); await release.promise; }
+      return { status: 'completed' };
+    },
+  });
+  try {
+    await entered.promise;
+    await Promise.resolve();
+    expect(started).toEqual(['reason-translate']);
+    release.release();
+    await work;
+    expect(started).toEqual(translate);
+  } finally {
+    controller.abort();
     release.release();
     await work;
   }
