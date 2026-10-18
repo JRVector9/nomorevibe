@@ -554,3 +554,83 @@ describe("생존 확인 — 동시에 연다", () => {
     expect(downCancel).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 이 잡이 본 실패는 이 서버(M3)에서 본 것이다. 서버 네트워크가 끊기면 모든 확인이 실패로 돌아오는데,
+ * 그대로 세면 공개 제품이 한꺼번에 숨겨진다. 한 틱에 30건 이상 봤고 실패가 30%를 넘으면 실패는 쓰지 않는다.
+ */
+describe("생존 확인 — 광역 실패 보류", () => {
+  const before = new Date(Date.now() - (RECHECK_AFTER_MINUTES + 60) * 60_000);
+
+  /** 이미 2번 실패한 제품(앞 failing개)과 살아 있던 제품. 모두 확인할 때가 지났다 */
+  async function due(total: number, failing: number) {
+    vi.stubEnv("UPTIME_BATCH_SIZE", String(total));
+    vi.stubEnv("UPTIME_CONCURRENCY", "16");
+    for (let i = 0; i < total; i++) {
+      await product(`p${i}`, `https://p${i}.test`);
+      await db.insert(productHealth).values(i < failing
+        ? { slug: `p${i}`, checkedAt: before, status: 0, failures: 2, downSince: before }
+        : { slug: `p${i}`, checkedAt: before, status: 200, failures: 0 });
+    }
+    // 연속 실패가 시작된 뒤 제품을 고치지 않았다 — 고쳤으면 1부터 다시 센다(recordPing)
+    await db.update(products).set({ updatedAt: new Date(before.getTime() - 3_600_000) });
+    // 앞 failing개는 연결조차 안 된다(status 0)
+    safeFetch.mockImplementation(async (url: string) => Number(new URL(url).hostname.slice(1, -5)) < failing
+      ? null : { finalUrl: url, response: { status: 200, body: { cancel: vi.fn() } } });
+    const events: { event: string; fields?: Record<string, unknown> }[] = [];
+    await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+    const rows = new Map((await db.select().from(productHealth)).map((row) => [row.slug, row]));
+    const failed = Array.from({ length: failing }, (_, i) => rows.get(`p${i}`)!);
+    const alive = Array.from({ length: total - failing }, (_, i) => rows.get(`p${failing + i}`)!);
+    return { events, failed, alive };
+  }
+
+  it("50건 중 40건이 연결조차 안 되면 실패는 쓰지 않고 다음 틱 대상으로 남긴다 — 성공은 쓴다", async () => {
+    const { events, failed, alive } = await due(50, 40);
+
+    expect(safeFetch).toHaveBeenCalledTimes(50);
+    // 연속 실패·확인 시각·일별 확인 수가 그대로다
+    expect(failed.every((row) => row.failures === 2 && row.checkedAt.getTime() === before.getTime())).toBe(true);
+    expect(alive.every((row) => row.failures === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    const daily = await db.select().from(productHealthDaily);
+    expect(daily).toHaveLength(10);
+    expect(daily.every((row) => row.successes === 1)).toBe(true);
+    // 보류한 40건은 가장 오래된 채로 남아 다음 틱이 먼저 다시 본다
+    expect((await nextToCheck(100)).map((t) => t.slug).sort()).toEqual(failed.map((row) => row.slug).sort());
+    expect(events).toContainEqual({ event: "uptime.broad_failure_held", fields: { attempted: 50, down: 40 } });
+    expect(events).toContainEqual({ event: "uptime.checked", fields: { alive: 10, down: 40, autoBanned: 0 } });
+  });
+
+  it("150건 중 2건 실패는 평소 실패라 그대로 센다", async () => {
+    const { events, failed, alive } = await due(150, 2);
+
+    expect(failed.every((row) => row.failures === 3 && row.status === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(alive).toHaveLength(148);
+    expect(alive.every((row) => row.failures === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(await db.select().from(productHealthDaily)).toHaveLength(150);
+    expect(await nextToCheck(200)).toEqual([]);
+    expect(events.map((e) => e.event)).not.toContain("uptime.broad_failure_held");
+  });
+
+  it.each([
+    { total: 30, failing: 9, reason: "30%를 넘지 않는다" },
+    { total: 29, failing: 29, reason: "30건이 안 돼 비율을 믿지 않는다" },
+  ])("$total건 중 $failing건 실패는 쓴다 — $reason", async ({ total, failing }) => {
+    const { events, failed } = await due(total, failing);
+
+    expect(failed.every((row) => row.failures === 3)).toBe(true);
+    expect(events.map((e) => e.event)).not.toContain("uptime.broad_failure_held");
+  });
+
+  it("모아 둔 실패를 쓸 때 임대를 잃었으면 쓰지 않고 실패를 알린다", async () => {
+    await product("a", "https://a.test");
+    dead();
+    const lease = { name: "uptime-ping", token: "old-owner", requestedVersion: 1 };
+    await db.insert(jobs).values({ name: lease.name, leaseToken: "new-owner", lockedAt: new Date() });
+
+    await expect(pingProducts({ ...tick(), lease })).rejects.toThrow("job_lease_lost");
+
+    expect(await db.select().from(productHealth)).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+  });
+});

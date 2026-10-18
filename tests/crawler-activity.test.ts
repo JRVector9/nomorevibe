@@ -226,6 +226,15 @@ describe("safe bounded latest results", () => {
     expect(current.recent[0]).toMatchObject({ outcome: "completed", itemErrors: null });
   });
 
+  it("surfaces an uptime tick whose failures were held as a broad failure", () => {
+    const report = build({ observations: [observation("job:uptime-ping", { events: [
+      { event: "uptime.broad_failure_held", counts: { attempted: 50, down: 40 } },
+      { event: "uptime.checked", counts: { alive: 10, down: 40, autoBanned: 0 } },
+    ] })] });
+    expect(report.recent[0]).toMatchObject({ name: "uptime-ping", errorEvents: 1, outcome: "event-errors" });
+    expect(report.recent[0].events[0]).toEqual({ label: "응답 점검 광역 실패 보류", counts: { attempted: 50, down: 40 } });
+  });
+
   it("preserves independent request errors beside an authoritative zero failed-item total", () => {
     const report = build({ observations: [observation("job:product-evidence-refresh", { events: [
       { event: "evidence.initial_refresh_queue_failed", counts: {} },
