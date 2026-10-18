@@ -75,3 +75,19 @@ export function webWriteRoute<A extends unknown[]>(handler: (...args: A) => Prom
     }
   };
 }
+
+/**
+ * 서명으로 받는 기계 쓰기 route(X 수집기 보고, 운영센터 v8 PR9). DB 를 보지 않는 검사(설정·크기·시각·서명·형식)를 관문보다 먼저 한다 —
+ * 꺼진 주소와 서명이 틀린 요청은 fence 도 읽지 않는다. 검사를 지난 것만 webWriteRoute 와 같은 관문(캐시 fence → 쓰기 TX 첫 lock)을 지난다.
+ */
+export function verifiedWebWriteRoute<A extends unknown[], V>(
+  verify: (...args: A) => Promise<{ ok: true; value: V } | { ok: false; response: Response }>,
+  handler: (value: V) => Promise<Response>,
+  refused: (error: DrWriterFencedError) => Response,
+): (...args: A) => Promise<Response> {
+  const write = webWriteRoute(handler, refused);
+  return async (...args) => {
+    const checked = await verify(...args);
+    return checked.ok ? write(checked.value) : checked.response;
+  };
+}

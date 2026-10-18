@@ -362,7 +362,7 @@ it("every admin server action and every write route handler goes through the web
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
     for (const [, method] of source.matchAll(/^export (?:async function|const) (POST|PUT|PATCH|DELETE)\b/gm)) {
-      expect(source, `${file} ${method}`).toMatch(new RegExp(`^export const ${method} = (withRoute|webWriteRoute)\\(`, "m"));
+      expect(source, `${file} ${method}`).toMatch(new RegExp(`^export const ${method} = (withRoute|webWriteRoute|verifiedWebWriteRoute)\\(`, "m"));
     }
   }
   // 쓰는 GET(OAuth·설치 콜백)도 같은 관문이다

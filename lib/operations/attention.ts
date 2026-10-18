@@ -25,6 +25,8 @@ export const ACK_ACTION = 'attention-ack';
 export const BACKLOG_KEYS: ReadonlySet<string> = new Set([
   'review', 'second', 'held', 'audit', 'audit-stalled', 'evidence-backlog', 'health-overdue', 'intro', 'repo-gone',
   'spam-auto-ban', 'repo-coverage',
+  // X 수집기 보고 끊김·오류(운영센터 v8 PR9) — 선택 소스 하나라 늘 hold 다
+  'x-status',
 ]);
 export const UNACK_ACTION = 'attention-unack';
 
