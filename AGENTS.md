@@ -28,5 +28,5 @@ M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenanc
 `PENDING.md`에는 백업 복구·장기 관측 등 아직 직접 확인하지 않은 운영 검증을 기록한다.
 첫 배포가 아직 안 됐다는 과거 기록을 현재 상태로 해석하지 않는다.
 2026-10-15 KST 사용자가 소개 검수를 포함한 적체 회복을 지시해 소개 검수 중단을 해제했다.
-신규 GitHub·Show HN 발굴은 중단하고 기존 일감을 처리 중이다.
+2026-10-18 08:19 KST 사용자 지시로 신규 GitHub·Show HN 발굴을 재개했다(운영 감사 13090).
 현재 설정·남은 확인은 `docs/operations/2026-10-14-backlog-catchup.md`와 `docs/CODEX_HANDOFF.md`를 따른다.

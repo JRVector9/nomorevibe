@@ -214,3 +214,17 @@ UTC 02:10:47.976 후속 snapshot에서 전체 진행은 ok, 소개 자동 ready0
 UTC 02:13:53 서버의 LaunchDaemon이 loaded/enabled/allowed/apply 상태이며 오류없음을 다시 확인했다.
 status age9.544초/tick3,929/quotaBlockedfalse였고 정상 후속 작업을 요청하고 있었다.
 로컬 PC와 독립적으로 가동 중이며 신규 발굴을 재개하지 않는다.
+
+## 2026-10-18 신규 발굴 재개
+
+사용자 지시로 2026-10-18 08:19:16 KST(UTC 10-17 23:19:16)에 `crawl-seed`·`hn-show-seed`의
+`not_before`를 비웠다. 한 트랜잭션에서 두 잡이 여전히 2100-01-01 정지이고 lease가 없을 때만 바꾸고,
+운영 감사 13090(`pipeline-discovery-resume`)에 바꾸기 전·후를 남겼다. cursor·요청/처리 판은 건드리지 않았다.
+같은 SQL을 먼저 rollback으로 실행해 문법과 상태 검사를 확인했다.
+
+두 잡은 재개 직후 바로 실행·성공했다. seed는 지난 회차가 덮은 끝에서 3일 조각으로 이어 받으므로
+정지 기간의 저장소를 건너뛰지 않는다. 재개 뒤 3시간 동안 공개 등재 240건이었다.
+
+서버의 기간 한정 controller(`com.nomorevibe.backlog-catchup`)는 설계대로 신규 발굴 재개를 보고 정상 종료했다
+(exit 0, KeepAlive `SuccessfulExit=false`라 다시 뜨지 않음). 이후 제작 근거·스타·썸네일 후속 요청은
+기존 scheduler 주기로만 돈다. 같은 날 제작 근거 대기는 약 2,750(최장 약 37일)이며 진행 중이다.
