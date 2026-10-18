@@ -227,7 +227,22 @@ SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'mo
   - `capability_update`·`evidence_update`: worker 4개와 scheduler는 `f`, attest는 `t`.
   - 트리거 `job_batch_candidates_evidence_insert_guard`(`tgenabled=O`)와 인덱스 1행.
   - 최종 판정은 4단계 preflight의 `checks.database = verified`다. 이 값은 실제 권한 catalog가 profile과 정확히 같을 때만 나온다.
-- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용).
+- **consumer `agent-scan` 행 범위(migration 0105, FX-E):** 0105가 운영 DB에 먼저 있어야 한다 — `-- consumer agent-scan` 절이 보기 `agent_scan_job_schedule`에 권한을 주므로 없으면 SQL이 실패한다. 0105는 `rate_limits`·`github_collector_apps`에 RLS를 켜고 `nomorevibe_oracle_*` 계정에만 조건을 건다(표 소유 역할과 소유자가 아닌 앱 계정은 전과 같다).
+  - Oracle 전용 App 설치를 그 계정에 허용한다(운영 DB 쓰기, 승인 필요). 하지 않으면 그 계정에는 App 행이 보이지 않아 consumer preflight가 `app_installation_unavailable`로 닫힌다.
+
+```sql
+UPDATE github_collector_apps SET oracle_principals = array_append(oracle_principals, 'nomorevibe_oracle_agent_scan'), updated_at = now()
+WHERE installation_id = <Oracle 전용 설치 ID> AND NOT ('nomorevibe_oracle_agent_scan' = ANY (oracle_principals));
+-- readback: 허용한 설치만 그 이름을 가진다. M3 몫 설치는 비어 있어야 한다
+SELECT installation_id, enabled, oracle_principals FROM github_collector_apps ORDER BY installation_id;
+-- 되돌리기: SET oracle_principals = array_remove(oracle_principals, 'nomorevibe_oracle_agent_scan')
+```
+
+  - 관리자 화면의 App 다시 등록(upsert)은 이 열을 바꾸지 않는다. App을 지우고 새로 등록하면 허용도 다시 넣는다.
+  - **남은 권한(신뢰 경계 기록):** 이 계정은 임의 저장소의 스캔·관측을 쓰고 지울 수 있다(거짓 AI 제작 근거 주입 가능), 모든 claim 행의 기한·소유 열을 바꿀 수 있다, `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`을 FOR UPDATE로 붙잡을 수 있다(문장 10초·idle 60초까지, 역할 계정과 같은 관행), 남의 `operations_observations` 키를 덮을 수 있다(예: `service:crawler:<M3 인스턴스>`를 꾸며 M3 crawler의 죽음을 가림). `rate_limits`에서는 GitHub 키만 닿지만 2차 제한 전역 키(`github:quota:secondary:global`)와 M3 토큰의 쿨다운 키도 GitHub 키라 `reset_at`을 미래로 밀면 M3·mini의 GitHub 수집이 그때까지 멈춘다. 2차 제한 전역 키는 원래 설계상 M3와 Oracle을 함께 묶는다(한쪽이 2차 제한에 걸리면 다른 쪽도 멈춘다).
+  - **App 비밀키:** Oracle env의 `GITHUB_COLLECTOR_SECRET`은 M3와 같다. 0105로 다른 설치의 암호문은 읽지 못하지만, 다른 경로(백업 등)로 암호문이 새면 같은 비밀키로 M3 몫 App 키와 개인 토큰도 풀린다. 서버별 비밀키는 후속 과제다.
+  - **논리 DR:** RLS를 켠 두 표는 `replication_plan.py`에서 `row_security_requires_review`(blocking)로 보인다. 구독 owner가 슈퍼유저이거나 BYPASSRLS인지, 복제 계정이 두 표를 모두 읽는지 확인한 뒤에만 계획을 진행한다. `rate_limits`는 일시 상태라 `--exclude public.rate_limits=<사유>`로 빼도 된다.
+- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용), 0105 미적용(보기 없음).
 - **되돌리기(운영 DB 쓰기, 승인 필요):** SQL 실패는 트랜잭션 전체가 취소된다. 성공한 뒤 되돌리려면 role마다 `DROP OWNED BY <role>; DROP ROLE <role>;`을 실행한다. 이 role들이 소유한 객체는 없다.
 - **승인:** 필요(운영 DB에 role 생성).
 - **근거:** `deploy/oracle/least-privilege.sql:1-176`, `deploy/oracle/refresh-principal.sql:1-20`, `lib/runtime/oracle-db-profile.ts:21-63,77-93,118-134`, `drizzle/0095_dr_writer_fence.sql:3-16`, `drizzle/0098_oracle_activation_gaps.sql:5-18`, `lib/runtime/oracle-preflight.ts:120-138`.
@@ -705,6 +720,7 @@ SELECT reason, from_epoch, to_epoch, from_state, to_state, created_at, operator 
 
 - **켜는 조건:** 비상 admission은 DB가 판정한 모드가 `full`(M3·mini 후보 heartbeat가 둘 다 60초 넘게 없음, writer active), `recovering`, `hold`(writer fenced)일 때만 동작한다. `normal`·`partial`에서는 판정하지 않는다. 사람이 켜는 스위치는 "예산을 미리 장착"하는 것이고, 실제 발동은 DB 관측이 정한다.
 - **전제:** `PHYSICAL_HOST=oracle-osaka-smoke`, `HOST_BUDGET_ENFORCEMENT` 활성(없으면 시작할 때 `emergency_admission_invalid`), `HTTP_ORIGIN_PERMITS=1`, `HOST_DB_BUDGET` 선언. 같은 host의 모든 Oracle 프로세스가 같은 예산·같은 비상 설정을 써야 한다. 다르면 장부가 `host_policy_mismatch`로 막는다.
+- **consumer는 비상 판정을 따르지 않는다.** consumer(`agent-scan`·`uptime`)는 host 장부를 켜지 않고 그 계정에는 판정이 읽는 `role_leases`·`http_origin_control` 권한이 없다. `agent-evidence-refresh`는 비상 때 `suspended`이므로 비상으로 들어가면 `systemctl stop nomorevibe-core-consumer@agent-scan`을 하거나 그 잡을 멈춘다(잡 멈춤은 모든 agent-scan consumer를 멈춘다 — pipeline-control runbook 11).
 - **값(D5):** 형식은 아래와 같고 기본값은 없다. PR16 설계의 측정 시작 제안은 `{jobs:1, modelJobs:1, httpJobs:2, agingMs:600000}`이다. 이것은 제안값이며 승인값이 아니다. `verifiedModelJobs`에는 독립 모델 품질·비용 검증을 마친 모델 잡만 넣는다(빈 목록도 명시한다).
 
 ```env

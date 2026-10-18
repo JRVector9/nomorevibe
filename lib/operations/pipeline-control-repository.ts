@@ -4,7 +4,8 @@ import type * as schema from "@/lib/db/schema";
 import { httpOriginControl } from "@/lib/db/http-origin-schema";
 import { uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { agentScanControl, jobBatchControl, modelCapacityControl, operationsAudit, pipelineStageModes } from "@/lib/db/schema";
-import { AGENT_SCAN_CONSUMER_PREFIX, beginAgentScanDrain, bumpAgentScanContract, completeAgentScanTransition } from "@/lib/domain/evidence/agents/claim-control";
+import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, beginAgentScanDrain, bumpAgentScanContract,
+  completeAgentScanTransition } from "@/lib/domain/evidence/agents/claim-control";
 import { beginJobBatchDrainIn, bumpJobBatchContract, completeJobBatchTransitionIn, setJobBatchPolicy } from "@/lib/jobs/batch-repository";
 import { beginStageDrain, bumpStageWriterContract, completeStageTransition } from "@/lib/jobs/items/repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -68,9 +69,11 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
             AND j.lease_token IS NOT NULL AND j.locked_at >= c.at - ${STALE_LOCK_MS} * interval '1 millisecond'
             AND (a.mode = 'legacy' OR a.mode = 'draining' AND a.draining_from = 'legacy'
               AND j.last_run_at::timestamptz <= a.updated_at AT TIME ZONE 'UTC')),
-          -- consumer 감독은 15초마다 service:crawler:<SERVICE_INSTANCE_ID>를 남긴다
+          -- consumer 감독은 15초마다 service:crawler:<SERVICE_INSTANCE_ID>를 남긴다. 운영센터 consumer_missing 과 같은 기준(running·starting,
+          -- 2분 안)이다. observed_at 은 시간대 없는 UTC 라 세션 시간대(localtimestamp)가 아니라 c.at 을 UTC 로 바꿔 비교한다
           'consumers', (SELECT count(*) FROM operations_observations o WHERE o.key LIKE ${`service:crawler:${AGENT_SCAN_CONSUMER_PREFIX}%`}
-            AND o.observed_at >= localtimestamp - interval '2 minutes'),
+            AND o.value->>'status' IN (${sql.join(AGENT_SCAN_CONSUMER_LIVE_STATUSES.map(status => sql`${status}`), sql`, `)})
+            AND o.observed_at >= (c.at AT TIME ZONE 'UTC') - ${AGENT_SCAN_CONSUMER_HEARTBEAT_MS} * interval '1 millisecond'),
           'queue', coalesce((SELECT jsonb_agg(jsonb_build_object('priority', q.priority, 'waiting', q.waiting, 'oldestMinutes', q.oldest) ORDER BY q.priority)
             FROM (SELECT r.priority, count(*) FILTER (WHERE r.ready) AS waiting,
                 round((extract(epoch FROM (c.at AT TIME ZONE 'UTC') - min(r.ready_at) FILTER (WHERE r.ready)) / 60)::numeric, 1) AS oldest

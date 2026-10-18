@@ -264,3 +264,22 @@ describe("safe bounded latest results", () => {
     expect(report.recent[0]).toMatchObject({ itemErrors: 0, errorEvents: 1, outcome: "event-errors" });
   });
 });
+
+// 리뷰 P3(agent-scan 9·uptime F8): consumer 는 역할 lease·후보가 없다 — '담당 여부 미확인' 역할 인스턴스로 섞이지 않고 consumer 줄로 보인다
+describe("consumer instances", () => {
+  it("lists agent-scan and uptime consumers as their own kind without role lanes", () => {
+    const report = build({ roles: [{ role: "crawler", ownerInstanceId: "m3-crawler", secondsUntilExpiry: 30 }], observations: [
+      observation("candidate:crawler:m3-crawler", { kind: "primary", phase: "active" }),
+      observation("service:crawler:m3-crawler", { status: "running", lanes: [lane("crawl-seed", ["crawl-seed", "crawl-fetch"], null)] }),
+      observation("service:crawler:agent-scan-consumer-m3", { status: "running", release: "45de7d0" }),
+      observation("service:crawler:agent-scan-consumer-oracle", { status: "running" }, old),
+      observation("service:maintenance:uptime-consumer-oracle", { status: "running" }),
+    ] });
+    expect(report.instances.find(row => row.instanceId === "agent-scan-consumer-m3"))
+      .toEqual({ instanceId: "agent-scan-consumer-m3", role: "crawler", kind: "consumer", state: "active", observedAt: fresh.toISOString(),
+        runtimeStale: false, release: "45de7d0", lanes: [] });
+    expect(report.instances.find(row => row.instanceId === "agent-scan-consumer-oracle")).toMatchObject({ kind: "consumer", state: "stale", lanes: [] });
+    expect(report.instances.find(row => row.instanceId === "uptime-consumer-oracle")).toMatchObject({ role: "maintenance", kind: "consumer", state: "active" });
+    expect(report.instances.find(row => row.instanceId === "m3-crawler")).toMatchObject({ kind: "primary", state: "active" });
+  });
+});

@@ -271,6 +271,23 @@ it('refuses legacy scan writes in items and while draining from items, and keeps
   expect(await saveRepositoryAgentScan(complete('acme/items', '203'))).toMatchObject({ state: 'complete' });
 });
 
+it('drops the writer contract back to 0 on returning to legacy so re-entering items needs a fresh writer check', async () => {
+  await inTx(tx => bumpAgentScanContract(tx));
+  await inTx(tx => beginAgentScanDrain(tx));
+  await inTx(tx => completeAgentScanTransition(tx, 'items'));
+  // 되돌리기: items → draining → legacy. legacy 에 있는 동안 앱이 관문 없는 옛 SHA 로 되돌려졌을 수 있다
+  await inTx(tx => beginAgentScanDrain(tx));
+  expect(await inTx(tx => completeAgentScanTransition(tx, 'legacy'))).toMatchObject({ mode: 'legacy', writerContractVersion: 0 });
+  // 고치기 전: contract 가 1 로 남아 다시 확인하지 않고 drain → items 로 갈 수 있었다
+  await expect(inTx(tx => beginAgentScanDrain(tx))).rejects.toThrow('agent_scan_contract_required');
+  expect(await inTx(tx => bumpAgentScanContract(tx))).toMatchObject({ mode: 'legacy', writerContractVersion: 1 });
+  // items 로 되돌아가는 drain 취소는 contract 를 그대로 둔다
+  await inTx(tx => beginAgentScanDrain(tx));
+  await inTx(tx => completeAgentScanTransition(tx, 'items'));
+  await inTx(tx => beginAgentScanDrain(tx));
+  expect(await inTx(tx => completeAgentScanTransition(tx, 'items'))).toMatchObject({ mode: 'items', writerContractVersion: 1 });
+});
+
 it('records outcomes on the scan clock, backs off scan-less failures per repository and keeps provider waits', async () => {
   await toItems();
   await queue([{ key: 'acme/new' }]);

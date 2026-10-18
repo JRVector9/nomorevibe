@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { JOB_CATALOG } from '@/lib/jobs/catalog';
 import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from '@/lib/operations/contracts';
 import type { operationsData } from '@/lib/operations/admin';
-import { staleServiceInstanceCount, supersededServiceInstanceKeys } from '@/lib/operations/instance';
+import { consumerServiceGroups, roleServiceInstances, staleServiceInstanceCount, supersededServiceInstanceKeys } from '@/lib/operations/instance';
 import type { SplitServiceRoleRow } from '@/lib/operations/split-service-roles';
 import { formatAgo, formatDetailTime } from '@/lib/format/time';
 import { StatusDot } from '../components/StatusDot';
@@ -74,7 +74,9 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
     window.history.replaceState(null,'',query?`?${query}`:window.location.pathname);
   }
   const openJob=(j:OperationJob)=>show({job:j.name});
-  const instancesFor=(key:string)=>data.serviceInstances.filter(instance=>instance.role===key).sort((a,b)=>new Date(b.observedAt).getTime()-new Date(a.observedAt).getTime());
+  /** 역할 칸은 consumer(ai1·ai2·uptime·agent-scan)를 빼고 센다 — consumer 는 아래 서비스 관측 표에 따로 한 줄씩 보인다 */
+  const instancesFor=(key:string)=>roleServiceInstances(data.serviceInstances,key).sort((a,b)=>new Date(b.observedAt).getTime()-new Date(a.observedAt).getTime());
+  const consumers=consumerServiceGroups(data.serviceInstances,new Date(data.fetchedAt).getTime());
   const latestFor=(key:string)=>instancesFor(key)[0];
   /** 지난 배포·예비의 키는 지워지지 않는다 — 1시간 넘게 관측이 없는 인스턴스는 지금 도는 것이 아니다(9개 옛 스케줄러 키가 늘 "일부 지연"을 냈다) */
   const liveFor=(key:string)=>instancesFor(key).filter(instance=>new Date(data.fetchedAt).getTime()-new Date(instance.observedAt).getTime()<=3_600_000);
@@ -134,7 +136,10 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
       <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
         <section className="ops-mini"><h3>서비스 관측 <small>{roles.filter(key=>!warns(key)).length}/{roles.length} 정상</small></h3>
           <table><tbody>{roles.map(key=><tr key={key} onClick={()=>show({worker:key})} title={`${key} — ${DESCRIPTIONS[key]}`}>
-            <td><StatusDot state={warns(key)?'delayed':status(key)===SPLIT_IDLE?'idle':'ok'} label={ROLE_LABELS[key]}/></td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${liveFor(key).length}대`}</td><td className="n">{key==='db'?'조회':formatAgo(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
+            <td><StatusDot state={warns(key)?'delayed':status(key)===SPLIT_IDLE?'idle':'ok'} label={ROLE_LABELS[key]}/></td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${liveFor(key).length}대`}</td><td className="n">{key==='db'?'조회':formatAgo(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>)}
+            {/* consumer 는 역할 lease 없이 claim 으로 일한다 — 역할 칸·정상 수에 섞지 않고 따로 보인다. 진행 경보는 단계 판정(consumer_missing)이 낸다 */}
+            {consumers.map(row=><tr key={`consumer:${row.consumer}`} title={`${row.consumer} consumer — ${ROLE_LABELS[row.role]??row.role} 일을 claim 으로 나눠 맡습니다`}>
+            <td><StatusDot state={row.fresh>0?'ok':'idle'} label={`${ROLE_LABELS[row.role]??row.role} consumer · ${row.consumer}`}/></td><td className="n">{`${row.fresh}/${row.live}대`}</td><td className="n">{formatAgo(row.latestAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
         <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
           <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>openJob(j)} title={j.name}>
             <td><StatusDot state={j.lastError?'failed':'ok'} label={JOB_LABELS[j.name]??j.name}/></td><td className="n">{formatAgo(j.lastRunAt,data.fetchedAt)}</td><td className="n">{formatAgo(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>

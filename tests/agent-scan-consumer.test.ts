@@ -79,7 +79,8 @@ it('records each claimed repository with its own collection and reports the runn
   expect(mocks.latest).toHaveBeenCalledWith('acme/one');
   const [input, latest, now] = mocks.collect.mock.calls[0];
   expect(input).toMatchObject({ repositoryKey: 'acme/one' }); expect(input.hasBudget()).toBe(true);
-  expect(latest).toBeNull(); expect(now).toBeInstanceOf(Date);
+  // 캐시 판단 시각은 claim 시각(DB 시계)이다 — host 시계가 아니다
+  expect(latest).toBeNull(); expect(now).toEqual(new Date(lease('acme/one').claimedAt));
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith(lease('acme/one'), result('acme/one'));
   expect(report).toHaveBeenCalledWith('running', 'agent-evidence-refresh', expect.any(Number));
   expect(report.mock.calls.at(-1)).toEqual(['idle']);
@@ -144,7 +145,8 @@ it('backs a repository off for 15 minutes when collection or recording throws, b
     .mockResolvedValue(idle('empty'));
   mocks.record.mockRejectedValueOnce(new Error('invalid agent observation'));
   mocks.collect.mockImplementation(async (input: { repositoryKey: string }) => {
-    if (input.repositoryKey === 'acme/throws') throw new Error('GitHub 수집 토큰이 없습니다');
+    // 저장소 탓 예외(응답 모양이 깨진 저장소 등). 자격 없음·DB 오류는 아래 테스트처럼 consumer 전체가 쉰다
+    if (input.repositoryKey === 'acme/throws') throw new TypeError('unexpected tree entry');
     return result(input.repositoryKey);
   });
   const { signal, waits } = stopAfter(3);
@@ -156,6 +158,48 @@ it('backs a repository off for 15 minutes when collection or recording throws, b
   // 예외 뒤에는 30초 쉬고, 소유를 잃은 기록 뒤에는 쉬지 않고 다음 claim 으로 간다
   expect(waits).toEqual([30_000, 30_000, 10_000]);
   expect(stats).toMatchObject({ claimed: 3, errors: 2, leaseLost: 1, abandoned: 2 });
+});
+
+it('pauses the whole consumer on missing credentials or a database outage without backing the repository off', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  const controller = new AbortController(), waits: number[] = [];
+  // 쉬는 만큼 시계를 민다. 다섯 번째 쉬기에서 멈춘다
+  mocks.sleep.mockImplementation(async (ms: number) => { waits.push(ms); vi.setSystemTime(Date.now() + ms); if (waits.length >= 5) controller.abort(); });
+  mocks.claim.mockResolvedValueOnce(claimed('acme/creds')).mockResolvedValueOnce(claimed('acme/db')).mockResolvedValue(idle('empty'));
+  mocks.collect.mockRejectedValueOnce(new Error('GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다'));
+  mocks.record.mockRejectedValueOnce(Object.assign(new Error('Failed query: update ...'), { cause: Object.assign(new Error('terminating connection'), { code: '57P01' }) }));
+  const stats = await runAgentScanConsumer({ owner, signal: controller.signal });
+  // 저장소를 미루지 않고 그대로 푼다(실패 수·retry_after 그대로) — 고치기 전: 저장소마다 15분씩 밀렸다
+  expect(mocks.abandon.mock.calls).toEqual([[lease('acme/creds'), {}], [lease('acme/db'), {}]]);
+  // 자격 없음 → 60초 쉼(그동안 claim 없음) → DB 오류 → 60초 쉼 → 다시 claim
+  expect(waits).toEqual([60_000, 60_000, 10_000, 10_000, 10_000]);
+  expect(mocks.claim).toHaveBeenCalledTimes(5);
+  expect(stats).toMatchObject({ claimed: 2, errors: 2, abandoned: 2, deferred: { systemic: 0 } });
+  expect(mocks.observe).toHaveBeenLastCalledWith('agent-scan:agent-scan-consumer-unit', expect.objectContaining({ pausedUntil: null, lastErrorCode: '57P01' }));
+});
+
+it('classifies only credential and database-wide failures as systemic', async () => {
+  const { agentScanSystemicError } = await import('@/lib/domain/evidence/agents/consumer');
+  const coded = (code: string) => Object.assign(new Error('Failed query: select ...'), { cause: Object.assign(new Error('x'), { code }) });
+  for (const error of [coded('57P01'), coded('08006'), coded('40P01'), coded('55P03'), coded('42P01'), coded('42501'), coded('ECONNREFUSED'),
+    new Error('github_collector_secret_missing'), new Error('github_collector_scope_invalid:GITHUB_COLLECTOR_SOURCES'),
+    new Error('GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다')]) expect(agentScanSystemicError(error)).toBe(true);
+  for (const error of [new Error('invalid agent observation'), new TypeError('unexpected tree entry'), coded('23505'), coded('22P02'),
+    new Error('agent_scan_record_invalid')]) expect(agentScanSystemicError(error)).toBe(false);
+});
+
+it('holds every worker while the consumer is paused for a systemic error', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  const controller = new AbortController(), waits: number[] = [];
+  mocks.sleep.mockImplementation(async (ms: number) => { waits.push(ms); if (waits.length >= 3) controller.abort(); });
+  mocks.claim.mockResolvedValueOnce(claimed('acme/creds')).mockResolvedValueOnce(claimed('acme/next')).mockResolvedValue(idle('empty'));
+  mocks.collect.mockRejectedValueOnce(new Error('github_collector_secret_missing'));
+  const stats = await runAgentScanConsumer({ owner, signal: controller.signal });
+  // 시계가 그대로라 첫 쉼 뒤에도 정지 시각 전이다 — 새 claim 없이 남은 시간만큼 쉰다
+  expect(mocks.claim).toHaveBeenCalledOnce();
+  expect(waits).toEqual([60_000, 60_000, 60_000]);
+  expect(stats.deferred.systemic).toBe(2);
+  expect(mocks.deferral).toHaveBeenCalledWith('agent-scan', 'systemic_error');
 });
 
 it('keeps scanning with C workers and refuses a concurrency outside 1..4', async () => {

@@ -73,6 +73,32 @@ export function isConsumerServiceInstance(instanceId: string | undefined): boole
   return consumerOfInstance(instanceId) !== null;
 }
 
+/**
+ * 운영센터 역할 칸(대수·'관측 지연'·상세)에 세는 그 역할의 인스턴스. consumer 는 역할 자리가 아니라 빼고 consumerServiceGroups 로 따로 보인다 —
+ * 섞이면 consumer 를 멈출 때 역할이 '일부 관측 지연'(오탐)이 되고, 역할 워커가 죽어도 consumer 가 살아 있으면 덜 심각해 보인다.
+ */
+export function roleServiceInstances<T extends { role: ServiceRole; instanceId?: string }>(rows: T[], role: string): T[] {
+  return rows.filter((row) => row.role === role && !isConsumerServiceInstance(row.instanceId));
+}
+
+/** consumer 이름별 관측 요약 — 1시간 안 관측(live)과 그중 45초 안(fresh), 가장 최근 관측 시각. 관측이 없는 consumer 는 빼고 이름순 */
+export function consumerServiceGroups<T extends { role: ServiceRole; instanceId?: string; observedAt: unknown }>(
+  rows: T[], now: number, liveMs = 3_600_000, freshnessMs = 45_000,
+): { consumer: string; role: ServiceRole; live: number; fresh: number; latestAt: string }[] {
+  const groups = new Map<string, { consumer: string; role: ServiceRole; live: number; fresh: number; latest: number }>();
+  for (const row of rows) {
+    const consumer = consumerOfInstance(row.instanceId), at = observedTime(row.observedAt);
+    if (!consumer || !Number.isFinite(at) || now - at > liveMs) continue;
+    const group = groups.get(consumer) ?? { consumer, role: row.role, live: 0, fresh: 0, latest: at };
+    group.live++;
+    if (now - at <= freshnessMs) group.fresh++;
+    group.latest = Math.max(group.latest, at);
+    groups.set(consumer, group);
+  }
+  return [...groups.values()].sort((a, b) => (a.consumer < b.consumer ? -1 : 1))
+    .map(({ latest, ...group }) => ({ ...group, latestAt: new Date(latest).toISOString() }));
+}
+
 /** 역할의 가장 최근 관측. 인스턴스 키(service:<role>:<id>)든 예전 키(<role>)든 같이 본다. consumer 인스턴스는 뺀다 */
 export function latestServiceInstance<T extends { role: ServiceRole; observedAt: unknown; instanceId?: string }>(
   rows: T[],

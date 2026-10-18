@@ -518,6 +518,57 @@ def migration_gate(client, sha):
     return {'migrations': 'applied', 'latestTag': journal['tag'], 'applied': applied}
 
 
+# Agent-scan legacy write gate (migration 0104, lib/domain/evidence/agents/claim-control.ts). A crawler release without it keeps writing
+# legacy scans while agent_scan_control is items/draining, so it overlaps the claim consumers on the same repository (review P2-7).
+AGENT_SCAN_GATE = ('lib/domain/evidence/agents/repository.ts', b'assertLegacyAgentScanWrite')
+# Production agent_scan_control mode, read-only like MIGRATION_STATE_SCRIPT (READ ONLY transaction, 5s limit). 'absent' = before 0104.
+AGENT_SCAN_MODE_SCRIPT = (
+    "import postgres from 'postgres';"
+    "const sql=postgres(process.env.DATABASE_URL,{max:1,prepare:false,connect_timeout:10,onnotice:()=>{}});"
+    "try{const row=await sql.begin('read only',async tx=>{await tx`SET LOCAL statement_timeout='5s'`;"
+    "const [table]=await tx`SELECT to_regclass('public.agent_scan_control') IS NOT NULL AS present`;"
+    "if(!table.present)return {mode:'absent'};"
+    "const [control]=await tx`SELECT mode FROM agent_scan_control WHERE id=1`;return {mode:control?control.mode:null};});"
+    "console.log(JSON.stringify(row));}finally{await sql.end({timeout:5});}")
+# Any worker container can read it; a crawler restore must not depend on the crawler container it is about to replace.
+AGENT_SCAN_PROBE_APPS = ('reviewer-m3', 'publisher-m3', 'crawler-m3')
+
+
+def app_role(short):
+    return consumer_role(short) if short in CONSUMER_APPS else short.rpartition('-')[0]
+
+
+def agent_scan_gated(sha):
+    """True only when that release's code carries the legacy write gate. A missing file or unreadable SHA is not proof."""
+    try:
+        return AGENT_SCAN_GATE[1] in git_blob(sha, AGENT_SCAN_GATE[0])
+    except RuntimeError:
+        return False
+
+
+def agent_scan_mode(client):
+    for short in AGENT_SCAN_PROBE_APPS:
+        try:
+            state = json.loads(ssh_python(M3[1], REMOTE_MIGRATIONS, client.app(short)['appName'], '0', AGENT_SCAN_MODE_SCRIPT, timeout=60))
+        except (RuntimeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+            continue
+        mode = state.get('mode') if isinstance(state, dict) else None
+        if mode in ('absent', 'legacy', 'draining', 'items'):
+            return mode
+    raise ValueError('agent_scan_mode_unknown')
+
+
+def agent_scan_release_gate(client, sha):
+    """Refuse crawler code without the agent-scan gate unless production agent_scan_control is legacy (or not yet migrated).
+    Return the control to legacy first (pipeline-control runbook 11-6); an unreadable mode is a refusal, never a pass."""
+    if agent_scan_gated(sha):
+        return {'agentScanGate': 'release_gated'}
+    mode = agent_scan_mode(client)
+    if mode not in ('absent', 'legacy'):
+        raise ValueError(f'agent_scan_ungated_release_while_{mode}')
+    return {'agentScanGate': 'ungated_release_allowed', 'agentScanMode': mode}
+
+
 def main_sha_and_token(target):
     if run(['gh', 'api', 'user', '--jq', '.login']) != 'JRVector9':
         raise ValueError('github_account_mismatch')
@@ -731,6 +782,8 @@ def restore(client, snapshot_path, short, token):
             current.get('dockerImage') not in (previous[kind], snapshot['target'][kind]) or
             current.get('autoDeploy') is not False):
         raise ValueError(f'{short}_restore_preflight_mismatch')
+    # Crawler code (role pair and agent-scan consumer apps) writes agent scans; check before any Dokploy write.
+    agent_scan = agent_scan_release_gate(client, previous['sha']) if app_role(short) == 'crawler' else None
     previous_id = client.latest(short)['deploymentId']
     client.request('application.saveEnvironment', {
         'applicationId': app_id, 'env': original['env'],
@@ -748,7 +801,8 @@ def restore(client, snapshot_path, short, token):
             setting(configured.get('env'), 'RELEASE_TAG') != previous['sha']):
         raise RuntimeError(f'{short}_restore_configuration_mismatch')
     client.request('application.deploy', {'applicationId': app_id})
-    return check_app_deployed(client, short, previous, previous_id)
+    result = check_app_deployed(client, short, previous, previous_id)
+    return {**result, **agent_scan} if agent_scan else result
 
 
 def inventory(client, sha):
@@ -892,11 +946,13 @@ def main(argv=None):
         raise ValueError('database_changes_require_migration_verified')
     # The operator assertion alone is not proof: a release with DB changes also needs the applied production journal.
     migrations = migration_gate(client, target['sha']) if changed else None
+    # The crawler pair is always released; refuse code without the agent-scan gate while the control is not legacy.
+    agent_scan = agent_scan_release_gate(client, target['sha'])
     monitor_gate(client, 'crawler')
     pre_pull(target, token, setting(state['apps']['web-m3']['env'],
                                     'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
     print(json.dumps({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
-                      'targetRelease': target['sha'], 'githubIntegration': integration,
+                      'targetRelease': target['sha'], 'githubIntegration': integration, **agent_scan,
                       **({'databaseMigrations': migrations} if migrations else {})}), flush=True)
     if args.action == 'run':
         deploy(client, target, token, state, args.snapshot, consumers)
