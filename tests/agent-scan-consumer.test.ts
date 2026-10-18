@@ -178,6 +178,16 @@ it('pauses the whole consumer on missing credentials or a database outage withou
   expect(mocks.observe).toHaveBeenLastCalledWith('agent-scan:agent-scan-consumer-unit', expect.objectContaining({ pausedUntil: null, lastErrorCode: '57P01' }));
 });
 
+it('classifies only credential and database-wide failures as systemic', async () => {
+  const { agentScanSystemicError } = await import('@/lib/domain/evidence/agents/consumer');
+  const coded = (code: string) => Object.assign(new Error('Failed query: select ...'), { cause: Object.assign(new Error('x'), { code }) });
+  for (const error of [coded('57P01'), coded('08006'), coded('40P01'), coded('55P03'), coded('42P01'), coded('42501'), coded('ECONNREFUSED'),
+    new Error('github_collector_secret_missing'), new Error('github_collector_scope_invalid:GITHUB_COLLECTOR_SOURCES'),
+    new Error('GitHub 수집 토큰이 없습니다 — 인증된 토큰이 필요합니다')]) expect(agentScanSystemicError(error)).toBe(true);
+  for (const error of [new Error('invalid agent observation'), new TypeError('unexpected tree entry'), coded('23505'), coded('22P02'),
+    new Error('agent_scan_record_invalid')]) expect(agentScanSystemicError(error)).toBe(false);
+});
+
 it('holds every worker while the consumer is paused for a systemic error', async () => {
   vi.useFakeTimers({ toFake: ['Date'] });
   const controller = new AbortController(), waits: number[] = [];

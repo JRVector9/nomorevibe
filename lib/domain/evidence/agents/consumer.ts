@@ -39,8 +39,11 @@ export const AGENT_SCAN_ERROR_RETRY_MS = 15 * 60_000;
 const RATE_LIMIT_FALLBACK_MS = 15 * 60_000;
 const OBSERVE_EVERY_MS = 60_000;
 const DEFERRAL_NAME = 'agent-scan';
-/** DB 가 잠시 안 되는 SQLSTATE: 연결(08)·자원(53)·운영자 개입·시간 초과(57)·직렬화·교착(40)·잠금 대기(55P03)·읽기 전용(25006) */
-const SYSTEMIC_DB_CODE = /^(08|53|57|40)[0-9A-Z]{3}$|^(55P03|25006)$/;
+/**
+ * 저장소와 무관한 DB SQLSTATE: 연결(08)·자원(53)·운영자 개입·시간 초과(57)·직렬화·교착(40)·잠금 대기(55P03)·읽기 전용(25006),
+ * 그리고 스키마·권한이 코드와 어긋남(없는 표·열 42P01·42703, 권한 없음 42501 — migration 이 늦거나 계정 SQL 이 옛 판)
+ */
+const SYSTEMIC_DB_CODE = /^(08|53|57|40)[0-9A-Z]{3}$|^(55P03|25006|42P01|42703|42501)$/;
 /** lib/crawl/github.ts 가 쓸 수집 자격이 하나도 없을 때 던지는 말 */
 const NO_COLLECTOR_TOKENS = 'GitHub 수집 토큰이 없습니다';
 
