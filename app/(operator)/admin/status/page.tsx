@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
-import { currentAdmin } from "@/lib/auth/admin";
+import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { frontierCounts, candidateCounts, rejectionBreakdown } from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -17,6 +17,11 @@ import { OperationsCenter } from "./OperationsCenter";
 import { PipelineControlStatus } from "./PipelineControlStatus";
 import { readPipelineControlStatus } from "@/lib/operations/pipeline-control-status";
 import { PipelineCompletions } from "./PipelineCompletions";
+import { ModelRouteContracts } from "./ModelRouteContracts";
+import { readModelRouteStatus } from "@/lib/operations/model-route-status";
+import { currentModelEnv } from "@/lib/operations/model-env";
+import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
+import { sourceBufferCsrf } from "./source-buffer-csrf";
 import { readPipelineCompletions } from "@/lib/operations/pipeline-completions";
 import { CrawlerActivity } from "./CrawlerActivity";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
@@ -106,6 +111,11 @@ function CardPending({ span, label }: { span: string; label: string }) {
 
 async function PipelineControlSlot() {
   return <PipelineControlStatus status={await readPipelineControlStatus()} />;
+}
+
+/** 모델 경로 계약·전환 진행(ops-v8 PR8) — 운영 CLI status 와 같은 readback 을 복제본에서만. 못 읽으면 보류 */
+async function ModelRouteSlot() {
+  return <ModelRouteContracts status={await readModelRouteStatus(await currentModelEnv())} />;
 }
 
 /** PR13c 처리 지표 — 복제본에서 따로 센다. 못 읽으면 칸마다 미확인으로 남는다 */
@@ -457,9 +467,20 @@ export default async function StatusPage() {
     </>
   );
 
+  // 진단 탭 맨 끝의 새 칸(ops-v8 PR8) — 원본 공급 조절은 이미 읽은 설정·관측만 쓰고, 경로 계약은 복제본에서만 따로 읽는다
+  const secret = authSecret();
+  const controls = (
+    <div className="mt-3 grid grid-cols-1 gap-3">
+      <SourceBufferCard enabled={settings.discover.sourceBuffer.enabled}
+        observation={ops.observations.find((row) => row.key === SOURCE_BUFFER_OBSERVATION_KEY)}
+        csrf={secret ? { token: sourceBufferCsrf(admin, secret), expiresAt: admin.exp } : null} />
+      <Suspense fallback={<p className="text-[13px] text-fg-3" aria-busy="true">모델 경로 계약을 읽는 중…</p>}><ModelRouteSlot /></Suspense>
+    </div>
+  );
+
   return (
     <main className="pb-10">
-      <OperationsCenter attention={attentionCards} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
+      <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
         crawlers={<CrawlerActivity report={buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
           roles: roleRows, throughput: inputs.throughput, now: new Date(now) })}/>}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}

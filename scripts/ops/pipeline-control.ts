@@ -6,8 +6,9 @@
 import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { currentModelEnv } from "@/lib/operations/model-env";
 import { formatControlResult, formatControlStatus, formatPipelineControlError, parsePipelineControlArgs,
-  pipelineControlDatabaseUrl, type ControlOptions, type ModelEnv } from "@/lib/operations/pipeline-control";
+  pipelineControlDatabaseUrl, type ControlOptions } from "@/lib/operations/pipeline-control";
 
 const POLICY_FILE_LIMIT = 64 * 1024;
 async function readPolicy(path: string): Promise<unknown> {
@@ -18,15 +19,6 @@ async function readPolicy(path: string): Promise<unknown> {
     try { return JSON.parse((await file.readFile()).toString("utf8")) as unknown; }
     catch { throw new Error("pipeline_control_invalid_policy_file"); }
   } finally { await file.close(); }
-}
-
-/** 호출 지점과 같은 상수·함수로 이 프로세스 env를 읽는다. 그 역할과 같은 model env로 실행해야 route 판정이 맞다. */
-async function currentModelEnv(): Promise<ModelEnv> {
-  const [{ reviewModel }, { TRANSLATE_MODEL }, { TAGLINE_MODEL }, { PROFILE_MODEL }, { VERIFY_MODEL }, { INTRO_CHECK_MODEL }] = await Promise.all([
-    import("@/lib/crawl/agent-review"), import("@/lib/crawl/translate"), import("@/lib/crawl/tagline"),
-    import("@/lib/domain/products/search-profile"), import("@/lib/domain/products/search-verify"), import("@/lib/domain/products/intro-check")]);
-  return { crawlReview: reviewModel(), translate: TRANSLATE_MODEL, tagline: TAGLINE_MODEL, profile: PROFILE_MODEL, verify: VERIFY_MODEL,
-    introCheck: INTRO_CHECK_MODEL };
 }
 
 export async function pipelineControlMain(args: readonly string[], env: Readonly<Record<string, string | undefined>> = process.env,
