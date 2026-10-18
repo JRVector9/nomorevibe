@@ -243,6 +243,67 @@ describe("uptime 연속 실패 자동 내림", () => {
     expect((await autoAudits())[0].detail.consecutiveFailures).toBe(11);
   });
 
+  /**
+   * 광역 실패 보류는 확인 시각만 넘긴다. 10회 이상 행은 확인 시각이 곧 자동 내림의 최신성·관리자 해제 비교 기준이라
+   * 보류가 그 창을 다시 열면 세지 않은 관측으로 내리게 된다 — 그 행은 건드리지 않는다.
+   */
+  it("광역 실패 보류는 9회를 10회로 만들지 않고 관리자가 풀어 준 10회 제품의 내림 창도 다시 열지 않는다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "30");
+    const nine = await product("held-nine", 9, ago(7 * 60));
+    const unbanned = await product("held-unbanned", 10, ago(7 * 60));
+    await setStatusWithAudit({ ...unbanned, status: "banned", action: "admin.product.ban" });
+    await setStatusWithAudit({ ...unbanned, status: "seeded", action: "admin.product.unban" });
+    // updatedAt 경계와 별개로 관리자 해제 시각 보호가 남는지 본다(위 "관리자가 해제한 같은 관측" 테스트와 같은 설정)
+    await db.update(productEvidenceAudit).set({ createdAt: ago(0.5) })
+      .where(eq(productEvidenceAudit.action, "admin.product.unban"));
+    await db.update(products).set({ updatedAt: ago(7 * 24 * 60) }).where(eq(products.id, unbanned.id));
+    for (let i = 0; i < 28; i++) await product(`held-new-${i}`);
+    const events: string[] = [];
+
+    // 30곳 모두 404 — 광역 실패로 보류한다
+    await pingProducts(ctx({ log: event => { events.push(event); } }));
+
+    expect(events).toContain("uptime.broad_failure_held");
+    const health = new Map((await db.select().from(productHealth)).map(row => [row.slug, row]));
+    expect(health.get(nine.slug)).toMatchObject({ failures: 9, status: 404 });
+    expect(health.get(nine.slug)!.checkedAt.getTime()).toBeGreaterThan(ago(1).getTime());
+    expect(health.get(unbanned.slug)).toMatchObject({ failures: 10, status: 404 });
+    expect(health.get(unbanned.slug)!.checkedAt.getTime()).toBeLessThan(ago(6 * 60).getTime());
+    expect(await nextUptimeAutoBanTargets(200)).toEqual([]);
+    expect(await autoBanUptimeProduct(nine)).toBe(false);
+    expect(await autoBanUptimeProduct(unbanned)).toBe(false);
+    expect(await status(nine.slug)).toBe("seeded");
+    expect(await status(unbanned.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+  });
+
+  it("봇·로그인 차단 응답은 연속 실패를 끊지 않지만 그 응답으로는 내리지 않는다 — 다음 404에 10회로 내린다", async () => {
+    const target = await product("blocked-then-dead", 9, ago(7 * 60));
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 403 } });
+    await pingProducts(ctx());
+    expect((await db.select().from(productHealth))[0]).toMatchObject({ failures: 9, status: 403 });
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) });
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 404 } });
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("banned");
+    expect((await autoAudits())[0].detail).toMatchObject({ consecutiveFailures: 10, lastStatus: 404 });
+  });
+
+  it.each([401, 403, 429, 999])("마지막 응답이 HTTP %s면 10회 이상 적체도 자동 내림 대상이 아니다", async (code) => {
+    const target = await product(`blocked-${code}`, 12);
+    await db.update(productHealth).set({ status: code });
+    expect(await nextUptimeAutoBanTargets(10)).toEqual([]);
+    expect(await autoBanUptimeProduct(target)).toBe(false);
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
   it("실제 관리자 해제는 제품 변경이므로 다음 실패부터 보수적으로 새 streak를 센다", async () => {
     const target = await product("manual-unban-current-edit", 10);
     await setStatusWithAudit({ ...target, status: "banned", action: "admin.product.ban" });

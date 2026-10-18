@@ -71,8 +71,8 @@ const EVENTS: Record<string, { label: string; fields: string[]; error?: boolean;
   "product_star_observation.waiting": { label: "스타 관측 공급자 대기", fields: ["examined", "recorded", "batches"], waiting: true },
   "readme_refresh.done": { label: "README 갱신 결과", fields: ["refreshed", "failed", "superseded"] },
   "uptime.idle": { label: "응답 점검 대상 없음", fields: ["checked"] },
-  "uptime.checked": { label: "서비스 응답 결과", fields: ["alive", "down"] },
-  "uptime.broad_failure_held": { label: "응답 점검 광역 실패 보류", fields: ["attempted", "down"], error: true },
+  "uptime.checked": { label: "서비스 응답 결과", fields: ["alive", "down", "unknown"] },
+  "uptime.broad_failure_held": { label: "응답 점검 광역 실패 보류", fields: ["attempted", "down", "unknown"], error: true },
   // split claims 모드(0103): 제출분(Oracle 등) 반영, home claim 이 멈춘 까닭(차단기 열림·policy 에 없는 instance·fenced)
   "uptime.split_applied": { label: "응답 점검 제출분 반영", fields: ["remote", "applied", "held", "confirmRequested", "returned", "stale", "lost"] },
   "uptime.split_blocked": { label: "응답 점검 분담 확인 멈춤", fields: ["breakerOpen", "unconfigured", "fenced"], error: true },
