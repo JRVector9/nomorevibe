@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { JOB_CATALOG } from '@/lib/jobs/catalog';
 import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from '@/lib/operations/contracts';
 import type { operationsData } from '@/lib/operations/admin';
-import { staleServiceInstanceCount } from '@/lib/operations/instance';
+import { staleServiceInstanceCount, supersededServiceInstanceKeys } from '@/lib/operations/instance';
+import type { SplitServiceRoleRow } from '@/lib/operations/split-service-roles';
 import { formatAgo, formatDetailTime } from '@/lib/format/time';
 import { StatusDot } from '../components/StatusDot';
 import { ACTION_LABELS } from '../activity/labels';
@@ -22,7 +23,14 @@ import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { STATUS_TABS, type StatusTab } from './action-links';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
-const DESCRIPTIONS:Record<string,string>={app:'제품 페이지·관리자·API 요청을 처리합니다.',scheduler:'예약 시각을 확인하고 담당 워커에게 작업을 요청합니다.',crawler:'프로젝트 원본·공개 근거를 수집합니다.',reviewer:'규칙 판정과 설정된 AI 심사로 후보를 검토합니다.',publisher:'승인 후보를 분류하고 최종 발행 조건을 검사합니다.',text:'소개 생성과 심사 사유 번역을 처리합니다.',maintenance:'발행된 제품이 열리는지 확인하고, 유효 방문을 집계해 랭킹을 갱신합니다.',db:'제품·후보·작업 요청과 실행 결과를 저장합니다.','connect-agent':'Codex·Claude 인증과 모델 검증·분류 실행을 전담합니다.'};
+const DESCRIPTIONS:Record<string,string>={app:'제품 페이지·관리자·API 요청을 처리합니다.',scheduler:'예약 시각을 확인하고 담당 워커에게 작업을 요청합니다.',crawler:'프로젝트 원본·공개 근거를 수집합니다.',reviewer:'규칙 판정과 설정된 AI 심사로 후보를 검토합니다.',publisher:'승인 후보를 분류하고 최종 발행 조건을 검사합니다.',text:'소개 생성과 심사 사유 번역을 처리합니다.',maintenance:'발행된 제품이 열리는지 확인하고, 유효 방문을 집계해 랭킹을 갱신합니다.',db:'제품·후보·작업 요청과 실행 결과를 저장합니다.','connect-agent':'Codex·Claude 인증과 모델 검증·분류 실행을 전담합니다.',
+  // 분리 역할(batch versioned 에서만 따로 돈다) — 기존 방식에서는 같은 잡을 원래 역할이 맡는다
+  translation:'사유 번역·한국어 소개·제품 번역(reason-translate·product-tagline-ko·product-translate)을 따로 맡습니다. 작업 배치가 versioned 일 때만 돕니다.',
+  'product-health':'공개 제품이 열리는지 응답을 점검합니다(uptime-ping). 작업 배치가 versioned 일 때만 돕니다.',
+  'site-evidence':'공식 사이트 근거를 수집합니다(product-site-evidence-refresh). 작업 배치가 versioned 일 때만 돕니다.',
+  'official-news':'AI 소식을 수집합니다(news-refresh). 작업 배치가 versioned 일 때만 돕니다.'};
+/** 분리 역할이 기존 방식(legacy·draining)이라 일하지 않을 때의 상태 — 경보가 아니다 */
+const SPLIT_IDLE='대기 · 기존 방식(legacy)';
 const TAB_LABELS:Record<StatusTab,string>={overview:'전체 현황',jobs:'작업 흐름',crawlers:'크롤러 활동',ai:'AI 연결',manual:'수동 분류',diagnostics:'진단'};
 /** 머리의 "마지막 갱신 13:38:20" — 서버가 읽은 시각(KST)의 시:분:초 */
 const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
@@ -35,12 +43,15 @@ const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
  * 바꿀 때는 history.replaceState 로 주소만 바꾼다 — Next 가 useSearchParams 와 맞춰 주고(공식 문서 "Native History API"),
  * router.replace 와 달리 force-dynamic 인 이 페이지의 서버 조회 전체를 탭 하나 누를 때마다 다시 돌리지 않는다.
  */
-export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual,crawlers,controls}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode;crawlers:React.ReactNode;controls?:React.ReactNode}) {
+export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual,crawlers,controls,splitRoles=[]}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode;crawlers:React.ReactNode;controls?:React.ReactNode;
+  /** 서비스 관측 표 끝에 더하는 분리 역할 행(lib/operations/split-service-roles.ts) — versioned 이거나 후보가 있을 때만 온다 */
+  splitRoles?:SplitServiceRoleRow[]}) {
   const params=useSearchParams();
   const tabParam=params.get('tab');
   const tab:StatusTab=(STATUS_TABS as readonly (string|null)[]).includes(tabParam)?tabParam as StatusTab:'overview';
   const job=jobs.find(j=>j.name===params.get('job'))??null;
-  const selected=ROLES.find(key=>key===params.get('worker'))??null;
+  const roles=[...ROLES,...splitRoles.map(row=>row.role)];
+  const selected=roles.find(key=>key===params.get('worker'))??null;
   const [message,setMessage]=useState(''),[pending,start]=useTransition(),[phoneFull,setPhoneFull]=useState(false);
   const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
   /** 주소의 탭·상세만 바꾼다. 전체 현황은 기본이라 ?tab= 을 뺀다 */
@@ -56,13 +67,19 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   const latestFor=(key:string)=>instancesFor(key)[0];
   /** 지난 배포·예비의 키는 지워지지 않는다 — 1시간 넘게 관측이 없는 인스턴스는 지금 도는 것이 아니다(9개 옛 스케줄러 키가 늘 "일부 지연"을 냈다) */
   const liveFor=(key:string)=>instancesFor(key).filter(instance=>new Date(data.fetchedAt).getTime()-new Date(instance.observedAt).getTime()<=3_600_000);
+  /** 새 boot·새 릴리스가 이어받은 옛 인스턴스는 지연으로 세지 않는다 — 살아 있어야 할 자리가 모자라면 그만큼은 남긴다 */
+  const superseded=supersededServiceInstanceKeys(data.serviceInstances,new Date(data.fetchedAt).getTime());
+  const split=(key:string)=>splitRoles.find(row=>row.role===key);
   const agent=latestFor('connect-agent')?.value as AgentStatus|undefined;
-  const observation=selected?latestFor(selected):undefined,owned=jobs.filter(j=>JOB_CATALOG.find(c=>c.name===j.name)?.role===selected),runtime=observation?.value;
+  const observation=selected?latestFor(selected):undefined,runtime=observation?.value;
+  const owned=jobs.filter(j=>selected&&split(selected)?split(selected)!.jobs.includes(j.name):JOB_CATALOG.find(c=>c.name===j.name)?.role===selected);
   function status(key:string){
     if(key==='db')return '조회 성공';
-    const instances=liveFor(key),seen=instances[0];if(!seen)return instancesFor(key).length?'관측 지연':'관측 없음';
+    const instances=liveFor(key).filter(instance=>!superseded.has(instance.key)),seen=instances[0];
+    const idle=split(key)?.alarms===false;
+    if(!seen)return idle?SPLIT_IDLE:instancesFor(key).length?'관측 지연':'관측 없음';
     const stale=staleServiceInstanceCount(instances,new Date(data.fetchedAt).getTime());
-    if(stale===instances.length)return '관측 지연';if(stale>0)return `일부 관측 지연 · ${stale}개`;
+    if(stale===instances.length)return idle?SPLIT_IDLE:'관측 지연';if(stale>0)return `일부 관측 지연 · ${stale}개`;
     return key==='connect-agent'?(agent?.busy?'작업 중':'응답 관측'):seen.value.status==='running'?'실행 관측':String(seen.value.status??'확인 필요');
   }
   const warns=(key:string)=>/없음|지연|필요|failed/.test(status(key));
@@ -91,9 +108,9 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
     {tab==='diagnostics'&&<div className="ops-diagnostics">
       {diagnostics}
       <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
-        <section className="ops-mini"><h3>서비스 관측 <small>{ROLES.filter(key=>!warns(key)).length}/{ROLES.length} 정상</small></h3>
-          <table><tbody>{ROLES.map(key=><tr key={key} onClick={()=>show({worker:key})} title={`${key} — ${DESCRIPTIONS[key]}`}>
-            <td><StatusDot state={warns(key)?'delayed':'ok'} label={ROLE_LABELS[key]}/></td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${liveFor(key).length}대`}</td><td className="n">{key==='db'?'조회':formatAgo(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
+        <section className="ops-mini"><h3>서비스 관측 <small>{roles.filter(key=>!warns(key)).length}/{roles.length} 정상</small></h3>
+          <table><tbody>{roles.map(key=><tr key={key} onClick={()=>show({worker:key})} title={`${key} — ${DESCRIPTIONS[key]}`}>
+            <td><StatusDot state={warns(key)?'delayed':status(key)===SPLIT_IDLE?'idle':'ok'} label={ROLE_LABELS[key]}/></td><td className="n">{key==='db'?`${data.dbLatencyMs}ms`:`${liveFor(key).length}대`}</td><td className="n">{key==='db'?'조회':formatAgo(latestFor(key)?.observedAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>
         <section className="ops-mini"><h3>작업 <small>마지막 · 다음</small></h3>
           <table><tbody>{jobs.filter(j=>j.name!=='heartbeat').map(j=><tr key={j.name} onClick={()=>openJob(j)} title={j.name}>
             <td><StatusDot state={j.lastError?'failed':'ok'} label={JOB_LABELS[j.name]??j.name}/></td><td className="n">{formatAgo(j.lastRunAt,data.fetchedAt)}</td><td className="n">{formatAgo(j.nextScheduledAt,data.fetchedAt)}</td></tr>)}</tbody></table></section>

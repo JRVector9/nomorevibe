@@ -30,6 +30,7 @@ import { hourlyThroughput, signalYields, todayPublications } from "@/lib/operati
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { catalogJobsForBatch } from "@/lib/jobs/batches";
+import { splitServiceRoleRows } from "@/lib/operations/split-service-roles";
 import { ATTENTION_HISTORY_KEY, attentionAcks, readAttentionHistory, recordAttentionSample } from "@/lib/operations/attention";
 import { webWritable } from "@/lib/operations/dr/web-gate";
 import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
@@ -487,6 +488,8 @@ export default async function StatusPage() {
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
         data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}
         reviewMode={settings.reviewMode} enabled={settings.enabled}
+        // 분리 역할 생존 행 — versioned 이거나 그 역할의 후보가 최근에 있을 때만, 경보는 versioned 에서만
+        splitRoles={splitServiceRoleRows({ batchMode: inputs.jobBatch.mode, observations: ops.observations, now: new Date(now).getTime() })}
         // 지금 batch 상태에서 돌지 않는 versioned 전용 잡은 생존 띠·실행 요청에 올리지 않는다(실패로 보이고 요청해도 안 돈다)
         jobs={catalogJobsForBatch(inputs.jobBatch).map(({ name }) => {
           const job = derived.states.get(name);
