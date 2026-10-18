@@ -2,7 +2,7 @@ import { JOB_CATALOG, type JobRole, type JobLane } from "@/lib/jobs/catalog";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { isPausedJob } from "@/lib/jobs/status";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
-import { parseServiceObservationKey } from "./instance";
+import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 import { parseAgentProviderFailure, parseRuntimeLanes } from "./worker-progress";
 import { NEWS_SOURCE_KEYS } from "@/lib/news/sources";
 
@@ -22,7 +22,8 @@ export type CollectorRow = { name: string; role: JobRole; lane: JobLane; state: 
   intervalMs: number | null; lastRunAt: string | null; lastSuccessAt: string | null; nextScheduledAt: string | null;
   retryAt: string | null; runs: number | null; waiting: number | null; deferred: number | null;
   error: "timeout" | "rate-limited" | "authentication" | "job-error" | null; note: string | null; latest: CollectorResult | null };
-export type CollectorInstance = { instanceId: string; role: JobRole; kind: "primary" | "standby" | "unknown";
+/** kind consumer: 역할 lease·후보 없이 claim 으로 일하는 consumer(agent-scan·uptime 등) — 담당·예비가 아니고 역할 작업 줄이 없다 */
+export type CollectorInstance = { instanceId: string; role: JobRole; kind: "primary" | "standby" | "unknown" | "consumer";
   state: "active" | "standby" | "stale" | "stopping" | "unknown"; observedAt: string | null; runtimeStale: boolean;
   release: string | null; lanes: { name: JobLane; jobs: string[]; currentJob: string | null;
     state: "idle" | "polling" | "running" | "stopping" | "standby" | "stale" | "unknown" | "other-job"; startedAt: string | null }[] };
@@ -157,8 +158,18 @@ function instanceRows(observations: Observation[], roles: RoleOwner[] | null, no
     grouped.set(key, current);
   }
   const scopedRoles = new Set([...grouped.values()].filter(row => row.instanceId !== "legacy").map(row => row.role));
+  const releaseOf = (row: Observation | undefined) => {
+    const value = row?.value.release;
+    return typeof value === "string" && /^[a-f0-9]{7,64}$/.test(value) ? value.slice(0,12) : null;
+  };
   const rows = [...grouped.values()].filter(row => row.instanceId !== "legacy" || !scopedRoles.has(row.role)).map(({ role, instanceId, candidate, runtime }): CollectorInstance => {
     const candidateFresh = fresh(candidate, now, 60_000), runtimeFresh = fresh(runtime, now, 45_000);
+    // consumer 는 역할 lease·후보 관측이 없다 — '담당 여부 미확인' 역할 인스턴스로 섞지 않고 감독 관측만으로 따로 한 줄을 낸다
+    if (isConsumerServiceInstance(instanceId)) {
+      const status = runtime?.value.status;
+      return { instanceId, role, kind: "consumer", state: runtimeFresh && (status === "running" || status === "starting") ? "active" : "stale",
+        observedAt: iso(runtime?.observedAt), runtimeStale: !runtimeFresh, release: releaseOf(runtime), lanes: [] };
+    }
     const phase = candidateFresh ? candidate?.value.phase : null;
     const owner = roles?.find(row => row.role === role);
     const owns = owner?.ownerInstanceId === instanceId && typeof owner.secondsUntilExpiry === "number"
@@ -181,9 +192,7 @@ function instanceRows(observations: Observation[], roles: RoleOwner[] | null, no
       return { name, jobs, state: laneState, currentJob, startedAt: currentJob ? iso(measured?.startedAt) : null };
     });
     const newest = [candidate, runtime].filter((row): row is Observation => !!row).sort((a,b) => Date.parse(iso(b.observedAt) ?? "") - Date.parse(iso(a.observedAt) ?? ""))[0];
-    const releaseValue = newest?.value.release;
-    const release = typeof releaseValue === "string" && /^[a-f0-9]{7,64}$/.test(releaseValue) ? releaseValue.slice(0,12) : null;
-    return { instanceId, role, kind, state, observedAt: iso(newest?.observedAt), runtimeStale: !runtimeFresh, release, lanes };
+    return { instanceId, role, kind, state, observedAt: iso(newest?.observedAt), runtimeStale: !runtimeFresh, release: releaseOf(newest), lanes };
   });
   rows.sort((a,b) => Date.parse(b.observedAt ?? "") - Date.parse(a.observedAt ?? ""));
   // Preserve every current instance; old deployment keys are bounded separately.
