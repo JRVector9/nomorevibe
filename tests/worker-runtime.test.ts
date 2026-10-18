@@ -470,3 +470,50 @@ it('re-ticks the reviewer lane after 1s only when second-review is stage-blocked
   }
   expect(sleeps).toEqual([1_000, 5_000, 5_000]);
 });
+
+it('gives the agent evidence scan the 55-second tick budget', () => {
+  const base = { requestedOnly: true as const };
+  expect(jobRunOptions('agent-evidence-refresh', base)).toEqual({ ...base, budgetMs: 55_000 });
+});
+
+it('re-polls the agent evidence scan lane after 1s only when its tick left work', async () => {
+  const sleeps: number[] = [];
+  for (const result of [{ status: 'completed', done: false }, { status: 'completed', done: true }, { status: 'deferred', reason: 'source_buffer' },
+    { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
+    const controller = new AbortController();
+    await runWorker({ role: 'crawler', signal: controller.signal }, {
+      names: ['agent-evidence-refresh'], lanes: [['agent-evidence-refresh']], seen: async () => {}, pending: async () => ['agent-evidence-refresh'],
+      run: async () => result,
+      sleep: async ms => { sleeps.push(ms); controller.abort(); },
+    });
+  }
+  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000]);
+});
+
+it('keeps other crawler lanes on their own schedule while the scan lane runs long ticks back to back', async () => {
+  const controller = new AbortController();
+  const scan = runtimeGate();
+  const events: string[] = [];
+  const work = runWorker({ role: 'crawler', signal: controller.signal }, {
+    names: ['crawl-fetch', 'agent-evidence-refresh'], lanes: [['crawl-fetch'], ['agent-evidence-refresh']],
+    seen: async () => {}, pending: async () => ['crawl-fetch', 'agent-evidence-refresh'],
+    run: async name => {
+      events.push(`start:${name}`);
+      if (name === 'agent-evidence-refresh') await scan.promise;
+      events.push(`end:${name}`);
+      return name === 'agent-evidence-refresh' ? { status: 'completed', done: false } : { status: 'completed', done: true };
+    },
+    sleep: async () => { await new Promise(resolve => setTimeout(resolve, 1)); },
+  });
+  try {
+    // 스캔 틱 하나가 끝나지 않은 동안 원본 수집 줄은 계속 돈다
+    await vi.waitFor(() => expect(events.filter(event => event === 'end:crawl-fetch').length).toBeGreaterThanOrEqual(3));
+    expect(events).not.toContain('end:agent-evidence-refresh');
+    scan.release();
+    await vi.waitFor(() => expect(events.filter(event => event === 'end:agent-evidence-refresh').length).toBeGreaterThanOrEqual(2));
+  } finally {
+    controller.abort();
+    scan.release();
+    await work;
+  }
+});

@@ -187,8 +187,9 @@ export async function runJob<C>(
     const budgetMs = options.budgetMs ?? 25_000;
     const sourceReady = ["product-evidence-refresh", "product-site-evidence-refresh"].includes(name) && outcome.done === false
       && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;
+    // 제작 근거 스캔도 남은 일을 알리면 여기서 다시 요청한다 — 다음 틱이 scheduler 의 다음 요청(1분)을 기다리지 않는다
     const reviewReady = outcome.continuation === "ready"
-      && ["crawl-agent-review", "second-review"].includes(name) && !options.signal?.aborted;
+      && ["crawl-agent-review", "second-review", "agent-evidence-refresh"].includes(name) && !options.signal?.aborted;
     let sourceContinuation = false;
     await db.transaction(async tx => {
       // DR writer fence 가 ACK TX 의 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서; jobs → fence 는 그 UPDATE 와 교착한다).
