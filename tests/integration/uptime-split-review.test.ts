@@ -228,10 +228,10 @@ describe("F3 제출 출처", () => {
     await admin.end({ timeout: 5 });
   });
 
-  it("Oracle principal 이 home(m3) 실패 제출 행을 써도 적용기는 판정하지 않는다 — 세 번 위조해도 숨김이 없다", async () => {
+  it("Oracle principal 은 home(m3) 실패 제출 행을 쓸 수 없다(0106) — 같은 행이 다른 길로 생겨도 적용기는 판정하지 않는다, 세 번 위조해도 숨김이 없다", async () => {
     const target = await product("victim");
     // 정책에 있는 home instance·host m3·home 으로 "연결 실패" 제출 행을 한 문장으로 만든다(principal 의 열 UPDATE 권한 안)
-    const forge = () => oracle`update uptime_claims c set state = 'submitted', epoch = c.epoch + 1,
+    const forge = (session: ReturnType<typeof postgres>) => session`update uptime_claims c set state = 'submitted', epoch = c.epoch + 1,
         control_epoch = (select epoch from uptime_split_control where id = 1), token = gen_random_uuid(),
         owner_instance_id = ${OWNERS.m3.instanceId}, owner_boot_id = gen_random_uuid(), host = 'm3', host_class = 'home',
         claimed_at = clock_timestamp() - interval '5 seconds', claim_slug = p.slug, claim_url = p.url,
@@ -240,8 +240,13 @@ describe("F3 제출 출처", () => {
         result_kind = 'network', result_status = 0, result_latency_ms = null, lease_until = null,
         submitted_at = clock_timestamp(), updated_at = clock_timestamp()
       from products p where p.id = c.product_id and c.product_id = ${target.id} returning c.product_id`;
+    // 0106 트리거: Oracle 계정은 Oracle host·probe 로만 claim 행을 쓴다
+    const denied = await forge(oracle).then(() => null, (error: { code?: string; message?: string }) => error);
+    expect(denied).toMatchObject({ code: "42501", message: "oracle_uptime_claim_host" });
+    expect(await claimRow(target.id)).toMatchObject({ state: "idle", host: null });
+    // 적용기 관문(submitted_not_probe)은 그대로 둔다 — 같은 행을 소유 계정으로 만들어 본다
     for (let round = 1; round <= 3; round++) {
-      expect(await forge()).toHaveLength(1);
+      expect(await forge(admin)).toHaveLength(1);
       const summary = await applyUptimeResults({ lease });
       expect(summary).toMatchObject({ remote: 1, outcomes: { discarded: 1, applied: 0 }, reasons: { submitted_not_probe: 1 } });
       expect(await healthRow(target.slug)).toMatchObject({ failures: 0 });

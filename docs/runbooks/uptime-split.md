@@ -216,6 +216,8 @@ select date_trunc('minute', received_at) as minute, host, count(*) from uptime_o
   legacy(PR-0a 이후)·claims(`splitResetStreak`)는 "연속 실패가 시작된 뒤 제품이 바뀌었을 때만 1부터" 다. 지금은 0103 트리거가 PR09 와 split 을
   함께 켜지 못하게 해 무해하지만, PR09 를 다시 쓰려면 이 의미를 legacy 와 맞춰야 한다. 그 경로는 비표준 HTTP 상태(999)를 raw 표 CHECK 에 그대로
   넣으려 해 기록이 실패한다는 점도 함께 맞춰야 한다.
-- **Oracle 계정 권한의 남은 폭**: claim 이 `host`·`host_class` 를 쓰므로 열 권한으로는 "Oracle 은 probe 만" 을 강제할 수 없다(적용기가 버린다, 위 11).
-  제어 행 잠금용 `UPDATE(id)` 로 행 잠금을 idle-in-transaction 60초까지 쥘 수 있고, `operations_observations` 키를 가리지 않는다(다른 Oracle 역할과 같다).
-  닫으려면 트리거·RLS(migration)가 필요하다. products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).
+- **Oracle 계정 권한의 남은 폭**: 0106 트리거가 둘을 닫았다 — Oracle 계정은 claim 행을 Oracle host·probe 로만 쓰고(home 으로 적힌 행은 42501,
+  적용기의 `submitted_not_probe` 는 두 번째 관문으로 남는다), `operations_observations` 에는 자기 consumer 키(`uptime-consumer:uptime-consumer-*`·
+  `service:maintenance:uptime-consumer-*`)만 쓴다. 남은 것은 제어 행 잠금용 `UPDATE(id)`(`dr_writer_fence`·`uptime_split_control`)다 — FOR SHARE 에 필요한
+  권한이 `SELECT … FOR UPDATE` 도 허용하고 트리거·RLS 로는 가를 수 없어, 행 잠금을 문장 10초·idle 60초까지 쥘 수 있다(역할 계정과 같은 관행,
+  oracle 활성화 runbook "consumer 행 범위(0106)"). products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).

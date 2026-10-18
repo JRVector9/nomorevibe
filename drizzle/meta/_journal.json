@@ -743,6 +743,13 @@
       "when": 1794086400017,
       "tag": "0105_oracle_agent_scan_row_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1794086400018,
+      "tag": "0106_oracle_consumer_row_scope",
+      "breakpoints": true
     }
   ]
 }

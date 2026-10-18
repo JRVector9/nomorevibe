@@ -131,11 +131,12 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       // 행은 RLS(0105)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.
       // GitHub 쿨다운은 INSERT·reset_at 갱신만 한다. 2차 제한 전역 키(github:quota:secondary:global)는 M3 와 함께 쓴다(남은 위험)
       rate_limits: { select: true, insert: true, update: ['reset_at'] },
+      // 키는 0106 트리거가 자기 consumer 키(agent-scan:·service:crawler: + agent-scan-consumer-*, defer:agent-scan, 이 host 장부)로 좁힌다
       operations_observations: observationsWrite } } },
   // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
-  // 열 권한으로 닫지 못하는 남은 위험(트리거·RLS = migration 이 필요): claim 이 host·host_class 를 쓰므로 home 으로 적힌 제출 행을 만들 수 있다
-  // (적용기가 판정하지 않는다 — submitted_not_probe), lock 용 UPDATE(id) 로 제어 행을 idle-in-transaction 60초까지 쥘 수 있다,
-  // operations_observations 키를 가리지 않는다(다른 Oracle 역할과 같은 패턴)
+  // 열 권한 밖의 행 범위는 0106 트리거가 좁힌다: claim 행은 Oracle host·probe 로만(home 으로 적힌 제출 행 → 42501, 적용기의 submitted_not_probe 는
+  // 두 번째 관문), operations_observations 는 자기 consumer 키만. 남은 위험: lock 용 UPDATE(id) 로 제어 행을 FOR UPDATE 로 문장 10초·idle 60초까지
+  // 쥘 수 있다 — FOR SHARE 에 필요한 권한이 FOR UPDATE 도 허용하고 트리거·RLS 로 가를 수 없다(다른 Oracle 역할의 dr_writer_fence 와 같은 패턴)
   uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
     tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },
       uptime_host_breakers: read, products: { select: UPTIME_PRODUCT_READ }, product_health: read, operations_observations: observationsWrite } } },
