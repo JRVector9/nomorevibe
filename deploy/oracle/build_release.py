@@ -10,17 +10,19 @@ import platform
 import tarfile
 import tempfile
 
-from release_contract import CLI_VERSIONS, MAX_BYTES, PLATFORM, file_hash, json_bytes, payload_path, sha, validate_manifest
+from release_contract import CLI_VERSIONS, CONSUMER_PROFILE, MAX_BYTES, PLATFORM, file_hash, json_bytes, payload_path, sha, validate_manifest
 
 
 def runtime_platform():
     return {'system': platform.system(), 'machine': platform.machine(), 'libc': platform.libc_ver()[0]}
 
 
-def build_release(source, output, release_sha, node_version):
+def build_release(source, output, release_sha, node_version, profile='full'):
     if runtime_platform() != {'system': 'Linux', 'machine': 'aarch64', 'libc': 'glibc'}:
         raise ValueError('native_builder_requires_linux_arm64_glibc')
     sha(release_sha, 40)
+    if profile not in ('full', CONSUMER_PROFILE):
+        raise ValueError('invalid_release_profile')
     source, output = Path(source), Path(output)
     if source.is_symlink() or not source.is_dir() or output.exists() or output.is_symlink():
         if output.exists() or output.is_symlink():
@@ -52,12 +54,13 @@ def build_release(source, output, release_sha, node_version):
             row = by_path.get(link_target(path, row['target']), {})
         return {'path': path, 'version': version, 'sha256': row.get('sha256')}
 
+    # A consumer-only release declares its profile and pins no CLI (release_contract.validate_manifest).
     value = validate_manifest({'version': 1, 'kind': 'nomorevibe-oracle-native-release',
         'releaseSha': release_sha, 'platform': PLATFORM.copy(), 'batchContractVersion': 1,
         'lockfileSha256': by_path.get('package-lock.json', {}).get('sha256'),
         'node': binary('runtime/bin/node', node_version),
-        'clis': {name: binary(f'tools/bin/{name}', version) for name, version in CLI_VERSIONS.items()},
-        'files': files})
+        'clis': {} if profile == CONSUMER_PROFILE else {name: binary(f'tools/bin/{name}', version) for name, version in CLI_VERSIONS.items()},
+        'files': files, **({'profile': CONSUMER_PROFILE} if profile == CONSUMER_PROFILE else {})})
     raw = json_bytes(value)
     descriptor, temporary = tempfile.mkstemp(prefix='.oracle-artifact-', dir=output.parent)
     temporary = Path(temporary)
@@ -102,9 +105,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--sha', required=True)
     parser.add_argument('--node-version', required=True)
+    parser.add_argument('--profile', choices=('full', CONSUMER_PROFILE), default='full')
     args = parser.parse_args()
     try:
-        print(json.dumps(build_release(args.prepared, args.output, args.sha, args.node_version)))
+        print(json.dumps(build_release(args.prepared, args.output, args.sha, args.node_version, args.profile)))
     except Exception as error:
         print(json.dumps({'error': type(error).__name__, 'code': 'oracle_artifact_build_failed'}))
         raise SystemExit(1) from None
