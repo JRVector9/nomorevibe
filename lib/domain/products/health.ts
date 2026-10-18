@@ -86,11 +86,14 @@ export async function recordPing(
     if (signal?.aborted) return;
     let resetStreak = false;
     if (expectedUrl !== undefined) {
-      const [current] = await tx.select({ url: products.url, resetStreak: sql<boolean>`exists (
-        select 1 from ${productHealth} h where h.slug = ${products.slug}
-          and (h.checked_at < ${products.updatedAt} or h.down_since < ${products.updatedAt}
-            or (h.failures > 0 and h.down_since is null))
-      )` }).from(products).where(eq(products.id, productId));
+      // 표 하나만 고르는 select면 drizzle이 선택 필드의 열을 표 이름 없이 찍는다. 그때 상관 하위 질의의
+      // "slug"가 h.slug로 묶여 아무 제품의 오래된 health 행에도 매번 1로 돌아갔다(10-15~10-19).
+      // join으로 두 표의 열을 표 이름째 찍게 한다. health 행이 없거나 비교가 null이면 exists처럼 거짓이다.
+      const [current] = await tx.select({ url: products.url, resetStreak: sql<boolean>`coalesce(
+        ${productHealth.checkedAt} < ${products.updatedAt} or ${productHealth.downSince} < ${products.updatedAt}
+          or (${productHealth.failures} > 0 and ${productHealth.downSince} is null), false)` })
+        .from(products).leftJoin(productHealth, eq(productHealth.slug, products.slug))
+        .where(eq(products.id, productId));
       // The request observed the old URL. Do not attach it to the replacement site's streak or daily totals.
       if (current.url !== expectedUrl) return;
       // Legacy health lacks a URL. A product edit after the streak began leaves its attribution unknown.

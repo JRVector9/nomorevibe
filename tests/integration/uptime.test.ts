@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 
 const safeFetch = vi.fn();
 const readBodyCapped = vi.fn();
@@ -35,7 +36,7 @@ vi.mock("@/lib/crawl/repository", async (importOriginal) => {
 });
 
 const { db } = await import("@/lib/db");
-const { productHealth, productHealthDaily, jobs } = await import("@/lib/db/schema");
+const { productHealth, productHealthDaily, products, jobs } = await import("@/lib/db/schema");
 const repo = await import("@/lib/domain/products/repository");
 const { nextToCheck, recordPing, downProducts, healthMetrics, RECHECK_AFTER_MINUTES } = await import(
   "@/lib/domain/products/health"
@@ -208,6 +209,56 @@ describe("생존 확인", () => {
     const [{ failures, downSince, status }] = await db.select().from(productHealth);
     expect({ failures, status }).toEqual({ failures: 2, status: 500 });
     expect(downSince).toBeInstanceOf(Date);
+  });
+
+  /**
+   * 고치기 전에는 resetStreak 상관 하위 질의가 표 하나만 고르는 select 안에 있어 drizzle이 "slug"를 표 이름 없이
+   * 찍었고, 그것이 h.slug로 묶였다. 그러면 다른 제품의 health 행이 이 제품 수정보다 오래되기만 해도 매번 1로
+   * 돌아가 3회 숨김·10회 내림이 꺼진다(2026-10-15~19 운영). 잡처럼 주소(expectedUrl)를 넘겨야 이 분기를 탄다.
+   */
+  async function streakBesideOlderHealth() {
+    const day = 24 * 60 * 60_000;
+    await product("older", "https://older.test", "unverified");
+    await db.insert(productHealth).values({ slug: "older", checkedAt: new Date(Date.now() - 30 * day), status: 200 });
+    await product("a", "https://a.test");
+    await db.update(products).set({ updatedAt: new Date(Date.now() - 7 * day) }).where(eq(products.slug, "a"));
+    const target = (await repo.findBySlug("a"))!;
+    const fail = (observedAt: Date) => recordPing("a", 0, null, observedAt, target.id, undefined, target.url);
+    const health = async () => (await db.select().from(productHealth).where(eq(productHealth.slug, "a")))[0];
+    const listed = () => repo.listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 });
+    return { target, fail, health, listed };
+  }
+
+  it("다른 제품의 health 행이 더 오래돼도 주소를 확인한 연속 실패를 이어 세고 3회면 공개 목록에서 가린다", async () => {
+    const { fail, health, listed } = await streakBesideOlderHealth();
+    const first = new Date(Date.now() - 3 * 3_600_000);
+    await fail(first);
+    await fail(new Date(Date.now() - 2 * 3_600_000));
+    expect((await health()).failures).toBe(2);
+    expect(await listed()).toEqual(["a"]);
+
+    await fail(new Date(Date.now() - 3_600_000));
+
+    const row = await health();
+    expect(row.failures).toBe(3);
+    expect(row.downSince?.getTime()).toBe(first.getTime());
+    expect((await downProducts()).map((d) => d.slug)).toEqual(["a"]);
+    expect(await listed()).toEqual([]);
+  });
+
+  it("제품을 고친 뒤의 실패는 이전 연속 실패에 붙이지 않고 1부터 센다", async () => {
+    const { target, fail, health, listed } = await streakBesideOlderHealth();
+    for (const hoursAgo of [3, 2, 1]) await fail(new Date(Date.now() - hoursAgo * 3_600_000));
+    expect((await health()).failures).toBe(3);
+
+    await repo.update(target.id, { name: "고친 이름" });
+    const afterEdit = new Date();
+    await fail(afterEdit);
+
+    const row = await health();
+    expect(row.failures).toBe(1);
+    expect(row.downSince?.getTime()).toBe(afterEdit.getTime());
+    expect(await listed()).toEqual(["a"]);
   });
 
   it("죽기 시작한 시각은 처음 실패한 때로 남는다", async () => {
