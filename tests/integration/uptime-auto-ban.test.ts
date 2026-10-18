@@ -21,7 +21,7 @@ import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, jobs, operationsAudit, productEvidenceAudit, productHealth, productHealthDaily, products } from "@/lib/db/schema";
 import { removeProductAndEvidence, setStatusWithAudit, update } from "@/lib/domain/products/repository";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
-import { recordPing } from "@/lib/domain/products/health";
+import { downProducts, recordPing } from "@/lib/domain/products/health";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -100,6 +100,31 @@ describe("uptime 연속 실패 자동 내림", () => {
     expect(await autoAudits()).toHaveLength(1);
     expect(await db.select().from(productEvidenceAudit)).toHaveLength(1);
     expect(await db.select().from(cdnPurges)).toHaveLength(1);
+  });
+
+  /**
+   * 2026-10-15~19 운영에서는 다른 제품의 오래된 health 행 하나 때문에 잡의 연속 실패가 매번 1로 돌아가
+   * 3회 숨김·10회 내림이 한 번도 일어나지 않았다(health.ts recordPing의 resetStreak). 실제 잡 경로로 센다.
+   */
+  it("다른 제품의 health 행이 더 오래돼도 실제 잡이 연속 실패를 세어 3회에 숨기고 10회에 내린다", async () => {
+    await db.insert(products).values({ slug: "older-health", url: "https://older-health.test", name: "older-health", tagline: "소개",
+      description: "설명", category: "Other", status: "unverified", verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    await db.insert(productHealth).values({ slug: "older-health", checkedAt: ago(30 * 24 * 60), status: 200 });
+    const target = await product("streak-beside-older-health");
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      await pingProducts(ctx());
+      const [health] = await db.select().from(productHealth).where(eq(productHealth.slug, target.slug));
+      expect(health.failures).toBe(attempt);
+      expect((await downProducts()).map(row => row.slug)).toEqual(attempt >= 3 && attempt < 10 ? [target.slug] : []);
+      if (attempt === 10) break;
+      expect(await status(target.slug)).toBe("seeded");
+      await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    }
+    expect(safeFetch).toHaveBeenCalledTimes(10);
+    expect(await status(target.slug)).toBe("banned");
+    const [operation] = await autoAudits();
+    expect(operation.detail).toMatchObject({ consecutiveFailures: 10, lastStatus: 404, productId: target.id });
+    expect(await db.select().from(cdnPurges)).toMatchObject([{ slug: target.slug, reason: "banned" }]);
   });
 
   it("이미 최근 확인한 10회 이상 적체도 추가 HTTP 없이 기존 배치 한도만 처리한다", async () => {
