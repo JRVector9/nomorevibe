@@ -1,6 +1,6 @@
-import { claimUptimeProducts, readUptimeSplitControl, releaseUptimeClaims, submitUptimeResults, UptimeClaimOwnerSchema,
+import { claimUptimeProducts, measureUptimeClockSkew, readUptimeSplitControl, releaseUptimeClaims, submitUptimeResults, UptimeClaimOwnerSchema,
   type UptimeClaimBatch, type UptimeClaimOwner, type UptimeClaimTicket, type UptimeResult } from "@/lib/domain/products/uptime-claims";
-import { uptimeSplitHostEntry, type UptimeSplitHost } from "@/lib/domain/products/uptime-split-policy";
+import { UPTIME_SPLIT_CLOCK_GUARD_MS, uptimeSplitHostEntry, type UptimeSplitHost } from "@/lib/domain/products/uptime-split-policy";
 import { FETCH_TIMEOUT_MS, safeFetch } from "@/lib/net/fetch";
 import { logger } from "@/lib/observability/logger";
 import { observe } from "@/lib/operations/observations";
@@ -17,6 +17,8 @@ import { interruptibleSleep, type RuntimeReport } from "@/scripts/worker";
  * - 본문은 읽지 않는다(§6). 응답 헤더를 받으면 본문을 취소한다. 텍스트 표본은 home 자기 확인만 만든다(지역화 본문이 재검사를 흔들지 않게).
  * - 25건 또는 5초마다 제출한다. 제출이 거절되거나 control epoch 이 바뀌면 그 묶음을 버리고(진행 중 결과도) 다시 읽는다.
  * - legacy·정책에 없음·차단기 open 이면 claim 하지 않고 쉰다. 쉬는 동안에도 감독 진행 기한(90초) 안에 report('idle') 한다.
+ * - claim 전마다 host−DB 시계 차를 잰다. 20초를 넘으면 쉰다(clock_skew) — 제출이 ±30초 검사에 걸려 lost 가 되고 되돌린 티켓을 다음 묶음이
+ *   다시 가져가 같은 사이트를 거듭 여는 고리(review F5)를 확인 전에 끊는다. 잰 값은 관측 키 clockSkewMs 로 남는다.
  * - 종료(SIGTERM → abort): 새 확인을 시작하지 않고, 진행 중 확인을 마쳐 제출한 뒤, 받아들여지지 않은 티켓을 돌려준다.
  * - 공유 HTTP permit(전역 http_origin_control)은 쓰지 않는다(§4). 진입점이 HTTP_ORIGIN_PERMITS=1 을 거절한다.
  */
@@ -33,7 +35,7 @@ const SLICE_MS = 30_000;
 export const UPTIME_CONSUMER_LEASE_MARGIN_MS = FETCH_TIMEOUT_MS + SUBMIT_EVERY_MS + 5_000;
 
 export type UptimeCheck = Pick<UptimeResult, "startedAt" | "observedAt" | "kind" | "status" | "latencyMs"> & { elapsedMs: number };
-export type UptimeConsumerIdle = "mode_legacy" | "source_unconfigured" | "pacing_unconfigured" | "host_mismatch"
+export type UptimeConsumerIdle = "mode_legacy" | "source_unconfigured" | "pacing_unconfigured" | "home_unsupported" | "host_mismatch" | "clock_skew"
   | "site_fenced" | "breaker_open" | "empty";
 export type UptimeConsumerSummary = { batches: number; claimed: number; checked: number; accepted: number; lost: number; released: number };
 type Claimed = Extract<UptimeClaimBatch, { kind: "claimed" }>;
@@ -62,7 +64,7 @@ export function uptimeConsumerInterval(maxPerHour: number): number {
 export function uptimeConsumerClaimLimit(batch: number, ttlMs: number, intervalMs: number): number {
   return Math.max(1, Math.min(batch, Math.floor((ttlMs - UPTIME_CONSUMER_LEASE_MARGIN_MS) / intervalMs) + 1));
 }
-/** probe 는 schema 가 셋 다 요구한다. home 항목도 이 consumer 로 돌리려면 셋 다 있어야 한다(상한 없이 돌지 않는다) */
+/** probe 는 schema 가 셋 다 요구한다. 셋이 없으면 돌지 않는다(상한 없이 돌지 않는다). home 항목은 이 consumer 로 돌지 않는다(home_unsupported) */
 function pacingOf(entry: UptimeSplitHost): Pacing | null {
   const { maxPerHour, batch, concurrency } = entry;
   return maxPerHour !== undefined && batch !== undefined && concurrency !== undefined ? { maxPerHour, batch, concurrency } : null;
@@ -177,7 +179,9 @@ export async function runUptimeConsumer(input: {
   const summary: UptimeConsumerSummary = { batches: 0, claimed: 0, checked: 0, accepted: 0, lost: 0, released: 0 };
   const stats = consumerStats(), pace = pacer();
   const view = { state: "starting" as "starting" | "running" | "idle" | "stopped", reason: null as string | null, host: null as string | null,
-    class: null as string | null, controlEpoch: null as number | null, breaker: null as string | null, pacing: null as Pacing | null };
+    class: null as string | null, controlEpoch: null as number | null, breaker: null as string | null, pacing: null as Pacing | null,
+    /** 마지막으로 잰 이 host 시계 − DB 시계(ms) */
+    clockSkewMs: null as number | null };
   // 운영센터·canary 가 읽는 관측 키. 실패해도 확인은 멈추지 않는다
   const publish = () => observe(`uptime-consumer:${owner.instanceId}`, { ...view, bootId: owner.bootId, ...stats.snapshot() }).catch(() => {});
   const observer = setInterval(() => { void publish(); }, OBSERVE_EVERY_MS);
@@ -269,7 +273,12 @@ export async function runUptimeConsumer(input: {
     const pacing = pacingOf(entry);
     view.host = entry.host; view.class = entry.class; view.pacing = pacing;
     if (!pacing) return rest("pacing_unconfigured");
+    // 제출은 probe 만 판정된다(적용기는 home 으로 적힌 제출 행을 버린다) — home 결과는 home 잡이 직접 반영한다. 확인해도 버려질 요청을 보내지 않는다
+    if (entry.class !== "probe") return rest("home_unsupported");
     if (input.physicalHost !== undefined && input.physicalHost !== entry.host) return rest("host_mismatch");
+    const skew = await stats.timed("read", () => measureUptimeClockSkew());
+    view.clockSkewMs = Math.round(skew);
+    if (Math.abs(skew) > UPTIME_SPLIT_CLOCK_GUARD_MS) return rest("clock_skew");
     const intervalMs = uptimeConsumerInterval(pacing.maxPerHour);
     await pace.ready(intervalMs, signal, () => report?.("idle"));
     if (signal?.aborted) return;

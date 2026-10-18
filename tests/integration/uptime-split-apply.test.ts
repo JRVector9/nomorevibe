@@ -188,7 +188,7 @@ describe("판정 반영", () => {
     expect(await rawRows(near.slug)).toEqual([]);
   });
 
-  it("clock skew beyond ±30 s is stale clock and leaves the product due", async () => {
+  it("clock skew beyond ±30 s is stale clock and backs the product off 15 minutes", async () => {
     const [early, future] = [await product("clock-early"), await product("clock-future")];
     const batch = await claimed(OWNERS.m3, 10);
     const before = await healthRow(early.slug);
@@ -200,7 +200,10 @@ describe("판정 반영", () => {
     expect(await healthRow(early.slug)).toEqual(before);
     const claim = await claimRow(early.id);
     expect(claim).toMatchObject({ state: "idle", last_outcome: "clock" });
-    expect(claim.due_at.getTime()).toBeLessThanOrEqual((await dbNow()).getTime());
+    // 바로 다시 due 면 다음 틱이 같은 사이트를 또 연다 — 적용 시각 + 15분(review F5)
+    const now = (await dbNow()).getTime();
+    expect(claim.due_at.getTime()).toBeGreaterThan(now + 14 * 60_000);
+    expect(claim.due_at.getTime()).toBeLessThanOrEqual(now + 15 * 60_000);
   });
 
   it("a control epoch change or a switch to legacy sends leftover submissions back to idle without counting", async () => {

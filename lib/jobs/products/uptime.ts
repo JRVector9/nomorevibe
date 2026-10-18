@@ -10,8 +10,9 @@ import { uptimeSlot } from "@/lib/domain/products/uptime-policy";
 import { uptimeObservationMode, uptimeObserverSource, nextUptimeObservationTargets, recordUptimeObservation } from "@/lib/domain/products/uptime-observations";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 import { applyUptimeResults, type UptimeApplySummary, type UptimeOwnResult } from "@/lib/domain/products/uptime-apply";
-import { claimUptimeProducts, readUptimeSplitControl, releaseUptimeClaims, syncUptimeClaimRows, type UptimeClaimTicket } from "@/lib/domain/products/uptime-claims";
-import { UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FAILURE_RATIO, uptimeSplitHostEntry } from "@/lib/domain/products/uptime-split-policy";
+import { claimUptimeProducts, measureUptimeClockSkew, readUptimeSplitControl, releaseUptimeClaims, syncUptimeClaimRows, UptimeOwnResultSchema,
+  type UptimeClaimTicket } from "@/lib/domain/products/uptime-claims";
+import { UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FAILURE_RATIO, UPTIME_SPLIT_CLOCK_GUARD_MS, uptimeSplitHostEntry } from "@/lib/domain/products/uptime-split-policy";
 import { serviceInstanceId } from "@/lib/operations/instance";
 import { checkUptime, runOriginLanes } from "./uptime-check";
 
@@ -178,10 +179,12 @@ function appliedCounts(summary: UptimeApplySummary) {
 /**
  * split claims 모드 한 틱(design-uptime §7.1, U1b 호출 순서). 정식 기록은 모두 묶음 적용기(applyUptimeResults)가 쓴다.
  * 1) 제출분 반영 — 결과가 없어도 틱마다 불러 차단기를 시간에 따라 진행시킨다(open → probing).
- * 2) 내림 적체 sweep(legacy 와 같다) 3) 새 공개 제품의 claim 행 4) home claim(재확인 요청 먼저)
+ * 2) 내림 적체 sweep(legacy 와 같다) 3) 새 공개 제품의 claim 행 4) home claim(재확인 요청 먼저) — 이 host 시계가 DB 와 20초 넘게
+ *    어긋나 있으면 claim·확인을 쉰다
  * 5) 확인(legacy 와 같은 HTTP·본문·서버 직렬) 6) 틱의 결과를 한 번에 반영 — 묶음 광역 규칙이 성공까지 포함한 틱 전체를 본다
  *    (나눠 넣으면 실패만 모인 묶음이 언제나 광역으로 보이거나, 30건에 영영 못 닿는다).
- * 7) 반영하지 못한(열지 않았거나 적용이 실패한) claim 은 풀로 돌려준다 — 다음 틱이 바로 다시 가져간다.
+ * 7) 반영하지 못한(열지 않았거나 적용이 실패한) claim 은 풀로 돌려준다 — 다음 틱이 바로 다시 가져간다. 결과 모양이 틀린 건은
+ *    반영에서 빼고(틱의 나머지는 반영한다) 돌려주지도 않는다 — TTL 뒤에 다시 잡힌다.
  */
 async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof uptimeCapacityConfig>): Promise<JobOutcome<null>> {
   if (!ctx.lease) throw new Error("uptime_job_required");
@@ -211,6 +214,12 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
     ctx.log("uptime.split_blocked", { unconfigured: 1 });
     return { done: false };
   }
+  // 이 host 시계가 DB 와 크게 어긋나 있으면 결과가 모두 stale clock 이 된다 — 확인을 쉬고 오류 이벤트로 알린다(반영·sweep 은 했다)
+  const skew = await measureUptimeClockSkew();
+  if (Math.abs(skew) > UPTIME_SPLIT_CLOCK_GUARD_MS) {
+    ctx.log("uptime.split_clock_skew", { skewMs: Math.round(skew) });
+    return { done: false };
+  }
   const owner = { instanceId, bootId: BOOT_ID };
   const batch = await claimUptimeProducts({ owner, limit: capacity.batch - swept });
   if (batch.kind === "blocked") {
@@ -224,13 +233,18 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   let alive = 0;
   let down = 0;
   const results: UptimeOwnResult[] = [];
+  /** 결과 모양이 틀린 claim(예: 확인 중 host 시계가 뒤로 감). 한 건이 틱 전체의 반영을 막지 않게 건별로 거른다 */
+  const invalid = new Set<number>();
   const errors = await runOriginLanes(batch.claims, capacity.concurrency, () => !signal?.aborted && ctx.hasBudget(), async (ticket: UptimeClaimTicket) => {
     const check = await checkUptime(ticket.url);
-    results.push({ productId: ticket.productId, token: ticket.token, epoch: ticket.epoch, startedAt: check.startedAt,
-      observedAt: check.observedAt, kind: check.kind, status: check.status, latencyMs: check.latencyMs, textSample: check.textSample });
+    const result = { productId: ticket.productId, token: ticket.token, epoch: ticket.epoch, startedAt: check.startedAt,
+      observedAt: check.observedAt, kind: check.kind, status: check.status, latencyMs: check.latencyMs };
+    if (UptimeOwnResultSchema.safeParse(result).success) results.push({ ...result, textSample: check.textSample });
+    else invalid.add(ticket.productId);
     if (check.up) alive++;
     else down++;
   });
+  if (invalid.size > 0) ctx.log("uptime.split_result_invalid", { invalid: invalid.size });
 
   // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 반영한다(legacy 와 같다). 멈추라는 신호면 쓰지 않는다
   const settled = new Set<number>();
@@ -245,7 +259,8 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
       errors.push(error);
     }
   }
-  const unsettled = batch.claims.filter(ticket => !settled.has(ticket.productId));
+  // 모양이 틀린 결과의 claim 은 되돌리지 않는다 — TTL(policy claim.ttlMs) 만료 뒤 다시 잡힌다. 바로 되돌리면 다음 틱이 같은 사이트를 다시 연다
+  const unsettled = batch.claims.filter(ticket => !settled.has(ticket.productId) && !invalid.has(ticket.productId));
   if (unsettled.length > 0) {
     try {
       await releaseUptimeClaims({ owner, claims: unsettled });
