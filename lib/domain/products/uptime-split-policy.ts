@@ -32,6 +32,13 @@ export const UPTIME_SPLIT_HOLD_MS = 15 * 60_000;
 export const UPTIME_RECHECK_MS = RECHECK_AFTER_MINUTES * 60_000;
 /** uptime_host_windows 한 칸 */
 export const UPTIME_WINDOW_BUCKET_MS = 60_000;
+/**
+ * 한 틱(묶음) 광역 실패 기준. 평소 하루 실패는 확인의 0.6~1.8%다(2026-10-14~18) — 한 틱의 30%를 넘는 실패는 사이트가 아니라
+ * 확인한 서버 쪽 문제로 본다. 표본이 너무 작으면 몇 건만 죽어도 비율이 튀므로 30건부터 판단한다.
+ * legacy 잡의 틱 보류(uptime.ts)와 split 정책의 batchMin·batchOpenRatio 가 같은 값이어야 한다 — 제어 CLI(uptime-split)가 다른 값을 거절한다.
+ */
+export const UPTIME_BROAD_FAILURE_MIN_CHECKS = 30;
+export const UPTIME_BROAD_FAILURE_RATIO = 0.3;
 const DAY_MS = 24 * 60 * 60_000;
 const KST_OFFSET_MS = 9 * 60 * 60_000;
 const LISTED = new Set(["verified", "seeded"]);
