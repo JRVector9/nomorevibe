@@ -116,12 +116,19 @@ export function buildWorkerProgress(
     stages, scheduler, liveness, lanes, activeJobs };
 }
 
+/**
+ * 근거 읽기 실행기 — 배포 관문(readWorkerProgress)은 지금처럼 주 DB `db` 를 넘기고,
+ * 운영센터 새 숫자는 readReplicaOnly(lib/db) 가 주는 복제본을 넘긴다(운영센터 v8 PR3). SQL·설정은 같다.
+ */
+export type EvidenceProgressExecutor = Pick<typeof db, "transaction">;
+
 /** Current eligible identities only. Rates count their latest persisted outputs, not ticks, HTTP requests or historical scans. */
-async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: boolean, failure: AgentProviderFailure | null): Promise<ProgressStageInput[]> {
+export async function evidenceProgress(executor: EvidenceProgressExecutor, settings: CrawlSettings, now: Date, skipUnseen: boolean,
+  failure: AgentProviderFailure | null): Promise<ProgressStageInput[]> {
   const at = sql`${now.toISOString()}::timestamp`;
   const preScanFailure = sql`d.repository_key = ${failure?.repositoryKey ?? ""}
     AND (s.id IS NULL OR s.started_at <= ${failure?.lastFailureAt ?? now.toISOString()}::timestamp)`;
-  const rows = await db.transaction(async tx => {
+  const rows = await executor.transaction(async tx => {
     await tx.execute(sql`SET LOCAL jit = off`);
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
     return tx.execute<{ key: "evidence" | "agent-evidence" | "ai-level"; waiting: number; oldest: number | null;
@@ -212,22 +219,29 @@ async function evidenceProgress(settings: CrawlSettings, now: Date, skipUnseen: 
   }));
 }
 
-export async function readWorkerProgress(now = new Date()) {
-  const [settings, jobs, batch] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode()]);
-  const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
-  const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
-  const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
-  const [throughput, observations, evidence] = await Promise.all([
-    pipelineThroughput(settings, now), db.select().from(operationsObservations),
-    evidenceProgress(settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(), parseAgentProviderFailure(agentCursor?.providerFailure)),
-  ]);
-  // Agent/AI collectors carry provider reset times in their existing cursor rather than job.notBefore.
-  const withBackoff = jobs.map(job => {
+/**
+ * Agent/AI collectors carry provider reset times in their existing cursor rather than job.notBefore.
+ * 관문과 운영센터가 같은 보정을 쓰도록 나눠 둔다 — 다른 잡과 지난·더 이른 retryAfter 는 그대로 돌려준다.
+ */
+export function withProviderBackoff<J extends { name: string; notBefore: Date | null; cursor?: unknown }>(jobs: J[], now: Date): J[] {
+  return jobs.map(job => {
     if (job.name !== "agent-evidence-refresh" && job.name !== "ai-level-refresh") return job;
     const retryAfter = (job.cursor as { retryAfter?: unknown } | null)?.retryAfter;
     const retry = typeof retryAfter === "string" ? new Date(retryAfter) : null;
     return retry && Number.isFinite(retry.getTime()) && retry > now && (!job.notBefore || retry > job.notBefore)
       ? { ...job, notBefore: retry } : job;
   });
-  return buildWorkerProgress(throughput, withBackoff, observations, now, batch, evidence);
+}
+
+export async function readWorkerProgress(now = new Date()) {
+  const [settings, jobs, batch] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode()]);
+  const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
+  const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
+  const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
+  // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
+  const [throughput, observations, evidence] = await Promise.all([
+    pipelineThroughput(settings, now), db.select().from(operationsObservations),
+    evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(), parseAgentProviderFailure(agentCursor?.providerFailure)),
+  ]);
+  return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch, evidence);
 }

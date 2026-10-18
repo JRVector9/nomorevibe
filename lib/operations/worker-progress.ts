@@ -67,6 +67,12 @@ export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progr
 export type ProgressReason = "paused" | "no_work" | "progressing" | "running" | "backoff" |
   "upstream_or_job_error" | "upstream_stalled" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention";
 export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level";
+/** 보강 근거 단계 이름 — 새 화면 요소에 "쉬운 말(코드)"로 쓴다(운영센터 v8). 지금 화면 글자는 그대로 둔다 */
+export const EVIDENCE_STAGE_LABELS = {
+  evidence: "제품 근거(evidence)",
+  "agent-evidence": "개발 AI 근거(agent-evidence)",
+  "ai-level": "AI 제작 단계(ai-level)",
+} as const satisfies Record<Extract<ProgressStageKey, "evidence" | "agent-evidence" | "ai-level">, string>;
 export type ProgressStageInput = Omit<Pick<ThroughputStage, "key" | "enabled" | "waiting" | "oldestMinutes" | "completed5m" | "progress5m" | "errors5m" | "manualAttention">, "key"> & {
   key: ProgressStageKey; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
 };
