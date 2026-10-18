@@ -421,7 +421,7 @@ class ConsumerLauncherGateTests(unittest.TestCase):
                                                     LauncherGateTests.fetch, LauncherGateTests.runner, LauncherGateTests.gate)
 
     def run(self, result=None):
-        # A fixture consumer is registered only inside each test; the shipped CONSUMERS stays empty until a consumer PR.
+        # A fixture consumer is registered only inside each test, next to the shipped CONSUMERS (agent-scan since E5).
         with patch.dict(launch.CONSUMERS, {CONSUMER: 'crawler'}):
             return super().run(result)
 
@@ -456,7 +456,7 @@ class ConsumerLauncherGateTests(unittest.TestCase):
         self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=crawler', f'--consumer={CONSUMER}'])
         self.assertEqual(self.runs, [([node, '--import', 'tsx', 'scripts/worker-oracle-preflight.ts', f'--consumer={CONSUMER}'], self.release)])
         self.assertEqual(len(self.fetches), 1)
-        # The fixed shipped list is empty: no consumer starts until its own PR registers it everywhere.
+        # A name absent from the fixed shipped list never starts: each consumer PR registers its own name everywhere.
         with patch.dict(launch.CONSUMERS, {}, clear=True):
             self.assert_consumer_closed('consumer', 'consumer_invalid')
         self.assert_consumer_closed('consumer', 'consumer_invalid', consumer='crawler')
@@ -541,13 +541,21 @@ class ConsumerLauncherGateTests(unittest.TestCase):
         self.assertEqual((caught.exception.check, caught.exception.reason), ('release', 'release_profile_mismatch'))
 
     def test_cli_refuses_an_unregistered_consumer_without_starting_anything(self):
-        result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--consumer', 'agent-scan'],
+        result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--consumer', 'unregistered-scan'],
                                 env={**os.environ, 'TZ': 'UTC'}, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
         both = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--role', 'official-news', '--consumer', 'agent-scan'],
                               env=os.environ, capture_output=True, text=True, timeout=10)
         self.assertNotEqual(both.returncode, 0)
+
+    def test_shipped_agent_scan_consumer_runs_under_crawler_and_stays_closed_outside_a_verified_release(self):
+        # E5: the same name and parent role as lib/runtime/consumer-registry.ts. Outside an installed Oracle release it exits 78 closed.
+        self.assertEqual(launch.CONSUMERS['agent-scan'], 'crawler')
+        result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--consumer', 'agent-scan'],
+                                env={**os.environ, 'TZ': 'UTC', 'RELEASE_TAG': 'a' * 40}, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 78)
+        self.assertEqual(json.loads(result.stdout)['check'], 'release')
 
 
 class ReleaseContractLauncherFilesTests(unittest.TestCase):
@@ -697,11 +705,18 @@ class ConsumerInstallUnitsTests(unittest.TestCase):
         self.assertEqual(again['preserved'], [f'etc/nomorevibe-core/consumer-{CONSUMER}.env'])
         self.assertIn('etc/nomorevibe-core/official-news.env', again['written'])
 
+    def test_shipped_agent_scan_consumer_installs_a_crawler_placeholder_without_secrets(self):
+        installer.install_units(self.root, 50, 1024 ** 3, 128, [], consumers=['agent-scan'], runner=self.runner(0))
+        text = (self.root / 'etc/nomorevibe-core/consumer-agent-scan.env').read_text()
+        self.assertIn('WORKER_ROLE=crawler\n', text)
+        values = [line for line in text.splitlines() if line and not line.startswith('#')]
+        self.assertFalse(any(line.startswith(('GITHUB_', 'AGENT_SCAN_', 'TZ=')) for line in values))
+
     def test_role_only_install_is_unchanged_and_unregistered_consumers_write_nothing(self):
         installer.install_units(self.root, 50, 1024 ** 3, 128, ['official-news'])
         self.assertNotIn('nomorevibe-core-consumer@.service', [path.name for path in (self.root / 'etc/systemd/system').iterdir()])
         other = Path(self.temp.name) / 'other'
-        for roles, consumers in (([], []), ([], ['agent-scan']), ([], [CONSUMER, CONSUMER]), (['official-news'], ['crawler'])):
+        for roles, consumers in (([], []), ([], ['unregistered-scan']), ([], [CONSUMER, CONSUMER]), (['official-news'], ['crawler'])):
             with self.subTest(roles=roles, consumers=consumers), self.assertRaises(ValueError):
                 installer.install_units(other, 50, 1024 ** 3, 128, roles, consumers=consumers, runner=self.runner(0))
         self.assertEqual(self.commands, [])

@@ -31,7 +31,7 @@ MODEL_ROLES = ('translation', 'reviewer', 'publisher', 'text')
 # Oracle consumer name -> parent role. Each name must also exist in lib/runtime/consumer-registry.ts (same role),
 # lib/runtime/oracle-db-profile.ts ORACLE_CONSUMER_DB_PROFILES and lib/runtime/oracle-consumer-preflight.ts
 # ORACLE_CONSUMER_READINESS; otherwise the preflight or supervisor refuses it. An unlisted name never starts.
-CONSUMERS = {}
+CONSUMERS = {'agent-scan': 'crawler'}
 FAILURE = {'code': 'oracle_runtime_preflight_unavailable'}
 BASE = Path('/opt/nomorevibe-core')
 APPROVED_IDENTITY = Path('/etc/nomorevibe-core/oracle-identity.json')

@@ -89,8 +89,8 @@ it('closes the workload on a profile drift, unsafe authority, unbounded timeouts
 it('refuses a replay scope and unregistered consumers before database work', async () => {
   io.replay.mockReturnValue({});
   expect((await inspectOracleConsumer(spec)).workload.reason).toBe('replay_unsupported');
-  // 등록부·DB 프로필·준비 확인 셋이 다 있어야 한다. 지금 실제 등록은 비어 있다
-  for (const consumer of ['ai1', 'agent-scan', 'uptime', 'crawler']) await expect(readOracleConsumerPreflight({ consumer })).rejects.toThrow('invalid_oracle_preflight_input');
+  // 등록부·DB 프로필·준비 확인 셋이 다 있어야 한다. 실제로 셋 다 등록된 것은 agent-scan(E5)뿐이다
+  for (const consumer of ['ai1', 'unregistered-scan', 'uptime', 'crawler']) await expect(readOracleConsumerPreflight({ consumer })).rejects.toThrow('invalid_oracle_preflight_input');
   await expect(readOracleConsumerPreflight({ consumer: 'ai1', ready: true })).rejects.toThrow('invalid_oracle_preflight_input');
   ORACLE_CONSUMER_DB_PROFILES.ai1 = db; ORACLE_CONSUMER_READINESS.ai1 = io.readiness;
   try {
@@ -109,7 +109,7 @@ it('the native preflight CLI accepts --consumer and still fails closed for an un
   const { spawnSync } = await import('node:child_process');
   const { resolve } = await import('node:path');
   const child = spawnSync(process.execPath, ['--import', resolve('node_modules/tsx/dist/loader.mjs'),
-    resolve('scripts/worker-oracle-preflight.ts'), '--consumer=agent-scan'], {
+    resolve('scripts/worker-oracle-preflight.ts'), '--consumer=unregistered-scan'], {
     cwd: process.cwd(), env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV }, encoding: 'utf8', timeout: 5000,
   });
   expect(child.error).toBeUndefined(); expect(child.status).toBe(78);

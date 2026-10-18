@@ -20,6 +20,8 @@ export type ConsumerSpec = {
 export const CONSUMERS = {
   ai1: { role: 'reviewer', command: ['scripts/pipeline-first-consumer.ts'], workerMax: 3 },
   ai2: { role: 'reviewer', command: ['scripts/pipeline-consumer.ts', '--stage=ai2'], workerMax: 3 },
+  // 제작 근거 스캔(agent_repository_claims). 수집 일꾼이 crawler 와 같은 GitHub 자격을 쓰므로 부모는 crawler 다
+  'agent-scan': { role: 'crawler', command: ['scripts/agent-scan-consumer.ts'], workerMax: 3 },
 } as const satisfies Record<string, ConsumerSpec>;
 export type ConsumerName = keyof typeof CONSUMERS;
 
