@@ -90,6 +90,18 @@
 - **최종 확인(00:55 KST)**: 14앱 Swarm spec에 fallback 줄·전 태스크 Running·롤백 없음, lease 5개 M3 주·예비 5개 standby(전부 c41b5110), 웹 health `networkRoutes` mini `{primary,valkey,read}: tailscale`·M3 `{primary,valkey}: tailscale`, 원래 배포 관문 ok, 최근 15분 잡 오류 0. fallback 로그: web-m3 복제본 1곳 `cache.valkey_fallback_opened route=lan`(15:43:42Z, 웹 4대 동시 기동 순간 Tailscale 새 연결이 1초 안에 안 열림 — 설계대로), DB fallback 0. DB 쪽 6432 LAN 출발 연결(M3 15·mini 18)은 같은 PgBouncer를 쓰는 다른 서비스와 구분 불가.
 - 남은 관측(runbook 5): 하루 동안 `db.connection_fallback`·`cache.valkey_fallback_opened` 빈도, health dbLatencyMs. 실제 Tailscale 끊김 상황의 넘어감은 아직 실측 안 함(drill 미실시).
 
+### 2026-10-18 오전 운영 (사용자 지시)
+- **잠재 P1 수정 [#536](https://github.com/JRVector9/nomorevibe/pull/536) (main 3d8f7fde)**: legacy 배치에서도 근거 새로 고침이 versioned 전용 `product-site-evidence-refresh` 행을 요청하는데 scheduler는 일정을 만들지 않아 `next_scheduled_at` NULL → `classifyScheduler` unknown_schedule → 배포 관문·자동 재시작이 막힐 수 있었다. 판정이 batch 상태(`catalogJobsForBatch`)를 보도록 고치고, 관리자 작업 목록·라벨·Oracle 준비조건 파싱도 함께 수정. 요청 쪽(두 wakeup 고정 순서)은 의도된 설계라 그대로. 14앱 배포 07:58–08:19 KST: git 빌드 6앱(`git_rollout.py`, 롤백 없음) → 공통 8앱 원래 도구 `run`(역할마다 관문 progress ok, 제외 없음).
+- **상세 '같은 분야' 줄 [#537](https://github.com/JRVector9/nomorevibe/pull/537) (main 1c23c829)**: 원인은 10-17 07:00 UTC 8시간 스타 회차 누락(장애 시간대) → `missing-run`/`missing-baseline` 으로 10-17 16:00–10-18 08:00 KST 모든 상세에서 줄이 사라짐. 급상승이 비면 분야 기본 목록(AI로 제작·최근 등록순)으로 채운다. 공통 8앱만 1c23c829(git 빌드 앱은 3d8f7fde 유지). 라이브 확인: 급상승 있는 분야는 그대로, `openathlete`(Sports 급상승이 자기뿐)는 "스포츠·피트니스 분야의 다른 프로젝트".
+- **신규 GitHub·Show HN 발굴 재개 08:19:16 KST** (operations_audit **13090**, `pipeline-discovery-resume`, 10-14 정지 12170의 반대): 두 잡이 2100 정지·lease 없음일 때만 `not_before` NULL, cursor·요청/처리 판 보존(롤백 dry-run 뒤 적용). 두 잡 즉시 실행·성공. 적체 회복 LaunchDaemon `com.nomorevibe.backlog-catchup` 은 설계대로 정상 종료(exit 0, KeepAlive SuccessfulExit=false 라 재시작 없음). seed는 지난 회차 끝(`cycleWindow.to`)부터 3일 조각으로 이어 받아 공백 없음. 재개 뒤 3시간 발행 240.
+- **2차 투표 모델 교체 09:43:31 KST** (operations_audit **13091**, actor `claude:second-voter-20261018`, 사용자 지시 "2차는 abcllm 에서 gpu3090 모델로"): `[supa] Qwen3.8-27B-NVFP4` → `[gpu3090] qwen3.8-flash-next`, 예비 `qwen3-coder:30b`·agreeAt 0.7·표본 5% 그대로.
+  - 근거(같은 200건, `.crawl-samples/second-voter-eval` 데이터셋, 지금 프롬프트 2026-10-06.2로 두 모델 모두 다시 실행): 형식 실패 17.5%→5%, 예비 포함 B(거절이 정답) 잘못 승인 13%→8%, 1차가 잘못 승인한 23건 포착 74%→83%, A·C 승인률 같거나 높음, 중앙 3.2→4.4초.
+  - 운영 실측(09:43–11:19 KST): 229건 중 형식 오류 8(3.5%, 교체 전 80분 20%), 승인 156·거절 54·보류 11. 새 모델이 1차 승인 중 거절·보류하는 비율이 교체 전 11% → 28–35% 라 사람 큐 유입이 늘었다(첫 50분 73건). 거절 표본 25건 대부분 지금 정책에 맞음(제목뿐인 페이지·대행·컨설팅·로그인만·비공개 저장소). **결정 대기:** 2차가 0.95 이상으로 명확한 정책 위반을 거절하면 사람 확인 없이 거절할지(심사 규칙 변경).
+  - 교체 전 Qwen3.8은 json_schema·thinking 끔·온도 0에도 형식 오류 10–20% 였다(10-06 선정 때부터).
+- 분류 보류 5건(08:25 KST Codex 일시 실패)은 09:25 자동 재시도에서 모두 발행.
+- 설계 검토(코드 변경 없음, 결정 대기): 운영센터 개편(독립 검토 5회 뒤 "지금보다 나빠지는 곳 없음, 잔여 3건": 장부 설명 클릭 1·폰 조치 카드 약 30px 아래·흐름 숫자 최대 약 40초 늦음, PR 10개), 서비스 안 반응 순위(지금 순위는 verified 제품만 받아 비어 있음 — 운영 제품은 seeded 43,263·verified 0), 써보기·피드백(로그인 없는 한 번 누르기 평가 제안). 보고서는 관리자 화면 캡처가 들어 있어 공개 저장소에 넣지 않았다.
+- 같은 날 확인한 운영 상태: 수집·심사·발행 관문 진행 판정 ok, 장애 대비 ok. 개발 AI 근거 대기 약 2,750(최장 약 37일, 진행 중), 공개 근거 24시간 성공이 적은 것은 96시간 주기(10-14~16 일괄 갱신 뒤)라 정상.
+
 ### 최종 상태 (2026-10-17 21:25 KST)
 - **#533 병합 → main 553a8e52.** 파이프라인 개편 개발 전부가 main에 있다: 스택 #467–#488, 통합 #527(#490–#526), #528–#531, 다른 세션의 #532, 최종 리뷰 수정·LAN fallback #533. migration 0000–0102.
 - 열린 PR: nomorevibe #292·#208(파이프라인 무관), abcLLM #1–#4(병합=배포, 승인 대기).
