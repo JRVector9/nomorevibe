@@ -4,6 +4,7 @@ import { operationsObservations } from "@/lib/db/schema";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
+import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
@@ -240,7 +241,7 @@ export async function readWorkerProgress(now = new Date()) {
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
   const [throughput, observations, evidence] = await Promise.all([
-    pipelineThroughput(settings, now), db.select().from(operationsObservations),
+    pipelineThroughput(settings, now), db.select().from(operationsObservations).where(WITHOUT_JOB_DEFERRALS),
     evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(), parseAgentProviderFailure(agentCursor?.providerFailure)),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch, evidence);
