@@ -45,6 +45,11 @@ describe("역할별 적용 상태", () => {
     expect(result.attention?.detail).toContain("11분");
   });
 
+  it("같은 역할 밑 consumer 관측(판을 싣지 않음)이 더 최근이어도 역할 워커의 판으로 본다", () => {
+    const result = status([service("crawler", { settingsVersion: SAVED }, 10), service("crawler", {}, 1, "agent-scan-consumer-m3")]);
+    expect(role(result, "crawler")).toMatchObject({ state: "applied", reportedVersion: SAVED });
+  });
+
   it("판을 싣지 않는 옛 워커는 '확인 안 됨'이고 조치할 일로 올리지 않는다", () => {
     const result = status([service("crawler", {})], SETTINGS_LAG_SECONDS * 10);
     expect(role(result, "crawler")).toMatchObject({ state: "unknown", reportedVersion: null, lagging: false });
