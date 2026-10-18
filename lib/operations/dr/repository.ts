@@ -54,7 +54,7 @@ export async function dbNow(tx: ProductTransaction): Promise<{ iso: string; ms: 
 }
 
 /** 복원된 R을 fence하고 복사된 모든 권한을 한 TX에서 폐기한다. 되돌리는 API는 없다(막히면 R을 버리고 새로 복원).
- * lock 순서: fence → model/http control → role → item → source claim → jobs (기존 writer의 role→jobs, item→jobs 순서와 같다). */
+ * lock 순서: fence → model/http control → role → item → source claim → uptime claim → jobs (기존 writer의 role→jobs, item→jobs 순서와 같다). */
 export async function sealRestoredDatabase(planValue: PromotionPlan, apply: boolean): Promise<PromotionRecord & { otherClients: number }> {
   const plan = promotionPlanSchema.parse(planValue);
   return drTransactionMaybeDry(apply, async tx => {
@@ -70,6 +70,7 @@ export async function sealRestoredDatabase(planValue: PromotionPlan, apply: bool
       SELECT owner_instance_id AS instance FROM role_leases WHERE owner_instance_id IS NOT NULL
       UNION SELECT owner_instance_id FROM pipeline_item_leases WHERE token IS NOT NULL
       UNION SELECT instance_id FROM evidence_source_claims WHERE token IS NOT NULL
+      UNION SELECT owner_instance_id FROM uptime_claims WHERE token IS NOT NULL
       UNION SELECT owner_instance_id FROM model_capacity_requests WHERE state IN ('waiting','reserved','dispatched','indeterminate')
       UNION SELECT instance_id FROM http_origin_hops WHERE state IN ('reserved','dispatched','indeterminate')
       UNION SELECT instance_id FROM job_batch_candidates) owners WHERE instance IS NOT NULL`)).map(row => row.instance).sort();
@@ -95,11 +96,15 @@ export async function sealRestoredDatabase(planValue: PromotionPlan, apply: bool
       lease_until = NULL, updated_at = clock_timestamp() WHERE token IS NOT NULL RETURNING work_key`);
     const claims = await tx.execute(sql`UPDATE evidence_source_claims SET token = NULL, instance_id = NULL, boot_id = NULL, lease_until = NULL,
       job = NULL, updated_at = clock_timestamp() WHERE token IS NOT NULL RETURNING product_id`);
+    // uptime split: 나간 claim·적용 전 제출을 모두 idle 로 되돌린다(늦은 제출·적용은 token CAS 에서 빗나간다). due 는 그대로라 승격 뒤 다시 확인한다
+    const uptimeClaims = await tx.execute(sql`UPDATE uptime_claims SET state = 'idle', token = NULL, lease_until = NULL,
+      result_started_at = NULL, result_observed_at = NULL, result_kind = NULL, result_status = NULL, result_latency_ms = NULL, submitted_at = NULL,
+      last_outcome = 'dr_sealed', updated_at = clock_timestamp() WHERE token IS NOT NULL RETURNING product_id`);
     const jobsRevoked = await tx.execute(sql`UPDATE jobs SET lease_token = NULL, locked_at = NULL WHERE lease_token IS NOT NULL RETURNING name`);
     const now = await dbNow(tx);
     const snapshot = sealSnapshotSchema.parse({ version: 1, sealedAt: now.iso, instances, modelBudgets: budgets,
       activeModelCalls: counts.model, activeHttpHops: counts.http,
-      revoked: { roles: roles.length, jobs: jobsRevoked.length, items: items.length, sourceClaims: claims.length },
+      revoked: { roles: roles.length, jobs: jobsRevoked.length, items: items.length, sourceClaims: claims.length, uptimeClaims: uptimeClaims.length },
       modelControl: { epoch: Number(model.epoch), revision: Number(model.revision), mode: model.mode }, httpControl: { epoch: Number(http.epoch), mode: http.mode } });
     await tx.execute(sql`INSERT INTO dr_promotions (promotion_id, lineage_id, from_epoch, to_epoch, state, plan, plan_hash, db_identity, seal_snapshot, operator)
       VALUES (${plan.promotionId}::uuid, ${plan.lineageId}::uuid, ${plan.fromEpoch}, ${plan.fromEpoch + 1}, 'sealed', ${JSON.stringify(plan)}::text::jsonb,
