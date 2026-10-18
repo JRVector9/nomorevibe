@@ -50,13 +50,17 @@ GIT_BUILD_APPS = {
 KNOWN_APPS = APPS | GIT_BUILD_APPS
 # AI1/AI2 independent consumer apps (PR06e): the shared worker image running `worker-supervisor.ts --role=reviewer --consumer=ai1|ai2`,
 # one replica each. The Dokploy apps do not exist yet, so ID and name are empty; an empty target is refused before any action, never guessed.
-# `plan`/`run` release only the pairs chosen with --consumer, right after the reviewer pair; without it the 8-app release is unchanged.
+# `plan`/`run` release only the apps chosen with --consumer, right after their parent role's pair; without it the 8-app release is unchanged.
+# agent-scan (E5) runs `--role=crawler --consumer=agent-scan` on M3 only (its other host is Oracle, outside Dokploy).
 CONSUMER_APPS = {
     'ai1-consumer-mini': ('', '', MINI, 'worker'),
     'ai1-consumer-m3': ('', '', M3, 'worker'),
     'ai2-consumer-mini': ('', '', MINI, 'worker'),
     'ai2-consumer-m3': ('', '', M3, 'worker'),
+    'agent-scan-consumer-m3': ('', '', M3, 'worker'),
 }
+# Consumer name -> parent role (lib/runtime/consumer-registry.ts). Its apps run that role's code, so they follow the role's pair and precede its gate.
+CONSUMER_ROLES = {'ai1': 'reviewer', 'ai2': 'reviewer', 'agent-scan': 'crawler'}
 
 
 def app_metadata(short):
@@ -69,17 +73,27 @@ def app_metadata(short):
 
 
 def consumer_apps(consumers):
-    """Apps of the chosen consumers, standby host first; any unregistered app is refused before Keychain or Dokploy."""
-    selected = tuple(f'{consumer}-consumer-{host}' for consumer in consumers for host in ('mini', 'm3'))
+    """Apps of the chosen consumers on their listed hosts, standby host first; any unregistered app is refused before Keychain or Dokploy."""
+    selected = tuple(f'{consumer}-consumer-{host}' for consumer in consumers for host in ('mini', 'm3')
+                     if f'{consumer}-consumer-{host}' in CONSUMER_APPS)
     for short in selected:
         app_metadata(short)
     return selected
 
 
+def consumer_role(short):
+    return CONSUMER_ROLES[short.rsplit('-consumer-', 1)[0]]
+
+
 def release_order(consumers=()):
-    """Image release order: chosen consumer apps follow the reviewer pair; with none it is exactly ORDER."""
-    split = ORDER.index('reviewer-m3') + 1
-    return ORDER[:split] + tuple(consumers) + ORDER[split:]
+    """Image release order: chosen consumer apps follow their parent role's pair; with none it is exactly ORDER."""
+    order = []
+    for short in ORDER:
+        order.append(short)
+        role, _, host = short.rpartition('-')
+        if host == 'm3':
+            order += [consumer for consumer in consumers if consumer_role(consumer) == role]
+    return tuple(order)
 
 
 IMAGE_PREFIX = {
@@ -686,8 +700,8 @@ def deploy(client, target, token, state, snapshot, consumers=()):
     print(json.dumps({'snapshot': snapshot, 'preflight': 'passed'}), flush=True)
     try:
         for role in ('publisher', 'reviewer', 'crawler'):
-            # Chosen consumer apps run reviewer code, so they follow the reviewer pair and precede its gate.
-            for short in (role + '-mini', role + '-m3') + (tuple(consumers) if role == 'reviewer' else ()):
+            # Chosen consumer apps run their parent role's code, so they follow that pair and precede its gate.
+            for short in (role + '-mini', role + '-m3') + tuple(app for app in consumers if consumer_role(app) == role):
                 print(json.dumps(stage_and_deploy(client, short, target, token,
                                                   state['previous'])), flush=True)
             print(json.dumps(monitor_gate(client, role)), flush=True)
@@ -833,8 +847,8 @@ def main(argv=None):
     parser.add_argument('--web-image')
     parser.add_argument('--snapshot', help='required for run/restore; absolute path outside Git checkout')
     parser.add_argument('--app', choices=ORDER + tuple(CONSUMER_APPS), help='app to restore from the snapshot')
-    parser.add_argument('--consumer', action='append', choices=('ai1', 'ai2'), default=[],
-                        help='plan/run: also release this registered consumer pair right after the reviewer pair')
+    parser.add_argument('--consumer', action='append', choices=tuple(CONSUMER_ROLES), default=[],
+                        help="plan/run: also release this registered consumer's apps right after its parent role's pair")
     parser.add_argument('--migration-verified', action='store_true',
                         help='assert any DB migration/schema change was applied before rollout; the helper then also '
                              'reads the production migration journal (read-only) and refuses if it is behind or unreadable')

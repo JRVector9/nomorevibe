@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ThroughputSnapshot } from '@/lib/operations/throughput-model';
 import type { ConsumerName } from '@/lib/runtime/consumer-registry';
 
-// B0: 등록부에 시험용 consumer 하나(fixture-scan, 부모 crawler)를 더해 일반화한 경로를 본다. 실제 등록부는 ai1·ai2 만 갖는다.
+// B0: 등록부에 시험용 consumer 하나(fixture-scan, 부모 crawler)를 더해 일반화한 경로를 본다. 실제 등록부는 ai1·ai2·agent-scan(E5)을 갖는다.
 vi.mock('@/lib/runtime/consumer-registry', async load => {
   const actual = await load<typeof import('@/lib/runtime/consumer-registry')>();
   const CONSUMERS = { ...actual.CONSUMERS, 'fixture-scan': { role: 'crawler', command: ['scripts/fixture-scan-consumer.ts'], workerMax: 2 } };
@@ -45,8 +45,12 @@ it('declares a registered consumer pair under its parent role with the registry 
 });
 it('rejects unknown, duplicated or AI rosters in the general consumer field', () => {
   // ai1·ai2 는 옛 칸(reviewerConsumers)에만 선언한다 — 두 칸으로 같은 자리를 두 번 세지 않는다
-  for (const consumers of [['agent-scan'], ['fixture-scan', 'fixture-scan'], ['ai1'], ['legacy'], ['crawler'], [null], 'fixture-scan'])
+  for (const consumers of [['unregistered-scan'], ['fixture-scan', 'fixture-scan'], ['ai1'], ['legacy'], ['crawler'], [null], 'fixture-scan'])
     expect(HostDbBudgetSchema.safeParse({ ...policy, consumers }).success).toBe(false);
+  // E5 가 등록한 실제 consumer 는 일반 칸에 선언한다(부모 crawler, 자식 pool 3)
+  expect(hostDbBudgetCatalog({ ...policy, consumers: ['agent-scan'] }).processes).toEqual([
+    { kind: 'role-parent', role: 'crawler', count: 1, primaryMax: 1, readMax: 0, consumer: 'agent-scan' },
+    { kind: 'worker', role: 'crawler', count: 1, primaryMax: 3, readMax: 0, consumer: 'agent-scan' }]);
 });
 it('matches parent and child entries only for the exact consumer and derives the child kind', () => {
   const env = environment();
@@ -75,7 +79,9 @@ it('runs only the registry command under the registry parent role and routes its
   expect(supervisorCommand('crawler', { consumer: FIXTURE, once: true })).toEqual(['scripts/fixture-scan-consumer.ts', '--once']);
   expect(supervisorCommand('crawler', { consumer: FIXTURE })).toEqual(['scripts/fixture-scan-consumer.ts']);
   expect(() => supervisorCommand('reviewer', { consumer: FIXTURE })).toThrow('invalid_item_consumer_role');
-  expect(() => supervisorCommand('crawler', { consumer: 'agent-scan' as ConsumerName })).toThrow('invalid_item_consumer_role');
+  expect(() => supervisorCommand('crawler', { consumer: 'unregistered-scan' as ConsumerName })).toThrow('invalid_item_consumer_role');
+  expect(supervisorCommand('crawler', { consumer: 'agent-scan' })).toEqual(['scripts/agent-scan-consumer.ts']);
+  expect(() => supervisorCommand('reviewer', { consumer: 'agent-scan' })).toThrow('invalid_item_consumer_role');
   const env = { SERVICE_INSTANCE_ID: 'fixture-scan-consumer-oracle' };
   expect(consumerHealthPath(env)).toBe('/tmp/nomorevibe-fixture-scan-consumer-health.json');
   expect(supervisorHealthPath({ consumer: FIXTURE }, env)).toBe('/tmp/nomorevibe-fixture-scan-consumer-health.json');

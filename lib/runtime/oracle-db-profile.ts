@@ -103,7 +103,27 @@ export type OracleConsumerDbProfile = { principal: string; profile: OracleDbProf
 const UPTIME_CLAIM_WRITE = ['state', 'epoch', 'control_epoch', 'token', 'owner_instance_id', 'owner_boot_id', 'host', 'host_class', 'lease_until',
   'claimed_at', 'claim_slug', 'claim_url', 'origin', 'claim_slot', 'result_started_at', 'result_observed_at', 'result_kind', 'result_status',
   'result_latency_ms', 'submitted_at', 'updated_at'] as const;
+// agent_repository_claims 에서 consumer 가 바꾸는 열: claim(소유 묶음·epoch)·기록(결과·시계·실패 묶음)·포기(소유 묶음·retry_after).
+// 행 만들기와 priority·requires_daily·state 는 큐 채우기(M3 컨트롤러, job lease) 몫이다 — INSERT 도 그 열 UPDATE 도 없다.
+const AGENT_CLAIM_STATE = ['token', 'instance_id', 'boot_id', 'epoch', 'control_epoch', 'binding_hash', 'claimed_at', 'lease_until', 'due_at',
+  'retry_after', 'failure_streak', 'first_failure_at', 'last_error_code', 'last_outcome', 'last_finished_at', 'updated_at'] as const;
+// 스캔 upsert 의 ON CONFLICT DO UPDATE 가 쓰는 열(lib/domain/evidence/agents/repository.ts writeRepositoryAgentScanIn)
+const AGENT_SCAN_STATE = ['coverage', 'state', 'cursor', 'request_count', 'file_count', 'started_at', 'completed_at', 'last_error_code',
+  'next_attempt_at'] as const;
 export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
+  // 제작 근거 스캔(E5): claim·스캔 기록·포기와 App 전용 GitHub 수집(설치 토큰·한도 관측·쿨다운)만 한다. 큐 채우기·제품 연결·후보 풀기는
+  // M3 컨트롤러가 한다 — products·crawl_candidates·jobs·pipeline_item_leases·개인 토큰 표(github_collector_accounts)·AI·HTTP 권한이 없다.
+  'agent-scan': { principal: 'nomorevibe_oracle_agent_scan', profile: { statementTimeout: '10s',
+    sequences: ['agent_repository_scans_id_seq', 'agent_repository_observations_id_seq'],
+    tables: { dr_writer_fence: lock('id'), pipeline_stage_modes: lock('stage'), agent_scan_control: lock('id'),
+      agent_repository_claims: { select: true, update: AGENT_CLAIM_STATE },
+      agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
+      agent_repository_observations: { select: true, insert: true, delete: true },
+      crawl_discovery_evidence: read, crawl_settings: read,
+      github_collector_apps: { select: true, update: ['core_quota', 'quota_observed_at'] },
+      // 키 범위로 줄일 수 없다(웹 로그인 제한 키와 같은 표) — 남은 위험(설계 R13). GitHub 쿨다운은 INSERT·reset_at 갱신만 한다
+      rate_limits: { select: true, insert: true, update: ['reset_at'] },
+      operations_observations: observationsWrite } } },
   // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
   uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
     tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },

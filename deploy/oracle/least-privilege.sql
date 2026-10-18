@@ -191,6 +191,35 @@ GRANT SELECT ON TABLE public.product_translations TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.text_translations TO nomorevibe_oracle_attest;
 GRANT SELECT ON TABLE public.uptime_observations TO nomorevibe_oracle_attest;
 
+-- consumer agent-scan
+CREATE ROLE nomorevibe_oracle_agent_scan LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :agent_scan_connections;
+ALTER ROLE nomorevibe_oracle_agent_scan SET statement_timeout = '10s';
+ALTER ROLE nomorevibe_oracle_agent_scan SET lock_timeout = '5s';
+ALTER ROLE nomorevibe_oracle_agent_scan SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE nomorevibe_oracle_agent_scan SET timezone = 'UTC';
+GRANT USAGE ON SCHEMA public TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.agent_repository_claims TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (token, instance_id, boot_id, epoch, control_epoch, binding_hash, claimed_at, lease_until, due_at, retry_after, failure_streak, first_failure_at, last_error_code, last_outcome, last_finished_at, updated_at) ON TABLE public.agent_repository_claims TO nomorevibe_oracle_agent_scan;
+GRANT SELECT, INSERT, DELETE ON TABLE public.agent_repository_observations TO nomorevibe_oracle_agent_scan;
+GRANT SELECT, INSERT ON TABLE public.agent_repository_scans TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (coverage, state, cursor, request_count, file_count, started_at, completed_at, last_error_code, next_attempt_at) ON TABLE public.agent_repository_scans TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.agent_scan_control TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (id) ON TABLE public.agent_scan_control TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.crawl_discovery_evidence TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.crawl_settings TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (id) ON TABLE public.dr_writer_fence TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.github_collector_apps TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (core_quota, quota_observed_at) ON TABLE public.github_collector_apps TO nomorevibe_oracle_agent_scan;
+GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (value, observed_at) ON TABLE public.operations_observations TO nomorevibe_oracle_agent_scan;
+GRANT SELECT ON TABLE public.pipeline_stage_modes TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (stage) ON TABLE public.pipeline_stage_modes TO nomorevibe_oracle_agent_scan;
+GRANT SELECT, INSERT ON TABLE public.rate_limits TO nomorevibe_oracle_agent_scan;
+GRANT UPDATE (reset_at) ON TABLE public.rate_limits TO nomorevibe_oracle_agent_scan;
+GRANT USAGE ON SEQUENCE public.agent_repository_scans_id_seq TO nomorevibe_oracle_agent_scan;
+GRANT USAGE ON SEQUENCE public.agent_repository_observations_id_seq TO nomorevibe_oracle_agent_scan;
+
 -- consumer uptime
 CREATE ROLE nomorevibe_oracle_uptime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :uptime_connections;
 ALTER ROLE nomorevibe_oracle_uptime SET statement_timeout = '10s';
