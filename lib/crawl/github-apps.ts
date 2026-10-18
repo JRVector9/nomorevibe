@@ -2,9 +2,10 @@ import { eq } from "drizzle-orm";
 import { appJwt } from "@/lib/github/app-jwt";
 import { db } from "@/lib/db";
 import { githubCollectorApps, operationsAudit } from "@/lib/db/schema";
+import { logger } from "@/lib/observability/logger";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { seal, unseal } from "@/lib/operations/credential-vault";
-import { collectorSecret, parseCoreQuota, type CoreQuota } from "./github-secret";
+import { collectorScope, collectorSecret, parseCoreQuota, type CoreQuota } from "./github-secret";
 
 export { appJwt } from "@/lib/github/app-jwt";
 
@@ -21,6 +22,8 @@ const HEADERS = { Accept: "application/vnd.github+json", "user-agent": "NoMoreVi
 const REFRESH_BEFORE_MS = 5 * 60_000;
 /** 받기에 실패한 설치는 이만큼 쉬었다가 다시 받는다 — 요청마다 실패하며 GitHub 를 두드리지 않게 */
 const FAILURE_BACKOFF_MS = 5 * 60_000;
+/** 허용 목록의 설치가 꺼져 있다는 경보는 이 간격에 한 번 — 요청마다 불리므로 */
+const SCOPE_ALERT_INTERVAL_MS = 60_000;
 
 export type AppIdentity = { appId: number; appSlug: string; installationId: number; accountLogin: string; core: CoreQuota | null };
 
@@ -118,15 +121,28 @@ export async function listGitHubCollectorApps() {
 
 /** 프로세스 안의 설치 토큰 — 설치마다 하나. failedUntil 이면 그때까지 받지 않는다 */
 const cache = new Map<number, { token: string; expiresAt: number } | { failedUntil: number }>();
+let scopeAlertAt = 0;
 
-/** 켜 둔 App 마다 쓸 수 있는 설치 토큰 — github-accounts.ts collectorTokens 가 개인 토큰 뒤에 붙인다. 받지 못한 설치는 빼고 돌려준다 */
+/**
+ * 켜 둔 App 마다 쓸 수 있는 설치 토큰 — github-accounts.ts collectorTokens 가 개인 토큰 뒤에 붙인다. 받지 못한 설치는 빼고 돌려준다.
+ * 이 서버의 설치 허용·제외 목록(collectorScope)이 있으면 그 안의 설치만 받는다 — 밖의 설치는 토큰도 만들지 않는다.
+ */
 export async function appCollectorTokens(secret: string, now = Date.now(), options: { deadlineAt?: number; signal?: AbortSignal } = {}): Promise<{ token: string; installationId: number; login: string }[]> {
   if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
+  const scope = collectorScope();
   // Optional token minting must leave time for the caller's GraphQL dispatch.
   const mintDeadline = options.deadlineAt === undefined ? undefined : options.deadlineAt - 5_000;
-  const rows = await db.select({ installationId: githubCollectorApps.installationId, appId: githubCollectorApps.appId, appSlug: githubCollectorApps.appSlug,
+  const enabled = await db.select({ installationId: githubCollectorApps.installationId, appId: githubCollectorApps.appId, appSlug: githubCollectorApps.appSlug,
     encryptedPrivateKey: githubCollectorApps.encryptedPrivateKey }).from(githubCollectorApps).where(eq(githubCollectorApps.enabled, true));
   if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
+  const rows = enabled.filter(row => (!scope?.onlyInstallations || scope.onlyInstallations.includes(row.installationId))
+    && !scope?.excludedInstallations?.includes(row.installationId));
+  // 허용 목록에 넣었는데 켜져 있지 않은(등록 안 됐거나 '수집에서 제외'한) 설치는 조용히 빠지지 않게 남긴다
+  const missing = scope?.onlyInstallations?.filter(id => !rows.some(row => row.installationId === id)) ?? [];
+  if (missing.length > 0 && now - scopeAlertAt >= SCOPE_ALERT_INTERVAL_MS) {
+    scopeAlertAt = now;
+    (rows.length === 0 ? logger.error : logger.warn)("github.app_scope_installation_disabled", { installationIds: missing, usable: rows.length });
+  }
   const tokens: { token: string; installationId: number; login: string }[] = [];
   for (const row of rows) {
     if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) break;
@@ -149,10 +165,14 @@ export async function appCollectorTokens(secret: string, now = Date.now(), optio
       if (mintDeadline !== undefined && error instanceof Error && (error.message === "github_request_deadline"
         || mintDeadline <= Date.now() && (error.name === "TimeoutError" || error.name === "AbortError"))) continue;
       cache.set(row.installationId, { failedUntil: now + FAILURE_BACKOFF_MS });
+      // 5분 쉬는 동안 이 설치 몫이 빠진다 — 사유 코드만 남긴다(키·토큰·응답 원문은 남기지 않는다)
+      logger.warn("github.app_token_unavailable", { installationId: row.installationId,
+        reason: error instanceof Error && error.message.startsWith("github_") ? error.message : error instanceof Error ? error.name : "unknown",
+        retryAt: new Date(now + FAILURE_BACKOFF_MS).toISOString() });
     }
   }
   return tokens;
 }
 
 /** 테스트용 — 프로세스 안의 설치 토큰을 비운다 */
-export function clearAppTokenCache() { cache.clear(); }
+export function clearAppTokenCache() { cache.clear(); scopeAlertAt = 0; }

@@ -414,6 +414,26 @@ ID·공개 상태·스타 수를 확인한 500스타 이상 원본은 제품 적
 `skipped`와 `alias_of`를 기록한다. 이 검사는 같은 ID를 동시에 가져오는 경우에도 DB 잠금으로
 직렬화한다. 기존에 저장된 서로 다른 이름의 중복 원본은 자동 삭제하지 않는다.
 
+서버(프로세스)마다 쓸 수집 자격을 환경 변수로 고를 수 있다. 아무것도 넣지 않으면 위처럼
+환경 토큰·관리자 PAT·켜 둔 GitHub App 설치를 모두 쓴다.
+
+| 변수 | 값 | 뜻 |
+|---|---|---|
+| `GITHUB_COLLECTOR_SOURCES` | `env`·`accounts`·`apps`를 쉼표로 | 쓸 자격 종류. `env`=`GITHUB_TOKEN`, `accounts`=관리자 PAT, `apps`=GitHub App 설치 |
+| `GITHUB_COLLECTOR_APP_INSTALLATIONS` | 설치 ID를 쉼표로 | 이 설치만 쓴다 |
+| `GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS` | 설치 ID를 쉼표로 | 이 설치는 빼고 쓴다 |
+
+예: Oracle은 `GITHUB_COLLECTOR_SOURCES=apps`와 `GITHUB_COLLECTOR_APP_INSTALLATIONS=<새 설치 ID>`,
+M3는 `GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS=<새 설치 ID>`. 값이 틀리면(빈 값, 모르는 종류,
+숫자가 아닌 ID, 허용·제외를 함께 넣음, `apps` 없이 설치를 고름) 첫 GitHub 요청에서
+`github_collector_scope_invalid:<변수>`로 실패한다. 범위를 정한 서버는 `GITHUB_COLLECTOR_SECRET`이
+없을 때 환경 토큰으로 물러나지 않고 `github_collector_secret_missing`으로 실패한다(자격 종류가
+`env`뿐이면 키가 필요 없다). 허용 목록의 설치가 꺼져 있거나 등록돼 있지 않으면
+`github.app_scope_installation_disabled`, 쓸 자격이 하나도 남지 않으면 `github.collector_scope_empty`를
+에러 로그로 남기고 요청은 인증 대기로 멈춘다. 설치 토큰을 받지 못한 설치는 5분 쉬며
+`github.app_token_unavailable`(사유 코드만)을 남긴다. 한도 관측·대기는 지금처럼 토큰(설치)별이고,
+2차 레이트 리밋 대기(`github:quota:secondary:global`)만 모든 서버가 함께 쓴다.
+
 검색 신호는 두 종류다. **커밋 검색**(`Co-authored-by: Claude` 같은 트레일러)은 결과에 레포
 메타가 없어 배포 여부를 모른 채 프론티어에 넣고, 그중 상당수가 `no_homepage`로 거부된다(실측
 206건 중 122건). **레포 검색**(`topic:vibe-coding` 같은 수식어)은 결과에 `homepage`가 실려 와
