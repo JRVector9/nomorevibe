@@ -29,6 +29,24 @@ describe("임베딩 서버 부르기", () => {
     await expect(embedTexts(["글"], { ...options(hang as unknown as typeof fetch), timeoutMs: 20 })).rejects.toThrow("timeout");
   });
 
+  it.each([
+    ["중복", [{ index: 0, embedding: vector(1) }, { index: 0, embedding: vector(2) }]],
+    ["범위 밖", [{ index: 0, embedding: vector(1) }, { index: 2, embedding: vector(2) }]],
+    ["음수", [{ index: -1, embedding: vector(1) }, { index: 0, embedding: vector(2) }]],
+    ["소수", [{ index: 0.5, embedding: vector(1) }, { index: 1, embedding: vector(2) }]],
+    ["문자열", [{ index: "0", embedding: vector(1) }, { index: 1, embedding: vector(2) }]],
+    ["누락", [{ embedding: vector(1) }, { index: 1, embedding: vector(2) }]],
+    ["null 행", [null, { index: 1, embedding: vector(2) }]],
+  ])("%s index 응답은 다른 제품에 벡터를 붙이지 않고 거절한다", async (_label, rows) => {
+    await expect(embedTexts(["첫째", "둘째"], options(reply({ data: rows }))))
+      .rejects.toThrow(new EmbeddingUnavailableError("bad_response"));
+  });
+
+  it("영벡터는 성공으로 저장하거나 의미 검색에 쓰지 않는다", async () => {
+    await expect(embedTexts(["글"], options(reply({ data: [{ index: 0, embedding: vector(0) }] }))))
+      .rejects.toThrow(new EmbeddingUnavailableError("bad_vector"));
+  });
+
   it("벡터를 halfvec 리터럴로 적는다", () => {
     expect(vectorLiteral([0.5, -1, 2])).toBe("[0.5,-1,2]");
   });

@@ -133,11 +133,19 @@ export async function embedTexts(
     throw new EmbeddingUnavailableError(timeout.aborted ? "timeout" : "network", { cause: error });
   }
   if (!response.ok) throw new EmbeddingUnavailableError(`http_${response.status}`);
-  const body = await response.json().catch(() => null) as { data?: { index: number; embedding: number[] }[] } | null;
-  const rows = body?.data;
-  if (!Array.isArray(rows) || rows.length !== texts.length) throw new EmbeddingUnavailableError("bad_response");
-  const vectors = [...rows].sort((a, b) => a.index - b.index).map((row) => row.embedding);
-  if (vectors.some((v) => !Array.isArray(v) || v.length !== EMBEDDING_DIMENSIONS || !v.every(Number.isFinite))) {
+  const body: unknown = await response.json().catch(() => null);
+  const rows = body && typeof body === "object" && "data" in body ? body.data : undefined;
+  if (!Array.isArray(rows) || rows.length !== texts.length
+    || rows.some((row) => !row || typeof row !== "object" || !Number.isInteger(row.index))) {
+    throw new EmbeddingUnavailableError("bad_response");
+  }
+  const ordered = [...rows].sort((a, b) => a.index - b.index);
+  // 개수만 같아도 index 가 중복되거나 빠지면 다른 제품의 벡터를 저장하게 된다.
+  if (ordered.some((row, index) => row.index !== index)) throw new EmbeddingUnavailableError("bad_response");
+  const vectors = ordered.map((row) => row.embedding);
+  // 영벡터는 코사인 검색에 쓸 수 없다. 저장 성공으로 처리하면 글이 바뀔 때까지 재생성하지도 않는다.
+  if (vectors.some((v) => !Array.isArray(v) || v.length !== EMBEDDING_DIMENSIONS || !v.every(Number.isFinite)
+    || !v.some((value: number) => value !== 0))) {
     throw new EmbeddingUnavailableError("bad_vector");
   }
   return vectors;

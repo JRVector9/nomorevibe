@@ -86,6 +86,29 @@ describe("제품 벡터 채우기", () => {
     expect(row.model).toBe(EMBEDDING_MODEL);
   });
 
+  it("키워드 생성과 검수 삭제가 문서 해시를 바꾸고 해당 제품의 벡터만 갱신한다", async () => {
+    await product("keywords-change", "seeded");
+    await product("keywords-stay", "verified");
+    await refreshProductEmbeddings(ctx, { embed: fakeEmbed().embed });
+    const [target] = await db.select({ id: products.id }).from(products).where(eq(products.slug, "keywords-change"));
+    const before = await db.select().from(productEmbeddings).where(eq(productEmbeddings.productId, target.id));
+
+    await db.update(products).set({ searchKeywords: "meeting notes · 회의록 정리 · wrong keyword" })
+      .where(eq(products.id, target.id));
+    const generated = fakeEmbed();
+    await refreshProductEmbeddings(ctx, { embed: generated.embed });
+    expect(generated.seen).toEqual([["keywords-change\nkeywords-change 소개\nmeeting notes · 회의록 정리 · wrong keyword"]]);
+    const added = await db.select().from(productEmbeddings).where(eq(productEmbeddings.productId, target.id));
+    expect(added[0].textHash).not.toBe(before[0].textHash);
+
+    await db.update(products).set({ searchKeywords: "meeting notes · 회의록 정리" }).where(eq(products.id, target.id));
+    const verified = fakeEmbed();
+    await refreshProductEmbeddings(ctx, { embed: verified.embed });
+    expect(verified.seen).toEqual([["keywords-change\nkeywords-change 소개\nmeeting notes · 회의록 정리"]]);
+    const removed = await db.select().from(productEmbeddings).where(eq(productEmbeddings.productId, target.id));
+    expect(removed[0].textHash).not.toBe(added[0].textHash);
+  });
+
   it("임베딩 서버가 없으면 실패하지 않고 다음 틱으로 넘긴다", async () => {
     await product("waiting", "seeded");
     const embed = vi.fn(async () => { throw new EmbeddingUnavailableError("timeout"); });
