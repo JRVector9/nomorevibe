@@ -137,7 +137,11 @@ it('appends registered consumer sections to the operator SQL and keeps every reg
   ORACLE_CONSUMER_DB_PROFILES['fixture-scan'] = FIXTURE;
   try {
     const rendered = renderOracleDbGrantSql();
-    expect(rendered.startsWith(base.slice(0, base.lastIndexOf('\nCOMMIT;')))).toBe(true);
+    // 이름 순서 자리에 그 절만 끼워 넣는다 — 역할 절과 이미 등록된 consumer 절은 바이트 그대로다
+    const section = `\n${['', '-- consumer fixture-scan', ...oracleConsumerGrantStatements(FIXTURE, { connectionLimit: ':fixture_scan_connections' })
+      .map(statement => `${statement};`)].join('\n')}`;
+    expect(rendered.split(section)).toHaveLength(2);
+    expect(rendered.replace(section, '')).toBe(base);
     expect(rendered).toContain('\n-- consumer fixture-scan\nCREATE ROLE nomorevibe_oracle_fixture_scan LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :fixture_scan_connections;\n');
     expect(rendered).toContain("ALTER ROLE nomorevibe_oracle_fixture_scan SET timezone = 'UTC';");
     expect(rendered.endsWith('\nCOMMIT;\n')).toBe(true);

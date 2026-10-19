@@ -550,6 +550,49 @@ class ConsumerLauncherGateTests(unittest.TestCase):
         self.assertNotEqual(both.returncode, 0)
 
 
+class UptimeConsumerLauncherTests(unittest.TestCase):
+    """U2: the shipped uptime consumer starts only the maintenance supervisor with --consumer=uptime from its own budget slot."""
+    setUp, tearDown, budget, fetch, runner = (LauncherGateTests.setUp, LauncherGateTests.tearDown, LauncherGateTests.budget,
+                                              LauncherGateTests.fetch, LauncherGateTests.runner)
+    consumer_gate = ConsumerLauncherGateTests.consumer_gate
+
+    def use_uptime(self, role='maintenance'):
+        value = json.loads(self.budget(role))
+        value['policy'].update({'roles': [], 'consumers': ['uptime']})
+        value['process'].update({'consumer': 'uptime'})
+        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-consumer@uptime.service\n')
+        self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': 'uptime-consumer-oracle', 'WORKER_ROLE': role, 'TZ': 'UTC',
+                    'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': json.dumps(value)}
+        report_value = consumer_report('uptime', 'maintenance', instanceId='uptime-consumer-oracle')
+        self.preflight = (78, json.dumps(report_value).encode())
+
+    def test_shipped_uptime_consumer_runs_the_maintenance_supervisor(self):
+        self.assertEqual(launch.CONSUMERS['uptime'], 'maintenance')
+        self.use_uptime()
+        (node, argv), _ = self.consumer_gate('uptime')
+        self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=maintenance', '--consumer=uptime'])
+        self.assertEqual(self.runs[-1][0][-1], '--consumer=uptime')
+
+    def test_uptime_consumer_refuses_another_parent_role_or_report(self):
+        self.use_uptime('product-health')
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate('uptime')
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('budget', 'host_db_budget_undeclared'))
+        self.use_uptime()
+        self.preflight = (78, json.dumps(consumer_report('uptime', 'product-health', instanceId='uptime-consumer-oracle')).encode())
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate('uptime')
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('preflight', 'preflight_report_mismatch'))
+
+    def test_install_writes_the_uptime_placeholder_with_its_parent_role(self):
+        root = self.root / 'install'
+        root.mkdir()
+        installer.install_units(root, 50, 1024 ** 3, 128, [], consumers=['uptime'])
+        text = (root / 'etc/nomorevibe-core/consumer-uptime.env').read_text()
+        self.assertIn('WORKER_ROLE=maintenance\n', text)
+        self.assertIn('HTTP_ORIGIN_PERMITS=0\n', text)
+
+
 class ReleaseContractLauncherFilesTests(unittest.TestCase):
     def test_only_fixed_launcher_modules_are_release_payload(self):
         for name in contract.LAUNCHER_FILES:

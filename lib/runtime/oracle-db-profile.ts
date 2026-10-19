@@ -99,7 +99,16 @@ export const ORACLE_REFRESH_PROFILE: Profile = { statementTimeout: '10s', sequen
  * pins the role default timezone to UTC: operational timestamp columns are timezone-less UTC (design R8).
  */
 export type OracleConsumerDbProfile = { principal: string; profile: OracleDbProfile };
-export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {};
+// split-v1 claim·제출·되돌림(lib/domain/products/uptime-claims.ts)이 쓰는 uptime_claims 열. due·confirm·affinity·충돌·적용 기록은 home 적용기만 쓴다
+const UPTIME_CLAIM_WRITE = ['state', 'epoch', 'control_epoch', 'token', 'owner_instance_id', 'owner_boot_id', 'host', 'host_class', 'lease_until',
+  'claimed_at', 'claim_slug', 'claim_url', 'origin', 'claim_slot', 'result_started_at', 'result_observed_at', 'result_kind', 'result_status',
+  'result_latency_ms', 'submitted_at', 'updated_at'] as const;
+export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
+  // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
+  uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
+    tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },
+      uptime_host_breakers: read, products: read, product_health: read, operations_observations: observationsWrite } } },
+};
 export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
 
 export type ConnectionLimit = number | `:${string}`;

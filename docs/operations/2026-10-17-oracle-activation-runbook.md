@@ -157,7 +157,7 @@ readlink /opt/nomorevibe-core/current
 
 ## 2. 운영 DB principal 생성과 권한 readback
 
-- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)를 만든다. D1이 A면 refresh principal도 만든다.
+- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)와 consumer 계정(uptime: `nomorevibe_oracle_uptime`, split claim·제출만)을 만든다. D1이 A면 refresh principal도 만든다.
 - **명령:** 관리자 연결은 URL에 비밀번호를 넣지 않고 `~/.pgpass`(0600)나 프롬프트를 쓴다. 관리자 자격 보관 위치는 **확인 필요**다. SQL 파일은 한 트랜잭션이다.
 
 ```bash
@@ -168,6 +168,7 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v official_news_connections="$OFFICIAL_NEWS_CONNECTIONS" \
   -v scheduler_connections="$SCHEDULER_CONNECTIONS" \
   -v attest_connections="$ATTEST_CONNECTIONS" \
+  -v uptime_connections="$UPTIME_CONNECTIONS" \
   -f "$SRC/deploy/oracle/least-privilege.sql"
 # D1 이 A 일 때만
 psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/deploy/oracle/refresh-principal.sql"
@@ -183,6 +184,7 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/
 \password nomorevibe_oracle_scheduler
 \password nomorevibe_oracle_attest
 \password nomorevibe_oracle_refresh
+\password nomorevibe_oracle_uptime
 ```
 
 - **비밀번호 보관 위치(값은 쓰지 않는다):**
