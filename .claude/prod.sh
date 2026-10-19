@@ -13,8 +13,12 @@
 #   prod.sh copy-env <이름> <원본앱> <대상앱>...
 #                            환경변수 한 줄을 앱 사이에 그대로 옮긴다(값은 찍지 않는다).
 #                            같은 이름이 대상에 이미 있으면 그 줄만 바꾼다. 옮긴 뒤 배포는 따로 한다.
+#   prod.sh set-release <SHA> <앱>...
+#                            git 빌드 앱(text text-mini maintenance scheduler)의 RELEASE_TAG 한 줄만
+#                            <SHA> 로 바꾼다. <SHA> 는 origin/main 과 같아야 한다. 바꾼 뒤 배포는 따로 한다.
+#                            (2026-10-17 사용자 허용으로 추가 — 역할 주·예비 교체 절차의 RELEASE_TAG 단계)
 #
-# 앱 이름: web-m3 web-mini crawler reviewer publisher scheduler maintenance connect-agent text
+# 앱 이름: web-m3 web-mini crawler reviewer publisher scheduler maintenance connect-agent text text-mini
 # mini 역할 예비 5개는 이 수동 목록에 없으며 공통 배포 스크립트/운영 절차가 관리한다.
 # 키는 키체인에서만 읽고 출력하지 않는다. 아래 목록에 없는 앱은 거부한다.
 set -euo pipefail
@@ -33,6 +37,8 @@ app_id() {
     connect-agent) echo "xJK6CoRUOs_bpVVNmJDBF" ;;
     # 2026-09-21 다른 세션이 만든 text 워커(사유 번역·소개 짓기·검색 키워드). appName nomorevibe-text-m3
     text) echo "Pi0loosJrKsse_UQ0mln9" ;;
+    # 2026-10-17 추가: mini 의 text 역할 예비(nomorevibe-text-standby-mini). 주보다 먼저 같은 RELEASE_TAG 로 올린다
+    text-mini) echo "YwCZROZf_V0qgI1coMugP" ;;
     *) echo "알 수 없는 앱: $1" >&2; exit 2 ;;
   esac
 }
@@ -124,6 +130,39 @@ case "$cmd" in
         + (([.issues, .error.issues, (.error.json.data.zodError.fieldErrors | if . then to_entries | map(.key) else null end)]
             | map(select(.)) | .[0] // []) | if length > 0 then " / 항목: " + ((. | map(if type=="object" then ((.path // []) | join(".")) else tostring end)) | join(", ")) else "" end)' 2>/dev/null | cut -c1-200 || true)"
       echo "$target $name $([ "$had" -gt 0 ] && echo 바꿈 || echo 넣음) → HTTP $code${why:+ ($why)} (줄 ${after}개)"
+    done
+    ;;
+  set-release)
+    # 역할 주·예비 교체(runbook 4단계)의 RELEASE_TAG 단계만 한다. 다른 줄과 빌드 설정은 그대로 돌려준다.
+    sha="${1:-}"; shift || true
+    [ -n "$sha" ] && [ $# -gt 0 ] || { echo "사용법: set-release <SHA> <앱>..." >&2; exit 2; }
+    [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "SHA 는 40자리 소문자 16진수여야 합니다" >&2; exit 2; }
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    git -C "$root" fetch -q origin main
+    [ "$sha" = "$(git -C "$root" rev-parse origin/main)" ] || { echo "SHA 가 origin/main 과 다릅니다" >&2; exit 2; }
+    # 첫 앱을 바꾸기 전에 전체 대상 목록을 검증한다.
+    for target in "$@"; do
+      case "$target" in text|text-mini|maintenance|scheduler) ;; *) echo "$target: git 빌드 앱만 바꿀 수 있습니다" >&2; exit 2 ;; esac
+    done
+    KEY="$(key)"
+    for target in "$@"; do
+      id="$(app_id "$target")"
+      app="$(curl -sf "$API/application.one?applicationId=$id" -H "x-api-key: $KEY")"
+      cur="$(printf '%s' "$app" | jq -r '.env // ""')"
+      had="$(printf '%s\n' "$cur" | grep -c '^RELEASE_TAG=' || true)"
+      # 기존 한 줄을 바꾸는 것만 한다 — 없거나 둘 이상이면 설정이 예상과 다르므로 저장하지 않는다
+      [ "$had" -eq 1 ] || { echo "$target 저장 안 함: RELEASE_TAG 줄이 ${had}개입니다" >&2; exit 3; }
+      next="$(printf '%s\n' "$cur" | sed "s/^RELEASE_TAG=.*/RELEASE_TAG=$sha/")"
+      before="$(printf '%s\n' "$cur" | grep -c . || true)"
+      after="$(printf '%s\n' "$next" | grep -c . || true)"
+      [ "$after" -eq "$before" ] || { echo "$target 저장 안 함: 줄이 $before → $after 로 바뀌었습니다" >&2; exit 3; }
+      body="$(printf '%s' "$app" | jq --arg id "$id" --arg env "$next" \
+        '{applicationId:$id, env:$env, buildSecrets:(.buildSecrets // ""), createEnvFile:(.createEnvFile // false), buildArgs:(.buildArgs // "")}' \
+        | curl -s -w '\n%{http_code}' -X POST "$API/application.saveEnvironment" \
+            -H "x-api-key: $KEY" -H "Content-Type: application/json" -d @-)"
+      code="$(printf '%s' "$body" | tail -1)"
+      echo "$target RELEASE_TAG → ${sha:0:8} HTTP $code (줄 ${after}개)"
+      [[ "$code" =~ ^2[0-9][0-9]$ ]] || exit 4
     done
     ;;
   migrate)
