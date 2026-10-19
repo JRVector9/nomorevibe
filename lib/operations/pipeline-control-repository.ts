@@ -2,6 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { httpOriginControl } from "@/lib/db/http-origin-schema";
+import { uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { agentScanControl, jobBatchControl, modelCapacityControl, operationsAudit, pipelineStageModes } from "@/lib/db/schema";
 import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, beginAgentScanDrain, bumpAgentScanContract,
   completeAgentScanTransition } from "@/lib/domain/evidence/agents/claim-control";
@@ -80,6 +81,7 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
                   greatest(due_at, retry_after) <= c.at AT TIME ZONE 'UTC' AND (token IS NULL OR lease_until <= c.at AT TIME ZONE 'UTC') AS ready
                 FROM agent_repository_claims WHERE state = 'active') r GROUP BY r.priority) q), '[]'::jsonb))
         FROM agent_scan_control a WHERE a.id = 1),
+      'uptimeSplitMode', (SELECT mode FROM uptime_split_control WHERE id = 1),
       'recentInstances', coalesce((SELECT jsonb_agg(DISTINCT split_part(o.key, ':', 3) ORDER BY split_part(o.key, ':', 3))
         FROM operations_observations o WHERE o.key LIKE 'service:%:%' AND o.key NOT LIKE 'service:scheduler:%'
           AND o.observed_at >= localtimestamp - interval '24 hours'), '[]'::jsonb),
@@ -100,11 +102,16 @@ export function readControlSnapshot(database: Database): Promise<ControlSnapshot
 
 class Rejected extends Error { constructor(readonly plan: ControlPlan, readonly snapshot: ControlSnapshot) { super("pipeline_control_rejected"); } }
 
-/** 판정 대상 control 행. fence 다음 첫 control lock이며 전환 함수가 같은 행을 다시 잠근다(같은 TX라 대기 없음). */
+/**
+ * 판정 대상 control 행. fence 다음 첫 control lock이며 전환 함수가 같은 행을 다시 잠근다(같은 TX라 대기 없음).
+ * batch 는 그 앞에 uptime_split_control 을 SHARE 로 잡는다 — 판정(claims 면 versioned 쪽 전환 거절)이 commit 까지 유효하다.
+ * uptime-split 제어 CLI 는 split(update) → job_batch_control(share) 순서로 잡으므로 순서가 같아 교착하지 않고, 동시 전환은 뒤쪽이 앞쪽 commit 을 보고 거절한다.
+ */
 async function lockTarget(tx: Tx, command: TransitionCommand): Promise<void> {
   const stage = (command.options as ControlOptions).stage;
   if (command.area === "stage") await tx.select({ stage: pipelineStageModes.stage }).from(pipelineStageModes).where(eq(pipelineStageModes.stage, stage)).for("update");
   else {
+    if (command.area === "batch") await tx.select({ id: uptimeSplitControl.id }).from(uptimeSplitControl).where(eq(uptimeSplitControl.id, 1)).for("share");
     const table = { capacity: modelCapacityControl, http: httpOriginControl, batch: jobBatchControl, "agent-scan": agentScanControl }[command.area];
     await tx.select({ id: table.id }).from(table).where(eq(table.id, 1)).for("update");
   }

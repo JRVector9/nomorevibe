@@ -153,6 +153,15 @@ describe("decideSplitResults — design §3.2 table", () => {
   ])("row 1 source_unconfigured: %s", (_name, claim) => {
     expect(one(input({ host: "oracle-osaka-smoke", claim }))).toMatchObject({ outcome: "discarded", reason: "source_unconfigured", health: null });
   });
+  it("row 1 submitted_not_probe: a submitted row written as home is never judged (only the home job's own results count)", () => {
+    const forged = { ...input({ host: "m3", kind: "network", claim: { state: "submitted" } }), submitted: true };
+    expect(one(forged)).toMatchObject({ outcome: "discarded", reason: "submitted_not_probe", health: null, raw: null,
+      claim: { dueAt: forged.claim.dueAt, lastOutcome: "submitted_not_probe", lastApplied: null } });
+    expect(one({ ...input({ host: "m3", status: 200, claim: { state: "submitted" } }), submitted: true })).toMatchObject({ outcome: "discarded" });
+    // 같은 home 결과라도 잡이 직접 연 것(own)은 센다. probe 의 제출 행은 그대로 판정한다
+    expect(one(input({ host: "m3", kind: "network" }))).toMatchObject({ outcome: "applied", reason: "split_counted" });
+    expect(one({ ...input({ host: "oracle-osaka-smoke", kind: "network" }), submitted: true })).toMatchObject({ outcome: "confirm_requested" });
+  });
   it("row 1 legacy without policy: leftover submitted rows go idle", () => {
     const batch = decideSplitResults([input({ host: "oracle-osaka-smoke" })], context({ control: { mode: "legacy", epoch: 6, policy: null, policyHash: null } }));
     expect(batch.decisions[0]).toMatchObject({ outcome: "discarded", reason: "mode_legacy" });
@@ -179,9 +188,9 @@ describe("decideSplitResults — design §3.2 table", () => {
     ["start before claim −30s", { result: { startedAt: at(-90_001) } }],
     ["observed after wall +30s", { result: { observedAt: at(30_001) } }],
     ["observed before start", { result: { startedAt: at(-40_000), observedAt: at(-41_000) } }],
-  ])("row 3 clock (%s): stale, due unchanged", (_name, shape) => {
+  ])("row 3 clock (%s): stale, due 15 minutes later (the same site is not reopened every tick)", (_name, shape) => {
     const value = input({ host: "oracle-osaka-smoke", status: 403, ...shape });
-    expect(one(value)).toMatchObject({ outcome: "stale", reason: "clock", health: null, raw: null, claim: { dueAt: value.claim.dueAt } });
+    expect(one(value)).toMatchObject({ outcome: "stale", reason: "clock", health: null, raw: null, claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS) } });
   });
   it("row 4 older: health already at or after this observation", () => {
     const observed = at(-49_000);
@@ -341,7 +350,8 @@ describe("host breaker — open·probe·close", () => {
     const rows = failures("oracle-osaka-smoke", 2, 5).map(row => ({ ...row, claim: { ...row.claim, claimedAt: at(-50_000) },
       result: { ...row.result, startedAt: at(-45_000), observedAt: at(-44_000) } }));
     const batch = decideSplitResults(rows, context({ breakers: [probing] }));
-    expect(batch.breakers[0]).toEqual({ ...probing, state: "open", openedAt: wall, probeAfter: at(20 * MIN), coolDownMs: 20 * MIN,
+    // opened_at 은 이번 열림 구간의 시작 그대로다(오래 열림 경보가 처음 연 시각부터 잰다)
+    expect(batch.breakers[0]).toEqual({ ...probing, state: "open", openedAt: at(-20 * MIN), probeAfter: at(20 * MIN), coolDownMs: 20 * MIN,
       reason: "probe_ratio", ratio: 2 / 5, probeChecks: 0, probeFailures: 0 });
     expect(batch.decisions.slice(0, 2).every(row => row.outcome === "returned")).toBe(true);
     const capped = settleUptimeBreaker({ ...probing, coolDownMs: 40 * MIN }, policy,

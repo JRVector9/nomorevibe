@@ -9,10 +9,11 @@ import type { UptimeSplitPolicy } from '@/lib/domain/products/uptime-split-polic
  * 실제 PostgreSQL 동시성·계정 권한·SIGTERM 은 tests/integration/uptime-consumer.test.ts.
  */
 const io = vi.hoisted(() => ({ read: vi.fn(), claim: vi.fn(), submit: vi.fn(), release: vi.fn(), observe: vi.fn(), fetch: vi.fn(),
-  runtime: vi.fn(), log: vi.fn() }));
+  runtime: vi.fn(), log: vi.fn(), skew: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: {}, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/domain/products/uptime-claims', async load => ({ ...await load<typeof import('@/lib/domain/products/uptime-claims')>(),
-  readUptimeSplitControl: io.read, claimUptimeProducts: io.claim, submitUptimeResults: io.submit, releaseUptimeClaims: io.release }));
+  readUptimeSplitControl: io.read, claimUptimeProducts: io.claim, submitUptimeResults: io.submit, releaseUptimeClaims: io.release,
+  measureUptimeClockSkew: io.skew }));
 vi.mock('@/lib/operations/observations', () => ({ observe: io.observe }));
 vi.mock('@/lib/net/fetch', () => ({ FETCH_TIMEOUT_MS: 10_000, safeFetch: io.fetch }));
 vi.mock('@/lib/observability/logger', () => ({ logger: { debug: io.log, info: io.log, warn: io.log, error: io.log } }));
@@ -64,6 +65,7 @@ beforeEach(() => {
   io.submit.mockImplementation(async ({ results }) => ({ kind: 'submitted', controlEpoch: 7, accepted: ids(results), lost: [] }));
   io.release.mockImplementation(async ({ claims }) => ({ kind: 'released', released: ids(claims) }));
   io.observe.mockResolvedValue(undefined);
+  io.skew.mockResolvedValue(0);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
@@ -201,6 +203,8 @@ it.each([
   ['an instance missing from the policy', control({ policy: { ...policy(), hosts: [policy().hosts[0]] } }), {}, 'source_unconfigured'],
   ['a home entry without pacing', control({ policy: { ...policy(), hosts: [policy().hosts[0],
     { host: 'm3', instanceId: ORACLE, region: 'kr-home', class: 'home' }] } }), {}, 'pacing_unconfigured'],
+  ['a home entry with pacing (home results are applied by the home job, never submitted)', control({ policy: { ...policy(), hosts: [policy().hosts[0],
+    { host: 'm3', instanceId: ORACLE, region: 'kr-home', class: 'home', maxPerHour: 1000, batch: 40, concurrency: 4 }] } }), {}, 'home_unsupported'],
   ['a policy that moved this instance to another host', control(), { physicalHost: 'm3' }, 'host_mismatch'],
 ])('does not claim under %s', async (_name, value, extra, reason) => {
   io.read.mockResolvedValue(value);
@@ -208,6 +212,19 @@ it.each([
   expect(io.claim).not.toHaveBeenCalled();
   expect(summary.batches).toBe(0);
   expect(io.observe.mock.calls.at(-1)?.[1]).toMatchObject({ state: 'stopped', reason });
+});
+
+it('rests without claiming while this host clock is more than 20 s off the DB clock, and reports the measured skew', async () => {
+  const abort = new AbortController(), report = vi.fn(), check = vi.fn();
+  io.skew.mockResolvedValueOnce(-60_000).mockImplementationOnce(async () => { abort.abort(); return 25_000; });
+  await drive(runUptimeConsumer({ owner, signal: abort.signal, report, check }));
+  expect(io.claim).not.toHaveBeenCalled();
+  expect(check).not.toHaveBeenCalled();
+  expect(io.observe.mock.calls.at(-1)?.[1]).toMatchObject({ state: 'stopped', reason: 'clock_skew', clockSkewMs: 25_000 });
+  // 20초 안이면 그대로 claim 한다
+  io.skew.mockResolvedValue(19_000);
+  io.claim.mockResolvedValueOnce(claimed([ticket(1)]));
+  expect(await drive(runUptimeConsumer({ owner, once: true, check: async () => ok() }))).toMatchObject({ claimed: 1, accepted: 1 });
 });
 
 it('releases a batch claimed under a newer control epoch than the one it paced for', async () => {

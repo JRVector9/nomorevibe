@@ -152,6 +152,11 @@ export const controlSnapshotSchema = z.object({
     queue: z.array(z.object({ priority: z.number().int().min(0).max(9), waiting: count, oldestMinutes: z.number().nonnegative().nullable() }).strict()),
   }).strict(),
   recentInstances: z.array(z.string()),
+  /**
+   * 응답 점검 분담(0103 uptime_split_control) mode. claims 동안 batch 를 versioned 쪽으로 옮기면 uptime-ping 이 product-health 역할 몫이 되어
+   * (Oracle principal 에는 split 권한이 없고, M3 는 policy 의 home 이 아닐 수 있다) 확인·적용이 멈춘다 — batch 전환이 이 값을 보고 거절한다
+   */
+  uptimeSplitMode: z.enum(["legacy", "claims"]),
   /** crawl_settings.values 원문(행이 없으면 null). 워커와 같은 mergeWithDefaults로 읽는다 */
   reviewSettings: z.unknown(),
   auditCampaign: z.object({ provider: z.string(), model: z.string() }).strict().nullable(),
@@ -395,9 +400,12 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
   if (b.contract < 1) blocked.push("batch_contract_required");
   const quiet = `jobs=${b.liveJobs},roles=${b.liveRoles},items=${b.liveItems},sources=${b.liveSources},agent_claims=${b.liveAgentClaims}`;
   const busy = b.liveJobs + b.liveRoles + b.liveItems + b.liveSources + b.liveAgentClaims > 0;
+  // legacy 에서 들어간 draining 은 versioned 로만 끝난다 — 응답 점검 분담(claims) 중에는 그 길을 열지 않는다(uptime-split 이 반대 방향을 막는다)
+  const splitClaims = snapshot.uptimeSplitMode === "claims" ? "uptime_split_claims_active" : null;
   if (command.name === "batch drain") {
     expect("mode", o.fromMode, b.mode);
     if (o.fromMode === "draining") blocked.push("batch_transition_invalid");
+    if (o.fromMode === "legacy" && splitClaims) blocked.push(splitClaims);
     // 기존 불변식: draining은 출발 mode로 되돌아갈 수 없다. legacy에서 들어가면 versioned로만 끝난다.
     if (o.fromMode === "legacy" && !policyValid) blocked.push("batch_policy_required_for_versioned");
     warnings.push(`batch_claims_paused_until_complete:${o.fromMode === "legacy" ? "versioned" : "legacy"}`);
@@ -408,6 +416,7 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
   expect("draining_from", o.drainingFrom, b.drainingFrom);
   if (o.to === "draining" || o.to === b.drainingFrom) blocked.push("batch_transition_invalid");
   if (o.to === "versioned" && !policyValid) blocked.push("batch_policy_required_for_versioned");
+  if (o.to === "versioned" && splitClaims) blocked.push(splitClaims);
   if (busy) blocked.push(`batch_not_drained:${quiet}`);
   return plan(target, `draining(from ${b.drainingFrom ?? "-"}) → ${o.to}, epoch ${b.epoch} → ${b.epoch + 1}`);
 }

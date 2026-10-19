@@ -8,7 +8,7 @@ import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch
 import type { ProductTransaction } from "./generation";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { advanceUptimeBreaker, closedUptimeBreaker, parseUptimeSplitControl, uptimeClaimAllowance, uptimeSplitHostEntry,
-  UPTIME_SPLIT_CLOCK_SKEW_MS, type UptimeBreakerState, type UptimeHost, type UptimeHostBreaker, type UptimeHostClass,
+  UPTIME_HTTP_STATUS_MAX, UPTIME_SPLIT_CLOCK_SKEW_MS, type UptimeBreakerState, type UptimeHost, type UptimeHostBreaker, type UptimeHostClass,
   type UptimeSplitControl } from "./uptime-split-policy";
 
 /**
@@ -35,18 +35,24 @@ export const UptimeClaimOwnerSchema = z.strictObject({
 });
 export type UptimeClaimOwner = z.infer<typeof UptimeClaimOwnerSchema>;
 
-/** 결과 한 건(제출·적용 공통 모양). 시작·관측은 확인한 host 의 시계다 */
-export const UptimeResultSchema = z.strictObject({
+const resultSchema = (maxHttpStatus: number) => z.strictObject({
   productId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), token: z.uuid(),
   epoch: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   startedAt: z.date(), observedAt: z.date(),
-  kind: z.enum(["http", "timeout", "dns", "network", "unknown"]), status: z.number().int().min(0).max(599),
+  kind: z.enum(["http", "timeout", "dns", "network", "unknown"]), status: z.number().int().min(0).max(maxHttpStatus),
   latencyMs: z.number().int().min(0).max(2_147_483_647).nullable(),
 }).superRefine((value, ctx) => {
   if (!Number.isFinite(value.startedAt.getTime()) || !Number.isFinite(value.observedAt.getTime()) || value.observedAt < value.startedAt
     || (value.kind === "http" ? value.status < 100 : value.status !== 0)) ctx.addIssue({ code: "custom", message: "uptime_result_invalid" });
 });
+/** 결과 한 건(제출·적용 공통 모양). 시작·관측은 확인한 host 의 시계다. 제출분은 claim 행 CHECK 와 같이 HTTP 100..599 만 담는다 */
+export const UptimeResultSchema = resultSchema(599);
 export type UptimeResult = z.infer<typeof UptimeResultSchema>;
+/**
+ * home 이 직접 연 결과(적용기 own). 제출 행에 담지 않으므로 비표준 HTTP 상태(예: 999)도 그대로 받는다 — legacy recordPing 이
+ * product_health.status 에 999 를 실패로 그대로 쓰는 것과 같은 의미다(UPTIME_HTTP_STATUS_MAX, uptime-split-policy.ts).
+ */
+export const UptimeOwnResultSchema = resultSchema(UPTIME_HTTP_STATUS_MAX);
 
 export type UptimeClaimTicket = {
   productId: number; slug: string; url: string; token: string; epoch: number;
@@ -74,6 +80,17 @@ export async function readUptimeSplitControl(): Promise<UptimeSplitControl> {
   return parseUptimeSplitControl({ mode: row.mode, epoch: row.epoch, policy: row.policy, policyHash: row.policyHash });
 }
 
+/**
+ * 이 host 시계 − DB 시계(ms). DB clock_timestamp 를 한 번 읽고 왕복의 가운데와 비교한다(오차는 왕복 시간의 절반 이내).
+ * home 잡·consumer 가 확인을 시작하기 전에 재서 UPTIME_SPLIT_CLOCK_GUARD_MS 를 넘으면 쉰다. 표를 읽지 않아 권한이 필요 없다
+ */
+export async function measureUptimeClockSkew(): Promise<number> {
+  supported();
+  const before = Date.now();
+  const [row] = await db.execute<{ ms: number }>(sql`select (extract(epoch from clock_timestamp()) * 1000)::float8 as ms`);
+  return (before + Date.now()) / 2 - Number(row.ms);
+}
+
 // products.url 의 scheme://host[:port] (소문자). 두 claim 의 비교는 언제나 이 같은 식으로 하므로 JS URL.origin 과 달라도 된다
 const originOf = (url: ReturnType<typeof sql>) =>
   sql`coalesce(lower(substring(${url} from '^[A-Za-z][A-Za-z0-9+.-]*://[^/?#]+')), ${url})`;
@@ -81,7 +98,7 @@ const originOf = (url: ReturnType<typeof sql>) =>
 /**
  * 이 owner 의 host·class(policy 의 instance 매핑)로 due 제품을 최대 limit 건 claim 한다. probe 는 policy 의 batch 를 넘지 않는다.
  * home 은 재확인 요청(confirm)을 먼저 가져간다. probe 는 실패 중·home 고정(affinity) 제품과 재확인 요청을 가져가지 않는다.
- * 차단기가 열려 있으면 가져가지 않고, probing 이면 probeSize 에서 이미 받은 수·나가 있는 수를 뺀 만큼만 가져간다.
+ * 차단기가 열려 있으면 가져가지 않고, probing 이면 probeSize 에서 이미 받은 수·나가 있는 수를 뺀 만큼만, 실패 중·재확인 요청이 아닌 제품만 가져간다.
  * 아무것도 쓰지 않는 거절은 blocked 로 돌려준다(fenced DB·legacy·policy 에 없는 instance·차단기).
  */
 export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limit: number }): Promise<UptimeClaimBatch> {
@@ -112,6 +129,10 @@ export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limi
     if (allowance === 0) return { kind: "blocked", reason: "breaker_open", controlEpoch: control.epoch };
 
     const probe = entry.class !== HOME_CLASS;
+    // 차단기 시험(probing) 표본은 이 host 네트워크가 돌아왔는지 보는 것이다 — 실패 중인 제품·재확인 요청(대개 실제로 죽은 사이트)이 섞이면
+    // 사이트의 죽음이 host 장애로 보여 시험이 매번 실패하고 영영 닫히지 않는다(review F2). 그래서 probing 동안은 건강하다고 알려진 제품
+    // (연속 실패 0, 재확인 요청 아님)만 가져간다. home 고정(affinity) 제품은 home 에서 열렸던 제품이라 표본에 든다
+    const healthyOnly = probe || breaker.state === "probing";
     // 1) 후보를 잠근다(다른 owner 가 잡은 행은 건너뛴다). origin advisory lock 은 고른 행에서만 시도한다(기다리지 않는다)
     const picked = await tx.execute<{ product_id: number; slug: string; url: string; origin: string; locked: boolean }>(sql`
       with cand as materialized (
@@ -123,8 +144,8 @@ export async function claimUptimeProducts(input: { owner: UptimeClaimOwner; limi
           -- legacy 쓰기와 겹쳐도 낭비하지 않는다. 재확인 요청은 정식 반영이 없었으므로 이 조건을 건너뛴다
           and (c.confirm_class is not null or h.checked_at is null
             or h.checked_at <= (${wall.toISOString()}::timestamptz at time zone 'UTC') - ${RECHECK_AFTER_MINUTES} * interval '1 minute')
-          and (${!probe} or (c.confirm_class is null and coalesce(h.failures, 0) = 0
-            and coalesce(c.affinity_home_until, '-infinity') <= ${wall.toISOString()}::timestamptz))
+          and (${!healthyOnly} or (c.confirm_class is null and coalesce(h.failures, 0) = 0))
+          and (${!probe} or coalesce(c.affinity_home_until, '-infinity') <= ${wall.toISOString()}::timestamptz)
           and (c.confirm_class is null or c.confirm_class = ${entry.class})
           and not exists (select 1 from uptime_claims o where o.state = 'claimed' and o.lease_until > clock_timestamp()
             and o.owner_instance_id <> ${owner.instanceId} and o.origin = ${originOf(sql`p.url`)})
@@ -167,7 +188,8 @@ function breakerFromJson(row: Record<string, unknown>): UptimeHostBreaker {
 }
 
 /**
- * 확인 결과를 제출한다(state claimed → submitted). token·epoch·owner(instance·boot)·지금 control epoch 가 맞고 host 시계가
+ * 확인 결과를 제출한다(state claimed → submitted). policy 에 probe 로 적힌 instance 만 제출한다.
+ * token·epoch·owner(instance·boot)·지금 control epoch 가 맞고 host 시계가
  * ±30초 안인 것만 받는다. 받지 않은 것은 lost 다 — 다시 claim 됐거나, epoch 이 바뀌었거나, 이미 제출했다.
  * 만료됐어도 아직 다른 owner 가 가져가지 않았으면 token 이 같으므로 받는다(행 lock 으로 claim 과 제출 중 먼저 commit 한 쪽만 이긴다).
  */
@@ -181,7 +203,8 @@ export async function submitUptimeResults(input: { owner: UptimeClaimOwner; resu
     if (!await writerSiteActive(tx)) return { kind: "blocked", reason: "site_fenced", controlEpoch: null };
     const control = await lockUptimeSplitControl(tx);
     if (control.mode !== "claims" || !control.policy) return { kind: "blocked", reason: "mode_legacy", controlEpoch: control.epoch };
-    if (!uptimeSplitHostEntry(control.policy, owner.instanceId)) return { kind: "blocked", reason: "source_unconfigured", controlEpoch: control.epoch };
+    // 제출은 probe 만 한다 — home 결과는 home 잡이 적용기에 직접 넘긴다(적용기는 probe 가 아닌 제출 행을 판정하지 않는다)
+    if (uptimeSplitHostEntry(control.policy, owner.instanceId)?.class !== "probe") return { kind: "blocked", reason: "source_unconfigured", controlEpoch: control.epoch };
     if (results.length === 0) return { kind: "submitted", controlEpoch: control.epoch, accepted: [], lost: [] };
     const rows = results.map(result => ({ product_id: result.productId, token: result.token, epoch: result.epoch,
       started_at: result.startedAt.toISOString(), observed_at: result.observedAt.toISOString(), kind: result.kind,

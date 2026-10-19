@@ -26,6 +26,11 @@ export type UptimeBreakerState = (typeof UPTIME_BREAKER_STATES)[number];
 
 /** host 시계를 믿는 폭. 시작이 claim 보다, 관측이 적용 시각보다 이만큼 넘게 어긋나면 stale clock 이다(제출 CAS 와 같은 값). */
 export const UPTIME_SPLIT_CLOCK_SKEW_MS = 30_000;
+/**
+ * 확인을 시작하기 전에 잰 host−DB 시계 차가 이만큼 넘으면 claim·확인을 쉰다(home 잡·Oracle consumer). 결과가 위 폭에 걸려 버려질
+ * 확인으로 사이트를 두드리지 않는다. 재는 오차(왕복의 절반)와 묶음이 도는 동안의 흐름을 위해 폭보다 10초 좁게 둔다.
+ */
+export const UPTIME_SPLIT_CLOCK_GUARD_MS = UPTIME_SPLIT_CLOCK_SKEW_MS - 10_000;
 /** home 광역 실패를 보류한 제품을 다시 볼 때까지 */
 export const UPTIME_SPLIT_HOLD_MS = 15 * 60_000;
 /** 정식 확인 간격. legacy(nextToCheck)와 같은 6시간이다 */
@@ -39,6 +44,18 @@ export const UPTIME_WINDOW_BUCKET_MS = 60_000;
  */
 export const UPTIME_BROAD_FAILURE_MIN_CHECKS = 30;
 export const UPTIME_BROAD_FAILURE_RATIO = 0.3;
+/**
+ * home 결과가 담을 수 있는 HTTP 상태 상한. safeFetch 는 100..599 밖의 비표준 상태(예: LinkedIn 999)를 그대로 돌려주고, legacy(recordPing)는
+ * 그것을 product_health.status 에 그대로 쓰고 실패로 센다(2xx·3xx 만 성공). split 의 정식 기록도 같은 값·같은 의미(실패)로 쓴다 —
+ * 알 수 없음(unknown/0)으로 바꾸면 상태별 규칙(예: 차단성 응답을 따로 다루는 규칙)이 legacy 와 claims 에서 달라진다.
+ * 100..599 만 담는 표(uptime_claims 제출 칸, uptime_observations)에는 담을 수 없어 그 표에만 unknown/0 으로 남긴다(Oracle consumer 와 같다).
+ * HTTP 상태 줄은 세 자리라 999 가 끝이다.
+ */
+export const UPTIME_HTTP_STATUS_MAX = 999;
+/** uptime_claims·uptime_observations CHECK 가 받는 표준 범위 */
+export function uptimeStandardHttpStatus(status: number): boolean {
+  return Number.isInteger(status) && status >= 100 && status <= 599;
+}
 const DAY_MS = 24 * 60 * 60_000;
 const KST_OFFSET_MS = 9 * 60 * 60_000;
 const LISTED = new Set(["verified", "seeded"]);
@@ -217,6 +234,7 @@ function openBreaker(breaker: UptimeHostBreaker, wall: Date, coolDownMs: number,
  * 이번 묶음을 더한 뒤의 차단기. closed 는 창·묶음 비율로 연다. probing 은 probeSize 건을 받으면 실패율 probeCloseRatio 이하일 때 닫고,
  * 그 비율을 넘을 수밖에 없게 되면 바로 cool-down 을 두 배로(최대 maxCoolDownMinutes) 늘려 다시 연다. open 은 시간이 지나야 바뀐다.
  * probe 는 probing 이 된 뒤 claim 된 결과의 수다(그 전에 나간 결과는 회복 근거가 아니다).
+ * opened_at 은 이번 열림 구간의 시작이다 — probing 에서 다시 열려도 처음 연 시각을 이어 간다(오래 열림 경보가 그 시각부터 잰다).
  */
 export function settleUptimeBreaker(breaker: UptimeHostBreaker, policy: UptimeSplitPolicy,
   counts: { window: UptimeHostCounts; batch: UptimeHostCounts; probe: UptimeHostCounts }, wall: Date): UptimeHostBreaker {
@@ -229,7 +247,8 @@ export function settleUptimeBreaker(breaker: UptimeHostBreaker, policy: UptimeSp
   const probeChecks = breaker.probeChecks + counts.probe.checks, probeFailures = breaker.probeFailures + counts.probe.failures;
   const ratio = probeChecks === 0 ? 0 : probeFailures / probeChecks;
   if (probeFailures > config.probeCloseRatio * config.probeSize) {
-    return openBreaker(breaker, wall, Math.min(breaker.coolDownMs * 2, config.maxCoolDownMinutes * 60_000), "probe_ratio", ratio);
+    const reopened = openBreaker(breaker, wall, Math.min(breaker.coolDownMs * 2, config.maxCoolDownMinutes * 60_000), "probe_ratio", ratio);
+    return { ...reopened, openedAt: breaker.openedAt ?? wall };
   }
   if (probeChecks >= config.probeSize) {
     return { ...breaker, state: "closed", probeAfter: null, coolDownMs: base, reason: null, ratio, probeChecks: 0, probeFailures: 0 };
@@ -266,7 +285,9 @@ export type UptimeClaimSnapshot = {
 export type UptimeProductSnapshot = { id: number; slug: string; url: string; status: string; accessMode: string; updatedAt: string };
 /** 잠근 product_health 행(없으면 null) */
 export type UptimeHealthSnapshot = { checkedAt: Date; failures: number; downSince: Date | null };
-export type UptimeSplitInput = { claim: UptimeClaimSnapshot; result: UptimeSplitResult; product: UptimeProductSnapshot | null; health: UptimeHealthSnapshot | null };
+export type UptimeSplitInput = { claim: UptimeClaimSnapshot; result: UptimeSplitResult; product: UptimeProductSnapshot | null; health: UptimeHealthSnapshot | null;
+  /** 제출 행(state submitted)에서 읽은 결과면 참. home 잡이 직접 연 결과(own)는 거짓이다 */
+  submitted?: boolean };
 export type UptimeSplitContext = {
   control: UptimeSplitControl;
   /** PR09 uptime_control. split 동안 둘 다 거짓이어야 한다(0103 트리거가 강제) */
@@ -282,7 +303,7 @@ export type UptimeSplitContext = {
 export type UptimeSplitOutcome = "lost" | "discarded" | "stale" | "held" | "applied" | "returned" | "confirm_requested";
 export type UptimeSplitReason =
   | "claim_lost"
-  | "mode_legacy" | "uptime_control_enabled" | "control_epoch" | "source_unconfigured"
+  | "mode_legacy" | "uptime_control_enabled" | "control_epoch" | "source_unconfigured" | "submitted_not_probe"
   | "product_missing" | "product_unlisted" | "url_changed" | "product_changed" | "clock" | "older_observation"
   | "minimum_interval"
   | "split_success" | "split_confirm_success" | "probe_breaker_open" | "split_confirm_required" | "split_broad_failure"
@@ -316,7 +337,7 @@ const isAlive = (result: UptimeSplitResult) => result.kind === "http" && result.
 
 function assertInput(input: UptimeSplitInput) {
   const { claim, result } = input;
-  const statusOk = result.kind === "http" ? Number.isInteger(result.status) && result.status >= 100 && result.status <= 599 : result.status === 0;
+  const statusOk = result.kind === "http" ? Number.isInteger(result.status) && result.status >= 100 && result.status <= UPTIME_HTTP_STATUS_MAX : result.status === 0;
   if (!Number.isSafeInteger(claim.productId) || claim.productId < 1 || !statusOk
     || !["http", "timeout", "dns", "network", "unknown"].includes(result.kind)
     || (result.latencyMs !== null && !(Number.isFinite(result.latencyMs) && result.latencyMs >= 0))
@@ -335,7 +356,7 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
 
 /**
  * 묶음 적용 판정(design-uptime §3.2 표). 입력 순서대로 결정을 돌려준다. 같은 제품이 두 번 오면 거부한다(제품당 claim 1행).
- * 1 control epoch·mode·PR09·policy 출처 → 버림 / 2 제품 변경 → stale / 3 시계 → stale / 4 더 새 health → stale /
+ * 1 control epoch·mode·PR09·policy 출처·probe 가 아닌 제출 행 → 버림 / 2 제품 변경 → stale / 3 시계 → stale(15분 미룸) / 4 더 새 health → stale /
  * 5 6시간 안 → 보류 / 6 성공 → 반영 / 7 probe 실패·차단기 열림 → 풀로 / 8 probe 실패 → home 재확인 / 9 home 실패·광역 → 보류 / 10 home 실패 → 반영.
  */
 export function decideSplitResults(inputs: readonly UptimeSplitInput[], context: UptimeSplitContext): UptimeSplitBatch {
@@ -366,7 +387,10 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
     const discard = control.mode !== "claims" ? "mode_legacy"
       : context.uptimeControl.observationsEnabled || context.uptimeControl.gateEnabled ? "uptime_control_enabled"
         : claim.controlEpoch !== control.epoch ? "control_epoch"
-          : !entry || entry.host !== claim.host || entry.class !== claim.hostClass ? "source_unconfigured" : null;
+          : !entry || entry.host !== claim.host || entry.class !== claim.hostClass ? "source_unconfigured"
+            // home 실패로 셀 수 있는 것은 home 잡이 직접 연 결과(own)뿐이다. 제출 행은 probe(Oracle)만 낸다 — home host·class 로 적힌 제출 행은
+            // 제출 권한(uptime_claims 열 UPDATE)만 가진 주체가 쓴 것이라 판정하지 않는다(review F3: 위조한 home 실패가 숨김·내림까지 갔다)
+            : input.submitted && entry.class !== "probe" ? "submitted_not_probe" : null;
     if (discard || !entry) { decisions[index] = settle(input, "discarded", discard ?? "source_unconfigured"); return; }
     if (!product) { decisions[index] = settle(input, "stale", "product_missing"); return; }
     if (!LISTED.has(product.status) || product.accessMode !== "website") { decisions[index] = settle(input, "stale", "product_unlisted"); return; }
@@ -375,7 +399,8 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
       decisions[index] = settle(input, "stale", "product_changed"); return;
     }
     if (!uptimeSplitClockValid({ claimedAt: claim.claimedAt, startedAt: result.startedAt, observedAt: result.observedAt, wall })) {
-      decisions[index] = settle(input, "stale", "clock"); return;
+      // 시계가 틀린 host 의 결과다 — 바로 다시 due 로 두면 다음 틱·묶음이 같은 사이트를 또 연다(review F5). 보류처럼 15분 미룬다
+      decisions[index] = settle(input, "stale", "clock", { dueAt: new Date(wall.getTime() + UPTIME_SPLIT_HOLD_MS) }); return;
     }
     if (health && health.checkedAt.getTime() >= result.observedAt.getTime()) {
       decisions[index] = settle(input, "stale", "older_observation", { dueAt: new Date(health.checkedAt.getTime() + UPTIME_RECHECK_MS) }); return;
@@ -406,9 +431,12 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
   for (const { index, input, entry, product } of candidates) {
     const { claim, result } = input;
     const alive = isAlive(result), home = entry.class === "home", confirmed = home && claim.confirmClass === "home";
+    // raw 표는 HTTP 100..599 만 담는다 — 비표준 상태는 raw 에만 unknown/0 으로 남기고 정식 기록(health)에는 그대로 쓴다(UPTIME_HTTP_STATUS_MAX)
+    const standard = result.kind !== "http" || uptimeStandardHttpStatus(result.status);
     const observation: UptimeObservation = { observationId: result.token, productId: claim.productId, slug: product.slug, url: product.url,
       slot: uptimeSlot(result.startedAt), startedAt: result.startedAt, observedAt: result.observedAt,
-      source: { host: entry.host, instanceId: entry.instanceId, region: entry.region }, kind: result.kind, status: result.status, latencyMs: result.latencyMs };
+      source: { host: entry.host, instanceId: entry.instanceId, region: entry.region },
+      kind: standard ? result.kind : "unknown", status: standard ? result.status : 0, latencyMs: standard ? result.latencyMs : null };
     const next = new Date(result.observedAt.getTime() + UPTIME_RECHECK_MS);
     const cleared = { confirmClass: null, confirmReason: null, confirmRequestedAt: null } as const;
     if (alive) {

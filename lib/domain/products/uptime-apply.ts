@@ -9,7 +9,7 @@ import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { writeHealthResults } from "./health-record";
 import { autoBanUptimeProduct, UPTIME_AUTO_BAN_THRESHOLD } from "./uptime-auto-ban";
-import { lockUptimeSplitControl, UptimeResultSchema, type UptimeResult } from "./uptime-claims";
+import { lockUptimeSplitControl, UptimeOwnResultSchema, type UptimeResult } from "./uptime-claims";
 import { closedUptimeBreaker, decideSplitResults, splitResetStreak, uptimeWindowSince, type UptimeHealthSnapshot, type UptimeHost,
   type UptimeHostBreaker, type UptimeHostCounts, type UptimeProductSnapshot, type UptimeSplitDecision, type UptimeSplitInput,
   type UptimeSplitMode, type UptimeSplitOutcome, type UptimeSplitReason } from "./uptime-split-policy";
@@ -31,7 +31,7 @@ export const UPTIME_APPLY_OWN_MAX = 200;
 /** 차단기 창 칸을 이만큼만 남긴다 */
 const WINDOW_RETENTION_MS = 2 * 24 * 60 * 60_000;
 
-/** home 이 직접 연 결과. claim 회차의 token·epoch 를 그대로 넣는다. 표본은 살아 있는 결과에서 읽은 본문 앞부분이다 */
+/** home 이 직접 연 결과. claim 회차의 token·epoch 를 그대로 넣는다. 표본은 살아 있는 결과에서 읽은 본문 앞부분이다. 비표준 HTTP 상태도 받는다(UptimeOwnResultSchema) */
 export type UptimeOwnResult = UptimeResult & { textSample?: string | null };
 
 export type UptimeApplySummary = {
@@ -73,7 +73,7 @@ export async function applyUptimeResults(input: {
   const own = new Map<number, { result: UptimeResult; textSample: string | null }>();
   for (const value of input.own ?? []) {
     const { textSample, ...rest } = value;
-    const result = UptimeResultSchema.parse(structuredClone(rest));
+    const result = UptimeOwnResultSchema.parse(structuredClone(rest));
     if (own.has(result.productId)) throw new TypeError("uptime_split_duplicate_product");
     own.set(result.productId, { result, textSample: typeof textSample === "string" ? textSample : null });
   }
@@ -129,7 +129,7 @@ export async function applyUptimeResults(input: {
     const inputs: UptimeSplitInput[] = [];
     for (const row of remoteRows) {
       const product = productById.get(row.productId) ?? null;
-      inputs.push({ claim: row, product, health: product ? healthBySlug.get(product.slug) ?? null : null,
+      inputs.push({ claim: row, product, health: product ? healthBySlug.get(product.slug) ?? null : null, submitted: true,
         result: { token: row.token!, epoch: row.epoch, startedAt: row.resultStartedAt!, observedAt: row.resultObservedAt!,
           kind: row.resultKind!, status: row.resultStatus!, latencyMs: row.resultLatencyMs } });
     }
