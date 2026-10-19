@@ -184,8 +184,11 @@ export function uptimeSplitStageInput(readback: UptimeSplitReadback): ProgressSt
   if (readback.control.mode !== "claims") return null;
   const q = readback.queue, waiting = q.due + q.submitted;
   const ages = [q.due > 0 ? q.dueOldestMinutes : null, q.submitted > 0 ? q.submittedOldestMinutes : null].filter((value): value is number => value !== null);
+  const stored = storedUptimeSplitPolicy(readback.control);
+  const ownerHost = stored.state === "verified" ? stored.policy.hosts.find(entry =>
+    entry.class === "home" && entry.instanceId === readback.maintenanceOwner)?.host : undefined;
   const stage: ProgressStageInput = { key: "uptime", enabled: true, waiting, oldestMinutes: waiting > 0 && ages.length ? Math.max(...ages) : null,
-    completed5m: q.applied5m, progress5m: q.applied5m, errors5m: null, held: heldHomeHosts(readback).length > 0 };
+    completed5m: q.applied5m, progress5m: q.applied5m, errors5m: null, held: ownerHost !== undefined && heldHomeHosts(readback).includes(ownerHost) };
   const stuck = stuckHomeBreaker(readback);
   return stuck ? { ...stage, progress5m: 0, held: false, providerErrors: 1, providerErrorMinutes: stuck.minutes } : stage;
 }

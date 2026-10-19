@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
 import { hostDbBudgetCatalog, type HostDbBudget } from '@/lib/db/host-budget';
 import { assertHostBudgetEntrySupported, hostBudgetEnforcement, hostBudgetShape, hostPressureDecision, hostProcessDecision,
-  hostProcessIdentity, hostTranslationCap, readHostLedger, type HostLedgerRow, type HostProcessRow } from '@/lib/operations/host-budget';
+  assertHostBudgetConsumerSupported, hostProcessIdentity, hostTranslationCap, readHostLedger, type HostLedgerRow, type HostProcessRow } from '@/lib/operations/host-budget';
 import { startHostBudget } from '@/lib/operations/host-budget-runtime';
 import { runWorker } from '@/scripts/worker';
 
@@ -141,4 +141,23 @@ it('releases the admitted slot even when the job run throws', async () => {
   });
   expect(events).toEqual(['run', 'release']);
   expect(result).toEqual({ ticks: 1, failures: 1 });
+});
+
+it('separates general consumers while preserving legacy identities and duplicate boot fencing', () => {
+  const parent = { kind: 'worker', role: 'crawler', replica: 1, copy: 1 };
+  const ids = [hostProcessIdentity(parent), hostProcessIdentity({ ...parent, consumer: 'agent-scan' }),
+    hostProcessIdentity({ ...parent, role: 'maintenance', consumer: 'uptime' })];
+  expect(new Set(ids).size).toBe(3);
+  expect(hostProcessIdentity({ ...parent, consumer: 'agent-scan' })).toBe(ids[1]);
+  const row = processRow(ids[1]);
+  expect(hostProcessDecision([row], { key: row.key, shape, primaryMax: 3, readMax: 0, bootId: randomUUID() }, policy)).toBe('host_process_duplicate');
+  expect(hostProcessDecision([row], { key: row.key, shape, primaryMax: 3, readMax: 0, bootId: row.bootId }, policy)).toBeNull();
+});
+it('rejects only unsupported Oracle agent scan host enforcement before DB work', () => {
+  const env = { PHYSICAL_HOST: 'oracle-osaka-smoke', HTTP_ORIGIN_PERMITS: '1',
+    HOST_BUDGET_ENFORCEMENT: JSON.stringify({ mode: 'enabled', pressure }) };
+  expect(() => assertHostBudgetConsumerSupported(env, 'agent-scan')).toThrow('agent_scan_oracle_host_budget_unsupported');
+  expect(() => assertHostBudgetConsumerSupported({ ...env, HOST_BUDGET_ENFORCEMENT: undefined }, 'agent-scan')).not.toThrow();
+  expect(() => assertHostBudgetConsumerSupported({ ...env, PHYSICAL_HOST: 'm3' }, 'agent-scan')).not.toThrow();
+  expect(() => assertHostBudgetConsumerSupported(env, 'ai1')).not.toThrow();
 });

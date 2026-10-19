@@ -36,6 +36,13 @@ export function assertHostBudgetEntrySupported(env: Readonly<Record<string, stri
   if (hostBudgetEnforcement(env).mode === 'enabled' || emergencyAdmissionConfig(env).mode === 'enabled') throw new Error('host_budget_entry_unsupported');
 }
 
+/** Oracle consumer principals deliberately lack host ledger cleanup/HTTP authority. Fail before any DB retry. */
+export function assertHostBudgetConsumerSupported(env: Readonly<Record<string, string | undefined>>, consumer?: string): void {
+  if (consumer === 'agent-scan' && env.PHYSICAL_HOST === 'oracle-osaka-smoke'
+    && env.HTTP_ORIGIN_PERMITS === '1' && hostBudgetEnforcement(env).mode === 'enabled')
+    throw new Error('agent_scan_oracle_host_budget_unsupported');
+}
+
 /** 선언값: Oracle host 번역 실제 호출 합 1(로드맵 PR10 행, PR11 계획 80행). M3·mini 는 이 gate 로 세지 않는다 */
 export const HOST_TRANSLATION_CALLS: Readonly<Partial<Record<HostDbBudget['host'], number>>> = { 'oracle-osaka-smoke': 1 };
 const TRANSLATION_JOBS: ReadonlySet<string> = new Set(batchJobsForRole('translation', 'versioned'));
@@ -61,7 +68,7 @@ export function hostBudgetShape(policy: HostDbBudget, pressure: HostPressureLimi
     emergency: emergency && { budget: emergency.budget, verifiedModelJobs: [...emergency.verifiedModelJobs].sort() } }))).digest('hex');
 }
 export function hostProcessIdentity(process: { kind: string; role: string; consumer?: string; replica: number; copy: number }): string {
-  return `${process.kind}:${process.role}:${process.role === 'reviewer' ? process.consumer ?? 'legacy' : '-'}:${process.replica}:${process.copy}`;
+  return `${process.kind}:${process.role}:${process.consumer ?? (process.role === 'reviewer' ? 'legacy' : '-')}:${process.replica}:${process.copy}`;
 }
 export function hostSlotPrefix(host: HostDbBudget['host']): string { return `host-slot:${host}`; }
 

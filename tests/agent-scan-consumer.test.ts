@@ -243,3 +243,17 @@ it('the entry point is off by default and checks version, concurrency, instance 
   expect(mocks.runtime).toHaveBeenCalledExactlyOnceWith('crawler', expect.any(Function));
   expect(mocks.claim.mock.calls[0][0].owner.instanceId).toBe('agent-scan-consumer-m3');
 });
+
+it.each(['headroom', 'admit', 'claim', 'latest'] as const)('does not start new scan work after abort during %s', async phase => {
+  const controller = new AbortController(), release = vi.fn().mockResolvedValue(undefined);
+  if (phase === 'headroom') mocks.headroom.mockImplementation(async () => { controller.abort(); return null; });
+  const admit = vi.fn(async () => { if (phase === 'admit') controller.abort(); return { admitted: true as const, release }; });
+  mocks.claim.mockImplementation(async () => { if (phase === 'claim') controller.abort(); return claimed('acme/a'); });
+  mocks.latest.mockImplementation(async () => { if (phase === 'latest') controller.abort(); return null; });
+  await runAgentScanConsumer({ owner, once: true, signal: controller.signal, admit });
+  if (phase === 'headroom' || phase === 'admit') expect(mocks.claim).not.toHaveBeenCalled();
+  if (phase !== 'latest') expect(mocks.latest).not.toHaveBeenCalled();
+  expect(mocks.collect).not.toHaveBeenCalled();
+  if (phase === 'claim' || phase === 'latest') expect(mocks.abandon).toHaveBeenCalledOnce();
+  if (phase !== 'headroom') expect(release).toHaveBeenCalledOnce();
+});

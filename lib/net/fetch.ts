@@ -35,7 +35,7 @@ export const DEFAULT_HEADERS = {
 export type FetchResult = { finalUrl: string; response: Response };
 
 /** The crawler opts into bounded retries; interactive callers retain null/page results. */
-type PageFetchOptions = { retryTransientErrors?: boolean };
+type PageFetchOptions = { retryTransientErrors?: boolean; signal?: AbortSignal };
 
 export class PageFetchError extends Error {
   readonly name = "PageFetchError";
@@ -399,31 +399,50 @@ function releaseWhenBodyEnds(res: Response, release: () => void, signal: AbortSi
   return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
 }
 
+/** Bound the caller's wait; this does not cancel the underlying DNS lookup, which may settle later.
+ * Both settlement paths stay observed, and each wait removes its abort listener. */
+function awaitGuard<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => { signal.removeEventListener("abort", onAbort); reject(signal.reason); };
+    work.then(value => {
+      signal.removeEventListener("abort", onAbort);
+      if (signal.aborted) reject(signal.reason); else resolve(value);
+    }, error => {
+      signal.removeEventListener("abort", onAbort);
+      reject(signal.aborted ? signal.reason : error);
+    });
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * SSRF-안전 fetch — 리다이렉트를 수동으로 추적하며 매 hop마다 정책을 다시 적용한다.
  * (redirect:"follow"는 검증 없이 사설망으로 향하는 302를 그대로 따라가므로 쓰지 않는다)
  */
 export async function safeFetch(url: string, mode: FetchMode = "interactive", options: PageFetchOptions = {}): Promise<FetchResult | null> {
   const background = mode === "background";
-  const total = background ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : null;
+  const total = background ? cappedRequestSignal(options.signal, FETCH_TIMEOUT_MS) : null;
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const guard = await assertPublicUrl(current);
-    if (!guard.ok) {
-      if (options.retryTransientErrors && guard.transient) throw new PageFetchError("transport", guard.reason);
-      return null;
-    }
-
-    const signal = total ?? AbortSignal.timeout(FETCH_TIMEOUT_MS);
+    const signal = total ?? cappedRequestSignal(options.signal, FETCH_TIMEOUT_MS);
     let release: (() => void) | null = null;
     let res: Response;
     try {
+      signal.throwIfAborted();
+      const guard = await awaitGuard(assertPublicUrl(current), signal);
+      signal.throwIfAborted();
+      if (!guard.ok) {
+        if (options.retryTransientErrors && guard.transient) throw new PageFetchError("transport", guard.reason);
+        return null;
+      }
       // 백그라운드는 hop마다 목적지 origin의 자리를 잡는다 (acquireOrigin 참고)
       if (background && !sharedHttpEnabled()) release = await acquireOrigin(new URL(current).origin, signal);
+      signal.throwIfAborted();
       res = await defaultRequest(current, { redirect: "manual", signal, headers: DEFAULT_HEADERS });
     } catch (error) {
       release?.();
-      if (error instanceof HttpOriginPermitError) throw error;
+      if (error instanceof HttpOriginPermitError || error instanceof PageFetchError) throw error;
       if (options.retryTransientErrors && !permanentTransportFailure(error)) {
         throw new PageFetchError(timedOut(error) ? "timeout" : "transport",
           error instanceof Error ? `${error.name}: ${error.message}` : String(error));

@@ -130,7 +130,7 @@ describe("uptime split plan", () => {
 describe("uptime split progress", () => {
   const now = new Date(AT);
   const claims = (queue: Partial<UptimeSplitReadback["queue"]>, breakers: UptimeSplitReadback["breakers"] = []) =>
-    readback({ queue: { ...readback().queue, ...queue }, breakers }, { mode: "claims" });
+    readback({ queue: { ...readback().queue, ...queue }, breakers, maintenanceOwner: "m3-maintenance" }, { mode: "claims" });
   const open = (host: "m3" | "mini" | "oracle-osaka-smoke", probeAfter: string) => ({ host, state: "open" as const, reason: "batch_ratio", ratio: 0.8,
     openedAt: AT, probeAfter, probeChecks: 0, probeFailures: 0 });
 
@@ -153,6 +153,17 @@ describe("uptime split progress", () => {
     expect(classifyStage({ ...stalled, progress5m: 30, completed5m: 30 }, null, true, now)).toMatchObject({ reason: "progressing", alarm: false });
     // 막 쌓인 일은 5분까지 데우는 중이다
     expect(classifyStage(uptimeSplitStageInput(claims({ due: 3, dueOldestMinutes: 2 }))!, null, true, now).reason).toBe("warming_up");
+  });
+  it("only the actual maintenance owner's home breaker can hold progress", () => {
+    const standby = claims({ due: 1000, dueOldestMinutes: 45 }, [open("mini", "2026-10-19T03:05:00.000Z")]);
+    expect(heldHomeHosts(standby)).toEqual(["mini"]);
+    expect(classifyStage(uptimeSplitStageInput(standby)!, null, true, now)).toMatchObject({ reason: "no_progress", alarm: true });
+    expect(uptimeSplitNote(standby)).toContain("mini 열림");
+    expect(uptimeSplitStageInput({ ...standby, maintenanceOwner: "mini-maintenance-standby" })).toMatchObject({ held: true });
+    expect(uptimeSplitStageInput({ ...standby, maintenanceOwner: null })).toMatchObject({ held: false });
+    expect(uptimeSplitStageInput({ ...standby, maintenanceOwner: "missing" })).toMatchObject({ held: false });
+    expect(uptimeSplitStageInput({ ...standby, maintenanceOwner: "mini-maintenance-standby",
+      breakers: [open("mini", AT)] })).toMatchObject({ held: false });
   });
   it("alarms (without restart) when the running home's breaker has been open for an hour, even while Oracle applies keep progress up", () => {
     const opened = (minutes: number) => ({ ...open("m3", "2026-10-19T03:20:00.000Z"), openedAt: new Date(now.getTime() - minutes * 60_000).toISOString() });
