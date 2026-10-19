@@ -149,11 +149,18 @@ export function isUnknownUptimeStatus(status: number): boolean {
  * 살았는지 알 수 없는 응답 — caller가 먼저 검증하는 것은 writeHealthResult와 같다. 확인 시각과 마지막 응답 코드만 남기고
  * (지연은 성공 확인에만 둔다) 연속 실패·죽기 시작한 시각은 올리지도 끊지도 않는다. 성공도 실패도 아니라 일별 가동률에도 넣지 않는다.
  * 행이 없는 새 제품은 실패 0인 행으로 만든다. 마지막 응답 코드가 이 목록이면 자동 내림 sweep이 고르지 않는다(uptime-auto-ban).
+ *
+ * resetStreak는 writeHealthResult와 같은 뜻이다 — 이전 연속 실패가 지금 제품(관리자 해제·제품 수정 뒤)의 것인지 모른다. writeHealthResult는
+ * 그때 이전 행이 없던 것처럼 쓰므로(실패는 1·지금부터, 성공은 0·없음) 여기서도 행이 없던 것처럼 실패 0·죽기 시작한 시각 없음으로 쓴다.
+ * 그대로 두면 해제한 제품이 이 응답만 받는 동안 이전 연속 실패로 계속 숨겨진다(리뷰 N1).
  */
-export async function writeHealthUnknown(tx: ProductTransaction, input: { slug: string; status: number; observedAt: Date }): Promise<void> {
+export async function writeHealthUnknown(tx: ProductTransaction, input: {
+  slug: string; status: number; observedAt: Date; resetStreak: boolean;
+}): Promise<void> {
   await tx.insert(productHealth)
     .values({ slug: input.slug, checkedAt: input.observedAt, status: input.status, latencyMs: null, failures: 0, downSince: null })
-    .onConflictDoUpdate({ target: productHealth.slug, set: { checkedAt: input.observedAt, status: input.status, latencyMs: null } });
+    .onConflictDoUpdate({ target: productHealth.slug, set: { checkedAt: input.observedAt, status: input.status, latencyMs: null,
+      ...(input.resetStreak ? { failures: 0, downSince: null } : {}) } });
 }
 
 /**

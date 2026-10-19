@@ -445,9 +445,9 @@ describe("묶음 쓰기", () => {
   it("writeHealthUnknowns equals writeHealthUnknown applied one by one (checked time·status only, streak and daily untouched)", async () => {
     const observedAt = new Date("2026-10-18T15:00:01.234Z");
     const rows = (prefix: string) => [
-      { slug: `${prefix}-new`, status: 403, observedAt },
-      { slug: `${prefix}-sick`, status: 999, observedAt },
-      { slug: `${prefix}-ten`, status: 429, observedAt },
+      { slug: `${prefix}-new`, status: 403, observedAt, resetStreak: false },
+      { slug: `${prefix}-sick`, status: 999, observedAt, resetStreak: false },
+      { slug: `${prefix}-ten`, status: 429, observedAt, resetStreak: false },
     ];
     for (const prefix of [`u1b-${TAG}-k1`, `u1b-${TAG}-k2`]) {
       for (const [slug, failures] of [["sick", 2], ["ten", 10]] as const) {
