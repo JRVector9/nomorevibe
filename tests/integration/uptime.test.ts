@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
 
 const safeFetch = vi.fn();
 const readBodyCapped = vi.fn();
@@ -35,12 +36,13 @@ vi.mock("@/lib/crawl/repository", async (importOriginal) => {
 });
 
 const { db } = await import("@/lib/db");
-const { productHealth, productHealthDaily, jobs } = await import("@/lib/db/schema");
+const { productHealth, productHealthDaily, products, jobs } = await import("@/lib/db/schema");
 const repo = await import("@/lib/domain/products/repository");
 const { nextToCheck, recordPing, downProducts, healthMetrics, RECHECK_AFTER_MINUTES } = await import(
   "@/lib/domain/products/health"
 );
 const { pingProducts } = await import("@/lib/jobs/products/uptime");
+const { readMaintenanceUptimeProgress } = await import("@/lib/operations/maintenance-progress");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -208,6 +210,56 @@ describe("생존 확인", () => {
     const [{ failures, downSince, status }] = await db.select().from(productHealth);
     expect({ failures, status }).toEqual({ failures: 2, status: 500 });
     expect(downSince).toBeInstanceOf(Date);
+  });
+
+  /**
+   * 고치기 전에는 resetStreak 상관 하위 질의가 표 하나만 고르는 select 안에 있어 drizzle이 "slug"를 표 이름 없이
+   * 찍었고, 그것이 h.slug로 묶였다. 그러면 다른 제품의 health 행이 이 제품 수정보다 오래되기만 해도 매번 1로
+   * 돌아가 3회 숨김·10회 내림이 꺼진다(2026-10-15~19 운영). 잡처럼 주소(expectedUrl)를 넘겨야 이 분기를 탄다.
+   */
+  async function streakBesideOlderHealth() {
+    const day = 24 * 60 * 60_000;
+    await product("older", "https://older.test", "unverified");
+    await db.insert(productHealth).values({ slug: "older", checkedAt: new Date(Date.now() - 30 * day), status: 200 });
+    await product("a", "https://a.test");
+    await db.update(products).set({ updatedAt: new Date(Date.now() - 7 * day) }).where(eq(products.slug, "a"));
+    const target = (await repo.findBySlug("a"))!;
+    const fail = (observedAt: Date) => recordPing("a", 0, null, observedAt, target.id, undefined, target.url);
+    const health = async () => (await db.select().from(productHealth).where(eq(productHealth.slug, "a")))[0];
+    const listed = () => repo.listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 });
+    return { target, fail, health, listed };
+  }
+
+  it("다른 제품의 health 행이 더 오래돼도 주소를 확인한 연속 실패를 이어 세고 3회면 공개 목록에서 가린다", async () => {
+    const { fail, health, listed } = await streakBesideOlderHealth();
+    const first = new Date(Date.now() - 3 * 3_600_000);
+    await fail(first);
+    await fail(new Date(Date.now() - 2 * 3_600_000));
+    expect((await health()).failures).toBe(2);
+    expect(await listed()).toEqual(["a"]);
+
+    await fail(new Date(Date.now() - 3_600_000));
+
+    const row = await health();
+    expect(row.failures).toBe(3);
+    expect(row.downSince?.getTime()).toBe(first.getTime());
+    expect((await downProducts()).map((d) => d.slug)).toEqual(["a"]);
+    expect(await listed()).toEqual([]);
+  });
+
+  it("제품을 고친 뒤의 실패는 이전 연속 실패에 붙이지 않고 1부터 센다", async () => {
+    const { target, fail, health, listed } = await streakBesideOlderHealth();
+    for (const hoursAgo of [3, 2, 1]) await fail(new Date(Date.now() - hoursAgo * 3_600_000));
+    expect((await health()).failures).toBe(3);
+
+    await repo.update(target.id, { name: "고친 이름" });
+    const afterEdit = new Date();
+    await fail(afterEdit);
+
+    const row = await health();
+    expect(row.failures).toBe(1);
+    expect(row.downSince?.getTime()).toBe(afterEdit.getTime());
+    expect(await listed()).toEqual(["a"]);
   });
 
   it("죽기 시작한 시각은 처음 실패한 때로 남는다", async () => {
@@ -501,5 +553,243 @@ describe("생존 확인 — 동시에 연다", () => {
     const rows = await db.select().from(productHealth);
     expect(rows.map((row) => row.slug).sort()).toEqual(["slow-down", "slow-up"]);
     expect(downCancel).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 이 잡이 본 실패는 이 서버(M3)에서 본 것이다. 서버 네트워크가 끊기면 모든 확인이 실패로 돌아오는데,
+ * 그대로 세면 공개 제품이 한꺼번에 숨겨진다. 한 틱에 30건 이상 봤고 실패가 30%를 넘으면 실패는 쓰지 않는다.
+ */
+describe("생존 확인 — 광역 실패 보류", () => {
+  const before = new Date(Date.now() - (RECHECK_AFTER_MINUTES + 60) * 60_000);
+
+  /** 이미 2번 실패한 제품(앞 failing개)과 살아 있던 제품. 모두 확인할 때가 지났다 */
+  async function due(total: number, failing: number) {
+    vi.stubEnv("UPTIME_BATCH_SIZE", String(total));
+    vi.stubEnv("UPTIME_CONCURRENCY", "16");
+    for (let i = 0; i < total; i++) {
+      await product(`p${i}`, `https://p${i}.test`);
+      await db.insert(productHealth).values(i < failing
+        ? { slug: `p${i}`, checkedAt: before, status: 0, failures: 2, downSince: before }
+        : { slug: `p${i}`, checkedAt: before, status: 200, failures: 0 });
+    }
+    // 연속 실패가 시작된 뒤 제품을 고치지 않았다 — 고쳤으면 1부터 다시 센다(recordPing)
+    await db.update(products).set({ updatedAt: new Date(before.getTime() - 3_600_000) });
+    // 앞 failing개는 연결조차 안 된다(status 0)
+    safeFetch.mockImplementation(async (url: string) => Number(new URL(url).hostname.slice(1, -5)) < failing
+      ? null : { finalUrl: url, response: { status: 200, body: { cancel: vi.fn() } } });
+    const events: { event: string; fields?: Record<string, unknown> }[] = [];
+    await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+    const rows = new Map((await db.select().from(productHealth)).map((row) => [row.slug, row]));
+    const failed = Array.from({ length: failing }, (_, i) => rows.get(`p${i}`)!);
+    const alive = Array.from({ length: total - failing }, (_, i) => rows.get(`p${failing + i}`)!);
+    return { events, failed, alive };
+  }
+
+  it("50건 중 40건이 연결조차 안 되면 실패는 세지 않고 확인 시각만 넘긴다 — 성공은 쓴다", async () => {
+    const { events, failed, alive } = await due(50, 40);
+
+    expect(safeFetch).toHaveBeenCalledTimes(50);
+    // 연속 실패·죽기 시작한 시각·마지막 응답 코드·일별 확인 수가 그대로다
+    expect(failed.every((row) => row.failures === 2 && row.status === 0 && row.downSince?.getTime() === before.getTime()
+      && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(alive.every((row) => row.failures === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    const daily = await db.select().from(productHealthDaily);
+    expect(daily).toHaveLength(10);
+    expect(daily.every((row) => row.successes === 1)).toBe(true);
+    // 보류한 40건도 다른 제품처럼 6시간 뒤 차례를 기다린다
+    expect(await nextToCheck(100)).toEqual([]);
+    expect(events).toContainEqual({ event: "uptime.broad_failure_held", fields: { attempted: 50, down: 40, unknown: 0 } });
+    expect(events).toContainEqual({ event: "uptime.checked", fields: { alive: 10, down: 40, unknown: 0, autoBanned: 0 } });
+  });
+
+  it("150건 중 2건 실패는 평소 실패라 그대로 센다", async () => {
+    const { events, failed, alive } = await due(150, 2);
+
+    expect(failed.every((row) => row.failures === 3 && row.status === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(alive).toHaveLength(148);
+    expect(alive.every((row) => row.failures === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(await db.select().from(productHealthDaily)).toHaveLength(150);
+    expect(await nextToCheck(200)).toEqual([]);
+    expect(events.map((e) => e.event)).not.toContain("uptime.broad_failure_held");
+  });
+
+  it.each([
+    { total: 30, failing: 9, reason: "30%를 넘지 않는다" },
+    { total: 29, failing: 29, reason: "30건이 안 돼 비율을 믿지 않는다" },
+  ])("$total건 중 $failing건 실패는 쓴다 — $reason", async ({ total, failing }) => {
+    const { events, failed } = await due(total, failing);
+
+    expect(failed.every((row) => row.failures === 3)).toBe(true);
+    expect(events.map((e) => e.event)).not.toContain("uptime.broad_failure_held");
+  });
+
+  it("모아 둔 실패를 쓸 때 임대를 잃었으면 쓰지 않고 실패를 알린다", async () => {
+    await product("a", "https://a.test");
+    dead();
+    const lease = { name: "uptime-ping", token: "old-owner", requestedVersion: 1 };
+    await db.insert(jobs).values({ name: lease.name, leaseToken: "new-owner", lockedAt: new Date() });
+
+    await expect(pingProducts({ ...tick(), lease })).rejects.toThrow("job_lease_lost");
+
+    expect(await db.select().from(productHealth)).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+  });
+
+  /**
+   * 보류한 실패의 확인 시각을 그대로 두면 가장 오래된 채로 다음 틱 배치를 먼저 채운다. 이 서버에서만 35%가 실패하는 장애가
+   * 이어지면 몇 틱 만에 배치 전체가 보류 제품으로 차서 다른 제품 확인이 0이 되고, 막힌 사이트는 1분마다 요청을 받았다(리뷰 F4).
+   */
+  it("이 서버에서만 35%가 실패하는 장애가 이어져도 보류한 제품은 차례를 넘기고 나머지를 계속 본다 — 같은 사이트를 다시 열지 않는다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "40");
+    vi.stubEnv("UPTIME_CONCURRENCY", "16");
+    // i가 작을수록 오래전에 확인했다. 모두 살아 있던 제품이다
+    for (let i = 0; i < 200; i++) {
+      await product(`p${i}`, `https://p${i}.test`);
+      await db.insert(productHealth).values({ slug: `p${i}`, checkedAt: new Date(before.getTime() - (200 - i) * 60_000), status: 200, failures: 0 });
+    }
+    const affected = (slug: string) => Number(slug.slice(1)) % 20 < 7;
+    const calls = new Map<string, number>();
+    safeFetch.mockImplementation(async (url: string) => {
+      calls.set(url, (calls.get(url) ?? 0) + 1);
+      return affected(new URL(url).hostname.slice(0, -5))
+        ? null : { finalUrl: url, response: { status: 200, body: { cancel: vi.fn() } } };
+    });
+
+    const first: unknown[] = [];
+    for (let n = 0; n < 8; n++) {
+      const events: { event: string; fields?: Record<string, unknown> }[] = [];
+      await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+      first.push(events[0]);
+    }
+
+    // 틱마다 새 40건(그중 14건 실패)을 보고 보류한다. 다섯 틱이면 200건을 다 봐서 남은 틱은 할 일이 없다
+    const held = { event: "uptime.broad_failure_held", fields: { attempted: 40, down: 14, unknown: 0 } };
+    const idle = { event: "uptime.idle", fields: { checked: 0, autoBanned: 0 } };
+    expect(first).toEqual([held, held, held, held, held, idle, idle, idle]);
+    expect(calls.size).toBe(200);
+    expect(Math.max(...calls.values())).toBe(1);
+    // 보류한 70건은 확인 시각만 넘어갔다 — 연속 실패·죽기 시작한 시각·마지막 응답 코드·일별 집계는 그대로다
+    const rows = (await db.select().from(productHealth)).filter((row) => affected(row.slug));
+    expect(rows).toHaveLength(70);
+    expect(rows.every((row) => row.failures === 0 && row.downSince === null && row.status === 200
+      && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(await db.select().from(productHealthDaily)).toHaveLength(130);
+    expect(await downProducts()).toEqual([]);
+    expect(await nextToCheck(200)).toEqual([]);
+  });
+
+  it("health 행이 없는 새 제품도 보류하면 실패 0인 행으로 차례를 넘기고, 6시간 뒤 실패는 1부터 센다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "30");
+    vi.stubEnv("UPTIME_CONCURRENCY", "16");
+    for (let i = 0; i < 30; i++) await product(`p${i}`, `https://p${i}.test`);
+    await db.update(products).set({ updatedAt: new Date(before.getTime() - 3_600_000) });
+    dead();
+
+    await pingProducts(tick());
+
+    const rows = await db.select().from(productHealth);
+    expect(rows).toHaveLength(30);
+    expect(rows.every((row) => row.failures === 0 && row.downSince === null && row.status === 0 && row.latencyMs === null
+      && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+    expect(await downProducts()).toEqual([]);
+    expect(await nextToCheck(30)).toEqual([]);
+    // 모두 보류한 틱도 확인은 한 것이다 — maintenance 감시가 멈춘 것으로 보지 않는다(밀린 것 없음·5분 안 기록 있음)
+    expect(await readMaintenanceUptimeProgress()).toMatchObject({ waiting: false, persistedWithin5m: true });
+
+    // 6시간 뒤 평소처럼 한 곳만 실패한다 — 보류 때 만든 행에 이어 1부터 센다
+    await db.update(productHealth).set({ checkedAt: before });
+    safeFetch.mockImplementation(async (url: string) => url === "https://p0.test"
+      ? null : { finalUrl: url, response: { status: 200, body: { cancel: vi.fn() } } });
+
+    await pingProducts(tick());
+
+    const [p0] = await db.select().from(productHealth).where(eq(productHealth.slug, "p0"));
+    expect(p0).toMatchObject({ failures: 1, status: 0 });
+    expect(p0.downSince?.getTime()).toBe(p0.checkedAt.getTime());
+    expect(await db.select().from(productHealthDaily)).toHaveLength(30);
+  });
+});
+
+/**
+ * 401·403·429·999는 살아 있는 사이트도 봇·로그인 차단 때문에 돌려준다(LinkedIn 프로필 등). 연속 실패로 세면 살아 있는
+ * 제품이 3회 숨김·10회 내림으로 간다 — 살았는지 알 수 없는 응답으로 보고 세지도 끊지도 않는다(리뷰 F7).
+ */
+describe("생존 확인 — 살았는지 알 수 없는 응답(봇·로그인 차단)", () => {
+  const before = new Date(Date.now() - (RECHECK_AFTER_MINUTES + 60) * 60_000);
+
+  /** 이미 2번 실패한 제품 하나가 status로 답한다(0이면 연결조차 안 된다) */
+  async function respond(status: number) {
+    await product("a", "https://a.test");
+    await db.insert(productHealth).values({ slug: "a", checkedAt: before, status: 0, failures: 2, downSince: before });
+    await db.update(products).set({ updatedAt: new Date(before.getTime() - 3_600_000) });
+    const cancel = vi.fn().mockResolvedValue(undefined);
+    safeFetch.mockResolvedValue(status === 0 ? null : { finalUrl: "https://a.test", response: { status, body: { cancel } } });
+    const events: { event: string; fields?: Record<string, unknown> }[] = [];
+    await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+    const [row] = await db.select().from(productHealth);
+    return { row, cancel, events };
+  }
+
+  it.each([401, 403, 429, 999])("HTTP %s는 연속 실패를 올리지도 끊지도 않고 확인 시각과 응답 코드만 남긴다", async (status) => {
+    const { row, cancel, events } = await respond(status);
+
+    expect(row).toMatchObject({ failures: 2, status, latencyMs: null });
+    expect(row.downSince?.getTime()).toBe(before.getTime());
+    expect(row.checkedAt.getTime()).toBeGreaterThan(before.getTime());
+    // 성공도 실패도 아니라 일별 가동률에 넣지 않는다
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+    expect(await nextToCheck(5)).toEqual([]);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(readBodyCapped).not.toHaveBeenCalled();
+    expect(events).toContainEqual({ event: "uptime.checked", fields: { alive: 0, down: 0, unknown: 1, autoBanned: 0 } });
+  });
+
+  it.each([0, 404, 402, 500, 418])("응답 %s는 지금처럼 실패로 센다", async (status) => {
+    const { row, events } = await respond(status);
+
+    expect(row).toMatchObject({ failures: 3, status });
+    expect(row.downSince?.getTime()).toBe(before.getTime());
+    expect(await db.select().from(productHealthDaily)).toMatchObject([{ checks: 1, successes: 0 }]);
+    expect(events).toContainEqual({ event: "uptime.checked", fields: { alive: 0, down: 1, unknown: 0, autoBanned: 0 } });
+  });
+
+  it("health 행이 없는 새 제품의 403은 실패 0인 행을 만든다", async () => {
+    await product("a", "https://a.test");
+    safeFetch.mockResolvedValue({ finalUrl: "https://a.test", response: { status: 403, body: { cancel: vi.fn().mockResolvedValue(undefined) } } });
+
+    await pingProducts(tick());
+
+    expect((await db.select().from(productHealth))[0]).toMatchObject({ failures: 0, downSince: null, status: 403, latencyMs: null });
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+    expect(await downProducts()).toEqual([]);
+  });
+
+  /**
+   * 광역 실패 비율에서는 알 수 없는 응답을 실패 쪽에 센다(성공이 아니다). 분모에서 빼면 이 틱은 10건뿐이라 30건 표본
+   * 하한에 걸려 보류가 꺼지고 10건 실패를 그대로 센다.
+   */
+  it("30건 중 20건이 403·10건이 연결 실패면 광역 실패로 보류하고 403은 응답 코드만 남긴다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "30");
+    vi.stubEnv("UPTIME_CONCURRENCY", "16");
+    for (let i = 0; i < 30; i++) {
+      await product(`p${i}`, `https://p${i}.test`);
+      await db.insert(productHealth).values({ slug: `p${i}`, checkedAt: before, status: 0, failures: 2, downSince: before });
+    }
+    await db.update(products).set({ updatedAt: new Date(before.getTime() - 3_600_000) });
+    safeFetch.mockImplementation(async (url: string) => Number(new URL(url).hostname.slice(1, -5)) < 10
+      ? null : { finalUrl: url, response: { status: 403, body: { cancel: vi.fn().mockResolvedValue(undefined) } } });
+    const events: { event: string; fields?: Record<string, unknown> }[] = [];
+
+    await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+
+    expect(events).toContainEqual({ event: "uptime.broad_failure_held", fields: { attempted: 30, down: 10, unknown: 20 } });
+    const rows = await db.select().from(productHealth);
+    expect(rows.every((row) => row.failures === 2 && row.downSince?.getTime() === before.getTime()
+      && row.checkedAt.getTime() > before.getTime())).toBe(true);
+    expect(rows.filter((row) => row.status === 403)).toHaveLength(20);
+    expect(rows.filter((row) => row.status === 0)).toHaveLength(10);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
   });
 });
