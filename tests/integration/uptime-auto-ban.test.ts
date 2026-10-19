@@ -19,7 +19,7 @@ vi.mock("@/lib/jobs/control", async importOriginal => {
 
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, jobs, operationsAudit, productEvidenceAudit, productHealth, productHealthDaily, products } from "@/lib/db/schema";
-import { removeProductAndEvidence, setStatusWithAudit, update } from "@/lib/domain/products/repository";
+import { listProductSlugs, removeProductAndEvidence, setStatusWithAudit, update } from "@/lib/domain/products/repository";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 import { downProducts, recordPing } from "@/lib/domain/products/health";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
@@ -327,6 +327,63 @@ describe("uptime 연속 실패 자동 내림", () => {
     const [health] = await db.select().from(productHealth);
     expect(health.failures).toBe(1);
     expect(health.downSince).toEqual(health.checkedAt);
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+  });
+
+  /**
+   * 관리자 해제·제품 수정 뒤에는 이전 연속 실패가 지금 제품의 것인지 모른다(resetStreak). 실패는 1부터·성공은 0으로 새로 시작하는데,
+   * 봇·로그인 차단 응답이 그 연속 실패를 그대로 두면 해제한 제품이 응답 코드가 바뀔 때까지 공개 목록에서 숨겨진다(리뷰 N1).
+   * 이 응답도 연속 실패를 새로 시작한 상태(실패 0·죽기 시작한 시각 없음)로 쓴다. 해제·수정이 없는 제품은 지금처럼 그대로 둔다.
+   */
+  it.each([401, 403, 429, 999])("관리자 해제 뒤 HTTP %s는 연속 실패를 새로 시작해 숨김을 푼다 — 해제·수정이 없는 제품은 그대로", async (code) => {
+    const target = await product(`unban-unknown-${code}`, 9, ago(7 * 60));
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("banned");
+    await setStatusWithAudit({ ...target, status: "seeded", action: "admin.product.unban" });
+    const kept = await product(`kept-unknown-${code}`, 9, ago(7 * 60));
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    const listed = () => listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 });
+    expect(await listed()).toEqual([]);
+
+    safeFetch.mockImplementation(async (url: string) => ({ finalUrl: url, response: { status: code } }));
+    await pingProducts(ctx());
+
+    const health = new Map((await db.select().from(productHealth)).map(row => [row.slug, row]));
+    expect(health.get(target.slug)).toMatchObject({ failures: 0, downSince: null, status: code, latencyMs: null });
+    expect(health.get(kept.slug)).toMatchObject({ failures: 9, downSince: ago(72 * 60), status: code });
+    expect(await listed()).toEqual([target.slug]);
+    expect((await downProducts()).map(row => row.slug)).toEqual([kept.slug]);
+    // 성공도 실패도 아니라 일별 집계는 해제 전 404 한 번 그대로다
+    expect(await db.select().from(productHealthDaily).where(eq(productHealthDaily.slug, target.slug)))
+      .toMatchObject([{ checks: 1, successes: 0 }]);
+
+    // 한 바퀴 더 같은 응답이어도 숨기지 않고, 그다음 실패는 1부터 센다
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    await pingProducts(ctx());
+    expect((await db.select().from(productHealth).where(eq(productHealth.slug, target.slug)))[0])
+      .toMatchObject({ failures: 0, downSince: null, status: code });
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    safeFetch.mockImplementation(async (url: string) => ({ finalUrl: url, response: { status: 404 } }));
+    await pingProducts(ctx());
+    const [after] = await db.select().from(productHealth).where(eq(productHealth.slug, target.slug));
+    expect(after).toMatchObject({ failures: 1, status: 404 });
+    expect(after.downSince).toEqual(after.checkedAt);
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await status(kept.slug)).toBe("seeded");
+    expect(await autoAudits()).toHaveLength(1);
+  });
+
+  it("URL이 아닌 제품 수정 뒤 HTTP 403도 연속 실패를 새로 시작해 숨김을 푼다", async () => {
+    const target = await product("name-edit-unknown", 12, ago(7 * 60));
+    await update(target.id, { name: "바뀐 이름" });
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 403 } });
+    await pingProducts(ctx());
+    const [health] = await db.select().from(productHealth);
+    expect(health).toMatchObject({ failures: 0, downSince: null, status: 403, latencyMs: null });
+    expect(await listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 })).toEqual([target.slug]);
+    expect(await downProducts()).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
     expect(await status(target.slug)).toBe("seeded");
     expect(await autoAudits()).toEqual([]);
   });

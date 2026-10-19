@@ -106,7 +106,7 @@ export async function recordPing(
     }
     if (signal?.aborted) return;
     if (held) await writeHealthHeld(tx, { slug, status, observedAt });
-    else if (isUnknownUptimeStatus(status)) await writeHealthUnknown(tx, { slug, status, observedAt });
+    else if (isUnknownUptimeStatus(status)) await writeHealthUnknown(tx, { slug, status, observedAt, resetStreak });
     else await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
