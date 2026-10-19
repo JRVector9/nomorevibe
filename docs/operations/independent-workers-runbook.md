@@ -198,6 +198,41 @@ GitHub가 401을 돌려주면 응답 본문을 크기 제한 안에서 읽고 `e
 분류 코드만 남으며 원문 응답·PAT는 남기지 않는다. 관리자에서 토큰 교체 후
 `crawl-seed`·`crawl-fetch`의 다음 실행과 새 원본 저장을 확인한다.
 
+### 서버별 GitHub 수집 자격 (App 설치를 한 서버 전용으로)
+
+관리자에서 켜 둔 App 설치·PAT와 `GITHUB_TOKEN`은 기본으로 모든 프로세스가 요청 단위로
+돌려 쓴다. 한 설치를 한 서버(예: Oracle) 전용으로 쓰려면 프로세스 환경 변수로 나눈다(README의
+`GITHUB_COLLECTOR_SOURCES` 표). 환경 변수는 그 값을 받은 프로세스에만 적용되므로, 설치를 빼려는
+서버의 GitHub 요청을 하는 모든 앱(M3·mini의 역할 워커 주·예비와 웹)에 같은 값을 넣는다.
+관리자 화면의 '수집에서 제외'는 모든 서버에서 빼는 스위치다.
+
+새 설치를 Oracle 전용으로 쓰는 순서:
+
+1. 조직에서 GitHub App을 만든다(조직 Settings → Developer settings → GitHub Apps → New
+   GitHub App). Webhook의 Active를 끄고 권한은 아무것도 고르지 않는다. 운영 중인 기존 App도
+   권한·저장소 없이 설치해 공개 저장소를 읽고 있다.
+2. App 설정의 Private keys에서 개인 키(.pem)를 만들고 App ID를 적어 둔다.
+3. Install App으로 그 조직에 설치한다. 설치 설정 주소
+   (`github.com/organizations/<조직>/settings/installations/<숫자>`) 끝의 숫자가 Installation ID다.
+4. 먼저 정한다: Oracle 가동 전까지 M3가 이 설치를 같이 써도 되는가.
+   - 같이 쓴다: 바로 5번. Oracle 가동 때 M3·mini 앱에
+     `GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS=<설치 ID>`를 넣고 재배포한다.
+   - 처음부터 Oracle만 쓴다: 이 기능이 든 release로 M3·mini 앱에 위 제외 변수를 먼저 넣고
+     재배포한 뒤 5번. 또는 5번 직후 '수집에서 제외'로 꺼 두었다가, Oracle 가동 때 제외 변수를
+     넣고 다시 켠다.
+5. `/admin/github-accounts`의 "GitHub App 등록"에 App ID·Installation ID·개인 키 전체를 넣는다.
+   저장하면 켜진 상태다.
+6. Oracle 프로세스 환경 파일에 `GITHUB_COLLECTOR_SOURCES=apps`,
+   `GITHUB_COLLECTOR_APP_INSTALLATIONS=<설치 ID>`, 같은 `GITHUB_COLLECTOR_SECRET`을 둔다.
+7. 확인: App 카드의 한도 관측 시각·잔여가 움직이는지, 워커 로그에
+   `github.collector_scope_empty`·`github.app_scope_installation_disabled`·`github.app_token_unavailable`이
+   없는지 본다.
+
+GitHub 공식 문서 기준 설치 한도는 시간당 5,000이다. 조직 설치는 저장소가 20개를 넘으면 저장소마다,
+조직 사용자가 20명을 넘으면 사용자마다 50씩 늘고 최대 12,500이다. GitHub Enterprise Cloud
+조직이면 15,000이다. 2차 레이트 리밋 대기 키(`github:quota:secondary:global`)는 서버를 나눠도
+하나라서, 한 서버가 2차 제한에 걸리면 모든 서버의 GitHub 요청이 그 시각까지 멈춘다.
+
 ### 저장소 이름 변경 중복 차단 (0054)
 
 `0054_crawl_github_identity_lookup`은 원본의 GitHub 숫자 ID 조회 인덱스와

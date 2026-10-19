@@ -63,6 +63,7 @@ export default async function GitHubAccountsPage() {
 
     <section className="mt-7" aria-label="등록된 GitHub App">
       <h2 className="text-[17px] font-bold">등록된 GitHub App {apps.length}개</h2>
+      <p className="mt-1 text-[13px] text-fg-3">&lsquo;수집에 사용&rsquo;은 켜져 있다는 뜻이며 기본으로 모든 서버가 함께 씁니다. 어느 서버가 어느 설치를 쓰는지는 그 서버 워커의 환경 변수 <code>GITHUB_COLLECTOR_APP_INSTALLATIONS</code>(이 설치만)·<code>GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS</code>(이 설치 제외)로 정합니다. &lsquo;수집에서 제외&rsquo;는 모든 서버에서 뺍니다.</p>
       {apps.length === 0 && <p className="mt-3 rounded-xl border border-line bg-bg-card p-4 text-[13px] text-fg-2">등록된 App 이 없습니다.</p>}
       <div className="mt-3 grid gap-3 md:grid-cols-2">
         {apps.map(app => {
