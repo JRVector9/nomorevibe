@@ -22,6 +22,9 @@
 4. **home 광역 기준은 legacy 와 같다**: 한 틱(묶음) 30건 이상에서 실패가 30% 초과면 그 실패를 세지 않는다. claims 에서는 여기에 더해 그 host 차단기가
    열려(기본 10분) 다음 틱부터 확인을 쉬고(반영·sweep 은 계속), cool-down 뒤 30건만 시험해 5% 이하면 닫는다. 그래서 policy 의
    `batchMin`·`batchOpenRatio` 는 30·0.3 이어야 하고 도구가 다른 값을 거절한다(`policy_batch_rule_differs_from_legacy`).
+   세지 않은 home 실패(`split_broad_failure`)는 legacy 광역 보류와 같은 **판정 보류**다 — 확인 시각만 넘기고(연속 실패·응답 코드·첫 실패 시각·
+   일일 집계 그대로) 다른 제품처럼 6시간 뒤 차례에 둔다. 재확인 요청도 그 확인으로 끝난다. 연속 실패가 10 이상인 행(관리자가 풀어 준 제품)은
+   확인 시각도 그대로 두고(자동 내림 최신성·관리자 해제 비교 기준) 15분 뒤 다시 본다.
 5. **`minChecks` 는 100 이하**(`policy_min_checks_above:100`). 200 이면 Oracle 1,000건/시간(10분 약 167건)에서 창 규칙이 영영 열리지 않는다.
    **probe `maxPerHour` 합계는 5,000 이하**(`policy_probe_rate_above:5000`). 제출분은 home 적용기가 1분 틱마다 100건만 반영해(시간당 최대 6,000)
    그보다 빨리 내면 `submitted` 가 쌓이기만 한다.
@@ -42,8 +45,15 @@
 11. **제출은 probe(Oracle)만 한다.** home 결과는 home 잡이 적용기에 직접 넘긴다. 적용기는 home host·class 로 적힌 제출 행을 판정하지 않고 버린다
    (`submitted_not_probe`, due 그대로) — Oracle 계정의 열 UPDATE 권한으로 "home 이 본 실패" 를 위조해도 세지 않는다. 그래서 consumer 를 home 항목으로
    돌리는 방식(A4 "두 번째 home consumer")은 지원하지 않는다(consumer 는 `home_unsupported` 로 쉬고, 제출 API 도 home instance 를 거절한다).
-12. **비표준 HTTP 상태**(100..599 밖, 예: LinkedIn 999)는 legacy 와 같은 값·같은 의미로 기록한다 — `product_health.status` 에 999 그대로, 실패.
+12. **비표준 HTTP 상태**(100..599 밖, 예: LinkedIn 999·600)는 legacy 와 같은 값·같은 의미로 기록한다 — `product_health.status` 에 그대로.
    100..599 만 담는 `uptime_observations`·제출 칸에만 `unknown/0` 으로 남는다(Oracle 이 본 999 는 `unknown:0` 재확인 요청이 된다).
+   **봇·로그인 차단 응답(401·403·429·999)** 은 legacy(#551 F7)와 같이 살았는지 알 수 없는 응답이다. home 이 보면 세지도 끊지도 않고 확인 시각·
+   응답 코드만 남긴다(`split_unknown`, 일일 집계 없음, 자동 내림 확인 안 함 — sweep 도 마지막 응답이 이 목록이면 고르지 않는다). 다만 관리자 해제·
+   URL 이 아닌 제품 수정 뒤라 연속 실패를 다시 셀 때(`splitResetStreak`, legacy `resetStreak`)는 실패 0·첫 실패 시각 없음으로 새로 시작한다
+   (리뷰 N1 — 그대로 두면 해제한 제품이 이 응답만 받는 동안 계속 숨겨진다). Oracle 이 보면
+   다른 실패처럼 home 재확인을 요청한다. 차단기 비율(묶음·창)에서는 legacy 광역 비율처럼 실패 쪽에 센다. 그 밖의 비표준 상태(600 등)는 실패다.
+   목록은 `health-record.ts` `UPTIME_UNKNOWN_STATUSES` 하나다 — legacy(`recordPing`)와 적용기(판정 `unknown` → `writeHealthUnknowns`)가 같이 쓰고,
+   한쪽 의미만 바뀌면 적용기가 `uptime_split_health_mismatch` 로 틱을 되돌린다(쌍둥이 시험 `uptime-split-twin.test.ts` 가 막는다).
    한 건의 결과 모양이 틀리면(`uptime.split_result_invalid`) 그 건만 반영에서 빠지고 TTL 뒤 다시 잡힌다.
 13. **host 시계.** home 잡·Oracle consumer 는 claim 전마다 host−DB 시계 차를 잰다. 20초를 넘으면 claim·확인을 쉰다(home: 이벤트
    `uptime.split_clock_skew`, consumer: 쉼 사유 `clock_skew`·관측 키 `clockSkewMs`). 그래도 ±30초 밖으로 판정된 결과(`clock`)는 due 를 15분 미룬다.
@@ -208,6 +218,8 @@ select date_trunc('minute', received_at) as minute, host, count(*) from uptime_o
   legacy(PR-0a 이후)·claims(`splitResetStreak`)는 "연속 실패가 시작된 뒤 제품이 바뀌었을 때만 1부터" 다. 지금은 0103 트리거가 PR09 와 split 을
   함께 켜지 못하게 해 무해하지만, PR09 를 다시 쓰려면 이 의미를 legacy 와 맞춰야 한다. 그 경로는 비표준 HTTP 상태(999)를 raw 표 CHECK 에 그대로
   넣으려 해 기록이 실패한다는 점도 함께 맞춰야 한다.
-- **Oracle 계정 권한의 남은 폭**: claim 이 `host`·`host_class` 를 쓰므로 열 권한으로는 "Oracle 은 probe 만" 을 강제할 수 없다(적용기가 버린다, 위 11).
-  제어 행 잠금용 `UPDATE(id)` 로 행 잠금을 idle-in-transaction 60초까지 쥘 수 있고, `operations_observations` 키를 가리지 않는다(다른 Oracle 역할과 같다).
-  닫으려면 트리거·RLS(migration)가 필요하다. products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).
+- **Oracle 계정 권한의 남은 폭**: 0106 트리거가 둘을 닫았다 — Oracle 계정은 claim 행을 Oracle host·probe 로만 쓰고(home 으로 적힌 행은 42501,
+  적용기의 `submitted_not_probe` 는 두 번째 관문으로 남는다), `operations_observations` 에는 자기 consumer 키(`uptime-consumer:uptime-consumer-*`·
+  `service:maintenance:uptime-consumer-*`)만 쓴다. 남은 것은 제어 행 잠금용 `UPDATE(id)`(`dr_writer_fence`·`uptime_split_control`)다 — FOR SHARE 에 필요한
+  권한이 `SELECT … FOR UPDATE` 도 허용하고 트리거·RLS 로는 가를 수 없어, 행 잠금을 문장 10초·idle 60초까지 쥘 수 있다(역할 계정과 같은 관행,
+  oracle 활성화 runbook "consumer 행 범위(0106)"). products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).

@@ -236,17 +236,33 @@ describe("decideSplitResults — design §3.2 table", () => {
         claim: { dueAt: wall, confirmClass: "home", confirmReason: reason, confirmRequestedAt: wall, lastApplied: null },
         raw: { disposition: "raw_only", reason: "split_confirm_required", observation: { source: { host: "oracle-osaka-smoke", region: "ap-osaka-1" } } } });
     });
-  it("row 9 home failure while the home breaker is open: held 15 minutes, confirm kept, observation_hold raw", () => {
+  it("row 9 home failure while the home breaker is open: judgement held like legacy (checked time only, due 6h), the confirm ends, observation_hold raw", () => {
     const value = input({ status: 500, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) } });
     const open = breaker("m3", { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "window_ratio", ratio: 0.5 });
-    expect(one(value, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", health: null,
-      claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS), confirmClass: "home", confirmReason: "http:403" },
+    expect(one(value, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", textSample: false,
+      health: { kind: "held", checkedAt: at(-49_000), failures: 0, downSince: null, alive: false, latencyMs: null, status: 500 },
+      claim: { dueAt: at(-49_000 + UPTIME_RECHECK_MS), confirmClass: null, confirmReason: null, confirmRequestedAt: null, lastApplied: null },
       raw: { disposition: "observation_hold", reason: "split_broad_failure" } });
+  });
+  it("row 9 held keeps the streak and first failure time; a new product gets a 0-failure row; at the auto-ban threshold nothing is written (15 minutes)", () => {
+    const open = breaker("m3", { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "window_ratio", ratio: 0.5 });
+    const since = new Date("2026-10-18T09:00:00Z");
+    expect(one(input({ kind: "network", health: { failures: 2, downSince: since } }), { breakers: [open] }))
+      .toMatchObject({ outcome: "held", health: { kind: "held", failures: 2, downSince: since, status: 0 } });
+    // 제품이 바뀌어 센다면 1 로 다시 셀 실패도 보류면 그대로다(writeHealthHeld 는 연속 실패를 보지 않는다)
+    expect(one(input({ status: 503, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 10:00:00" } }), { breakers: [open] }))
+      .toMatchObject({ health: { kind: "held", failures: 9, downSince: since } });
+    expect(one(input({ status: 503, health: null }), { breakers: [open] })).toMatchObject({ health: { kind: "held", failures: 0, downSince: null, status: 503 } });
+    const unbanned = input({ status: 404, health: { failures: 10, downSince: since },
+      claim: { confirmClass: "home", confirmReason: "http:404", confirmRequestedAt: at(-2 * MIN) } });
+    expect(one(unbanned, { breakers: [open] })).toMatchObject({ outcome: "held", reason: "split_broad_failure", health: null,
+      claim: { dueAt: at(UPTIME_SPLIT_HOLD_MS), confirmClass: "home" }, raw: { disposition: "observation_hold" } });
   });
   it("row 9 home batch shaped like a broad failure (≥30, >30%): failures held, successes still applied, breaker opens", () => {
     const rows = failures("m3", 10, 30);
     const batch = decideSplitResults(rows, context());
-    expect(batch.decisions.slice(0, 10).every(row => row.outcome === "held" && row.reason === "split_broad_failure" && row.health === null)).toBe(true);
+    expect(batch.decisions.slice(0, 10).every(row => row.outcome === "held" && row.reason === "split_broad_failure"
+      && row.health?.kind === "held" && row.health.failures === 0 && row.claim?.dueAt.getTime() === at(-49_000 + UPTIME_RECHECK_MS).getTime())).toBe(true);
     expect(batch.decisions.slice(10).every(row => row.outcome === "applied" && row.health?.failures === 0)).toBe(true);
     expect(batch.breakers).toEqual([{ ...closedUptimeBreaker("m3", policy), state: "open", openedAt: wall, probeAfter: at(10 * MIN),
       reason: "batch_ratio", ratio: 10 / 30 }]);
@@ -266,12 +282,54 @@ describe("decideSplitResults — design §3.2 table", () => {
     expect(one(input({ status: 404, host: "mini", health: { failures: 9, downSince: since } }))).toMatchObject({ health: { failures: 10 } });
   });
   it("row 10 home confirm of an Oracle failure counts as split_confirmed and clears the confirm", () => {
-    const value = input({ status: 403, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) },
+    // home 이 본 403 은 알 수 없는 응답이라 세지 않는다(아래 9a) — 센 실패의 예는 503 이다
+    const value = input({ status: 503, claim: { confirmClass: "home", confirmReason: "http:403", confirmRequestedAt: at(-2 * MIN) },
       health: { failures: 1, downSince: new Date("2026-10-18T21:00:00Z") } });
     expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_confirmed", health: { failures: 2 },
       claim: { confirmClass: null, confirmReason: null, confirmRequestedAt: null, conflictCount: 0 },
       raw: { disposition: "applied", reason: "split_confirmed" } });
   });
+  it.each([401, 403, 429, 999])("row 9a home %s is unknown like legacy: not counted, checked time and status only, no daily, due 6h, fresh streak after a product change", status => {
+    const since = new Date("2026-10-18T09:00:00Z");
+    const value = input({ status, health: { failures: 3, downSince: since } });
+    expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_unknown", textSample: false,
+      health: { kind: "unknown", status, failures: 3, downSince: since, alive: false, latencyMs: null, checkedAt: at(-49_000) },
+      claim: { dueAt: at(-49_000 + UPTIME_RECHECK_MS), confirmClass: null, conflictCount: 0, lastApplied: { at: wall, host: "m3" } },
+      raw: { disposition: "applied", reason: "split_unknown",
+        observation: status === 999 ? { kind: "unknown", status: 0, latencyMs: null } : { kind: "http", status } } });
+    // 연속 실패가 시작된 뒤 제품이 바뀌었으면(관리자 해제·수정) 행이 없던 것처럼 새로 시작한다 — 실패 0·첫 실패 시각 없음(리뷰 N1,
+    // writeHealthUnknown 의 resetStreak 와 같다). 새 제품은 실패 0 행
+    expect(one(input({ status, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 10:00:00" } })))
+      .toMatchObject({ health: { kind: "unknown", failures: 0, downSince: null, status } });
+    expect(one(input({ status, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 08:00:00" } })))
+      .toMatchObject({ health: { kind: "unknown", failures: 9, downSince: since } });
+    expect(one(input({ status, health: null }))).toMatchObject({ health: { kind: "unknown", failures: 0, downSince: null, status } });
+  });
+  it("row 9a home unknown on a confirm row ends the confirm without a regional conflict", () => {
+    const value = input({ status: 403, claim: { confirmClass: "home", confirmReason: "timeout:0", confirmRequestedAt: at(-2 * MIN), conflictCount: 2 },
+      health: { failures: 1, downSince: new Date("2026-10-18T21:00:00Z") } });
+    expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_unknown", health: { kind: "unknown", failures: 1 },
+      claim: { confirmClass: null, confirmReason: null, confirmRequestedAt: null, conflictCount: 2, affinityHomeUntil: null } });
+  });
+  it("row 9a unknown counts as failure for the breaker ratio (like legacy) but is still written while real failures are held", () => {
+    // 30건 중 403 7건 + 연결 실패 3건 = 10/30 > 30% → 열린다. legacy 틱 보류도 (실패 + 알 수 없음) / 확인 수로 본다
+    const rows = [...Array.from({ length: 7 }, () => input({ status: 403 })), ...failures("m3", 3, 23)];
+    const batch = decideSplitResults(rows, context());
+    expect(batch.breakers).toEqual([expect.objectContaining({ host: "m3", state: "open", reason: "batch_ratio", ratio: 10 / 30 })]);
+    expect(batch.windows).toEqual([{ host: "m3", bucket: wall, checks: 30, failures: 10, transport: 3 }]);
+    expect(batch.decisions.slice(0, 7).every(row => row.reason === "split_unknown" && row.health?.kind === "unknown")).toBe(true);
+    expect(batch.decisions.slice(7, 10).every(row => row.reason === "split_broad_failure" && row.health?.kind === "held")).toBe(true);
+    // 403 만 9건이면 9/30 = 30% — 초과가 아니라 실패 1건을 센다
+    const nine = decideSplitResults([...Array.from({ length: 8 }, () => input({ status: 403 })), ...failures("m3", 1, 22)], context());
+    expect(nine.breakers[0].state).toBe("closed");
+    expect(nine.decisions[8]).toMatchObject({ reason: "split_counted", health: { kind: "counted", failures: 1 } });
+  });
+  it.each([[401, "http", "http:401"], [429, "http", "http:429"], [0, "unknown", "unknown:0"]] as const)(
+    "row 8 probe %s/%s (bot or login block, 999 arrives as unknown/0) is a probe failure: never counted, home confirm", (status, kind, reason) => {
+      const value = input({ host: "oracle-osaka-smoke", status, kind, health: { failures: 2, downSince: new Date("2026-10-18T00:00:00Z") } });
+      expect(one(value)).toMatchObject({ outcome: "confirm_requested", reason: "split_confirm_required", health: null,
+        claim: { confirmClass: "home", confirmReason: reason } });
+    });
   it("Oracle-only blocks never hide: four 6h cycles of Oracle 403 + home success leave failures at 0", () => {
     let health: UptimeHealthSnapshot = { checkedAt: new Date("2026-10-18T00:00:00Z"), failures: 0, downSince: null };
     for (let cycle = 0; cycle < 4; cycle++) {
@@ -290,7 +348,7 @@ describe("decideSplitResults — design §3.2 table", () => {
     const open = (host: UptimeHost) => breaker(host, { state: "open", openedAt: at(-MIN), probeAfter: at(9 * MIN), reason: "batch_ratio", ratio: 1 });
     const batch = decideSplitResults([input({ status: 500 }), input({ host: "oracle-osaka-smoke", status: 500 })],
       context({ breakers: [open("m3"), open("oracle-osaka-smoke")] }));
-    expect(batch.decisions.map(row => [row.outcome, row.health])).toEqual([["held", null], ["returned", null]]);
+    expect(batch.decisions.map(row => [row.outcome, row.health?.kind ?? null, row.health?.failures ?? null])).toEqual([["held", "held", 0], ["returned", null, null]]);
   });
   it("rejects a duplicate product and malformed results instead of guessing", () => {
     const value = input();

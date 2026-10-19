@@ -137,7 +137,10 @@ export async function rawRows(slug: string) {
 
 /** 이 파일이 쓰는 공유 test DB 상태를 비운다(제품 TRUNCATE 가 claim 행을 cascade 로 지운다). resetTables 뒤에 부른다 */
 export async function clearSplitState() {
-  await db.execute(sql`select setval(pg_get_serial_sequence('products', 'id'), ${PRODUCT_ID_BASE})`);
+  // 이 파일이 앞 시험에서 raw 사실을 남긴 제품 id 는 다시 쓰지 않는다. 같은 대역 시작으로 매번 되돌리면 파일 끝의 시퀀스가 이미 쓴 id 보다
+  // 낮게 남고, 표를 비우지 않는 뒤 파일(예: oracle-db-roles 의 canary 제품)이 그 id 를 받아 남의 raw 사실을 제 것으로 센다
+  await db.execute(sql`select setval(pg_get_serial_sequence('products', 'id'), greatest(${PRODUCT_ID_BASE}::bigint,
+    (select max(product_id) from uptime_observations where product_id between ${PRODUCT_ID_BASE} and ${PRODUCT_ID_BASE + 1_000_000})))`);
   await db.execute(sql`delete from uptime_host_windows`);
   await db.execute(sql`delete from uptime_host_breakers`);
   await db.execute(sql`update uptime_control set observations_enabled = false, gate_enabled = false where id = 1

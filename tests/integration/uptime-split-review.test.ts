@@ -82,9 +82,10 @@ afterAll(async () => {
 });
 
 describe("F1 비표준 HTTP 상태", () => {
-  it("999·600 은 legacy 처럼 그 상태 그대로 실패로 기록하고, 틱의 나머지도 반영한다 — 다음 틱이 같은 사이트를 다시 열지 않는다", async () => {
+  it("999·600 은 legacy 처럼 그 상태 그대로 기록하고(999 는 알 수 없는 응답, 600 은 실패), 틱의 나머지도 반영한다 — 다음 틱이 같은 사이트를 다시 열지 않는다", async () => {
     const healthy = await products("ok", 20);
-    const linkedin = await product("li999"), odd = await product("s600");
+    // 999 제품은 앞선 실패 2회가 있다 — 알 수 없는 응답은 그 수를 올리지도 끊지도 않는다
+    const linkedin = await product("li999", { health: { failures: 2, status: 503 } }), odd = await product("s600");
     respond(new Map([[linkedin.url, 999], [odd.url, 600]]));
     const events: Logged[] = [];
     await pingProducts(tick(events));
@@ -93,13 +94,16 @@ describe("F1 비표준 HTTP 상태", () => {
       expect(await healthRow(row.slug)).toMatchObject({ failures: 0, status: 200 });
       expect(await claimRow(row.id)).toMatchObject({ state: "idle", last_outcome: "split_success" });
     }
-    // 정식 기록은 legacy(recordPing)와 같은 값·같은 의미: 상태 그대로, 실패 1
-    expect(await healthRow(linkedin.slug)).toMatchObject({ status: 999, failures: 1, latency_ms: null });
+    // 정식 기록은 legacy(recordPing)와 같은 값·같은 의미: 상태 그대로. 999 는 봇·로그인 차단 응답이라 세지 않고(F7) 600 은 실패 1
+    expect(await healthRow(linkedin.slug)).toMatchObject({ status: 999, failures: 2, latency_ms: null });
     expect(await healthRow(odd.slug)).toMatchObject({ status: 600, failures: 1 });
-    expect(await claimRow(linkedin.id)).toMatchObject({ state: "idle", last_outcome: "split_counted" });
+    expect(await claimRow(linkedin.id)).toMatchObject({ state: "idle", last_outcome: "split_unknown" });
+    expect(await claimRow(odd.id)).toMatchObject({ state: "idle", last_outcome: "split_counted" });
     // raw 표는 100..599 만 담는다 — 그 표에만 unknown/0
-    expect(await rawRows(linkedin.slug)).toMatchObject([{ host: "m3", disposition: "applied", reason: "split_counted", kind: "unknown", status: 0 }]);
+    expect(await rawRows(linkedin.slug)).toMatchObject([{ host: "m3", disposition: "applied", reason: "split_unknown", kind: "unknown", status: 0 }]);
+    expect(await rawRows(odd.slug)).toMatchObject([{ host: "m3", disposition: "applied", reason: "split_counted", kind: "unknown", status: 0 }]);
     expect(events.map(row => row.event)).toEqual(["uptime.checked"]);
+    expect(events[0].fields).toMatchObject({ alive: 20, down: 1, unknown: 1 });
 
     http.safeFetch.mockClear();
     await pingProducts(tick());
@@ -108,10 +112,10 @@ describe("F1 비표준 HTTP 상태", () => {
 
   it("legacy 도 999 를 같은 값으로 쓴다(두 경로의 정식 기록이 같다)", async () => {
     await setSplit("legacy", null);
-    const linkedin = await product("legacy-li999", { claim: false });
+    const linkedin = await product("legacy-li999", { claim: false, health: { failures: 2, status: 503 } });
     respond(new Map([[linkedin.url, 999]]));
     await pingProducts(tick());
-    expect(await healthRow(linkedin.slug)).toMatchObject({ status: 999, failures: 1, latency_ms: null });
+    expect(await healthRow(linkedin.slug)).toMatchObject({ status: 999, failures: 2, latency_ms: null });
   });
 
   it("모양이 틀린 결과 한 건은 그 건만 빼고 반영한다 — 그 claim 은 되돌리지 않아 TTL 전에는 다시 열지 않는다", async () => {
@@ -224,10 +228,10 @@ describe("F3 제출 출처", () => {
     await admin.end({ timeout: 5 });
   });
 
-  it("Oracle principal 이 home(m3) 실패 제출 행을 써도 적용기는 판정하지 않는다 — 세 번 위조해도 숨김이 없다", async () => {
+  it("Oracle principal 은 home(m3) 실패 제출 행을 쓸 수 없다(0106) — 같은 행이 다른 길로 생겨도 적용기는 판정하지 않는다, 세 번 위조해도 숨김이 없다", async () => {
     const target = await product("victim");
     // 정책에 있는 home instance·host m3·home 으로 "연결 실패" 제출 행을 한 문장으로 만든다(principal 의 열 UPDATE 권한 안)
-    const forge = () => oracle`update uptime_claims c set state = 'submitted', epoch = c.epoch + 1,
+    const forge = (session: ReturnType<typeof postgres>) => session`update uptime_claims c set state = 'submitted', epoch = c.epoch + 1,
         control_epoch = (select epoch from uptime_split_control where id = 1), token = gen_random_uuid(),
         owner_instance_id = ${OWNERS.m3.instanceId}, owner_boot_id = gen_random_uuid(), host = 'm3', host_class = 'home',
         claimed_at = clock_timestamp() - interval '5 seconds', claim_slug = p.slug, claim_url = p.url,
@@ -236,8 +240,13 @@ describe("F3 제출 출처", () => {
         result_kind = 'network', result_status = 0, result_latency_ms = null, lease_until = null,
         submitted_at = clock_timestamp(), updated_at = clock_timestamp()
       from products p where p.id = c.product_id and c.product_id = ${target.id} returning c.product_id`;
+    // 0106 트리거: Oracle 계정은 Oracle host·probe 로만 claim 행을 쓴다
+    const denied = await forge(oracle).then(() => null, (error: { code?: string; message?: string }) => error);
+    expect(denied).toMatchObject({ code: "42501", message: "oracle_uptime_claim_host" });
+    expect(await claimRow(target.id)).toMatchObject({ state: "idle", host: null });
+    // 적용기 관문(submitted_not_probe)은 그대로 둔다 — 같은 행을 소유 계정으로 만들어 본다
     for (let round = 1; round <= 3; round++) {
-      expect(await forge()).toHaveLength(1);
+      expect(await forge(admin)).toHaveLength(1);
       const summary = await applyUptimeResults({ lease });
       expect(summary).toMatchObject({ remote: 1, outcomes: { discarded: 1, applied: 0 }, reasons: { submitted_not_probe: 1 } });
       expect(await healthRow(target.slug)).toMatchObject({ failures: 0 });

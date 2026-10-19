@@ -3,7 +3,8 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, productEvidenceAudit, products } from "@/lib/db/schema";
-import { writeHealthResult, writeHealthResults, type HealthResultInput } from "@/lib/domain/products/health-record";
+import { writeHealthHeld, writeHealthHelds, writeHealthResult, writeHealthResults, writeHealthUnknown, writeHealthUnknowns,
+  type HealthResultInput } from "@/lib/domain/products/health-record";
 import { downProducts, recordPing } from "@/lib/domain/products/health";
 import { notDown } from "@/lib/domain/products/repository";
 import { autoBanUptimeProduct } from "@/lib/domain/products/uptime-auto-ban";
@@ -231,19 +232,29 @@ describe("판정 반영", () => {
 });
 
 describe("광역 장애 차단기", () => {
-  it("home broad failure: 40 of 50 transport failures are held, the streak is untouched, the breaker opens and home claims stop; 30 healthy probes close it", async () => {
-    const first = await Promise.all(Array.from({ length: 50 }, (_, index) => product(`home-broad-${index}`)));
+  it("home broad failure: 40 of 50 transport failures are held like legacy (checked time only, streak untouched), the breaker opens and home claims stop; 30 healthy probes close it", async () => {
+    // [1] 은 관리자가 풀어 준 연속 실패 10회 제품 — 보류해도 확인 시각까지 그대로다(writeHealthHeld 와 같다)
+    const first = await Promise.all(Array.from({ length: 50 }, (_, index) => product(`home-broad-${index}`, index === 1 ? { health: { failures: 10 } } : {})));
     const later = await Promise.all(Array.from({ length: 30 }, (_, index) => product(`home-probe-${index}`, { dueMinutes: 60 })));
     const batch = await claimed(OWNERS.m3, 50);
     expect(batch.claims).toHaveLength(50);
-    const before = await healthRow(first[0].slug);
+    const before = await healthRow(first[0].slug), unbannedBefore = await healthRow(first[1].slug);
     const summary = await applyUptimeResults({ lease, own: first.map((target, index) =>
       result(ticketOf(batch, target), index < 40 ? { status: 0, kind: "network" } : { status: 200 })) });
     expect(summary.outcomes).toMatchObject({ held: 40, applied: 10 });
-    expect(await healthRow(first[0].slug)).toEqual(before);
+    // 판정 보류: 확인 시각만 넘어가고 연속 실패·응답 코드·첫 실패 시각·지연·일일 집계는 그대로다
+    const after = await healthRow(first[0].slug);
+    expect({ ...after, checked_at: before.checked_at }).toEqual(before);
+    expect(Date.parse(`${after.checked_at.replace(" ", "T")}Z`)).toBeGreaterThan(Date.parse(`${before.checked_at.replace(" ", "T")}Z`));
+    expect(await dailyRows(first[0].slug)).toEqual([]);
     const held = await claimRow(first[0].id);
     expect(held).toMatchObject({ state: "idle", last_outcome: "split_broad_failure" });
-    expect(held.due_at.getTime() - (await dbNow()).getTime()).toBeGreaterThan(14 * 60_000);
+    // 다른 제품처럼 6시간 뒤 차례다(래칫 없음)
+    expect(held.due_at.getTime() - (await dbNow()).getTime()).toBeGreaterThan(5 * 60 * 60_000);
+    expect(await healthRow(first[1].slug)).toEqual(unbannedBefore);
+    const unbanned = (await claimRow(first[1].id)).due_at.getTime() - (await dbNow()).getTime();
+    expect(unbanned).toBeGreaterThan(14 * 60_000);
+    expect(unbanned).toBeLessThanOrEqual(15 * 60_000);
     expect(await rawRows(first[0].slug)).toMatchObject([{ host: "m3", disposition: "observation_hold", reason: "split_broad_failure" }]);
     expect(summary.breakers.find(breaker => breaker.host === "m3")).toMatchObject({ state: "open", reason: "batch_ratio", ratio: 0.8 });
     const [window] = await db.execute<{ checks: number; failures: number; transport: number }>(sql`
@@ -400,6 +411,65 @@ describe("묶음 쓰기", () => {
     // 마이크로초까지 첫 실패 시각을 보존한다(legacy 의 coalesce 와 같다)
     expect(await healthRow(`u1b-${TAG}-m2-old`)).toMatchObject({ failures: 5, down_since: "2026-10-17 09:00:00.654321" });
     await expect(db.transaction(tx => writeHealthResults(tx, [mixed("dup")[0], mixed("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
+  });
+
+  it("writeHealthHelds equals writeHealthHeld applied one by one (checked time only, new row at 0, untouched at the auto-ban threshold)", async () => {
+    const observedAt = new Date("2026-10-18T15:00:01.234Z");
+    const rows = (prefix: string) => [
+      { slug: `${prefix}-new`, status: 0, observedAt },
+      { slug: `${prefix}-sick`, status: 503, observedAt },
+      { slug: `${prefix}-nine`, status: 404, observedAt },
+      { slug: `${prefix}-ten`, status: 0, observedAt },
+    ];
+    for (const prefix of [`u1b-${TAG}-h1`, `u1b-${TAG}-h2`]) {
+      for (const [slug, failures] of [["sick", 2], ["nine", 9], ["ten", 10]] as const) {
+        await db.execute(sql`insert into product_health (slug, checked_at, status, latency_ms, failures, down_since)
+          values (${`${prefix}-${slug}`}, '2026-10-18 10:00:00.123456', 500, null, ${failures}, '2026-10-17 09:00:00.654321')`);
+      }
+    }
+    for (const input of rows(`u1b-${TAG}-h1`)) await db.transaction(tx => writeHealthHeld(tx, input));
+    const written = await db.transaction(tx => writeHealthHelds(tx, rows(`u1b-${TAG}-h2`)));
+    for (const slug of ["new", "sick", "nine", "ten"]) {
+      expect(await healthRow(`u1b-${TAG}-h2-${slug}`)).toEqual(await healthRow(`u1b-${TAG}-h1-${slug}`));
+      expect(await dailyRows(`u1b-${TAG}-h2-${slug}`)).toEqual([]);
+    }
+    expect(await healthRow(`u1b-${TAG}-h2-sick`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 500, failures: 2,
+      down_since: "2026-10-17 09:00:00.654321", latency_ms: null });
+    expect(await healthRow(`u1b-${TAG}-h2-new`)).toMatchObject({ status: 0, failures: 0, down_since: null });
+    expect(await healthRow(`u1b-${TAG}-h2-ten`)).toMatchObject({ checked_at: "2026-10-18 10:00:00.123456", failures: 10 });
+    // 기준 이상이라 건드리지 않은 행은 돌려주지 않는다 — 적용기가 판정과 맞춰 본다
+    expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-h2-new`, 0], [`u1b-${TAG}-h2-nine`, 9], [`u1b-${TAG}-h2-sick`, 2]]);
+    await expect(db.transaction(tx => writeHealthHelds(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
+  });
+
+  it("writeHealthUnknowns equals writeHealthUnknown applied one by one (checked time·status only, streak and daily untouched unless reset)", async () => {
+    const observedAt = new Date("2026-10-18T15:00:01.234Z");
+    const rows = (prefix: string) => [
+      { slug: `${prefix}-new`, status: 403, observedAt, resetStreak: false },
+      { slug: `${prefix}-sick`, status: 999, observedAt, resetStreak: false },
+      { slug: `${prefix}-ten`, status: 429, observedAt, resetStreak: false },
+      // 관리자 해제·제품 수정 뒤(리뷰 N1): 행이 없던 것처럼 실패 0·첫 실패 시각 없음
+      { slug: `${prefix}-reset`, status: 403, observedAt, resetStreak: true },
+    ];
+    for (const prefix of [`u1b-${TAG}-k1`, `u1b-${TAG}-k2`]) {
+      for (const [slug, failures] of [["sick", 2], ["ten", 10], ["reset", 10]] as const) {
+        await db.execute(sql`insert into product_health (slug, checked_at, status, latency_ms, failures, down_since)
+          values (${`${prefix}-${slug}`}, '2026-10-18 10:00:00.123456', 500, 77, ${failures}, '2026-10-17 09:00:00.654321')`);
+      }
+    }
+    for (const input of rows(`u1b-${TAG}-k1`)) await db.transaction(tx => writeHealthUnknown(tx, input));
+    const written = await db.transaction(tx => writeHealthUnknowns(tx, rows(`u1b-${TAG}-k2`)));
+    for (const slug of ["new", "sick", "ten", "reset"]) {
+      expect(await healthRow(`u1b-${TAG}-k2-${slug}`)).toEqual(await healthRow(`u1b-${TAG}-k1-${slug}`));
+      expect(await dailyRows(`u1b-${TAG}-k2-${slug}`)).toEqual([]);
+    }
+    expect(await healthRow(`u1b-${TAG}-k2-sick`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 999, failures: 2,
+      down_since: "2026-10-17 09:00:00.654321", latency_ms: null });
+    expect(await healthRow(`u1b-${TAG}-k2-reset`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 403, failures: 0,
+      down_since: null, latency_ms: null });
+    expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-k2-new`, 0], [`u1b-${TAG}-k2-reset`, 0], [`u1b-${TAG}-k2-sick`, 2],
+      [`u1b-${TAG}-k2-ten`, 10]]);
+    await expect(db.transaction(tx => writeHealthUnknowns(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
   });
 
   it("home's live result refreshes the stored first-screen text; Oracle results never do", async () => {
