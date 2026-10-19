@@ -86,6 +86,7 @@ function resultCount(name: string, events: Array<{event:string;counts:Record<str
     'reason-translate': ['translate.done','translated'], 'product-tagline-ko': ['tagline_ko.done','written'],
     'product-translate': ['product_translation.tick','stored'], 'news-refresh': ['news.refreshed','added'],
     'crawl-fetch':['crawl.fetched','fetched'], 'second-review':['crawl.second_reviewed','reviewed'],
+    'human-deepseek-review':['crawl.human_reviewed','applied'],
     'crawl-publish':['crawl.publish_done','published'], 'product-search-profile':['search_profile.done','written'],
     'click-rollup':['clicks.rolled','rows'], 'uptime-ping':['uptime.checked','alive'],
     'product-site-evidence-refresh':['evidence.site_refresh_batch','succeeded'],
