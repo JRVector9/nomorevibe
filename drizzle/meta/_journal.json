@@ -729,6 +729,27 @@
       "when": 1794086400015,
       "tag": "0103_uptime_split",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1794086400016,
+      "tag": "0104_agent_repository_claims",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1794086400017,
+      "tag": "0105_oracle_agent_scan_row_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1794086400018,
+      "tag": "0106_oracle_consumer_row_scope",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, index, integer, jsonb, pgTable, serial, smallint, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
+import { bigint, boolean, check, index, integer, jsonb, pgTable, serial, smallint, text, timestamp, uniqueIndex, uuid, varchar } from 'drizzle-orm/pg-core';
 import type { AgentObservation } from '@/lib/domain/evidence/agents/types';
 import type { CollectCursor } from '@/lib/domain/evidence/agents/collect';
 import type { AiLevelEvidence } from '@/lib/domain/evidence/ai-level-labels';
@@ -24,6 +24,40 @@ export const crawlDiscoveryEvidence = pgTable('crawl_discovery_evidence', {
   incomplete: boolean('incomplete').notNull().default(false), observedAt: timestamp('observed_at').notNull().defaultNow(),
 }, table => [uniqueIndex('crawl_discovery_repository_key_idx').on(table.repositoryKey, table.evidenceKey)]);
 export type AgentRepositoryScan = typeof agentRepositoryScans.$inferSelect;
+/**
+ * 0104 제작 근거 스캔 claim 제어(단일 행). pipeline_stage_modes 와 같은 뜻이다: legacy → draining → items, 전환을 마칠 때마다 epoch+1,
+ * writer_contract_version 은 모든 스캔 writer 가 쓰기 관문을 가진 release 라는 운영자 확인. 기본 legacy 라 배포만으로는 동작이 바뀌지 않는다.
+ */
+export const agentScanControl = pgTable('agent_scan_control', {
+  id: integer('id').primaryKey().default(1),
+  mode: varchar('mode', { length: 10 }).$type<'legacy' | 'draining' | 'items'>().notNull().default('legacy'),
+  drainingFrom: varchar('draining_from', { length: 8 }).$type<'legacy' | 'items'>(),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(1),
+  writerContractVersion: integer('writer_contract_version').notNull().default(0),
+  updatedAt: timestamp('updated_at').notNull().default(sql`(clock_timestamp() AT TIME ZONE 'UTC')`),
+}, table => [check('agent_scan_control_id', sql`${table.id} = 1`),
+  check('agent_scan_control_mode', sql`${table.mode} in ('legacy','draining','items')`),
+  check('agent_scan_control_epoch', sql`${table.epoch} between 1 and 9007199254740991`),
+  check('agent_scan_control_contract', sql`${table.writerContractVersion} >= 0`),
+  check('agent_scan_control_draining', sql`(${table.mode} = 'draining' and ${table.drainingFrom} is not null and ${table.drainingFrom} in ('legacy','items')) or (${table.mode} <> 'draining' and ${table.drainingFrom} is null)`)]);
+/** 저장소 키당 1행. 행은 큐 채우기만 만들고, consumer 는 claim·기록·포기로 소유 열만 바꾼다(lib/domain/evidence/agents/claims.ts). */
+export const agentRepositoryClaims = pgTable('agent_repository_claims', {
+  repositoryKey: varchar('repository_key', { length: 200 }).primaryKey(),
+  state: varchar('state', { length: 8 }).$type<'active' | 'gone'>().notNull().default('active'),
+  priority: smallint('priority').notNull(), requiresDaily: boolean('requires_daily').notNull(),
+  dueAt: timestamp('due_at').notNull(), retryAfter: timestamp('retry_after'),
+  failureStreak: integer('failure_streak').notNull().default(0), firstFailureAt: timestamp('first_failure_at'),
+  lastErrorCode: varchar('last_error_code', { length: 60 }),
+  lastOutcome: varchar('last_outcome', { length: 20 }).$type<'complete' | 'partial' | 'failed' | 'cached' | 'abandoned'>(),
+  lastFinishedAt: timestamp('last_finished_at'),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(0), controlEpoch: bigint('control_epoch', { mode: 'number' }),
+  bindingHash: varchar('binding_hash', { length: 64 }), instanceId: varchar('instance_id', { length: 120 }), bootId: uuid('boot_id'),
+  token: uuid('token'), claimedAt: timestamp('claimed_at'), leaseUntil: timestamp('lease_until'),
+  updatedAt: timestamp('updated_at').notNull().default(sql`(clock_timestamp() AT TIME ZONE 'UTC')`),
+}, table => [index('agent_repository_claims_queue_idx').on(table.priority, table.dueAt, table.repositoryKey).where(sql`${table.state} = 'active'`),
+  index('agent_repository_claims_due_idx').on(table.dueAt, table.repositoryKey).where(sql`${table.state} = 'active'`),
+  index('agent_repository_claims_live_idx').on(table.leaseUntil).where(sql`${table.token} is not null`)]);
+// agent_repository_claims 의 CHECK(키 모양·소유 열 묶음·실패 묶음·결과 값)는 drizzle/0104_agent_repository_claims.sql 이 정본이다.
 /**
  * 저장소마다 AI 제작 근거 단계(0063, lib/domain/evidence/ai-level.ts) — ai-level-refresh 잡이 GraphQL 묶음으로 판정해 적는다.
  * level: 1 AI 에이전트 앱이 연 PR 병합 · 2 AI 도구 서명 개발 커밋 · 3 AI 도구 전용 설정 파일 · NULL 검사했지만 근거 없음.

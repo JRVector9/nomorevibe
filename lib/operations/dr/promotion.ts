@@ -59,7 +59,9 @@ export const sealSnapshotSchema = z.object({ version: z.literal(1), sealedAt: is
   modelBudgets: z.array(identity(120)).max(256), activeModelCalls: z.number().int().min(0), activeHttpHops: z.number().int().min(0),
   revoked: z.object({ roles: z.number().int().min(0), jobs: z.number().int().min(0), items: z.number().int().min(0), sourceClaims: z.number().int().min(0),
     // 0103 뒤 seal 부터 기록한다. 그 전 snapshot 에는 없다
-    uptimeClaims: z.number().int().min(0).optional() }).strict(),
+    uptimeClaims: z.number().int().min(0).optional(),
+    // 0104 뒤 seal 부터 있다. 그 전 스냅숏도 읽히게 optional 이다
+    agentClaims: z.number().int().min(0).optional() }).strict(),
   modelControl: z.object({ epoch: positiveEpoch, revision: positiveEpoch, mode: z.enum(["disabled", "draining"]) }).strict(),
   httpControl: z.object({ epoch: positiveEpoch, mode: z.enum(["disabled", "draining"]) }).strict() }).strict();
 export type SealSnapshot = Readonly<z.infer<typeof sealSnapshotSchema>>;
