@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  consumerServiceGroups,
   isConsumerServiceInstance,
   latestServiceInstance,
   parseServiceObservationKey,
+  roleServiceInstances,
   serviceObservationKey,
   serviceInstanceId,
   serviceInstancesFromObservations,
@@ -116,4 +118,28 @@ it('keeps AI1/AI2 consumer observations out of the reviewer role liveness and sl
   expect(latestServiceInstance(rows, 'reviewer')?.instanceId).toBe('reviewer-m3');
   expect(supersededServiceInstanceKeys(rows, Date.parse('2026-10-19T00:10:00Z'))).toEqual(new Set());
   expect(latestServiceInstance(rows.filter(row => row.instanceId !== 'reviewer-m3'), 'reviewer')).toBeUndefined();
+});
+
+// 리뷰 P3(agent-scan 9·uptime F8): 운영센터 역할 표·카드에 consumer 가 역할 인스턴스로 섞이면 consumer 를 멈출 때 '일부 관측 지연'(오탐),
+// 역할 워커가 죽고 consumer 만 살면 '관측 지연' 대신 '일부 관측 지연'(약화)이 된다. 역할 칸은 consumer 를 빼고, consumer 는 따로 센다.
+it('keeps every consumer (agent-scan, uptime, ai1, ai2) out of role cards and lists them on their own', () => {
+  const at = (seconds: number) => new Date(Date.parse('2026-10-19T01:00:00Z') - seconds * 1_000).toISOString();
+  const rows = serviceInstancesFromObservations([
+    { key: 'service:crawler:m3-crawler', value: { status: 'running' }, observedAt: at(400) },
+    { key: 'service:crawler:agent-scan-consumer-m3', value: { status: 'running' }, observedAt: at(5) },
+    { key: 'service:crawler:agent-scan-consumer-oracle', value: { status: 'stopped' }, observedAt: at(1_200) },
+    { key: 'service:maintenance:m3-maintenance', value: { status: 'running' }, observedAt: at(5) },
+    { key: 'service:maintenance:uptime-consumer-oracle', value: { status: 'running' }, observedAt: at(600) },
+    { key: 'service:reviewer:ai1-consumer-m3', value: { status: 'running' }, observedAt: at(7_200) },
+  ]);
+  const now = Date.parse('2026-10-19T01:00:00Z');
+  // crawler 역할 워커가 죽었다(400초) — consumer 가 살아 있어도 역할 칸은 그 한 대만 보고 '관측 지연'이 된다
+  expect(roleServiceInstances(rows, 'crawler').map(row => row.instanceId)).toEqual(['m3-crawler']);
+  expect(staleServiceInstanceCount(roleServiceInstances(rows, 'crawler'), now)).toBe(1);
+  // uptime consumer 를 멈춰도 maintenance 칸은 정상 그대로다
+  expect(roleServiceInstances(rows, 'maintenance').map(row => row.instanceId)).toEqual(['m3-maintenance']);
+  expect(consumerServiceGroups(rows, now)).toEqual([
+    { consumer: 'agent-scan', role: 'crawler', live: 2, fresh: 1, latestAt: at(5) },
+    { consumer: 'uptime', role: 'maintenance', live: 1, fresh: 0, latestAt: at(600) },
+  ]);
 });

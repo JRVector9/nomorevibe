@@ -1,7 +1,7 @@
-import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { agentRepositoryClaims, agentRepositoryScans, agentScanControl, crawlSettings, githubCollectorAccounts, githubCollectorApps,
@@ -11,6 +11,7 @@ import { saveSettings } from '@/lib/crawl/settings';
 import { AGENT_SCAN_PRIORITY } from '@/lib/domain/evidence/agents/claims';
 import { beginAgentScanDrain, bumpAgentScanContract, completeAgentScanTransition } from '@/lib/domain/evidence/agents/claim-control';
 import { runAgentScanConsumer } from '@/lib/domain/evidence/agents/consumer';
+import { AGENT_DETECTOR_VERSION } from '@/lib/domain/evidence/agents/types';
 import { jobDeferralKey } from '@/lib/jobs/deferral-observation';
 import { seal } from '@/lib/operations/credential-vault';
 import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from '@/lib/runtime/oracle-db-profile';
@@ -147,6 +148,82 @@ it('defers claims while GitHub headroom is low and pauses after a provider rate 
   expect(await claimRow('acme/next-2')).toMatchObject({ epoch: 0 });
 }, 30_000);
 
+/** 기록 뒤 claim 이 곧바로 다시 도래하지 않는다 — greatest(due_at, retry_after) 가 DB 시계로 지금보다 뒤다 */
+async function nextClaimSeconds(key: string): Promise<number> {
+  const [{ seconds }] = await db.execute<{ seconds: string }>(sql`SELECT extract(epoch FROM greatest(due_at, coalesce(retry_after, due_at))
+    - (clock_timestamp() AT TIME ZONE 'UTC'))::text AS seconds FROM agent_repository_claims WHERE repository_key = ${key}`);
+  return Number(seconds);
+}
+
+it('a renamed repository whose scan lands on the old-name row backs off instead of being re-claimed at once', async () => {
+  // 옛 이름으로 한 번 스캔해 (GitHub id 1007, head C) 행을 만든다. 옛 이름은 수요에서 빠졌다(gone)
+  await queue([{ key: 'oldorg/repo-7' }]);
+  await toItems();
+  await runAgentScanConsumer({ owner: owner('old'), once: true, request: fakeGitHub([]) });
+  expect(await scansOf('oldorg/repo-7')).toHaveLength(1);
+  await db.update(agentRepositoryClaims).set({ state: 'gone' }).where(eq(agentRepositoryClaims.repositoryKey, 'oldorg/repo-7'));
+  // 같은 id·head 의 새 이름이 새 후보로 들어온다 — 스캔은 옛 이름 행에 묶이고(별칭 재확인) 새 이름으로는 최신 스캔이 없다
+  await queue([{ key: 'neworg/repo-7', priority: AGENT_SCAN_PRIORITY.newCandidate }]);
+  const paths: string[] = [], controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2_000);
+  const stats = await runAgentScanConsumer({ owner: owner('new'), signal: controller.signal, request: fakeGitHub(paths, { delayMs: 5 }) });
+  clearTimeout(timer);
+  // 한 번 보고 다음 기한까지 쉰다(고치기 전: 2초에 수십 번 같은 저장소를 다시 잡았다)
+  expect(metadataCalls(paths, 'neworg/repo-7')).toBe(1);
+  expect(stats).toMatchObject({ claimed: 1, errors: 0, leaseLost: 0 });
+  expect(await claimRow('neworg/repo-7')).toMatchObject({ token: null, epoch: 1, failureStreak: 1, lastErrorCode: 'alias_conflict' });
+  expect(await nextClaimSeconds('neworg/repo-7')).toBeGreaterThan(14 * 60);
+  expect(await scansOf('neworg/repo-7')).toEqual([]);
+  expect(await scansOf('oldorg/repo-7')).toMatchObject([{ lastErrorCode: 'alias_recheck_required' }]);
+}, 30_000);
+
+it('judges the cache by the claim (DB) clock so a host clock behind the DB scans once instead of spinning on cached records', async () => {
+  const key = 'acme/skew-1', scopeHash = createHash('sha256').update(JSON.stringify('')).digest('hex');
+  // 최신 스캔(다른 head)과 claim 이 DB 시계로 2초 전에 도래했다. 후보 수요라 매일 주기(next_attempt_at 그대로)
+  await db.execute(sql`INSERT INTO agent_repository_scans (github_repository_id, repository_key, commit_sha, detector_version, scope, scope_hash,
+      state, request_count, file_count, coverage, started_at, completed_at, next_attempt_at)
+    VALUES (1001, ${key}, ${'e'.repeat(40)}, ${AGENT_DETECTOR_VERSION}, '', ${scopeHash}, 'complete', 3, 0, '{}'::jsonb,
+      (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 day', (clock_timestamp() AT TIME ZONE 'UTC') - interval '1 day',
+      (clock_timestamp() AT TIME ZONE 'UTC') - interval '2 seconds')`);
+  await db.execute(sql`INSERT INTO agent_repository_claims (repository_key, priority, requires_daily, due_at)
+    VALUES (${key}, ${AGENT_SCAN_PRIORITY.regular}, true, (clock_timestamp() AT TIME ZONE 'UTC') - interval '2 seconds')`);
+  await toItems();
+  const paths: string[] = [], controller = new AbortController();
+  // host 시계를 DB 보다 5초 늦춘다(Date 만 — 타이머는 실제)
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true });
+  let stats: Awaited<ReturnType<typeof runAgentScanConsumer>>;
+  try {
+    vi.setSystemTime(Date.now() - 5_000);
+    const timer = setTimeout(() => controller.abort(), 2_000);
+    stats = await runAgentScanConsumer({ owner: owner('skew'), signal: controller.signal, request: fakeGitHub(paths, { delayMs: 5 }) });
+    clearTimeout(timer);
+  } finally { vi.useRealTimers(); }
+  // 고치기 전: host 시계로는 아직 볼 때가 아니라 cached 를 수백 번 기록하며 같은 저장소를 다시 잡았다
+  expect(stats).toMatchObject({ claimed: 1, recorded: { cached: 0, complete: 1 }, errors: 0 });
+  expect(metadataCalls(paths, key)).toBe(1);
+  expect(await nextClaimSeconds(key)).toBeGreaterThan(60);
+}, 30_000);
+
+it('follows the job pause: a paused agent-evidence-refresh keeps consumers idle without GitHub until it is resumed', async () => {
+  await queue([{ key: 'acme/paused-1' }]);
+  await toItems();
+  // 운영자의 잡 멈춤(not_before 먼 미래) — legacy 에서 스캔을 멈추는 그 값이다
+  await db.execute(sql`INSERT INTO jobs (name, not_before) VALUES ('agent-evidence-refresh', '2100-01-01')
+    ON CONFLICT (name) DO UPDATE SET not_before = excluded.not_before`);
+  try {
+    const paths: string[] = [];
+    // 고치기 전: claim 이 잡 멈춤을 보지 않아 계속 스캔했다
+    const paused = await runAgentScanConsumer({ owner: owner('paused'), once: true, request: fakeGitHub(paths) });
+    expect(paused).toMatchObject({ claimed: 0, deferred: { paused: 1 } });
+    expect(paths).toEqual([]);
+    expect(await claimRow('acme/paused-1')).toMatchObject({ epoch: 0, token: null });
+    // 잡을 다시 열면(not_before 비움) 이어서 맡는다
+    await db.execute(sql`UPDATE jobs SET not_before = NULL WHERE name = 'agent-evidence-refresh'`);
+    const resumed = await runAgentScanConsumer({ owner: owner('resumed'), once: true, request: fakeGitHub(paths) });
+    expect(resumed).toMatchObject({ claimed: 1, recorded: { complete: 1 } });
+  } finally { await db.execute(sql`DELETE FROM jobs WHERE name = 'agent-evidence-refresh'`); }
+});
+
 it('abandons the claim without writing when shutdown interrupts the scan', async () => {
   await queue([{ key: 'acme/stop-1' }, { key: 'acme/stop-2' }]);
   await toItems();
@@ -167,7 +244,9 @@ it('the Oracle agent-scan principal claims, records and abandons through App-onl
   for (const statement of oracleConsumerGrantStatements(PROFILE, { connectionLimit: 4 })) await admin.unsafe(statement);
   await admin.unsafe(`ALTER ROLE ${PROFILE.principal} PASSWORD '${password}'`);
   const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
-  await db.insert(githubCollectorApps).values({ installationId: 4242, appId: 99, appSlug: 'e5-oracle', accountLogin: 'e5', encryptedPrivateKey: seal(pem, secret) });
+  // 운영자가 이 설치를 Oracle 계정에 허용한다(0105 RLS). 허용하지 않은 설치는 그 계정에 보이지 않는다
+  await db.insert(githubCollectorApps).values({ installationId: 4242, appId: 99, appSlug: 'e5-oracle', accountLogin: 'e5', encryptedPrivateKey: seal(pem, secret),
+    oraclePrincipals: [PROFILE.principal] });
   // 개인 토큰 표에 행이 있어도 App 전용 서버는 읽지 않는다(그 계정은 권한이 없다)
   await db.insert(githubCollectorAccounts).values({ userId: 4243, login: 'e5-pat', encryptedToken: seal('pat-fixture-never-read-by-oracle', secret) });
   await queue([{ key: 'acme/oracle-1', priority: AGENT_SCAN_PRIORITY.newProduct }, { key: 'acme/oracle-2' }]);

@@ -11,6 +11,7 @@ import { AGENT_DETECTOR_VERSION } from './types';
  *
  * - 수집 자격은 App 전용이어야 한다(GITHUB_COLLECTOR_SOURCES=apps). 개인 토큰 표 권한이 없는 계정이라 다른 자격이면 첫 요청에서 42501 이다.
  * - 수집 비밀키가 있고, 이 서버가 쓸 App 설치(허용 목록이면 그 전부)가 켜져 있으며, 그 개인 키가 이 비밀키로 풀린다(값은 남기지 않는다).
+ *   이 계정에는 oracle_principals 에 계정 이름이 든 설치만 보인다(0105 RLS) — 운영자가 허용하지 않은 설치는 app_installation_unavailable 이다.
  * - 제어 행(migration 0104)이 있고 설정의 탐지기 버전이 이 release 와 같다.
  * 모드가 legacy 여도 준비된 것으로 본다 — consumer 는 claim 이 idle 을 돌려주는 동안 쉬고, unit 이 exit 78 을 되풀이하지 않는다.
  * 틀린 설정은 rejected, 바뀔 수 있는 상태(제어 행·탐지기·설치 켜짐)는 unknown 이다. 둘 다 launcher 를 닫는다.

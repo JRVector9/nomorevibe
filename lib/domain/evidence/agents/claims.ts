@@ -11,6 +11,7 @@ import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { mergeWithDefaults } from '@/lib/crawl/settings';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
 import { assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
+import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import { AGENT_DETECTOR_VERSION } from './types';
@@ -52,7 +53,7 @@ export const agentScanLeaseSchema = z.strictObject({ repositoryKey: repositoryKe
   claimedAt: isoSchema, leaseUntil: isoSchema, priority: z.number().int().min(0).max(9), requiresDaily: z.boolean() });
 /** claimedAt·leaseUntil 은 DB 시계의 관측값이다(ISO, UTC). 권한은 token·epoch·controlEpoch·bindingHash 와 DB 의 lease_until 이다 */
 export type AgentScanLease = Readonly<z.infer<typeof agentScanLeaseSchema>>;
-export type AgentScanIdleReason = 'fenced' | 'mode' | 'disabled' | 'detector' | 'empty';
+export type AgentScanIdleReason = 'fenced' | 'mode' | 'disabled' | 'detector' | 'paused' | 'empty';
 export type AgentScanClaim = { kind: 'claimed'; lease: AgentScanLease } | { kind: 'idle'; reason: AgentScanIdleReason };
 export type AgentScanRecordOutcome = 'complete' | 'partial' | 'failed' | 'cached';
 export type AgentScanRecord = { outcome: AgentScanRecordOutcome; scanId: number | null; failureStreak: number; dueAt: string; retryAfter: string | null };
@@ -83,7 +84,7 @@ type ClaimRow = { repository_key: string; token: string; instance_id: string; bo
 /**
  * 다음 저장소 하나를 맡는다. order 'due' 는 priority 를 무시하고 오래 기다린 것부터 고른다 — consumer 가 몇 번에 한 번 써서
  * 뒤 순위(정기·오류)도 굶지 않게 한다. idle 이유: fenced(DR 차단 DB) · mode(items 아님 또는 contract 0) · disabled(설정 꺼짐)
- * · detector(설정 탐지기 버전 ≠ 이 release) · empty(지금 맡을 저장소 없음).
+ * · detector(설정 탐지기 버전 ≠ 이 release) · paused(운영자가 agent-evidence-refresh 잡을 멈춤) · empty(지금 맡을 저장소 없음).
  */
 export async function claimAgentRepository(input: { owner: ItemOwner; order?: 'priority' | 'due' }): Promise<AgentScanClaim> {
   supported();
@@ -99,6 +100,11 @@ export async function claimAgentRepository(input: { owner: ItemOwner; order?: 'p
     if (!settings.agentEvidence.enabled) return idle('disabled');
     // release 가 섞여도(M3·Oracle) 판정이 쓰는 탐지기 버전과 다른 스캔을 만들지 않는다
     if (settings.agentEvidence.detectorVersion !== AGENT_DETECTOR_VERSION) return idle('detector');
+    // 운영자의 잡 멈춤(jobs.not_before 먼 미래, runner 의 PAUSED 와 같은 식)은 items 에서도 스캔을 멈춘다 — 컨트롤러만 멈추고 consumer 가
+    // 계속 돌면 화면은 '설정상 중지'인데 GitHub 를 쓴다. consumer 계정은 jobs 권한이 없어 그 잡의 not_before 만 보이는 보기(0105)를 읽는다
+    const [schedule] = await tx.execute<{ paused: boolean }>(sql`
+      SELECT coalesce(bool_or(not_before > now() + ${PAUSED_AFTER_MS} * interval '1 millisecond'), false) AS paused FROM agent_scan_job_schedule`);
+    if (schedule?.paused) return idle('paused');
     const [picked] = await tx.execute<{ repository_key: string }>(sql`
       SELECT c.repository_key FROM agent_repository_claims c
       WHERE c.state = 'active' AND c.due_at <= (SELECT clock_timestamp() AT TIME ZONE 'UTC')
@@ -154,7 +160,8 @@ async function finalAuthority(tx: ProductTransaction, leaseUntilText: string) {
  * 만료, 모드 아님, DR fence) 'agent_scan_lease_lost' 로 아무것도 쓰지 않는다.
  *
  * 시계: 스캔 행의 started_at 은 claim 시각(DB 시계)이다. 성공하면 실패 수·retry_after 를 비우고 due_at 을 방금 쓴 최신 스캔으로 다시 잰다
- * (큐 채우기와 같은 식). 스캔 행이 없는 저장소 실패(처음 보는 저장소의 metadata 404 등)는 retry_after 를 15분×2^(n−1), 7일 상한으로 미룬다.
+ * (큐 채우기와 같은 식). 스캔 행이 없는 저장소 실패(처음 보는 저장소의 metadata 404 등)와 다른 이름 행에 묶인 스캔(alias_conflict)은
+ * retry_after 를 15분×2^(n−1), 7일 상한으로 미룬다.
  */
 export async function recordAgentRepositoryScan(value: AgentScanLease, result: CollectResult | null): Promise<AgentScanRecord> {
   supported();
@@ -173,7 +180,7 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
     const owned = await lockOwnedClaim(tx, lease);
     const settings = await readCrawlSettings(tx);
     if (settings.agentEvidence.detectorVersion !== lease.binding.detectorVersion || lease.binding.detectorVersion !== AGENT_DETECTOR_VERSION) throw lost();
-    let scan: { id: number; state: string } | null = null;
+    let scan: { id: number; state: string; repositoryKey: string } | null = null;
     if (result) {
       // 같은 identity 잠금 아래에서 읽은 최신 행에 묶는다(legacy refresh 의 변환과 같은 규칙)
       const persisted = persistableAgentScanResult(result, await getLatestRepositoryAgentScan(lease.repositoryKey, '', tx));
@@ -181,8 +188,14 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
         scan = await writeRepositoryAgentScanIn(tx, persisted, validatedAgentObservations(persisted), owned.claimedAt);
       }
     }
-    const kind = !result ? 'cached' : scan ? 'scan' : 'scanless';
+    // 이름이 바뀐 저장소: 같은 GitHub id·head 의 옛 이름 행에 묶였다(writeRepositoryAgentScanIn 의 별칭 충돌 — 옛 이름 행은 alias_recheck_required).
+    // 이 이름으로는 최신 스캔이 생기지 않아 기한을 스캔에서 잴 수 없다 — 그대로 두면 지난 due 로 곧바로 다시 잡혀 쉬지 않고 돈다.
+    // 저장소 실패처럼 실패 수를 올리고 retry_after 를 15분×2^(n−1)(7일 상한)로 미룬다. legacy 는 이름순 커서가 지나가 한 바퀴에 한 번 본다.
+    const aliased = !!scan && scan.repositoryKey !== lease.repositoryKey;
+    const kind = !result ? 'cached' : scan && !aliased ? 'scan' : 'scanless';
     const outcome: AgentScanRecordOutcome = !result ? 'cached' : code ? 'failed' : scan?.state === 'complete' ? 'complete' : 'partial';
+    const failureCode = aliased ? 'alias_conflict' : repositoryFailure ? code : null;
+    const counted = failureCode !== null;
     const keepFailure = providerWait || kind === 'cached';
     const due = agentRefreshDueAtSql(sql`latest`, sql`c.requires_daily`, settings.agentEvidence.backgroundRefreshDays, sql`clock.at`);
     const retryAt = result?.retryAt ? result.retryAt.toISOString() : null;
@@ -193,11 +206,12 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
         due_at = CASE WHEN ${kind !== 'scanless'} THEN coalesce((SELECT ${due} FROM (${latestScanSql(sql`c.repository_key`)}) latest), c.due_at)
           ELSE c.due_at END,
         retry_after = CASE WHEN ${kind !== 'scanless'} THEN NULL
-          WHEN ${repositoryFailure} THEN clock.at + least(interval '7 days', interval '15 minutes' * power(2, least(c.failure_streak, 10)))
+          WHEN ${counted} THEN greatest(clock.at + least(interval '7 days', interval '15 minutes' * power(2, least(c.failure_streak, 10))),
+            coalesce(${retryAt}::timestamp, clock.at))
           ELSE greatest(clock.at, coalesce(${retryAt}::timestamp, clock.at + interval '15 minutes')) END,
-        failure_streak = CASE WHEN ${repositoryFailure} THEN least(c.failure_streak + 1, 1000000) WHEN ${keepFailure} THEN c.failure_streak ELSE 0 END,
-        first_failure_at = CASE WHEN ${repositoryFailure} THEN coalesce(c.first_failure_at, clock.at) WHEN ${keepFailure} THEN c.first_failure_at ELSE NULL END,
-        last_error_code = CASE WHEN ${repositoryFailure} THEN ${code} WHEN ${keepFailure} THEN c.last_error_code ELSE NULL END
+        failure_streak = CASE WHEN ${counted} THEN least(c.failure_streak + 1, 1000000) WHEN ${keepFailure} THEN c.failure_streak ELSE 0 END,
+        first_failure_at = CASE WHEN ${counted} THEN coalesce(c.first_failure_at, clock.at) WHEN ${keepFailure} THEN c.first_failure_at ELSE NULL END,
+        last_error_code = CASE WHEN ${counted} THEN ${failureCode} WHEN ${keepFailure} THEN c.last_error_code ELSE NULL END
       FROM clock WHERE c.repository_key = ${lease.repositoryKey} AND c.token = ${lease.token}::uuid
       RETURNING c.failure_streak, to_char(c.due_at, ${ISO}) AS due_at, to_char(c.retry_after, ${ISO}) AS retry_after`);
     if (!row) throw lost();
