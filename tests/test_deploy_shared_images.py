@@ -708,7 +708,9 @@ class FleetInventoryTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())['complete'], code is None)
 
 
-CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
+AI_CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
+# E5: the agent-scan consumer runs crawler code on M3 only (its other host is Oracle).
+CONSUMERS = AI_CONSUMERS + ('agent-scan-consumer-m3',)
 
 
 class ConsumerAppRegistrationTests(unittest.TestCase):
@@ -753,11 +755,15 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
             release.app_metadata('ai3-consumer-m3')
         with self.assertRaisesRegex(ValueError, 'ai1-consumer-mini_app_unregistered'):
             release.consumer_apps(['ai1'])
+        with self.assertRaisesRegex(ValueError, 'agent-scan-consumer-m3_app_unregistered'):
+            release.consumer_apps(['agent-scan'])
 
     def test_main_refuses_unregistered_or_misused_consumer_targets_before_keychain(self):
         base = ['--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
         for arguments, error in ((['plan'] + base + ['--consumer', 'ai2'], 'ai2-consumer-mini_app_unregistered'),
                                  (['run'] + base + ['--snapshot', '/private/tmp/x.json', '--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
+                                 (['plan'] + base + ['--consumer', 'agent-scan'], 'agent-scan-consumer-m3_app_unregistered'),
+                                 (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'agent-scan-consumer-m3'], 'agent-scan-consumer-m3_app_unregistered'),
                                  (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'ai1-consumer-m3'], 'ai1-consumer-m3_app_unregistered')):
             with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy:
                 with self.assertRaisesRegex(ValueError, error):
@@ -781,7 +787,7 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (18, False, ['ai2-consumer-m3']))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (19, False, ['ai2-consumer-m3']))
         self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'registered'))
         self.assertEqual({short: result['apps'][short]['deployedBy'] for short in CONSUMERS}, dict.fromkeys(CONSUMERS, 'run'))
 
@@ -820,9 +826,28 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
              patch.object(release, 'monitor_gate', side_effect=lambda _c, role: steps.append('gate:' + role) or {'role': role}), \
              patch.object(release, 'public_gate', return_value={}), patch.object(release, 'purge_html', return_value={}), \
              redirect_stdout(io.StringIO()):
-            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', CONSUMERS)
-        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *CONSUMERS,
+            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', AI_CONSUMERS)
+        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *AI_CONSUMERS,
                                  'gate:reviewer', 'crawler-mini', 'crawler-m3', 'gate:crawler', 'web-mini', 'web-m3'])
+
+    def test_agent_scan_consumer_follows_the_crawler_pair_before_its_gate(self):
+        """E5: the M3-only agent-scan app runs crawler code; selecting it leaves every other app and gate where it was."""
+        with self.registered():
+            self.assertEqual(release.consumer_apps(['agent-scan']), ('agent-scan-consumer-m3',))
+            self.assertEqual(release.consumer_apps(['ai1', 'agent-scan']), ('ai1-consumer-mini', 'ai1-consumer-m3', 'agent-scan-consumer-m3'))
+        self.assertEqual(release.release_order(('agent-scan-consumer-m3',)),
+                         release.ORDER[:6] + ('agent-scan-consumer-m3',) + release.ORDER[6:])
+        self.assertEqual(release.release_order(CONSUMERS), release.ORDER[:4] + AI_CONSUMERS + release.ORDER[4:6]
+                         + ('agent-scan-consumer-m3',) + release.ORDER[6:])
+        steps = []
+        with self.registered(), patch.object(release, 'save_snapshot'), \
+             patch.object(release, 'stage_and_deploy', side_effect=lambda _c, short, _t, _k, _p: steps.append(short) or {'app': short}), \
+             patch.object(release, 'monitor_gate', side_effect=lambda _c, role: steps.append('gate:' + role) or {'role': role}), \
+             patch.object(release, 'public_gate', return_value={}), patch.object(release, 'purge_html', return_value={}), \
+             redirect_stdout(io.StringIO()):
+            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', CONSUMERS)
+        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *AI_CONSUMERS,
+                                 'gate:reviewer', 'crawler-mini', 'crawler-m3', 'agent-scan-consumer-m3', 'gate:crawler', 'web-mini', 'web-m3'])
 
     def test_stage_and_restore_use_the_consumer_app_id_and_worker_image(self):
         class ConsumerClient(FakeClient):

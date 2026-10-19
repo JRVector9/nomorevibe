@@ -46,12 +46,15 @@ function failure(error: GitHubFailure): Pick<CollectResult, 'errorCode' | 'retry
 export async function collectRepositoryAgentEvidence(input: {
   repositoryKey: string; scope?: string; cursor?: CollectCursor | null; request?: AgentGitHubRequest;
   hasBudget?: () => boolean; maxRequests?: number; knownComplete?: { repositoryId: string; commitSha: string }; deadlineAt?: number; discoveryCommitShas?: string[];
+  /** 종료 신호. 기본 요청(githubRequest)에 넘겨 진행 중인 요청을 끊는다 — 끊긴 요청은 transport 실패로 돌아온다 */
+  signal?: AbortSignal;
 }): Promise<CollectResult> {
   const repositoryKey = normalizeAgentRepositoryKey(input.repositoryKey);
   const scope = normalizeScope(input.scope ?? input.cursor?.scope ?? '');
   const started = Date.now();
   const deadlineAt = Math.min(started + AGENT_SCAN_LIMITS.durationMs, input.deadlineAt ?? Infinity);
-  const request: AgentGitHubRequest = input.request ?? (path => githubRequest(path, {}, { timeoutMs: Math.max(1, Math.min(AGENT_SCAN_LIMITS.timeoutMs, deadlineAt - Date.now())) }));
+  const request: AgentGitHubRequest = input.request ?? (path => githubRequest(path, {}, { timeoutMs: Math.max(1, Math.min(AGENT_SCAN_LIMITS.timeoutMs, deadlineAt - Date.now())),
+    ...(input.signal ? { signal: input.signal } : {}) }));
   const maxRequests = Math.max(3, Math.min(input.maxRequests ?? AGENT_SCAN_LIMITS.requests, AGENT_SCAN_LIMITS.requests));
   let cursor = input.cursor ? structuredClone(input.cursor) : null;
   if (cursor && (cursor.repositoryKey !== repositoryKey || cursor.scope !== scope || cursor.detectorVersion !== AGENT_DETECTOR_VERSION || !shaPattern.test(cursor.commitSha) || !/^\d+$/.test(cursor.repositoryId) || [...cursor.pendingTrees, ...cursor.pendingBlobs].some(item => !shaPattern.test(item.sha) || item.path.split('/').some(p => p === '..')))) throw new InvalidAgentScanCursorError();

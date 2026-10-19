@@ -30,3 +30,21 @@ it('counts a passed reset as a full window and does not gate when a reset is min
   mocks.execute.mockResolvedValueOnce([quota(100, 6), quota(100, 30)]);
   expect(await readGitHubCoreHeadroom(NOW)).toMatchObject({ low: true });
 });
+
+it('reads only the credential tables this process uses when a collector scope is given', async () => {
+  const { PgDialect } = await import('drizzle-orm/pg-core');
+  const { collectorScope } = await import('@/lib/crawl/github-secret');
+  const text = () => new PgDialect().sqlToQuery(mocks.execute.mock.calls.at(-1)![0]);
+  mocks.execute.mockResolvedValue([quota(100, 30)]);
+  await readGitHubCoreHeadroom(NOW);
+  expect(text().sql).toMatch(/github_collector_accounts WHERE enabled UNION ALL SELECT core_quota FROM github_collector_apps WHERE enabled$/);
+  // App 전용 Oracle: 개인 토큰 표는 쿼리에 나오지도 않는다(그 계정은 권한이 없다)
+  expect(await readGitHubCoreHeadroom(NOW, collectorScope({ GITHUB_COLLECTOR_SOURCES: 'apps', GITHUB_COLLECTOR_APP_INSTALLATIONS: '42,43' })))
+    .toEqual({ remaining: 100, limit: 5_000, low: true });
+  expect(text()).toMatchObject({ sql: 'SELECT core_quota FROM github_collector_apps WHERE enabled AND installation_id IN ($1, $2)', params: [42, 43] });
+  await readGitHubCoreHeadroom(NOW, collectorScope({ GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS: '42' }));
+  expect(text().sql).toContain('github_collector_accounts WHERE enabled UNION ALL SELECT core_quota FROM github_collector_apps WHERE enabled AND installation_id NOT IN ($1)');
+  mocks.execute.mockClear();
+  expect(await readGitHubCoreHeadroom(NOW, collectorScope({ GITHUB_COLLECTOR_SOURCES: 'env' }))).toBeNull();
+  expect(mocks.execute).not.toHaveBeenCalled();
+});

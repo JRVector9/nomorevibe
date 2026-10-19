@@ -209,16 +209,24 @@ export async function recordAgentRepositoryScan(value: AgentScanLease, result: C
 /**
  * 맡은 저장소를 쓰지 않고 푼다(예산 소진·종료 신호·60초 마감). due_at·retry_after·실패 수는 그대로 둔다 — 실패로 세지 않는다.
  * 만료됐어도 다른 owner 가 아직 맡지 않았으면 푼다. 이미 잃었으면 false.
+ *
+ * retryAfterMs: 처리 중 예외(관측 검증 실패·자격 없음 등)로 포기할 때만 준다. 그대로 풀면 같은 저장소가 큐 맨 앞에서 곧바로 다시 잡혀
+ * 일꾼이 그 하나에 묶인다. retry_after 를 지금+이만큼(이미 더 늦으면 그대로)으로 미룬다. 실패 수·due_at 은 여전히 그대로다.
  */
-export async function abandonAgentRepositoryClaim(value: AgentScanLease): Promise<boolean> {
+export async function abandonAgentRepositoryClaim(value: AgentScanLease, options: { retryAfterMs?: number } = {}): Promise<boolean> {
   supported();
   const lease = parseLease(value);
+  const { retryAfterMs } = options;
+  if (retryAfterMs !== undefined && (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 1 || retryAfterMs > 7 * 86_400_000))
+    throw new Error('invalid_agent_scan_retry');
+  const retryAfter = retryAfterMs === undefined ? sql``
+    : sql`, retry_after = greatest(retry_after, (clock_timestamp() AT TIME ZONE 'UTC') + ${retryAfterMs} * interval '1 millisecond')`;
   return onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return false;
     await lockAgentScanControl(tx, 'share');
     const released = await tx.execute(sql`
       UPDATE agent_repository_claims SET token = NULL, instance_id = NULL, boot_id = NULL, claimed_at = NULL, lease_until = NULL,
-        control_epoch = NULL, binding_hash = NULL, last_outcome = 'abandoned', updated_at = (clock_timestamp() AT TIME ZONE 'UTC')
+        control_epoch = NULL, binding_hash = NULL, last_outcome = 'abandoned', updated_at = (clock_timestamp() AT TIME ZONE 'UTC')${retryAfter}
       WHERE repository_key = ${lease.repositoryKey} AND token = ${lease.token}::uuid AND instance_id = ${lease.owner.instanceId}
         AND boot_id = ${lease.owner.bootId}::uuid AND epoch = ${lease.epoch} AND control_epoch = ${lease.controlEpoch}
         AND binding_hash = ${lease.bindingHash}

@@ -92,7 +92,7 @@ python3 scripts/ops/deploy_shared_images.py inventory --sha "$APPROVED_RELEASE_S
 | --- | --- | --- | --- |
 | D1 | Oracle capability refresh 정책: A(Oracle host timer, 별도 `nomorevibe_oracle_refresh` principal) 또는 B(M3/mini 원격 실행). 정하지 않으면 선출된 역할은 15분 안에 claim을 멈춘다. | 2, 4 | `deploy/oracle/README.md:112-124`, `lib/jobs/batches.ts:61-62` |
 | D2 | `nomorevibe-core.slice`의 CPUQuota %·MemoryMax bytes·TasksMax(실측 뒤 명시, 기본값 없음) | 3 | `deploy/oracle/manage_release.py:18-28` |
-| D3 | 역할별 DB connection limit(psql 변수 6개)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
+| D3 | 역할별 DB connection limit(psql 변수 8개 — consumer `agent-scan`·`uptime` 포함)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
 | D4 | `HOST_BUDGET_ENFORCEMENT` 압박 한도 4개(maxLoadPerCpu·maxHostRssBytes·maxEventLoopDelayMs·maxHeartbeatGapMs) | 3, 8 | `lib/operations/host-budget.ts:12-32` |
 | D5 | 비상 예산 값 `{jobs, modelJobs, httpJobs, agingMs}`과 `verifiedModelJobs` 목록(빈 목록도 명시) | 8 | `lib/operations/emergency-admission.ts:14-35`, `lib/operations/emergency-priority.ts:73-74` |
 | D6 | 비상 독립 provider(번역·심사 등)와 비용 상한 | 5, 8 | `/tmp/nomorevibe-pr16-emergency-design-20261017.md` 5장 |
@@ -157,7 +157,8 @@ readlink /opt/nomorevibe-core/current
 
 ## 2. 운영 DB principal 생성과 권한 readback
 
-- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)와 consumer 계정(uptime: `nomorevibe_oracle_uptime`, split claim·제출만)을 만든다. D1이 A면 refresh principal도 만든다.
+- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)와 consumer role 2개를 만든다 — 제작 근거 스캔 `nomorevibe_oracle_agent_scan`(SQL 파일의 `-- consumer agent-scan` 절), uptime `nomorevibe_oracle_uptime`(`-- consumer uptime` 절, split claim·제출만). D1이 A면 refresh principal도 만든다.
+  6개 role 이 이미 있으면 파일 전체를 다시 실행하지 않는다(`CREATE ROLE` 충돌로 트랜잭션 전체가 취소된다). 그때는 승인을 받아 필요한 consumer 절(`-- consumer agent-scan`·`-- consumer uptime`)만 `BEGIN`/`COMMIT` 으로 감싸 실행한다.
 - **명령:** 관리자 연결은 URL에 비밀번호를 넣지 않고 `~/.pgpass`(0600)나 프롬프트를 쓴다. 관리자 자격 보관 위치는 **확인 필요**다. SQL 파일은 한 트랜잭션이다.
 
 ```bash
@@ -169,6 +170,7 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v scheduler_connections="$SCHEDULER_CONNECTIONS" \
   -v attest_connections="$ATTEST_CONNECTIONS" \
   -v uptime_connections="$UPTIME_CONNECTIONS" \
+  -v agent_scan_connections="$AGENT_SCAN_CONNECTIONS" \
   -f "$SRC/deploy/oracle/least-privilege.sql"
 # D1 이 A 일 때만
 psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/deploy/oracle/refresh-principal.sql"
@@ -183,12 +185,15 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/
 \password nomorevibe_oracle_official_news
 \password nomorevibe_oracle_scheduler
 \password nomorevibe_oracle_attest
+\password nomorevibe_oracle_agent_scan
 \password nomorevibe_oracle_refresh
 \password nomorevibe_oracle_uptime
 ```
 
 - **비밀번호 보관 위치(값은 쓰지 않는다):**
   - 각 worker principal: 해당 역할 env 파일 `/etc/nomorevibe-core/<role>.env`의 `DATABASE_URL`(root 0600).
+  - consumer principal `nomorevibe_oracle_agent_scan`: `/etc/nomorevibe-core/consumer-agent-scan.env`의 `DATABASE_URL`(root 0600).
+  - consumer principal `nomorevibe_oracle_uptime`: `/etc/nomorevibe-core/consumer-uptime.env`의 `DATABASE_URL`(root 0600).
   - refresh principal: `/etc/nomorevibe-core/refresh.env`의 `ORACLE_ATTEST_DATABASE_URL`(root 0600, refresh unit 전용 계정 `nomorevibe-attest`가 쓴다).
   - attest principal: worker 계정이 읽을 수 없는 곳(D12). 역할 env 파일에 넣지 않는다.
   - Oracle에서 붙는 경로(PgBouncer auth 설정, pg_hba의 Oracle 주소 허용)는 저장소에 없다. **확인 필요.**
@@ -217,11 +222,33 @@ SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'mo
 
   기대값:
   - 6개 role 모두 `rolcanlogin=t`이고 super·createdb·createrole·replication·bypassrls·inherit는 `f`다. `rolconfig`에 `statement_timeout`(scheduler 10s, 나머지 60s), `lock_timeout=5s`, `idle_in_transaction_session_timeout=60s`가 있다.
+  - consumer role `nomorevibe_oracle_agent_scan`·`nomorevibe_oracle_uptime`도 같고, `rolconfig`에 `statement_timeout=10s`와 `TimeZone=UTC`가 더 있다. 최종 판정은 각 consumer preflight(`worker-oracle-preflight.ts --consumer=agent-scan`·`--consumer=uptime`)의 `checks.database = verified`다.
   - fence: translation·product-health·site-evidence·official-news·scheduler는 `fence_select=t`, `fence_lock=t`, `fence_update_all=f`. attest는 셋 다 `f`.
   - `capability_update`·`evidence_update`: worker 4개와 scheduler는 `f`, attest는 `t`.
   - 트리거 `job_batch_candidates_evidence_insert_guard`(`tgenabled=O`)와 인덱스 1행.
   - 최종 판정은 4단계 preflight의 `checks.database = verified`다. 이 값은 실제 권한 catalog가 profile과 정확히 같을 때만 나온다.
-- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용).
+- **consumer `agent-scan` 행 범위(migration 0105, FX-E):** 0105가 운영 DB에 먼저 있어야 한다 — `-- consumer agent-scan` 절이 보기 `agent_scan_job_schedule`에 권한을 주므로 없으면 SQL이 실패한다. 0105는 `rate_limits`·`github_collector_apps`에 RLS를 켜고 `nomorevibe_oracle_*` 계정에만 조건을 건다(표 소유 역할과 소유자가 아닌 앱 계정은 전과 같다).
+  - Oracle 전용 App 설치를 그 계정에 허용한다(운영 DB 쓰기, 승인 필요). 하지 않으면 그 계정에는 App 행이 보이지 않아 consumer preflight가 `app_installation_unavailable`로 닫힌다.
+
+```sql
+UPDATE github_collector_apps SET oracle_principals = array_append(oracle_principals, 'nomorevibe_oracle_agent_scan'), updated_at = now()
+WHERE installation_id = <Oracle 전용 설치 ID> AND NOT ('nomorevibe_oracle_agent_scan' = ANY (oracle_principals));
+-- readback: 허용한 설치만 그 이름을 가진다. M3 몫 설치는 비어 있어야 한다
+SELECT installation_id, enabled, oracle_principals FROM github_collector_apps ORDER BY installation_id;
+-- 되돌리기: SET oracle_principals = array_remove(oracle_principals, 'nomorevibe_oracle_agent_scan')
+```
+
+  - 관리자 화면의 App 다시 등록(upsert)은 이 열을 바꾸지 않는다. App을 지우고 새로 등록하면 허용도 다시 넣는다.
+  - **남은 권한(신뢰 경계 기록):** 이 계정은 임의 저장소의 스캔·관측을 쓰고 지울 수 있다(거짓 AI 제작 근거 주입 가능), 모든 claim 행의 기한·소유 열을 바꿀 수 있다, `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`을 FOR UPDATE로 붙잡을 수 있다(문장 10초·idle 60초까지, 역할 계정과 같은 관행). `operations_observations`는 0106 트리거가 자기 키(`agent-scan:agent-scan-consumer-*`·`service:crawler:agent-scan-consumer-*`·`defer:agent-scan`·`host-slot:oracle-osaka-smoke[:…]`)로 좁힌다 — 남의 키(예: `service:crawler:<M3 인스턴스>`)는 42501. `rate_limits`에서는 GitHub 키만 닿지만 2차 제한 전역 키(`github:quota:secondary:global`)와 M3 토큰의 쿨다운 키도 GitHub 키라 `reset_at`을 미래로 밀면 M3·mini의 GitHub 수집이 그때까지 멈춘다. 2차 제한 전역 키는 원래 설계상 M3와 Oracle을 함께 묶는다(한쪽이 2차 제한에 걸리면 다른 쪽도 멈춘다).
+  - **App 비밀키:** Oracle env의 `GITHUB_COLLECTOR_SECRET`은 M3와 같다. 0105로 다른 설치의 암호문은 읽지 못하지만, 다른 경로(백업 등)로 암호문이 새면 같은 비밀키로 M3 몫 App 키와 개인 토큰도 풀린다. 서버별 비밀키는 후속 과제다.
+  - **논리 DR:** RLS를 켠 두 표는 `replication_plan.py`에서 `row_security_requires_review`(blocking)로 보인다. 구독 owner가 슈퍼유저이거나 BYPASSRLS인지, 복제 계정이 두 표를 모두 읽는지 확인한 뒤에만 계획을 진행한다. `rate_limits`는 일시 상태라 `--exclude public.rate_limits=<사유>`로 빼도 된다.
+- **consumer 행 범위(migration 0106, INT2):** 0106은 RLS가 아니라 트리거 둘이다(SECURITY INVOKER, `tgenabled=O`). 조건은 `current_user` 이름만 보므로 표 소유 역할·소유자가 아닌 앱 계정·역할 계정 6개는 전과 같다. 계정을 만들기 전·후 어느 때 적용해도 된다(SQL 파일은 0106 객체를 참조하지 않는다).
+  - `uptime_claims_oracle_scope`: `nomorevibe_oracle_*` 계정은 claim 행을 `host=oracle-osaka-smoke`·`host_class=probe`로만 쓴다(home으로 적힌 제출 행 위조·home 행 고치기 → 42501 `oracle_uptime_claim_host`).
+  - `operations_observations_oracle_consumer_scope`: `nomorevibe_oracle_uptime`은 `uptime-consumer:uptime-consumer-*`·`service:maintenance:uptime-consumer-*`, `nomorevibe_oracle_agent_scan`은 위 agent-scan 키만 만들고 고친다(42501 `oracle_consumer_observation_key`). 인스턴스 이름은 consumer 접두로 시작해야 한다(`SERVICE_INSTANCE_ID`).
+  - readback: `SELECT c.relname, t.tgname, t.tgenabled FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgname IN ('uptime_claims_oracle_scope','operations_observations_oracle_consumer_scope');` → 2행, 둘 다 `O`.
+  - **논리 DR:** 0106은 RLS를 켜지 않아 `row_security_requires_review` 대상이 늘지 않는다(0105의 두 표뿐). 두 트리거는 일반(origin) 트리거라 구독 적용(`session_replication_role=replica`)에서는 돌지 않는다 — 원본이 이미 검사했다. R에도 migration으로 같은 트리거가 생겨 승격 뒤에는 그대로 동작한다. 0105와 달리 사람이 확인할 DR 항목은 없다.
+  - **닫지 못한 것:** 제어 행 잠금용 `UPDATE(id)`(uptime 계정의 `dr_writer_fence`·`uptime_split_control`, agent-scan 계정의 `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`)는 트리거·RLS로 닫을 수 없다. PostgreSQL은 FOR SHARE에도 UPDATE 권한(열 하나 이상)을 요구하고 같은 권한으로 `SELECT … FOR UPDATE`가 되며(트리거가 돌지 않는다), UPDATE의 BEFORE 트리거는 행을 잠근 뒤에 돈다(거절해도 잠금은 트랜잭션 끝까지 남는다). RLS의 UPDATE 정책은 FOR SHARE에도 걸려 쓸 수 없다. 데이터는 `CHECK (id = 1)`이 지킨다 — 남는 것은 행 잠금 지연(문장 10초·idle 60초 반복)이고 역할 계정 6개의 `dr_writer_fence`와 같은 관행이다. 닫으려면 FOR SHARE만 하는 SECURITY DEFINER 함수(EXECUTE는 consumer 계정만)로 바꾸고 UPDATE(id)를 회수해야 한다 — 생성기·권한 비교·preflight·재생 handler 검사(SECURITY DEFINER 함수 EXECUTE 금지)를 함께 바꾸는 후속 과제다.
+- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용), 0105 미적용(보기 없음).
 - **되돌리기(운영 DB 쓰기, 승인 필요):** SQL 실패는 트랜잭션 전체가 취소된다. 성공한 뒤 되돌리려면 role마다 `DROP OWNED BY <role>; DROP ROLE <role>;`을 실행한다. 이 role들이 소유한 객체는 없다.
 - **승인:** 필요(운영 DB에 role 생성).
 - **근거:** `deploy/oracle/least-privilege.sql:1-176`, `deploy/oracle/refresh-principal.sql:1-20`, `lib/runtime/oracle-db-profile.ts:21-63,77-93,118-134`, `drizzle/0095_dr_writer_fence.sql:3-16`, `drizzle/0098_oracle_activation_gaps.sql:5-18`, `lib/runtime/oracle-preflight.ts:120-138`.
@@ -699,6 +726,7 @@ SELECT reason, from_epoch, to_epoch, from_state, to_state, created_at, operator 
 
 - **켜는 조건:** 비상 admission은 DB가 판정한 모드가 `full`(M3·mini 후보 heartbeat가 둘 다 60초 넘게 없음, writer active), `recovering`, `hold`(writer fenced)일 때만 동작한다. `normal`·`partial`에서는 판정하지 않는다. 사람이 켜는 스위치는 "예산을 미리 장착"하는 것이고, 실제 발동은 DB 관측이 정한다.
 - **전제:** `PHYSICAL_HOST=oracle-osaka-smoke`, `HOST_BUDGET_ENFORCEMENT` 활성(없으면 시작할 때 `emergency_admission_invalid`), `HTTP_ORIGIN_PERMITS=1`, `HOST_DB_BUDGET` 선언. 같은 host의 모든 Oracle 프로세스가 같은 예산·같은 비상 설정을 써야 한다. 다르면 장부가 `host_policy_mismatch`로 막는다.
+- **consumer는 비상 판정을 따르지 않는다.** consumer(`agent-scan`·`uptime`)는 host 장부를 켜지 않고 그 계정에는 판정이 읽는 `role_leases`·`http_origin_control` 권한이 없다. `agent-evidence-refresh`는 비상 때 `suspended`이므로 비상으로 들어가면 `systemctl stop nomorevibe-core-consumer@agent-scan`을 하거나 그 잡을 멈춘다(잡 멈춤은 모든 agent-scan consumer를 멈춘다 — pipeline-control runbook 11).
 - **값(D5):** 형식은 아래와 같고 기본값은 없다. PR16 설계의 측정 시작 제안은 `{jobs:1, modelJobs:1, httpJobs:2, agingMs:600000}`이다. 이것은 제안값이며 승인값이 아니다. `verifiedModelJobs`에는 독립 모델 품질·비용 검증을 마친 모델 잡만 넣는다(빈 목록도 명시한다).
 
 ```env

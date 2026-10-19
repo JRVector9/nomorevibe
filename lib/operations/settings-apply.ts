@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { crawlSettings, operationsObservations } from "@/lib/db/schema";
 import { storedSettingsVersion } from "@/lib/crawl/settings-version";
 import { ROLE_LABELS } from "./contracts";
-import { parseServiceObservationKey } from "./instance";
+import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 
 /**
  * 설정 적용 확인(2026-10-08 UX 감사 ADM-19) — 저장한 크롤 설정 판을 워커 역할마다 읽었는지.
@@ -55,7 +55,8 @@ export function settingsApplyStatus(input: {
 }): SettingsApply {
   const instances = input.observations.flatMap((row) => {
     const parsed = parseServiceObservationKey(row.key);
-    return parsed ? [{ ...row, role: parsed.role }] : [];
+    // consumer(예: crawler 밑 agent-scan-consumer-m3)는 크롤 설정 판을 싣지 않는다 — 역할의 최근 관측을 가리지 않게 뺀다
+    return parsed && !isConsumerServiceInstance(parsed.instanceId) ? [{ ...row, role: parsed.role }] : [];
   });
   const roles = SETTINGS_ROLES.map((role): RoleSettingsApply => {
     const label = ROLE_LABELS[role] ?? role;

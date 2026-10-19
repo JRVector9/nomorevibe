@@ -165,7 +165,8 @@ export async function attachRepositoryAgentScan(input: { productSlug: string; pr
     return true;
   });
 }
-export type AgentScanCollectionInput = { repositoryKey: string; scope?: string; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number };
+export type AgentScanCollectionInput = { repositoryKey: string; scope?: string; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number;
+  signal?: AbortSignal };
 /**
  * GitHub 수집만 한다(쓰지 않는다). latest 가 아직 다시 볼 때가 아니면(force 없이) null — 캐시다.
  * legacy refresh 와 claim consumer(claims.ts 의 recordAgentRepositoryScan 으로 쓴다)가 같은 이어 하기·재고정 규칙을 쓴다.
