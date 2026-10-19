@@ -58,3 +58,16 @@ it("forwards the caller signal to in-flight HTTP and prevents quota writes after
   expect(actualSignal?.aborted).toBe(true);
   expect(mocks.observe).not.toHaveBeenCalled();
 });
+
+it('bounds an unresolved token provider and fences late token settlement at the absolute deadline', async () => {
+  let resolve!: (value: unknown) => void;
+  mocks.tokens.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const pending = githubRequest('/repos/owner/repo', {}, { deadlineAt: Date.now() + 20 });
+  await vi.advanceTimersByTimeAsync(20);
+  expect(await pending).toMatchObject({ ok: false, error: { kind: 'transport' } });
+  resolve([{ token: 'late', userId: null, login: 'late' }]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.auth).not.toHaveBeenCalled();
+  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});

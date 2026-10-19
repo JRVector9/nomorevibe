@@ -588,3 +588,16 @@ B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 �
 DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이다. 웹2개 기본8이면35, 운영 웹 각각6이면31이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
 
 관리자 상태 화면에 소개·사유 번역(text) 카드를 추가했다. 표시만으로 배포 성공을 판단하지 않는다. 해당 release의 컨테이너 healthy, publisher의 텍스트 실행0, text의 처리 및 backlog 감소를 확인한다. 공유 모델 서버 경합은 분리 후에도 계측한다.
+
+### Oracle consumer host budget 제한 및 identity 전환
+
+Oracle 전용 `agent-scan` principal은 host 장부의 만료 DELETE 및 HTTP control 권한을 갖지 않는다.
+따라서 `HOST_BUDGET_ENFORCEMENT.mode=enabled`와 `HTTP_ORIGIN_PERMITS=1` 조합은 launcher,
+consumer preflight, runtime에서 `agent_scan_oracle_host_budget_unsupported` 설정 오류로 거절한다.
+기본 비활성 설정은 유지하며 이를 해결하려고 GRANT를 확대하지 않는다.
+
+host process identity의 consumer 칸은 등록된 일반 consumer(`agent-scan`, `uptime`)도 구분한다.
+기존 reviewer(`legacy`/`ai1`/`ai2`)와 consumer 없는 프로세스의 identity는 그대로다.
+일반 consumer만 과거 `-` 칸에서 이름으로 전환되므로 host budget 활성 상태의 전환은 해당
+구버전 프로세스를 먼저 종료하고 기존 장부 lease(기본 45초)가 만료된 뒤 시작한다.
+혼합 버전에서 동일 consumer를 중복 기동하지 않는다. 같은 새 identity의 다른 boot는 계속 거절한다.
