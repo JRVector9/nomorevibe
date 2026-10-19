@@ -175,6 +175,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
 
       <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0}
         inflow={overview.wait?.in24h ?? null} />
+      <Link href="/admin#human-review" className="dash-pill">사람 검토 DeepSeek 위임: {settings.humanReview.enabled ? '켜짐 · M3 Ultra' : '꺼짐'} · 설정 →</Link>
 
       <TakedownStrip summary={takedowns} />
 

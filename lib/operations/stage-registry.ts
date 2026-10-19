@@ -23,7 +23,7 @@ export type PipelineStageDef = Readonly<{
   label: string;
   /** 코드 이름 — 새 요소는 "쉬운 말(코드)"로 함께 적는다 */
   code: string;
-  /** 이 단계를 처리하는 카탈로그 잡 — 사람 심사·X 는 없다 */
+  /** 이 단계를 처리하는 카탈로그 잡 — X 는 없다 */
   jobs: readonly string[];
   /** 첫 잡의 역할. 같은 단계의 다른 잡은 다른 역할일 수 있다(공개 근거의 분리 역할 site-evidence, 발행 앞의 소개 짓기 text) */
   role: CatalogRole | null;
@@ -57,8 +57,9 @@ export const PIPELINE_STAGES = Object.freeze([
     throughputKey: "first", progressKey: "first", completionKey: "ai1" }),
   stage({ key: "second", group: "review", label: "AI 2차", code: "second-review", jobs: ["second-review"], role: "reviewer",
     throughputKey: "second", progressKey: "second", completionKey: "ai2" }),
-  // 심사 큐의 직접 판단(stage=human) — 사람이 하는 단계라 잡이 없다
-  stage({ key: "human", group: "review", label: "사람 심사", code: "human", jobs: [], role: null, flowKey: "review" }),
+  // 심사 큐의 직접 판단(stage=human) — 관리자 스위치를 켜면 reviewer가 DeepSeek에 위임한다
+  stage({ key: "human", group: "review", label: "사람 심사", code: "human-deepseek-review",
+    jobs: ["human-deepseek-review"], role: "reviewer", flowKey: "review" }),
   // 소개 짓기(crawl-tagline)는 소개가 없어 발행 앞에서 멈춘 승인 후보의 한 줄을 짓는다 — 다 지으면 발행 대기로 돌아간다
   stage({ key: "publish", group: "review", label: "발행", code: "crawl-publish", jobs: ["crawl-publish", "crawl-tagline"], role: "publisher",
     throughputKey: "publish", progressKey: "publish", flowKey: "publish", completionKey: "publish" }),

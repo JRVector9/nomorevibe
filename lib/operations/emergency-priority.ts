@@ -54,6 +54,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "crawl-judge": { tier: "prepared-review" },
   "crawl-agent-review": { tier: "prepared-review", model: true },
   "second-review": { tier: "prepared-review", model: true },
+  "human-deepseek-review": { tier: "prepared-review", model: true },
   "crawl-tagline": { tier: "prepared-review", model: true },
   "product-site-evidence-refresh": { tier: "evidence", http: true },
   "product-evidence-refresh": { tier: "evidence", http: true },
