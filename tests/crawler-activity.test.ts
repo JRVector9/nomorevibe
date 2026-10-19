@@ -235,6 +235,16 @@ describe("safe bounded latest results", () => {
     expect(report.recent[0].events[0]).toEqual({ label: "응답 점검 광역 실패 보류", counts: { attempted: 50, down: 40 } });
   });
 
+  it("shows split claims applying submitted results and a breaker that stops home checks", () => {
+    const report = build({ observations: [observation("job:uptime-ping", { events: [
+      { event: "uptime.split_applied", counts: { remote: 12, applied: 9, held: 0, confirmRequested: 3, returned: 0, stale: 0, lost: 0, discarded: 0 } },
+      { event: "uptime.split_blocked", counts: { breakerOpen: 1, unconfigured: 0, fenced: 0 } },
+    ] })] });
+    expect(report.recent[0]).toMatchObject({ name: "uptime-ping", errorEvents: 1, outcome: "event-errors" });
+    expect(report.recent[0].events.map(event => event.label)).toEqual(["응답 점검 제출분 반영", "응답 점검 분담 확인 멈춤"]);
+    expect(report.recent[0].events[0].counts).toMatchObject({ remote: 12, applied: 9, confirmRequested: 3 });
+  });
+
   it("shows bot- or login-blocked uptime responses as unknown beside alive and down", () => {
     const report = build({ observations: [observation("job:uptime-ping", { events: [
       { event: "uptime.broad_failure_held", counts: { attempted: 30, down: 10, unknown: 20 } },
@@ -252,5 +262,24 @@ describe("safe bounded latest results", () => {
       { event: "evidence.refresh_batch", counts: { attempted: 0, failed: 0 } },
     ] })] });
     expect(report.recent[0]).toMatchObject({ itemErrors: 0, errorEvents: 1, outcome: "event-errors" });
+  });
+});
+
+// 리뷰 P3(agent-scan 9·uptime F8): consumer 는 역할 lease·후보가 없다 — '담당 여부 미확인' 역할 인스턴스로 섞이지 않고 consumer 줄로 보인다
+describe("consumer instances", () => {
+  it("lists agent-scan and uptime consumers as their own kind without role lanes", () => {
+    const report = build({ roles: [{ role: "crawler", ownerInstanceId: "m3-crawler", secondsUntilExpiry: 30 }], observations: [
+      observation("candidate:crawler:m3-crawler", { kind: "primary", phase: "active" }),
+      observation("service:crawler:m3-crawler", { status: "running", lanes: [lane("crawl-seed", ["crawl-seed", "crawl-fetch"], null)] }),
+      observation("service:crawler:agent-scan-consumer-m3", { status: "running", release: "45de7d0" }),
+      observation("service:crawler:agent-scan-consumer-oracle", { status: "running" }, old),
+      observation("service:maintenance:uptime-consumer-oracle", { status: "running" }),
+    ] });
+    expect(report.instances.find(row => row.instanceId === "agent-scan-consumer-m3"))
+      .toEqual({ instanceId: "agent-scan-consumer-m3", role: "crawler", kind: "consumer", state: "active", observedAt: fresh.toISOString(),
+        runtimeStale: false, release: "45de7d0", lanes: [] });
+    expect(report.instances.find(row => row.instanceId === "agent-scan-consumer-oracle")).toMatchObject({ kind: "consumer", state: "stale", lanes: [] });
+    expect(report.instances.find(row => row.instanceId === "uptime-consumer-oracle")).toMatchObject({ role: "maintenance", kind: "consumer", state: "active" });
+    expect(report.instances.find(row => row.instanceId === "m3-crawler")).toMatchObject({ kind: "primary", state: "active" });
   });
 });

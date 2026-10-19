@@ -4,7 +4,8 @@ import { ScrollTable } from '../components/ScrollTable';
 import { PipelineRuntimeStatus } from './PipelineRuntimeStatus';
 
 const MODES: Record<string, string> = { disabled: '비활성 설정', legacy: '기존 배치', draining: '드레인 중',
-  versioned: '분리 배치 설정', open: '신규 접수 설정', items: '항목 처리 설정', observing: '원시 관측 설정', gated: '판정 gate 설정' };
+  versioned: '분리 배치 설정', open: '신규 접수 설정', items: '항목 처리 설정', observing: '원시 관측 설정', gated: '판정 gate 설정',
+  claims: '제품 단위 분담 설정' };
 const STAGES: Record<string, string> = { fetch: '원본 수집', ai1: 'AI 1차', ai2: 'AI 2차' };
 const number = (value: number | null) => value === null ? '미확인' : value.toLocaleString('ko-KR');
 

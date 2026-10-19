@@ -1,13 +1,20 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { safeFetch, readBodyCapped, fetchPage } from "@/lib/net/fetch";
-import { extractTextSample, metaRefreshTarget } from "@/lib/net/normalize";
+import { db } from "@/lib/db";
+import { uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/health";
 import { isUnknownUptimeStatus } from "@/lib/domain/products/health-record";
 import { uptimeSlot } from "@/lib/domain/products/uptime-policy";
 import { uptimeObservationMode, uptimeObserverSource, nextUptimeObservationTargets, recordUptimeObservation } from "@/lib/domain/products/uptime-observations";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
+import { applyUptimeResults, type UptimeApplySummary, type UptimeOwnResult } from "@/lib/domain/products/uptime-apply";
+import { claimUptimeProducts, measureUptimeClockSkew, readUptimeSplitControl, releaseUptimeClaims, syncUptimeClaimRows, UptimeOwnResultSchema,
+  type UptimeClaimTicket } from "@/lib/domain/products/uptime-claims";
+import { UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FAILURE_RATIO, UPTIME_SPLIT_CLOCK_GUARD_MS, uptimeSplitHostEntry } from "@/lib/domain/products/uptime-split-policy";
+import { serviceInstanceId } from "@/lib/operations/instance";
+import { checkUptime, runOriginLanes } from "./uptime-check";
 
 /**
  * 생존 확인 잡.
@@ -48,6 +55,11 @@ import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/pro
  * (연속 실패·일별 집계·숨김·내림은 그대로, health-record writeHealthHeld). 시각을 그대로 두면 가장 오래된 채로
  * 다음 틱 배치를 먼저 채워, 부분 장애가 이어지면 몇 틱 만에 배치 전체가 보류 제품이 되고 다른 제품 확인이 멈추며
  * 막힌 사이트는 1분마다 요청을 받았다.
+ *
+ * 2026-10-19 split-v1(제품 단위 분담, 0103)이 claims 모드면 같은 잡이 claim 경로로 돈다(design-uptime §7.1). 틱마다
+ * 제출분 반영(Oracle 등) → 내림 적체 sweep → 새 제품 행 → home claim → 확인 → 틱 결과를 한 번에 반영한다. 판정은
+ * 묶음 적용기(uptime-apply.ts)가 하고, 광역 실패는 host 차단기가 막는다(묶음 기준은 legacy 보류와 같은 30건·30%).
+ * legacy 모드면 아래 경로가 그대로다. 모드는 틱 시작에 한 번 읽는다 — 전환은 다음 틱부터다.
  */
 
 /**
@@ -66,11 +78,12 @@ const DEFAULT_BATCH = 15;
 const DEFAULT_CONCURRENCY = 3;
 
 /**
- * 광역 실패 보류 기준. 평소 하루 실패는 확인의 0.6~1.8%다(2026-10-14~18) — 한 틱의 30%를 넘는 실패는
- * 사이트가 아니라 이 서버 쪽 문제로 본다. 표본이 너무 작으면 몇 건만 죽어도 비율이 튀므로 30건부터 판단한다.
+ * 광역 실패 보류 기준(UPTIME_BROAD_FAILURE_*, uptime-split-policy.ts). 평소 하루 실패는 확인의 0.6~1.8%다(2026-10-14~18) —
+ * 한 틱의 30%를 넘는 실패는 사이트가 아니라 이 서버 쪽 문제로 본다. 표본이 너무 작으면 몇 건만 죽어도 비율이 튀므로 30건부터 판단한다.
+ * split claims 모드의 묶음 규칙(policy batchMin·batchOpenRatio)도 같은 값이다.
  */
-const BROAD_FAILURE_MIN_ATTEMPTS = 30;
-const BROAD_FAILURE_RATE = 0.3;
+const BROAD_FAILURE_MIN_ATTEMPTS = UPTIME_BROAD_FAILURE_MIN_CHECKS;
+const BROAD_FAILURE_RATE = UPTIME_BROAD_FAILURE_RATIO;
 
 function capacitySetting(env: Readonly<Record<string, string | undefined>>, key: string, fallback: number, max: number) {
   const raw = env[key];
@@ -88,17 +101,15 @@ export function uptimeCapacityConfig(env: Readonly<Record<string, string | undef
     concurrency: capacitySetting(env, "UPTIME_CONCURRENCY", DEFAULT_CONCURRENCY, 16) };
 }
 
-/**
- * 본문에서 받아 볼 바이트 상한.
- *
- * 판정에 쓰는 것은 앞부분 1,500자뿐이다. 수집 때 쓰는 2MB를 그대로 쓰면 1분마다
- * 여러 건에서 쓰지도 않을 바이트를 받는다. 256KB면 첫 화면 글자를 담기에 충분하다.
- */
-const BODY_BYTES = 256 * 1024;
-
 export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const capacity = uptimeCapacityConfig();
   const observationMode = await uptimeObservationMode();
+  // PR09 관측·gate 가 켜져 있으면 split 은 legacy 다(0103 트리거가 함께 켜지 못하게 막는다) — 그때는 split 행을 읽지 않는다
+  // (Oracle product-health 관측자 principal 에는 그 표 권한이 없다). policy 는 claims 경로가 검증한다(hash 가 틀리면 그쪽이 멈춘다)
+  if (!observationMode.observationsEnabled && !observationMode.gateEnabled) {
+    const [split] = await db.select({ mode: uptimeSplitControl.mode }).from(uptimeSplitControl).where(eq(uptimeSplitControl.id, 1));
+    if (split?.mode === "claims") return pingClaimed(ctx, capacity);
+  }
   const source = observationMode.observationsEnabled ? uptimeObserverSource(observationMode.sources) : null;
   const raw = source ? { source, gateEnabled: observationMode.gateEnabled } : null;
   const write = oneAtATime();
@@ -120,31 +131,15 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   let down = 0;
   /** 봇·로그인 차단 응답(401·403·429·999) — 살았는지 알 수 없어 세지 않고 바로 기록한다 */
   let unknown = 0;
-  const errors: unknown[] = [];
   /** legacy 실패 기록 — 틱 끝에 광역 실패인지 본 뒤 센다(record) 또는 판정을 보류한다(hold) */
   const failures: DeferredFailure[] = [];
-  const lanes = byOrigin(targets);
 
-  /**
-   * 한 건이 실패하면 새로 열지 않는다. 다만 이미 연 것은 끝까지 읽거나 끊고 기록한 뒤에
-   * 실패를 알린다 — 먼저 던지면 남은 확인이 러너가 임대를 푼 뒤에 뒤늦게 기록된다.
-   */
-  await Promise.all(Array.from({ length: Math.min(capacity.concurrency, lanes.length) }, async () => {
-    for (let lane = lanes.shift(); lane; lane = lanes.shift()) {
-      for (const target of lane) {
-        if (errors.length > 0 || ctx.signal?.aborted || !ctx.hasBudget()) return;
-        try {
-          const result = await ping(target, write, ctx, () => { autoBanned++; }, raw, failure => { failures.push(failure); });
-          if (result === "up") alive++;
-          else if (result === "unknown") unknown++;
-          else down++;
-        } catch (error) {
-          errors.push(error);
-          return;
-        }
-      }
-    }
-  }));
+  const errors = await runOriginLanes(targets, capacity.concurrency, () => !ctx.signal?.aborted && ctx.hasBudget(), async target => {
+    const result = await ping(target, write, ctx, () => { autoBanned++; }, raw, failure => { failures.push(failure); });
+    if (result === "up") alive++;
+    else if (result === "unknown") unknown++;
+    else down++;
+  });
 
   // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 쓴다(성공과 같다). 광역 실패면 세지 않고 확인 시각만 넘긴다.
   // 첫 쓰기 실패에서 멈추고 나머지는 다음 틱이 다시 본다
@@ -170,80 +165,149 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   return { done: false };
 }
 
+/** 이 프로세스의 claim owner boot. 잡이 틱마다 같은 owner 로 claim·되돌림을 한다 */
+const BOOT_ID = randomUUID();
+
+/** 적용 요약 중 운영 관측에 남길 수(runner 는 숫자만 남긴다) */
+function appliedCounts(summary: UptimeApplySummary) {
+  const { outcomes } = summary;
+  return { remote: summary.remote, applied: outcomes.applied, held: outcomes.held, confirmRequested: outcomes.confirm_requested,
+    returned: outcomes.returned, stale: outcomes.stale, lost: outcomes.lost, discarded: outcomes.discarded,
+    conflicts: summary.conflicts, autoBanned: summary.autoBanned };
+}
+
+/**
+ * split claims 모드 한 틱(design-uptime §7.1, U1b 호출 순서). 정식 기록은 모두 묶음 적용기(applyUptimeResults)가 쓴다.
+ * 1) 제출분 반영 — 결과가 없어도 틱마다 불러 차단기를 시간에 따라 진행시킨다(open → probing).
+ * 2) 내림 적체 sweep(legacy 와 같다) 3) 새 공개 제품의 claim 행 4) home claim(재확인 요청 먼저) — 이 host 시계가 DB 와 20초 넘게
+ *    어긋나 있으면 claim·확인을 쉰다
+ * 5) 확인(legacy 와 같은 HTTP·본문·서버 직렬) 6) 틱의 결과를 한 번에 반영 — 묶음 광역 규칙이 성공까지 포함한 틱 전체를 본다
+ *    (나눠 넣으면 실패만 모인 묶음이 언제나 광역으로 보이거나, 30건에 영영 못 닿는다).
+ * 7) 반영하지 못한(열지 않았거나 적용이 실패한) claim 은 풀로 돌려준다 — 다음 틱이 바로 다시 가져간다. 결과 모양이 틀린 건은
+ *    반영에서 빼고(틱의 나머지는 반영한다) 돌려주지도 않는다 — TTL 뒤에 다시 잡힌다.
+ */
+async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof uptimeCapacityConfig>): Promise<JobOutcome<null>> {
+  if (!ctx.lease) throw new Error("uptime_job_required");
+  const lease = ctx.lease, signal = ctx.signal;
+  const remote = await applyUptimeResults({ lease, signal, hasBudget: ctx.hasBudget });
+  if (remote.remote > 0) ctx.log("uptime.split_applied", appliedCounts(remote));
+  // 그 사이 legacy 로 돌아갔으면 다음 틱이 legacy 로 돈다
+  if (remote.mode !== "claims") return { done: false };
+
+  let autoBanned = remote.autoBanned;
+  let swept = 0;
+  const backlog = await nextUptimeAutoBanTargets(capacity.batch);
+  for (const target of backlog) {
+    if (signal?.aborted || !ctx.hasBudget()) break;
+    swept++;
+    if (await autoBanUptimeProduct(target, ctx)) autoBanned++;
+  }
+  await syncUptimeClaimRows({ lease });
+  const idle = () => { ctx.log(backlog.length ? "uptime.checked" : "uptime.idle", { checked: 0, autoBanned }); return { done: backlog.length === 0 }; };
+  if (swept >= capacity.batch || signal?.aborted || !ctx.hasBudget()) return idle();
+
+  // home(M3·mini)만 이 잡으로 확인한다. policy 에 없거나 probe 로 적힌 instance 는 claim 하지 않는다(반영·sweep 은 했다)
+  const instanceId = serviceInstanceId();
+  const control = await readUptimeSplitControl();
+  const entry = instanceId && control.policy ? uptimeSplitHostEntry(control.policy, instanceId) : null;
+  if (!instanceId || !entry || entry.class !== "home") {
+    ctx.log("uptime.split_blocked", { unconfigured: 1 });
+    return { done: false };
+  }
+  // 이 host 시계가 DB 와 크게 어긋나 있으면 결과가 모두 stale clock 이 된다 — 확인을 쉬고 오류 이벤트로 알린다(반영·sweep 은 했다)
+  const skew = await measureUptimeClockSkew();
+  if (Math.abs(skew) > UPTIME_SPLIT_CLOCK_GUARD_MS) {
+    ctx.log("uptime.split_clock_skew", { skewMs: Math.round(skew) });
+    return { done: false };
+  }
+  const owner = { instanceId, bootId: BOOT_ID };
+  const batch = await claimUptimeProducts({ owner, limit: capacity.batch - swept });
+  if (batch.kind === "blocked") {
+    // 차단기 열림은 이 host 의 광역 장애다 — 확인을 쉬고 반영·sweep 만 한다. legacy 로 돌아갔으면 조용히 다음 틱으로
+    if (batch.reason !== "mode_legacy") ctx.log("uptime.split_blocked", { breakerOpen: batch.reason === "breaker_open" ? 1 : 0,
+      unconfigured: batch.reason === "source_unconfigured" ? 1 : 0, fenced: batch.reason === "site_fenced" ? 1 : 0 });
+    return { done: false };
+  }
+  if (batch.claims.length === 0) return idle();
+
+  let alive = 0;
+  let down = 0;
+  /** 봇·로그인 차단 응답(401·403·429·999) — 적용기가 legacy 처럼 세지 않고 확인 시각·응답 코드만 쓴다 */
+  let unknown = 0;
+  const results: UptimeOwnResult[] = [];
+  /** 결과 모양이 틀린 claim(예: 확인 중 host 시계가 뒤로 감). 한 건이 틱 전체의 반영을 막지 않게 건별로 거른다 */
+  const invalid = new Set<number>();
+  const errors = await runOriginLanes(batch.claims, capacity.concurrency, () => !signal?.aborted && ctx.hasBudget(), async (ticket: UptimeClaimTicket) => {
+    const check = await checkUptime(ticket.url);
+    const result = { productId: ticket.productId, token: ticket.token, epoch: ticket.epoch, startedAt: check.startedAt,
+      observedAt: check.observedAt, kind: check.kind, status: check.status, latencyMs: check.latencyMs };
+    if (UptimeOwnResultSchema.safeParse(result).success) results.push({ ...result, textSample: check.textSample });
+    else invalid.add(ticket.productId);
+    if (check.up) alive++;
+    else if (isUnknownUptimeStatus(check.status)) unknown++;
+    else down++;
+  });
+  if (invalid.size > 0) ctx.log("uptime.split_result_invalid", { invalid: invalid.size });
+
+  // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 반영한다(legacy 와 같다). 멈추라는 신호면 쓰지 않는다
+  const settled = new Set<number>();
+  if (results.length > 0 && !signal?.aborted) {
+    try {
+      const own = await applyUptimeResults({ lease, own: results, submittedLimit: 0, signal, hasBudget: ctx.hasBudget });
+      for (const result of results) settled.add(result.productId);
+      autoBanned += own.autoBanned;
+      const held = own.reasons.split_broad_failure ?? 0;
+      if (held > 0) ctx.log("uptime.broad_failure_held", { attempted: results.length, down: held, unknown });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  // 모양이 틀린 결과의 claim 은 되돌리지 않는다 — TTL(policy claim.ttlMs) 만료 뒤 다시 잡힌다. 바로 되돌리면 다음 틱이 같은 사이트를 다시 연다
+  const unsettled = batch.claims.filter(ticket => !settled.has(ticket.productId) && !invalid.has(ticket.productId));
+  if (unsettled.length > 0) {
+    try {
+      await releaseUptimeClaims({ owner, claims: unsettled });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length > 0) throw errors[0];
+
+  ctx.log("uptime.checked", { alive, down, unknown, autoBanned });
+  return { done: false };
+}
+
 /** 틱 끝까지 미룬 legacy 실패 — 세어 기록하거나(record) 확인 시각만 넘긴다(hold) */
 type DeferredFailure = { record: () => Promise<void>; hold: () => Promise<void> };
 
 /** 한 제품을 열어 보고 기록한다. 살았는지(up)·죽었는지(down)·봇·로그인 차단이라 알 수 없는지(unknown) */
 async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null, deferFailure: (failure: DeferredFailure) => void): Promise<"up" | "down" | "unknown"> {
-  // GET이라 본문 스트림이 열린 채로 온다. 안 읽고 취소하지 않으면 연결이 풀로 돌아가지
-  // 않고 버퍼가 남는다 — 어느 쪽이든 스트림을 반드시 닫는다.
-  const observationStartedAt = new Date();
-  const startedAt = performance.now();
-  const fetched = await safeFetch(target.url, "background");
-  const latencyMs = Math.max(0, Math.round(performance.now() - startedAt));
-  const status = fetched?.response.status ?? 0;
-  const up = status >= 200 && status < 400;
-  const unknown = !up && isUnknownUptimeStatus(status);
-
-  let sample: string | null = null;
-  if (fetched && up) {
-    // readBodyCapped은 상한에 닿으면 스스로 스트림을 끊는다
-    try {
-      const html = (await readBodyCapped(fetched.response, BODY_BYTES)).toString("utf-8");
-      /**
-       * 수집 잡과 같은 규칙으로 본다. 여기만 meta refresh를 안 따라가면 껍데기의
-       * "Redirecting…"이 수집이 확보한 목적지 본문을 덮어써, 재검수의 근거가 사라진다.
-       */
-      const hop = metaRefreshTarget(html, fetched.finalUrl);
-      sample = extractTextSample(hop ? (await fetchPage(hop, "background"))?.html ?? html : html);
-    } catch {
-      sample = null; // 본문은 부가물이다 — 못 읽어도 생존 확인은 그대로 기록한다
-    }
-  } else {
-    await fetched?.response.body?.cancel().catch(() => {});
-  }
-
-  const observedAt = new Date();
+  const check = await checkUptime(target.url);
+  const unknown = !check.up && isUnknownUptimeStatus(check.status);
   const record = async () => {
     if (ctx.signal?.aborted) return;
     if (raw) {
       if (!ctx.lease) throw new Error("uptime_job_required");
       const result = await recordUptimeObservation({ observationId: randomUUID(), productId: target.id, slug: target.slug, url: target.url,
-        slot: uptimeSlot(observationStartedAt), startedAt: observationStartedAt, observedAt, source: raw.source,
-        kind: fetched ? "http" : "unknown", status, latencyMs: fetched ? latencyMs : null }, { lease: ctx.lease, signal: ctx.signal });
+        slot: uptimeSlot(check.startedAt), startedAt: check.startedAt, observedAt: check.observedAt, source: raw.source,
+        kind: check.kind, status: check.status, latencyMs: check.latencyMs }, { lease: ctx.lease, signal: ctx.signal });
       ctx.log("uptime.observation", { productId: target.id, host: raw.source.host, ...result });
       if (result.state !== "applied") return;
     } else {
-      await recordPing(target.slug, status, fetched ? latencyMs : null, observedAt, target.id, ctx.lease, target.url, ctx.signal);
+      await recordPing(target.slug, check.status, check.latencyMs, check.observedAt, target.id, ctx.lease, target.url, ctx.signal);
     }
-    if (!up && !unknown && await autoBanUptimeProduct(target, ctx)) onBanned();
-    if (sample) await refreshTextSample(target.slug, sample, ctx.lease, target, ctx.signal).catch(() => {});
+    if (!check.up && !unknown && await autoBanUptimeProduct(target, ctx)) onBanned();
+    if (check.textSample) await refreshTextSample(target.slug, check.textSample, ctx.lease, target, ctx.signal).catch(() => {});
   };
   const hold = async () => {
     if (ctx.signal?.aborted) return;
-    await recordPing(target.slug, status, null, observedAt, target.id, ctx.lease, target.url, ctx.signal, true);
+    await recordPing(target.slug, check.status, null, check.observedAt, target.id, ctx.lease, target.url, ctx.signal, true);
   };
   // legacy 실패는 바로 쓰지 않는다 — 광역 실패 보류(pingProducts). 알 수 없는 응답은 세지 않으니 성공처럼 바로 쓴다.
   // raw 관측 모드는 관측 사실을 그대로 남긴다(광역 판정은 gate의 regional-v1 몫)
-  if (!up && !unknown && !raw) deferFailure({ record, hold });
+  if (!check.up && !unknown && !raw) deferFailure({ record, hold });
   else await write(record);
-  return up ? "up" : unknown ? "unknown" : "down";
-}
-
-/**
- * 같은 서버의 주소를 한 줄로 묶는다. 한 줄은 한 번에 한 곳에서만 차례로 연다.
- * 오래된 순서는 줄 안에서도 줄 사이에서도 그대로다. 주소가 깨졌으면 그 자체를 한 줄로 둔다 —
- * 여기서 던지면 그 제품이 계속 가장 오래된 채로 남아 매 틱을 막는다(열기는 safeFetch가 거른다).
- */
-function byOrigin(targets: PingTarget[]): PingTarget[][] {
-  const lanes = new Map<string, PingTarget[]>();
-  for (const target of targets) {
-    const origin = URL.parse(target.url)?.origin ?? target.url;
-    const lane = lanes.get(origin);
-    if (lane) lane.push(target);
-    else lanes.set(origin, [target]);
-  }
-  return [...lanes.values()];
+  return check.up ? "up" : unknown ? "unknown" : "down";
 }
 
 /** 넘긴 일을 들어온 순서대로 하나씩 실행한다. 앞의 일이 실패해도 다음 일은 돈다 */

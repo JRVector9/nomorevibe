@@ -30,6 +30,7 @@ it('reads actual migrated controls without changing management rows, privileges 
         'model',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM model_capacity_control t),
         'http',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM http_origin_control t),
         'uptime',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM uptime_control t),
+        'uptimeSplit',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM uptime_split_control t),
         'observations',(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY key),'[]'::jsonb) FROM operations_observations t),
         'jobs',(SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY name),'[]'::jsonb) FROM jobs t),
         'unsettledModel',(SELECT count(*)::int FROM model_capacity_requests WHERE state IN ('dispatched','indeterminate')),
@@ -45,7 +46,9 @@ it('reads actual migrated controls without changing management rows, privileges 
     const result = await readPipelineControlStatus();
     expect(result.observedAt).not.toBeNull();
     expect(Number.isFinite(Date.parse(result.observedAt!))).toBe(true);
-    expect(result.controls.map(row => row.key)).toEqual(['batch', 'source', 'model', 'http', 'uptime']);
+    expect(result.controls.map(row => row.key)).toEqual(['batch', 'source', 'model', 'http', 'uptime', 'uptimeSplit']);
+    const split = (before.uptimeSplit as { mode: string; epoch: number }[])[0];
+    expect(result.controls.find(row => row.key === 'uptimeSplit')).toMatchObject({ mode: split.mode, epoch: split.epoch });
     expect(result.stages).toHaveLength(3);
     const stages = before.stage as { stage: string; epoch: number; writer_contract_version: number; mode: string }[];
     for (const row of stages) expect(result.stages.find(stage => stage.stage === row.stage)).toMatchObject({

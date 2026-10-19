@@ -201,9 +201,10 @@ export function sourceSummary(split: ReplicaRead<SourceSplit>, settings: Pick<Cr
     note: `이번 시 · 기준 ${dbClock(split.value.at)} (DB)` };
 }
 
-const DEFAULT_MODES: Readonly<Record<string, string>> = { batch: "legacy", source: "disabled", model: "disabled", http: "disabled", uptime: "disabled" };
+const DEFAULT_MODES: Readonly<Record<string, string>> = { batch: "legacy", source: "disabled", model: "disabled", http: "disabled", uptime: "disabled",
+  uptimeSplit: "legacy" };
 const MODE_WORDS: Readonly<Record<string, string>> = { legacy: "기존 방식", draining: "전환 중", versioned: "분리 배치", items: "항목 처리",
-  open: "켜짐", disabled: "꺼짐", observing: "관측만", gated: "판정 관문" };
+  open: "켜짐", disabled: "꺼짐", observing: "관측만", gated: "판정 관문", claims: "제품 단위 분담" };
 export const modeWord = (mode: string | null) => mode === null ? "확인 안 됨" : `${MODE_WORDS[mode] ?? mode}(${mode})`;
 
 /**
