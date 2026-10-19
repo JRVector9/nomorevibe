@@ -4,6 +4,10 @@ vi.mock('@/lib/db', () => ({ db: { execute: mocks.execute } }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: async () => ({ agentEvidence: { enabled: true } }) }));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({ refreshRepositoryAgentEvidence: mocks.refresh }));
 vi.mock('@/lib/crawl/github-headroom', () => ({ readGitHubCoreHeadroom: mocks.headroom }));
+// 스캔 모드는 legacy(이 파일은 legacy 틱만 본다). 모드 갈래는 tests/integration/agent-scan-controller.test.ts 가 실제 DB 로 본다
+vi.mock('@/lib/domain/evidence/agents/claim-control', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/domain/evidence/agents/claim-control')>(),
+  readAgentScanMode: async () => ({ mode: 'legacy', drainingFrom: null }) }));
 import { AGENT_EVIDENCE_TICK_MS, refreshAgentEvidenceJob } from '@/lib/jobs/products/agent-evidence-refresh';
 beforeEach(() => { mocks.execute.mockReset(); mocks.refresh.mockReset(); mocks.headroom.mockReset(); mocks.headroom.mockResolvedValue(null); });
 afterEach(() => vi.useRealTimers());

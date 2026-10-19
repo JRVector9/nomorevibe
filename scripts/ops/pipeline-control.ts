@@ -1,6 +1,7 @@
-/** 운영자 제어 CLI(PR06d): stage mode·공통 모델 슬롯·공유 HTTP·job batch control. 절차는 docs/operations/2026-10-17-pipeline-control-runbook.md.
+/** 운영자 제어 CLI(PR06d): stage mode·공통 모델 슬롯·공유 HTTP·job batch·제작 근거 스캔 control. 절차는 docs/operations/2026-10-17-pipeline-control-runbook.md.
  *   PIPELINE_CONTROL_DATABASE_URL=... node --import tsx scripts/ops/pipeline-control.ts status [--json]
  *   ... stage drain|complete|contract ...   ... capacity policy|mode ...   ... http policy|mode ...   ... batch policy|contract|drain|complete ...
+ *   ... agent-scan status [--json]   ... agent-scan contract|drain|complete ...
  * 전환 명령은 기대 현재 상태·--operator·--reason이 필수이고 기본 dry-run(읽기 전용, DB 쓰기 0)이다. --execute일 때만 쓴다.
  * DB URL은 환경변수로만 받는다(argv·출력에 쓰지 않음). exit 0=완료·허용, 3=거절(아무것도 쓰지 않음), 1=오류(stderr에 고정 code만). */
 import { open } from "node:fs/promises";
@@ -35,7 +36,8 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
   try {
     if (command.name === "status") {
       const snapshot = await repository.readControlSnapshot(database);
-      write(command.json ? `${JSON.stringify({ command: "status", snapshot })}\n` : formatControlStatus(snapshot, models));
+      const name = command.area ? `${command.area} status` : "status";
+      write(command.json ? `${JSON.stringify({ command: name, snapshot })}\n` : formatControlStatus(snapshot, models, command.area));
       return 0;
     }
     const result = await repository.runPipelineControl(database, command, policy, models);

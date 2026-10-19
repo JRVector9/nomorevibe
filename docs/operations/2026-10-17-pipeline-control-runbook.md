@@ -1,11 +1,11 @@
-# 파이프라인 운영자 제어 runbook — stage canary·legacy 복귀·capacity·HTTP·batch (PR06d, 2026-10-17)
+# 파이프라인 운영자 제어 runbook — stage canary·legacy 복귀·capacity·HTTP·batch·제작 근거 스캔 (PR06d, 2026-10-17)
 
 > **이 문서의 운영 실행(`--execute`)은 모두 사용자 승인 뒤에 한다.** 승인 전에는 dry-run과 아래 읽기 전용 SQL만 쓴다.
 > 운영 DB에서 이 도구를 실행한 적은 아직 없다. 아래 순서와 수치는 코드와 로컬 테스트 DB로만 확인했다.
 
 ## 0. 도구와 공통 규칙
 
-- 도구: `scripts/ops/pipeline-control.ts`. 대상은 `pipeline_stage_modes`(ai1·ai2), `model_capacity_control`, `http_origin_control`, `job_batch_control` 네 control 행이다. `fetch` stage는 운영 consumer가 연결돼 있지 않아 다루지 않는다.
+- 도구: `scripts/ops/pipeline-control.ts`. 대상은 `pipeline_stage_modes`(ai1·ai2), `model_capacity_control`, `http_origin_control`, `job_batch_control`, `agent_scan_control`(제작 근거 스캔, §11) 다섯 control 행이다. `fetch` stage는 운영 consumer가 연결돼 있지 않아 다루지 않는다.
 - 실행 위치: 운영 DB primary에 쓰기로 접속할 수 있는 maintenance 계열 컨테이너. `node --import tsx scripts/ops/pipeline-control.ts <명령>`.
 - DB URL은 `PIPELINE_CONTROL_DATABASE_URL` 환경변수로만 준다. 앱의 `DATABASE_URL`로 대체하지 않는다. `PGHOST`·`PGHOSTADDR`·`PGPORT`·`PGSERVICE`·`PGSERVICEFILE`·`PGOPTIONS`가 있거나 URL을 인자로 주면 거절한다. 복제본 URL은 쓰지 않는다.
 - **기본은 dry-run이다.** `REPEATABLE READ, READ ONLY` 트랜잭션 하나로 현재 상태를 읽고 무엇이 바뀔지 계획만 출력한다. 행 잠금과 쓰기는 없다.
@@ -28,6 +28,11 @@
 | `batch contract` | `--expect-contract` `--expect-epoch` | `bumpJobBatchContract` | legacy에서만, +1만 |
 | `batch drain --from-mode=legacy\|versioned` | `--expect-epoch` | `beginJobBatchDrainIn` | legacy에서는 유효한 policy가 있어야 한다 |
 | `batch complete --draining-from=legacy\|versioned --to=legacy\|versioned` | `--expect-epoch` | `completeJobBatchTransitionIn` | 전역 정지(아래 §8)일 때만. epoch +1 |
+| `agent-scan contract` | `--expect-contract` `--expect-epoch` | `bumpAgentScanContract` | legacy에서만, +1만(§11) |
+| `agent-scan drain --from-mode=legacy\|items` | `--expect-epoch` | `beginAgentScanDrain` | contract ≥ 1 필요 |
+| `agent-scan complete --draining-from=legacy\|items --to=legacy\|items` | `--expect-epoch` | `completeAgentScanTransition` | 살아 있는 저장소 claim 0일 때만. epoch +1 |
+
+`agent-scan status [--json]`은 `[agent-scan]` 칸만 읽는다(읽기 전용, operator·reason 없음).
 
 기대 상태 값은 `status` 출력에서 그대로 옮긴다.
 
@@ -37,10 +42,11 @@
 |---|---|
 | `expect_<필드>_mismatch:<현재값>` | 입력한 기대 상태가 현재 행과 다르다(mode·epoch·revision·contract·draining_from·policy_hash). 다시 `status`를 본다 |
 | `site_fenced` | 이 DB는 fenced다 |
-| `stage_contract_required` / `batch_contract_required` | writer contract가 0이다. 먼저 `contract` |
-| `stage_transition_invalid` / `batch_transition_invalid` / `capacity_transition_invalid` / `http_transition_invalid` | 허용되지 않는 전환(예: disabled→open 직행, draining에서 다시 drain, legacy 밖에서 contract·batch policy) |
+| `stage_contract_required` / `batch_contract_required` / `agent_scan_contract_required` | writer contract가 0이다. 먼저 `contract` |
+| `stage_transition_invalid` / `batch_transition_invalid` / `capacity_transition_invalid` / `http_transition_invalid` / `agent_scan_transition_invalid` | 허용되지 않는 전환(예: disabled→open 직행, draining에서 다시 drain, legacy 밖에서 contract·batch policy) |
 | `stage_not_drained:<n>` | 그 stage에 lease_until이 지나지 않은 item lease가 n개 |
-| `batch_not_drained:jobs=..,roles=..,items=..,sources=..` | 전역 정지가 아니다 |
+| `agent_scan_not_drained:<n>` | 제작 근거 저장소 claim 중 lease_until이 지나지 않은 것이 n개 |
+| `batch_not_drained:jobs=..,roles=..,items=..,sources=..,agent_claims=..` | 전역 정지가 아니다(살아 있는 제작 근거 claim 포함) |
 | `batch_policy_required_for_versioned` | versioned로 끝나야 하는데 유효한 batch policy가 없다 |
 | `capacity_policy_missing` / `http_policy_missing` / `*_policy_invalid` | policy가 없거나 저장된 hash와 맞지 않는다 |
 | `*_policy_requires_closed` | open 상태에서 policy를 바꾸려 했다 |
@@ -57,6 +63,10 @@
 | `items_consumer_defers:*` | 위 거절 code와 같은 조건. `stage drain --from-mode=legacy`에서는 경고만 하고, `stage complete --to=items`는 `--allow-stalled-stage`를 붙였을 때만 경고로 바뀌어 진행된다 |
 | `stage_paused_until_complete:<stage>` | draining 동안 그 stage의 legacy·item claim이 모두 멈춘다 |
 | `legacy_job_in_flight:<stage>` | legacy job lease가 아직 살아 있다. 지금 items로 끝내면 그 결과는 ownership_lost로 버려진다 |
+| `consumer_heartbeat_missing:agent-scan` | 최근 2분 `service:crawler:agent-scan-consumer-*` 관측이 없다. items로 가면 스캔할 consumer가 없다 |
+| `agent_scan_paused_until_complete` | draining 동안 legacy 잡은 새 스캔을 시작하지 않고(컨트롤러만 돈다) consumer는 claim하지 않는다 |
+| `legacy_job_in_flight:agent-scan` | drain 전에 시작한 `agent-evidence-refresh` 틱이 아직 살아 있다. 지금 items로 끝내면 그 틱이 쓰려던 스캔 1건은 관문에서 버려지고 다시 처리된다 |
+| `expired_unsettled_claims:<n>` | 기한 지난 미정산 저장소 claim(누구든 다시 맡을 수 있다). complete를 막지 않는다 |
 | `drain_cancelled` | 출발 mode로 되돌아간다(epoch는 오른다) |
 | `expired_unsettled_leases:<n>` | 기한 지난 미정산 item lease. complete를 막지 않는다 |
 | `old_generation_held:<n>` | 이전 epoch·revision·policy로 잡힌 active 장부 행. 정산될 때까지 새 admission은 `policy_changed`로 미뤄진다 |
@@ -74,7 +84,7 @@ node --import tsx scripts/ops/pipeline-control.ts status
 node --import tsx scripts/ops/pipeline-control.ts status --json > control-before.json
 ```
 
-`status`는 stage별 mode·epoch·contract·live·legacy job·consumer 수, capacity·HTTP·batch 행, 그리고 `[capacity routes]` 표(지금 쓰는 조합별 serving 상태, §6-3)를 보여 준다.
+`status`는 stage별 mode·epoch·contract·live·legacy job·consumer 수, capacity·HTTP·batch 행, `[agent-scan]` 행과 priority별 대기 표(§11), 그리고 `[capacity routes]` 표(지금 쓰는 조합별 serving 상태, §6-3)를 보여 준다.
 
 ## 2. 먼저 알아야 할 순서 제약 — item consumer는 capacity open이 필요하다
 
@@ -255,7 +265,7 @@ node --import tsx scripts/ops/pipeline-control.ts batch policy --file=batch-poli
 node --import tsx scripts/ops/pipeline-control.ts batch contract --expect-contract=0 --expect-epoch=BE --operator=<이름> --reason="<사유>" --execute
 ```
 
-8-3 전역 정지: scheduler·모든 워커·consumer 앱을 멈추거나(Dokploy stop, 별도 승인) lease가 끝나기를 기다린다(role 45초, job 90초, item 최대 1시간, source claim). `status`의 `[batch] live jobs=0 roles=0 items=0 sources=0`을 확인한다.
+8-3 전역 정지: scheduler·모든 워커·consumer 앱을 멈추거나(Dokploy stop, 별도 승인) lease가 끝나기를 기다린다(role 45초, job 90초, item 최대 1시간, source claim, 제작 근거 claim 120초). `status`의 `[batch] live jobs=0 roles=0 items=0 sources=0 agent_claims=0`을 확인한다.
 
 ```sh
 # 8-4 legacy → draining
@@ -329,3 +339,68 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 - route 단위 open, HTTP 한도 변경, versioned 상태의 batch policy 변경, fetch stage.
 - 배포·env 변경, consumer 앱 생성, 워커 정지.
 - 처리량·품질·2배 판정. 이 도구의 허용은 control 행 전환이 가드를 통과했다는 뜻일 뿐이다.
+
+## 11. 제작 근거 스캔(agent-scan) — legacy → items, 되돌리기
+
+`agent_scan_control`(0104)의 뜻은 stage와 같다. 모드별 동작:
+
+| 모드 | `agent-evidence-refresh` 잡(crawler) | consumer(`agent-scan-consumer-*`) | 스캔 기록 |
+|---|---|---|---|
+| legacy | 지금처럼 GitHub로 스캔한다 | claim하지 않는다 | legacy 쓰기만 |
+| draining(from legacy) | 새 스캔을 시작하지 않는다(틱 도중이어도 다음 저장소 전에 멈춘다). 컨트롤러 일만 한다 | claim하지 않는다 | 진행 중이던 legacy 쓰기만 |
+| items | **컨트롤러**: GitHub 호출 없이 큐 채우기 → 관리자 추가 수집 완료 처리 → 제품 연결 → 근거 대기 후보 풀기 | claim·스캔·기록 | consumer 기록만(epoch 일치) |
+| draining(from items) | 컨트롤러 | 새 claim 없음, 진행 중 기록만 마친다 | 진행 중 consumer 기록만 |
+
+- 컨트롤러 틱은 잡 커서에서 새 제품 몫의 자리(`afterNewProduct`)만 남기고 legacy 스캔의 공급자 대기·스캔 전 실패 기록은 지운다. 운영센터 `agent-evidence` 단계는 items·draining(from items)에서 claim 표로 센다: 대기·최장 대기는 claim의 `due_at`과 저장소별 `retry_after` 중 늦은 쪽, 처리·오류는 최신 스캔(스캔 행이 없는 실패는 claim 행의 실패 기록)이다.
+- items·draining에서 이 단계는 crawler 자동 재시작 대상이 아니다(재시작해도 consumer 문제는 고쳐지지 않는다). items인데 consumer 관측이 2분 넘게 없으면 단계 판정이 `consumer_missing`(소비자 끊김) 경보다.
+- `status`의 `[agent-scan]`: `live`(lease_until 전 claim), `unsettled`(기한 지난 미정산), `legacy_job`(drain 전에 시작한 잡 틱이 살아 있으면 `live`), `consumers`(2분 안 consumer 관측 수), 그리고 priority별 `waiting`(지금 잡을 수 있는 행: 도래했고 backoff가 지났고 살아 있는 claim이 아님)·`oldest_min`. priority: 0 관리자 추가 수집 · 1 1차 심사 대기 · 2 스캔 없는 공개 제품 · 3 스캔 없는 후보 · 4 이어 하기 · 5 정기 · 6 오류 반복.
+
+사전 확인(설계 §8 S3–S5, 각각 별도 승인):
+- migration 0104가 운영 DB에 있다(`agent_scan_control` 1행, legacy·epoch 1·contract 0).
+- 관문이 들어간 release가 **스캔을 쓰는 모든 앱**(crawler M3·mini, 다른 역할 포함 14앱)에 배포됐다. `scripts/backfill-agent-evidence.ts`도 같은 release로만 돌린다. contract는 이것을 운영자가 확인했다는 표시다 — 옛 코드는 items에서도 스캔을 써서 consumer와 같은 저장소를 겹쳐 쓴다.
+- consumer 앱(`SERVICE_INSTANCE_ID=agent-scan-consumer-<자리>`, `worker-supervisor.ts --role=crawler --consumer=agent-scan`)이 떠 있고 `status`의 `consumers` ≥ 1이다. legacy에서는 claim하지 않고 쉰다.
+
+`A` = `status`의 `[agent-scan]` epoch.
+
+```sh
+# 11-1 writer contract 0→1
+node --import tsx scripts/ops/pipeline-control.ts agent-scan contract --expect-contract=0 --expect-epoch=A --operator=<이름> --reason="<사유>"
+node --import tsx scripts/ops/pipeline-control.ts agent-scan contract --expect-contract=0 --expect-epoch=A --operator=<이름> --reason="<사유>" --execute
+
+# 11-2 legacy → draining. 이 순간부터 legacy 잡은 새 스캔을 시작하지 않는다
+node --import tsx scripts/ops/pipeline-control.ts agent-scan drain --from-mode=legacy --expect-epoch=A --operator=<이름> --reason="<사유>" --execute
+```
+
+11-3 legacy 틱 종료 대기: `agent-scan status`의 `legacy_job`이 `idle`이 될 때까지 기다린다(최대 약 1분: 틱 마감 50초 + 진행 중 스캔 1건). drain 뒤에 시작한 틱은 컨트롤러라 `idle`로 센다.
+
+```sh
+# 11-4 draining → items. epoch A → A+1. 이때부터 consumer만 스캔한다
+node --import tsx scripts/ops/pipeline-control.ts agent-scan complete --draining-from=legacy --to=items --expect-epoch=A --operator=<이름> --reason="<사유>"
+node --import tsx scripts/ops/pipeline-control.ts agent-scan complete --draining-from=legacy --to=items --expect-epoch=A --operator=<이름> --reason="<사유>" --execute
+```
+
+11-5 관찰(5분 안, 이후 2–24시간): 잡 관측 `job:agent-evidence-refresh`의 `agent_scan.queue_filled`가 0보다 큼(첫 틱), `live` ≤ consumer 수, 새 스캔 행의 `started_at`이 consumer claim 시각, legacy 잡의 GitHub 호출 0, `unsettled`가 늘지 않음, crawler 재시작 없음, 운영센터 `agent-evidence`가 `consumer_missing`이 아님. 중단 기준: consumer 관측 5분 이상 없음, 30분 동안 대기가 줄지 않음, `unsettled`가 5보다 크고 계속 증가.
+
+### 11-6 되돌리기 — items → draining → legacy
+
+```sh
+# items → draining(from items). consumer는 새 claim을 멈추고 진행 중 기록만 마친다
+node --import tsx scripts/ops/pipeline-control.ts agent-scan drain --from-mode=items --expect-epoch=A1 --operator=<이름> --reason="<사유>" --execute
+# live 0 대기(claim TTL 최대 120초). 그 뒤 legacy. epoch A1 → A1+1, 옛 consumer의 늦은 기록은 epoch가 달라 거절된다
+node --import tsx scripts/ops/pipeline-control.ts agent-scan complete --draining-from=items --to=legacy --expect-epoch=A1 --operator=<이름> --reason="<사유>" --execute
+```
+
+- `A1` = 그 시점 epoch(11-4 뒤라면 A+1). legacy로 바로 갈 수 없다(`expect_mode_mismatch`).
+- **코드를 이전 SHA로 되돌릴 때의 순서(중요):** 이전 release에는 모드 관문이 없다. 그래서 **먼저** 위 순서로 control을 `legacy`로 돌리고, **consumer 앱(M3 Dokploy)과 Oracle unit을 멈춘 뒤에** 앱을 이전 SHA로 재배포한다. items 상태에서 옛 crawler가 돌면 consumer와 같은 저장소를 겹쳐 쓰고 스캔 커서가 뒤로 돈다. control 행과 claim 표는 남아 있어도 옛 코드에는 무해하다.
+- drain을 취소하려면 출발 mode로 complete한다(`--draining-from=items --to=items`, `drain_cancelled`, epoch +1). epoch는 되돌리지 않고 contract는 내리지 않는다.
+
+```sql
+-- 제작 근거 스캔 control·claim(시각은 시간대 없는 UTC)
+SELECT mode, draining_from, epoch, writer_contract_version, updated_at FROM agent_scan_control WHERE id = 1;
+SELECT count(*) FILTER (WHERE token IS NOT NULL AND lease_until > clock_timestamp() AT TIME ZONE 'UTC') AS live,
+       count(*) FILTER (WHERE token IS NOT NULL AND lease_until <= clock_timestamp() AT TIME ZONE 'UTC') AS unsettled,
+       count(*) FILTER (WHERE state = 'active' AND retry_after > clock_timestamp() AT TIME ZONE 'UTC') AS backoff
+FROM agent_repository_claims;
+SELECT instance_id, count(*) FROM agent_repository_claims WHERE token IS NOT NULL GROUP BY 1;
+SELECT key, observed_at, value->>'status' AS status FROM operations_observations WHERE key LIKE 'service:crawler:agent-scan-consumer-%' ORDER BY key;
+```

@@ -11,6 +11,7 @@ import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { agentLimitedSettledSql, agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
 import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand";
+import { AGENT_SCAN_CONSUMER_PREFIX, agentScanByClaims, readAgentScanMode, type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
@@ -33,6 +34,8 @@ const EVIDENCE_PROVIDER_FAILURE_CODES = ["rate_limited", "auth_unavailable"];
 // 인증·한도로 스캔을 시작조차 못 하면 잡 커서의 공급자 실패(job_failure)로 남아 계속 경보한다.
 const AGENT_PROVIDER_FAILURE_CODES = ["rate_limited"];
 const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${value}`), sql`, `);
+/** consumer 생존 판정 — pipeline-control status 의 consumers 와 같은 2분 */
+const CONSUMER_HEARTBEAT_MS = 120_000;
 
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
   stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
@@ -58,6 +61,7 @@ export function buildWorkerProgress(
   now: Date,
   batch: { mode: string; writerContractVersion: number },
   evidence: ProgressStageInput[] = [],
+  agentScan: AgentScanModeState | null = null,
 ): WorkerProgressReport {
   const instances = serviceInstancesFromObservations(observations);
   const liveness = (["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"] as const).map(role => {
@@ -69,11 +73,16 @@ export function buildWorkerProgress(
   });
   const isObserved = (role: "scheduler" | "crawler" | "reviewer" | "publisher") =>
     liveness.some(row => row.role === role && !row.alarm);
+  const agentScanConsumerAlive = instances.some(row => row.role === "crawler" && row.instanceId.startsWith(AGENT_SCAN_CONSUMER_PREFIX)
+    && (row.value.status === "running" || row.value.status === "starting")
+    && now.getTime() - new Date(row.observedAt as string | Date).getTime() <= CONSUMER_HEARTBEAT_MS);
   const states = new Map(jobs.map(job => [job.name, job]));
   const classified: StageProgress[] = [...throughput.stages, ...evidence].map(stage => {
     const job = states.get(jobForStage[stage.key]);
-    const result = classifyStage(stage, job ?? null, isObserved(["fetch", "evidence", "agent-evidence", "ai-level"].includes(stage.key)
+    const classifiedStage = classifyStage(stage, job ?? null, isObserved(["fetch", "evidence", "agent-evidence", "ai-level"].includes(stage.key)
       ? "crawler" : stage.key === "publish" ? "publisher" : "reviewer"), now);
+    const result = stage.key === "agent-evidence" && agentScan && agentScan.mode !== "legacy"
+      ? agentScanStage(classifiedStage, agentScan, agentScanConsumerAlive) : classifiedStage;
     return { ...result, job: jobForStage[stage.key], lane: laneForJob(result.role, jobForStage[stage.key]),
       waiting: stage.waiting, oldestMinutes: stage.oldestMinutes, completed5m: stage.completed5m,
       progress5m: stage.progress5m, errors5m: stage.errors5m, deferred: stage.deferred,
@@ -118,6 +127,42 @@ export function buildWorkerProgress(
 }
 
 /**
+ * items·draining 의 제작 근거 단계(설계 §4.5, R4). legacy 잡은 GitHub 를 부르지 않고 스캔은 consumer 가 맡으므로
+ * crawler 를 재시작해도 고쳐지지 않는다 — 재시작 대상이 아니다(restartEligible false). items 인데 consumer 관측이
+ * 2분 넘게 없으면 consumer_missing 경보다(설정상 중지는 그대로 둔다).
+ */
+function agentScanStage(stage: StageProgress, agentScan: AgentScanModeState, consumerAlive: boolean): StageProgress {
+  if (agentScan.mode === "items" && !consumerAlive && stage.reason !== "paused")
+    return { ...stage, reason: "consumer_missing", alarm: true, restartEligible: false };
+  return { ...stage, restartEligible: false };
+}
+
+/**
+ * items·draining(from items)의 제작 근거 대상 — consumer 가 맡는 claim 표(active 행)로 센다(설계 §4.5).
+ * 대기·최장 대기는 consumer 가 잡을 수 있는 시각(due_at 과 저장소별 retry_after 중 늦은 쪽), 처리·오류는 최신 스캔으로 센다.
+ * 스캔 행이 없는 저장소의 실패(처음 보는 저장소의 metadata 404 등)는 잡 커서의 1건이 아니라 claim 행의 실패 기록으로 센다.
+ * 시각 열은 모두 시간대 없는 UTC 다.
+ */
+function agentClaimTargetsSql(): SQL {
+  return sql`latest_agent AS (
+        SELECT DISTINCT ON (s.repository_key) s.* FROM agent_repository_scans s
+        JOIN agent_repository_claims c ON c.repository_key = s.repository_key AND c.state = 'active'
+        WHERE s.scope = '' AND s.detector_version = ${AGENT_DETECTOR_VERSION}
+        ORDER BY s.repository_key, s.started_at DESC, s.id DESC
+      ), agent_targets AS (
+        SELECT greatest(c.due_at, c.retry_after) AS due_at, s.state,
+          coalesce(${agentLimitedSettledSql(sql`s`)}, false) AS settled,
+          coalesce(s.last_error_code, CASE WHEN s.id IS NULL THEN c.last_error_code END) AS error_code,
+          s.completed_at, CASE WHEN s.id IS NULL THEN c.last_finished_at ELSE s.started_at END AS started_at,
+          s.file_count, s.request_count,
+          CASE WHEN s.id IS NULL THEN c.first_failure_at ELSE coalesce(s.completed_at, s.started_at) END AS error_since,
+          false AS job_failure
+        FROM agent_repository_claims c LEFT JOIN latest_agent s USING (repository_key)
+        WHERE c.state = 'active'
+      )`;
+}
+
+/**
  * 근거 읽기 실행기 — 배포 관문(readWorkerProgress)은 지금처럼 주 DB `db` 를 넘기고,
  * 운영센터 새 숫자는 readReplicaOnly(lib/db) 가 주는 복제본을 넘긴다(운영센터 v8 PR3). SQL·설정은 같다.
  */
@@ -125,16 +170,11 @@ export type EvidenceProgressExecutor = Pick<typeof db, "transaction">;
 
 /** Current eligible identities only. Rates count their latest persisted outputs, not ticks, HTTP requests or historical scans. */
 export async function evidenceProgress(executor: EvidenceProgressExecutor, settings: CrawlSettings, now: Date, skipUnseen: boolean,
-  failure: AgentProviderFailure | null): Promise<ProgressStageInput[]> {
+  failure: AgentProviderFailure | null, agentClaims = false): Promise<ProgressStageInput[]> {
   const at = sql`${now.toISOString()}::timestamp`;
   const preScanFailure = sql`d.repository_key = ${failure?.repositoryKey ?? ""}
     AND (s.id IS NULL OR s.started_at <= ${failure?.lastFailureAt ?? now.toISOString()}::timestamp)`;
-  const rows = await executor.transaction(async tx => {
-    await tx.execute(sql`SET LOCAL jit = off`);
-    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
-    return tx.execute<{ key: "evidence" | "agent-evidence" | "ai-level"; waiting: number; oldest: number | null;
-      completed: number; progress: number; errors: number; deferred: number; provider_errors: number; error_age: number | null }>(sql`
-      WITH ${evidenceSourceTargetCtesSql()}, agent_inputs AS MATERIALIZED (
+  const agentTargets = agentClaims ? agentClaimTargetsSql() : sql`agent_inputs AS MATERIALIZED (
         -- Avoid parallel sorted finalization over long keys under the database locale.
         SELECT ${progressRepositoryKeySql(sql`repo_url`, "agent")} AS repository_key, created_at,
           status NOT IN ('seeded','verified') AS requires_daily
@@ -160,7 +200,13 @@ export async function evidenceProgress(executor: EvidenceProgressExecutor, setti
           -- 잡 커서가 기록한 스캔 전 공급자 실패는 저장소별 재시도 대기가 아니다
           coalesce(${preScanFailure}, false) AS job_failure
         FROM agent_demand d LEFT JOIN latest_agent s USING (repository_key)
-      ), ai_current AS MATERIALIZED (
+      )`;
+  const rows = await executor.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL jit = off`);
+    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+    return tx.execute<{ key: "evidence" | "agent-evidence" | "ai-level"; waiting: number; oldest: number | null;
+      completed: number; progress: number; errors: number; deferred: number; provider_errors: number; error_age: number | null }>(sql`
+      WITH ${evidenceSourceTargetCtesSql()}, ${agentTargets}, ai_current AS MATERIALIZED (
         -- Avoid one long-key index probe per target when demand cardinality is underestimated.
         SELECT repository_key, rules_version, next_check_at, checked_at, last_error
         FROM repository_ai_levels WHERE rules_version = ${AI_LEVEL_RULES_VERSION}
@@ -237,14 +283,17 @@ export function withProviderBackoff<J extends { name: string; notBefore: Date | 
 }
 
 export async function readWorkerProgress(now = new Date()) {
-  const [settings, jobs, batch] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode()]);
+  const [settings, jobs, batch, agentScan] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db)]);
   const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
   const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
+  // claim 표로 셀 때는 잡 커서의 스캔 전 실패(legacy 스캔의 기록)를 쓰지 않는다
+  const agentClaims = agentScanByClaims(agentScan);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
   const [throughput, observations, evidence] = await Promise.all([
     pipelineThroughput(settings, now), db.select().from(operationsObservations).where(WITHOUT_JOB_DEFERRALS),
-    evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(), parseAgentProviderFailure(agentCursor?.providerFailure)),
+    evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
+      agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims),
   ]);
-  return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch, evidence);
+  return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch, evidence, agentScan);
 }

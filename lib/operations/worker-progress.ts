@@ -65,7 +65,9 @@ export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progr
 }
 
 export type ProgressReason = "paused" | "no_work" | "progressing" | "running" | "backoff" |
-  "upstream_or_job_error" | "upstream_stalled" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention";
+  "upstream_or_job_error" | "upstream_stalled" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention" |
+  /** 건 단위 consumer 가 맡는 단계(items 의 제작 근거 스캔)인데 consumer 관측이 없다 — 역할 워커 재시작으로 고쳐지지 않는다 */
+  "consumer_missing";
 export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level";
 /** 보강 근거 단계 이름 — 새 화면 요소에 "쉬운 말(코드)"로 쓴다(운영센터 v8). 지금 화면 글자는 그대로 둔다 */
 export const EVIDENCE_STAGE_LABELS = {
