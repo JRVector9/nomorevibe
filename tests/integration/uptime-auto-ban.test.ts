@@ -19,9 +19,9 @@ vi.mock("@/lib/jobs/control", async importOriginal => {
 
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, jobs, operationsAudit, productEvidenceAudit, productHealth, productHealthDaily, products } from "@/lib/db/schema";
-import { removeProductAndEvidence, setStatusWithAudit, update } from "@/lib/domain/products/repository";
+import { listProductSlugs, removeProductAndEvidence, setStatusWithAudit, update } from "@/lib/domain/products/repository";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
-import { recordPing } from "@/lib/domain/products/health";
+import { downProducts, recordPing } from "@/lib/domain/products/health";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { pingProducts } from "@/lib/jobs/products/uptime";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -100,6 +100,31 @@ describe("uptime 연속 실패 자동 내림", () => {
     expect(await autoAudits()).toHaveLength(1);
     expect(await db.select().from(productEvidenceAudit)).toHaveLength(1);
     expect(await db.select().from(cdnPurges)).toHaveLength(1);
+  });
+
+  /**
+   * 2026-10-15~19 운영에서는 다른 제품의 오래된 health 행 하나 때문에 잡의 연속 실패가 매번 1로 돌아가
+   * 3회 숨김·10회 내림이 한 번도 일어나지 않았다(health.ts recordPing의 resetStreak). 실제 잡 경로로 센다.
+   */
+  it("다른 제품의 health 행이 더 오래돼도 실제 잡이 연속 실패를 세어 3회에 숨기고 10회에 내린다", async () => {
+    await db.insert(products).values({ slug: "older-health", url: "https://older-health.test", name: "older-health", tagline: "소개",
+      description: "설명", category: "Other", status: "unverified", verifyToken: "verify", editTokenHash: "x".repeat(64) });
+    await db.insert(productHealth).values({ slug: "older-health", checkedAt: ago(30 * 24 * 60), status: 200 });
+    const target = await product("streak-beside-older-health");
+    for (let attempt = 1; attempt <= 10; attempt++) {
+      await pingProducts(ctx());
+      const [health] = await db.select().from(productHealth).where(eq(productHealth.slug, target.slug));
+      expect(health.failures).toBe(attempt);
+      expect((await downProducts()).map(row => row.slug)).toEqual(attempt >= 3 && attempt < 10 ? [target.slug] : []);
+      if (attempt === 10) break;
+      expect(await status(target.slug)).toBe("seeded");
+      await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    }
+    expect(safeFetch).toHaveBeenCalledTimes(10);
+    expect(await status(target.slug)).toBe("banned");
+    const [operation] = await autoAudits();
+    expect(operation.detail).toMatchObject({ consecutiveFailures: 10, lastStatus: 404, productId: target.id });
+    expect(await db.select().from(cdnPurges)).toMatchObject([{ slug: target.slug, reason: "banned" }]);
   });
 
   it("이미 최근 확인한 10회 이상 적체도 추가 HTTP 없이 기존 배치 한도만 처리한다", async () => {
@@ -218,6 +243,67 @@ describe("uptime 연속 실패 자동 내림", () => {
     expect((await autoAudits())[0].detail.consecutiveFailures).toBe(11);
   });
 
+  /**
+   * 광역 실패 보류는 확인 시각만 넘긴다. 10회 이상 행은 확인 시각이 곧 자동 내림의 최신성·관리자 해제 비교 기준이라
+   * 보류가 그 창을 다시 열면 세지 않은 관측으로 내리게 된다 — 그 행은 건드리지 않는다.
+   */
+  it("광역 실패 보류는 9회를 10회로 만들지 않고 관리자가 풀어 준 10회 제품의 내림 창도 다시 열지 않는다", async () => {
+    vi.stubEnv("UPTIME_BATCH_SIZE", "30");
+    const nine = await product("held-nine", 9, ago(7 * 60));
+    const unbanned = await product("held-unbanned", 10, ago(7 * 60));
+    await setStatusWithAudit({ ...unbanned, status: "banned", action: "admin.product.ban" });
+    await setStatusWithAudit({ ...unbanned, status: "seeded", action: "admin.product.unban" });
+    // updatedAt 경계와 별개로 관리자 해제 시각 보호가 남는지 본다(위 "관리자가 해제한 같은 관측" 테스트와 같은 설정)
+    await db.update(productEvidenceAudit).set({ createdAt: ago(0.5) })
+      .where(eq(productEvidenceAudit.action, "admin.product.unban"));
+    await db.update(products).set({ updatedAt: ago(7 * 24 * 60) }).where(eq(products.id, unbanned.id));
+    for (let i = 0; i < 28; i++) await product(`held-new-${i}`);
+    const events: string[] = [];
+
+    // 30곳 모두 404 — 광역 실패로 보류한다
+    await pingProducts(ctx({ log: event => { events.push(event); } }));
+
+    expect(events).toContain("uptime.broad_failure_held");
+    const health = new Map((await db.select().from(productHealth)).map(row => [row.slug, row]));
+    expect(health.get(nine.slug)).toMatchObject({ failures: 9, status: 404 });
+    expect(health.get(nine.slug)!.checkedAt.getTime()).toBeGreaterThan(ago(1).getTime());
+    expect(health.get(unbanned.slug)).toMatchObject({ failures: 10, status: 404 });
+    expect(health.get(unbanned.slug)!.checkedAt.getTime()).toBeLessThan(ago(6 * 60).getTime());
+    expect(await nextUptimeAutoBanTargets(200)).toEqual([]);
+    expect(await autoBanUptimeProduct(nine)).toBe(false);
+    expect(await autoBanUptimeProduct(unbanned)).toBe(false);
+    expect(await status(nine.slug)).toBe("seeded");
+    expect(await status(unbanned.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
+  });
+
+  it("봇·로그인 차단 응답은 연속 실패를 끊지 않지만 그 응답으로는 내리지 않는다 — 다음 404에 10회로 내린다", async () => {
+    const target = await product("blocked-then-dead", 9, ago(7 * 60));
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 403 } });
+    await pingProducts(ctx());
+    expect((await db.select().from(productHealth))[0]).toMatchObject({ failures: 9, status: 403 });
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) });
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 404 } });
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("banned");
+    expect((await autoAudits())[0].detail).toMatchObject({ consecutiveFailures: 10, lastStatus: 404 });
+  });
+
+  it.each([401, 403, 429, 999])("마지막 응답이 HTTP %s면 10회 이상 적체도 자동 내림 대상이 아니다", async (code) => {
+    const target = await product(`blocked-${code}`, 12);
+    await db.update(productHealth).set({ status: code });
+    expect(await nextUptimeAutoBanTargets(10)).toEqual([]);
+    expect(await autoBanUptimeProduct(target)).toBe(false);
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+    expect(safeFetch).not.toHaveBeenCalled();
+  });
+
   it("실제 관리자 해제는 제품 변경이므로 다음 실패부터 보수적으로 새 streak를 센다", async () => {
     const target = await product("manual-unban-current-edit", 10);
     await setStatusWithAudit({ ...target, status: "banned", action: "admin.product.ban" });
@@ -241,6 +327,63 @@ describe("uptime 연속 실패 자동 내림", () => {
     const [health] = await db.select().from(productHealth);
     expect(health.failures).toBe(1);
     expect(health.downSince).toEqual(health.checkedAt);
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await autoAudits()).toEqual([]);
+  });
+
+  /**
+   * 관리자 해제·제품 수정 뒤에는 이전 연속 실패가 지금 제품의 것인지 모른다(resetStreak). 실패는 1부터·성공은 0으로 새로 시작하는데,
+   * 봇·로그인 차단 응답이 그 연속 실패를 그대로 두면 해제한 제품이 응답 코드가 바뀔 때까지 공개 목록에서 숨겨진다(리뷰 N1).
+   * 이 응답도 연속 실패를 새로 시작한 상태(실패 0·죽기 시작한 시각 없음)로 쓴다. 해제·수정이 없는 제품은 지금처럼 그대로 둔다.
+   */
+  it.each([401, 403, 429, 999])("관리자 해제 뒤 HTTP %s는 연속 실패를 새로 시작해 숨김을 푼다 — 해제·수정이 없는 제품은 그대로", async (code) => {
+    const target = await product(`unban-unknown-${code}`, 9, ago(7 * 60));
+    await pingProducts(ctx());
+    expect(await status(target.slug)).toBe("banned");
+    await setStatusWithAudit({ ...target, status: "seeded", action: "admin.product.unban" });
+    const kept = await product(`kept-unknown-${code}`, 9, ago(7 * 60));
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    const listed = () => listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 });
+    expect(await listed()).toEqual([]);
+
+    safeFetch.mockImplementation(async (url: string) => ({ finalUrl: url, response: { status: code } }));
+    await pingProducts(ctx());
+
+    const health = new Map((await db.select().from(productHealth)).map(row => [row.slug, row]));
+    expect(health.get(target.slug)).toMatchObject({ failures: 0, downSince: null, status: code, latencyMs: null });
+    expect(health.get(kept.slug)).toMatchObject({ failures: 9, downSince: ago(72 * 60), status: code });
+    expect(await listed()).toEqual([target.slug]);
+    expect((await downProducts()).map(row => row.slug)).toEqual([kept.slug]);
+    // 성공도 실패도 아니라 일별 집계는 해제 전 404 한 번 그대로다
+    expect(await db.select().from(productHealthDaily).where(eq(productHealthDaily.slug, target.slug)))
+      .toMatchObject([{ checks: 1, successes: 0 }]);
+
+    // 한 바퀴 더 같은 응답이어도 숨기지 않고, 그다음 실패는 1부터 센다
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    await pingProducts(ctx());
+    expect((await db.select().from(productHealth).where(eq(productHealth.slug, target.slug)))[0])
+      .toMatchObject({ failures: 0, downSince: null, status: code });
+    await db.update(productHealth).set({ checkedAt: ago(7 * 60) }).where(eq(productHealth.slug, target.slug));
+    safeFetch.mockImplementation(async (url: string) => ({ finalUrl: url, response: { status: 404 } }));
+    await pingProducts(ctx());
+    const [after] = await db.select().from(productHealth).where(eq(productHealth.slug, target.slug));
+    expect(after).toMatchObject({ failures: 1, status: 404 });
+    expect(after.downSince).toEqual(after.checkedAt);
+    expect(await status(target.slug)).toBe("seeded");
+    expect(await status(kept.slug)).toBe("seeded");
+    expect(await autoAudits()).toHaveLength(1);
+  });
+
+  it("URL이 아닌 제품 수정 뒤 HTTP 403도 연속 실패를 새로 시작해 숨김을 푼다", async () => {
+    const target = await product("name-edit-unknown", 12, ago(7 * 60));
+    await update(target.id, { name: "바뀐 이름" });
+    safeFetch.mockResolvedValue({ finalUrl: target.url, response: { status: 403 } });
+    await pingProducts(ctx());
+    const [health] = await db.select().from(productHealth);
+    expect(health).toMatchObject({ failures: 0, downSince: null, status: 403, latencyMs: null });
+    expect(await listProductSlugs({ statuses: ["verified", "seeded"], excludeDown: true, limit: 10 })).toEqual([target.slug]);
+    expect(await downProducts()).toEqual([]);
+    expect(await db.select().from(productHealthDaily)).toEqual([]);
     expect(await status(target.slug)).toBe("seeded");
     expect(await autoAudits()).toEqual([]);
   });
