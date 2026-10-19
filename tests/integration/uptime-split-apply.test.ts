@@ -442,28 +442,33 @@ describe("묶음 쓰기", () => {
     await expect(db.transaction(tx => writeHealthHelds(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
   });
 
-  it("writeHealthUnknowns equals writeHealthUnknown applied one by one (checked time·status only, streak and daily untouched)", async () => {
+  it("writeHealthUnknowns equals writeHealthUnknown applied one by one (checked time·status only, streak and daily untouched unless reset)", async () => {
     const observedAt = new Date("2026-10-18T15:00:01.234Z");
     const rows = (prefix: string) => [
       { slug: `${prefix}-new`, status: 403, observedAt, resetStreak: false },
       { slug: `${prefix}-sick`, status: 999, observedAt, resetStreak: false },
       { slug: `${prefix}-ten`, status: 429, observedAt, resetStreak: false },
+      // 관리자 해제·제품 수정 뒤(리뷰 N1): 행이 없던 것처럼 실패 0·첫 실패 시각 없음
+      { slug: `${prefix}-reset`, status: 403, observedAt, resetStreak: true },
     ];
     for (const prefix of [`u1b-${TAG}-k1`, `u1b-${TAG}-k2`]) {
-      for (const [slug, failures] of [["sick", 2], ["ten", 10]] as const) {
+      for (const [slug, failures] of [["sick", 2], ["ten", 10], ["reset", 10]] as const) {
         await db.execute(sql`insert into product_health (slug, checked_at, status, latency_ms, failures, down_since)
           values (${`${prefix}-${slug}`}, '2026-10-18 10:00:00.123456', 500, 77, ${failures}, '2026-10-17 09:00:00.654321')`);
       }
     }
     for (const input of rows(`u1b-${TAG}-k1`)) await db.transaction(tx => writeHealthUnknown(tx, input));
     const written = await db.transaction(tx => writeHealthUnknowns(tx, rows(`u1b-${TAG}-k2`)));
-    for (const slug of ["new", "sick", "ten"]) {
+    for (const slug of ["new", "sick", "ten", "reset"]) {
       expect(await healthRow(`u1b-${TAG}-k2-${slug}`)).toEqual(await healthRow(`u1b-${TAG}-k1-${slug}`));
       expect(await dailyRows(`u1b-${TAG}-k2-${slug}`)).toEqual([]);
     }
     expect(await healthRow(`u1b-${TAG}-k2-sick`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 999, failures: 2,
       down_since: "2026-10-17 09:00:00.654321", latency_ms: null });
-    expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-k2-new`, 0], [`u1b-${TAG}-k2-sick`, 2], [`u1b-${TAG}-k2-ten`, 10]]);
+    expect(await healthRow(`u1b-${TAG}-k2-reset`)).toEqual({ checked_at: "2026-10-18 15:00:01.234", status: 403, failures: 0,
+      down_since: null, latency_ms: null });
+    expect([...written.entries()].sort()).toEqual([[`u1b-${TAG}-k2-new`, 0], [`u1b-${TAG}-k2-reset`, 0], [`u1b-${TAG}-k2-sick`, 2],
+      [`u1b-${TAG}-k2-ten`, 10]]);
     await expect(db.transaction(tx => writeHealthUnknowns(tx, [rows("dup")[0], rows("dup")[0]]))).rejects.toThrow("health_results_duplicate_slug");
   });
 

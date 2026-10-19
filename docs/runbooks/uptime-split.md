@@ -48,7 +48,9 @@
 12. **비표준 HTTP 상태**(100..599 밖, 예: LinkedIn 999·600)는 legacy 와 같은 값·같은 의미로 기록한다 — `product_health.status` 에 그대로.
    100..599 만 담는 `uptime_observations`·제출 칸에만 `unknown/0` 으로 남는다(Oracle 이 본 999 는 `unknown:0` 재확인 요청이 된다).
    **봇·로그인 차단 응답(401·403·429·999)** 은 legacy(#551 F7)와 같이 살았는지 알 수 없는 응답이다. home 이 보면 세지도 끊지도 않고 확인 시각·
-   응답 코드만 남긴다(`split_unknown`, 일일 집계 없음, 자동 내림 확인 안 함 — sweep 도 마지막 응답이 이 목록이면 고르지 않는다). Oracle 이 보면
+   응답 코드만 남긴다(`split_unknown`, 일일 집계 없음, 자동 내림 확인 안 함 — sweep 도 마지막 응답이 이 목록이면 고르지 않는다). 다만 관리자 해제·
+   URL 이 아닌 제품 수정 뒤라 연속 실패를 다시 셀 때(`splitResetStreak`, legacy `resetStreak`)는 실패 0·첫 실패 시각 없음으로 새로 시작한다
+   (리뷰 N1 — 그대로 두면 해제한 제품이 이 응답만 받는 동안 계속 숨겨진다). Oracle 이 보면
    다른 실패처럼 home 재확인을 요청한다. 차단기 비율(묶음·창)에서는 legacy 광역 비율처럼 실패 쪽에 센다. 그 밖의 비표준 상태(600 등)는 실패다.
    목록은 `health-record.ts` `UPTIME_UNKNOWN_STATUSES` 하나다 — legacy(`recordPing`)와 적용기(판정 `unknown` → `writeHealthUnknowns`)가 같이 쓰고,
    한쪽 의미만 바뀌면 적용기가 `uptime_split_health_mismatch` 로 틱을 되돌린다(쌍둥이 시험 `uptime-split-twin.test.ts` 가 막는다).

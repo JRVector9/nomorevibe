@@ -327,7 +327,7 @@ export type UptimeClaimUpdate = {
  * - held: writeHealthHeld 와 같다 — 판정 보류. 확인 시각만 넘기고 연속 실패·첫 실패 시각·응답 코드·지연·일일 집계는 그대로다
  *   (status 는 행이 없는 새 제품에만 쓴다). failures·downSince 는 쓴 뒤에도 그대로인 값이다.
  * - unknown: writeHealthUnknown 과 같다 — 살았는지 알 수 없는 응답. 확인 시각·응답 코드만 쓰고 지연은 비운다. 연속 실패·첫 실패 시각·
- *   일일 집계는 그대로다.
+ *   일일 집계는 그대로다. 다만 연속 실패를 다시 셀 때(splitResetStreak, counted 와 같은 함수)는 행이 없던 것처럼 실패 0·첫 실패 시각 없음이다(리뷰 N1).
  */
 export type UptimeHealthWrite = {
   kind: "counted" | "held" | "unknown";
@@ -368,11 +368,12 @@ function healthWrite(input: UptimeSplitInput, product: UptimeProductSnapshot, al
     downSince: alive ? null : !health || reset ? result.observedAt : health.downSince ?? result.observedAt };
 }
 
-/** 알 수 없는 응답(writeHealthUnknown 과 같다) */
+/** 알 수 없는 응답(writeHealthUnknown 과 같다). 연속 실패를 다시 셀 때는 healthWrite 처럼 행이 없던 것과 같은 값(실패 0·첫 실패 시각 없음)이다 */
 function unknownWrite(input: UptimeSplitInput, product: UptimeProductSnapshot): UptimeHealthWrite {
   const { health, result } = input;
+  const kept = health && !splitResetStreak(health, product.updatedAt) ? health : null;
   return { kind: "unknown", slug: product.slug, checkedAt: result.observedAt, status: result.status, latencyMs: null, alive: false,
-    day: uptimeHealthDay(result.observedAt), failures: health?.failures ?? 0, downSince: health?.downSince ?? null };
+    day: uptimeHealthDay(result.observedAt), failures: kept?.failures ?? 0, downSince: kept?.downSince ?? null };
 }
 
 /** 판정 보류(writeHealthHeld 와 같다). 연속 실패가 자동 내림 기준 이상인 행은 확인 시각도 넘기지 않으므로 null 이다 */
@@ -483,7 +484,8 @@ export function decideSplitResults(inputs: readonly UptimeSplitInput[], context:
           raw: { observation, disposition: "raw_only", reason: "split_confirm_required" } }
         : settle(input, "returned", "probe_breaker_open");
     } else if (unknown) {
-      // home 이 본 봇·로그인 차단 응답 — legacy(recordPing → writeHealthUnknown)와 같다. 세지도 끊지도 않고 확인 시각·응답 코드만 남긴다.
+      // home 이 본 봇·로그인 차단 응답 — legacy(recordPing → writeHealthUnknown)와 같다. 세지도 끊지도 않고 확인 시각·응답 코드만 남긴다
+      // (관리자 해제·제품 수정 뒤라 연속 실패를 다시 셀 때는 새로 시작한다).
       // legacy 는 광역 보류 틱에도 바로 쓰므로 차단기와 무관하다(차단기 재료에서는 위 counts 가 실패 쪽에 센다 — legacy 비율과 같다).
       // 재확인 요청도 이 확인으로 끝난다(지역 충돌은 성공일 때만 센다)
       decisions[index] = { ...settle(input, "applied", "split_unknown", { dueAt: next, ...cleared, lastApplied: { at: wall, host: entry.host } }),

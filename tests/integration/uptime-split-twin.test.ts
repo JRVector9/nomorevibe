@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { healthFor } from "@/lib/domain/products/health";
+import { setStatusWithAudit, update } from "@/lib/domain/products/repository";
 import { applyUptimeResults } from "@/lib/domain/products/uptime-apply";
 import { claimUptimeProducts, submitUptimeResults } from "@/lib/domain/products/uptime-claims";
 import type { JobLease } from "@/lib/jobs/control";
@@ -256,6 +257,44 @@ describe("legacy ↔ claims 쌍둥이", () => {
     expect(claims.outcomes["blocked-0"]).toBe("split_unknown");
   });
 
+  // 리뷰 N1: 관리자 해제·URL 이 아닌 제품 수정 뒤에는 이전 연속 실패가 지금 제품의 것인지 모른다(resetStreak·splitResetStreak). 실패·성공처럼
+  // 알 수 없는 응답도 그때는 연속 실패를 새로 시작한다(실패 0·첫 실패 시각 없음) — 해제한 제품의 숨김이 풀린다. 해제·수정이 없으면 그대로다.
+  // 두 경로가 똑같이 틀리면 쌍둥이 비교만으로는 못 잡으므로 절대값도 본다.
+  it("관리자 해제·제품 수정 뒤 알 수 없는 응답은 두 경로 모두 연속 실패를 새로 시작해 숨김을 푼다 — 해제·수정이 없으면 그대로(N1)", async () => {
+    const specs: Spec[] = [
+      ...many("ok", 30, { response: 200 }),
+      { name: "unbanned403", health: { failures: 10, status: 404 }, response: 403 },
+      { name: "unbanned999", health: { failures: 10, status: 404 }, response: 999 },
+      { name: "unbanned404", health: { failures: 10, status: 404 }, response: 404 },
+      { name: "edited429", health: { failures: 4, status: 503 }, response: 429 },
+      { name: "edited401", health: { failures: 3, status: 503 }, response: 401 },
+      { name: "kept403", health: { failures: 4, status: 503 }, response: 403 },
+    ];
+    // 틱 직전에 관리자가 내렸다가 풀어 준다(감사 + products.updated_at) / 이름만 고친다
+    const prepare = async (targets: readonly Target[]) => {
+      for (const { name, target } of targets) {
+        if (name.startsWith("unbanned")) {
+          expect(await setStatusWithAudit({ id: target.id, slug: target.slug, status: "banned", action: "admin.product.ban" })).toBe(true);
+          expect(await setStatusWithAudit({ id: target.id, slug: target.slug, status: "seeded", action: "admin.product.unban" })).toBe(true);
+        } else if (name.startsWith("edited")) await update(target.id, { name: `${name} 바뀐 이름` });
+      }
+    };
+    const legacy = await run("legacy", specs, prepare);
+    const claims = await run("claims", specs, prepare);
+    expect(claims.snapshots).toEqual(legacy.snapshots);
+    const { snapshots } = legacy;
+    for (const name of ["unbanned403", "unbanned999"]) {
+      expect(snapshots[name]).toEqual({ failures: 0, status: Number(name.slice(-3)), latency: "none", checked: "advanced", downSince: "none",
+        daily: { checks: 0, successes: 0, latencySamples: 0 }, hidden: false, productStatus: "seeded" });
+    }
+    expect(snapshots.unbanned404).toMatchObject({ failures: 1, status: 404, downSince: "new", hidden: false, productStatus: "seeded", daily: { checks: 1 } });
+    expect(snapshots.edited429).toMatchObject({ failures: 0, status: 429, downSince: "none", hidden: false, daily: { checks: 0 } });
+    expect(snapshots.edited401).toMatchObject({ failures: 0, status: 401, downSince: "none", hidden: false });
+    expect(snapshots.kept403).toMatchObject({ failures: 4, status: 403, checked: "advanced", downSince: "same", hidden: true, daily: { checks: 0 } });
+    for (const name of ["unbanned403", "unbanned999", "edited429", "edited401", "kept403"]) expect(claims.outcomes[name]).toBe("split_unknown");
+    expect(claims.outcomes.unbanned404).toBe("split_counted");
+  });
+
   // 한 틱으로는 숨김(3)·내림(10)·제품 수정 뒤 다시 세기까지 이어지는 의미를 다 볼 수 없다 — 6시간 바퀴를 넷 돌려 바퀴마다 비교한다
   it("여러 바퀴: 알 수 없는 응답을 사이에 둔 숨김·10회째 내림·회복·제품 수정 뒤 1부터 다시 세기가 바퀴마다 같다(F7·F1 999)", async () => {
     const specs: CycleSpec[] = [
@@ -264,6 +303,8 @@ describe("legacy ↔ claims 쌍둥이", () => {
       { name: "recover", health: { failures: 5, status: 503 }, responses: [999, 401, 200, 200] },
       { name: "changed", responses: [503, 503, 503, 503], changeBefore: 2 },
       { name: "changed-unknown", responses: [503, 403, 503, 503], changeBefore: 1 },
+      { name: "changed-hidden", health: { failures: 4, status: 503 }, responses: [503, 403, 403, 503], changeBefore: 1 },
+      { name: "kept-hidden", health: { failures: 4, status: 503 }, responses: [503, 403, 403, 503] },
       { name: "stuck999", health: { failures: 9, status: 503 }, responses: [999, 999, 999, 999] },
       { name: "fresh", health: null, responses: [403, 503, 401, null] },
     ];
@@ -279,9 +320,14 @@ describe("legacy ↔ claims 쌍둥이", () => {
     expect(legacy.map(round => round.snapshots.recover.hidden)).toEqual([true, true, false, false]);
     expect(failures("changed")).toEqual([1, 2, 1, 2]);
     expect(legacy[2].snapshots.changed.downSince).toBe("new");
-    // 수정 뒤의 알 수 없는 응답은 연속 실패를 끊지도 잇지도 않는다 — 그다음 실패가 수정 전 첫 실패에 이어 붙지 않고 1부터다
-    expect(failures("changed-unknown")).toEqual([1, 1, 1, 2]);
-    expect(legacy.map(round => round.snapshots["changed-unknown"].downSince)).toEqual(["new", "same", "new", "same"]);
+    // 수정 뒤의 알 수 없는 응답은 연속 실패를 새로 시작한다(실패 0·첫 실패 시각 없음, 리뷰 N1) — 그다음 실패는 1부터다
+    expect(failures("changed-unknown")).toEqual([1, 0, 1, 2]);
+    expect(legacy.map(round => round.snapshots["changed-unknown"].downSince)).toEqual(["new", "none", "new", "same"]);
+    // 숨겨진 제품도 수정 뒤 알 수 없는 응답이면 풀리고, 이어지는 같은 응답에도 다시 숨지 않는다. 수정이 없으면 지금처럼 그대로 숨긴다
+    expect(failures("changed-hidden")).toEqual([5, 0, 0, 1]);
+    expect(legacy.map(round => round.snapshots["changed-hidden"].hidden)).toEqual([true, false, false, false]);
+    expect(failures("kept-hidden")).toEqual([5, 5, 5, 6]);
+    expect(legacy.map(round => round.snapshots["kept-hidden"].hidden)).toEqual([true, true, true, true]);
     expect(failures("stuck999")).toEqual([9, 9, 9, 9]);
     expect(legacy[3].snapshots.stuck999).toMatchObject({ status: 999, productStatus: "seeded" });
     expect(failures("fresh")).toEqual([0, 1, 1, 2]);

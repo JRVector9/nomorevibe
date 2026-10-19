@@ -158,8 +158,11 @@ export async function applyUptimeResults(input: {
     }));
     const heldFailures = await writeHealthHelds(tx, held.map(decision => ({ slug: decision.health!.slug, status: decision.health!.status,
       observedAt: decision.health!.checkedAt })));
-    const unknownFailures = await writeHealthUnknowns(tx, unknown.map(decision => ({ slug: decision.health!.slug, status: decision.health!.status,
-      observedAt: decision.health!.checkedAt })));
+    const unknownFailures = await writeHealthUnknowns(tx, unknown.map(decision => {
+      const health = decision.health!, value = inputById.get(decision.productId)!;
+      return { slug: health.slug, status: health.status, observedAt: health.checkedAt,
+        resetStreak: splitResetStreak(value.health, value.product!.updatedAt) };
+    }));
     const differs = (rows: UptimeSplitDecision[], written: Map<string, number>) => rows.some(decision => written.get(decision.health!.slug) !== decision.health!.failures);
     if (differs(counted, failures) || differs(held, heldFailures) || differs(unknown, unknownFailures)) throw new Error("uptime_split_health_mismatch");
     const raw = decisions.flatMap(decision => decision.raw ? [decision.raw] : []).map(({ observation, disposition, reason }) => ({

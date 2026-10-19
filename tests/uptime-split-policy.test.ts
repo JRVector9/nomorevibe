@@ -289,7 +289,7 @@ describe("decideSplitResults — design §3.2 table", () => {
       claim: { confirmClass: null, confirmReason: null, confirmRequestedAt: null, conflictCount: 0 },
       raw: { disposition: "applied", reason: "split_confirmed" } });
   });
-  it.each([401, 403, 429, 999])("row 9a home %s is unknown like legacy: not counted nor reset, checked time and status only, no daily, due 6h", status => {
+  it.each([401, 403, 429, 999])("row 9a home %s is unknown like legacy: not counted, checked time and status only, no daily, due 6h, fresh streak after a product change", status => {
     const since = new Date("2026-10-18T09:00:00Z");
     const value = input({ status, health: { failures: 3, downSince: since } });
     expect(one(value)).toMatchObject({ outcome: "applied", reason: "split_unknown", textSample: false,
@@ -297,8 +297,11 @@ describe("decideSplitResults — design §3.2 table", () => {
       claim: { dueAt: at(-49_000 + UPTIME_RECHECK_MS), confirmClass: null, conflictCount: 0, lastApplied: { at: wall, host: "m3" } },
       raw: { disposition: "applied", reason: "split_unknown",
         observation: status === 999 ? { kind: "unknown", status: 0, latencyMs: null } : { kind: "http", status } } });
-    // 제품이 바뀌어도 이어 붙이거나 1 로 다시 세지 않는다(writeHealthUnknown 은 연속 실패를 보지 않는다). 새 제품은 실패 0 행
+    // 연속 실패가 시작된 뒤 제품이 바뀌었으면(관리자 해제·수정) 행이 없던 것처럼 새로 시작한다 — 실패 0·첫 실패 시각 없음(리뷰 N1,
+    // writeHealthUnknown 의 resetStreak 와 같다). 새 제품은 실패 0 행
     expect(one(input({ status, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 10:00:00" } })))
+      .toMatchObject({ health: { kind: "unknown", failures: 0, downSince: null, status } });
+    expect(one(input({ status, health: { failures: 9, downSince: since }, product: { updatedAt: "2026-10-18 08:00:00" } })))
       .toMatchObject({ health: { kind: "unknown", failures: 9, downSince: since } });
     expect(one(input({ status, health: null }))).toMatchObject({ health: { kind: "unknown", failures: 0, downSince: null, status } });
   });
