@@ -23,7 +23,7 @@ export const capacityManifestSchema = z.object({
 }).strict();
 export const generationRecordSchema = z.object({
   candidateId: positive, firstAttemptId: positive, inputHash: hash, sourceRevisionHash: hash, policyHash: hash,
-  provider: text.nullable(), model: text.nullable(), kind: z.enum(["automatic", "admin_override", "evidence_refresh"]),
+  provider: text.nullable(), model: text.nullable(), kind: z.enum(["automatic", "admin_override", "evidence_refresh", "delegated"]),
   state: z.enum(["running", "succeeded", "failed", "superseded"]), reusedFromAttemptId: positive.nullable(),
   decision: z.enum(["approve", "reject", "needs_review"]).nullable(), startedAt: date,
   completedAt: date.nullable(), validUntil: date, candidateState: z.enum(["new", "approved", "rejected", "needs_review", "published"]),
