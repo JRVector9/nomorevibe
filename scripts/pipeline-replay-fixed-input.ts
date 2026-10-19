@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { open, writeFile } from "node:fs/promises";
 import { assertExportSourceEnv, assertIsolatedReplayDatabase, attachFixedInputLabels, compareFixedInputRuns, FIXED_INPUT_FILE_LIMIT,
   formatFixedInputCliError, parseFixedInputArtifact, parseFixedInputRunManifest, reportFixedInputRun, sha256 } from "../lib/operations/pipeline-replay-fixed-input";
+import { fixedInputPreflightStatus } from "../lib/operations/pipeline-replay-preflight-status";
 
 const USAGE = "usage: pipeline-replay-fixed-input export FROM TO SEED COUNT OUTPUT | preflight MANIFEST ARTIFACT | run MANIFEST ARTIFACT OUTPUT"
   + " | report RESULT | compare BASELINE CANDIDATE | label RESULT LABELS OUTPUT";
@@ -75,10 +76,9 @@ async function main() {
     const [manifestBytes, artifactBytes] = await Promise.all(args.map(bytes));
     const { fixedInputPreflight } = await import("../lib/operations/pipeline-replay-model-runner");
     const checked = fixedInputPreflight(json(manifestBytes), json(artifactBytes));
-    result = { mode: checked.manifest.mode, artifactShaMatches: checked.manifest.artifactSha256 === sha256(artifactBytes),
+    result = { mode: checked.manifest.mode, ...fixedInputPreflightStatus(checked.manifest.artifactSha256, sha256(artifactBytes), checked.blocked),
       inputs: checked.artifact.inputs.length, limits: checked.manifest.limits, durationMs: checked.manifest.durationMs,
-      firstReviewer: checked.settings.firstReview, voters: checked.settings.secondReview.voters, fallbacks: checked.settings.secondReview.fallbacks ?? [],
-      executable: !checked.blocked.length, blocked: checked.blocked };
+      firstReviewer: checked.settings.firstReview, voters: checked.settings.secondReview.voters, fallbacks: checked.settings.secondReview.fallbacks ?? [] };
   } else if (command === "report" && args.length === 1) result = reportFixedInputRun(await read(args[0]));
   else if (command === "compare" && args.length === 2) result = compareFixedInputRuns(await read(args[0]), await read(args[1]));
   else if (command === "label" && args.length === 3) {

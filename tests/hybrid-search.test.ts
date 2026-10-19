@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { CANDIDATES, fuseRanks, rankSearch, rerankDocuments, RERANK_TOP, type RankDependencies } from "@/lib/domain/products/hybrid-search";
 import { searchRelevance, withPrimaryFallback } from "@/lib/domain/products/relevance";
+import { embedTexts } from "@/lib/domain/products/embedding";
 
 const slugs = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
 
@@ -70,6 +71,18 @@ describe("관련도순 검색", () => {
   it("재정렬이 실패하면 섞은 순서로 낸다", async () => {
     const result = await rankSearch("q", deps({ rerank: vi.fn(async () => { throw new Error("rerank_http_503"); }) }));
     expect(result).toEqual({ head: ["c", "a", "b", "x"], total: 4, semantic: true, reranked: false });
+  });
+
+  it("입력과 다른 index 의 임베딩 응답은 벡터 조회 없이 낱말 검색으로 넘긴다", async () => {
+    const nearestSlugs = vi.fn(async () => ["wrong-vector"]);
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      data: [{ index: 1, embedding: Array.from({ length: 1024 }, (_, i) => i === 0 ? 1 : 0) }],
+    })));
+    const result = await rankSearch("회의록", deps({ nearestSlugs,
+      embed: async (text) => (await embedTexts([text], { timeoutMs: 1_000, url: "http://models.local", fetchImpl }))[0],
+    }));
+    expect(nearestSlugs).not.toHaveBeenCalled();
+    expect(result).toEqual({ head: ["a", "b", "c"], total: 3, semantic: false, reranked: true });
   });
 
   it("아무것도 걸리지 않으면 재정렬을 부르지 않는다", async () => {
