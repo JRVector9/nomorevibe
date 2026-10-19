@@ -501,6 +501,34 @@ class OracleReleaseTests(unittest.TestCase):
                 self.assertEqual(snapshot.written, 0)
                 self.assertFalse((self.root / 'read-error').exists())
 
+    def test_consumer_profile_is_explicit_pins_no_cli_and_carries_no_tools(self):
+        """R15: a consumer-only release omits the CLIs only through an explicit profile; the full contract is unchanged."""
+        full = self.manifest()
+        self.assertNotIn('profile', full)
+        self.assertEqual(contract.release_profile(full), 'full')
+        for name in ('codex', 'claude', 'grok'):
+            (self.stage / 'tools/bin' / name).unlink()
+        (self.stage / 'tools/bin').rmdir()
+        (self.stage / 'tools').rmdir()
+        with patch.object(builder, 'runtime_platform', return_value=RUNTIME):
+            with self.assertRaisesRegex(ValueError, 'missing_release_file'):
+                builder.build_release(self.stage, self.root / 'full-without-cli.tar.gz', SHA, 'v24.19.0')
+            with self.assertRaisesRegex(ValueError, 'invalid_release_profile'):
+                builder.build_release(self.stage, self.root / 'unknown.tar.gz', SHA, 'v24.19.0', 'lite')
+            built = builder.build_release(self.stage, self.root / 'consumer.tar.gz', SHA, 'v24.19.0', 'consumer')
+        value = manager.inspect_archive(self.root / 'consumer.tar.gz', built['archiveSha256'])
+        self.assertEqual((value['profile'], value['clis'], contract.release_profile(value)), ('consumer', {}, 'consumer'))
+        self.assertFalse(any(row['path'].startswith('tools') for row in value['files']))
+        variants = {'profile_full': {**value, 'profile': 'full'}, 'profile_other': {**value, 'profile': 'lite'},
+                    'pinned_cli': {**value, 'clis': full['clis']},
+                    'tools_entry': {**value, 'files': [*value['files'], {'path': 'tools/bin/extra', 'kind': 'file', 'sha256': 'f' * 64, 'mode': 0o755}]},
+                    'missing_base': {**value, 'files': [row for row in value['files'] if row['path'] != 'scripts/worker-supervisor.ts']},
+                    'full_without_cli': {**full, 'clis': {}}}
+        for name, changed in variants.items():
+            with self.subTest(variant=name), self.assertRaises(ValueError):
+                contract.validate_manifest(copy.deepcopy(changed))
+        self.assertEqual(contract.validate_manifest(copy.deepcopy(value)), value)
+
     def test_cli_inspection_is_local_and_reports_no_readiness(self):
         result = self.build()
         command = [sys.executable, str(SOURCE / 'manage_release.py'), 'inspect', '--archive', str(self.archive),

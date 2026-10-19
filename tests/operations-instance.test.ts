@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  isConsumerServiceInstance,
   latestServiceInstance,
   parseServiceObservationKey,
   serviceObservationKey,
   serviceInstanceId,
   serviceInstancesFromObservations,
   staleServiceInstanceCount,
+  supersededServiceInstanceKeys,
 } from "@/lib/operations/instance";
 
 describe("service instance observations", () => {
@@ -99,4 +101,19 @@ it('gives two scheduler replicas distinct observation keys when replica identity
   expect(serviceObservationKey('crawler', { ...env, HOSTNAME: 'task-a' }))
     .toBe('service:crawler:m3-scheduler');
   expect(() => serviceObservationKey('scheduler', env)).toThrow('HOSTNAME');
+});
+
+// 설계 R5: AI1·AI2 consumer 도 감독 관측을 service:reviewer:<stage>-consumer-* 로 남긴다. 역할 lease 가 없으므로 역할 생존의 근거가 아니다.
+it('keeps AI1/AI2 consumer observations out of the reviewer role liveness and slots', () => {
+  expect(['ai1-consumer-m3', 'ai2-consumer-mini'].map(isConsumerServiceInstance)).toEqual([true, true]);
+  expect(['reviewer-m3', 'ai3-consumer-m3', 'consumer-ai1', undefined].map(isConsumerServiceInstance)).toEqual([false, false, false, false]);
+  const rows = serviceInstancesFromObservations([
+    { key: 'service:reviewer:reviewer-m3', value: { status: 'running', bootedAt: 1, release: 'a' }, observedAt: '2026-10-19T00:00:00Z' },
+    { key: 'service:reviewer:ai1-consumer-m3', value: { status: 'running', bootedAt: 2, release: 'b' }, observedAt: '2026-10-19T00:09:50Z' },
+    { key: 'service:reviewer:ai2-consumer-m3', value: { status: 'running', bootedAt: 3, release: 'b' }, observedAt: '2026-10-19T00:09:55Z' },
+  ]);
+  // 역할 워커가 10분째 조용하면 그대로 보인다 — 더 최근의 consumer 관측이 가리지 않는다
+  expect(latestServiceInstance(rows, 'reviewer')?.instanceId).toBe('reviewer-m3');
+  expect(supersededServiceInstanceKeys(rows, Date.parse('2026-10-19T00:10:00Z'))).toEqual(new Set());
+  expect(latestServiceInstance(rows.filter(row => row.instanceId !== 'reviewer-m3'), 'reviewer')).toBeUndefined();
 });

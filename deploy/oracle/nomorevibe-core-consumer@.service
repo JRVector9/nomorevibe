@@ -1,0 +1,34 @@
+# Template. The launcher exits78 unless release/runtime/TZ/budget/OCI identity/consumer preflight are all verified.
+[Unit]
+Description=NoMoreVibe Oracle consumer %i
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=nomorevibe-core
+Group=nomorevibe-core
+Slice=nomorevibe-core.slice
+WorkingDirectory=/opt/nomorevibe-core/current
+EnvironmentFile=/etc/nomorevibe-core/consumer-%i.env
+# Operational timestamps are timezone-less UTC. The launcher and the consumer preflight refuse any other zone.
+Environment=TZ=UTC
+Environment=HOME=/var/lib/nomorevibe-core/consumer-%i
+Environment=WORKER_HEALTH_PATH=/run/nomorevibe-core/consumer-%i/worker-health.json
+ExecStart=/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --consumer=%i
+StateDirectory=nomorevibe-core/consumer-%i
+RuntimeDirectory=nomorevibe-core/consumer-%i
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+KillMode=mixed
+TimeoutStopSec=60s
+Restart=on-failure
+RestartSec=15s
+
+[Install]
+WantedBy=multi-user.target

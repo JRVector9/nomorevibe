@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Oracle role launcher. The fixed role process starts only when every readiness check is verified.
+"""Oracle role/consumer launcher. The fixed process starts only when every readiness check is verified.
 
 Checks run in a fixed order and stop at the first result that is not verified: installed release, runtime
 account/platform, host budget, OCI identity, then the existing runtime preflight (batch, DB authority,
@@ -7,6 +7,11 @@ timeouts and the PR10d canary, or for the scheduler its attested tick canary of 
 rejected result exits78. No flag, environment variable,
 supplied receipt or local marker can skip a check. Database election and per-claim admission still apply
 after start; this gate never writes DB state.
+
+--consumer=<name> starts an item consumer (claims work without a role lease) under its parent role's supervisor.
+The same release, runtime, budget and identity checks apply, plus TZ=UTC. Its preflight is the consumer preflight
+(identity, exact DB profile, timeouts, UTC timezone and the consumer's own readiness); it never requires batch
+versioned mode or a canary, because consumers share queues with M3/mini without stopping them.
 """
 import argparse
 import json
@@ -23,6 +28,10 @@ ROLES = ('crawler', 'reviewer', 'publisher', 'text', 'maintenance', 'translation
 # Same Oracle-first split roles and model-bound roles as lib/jobs/batches.ts.
 SPLIT_ROLES = ('translation', 'product-health', 'site-evidence', 'official-news')
 MODEL_ROLES = ('translation', 'reviewer', 'publisher', 'text')
+# Oracle consumer name -> parent role. Each name must also exist in lib/runtime/consumer-registry.ts (same role),
+# lib/runtime/oracle-db-profile.ts ORACLE_CONSUMER_DB_PROFILES and lib/runtime/oracle-consumer-preflight.ts
+# ORACLE_CONSUMER_READINESS; otherwise the preflight or supervisor refuses it. An unlisted name never starts.
+CONSUMERS = {}
 FAILURE = {'code': 'oracle_runtime_preflight_unavailable'}
 BASE = Path('/opt/nomorevibe-core')
 APPROVED_IDENTITY = Path('/etc/nomorevibe-core/oracle-identity.json')
@@ -36,6 +45,10 @@ PREFLIGHT_TIMEOUT_SECONDS = 90
 MAX_PREFLIGHT_BYTES = 1024 * 1024
 REQUIRED_PREFLIGHT = ('identity', 'batch', 'database', 'timeouts')
 PREFLIGHT_CHECKS = ('identity', 'runtime', 'host', 'release', 'database', 'timeouts', 'budget', 'model', 'batch', 'admission')
+# A consumer report has its own kind and exact key set. Batch/model/admission must say not_applicable, never verified.
+CONSUMER_REQUIRED_PREFLIGHT = ('identity', 'database', 'timeouts', 'timezone', 'consumer')
+CONSUMER_NOT_APPLICABLE = ('model', 'batch', 'admission')
+CONSUMER_PREFLIGHT_CHECKS = PREFLIGHT_CHECKS + ('timezone', 'consumer')
 
 
 class Unverified(Exception):
@@ -83,17 +96,24 @@ def check_runtime(platform_info, user):
     _require(user == (SERVICE_USER, False), 'runtime', 'service_account_mismatch')
 
 
-def check_budget(env, role, release_sha, proc_cgroup, cgroup_root):
+def check_budget(env, role, release_sha, proc_cgroup, cgroup_root, consumer=None):
     from release_contract import load_json
     try:
         options = load_json(env.get('HOST_DB_BUDGET') or '')
         policy, process = options['policy'], options['process']
         kind = 'scheduler-parent' if role == 'scheduler' else 'role-parent'
+        if consumer is None:
+            # A role process never borrows a consumer slot (only the reviewer's explicit legacy slot is its own).
+            slot = process.get('consumer') in ((None, 'legacy') if role == 'reviewer' else (None,))
+            listed = policy['schedulerReplicas'] >= 1 if role == 'scheduler' else role in policy['roles']
+        else:
+            slot = process.get('consumer') == consumer
+            listed = type(policy.get('consumers')) is list and consumer in policy['consumers']
         declared = (options['mode'] == 'enabled' and policy['host'] == HOST and policy['release'] == release_sha
                     and process['host'] == HOST and process['release'] == release_sha and process['kind'] == kind
                     and process['role'] == role and env.get('WORKER_ROLE') == role and env.get('PHYSICAL_HOST') == HOST
-                    and (policy['schedulerReplicas'] >= 1 if role == 'scheduler' else role in policy['roles']))
-    except (ValueError, KeyError, TypeError):
+                    and slot and listed)
+    except (ValueError, KeyError, TypeError, AttributeError):
         declared = False
     _require(declared, 'budget', 'host_db_budget_undeclared')
     # cgroup v2 single line: this process must already run inside the shared core slice.
@@ -127,25 +147,34 @@ def run_preflight(argv, cwd, env):
     return result.returncode, result.stdout
 
 
-def check_preflight(role, env, release, release_sha, runner):
+def check_preflight(role, env, release, release_sha, runner, consumer=None):
     from release_contract import load_json
-    argv = [str(release / 'runtime/bin/node'), '--import', 'tsx', 'scripts/worker-oracle-preflight.ts', f'--role={role}']
+    target = f'--consumer={consumer}' if consumer is not None else f'--role={role}'
+    argv = [str(release / 'runtime/bin/node'), '--import', 'tsx', 'scripts/worker-oracle-preflight.ts', target]
     try:
         code, output = runner(argv, release, env)
         _require(code == 78 and len(output) <= MAX_PREFLIGHT_BYTES, 'preflight', 'preflight_failed')
         report = load_json(output)
         checks, workload = report['checks'], report['workload']
-        shaped = (report['kind'] == 'nomorevibe-oracle-runtime-preflight' and report['version'] == 1
+        if consumer is None:
+            kind, keys, owner = 'nomorevibe-oracle-runtime-preflight', PREFLIGHT_CHECKS, True
+        else:
+            kind, keys, owner = 'nomorevibe-oracle-consumer-preflight', CONSUMER_PREFLIGHT_CHECKS, report['consumer'] == consumer
+        shaped = (report['kind'] == kind and report['version'] == 1 and owner
                   and report['role'] == role and report['configuredHost'] == TARGET
                   and report['instanceId'] == env.get('SERVICE_INSTANCE_ID') and report['releaseSha'] == release_sha
                   and report['ready'] is False and report['activationAllowed'] is False
-                  and type(checks) is dict and set(checks) == set(PREFLIGHT_CHECKS))
+                  and type(checks) is dict and set(checks) == set(keys))
     except (subprocess.TimeoutExpired, OSError, ValueError, KeyError, TypeError):
         raise Unverified('preflight', 'preflight_unavailable') from None
     _require(shaped, 'preflight', 'preflight_report_mismatch')
     _require(all(type(value) is dict and value.get('status') != 'rejected' for value in checks.values()),
              'preflight', 'preflight_rejected')
-    for name in REQUIRED_PREFLIGHT + (('model',) if role in MODEL_ROLES else ()):
+    if consumer is not None:
+        for name in CONSUMER_NOT_APPLICABLE:
+            _require(checks[name].get('status') == 'not_applicable', 'preflight', f'{name}_unexpected')
+    required = CONSUMER_REQUIRED_PREFLIGHT if consumer is not None else REQUIRED_PREFLIGHT + (('model',) if role in MODEL_ROLES else ())
+    for name in required:
         _require(checks[name].get('status') == 'verified', 'preflight', f'{name}_unverified')
     # Admission exists only after election; the elected process re-checks it at every claim. The scheduler claims
     # nothing: its workload is ready only for the boot an attested canary tick recorded, which every restart replaces.
@@ -161,32 +190,55 @@ def role_command(role, release):
     return node, [node, '--import', 'tsx', 'scripts/role-worker.ts', f'--role={role}', f'--kind={kind}']
 
 
-def gate(role, env, *, base=BASE, launcher=__file__, owner_uid=0, platform_info=None, user=None,
-         proc_cgroup=PROC_CGROUP, cgroup_root=CGROUP_ROOT, approved_identity=APPROVED_IDENTITY,
-         fetch=None, runner=run_preflight):
+def consumer_command(consumer, release):
+    """The parent role's supervisor runs the consumer's fixed child (lib/runtime/consumer-registry.ts)."""
+    node = str(release / 'runtime/bin/node')
+    return node, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', f'--role={CONSUMERS[consumer]}', f'--consumer={consumer}']
+
+
+def gate(role, env, **fixtures):
     """Keyword arguments exist for local fixtures only; main() never passes them."""
     _require(role in ROLES, 'role', 'role_invalid')
+    return _gate(role, None, env, **fixtures)
+
+
+def consumer_gate(consumer, env, **fixtures):
+    """Same fixed order as gate(); keyword arguments exist for local fixtures only."""
+    _require(consumer in CONSUMERS, 'consumer', 'consumer_invalid')
+    return _gate(CONSUMERS[consumer], consumer, env, **fixtures)
+
+
+def _gate(role, consumer, env, *, base=BASE, launcher=__file__, owner_uid=0, platform_info=None, user=None,
+          proc_cgroup=PROC_CGROUP, cgroup_root=CGROUP_ROOT, approved_identity=APPROVED_IDENTITY,
+          fetch=None, runner=run_preflight):
+    from release_contract import release_profile
     if platform_info is None:
         platform_info = {'system': platform.system(), 'machine': platform.machine(), 'libc': platform.libc_ver()[0]}
     if user is None:
         user = (pwd.getpwuid(os.getuid()).pw_name, os.getuid() == 0)
     if fetch is None:
         from oci_identity import fetch_instance_metadata as fetch
-    release, _ = check_release(env, base, launcher, owner_uid)
+    release, manifest = check_release(env, base, launcher, owner_uid)
+    # A consumer-profile release carries no pinned CLI; only consumers start from it.
+    _require(consumer is not None or release_profile(manifest) == 'full', 'release', 'release_profile_mismatch')
     check_runtime(platform_info, user)
-    check_budget(env, role, env['RELEASE_TAG'], proc_cgroup, cgroup_root)
+    # Operational timestamps are timezone-less UTC; a consumer process reading them in another zone shifts by hours.
+    _require(consumer is None or env.get('TZ') == 'UTC', 'runtime', 'process_timezone_not_utc')
+    check_budget(env, role, env['RELEASE_TAG'], proc_cgroup, cgroup_root, consumer)
     check_identity(approved_identity, fetch, owner_uid)
-    check_preflight(role, env, release, env['RELEASE_TAG'], runner)
-    return role_command(role, release), release
+    check_preflight(role, env, release, env['RELEASE_TAG'], runner, consumer)
+    return (consumer_command(consumer, release) if consumer is not None else role_command(role, release)), release
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--role', required=True, choices=ROLES)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--role', choices=ROLES)
+    target.add_argument('--consumer', choices=sorted(CONSUMERS))
     args = parser.parse_args()
     env = dict(os.environ)
     try:
-        (node, argv), release = gate(args.role, env)
+        (node, argv), release = consumer_gate(args.consumer, env) if args.consumer is not None else gate(args.role, env)
     except Unverified as error:
         print(json.dumps({'check': error.check, 'reason': error.reason}))
         print(json.dumps(FAILURE), file=sys.stderr)
