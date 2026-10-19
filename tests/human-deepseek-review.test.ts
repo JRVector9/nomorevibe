@@ -49,7 +49,7 @@ describe('DeepSeek local transport', () => {
     const result = await (await transport()).reviewWithDeepSeek(input, { request });
     expect(result).toMatchObject({ ok: true, outcome: verdict });
     const [url, options] = request.mock.calls[0];
-    expect(url).toBe('http://m3ultra:8010/v1/chat/completions');
+    expect(url).toBe('http://100.92.77.66:8010/v1/chat/completions');
     expect(options.headers).toEqual({ 'content-type': 'application/json' });
     expect(options.redirect).toBe('error');
     const body = JSON.parse(options.body);
@@ -83,9 +83,23 @@ describe('DeepSeek local transport', () => {
     expect(await real.deepseekReviewReady(vi.fn().mockResolvedValue(new Response('{"data":[{"id":"other"}]}')))).toBe(false);
     expect(await real.deepseekReviewReady(vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: DEEPSEEK_REVIEW_MODEL }] }))))).toBe(true);
   });
+  it('checks readiness through the same Docker-reachable M3 address as inference', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: DEEPSEEK_REVIEW_MODEL }] })));
+    expect(await (await transport()).deepseekReviewReady(request)).toBe(true);
+    expect(request).toHaveBeenCalledWith('http://100.92.77.66:8010/v1/models', expect.objectContaining({
+      cache: 'no-store', redirect: 'error', signal: expect.any(AbortSignal),
+    }));
+  });
 });
 
 describe('admin switch', () => {
+  it('activates after confirming the local model and refreshes the switch pages', async () => {
+    expect(await setHumanReview(null, form('true'))).toHaveProperty('message');
+    expect(mocks.ready).toHaveBeenCalledTimes(1);
+    expect(mocks.save).toHaveBeenCalledWith({ enabled: true, expectedGeneration: 3, actor: 'operator' });
+    expect(mocks.ready.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]);
+    expect(mocks.revalidate.mock.calls).toEqual([['/admin'], ['/admin/review'], ['/admin/status']]);
+  });
   it('checks administrator access before model lookup or writes', async () => {
     mocks.admin.mockResolvedValue(null);
     expect(await setHumanReview(null, form('true'))).toHaveProperty('error');
