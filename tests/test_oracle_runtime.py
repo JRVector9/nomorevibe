@@ -209,6 +209,27 @@ class OracleReleaseTests(unittest.TestCase):
                 manager.inspect_archive(path, archive_hash)
         self.assertFalse((self.root / 'escaped').exists())
 
+    def test_stage_umask_directories_and_tamper(self):
+        result = self.build()
+        for mask in (0o002, 0o022):
+            destination = self.root / ('offline-' + str(mask))
+            previous = os.umask(mask)
+            try:
+                manager.stage_release(destination, self.archive, result['archiveSha256'], HOST, HOST)
+                manager.switch_release(destination, SHA, None, HOST, HOST)
+            finally:
+                os.umask(previous)
+            release = destination / f'opt/nomorevibe-core/releases/{SHA}'
+            self.assertEqual(manager.verify_installed_release(release)['releaseSha'], SHA)
+            import launch
+            launch.check_release({'RELEASE_TAG': SHA}, destination / 'opt/nomorevibe-core',
+                                 release / 'deploy/oracle/launch.py', os.getuid())
+            for directory in [release, *(p for p in release.rglob('*') if p.is_dir() and not p.is_symlink())]:
+                self.assertEqual(directory.stat().st_mode & 0o7777, 0o755)
+            (release / 'runtime/bin').chmod(0o775)
+            with self.assertRaisesRegex(ValueError, 'staged_directory_mode_mismatch'):
+                manager.verify_installed_release(release)
+
     def test_stage_and_pinned_switch_preserve_x_and_previous_release(self):
         destination = self.root / 'offline'
         x = destination / 'opt/nomorevibe-x/status'

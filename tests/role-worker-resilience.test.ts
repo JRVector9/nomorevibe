@@ -196,3 +196,34 @@ it('adds the error code and the per-lane consecutive count to poll and tick fail
   expect(log.mock.calls[0][1]).toMatchObject({ role: 'crawler', errorName: 'PostgresError', message: 'terminating connection due to administrator command' });
   expect(JSON.stringify(log.mock.calls)).not.toContain('secret-param');
 });
+
+it('releases an election that completes after shutdown without starting a child', async () => {
+  const controller = new AbortController(), lease: RoleLease = { ...candidate, epoch: 1 };
+  let grant!: (lease: RoleLease) => void;
+  const release = vi.fn(async () => true), supervise = vi.fn(async () => 0);
+  const run = runRoleCandidate(candidate, controller.signal, {
+    acquire: () => new Promise(resolve => { grant = resolve; }), renew: async () => true, release, supervise,
+  });
+  controller.abort(); grant(lease);
+  expect(await run).toBe(0); expect(supervise).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledExactlyOnceWith(lease);
+});
+
+it.each(['resolve', 'reject'])('stops a child on a wedged renewal and ignores its late %s', async settle => {
+  vi.useFakeTimers(); vi.setSystemTime(T0); captureLogs();
+  const controller = new AbortController(), lease: RoleLease = { ...candidate, epoch: 1 };
+  let resolve!: (value: boolean) => void, reject!: (error: Error) => void;
+  const supervise = vi.fn(async (_lease: RoleLease, signal: AbortSignal) => {
+    await new Promise(done => signal.addEventListener('abort', done, { once: true }));
+    expect(signal.reason).toBe('role_lease_lost'); return 0;
+  });
+  const running = runRoleCandidate(candidate, controller.signal, {
+    acquire: vi.fn().mockResolvedValueOnce(lease).mockResolvedValue(null),
+    renew: () => new Promise((yes, no) => { resolve = yes; reject = no; }), supervise,
+    sleep: async () => { controller.abort(); },
+  });
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(await running).toBe(0); expect(supervise).toHaveBeenCalledOnce();
+  if (settle === 'resolve') resolve(true); else reject(new Error('late renewal'));
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(supervise).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+});

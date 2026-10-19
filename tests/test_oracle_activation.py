@@ -420,6 +420,13 @@ class ConsumerLauncherGateTests(unittest.TestCase):
     setUp, tearDown, budget, fetch, runner, gate = (LauncherGateTests.setUp, LauncherGateTests.tearDown, LauncherGateTests.budget,
                                                     LauncherGateTests.fetch, LauncherGateTests.runner, LauncherGateTests.gate)
 
+    def test_agent_scan_host_budget_conflict_is_configuration_rejection_before_release_or_db(self):
+        env = {'HTTP_ORIGIN_PERMITS': '1', 'HOST_BUDGET_ENFORCEMENT': '{"mode":"enabled"}'}
+        with self.assertRaises(launch.Unverified) as caught:
+            launch.consumer_gate('agent-scan', env)
+        self.assertEqual((caught.exception.check, caught.exception.reason),
+                         ('budget', 'agent_scan_oracle_host_budget_unsupported'))
+
     def run(self, result=None):
         # A fixture consumer is registered only inside each test, next to the shipped CONSUMERS (agent-scan since E5).
         with patch.dict(launch.CONSUMERS, {CONSUMER: 'crawler'}):

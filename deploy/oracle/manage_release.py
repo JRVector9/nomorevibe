@@ -113,7 +113,11 @@ def _base(root):
 @contextmanager
 def _locked(root):
     base = _base(root)
-    (base / 'releases').mkdir(parents=True, exist_ok=True)
+    # Only directories created by this manager are normalized; caller/shared parents stay untouched.
+    for directory in (Path(root) / 'opt', base, base / 'releases'):
+        if not directory.exists():
+            directory.mkdir(parents=True)
+            directory.chmod(0o755)
     descriptor = os.open(base / '.manager.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     with os.fdopen(descriptor, 'r+') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -133,6 +137,9 @@ def _sync_directory(path):
 def _verify_release(path):
     if path.is_symlink() or not path.is_dir() or (path / 'release.json').is_symlink():
         raise ValueError('invalid_staged_release')
+    if any(directory.stat().st_mode & 0o7777 != 0o755 for directory in
+           [path, *(entry for entry in path.rglob('*') if entry.is_dir() and not entry.is_symlink())]):
+        raise ValueError('staged_directory_mode_mismatch')
     manifest = validate_manifest(load_json((path / 'release.json').read_bytes()))
     if path.name != manifest['releaseSha']:
         raise ValueError('staged_release_identity_mismatch')
@@ -190,6 +197,8 @@ def stage_release(root, path, expected_hash, expected_host, observed_host):
                 (temporary / 'release.json').write_bytes(json_bytes(manifest))
                 (temporary / 'release.json').chmod(0o444)
                 # mkdtemp is private0700; the nonroot service account must traverse the published tree.
+                for directory in (entry for entry in temporary.rglob('*') if entry.is_dir() and not entry.is_symlink()):
+                    directory.chmod(0o755)
                 temporary.chmod(0o755)
                 _sync_directory(temporary)
                 os.rename(temporary, destination)

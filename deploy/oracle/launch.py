@@ -212,6 +212,13 @@ def _gate(role, consumer, env, *, base=BASE, launcher=__file__, owner_uid=0, pla
           proc_cgroup=PROC_CGROUP, cgroup_root=CGROUP_ROOT, approved_identity=APPROVED_IDENTITY,
           fetch=None, runner=run_preflight):
     from release_contract import release_profile
+    if consumer == 'agent-scan' and env.get('HTTP_ORIGIN_PERMITS') == '1':
+        try:
+            enforcement = json.loads(env.get('HOST_BUDGET_ENFORCEMENT', '{}'))
+        except (ValueError, TypeError):
+            enforcement = {}
+        _require(not isinstance(enforcement, dict) or enforcement.get('mode') != 'enabled',
+                 'budget', 'agent_scan_oracle_host_budget_unsupported')
     if platform_info is None:
         platform_info = {'system': platform.system(), 'machine': platform.machine(), 'libc': platform.libc_ver()[0]}
     if user is None:
