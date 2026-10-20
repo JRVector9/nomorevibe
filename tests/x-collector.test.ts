@@ -33,6 +33,8 @@ it("durably reserves ten before HTTP and does not read the search results again"
   const result = await runXCollector(options(), { request });
   expect(result).toMatchObject({ status: "completed", reservedPosts: 10, requests: 1, candidates: 1 });
   expect(request).toHaveBeenCalledOnce();
+  const url = new URL((request.mock.calls as unknown as [string][])[0][0]);
+  expect([url.searchParams.get("sort_order"), url.searchParams.get("max_results")]).toEqual(["relevancy", "10"]);
   const stored = await readFile(join(stateDir, "observations.json"), "utf8");
   expect(stored).not.toMatch(/private-raw-text|private-author|private-token/);
   expect(JSON.parse(stored)).toMatchObject({ expiresAt: "2026-10-16T04:00:00.000Z",

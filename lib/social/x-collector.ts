@@ -106,7 +106,7 @@ export async function runXCollector(
       return result;
     };
     // Validate the exact transport settings before making a persistent reservation.
-    const plan = await runXPilot({ query: X_COLLECTOR_QUERY, searchOnly: true }, { now: () => now });
+    const plan = await runXPilot({ query: X_COLLECTOR_QUERY, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { now: () => now });
     if (plan.status !== "planned") return { ...result, status: "blocked", reason: "invalid_plan" };
     if (!options.live) return await finish();
     const gate = !options.useCaseApproved ? "use_case_not_approved" : !options.token?.trim() ? "bearer_token_missing"
@@ -130,7 +130,7 @@ export async function runXCollector(
     } finally { await receipt.close(); }
     await syncDirectory(options.stateDir);
     const pilot = await runXPilot({ live: true, useCaseApproved: true, token: options.token,
-      query: X_COLLECTOR_QUERY, searchOnly: true }, { request: dependencies.request, now: () => now });
+      query: X_COLLECTOR_QUERY, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { request: dependencies.request, now: () => now });
     result.requests = pilot.requests.length;
     result.status = pilot.status === "completed" ? "completed" : "stopped";
     if (pilot.reason) result.reason = pilot.reason;
@@ -153,3 +153,8 @@ import { sendSigned, signPosts, signStatus, xPostsReportFrom, xStatusReportFrom,
 
 const DAY = 86_400_000;
 export const X_COLLECTOR_QUERY = 'url:github.com (launch OR launched OR "built with" OR "vibe coding" OR "SKILL.md" OR "agent skill") has:links';
+/**
+ * 하루 한 번 읽는 10개를 최근 24시간에서 관련도순으로 고른다. 최신순은 막 올라온(반응 0~2) 글만 잡혀
+ * 화제 자격(X 50점)에 닿지 못했다(2026-10-20 첫 실제 수집). 관련도 순서의 기준은 X 가 공개하지 않는다.
+ */
+export const X_COLLECTOR_SORT_ORDER = "relevancy";

@@ -21,6 +21,18 @@ it("search-only collection reads ten posts once without an immediate lookup", as
     plan: { maxRequests: 1, maxPostResources: 10 }, observations: [{ id: "123" }] });
   expect(request).toHaveBeenCalledOnce();
   expect(new URL(request.mock.calls[0][0]).pathname).toBe("/2/tweets/search/recent");
+  expect(new URL(request.mock.calls[0][0]).searchParams.get("sort_order")).toBe("recency");
+});
+
+it("asks for relevancy order only when selected, and rejects other orders before HTTP", async () => {
+  const request = vi.fn().mockImplementation(() => Promise.resolve(response({ data: [post("123")] })));
+  const result = await runXPilot({ ...live, searchOnly: true, sortOrder: "relevancy" }, { request });
+  expect(result).toMatchObject({ status: "completed", plan: { sortOrder: "relevancy" } });
+  expect(new URL(request.mock.calls[0][0]).searchParams.get("sort_order")).toBe("relevancy");
+  const other = vi.fn();
+  expect(await runXPilot({ ...live, sortOrder: "popular" as "recency" }, { request: other }))
+    .toMatchObject({ status: "skipped", reason: "invalid_sort_order", plan: null });
+  expect(other).not.toHaveBeenCalled();
 });
 
 it("search-only collection rejects supplied lookup IDs before HTTP", async () => {
@@ -34,7 +46,7 @@ it("defaults to a zero-HTTP dry-run with a bounded one-page plan", async () => {
   const request = vi.fn();
   const result = await runXPilot({}, { request, now: () => at.getTime() });
   expect(result).toMatchObject({ mode: "dry-run", status: "planned", reservedPosts: 0, requests: [], observations: [], needsLiveValidation: true,
-    plan: { maxRequests: 3, maxPostResources: 30, searchLimit: 10, startTime: "2026-10-13T05:00:00.000Z", fieldsParameter: "tweet.fields" } });
+    plan: { maxRequests: 3, maxPostResources: 30, searchLimit: 10, startTime: "2026-10-13T05:00:00.000Z", fieldsParameter: "tweet.fields", sortOrder: "recency" } });
   expect(request).not.toHaveBeenCalled();
 });
 
