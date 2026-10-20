@@ -737,3 +737,25 @@ it("별 자동승인도 소개가 없으면 올리지 않고 사람 확인(no_de
   expect(await products.findByUrl("https://bigoss.test")).toBeUndefined();
   expect(await crawl.getCandidate(repo)).toMatchObject({ state: "needs_review", reason: "no_description" });
 });
+
+describe("발행 뒤 마이페이지 알림", () => {
+  it("OG 이미지 단계가 실패해도 메이커 팔로·저장소 주인 알림은 그 전에 발행 잡 lease 로 넣었다", async () => {
+    const { cacheOgImage } = await import("@/lib/domain/products/og");
+    const { publicIdentities, publicUsers } = await import("@/lib/db/public-user-schema");
+    const { notifications, userFollows } = await import("@/lib/db/me-schema");
+    const [owner] = await db.insert(publicUsers).values({ displayName: "주인" }).returning();
+    await db.insert(publicIdentities).values({ userId: owner.id, provider: "github", subject: "4242" });
+    const [fan] = await db.insert(publicUsers).values({ displayName: "팬" }).returning();
+    await db.insert(userFollows).values({ userId: fan.id, targetType: "maker", targetKey: "someone" });
+    await approved("someone/og-app", {
+      meta: { owner: { id: 4242, type: "User", login: "someone" }, full_name: "someone/og-app" },
+      pageMeta: { title: "My App", description: "페이지가 말하는 소개", ogImage: "https://my-app.test/og.png" },
+    });
+    vi.mocked(cacheOgImage).mockRejectedValueOnce(new Error("og_down"));
+    await tick();
+    expect(vi.mocked(cacheOgImage)).toHaveBeenCalled();
+    expect(await products.findByUrl("https://my-app.test")).toMatchObject({ status: "seeded", ogImage: null });
+    const rows = await db.select().from(notifications);
+    expect(rows.map((row) => [row.userId, row.kind]).sort()).toEqual([[owner.id, "new_listing_mine"], [fan.id, "maker_new_project"]].sort());
+  });
+});

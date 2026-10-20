@@ -1,18 +1,20 @@
-import { createTranslator, type Translator } from "@/lib/i18n/messages";
+import { createTranslator, type Dictionary, type Translator } from "@/lib/i18n/messages";
 import type { Locale } from "@/lib/i18n/locales";
-import { me as ko } from "@/messages/ko/me";
-import { me as en } from "@/messages/en/me";
-import { me as zhHans } from "@/messages/zh-Hans/me";
-import { me as zhHant } from "@/messages/zh-Hant/me";
 import type { NotificationKind } from "./contract";
 
 /**
  * 알림 메일 글 — 글자만 메일과 간단한 HTML 두 갈래. 추적 그림·추적 링크는 넣지 않는다.
- * 워커가 만들므로 lib/i18n/dictionary.ts(server-only) 대신 문구 파일을 바로 읽는다.
+ * 워커가 만들므로 lib/i18n/dictionary.ts(server-only) 대신 문구 파일을 바로 읽는다. 잡 목록이 이 파일까지 올리므로
+ * 문구 파일은 보낼 때 늦게 읽는다 — messages/ 가 없는 워커 이미지(Oracle release)도 잡 목록은 올라온다.
  */
-const CATALOGS = { ko, en, "zh-Hans": zhHans, "zh-Hant": zhHant } as const;
-export function meTranslator(locale: Locale): Translator<"me"> {
-  return createTranslator("me", CATALOGS[locale] ?? ko);
+const CATALOGS: Record<Locale, () => Promise<Dictionary["me"]>> = {
+  ko: () => import("@/messages/ko/me").then((module) => module.me),
+  en: () => import("@/messages/en/me").then((module) => module.me),
+  "zh-Hans": () => import("@/messages/zh-Hans/me").then((module) => module.me),
+  "zh-Hant": () => import("@/messages/zh-Hant/me").then((module) => module.me),
+};
+export async function meTranslator(locale: Locale): Promise<Translator<"me">> {
+  return createTranslator("me", await (CATALOGS[locale] ?? CATALOGS.ko)());
 }
 
 export type EmailKind = Exclude<NotificationKind, "comment_reviewed" | "inbox_new">;
@@ -54,8 +56,8 @@ function layout(t: Translator<"me">, body: { text: string[]; html: string }, lin
   return { text, html };
 }
 
-export function instantEmail(locale: Locale, kind: EmailKind, product: EmailProduct, links: EmailLinks): EmailContent {
-  const t = meTranslator(locale);
+export async function instantEmail(locale: Locale, kind: EmailKind, product: EmailProduct, links: EmailLinks): Promise<EmailContent> {
+  const t = await meTranslator(locale);
   const message = line(t, kind, product);
   const body = {
     text: [message, "", `${t("email.open")}: ${links.open}`],
@@ -65,8 +67,8 @@ export function instantEmail(locale: Locale, kind: EmailKind, product: EmailProd
 }
 
 /** 주간 요약 — 지난 7일 안 읽은 알림을 한 통에. total 이 items 보다 많으면 «더 있어요» 한 줄 */
-export function digestEmail(locale: Locale, items: readonly DigestItem[], total: number, links: EmailLinks): EmailContent {
-  const t = meTranslator(locale);
+export async function digestEmail(locale: Locale, items: readonly DigestItem[], total: number, links: EmailLinks): Promise<EmailContent> {
+  const t = await meTranslator(locale);
   const lines = items.map((item) => ({ message: line(t, item.kind, item.product), url: item.url }));
   const more = total > items.length ? t("email.digest.more", { count: total - items.length }) : null;
   const body = {

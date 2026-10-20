@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/home/icons";
-import { useUnreadCount } from "@/components/me/account-store";
+import { markAuthDisabled, useUnreadCount } from "@/components/me/account-store";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
 
@@ -43,10 +43,12 @@ function TalkIcon() {
  * 마이는 로그인 전에도 이 브라우저 저장 목록(/me 저장 탭)을 연다. 홈의 ?saved=1 거르기는 그대로다. 점(data-me-dot)은 안 읽은 알림 자리(MY4).
  * '공개'는 뺐다 — 헤더 첫 줄의 '프로젝트 공개' 버튼이 늘 보인다. 검색은 헤더의 검색창으로 초점을 옮긴다(접혀 있으면 펴진다).
  */
-export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
+export function MobileNav({ authEnabled = false, talkEnabled = false }: { authEnabled?: boolean; talkEnabled?: boolean }) {
   const pathname = stripLocale(usePathname());
   const locale = useLocale();
   const t = useTranslations("common");
+  // 로그인 기능이 꺼져 있으면 요약을 묻지 않는다(SiteHeader 와 같다) — 점은 늘 숨김
+  if (!authEnabled) markAuthDisabled();
   const unread = useUnreadCount();
   if (pathname.startsWith("/admin")) return null;
 
@@ -86,6 +88,8 @@ export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
       <Link prefetch={false} href={localePath(locale, "/me")} className={me ? "active" : undefined}>
         <span className="me-nav-icon"><UserIcon /><span className="dot" data-me-dot hidden={!unread} /></span>
         {t("navigation.my")}
+        {/* 점은 그림이라 읽히지 않는다 — 화면 낭독기에는 안 읽은 수를 이름 뒤에 */}
+        {unread > 0 && <span className="sr-only">{`, ${t("account.unread", { count: unread })}`}</span>}
       </Link>
     </nav>
   );

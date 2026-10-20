@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useLocale } from "@/lib/i18n/context";
 import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
 import type { FollowTarget } from "@/lib/me/contract";
-import { loadMeAccount, useMeAccount } from "./account-store";
+import { loadMeState, useMeAccount } from "./account-store";
 import type { FollowLabels } from "./follow-labels";
 
 export type FollowVariant = "hero" | "inline" | "chip" | "row";
@@ -85,11 +85,18 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
   const [error, setError] = useState("");
   const [prompt, setPrompt] = useState(false);
   const wrapper = useRef<HTMLSpanElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
+  /** 누른 뒤에는 늦게 온 상태 물음이 바꾼 값을 덮지 않는다(로그인 상태를 다시 물어 받은 뒤 묻는 경우) */
+  const touched = useRef(false);
   const titleId = useId();
 
   async function change(next: boolean) {
-    const me = await loadMeAccount();
+    // 로그인 상태를 묻지 못했으면(503·끊김) 로그인을 권하지 않는다 — 실패를 말하고, 다음 누름이 다시 묻는다
+    const loaded = await loadMeState();
+    if (loaded.status === "error") return setError(labels.failed);
+    const me = loaded.account;
     if (!me) return setPrompt(true);
+    touched.current = true;
     setBusy(true);
     setError("");
     setFollowing(next);
@@ -113,7 +120,7 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
     if (!account || initial !== undefined) return;
     let live = true;
     void followStateOf(target, targetKey).then((state) => {
-      if (!live) return;
+      if (!live || touched.current) return;
       setFollowing(state);
       if (state === false && readIntent(target, targetKey)) void change(true);
     });
@@ -122,10 +129,16 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, target, targetKey, initial]);
 
+  // 로그인 권하는 작은 창 — 열리면 첫 링크에 초점, 바깥을 누르거나 초점이 나가면 닫고, Esc 는 단추로 초점을 돌려준다
   useEffect(() => {
     if (!prompt) return;
+    wrapper.current?.querySelector<HTMLElement>("[role=dialog] a, [role=dialog] button")?.focus();
     function close(event: KeyboardEvent | PointerEvent) {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !wrapper.current?.contains(event.target as Node)) setPrompt(false);
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        setPrompt(false);
+        button.current?.focus();
+      } else if (!wrapper.current?.contains(event.target as Node)) setPrompt(false);
     }
     document.addEventListener("keydown", close);
     document.addEventListener("pointerdown", close);
@@ -139,8 +152,10 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
   const style = VARIANTS[variant];
   const loginHref = (returnTo: string) => localePath(locale, `/login?returnTo=${encodeURIComponent(safePublicReturnUrl(returnTo, localePath(locale, "/")))}`);
   return (
-    <span ref={wrapper} className="relative inline-flex items-center">
-      <button type="button" aria-pressed={account ? on : undefined} aria-label={labels.aria} disabled={busy}
+    <span ref={wrapper} className="relative inline-flex items-center" onBlur={(event) => {
+      if (prompt && event.relatedTarget && !wrapper.current?.contains(event.relatedTarget as Node)) setPrompt(false);
+    }}>
+      <button ref={button} type="button" aria-pressed={account ? on : undefined} aria-label={labels.aria} disabled={busy}
         aria-expanded={account === null ? prompt : undefined} aria-controls={account === null && prompt ? titleId : undefined}
         onClick={() => account === null ? setPrompt((open) => !open) : void change(!on)}
         className={`${style.base} ${on ? style.on : style.off} disabled:opacity-60`}>
@@ -157,7 +172,7 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
               writeIntent(target, targetKey);
               event.currentTarget.href = loginHref(`${window.location.pathname}${window.location.search}${window.location.hash}`);
             }} className="inline-flex min-h-10 items-center rounded-full bg-fg px-4 text-[13px] font-medium text-bg-card">{labels.login}</a>
-            <button type="button" onClick={() => setPrompt(false)} className="inline-flex min-h-10 items-center rounded-full px-3 text-[13px] text-fg-2">{labels.later}</button>
+            <button type="button" onClick={() => { setPrompt(false); button.current?.focus(); }} className="inline-flex min-h-10 items-center rounded-full px-3 text-[13px] text-fg-2">{labels.later}</button>
           </span>
         </span>
       )}

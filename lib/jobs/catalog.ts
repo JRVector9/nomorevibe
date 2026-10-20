@@ -118,7 +118,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "email-weekly-digest", role: "maintenance", intervalMs: 15 * 60_000 },
   /**
    * 마이페이지 알림함(lib/jobs/me/notifications.ts) — 팔로한 프로젝트가 내려감(cdn_purges 를 따라 읽고, 닿지 않는 것을 본다),
-   * 팔로한 분야 주간 묶음(월요일 09:00 KST 부터 하루 안에 — 주기 일정에는 시각이 없어 틱마다 시각을 본다), 90일 지난 알림 지우기.
+   * 팔로한 분야 주간 묶음(월요일 00:00 KST 부터 하루 안에 — 기본 09:00 주간 메일 요약보다 먼저 넣는다. 주기 일정에는 시각이 없어 틱마다 시각을 본다), 90일 지난 알림 지우기.
    */
   { name: "notification-delisted", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "notification-category-digest", role: "maintenance", intervalMs: 15 * 60_000 },

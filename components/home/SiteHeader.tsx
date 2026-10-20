@@ -7,6 +7,7 @@ import { Icon } from "@/components/home/icons";
 import { AccountMenu } from "@/components/auth/AccountMenu";
 import { useSavedCount } from "@/components/home/useSavedSlugs";
 import { AlertBell } from "@/components/me/AlertBell";
+import { markAuthDisabled } from "@/components/me/account-store";
 import { BRAND } from "@/lib/copy/brand";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
@@ -124,6 +125,8 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
     clientHydrationSnapshot,
     serverHydrationSnapshot,
   );
+  // 로그인 기능이 꺼져 있으면 계정 요약(/api/me/summary)을 묻지 않는다 — 저장 동기화·아래 탭 점이 404 를 받지 않게
+  if (!authEnabled) markAuthDisabled();
   // 로그인 중이면 계정의 저장 수(MY2)
   const hasSaved = useSavedCount() > 0;
   const shortcut = hydrated ? shortcutLabel(navigator.userAgent) : null;

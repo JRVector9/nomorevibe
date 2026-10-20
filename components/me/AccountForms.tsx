@@ -8,6 +8,7 @@ import type { MessageKey } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import { DISPLAY_NAME_CHANGE_DAYS } from "@/lib/me/contract";
 import { DISPLAY_NAME_MAX, DISPLAY_NAME_MIN } from "@/lib/me/profile";
+import { patchMeAccount } from "./account-store";
 
 /** 계정 탭의 쓰기 단추들 — 닉네임, 내 데이터 받기, 계정 삭제, 로그아웃. 쓰기는 모두 x-csrf-token 을 붙인다 */
 
@@ -62,7 +63,8 @@ export function ProfileForm({ csrfToken, displayName, nextNameChangeAt }: { csrf
       setNext(body.nextNameChangeAt);
       setOpen(false);
       setMessage({ kind: "ok", key: "account.nicknameSaved" });
-      // 머리·메뉴의 이름도 새로 그린다
+      // 아바타 메뉴는 이 화면의 계정 값을 고치고(다시 묻지 않는다), 마이페이지 머리는 서버가 다시 그린다
+      patchMeAccount({ user: { displayName: body.displayName } });
       router.refresh();
     } catch {
       setMessage({ kind: "error", key: "account.error.generic" });

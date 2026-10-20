@@ -47,6 +47,7 @@ export function AlertBell() {
   const [items, setItems] = useState<NotificationView[] | null>(null);
   const [failed, setFailed] = useState(false);
   const wrapper = useRef<HTMLDivElement>(null);
+  const button = useRef<HTMLButtonElement>(null);
   const panelId = useId();
 
   useEffect(() => {
@@ -60,7 +61,11 @@ export function AlertBell() {
         setUnreadCount(body.unread);
       }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
     function close(event: KeyboardEvent | PointerEvent) {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !wrapper.current?.contains(event.target as Node)) setOpen(false);
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== "Escape") return;
+        setOpen(false);
+        button.current?.focus();
+      } else if (!wrapper.current?.contains(event.target as Node)) setOpen(false);
     }
     document.addEventListener("keydown", close);
     document.addEventListener("pointerdown", close);
@@ -71,6 +76,14 @@ export function AlertBell() {
     };
   }, [open, locale]);
 
+  // 열리면 창으로 초점을 옮기고, 줄이 오면 첫 알림으로 — 그사이 사용자가 창 안에서 옮긴 초점은 건드리지 않는다
+  useEffect(() => {
+    const panel = open ? document.getElementById(panelId) : null;
+    if (!panel || (panel.contains(document.activeElement) && document.activeElement !== panel)) return;
+    const first = items === null && !failed ? null : panel.querySelector<HTMLElement>(".alert-bell-item") ?? panel.querySelector<HTMLElement>("a, button");
+    (first ?? panel).focus();
+  }, [open, items, failed, panelId]);
+
   if (!account) return null;
   const now = new Date();
 
@@ -79,14 +92,16 @@ export function AlertBell() {
   }
 
   return (
-    <div ref={wrapper} className="alert-bell">
-      <button type="button" className="alert-bell-button" aria-expanded={open} aria-controls={panelId} onClick={() => { setFailed(false); setOpen(!open); }}
+    <div ref={wrapper} className="alert-bell" onBlur={(event) => {
+      if (open && event.relatedTarget && !wrapper.current?.contains(event.relatedTarget as Node)) setOpen(false);
+    }}>
+      <button ref={button} type="button" className="alert-bell-button" aria-expanded={open} aria-controls={panelId} onClick={() => { setFailed(false); setOpen(!open); }}
         aria-label={unread ? t("bell.unread", { count: unread }) : t("bell.label")}>
         <BellIcon />
         {unread > 0 && <b className="alert-bell-badge" aria-hidden="true">{unread > 99 ? "99+" : unread}</b>}
       </button>
       {open && (
-        <div id={panelId} className="alert-bell-panel" role="dialog" aria-label={t("bell.label")}>
+        <div id={panelId} className="alert-bell-panel" role="dialog" aria-label={t("bell.label")} tabIndex={-1}>
           <div className="alert-bell-head">
             <strong>{t("bell.label")}</strong>
             {unread > 0 && <button type="button" onClick={() => void readAll()}>{t("bell.readAll")}</button>}

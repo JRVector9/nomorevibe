@@ -22,7 +22,7 @@ export async function PublicShell({ locale, children, seasonfooter }: {
       <SiteHeader authEnabled={publicUserAuthEnabled()} talkEnabled={talkPublicEnabled()} />
       <div className="flex-1" id="main" tabIndex={-1}>{children}</div>
       <SiteFooter locale={locale} messages={messages}>{seasonfooter}</SiteFooter>
-      <MobileNav talkEnabled={talkPublicEnabled()} />
+      <MobileNav authEnabled={publicUserAuthEnabled()} talkEnabled={talkPublicEnabled()} />
       <SavedToast />
     </>
   );

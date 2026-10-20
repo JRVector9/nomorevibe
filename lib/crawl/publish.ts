@@ -260,8 +260,10 @@ export async function publishCandidate(
       throw e;
     }
   }
-  // 이 GitHub 주인을 팔로한 사람에게 새 프로젝트 — 발행은 commit 됐다. 실패해도 발행은 그대로(뒤 OG 단계보다 먼저)
-  await notifyMakerNewProject(slug);
+  // 이 GitHub 주인을 팔로한 사람과 저장소 주인 계정(new_listing_mine)에 새 프로젝트 — 발행은 commit 됐다.
+  // 실패해도 발행은 그대로이고, 뒤 OG 단계가 실패해도 알림은 이미 넣었다
+  await notifyMakerNewProject(slug, lease);
+  await notifyNewListingMine({ slug, repoMeta: document.repoMeta }, lease).catch(() => logger.warn("maker.new_listing_notify_failed", { slug }));
 
   // OG 이미지는 부가 작업이다. 핫링크하지 않는 이유는 등록 경로와 같다 —
   // 상대 서버가 죽으면 목록이 깨지고, 이미지가 사후에 바뀔 수 있다.
@@ -276,8 +278,6 @@ export async function publishCandidate(
   }
 
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
-  // 저장소 주인이 GitHub 로 로그인한 계정이면 알림함에 한 줄(마이페이지 new_listing_mine) — 실패해도 발행은 그대로다
-  await notifyNewListingMine({ slug, repoMeta: document.repoMeta }, lease).catch(() => logger.warn("maker.new_listing_notify_failed", { slug }));
   // The periodic worker also catches a missed request after a process shutdown.
   await requestJob("product-thumbnail-refresh").catch(() => logger.warn("thumbnail.enqueue_failed", { slug }));
   return { ok: true, slug };

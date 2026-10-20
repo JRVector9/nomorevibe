@@ -89,8 +89,8 @@ describe("발송함 계산", () => {
 
 describe("알림 메일 글", () => {
   const links = { open: "https://nomorevibe.example/p/one", unsubscribe: "https://nomorevibe.example/api/me/notification-settings/unsubscribe?token=1.makerReply.x&lang=ko", settings: "https://nomorevibe.example/me/alerts" };
-  it("제품 이름을 HTML 에서 가리고 제목은 한 줄로 둔다", () => {
-    const mail = instantEmail("ko", "maker_reply", { slug: "one", name: "<script>\nalert(1)</script>" }, links);
+  it("제품 이름을 HTML 에서 가리고 제목은 한 줄로 둔다", async () => {
+    const mail = await instantEmail("ko", "maker_reply", { slug: "one", name: "<script>\nalert(1)</script>" }, links);
     expect(mail.subject).not.toMatch(/[\r\n]/);
     expect(mail.subject).toContain("메이커가 답장했어요");
     expect(mail.html).not.toContain("<script>");
@@ -99,10 +99,10 @@ describe("알림 메일 글", () => {
     expect(mail.text).toContain(links.unsubscribe);
     expect(mail.html).not.toMatch(/<img/i);
   });
-  it("네 언어 모두 즉시 메일·주간 요약을 만든다", () => {
+  it("네 언어 모두 즉시 메일·주간 요약을 만든다", async () => {
     for (const locale of LOCALES) {
-      const instant = instantEmail(locale, "followed_release", null, links);
-      const digest = digestEmail(locale, [{ kind: "category_new", product: { slug: "one", name: "One" }, url: links.open }], 3, links);
+      const instant = await instantEmail(locale, "followed_release", null, links);
+      const digest = await digestEmail(locale, [{ kind: "category_new", product: { slug: "one", name: "One" }, url: links.open }], 3, links);
       expect(instant.subject.length).toBeGreaterThan(0);
       expect(digest.text).toContain(links.open);
       expect(digest.text).toContain(links.unsubscribe);
