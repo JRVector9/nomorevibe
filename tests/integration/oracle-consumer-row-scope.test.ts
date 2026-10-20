@@ -6,7 +6,7 @@ import { ORACLE_CONSUMER_DB_PROFILES, ORACLE_DB_PRINCIPALS, oracleConsumerGrantS
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 /*
- * 0106 행 범위(실제 PostgreSQL). Oracle consumer 계정(생성 SQL 그대로)은
+ * 0107 행 범위(실제 PostgreSQL). Oracle consumer 계정(생성 SQL 그대로)은
  * - uptime_claims 를 Oracle host·probe 로만 쓴다(home 으로 적힌 제출 행 위조·home 행 고치기 → 42501, review-uptime F3),
  * - operations_observations 에 자기 consumer 의 관측 키만 쓴다(다른 키 덮기 → 42501, F11).
  * Oracle 역할 계정(product-health)과 소유자가 아닌 앱 계정(M3 앱 계정이 소유자가 아닐 때와 같은 모양), 소유 계정은 그대로다.
@@ -148,7 +148,7 @@ it('adds only invoker origin triggers — no new row security (logical DR plan) 
     { table: 'operations_observations', name: 'operations_observations_oracle_consumer_scope', enabled: 'O', definer: false },
     { table: 'uptime_claims', name: 'uptime_claims_oracle_scope', enabled: 'O', definer: false },
   ]);
-  // RLS 를 켠 표는 0105 의 두 표뿐이다(논리 DR 계획의 row_security_requires_review 대상이 늘지 않는다)
+  // RLS 를 켠 표는 0106 의 두 표뿐이다(논리 DR 계획의 row_security_requires_review 대상이 늘지 않는다)
   const rls = await admin<{ name: string }[]>`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relrowsecurity ORDER BY 1`;
   expect(rls.map(row => row.name)).toEqual(['github_collector_apps', 'rate_limits']);

@@ -25,7 +25,7 @@ export type ControlStage = typeof CONTROL_STAGES[number];
 const MODES = {
   stage: ["legacy", "draining", "items"], capacity: ["disabled", "draining", "open"],
   http: ["disabled", "draining", "open"], batch: ["legacy", "draining", "versioned"],
-  // 제작 근거 스캔(agent_scan_control, 0104) — stage 와 같은 뜻의 legacy·draining·items
+  // 제작 근거 스캔(agent_scan_control, 0105) — stage 와 같은 뜻의 legacy·draining·items
   "agent-scan": ["legacy", "draining", "items"],
 } as const;
 type Area = keyof typeof MODES;
@@ -153,7 +153,7 @@ export const controlSnapshotSchema = z.object({
   }).strict(),
   recentInstances: z.array(z.string()),
   /**
-   * 응답 점검 분담(0103 uptime_split_control) mode. claims 동안 batch 를 versioned 쪽으로 옮기면 uptime-ping 이 product-health 역할 몫이 되어
+   * 응답 점검 분담(0104 uptime_split_control) mode. claims 동안 batch 를 versioned 쪽으로 옮기면 uptime-ping 이 product-health 역할 몫이 되어
    * (Oracle principal 에는 split 권한이 없고, M3 는 policy 의 home 이 아닐 수 있다) 확인·적용이 멈춘다 — batch 전환이 이 값을 보고 거절한다
    */
   uptimeSplitMode: z.enum(["legacy", "claims"]),

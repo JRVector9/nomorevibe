@@ -5,7 +5,7 @@ import { ORACLE_CONSUMER_DB_PROFILES, oracleConsumerGrantStatements } from '@/li
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 /*
- * 0105 행 범위(실제 PostgreSQL). Oracle agent-scan 계정(생성 SQL 그대로)은 rate_limits 의 GitHub 수집 키(github:quota:·github:auth:)만,
+ * 0106 행 범위(실제 PostgreSQL). Oracle agent-scan 계정(생성 SQL 그대로)은 rate_limits 의 GitHub 수집 키(github:quota:·github:auth:)만,
  * github_collector_apps 는 oracle_principals 에 그 계정 이름이 든 설치만 읽고 쓴다(리뷰 P2-4·P2-5).
  * 소유 역할이 아닌 일반 계정(M3 앱 계정이 소유자가 아닐 때와 같은 모양)은 두 표의 모든 행을 그대로 다룬다.
  * 두 표에 넣은 행은 파일 끝에 지운다.

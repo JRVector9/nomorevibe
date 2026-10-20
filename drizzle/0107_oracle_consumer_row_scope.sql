@@ -3,7 +3,7 @@
 -- Oracle 역할 계정 6개(nomorevibe_oracle_translation 등)에는 아무것도 바뀌지 않는다(그 계정들은 두 표 중 uptime_claims 권한이 없고,
 -- 관측 키 조건은 consumer 계정 둘에만 건다). 계정은 NOINHERIT·current_user = session_user 를 preflight 가 확인한다.
 -- RLS 가 아니라 트리거다: operations_observations 는 재생(replay) handler 표라 RLS 를 켜면 handler profile 이 거절하고, RLS 를 켠 표는
--- 논리 DR 계획에서 row_security_requires_review 로 막힌다(0105). 트리거 함수는 SECURITY INVOKER 다(handler profile 이 SECURITY DEFINER
+-- 논리 DR 계획에서 row_security_requires_review 로 막힌다(0106). 트리거 함수는 SECURITY INVOKER 다(handler profile 이 SECURITY DEFINER
 -- 트리거를 거절한다). 일반(origin) 트리거라 논리 복제 적용(session_replication_role=replica)에서는 돌지 않는다 — 원본이 이미 검사했다.
 -- 거절은 SQLSTATE 42501(권한 없음)이다.
 --

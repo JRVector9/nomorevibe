@@ -22,7 +22,7 @@ import { getLatestRepositoryAgentScan, persistableAgentScanResult, validatedAgen
 import { agentScanRecordAllowed, lockAgentScanControl } from './claim-control';
 
 /**
- * 제작 근거 스캔의 저장소 단위 claim(0104). 여러 서버의 consumer 가 같은 큐를 나눠 맡는다.
+ * 제작 근거 스캔의 저장소 단위 claim(0105). 여러 서버의 consumer 가 같은 큐를 나눠 맡는다.
  *
  * - claim: fence SHARE → control SHARE(items·contract≥1) → 행 하나 FOR UPDATE SKIP LOCKED → token·epoch+1. 전역 mutex 가 없다.
  * - 기록: fence SHARE → stage SHARE → control SHARE(기록 관문·control epoch) → 저장소 identity → claim 행 FOR UPDATE(owner CAS)
@@ -101,7 +101,7 @@ export async function claimAgentRepository(input: { owner: ItemOwner; order?: 'p
     // release 가 섞여도(M3·Oracle) 판정이 쓰는 탐지기 버전과 다른 스캔을 만들지 않는다
     if (settings.agentEvidence.detectorVersion !== AGENT_DETECTOR_VERSION) return idle('detector');
     // 운영자의 잡 멈춤(jobs.not_before 먼 미래, runner 의 PAUSED 와 같은 식)은 items 에서도 스캔을 멈춘다 — 컨트롤러만 멈추고 consumer 가
-    // 계속 돌면 화면은 '설정상 중지'인데 GitHub 를 쓴다. consumer 계정은 jobs 권한이 없어 그 잡의 not_before 만 보이는 보기(0105)를 읽는다
+    // 계속 돌면 화면은 '설정상 중지'인데 GitHub 를 쓴다. consumer 계정은 jobs 권한이 없어 그 잡의 not_before 만 보이는 보기(0106)를 읽는다
     const [schedule] = await tx.execute<{ paused: boolean }>(sql`
       SELECT coalesce(bool_or(not_before > now() + ${PAUSED_AFTER_MS} * interval '1 millisecond'), false) AS paused FROM agent_scan_job_schedule`);
     if (schedule?.paused) return idle('paused');

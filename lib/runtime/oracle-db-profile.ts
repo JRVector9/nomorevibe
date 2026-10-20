@@ -124,17 +124,17 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
       agent_repository_observations: { select: true, insert: true, delete: true },
       crawl_discovery_evidence: read, crawl_settings: read,
-      // 잡 멈춤(agent-evidence-refresh 의 not_before)만 보이는 보기(0105). claim 이 운영자 정지를 따른다 — jobs 권한은 없다
+      // 잡 멈춤(agent-evidence-refresh 의 not_before)만 보이는 보기(0106). claim 이 운영자 정지를 따른다 — jobs 권한은 없다
       agent_scan_job_schedule: read,
-      // 행은 RLS(0105)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다
+      // 행은 RLS(0106)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다
       github_collector_apps: { select: true, update: ['core_quota', 'quota_observed_at'] },
-      // 행은 RLS(0105)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.
+      // 행은 RLS(0106)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.
       // GitHub 쿨다운은 INSERT·reset_at 갱신만 한다. 2차 제한 전역 키(github:quota:secondary:global)는 M3 와 함께 쓴다(남은 위험)
       rate_limits: { select: true, insert: true, update: ['reset_at'] },
-      // 키는 0106 트리거가 자기 consumer 키(agent-scan:·service:crawler: + agent-scan-consumer-*, defer:agent-scan, 이 host 장부)로 좁힌다
+      // 키는 0107 트리거가 자기 consumer 키(agent-scan:·service:crawler: + agent-scan-consumer-*, defer:agent-scan, 이 host 장부)로 좁힌다
       operations_observations: observationsWrite } } },
   // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
-  // 열 권한 밖의 행 범위는 0106 트리거가 좁힌다: claim 행은 Oracle host·probe 로만(home 으로 적힌 제출 행 → 42501, 적용기의 submitted_not_probe 는
+  // 열 권한 밖의 행 범위는 0107 트리거가 좁힌다: claim 행은 Oracle host·probe 로만(home 으로 적힌 제출 행 → 42501, 적용기의 submitted_not_probe 는
   // 두 번째 관문), operations_observations 는 자기 consumer 키만. 남은 위험: lock 용 UPDATE(id) 로 제어 행을 FOR UPDATE 로 문장 10초·idle 60초까지
   // 쥘 수 있다 — FOR SHARE 에 필요한 권한이 FOR UPDATE 도 허용하고 트리거·RLS 로 가를 수 없다(다른 Oracle 역할의 dr_writer_fence 와 같은 패턴)
   uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],

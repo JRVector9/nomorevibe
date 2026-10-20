@@ -1005,7 +1005,7 @@ class AgentScanReleaseGateTests(unittest.TestCase):
             self.apps[short]['appName'] = 'probe-' + short
 
     def gated(self, gated):
-        source = b'import x;\nawait assertLegacyAgentScanWrite(tx);\n' if gated else b'// before 0104\n'
+        source = b'import x;\nawait assertLegacyAgentScanWrite(tx);\n' if gated else b'// before 0105\n'
         return patch.object(release, 'git_blob', side_effect=lambda _sha, path: source if path == release.AGENT_SCAN_GATE[0] else b'')
 
     def probe(self, *outcomes):

@@ -142,7 +142,7 @@ export async function applyUptimeTransition(database: Database, input: { target:
       return { kind: input.apply ? "applied" as const : "dry_run" as const, plan, before: snapshot.control, after };
     });
   } catch (error) {
-    // 판정 뒤 split 이 먼저 claims 로 commit 된 경합 — 0103 트리거의 거절을 오류가 아니라 거절로 돌려준다(아무것도 쓰지 않았다)
+    // 판정 뒤 split 이 먼저 claims 로 commit 된 경합 — 0104 트리거의 거절을 오류가 아니라 거절로 돌려준다(아무것도 쓰지 않았다)
     const code = uptimeExclusionError(error);
     if (code) return { kind: "blocked", plan: { ...plan, allowed: false, blocked: [...plan.blocked, code] }, before: snapshot.control };
     throw error;
