@@ -6,6 +6,7 @@ import type { detail } from "@/messages/ko/detail";
 import type { auth } from "@/messages/ko/auth";
 import type { launch } from "@/messages/ko/launch";
 import type { policy } from "@/messages/ko/policy";
+import type { me } from "@/messages/ko/me";
 
 /** Korean declares semantic keys and interpolation contracts, not translated values. */
 export interface MessageSchemas {
@@ -17,6 +18,7 @@ export interface MessageSchemas {
   auth: typeof auth;
   launch: typeof launch;
   policy: typeof policy;
+  me: typeof me;
 }
 export type Namespace = keyof MessageSchemas;
 export type MessageCatalog<Schema> = { readonly [Key in keyof Schema]: string };

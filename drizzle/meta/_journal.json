@@ -757,6 +757,13 @@
       "when": 1794086400019,
       "tag": "0107_oracle_consumer_row_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1794086400020,
+      "tag": "0108_mypage",
+      "breakpoints": true
     }
   ]
 }

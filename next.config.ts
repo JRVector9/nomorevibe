@@ -70,6 +70,9 @@ const nextConfig: NextConfig = {
         { source: localePath(locale, "/login"), headers: noStore },
         { source: localePath(locale, "/feedback/:id"), headers: noStore },
         { source: localePath(locale, "/p/:slug/github"), headers: [...tag("html,p-:slug"), ...noStore] },
+        // 마이페이지는 사람마다 다르다 — 로그인 전 화면(이 브라우저 목록)도 저장하지 않는다
+        { source: localePath(locale, "/me"), headers: noStore },
+        { source: localePath(locale, "/me/:tab*"), headers: noStore },
       ]),
       ...["nmv_admin", "nmv_user", "nmv_login_nonce"].map((key) => ({
         source: "/:path*", has: [{ type: "cookie" as const, key }], headers: noStore,
