@@ -24,8 +24,8 @@ const reply = (status: number, body: unknown, headers: Record<string, string> = 
   Response.json(body, { status, headers: { ...HEADERS, ...headers } });
 const refuse = (status: number, error: string): Checked => ({ ok: false, response: reply(status, { error }) });
 
-/** 4KB 까지만 읽는다 — 넘으면 "too_large", 5초 안에 다 오지 않으면 "timeout" */
-async function readBody(request: Request): Promise<Uint8Array | "too_large" | "timeout"> {
+/** max 바이트(보고 4KB)까지만 읽는다 — 넘으면 "too_large", 5초 안에 다 오지 않으면 "timeout". X 게시물 보고(x-posts-receive)도 쓴다 */
+export async function readBody(request: Request, max = X_STATUS_MAX_BODY_BYTES): Promise<Uint8Array | "too_large" | "timeout"> {
   const reader = request.body?.getReader();
   if (!reader) return new Uint8Array();
   const chunks: Uint8Array[] = [];
@@ -37,7 +37,7 @@ async function readBody(request: Request): Promise<Uint8Array | "too_large" | "t
       if (next === "timeout") { void reader.cancel().catch(() => {}); return "timeout"; }
       if (next.done) return Buffer.concat(chunks, size);
       size += next.value.byteLength;
-      if (size > X_STATUS_MAX_BODY_BYTES) { void reader.cancel().catch(() => {}); return "too_large"; }
+      if (size > max) { void reader.cancel().catch(() => {}); return "too_large"; }
       chunks.push(next.value);
     }
   } finally { clearTimeout(timer); reader.releaseLock(); }

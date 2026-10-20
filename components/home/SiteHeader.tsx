@@ -54,6 +54,14 @@ function RisingLink({ active = false }: { active?: boolean }) {
   return <Link prefetch={false} href={localePath(locale, "/rising")} className={active ? "active" : undefined}>{t("navigation.rising")}</Link>;
 }
 
+/** SNS 화제(C안) — 켜져 있으면 메뉴 맨 앞. /talk 에서 진하게 */
+function TalkNavLink() {
+  const locale = useLocale();
+  const t = useTranslations("common");
+  const active = stripLocale(usePathname()).startsWith("/talk");
+  return <Link prefetch={false} href={localePath(locale, "/talk")} className={active ? "active" : undefined}>{t("navigation.talk")}</Link>;
+}
+
 /** 급상승 화면과 거르기 없는 홈에서 켠다. 신규 모두 보기·검색·분야 화면에서는 끈다. */
 function RisingNavLink() {
   const pathname = stripLocale(usePathname());
@@ -102,7 +110,7 @@ function SearchFields() {
  * 주소의 쿼리(useSearchParams)를 읽는 두 조각만 Suspense 로 감싼다. 정적으로 굳는 화면에서는 그 조각만 기다림 모양으로
  * 나가는데, 기다림 모양도 같은 링크·입력칸이라 자리가 바뀌지 않는다.
  */
-export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
+export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authEnabled?: boolean; talkEnabled?: boolean }) {
   const router = useRouter();
   const locale = useLocale();
   const t = useTranslations("common");
@@ -183,6 +191,7 @@ export function SiteHeader({ authEnabled = false }: { authEnabled?: boolean }) {
           {BRAND}
         </Link>
         <nav className="navigation" aria-label={t("navigation.main")}>
+          {talkEnabled && <TalkNavLink />}
           <Suspense fallback={<RisingLink />}>
             <RisingNavLink />
           </Suspense>

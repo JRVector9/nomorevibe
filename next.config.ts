@@ -67,6 +67,7 @@ const nextConfig: NextConfig = {
       { path: "/c/:category", tags: "html,lists", seconds: 60 },
       { path: "/popular", tags: "html,lists", seconds: 60 },
       { path: "/rising", tags: "html,lists", seconds: 60 },
+      { path: "/talk", tags: "html,lists", seconds: 60 },
       { path: "/policy", tags: "html", seconds: 600 },
       { path: "/launch", tags: "html", seconds: 600 },
       { path: "/rankings/:key", tags: "html,lists", seconds: 60 },
