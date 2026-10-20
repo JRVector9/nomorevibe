@@ -7,6 +7,7 @@ import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import type { TranslatedProduct } from "@/lib/i18n/products";
 import type { TalkEntry, TalkPost, TalkProduct } from "@/lib/social/talk";
+import { TALK_SAMPLE_TARGET } from "@/lib/social/talk-samples";
 import { TalkSparkline } from "./TalkSparkline";
 import { discussionUrl, sourceChip, sourceClass, sourceList } from "./talk-format";
 import "./talk.css";
@@ -48,6 +49,7 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
   const count = (n: number) => formatNumber(n, locale);
   const href = (slug: string) => localePath(locale, `/p/${slug}`);
   const firstPost = lead ? lead.posts.reduce((first, post) => post.postedAt < first.postedAt ? post : first, lead.posts[0]) : null;
+  const sampled = Boolean(lead?.sample) || rest.some(entry => entry.sample);
   return (
     <section id="talk" className="talk-hero" aria-labelledby="talk-title">
       {preview && <p className="talk-preview" role="note">{t("talk.preview")}</p>}
@@ -65,12 +67,14 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
               <div className="talk-lead-top">
                 <ProductIcon name={lead.product.name} ogImage={lead.product.ogImage} size={60} category={lead.product.category} />
                 <div style={{ minWidth: 0 }}>
-                  <p className="talk-lead-rank">{t("talk.lead")}</p>
-                  <h3 id="talk-lead-title"><Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link></h3>
+                  <p className="talk-lead-rank">{lead.sample ? <span className="talk-sample">{t("talk.sample")}</span> : t("talk.lead")}</p>
+                  <h3 id="talk-lead-title">{lead.sample ? lead.product.name : <Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link>}</h3>
                 </div>
               </div>
-              <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
-                translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
+              {lead.sample ? <p className="talk-lead-tagline talk-sample-text">{t("talk.sampleTagline")}</p> : (
+                <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
+                  translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
+              )}
               <TalkChips posts={lead.posts} t={t} locale={locale} />
               {lead.starGrowth && (
                 <div className="talk-lead-chart">
@@ -82,10 +86,12 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
                     label={`${count(lead.starGrowth.from)} → ${count(lead.starGrowth.to)}`} />
                 </div>
               )}
-              <div className="talk-actions">
-                <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
-                {lead.posts[0] && <a href={discussionUrl(lead.posts[0])} target="_blank" rel="noopener">{t("talk.discussion")} ↗</a>}
-              </div>
+              {!lead.sample && (
+                <div className="talk-actions">
+                  <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
+                  {lead.posts[0] && <a href={discussionUrl(lead.posts[0])} target="_blank" rel="noopener">{t("talk.discussion")} ↗</a>}
+                </div>
+              )}
             </article>
           )}
           {rest.length > 0 && (
@@ -95,7 +101,8 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
                   <span className="talk-row-rank">{entry.rank}</span>
                   <ProductIcon name={entry.product.name} ogImage={entry.product.ogImage} size={40} category={entry.product.category} />
                   <span className="talk-row-name">
-                    <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>
+                    {entry.sample ? <span>{entry.product.name} <span className="talk-sample">{t("talk.sample")}</span></span>
+                      : <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>}
                     <TalkChips posts={entry.posts} t={t} locale={locale} short />
                   </span>
                   <span className="talk-row-stars">
@@ -108,6 +115,7 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
           )}
         </div>
       )}
+      {sampled && <p className="talk-sample-note" role="note">{t("talk.sampleNote", { count: count(TALK_SAMPLE_TARGET) })}</p>}
     </section>
   );
 }

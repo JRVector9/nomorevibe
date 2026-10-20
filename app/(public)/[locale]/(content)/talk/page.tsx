@@ -22,6 +22,7 @@ import { getRequestLocale } from "@/lib/i18n/server";
 import { logger } from "@/lib/observability/logger";
 import { talkVisibility } from "@/lib/social/flags";
 import { listTalk, type TalkBoard } from "@/lib/social/talk";
+import { padWithSamples, TALK_SAMPLE_TARGET } from "@/lib/social/talk-samples";
 import type { TalkMode } from "@/lib/social/talk-score";
 
 export const dynamic = "force-dynamic";
@@ -65,10 +66,13 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
     logger.error("talk.list_failed", { error });
   }
   const localized = await localizeProductList((board?.entries ?? []).map(entry => entry.product), locale);
-  const entries: LocalizedTalkEntry[] = (board?.entries ?? []).map((entry, index) => ({ ...entry, product: localized[index] }));
+  const real: LocalizedTalkEntry[] = (board?.entries ?? []).map((entry, index) => ({ ...entry, product: localized[index] }));
+  // 실제 화제가 모이기 전에는 모자란 자리를 '예시' 카드로 채운다(lib/social/talk-samples.ts) — 타임라인은 실제 글만
+  const entries = board ? padWithSamples(real, now, n => t("talk.sampleName", { n: String(n) })) : real;
+  const sampled = entries.some(entry => entry.sample);
   const [lead, ...rest] = entries;
   const sources = [...new Set(entries.flatMap(entry => entry.sources))];
-  const recent = entries.flatMap(entry => entry.posts.map(post => ({ post, entry })))
+  const recent = real.flatMap(entry => entry.posts.map(post => ({ post, entry })))
     .sort((a, b) => b.post.postedAt.getTime() - a.post.postedAt.getTime()).slice(0, 6);
   const href = (slug: string) => localePath(locale, `/p/${slug}`);
   const firstPosted = lead ? new Date(Math.min(...lead.posts.map(post => post.postedAt.getTime()))) : null;
@@ -96,17 +100,23 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
       {!board ? <p className="talk-empty" role="status">{t("error.list")}</p> : !lead ? <p className="talk-empty" role="status">{t("talk.empty")}</p> : (
         <section className="talk-feature" aria-labelledby="talk-feature-title">
           <div className="talk-feature-main">
-            <p className="talk-lead-rank">{mode === "now" ? t("talk.lead") : t("talk.modeWeek")} · {t("talk.sourceCount", { count: count(lead.sources.length) })}</p>
+            <p className="talk-lead-rank">
+              {lead.sample ? <span className="talk-sample">{t("talk.sample")}</span> : mode === "now" ? t("talk.lead") : t("talk.modeWeek")} · {t("talk.sourceCount", { count: count(lead.sources.length) })}
+            </p>
             <h2 id="talk-feature-title">
               <ProductIcon name={lead.product.name} ogImage={lead.product.ogImage} size={52} category={lead.product.category} />
-              <Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link>
+              {lead.sample ? lead.product.name : <Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link>}
             </h2>
-            <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
-              translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
+            {lead.sample ? <p className="talk-lead-tagline talk-sample-text">{t("talk.sampleTagline")}</p> : (
+              <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
+                translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
+            )}
             <PostLines entry={lead} t={t} locale={locale} now={now} />
-            <div className="talk-actions">
-              <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
-            </div>
+            {!lead.sample && (
+              <div className="talk-actions">
+                <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
+              </div>
+            )}
           </div>
           <div className="talk-feature-chart">
             <span className="talk-stat">{t(lead.starGrowth?.basis === "observation" ? "talk.starsAfterObservation" : "talk.starsAfterMention")}</span>
@@ -130,9 +140,14 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
               <span className="talk-entry-rank">{entry.rank}</span>
               <ProductIcon name={entry.product.name} ogImage={entry.product.ogImage} size={44} category={entry.product.category} />
               <div style={{ minWidth: 0 }}>
-                <div className="talk-entry-name"><Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link></div>
-                <ProductTagline className="talk-entry-tagline" tagline={entry.product.tagline} taglineKo={entry.product.taglineKo}
-                  translation={entry.product.translation} source={entry.product.taglineSource} showSource={false} />
+                <div className="talk-entry-name">
+                  {entry.sample ? <>{entry.product.name} <span className="talk-sample">{t("talk.sample")}</span></>
+                    : <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>}
+                </div>
+                {entry.sample ? <p className="talk-entry-tagline talk-sample-text">{t("talk.sampleTagline")}</p> : (
+                  <ProductTagline className="talk-entry-tagline" tagline={entry.product.tagline} taglineKo={entry.product.taglineKo}
+                    translation={entry.product.translation} source={entry.product.taglineSource} showSource={false} />
+                )}
                 <PostLines entry={entry} t={t} locale={locale} now={now} />
               </div>
               <div className="talk-stat">
@@ -144,6 +159,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
           ))}
         </ol>
         <aside className="talk-aside">
+          {sampled && <p className="talk-sample-note" role="note">{t("talk.sampleNote", { count: count(TALK_SAMPLE_TARGET) })}</p>}
           {recent.length > 0 && (
             <section className="talk-box" aria-labelledby="talk-timeline-title">
               <h2 id="talk-timeline-title">{t("talk.timeline")}</h2>
@@ -190,9 +206,10 @@ function PostLines({ entry, t, locale, now }: { entry: LocalizedTalkEntry; t: Tr
           <div key={post.id} className="talk-line">
             <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(x ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
             {post.kind === "show" && <span className="talk-maker">{t("talk.byMaker")}</span>}
-            {x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
+            {entry.sample ? <span className="talk-line-title">{t("talk.samplePost")}</span>
+              : x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
             <span>{formatDate(post.postedAt, now, locale)}</span>
-            <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t(x ? "talk.viewOnX" : "talk.discussion")} ↗</a>
+            {!entry.sample && <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t(x ? "talk.viewOnX" : "talk.discussion")} ↗</a>}
           </div>
         );
       })}

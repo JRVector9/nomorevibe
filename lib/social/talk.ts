@@ -75,6 +75,8 @@ export type TalkEntry = {
   byMaker: boolean;
   starGrowth: TalkStarGrowth | null;
   homeDecision: TalkHomeDecision | null;
+  /** 실제 화제가 모이기 전 빈 자리를 채우는 '예시' 카드(lib/social/talk-samples.ts) — 링크·실제 제품이 없다 */
+  sample?: true;
 };
 export type TalkBoard = {
   mode: TalkMode;
