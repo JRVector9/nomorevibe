@@ -25,7 +25,7 @@ import "./cards.css";
  * 미클레임·저장소·관심 수는 방문자에게 뜻이 없어 뺐다(상세에서 밝힌다). 메이커가 신고한 제작 도구만
  * 소유자 옆에 붙는다 — 수집기 추정값은 공개 뷰모델에서 이미 null 이다(view.ts toListItem).
  */
-export function ProjectCard({ product, saved, onToggleSave, now, priority = false, headingLevel = 3, rank }: {
+export function ProjectCard({ product, saved, onToggleSave, now, priority = false, headingLevel = 3, rank, children }: {
   product: HomeCardProduct & { listedAt?: TimeInput };
   saved: boolean;
   onToggleSave: (slug: string) => void;
@@ -38,6 +38,8 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
   headingLevel?: 2 | 3;
   /** 순위 목록(홈 '많이 쓰이는 프로젝트'·/popular 카드 보기)의 자리 — 제목 앞에 숫자로 */
   rank?: number;
+  /** 메타 줄 아래 한 줄 — 마이페이지 저장 탭의 써봤는지·저장한 날 */
+  children?: React.ReactNode;
 }) {
   const serverNow = useServerNow();
   const locale = useLocale();
@@ -89,6 +91,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
           </span>
           {product.starGrowth ? <StarGrowthMetric value={product.starGrowth} /> : <StarMetric value={product} now={at} listedAt={product.listedAt} />}
         </div>
+        {children}
       </div>
     </article>
   );

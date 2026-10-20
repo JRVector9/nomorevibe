@@ -1,0 +1,30 @@
+/* 저장 동기화 토스트·합치기 묻기(마이페이지 MY2) — app/globals.css 토큰만. 글자색·바탕을 뒤집어 두 테마에서 같은 모양이다 */
+.saved-toast {
+  position: fixed; left: 50%; bottom: 24px; z-index: 30; transform: translateX(-50%);
+  width: min(460px, calc(100vw - 32px)); padding: 14px 16px; border-radius: 16px;
+  background: var(--text); color: var(--bg-card); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  font-size: 14px; line-height: 1.45;
+}
+.saved-toast p { margin: 0; }
+.saved-toast-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.saved-toast-close, .saved-toast .saved-merge-later {
+  min-height: 40px; padding: 0 12px; border: 0; border-radius: 980px; background: transparent; color: inherit;
+  font: inherit; font-size: 14px; font-weight: 500; flex: none; cursor: pointer; opacity: 0.85;
+}
+.saved-toast-close:hover, .saved-toast .saved-merge-later:hover { opacity: 1; }
+
+.saved-merge { display: flex; flex-direction: column; gap: 10px; }
+.saved-merge p { margin: 0; }
+.saved-merge-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.saved-merge-move, .saved-merge-later {
+  min-height: 40px; padding: 0 16px; border-radius: 980px; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+}
+.saved-merge-move { border: 0; background: var(--accent-solid); color: #fff; }
+.saved-merge-later { border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text); }
+.saved-merge button:disabled { opacity: 0.6; cursor: default; }
+.saved-toast .saved-merge-later { border: 0; }
+
+/* 좁은 화면 — 아래 탭 막대(MobileNav) 위로 */
+@media (max-width: 520px) {
+  .saved-toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+}

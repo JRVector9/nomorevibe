@@ -43,4 +43,14 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "社交热议",
   "navigation.talkShort": "热议",
+  // 저장 동기화 알림(마이페이지 MY2) — 어느 화면에서나 뜬다
+  "saved.mergePrompt": "要把此浏览器中的 {count} 个收藏移到账号吗？",
+  "saved.mergeMove": "移过去",
+  "saved.mergeLater": "以后再说",
+  "saved.merging": "正在移动…",
+  "saved.merged": "已将 {count} 个收藏移到账号。",
+  "saved.mergeSkipped": "{count} 个因已下架或超出上限而未能移动。",
+  "saved.mergeFailed": "暂时无法移动。此浏览器中的列表保持不变。",
+  "saved.limit": "最多可收藏 {limit} 个项目。请先移除不再需要的项目。",
+  "saved.close": "关闭",
 });

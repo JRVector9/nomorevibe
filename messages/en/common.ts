@@ -43,4 +43,14 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "Social buzz",
   "navigation.talkShort": "Buzz",
+  // 저장 동기화 알림(마이페이지 MY2) — 어느 화면에서나 뜬다
+  "saved.mergePrompt": "Move the {count} saved projects in this browser to your account?",
+  "saved.mergeMove": "Move",
+  "saved.mergeLater": "Later",
+  "saved.merging": "Moving…",
+  "saved.merged": "Moved {count} saved projects to your account.",
+  "saved.mergeSkipped": "{count} could not be moved because they were taken down or the limit was reached.",
+  "saved.mergeFailed": "Could not move them right now. Your list in this browser is unchanged.",
+  "saved.limit": "You can save up to {limit} projects. Remove some you no longer need first.",
+  "saved.close": "Close",
 });
