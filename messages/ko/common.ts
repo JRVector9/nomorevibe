@@ -38,4 +38,6 @@ export const common = {
   "error.description": globalError.description,
   "error.retry": globalError.retry,
   "error.reference": globalError.reference,
+  "navigation.talk": "SNS 화제",
+  "navigation.talkShort": "화제",
 } as const;
