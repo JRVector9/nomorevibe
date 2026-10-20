@@ -38,6 +38,9 @@ APPROVED_IDENTITY = Path('/etc/nomorevibe-core/oracle-identity.json')
 CGROUP_ROOT = Path('/sys/fs/cgroup')
 PROC_CGROUP = Path('/proc/self/cgroup')
 SLICE = 'nomorevibe-core.slice'
+# systemd nests a dashed slice name under its prefix slice (systemd.slice(5)): nomorevibe-core.slice lives at
+# /nomorevibe.slice/nomorevibe-core.slice, never directly under the cgroup root (osaka-smoke 2026-10-20).
+SLICE_CGROUP = ('nomorevibe.slice', SLICE)
 SERVICE_USER = 'nomorevibe-core'
 HOST = 'oracle-osaka-smoke'
 TARGET = {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'}
@@ -119,10 +122,10 @@ def check_budget(env, role, release_sha, proc_cgroup, cgroup_root, consumer=None
     # cgroup v2 single line: this process must already run inside the shared core slice.
     lines = proc_cgroup.read_text().splitlines() if proc_cgroup.is_file() else []
     parts = PurePosixPath(lines[0][3:]).parts if len(lines) == 1 and lines[0].startswith('0::/') else ()
-    _require(len(parts) >= 2 and parts[1] == SLICE, 'budget', 'core_slice_not_applied')
+    _require(len(parts) > len(SLICE_CGROUP) and parts[1:1 + len(SLICE_CGROUP)] == SLICE_CGROUP, 'budget', 'core_slice_not_applied')
     limits = {}
     for name in ('cpu.max', 'memory.max', 'pids.max'):
-        path = cgroup_root / SLICE / name
+        path = cgroup_root.joinpath(*SLICE_CGROUP, name)
         limits[name] = path.read_text().split() if path.is_file() else []
     # The kernel must enforce numeric aggregate limits; "max" means unbounded.
     _require(len(limits['cpu.max']) == 2 and all(value.isdigit() for value in limits['cpu.max'])

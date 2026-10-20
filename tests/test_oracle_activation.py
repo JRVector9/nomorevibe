@@ -238,11 +238,11 @@ class LauncherGateTests(unittest.TestCase):
         self.approved = self.root / 'oracle-identity.json'
         self.approved.write_text(json.dumps(APPROVED))
         self.cgroup = self.root / 'cgroup'
-        (self.cgroup / launch.SLICE).mkdir(parents=True)
+        self.cgroup.joinpath(*launch.SLICE_CGROUP).mkdir(parents=True)
         for name, value in (('cpu.max', '50000 100000\n'), ('memory.max', '2147483648\n'), ('pids.max', '256\n')):
-            (self.cgroup / launch.SLICE / name).write_text(value)
+            self.cgroup.joinpath(*launch.SLICE_CGROUP, name).write_text(value)
         self.proc = self.root / 'proc-cgroup'
-        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-role@official-news.service\n')
+        self.proc.write_text('0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-role@official-news.service\n')
         self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': INSTANCE, 'WORKER_ROLE': 'official-news',
                     'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': self.budget()}
         self.fetches, self.runs = [], []
@@ -315,13 +315,16 @@ class LauncherGateTests(unittest.TestCase):
                 self.assert_closed('budget', 'host_db_budget_undeclared', env=env)
         self.proc.write_text('0::/system.slice/nomorevibe-core-role@official-news.service\n')
         self.assert_closed('budget', 'core_slice_not_applied')
+        # systemd never puts the dashed slice at the cgroup root; that path is not the core slice
         self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-role@official-news.service\n')
+        self.assert_closed('budget', 'core_slice_not_applied')
+        self.proc.write_text('0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-role@official-news.service\n')
         for name, value in (('cpu.max', 'max 100000\n'), ('memory.max', 'max\n'), ('pids.max', 'max\n')):
-            original = (self.cgroup / launch.SLICE / name).read_text()
-            (self.cgroup / launch.SLICE / name).write_text(value)
+            original = self.cgroup.joinpath(*launch.SLICE_CGROUP, name).read_text()
+            self.cgroup.joinpath(*launch.SLICE_CGROUP, name).write_text(value)
             with self.subTest(limit=name):
                 self.assert_closed('budget', 'core_slice_unbounded')
-            (self.cgroup / launch.SLICE / name).write_text(original)
+            self.cgroup.joinpath(*launch.SLICE_CGROUP, name).write_text(original)
         self.assertEqual((self.fetches, self.runs), ([], []))
 
     def test_oci_identity_must_match_before_any_database_preflight(self):
@@ -368,7 +371,7 @@ class LauncherGateTests(unittest.TestCase):
         self.assertEqual(launch.role_command('scheduler', self.release)[1][-2:], ['scripts/worker-supervisor.ts', '--role=scheduler'])
 
     def test_scheduler_starts_only_with_the_canary_of_its_current_boot(self):
-        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-scheduler.service\n')
+        self.proc.write_text('0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-scheduler.service\n')
         self.env.update(WORKER_ROLE='scheduler', HOST_DB_BUDGET=self.budget('scheduler'))
         # PR11g preflight reasons: a restart (new boot), another batch epoch, stale evidence or no attested tick stay closed.
         for reason in ('result_boot_mismatch', 'result_epoch_mismatch', 'result_stale', 'capability_stale', 'result_unknown', 'candidate_unknown'):
@@ -439,7 +442,7 @@ class ConsumerLauncherGateTests(unittest.TestCase):
         return json.dumps(value)
 
     def use_consumer(self):
-        self.proc.write_text(f'0::/nomorevibe-core.slice/nomorevibe-core-consumer@{CONSUMER}.service\n')
+        self.proc.write_text(f'0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-consumer@{CONSUMER}.service\n')
         self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': CONSUMER_INSTANCE, 'WORKER_ROLE': 'crawler', 'TZ': 'UTC',
                     'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': self.consumer_budget()}
         self.preflight = (78, json.dumps(consumer_report()).encode())
@@ -575,7 +578,7 @@ class UptimeConsumerLauncherTests(unittest.TestCase):
         value = json.loads(self.budget(role))
         value['policy'].update({'roles': [], 'consumers': ['uptime']})
         value['process'].update({'consumer': 'uptime'})
-        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-consumer@uptime.service\n')
+        self.proc.write_text('0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-consumer@uptime.service\n')
         self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': 'uptime-consumer-oracle', 'WORKER_ROLE': role, 'TZ': 'UTC',
                     'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': json.dumps(value)}
         report_value = consumer_report('uptime', 'maintenance', instanceId='uptime-consumer-oracle')
