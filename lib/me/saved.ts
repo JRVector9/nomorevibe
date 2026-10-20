@@ -55,8 +55,9 @@ export type SavedQuery = { sort: SavedSort; filter: SavedFilter; category: strin
 /**
  * 공개 목록과 같은 공개 조건 — 검증·시드 제품이고 기본 목록에 싣는 것(개인 프로필은 주인이 있을 때만, visibility.ts).
  * 내리거나(banned) 검증 전인 제품은 목록에서 빠진다. 응답 없음(notDown)은 빼지 않고 카드에 밝힌다(시안 '접속 안 됨').
+ * 마이페이지 머리 숫자(summary.ts)도 이 조건으로 센다.
  */
-const savedPublic = and(inArray(products.status, ["verified", "seeded"]), listedByDefault)!;
+export const savedPublic = and(inArray(products.status, ["verified", "seeded"]), listedByDefault)!;
 
 const cardColumns = Object.fromEntries(Object.keys(LIST_COLUMNS).map((key) => [key, products[key as keyof typeof LIST_COLUMNS]])) as
   { [K in keyof typeof LIST_COLUMNS]: (typeof products)[K] };

@@ -82,7 +82,7 @@ export default async function MeAccountPage() {
       <section className="me-box" aria-labelledby="me-account-data">
         <h2 className="me-box-h" id="me-account-data">{t("account.data")}</h2>
         <div className="me-kvs">
-          <ExportData />
+          <ExportData csrfToken={session.csrfToken} />
           <DeleteAccount csrfToken={session.csrfToken} displayName={view.displayName} />
         </div>
       </section>

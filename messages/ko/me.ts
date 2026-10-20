@@ -104,6 +104,7 @@ export const me = {
   "account.error.loginRequired": "로그인이 풀렸어요. 다시 로그인해 주세요.",
   "account.error.unavailable": "지금은 바꿀 수 없어요. 잠시 뒤 다시 시도해 주세요.",
   "account.error.generic": "처리하지 못했어요. 다시 시도해 주세요.",
+  "account.deletedName": "탈퇴한 사용자",
   // 의견 탭 (MY1)
   "opinions.title": "남긴 의견",
   "opinions.filter": "의견 거르기",
@@ -227,8 +228,14 @@ export const me = {
   "tried.emptyTitle": "아직 써본 프로젝트가 없어요",
   "tried.emptyBody": "제품을 써 보고 돌아와 한 번만 눌러 주세요.",
   "tried.emptyCta": "지금 뜨는 프로젝트 써보기",
-  "tried.browserNote": "이 브라우저에서 남긴 평가예요. 로그인하면 계정으로 옮겨요.",
+  "tried.browserNote": "이 브라우저에서 남긴 평가예요. 로그인하면 계정으로 옮길 수 있어요.",
   "tried.merged": "이 브라우저의 평가 {count}개를 계정으로 옮겼어요.",
+  "tried.mergePrompt": "이 브라우저에서 남긴 평가 {count}개를 계정으로 옮길까요?",
+  "tried.mergeMove": "옮기기",
+  "tried.mergeLater": "나중에",
+  "tried.merging": "옮기는 중…",
+  "tried.mergeFailed": "평가를 옮기지 못했어요. 잠시 후 다시 해 주세요.",
+  "tried.browserOnly": "이 브라우저에서 남긴 평가예요.",
   // 팔로 탭 (MY4)
   "following.title": "팔로 중",
   "following.groups": "팔로 종류",

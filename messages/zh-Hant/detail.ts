@@ -430,4 +430,5 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "talk.xPost": "X 貼文",
   "talk.viewOnX": "在 X 上查看",
   "talk.xHeadline": "X {points} 次互動 · {comments} 則回覆",
+  "feedback.deletedAuthor": "已註銷使用者",
 });

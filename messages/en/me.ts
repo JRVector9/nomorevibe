@@ -106,6 +106,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "account.error.loginRequired": "You've been signed out. Please sign in again.",
   "account.error.unavailable": "This can't be changed right now. Please try again shortly.",
   "account.error.generic": "Something went wrong. Please try again.",
+  "account.deletedName": "Deleted user",
   // 의견 탭 (MY1)
   "opinions.title": "Your opinions",
   "opinions.filter": "Filter opinions",
@@ -231,6 +232,12 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "tried.emptyCta": "Try a rising project",
   "tried.browserNote": "Ratings left in this browser. Sign in to move them to your account.",
   "tried.merged": "Moved {count} ratings from this browser to your account.",
+  "tried.mergePrompt": "Move {count} ratings left in this browser to your account?",
+  "tried.mergeMove": "Move",
+  "tried.mergeLater": "Later",
+  "tried.merging": "Moving…",
+  "tried.mergeFailed": "Couldn't move the ratings. Please try again shortly.",
+  "tried.browserOnly": "Ratings left in this browser.",
   // 팔로 탭 (MY4)
   "following.title": "Following",
   "following.groups": "Follow types",

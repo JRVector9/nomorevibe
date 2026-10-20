@@ -140,14 +140,12 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
 
   if (hidden) return null;
   const summary = loaded?.summary;
-  // 방금 한 일의 결과가 있으면 그 문구가 내 평가 자리를 대신한다(요약은 그대로 둔다)
-  const meta = [
-    message ?? (mine ? t("try.saved", { verdict: t(`verdict.${mine.verdict}`) }) : null),
-    summary ? t("try.summary", {
-      tried: formatNumber(summary.tried, locale), good: formatNumber(summary.good, locale),
-      meh: formatNumber(summary.meh, locale), bad: formatNumber(summary.bad, locale),
-    }) : loaded ? t("try.summaryFew") : null,
-  ].filter(Boolean).join(" · ");
+  // 방금 한 일의 결과가 있으면 그 문구가 내 평가 자리를 대신한다(요약은 제 줄에 그대로 둔다)
+  const result = message ?? (mine ? t("try.saved", { verdict: t(`verdict.${mine.verdict}`) }) : null);
+  const summaryText = summary ? t("try.summary", {
+    tried: formatNumber(summary.tried, locale), good: formatNumber(summary.good, locale),
+    meh: formatNumber(summary.meh, locale), bad: formatNumber(summary.bad, locale),
+  }) : loaded ? t("try.summaryFew") : null;
   const editor = draft && (
     <form ref={form} className="try-editor" onSubmit={submit} aria-busy={pending}
       onKeyDown={(event) => { if (event.key === "Escape" && !sheet) { event.preventDefault(); close(); } }}>
@@ -180,8 +178,8 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
           </button>
         )}
       </div>
-      {/* 자리를 늘 잡아 둔다 — 요약이 늦게 와도 아래가 밀리지 않는다 */}
-      <p className="try-meta">{meta}</p>
+      {/* 결과 한 줄·요약 한 줄 자리를 늘 잡아 둔다 — 요약이 늦게 와도 아래가 밀리지 않는다. 자르지 않는다(휴대폰 영어도 다 보인다) */}
+      <p className="try-meta"><span>{result}</span><span>{summaryText}</span></p>
       <p className="sr-only" role="status" aria-live="polite">{message}</p>
       {!sheet && editor}
       <dialog ref={dialog} className="try-sheet" aria-labelledby={sheetTitleId} onClose={() => { if (sheet) close(); }}>

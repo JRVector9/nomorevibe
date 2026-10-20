@@ -56,6 +56,15 @@ describe("GET /badge/<slug>.svg", () => {
     for (const slug of ["gone.svg", "missing.svg", "Tiny-Cron.svg"]) expect((await badge(slug)).status, slug).toBe(404);
   });
 
+  it("검증 전(unverified) 등록은 배지도 공유 카드도 404 — 누구나 아무 주소로 등록하므로 «listed» 를 내주면 피싱에 쓰인다", async () => {
+    await product("phish-wallet", "unverified", { name: "MetaMask Wallet", url: "https://phish.example" });
+    for (const query of ["", "?style=tried", "?lang=ko"]) expect((await badge("phish-wallet.svg", query)).status, query).toBe(404);
+    expect((await card("ko", "phish-wallet")).status).toBe(404);
+    expect((await card("en", "phish-wallet")).status).toBe(404);
+    const { shareCardData } = await import("@/lib/me/share");
+    expect(await shareCardData("phish-wallet", "ko")).toBeNull();
+  });
+
   it("?style=tried 는 써본 사람 3명부터 숫자, 그 전에는 기본 배지", async () => {
     const seeded = await product("tiny-cron", "seeded");
     const verified = await product("checked", "verified");

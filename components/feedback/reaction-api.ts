@@ -29,10 +29,19 @@ async function failure(response?: Response): Promise<ReactionFailure> {
   };
 }
 
+/**
+ * 익명 쓰기는 이 브라우저 쿠키(nmv_visitor)가 있어야 받는다 — 쿠키는 GET 이 준다. 쿠키가 지워졌으면(400 visitor_required)
+ * GET 으로 한 번 받아 오고 한 번만 다시 보낸다.
+ */
 export async function putReactionRequest(slug: string, body: ReactionBody, csrfToken: string | null):
   Promise<{ ok: true; mine: ReactionMine; summary: ReactionSummary | null } | ReactionFailure> {
   try {
-    const response = await fetch(endpoint(slug), { method: "PUT", cache: "no-store", headers: headersFor(csrfToken), body: JSON.stringify(body) });
+    const send = () => fetch(endpoint(slug), { method: "PUT", cache: "no-store", headers: headersFor(csrfToken), body: JSON.stringify(body) });
+    let response = await send();
+    if (response.status === 400 && ((await response.clone().json().catch(() => null)) as { error?: unknown } | null)?.error === "visitor_required") {
+      const issued = await fetch(endpoint(slug), { cache: "no-store" });
+      if (issued.ok) response = await send();
+    }
     if (!response.ok) return failure(response);
     const value = await response.json() as { mine: ReactionMine; summary: ReactionSummary | null };
     return { ok: true, mine: value.mine, summary: value.summary };

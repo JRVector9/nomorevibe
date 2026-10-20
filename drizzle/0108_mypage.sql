@@ -1,21 +1,7 @@
 -- 마이페이지(MY1~MY8) 표 — 마이페이지 시안 4절·로그인 설계 8.1절·써봤어요 피드백 설계 5절(2026-10-18).
 -- 기존 표에는 비워 둘 수 있는 열만 더하고, 새 표는 모두 계정·제품이 지워지면 함께 지워진다(작성자 열은 탈퇴 익명화로 남긴다).
-
--- MY1 (L3): 계정 화면 — 닉네임 바꾼 때(30일에 한 번), 탈퇴 표시(댓글 작성자 FK 때문에 행은 남긴다), 로그인 기기 목록
-ALTER TABLE "public_users"
-  ADD COLUMN "display_name_changed_at" timestamp with time zone,
-  ADD COLUMN "deleted_at" timestamp with time zone;
---> statement-breakpoint
-ALTER TABLE "public_identities"
-  ADD COLUMN "provider_login" varchar(100),
-  ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL,
-  ADD COLUMN "last_used_at" timestamp with time zone;
---> statement-breakpoint
-ALTER TABLE "public_sessions"
-  ADD COLUMN "provider" varchar(32),
-  ADD COLUMN "device_label" varchar(40),
-  ADD COLUMN "last_seen_at" timestamp with time zone;
---> statement-breakpoint
+-- 계정 표의 ALTER(ACCESS EXCLUSIVE)는 맨 끝에 둔다 — 앞에서 잡으면 products FK·색인이 잠금을 기다리는 동안
+-- 로그인한 모든 요청(public_sessions 읽기)이 함께 멈춘다.
 
 -- MY2 (L4): 계정 저장 목록. merge = 첫 로그인 때 이 브라우저 목록에서 옮긴 것
 CREATE TABLE "user_saved_products" (
@@ -195,3 +181,30 @@ CREATE TABLE "maker_replies" (
 CREATE UNIQUE INDEX "maker_replies_target_idx" ON "maker_replies" ("target_type", "target_id");
 --> statement-breakpoint
 CREATE INDEX "maker_replies_product_idx" ON "maker_replies" ("product_id", "created_at" DESC);
+--> statement-breakpoint
+
+-- MY4·MY5: 메이커 팔로·내 저장소 찾기·주소로 확인이 쓰는 저장소 주인 열쇠 — 질의(lib/me/follows.ts·maker.ts·maker-claims.ts)와 같은 식이어야 탄다
+CREATE INDEX "products_listed_owner_idx" ON "products" ((substring(lower("repo_url") from '^https?://(?:www\.)?github\.com/([a-z0-9-]+)/[^/]+/?$')));
+--> statement-breakpoint
+CREATE INDEX "products_renamed_owner_idx" ON "products" ((nullif(lower(split_part("repo_renamed_to", '/', 1)), ''))) WHERE "repo_renamed_to" is not null;
+--> statement-breakpoint
+CREATE INDEX "products_renamed_to_idx" ON "products" ((lower("repo_renamed_to"))) WHERE "repo_renamed_to" is not null;
+--> statement-breakpoint
+
+-- MY1 (L3): 계정 화면 — 닉네임 바꾼 때(30일에 한 번), 탈퇴 표시(댓글 작성자 FK 때문에 행은 남긴다), 로그인 기기 목록
+ALTER TABLE "public_users"
+  ADD COLUMN "display_name_changed_at" timestamp with time zone,
+  ADD COLUMN "deleted_at" timestamp with time zone;
+--> statement-breakpoint
+ALTER TABLE "public_identities"
+  ADD COLUMN "provider_login" varchar(100),
+  ADD COLUMN "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  ADD COLUMN "last_used_at" timestamp with time zone;
+--> statement-breakpoint
+-- 이미 있는 연결은 처음 확인한 때가 곧 연결한 때다(새 열의 기본값 now() 는 이 마이그레이션 시각)
+UPDATE "public_identities" SET "created_at" = "verified_at";
+--> statement-breakpoint
+ALTER TABLE "public_sessions"
+  ADD COLUMN "provider" varchar(32),
+  ADD COLUMN "device_label" varchar(40),
+  ADD COLUMN "last_seen_at" timestamp with time zone;

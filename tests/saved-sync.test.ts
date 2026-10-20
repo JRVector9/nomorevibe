@@ -198,6 +198,52 @@ describe("브라우저 동기화", () => {
     expect(storage.read("nmb-saved-v1")).toEqual(["mine"]);
   });
 
+  it.each([["put", [] as string[], ["x"]], ["delete", ["x"], []]] as const)(
+    "계정 목록을 받는 사이 끝난 %s 는 늦게 온 옛 목록이 되돌리지 않는다 — 그 목록은 버리고 다시 받는다",
+    async (op, before, after) => {
+      const storage = browser({ "nmb-saved-v1": before, "nmb-saved-sync-v1": { user: 7, base: before, pending: {} } });
+      let account: string[] = [...before];
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let lists = 0;
+      const calls = server(async (call) => {
+        if (call.url === "/api/me/saved?view=slugs") {
+          lists += 1;
+          // 첫 목록은 누르기 전의 서버 모습 — 저장이 끝난 뒤에야 도착한다
+          const snapshot = [...account];
+          if (lists === 1) await gate;
+          return Response.json({ slugs: snapshot });
+        }
+        if (call.url === "/api/me/saved/x") {
+          account = call.method === "PUT" ? ["x"] : [];
+          return Response.json({ saved: call.method === "PUT", total: account.length });
+        }
+        return loggedIn(call, account) ?? Response.json({}, { status: 500 });
+      });
+      const saved = await load();
+      await vi.waitFor(() => expect(lists).toBe(1));
+      saved.toggleSaved("x", op === "put");
+      await vi.waitFor(() => expect(calls.some((call) => call.url === "/api/me/saved/x")).toBe(true));
+      await vi.waitFor(() => expect((storage.read("nmb-saved-sync-v1") as { base: string[] }).base).toEqual(after));
+      release();
+      await vi.waitFor(() => expect(lists).toBe(2));
+      await vi.waitFor(() => expect(saved.savedAccountSnapshot().serverCount).toBe(after.length));
+      expect(storage.read("nmb-saved-v1")).toEqual(after);
+      expect(storage.read("nmb-saved-sync-v1")).toEqual({ user: 7, base: after, pending: {} });
+      expect(account).toEqual(after);
+      // 다시 보내지 않는다(되돌리는 PUT·DELETE 가 없다)
+      expect(calls.filter((call) => call.url === "/api/me/saved/x")).toHaveLength(1);
+    });
+
+  it("로그인해도 이 브라우저의 써봤어요 평가를 묻지 않고 옮기지 않는다(옮기기는 써봤어요 탭에서 묻는다)", async () => {
+    browser({ "nmb-saved-v1": [], "nmb-reacted-v1": ["tiny-cron"] });
+    vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+    const calls = server((call) => loggedIn(call, []) ?? Response.json({}, { status: 500 }));
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().serverCount).toBe(0));
+    expect(calls.map((call) => call.url)).toEqual(["/api/me/summary", "/api/me/saved?view=slugs"]);
+  });
+
   it("계정을 묻는 동안 누른 책갈피도 로그인이 확인되면 보낸다", async () => {
     browser({ "nmb-saved-v1": [] });
     let answer!: () => void;

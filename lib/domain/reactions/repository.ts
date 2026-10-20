@@ -28,6 +28,8 @@ export type ReactionOwner = { userId: number | null; visitor: string | null };
 /** pg_advisory_xact_lock(이 값, product_id) — 제품 하나의 평가 쓰기를 한 줄로 세운다 */
 const REACTION_LOCK = 6983;
 const HOUR = 3_600;
+/** 신뢰할 IP 가 없을 때 제품 하나에 시간당 랭킹에 세는 새 익명 줄 — 넘으면 받기는 하되 랭킹·공개 요약에서 뺀다 */
+export const UNTRUSTED_NEW_ANONYMOUS_PER_HOUR = 30;
 
 const toMine = (row: ReactionRow): ReactionMine => ({
   verdict: row.verdict, tags: row.tags as ReactionTag[], comment: row.comment, commentState: row.commentState,
@@ -117,7 +119,7 @@ async function dropReplies(tx: Transaction, ids: string[]) {
   if (ids.length) await tx.delete(makerReplies).where(and(eq(makerReplies.targetType, "reaction"), inArray(makerReplies.targetId, ids)));
 }
 
-export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { flood?: boolean; now?: Date } = {}) {
+export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { flood?: boolean; untrustedIp?: boolean; now?: Date } = {}) {
   const now = options.now ?? new Date();
   return onPrimary(() => db.transaction(async (tx) => {
     const product = await findProduct(tx, slug);
@@ -151,6 +153,8 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
     let commentState = current?.commentState ?? null;
     let commentReason = current?.commentReason ?? null;
     if (input.comment !== (current?.comment ?? null)) {
+      // 메이커 답장은 옛 한 줄에 단 것이다 — 한 줄이 바뀌거나 지워지면 함께 지운다
+      if (current) await dropReplies(tx, [current.id]);
       if (input.comment === null) {
         commentState = null;
         commentReason = null;
@@ -163,10 +167,13 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
         ({ state: commentState, reason: commentReason } = reviewReactionComment(input.comment));
       }
     }
+    // 신뢰할 IP 가 없으면 쿠키를 새로 받아 오는 익명 연타를 IP 묶음이 막지 못한다 — 제품마다 새 익명 줄을 세어 넘친 것은 랭킹에서 뺀다
+    const capped = !current && !userId && options.untrustedIp
+      ? !await withinQuota(tx, `reaction-anonymous-new:product:${product.id}`, UNTRUSTED_NEW_ANONYMOUS_PER_HOUR, HOUR) : false;
     const values = {
       verdict: input.verdict, tags: input.tags, comment: input.comment, commentState, commentReason,
       triedVerified: Boolean(current?.triedVerified) || (hash ? await clickedRecently(tx, slug, hash) : false),
-      rankingExcluded: Boolean(current?.rankingExcluded) || Boolean(options.flood),
+      rankingExcluded: Boolean(current?.rankingExcluded) || Boolean(options.flood) || capped,
       source: input.source, device: input.device, locale: input.locale, userId, visitorHash,
     };
     // 소유만 바뀌면(익명 행에 계정을 붙임) 하루 횟수·바꾼 때를 그대로 둔다
@@ -204,10 +211,15 @@ export function deleteReaction(slug: string, owner: ReactionOwner): Promise<{ de
 
 const listSelection = {
   reaction: productReactions, slug: products.slug, name: products.name, ogImage: products.ogImage, category: products.category,
-  replyBody: makerReplies.body, replyAt: makerReplies.createdAt, replyAuthor: publicUsers.displayName,
+  replyBody: makerReplies.body, replyAt: makerReplies.createdAt,
+  // 탈퇴한 계정의 이름은 내보내지 않는다 — 화면이 그 언어로 적는다
+  replyAuthor: sql<string | null>`case when ${publicUsers.deletedAt} is null then ${publicUsers.displayName} end`,
 };
 type ListRow = { reaction: ReactionRow; slug: string; name: string; ogImage: string | null; category: string;
   replyBody: string | null; replyAt: Date | null; replyAuthor: string | null };
+
+/** 써봤어요 목록에 보이는 제품 — 내린(banned) 제품은 뺀다. 마이페이지 머리 숫자(summary.ts)도 이 조건으로 센다 */
+export const reactionListVisible = ne(products.status, "banned");
 
 function listQuery(where: ReturnType<typeof and>) {
   return db.select(listSelection).from(productReactions)
@@ -215,13 +227,13 @@ function listQuery(where: ReturnType<typeof and>) {
     // 메이커 답장은 검수를 지난 것만(MY6 이 쓴다)
     .leftJoin(makerReplies, and(eq(makerReplies.targetType, "reaction"), eq(makerReplies.targetId, productReactions.id), eq(makerReplies.reviewState, "accepted")))
     .leftJoin(publicUsers, eq(publicUsers.id, makerReplies.authorUserId))
-    .where(and(where, ne(products.status, "banned")))
+    .where(and(where, reactionListVisible))
     .orderBy(desc(productReactions.updatedAt), asc(productReactions.id));
 }
 
 const toItem = (row: ListRow): ReactionListItem => ({
   ...toMine(row.reaction), slug: row.slug, name: row.name, ogImage: row.ogImage?.startsWith("/") && !row.ogImage.startsWith("//") ? row.ogImage : null, category: row.category,
-  reply: row.replyBody && row.replyAt ? { body: row.replyBody, authorName: row.replyAuthor ?? "", createdAt: row.replyAt.toISOString() } : null,
+  reply: row.replyBody && row.replyAt ? { body: row.replyBody, authorName: row.replyAuthor, createdAt: row.replyAt.toISOString() } : null,
 });
 
 /** 계정의 평가 — 최근에 바꾼 순 */

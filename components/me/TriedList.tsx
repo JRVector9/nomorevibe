@@ -6,7 +6,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
 import { ReactionFields, type ReactionDraft } from "@/components/feedback/ReactionFields";
 import { deleteReactionRequest, phoneWidth, putReactionRequest } from "@/components/feedback/reaction-api";
-import { forgetReacted, mergeBrowserReactions, reactedChunks, rememberReacted } from "@/components/feedback/reacted";
+import { browserReactionsToMerge, forgetReacted, mergeBrowserReactions, postponeReactionMerge, reactedChunks, rememberReacted } from "@/components/feedback/reacted";
 import type { ReactionListItem } from "@/lib/domain/reactions/contract";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatDate, formatNumber, formatRelativeTime } from "@/lib/i18n/format";
@@ -24,36 +24,30 @@ async function fetchItems(url: string): Promise<ReactionListItem[]> {
   return ((await response.json()) as { reactions: ReactionListItem[] }).reactions;
 }
 
-/** 합치기는 세션마다 한 번 — 효과가 다시 돌아도(개발 StrictMode·다시 열기) 같은 결과를 나눠 받는다 */
-const merges = new Map<string, Promise<number>>();
-function mergeOnce(csrfToken: string): Promise<number> {
-  let pending = merges.get(csrfToken);
-  if (!pending) merges.set(csrfToken, pending = reactedChunks().length > 0 ? mergeBrowserReactions(csrfToken) : Promise.resolve(0));
-  return pending;
-}
-
 /**
  * 로그아웃: 이 브라우저가 기억한 slug 마다 이 쿠키의 익명 평가만(Q4).
- * 로그인: 처음 열 때 이 브라우저 평가를 계정에 합치고(L4), 옮긴 것이 있거나 서버가 목록을 못 줬으면 다시 읽는다. null 은 그대로 둔다.
+ * 로그인: 서버가 목록을 못 줬거나 다시 읽을 때만 계정 목록을 읽는다. null 은 그대로 둔다.
  */
-async function loadItems(csrfToken: string | null, hasInitial: boolean): Promise<{ items: ReactionListItem[] | null; merged: number }> {
-  if (csrfToken) {
-    const merged = await mergeOnce(csrfToken);
-    return { items: merged > 0 || !hasInitial ? await fetchItems("/api/me/reactions") : null, merged };
-  }
+async function loadItems(csrfToken: string | null, hasInitial: boolean): Promise<ReactionListItem[] | null> {
+  if (csrfToken) return hasInitial ? null : fetchItems("/api/me/reactions");
   const batches = await Promise.all(reactedChunks().map((slugs) => fetchItems(`/api/me/reactions/browser?slugs=${encodeURIComponent(slugs.join(","))}`)));
-  return { items: batches.flat().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)), merged: 0 };
+  return batches.flat().sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 /**
  * 써봤어요 탭(마이페이지 시안 3.2) — 제품마다 평가 하나, 태그, 한 줄과 그 상태, 써봄 확인, 메이커 답장.
  * 고치기는 그 자리에서 열리고 상세 판과 같은 PUT(source=me)을 쓴다. 지우기는 두 번 눌러야 하고 5초 동안 되돌릴 수 있다.
+ * 로그인했고 이 브라우저에 계정으로 옮기지 않은 익명 평가가 있으면 옮길지 묻는다(«옮기기»·«나중에», 저장 탭의 묻기와 같은 모양) —
+ * 공용 PC 에서 남이 남긴 평가가 묻지도 않고 내 계정에 붙지 않게.
  */
-export function TriedList({ account, initial }: { account: { csrfToken: string } | null; initial: ReactionListItem[] | null }) {
+export function TriedList({ account, initial, authEnabled }: {
+  account: { csrfToken: string; userId: number } | null; initial: ReactionListItem[] | null; authEnabled: boolean;
+}) {
   const t = useTranslations("me");
   const locale = useLocale();
   const now = useServerNow();
   const csrfToken = account?.csrfToken ?? null;
+  const userId = account?.userId ?? null;
   const [items, setItems] = useState<ReactionListItem[] | null>(initial);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -62,6 +56,9 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [merged, setMerged] = useState(0);
+  const [offer, setOffer] = useState<string[]>([]);
+  const [merging, setMerging] = useState(false);
+  const [mergeFailed, setMergeFailed] = useState(false);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [removed, setRemoved] = useState<Pending | null>(null);
   const trap = useRef<HTMLInputElement>(null);
@@ -70,14 +67,41 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
   const hasInitial = initial !== null;
   useEffect(() => {
     let active = true;
-    loadItems(csrfToken, hasInitial && attempt === 0).then(({ items: loaded, merged: count }) => {
+    loadItems(csrfToken, hasInitial && attempt === 0).then((loaded) => {
       if (!active) return;
       if (loaded) setItems(loaded);
       setFailed(false);
-      setMerged(count);
     }).catch(() => { if (active) setFailed(true); });
     return () => { active = false; };
   }, [csrfToken, hasInitial, attempt]);
+
+  // 이 브라우저에 남은 익명 평가 — 읽기만 한다. 옮기기는 «옮기기»를 눌러야 한다
+  useEffect(() => {
+    if (userId === null) return;
+    let active = true;
+    void browserReactionsToMerge(userId).then((slugs) => { if (active) setOffer(slugs); });
+    return () => { active = false; };
+  }, [userId]);
+
+  async function moveBrowserReactions() {
+    if (userId === null || !csrfToken || merging) return;
+    setMerging(true);
+    setMergeFailed(false);
+    const count = await mergeBrowserReactions(userId, csrfToken, offer);
+    setMerging(false);
+    // 옮기지 못했으면(fenced DB 등) 익명 평가는 그대로 — 묻기를 남겨 다시 누를 수 있다
+    if (count === null) return setMergeFailed(true);
+    setOffer([]);
+    setMerged(count);
+    // 옮긴 평가가 계정 목록에 들어오도록 다시 읽는다
+    setAttempt((value) => value + 1);
+  }
+
+  function postponeBrowserReactions() {
+    if (userId === null) return;
+    postponeReactionMerge(userId);
+    setOffer([]);
+  }
 
   // 되돌리기를 기다리는 중에 떠나면 바로 지운다(keepalive)
   useEffect(() => {
@@ -170,6 +194,16 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
   }
   if (!items) return <section className="tried" aria-busy="true"><p className="tried-status">{t("tried.loading")}</p></section>;
 
+  const mergePrompt = offer.length > 0 && (
+    <div className="tried-merge">
+      <p>{t("tried.mergePrompt", { count: formatNumber(offer.length, locale) })}</p>
+      {mergeFailed && <p className="tried-error" role="alert">{t("tried.mergeFailed")}</p>}
+      <div className="tried-merge-actions">
+        <button type="button" className="tried-save" onClick={moveBrowserReactions} aria-disabled={merging}>{t(merging ? "tried.merging" : "tried.mergeMove")}</button>
+        <button type="button" className="tried-button" onClick={postponeBrowserReactions} disabled={merging}>{t("tried.mergeLater")}</button>
+      </div>
+    </div>
+  );
   const undoBar = removed && (
     <div className="tried-undo">
       <span>{t("tried.deleted", { name: removed.item.name })}</span>
@@ -180,6 +214,8 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
     return (
       <section className="tried">
         <h2 className="sr-only">{t("tried.title")}</h2>
+        {mergePrompt}
+        {merged > 0 && <p className="tried-browser">{t("tried.merged", { count: formatNumber(merged, locale) })}</p>}
         {undoBar}
         <div className="tried-empty">
           <p className="tried-empty-title">{t("tried.emptyTitle")}</p>
@@ -197,12 +233,13 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
   return (
     <section className="tried">
       <h2 className="sr-only">{t("tried.title")}</h2>
-      {!account && (
+      {!account && (authEnabled ? (
         <p className="tried-browser">
           {t("tried.browserNote")}{" "}
           <Link prefetch={false} href={localePath(locale, `/login?returnTo=${encodeURIComponent(localePath(locale, ME_TAB_PATHS.tried))}`)}>{t("loginRequired.cta")}</Link>
         </p>
-      )}
+      ) : <p className="tried-browser">{t("tried.browserOnly")}</p>)}
+      {mergePrompt}
       {merged > 0 && <p className="tried-browser">{t("tried.merged", { count: formatNumber(merged, locale) })}</p>}
       <div className="tried-filters" role="group" aria-label={t("tried.filter")}>
         {(["all", ...REACTION_VERDICTS] as const).map((value) => (
@@ -241,7 +278,7 @@ export function TriedList({ account, initial }: { account: { csrfToken: string }
                 )}
                 {item.reply && (
                   <div className="tried-reply">
-                    <p className="tried-reply-by">{t("tried.reply")} · {item.reply.authorName} · {formatRelativeTime(item.reply.createdAt, now, locale)}</p>
+                    <p className="tried-reply-by">{t("tried.reply")} · {item.reply.authorName ?? t("account.deletedName")} · {formatRelativeTime(item.reply.createdAt, now, locale)}</p>
                     <p className="tried-reply-body">{item.reply.body}</p>
                   </div>
                 )}

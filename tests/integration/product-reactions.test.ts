@@ -101,10 +101,16 @@ describe("anonymous reactions keyed by the nmv_visitor cookie", () => {
     expect(await rows()).toHaveLength(0);
   });
 
-  it("issues the same first-party visitor cookie as /go when the browser has none", async () => {
+  it("issues the same first-party visitor cookie as /go from GET when the browser has none, and refuses cookie-less anonymous writes", async () => {
     await seed();
-    const response = await put("try-tool", { verdict: "meh" });
+    const refused = await put("try-tool", { verdict: "meh" });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: "visitor_required" });
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    expect(await rows()).toHaveLength(0);
+    const response = await get("try-tool");
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     const cookie = response.headers.get("set-cookie") ?? "";
     const issued = cookie.match(/nmv_visitor=([a-f0-9-]+)/)?.[1];
     expect(issued).toMatch(/^[a-f0-9-]{36}$/);
@@ -112,8 +118,16 @@ describe("anonymous reactions keyed by the nmv_visitor cookie", () => {
     expect(cookie).toMatch(/SameSite=lax/i);
     expect(cookie).toMatch(/Path=\//);
     expect(cookie).toMatch(/Max-Age=31536000/);
-    expect((await (await get("try-tool", { visitor: issued })).json()).mine).toMatchObject({ verdict: "meh" });
+    expect((await put("try-tool", { verdict: "meh" }, { visitor: issued })).status).toBe(200);
+    const again = await get("try-tool", { visitor: issued });
+    expect(again.headers.get("set-cookie")).toBeNull();
+    expect((await again.json()).mine).toMatchObject({ verdict: "meh" });
     expect((await rows())[0].visitorHash).toBe(hashOf("try-tool", issued));
+    // 모양이 틀린 쿠키는 없는 것과 같다
+    expect((await put("try-tool", { verdict: "good" }, { visitor: "not a visitor id" })).status).toBe(400);
+    // 로그인했으면 쿠키 없이도 계정으로 쓴다
+    const session = await login();
+    expect((await put("try-tool", { verdict: "good" }, { session })).status).toBe(200);
   });
 
   it("marks a reaction tried-verified only after a /go click by the same visitor within seven days", async () => {
@@ -264,14 +278,49 @@ describe("anti-abuse", () => {
 
     vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
     for (let index = 0; index < 60; index += 1) {
-      expect((await put("try-tool", { verdict: "good" }, { ip: "198.51.100.7" })).status).toBe(200);
+      expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip: "198.51.100.7" })).status).toBe(200);
     }
-    // 쿠키를 버리고 다시 와도 IP 묶음이 막는다
-    expect((await put("try-tool", { verdict: "good" }, { ip: "198.51.100.7" })).status).toBe(429);
-    expect((await put("try-tool", { verdict: "good" }, { ip: "198.51.100.8" })).status).toBe(200);
+    // 쿠키를 버리고 새로 받아 와도 IP 묶음이 막는다
+    expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip: "198.51.100.7" })).status).toBe(429);
+    expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip: "198.51.100.8" })).status).toBe(200);
     const keys = (await db.select({ key: rateLimits.key }).from(rateLimits)).map((row) => row.key);
     expect(keys.some((key) => key.includes("198.51.100"))).toBe(false);
     expect(keys.some((key) => key.includes(VISITOR))).toBe(false);
+  });
+
+  it("buckets IPv6 clients by /64 for the IP limit", async () => {
+    const { ipBucket } = await import("@/lib/domain/reactions/http");
+    await seed();
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    const bucket = productVisitorHash("ip:", "2001:db8:1:2::/64");
+    expect(ipBucket("2001:0db8:0001:0002:aaaa:bbbb:cccc:dddd")).toBe("2001:db8:1:2::/64");
+    await db.insert(rateLimits).values({ key: `reaction:ip:${bucket}`, count: 60, resetAt: sql`now() + interval '1 hour'` });
+    // 같은 /64 안에서 주소를 바꿔도 같은 묶음
+    for (const ip of ["2001:db8:1:2::1", "2001:db8:1:2:ffff:ffff:ffff:fffe"]) {
+      expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip })).status, ip).toBe(429);
+    }
+    expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip: "2001:db8:1:3::1" })).status).toBe(200);
+  });
+
+  it("without a trusted IP, counts only 30 new anonymous rows an hour per product toward the ranking", async () => {
+    const product = await seed();
+    await seed("other-tool");
+    const visitors = Array.from({ length: 30 }, () => randomUUID());
+    for (const visitor of visitors) expect((await put("try-tool", { verdict: "good" }, { visitor })).status).toBe(200);
+    const late = randomUUID();
+    expect((await put("try-tool", { verdict: "good" }, { visitor: late })).status).toBe(200);
+    const all = await rows();
+    expect(all.filter((row) => row.productId === product.id && row.rankingExcluded)).toEqual([expect.objectContaining({ visitorHash: hashOf("try-tool", late) })]);
+    // 이미 있는 줄을 바꾸는 것·계정 줄·다른 제품은 세지 않는다
+    expect((await put("try-tool", { verdict: "bad" }, { visitor: visitors[0] })).status).toBe(200);
+    const session = await login();
+    expect((await put("try-tool", { verdict: "meh" }, { session })).status).toBe(200);
+    expect((await put("other-tool", { verdict: "good" }, { visitor: randomUUID() })).status).toBe(200);
+    expect((await rows()).filter((row) => row.rankingExcluded)).toHaveLength(1);
+    // 신뢰할 IP 가 있으면 IP 묶음 한도가 대신한다
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    expect((await put("try-tool", { verdict: "good" }, { visitor: randomUUID(), ip: "198.51.100.9" })).status).toBe(200);
+    expect((await rows()).filter((row) => row.rankingExcluded)).toHaveLength(1);
   });
 
   it("caps changes per row per KST day and keeps the last value", async () => {
@@ -331,6 +380,26 @@ describe("public summary", () => {
   });
 });
 
+describe("maker replies follow the comment", () => {
+  it("drops the maker reply when the comment text changes or is removed, and keeps it when only the verdict or tags change", async () => {
+    const product = await seed();
+    const maker = await login("메이커");
+    await put("try-tool", { verdict: "good", comment: "정말 좋아요" }, { visitor: VISITOR });
+    const [row] = await rows();
+    const reply = () => db.insert(makerReplies).values({ productId: product.id, targetType: "reaction", targetId: row.id, authorUserId: maker.user.id, body: "고마워요!" });
+    const replies = () => db.select().from(makerReplies);
+    await reply();
+    await put("try-tool", { verdict: "meh", tags: ["slow"], comment: "정말 좋아요" }, { visitor: VISITOR });
+    expect(await replies()).toHaveLength(1);
+    await put("try-tool", { verdict: "bad", comment: "사기 같아요" }, { visitor: VISITOR });
+    expect(await replies()).toHaveLength(0);
+    await reply();
+    await put("try-tool", { verdict: "bad", comment: null }, { visitor: VISITOR });
+    expect(await replies()).toHaveLength(0);
+    expect((await rows())[0]).toMatchObject({ id: row.id, comment: null });
+  });
+});
+
 describe("tried tab lists", () => {
   it("lists only my account rows with accepted maker replies", async () => {
     const product = await seed("listed");
@@ -347,6 +416,10 @@ describe("tried tab lists", () => {
     const { reactions: listed } = await response.json();
     expect(listed).toHaveLength(1);
     expect(listed[0]).toMatchObject({ slug: "listed", name: "Tool listed", verdict: "good", comment: "좋아요", commentState: "accepted", reply: { body: "고마워요!", authorName: "남" } });
+    // 답장한 계정이 탈퇴하면 이름 대신 null — 화면이 그 언어로 «탈퇴한 사용자»를 적는다
+    await db.update(publicUsers).set({ displayName: "탈퇴한 사용자", deletedAt: new Date() }).where(eq(publicUsers.id, other.user.id));
+    expect((await (await route.GET(new Request(`${ORIGIN}/api/me/reactions`, { headers: { cookie: `nmv_user=${mine.token}` } }))).json()).reactions[0].reply)
+      .toMatchObject({ body: "고마워요!", authorName: null });
     await db.update(makerReplies).set({ reviewState: "held" });
     expect((await (await route.GET(new Request(`${ORIGIN}/api/me/reactions`, { headers: { cookie: `nmv_user=${mine.token}` } }))).json()).reactions[0].reply).toBeNull();
     expect((await route.GET(new Request(`${ORIGIN}/api/me/reactions`))).status).toBe(401);

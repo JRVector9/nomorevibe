@@ -2,6 +2,8 @@ import { eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { githubUserConnections } from "@/lib/db/github-user-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
+import { reactionListVisible } from "@/lib/domain/reactions/repository";
+import { savedPublic } from "./saved";
 
 /** 마이페이지 머리 숫자 — 저장·써봤어요·의견·팔로 개수와 안 읽은 알림. 머리·아바타 메뉴·GET /api/me/summary 가 같이 쓴다 */
 export type MeCounts = { saved: number; tried: number; opinions: number; following: number; unreadAlerts: number };
@@ -34,7 +36,7 @@ export function shapeMeSummary(user: { id: number; displayName: string; createdA
   };
 }
 
-/** 한 계정의 머리 숫자. 바뀐 직후에도 맞아야 해서 주 DB 에서 읽는다. 탈퇴한 계정은 null */
+/** 한 계정의 머리 숫자. 바뀐 직후에도 맞아야 해서 주 DB 에서 읽는다. 저장·써봤어요는 탭과 같은 공개 조건으로 센다. 탈퇴한 계정은 null */
 export function getMeSummary(userId: number): Promise<MeSummary | null> {
   return onPrimary(async () => {
     const [user] = await db.select({ id: publicUsers.id, displayName: publicUsers.displayName, createdAt: publicUsers.createdAt, deletedAt: publicUsers.deletedAt })
@@ -42,8 +44,8 @@ export function getMeSummary(userId: number): Promise<MeSummary | null> {
     if (!user || user.deletedAt) return null;
     const [[counts], identities] = await Promise.all([
       db.execute<CountRow>(sql`select
-        (select count(*) from user_saved_products where user_id = ${userId}) as saved,
-        (select count(*) from product_reactions where user_id = ${userId}) as tried,
+        (select count(*) from user_saved_products s join products on products.id = s.product_id where s.user_id = ${userId} and ${savedPublic}) as saved,
+        (select count(*) from product_reactions r join products on products.id = r.product_id where r.user_id = ${userId} and ${reactionListVisible}) as tried,
         (select count(*) from product_feedback where author_user_id = ${userId}) as opinions,
         (select count(*) from user_follows where user_id = ${userId}) as following,
         (select count(*) from notifications where user_id = ${userId} and read_at is null) as unread_alerts,

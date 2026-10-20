@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 import { deviceLabel } from "@/lib/domain/accounts/device";
 import { safePublicReturnUrl } from "@/lib/i18n/routing";
 import { DELETED_DISPLAY_NAME, displayNameChangeAvailableAt, isSessionPublicId, maskEmail, normalizeDisplayName, sessionPublicId } from "@/lib/me/profile";

@@ -46,6 +46,7 @@ import { TalkBand } from "@/components/social/TalkBand";
 import { talkVisibility } from "@/lib/social/flags";
 import { productTalk, type ProductTalk } from "@/lib/social/talk";
 import { productFollowSlots } from "@/components/me/FollowSlot";
+import { tryPanelMessages } from "@/components/feedback/try-messages";
 
 export const dynamic = "force-dynamic";
 
@@ -132,7 +133,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
   // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
   // 써보기 판(피드백 PR3) — 내 평가·요약은 판이 브라우저에서 읽는다(이 HTML 은 엣지에 4분 남는다)
-  const me = productReactionsEnabled() ? await getDictionary(locale, "me") : null;
+  const me = productReactionsEnabled() ? tryPanelMessages(await getDictionary(locale, "me")) : null;
   // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
   const jsonLd = productJsonLd({
     origin: siteOrigin(), slug, name: product.name, description: product.translation?.ready ? product.translation.text : locale === "ko" ? product.taglineKo?.trim() || product.tagline : product.tagline,

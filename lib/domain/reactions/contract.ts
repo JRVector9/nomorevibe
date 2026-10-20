@@ -30,13 +30,14 @@ export type ReactionMine = {
   triedVerified: boolean; updatedAt: string;
 };
 export type ReactionSummary = { tried: number; good: number; meh: number; bad: number };
-export type ReactionReply = { body: string; authorName: string; createdAt: string };
+/** authorName 이 null 이면 탈퇴한 계정(화면이 그 언어로 적는다) */
+export type ReactionReply = { body: string; authorName: string | null; createdAt: string };
 export type ReactionListItem = ReactionMine & {
   slug: string; name: string; ogImage: string | null; category: string; reply: ReactionReply | null;
 };
 
 export type ReactionErrorCode = "reaction_invalid" | "reaction_not_found" | "reaction_rate_limited" | "reaction_change_limited"
-  | "reaction_refused" | "reaction_unavailable" | "reactions_disabled";
+  | "reaction_refused" | "reaction_unavailable" | "reactions_disabled" | "visitor_required";
 
 export class ReactionError extends Error {
   constructor(public readonly code: ReactionErrorCode, public readonly status: number) {
