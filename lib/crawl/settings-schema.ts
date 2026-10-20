@@ -319,6 +319,11 @@ export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
+  /** 사람 큐의 판단을 M3 Ultra 로컬 DeepSeek에 맡긴다. 토글 세대가 이전 실행을 차단한다. */
+  humanReview: z.object({
+    enabled: z.boolean().default(false),
+    generation: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  }).default({ enabled: false, generation: 0 }),
   /**
    * 1차 심사를 누가 보나. 2차와 같은 모양이라 같은 스키마를 쓴다.
    *
@@ -442,6 +447,7 @@ export function mergeAdditionalAgentDiscoveryQueries(existing: readonly AgentDis
 export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   enabled: false, // 켜는 것은 명시적 행위여야 한다
   reviewMode: "off",
+  humanReview: { enabled: false, generation: 0 },
   reviewConcurrency: 2,
   agentEvidence: defaultAgentEvidence,
   news: defaultNews,

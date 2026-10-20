@@ -14,6 +14,8 @@ import { SettingsForm } from "./SettingsForm";
 import { SettingsDriftNotice } from "./SettingsDriftNotice";
 import { ScrollToHash } from "./ScrollToHash";
 import { ReviewModeForm } from "./review/ReviewModeForm";
+import { HumanReviewSwitch } from "./review/HumanReviewSwitch";
+import { deepseekReviewReady } from "@/lib/crawl/deepseek-review";
 import { SecondVoterSwitch } from "./review/SecondVoterSwitch";
 import { voterChoices } from "./review/voters";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
@@ -121,6 +123,9 @@ export default async function AdminPage() {
         </aside>
         <div className="flex min-w-0 flex-[999_1_640px] flex-col gap-4">
           <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} secondControls={<>
+            <Suspense fallback={<p aria-busy="true">DeepSeek 연결 확인 중…</p>}>
+              <HumanReviewSwitchSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} />
+            </Suspense>
             <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === "true"} />
             {/* 게이트웨이 모델 목록을 기다리는 동안에도 나머지 설정은 먼저 그린다 */}
             <Suspense fallback={<p aria-busy="true" className="rounded-[10px] border border-line px-4 py-3 text-[13px] font-semibold text-fg-2">
@@ -135,6 +140,10 @@ export default async function AdminPage() {
       <ScrollToHash />
     </main>
   );
+}
+
+async function HumanReviewSwitchSlot({ enabled, generation }: { enabled: boolean; generation: number }) {
+  return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await deepseekReviewReady()} />;
 }
 
 /** 2차 표 바로 바꾸기 — 게이트웨이 모델 목록이 오면 그린다(못 읽으면 Grok·Claude 만) */

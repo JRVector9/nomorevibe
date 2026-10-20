@@ -4,6 +4,8 @@
  */
 export const ACTION_LABELS: Record<string, string> = {
   "candidate-approve": "후보 승인",
+  "candidate-deepseek-decision": "DeepSeek 위임 판단",
+  "human-review-deepseek": "DeepSeek 사람 검토 전환",
   "candidate-reject": "후보 거부",
   "candidate-undo": "후보 결정 되돌리기",
   "evidence-collect": "근거 더 모으기",
@@ -107,10 +109,10 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
     "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
-  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
+  review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-deepseek-decision", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
     "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",
     "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },
-  settings: { label: "설정·연결", actions: ["settings-save", "collection-enabled", "source-buffer", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
+  settings: { label: "설정·연결", actions: ["settings-save", "human-review-deepseek", "collection-enabled", "source-buffer", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",

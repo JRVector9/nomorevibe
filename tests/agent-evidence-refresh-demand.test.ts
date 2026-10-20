@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { prioritizeAgentRefreshDemand, REVIEW_SCAN_SHARE } from '@/lib/jobs/products/agent-evidence-refresh';
+import { NEW_PRODUCT_SCAN_SHARE, prioritizeAgentRefreshDemand, REVIEW_SCAN_SHARE } from '@/lib/jobs/products/agent-evidence-refresh';
 it('resumes due partial repositories before the pagination cursor without advancing it', () => {
   const work = prioritizeAgentRefreshDemand(['acme/first', 'acme/other'], ['acme/new', 'acme/other']);
   expect(work).toEqual([
@@ -24,4 +24,21 @@ it('puts repositories waiting on first review between resumed scans and the alph
 it('does not scan a repository twice when it is both resumable and waiting on review', () => {
   const work = prioritizeAgentRefreshDemand(['acme/both'], [], ['acme/both', 'acme/review']);
   expect(work.map(row => row.repositoryKey)).toEqual(['acme/both', 'acme/review']);
+});
+
+it('puts never-scanned public products after review waits and before the sweep, capped per tick, carrying their product id', () => {
+  const fresh = Array.from({ length: NEW_PRODUCT_SCAN_SHARE + 1 }, (_, i) => ({ id: 100 + i, repositoryKey: `new/p${i}` }));
+  const work = prioritizeAgentRefreshDemand(['acme/partial'], ['aaa/sweep', 'new/p0'], ['wait/r0'], fresh);
+  expect(work).toEqual([
+    { repositoryKey: 'acme/partial', advanceCursor: false },
+    { repositoryKey: 'wait/r0', advanceCursor: false },
+    ...fresh.slice(0, NEW_PRODUCT_SCAN_SHARE).map(({ id, repositoryKey }) => ({ repositoryKey, advanceCursor: false, newProductId: id })),
+    // 일반 대기에도 있던 new/p0 은 앞에서 한 번만 본다
+    { repositoryKey: 'aaa/sweep', advanceCursor: true },
+  ]);
+});
+
+it('keeps the new-product position when its repository is already ahead for another reason', () => {
+  const work = prioritizeAgentRefreshDemand(['acme/both'], [], [], [{ id: 7, repositoryKey: 'acme/both' }]);
+  expect(work).toEqual([{ repositoryKey: 'acme/both', advanceCursor: false, newProductId: 7 }]);
 });
