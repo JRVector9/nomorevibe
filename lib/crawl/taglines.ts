@@ -54,7 +54,7 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
     .where(and(
       eq(crawlCandidates.state, "needs_review"),
       eq(crawlCandidates.reason, "no_description"),
-      inArray(crawlCandidates.decidedBy, ["auto", "admin"]),
+      inArray(crawlCandidates.decidedBy, ["auto", "admin", "deepseek"]),
       // 사람이 적은 줄은 다시 짓지 않는다 — 그 사람이 페이지를 보고 적었다
       sql`${crawlTaglines.writtenBy} is null`,
       sql`(${crawlTaglines.repo} is null
@@ -83,7 +83,7 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
     const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, task.candidate.id)).for("update");
     const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.id, task.document.id)).for("share");
     const [written] = await tx.select().from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo)).for("update");
-    if (!candidate || candidate.state !== "needs_review" || candidate.reason !== "no_description" || !["auto", "admin"].includes(candidate.decidedBy ?? "")
+    if (!candidate || candidate.state !== "needs_review" || candidate.reason !== "no_description" || !["auto", "admin", "deepseek"].includes(candidate.decidedBy ?? "")
       || written?.writtenBy || !isDeepStrictEqual(candidate, task.candidate) || !isDeepStrictEqual(document, task.document)
       || !isDeepStrictEqual(written ?? null, task.written)) return { stored: false, released: false };
     const sourceHash = taglineHash(taglineEvidence(candidate.repo, document!));
@@ -210,7 +210,7 @@ async function lockCrawlSources(tx: ProductTransaction, task: TaglineTask): Prom
     due: sql<boolean>`${crawlTaglines.retryAt} IS NULL OR ${crawlTaglines.retryAt}<=clock_timestamp()` })
     .from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo)).for("update");
   if (!candidate || !document || !mergeWithDefaults(settings?.values).enabled || candidate.row.state !== "needs_review"
-    || candidate.row.reason !== "no_description" || !["auto", "admin"].includes(candidate.row.decidedBy ?? "") || cache?.row.writtenBy
+    || candidate.row.reason !== "no_description" || !["auto", "admin", "deepseek"].includes(candidate.row.decidedBy ?? "") || cache?.row.writtenBy
     || candidate.row.repo !== document.row.repo || !isDeepStrictEqual(candidate.row, task.candidate) || !isDeepStrictEqual(document.row, task.document)
     || !isDeepStrictEqual(cache?.row ?? null, task.written)) throw new CrawlTaglineChanged();
   const sourceHash = taglineHash(taglineEvidence(candidate.row.repo, document.row));
