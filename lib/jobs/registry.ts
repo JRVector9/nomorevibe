@@ -37,6 +37,7 @@ import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh"
 import { refreshNews } from "@/lib/news/refresh";
 import { deliverGithubFeedback } from "@/lib/jobs/github/feedback-delivery";
 import { reconcileGithubIntegrations } from "@/lib/jobs/github/integration-reconcile";
+import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
 
 /**
  * 이름 → 작업 매핑.
@@ -85,6 +86,9 @@ export const JOBS: Record<string, AnyJob> = {
   "cdn-purge": (ctx) => purgeRemovedProducts(ctx),
   "github-feedback-delivery": deliverGithubFeedback,
   "github-integration-reconcile": reconcileGithubIntegrations,
+  /** 알림 메일 발송함을 비우고, 주간 요약을 줄 세운다(마이페이지 MY7) */
+  "email-outbox-send": sendEmailOutbox,
+  "email-weekly-digest": queueEmailDigests,
   /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
   "reason-translate": translateReasons,
   /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */

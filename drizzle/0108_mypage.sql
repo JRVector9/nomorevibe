@@ -121,12 +121,14 @@ CREATE TABLE "notification_settings" (
   "digest_weekday" smallint DEFAULT 1 NOT NULL,
   "digest_hour" smallint DEFAULT 9 NOT NULL,
   "news_opt_in_at" timestamp with time zone,
+  "locale" varchar(8) DEFAULT 'ko' NOT NULL,
   "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "notification_settings_mode_check" CHECK (
     "maker_reply" in ('instant', 'weekly', 'off') and "followed_project" in ('instant', 'weekly', 'off')
     and "followed_maker" in ('instant', 'weekly', 'off') and "followed_category" in ('weekly', 'off')
     and "new_listing_mine" in ('instant', 'off')),
-  CONSTRAINT "notification_settings_digest_check" CHECK ("digest_weekday" between 0 and 6 and "digest_hour" between 0 and 23)
+  CONSTRAINT "notification_settings_digest_check" CHECK ("digest_weekday" between 0 and 6 and "digest_hour" between 0 and 23),
+  CONSTRAINT "notification_settings_locale_check" CHECK ("locale" in ('ko', 'en', 'zh-Hans', 'zh-Hant'))
 );
 --> statement-breakpoint
 
