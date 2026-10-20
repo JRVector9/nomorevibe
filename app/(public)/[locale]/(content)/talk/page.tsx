@@ -194,4 +194,3 @@ function PostLines({ entry, t, locale, now }: { entry: LocalizedTalkEntry; t: Tr
     </div>
   );
 }
-
