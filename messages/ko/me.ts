@@ -309,6 +309,9 @@ export const me = {
   "unsubscribe.invalidBody": "메일의 «이 알림 끄기» 링크를 다시 눌러 주세요. 알림 설정에서도 끌 수 있어요.",
   "unsubscribe.unavailable": "지금은 끄지 못했어요. 잠시 뒤 다시 눌러 주세요.",
   "unsubscribe.settings": "알림 설정 열기",
+  "unsubscribe.confirmTitle": "이 메일 알림을 끌까요?",
+  "unsubscribe.confirmBody": "«{setting}» 메일을 더 받지 않으려면 아래 단추를 눌러 주세요. 사이트 안 알림함은 그대로예요.",
+  "unsubscribe.confirm": "메일 알림 끄기",
   // 내 프로젝트 탭 (MY5·MY6)
   "projects.title": "내 프로젝트",
   // 배지·공유 카드 (MY8)

@@ -283,7 +283,7 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
       method, ...(method === "POST" ? { headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" } : {}),
     }));
   };
-  it("서명한 칸 하나를 끄고 확인 화면을 보인다 — 고친 열쇠는 아무것도 바꾸지 않는다", async () => {
+  it("GET 은 확인 화면만, POST 가 서명한 칸 하나를 끈다 — 고친 열쇠는 아무것도 바꾸지 않는다", async () => {
     const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
     const reader = await member("읽는이", "hanul@example.com");
     const other = await member("다른이", "other@example.com");
@@ -293,16 +293,24 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
     expect(refused.status).toBe(400);
     expect(await db.select().from(notificationSettings)).toEqual([]);
 
-    const done = await call("GET", token);
+    // 메일 보안 검사기가 링크를 미리 열어도 꺼지지 않는다
+    const confirm = await call("GET", token);
+    expect(confirm.status).toBe(200);
+    expect(confirm.headers.get("content-type")).toContain("text/html");
+    expect(confirm.headers.get("cache-control")).toBe("private, no-store");
+    expect(confirm.headers.get("referrer-policy")).toBe("no-referrer");
+    const form = await confirm.text();
+    expect(form).toContain("이 메일 알림을 끌까요?");
+    expect(form).toContain('<form method="post" action="/api/me/notification-settings/unsubscribe?token=');
+    expect(await db.select().from(notificationSettings)).toEqual([]);
+
+    const done = await call("POST", token);
     expect(done.status).toBe(200);
-    expect(done.headers.get("content-type")).toContain("text/html");
-    expect(done.headers.get("cache-control")).toBe("private, no-store");
-    expect(done.headers.get("referrer-policy")).toBe("no-referrer");
     const html = await done.text();
     expect(html).toContain("메일 알림을 껐어요");
     expect(html).toContain("«메이커 답장»");
     expect((await db.select().from(notificationSettings))).toMatchObject([{ userId: reader.id, makerReply: "off", followedProject: "weekly" }]);
-    expect((await call("GET", token)).status).toBe(200);
+    expect((await call("POST", token)).status).toBe(200);
   });
 
   it("주간 요약 열쇠는 주간 칸을 모두 끄고, POST 한 번 끄기도 같다", async () => {

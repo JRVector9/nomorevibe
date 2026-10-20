@@ -311,6 +311,9 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "unsubscribe.invalidBody": "Please click the “Turn off this alert” link in the email again. You can also turn it off in alert settings.",
   "unsubscribe.unavailable": "We couldn't turn it off right now. Please try again in a moment.",
   "unsubscribe.settings": "Open alert settings",
+  "unsubscribe.confirmTitle": "Turn off this email alert?",
+  "unsubscribe.confirmBody": "Press the button below to stop “{setting}” emails. Your on-site inbox stays as it is.",
+  "unsubscribe.confirm": "Turn off email alert",
   // 내 프로젝트 탭 (MY5·MY6)
   "projects.title": "My projects",
   // 배지·공유 카드 (MY8)

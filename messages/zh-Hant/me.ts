@@ -311,6 +311,9 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "unsubscribe.invalidBody": "請重新點擊郵件中的「關閉此通知」連結。也可以在通知設定中關閉。",
   "unsubscribe.unavailable": "暫時無法關閉，請稍後再試。",
   "unsubscribe.settings": "開啟通知設定",
+  "unsubscribe.confirmTitle": "要關閉這類郵件通知嗎？",
+  "unsubscribe.confirmBody": "如不想再收到「{setting}」郵件，請點擊下方按鈕。站內通知匣保持不變。",
+  "unsubscribe.confirm": "關閉郵件通知",
   // 내 프로젝트 탭 (MY5·MY6)
   "projects.title": "我的專案",
   // 배지·공유 카드 (MY8)
