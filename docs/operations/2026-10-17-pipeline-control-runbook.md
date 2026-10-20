@@ -342,7 +342,7 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 
 ## 11. 제작 근거 스캔(agent-scan) — legacy → items, 되돌리기
 
-`agent_scan_control`(0104)의 뜻은 stage와 같다. 모드별 동작:
+`agent_scan_control`(0105)의 뜻은 stage와 같다. 모드별 동작:
 
 | 모드 | `agent-evidence-refresh` 잡(crawler) | consumer(`agent-scan-consumer-*`) | 스캔 기록 |
 |---|---|---|---|
@@ -356,7 +356,7 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 - `status`의 `[agent-scan]`: `live`(lease_until 전 claim), `unsettled`(기한 지난 미정산), `legacy_job`(drain 전에 시작한 잡 틱이 살아 있으면 `live`), `consumers`(2분 안 consumer 관측 수), 그리고 priority별 `waiting`(지금 잡을 수 있는 행: 도래했고 backoff가 지났고 살아 있는 claim이 아님)·`oldest_min`. priority: 0 관리자 추가 수집 · 1 1차 심사 대기 · 2 스캔 없는 공개 제품 · 3 스캔 없는 후보 · 4 이어 하기 · 5 정기 · 6 오류 반복.
 
 사전 확인(설계 §8 S3–S5, 각각 별도 승인):
-- migration 0104가 운영 DB에 있다(`agent_scan_control` 1행, legacy·epoch 1·contract 0).
+- migration 0105가 운영 DB에 있다(`agent_scan_control` 1행, legacy·epoch 1·contract 0).
 - 관문이 들어간 release가 **스캔을 쓰는 모든 앱**(crawler M3·mini, 다른 역할 포함 14앱)에 배포됐다. `scripts/backfill-agent-evidence.ts`도 같은 release로만 돌린다. contract는 이것을 운영자가 확인했다는 표시다 — 옛 코드는 items에서도 스캔을 써서 consumer와 같은 저장소를 겹쳐 쓴다.
 - consumer 앱(`SERVICE_INSTANCE_ID=agent-scan-consumer-<자리>`, `worker-supervisor.ts --role=crawler --consumer=agent-scan`)이 떠 있고 `status`의 `consumers` ≥ 1이다. legacy에서는 claim하지 않고 쉰다.
 

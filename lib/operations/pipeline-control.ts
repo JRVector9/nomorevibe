@@ -25,7 +25,7 @@ export type ControlStage = typeof CONTROL_STAGES[number];
 const MODES = {
   stage: ["legacy", "draining", "items"], capacity: ["disabled", "draining", "open"],
   http: ["disabled", "draining", "open"], batch: ["legacy", "draining", "versioned"],
-  // 제작 근거 스캔(agent_scan_control, 0104) — stage 와 같은 뜻의 legacy·draining·items
+  // 제작 근거 스캔(agent_scan_control, 0105) — stage 와 같은 뜻의 legacy·draining·items
   "agent-scan": ["legacy", "draining", "items"],
 } as const;
 type Area = keyof typeof MODES;
