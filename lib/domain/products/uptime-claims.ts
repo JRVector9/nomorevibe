@@ -12,7 +12,7 @@ import { advanceUptimeBreaker, closedUptimeBreaker, parseUptimeSplitControl, upt
   type UptimeSplitControl } from "./uptime-split-policy";
 
 /**
- * split-v1 claim 저장소(0103 uptime_claims). 제품당 1행을 idle → claimed → submitted 로 옮긴다. 정식 기록은 쓰지 않는다
+ * split-v1 claim 저장소(0104 uptime_claims). 제품당 1행을 idle → claimed → submitted 로 옮긴다. 정식 기록은 쓰지 않는다
  * (home 적용기 uptime-apply.ts 만 쓴다). 그래서 Oracle principal 은 이 파일의 claim·제출·되돌림만 할 수 있으면 된다.
  *
  * - claim: due 선정 + FOR UPDATE SKIP LOCKED + 소유 기록을 한 TX 의 두 문장으로 한다. 다른 owner 가 잡고 있는 행은 기다리지 않고 건너뛴다.
@@ -230,7 +230,7 @@ export async function releaseUptimeClaims(input: { owner: UptimeClaimOwner; clai
 
 /**
  * 공개 website 제품 중 uptime_claims 행이 없는 것에 idle 행을 만든다(home 잡만 부른다. Oracle 에는 INSERT 권한이 없다).
- * due 는 0103 백필과 같다: 마지막 확인 + 6시간, 확인한 적 없으면 지금. 비공개가 된 제품의 행은 claim 조건이 거르고, 삭제는 FK cascade 다.
+ * due 는 0104 백필과 같다: 마지막 확인 + 6시간, 확인한 적 없으면 지금. 비공개가 된 제품의 행은 claim 조건이 거르고, 삭제는 FK cascade 다.
  * 행을 만들기만 하므로 legacy 동작은 바뀌지 않는다. fenced DB 에서는 worker 쓰기와 같이 거절한다.
  */
 export async function syncUptimeClaimRows(input: { limit?: number; lease?: JobLease } = {}): Promise<number> {
