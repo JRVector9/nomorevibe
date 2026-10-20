@@ -23,9 +23,11 @@
   main 상태 DB(104줄)에 네 개를 더하면 108줄·표 생성까지 확인했다. 남은 것:
   - 합칠 때 `drizzle/meta/_journal.json` 은 글자 충돌이 난다 — main 의 0103_social_posts 다음에 0104~0107 을 둔다.
   - main 과 합치면 #556·#560·#561·#562 는 `health-record.ts`·`uptime.ts`·`crawler-activity.ts` 등에서 #551·#566 과 코드 충돌이 난다(번호와 무관, 아직 안 함).
-  - PR 없는 브랜치 4개는 옛 번호 그대로다: `codex/oracle-scaleout-fix-agent-scan-20261019`·`codex/oracle-scaleout-fix-uptime-20261019`,
-    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`(뒤 둘은 다른 에이전트 작업 폴더에 커밋 안 된 파일이 있어 건드리지 않았다).
-    이 브랜치를 통합에 다시 합치면 같은 규칙으로 옮긴다.
+  - PR 없는 브랜치 4개(`codex/oracle-scaleout-fix-uptime-20261019`·`codex/oracle-scaleout-fix-agent-scan-20261019`·
+    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`)에도 같은 커밋을 더했다(사용자 지시, force push 없음).
+    뒤 둘의 xaegis 작업 폴더(`~/.xaegis-hub/data/main-agent/nomorevibe-{oracle-fixes,merge-audit}-20261019/source`)는 건드리지 않아
+    로컬 브랜치가 원격보다 한 커밋 뒤다 — 그 폴더에서 이어 작업하기 전에 `git pull --ff-only` 한다(untracked 파일 3개는 그대로).
+  - PR 들은 main 과 충돌해 GitHub 가 PR CI 를 돌리지 않는다. 12개 브랜치 모두 CI 를 수동(workflow_dispatch)으로 돌렸다 — 결과는 아래.
   - [#563](https://github.com/JRVector9/nomorevibe/pull/563)의 10-22 계획 "0103~0106 적용"은 이제 **0104~0107 적용**이다.
 - osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
 
