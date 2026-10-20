@@ -112,6 +112,11 @@ export async function readReaction(slug: string, owner: ReactionOwner): Promise<
  * - 로그인: 계정 행 → 없으면 이 브라우저의 익명 행에 user_id 를 붙인다(행 하나). 둘 다 있으면 익명 행을 지운다.
  * - 익명: 이 브라우저 해시를 계정 행이 쥐고 있으면(로그아웃한 브라우저) 그 행에서 해시를 떼고 새 행을 만든다.
  */
+/** 지운 평가에 달린 메이커 답장도 함께 지운다 — 대상 없는 답장을 남기지 않는다 */
+async function dropReplies(tx: Transaction, ids: string[]) {
+  if (ids.length) await tx.delete(makerReplies).where(and(eq(makerReplies.targetType, "reaction"), inArray(makerReplies.targetId, ids)));
+}
+
 export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { flood?: boolean; now?: Date } = {}) {
   const now = options.now ?? new Date();
   return onPrimary(() => db.transaction(async (tx) => {
@@ -127,6 +132,7 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
     if (holder && holder.userId === null) {
       // 계정 평가가 이 브라우저의 익명 평가를 대신한다 — 한 사람 한 줄
       await tx.delete(productReactions).where(eq(productReactions.id, holder.id));
+      await dropReplies(tx, [holder.id]);
     } else if (holder && !owner.userId) {
       await tx.update(productReactions).set({ visitorHash: null }).where(eq(productReactions.id, holder.id));
     } else if (holder) {
@@ -191,6 +197,7 @@ export function deleteReaction(slug: string, owner: ReactionOwner): Promise<{ de
     const anonymous = hash ? and(eq(productReactions.visitorHash, hash), isNull(productReactions.userId)) : undefined;
     const deleted = await tx.delete(productReactions).where(and(eq(productReactions.productId, product.id),
       owner.userId ? or(eq(productReactions.userId, owner.userId), anonymous) : anonymous)).returning({ id: productReactions.id });
+    await dropReplies(tx, deleted.map((row) => row.id));
     return { deleted: deleted.length > 0, summary: await summaryOf(tx, product.id) };
   }));
 }
@@ -251,10 +258,14 @@ export async function mergeBrowserReactions(userId: number, slugs: string[], vis
       const mine = rows.find((row) => row.userId === userId);
       const triedVerified = anonymous.triedVerified || Boolean(mine?.triedVerified);
       if (!mine || anonymous.updatedAt > mine.updatedAt) {
-        if (mine) await tx.delete(productReactions).where(eq(productReactions.id, mine.id));
+        if (mine) {
+          await tx.delete(productReactions).where(eq(productReactions.id, mine.id));
+          await dropReplies(tx, [mine.id]);
+        }
         await tx.update(productReactions).set({ userId, triedVerified }).where(eq(productReactions.id, anonymous.id));
       } else {
         await tx.delete(productReactions).where(eq(productReactions.id, anonymous.id));
+        await dropReplies(tx, [anonymous.id]);
         await tx.update(productReactions).set({ visitorHash: mine.visitorHash ?? hash, triedVerified }).where(eq(productReactions.id, mine.id));
       }
       merged += 1;

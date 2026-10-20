@@ -167,7 +167,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
   }, []);
 
   function openSaved() {
-    router.push(localePath(locale, "/?saved=1#projects"));
+    router.push(localePath(locale, "/me"));
   }
 
   /**

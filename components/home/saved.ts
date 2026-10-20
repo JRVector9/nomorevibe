@@ -1,4 +1,5 @@
 import { SAVED_LIMIT } from "@/lib/me/contract";
+import { mergeBrowserReactions, reactedSlugs } from "@/components/feedback/reacted";
 
 const KEY = "nmb-saved-v1";
 /** 로그인한 계정과 맞춰 본 기록 — 마지막으로 본 서버 주소(base)와 아직 서버에 못 보낸 바꿈(pending) */
@@ -158,6 +159,18 @@ function postponed(userId: number): boolean {
   return Array.isArray(later) && later.includes(userId);
 }
 
+/** 첫 로그인 합치기(L4) — 이 브라우저가 평가한 제품을 계정으로 옮긴다. 계정·탭마다 한 번 */
+function mergeReactionsOnce(userId: number, token: string): void {
+  const key = `nmb-reacted-merge:${userId}`;
+  try {
+    if (sessionStorage.getItem(key) || !reactedSlugs().length) return;
+    sessionStorage.setItem(key, "1");
+  } catch {
+    return;
+  }
+  void mergeBrowserReactions(token);
+}
+
 /** 페이지마다 한 번 — 저장을 그리는 첫 구독이 부른다 */
 export function startSavedSync(): void {
   if (phase !== "idle" || typeof window === "undefined") return;
@@ -194,6 +207,7 @@ async function connect(): Promise<void> {
     return;
   }
   csrf = me!.csrfToken as string;
+  mergeReactionsOnce(userId, csrf);
   let current = state;
   if (state && state.user !== userId) {
     writeLocal(forgetAccountCopy(localList(), state));
