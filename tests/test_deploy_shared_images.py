@@ -629,10 +629,14 @@ class FleetInventoryTests(unittest.TestCase):
     def setUp(self):
         self.sha = 'b' * 40
 
+    # 2026-10-20: agent-scan-consumer-m3 is the one consumer app that exists in Dokploy; inventory covers it like an image worker
+    REGISTERED_CONSUMERS = ('agent-scan-consumer-m3',)
+
     def fleet(self, release_tag=None):
-        return {short: {'sourceType': 'docker' if short in release.APPS else 'github', 'applicationStatus': 'done', 'replicas': 1,
+        return {short: {'sourceType': 'docker' if short in release.APPS or short in release.CONSUMER_APPS else 'github',
+                        'applicationStatus': 'done', 'replicas': 1,
                         'env': 'RELEASE_TAG=' + (release_tag or self.sha) + '\nSECRET_TOKEN=do-not-print\n', 'appName': 'service-' + short}
-                for short in release.KNOWN_APPS}
+                for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS}
 
     def test_catalog_covers_the_production_fleet_and_never_oracle_or_unregistered_split_roles(self):
         self.assertEqual(release.ORDER, tuple(release.APPS))
@@ -649,9 +653,10 @@ class FleetInventoryTests(unittest.TestCase):
         client = FakeClient(self.fleet())
         result = release.inventory(client, self.sha)
         self.assertEqual(client.requests, [])
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (14, True, []))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (15, True, []))
         self.assertEqual({short: row['deployedBy'] for short, row in result['apps'].items()},
-                         {short: 'run' if short in release.APPS else 'manual-git-build' for short in release.KNOWN_APPS})
+                         {short: 'run' if short in release.APPS or short in release.CONSUMER_APPS else 'manual-git-build'
+                          for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS})
         self.assertNotIn('do-not-print', json.dumps(result))
         self.assertEqual((result['splitRoleApps'], result['oracle']), ('none_registered', 'outside_dokploy'))
 
@@ -727,15 +732,22 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
     def test_consumer_apps_are_unregistered_and_outside_the_existing_fleet(self):
         self.assertEqual(tuple(release.CONSUMER_APPS), CONSUMERS)
         for short, (app_id, name, server, kind) in release.CONSUMER_APPS.items():
-            self.assertEqual((app_id, name, kind), ('', '', 'worker'))
+            if short in AI_CONSUMERS:
+                self.assertEqual((app_id, name, kind), ('', '', 'worker'))
             self.assertEqual(server, release.MINI if short.endswith('-mini') else release.M3)
             self.assertNotIn(short, release.KNOWN_APPS)
         self.assertEqual(release.release_order(), release.ORDER)
 
+    def test_the_agent_scan_consumer_app_is_registered_on_m3(self):
+        # 2026-10-20: created in Dokploy as a copy of crawler-m3; it is still released only with --consumer agent-scan
+        self.assertEqual(release.CONSUMER_APPS['agent-scan-consumer-m3'],
+                         ('LIRNQFq9mWGBOWRshJ-19', 'nomorevibe-agent-scan-consumer-m3', release.M3, 'worker'))
+        self.assertEqual(release.consumer_apps(['agent-scan']), ('agent-scan-consumer-m3',))
+
     def test_an_unregistered_consumer_is_refused_before_any_dokploy_request(self):
         client = release.Dokploy('unused-key')
         with patch.object(client, 'request') as request:
-            for short in CONSUMERS:
+            for short in AI_CONSUMERS:
                 with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
                     client.app(short)
                 with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
@@ -745,15 +757,11 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
             release.app_metadata('ai3-consumer-m3')
         with self.assertRaisesRegex(ValueError, 'ai1-consumer-mini_app_unregistered'):
             release.consumer_apps(['ai1'])
-        with self.assertRaisesRegex(ValueError, 'agent-scan-consumer-m3_app_unregistered'):
-            release.consumer_apps(['agent-scan'])
 
     def test_main_refuses_unregistered_or_misused_consumer_targets_before_keychain(self):
         base = ['--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
         for arguments, error in ((['plan'] + base + ['--consumer', 'ai2'], 'ai2-consumer-mini_app_unregistered'),
                                  (['run'] + base + ['--snapshot', '/private/tmp/x.json', '--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
-                                 (['plan'] + base + ['--consumer', 'agent-scan'], 'agent-scan-consumer-m3_app_unregistered'),
-                                 (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'agent-scan-consumer-m3'], 'agent-scan-consumer-m3_app_unregistered'),
                                  (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'ai1-consumer-m3'], 'ai1-consumer-m3_app_unregistered')):
             with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy:
                 with self.assertRaisesRegex(ValueError, error):
@@ -772,8 +780,8 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet = {short: {'sourceType': 'docker', 'applicationStatus': 'done', 'replicas': 1, 'env': 'RELEASE_TAG=' + self.new_sha + '\n'}
                  for short in tuple(release.KNOWN_APPS) + CONSUMERS}
         result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete']), (14, True))
-        self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'unregistered'))
+        self.assertEqual((result['appCount'], result['complete']), (15, True))
+        self.assertEqual(result['consumerApps'], {**dict.fromkeys(AI_CONSUMERS, 'unregistered'), 'agent-scan-consumer-m3': 'registered'})
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)
