@@ -18,3 +18,21 @@ it.each([["--live", "--dry-run"], ["--live", "--live"], ["--token", "private-tok
 it("requires an absolute persistent state path", () => {
   expect(() => xCollectorConfig([], { X_STATE_DIR: "relative" }, "osaka-smoke")).toThrow("invalid_configuration");
 });
+it("sends web reports only with a 32-byte secret and https report addresses", () => {
+  const secret = "x-status-current-secret-0123456789abcdef";
+  expect(xCollectorConfig([], {}, "osaka-smoke")).not.toHaveProperty("report");
+  expect(xCollectorConfig([], { X_STATUS_REPORT_SECRET: secret, X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status" }, "osaka-smoke").report)
+    .toEqual({ secret, statusUrl: "https://nomorevibe.com/api/ops/x-status", postsUrl: null });
+  expect(xCollectorConfig([], { X_STATUS_REPORT_SECRET: secret, X_POSTS_REPORT_URL: "https://nomorevibe.com/api/ops/x-posts" }, "osaka-smoke").report)
+    .toMatchObject({ statusUrl: null, postsUrl: "https://nomorevibe.com/api/ops/x-posts" });
+});
+it.each([
+  { X_STATUS_REPORT_SECRET: "short", X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789 abcdef", X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_STATUS_REPORT_URL: "http://nomorevibe.com/api/ops/x-status" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_POSTS_REPORT_URL: "https://user:pass@nomorevibe.com/api/ops/x-posts" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_POSTS_REPORT_URL: "not a url" },
+])("rejects unsafe report settings without echoing them: %#", environment => {
+  expect(() => xCollectorConfig([], environment, "osaka-smoke")).toThrow(/^invalid_configuration$/);
+});

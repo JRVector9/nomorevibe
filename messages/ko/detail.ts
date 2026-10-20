@@ -423,4 +423,8 @@ export const detail = {
   "talk.viewAll": "SNS 화제 전체 보기",
   "talk.note": "점수는 각 플랫폼이 보여 주는 값을 마지막 확인 시각에 옮긴 것입니다. 글 본문과 댓글은 옮기지 않고, 원문이 지워지면 여기서도 빠집니다.",
   "talk.preview": "미리보기 · 관리자에게만 보입니다",
+  "talk.xScore": "반응 {points} · 답글 {comments}",
+  "talk.xPost": "X 게시물",
+  "talk.viewOnX": "X에서 보기",
+  "talk.xHeadline": "X 반응 {points} · 답글 {comments}",
 } as const;

@@ -128,3 +128,21 @@ it("상세 화제 기록은 90일 안의 글을 이슈 글까지 보여 주고, 
   expect(await productTalk(doory.id, "https://doory.art", NOW)).toBeNull();
   expect(await productTalk(doory.id, "https://github.com/acme/silent", NOW)).toBeNull();
 });
+
+it("X 게시물은 마지막으로 확인한 뒤 24시간만 목록·상세·대기 수에 든다", async () => {
+  const tool = await product("acme/tool");
+  const x = (id: string, repo: string) => ({ ...hn(id, repo, 80, 4, "2026-10-17T00:00:00Z"), title: "" });
+  await recordSocialPosts("x", [x("1980000000000000001", "acme/tool"), x("1980000000000000002", "acme/waiting")], new Date("2026-10-17T07:00:00Z"));
+  const board = await listTalk({ mode: "now", now: NOW });
+  expect(board.entries.map(entry => [entry.product.slug, entry.posts.map(item => item.source)])).toEqual([[tool.slug, ["x"]]]);
+  expect(board.unlisted).toEqual({ active: 0, unknown: 1 });
+  expect((await productTalk(tool.id, "https://github.com/acme/tool", NOW))?.sources).toEqual(["x"]);
+
+  const later = new Date("2026-10-18T07:00:01Z");
+  expect((await listTalk({ mode: "now", now: later })).entries).toEqual([]);
+  expect((await listTalk({ mode: "now", now: later })).unlisted).toEqual({ active: 0, unknown: 0 });
+  expect(await productTalk(tool.id, "https://github.com/acme/tool", later)).toBeNull();
+  // 다시 확인되면 돌아온다
+  await recordSocialPosts("x", [x("1980000000000000001", "acme/tool")], new Date("2026-10-18T07:00:00Z"));
+  expect((await listTalk({ mode: "now", now: later })).entries.map(entry => entry.product.slug)).toEqual([tool.slug]);
+});

@@ -4,6 +4,8 @@ export type XCollectorOptions = {
   useCaseApproved?: boolean;
   token?: string;
   now?: () => number;
+  /** 웹으로 보내는 보고(게시물·하루 상태). 없으면 보내지 않는다 */
+  report?: XReportConfig;
 };
 export type XCollectorResult = {
   status: "planned" | "blocked" | "completed" | "stopped";
@@ -13,6 +15,7 @@ export type XCollectorResult = {
   candidates: number;
 };
 type Candidate = { repository: string; reactions: number | null; postCount: number; skillVerified: false };
+type Reports = { posts?: XReportOutcome; status?: XReportOutcome };
 
 async function syncDirectory(directory: string) {
   const handle = await open(directory, "r");
@@ -52,9 +55,37 @@ function candidatesFrom(observations: XObservation[]): Candidate[] {
   return [...candidates.values()].sort((a, b) => (b.reactions ?? -1) - (a.reactions ?? -1) || a.repository.localeCompare(b.repository));
 }
 
+const exists = (path: string) => access(path).then(() => true, () => false);
+
+/** 마지막으로 정상 끝난 실행(live completed · dry-run planned)의 시각 */
+async function lastSuccess(stateDir: string): Promise<string | null> {
+  try {
+    const value = JSON.parse(await readFile(join(stateDir, "last-success.json"), "utf8")) as { observedAt?: unknown };
+    return typeof value.observedAt === "string" && Number.isFinite(Date.parse(value.observedAt)) ? value.observedAt : null;
+  } catch { return null; }
+}
+
+/** 게시물은 실제 수집이 끝났고 보낼 것이 있을 때만, 하루 상태는 매 실행 보낸다 */
+async function sendReports(config: XReportConfig, run: { live: boolean; result: XCollectorResult; observed: XObservation[];
+  observedAt: string; day: string; stateDir: string }, send?: typeof fetch): Promise<Reports> {
+  const reports: Reports = {};
+  if (config.postsUrl && run.live && run.result.status === "completed") {
+    const payload = xPostsReportFrom(run.observed, run.observedAt);
+    if (payload.posts.length || payload.unavailable.length) reports.posts = await sendSigned(config.postsUrl, signPosts(config.secret), payload, send);
+  }
+  if (config.statusUrl) {
+    reports.status = await sendSigned(config.statusUrl, signStatus(config.secret), xStatusReportFrom({
+      live: run.live, status: run.result.status, reason: run.result.reason, candidates: run.result.candidates,
+      reservedToday: await exists(join(run.stateDir, `budget-${run.day}.json`)),
+      lastRunAt: run.observedAt, lastSuccessAt: await lastSuccess(run.stateDir),
+    }), send);
+  }
+  return reports;
+}
+
 export async function runXCollector(
   options: XCollectorOptions,
-  dependencies: { request?: typeof fetch } = {},
+  dependencies: { request?: typeof fetch; send?: typeof fetch } = {},
 ): Promise<XCollectorResult> {
   const result: XCollectorResult = { status: "planned", reservedPosts: 0, requests: 0, candidates: 0 };
   const now = (options.now ?? Date.now)();
@@ -65,8 +96,13 @@ export async function runXCollector(
   try {
     await mkdir(options.stateDir, { recursive: true, mode: 0o700 });
     await chmod(options.stateDir, 0o700);
+    let observed: XObservation[] = [];
     const finish = async () => {
-      await writeCurrent(options.stateDir, "status.json", { ...result, day, observedAt, service: "oci-osaka-smoke-x" });
+      if (result.status === "completed" || result.status === "planned") await writeCurrent(options.stateDir, "last-success.json", { observedAt });
+      const reports = options.report
+        ? await sendReports(options.report, { live: Boolean(options.live), result, observed, observedAt, day, stateDir: options.stateDir }, dependencies.send)
+        : undefined;
+      await writeCurrent(options.stateDir, "status.json", { ...result, day, observedAt, service: "oci-osaka-smoke-x", ...(reports ? { reports } : {}) });
       return result;
     };
     // Validate the exact transport settings before making a persistent reservation.
@@ -98,6 +134,7 @@ export async function runXCollector(
     result.requests = pilot.requests.length;
     result.status = pilot.status === "completed" ? "completed" : "stopped";
     if (pilot.reason) result.reason = pilot.reason;
+    if (result.status === "completed") observed = pilot.observations;
     const candidates = result.status === "completed" ? candidatesFrom(pilot.observations) : [];
     result.candidates = candidates.length;
     // A single private snapshot; post text, authors, and raw provider bodies never reach disk.
@@ -108,10 +145,11 @@ export async function runXCollector(
     return { ...result, status: "stopped", reason: "state_error" };
   }
 }
-import { chmod, mkdir, open, rename, unlink } from "node:fs/promises";
+import { access, chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { runXPilot, type XObservation } from "./x-pilot";
+import { sendSigned, signPosts, signStatus, xPostsReportFrom, xStatusReportFrom, type XReportConfig, type XReportOutcome } from "./x-report";
 
 const DAY = 86_400_000;
 export const X_COLLECTOR_QUERY = 'url:github.com (launch OR launched OR "built with" OR "vibe coding" OR "SKILL.md" OR "agent skill") has:links';

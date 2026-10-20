@@ -23,7 +23,22 @@
 토큰은 사용자가 제공한 로컬 `~/.config/nomorevibe/x-api.env`에서 SSH stdin으로 전달했다.
 토큰·env 전문을 명령 인자·로그·Git에 출력하지 않았다. 구매·자동충전·권한 확대는 하지 않았다.
 X 사용 목적 승인 기록은 아직 확인하지 못했다. 토큰/API200을 외부 승인 기록으로 대체하지 않는다.
-독립 서비스 설치와 실제 수집 가동을 구별한다. 공개 HOT 필터·관리자 연결은 아직 구현 범위 밖이다.
+독립 서비스 설치와 실제 수집 가동을 구별한다.
+
+## 웹 보고 — 하루 상태와 게시물(SNS 화제 C안 T18)
+
+수집기는 매 실행 끝에 웹으로 서명한 보고를 보낸다. 계약은 [보고 runbook](2026-10-18-x-status-report-runbook.md)이다.
+
+| env(`/etc/nomorevibe-x.env`) | 값 |
+| --- | --- |
+| `X_STATUS_REPORT_SECRET` | 웹 두 앱과 **같은 값**, 32바이트 이상·공백 없음. 없으면 아무것도 보내지 않는다 |
+| `X_STATUS_REPORT_URL` | `https://nomorevibe.com/api/ops/x-status` — 매 실행(dry-run 포함) 하루 상태 |
+| `X_POSTS_REPORT_URL` | `https://nomorevibe.com/api/ops/x-posts` — live 수집이 끝난 실행에서만 게시물 |
+
+비밀이 있는데 주소가 하나도 없거나 https 가 아닌 주소면 설정 오류로 멈춘다(요청·예약 없음).
+보내기는 한 번뿐이고(10초 제한) 결과는 `status.json` 의 `reports`(`posts`·`status`: 응답 코드 또는 `timeout`·`network`)에만 남는다.
+보내기가 실패해도 수집 결과·예약 장부는 그대로다. **보고를 다시 받으려고 수집을 다시 돌리지 않는다.**
+수집기는 운영 DB 자격 증명을 갖지 않는다 — DB 에 쓰는 것은 웹이다.
 
 ## 하루 10개 계약
 
@@ -42,7 +57,8 @@ read $0.005 기준10개는 최대$0.05/일,31일$1.55의 단순 환산이며 실
 `observations.json`은 저장소별 반응 합계·기여 게시물 수·시각의 비공개 최신 스냅샷이다.
 본문·작성자·프로필·raw 응답은 저장하지 않는다. 반응 누락은 null, withheld/모호한 링크는 제외한다.
 `skillVerified:false`이며 SKILL.md 존재나 제품 적합성을 검증한 결과가 아니다.
-24시간 만료 이후 표시하면 안 된다. 현재는 소비자/공개 endpoint가 없고, 다음 유효 요청이 파일을 교체한다.
+24시간 만료 이후 표시하면 안 된다. 이 파일은 웹이 읽지 않는다 — 웹에는 게시물 보고(ID·저장소·반응 수)로 가고,
+웹도 마지막 확인 뒤 24시간만 공개 화면에 보인다. 다음 유효 요청이 파일을 교체한다.
 장기 관측 기록이나 성장률/HOT 확정 순위가 아니다.
 
 ## 운영 명령
@@ -69,9 +85,9 @@ root 전용 env의 `X_COLLECTION_LIVE=1`, `X_USE_CASE_APPROVED=1`을 설정해�
 ## 빌드·갱신·복구
 
 ```sh
-npx vitest run tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts
+npx vitest run tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts tests/x-posts.test.ts
 npx tsc --noEmit
-npx eslint lib/social/x-pilot.ts lib/social/x-collector.ts scripts/x-collector.ts tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts
+npx eslint lib/social/x-pilot.ts lib/social/x-collector.ts lib/social/x-report.ts scripts/x-collector.ts tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts
 node_modules/.bin/esbuild scripts/x-collector.ts --bundle --platform=node --target=node24 --format=esm --outfile=/private/tmp/x-collector.mjs
 shasum -a 256 /private/tmp/x-collector.mjs
 ```

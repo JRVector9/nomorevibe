@@ -330,7 +330,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.methodBest": "Only the biggest post per source counts",
   "talk.methodDecay": "“Now” halves a post’s weight every 36 hours; “This week” adds posts up as they are",
   "talk.methodWindow": "Posts stay on this list for 7 days",
-  "talk.methodThreshold": "Only Hacker News posts with 30+ points or 15+ comments qualify",
+  "talk.methodThreshold": "Only Hacker News posts with 30+ points or 15+ comments, and X posts with 50+ reactions (likes + reposts×2), qualify",
   "talk.methodRemoved": "If the original post is deleted, it leaves this list too",
   "talk.methodSeparate": "Counted separately from nomorevibe’s own rankings",
   "talk.unlisted": "{count} discussed repositories aren’t listed yet · {active} in review",
@@ -339,4 +339,8 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.stars": "GitHub stars",
   "talk.outOfRange": "Not tracked",
   "talk.list": "Buzz ranking",
+  "talk.xScore": "{points} reactions · {comments} replies",
+  "talk.xPost": "X post",
+  "talk.viewOnX": "View on X",
+  "talk.methodX": "X posts show only reaction counts and a link, never the post text, and stay for 24 hours after each check",
 });

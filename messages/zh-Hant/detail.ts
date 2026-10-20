@@ -426,4 +426,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "talk.viewAll": "查看全部社群熱議",
   "talk.note": "分數為各平台在最後檢查時顯示的數值。我們不複製貼文內文與留言，原文刪除後此處也會移除。",
   "talk.preview": "預覽 · 僅管理員可見",
+  "talk.xScore": "{points} 次互動 · {comments} 則回覆",
+  "talk.xPost": "X 貼文",
+  "talk.viewOnX": "在 X 上查看",
+  "talk.xHeadline": "X {points} 次互動 · {comments} 則回覆",
 });

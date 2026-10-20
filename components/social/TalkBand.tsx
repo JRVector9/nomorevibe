@@ -31,16 +31,22 @@ export function TalkBand({ talk, t, locale, now, preview }: {
           {talk.rank ? t("talk.kickerRank", { rank: count(talk.rank) }) : t("talk.kicker")} · {t("talk.sources", { count: count(talk.sources.length) })}
           {preview && <> · {t("talk.preview")}</>}
         </p>
-        <h2 id="talk-band-title">{t("talk.headline", { source: SOURCE_NAME[best.source], points: count(best.points), comments: count(best.comments) })}</h2>
+        <h2 id="talk-band-title">{best.source === "x"
+          ? t("talk.xHeadline", { points: count(best.points), comments: count(best.comments) })
+          : t("talk.headline", { source: SOURCE_NAME[best.source], points: count(best.points), comments: count(best.comments) })}</h2>
         <div className="talk-lines">
-          {talk.posts.slice(0, 4).map(post => (
-            <div key={post.id} className="talk-line">
-              <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t("talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
-              <span className="talk-line-title" lang="en">{post.title}</span>
-              <span>{formatDate(post.postedAt, now, locale)} · {t(post.kind === "show" ? "talk.byMaker" : "talk.byOthers")}</span>
-              <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{discussion(post.linkTarget)} ↗</a>
-            </div>
-          ))}
+          {talk.posts.slice(0, 4).map(post => {
+            // X 게시물은 본문·작성자를 옮기지 않는다 — 반응 수와 링크만
+            const x = post.source === "x";
+            return (
+              <div key={post.id} className="talk-line">
+                <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(x ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+                {x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
+                <span>{formatDate(post.postedAt, now, locale)}{x ? "" : ` · ${t(post.kind === "show" ? "talk.byMaker" : "talk.byOthers")}`}</span>
+                <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{x ? t("talk.viewOnX") : discussion(post.linkTarget)} ↗</a>
+              </div>
+            );
+          })}
         </div>
       </div>
       {talk.starGrowth ? (
