@@ -6,6 +6,7 @@ import { localePath } from "@/lib/i18n/routing";
 import { ME_TAB_PATHS } from "@/lib/me/contract";
 import type { MeSummary } from "@/lib/me/summary";
 import { MeAvatar } from "./MeAvatar";
+import { MeSavedCount } from "./MeTabs";
 
 const STATS = [["tried", "tried"], ["saved", "saved"], ["opinions", "opinions"], ["following", "following"]] as const;
 
@@ -34,7 +35,7 @@ export function MeHead({ summary, locale, t, now }: { summary: MeSummary; locale
       <nav className="me-stats" aria-label={t("head.stats")}>
         {STATS.map(([tab, key]) => (
           <Link key={tab} prefetch={false} className="me-stat" href={localePath(locale, ME_TAB_PATHS[tab])}>
-            <b>{formatNumber(counts[key], locale)}</b>
+            <b>{key === "saved" ? <MeSavedCount initial={counts.saved} /> : formatNumber(counts[key], locale)}</b>
             <span>{t(`tabs.${tab}`)}</span>
           </Link>
         ))}

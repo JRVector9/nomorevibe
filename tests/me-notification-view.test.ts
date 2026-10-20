@@ -111,9 +111,11 @@ describe("팔로 열쇠", () => {
 });
 
 describe("분야 주간 묶음 시각", () => {
-  it("월요일 09:00 KST 이 그 주의 요약 시각이다", () => {
-    expect(categoryDigestWeek(new Date("2026-10-20T05:00:00Z"))).toEqual({ key: "2026-W43", sendAt: new Date("2026-10-19T00:00:00Z") });
-    // KST 월요일 00:30 은 이미 새 주다 — 요약은 아홉 시간 뒤
-    expect(categoryDigestWeek(new Date("2026-10-25T15:30:00Z"))).toEqual({ key: "2026-W44", sendAt: new Date("2026-10-26T00:00:00Z") });
+  it("월요일 00:00 KST 이 그 주의 요약 시각이다 — 기본 주간 메일(09:00)보다 먼저", () => {
+    expect(categoryDigestWeek(new Date("2026-10-20T05:00:00Z"))).toEqual({ key: "2026-W43", sendAt: new Date("2026-10-18T15:00:00Z") });
+    // KST 월요일 00:30 은 이미 새 주이고 요약 시각도 지났다
+    expect(categoryDigestWeek(new Date("2026-10-25T15:30:00Z"))).toEqual({ key: "2026-W44", sendAt: new Date("2026-10-25T15:00:00Z") });
+    // KST 일요일 23:59 는 아직 지난 주다
+    expect(categoryDigestWeek(new Date("2026-10-25T14:59:00Z"))).toEqual({ key: "2026-W43", sendAt: new Date("2026-10-18T15:00:00Z") });
   });
 });

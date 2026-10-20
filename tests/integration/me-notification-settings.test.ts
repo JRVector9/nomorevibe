@@ -1,8 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
-import { emailOutbox, notificationSettings, notifications } from "@/lib/db/me-schema";
+import { products, productUpdates } from "@/lib/db/schema";
+import { emailOutbox, notificationSettings, notifications, userFollows } from "@/lib/db/me-schema";
 import { publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
 import { ensureSchema, resetTables } from "./setup";
@@ -129,8 +129,8 @@ describe("notify → 발송함", () => {
 
   it("발송함에 넣다 실패해도 notify 는 던지지 않는다", async () => {
     configureEmail();
-    const { enqueueNotificationEmail } = await outbox();
-    expect(await enqueueNotificationEmail({ id: 1, userId: 999_999, kind: "maker_reply", dedupeKey: "maker_reply:x" })).toBe(false);
+    const { enqueueNotificationEmails } = await outbox();
+    expect(await enqueueNotificationEmails([{ id: 1, userId: 999_999, kind: "maker_reply", dedupeKey: "maker_reply:x" }])).toBe(0);
     const reader = await member("읽는이", "hanul@example.com");
     await db.execute(sql`ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_test_block CHECK (kind <> 'maker_reply') NOT VALID`);
     try {
@@ -139,6 +139,65 @@ describe("notify → 발송함", () => {
     } finally {
       await db.execute(sql`ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_test_block`);
     }
+    expect(await rows()).toEqual([]);
+  });
+
+  it("팔로·검토 결과·메이커 새 프로젝트 길도 notify 와 같게 «즉시»인 계정만 줄 세운다", async () => {
+    const { notifyCommentReviewed, notifyMakerNewProject, notifyNewReleases } = await import("@/lib/me/notifications");
+    const instant = await member("즉시", "instant@example.com");
+    const weekly = await member("주간", "weekly@example.com");
+    const off = await member("끔", "off@example.com");
+    const plain = await member("기본값", "plain@example.com");
+    const noEmail = await member("주소없음");
+    await put(instant.headers, { followedProject: "instant", followedMaker: "instant" });
+    await put(weekly.headers, { followedProject: "weekly", followedMaker: "weekly" });
+    await put(off.headers, { followedProject: "off", followedMaker: "off" });
+    await put(noEmail.headers, { followedProject: "instant", followedMaker: "instant" });
+    const [item] = await db.insert(products).values({ slug: "widget", url: "https://widget.example", name: "Widget", tagline: "T", description: "D", category: "other",
+      status: "seeded", source: "crawler", repoUrl: "https://github.com/memo-lab/widget", verifyToken: "v", editTokenHash: "e" }).returning();
+    const everyone = [instant, weekly, off, plain, noEmail];
+    await db.insert(userFollows).values(everyone.flatMap((who) => [
+      { userId: who.id, targetType: "product" as const, targetKey: String(item.id) }, { userId: who.id, targetType: "maker" as const, targetKey: "memo-lab" },
+    ]));
+    const [update] = await db.insert(productUpdates).values({ slug: item.slug, sourceKind: "github_release", dedupeKey: "r1", title: "v1", observedAt: new Date(), publishedAt: new Date() }).returning();
+
+    // 발신 설정이 없으면 알림함에만 넣는다
+    expect(await notifyMakerNewProject(item.slug)).toBe(5);
+    expect(await rows()).toEqual([]);
+    await db.delete(notifications);
+
+    configureEmail();
+    expect(await notifyNewReleases(item.id)).toBe(5);
+    expect(await notifyMakerNewProject(item.slug)).toBe(5);
+    expect(await notifyCommentReviewed({ id: crypto.randomUUID(), productId: item.id, authorUserId: instant.id }, "accepted")).toBe(1);
+    const queued = await rows();
+    expect(queued.map((row) => [row.userId, row.kind, row.dedupeKey, row.state]).sort()).toEqual([
+      [instant.id, "followed_release", `email:${instant.id}:followed_release:${update.id}`, "pending"],
+      [instant.id, "maker_new_project", `email:${instant.id}:maker_new_project:${item.id}`, "pending"],
+    ].sort());
+    const [release] = await db.select().from(notifications).where(and(eq(notifications.userId, instant.id), eq(notifications.kind, "followed_release")));
+    expect(queued.find((row) => row.kind === "followed_release")?.payload).toEqual({ notificationId: release.id, setting: "followedProject", product: { slug: "widget", name: "Widget" } });
+
+    // 다시 돌아도 한 줄, 알림 넣기와 같은 lease 쓰기 안에서 발송함이 실패해도 알림은 남는다
+    expect(await notifyNewReleases(item.id)).toBe(0);
+    await db.delete(notifications);
+    await db.delete(emailOutbox);
+    await db.execute(sql`ALTER TABLE email_outbox ADD CONSTRAINT email_outbox_test_block CHECK (kind <> 'followed_release') NOT VALID`);
+    try {
+      expect(await notifyNewReleases(item.id)).toBe(5);
+    } finally {
+      await db.execute(sql`ALTER TABLE email_outbox DROP CONSTRAINT email_outbox_test_block`);
+    }
+    expect(await rows()).toEqual([]);
+    expect(await db.select().from(notifications)).toHaveLength(5);
+  });
+
+  it("탈퇴한 계정에는 줄을 세우지 않는다", async () => {
+    configureEmail();
+    const { enqueueNotificationEmails } = await outbox();
+    const gone = await member("떠난이", "gone@example.com");
+    await db.update(publicUsers).set({ deletedAt: new Date() }).where(eq(publicUsers.id, gone.id));
+    expect(await enqueueNotificationEmails([{ id: 1, userId: gone.id, kind: "maker_reply", dedupeKey: "maker_reply:1" }])).toBe(0);
     expect(await rows()).toEqual([]);
   });
 });
@@ -226,6 +285,30 @@ describe("email-outbox-send", () => {
   });
 });
 
+describe("email-outbox-send 시도 상한", () => {
+  it("상한까지 시도한 pending 줄은 잡지 않고 unknown 으로 닫는다 — 다른 줄은 그대로 보낸다", async () => {
+    configureEmail();
+    const reader = await member("읽는이", "hanul@example.com");
+    const past = new Date(Date.now() - 60_000);
+    await db.insert(emailOutbox).values([
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "poison", payload: {}, attempts: 10, nextAttemptAt: past },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "last-try", payload: {}, attempts: 5, nextAttemptAt: past },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "in-flight", payload: {}, attempts: 5, nextAttemptAt: new Date(Date.now() + 60 * 60_000) },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "good", payload: {}, attempts: 0, nextAttemptAt: past },
+    ]);
+    const fetcher = vi.fn(async () => new Response("{}", { status: 200 }));
+    const { sendPendingEmails } = await outbox();
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 1, unknown: 2 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const byKey = Object.fromEntries((await rows()).map((row) => [row.dedupeKey, [row.state, row.attempts, row.lastError]]));
+    expect(byKey).toEqual({
+      poison: ["unknown", 10, "attempts_exhausted"], "last-try": ["unknown", 5, "attempts_exhausted"],
+      "in-flight": ["pending", 5, null], good: ["accepted", 1, null],
+    });
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 0, unknown: 0 });
+  });
+});
+
 describe("email-weekly-digest", () => {
   const MONDAY_10_KST = new Date("2026-10-19T01:00:00Z");
   it("고른 요일·시각이 지나면 계정마다 한 주 한 통, 지난 7일 안 읽은 주간 종류만 묶는다", async () => {
@@ -276,6 +359,23 @@ describe("email-weekly-digest", () => {
   });
 });
 
+describe("분야 묶음과 주간 메일 요약", () => {
+  it("분야 묶음은 월요일 0시에 들어가 그날 9시 주간 메일에 담긴다", async () => {
+    configureEmail();
+    const reader = await member("읽는이", "hanul@example.com");
+    await db.insert(userFollows).values({ userId: reader.id, targetType: "category", targetKey: "other" });
+    await db.insert(products).values({ slug: "fresh", url: "https://fresh.example", name: "Fresh", tagline: "T", description: "D", category: "Other",
+      status: "seeded", verifyToken: "v", editTokenHash: "e", createdAt: new Date("2026-10-16T00:00:00Z") });
+    const { sendCategoryDigest } = await import("@/lib/jobs/me/notifications");
+    const ctx = { cursor: null, save: async () => {}, hasBudget: () => true, log: () => {} };
+    await sendCategoryDigest(ctx as never, new Date("2026-10-18T15:30:00Z")); // 월요일 00:30 KST
+    expect((await db.select().from(notifications)).map((row) => row.kind)).toEqual(["category_new"]);
+    const { queueWeeklyDigests } = await outbox();
+    expect(await queueWeeklyDigests({ now: new Date("2026-10-19T00:00:00Z") })).toEqual({ queued: 1, empty: 0 }); // 월요일 09:00 KST
+    expect((await rows())[0].payload).toMatchObject({ week: "2026-W43", total: 1, items: [{ kind: "category_new", product: null }] });
+  });
+});
+
 describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
   const call = async (method: "GET" | "POST", token: string, lang = "ko") => {
     const handler = (await unsubscribeRoute())[method];
@@ -322,5 +422,16 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
     expect(await response.text()).toContain("Email alert turned off");
     expect((await db.select().from(notificationSettings))[0]).toMatchObject({ makerReply: "instant", followedProject: "off", followedMaker: "off", followedCategory: "off" });
     expect((await call("GET", signUnsubscribeToken(999_999, "news"))).status).toBe(200);
+  });
+
+  it("탈퇴한 계정(deleted_at)의 끄기 링크는 설정 행을 다시 만들지 않는다 — 설정 저장도 같다", async () => {
+    const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
+    const { saveNotificationSettings } = await import("@/lib/me/notification-settings");
+    const gone = await member("떠난이", "gone@example.com");
+    await db.update(publicUsers).set({ deletedAt: new Date() }).where(eq(publicUsers.id, gone.id));
+    expect((await call("POST", signUnsubscribeToken(gone.id, "makerReply"))).status).toBe(200);
+    expect((await call("POST", signUnsubscribeToken(gone.id, "weekly"))).status).toBe(200);
+    await saveNotificationSettings(gone.id, { followedProject: "instant" });
+    expect(await db.select().from(notificationSettings)).toEqual([]);
   });
 });

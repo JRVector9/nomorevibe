@@ -9,6 +9,7 @@ import { formatDay } from "@/lib/format/time";
 import { withJobLeaseWrite } from "@/lib/jobs/control";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { NOTIFICATION_RETENTION_DAYS } from "@/lib/me/contract";
+import { enqueueNotificationEmails } from "@/lib/me/email-outbox";
 import { categoryOfKey } from "@/lib/me/follow-keys";
 import { notifyFollowers } from "@/lib/me/notifications";
 
@@ -19,7 +20,13 @@ const PUBLIC_STATUSES = ["seeded", "verified"] as const;
 const followedProductIds = sql`(select case when f.target_key ~ '^[0-9]{1,9}$' then f.target_key::int end
   from ${userFollows} f where f.target_type = 'product')`;
 
-export type DelistedCursor = { purgeId: number };
+/** purgeId = 끝까지 읽은 id, floor = 처음 시작한 곳(그 앞의 차단은 알리지 않는다) */
+export type DelistedCursor = { purgeId: number; floor?: number };
+/**
+ * cdn_purges id 는 sequence 라 트랜잭션이 늦게 commit 되면 낮은 id 가 커서 뒤에 나타난다 — 틱마다 커서 앞 500개를 다시 본다(floor 아래로는 가지 않는다).
+ * dedupe_key 에 purge id 가 있어 다시 봐도 한 줄이고, 팔로한 사람이 있는 줄만 다시 넣어 본다.
+ */
+const PURGE_OVERLAP = 500;
 
 /**
  * 팔로한 프로젝트가 목록에서 빠지면 알린다(followed_delisted). 내리는 길이 아홉 갈래라(관리자 차단·내려달라는 요청·감사·
@@ -34,15 +41,19 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
     const [row] = await db.select({ max: sql<number>`coalesce(max(${cdnPurges.id}), 0)::int` }).from(cdnPurges);
     cursor = { purgeId: row.max };
   }
+  const floor = cursor.floor ?? cursor.purgeId;
+  cursor = { purgeId: cursor.purgeId, floor };
   let removed = 0;
+  let scanned = Math.max(cursor.purgeId - PURGE_OVERLAP, floor);
   for (let round = 0; round < 10 && ctx.hasBudget(); round += 1) {
-    const rows = await db.select({ id: cdnPurges.id, reason: cdnPurges.reason, productId: products.id, status: products.status })
+    const rows = await db.select({ id: cdnPurges.id, reason: cdnPurges.reason, productId: products.id, status: products.status,
+      followed: sql<boolean>`exists (select 1 from ${userFollows} f where f.target_type = 'product' and f.target_key = ${products.id}::text)` })
       .from(cdnPurges).leftJoin(products, eq(products.slug, cdnPurges.slug))
-      .where(gt(cdnPurges.id, cursor.purgeId)).orderBy(asc(cdnPurges.id)).limit(200);
+      .where(gt(cdnPurges.id, scanned)).orderBy(asc(cdnPurges.id)).limit(200);
     if (!rows.length) break;
-    const delisted = rows.filter((row) => row.productId !== null && row.status !== null
+    const delisted = rows.filter((row) => row.productId !== null && row.status !== null && row.followed
       && row.reason !== "takedown" && row.reason !== "deleted" && !(PUBLIC_STATUSES as readonly string[]).includes(row.status));
-    removed += await withJobLeaseWrite(ctx.lease, async (tx) => {
+    if (delisted.length) removed += await withJobLeaseWrite(ctx.lease, async (tx) => {
       let total = 0;
       for (const row of delisted) {
         total += await notifyFollowers({ targetType: "product", targetKeys: [String(row.productId)], kind: "followed_delisted", productId: row.productId,
@@ -50,8 +61,12 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
       }
       return total;
     });
-    cursor = { purgeId: rows[rows.length - 1].id };
-    await ctx.save(cursor);
+    scanned = rows[rows.length - 1].id;
+    if (scanned > cursor.purgeId) {
+      cursor = { purgeId: scanned, floor };
+      await ctx.save(cursor);
+    }
+    if (rows.length < 200) break;
   }
 
   const hidden = await db.select({ id: products.id, downSince: productHealth.downSince, repoMissingSince: products.repoMissingSince })
@@ -74,19 +89,21 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
 }
 
 export type CategoryDigestCursor = { week: string; afterUserId: number; done: boolean };
-/** 월요일 09:00(KST)부터 하루 동안만 보낸다 — 잡이 그 주 내내 멈춰 있었다면 지난 주 요약을 늦게 보내지 않고 건너뛴다 */
-const DIGEST_HOUR = 9;
+/**
+ * 월요일 00:00(KST)부터 하루 동안만 보낸다 — 주간 메일 요약(기본 월요일 09:00, lib/me/email-outbox.ts)보다 먼저 넣어 그 주 메일에 담기게.
+ * 잡이 그 주 내내 멈춰 있었다면 지난 주 요약을 늦게 보내지 않고 건너뛴다
+ */
 const DIGEST_WINDOW_MS = DAY_MS;
 const DIGEST_BATCH = 200;
 
 /** 이번 주 요약 시각과 주 열쇠 — 월요일 0시(KST)가 주의 시작이다(lib/domain/ranking/period.ts) */
 export function categoryDigestWeek(now: Date): { key: string; sendAt: Date } {
   const week = periodContaining(now, "weekly");
-  return { key: week.key, sendAt: new Date(week.startsAt.getTime() + DIGEST_HOUR * HOUR_MS) };
+  return { key: week.key, sendAt: week.startsAt };
 }
 
 /**
- * 팔로한 분야의 새 등재 — 주 1회 묶음 한 줄(category_new, Q7). 분야를 팔로한 계정마다 지난 7일(요약 시각 기준) 새로 올라온
+ * 팔로한 분야의 새 등재 — 주 1회 묶음 한 줄(category_new, Q7). 분야를 팔로한 계정마다 지난 7일(지난 주 월요일 0시부터 이번 주 월요일 0시 전까지) 새로 올라온
  * 공개 제품 수를 분야별로 세어 하나로 적는다. 새 것이 없으면 쓰지 않는다. dedupe_key 가 주마다 하나라 다시 돌아도 한 줄이다.
  */
 export async function sendCategoryDigest(ctx: JobContext<CategoryDigestCursor>, now = new Date()): Promise<JobOutcome<CategoryDigestCursor>> {
@@ -121,8 +138,13 @@ export async function sendCategoryDigest(ctx: JobContext<CategoryDigestCursor>, 
       return [{ userId, kind: "category_new" as const, payload: { week: key, total, categories: found.slice(0, 3), others: found.length - 1 },
         dedupeKey: `category_new:${key}` }];
     });
-    if (rows.length) written += (await withJobLeaseWrite(ctx.lease, (tx) => tx.insert(notifications).values(rows)
-      .onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] }).returning({ id: notifications.id }))).length;
+    // 분야 칸은 «즉시»를 고를 수 없어 메일 줄은 생기지 않는다 — 다른 알림 길과 같은 자리에서 발송함을 부른다(주간 요약이 묶는다)
+    if (rows.length) written += await withJobLeaseWrite(ctx.lease, async (tx) => {
+      const inserted = await tx.insert(notifications).values(rows).onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] })
+        .returning({ id: notifications.id, userId: notifications.userId, kind: notifications.kind, productId: notifications.productId, dedupeKey: notifications.dedupeKey });
+      await enqueueNotificationEmails(inserted, tx);
+      return inserted.length;
+    });
     cursor = { ...cursor, afterUserId: users[users.length - 1].userId };
     await ctx.save(cursor);
   }

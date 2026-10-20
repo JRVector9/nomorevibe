@@ -29,6 +29,8 @@ COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
 COPY --chown=worker:nodejs lib ./lib
 COPY --chown=worker:nodejs scripts ./scripts
 COPY --chown=worker:nodejs drizzle ./drizzle
+# 알림 메일 문구(lib/me/email-copy.ts) — 보낼 때만 늦게 읽는다. 잡 목록은 이 폴더 없이도 올라온다(Oracle release).
+COPY --chown=worker:nodejs messages ./messages
 # Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4

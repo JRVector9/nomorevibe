@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { jobs, productHealth, products, productUpdates, rateLimits } from "@/lib/db/schema";
@@ -6,7 +6,8 @@ import { notifications, userFollows } from "@/lib/db/me-schema";
 import { publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
-import { ensureSchema, resetTables } from "./setup";
+import postgres from "postgres";
+import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 
 vi.mock("server-only", () => ({}));
 
@@ -268,6 +269,32 @@ describe("알림 만들기", () => {
   });
 });
 
+describe("알림 넣기와 잡 lease", () => {
+  it("발행·수집 잡의 lease 를 받으면 그 lease 쓰기 안에서 넣고, lease 를 잃었으면 넣지 않는다", async () => {
+    const { notifyMakerNewProject, notifyNewReleases } = await import("@/lib/me/notifications");
+    const a = await user();
+    const p = await product({ name: "위젯" });
+    await db.insert(userFollows).values([{ userId: a.id, targetType: "maker", targetKey: "memo-lab" }, { userId: a.id, targetType: "product", targetKey: String(p.id) }]);
+    await db.insert(productUpdates).values({ slug: p.slug, sourceKind: "github_release", dedupeKey: "r1", title: "v1", observedAt: new Date(), publishedAt: new Date() });
+    // 잡 줄은 다른 파일과 나눠 쓴다 — 이 테스트가 잡은 lease 는 끝나면 지운다
+    const names = ["crawl-publish", "product-evidence-refresh"];
+    await db.delete(jobs).where(inArray(jobs.name, names));
+    await db.insert(jobs).values(names.map((name) => ({ name, leaseToken: "now-owner", lockedAt: sql`now()`, requestedVersion: 1 })));
+    try {
+      const lost = (name: string) => ({ name, token: "old-owner", requestedVersion: 1 });
+      expect(await notifyMakerNewProject(p.slug, lost("crawl-publish"))).toBe(0);
+      expect(await notifyNewReleases(p.id, lost("product-evidence-refresh"))).toBe(0);
+      expect(await db.select().from(notifications)).toEqual([]);
+
+      expect(await notifyMakerNewProject(p.slug, { ...lost("crawl-publish"), token: "now-owner" })).toBe(1);
+      expect(await notifyNewReleases(p.id, { ...lost("product-evidence-refresh"), token: "now-owner" })).toBe(1);
+      expect((await db.select().from(notifications)).map((row) => row.kind).sort()).toEqual(["followed_release", "maker_new_project"]);
+    } finally {
+      await db.delete(jobs).where(inArray(jobs.name, names));
+    }
+  });
+});
+
 describe("알림 잡", () => {
   it("notification-delisted — 차단(cdn_purges 를 따라)과 연속 실패를 팔로한 사람에게 한 번씩", async () => {
     const { sendDelistedNotifications } = await import("@/lib/jobs/me/notifications");
@@ -280,7 +307,7 @@ describe("알림 잡", () => {
 
     // 처음에는 지금 끝에서 시작한다 — 그 전에 내려간 것(before)은 알리지 않는다
     const start = await sendDelistedNotifications(ctx<{ purgeId: number }>().ctx);
-    expect(start.cursor).toEqual({ purgeId: expect.any(Number) });
+    expect(start.cursor).toEqual({ purgeId: expect.any(Number), floor: start.cursor?.purgeId });
     expect(await db.select().from(notifications)).toEqual([]);
 
     await db.update(products).set({ status: "banned" }).where(eq(products.id, banned.id));
@@ -305,11 +332,40 @@ describe("알림 잡", () => {
     expect(await db.select().from(notifications)).toHaveLength(1);
   });
 
-  it("notification-category-digest — 월요일 09:00 뒤 하루 안에, 계정마다 그 주 한 줄", async () => {
+  it("notification-delisted — 늦게 commit 된 낮은 purge id 도 다음 틱에 알리고, 시작 전 차단은 다시 보지 않는다", async () => {
+    const { sendDelistedNotifications } = await import("@/lib/jobs/me/notifications");
+    const a = await user();
+    const [before, early, late] = [await product(), await product(), await product()];
+    await db.insert(userFollows).values([before, early, late].map((p) => ({ userId: a.id, targetType: "product" as const, targetKey: String(p.id) })));
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, before.id));
+    const start = await sendDelistedNotifications(ctx<{ purgeId: number; floor?: number }>().ctx);
+
+    // 다른 연결이 먼저 purge id 를 받고(early) 늦게 commit 한다 — 그사이 뒤 id(late)가 먼저 commit 되어 커서가 넘어간다
+    const other = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
+    try {
+      await other.begin(async (tx) => {
+        await tx`update products set status = 'banned' where id = ${early.id}`;
+        await db.update(products).set({ status: "banned" }).where(eq(products.id, late.id));
+        const mid = await sendDelistedNotifications(ctx(start.cursor ?? null).ctx);
+        expect((await db.select().from(notifications)).map((row) => row.productId)).toEqual([late.id]);
+        start.cursor = mid.cursor;
+      });
+    } finally {
+      await other.end();
+    }
+    const end = await sendDelistedNotifications(ctx(start.cursor ?? null).ctx);
+    await sendDelistedNotifications(ctx(end.cursor ?? null).ctx);
+    const rows = await db.select().from(notifications);
+    expect(rows.map((row) => row.productId).sort()).toEqual([early.id, late.id].sort());
+    expect(end.cursor?.floor).toBe(start.cursor?.floor);
+  });
+
+  it("notification-category-digest — 월요일 00:00 뒤 하루 안에, 계정마다 그 주 한 줄", async () => {
     const { sendCategoryDigest } = await import("@/lib/jobs/me/notifications");
     const [a, b, idle] = [await user(), await user(), await user()];
-    const sendAt = new Date("2026-10-19T00:00:00Z"); // 월요일 09:00 KST
+    const sendAt = new Date("2026-10-18T15:00:00Z"); // 월요일 00:00 KST
     const inWindow = new Date(sendAt.getTime() - 2 * 86_400_000);
+    await product({ category: "Design", createdAt: new Date(sendAt.getTime() + 60_000) }); // 이번 주에 올라온 것은 다음 주 묶음이다
     await product({ category: "Design", createdAt: inWindow });
     await product({ category: "Design", createdAt: inWindow });
     await product({ category: "Dev", createdAt: inWindow });

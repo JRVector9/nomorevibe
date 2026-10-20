@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gte, inArray, isNull, lte, notExists, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, notExists, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { emailOutbox, notificationSettings, notifications } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { products } from "@/lib/db/schema";
 import { emailLoginConfigured, sendEmail, type EmailDeliveryState } from "@/lib/domain/accounts/email-delivery";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { localePath } from "@/lib/i18n/routing";
 import type { Locale } from "@/lib/i18n/locales";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { logger } from "@/lib/observability/logger";
 import { siteOrigin } from "@/lib/site";
-import type { NotificationKind } from "./contract";
+import { EMAIL_SETTING_CHOICES, type EmailSettingKey, type NotificationKind } from "./contract";
 import { digestEmail, instantEmail, type DigestItem, type EmailContent, type EmailKind, type EmailProduct } from "./email-copy";
 import { DEFAULT_NOTIFICATION_SETTINGS, EMAIL_SETTING_FOR_KIND, emailRecipient, weeklyKinds } from "./notification-settings";
 import { alertSettingsUrl, unsubscribeUrl } from "./unsubscribe";
@@ -56,33 +57,55 @@ export type NotificationEmailSource = {
   id: number; userId: number; kind: NotificationKind; productId?: number | null; payload?: Record<string, unknown>; dedupeKey: string;
 };
 
-async function productSnapshot(productId: number | null | undefined): Promise<EmailProduct> {
-  if (!productId) return null;
-  const [row] = await db.select({ slug: products.slug, name: products.name }).from(products).where(eq(products.id, productId));
-  return row ?? null;
+type Executor = typeof db | ProductTransaction;
+const SETTING_COLUMNS = {
+  makerReply: notificationSettings.makerReply, followedProject: notificationSettings.followedProject, followedMaker: notificationSettings.followedMaker,
+  followedCategory: notificationSettings.followedCategory, newListingMine: notificationSettings.newListingMine,
+} as const satisfies Record<EmailSettingKey, unknown>;
+/** 이 종류를 «즉시» 메일로 받을 수 있는가 — 칸이 없거나(사이트 안에만) «즉시»를 고를 수 없는 칸(분야)이면 줄을 세지 않는다 */
+function instantSetting(kind: NotificationKind): EmailSettingKey | null {
+  const setting = EMAIL_SETTING_FOR_KIND[kind];
+  return setting && (EMAIL_SETTING_CHOICES[setting] as readonly string[]).includes("instant") ? setting : null;
 }
 
 /**
- * notify() 가 알림을 넣은 뒤 부른다 — 그 종류의 메일 설정이 «즉시»이고 받을 주소가 있으면 한 줄 넣는다.
- * 무슨 일이 있어도 던지지 않는다: 메일은 덤이고 알림함이 본체다. 넣었으면 true
+ * 알림을 넣은 뒤 부른다 — 넣은 줄마다 그 종류의 메일 설정이 «즉시»(행이 없으면 기본값)이고 탈퇴하지 않았고 이메일 신원이 있으면
+ * 발송함에 한 줄. 줄이 많아도 한 문장(INSERT … SELECT)이다. 부른 쪽 트랜잭션(lease 쓰기)을 받으면 그 안에서 savepoint 로 넣어
+ * 실패해도 그 트랜잭션을 깨지 않는다. 무슨 일이 있어도 던지지 않는다: 메일은 덤이고 알림함이 본체다. 넣은 수
  */
-export async function enqueueNotificationEmail(row: NotificationEmailSource): Promise<boolean> {
+export async function enqueueNotificationEmails(rows: readonly NotificationEmailSource[], executor: Executor = db): Promise<number> {
+  const queued = rows.flatMap((row) => {
+    const setting = instantSetting(row.kind);
+    return setting ? [{ ...row, setting }] : [];
+  });
+  if (!queued.length || !emailLoginConfigured()) return 0;
   try {
-    const setting = EMAIL_SETTING_FOR_KIND[row.kind];
-    if (!setting || !emailLoginConfigured()) return false;
-    return await onPrimary(async () => {
-      const recipient = await emailRecipient(row.userId);
-      if (!recipient || recipient.settings[setting] !== "instant") return false;
-      const product = await productSnapshot(row.productId);
-      const inserted = await db.insert(emailOutbox).values({
-        userId: row.userId, kind: row.kind, dedupeKey: notificationEmailDedupeKey(row.userId, row.dedupeKey),
-        payload: { notificationId: row.id, setting, product },
-      }).onConflictDoNothing({ target: emailOutbox.dedupeKey }).returning({ id: emailOutbox.id });
-      return inserted.length > 0;
-    });
+    const mode = sql.join((Object.entries(SETTING_COLUMNS) as [EmailSettingKey, (typeof SETTING_COLUMNS)[EmailSettingKey]][])
+      .map(([key, column]) => sql`when ${key} then coalesce(${column}, ${DEFAULT_NOTIFICATION_SETTINGS[key]})`), sql` `);
+    const statement = (chunk: typeof queued) => sql`
+      insert into ${emailOutbox} (user_id, kind, dedupe_key, payload)
+      select n.user_id, n.kind, n.dedupe_key, jsonb_build_object('notificationId', n.id, 'setting', n.setting,
+             'product', case when ${products.id} is null then null else jsonb_build_object('slug', ${products.slug}, 'name', ${products.name}) end)
+        from (values ${sql.join(chunk.map((row) => sql`(${row.id}::bigint, ${row.userId}::int, ${row.kind}::varchar, ${row.productId ?? null}::int,
+          ${notificationEmailDedupeKey(row.userId, row.dedupeKey)}::varchar, ${row.setting}::varchar)`), sql`, `)}) as n(id, user_id, kind, product_id, dedupe_key, setting)
+        join ${publicUsers} on ${publicUsers.id} = n.user_id and ${publicUsers.deletedAt} is null
+        left join ${notificationSettings} on ${notificationSettings.userId} = n.user_id
+        left join ${products} on ${products.id} = n.product_id
+       where (case n.setting ${mode} end) = 'instant'
+         and exists (select 1 from ${publicIdentities} where ${publicIdentities.userId} = n.user_id and ${publicIdentities.provider} = 'email')
+      on conflict (dedupe_key) do nothing
+      returning id`;
+    // 팔로가 많아도 한 문장의 인자 수(65,535)를 넘지 않게 1,000줄씩
+    const insert = async (target: Executor) => {
+      let total = 0;
+      for (let start = 0; start < queued.length; start += 1_000) total += (await target.execute(statement(queued.slice(start, start + 1_000)))).length;
+      return total;
+    };
+    const inserted = await onPrimary(() => executor === db ? insert(db) : executor.transaction((savepoint) => insert(savepoint)));
+    return inserted;
   } catch (error) {
-    logger.warn("me.email_enqueue_failed", { kind: row.kind, error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
-    return false;
+    logger.warn("me.email_enqueue_failed", { kinds: [...new Set(queued.map((row) => row.kind))], error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
+    return 0;
   }
 }
 
@@ -116,20 +139,23 @@ async function compose(row: OutboxRow): Promise<{ to: string; content: EmailCont
     });
     if (!items.length) return null;
     const total = typeof row.payload.total === "number" ? row.payload.total : items.length;
-    return { to: identity.address, unsubscribe, content: digestEmail(locale, items, total, { open: settingsLink, unsubscribe, settings: settingsLink }) };
+    return { to: identity.address, unsubscribe, content: await digestEmail(locale, items, total, { open: settingsLink, unsubscribe, settings: settingsLink }) };
   }
   const setting = EMAIL_SETTING_FOR_KIND[row.kind as NotificationKind];
   if (!isEmailKind(row.kind) || !setting || settings[setting] !== "instant") return null;
   const unsubscribe = unsubscribeUrl(row.userId, setting, locale);
   const product = snapshot(row.payload.product);
-  return { to: identity.address, unsubscribe, content: instantEmail(locale, row.kind, product, { open: productUrl(locale, product), unsubscribe, settings: settingsLink }) };
+  return { to: identity.address, unsubscribe, content: await instantEmail(locale, row.kind, product, { open: productUrl(locale, product), unsubscribe, settings: settingsLink }) };
 }
 
-/** 다음 한 줄을 잡는다 — 시도 횟수를 올리고 다음 시도 시각을 먼저 적는다(보내는 중 죽어도 그 시각 뒤 다시 잡힌다) */
+/**
+ * 다음 한 줄을 잡는다 — 시도 횟수를 올리고 다음 시도 시각을 먼저 적는다(보내는 중 죽어도 그 시각 뒤 다시 잡힌다).
+ * 상한까지 시도한 줄은 잡지 않는다 — attempts 가 check(0–10)를 넘어 틱마다 같은 줄에서 멈추지 않게
+ */
 function claimNext(lease: JobLease | undefined): Promise<OutboxRow | null> {
   return withJobLeaseWrite(lease, async (tx) => {
     const [row] = await tx.select().from(emailOutbox)
-      .where(and(eq(emailOutbox.state, "pending"), lte(emailOutbox.nextAttemptAt, sql`now()`)))
+      .where(and(eq(emailOutbox.state, "pending"), lte(emailOutbox.nextAttemptAt, sql`now()`), lt(emailOutbox.attempts, EMAIL_MAX_ATTEMPTS)))
       .orderBy(emailOutbox.nextAttemptAt, emailOutbox.id).for("update", { skipLocked: true }).limit(1);
     if (!row) return null;
     const attempts = row.attempts + 1;
@@ -167,6 +193,11 @@ export async function sendPendingEmails(options: {
     tick.skipped = closed.length;
     return tick;
   }
+  // 상한까지 시도하고도 pending 으로 남은 줄(마지막 시도 중 죽었다) — 그 시도의 다음 시각이 지나면 결과를 모르는 채로 닫는다
+  const exhausted = await withJobLeaseWrite(options.lease, (tx) => tx.update(emailOutbox).set({ state: "unknown", lastError: "attempts_exhausted" })
+    .where(and(eq(emailOutbox.state, "pending"), lte(emailOutbox.nextAttemptAt, sql`now()`), gte(emailOutbox.attempts, EMAIL_MAX_ATTEMPTS)))
+    .returning({ id: emailOutbox.id }));
+  tick.unknown += exhausted.length;
   const limit = options.limit ?? 20;
   for (let sent = 0; sent < limit; sent += 1) {
     if (options.signal?.aborted || (options.hasBudget && !options.hasBudget())) break;

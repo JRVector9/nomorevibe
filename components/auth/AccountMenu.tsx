@@ -9,11 +9,12 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
 import { ME_SAVED_LINK, ME_TAB_PATHS } from "@/lib/me/contract";
-import { loadMeAccount, type MeAccount as PublicAccount } from "@/components/me/account-store";
+import { useMeAccount, useUnreadCount } from "@/components/me/account-store";
 
 /**
  * 머리의 계정 자리 — 로그아웃이면 로그인 링크, 로그인이면 이니셜 아바타와 메뉴(마이페이지 시안 머리 그림).
- * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me/summary 한 번(account-store, 다른 부품과 나눠 씀)으로 이름·수단·숫자를 받는다.
+ * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me/summary 한 번(account-store, 다른 부품과 나눠 씀)으로 이름·수단을 받는다.
+ * 이름은 닉네임을 바꾸면(patchMeAccount), 알림 수는 종·알림함과 같은 숫자(useUnreadCount)를 따라 그린다.
  */
 export function AccountMenu() {
   const locale = useLocale();
@@ -21,19 +22,14 @@ export function AccountMenu() {
   const pathname = usePathname();
   const query = useSearchParams().toString();
   const loginHref = (returnTo: string) => localePath(locale, `/login?returnTo=${encodeURIComponent(safePublicReturnUrl(returnTo, localePath(locale, "/")))}`);
-  const [account, setAccount] = useState<PublicAccount | null>(null);
+  const account = useMeAccount();
+  const unread = useUnreadCount();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const panelId = useId();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    let live = true;
-    void loadMeAccount().then((loaded) => { if (live && loaded) setAccount(loaded); });
-    return () => { live = false; };
-  }, []);
-
   // 열리면 첫 항목에 초점, 바깥을 누르면 닫는다
   useEffect(() => {
     if (!open) return;
@@ -82,7 +78,6 @@ export function AccountMenu() {
   const provider = account.providers[0];
   const via = provider?.provider === "github" ? (provider.login ? t("account.viaGithub", { login: provider.login }) : t("account.viaGithubPlain"))
     : provider?.provider === "email" ? t("account.viaEmail") : null;
-  const unread = account.counts?.unreadAlerts ?? 0;
   const links = [
     ["account.mypage", ME_TAB_PATHS.saved],
     ...(account.isMaker ? [["account.projects", ME_TAB_PATHS.projects] as const] : []),

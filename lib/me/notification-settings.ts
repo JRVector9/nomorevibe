@@ -3,6 +3,7 @@ import { db, onPrimary } from "@/lib/db";
 import { notificationSettings } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { emailLoginConfigured } from "@/lib/domain/accounts/email-delivery";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { EMAIL_SETTING_CHOICES, type EmailMode, type EmailSettingKey, type NotificationKind } from "./contract";
 
@@ -132,9 +133,19 @@ export async function readNotificationSettings(userId: number): Promise<Notifica
   });
 }
 
+/**
+ * 설정을 쓰기 전에 계정 행을 잡는다(FOR SHARE). 탈퇴한 계정은 public_users 행이 deleted_at 과 함께 남는다 — 없는 계정으로 보고 쓰지 않는다.
+ * 탈퇴(lib/me/account.ts)는 같은 행을 FOR UPDATE 로 잡고 설정을 지우므로, 탈퇴와 겹치면 그 뒤에 다시 보고 쓰지 않는다
+ */
+async function liveUser(tx: ProductTransaction, userId: number): Promise<boolean> {
+  const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("share");
+  return Boolean(user);
+}
+
 /** 받은 칸만 바꾼다. 소식 동의는 처음 동의한 시각을 지키고, 끄면 지운다 */
 export async function saveNotificationSettings(userId: number, input: NotificationSettingsInput): Promise<NotificationSettingsResponse> {
-  await onPrimary(async () => {
+  await onPrimary(() => db.transaction(async (tx) => {
+    if (!await liveUser(tx, userId)) return;
     const identity = await emailIdentity(userId, null);
     const modes = Object.fromEntries(EMAIL_SETTING_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]));
     const common = {
@@ -144,7 +155,7 @@ export async function saveNotificationSettings(userId: number, input: Notificati
       ...(input.locale !== undefined ? { locale: input.locale } : {}),
       ...(identity ? { emailIdentityId: identity.id } : {}),
     };
-    await db.insert(notificationSettings).values({
+    await tx.insert(notificationSettings).values({
       userId, ...common, ...(input.newsOptIn !== undefined ? { newsOptInAt: input.newsOptIn ? sql`now()` : null } : {}),
     }).onConflictDoUpdate({
       target: notificationSettings.userId,
@@ -153,7 +164,7 @@ export async function saveNotificationSettings(userId: number, input: Notificati
         ...(input.newsOptIn !== undefined ? { newsOptInAt: input.newsOptIn ? sql`coalesce(${notificationSettings.newsOptInAt}, now())` : null } : {}),
       },
     });
-  });
+  }));
   return readNotificationSettings(userId);
 }
 
@@ -162,16 +173,16 @@ export const UNSUBSCRIBE_KEYS = [...EMAIL_SETTING_KEYS, "weekly", "news"] as con
 export type UnsubscribeKey = (typeof UNSUBSCRIBE_KEYS)[number];
 
 export async function turnOffEmail(userId: number, key: UnsubscribeKey): Promise<void> {
-  await onPrimary(async () => {
-    const current = view(await settingsRow(userId));
+  await onPrimary(() => db.transaction(async (tx) => {
+    // 탈퇴했으면(행이 지워졌거나 deleted_at) 끌 것이 없다 — 설정 행을 다시 만들지 않는다
+    if (!await liveUser(tx, userId)) return;
+    const [row] = await tx.select().from(notificationSettings).where(eq(notificationSettings.userId, userId));
+    const current = view(row);
     const change: Record<string, unknown> = key === "news" ? { newsOptInAt: null }
       : key === "weekly" ? Object.fromEntries(EMAIL_SETTING_KEYS.filter((name) => current[name] === "weekly").map((name) => [name, "off"]))
         : { [key]: "off" };
-    // 탈퇴로 계정이 지워졌으면 끌 것이 없다 — 행을 만들지 않는다
-    const [user] = await db.select({ id: publicUsers.id }).from(publicUsers).where(eq(publicUsers.id, userId));
-    if (!user) return;
-    await db.insert(notificationSettings).values({ userId, ...change }).onConflictDoUpdate({
+    await tx.insert(notificationSettings).values({ userId, ...change }).onConflictDoUpdate({
       target: notificationSettings.userId, set: { ...change, updatedAt: sql`now()` },
     });
-  });
+  }));
 }

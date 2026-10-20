@@ -22,3 +22,4 @@
 @media (max-width: 520px) {
   .alert-bell { display: none; }
 }
+.alert-bell-panel:focus { outline: none; }
