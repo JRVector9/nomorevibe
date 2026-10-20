@@ -103,6 +103,7 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "click-rollup": "유효 방문 집계 — 방문 통계이지 제품 흐름이 아니다",
   "ranking-refresh": "랭킹 갱신 — 방문 집계가 끝나면 따라 도는 순위 계산",
   "news-refresh": "AI 소식 수집 — 제품 흐름과 따로인 공식 피드",
+  "hn-talk": "HN 화제 글 기록 — 프론티어에 넣지 않는 SNS 관측",
   "cdn-purge": "내린 제품의 CDN 캐시 지우기 — 내린 뒤 정리",
   "github-feedback-delivery": "메이커 동의를 받은 GitHub 피드백 전송 — 사용자 요청 처리",
 };

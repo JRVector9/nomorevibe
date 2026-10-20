@@ -14,7 +14,7 @@ import type { OperationJob } from './OperationsCenter';
  * 카탈로그에 없는 작업이 생겨도 빠지지 않도록 나머지는 뒤에 붙인다.
  */
 const PIPELINE_ORDER = [
-  'crawl-seed', 'hn-show-seed', 'crawl-fetch', 'agent-evidence-refresh',
+  'crawl-seed', 'hn-show-seed', 'hn-talk', 'crawl-fetch', 'agent-evidence-refresh',
   'crawl-judge', 'crawl-agent-review', 'second-review', 'reason-translate', 'crawl-publish',
   'product-thumbnail-refresh', 'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
 ];
@@ -23,6 +23,7 @@ const PIPELINE_ORDER = [
 const FLOW: Record<string, { reads: string; writes: string }> = {
   'crawl-seed': { reads: 'GitHub 검색', writes: '프론티어' },
   'hn-show-seed': { reads: 'Show HN', writes: '프론티어' },
+  'hn-talk': { reads: 'Hacker News 검색', writes: 'SNS 화제 글' },
   'crawl-fetch': { reads: '프론티어', writes: '원본 · 후보(new)' },
   'agent-evidence-refresh': { reads: '원본', writes: '개발 AI 근거' },
   'crawl-judge': { reads: '후보(new)', writes: '승인 · 보류 · 거부' },
