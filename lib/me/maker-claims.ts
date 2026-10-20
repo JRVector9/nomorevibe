@@ -8,6 +8,7 @@ import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { isGithubNumericId, isGithubRepositoryName } from "@/lib/github/repositories";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { enqueueNotificationEmails } from "@/lib/me/email-outbox";
 import { logger } from "@/lib/observability/logger";
 import { createMemo } from "@/lib/cache/memo";
 import { rateLimit } from "@/lib/rate-limit";
@@ -329,10 +330,16 @@ export async function notifyNewListingMine(input: { slug: string; repoMeta: Reco
     .innerJoin(publicUsers, and(eq(publicUsers.id, publicIdentities.userId), isNull(publicUsers.deletedAt)))
     .where(and(eq(products.slug, input.slug), inArray(products.status, [...PUBLIC_STATUSES]))).limit(1));
   if (!row) return false;
-  const inserted = await withJobLeaseWrite(lease, (tx) => tx.insert(notifications).values({
-    userId: row.userId, kind: "new_listing_mine", productId: row.productId,
-    payload: { name: row.name, ...(fullName ? { repo: fullName } : {}) }, dedupeKey: `new_listing_mine:${row.productId}`,
-  }).onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] }).returning({ id: notifications.id }));
+  const inserted = await withJobLeaseWrite(lease, async (tx) => {
+    const rows = await tx.insert(notifications).values({
+      userId: row.userId, kind: "new_listing_mine", productId: row.productId,
+      payload: { name: row.name, ...(fullName ? { repo: fullName } : {}) }, dedupeKey: `new_listing_mine:${row.productId}`,
+    }).onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] })
+      .returning({ id: notifications.id, userId: notifications.userId, kind: notifications.kind, productId: notifications.productId, dedupeKey: notifications.dedupeKey });
+    // «즉시» 메일은 같은 lease 쓰기 안에서 줄 세운다(던지지 않는다)
+    await enqueueNotificationEmails(rows, tx);
+    return rows;
+  });
   return inserted.length > 0;
 }
 

@@ -82,31 +82,43 @@ function SavedList<T extends SavedItem>({ items, onRemove, mine }: { items: T[];
   );
 }
 
-/** 빼기 되돌리기·동기화 알림 — 화면 아래 한 줄. 되돌리기가 먼저다 */
-function SavedTabToast({ removed, onUndo }: { removed: string | null; onUndo: () => void }) {
+/**
+ * 빼기 되돌리기·동기화 알림 — 화면 아래 한 줄. 되돌리기가 먼저다.
+ * 알림 영역(role=status)은 늘 그려 두고 글만 바꾼다(처음 끼운 영역은 읽지 않는 화면 읽기 도구가 있다).
+ * 빼면 초점을 «되돌리기»로 옮기고, 그 위에 마우스나 초점이 있는 동안은 사라지지 않는다.
+ */
+function SavedTabToast({ removed, onUndo, onHold }: { removed: string | null; onUndo: () => void; onHold: (held: boolean) => void }) {
   const t = useTranslations("me");
   const common = useTranslations("common");
   const locale = useLocale();
   const { notice } = useSavedAccount();
-  if (!removed && !notice) return null;
+  const undo = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (removed) undo.current?.focus();
+  }, [removed]);
+  const visible = Boolean(removed || notice);
   return (
-    <div className="saved-toast" role="status">
-      <div className="saved-toast-row">
-        <p>{removed ? t("saved.removed", { name: removed }) : savedNoticeText(notice!, common, locale)}</p>
-        {removed && <button type="button" className="saved-toast-action" onClick={onUndo}>{t("saved.undo")}</button>}
-      </div>
+    <div role="status">
+      {visible && <div className="saved-toast" onMouseEnter={() => onHold(true)} onMouseLeave={() => onHold(false)}
+        onFocus={() => onHold(true)} onBlur={() => onHold(false)}>
+        <div className="saved-toast-row">
+          <p>{removed ? t("saved.removed", { name: removed }) : savedNoticeText(notice!, common, locale)}</p>
+          {removed && <button ref={undo} type="button" className="saved-toast-action" onClick={onUndo}>{t("saved.undo")}</button>}
+        </div>
+      </div>}
     </div>
   );
 }
 
-function useUndo<T extends SavedItem>(): [Removed<T> | null, (value: Removed<T> | null) => void] {
+function useUndo<T extends SavedItem>(): [Removed<T> | null, (value: Removed<T> | null) => void, (held: boolean) => void] {
   const [removed, setRemoved] = useState<Removed<T> | null>(null);
+  const [held, setHeld] = useState(false);
   useEffect(() => {
-    if (!removed) return;
+    if (!removed || held) return;
     const timer = setTimeout(() => setRemoved(null), UNDO_MS);
     return () => clearTimeout(timer);
-  }, [removed]);
-  return [removed, setRemoved];
+  }, [removed, held]);
+  return [removed, (value) => { setHeld(false); setRemoved(value); }, setHeld];
 }
 
 /** 첫 행동 하나 — 인기 프로젝트 둘러보기 */
@@ -145,7 +157,7 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
   const [page, setPage] = useState<SavedPage | null>(initial);
   // 서버가 첫 쪽을 못 읽었으면 다시 시도 단추부터
   const [status, setStatus] = useState<"ready" | "loading" | "more" | "error">(initial ? "ready" : "error");
-  const [removed, setRemoved] = useUndo<SavedAccountItem>();
+  const [removed, setRemoved, holdUndo] = useUndo<SavedAccountItem>();
   const request = useRef<AbortController | null>(null);
   const count = (value: number) => formatNumber(value, locale);
 
@@ -197,7 +209,7 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
   const offer = account.status === "user" && account.offer > 0
     ? <SavedMergePrompt className="me-saved-merge" count={account.offer} onMerged={() => void load(query)} />
     : null;
-  const toast = <SavedTabToast removed={removed ? removed.item.name : null} onUndo={undo} />;
+  const toast = <SavedTabToast removed={removed ? removed.item.name : null} onUndo={undo} onHold={holdUndo} />;
 
   if (!page) {
     return (
@@ -289,7 +301,7 @@ export function SavedBrowserList({ authEnabled }: { authEnabled: boolean }) {
   const [shown, setShown] = useState(PAGE_SIZE);
   const [cards, setCards] = useState<ReadonlyMap<string, SavedItem | null>>(new Map());
   const [failed, setFailed] = useState(false);
-  const [removed, setRemoved] = useUndo<SavedItem>();
+  const [removed, setRemoved, holdUndo] = useUndo<SavedItem>();
   const visible = slugs.slice(0, shown);
   const missing = visible.filter((slug) => !cards.has(slug)).join(",");
 
@@ -327,7 +339,7 @@ export function SavedBrowserList({ authEnabled }: { authEnabled: boolean }) {
   }
 
   if (!hydrated) return <section className="me-saved" aria-label={t("saved.browser.title")} />;
-  const toast = <SavedTabToast removed={removed ? removed.item.name : null} onUndo={undo} />;
+  const toast = <SavedTabToast removed={removed ? removed.item.name : null} onUndo={undo} onHold={holdUndo} />;
   if (slugs.length === 0) {
     return (
       <section className="me-saved" aria-labelledby="me-saved-browser">
