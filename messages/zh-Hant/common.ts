@@ -41,4 +41,6 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.description": globalError.description,
   "error.retry": globalError.retry,
   "error.reference": globalError.reference,
+  "navigation.talk": "社群熱議",
+  "navigation.talkShort": "熱議",
 });

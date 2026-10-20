@@ -39,7 +39,7 @@ export const candidateRevisionHash = (candidate: CrawlCandidate) => reviewHash({
 });
 
 /** Same lock order as review/publication, without any network call or held external operation. */
-async function lockedInput(tx: ProductTransaction, repo: string) {
+export async function lockedInput(tx: ProductTransaction, repo: string) {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for('update');
   if (!candidate || candidate.state === 'published' || candidate.publishedSlug) return null;
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for('share');
