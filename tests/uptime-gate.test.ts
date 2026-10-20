@@ -89,7 +89,7 @@ describe("raw-only transition validates source and runner coverage only", () => 
     expect(planUptimeTransition("raw-only", snapshot()).blocked).toEqual(["uptime_no_change"]);
     expect(planUptimeTransition("raw-only", snapshot(value => { value.control.gateEnabled = true; })).blocked).toContain("uptime_rollback_required");
   });
-  it("refuses raw-only and gate while the uptime split runs in claims mode (0103 mutual exclusion)", () => {
+  it("refuses raw-only and gate while the uptime split runs in claims mode (0104 mutual exclusion)", () => {
     const claims = (value: UptimeGateSnapshot) => { disabled(value); value.split = { mode: "claims", epoch: 5 }; };
     expect(planUptimeTransition("raw-only", snapshot(claims), [m3, mini, oracle]).blocked).toEqual(["uptime_split_claims_active"]);
     expect(planUptimeTransition("gate", snapshot(value => { value.split = { mode: "claims", epoch: 5 }; })).blocked).toEqual(["uptime_split_claims_active"]);

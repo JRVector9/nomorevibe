@@ -37,7 +37,7 @@ const fixture = vi.hoisted(() => {
     observations: ["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"]
       .map(role => ({ key: `service:${role}:test`, value: { status: "running" }, observedAt: NOW })),
     primary: { transactions: [] as Array<{ config: unknown; statements: SQL[] }> },
-    // 응답 점검 분담(0103) 장부는 근거와 따로 읽는다 — 기본은 legacy(관문에 uptime 단계 없음)
+    // 응답 점검 분담(0104) 장부는 근거와 따로 읽는다 — 기본은 legacy(관문에 uptime 단계 없음)
     split: { mode: "legacy" as "legacy" | "claims" },
   };
 });

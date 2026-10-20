@@ -144,7 +144,7 @@ describe("uptime split progress", () => {
 });
 
 describe("mutual exclusion trigger errors", () => {
-  it("maps only the 0103 trigger rejections (also inside a wrapped cause) to a refusal code", () => {
+  it("maps only the 0104 trigger rejections (also inside a wrapped cause) to a refusal code", () => {
     const pg = Object.assign(new Error("uptime_control_requires_split_legacy"), { code: "55000" });
     expect(uptimeExclusionError(pg)).toBe("uptime_control_requires_split_legacy");
     expect(uptimeExclusionError(Object.assign(new Error("Failed query: update ..."), { cause: Object.assign(

@@ -44,7 +44,7 @@ export type UptimeGateSnapshot = {
   /** gate를 켜면 인증된 gate 행이 없는 제품은 목록 숨김·내림 대상에서 빠진다. 지금 숨김·10회 이상 수. */
   impact: { hiddenNow: number; banEligibleNow: number };
   shadow: UptimeShadowResult | null;
-  /** 응답 점검 제품 단위 분담(0103 uptime_split_control). claims 면 PR09 관측·gate 를 켤 수 없다 */
+  /** 응답 점검 제품 단위 분담(0104 uptime_split_control). claims 면 PR09 관측·gate 를 켤 수 없다 */
   split?: { mode: "legacy" | "claims"; epoch: number };
 };
 export type UptimeTransitionPlan = { target: UptimeGateTarget; from: UptimeMode; allowed: boolean; blocked: string[];
@@ -103,7 +103,7 @@ export function planUptimeTransition(target: UptimeGateTarget, snapshot: UptimeG
   for (const runner of snapshot.runners) {
     if (!sources.some(source => source.instanceId === runner)) blocked.push(`uptime_runner_unconfigured:${runner}`);
   }
-  // split claims 와 함께 켤 수 없다(0103 트리거가 같은 것을 강제한다). 끄는 rollback 은 막지 않는다 — 먼저 `uptime-split mode --to=legacy`
+  // split claims 와 함께 켤 수 없다(0104 트리거가 같은 것을 강제한다). 끄는 rollback 은 막지 않는다 — 먼저 `uptime-split mode --to=legacy`
   if (snapshot.split?.mode === "claims") blocked.push("uptime_split_claims_active");
   return { target, from, allowed: blocked.length === 0, blocked,
     next: { observationsEnabled: true, gateEnabled: target === "gate", sources } };

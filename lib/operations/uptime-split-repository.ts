@@ -99,7 +99,7 @@ class Rejected extends Error { constructor(readonly plan: UptimeSplitPlan, reado
 /**
  * 기본 dry-run: 읽기 전용 readback과 계획만 낸다. --execute면 한 TX에서 fence(share) → uptime_control(share) → split 행(update)을 잡고
  * 잠근 상태로 같은 계획을 다시 세워 기대 상태(compare-and-set)를 확인한 뒤 split 행(epoch+1)과 관리자 작업 로그를 함께 commit한다.
- * uptime_control 을 split 보다 먼저 잡는다 — 0103 트리거가 split 을 claims 로 쓸 때 같은 행을 SHARE 로 잡고, PR09 전환(uptime-gate)은
+ * uptime_control 을 split 보다 먼저 잡는다 — 0104 트리거가 split 을 claims 로 쓸 때 같은 행을 SHARE 로 잡고, PR09 전환(uptime-gate)은
  * uptime_control → split 순서로 잡으므로 순서가 같아 교착하지 않는다. 계획·CAS·트리거 어느 쪽이든 거절되면 TX 전체가 rollback된다.
  */
 export async function runUptimeSplitControl(database: Database, command: UptimeSplitTransition, policyFile?: unknown): Promise<UptimeSplitResult> {

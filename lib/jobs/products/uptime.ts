@@ -51,7 +51,7 @@ import { checkUptime, runOriginLanes } from "./uptime-check";
  * 확인했는데 실패가 BROAD_FAILURE_RATE를 넘으면 그 틱의 실패는 쓰지 않는다. 성공은 바로 쓴다.
  * 쓰지 않은 제품은 확인 시각이 그대로라 가장 오래된 채로 남아 다음 틱이 다시 본다.
  *
- * 2026-10-19 split-v1(제품 단위 분담, 0103)이 claims 모드면 같은 잡이 claim 경로로 돈다(design-uptime §7.1). 틱마다
+ * 2026-10-19 split-v1(제품 단위 분담, 0104)이 claims 모드면 같은 잡이 claim 경로로 돈다(design-uptime §7.1). 틱마다
  * 제출분 반영(Oracle 등) → 내림 적체 sweep → 새 제품 행 → home claim → 확인 → 틱 결과를 한 번에 반영한다. 판정은
  * 묶음 적용기(uptime-apply.ts)가 하고, 광역 실패는 host 차단기가 막는다(묶음 기준은 legacy 보류와 같은 30건·30%).
  * legacy 모드면 아래 경로가 그대로다. 모드는 틱 시작에 한 번 읽는다 — 전환은 다음 틱부터다.
@@ -99,7 +99,7 @@ export function uptimeCapacityConfig(env: Readonly<Record<string, string | undef
 export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const capacity = uptimeCapacityConfig();
   const observationMode = await uptimeObservationMode();
-  // PR09 관측·gate 가 켜져 있으면 split 은 legacy 다(0103 트리거가 함께 켜지 못하게 막는다) — 그때는 split 행을 읽지 않는다
+  // PR09 관측·gate 가 켜져 있으면 split 은 legacy 다(0104 트리거가 함께 켜지 못하게 막는다) — 그때는 split 행을 읽지 않는다
   // (Oracle product-health 관측자 principal 에는 그 표 권한이 없다). policy 는 claims 경로가 검증한다(hash 가 틀리면 그쪽이 멈춘다)
   if (!observationMode.observationsEnabled && !observationMode.gateEnabled) {
     const [split] = await db.select({ mode: uptimeSplitControl.mode }).from(uptimeSplitControl).where(eq(uptimeSplitControl.id, 1));

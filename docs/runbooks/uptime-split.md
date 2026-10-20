@@ -1,6 +1,6 @@
 # 응답 점검 제품 단위 분담(split-v1) runbook (U1c)
 
-제품 연결 확인(`uptime-ping`)을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡는다. 제어는 `uptime_split_control` 한 행(0103)이다.
+제품 연결 확인(`uptime-ping`)을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡는다. 제어는 `uptime_split_control` 한 행(0104)이다.
 
 | mode | 누가 확인하나 | 정식 기록(health·연속 실패·숨김·내림) |
 |---|---|---|
@@ -24,7 +24,7 @@
    `batchMin`·`batchOpenRatio` 는 30·0.3 이어야 하고 도구가 다른 값을 거절한다(`policy_batch_rule_differs_from_legacy`).
 5. **`minChecks` 는 100 이하**(`policy_min_checks_above:100`). 200 이면 Oracle 1,000건/시간(10분 약 167건)에서 창 규칙이 영영 열리지 않는다.
 6. **PR09 관측·gate(`uptime_control`)와 함께 켤 수 없다.** split 을 claims 로 하려면 PR09 가 disabled 여야 하고(`uptime_control_enabled`),
-   claims 동안 `uptime-gate.ts` 의 raw-only·gate 전환은 거절된다(`uptime_split_claims_active`). DB 트리거(0103)가 같은 것을 강제하고, 경합으로
+   claims 동안 `uptime-gate.ts` 의 raw-only·gate 전환은 거절된다(`uptime_split_claims_active`). DB 트리거(0104)가 같은 것을 강제하고, 경합으로
    트리거에 닿으면 두 도구 모두 오류가 아니라 거절(`uptime_split_requires_uptime_control_disabled` / `uptime_control_requires_split_legacy`)로 돌려준다.
    PR09 를 켜야 하면 먼저 `mode --to=legacy`.
 7. **claims 동안 `job_batch_control` 을 versioned 로 바꾸지 않는다.** Oracle product-health 역할 잡이 claim 권한 없이 같은 잡을 돈다.
@@ -71,13 +71,13 @@
 
 ## 순서
 
-### A2 전제 — 0103 적용·U1a~c 배포(동작 변화 없음)
+### A2 전제 — 0104 적용·U1a~c 배포(동작 변화 없음)
 
 ```sh
 node --import tsx scripts/ops/uptime-split.ts status > split-status-before.txt
 ```
 
-확인: `mode=legacy`, `[queue]` 의 `행 없음`이 0 근처(0103 백필 뒤 새 제품만), `maintenance 후보(24h)` 에 M3·mini maintenance instance 가 보인다.
+확인: `mode=legacy`, `[queue]` 의 `행 없음`이 0 근처(0104 백필 뒤 새 제품만), `maintenance 후보(24h)` 에 M3·mini maintenance instance 가 보인다.
 
 ### A3 — home 만 claims
 
@@ -175,4 +175,4 @@ select date_trunc('minute', received_at) as minute, host, count(*) from uptime_o
    `status` 의 5분 반영이 0 으로 내려가고(legacy 는 claim 장부를 쓰지 않는다) `product_health` 저장은 계속되는지(운영센터 응답 점검 칸의 6시간 밀림,
    `select max(checked_at) from product_health`) 확인한다.
 2. **Oracle 만 빼기**: policy 에서 Oracle 항목을 지운다(epoch+1, 다음 claim 부터 거부) 또는 unit 을 멈춘다(TTL 뒤 회수).
-3. **코드 되돌리기**: 반드시 1 을 먼저 하고 legacy 틱을 확인한 뒤, Oracle unit 을 멈추고 이전 SHA 로 재배포한다. 표(0103)는 남겨도 무해하다.
+3. **코드 되돌리기**: 반드시 1 을 먼저 하고 legacy 틱을 확인한 뒤, Oracle unit 을 멈추고 이전 SHA 로 재배포한다. 표(0104)는 남겨도 무해하다.
