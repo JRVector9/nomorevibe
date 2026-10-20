@@ -14,6 +14,22 @@ const post = (id: string, repositories = ["Owner/Repo"]) => ({ id, created_at: "
   public_metrics: { like_count: 0, reply_count: 2, retweet_count: 3, quote_count: 4, impression_count: 5, bookmark_count: 6 } });
 afterEach(() => vi.useRealTimers());
 
+it("search-only collection reads ten posts once without an immediate lookup", async () => {
+  const request = vi.fn().mockImplementation(() => Promise.resolve(response({ data: [post("123")] })));
+  const result = await runXPilot({ ...live, searchOnly: true }, { request });
+  expect(result).toMatchObject({ status: "completed", reservedPosts: 10,
+    plan: { maxRequests: 1, maxPostResources: 10 }, observations: [{ id: "123" }] });
+  expect(request).toHaveBeenCalledOnce();
+  expect(new URL(request.mock.calls[0][0]).pathname).toBe("/2/tweets/search/recent");
+});
+
+it("search-only collection rejects supplied lookup IDs before HTTP", async () => {
+  const request = vi.fn();
+  expect(await runXPilot({ ...live, searchOnly: true, lookupIds: ["123"] }, { request }))
+    .toMatchObject({ status: "skipped", reason: "invalid_lookup_ids", requests: [] });
+  expect(request).not.toHaveBeenCalled();
+});
+
 it("defaults to a zero-HTTP dry-run with a bounded one-page plan", async () => {
   const request = vi.fn();
   const result = await runXPilot({}, { request, now: () => at.getTime() });
