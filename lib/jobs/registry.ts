@@ -1,6 +1,7 @@
 import type { JobContext, JobOutcome } from "./runner";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { seedFromShowHN } from "@/lib/crawl/jobs/hn-show";
+import { collectHnTalk } from "@/lib/social/hn-talk";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
@@ -62,6 +63,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** Show HN에서 배포를 알린 프로젝트를 프론티어에 넣는다 — 반대 방향의 입구 */
   "hn-show-seed": seedFromShowHN,
+
+  /** HN에서 GitHub 저장소를 가리킨 글을 점수와 함께 남긴다 — 화제 화면의 재료, 프론티어에는 넣지 않는다 */
+  "hn-talk": (ctx) => collectHnTalk(ctx),
 
   /** 프론티어에서 꺼낸 레포의 원본(레포 메타 + 배포 페이지)을 확보한다 */
   "crawl-fetch": fetchCrawlDocuments,
