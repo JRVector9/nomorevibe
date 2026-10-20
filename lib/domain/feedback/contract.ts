@@ -5,8 +5,9 @@ export type FeedbackWrite = {
   requestId: string; kind: FeedbackKind; title: string; body: string;
   serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean;
 };
+/** authorDisplayName 이 null 이면 탈퇴한 계정 — DB 에 남은 «탈퇴한 사용자»를 그대로 내보내지 않고 화면이 그 언어로 적는다 */
 export type FeedbackView = {
-  id: string; productId: number; slug: string; productName: string; authorUserId: number; authorDisplayName: string;
+  id: string; productId: number; slug: string; productName: string; authorUserId: number; authorDisplayName: string | null;
   kind: FeedbackKind; title: string; body: string; reviewState: FeedbackReviewState; reviewReason: string | null;
   deliveryState: IssueDeliveryState; createdAt: string;
   githubIssueUrl?: string | null; externalIssueState?: "open" | "closed" | "deleted" | "unknown" | null; lastErrorCode?: string | null;

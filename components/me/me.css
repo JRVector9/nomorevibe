@@ -1,0 +1,124 @@
+/* 마이페이지 틀 — app/globals.css 토큰만 쓴다. 탭별 화면은 각자 css 파일을 둔다. 아래 공용 부품(me-btn·me-box·me-kv·me-state·me-empty)은 어느 탭이든 써도 된다 */
+.me-page { max-width: 1120px; margin: 0 auto; padding: 28px 24px 56px; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.me-placeholder { font-size: 14px; color: var(--text-2); padding: 32px 0; }
+
+/* 머리 — 아바타·닉네임·가입일·로그인 수단, 숫자 넷 */
+.me-head { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.me-id { display: flex; flex-direction: column; gap: 6px; min-width: 0; flex: 1 1 340px; }
+.me-name-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.me-name { font-size: 26px; font-weight: 600; letter-spacing: -0.025em; line-height: 1.2; overflow-wrap: anywhere; min-width: 0; }
+/* 글자 링크도 누르는 자리는 40px — 줄 높이는 바꾸지 않고 위아래 여백으로 넓힌다 */
+.me-link { border: 0; background: none; padding: 0; color: var(--accent-ink); font-size: 13px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; display: inline-flex; align-items: center; min-height: 40px; }
+.me-sub { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.me-prov { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 9px; border-radius: 980px; background: var(--bg-soft); color: var(--text); font-size: 13px; white-space: nowrap; }
+.me-prov i { font-style: normal; font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-2); }
+.me-prov-maker { background: var(--accent-soft); color: var(--accent-ink); font-weight: 500; }
+.me-stats { display: flex; gap: 2px; flex-wrap: wrap; }
+.me-stat { padding: 8px 14px; border-radius: 12px; display: flex; flex-direction: column; align-items: flex-start; min-width: 78px; min-height: 44px; color: var(--text); }
+.me-stat:hover { background: var(--bg-soft); }
+.me-stat b { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; }
+.me-stat span { font-size: 13px; color: var(--text-2); }
+
+/* 탭 줄 — 넓은 화면은 알약 묶음, 휴대폰은 밑줄 탭(옆으로 민다) */
+.me-tabs { position: relative; display: inline-flex; align-self: flex-start; max-width: 100%; gap: 2px; padding: 2px; border-radius: 980px; background: var(--bg-soft); overflow-x: auto; scrollbar-width: none; flex: none; }
+.me-tabs::-webkit-scrollbar { display: none; }
+.me-tab { min-height: 42px; padding: 0 16px; border-radius: 980px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: 14px; color: var(--text-2); flex: none; }
+.me-tab:hover { color: var(--text); }
+.me-tab[aria-current="page"] { background: var(--bg-card); color: var(--text); font-weight: 500; box-shadow: 0 1px 4px rgb(0 0 0 / 10%); }
+.me-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.me-tc { color: var(--text-2); font-weight: 400; font-variant-numeric: tabular-nums; }
+.me-tc-hot { min-width: 20px; height: 20px; border-radius: 980px; background: var(--accent-soft); color: var(--accent-ink); font-size: 13px; font-weight: 600; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; }
+
+/* 로그아웃 머리 — 로그인하면 되는 것. 아래 탭·이 브라우저 목록은 그대로 보인다 */
+.me-out { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 40px; align-items: start; padding-top: 8px; }
+.me-out-l { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.me-kicker { font-size: 13px; color: var(--text-2); }
+.me-out-h { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.2; }
+.me-out-p { font-size: 15px; color: var(--text-2); line-height: 1.6; max-width: 46ch; }
+.me-out-acts { display: flex; align-items: center; gap: 12px 18px; flex-wrap: wrap; }
+.me-ben { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.me-ben li { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; align-items: start; font-size: 14px; line-height: 1.5; }
+.me-ben-ic { width: 34px; height: 34px; border-radius: 10px; background: var(--bg-soft); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+.me-ben b { font-weight: 600; display: block; }
+.me-ben small { color: var(--text-2); font-size: 13px; }
+
+/* 로그인해야 쓰는 탭 · 빈 탭 — 첫 행동 하나만 크게 */
+.me-login-required, .me-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 44px 20px; border: 1px dashed var(--border-strong); border-radius: 18px; }
+.me-login-required h2, .me-empty h2 { font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.me-login-required p, .me-empty p { font-size: 14px; color: var(--text-2); max-width: 44ch; line-height: 1.55; }
+.me-login-required .me-btn, .me-empty .me-btn { margin-top: 6px; }
+.me-empty-ic { width: 56px; height: 56px; border-radius: 16px; background: var(--bg-soft); display: flex; align-items: center; justify-content: center; color: var(--text-2); }
+
+/* 공용 부품 — 단추(누르는 자리 40px 이상)·상자·한 줄·상태 칩·알림 글 */
+.me-btn { min-height: 40px; padding: 0 14px; border-radius: 980px; border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text); font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.me-btn:hover { background: var(--bg-hover); }
+.me-btn:disabled { opacity: 0.45; cursor: default; }
+.me-btn:focus-visible, .me-link:focus-visible, .me-stat:focus-visible, .me-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.me-btn-sm { font-size: 13px; padding: 0 12px; }
+.me-btn-lg { min-height: 46px; padding: 0 22px; font-size: 15px; font-weight: 600; }
+.me-btn-wide { width: 100%; min-height: 44px; }
+.me-btn-pri { background: var(--text); color: var(--bg-card); border-color: transparent; font-weight: 500; }
+.me-btn-pri:hover { background: var(--text); opacity: 0.9; }
+.me-btn-danger { color: var(--down); }
+.me-btn-danger-solid { background: var(--down); border-color: transparent; color: var(--bg-card); font-weight: 600; }
+.me-btn-danger-solid:hover { background: var(--down); opacity: 0.9; }
+.me-acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.me-box { border: 1px solid var(--border); border-radius: 16px; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; background: var(--bg-card); min-width: 0; }
+.me-box-dash { border-style: dashed; border-color: var(--border-strong); }
+.me-box-h { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.me-box-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.me-kvs { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
+.me-kv { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.me-kvs > .me-kv:first-child { border-top: 0; padding-top: 0; }
+.me-kv-l { display: flex; gap: 10px; align-items: center; min-width: 0; flex: 1 1 auto; }
+.me-kv-x { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.me-kv > .me-btn, .me-kv > .me-note { flex: none; }
+.me-kv-t { font-weight: 500; overflow-wrap: anywhere; }
+.me-kv-s { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.me-logo { width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 13px; font-weight: 600; flex: none; background: var(--bg-soft); color: var(--text); }
+.me-logo-github { background: var(--text); color: var(--bg-card); }
+.me-state { display: inline-flex; align-items: center; min-height: 24px; padding: 0 8px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; }
+.me-state-on { color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); }
+.me-state-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
+.me-state-off { color: var(--text-2); background: var(--bg-hover); }
+.me-state-kind { color: var(--text); background: var(--bg-card); border: 1px solid var(--border); }
+.me-hint, .me-note { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.me-desc { font-size: 14px; color: var(--text-2); line-height: 1.6; }
+.me-down { color: var(--down); }
+.me-error { font-size: 13px; color: var(--down); }
+.me-ok { font-size: 13px; color: var(--up); }
+.me-ok:empty, .me-error:empty { display: none; }
+.me-input { min-height: 42px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--bg-card); padding: 0 12px; font-size: 15px; color: var(--text); width: 100%; }
+.me-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.me-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--bg); }
+.me-edit[hidden] { display: none; }
+.me-edit-k { font-size: 13px; color: var(--text-2); font-weight: 500; }
+.me-edit-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.me-count { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.me-count.over { color: var(--down); font-weight: 600; }
+.me-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.me-chip { min-height: 40px; padding: 0 14px; border-radius: 980px; background: var(--bg-soft); border: 0; color: var(--text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; flex: none; }
+.me-chip[aria-pressed="true"] { background: var(--text); color: var(--bg-card); font-weight: 500; }
+.me-cc { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.me-chip[aria-pressed="true"] .me-cc { color: color-mix(in srgb, var(--bg-card) 62%, var(--text)); }
+
+@media (max-width: 640px) {
+  .me-page { padding: 18px 16px 40px; gap: 14px; }
+  /* 휴대폰 머리 — 아바타 48px·이름 19px, 숫자 넷은 한 줄 네 칸 */
+  .me-head { gap: 12px; }
+  .me-id { flex: 1 1 0; gap: 4px; }
+  .me-name { font-size: 19px; letter-spacing: -0.02em; }
+  .me-stats { flex: 1 1 100%; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; background: var(--bg-soft); border-radius: 14px; padding: 4px; }
+  .me-stat { align-items: center; text-align: center; min-width: 0; padding: 6px 2px; border-radius: 10px; }
+  .me-stat:hover { background: var(--bg-hover); }
+  .me-stat b { font-size: 18px; }
+  .me-tabs { align-self: stretch; display: flex; max-width: none; margin: 0 -16px; padding: 0 8px; gap: 0; border-radius: 0; background: transparent; border-bottom: 1px solid var(--border); }
+  .me-tab { border-radius: 0; padding: 0 12px; min-height: 44px; }
+  .me-tab[aria-current="page"] { background: transparent; box-shadow: inset 0 -2px 0 var(--text); font-weight: 600; }
+  .me-out { grid-template-columns: minmax(0, 1fr); gap: 18px; padding-top: 0; }
+  .me-out-h { font-size: 24px; }
+  .me-out-p { font-size: 14px; }
+  .me-out-acts { flex-direction: column; align-items: stretch; text-align: center; }
+  .me-box { padding: 16px; }
+  .me-login-required, .me-empty { padding: 32px 16px; }
+}

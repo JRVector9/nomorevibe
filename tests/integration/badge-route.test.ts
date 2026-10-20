@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+vi.mock("server-only", () => ({}));
 
 const repo = await import("@/lib/domain/products/repository");
 const { GET } = await import("@/app/badge/[slug]/route");
@@ -41,11 +42,13 @@ describe("배지", () => {
     expect(svg).toContain("verified");
   });
 
-  it("검증되지 않은 제품에는 내주지 않는다 — 배지가 없는 것이 곧 정보다", async () => {
+  it("검증 전 공개 제품은 «listed» 배지(SNS 설계 T12), 내려갔거나 없는 제품은 404 — 배지가 없는 것이 곧 정보다", async () => {
     await product("found", "seeded");
     await product("gone", "banned");
 
-    expect((await badge("found")).status).toBe(404);
+    const listed = await badge("found");
+    expect(listed.status).toBe(200);
+    expect(await listed.text()).not.toContain("verified");
     expect((await badge("gone")).status).toBe(404);
     expect((await badge("nobody")).status).toBe(404);
   });

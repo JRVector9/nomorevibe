@@ -28,7 +28,7 @@ export function FeedbackItem({ feedback }: { feedback: FeedbackView }) {
   const now = useServerNow();
   return (
     <article className="rounded-xl border border-line p-4">
-      <p className="text-[13px] text-fg-2">{t(`feedback.kind.${feedback.kind}`)} · {feedback.authorDisplayName} · {formatDate(feedback.createdAt, now, locale)}</p>
+      <p className="text-[13px] text-fg-2">{t(`feedback.kind.${feedback.kind}`)} · {feedback.authorDisplayName ?? t("feedback.deletedAuthor")} · {formatDate(feedback.createdAt, now, locale)}</p>
       <h3 className="mt-2 break-words text-[15px] font-semibold">
         <Link prefetch={false} href={localePath(locale, `/feedback/${feedback.id}`)} className="underline underline-offset-2">{feedback.title}</Link>
       </h3>
@@ -52,7 +52,7 @@ function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
   return (
     <article className="border-b border-line py-4 last:border-b-0">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-2">
-        <strong className="break-words font-medium text-fg">{feedback.authorDisplayName}</strong>
+        <strong className="break-words font-medium text-fg">{feedback.authorDisplayName ?? t("feedback.deletedAuthor")}</strong>
         <span className="rounded bg-bg-card px-1.5 py-0.5">{t(`feedback.kind.${feedback.kind}`)}</span>
         <time dateTime={feedback.createdAt}>{formatDate(feedback.createdAt, now, locale)}</time>
         <Link prefetch={false} href={localePath(locale, `/feedback/${feedback.id}`)} className="ml-auto underline underline-offset-2">{t("action.original")}</Link>

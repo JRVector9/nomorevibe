@@ -37,6 +37,9 @@ import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh"
 import { refreshNews } from "@/lib/news/refresh";
 import { deliverGithubFeedback } from "@/lib/jobs/github/feedback-delivery";
 import { reconcileGithubIntegrations } from "@/lib/jobs/github/integration-reconcile";
+import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
+import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
+import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
 
 /**
  * 이름 → 작업 매핑.
@@ -85,6 +88,11 @@ export const JOBS: Record<string, AnyJob> = {
   "cdn-purge": (ctx) => purgeRemovedProducts(ctx),
   "github-feedback-delivery": deliverGithubFeedback,
   "github-integration-reconcile": reconcileGithubIntegrations,
+  /** 알림 메일 발송함을 비우고, 주간 요약을 줄 세운다(마이페이지 MY7) */
+  "email-outbox-send": sendEmailOutbox,
+  "email-weekly-digest": queueEmailDigests,
+  /** 운영자 확인(GitHub 저장소 주인)을 30일마다 다시 본다 — 주인이 바뀌면 푼다 */
+  "maker-recheck": recheckMakers,
   /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
   "reason-translate": translateReasons,
   /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */
@@ -126,6 +134,11 @@ export const JOBS: Record<string, AnyJob> = {
   "product-thumbnail-refresh": refreshProductThumbnails,
   /** 검색이 읽는 토픽·본문을 crawl_documents 와 맞춘다 */
   "product-search-refresh": refreshProductSearchDocuments,
+
+  /** 마이페이지 알림함 — 팔로한 프로젝트 내려감, 팔로한 분야 주간 묶음, 90일 지난 알림 지우기 */
+  "notification-delisted": sendDelistedNotifications,
+  "notification-category-digest": (ctx) => sendCategoryDigest(ctx),
+  "notification-prune": pruneNotifications,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),

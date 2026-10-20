@@ -19,6 +19,7 @@ import {
 } from "../repository";
 import { relationshipState } from "../relationship";
 import { insertUpdateCandidates } from "../updates";
+import { notifyNewReleases } from "@/lib/me/notifications";
 import { fetchPushActivity, type PushActivity } from "./github-activity";
 
 export const CONTRIBUTOR_COUNT_CAP = 500;
@@ -883,6 +884,8 @@ export async function refreshGitHubEvidence(
     return persistReleases(tx, input.slug, releasePayloads, now, productId);
   });
   if (releaseCount === null) return { status: "budget_exhausted", releases: 0 };
+  // 팔로한 사람에게 새 릴리스 — commit 뒤 같은 lease 쓰기로, 실패해도 수집은 그대로(lib/me/notifications.ts)
+  if (releaseCount > 0) await notifyNewReleases(productId, dependencies.lease);
   const status = !factsChanged && releaseCount === 0
     ? "not_modified"
     : "updated";

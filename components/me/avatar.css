@@ -1,0 +1,8 @@
+/* 이니셜 아바타 — 머리 메뉴(모든 화면)와 마이페이지 머리가 같이 쓴다. 바탕색은 MeAvatar 가 타일 토큰으로 준다 */
+.me-ava { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; font-weight: 700; color: var(--text); flex: none; line-height: 1; }
+.me-ava-s { width: 32px; height: 32px; font-size: 14px; }
+.me-ava-m { width: 48px; height: 48px; font-size: 20px; }
+.me-ava-l { width: 68px; height: 68px; font-size: 28px; }
+@media (max-width: 640px) {
+  .me-head .me-ava-l { width: 48px; height: 48px; font-size: 20px; }
+}

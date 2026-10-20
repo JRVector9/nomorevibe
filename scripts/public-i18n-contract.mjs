@@ -7,17 +7,24 @@ import { LOCALES } from '../lib/i18n/locales.ts';
 /** An added public page must declare its message namespaces here, in the shared locale tree. */
 export const PUBLIC_PAGE_NAMESPACES = {
   '/': ['browse', 'labels'],
-  '/c/[category]': ['browse', 'labels'],
+  '/c/[category]': ['browse', 'labels', 'me'],
   '/rising': ['browse', 'labels'],
   '/talk': ['browse', 'labels'],
   '/popular': ['browse', 'labels'],
   '/rankings/[key]': ['browse', 'labels'],
-  '/p/[slug]': ['detail', 'labels'],
+  '/p/[slug]': ['detail', 'labels', 'me'],
   '/p/[slug]/github': ['detail'],
   '/feedback/[id]': ['auth', 'detail'],
   '/login': ['auth'],
   '/launch': ['launch'],
   '/policy': ['policy'],
+  '/me': ['me', 'labels'],
+  '/me/projects': ['me', 'labels'],
+  '/me/tried': ['me', 'labels'],
+  '/me/opinions': ['me', 'labels', 'detail'],
+  '/me/following': ['me', 'labels'],
+  '/me/alerts': ['me', 'labels'],
+  '/me/account': ['me', 'labels'],
 };
 
 const sameSet = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());

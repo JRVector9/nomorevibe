@@ -430,4 +430,5 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "talk.xPost": "X post",
   "talk.viewOnX": "View on X",
   "talk.xHeadline": "X · {points} reactions · {comments} replies",
+  "feedback.deletedAuthor": "Deleted user",
 });

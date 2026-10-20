@@ -12,6 +12,7 @@ const loaders = {
     auth: () => import("@/messages/ko/auth").then((module) => module.auth),
     launch: () => import("@/messages/ko/launch").then((module) => module.launch),
     policy: () => import("@/messages/ko/policy").then((module) => module.policy),
+    me: () => import("@/messages/ko/me").then((module) => module.me),
   },
   "en": {
     common: () => import("@/messages/en/common").then((module) => module.common),
@@ -22,6 +23,7 @@ const loaders = {
     auth: () => import("@/messages/en/auth").then((module) => module.auth),
     launch: () => import("@/messages/en/launch").then((module) => module.launch),
     policy: () => import("@/messages/en/policy").then((module) => module.policy),
+    me: () => import("@/messages/en/me").then((module) => module.me),
   },
   "zh-Hans": {
     common: () => import("@/messages/zh-Hans/common").then((module) => module.common),
@@ -32,6 +34,7 @@ const loaders = {
     auth: () => import("@/messages/zh-Hans/auth").then((module) => module.auth),
     launch: () => import("@/messages/zh-Hans/launch").then((module) => module.launch),
     policy: () => import("@/messages/zh-Hans/policy").then((module) => module.policy),
+    me: () => import("@/messages/zh-Hans/me").then((module) => module.me),
   },
   "zh-Hant": {
     common: () => import("@/messages/zh-Hant/common").then((module) => module.common),
@@ -42,6 +45,7 @@ const loaders = {
     auth: () => import("@/messages/zh-Hant/auth").then((module) => module.auth),
     launch: () => import("@/messages/zh-Hant/launch").then((module) => module.launch),
     policy: () => import("@/messages/zh-Hant/policy").then((module) => module.policy),
+    me: () => import("@/messages/zh-Hant/me").then((module) => module.me),
   },
 } satisfies Record<Locale, { [N in Namespace]: () => Promise<Dictionary[N]> }>;
 

@@ -1,0 +1,7 @@
+/* 계정 탭(시안 3.5) — 넓은 화면은 두 칸, 휴대폰은 한 칸. 부품은 me.css */
+.me-account { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.me-account #profile { scroll-margin-top: 80px; }
+.me-logout { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; max-width: 360px; justify-self: center; width: 100%; }
+@media (max-width: 760px) {
+  .me-account { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}

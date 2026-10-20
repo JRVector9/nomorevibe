@@ -68,3 +68,8 @@
   .nmb-footer .footer-right { flex-wrap: wrap; column-gap: 20px; row-gap: 0; }
   .nmb-footer .footer-right a { display: inline-flex; align-items: center; min-height: 44px; }
 }
+
+/* 아래 탭 '마이' — 안 읽은 알림 점 자리(data-me-dot, 마이페이지 MY4 가 켠다) */
+.mobile-bottom .me-nav-icon { position: relative; display: inline-flex; }
+.mobile-bottom .me-nav-icon .dot { position: absolute; top: -2px; right: -5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.mobile-bottom .me-nav-icon .dot[hidden] { display: none; }

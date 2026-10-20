@@ -25,6 +25,14 @@ const nextConfig: NextConfig = {
     "/skill.md": ["./skill/SKILL.md"],
   },
 
+  /** 로그인 설계 M4 의 /account 는 마이페이지 계정 탭으로 영구 이동한다(마이페이지 시안 Q1). /ko/… 도 받는다 */
+  async redirects() {
+    return [
+      ...LOCALES.map((locale) => ({ source: localePath(locale, "/account"), destination: localePath(locale, "/me/account"), permanent: true })),
+      { source: "/ko/account", destination: "/me/account", permanent: true },
+    ];
+  },
+
   /**
    * Cloudflare 캐시 태그 — 저장한 사본을 골라 지울 이름표다(Cloudflare 가 방문자에게 보내기 전에 뗀다).
    * 화면 이동용(RSC) 사본은 `?_rsc=` 주소가 제각각이라 주소로는 다 못 지운다. 태그는 갈래를 함께 지운다.
@@ -70,6 +78,9 @@ const nextConfig: NextConfig = {
         { source: localePath(locale, "/login"), headers: noStore },
         { source: localePath(locale, "/feedback/:id"), headers: noStore },
         { source: localePath(locale, "/p/:slug/github"), headers: [...tag("html,p-:slug"), ...noStore] },
+        // 마이페이지는 사람마다 다르다 — 로그인 전 화면(이 브라우저 목록)도 저장하지 않는다
+        { source: localePath(locale, "/me"), headers: noStore },
+        { source: localePath(locale, "/me/:tab*"), headers: noStore },
       ]),
       ...["nmv_admin", "nmv_user", "nmv_login_nonce"].map((key) => ({
         source: "/:path*", has: [{ type: "cookie" as const, key }], headers: noStore,

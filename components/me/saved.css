@@ -1,0 +1,60 @@
+/* 저장 탭(MY2) — app/globals.css 토큰만. PC 카드는 홈 ProjectCard(app/home.css·cards.css), 알약은 home.css .chip 을 그대로 쓴다 */
+.me-saved { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.me-saved-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.me-saved-head h2 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -0.01em; }
+.me-saved-count { margin: -8px 0 0; font-size: 14px; color: var(--text-2); }
+.me-saved-note { margin: 0; font-size: 13px; color: var(--text-2); }
+.me-saved-status { margin: 0; padding: 24px 0; font-size: 14px; color: var(--text-2); }
+.me-saved-merge { padding: 14px 16px; border-radius: 16px; background: var(--accent-soft); color: var(--text); font-size: 14px; line-height: 1.45; }
+
+/* 거르기 줄 — PC: 알약 | 정렬 / 메모. 휴대폰: 알약(옆으로 밀기) / 메모 | 정렬 */
+.me-saved-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "chips sort" "note note"; align-items: center; gap: 10px 16px; }
+.me-chip-row { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.me-chip-group { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.me-chip-sep { width: 1px; height: 20px; background: var(--border-strong); flex: none; }
+.me-saved .chip { border: 0; font: inherit; font-size: 13px; cursor: pointer; height: 40px; }
+.me-saved-tools .me-saved-note { grid-area: note; }
+.me-sort { grid-area: sort; justify-self: end; }
+.me-sort select { min-height: 40px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: 980px; background: var(--bg-card); color: var(--text); font: inherit; font-size: 14px; cursor: pointer; }
+
+/* 목록 — PC 세 칸 카드, 휴대폰 한 줄 행. 한 번에 하나만 보인다 */
+.me-saved-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.me-saved-rows { display: none; list-style: none; margin: 0; padding: 0; flex-direction: column; }
+.me-saved-mine { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.me-verdict { display: inline-flex; align-items: center; min-height: 24px; padding: 0 9px; border-radius: 980px; background: var(--bg-hover); color: var(--text-2); font-size: 13px; }
+.me-verdict.tried { background: var(--accent-soft); color: var(--accent-ink); }
+.me-saved .more-btn { margin-top: 8px; min-height: 44px; cursor: pointer; }
+.me-saved .more-btn:disabled { opacity: 0.6; cursor: default; }
+
+.me-srow { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px; column-gap: 12px; align-items: start; padding: 14px 0; border-top: 1px solid var(--border); }
+.me-srow:first-child { border-top: 0; padding-top: 4px; }
+.me-srow-icon { display: flex; padding-top: 2px; }
+.me-srow-body { min-width: 0; }
+.me-srow-name { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me-srow-tagline { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.me-srow .card-intro-source { display: none; }
+.me-srow .card-link::after { border-radius: 12px; }
+.me-srow .cover-saved { position: relative; z-index: 1; margin: -8px -8px 0 0; justify-self: end; }
+.me-srow .me-saved-mine { margin-top: 6px; padding-top: 0; border-top: 0; justify-content: flex-start; }
+
+/* 비어 있음 — 첫 행동 하나만 크게 */
+.me-saved-empty { padding: 44px 20px; }
+.me-saved-empty p { max-width: 46ch; margin-left: auto; margin-right: auto; }
+.me-cta { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 22px; border-radius: 980px; background: var(--text); color: var(--bg-card); font-size: 14px; font-weight: 500; }
+.me-cta:hover { color: var(--bg-card); opacity: 0.9; }
+.me-saved-empty .me-saved-hint { margin: 18px auto 0; font-size: 13px; }
+
+.saved-toast .saved-toast-action { min-height: 40px; padding: 0 12px; border: 0; border-radius: 980px; background: transparent; color: inherit; font: inherit; font-size: 14px; font-weight: 600; flex: none; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+
+@media (max-width: 960px) {
+  .me-saved-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .me-saved-tools { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "chips chips" "note sort"; }
+  .me-chip-row { flex-wrap: nowrap; overflow-x: auto; margin: 0 -16px; padding: 0 16px; scrollbar-width: none; }
+  .me-chip-row::-webkit-scrollbar { display: none; }
+  .me-chip-group { flex-wrap: nowrap; }
+  .me-saved .chip { flex: none; }
+  .me-saved-cards { display: none; }
+  .me-saved-rows { display: flex; }
+}

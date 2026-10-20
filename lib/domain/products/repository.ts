@@ -6,6 +6,7 @@ import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
 import { and, desc, eq, inArray, isNotNull, isNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { productMakerMembers } from "@/lib/db/me-schema";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
@@ -646,8 +647,14 @@ export async function update(id: number, values: Partial<Product>): Promise<void
     if (values.url !== undefined && values.url !== locked.url) {
       await tx.delete(productHealth).where(eq(productHealth.slug, current.slug));
     }
-    // 2단계 확인은 옛 저장소가 사라졌을 때의 것이다 — 새 저장소에는 맞지 않는다
-    if (Object.keys(resetStats).length) await tx.delete(productRepoReviews).where(eq(productRepoReviews.productId, id));
+    if (Object.keys(resetStats).length) {
+      // 2단계 확인은 옛 저장소가 사라졌을 때의 것이다 — 새 저장소에는 맞지 않는다
+      await tx.delete(productRepoReviews).where(eq(productRepoReviews.productId, id));
+      // GitHub 저장소 주인 확인도 옛 저장소에 대한 것이다 — 같은 트랜잭션에서 푼다(새 저장소 주인이면 다시 확인한다)
+      await tx.update(productMakerMembers).set({ revokedAt: sql`now()`, revokedReason: "repo_changed" })
+        .where(and(eq(productMakerMembers.productId, id), inArray(productMakerMembers.method, ["github_repo_owner", "github_repo_admin"]),
+          isNull(productMakerMembers.revokedAt)));
+    }
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
       repoUrl: product.repoUrl, declarationSource: "maker", mode: "explicit" }, tx);
   });

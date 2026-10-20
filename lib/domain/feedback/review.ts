@@ -9,14 +9,15 @@ import { adminAuditRow } from "@/lib/operations/admin-log";
 import { FeedbackError, type FeedbackReviewState } from "./contract";
 import type { FeedbackTransactionHook } from "./repository";
 import { enqueueFeedbackIssue } from "./github/enqueue";
+import { notifyCommentReviewed } from "@/lib/me/notifications";
 
 /** adminLogin must come from the existing administrator session, never a form field. */
-export function reviewFeedback(input: { id: string; expectedReviewState: FeedbackReviewState; decision: "accepted" | "rejected"; reason: string; adminLogin: string }, options: { onAccepted?: FeedbackTransactionHook } = {}) {
+export async function reviewFeedback(input: { id: string; expectedReviewState: FeedbackReviewState; decision: "accepted" | "rejected"; reason: string; adminLogin: string }, options: { onAccepted?: FeedbackTransactionHook } = {}) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(input.id)
     || !["accepted", "held", "rejected"].includes(input.expectedReviewState) || !["accepted", "rejected"].includes(input.decision)
     || input.expectedReviewState === input.decision || !input.reason.trim() || input.reason.length > 1000
     || !input.adminLogin.trim() || input.adminLogin.length > 120) throw new FeedbackError("feedback_invalid", 400);
-  return onPrimary(() => db.transaction(async (tx) => {
+  const reviewed = await onPrimary(() => db.transaction(async (tx) => {
     const [target] = await tx.select({ productId: productFeedback.productId }).from(productFeedback).where(eq(productFeedback.id, input.id));
     if (!target) throw new FeedbackError("feedback_not_found", 404);
     // Match dispatch/retransmit and binding invalidation: product → binding → outbox → feedback.
@@ -45,4 +46,7 @@ export function reviewFeedback(input: { id: string; expectedReviewState: Feedbac
     const [reviewed] = await tx.select().from(productFeedback).where(eq(productFeedback.id, feedback.id));
     return reviewed;
   }));
+  // 보류했던 글의 결과만 작성자 알림함에 — commit 뒤, 실패해도 심사는 끝난 것이다
+  if (input.expectedReviewState === "held") await notifyCommentReviewed(reviewed, input.decision);
+  return reviewed;
 }

@@ -5,12 +5,15 @@ import { Suspense, useEffect, useState, useSyncExternalStore, useTransition } fr
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/home/icons";
 import { AccountMenu } from "@/components/auth/AccountMenu";
-import { parseSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
+import { useSavedCount } from "@/components/home/useSavedSlugs";
+import { AlertBell } from "@/components/me/AlertBell";
+import { markAuthDisabled } from "@/components/me/account-store";
 import { BRAND } from "@/lib/copy/brand";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import "./chrome.css";
+import { ME_SAVED_LINK } from "@/lib/me/contract";
 
 function subscribeHydration(): () => void {
   return () => {};
@@ -122,8 +125,10 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
     clientHydrationSnapshot,
     serverHydrationSnapshot,
   );
-  const savedRaw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
-  const hasSaved = parseSaved(savedRaw).size > 0;
+  // 로그인 기능이 꺼져 있으면 계정 요약(/api/me/summary)을 묻지 않는다 — 저장 동기화·아래 탭 점이 404 를 받지 않게
+  if (!authEnabled) markAuthDisabled();
+  // 로그인 중이면 계정의 저장 수(MY2)
+  const hasSaved = useSavedCount() > 0;
   const shortcut = hydrated ? shortcutLabel(navigator.userAgent) : null;
 
   useEffect(() => {
@@ -167,7 +172,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
   }, []);
 
   function openSaved() {
-    router.push(localePath(locale, "/?saved=1#projects"));
+    router.push(localePath(locale, ME_SAVED_LINK));
   }
 
   /**
@@ -220,6 +225,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
         <LanguageSwitcher />
+        {authEnabled && <AlertBell />}
         {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold">{t("account.login")}</Link>}><AccountMenu /></Suspense>}
         <Link className="primary" href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
       </div>

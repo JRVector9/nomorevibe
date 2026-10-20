@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { emailLoginChallenges, publicIdentities, publicSessions, publicUsers, type PublicUser } from "@/lib/db/public-user-schema";
 import { rateLimit } from "@/lib/rate-limit";
+import { webWritable } from "@/lib/operations/dr/web-gate";
 import { PublicAuthError } from "./errors";
 import { csrfForToken, hashEmailCode, hashSessionToken, isOpaqueToken, matchesSecretHash, newPublicSession, privateRateKey } from "./session";
 import type { EmailDeliveryState } from "./email-delivery";
@@ -35,7 +36,7 @@ export async function recordEmailDelivery(challengeId: string, state: EmailDeliv
     .where(eq(emailLoginChallenges.id, challengeId)));
 }
 
-export type VerifyEmailInput = { challengeId: string; code: string; browserNonce: string; previousToken?: string };
+export type VerifyEmailInput = { challengeId: string; code: string; browserNonce: string; previousToken?: string; deviceLabel?: string | null };
 
 export async function consumeEmailChallenge(input: VerifyEmailInput) {
   const result = await onPrimary(() => db.transaction(async (tx) => {
@@ -53,21 +54,26 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
       return null;
     }
 
-    const [identity] = await tx.select({ userId: publicIdentities.userId }).from(publicIdentities)
+    const [identity] = await tx.select({ id: publicIdentities.id, userId: publicIdentities.userId }).from(publicIdentities)
       .where(and(eq(publicIdentities.provider, "email"), eq(publicIdentities.subject, challenge.email)));
     let user: PublicUser;
     if (identity) {
-      [user] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName }).from(publicUsers).where(eq(publicUsers.id, identity.userId));
+      // 탈퇴와 겹치면 탈퇴가 먼저 끝난 뒤 다시 읽는다 — 탈퇴한 계정에는 세션을 만들지 않는다
+      const [found] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName, deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, identity.userId)).for("share");
+      if (!found || found.deletedAt) throw new PublicAuthError(401, "login_required");
+      user = { id: found.id, displayName: found.displayName };
+      await tx.update(publicIdentities).set({ lastUsedAt: now }).where(eq(publicIdentities.id, identity.id));
     } else {
       [user] = await tx.insert(publicUsers).values({ displayName: `참여자-${randomBytes(4).toString("hex")}` }).returning({ id: publicUsers.id, displayName: publicUsers.displayName });
-      await tx.insert(publicIdentities).values({ userId: user.id, provider: "email", subject: challenge.email });
+      await tx.insert(publicIdentities).values({ userId: user.id, provider: "email", subject: challenge.email, lastUsedAt: now });
     }
 
     const session = newPublicSession();
     if (isOpaqueToken(input.previousToken)) {
       await tx.update(publicSessions).set({ revokedAt: now }).where(eq(publicSessions.tokenHash, hashSessionToken(input.previousToken)));
     }
-    await tx.insert(publicSessions).values({ tokenHash: session.tokenHash, userId: user.id, createdAt: session.createdAt, expiresAt: session.expiresAt });
+    await tx.insert(publicSessions).values({ tokenHash: session.tokenHash, userId: user.id, createdAt: session.createdAt, expiresAt: session.expiresAt,
+      provider: "email", deviceLabel: input.deviceLabel ?? null, lastSeenAt: session.createdAt });
     await tx.update(emailLoginChallenges).set({ consumedAt: now }).where(eq(emailLoginChallenges.id, input.challengeId));
     return { user, token: session.token, expiresAt: session.expiresAt, csrfToken: csrfForToken(session.token, "session"), returnTo: challenge.returnTo };
   }));
@@ -75,14 +81,31 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
   return result;
 }
 
+/** 마지막 사용일은 하루 한 번만 고친다 — 매 요청 쓰지 않게 */
+const SESSION_SEEN_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export async function getSessionUser(token: string): Promise<PublicUser | null> {
   if (!isOpaqueToken(token)) return null;
+  const tokenHash = hashSessionToken(token);
   return onPrimary(async () => {
-    const [user] = await db.select({ id: publicUsers.id, displayName: publicUsers.displayName }).from(publicSessions)
+    const [row] = await db.select({ id: publicUsers.id, displayName: publicUsers.displayName, lastSeenAt: publicSessions.lastSeenAt }).from(publicSessions)
       .innerJoin(publicUsers, eq(publicUsers.id, publicSessions.userId))
-      .where(and(eq(publicSessions.tokenHash, hashSessionToken(token)), isNull(publicSessions.revokedAt), gt(publicSessions.expiresAt, sql`now()`)));
-    return user ?? null;
+      .where(and(eq(publicSessions.tokenHash, tokenHash), isNull(publicSessions.revokedAt), gt(publicSessions.expiresAt, sql`now()`), isNull(publicUsers.deletedAt)));
+    if (!row) return null;
+    if (!row.lastSeenAt || Date.now() - row.lastSeenAt.getTime() > SESSION_SEEN_INTERVAL_MS) await touchSession(tokenHash);
+    return { id: row.id, displayName: row.displayName };
   });
+}
+
+/** 조건부 한 줄 쓰기 — 여러 요청이 겹쳐도 하루 한 번. fenced DB 거나 실패하면 건너뛴다(읽기는 그대로 된다) */
+async function touchSession(tokenHash: string): Promise<void> {
+  try {
+    if (!await webWritable()) return;
+    await db.update(publicSessions).set({ lastSeenAt: sql`now()` })
+      .where(and(eq(publicSessions.tokenHash, tokenHash), or(isNull(publicSessions.lastSeenAt), lt(publicSessions.lastSeenAt, sql`now() - interval '1 day'`))));
+  } catch {
+    // 마지막 사용일은 보조 정보다
+  }
 }
 
 export async function revokePublicSession(token: string): Promise<void> {

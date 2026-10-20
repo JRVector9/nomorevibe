@@ -11,7 +11,7 @@ import {
 } from "@/components/home/browse-state";
 import { Icon } from "@/components/home/icons";
 import { ProjectCard } from "@/components/home/ProjectCard";
-import { parseSaved, persistSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
+import { parseSaved, savedSnapshot, subscribeSaved, toggleSaved } from "@/components/home/saved";
 import type { HomeCardProduct } from "@/components/home/types";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
@@ -53,10 +53,7 @@ export function ProjectGrid({
   const limit = onlySaved ? localLimit : (browseState.shown ?? HOME_FIRST_PAGE);
 
   function toggleSave(slug: string) {
-    const next = new Set(saved);
-    if (next.has(slug)) next.delete(slug);
-    else next.add(slug);
-    persistSaved(next);
+    toggleSaved(slug, !saved.has(slug));
   }
 
   const rows = onlySaved ? products.filter((product) => saved.has(product.slug)) : products;

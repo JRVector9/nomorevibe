@@ -64,12 +64,14 @@ beforeEach(() => {
 });
 
 describe("모바일 아래 탭", () => {
-  it("발견·검색·인기·저장 순서이고 인기는 /popular 로 간다 — 공개 탭은 없다", () => {
+  it("발견·검색·인기·마이 순서이고 인기는 /popular, 마이는 /me 로 간다 — 공개 탭은 없다", () => {
     const html = renderWithLocale(createElement(MobileNav));
-    const labels = [...html.matchAll(/<\/svg>([^<]+)<\/(?:a|button)>/g)].map((match) => match[1]);
+    const labels = [...html.matchAll(/<\/(?:svg|span)>([^<]+)<\/(?:a|button)>/g)].map((match) => match[1]);
 
-    expect(labels).toEqual(["발견", "검색", "인기", "저장"]);
-    expect(hrefs(html)).toEqual(["/", "/popular"]);
+    // 마이페이지 시안 Q2 — '저장' 자리를 '마이'로. 안 읽은 알림 점 자리는 처음엔 숨김
+    expect(labels).toEqual(["발견", "검색", "인기", "마이"]);
+    expect(hrefs(html)).toEqual(["/", "/popular", "/me"]);
+    expect(html).toMatch(/<span class="dot" data-me-dot="true" hidden=""><\/span>/);
     expect(html).not.toContain("/launch");
     expect(html).not.toContain("#popular");
     // 발견(격자)과 인기는 다른 그림이다
@@ -81,6 +83,8 @@ describe("모바일 아래 탭", () => {
     expect(renderWithLocale(createElement(MobileNav))).toContain('class="active" href="/"');
     mocks.pathname = "/popular";
     expect(renderWithLocale(createElement(MobileNav))).toContain('class="active" href="/popular"');
+    mocks.pathname = "/me/account";
+    expect(renderWithLocale(createElement(MobileNav))).toContain('class="active" href="/me"');
     mocks.pathname = "/p/some";
     expect(renderWithLocale(createElement(MobileNav))).not.toContain("active");
   });

@@ -11,10 +11,11 @@ export type FeedbackTransaction = Parameters<Parameters<typeof db.transaction>[0
 /** Only DB work belongs in this hook; external requests must run after the transaction. */
 export type FeedbackTransactionHook = (tx: FeedbackTransaction, feedback: ProductFeedback) => Promise<void>;
 
-const selection = { feedback: productFeedback, slug: products.slug, productName: products.name, authorDisplayName: publicUsers.displayName,
+const selection = { feedback: productFeedback, slug: products.slug, productName: products.name,
+  authorDisplayName: sql<string | null>`case when ${publicUsers.deletedAt} is null then ${publicUsers.displayName} end`,
   delivery: { state: githubIssueOutbox.state, issueId: githubIssueOutbox.githubIssueId, issueNumber: githubIssueOutbox.githubIssueNumber,
     issueUrl: githubIssueOutbox.githubIssueUrl, externalState: githubIssueOutbox.externalIssueState, errorCode: githubIssueOutbox.lastErrorCode } };
-type SelectedFeedback = { feedback: ProductFeedback; slug: string; productName: string; authorDisplayName: string;
+type SelectedFeedback = { feedback: ProductFeedback; slug: string; productName: string; authorDisplayName: string | null;
   delivery: { state: string; issueId: number | null; issueNumber: number | null; issueUrl: string | null; externalState: "open" | "closed" | "deleted" | "unknown" | null; errorCode: string | null } | null };
 
 export function feedbackView(row: SelectedFeedback, privateReview = false): FeedbackView {

@@ -110,6 +110,19 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 다 돌면 하루 쉬고, 판정 버전이 바뀌면 곧바로 다시 돈다. 저장된 원본만 읽으므로 한가한 maintenance 에 둔다.
    */
   { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
+  /**
+   * 알림 메일(MY7) — 발송함을 1분마다 한 틱 20통까지 비우고, 주간 요약은 15분마다 고른 요일·시각(KST)이 지난 계정을 묶는다.
+   * 발신 설정(LOGIN_EMAIL_*)이 없으면 둘 다 네트워크를 부르지 않는다. 한가한 maintenance 에 둔다.
+   */
+  { name: "email-outbox-send", role: "maintenance", intervalMs: 60_000 },
+  { name: "email-weekly-digest", role: "maintenance", intervalMs: 15 * 60_000 },
+  /**
+   * 마이페이지 알림함(lib/jobs/me/notifications.ts) — 팔로한 프로젝트가 내려감(cdn_purges 를 따라 읽고, 닿지 않는 것을 본다),
+   * 팔로한 분야 주간 묶음(월요일 00:00 KST 부터 하루 안에 — 기본 09:00 주간 메일 요약보다 먼저 넣는다. 주기 일정에는 시각이 없어 틱마다 시각을 본다), 90일 지난 알림 지우기.
+   */
+  { name: "notification-delisted", role: "maintenance", intervalMs: 5 * 60_000 },
+  { name: "notification-category-digest", role: "maintenance", intervalMs: 15 * 60_000 },
+  { name: "notification-prune", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)
@@ -129,6 +142,11 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "product-star-observation", role: "crawler", intervalMs: 60_000, lane: "stars" },
   // Crawler already owns GitHub authentication; two recrawl-invalidated READMEs per tick.
   { name: "product-readme-refresh", role: "crawler", intervalMs: 5 * 60_000 },
+  /**
+   * 운영자 확인 재확인(마이페이지 MY5) — 30일 지난 행만 한 틱 20개까지 GitHub 저장소 주인을 다시 본다. README 갱신과 같은 까닭으로
+   * GitHub 수집 자격이 있는 crawler 에 둔다(maintenance 에는 GITHUB_COLLECTOR_SECRET·GITHUB_TOKEN 이 없다). 날짜 지난 행이 없으면 조회 한 번
+   */
+  { name: "maker-recheck", role: "crawler", intervalMs: 60 * 60_000 },
 ];
 
 export const JOB_NAMES = JOB_CATALOG.map(job => job.name);
