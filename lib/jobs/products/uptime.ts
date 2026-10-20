@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { refreshTextSample } from "@/lib/crawl/repository";
 import { nextToCheck, recordPing, type PingTarget } from "@/lib/domain/products/health";
+import { isUnknownUptimeStatus } from "@/lib/domain/products/health-record";
 import { uptimeSlot } from "@/lib/domain/products/uptime-policy";
 import { uptimeObservationMode, uptimeObserverSource, nextUptimeObservationTargets, recordUptimeObservation } from "@/lib/domain/products/uptime-observations";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
@@ -48,8 +49,11 @@ import { checkUptime, runOriginLanes } from "./uptime-check";
  * 2026-10-19 연속 실패 카운터가 매번 1로 돌아가던 버그(health.ts recordPing)를 고치면서 광역 실패 보류를 넣었다.
  * 이 잡이 본 실패는 이 서버(M3)에서 본 것이라, 이 서버의 네트워크·DNS가 끊기면 공개 제품 전체가 한꺼번에
  * 실패로 세어져 숨겨진다. 그래서 실패 기록만 틱 끝까지 모아 두고, 한 틱에 BROAD_FAILURE_MIN_ATTEMPTS건 이상
- * 확인했는데 실패가 BROAD_FAILURE_RATE를 넘으면 그 틱의 실패는 쓰지 않는다. 성공은 바로 쓴다.
- * 쓰지 않은 제품은 확인 시각이 그대로라 가장 오래된 채로 남아 다음 틱이 다시 본다.
+ * 확인했는데 실패가 BROAD_FAILURE_RATE를 넘으면 그 틱의 실패는 세지 않는다. 성공은 바로 쓴다.
+ * 세지 않은 제품은 "확인은 했지만 판정 보류"로 확인 시각만 넘겨 다른 제품처럼 6시간 뒤 차례를 기다린다
+ * (연속 실패·일별 집계·숨김·내림은 그대로, health-record writeHealthHeld). 시각을 그대로 두면 가장 오래된 채로
+ * 다음 틱 배치를 먼저 채워, 부분 장애가 이어지면 몇 틱 만에 배치 전체가 보류 제품이 되고 다른 제품 확인이 멈추며
+ * 막힌 사이트는 1분마다 요청을 받았다.
  *
  * 2026-10-19 split-v1(제품 단위 분담, 0104)이 claims 모드면 같은 잡이 claim 경로로 돈다(design-uptime §7.1). 틱마다
  * 제출분 반영(Oracle 등) → 내림 적체 sweep → 새 제품 행 → home claim → 확인 → 틱 결과를 한 번에 반영한다. 판정은
@@ -124,31 +128,38 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
 
   let alive = 0;
   let down = 0;
-  /** legacy 실패 기록 — 틱 끝에 광역 실패인지 본 뒤 쓴다 */
-  const failures: Array<() => Promise<void>> = [];
+  /** 봇·로그인 차단 응답(401·403·429·999) — 살았는지 알 수 없어 세지 않고 바로 기록한다 */
+  let unknown = 0;
+  /** legacy 실패 기록 — 틱 끝에 광역 실패인지 본 뒤 센다(record) 또는 판정을 보류한다(hold) */
+  const failures: DeferredFailure[] = [];
 
   const errors = await runOriginLanes(targets, capacity.concurrency, () => !ctx.signal?.aborted && ctx.hasBudget(), async target => {
-    if (await ping(target, write, ctx, () => { autoBanned++; }, raw, record => { failures.push(record); })) alive++;
+    const result = await ping(target, write, ctx, () => { autoBanned++; }, raw, failure => { failures.push(failure); });
+    if (result === "up") alive++;
+    else if (result === "unknown") unknown++;
     else down++;
   });
 
-  // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 쓴다(성공과 같다). 첫 쓰기 실패에서 멈추고 나머지는 다음 틱이 다시 본다
-  const attempted = alive + down;
-  if (failures.length > 0 && attempted >= BROAD_FAILURE_MIN_ATTEMPTS && failures.length / attempted > BROAD_FAILURE_RATE) {
-    ctx.log("uptime.broad_failure_held", { attempted, down: failures.length });
-  } else {
-    for (const record of failures) {
-      try {
-        await write(record);
-      } catch (error) {
-        errors.push(error);
-        break;
-      }
+  // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 쓴다(성공과 같다). 광역 실패면 세지 않고 확인 시각만 넘긴다.
+  // 첫 쓰기 실패에서 멈추고 나머지는 다음 틱이 다시 본다
+  // 알 수 없는 응답은 성공이 아니므로 비율에서는 실패 쪽에 센다 — 이전처럼 분모·분자에 그대로 둬 보류가 느슨해지지 않는다.
+  // 평소에는 공개 제품의 0.04%라 비율을 거의 움직이지 않고, 한 틱에 몰리면 이 서버가 막힌 것(IP 평판·CDN 한도)이라
+  // 같은 틱의 다른 실패도 믿기 어렵다. 분모에서 빼면 표본이 30건 아래로 줄어 보류가 아예 꺼질 수 있다.
+  const attempted = alive + down + unknown;
+  const held = failures.length > 0 && attempted >= BROAD_FAILURE_MIN_ATTEMPTS
+    && (failures.length + unknown) / attempted > BROAD_FAILURE_RATE;
+  if (held) ctx.log("uptime.broad_failure_held", { attempted, down: failures.length, unknown });
+  for (const failure of failures) {
+    try {
+      await write(held ? failure.hold : failure.record);
+    } catch (error) {
+      errors.push(error);
+      break;
     }
   }
   if (errors.length > 0) throw errors[0];
 
-  ctx.log("uptime.checked", { alive, down, autoBanned });
+  ctx.log("uptime.checked", { alive, down, unknown, autoBanned });
   // 한 바퀴를 다 돌았는지는 여기서 알 수 없다 — 오래된 것부터 계속 가져오면 그만이다
   return { done: false };
 }
@@ -248,9 +259,13 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   return { done: false };
 }
 
-/** 한 제품을 열어 보고 기록한다. 살아 있으면 true */
-async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null, deferFailure: (record: () => Promise<void>) => void): Promise<boolean> {
+/** 틱 끝까지 미룬 legacy 실패 — 세어 기록하거나(record) 확인 시각만 넘긴다(hold) */
+type DeferredFailure = { record: () => Promise<void>; hold: () => Promise<void> };
+
+/** 한 제품을 열어 보고 기록한다. 살았는지(up)·죽었는지(down)·봇·로그인 차단이라 알 수 없는지(unknown) */
+async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ctx: JobContext<null>, onBanned: () => void, raw: { source: ReturnType<typeof uptimeObserverSource>; gateEnabled: boolean } | null, deferFailure: (failure: DeferredFailure) => void): Promise<"up" | "down" | "unknown"> {
   const check = await checkUptime(target.url);
+  const unknown = !check.up && isUnknownUptimeStatus(check.status);
   const record = async () => {
     if (ctx.signal?.aborted) return;
     if (raw) {
@@ -263,13 +278,18 @@ async function ping(target: PingTarget, write: ReturnType<typeof oneAtATime>, ct
     } else {
       await recordPing(target.slug, check.status, check.latencyMs, check.observedAt, target.id, ctx.lease, target.url, ctx.signal);
     }
-    if (!check.up && await autoBanUptimeProduct(target, ctx)) onBanned();
+    if (!check.up && !unknown && await autoBanUptimeProduct(target, ctx)) onBanned();
     if (check.textSample) await refreshTextSample(target.slug, check.textSample, ctx.lease, target, ctx.signal).catch(() => {});
   };
-  // legacy 실패는 바로 쓰지 않는다 — 광역 실패 보류(pingProducts). raw 관측 모드는 관측 사실을 그대로 남긴다(광역 판정은 gate의 regional-v1 몫)
-  if (!check.up && !raw) deferFailure(record);
+  const hold = async () => {
+    if (ctx.signal?.aborted) return;
+    await recordPing(target.slug, check.status, null, check.observedAt, target.id, ctx.lease, target.url, ctx.signal, true);
+  };
+  // legacy 실패는 바로 쓰지 않는다 — 광역 실패 보류(pingProducts). 알 수 없는 응답은 세지 않으니 성공처럼 바로 쓴다.
+  // raw 관측 모드는 관측 사실을 그대로 남긴다(광역 판정은 gate의 regional-v1 몫)
+  if (!check.up && !unknown && !raw) deferFailure({ record, hold });
   else await write(record);
-  return check.up;
+  return check.up ? "up" : unknown ? "unknown" : "down";
 }
 
 /** 넘긴 일을 들어온 순서대로 하나씩 실행한다. 앞의 일이 실패해도 다음 일은 돈다 */

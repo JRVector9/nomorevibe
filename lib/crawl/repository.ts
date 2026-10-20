@@ -679,11 +679,14 @@ export async function saveFetchedDocument(
       return { needsJudgement: false, initialEvidenceRejected: true };
     }
     let needsJudgement = !candidate || candidate.state === "new";
-    if (candidate && candidate.decidedBy === "auto" && !candidate.publishedSlug
+    if (candidate && (candidate.decidedBy === "auto" || candidate.decidedBy === "deepseek") && !candidate.publishedSlug
       && ["approved", "needs_review"].includes(candidate.state)
       && !(candidate.productUrl === saved.productUrl && previous && !judgedSourceChanged(previous, saved))) {
+      const signals = { ...candidate.signals };
+      delete signals.delegatedReviewAttemptId;
       await tx.update(crawlCandidates).set({
         productUrl: saved.productUrl, state: "new", reason: "source_changed", decidedAt: null, updatedAt: new Date(),
+        ...(candidate.decidedBy === 'deepseek' ? { decidedBy: 'auto', signals } : {}),
       }).where(eq(crawlCandidates.id, candidate.id));
       needsJudgement = true;
     }

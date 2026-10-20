@@ -32,6 +32,7 @@ describe("미등록 잡 — 카탈로그의 잡은 정확히 한 단계에 들�
   it("잡에서 단계를 찾는다 — 제외한 잡과 모르는 잡은 없다", () => {
     expect(stageForJob("crawl-tagline")?.key).toBe("publish");
     expect(stageForJob("product-site-evidence-refresh")?.key).toBe("evidence");
+    expect(stageForJob("human-deepseek-review")?.key).toBe("human");
     expect(stageForJob("heartbeat")).toBeNull();
     expect(stageForJob("no-such-job")).toBeNull();
   });
@@ -70,7 +71,7 @@ describe("단계 표", () => {
       // 코드 이름은 잡이 있으면 첫 잡 이름이다
       if (row.jobs.length) expect(row.code, row.key).toBe(row.jobs[0]);
     }
-    expect(PIPELINE_STAGES.filter((row) => !row.jobs.length).map((row) => row.key)).toEqual(["x", "human"]);
+    expect(PIPELINE_STAGES.filter((row) => !row.jobs.length).map((row) => row.key)).toEqual(["x"]);
   });
 
   it("처리량·진행 열쇠는 지금 모듈의 단계를 한 번씩 가리키고, 진행 열쇠의 잡은 worker-progress 가 보는 잡과 같다", () => {

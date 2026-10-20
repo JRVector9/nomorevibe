@@ -1,0 +1,10 @@
+[Unit]
+Description=NoMoreVibe X daily ten-post reservation (osaka-smoke)
+
+[Timer]
+OnCalendar=*-*-* 00:10:00 UTC
+Persistent=true
+Unit=nomorevibe-x.service
+
+[Install]
+WantedBy=timers.target

@@ -27,6 +27,7 @@ import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -165,10 +166,18 @@ function activeReviewIdentity(settings: CrawlSettings): SQL {
       eq(crawlReviewAttempts.model, reviewer?.model ?? "")))!;
 }
 
-function matchingSource(settings: CrawlSettings): SQL {
+function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): SQL {
+  return sql`(${settings.humanReview.enabled}
+    AND ${crawlReviewAttempts.kind} = 'delegated'
+    AND ${crawlReviewAttempts.provider} = ${DEEPSEEK_REVIEW_PROVIDER}
+    AND ${crawlReviewAttempts.model} = ${DEEPSEEK_REVIEW_MODEL}
+    AND ${crawlReviewAttempts.actor} = ${deepseekActor(settings.humanReview.generation)}
+    AND ${crawlReviewAttempts.id}::text = ${attemptId === undefined ? sql`${crawlCandidates.signals}->>'delegatedReviewAttemptId'` : attemptId})`;
+}
+
+function matchingSource(settings: CrawlSettings, delegated = false): SQL {
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
-    AND ${crawlReviewAttempts.kind} = 'automatic'
-    AND ${activeReviewIdentity(settings)}
+    AND ${delegated ? delegatedReviewIdentity(settings) : sql`${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}`}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -242,13 +251,17 @@ export function secondReviewApprovalPredicate(settings: CrawlSettings): SQL {
 }
 
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
-  if (settings.reviewMode !== "enforce") return sql`true`;
-  return sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (
+  const delegated = sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, true)}
+    AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
+    AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`;
+  const ordinary = settings.reviewMode !== 'enforce' ? sql`true` : sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
     AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}
     AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
       settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
+  return sql`CASE WHEN ${crawlCandidates.decidedBy} = 'deepseek' OR (${crawlCandidates.decidedBy} <> 'admin' AND ${crawlCandidates.signals}->'delegatedReviewAttemptId' IS NOT NULL)
+    THEN ${delegated} ELSE ${ordinary} END`;
 }
 
 /** SQL prefilter; the publication transaction repeats this check against locked rows. */
@@ -1055,11 +1068,13 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings;
   input?: ReviewInput; lease: JobLease; approvalId?: number;
 }): Promise<CrawlReviewAttempt | null> {
-  if (input.settings.reviewMode !== "enforce" || input.candidate.decidedBy === "admin") {
+  const delegated = input.candidate.decidedBy === 'deepseek'
+    || input.candidate.decidedBy !== 'admin' && input.candidate.signals?.delegatedReviewAttemptId !== undefined;
+  if (!delegated && (input.settings.reviewMode !== "enforce" || input.candidate.decidedBy === "admin")) {
     await assertJobLease(tx, input.lease);
     return null;
   }
-  if (input.candidate.signals?.starAutoApproval) {
+  if (!delegated && input.candidate.signals?.starAutoApproval) {
     const proof = candidateStarAutoApproval(input.candidate, input.document, input.settings, reviewSemanticNow());
     await assertJobLease(tx, input.lease);
     if (!proof || input.candidate.productUrl !== input.document.productUrl
@@ -1074,8 +1089,9 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
   const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
-    activeReviewIdentity(input.settings),
-    eq(crawlReviewAttempts.candidateId, input.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
+    delegated ? delegatedReviewIdentity(input.settings, String(input.candidate.signals?.delegatedReviewAttemptId))
+      : and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")),
+    eq(crawlReviewAttempts.candidateId, input.candidate.id),
     eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.inputHash, current.inputHash),
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),
     eq(crawlReviewAttempts.policyHash, current.policyHash),
@@ -1089,7 +1105,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     || input.input && input.input.inputHash !== current.inputHash) throw new ReviewApprovalChangedError();
   validateReviewOutcome(current, approval.outcome);
   // 발행 직전에 한 번 더 — 목록을 고른 뒤 2차 표가 반대로 바뀌었을 수 있다
-  if (secondGateRequired(input.settings)) {
+  if (!delegated && secondGateRequired(input.settings)) {
     // 표를 잠근 뒤 같은 조건으로 다시 잰다 — 목록을 고른 뒤 표가 바뀌었을 수 있다
     await tx.select({ id: secondReviews.id }).from(secondReviews).where(eq(secondReviews.firstAttemptId, approval.id)).for("share");
     const [gate] = await tx.execute<{ ok: boolean }>(sql`select ${secondApproved({ id: sql`${approval.id}`, model: sql`${approval.model}` },

@@ -9,7 +9,7 @@ import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
-import { agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
+import { agentLimitedSettledSql, agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
 import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
@@ -151,6 +151,8 @@ export async function evidenceProgress(executor: EvidenceProgressExecutor, setti
       ), agent_targets AS (
         SELECT greatest(d.created_at,
           ${agentRefreshDueAtSql(sql`s`, sql`d.requires_daily`, settings.agentEvidence.backgroundRefreshDays, at)}) AS due_at, s.state,
+          -- 범위 제한으로 끝난 partial 은 잡이 complete 처럼 주기로만 다시 본다 — 재시도 예약(deferred)으로 세지 않는다
+          coalesce(${agentLimitedSettledSql(sql`s`)}, false) AS settled,
           coalesce(s.last_error_code, CASE WHEN ${preScanFailure} THEN ${failure?.code ?? null} END) AS error_code,
           s.completed_at, CASE WHEN ${preScanFailure} THEN ${failure?.lastFailureAt ?? null}::timestamp ELSE s.started_at END AS started_at,
           s.file_count, s.request_count,
@@ -197,7 +199,7 @@ export async function evidenceProgress(executor: EvidenceProgressExecutor, setti
           AND started_at > ${at} - interval '5 minutes' AND started_at <= ${at})::int,
         count(*) FILTER (WHERE error_code IS NOT NULL AND error_code NOT IN ('budget_exhausted','alias_recheck_required')
           AND started_at > ${at} - interval '5 minutes' AND started_at <= ${at})::int,
-        count(*) FILTER (WHERE due_at > ${at} AND (state = 'partial' OR error_code IS NOT NULL))::int,
+        count(*) FILTER (WHERE due_at > ${at} AND ((state = 'partial' AND NOT settled) OR error_code IS NOT NULL))::int,
         count(*) FILTER (WHERE job_failure OR error_code IN (${sqlTextList(AGENT_PROVIDER_FAILURE_CODES)}))::int,
         extract(epoch FROM (${at} - min(error_since) FILTER (WHERE job_failure OR error_code IN (${sqlTextList(AGENT_PROVIDER_FAILURE_CODES)})))) / 60
       FROM agent_targets
