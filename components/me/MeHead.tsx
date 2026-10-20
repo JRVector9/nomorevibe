@@ -3,7 +3,7 @@ import { formatDate, formatNumber } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
 import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
-import { ME_TAB_PATHS } from "@/lib/me/contract";
+import { ME_SAVED_LINK, ME_TAB_PATHS } from "@/lib/me/contract";
 import type { MeSummary } from "@/lib/me/summary";
 import { MeAvatar } from "./MeAvatar";
 
@@ -33,7 +33,7 @@ export function MeHead({ summary, locale, t, now }: { summary: MeSummary; locale
       </div>
       <nav className="me-stats" aria-label={t("head.stats")}>
         {STATS.map(([tab, key]) => (
-          <Link key={tab} prefetch={false} className="me-stat" href={localePath(locale, ME_TAB_PATHS[tab])}>
+          <Link key={tab} prefetch={false} className="me-stat" href={localePath(locale, tab === "saved" ? ME_SAVED_LINK : ME_TAB_PATHS[tab])}>
             <b>{formatNumber(counts[key], locale)}</b>
             <span>{t(`tabs.${tab}`)}</span>
           </Link>
