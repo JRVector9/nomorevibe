@@ -121,6 +121,29 @@
 - **[#569](https://github.com/JRVector9/nomorevibe/pull/569) (main a2281746, 16:24 KST)**: 수집기 검색을 `sort_order=relevancy` 로. 수집기 번들만 바뀌어 osaka release `3d25790786540aad` 만 설치(웹·워커 재배포 없음, main 의 공통 8앱·scheduler 는 eef28fd2). 첫 관련도순 실행은 10-21 09:10 KST.
 - 배포 뒤 상태: 공통 8앱·scheduler eef28fd2, 공개 health ok, `/talk` 404(꺼짐), hn-talk 30분마다 정상(HN 20건). 남은 확인은 `PENDING.md` "SNS 화제·X 수집".
 
+### 2026-10-20 저녁 Oracle 증설 통합 배포 [#562](https://github.com/JRVector9/nomorevibe/pull/562) (사용자 지시)
+- **번호 고침**: main 의 `0103_social_posts` 와 겹치던 Oracle 묶음을 0104~0107(journal when …016~…019)로 옮기고 브랜치 11개에 main 을 합쳤다(기록은 `PENDING.md`).
+- **병합 20:34 KST → main 6ad56cd1**(merge commit). 처음엔 CI 확인용이었으나 독립 리뷰 수정(fix-uptime·fix-agent-scan)이 이 브랜치에만 있어 사용자 지시로 병합했다.
+  대체된 #554·#556·#557·#558·#559·#560·#561 은 설명을 남기고 닫았고, #553·#555 는 head 가 그대로 들어가 GitHub 가 병합으로 표시했다.
+- **migration 20:35 KST(1초)**: 깨끗한 main checkout 에서 직접 5432 로 적용 — journal 108줄, uptime split·agent scan 모두 **legacy**(epoch 1),
+  uptime_claims 백필 42,564, RLS 2표(`rate_limits`·`github_collector_apps`, 앱은 표 owner 라 영향 없음), 트리거 4개. 논리 복제 없음(물리 슬롯만).
+- **앱**: scheduler·maintenance M3 → 6ad56cd1. M3 재배포 동안 maintenance lease 가 mini 예비(이전 33964cb5)로 넘어갔고, 예비는 release 가 같을 때만 넘겨받으므로
+  maintenance-mini(`T6ATm-paaE03hfSsQX8-S`)도 6ad56cd1 로 올리자 lease 가 M3 로 돌아왔다(prod.sh 에 없는 앱이라 같은 방식으로 RELEASE_TAG 한 줄만).
+  공통 8앱 `run --migration-verified` 20:56~20:58 KST(역할마다 ready·ok, 공개 health ok). text·text-mini·connect-agent 는 33964cb5 그대로(변경 없음).
+- 배포 뒤: 두 웹 6ad56cd1, 역할 lease 모두 M3 주, 20분 잡 오류 0, `/talk` 404(꺼짐), X 보고 주소 401(정상).
+- HTML purge 는 토큰이 없어 건너뛰었다 — 옛 HTML 은 최대 5분이라 이미 지났다. 토큰은 운영자 Mac 키체인 `nomorevibe-cloudflare-purge-token` 에 있어야 한다.
+- Oracle 서버 확인(사용자 질문): osaka-smoke 에는 X 수집기만 있고, nomorevibe Oracle consumer 는 아직 어디에도 없다
+  (운영 DB 에 `nomorevibe_oracle_*` 계정·Oracle 관측·Oracle 반영 0, onetwoday 컨테이너는 다른 프로젝트, oracle-serenity 는 프록시).
+- **리뷰 수정 [#575](https://github.com/JRVector9/nomorevibe/pull/575) → main 14a9171c**(0a4e8c06·c204cbd1 cherry-pick, merge commit): 워커 종료·요청 시간 제한,
+  consumer 예산 분리, split 진행은 지금 maintenance 주인의 차단기만. scheduler·maintenance M3→mini·공통 8앱(21:40~21:43 KST, ready·ok)·text→text-mini(22:12 KST)
+  모두 14a9171c. 역할 lease 5개 모두 M3 주 14a9171c.
+- **uptime A3(home 만 claims)**: policy 저장(감사 13713, epoch 2, home `m3-maintenance`·`mini-maintenance-standby`, region kr-home) →
+  **21:55 KST claims**(감사 13717, epoch 3). 첫 30분: 반영 238(전부 m3)·split_success 235·counted 3, 마감 지남 최장 0~1분, 차단기 닫힘, 새 제품 claim 행 틱마다 채움.
+  되돌리기 `scripts/ops/uptime-split.ts mode --to=legacy --from-mode=claims --expect-epoch=3`.
+- **제작 근거 consumer 앱 생성**: crawler-m3 설정 복제로 `nomorevibe-agent-scan-consumer-m3`(`LIRNQFq9mWGBOWRshJ-19`, appName `…-ocsfsj`) — 명령
+  `worker-supervisor.ts --role=crawler --consumer=agent-scan`, env 는 `SERVICE_INSTANCE_ID=agent-scan-consumer-m3`·`AGENT_SCAN_CONSUMER_VERSION=1`·`AGENT_SCAN_CONCURRENCY=1` 만 다름.
+  1/1 healthy, `agent-scan status` consumers=1(legacy 라 쉰다). 배포 도구 등록 [#577](https://github.com/JRVector9/nomorevibe/pull/577)(main 61027164) — 이후 릴리스는 `--consumer agent-scan`.
+
 ### 최종 상태 (2026-10-17 21:25 KST)
 - **#533 병합 → main 553a8e52.** 파이프라인 개편 개발 전부가 main에 있다: 스택 #467–#488, 통합 #527(#490–#526), #528–#531, 다른 세션의 #532, 최종 리뷰 수정·LAN fallback #533. migration 0000–0102.
 - 열린 PR: nomorevibe #292·#208(파이프라인 무관), abcLLM #1–#4(병합=배포, 승인 대기).

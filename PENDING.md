@@ -45,6 +45,19 @@
     단독으로 main 에 맞추려면 통합이 한 적응을 다시 해야 해, 사용자 지시로 원격 브랜치를 지웠다(복구가 필요하면 875d2b7c·4b55cb2b).
 - osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
 
+## Oracle 증설 배포 뒤 — 2026-10-20
+
+#562 를 main(6ad56cd1)에 병합·배포했다(migration 0104~0107 적용, 모두 legacy). 기록은 `docs/CODEX_HANDOFF.md` "2026-10-20 저녁 Oracle 증설 통합 배포".
+
+- 리뷰 수정 0a4e8c06 은 #575(main 14a9171c)로 들어가 모든 앱에 배포됐다. 공통 8앱·git 빌드 앱·text 모두 14a9171c(connect-agent 만 33964cb5, 변경 없음).
+- **uptime A3 관측 중**(2026-10-20 21:55 KST claims, epoch 3): runbook 통과 조건(마감 지남 최장 ≤ 12분, 5분 반영 끊김 없음, `uptime.split_blocked`·`split_broad_failure` 없음,
+  숨김·내림 속도 legacy 와 비슷)을 **10-21 03:55 KST 이후** 확인한다. 통과하면 A6 Oracle probe(cap 1,000/h) — Oracle 설치가 먼저다.
+- **제작 근거 items 전환 대기**: consumer 앱은 만들었다(consumers=1). runbook §11 11-1 contract → 11-2 drain → 11-3 legacy 틱 끝 → 11-4 items 는
+  운영 쓰기라 사용자 허가 뒤 한다. 되돌리기 11-6.
+- **Oracle 설치·시작**(`docs/operations/2026-10-17-oracle-activation-runbook.md`): ARM 빌드·DB 계정(`nomorevibe_oracle_*`)·PgBouncer 인증·TZ=UTC·unit. 아직 아무것도 설치하지 않았다.
+- maintenance-mini 는 `.claude/prod.sh` 목록에 없다 — 다음 maintenance 배포 때도 M3·mini 를 같은 release 로 맞춘다(아니면 lease 가 예비에 남는다).
+- Cloudflare HTML purge 토큰을 운영자 Mac 키체인(`nomorevibe-cloudflare-purge-token`)에 둔다 — 지금 접근한 M3 Ultra·mini 에는 없다.
+
 ## 수집·검수 개선의 운영 검증 — 2026-10-14
 
 PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타입·lint·빌드)는 별도 브랜치에서 실행했다. 마지막 근거·캐시 cutoff·재개 커서 경계까지 수정하고 전체 검사와 모든 범위의 최종 독립 리뷰를 통과해 로컬 커밋했다.
