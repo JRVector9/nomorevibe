@@ -9,14 +9,16 @@ const METRICS = ["like_count", "reply_count", "retweet_count", "quote_count", "i
 type Metric = typeof METRICS[number];
 type Availability = "available" | "unavailable" | "unknown";
 type Failure = "timeout" | "transport_error" | "http_error" | "body_too_large" | "invalid_response";
+/** recent search 의 순서 — recency(최신순)·relevancy(관련도순) 두 값뿐이다 */
+export type XSortOrder = "recency" | "relevancy";
 export type XPilotOptions = { live?: boolean; useCaseApproved?: boolean; token?: string; query?: string;
-  fieldsParameter?: "tweet.fields" | "post.fields"; lookupIds?: readonly string[]; searchOnly?: boolean };
+  fieldsParameter?: "tweet.fields" | "post.fields"; lookupIds?: readonly string[]; searchOnly?: boolean; sortOrder?: XSortOrder };
 export type XObservation = { id: string; createdAt: string | null; observedAt: string; availability: Availability;
   repositories: string[]; linkStatus: "none" | "single" | "ambiguous"; metrics: Record<Metric, number | null> };
 type RequestRecord = { endpoint: "recent-search" | "lookup"; reservedPosts: number; status: number | null;
   outcome: "ok" | "http" | Exclude<Failure, "http_error">; retryAfterSeconds?: number };
 export type XPilotResult = { mode: "dry-run" | "live"; status: "planned" | "skipped" | "completed" | "stopped"; reason?: string;
-  needsLiveValidation: true; plan: { query: string; startTime: string; fieldsParameter: string; searchLimit: 10;
+  needsLiveValidation: true; plan: { query: string; startTime: string; fieldsParameter: string; sortOrder: XSortOrder; searchLimit: 10;
     maxRequests: 1 | 3; maxPostResources: 10 | 30; endpoints: string[] } | null; reservedPosts: number;
   requests: RequestRecord[]; observations: XObservation[];
   summary: { available: number; unavailable: number; unknown: number; singleRepoPosts: number; ambiguousRepoPosts: number;
@@ -127,13 +129,15 @@ export async function runXPilot(options: XPilotOptions = {}, dependencies: { req
     plan: null, requests: [], reservedPosts: 0, observations: [], summary: summarize([]) };
   const skip = (reason: string) => { result.status = "skipped"; result.reason = reason; return result; };
   const fieldsParameter = options.fieldsParameter ?? "tweet.fields";
+  const sortOrder = options.sortOrder ?? "recency";
   const rawQuery = (options.query ?? X_PILOT_QUERY).trim();
   const query = `(${rawQuery}) -is:retweet`;
   const provided = [...new Set(options.lookupIds ?? [])];
   if (!rawQuery || query.length > 512 || /[\u0000-\u001f\u007f]/.test(query)) return skip("invalid_query");
   if (!["tweet.fields", "post.fields"].includes(fieldsParameter)) return skip("invalid_fields_parameter");
+  if (!["recency", "relevancy"].includes(sortOrder)) return skip("invalid_sort_order");
   if (provided.length > 10 || provided.some(id => !postId(id)) || (options.searchOnly && provided.length)) return skip("invalid_lookup_ids");
-  result.plan = { query, startTime: new Date(now() - 24 * 3600_000).toISOString(), fieldsParameter, searchLimit: 10,
+  result.plan = { query, startTime: new Date(now() - 24 * 3600_000).toISOString(), fieldsParameter, sortOrder, searchLimit: 10,
     maxRequests: options.searchOnly ? 1 : 3, maxPostResources: options.searchOnly ? 10 : 30,
     endpoints: options.searchOnly ? [SEARCH] : [SEARCH, LOOKUP] };
   if (!options.live) return result;
@@ -154,7 +158,7 @@ export async function runXPilot(options: XPilotOptions = {}, dependencies: { req
     url.searchParams.set(fieldsParameter, FIELDS);
     if (endpoint === "recent-search") {
       url.searchParams.set("query", query); url.searchParams.set("max_results", "10");
-      url.searchParams.set("sort_order", "recency"); url.searchParams.set("start_time", result.plan!.startTime);
+      url.searchParams.set("sort_order", result.plan!.sortOrder); url.searchParams.set("start_time", result.plan!.startTime);
     } else url.searchParams.set("ids", ids.join(","));
     const record: RequestRecord = { endpoint, reservedPosts: reserve, status: null, outcome: "ok" };
     result.requests.push(record); result.reservedPosts += reserve;
