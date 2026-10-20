@@ -37,6 +37,7 @@ import { refreshProductEmbeddings } from "@/lib/jobs/products/embedding-refresh"
 import { refreshNews } from "@/lib/news/refresh";
 import { deliverGithubFeedback } from "@/lib/jobs/github/feedback-delivery";
 import { reconcileGithubIntegrations } from "@/lib/jobs/github/integration-reconcile";
+import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
 
 /**
  * 이름 → 작업 매핑.
@@ -126,6 +127,11 @@ export const JOBS: Record<string, AnyJob> = {
   "product-thumbnail-refresh": refreshProductThumbnails,
   /** 검색이 읽는 토픽·본문을 crawl_documents 와 맞춘다 */
   "product-search-refresh": refreshProductSearchDocuments,
+
+  /** 마이페이지 알림함 — 팔로한 프로젝트 내려감, 팔로한 분야 주간 묶음, 90일 지난 알림 지우기 */
+  "notification-delisted": sendDelistedNotifications,
+  "notification-category-digest": (ctx) => sendCategoryDigest(ctx),
+  "notification-prune": pruneNotifications,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),

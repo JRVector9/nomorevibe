@@ -108,6 +108,9 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "hn-talk": "HN 화제 글 기록 — 프론티어에 넣지 않는 SNS 관측",
   "cdn-purge": "내린 제품의 CDN 캐시 지우기 — 내린 뒤 정리",
   "github-feedback-delivery": "메이커 동의를 받은 GitHub 피드백 전송 — 사용자 요청 처리",
+  "notification-delisted": "팔로한 프로젝트 내려감 알림 — 내린 뒤 계정 알림함에 적기",
+  "notification-category-digest": "팔로한 분야 주간 묶음 알림 — 공개 제품을 세기만 한다",
+  "notification-prune": "90일 지난 알림 지우기 — 계정 알림함 정리",
 };
 
 export function stageForJob(job: string): PipelineStageDef | null {

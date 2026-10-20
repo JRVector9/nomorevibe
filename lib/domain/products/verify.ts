@@ -8,6 +8,7 @@ import { type Result, ok, fail } from "./errors";
 import * as repo from "./repository";
 import { isUnclaimed } from "./view";
 import { VERIFY_FILE_PATH, VERIFY_META_NAME, verifyExpectation } from "./verify-contract";
+import { notifyMakerNewProject } from "@/lib/me/notifications";
 
 export type VerifyOutput = {
   slug: string;
@@ -102,6 +103,8 @@ export async function verifyProduct(slug: string): Promise<Result<VerifyOutput>>
   }
 
   logger.info("verify.succeeded", { slug, method, claimed: claiming });
+  // 확인 전에는 상세에만 있던 제품이 이제 목록에 오른다 — 그 주인을 팔로한 사람에게(이미 공개였던 클레임은 새 프로젝트가 아니다)
+  if (product.status === "unverified") await notifyMakerNewProject(slug);
   if (editToken) {
     // 수집한 제품에 주인이 나타난 건수는 시드가 실제로 쓸모 있었는지를 말해준다
     logger.info("product.claimed", { slug, url: product.url });

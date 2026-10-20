@@ -1,5 +1,5 @@
 import { localizeProductList } from "@/lib/i18n/products";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import type { Metadata, ResolvingMetadata } from "next";
 import { pageTitle } from "@/lib/copy/brand";
 import { LOCALES } from "@/lib/i18n/locales";
@@ -321,9 +321,9 @@ export default async function HomePage({ searchParams }: Props) {
  * 골격을 경로의 loading.tsx 로 두지 않는다 — 경로 단위 골격은 모든 하위 경로의 응답을 일찍 흘려 보내 없는 주소가 404 대신
  * 200(noindex)이 되고 redirect 가 meta refresh 가 된다(2026-10-09 next start 로 확인).
  * 열쇠: 검색어·분야·정렬·거르기가 바뀌면 새 목록이라 골격을 다시 보인다. '더 보기'(shown)·개인 계정 거르기는 같은 목록을 늘리거나
- * 아래 구획만 바꾸는 것이라 골격으로 덮지 않는다.
+ * 아래 구획만 바꾸는 것이라 골격으로 덮지 않는다. titleAction 은 목록 제목 옆 자리다(분야 화면의 팔로 단추).
  */
-export async function HomeScreen({ params }: { params: HomeParams }) {
+export async function HomeScreen({ params, titleAction }: { params: HomeParams; titleAction?: ReactNode }) {
   const locale = await getRequestLocale();
   const [t, labels] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels")]);
   const query = firstValue(params.q)?.trim().slice(0, 200) || undefined;
@@ -333,7 +333,7 @@ export async function HomeScreen({ params }: { params: HomeParams }) {
   const title = newOnly ? t("new.title") : query ? t("home.searchTitle", { query }) : category ? t("home.categoryTitle", { category: translatedCategory(category, labels) }) : undefined;
   return (
     <Suspense key={key} fallback={<FeedSkeleton title={title} busy={t(!newOnly && query ? "home.searching" : "home.loading")} label={t("home.projects")} />}>
-      <HomeContent params={params} />
+      <HomeContent params={params} titleAction={titleAction} />
     </Suspense>
   );
 }
@@ -419,7 +419,7 @@ function FeedSkeleton({ title, busy, label }: { title?: string; busy: string; la
   );
 }
 
-export async function HomeContent({ params }: { params: HomeParams }) {
+export async function HomeContent({ params, titleAction }: { params: HomeParams; titleAction?: ReactNode }) {
   const locale = await getRequestLocale();
   const [t, labels, dictionary] = await Promise.all([getTranslator(locale, "browse"), getTranslator(locale, "labels"), getDictionary(locale, "browse")]);
   const count = (n: number) => formatNumber(n, locale);
@@ -663,6 +663,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
             {effectiveSort === "recent" && <p className="row-note">{t("home.recentNote")}</p>}
             {effectiveSort === "all-time" && <p className="row-note">{t("home.starsNote")}</p>}
           </div>
+          {titleAction && <div>{titleAction}</div>}
         </div>
 
         <BrowseFilters

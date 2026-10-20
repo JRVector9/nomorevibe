@@ -40,4 +40,10 @@ export const common = {
   "error.reference": globalError.reference,
   "navigation.talk": "SNS 화제",
   "navigation.talkShort": "화제",
+  "bell.label": "알림",
+  "bell.unread": "알림 — 안 읽은 것 {count}개",
+  "bell.empty": "새 알림이 없어요",
+  "bell.readAll": "모두 읽음",
+  "bell.all": "알림함 전체 보기",
+  "bell.failed": "알림을 불러오지 못했어요.",
 } as const;

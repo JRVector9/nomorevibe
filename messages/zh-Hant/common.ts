@@ -43,4 +43,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "社群熱議",
   "navigation.talkShort": "熱議",
+  "bell.label": "通知",
+  "bell.unread": "通知 — {count} 則未讀",
+  "bell.empty": "沒有新通知",
+  "bell.readAll": "全部已讀",
+  "bell.all": "查看全部通知",
+  "bell.failed": "未能載入通知。",
 });

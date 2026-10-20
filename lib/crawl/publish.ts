@@ -19,6 +19,7 @@ import { guardPublication, publicationSourceChanged, PublicationStateChangedErro
 import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
+import { notifyMakerNewProject } from "@/lib/me/notifications";
 import { ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
@@ -258,6 +259,8 @@ export async function publishCandidate(
       throw e;
     }
   }
+  // 이 GitHub 주인을 팔로한 사람에게 새 프로젝트 — 발행은 commit 됐다. 실패해도 발행은 그대로(뒤 OG 단계보다 먼저)
+  await notifyMakerNewProject(slug);
 
   // OG 이미지는 부가 작업이다. 핫링크하지 않는 이유는 등록 경로와 같다 —
   // 상대 서버가 죽으면 목록이 깨지고, 이미지가 사후에 바뀔 수 있다.

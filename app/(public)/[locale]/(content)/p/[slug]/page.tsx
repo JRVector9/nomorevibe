@@ -43,6 +43,7 @@ import { getProductGithubBinding } from "@/lib/domain/github-installations/bindi
 import { TalkBand } from "@/components/social/TalkBand";
 import { talkVisibility } from "@/lib/social/flags";
 import { productTalk, type ProductTalk } from "@/lib/social/talk";
+import { productFollowSlots } from "@/components/me/FollowSlot";
 
 export const dynamic = "force-dynamic";
 
@@ -150,7 +151,7 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
       </nav>
 
       <ProductHero product={product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
-        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
+        repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null} follow={productFollowSlots(product, detail.repository?.facts?.repositoryUrl ?? null)}
         personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
           ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined} />
 

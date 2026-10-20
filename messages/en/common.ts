@@ -43,4 +43,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "Social buzz",
   "navigation.talkShort": "Buzz",
+  "bell.label": "Alerts",
+  "bell.unread": "Alerts — {count} unread",
+  "bell.empty": "No new alerts",
+  "bell.readAll": "Mark all read",
+  "bell.all": "Open the inbox",
+  "bell.failed": "Could not load alerts.",
 });

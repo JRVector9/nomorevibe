@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState, useSyncExternalStore, useTransition } fr
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/home/icons";
 import { AccountMenu } from "@/components/auth/AccountMenu";
+import { AlertBell } from "@/components/me/AlertBell";
 import { parseSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
 import { BRAND } from "@/lib/copy/brand";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
@@ -220,6 +221,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
         <LanguageSwitcher />
+        {authEnabled && <AlertBell />}
         {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold">{t("account.login")}</Link>}><AccountMenu /></Suspense>}
         <Link className="primary" href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
       </div>
