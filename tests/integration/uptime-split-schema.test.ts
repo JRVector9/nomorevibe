@@ -11,13 +11,15 @@ import { uptimeSplitPolicyHash, type UptimeSplitPolicy } from "@/lib/domain/prod
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 /*
- * U1a 0104: 실제 PostgreSQL 에서 0102 까지 올린 DB 에 제품을 넣고 0104 를 더한다(백필·외래 키·CHECK·상호 배제 트리거).
+ * U1a 0104: 실제 PostgreSQL 에서 0104 바로 앞 migration 까지 올린 DB 에 제품을 넣고 0104 를 더한다(백필·외래 키·CHECK·상호 배제 트리거).
  * 이 파일이 만들고 지우는 임시 DB 하나만 쓴다(공유 test DB 는 건드리지 않는다). 뒤 migration 이 생겨도 0104 직후 상태를 본다.
  */
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const name = `nomorevibe_test_u1a_${randomBytes(6).toString("hex")}`;
 const url = (() => { const value = new URL(TEST_DATABASE_URL); value.pathname = `/${name}`; return value.toString(); })();
 const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")) as { entries: { idx: number; tag: string }[] };
+/** 0104 바로 앞 migration — main 의 migration 이 먼저 들어가도(0103_social_posts) 0104 하나만 더한 차이를 본다 */
+const PREVIOUS = journal.entries[journal.entries.findIndex(entry => entry.tag === "0104_uptime_split") - 1].tag;
 const NEW_TABLES = ["uptime_split_control", "uptime_claims", "uptime_host_windows", "uptime_host_breakers"];
 const policy: UptimeSplitPolicy = { version: 1, hosts: [{ host: "m3", instanceId: "m3-maintenance", region: "kr-home", class: "home" }],
   claim: { ttlMs: 180_000 }, confirm: { affinityDays: 7 },
@@ -63,7 +65,7 @@ beforeAll(async () => {
   ensureSchema();
   const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
   try { await admin.unsafe(`CREATE DATABASE ${name}`); created = true; } finally { await admin.end({ timeout: 5 }); }
-  await migrateThrough("0102_model_capacity_gateway_not_started");
+  await migrateThrough(PREVIOUS);
   client = postgres(url, { max: 4, prepare: false, onnotice: () => {} });
   ids = { listed: await product("u1a-listed", "verified", "website"), fresh: await product("u1a-fresh", "seeded", "website"),
     banned: await product("u1a-banned", "banned", "website"), installable: await product("u1a-installable", "verified", "installable"),
