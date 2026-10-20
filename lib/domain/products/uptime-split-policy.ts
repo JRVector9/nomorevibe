@@ -4,7 +4,7 @@ import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { UptimeHostSchema, uptimeSlot, type UptimeDisposition, type UptimeObservation, type UptimeSource } from "./uptime-policy";
 
 /**
- * split-v1 — 제품 연결 확인을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡을 때의 판정 규칙(0103 표).
+ * split-v1 — 제품 연결 확인을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡을 때의 판정 규칙(0104 표).
  * 이 파일은 순수 함수만 둔다. DB·시계·환경 변수를 읽지 않는다. 시각은 부르는 쪽이 DB clock_timestamp 로 넘긴다.
  *
  * - 성공은 어느 host 것이든 반영한다(어디선가 열리면 살아 있다).
@@ -36,7 +36,7 @@ const DAY_MS = 24 * 60 * 60_000;
 const KST_OFFSET_MS = 9 * 60 * 60_000;
 const LISTED = new Set(["verified", "seeded"]);
 
-/** Oracle 은 언제나 probe, M3·mini 는 home 이다. 0103 의 uptime_claims_host CHECK 와 같다. */
+/** Oracle 은 언제나 probe, M3·mini 는 home 이다. 0104 의 uptime_claims_host CHECK 와 같다. */
 export function uptimeHostClass(host: UptimeHost): UptimeHostClass {
   return host === "oracle-osaka-smoke" ? "probe" : "home";
 }
@@ -262,7 +262,7 @@ export type UptimeHealthSnapshot = { checkedAt: Date; failures: number; downSinc
 export type UptimeSplitInput = { claim: UptimeClaimSnapshot; result: UptimeSplitResult; product: UptimeProductSnapshot | null; health: UptimeHealthSnapshot | null };
 export type UptimeSplitContext = {
   control: UptimeSplitControl;
-  /** PR09 uptime_control. split 동안 둘 다 거짓이어야 한다(0103 트리거가 강제) */
+  /** PR09 uptime_control. split 동안 둘 다 거짓이어야 한다(0104 트리거가 강제) */
   uptimeControl: { observationsEnabled: boolean; gateEnabled: boolean };
   /** 적용 TX 의 DB clock_timestamp */
   wall: Date;
