@@ -227,7 +227,7 @@ SELECT indexname FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'mo
   - `capability_update`·`evidence_update`: worker 4개와 scheduler는 `f`, attest는 `t`.
   - 트리거 `job_batch_candidates_evidence_insert_guard`(`tgenabled=O`)와 인덱스 1행.
   - 최종 판정은 4단계 preflight의 `checks.database = verified`다. 이 값은 실제 권한 catalog가 profile과 정확히 같을 때만 나온다.
-- **consumer `agent-scan` 행 범위(migration 0105, FX-E):** 0105가 운영 DB에 먼저 있어야 한다 — `-- consumer agent-scan` 절이 보기 `agent_scan_job_schedule`에 권한을 주므로 없으면 SQL이 실패한다. 0105는 `rate_limits`·`github_collector_apps`에 RLS를 켜고 `nomorevibe_oracle_*` 계정에만 조건을 건다(표 소유 역할과 소유자가 아닌 앱 계정은 전과 같다).
+- **consumer `agent-scan` 행 범위(migration 0106, FX-E):** 0106이 운영 DB에 먼저 있어야 한다 — `-- consumer agent-scan` 절이 보기 `agent_scan_job_schedule`에 권한을 주므로 없으면 SQL이 실패한다. 0106은 `rate_limits`·`github_collector_apps`에 RLS를 켜고 `nomorevibe_oracle_*` 계정에만 조건을 건다(표 소유 역할과 소유자가 아닌 앱 계정은 전과 같다).
   - Oracle 전용 App 설치를 그 계정에 허용한다(운영 DB 쓰기, 승인 필요). 하지 않으면 그 계정에는 App 행이 보이지 않아 consumer preflight가 `app_installation_unavailable`로 닫힌다.
 
 ```sql
@@ -239,16 +239,16 @@ SELECT installation_id, enabled, oracle_principals FROM github_collector_apps OR
 ```
 
   - 관리자 화면의 App 다시 등록(upsert)은 이 열을 바꾸지 않는다. App을 지우고 새로 등록하면 허용도 다시 넣는다.
-  - **남은 권한(신뢰 경계 기록):** 이 계정은 임의 저장소의 스캔·관측을 쓰고 지울 수 있다(거짓 AI 제작 근거 주입 가능), 모든 claim 행의 기한·소유 열을 바꿀 수 있다, `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`을 FOR UPDATE로 붙잡을 수 있다(문장 10초·idle 60초까지, 역할 계정과 같은 관행). `operations_observations`는 0106 트리거가 자기 키(`agent-scan:agent-scan-consumer-*`·`service:crawler:agent-scan-consumer-*`·`defer:agent-scan`·`host-slot:oracle-osaka-smoke[:…]`)로 좁힌다 — 남의 키(예: `service:crawler:<M3 인스턴스>`)는 42501. `rate_limits`에서는 GitHub 키만 닿지만 2차 제한 전역 키(`github:quota:secondary:global`)와 M3 토큰의 쿨다운 키도 GitHub 키라 `reset_at`을 미래로 밀면 M3·mini의 GitHub 수집이 그때까지 멈춘다. 2차 제한 전역 키는 원래 설계상 M3와 Oracle을 함께 묶는다(한쪽이 2차 제한에 걸리면 다른 쪽도 멈춘다).
-  - **App 비밀키:** Oracle env의 `GITHUB_COLLECTOR_SECRET`은 M3와 같다. 0105로 다른 설치의 암호문은 읽지 못하지만, 다른 경로(백업 등)로 암호문이 새면 같은 비밀키로 M3 몫 App 키와 개인 토큰도 풀린다. 서버별 비밀키는 후속 과제다.
+  - **남은 권한(신뢰 경계 기록):** 이 계정은 임의 저장소의 스캔·관측을 쓰고 지울 수 있다(거짓 AI 제작 근거 주입 가능), 모든 claim 행의 기한·소유 열을 바꿀 수 있다, `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`을 FOR UPDATE로 붙잡을 수 있다(문장 10초·idle 60초까지, 역할 계정과 같은 관행). `operations_observations`는 0107 트리거가 자기 키(`agent-scan:agent-scan-consumer-*`·`service:crawler:agent-scan-consumer-*`·`defer:agent-scan`·`host-slot:oracle-osaka-smoke[:…]`)로 좁힌다 — 남의 키(예: `service:crawler:<M3 인스턴스>`)는 42501. `rate_limits`에서는 GitHub 키만 닿지만 2차 제한 전역 키(`github:quota:secondary:global`)와 M3 토큰의 쿨다운 키도 GitHub 키라 `reset_at`을 미래로 밀면 M3·mini의 GitHub 수집이 그때까지 멈춘다. 2차 제한 전역 키는 원래 설계상 M3와 Oracle을 함께 묶는다(한쪽이 2차 제한에 걸리면 다른 쪽도 멈춘다).
+  - **App 비밀키:** Oracle env의 `GITHUB_COLLECTOR_SECRET`은 M3와 같다. 0106으로 다른 설치의 암호문은 읽지 못하지만, 다른 경로(백업 등)로 암호문이 새면 같은 비밀키로 M3 몫 App 키와 개인 토큰도 풀린다. 서버별 비밀키는 후속 과제다.
   - **논리 DR:** RLS를 켠 두 표는 `replication_plan.py`에서 `row_security_requires_review`(blocking)로 보인다. 구독 owner가 슈퍼유저이거나 BYPASSRLS인지, 복제 계정이 두 표를 모두 읽는지 확인한 뒤에만 계획을 진행한다. `rate_limits`는 일시 상태라 `--exclude public.rate_limits=<사유>`로 빼도 된다.
-- **consumer 행 범위(migration 0106, INT2):** 0106은 RLS가 아니라 트리거 둘이다(SECURITY INVOKER, `tgenabled=O`). 조건은 `current_user` 이름만 보므로 표 소유 역할·소유자가 아닌 앱 계정·역할 계정 6개는 전과 같다. 계정을 만들기 전·후 어느 때 적용해도 된다(SQL 파일은 0106 객체를 참조하지 않는다).
+- **consumer 행 범위(migration 0107, INT2):** 0107은 RLS가 아니라 트리거 둘이다(SECURITY INVOKER, `tgenabled=O`). 조건은 `current_user` 이름만 보므로 표 소유 역할·소유자가 아닌 앱 계정·역할 계정 6개는 전과 같다. 계정을 만들기 전·후 어느 때 적용해도 된다(SQL 파일은 0107 객체를 참조하지 않는다).
   - `uptime_claims_oracle_scope`: `nomorevibe_oracle_*` 계정은 claim 행을 `host=oracle-osaka-smoke`·`host_class=probe`로만 쓴다(home으로 적힌 제출 행 위조·home 행 고치기 → 42501 `oracle_uptime_claim_host`).
   - `operations_observations_oracle_consumer_scope`: `nomorevibe_oracle_uptime`은 `uptime-consumer:uptime-consumer-*`·`service:maintenance:uptime-consumer-*`, `nomorevibe_oracle_agent_scan`은 위 agent-scan 키만 만들고 고친다(42501 `oracle_consumer_observation_key`). 인스턴스 이름은 consumer 접두로 시작해야 한다(`SERVICE_INSTANCE_ID`).
   - readback: `SELECT c.relname, t.tgname, t.tgenabled FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE t.tgname IN ('uptime_claims_oracle_scope','operations_observations_oracle_consumer_scope');` → 2행, 둘 다 `O`.
-  - **논리 DR:** 0106은 RLS를 켜지 않아 `row_security_requires_review` 대상이 늘지 않는다(0105의 두 표뿐). 두 트리거는 일반(origin) 트리거라 구독 적용(`session_replication_role=replica`)에서는 돌지 않는다 — 원본이 이미 검사했다. R에도 migration으로 같은 트리거가 생겨 승격 뒤에는 그대로 동작한다. 0105와 달리 사람이 확인할 DR 항목은 없다.
+  - **논리 DR:** 0107은 RLS를 켜지 않아 `row_security_requires_review` 대상이 늘지 않는다(0106의 두 표뿐). 두 트리거는 일반(origin) 트리거라 구독 적용(`session_replication_role=replica`)에서는 돌지 않는다 — 원본이 이미 검사했다. R에도 migration으로 같은 트리거가 생겨 승격 뒤에는 그대로 동작한다. 0106과 달리 사람이 확인할 DR 항목은 없다.
   - **닫지 못한 것:** 제어 행 잠금용 `UPDATE(id)`(uptime 계정의 `dr_writer_fence`·`uptime_split_control`, agent-scan 계정의 `dr_writer_fence`·`pipeline_stage_modes`·`agent_scan_control`)는 트리거·RLS로 닫을 수 없다. PostgreSQL은 FOR SHARE에도 UPDATE 권한(열 하나 이상)을 요구하고 같은 권한으로 `SELECT … FOR UPDATE`가 되며(트리거가 돌지 않는다), UPDATE의 BEFORE 트리거는 행을 잠근 뒤에 돈다(거절해도 잠금은 트랜잭션 끝까지 남는다). RLS의 UPDATE 정책은 FOR SHARE에도 걸려 쓸 수 없다. 데이터는 `CHECK (id = 1)`이 지킨다 — 남는 것은 행 잠금 지연(문장 10초·idle 60초 반복)이고 역할 계정 6개의 `dr_writer_fence`와 같은 관행이다. 닫으려면 FOR SHARE만 하는 SECURITY DEFINER 함수(EXECUTE는 consumer 계정만)로 바꾸고 UPDATE(id)를 회수해야 한다 — 생성기·권한 비교·preflight·재생 handler 검사(SECURITY DEFINER 함수 EXECUTE 금지)를 함께 바꾸는 후속 과제다.
-- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용), 0105 미적용(보기 없음).
+- **중단 조건:** `CREATE ROLE` 충돌(이미 있음), 기대값과 다른 권한, 트리거·인덱스 없음(0098 미적용), 0106 미적용(보기 없음).
 - **되돌리기(운영 DB 쓰기, 승인 필요):** SQL 실패는 트랜잭션 전체가 취소된다. 성공한 뒤 되돌리려면 role마다 `DROP OWNED BY <role>; DROP ROLE <role>;`을 실행한다. 이 role들이 소유한 객체는 없다.
 - **승인:** 필요(운영 DB에 role 생성).
 - **근거:** `deploy/oracle/least-privilege.sql:1-176`, `deploy/oracle/refresh-principal.sql:1-20`, `lib/runtime/oracle-db-profile.ts:21-63,77-93,118-134`, `drizzle/0095_dr_writer_fence.sql:3-16`, `drizzle/0098_oracle_activation_gaps.sql:5-18`, `lib/runtime/oracle-preflight.ts:120-138`.

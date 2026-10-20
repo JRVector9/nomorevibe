@@ -244,7 +244,7 @@ it('the Oracle agent-scan principal claims, records and abandons through App-onl
   for (const statement of oracleConsumerGrantStatements(PROFILE, { connectionLimit: 4 })) await admin.unsafe(statement);
   await admin.unsafe(`ALTER ROLE ${PROFILE.principal} PASSWORD '${password}'`);
   const pem = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
-  // 운영자가 이 설치를 Oracle 계정에 허용한다(0105 RLS). 허용하지 않은 설치는 그 계정에 보이지 않는다
+  // 운영자가 이 설치를 Oracle 계정에 허용한다(0106 RLS). 허용하지 않은 설치는 그 계정에 보이지 않는다
   await db.insert(githubCollectorApps).values({ installationId: 4242, appId: 99, appSlug: 'e5-oracle', accountLogin: 'e5', encryptedPrivateKey: seal(pem, secret),
     oraclePrincipals: [PROFILE.principal] });
   // 개인 토큰 표에 행이 있어도 App 전용 서버는 읽지 않는다(그 계정은 권한이 없다)
