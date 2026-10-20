@@ -7,6 +7,7 @@ import type { Locale } from "@/lib/i18n/locales";
 import { localePath } from "@/lib/i18n/routing";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { ME_TAB_PATHS } from "@/lib/me/contract";
+import { siteOrigin } from "@/lib/site";
 import { findMyRepos, makerInbox, makerProjects, type InboxItem, type MakerProject } from "@/lib/me/maker";
 import { FoundReposBox } from "./FoundReposBox";
 import { IntroEditor } from "./IntroEditor";
@@ -105,7 +106,7 @@ function ProjectCard({ project, csrfToken, t, locale, now }: { project: MakerPro
       <IntroEditor csrfToken={csrfToken} productId={project.productId} tagline={project.tagline} description={project.description}>
         <Link prefetch={false} className="me-proj-btn" href={localePath(locale, `/p/${encodeURIComponent(project.slug)}`)}>{t("projects.open")}</Link>
       </IntroEditor>
-      <ShareKit slug={project.slug} name={project.name} />
+      <ShareKit slug={project.slug} name={project.name} origin={siteOrigin()} />
     </li>
   );
 }

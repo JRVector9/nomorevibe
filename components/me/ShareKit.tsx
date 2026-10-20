@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- 배지 SVG·공유 카드 PNG 는 우리 주소가 그때그때 그리는 그림이라 next/image 최적화 대상이 아니다 */
 
 import "./share-kit.css";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 
@@ -12,22 +12,16 @@ type StatusKey = "share.copied" | "share.linkCopied" | "share.copyFailed";
 const VARIANTS: Variant[] = ["listed", "tried"];
 const LANGS: BadgeLang[] = ["en", "ko"];
 
-const subscribe = () => () => {};
-/** README 에 붙일 절대 주소 — 운영은 NEXT_PUBLIC_SITE_URL(빌드 때 박힌다), 없으면 이 창의 주소 */
-function useOrigin(): string {
-  const configured = (process.env.NEXT_PUBLIC_SITE_URL ?? "").replace(/\/+$/, "");
-  return useSyncExternalStore(subscribe, () => configured || window.location.origin, () => configured);
-}
-
 /**
  * 배지·공유 카드 복사(MY8) — 내 프로젝트 탭(MY5)이 프로젝트마다 그린다(SNS 설계 T12·T13, 시안 M5).
  * 배지 주소는 그대로(/badge/<slug>.svg) 두고 종류·글자만 뒤에 붙인다. 복사가 안 되는 브라우저에서는 글자를 골라 두어 직접 복사하게 한다.
  * 배지 링크에는 ?via=badge, 공유 링크에는 ?via=share 를 붙인다(유입 분류는 순위 설계에서).
+ * README 에 붙일 절대 주소(origin)는 서버가 넘긴다 — NEXT_PUBLIC_SITE_URL 은 운영 이미지 빌드 때 비어 있어, 브라우저에서 읽으면
+ * 서버가 그린 주소와 달라 하이드레이션이 깨진다(React #418).
  */
-export function ShareKit({ slug, name }: { slug: string; name: string }) {
+export function ShareKit({ slug, name, origin }: { slug: string; name: string; origin: string }) {
   const t = useTranslations("me");
   const locale = useLocale();
-  const origin = useOrigin();
   const [variant, setVariant] = useState<Variant>("listed");
   const [lang, setLang] = useState<BadgeLang>("en");
   const [status, setStatus] = useState<StatusKey | "">("");
