@@ -57,4 +57,14 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "account.viaGithubPlain": "GitHub",
   "account.viaEmail": "電子郵件",
   "account.unread": "{count} 則未讀通知",
+  // 저장 동기화 알림(마이페이지 MY2) — 어느 화면에서나 뜬다
+  "saved.mergePrompt": "要把此瀏覽器中的 {count} 個收藏移到帳號嗎？",
+  "saved.mergeMove": "移過去",
+  "saved.mergeLater": "以後再說",
+  "saved.merging": "正在移動…",
+  "saved.merged": "已將 {count} 個收藏移到帳號。",
+  "saved.mergeSkipped": "{count} 個因已下架或超出上限而未能移動。",
+  "saved.mergeFailed": "暫時無法移動。此瀏覽器中的列表保持不變。",
+  "saved.limit": "最多可收藏 {limit} 個專案。請先移除不再需要的專案。",
+  "saved.close": "關閉",
 });

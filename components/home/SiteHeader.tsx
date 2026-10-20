@@ -5,7 +5,7 @@ import { Suspense, useEffect, useState, useSyncExternalStore, useTransition } fr
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "@/components/home/icons";
 import { AccountMenu } from "@/components/auth/AccountMenu";
-import { parseSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
+import { useSavedCount } from "@/components/home/useSavedSlugs";
 import { BRAND } from "@/lib/copy/brand";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
@@ -122,8 +122,8 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
     clientHydrationSnapshot,
     serverHydrationSnapshot,
   );
-  const savedRaw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
-  const hasSaved = parseSaved(savedRaw).size > 0;
+  // 로그인 중이면 계정의 저장 수(MY2)
+  const hasSaved = useSavedCount() > 0;
   const shortcut = hydrated ? shortcutLabel(navigator.userAgent) : null;
 
   useEffect(() => {

@@ -3,9 +3,9 @@
 import { useTranslations } from "@/lib/i18n/context";
 import { useMemo, useSyncExternalStore } from "react";
 import { Icon } from "@/components/home/icons";
-import { parseSaved, persistSaved, savedSnapshot, subscribeSaved } from "@/components/home/saved";
+import { parseSaved, savedSnapshot, subscribeSaved, toggleSaved } from "@/components/home/saved";
 
-/** 홈 카드의 북마크와 같은 저장 목록에 넣고 뺀다 — 44px 원형 단추 */
+/** 홈 카드의 북마크와 같은 저장 목록에 넣고 뺀다 — 44px 원형 단추. 로그인 중이면 계정에도 쓴다 */
 export function SaveButton({ slug, name }: { slug: string; name: string }) {
   const t = useTranslations("labels");
   const raw = useSyncExternalStore(subscribeSaved, savedSnapshot, () => "[]");
@@ -13,10 +13,7 @@ export function SaveButton({ slug, name }: { slug: string; name: string }) {
   const on = saved.has(slug);
 
   function toggle() {
-    const next = new Set(saved);
-    if (on) next.delete(slug);
-    else next.add(slug);
-    persistSaved(next);
+    toggleSaved(slug, !on);
   }
 
   return (

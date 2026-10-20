@@ -54,4 +54,14 @@ export const common = {
   "account.viaGithubPlain": "GitHub",
   "account.viaEmail": "이메일",
   "account.unread": "안 읽은 알림 {count}개",
+  // 저장 동기화 알림(마이페이지 MY2) — 어느 화면에서나 뜬다
+  "saved.mergePrompt": "이 브라우저에 있는 저장 {count}개를 계정으로 옮길까요?",
+  "saved.mergeMove": "옮기기",
+  "saved.mergeLater": "나중에",
+  "saved.merging": "옮기는 중…",
+  "saved.merged": "저장 {count}개를 계정으로 옮겼어요.",
+  "saved.mergeSkipped": "{count}개는 목록에서 내려갔거나 상한을 넘어 옮기지 못했어요.",
+  "saved.mergeFailed": "지금은 옮기지 못했어요. 이 브라우저 목록은 그대로 있어요.",
+  "saved.limit": "저장은 {limit}개까지예요. 안 보는 프로젝트를 먼저 빼 주세요.",
+  "saved.close": "닫기",
 } as const;
