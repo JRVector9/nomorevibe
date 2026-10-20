@@ -5,7 +5,7 @@ import { UPTIME_BREAKER_STATES, UPTIME_BROAD_FAILURE_MIN_CHECKS, UPTIME_BROAD_FA
 import type { ProgressStageInput } from "./worker-progress";
 
 /**
- * 응답 점검 제품 단위 분담(split-v1, 0103 uptime_split_control) 운영 제어의 순수 부분 — 인자, 판정(dry-run 계획), 읽기 모양, 출력.
+ * 응답 점검 제품 단위 분담(split-v1, 0104 uptime_split_control) 운영 제어의 순수 부분 — 인자, 판정(dry-run 계획), 읽기 모양, 출력.
  * DB·파일·네트워크 없음. 실행 때 잠근 행으로 같은 계획을 다시 세운다(uptime-split-repository.ts). 절차는 docs/runbooks/uptime-split.md.
  */
 
@@ -272,7 +272,7 @@ export function planUptimeSplit(command: UptimeSplitTransition, snapshot: Uptime
   if (command.to === "claims") {
     if (stored.state !== "verified") blocked.push(stored.state === "unset" ? "uptime_split_policy_missing" : "uptime_split_policy_invalid");
     else { policyRules(stored.policy, blocked); runnerRules(snapshot, stored.policy, blocked, warnings); }
-    // PR09 관측·gate 와 함께 켤 수 없다(0103 트리거가 같은 것을 강제한다)
+    // PR09 관측·gate 와 함께 켤 수 없다(0104 트리거가 같은 것을 강제한다)
     if (pr09) blocked.push("uptime_control_enabled");
     // 배치 versioned 에서는 Oracle product-health 역할 잡이 claim 권한 없이 같은 잡을 돈다(design-uptime §11)
     if (snapshot.batchMode !== "legacy") blocked.push(`batch_mode_not_legacy:${snapshot.batchMode}`);
@@ -321,7 +321,7 @@ export function formatUptimeSplitResult(result: UptimeSplitResult): string {
 
 const EXCLUSION_CODES = new Set(["uptime_split_requires_uptime_control_disabled", "uptime_control_requires_split_legacy"]);
 /**
- * 0103 상호 배제 트리거(split claims ↔ PR09 관측·gate)의 거절이면 그 code, 아니면 null. drizzle 이 감싼 원래 오류(cause)까지 본다.
+ * 0104 상호 배제 트리거(split claims ↔ PR09 관측·gate)의 거절이면 그 code, 아니면 null. drizzle 이 감싼 원래 오류(cause)까지 본다.
  * 코드 검사(판정)를 지난 뒤 다른 운영 명령이 먼저 commit 한 경합에서만 여기에 닿는다 — 오류가 아니라 거절로 돌려준다.
  */
 export function uptimeExclusionError(error: unknown): string | null {

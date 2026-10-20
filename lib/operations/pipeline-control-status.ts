@@ -106,7 +106,7 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
       metrics: [metric('원시 관측', row.rawOnly), metric('판정 보류', row.held), metric('적용 기록', row.applied), metric('설정 관측지', row.sources.length)],
       note: '누적 관측 결과입니다. 원시 관측만으로 제품 실패나 Oracle 장애복구를 판정하지 않습니다.' });
   }
-  // split-v1(0103): mode·epoch·policy 와 claim 장부. 마감 지남 = home 이 지금 가져갈 수 있는 수, 제출 대기 = 반영 안 된 Oracle 등 결과
+  // split-v1(0104): mode·epoch·policy 와 claim 장부. 마감 지남 = home 이 지금 가져갈 수 있는 수, 제출 대기 = 반영 안 된 Oracle 등 결과
   const split = uptimeSplitReadbackSchema.safeParse(input.uptimeSplit);
   if (split.success) {
     const row = split.data, stored = storedUptimeSplitPolicy(row.control), q = row.queue;

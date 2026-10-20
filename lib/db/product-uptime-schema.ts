@@ -46,7 +46,7 @@ export const uptimeGates = pgTable("uptime_gates", {
   recheckRequestedAt: timestamp("recheck_requested_at", { withTimezone: true }),
 });
 
-/** 0103 split-v1 제어(단일 행). mode 전환·policy 변경마다 epoch+1. legacy 가 기본이라 배포만으로는 동작이 바뀌지 않는다. */
+/** 0104 split-v1 제어(단일 행). mode 전환·policy 변경마다 epoch+1. legacy 가 기본이라 배포만으로는 동작이 바뀌지 않는다. */
 export const uptimeSplitControl = pgTable("uptime_split_control", {
   id: integer("id").primaryKey().default(1),
   mode: varchar("mode", { length: 10 }).$type<UptimeSplitMode>().notNull().default("legacy"),
@@ -87,7 +87,7 @@ export const uptimeClaims = pgTable("uptime_claims", {
 }, table => [index("uptime_claims_due_idx").on(table.dueAt, table.productId).where(sql`${table.state} <> 'submitted'`),
   index("uptime_claims_origin_live_idx").on(table.origin).where(sql`${table.state} = 'claimed'`),
   index("uptime_claims_submitted_idx").on(table.submittedAt, table.productId).where(sql`${table.state} = 'submitted'`)]);
-// uptime_claims·uptime_host_windows·uptime_host_breakers 의 CHECK(상태 모양·Oracle=probe·결과 모양)는 drizzle/0103_uptime_split.sql 이 정본이다.
+// uptime_claims·uptime_host_windows·uptime_host_breakers 의 CHECK(상태 모양·Oracle=probe·결과 모양)는 drizzle/0104_uptime_split.sql 이 정본이다.
 
 /** host 차단기 재료. 적용기가 묶음마다 host 별 분 단위 칸에 더한다. */
 export const uptimeHostWindows = pgTable("uptime_host_windows", {

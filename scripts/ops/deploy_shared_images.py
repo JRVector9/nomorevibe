@@ -518,10 +518,10 @@ def migration_gate(client, sha):
     return {'migrations': 'applied', 'latestTag': journal['tag'], 'applied': applied}
 
 
-# Agent-scan legacy write gate (migration 0104, lib/domain/evidence/agents/claim-control.ts). A crawler release without it keeps writing
+# Agent-scan legacy write gate (migration 0105, lib/domain/evidence/agents/claim-control.ts). A crawler release without it keeps writing
 # legacy scans while agent_scan_control is items/draining, so it overlaps the claim consumers on the same repository (review P2-7).
 AGENT_SCAN_GATE = ('lib/domain/evidence/agents/repository.ts', b'assertLegacyAgentScanWrite')
-# Production agent_scan_control mode, read-only like MIGRATION_STATE_SCRIPT (READ ONLY transaction, 5s limit). 'absent' = before 0104.
+# Production agent_scan_control mode, read-only like MIGRATION_STATE_SCRIPT (READ ONLY transaction, 5s limit). 'absent' = before 0105.
 AGENT_SCAN_MODE_SCRIPT = (
     "import postgres from 'postgres';"
     "const sql=postgres(process.env.DATABASE_URL,{max:1,prepare:false,connect_timeout:10,onnotice:()=>{}});"

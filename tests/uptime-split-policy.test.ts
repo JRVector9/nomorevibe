@@ -432,8 +432,8 @@ describe("host breaker — open·probe·close", () => {
   });
 });
 
-describe("0103 migration text", () => {
-  const migration = readFileSync("drizzle/0103_uptime_split.sql", "utf8").replace(/--(?!> statement-breakpoint).*$/gm, "");
+describe("0104 migration text", () => {
+  const migration = readFileSync("drizzle/0104_uptime_split.sql", "utf8").replace(/--(?!> statement-breakpoint).*$/gm, "");
   it("adds tables only; the one existing-table change is the uptime_control guard trigger, then the products FK last", () => {
     expect([...migration.matchAll(/CREATE TABLE (\w+)/g)].map(match => match[1])).toEqual(["uptime_split_control", "uptime_claims", "uptime_host_windows", "uptime_host_breakers"]);
     expect([...migration.matchAll(/ALTER TABLE (\w+)/g)].map(match => match[1])).toEqual(["uptime_claims"]);
@@ -446,6 +446,6 @@ describe("0103 migration text", () => {
   });
   it("is journal entry 103 strictly after 0102", () => {
     const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { tag: string }[] };
-    expect(journal.entries.find(entry => entry.tag === "0103_uptime_split")).toEqual({ idx: 103, version: "7", when: 1794086400015, tag: "0103_uptime_split", breakpoints: true });
+    expect(journal.entries.find(entry => entry.tag === "0104_uptime_split")).toEqual({ idx: 104, version: "7", when: 1794086400016, tag: "0104_uptime_split", breakpoints: true });
   });
 });

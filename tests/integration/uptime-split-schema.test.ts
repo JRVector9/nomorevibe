@@ -11,8 +11,8 @@ import { uptimeSplitPolicyHash, type UptimeSplitPolicy } from "@/lib/domain/prod
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 /*
- * U1a 0103: 실제 PostgreSQL 에서 0102 까지 올린 DB 에 제품을 넣고 0103 을 더한다(백필·외래 키·CHECK·상호 배제 트리거).
- * 이 파일이 만들고 지우는 임시 DB 하나만 쓴다(공유 test DB 는 건드리지 않는다). 뒤 migration 이 생겨도 0103 직후 상태를 본다.
+ * U1a 0104: 실제 PostgreSQL 에서 0102 까지 올린 DB 에 제품을 넣고 0104 를 더한다(백필·외래 키·CHECK·상호 배제 트리거).
+ * 이 파일이 만들고 지우는 임시 DB 하나만 쓴다(공유 test DB 는 건드리지 않는다). 뒤 migration 이 생겨도 0104 직후 상태를 본다.
  */
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const name = `nomorevibe_test_u1a_${randomBytes(6).toString("hex")}`;
@@ -72,7 +72,7 @@ beforeAll(async () => {
     ('u1a-banned', '2026-10-18 21:00:00', 500, 4)`;
   before = await catalog();
   const [start] = await sql()<{ at: Date }[]>`SELECT clock_timestamp() AS at`;
-  expect(await migrateThrough("0103_uptime_split")).toBe(journal.entries.findIndex(entry => entry.tag === "0103_uptime_split") + 1);
+  expect(await migrateThrough("0104_uptime_split")).toBe(journal.entries.findIndex(entry => entry.tag === "0104_uptime_split") + 1);
   const [end] = await sql()<{ at: Date }[]>`SELECT clock_timestamp() AS at`;
   window = { start: start.at, end: end.at };
   after = await catalog();
@@ -84,10 +84,10 @@ afterAll(async () => {
   try { if (created) await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await admin.end({ timeout: 5 }); }
 }, 120_000);
 
-it("re-running the migrator is a no-op (journal records 0103 once)", async () => {
+it("re-running the migrator is a no-op (journal records 0104 once)", async () => {
   const count = async () => (await sql()<{ n: number }[]>`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`)[0].n;
   const applied = await count();
-  await migrateThrough("0103_uptime_split");
+  await migrateThrough("0104_uptime_split");
   expect(await count()).toBe(applied);
   expect((await sql()<{ n: number }[]>`SELECT count(*)::int AS n FROM uptime_split_control`)[0].n).toBe(1);
 });

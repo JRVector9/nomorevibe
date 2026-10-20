@@ -1,6 +1,6 @@
 # 응답 점검 제품 단위 분담(split-v1) runbook (U1c)
 
-제품 연결 확인(`uptime-ping`)을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡는다. 제어는 `uptime_split_control` 한 행(0103)이다.
+제품 연결 확인(`uptime-ping`)을 home(M3·mini)과 probe(Oracle)가 제품 단위로 나눠 맡는다. 제어는 `uptime_split_control` 한 행(0104)이다.
 
 | mode | 누가 확인하나 | 정식 기록(health·연속 실패·숨김·내림) |
 |---|---|---|
@@ -29,7 +29,7 @@
    **probe `maxPerHour` 합계는 5,000 이하**(`policy_probe_rate_above:5000`). 제출분은 home 적용기가 1분 틱마다 100건만 반영해(시간당 최대 6,000)
    그보다 빨리 내면 `submitted` 가 쌓이기만 한다.
 6. **PR09 관측·gate(`uptime_control`)와 함께 켤 수 없다.** split 을 claims 로 하려면 PR09 가 disabled 여야 하고(`uptime_control_enabled`),
-   claims 동안 `uptime-gate.ts` 의 raw-only·gate 전환은 거절된다(`uptime_split_claims_active`). DB 트리거(0103)가 같은 것을 강제하고, 경합으로
+   claims 동안 `uptime-gate.ts` 의 raw-only·gate 전환은 거절된다(`uptime_split_claims_active`). DB 트리거(0104)가 같은 것을 강제하고, 경합으로
    트리거에 닿으면 두 도구 모두 오류가 아니라 거절(`uptime_split_requires_uptime_control_disabled` / `uptime_control_requires_split_legacy`)로 돌려준다.
    PR09 를 켜야 하면 먼저 `mode --to=legacy`.
 7. **claims 동안 `job_batch_control` 을 versioned 로 바꾸지 않는다.** Oracle product-health 역할 잡이 claim 권한 없이 같은 잡을 돈다.
@@ -96,13 +96,13 @@
 
 ## 순서
 
-### A2 전제 — 0103 적용·U1a~c 배포(동작 변화 없음)
+### A2 전제 — 0104 적용·U1a~c 배포(동작 변화 없음)
 
 ```sh
 node --import tsx scripts/ops/uptime-split.ts status > split-status-before.txt
 ```
 
-확인: `mode=legacy`, `[queue]` 의 `행 없음`이 0 근처(0103 백필 뒤 새 제품만), `maintenance 후보(24h)` 에 M3·mini maintenance instance 가 보인다.
+확인: `mode=legacy`, `[queue]` 의 `행 없음`이 0 근처(0104 백필 뒤 새 제품만), `maintenance 후보(24h)` 에 M3·mini maintenance instance 가 보인다.
 
 ### A3 — home 만 claims
 
@@ -206,7 +206,7 @@ select date_trunc('minute', received_at) as minute, host, count(*) from uptime_o
    `status` 의 5분 반영이 0 으로 내려가고(legacy 는 claim 장부를 쓰지 않는다) `product_health` 저장은 계속되는지(운영센터 응답 점검 칸의 6시간 밀림,
    `select max(checked_at) from product_health`) 확인한다.
 2. **Oracle 만 빼기**: policy 에서 Oracle 항목을 지운다(epoch+1, 다음 claim 부터 거부) 또는 unit 을 멈춘다(TTL 뒤 회수).
-3. **코드 되돌리기**: 반드시 1 을 먼저 하고 legacy 틱을 확인한 뒤, Oracle unit 을 멈추고 이전 SHA 로 재배포한다. 표(0103)는 남겨도 무해하다.
+3. **코드 되돌리기**: 반드시 1 을 먼저 하고 legacy 틱을 확인한 뒤, Oracle unit 을 멈추고 이전 SHA 로 재배포한다. 표(0104)는 남겨도 무해하다.
 
 ## 알려진 잔여(고치지 않음, 운영으로 다룬다)
 
@@ -215,11 +215,11 @@ select date_trunc('minute', received_at) as minute, host, count(*) from uptime_o
 - **혼합 버전**: maintenance 예비(mini)만 구버전인 채 claims 에서 역할을 넘겨받으면 구버전 legacy 와 Oracle 이 같은 제품을 몇 분 안에 각각 연다
   (정식 기록은 `older_observation`·`minimum_interval` 이 지켜 두 번 세지 않는다). **M3·mini maintenance 는 같은 SHA** 로 배포한 뒤 claims 로 간다.
 - **PR09 raw 관측 경로의 연속 실패 리셋 의미**: `recordUptimeObservation`(gate 꺼짐)은 `resetStreak: !health?.downSince` 로 제품 수정 시각을 보지 않는다.
-  legacy(PR-0a 이후)·claims(`splitResetStreak`)는 "연속 실패가 시작된 뒤 제품이 바뀌었을 때만 1부터" 다. 지금은 0103 트리거가 PR09 와 split 을
+  legacy(PR-0a 이후)·claims(`splitResetStreak`)는 "연속 실패가 시작된 뒤 제품이 바뀌었을 때만 1부터" 다. 지금은 0104 트리거가 PR09 와 split 을
   함께 켜지 못하게 해 무해하지만, PR09 를 다시 쓰려면 이 의미를 legacy 와 맞춰야 한다. 그 경로는 비표준 HTTP 상태(999)를 raw 표 CHECK 에 그대로
   넣으려 해 기록이 실패한다는 점도 함께 맞춰야 한다.
-- **Oracle 계정 권한의 남은 폭**: 0106 트리거가 둘을 닫았다 — Oracle 계정은 claim 행을 Oracle host·probe 로만 쓰고(home 으로 적힌 행은 42501,
+- **Oracle 계정 권한의 남은 폭**: 0107 트리거가 둘을 닫았다 — Oracle 계정은 claim 행을 Oracle host·probe 로만 쓰고(home 으로 적힌 행은 42501,
   적용기의 `submitted_not_probe` 는 두 번째 관문으로 남는다), `operations_observations` 에는 자기 consumer 키(`uptime-consumer:uptime-consumer-*`·
   `service:maintenance:uptime-consumer-*`)만 쓴다. 남은 것은 제어 행 잠금용 `UPDATE(id)`(`dr_writer_fence`·`uptime_split_control`)다 — FOR SHARE 에 필요한
   권한이 `SELECT … FOR UPDATE` 도 허용하고 트리거·RLS 로는 가를 수 없어, 행 잠금을 문장 10초·idle 60초까지 쥘 수 있다(역할 계정과 같은 관행,
-  oracle 활성화 runbook "consumer 행 범위(0106)"). products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).
+  oracle 활성화 runbook "consumer 행 범위(0107)"). products 는 claim 이 읽는 다섯 열만 읽는다(`least-privilege.sql`).

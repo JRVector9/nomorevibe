@@ -25,7 +25,7 @@ export const crawlDiscoveryEvidence = pgTable('crawl_discovery_evidence', {
 }, table => [uniqueIndex('crawl_discovery_repository_key_idx').on(table.repositoryKey, table.evidenceKey)]);
 export type AgentRepositoryScan = typeof agentRepositoryScans.$inferSelect;
 /**
- * 0104 제작 근거 스캔 claim 제어(단일 행). pipeline_stage_modes 와 같은 뜻이다: legacy → draining → items, 전환을 마칠 때마다 epoch+1,
+ * 0105 제작 근거 스캔 claim 제어(단일 행). pipeline_stage_modes 와 같은 뜻이다: legacy → draining → items, 전환을 마칠 때마다 epoch+1,
  * writer_contract_version 은 모든 스캔 writer 가 쓰기 관문을 가진 release 라는 운영자 확인. 기본 legacy 라 배포만으로는 동작이 바뀌지 않는다.
  */
 export const agentScanControl = pgTable('agent_scan_control', {
@@ -57,7 +57,7 @@ export const agentRepositoryClaims = pgTable('agent_repository_claims', {
 }, table => [index('agent_repository_claims_queue_idx').on(table.priority, table.dueAt, table.repositoryKey).where(sql`${table.state} = 'active'`),
   index('agent_repository_claims_due_idx').on(table.dueAt, table.repositoryKey).where(sql`${table.state} = 'active'`),
   index('agent_repository_claims_live_idx').on(table.leaseUntil).where(sql`${table.token} is not null`)]);
-// agent_repository_claims 의 CHECK(키 모양·소유 열 묶음·실패 묶음·결과 값)는 drizzle/0104_agent_repository_claims.sql 이 정본이다.
+// agent_repository_claims 의 CHECK(키 모양·소유 열 묶음·실패 묶음·결과 값)는 drizzle/0105_agent_repository_claims.sql 이 정본이다.
 /**
  * 저장소마다 AI 제작 근거 단계(0063, lib/domain/evidence/ai-level.ts) — ai-level-refresh 잡이 GraphQL 묶음으로 판정해 적는다.
  * level: 1 AI 에이전트 앱이 연 PR 병합 · 2 AI 도구 서명 개발 커밋 · 3 AI 도구 전용 설정 파일 · NULL 검사했지만 근거 없음.

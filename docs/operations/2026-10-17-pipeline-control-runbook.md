@@ -344,7 +344,7 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 
 ## 11. 제작 근거 스캔(agent-scan) — legacy → items, 되돌리기
 
-`agent_scan_control`(0104)의 뜻은 stage와 같다. 모드별 동작:
+`agent_scan_control`(0105)의 뜻은 stage와 같다. 모드별 동작:
 
 | 모드 | `agent-evidence-refresh` 잡(crawler) | consumer(`agent-scan-consumer-*`) | 스캔 기록 |
 |---|---|---|---|
@@ -355,12 +355,12 @@ FROM operations_audit WHERE action LIKE 'pipeline-control-%' ORDER BY id DESC LI
 
 - 컨트롤러 틱은 잡 커서에서 새 제품 몫의 자리(`afterNewProduct`)만 남기고 legacy 스캔의 공급자 대기·스캔 전 실패 기록은 지운다. 운영센터 `agent-evidence` 단계는 items·draining(from items)에서 claim 표로 센다: 대기·최장 대기는 claim의 `due_at`과 저장소별 `retry_after` 중 늦은 쪽, 처리·오류는 최신 스캔(스캔 행이 없는 실패는 claim 행의 실패 기록)이다.
 - items·draining에서 이 단계는 crawler 자동 재시작 대상이 아니다(재시작해도 consumer 문제는 고쳐지지 않는다). items인데 consumer 관측이 2분 넘게 없으면 단계 판정이 `consumer_missing`(소비자 끊김) 경보다.
-- **잡 멈춤은 items에서도 스캔을 멈춘다.** 운영자가 `agent-evidence-refresh`를 멈추면(`jobs.not_before` 먼 미래, 1년 넘게) 컨트롤러 틱이 멈추고, consumer의 claim도 `paused`로 쉰다(30초마다 다시 본다. Oracle 계정은 jobs 권한 없이 0105 보기 `agent_scan_job_schedule`로 그 값만 읽는다). 이미 맡은 저장소는 기록을 마친다. 운영센터는 '설정상 중지'이고 `consumer_missing` 경보를 내지 않는다. 다시 열면(`not_before` 비움) 30초 안에 이어 맡는다. 스캔을 멈추는 다른 방법은 `agent-scan drain`, `agentEvidence.enabled=false`, consumer 정지다.
+- **잡 멈춤은 items에서도 스캔을 멈춘다.** 운영자가 `agent-evidence-refresh`를 멈추면(`jobs.not_before` 먼 미래, 1년 넘게) 컨트롤러 틱이 멈추고, consumer의 claim도 `paused`로 쉰다(30초마다 다시 본다. Oracle 계정은 jobs 권한 없이 0106 보기 `agent_scan_job_schedule`로 그 값만 읽는다). 이미 맡은 저장소는 기록을 마친다. 운영센터는 '설정상 중지'이고 `consumer_missing` 경보를 내지 않는다. 다시 열면(`not_before` 비움) 30초 안에 이어 맡는다. 스캔을 멈추는 다른 방법은 `agent-scan drain`, `agentEvidence.enabled=false`, consumer 정지다.
 - **비상(PR16 full·recovering·hold)에서 이 잡은 `suspended`지만 consumer는 비상 판정을 스스로 읽지 못한다** — 판정이 role_leases·http_origin_control을 읽는데 consumer 계정에는 그 권한이 없고, Oracle consumer는 host 장부(HOST_BUDGET_ENFORCEMENT)를 켜지 않는다. 비상으로 들어가면 위 잡 멈춤으로 모든 consumer를 멈추거나 Oracle에서 `systemctl stop nomorevibe-core-consumer@agent-scan`을 한다.
 - `status`의 `[agent-scan]`: `live`(lease_until 전 claim), `unsettled`(기한 지난 미정산), `legacy_job`(drain 전에 시작한 잡 틱이 살아 있으면 `live`), `consumers`(상태가 running·starting이고 2분 안인 consumer 관측 수 — 운영센터 `consumer_missing`과 같은 기준. 크래시 루프·정지 중인 consumer는 세지 않는다), 그리고 priority별 `waiting`(지금 잡을 수 있는 행: 도래했고 backoff가 지났고 살아 있는 claim이 아님)·`oldest_min`. priority: 0 관리자 추가 수집 · 1 1차 심사 대기 · 2 스캔 없는 공개 제품 · 3 스캔 없는 후보 · 4 이어 하기 · 5 정기 · 6 오류 반복.
 
 사전 확인(설계 §8 S3–S5, 각각 별도 승인):
-- migration 0104가 운영 DB에 있다(`agent_scan_control` 1행, legacy·epoch 1·contract 0).
+- migration 0105가 운영 DB에 있다(`agent_scan_control` 1행, legacy·epoch 1·contract 0).
 - 관문이 들어간 release가 **스캔을 쓰는 모든 앱**(crawler M3·mini, 다른 역할 포함 14앱)에 배포됐다. `scripts/backfill-agent-evidence.ts`도 같은 release로만 돌린다. contract는 이것을 운영자가 확인했다는 표시다 — 옛 코드는 items에서도 스캔을 써서 consumer와 같은 저장소를 겹쳐 쓴다.
 - consumer 앱(`SERVICE_INSTANCE_ID=agent-scan-consumer-<자리>`, `worker-supervisor.ts --role=crawler --consumer=agent-scan`)이 떠 있고 `status`의 `consumers` ≥ 1이다. legacy에서는 claim하지 않고 쉰다.
 
@@ -396,7 +396,7 @@ node --import tsx scripts/ops/pipeline-control.ts agent-scan complete --draining
 
 - `A1` = 그 시점 epoch(11-4 뒤라면 A+1). legacy로 바로 갈 수 없다(`expect_mode_mismatch`).
 - **코드를 이전 SHA로 되돌릴 때의 순서(중요):** 이전 release에는 모드 관문이 없다. 그래서 **먼저** 위 순서로 control을 `legacy`로 돌리고, **consumer 앱(M3 Dokploy)과 Oracle unit을 멈춘 뒤에** 앱을 이전 SHA로 재배포한다. items 상태에서 옛 crawler가 돌면 consumer와 같은 저장소를 겹쳐 쓰고 스캔 커서가 뒤로 돈다. control 행과 claim 표는 남아 있어도 옛 코드에는 무해하다.
-  - `deploy_shared_images.py restore --app crawler-*|agent-scan-consumer-*`와 `plan|run`은 되돌릴(배포할) SHA에 관문(`assertLegacyAgentScanWrite`)이 없으면 운영 `agent_scan_control.mode`를 읽기 전용으로 읽어(reviewer-m3 → publisher-m3 → crawler-m3 컨테이너 순, migration 확인과 같은 방식) `legacy`(또는 0104 전)가 아니면 Dokploy를 바꾸기 전에 `agent_scan_ungated_release_while_<mode>`로 거절한다. 읽지 못하면 `agent_scan_mode_unknown`으로 거절한다. 관문이 있는 SHA는 읽지 않고 통과한다.
+  - `deploy_shared_images.py restore --app crawler-*|agent-scan-consumer-*`와 `plan|run`은 되돌릴(배포할) SHA에 관문(`assertLegacyAgentScanWrite`)이 없으면 운영 `agent_scan_control.mode`를 읽기 전용으로 읽어(reviewer-m3 → publisher-m3 → crawler-m3 컨테이너 순, migration 확인과 같은 방식) `legacy`(또는 0105 전)가 아니면 Dokploy를 바꾸기 전에 `agent_scan_ungated_release_while_<mode>`로 거절한다. 읽지 못하면 `agent_scan_mode_unknown`으로 거절한다. 관문이 있는 SHA는 읽지 않고 통과한다.
   - **pipeline-control CLI를 돌리는 컨테이너(maintenance, git 빌드)는 control이 `legacy`가 될 때까지 되돌리지 않는다.** 관문 release보다 옛 SHA에는 `agent-scan` 명령이 없어 items를 끌 수단이 사라진다.
   - git 빌드 앱(text·maintenance)도 G1 제외 변수(`GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS`)를 아는 release여야 한다. 옛 SHA로 되돌리면 Oracle 몫 설치를 함께 써 한도가 겹친다.
 - drain을 취소하려면 출발 mode로 complete한다(`--draining-from=items --to=items`, `drain_cancelled`, epoch +1). epoch는 되돌리지 않는다.
