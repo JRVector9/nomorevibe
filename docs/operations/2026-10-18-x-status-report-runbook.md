@@ -138,7 +138,11 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
 직전 비밀은 지금 비밀과 다르고 32바이트 이상일 때만 쓴다. 유출이 의심되면 1단계에서 `_PREVIOUS` 를 두지 않고 바로 바꾼다
 (그 사이 보고가 401 이 되어 다음 날 끊김이 뜰 수 있다).
 
-## Cloudflare — 브라우저가 아닌 POST (배포 때 확인, 아직 미확인)
+## Cloudflare — 브라우저가 아닌 POST (2026-10-20 확인: 막지 않음)
+
+2026-10-20 16:08 KST osaka-smoke(Node `fetch`)가 보낸 두 보고가 모두 200 이었다. 지금 설정으로는 예외 규칙이 필요 없다.
+설정을 바꾼 뒤 보고가 403 이 되면 아래로 확인한다.
+
 
 웹은 Cloudflare → Tunnel → Traefik 뒤에 있다. Bot Fight Mode·관리형 챌린지·Browser Integrity Check 같은 설정은
 브라우저가 아닌 POST(Node `fetch`, Oracle Osaka IP)를 403 챌린지로 막을 수 있다. GitHub 웹훅 주소도 같은 앞단을 지나지만
