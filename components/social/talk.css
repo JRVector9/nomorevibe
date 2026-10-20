@@ -1,0 +1,110 @@
+/*
+ * SNS 화제(C안) — 홈 대표 구획 · /talk · 상세 화제 띠.
+ * 줄 머리(.row-head)·탭(.tabs)·순위 줄 모양은 home.css 를 그대로 쓰고, 여기서는 화제에만 있는 것만 정한다.
+ * 색은 globals.css 토큰만 쓴다(--source-* 는 출처 칩).
+ */
+
+/* 출처 칩 — 플랫폼 이름 글자가 먼저, 색은 보조 */
+.talk-src { display: inline-flex; align-items: center; gap: 4px; min-height: 22px; padding: 1px 7px; border-radius: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.talk-src b { font-weight: 700; }
+.talk-src-hn { background: var(--source-hn-soft); color: var(--source-hn); }
+.talk-src-geeknews { background: var(--source-gn-soft); color: var(--source-gn); }
+.talk-src-x { background: var(--bg-hover); color: var(--text); }
+.talk-srcs { display: flex; flex-wrap: wrap; gap: 4px; }
+.talk-maker { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid var(--border-strong); font-size: 13px; color: var(--text-2); white-space: nowrap; }
+.talk-grow { color: var(--up); font-weight: 600; font-variant-numeric: tabular-nums; }
+.talk-link { color: var(--accent-ink); white-space: nowrap; }
+.talk-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.talk-preview { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
+
+/* 스타 곡선 */
+.talk-spark { display: block; width: 100%; height: 34px; }
+.talk-spark-lg { display: block; width: 100%; height: 96px; }
+.talk-spark polyline, .talk-spark-lg polyline { fill: none; stroke: var(--up); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.talk-spark-mark { stroke: var(--source-hn); stroke-width: 1.2; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
+
+/* 홈 대표 구획 */
+.talk-hero { margin-top: 22px; padding: 18px; border-radius: 20px; background: var(--bg-soft); display: flex; flex-direction: column; gap: 14px; }
+.talk-hero .row-head { align-items: flex-end; }
+.talk-hero-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.talk-lead { position: relative; background: var(--bg-card); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.talk-lead-top { display: flex; gap: 14px; align-items: center; min-width: 0; }
+.talk-lead-rank { margin: 0; font-size: 13px; font-weight: 600; color: var(--accent-ink); }
+.talk-lead h3 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talk-lead-tagline { margin: 0; font-size: 14.5px; color: var(--text-2); }
+.talk-lead-chart { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: center; border-top: 1px solid var(--border); padding-top: 10px; }
+.talk-lead-chart b { display: block; font-size: 22px; font-weight: 600; color: var(--up); font-variant-numeric: tabular-nums; }
+.talk-lead-chart small { display: block; font-size: 13px; color: var(--text-2); }
+.talk-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.talk-actions a { display: inline-flex; align-items: center; height: 36px; padding: 0 14px; border-radius: 980px; background: var(--bg-soft); font-size: 13.5px; font-weight: 500; color: var(--text); white-space: nowrap; }
+.talk-actions a.solid { background: var(--accent-solid); color: white; }
+.talk-actions a:hover { opacity: 0.9; }
+.talk-list { list-style: none; margin: 0; padding: 4px 16px; background: var(--bg-card); border-radius: 16px; display: flex; flex-direction: column; min-width: 0; }
+.talk-row { display: grid; grid-template-columns: 18px 40px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border); }
+.talk-row:last-child { border-bottom: 0; }
+.talk-row-rank { font-weight: 600; color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+.talk-row-name { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.talk-row-name a { font-size: 14.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talk-row-name a:hover { color: var(--accent-ink); }
+.talk-row-stars { font-size: 13px; color: var(--text-2); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.talk-empty { margin: 0; font-size: 14px; color: var(--text-2); }
+
+/* /talk */
+.talk-page { padding-top: 12px; padding-bottom: 65px; display: flex; flex-direction: column; gap: 18px; }
+.talk-page > .tabs { align-self: flex-start; }
+.talk-feature { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; padding: 20px; border-radius: 20px; background: var(--bg-soft); }
+.talk-feature-main { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.talk-feature-main h2 { margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.025em; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.talk-feature-main h2 a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talk-feature-chart { background: var(--bg-card); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.talk-feature-chart b { font-size: 22px; font-weight: 600; color: var(--up); font-variant-numeric: tabular-nums; }
+.talk-caption { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.talk-layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 32px; align-items: start; }
+.talk-entries { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.talk-entry { display: grid; grid-template-columns: 24px 44px minmax(0, 1fr) 120px; gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--border); align-items: start; }
+.talk-entry-rank { padding-top: 11px; font-size: 15px; font-weight: 600; color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
+.talk-entry-name { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; min-width: 0; }
+.talk-entry-name a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.talk-entry-name a:hover { color: var(--accent-ink); }
+.talk-entry-tagline { margin: 1px 0 0; font-size: 13px; color: var(--text-2); }
+.talk-lines { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+.talk-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--text-2); }
+.talk-line-title { color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.talk-stat { display: flex; flex-direction: column; gap: 1px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.talk-stat b { font-size: 15px; font-weight: 600; color: var(--text); }
+.talk-aside { display: flex; flex-direction: column; gap: 14px; }
+.talk-box { background: var(--bg-soft); border-radius: 16px; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--text-2); line-height: 1.55; }
+.talk-box h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text); }
+.talk-box ul { margin: 0; padding-left: 1.05em; display: flex; flex-direction: column; gap: 4px; }
+.talk-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.talk-timeline li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; padding: 6px 0; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.talk-timeline b { color: var(--text); font-weight: 600; }
+.talk-unlisted { border: 1px dashed var(--border-strong); border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--text-2); }
+
+/* 상세 화제 띠 */
+.talk-band { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) auto; gap: 22px; align-items: center; padding: 18px 20px; border-radius: 18px; background: var(--bg-soft); margin-top: 24px; }
+.talk-band-kicker { margin: 0; font-size: 13px; font-weight: 600; color: var(--source-hn); }
+.talk-band h2 { margin: 2px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+.talk-band .talk-lines { margin-top: 10px; gap: 6px; }
+.talk-band .talk-line { font-size: 13px; }
+.talk-band-chart { background: var(--bg-card); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.talk-band-chart span { font-size: 13px; color: var(--text-2); }
+.talk-band-chart b { font-size: 22px; font-weight: 600; color: var(--up); font-variant-numeric: tabular-nums; }
+.talk-band-chart small { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.talk-band-actions { display: flex; flex-direction: column; gap: 8px; }
+.talk-band-actions a { display: inline-flex; align-items: center; justify-content: center; height: 38px; padding: 0 16px; border-radius: 980px; background: var(--bg-card); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.talk-band-actions a:hover { color: var(--accent-ink); }
+.talk-band-note { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55; }
+
+@media (max-width: 900px) {
+  .talk-hero-grid, .talk-feature, .talk-layout { grid-template-columns: minmax(0, 1fr); }
+  .talk-band { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .talk-band-actions { flex-direction: row; flex-wrap: wrap; }
+}
+@media (max-width: 640px) {
+  .talk-hero { padding: 12px; margin-left: -4px; margin-right: -4px; }
+  .talk-lead h3 { font-size: 20px; }
+  .talk-entry { grid-template-columns: 20px 36px minmax(0, 1fr); }
+  .talk-entry .talk-stat { grid-column: 3; flex-direction: row; gap: 8px; align-items: baseline; }
+  .talk-feature-main h2 { font-size: 22px; }
+}

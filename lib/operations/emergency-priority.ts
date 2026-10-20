@@ -54,6 +54,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "crawl-judge": { tier: "prepared-review" },
   "crawl-agent-review": { tier: "prepared-review", model: true },
   "second-review": { tier: "prepared-review", model: true },
+  "human-deepseek-review": { tier: "prepared-review", model: true },
   "crawl-tagline": { tier: "prepared-review", model: true },
   "product-site-evidence-refresh": { tier: "evidence", http: true },
   "product-evidence-refresh": { tier: "evidence", http: true },
@@ -67,6 +68,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "product-search-health": "suspended", "click-rollup": "suspended", "ranking-refresh": "suspended",
   "product-thumbnail-refresh": "suspended", "agent-evidence-refresh": "suspended", "ai-level-refresh": "suspended",
   "product-stars-refresh": "suspended", "product-star-observation": "suspended", "product-readme-refresh": "suspended",
+  "hn-talk": "suspended",
 };
 
 /** 실측 뒤 명시하는 값만 받는다(기본값 없음, host-budget 와 같은 원칙). 제어 단계는 이 예산 밖이다 — heartbeat 여유 */

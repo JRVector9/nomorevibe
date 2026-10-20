@@ -60,6 +60,7 @@ it("counts an applied model rejection without optional AI2 and deduplicates retr
 it.each([
   ["rules", { provider: "rules" }], ["reuse", { reusedFromAttemptId: 9 }],
   ["human", { decidedBy: "admin" }], ["human", { decidedBy: null }],
+  ["human", { kind: "delegated" }],
   ["human", { appliedAttemptId: null }], ["human", { candidateState: "needs_review" }],
   ["partial", { state: "running", completedAt: null, secondGateSatisfied: false, secondGateCompletedAt: null }], ["partial", { state: "failed" }],
   ["partial", { decision: "needs_review" }], ["stale", { currentInputMatched: false }],

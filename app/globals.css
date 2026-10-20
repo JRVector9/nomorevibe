@@ -47,6 +47,11 @@
   --tile-form: #edf5ef;
   --tile-hue: #f6eef3;
   --tile-note: #f0eff8;
+  /* SNS 화제 출처 칩(lib/social) — 이름 글자가 먼저이고 색은 보조다 */
+  --source-hn: #b4500f;
+  --source-hn-soft: rgba(204, 92, 18, 0.11);
+  --source-gn: #2a5bb8;
+  --source-gn-soft: rgba(42, 91, 184, 0.1);
 }
 
 /**
@@ -84,6 +89,10 @@
     --tile-form: #172a20;
     --tile-hue: #2a1a25;
     --tile-note: #1f1c33;
+    --source-hn: #ff9a52;
+    --source-hn-soft: rgba(255, 154, 82, 0.15);
+    --source-gn: #7fb0ff;
+    --source-gn-soft: rgba(127, 176, 255, 0.14);
   }
 }
 
@@ -113,6 +122,10 @@
   --tile-form: #172a20;
   --tile-hue: #2a1a25;
   --tile-note: #1f1c33;
+  --source-hn: #ff9a52;
+  --source-hn-soft: rgba(255, 154, 82, 0.15);
+  --source-gn: #7fb0ff;
+  --source-gn-soft: rgba(127, 176, 255, 0.14);
 }
 
 /**

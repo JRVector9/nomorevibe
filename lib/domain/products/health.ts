@@ -35,7 +35,7 @@ export const DOWN_THRESHOLD = 3;
 export { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { RECHECK_AFTER_MINUTES } from "./health-freshness";
 import { uptimeControl } from "@/lib/db/product-uptime-schema";
-import { writeHealthResult } from "./health-record";
+import { isUnknownUptimeStatus, writeHealthHeld, writeHealthResult, writeHealthUnknown } from "./health-record";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 
@@ -64,7 +64,10 @@ export async function nextToCheck(limit: number): Promise<PingTarget[]> {
     .limit(limit);
 }
 
-/** 확인 결과 기록. 2xx·3xx면 살아 있는 것으로 본다 */
+/**
+ * 확인 결과 기록. 2xx·3xx면 살아 있는 것으로 본다. 401·403·429·999는 살았는지 알 수 없는 응답이라 세지 않는다(writeHealthUnknown).
+ * held면 판정을 보류한다(광역 실패 보류, uptime.ts) — 같은 검증을 거쳐 확인 시각만 넘긴다(writeHealthHeld).
+ */
 export async function recordPing(
   slug: string,
   status: number,
@@ -74,6 +77,7 @@ export async function recordPing(
   lease?: JobLease,
   expectedUrl?: string,
   signal?: AbortSignal,
+  held = false,
 ): Promise<void> {
   if (!Number.isFinite(observedAt.getTime())) throw new Error("invalid ping timestamp");
   const productId = expectedProductId ?? await findProductGenerationId(slug);
@@ -86,11 +90,14 @@ export async function recordPing(
     if (signal?.aborted) return;
     let resetStreak = false;
     if (expectedUrl !== undefined) {
-      const [current] = await tx.select({ url: products.url, resetStreak: sql<boolean>`exists (
-        select 1 from ${productHealth} h where h.slug = ${products.slug}
-          and (h.checked_at < ${products.updatedAt} or h.down_since < ${products.updatedAt}
-            or (h.failures > 0 and h.down_since is null))
-      )` }).from(products).where(eq(products.id, productId));
+      // 표 하나만 고르는 select면 drizzle이 선택 필드의 열을 표 이름 없이 찍는다. 그때 상관 하위 질의의
+      // "slug"가 h.slug로 묶여 아무 제품의 오래된 health 행에도 매번 1로 돌아갔다(10-15~10-19).
+      // join으로 두 표의 열을 표 이름째 찍게 한다. health 행이 없거나 비교가 null이면 exists처럼 거짓이다.
+      const [current] = await tx.select({ url: products.url, resetStreak: sql<boolean>`coalesce(
+        ${productHealth.checkedAt} < ${products.updatedAt} or ${productHealth.downSince} < ${products.updatedAt}
+          or (${productHealth.failures} > 0 and ${productHealth.downSince} is null), false)` })
+        .from(products).leftJoin(productHealth, eq(productHealth.slug, products.slug))
+        .where(eq(products.id, productId));
       // The request observed the old URL. Do not attach it to the replacement site's streak or daily totals.
       if (current.url !== expectedUrl) return;
       // Legacy health lacks a URL. A product edit after the streak began leaves its attribution unknown.
@@ -98,7 +105,9 @@ export async function recordPing(
       resetStreak = current.resetStreak;
     }
     if (signal?.aborted) return;
-    await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
+    if (held) await writeHealthHeld(tx, { slug, status, observedAt });
+    else if (isUnknownUptimeStatus(status)) await writeHealthUnknown(tx, { slug, status, observedAt, resetStreak });
+    else await writeHealthResult(tx, { slug, status, latencyMs, observedAt, resetStreak });
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
     if (signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");

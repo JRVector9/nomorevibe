@@ -11,6 +11,7 @@ import {
 } from "./settings-schema";
 import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { requestJob } from "@/lib/jobs/control";
 
 const ROW_ID = 1;
 
@@ -93,7 +94,7 @@ export type SaveResult =
  * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
  */
 export function settingsFormVersion(settings: CrawlSettings): string {
-  const edited = { ...settings, reviewMode: null, classify: null, news: null };
+  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null };
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
 }
 
@@ -105,6 +106,7 @@ function applyPatch(current: CrawlSettings, patch: unknown) {
     ...raw,
     // A general or stale settings form cannot change the publication gate.
     reviewMode: current.reviewMode,
+    humanReview: current.humanReview,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(current.classify, raw.classify),
@@ -233,6 +235,34 @@ export async function setSourceBufferEnabled(input: { enabled: boolean; expected
 export async function getSettingsMeta(): Promise<{ updatedBy: string | null; updatedAt: Date } | null> {
   const row = await db.query.crawlSettings.findFirst({ where: eq(crawlSettings.id, ROW_ID) });
   return row ? { updatedBy: row.updatedBy, updatedAt: row.updatedAt } : null;
+}
+
+/** General/stale settings forms cannot grant model decision authority. */
+export async function setHumanReviewEnabled(input: { enabled: boolean; expectedGeneration: number; actor: string }): Promise<SaveResult> {
+  if (typeof input.enabled !== 'boolean' || !Number.isSafeInteger(input.expectedGeneration) || input.expectedGeneration < 0) {
+    return { ok: false, issues: ['스위치 값을 읽을 수 없습니다.'] };
+  }
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for('update');
+    const current = mergeWithDefaults(row.values);
+    if (current === DEFAULT_CRAWL_SETTINGS || current.humanReview.generation !== input.expectedGeneration) {
+      return { ok: false, issues: ['그 사이 설정이 바뀌었거나 읽지 못했습니다. 새로고침해주세요.'] };
+    }
+    if (current.humanReview.enabled === input.enabled) return { ok: true, settings: current };
+    if (current.humanReview.generation >= Number.MAX_SAFE_INTEGER) return { ok: false, issues: ['설정 세대를 더 올릴 수 없습니다.'] };
+    const settings = crawlSettingsSchema.parse({ ...current, humanReview: {
+      enabled: input.enabled, generation: current.humanReview.generation + 1,
+    } });
+    await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
+    await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, {
+      action: 'human-review-deepseek', target: 'crawl_settings',
+      detail: { before: current.humanReview, after: settings.humanReview, model: 'deepseek-v4.1-flash-1017', host: 'm3ultra' },
+    }));
+    if (input.enabled) await requestJob('human-deepseek-review', tx);
+    return { ok: true, settings };
+  });
 }
 
 /**
