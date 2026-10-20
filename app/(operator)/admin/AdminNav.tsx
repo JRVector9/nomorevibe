@@ -21,6 +21,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
       { href: "/admin/translations", label: "공개 번역", hint: "언어별 실패·제한 재요청", icon: "file" },
       { href: "/admin/github-integrations", label: "GitHub 연동", hint: "전송 상태·재조회·수동 재전송", icon: "key" },
       { href: "/admin/products", label: "제품", hint: "목록·제품 근거", icon: "box" },
+      { href: "/admin/talk", label: "SNS 화제", hint: "홈 1위·글 숨기기·화제에서 빼기", icon: "news" },
     ],
   },
   {
