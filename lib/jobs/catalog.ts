@@ -19,11 +19,14 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "crawl-seed", role: "crawler", intervalMs: 10 * 60_000 },
   // 하루 약 123건이 올라온다. 30분이면 한 번에 100건 상한에 걸릴 일이 없다.
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
+  // HN 화제 글 기록 — 최근 72시간·10점 이상 GitHub 글을 한두 요청으로 다시 읽는다(lib/social/hn-talk.ts)
+  { name: "hn-talk", role: "crawler", intervalMs: 30 * 60_000 },
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
   { name: "second-review", role: "reviewer", intervalMs: 60_000 },
+  { name: "human-deepseek-review", role: "reviewer", intervalMs: 60_000 },
   /**
    * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. reviewer 에 둔 까닭은 잡이 역할 안에서
    * 차례로 돌기 때문이다(scripts/worker.ts). 1차 심사와 번갈아 돌 뿐 겹치지 않아, 공유 게이트웨이의

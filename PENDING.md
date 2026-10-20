@@ -6,6 +6,39 @@
 
 ---
 
+## SNS 화제·X 수집 — 2026-10-20
+
+배포·첫 실제 수집 기록은 `docs/CODEX_HANDOFF.md` "2026-10-20 SNS 화제 C안·X 수집 연결". 아직 직접 확인하지 않은 것:
+
+- **X 관련도순 첫 결과**(10-21 09:10 KST 정기 실행): 점수 분포·50점 자격 도달 수·제품 매칭 수를 10-20 최신순(0~2점, 자격 0)과 비교한다.
+  여전히 자격 도달이 없으면 X 자격 기준(`lib/social/talk-score.ts`)을 실제 분포로 다시 정하거나, 하루 읽기 일부로 전날 글 반응을 다시 확인한다.
+- **X 24시간 표시 규칙의 실제 동작**: 다시 잡히지 않은 X 글이 하루 뒤 /talk·홈·상세에서 빠지는지(공개를 켠 뒤, 또는 관리자 미리보기로).
+- **X 하루 보고 끊김 조치**: 26시간 넘게 보고가 없을 때 운영센터 조치가 뜨는지 — 정상이면 매일 00:10 UTC 보고가 들어와 뜨지 않는다.
+- **X 사용 목적 승인 기록**: 스위치는 사용자 지시로 켰다. X 쪽 승인 기록은 이 저장소에 없다([정책 확인 기록](docs/operations/2026-10-14-x-api-policy-and-pilot.md)).
+- **공개 켜기 결정**: `SNS_TALK_PUBLIC_ENABLED` 는 꺼져 있다. 약 2주 관측 뒤 점수 무게·자격 기준을 다시 맞추고(설계 D9) 켤지 정한다. 켤 때 두 웹 env 와 Cloudflare HTML purge 를 함께 한다(이번 배포는 purge 토큰이 없어 건너뜀).
+- **관리자 `/admin/talk` 실물 확인**: 운영 화면은 관리자 로그인이 필요해 아직 보지 않았다(로컬 개발 서버에서만 확인).
+- **Oracle 증설 migration 번호(2026-10-20 고침)**: main 의 `0103_social_posts`(when 1794086400015, 운영 적용) 때문에 Oracle 묶음을
+  **0104 uptime_split · 0105 agent_repository_claims · 0106 oracle_agent_scan_row_scope · 0107 oracle_consumer_row_scope**(when …016~…019)로 옮겼다.
+  PR 브랜치 8개(#554·#556·#560·#561·#557·#558·#559·#562)에 같은 커밋 "fix(db): Oracle 증설 migration 번호를 한 칸 뒤로"를 더했다(force push 없음).
+  main 상태 DB(104줄)에 네 개를 더하면 108줄·표 생성까지 확인했다. 남은 것:
+  - 합칠 때 `drizzle/meta/_journal.json` 은 글자 충돌이 난다 — main 의 0103_social_posts 다음에 0104~0107 을 둔다.
+  - main 과 합치면 #556·#560·#561·#562 는 `health-record.ts`·`uptime.ts`·`crawler-activity.ts` 등에서 #551·#566 과 코드 충돌이 난다(번호와 무관, 아직 안 함).
+  - PR 없는 브랜치 4개(`codex/oracle-scaleout-fix-uptime-20261019`·`codex/oracle-scaleout-fix-agent-scan-20261019`·
+    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`)에도 같은 커밋을 더했다(사용자 지시, force push 없음).
+    뒤 둘의 xaegis 작업 폴더(`~/.xaegis-hub/data/main-agent/nomorevibe-{oracle-fixes,merge-audit}-20261019/source`)는 건드리지 않아
+    로컬 브랜치가 원격보다 한 커밋 뒤다 — 그 폴더에서 이어 작업하기 전에 `git pull --ff-only` 한다(untracked 파일 3개는 그대로).
+  - PR 들은 main 과 충돌해 GitHub 가 PR CI 를 돌리지 않는다. 12개 브랜치 모두 CI 를 수동(workflow_dispatch, main 이 아니라 이미지 발행 없음)으로 돌렸다:
+    PR 8개와 `codex/oracle-scaleout-fix-*` 2개는 모두 성공(quality·통합 3묶음).
+    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019` 는 통합 1번 묶음에서
+    `tests/integration/uptime-split-control.test.ts` "배포 관문·감시" 1건이 실패했다(기대 `backoff`·경보 아님, 실제 `worker_missing`·경보). quality·통합 2·3묶음은 성공.
+    번호를 바꾸기 전 커밋(0a4e8c06·91f422c7)에서도 로컬에서 같은 실패가 났다 — 번호 변경과 무관하게 원래 있던 문제였다.
+    원인: 리뷰 수정 0a4e8c06 이 split 진행을 붙잡는 차단기를 "지금 maintenance 를 돌리는 home(role_leases 주인)"의 것으로 좁혔는데,
+    테스트는 주인 없이 m3 차단기만 열었다. **테스트를 고쳤다**(사용자 지시): 감시 시나리오에 maintenance 주인(m3)을 두고,
+    주인이 mini 로 넘어가면 붙잡지 않는 것도 보며, 파일 앞의 maintenance 행은 그대로 되돌린다
+    (review-fixes c204cbd1 · merge-review cde03602, 코드 동작은 그대로). 다시 돌린 CI(run 39397794224·39397798414)는 두 브랜치 모두 성공 — 이제 12개 브랜치 CI 가 모두 통과한다.
+  - [#563](https://github.com/JRVector9/nomorevibe/pull/563)의 10-22 계획 "0103~0106 적용"은 이제 **0104~0107 적용**이다.
+- osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
+
 ## 수집·검수 개선의 운영 검증 — 2026-10-14
 
 PR00~07의 코드·회귀검사와 전체 검사(단위2,318·통합1,543·타입·lint·빌드)는 별도 브랜치에서 실행했다. 마지막 근거·캐시 cutoff·재개 커서 경계까지 수정하고 전체 검사와 모든 범위의 최종 독립 리뷰를 통과해 로컬 커밋했다.

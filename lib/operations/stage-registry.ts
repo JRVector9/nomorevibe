@@ -23,7 +23,7 @@ export type PipelineStageDef = Readonly<{
   label: string;
   /** 코드 이름 — 새 요소는 "쉬운 말(코드)"로 함께 적는다 */
   code: string;
-  /** 이 단계를 처리하는 카탈로그 잡 — 사람 심사·X 는 없다 */
+  /** 이 단계를 처리하는 카탈로그 잡 — X 는 없다 */
   jobs: readonly string[];
   /** 첫 잡의 역할. 같은 단계의 다른 잡은 다른 역할일 수 있다(공개 근거의 분리 역할 site-evidence, 발행 앞의 소개 짓기 text) */
   role: CatalogRole | null;
@@ -57,8 +57,9 @@ export const PIPELINE_STAGES = Object.freeze([
     throughputKey: "first", progressKey: "first", completionKey: "ai1" }),
   stage({ key: "second", group: "review", label: "AI 2차", code: "second-review", jobs: ["second-review"], role: "reviewer",
     throughputKey: "second", progressKey: "second", completionKey: "ai2" }),
-  // 심사 큐의 직접 판단(stage=human) — 사람이 하는 단계라 잡이 없다
-  stage({ key: "human", group: "review", label: "사람 심사", code: "human", jobs: [], role: null, flowKey: "review" }),
+  // 심사 큐의 직접 판단(stage=human) — 관리자 스위치를 켜면 reviewer가 DeepSeek에 위임한다
+  stage({ key: "human", group: "review", label: "사람 심사", code: "human-deepseek-review",
+    jobs: ["human-deepseek-review"], role: "reviewer", flowKey: "review" }),
   // 소개 짓기(crawl-tagline)는 소개가 없어 발행 앞에서 멈춘 승인 후보의 한 줄을 짓는다 — 다 지으면 발행 대기로 돌아간다
   stage({ key: "publish", group: "review", label: "발행", code: "crawl-publish", jobs: ["crawl-publish", "crawl-tagline"], role: "publisher",
     throughputKey: "publish", progressKey: "publish", flowKey: "publish", completionKey: "publish" }),
@@ -102,6 +103,7 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "click-rollup": "유효 방문 집계 — 방문 통계이지 제품 흐름이 아니다",
   "ranking-refresh": "랭킹 갱신 — 방문 집계가 끝나면 따라 도는 순위 계산",
   "news-refresh": "AI 소식 수집 — 제품 흐름과 따로인 공식 피드",
+  "hn-talk": "HN 화제 글 기록 — 프론티어에 넣지 않는 SNS 관측",
   "cdn-purge": "내린 제품의 CDN 캐시 지우기 — 내린 뒤 정리",
   "github-feedback-delivery": "메이커 동의를 받은 GitHub 피드백 전송 — 사용자 요청 처리",
 };
