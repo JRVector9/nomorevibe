@@ -23,6 +23,12 @@ const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${product
 /** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
 const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, sql`not ${repoGone}`);
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
+/**
+ * X 게시물은 마지막으로 확인한 뒤 24시간만 보인다 — X 정책은 API 로 최신 상태를 확인한 콘텐츠만 표시하게 한다.
+ * 수집기는 하루 한 번 최근 24시간을 다시 검색하므로, 다시 잡히지 않은 글은 하루 뒤 화면에서 빠진다.
+ */
+export const X_FRESH_MS = 24 * 3_600_000;
+const freshX = (now: Date) => sql`(${socialPosts.source} <> 'x' or ${socialPosts.lastSeenAt} >= ${new Date(now.getTime() - X_FRESH_MS).toISOString()}::timestamptz)`;
 
 export type TalkPost = {
   id: number;
@@ -154,7 +160,7 @@ async function starGrowths(entries: { productId: number; firstPostedAt: Date }[]
 
 async function unlistedCounts(postedSince: Date, now: Date, listed: Set<string>) {
   const rows = await db.select(postFields).from(socialPosts)
-    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS), gte(socialPosts.postedAt, postedSince), notExcluded));
+    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS), gte(socialPosts.postedAt, postedSince), notExcluded, freshX(now)));
   const keys = new Set<string>();
   for (const row of rows) if (row.repositoryKey && !listed.has(row.repositoryKey) && talkQualifies(row) && row.postedAt <= now) keys.add(row.repositoryKey);
   if (!keys.size) return { active: 0, unknown: 0 };
@@ -179,7 +185,7 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
   const rows: Row[] = await db.select({ ...postFields, ...productFields }).from(socialPosts)
     .innerJoin(products, sql`${PRODUCT_IDENTITY} = 'https://github.com/' || ${socialPosts.repositoryKey}`)
     .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS),
-      gte(socialPosts.postedAt, since), sql`${socialPosts.postedAt} <= ${now.toISOString()}::timestamptz`, notExcluded, publicProduct()));
+      gte(socialPosts.postedAt, since), sql`${socialPosts.postedAt} <= ${now.toISOString()}::timestamptz`, notExcluded, freshX(now), publicProduct()));
 
   // 같은 저장소를 가리키는 제품이 둘이면 먼저 등록된 것(id 가 작은 것) 하나에 모은다
   const groups = new Map<string, { product: TalkProduct; posts: TalkPost[] }>();
@@ -253,7 +259,7 @@ export async function productTalk(productId: number, repoUrl: string | null, now
   if (!key) return null;
   const since = new Date(now.getTime() - TALK_DETAIL_MS);
   const rows = await db.select(postFields).from(socialPosts)
-    .where(and(eq(socialPosts.repositoryKey, key), eq(socialPosts.state, "visible"), gte(socialPosts.postedAt, since), notExcluded));
+    .where(and(eq(socialPosts.repositoryKey, key), eq(socialPosts.state, "visible"), gte(socialPosts.postedAt, since), notExcluded, freshX(now)));
   if (!rows.length) return null;
   const posts = orderPosts(rows.map(row => post(row as Row)));
   const ranked = posts.filter(item => RANKED_TARGETS.includes(item.linkTarget));

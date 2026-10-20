@@ -151,7 +151,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
                 {recent.map(({ post, entry }) => (
                   <li key={post.id}>
                     <span>{formatDate(post.postedAt, now, locale)}</span>
-                    <span><b>{entry.product.name}</b> {sourceChip(post, true)} {t("talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+                    <span><b>{entry.product.name}</b> {sourceChip(post, true)} {t(post.source === "x" ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
                   </li>
                 ))}
               </ol>
@@ -165,6 +165,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
               <li>{t("talk.methodDecay")}</li>
               <li>{t("talk.methodWindow")}</li>
               <li>{t("talk.methodRemoved")}</li>
+              <li>{t("talk.methodX")}</li>
               <li>{t("talk.methodSeparate")}</li>
             </ul>
           </section>
@@ -182,15 +183,19 @@ function PostLines({ entry, t, locale, now }: { entry: LocalizedTalkEntry; t: Tr
   const count = (n: number) => formatNumber(n, locale);
   return (
     <div className="talk-lines">
-      {entry.posts.slice(0, 3).map(post => (
-        <div key={post.id} className="talk-line">
-          <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t("talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
-          {post.kind === "show" && <span className="talk-maker">{t("talk.byMaker")}</span>}
-          <span className="talk-line-title" lang="en">{post.title}</span>
-          <span>{formatDate(post.postedAt, now, locale)}</span>
-          <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t("talk.discussion")} ↗</a>
-        </div>
-      ))}
+      {entry.posts.slice(0, 3).map(post => {
+        // X 게시물은 본문을 옮기지 않는다 — 반응 수와 링크만
+        const x = post.source === "x";
+        return (
+          <div key={post.id} className="talk-line">
+            <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(x ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+            {post.kind === "show" && <span className="talk-maker">{t("talk.byMaker")}</span>}
+            {x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
+            <span>{formatDate(post.postedAt, now, locale)}</span>
+            <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t(x ? "talk.viewOnX" : "talk.discussion")} ↗</a>
+          </div>
+        );
+      })}
     </div>
   );
 }

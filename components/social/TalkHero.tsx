@@ -26,7 +26,7 @@ export function TalkChips({ posts, t, locale, short = false }: { posts: readonly
       {leadPosts(posts).map(post => (
         <span key={post.id} className={sourceClass(post.source)}>
           <b>{sourceChip(post)}</b>
-          {short ? count(post.points) : t("talk.score", { points: count(post.points), comments: count(post.comments) })}
+          {short ? count(post.points) : t(post.source === "x" ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}
         </span>
       ))}
     </span>

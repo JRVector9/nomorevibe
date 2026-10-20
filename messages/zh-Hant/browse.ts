@@ -330,7 +330,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.methodBest": "每個來源只計最高的一篇",
   "talk.methodDecay": "「目前」每 36 小時權重減半，「本週」直接累加",
   "talk.methodWindow": "貼文在發布後 7 天內顯示於此列表",
-  "talk.methodThreshold": "僅收錄 Hacker News 上 30 分以上或 15 則留言以上的貼文",
+  "talk.methodThreshold": "僅收錄 Hacker News 上 30 分以上或 15 則留言以上的貼文，以及 X 上互動（按讚 + 轉發×2）50 以上的貼文",
   "talk.methodRemoved": "原文刪除後此處也會移除",
   "talk.methodSeparate": "與 nomorevibe 站內排名分開計算",
   "talk.unlisted": "{count} 個熱議儲存庫尚未公開 · {active} 個審核中",
@@ -339,4 +339,8 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.stars": "GitHub 星標",
   "talk.outOfRange": "不在觀測範圍",
   "talk.list": "熱議排名",
+  "talk.xScore": "{points} 次互動 · {comments} 則回覆",
+  "talk.xPost": "X 貼文",
+  "talk.viewOnX": "在 X 上查看",
+  "talk.methodX": "X 貼文只顯示互動數與連結，不顯示內文，每次檢查後保留 24 小時",
 });

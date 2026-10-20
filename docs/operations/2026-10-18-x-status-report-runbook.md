@@ -6,9 +6,9 @@ Tailscale 로 끌어오는 길 대신 이 길을 고른 까닭은 v8 계획(공�
 
 - 받는 주소: `POST https://nomorevibe.com/api/ops/x-status` — **공개 쓰기 주소 1개**다.
 - 받는 코드: `app/api/ops/x-status/route.ts`, `lib/operations/x-status-receive.ts`, 형식·읽기는 `lib/operations/x-status.ts`.
-- **보내는 코드는 이 PR 에 없다.** 수집기는 아직 푸시하지 않은 `codex/x-osaka-smoke-20261015` 브랜치에 있고,
-  보내기는 그 브랜치에서 이 문서의 계약대로 만든다. 수집기 설치·운영은 그 브랜치의
-  `docs/operations/2026-10-15-x-osaka-smoke-runbook.md` 를 따른다.
+- 보내는 코드: `lib/social/x-report.ts`(SNS 화제 C안 T18 에서 수집기와 함께 main 으로 들어왔다). 수집기가 매 실행 끝에
+  이 문서의 계약대로 한 번 보낸다. 수집기 설치·운영은 `docs/operations/2026-10-15-x-osaka-smoke-runbook.md` 를 따른다.
+- 같은 비밀로 게시물 보고(`/api/ops/x-posts`)도 보낸다 — 아래 "게시물 보고(x-posts)".
 
 ## 켜기 전(지금 배포 상태)
 
@@ -92,10 +92,11 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
 | 401 | `x_status_signature_invalid` | 비밀·서명 틀림 | 비밀·서명 문자열 확인 |
 | 400 · 413 · 415 · 408 | `x_status_payload_invalid` 등 | 형식·크기 | 보내는 코드 버그. 다시 보내지 않는다 |
 | 409 | `x_status_not_newer` | 같거나 새 보고가 이미 있다 | 다시 보내지 않는다 |
-| 429 | `x_status_rate_limited` | 60초 안에 또 보냄 | 60초 뒤 **새 시각으로 다시 서명**해 한 번 |
+| 429 | `x_status_rate_limited` | 60초 안에 또 보냄(수동 실행을 겹쳐 돌린 때) | 다시 보내지 않는다. 다음 실행에 맡긴다 |
 | 503 | `x_status_unavailable` | DR fenced 사이트 | 다음 날 보고에 맡긴다 |
 
-다시 보낼 때는 언제나 새 `x-nmv-timestamp` 로 다시 서명한다(같은 것은 409). **보고가 실패해도 수집을 다시 돌리지 않는다** —
+수집기(`sendSigned`)는 한 번만 보내고 응답 코드나 `timeout`·`network` 를 `status.json` 의 `reports` 에 남긴다.
+손으로 다시 보낼 때는 언제나 새 `x-nmv-timestamp` 로 다시 서명한다(같은 것은 409). **보고가 실패해도 수집을 다시 돌리지 않는다** —
 하루 10개 장부를 지키기 위해서다. 보고 실패는 웹 쪽 "끊김"으로 드러난다.
 
 ## 운영센터 조치 — "X 보고 끊김/오류"(`x-status`)
@@ -115,8 +116,9 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
    요청은 두 웹 중 어느 쪽으로도 갈 수 있어, 한쪽에만 있으면 다른 쪽으로 간 보고는 404 가 된다.
    확인: 서명 없는 `POST /api/ops/x-status` 가 404 가 아니라 401 이면 켜진 것이다(여러 번 보내 두 웹 모두 401 인지 본다).
 3. Cloudflare 확인(아래)을 dry-run 보고로 한다.
-4. 수집기 쪽: root 전용 env(`/etc/nomorevibe-x.env`)에 `X_STATUS_REPORT_URL`·`X_STATUS_REPORT_SECRET` 을 두고,
-   보내기를 넣은 새 릴리스를 그 브랜치의 runbook 대로 배치한다.
+4. 수집기 쪽: root 전용 env(`/etc/nomorevibe-x.env`)에 `X_STATUS_REPORT_SECRET`·`X_STATUS_REPORT_URL`
+   (게시물도 받으려면 `X_POSTS_REPORT_URL`)을 두고, 보내기를 넣은 새 릴리스를 osaka runbook 대로 배치한다.
+   비밀이 있는데 주소가 하나도 없거나, 주소가 https 가 아니거나 사용자 정보·조각이 있으면 수집기는 설정 오류로 멈춘다.
 5. `dry-run` 으로 수동 실행 1회 → 200. 읽기 전용 조회로 줄을 본다:
    `select value, observed_at from operations_observations where key = 'x-status';`
    `observed_at` 은 DB 시계(UTC 벽시계)다. 경과는 SQL 로 잰다.
@@ -148,3 +150,45 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
   `http.request.method eq "POST" and http.request.uri.path eq "/api/ops/x-status"` → 해당 보안 기능 건너뛰기.
   요금제에 따라 Bot Fight Mode 는 규칙으로 건너뛸 수 없을 수 있으니 실제 화면에서 확인한다.
   인증은 앱의 서명이 하므로 이 예외로 열리는 것은 없다(서명이 틀리면 DB 전에 401).
+
+## 게시물 보고(x-posts) — SNS 화제 C안 T18
+
+수집기가 **실제 수집(live)을 끝낸 실행에서만**, 보낼 게시물이나 사용 불가 ID 가 있을 때 한 번 보낸다. dry-run·막힘·실패에는 보내지 않는다.
+웹은 `social_posts`(source=`x`)에 넣고 값이 바뀐 글만 `social_post_observations` 에 한 줄 남긴다(HN 수집과 같은 표·같은 규칙).
+
+- 받는 주소: `POST https://nomorevibe.com/api/ops/x-posts` — 공개 쓰기 주소가 하나 더 는다. Cloudflare 예외가 필요하면 이 주소도 함께 둔다.
+- 받는 코드: `app/api/ops/x-posts/route.ts`, `lib/operations/x-posts-receive.ts`, 형식은 `lib/operations/x-posts.ts`.
+- 비밀·머리·검사 순서·응답 표는 하루 보고와 같다. 다른 점만:
+  - 서명 머리는 `nomorevibe-x-posts-v1` — 하루 보고의 서명을 이 주소에 다시 쓸 수 없다(401).
+  - 본문은 16,384바이트까지. 오류 코드 머리는 `x_posts_`.
+  - 단조·속도는 관측 표의 `x-posts` 한 줄로 따로 잰다. 그 줄과 게시물 쓰기는 **한 트랜잭션**이라 쓰다 실패하면 줄도 남지 않는다.
+  - 200 본문은 `{"accepted":true,"inserted":n,"updated":n,"gone":n}`.
+
+```json
+{"v":1,"observedAt":"2026-10-21T00:10:01.000Z",
+ "posts":[{"id":"1980000000000000001","createdAt":"2026-10-20T12:00:00.000Z","repository":"acme/tool",
+           "metrics":{"like":40,"reply":6,"repost":9,"quote":2}}],
+ "unavailable":["1980000000000000009"]}
+```
+
+| 칸 | 규칙 |
+| --- | --- |
+| `observedAt` | 수집기가 검색한 UTC ISO 시각. 보낸 시각(+1초)보다 뒤일 수 없다 |
+| `posts` | 0~10개. 저장소 하나만 가리키고 반응 네 칸이 모두 있는 공개 게시물만 |
+| `posts[].id` | X 게시물 ID(숫자 글자 1~20자, 0 으로 시작 않음) |
+| `posts[].createdAt` | 작성 시각. `observedAt` 보다 뒤일 수 없다 |
+| `posts[].repository` | `owner/repo` 하나(`.`·`..` 불가). 웹은 소문자로 저장소 열쇠를 만든다 |
+| `posts[].metrics` | `like`·`reply`·`repost`·`quote` 정수 0~10억, 넷 다 있어야 한다 |
+| `unavailable` | 0~10개 ID. 이번 검색에서 사용할 수 없다고 나온 게시물 — 이미 받은 보이는 글이면 `gone`(`source_unavailable`)으로 내린다 |
+
+한 ID 는 `posts`·`unavailable` 을 통틀어 한 번만 나온다. 칸이 더 있거나 빠지면 400. 본문·작성자·프로필·원 응답은 보내지 않는다(재배포는 ID 중심).
+
+웹이 쓰는 값: 제목은 비우고(화면은 "X 게시물"로 그린다), 링크는 `https://github.com/<repository>`, 점수 = `like + repost×2`,
+댓글 칸 = `reply`. 화제 자격은 점수 50 이상, 출처 무게 0.6(`lib/social/talk-score.ts`).
+
+**공개 화면에는 마지막으로 확인한 뒤 24시간만** 보인다(`lib/social/talk.ts` 의 `X_FRESH_MS`) — X 정책은 API 로 최신 상태를 확인한
+콘텐츠만 표시하게 한다. 수집기는 하루 한 번 최근 24시간을 다시 검색하므로, 다시 잡히지 않은 글은 하루 뒤 /talk·홈·상세에서 빠진다
+(관리자 `/admin/talk` 에는 남는다). 공개 화면 자체는 여전히 `SNS_TALK_PUBLIC_ENABLED` 로 꺼져 있다.
+
+확인(읽기 전용): `select value, observed_at from operations_observations where key = 'x-posts';`,
+`select external_id, repository_key, points, comments, state, last_seen_at from social_posts where source = 'x' order by last_seen_at desc limit 20;`

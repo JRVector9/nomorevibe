@@ -426,4 +426,8 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "talk.viewAll": "See all social buzz",
   "talk.note": "Scores are copied from each platform at the last check. We don’t copy post bodies or comments, and deleted posts disappear here too.",
   "talk.preview": "Preview · visible to admins only",
+  "talk.xScore": "{points} reactions · {comments} replies",
+  "talk.xPost": "X post",
+  "talk.viewOnX": "View on X",
+  "talk.xHeadline": "X · {points} reactions · {comments} replies",
 });

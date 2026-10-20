@@ -61,7 +61,9 @@ export default async function AdminTalkPage() {
         </Panel>
         <Panel title="화제 글 (최근 7일)" note={`기록한 글 ${posts.length}건 · 점수 큰 순. 숨긴 글은 다시 수집돼도 숨긴 채로 남습니다. 저장소를 빼면 그 저장소의 모든 글이 화면에서 빠집니다.${board.unlisted.active + board.unlisted.unknown > 0 ? ` 화제인데 아직 공개 제품이 아닌 저장소 ${board.unlisted.active + board.unlisted.unknown}개(심사 중 ${board.unlisted.active}).` : ""}`}>
           <TalkPostsBoard now={now.toISOString()} rows={posts.map(post => ({
-            id: post.id, source: post.kind === "show" && post.source === "hn" ? "Show HN" : SOURCE_NAME[post.source], kind: post.kind, title: post.title,
+            id: post.id, source: post.kind === "show" && post.source === "hn" ? "Show HN" : SOURCE_NAME[post.source], kind: post.kind,
+            // X 는 본문을 받지 않는다 — 게시물 ID 로 이름을 붙인다
+            title: post.title || `X 게시물 ${post.externalId}`,
             discussionUrl: discussionUrl(post), linkTarget: post.linkTarget, repositoryKey: post.repositoryKey, points: post.points, comments: post.comments,
             postedAt: post.postedAt.toISOString(), state: post.state, excluded: post.excluded, product: post.product,
           }))} />
