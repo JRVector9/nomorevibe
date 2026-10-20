@@ -11,6 +11,7 @@ import { Panel } from "@/components/Panel";
 import { ScrollTable } from "../../components/ScrollTable";
 import { BanAction } from "../BanAction";
 import { ForceRefreshForm, UpdateVisibilityForm } from "./EvidenceProductActions";
+import { makerMembersOf, MakerMembersPanel } from "./MakerMembers";
 import {
   DECLARATION_LABELS, EVIDENCE_AUDIT_LABELS, FACT_LABELS, HISTORY_KIND_LABELS, LINK_KIND_LABELS, PRODUCT_STATUS_LABELS,
   RELATIONSHIP_LABELS, SOURCE_STATE_LABELS, UPDATE_SOURCE_LABELS, historyActionLabel, historyNote, labelOf,
@@ -52,10 +53,11 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
   const { slug } = await params;
   const view = await getEvidenceAdminProduct(slug);
   if (!view) notFound();
-  const [refresh, history] = await Promise.all([
+  const [refresh, history, makers] = await Promise.all([
     getProductRefreshRequest(slug),
     // 기록을 못 읽어도 상세는 그린다
     productHistory(view.product.slug).catch(() => null),
+    makerMembersOf(view.product.slug).catch(() => null),
   ]);
   const refreshPending = refresh && refresh.requestedVersion > refresh.completedVersion;
   const activityHref = `/admin/activity?target=${encodeURIComponent(view.product.slug)}`;
@@ -119,6 +121,8 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
             })}</ol>
           )}
         </Panel>
+
+        <MakerMembersPanel rows={makers} />
 
         <Panel title="메이커와 관측값 충돌" note="메이커 제공값을 숨기지 않고 객관적 출처의 값과 나란히 봅니다.">
           {view.conflicts.length === 0 ? (

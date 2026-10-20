@@ -42,6 +42,7 @@ export const JOB_LABELS: Record<string, string> = {
   'product-spam-rescan': '공개 제품 스팸 재검사',
   'product-translate': '제품 정보 번역', 'ai-level-refresh': 'AI 제작 단계 확인',
   'product-site-evidence-refresh': '공식 사이트 근거 갱신',
+  'maker-recheck': '운영자 확인 재확인',
 };
 export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비스', db: '데이터베이스', scheduler: '작업 일정 관리', crawler: '프로젝트 수집', reviewer: '후보 심사', publisher: '제품 발행', text: '소개·사유 번역', maintenance: '생존 확인·지표 집계', 'connect-agent': 'AI 연결·분류 실행',
   // 분리 역할(batch versioned) — 기존 역할의 잡을 떼어 Oracle 등 다른 host 에서 돈다

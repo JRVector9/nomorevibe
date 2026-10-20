@@ -129,6 +129,11 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "product-star-observation", role: "crawler", intervalMs: 60_000, lane: "stars" },
   // Crawler already owns GitHub authentication; two recrawl-invalidated READMEs per tick.
   { name: "product-readme-refresh", role: "crawler", intervalMs: 5 * 60_000 },
+  /**
+   * 운영자 확인 재확인(마이페이지 MY5) — 30일 지난 행만 한 틱 20개까지 GitHub 저장소 주인을 다시 본다. README 갱신과 같은 까닭으로
+   * GitHub 수집 자격이 있는 crawler 에 둔다(maintenance 에는 GITHUB_COLLECTOR_SECRET·GITHUB_TOKEN 이 없다). 날짜 지난 행이 없으면 조회 한 번
+   */
+  { name: "maker-recheck", role: "crawler", intervalMs: 60 * 60_000 },
 ];
 
 export const JOB_NAMES = JOB_CATALOG.map(job => job.name);

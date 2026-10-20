@@ -25,6 +25,7 @@ import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { spamSignals, SPAM_DETECTOR_VERSION } from "./spam-signals";
 import { storedAiLevel } from "@/lib/domain/evidence/ai-level-store";
+import { notifyNewListingMine } from "@/lib/me/maker-claims";
 
 /**
  * 발행 — 통과한 후보를 목록에 올린다.
@@ -272,6 +273,8 @@ export async function publishCandidate(
   }
 
   logger.info("crawl.published", { repo: candidate.repo, slug, url, category });
+  // 저장소 주인이 GitHub 로 로그인한 계정이면 알림함에 한 줄(마이페이지 new_listing_mine) — 실패해도 발행은 그대로다
+  await notifyNewListingMine({ slug, repoMeta: document.repoMeta }, lease).catch(() => logger.warn("maker.new_listing_notify_failed", { slug }));
   // The periodic worker also catches a missed request after a process shutdown.
   await requestJob("product-thumbnail-refresh").catch(() => logger.warn("thumbnail.enqueue_failed", { slug }));
   return { ok: true, slug };

@@ -1,9 +1,15 @@
-import { MePlaceholder } from "@/components/me/MePlaceholder";
+import { MeLoginRequired } from "@/components/me/MeLoginRequired";
+import { ProjectsView } from "@/components/me/projects/ProjectsView";
 import { meMetadata } from "@/lib/me/metadata";
+import { getMeSession } from "@/lib/me/session";
 
 export const dynamic = "force-dynamic";
 export const generateMetadata = () => meMetadata("projects");
 
-export default function MeProjectsPage() {
-  return <MePlaceholder />;
+/** 내 프로젝트 탭(MY5·MY6) — 로그인한 계정의 확인한 프로젝트·받은 의견. ?view=inbox 는 받은 의견 전체 */
+export default async function MeProjectsPage({ searchParams }: PageProps<"/[locale]/me/projects">) {
+  const session = await getMeSession();
+  if (!session) return <MeLoginRequired tab="projects" />;
+  const { view } = await searchParams;
+  return <ProjectsView userId={session.user.id} csrfToken={session.csrfToken} view={view === "inbox" ? "inbox" : "default"} />;
 }
