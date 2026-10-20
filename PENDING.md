@@ -20,23 +20,29 @@
 - **Oracle 증설 migration 번호(2026-10-20 고침)**: main 의 `0103_social_posts`(when 1794086400015, 운영 적용) 때문에 Oracle 묶음을
   **0104 uptime_split · 0105 agent_repository_claims · 0106 oracle_agent_scan_row_scope · 0107 oracle_consumer_row_scope**(when …016~…019)로 옮겼다.
   PR 브랜치 8개(#554·#556·#560·#561·#557·#558·#559·#562)에 같은 커밋 "fix(db): Oracle 증설 migration 번호를 한 칸 뒤로"를 더했다(force push 없음).
-  main 상태 DB(104줄)에 네 개를 더하면 108줄·표 생성까지 확인했다. 남은 것:
-  - 합칠 때 `drizzle/meta/_journal.json` 은 글자 충돌이 난다 — main 의 0103_social_posts 다음에 0104~0107 을 둔다.
-  - main 과 합치면 #556·#560·#561·#562 는 `health-record.ts`·`uptime.ts`·`crawler-activity.ts` 등에서 #551·#566 과 코드 충돌이 난다(번호와 무관, 아직 안 함).
-  - PR 없는 브랜치 4개(`codex/oracle-scaleout-fix-uptime-20261019`·`codex/oracle-scaleout-fix-agent-scan-20261019`·
-    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`)에도 같은 커밋을 더했다(사용자 지시, force push 없음).
-    뒤 둘의 xaegis 작업 폴더(`~/.xaegis-hub/data/main-agent/nomorevibe-{oracle-fixes,merge-audit}-20261019/source`)는 건드리지 않아
-    로컬 브랜치가 원격보다 한 커밋 뒤다 — 그 폴더에서 이어 작업하기 전에 `git pull --ff-only` 한다(untracked 파일 3개는 그대로).
-  - PR 들은 main 과 충돌해 GitHub 가 PR CI 를 돌리지 않는다. 12개 브랜치 모두 CI 를 수동(workflow_dispatch, main 이 아니라 이미지 발행 없음)으로 돌렸다:
-    PR 8개와 `codex/oracle-scaleout-fix-*` 2개는 모두 성공(quality·통합 3묶음).
-    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019` 는 통합 1번 묶음에서
-    `tests/integration/uptime-split-control.test.ts` "배포 관문·감시" 1건이 실패했다(기대 `backoff`·경보 아님, 실제 `worker_missing`·경보). quality·통합 2·3묶음은 성공.
-    번호를 바꾸기 전 커밋(0a4e8c06·91f422c7)에서도 로컬에서 같은 실패가 났다 — 번호 변경과 무관하게 원래 있던 문제였다.
-    원인: 리뷰 수정 0a4e8c06 이 split 진행을 붙잡는 차단기를 "지금 maintenance 를 돌리는 home(role_leases 주인)"의 것으로 좁혔는데,
-    테스트는 주인 없이 m3 차단기만 열었다. **테스트를 고쳤다**(사용자 지시): 감시 시나리오에 maintenance 주인(m3)을 두고,
-    주인이 mini 로 넘어가면 붙잡지 않는 것도 보며, 파일 앞의 maintenance 행은 그대로 되돌린다
-    (review-fixes c204cbd1 · merge-review cde03602, 코드 동작은 그대로). 다시 돌린 CI(run 39397794224·39397798414)는 두 브랜치 모두 성공 — 이제 12개 브랜치 CI 가 모두 통과한다.
-  - [#563](https://github.com/JRVector9/nomorevibe/pull/563)의 10-22 계획 "0103~0106 적용"은 이제 **0104~0107 적용**이다.
+  main 상태 DB(104줄)에 네 개를 더하면 108줄·표 생성까지 확인했다.
+  - PR 없는 `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019` 에도 같은 커밋을 더했다.
+    두 브랜치의 xaegis 작업 폴더(`~/.xaegis-hub/data/main-agent/nomorevibe-{oracle-fixes,merge-audit}-20261019/source`)는 건드리지 않아
+    로컬 브랜치가 원격보다 뒤다 — 그 폴더에서 이어 작업하기 전에 `git pull --ff-only` 한다(untracked 파일 3개는 그대로).
+  - review 브랜치 2개의 `tests/integration/uptime-split-control.test.ts` "배포 관문·감시" 실패(번호 변경 전부터 있던 문제)는 테스트를 고쳤다:
+    리뷰 수정 0a4e8c06 이 split 진행을 붙잡는 차단기를 "지금 maintenance 를 돌리는 home(role_leases 주인)"의 것으로 좁혔는데 테스트는 주인 없이
+    m3 차단기만 열었다. 감시 시나리오에 주인(m3)을 두고, 주인이 mini 로 넘어가면 붙잡지 않는 것도 보며, 파일 앞의 maintenance 행은 되돌린다
+    (review-fixes c204cbd1 · merge-review cde03602, 코드 동작은 그대로).
+- **main 과 합침(2026-10-20, 사용자 지시)**: 브랜치 11개(#554·#556·#560·#561·#557·#558·#559·#562·#563, review 2개)에 `Merge origin/main` 커밋을 더해
+  이제 main(48a1d6cd)과 충돌이 없다(PR 은 모두 MERGEABLE). 해결:
+  - `drizzle/meta/_journal.json`: main 의 0103_social_posts 다음에 0104~0107.
+  - #551 을 이미 가진 #562·review 2개: `health-record.ts`·`uptime.ts`·`tests/crawler-activity.test.ts` 는 브랜치 쪽(main 판은 #551 5788ab2a 와 같다),
+    `crawler-activity.ts` 는 브랜치 쪽 + main(#566)의 `social.hn_talk_*` 이벤트 3줄.
+  - #551 이 없는 #556·#560·#561: `health-record.ts` 는 이 줄의 `writeHealthResults` 와 #551 함수를 둘 다, #561 의 `uptime.ts`·uptime 통합 테스트는
+    통합 브랜치가 같은 조합을 푼 c41f7755 의 결과. **split 을 #551 뜻(401·403·429·999 는 알 수 없는 응답)에 맞추는 적응은 통합 줄(#562)에만 있다** —
+    이 PR 들만 따로 main 에 합치면 split claims 가 그 응답을 실패로 센다. 배포는 계획대로 통합 줄로 한다.
+  - 테스트 기준: `uptime-split-schema` 비교 기준을 0102 고정 → journal 의 0104 바로 앞(main 의 0103 이 끼어 들었다),
+    merge-review 의 `next-config` CloudFront 규칙 수 64 → 72(main #567 의 공개 /talk 4언어 × HTML·RSC).
+  - #563: 기록의 migration 번호를 0104~0107 로 맞추고(10-22 계획도 **0104~0107 적용**), main 의 10-20 기록과 날짜 순서로 둘 다.
+  - CI: PR 9개 PR CI 성공(#562 포함), review-fixes 수동 CI 성공. merge-review 는 quality 의 `cli-process-runner` "abort kill" 1건이 한 번
+    실패했다(로컬 5/5 통과, 병합이 건드린 파일과 무관) — 실패한 job 만 다시 돌려 성공했다(run 39406088351) — 11개 브랜치 CI 가 모두 통과한다.
+  - `codex/oracle-scaleout-fix-uptime-20261019`·`codex/oracle-scaleout-fix-agent-scan-20261019` 는 통합(#562)에 이미 들어 있고(235faccf·36bd586d)
+    단독으로 main 에 맞추려면 통합이 한 적응을 다시 해야 해, 사용자 지시로 원격 브랜치를 지웠다(복구가 필요하면 875d2b7c·4b55cb2b).
 - osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
 
 ## 수집·검수 개선의 운영 검증 — 2026-10-14
