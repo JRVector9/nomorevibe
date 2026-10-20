@@ -52,12 +52,14 @@ KNOWN_APPS = APPS | GIT_BUILD_APPS
 # one replica each. The Dokploy apps do not exist yet, so ID and name are empty; an empty target is refused before any action, never guessed.
 # `plan`/`run` release only the apps chosen with --consumer, right after their parent role's pair; without it the 8-app release is unchanged.
 # agent-scan (E5) runs `--role=crawler --consumer=agent-scan` on M3 only (its other host is Oracle, outside Dokploy).
+# 2026-10-20: agent-scan-consumer-m3 was created as a copy of crawler-m3 (same image, env + SERVICE_INSTANCE_ID=agent-scan-consumer-m3,
+# AGENT_SCAN_CONSUMER_VERSION=1, AGENT_SCAN_CONCURRENCY=1). Release it with `--consumer agent-scan`; the AI1/AI2 apps still do not exist.
 CONSUMER_APPS = {
     'ai1-consumer-mini': ('', '', MINI, 'worker'),
     'ai1-consumer-m3': ('', '', M3, 'worker'),
     'ai2-consumer-mini': ('', '', MINI, 'worker'),
     'ai2-consumer-m3': ('', '', M3, 'worker'),
-    'agent-scan-consumer-m3': ('', '', M3, 'worker'),
+    'agent-scan-consumer-m3': ('LIRNQFq9mWGBOWRshJ-19', 'nomorevibe-agent-scan-consumer-m3', M3, 'worker'),
 }
 # Consumer name -> parent role (lib/runtime/consumer-registry.ts). Its apps run that role's code, so they follow the role's pair and precede its gate.
 CONSUMER_ROLES = {'ai1': 'reviewer', 'ai2': 'reviewer', 'agent-scan': 'crawler'}
