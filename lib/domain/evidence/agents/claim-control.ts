@@ -3,7 +3,7 @@ import { agentRepositoryClaims, agentScanControl } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 
 /**
- * 제작 근거 스캔의 모드(agent_scan_control, 0104). pipeline_stage_modes 와 같은 뜻이다(lib/jobs/items/repository.ts).
+ * 제작 근거 스캔의 모드(agent_scan_control, 0105). pipeline_stage_modes 와 같은 뜻이다(lib/jobs/items/repository.ts).
  *
  * | 모드 | legacy 잡 스캔 쓰기 | consumer 기록 |
  * | legacy | 허용 | 거절 |

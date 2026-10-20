@@ -21,7 +21,7 @@ import { getLatestRepositoryAgentScan, persistableAgentScanResult, validatedAgen
 import { agentScanRecordAllowed, lockAgentScanControl } from './claim-control';
 
 /**
- * 제작 근거 스캔의 저장소 단위 claim(0104). 여러 서버의 consumer 가 같은 큐를 나눠 맡는다.
+ * 제작 근거 스캔의 저장소 단위 claim(0105). 여러 서버의 consumer 가 같은 큐를 나눠 맡는다.
  *
  * - claim: fence SHARE → control SHARE(items·contract≥1) → 행 하나 FOR UPDATE SKIP LOCKED → token·epoch+1. 전역 mutex 가 없다.
  * - 기록: fence SHARE → stage SHARE → control SHARE(기록 관문·control epoch) → 저장소 identity → claim 행 FOR UPDATE(owner CAS)
