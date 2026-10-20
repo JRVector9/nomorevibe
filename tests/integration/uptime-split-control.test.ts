@@ -28,6 +28,7 @@ const env = { UPTIME_SPLIT_DATABASE_URL: TEST_DATABASE_URL };
 const raw = postgres(TEST_DATABASE_URL, { max: 2 });
 let directory = "";
 let foreignRunners: Record<string, unknown>[] = [];
+let foreignLease: Record<string, unknown> | undefined;
 let original: { split: Record<string, unknown>; control: Record<string, unknown> | undefined };
 
 type Out = { status: number; json: (UptimeSplitResult & { snapshot?: UptimeSplitSnapshot }) | null };
@@ -62,6 +63,9 @@ beforeAll(async () => {
   foreignRunners = (await db.execute<{ row: Record<string, unknown> }>(sql`select to_jsonb(o) as row from operations_observations o
     where key like 'candidate:maintenance:%' or key like 'candidate:product-health:%' order by key`)).map(row => row.row);
   await db.delete(operationsObservations).where(runnerPattern);
+  // maintenance 역할 lease 도 같다 — 감시 테스트가 주인을 바꾸므로 이 파일 동안만 빼 둔다
+  [foreignLease] = (await db.execute<{ row: Record<string, unknown> }>(sql`select to_jsonb(r) as row from role_leases r
+    where role = 'maintenance'`)).map(row => row.row);
 });
 beforeEach(async () => {
   await resetTables();
@@ -70,6 +74,8 @@ beforeEach(async () => {
   await setSplit("legacy", null);
   await db.insert(operationsObservations).values({ key: RUNNER, value: { role: "maintenance", phase: "active" } })
     .onConflictDoUpdate({ target: operationsObservations.key, set: { observedAt: sql`localtimestamp` } });
+  // resetTables 는 role_leases 를 비우지 않는다 — 감시 테스트가 넣는 maintenance 주인을 다음 테스트로 넘기지 않는다
+  await db.execute(sql`delete from role_leases where role = 'maintenance'`);
 });
 afterAll(async () => {
   await db.execute(sql`update uptime_control set observations_enabled = false, gate_enabled = false where id = 1`);
@@ -80,6 +86,9 @@ afterAll(async () => {
       gate_enabled = ${original.control.gate_enabled as boolean}, sources = ${JSON.stringify(original.control.sources)}::jsonb where id = 1`);
   }
   await db.execute(sql`delete from uptime_host_breakers`);
+  await db.execute(sql`delete from role_leases where role = 'maintenance'`);
+  if (foreignLease) await db.execute(sql`insert into role_leases
+    select * from jsonb_populate_record(null::role_leases, ${JSON.stringify(foreignLease)}::jsonb)`);
   await db.delete(operationsObservations).where(runnerPattern);
   for (const row of foreignRunners) await db.execute(sql`insert into operations_observations
     select * from jsonb_populate_record(null::operations_observations, ${JSON.stringify(row)}::jsonb)`);
@@ -282,11 +291,19 @@ describe("운영 진행 지표", () => {
     expect((await readMaintenanceUptimeProgress()).splitHeld).toBe(false);
 
     await setSplit("claims");
+    // 차단기 대기로 보는 것은 지금 maintenance 를 돌리는 home 의 차단기뿐이다 — 그 주인(m3)을 역할 lease 로 둔다
+    await db.execute(sql`insert into role_leases (role, owner_instance_id, lease_until) values ('maintenance', ${OWNERS.m3.instanceId},
+      (clock_timestamp() at time zone 'UTC') + interval '45 seconds')
+      on conflict (role) do update set owner_instance_id = excluded.owner_instance_id, lease_until = excluded.lease_until`);
     await db.execute(sql`insert into uptime_host_breakers (host, state, opened_at, probe_after, reason, ratio)
       values ('m3', 'open', clock_timestamp(), clock_timestamp() + interval '10 minutes', 'batch_ratio', 0.8)`);
     const held = (await readWorkerProgress()).stages.find(row => row.stage === "uptime");
     expect(held).toMatchObject({ role: "maintenance", job: "uptime-ping", reason: "backoff", alarm: false, held: true, waiting: 1 });
     expect((await readMaintenanceUptimeProgress()).splitHeld).toBe(true);
+    // 역할이 mini 로 넘어가면 m3 차단기는 진행을 붙잡지 않는다
+    await db.execute(sql`update role_leases set owner_instance_id = ${OWNERS.mini.instanceId} where role = 'maintenance'`);
+    expect((await readWorkerProgress()).stages.find(row => row.stage === "uptime")).toMatchObject({ held: false });
+    await db.execute(sql`update role_leases set owner_instance_id = ${OWNERS.m3.instanceId} where role = 'maintenance'`);
 
     await db.execute(sql`delete from uptime_host_breakers`);
     await db.execute(sql`update uptime_claims set last_applied_at = clock_timestamp(), last_applied_host = 'm3'`);
