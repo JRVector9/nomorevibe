@@ -24,7 +24,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/skill.md": ["./skill/SKILL.md"],
     // 공유 카드 글꼴(lib/me/share-card.tsx 가 실행 중에 읽는다)
-    "/\\[locale\\]/p/\\[slug\\]/share-card.png": ["./lib/me/fonts/*.woff"],
+    "/\\[locale\\]/p/\\[slug\\]/share-card.png": ["./assets/fonts/*.woff"],
   },
 
   /** 로그인 설계 M4 의 /account 는 마이페이지 계정 탭으로 영구 이동한다(마이페이지 시안 Q1). /ko/… 도 받는다 */

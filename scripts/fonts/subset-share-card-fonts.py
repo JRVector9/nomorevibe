@@ -1,10 +1,10 @@
-"""공유 카드(lib/me/share-card.tsx) 글꼴 lib/me/fonts/*.woff 를 다시 만든다 — 한글 완성형 전부, 간체 GB2312, 번체 Big5 상용자, 라틴·기호.
+"""공유 카드(lib/me/share-card.tsx) 글꼴 assets/fonts/*.woff 를 다시 만든다 — 한글 완성형 전부, 간체 GB2312, 번체 Big5 상용자, 라틴·기호.
 
 원본: Google Fonts 의 Noto Sans KR·SC·TC 정적 TTF(400·700). css2 API 를 woff2 를 모르는 옛 브라우저 이름으로 부르면 TTF 주소를 준다.
   <src_dir>/noto-{kr,sc,tc}-{400,700}.ttf 로 받아 두고:
   python3 -m venv .venv && .venv/bin/pip install fonttools==4.60.1
-  .venv/bin/python scripts/fonts/subset-share-card-fonts.py <src_dir> lib/me/fonts
-글꼴 라이선스는 SIL OFL 1.1(lib/me/fonts/OFL.txt).
+  .venv/bin/python scripts/fonts/subset-share-card-fonts.py <src_dir> assets/fonts
+글꼴 라이선스는 SIL OFL 1.1(assets/fonts/OFL.txt).
 """
 import sys
 from pathlib import Path

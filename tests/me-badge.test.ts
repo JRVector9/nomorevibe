@@ -54,7 +54,7 @@ describe("공유 카드 글꼴", () => {
   });
 
   it("저장소에 WOFF 여섯 개와 라이선스가 있다 — 밖에서 받지 않는다", () => {
-    const dir = path.join(process.cwd(), "lib/me/fonts");
+    const dir = path.join(process.cwd(), "assets/fonts");
     for (const script of ["kr", "sc", "tc"]) {
       for (const weight of [400, 700]) {
         const file = readFileSync(path.join(dir, `noto-sans-${script}-${weight}.woff`));
@@ -66,6 +66,6 @@ describe("공유 카드 글꼴", () => {
   });
 
   it("standalone 빌드에 글꼴 폴더가 실린다", () => {
-    expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/share-card.png"]).toEqual(["./lib/me/fonts/*.woff"]);
+    expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/share-card.png"]).toEqual(["./assets/fonts/*.woff"]);
   });
 });

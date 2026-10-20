@@ -8,7 +8,8 @@ import type { ShareCardData } from "./share";
 
 /**
  * 공유 카드 그림(SNS 설계 T13·M5) — 1200×630, 어두운 잉크 카드. next/og ImageResponse(Satori)로 그린다.
- * 글꼴: 저장소에 둔 Noto Sans KR·SC·TC 부분집합(lib/me/fonts, WOFF, SIL OFL 1.1 — 만든 방법은 scripts/fonts/subset-share-card-fonts.py).
+ * 글꼴: 저장소에 둔 Noto Sans KR·SC·TC 부분집합(assets/fonts, WOFF, SIL OFL 1.1 — 만든 방법은 scripts/fonts/subset-share-card-fonts.py).
+ * lib 밖에 두는 것은 글꼴을 쓰지 않는 워커 이미지·Oracle 릴리스(lib 를 통째로 복사한다)를 키우지 않으려는 것이다.
  * 한글 완성형 전부·간체 GB2312·번체 Big5 상용자·라틴·기호가 들어 있다. 처음 그릴 때 한 번 읽어 프로세스에 둔다 — 밖으로 나가지 않는다.
  * 카드 언어의 글꼴을 앞에 두고 나머지 둘을 뒤에 둬, 한 카드에 섞인 한글·한자도 그린다. 부분집합에 없는 드문 글자는 빠질 수 있다.
  */
@@ -16,7 +17,7 @@ const INK = { card: "#10141c", fg: "#f0f3fa", fg2: "#98a2b8", chip: "rgba(255, 2
 type Script = "kr" | "sc" | "tc";
 const SCRIPTS: Record<Locale, Script> = { ko: "kr", en: "kr", "zh-Hans": "sc", "zh-Hant": "tc" };
 /** standalone 빌드에도 실리게 next.config 의 outputFileTracingIncludes 가 이 폴더를 넣는다 */
-const FONT_DIR = path.join(process.cwd(), "lib/me/fonts");
+const FONT_DIR = path.join(process.cwd(), "assets/fonts");
 const files = new Map<string, Promise<ArrayBuffer>>();
 
 function fontFile(script: Script, weight: 400 | 700): Promise<ArrayBuffer> {
