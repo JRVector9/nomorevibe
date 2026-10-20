@@ -30,7 +30,7 @@ export async function consumeGithubAuthFlow(input: { state: string; browserNonce
   return { id: flow.id, actorUserId: flow.actorUserId, productId: flow.productId, pkceVerifier: decryptGithubSecret(flow.encryptedPkceVerifier), returnTo: flow.returnTo, expiresAt: flow.expiresAt };
 }
 
-export async function saveGithubUserConnection(input: { actorUserId: number | null; githubUser: { id: number; login: string }; tokens: GithubUserTokens; previousToken?: string }) {
+export async function saveGithubUserConnection(input: { actorUserId: number | null; githubUser: { id: number; login: string }; tokens: GithubUserTokens; previousToken?: string; deviceLabel?: string | null }) {
   return onPrimary(() => db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`public-github:${input.githubUser.id}`}, 0))`);
     const subject = String(input.githubUser.id);
@@ -39,17 +39,22 @@ export async function saveGithubUserConnection(input: { actorUserId: number | nu
     const userId = input.actorUserId ?? identity?.userId;
     let user;
     if (userId !== undefined) {
-      [user] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
-      if (!user) throw new PublicAuthError(401, "login_required");
+      const [found] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName, deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
+      // 탈퇴한 계정에는 세션·연결을 다시 만들지 않는다
+      if (!found || found.deletedAt) throw new PublicAuthError(401, "login_required");
+      user = { id: found.id, displayName: found.displayName };
     } else {
       [user] = await tx.insert(publicUsers).values({ displayName: `참여자-${randomBytes(4).toString("hex")}` }).returning({ id: publicUsers.id, displayName: publicUsers.displayName });
     }
-    if (!identity) await tx.insert(publicIdentities).values({ userId: user.id, provider: "github", subject });
+    // 표시용 login 은 로그인할 때마다 고친다(GitHub 에서 이름을 바꿀 수 있다)
+    if (identity) await tx.update(publicIdentities).set({ providerLogin: input.githubUser.login, lastUsedAt: sql`now()` }).where(eq(publicIdentities.id, identity.id));
+    else await tx.insert(publicIdentities).values({ userId: user.id, provider: "github", subject, providerLogin: input.githubUser.login, lastUsedAt: sql`now()` });
     const values = { githubUserId: input.githubUser.id, githubLogin: input.githubUser.login, state: "active" as const, encryptedAccessToken: encryptGithubSecret(input.tokens.accessToken), encryptedRefreshToken: encryptGithubSecret(input.tokens.refreshToken), accessExpiresAt: input.tokens.accessExpiresAt, refreshExpiresAt: input.tokens.refreshExpiresAt, refreshLeaseOwner: null, refreshLeaseExpiresAt: null, updatedAt: sql`now()` };
     await tx.insert(githubUserConnections).values({ userId: user.id, ...values }).onConflictDoUpdate({ target: githubUserConnections.userId, set: { ...values, revision: sql`${githubUserConnections.revision} + 1` } });
     const session = newPublicSession();
     if (isOpaqueToken(input.previousToken)) await tx.update(publicSessions).set({ revokedAt: sql`now()` }).where(eq(publicSessions.tokenHash, hashSessionToken(input.previousToken)));
-    await tx.insert(publicSessions).values({ userId: user.id, tokenHash: session.tokenHash, createdAt: session.createdAt, expiresAt: session.expiresAt });
+    await tx.insert(publicSessions).values({ userId: user.id, tokenHash: session.tokenHash, createdAt: session.createdAt, expiresAt: session.expiresAt,
+      provider: "github", deviceLabel: input.deviceLabel ?? null, lastSeenAt: session.createdAt });
     return { user, token: session.token, csrfToken: csrfForToken(session.token, "session") };
   }));
 }

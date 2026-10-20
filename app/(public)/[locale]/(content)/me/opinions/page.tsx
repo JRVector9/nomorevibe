@@ -1,9 +1,20 @@
-import { MePlaceholder } from "@/components/me/MePlaceholder";
+import "@/components/me/opinions.css";
+import { MeLoginRequired } from "@/components/me/MeLoginRequired";
+import { OpinionList } from "@/components/me/OpinionList";
+import { I18nProvider } from "@/lib/i18n/context";
+import { getDictionary } from "@/lib/i18n/dictionary";
+import { getRequestLocale } from "@/lib/i18n/server";
 import { meMetadata } from "@/lib/me/metadata";
+import { listMyOpinions } from "@/lib/me/opinions";
+import { getMeSession } from "@/lib/me/session";
 
 export const dynamic = "force-dynamic";
 export const generateMetadata = () => meMetadata("opinions");
 
-export default function MeOpinionsPage() {
-  return <MePlaceholder />;
+/** 의견 탭(시안 3.3) — 로그인하고 쓴 긴 글의 공개·검토 중·숨김 상태, 메이커 답장, GitHub 이슈 전달. 종류·전달 문구는 상세(detail)와 같다 */
+export default async function MeOpinionsPage() {
+  const [locale, session] = await Promise.all([getRequestLocale(), getMeSession()]);
+  if (!session) return <MeLoginRequired tab="opinions" />;
+  const [detail, opinions] = await Promise.all([getDictionary(locale, "detail"), listMyOpinions(session.user.id)]);
+  return <I18nProvider locale={locale} dictionaries={{ detail }}><OpinionList opinions={opinions} /></I18nProvider>;
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPublicSession, publicAuthErrorResponse, PublicAuthError, PUBLIC_PRIVATE_HEADERS, requestCookie } from "@/lib/domain/accounts/request-auth";
+import { deviceLabel } from "@/lib/domain/accounts/device";
 import { PUBLIC_SESSION_COOKIE, publicSessionCookieOptions } from "@/lib/domain/accounts/session";
 import { finishGithubAuthorization, GITHUB_NONCE_COOKIE, githubNonceCookieOptions, requireGithubStarEnabled } from "@/lib/domain/github-user/authorization";
 import { githubStarAppConfig } from "@/lib/domain/github-user/config";
@@ -15,7 +16,7 @@ export const GET = webWriteRoute(async (request: Request) => {
     const url = new URL(request.url);
     if (url.searchParams.getAll("state").length !== 1 || url.searchParams.getAll("code").length > 1) throw new PublicAuthError(400, "invalid_github_flow");
     const session = await getPublicSession(request);
-    const input = { state: url.searchParams.get("state") ?? "", code: url.searchParams.get("code") ?? "", browserNonce: requestCookie(request, GITHUB_NONCE_COOKIE) ?? "", actorUserId: session?.user.id ?? null, previousToken: requestCookie(request, PUBLIC_SESSION_COOKIE) };
+    const input = { state: url.searchParams.get("state") ?? "", code: url.searchParams.get("code") ?? "", browserNonce: requestCookie(request, GITHUB_NONCE_COOKIE) ?? "", actorUserId: session?.user.id ?? null, previousToken: requestCookie(request, PUBLIC_SESSION_COOKIE), deviceLabel: deviceLabel(request.headers.get("user-agent")) };
     if (url.searchParams.has("error")) {
       const flow = await consumeGithubAuthFlow({ ...input, purpose: "star" });
       consumedReturnTo = flow.returnTo;

@@ -40,4 +40,18 @@ export const common = {
   "error.reference": globalError.reference,
   "navigation.talk": "SNS 화제",
   "navigation.talkShort": "화제",
+  // 마이페이지 머리 메뉴·아래 탭(MY1)
+  "navigation.my": "마이",
+  "account.menu": "{name} 계정 메뉴",
+  "account.mypage": "마이페이지",
+  "account.projects": "내 프로젝트",
+  "account.saved": "저장",
+  "account.tried": "써봤어요",
+  "account.opinions": "의견",
+  "account.alerts": "알림",
+  "account.settings": "계정",
+  "account.viaGithub": "GitHub @{login}",
+  "account.viaGithubPlain": "GitHub",
+  "account.viaEmail": "이메일",
+  "account.unread": "안 읽은 알림 {count}개",
 } as const;

@@ -1,0 +1,27 @@
+/* 의견 탭(시안 3.3) — 거르기 알약, 글마다 제품·종류·상태·원문·메이커 답장. 부품은 me.css */
+.me-opinions { display: flex; flex-direction: column; gap: 16px; }
+.me-ptool { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.me-olist { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-card); }
+.me-orow { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px 14px; padding: 16px 18px; border-bottom: 1px solid var(--border); align-items: center; }
+.me-orow:last-child { border-bottom: 0; }
+.me-mi { width: 44px; height: 44px; border-radius: 10px; font-size: 19px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: var(--text); flex: none; }
+.me-orow-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.me-orow-n { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.me-orow-n:hover { color: var(--accent-ink); }
+.me-orow-b { grid-column: 2 / -1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.me-quote-t { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.me-quote { font-size: 14px; line-height: 1.55; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.me-quote-hid { color: var(--text-2); font-style: italic; }
+.me-meta { font-size: 13px; color: var(--text-2); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-variant-numeric: tabular-nums; }
+.me-meta a { text-decoration: underline; text-underline-offset: 2px; }
+.me-reply { border-left: 2px solid var(--accent); background: var(--bg-soft); border-radius: 0 10px 10px 0; padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.me-reply-h { font-size: 13px; color: var(--text-2); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.me-mk { color: var(--accent-ink); font-weight: 600; }
+.me-filtered-empty { padding: 24px 0; text-align: center; }
+@media (max-width: 640px) {
+  .me-ptool .me-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+  .me-ptool .me-chips::-webkit-scrollbar { display: none; }
+  .me-orow { grid-template-columns: minmax(0, 1fr) auto; padding: 14px; }
+  .me-mi { display: none; }
+  .me-orow-b { grid-column: 1 / -1; }
+}

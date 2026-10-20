@@ -21,7 +21,7 @@ export const PUBLIC_PAGE_NAMESPACES = {
   '/me': ['me', 'labels'],
   '/me/projects': ['me', 'labels'],
   '/me/tried': ['me', 'labels'],
-  '/me/opinions': ['me', 'labels'],
+  '/me/opinions': ['me', 'labels', 'detail'],
   '/me/following': ['me', 'labels'],
   '/me/alerts': ['me', 'labels'],
   '/me/account': ['me', 'labels'],

@@ -43,4 +43,18 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "社群熱議",
   "navigation.talkShort": "熱議",
+  // 마이페이지 머리 메뉴·아래 탭(MY1)
+  "navigation.my": "我的",
+  "account.menu": "{name} 的帳號選單",
+  "account.mypage": "我的頁面",
+  "account.projects": "我的專案",
+  "account.saved": "收藏",
+  "account.tried": "試用過",
+  "account.opinions": "意見",
+  "account.alerts": "通知",
+  "account.settings": "帳號",
+  "account.viaGithub": "GitHub @{login}",
+  "account.viaGithubPlain": "GitHub",
+  "account.viaEmail": "電子郵件",
+  "account.unread": "{count} 則未讀通知",
 });

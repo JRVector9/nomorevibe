@@ -64,7 +64,7 @@ export function safePublicReturnUrl(value: unknown, fallback: string = "/"): str
     if (decoded.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(decoded)) return fallback;
     const logical = stripLocale(decoded);
     if (isLocaleExcludedPath(logical)) return fallback;
-    const publicRoute = /^(?:\/|\/(?:rising|popular|login|launch|policy)\/?|\/c\/[^/]+\/?|\/p\/[^/]+(?:\/github)?\/?|\/rankings\/[^/]+\/?|\/feedback\/[^/]+\/?)$/;
+    const publicRoute = /^(?:\/|\/(?:rising|popular|login|launch|policy)\/?|\/c\/[^/]+\/?|\/p\/[^/]+(?:\/github)?\/?|\/rankings\/[^/]+\/?|\/feedback\/[^/]+\/?|\/me(?:\/(?:projects|tried|opinions|following|alerts|account))?\/?)$/;
     if (!publicRoute.test(logical)) return fallback;
     const locale = pathLocale(parsed.pathname) ?? DEFAULT_LOCALE;
     return localePath(locale, `${parsed.pathname}${suffix}`);

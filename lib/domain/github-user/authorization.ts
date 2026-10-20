@@ -32,7 +32,7 @@ export async function startGithubAuthorization(input: { actorUserId: number | nu
   return { authorizeUrl: githubAuthorizeUrl({ state: flow.state, challenge: flow.codeChallenge }), browserNonce: flow.browserNonce };
 }
 
-export async function finishGithubAuthorization(input: { state: string; code: string; browserNonce: string; actorUserId: number | null; previousToken?: string }, onConsumed?: (returnTo: string) => void) {
+export async function finishGithubAuthorization(input: { state: string; code: string; browserNonce: string; actorUserId: number | null; previousToken?: string; deviceLabel?: string | null }, onConsumed?: (returnTo: string) => void) {
   requireGithubStarEnabled();
   const flow = await consumeGithubAuthFlow({ state: input.state, browserNonce: input.browserNonce, actorUserId: input.actorUserId, purpose: "star" });
   // Only a validated, one-time flow can supply navigation context on later errors.
@@ -42,6 +42,6 @@ export async function finishGithubAuthorization(input: { state: string; code: st
   if (exchange.outcome !== "confirmed_success") throw new PublicAuthError(400, "github_authorization_failed");
   const profile = await githubRequest<{ id?: unknown; login?: unknown }>({ path: "/user", token: exchange.tokens.accessToken });
   if (profile.outcome !== "confirmed_success" || !profile.data || !isGithubNumericId(profile.data.id) || typeof profile.data.login !== "string" || !/^[A-Za-z0-9-]{1,100}$/.test(profile.data.login)) throw new PublicAuthError(400, "github_identity_unavailable");
-  const login = await saveGithubUserConnection({ actorUserId: flow.actorUserId, githubUser: { id: profile.data.id, login: profile.data.login }, tokens: exchange.tokens, previousToken: input.previousToken });
+  const login = await saveGithubUserConnection({ actorUserId: flow.actorUserId, githubUser: { id: profile.data.id, login: profile.data.login }, tokens: exchange.tokens, previousToken: input.previousToken, deviceLabel: input.deviceLabel });
   return { ...login, returnTo: flow.returnTo };
 }

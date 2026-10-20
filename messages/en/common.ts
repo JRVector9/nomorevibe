@@ -43,4 +43,18 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "error.reference": globalError.reference,
   "navigation.talk": "Social buzz",
   "navigation.talkShort": "Buzz",
+  // 마이페이지 머리 메뉴·아래 탭(MY1)
+  "navigation.my": "Me",
+  "account.menu": "Account menu for {name}",
+  "account.mypage": "My page",
+  "account.projects": "My projects",
+  "account.saved": "Saved",
+  "account.tried": "Tried",
+  "account.opinions": "Opinions",
+  "account.alerts": "Alerts",
+  "account.settings": "Account",
+  "account.viaGithub": "GitHub @{login}",
+  "account.viaGithubPlain": "GitHub",
+  "account.viaEmail": "Email",
+  "account.unread": "{count} unread alerts",
 });

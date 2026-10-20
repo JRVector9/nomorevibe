@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { Icon } from "@/components/home/icons";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
@@ -17,6 +17,16 @@ function TrophyIcon() {
   );
 }
 
+/** '마이' 탭 아이콘 — 사람(마이페이지 시안 Q2) */
+function UserIcon() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="8.5" r="3.8" />
+      <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+    </svg>
+  );
+}
+
 /** '화제' 탭 아이콘 — 말풍선 */
 function TalkIcon() {
   return (
@@ -28,19 +38,15 @@ function TalkIcon() {
 }
 
 /**
- * 좁은 화면의 아래 탭 — 발견·검색·인기·저장(UX-26). SNS 화제를 켜면 발견 다음에 '화제'(C안).
+ * 좁은 화면의 아래 탭 — 발견·검색·인기·마이(UX-26, 마이페이지 시안 Q2: '저장' 자리를 '마이'로). SNS 화제를 켜면 발견 다음에 '화제'(C안).
+ * 마이는 로그인 전에도 이 브라우저 저장 목록(/me 저장 탭)을 연다. 홈의 ?saved=1 거르기는 그대로다. 점(data-me-dot)은 안 읽은 알림 자리(MY4).
  * '공개'는 뺐다 — 헤더 첫 줄의 '프로젝트 공개' 버튼이 늘 보인다. 검색은 헤더의 검색창으로 초점을 옮긴다(접혀 있으면 펴진다).
  */
 export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
   const pathname = stripLocale(usePathname());
-  const router = useRouter();
   const locale = useLocale();
   const t = useTranslations("common");
   if (pathname.startsWith("/admin")) return null;
-
-  function openSaved() {
-    router.push(localePath(locale, "/?saved=1#projects"));
-  }
 
   function focusSearch() {
     const input = document.getElementById("search");
@@ -53,6 +59,7 @@ export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
   const discover = pathname === "/" || pathname.startsWith("/c/");
   const popular = pathname.startsWith("/popular");
   const talk = pathname.startsWith("/talk");
+  const me = pathname === "/me" || pathname.startsWith("/me/");
 
   return (
     <nav className="mobile-bottom" aria-label={t("navigation.mobile")}>
@@ -74,10 +81,10 @@ export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
         <TrophyIcon />
         {t("navigation.popular")}
       </Link>
-      <button type="button" onClick={openSaved}>
-        <Icon name="bookmark" />
-        {t("navigation.savedShort")}
-      </button>
+      <Link prefetch={false} href={localePath(locale, "/me")} className={me ? "active" : undefined}>
+        <span className="me-nav-icon"><UserIcon /><span className="dot" data-me-dot hidden /></span>
+        {t("navigation.my")}
+      </Link>
     </nav>
   );
 }
