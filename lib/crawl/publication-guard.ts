@@ -51,7 +51,9 @@ export async function recordPublicationFailure(candidate: CrawlCandidate, failur
     if (!current || current.state !== "approved" || !isDeepStrictEqual(candidate,current)) return false;
     const now = new Date();
     await tx.update(crawlCandidates).set({
-      state:failure.state,reason:failure.reason,judgedAt:now,updatedAt:now,
+      state:failure.state,reason:failure.reason,
+      judgedAt: candidate.decidedBy === 'deepseek' && failure.reason === 'no_description' ? current.judgedAt : now,
+      updatedAt:now,
       // Retain the original reviewer and signals; an unsuccessful publish is not a new review.
       // 멈춘 이유만 얹는다 — 없으면 "보류 207건"이 왜 보류인지 기록으로 알 수 없었다(2026-09-19)
       ...(failure.stoppedAt || failure.existing || failure.signals ? { signals: { ...(current.signals ?? {}), ...(failure.signals ?? {}),
@@ -98,7 +100,7 @@ export async function guardPublication(tx: ProductTransaction, input: {
       || now-scan.completedAt.getTime() < 0 || now-scan.completedAt.getTime() >= 24*3600_000) throw new PublicationStateChangedError();
   }
   if (input.lease) await assertReviewApproval(tx, { candidate, document, settings: input.settings, lease: input.lease });
-  else if (input.settings.reviewMode === "enforce") throw new ReviewApprovalChangedError();
+  else if (input.settings.reviewMode === "enforce" || candidate.decidedBy === 'deepseek' || candidate.signals?.delegatedReviewAttemptId !== undefined) throw new ReviewApprovalChangedError();
   await tx.update(crawlCandidates).set({state:"published",publishedSlug:input.slug,updatedAt:new Date()})
     .where(eq(crawlCandidates.id,candidate.id));
   if (input.lease) await assertJobLeaseAtWallTime(tx, input.lease);

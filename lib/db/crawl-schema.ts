@@ -212,7 +212,7 @@ export type CrawlCandidate = typeof crawlCandidates.$inferSelect;
 export const crawlReviewAttempts = pgTable("crawl_review_attempts", {
   id: serial("id").primaryKey(),
   candidateId: integer("candidate_id").notNull().references(() => crawlCandidates.id, { onDelete: "cascade" }),
-  kind: varchar("kind", { length: 24 }).$type<"automatic" | "admin_override" | "evidence_refresh">().notNull().default("automatic"),
+  kind: varchar("kind", { length: 24 }).$type<"automatic" | "admin_override" | "evidence_refresh" | "delegated">().notNull().default("automatic"),
   state: varchar("state", { length: 20 }).$type<"running" | "succeeded" | "failed" | "superseded">().notNull(),
   inputHash: varchar("input_hash", { length: 64 }).notNull(),
   policyHash: varchar("policy_hash", { length: 64 }).notNull(),

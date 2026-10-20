@@ -110,6 +110,17 @@
 - **남은 확인**: 운영 관리자 화면 실물 확인(관리자 로그인 만료 — 사용자 로그인 필요). X 상태 보고는 `X_STATUS_REPORT_SECRET`·Cloudflare 설정 전까지 꺼짐(`docs/operations/2026-10-18-x-status-report-runbook.md`). 선택 PR10(근거 단계를 조치에 넣기)은 하지 않음. v9-storage Tailscale 키가 10-19 만료 — 사용자가 만료 끄기 필요.
 - 설계 시안(코드 변경 없음, 결정 대기): 프로젝트 목표 대비 부족한 점(D1–D9), 로그인(D1 GitHub OAuth 앱 등록은 사용자 몫, D11 캐시·D12 개인정보 문의처·D13 만 14세 미만), 마이페이지(`/me` 6탭, 폰 아래 탭 '저장'→'마이', 공개 프로필에서 저장·평가 숨김 등 Q1–Q7). 시안은 공개 저장소에 넣지 않았다.
 
+### 2026-10-20 SNS 화제 C안·X 수집 연결 (사용자 지시)
+- 기획 [SNS 화제·홍보 설계](https://claude.ai/artifact/2jZK95DBGdShdFmpyWiZSi)의 화면 시안 3안 중 **C안(비중 높음)** 을 사용자가 골랐다. 공개 화면은 `SNS_TALK_PUBLIC_ENABLED` 로 꺼 둔 채 배포했다(관리자는 미리보기 가능).
+- **[#566](https://github.com/JRVector9/nomorevibe/pull/566) (main dd3cfec0, 13:53 KST 병합)**: `social_posts`·관측·화제 결정 표(migration **0103**, 직접 5432 적용 — journal 104줄)와 `hn-talk` 잡(crawler, 30분, Algolia 최근 72시간·10점 이상·사라진 글 내림·90일 보관). 첫 공통 8앱 `run` 이 crawler 관문에서 멈췄다(`crawler_monitor_gate_timeout` — scheduler 가 새 잡 일정을 아직 만들지 않아 `unknown_schedule`). scheduler 를 먼저 배포하고 워커 6앱을 스냅샷에서 한 앱씩 되돌린 뒤 8앱 `run` 을 다시 해 성공. **새 잡을 넣는 릴리스는 scheduler 를 먼저 배포한다.**
+- **[#567](https://github.com/JRVector9/nomorevibe/pull/567) (main 36e718aa, 14:27 KST)**: 읽기 모델(`lib/social/talk.ts`)·`/talk`·홈 화제 띠·상세 화제 기록·관리자 `/admin/talk`. scheduler(14:46 done) → 공통 8앱 `run` 성공. text·maintenance·connect-agent 는 33964cb5 그대로(소셜 코드 없음).
+- **[#568](https://github.com/JRVector9/nomorevibe/pull/568) (main eef28fd2, 15:38 KST)**: osaka-smoke X 수집기를 main 으로 가져오고(전에는 `codex/x-osaka-smoke-20261015` 에만 있었다), 게시물 보고 `POST /api/ops/x-posts`(x-status 와 같은 비밀·다른 서명 머리)로 `social_posts`(source=x)에 넣는다. X 글은 마지막 확인 뒤 24시간만 공개 화면에. scheduler(15:56 done) → 공통 8앱 `run`(역할마다 ready·ok, 공개 health ok, HTML purge 는 토큰 없어 건너뜀).
+  - 16:06 KST `X_STATUS_REPORT_SECRET` 을 웹 두 앱·osaka env 에 같은 값으로 넣고(값 출력 없음) 웹 mini→M3 재배포. 서명 없는 POST 8회 모두 두 주소 401(앱 JSON 응답 — Cloudflare 챌린지 없음).
+  - osaka: 15:24 KST env 백업(`/etc/nomorevibe-x.env.bak-20261020T062402Z`) 뒤 `X_COLLECTION_LIVE=1`·`X_USE_CASE_APPROVED=1`(사용자 지시 "X 수집도 오라클에서 실제로 켜줘"). release `f419c3aed5aaf5f2` 설치.
+  - **16:08 KST 첫 실제 수집(수동 1회)**: completed·요청1·예약10·후보10, 게시물 보고 200·하루 보고 200. DB x 10건·관측 10줄, `x-status` live·reads 10/10·error null. 10건 모두 작성 70분 안·점수 0~2 → 화제 자격(X 50점) 0건, 제품 매칭 1건.
+- **[#569](https://github.com/JRVector9/nomorevibe/pull/569) (main a2281746, 16:24 KST)**: 수집기 검색을 `sort_order=relevancy` 로. 수집기 번들만 바뀌어 osaka release `3d25790786540aad` 만 설치(웹·워커 재배포 없음, main 의 공통 8앱·scheduler 는 eef28fd2). 첫 관련도순 실행은 10-21 09:10 KST.
+- 배포 뒤 상태: 공통 8앱·scheduler eef28fd2, 공개 health ok, `/talk` 404(꺼짐), hn-talk 30분마다 정상(HN 20건). 남은 확인은 `PENDING.md` "SNS 화제·X 수집".
+
 ### 최종 상태 (2026-10-17 21:25 KST)
 - **#533 병합 → main 553a8e52.** 파이프라인 개편 개발 전부가 main에 있다: 스택 #467–#488, 통합 #527(#490–#526), #528–#531, 다른 세션의 #532, 최종 리뷰 수정·LAN fallback #533. migration 0000–0102.
 - 열린 PR: nomorevibe #292·#208(파이프라인 무관), abcLLM #1–#4(병합=배포, 승인 대기).
