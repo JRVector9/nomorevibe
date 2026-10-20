@@ -14,7 +14,7 @@ import type { OperationJob } from './OperationsCenter';
  * 카탈로그에 없는 작업이 생겨도 빠지지 않도록 나머지는 뒤에 붙인다.
  */
 const PIPELINE_ORDER = [
-  'crawl-seed', 'hn-show-seed', 'crawl-fetch', 'agent-evidence-refresh',
+  'crawl-seed', 'hn-show-seed', 'hn-talk', 'crawl-fetch', 'agent-evidence-refresh',
   'crawl-judge', 'crawl-agent-review', 'second-review', 'reason-translate', 'crawl-publish',
   'product-thumbnail-refresh', 'uptime-ping', 'product-evidence-refresh', 'click-rollup', 'ranking-refresh', 'news-refresh',
 ];
@@ -23,11 +23,13 @@ const PIPELINE_ORDER = [
 const FLOW: Record<string, { reads: string; writes: string }> = {
   'crawl-seed': { reads: 'GitHub 검색', writes: '프론티어' },
   'hn-show-seed': { reads: 'Show HN', writes: '프론티어' },
+  'hn-talk': { reads: 'Hacker News 검색', writes: 'SNS 화제 글' },
   'crawl-fetch': { reads: '프론티어', writes: '원본 · 후보(new)' },
   'agent-evidence-refresh': { reads: '원본', writes: '개발 AI 근거' },
   'crawl-judge': { reads: '후보(new)', writes: '승인 · 보류 · 거부' },
   'crawl-agent-review': { reads: '보류', writes: 'AI 심사 기록' },
   'second-review': { reads: 'AI 판단 · 공개분 표본', writes: '2차 판단' },
+  'human-deepseek-review': { reads: '사람 검토 대기 · 원본 근거', writes: 'DeepSeek 위임 판단' },
   'product-audit': { reads: '진행 중인 감사 · 공개 제품', writes: '내릴 후보' },
   'reason-translate': { reads: '영어 심사 사유', writes: '한국어 번역' },
   'crawl-publish': { reads: '승인', writes: '카테고리 · 공개 제품' },

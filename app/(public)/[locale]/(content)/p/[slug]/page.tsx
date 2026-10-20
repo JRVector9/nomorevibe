@@ -40,6 +40,9 @@ import { siteOrigin } from "@/lib/site";
 import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
 import { parseGithubRepository } from "@/lib/github/repositories";
 import { getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
+import { TalkBand } from "@/components/social/TalkBand";
+import { talkVisibility } from "@/lib/social/flags";
+import { productTalk, type ProductTalk } from "@/lib/social/talk";
 
 export const dynamic = "force-dynamic";
 
@@ -118,6 +121,11 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
   const risingTotal = detail.relatedTotal ?? null;
   const githubDeliveryAvailable = githubFeedbackDeliveryEnabled()
     && Boolean((await getProductGithubBinding(product.id).catch(() => null))?.enabled);
+  // SNS 화제 띠(C안) — 화면을 켰거나 관리자 미리보기일 때만 읽는다. 실패해도 상세는 그대로 연다
+  const talkView = await talkVisibility();
+  const talk: ProductTalk | null = talkView.visible
+    ? await productTalk(product.id, product.repoUrl).catch((error: unknown) => { logger.warn("detail.talk_unavailable", { slug, error }); return null; })
+    : null;
   // 날짜의 '올해'를 정하는 시각 — 업데이트 목록(클라이언트)도 서버가 읽은 이 값으로 그린다
   const now = new Date();
   // 구조화 데이터(SEO-06) — 우리가 가진 사실만, 화면의 경로 nav 와 같은 빵부스러기. 소개는 메타 description 과 같은 값
@@ -141,10 +149,12 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
         <span className="min-w-0 truncate text-fg">{product.name}</span>
       </nav>
 
-      <ProductHero product={product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} health={detail.health} languages={languages}
+      <ProductHero product={product} unclaimed={detail.unclaimed} risingRank={detail.risingRank} talkRank={talk?.qualifies ? talk.rank : null} health={detail.health} languages={languages}
         repositoryUrl={detail.repository?.facts?.repositoryUrl ?? null}
         personalGithubStar={githubStarEnabled() && !product.repoGone && product.repoUrl && parseGithubRepository(product.repoUrl)
           ? <GithubStarButton key={product.slug} slug={product.slug} stars={product.stars} /> : undefined} />
+
+      {talk && <TalkBand talk={talk} t={t} locale={locale} now={now} preview={talkView.preview} />}
 
       {/* 넓으면 2:1 두 열, 좁으면 오른쪽 열이 본문 아래로 */}
       <div className="flex flex-wrap items-start gap-x-12 gap-y-9 pt-7">
