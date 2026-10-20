@@ -110,6 +110,7 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "github-feedback-delivery": "메이커 동의를 받은 GitHub 피드백 전송 — 사용자 요청 처리",
   "email-outbox-send": "알림 메일 보내기 — 사용자 알림 설정 처리, 제품 흐름이 아니다",
   "email-weekly-digest": "주간 요약 메일 묶기 — 사용자 알림 설정 처리, 제품 흐름이 아니다",
+  "maker-recheck": "운영자 확인 재확인 — 계정과 저장소 주인 대조, 제품 흐름이 아니다",
 };
 
 export function stageForJob(job: string): PipelineStageDef | null {

@@ -38,6 +38,7 @@ import { refreshNews } from "@/lib/news/refresh";
 import { deliverGithubFeedback } from "@/lib/jobs/github/feedback-delivery";
 import { reconcileGithubIntegrations } from "@/lib/jobs/github/integration-reconcile";
 import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
+import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
 
 /**
  * 이름 → 작업 매핑.
@@ -89,6 +90,8 @@ export const JOBS: Record<string, AnyJob> = {
   /** 알림 메일 발송함을 비우고, 주간 요약을 줄 세운다(마이페이지 MY7) */
   "email-outbox-send": sendEmailOutbox,
   "email-weekly-digest": queueEmailDigests,
+  /** 운영자 확인(GitHub 저장소 주인)을 30일마다 다시 본다 — 주인이 바뀌면 푼다 */
+  "maker-recheck": recheckMakers,
   /** 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 */
   "reason-translate": translateReasons,
   /** 소개가 없어 멈춘 후보의 한 줄 소개를 짓는다 — 목록에는 지은 것이라고 밝히고 올린다 */
