@@ -55,9 +55,9 @@ describe("Next.js multi-instance configuration", () => {
     const personal = [{ type: "cookie", key: "nmv_admin" }, { type: "cookie", key: "nmv_user" },
       { type: "cookie", key: "nmv_login_nonce" }, { type: "query", key: "q" }];
 
-    // 네 언어의 공개 경로마다 HTML 하나·RSC 하나; private 경로는 마지막 no-store 규칙이 보호한다
-    expect(cdnRules).toHaveLength(64);
-    for (const source of ["/", "/en", "/zh-Hans", "/zh-Hant", "/en/p/:slug", "/c/:category", "/rising"]) {
+    // 네 언어의 공개 경로마다 HTML 하나·RSC 하나; private 경로는 마지막 no-store 규칙이 보호한다(/talk 4언어 8개 포함)
+    expect(cdnRules).toHaveLength(72);
+    for (const source of ["/", "/en", "/zh-Hans", "/zh-Hant", "/en/p/:slug", "/c/:category", "/rising", "/talk", "/en/talk"]) {
       expect(cdnRules.filter((rule) => rule.source === source)).toHaveLength(2);
     }
     for (const rule of cdnRules) {
