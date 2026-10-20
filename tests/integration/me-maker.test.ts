@@ -87,7 +87,7 @@ async function claim(session: Session, body: unknown, headers: Record<string, st
 }
 
 describe("POST /api/maker/claims — GitHub 저장소 주인 확인", () => {
-  it("개인 저장소 주인이면 owner 로 확인하고 수집 제품의 claimed_at 을 적는다(상태는 그대로, 추정 builder 는 비움)", async () => {
+  it("개인 저장소 주인이면 owner 로 확인한다 — 제품의 claimed_at·builder·상태는 그대로(도메인 검증의 수정 키 발급을 막지 않는다)", async () => {
     const session = await account();
     const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron");
     upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
@@ -99,8 +99,8 @@ describe("POST /api/maker/claims — GitHub 저장소 주인 확인", () => {
     expect(member).toMatchObject({ productId: tiny.id, userId: session.user.id, role: "owner", method: "github_repo_owner", githubUserId: GITHUB_ID, revokedAt: null });
     expect(member.recheckAt!.getTime() - Date.now()).toBeGreaterThan(29 * 86_400_000);
     const [stored] = await db.select().from(products).where(eq(products.id, tiny.id));
-    expect(stored.claimedAt).not.toBeNull();
-    expect(stored.builder).toBeNull();
+    expect(stored.claimedAt).toBeNull();
+    expect(stored.builder).toBe("Claude Code");
     expect(stored.status).toBe("seeded");
   });
 

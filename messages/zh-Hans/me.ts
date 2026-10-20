@@ -85,7 +85,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "account.exportCta": "下载",
   "account.busy": "处理中…",
   "account.delete": "删除账号",
-  "account.deleteHint": "登录方式、设备、收藏、关注和通知会立即删除，已公开的意见将以已注销用户的名义保留。",
+  "account.deleteHint": "登录方式、设备、收藏、试用评价、关注和通知会立即删除，只有已公开的意见和回复会以已注销用户的名义保留。",
   "account.deleteOpen": "删除账号…",
   "account.deleteWarn": "删除后无法恢复",
   "account.deleteDetail": "GitHub 星标权限、保存的令牌以及已验证项目的创作者资格也会一并删除。用同一 GitHub 或邮箱再次登录将创建新账号。",

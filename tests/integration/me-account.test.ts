@@ -353,6 +353,12 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     const alice = await seedAccount("alice", 101, "alice@example.com");
     const bob = await seedAccount("bob", 202, "bob@example.com");
     const bobBefore = await countFor(bob.owner.id);
+    // 공개되지 않은 의견(보류)과 거기 달린 답장, 내가 쓴 보류 답장은 남기지 않는다
+    const [held] = await db.insert(productFeedback).values({ productId: bob.tool.id, authorUserId: alice.owner.id, requestId: crypto.randomUUID(), requestHash: "2".repeat(64),
+      normalizedBodyHash: "2".repeat(64), kind: "bug", title: "연락처 적은 글", body: "010-0000-0000", serviceDisclosureConsent: true, reviewState: "held" }).returning();
+    await db.insert(makerReplies).values({ productId: bob.tool.id, targetType: "feedback", targetId: held.id, authorUserId: bob.owner.id, body: "보류 글 답장" });
+    const [heldReply] = await db.insert(makerReplies).values({ productId: bob.tool.id, targetType: "reaction", targetId: bob.anonymous.id, authorUserId: alice.owner.id,
+      body: "보류된 내 답장", reviewState: "held" }).returning();
 
     const response = await POST(call("/api/me/delete", alice.login, { method: "POST", body: { confirm: " alice " } }));
     expect(response.status).toBe(200);
@@ -364,14 +370,16 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     expect(stored.deletedAt).not.toBeNull();
     expect(await countFor(alice.owner.id)).toEqual({ identities: 0, sessions: 0, github: 0, flows: 0, stars: 0, saved: 0, follows: 0, notifications: 0, settings: 0, outbox: 0, makers: 0, reactions: 0 });
     expect(await db.select().from(emailLoginChallenges).where(eq(emailLoginChallenges.email, "alice@example.com"))).toHaveLength(0);
-    // 이 브라우저 열쇠가 있는 평가는 익명으로 남고, 계정에만 묶인 평가와 그 답장은 지운다
-    const [kept] = await db.select().from(productReactions).where(eq(productReactions.id, alice.anonymous.id));
-    expect(kept).toMatchObject({ userId: null, verdict: "good" });
+    // 써봤어요는 이 브라우저 열쇠가 있어도 모두 지운다(공용 PC 쿠키로 다시 읽히지 않게) — 그 답장도
+    expect(await db.select().from(productReactions).where(eq(productReactions.id, alice.anonymous.id))).toHaveLength(0);
     expect(await db.select().from(productReactions).where(eq(productReactions.id, alice.accountOnly.id))).toHaveLength(0);
     expect(await db.select().from(makerReplies).where(eq(makerReplies.targetId, alice.accountOnly.id))).toHaveLength(0);
     // 공개 의견·메이커 답장·저장소 연결 동의는 남고, 작성자는 익명으로 보인다
     expect(await getFeedback(alice.feedback.id)).toMatchObject({ authorUserId: alice.owner.id, authorDisplayName: "탈퇴한 사용자", body: "alice 본문" });
     expect(await db.select().from(makerReplies).where(eq(makerReplies.id, alice.reply.id))).toHaveLength(1);
+    expect(await db.select().from(productFeedback).where(eq(productFeedback.id, held.id))).toHaveLength(0);
+    expect(await db.select().from(makerReplies).where(eq(makerReplies.targetId, held.id))).toHaveLength(0);
+    expect(await db.select().from(makerReplies).where(eq(makerReplies.id, heldReply.id))).toHaveLength(0);
     expect(await db.select().from(githubProductBindings).where(eq(githubProductBindings.consentedByUserId, alice.owner.id))).toHaveLength(1);
 
     // 옛 쿠키는 어디서도 통하지 않는다

@@ -83,7 +83,7 @@ export const me = {
   "account.exportCta": "받기",
   "account.busy": "처리 중…",
   "account.delete": "계정 삭제",
-  "account.deleteHint": "로그인 수단·기기·저장·팔로·알림은 바로 지우고, 공개한 의견은 «탈퇴한 사용자» 이름으로 남아요.",
+  "account.deleteHint": "로그인 수단·기기·저장·써봤어요 평가·팔로·알림은 바로 지우고, 공개된 의견과 답장만 «탈퇴한 사용자» 이름으로 남아요.",
   "account.deleteOpen": "계정 삭제…",
   "account.deleteWarn": "삭제하면 되돌릴 수 없어요",
   "account.deleteDetail": "GitHub 스타 권한과 보관 중인 토큰, 확인한 프로젝트의 메이커 자격도 함께 지워요. 같은 GitHub·이메일로 다시 로그인하면 새 계정이 만들어져요.",

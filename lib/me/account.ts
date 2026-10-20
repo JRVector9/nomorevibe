@@ -156,7 +156,7 @@ export async function exportAccount(userId: number) {
 /**
  * 계정 삭제 — 한 트랜잭션. 사람 행은 남기고(댓글·답장 작성자 FK 에 ON DELETE 가 없다) 이름을 '탈퇴한 사용자'로 바꾼 뒤
  * 로그인 수단·세션·GitHub 연결·저장·팔로·알림·메일·메이커 확인을 지운다. 신원이 지워지므로 같은 GitHub·이메일로 다시 오면 새 계정이다.
- * 써봤어요는 이 브라우저 열쇠(visitor_hash)가 있으면 익명으로 남기고, 계정에만 묶였으면 지운다. 공개한 의견·메이커 답장은 남는다.
+ * 써봤어요와 공개되지 않은 의견·답장도 지운다. 공개한 의견·메이커 답장만 «탈퇴한 사용자» 이름으로 남는다.
  */
 export async function deleteAccount(userId: number, confirmation: unknown): Promise<void> {
   await onPrimary(async () => {
@@ -183,9 +183,14 @@ export async function deleteAccount(userId: number, confirmation: unknown): Prom
       await tx.delete(notifications).where(eq(notifications.userId, userId));
       await tx.delete(emailOutbox).where(eq(emailOutbox.userId, userId));
       await tx.delete(productMakerMembers).where(eq(productMakerMembers.userId, userId));
-      const removed = await tx.delete(productReactions).where(and(eq(productReactions.userId, userId), isNull(productReactions.visitorHash))).returning({ id: productReactions.id });
+      // 써봤어요는 모두 지운다 — 익명으로 남기면 같은 브라우저 쿠키(공용 PC)로 다시 읽히고 고쳐진다. 거기 달린 메이커 답장도 함께
+      const removed = await tx.delete(productReactions).where(eq(productReactions.userId, userId)).returning({ id: productReactions.id });
       if (removed.length) await tx.delete(makerReplies).where(and(eq(makerReplies.targetType, "reaction"), inArray(makerReplies.targetId, removed.map((row) => row.id))));
-      await tx.update(productReactions).set({ userId: null }).where(eq(productReactions.userId, userId));
+      // 공개되지 않은(보류·거절) 의견과 내 답장은 지운다 — 공개한 것만 «탈퇴한 사용자»로 남긴다. 의견의 GitHub 발송함은 FK cascade
+      const hidden = await tx.delete(productFeedback).where(and(eq(productFeedback.authorUserId, userId), ne(productFeedback.reviewState, "accepted")))
+        .returning({ id: productFeedback.id });
+      if (hidden.length) await tx.delete(makerReplies).where(and(eq(makerReplies.targetType, "feedback"), inArray(makerReplies.targetId, hidden.map((row) => row.id))));
+      await tx.delete(makerReplies).where(and(eq(makerReplies.authorUserId, userId), ne(makerReplies.reviewState, "accepted")));
       await tx.update(publicUsers).set({ displayName: DELETED_DISPLAY_NAME, displayNameChangedAt: null, deletedAt: sql`now()` }).where(eq(publicUsers.id, userId));
     });
   });

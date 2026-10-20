@@ -85,7 +85,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "account.exportCta": "下載",
   "account.busy": "處理中…",
   "account.delete": "刪除帳號",
-  "account.deleteHint": "登入方式、裝置、收藏、追蹤和通知會立即刪除，已公開的意見將以已註銷使用者的名義保留。",
+  "account.deleteHint": "登入方式、裝置、收藏、試用評價、追蹤和通知會立即刪除，只有已公開的意見和回覆會以已註銷使用者的名義保留。",
   "account.deleteOpen": "刪除帳號…",
   "account.deleteWarn": "刪除後無法復原",
   "account.deleteDetail": "GitHub 星號權限、保存的權杖以及已驗證專案的創作者資格也會一併刪除。以相同的 GitHub 或電子郵件再次登入將建立新帳號。",

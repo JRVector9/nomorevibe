@@ -6,7 +6,7 @@ import { turnOffEmail, type UnsubscribeKey } from "@/lib/me/notification-setting
 import { alertSettingsUrl, verifyUnsubscribeToken } from "@/lib/me/unsubscribe";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 import { logger } from "@/lib/observability/logger";
-import { clientIp, rateLimit } from "@/lib/rate-limit";
+import { rateLimit, trustedClientIp } from "@/lib/rate-limit";
 
 /**
  * 메일의 «이 알림 끄기»(MY7) — 로그인 없이 끈다. 서명한 열쇠(lib/me/unsubscribe.ts)가 곧 권한이라 Origin·CSRF 를 보지 않는다.
@@ -44,9 +44,14 @@ async function unsubscribe(request: Request): Promise<Response> {
   const t = meTranslator(locale);
   const unavailable = () => page(locale, 503, t("unsubscribe.invalidTitle"), t("unsubscribe.unavailable"));
   try {
-    if (!await onPrimary(() => rateLimit(`me-unsubscribe:${clientIp(request)}`, 60, 15 * 60_000))) return unavailable();
+    // 열쇠를 먼저 본다 — 맞는 열쇠는 계정마다 넉넉히, 틀린 열쇠만 IP 로 센다(IP 를 모르면 모두가 한 통을 나눠 써 남의 끄기를 막게 된다)
     const verified = verifyUnsubscribeToken(url.searchParams.get("token"));
-    if (!verified) return page(locale, 400, t("unsubscribe.invalidTitle"), t("unsubscribe.invalidBody"));
+    if (!verified) {
+      const ip = trustedClientIp(request);
+      if (ip && !await onPrimary(() => rateLimit(`me-unsubscribe:ip:${ip}`, 60, 15 * 60_000))) return unavailable();
+      return page(locale, 400, t("unsubscribe.invalidTitle"), t("unsubscribe.invalidBody"));
+    }
+    if (!await onPrimary(() => rateLimit(`me-unsubscribe:user:${verified.userId}`, 20, 15 * 60_000))) return unavailable();
     if (request.method === "GET") {
       // 같은 주소(열쇠 포함)로 POST 한다 — 상대 주소라 다른 곳으로 보내지 않는다
       const setting = settingLabel(locale, verified.key);

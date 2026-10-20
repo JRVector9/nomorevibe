@@ -85,7 +85,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "account.exportCta": "Download",
   "account.busy": "Working…",
   "account.delete": "Delete account",
-  "account.deleteHint": "Sign-in methods, devices, saves, follows and alerts are removed right away. Published opinions stay, shown as a deleted user.",
+  "account.deleteHint": "Sign-in methods, devices, saves, tried ratings, follows and alerts are removed right away. Only published opinions and replies stay, shown as a deleted user.",
   "account.deleteOpen": "Delete account…",
   "account.deleteWarn": "This can't be undone",
   "account.deleteDetail": "Your GitHub star permission, stored tokens and maker status on verified projects are removed too. Signing in again with the same GitHub or email creates a new account.",

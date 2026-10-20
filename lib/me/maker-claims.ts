@@ -137,7 +137,7 @@ async function recordOwnerMembership(product: ClaimProduct, userId: number, gith
     // 제품 쓰기와 같은 잠금 차례(repository.update · markVerified)
     await lockPipelineInputStages(tx);
     if (!(await lockProductGeneration(tx, product.id, product.slug))) return false;
-    const [current] = await tx.select({ status: products.status, repoUrl: products.repoUrl, source: products.source, claimedAt: products.claimedAt })
+    const [current] = await tx.select({ status: products.status, repoUrl: products.repoUrl })
       .from(products).where(eq(products.id, product.id));
     // GitHub 을 읽는 사이 저장소 주소가 바뀌었거나 내려갔으면 그 확인은 이 행의 것이 아니다
     if (!current || !(PUBLIC_STATUSES as readonly string[]).includes(current.status) || current.repoUrl !== product.repoUrl) return false;
@@ -146,14 +146,8 @@ async function recordOwnerMembership(product: ClaimProduct, userId: number, gith
       .onConflictDoUpdate({ target: [productMakerMembers.productId, productMakerMembers.userId], set: {
         role: "owner", githubUserId, method: "github_repo_owner", verifiedAt: sql`now()`, recheckAt, revokedAt: null, revokedReason: null,
       } });
-    if (current.source === "crawler" && current.claimedAt === null) {
-      /**
-       * 도메인 검증(verify.ts)과 같은 클레임 기록 — 상태(seeded)는 그대로 둔다(로그인 설계 D8). 우리가 추정한 "만든 AI"는 비운다:
-       * 주인이 생기면 화면이 그 값을 "메이커 신고"로 보이므로(view.ts builderClaimOf)
-       */
-      await tx.update(products).set({ claimedAt: new Date(), builder: null, updatedAt: new Date() })
-        .where(and(eq(products.id, product.id), isNull(products.claimedAt)));
-    }
+    // products.claimed_at·builder 는 건드리지 않는다 — 그 칸은 도메인 검증(verify.ts)이 수정 키를 주는 근거라,
+    // 여기서 채우면 진짜 도메인 주인의 클레임을 막고 자격이 풀려도 되돌릴 수 없다. 운영자 여부는 product_maker_members 로만 본다
     return true;
   }));
 }
