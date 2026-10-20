@@ -36,7 +36,7 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'uptime-ping')).toEqual({
     name: 'uptime-ping', role: 'maintenance', intervalMs: 60_000,
   });
-  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile']));
+  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile', 'email-outbox-send', 'email-weekly-digest']));
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
 });
 

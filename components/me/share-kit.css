@@ -1,0 +1,22 @@
+/* 배지·공유 카드(MY8) — app/globals.css 토큰만. 코드 칸은 칸 안에서만 가로로 밀린다(쪽 전체는 밀리지 않는다) */
+.me-share { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.me-share-h { font-size: 15px; font-weight: 600; color: var(--text); margin-top: 4px; }
+.me-share-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+.me-share-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 980px; background: var(--bg-soft); }
+.me-share-seg button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 980px; background: transparent; color: var(--text-2); font-size: 13px; white-space: nowrap; cursor: pointer; }
+.me-share-seg button[aria-pressed="true"] { background: var(--bg-card); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12), inset 0 0 0 1px var(--border-strong); }
+.me-share-badge { display: flex; align-items: center; min-height: 40px; }
+.me-share-badge img { height: 20px; width: auto; max-width: 100%; }
+.me-share-note { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.me-share-code { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.me-share-code-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-2); }
+.me-share-code pre, .me-share-link { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--bg-soft); color: var(--text); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; overflow-x: auto; white-space: pre; max-width: 100%; }
+.me-share-link { display: block; }
+.me-share-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 16px; border-radius: 980px; border: 1px solid var(--border-strong); background: var(--bg-card); color: var(--text); font-size: 13px; white-space: nowrap; cursor: pointer; text-decoration: none; }
+.me-share-btn:hover { background: var(--bg-hover); }
+.me-share-btn.pri { background: var(--text); color: var(--bg-card); border-color: transparent; font-weight: 500; }
+.me-share-btn:focus-visible, .me-share-seg button:focus-visible, .me-share-code pre:focus-visible, .me-share-card:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.me-share-card { display: block; width: 100%; max-width: 560px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-soft); aspect-ratio: 1200 / 630; }
+.me-share-card img { display: block; width: 100%; height: auto; }
+.me-share-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.me-share-status { font-size: 13px; color: var(--text-2); min-height: 1lh; }

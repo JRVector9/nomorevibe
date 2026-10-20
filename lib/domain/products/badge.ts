@@ -37,3 +37,72 @@ export function verifiedBadgeSvg(): string {
     `</svg>`,
   ].join("");
 }
+
+/**
+ * 공개 제품 누구나 다는 배지(SNS 설계 T12, M5) — «소개됨»과 «써본 사람 N»(3명부터). 사실만 말하고 품질 보증처럼 읽히는 말은 쓰지 않는다.
+ * 기본 글자는 위 배지처럼 영어(listed), ?lang=ko 면 한국어. 위 «verified» 배지는 그대로 둔다 — 주소·가로세로를 바꾸지 않는다.
+ * 오른쪽 칸 폭은 글자로 어림하고 textLength 로 맞춘다(글꼴이 달라도 칸을 넘지 않는다). 색은 SNS 설계 배지 색.
+ */
+export type BadgeLang = "en" | "ko";
+const BADGE_LEFT_COLOR = "#2b2f38";
+const LISTED_COLOR = "#c0323a";
+const TRIED_COLOR = "#1e7b3c";
+/** 써본 사람 숫자는 3명부터(피드백 설계의 «3명 미만이면 아직 적어요») */
+export const TRIED_BADGE_MIN = 3;
+
+export function escapeXml(value: string): string {
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+export function formatBadgeCount(value: number): string {
+  return new Intl.NumberFormat("en-US").format(Math.max(0, Math.floor(value)));
+}
+
+/** Verdana 11px 어림 폭 — 한글·한자는 한 칸, 숫자·대문자는 7px 남짓 */
+export function badgeTextWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    if (/[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af\u2e80-\u9fff\uf900-\ufaff]/.test(char)) width += 11;
+    else if (/[0-9A-Z#]/.test(char)) width += 7.2;
+    else if (char === " ") width += 3.9;
+    else if (/[il.,:;'|!·]/.test(char)) width += 3.4;
+    else if (/[mw]/.test(char)) width += 9.6;
+    else width += 6.3;
+  }
+  return Math.ceil(width);
+}
+
+function factBadge(message: string, color: string, title: string): string {
+  const textWidth = badgeTextWidth(message);
+  const right = textWidth + 14;
+  const width = LEFT_WIDTH + right;
+  const label = escapeXml(title);
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${HEIGHT}" role="img" aria-label="${label}">`,
+    `<title>${label}</title>`,
+    `<clipPath id="r"><rect width="${width}" height="${HEIGHT}" rx="3" fill="#fff"/></clipPath>`,
+    `<g clip-path="url(#r)">`,
+    `<rect width="${LEFT_WIDTH}" height="${HEIGHT}" fill="${BADGE_LEFT_COLOR}"/>`,
+    `<rect x="${LEFT_WIDTH}" width="${right}" height="${HEIGHT}" fill="${color}"/>`,
+    `</g>`,
+    `<g fill="#fff" text-anchor="middle" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11">`,
+    `<text x="${LEFT_WIDTH / 2}" y="14">${LEFT}</text>`,
+    `<text x="${LEFT_WIDTH + right / 2}" y="14" textLength="${textWidth}" lengthAdjust="spacingAndGlyphs">${escapeXml(message)}</text>`,
+    `</g>`,
+    `</svg>`,
+  ].join("");
+}
+
+export function listedBadgeSvg(name: string, lang: BadgeLang = "en"): string {
+  return lang === "ko"
+    ? factBadge("소개됨", LISTED_COLOR, `${name} — ${BRAND}에 소개됨`)
+    : factBadge("listed", LISTED_COLOR, `${name} is listed on ${BRAND}`);
+}
+
+export function triedBadgeSvg(name: string, count: number, lang: BadgeLang = "en"): string {
+  const value = formatBadgeCount(count);
+  return lang === "ko"
+    ? factBadge(`써본 사람 ${value}`, TRIED_COLOR, `${name} — ${BRAND} 써본 사람 ${value}`)
+    : factBadge(`tried by ${value}`, TRIED_COLOR, `${name}: tried by ${value} on ${BRAND}`);
+}

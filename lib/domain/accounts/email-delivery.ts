@@ -27,3 +27,35 @@ export async function sendLoginEmail(email: LoginEmail, fetcher: typeof fetch = 
     return "unknown";
   }
 }
+
+export type OutgoingEmail = {
+  to: string; subject: string; text: string; html: string;
+  /** 같은 열쇠로 24시간 안에 다시 보내면 Resend 가 한 번만 보낸다 — 발송함 행 id 를 쓴다 */
+  idempotencyKey: string;
+  headers?: Record<string, string>;
+};
+
+/**
+ * 알림 메일 — 로그인 코드와 같은 Resend 키·보내는 주소(LOGIN_EMAIL_*). 발송함(lib/me/email-outbox.ts)이 다시 보낼 수 있게
+ * 한도 초과(429)·같은 열쇠의 겹친 요청(409)은 rejected 가 아니라 unknown 으로 돌려준다.
+ */
+export async function sendEmail(email: OutgoingEmail, fetcher: typeof fetch = fetch): Promise<EmailDeliveryState> {
+  const key = process.env.LOGIN_EMAIL_API_KEY;
+  const from = process.env.LOGIN_EMAIL_FROM;
+  if (!key || !from) throw new Error("public_auth_unconfigured");
+  try {
+    const response = await fetcher("https://api.resend.com/emails", {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "Idempotency-Key": email.idempotencyKey },
+      body: JSON.stringify({ from, to: [email.to], subject: email.subject, text: email.text, html: email.html, ...(email.headers ? { headers: email.headers } : {}) }),
+    });
+    if (response.ok) return "accepted";
+    if (response.status === 429 || response.status === 409) return "unknown";
+    if (response.status >= 400 && response.status < 500) return "rejected";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}

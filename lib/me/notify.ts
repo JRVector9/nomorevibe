@@ -2,6 +2,7 @@ import "server-only";
 import { db, onPrimary } from "@/lib/db";
 import { notifications } from "@/lib/db/me-schema";
 import type { NotificationKind } from "./contract";
+import { enqueueNotificationEmail } from "./email-outbox";
 
 export type NotificationInput = {
   userId: number;
@@ -17,5 +18,7 @@ export async function notify(input: NotificationInput): Promise<boolean> {
   const rows = await onPrimary(() => db.insert(notifications).values({
     userId: input.userId, kind: input.kind, productId: input.productId ?? null, payload: input.payload ?? {}, dedupeKey: input.dedupeKey.slice(0, 120),
   }).onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] }).returning({ id: notifications.id }));
+  // 메일 설정이 «즉시»면 발송함에 한 통(MY7) — 실패해도 던지지 않는다
+  if (rows.length) await enqueueNotificationEmail({ ...input, id: rows[0].id });
   return rows.length > 0;
 }

@@ -5,6 +5,7 @@ import { publicIdentities, publicUsers } from "./public-user-schema";
 import type {
   EmailMode, FollowTarget, MakerMethod, MakerReplyTarget, MakerRole, NotificationKind, ReactionCommentState, ReactionSource, ReactionVerdict,
 } from "@/lib/me/contract";
+import type { Locale } from "@/lib/i18n/locales";
 
 /** 마이페이지 표 — drizzle/0108_mypage.sql 과 같은 모양. 값 목록은 lib/me/contract.ts */
 
@@ -100,12 +101,15 @@ export const notificationSettings = pgTable("notification_settings", {
   digestHour: smallint("digest_hour").notNull().default(9),
   /** 광고성 소식 동의 시각. null 이면 보내지 않는다 */
   newsOptInAt: timestamp("news_opt_in_at", { withTimezone: true }),
+  /** 메일 글의 언어 — 설정을 저장한 화면의 언어 */
+  locale: varchar("locale", { length: 8 }).$type<Locale>().notNull().default("ko"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("notification_settings_mode_check", sql`${table.makerReply} in ('instant', 'weekly', 'off') and ${table.followedProject} in ('instant', 'weekly', 'off')
     and ${table.followedMaker} in ('instant', 'weekly', 'off') and ${table.followedCategory} in ('weekly', 'off')
     and ${table.newListingMine} in ('instant', 'off')`),
   check("notification_settings_digest_check", sql`${table.digestWeekday} between 0 and 6 and ${table.digestHour} between 0 and 23`),
+  check("notification_settings_locale_check", sql`${table.locale} in ('ko', 'en', 'zh-Hans', 'zh-Hant')`),
 ]);
 
 export const emailOutbox = pgTable("email_outbox", {

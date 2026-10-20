@@ -110,6 +110,12 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 다 돌면 하루 쉬고, 판정 버전이 바뀌면 곧바로 다시 돈다. 저장된 원본만 읽으므로 한가한 maintenance 에 둔다.
    */
   { name: "product-spam-rescan", role: "maintenance", intervalMs: 5 * 60_000 },
+  /**
+   * 알림 메일(MY7) — 발송함을 1분마다 한 틱 20통까지 비우고, 주간 요약은 15분마다 고른 요일·시각(KST)이 지난 계정을 묶는다.
+   * 발신 설정(LOGIN_EMAIL_*)이 없으면 둘 다 네트워크를 부르지 않는다. 한가한 maintenance 에 둔다.
+   */
+  { name: "email-outbox-send", role: "maintenance", intervalMs: 60_000 },
+  { name: "email-weekly-digest", role: "maintenance", intervalMs: 15 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)

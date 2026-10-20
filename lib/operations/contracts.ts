@@ -24,6 +24,7 @@ export const classifyPayloadSchema = z.object({
 export const JOB_LABELS: Record<string, string> = {
   'github-integration-reconcile': 'GitHub 연동 재조회',
   'github-feedback-delivery': 'GitHub 피드백 전송',
+  'email-outbox-send': '알림 메일 보내기', 'email-weekly-digest': '주간 요약 메일 묶기',
   'human-deepseek-review': 'DeepSeek 사람 검토',
   heartbeat: '스케줄러 관측', 'crawl-seed': '수집 대상 탐색', 'hn-show-seed': 'Show HN 수집', 'hn-talk': 'HN 화제 수집', 'crawl-fetch': '프로젝트 원본 수집',
   'crawl-judge': '규칙 심사', 'crawl-agent-review': 'AI 후보 심사', 'second-review': '2차 심사', 'reason-translate': '사유 번역', 'crawl-publish': '제품 분류·발행',
