@@ -48,7 +48,7 @@ function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
  * 단추는 [제품 방문하기][GitHub][공유][저장] 넷이다(UX-31). 같은 사이트로 가는 도메인 글자 링크는 뺐다 —
  * 사이트 주소는 정보 카드의 '웹사이트' 줄이 보여 준다.
  */
-export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar }: {
+export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar, tryPanel }: {
   product: ProductDetailView["product"];
   unclaimed: boolean;
   risingRank: number | null;
@@ -60,6 +60,8 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
   /** GitHub 이 알려 준 저장소의 정식 주소(RepositoryFacts.repositoryUrl) — 운영 주체를 지금 주인으로 정한다(UX-15) */
   repositoryUrl?: string | null;
   personalGithubStar?: ReactNode;
+  /** 써보기 판(components/feedback/TryPanel) — 단추 바로 아래. 써봤어요가 켜졌을 때만 넘긴다 */
+  tryPanel?: ReactNode;
 }) {
   const t = useTranslations("detail");
   const locale = useLocale();
@@ -130,6 +132,7 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
                 : t("hero.goneDescription")}
             </p>
           )}
+          {tryPanel}
         </div>
       </div>
     </section>

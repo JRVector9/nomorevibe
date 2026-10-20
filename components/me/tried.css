@@ -1,0 +1,52 @@
+/* 써봤어요 탭(마이페이지 시안 3.2) — app/globals.css 토큰만 쓴다. 칸 규칙은 components/feedback/reaction.css */
+.tried { display: flex; flex-direction: column; gap: 14px; }
+.tried-status { font-size: 14px; color: var(--text-2); padding: 20px 0; }
+.tried-browser { font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.tried-browser a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+.tried-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.tried-filter {
+  min-height: 40px; padding: 0 14px; border-radius: 980px; border: 1px solid var(--border); background: var(--bg-card);
+  color: var(--text-2); font-size: 13px; cursor: pointer;
+}
+.tried-filter[aria-pressed="true"] { border-color: var(--text); color: var(--text); font-weight: 600; }
+.tried-filter-count { font-variant-numeric: tabular-nums; }
+.tried-list { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.tried-item { display: flex; flex-direction: column; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.tried-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tried-product { display: inline-flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto; min-height: 44px; }
+.tried-name { font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tried-product:hover .tried-name { text-decoration: underline; text-underline-offset: 3px; }
+.tried-verdict { flex: none; display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: 980px; font-size: 13px; font-weight: 600; border: 1px solid var(--border-strong); }
+.tried-verdict[data-verdict="good"] { color: var(--up); border-color: var(--up); background: color-mix(in srgb, var(--up) 10%, var(--bg-card)); }
+.tried-verdict[data-verdict="meh"] { color: var(--text); background: var(--bg-soft); }
+.tried-verdict[data-verdict="bad"] { color: var(--down); border-color: var(--down); background: color-mix(in srgb, var(--down) 9%, var(--bg-card)); }
+.tried-button { flex: none; min-height: 40px; padding: 0 12px; border-radius: 980px; font-size: 13px; color: var(--text); background: var(--bg-soft); cursor: pointer; }
+.tried-button:hover { background: var(--bg-hover); }
+.tried-tags { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 56px; }
+.tried-tags li { font-size: 13px; color: var(--text-2); padding: 3px 10px; border-radius: 980px; background: var(--bg-soft); }
+.tried-comment { font-size: 14px; line-height: 1.55; color: var(--text); padding-left: 56px; overflow-wrap: anywhere; }
+.tried-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--text-2); padding-left: 56px; }
+.tried-state { font-weight: 600; }
+.tried-state[data-state="accepted"] { color: var(--up); }
+.tried-state[data-state="held"] { color: var(--warn); }
+.tried-state[data-state="rejected"] { color: var(--down); }
+.tried-note { font-size: 13px; color: var(--text-2); padding-left: 56px; }
+.tried-reply { margin-left: 56px; padding: 10px 12px; border-radius: 10px; background: var(--bg-soft); display: flex; flex-direction: column; gap: 4px; }
+.tried-reply-by { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.tried-reply-body { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.tried-editor { display: flex; flex-direction: column; gap: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); }
+.tried-error { font-size: 13px; color: var(--down); }
+.tried-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.tried-remove { min-height: 40px; padding: 0 10px; margin-right: auto; font-size: 13px; color: var(--down); cursor: pointer; }
+.tried-save { min-height: 40px; padding: 0 18px; border-radius: 980px; background: var(--text); color: var(--bg-card); font-size: 14px; font-weight: 600; cursor: pointer; }
+.tried-save[aria-disabled="true"], .tried-remove[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.tried-undo { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 8px 8px 14px; border-radius: 12px; background: var(--bg-soft); font-size: 13px; color: var(--text); }
+.tried-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 44px 20px; border: 1px dashed var(--border-strong); border-radius: 18px; }
+.tried-empty-title { font-size: 16px; font-weight: 600; }
+.tried-empty-body { font-size: 14px; color: var(--text-2); max-width: 44ch; }
+.tried-cta { min-height: 42px; padding: 0 18px; border-radius: 980px; background: var(--text); color: var(--bg-card); font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; }
+@media (max-width: 640px) {
+  .tried-tags, .tried-comment, .tried-meta, .tried-note { padding-left: 0; }
+  .tried-reply { margin-left: 0; }
+  .tried-editor { padding: 12px; }
+}

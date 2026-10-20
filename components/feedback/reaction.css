@@ -1,0 +1,32 @@
+/* 써봤어요 칸 — 상세 써보기 판·시트와 마이페이지 고치기가 같이 쓴다. app/globals.css 토큰만 쓴다 */
+.reaction-verdicts { display: flex; flex-wrap: wrap; gap: 8px; }
+.reaction-verdict {
+  min-height: 40px; padding: 0 16px; border-radius: 980px; border: 1px solid var(--border-strong);
+  background: var(--bg-card); color: var(--text); font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer;
+}
+.reaction-verdict:hover { background: var(--bg-hover); }
+/* 평가 셋은 글자와 색을 같이 쓴다 — 색만으로 고른 것을 알리지 않는다(눌림은 굵기·테두리도 바뀐다) */
+.reaction-verdict[aria-pressed="true"] { font-weight: 700; border-width: 2px; padding: 0 15px; }
+.reaction-verdict[data-verdict="good"][aria-pressed="true"] { border-color: var(--up); color: var(--up); background: color-mix(in srgb, var(--up) 10%, var(--bg-card)); }
+.reaction-verdict[data-verdict="meh"][aria-pressed="true"] { border-color: var(--text-2); color: var(--text); background: var(--bg-soft); }
+.reaction-verdict[data-verdict="bad"][aria-pressed="true"] { border-color: var(--down); color: var(--down); background: color-mix(in srgb, var(--down) 9%, var(--bg-card)); }
+.reaction-verdict[aria-disabled="true"] { cursor: progress; }
+.reaction-fieldset { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.reaction-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.reaction-label-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.reaction-count { font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.reaction-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.reaction-tag {
+  min-height: 40px; padding: 0 13px; border-radius: 980px; border: 1px solid var(--border); background: var(--bg-soft);
+  color: var(--text); font-size: 13px; cursor: pointer;
+}
+.reaction-tag[aria-pressed="true"] { border-color: var(--text); background: var(--bg-card); font-weight: 600; }
+.reaction-tag:disabled { color: var(--text-2); cursor: not-allowed; opacity: 0.6; }
+.reaction-input {
+  width: 100%; min-height: 44px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--border-strong);
+  background: var(--bg); color: var(--text); font-size: 16px;
+}
+.reaction-input:focus-visible { outline-offset: 0; }
+.reaction-note { font-size: 13px; line-height: 1.5; color: var(--text-2); }
+/* 봇 미끼 — 사람 눈·키보드·읽기 도구에 닿지 않는다 */
+.reaction-trap { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
