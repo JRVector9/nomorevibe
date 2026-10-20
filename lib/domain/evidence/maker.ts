@@ -18,6 +18,7 @@ import { isSafeMakerMarkdown, makerMediaSchema, safeHttpUrl } from "./contracts"
 import { readMakerMediaResource } from "./repository";
 import { assertMakerResourceVersion } from "./resource-version";
 import { queueProductRefresh } from "./refresh-requests";
+import { notifyNewReleases } from "@/lib/me/notifications";
 
 const MAX_MAKER_BODY_BYTES = 64 * 1024;
 const slugSchema = z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9-]*$/);
@@ -162,7 +163,7 @@ export async function createMakerUpdate(input: {
   const actor = actorSchema.parse(input.actor);
   const productId = await expectedProductId(slug, input.productId);
   const update = makerUpdateCreateSchema.parse(input.update);
-  return withProductGeneration(slug, productId, async (tx) => {
+  const id = await withProductGeneration(slug, productId, async (tx) => {
     const [created] = await tx.insert(productUpdates).values({
       slug,
       sourceKind: "maker",
@@ -181,6 +182,9 @@ export async function createMakerUpdate(input: {
     });
     return created.id;
   });
+  // 팔로한 사람에게 새 업데이트 — commit 뒤, 실패해도 등록은 그대로
+  await notifyNewReleases(productId);
+  return id;
 }
 
 export type MakerUpdateMutationResult = "updated" | "deleted" | "not_found" | "forbidden";

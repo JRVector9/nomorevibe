@@ -48,7 +48,7 @@ function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
  * 단추는 [제품 방문하기][GitHub][공유][저장] 넷이다(UX-31). 같은 사이트로 가는 도메인 글자 링크는 뺐다 —
  * 사이트 주소는 정보 카드의 '웹사이트' 줄이 보여 준다.
  */
-export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar, tryPanel }: {
+export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar, tryPanel, follow }: {
   product: ProductDetailView["product"];
   unclaimed: boolean;
   risingRank: number | null;
@@ -62,6 +62,8 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
   personalGithubStar?: ReactNode;
   /** 써보기 판(components/feedback/TryPanel) — 단추 바로 아래. 써봤어요가 켜졌을 때만 넘긴다 */
   tryPanel?: ReactNode;
+  /** 팔로 단추 자리(마이페이지 MY4) — 단추 줄의 프로젝트, GitHub 주인 옆의 메이커 */
+  follow?: { project: ReactNode; maker: ReactNode };
 }) {
   const t = useTranslations("detail");
   const locale = useLocale();
@@ -102,7 +104,7 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
             {personalGithubStar ? <><span aria-hidden>·</span>{personalGithubStar}</>
               : product.stars !== null && product.stars !== undefined && <><span aria-hidden>·</span><span className="font-medium text-fg">★ {formatNumber(product.stars, locale)}</span></>}
             {languages.length > 0 && <><span aria-hidden>·</span><span>{languages.join(" · ")}</span></>}
-            {owner && <><span aria-hidden>·</span><span>GitHub @{owner.login}</span></>}
+            {owner && <><span aria-hidden>·</span><span>GitHub @{owner.login}</span>{follow?.maker}</>}
             <span aria-hidden>·</span>
             {installable ? <span>{t("hero.installable")}</span> : <HealthStatus health={health} />}
             {unclaimed && <><span aria-hidden>·</span><span title={t("hero.unclaimedHint")}>{t("hero.unclaimed")}</span></>}
@@ -124,6 +126,7 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
             )}
             <ShareButton title={product.name} path={localePath(locale, `/p/${product.slug}`)} />
             <SaveButton slug={product.slug} name={product.name} />
+            {follow?.project}
           </div>
           {product.repoGone && (
             <p className="text-[13px] text-fg-2">

@@ -64,4 +64,10 @@ export const common = {
   "saved.mergeFailed": "지금은 옮기지 못했어요. 이 브라우저 목록은 그대로 있어요.",
   "saved.limit": "저장은 {limit}개까지예요. 안 보는 프로젝트를 먼저 빼 주세요.",
   "saved.close": "닫기",
+  "bell.label": "알림",
+  "bell.unread": "알림 — 안 읽은 것 {count}개",
+  "bell.empty": "새 알림이 없어요",
+  "bell.readAll": "모두 읽음",
+  "bell.all": "알림함 전체 보기",
+  "bell.failed": "알림을 불러오지 못했어요.",
 } as const;

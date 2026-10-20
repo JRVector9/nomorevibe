@@ -67,4 +67,10 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "saved.mergeFailed": "Could not move them right now. Your list in this browser is unchanged.",
   "saved.limit": "You can save up to {limit} projects. Remove some you no longer need first.",
   "saved.close": "Close",
+  "bell.label": "Alerts",
+  "bell.unread": "Alerts — {count} unread",
+  "bell.empty": "No new alerts",
+  "bell.readAll": "Mark all read",
+  "bell.all": "Open the inbox",
+  "bell.failed": "Could not load alerts.",
 });

@@ -19,6 +19,14 @@ it('GitHub 연동 재조회는 maintenance에서 15분마다 실행한다', () =
   });
 });
 
+it('알림함 잡 셋은 maintenance에서 돈다 — 주간 묶음은 15분마다 깨어 월요일 09:00(KST)을 스스로 본다', () => {
+  expect(JOB_CATALOG.filter(job => job.name.startsWith('notification-'))).toEqual([
+    { name: 'notification-delisted', role: 'maintenance', intervalMs: 5 * 60_000 },
+    { name: 'notification-category-digest', role: 'maintenance', intervalMs: 15 * 60_000 },
+    { name: 'notification-prune', role: 'maintenance', intervalMs: 60 * 60_000 },
+  ]);
+});
+
 it('GitHub 피드백 전송은 publisher에서 1분마다 기존 역할 lease를 따른다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'github-feedback-delivery')).toEqual({
     name: 'github-feedback-delivery', role: 'publisher', intervalMs: 60_000,
@@ -36,7 +44,7 @@ it('생존 확인은 maintenance 역할에서 1분마다 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'uptime-ping')).toEqual({
     name: 'uptime-ping', role: 'maintenance', intervalMs: 60_000,
   });
-  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile', 'email-outbox-send', 'email-weekly-digest']));
+  expect(new Set(jobsForRole('maintenance'))).toEqual(new Set(['uptime-ping', 'click-rollup', 'ranking-refresh', 'news-refresh', 'product-thumbnail-refresh', 'product-search-refresh', 'product-search-health', 'product-spam-rescan', 'github-integration-reconcile', 'email-outbox-send', 'email-weekly-digest', 'notification-delisted', 'notification-category-digest', 'notification-prune']));
   expect(jobsForRole('crawler')).not.toContain('uptime-ping');
 });
 

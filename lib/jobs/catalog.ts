@@ -116,6 +116,13 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    */
   { name: "email-outbox-send", role: "maintenance", intervalMs: 60_000 },
   { name: "email-weekly-digest", role: "maintenance", intervalMs: 15 * 60_000 },
+  /**
+   * 마이페이지 알림함(lib/jobs/me/notifications.ts) — 팔로한 프로젝트가 내려감(cdn_purges 를 따라 읽고, 닿지 않는 것을 본다),
+   * 팔로한 분야 주간 묶음(월요일 09:00 KST 부터 하루 안에 — 주기 일정에는 시각이 없어 틱마다 시각을 본다), 90일 지난 알림 지우기.
+   */
+  { name: "notification-delisted", role: "maintenance", intervalMs: 5 * 60_000 },
+  { name: "notification-category-digest", role: "maintenance", intervalMs: 15 * 60_000 },
+  { name: "notification-prune", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)

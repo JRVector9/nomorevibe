@@ -111,6 +111,9 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "email-outbox-send": "알림 메일 보내기 — 사용자 알림 설정 처리, 제품 흐름이 아니다",
   "email-weekly-digest": "주간 요약 메일 묶기 — 사용자 알림 설정 처리, 제품 흐름이 아니다",
   "maker-recheck": "운영자 확인 재확인 — 계정과 저장소 주인 대조, 제품 흐름이 아니다",
+  "notification-delisted": "팔로한 프로젝트 내려감 알림 — 내린 뒤 계정 알림함에 적기",
+  "notification-category-digest": "팔로한 분야 주간 묶음 알림 — 공개 제품을 세기만 한다",
+  "notification-prune": "90일 지난 알림 지우기 — 계정 알림함 정리",
 };
 
 export function stageForJob(job: string): PipelineStageDef | null {

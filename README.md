@@ -335,6 +335,9 @@ docker compose exec crawler node --import tsx scripts/run-job.ts crawl-fetch
 | `product-search-refresh` | 원본 발췌·토픽·README 검색 입력 복사 | `products.search_*`, 프로필 갱신 표시 |
 | `product-search-profile` / `product-search-verify` | 변경 원본의 키워드 생성·엄격 검수 | 검색 프로필·키워드 사본 |
 | `product-search-health` | 원본 해시·프로필·사본·실패/정체 읽기 전용 대조 | 관리자 완료 관측 |
+| `notification-delisted` | 팔로한 프로젝트가 목록에서 빠지면(`cdn_purges` 따라 읽기·연속 실패) 알림 | `notifications` (followed_delisted) |
+| `notification-category-digest` | 팔로한 분야의 지난 7일 새 등재를 계정마다 한 줄로 묶음 | `notifications` (category_new, 주마다 하나) |
+| `notification-prune` | 90일 지난 알림을 1,000줄씩 지움 | — |
 
 ```bash
 GITHUB_TOKEN=... npm run job crawl-seed      # 로컬에서 한 틱씩
@@ -376,6 +379,9 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 | `product-search-profile` | 1분 | text 워커가 한·영 키워드 생성 |
 | `product-search-verify` | 1분 | text 워커가 키워드를 근거와 대조 |
 | `product-search-health` | 15분 | maintenance에서 해시·검색 사본·재시도·정체 감시 |
+| `notification-delisted` | 5분 | 내려감 알림은 급하지 않다. 처음에는 `cdn_purges` 끝에서 시작한다 |
+| `notification-category-digest` | 15분 | 주기 일정에는 시각이 없어 틱마다 월요일 09:00(KST)부터 하루 안인지 본다 |
+| `notification-prune` | 1시간 | 보관 90일, 틱마다 최대 5만 줄 |
 
 기존 Dokploy/GitHub Actions의 HTTP 스케줄과 evidence wrapper는 전환 때 중지한다.
 호환 cron API는 요청만 접수하므로 소비 워커를 대신하지 않는다. `ranking-refresh`를 별도 정기
