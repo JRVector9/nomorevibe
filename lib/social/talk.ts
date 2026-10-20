@@ -20,7 +20,8 @@ export const TALK_DETAIL_MS = 90 * 86_400_000;
 const RANKED_TARGETS: SocialLinkTarget[] = ["repo", "path"];
 /** products_repository_identity_idx 와 같은 식 — 저장소 키로 제품을 찾을 때 이 인덱스를 탄다(ai-level-refresh.ts) */
 const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
-const publicProduct = and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, sql`not ${repoGone}`);
+/** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
+const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, sql`not ${repoGone}`);
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
 
 export type TalkPost = {
@@ -39,6 +40,8 @@ export type TalkProduct = {
   id: number;
   slug: string;
   name: string;
+  /** 번역 해시에 쓰는 원래 이름 — 화면 이름(name)은 저장소 이름으로 바뀌었을 수 있다 */
+  translationName: string;
   tagline: string;
   taglineKo: string | null;
   taglineSource: TaglineSource;
@@ -50,7 +53,11 @@ export type TalkProduct = {
   accessMode: "website" | "installable";
 };
 /** 글 뒤 GitHub 스타. mention: 첫 글 직전 관측부터, observation: 첫 글 뒤 첫 관측부터(관측 범위에 늦게 든 제품) */
-export type TalkStarGrowth = { delta: number; basis: "mention" | "observation"; from: number; fromAt: Date; to: number; toAt: Date };
+export type TalkStarGrowth = {
+  delta: number; basis: "mention" | "observation"; from: number; fromAt: Date; to: number; toAt: Date;
+  /** 기준 관측부터 마지막 관측까지 — 곡선을 그린다 */
+  points: { stars: number; at: Date }[];
+};
 export type TalkEntry = {
   rank: number;
   repositoryKey: string;
@@ -89,7 +96,7 @@ type Row = TalkPost & { repositoryKey: string | null } & Partial<Record<keyof ty
 function product(row: Row): TalkProduct {
   const repoUrl = row.repoUrl as string | null;
   return {
-    id: row.productId as number, slug: row.slug as string, name: displayProjectName(row.name as string, repoUrl),
+    id: row.productId as number, slug: row.slug as string, name: displayProjectName(row.name as string, repoUrl), translationName: row.name as string,
     tagline: row.tagline as string, taglineKo: row.taglineKo as string | null, taglineSource: row.taglineSource as TaglineSource,
     category: row.category as string, repoUrl, ogImage: row.ogImage as string | null, stars: row.stars as number | null,
     aiLevel: row.aiLevel as number | null, accessMode: row.accessMode as "website" | "installable",
@@ -118,7 +125,10 @@ export function starGrowthSince(observations: readonly { stars: number; observed
   const before = sorted.filter(item => item.observedAt <= firstPostedAt).at(-1);
   const base = before ?? sorted.find(item => item.observedAt > firstPostedAt);
   if (!base || base === latest) return null;
-  return { delta: latest.stars - base.stars, basis: before ? "mention" : "observation", from: base.stars, fromAt: base.observedAt, to: latest.stars, toAt: latest.observedAt };
+  return {
+    delta: latest.stars - base.stars, basis: before ? "mention" : "observation", from: base.stars, fromAt: base.observedAt, to: latest.stars, toAt: latest.observedAt,
+    points: sorted.slice(sorted.indexOf(base)).map(item => ({ stars: item.stars, at: item.observedAt })),
+  };
 }
 
 async function starGrowths(entries: { productId: number; firstPostedAt: Date }[]): Promise<Map<number, TalkStarGrowth>> {
@@ -169,7 +179,7 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
   const rows: Row[] = await db.select({ ...postFields, ...productFields }).from(socialPosts)
     .innerJoin(products, sql`${PRODUCT_IDENTITY} = 'https://github.com/' || ${socialPosts.repositoryKey}`)
     .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS),
-      gte(socialPosts.postedAt, since), sql`${socialPosts.postedAt} <= ${now.toISOString()}::timestamptz`, notExcluded, publicProduct));
+      gte(socialPosts.postedAt, since), sql`${socialPosts.postedAt} <= ${now.toISOString()}::timestamptz`, notExcluded, publicProduct()));
 
   // 같은 저장소를 가리키는 제품이 둘이면 먼저 등록된 것(id 가 작은 것) 하나에 모은다
   const groups = new Map<string, { product: TalkProduct; posts: TalkPost[] }>();
