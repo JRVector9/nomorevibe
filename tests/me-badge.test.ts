@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { badgeTextWidth, escapeXml, formatBadgeCount, listedBadgeSvg, triedBadgeSvg, verifiedBadgeSvg } from "@/lib/domain/products/badge";
-import { clampCardText } from "@/lib/me/share-card";
+import { cardFontOrder, clampCardText } from "@/lib/me/share-card";
+import nextConfig from "@/next.config";
 
 describe("README 배지", () => {
   it("검증 배지는 주소·모양을 바꾸지 않는다", () => {
@@ -39,5 +42,30 @@ describe("공유 카드 글 자르기", () => {
     expect(cut.endsWith("…")).toBe(true);
     expect(Array.from(cut)).toHaveLength(47);
     expect(clampCardText("a  b\n c", 46)).toBe("a b c");
+  });
+});
+
+describe("공유 카드 글꼴", () => {
+  it("카드 언어의 글꼴을 앞에, 나머지 둘을 뒤에 둔다", () => {
+    expect(cardFontOrder("ko")).toEqual(["kr", "sc", "tc"]);
+    expect(cardFontOrder("en")).toEqual(["kr", "sc", "tc"]);
+    expect(cardFontOrder("zh-Hans")).toEqual(["sc", "kr", "tc"]);
+    expect(cardFontOrder("zh-Hant")).toEqual(["tc", "kr", "sc"]);
+  });
+
+  it("저장소에 WOFF 여섯 개와 라이선스가 있다 — 밖에서 받지 않는다", () => {
+    const dir = path.join(process.cwd(), "lib/me/fonts");
+    for (const script of ["kr", "sc", "tc"]) {
+      for (const weight of [400, 700]) {
+        const file = readFileSync(path.join(dir, `noto-sans-${script}-${weight}.woff`));
+        expect(file.subarray(0, 4).toString("latin1")).toBe("wOFF");
+        expect(file.length).toBeLessThan(2_000_000);
+      }
+    }
+    expect(readFileSync(path.join(dir, "OFL.txt"), "utf8")).toContain("SIL Open Font License, Version 1.1");
+  });
+
+  it("standalone 빌드에 글꼴 폴더가 실린다", () => {
+    expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/share-card.png"]).toEqual(["./lib/me/fonts/*.woff"]);
   });
 });

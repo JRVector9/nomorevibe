@@ -82,6 +82,8 @@ describe("GET /p/<slug>/share-card.png", () => {
   it("공개 제품은 1200×630 PNG, 내려간·없는 제품·모르는 언어는 404", async () => {
     await product("tiny-cron", "seeded", { stars: 214 });
     await product("gone", "banned");
+    // 글꼴은 저장소 파일이다 — 그리는 동안 네트워크를 부르지 않는다
+    const network = vi.spyOn(globalThis, "fetch");
     const response = await card("ko", "tiny-cron");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -92,6 +94,10 @@ describe("GET /p/<slug>/share-card.png", () => {
     expect(png.readUInt32BE(16)).toBe(1200);
     expect(png.readUInt32BE(20)).toBe(630);
     expect((await card("en", "tiny-cron")).status).toBe(200);
+    expect((await card("zh-Hant", "tiny-cron")).status).toBe(200);
+    // next/og 는 렌더러 wasm 을 data: 주소로 읽는다 — 밖(http·https)으로 나간 요청만 센다
+    expect(network.mock.calls.map(([url]) => String(url)).filter((url) => /^https?:/.test(url))).toEqual([]);
+    network.mockRestore();
     expect((await card("ko", "gone")).status).toBe(404);
     expect((await card("ko", "missing")).status).toBe(404);
     expect((await card("fr", "tiny-cron")).status).toBe(404);
