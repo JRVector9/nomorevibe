@@ -104,8 +104,8 @@ export function ProfileForm({ csrfToken, displayName, nextNameChangeAt }: { csrf
   );
 }
 
-/** 내 데이터 받기 — 실패(하루 2번 넘음 등)는 파일이 아니라 글로 알린다 */
-export function ExportData() {
+/** 내 데이터 받기 — POST(CSRF)로 받아 파일로 내린다. 실패(하루 2번 넘음 등)는 파일이 아니라 글로 알린다 */
+export function ExportData({ csrfToken }: { csrfToken: string }) {
   const t = useTranslations("me");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ErrorKey | null>(null);
@@ -115,7 +115,7 @@ export function ExportData() {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/me/export", { cache: "no-store" });
+      const response = await fetch("/api/me/export", { method: "POST", cache: "no-store", headers: { "x-csrf-token": csrfToken } });
       if (!response.ok) {
         setError(await accountError(response));
         return;

@@ -56,7 +56,9 @@ export async function findMyRepos(userId: number): Promise<{ linked: boolean; lo
       to_char(coalesce(p.verified_at, p.created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as listed_iso
     from products p
     where p.status in ('seeded', 'verified')
-      and (lower(p.repo_url) like ${`%github.com/${owner}/%`} or lower(p.repo_renamed_to) like ${`${owner}/%`})
+      -- 후보는 저장소 주인 열쇠 색인으로 고른다(0108, lib/me/follows.ts 와 같은 식). 아래 줄이 정확한 조건이다
+      and (substring(lower(p.repo_url) from '^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$') = ${owner}
+        or (p.repo_renamed_to is not null and nullif(lower(split_part(p.repo_renamed_to, '/', 1)), '') = ${owner}))
       and lower(coalesce(split_part(p.repo_renamed_to, '/', 1),
         substring(p.repo_url from '^https?://(?:www[.])?github[.]com/([^/]+)/[^/]+/?$'))) = ${owner}
       and not exists (select 1 from product_maker_members m where m.product_id = p.id and m.user_id = ${userId} and m.revoked_at is null)

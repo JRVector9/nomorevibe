@@ -106,6 +106,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "account.error.loginRequired": "登入已失效，請重新登入。",
   "account.error.unavailable": "目前無法修改，請稍後再試。",
   "account.error.generic": "處理失敗，請重試。",
+  "account.deletedName": "已註銷使用者",
   // 의견 탭 (MY1)
   "opinions.title": "我的意見",
   "opinions.filter": "篩選意見",
@@ -229,8 +230,14 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "tried.emptyTitle": "還沒有試用過的專案",
   "tried.emptyBody": "試用產品後回來，點一下就好。",
   "tried.emptyCta": "試試正在竄升的專案",
-  "tried.browserNote": "這是在此瀏覽器留下的評價。登入後會移到帳號中。",
+  "tried.browserNote": "這是在此瀏覽器留下的評價。登入後可以移到帳號中。",
   "tried.merged": "已將此瀏覽器的 {count} 則評價移到帳號中。",
+  "tried.mergePrompt": "要把在此瀏覽器留下的 {count} 則評價移到帳號中嗎？",
+  "tried.mergeMove": "移到帳號",
+  "tried.mergeLater": "以後再說",
+  "tried.merging": "正在移動…",
+  "tried.mergeFailed": "未能移動評價，請稍後再試。",
+  "tried.browserOnly": "這是在此瀏覽器留下的評價。",
   // 팔로 탭 (MY4)
   "following.title": "追蹤中",
   "following.groups": "追蹤類型",

@@ -7,6 +7,8 @@ import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { githubUserConnections } from "@/lib/db/github-user-schema";
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
+import { crawlDocuments } from "@/lib/db/schema";
+import { clearAllMemos } from "@/lib/cache/memo";
 import { ensureSchema, resetTables } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -39,6 +41,8 @@ beforeEach(async () => {
   vi.stubEnv("GITHUB_TOKEN", "integration-collector-token");
   vi.stubEnv("GITHUB_COLLECTOR_SECRET", "");
   await resetTables();
+  await db.delete(crawlDocuments).where(sql`lower(${crawlDocuments.repo}) like 'hanul/%'`);
+  clearAllMemos();
   upstream = {};
   githubCalls = [];
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => {
@@ -181,6 +185,74 @@ describe("POST /api/maker/claims — GitHub 저장소 주인 확인", () => {
     upstream["/repos/hanul/tiny-cron"] = { status: 502, body: {} };
     expect((await claim(session, { productIds: [tiny.id] })).body.results?.[0].result).toBe("github_unavailable");
     expect(await db.select().from(productMakerMembers)).toHaveLength(0);
+    // 답하지 못한 것은 담지 않는다 — 다시 누르면 다시 묻는다
+    upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
+    expect((await claim(session, { productIds: [tiny.id] })).body.results?.[0].result).toBe("verified");
+  });
+
+  it("저장소 주소가 바뀌면 그 제품의 GitHub 주인 확인을 같은 쓰기에서 푼다(repo_changed) — 다른 고치기·다른 제품은 그대로", async () => {
+    const productsRepo = await import("@/lib/domain/products/repository");
+    const session = await account();
+    const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron");
+    const other = await product("other-tool", "https://github.com/hanul/other-tool");
+    upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
+    upstream["/repos/hanul/other-tool"] = repo(12, hanul, "other-tool");
+    expect((await claim(session, { productIds: [tiny.id, other.id] })).body.results?.map((item) => item.result)).toEqual(["verified", "verified"]);
+    await productsRepo.update(tiny.id, { tagline: "새 소개", repoUrl: "https://github.com/hanul/tiny-cron" });
+    expect((await db.select().from(productMakerMembers).where(eq(productMakerMembers.productId, tiny.id)))[0]).toMatchObject({ revokedAt: null });
+    await productsRepo.update(tiny.id, { repoUrl: "https://github.com/someone/else" });
+    const rows = new Map((await db.select().from(productMakerMembers)).map((row) => [row.productId, row]));
+    expect(rows.get(tiny.id)).toMatchObject({ revokedReason: "repo_changed" });
+    expect(rows.get(tiny.id)!.revokedAt).not.toBeNull();
+    expect(rows.get(other.id)).toMatchObject({ revokedAt: null, revokedReason: null });
+    expect((await makerProjects(session.user.id)).map((row) => row.productId)).toEqual([other.id]);
+  });
+
+  it("수집 때 본 저장소 숫자 id 와 GitHub 의 답이 다르면(옛 이름을 차지해 새로 만든 저장소) owner_mismatch", async () => {
+    const session = await account();
+    const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron");
+    const same = await product("same-id", "https://github.com/hanul/same-id");
+    await db.insert(crawlDocuments).values([
+      { repo: "Hanul/tiny-cron", repoMeta: { id: 11, owner: { id: 1, type: "User" } } },
+      { repo: "hanul/same-id", repoMeta: { id: 12, owner: { id: 1, type: "User" } } },
+    ]);
+    upstream["/repos/hanul/tiny-cron"] = repo(99, hanul, "tiny-cron");
+    upstream["/repos/hanul/same-id"] = repo(12, hanul, "same-id");
+    const result = await claim(session, { productIds: [tiny.id, same.id] });
+    expect(result.body.results?.map((item) => [item.productId, item.result])).toEqual([[tiny.id, "owner_mismatch"], [same.id, "verified"]]);
+  });
+
+  it("같은 저장소의 답(있음·없음)은 10분 담아 GitHub 을 다시 부르지 않는다", async () => {
+    const first = await account();
+    const second = await account({ githubId: 7002, login: "second" });
+    const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron");
+    const gone = await product("gone-tool", "https://github.com/hanul/gone-tool");
+    upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
+    expect((await claim(first, { productIds: [tiny.id, gone.id] })).body.results?.map((item) => item.result)).toEqual(["verified", "repo_not_found"]);
+    expect(githubCalls).toEqual(["/repos/hanul/tiny-cron", "/repos/hanul/gone-tool"]);
+    expect((await claim(second, { productIds: [tiny.id, gone.id] })).body.results?.map((item) => item.result)).toEqual(["owner_mismatch", "repo_not_found"]);
+    expect(githubCalls).toHaveLength(2);
+  });
+
+  it("GitHub 을 실제로 부르는 수는 전체 시간당 300번·계정마다 40번 — 넘으면 github_unavailable 이고 부르지 않는다", async () => {
+    const { CLAIM_LOOKUPS_PER_HOUR, CLAIM_LOOKUPS_PER_USER_HOUR } = await import("@/lib/me/maker-claims");
+    const session = await account();
+    const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron");
+    upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
+    const counts = async () => new Map((await db.select().from(rateLimits)).map((row) => [row.key, row.count]));
+    await db.insert(rateLimits).values({ key: `maker:claims:github:user:${session.user.id}`, count: CLAIM_LOOKUPS_PER_USER_HOUR, resetAt: sql`now() + interval '1 hour'` });
+    expect((await claim(session, { productIds: [tiny.id] })).body.results?.[0].result).toBe("github_unavailable");
+    expect(githubCalls).toEqual([]);
+    // 계정 한도에 걸린 요청은 전체 한도를 쓰지 않는다
+    expect((await counts()).get("maker:claims:github")).toBeUndefined();
+    await db.delete(rateLimits);
+    await db.insert(rateLimits).values({ key: "maker:claims:github", count: CLAIM_LOOKUPS_PER_HOUR, resetAt: sql`now() + interval '1 hour'` });
+    expect((await claim(session, { productIds: [tiny.id] })).body.results?.[0].result).toBe("github_unavailable");
+    expect(githubCalls).toEqual([]);
+    await db.delete(rateLimits);
+    expect((await claim(session, { productIds: [tiny.id] })).body.results?.[0].result).toBe("verified");
+    expect((await counts()).get("maker:claims:github")).toBe(1);
+    expect((await counts()).get(`maker:claims:github:user:${session.user.id}`)).toBe(1);
   });
 });
 

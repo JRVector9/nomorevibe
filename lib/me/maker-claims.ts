@@ -1,6 +1,6 @@
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { products } from "@/lib/db/schema";
+import { crawlDocuments, products } from "@/lib/db/schema";
 import { notifications, productMakerMembers } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { githubRequest } from "@/lib/crawl/github";
@@ -9,6 +9,8 @@ import { isGithubNumericId, isGithubRepositoryName } from "@/lib/github/reposito
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { logger } from "@/lib/observability/logger";
+import { createMemo } from "@/lib/cache/memo";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * 운영자 확인(마이페이지 MY5 = 로그인 설계 L5 = 피드백 PR8) — GitHub 로그인 숫자 id 가 저장소 주인 숫자 id 와 같으면 주인이다.
@@ -22,6 +24,10 @@ export const MAKER_RECHECK_DAYS = 30;
 export const CLAIM_BATCH_LIMIT = 20;
 const PUBLIC_STATUSES = ["seeded", "verified"] as const;
 const DAY_MS = 24 * 60 * 60_000;
+const HOUR_MS = 60 * 60_000;
+/** 운영자 확인이 GitHub 을 실제로 부르는 한도 — 수집기와 같은 자격을 쓰므로 전체 시간당 300번, 계정마다 40번 */
+export const CLAIM_LOOKUPS_PER_HOUR = 300;
+export const CLAIM_LOOKUPS_PER_USER_HOUR = 40;
 
 export type MakerErrorCode = "github_login_required" | "invalid_request" | "invalid_repo_url" | "repo_not_listed"
   | "target_not_found" | "not_a_member" | "reply_invalid" | "intro_invalid" | "product_not_found" | "rate_limited";
@@ -63,18 +69,20 @@ export function parseRepoUrl(input: unknown): RepoRef | null {
   return { owner, repo, fullName: `${owner}/${repo}`, url: `https://github.com/${owner}/${repo}` };
 }
 
-/** GitHub 이 저장소에 대해 답한 주인 사실 */
-export type RepoOwnerFact = { ownerId: number; ownerType: string; private: boolean };
+/** GitHub 이 저장소에 대해 답한 주인 사실 — repoId 는 저장소 숫자 id(답에 있을 때) */
+export type RepoOwnerFact = { ownerId: number; ownerType: string; private: boolean; repoId?: number };
 export type ClaimRejection = "org_repo_not_supported_yet" | "owner_mismatch" | "repo_not_found" | "repo_not_public";
 export type OwnershipDecision = { ok: true; githubUserId: number } | { ok: false; reason: ClaimRejection };
 
 /**
  * 주인 판정(순수) — 개인 계정 저장소이고 주인 숫자 id 가 내 GitHub 숫자 id 중 하나와 같을 때만 주인이다.
- * 이름이 바뀐 계정도 숫자 id 는 그대로라 통과하고, 옮겨 간 저장소는 주인 id 가 달라 거절된다. 조직 저장소는 아직 받지 않는다
+ * 이름이 바뀐 계정도 숫자 id 는 그대로라 통과하고, 옮겨 간 저장소는 주인 id 가 달라 거절된다. 조직 저장소는 아직 받지 않는다.
+ * 수집할 때 본 저장소 숫자 id(knownRepoId)가 있으면 같은 저장소여야 한다 — 옛 이름을 차지해 같은 주소에 새로 만든 저장소는 다른 저장소다
  */
-export function decideOwnership(githubUserIds: readonly number[], fact: RepoOwnerFact | null): OwnershipDecision {
+export function decideOwnership(githubUserIds: readonly number[], fact: RepoOwnerFact | null, knownRepoId: number | null = null): OwnershipDecision {
   if (!fact) return { ok: false, reason: "repo_not_found" };
   if (fact.private) return { ok: false, reason: "repo_not_public" };
+  if (knownRepoId !== null && fact.repoId !== undefined && fact.repoId !== knownRepoId) return { ok: false, reason: "owner_mismatch" };
   if (fact.ownerType === "Organization") return { ok: false, reason: "org_repo_not_supported_yet" };
   if (fact.ownerType !== "User" || !isGithubNumericId(fact.ownerId)) return { ok: false, reason: "owner_mismatch" };
   const match = githubUserIds.find((id) => isGithubNumericId(id) && id === fact.ownerId);
@@ -98,7 +106,41 @@ export async function lookupRepositoryOwner(ref: RepoRef, options: { deadlineAt?
   if (result.status !== 200 || !result.value || typeof result.value !== "object") return { kind: "unavailable" };
   const owner = result.value.owner && typeof result.value.owner === "object" ? result.value.owner as Record<string, unknown> : null;
   if (!owner || !isGithubNumericId(owner.id) || typeof owner.type !== "string" || typeof result.value.private !== "boolean") return { kind: "unavailable" };
-  return { kind: "found", fact: { ownerId: owner.id, ownerType: owner.type, private: result.value.private } };
+  return { kind: "found", fact: { ownerId: owner.id, ownerType: owner.type, private: result.value.private,
+    ...(isGithubNumericId(result.value.id) ? { repoId: result.value.id } : {}) } };
+}
+
+/** 수집할 때 본 저장소 숫자 id(crawl_documents.repo_meta.id, 같은 이름의 가장 최근 원본). 수집하지 않은 저장소면 null */
+export async function knownRepositoryId(ref: RepoRef): Promise<number | null> {
+  const [row] = await db.select({ id: sql<string | null>`${crawlDocuments.repoMeta}->>'id'` }).from(crawlDocuments)
+    .where(sql`lower(${crawlDocuments.repo}) = ${ref.fullName}`)
+    .orderBy(desc(crawlDocuments.fetchedAt), desc(crawlDocuments.id)).limit(1);
+  const id = Number(row?.id);
+  return isGithubNumericId(id) ? id : null;
+}
+
+/**
+ * 운영자 확인의 GitHub 답 — 저장소마다 있음·없음을 10분 들고 있어 같은 저장소를 여러 번 눌러도 한 번만 묻는다.
+ * 답하지 못한 것(unavailable)과 한도에 걸린 것은 담지 않는다. 재확인 잡은 늘 새로 묻는다
+ */
+const claimAnswers = createMemo<RepoLookup>({ ttlMs: 10 * 60_000, max: 2_000 });
+class ClaimLookupSkipped extends Error {}
+
+async function claimLookup(userId: number, ref: RepoRef, lookup: Lookup, options: { deadlineAt: number; signal?: AbortSignal }): Promise<RepoLookup> {
+  return claimAnswers.get(ref.fullName, async () => {
+    // 실제로 부를 때만 센다 — 계정 한도를 먼저 봐서 한 계정이 전체 한도를 다 쓰지 못하게
+    if (!(await rateLimit(`maker:claims:github:user:${userId}`, CLAIM_LOOKUPS_PER_USER_HOUR, HOUR_MS))
+      || !(await rateLimit("maker:claims:github", CLAIM_LOOKUPS_PER_HOUR, HOUR_MS))) {
+      logger.warn("maker.claim_lookup_limited", { userId });
+      throw new ClaimLookupSkipped();
+    }
+    const answer = await lookup(ref, options);
+    if (answer.kind === "unavailable") throw new ClaimLookupSkipped();
+    return answer;
+  }).catch((error: unknown) => {
+    if (error instanceof ClaimLookupSkipped) return { kind: "unavailable" } as const;
+    throw error;
+  });
 }
 
 export type Lookup = typeof lookupRepositoryOwner;
@@ -171,7 +213,8 @@ export async function claimProducts(userId: number, input: ClaimInput, options: 
       inArray(products.status, [...PUBLIC_STATUSES]),
       or(
         sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '') = ${ref.url}`,
-        sql`lower(${products.repoRenamedTo}) = ${ref.fullName}`,
+        // 부분 색인(products_renamed_to_idx)을 타도록 — 두 갈래가 모두 색인을 타야 OR 이 제품 전부를 훑지 않는다
+        sql`(${products.repoRenamedTo} is not null and lower(${products.repoRenamedTo}) = ${ref.fullName})`,
       ),
     )).orderBy(asc(products.id)).limit(CLAIM_BATCH_LIMIT));
     if (found.length === 0) throw new MakerError("repo_not_listed", 404);
@@ -195,9 +238,9 @@ export async function claimProducts(userId: number, input: ClaimInput, options: 
     if (!ref) { results.push(item("no_github_repo")); continue; }
     if (active.has(product.id)) { results.push(item("already_verified", ref.fullName)); continue; }
     if (options.signal?.aborted || Date.now() >= deadlineAt - 1_000) { results.push(item("github_unavailable", ref.fullName)); continue; }
-    const answer = await lookup(ref, { deadlineAt: Math.min(deadlineAt, Date.now() + 10_000), signal: options.signal });
+    const answer = await claimLookup(userId, ref, lookup, { deadlineAt: Math.min(deadlineAt, Date.now() + 10_000), signal: options.signal });
     if (answer.kind === "unavailable") { results.push(item("github_unavailable", ref.fullName)); continue; }
-    const decision = decideOwnership(githubIds, answer.kind === "found" ? answer.fact : null);
+    const decision = decideOwnership(githubIds, answer.kind === "found" ? answer.fact : null, await knownRepositoryId(ref));
     if (!decision.ok) { results.push(item(decision.reason, ref.fullName)); continue; }
     const recorded = await recordOwnerMembership(product, userId, decision.githubUserId);
     if (recorded) logger.info("maker.claimed", { productId: product.id, userId, method: "github_repo_owner" });
@@ -243,7 +286,7 @@ export async function recheckMakerMemberships(options: {
       const answer = await lookup(ref, { deadlineAt: Math.min(options.deadlineAt, Date.now() + 10_000), signal: options.signal });
       if (answer.kind === "unavailable") outcome = null;
       else {
-        const decision = decideOwnership([row.githubUserId], answer.kind === "found" ? answer.fact : null);
+        const decision = decideOwnership([row.githubUserId], answer.kind === "found" ? answer.fact : null, await knownRepositoryId(ref));
         outcome = decision.ok ? { keep: true } : { keep: false, reason: decision.reason };
       }
     }

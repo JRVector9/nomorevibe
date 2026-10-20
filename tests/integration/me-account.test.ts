@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
+import { products, rateLimits } from "@/lib/db/schema";
 import { emailLoginChallenges, publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { githubAuthFlows, githubUserConnections } from "@/lib/db/github-user-schema";
 import { githubProductBindings } from "@/lib/db/github-binding-schema";
@@ -292,12 +292,13 @@ const countFor = async (userId: number) => ({
   reactions: (await db.select().from(productReactions).where(eq(productReactions.userId, userId))).length,
 });
 
-describe("내 데이터 받기 — GET /api/me/export", () => {
+describe("내 데이터 받기 — POST /api/me/export", () => {
   it("내 것만 JSON 파일로, 토큰·해시·암호화 값 없이. 하루 2번", async () => {
-    const { GET } = await routes.exportData();
+    const { POST } = await routes.exportData();
+    const exportCall = (login: Login | null, init: { origin?: string; csrf?: string | null } = {}) => POST(call("/api/me/export", login, { method: "POST", ...init }));
     const alice = await seedAccount("alice", 101, "alice@example.com");
     const bob = await seedAccount("bob", 202, "bob@example.com");
-    const response = await GET(call("/api/me/export", alice.login));
+    const response = await exportCall(alice.login);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("content-disposition")).toMatch(/^attachment; filename="nomorevibe-my-data-\d{8}\.json"$/);
@@ -322,11 +323,22 @@ describe("내 데이터 받기 — GET /api/me/export", () => {
     for (const secret of [alice.login.tokenHash, alice.second.tokenHash, alice.login.token, "sealed-access-alice", "sealed-refresh-alice", "sealed-pkce-alice", "bob", bob.login.tokenHash]) {
       expect(text).not.toContain(secret);
     }
-    expect((await GET(call("/api/me/export", alice.login))).status).toBe(200);
-    const limited = await GET(call("/api/me/export", alice.login));
+    expect((await exportCall(alice.login)).status).toBe(200);
+    const limited = await exportCall(alice.login);
     expect(limited.status).toBe(429);
     expect(await limited.json()).toEqual({ error: "export_rate_limited" });
-    expect((await GET(call("/api/me/export", null))).status).toBe(401);
+    expect((await exportCall(null)).status).toBe(401);
+  });
+
+  it("다른 사이트에서 온 요청·CSRF 값이 없거나 틀린 요청은 한도를 쓰지 않고 403 — 그 뒤에도 하루 2번을 그대로 받는다", async () => {
+    const { POST } = await routes.exportData();
+    const alice = await seedAccount("alice", 101, "alice@example.com");
+    for (const init of [{ origin: "https://evil.example" }, { csrf: null }, { csrf: "f".repeat(64) }]) {
+      expect((await POST(call("/api/me/export", alice.login, { method: "POST", ...init }))).status).toBe(403);
+    }
+    expect(await db.select().from(rateLimits).where(eq(rateLimits.key, `me-export:${alice.owner.id}`))).toEqual([]);
+    expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
+    expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
   });
 });
 
@@ -360,6 +372,10 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     const [heldReply] = await db.insert(makerReplies).values({ productId: bob.tool.id, targetType: "reaction", targetId: bob.anonymous.id, authorUserId: alice.owner.id,
       body: "보류된 내 답장", reviewState: "held" }).returning();
 
+    const [bobFeedback] = await db.insert(productFeedback).values({ productId: bob.tool.id, authorUserId: bob.owner.id, requestId: crypto.randomUUID(), requestHash: "3".repeat(64),
+      normalizedBodyHash: "3".repeat(64), kind: "question", title: "bob 질문", body: "bob 본문", serviceDisclosureConsent: true, reviewState: "accepted" }).returning();
+    await db.insert(makerReplies).values({ productId: bob.tool.id, targetType: "feedback", targetId: bobFeedback.id, authorUserId: alice.owner.id, body: "alice 가 단 답장" });
+
     const response = await POST(call("/api/me/delete", alice.login, { method: "POST", body: { confirm: " alice " } }));
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");
@@ -375,7 +391,10 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     expect(await db.select().from(productReactions).where(eq(productReactions.id, alice.accountOnly.id))).toHaveLength(0);
     expect(await db.select().from(makerReplies).where(eq(makerReplies.targetId, alice.accountOnly.id))).toHaveLength(0);
     // 공개 의견·메이커 답장·저장소 연결 동의는 남고, 작성자는 익명으로 보인다
-    expect(await getFeedback(alice.feedback.id)).toMatchObject({ authorUserId: alice.owner.id, authorDisplayName: "탈퇴한 사용자", body: "alice 본문" });
+    // DB 의 이름은 «탈퇴한 사용자» 그대로지만 화면에는 이름 대신 null 을 준다 — 화면이 그 언어로 적는다
+    expect(await getFeedback(alice.feedback.id)).toMatchObject({ authorUserId: alice.owner.id, authorDisplayName: null, body: "alice 본문" });
+    const { listMyOpinions } = await import("@/lib/me/opinions");
+    expect((await listMyOpinions(bob.owner.id)).find((item) => item.id === bobFeedback.id)?.reply).toMatchObject({ body: "alice 가 단 답장", authorDisplayName: null });
     expect(await db.select().from(makerReplies).where(eq(makerReplies.id, alice.reply.id))).toHaveLength(1);
     expect(await db.select().from(productFeedback).where(eq(productFeedback.id, held.id))).toHaveLength(0);
     expect(await db.select().from(makerReplies).where(eq(makerReplies.targetId, held.id))).toHaveLength(0);
@@ -455,7 +474,7 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     const bob = await seedAccount("bob", 202, "bob@example.com");
     expect((await remove.POST(call("/api/me/delete", bob.login, { method: "POST", body: { confirm: "bob" } }))).status).toBe(200);
     expect((await profile.PATCH(call("/api/me/profile", bob.second, { method: "PATCH", body: { displayName: "되살리기" } }))).status).toBe(401);
-    expect((await exportData.GET(call("/api/me/export", bob.second))).status).toBe(401);
+    expect((await exportData.POST(call("/api/me/export", bob.second, { method: "POST" }))).status).toBe(401);
     const [gone] = await db.select().from(publicUsers).where(eq(publicUsers.id, bob.owner.id));
     expect(gone.displayName).toBe("탈퇴한 사용자");
   });
@@ -479,6 +498,25 @@ describe("머리 숫자·의견 탭", () => {
     await db.update(notifications).set({ readAt: new Date() }).where(eq(notifications.userId, alice.owner.id));
     expect(await (await GET(call("/api/me/summary", alice.login))).json()).toMatchObject({ isMaker: false, counts: { unreadAlerts: 0 } });
     expect(await (await GET(call("/api/me/summary", null))).json()).toEqual({ user: null, csrfToken: null, counts: null, isMaker: false, providers: [] });
+  });
+
+  it("저장·써봤어요 수는 탭과 같은 공개 조건 — 내린·검증 전·주인 없는 수집 프로필 제품은 저장 수에서, 내린 제품은 써봤어요 수에서 뺀다", async () => {
+    const { getMeSummary } = await import("@/lib/me/summary");
+    const { savedSlugs } = await import("@/lib/me/saved");
+    const { listUserReactions } = await import("@/lib/domain/reactions/repository");
+    const reader = await user("세는 사람");
+    const shown = await product("shown");
+    const others = await db.insert(products).values([
+      { slug: "banned-one", status: "banned" as const, category: "Dev" },
+      { slug: "pending-one", status: "unverified" as const, category: "Dev" },
+      { slug: "profile-one", status: "seeded" as const, category: "Profile", source: "crawler" as const },
+    ].map((row) => ({ ...row, name: row.slug, url: `https://${row.slug}.example`, tagline: "t", description: "d", verifyToken: "v", editTokenHash: "e" }))).returning();
+    await db.insert(userSavedProducts).values([shown, ...others].map((row) => ({ userId: reader.id, productId: row.id })));
+    await db.insert(productReactions).values([shown, ...others].map((row) => ({ productId: row.id, userId: reader.id, verdict: "good" as const, source: "panel" as const, locale: "ko" })));
+    const summary = await getMeSummary(reader.id);
+    expect(summary?.counts).toMatchObject({ saved: 1, tried: 3 });
+    expect(await savedSlugs(reader.id)).toEqual(["shown"]);
+    expect((await listUserReactions(reader.id)).map((item) => item.slug).sort()).toEqual(["pending-one", "profile-one", "shown"]);
   });
 
   it("의견 목록 — 내 글만, 공개된 메이커 답장만 붙는다", async () => {

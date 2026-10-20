@@ -16,12 +16,16 @@ import { siteOrigin } from "@/lib/site";
 import { talkPublicEnabled } from "@/lib/social/flags";
 import { productTalk } from "@/lib/social/talk";
 
+/** 배지·공유 카드는 공개 목록에 오른 제품에만 — 아무 주소나 등록한 검증 전(unverified) 줄에 내주면 피싱에 쓰인다 */
+const CATALOG_STATUSES = ["seeded", "verified"] as const;
+
 /**
- * 배지·공유 카드(MY8)가 읽는 공개 값 — 상세와 같은 기본 정보(내려간 제품은 null)와 써본 사람 수.
+ * 배지·공유 카드(MY8)가 읽는 공개 값 — 상세와 같은 기본 정보(목록 밖 제품은 null)와 써본 사람 수.
  * 둘 다 공개 읽기 캐시(30초, 복제본)를 탄다. 상세의 identity 열쇠를 그대로 써서 같은 값을 나눠 쓴다.
  */
-export function publicProductIdentity(slug: string) {
-  return publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
+export async function publicProductIdentity(slug: string) {
+  const product = await publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
+  return product && (CATALOG_STATUSES as readonly string[]).includes(product.status) ? product : null;
 }
 
 /** 써본 사람 — 써봤어요 평가 수. 랭킹에서 뺀 평가(의심·고장 표시)는 세지 않는다 */

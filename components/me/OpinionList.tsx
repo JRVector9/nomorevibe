@@ -76,7 +76,7 @@ export function OpinionList({ opinions }: { opinions: OpinionView[] }) {
                 </p>
                 {item.reply && (
                   <div className="me-reply">
-                    <p className="me-reply-h"><span className="me-mk">{t("opinions.makerReply")}</span>{item.reply.authorDisplayName} · {formatDate(item.reply.createdAt, now, locale)}</p>
+                    <p className="me-reply-h"><span className="me-mk">{t("opinions.makerReply")}</span>{item.reply.authorDisplayName ?? t("account.deletedName")} · {formatDate(item.reply.createdAt, now, locale)}</p>
                     <p>{item.reply.body}</p>
                   </div>
                 )}

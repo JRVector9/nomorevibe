@@ -1,5 +1,4 @@
 import { SAVED_LIMIT } from "@/lib/me/contract";
-import { mergeBrowserReactions, reactedSlugs } from "@/components/feedback/reacted";
 import { loadMeState } from "@/components/me/account-store";
 
 const KEY = "nmb-saved-v1";
@@ -108,6 +107,10 @@ let csrf = "";
 let offerSlugs: string[] = [];
 const early = new Map<string, SavedOp>();
 const chains = new Map<string, Promise<void>>();
+/** 이 브라우저의 저장·빼기와 그 보내기가 끝날 때마다 하나 늘린다 — 계정 목록을 받는 사이 바뀌었는지 본다 */
+let edits = 0;
+/** 받는 사이 바뀌면 보내기가 끝난 뒤 다시 받는다 — 계속 바뀌면 이만큼만 */
+const REFRESH_TRIES = 3;
 
 function setAccount(patch: Partial<SavedAccount>): void {
   account = { ...account, ...patch };
@@ -160,18 +163,6 @@ function postponed(userId: number): boolean {
   return Array.isArray(later) && later.includes(userId);
 }
 
-/** 첫 로그인 합치기(L4) — 이 브라우저가 평가한 제품을 계정으로 옮긴다. 계정·탭마다 한 번 */
-function mergeReactionsOnce(userId: number, token: string): void {
-  const key = `nmb-reacted-merge:${userId}`;
-  try {
-    if (sessionStorage.getItem(key) || !reactedSlugs().length) return;
-    sessionStorage.setItem(key, "1");
-  } catch {
-    return;
-  }
-  void mergeBrowserReactions(token);
-}
-
 /** 페이지마다 한 번 — 저장을 그리는 첫 구독이 부른다 */
 export function startSavedSync(): void {
   if (phase !== "idle" || typeof window === "undefined") return;
@@ -202,7 +193,6 @@ async function connect(): Promise<void> {
     return;
   }
   csrf = me!.csrfToken as string;
-  mergeReactionsOnce(userId, csrf);
   let current = state;
   if (state && state.user !== userId) {
     writeLocal(forgetAccountCopy(localList(), state));
@@ -217,16 +207,28 @@ async function connect(): Promise<void> {
   await refresh();
 }
 
-/** 계정 목록을 받아 이 브라우저와 맞춘다. 못 받으면(fenced DB·끊김) 이 브라우저 목록을 그대로 둔다 */
+/**
+ * 계정 목록을 받아 이 브라우저와 맞춘다. 못 받으면(fenced DB·끊김) 이 브라우저 목록을 그대로 둔다.
+ * 받는 사이 저장·빼기를 했거나 보내기가 끝났으면 받은 목록은 그 전의 것이다 — 맞추면 방금 한 일을 되돌린다.
+ * 그 목록은 버리고 보내기가 모두 끝난 뒤 다시 받는다.
+ */
 async function refresh(): Promise<void> {
-  let server: string[];
-  try {
-    const response = await fetch("/api/me/saved?view=slugs", { cache: "no-store" });
-    if (!response.ok) throw new Error(String(response.status));
-    server = strings((await response.json() as { slugs?: unknown }).slugs);
-  } catch {
-    return;
+  let server: string[] | null = null;
+  for (let attempt = 0; attempt < REFRESH_TRIES && server === null; attempt += 1) {
+    const since = edits;
+    try {
+      const response = await fetch("/api/me/saved?view=slugs", { cache: "no-store" });
+      if (!response.ok) throw new Error(String(response.status));
+      server = strings((await response.json() as { slugs?: unknown }).slugs);
+    } catch {
+      return;
+    }
+    if (edits !== since) {
+      server = null;
+      await Promise.allSettled([...chains.values()]);
+    }
   }
+  if (server === null) return;
   const state = readSync();
   if (!state || state.user !== account.userId) return;
   const result = reconcileSaved({ local: localList(), server, base: state.base, pending: state.pending });
@@ -239,6 +241,7 @@ async function refresh(): Promise<void> {
 }
 
 function queue(slug: string, op: SavedOp): void {
+  edits += 1;
   if (phase === "idle" || phase === "checking") {
     early.set(slug, op);
     return;
@@ -269,6 +272,7 @@ async function deliver(slug: string, op: SavedOp): Promise<void> {
   const settled = response.ok || response.status === 400 || response.status === 404 || code === "saved_limit";
   const state = readSync();
   if (!settled || !state || state.user !== account.userId) return;
+  edits += 1;
   if (state.pending[slug] === op) delete state.pending[slug];
   if (response.ok) state.base = op === "put" ? [slug, ...state.base.filter((item) => item !== slug)] : state.base.filter((item) => item !== slug);
   writeJson(SYNC_KEY, state);

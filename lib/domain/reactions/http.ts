@@ -41,15 +41,34 @@ export async function reactionRequester(request: Request, mutation: boolean): Pr
 const HOUR_MS = 3_600_000;
 
 /**
- * 쓰기 한도(피드백 설계 4.2) — 계정 또는 이 브라우저 시간당 30, 신뢰할 수 있는 IP 가 있으면 IP 묶음 시간당 60.
+ * IP 한도의 묶음 — IPv6 는 /64(한 회선이 보통 /64 하나를 통째로 받아 주소를 마음대로 바꾼다), IPv4·IPv4 사상 주소는 그대로.
+ * 모양을 알 수 없으면 받은 글자 그대로
+ */
+export function ipBucket(ip: string): string {
+  const value = ip.trim().toLowerCase().replace(/%.*$/, "");
+  if (!value.includes(":")) return value;
+  const mapped = /^(?:::|(?:0{1,4}:){5})ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(value);
+  if (mapped) return mapped[1];
+  const halves = value.split("::");
+  if (halves.length > 2 || !/^[0-9a-f:]+$/.test(value)) return value;
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const groups = halves.length === 2 ? [...left, ...Array<string>(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right] : left;
+  if (groups.length !== 8 || !groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))) return value;
+  return `${groups.slice(0, 4).map((group) => group.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
+/**
+ * 쓰기 한도(피드백 설계 4.2) — 계정 또는 이 브라우저 시간당 30, 신뢰할 수 있는 IP 가 있으면 IP 묶음(IPv6 는 /64) 시간당 60.
  * 쿠키를 지우고 다시 오는 연타는 IP 묶음이 막는다. IP 는 해시로만 rate_limits 열쇠에 남는다.
+ * 신뢰할 IP 가 없을 때의 익명 연타는 제품마다 새 익명 줄 한도(putReaction untrustedIp)가 랭킹에서 뺀다.
  */
 export async function enforceReactionLimits(request: Request, userId: number | null, visitor: string | null): Promise<void> {
   const visitorKey = visitor ? reactionRateKey(visitor) : null;
   const owner = userId ? `user:${userId}` : visitorKey ? `visitor:${visitorKey}` : null;
   if (owner && !await rateLimit(`reaction:${owner}`, 30, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
   const ip = trustedClientIp(request);
-  const ipKey = ip ? productVisitorHash("ip:", ip) : null;
+  const ipKey = ip ? productVisitorHash("ip:", ipBucket(ip)) : null;
   if (ipKey && !await rateLimit(`reaction:ip:${ipKey}`, 60, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
 }
 

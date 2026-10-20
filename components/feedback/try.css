@@ -5,11 +5,9 @@
 .try-hint { font-size: 13px; color: var(--text-2); }
 .try-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .try-change { min-height: 40px; padding: 0 10px; font-size: 13px; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-/* 내 평가·요약 줄 — 처음부터 두 줄 자리를 잡아 둔다(읽기가 늦게 끝나도 아래가 밀리지 않는다) */
-.try-meta {
-  min-height: 40px; font-size: 13px; line-height: 20px; color: var(--text-2);
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
-}
+/* 내 평가 결과 줄·요약 줄 — 처음부터 한 줄씩 자리를 잡아 둔다(읽기가 늦게 끝나도 아래가 밀리지 않는다). 긴 글은 자르지 않고 접는다 */
+.try-meta { font-size: 13px; line-height: 20px; color: var(--text-2); overflow-wrap: anywhere; }
+.try-meta > span { display: block; min-height: 20px; }
 .try-editor { display: flex; flex-direction: column; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); }
 .try-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .try-send { min-height: 44px; padding: 0 20px; border-radius: 980px; background: var(--text); color: var(--bg-card); font-size: 14px; font-weight: 600; cursor: pointer; }

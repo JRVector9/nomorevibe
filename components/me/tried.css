@@ -3,6 +3,8 @@
 .tried-status { font-size: 14px; color: var(--text-2); padding: 20px 0; }
 .tried-browser { font-size: 13px; line-height: 1.5; color: var(--text-2); }
 .tried-browser a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+.tried-merge { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 16px; background: var(--accent-soft); color: var(--text); font-size: 14px; line-height: 1.45; }
+.tried-merge-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .tried-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .tried-filter {
   min-height: 40px; padding: 0 14px; border-radius: 980px; border: 1px solid var(--border); background: var(--bg-card);
