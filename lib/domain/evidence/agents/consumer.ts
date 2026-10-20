@@ -134,7 +134,9 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
   const scan = async (lease: AgentScanLease, claimStartedAt: number) => {
     let result: CollectResult | null;
     try {
+      if (signal?.aborted) { await release(lease); return; }
       const latest = await getLatestRepositoryAgentScan(lease.repositoryKey);
+      if (signal?.aborted) { await release(lease); return; }
       // 캐시 판단은 claim 시각(DB 시계)으로 한다 — claim 도래(due_at)도 DB 시계라, host 시계가 늦으면 "아직 볼 때가 아님"(cached)을
       // 기록하고 지난 기한이 그대로 남아 같은 저장소를 쉬지 않고 다시 잡는다
       result = await collectRepositoryAgentScan({ repositoryKey: lease.repositoryKey, hasBudget: () => !signal?.aborted,
@@ -177,6 +179,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
       return Math.min(pausedUntil - Date.now(), AGENT_SCAN_WAIT_MS.quota);
     }
     const headroom = await readGitHubCoreHeadroom(Date.now(), scope);
+    if (signal?.aborted) return null;
     if (headroom?.low) {
       stats.deferred.quota++; last.idle = 'github_headroom_low'; deferred('github_headroom_low');
       logger.info('agent_scan.github_headroom_low', { remaining: headroom.remaining, limit: headroom.limit });
@@ -189,6 +192,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
     }
     let repositoryKey: string | null = null;
     try {
+      if (signal?.aborted) return null;
       const claimStartedAt = Date.now();
       const claim = await claimAgentRepository({ owner, order: agentScanClaimOrder(attempts++) });
       if (claim.kind === 'idle') {

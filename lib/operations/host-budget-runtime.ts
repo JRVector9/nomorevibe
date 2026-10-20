@@ -10,7 +10,7 @@ import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
 import { emergencyAdmissionConfig, emergencyJobDecision, type EmergencyAdmissionDeferReason } from './emergency-admission';
 import { readEmergencyJobs, readEmergencyState } from './emergency-admission-runtime';
-import { hostBudgetEnforcement, hostBudgetShape, hostPressureDecision, hostProcessDecision, hostProcessIdentity, hostSlotPrefix,
+import { assertHostBudgetConsumerSupported, hostBudgetEnforcement, hostBudgetShape, hostPressureDecision, hostProcessDecision, hostProcessIdentity, hostSlotPrefix,
   hostTranslationCap, readHostLedger, type HostDeferReason, type HostEmergencyRow, type HostProcessRow, type HostTranslationRow } from './host-budget';
 import { serviceInstanceId } from './instance';
 
@@ -70,6 +70,7 @@ export function startHostBudget(env: Readonly<Record<string, string | undefined>
   if (!declaration || !instanceId || env.HTTP_ORIGIN_PERMITS !== '1' || !Number.isSafeInteger(leaseMs) || !Number.isSafeInteger(renewMs)
     || renewMs < 1 || renewMs >= leaseMs || enforcement.pressure.maxHeartbeatGapMs <= renewMs
     || holdMs !== undefined && (!Number.isSafeInteger(holdMs) || holdMs < 1)) throw new Error('host_budget_invalid');
+  assertHostBudgetConsumerSupported(env, 'consumer' in declaration.process ? declaration.process.consumer : undefined);
   const { policy, process: identity, primaryMax, readMax } = declaration;
   const host = policy.host, prefix = hostSlotPrefix(host), bootId = randomUUID(), owner = hostProcessIdentity(identity);
   const self = { key: `${prefix}:p:${owner}`, bootId, primaryMax, readMax,

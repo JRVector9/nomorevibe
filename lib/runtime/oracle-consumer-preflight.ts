@@ -1,3 +1,4 @@
+import { assertHostBudgetConsumerSupported } from '@/lib/operations/host-budget';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
@@ -126,6 +127,11 @@ export async function inspectOracleConsumer(spec: OracleConsumerSpec): Promise<O
       batch: { status: 'not_applicable', reason: 'consumer_without_batch' },
       admission: { status: 'not_applicable', reason: 'consumer_item_claims_only' } },
   };
+  try { assertHostBudgetConsumerSupported(process.env, spec.consumer); }
+  catch (error) {
+    const reason = error instanceof Error ? error.message : 'host_budget_invalid';
+    report.checks.consumer = { status: 'rejected', reason }; report.workload.reason = reason; return report;
+  }
   if (currentReplayDb()) { report.workload.reason = 'replay_unsupported'; return report; }
   let instance: string | null;
   try { instance = serviceInstanceId(env); } catch { return report; }

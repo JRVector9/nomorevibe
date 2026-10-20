@@ -56,7 +56,36 @@ function requestStopped(options: { deadlineAt?: number; signal?: AbortSignal }):
   return Boolean(options.signal?.aborted) || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now());
 }
 
+/** Bound caller waiting even when a credential/DB provider never settles.
+ * Aborting also fences late continuations; it cannot cancel an underlying DB read. */
 export async function githubRequest<T>(
+  path: string, conditional: ConditionalRequest = {},
+  options: { timeoutMs?: number; body?: unknown; deadlineAt?: number; signal?: AbortSignal } = {},
+): Promise<GitHubHttpResult<T>> {
+  if (options.deadlineAt === undefined && !options.signal) return githubRequestWithinBudget<T>(path, conditional, options);
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stop: () => void = () => {};
+  const stopped = new Promise<GitHubHttpResult<T>>(resolve => {
+    stop = () => { controller.abort(); resolve({ ok: false, error: { kind: "transport" } }); };
+    options.signal?.addEventListener("abort", stop, { once: true });
+    if (options.deadlineAt !== undefined) {
+      const remaining = options.deadlineAt - Date.now();
+      if (!Number.isFinite(remaining) || remaining <= 0) stop();
+      else timer = setTimeout(stop, remaining);
+    }
+    if (options.signal?.aborted) stop();
+  });
+  try {
+    if (controller.signal.aborted) return await stopped;
+    return await Promise.race([githubRequestWithinBudget<T>(path, conditional, { ...options, signal: controller.signal }), stopped]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    options.signal?.removeEventListener("abort", stop);
+  }
+}
+
+async function githubRequestWithinBudget<T>(
   path: string,
   conditional: ConditionalRequest = {},
   /** body 가 있으면 JSON 으로 POST 한다(GraphQL) */

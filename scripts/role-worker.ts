@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { interruptibleSleep, runtimeLog } from './worker';
-import { superviseWorker } from './worker-supervisor';
+import { superviseWorker, supervisorLimits } from './worker-supervisor';
 import { readRoleLockHolders, releaseRole, renewRole, tryAcquireRole, type RoleCandidate, type RoleLease } from '@/lib/jobs/role-leader';
 import { batchLeaseAdmission } from '@/lib/jobs/batch-repository';
 import { dbErrorFields } from '@/lib/db/error-fields';
@@ -43,6 +43,8 @@ export type RoleRuntimeHealth = { dbFailingSince: number | null; dbFailures: num
 /** 선출된 versioned 역할의 claim 관문이 이만큼 계속 막히면 child 를 멈추고 lease 를 놓아 다른 host 가 선출될 수 있게 한다.
  * stale 결과(24시간)·만료 capability(15분)는 운영자 recanary/refresh 전에는 스스로 풀리지 않는다. 2분은 15초 표본 여러 번이라 attest 가 증거를 바꾸는 순간 같은 일시 상태로는 놓지 않는다. */
 export const BATCH_ADMISSION_RELEASE_MS = 2 * 60_000;
+export const ROLE_RENEW_DEADLINE_MS = 10_000;
+export const ROLE_LEASE_WINDOW_MS = 45_000;
 const LOCK_ERRORS = new Set(['55P03', '40P01']);
 
 export function roleHasUnexplainedStall(report: {
@@ -104,9 +106,16 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
   };
   while (!signal.aborted) {
     let lease: RoleLease | null = null;
+    const acquiredAt = Date.now();
     pending();
     try { lease = await deps.acquire(candidate); succeeded(); }
     catch (error) { failed('role.acquire_unknown', error); }
+    if (signal.aborted) {
+      // An election already in flight may still commit after SIGTERM. Never start its child.
+      if (lease) await deps.release?.(lease).catch(() => false);
+      deps.report?.('stopping', null);
+      return 0;
+    }
     if (!lease) {
       // 스스로 회복하지 못한 boot 는 깨끗이 끝낸다 — 재시작 정책이 새 프로세스·새 DB pool 로 다시 띄운다.
       if (health.dbFailingSince !== null && Date.now() - health.dbFailingSince >= ROLE_STUCK_UNHEALTHY_MS) {
@@ -124,17 +133,38 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     const active = new AbortController();
     const onStop = () => active.abort('shutdown_requested');
     signal.addEventListener('abort', onStop, { once: true });
+    if (signal.aborted) onStop();
     let renewing = false, lost = false, checkingProgress = false, stalledSamples = 0, progressRestart = false;
-    let checkingAdmission = false, admissionRelease = false;
+    let checkingAdmission = false, admissionRelease = false, ended = false;
+    let leaseDeadline = acquiredAt + ROLE_LEASE_WINDOW_MS, renewDeadline: number | null = null;
+    const lose = (reason: string) => {
+      if (lost || ended) return;
+      lost = true;
+      failed('role.renew_unknown', new Error(reason), { epoch: lease.epoch });
+      active.abort('role_lease_lost');
+    };
+    // Independent of the renew promise: a wedged DB call cannot keep a child alive.
+    const watchdog = setInterval(() => {
+      if (Date.now() >= leaseDeadline || (renewDeadline !== null && Date.now() >= renewDeadline)) lose('role_renew_deadline');
+    }, 250);
+    watchdog.unref();
     const timer = setInterval(() => {
-      if (renewing || lost) return;
+      if (renewing || lost || ended || active.signal.aborted) return;
+      if (Date.now() >= leaseDeadline) { lose('role_lease_expired'); return; }
       renewing = true;
+      const startedAt = Date.now();
+      renewDeadline = Math.min(leaseDeadline, startedAt + ROLE_RENEW_DEADLINE_MS);
       pending();
-      void deps.renew(lease).then(ok => {
+      void Promise.resolve().then(() => deps.renew(lease)).then(ok => {
+        if (ended || lost || active.signal.aborted) return;
+        if (Date.now() >= renewDeadline!) { lose('role_renew_deadline'); return; }
         succeeded();
         if (!ok) { lost = true; active.abort('role_lease_lost'); }
-      }).catch(error => { failed('role.renew_unknown', error, { epoch: lease.epoch }); lost = true; active.abort('role_lease_lost'); })
-        .finally(() => { renewing = false; });
+        else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
+      }).catch(error => {
+        if (ended || lost || active.signal.aborted) return;
+        failed('role.renew_unknown', error, { epoch: lease.epoch }); lost = true; active.abort('role_lease_lost');
+      }).finally(() => { renewing = false; renewDeadline = null; });
     }, 10_000);
     timer.unref();
     const progressTimer = candidate.kind === 'primary' && deps.checkProgress ? setInterval(() => {
@@ -175,9 +205,22 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       }).finally(() => { checkingAdmission = false; });
     }, 15_000) : null;
     admissionTimer?.unref();
-    let exitCode = 1;
-    try { exitCode = await deps.supervise(lease, active.signal); }
+    let exitCode = 1, drainTimedOut = false;
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    let startDrain: () => void;
+    const drainExpired = new Promise<number>(resolve => {
+      startDrain = () => {
+        drainTimer = setTimeout(() => { drainTimedOut = true; resolve(1); }, supervisorLimits(candidate.role).drainMs + 5_000);
+      };
+      active.signal.addEventListener('abort', startDrain, { once: true });
+      if (active.signal.aborted) startDrain();
+    });
+    try { exitCode = await Promise.race([deps.supervise(lease, active.signal), drainExpired]); }
     finally {
+      ended = true;
+      active.signal.removeEventListener('abort', startDrain!);
+      if (drainTimer) clearTimeout(drainTimer);
+      clearInterval(watchdog);
       clearInterval(timer);
       if (progressTimer) clearInterval(progressTimer);
       if (admissionTimer) clearInterval(admissionTimer);
@@ -185,6 +228,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     }
     runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost, progressRestart, admissionRelease });
     deps.report?.(signal.aborted ? 'stopping' : 'standby', null);
+    if (drainTimedOut) return 1; // Never elect another child while the old supervisor is uncertain.
     if (signal.aborted) {
       if (exitCode === 0) await deps.release?.(lease).catch(() => false);
       return exitCode;
