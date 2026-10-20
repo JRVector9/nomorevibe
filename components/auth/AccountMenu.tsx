@@ -8,7 +8,7 @@ import { MeAvatar } from "@/components/me/MeAvatar";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
-import { ME_TAB_PATHS } from "@/lib/me/contract";
+import { ME_SAVED_LINK, ME_TAB_PATHS } from "@/lib/me/contract";
 import type { MeSummary } from "@/lib/me/summary";
 
 type PublicAccount = Pick<MeSummary, "user" | "isMaker" | "providers"> & { counts: MeSummary["counts"] | null; csrfToken: string };
@@ -92,7 +92,7 @@ export function AccountMenu() {
   const links = [
     ["account.mypage", ME_TAB_PATHS.saved],
     ...(account.isMaker ? [["account.projects", ME_TAB_PATHS.projects] as const] : []),
-    ["account.saved", ME_TAB_PATHS.saved],
+    ["account.saved", ME_SAVED_LINK],
     ["account.tried", ME_TAB_PATHS.tried],
     ["account.opinions", ME_TAB_PATHS.opinions],
     ["account.alerts", ME_TAB_PATHS.alerts],

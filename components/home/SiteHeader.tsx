@@ -11,6 +11,7 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import "./chrome.css";
+import { ME_SAVED_LINK } from "@/lib/me/contract";
 
 function subscribeHydration(): () => void {
   return () => {};
@@ -167,7 +168,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
   }, []);
 
   function openSaved() {
-    router.push(localePath(locale, "/me"));
+    router.push(localePath(locale, ME_SAVED_LINK));
   }
 
   /**

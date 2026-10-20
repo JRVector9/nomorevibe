@@ -16,6 +16,8 @@ export const ME_TAB_PATHS: Record<MeTab, string> = {
   alerts: "/me/alerts",
   account: "/me/account",
 };
+/** 저장 탭으로 바로 가는 주소 — 답장 기다림이 있는 메이커는 /me 가 내 프로젝트로 열리므로(Q3) 탭·메뉴의 «저장»은 이쪽 */
+export const ME_SAVED_LINK = "/me?tab=saved";
 
 /** 써봤어요 평가 — 좋았어요·그저 그래요·안 됐어요 */
 export const REACTION_VERDICTS = ["good", "meh", "bad"] as const;

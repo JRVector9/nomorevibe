@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
-import { ME_TAB_PATHS, ME_TABS, type MeTab } from "@/lib/me/contract";
+import { ME_SAVED_LINK, ME_TAB_PATHS, ME_TABS, type MeTab } from "@/lib/me/contract";
 
 /**
  * 마이페이지 탭 줄 — 탭마다 주소가 따로 있다. 내 프로젝트는 확인한 프로젝트가 있을 때만 맨 앞에 붙는다.
@@ -46,7 +46,7 @@ export function MeTabs({ showProjects = false, counts }: { showProjects?: boolea
       {tabs.map((tab) => {
         const count = counts?.[tab];
         return (
-          <Link key={tab} prefetch={false} href={localePath(locale, ME_TAB_PATHS[tab])} className="me-tab" aria-current={active(tab) ? "page" : undefined}>
+          <Link key={tab} prefetch={false} href={localePath(locale, tab === "saved" ? ME_SAVED_LINK : ME_TAB_PATHS[tab])} className="me-tab" aria-current={active(tab) ? "page" : undefined}>
             {t(`tabs.${tab}`)}
             {count !== undefined && (tab === "alerts"
               ? count > 0 && <span className="me-tc me-tc-hot"><span className="sr-only">{t("tabs.unread", { count })}</span><span aria-hidden="true">{formatNumber(count, locale)}</span></span>
