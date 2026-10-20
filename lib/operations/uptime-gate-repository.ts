@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, like, lte, ne, or, sql, ty
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { operationsAudit, operationsObservations, productHealth, products } from "@/lib/db/schema";
-import { uptimeControl, uptimeGates, uptimeObservations } from "@/lib/db/product-uptime-schema";
+import { uptimeControl, uptimeGates, uptimeObservations, uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
 import { UPTIME_AUTO_BAN_THRESHOLD } from "@/lib/domain/products/uptime-auto-ban";
 import { uptimeNegativeAllowed } from "@/lib/domain/products/uptime-negative-gate";
@@ -10,6 +10,7 @@ import { UPTIME_EVIDENCE_MS, UPTIME_POLICY_VERSION, UptimeSourcesSchema, type Up
 import { planUptimeTransition, sameUptimeSource, shadowEvaluateUptimeGate, uptimeMode, uptimeRollbackTarget, UPTIME_GATE_LOOKBACK_MS,
   UPTIME_GATE_SHADOW_LIMIT, UPTIME_GATE_SHADOW_MS, UPTIME_RUNNER_LOOKBACK_MS, UPTIME_RUNNER_ROLES, type UptimeControlState,
   type UptimeGateSnapshot, type UptimeGateTarget, type UptimeTransitionPlan } from "./uptime-gate";
+import { uptimeExclusionError } from "./uptime-split";
 
 type Database = PostgresJsDatabase<typeof schema>;
 type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
@@ -69,6 +70,8 @@ async function snapshotIn(tx: Tx): Promise<UptimeGateSnapshot> {
   }).from(uptimeGates);
   const heldRows = await tx.select({ reason: uptimeGates.reason, count: sql<number>`count(*)::int` }).from(uptimeGates)
     .where(eq(uptimeGates.state, "observation_hold")).groupBy(uptimeGates.reason);
+  const [split] = await tx.select({ mode: uptimeSplitControl.mode, epoch: uptimeSplitControl.epoch }).from(uptimeSplitControl)
+    .where(eq(uptimeSplitControl.id, 1));
   // health.ts downWhere와 같은 식이다. 10회 이상은 sweep의 최신성 조건을 빼 수만 센다.
   const [impact] = await tx.select({ hiddenNow: sql<number>`count(*)::int`,
     banEligibleNow: count(sql`${productHealth.failures} >= ${UPTIME_AUTO_BAN_THRESHOLD}`) })
@@ -87,7 +90,7 @@ async function snapshotIn(tx: Tx): Promise<UptimeGateSnapshot> {
     hosts, holdReasons: Object.fromEntries(holdRows.map(row => [row.reason ?? "unknown", row.count])),
     runners: [...new Set(runnerRows.map(row => row.key.split(":")[2]).filter(Boolean))].sort(),
     gates: { ...gate, heldReasons: Object.fromEntries(heldRows.map(row => [row.reason ?? "unknown", row.count])) },
-    impact, shadow: await shadowIn(tx, control, nowMs) };
+    impact, shadow: await shadowIn(tx, control, nowMs), ...(split ? { split: { mode: split.mode, epoch: split.epoch } } : {}) };
 }
 
 export function readUptimeGateSnapshot(database: Database): Promise<UptimeGateSnapshot> {
@@ -130,13 +133,20 @@ export async function applyUptimeTransition(database: Database, input: { target:
   if (snapshot.control.revision !== input.expectRevision) throw new Error("uptime_control_revision_conflict");
   const plan = planUptimeTransition(input.target, snapshot, input.sources);
   if (!plan.allowed) return { kind: "blocked", plan, before: snapshot.control };
-  return maybeDry(database, input.apply, async tx => {
-    const locked = await readControl(tx, true);
-    if (locked.revision !== input.expectRevision) throw new Error("uptime_control_revision_conflict");
-    const after = await switchControl(tx, snapshot.control, plan.next, { operator: input.operator, action: "uptime-control-transition",
-      detail: { target: input.target, observations: snapshot.observations, hosts: snapshot.hosts, shadow: snapshot.shadow, impact: snapshot.impact } });
-    return { kind: input.apply ? "applied" as const : "dry_run" as const, plan, before: snapshot.control, after };
-  });
+  try {
+    return await maybeDry(database, input.apply, async tx => {
+      const locked = await readControl(tx, true);
+      if (locked.revision !== input.expectRevision) throw new Error("uptime_control_revision_conflict");
+      const after = await switchControl(tx, snapshot.control, plan.next, { operator: input.operator, action: "uptime-control-transition",
+        detail: { target: input.target, observations: snapshot.observations, hosts: snapshot.hosts, shadow: snapshot.shadow, impact: snapshot.impact } });
+      return { kind: input.apply ? "applied" as const : "dry_run" as const, plan, before: snapshot.control, after };
+    });
+  } catch (error) {
+    // 판정 뒤 split 이 먼저 claims 로 commit 된 경합 — 0104 트리거의 거절을 오류가 아니라 거절로 돌려준다(아무것도 쓰지 않았다)
+    const code = uptimeExclusionError(error);
+    if (code) return { kind: "blocked", plan: { ...plan, allowed: false, blocked: [...plan.blocked, code] }, before: snapshot.control };
+    throw error;
+  }
 }
 
 export type UptimeRollbackResult =

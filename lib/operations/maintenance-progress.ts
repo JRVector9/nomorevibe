@@ -8,19 +8,24 @@ export type MaintenanceUptimeProgress = {
   persistedWithin5m: boolean;
   inBackoff: boolean;
   jobError: boolean;
+  /**
+   * split claims 모드에서 home host 차단기가 열려 쉬는 중이다(광역 장애). 잡은 확인을 일부러 건너뛰므로 저장이 없어도 멈춤이 아니다 —
+   * 재시작해도 고쳐지지 않는다. 시험 시각(probe_after)이 지나면 다시 확인하므로 그때부터는 지금 규칙대로 본다.
+   */
+  splitHeld: boolean;
 };
 
 /** A large overdue queue alone is not a stall; a fresh saved ping keeps the role active. */
 export function maintenanceUptimeStalled(state: MaintenanceUptimeProgress): boolean {
   return state.schedulerScheduled && state.waiting && (state.oldestMinutes ?? 0) >= 5 &&
-    !state.persistedWithin5m && !state.inBackoff && !state.jobError;
+    !state.persistedWithin5m && !state.inBackoff && !state.jobError && !state.splitHeld;
 }
 
 /** Use the DB clock for both queue age and persisted output age. */
 export async function readMaintenanceUptimeProgress(): Promise<Omit<MaintenanceUptimeProgress, 'schedulerScheduled'>> {
   const rows = await db.execute<{
     waiting: boolean; oldest_minutes: number | null; persisted_within_5m: boolean;
-    in_backoff: boolean; job_error: boolean;
+    in_backoff: boolean; job_error: boolean; split_held: boolean;
   }>(sql`
     with due as (
       -- 기다림은 다시 볼 때가 된 시각(마지막 확인 + 6시간)부터 잰다. 마지막 확인부터 재면 막 차례가 된 제품도
@@ -35,9 +40,13 @@ export async function readMaintenanceUptimeProgress(): Promise<Omit<MaintenanceU
       exists(select 1 from product_health where checked_at > now() - interval '5 minutes') as persisted_within_5m,
       coalesce((select not_before > now() from jobs where name = 'uptime-ping'), false) as in_backoff,
       coalesce((select last_error is not null and last_run_at > now() - interval '5 minutes'
-        from jobs where name = 'uptime-ping'), false) as job_error
+        from jobs where name = 'uptime-ping'), false) as job_error,
+      exists(select 1 from uptime_split_control s join uptime_host_breakers b
+          on b.state = 'open' and b.probe_after > clock_timestamp()
+            and b.host in (select h->>'host' from jsonb_array_elements(s.policy->'hosts') h where h->>'class' = 'home')
+        where s.id = 1 and s.mode = 'claims') as split_held
   `);
   const row = rows[0];
   return { waiting: row.waiting, oldestMinutes: row.oldest_minutes === null ? null : Number(row.oldest_minutes),
-    persistedWithin5m: row.persisted_within_5m, inBackoff: row.in_backoff, jobError: row.job_error };
+    persistedWithin5m: row.persisted_within_5m, inBackoff: row.in_backoff, jobError: row.job_error, splitHeld: row.split_held };
 }

@@ -13,6 +13,11 @@ import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { parseAgentProviderFailure, type AgentProviderFailure } from '@/lib/operations/worker-progress';
 import { agentRefreshDueAtSql } from '@/lib/domain/evidence/agents/refresh-policy';
 import { readGitHubCoreHeadroom } from '@/lib/crawl/github-headroom';
+import { collectorScope } from '@/lib/crawl/github-secret';
+import { readAgentScanMode } from '@/lib/domain/evidence/agents/claim-control';
+import { fillAgentScanQueue } from '@/lib/domain/evidence/agents/claims';
+import { agentCoverageRevisionSql } from '@/lib/domain/evidence/agents/coverage';
+import type { CrawlSettings } from '@/lib/crawl/settings-schema';
 
 /** afterNewProduct: 새 공개 제품 몫이 마지막으로 본 제품 id — 일반 대기의 afterRepository 와 따로 간다 */
 export type AgentEvidenceRefreshCursor = { afterRepository?: string; afterNewProduct?: number; retryAfter?: string; providerFailure?: AgentProviderFailure };
@@ -61,6 +66,9 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   const deadlineAt = Date.now() + AGENT_EVIDENCE_TICK_MS;
   const settings = await getSettings();
   if (!settings.agentEvidence.enabled) { ctx.log('agent_evidence.disabled'); return { done: true }; }
+  // items·draining 에서는 consumer 가 저장소 단위 claim 으로 스캔한다. 이 잡은 GitHub 를 부르지 않는 컨트롤러다 —
+  // 수요 조회·GitHub 호출 전에 가른다(호출한 뒤 관문에서 거절되면 요청만 버린다)
+  if ((await readAgentScanMode(db)).mode !== 'legacy') return controlAgentScanQueue(ctx, settings);
   let afterRepository = ctx.cursor?.afterRepository ?? '';
   let providerFailure = parseAgentProviderFailure(ctx.cursor?.providerFailure);
   const savedNewProduct = ctx.cursor?.afterNewProduct;
@@ -155,10 +163,15 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   let attempted = 0;
   const more = (): JobOutcome<AgentEvidenceRefreshCursor> => ({ done: false, cursor: cursor(), ...(attempted > 0 ? { continuation: 'ready' as const } : {}) });
   const collect = async (): Promise<JobOutcome<AgentEvidenceRefreshCursor>> => {
+    // 이 프로세스가 실제로 쓰는 수집 자격(G1 서버별 범위). 여유 관문은 consumer 와 같은 범위만 센다 — 다른 서버 몫으로 뺀 설치의
+    // 남은 한도를 더하면 이 서버 자격을 25% 아래까지 쓴다. 값이 틀리면 첫 요청 전에 틱이 실패한다(어차피 모든 요청이 실패한다)
+    const scope = collectorScope();
     for (const row of work) {
       if (!ctx.hasBudget() || Date.now() > deadlineAt - 8_000) return more();
+      // 틱 도중 drain 이 시작되면 새 스캔을 시작하지 않는다 — 이미 시작한 스캔만 draining(from legacy) 관문을 지나 기록된다
+      if ((await readAgentScanMode(db)).mode !== 'legacy') return more();
       // GitHub 여유 관문 — 남은 core 가 적으면 먼저 도는 수집(원본·AI 단계)에 한도를 남기고 다음 정기 틱에 다시 본다
-      const headroom = await readGitHubCoreHeadroom();
+      const headroom = await readGitHubCoreHeadroom(Date.now(), scope);
       if (headroom?.low) {
         ctx.log('agent_evidence.github_headroom_low', { remaining: headroom.remaining, limit: headroom.limit });
         return { done: false, cursor: cursor() };
@@ -188,7 +201,7 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
         if (result.scan?.state === 'complete' && !result.errorCode) {
           if (!result.cached) {
             if (!ctx.lease) throw new Error('admin_evidence_refresh_job_required');
-            await requeueAfterAdminEvidenceRefresh(repositoryKey, ctx.lease);
+            await consumeAdminEvidenceRefreshes(ctx.lease, sql`lower(candidate.repo) = ${repositoryKey}`);
           }
           await db.transaction(async tx => {
             await lockPipelineInputStages(tx);
@@ -217,6 +230,61 @@ export async function refreshAgentEvidenceJob(ctx: JobContext<AgentEvidenceRefre
   await attachPendingScans(ctx);
   await releaseEvidencePendingCandidates(settings.agentEvidence.detectorVersion, ctx.lease);
   return outcome;
+}
+
+/**
+ * items·draining 모드의 틱(GitHub 호출 없음). 스캔은 consumer 가 claim 으로 맡고, 이 잡은 job lease 아래에서 그 둘레만 한다:
+ * 큐 채우기(fillAgentScanQueue) → 관리자 추가 수집 완료 처리 → 제품 연결 → 근거 대기 후보 풀기.
+ * 커서는 새 제품 몫의 자리(afterNewProduct)만 남긴다 — legacy 로 되돌아가면 그 자리에서 잇는다. 일반 대기 자리·공급자 대기·스캔 전
+ * 실패 기록은 legacy 스캔의 것이라 지운다(운영센터는 items 에서 claim 표로 센다).
+ */
+async function controlAgentScanQueue(ctx: JobContext<AgentEvidenceRefreshCursor>, settings: CrawlSettings): Promise<JobOutcome<AgentEvidenceRefreshCursor>> {
+  if (!ctx.lease) throw new Error('admin_evidence_refresh_job_required');
+  const filled = await fillAgentScanQueue({ settings, lease: ctx.lease });
+  if (filled) ctx.log('agent_scan.queue_filled', filled);
+  const consumed = await consumeAdminEvidenceRefreshes(ctx.lease, ADMIN_REFRESH_SCANNED);
+  if (consumed) ctx.log('agent_scan.admin_consumed', { consumed });
+  await attachPendingScans(ctx);
+  await releaseEvidencePendingCandidates(settings.agentEvidence.detectorVersion, ctx.lease);
+  const afterNewProduct = ctx.cursor?.afterNewProduct;
+  return { done: true, ...(typeof afterNewProduct === 'number' && Number.isSafeInteger(afterNewProduct) && afterNewProduct > 0 ? { cursor: { afterNewProduct } } : {}) };
+}
+
+/**
+ * 관리자 추가 수집 요청 중 스캔 완료로 소비할 수 있는 것 — 요청 뒤에 끝난 최신 스캔(전체 범위)이 오류·범위 제한 없이 complete 다.
+ * 소비 쪽(evidence-refresh-completion.ts)이 고르는 최신 스캔·완료 판정과 같은 식이다. 최종 판정과 잠금은 소비 쪽이 한다.
+ */
+const ADMIN_REFRESH_SCANNED = sql`EXISTS (
+  SELECT 1 FROM (
+    SELECT scan.state, scan.last_error_code, scan.completed_at, scan.coverage, scan.cursor FROM agent_repository_scans scan
+    WHERE scan.repository_key = lower(candidate.repo) AND scan.scope = ''
+    ORDER BY scan.started_at DESC, scan.id DESC LIMIT 1
+  ) latest
+  WHERE latest.state = 'complete' AND latest.last_error_code IS NULL
+    AND ${agentCoverageRevisionSql(sql`latest.coverage`, sql`latest.cursor`)} = '{}'::jsonb
+    AND date_trunc('milliseconds', latest.completed_at) > date_trunc('milliseconds',
+      coalesce((request.source->>'scanCompletedAt')::timestamptz AT TIME ZONE 'UTC', request.started_at)))`;
+/**
+ * 관리자 추가 수집 요청을 스캔 완료로 소비한다(requeueAfterAdminEvidenceRefresh, job lease 아래). 소비 쪽은 후보를 repo 로 정확히
+ * 찾으므로 소문자 저장소 키가 아니라 후보의 실제 repo 를 넘긴다 — 키를 넘기던 때는 대소문자가 섞인 후보의 요청이 스캔 완료로
+ * 소비되지 않고 원본 재수집 때까지 남았다(설계 R6). 미소비 요청이 있는 보류 후보만 고른다(소비 쪽과 같은 조건).
+ */
+async function consumeAdminEvidenceRefreshes(lease: JobLease, scope: SQL): Promise<number> {
+  const rows = await db.execute<{ repo: string }>(sql`
+    SELECT candidate.repo FROM crawl_candidates candidate
+    CROSS JOIN LATERAL (
+      SELECT request.id, request.started_at, request.source FROM crawl_review_attempts request
+      WHERE request.candidate_id = candidate.id AND request.kind = 'evidence_refresh' ORDER BY request.id DESC LIMIT 1
+    ) request
+    WHERE candidate.state = 'needs_review' AND candidate.decided_by = 'auto' AND candidate.published_slug IS NULL
+      AND request.id > CASE WHEN jsonb_typeof(candidate.signals->'adminEvidenceRefreshConsumedId') = 'number'
+        THEN (candidate.signals->>'adminEvidenceRefreshConsumedId')::numeric ELSE 0 END
+      AND ${scope}
+    ORDER BY request.id LIMIT 50
+  `);
+  let consumed = 0;
+  for (const row of rows) if (await requeueAfterAdminEvidenceRefresh(row.repo, lease)) consumed++;
+  return consumed;
 }
 
 /**

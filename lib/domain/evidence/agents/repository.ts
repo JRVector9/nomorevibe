@@ -3,13 +3,14 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { agentRepositoryScans, agentRepositoryObservations, crawlDiscoveryEvidence, productEvidenceSources, productLinks, type AgentRepositoryScan } from '@/lib/db/schema';
-import { withProductGeneration } from '@/lib/domain/products/generation';
+import { withProductGeneration, type ProductTransaction } from '@/lib/domain/products/generation';
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
 import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { agentObservationSchema, AGENT_DETECTOR_VERSION, type AgentObservation } from './types';
 import { collectRepositoryAgentEvidence, InvalidAgentScanCursorError, normalizeAgentRepositoryKey, type CollectResult, type AgentGitHubRequest } from './collect';
 import { lockRepositoryAgentEvidence } from './lock';
 import { effectiveAgentScanState } from './coverage';
+import { assertLegacyAgentScanWrite } from './claim-control';
 const DAY = 24 * 60 * 60 * 1000;
 /** 저장소 탓으로 끝난 실패 — 공급자 한도(rate_limited)나 인증 대기(retryAt 있는 unavailable)와 달리 같은 저장소에서 되풀이된다 */
 const REPOSITORY_FAILURE_CODES = ['timeout', 'unavailable', 'invalid'] as const;
@@ -52,22 +53,30 @@ export async function getRepositoryAgentEvidence(scanId: number): Promise<{ scan
   const rows = await db.select().from(agentRepositoryObservations).where(eq(agentRepositoryObservations.scanId, scanId)).orderBy(agentRepositoryObservations.id);
   return { scan, observations: rows.flatMap(row => { const parsed = agentObservationSchema.safeParse(row.facts); return parsed.success ? [parsed.data] : []; }) };
 }
-export async function getLatestRepositoryAgentScan(repositoryKey: string, scope = '') {
-  return await db.query.agentRepositoryScans.findFirst({ where: and(eq(agentRepositoryScans.repositoryKey, normalizeAgentRepositoryKey(repositoryKey)), eq(agentRepositoryScans.scopeHash, digest(scope)), eq(agentRepositoryScans.detectorVersion, AGENT_DETECTOR_VERSION)), orderBy: [desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)] }) ?? null;
+export async function getLatestRepositoryAgentScan(repositoryKey: string, scope = '', executor: typeof db | ProductTransaction = db) {
+  return await executor.query.agentRepositoryScans.findFirst({ where: and(eq(agentRepositoryScans.repositoryKey, normalizeAgentRepositoryKey(repositoryKey)), eq(agentRepositoryScans.scopeHash, digest(scope)), eq(agentRepositoryScans.detectorVersion, AGENT_DETECTOR_VERSION)), orderBy: [desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)] }) ?? null;
 }
 export async function getLatestRepositoryAgentEvidence(repositoryKey: string, scope = '') {
   const scan = await db.query.agentRepositoryScans.findFirst({ where: and(eq(agentRepositoryScans.repositoryKey, normalizeAgentRepositoryKey(repositoryKey)), eq(agentRepositoryScans.scopeHash, digest(scope)), eq(agentRepositoryScans.detectorVersion, AGENT_DETECTOR_VERSION), eq(agentRepositoryScans.state, 'complete')), orderBy: [desc(agentRepositoryScans.completedAt), desc(agentRepositoryScans.id)] });
   const selected = scan ?? await getLatestRepositoryAgentScan(repositoryKey, scope);
   return selected ? getRepositoryAgentEvidence(selected.id) : null;
 }
-export async function saveRepositoryAgentScan(result: CollectResult, now = new Date(), lease?: JobLease) {
-  if (!result.repositoryId || !result.commitSha) return null;
+/** 쓰기 전에 관측을 검사한다. 하나라도 어긋나면 아무것도 쓰지 않는다 — legacy 쓰기와 claim 기록(claims.ts)이 같이 쓴다 */
+export function validatedAgentObservations(result: CollectResult): AgentObservation[] {
   const observations = result.observations.map(value => agentObservationSchema.parse(value));
   if (observations.some(value => {
     if (Buffer.byteLength(JSON.stringify(value)) > 64 * 1024) return true;
     if (value.kind === 'commit_attribution') return result.repositoryFork === true || (value.commitEvidence !== undefined && (value.commitEvidence.headSha !== result.commitSha || value.commitEvidence.changedPaths.some(path => value.scope !== '' && !path.startsWith(value.scope + '/')))) || value.sourcePath !== null || value.blobSha !== null || value.sourceUrl !== `https://github.com/${result.repositoryKey}/commit/${value.commitSha}`;
     return value.commitSha !== result.commitSha || value.sourcePath === null || value.sourceUrl !== `https://github.com/${result.repositoryKey}/blob/${result.commitSha}/${value.sourcePath.split('/').map(encodeURIComponent).join('/')}`;
   })) throw new Error('invalid agent observation');
+  return observations;
+}
+/**
+ * 스캔 행 upsert 와 관측 넣기(네트워크 없음). 잠금과 권한 확인은 호출자 TX 가 먼저 한다:
+ * stage SHARE → agent_scan_control 관문(legacy: assertLegacyAgentScanWrite, claim: 기록 관문) → 저장소 identity → (claim 행) → 이 쓰기.
+ */
+export async function writeRepositoryAgentScanIn(tx: ProductTransaction, result: CollectResult, observations: AgentObservation[], now: Date): Promise<AgentRepositoryScan> {
+  if (!result.repositoryId || !result.commitSha) throw new Error('agent_scan_identity_required');
   const nextAttemptAt = result.retryAt && result.retryAt > now ? result.retryAt : new Date(now.getTime() + (result.state === 'complete' || result.cursor?.coverageLimited && !result.cursor.pendingTrees.length && !result.cursor.pendingBlobs.length && !result.cursor.pendingCommits?.length ? DAY : result.errorCode ? 15 * 60_000 : 60_000));
   // A rename shares GitHub ID/head, but existing products still look up the original name.
   // Keep that name and bind the queue to it atomically on conflict. The collector rechecks
@@ -91,42 +100,50 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
   const coverageUpdate = { ...(result.repositoryFork === undefined ? {} : { repositoryFork: result.repositoryFork }),
     ...(result.state === 'complete' ? { limited: false, unavailableCommits: [] }
       : result.cursor?.coverageLimited ? { limited: true, unavailableCommits: result.cursor.unavailableCommits ?? [] } : {}) };
+  // Complete immutable evidence can coexist with unfinished later discovery work.
+  const [scan] = await tx.insert(agentRepositoryScans).values({
+    githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey,
+    commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION,
+    scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor,
+    requestCount: result.requestCount, fileCount: result.fileCount,
+    coverage,
+    startedAt: now, completedAt: result.state === 'complete' ? now : null,
+    lastErrorCode: result.errorCode, nextAttemptAt,
+  }).onConflictDoUpdate({
+    target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash],
+    set: {
+      coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify(coverageUpdate)}::jsonb`,
+      state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' WHEN NOT (${sameName}) THEN 'partial' ELSE ${result.state} END`,
+      cursor: conflictCursor,
+      requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`,
+      fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`,
+      startedAt: now,
+      // Checking an alias does not confirm that the original URL still identifies this repo.
+      completedAt: result.state === 'complete'
+        ? sql`CASE WHEN ${sameName} THEN excluded.completed_at ELSE ${agentRepositoryScans.completedAt} END`
+        : sql`${agentRepositoryScans.completedAt}`,
+      lastErrorCode: sql`CASE WHEN ${sameName} THEN ${result.errorCode} ELSE 'alias_recheck_required' END`,
+      // Recheck promptly, but never bypass an upstream failure's retry deadline.
+      nextAttemptAt: sql`CASE WHEN ${repeatedFailure} THEN greatest(excluded.next_attempt_at, excluded.started_at + least(interval '7 days',
+          greatest(interval '15 minutes', 2 * (${agentRepositoryScans.nextAttemptAt} - ${agentRepositoryScans.startedAt}))))
+        WHEN ${sameName} OR ${result.errorCode !== null} THEN excluded.next_attempt_at ELSE excluded.started_at END`,
+    },
+  }).returning();
+  // Repository metadata can change at an unchanged head. Do not retain upstream claims after a fork recheck.
+  if (result.repositoryFork === true) await tx.delete(agentRepositoryObservations).where(and(
+    eq(agentRepositoryObservations.scanId, scan.id), sql`${agentRepositoryObservations.facts}->>'kind' = 'commit_attribution'`));
+  for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
+  return scan;
+}
+export async function saveRepositoryAgentScan(result: CollectResult, now = new Date(), lease?: JobLease) {
+  if (!result.repositoryId || !result.commitSha) return null;
+  const observations = validatedAgentObservations(result);
   return db.transaction(async tx => {
     await lockPipelineInputStages(tx);
+    // claim 기반(items)으로 넘어간 뒤 legacy 잡·backfill 스크립트는 스캔을 쓰지 못한다(claim-control.ts)
+    await assertLegacyAgentScanWrite(tx);
     await lockRepositoryAgentEvidence(tx, result.repositoryKey, result.scope);
-    // Complete immutable evidence can coexist with unfinished later discovery work.
-    const [scan] = await tx.insert(agentRepositoryScans).values({
-      githubRepositoryId: BigInt(result.repositoryId!), repositoryKey: result.repositoryKey,
-      commitSha: result.commitSha!, detectorVersion: AGENT_DETECTOR_VERSION,
-      scope: result.scope, scopeHash: digest(result.scope), state: result.state, cursor: result.cursor,
-      requestCount: result.requestCount, fileCount: result.fileCount,
-      coverage,
-      startedAt: now, completedAt: result.state === 'complete' ? now : null,
-      lastErrorCode: result.errorCode, nextAttemptAt,
-    }).onConflictDoUpdate({
-      target: [agentRepositoryScans.githubRepositoryId, agentRepositoryScans.commitSha, agentRepositoryScans.detectorVersion, agentRepositoryScans.scopeHash],
-      set: {
-        coverage: sql`${agentRepositoryScans.coverage} || ${JSON.stringify(coverageUpdate)}::jsonb`,
-        state: sql`CASE WHEN ${agentRepositoryScans.state} = 'complete' THEN 'complete' WHEN NOT (${sameName}) THEN 'partial' ELSE ${result.state} END`,
-        cursor: conflictCursor,
-        requestCount: sql`${agentRepositoryScans.requestCount} + ${result.requestCount}`,
-        fileCount: sql`${agentRepositoryScans.fileCount} + ${result.fileCount}`,
-        startedAt: now,
-        // Checking an alias does not confirm that the original URL still identifies this repo.
-        completedAt: result.state === 'complete'
-          ? sql`CASE WHEN ${sameName} THEN excluded.completed_at ELSE ${agentRepositoryScans.completedAt} END`
-          : sql`${agentRepositoryScans.completedAt}`,
-        lastErrorCode: sql`CASE WHEN ${sameName} THEN ${result.errorCode} ELSE 'alias_recheck_required' END`,
-        // Recheck promptly, but never bypass an upstream failure's retry deadline.
-        nextAttemptAt: sql`CASE WHEN ${repeatedFailure} THEN greatest(excluded.next_attempt_at, excluded.started_at + least(interval '7 days',
-            greatest(interval '15 minutes', 2 * (${agentRepositoryScans.nextAttemptAt} - ${agentRepositoryScans.startedAt}))))
-          WHEN ${sameName} OR ${result.errorCode !== null} THEN excluded.next_attempt_at ELSE excluded.started_at END`,
-      },
-    }).returning();
-    // Repository metadata can change at an unchanged head. Do not retain upstream claims after a fork recheck.
-    if (result.repositoryFork === true) await tx.delete(agentRepositoryObservations).where(and(
-      eq(agentRepositoryObservations.scanId, scan.id), sql`${agentRepositoryObservations.facts}->>'kind' = 'commit_attribution'`));
-    for (const facts of observations) await tx.insert(agentRepositoryObservations).values({ scanId: scan.id, observationKey: observationKey(facts), facts }).onConflictDoNothing();
+    const scan = await writeRepositoryAgentScanIn(tx, result, observations, now);
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
     return scan;
   });
@@ -148,38 +165,54 @@ export async function attachRepositoryAgentScan(input: { productSlug: string; pr
     return true;
   });
 }
-export async function refreshRepositoryAgentEvidence(input: { repositoryKey: string; scope?: string; productSlug?: string; productId?: number; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number; lease?: JobLease }) {
-  const latest = await getLatestRepositoryAgentScan(input.repositoryKey, input.scope);
-  const now = new Date();
-  if (latest && !input.force && latest.nextAttemptAt > now) {
-    if (latest.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: latest.id }, input.lease);
-    return { ...(await getRepositoryAgentEvidence(latest.id))!, cached: true, errorCode: latest.lastErrorCode, retryAt: latest.nextAttemptAt };
-  }
+export type AgentScanCollectionInput = { repositoryKey: string; scope?: string; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number;
+  signal?: AbortSignal };
+/**
+ * GitHub 수집만 한다(쓰지 않는다). latest 가 아직 다시 볼 때가 아니면(force 없이) null — 캐시다.
+ * legacy refresh 와 claim consumer(claims.ts 의 recordAgentRepositoryScan 으로 쓴다)가 같은 이어 하기·재고정 규칙을 쓴다.
+ * budget_exhausted 결과는 쓰지 않는다(미룬 시도다) — legacy 는 그대로 돌아 나오고 consumer 는 포기한다.
+ */
+export async function collectRepositoryAgentScan(input: AgentScanCollectionInput, latest: AgentRepositoryScan | null, now: Date): Promise<CollectResult | null> {
+  if (latest && !input.force && latest.nextAttemptAt > now) return null;
   const resume = latest && ['partial', 'complete'].includes(latest.state) && latest.cursor && (latest.cursor.pendingTrees.length || latest.cursor.pendingBlobs.length || latest.cursor.pendingCommits?.length) ? latest.cursor : null;
   const discovery = await listDiscoveryEvidence(input.repositoryKey);
   const discoveryCommitShas = discovery.flatMap(row => row.commitSha ? [row.commitSha] : []);
   const collectionInput = { ...input, discoveryCommitShas, knownComplete: latest?.state === 'complete' ? { repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha } : undefined };
-  let result: CollectResult;
   try {
-    result = await collectRepositoryAgentEvidence({ ...collectionInput, cursor: resume });
+    return await collectRepositoryAgentEvidence({ ...collectionInput, cursor: resume });
   } catch (error) {
     if (!(error instanceof InvalidAgentScanCursorError) || !resume) throw error;
     // Legacy rename conflicts can leave an unusable cursor. Re-pin public metadata/head
     // once, within the original budget; never relabel and trust another repository's work.
     // A failed recheck follows the usual persisted error/backoff path below.
-    result = await collectRepositoryAgentEvidence({ ...collectionInput, cursor: null });
+    return await collectRepositoryAgentEvidence({ ...collectionInput, cursor: null });
+  }
+}
+/**
+ * A failed metadata/branch request cannot create a new immutable scan, but it must
+ * invalidate the previous confirmation until a successful public recheck clears it.
+ * Budget exhaustion is a deferred attempt, never an upstream failure — callers handle it first.
+ */
+export function persistableAgentScanResult(result: CollectResult, latest: AgentRepositoryScan | null): CollectResult {
+  return !result.commitSha && result.errorCode && latest
+    ? { ...result, repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha, scope: latest.scope, state: 'failed', cursor: null }
+    : result;
+}
+export async function refreshRepositoryAgentEvidence(input: { repositoryKey: string; scope?: string; productSlug?: string; productId?: number; force?: boolean; hasBudget?: () => boolean; request?: AgentGitHubRequest; deadlineAt?: number; lease?: JobLease }) {
+  const latest = await getLatestRepositoryAgentScan(input.repositoryKey, input.scope);
+  const now = new Date();
+  const result = await collectRepositoryAgentScan(input, latest, now);
+  if (!result) {
+    const cached = latest!;
+    if (cached.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: cached.id }, input.lease);
+    return { ...(await getRepositoryAgentEvidence(cached.id))!, cached: true, errorCode: cached.lastErrorCode, retryAt: cached.nextAttemptAt };
   }
   // An unfinished public recheck must preserve the existing confirmation and any failed-recheck hold.
   if (result.errorCode === 'budget_exhausted') return {
     ...(latest ? (await getRepositoryAgentEvidence(latest.id))! : { scan: null, observations: [] }),
     cached: false, errorCode: result.errorCode, retryAt: result.retryAt,
   };
-  // A failed metadata/branch request cannot create a new immutable scan, but it must
-  // invalidate the previous confirmation until a successful public recheck clears it.
-  // Budget exhaustion is a deferred attempt, never an upstream failure.
-  const persistedResult: CollectResult = !result.commitSha && result.errorCode && latest
-    ? { ...result, repositoryId: String(latest.githubRepositoryId), commitSha: latest.commitSha, scope: latest.scope, state: 'failed', cursor: null }
-    : result;
+  const persistedResult = persistableAgentScanResult(result, latest);
   const scan = await saveRepositoryAgentScan(persistedResult, now, input.lease);
   if (!scan) return { scan: null, observations: result.observations, cached: false, errorCode: result.errorCode, retryAt: result.retryAt };
   if (scan.state === 'complete' && input.productSlug && input.productId) await attachRepositoryAgentScan({ productSlug: input.productSlug, productId: input.productId, scanId: scan.id }, input.lease);

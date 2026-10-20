@@ -19,8 +19,10 @@ export const ORACLE_DB_PRINCIPALS: Record<OracleDbService, string> = {
   scheduler: 'nomorevibe_oracle_scheduler', attest: 'nomorevibe_oracle_attest',
 };
 type Columns = readonly string[];
-type TableGrant = { select?: true; insert?: true | Columns; update?: true | Columns; delete?: true };
-type Profile = { tables: Record<string, TableGrant>; sequences: readonly string[]; statementTimeout: '10s' | '60s' };
+/** select 가 열 목록이면 그 열만 읽는다(GRANT SELECT (열…)) — 표 전체 SELECT 는 같은 행의 비밀 열(products.verify_token 등)까지 연다 */
+type TableGrant = { select?: true | Columns; insert?: true | Columns; update?: true | Columns; delete?: true };
+export type OracleDbProfile = { tables: Record<string, TableGrant>; sequences: readonly string[]; statementTimeout: '10s' | '60s' };
+type Profile = OracleDbProfile;
 const read: TableGrant = { select: true }, write: TableGrant = { select: true, insert: true, update: true };
 const lock = (key: string): TableGrant => ({ select: true, update: [key] });
 const CANDIDATE_IDENTITY = ['host', 'boot_id', 'release', 'policy_hash', 'observed_at'] as const;
@@ -91,19 +93,79 @@ export const ORACLE_REFRESH_PROFILE: Profile = { statementTimeout: '10s', sequen
   tables: { job_batch_control: lock('id'), job_batch_candidates: { select: true, update: ['capability'] },
     http_origin_control: read, http_origin_hops: read } };
 
+/**
+ * Oracle consumer principals (건 단위 일꾼: claim 으로 같은 큐를 나눠 맡고 역할 lease·batch 를 쓰지 않는다). The key is the consumer
+ * name in lib/runtime/consumer-registry.ts; E5(agent-scan)·U2(uptime) add their entries together with the tables they use.
+ * A consumer profile never holds ORACLE_CONSUMER_FORBIDDEN_TABLES (role lease, batch, job and AI item authority), and its generated SQL
+ * pins the role default timezone to UTC: operational timestamp columns are timezone-less UTC (design R8).
+ */
+export type OracleConsumerDbProfile = { principal: string; profile: OracleDbProfile };
+// split-v1 claim(lib/domain/products/uptime-claims.ts)이 읽는 products 열 — 공개 website 여부와 확인할 주소뿐이다.
+// 표 전체 SELECT 는 verify_token·edit_token_hash 같은 비밀 열까지 연다(review F11)
+const UPTIME_PRODUCT_READ = ['id', 'slug', 'url', 'status', 'access_mode'] as const;
+// split-v1 claim·제출·되돌림(lib/domain/products/uptime-claims.ts)이 쓰는 uptime_claims 열. due·confirm·affinity·충돌·적용 기록은 home 적용기만 쓴다
+const UPTIME_CLAIM_WRITE = ['state', 'epoch', 'control_epoch', 'token', 'owner_instance_id', 'owner_boot_id', 'host', 'host_class', 'lease_until',
+  'claimed_at', 'claim_slug', 'claim_url', 'origin', 'claim_slot', 'result_started_at', 'result_observed_at', 'result_kind', 'result_status',
+  'result_latency_ms', 'submitted_at', 'updated_at'] as const;
+// agent_repository_claims 에서 consumer 가 바꾸는 열: claim(소유 묶음·epoch)·기록(결과·시계·실패 묶음)·포기(소유 묶음·retry_after).
+// 행 만들기와 priority·requires_daily·state 는 큐 채우기(M3 컨트롤러, job lease) 몫이다 — INSERT 도 그 열 UPDATE 도 없다.
+const AGENT_CLAIM_STATE = ['token', 'instance_id', 'boot_id', 'epoch', 'control_epoch', 'binding_hash', 'claimed_at', 'lease_until', 'due_at',
+  'retry_after', 'failure_streak', 'first_failure_at', 'last_error_code', 'last_outcome', 'last_finished_at', 'updated_at'] as const;
+// 스캔 upsert 의 ON CONFLICT DO UPDATE 가 쓰는 열(lib/domain/evidence/agents/repository.ts writeRepositoryAgentScanIn)
+const AGENT_SCAN_STATE = ['coverage', 'state', 'cursor', 'request_count', 'file_count', 'started_at', 'completed_at', 'last_error_code',
+  'next_attempt_at'] as const;
+export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
+  // 제작 근거 스캔(E5): claim·스캔 기록·포기와 App 전용 GitHub 수집(설치 토큰·한도 관측·쿨다운)만 한다. 큐 채우기·제품 연결·후보 풀기는
+  // M3 컨트롤러가 한다 — products·crawl_candidates·jobs·pipeline_item_leases·개인 토큰 표(github_collector_accounts)·AI·HTTP 권한이 없다.
+  'agent-scan': { principal: 'nomorevibe_oracle_agent_scan', profile: { statementTimeout: '10s',
+    sequences: ['agent_repository_scans_id_seq', 'agent_repository_observations_id_seq'],
+    tables: { dr_writer_fence: lock('id'), pipeline_stage_modes: lock('stage'), agent_scan_control: lock('id'),
+      agent_repository_claims: { select: true, update: AGENT_CLAIM_STATE },
+      agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
+      agent_repository_observations: { select: true, insert: true, delete: true },
+      crawl_discovery_evidence: read, crawl_settings: read,
+      // 잡 멈춤(agent-evidence-refresh 의 not_before)만 보이는 보기(0106). claim 이 운영자 정지를 따른다 — jobs 권한은 없다
+      agent_scan_job_schedule: read,
+      // 행은 RLS(0106)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다
+      github_collector_apps: { select: true, update: ['core_quota', 'quota_observed_at'] },
+      // 행은 RLS(0106)가 GitHub 수집 키(github:quota:·github:auth:)로 좁힌다 — 웹 로그인 제한·IP 키는 읽지도 쓰지도 못한다.
+      // GitHub 쿨다운은 INSERT·reset_at 갱신만 한다. 2차 제한 전역 키(github:quota:secondary:global)는 M3 와 함께 쓴다(남은 위험)
+      rate_limits: { select: true, insert: true, update: ['reset_at'] },
+      // 키는 0107 트리거가 자기 consumer 키(agent-scan:·service:crawler: + agent-scan-consumer-*, defer:agent-scan, 이 host 장부)로 좁힌다
+      operations_observations: observationsWrite } } },
+  // Oracle 은 정식 기록(product_health·일일 집계·uptime_observations·내림)을 쓰지 않는다 — 결과를 claim 행에 제출만 한다(design-uptime §7.3)
+  // 열 권한 밖의 행 범위는 0107 트리거가 좁힌다: claim 행은 Oracle host·probe 로만(home 으로 적힌 제출 행 → 42501, 적용기의 submitted_not_probe 는
+  // 두 번째 관문), operations_observations 는 자기 consumer 키만. 남은 위험: lock 용 UPDATE(id) 로 제어 행을 FOR UPDATE 로 문장 10초·idle 60초까지
+  // 쥘 수 있다 — FOR SHARE 에 필요한 권한이 FOR UPDATE 도 허용하고 트리거·RLS 로 가를 수 없다(다른 Oracle 역할의 dr_writer_fence 와 같은 패턴)
+  uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
+    tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },
+      uptime_host_breakers: read, products: { select: UPTIME_PRODUCT_READ }, product_health: read, operations_observations: observationsWrite } } },
+};
+export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
+
 export type ConnectionLimit = number | `:${string}`;
 /** Ordered statements for one service. Passwords are never part of this output. */
 export function oracleDbGrantStatements(service: OracleDbService | 'refresh', options: { connectionLimit: ConnectionLimit }): string[] {
   const name = service === 'refresh' ? ORACLE_REFRESH_PRINCIPAL : ORACLE_DB_PRINCIPALS[service];
   const profile = service === 'refresh' ? ORACLE_REFRESH_PROFILE : ORACLE_DB_PROFILES[service];
-  const limit = options.connectionLimit;
+  return grantStatements(name, profile, options.connectionLimit, []);
+}
+/** Same statement shape plus `SET timezone = 'UTC'`; the principal must be a new nomorevibe_oracle_* name. */
+export function oracleConsumerGrantStatements(consumer: OracleConsumerDbProfile, options: { connectionLimit: ConnectionLimit }): string[] {
+  const taken = [...Object.values(ORACLE_DB_PRINCIPALS), ORACLE_REFRESH_PRINCIPAL];
+  if (!/^nomorevibe_oracle_[a-z][a-z_]{0,40}$/.test(consumer.principal) || taken.includes(consumer.principal)) throw new Error('invalid_consumer_principal');
+  if (ORACLE_CONSUMER_FORBIDDEN_TABLES.some(table => Object.hasOwn(consumer.profile.tables, table))) throw new Error('consumer_runtime_authority_forbidden');
+  return grantStatements(consumer.principal, consumer.profile, options.connectionLimit, [`ALTER ROLE ${consumer.principal} SET timezone = 'UTC'`]);
+}
+function grantStatements(name: string, profile: Profile, limit: ConnectionLimit, settings: string[]): string[] {
   if (typeof limit === 'number' ? !Number.isSafeInteger(limit) || limit < 1 || limit > 64 : !/^:[a-z_]+$/.test(limit)) throw new Error('invalid_connection_limit');
   const statements = [`CREATE ROLE ${name} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${limit}`,
     `ALTER ROLE ${name} SET statement_timeout = '${profile.statementTimeout}'`, `ALTER ROLE ${name} SET lock_timeout = '5s'`,
-    `ALTER ROLE ${name} SET idle_in_transaction_session_timeout = '60s'`, `GRANT USAGE ON SCHEMA public TO ${name}`];
+    `ALTER ROLE ${name} SET idle_in_transaction_session_timeout = '60s'`, ...settings, `GRANT USAGE ON SCHEMA public TO ${name}`];
   for (const [table, grant] of Object.entries(profile.tables).sort(([a], [b]) => a < b ? -1 : 1)) {
-    const whole = [grant.select && 'SELECT', grant.insert === true && 'INSERT', grant.update === true && 'UPDATE', grant.delete && 'DELETE'].filter(Boolean);
+    const whole = [grant.select === true && 'SELECT', grant.insert === true && 'INSERT', grant.update === true && 'UPDATE', grant.delete && 'DELETE'].filter(Boolean);
     if (whole.length) statements.push(`GRANT ${whole.join(', ')} ON TABLE public.${table} TO ${name}`);
+    if (Array.isArray(grant.select)) statements.push(`GRANT SELECT (${grant.select.join(', ')}) ON TABLE public.${table} TO ${name}`);
     if (Array.isArray(grant.insert)) statements.push(`GRANT INSERT (${grant.insert.join(', ')}) ON TABLE public.${table} TO ${name}`);
     if (Array.isArray(grant.update)) statements.push(`GRANT UPDATE (${grant.update.join(', ')}) ON TABLE public.${table} TO ${name}`);
   }
@@ -119,7 +181,11 @@ export function renderOracleDbGrantSql(): string {
     '--   psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v translation_connections=N ... -f deploy/oracle/least-privilege.sql',
     '-- Then set each password interactively with \\password <role>. This file contains no secret and grants no migration/DDL right.',
     'BEGIN;', ...services.flatMap(service => ['', `-- ${service}`, ...oracleDbGrantStatements(service,
-      { connectionLimit: `:${service.replace('-', '_')}_connections` }).map(statement => `${statement};`)]), '', 'COMMIT;', ''].join('\n');
+      { connectionLimit: `:${service.replace('-', '_')}_connections` }).map(statement => `${statement};`)]),
+    // Consumer sections follow the role services; with no registered consumer the text is unchanged.
+    ...Object.entries(ORACLE_CONSUMER_DB_PROFILES).sort(([a], [b]) => a < b ? -1 : 1).flatMap(([consumer, profile]) => ['', `-- consumer ${consumer}`,
+      ...oracleConsumerGrantStatements(profile!, { connectionLimit: `:${consumer.replaceAll('-', '_')}_connections` }).map(statement => `${statement};`)]),
+    '', 'COMMIT;', ''].join('\n');
 }
 /** The exact deploy/oracle/refresh-principal.sql text (optional host refresh timer only). */
 export function renderOracleRefreshGrantSql(): string {
@@ -135,17 +201,24 @@ export type PrivilegeRow = { schema: string; table: string; select: boolean; ins
   columns: { name: string; select: boolean; insert: boolean; update: boolean }[] };
 /** Exact comparison of the live catalog with the approved profile. Any extra or missing right is a mismatch. */
 export function oracleDbPrivilegeMismatches(service: OracleDbService, principal: string, value: unknown): string[] {
-  if (principal !== ORACLE_DB_PRINCIPALS[service]) return ['principal'];
+  return privilegeMismatches(ORACLE_DB_PRINCIPALS[service], ORACLE_DB_PROFILES[service], principal, value);
+}
+/** The same exact comparison for a consumer principal. */
+export function oracleConsumerPrivilegeMismatches(consumer: OracleConsumerDbProfile, principal: string, value: unknown): string[] {
+  return privilegeMismatches(consumer.principal, consumer.profile, principal, value);
+}
+function privilegeMismatches(expected: string, profile: Profile, principal: string, value: unknown): string[] {
+  if (principal !== expected) return ['principal'];
   if (!Array.isArray(value)) return ['catalog'];
-  const profile = ORACLE_DB_PROFILES[service], seen = new Set<string>(), mismatches: string[] = [];
+  const seen = new Set<string>(), mismatches: string[] = [];
   for (const row of value as PrivilegeRow[]) {
     const grant: TableGrant = row?.schema === 'public' ? profile.tables[row.table] ?? {} : {};
     seen.add(`${row?.schema}.${row?.table}`);
-    const column = (kind: 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as Columns).includes(name);
-    const exact = row && row.select === Boolean(grant.select) && row.insert === (grant.insert === true) && row.update === (grant.update === true)
+    const column = (kind: 'select' | 'insert' | 'update', name: string) => grant[kind] === true || Array.isArray(grant[kind]) && (grant[kind] as Columns).includes(name);
+    const exact = row && row.select === (grant.select === true) && row.insert === (grant.insert === true) && row.update === (grant.update === true)
       && row.delete === Boolean(grant.delete) && Array.isArray(row.columns)
-      && row.columns.every(item => item.select === Boolean(grant.select) && item.insert === column('insert', item.name) && item.update === column('update', item.name))
-      && (['insert', 'update'] as const).every(kind => !Array.isArray(grant[kind]) || (grant[kind] as Columns).every(name => row.columns.some(item => item.name === name)));
+      && row.columns.every(item => item.select === column('select', item.name) && item.insert === column('insert', item.name) && item.update === column('update', item.name))
+      && (['select', 'insert', 'update'] as const).every(kind => !Array.isArray(grant[kind]) || (grant[kind] as Columns).every(name => row.columns.some(item => item.name === name)));
     if (!exact) mismatches.push(`${row?.schema}.${row?.table}`);
   }
   for (const table of Object.keys(profile.tables)) if (!seen.has(`public.${table}`)) mismatches.push(`public.${table}`);

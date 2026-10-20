@@ -392,6 +392,215 @@ class LauncherGateTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {'check': 'release', 'reason': 'current_release_mismatch'})
 
 
+CONSUMER = 'fixture-scan'
+CONSUMER_INSTANCE = 'fixture-scan-consumer-oracle'
+
+
+def consumer_report(consumer=CONSUMER, role='crawler', **changes):
+    value = {'kind': 'nomorevibe-oracle-consumer-preflight', 'version': 1, 'consumer': consumer, 'role': role,
+             'configuredHost': {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'},
+             'instanceId': CONSUMER_INSTANCE, 'releaseSha': SHA, 'ready': False, 'activationAllowed': False,
+             'workload': {'ready': True, 'reason': 'ready'},
+             'checks': {name: {'status': 'unknown', 'reason': 'x'} for name in launch.CONSUMER_PREFLIGHT_CHECKS}}
+    for name in launch.CONSUMER_REQUIRED_PREFLIGHT:
+        value['checks'][name] = {'status': 'verified', 'reason': 'fixture'}
+    for name in launch.CONSUMER_NOT_APPLICABLE:
+        value['checks'][name] = {'status': 'not_applicable', 'reason': 'fixture'}
+    for path, item in changes.items():
+        target = value
+        keys = path.split('__')
+        for key in keys[:-1]:
+            target = target[key]
+        target[keys[-1]] = item
+    return value
+
+
+class ConsumerLauncherGateTests(unittest.TestCase):
+    """B0: --consumer=<name> keeps release/runtime/budget/identity and replaces batch/canary with the consumer preflight."""
+    setUp, tearDown, budget, fetch, runner, gate = (LauncherGateTests.setUp, LauncherGateTests.tearDown, LauncherGateTests.budget,
+                                                    LauncherGateTests.fetch, LauncherGateTests.runner, LauncherGateTests.gate)
+
+    def run(self, result=None):
+        # A fixture consumer is registered only inside each test, next to the shipped CONSUMERS (agent-scan since E5).
+        with patch.dict(launch.CONSUMERS, {CONSUMER: 'crawler'}):
+            return super().run(result)
+
+    def consumer_budget(self, policy_changes=None, **process_changes):
+        value = json.loads(self.budget('crawler'))
+        value['policy'].update({'roles': [], 'consumers': [CONSUMER], **(policy_changes or {})})
+        value['process'].update({'consumer': CONSUMER, **process_changes})
+        return json.dumps(value)
+
+    def use_consumer(self):
+        self.proc.write_text(f'0::/nomorevibe-core.slice/nomorevibe-core-consumer@{CONSUMER}.service\n')
+        self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': CONSUMER_INSTANCE, 'WORKER_ROLE': 'crawler', 'TZ': 'UTC',
+                    'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': self.consumer_budget()}
+        self.preflight = (78, json.dumps(consumer_report()).encode())
+
+    def consumer_gate(self, consumer=CONSUMER, **overrides):
+        options = dict(base=self.base, launcher=self.release / 'deploy/oracle/launch.py', owner_uid=os.getuid(),
+                       platform_info=RUNTIME, user=('nomorevibe-core', False), proc_cgroup=self.proc,
+                       cgroup_root=self.cgroup, approved_identity=self.approved, fetch=self.fetch, runner=self.runner)
+        options.update(overrides)
+        return launch.consumer_gate(consumer, overrides.pop('env', self.env), **{k: v for k, v in options.items() if k != 'env'})
+
+    def assert_consumer_closed(self, check, reason, **overrides):
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate(**overrides)
+        self.assertEqual((caught.exception.check, caught.exception.reason), (check, reason))
+
+    def test_consumer_starts_its_parent_supervisor_without_batch_or_canary(self):
+        self.use_consumer()
+        (node, argv), release = self.consumer_gate()
+        self.assertEqual(release, self.release)
+        self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=crawler', f'--consumer={CONSUMER}'])
+        self.assertEqual(self.runs, [([node, '--import', 'tsx', 'scripts/worker-oracle-preflight.ts', f'--consumer={CONSUMER}'], self.release)])
+        self.assertEqual(len(self.fetches), 1)
+        # A name absent from the fixed shipped list never starts: each consumer PR registers its own name everywhere.
+        with patch.dict(launch.CONSUMERS, {}, clear=True):
+            self.assert_consumer_closed('consumer', 'consumer_invalid')
+        self.assert_consumer_closed('consumer', 'consumer_invalid', consumer='crawler')
+
+    def test_consumer_budget_requires_its_own_declared_slot(self):
+        self.use_consumer()
+        disabled = {**json.loads(self.consumer_budget()), 'mode': 'disabled'}
+        cases = [self.consumer_budget(kind='worker'), self.consumer_budget(consumer=None), self.consumer_budget(consumer='ai1'),
+                 self.consumer_budget(role='reviewer'), self.consumer_budget({'consumers': []}),
+                 # A string roster must not match by substring.
+                 self.consumer_budget({'consumers': CONSUMER}), self.consumer_budget({'consumers': None}),
+                 self.budget('crawler'), json.dumps(disabled)]
+        for budget in cases:
+            with self.subTest(budget=budget):
+                self.assert_consumer_closed('budget', 'host_db_budget_undeclared', env={**self.env, 'HOST_DB_BUDGET': budget})
+        self.assert_consumer_closed('budget', 'host_db_budget_undeclared', env={**self.env, 'WORKER_ROLE': 'reviewer'})
+        self.assertEqual((self.fetches, self.runs), ([], []))
+        # A role process can never borrow a consumer slot either.
+        role_env = {**self.env, 'HOST_DB_BUDGET': self.consumer_budget({'roles': ['crawler']})}
+        with self.assertRaises(launch.Unverified) as caught:
+            self.gate('crawler', env=role_env)
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('budget', 'host_db_budget_undeclared'))
+
+    def test_consumer_process_timezone_must_be_utc_before_network_or_database(self):
+        self.use_consumer()
+        for value in (None, '', 'Asia/Tokyo', 'Etc/UTC', ':UTC', 'utc'):
+            env = {key: item for key, item in self.env.items() if key != 'TZ'}
+            if value is not None:
+                env['TZ'] = value
+            with self.subTest(tz=value):
+                self.assert_consumer_closed('runtime', 'process_timezone_not_utc', env=env)
+        self.assertEqual((self.fetches, self.runs), ([], []))
+
+    def test_consumer_preflight_report_is_exact_and_never_claims_batch(self):
+        self.use_consumer()
+        cases = [
+            (consumer_report(checks__batch={'status': 'verified', 'reason': 'x'}), 'batch_unexpected'),
+            (consumer_report(checks__admission={'status': 'unknown', 'reason': 'x'}), 'admission_unexpected'),
+            (consumer_report(checks__timezone={'status': 'unknown', 'reason': 'role_timezone_unverified'}), 'timezone_unverified'),
+            (consumer_report(checks__consumer={'status': 'unknown', 'reason': 'consumer_readiness_unknown'}), 'consumer_unverified'),
+            (consumer_report(checks__database={'status': 'unknown', 'reason': 'approved_privilege_profile_unavailable'}), 'database_unverified'),
+            (consumer_report(checks__timezone={'status': 'rejected', 'reason': 'session_timezone_not_utc'}), 'preflight_rejected'),
+            (consumer_report(workload={'ready': False, 'reason': 'consumer_unknown'}), 'workload_unverified'),
+            (consumer_report(consumer='other-scan'), 'preflight_report_mismatch'),
+            (consumer_report(role='reviewer'), 'preflight_report_mismatch'),
+            (consumer_report(kind='nomorevibe-oracle-runtime-preflight'), 'preflight_report_mismatch'),
+            ({**consumer_report(), 'checks': {k: v for k, v in consumer_report()['checks'].items() if k != 'timezone'}}, 'preflight_report_mismatch'),
+            (report('crawler'), 'preflight_unavailable'),
+        ]
+        for value, reason in cases:
+            self.preflight = (78, json.dumps(value).encode())
+            with self.subTest(reason=reason, value=value.get('kind')):
+                self.assert_consumer_closed('preflight', reason)
+
+    def test_only_consumers_start_from_a_consumer_profile_release(self):
+        stage = prepared_release(self.root / 'prepared-consumer')
+        for name in ('codex', 'claude', 'grok'):
+            (stage / 'tools/bin' / name).unlink()
+        (stage / 'tools/bin').rmdir()
+        (stage / 'tools').rmdir()
+        archive = self.root / 'consumer.tar.gz'
+        other = 'e' * 40
+        with patch.object(builder, 'runtime_platform', return_value=RUNTIME):
+            built = builder.build_release(stage, archive, other, 'v24.19.0', 'consumer')
+        host = oci_identity.validate_identity(APPROVED, oci_identity.observed_identity(METADATA))
+        manager.stage_release(self.root / 'offline', archive, built['archiveSha256'], host, host)
+        manager.switch_release(self.root / 'offline', other, SHA, host, host)
+        release = self.base / 'releases' / other
+        self.use_consumer()
+        budget = json.loads(self.consumer_budget())
+        for part in ('policy', 'process'):
+            budget[part]['release'] = other
+        self.env.update(RELEASE_TAG=other, HOST_DB_BUDGET=json.dumps(budget))
+        self.preflight = (78, json.dumps(consumer_report(releaseSha=other)).encode())
+        (node, argv), _ = self.consumer_gate(launcher=release / 'deploy/oracle/launch.py')
+        self.assertEqual(argv[-1], f'--consumer={CONSUMER}')
+        role_env = {'RELEASE_TAG': other, 'SERVICE_INSTANCE_ID': INSTANCE, 'WORKER_ROLE': 'official-news', 'PHYSICAL_HOST': 'oracle-osaka-smoke'}
+        with self.assertRaises(launch.Unverified) as caught:
+            launch.gate('official-news', role_env, base=self.base, launcher=release / 'deploy/oracle/launch.py', owner_uid=os.getuid(),
+                        platform_info=RUNTIME, user=('nomorevibe-core', False), proc_cgroup=self.proc, cgroup_root=self.cgroup,
+                        approved_identity=self.approved, fetch=self.fetch, runner=self.runner)
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('release', 'release_profile_mismatch'))
+
+    def test_cli_refuses_an_unregistered_consumer_without_starting_anything(self):
+        result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--consumer', 'unregistered-scan'],
+                                env={**os.environ, 'TZ': 'UTC'}, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, '')
+        both = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--role', 'official-news', '--consumer', 'agent-scan'],
+                              env=os.environ, capture_output=True, text=True, timeout=10)
+        self.assertNotEqual(both.returncode, 0)
+
+    def test_shipped_agent_scan_consumer_runs_under_crawler_and_stays_closed_outside_a_verified_release(self):
+        # E5: the same name and parent role as lib/runtime/consumer-registry.ts. Outside an installed Oracle release it exits 78 closed.
+        self.assertEqual(launch.CONSUMERS['agent-scan'], 'crawler')
+        result = subprocess.run([sys.executable, str(SOURCE / 'launch.py'), '--consumer', 'agent-scan'],
+                                env={**os.environ, 'TZ': 'UTC', 'RELEASE_TAG': 'a' * 40}, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 78)
+        self.assertEqual(json.loads(result.stdout)['check'], 'release')
+
+
+class UptimeConsumerLauncherTests(unittest.TestCase):
+    """U2: the shipped uptime consumer starts only the maintenance supervisor with --consumer=uptime from its own budget slot."""
+    setUp, tearDown, budget, fetch, runner = (LauncherGateTests.setUp, LauncherGateTests.tearDown, LauncherGateTests.budget,
+                                              LauncherGateTests.fetch, LauncherGateTests.runner)
+    consumer_gate = ConsumerLauncherGateTests.consumer_gate
+
+    def use_uptime(self, role='maintenance'):
+        value = json.loads(self.budget(role))
+        value['policy'].update({'roles': [], 'consumers': ['uptime']})
+        value['process'].update({'consumer': 'uptime'})
+        self.proc.write_text('0::/nomorevibe-core.slice/nomorevibe-core-consumer@uptime.service\n')
+        self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': 'uptime-consumer-oracle', 'WORKER_ROLE': role, 'TZ': 'UTC',
+                    'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': json.dumps(value)}
+        report_value = consumer_report('uptime', 'maintenance', instanceId='uptime-consumer-oracle')
+        self.preflight = (78, json.dumps(report_value).encode())
+
+    def test_shipped_uptime_consumer_runs_the_maintenance_supervisor(self):
+        self.assertEqual(launch.CONSUMERS['uptime'], 'maintenance')
+        self.use_uptime()
+        (node, argv), _ = self.consumer_gate('uptime')
+        self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=maintenance', '--consumer=uptime'])
+        self.assertEqual(self.runs[-1][0][-1], '--consumer=uptime')
+
+    def test_uptime_consumer_refuses_another_parent_role_or_report(self):
+        self.use_uptime('product-health')
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate('uptime')
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('budget', 'host_db_budget_undeclared'))
+        self.use_uptime()
+        self.preflight = (78, json.dumps(consumer_report('uptime', 'product-health', instanceId='uptime-consumer-oracle')).encode())
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate('uptime')
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('preflight', 'preflight_report_mismatch'))
+
+    def test_install_writes_the_uptime_placeholder_with_its_parent_role(self):
+        root = self.root / 'install'
+        root.mkdir()
+        installer.install_units(root, 50, 1024 ** 3, 128, [], consumers=['uptime'])
+        text = (root / 'etc/nomorevibe-core/consumer-uptime.env').read_text()
+        self.assertIn('WORKER_ROLE=maintenance\n', text)
+        self.assertIn('HTTP_ORIGIN_PERMITS=0\n', text)
+
+
 class ReleaseContractLauncherFilesTests(unittest.TestCase):
     def test_only_fixed_launcher_modules_are_release_payload(self):
         for name in contract.LAUNCHER_FILES:
@@ -483,6 +692,84 @@ class InstallUnitsTests(unittest.TestCase):
         self.assertEqual(self.commands, [])
         self.assertFalse((Path(self.temp.name) / 'other').exists())
 
+
+
+class ConsumerInstallUnitsTests(unittest.TestCase):
+    """B0: the consumer unit fixes TZ=UTC, its env placeholder holds no secret and nothing is enabled or started."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / 'staging'
+        self.root.mkdir()
+        self.commands = []
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def run(self, result=None):
+        with patch.dict(launch.CONSUMERS, {CONSUMER: 'crawler'}):
+            return super().run(result)
+
+    def runner(self, lookup):
+        def run(command, **options):
+            self.commands.append(command)
+            return subprocess.CompletedProcess(command, lookup if command[0] == 'getent' else 0)
+        return run
+
+    def test_consumer_only_install_writes_the_utc_unit_and_a_private_placeholder(self):
+        result = installer.install_units(self.root, 50, 1024 ** 3, 128, [], consumers=[CONSUMER], runner=self.runner(0))
+        self.assertEqual((self.commands, result['commands'], result['enabled'], result['started'], result['activationAllowed']),
+                         ([], [], [], [], False))
+        units = self.root / 'etc/systemd/system'
+        self.assertEqual(sorted(path.name for path in units.iterdir()),
+                         ['nomorevibe-core-consumer@.service', 'nomorevibe-core-role@.service', 'nomorevibe-core-scheduler.service',
+                          'nomorevibe-core.slice'])
+        unit = (units / 'nomorevibe-core-consumer@.service').read_text()
+        lines = unit.splitlines()
+        for line in ('User=nomorevibe-core', 'Slice=nomorevibe-core.slice', 'Environment=TZ=UTC', 'NoNewPrivileges=yes',
+                     'EnvironmentFile=/etc/nomorevibe-core/consumer-%i.env', 'KillMode=mixed', 'PrivateTmp=yes',
+                     'ExecStart=/usr/bin/python3 /opt/nomorevibe-core/current/deploy/oracle/launch.py --consumer=%i'):
+            self.assertIn(line, lines)
+        self.assertEqual([line for line in lines if line.startswith('Environment=TZ')], ['Environment=TZ=UTC'])
+        env = self.root / f'etc/nomorevibe-core/consumer-{CONSUMER}.env'
+        self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+        text = env.read_text()
+        self.assertIn('WORKER_ROLE=crawler\n', text)
+        self.assertIn('DATABASE_URL=\n', text)
+        self.assertIn('HOST_DB_BUDGET=\n', text)
+        # The unit owns TZ; the placeholder never carries batch, TZ or credential values.
+        values = [line for line in text.splitlines() if line and not line.startswith('#')]
+        self.assertFalse(any(line.startswith(('TZ=', 'JOB_BATCH_VERSION=')) for line in values))
+        self.assertEqual({line.split('=', 1)[0]: line.split('=', 1)[1] for line in values if not line.endswith('=')},
+                         {'PHYSICAL_HOST': 'oracle-osaka-smoke', 'WORKER_ROLE': 'crawler', 'DB_POOLER_MODE': 'pgbouncer', 'HTTP_ORIGIN_PERMITS': '0'})
+        env.write_text('DATABASE_URL=operator-secret\n')
+        again = installer.install_units(self.root, 50, 1024 ** 3, 128, ['official-news'], consumers=[CONSUMER])
+        self.assertEqual(env.read_text(), 'DATABASE_URL=operator-secret\n')
+        self.assertEqual(again['preserved'], [f'etc/nomorevibe-core/consumer-{CONSUMER}.env'])
+        self.assertIn('etc/nomorevibe-core/official-news.env', again['written'])
+
+    def test_shipped_agent_scan_consumer_installs_a_crawler_placeholder_without_secrets(self):
+        installer.install_units(self.root, 50, 1024 ** 3, 128, [], consumers=['agent-scan'], runner=self.runner(0))
+        text = (self.root / 'etc/nomorevibe-core/consumer-agent-scan.env').read_text()
+        self.assertIn('WORKER_ROLE=crawler\n', text)
+        values = [line for line in text.splitlines() if line and not line.startswith('#')]
+        self.assertFalse(any(line.startswith(('GITHUB_', 'AGENT_SCAN_', 'TZ=')) for line in values))
+
+    def test_role_only_install_is_unchanged_and_unregistered_consumers_write_nothing(self):
+        installer.install_units(self.root, 50, 1024 ** 3, 128, ['official-news'])
+        self.assertNotIn('nomorevibe-core-consumer@.service', [path.name for path in (self.root / 'etc/systemd/system').iterdir()])
+        other = Path(self.temp.name) / 'other'
+        for roles, consumers in (([], []), ([], ['unregistered-scan']), ([], [CONSUMER, CONSUMER]), (['official-news'], ['crawler'])):
+            with self.subTest(roles=roles, consumers=consumers), self.assertRaises(ValueError):
+                installer.install_units(other, 50, 1024 ** 3, 128, roles, consumers=consumers, runner=self.runner(0))
+        self.assertEqual(self.commands, [])
+        self.assertFalse(other.exists())
+
+    def test_apply_creates_only_the_service_account_and_reloads(self):
+        result = installer.install_units(self.root, 50, 1024 ** 3, 128, [], consumers=[CONSUMER], apply=True,
+                                         live_root=self.root, runner=self.runner(0))
+        self.assertEqual(self.commands, [['getent', 'passwd', 'nomorevibe-core'], ['systemctl', 'daemon-reload']])
+        self.assertEqual((result['enabled'], result['started']), ([], []))
 
 
 class SchedulerTemplateTests(unittest.TestCase):

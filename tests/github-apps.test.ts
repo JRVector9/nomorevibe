@@ -1,6 +1,7 @@
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { appCollectorTokens, appJwt, clearAppTokenCache, inspectGitHubApp, mintInstallationToken } from "@/lib/crawl/github-apps";
+import { logger } from "@/lib/observability/logger";
 import { seal } from "@/lib/operations/credential-vault";
 
 const { select } = vi.hoisted(() => ({ select: vi.fn() }));
@@ -8,7 +9,9 @@ vi.mock("@/lib/db", () => ({ db: { select } }));
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const pem = privateKey.export({ type: "pkcs1", format: "pem" }).toString();
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); clearAppTokenCache(); });
+const SCOPE_ENV = ["GITHUB_COLLECTOR_SOURCES", "GITHUB_COLLECTOR_APP_INSTALLATIONS", "GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS"];
+beforeEach(() => { for (const name of SCOPE_ENV) vi.stubEnv(name, undefined); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); clearAppTokenCache(); });
 
 it("does not mint tokens after cancellation during the app-account database read", async () => {
   const controller = new AbortController();
@@ -75,4 +78,63 @@ it("inspects the app before saving — the key must parse, the app id must match
     .mockResolvedValueOnce(new Response(JSON.stringify({ resources: { core: { limit: 5000, used: 1, remaining: 4999, reset: 1800000000 } } }), { status: 200 })));
   expect(await inspectGitHubApp(123, 456, pem)).toEqual({ appId: 123, appSlug: "nmv-collector", installationId: 456, accountLogin: "owner",
     core: { limit: 5000, used: 1, remaining: 4999, reset: 1800000000 } });
+});
+
+/** 설치 두 개(456·789)가 켜져 있다 — 토큰을 받는 주소로 어느 설치인지 가린다 */
+function twoInstallations(secret: string) {
+  const rows = [456, 789].map(installationId => ({ installationId, appId: 123, appSlug: `fixture-${installationId}`, encryptedPrivateKey: seal(pem, secret) }));
+  select.mockReset().mockReturnValue({ from: () => ({ where: async () => rows }) });
+  const fetcher = vi.fn().mockImplementation(async (url: string) => {
+    const id = /\/app\/installations\/(\d+)\/access_tokens$/.exec(url)?.[1];
+    return new Response(JSON.stringify({ token: `ghs_installation_${id}_1234567890`, expires_at: new Date(Date.now() + 3600000).toISOString() }), { status: 201 });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  return fetcher;
+}
+
+it("mints every enabled installation when no host scope is set", async () => {
+  twoInstallations("s".repeat(48));
+  expect((await appCollectorTokens("s".repeat(48))).map(token => token.installationId)).toEqual([456, 789]);
+});
+
+it("mints only the allowed installation and never touches the others", async () => {
+  vi.stubEnv("GITHUB_COLLECTOR_APP_INSTALLATIONS", "789");
+  const fetcher = twoInstallations("s".repeat(48));
+  expect(await appCollectorTokens("s".repeat(48))).toEqual([{ token: "ghs_installation_789_1234567890", installationId: 789, login: "fixture-789 (앱)" }]);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(fetcher.mock.calls[0][0]).toBe("https://api.github.com/app/installations/789/access_tokens");
+});
+
+it("skips an excluded installation", async () => {
+  vi.stubEnv("GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS", "789");
+  const fetcher = twoInstallations("s".repeat(48));
+  expect((await appCollectorTokens("s".repeat(48))).map(token => token.installationId)).toEqual([456]);
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it("reports an allowed installation that is not enabled instead of silently dropping it", async () => {
+  const error = vi.spyOn(logger, "error").mockImplementation(() => {});
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+  vi.stubEnv("GITHUB_COLLECTOR_APP_INSTALLATIONS", "999");
+  const fetcher = twoInstallations("s".repeat(48));
+  expect(await appCollectorTokens("s".repeat(48), 1_000_000)).toEqual([]);
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(error).toHaveBeenCalledWith("github.app_scope_installation_disabled", { installationIds: [999], usable: 0 });
+  // 요청마다 불리므로 1분에 한 번만 남긴다
+  await appCollectorTokens("s".repeat(48), 1_030_000);
+  expect(error).toHaveBeenCalledOnce();
+  // 일부만 켜져 있으면 켜진 설치는 쓰고 빠진 설치를 경고로 남긴다
+  vi.stubEnv("GITHUB_COLLECTOR_APP_INSTALLATIONS", "456,999");
+  expect((await appCollectorTokens("s".repeat(48), 1_060_000)).map(token => token.installationId)).toEqual([456]);
+  expect(warn).toHaveBeenCalledWith("github.app_scope_installation_disabled", { installationIds: [999], usable: 1 });
+});
+
+it("logs the reason when an installation token cannot be minted, without the key or token", async () => {
+  const warn = vi.spyOn(logger, "warn").mockImplementation(() => {});
+  const secret = "s".repeat(48);
+  select.mockReset().mockReturnValue({ from: () => ({ where: async () => [{ installationId: 456, appId: 123, appSlug: "fixture", encryptedPrivateKey: seal(pem, secret) }] }) });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}", { status: 404 })));
+  expect(await appCollectorTokens(secret, 1_000_000)).toEqual([]);
+  expect(warn).toHaveBeenCalledWith("github.app_token_unavailable", { installationId: 456, reason: "github_app_installation_missing", retryAt: new Date(1_300_000).toISOString() });
+  expect(JSON.stringify(warn.mock.calls)).not.toContain("PRIVATE KEY");
 });

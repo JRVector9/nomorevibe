@@ -65,8 +65,9 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}, ai2: Partial<Stage> 
   return { now: "2026-10-17T00:00:00.000Z", fence: { state: "active", writerEpoch: 1 }, stages: [stage("ai1"), stage("ai2")],
     capacity: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, waiting: 0, reserved: 0, dispatched: 0, indeterminate: 0, oldGeneration: 0 },
     http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
-    batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0 },
-    recentInstances: [], reviewSettings: SETTINGS, auditCampaign: { provider: "claude-cli", model: "sonnet" }, ...overrides };
+    batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
+    agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
+    recentInstances: [], uptimeSplitMode: "legacy", reviewSettings: SETTINGS, auditCampaign: { provider: "claude-cli", model: "sonnet" }, ...overrides };
 }
 const policyFor = (routes: readonly (readonly [string, string, string])[]): ModelCapacityPolicy => ({ version: 1, globalLimit: 4,
   providerLimits: { all: 4 }, groupLimits: { all: 4 }, poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 },

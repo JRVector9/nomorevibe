@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
-import { evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchCandidates, jobs, operationsObservations, pipelineItemLeases, roleLeases } from '@/lib/db/schema';
+import { agentRepositoryClaims, evidenceSourceClaims, evidenceSourceControl, jobBatchControl, jobBatchCandidates, jobs, operationsObservations, pipelineItemLeases, roleLeases } from '@/lib/db/schema';
 import { JOB_CATALOG } from './catalog';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { batchCandidateSchema, batchLeaseSchema, batchHostOrder, batchJobsForRole, batchPolicyHash, batchPolicySchema, BATCH_ROLES,
@@ -278,7 +278,9 @@ export async function completeJobBatchTransitionIn(tx: ProductTransaction, targe
   const [role] = await tx.select({role:roleLeases.role}).from(roleLeases).where(sql`${roleLeases.ownerInstanceId} is not null AND ${roleLeases.leaseUntil}>clock_timestamp()`).limit(1);
   const [source] = await tx.select({id:evidenceSourceClaims.productId}).from(evidenceSourceClaims)
     .where(sql`${evidenceSourceClaims.token} is not null AND ${evidenceSourceClaims.leaseUntil}>clock_timestamp()`).limit(1);
-  if (active || item || role || source) throw new Error('job_batch_not_drained');
+  const [agent] = await tx.select({key:agentRepositoryClaims.repositoryKey}).from(agentRepositoryClaims)
+    .where(sql`${agentRepositoryClaims.token} is not null AND ${agentRepositoryClaims.leaseUntil}>(clock_timestamp() AT TIME ZONE 'UTC')`).limit(1);
+  if (active || item || role || source || agent) throw new Error('job_batch_not_drained');
   const [updated] = await tx.update(jobBatchControl).set({mode:target,drainingFrom:null,epoch:sql`${jobBatchControl.epoch}+1`,updatedAt:sql`clock_timestamp()`})
     .where(and(eq(jobBatchControl.id,1),sql`${jobBatchControl.epoch}<9007199254740991`)).returning();
   if (!updated) throw new Error('job_batch_epoch_exhausted');

@@ -112,6 +112,26 @@ it('starts no scan while total GitHub core headroom is below a quarter, then res
   expect(scannedKeys()).toEqual(['acme/r00', 'acme/r01', 'acme/r02']);
 });
 
+it('counts only the credentials this process may use (G1 scope) in the headroom gate, like the consumer', async () => {
+  await candidates(2);
+  const reset = Math.floor(Date.now() / 1_000) + 50 * 60;
+  // 이 서버(M3)가 쓰는 설치 111 은 12% 남았고, Oracle 전용으로 뺀 설치 222 는 거의 가득이다
+  for (const [installationId, remaining] of [[111, 600], [222, 4_900]] as const) await db.insert(githubCollectorApps).values({ installationId,
+    appId: installationId, appSlug: `app-${installationId}`, accountLogin: 'acme', encryptedPrivateKey: 'sealed',
+    coreQuota: { limit: 5_000, used: 5_000 - remaining, remaining, reset }, quotaObservedAt: new Date() });
+  vi.stubEnv('GITHUB_COLLECTOR_EXCLUDE_APP_INSTALLATIONS', '222');
+  try {
+    const paths: string[] = [];
+    // 고치기 전: 범위 없이 두 설치를 합쳐(55%) 관문이 열려 M3 자기 자격을 25% 아래로 썼다
+    expect(await tick(repositories(paths))).toMatchObject({ status: 'completed', done: false });
+    expect(spies.refresh).not.toHaveBeenCalled();
+    expect(paths).toEqual([]);
+    const [observation] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, 'job:agent-evidence-refresh'));
+    expect((observation.value as { events: unknown[] }).events).toContainEqual(
+      { event: 'agent_evidence.github_headroom_low', counts: { remaining: 600, limit: 5_000 } });
+  } finally { vi.unstubAllEnvs(); }
+});
+
 const HEAD = 'c'.repeat(40);
 const cursorFor = (repositoryKey: string, repositoryId: string, patch: Partial<CollectCursor> = {}): CollectCursor => ({ repositoryId, repositoryKey,
   commitSha: HEAD, detectorVersion: AGENT_DETECTOR_VERSION, scope: '', pendingTrees: [], pendingBlobs: [], pendingCommits: [], ...patch });

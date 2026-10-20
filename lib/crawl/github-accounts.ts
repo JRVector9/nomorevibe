@@ -1,10 +1,11 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { githubCollectorAccounts, githubCollectorApps, operationsAudit } from "@/lib/db/schema";
+import { logger } from "@/lib/observability/logger";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { seal, unseal } from "@/lib/operations/credential-vault";
 import { appCollectorTokens } from "./github-apps";
-import { collectorSecret, parseCoreQuota, type CoreQuota } from "./github-secret";
+import { collectorScope, collectorSecret, parseCoreQuota, type CollectorSource, type CoreQuota } from "./github-secret";
 
 export { collectorSecret, parseCoreQuota, type CoreQuota };
 
@@ -84,26 +85,33 @@ export async function listGitHubCollectorAccounts() {
 
 export async function collectorTokens(options: { deadlineAt?: number; signal?: AbortSignal } = {}): Promise<CollectorToken[]> {
   if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
-  const legacy = process.env.GITHUB_TOKEN?.trim();
+  // 이 서버가 쓸 자격(github-secret.ts) — 환경 변수가 없으면 null 이고 지금처럼 전부 쓴다. 값이 틀리면 여기서 던진다
+  const scope = collectorScope();
+  const uses = (source: CollectorSource) => scope === null || scope.sources.has(source);
+  const legacy = uses("env") ? process.env.GITHUB_TOKEN?.trim() : undefined;
   // During rollout the existing worker can keep using its env token before the shared key is installed.
-  if (!process.env.GITHUB_COLLECTOR_SECRET) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
-  const rows = await db.select({ userId: githubCollectorAccounts.userId, login: githubCollectorAccounts.login,
+  // 범위를 정한 서버는 비밀키가 없다고 환경 토큰으로 물러나지 않는다 — 아래 collectorSecret 이 던진다
+  if (scope === null && !process.env.GITHUB_COLLECTOR_SECRET) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
+  const rows = !uses("accounts") ? [] : await db.select({ userId: githubCollectorAccounts.userId, login: githubCollectorAccounts.login,
     encryptedToken: githubCollectorAccounts.encryptedToken }).from(githubCollectorAccounts)
     .where(eq(githubCollectorAccounts.enabled, true)).orderBy(githubCollectorAccounts.userId);
   if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
-  const secret = collectorSecret();
+  const secret = uses("accounts") || uses("apps") ? collectorSecret() : null;
   // GitHub App 설치 토큰 — 같은 계정이어도 설치마다 한도가 따로다(github-apps.ts). 받지 못한 설치는 빠진다
-  const apps = options.deadlineAt === undefined && !options.signal ? await appCollectorTokens(secret) : await appCollectorTokens(secret, Date.now(), options);
+  const apps = secret === null || !uses("apps") ? []
+    : options.deadlineAt === undefined && !options.signal ? await appCollectorTokens(secret) : await appCollectorTokens(secret, Date.now(), options);
   if (options.signal?.aborted || (options.deadlineAt !== undefined && options.deadlineAt <= Date.now())) return [];
-  if (rows.length === 0 && apps.length === 0) return legacy ? [{ token: legacy, userId: null, login: "환경 토큰" }] : [];
   const seen = new Set<string>();
   const result: CollectorToken[] = [];
   if (legacy) { seen.add(legacy); result.push({ token: legacy, userId: null, login: "환경 토큰" }); }
   for (const row of rows) {
-    const token = decryptCollectorToken(row.encryptedToken, secret);
+    const token = decryptCollectorToken(row.encryptedToken, secret!);
     if (!seen.has(token)) { result.push({ token, userId: row.userId, login: row.login }); seen.add(token); }
   }
   for (const app of apps) if (!seen.has(app.token)) { result.push({ token: app.token, userId: null, login: app.login, installationId: app.installationId }); seen.add(app.token); }
+  // 범위를 정한 서버에 쓸 자격이 하나도 없으면 남긴다 — 요청은 인증 대기(auth_unavailable)나 토큰 없음 실패로 멈춘다(github.ts)
+  if (scope !== null && result.length === 0) logger.error("github.collector_scope_empty", { sources: [...scope.sources],
+    onlyInstallations: scope.onlyInstallations, excludedInstallations: scope.excludedInstallations });
   return result;
 }
 

@@ -29,7 +29,7 @@ export function ModelRouteContracts({ status: read }: { status: ReplicaRead<Mode
   const counts = (Object.keys(ROUTE_STATUS) as RouteStatus[]).map(key => [key, status.routes.filter(row => row.status === key).length] as const)
     .filter(([, count]) => count > 0);
   const { batch, capacity } = status;
-  const batchLive = batch.liveJobs + batch.liveRoles + batch.liveItems + batch.liveSources;
+  const batchLive = batch.liveJobs + batch.liveRoles + batch.liveItems + batch.liveSources + batch.liveAgentClaims;
   return (
     <Panel title="모델 경로 계약 · 전환 진행"
       actions={<span className="text-[13px] text-fg-3">새 · 기준 <time dateTime={status.at}>{formatDetailTime(status.at)}</time> (DB · 복제본)</span>}
@@ -57,7 +57,7 @@ export function ModelRouteContracts({ status: read }: { status: ReplicaRead<Mode
         </table>
       </ScrollTable>
       <p className="mt-2 text-[13px] text-fg-2">작업 배치(batch) {mode(batch.mode)}{batch.drainingFrom ? ` · 비우기 출발 ${mode(batch.drainingFrom)}` : ''} · 담당 차례(epoch) {n(batch.epoch)}
-        {' '}· 실행 중 작업 {n(batch.liveJobs)} · 역할 {n(batch.liveRoles)} · 항목 {n(batch.liveItems)} · 출처 {n(batch.liveSources)}
+        {' '}· 실행 중 작업 {n(batch.liveJobs)} · 역할 {n(batch.liveRoles)} · 항목 {n(batch.liveItems)} · 출처 {n(batch.liveSources)} · 제작 근거 {n(batch.liveAgentClaims)}
         {batch.mode === 'draining' && (batchLive > 0 ? ' — 모두 0이 되어야 전환을 마칠 수 있습니다' : ' — 비우기 끝, 전환을 마칠 수 있습니다')}</p>
       <p className="mt-1 text-[13px] text-fg-2">공통 모델 슬롯(capacity) {mode(capacity.mode)} · 옛 세대 점유 {n(capacity.oldGeneration)}</p>
     </Panel>

@@ -208,6 +208,7 @@ class ReleaseSafetyTests(unittest.TestCase):
                  patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
                  patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state), \
                  patch.object(release, 'monitor_gate'), patch.object(release, 'pre_pull'), patch.object(release, 'deploy') as deploy, \
+                 patch.object(release, 'agent_scan_release_gate', return_value={'agentScanGate': 'release_gated'}), \
                  redirect_stdout(io.StringIO()):
                 release.main(args)
                 self.assertEqual(deploy.call_count, int(action == 'run'))
@@ -697,7 +698,9 @@ class FleetInventoryTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())['complete'], code is None)
 
 
-CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
+AI_CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
+# E5: the agent-scan consumer runs crawler code on M3 only (its other host is Oracle).
+CONSUMERS = AI_CONSUMERS + ('agent-scan-consumer-m3',)
 
 
 class ConsumerAppRegistrationTests(unittest.TestCase):
@@ -742,11 +745,15 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
             release.app_metadata('ai3-consumer-m3')
         with self.assertRaisesRegex(ValueError, 'ai1-consumer-mini_app_unregistered'):
             release.consumer_apps(['ai1'])
+        with self.assertRaisesRegex(ValueError, 'agent-scan-consumer-m3_app_unregistered'):
+            release.consumer_apps(['agent-scan'])
 
     def test_main_refuses_unregistered_or_misused_consumer_targets_before_keychain(self):
         base = ['--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
         for arguments, error in ((['plan'] + base + ['--consumer', 'ai2'], 'ai2-consumer-mini_app_unregistered'),
                                  (['run'] + base + ['--snapshot', '/private/tmp/x.json', '--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
+                                 (['plan'] + base + ['--consumer', 'agent-scan'], 'agent-scan-consumer-m3_app_unregistered'),
+                                 (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'agent-scan-consumer-m3'], 'agent-scan-consumer-m3_app_unregistered'),
                                  (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'ai1-consumer-m3'], 'ai1-consumer-m3_app_unregistered')):
             with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy:
                 with self.assertRaisesRegex(ValueError, error):
@@ -770,7 +777,7 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (18, False, ['ai2-consumer-m3']))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (19, False, ['ai2-consumer-m3']))
         self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'registered'))
         self.assertEqual({short: result['apps'][short]['deployedBy'] for short in CONSUMERS}, dict.fromkeys(CONSUMERS, 'run'))
 
@@ -809,9 +816,28 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
              patch.object(release, 'monitor_gate', side_effect=lambda _c, role: steps.append('gate:' + role) or {'role': role}), \
              patch.object(release, 'public_gate', return_value={}), patch.object(release, 'purge_html', return_value={}), \
              redirect_stdout(io.StringIO()):
-            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', CONSUMERS)
-        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *CONSUMERS,
+            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', AI_CONSUMERS)
+        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *AI_CONSUMERS,
                                  'gate:reviewer', 'crawler-mini', 'crawler-m3', 'gate:crawler', 'web-mini', 'web-m3'])
+
+    def test_agent_scan_consumer_follows_the_crawler_pair_before_its_gate(self):
+        """E5: the M3-only agent-scan app runs crawler code; selecting it leaves every other app and gate where it was."""
+        with self.registered():
+            self.assertEqual(release.consumer_apps(['agent-scan']), ('agent-scan-consumer-m3',))
+            self.assertEqual(release.consumer_apps(['ai1', 'agent-scan']), ('ai1-consumer-mini', 'ai1-consumer-m3', 'agent-scan-consumer-m3'))
+        self.assertEqual(release.release_order(('agent-scan-consumer-m3',)),
+                         release.ORDER[:6] + ('agent-scan-consumer-m3',) + release.ORDER[6:])
+        self.assertEqual(release.release_order(CONSUMERS), release.ORDER[:4] + AI_CONSUMERS + release.ORDER[4:6]
+                         + ('agent-scan-consumer-m3',) + release.ORDER[6:])
+        steps = []
+        with self.registered(), patch.object(release, 'save_snapshot'), \
+             patch.object(release, 'stage_and_deploy', side_effect=lambda _c, short, _t, _k, _p: steps.append(short) or {'app': short}), \
+             patch.object(release, 'monitor_gate', side_effect=lambda _c, role: steps.append('gate:' + role) or {'role': role}), \
+             patch.object(release, 'public_gate', return_value={}), patch.object(release, 'purge_html', return_value={}), \
+             redirect_stdout(io.StringIO()):
+            release.deploy(None, self.target, 'token', {'apps': {}, 'previous': {}}, '/private/tmp/s.json', CONSUMERS)
+        self.assertEqual(steps, ['publisher-mini', 'publisher-m3', 'gate:publisher', 'reviewer-mini', 'reviewer-m3', *AI_CONSUMERS,
+                                 'gate:reviewer', 'crawler-mini', 'crawler-m3', 'agent-scan-consumer-m3', 'gate:crawler', 'web-mini', 'web-m3'])
 
     def test_stage_and_restore_use_the_consumer_app_id_and_worker_image(self):
         class ConsumerClient(FakeClient):
@@ -848,6 +874,7 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
              patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
              patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state) as baseline, \
              patch.object(release, 'github_integration_preflight', return_value={}), patch.object(release, 'monitor_gate'), \
+             patch.object(release, 'agent_scan_release_gate', return_value={'agentScanGate': 'release_gated'}), \
              patch.object(release, 'pre_pull'), redirect_stdout(output):
             release.main(['plan', '--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web'],
                           '--consumer', 'ai2'])
@@ -925,6 +952,7 @@ class MigrationGateTests(unittest.TestCase):
              patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
              patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state), \
              patch.object(release, 'github_integration_preflight', return_value={}), patch.object(release, 'migration_gate', **gate) as checked, \
+             patch.object(release, 'agent_scan_release_gate', return_value={'agentScanGate': 'release_gated'}), \
              patch.object(release, 'monitor_gate') as monitor, patch.object(release, 'pre_pull') as pull, redirect_stdout(output):
             try:
                 release.main(args)
@@ -963,6 +991,109 @@ class MigrationGateTests(unittest.TestCase):
         with patch.object(release, 'ssh_python', side_effect=lambda *args, **kwargs: local_probe(*args[:5], url=unreachable)), \
              self.assertRaisesRegex(ValueError, 'database_migration_state_unknown'):
             release.migration_gate(client, 'HEAD')
+
+
+class AgentScanReleaseGateTests(unittest.TestCase):
+    """P2-7: crawler code without the agent-scan legacy write gate is never restored or released while the control is not legacy."""
+
+    def setUp(self):
+        test = ReleaseSafetyTests('test_replace_setting_requires_one_line')
+        test.setUp()
+        self.test = test
+        self.apps = test.apps()
+        for short in release.AGENT_SCAN_PROBE_APPS:
+            self.apps[short]['appName'] = 'probe-' + short
+
+    def gated(self, gated):
+        source = b'import x;\nawait assertLegacyAgentScanWrite(tx);\n' if gated else b'// before 0105\n'
+        return patch.object(release, 'git_blob', side_effect=lambda _sha, path: source if path == release.AGENT_SCAN_GATE[0] else b'')
+
+    def probe(self, *outcomes):
+        """Each probe container answers in turn: a mode string, or an exception for an unreachable container."""
+        answers = iter(outcomes)
+
+        def remote(_host, source, service, _when, script, timeout=None):
+            self.assertEqual((source, script), (release.REMOTE_MIGRATIONS, release.AGENT_SCAN_MODE_SCRIPT))
+            self.probed.append(service)
+            answer = next(answers)
+            if isinstance(answer, Exception):
+                raise answer
+            return json.dumps({'mode': answer})
+        self.probed = []
+        return patch.object(release, 'ssh_python', side_effect=remote)
+
+    def restore(self, short, gated, *outcomes):
+        current = self.apps[short]
+        current['dockerImage'] = self.test.target['worker']
+        current['env'] = 'RELEASE_TAG=' + self.test.new_sha + '\n'
+        previous = {'sha': self.test.old_sha, 'worker': self.test.old_worker, 'web': self.test.old_web}
+        original = dict(current, dockerImage=self.test.old_worker, env='RELEASE_TAG=' + self.test.old_sha + '\n')
+        client = FakeClient(self.apps)
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'snapshot.json')
+            release.save_snapshot(path, self.test.target, {'previous': previous, 'apps': {short: original}})
+            with self.gated(gated), self.probe(*outcomes), \
+                 patch.object(release, 'check_app_deployed', return_value={'app': short}):
+                try:
+                    return release.restore(client, path, short, 'token')
+                finally:
+                    self.requests = client.requests
+
+    def test_restore_refuses_an_ungated_crawler_release_while_items_or_draining_before_any_write(self):
+        for mode in ('items', 'draining'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, f'agent_scan_ungated_release_while_{mode}'):
+                self.restore('crawler-m3', False, mode)
+            self.assertEqual(self.requests, [])
+
+    def test_restore_of_an_ungated_crawler_release_proceeds_only_once_the_control_is_legacy_or_absent(self):
+        for mode in ('legacy', 'absent'):
+            with self.subTest(mode=mode):
+                result = self.restore('crawler-mini', False, mode)
+                self.assertEqual(result, {'app': 'crawler-mini', 'agentScanGate': 'ungated_release_allowed', 'agentScanMode': mode})
+                self.assertEqual(self.requests, ['application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy'])
+                # 되돌릴 crawler 컨테이너가 아니라 다른 worker 컨테이너에서 먼저 읽는다
+                self.assertEqual(self.probed, ['probe-reviewer-m3'])
+
+    def test_a_gated_release_needs_no_database_read_and_other_roles_are_never_checked(self):
+        self.assertEqual(self.restore('crawler-m3', True), {'app': 'crawler-m3', 'agentScanGate': 'release_gated'})
+        self.assertEqual(self.probed, [])
+        self.assertEqual(self.restore('publisher-mini', False), {'app': 'publisher-mini'})
+        self.assertEqual(self.probed, [])
+
+    def test_an_unreadable_mode_is_a_refusal_after_trying_every_probe_container(self):
+        with self.assertRaisesRegex(ValueError, 'agent_scan_mode_unknown'):
+            self.restore('crawler-m3', False, RuntimeError('command_failed:ssh:255'), subprocess.TimeoutExpired('ssh', 60), 'unexpected')
+        self.assertEqual(self.probed, ['probe-reviewer-m3', 'probe-publisher-m3', 'probe-crawler-m3'])
+        self.assertEqual(self.requests, [])
+        # 한 컨테이너가 안 되면 다음 컨테이너에서 읽는다
+        self.assertEqual(self.restore('crawler-m3', False, RuntimeError('command_failed:ssh:255'), 'legacy')['agentScanMode'], 'legacy')
+        self.assertEqual(self.probed, ['probe-reviewer-m3', 'probe-publisher-m3'])
+
+    def test_main_checks_the_target_release_before_any_gate_pull_or_deploy(self):
+        state = {'apps': self.apps, 'previous': {'sha': self.test.old_sha, 'worker': self.test.old_worker, 'web': self.test.old_web}}
+        args = ['plan', '--sha', self.test.new_sha, '--worker-image', self.test.target['worker'], '--web-image', self.test.target['web']]
+        with patch.object(release, 'run', side_effect=['operator-secret', self.test.new_sha, '']), \
+             patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+             patch.object(release, 'Dokploy', return_value=FakeClient(self.apps)), patch.object(release, 'baseline', return_value=state), \
+             patch.object(release, 'github_integration_preflight', return_value={}), self.gated(False), self.probe('items'), \
+             patch.object(release, 'monitor_gate') as monitor, patch.object(release, 'pre_pull') as pull, redirect_stdout(io.StringIO()), \
+             self.assertRaisesRegex(ValueError, 'agent_scan_ungated_release_while_items'):
+            release.main(args)
+        self.assertEqual((monitor.call_count, pull.call_count), (0, 0))
+
+    def test_mode_probe_is_a_bound_read_only_query(self):
+        script = release.AGENT_SCAN_MODE_SCRIPT
+        self.assertIn("sql.begin('read only'", script)
+        self.assertIn("SET LOCAL statement_timeout='5s'", script)
+        self.assertIsNone(re.search(r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT)\b', script, re.I))
+
+    @unittest.skipUnless(os.environ.get('TEST_DATABASE_URL'), 'needs a local migrated test database (TEST_DATABASE_URL)')
+    def test_mode_probe_reads_the_real_control_row(self):
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(['node', '--input-type=module', '-e', release.AGENT_SCAN_MODE_SCRIPT, '0'], cwd=root, capture_output=True,
+                                text=True, timeout=60, env={**os.environ, 'DATABASE_URL': os.environ['TEST_DATABASE_URL']})
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(json.loads(result.stdout.strip().splitlines()[-1])['mode'], ('legacy', 'draining', 'items'))
 
 
 if __name__ == '__main__':
