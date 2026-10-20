@@ -49,11 +49,12 @@
 
 #562 를 main(6ad56cd1)에 병합·배포했다(migration 0104~0107 적용, 모두 legacy). 기록은 `docs/CODEX_HANDOFF.md` "2026-10-20 저녁 Oracle 증설 통합 배포".
 
-- **리뷰 수정 0a4e8c06**(워커 종료·요청 시간 제한, consumer 예산 분리, split 진행은 지금 maintenance 주인의 차단기만): 별도 PR 로 main 에 넣는다 — uptime claims 전환 전에 배포.
-- **다음 운영 단계**(각 runbook):
-  - uptime A3 home 만 claims(`docs/runbooks/uptime-split.md`) → 6시간 관측 → A6 Oracle probe(cap 1,000/h).
-  - 제작 근거 items(`docs/operations/2026-10-17-pipeline-control-runbook.md` §11): **consumer 앱 `agent-scan-consumer-m3` 가 아직 없다**(deploy 도구 자리만 비어 있음) — 앱을 만든 뒤 11-1 부터.
-  - Oracle 설치·시작(`docs/operations/2026-10-17-oracle-activation-runbook.md`): ARM 빌드·DB 계정(`nomorevibe_oracle_*`)·PgBouncer 인증·TZ=UTC. 아직 아무것도 설치하지 않았다.
+- 리뷰 수정 0a4e8c06 은 #575(main 14a9171c)로 들어가 모든 앱에 배포됐다. 공통 8앱·git 빌드 앱·text 모두 14a9171c(connect-agent 만 33964cb5, 변경 없음).
+- **uptime A3 관측 중**(2026-10-20 21:55 KST claims, epoch 3): runbook 통과 조건(마감 지남 최장 ≤ 12분, 5분 반영 끊김 없음, `uptime.split_blocked`·`split_broad_failure` 없음,
+  숨김·내림 속도 legacy 와 비슷)을 **10-21 03:55 KST 이후** 확인한다. 통과하면 A6 Oracle probe(cap 1,000/h) — Oracle 설치가 먼저다.
+- **제작 근거 items 전환 대기**: consumer 앱은 만들었다(consumers=1). runbook §11 11-1 contract → 11-2 drain → 11-3 legacy 틱 끝 → 11-4 items 는
+  운영 쓰기라 사용자 허가 뒤 한다. 되돌리기 11-6.
+- **Oracle 설치·시작**(`docs/operations/2026-10-17-oracle-activation-runbook.md`): ARM 빌드·DB 계정(`nomorevibe_oracle_*`)·PgBouncer 인증·TZ=UTC·unit. 아직 아무것도 설치하지 않았다.
 - maintenance-mini 는 `.claude/prod.sh` 목록에 없다 — 다음 maintenance 배포 때도 M3·mini 를 같은 release 로 맞춘다(아니면 lease 가 예비에 남는다).
 - Cloudflare HTML purge 토큰을 운영자 Mac 키체인(`nomorevibe-cloudflare-purge-token`)에 둔다 — 지금 접근한 M3 Ultra·mini 에는 없다.
 
