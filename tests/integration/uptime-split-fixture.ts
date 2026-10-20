@@ -35,7 +35,7 @@ export const OWNERS = {
   oracle: { instanceId: "u1b-oracle", bootId: randomUUID() },
 } as const;
 
-/** split 제어를 바꾼다(epoch+1, 실제 운영 명령과 같다). claims 는 uptime_control 이 꺼져 있어야 한다(0103 트리거) */
+/** split 제어를 바꾼다(epoch+1, 실제 운영 명령과 같다). claims 는 uptime_control 이 꺼져 있어야 한다(0104 트리거) */
 export async function setSplit(mode: "legacy" | "claims", policy: UptimeSplitPolicy | null = POLICY): Promise<number> {
   const [row] = await db.execute<{ epoch: number }>(sql`update uptime_split_control set mode = ${mode},
     policy = ${policy ? JSON.stringify(policy) : null}::text::jsonb, policy_hash = ${policy ? uptimeSplitPolicyHash(policy) : null},
