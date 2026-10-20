@@ -9,6 +9,7 @@ export const PUBLIC_PAGE_NAMESPACES = {
   '/': ['browse', 'labels'],
   '/c/[category]': ['browse', 'labels'],
   '/rising': ['browse', 'labels'],
+  '/talk': ['browse', 'labels'],
   '/popular': ['browse', 'labels'],
   '/rankings/[key]': ['browse', 'labels'],
   '/p/[slug]': ['detail', 'labels'],

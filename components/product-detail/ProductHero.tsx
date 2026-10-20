@@ -48,10 +48,12 @@ function HealthStatus({ health }: { health: ProductDetailView["health"] }) {
  * 단추는 [제품 방문하기][GitHub][공유][저장] 넷이다(UX-31). 같은 사이트로 가는 도메인 글자 링크는 뺐다 —
  * 사이트 주소는 정보 카드의 '웹사이트' 줄이 보여 준다.
  */
-export function ProductHero({ product, unclaimed, risingRank, health, languages, repositoryUrl = null, personalGithubStar }: {
+export function ProductHero({ product, unclaimed, risingRank, talkRank = null, health, languages, repositoryUrl = null, personalGithubStar }: {
   product: ProductDetailView["product"];
   unclaimed: boolean;
   risingRank: number | null;
+  /** SNS 화제 '지금' 순위(lib/social/talk.ts productTalk) — 화제 화면이 보일 때만 넘긴다 */
+  talkRank?: number | null;
   health: ProductDetailView["health"];
   /** 저장소 언어 상위 둘 — RepositoryFacts.languages 에서 */
   languages: string[];
@@ -78,6 +80,11 @@ export function ProductHero({ product, unclaimed, risingRank, health, languages,
             {risingRank !== null && risingRank <= RISING_BADGE_MAX && (
               <Link prefetch={false} href={localePath(locale, "/#rising")} className="inline-flex h-7 items-center rounded-full bg-accent-soft px-[11px] text-[13px] font-semibold text-accent-ink">
                 {t("hero.rising", { rank: formatNumber(risingRank, locale) })}
+              </Link>
+            )}
+            {talkRank !== null && (
+              <Link prefetch={false} href={localePath(locale, "/talk")} className="inline-flex h-7 items-center rounded-full bg-[var(--source-hn-soft)] px-[11px] text-[13px] font-semibold text-[var(--source-hn)]">
+                {t("talk.pill", { rank: formatNumber(talkRank, locale) })}
               </Link>
             )}
           </div>

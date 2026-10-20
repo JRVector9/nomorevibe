@@ -1,0 +1,111 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "@/lib/i18n/context";
+import { createTranslator } from "@/lib/i18n/messages";
+import { browse } from "@/messages/ko/browse";
+import { common } from "@/messages/ko/common";
+import { detail } from "@/messages/ko/detail";
+import { labels } from "@/messages/ko/labels";
+import type { ProductTalk, TalkPost, TalkStarGrowth } from "@/lib/social/talk";
+import type { LocalizedTalkEntry } from "@/components/social/TalkHero";
+
+vi.mock("server-only", () => ({}));
+const mocks = vi.hoisted(() => ({ pathname: "/", admin: vi.fn() }));
+vi.mock("next/navigation", () => ({ usePathname: () => mocks.pathname, useSearchParams: () => new URLSearchParams(), useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
+
+const { TalkBand } = await import("@/components/social/TalkBand");
+const { TalkHero } = await import("@/components/social/TalkHero");
+const { SiteHeader } = await import("@/components/home/SiteHeader");
+const { MobileNav } = await import("@/components/home/MobileNav");
+const { talkPublicEnabled, talkVisibility } = await import("@/lib/social/flags");
+
+const NOW = new Date("2026-10-18T06:00:00Z");
+const post = (id: number, extra: Partial<TalkPost> = {}): TalkPost => ({
+  id, source: "hn", externalId: String(5000 + id), kind: "link", title: "Doory – Open-Source Canva", linkTarget: "repo",
+  postedAt: new Date("2026-10-12T00:48:00Z"), points: 230, comments: 80, frontPage: true, ...extra,
+});
+const growth: TalkStarGrowth = {
+  delta: 792, basis: "observation", from: 771, fromAt: new Date("2026-10-13T00:00:00Z"), to: 1563, toAt: new Date("2026-10-18T00:00:00Z"),
+  points: [{ stars: 771, at: new Date("2026-10-13T00:00:00Z") }, { stars: 1200, at: new Date("2026-10-15T00:00:00Z") }, { stars: 1563, at: new Date("2026-10-18T00:00:00Z") }],
+};
+const entry = (rank: number, slug: string, extra: Partial<LocalizedTalkEntry> = {}): LocalizedTalkEntry => ({
+  rank, repositoryKey: `acme/${slug}`, score: 3, sources: ["hn"], byMaker: false, starGrowth: null, homeDecision: null, posts: [post(rank)],
+  product: { id: rank, slug, name: slug, translationName: slug, tagline: `${slug} tagline`, taglineKo: null, taglineSource: "maker", category: "Design",
+    repoUrl: `https://github.com/acme/${slug}`, ogImage: null, stars: 1563, aiLevel: 1, accessMode: "website" },
+  ...extra,
+});
+
+beforeEach(() => {
+  mocks.pathname = "/";
+  mocks.admin.mockReset().mockResolvedValue(null);
+  delete process.env.SNS_TALK_PUBLIC_ENABLED;
+});
+
+describe("화면 스위치", () => {
+  it("켜기 전에는 관리자에게만 미리보기로 보인다", async () => {
+    expect(talkPublicEnabled()).toBe(false);
+    expect(await talkVisibility()).toEqual({ visible: false, preview: false });
+    mocks.admin.mockResolvedValue({ login: "jr", exp: 0, method: "local" });
+    expect(await talkVisibility()).toEqual({ visible: true, preview: true });
+    process.env.SNS_TALK_PUBLIC_ENABLED = "true";
+    expect(await talkVisibility()).toEqual({ visible: true, preview: false });
+  });
+
+  it("헤더 맨 앞과 모바일 탭은 켰을 때만 「SNS 화제」를 둔다", () => {
+    const render = (talkEnabled: boolean) => renderToStaticMarkup(<I18nProvider locale="ko" dictionaries={{ common }} now={NOW.toISOString()}>
+      <SiteHeader talkEnabled={talkEnabled} /><MobileNav talkEnabled={talkEnabled} /></I18nProvider>);
+    expect(render(false)).not.toContain('href="/talk"');
+    const on = render(true);
+    expect(on.match(/href="\/talk"/g)).toHaveLength(2);
+    // 메뉴 첫 링크가 화제다(C안)
+    expect(on.slice(on.indexOf('class="navigation"')).match(/<a[^>]*href="([^"]+)"/)?.[1]).toBe("/talk");
+    mocks.pathname = "/talk";
+    expect(render(true)).toContain('class="active" href="/talk"');
+  });
+});
+
+describe("상세 화제 띠", () => {
+  const t = createTranslator("detail", detail);
+  const talk: ProductTalk = { posts: [post(1), post(2, { linkTarget: "issue", title: "Crash on export", points: 40, comments: 20, kind: "link" })],
+    qualifies: true, rank: 2, sources: ["hn"], starGrowth: growth, checkedAt: new Date("2026-10-18T05:30:00Z") };
+
+  it("순위·가장 큰 글·원문 토론·이슈 토론·글 뒤 스타를 그린다", () => {
+    const html = renderToStaticMarkup(<TalkBand talk={talk} t={t} locale="ko" now={NOW} preview={false} />);
+    expect(html).toContain("SNS에서 화제 · 지금 2위 · 출처 1곳");
+    expect(html).toContain("Hacker News 230점 · 댓글 80");
+    expect(html).toContain('href="https://news.ycombinator.com/item?id=5001"');
+    expect(html).toContain("이슈 토론 ↗");
+    expect(html).toContain("+792");
+    expect(html).toContain("GitHub 스타 · 첫 관측 뒤");
+    expect(html).toContain('rel="noopener"');
+  });
+
+  it("자격 글이 없으면 그리지 않는다", () => {
+    expect(renderToStaticMarkup(<TalkBand talk={{ ...talk, qualifies: false }} t={t} locale="ko" now={NOW} preview={false} />)).toBe("");
+  });
+});
+
+describe("홈 대표 구획", () => {
+  const t = createTranslator("browse", browse);
+  const render = (props: Partial<Parameters<typeof TalkHero>[0]>) => renderToStaticMarkup(
+    <I18nProvider locale="ko" dictionaries={{ labels }} now={NOW.toISOString()}>
+      <TalkHero lead={null} rest={[]} sources={["hn"]} t={t} locale="ko" preview={false} {...props} />
+    </I18nProvider>);
+
+  it("허용된 1위는 크게, 나머지는 목록으로", () => {
+    const html = render({ lead: entry(1, "doory", { starGrowth: growth }), rest: [entry(2, "konnect"), entry(3, "spotatui")] });
+    expect(html).toContain("지금 SNS에서 화제");
+    expect(html).toContain("Hacker News에서 이야기된 AI로 만든 프로젝트");
+    expect(html).toContain('id="talk-lead-title"><a href="/p/doory">doory</a>');
+    expect(html).toContain("첫 관측 뒤 GitHub 스타");
+    expect(html.match(/class="talk-row"/g)).toHaveLength(2);
+    expect(html).toContain('href="/talk"');
+  });
+
+  it("1위 허용 전이면 목록만, 아무것도 없으면 조용하다고 말한다", () => {
+    expect(render({ rest: [entry(1, "doory")] })).not.toContain("talk-lead");
+    expect(render({})).toContain("지금은 화제가 된 프로젝트가 없습니다.");
+    expect(render({ preview: true })).toContain("미리보기");
+  });
+});
