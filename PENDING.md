@@ -17,7 +17,16 @@
 - **X 사용 목적 승인 기록**: 스위치는 사용자 지시로 켰다. X 쪽 승인 기록은 이 저장소에 없다([정책 확인 기록](docs/operations/2026-10-14-x-api-policy-and-pilot.md)).
 - **공개 켜기 결정**: `SNS_TALK_PUBLIC_ENABLED` 는 꺼져 있다. 약 2주 관측 뒤 점수 무게·자격 기준을 다시 맞추고(설계 D9) 켤지 정한다. 켤 때 두 웹 env 와 Cloudflare HTML purge 를 함께 한다(이번 배포는 purge 토큰이 없어 건너뜀).
 - **관리자 `/admin/talk` 실물 확인**: 운영 화면은 관리자 로그인이 필요해 아직 보지 않았다(로컬 개발 서버에서만 확인).
-- **migration 번호 충돌**: main 의 `0103_social_posts` 와 draft [#554](https://github.com/JRVector9/nomorevibe/pull/554)의 `0103_uptime_split` 이 겹친다. #554·[#557](https://github.com/JRVector9/nomorevibe/pull/557)(0104)은 rebase 때 번호와 journal `when`(0103 은 1794086400015)을 뒤로 옮겨야 한다.
+- **Oracle 증설 migration 번호(2026-10-20 고침)**: main 의 `0103_social_posts`(when 1794086400015, 운영 적용) 때문에 Oracle 묶음을
+  **0104 uptime_split · 0105 agent_repository_claims · 0106 oracle_agent_scan_row_scope · 0107 oracle_consumer_row_scope**(when …016~…019)로 옮겼다.
+  PR 브랜치 8개(#554·#556·#560·#561·#557·#558·#559·#562)에 같은 커밋 "fix(db): Oracle 증설 migration 번호를 한 칸 뒤로"를 더했다(force push 없음).
+  main 상태 DB(104줄)에 네 개를 더하면 108줄·표 생성까지 확인했다. 남은 것:
+  - 합칠 때 `drizzle/meta/_journal.json` 은 글자 충돌이 난다 — main 의 0103_social_posts 다음에 0104~0107 을 둔다.
+  - main 과 합치면 #556·#560·#561·#562 는 `health-record.ts`·`uptime.ts`·`crawler-activity.ts` 등에서 #551·#566 과 코드 충돌이 난다(번호와 무관, 아직 안 함).
+  - PR 없는 브랜치 4개는 옛 번호 그대로다: `codex/oracle-scaleout-fix-agent-scan-20261019`·`codex/oracle-scaleout-fix-uptime-20261019`,
+    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`(뒤 둘은 다른 에이전트 작업 폴더에 커밋 안 된 파일이 있어 건드리지 않았다).
+    이 브랜치를 통합에 다시 합치면 같은 규칙으로 옮긴다.
+  - [#563](https://github.com/JRVector9/nomorevibe/pull/563)의 10-22 계획 "0103~0106 적용"은 이제 **0104~0107 적용**이다.
 - osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
 
 ## 수집·검수 개선의 운영 검증 — 2026-10-14
