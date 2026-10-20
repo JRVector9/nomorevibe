@@ -11,6 +11,8 @@ import { collectRepositoryAgentEvidence, InvalidAgentScanCursorError, normalizeA
 import { lockRepositoryAgentEvidence } from './lock';
 import { effectiveAgentScanState } from './coverage';
 const DAY = 24 * 60 * 60 * 1000;
+/** 저장소 탓으로 끝난 실패 — 공급자 한도(rate_limited)나 인증 대기(retryAt 있는 unavailable)와 달리 같은 저장소에서 되풀이된다 */
+const REPOSITORY_FAILURE_CODES = ['timeout', 'unavailable', 'invalid'] as const;
 const digest = (input: unknown) => createHash('sha256').update(JSON.stringify(input)).digest('hex');
 const observationKey = (observation: AgentObservation) => digest(Object.keys(observation).sort().map(key => [key, observation[key as keyof AgentObservation]]));
 export type DiscoveryEvidenceInput = { repositoryKey: string; signalId: string; sourceUrl: string; commitSha?: string | null; attribution?: { client: string | null; label: string } | null; searchWindowFrom?: Date | null; searchWindowTo?: Date | null; incomplete?: boolean };
@@ -77,6 +79,13 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
     WHEN ${agentRepositoryScans.repositoryKey} = ${result.repositoryKey} THEN ${JSON.stringify(result.cursor)}::jsonb
     ELSE jsonb_set(${JSON.stringify(renamedCursor)}::jsonb, '{repositoryKey}', to_jsonb(${agentRepositoryScans.repositoryKey})) END`;
   const sameName = sql`${agentRepositoryScans.repositoryKey} = ${result.repositoryKey}`;
+  /**
+   * 같은 행이 저장소 실패로 거듭 끝나면 다음 시도 간격을 직전 간격의 두 배로 늘린다(15분 → 30분 → 1시간 → … → 7일).
+   * 2026-10-19 프로드에서 unavailable 로 끝나지 않는 저장소 52개가 15분마다 다시 잡혀 누적 요청이 1,000건을 넘었다.
+   * 직전 간격은 기존 열(next_attempt_at − started_at)로 구한다. 성공하면 오류 코드가 비어 다음 실패는 다시 15분부터다.
+   */
+  const repeatedFailure = (REPOSITORY_FAILURE_CODES as readonly (string | null)[]).includes(result.errorCode) && !result.retryAt
+    ? sql`${sameName} AND ${agentRepositoryScans.lastErrorCode} IN ('timeout', 'unavailable', 'invalid')` : sql`false`;
   const coverage = { limited: result.cursor?.coverageLimited ?? false, repositoryFork: result.repositoryFork ?? null,
     unavailableCommits: result.cursor?.unavailableCommits ?? [] };
   const coverageUpdate = { ...(result.repositoryFork === undefined ? {} : { repositoryFork: result.repositoryFork }),
@@ -109,7 +118,9 @@ export async function saveRepositoryAgentScan(result: CollectResult, now = new D
           : sql`${agentRepositoryScans.completedAt}`,
         lastErrorCode: sql`CASE WHEN ${sameName} THEN ${result.errorCode} ELSE 'alias_recheck_required' END`,
         // Recheck promptly, but never bypass an upstream failure's retry deadline.
-        nextAttemptAt: sql`CASE WHEN ${sameName} OR ${result.errorCode !== null} THEN excluded.next_attempt_at ELSE excluded.started_at END`,
+        nextAttemptAt: sql`CASE WHEN ${repeatedFailure} THEN greatest(excluded.next_attempt_at, excluded.started_at + least(interval '7 days',
+            greatest(interval '15 minutes', 2 * (${agentRepositoryScans.nextAttemptAt} - ${agentRepositoryScans.startedAt}))))
+          WHEN ${sameName} OR ${result.errorCode !== null} THEN excluded.next_attempt_at ELSE excluded.started_at END`,
       },
     }).returning();
     // Repository metadata can change at an unchanged head. Do not retain upstream claims after a fork recheck.

@@ -94,7 +94,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
   }
   const purpose = nonProductPurpose({ ...document.pageMeta, description: [document.repoMeta.description, document.pageMeta?.description].filter(v => typeof v === "string").join(" ") });
   if (purpose && !starAutoApproved) return { ok: false, reason: "not_a_product" };
-  if (access?.mode === "installable" && candidate.decidedBy !== "admin" && !starAutoApproved && settings.reviewMode !== "enforce") {
+  if (access?.mode === "installable" && candidate.decidedBy !== "admin" && candidate.decidedBy !== 'deepseek'
+    && !starAutoApproved && settings.reviewMode !== "enforce") {
     return { ok: false, reason: "installation_review_required" };
   }
   const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin" && !starAutoApproved

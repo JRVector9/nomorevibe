@@ -78,6 +78,8 @@ import { getSettings as getCrawlSettings } from "@/lib/crawl/settings";
 import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
 import { AI_FILTER_LEVELS, parseAiFilter, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { siteOrigin } from "@/lib/site";
+import { TalkHero } from "@/components/social/TalkHero";
+import { loadHomeTalk } from "@/lib/social/home-talk";
 
 export const dynamic = "force-dynamic";
 
@@ -493,6 +495,11 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const verifiedLoad = requestedSort === "trending" ? publicRead("count", ["verified"], () => countProducts({ statuses: ["verified"], excludeDown: true })) : Promise.resolve(0);
   // 집계 기준 창의 AI 단계별 수 — 못 세도 목록은 선다.
   const aiCountsLoad = publicRead("count", ["ai-levels"], () => aiLevelCounts()).catch(() => null);
+  // SNS 화제 대표 구획(C안) — 거르기 없는 홈에서만. 실패하면 구획만 빠진다
+  const talkLoad = filtered ? Promise.resolve(null) : loadHomeTalk(now, locale).catch((error: unknown) => {
+    logger.warn("home.talk_unavailable", { error });
+    return null;
+  });
   for (const load of [seasonLoad, searchLoad, countsLoad, verifiedLoad]) load.catch(() => {});
 
   try {
@@ -601,7 +608,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   const asideFailure = [pulseResult, newsResult]
     .find((result): result is PromiseRejectedResult => result.status === "rejected");
   if (asideFailure) logger.warn("home.pulse_unavailable", { error: asideFailure.reason });
-  const [stripData, freshData, aiCounts] = await Promise.all([stripLoad, newLoad, aiCountsLoad]);
+  const [stripData, freshData, aiCounts, talk] = await Promise.all([stripLoad, newLoad, aiCountsLoad, talkLoad]);
   const [localizedList, localizedUnclaimed, localizedStrip, fresh] = await Promise.all([
     localizeProductList(list,locale), localizeProductList(unclaimed,locale),
     localizeProductList(stripData?.items ?? [],locale), localizeProductList(freshData,locale),
@@ -632,6 +639,7 @@ export async function HomeContent({ params }: { params: HomeParams }) {
   return (
     <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
+      {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
       {!filtered && (
         <CompactRow id="rising" priority title={t("growth.title")} note={<>{starGrowthNote(strip?.snapshot ?? null, locale, t)} · <Link prefetch={false} href={metricHref(state, "star-growth", locale)} scroll={false}>{t("nav.methodology")}</Link></>}
           summary={(strip?.items.length ?? 0) === 0 ? <p className="row-note" role="status">{!strip
