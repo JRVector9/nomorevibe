@@ -1,5 +1,6 @@
 import { SAVED_LIMIT } from "@/lib/me/contract";
 import { mergeBrowserReactions, reactedSlugs } from "@/components/feedback/reacted";
+import { loadMeState } from "@/components/me/account-store";
 
 const KEY = "nmb-saved-v1";
 /** 로그인한 계정과 맞춰 본 기록 — 마지막으로 본 서버 주소(base)와 아직 서버에 못 보낸 바꿈(pending) */
@@ -179,16 +180,10 @@ export function startSavedSync(): void {
 }
 
 async function connect(): Promise<void> {
-  let me: { user?: { id?: unknown } | null; csrfToken?: unknown } | null = null;
-  let answered = false;
-  try {
-    const response = await fetch("/api/me", { cache: "no-store" });
-    // 404 = 로그인 기능이 꺼져 있다 — 이 브라우저 목록만
-    answered = response.ok || response.status === 404;
-    if (response.ok) me = await response.json();
-  } catch {
-    answered = false;
-  }
+  // 머리 메뉴·종과 같은 한 번의 요약 요청을 나눠 쓴다. off(404) = 로그인 기능이 꺼져 있다 — 이 브라우저 목록만
+  const loaded = await loadMeState();
+  const answered = loaded.status !== "error";
+  const me: { user?: { id?: unknown } | null; csrfToken?: unknown } | null = loaded.status === "ok" ? (loaded.account ?? { user: null }) : null;
   const state = readSync();
   const userId = me?.user?.id;
   if (typeof userId !== "number" || !Number.isSafeInteger(userId) || typeof me?.csrfToken !== "string") {

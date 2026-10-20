@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/home/icons";
+import { useUnreadCount } from "@/components/me/account-store";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
 
@@ -46,6 +47,7 @@ export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
   const pathname = stripLocale(usePathname());
   const locale = useLocale();
   const t = useTranslations("common");
+  const unread = useUnreadCount();
   if (pathname.startsWith("/admin")) return null;
 
   function focusSearch() {
@@ -82,7 +84,7 @@ export function MobileNav({ talkEnabled = false }: { talkEnabled?: boolean }) {
         {t("navigation.popular")}
       </Link>
       <Link prefetch={false} href={localePath(locale, "/me")} className={me ? "active" : undefined}>
-        <span className="me-nav-icon"><UserIcon /><span className="dot" data-me-dot hidden /></span>
+        <span className="me-nav-icon"><UserIcon /><span className="dot" data-me-dot hidden={!unread} /></span>
         {t("navigation.my")}
       </Link>
     </nav>

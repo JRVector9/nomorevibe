@@ -86,7 +86,7 @@ function server(route: Route) {
   return calls;
 }
 
-const loggedIn = (call: Call, saved: string[]) => call.url === "/api/me" ? Response.json({ user: { id: 7, displayName: "하늘" }, csrfToken: "c".repeat(64) })
+const loggedIn = (call: Call, saved: string[]) => call.url === "/api/me/summary" ? Response.json({ user: { id: 7, displayName: "하늘" }, csrfToken: "c".repeat(64) })
   : call.url === "/api/me/saved?view=slugs" ? Response.json({ slugs: saved }) : null;
 
 async function load() {
@@ -107,7 +107,7 @@ describe("브라우저 동기화", () => {
     await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("none"));
     saved.toggleSaved("b");
     expect(storage.read("nmb-saved-v1")).toEqual(["a", "b"]);
-    expect(calls.map((call) => call.url)).toEqual(["/api/me"]);
+    expect(calls.map((call) => call.url)).toEqual(["/api/me/summary"]);
   });
 
   it("로그인 중 책갈피는 CSRF 를 붙여 서버에도 쓰고, 서버 수를 머리 점에 준다", async () => {
@@ -203,7 +203,7 @@ describe("브라우저 동기화", () => {
     let answer!: () => void;
     const asked = new Promise<void>((resolve) => { answer = resolve; });
     const calls = server(async (call) => {
-      if (call.url === "/api/me") await asked;
+      if (call.url === "/api/me/summary") await asked;
       return loggedIn(call, []) ?? Response.json({ saved: true, total: 1 });
     });
     const saved = await load();

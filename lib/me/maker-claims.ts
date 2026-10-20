@@ -294,7 +294,7 @@ export async function notifyNewListingMine(input: { slug: string; repoMeta: Reco
   if (!row) return false;
   const inserted = await withJobLeaseWrite(lease, (tx) => tx.insert(notifications).values({
     userId: row.userId, kind: "new_listing_mine", productId: row.productId,
-    payload: { productSlug: input.slug, productName: row.name, repoFullName: fullName }, dedupeKey: `new_listing_mine:${row.productId}`,
+    payload: { name: row.name, ...(fullName ? { repo: fullName } : {}) }, dedupeKey: `new_listing_mine:${row.productId}`,
   }).onConflictDoNothing({ target: [notifications.userId, notifications.dedupeKey] }).returning({ id: notifications.id }));
   return inserted.length > 0;
 }

@@ -1,19 +1,33 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore } from "react";
+import type { MeSummary } from "@/lib/me/summary";
 
-/** 이 화면의 로그인 상태 — 팔로 단추·종·아래 탭 점이 /api/me 를 한 번만 묻게 나눠 쓴다. 로그인·로그아웃은 새 문서로 열려 다시 묻는다 */
-export type MeAccount = { user: { id: number; displayName: string }; csrfToken: string };
+/**
+ * 이 화면의 로그인 상태 — 머리 메뉴·팔로 단추·종·아래 탭 점·저장 동기화가 /api/me/summary 를 한 번만 묻게 나눠 쓴다.
+ * 로그인·로그아웃은 새 문서로 열려 다시 묻는다.
+ */
+export type MeAccount = Pick<MeSummary, "user" | "isMaker" | "providers"> & { counts: MeSummary["counts"] | null; csrfToken: string };
+/** ok = 답을 받음(로그아웃이면 account null), off = 로그인 기능이 꺼짐(404), error = 묻지 못함 */
+export type MeState = { status: "ok" | "off" | "error"; account: MeAccount | null };
 
-let account: Promise<MeAccount | null> | null = null;
+let state: Promise<MeState> | null = null;
+
+export function loadMeState(): Promise<MeState> {
+  state ??= fetch("/api/me/summary", { cache: "no-store" }).then(async (response): Promise<MeState> => {
+    if (response.status === 404) return { status: "off", account: null };
+    if (!response.ok) return { status: "error", account: null };
+    const body = await response.json();
+    const account = body?.user && typeof body.csrfToken === "string" ? body as MeAccount : null;
+    // 첫 숫자는 요약에 들어 있다 — 종이 따로 묻지 않는다
+    if (account && typeof account.counts?.unreadAlerts === "number" && unread === null) setUnreadCount(account.counts.unreadAlerts);
+    return { status: "ok", account };
+  }).catch((): MeState => ({ status: "error", account: null }));
+  return state;
+}
 
 export function loadMeAccount(): Promise<MeAccount | null> {
-  account ??= fetch("/api/me", { cache: "no-store" }).then(async (response) => {
-    if (!response.ok) return null;
-    const body = await response.json();
-    return body?.user && typeof body.csrfToken === "string" ? body as MeAccount : null;
-  }).catch(() => null);
-  return account;
+  return loadMeState().then((loaded) => loaded.account);
 }
 
 /** 아직 모르면 undefined, 로그아웃이면 null */

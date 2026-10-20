@@ -275,7 +275,7 @@ describe("PUT /api/me/maker/replies — 메이커 답장", () => {
     expect(stored).toMatchObject({ productId: tiny.id, targetType: "feedback", targetId: feedback.id, authorUserId: maker.user.id, body: "다음 버전에 넣을게요." });
     const sent = await db.select().from(notifications);
     expect(sent).toEqual([expect.objectContaining({ userId: author.user.id, kind: "maker_reply", productId: tiny.id, dedupeKey: `maker_reply:${stored.id}`,
-      payload: { productSlug: "tiny-cron", productName: "tiny-cron", replyId: stored.id, targetType: "feedback" } })]);
+      payload: expect.objectContaining({ name: "tiny-cron", excerpt: "다음 버전에 넣을게요.", feedbackId: feedback.id }) })]);
 
     const edited = await reply(maker, { targetType: "feedback", targetId: feedback.id, body: "다음 주 업데이트에 넣을게요." });
     expect(edited.status).toBe(200);
@@ -384,7 +384,7 @@ describe("새 등재 알림 — notifyNewListingMine", () => {
     expect(await notifyNewListingMine({ slug: "tiny-cron", repoMeta: meta })).toBe(true);
     expect(await notifyNewListingMine({ slug: "tiny-cron", repoMeta: meta })).toBe(false);
     expect(await db.select().from(notifications)).toEqual([expect.objectContaining({ userId: maker.user.id, kind: "new_listing_mine", productId: tiny.id,
-      dedupeKey: `new_listing_mine:${tiny.id}`, payload: { productSlug: "tiny-cron", productName: "tiny-cron", repoFullName: "hanul/tiny-cron" } })]);
+      dedupeKey: `new_listing_mine:${tiny.id}`, payload: { name: "tiny-cron", repo: "hanul/tiny-cron" } })]);
     await product("org-app", "https://github.com/acme/org-app");
     expect(await notifyNewListingMine({ slug: "org-app", repoMeta: { owner: { id: GITHUB_ID, type: "Organization" } } })).toBe(false);
     await product("stranger", "https://github.com/stranger/app");

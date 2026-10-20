@@ -9,13 +9,11 @@ import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
 import { ME_SAVED_LINK, ME_TAB_PATHS } from "@/lib/me/contract";
-import type { MeSummary } from "@/lib/me/summary";
-
-type PublicAccount = Pick<MeSummary, "user" | "isMaker" | "providers"> & { counts: MeSummary["counts"] | null; csrfToken: string };
+import { loadMeAccount, type MeAccount as PublicAccount } from "@/components/me/account-store";
 
 /**
  * 머리의 계정 자리 — 로그아웃이면 로그인 링크, 로그인이면 이니셜 아바타와 메뉴(마이페이지 시안 머리 그림).
- * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me/summary 한 번으로 이름·수단·숫자를 받는다.
+ * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me/summary 한 번(account-store, 다른 부품과 나눠 씀)으로 이름·수단·숫자를 받는다.
  */
 export function AccountMenu() {
   const locale = useLocale();
@@ -31,13 +29,9 @@ export function AccountMenu() {
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    const abort = new AbortController();
-    fetch("/api/me/summary", { cache: "no-store", signal: abort.signal }).then(async (response) => {
-      if (!response.ok) return;
-      const body = await response.json();
-      if (body.user && body.csrfToken) setAccount(body);
-    }).catch(() => {});
-    return () => abort.abort();
+    let live = true;
+    void loadMeAccount().then((loaded) => { if (live && loaded) setAccount(loaded); });
+    return () => { live = false; };
   }, []);
 
   // 열리면 첫 항목에 초점, 바깥을 누르면 닫는다

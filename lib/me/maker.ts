@@ -251,8 +251,11 @@ export async function upsertMakerReply(userId: number, input: ReplyInput): Promi
     try {
       const [author] = await onPrimary(() => db.select({ deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, recipient)));
       if (author && author.deletedAt === null) {
+        // 알림함 한 줄(lib/me/notification-view.ts)이 읽는 모양 — 답한 메이커의 GitHub login, 답장 앞부분, 댓글이면 원문 주소
+        const { login } = await githubLoginOf(userId);
         await notify({ userId: recipient, kind: "maker_reply", productId: reply.productId, dedupeKey: `maker_reply:${reply.id}`,
-          payload: { productSlug: product?.slug ?? null, productName: product?.name ?? null, replyId: reply.id, targetType: reply.targetType } });
+          payload: { name: product?.name ?? null, ...(login ? { maker: `@${login}` } : {}), excerpt: reply.body.slice(0, 120),
+            ...(reply.targetType === "feedback" ? { feedbackId: reply.targetId } : {}) } });
       }
     } catch (error) {
       // 답장은 이미 남았다 — 알림 실패로 답장을 되돌리지 않는다
