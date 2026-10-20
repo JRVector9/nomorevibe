@@ -27,7 +27,15 @@
     `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019`)에도 같은 커밋을 더했다(사용자 지시, force push 없음).
     뒤 둘의 xaegis 작업 폴더(`~/.xaegis-hub/data/main-agent/nomorevibe-{oracle-fixes,merge-audit}-20261019/source`)는 건드리지 않아
     로컬 브랜치가 원격보다 한 커밋 뒤다 — 그 폴더에서 이어 작업하기 전에 `git pull --ff-only` 한다(untracked 파일 3개는 그대로).
-  - PR 들은 main 과 충돌해 GitHub 가 PR CI 를 돌리지 않는다. 12개 브랜치 모두 CI 를 수동(workflow_dispatch)으로 돌렸다 — 결과는 아래.
+  - PR 들은 main 과 충돌해 GitHub 가 PR CI 를 돌리지 않는다. 12개 브랜치 모두 CI 를 수동(workflow_dispatch, main 이 아니라 이미지 발행 없음)으로 돌렸다:
+    PR 8개와 `codex/oracle-scaleout-fix-*` 2개는 모두 성공(quality·통합 3묶음).
+    `codex/gpu3090-oracle-review-fixes-20261019`·`codex/gpu3090-merge-review-20261019` 는 통합 1번 묶음에서
+    `tests/integration/uptime-split-control.test.ts` "배포 관문·감시" 1건이 실패했다(기대 `backoff`·경보 아님, 실제 `worker_missing`·경보). quality·통합 2·3묶음은 성공.
+    번호를 바꾸기 전 커밋(0a4e8c06·91f422c7)에서도 로컬에서 같은 실패가 났다 — 번호 변경과 무관하게 원래 있던 문제였다.
+    원인: 리뷰 수정 0a4e8c06 이 split 진행을 붙잡는 차단기를 "지금 maintenance 를 돌리는 home(role_leases 주인)"의 것으로 좁혔는데,
+    테스트는 주인 없이 m3 차단기만 열었다. **테스트를 고쳤다**(사용자 지시): 감시 시나리오에 maintenance 주인(m3)을 두고,
+    주인이 mini 로 넘어가면 붙잡지 않는 것도 보며, 파일 앞의 maintenance 행은 그대로 되돌린다
+    (review-fixes c204cbd1 · merge-review cde03602, 코드 동작은 그대로). 다시 돌린 CI(run 39397794224·39397798414)는 두 브랜치 모두 성공 — 이제 12개 브랜치 CI 가 모두 통과한다.
   - [#563](https://github.com/JRVector9/nomorevibe/pull/563)의 10-22 계획 "0103~0106 적용"은 이제 **0104~0107 적용**이다.
 - osaka env 백업 `/etc/nomorevibe-x.env.bak-20261020T062402Z`(root 0600)에는 X 토큰이 들어 있다. 되돌릴 일이 없으면 지운다.
 
