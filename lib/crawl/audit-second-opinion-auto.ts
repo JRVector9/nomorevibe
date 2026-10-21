@@ -10,11 +10,11 @@ import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
 import { auditItemModel, holdCandidate } from "./product-audit-hold";
 import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
-import { endpointBackoffActive, noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, readQwenEndpointBackoff,
+import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, readQwenEndpointBackoff,
   withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
 import { applyPublishedAutoOpinion, type PublishedAutoResult } from "./published-second-review";
-import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
+import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
   type QwenDirectReview } from "./qwen-direct-review";
 import type { AuditHoldSettings } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
@@ -32,20 +32,26 @@ import type { CrawlSettings } from "./settings-schema";
  *    묻는다. 승인이면 사람의 '유지'와 같은 길로 닫고(누가 qwen-v2-auto), 거절·판단 보류면 판단만 적어 사람 확인 목록 앞에 둔다.
  *    이 길로는 내리지도 숨기지도 않는다.
  *
- * 두 갈래가 번갈아 한 줄로 선다(갈래마다 perTick 까지). 새 호출은 STEP_MS 안에서만 시작하고, 틱의 끝까지 호출 하나(CALL_TIMEOUT_MS)와
- * 기록 여유가 남아야 한다. 감사가 Qwen 직접 심사로 바뀌었으면(0112) 같은 서버를 감사 자리(AUDIT_QWEN_CONCURRENCY, 기본 2)가 틱 내내 쓰고
+ * 두 갈래가 번갈아 한 줄로 선다(갈래마다 perTick 까지). 새 호출은 STEP_MS 안에서만, 틱의 끝까지 15초(QWEN_AUTO_MIN_START_MS) 이상 남을 때만
+ * 시작하고, 제한 시간은 min(45초, 남은 시간 − 저장 여유)다 — 줄인 제한 시간에 걸린 것(틱 끝)은 적지 않는다. 감사가 Qwen 직접 심사로 바뀌었으면(0112) 같은 서버를 감사 자리(AUDIT_QWEN_CONCURRENCY, 기본 2)가 틱 내내 쓰고
  * 이 단계는 2차 갈림 판가름과 나눠 쓰는 두 번째 자리 하나(withQwenSecondarySlot)로 30초만 쓴다 — gpu3090 동시 호출은 감사 자리 + 1 을
  * 넘지 않고(qwen-endpoint-backoff.ts), 감사가 먼저다. 누가 서버 탈을 만나든 모두 함께 물러난다. 모델 호출은 트랜잭션 밖이고, 쓰기는 한 건마다 DR writer fence → … → 작업 lease 의 한 커밋이다.
- * 부르는 곳의 탈(닿지 않음·시간 초과·5xx·404·401/403·429)이면 이 틱의 나머지를 멈추고 함께 쓰는 물러나기(1분부터 두 배씩 15분까지)를 걸며
- * 마지막 오류를 관측에 남긴다.
- * 항목만의 실패(형식 오류·400·입력 초과·원본 없음)는 그 항목을 두 번까지만 묻는다(관측의 failures). 이 단계는 잡을 실패시키지 않는다.
+ * 서버 탈(qwen-endpoint-backoff.ts noteQwenCallFailure — 닿지 않음·5xx·404·401/403 은 바로, 진짜 시간 초과·429 는 부르는 쪽 모두를 통틀어
+ * 성공 없이 세 번 잇달아)이면 이 틱의 나머지를 멈추고 함께 쓰는 물러나기(1분부터 두 배씩 15분까지)를 걸며 마지막 오류를 관측에 남긴다.
+ * 항목만의 실패(형식 오류·400·입력 초과·원본 없음, 탈이 아닌 한 번의 진짜 시간 초과)는 그 항목을 두 번까지만 묻는다(관측의 failures).
+ * 탈이 아닌 429 는 항목 탓이 아니라 세지 않고 다음 항목으로 간다. 이 단계는 잡을 실패시키지 않는다.
  */
 export const QWEN_AUTO_OBSERVATION = "qwen-second-opinion";
 export const QWEN_V2_AUTO_ACTOR = QWEN_V2_AUTO_SOURCE;
 /** 새 호출을 시작하는 창 — 감사 묻기(틱 65초)와 나란히 돌아 틱(예산 70초)을 늘리지 않는다 */
 const STEP_MS = 30_000;
-/** 한 호출의 상한 — 실측 2.2~4.7초(2026-10-21, 50건). 이보다 길면 서버가 붐비거나 멈춘 것이다 */
-export const QWEN_AUTO_CALL_TIMEOUT_MS = 20_000;
+/**
+ * 한 호출의 상한 — 감사 Qwen 직접 심사와 같다(jobs/product-audit.ts QWEN_CALL_TIMEOUT_MS): 한 건만이면 2.5초지만 감사 자리 넷과 함께 뜨면
+ * 한 건에 12초쯤(운영 실측 평균 11.8초·최대 19.8초, 2026-10-21)이라 20초는 짧았다
+ */
+export const QWEN_AUTO_CALL_TIMEOUT_MS = 45_000;
+/** 새 호출을 시작할 수 있는 틱의 남은 시간 — 부하 중 p95 쯤. 더 짧으면 제한 시간을 그 안으로 줄인다 */
+export const QWEN_AUTO_MIN_START_MS = 15_000;
 const WRITE_MARGIN_MS = 2_000;
 /** 항목만의 실패를 몇 번까지 다시 묻나 */
 export const QWEN_AUTO_ITEM_ATTEMPTS = 2;
@@ -218,9 +224,11 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     audit.enabled ? await auditTargets(settings.auditHold, config.model, given("a:"), audit.perTick) : [],
   );
   if (!queue.length) return;
-  // 새 호출은 한 호출의 제한 시간과 기록 여유가 다 남을 때만, 그리고 누가 서버 탈을 만나 함께 쓰는 물러나기가 걸리면 곧바로 멈춘다
+  // 새 호출은 시작 창(STEP_MS) 안에서 틱 끝까지 15초 이상 남을 때만, 그리고 누가 서버 탈을 만나 함께 쓰는 물러나기가 걸리면 곧바로 멈춘다.
+  // 제한 시간은 min(45초, 남은 시간 − 저장 여유) — 줄인 제한 시간에 걸린 것(틱 끝)은 서버 탈도 항목의 실패도 아니다
+  const left = () => (ctx.deadlineAt ?? Infinity) - Date.now();
   const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && Date.now() - startedAt < STEP_MS && !qwenEndpointBackingOff()
-    && (ctx.deadlineAt === undefined || ctx.deadlineAt - Date.now() >= QWEN_AUTO_CALL_TIMEOUT_MS + WRITE_MARGIN_MS);
+    && left() >= QWEN_AUTO_MIN_START_MS;
   const failItem = (target: Target, code: string) => {
     tally.failed += 1;
     observation.failures[target.key] = { code, count: (observation.failures[target.key]?.count ?? 0) + 1, at: now() };
@@ -244,25 +252,30 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     ran = true;
     let review: QwenDirectReview | null;
     let callStartedAt = 0;
+    let shrunk = false;
     try {
       // 두 번째 자리(갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 기다리는 동안 바뀐다
       review = await withQwenSecondarySlot(async () => {
         if (!canStart()) return null;
+        const timeoutMs = Math.min(QWEN_AUTO_CALL_TIMEOUT_MS, left() - WRITE_MARGIN_MS);
+        shrunk = timeoutMs < QWEN_AUTO_CALL_TIMEOUT_MS;
         callStartedAt = Date.now();
-        return reviewWithQwenDirect(input, { timeoutMs: QWEN_AUTO_CALL_TIMEOUT_MS, signal: ctx.signal });
+        return reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal });
       });
     } catch (error) {
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
-      if (qwenEndpointFailure(error.code)) {
-        // 부르는 곳의 탈 — 이 틱의 나머지는 부르지 않고 gpu3090 을 부르는 모두가 물러난다. 항목에는 아무것도 적지 않는다
-        await noteQwenEndpointFailure(error.code);
+      // 줄인 제한 시간(틱 끝)에 걸렸다 — 아무것도 적지 않고 멈춘다
+      if (error.code === "qwen_timeout" && shrunk) break;
+      const { outage } = await noteQwenCallFailure(error.code);
+      observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
+      if (outage) {
+        // 서버 탈 — 이 틱의 나머지는 부르지 않고 gpu3090 을 부르는 모두가 물러난다. 항목에는 아무것도 적지 않는다
         tally.endpointError = error.code;
-        observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
         break;
       }
-      failItem(target, error.code);
-      observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
+      // 탈이 아닌 붐빔 — 429 는 항목 탓이 아니라 세지 않고, 한 번의 진짜 시간 초과는 그 항목의 실패로 센다
+      if (error.code !== "qwen_http_429") failItem(target, error.code);
       continue;
     }
     if (!review) break;
