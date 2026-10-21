@@ -14,6 +14,7 @@ import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } fr
  * 화제 읽기 — /talk·홈 대표 구획·상세 화제 띠가 읽는다(SNS 화제·홍보 설계 C안).
  *
  * 공개 제품(seeded·verified, 응답 있음, 기본 목록, 감사 보류 아님, 저장소 살아 있음)에 이어진 글만 오른다. 관리자가 뺀 저장소는 빠진다.
+ * 보이는(visible) 글만 읽으므로 수집기가 숨긴 Bluesky 글(봇·라벨)도 오르지 않는다.
  * 이슈·PR 을 가리킨 글은 상세에서만 보이고 순위에는 세지 않는다 — 저장소 자체가 아니라 그 안의 토론이다.
  */
 /** 상세 화제 기록을 남기는 기간(시안 Q3 권장: 관측 보관과 같은 90일) */
@@ -44,7 +45,14 @@ const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where
 export const X_FRESH_MS = 24 * 3_600_000;
 /** 이 시각 뒤에 확인한 X 게시물만 보인다 */
 export const xFreshSince = (now: Date) => new Date(now.getTime() - X_FRESH_MS);
-const freshX = (now: Date) => sql`(${socialPosts.source} <> 'x' or ${socialPosts.lastSeenAt} >= ${xFreshSince(now).toISOString()}::timestamptz)`;
+/**
+ * Bluesky 게시물도 마지막으로 확인한 뒤 24시간만 보인다 — 원문이 지워지면 화면에서도 빠지게(수집기 bluesky-talk 이 제품에 이어진 글을
+ * 30분마다 다시 묻는다). 수집이 멈추면 하루 뒤 모두 빠진다.
+ */
+export const BLUESKY_FRESH_MS = 24 * 3_600_000;
+export const blueskyFreshSince = (now: Date) => new Date(now.getTime() - BLUESKY_FRESH_MS);
+const freshX = (now: Date) => sql`((${socialPosts.source} <> 'x' or ${socialPosts.lastSeenAt} >= ${xFreshSince(now).toISOString()}::timestamptz)
+  and (${socialPosts.source} <> 'bluesky' or ${socialPosts.lastSeenAt} >= ${blueskyFreshSince(now).toISOString()}::timestamptz))`;
 
 export type TalkPost = {
   id: number;

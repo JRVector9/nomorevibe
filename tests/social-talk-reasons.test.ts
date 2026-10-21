@@ -77,6 +77,26 @@ describe('왜 /talk 에 없나', () => {
     expect(thresholdLabel('hn')).toBe('HN 30점 또는 댓글 15개');
   });
 
+  it('Bluesky — 수집기가 숨긴 까닭(봇·라벨)·저장소 여럿·확인 24시간·반응 5 기준을 적는다', () => {
+    const none = new Map();
+    const bsky = (extra: Partial<TalkVerdictPost> = {}) => post({ source: 'bluesky', points: 12, ...extra });
+    expect(talkVerdict(bsky({ state: 'hidden', stateReason: 'bot_suspected' }), none, NOW).reasons)
+      .toEqual([{ code: 'bot', label: '숨김 — 봇으로 보임(72시간에 GitHub 링크 글 15개 이상)' }]);
+    expect(labels(talkVerdict(bsky({ state: 'hidden', stateReason: 'label:bot' }), none, NOW))).toEqual(['숨김 — 봇 계정(스스로 자동 계정이라 밝힘)']);
+    expect(labels(talkVerdict(bsky({ state: 'hidden', stateReason: 'label:!no-unauthenticated' }), none, NOW))).toEqual(['숨김 — 로그아웃 사용자에게 보이지 않기를 원한 계정']);
+    expect(talkVerdict(bsky({ state: 'hidden', stateReason: 'label:porn' }), none, NOW).reasons).toEqual([{ code: 'label', label: '숨김 — 라벨 porn' }]);
+    expect(labels(talkVerdict(bsky({ state: 'hidden', stateReason: 'admin' }), none, NOW))).toEqual(['숨김']);
+    // 저장소 주소인데 키가 없다 — 저장소 여럿을 가리킨 글
+    expect(talkVerdict(bsky({ linkTarget: 'site', repositoryKey: null, product: null, linkUrl: 'https://github.com/acme/one' }), none, NOW).reasons)
+      .toEqual([{ code: 'multi_repo', label: '저장소 여럿 — 한 저장소만 가리킨 글만 셉니다' }]);
+    expect(labels(talkVerdict(bsky({ linkTarget: 'site', repositoryKey: null, product: null, linkUrl: 'https://github.com/sponsors/acme' }), none, NOW)))
+      .toEqual(['저장소 아님 — 저장소 모양이 아닌 주소']);
+    expect(talkVerdict(bsky({ lastSeenAt: new Date(NOW.getTime() - 25 * HOUR) }), none, NOW).reasons)
+      .toEqual([{ code: 'bluesky_stale', label: 'Bluesky 확인 24시간 지남' }]);
+    expect(labels(talkVerdict(bsky({ points: 4 }), none, NOW))).toEqual(['점수 미달 — Bluesky 반응 5 아래']);
+    expect(thresholdLabel('bluesky')).toBe('Bluesky 반응 5');
+  });
+
   it('조건을 모두 넘었는데 후보에 없으면 모른다고 적는다', () => {
     expect(talkVerdict(post(), new Map(), NOW)).toMatchObject({ shown: false, reasons: [{ code: 'unknown' }] });
   });

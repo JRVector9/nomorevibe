@@ -5,7 +5,7 @@ import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import type { ProductTalk } from "@/lib/social/talk";
 import { TalkSparkline } from "./TalkSparkline";
-import { discussionUrl, SOURCE_NAME, sourceChip, sourceClass } from "./talk-format";
+import { discussionUrl, linkOnly, SOURCE_NAME, sourceChip, sourceClass } from "./talk-format";
 import "./talk.css";
 
 /**
@@ -33,17 +33,18 @@ export function TalkBand({ talk, t, locale, now, preview }: {
         </p>
         <h2 id="talk-band-title">{best.source === "x"
           ? t("talk.xHeadline", { points: count(best.points), comments: count(best.comments) })
+          : best.source === "bluesky" ? t("talk.bskyHeadline", { points: count(best.points), comments: count(best.comments) })
           : t("talk.headline", { source: SOURCE_NAME[best.source], points: count(best.points), comments: count(best.comments) })}</h2>
         <div className="talk-lines">
           {talk.posts.slice(0, 4).map(post => {
-            // X 게시물은 본문·작성자를 옮기지 않는다 — 반응 수와 링크만
-            const x = post.source === "x";
+            // X·Bluesky 게시물은 본문·작성자를 옮기지 않는다 — 반응 수와 링크만
+            const reactions = linkOnly(post.source), x = post.source === "x";
             return (
               <div key={post.id} className="talk-line">
-                <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(x ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
-                {x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
-                <span>{formatDate(post.postedAt, now, locale)}{x ? "" : ` · ${t(post.kind === "show" ? "talk.byMaker" : "talk.byOthers")}`}</span>
-                <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{x ? t("talk.viewOnX") : discussion(post.linkTarget)} ↗</a>
+                <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(reactions ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+                {reactions ? <span className="talk-line-title">{t(x ? "talk.xPost" : "talk.bskyPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
+                <span>{formatDate(post.postedAt, now, locale)}{reactions ? "" : ` · ${t(post.kind === "show" ? "talk.byMaker" : "talk.byOthers")}`}</span>
+                <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{reactions ? t(x ? "talk.viewOnX" : "talk.viewOnBluesky") : discussion(post.linkTarget)} ↗</a>
               </div>
             );
           })}

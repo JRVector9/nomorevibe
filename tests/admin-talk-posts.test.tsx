@@ -40,6 +40,17 @@ it('수집한 글마다 원문·가리킨 주소·연결 제품·확인 시각�
   expect(html).not.toContain('href="weird"');
 });
 
+it('Bluesky 글은 원문 게시물 링크와 숨긴 까닭(봇·라벨)을 보인다', () => {
+  const id = 'did:plc:ltjj43huonogytm4szn5hzkx/3mygbhpmh762y';
+  const html = renderToStaticMarkup(<TalkPostsBoard now={NOW} rows={[
+    row({ id: 4, source: 'Bluesky', title: 'Bluesky 게시물 3mygbhpmh762y', discussionUrl: discussionUrl({ source: 'bluesky', externalId: id }),
+      state: 'hidden', talk: { shown: false, rank: null, reasons: ['숨김 — 봇으로 보임(72시간에 GitHub 링크 글 15개 이상)'] } }),
+  ]} />);
+  expect(html).toContain('href="https://bsky.app/profile/did:plc:ltjj43huonogytm4szn5hzkx/post/3mygbhpmh762y"');
+  expect(html).toContain('Bluesky 게시물 3mygbhpmh762y');
+  expect(html).toContain('숨김 — 봇으로 보임');
+});
+
 it('조건에 맞는 글이 없으면 그렇게 적는다', () => {
   expect(renderToStaticMarkup(<TalkPostsBoard now={NOW} rows={[]} />)).toContain('조건에 맞는 글이 없습니다.');
 });

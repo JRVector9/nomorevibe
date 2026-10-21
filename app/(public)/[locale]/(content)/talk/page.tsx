@@ -5,7 +5,7 @@ import { ProductIcon } from "@/components/ProductIcon";
 import { ProductTagline } from "@/components/ProductTagline";
 import type { LocalizedTalkEntry } from "@/components/social/TalkHero";
 import { TalkSparkline } from "@/components/social/TalkSparkline";
-import { discussionUrl, sourceChip, sourceClass, sourceList } from "@/components/social/talk-format";
+import { discussionUrl, linkOnly, sourceChip, sourceClass, sourceList } from "@/components/social/talk-format";
 import "@/components/social/talk.css";
 import "@/app/(public)/[locale]/(content)/popular/popular.css";
 import { canonicalAlternates } from "@/app/(public)/[locale]/(content)/page";
@@ -167,7 +167,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
                 {recent.map(({ post, entry }) => (
                   <li key={post.id}>
                     <span>{formatDate(post.postedAt, now, locale)}</span>
-                    <span><b>{entry.product.name}</b> {sourceChip(post, true)} {t(post.source === "x" ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+                    <span><b>{entry.product.name}</b> {sourceChip(post, true)} {t(linkOnly(post.source) ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
                   </li>
                 ))}
               </ol>
@@ -182,6 +182,8 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
               <li>{t("talk.methodWindow")}</li>
               <li>{t("talk.methodRemoved")}</li>
               <li>{t("talk.methodX")}</li>
+              <li>{t("talk.methodBluesky")}</li>
+              <li>{t("talk.methodRequest")}</li>
               <li>{t("talk.methodSeparate")}</li>
             </ul>
           </section>
@@ -200,16 +202,16 @@ function PostLines({ entry, t, locale, now }: { entry: LocalizedTalkEntry; t: Tr
   return (
     <div className="talk-lines">
       {entry.posts.slice(0, 3).map(post => {
-        // X 게시물은 본문을 옮기지 않는다 — 반응 수와 링크만
-        const x = post.source === "x";
+        // X·Bluesky 게시물은 본문을 옮기지 않는다 — 반응 수와 링크만
+        const reactions = linkOnly(post.source), x = post.source === "x";
         return (
           <div key={post.id} className="talk-line">
-            <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(x ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
+            <span className={sourceClass(post.source)}><b>{sourceChip(post)}</b> {t(reactions ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}</span>
             {post.kind === "show" && <span className="talk-maker">{t("talk.byMaker")}</span>}
             {entry.sample ? <span className="talk-line-title">{t("talk.samplePost")}</span>
-              : x ? <span className="talk-line-title">{t("talk.xPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
+              : reactions ? <span className="talk-line-title">{t(x ? "talk.xPost" : "talk.bskyPost")}</span> : <span className="talk-line-title" lang="en">{post.title}</span>}
             <span>{formatDate(post.postedAt, now, locale)}</span>
-            {!entry.sample && <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t(x ? "talk.viewOnX" : "talk.discussion")} ↗</a>}
+            {!entry.sample && <a className="talk-link" href={discussionUrl(post)} target="_blank" rel="noopener">{t(reactions ? (x ? "talk.viewOnX" : "talk.viewOnBluesky") : "talk.discussion")} ↗</a>}
           </div>
         );
       })}

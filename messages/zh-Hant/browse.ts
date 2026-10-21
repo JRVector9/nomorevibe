@@ -330,7 +330,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.methodBest": "每個來源只計最高的一篇",
   "talk.methodDecay": "「目前」每 36 小時權重減半，「本週」直接累加",
   "talk.methodWindow": "貼文在發布後 7 天內顯示於此列表",
-  "talk.methodThreshold": "僅收錄 Hacker News 上 30 分以上或 15 則留言以上的貼文，以及 X 上互動（按讚 + 轉發×2）50 以上的貼文",
+  "talk.methodThreshold": "僅收錄 Hacker News 上 30 分以上或 15 則留言以上的貼文、X 上互動 50 以上的貼文，以及 Bluesky 上互動 5 以上的貼文（互動 = 按讚 + 轉發×2）",
   "talk.methodRemoved": "原文刪除後此處也會移除",
   "talk.methodSeparate": "與 nomorevibe 站內排名分開計算",
   "talk.unlisted": "{count} 個熱議儲存庫尚未公開 · {active} 個審核中",
@@ -348,4 +348,8 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.xPost": "X 貼文",
   "talk.viewOnX": "在 X 上查看",
   "talk.methodX": "X 貼文只顯示互動數與連結，不顯示內文，每次檢查後保留 24 小時",
+  "talk.bskyPost": "Bluesky 貼文",
+  "talk.viewOnBluesky": "在 Bluesky 上查看",
+  "talk.methodBluesky": "Bluesky 貼文同樣只顯示互動數與連結，每次檢查後保留 24 小時。疑似機器人帳號的貼文、帶標籤的貼文，以及不希望被未登入使用者看到的帳號的貼文不計入",
+  "talk.methodRequest": "作者可要求移除貼文：刪除原文，或在該專案詳情頁底部的請求表單中填寫貼文網址",
 });

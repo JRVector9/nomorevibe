@@ -327,7 +327,7 @@ export const browse = {
   "talk.methodBest": "출처마다 가장 큰 글 하나만 셉니다",
   "talk.methodDecay": "‘지금’은 36시간마다 무게가 절반이 되고, ‘이번 주’는 그대로 합칩니다",
   "talk.methodWindow": "글은 게시 뒤 7일 동안 이 목록에 보입니다",
-  "talk.methodThreshold": "Hacker News 30점 또는 댓글 15개, X 반응(좋아요 + 재게시×2) 50 이상인 글만 오릅니다",
+  "talk.methodThreshold": "Hacker News 30점 또는 댓글 15개, X 반응(좋아요 + 재게시×2) 50, Bluesky 반응(좋아요 + 재게시×2) 5 이상인 글만 오릅니다",
   "talk.methodRemoved": "원문이 지워지면 여기서도 빠집니다",
   "talk.methodSeparate": "nomorevibe 반응 순위와 따로 셉니다",
   "talk.unlisted": "화제인데 아직 공개되지 않은 저장소 {count}개 · 심사 중 {active}개",
@@ -345,4 +345,8 @@ export const browse = {
   "talk.xPost": "X 게시물",
   "talk.viewOnX": "X에서 보기",
   "talk.methodX": "X 게시물은 본문 없이 반응 수와 링크만 보여 주고, 확인한 뒤 24시간 동안만 오릅니다",
+  "talk.bskyPost": "Bluesky 게시물",
+  "talk.viewOnBluesky": "Bluesky에서 보기",
+  "talk.methodBluesky": "Bluesky 게시물도 본문 없이 반응 수와 링크만 보여 주고 확인한 뒤 24시간 동안만 오릅니다. 봇으로 보이는 계정, 라벨이 붙은 글, 로그아웃한 사람에게 보이지 않기를 원한 계정의 글은 빼고 셉니다",
+  "talk.methodRequest": "글쓴이가 원하면 뺍니다 — 원문을 지우거나, 그 프로젝트 상세 페이지 아래 요청 폼에 글 주소를 적어 주세요",
 } as const;

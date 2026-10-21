@@ -10,6 +10,7 @@
 .talk-src-hn { background: var(--source-hn-soft); color: var(--source-hn); }
 .talk-src-geeknews { background: var(--source-gn-soft); color: var(--source-gn); }
 .talk-src-x { background: var(--bg-hover); color: var(--text); }
+.talk-src-bluesky { background: var(--source-bsky-soft); color: var(--source-bsky); }
 .talk-srcs { display: flex; flex-wrap: wrap; gap: 4px; }
 .talk-maker { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 6px; border: 1px solid var(--border-strong); font-size: 13px; color: var(--text-2); white-space: nowrap; }
 .talk-grow { color: var(--up); font-weight: 600; font-variant-numeric: tabular-nums; }

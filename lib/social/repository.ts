@@ -21,8 +21,12 @@ export async function recordSocialPosts(source: SocialSource, posts: readonly So
   return withJobLeaseWrite(lease, tx => writeSocialPosts(tx, source, posts, observedAt));
 }
 
-/** recordSocialPosts 의 본문 — 이미 연 쓰기 트랜잭션 안에서(웹 관문의 X 보고 받기) */
-export async function writeSocialPosts(tx: ProductTransaction, source: SocialSource, posts: readonly SocialPostInput[], observedAt: Date) {
+/**
+ * recordSocialPosts 의 본문 — 이미 연 쓰기 트랜잭션 안에서(웹 관문의 X 보고 받기).
+ * periodic: false 면 값이 바뀔 때만 관측을 남긴다 — Bluesky 는 창 안 글이 수천 건이라 6시간마다 같은 값을 쌓지 않는다.
+ */
+export async function writeSocialPosts(tx: ProductTransaction, source: SocialSource, posts: readonly SocialPostInput[], observedAt: Date,
+  options: { periodic?: boolean } = {}) {
   const unique = [...new Map(posts.map(post => [post.externalId, post])).values()];
   if (!unique.length) return { inserted: 0, updated: 0, observed: 0 };
   const rows = await tx.insert(socialPosts).values(unique.map(post => ({
@@ -58,7 +62,7 @@ export async function writeSocialPosts(tx: ProductTransaction, source: SocialSou
     ) last ON true
     WHERE p.id IN (${sql.join(rows.map(row => sql`${row.id}`), sql`, `)})
       AND (last.observed_at IS NULL OR last.points <> p.points OR last.comments <> p.comments
-        OR last.observed_at <= ${at}::timestamptz - ${OBSERVATION_REFRESH}::interval)
+        ${options.periodic === false ? sql`` : sql`OR last.observed_at <= ${at}::timestamptz - ${OBSERVATION_REFRESH}::interval`})
     ON CONFLICT DO NOTHING
     RETURNING post_id`);
   const inserted = rows.filter(row => row.inserted).length;

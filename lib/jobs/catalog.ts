@@ -21,6 +21,11 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
   // HN 화제 글 기록 — 최근 72시간·10점 이상 GitHub 글을 한두 요청으로 다시 읽는다(lib/social/hn-talk.ts)
   { name: "hn-talk", role: "crawler", intervalMs: 30 * 60_000 },
+  /**
+   * Bluesky 화제 글 기록 — 최근 72시간 GitHub 링크 게시물을 모두 남긴다(lib/social/bluesky-talk.ts). 회차당 요청 30번까지·0.5초 간격,
+   * 보통 새 글 1~2 + 반응 큰 글 3 + 다시 묻기 12 = 20번 안팎이라 30분이면 AppView 에 부담이 없고 crawler 시간도 거의 쓰지 않는다
+   */
+  { name: "bluesky-talk", role: "crawler", intervalMs: 30 * 60_000 },
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },

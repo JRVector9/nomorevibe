@@ -121,6 +121,11 @@
 - **[#569](https://github.com/JRVector9/nomorevibe/pull/569) (main a2281746, 16:24 KST)**: 수집기 검색을 `sort_order=relevancy` 로. 수집기 번들만 바뀌어 osaka release `3d25790786540aad` 만 설치(웹·워커 재배포 없음, main 의 공통 8앱·scheduler 는 eef28fd2). 첫 관련도순 실행은 10-21 09:10 KST.
 - 배포 뒤 상태: 공통 8앱·scheduler eef28fd2, 공개 health ok, `/talk` 404(꺼짐), hn-talk 30분마다 정상(HN 20건). 남은 확인은 `PENDING.md` "SNS 화제·X 수집".
 
+### 2026-10-22 Bluesky 화제 수집 (사용자 지시, PR — 배포 전)
+- 세 번째 SNS 화제 출처. 잡 `bluesky-talk`(crawler, 30분, 회차당 요청 30번까지)이 Bluesky AppView 공개 검색·getPosts 로 최근 72시간 GitHub 링크 게시물을 모두 남긴다(`lib/social/bluesky-talk*.ts`).
+  봇(72시간 15개 이상)·라벨(`!no-unauthenticated`·성인·검토·bot) 글은 숨김으로 남기고, 지워진 글은 내린 뒤 7일에 지운다. /talk 자격 반응 5, 확인 24시간.
+- migration `0115_social_posts_bluesky`(출처 제약에 bluesky). 배포는 migration → scheduler → 공통 8앱 순서. 설계·실측은 `docs/operations/2026-10-22-bluesky-talk.md`, 남은 확인은 `PENDING.md` "Bluesky 화제 수집".
+
 ### 2026-10-20 저녁 Oracle 증설 통합 배포 [#562](https://github.com/JRVector9/nomorevibe/pull/562) (사용자 지시)
 - **번호 고침**: main 의 `0103_social_posts` 와 겹치던 Oracle 묶음을 0104~0107(journal when …016~…019)로 옮기고 브랜치 11개에 main 을 합쳤다(기록은 `PENDING.md`).
 - **병합 20:34 KST → main 6ad56cd1**(merge commit). 처음엔 CI 확인용이었으나 독립 리뷰 수정(fix-uptime·fix-agent-scan)이 이 브랜치에만 있어 사용자 지시로 병합했다.

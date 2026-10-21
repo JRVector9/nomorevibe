@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
 import { dbPoolConfig } from '@/lib/db/pool';
-import { runWorker } from '@/scripts/worker';
+import { jobRunOptions, runWorker } from '@/scripts/worker';
 
 it('registers canonical site refresh only as a sixty-second version-one site-evidence job', () => {
   expect(JOB_CATALOG.find(job => job.name === 'product-site-evidence-refresh')).toEqual({
@@ -52,6 +52,12 @@ it('재수집된 README만 기존 GitHub 인증이 있는 crawler에서 제한�
   expect(JOB_CATALOG.find(job => job.name === 'product-readme-refresh')).toEqual({
     name: 'product-readme-refresh', role: 'crawler', intervalMs: 5 * 60_000,
   });
+});
+
+it('Bluesky 화제 수집은 crawler 기본 줄에서 30분마다, 요청 상한을 다 쓸 수 있는 40초 틱으로 돈다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'bluesky-talk')).toEqual({ name: 'bluesky-talk', role: 'crawler', intervalMs: 30 * 60_000 });
+  expect(jobsForRole('crawler')).toContain('bluesky-talk');
+  expect(jobRunOptions('bluesky-talk', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 40_000 });
 });
 
 /** 회사 발표는 하루 몇 건이다. 이미 시간을 넘겨 쓰는 crawler에 얹지 않는다 */

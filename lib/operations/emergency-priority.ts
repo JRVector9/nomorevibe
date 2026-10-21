@@ -68,7 +68,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "product-search-health": "suspended", "click-rollup": "suspended", "ranking-refresh": "suspended",
   "product-thumbnail-refresh": "suspended", "agent-evidence-refresh": "suspended", "ai-level-refresh": "suspended",
   "product-stars-refresh": "suspended", "product-star-observation": "suspended", "product-readme-refresh": "suspended",
-  "hn-talk": "suspended", "email-outbox-send": "suspended", "email-weekly-digest": "suspended", "maker-recheck": "suspended",
+  "hn-talk": "suspended", "bluesky-talk": "suspended", "email-outbox-send": "suspended", "email-weekly-digest": "suspended", "maker-recheck": "suspended",
   "notification-delisted": "suspended", "notification-category-digest": "suspended", "notification-prune": "suspended",
 };
 

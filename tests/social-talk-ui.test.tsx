@@ -8,6 +8,7 @@ import { detail } from "@/messages/ko/detail";
 import { labels } from "@/messages/ko/labels";
 import type { ProductTalk, TalkPost, TalkStarGrowth } from "@/lib/social/talk";
 import type { LocalizedTalkEntry } from "@/components/social/TalkHero";
+import { TALK_THRESHOLD } from "@/lib/social/talk-score";
 
 vi.mock("server-only", () => ({}));
 const mocks = vi.hoisted(() => ({ pathname: "/", admin: vi.fn() }));
@@ -84,6 +85,17 @@ describe("상세 화제 띠", () => {
   it("자격 글이 없으면 그리지 않는다", () => {
     expect(renderToStaticMarkup(<TalkBand talk={{ ...talk, qualifies: false }} t={t} locale="ko" now={NOW} preview={false} />)).toBe("");
   });
+
+  it("Bluesky 게시물은 본문 없이 반응 수와 원문 링크만 그린다", () => {
+    const bsky = post(3, { source: "bluesky", externalId: "did:plc:ltjj43huonogytm4szn5hzkx/3mygbhpmh762y", title: "", points: 12, comments: 3, frontPage: false });
+    const html = renderToStaticMarkup(<TalkBand talk={{ ...talk, posts: [bsky], sources: ["bluesky"] }} t={t} locale="ko" now={NOW} preview={false} />);
+    expect(html).toContain("Bluesky 반응 12 · 답글 3");
+    expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b> 반응 12 · 답글 3');
+    expect(html).toContain("Bluesky 게시물");
+    expect(html).toContain('href="https://bsky.app/profile/did:plc:ltjj43huonogytm4szn5hzkx/post/3mygbhpmh762y"');
+    expect(html).toContain("Bluesky에서 보기 ↗");
+    expect(html).not.toContain("남이 소개한 글");
+  });
 });
 
 describe("홈 대표 구획", () => {
@@ -101,6 +113,15 @@ describe("홈 대표 구획", () => {
     expect(html).toContain("첫 관측 뒤 GitHub 스타");
     expect(html.match(/class="talk-row"/g)).toHaveLength(2);
     expect(html).toContain('href="/talk"');
+  });
+
+  it("Bluesky 출처는 이름·칩을 달고 반응 수로 적는다", () => {
+    const bsky = post(9, { source: "bluesky", externalId: "did:plc:ltjj43huonogytm4szn5hzkx/3mygbhpmh762y", title: "", points: 7, comments: 1 });
+    const html = render({ lead: entry(1, "doory", { posts: [post(1), bsky], sources: ["hn", "bluesky"] }), sources: ["hn", "bluesky"] });
+    expect(html).toContain("Hacker News·Bluesky에서 이야기된 AI로 만든 프로젝트");
+    expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b>반응 7 · 답글 1');
+    // 집계 기준 문구는 상수와 같은 값을 말한다
+    expect(browse["talk.methodThreshold"]).toContain(`Bluesky 반응(좋아요 + 재게시×2) ${TALK_THRESHOLD.bluesky.points} 이상`);
   });
 
   it("1위 허용 전이면 목록만, 아무것도 없으면 조용하다고 말한다", () => {

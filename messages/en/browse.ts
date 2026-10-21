@@ -330,7 +330,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.methodBest": "Only the biggest post per source counts",
   "talk.methodDecay": "“Now” halves a post’s weight every 36 hours; “This week” adds posts up as they are",
   "talk.methodWindow": "Posts stay on this list for 7 days",
-  "talk.methodThreshold": "Only Hacker News posts with 30+ points or 15+ comments, and X posts with 50+ reactions (likes + reposts×2), qualify",
+  "talk.methodThreshold": "Only Hacker News posts with 30+ points or 15+ comments, X posts with 50+ reactions and Bluesky posts with 5+ reactions (likes + reposts×2) qualify",
   "talk.methodRemoved": "If the original post is deleted, it leaves this list too",
   "talk.methodSeparate": "Counted separately from nomorevibe’s own rankings",
   "talk.unlisted": "{count} discussed repositories aren’t listed yet · {active} in review",
@@ -348,4 +348,8 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.xPost": "X post",
   "talk.viewOnX": "View on X",
   "talk.methodX": "X posts show only reaction counts and a link, never the post text, and stay for 24 hours after each check",
+  "talk.bskyPost": "Bluesky post",
+  "talk.viewOnBluesky": "View on Bluesky",
+  "talk.methodBluesky": "Bluesky posts likewise show only reaction counts and a link and stay for 24 hours after each check. Posts from bot-like accounts, labeled posts and accounts that asked not to be shown to logged-out people are left out",
+  "talk.methodRequest": "Authors can have their post removed: delete it at the source, or send its address through the request form at the bottom of that project's page",
 });
