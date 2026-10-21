@@ -5,8 +5,8 @@ import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { HnTalkPost } from "./hn-talk-source";
 
-/** 출처와 무관한 글 한 건 — HN 수집과 X 보고가 같은 모양으로 넣는다 */
-export type SocialPostInput = HnTalkPost;
+/** 출처와 무관한 글 한 건 — HN 수집과 X 보고가 같은 모양으로 넣는다. 저장소 열쇠는 site 글만 비운다(social-schema.ts) */
+export type SocialPostInput = Omit<HnTalkPost, "repositoryKey"> & { repositoryKey: string | null };
 
 /** 값이 그대로여도 이만큼 지나면 관측 한 줄을 다시 남긴다 — 곡선이 끊기지 않게 */
 const OBSERVATION_REFRESH = "6 hours";

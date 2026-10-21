@@ -22,9 +22,13 @@ it("sends web reports only with a 32-byte secret and https report addresses", ()
   const secret = "x-status-current-secret-0123456789abcdef";
   expect(xCollectorConfig([], {}, "osaka-smoke")).not.toHaveProperty("report");
   expect(xCollectorConfig([], { X_STATUS_REPORT_SECRET: secret, X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status" }, "osaka-smoke").report)
-    .toEqual({ secret, statusUrl: "https://nomorevibe.com/api/ops/x-status", postsUrl: null });
+    .toEqual({ secret, statusUrl: "https://nomorevibe.com/api/ops/x-status", postsUrl: null, queryUrl: null });
   expect(xCollectorConfig([], { X_STATUS_REPORT_SECRET: secret, X_POSTS_REPORT_URL: "https://nomorevibe.com/api/ops/x-posts" }, "osaka-smoke").report)
     .toMatchObject({ statusUrl: null, postsUrl: "https://nomorevibe.com/api/ops/x-posts" });
+  expect(xCollectorConfig([], { X_STATUS_REPORT_SECRET: secret, X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status",
+    X_QUERY_URL: "https://nomorevibe.com/api/ops/x-query" }, "osaka-smoke").report).toMatchObject({ queryUrl: "https://nomorevibe.com/api/ops/x-query" });
+  // 비밀이 없으면 묻지 않는다(서명할 수 없다)
+  expect(xCollectorConfig([], { X_QUERY_URL: "https://nomorevibe.com/api/ops/x-query" }, "osaka-smoke")).not.toHaveProperty("report");
 });
 it.each([
   { X_STATUS_REPORT_SECRET: "short", X_STATUS_REPORT_URL: "https://nomorevibe.com/api/ops/x-status" },
@@ -33,6 +37,7 @@ it.each([
   { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_STATUS_REPORT_URL: "http://nomorevibe.com/api/ops/x-status" },
   { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_POSTS_REPORT_URL: "https://user:pass@nomorevibe.com/api/ops/x-posts" },
   { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_POSTS_REPORT_URL: "not a url" },
+  { X_STATUS_REPORT_SECRET: "x-status-current-secret-0123456789abcdef", X_QUERY_URL: "http://nomorevibe.com/api/ops/x-query" },
 ])("rejects unsafe report settings without echoing them: %#", environment => {
   expect(() => xCollectorConfig([], environment, "osaka-smoke")).toThrow(/^invalid_configuration$/);
 });

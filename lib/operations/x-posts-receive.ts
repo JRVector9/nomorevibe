@@ -5,6 +5,7 @@ import { operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 import { markSocialPostsGoneByExternalId, writeSocialPosts, type SocialPostInput } from "@/lib/social/repository";
+import { publicRepositoryKeys } from "@/lib/social/talk";
 import { parseXPostsReport, xPoints, xPostsDigest, X_POSTS_KEY, X_POSTS_MAX_BODY_BYTES, type XPostsReport } from "./x-posts";
 import { readBody } from "./x-status-receive";
 import {
@@ -62,13 +63,31 @@ export async function verifyXPostsRequest(request: Request, nowMs = Date.now()):
   return { ok: true, value: { report, sentAt, signedWith: current ? "current" : "previous" } };
 }
 
-/** 보고의 게시물을 우리 글 모양으로 — 본문이 없으므로 제목은 비우고, 화면은 출처가 x 면 'X 게시물'로 그린다 */
-export function xSocialPosts(report: XPostsReport): SocialPostInput[] {
-  return report.posts.map(post => ({
-    externalId: post.id, kind: "link" as const, title: "", linkUrl: `https://github.com/${post.repository}`, linkTarget: "repo" as const,
-    repositoryKey: post.repository.toLowerCase(), postedAt: new Date(post.createdAt), frontPage: false, ...xPoints(post.metrics),
-  }));
+/**
+ * 보고의 게시물을 우리 글 모양으로 — 본문이 없으므로 제목은 비우고, 화면은 출처가 x 면 'X 게시물'로 그린다.
+ *
+ * - 저장소 하나: 그 저장소 글(repo). v1 은 모두 이것이다.
+ * - 저장소 여럿(v2): 보낸 순서에서 처음 나오는 공개 제품의 저장소 글(repo) — 그 제품을 정말 가리킨 글이다.
+ *   공개 제품이 하나도 없으면 site 글(저장소 열쇠 없음, 링크는 첫 저장소).
+ * - 저장소 없음(v2): site 글, 링크는 X 게시물 주소.
+ *
+ * site 글은 공개 화면(/talk·홈·상세·'아직 공개 제품이 아닌 저장소' 수)에 오르지 않는다 — 공개 읽기는 저장소 열쇠로 제품을 찾고(talk.ts),
+ * 순위는 repo·path 글만 센다. 관리자 /admin/talk 에는 다른 글처럼 보인다(검색이 돌려준 글을 버리지 않는다).
+ */
+export function xSocialPosts(report: XPostsReport, publicKeys: ReadonlySet<string> = new Set()): SocialPostInput[] {
+  const posts = report.v === 1 ? report.posts.map(({ repository, ...post }) => ({ ...post, repositories: [repository] })) : report.posts;
+  return posts.map(post => {
+    const base = { externalId: post.id, kind: "link" as const, title: "", postedAt: new Date(post.createdAt), frontPage: false, ...xPoints(post.metrics) };
+    const repository = post.repositories.length === 1 ? post.repositories[0] : post.repositories.find(item => publicKeys.has(item.toLowerCase()));
+    if (repository) return { ...base, linkUrl: `https://github.com/${repository}`, linkTarget: "repo" as const, repositoryKey: repository.toLowerCase() };
+    const linkUrl = post.repositories.length ? `https://github.com/${post.repositories[0]}` : `https://x.com/i/web/status/${post.id}`;
+    return { ...base, linkUrl, linkTarget: "site" as const, repositoryKey: null };
+  });
 }
+
+/** 여러 저장소를 가리킨 v2 글의 저장소 열쇠 — 공개 제품인지 DB 에 물을 것 */
+const ambiguousKeys = (report: XPostsReport) => report.v === 1 ? []
+  : [...new Set(report.posts.filter(post => post.repositories.length > 1).flatMap(post => post.repositories.map(item => item.toLowerCase())))];
 
 const storedSentAt = sql`case when ${operationsObservations.value}->>'sentAt' ~ '^[0-9]{1,15}$' then (${operationsObservations.value}->>'sentAt')::bigint else 0 end`;
 const dbNow = sql`(now() at time zone 'utc')`;
@@ -92,7 +111,8 @@ export async function recordXPosts({ report, sentAt, signedWith }: XPostsVerifie
       .returning({ key: operationsObservations.key });
     // 동시에 온 같은 보고 중 진 쪽은 아무것도 쓰지 않는다
     if (!claimed.length) return { result: "not_newer" as const };
-    const written = await writeSocialPosts(tx, "x", xSocialPosts(report), observedAt);
+    const keys = ambiguousKeys(report);
+    const written = await writeSocialPosts(tx, "x", xSocialPosts(report, keys.length ? await publicRepositoryKeys(tx, keys) : undefined), observedAt);
     const gone = await markSocialPostsGoneByExternalId(tx, "x", report.unavailable, observedAt);
     return { result: "accepted" as const, inserted: written.inserted, updated: written.updated, gone };
   });
@@ -100,7 +120,8 @@ export async function recordXPosts({ report, sentAt, signedWith }: XPostsVerifie
 
 export async function writeXPosts(verified: XPostsVerified): Promise<Response> {
   const outcome = await recordXPosts(verified);
-  const fields = { posts: verified.report.posts.length, unavailable: verified.report.unavailable.length, signedWith: verified.signedWith, sentAt: verified.sentAt };
+  const fields = { v: verified.report.v, posts: verified.report.posts.length, unavailable: verified.report.unavailable.length,
+    signedWith: verified.signedWith, sentAt: verified.sentAt };
   if (outcome.result === "accepted") {
     logger.info("x_posts.accepted", { ...fields, inserted: outcome.inserted, updated: outcome.updated, gone: outcome.gone });
     return reply(200, { accepted: true, inserted: outcome.inserted, updated: outcome.updated, gone: outcome.gone });

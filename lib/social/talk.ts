@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/schema";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { taglineKo } from "@/lib/domain/products/korean-tagline";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { listedByDefault, notAuditHeld, notDown, repoGone } from "@/lib/domain/products/repository";
 import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } from "./talk-score";
 
@@ -19,9 +20,12 @@ import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } fr
 export const TALK_DETAIL_MS = 90 * 86_400_000;
 const RANKED_TARGETS: SocialLinkTarget[] = ["repo", "path"];
 /** products_repository_identity_idx 와 같은 식 — 저장소 키로 제품을 찾을 때 이 인덱스를 탄다(ai-level-refresh.ts) */
-const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
-/** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
-const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
+export const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
+/**
+ * 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다).
+ * X 검색어(x-query-receive.ts)와 여러 저장소를 가리킨 X 글(publicRepositoryKeys)도 같은 조건을 쓴다.
+ */
+export const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
 /**
  * X 게시물은 마지막으로 확인한 뒤 24시간만 보인다 — X 정책은 API 로 최신 상태를 확인한 콘텐츠만 표시하게 한다.
@@ -226,6 +230,14 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
     unlisted: await unlistedCounts(since, now, new Set(groups.keys())),
     checkedAt: await lastCheckedAt(),
   };
+}
+
+/** 이 저장소 열쇠(소문자 owner/repo) 중 공개 제품의 저장소인 것 — 여러 저장소를 가리킨 X 글을 어느 제품에 붙일지(x-posts-receive.ts) */
+export async function publicRepositoryKeys(tx: ProductTransaction, keys: readonly string[]): Promise<Set<string>> {
+  if (!keys.length) return new Set();
+  const rows = await tx.select({ key: sql<string>`substring(${PRODUCT_IDENTITY} from '^https://github[.]com/(.+)$')` }).from(products)
+    .where(and(sql`${PRODUCT_IDENTITY} in (${sql.join(keys.map(key => sql`${"https://github.com/" + key}`), sql`, `)})`, publicProduct()));
+  return new Set(rows.map(row => row.key));
 }
 
 async function lastCheckedAt(): Promise<Date | null> {

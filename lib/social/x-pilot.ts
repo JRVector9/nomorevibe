@@ -1,5 +1,9 @@
 /** Private first acceptance pilot. No database, pagination, retries, scoring, or link fetching. */
 export const X_PILOT_QUERY = 'url:github.com (launch OR launched OR "built with" OR "vibe coding") has:links';
+/** recent search 검색어 길이 상한(셀프서브, docs.x.com 「Building queries」) — 감싸는 괄호와 -is:retweet 까지 센다 */
+export const X_QUERY_MAX_LENGTH = 512;
+/** 실제로 보내는 검색어 — 재게시를 검색어 전체 밖에서 뺀다. 길이 검사는 runXPilot 한 곳에서 한다 */
+export const xSearchQuery = (raw: string) => `(${raw.trim()}) -is:retweet`;
 const SEARCH = "https://api.x.com/2/tweets/search/recent";
 const LOOKUP = "https://api.x.com/2/tweets";
 const FIELDS = "id,created_at,entities,public_metrics,withheld";
@@ -131,9 +135,9 @@ export async function runXPilot(options: XPilotOptions = {}, dependencies: { req
   const fieldsParameter = options.fieldsParameter ?? "tweet.fields";
   const sortOrder = options.sortOrder ?? "recency";
   const rawQuery = (options.query ?? X_PILOT_QUERY).trim();
-  const query = `(${rawQuery}) -is:retweet`;
+  const query = xSearchQuery(rawQuery);
   const provided = [...new Set(options.lookupIds ?? [])];
-  if (!rawQuery || query.length > 512 || /[\u0000-\u001f\u007f]/.test(query)) return skip("invalid_query");
+  if (!rawQuery || query.length > X_QUERY_MAX_LENGTH || /[\u0000-\u001f\u007f]/.test(query)) return skip("invalid_query");
   if (!["tweet.fields", "post.fields"].includes(fieldsParameter)) return skip("invalid_fields_parameter");
   if (!["recency", "relevancy"].includes(sortOrder)) return skip("invalid_sort_order");
   if (provided.length > 10 || provided.some(id => !postId(id)) || (options.searchOnly && provided.length)) return skip("invalid_lookup_ids");
