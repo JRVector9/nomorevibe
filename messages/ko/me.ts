@@ -198,6 +198,7 @@ export const me = {
   "try.error.changes": "오늘은 이 평가를 더 바꿀 수 없어요. 내일 다시 바꿀 수 있어요.",
   "try.error.invalid": "보낼 수 없는 내용이에요. 한 줄은 140자까지예요.",
   "try.error.failed": "저장하지 못했어요. 잠시 후 다시 해 주세요.",
+  "try.error.load": "내 평가를 불러오지 못했어요. 잠시 후 다시 눌러 주세요.",
   "tried.filter": "평가로 거르기",
   "tried.all": "전체",
   "tried.edit": "고치기",

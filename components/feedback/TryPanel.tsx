@@ -5,13 +5,10 @@ import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { REACTION_VERDICTS, type ReactionVerdict } from "@/lib/me/contract";
-import type { ReactionMine, ReactionSummary } from "@/lib/domain/reactions/contract";
 import { Icon } from "@/components/home/icons";
 import { ReactionFields, type ReactionDraft } from "./ReactionFields";
-import { deleteReactionRequest, phoneWidth, putReactionRequest, type ReactionBody } from "./reaction-api";
-import { forgetReacted, rememberReacted } from "./reacted";
-
-type Loaded = { mine: ReactionMine | null; summary: ReactionSummary | null; csrfToken: string | null };
+import { deleteReactionRequest, phoneWidth, putReactionRequest, readReactionPanel, type ReactionBody, type ReactionPanelState } from "./reaction-api";
+import { forgetReacted, hasReacted, rememberReacted } from "./reacted";
 
 /**
  * 상세 써보기 판(피드백 설계 M1 A·B, 휴대폰 M2) — 「제품 방문하기」 바로 아래.
@@ -19,13 +16,15 @@ type Loaded = { mine: ReactionMine | null; summary: ReactionSummary | null; csrf
  * 평가 단추를 누르는 순간 저장한다(로그인 없음). 태그·한 줄은 그 뒤에 펼치는 덤이다 — PC 는 판 아래, 휴대폰은 아래 시트.
  * 상세 HTML 은 엣지에 4분 남으므로 내 평가와 요약은 브라우저에서 따로 읽는다(no-store). 판의 높이는 처음부터 잡아 두어
  * 읽기가 끝나도 아래 내용이 밀리지 않는다. 결과는 읽기 도구에 상태 문구로 한 번 알린다.
+ * 내 평가를 못 읽었으면 「없음」이 아니라 「모름」이다 — 누르면 다시 읽고, 그래도 모르면 보내지 않는다. 평가 단추는 평가만 보내
+ * 서버가 남겨 둔 태그·한 줄(과 그 메이커 답장)을 지우지 않는다.
  */
 export function TryPanel({ slug, name }: { slug: string; name: string }) {
   const t = useTranslations("me");
   const locale = useLocale();
   const headingId = useId();
   const sheetTitleId = useId();
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loaded, setLoaded] = useState<ReactionPanelState | null>(null);
   const [hidden, setHidden] = useState(false);
   const [draft, setDraft] = useState<ReactionDraft | null>(null);
   const [sheet, setSheet] = useState(false);
@@ -36,28 +35,17 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const panel = useRef<HTMLElement>(null);
   const form = useRef<HTMLFormElement>(null);
-  // 읽기가 끝나기 전에 누르면 그 읽기(로그인이면 CSRF 값)를 기다린다
-  const ready = useRef<Promise<Loaded | null> | null>(null);
+  // 읽기가 끝나기 전에 누르면 그 읽기(로그인이면 CSRF 값)를 기다린다. null 은 못 읽음(모름)
+  const ready = useRef<Promise<ReactionPanelState | null> | null>(null);
   const mine = loaded?.mine ?? null;
 
   useEffect(() => {
     const controller = new AbortController();
-    ready.current = fetch(`/api/products/${encodeURIComponent(slug)}/reactions`, { cache: "no-store", signal: controller.signal }).then(async (response) => {
+    ready.current = readReactionPanel(slug, hasReacted(slug), controller.signal).then((state) => {
       // 꺼져 있으면(404) 판을 그리지 않는다
-      if (response.status === 404) {
-        setHidden(true);
-        return null;
-      }
-      if (!response.ok) throw new Error("reactions_unavailable");
-      const value = await response.json() as Loaded;
-      const next = { mine: value.mine, summary: value.summary, csrfToken: value.csrfToken };
-      setLoaded(next);
-      return next;
-    }).catch(() => {
-      if (controller.signal.aborted) return null;
-      const next = { mine: null, summary: null, csrfToken: null };
-      setLoaded(next);
-      return next;
+      if (state === "hidden") setHidden(true);
+      else if (state && !controller.signal.aborted) setLoaded(state);
+      return state === "hidden" ? null : state;
     });
     return () => controller.abort();
   }, [slug]);
@@ -73,21 +61,33 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
     return () => { style.overflow = previous; };
   }, [sheet]);
 
-  async function save(body: Pick<ReactionBody, "verdict" | "tags" | "comment">, done: "picked" | "sent"): Promise<boolean> {
+  /** 내 평가를 아는 상태 — 처음 읽기가 실패했으면 한 번 더 읽는다. 그래도 모르면 null(보내지 않는다) */
+  async function known(): Promise<ReactionPanelState | null> {
+    const state = loaded ?? await ready.current;
+    if (state) return state;
+    const again = await readReactionPanel(slug, hasReacted(slug));
+    if (!again || again === "hidden") return null;
+    ready.current = Promise.resolve(again);
+    setLoaded(again);
+    return again;
+  }
+
+  async function save(body: Pick<ReactionBody, "verdict" | "tags" | "comment">, done: "picked" | "sent", state: ReactionPanelState): Promise<boolean> {
     setPending(true);
     const phone = phoneWidth();
     const result = await putReactionRequest(slug, {
       // 판의 단추는 panel, 시트의 보내기는 sheet
       ...body, source: sheet ? "sheet" : "panel", device: phone ? "phone" : "desktop", locale,
       website: trap.current?.value ?? "",
-    }, (loaded ?? await ready.current)?.csrfToken ?? null);
+    }, state.csrfToken, { refreshCsrf: true });
     setPending(false);
     if (!result.ok) {
       setMessage(t(result.errorKey));
       return false;
     }
-    rememberReacted(slug);
-    setLoaded((current) => ({ csrfToken: current?.csrfToken ?? null, mine: result.mine, summary: result.summary }));
+    // 이 브라우저 목록에는 익명 평가만 — 계정 평가는 계정 목록에 있다
+    if (!result.signedIn) rememberReacted(slug);
+    setLoaded({ csrfToken: result.csrfToken, signedIn: result.signedIn, mine: result.mine, summary: result.summary });
     const verdict = t(`verdict.${result.mine.verdict}`);
     setMessage(done === "picked" ? t("try.savedMore", { verdict }) : t(result.mine.commentState === "held" ? "try.sentHeld" : "try.sent"));
     return true;
@@ -103,12 +103,15 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
 
   async function pick(verdict: ReactionVerdict, trigger: HTMLButtonElement) {
     if (pending) return;
-    // 읽기 전에 눌렀으면 기다린다 — 남겨 둔 태그·한 줄을 빈 값으로 덮지 않게
-    const saved = (loaded ?? await ready.current)?.mine ?? null;
-    open(verdict, trigger, false, saved);
+    // 읽기 전에 눌렀으면 기다린다 — 못 읽었으면 펼치지도 보내지도 않는다(빈 칸으로 남긴 것을 덮지 않게)
+    setPending(true);
+    const state = await known();
+    setPending(false);
+    if (!state) return setMessage(t("try.error.load"));
+    open(verdict, trigger, false, state.mine);
     // 이미 같은 평가면 다시 보내지 않는다 — 펼치기만
-    if (saved?.verdict === verdict) return;
-    await save({ verdict, tags: saved?.tags ?? [], comment: saved?.comment ?? null }, "picked");
+    if (state.mine?.verdict === verdict) return;
+    await save({ verdict }, "picked", state);
   }
 
   function close() {
@@ -122,18 +125,19 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft || pending) return;
-    if (await save({ verdict: draft.verdict, tags: draft.tags, comment: draft.comment.trim() || null }, "sent")) close();
+    // 펼친 칸은 내 평가를 안 뒤에만 열린다
+    if (!draft || pending || !loaded) return;
+    if (await save({ verdict: draft.verdict, tags: draft.tags, comment: draft.comment.trim() || null }, "sent", loaded)) close();
   }
 
   async function remove() {
-    if (pending) return;
+    if (pending || !loaded) return;
     setPending(true);
-    const result = await deleteReactionRequest(slug, (loaded ?? await ready.current)?.csrfToken ?? null);
+    const result = await deleteReactionRequest(slug, loaded.csrfToken, { refreshCsrf: true });
     setPending(false);
     if (!result.ok) return setMessage(t(result.errorKey));
-    forgetReacted(slug);
-    setLoaded((current) => ({ csrfToken: current?.csrfToken ?? null, mine: null, summary: result.summary }));
+    if (!result.signedIn) forgetReacted(slug);
+    setLoaded({ csrfToken: result.csrfToken, signedIn: result.signedIn, mine: null, summary: result.summary });
     setMessage(t("try.deleted"));
     close();
   }
