@@ -5,7 +5,7 @@ import { operationsObservations, products } from "@/lib/db/schema";
 import { RISING_FRESH_DAYS, RISING_MAX_STARS, risingFreshDays, starGainPerDay } from "@/lib/domain/products/repository";
 import { logger } from "@/lib/observability/logger";
 import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
-import { PRODUCT_IDENTITY, publicProduct } from "@/lib/social/talk";
+import { PRODUCT_IDENTITY, talkPublicProduct } from "@/lib/social/talk";
 import { planXQueryRepositories, type XQueryCandidate } from "@/lib/social/x-query";
 import { parseXQueryRequest, xQueryDigest, X_QUERY_KEY, X_QUERY_MAX_BODY_BYTES, type XQueryRequest } from "./x-query";
 import { readBody } from "./x-status-receive";
@@ -65,7 +65,7 @@ export async function verifyXQueryRequest(request: Request, nowMs = Date.now()):
 /** 정규화한 저장소 주소에서 소문자 owner/repo — github.com 저장소 주소가 아니면 null */
 const REPOSITORY = sql<string | null>`substring(${PRODUCT_IDENTITY} from '^https://github[.]com/([a-z0-9-]+/[a-z0-9_.-]+)$')`;
 
-/** 공개 제품(talk.ts 의 publicProduct) 중 GitHub 저장소가 있는 것 — 스타가 느는지는 홈 '지금 뜨는'과 같은 조건(repository.ts) */
+/** 공개 제품(talk.ts 의 publicProduct 그대로) 중 GitHub 저장소가 있는 것 — 스타가 느는지는 홈 '지금 뜨는'과 같은 조건(repository.ts) */
 export async function xQueryCandidates(): Promise<XQueryCandidate[]> {
   const fresh = await risingFreshDays();
   const days = Number.isSafeInteger(fresh) && fresh > 0 ? fresh : RISING_FRESH_DAYS;
@@ -74,7 +74,7 @@ export async function xQueryCandidates(): Promise<XQueryCandidate[]> {
   const rows = await db.select({
     id: products.id, repository: REPOSITORY, verifiedAt: products.verifiedAt, createdAt: products.createdAt,
     gain: sql<string | number | null>`case when ${rising} then ${starGainPerDay} end`,
-  }).from(products).where(and(publicProduct(), sql`${REPOSITORY} is not null`));
+  }).from(products).where(and(talkPublicProduct(), sql`${REPOSITORY} is not null`));
   return rows.flatMap(row => row.repository ? [{
     id: row.id, repository: row.repository, listedAt: (row.verifiedAt ?? row.createdAt).getTime(),
     gain: row.gain === null ? null : Number(row.gain),
