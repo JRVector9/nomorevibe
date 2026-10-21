@@ -13,7 +13,7 @@ import { useMeAccount, useUnreadCount } from "@/components/me/account-store";
 
 /**
  * 머리의 계정 자리 — 로그아웃이면 로그인 링크, 로그인이면 이니셜 아바타와 메뉴(마이페이지 시안 머리 그림).
- * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me/summary 한 번(account-store, 다른 부품과 나눠 씀)으로 이름·수단을 받는다.
+ * 처음 HTML 에는 개인 정보가 없다(엣지 저장 화면). 붙은 뒤 /api/me?view=header 한 번(account-store, 다른 부품과 나눠 씀)으로 이름·수단을 받는다.
  * 이름은 닉네임을 바꾸면(patchMeAccount), 알림 수는 종·알림함과 같은 숫자(useUnreadCount)를 따라 그린다.
  */
 export function AccountMenu() {

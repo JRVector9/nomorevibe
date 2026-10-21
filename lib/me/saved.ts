@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, productUpdates } from "@/lib/db/schema";
 import { productReactions, userSavedProducts } from "@/lib/db/me-schema";
@@ -168,9 +168,12 @@ export async function savedSlugs(userId: number): Promise<string[]> {
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** 같은 사용자의 저장 쓰기를 한 줄로 세운다 — 세고 넣는 사이에 다른 기기가 끼지 않게 */
+/**
+ * 같은 사용자의 저장 쓰기(넣기·빼기·합치기)를 한 줄로 세운다 — 세고 넣는 사이에 다른 기기가 끼지 않게.
+ * 탈퇴(deleteAccount)도 이 행을 잠근다. 세션 확인을 지나 기다리던 쓰기는 탈퇴가 끝난 뒤 다시 보고 멈춘다 — 지운 계정에 행을 되살리지 않게
+ */
 async function lockUser(tx: Tx, userId: number): Promise<void> {
-  const [row] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
+  const [row] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("update");
   if (!row) throw new PublicAuthError(401, "login_required");
 }
 
@@ -195,9 +198,10 @@ export async function putSaved(userId: number, slug: string): Promise<{ saved: t
   });
 }
 
-/** 빼기 — 없거나 이미 내려간 제품이어도 그대로 성공(멱등) */
+/** 빼기 — 없거나 이미 내려간 제품이어도 그대로 성공(멱등). 합치기와 줄을 세운다 — 합치기가 넣는 중인 주소를 먼저 빼고 끝나지 않게 */
 export async function deleteSaved(userId: number, slug: string): Promise<{ saved: false; total: number }> {
   return db.transaction(async (tx) => {
+    await lockUser(tx, userId);
     await tx.delete(userSavedProducts).where(and(eq(userSavedProducts.userId, userId),
       inArray(userSavedProducts.productId, tx.select({ id: products.id }).from(products).where(eq(products.slug, slug)))));
     return { saved: false as const, total: await savedCount(tx, userId) };

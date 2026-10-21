@@ -1,5 +1,5 @@
 import { SAVED_LIMIT } from "@/lib/me/contract";
-import { loadMeState } from "@/components/me/account-store";
+import { loadMeState, meStateSnapshot, subscribeMeState } from "@/components/me/account-store";
 
 const KEY = "nmb-saved-v1";
 /** 로그인한 계정과 맞춰 본 기록 — 마지막으로 본 서버 주소(base)와 아직 서버에 못 보낸 바꿈(pending) */
@@ -48,7 +48,11 @@ export function persistSaved(saved: Set<string>): boolean {
 /* ── 계정과 맞춰 보기(로그인 설계 L4) — 순수 함수 ── */
 
 export type SavedOp = "put" | "delete";
-export type SavedSyncState = { user: number; base: string[]; pending: Record<string, SavedOp> };
+export type SavedSyncState = {
+  user: number; base: string[]; pending: Record<string, SavedOp>;
+  /** base 를 받을 때 본 저장 판(account-store savedVersion) — 다음 화면에서 판이 같으면 계정 목록을 다시 받지 않는다 */
+  version?: string;
+};
 
 /**
  * 이 브라우저 목록(local)을 계정 목록(server)에 맞춘다. 로그인한 사람에게는 서버가 기준이다.
@@ -85,9 +89,9 @@ export function forgetAccountCopy(local: readonly string[], state: SavedSyncStat
   return local.filter((slug) => !base.has(slug) || state.pending[slug] === "put");
 }
 
-/* ── 브라우저 쪽 동기화 — 페이지마다 한 번 계정 목록을 받아 맞추고, 로그인 중 책갈피는 서버에도 쓴다 ── */
+/* ── 브라우저 쪽 동기화 — 문서마다 한 번 계정과 맞추고(저장 판이 그대로면 목록은 받지 않는다), 로그인 중 책갈피는 서버에도 쓴다 ── */
 
-export type SavedNotice = { kind: "merged"; merged: number; skipped: number } | { kind: "mergeFailed" } | { kind: "limit" };
+export type SavedNotice = { kind: "merged"; merged: number; skipped: number } | { kind: "mergeFailed" } | { kind: "limit" } | { kind: "unavailable" };
 export type SavedAccount = {
   /** user 일 때만 서버와 맞춘다. none 이면 이 브라우저 목록만(지금까지와 같다) */
   status: "checking" | "none" | "user";
@@ -101,12 +105,18 @@ export type SavedAccount = {
 
 const INITIAL: SavedAccount = { status: "checking", userId: null, serverCount: null, offer: 0, notice: null };
 let account = INITIAL;
-/** offline: 계정을 묻지 못했다 — 지난 계정 기록이 있으면 바꿈을 쌓아 두고 다음 방문에 보낸다 */
+/**
+ * offline: 계정을 묻지 못했다 — 바꿈은 지난 계정 기록(없으면 early)에 쌓아 두고, 로그인 상태를 받으면 다시 맞춰 보낸다.
+ * none: 로그아웃·로그인 꺼짐 — 이 브라우저 목록만. 다른 탭에서 로그인한 것이 확인되면 다시 맞춘다
+ */
 let phase: "idle" | "checking" | "none" | "offline" | "user" = "idle";
 let csrf = "";
 let offerSlugs: string[] = [];
+/** 계정을 확인하기 전에 누른 바꿈 — 로그인이 확인되면 pending 으로 옮겨 보낸다 */
 const early = new Map<string, SavedOp>();
 const chains = new Map<string, Promise<void>>();
+/** 합치기 중 — 그사이 누른 넣기·빼기는 합치기가 끝난 뒤 보낸다(늦게 끝난 합치기가 방금 뺀 것을 다시 넣지 않게) */
+let merging: Promise<unknown> | null = null;
 /** 이 브라우저의 저장·빼기와 그 보내기가 끝날 때마다 하나 늘린다 — 계정 목록을 받는 사이 바뀌었는지 본다 */
 let edits = 0;
 /** 받는 사이 바뀌면 보내기가 끝난 뒤 다시 받는다 — 계속 바뀌면 이만큼만 */
@@ -133,25 +143,35 @@ function readJson(key: string): unknown {
   }
 }
 
-function writeJson(key: string, value: unknown): void {
+function writeJson(key: string, value: unknown): boolean {
   try {
     if (value === null) localStorage.removeItem(key);
     else localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
-    // 저장소를 못 쓰면 이번 방문 안에서만 맞춘다
+    return false;
   }
 }
 
 const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 
+/** 저장소를 못 쓰는 브라우저(저장소를 끈 WebView·용량 초과) — 마지막 쓰기가 실패했으면 이 문서 안에서는 이 사본으로 맞춘다 */
+let syncCopy: SavedSyncState | null = null;
+let syncStored = true;
+
 function readSync(): SavedSyncState | null {
-  const value = readJson(SYNC_KEY) as Partial<SavedSyncState> | null;
+  const value = (syncStored ? readJson(SYNC_KEY) : syncCopy) as Partial<SavedSyncState> | null;
   if (!value || typeof value !== "object" || !Number.isSafeInteger(value.user)) return null;
   const pending: Record<string, SavedOp> = {};
   if (value.pending && typeof value.pending === "object") {
     for (const [slug, op] of Object.entries(value.pending)) if (op === "put" || op === "delete") pending[slug] = op;
   }
-  return { user: value.user!, base: strings(value.base), pending };
+  return { user: value.user!, base: strings(value.base), pending, ...(typeof value.version === "string" ? { version: value.version } : {}) };
+}
+
+function writeSync(value: SavedSyncState | null): void {
+  syncCopy = value;
+  syncStored = writeJson(SYNC_KEY, value);
 }
 
 const localList = (): string[] => [...parseSaved(savedSnapshot())];
@@ -163,36 +183,47 @@ function postponed(userId: number): boolean {
   return Array.isArray(later) && later.includes(userId);
 }
 
-/** 페이지마다 한 번 — 저장을 그리는 첫 구독이 부른다 */
+/** 문서마다 한 번 — 저장을 그리는 첫 구독이 부른다 */
 export function startSavedSync(): void {
   if (phase !== "idle" || typeof window === "undefined") return;
   phase = "checking";
+  // 처음에 묻지 못했거나(503·끊김) 다른 탭에서 로그인했으면, 로그인 상태를 새로 받을 때 다시 맞춘다
+  subscribeMeState(() => {
+    const me = meStateSnapshot();
+    if (!me || me.status === "error" || !(phase === "offline" || (phase === "none" && me.account))) return;
+    phase = "checking";
+    void connect();
+  });
   void connect();
 }
 
 async function connect(): Promise<void> {
-  // 머리 메뉴·종과 같은 한 번의 요약 요청을 나눠 쓴다. off(404) = 로그인 기능이 꺼져 있다 — 이 브라우저 목록만
+  // 머리 메뉴·종과 같은 한 번의 로그인 물음을 나눠 쓴다. off = 로그인 기능이 꺼져 있다 — 이 브라우저 목록만
   const loaded = await loadMeState();
-  const answered = loaded.status !== "error";
-  const me: { user?: { id?: unknown } | null; csrfToken?: unknown } | null = loaded.status === "ok" ? (loaded.account ?? { user: null }) : null;
+  const me = loaded.account;
   const state = readSync();
-  const userId = me?.user?.id;
-  if (typeof userId !== "number" || !Number.isSafeInteger(userId) || typeof me?.csrfToken !== "string") {
-    phase = "none";
-    if (!answered && state) {
-      // 묻지 못했다 — 로그아웃으로 보지 않고, 지난 계정의 바꿈으로 쌓아 둔다
+  if (!me) {
+    if (loaded.status === "error") {
+      // 묻지 못했다 — 로그아웃으로 보지 않는다. 바꿈은 지난 계정 기록(없으면 early)에 쌓아 두고, 답을 받으면 다시 맞춘다
       phase = "offline";
-      for (const [slug, op] of early) state.pending[slug] = op;
-      writeJson(SYNC_KEY, state);
-    } else if (me && !me.user && state) {
-      writeLocal(forgetAccountCopy(localList(), state));
-      writeJson(SYNC_KEY, null);
+      if (state && early.size) {
+        for (const [slug, op] of early) state.pending[slug] = op;
+        early.clear();
+        writeSync(state);
+      }
+    } else {
+      phase = "none";
+      early.clear();
+      if (loaded.status === "ok" && state) {
+        writeLocal(forgetAccountCopy(localList(), state));
+        writeSync(null);
+      }
     }
-    early.clear();
     setAccount({ status: "none" });
     return;
   }
-  csrf = me!.csrfToken as string;
+  csrf = me.csrfToken;
+  const userId = me.user.id;
   let current = state;
   if (state && state.user !== userId) {
     writeLocal(forgetAccountCopy(localList(), state));
@@ -201,10 +232,17 @@ async function connect(): Promise<void> {
   current ??= { user: userId, base: [], pending: {} };
   for (const [slug, op] of early) current.pending[slug] = op;
   early.clear();
-  writeJson(SYNC_KEY, current);
+  writeSync(current);
   phase = "user";
   setAccount({ status: "user", userId });
-  await refresh();
+  // 지난번 맞춘 뒤 계정 목록이 그대로면(판이 같고, 못 보낸 바꿈이 없고, 받은 것이 이 브라우저에 다 있다) 다시 받지 않는다
+  const local = localList(), known = new Set(current.base), here = new Set(local);
+  if (me.savedVersion && current.version === me.savedVersion && !Object.keys(current.pending).length && current.base.every((slug) => here.has(slug))) {
+    offerSlugs = local.filter((slug) => !known.has(slug));
+    setAccount({ serverCount: current.base.length, offer: postponed(userId) ? 0 : offerSlugs.length });
+    return;
+  }
+  await refresh(me.savedVersion);
 }
 
 /**
@@ -212,7 +250,7 @@ async function connect(): Promise<void> {
  * 받는 사이 저장·빼기를 했거나 보내기가 끝났으면 받은 목록은 그 전의 것이다 — 맞추면 방금 한 일을 되돌린다.
  * 그 목록은 버리고 보내기가 모두 끝난 뒤 다시 받는다.
  */
-async function refresh(): Promise<void> {
+async function refresh(version?: string | null): Promise<void> {
   let server: string[] | null = null;
   for (let attempt = 0; attempt < REFRESH_TRIES && server === null; attempt += 1) {
     const since = edits;
@@ -233,7 +271,8 @@ async function refresh(): Promise<void> {
   if (!state || state.user !== account.userId) return;
   const result = reconcileSaved({ local: localList(), server, base: state.base, pending: state.pending });
   writeLocal(result.local);
-  writeJson(SYNC_KEY, { user: state.user, base: result.base, pending: result.pending });
+  // 판은 받기 전에 본 것만 남긴다 — 그 뒤 바뀌었으면 다음 화면에서 판이 달라 다시 받는다
+  writeSync({ user: state.user, base: result.base, pending: result.pending, ...(version ? { version } : {}) });
   offerSlugs = result.localOnly;
   setAccount({ serverCount: result.base.length, offer: postponed(state.user) ? 0 : offerSlugs.length });
   for (const slug of result.puts) send(slug, "put");
@@ -242,21 +281,20 @@ async function refresh(): Promise<void> {
 
 function queue(slug: string, op: SavedOp): void {
   edits += 1;
-  if (phase === "idle" || phase === "checking") {
-    early.set(slug, op);
-    return;
-  }
   if (phase === "none") return;
-  const state = readSync();
-  if (!state) return;
-  state.pending[slug] = op;
-  writeJson(SYNC_KEY, state);
-  if (phase === "user") send(slug, op);
+  const state = phase === "user" || phase === "offline" ? readSync() : null;
+  if (state) {
+    state.pending[slug] = op;
+    writeSync(state);
+  } else early.set(slug, op);
+  if (phase === "user" && state) send(slug, op);
+  // 묻지 못했으면 누를 때 다시 묻는다 — 답을 받으면 다시 맞추며 보낸다
+  else if (phase === "offline") void loadMeState();
 }
 
-/** 같은 주소의 바꿈은 한 줄로 보낸다 — 빨리 눌러도 마지막 뜻이 서버에 남는다 */
+/** 같은 주소의 바꿈은 한 줄로 보낸다 — 빨리 눌러도 마지막 뜻이 서버에 남는다. 합치기 중이면 그 뒤에 */
 function send(slug: string, op: SavedOp): void {
-  chains.set(slug, (chains.get(slug) ?? Promise.resolve()).then(() => deliver(slug, op)));
+  chains.set(slug, (chains.get(slug) ?? Promise.resolve()).then(() => merging).then(() => deliver(slug, op)));
 }
 
 async function deliver(slug: string, op: SavedOp): Promise<void> {
@@ -268,15 +306,17 @@ async function deliver(slug: string, op: SavedOp): Promise<void> {
     return;
   }
   const code = response.ok ? null : await response.json().then((body: { error?: unknown }) => body.error, () => null);
-  // 받지 않은 것(내려간 제품·잘못된 주소·상한)만 거둔다. 그 밖의 실패(503·429·401)는 pending 으로 남겨 다음 방문에 다시 보낸다
+  // 받지 않은 것(내려간 제품·잘못된 주소·상한·로그인 꺼짐)만 거둔다. 그 밖의 실패(503·429·401)는 pending 으로 남겨 다음 방문에 다시 보낸다
   const settled = response.ok || response.status === 400 || response.status === 404 || code === "saved_limit";
   const state = readSync();
   if (!settled || !state || state.user !== account.userId) return;
   edits += 1;
   if (state.pending[slug] === op) delete state.pending[slug];
   if (response.ok) state.base = op === "put" ? [slug, ...state.base.filter((item) => item !== slug)] : state.base.filter((item) => item !== slug);
-  writeJson(SYNC_KEY, state);
-  if (code === "saved_limit") {
+  writeSync(state);
+  // 계정이 받지 않은 저장(상한·목록에 없는 제품)은 이 브라우저에서도 되돌리고 알린다 — 남겨 두면 옮길 거리로 묻고 합치기에서 말없이 빠진다
+  const refused = op === "put" ? code === "saved_limit" ? "limit" as const : code === "product_not_found" ? "unavailable" as const : null : null;
+  if (refused) {
     const local = parseSaved(savedSnapshot());
     local.delete(slug);
     persistSaved(local);
@@ -285,7 +325,7 @@ async function deliver(slug: string, op: SavedOp): Promise<void> {
   setAccount({
     serverCount: state.base.length,
     offer: account.offer ? offerSlugs.length : 0,
-    ...(code === "saved_limit" ? { notice: { kind: "limit" as const } } : {}),
+    ...(refused ? { notice: { kind: refused } } : {}),
   });
 }
 
@@ -302,21 +342,32 @@ export function toggleSaved(slug: string, on?: boolean): boolean {
   return next;
 }
 
-/** 이 브라우저에만 있는 저장을 계정으로 옮긴다(L4). 옮긴 수·건너뛴 수는 notice 로 알린다 */
+/**
+ * 이 브라우저에만 있는 저장을 계정으로 옮긴다(L4). 옮긴 수·건너뛴 수는 notice 로 알린다.
+ * 한 번에 최근 것부터 SAVED_LIMIT 개 — 보내지 않은 것은 다음 맞추기에서 다시 옮길지 묻는다
+ */
 export async function mergeBrowserSaved(): Promise<boolean> {
   const state = readSync();
-  if (phase !== "user" || !state || !offerSlugs.length) return false;
-  const offered = offerSlugs;
-  let result: { merged?: unknown; skipped?: unknown } | null = null;
+  if (phase !== "user" || !state || !offerSlugs.length || merging) return false;
+  // 물은 뒤 이 브라우저에서 빼거나 따로 보낸 것(pending)은 옮기지 않는다
+  const here = new Set(localList());
+  const sent = offerSlugs.filter((slug) => here.has(slug) && !state.pending[slug]).slice(-SAVED_LIMIT);
+  if (!sent.length) {
+    offerSlugs = [];
+    setAccount({ offer: 0 });
+    return false;
+  }
+  const request = fetch("/api/me/saved", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-csrf-token": csrf },
+    body: JSON.stringify({ slugs: sent }),
+  }).then((response) => response.ok ? response.json() as Promise<{ merged?: unknown; skipped?: unknown }> : null).catch(() => null);
+  merging = request;
+  let result: { merged?: unknown; skipped?: unknown } | null;
   try {
-    const response = await fetch("/api/me/saved/merge", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-csrf-token": csrf },
-      body: JSON.stringify({ slugs: offered.slice(-SAVED_LIMIT) }),
-    });
-    if (response.ok) result = await response.json();
-  } catch {
-    result = null;
+    result = await request;
+  } finally {
+    merging = null;
   }
   if (!result) {
     // fenced DB 면 이 브라우저 목록을 지우지 않는다 — 다음에 다시 묻는다
@@ -325,9 +376,10 @@ export async function mergeBrowserSaved(): Promise<boolean> {
   }
   const done = readSync();
   if (!done || done.user !== state.user) return false;
-  // 건너뛴 것(내려간 제품·상한)도 계정이 판단했다 — 다음 맞추기에서 이 브라우저에서도 빠진다
-  done.base = [...new Set([...done.base, ...offered])];
-  writeJson(SYNC_KEY, done);
+  // 보낸 것은 건너뛴 것(내려간 제품·상한)까지 계정이 판단했다 — 다음 맞추기에서 이 브라우저에서도 빠진다.
+  // 합치기 중에 누른 것(pending)은 그 바꿈이 정한다
+  done.base = [...new Set([...done.base, ...sent.filter((slug) => !done.pending[slug])])];
+  writeSync(done);
   offerSlugs = [];
   setAccount({ offer: 0, notice: { kind: "merged", merged: Number(result.merged) || 0, skipped: Number(result.skipped) || 0 } });
   await refresh();

@@ -8,7 +8,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
 import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
-import { loadMeState } from "@/components/me/account-store";
+import { loadMeState, recheckMeState } from "@/components/me/account-store";
 
 export { FeedbackDeliveryStatus };
 
@@ -79,7 +79,7 @@ function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
 /**
  * 내 의견(보류 포함). 로그아웃이면 묻지 않고 null — 머리 메뉴가 받아 둔 로그인 상태(account-store)를 나눠 쓴다.
  * 401 을 "로그아웃" 신호로 쓰면 브라우저가 상세를 열 때마다 콘솔에 오류를 남기고 세션 조회도 한 번 더 한다.
- * 로그인 상태를 모르면(error) 예전처럼 물어 401 로 안다.
+ * 로그인 상태를 모르면(error) 예전처럼 물어 401 로 안다. 로그아웃 답은 오래되거나 화면으로 돌아오면 account-store 가 다시 묻는다(다른 탭 로그인).
  */
 export async function loadMineFeedback(slug: string, signal?: AbortSignal): Promise<FeedbackView[] | null> {
   const me = await loadMeState();
@@ -174,6 +174,8 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
       setMineLoaded(true);
       setMineError(null);
       setShowAll(false);
+      // 의견을 올렸으면 로그인한 것이다 — 이 화면이 아는 로그아웃 답(다른 탭에서 로그인)은 버리고 다시 물은 뒤 내 의견을 읽는다
+      void recheckMeState();
       void load();
     };
     window.addEventListener(FEEDBACK_SUBMITTED_EVENT, refresh);
