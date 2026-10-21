@@ -17,18 +17,33 @@ import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } fr
  */
 /** 상세 화제 기록을 남기는 기간(시안 Q3 권장: 관측 보관과 같은 90일) */
 export const TALK_DETAIL_MS = 90 * 86_400_000;
-const RANKED_TARGETS: SocialLinkTarget[] = ["repo", "path"];
+/** /talk 한 화면에 싣는 저장소 수(listTalk 기본값) — 관리자 화면이 '순위 밖'을 같은 수로 가른다 */
+export const TALK_LIST_LIMIT = 50;
+/** 순위에 세는 글 — 저장소 자체·저장소 안 경로. 이슈·PR 은 상세에서만 보인다 */
+export const RANKED_TARGETS: readonly SocialLinkTarget[] = ["repo", "path"];
 /** products_repository_identity_idx 와 같은 식 — 저장소 키로 제품을 찾을 때 이 인덱스를 탄다(ai-level-refresh.ts) */
-const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
+export const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
+/** 화제에 오르는 제품 상태 */
+export const TALK_PRODUCT_STATUSES = ["seeded", "verified"] as const;
 /** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
-const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
+const publicProduct = () => and(inArray(products.status, [...TALK_PRODUCT_STATUSES]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
+/** 공개 제품 조건을 하나씩 — 관리자 화면이 제품 행에 실어 어느 조건이 막았는지 적는다(같은 식을 다시 쓰지 않게) */
+export const publicProductChecks = () => ({
+  publicProduct: sql<boolean>`coalesce((${publicProduct()}), false)`,
+  down: sql<boolean>`coalesce(not (${notDown}), false)`,
+  unlisted: sql<boolean>`coalesce(not (${listedByDefault}), false)`,
+  auditHeld: sql<boolean>`coalesce(not (${notAuditHeld}), false)`,
+  repoGone: sql<boolean>`coalesce((${repoGone}), false)`,
+});
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
 /**
  * X 게시물은 마지막으로 확인한 뒤 24시간만 보인다 — X 정책은 API 로 최신 상태를 확인한 콘텐츠만 표시하게 한다.
  * 수집기는 하루 한 번 최근 24시간을 다시 검색하므로, 다시 잡히지 않은 글은 하루 뒤 화면에서 빠진다.
  */
 export const X_FRESH_MS = 24 * 3_600_000;
-const freshX = (now: Date) => sql`(${socialPosts.source} <> 'x' or ${socialPosts.lastSeenAt} >= ${new Date(now.getTime() - X_FRESH_MS).toISOString()}::timestamptz)`;
+/** 이 시각 뒤에 확인한 X 게시물만 보인다 */
+export const xFreshSince = (now: Date) => new Date(now.getTime() - X_FRESH_MS);
+const freshX = (now: Date) => sql`(${socialPosts.source} <> 'x' or ${socialPosts.lastSeenAt} >= ${xFreshSince(now).toISOString()}::timestamptz)`;
 
 export type TalkPost = {
   id: number;
@@ -162,7 +177,7 @@ async function starGrowths(entries: { productId: number; firstPostedAt: Date }[]
 
 async function unlistedCounts(postedSince: Date, now: Date, listed: Set<string>) {
   const rows = await db.select(postFields).from(socialPosts)
-    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS), gte(socialPosts.postedAt, postedSince), notExcluded, freshX(now)));
+    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, [...RANKED_TARGETS]), gte(socialPosts.postedAt, postedSince), notExcluded, freshX(now)));
   const keys = new Set<string>();
   for (const row of rows) if (row.repositoryKey && !listed.has(row.repositoryKey) && talkQualifies(row) && row.postedAt <= now) keys.add(row.repositoryKey);
   if (!keys.size) return { active: 0, unknown: 0 };
@@ -180,13 +195,18 @@ async function unlistedCounts(postedSince: Date, now: Date, listed: Set<string>)
   return { active: activeKeys, unknown: keys.size - activeKeys };
 }
 
-/** 화제 목록. now: 36시간 반감, week: 최근 7일을 그대로 합친다 */
-export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: number }): Promise<TalkBoard> {
-  const now = options.now ?? new Date();
+export type TalkGroup = { repositoryKey: string; product: TalkProduct; posts: TalkPost[]; score: number | null };
+
+/**
+ * /talk 에 오를 수 있는 글 — 공개 제품에 이어진, 보이는, 최근 7일 안의(X 는 24시간 안에 확인한) 저장소 글을 저장소마다 묶어 점수를 매긴다.
+ * 자격 글이 없는 묶음(score null)도 함께 돌려준다. 점수 큰 순, 점수 없는 묶음은 뒤.
+ * listTalk 와 관리자 화면('왜 /talk 에 없나')이 같은 조건을 읽는다.
+ */
+export async function talkGroups(now: Date, mode: TalkMode): Promise<TalkGroup[]> {
   const since = new Date(now.getTime() - TALK_VISIBLE_MS);
   const rows: Row[] = await db.select({ ...postFields, ...productFields }).from(socialPosts)
     .innerJoin(products, sql`${PRODUCT_IDENTITY} = 'https://github.com/' || ${socialPosts.repositoryKey}`)
-    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, RANKED_TARGETS),
+    .where(and(eq(socialPosts.state, "visible"), inArray(socialPosts.linkTarget, [...RANKED_TARGETS]),
       gte(socialPosts.postedAt, since), sql`${socialPosts.postedAt} <= ${now.toISOString()}::timestamptz`, notExcluded, freshX(now), publicProduct()));
 
   // 같은 저장소를 가리키는 제품이 둘이면 먼저 등록된 것(id 가 작은 것) 하나에 모은다
@@ -199,11 +219,17 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
   }
   for (const group of groups.values()) group.posts = [...new Map(group.posts.map(item => [item.id, item])).values()];
 
-  const scored = [...groups.entries()].flatMap(([repositoryKey, group]) => {
-    const score = repositoryTalkScore(group.posts, now, options.mode);
-    return score === null ? [] : [{ repositoryKey, score, ...group }];
-  }).sort((a, b) => b.score - a.score || a.product.id - b.product.id);
-  const limited = scored.slice(0, options.limit ?? 50);
+  return [...groups.entries()].map(([repositoryKey, group]) => ({ repositoryKey, ...group, score: repositoryTalkScore(group.posts, now, mode) }))
+    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1) || a.product.id - b.product.id);
+}
+
+/** 화제 목록. now: 36시간 반감, week: 최근 7일을 그대로 합친다 */
+export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: number }): Promise<TalkBoard> {
+  const now = options.now ?? new Date();
+  const since = new Date(now.getTime() - TALK_VISIBLE_MS);
+  const groups = await talkGroups(now, options.mode);
+  const scored = groups.flatMap(group => group.score === null ? [] : [{ ...group, score: group.score }]);
+  const limited = scored.slice(0, options.limit ?? TALK_LIST_LIMIT);
 
   const decisions = limited.length
     ? await db.select().from(socialTalkDecisions).where(inArray(socialTalkDecisions.repositoryKey, limited.map(entry => entry.repositoryKey)))
@@ -223,7 +249,7 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
       starGrowth: growth.get(entry.product.id) ?? null,
       homeDecision: decided.get(entry.repositoryKey) ?? null,
     })),
-    unlisted: await unlistedCounts(since, now, new Set(groups.keys())),
+    unlisted: await unlistedCounts(since, now, new Set(groups.map(group => group.repositoryKey))),
     checkedAt: await lastCheckedAt(),
   };
 }

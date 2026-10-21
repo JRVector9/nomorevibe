@@ -17,6 +17,8 @@
 - **X 사용 목적 승인 기록**: 스위치는 사용자 지시로 켰다. X 쪽 승인 기록은 이 저장소에 없다([정책 확인 기록](docs/operations/2026-10-14-x-api-policy-and-pilot.md)).
 - **공개 켜기 결정**: `SNS_TALK_PUBLIC_ENABLED` 는 꺼져 있다. 약 2주 관측 뒤 점수 무게·자격 기준을 다시 맞추고(설계 D9) 켤지 정한다. 켤 때 두 웹 env 와 Cloudflare HTML purge 를 함께 한다(이번 배포는 purge 토큰이 없어 건너뜀).
 - **관리자 `/admin/talk` 실물 확인**: 운영 화면은 관리자 로그인이 필요해 아직 보지 않았다(로컬 개발 서버에서만 확인).
+  2026-10-21 더한 "수집한 글 전부"(HN·X 모든 글·모든 상태, 거르기·쪽 넘김, 글마다 /talk 판정)도 배포 뒤 운영 데이터로 본다.
+  HN 이 저장소 아닌 주소(github.io·gist 등)를 키 없이 남기는지는 크롤러 활동의 `social.hn_talk_collected` `unlinked`·`skipped` 로 확인한다.
 - **Oracle 증설 migration 번호(2026-10-20 고침)**: main 의 `0103_social_posts`(when 1794086400015, 운영 적용) 때문에 Oracle 묶음을
   **0104 uptime_split · 0105 agent_repository_claims · 0106 oracle_agent_scan_row_scope · 0107 oracle_consumer_row_scope**(when …016~…019)로 옮겼다.
   PR 브랜치 8개(#554·#556·#560·#561·#557·#558·#559·#562)에 같은 커밋 "fix(db): Oracle 증설 migration 번호를 한 칸 뒤로"를 더했다(force push 없음).
