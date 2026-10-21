@@ -7,7 +7,7 @@ import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repos
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { getSettings, type AuditHoldSettings } from "./settings";
 import { auditHoldCount, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
-import { secondOpinionFilter, secondOpinionsField, secondOpinionVote, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
+import { countedSecondReject, secondOpinionFilter, secondOpinionsField, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
@@ -296,8 +296,11 @@ export type AuditCounts = {
   total: number; reviewed: number; reject: number; needsReview: number;
   /** 사람이 아직 손대지 않았고 제품이 아직 떠 있는 것 — 목록에 보이는 수 */
   openReject: number; openNeedsReview: number;
-  /** 그 거절 중 두 번째 모델도 거절한 것(두 모델 모두 거절)과, 두 번째 모델은 승인한 것(갈림) — audit-second-opinions.ts */
-  openAgreed: number; openSplit: number;
+  /**
+   * 그 거절 중 두 번째 모델도 거절한 것(두 모델 모두 거절 — 카탈로그 예외로 세지 않은 Qwen 거절은 빠진다), 갈림(두 번째 모델 승인 또는
+   * 카탈로그 예외 Qwen 거절), Qwen·grok 의견 다름, Qwen 거절(카탈로그 제외) — audit-second-opinions.ts
+   */
+  openAgreed: number; openSplit: number; openDisagree: number; openQwenCatalog: number;
   removed: number; kept: number;
   /** 원본이 없거나 시도를 다 써서 답을 못 받은 것 */
   failed: number;
@@ -321,7 +324,7 @@ export async function productAuditOverview(): Promise<AuditOverview> {
   const [[campaign], held, settings] = await Promise.all([
     db.select().from(productAuditCampaigns).orderBy(desc(productAuditCampaigns.id)).limit(1), auditHoldCount(), getSettings()]);
   const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, openAgreed: 0, openSplit: 0,
-    removed: 0, kept: 0, failed: 0, skipped: 0 };
+    openDisagree: 0, openQwenCatalog: 0, removed: 0, kept: 0, failed: 0, skipped: 0 };
   const hold = settings.auditHold;
   if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
@@ -334,8 +337,12 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     needsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review')::int`,
     openReject: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open})::int`,
     openNeedsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review' and ${open})::int`,
-    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql)})::int`,
-    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql)})::int`,
+    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql, reasonSql)})::int`,
+    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql, reasonSql)})::int`,
+    openDisagree: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
+      and ${secondOpinionFilter("disagree", itemIdSql, reasonSql)})::int`,
+    openQwenCatalog: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
+      and ${secondOpinionFilter("qwen_catalog", itemIdSql, reasonSql)})::int`,
     removed: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'removed')::int`,
     kept: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'kept')::int`,
     failed: sql<number>`count(*) filter (where ${failed})::int`,
@@ -364,8 +371,9 @@ export type AuditFindingRow = {
   second: SecondOpinionView[];
 };
 
-/** 감사 항목 id — 두 번째 의견 조건이 바깥 항목을 가리킨다 */
+/** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
 const itemIdSql = sql`${productAuditItems.id}`;
+const reasonSql = sql`${productAuditItems.aiReason}`;
 
 const findingColumns = {
   id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
@@ -376,7 +384,7 @@ const findingColumns = {
 /** 열린 거절·보류 목록의 조건 — 이 감사의 이 결정이고, 사람이 손대지 않았고, 제품이 떠 있다. second 면 두 번째 의견으로 더 거른다 */
 function openFindings(campaignId: number, decision: "reject" | "needs_review", second?: SecondOpinionFilter) {
   return and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision), isNull(productAuditItems.humanDecision),
-    listed, ...(second ? [secondOpinionFilter(second, itemIdSql)] : []));
+    listed, ...(second ? [secondOpinionFilter(second, itemIdSql, reasonSql)] : []));
 }
 
 /**
@@ -509,11 +517,12 @@ export const GROUP_REMOVE_MAX = 50;
 
 /** 묶을 수 있는 것 — 아직 아무도 손대지 않았고, 떠 있고, 주인이 없고, 확신이 문턱 이상인 거부 */
 /**
- * 묶을 수 있는 것 — 거절, 사람이 아직 정하지 않음, 확신 문턱 이상, 그리고 갈리지 않음: 두 번째 모델이 승인했고 거절은 없는 것(갈림)은
- * 사람이 한 건씩 본다. SaaS 첫 화면을 "광고 문구뿐"으로 잡은 오탐이 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
+ * 묶을 수 있는 것 — 거절, 사람이 아직 정하지 않음, 확신 문턱 이상, 그리고 갈리지 않음: 갈림(보류의 까닭이 되는 두 번째 거절은 없고 두 번째
+ * 모델이 승인했거나 카탈로그 예외로 세지 않은 Qwen 거절이 있는 것)은 사람이 한 건씩 본다. SaaS 첫 화면을 "광고 문구뿐"으로 잡은 오탐이
+ * 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
  */
 const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
-  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql)}`);
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql, reasonSql)}`);
 const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
   and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
 
@@ -523,12 +532,12 @@ export type AuditGroupScope = (typeof GROUP_SCOPES)[number];
 
 /**
  * 범위를 잠근 뒤 다시 보는 조건 — 오래된 화면이 그 사이 풀린 보류(승인 옮겨 적기·유지)나 바뀐 의견을 내리지 않게.
- * held: 그 제품이 지금 이 항목으로 보류 중. agreed: 이 항목에 두 번째 모델의 거절이 있다
+ * held: 그 제품이 지금 이 항목으로 보류 중. agreed: 이 항목에 보류의 까닭이 되는 두 번째 거절이 있다(모델별 규칙 — 카탈로그 같은 항목의 Qwen 거절은 빠진다)
  */
 function groupScope(scope: AuditGroupScope): SQL | undefined {
   if (scope === "held") return sql`exists (select 1 from ${products} hp where hp.id = ${productAuditItems.productId}
     and hp.audit_hold_at is not null and hp.audit_hold_item_id = ${productAuditItems.id})`;
-  return scope === "agreed" ? secondOpinionVote(itemIdSql, "reject") : undefined;
+  return scope === "agreed" ? countedSecondReject(itemIdSql, reasonSql) : undefined;
 }
 
 export type AuditRemovalGroup = {

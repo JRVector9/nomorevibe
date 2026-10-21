@@ -5,14 +5,15 @@ import { ConfirmAction } from '../components/ConfirmAction';
 import { resultToast, useAdminToast } from '../components/Toast';
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, type AuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { auditHoldWidens, sameAuditHold } from '@/lib/crawl/audit-hold-policy';
-import type { CrawlSettings } from '@/lib/crawl/settings-schema';
+import { QWEN_AUTO_MAX_PER_TICK, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { cancelAudit, releaseAuditHolds, restartStalledAudit, saveAuditHold, startAudit, type AuditActionState } from './actions';
 
 type AuditHold = CrawlSettings['auditHold'];
 
 /**
- * 감사 보류의 설정 — 켬/끔, 확신 문턱, 보류하는 사유 갈래, 두 번째 모델 거절. 값은 이 화면이 쥐고 있다가(오류가 나도 고친 값이 남는다)
- * 저장을 누르면 확인 창이 지금 값 → 바꿀 값을 보인다. 넓히는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬)은 까닭을 받는다 —
+ * 감사 보류의 설정 — 켬/끔, 확신 문턱, 보류하는 사유 갈래, 두 번째 모델 거절, Qwen-v2 자동 단계 둘(두 번째 의견·공개분 거르기)의 켬/끔과 틱당 수.
+ * 값은 이 화면이 쥐고 있다가(오류가 나도 고친 값이 남는다)
+ * 저장을 누르면 확인 창이 지금 값 → 바꿀 값을 보인다. 넓히는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬·Qwen-v2 단계 켬)은 까닭을 받는다 —
  * 서버(setAuditHold)도 같은 규칙으로 막는다. 화면이 본 값을 함께 보내 그 사이 바뀌었으면 거절된다. 저장되면 페이지가 새 값으로 다시 그린다(key).
  * 끄거나 좁혀도 이미 건 보류는 남는다 — 풀려면 옆의 '보류 모두 풀기'다.
  */
@@ -22,9 +23,16 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
   const [threshold, setThreshold] = useState(hold.minConfidence.toFixed(2));
   const [categories, setCategories] = useState<AuditReasonCategory[]>([...hold.categories]);
   const [secondOpinionReject, setSecondOpinionReject] = useState(hold.secondOpinionReject);
+  const [autoEnabled, setAutoEnabled] = useState(hold.autoSecondOpinion.enabled);
+  const [autoPerTick, setAutoPerTick] = useState(String(hold.autoSecondOpinion.perTick));
+  const [publishedEnabled, setPublishedEnabled] = useState(hold.publishedFilter.enabled);
+  const [publishedPerTick, setPublishedPerTick] = useState(String(hold.publishedFilter.perTick));
   const minConfidence = Number(threshold);
-  const valid = Number.isFinite(minConfidence) && minConfidence >= 0.8 && minConfidence <= 1;
-  const next = { enabled, minConfidence, categories: AUDIT_REASON_KEYS.filter((key) => categories.includes(key)), secondOpinionReject };
+  const perTickValid = (value: string) => /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= QWEN_AUTO_MAX_PER_TICK;
+  const ticksValid = perTickValid(autoPerTick) && perTickValid(publishedPerTick);
+  const valid = Number.isFinite(minConfidence) && minConfidence >= 0.8 && minConfidence <= 1 && ticksValid;
+  const next = { enabled, minConfidence, categories: AUDIT_REASON_KEYS.filter((key) => categories.includes(key)), secondOpinionReject,
+    autoSecondOpinion: { enabled: autoEnabled, perTick: Number(autoPerTick) }, publishedFilter: { enabled: publishedEnabled, perTick: Number(publishedPerTick) } };
   const changed = valid && !sameAuditHold(hold, next);
   const widens = valid && auditHoldWidens(hold, next);
   const onOff = (value: boolean) => (value ? '켬' : '끔');
@@ -51,6 +59,32 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
           두 번째 모델도 거절하면 갈래와 상관없이 보류
         </label>
       </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-fg-2">
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" name="autoSecondOpinion" checked={autoEnabled} onChange={(event) => setAutoEnabled(event.target.checked)}
+            className="size-4 accent-accent" />
+          Qwen-v2 두 번째 의견을 자동으로 받기
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          틱마다
+          <input type="number" name="autoSecondOpinionPerTick" min={1} max={QWEN_AUTO_MAX_PER_TICK} step={1} value={autoPerTick}
+            onChange={(event) => setAutoPerTick(event.target.value)} aria-invalid={!perTickValid(autoPerTick)} aria-label="두 번째 의견 틱당 수"
+            className="w-[4.5rem] rounded-lg border border-line bg-bg-soft px-2 py-1.5 font-mono text-[13px]" />
+          건
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" name="publishedFilter" checked={publishedEnabled} onChange={(event) => setPublishedEnabled(event.target.checked)}
+            className="size-4 accent-accent" />
+          공개분 2차 사람 확인을 Qwen-v2 로 한 번 더 보기(승인이면 유지로 닫음)
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          틱마다
+          <input type="number" name="publishedFilterPerTick" min={1} max={QWEN_AUTO_MAX_PER_TICK} step={1} value={publishedPerTick}
+            onChange={(event) => setPublishedPerTick(event.target.value)} aria-invalid={!perTickValid(publishedPerTick)} aria-label="공개분 거르기 틱당 수"
+            className="w-[4.5rem] rounded-lg border border-line bg-bg-soft px-2 py-1.5 font-mono text-[13px]" />
+          건
+        </label>
+      </div>
       <fieldset className="flex flex-wrap items-center gap-x-3 text-[13px] text-fg-2">
         <legend className="mb-1 font-semibold text-fg-3">보류하는 사유 갈래</legend>
         {AUDIT_REASON_KEYS.map((key) => (
@@ -60,8 +94,9 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
           </label>
         ))}
       </fieldset>
-      {!valid && <p className="text-[13px] text-down">확신 문턱은 0.80~1.00 사이로 적어 주세요.</p>}
-      <ConfirmAction tone={widens ? 'danger' : 'neutral'} title={widens ? '보류를 넓힙니다 — 사람 눈 없이 목록에서 빠지는 제품이 늘어납니다' : '보류 설정을 바꿉니다'}
+      {!valid && <p className="text-[13px] text-down">{ticksValid ? '확신 문턱은 0.80~1.00 사이로 적어 주세요.'
+        : `틱마다 받는 수는 1~${QWEN_AUTO_MAX_PER_TICK} 사이의 정수로 적어 주세요.`}</p>}
+      <ConfirmAction tone={widens ? 'danger' : 'neutral'} title={widens ? '보류를 넓힙니다 — 사람 눈 없이 정하는 일이 늘어납니다' : '보류 설정을 바꿉니다'}
         confirmLabel="보류 설정 저장"
         summary={<ul>
           {hold.enabled !== next.enabled && <li>자동 보류: {onOff(hold.enabled)} → {onOff(next.enabled)}</li>}
@@ -69,6 +104,12 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
           {!sameAuditHold({ ...hold, categories: next.categories }, hold) && <li>사유 갈래: {labels(hold.categories)} → {labels(next.categories)}</li>}
           {hold.secondOpinionReject !== next.secondOpinionReject &&
             <li>두 번째 모델 거절로 보류: {onOff(hold.secondOpinionReject)} → {onOff(next.secondOpinionReject)}</li>}
+          {(hold.autoSecondOpinion.enabled !== next.autoSecondOpinion.enabled || hold.autoSecondOpinion.perTick !== next.autoSecondOpinion.perTick) &&
+            <li>Qwen-v2 두 번째 의견: {onOff(hold.autoSecondOpinion.enabled)} 틱마다 {hold.autoSecondOpinion.perTick}건 →{' '}
+              {onOff(next.autoSecondOpinion.enabled)} 틱마다 {next.autoSecondOpinion.perTick}건 — 거절은 보류의 까닭이 되고(카탈로그·디렉터리 같은 것은 빼고), 승인은 보류를 풉니다</li>}
+          {(hold.publishedFilter.enabled !== next.publishedFilter.enabled || hold.publishedFilter.perTick !== next.publishedFilter.perTick) &&
+            <li>공개분 2차 거르기: {onOff(hold.publishedFilter.enabled)} 틱마다 {hold.publishedFilter.perTick}건 →{' '}
+              {onOff(next.publishedFilter.enabled)} 틱마다 {next.publishedFilter.perTick}건 — Qwen-v2 가 승인한 사람 확인 행은 유지로 닫힙니다(내리지는 않습니다)</li>}
           <li>끄거나 좁혀도 이미 건 보류는 남습니다. 넓히면 다음 틱부터 분당 20건씩 더 겁니다.</li>
         </ul>}
         note={{ label: widens ? '왜 넓히는지 (꼭 적어 주세요 · 기록에 남습니다)' : '바꾸는 까닭 (선택 · 기록에 남습니다)', optional: !widens, maxLength: 500 }}
@@ -79,6 +120,10 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
           form.set('minConfidence', threshold);
           for (const key of next.categories) form.append('category', key);
           if (next.secondOpinionReject) form.set('secondOpinionReject', 'on');
+          if (next.autoSecondOpinion.enabled) form.set('autoSecondOpinion', 'on');
+          form.set('autoSecondOpinionPerTick', autoPerTick);
+          if (next.publishedFilter.enabled) form.set('publishedFilter', 'on');
+          form.set('publishedFilterPerTick', publishedPerTick);
           form.set('reason', note ?? '');
           const result = await saveAuditHold(null, form);
           if (result && !result.error) toast.show(resultToast(result, { message: result.message ?? '보류 설정을 저장했습니다' }));

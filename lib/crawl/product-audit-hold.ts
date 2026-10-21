@@ -8,7 +8,8 @@ import type { JobContext } from "@/lib/jobs/runner";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { lockedAuditHold, type AuditHoldSettings } from "./settings";
-import { secondOpinionVote } from "./audit-second-opinions";
+import { secondOpinionVotesField, type SecondOpinionVoteRow } from "./audit-second-opinions";
+import { secondRejectHolds } from "./second-opinion-rules";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -60,9 +61,10 @@ const column = (alias: string) => (name: string) => sql`${sql.identifier(alias)}
  * 보류할 수 있는 제품 — 공개(seeded)이고 주인이 없다: 검증 전이고 클레임하지 않았고 메이커 권한(product_maker_members)도 없다.
  * verified 는 주인이 확인된 것이라 들지 않는다. 이미 보류된 것도 뺀다. alias 는 products 를 부르는 이름이다
  */
-function unownedPublic(alias: string): SQL {
+function unownedPublic(alias: string, options: { includeHeld?: boolean } = {}): SQL {
   const c = column(alias);
-  return sql`(${c("status")} = 'seeded' and ${c("claimed_at")} is null and ${c("verified_at")} is null and ${c("audit_hold_at")} is null
+  const notHeld = options.includeHeld ? sql`` : sql` and ${c("audit_hold_at")} is null`;
+  return sql`(${c("status")} = 'seeded' and ${c("claimed_at")} is null and ${c("verified_at")} is null${notHeld}
     and not exists (select 1 from ${productMakerMembers} m where m.product_id = ${c("id")} and m.revoked_at is null))`;
 }
 
@@ -93,21 +95,43 @@ async function markOpenItemsReleased(tx: ProductTransaction, productIds: number[
     isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
 }
 
-/** 그 항목에 두 번째 모델의 거절·승인이 있다(product_audit_second_opinions) */
-const secondReject = (alias: string) => secondOpinionVote(column(alias)("id"), "reject");
-const secondApprove = (alias: string) => secondOpinionVote(column(alias)("id"), "approve");
+/**
+ * 보류 후보 — 보류의 까닭이 될 수 있는 감사 항목(holdableItem)이고 그 제품이 주인 없는 공개 제품이다. 이미 보류된 제품도 든다
+ * (그 보류의 까닭인 항목). 둘째 문(holdGate)은 보지 않는다 — Qwen-v2 자동 의견(audit-second-opinion-auto.ts)이 물을 것을 고르고,
+ * 그 의견이 둘째 문을 바꾼다. itemAlias·productAlias 는 product_audit_items·products 를 부르는 이름이다
+ */
+export function holdCandidate(itemAlias: string, productAlias: string, minConfidence: number): SQL {
+  return sql`(${column(itemAlias)("product_id")} = ${column(productAlias)("id")} and ${holdableItem(itemAlias, minConfidence)}
+    and ${unownedPublic(productAlias, { includeHeld: true })})`;
+}
+
+/** 그 항목의 두 번째 의견(모델·결정, product_audit_second_opinions) */
+const secondVotes = (alias: string) => secondOpinionVotesField(column(alias)("id"));
+
+/** 보류의 둘째 문이 읽는 감사 항목 — 감사 사유와 두 번째 의견들 */
+export type HoldGateItem = { reason: string | null | undefined; opinions: readonly SecondOpinionVoteRow[] };
+
+/**
+ * 두 번째 의견들이 보류에 무엇을 말하나 — 거절(모델별 규칙 secondRejectHolds 를 지난 것만)·승인(모델을 가리지 않는다).
+ * 모델별 규칙(second-opinion-rules.ts SECOND_OPINION_REJECT_RULES): grok 의 거절은 늘 센다. Qwen 의 거절은 카탈로그·디렉터리 같은 항목
+ * (감사 사유 갈래가 '남의 플랫폼·목록 페이지'이거나 directory·catalog·awesome·curated list·list of)에서 세지 않는다 — 그 항목은 '갈림'에서 사람이 본다
+ */
+export function secondOpinionStance(item: HoldGateItem): { secondReject: boolean; secondApprove: boolean } {
+  return { secondReject: item.opinions.some((opinion) => opinion.decision === "reject" && secondRejectHolds(opinion.model, item.reason)),
+    secondApprove: item.opinions.some((opinion) => opinion.decision === "approve") };
+}
 
 /**
  * 확신 문턱(holdableItem)을 지난 항목의 둘째 문 — 확신만으로는 가를 수 없었다(settings-schema.ts DEFAULT_AUDIT_HOLD).
  * (a) 사유 갈래가 허용 목록(auditHold.categories)에 들고, 두 번째 모델이 승인하지 않았다 — 갈래는 감사 화면의 칩과 같은 분류
  *     (classifyAuditReason)다. 회사 소개 갈래의 정규식은 "marketing copy·promotional landing" 으로 SaaS 첫 화면도 잡는다 —
  *     다른 모델이 열어 보고 승인했으면 목록에 두고 '갈림'으로 사람에게 넘긴다. 또는
- * (b) 두 번째 모델도 거절했다(auditHold.secondOpinionReject 가 켜져 있을 때) — 갈래와 상관없이.
- * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기와 새 답이 모두 이 함수로 가른다.
+ * (b) 두 번째 모델도 거절했다(auditHold.secondOpinionReject 가 켜져 있을 때) — 갈래와 상관없이, 모델별 규칙을 지난 거절만(secondOpinionStance).
+ * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기·새 답·의견 옮겨 적기가 모두 이 함수로 가른다.
  */
-export function holdGate(item: { reason: string | null | undefined; secondReject: boolean; secondApprove: boolean },
-  hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">): boolean {
-  return (hold.categories.includes(classifyAuditReason(item.reason)) && !item.secondApprove) || (hold.secondOpinionReject && item.secondReject);
+export function holdGate(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">): boolean {
+  const { secondReject, secondApprove } = secondOpinionStance(item);
+  return (hold.categories.includes(classifyAuditReason(item.reason)) && !secondApprove) || (hold.secondOpinionReject && secondReject);
 }
 
 /**
@@ -129,10 +153,10 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
   const hold = await lockedAuditHold(tx);
   if (!hold.enabled) return false;
   const [item] = await tx.select({ campaignId: productAuditItems.campaignId, aiReason: productAuditItems.aiReason,
-    aiConfidence: productAuditItems.aiConfidence, secondReject: sql<boolean>`${secondReject("product_audit_items")}`,
-    secondApprove: sql<boolean>`${secondApprove("product_audit_items")}` })
+    aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items") })
     .from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
-  if (!item || !holdGate({ reason: item.aiReason, secondReject: item.secondReject, secondApprove: item.secondApprove }, hold)) return false;
+  if (!item || !holdGate({ reason: item.aiReason, opinions: item.opinions }, hold)) return false;
+  const stance = secondOpinionStance({ reason: item.aiReason, opinions: item.opinions });
   const [held] = await tx.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: input.itemId })
     .where(and(eq(products.id, input.productId), eq(products.slug, input.slug), unownedPublic("products"),
       sql`exists (select 1 from ${productAuditItems} i where i.id = ${input.itemId} and i.product_id = ${input.productId}
@@ -144,8 +168,8 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
     metadata: { itemId: input.itemId, campaignId: item.campaignId, aiConfidence: item.aiConfidence, minConfidence: hold.minConfidence,
       // 어느 문으로 걸렸나 — 두 번째 모델이 승인하지 않은 허용 갈래인지, 두 번째 모델도 거절했는지
       category: classifyAuditReason(item.aiReason),
-      byCategory: hold.categories.includes(classifyAuditReason(item.aiReason)) && !item.secondApprove,
-      bySecondOpinion: hold.secondOpinionReject && item.secondReject } });
+      byCategory: hold.categories.includes(classifyAuditReason(item.aiReason)) && !stance.secondApprove,
+      bySecondOpinion: hold.secondOpinionReject && stance.secondReject } });
   await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_HOLD_PURGE });
   return true;
 }
@@ -247,15 +271,13 @@ async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room:
   const picked: { item_id: number; product_id: number; slug: string }[] = [];
   for (let afterId = 0; picked.length < room && Date.now() - startedAt <= SWEEP_MS;) {
     const page = await db.execute<{ item_id: number; product_id: number; slug: string; ai_reason: string | null;
-      second_reject: boolean; second_approve: boolean }>(sql`
-      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondReject("i")} as second_reject,
-             ${secondApprove("i")} as second_approve
+      opinions: SecondOpinionVoteRow[] }>(sql`
+      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondVotes("i")} as opinions
         from ${productAuditItems} i join ${products} p on p.id = i.product_id
        where ${holdableItem("i", hold.minConfidence)} and ${unownedPublic("p")} and i.id > ${afterId}
        order by i.id limit ${CANDIDATE_PAGE}`);
     for (const row of page) {
-      const gate = { reason: row.ai_reason, secondReject: row.second_reject, secondApprove: row.second_approve };
-      if (picked.length < room && holdGate(gate, hold)) picked.push(row);
+      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions }, hold)) picked.push(row);
     }
     if (page.length < CANDIDATE_PAGE) break;
     afterId = page[page.length - 1].item_id;

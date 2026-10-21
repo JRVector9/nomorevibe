@@ -4,7 +4,12 @@ import { useActionState } from 'react';
 import { resolvePublishedSecondReview, type ReviewActionState } from './actions';
 import { ReasonText } from './ReasonText';
 
-export type PublishedSecondRow = { id: number; slug: string; repo: string; decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; trigger: string; signals: string[] };
+export type PublishedSecondRow = { id: number; slug: string; repo: string; decision: string | null; confidence: number | null; reason: string | null; reasonKo: string | null; trigger: string; signals: string[];
+  /** Qwen-v2 가 한 번 더 본 판단(audit-second-opinion-auto.ts) — 거절·판단 보류만 여기 남는다(승인은 유지로 닫힌다). 아직 안 봤으면 null */
+  qwen?: { decision: string; confidence: number | null; reason: string | null; reasonKo: string | null } | null };
+
+/** Qwen-v2 배지 — 거절이면 2차와 같은 쪽, 판단 보류면 사람이 본다 */
+const QWEN_LABEL: Record<string, string> = { reject: 'Qwen-v2도 거절', needs_review: 'Qwen-v2 판단 보류', approve: 'Qwen-v2 승인' };
 
 const TRIGGER: Record<string, string> = { risk: '위험 신호', sample: '무작위 표본' };
 const SIGNAL: Record<string, string> = { store_or_messenger: '스토어·메신저 주소', sentence_name: '문장 같은 이름', seo_name: '광고성 이름', no_text: '본문·README 없음' };
@@ -18,6 +23,16 @@ function Row({ row }: { row: PublishedSecondRow }) {
         <a href={`https://github.com/${row.repo}`} target="_blank" rel="noreferrer noopener" title="GitHub 에서 열기"
           className="ml-2 font-mono text-fg-3 hover:text-accent hover:underline">{row.repo} ↗</a>
         <p className="mt-0.5 text-fg-2"><ReasonText text={row.reason} korean={row.reasonKo} limit={260} /></p>
+        {row.qwen && (
+          <p className="mt-1 text-fg-2">
+            <span title="gpu3090 Qwen-v2 가 한 번 더 본 판단 — 승인이면 유지로 닫히고, 거절·판단 보류면 사람을 기다립니다"
+              className={`mr-1.5 rounded px-1.5 py-0.5 font-semibold ${row.qwen.decision === 'reject' ? 'bg-down/10 text-down' : 'bg-warn/15 text-warn'}`}>
+              {QWEN_LABEL[row.qwen.decision] ?? `Qwen-v2 ${row.qwen.decision}`}
+              {typeof row.qwen.confidence === 'number' && <span className="ml-1 font-mono font-normal">{row.qwen.confidence.toFixed(2)}</span>}
+            </span>
+            {row.qwen.reason && <ReasonText text={row.qwen.reason} korean={row.qwen.reasonKo} limit={260} />}
+          </p>
+        )}
         {state?.error && <p className="text-down">{state.error}</p>}
         {state?.message && <p className="text-up">{state.message}</p>}
       </td>

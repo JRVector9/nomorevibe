@@ -54,10 +54,22 @@ function mergeSecondReview(stored: unknown) {
   return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
 }
 
+/** 깨진 감사 보류 설정을 읽은 값 — 보류도, Qwen-v2 자동 단계 둘도 모두 꺼진다 */
+const AUDIT_HOLD_OFF: AuditHoldSettings = { ...DEFAULT_CRAWL_SETTINGS.auditHold, enabled: false,
+  autoSecondOpinion: { ...DEFAULT_CRAWL_SETTINGS.auditHold.autoSecondOpinion, enabled: false },
+  publishedFilter: { ...DEFAULT_CRAWL_SETTINGS.auditHold.publishedFilter, enabled: false } };
+
+/** 한 단계의 칸 — 없으면 기본값, 객체면 빠진 칸만 기본값으로 채운다. 객체가 아니면 그대로 넘겨 검증이 깨진 것으로 가른다 */
+function autoStep(raw: unknown, fallback: AuditHoldSettings["autoSecondOpinion"]): unknown {
+  if (raw === undefined) return fallback;
+  return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? { ...fallback, ...raw } : raw;
+}
+
 /**
  * 저장된 행의 감사 보류 설정 — 행의 나머지와 따로 읽는다. 칸이 없으면 기본값(켬, 첫 배포의 뜻), 있는데 깨졌으면 꺼짐.
  * 끈 스위치가 다른 칸의 손상이나 깨진 값 때문에 기본값(켬)으로 되살아나면 안 된다. 모르는 갈래는 버리고(코드에서 갈래를 지운 뒤에도
- * 읽히게) 겹친 갈래는 하나로 둔다. 일부 칸만 있으면 나머지를 기본값으로 채운다(새 칸을 더한 배포).
+ * 읽히게) 겹친 갈래는 하나로 둔다. 일부 칸만 있으면 나머지를 기본값으로 채운다(새 칸을 더한 배포 — Qwen-v2 자동 단계 둘도 같다).
+ * 어느 칸이든 깨졌으면 보류와 Qwen-v2 자동 단계(두 번째 의견·공개분 거르기)가 모두 꺼진다.
  */
 export function storedAuditHold(stored: unknown): AuditHoldSettings {
   const value = (stored ?? {}) as Record<string, unknown>;
@@ -66,11 +78,14 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
   const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   const categories = object && Array.isArray(object.categories)
     ? [...new Set(object.categories.filter(isAuditReasonCategory))] : object?.categories;
-  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...object,
-    ...(categories === undefined ? {} : { categories }) }) : null;
+  const defaults = DEFAULT_CRAWL_SETTINGS.auditHold;
+  const parsed = object ? auditHoldSchema.safeParse({ ...defaults, ...object,
+    ...(categories === undefined ? {} : { categories }),
+    autoSecondOpinion: autoStep(object.autoSecondOpinion, defaults.autoSecondOpinion),
+    publishedFilter: autoStep(object.publishedFilter, defaults.publishedFilter) }) : null;
   if (parsed?.success) return parsed.data;
   logger.error("crawl.audit_hold_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
-  return { ...DEFAULT_CRAWL_SETTINGS.auditHold, enabled: false };
+  return AUDIT_HOLD_OFF;
 }
 
 /** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
@@ -294,7 +309,8 @@ export async function setAuditHold(input: { next: AuditHoldSettings; expected: A
     }
     if (auditHoldWidens(before, parsed.data) && !reason) {
       await tx.insert(operationsAudit).values(await audit(false, "reason_required"));
-      return { ok: false, issues: ["보류를 넓히는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬)은 까닭을 적어야 합니다."] };
+      return { ok: false, issues: ["보류를 넓히거나 사람 없이 정하는 일을 켜는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬·Qwen-v2 자동 의견 켬·"
+        + "공개분 자동 유지 켬)은 까닭을 적어야 합니다."] };
     }
     // 이 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도(읽기는 기본값으로 돌아간다) 끄기는 되어야 하고, 깨진 칸을 기본값으로 덮지 않는다
     const values = { ...((row.values ?? {}) as Record<string, unknown>), auditHold: parsed.data };

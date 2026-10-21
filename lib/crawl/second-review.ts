@@ -971,8 +971,12 @@ export async function secondReviewsFor(candidateIds: number[]) {
     .orderBy(secondReviews.candidateId, secondReviews.id);
 }
 
-/** 공개된 제품 중 2차가 제품이 아니라고 본 것 — 사람이 내릴지 정한다 */
+/**
+ * 공개된 제품 중 2차가 제품이 아니라고 본 것 — 사람이 내릴지 정한다. Qwen-v2 도 거절한 것(auto_opinion, audit-second-opinion-auto.ts)이 먼저,
+ * 그다음 Qwen-v2 가 판단을 미룬 것, 그 뒤 최근에 본 것부터. Qwen-v2 가 승인한 행은 이미 유지로 닫혀 여기 없다
+ */
 export async function publishedSecondReviews(limit = 100) {
+  const qwen = sql`${secondReviews.autoOpinion}->>'decision'`;
   return db.select().from(secondReviews).where(and(eq(secondReviews.status, "needs_human"), isNotNull(secondReviews.publishedSlug)))
-    .orderBy(desc(secondReviews.reviewedAt)).limit(limit);
+    .orderBy(sql`case ${qwen} when 'reject' then 0 when 'needs_review' then 1 else 2 end`, desc(secondReviews.reviewedAt)).limit(limit);
 }

@@ -16,6 +16,11 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
 export type SecondReviewTrigger = "ai_decided" | "ai_held" | "ai_approved" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
 export type SecondReviewProvider = "claude-cli" | "abcllm" | "grok-cli";
+/** 공개분 사람 확인 행의 Qwen-v2 판단(0111) — by 는 늘 qwen-v2-auto, at 은 ISO 시각 */
+export type SecondReviewAutoOpinion = {
+  by: string; model: string; promptVersion: string; decision: "approve" | "reject" | "needs_review";
+  confidence: number | null; reason: string | null; inputHash: string | null; at: string;
+};
 
 export const secondReviews = pgTable("second_reviews", {
   id: serial("id").primaryKey(),
@@ -52,6 +57,11 @@ export const secondReviews = pgTable("second_reviews", {
   status: varchar("status", { length: 20 }).$type<SecondReviewStatus>().notNull().default("pending"),
   resolvedBy: varchar("resolved_by", { length: 120 }),
   resolution: varchar("resolution", { length: 40 }),
+  /**
+   * 공개분 사람 확인 행에 Qwen-v2 가 한 번 더 본 판단(0111, lib/crawl/audit-second-opinion-auto.ts). 승인이면 사람의 '유지'와 같은 길로 닫혀
+   * resolved_by 가 qwen-v2-auto 다. 거절·판단 보류면 행은 사람을 기다리고 판단만 남는다. 없으면 아직 보지 않았다
+   */
+  autoOpinion: jsonb("auto_opinion").$type<SecondReviewAutoOpinion>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   reviewedAt: timestamp("reviewed_at"),
   resolvedAt: timestamp("resolved_at"),

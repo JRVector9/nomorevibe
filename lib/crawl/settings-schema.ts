@@ -301,8 +301,12 @@ const defaultRising = { freshDays: 7 };
  * 다른 모델(grok)도 같은 항목을 거절했으면 갈래와 상관없이 보류한다(secondOpinionReject) — 두 모델이 따로 같은 답을 낸 것이다.
  * 그 모델이 승인했으면 갈래로는 걸지 않는다 — 회사 소개 갈래가 "광고 문구뿐"으로 잡는 SaaS 첫 화면을 다른 모델이 열어 보고 승인한 것이다.
  */
-export const DEFAULT_AUDIT_HOLD: { enabled: boolean; minConfidence: number; categories: AuditReasonCategory[]; secondOpinionReject: boolean } =
-  { enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"], secondOpinionReject: true };
+export const DEFAULT_AUDIT_HOLD: { enabled: boolean; minConfidence: number; categories: AuditReasonCategory[]; secondOpinionReject: boolean;
+  autoSecondOpinion: { enabled: boolean; perTick: number }; publishedFilter: { enabled: boolean; perTick: number } } =
+  { enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"], secondOpinionReject: true,
+    autoSecondOpinion: { enabled: true, perTick: 10 }, publishedFilter: { enabled: true, perTick: 10 } };
+/** Qwen-v2 자동 단계의 틱당 상한의 끝 — 단계 전체가 30초 안이라(audit-second-opinion-auto.ts) 그보다 많이는 어차피 못 부른다 */
+export const QWEN_AUTO_MAX_PER_TICK = 20;
 /** 문턱의 하한 — 그 아래로 내리면 모델이 틀린 몫(1차 심사 실측 정확도 85%)이 사람 눈 없이 목록에서 빠진다 */
 export const AUDIT_HOLD_MIN_CONFIDENCE_FLOOR = 0.8;
 
@@ -337,6 +341,9 @@ export const reviewVoterSchema = z.object({
  * 감사 보류 설정의 모양 — 저장된 행에서 따로 읽는다(settings.ts storedAuditHold). 행의 다른 칸이 깨져도 이 값은 그대로 읽고,
  * 이 값이 깨졌으면 꺼진 것으로 읽는다 — 끈 스위치가 기본값(켬)으로 되돌아가면 안 된다.
  */
+/** Qwen-v2 자동 단계 하나 — 켬/끔과 틱당 상한 */
+const qwenAutoStepSchema = z.object({ enabled: z.boolean(), perTick: z.number().int().min(1).max(QWEN_AUTO_MAX_PER_TICK) }).strict();
+
 export const auditHoldSchema = z.object({
   enabled: z.boolean(),
   minConfidence: z.number().min(AUDIT_HOLD_MIN_CONFIDENCE_FLOOR).max(1),
@@ -346,6 +353,16 @@ export const auditHoldSchema = z.object({
     .refine((categories) => new Set(categories).size === categories.length, { message: "같은 갈래를 두 번 넣을 수 없다" }),
   /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
   secondOpinionReject: z.boolean(),
+  /**
+   * 보류 후보(확신 문턱·주인 없음·사람 결정 없음·그 제품의 마지막 항목)에 gpu3090 Qwen-v2 의 두 번째 의견을 감사 잡 틱마다 perTick 건까지
+   * 받아 적는다(lib/crawl/audit-second-opinion-auto.ts). 승인이면 옮겨 적기와 같은 길로 보류를 다시 갈라 풀고, 거절은 쓸기가 건다
+   */
+  autoSecondOpinion: qwenAutoStepSchema,
+  /**
+   * 공개분 2차가 사람 확인(needs_human)으로 넘긴 행을 같은 Qwen-v2 로 한 번 더 본다. 승인이면 사람의 '유지'와 같은 길로 닫고(누가 qwen-v2-auto),
+   * 거절·판단 보류면 그 판단을 행에 적어 사람 확인 목록 앞에 둔다. 이 길로는 내리지도 숨기지도 않는다
+   */
+  publishedFilter: qwenAutoStepSchema,
 }).strict();
 
 export const crawlSettingsSchema = z.object({

@@ -7,7 +7,7 @@ import { cancelProductAudit, GROUP_REMOVE_MAX, GROUP_SCOPES, keepAuditedProduct,
 import { releaseAllAuditHolds } from '@/lib/crawl/product-audit-hold';
 import { isAuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { setAuditHold } from '@/lib/crawl/settings';
-import { crawlSettingsSchema } from '@/lib/crawl/settings-schema';
+import { crawlSettingsSchema, QWEN_AUTO_MAX_PER_TICK } from '@/lib/crawl/settings-schema';
 import { fixIntroFromRequest, isIntroRequestOutcome, resolveIntroRequest } from '@/lib/domain/products/intro-requests';
 import { LIMITS } from '@/lib/domain/products/limits';
 import { logger } from '@/lib/observability/logger';
@@ -134,7 +134,7 @@ export const restartStalledAudit = webWriteAction(async function restartStalledA
 });
 
 /**
- * 감사 보류의 스위치·문턱·사유 갈래·두 번째 모델 거절을 바꾼다. 화면이 본 값(expected)과 잠근 행을 견줘 다르면 쓰지 않는다 —
+ * 감사 보류의 스위치·문턱·사유 갈래·두 번째 모델 거절·Qwen-v2 자동 단계 둘을 바꾼다. 화면이 본 값(expected)과 잠근 행을 견줘 다르면 쓰지 않는다 —
  * 작업 로그는 setAuditHold 가 같은 트랜잭션에 남긴다. 끄거나 좁혀도 이미 건 보류는 남는다(풀려면 '보류 모두 풀기').
  */
 export const saveAuditHold = webWriteAction(async function saveAuditHold(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
@@ -146,9 +146,12 @@ export const saveAuditHold = webWriteAction(async function saveAuditHold(_previo
   const minConfidence = Number(form.get('minConfidence'));
   const next = holdSchema.safeParse({ enabled: form.get('enabled') === 'on', minConfidence,
     categories: [...new Set(form.getAll('category').map(String).filter(isAuditReasonCategory))],
-    secondOpinionReject: form.get('secondOpinionReject') === 'on' });
+    secondOpinionReject: form.get('secondOpinionReject') === 'on',
+    autoSecondOpinion: { enabled: form.get('autoSecondOpinion') === 'on', perTick: Number(form.get('autoSecondOpinionPerTick')) },
+    publishedFilter: { enabled: form.get('publishedFilter') === 'on', perTick: Number(form.get('publishedFilterPerTick')) } });
   if (!expected?.success) return { error: '화면의 값을 읽지 못했습니다. 새로고침해주세요.' };
-  if (!next.success) return { error: '확신 문턱은 0.80~1.00 사이로 적어 주세요.' };
+  if (!next.success) return { error: next.error.issues.some((issue) => issue.path[0] === 'minConfidence')
+    ? '확신 문턱은 0.80~1.00 사이로 적어 주세요.' : `틱마다 받는 수는 1~${QWEN_AUTO_MAX_PER_TICK} 사이의 정수로 적어 주세요.` };
   const result = await setAuditHold({ next: next.data, expected: expected.data, actor: admin.login, reason: String(form.get('reason') ?? '') });
   if (!result.ok) return { error: result.issues.join(' · ') };
   logger.info('admin.audit_hold_saved', { login: admin.login, enabled: result.auditHold.enabled });

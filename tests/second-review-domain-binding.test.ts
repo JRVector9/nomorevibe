@@ -39,7 +39,7 @@ function fixture(published = false) {
     firstModel: published ? null : first.model, firstAttemptId: published ? null : first.id,
     generationKey: secondReviewGeneration(published ? null : first.id, input, published ? "sample" : "ai_approved"),
     inputHash: published ? publishedInputHash(candidate.publishedSlug!) : input.inputHash,
-    provider: "abcllm", model: "second-model", secondDecision: null, secondConfidence: null, secondReason: null,
+    provider: "abcllm", model: "second-model", secondDecision: null, secondConfidence: null, secondReason: null, autoOpinion: null,
     errorCode: null, errorDetail: null, fallbackForId: null, failureCount: 0, status: "pending",
     resolvedBy: null, resolution: null, createdAt: now, reviewedAt: null, resolvedAt: null };
   return { row, current: { candidate, document, settings, input, first: published ? null : first } };

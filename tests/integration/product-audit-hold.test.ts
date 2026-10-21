@@ -25,6 +25,8 @@ import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
+// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("server-only", () => ({}));
 
 /** 외부 모델 호출만 바꾼다. 올리기·답 적기·보류·쓸기·lease 는 실제 DB 로 돈다 */
@@ -108,7 +110,7 @@ it("테스트의 두 사유는 감사 화면의 갈래로 회사 소개·글 문
   expect(classifyAuditReason(COMPANY)).toBe("company");
   expect(classifyAuditReason(CONTENT)).toBe("content");
   expect(DEFAULT_AUDIT_HOLD).toEqual({ enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"],
-    secondOpinionReject: true });
+    secondOpinionReject: true, autoSecondOpinion: { enabled: true, perTick: 10 }, publishedFilter: { enabled: true, perTick: 10 } });
 });
 
 describe("새 답이 같은 커밋에서 보류한다", () => {
@@ -589,7 +591,9 @@ describe("리뷰 회귀 — 꺼진 스위치는 기본값으로 되살아나지 
     await corrupt(`jsonb_set(values, '{auditHold}', '"on"')`);
     expect((await getSettings()).auditHold.enabled).toBe(false);
     await corrupt(`jsonb_set(values, '{auditHold}', '{"enabled": true, "minConfidence": 0.97, "categories": ["company", "retired", "company"], "secondOpinionReject": false}')`);
-    expect((await getSettings()).auditHold).toEqual({ enabled: true, minConfidence: 0.97, categories: ["company"], secondOpinionReject: false });
+    // 새 칸(Qwen-v2 자동 단계 둘)이 없던 행은 그 칸만 기본값으로 채운다
+    expect((await getSettings()).auditHold).toEqual({ enabled: true, minConfidence: 0.97, categories: ["company"], secondOpinionReject: false,
+      autoSecondOpinion: DEFAULT_AUDIT_HOLD.autoSecondOpinion, publishedFilter: DEFAULT_AUDIT_HOLD.publishedFilter });
     // 다른 칸이 깨진 행 — 읽기는 기본값으로 돌아가지만 보류는 저장된 값, 끄기는 된다
     await corrupt(`jsonb_set(values, '{reviewConcurrency}', '"bad"')`);
     const before = (await getSettings()).auditHold;

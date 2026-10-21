@@ -227,10 +227,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
             <h2 className="text-[15px] font-bold text-fg">공개분 확인</h2>
             <PublishedSecondReviews rows={await (async () => {
               const rows = await publishedSecondReviews();
-              const korean = await translationsFor(rows.map((row) => row.secondReason));
+              const korean = await translationsFor(rows.flatMap((row) => [row.secondReason, row.autoOpinion?.reason ?? null]));
               return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
                 confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
-                trigger: row.trigger, signals: row.signals }));
+                trigger: row.trigger, signals: row.signals,
+                // Qwen-v2 가 한 번 더 본 판단(승인이 아닌 것만 여기 남는다) — 배지와 사유
+                qwen: row.autoOpinion ? { decision: row.autoOpinion.decision, confidence: row.autoOpinion.confidence, reason: row.autoOpinion.reason,
+                  reasonKo: row.autoOpinion.reason ? korean.get(row.autoOpinion.reason) ?? null : null } : null }));
             })()} />
           </>
         ) : entries.length === 0 ? (

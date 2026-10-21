@@ -4,13 +4,15 @@ import type * as schema from "@/lib/db/schema";
 import { crawlSettings, productAuditItems, productAuditSecondOpinions, products } from "@/lib/db/schema";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { holdGate, releaseAuditHold } from "./product-audit-hold";
 import { lockedAuditHold, storedAuditHold, type AuditHoldSettings } from "./settings";
 
 /**
  * 두 번째 의견 옮겨 적기(0110) — 밖에서 돌린 grok 일괄 결과(JSONL)를 product_audit_second_opinions 에 넣는다.
- * scripts/ops/import-audit-second-opinions.ts 가 부른다. 읽는 SQL 은 audit-second-opinions.ts 에 있다.
+ * scripts/ops/import-audit-second-opinions.ts 가 부른다. 감사 잡의 Qwen-v2 자동 의견(audit-second-opinion-auto.ts)도 같은 쓰기
+ * (writeAuditSecondOpinions)를 지난다 — 그쪽은 작업 lease 를 함께 넘겨 같은 커밋에서 확인한다. 읽는 SQL 은 audit-second-opinions.ts 에 있다.
  *
  * 승인 의견이 지금 그 항목으로 보류된 제품에 오면 같은 트랜잭션에서 보류를 다시 가른다 — 덮어쓴 뒤의 의견과 지금 설정으로
  * 보류의 둘째 문(holdGate)이 더는 맞지 않으면 푼다(거절 의견이 남아 두 번째 거절이 켜져 있으면 그대로 둔다). 보류는 늘 시스템이
@@ -37,8 +39,10 @@ export type SecondOpinionImport = {
   dryRun: boolean;
 };
 
-type Parsed = { itemId: number; productId: number; model: string; decision: "approve" | "reject" | "needs_review";
-  confidence: number | null; reason: string | null; inputHash: string | null };
+/** 쓸 의견 한 줄 — promptVersion 은 그 의견을 받은 글의 판(Qwen-v2 자동 의견), grok 일괄은 null */
+export type SecondOpinionRow = { itemId: number; productId: number; model: string; decision: "approve" | "reject" | "needs_review";
+  confidence: number | null; reason: string | null; inputHash: string | null; promptVersion: string | null };
+type Parsed = SecondOpinionRow;
 
 /** 한 줄을 읽는다. 오류가 적힌 줄·모양이 틀린 줄은 까닭을 돌려준다 */
 export function parseSecondOpinionLine(line: SecondOpinionLine): Parsed | "error" | "invalid" {
@@ -51,7 +55,8 @@ export function parseSecondOpinionLine(line: SecondOpinionLine): Parsed | "error
   if (confidence !== null && (!Number.isFinite(confidence) || confidence < 0 || confidence > 1)) return "invalid";
   const reason = typeof line.grokReason === "string" && line.grokReason.trim() ? line.grokReason.trim().slice(0, REASON_LIMIT) : null;
   const inputHash = typeof line.inputHash === "string" && line.inputHash.trim() ? line.inputHash.trim().slice(0, 128) : null;
-  return { itemId, productId, model: line.model.trim(), decision: line.grokDecision as Parsed["decision"], confidence, reason, inputHash };
+  return { itemId, productId, model: line.model.trim(), decision: line.grokDecision as Parsed["decision"], confidence, reason, inputHash,
+    promptVersion: null };
 }
 
 type Database = PostgresJsDatabase<typeof schema>;
@@ -70,9 +75,7 @@ type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
  */
 export async function importAuditSecondOpinions(database: Database, lines: SecondOpinionLine[],
   options: { dryRun: boolean; source: string }): Promise<SecondOpinionImport> {
-  const result: SecondOpinionImport = { read: lines.length, inserted: 0, updated: 0, released: 0, dryRun: options.dryRun,
-    skipped: { error: 0, invalid: 0, duplicate: 0, missing: 0, product_mismatch: 0, not_open: 0 } };
-  const source = options.source.trim().slice(0, 40) || "import";
+  const result = emptyResult(lines.length, options.dryRun);
   const unique = new Map<string, Parsed>();
   for (const line of lines) {
     const parsed = parseSecondOpinionLine(line);
@@ -81,7 +84,23 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
     if (unique.has(key)) result.skipped.duplicate += 1;
     unique.set(key, parsed);
   }
-  const rows = [...unique.values()];
+  return writeAuditSecondOpinions(database, [...unique.values()], options, result);
+}
+
+function emptyResult(read: number, dryRun: boolean): SecondOpinionImport {
+  return { read, inserted: 0, updated: 0, released: 0, dryRun,
+    skipped: { error: 0, invalid: 0, duplicate: 0, missing: 0, product_mismatch: 0, not_open: 0 } };
+}
+
+/**
+ * 읽은 의견을 쓴다 — 옮겨 적기와 Qwen-v2 자동 의견이 같이 지난다. rows 는 (항목, 모델)마다 하나여야 한다.
+ * lease 를 주면 쓰기마다 같은 커밋에서 작업 lease 를 벽시계로 다시 본다(감사 잡 — 잃었으면 아무것도 commit 하지 않는다).
+ * DR writer fence 는 lease 와 상관없이 늘 첫 잠금이다.
+ */
+export async function writeAuditSecondOpinions(database: Database, rows: SecondOpinionRow[],
+  options: { dryRun: boolean; source: string; lease?: JobLease }, result: SecondOpinionImport = emptyResult(rows.length, options.dryRun)):
+  Promise<SecondOpinionImport> {
+  const source = options.source.trim().slice(0, 40) || "import";
   for (let offset = 0; offset < rows.length; offset += BATCH) {
     const batch = rows.slice(offset, offset + BATCH);
     const run = async (tx: Transaction) => {
@@ -108,7 +127,7 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
         const existing = await tx.select({ itemId: productAuditSecondOpinions.itemId, model: productAuditSecondOpinions.model,
           decision: productAuditSecondOpinions.decision })
           .from(productAuditSecondOpinions).where(inArray(productAuditSecondOpinions.itemId, accepted.map((row) => row.itemId)));
-        const after = new Map(existing.map((row) => [`${row.itemId}:${row.model}`, row]));
+        const after = new Map<string, { itemId: number; model: string; decision: string }>(existing.map((row) => [`${row.itemId}:${row.model}`, row]));
         for (const row of accepted) {
           if (after.has(`${row.itemId}:${row.model}`)) result.updated += 1;
           else result.inserted += 1;
@@ -118,7 +137,7 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
         const hold = storedAuditHold(settings?.values);
         const opinions = [...after.values()];
         result.released += (await heldBy(tx, approvals)).filter((itemId) => releasable(items.get(itemId)!.aiReason,
-          opinions.filter((row) => row.itemId === itemId).map((row) => row.decision), hold)).length;
+          opinions.filter((row) => row.itemId === itemId), hold)).length;
         return;
       }
       // 승인이 보류를 풀 수 있는 제품의 세대를 의견을 적기 전에 잡는다 — 제품 id 순
@@ -130,7 +149,8 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
         .values(accepted.map((row) => ({ ...row, source })))
         .onConflictDoUpdate({ target: [productAuditSecondOpinions.itemId, productAuditSecondOpinions.model], set: {
           productId: sql`excluded.product_id`, decision: sql`excluded.decision`, confidence: sql`excluded.confidence`,
-          reason: sql`excluded.reason`, inputHash: sql`excluded.input_hash`, source: sql`excluded.source`, createdAt: sql`now()`,
+          reason: sql`excluded.reason`, inputHash: sql`excluded.input_hash`, source: sql`excluded.source`,
+          promptVersion: sql`excluded.prompt_version`, createdAt: sql`now()`,
         } })
         // 새로 넣은 줄은 xmax 가 0 이다 — 덮어쓴 줄과 가른다
         .returning({ inserted: sql<boolean>`(xmax = 0)` });
@@ -140,26 +160,28 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
       }
       // 잠근 뒤 다시 본다 — 지금 그 항목으로 보류됐고, 덮어쓴 뒤의 의견과 지금 설정으로는 둘째 문이 맞지 않는다
       const held = await heldBy(tx, approvals.filter((row) => locked.has(row.productId)));
-      if (!held.length) return;
-      const hold = await lockedAuditHold(tx);
-      const opinions = await tx.select({ itemId: productAuditSecondOpinions.itemId, decision: productAuditSecondOpinions.decision })
-        .from(productAuditSecondOpinions).where(inArray(productAuditSecondOpinions.itemId, held));
-      for (const itemId of held) {
-        const item = items.get(itemId)!;
-        if (!releasable(item.aiReason, opinions.filter((row) => row.itemId === itemId).map((row) => row.decision), hold)) continue;
-        if (await releaseAuditHold(tx, { productId: item.productId, slug: item.slug!, actor: `import:${source}`, reason: "second_approve" })) {
-          result.released += 1;
+      if (held.length) {
+        const hold = await lockedAuditHold(tx);
+        const opinions = await tx.select({ itemId: productAuditSecondOpinions.itemId, model: productAuditSecondOpinions.model,
+          decision: productAuditSecondOpinions.decision }).from(productAuditSecondOpinions).where(inArray(productAuditSecondOpinions.itemId, held));
+        for (const itemId of held) {
+          const item = items.get(itemId)!;
+          if (!releasable(item.aiReason, opinions.filter((row) => row.itemId === itemId), hold)) continue;
+          if (await releaseAuditHold(tx, { productId: item.productId, slug: item.slug!, actor: `import:${source}`, reason: "second_approve" })) {
+            result.released += 1;
+          }
         }
       }
+      if (options.lease) await assertJobLeaseAtWallTime(tx, options.lease);
     };
     await (options.dryRun ? database.transaction(run, { accessMode: "read only" }) : database.transaction(run));
   }
   return result;
 }
 
-/** 덮어쓴 뒤의 의견으로 보류의 둘째 문(holdGate)이 더는 맞지 않는가 — 맞지 않으면 승인이 보류를 푼다 */
-function releasable(reason: string | null, decisions: string[], hold: AuditHoldSettings): boolean {
-  return !holdGate({ reason, secondReject: decisions.includes("reject"), secondApprove: decisions.includes("approve") }, hold);
+/** 덮어쓴 뒤의 의견으로 보류의 둘째 문(holdGate — 모델별 거절 규칙 포함)이 더는 맞지 않는가 — 맞지 않으면 승인이 보류를 푼다 */
+function releasable(reason: string | null, opinions: { model: string; decision: string }[], hold: AuditHoldSettings): boolean {
+  return !holdGate({ reason, opinions }, hold);
 }
 
 /** 이 승인 줄들 가운데 지금 그 항목으로 보류된 제품의 항목 id */

@@ -21,6 +21,8 @@ import { ensureSchema, resetTables } from "./setup";
 // admission 거절과 runner readback 만 본다. 슬롯 허가·종료 증거가 아니다.
 // 바꾸는 것은 CLI·게이트웨이 호출뿐이고 control·job·도메인 TX 는 실제 PostgreSQL 로 돈다.
 const spies = vi.hoisted(() => ({ agent: vi.fn(), gateway: vi.fn() }));
+// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/agent-review", async (load) => ({ ...await load<typeof import("@/lib/crawl/agent-review")>(), reviewWithAgent: spies.agent }));
 vi.mock("@/lib/crawl/agent-review-gateway", async (load) => ({ ...await load<typeof import("@/lib/crawl/agent-review-gateway")>(),
   reviewWithGateway: spies.gateway }));

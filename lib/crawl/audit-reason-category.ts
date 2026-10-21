@@ -20,8 +20,11 @@ export const AUDIT_REASON_CATEGORIES = {
 export type AuditReasonCategory = keyof typeof AUDIT_REASON_CATEGORIES;
 export const AUDIT_REASON_KEYS = Object.keys(AUDIT_REASON_CATEGORIES) as AuditReasonCategory[];
 
-/** 위에서부터 처음 맞는 갈래. 낱말 경계(\b)로 'shopping' 같은 이웃 낱말을 막는다 */
-const RULES: [Exclude<AuditReasonCategory, "other">, RegExp][] = [
+/**
+ * 위에서부터 처음 맞는 갈래. 낱말 경계(\b)로 'shopping' 같은 이웃 낱말을 막는다.
+ * SQL 도 이 글로 같은 갈래를 가른다(audit-second-opinions.ts auditReasonCategorySql — \b 를 Postgres 의 \y 로만 바꾼다)
+ */
+export const AUDIT_REASON_RULES: readonly (readonly [Exclude<AuditReasonCategory, "other">, RegExp])[] = [
   ["login", /\b(log[- ]?in|sign[- ]?in|password|credentials?|authentication (?:screen|page|wall)|access portal)\b/],
   ["placeholder", /\b(placeholder|coming soon|waitlist|wait list|loading\.{0,3}|under construction|blank page|empty page|(?:page ?text|readme) (?:is|are) empty|no (?:visible )?page ?text|only (?:shows|contains|displays|has)? ?(?:a |the )?(?:title|styling|css|javascript bundle|error)|shows only (?:a |the )?(?:title|styling|error)|enable javascript|javascript bundle|styling (?:code|content)|deployment[_ ]not[_ ]found|deployment could not be found|404|not found|error (?:page|message|spinner)|no visible (?:content|ui|interface|description)|health ?check|parked domain|default (?:template|page)|starter template|boilerplate|update available)\b/],
   ["platform", /\b(nuget|npm(?:js)?|pypi|crates\.io|rubygems|maven|docker hub|package registr(?:y|ies)|app store listing|play store listing|telegram|discord|whatsapp group|t\.me|accounts\.google|checkout\.stripe|stripe (?:payment|checkout)|buy me a coffee|ko-fi|patreon|product hunt|third[- ]party (?:platform|site|service|listing)|listing site|directory(?:\/benchmark)? (?:site|listing|page)|curated directory|catalog of (?:tools|services|links)|aggregat(?:es|or|ing)|resource catalog|hosting provider|marketplace listing|github (?:profile|repository) page|gumroad|boosty|copr|video (?:hosting|platform)|youtube|bilibili|vimeo|marketplace (?:page|listing)|catalog\/benchmark|landscape page|lists many|curation platform|prompt library)\b/],
@@ -35,7 +38,7 @@ export function classifyAuditReason(reason: string | null | undefined): AuditRea
   if (!reason) return "other";
   // 모델이 쓰는 줄 바꿈 없는 하이픈(U+2011)·긴 하이픈을 보통 하이픈으로
   const text = reason.toLowerCase().replace(/[\u2010-\u2015]/g, "-");
-  return RULES.find(([, pattern]) => pattern.test(text))?.[0] ?? "other";
+  return AUDIT_REASON_RULES.find(([, pattern]) => pattern.test(text))?.[0] ?? "other";
 }
 
 /** 갈래마다 몇 건이고 어느 항목인지 — 화면의 칩 수와 거르기가 같은 셈을 쓴다 */

@@ -12,6 +12,8 @@ import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-
 import { finishAuditCampaign, loadAuditInput, markAuditNoSource, pendingAuditItems, recordAuditResult,
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
+import { runQwenSecondOpinions } from "@/lib/crawl/audit-second-opinion-auto";
+import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
@@ -37,6 +39,22 @@ const REVIEWER_DOWN = new Set(["not_configured", "auth", "missing_cli", "model_u
 export async function auditPublishedProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
   await sweepAuditHolds(ctx, settings.auditHold);
+  /*
+   * Qwen-v2 단계(감사 두 번째 의견·공개분 2차 거르기, audit-second-opinion-auto.ts)는 감사 묻기와 나란히 돈다 — gpu3090 에 바로 한 번에
+   * 한 호출이라 게이트웨이 자리를 쓰지 않고, 새 호출은 30초 안에만 시작해 틱(예산 70초)을 늘리지 않는다. 앞에 두면 감사 묻기가
+   * 60초 호출을 시작할 여유(TICK_MS)를 잃고, 뒤에 두면 감사가 도는 동안 영영 차례가 오지 않는다. 이 단계는 잡을 실패시키지 않는다.
+   * 감사 묻기가 끝나도(실패해도) 단계가 끝날 때까지 기다린 뒤 틱을 닫는다 — 쓰기가 lease 를 놓은 뒤에 남지 않게.
+   */
+  const opinions = runQwenSecondOpinions(ctx, settings);
+  try {
+    return await askAuditCampaign(ctx, settings);
+  } finally {
+    await opinions;
+  }
+}
+
+/** 진행 중인 감사에서 아직 답을 못 받은 제품을 묻는다 */
+async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings): Promise<JobOutcome<null>> {
   // 쓸기에 쓴 시간은 틱에서 빼지 않는다(쓸기는 SWEEP_MS 안이고, 러너 예산 70초가 바깥 상한이다)
   const startedAt = Date.now();
   const campaign = await runningAuditCampaign();

@@ -129,7 +129,8 @@ export const productAuditAttempts = pgTable("product_audit_attempts", {
 /**
  * 감사 답에 대한 다른 모델의 두 번째 의견(0110) — 감사 모델이 아닌 모델(2026-10-21 grok CLI 일괄)이 같은 항목을 다시 본 것.
  *
- * 감사 잡이 부르지 않는다. 밖에서 돌린 결과(JSONL)를 scripts/ops/import-audit-second-opinions.ts 가 옮겨 적는다 — 같은 (항목, 모델)은
+ * grok 은 밖에서 돌린 결과(JSONL)를 scripts/ops/import-audit-second-opinions.ts 가 옮겨 적고, gpu3090 Qwen-v2 는 감사 잡 틱마다 받아 적는다
+ * (lib/crawl/audit-second-opinion-auto.ts, source qwen-v2-auto) — 둘 다 같은 쓰기(audit-second-opinion-import.ts)를 지난다. 같은 (항목, 모델)은
  * 덮어써서 다시 넣어도 한 줄이다. 두 번째 모델도 거절했으면 사유 갈래와 상관없이 보류의 까닭이 된다(lib/crawl/product-audit-hold.ts).
  * 승인·판단 보류는 보류하지도 풀지도 않는다 — 감사 화면이 '갈림'으로 보여 사람이 본다.
  * item_id 가 JSONL 의 auditResultId(product_audit_items.id)다. 항목이 지워지면 함께 지운다.
@@ -144,6 +145,8 @@ export const productAuditSecondOpinions = pgTable("product_audit_second_opinions
   reason: text("reason"),
   inputHash: varchar("input_hash", { length: 128 }),
   source: varchar("source", { length: 40 }).notNull(),
+  /** 그 의견을 받은 글의 판(0111) — Qwen-v2 자동 의견(qwen-direct-review.ts QWEN_V2_PROMPT_VERSION). grok 일괄은 비어 있다 */
+  promptVersion: varchar("prompt_version", { length: 40 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("product_audit_second_opinions_item_model_idx").on(table.itemId, table.model),
