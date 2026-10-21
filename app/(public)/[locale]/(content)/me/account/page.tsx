@@ -3,6 +3,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { DeleteAccount, ExportData, LogoutButton, ProfileForm } from "@/components/me/AccountForms";
 import { MeLoginRequired } from "@/components/me/MeLoginRequired";
+import { MeNow } from "@/components/me/MeNow";
 import { SessionList } from "@/components/me/SessionList";
 import { hashSessionToken, isOpaqueToken, PUBLIC_SESSION_COOKIE } from "@/lib/domain/accounts/session";
 import { githubStarEnabled } from "@/lib/domain/github-integration/flags";
@@ -28,7 +29,7 @@ export default async function MeAccountPage() {
   const date = (value: string) => formatDate(value, now, locale);
   const star: "active" | "needs_reconnect" | "revoked" | "none" = view.github?.state ?? "none";
   return (
-    <div className="me-account">
+    <MeNow><div className="me-account">
       <section className="me-box" id="profile" aria-labelledby="me-account-profile">
         <h2 className="me-box-h" id="me-account-profile">{t("account.profile")}</h2>
         <ProfileForm csrfToken={session.csrfToken} displayName={view.displayName} nextNameChangeAt={view.nextNameChangeAt} />
@@ -95,6 +96,6 @@ export default async function MeAccountPage() {
       </section>
 
       <LogoutButton csrfToken={session.csrfToken} />
-    </div>
+    </div></MeNow>
   );
 }

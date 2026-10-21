@@ -2,18 +2,16 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { ProductIcon } from "@/components/ProductIcon";
 import { FeedbackDeliveryStatus } from "@/components/product-detail/FeedbackDeliveryStatus";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatDate, formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import type { OpinionView } from "@/lib/me/opinions";
-import { initialOf } from "./MeAvatar";
 import { MeIcon } from "./MeIcon";
 
 type Filter = "all" | "accepted" | "held" | "rejected" | "replied";
 const FILTERS: Filter[] = ["all", "accepted", "held", "rejected", "replied"];
-const TILES = ["hue", "note", "day", "form", "invoice", "paper"] as const;
-const tileOf = (id: number) => `var(--tile-${TILES[Math.abs(id) % TILES.length]})`;
 const matches = (item: OpinionView, filter: Filter) => filter === "all" || (filter === "replied" ? item.reply !== null : item.reviewState === filter);
 
 /** 의견 탭 목록 — 상태는 색만이 아니라 글자로도 적고, 검토 중·숨김은 누가 보는지와 이유를 한 줄로 밝힌다 */
@@ -50,13 +48,13 @@ export function OpinionList({ opinions }: { opinions: OpinionView[] }) {
             </button>
           ))}
         </div>
-        <p className="me-note">{t("opinions.tiedNote")}</p>
+        <p className="me-aside">{t("opinions.tiedNote")}</p>
       </div>
       {shown.length ? (
         <ul className="me-olist">
           {shown.map((item) => (
             <li key={item.id} className="me-orow">
-              <span className="me-mi" style={{ background: tileOf(item.productId) }} aria-hidden="true">{initialOf(item.productName)}</span>
+              <span className="me-mi" aria-hidden="true"><ProductIcon name={item.productName} ogImage={item.ogImage?.startsWith("/") ? item.ogImage : null} size={44} category={item.category} /></span>
               <div className="me-orow-h">
                 <Link prefetch={false} className="me-orow-n" href={localePath(locale, `/p/${item.slug}`)}>{item.productName}</Link>
                 <span className="me-state me-state-kind">{detail(item.kind === "feature" ? "feedback.kind.featureShort" : `feedback.kind.${item.kind}`)}</span>
@@ -68,8 +66,8 @@ export function OpinionList({ opinions }: { opinions: OpinionView[] }) {
                   <p className="me-quote-t">{item.title}</p>
                   <p className="me-quote">{item.body}</p>
                 </>}
-                {item.reviewState === "held" && <p className="me-note">{t("opinions.heldNote")}</p>}
-                {item.reviewReason && <p className="me-note">{reason(item.reviewReason)}</p>}
+                {item.reviewState === "held" && <p className="me-aside">{t("opinions.heldNote")}</p>}
+                {item.reviewReason && <p className="me-aside">{reason(item.reviewReason)}</p>}
                 <p className="me-meta">
                   <time dateTime={item.createdAt}>{formatDate(item.createdAt, now, locale)}</time>
                   {(item.deliveryState !== "local_only" || item.githubIssueUrl) && <span><FeedbackDeliveryStatus feedback={item} compact /></span>}
@@ -84,7 +82,7 @@ export function OpinionList({ opinions }: { opinions: OpinionView[] }) {
             </li>
           ))}
         </ul>
-      ) : <p className="me-note me-filtered-empty" role="status">{t("opinions.filteredEmpty")}</p>}
+      ) : <p className="me-aside me-filtered-empty" role="status">{t("opinions.filteredEmpty")}</p>}
       {opinions.length >= 100 && <p className="me-hint">{t("opinions.limit")}</p>}
     </section>
   );

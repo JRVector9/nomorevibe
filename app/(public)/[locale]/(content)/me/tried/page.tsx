@@ -1,5 +1,6 @@
 import { MePlaceholder } from "@/components/me/MePlaceholder";
 import { TriedList } from "@/components/me/TriedList";
+import { MeNow } from "@/components/me/MeNow";
 import { publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
 import { listUserReactions } from "@/lib/domain/reactions/repository";
@@ -17,5 +18,5 @@ export default async function MeTriedPage() {
   if (!productReactionsEnabled()) return <MePlaceholder />;
   const session = await getMeSession();
   const initial = session ? await listUserReactions(session.user.id).catch(() => null) : null;
-  return <TriedList account={session ? { csrfToken: session.csrfToken, userId: session.user.id } : null} initial={initial} authEnabled={publicUserAuthEnabled()} />;
+  return <MeNow><TriedList account={session ? { csrfToken: session.csrfToken, userId: session.user.id } : null} initial={initial} authEnabled={publicUserAuthEnabled()} /></MeNow>;
 }

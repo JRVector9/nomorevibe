@@ -1,16 +1,18 @@
 import "server-only";
 import { and, asc, desc, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { products } from "@/lib/db/schema";
+import { products, rateLimits } from "@/lib/db/schema";
 import { emailLoginChallenges, publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { githubAuthFlows, githubUserConnections } from "@/lib/db/github-user-schema";
 import { githubMakerAuthContexts } from "@/lib/db/github-binding-schema";
 import { githubStarOperationReceipts, githubStarOperations } from "@/lib/db/github-star-schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
+import { githubIssueOutbox } from "@/lib/db/github-issue-outbox-schema";
 import {
   emailOutbox, makerReplies, notifications, notificationSettings, productMakerMembers, productReactions, userFollows, userSavedProducts,
 } from "@/lib/db/me-schema";
 import { PublicAuthError } from "@/lib/domain/accounts/errors";
+import { lockPublicEmail } from "@/lib/domain/accounts/repository";
 import { rateLimit } from "@/lib/rate-limit";
 import { DISPLAY_NAME_CHANGE_DAYS } from "./contract";
 import { DELETED_DISPLAY_NAME, displayNameChangeAvailableAt, maskEmail, normalizeDisplayName, sessionPublicId, isSessionPublicId } from "./profile";
@@ -106,10 +108,11 @@ export async function revokeOtherSessions(userId: number, currentTokenHash: stri
   });
 }
 
-/** 내 데이터 받기(개인정보보호법 열람) — 토큰·해시·암호화 값은 넣지 않는다. 하루 2번 */
+/** 내 데이터 받기(개인정보보호법 열람) — 토큰·해시·암호화 값은 넣지 않는다. 하루 2번 — 읽다가 실패하면 그 한 번은 돌려준다 */
 export async function exportAccount(userId: number) {
+  const key = `me-export:${userId}`;
   return onPrimary(async () => {
-    await limit(`me-export:${userId}`, 2, 24 * RATE_HOUR, "export_rate_limited");
+    await limit(key, 2, 24 * RATE_HOUR, "export_rate_limited");
     return db.transaction(async (tx) => {
       const [user] = await tx.select().from(publicUsers).where(eq(publicUsers.id, userId));
       if (!user || user.deletedAt) throw new PublicAuthError(401, "login_required");
@@ -140,6 +143,17 @@ export async function exportAccount(userId: number) {
       const memberships = await tx.select({ slug: products.slug, name: products.name, role: productMakerMembers.role, method: productMakerMembers.method, verifiedAt: productMakerMembers.verifiedAt,
         recheckAt: productMakerMembers.recheckAt, revokedAt: productMakerMembers.revokedAt, revokedReason: productMakerMembers.revokedReason })
         .from(productMakerMembers).innerJoin(products, eq(products.id, productMakerMembers.productId)).where(eq(productMakerMembers.userId, userId));
+      // 계정 삭제가 지우는 내 줄은 모두 싣는다 — 알림 메일 발송함과 사이트에서 누른 GitHub 스타(중복 열쇠·요청 id·lease 는 빼고)
+      const emails = await tx.select({ kind: emailOutbox.kind, payload: emailOutbox.payload, state: emailOutbox.state, createdAt: emailOutbox.createdAt, sentAt: emailOutbox.sentAt })
+        .from(emailOutbox).where(eq(emailOutbox.userId, userId)).orderBy(desc(emailOutbox.createdAt));
+      const stars = await tx.select({ slug: products.slug, repositoryId: githubStarOperations.repositoryId, productRepoUrl: githubStarOperations.productRepoUrl,
+        state: githubStarOperations.state, desiredStarred: githubStarOperations.desiredStarred, dispatchedAt: githubStarOperations.dispatchedAt, observedAt: githubStarOperations.observedAt })
+        .from(githubStarOperations).leftJoin(products, eq(products.id, githubStarOperations.productId)).where(eq(githubStarOperations.userId, userId))
+        .orderBy(asc(githubStarOperations.repositoryId));
+      const starRequests = await tx.select({ slug: products.slug, repositoryId: githubStarOperationReceipts.repositoryId, starred: githubStarOperationReceipts.starred,
+        result: sql<string | null>`${githubStarOperationReceipts.response}->>'state'`, createdAt: githubStarOperationReceipts.createdAt })
+        .from(githubStarOperationReceipts).leftJoin(products, eq(products.id, githubStarOperationReceipts.productId)).where(eq(githubStarOperationReceipts.userId, userId))
+        .orderBy(desc(githubStarOperationReceipts.createdAt));
       return {
         exportedAt: new Date().toISOString(),
         profile: { displayName: user.displayName, createdAt: user.createdAt, displayNameChangedAt: user.displayNameChangedAt },
@@ -147,27 +161,43 @@ export async function exportAccount(userId: number) {
           verifiedAt: row.verifiedAt, createdAt: row.createdAt, lastUsedAt: row.lastUsedAt })),
         githubStarConnection: github ?? null,
         sessions, saved, reactions, feedback, makerReplies: replies, follows, notifications: inbox,
-        notificationSettings: settings ?? null, makerMemberships: memberships,
+        notificationSettings: settings ?? null, makerMemberships: memberships, notificationEmails: emails, githubStars: stars, githubStarRequests: starRequests,
       };
-    }, { isolationLevel: "repeatable read", accessMode: "read only" });
+    }, { isolationLevel: "repeatable read", accessMode: "read only" }).catch(async (error: unknown) => {
+      // 받지 못한 내려받기(끊김·장애 조치·시간 초과)가 하루 한도를 쓰지 않게 — 돌려주지 못해도 원래 오류를 낸다
+      await db.update(rateLimits).set({ count: sql`greatest(${rateLimits.count} - 1, 0)` }).where(eq(rateLimits.key, key)).catch(() => undefined);
+      throw error;
+    });
   });
 }
 
 /**
  * 계정 삭제 — 한 트랜잭션. 사람 행은 남기고(댓글·답장 작성자 FK 에 ON DELETE 가 없다) 이름을 '탈퇴한 사용자'로 바꾼 뒤
  * 로그인 수단·세션·GitHub 연결·저장·팔로·알림·메일·메이커 확인을 지운다. 신원이 지워지므로 같은 GitHub·이메일로 다시 오면 새 계정이다.
- * 써봤어요와 공개되지 않은 의견·답장도 지운다. 공개한 의견·메이커 답장만 «탈퇴한 사용자» 이름으로 남는다.
+ * 써봤어요와 공개되지 않은 의견·답장도 지운다. 공개한 의견·메이커 답장만 «탈퇴한 사용자» 이름으로 남고, 그 의견의 보내지 않은 GitHub 전달은 멈춘다.
+ * public_users 행은 지우지 않는다(소프트 삭제) — 써봤어요 FK(ON DELETE SET NULL)와 주인 CHECK 가 맞지 않아, 행을 지우려면 써봤어요를 먼저 지워야 한다.
  */
 export async function deleteAccount(userId: number, confirmation: unknown): Promise<void> {
   await onPrimary(async () => {
     await limit(`me-delete:${userId}`, 5, RATE_HOUR, "delete_rate_limited");
     await db.transaction(async (tx) => {
+      // 이메일 로그인과 같은 순서로 잠근다 — 그 이메일의 로그인 흐름 잠금이 먼저, 계정 행이 다음(lockPublicEmail).
+      // 거꾸로면 코드 확인(챌린지 FOR UPDATE → 계정 FOR SHARE)과 교착한다. 이메일 신원은 새 계정을 만들 때만 생기므로 먼저 읽어도 된다
+      const emails = (await tx.select({ email: publicIdentities.subject }).from(publicIdentities)
+        .where(and(eq(publicIdentities.userId, userId), eq(publicIdentities.provider, "email")))).map((row) => row.email).sort();
+      for (const email of emails) await lockPublicEmail(tx, email);
       // 로그인 흐름(FOR SHARE)과 줄을 세운다 — 삭제가 끝난 뒤에는 그 계정으로 새 세션을 만들지 못한다
       const [user] = await tx.select({ displayName: publicUsers.displayName, deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
       if (!user || user.deletedAt) throw new PublicAuthError(401, "login_required");
       if (typeof confirmation !== "string" || confirmation.trim() !== user.displayName) throw new PublicAuthError(400, "delete_confirmation_mismatch");
-      const emails = (await tx.select({ email: publicIdentities.subject }).from(publicIdentities)
-        .where(and(eq(publicIdentities.userId, userId), eq(publicIdentities.provider, "email")))).map((row) => row.email);
+
+      // 아직 보내지 않은 GitHub 이슈 전달은 멈춘다 — 본문에 그때의 닉네임이 박혀 있어 탈퇴 뒤 GitHub 에 그 이름이 새로 올라간다.
+      // 이미 보낸 것(sending·uncertain)은 결과만 확인한다. 발송 워커와 같은 순서(발송함 → 의견)로 잠근다(lib/domain/feedback/github/outbox.ts)
+      const stopped = await tx.update(githubIssueOutbox).set({ state: "cancelled", lastErrorCode: "author_deleted", leaseToken: null, leaseExpiresAt: null, updatedAt: new Date() })
+        .where(and(inArray(githubIssueOutbox.state, ["queued", "retry_wait"]),
+          inArray(githubIssueOutbox.feedbackId, tx.select({ id: productFeedback.id }).from(productFeedback).where(eq(productFeedback.authorUserId, userId)))))
+        .returning({ feedbackId: githubIssueOutbox.feedbackId });
+      if (stopped.length) await tx.update(productFeedback).set({ deliveryState: "cancelled" }).where(inArray(productFeedback.id, stopped.map((row) => row.feedbackId)));
 
       await tx.delete(publicSessions).where(eq(publicSessions.userId, userId));
       await tx.delete(githubMakerAuthContexts).where(eq(githubMakerAuthContexts.actorUserId, userId));

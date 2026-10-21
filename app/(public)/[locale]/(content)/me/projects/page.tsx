@@ -1,5 +1,6 @@
 import { MeLoginRequired } from "@/components/me/MeLoginRequired";
 import { ProjectsView } from "@/components/me/projects/ProjectsView";
+import { MeNow } from "@/components/me/MeNow";
 import { meMetadata } from "@/lib/me/metadata";
 import { getMeSession } from "@/lib/me/session";
 
@@ -11,5 +12,5 @@ export default async function MeProjectsPage({ searchParams }: PageProps<"/[loca
   const session = await getMeSession();
   if (!session) return <MeLoginRequired tab="projects" />;
   const { view } = await searchParams;
-  return <ProjectsView userId={session.user.id} csrfToken={session.csrfToken} view={view === "inbox" ? "inbox" : "default"} />;
+  return <MeNow><ProjectsView userId={session.user.id} csrfToken={session.csrfToken} view={view === "inbox" ? "inbox" : "default"} /></MeNow>;
 }

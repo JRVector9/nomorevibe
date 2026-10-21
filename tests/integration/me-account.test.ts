@@ -5,7 +5,8 @@ import { products, rateLimits } from "@/lib/db/schema";
 import { emailLoginChallenges, publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { githubAuthFlows, githubUserConnections } from "@/lib/db/github-user-schema";
 import { githubProductBindings } from "@/lib/db/github-binding-schema";
-import { githubStarOperations } from "@/lib/db/github-star-schema";
+import { githubIssueOutbox } from "@/lib/db/github-issue-outbox-schema";
+import { githubStarOperationReceipts, githubStarOperations } from "@/lib/db/github-star-schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
 import {
   emailOutbox, makerReplies, notifications, notificationSettings, productMakerMembers, productReactions, userFollows, userSavedProducts,
@@ -67,6 +68,16 @@ const routes = {
   summary: () => import("@/app/api/me/summary/route"),
 };
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
+/** 잠금을 기다리는 다른 연결이 생길 때까지 — 두 트랜잭션의 차례를 정해 겹치게 한다 */
+async function untilLockWait() {
+  for (let attempt = 0; attempt < 250; attempt += 1) {
+    const [row] = await db.execute<{ waiting: number }>(sql`select count(*)::int as waiting from pg_stat_activity
+      where datname = current_database() and wait_event_type = 'Lock' and pid <> pg_backend_pid()`);
+    if (Number(row.waiting) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("no_lock_wait");
+}
 
 describe("닉네임 바꾸기 — PATCH /api/me/profile", () => {
   it("바꾸면 다음 변경일이 30일 뒤, 그 안에는 409 이고 이름은 그대로다", async () => {
@@ -256,6 +267,9 @@ async function seedAccount(name: string, githubId: number, email: string) {
   await db.insert(githubAuthFlows).values({ id: crypto.randomUUID(), purpose: "star", actorUserId: owner.id, stateHash: String(githubId % 10).repeat(64), browserNonceHash: "b".repeat(64),
     encryptedPkceVerifier: `sealed-pkce-${name}`, expiresAt: new Date(Date.now() + 600_000) });
   await db.insert(githubStarOperations).values({ userId: owner.id, repositoryId: githubId, productId: tool.id, productRepoUrl: `https://github.com/${name}/tool` });
+  const receiptOperation = crypto.randomUUID();
+  await db.insert(githubStarOperationReceipts).values({ userId: owner.id, operationId: receiptOperation, repositoryId: githubId, productId: tool.id, starred: true, expectedRevision: 0,
+    response: { state: "starred", revision: 1, repositoryId: githubId, operationId: receiptOperation, pending: false, productRepoUrl: `https://github.com/${name}/tool` } });
   await db.insert(emailLoginChallenges).values({ id: crypto.randomUUID(), email, codeHash: "c".repeat(64), browserNonceHash: "d".repeat(64), expiresAt: new Date(Date.now() + 600_000) });
   await db.insert(userSavedProducts).values({ userId: owner.id, productId: tool.id });
   await db.insert(userFollows).values({ userId: owner.id, targetType: "product", targetKey: String(tool.id) });
@@ -274,7 +288,7 @@ async function seedAccount(name: string, githubId: number, email: string) {
     productRepoUrl: `https://github.com/${name}/tool`, installationId: githubId, consentedByUserId: owner.id });
   const login = await session(owner.id, { provider: "github", deviceLabel: "Mac · Chrome" });
   const second = await session(owner.id, { provider: "email" });
-  return { owner, tool, other, login, second, anonymous, accountOnly, feedback, reply };
+  return { owner, tool, other, login, second, anonymous, accountOnly, feedback, reply, receiptOperation };
 }
 
 const countFor = async (userId: number) => ({
@@ -283,6 +297,7 @@ const countFor = async (userId: number) => ({
   github: (await db.select().from(githubUserConnections).where(eq(githubUserConnections.userId, userId))).length,
   flows: (await db.select().from(githubAuthFlows).where(eq(githubAuthFlows.actorUserId, userId))).length,
   stars: (await db.select().from(githubStarOperations).where(eq(githubStarOperations.userId, userId))).length,
+  starRequests: (await db.select().from(githubStarOperationReceipts).where(eq(githubStarOperationReceipts.userId, userId))).length,
   saved: (await db.select().from(userSavedProducts).where(eq(userSavedProducts.userId, userId))).length,
   follows: (await db.select().from(userFollows).where(eq(userFollows.userId, userId))).length,
   notifications: (await db.select().from(notifications).where(eq(notifications.userId, userId))).length,
@@ -320,7 +335,14 @@ describe("내 데이터 받기 — POST /api/me/export", () => {
     expect(data.notificationSettings).toMatchObject({ makerReply: "instant" });
     expect(data.notificationSettings).not.toHaveProperty("emailIdentityId");
     expect(data.makerMemberships).toEqual([expect.objectContaining({ slug: "alice-tool", role: "owner" })]);
-    for (const secret of [alice.login.tokenHash, alice.second.tokenHash, alice.login.token, "sealed-access-alice", "sealed-refresh-alice", "sealed-pkce-alice", "bob", bob.login.tokenHash]) {
+    // 계정 삭제가 지우는 줄은 받기에도 있다 — 알림 메일 발송함·GitHub 스타
+    expect(data.notificationEmails).toEqual([expect.objectContaining({ kind: "maker_reply", state: "pending", payload: { to: "alice@example.com" } })]);
+    expect(data.notificationEmails[0]).not.toHaveProperty("dedupeKey");
+    expect(data.githubStars).toEqual([expect.objectContaining({ slug: "alice-tool", repositoryId: 101, productRepoUrl: "https://github.com/alice/tool", state: "unknown" })]);
+    expect(data.githubStars[0]).not.toHaveProperty("leaseOwner");
+    expect(data.githubStarRequests).toEqual([expect.objectContaining({ slug: "alice-tool", repositoryId: 101, starred: true, result: "starred" })]);
+    for (const secret of [alice.login.tokenHash, alice.second.tokenHash, alice.login.token, "sealed-access-alice", "sealed-refresh-alice", "sealed-pkce-alice", "bob", bob.login.tokenHash,
+      "mail:alice", alice.receiptOperation]) {
       expect(text).not.toContain(secret);
     }
     expect((await exportCall(alice.login)).status).toBe(200);
@@ -339,6 +361,25 @@ describe("내 데이터 받기 — POST /api/me/export", () => {
     expect(await db.select().from(rateLimits).where(eq(rateLimits.key, `me-export:${alice.owner.id}`))).toEqual([]);
     expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
     expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
+  });
+
+  it("읽다가 실패한 내려받기는 하루 2번에서 빼지 않는다", async () => {
+    const { POST } = await routes.exportData();
+    const alice = await seedAccount("alice", 101, "alice@example.com");
+    // 한도를 센 뒤 읽기가 실패한다(장애 조치·연결 리셋 대신, 읽을 표 하나를 잠깐 치운다)
+    await db.execute(sql`alter table email_outbox rename to email_outbox_away`);
+    let failed: Response;
+    try {
+      failed = await POST(call("/api/me/export", alice.login, { method: "POST" }));
+    } finally {
+      await db.execute(sql`alter table email_outbox_away rename to email_outbox`);
+    }
+    expect(failed.status).not.toBe(200);
+    const [bucket] = await db.select().from(rateLimits).where(eq(rateLimits.key, `me-export:${alice.owner.id}`));
+    expect(bucket.count).toBe(0);
+    expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
+    expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(200);
+    expect((await POST(call("/api/me/export", alice.login, { method: "POST" }))).status).toBe(429);
   });
 });
 
@@ -384,7 +425,7 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     const [stored] = await db.select().from(publicUsers).where(eq(publicUsers.id, alice.owner.id));
     expect(stored.displayName).toBe("탈퇴한 사용자");
     expect(stored.deletedAt).not.toBeNull();
-    expect(await countFor(alice.owner.id)).toEqual({ identities: 0, sessions: 0, github: 0, flows: 0, stars: 0, saved: 0, follows: 0, notifications: 0, settings: 0, outbox: 0, makers: 0, reactions: 0 });
+    expect(await countFor(alice.owner.id)).toEqual({ identities: 0, sessions: 0, github: 0, flows: 0, stars: 0, starRequests: 0, saved: 0, follows: 0, notifications: 0, settings: 0, outbox: 0, makers: 0, reactions: 0 });
     expect(await db.select().from(emailLoginChallenges).where(eq(emailLoginChallenges.email, "alice@example.com"))).toHaveLength(0);
     // 써봤어요는 이 브라우저 열쇠가 있어도 모두 지운다(공용 PC 쿠키로 다시 읽히지 않게) — 그 답장도
     expect(await db.select().from(productReactions).where(eq(productReactions.id, alice.anonymous.id))).toHaveLength(0);
@@ -455,6 +496,73 @@ describe("계정 삭제 — POST /api/me/delete", () => {
     const started = await login.startEmailLogin({ email: "race@example.com", browserNonce, ip: "192.0.2.9" }, async (email) => { messages.push(email); return "accepted"; });
     await expect(login.verifyEmailLogin({ challengeId: started.challengeId, code: messages[0].code, browserNonce })).rejects.toMatchObject({ status: 401 });
     expect(await db.select().from(publicSessions).where(and(eq(publicSessions.userId, alice.owner.id), isNull(publicSessions.revokedAt)))).toHaveLength(1);
+  });
+
+  it("이메일 코드 확인과 겹쳐도 교착하지 않는다 — 삭제가 그 이메일의 로그인 잠금을 계정 행보다 먼저 잡는다", async () => {
+    const { POST } = await routes.remove();
+    const { lockPublicEmail } = await import("@/lib/domain/accounts/repository");
+    const alice = await seedAccount("alice", 101, "alice@example.com");
+    // 코드 확인(consumeEmailChallenge)의 차례 그대로 — 이메일 잠금 → 챌린지 FOR UPDATE → (삭제가 시작된 뒤) 계정 FOR SHARE
+    let release!: () => void;
+    const proceed = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => { locked = resolve; });
+    const verify = db.transaction(async (tx) => {
+      await lockPublicEmail(tx, "alice@example.com");
+      await tx.select().from(emailLoginChallenges).where(eq(emailLoginChallenges.email, "alice@example.com")).for("update");
+      locked();
+      await proceed;
+      const [found] = await tx.select({ deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, alice.owner.id)).for("share");
+      return found;
+    });
+    await holding;
+    const deletion = POST(call("/api/me/delete", alice.login, { method: "POST", body: { confirm: "alice" } }));
+    await untilLockWait();
+    release();
+    const [verified, deleted] = await Promise.allSettled([verify, deletion]);
+    // 확인이 먼저 끝나고(아직 탈퇴 전), 삭제는 그 뒤에 이어서 끝난다 — 어느 쪽도 40P01 로 죽지 않는다
+    expect(verified).toMatchObject({ status: "fulfilled", value: { deletedAt: null } });
+    expect(deleted.status === "fulfilled" ? deleted.value.status : deleted.reason).toBe(200);
+    const [stored] = await db.select().from(publicUsers).where(eq(publicUsers.id, alice.owner.id));
+    expect(stored.deletedAt).not.toBeNull();
+    expect(await db.select().from(emailLoginChallenges).where(eq(emailLoginChallenges.email, "alice@example.com"))).toHaveLength(0);
+  });
+
+  it("보내지 않은 GitHub 이슈 전달은 멈춘다 — 본문의 옛 닉네임이 탈퇴 뒤 GitHub 에 올라가지 않게", async () => {
+    const { POST } = await routes.remove();
+    const alice = await seedAccount("alice", 101, "alice@example.com");
+    const bob = await seedAccount("bob", 202, "bob@example.com");
+    const outbox = (feedbackId: string, productId: number, state: "queued" | "retry_wait" | "sending") => ({
+      feedbackId, productId, repositoryId: 101, repositoryFullName: "alice/tool", repositoryUrl: "https://github.com/alice/tool", installationId: 101, bindingRevision: 1,
+      feedbackRequestHash: "f".repeat(64), payloadTitle: "질문", payloadBody: "작성자: alice", payloadHash: "a".repeat(64), dispatchId: crypto.randomUUID(), state,
+      leaseToken: crypto.randomUUID(), leaseExpiresAt: new Date(Date.now() + 30_000),
+    });
+    const accepted = async (owner: { id: number }, productId: number, tag: string) => (await db.insert(productFeedback).values({ productId, authorUserId: owner.id,
+      requestId: crypto.randomUUID(), requestHash: tag.repeat(64), normalizedBodyHash: tag.repeat(64), kind: "question", title: `${tag} 질문`, body: `${tag} 본문`,
+      serviceDisclosureConsent: true, reviewState: "accepted", deliveryState: "queued" }).returning())[0];
+    const retrying = await accepted(alice.owner, alice.tool.id, "4");
+    const sending = await accepted(alice.owner, alice.tool.id, "5");
+    const [queuedRow] = await db.insert(githubIssueOutbox).values(outbox(alice.feedback.id, alice.tool.id, "queued")).returning();
+    const [retryRow] = await db.insert(githubIssueOutbox).values(outbox(retrying.id, alice.tool.id, "retry_wait")).returning();
+    const [sendingRow] = await db.insert(githubIssueOutbox).values(outbox(sending.id, alice.tool.id, "sending")).returning();
+    const [bobRow] = await db.insert(githubIssueOutbox).values(outbox(bob.feedback.id, bob.tool.id, "queued")).returning();
+
+    expect((await POST(call("/api/me/delete", alice.login, { method: "POST", body: { confirm: "alice" } }))).status).toBe(200);
+    const state = async (id: string) => (await db.select().from(githubIssueOutbox).where(eq(githubIssueOutbox.id, id)))[0];
+    for (const row of [queuedRow, retryRow]) expect(await state(row.id)).toMatchObject({ state: "cancelled", lastErrorCode: "author_deleted", leaseToken: null, leaseExpiresAt: null });
+    // 이미 보낸 것은 결과를 확인해야 해서 그대로, 다른 계정의 것도 그대로다
+    expect(await state(sendingRow.id)).toMatchObject({ state: "sending" });
+    expect(await state(bobRow.id)).toMatchObject({ state: "queued" });
+    const delivery = async (id: string) => (await db.select({ deliveryState: productFeedback.deliveryState }).from(productFeedback).where(eq(productFeedback.id, id)))[0].deliveryState;
+    expect(await delivery(alice.feedback.id)).toBe("cancelled");
+    expect(await delivery(retrying.id)).toBe("cancelled");
+    expect(await delivery(sending.id)).toBe("queued");
+    // 발송 워커는 멈춘 줄을 다시 잡지 않는다
+    vi.stubEnv("GITHUB_FEEDBACK_DELIVERY_ENABLED", "true");
+    const { claimFeedbackOutbox } = await import("@/lib/domain/feedback/github/outbox");
+    await db.update(githubIssueOutbox).set({ leaseExpiresAt: null });
+    const claimed = await claimFeedbackOutbox();
+    expect(claimed?.id).toBe(bobRow.id);
   });
 
   it("삭제 뒤 남은 요청은 거절되고, 닉네임 바꾸기와 겹쳐도 결과는 둘 중 하나로 맞는다", async () => {
