@@ -54,6 +54,7 @@ import { taglineKoField } from "./korean-tagline";
 import { namesNeedingReview } from "./name-review";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { HIDDEN_BY_DEFAULT_CATEGORIES } from "./visibility";
+import { releaseAuditHold } from "@/lib/crawl/product-audit-hold";
 export { findRepositoryProduct } from "./repository-identity";
 
 /** 제품 데이터 접근 — 도메인 바깥에서 DB를 직접 만지지 않도록 여기로 모은다 */
@@ -91,7 +92,7 @@ export type ListOptions = {
   /** 건너뛸 개수. 목록이 상한에서 조용히 잘리지 않으려면 뒤를 볼 수 있어야 한다 */
   offset?: number;
   /**
-   * 공개 목록의 거르기 — 연속 실패로 닿지 않는 제품(notDown)과, 주인 없는 개인 프로필(listedByDefault)을 뺀다.
+   * 공개 목록의 거르기 — 연속 실패로 닿지 않는 제품(notDown)과, 주인 없는 개인 프로필(listedByDefault), 감사 보류(notAuditHeld)를 뺀다.
    * 공개 목록만 켠다 — 어드민은 그것을 봐야 처리한다
    */
   excludeDown?: boolean;
@@ -151,6 +152,21 @@ export const listedByDefault = sql`(${products.category} not in (${hiddenCategor
 export function listedByDefaultAs(alias: string) {
   const column = (name: string) => sql`${sql.identifier(alias)}.${sql.identifier(name)}`;
   return sql`(${column("category")} not in (${hiddenCategories}) or ${column("source")} <> 'crawler' or ${column("claimed_at")} is not null)`;
+}
+
+/**
+ * 감사 보류가 아니다(0110) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은 사람이 정할 때까지 공개 목록에 싣지 않는다
+ * (lib/crawl/product-audit-hold.ts). 상태는 그대로라 상세 주소는 열리고 색인은 indexing.ts 가 막는다.
+ *
+ * 공개 목록이 지나는 길(listConditions 의 excludeDown)과 그 길을 쓰지 않는 공개 읽기 — 발견·RSS·신규 띠(이 파일), 인기 구간(popular.ts),
+ * 급상승(star-growth.ts), 홈 집계(home-pulse.ts), 화제(social/talk.ts), 순위(ranking/view.ts·season-entries.ts), 분야 새 등재 수
+ * (jobs/me/notifications.ts·me/follows.ts) — 가 listedByDefault 옆에 함께 건다. listedByDefault 에 섞지 않는 까닭: 저장 목록(me/saved.ts)과
+ * 별 관측은 그 조건을 쓰지만 보류된 제품을 빼지 않는다 — 저장한 사람은 상세로 계속 갈 수 있다.
+ * notDown 에도 섞지 않는다 — 팔로 알림이 not notDown 을 '내려감'으로 읽는다(보류는 알리지 않는다).
+ */
+export const notAuditHeld = sql`${products.auditHoldAt} is null`;
+export function notAuditHeldAs(alias: string) {
+  return sql`${sql.identifier(alias)}.${sql.identifier("audit_hold_at")} is null`;
 }
 
 /**
@@ -348,7 +364,7 @@ async function listConditions({ statuses, category, query, builder, observedTool
   const conditions = [inArray(products.status, statuses)];
   if (slugs) conditions.push(slugs.length ? inArray(products.slug, [...slugs]) : sql`false`);
   if (excludeSlugs?.length) conditions.push(notInArray(products.slug, [...excludeSlugs]));
-  if (excludeDown) conditions.push(notDown, listedByDefault);
+  if (excludeDown) conditions.push(notDown, listedByDefault, notAuditHeld);
   if (needsEditor) conditions.push(introNeedsEditor);
   if (goneOnly) conditions.push(repoGone);
   if (repoMissing) conditions.push(inArray(products.repoStatus, ["not_found", "empty"]));
@@ -399,7 +415,7 @@ const repositoryBornAt = sql`(
 
 /** 신규 띠와 모두 보기의 기간·공개·저장소·스타 조건을 함께 정한다. 생성일 미상은 비교에서 빠진다. */
 function newRepositoryConditions(since: Date, until: Date, minStars: number) {
-  return and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault,
+  return and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault, notAuditHeld,
     eq(products.repoStatus, "ok"),
     sql`btrim(${products.repoUrl}) ~* '^https?://(www[.])?github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$'`,
     sql`${products.stars} >= ${minStars}`,
@@ -539,7 +555,7 @@ export async function getRisingRank(slug: string): Promise<number | null> {
 export async function listRecentlyDiscovered(limit: number): Promise<(Product & { repoGone: boolean; taglineKo: string | null })[]> {
   return db.query.products.findMany({
     extras: { ...repoGoneField, ...taglineKoField },
-    where: and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault, repoCheckedForNewest),
+    where: and(inArray(products.status, ["verified", "seeded"]), notDown, listedByDefault, notAuditHeld, repoCheckedForNewest),
     orderBy: [sql`${listedAt} desc`, products.slug],
     limit,
   });
@@ -825,6 +841,9 @@ export async function setStatusWithAudit(input: {
       reason: input.reason,
       metadata: { ...input.metadata, status: input.status },
     });
+    // 차단·해제는 사람(또는 사람이 정한 규칙)이 그 제품을 정한 것이다 — 감사 보류는 같은 커밋에서 푼다. 해제면 다시 보류하지도 않는다
+    await releaseAuditHold(tx, { productId: input.id, slug: input.slug, actor: input.actor ?? "admin",
+      reason: input.action === "admin.product.unban" ? "unbanned" : "banned" });
     return true;
   };
   // Existing transactions acquire the stages at their entry, before any domain lock.

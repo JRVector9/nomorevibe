@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, boolean, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, real, boolean, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import type { ReviewOutcome, ReviewSource } from "@/lib/crawl/agent-review-contract";
 
 /**
@@ -12,6 +12,7 @@ import type { ReviewOutcome, ReviewSource } from "@/lib/crawl/agent-review-contr
  *
  * 이 표들은 "찾아낸 것"만 적는다. 감사는 아무것도 내리지 않는다 — crawl_candidates.state 도
  * products.status 도 쓰지 않는다. 내리는 것은 사람이 한 건씩 누른다(/admin/audit).
+ * 확신 높은 거부는 사람이 정할 때까지 공개 목록에서만 뺀다(0110 감사 보류, lib/crawl/product-audit-hold.ts).
  *
  * 1차 심사 기록(crawl_review_attempts)을 쓰지 않는 이유: 그 표는 enforce 발행 문의 장부다.
  * 재사용 대조(matchingSource)가 automatic·현재 모델·판정 시각·문서·스캔까지 맞아야 하고,
@@ -84,6 +85,11 @@ export const productAuditItems = pgTable("product_audit_items", {
   humanNote: varchar("human_note", { length: 500 }),
   /** 유지 판정이 다음 감사에서 이 제품을 빼 주는 기한 */
   keepUntil: timestamp("keep_until"),
+  /**
+   * 사람이 이 항목의 보류를 풀었다(0110) — 차단 해제·모두 풀기. 사람 결정(human_decision)은 아니지만 같은 항목으로 다시 보류하지 않는다.
+   * 유지·내리기는 human_decision 이 남으므로 따로 적지 않는다(lib/crawl/product-audit-hold.ts)
+   */
+  holdReleasedAt: timestamp("hold_released_at"),
 }, (table) => [
   uniqueIndex("product_audit_items_campaign_product_idx").on(table.campaignId, table.productId),
   // 잡이 다음 일감을 고른다 — 아직 답을 받지 못한 것만
@@ -118,5 +124,32 @@ export const productAuditAttempts = pgTable("product_audit_attempts", {
   index("product_audit_attempts_item_idx").on(table.itemId),
 ]);
 
+/**
+ * 감사 답에 대한 다른 모델의 두 번째 의견(0110) — 감사 모델이 아닌 모델(2026-10-21 grok CLI 일괄)이 같은 항목을 다시 본 것.
+ *
+ * 감사 잡이 부르지 않는다. 밖에서 돌린 결과(JSONL)를 scripts/ops/import-audit-second-opinions.ts 가 옮겨 적는다 — 같은 (항목, 모델)은
+ * 덮어써서 다시 넣어도 한 줄이다. 두 번째 모델도 거절했으면 사유 갈래와 상관없이 보류의 까닭이 된다(lib/crawl/product-audit-hold.ts).
+ * 승인·판단 보류는 보류하지도 풀지도 않는다 — 감사 화면이 '갈림'으로 보여 사람이 본다.
+ * item_id 가 JSONL 의 auditResultId(product_audit_items.id)다. 항목이 지워지면 함께 지운다.
+ */
+export const productAuditSecondOpinions = pgTable("product_audit_second_opinions", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").notNull().references(() => productAuditItems.id, { onDelete: "cascade" }),
+  productId: integer("product_id").notNull(),
+  model: varchar("model", { length: 160 }).notNull(),
+  decision: varchar("decision", { length: 20 }).$type<ReviewOutcome["decision"]>().notNull(),
+  confidence: real("confidence"),
+  reason: text("reason"),
+  inputHash: varchar("input_hash", { length: 128 }),
+  source: varchar("source", { length: 40 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("product_audit_second_opinions_item_model_idx").on(table.itemId, table.model),
+  index("product_audit_second_opinions_product_idx").on(table.productId),
+  check("product_audit_second_opinions_decision_check", sql`${table.decision} in ('approve', 'reject', 'needs_review')`),
+  check("product_audit_second_opinions_reason_check", sql`char_length(${table.reason}) <= 2000`),
+]);
+
 export type ProductAuditCampaign = typeof productAuditCampaigns.$inferSelect;
 export type ProductAuditItem = typeof productAuditItems.$inferSelect;
+export type ProductAuditSecondOpinion = typeof productAuditSecondOpinions.$inferSelect;

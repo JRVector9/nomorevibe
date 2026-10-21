@@ -100,7 +100,9 @@ export async function listFollows(userId: number): Promise<FollowList> {
         .from(products).where(inArray(products.id, productIds)) : [],
       makerKeys.length ? makerProjects(makerKeys) : [],
       categoryRows.length ? db.select({ category: products.category, total: sql<number>`count(*)::int` }).from(products)
+        // 감사 보류는 공개 목록에 없다 — 분야의 새 등재로도 세지 않는다(repository.ts notAuditHeld)
         .where(and(inArray(products.status, ["seeded", "verified"]), inArray(products.category, categoryRows.map((item) => item.category)),
+          isNull(products.auditHoldAt),
           sql`coalesce(${products.verifiedAt}, ${products.createdAt}) >= now() - interval '7 days'`)).groupBy(products.category) : [],
     ]);
     const slugs = productRows.map((row) => row.slug);

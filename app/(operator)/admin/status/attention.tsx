@@ -375,6 +375,13 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "내릴 후보", href: ACTION_LINKS.audit },
     });
   }
+  if (attention && attention.auditHeld > 0) {
+    actions.push({
+      key: "audit-held", tone: "hold", count: attention.auditHeld, unit: "건", title: "감사 보류로 목록에서 빠진 제품이 사람을 기다립니다",
+      detail: <>AI 감사가 높은 확신으로 &ldquo;제품 아님&rdquo;이라 해 공개 목록에서만 뺀 것 — 차단이 아닙니다. 내리거나 유지로 정해야 풀립니다.</>,
+      action: { label: "보류 중", href: ACTION_LINKS.auditHeld },
+    });
+  }
   if (attention?.auditCampaign && !attention.auditCampaign.current) {
     actions.push({
       key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, unit: "건", title: "발행분 감사가 멈춰 있습니다",

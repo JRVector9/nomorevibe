@@ -12,7 +12,7 @@ import {
   type ProductStarObservationRun,
 } from "@/lib/db/product-star-observation-schema";
 import { taglineKo } from "./korean-tagline";
-import { aiLevelPredicate, listedByDefault, notDown, repoGone } from "./repository";
+import { aiLevelPredicate, listedByDefault, notAuditHeld, notDown, repoGone } from "./repository";
 import { publicRead } from "./public-reads";
 import {
   latestStarObservationCycleAt,
@@ -178,7 +178,7 @@ function currentObservationConditions(current: ProductStarObservationRun, policy
     gte(observations.observedAt, current.windowStartsAt), lt(observations.observedAt, current.deadlineAt),
     gte(observations.observedAt, new Date(current.cycleAt.getTime() - policy.collectionWindowHours * HOUR_MS)),
     gte(observations.observedAt, new Date(now.getTime() - policy.maxAgeHours * HOUR_MS)),
-    inArray(products.status, ["verified", "seeded"]), listedByDefault, notDown, sql`not ${repoGone}`,
+    inArray(products.status, ["verified", "seeded"]), listedByDefault, notAuditHeld, notDown, sql`not ${repoGone}`,
     eq(products.repoUrl, observations.repoUrl), eq(products.repoLinkVersion, observations.repoLinkVersion),
     sql`${products.repoStatus} is distinct from 'blocked'`,
   );

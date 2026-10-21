@@ -18,7 +18,7 @@ import { siteOrigin } from "@/lib/site";
 import { talkPublicEnabled } from "@/lib/social/flags";
 import { productTalk } from "@/lib/social/talk";
 
-/** 배지·공유 카드는 공개 목록에 오른 제품에만 — 아무 주소나 등록한 검증 전(unverified) 줄에 내주면 피싱에 쓰인다 */
+/** 배지·공유 카드는 공개 목록에 오른 제품에만 — 아무 주소나 등록한 검증 전(unverified) 줄에 내주면 피싱에 쓰인다. 감사 보류 중인 것도 목록 밖이다 */
 const CATALOG_STATUSES = ["seeded", "verified"] as const;
 
 /**
@@ -28,7 +28,7 @@ const CATALOG_STATUSES = ["seeded", "verified"] as const;
  */
 export async function publicProductIdentity(slug: string) {
   const product = await publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
-  if (!product || !(CATALOG_STATUSES as readonly string[]).includes(product.status)) return null;
+  if (!product || !(CATALOG_STATUSES as readonly string[]).includes(product.status) || product.auditHoldAt) return null;
   return hiddenByDefault(product.category) && product.source === "crawler" && !product.claimedAt ? null : product;
 }
 

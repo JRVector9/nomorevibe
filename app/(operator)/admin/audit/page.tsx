@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { auditDecisionHistory, auditFindingReasons, auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, listAuditFindings, productAuditOverview,
-  type AuditOverview } from "@/lib/crawl/product-audit";
+import { auditDecisionHistory, auditFindingReasons, auditRemovalGroups, GROUP_REMOVE_MAX, GROUP_REMOVE_MIN_CONFIDENCE, heldFindingReasons,
+  listAuditFindings, listHeldFindings, productAuditOverview, type AuditOverview } from "@/lib/crawl/product-audit";
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory,
   type AuditReasonCategory } from "@/lib/crawl/audit-reason-category";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
@@ -11,7 +11,7 @@ import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
 import { AuditFinding } from "./AuditFinding";
 import { AuditGroups } from "./AuditGroups";
-import { CancelAudit, RestartStalledAudit, StartAudit } from "./AuditControls";
+import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
 import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
@@ -28,9 +28,16 @@ export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robot
 /** 한 쪽. 줄마다 사람이 페이지를 열어 보고 누르므로 한 화면에 다 들어갈 필요가 없다 */
 const PAGE_SIZE = 50;
 
-/** 갈래 — 모델이 "아니다"라고 한 것과 "모르겠다"고 한 것. 둘 다 사람이 본다 */
+/**
+ * 갈래 — 모델이 "아니다"라고 한 것과 "모르겠다"고 한 것. 둘 다 사람이 본다.
+ * 보류 중: 감사 보류로 이미 공개 목록에서 빠져 사람을 기다리는 것(회차와 상관없이, 오래된 것부터) — 있으면 이 갈래부터 연다.
+ * 두 모델 모두 거절·갈림: 내릴 후보 중 두 번째 모델(audit-second-opinions.ts)도 거절한 것과, 두 번째 모델은 승인한 것
+ */
 const VIEWS = {
+  held: { label: "보류 중(목록에서 빠짐)", empty: "보류 중인 것이 없습니다." },
   reject: { label: "내릴 후보", empty: "사람이 볼 내릴 후보가 없습니다." },
+  agreed: { label: "두 모델 모두 거절", empty: "두 번째 모델도 거절한 내릴 후보가 없습니다." },
+  split: { label: "갈림 (2차 승인)", empty: "두 번째 모델이 승인한 내릴 후보가 없습니다." },
   needs_review: { label: "판단 보류", empty: "AI가 판단을 미룬 것이 없습니다." },
 } as const;
 type View = keyof typeof VIEWS;
@@ -52,8 +59,6 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   if (!admin) redirect("/admin/login");
 
   const { view: rawView, page: rawPage, tab: rawTab, reason: rawReason } = await searchParams;
-  // `in`은 프로토타입 키까지 통과시킨다 — 제품 관리의 ?filter=constructor 와 같은 함정
-  const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : "reject";
   // 사유 갈래 — 모델의 사유 문장을 낱말로 나눈 것(audit-reason-category). 판단은 바꾸지 않고 묶어 보기만 한다
   const reason: AuditReasonCategory | null = isAuditReasonCategory(rawReason) ? rawReason : null;
   const parsedPage = Number(rawPage ?? 1);
@@ -63,6 +68,10 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const now = new Date();
   const [overview, summary, introPending] = await Promise.all([productAuditOverview(), takedownSummary(), pendingIntroRequestCount()]);
   const { campaign, counts } = overview;
+  // 보류 중인 것이 있으면 그것부터 — 이미 목록에서 빠져 사람을 기다린다.
+  // `in`은 프로토타입 키까지 통과시킨다 — 제품 관리의 ?filter=constructor 와 같은 함정
+  const defaultView: View = overview.held > 0 ? "held" : "reject";
+  const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
   const [queue, introRequests, history, auditHistory] = await Promise.all([
@@ -72,12 +81,20 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "history" ? auditDecisionHistory() : Promise.resolve([]),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
-  const open = { reject: counts.openReject, needs_review: counts.openNeedsReview };
-  const reasonIds = campaign && tab === "audit" ? groupAuditReasons(await auditFindingReasons(campaign.id, view)) : null;
+  const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
+    needs_review: counts.openNeedsReview };
+  // 보류 갈래의 사유는 패널의 갈래별 수에도 쓴다 — 감사 탭이면 늘 읽는다(보류된 것만, 수천 건 안)
+  const heldReasonIds = tab === "audit" ? groupAuditReasons(await heldFindingReasons()) : null;
+  const second = view === "agreed" || view === "split" ? view : undefined;
+  const decision = view === "needs_review" ? "needs_review" : "reject";
+  const reasonIds = !campaign || tab !== "audit" ? null : view === "held" ? heldReasonIds
+    : groupAuditReasons(await auditFindingReasons(campaign.id, decision, second));
   const filteredIds = reason && reasonIds ? reasonIds[reason] : undefined;
+  const paging = { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, ids: filteredIds };
   const [findings, groups] = campaign && tab === "audit" ? await Promise.all([
-    listAuditFindings(campaign.id, view, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, ids: filteredIds }),
-    view === "reject" ? auditRemovalGroups(campaign.id) : Promise.resolve([]),
+    view === "held" ? listHeldFindings(paging) : listAuditFindings(campaign.id, decision, { ...paging, second }),
+    view === "reject" ? auditRemovalGroups(campaign.id)
+      : view === "held" || view === "agreed" ? auditRemovalGroups(campaign.id, view) : Promise.resolve([]),
   ]) : [[], []];
   // 사유의 한국어 — 미리 옮겨 둔 것이 있을 때만(lib/crawl/translations). 없으면 원문과 "번역 대기"
   const korean = findings.length ? await translationsFor(findings.map((finding) => finding.reason)) : new Map<string, string>();
@@ -85,7 +102,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   // 갈래를 바꾸면(view) 사유 거르기는 푼다 — 두 갈래의 사유는 섞여 세지 않는다
   const href = (nextView: View, nextPage = 1, nextReason: AuditReasonCategory | null = nextView === view ? reason : null) => {
     const params = new URLSearchParams({ tab: "audit" });
-    if (nextView !== "reject") params.set("view", nextView);
+    if (nextView !== defaultView) params.set("view", nextView);
     if (nextReason) params.set("reason", nextReason);
     if (nextPage > 1) params.set("page", String(nextPage));
     return `/admin/audit${params.size ? `?${params}` : ""}`;
@@ -110,6 +127,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
             {name === "requests" && (signal ? <b className="admin-nav-badge" data-tone={signal.tone}>{count(summary.pending)}</b> : <span className="td-count">0</span>)}
             {name === "requests" && introPending > 0 && <span className="td-count">소개 {count(introPending)}</span>}
             {name === "audit" && <span className="td-count">{count(auditOpen)}</span>}
+            {name === "audit" && overview.held > 0 && <span className="td-count">보류 {count(overview.held)}</span>}
           </Link>
         ))}
       </nav>
@@ -142,17 +160,19 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       {tab === "audit" && <>
       <p className="max-w-[80ch] text-[13px] leading-[1.7] text-fg-2">
         이미 공개된 제품을 1차 심사 글로 다시 본 결과입니다. 감사는 <b className="font-semibold">아무것도 내리지 않습니다</b> —
-        AI가 제품이 아니라고 했거나 판단을 미룬 것을 여기 모을 뿐입니다. 주소를 열어 확인하고 한 건씩
+        AI가 제품이 아니라고 했거나 판단을 미룬 것을 여기 모을 뿐입니다. 확신이 높고 사유 갈래가 확실한 것(또는 두 번째 모델도 거절한 것)은
+        <b className="font-semibold"> 보류</b> — 차단하지 않고 공개 목록에서만 빼 사람을 기다립니다. 주소를 열어 확인하고 한 건씩
         <b className="font-semibold"> 내리기</b>(차단 — 행은 남고 제품 관리에서 되돌릴 수 있음) 또는
         <b className="font-semibold"> 유지</b>(90일 동안, 페이지가 그대로인 한 다음 감사에서 뺌)를 누릅니다.
         확신이 아주 높은 것은 같은 분류끼리 묶어 이름을 훑고 한 번에 내릴 수 있습니다.
       </p>
 
       <CampaignPanel overview={overview} now={now} />
+      <HoldPanel overview={overview} heldReasons={heldReasonIds} />
 
       {campaign && (
         <>
-          {view === "reject" && <AuditGroups groups={groups} minConfidence={GROUP_REMOVE_MIN_CONFIDENCE} max={GROUP_REMOVE_MAX} />}
+          <AuditGroups groups={groups} minConfidence={GROUP_REMOVE_MIN_CONFIDENCE} max={GROUP_REMOVE_MAX} />
 
           <nav className="flex flex-wrap items-center gap-1.5">
             {(Object.keys(VIEWS) as View[]).map((name) => (
@@ -165,8 +185,9 @@ export default async function AdminAuditPage({ searchParams }: Props) {
             ))}
             <span className="ml-auto flex flex-wrap items-center gap-3">
               <ReasonLanguageToggle done={null} total={null} />
-              {/* 내보내기의 view 는 화면 갈래라 감사의 갈래는 decision 으로 싣는다 */}
-              <a href={`/admin/export?view=audit&format=csv&decision=${view}`} className="text-[13px] text-accent hover:underline">CSV 내보내기</a>
+              {/* 내보내기의 view 는 화면 갈래라 감사의 갈래는 decision 으로 싣는다 — 보류·두 번째 의견 갈래는 내보내지 않는다 */}
+              {(view === "reject" || view === "needs_review") &&
+                <a href={`/admin/export?view=audit&format=csv&decision=${view}`} className="text-[13px] text-accent hover:underline">CSV 내보내기</a>}
             </span>
           </nav>
 
@@ -192,7 +213,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                   {findings.map((finding) => (
                     <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
                       reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label,
-                      reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null }} />
+                      reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
+                      heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
                   ))}
                 </tbody>
               </table>
@@ -318,6 +340,39 @@ function AuditHistory({ rows, korean, now }: { rows: Awaited<ReturnType<typeof a
       </table>
       </ScrollTable>
     </div>
+  );
+}
+
+/**
+ * 감사 보류 — 지금 켜져 있는지, 어떤 문으로 거는지(확신·사유 갈래·두 번째 모델), 보류 중인 수와 갈래별 수. 설정과 '보류 모두 풀기'.
+ * 보류는 차단이 아니다 — 상태는 그대로이고 상세 주소는 열린다. 사람이 유지·내리기·차단 해제하면 풀린다(product-audit-hold.ts)
+ */
+function HoldPanel({ overview, heldReasons }: { overview: AuditOverview; heldReasons: Record<AuditReasonCategory, number[]> | null }) {
+  const { hold, held } = overview;
+  const byCategory = heldReasons ? AUDIT_REASON_KEYS.filter((key) => heldReasons[key].length > 0) : [];
+  return (
+    <section className="flex flex-col gap-3 rounded-[12px] border border-line bg-bg-card p-4" aria-labelledby="audit-hold-title">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 id="audit-hold-title" className="text-[14.5px] font-bold">자동 보류</h2>
+        <span className={`rounded px-1.5 py-0.5 text-[13px] font-semibold ${hold.enabled ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>
+          {hold.enabled ? "켬" : "끔"}</span>
+        <span className="text-[13px] text-fg-3">
+          확신 {hold.minConfidence.toFixed(2)} 이상 · 주인 없는 공개 제품 · 갈래 {hold.categories.length
+            ? hold.categories.map((key) => AUDIT_REASON_CATEGORIES[key].label).join(", ") : "없음"}
+          {" · 두 번째 모델이 승인한 것은 갈래로 걸지 않음"}
+          {hold.secondOpinionReject && " · 두 번째 모델도 거절하면 갈래와 상관없이"}
+        </span>
+      </div>
+      <p className="text-[13px] tabular-nums text-fg-2">
+        보류 중 <b className="font-semibold text-warn">{count(held)}</b>건 — 차단이 아니라 공개 목록·검색·sitemap 에서만 빠졌습니다.
+        {byCategory.length > 0 && <> 갈래별: {byCategory.map((key) => `${AUDIT_REASON_CATEGORIES[key].label} ${count(heldReasons![key].length)}`).join(" · ")}</>}
+      </p>
+      <AuditHoldSettingsForm hold={hold} />
+      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
+        <ReleaseAllHolds held={held} />
+        <span className="text-[13px] text-fg-3">끄거나 문턱·갈래를 좁혀도 이미 건 보류는 남습니다. 모두 풀면 목록에 돌아오고, 감사 거절 목록에는 그대로 남습니다.</span>
+      </div>
+    </section>
   );
 }
 

@@ -20,6 +20,8 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mo
 vi.mock("@/lib/crawl/agent-review", async (load) => ({ ...await load<typeof import("@/lib/crawl/agent-review")>(), reviewWithAgent: mocks.agent }));
 vi.mock("@/lib/crawl/agent-review-gateway", async (load) => ({ ...await load<typeof import("@/lib/crawl/agent-review-gateway")>(),
   reviewWithGateway: mocks.gateway }));
+// 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
+vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit,
   loadAuditInput: mocks.input, recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
 
@@ -157,7 +159,7 @@ it.each([
   expect(await auditPublishedProducts(ctx)).toEqual({ done: false });
   expect(cli.mock.calls).toEqual([[auditInput, { model, timeoutMs, signal: expect.any(AbortSignal) }]]);
   expect(mocks.recordAudit.mock.calls).toEqual([[{ itemId: 7, startedAt: expect.any(Date), provider, model, input: auditInput,
-    ok: true, outcome: verdict.outcome }, ctx.lease]]);
+    ok: true, outcome: verdict.outcome }, ctx.lease, DEFAULT_CRAWL_SETTINGS.auditHold]]);
   expect(mocks.read).toHaveBeenCalledTimes(1);
   expect(ctx.log).toHaveBeenCalledWith("product_audit.reviewed", { campaign: 4, reviewed: 1, failed: 0, noSource: 0 });
 });

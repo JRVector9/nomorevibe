@@ -3,7 +3,82 @@
 import { useActionState } from 'react';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { resultToast, useAdminToast } from '../components/Toast';
-import { cancelAudit, restartStalledAudit, startAudit, type AuditActionState } from './actions';
+import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS } from '@/lib/crawl/audit-reason-category';
+import type { CrawlSettings } from '@/lib/crawl/settings-schema';
+import { cancelAudit, releaseAuditHolds, restartStalledAudit, saveAuditHold, startAudit, type AuditActionState } from './actions';
+
+type AuditHold = CrawlSettings['auditHold'];
+
+/**
+ * 감사 보류의 설정 — 켬/끔, 확신 문턱, 보류하는 사유 갈래, 두 번째 모델 거절. 폼은 화면이 본 값을 함께 보내 그 사이 바뀌었으면 거절된다.
+ * 끄거나 좁혀도 이미 건 보류는 남는다 — 풀려면 옆의 '보류 모두 풀기'다.
+ */
+export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
+  const [state, action, pending] = useActionState<AuditActionState, FormData>(saveAuditHold, null);
+  return (
+    <form action={action} className="flex flex-col gap-2">
+      <input type="hidden" name="expected" value={JSON.stringify(hold)} />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-fg-2">
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" name="enabled" defaultChecked={hold.enabled} className="size-4 accent-accent" />
+          <b className="font-semibold">자동 보류</b>
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          확신
+          <input type="number" name="minConfidence" min={0.8} max={1} step={0.01} defaultValue={hold.minConfidence.toFixed(2)}
+            className="w-[5.5rem] rounded-lg border border-line bg-bg-soft px-2 py-1.5 font-mono text-[13px]" aria-label="확신 문턱" />
+          이상
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" name="secondOpinionReject" defaultChecked={hold.secondOpinionReject} className="size-4 accent-accent" />
+          두 번째 모델도 거절하면 갈래와 상관없이 보류
+        </label>
+      </div>
+      <fieldset className="flex flex-wrap items-center gap-x-3 text-[13px] text-fg-2">
+        <legend className="mb-1 font-semibold text-fg-3">보류하는 사유 갈래</legend>
+        {AUDIT_REASON_KEYS.map((key) => (
+          <label key={key} title={AUDIT_REASON_CATEGORIES[key].hint} className="flex min-h-10 items-center gap-1.5">
+            <input type="checkbox" name="category" value={key} defaultChecked={hold.categories.includes(key)} className="size-4 accent-accent" />
+            {AUDIT_REASON_CATEGORIES[key].label}
+          </label>
+        ))}
+      </fieldset>
+      <div className="flex flex-wrap items-center gap-2">
+        <input name="reason" maxLength={500} placeholder="바꾸는 까닭 (선택, 기록에 남습니다)" aria-label="보류 설정을 바꾸는 까닭"
+          className="min-h-10 min-w-0 flex-1 rounded-lg border border-line bg-bg-soft px-3 py-1.5 text-[13px]" />
+        <button type="submit" disabled={pending}
+          className="min-h-10 rounded-lg border border-accent bg-accent px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50">
+          {pending ? '저장 중…' : '보류 설정 저장'}
+        </button>
+      </div>
+      {state?.error && <p className="text-[13px] text-down">{state.error}</p>}
+      {state?.message && <p className="text-[13px] text-up">{state.message}</p>}
+    </form>
+  );
+}
+
+/** 보류 모두 풀기 — 아무것도 내리지 않고 보류된 제품을 목록에 돌려놓는다. 확인 창에서 까닭을 받는다 */
+export function ReleaseAllHolds({ held }: { held: number }) {
+  const toast = useAdminToast();
+  return (
+    <ConfirmAction tone="neutral" title={`보류 ${held.toLocaleString('ko-KR')}건을 모두 풉니다`} confirmLabel="보류 모두 풀기"
+      summary={<ul>
+        <li>아무것도 내리지 않습니다. 보류된 제품이 공개 목록·검색·sitemap 에 돌아옵니다.</li>
+        <li>푼 항목은 다시 보류하지 않습니다. 감사 거절 목록에는 그대로 남아 사람을 기다립니다.</li>
+        <li>자동 보류가 켜져 있으면 새 감사 답은 다시 보류될 수 있습니다 — 멈추려면 먼저 끄세요.</li>
+      </ul>}
+      note={{ label: '왜 푸는지 (기록에 남습니다)', placeholder: '예: 문턱을 잘못 잡음', optional: true, maxLength: 500 }}
+      onConfirm={async ({ note }) => {
+        const form = new FormData();
+        form.set('note', note ?? '');
+        const result = await releaseAuditHolds(form);
+        toast.show(resultToast(result, { message: result?.message ?? '보류를 풀었습니다', link: { label: '기록 보기', href: '/admin/activity?group=takedown' } }));
+        return result;
+      }}
+      trigger={(open) => <button type="button" onClick={open} disabled={held === 0}
+        className="min-h-10 rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 disabled:opacity-50">보류 모두 풀기</button>} />
+  );
+}
 
 /**
  * 감사를 여는 폼. 이 버튼은 아무것도 내리지 않는다 — 화면에도 그렇게 적는다.

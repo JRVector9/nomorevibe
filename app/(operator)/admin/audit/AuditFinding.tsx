@@ -3,6 +3,7 @@
 import { startTransition, useActionState, useState } from 'react';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { ReasonText } from '../review/ReasonText';
+import type { SecondOpinionView } from '@/lib/crawl/audit-second-opinions';
 import { decideAuditFinding, type AuditActionState } from './actions';
 
 export type AuditFindingView = {
@@ -10,7 +11,15 @@ export type AuditFindingView = {
   reason: string | null; reasonKo: string | null; confidence: number | null; reviewedAt: string | null; owned: boolean;
   /** 사유 갈래 이름(audit-reason-category) — 무엇 때문에 내릴 후보가 됐는지 사유를 펴기 전에 본다 */
   reasonCategory: string;
+  /** 감사 보류로 공개 목록에서 빠진 시각(화면 글자) — 없으면 없음 */
+  heldAt?: string | null;
+  /** 다른 모델의 두 번째 의견 — 없으면 없음 */
+  second?: SecondOpinionView[];
 };
+
+const SECOND_LABELS = { approve: '승인', reject: '거절', needs_review: '판단 보류' } as const;
+/** 'grok-4-fast' → 'grok' — 줄에는 모델 갈래만, 전체 이름은 마우스를 올리면 */
+const modelFamily = (model: string) => model.split(/[-\s/:]/)[0] || model;
 
 /**
  * 감사가 짚은 제품 한 줄. 폼 하나가 제품 하나다 — 고르는 칸도, 모두 고르기도 두지 않는다.
@@ -30,6 +39,15 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
         <div className="flex min-w-0 items-baseline gap-2">
           <a href={finding.url} target="_blank" rel="noreferrer noopener" className="max-w-[60%] shrink-0 truncate font-semibold hover:text-accent">{finding.name}</a>
           {finding.owned && <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
+          {finding.heldAt && <span title={`${finding.heldAt}부터 공개 목록에서 빠짐 — 차단이 아닙니다`}
+            className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 font-semibold text-warn">보류 중(목록에서 빠짐)</span>}
+          {(finding.second ?? []).map((opinion) => (
+            <span key={opinion.model} title={`두 번째 의견 · ${opinion.model}`}
+              className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${opinion.decision === 'reject' ? 'bg-down/10 text-down' : opinion.decision === 'approve' ? 'bg-up/10 text-up' : 'bg-bg-soft text-fg-2'}`}>
+              {modelFamily(opinion.model)}: {SECOND_LABELS[opinion.decision] ?? opinion.decision}
+              {opinion.decision !== 'approve' && typeof opinion.confidence === 'number' ? ` ${opinion.confidence.toFixed(2)}` : ''}
+            </span>
+          ))}
           <span title={finding.url} className="min-w-0 truncate font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>
         </div>
         <div className="mt-1 flex items-start gap-2">

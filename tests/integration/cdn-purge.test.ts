@@ -75,6 +75,19 @@ describe("내려간 제품의 Cloudflare 지우기", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  /** 감사 보류(0110) — 상태가 바뀌지 않아 트리거가 적지 않는다. 보류는 그 상세(p-·og-)와 목록을, 모두 풀기는 목록만(빈 slug) 지운다 */
+  it("감사 보류가 적은 줄을 같은 요청에 싣는다 — 빈 slug 의 줄은 목록만 지운다", async () => {
+    await db.insert(cdnPurges).values([{ slug: "held", reason: "audit_hold" }, { slug: "", reason: "audit_release" }]);
+    const fetch = cloudflare();
+    await purgeRemovedProducts(ctx, { config, fetch });
+    expect(tagsSent(fetch)).toEqual(["p-held", "og-held", "lists"]);
+
+    await db.delete(cdnPurges);
+    await db.insert(cdnPurges).values({ slug: "", reason: "audit_release" });
+    await purgeRemovedProducts(ctx, { config, fetch });
+    expect(tagsSent(fetch, 1)).toEqual(["lists"]);
+  });
+
   it("Cloudflare 가 거절하면 행을 남기고 시도 수와 오류만 적는다", async () => {
     await product("limited", "seeded");
     await db.update(products).set({ status: "banned" });

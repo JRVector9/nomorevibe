@@ -6,13 +6,13 @@ import {
 } from "@/lib/db/schema";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { taglineKo } from "@/lib/domain/products/korean-tagline";
-import { listedByDefault, notDown, repoGone } from "@/lib/domain/products/repository";
+import { listedByDefault, notAuditHeld, notDown, repoGone } from "@/lib/domain/products/repository";
 import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } from "./talk-score";
 
 /**
  * 화제 읽기 — /talk·홈 대표 구획·상세 화제 띠가 읽는다(SNS 화제·홍보 설계 C안).
  *
- * 공개 제품(seeded·verified, 응답 있음, 기본 목록, 저장소 살아 있음)에 이어진 글만 오른다. 관리자가 뺀 저장소는 빠진다.
+ * 공개 제품(seeded·verified, 응답 있음, 기본 목록, 감사 보류 아님, 저장소 살아 있음)에 이어진 글만 오른다. 관리자가 뺀 저장소는 빠진다.
  * 이슈·PR 을 가리킨 글은 상세에서만 보이고 순위에는 세지 않는다 — 저장소 자체가 아니라 그 안의 토론이다.
  */
 /** 상세 화제 기록을 남기는 기간(시안 Q3 권장: 관측 보관과 같은 90일) */
@@ -21,7 +21,7 @@ const RANKED_TARGETS: SocialLinkTarget[] = ["repo", "path"];
 /** products_repository_identity_idx 와 같은 식 — 저장소 키로 제품을 찾을 때 이 인덱스를 탄다(ai-level-refresh.ts) */
 const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
 /** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
-const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, sql`not ${repoGone}`);
+const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
 /**
  * X 게시물은 마지막으로 확인한 뒤 24시간만 보인다 — X 정책은 API 로 최신 상태를 확인한 콘텐츠만 표시하게 한다.

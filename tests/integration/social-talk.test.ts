@@ -84,6 +84,16 @@ it("7일이 지난 글은 목록에서 빠지고, 관리자가 뺀 저장소도 
   expect(old.id).toBeGreaterThan(0);
 });
 
+/** 감사 보류(0110) — 공개 목록에서 빠진 제품의 글은 화제에도 오르지 않는다. 풀리면 돌아온다 */
+it("감사 보류된 제품의 글은 화제에 오르지 않는다", async () => {
+  const held = await product("acme/held", { auditHoldAt: new Date() });
+  const listed = await product("acme/listed");
+  await recordSocialPosts("hn", [hn("1", "acme/held", 300, 90, "2026-10-17T00:00:00Z"), hn("2", "acme/listed", 60, 10, "2026-10-17T00:00:00Z")], NOW);
+  expect((await listTalk({ mode: "week", now: NOW })).entries.map(entry => entry.product.id)).toEqual([listed.id]);
+  await db.update(products).set({ auditHoldAt: null }).where(sql`${products.id} = ${held.id}`);
+  expect((await listTalk({ mode: "week", now: NOW })).entries.map(entry => entry.product.id)).toEqual([held.id, listed.id]);
+});
+
 it("글 뒤 스타는 첫 글 직전 관측부터, 직전 관측이 없으면 첫 글 뒤 첫 관측부터 잰다", async () => {
   const konnect = await product("acme/konnect");
   const doory = await product("acme/doory");

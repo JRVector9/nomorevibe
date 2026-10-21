@@ -206,7 +206,9 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
     }),
     settle("audit", async () => {
       const [counts, items] = await Promise.all([attention, auditPreview()]);
-      return { count: counts.auditRejectsOpen, items };
+      // 보류 중인 것은 이미 목록에서 빠져 사람을 기다린다 — 감사 화면의 '보류 중' 갈래가 오래된 것부터 보인다
+      return { count: counts.auditRejectsOpen, items,
+        note: counts.auditHeld > 0 ? `보류 중(목록에서 빠짐) ${count(counts.auditHeld)}건` : undefined };
     }),
     settle("down", async () => {
       const [total, items] = await Promise.all([downProductCount(), downPreview()]);

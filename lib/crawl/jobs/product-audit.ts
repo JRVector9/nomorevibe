@@ -11,6 +11,7 @@ import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 import { finishAuditCampaign, loadAuditInput, markAuditNoSource, pendingAuditItems, recordAuditResult,
   runningAuditCampaign } from "@/lib/crawl/product-audit";
+import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
@@ -29,14 +30,17 @@ const REVIEWER_DOWN = new Set(["not_configured", "auth", "missing_cli", "model_u
 /**
  * 발행분 감사. 진행 중인 감사에서 아직 답을 못 받은 제품을 1차 심사 글로 묻고 결과를 적는다.
  *
- * 적기만 한다. crawl_candidates.state 도 products.status 도 쓰지 않는다 — 내리는 것은 사람이
- * /admin/audit 에서 한 건씩 누른다.
+ * crawl_candidates.state 도 products.status 도 쓰지 않는다 — 내리는 것은 사람이 /admin/audit 에서 한 건씩 누른다.
+ * 확신 높은 거부만 사람이 볼 때까지 공개 목록에서 뺀다(감사 보류): 답을 적는 커밋에서, 그리고 틱마다 먼저 밀린 것을 조금씩 쓴다.
+ * 쓸기는 모델을 부르지 않으므로 감사가 끝났거나 수집이 꺼져 있어도 돈다 — 스위치는 감사 보류 하나다(product-audit-hold.ts).
  */
 export async function auditPublishedProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  const settings = await getSettings();
+  await sweepAuditHolds(ctx, settings.auditHold);
+  // 쓸기에 쓴 시간은 틱에서 빼지 않는다(쓸기는 SWEEP_MS 안이고, 러너 예산 70초가 바깥 상한이다)
   const startedAt = Date.now();
   const campaign = await runningAuditCampaign();
   if (!campaign) return { done: true };
-  const settings = await getSettings();
   // 수집 스위치는 비상 정지다. 이것을 끄면 발행 문이 멈추는데, 감사가 계속 돌면 끈 순간 그 빈
   // 자리를 감사가 다 차지해 공유 게이트웨이에 오히려 더 많이 보낸다
   if (!settings.enabled) {
@@ -137,7 +141,7 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
       const call = { itemId: item.id, startedAt: callStartedAt, provider: campaign.provider, model: campaign.model, input };
       if (result.ok) {
         reviewed += 1;
-        await recordAuditResult({ ...call, ok: true, outcome: result.outcome }, lease);
+        await recordAuditResult({ ...call, ok: true, outcome: result.outcome }, lease, settings.auditHold);
         continue;
       }
       const reviewerDown = REVIEWER_DOWN.has(result.error);

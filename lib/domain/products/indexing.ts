@@ -13,6 +13,7 @@ import { repoGone } from "./repository";
  * 1. 공개(seeded·verified)가 아니면 색인하지 않는다 — 차단(banned)·미검증(unverified).
  * 2. 처리되지 않은 내려달라는 요청(takedown_requests.handled_at is null)이 있으면 색인하지 않는다. 요청이 오는 즉시다(D1).
  *    둠(dismissed)으로 처리되면 다시 색인한다. 내림(removed)이면 차단돼 1번에 걸린다.
+ *    감사 보류(products.audit_hold_at, 0110)도 같다 — 사람이 정할 때까지 공개 목록에서 빠지고 색인하지 않는다. 유지로 풀리면 다시 색인한다.
  * 3. 주인이 있는 제품(view.ts isUnclaimed 의 반대 — 등록하거나 클레임한 것)은 색인한다.
  *    단 설치형의 저장소가 사라졌다고 확정되면(repository.ts repoGone) 공개 목록이 가리는 것과 같이(notDown) 색인하지 않는다.
  *    웹사이트는 사이트가 살아 있을 수 있어 목록에 남으므로 색인도 남는다.
@@ -37,6 +38,8 @@ import { repoGone } from "./repository";
 
 /** 색인 판단에 드는 값 — 상세의 제품 행(detail-view.ts PublicProduct)에 indexingFields 를 더하면 모두 있다 */
 export type IndexingFacts = Pick<Product, "status" | "source" | "claimedAt" | "accessMode" | "category"> & {
+  /** 감사 보류 시각(lib/crawl/product-audit-hold.ts) — 있으면 색인하지 않는다 */
+  auditHoldAt?: Date | null;
   /** repository.ts repoGoneField 로 읽은 값 */
   repoGone?: boolean;
   /** indexingFields.aiEvidence */
@@ -48,7 +51,7 @@ export type IndexingFacts = Pick<Product, "status" | "source" | "claimedAt" | "a
 /** 위 규칙의 JS 판 — 상세 generateMetadata 의 robots 가 쓴다. 참이면 색인해도 된다 */
 export function productIndexable(product: IndexingFacts): boolean {
   if (product.status !== "seeded" && product.status !== "verified") return false;
-  if (product.takedownPending) return false;
+  if (product.takedownPending || product.auditHoldAt) return false;
   const gone = product.repoGone === true;
   const owned = product.source !== "crawler" || product.claimedAt !== null;
   if (owned) return !(product.accessMode !== "website" && gone);
@@ -88,7 +91,7 @@ export const indexingFields = {
 
 /** 위 규칙의 SQL 판 — products 를 별칭 없이 읽는 쿼리의 where 에 쓴다(sitemap) */
 export const indexableProduct = sql`(${products.status} in ('seeded', 'verified')
-  and not ${takedownPending}
+  and not ${takedownPending} and ${products.auditHoldAt} is null
   and case when ${products.source} <> 'crawler' or ${products.claimedAt} is not null
     then not (${products.accessMode} <> 'website' and ${repoGone})
     else ${products.category} <> 'Profile' and not ${repoGone} and ${confirmedAiEvidence} end)`;
