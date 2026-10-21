@@ -122,7 +122,13 @@ function usageFrom(value: Record<string, unknown>): ReviewUsage {
   return { inputTokens: tokens(usage.prompt_tokens), outputTokens: tokens(usage.completion_tokens) };
 }
 
-function gatewayWire(model: string, serialized: string): string {
+/**
+ * 정책 글(REVIEW_SYSTEM_PROMPT) 뒤에 붙는 한 줄 — 게이트웨이 심사의 기본이다. 다른 글을 붙이는 호출(qwen-direct-review.ts 의 v2 덧붙임)은
+ * 이 줄을 바꿔 끼울 뿐 정책 글은 한 바이트도 바꾸지 않는다
+ */
+export const GATEWAY_SYSTEM_SUFFIX = "\nReturn one JSON object with decision, reason, evidenceIds, confidence.";
+
+function gatewayWire(model: string, serialized: string, systemSuffix: string = GATEWAY_SYSTEM_SUFFIX): string {
   // 꺾쇠를 막아 두어야 증거 안의 글이 구분자를 끝내지 못한다 — CLI 쪽과 같은 처리다
   const prompt = `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
 
@@ -134,7 +140,7 @@ function gatewayWire(model: string, serialized: string): string {
     chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
     messages: [
-      { role: "system", content: `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence.` },
+      { role: "system", content: `${REVIEW_SYSTEM_PROMPT}${systemSuffix}` },
       { role: "user", content: prompt },
     ],
   });
@@ -142,11 +148,19 @@ function gatewayWire(model: string, serialized: string): string {
 
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
+  /**
+   * 게이트웨이 대신 부를 OpenAI 호환 서버(qwen-direct-review.ts — gpu3090 vLLM). baseUrl 은 /v1 까지 적는다.
+   * apiKey 가 없으면 Authorization 을 보내지 않는다(키 없는 서버). 주지 않으면 지금처럼 ABCLLM_BASE_URL·ABCLLM_API_KEY 다
+   */
+  endpoint?: { baseUrl: string; apiKey: string | null };
+  /** 정책 글 뒤에 붙일 글 — 주지 않으면 GATEWAY_SYSTEM_SUFFIX. 정책 글 자체는 늘 그대로다 */
+  systemSuffix?: string;
 }): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
-  const key = process.env.ABCLLM_API_KEY?.trim();
+  const key = options.endpoint ? options.endpoint.apiKey?.trim() || null : process.env.ABCLLM_API_KEY?.trim();
   const model = gatewayModel(options.model);
-  if (!key || !model) return { ok: false, error: "not_configured" };
+  if ((!options.endpoint && !key) || !model) return { ok: false, error: "not_configured" };
+  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/v1/chat/completions`;
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 
@@ -159,10 +173,10 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   };
   let response: Response;
   try {
-    response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+    response = await (options.request ?? fetch)(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: gatewayWire(model, serialized),
+      headers: key ? { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
+      body: gatewayWire(model, serialized, options.systemSuffix),
       // 바깥 신호가 와도 제한 시간은 살아 있어야 한다 — 둘 중 먼저 오는 것으로 끊는다
       signal: timeout,
     });

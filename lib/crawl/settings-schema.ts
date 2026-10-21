@@ -303,6 +303,8 @@ const defaultRising = { freshDays: 7 };
  */
 export const DEFAULT_AUDIT_HOLD: { enabled: boolean; minConfidence: number; categories: AuditReasonCategory[]; secondOpinionReject: boolean } =
   { enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"], secondOpinionReject: true };
+/** Qwen-v2 감사 두 번째 의견·공개분 거르기의 틱당 상한의 끝 — 단계 전체가 30초 안이라(audit-second-opinion-auto.ts) 그보다 많이는 어차피 못 부른다 */
+export const QWEN_AUTO_MAX_PER_TICK = 20;
 /** 문턱의 하한 — 그 아래로 내리면 모델이 틀린 몫(1차 심사 실측 정확도 85%)이 사람 눈 없이 목록에서 빠진다 */
 export const AUDIT_HOLD_MIN_CONFIDENCE_FLOOR = 0.8;
 
@@ -320,6 +322,22 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
+/** 갈림 판가름이 하루(KST 0시부터)에 사람 없이 거부로 닫는 수의 기본 상한 — 사용자 결정(2026-10-21). 넘으면 나머지는 «하루 상한»으로 사람에게 */
+export const SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP = 50;
+
+/**
+ * 2차 갈림 판가름(lib/crawl/gate-split-tiebreak.ts, 2026-10-21) — 관문에서 1차 승인·2차 반대로 갈려 사람에게 넘어온 후보를 gpu3090 Qwen-v2 에
+ * 한 번 더 묻는다. Qwen-v2 가 거부하면 M3 DeepSeek 이 같은 입력으로 따로 확인하고(gate-split-confirm.ts), 둘 다 거부해야 거부로 닫는다.
+ * 승인이면 발행하지 않고 사람 큐 맨 앞에 둔다. perTick 은 2차 잡 한 틱에 Qwen-v2 에 묻는 수의 상한이다.
+ * dailyRejectCap: 하루(KST)에 사람 없이 거부로 닫는 수의 상한(0 이면 닫지 않는다). 빠진 행(이 칸 전의 값)은 기본 50 으로 읽는다 — 안전 상한이라
+ * 기본값이 곧 설계한 값이다. qwenAuto.splitTiebreak 에 둔다(아래 qwenAutoSchema).
+ */
+export const splitTiebreakSchema = z.object({
+  enabled: z.boolean(),
+  perTick: z.number().int().min(1).max(50),
+  dailyRejectCap: z.number().int().min(0).max(500).default(SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP),
+}).strict();
+
 const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 export const reviewVoterSchema = z.object({
@@ -347,6 +365,59 @@ export const auditHoldSchema = z.object({
   /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
   secondOpinionReject: z.boolean(),
 }).strict();
+
+/**
+ * 사람 대기 보류 중 Qwen-v2 가 다시 보는 사유(lib/crawl/held-qwen-retry.ts). 규칙·1차·발행이 사람에게 넘긴 것 중
+ * 모델이 근거를 보고 가를 수 있는 셋이다 — 원본 소실(repo_deleted)·스팸 의심(suspected_spam)은 따로 안전한 길이 있어 넣지 않는다.
+ */
+export const HELD_QWEN_REASONS = ["no_description", "ai_review_exhausted", "ambiguous"] as const;
+export type HeldQwenReason = (typeof HELD_QWEN_REASONS)[number];
+
+/**
+ * 보류 Qwen-v2 재심사의 스위치 — qwenAuto.heldRetry(아래 qwenAutoSchema). 저장된 행에서 따로 읽는다(settings.ts storedQwenAuto) — 칸이 없거나
+ * 깨졌으면 꺼짐. 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(심사 큐의 스위치·운영 스크립트가 setQwenAutoStep 으로만 바꾼다).
+ */
+export const heldQwenRetrySchema = z.object({
+  enabled: z.boolean(),
+  /** 한 틱(1분)에 새로 부르는 수 */
+  perTick: z.number().int().min(1).max(50),
+  /** 한 틱에 이 일에 쓰는 시간(초). 같은 잡의 DeepSeek 위임이 나머지를 쓴다 */
+  budgetSeconds: z.number().int().min(10).max(60),
+  reasons: z.array(z.enum(HELD_QWEN_REASONS)).max(HELD_QWEN_REASONS.length)
+    .refine((reasons) => new Set(reasons).size === reasons.length, { message: "같은 사유를 두 번 넣을 수 없다" }),
+}).strict();
+export type HeldQwenRetrySettings = z.infer<typeof heldQwenRetrySchema>;
+export const DEFAULT_HELD_QWEN_RETRY: HeldQwenRetrySettings = { enabled: false, perTick: 10, budgetSeconds: 40, reasons: [...HELD_QWEN_REASONS] };
+
+/** Qwen-v2 감사 두 번째 의견·공개분 2차 거르기의 한 단계 — 켬/끔과 틱당 상한(audit-second-opinion-auto.ts) */
+export const qwenAutoStepSchema = z.object({ enabled: z.boolean(), perTick: z.number().int().min(1).max(QWEN_AUTO_MAX_PER_TICK) }).strict();
+
+/**
+ * gpu3090 Qwen-v2 자동 단계 넷(2026-10-21) — 모두 기본 꺼짐. 켜는 것은 compare-and-set·확인 창의 사유·작업 로그를 거친다(settings.ts setQwenAutoStep,
+ * 화면 또는 scripts/ops/set-qwen-auto.ts).
+ *  - auditSecondOpinion: 감사 보류 후보에 두 번째 의견을 받아 적는다(감사 잡). 승인은 보류를 풀고 거절은 쓸기가 건다
+ *  - publishedFilter: 공개분 2차의 사람 확인 행을 한 번 더 본다(감사 잡). 승인이면 사람의 '유지'와 같은 길로 닫는다
+ *  - splitTiebreak: 관문 갈림 보류에 세 번째 표를 묻는다(2차 잡). 거부 다수면 거부로 닫는다
+ *  - heldRetry: 소개 없음·재시도 소진·판단 보류를 다시 본다(사람 검토 잡). 거부는 끝내고 승인은 관문으로 되돌린다
+ *
+ * 최상위 칸에 둔 까닭(옛 코드와 새 코드가 함께 도는 배포·되돌림): 이 칸을 모르는 옛 코드는 최상위의 모르는 칸을 버리고(strip) 읽는다 —
+ * auditHold(strict) 안에 두면 옛 코드가 감사 보류를 통째로 깨진 것(꺼짐)으로 읽고, 옛 코드가 저장하면 문턱이 기본값으로 덮인다.
+ * 옛 코드가 저장해 이 칸이 사라지면 새 코드는 없는 것을 꺼짐으로 읽는다(settings.ts storedQwenAuto) — 칸이나 단계가 없거나 깨졌으면 그 단계는 꺼짐이다.
+ */
+export const qwenAutoSchema = z.object({
+  auditSecondOpinion: qwenAutoStepSchema,
+  publishedFilter: qwenAutoStepSchema,
+  splitTiebreak: splitTiebreakSchema,
+  heldRetry: heldQwenRetrySchema,
+}).strict();
+export type QwenAutoSettings = z.infer<typeof qwenAutoSchema>;
+export type QwenAutoStep = keyof QwenAutoSettings;
+export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry"] as const satisfies readonly QwenAutoStep[];
+/** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
+export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
+  auditSecondOpinion: { enabled: false, perTick: 10 }, publishedFilter: { enabled: false, perTick: 10 },
+  splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
+};
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
@@ -447,6 +518,8 @@ export const crawlSettingsSchema = z.object({
    * 감사 화면(/admin/audit)이 따로 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(settings.ts applyPatch).
    */
   auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
+  /** gpu3090 Qwen-v2 가 사람 없이 정하는 자동 단계 넷 — 위 qwenAutoSchema. 크롤 설정 폼·기본값 되돌리기는 건드리지 않는다 */
+  qwenAuto: qwenAutoSchema.default(DEFAULT_QWEN_AUTO),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
@@ -492,6 +565,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   news: defaultNews,
   rising: defaultRising,
   auditHold: DEFAULT_AUDIT_HOLD,
+  qwenAuto: DEFAULT_QWEN_AUTO,
   secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {

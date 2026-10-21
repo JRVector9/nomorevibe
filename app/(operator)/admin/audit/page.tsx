@@ -7,11 +7,16 @@ import { auditDecisionHistory, auditFindingReasons, auditRemovalGroups, GROUP_RE
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupAuditReasons, isAuditReasonCategory,
   type AuditReasonCategory } from "@/lib/crawl/audit-reason-category";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
+import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
+import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
+import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
+import { auditReviewer, auditReviewerLabel, auditReviewerSwitched, QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
 import { AuditFinding } from "./AuditFinding";
 import { AuditGroups } from "./AuditGroups";
-import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit } from "./AuditControls";
+import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit, SwitchAuditModel } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
 import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
@@ -32,15 +37,21 @@ const PAGE_SIZE = 50;
 /**
  * 갈래 — 모델이 "아니다"라고 한 것과 "모르겠다"고 한 것. 둘 다 사람이 본다.
  * 보류 중: 감사 보류로 이미 공개 목록에서 빠져 사람을 기다리는 것(회차와 상관없이, 오래된 것부터) — 있으면 이 갈래부터 연다.
- * 두 모델 모두 거절·갈림: 내릴 후보 중 두 번째 모델(audit-second-opinions.ts)도 거절한 것과, 두 번째 모델은 승인한 것
+ * 두 모델 모두 거절·갈림·의견 다름·Qwen 카탈로그: 내릴 후보를 두 번째 의견(audit-second-opinions.ts)으로 거른 것. 모두 거절은 보류의 까닭이 되는
+ * 두 번째 거절이 있는 것, 갈림은 두 번째 모델이 승인했거나 카탈로그·디렉터리 같아 Qwen 거절(의견·감사 답)을 세지 않은 것, Qwen 거절(카탈로그 예외)은 그 뒤의 것만
  */
 const VIEWS = {
   held: { label: "보류 중(목록에서 빠짐)", empty: "보류 중인 것이 없습니다." },
   reject: { label: "내릴 후보", empty: "사람이 볼 내릴 후보가 없습니다." },
   agreed: { label: "두 모델 모두 거절", empty: "두 번째 모델도 거절한 내릴 후보가 없습니다." },
-  split: { label: "갈림 (2차 승인)", empty: "두 번째 모델이 승인한 내릴 후보가 없습니다." },
+  split: { label: "갈림 (2차 승인·카탈로그)", empty: "두 번째 모델이 승인했거나 카탈로그 같아 Qwen 거절을 세지 않은 내릴 후보가 없습니다.",
+    hint: "두 번째 모델이 승인했거나, 카탈로그·디렉터리 같아 Qwen 거절(두 번째 의견·Qwen 이 낸 감사 답)을 보류의 까닭으로 세지 않은 것 — 사람이 한 건씩 봅니다" },
+  disagree: { label: "Qwen·grok 의견 다름", empty: "Qwen 과 grok 의 의견이 다른 내릴 후보가 없습니다.",
+    hint: "두 모델의 두 번째 의견이 모두 있고 결정이 다른 것" },
+  qwen_catalog: { label: "Qwen 거절(카탈로그 예외)", empty: "카탈로그·디렉터리 같아 Qwen 거절을 보류에서 뺀 내릴 후보가 없습니다.",
+    hint: "Qwen 이 거절했지만(두 번째 의견이든 감사 답이든) 카탈로그·디렉터리 같아(사유 갈래 '남의 플랫폼·목록' 또는 directory·catalog·awesome·curated list·list of) 그 거절로는 보류하지 않은 것" },
   needs_review: { label: "판단 보류", empty: "AI가 판단을 미룬 것이 없습니다." },
-} as const;
+} as const satisfies Record<string, { label: string; empty: string; hint?: string }>;
 type View = keyof typeof VIEWS;
 
 const STATUS: Record<string, string> = { running: "진행 중", done: "끝남", cancelled: "중단됨" };
@@ -83,10 +94,12 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
-    needs_review: counts.openNeedsReview };
+    disagree: counts.openDisagree, qwen_catalog: counts.openQwenCatalog, needs_review: counts.openNeedsReview };
+  // Qwen-v2 자동 단계의 상태 — 감사 탭에서만 읽는다(남은 수를 센다)
+  const qwen = tab === "audit" ? await qwenSecondOpinionStatus({ auditHold: overview.hold, qwenAuto: overview.qwenAuto }) : null;
   // 보류 갈래의 사유는 패널의 갈래별 수에도 쓴다 — 감사 탭이면 늘 읽는다(보류된 것만, 수천 건 안)
   const heldReasonIds = tab === "audit" ? groupAuditReasons(await heldFindingReasons()) : null;
-  const second = view === "agreed" || view === "split" ? view : undefined;
+  const second = (SECOND_OPINION_FILTERS as readonly string[]).includes(view) ? view as SecondOpinionFilter : undefined;
   const decision = view === "needs_review" ? "needs_review" : "reject";
   const reasonIds = !campaign || tab !== "audit" ? null : view === "held" ? heldReasonIds
     : groupAuditReasons(await auditFindingReasons(campaign.id, decision, second));
@@ -170,7 +183,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       </p>
 
       <CampaignPanel overview={overview} now={now} />
-      <HoldPanel overview={overview} heldReasons={heldReasonIds} />
+      <HoldPanel overview={overview} heldReasons={heldReasonIds} qwen={qwen} now={now} />
 
       {campaign && (
         <>
@@ -180,6 +193,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           <nav className="flex flex-wrap items-center gap-1.5">
             {(Object.keys(VIEWS) as View[]).map((name) => (
               <Link key={name} href={href(name)} aria-current={name === view ? "page" : undefined}
+                title={(VIEWS[name] as { hint?: string }).hint}
                 className={`rounded-full border px-2.5 py-1 text-[13px] ${
                   name === view ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"
                 }`}>
@@ -216,6 +230,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                   {findings.map((finding) => (
                     <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
                       reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label,
+                      // 남은 감사 모델 바꾸기 뒤 Qwen 이 낸 답 — 확신이 늘 0.95·1.00 이라 사람이 가려 읽는다
+                      answeredBy: finding.aiProvider === QWEN_AUDIT_PROVIDER ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) : null,
                       reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
                       heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
                   ))}
@@ -350,7 +366,9 @@ function AuditHistory({ rows, korean, now }: { rows: Awaited<ReturnType<typeof a
  * 감사 보류 — 지금 켜져 있는지, 어떤 문으로 거는지(확신·사유 갈래·두 번째 모델), 보류 중인 수와 갈래별 수. 설정과 '보류 모두 풀기'.
  * 보류는 차단이 아니다 — 상태는 그대로이고 상세 주소는 열린다. 사람이 유지·내리기·차단 해제하면 풀린다(product-audit-hold.ts)
  */
-function HoldPanel({ overview, heldReasons }: { overview: AuditOverview; heldReasons: Record<AuditReasonCategory, number[]> | null }) {
+function HoldPanel({ overview, heldReasons, qwen, now }: {
+  overview: AuditOverview; heldReasons: Record<AuditReasonCategory, number[]> | null; qwen: QwenAutoStatus | null; now: Date;
+}) {
   const { hold, held } = overview;
   const byCategory = heldReasons ? AUDIT_REASON_KEYS.filter((key) => heldReasons[key].length > 0) : [];
   return (
@@ -363,13 +381,28 @@ function HoldPanel({ overview, heldReasons }: { overview: AuditOverview; heldRea
           확신 {hold.minConfidence.toFixed(2)} 이상 · 주인 없는 공개 제품 · 갈래 {hold.categories.length
             ? hold.categories.map((key) => AUDIT_REASON_CATEGORIES[key].label).join(", ") : "없음"}
           {" · 두 번째 모델이 승인한 것은 갈래로 걸지 않음"}
-          {hold.secondOpinionReject && " · 두 번째 모델도 거절하면 갈래와 상관없이"}
+          {hold.secondOpinionReject && " · 두 번째 모델도 거절하면 갈래와 상관없이(Qwen 거절은 카탈로그·디렉터리 같은 것에서는 세지 않음)"}
         </span>
       </div>
       <p className="text-[13px] tabular-nums text-fg-2">
         보류 중 <b className="font-semibold text-warn">{count(held)}</b>건 — 차단이 아니라 공개 목록·검색·sitemap 에서만 빠졌습니다.
         {byCategory.length > 0 && <> 갈래별: {byCategory.map((key) => `${AUDIT_REASON_CATEGORIES[key].label} ${count(heldReasons![key].length)}`).join(" · ")}</>}
       </p>
+      {qwen && <QwenStatus status={qwen} now={now} />}
+      {qwen && <div className="flex flex-col gap-1">
+        <QwenAutoStepSwitch key={`a:${JSON.stringify(overview.qwenAuto.auditSecondOpinion)}`} step="auditSecondOpinion"
+          value={overview.qwenAuto.auditSecondOpinion} title="Qwen-v2 감사 두 번째 의견" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
+          enableNotes={["보류 후보마다 gpu3090 Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto). 확신 0.90 이상만 보류에 반영합니다.",
+            "승인은 그 항목의 보류를 풉니다(작업 로그에 남습니다).",
+            hold.secondOpinionReject ? "거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
+              : "두 번째 모델 거절로 보류가 꺼져 있어 거절은 보류의 까닭이 되지 않습니다(기록만 남습니다).",
+            "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다."]} />
+        <QwenAutoStepSwitch key={`p:${JSON.stringify(overview.qwenAuto.publishedFilter)}`} step="publishedFilter"
+          value={overview.qwenAuto.publishedFilter} title="Qwen-v2 공개분 2차 거르기" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
+          enableNotes={["공개분 2차가 사람 확인으로 넘긴 행을 Qwen-v2 로 한 번 더 봅니다(감사 잡).",
+            "승인(확신 0.90 이상)이면 사람의 '유지'와 같은 길로 닫습니다 — 누가 qwen-v2-auto. 내리지도 숨기지도 않습니다.",
+            "거절·판단 보류·낮은 확신이면 행을 그대로 두고 «Qwen-v2도 거절»·«판단 보류»로 사람 확인 목록 앞에 둡니다."]} />
+      </div>}
       {/* 저장된 값이 바뀌면 새로 그린다 — 오류가 나면 고친 값을 그대로 둔다 */}
       <AuditHoldSettingsForm key={JSON.stringify(hold)} hold={hold} />
       <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
@@ -380,9 +413,43 @@ function HoldPanel({ overview, heldReasons }: { overview: AuditOverview; heldRea
   );
 }
 
-/** 지금 감사가 어디까지 왔고, 무엇으로, 누가 열었는지. 새 감사는 여기서 연다 */
+const ERROR_TARGET = { audit: "감사 두 번째 의견", published: "공개분 2차 거르기" } as const;
+
+/**
+ * Qwen-v2 자동 단계(audit-second-opinion-auto.ts) — gpu3090 Qwen 을 바로 불러 감사 거절에 두 번째 의견을 적고, 공개분 2차의 사람 확인 행을 한 번 더 본다.
+ * 켬/끔·틱당 수, 지난 1시간·24시간에 적은 수(공개분은 그중 유지로 닫은 수), 남은 것, 마지막 오류
+ */
+function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
+  const at = (iso: string | null) => iso ? formatListTime(new Date(iso), now) : "—";
+  const onOff = (on: boolean) => <span className={`rounded px-1.5 py-0.5 font-semibold ${on ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>
+    {on ? "켬" : "끔"}</span>;
+  const { audit, published, lastError } = status;
+  const recovered = lastError && status.lastSuccessAt && status.lastSuccessAt > lastError.at;
+  return (
+    <div className="flex flex-col gap-1 border-t border-line pt-3 text-[13px] tabular-nums text-fg-2" aria-label="Qwen-v2 자동 단계">
+      <p><b className="font-semibold">Qwen-v2 두 번째 의견</b> {onOff(audit.enabled)} 틱마다 {count(audit.perTick)}건 ·
+        지난 1시간 {count(audit.lastHour)} · 24시간 {count(audit.lastDay)} · 남은 것 <b className="font-semibold">{count(audit.remaining)}</b></p>
+      <p><b className="font-semibold">공개분 2차 거르기</b> {onOff(published.enabled)} 틱마다 {count(published.perTick)}건 ·
+        지난 1시간 {count(published.lastHour)}(유지로 닫음 {count(published.keptHour)}) · 24시간 {count(published.lastDay)}(유지로 닫음 {count(published.keptDay)}) ·
+        남은 것 <b className="font-semibold">{count(published.remaining)}</b></p>
+      <p className="text-fg-3">{status.model ?? "모델 설정 오류"} · {status.url ?? "주소 설정 오류"} · 글 {status.promptVersion} ·
+        마지막으로 돈 때 {at(status.lastRunAt)}{status.givenUp > 0 && ` · 답을 못 받아 그만 물은 것 ${count(status.givenUp)}건`}</p>
+      {status.endpointBackoff && <p className="text-warn">gpu3090 이 탈 나 {at(status.endpointBackoff.until)}까지 모두 물러납니다
+        (<span className="font-mono">{status.endpointBackoff.code ?? "qwen_unreachable"}</span>, 연속 {count(status.endpointBackoff.failures)}번) —
+        Qwen 직접 감사·두 번째 의견·공개분 거르기·갈림 판가름·보류 재심사가 그동안 묻지 않습니다.</p>}
+      {lastError && <p className={recovered ? "text-fg-3" : "text-warn"}>마지막 오류: <span className="font-mono">{lastError.code}</span>
+        {lastError.detail && ` (${lastError.detail})`} · {ERROR_TARGET[lastError.target] ?? lastError.target} · {at(lastError.at)}
+        {recovered && ` — 그 뒤 ${at(status.lastSuccessAt)}에 다시 받음`}</p>}
+    </div>
+  );
+}
+
+/**
+ * 지금 감사가 어디까지 왔고, 무엇으로, 누가 열었는지. 새 감사는 여기서 연다.
+ * 남은 감사 모델 바꾸기(0112) 뒤면 '모델 전환: 시작 모델 → 지금 모델 (시각)'과 바꾼 뒤 답한 수를 보인다
+ */
 function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }) {
-  const { campaign, counts, paused, stalled } = overview;
+  const { campaign, counts, paused, stalled, switchTo } = overview;
   const running = campaign?.status === "running";
   const percent = counts.total ? Math.floor((counts.reviewed / counts.total) * 100) : 0;
   return (
@@ -404,6 +471,13 @@ function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }
               {campaign.reauditKept && " · 유지 판정 포함"}
             </span>
           </div>
+          {auditReviewerSwitched(campaign) && (
+            <p className="text-[13px] text-fg-2">
+              <b className="font-semibold">모델 전환: {auditReviewerLabel(campaign)} → {auditReviewerLabel(auditReviewer(campaign))}</b>
+              {campaign.switchedAt && ` (${formatListTime(campaign.switchedAt, now)}${campaign.switchedBy ? ` · ${campaign.switchedBy}` : ""})`}
+              {` · 바꾼 뒤 답 ${count(counts.answeredByCurrent ?? 0)}건 · 그 전 답은 그대로`}
+            </p>
+          )}
           <p className="text-[13px] text-fg-2">{campaign.reason}</p>
           <p className="text-[13px] tabular-nums text-fg-2">
             검토 <b className="font-semibold">{count(counts.reviewed)}</b> / {count(counts.total)} ({percent}%) ·
@@ -413,7 +487,14 @@ function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }
             {counts.skipped > 0 && ` · 묻기 전에 내려가 건너뜀 ${count(counts.skipped)}`}
           </p>
           {paused && <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] leading-[1.7] text-fg-2">{paused}</p>}
-          {running && !stalled && <CancelAudit />}
+          {running && !stalled && (
+            <div className="flex flex-wrap items-center gap-2">
+              {switchTo && <SwitchAuditModel campaignId={campaign.id} unanswered={Math.max(0, counts.total - counts.reviewed - counts.failed - counts.skipped)}
+                from={{ ...auditReviewer(campaign), label: auditReviewerLabel(auditReviewer(campaign)) }}
+                to={{ model: switchTo.model, label: auditReviewerLabel(switchTo) }} />}
+              <CancelAudit />
+            </div>
+          )}
         </>
       ) : (
         <p className="text-[13px] text-fg-2">아직 연 감사가 없습니다.</p>

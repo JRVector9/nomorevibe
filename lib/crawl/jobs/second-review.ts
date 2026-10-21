@@ -1,5 +1,7 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import type { JobLease } from "@/lib/jobs/control";
+import { runGateSplitTiebreak } from "@/lib/crawl/gate-split-tiebreak";
 import { getSettings } from "@/lib/crawl/settings";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
@@ -40,6 +42,23 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
   const closed = await closeSettledSecondReviews(undefined, lease);
   const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
   await retryFailedSecondReviews(undefined, lease);
+  /*
+   * 갈림 판가름(gate-split-tiebreak.ts) — 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 한 번 더 묻는다. 게이트웨이가 아닌 곳을 부르므로
+   * 아래 표 심사와 나란히 돌고, 몫(perTick)·시간·실패는 따로 센다. 표 심사가 단계에 막혀도 돈다. 둘 다 끝난 뒤 틱을 닫는다.
+   * gpu3090 은 감사 잡의 Qwen 호출과 같은 서버다 — 판가름은 감사 잡의 두 번째 의견·공개분 거르기와 두 번째 자리 하나를 나눠 쓰고, 물러나기도
+   * 함께한다(qwen-endpoint-backoff.ts). 두 잡이 겹쳐 돌아도 동시 호출은 감사 자리(2~4) + 1
+   */
+  const tiebreak = runGateSplitTiebreak(ctx, lease, { deadlineAt: startedAt + TICK_MS }).then(() => null, (error: unknown) => ({ error }));
+  const outcome = await reviewPendingVotes(ctx, lease, startedAt, { enqueued, closed, reopened })
+    .catch(async (error: unknown) => { await tiebreak; throw error; });
+  const failure = await tiebreak;
+  if (failure) throw failure.error;
+  return outcome;
+}
+
+/** 대기 중인 2차 표를 행에 적힌 모델로 본다 — 위 틱의 나머지다 */
+async function reviewPendingVotes(ctx: JobContext<null>, lease: JobLease, startedAt: number,
+  { enqueued, closed, reopened }: { enqueued: number; closed: number; reopened: number }): Promise<JobOutcome<null>> {
   if (!await canStartLegacySecondReview(lease)) {
     ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
     return { done: false, deferred: "stage_blocked" };

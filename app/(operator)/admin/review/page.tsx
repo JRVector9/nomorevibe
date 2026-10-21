@@ -22,10 +22,14 @@ import { modelHealth } from "@/lib/operations/dashboard";
 import { humanQueueOverview, taglineProgress } from "@/lib/crawl/review-overview";
 import { ReviewStatusChips } from "./ReviewStatusChips";
 import { ReviewStageRail } from "./ReviewStageRail";
+import { splitTiebreakStatus } from "@/lib/crawl/gate-split-tiebreak-read";
+import { SplitTiebreakSwitch } from "./SplitTiebreakSwitch";
 import { ScrollToHash } from "../ScrollToHash";
 import "../status/dashboard/dashboard.css";
 import "./review.css";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
+import { heldQwenBadges, heldQwenRetryStatus } from "@/lib/crawl/held-qwen-retry";
+import { HeldQwenRetryPanel } from "./HeldQwenRetryPanel";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
@@ -70,6 +74,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   // 모델 상태도 갈래 셈을 기다릴 까닭이 없어 같이 띄운다
   const translation = translationProgress().catch(() => null);
   const modelsLoad = modelHealth(settings).catch(() => null);
+  // 갈림 판가름(Qwen-v2) 줄 — 못 읽어도 큐는 그린다
+  const tiebreakLoad = splitTiebreakStatus().catch(() => null);
+  // 보류 Qwen-v2 재심사 줄 — 못 읽어도 큐는 그린다
+  const heldQwenLoad = heldQwenRetryStatus(settings).catch(() => null);
   // 구간·2차 칩·사람 몫의 수는 운영센터와 같은 humanQueueOverview 하나에서 온다 — 두 화면의 숫자가 갈리지 않게
   const [takedowns, causes, overview, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), humanQueueOverview(settings), candidateStateCounts(), publicationChange24h()]);
   const decisions = overview.aiDecisions;
@@ -77,9 +85,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     judge: stateCounts.new, ...overview.stages, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
   // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, taglines] = await Promise.all([
+  const [models, taglines, tiebreak] = await Promise.all([
     modelsLoad,
     taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
+    tiebreakLoad,
   ]);
 
   /*
@@ -100,6 +109,12 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     state: stage ? STAGE_STATE[stage] : detailed ? 'needs_review' : state, offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, ids,
     search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort,
   });
+  // 보류 줄의 Qwen-v2 배지 — 그 줄의 지금 입력에 맞는 마지막 시도(held-qwen-retry.ts). 못 읽으면 배지 없이 그린다
+  const [qwenBadges, heldQwen] = await Promise.all([
+    heldQwenBadges(entries.filter((entry) => entry.candidate.state === 'needs_review').map((entry) => ({ candidateId: entry.candidate.id,
+      reason: entry.candidate.reason, inputHash: entry.inputHash, sourceRevisionHash: entry.sourceRevisionHash }))).catch(() => ({})),
+    heldQwenLoad,
+  ]);
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const listParams = (next: Partial<Record<'state' | 'stage' | 'cause' | 'ai' | 'second' | 'q' | 'updated' | 'sort' | 'page', string | number | undefined>>) => {
     const merged = { state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined,
@@ -177,6 +192,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0}
         inflow={overview.wait?.in24h ?? null} />
       <Link href="/admin#human-review" className="dash-pill">사람 검토 DeepSeek 위임: {settings.humanReview.enabled ? '켜짐 · M3 Ultra' : '꺼짐'} · 설정 →</Link>
+      {/* 사람 큐를 거르는 gpu3090 Qwen-v2 둘 — 관문 갈림 판가름(2차 잡)과 보류 재심사(사람 검토 잡). 배지도 따로다: 판가름 «Qwen-v2 승인 — 발행 후보»,
+          재심사 «Qwen-v2: 승인 의견»·«Qwen-v2: 판단 보류» */}
+      <SplitTiebreakSwitch value={settings.qwenAuto.splitTiebreak} status={tiebreak} />
+      <HeldQwenRetryPanel key={heldQwen ? JSON.stringify([heldQwen.enabled, heldQwen.perTick, heldQwen.budgetSeconds, heldQwen.reasons]) : 'none'} status={heldQwen} />
 
       <TakedownStrip summary={takedowns} />
 
@@ -227,10 +246,13 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
             <h2 className="text-[15px] font-bold text-fg">공개분 확인</h2>
             <PublishedSecondReviews rows={await (async () => {
               const rows = await publishedSecondReviews();
-              const korean = await translationsFor(rows.map((row) => row.secondReason));
+              const korean = await translationsFor(rows.flatMap((row) => [row.secondReason, row.autoOpinion?.reason ?? null]));
               return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
                 confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
-                trigger: row.trigger, signals: row.signals }));
+                trigger: row.trigger, signals: row.signals,
+                // Qwen-v2 가 한 번 더 본 판단(승인이 아닌 것만 여기 남는다) — 배지와 사유
+                qwen: row.autoOpinion ? { decision: row.autoOpinion.decision, confidence: row.autoOpinion.confidence, reason: row.autoOpinion.reason,
+                  reasonKo: row.autoOpinion.reason ? korean.get(row.autoOpinion.reason) ?? null : null } : null }));
             })()} />
           </>
         ) : entries.length === 0 ? (
@@ -242,7 +264,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           </>
         ) : (
           <ReviewConsole key={`${page}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`}
-            entries={entries} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle}
+            entries={entries} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle} qwenBadges={qwenBadges}
             footer={pagination} pageHref={pageHref}
             sort={sort} sortHref={Object.fromEntries(REVIEW_SORTS.map((key) => [key, query({ sort: key || undefined, page: 1 })])) as Record<ReviewSort, string>}
             cause={cause} causes={[{ value: '', label: '갈래 전체', count: causes.total, href: query({ cause: undefined, state: undefined, page: 1 }) },

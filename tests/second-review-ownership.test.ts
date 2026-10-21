@@ -42,7 +42,7 @@ function context(published = false): SecondReviewDomainContext {
     firstAttemptId: published ? null : first.id,
     generationKey: secondReviewGeneration(published ? null : first.id, input, published ? "sample" : "ai_approved"),
     inputHash: published ? "a".repeat(64) : input.inputHash, provider: "abcllm", model: "second-model",
-    secondDecision: null, secondConfidence: null, secondReason: null, errorCode: null, errorDetail: null,
+    secondDecision: null, secondConfidence: null, secondReason: null, autoOpinion: null, errorCode: null, errorDetail: null,
     fallbackForId: null, failureCount: 0, status: "pending", resolvedBy: null, resolution: null,
     createdAt: now, reviewedAt: null, resolvedAt: null };
   return { row, candidate, document, settings: policy, input, first: published ? null : first, root: row,

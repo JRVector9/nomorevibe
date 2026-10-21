@@ -1,7 +1,7 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, not, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
@@ -28,6 +28,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
+import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql, underlyingModelSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -176,8 +177,9 @@ function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): S
 }
 
 function matchingSource(settings: CrawlSettings, delegated = false): SQL {
+  // 보류 Qwen-v2 의 승인(성공·승인 행만)도 지금 1차 심사자의 판단처럼 관문에 선다(held-qwen-retry-policy.ts)
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
-    AND ${delegated ? delegatedReviewIdentity(settings) : sql`${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}`}
+    AND ${delegated ? delegatedReviewIdentity(settings) : sql`((${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}) OR ${heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals))})`}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -233,13 +235,16 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
   // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
   const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
     WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
-  const independent = sql`${sameModelName(sql`v->>'model'`)} <> ${sameModelName(sql`coalesce(${attempt.model}, '')`)}`;
+  // 1차와 같은 모델인지는 자리 표시([MLX]·[gpu3090] 등)를 모두 떼고 가른다 — 같은 가중치의 표는 칸이 달라도 독립 표가 아니다.
+  // 칸을 채운 표를 실제로 낸 모델(대체 모델 포함, g.model)이 1차와 같은 모델이면 그 칸은 비어 있는 것으로 본다
+  const independent = sql`${underlyingModelSql(sql`v->>'model'`)} <> ${underlyingModelSql(sql`coalesce(${attempt.model}, '')`)}`;
   return sql`(EXISTS (SELECT 1 FROM ${slots} WHERE ${independent})
     AND NOT EXISTS (SELECT 1 FROM ${slots} WHERE ${independent}
       AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
         WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
           AND coalesce(root.provider, g.provider) = v->>'provider'
-          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}))
+          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}
+          AND ${underlyingModelSql(sql`g.model`)} <> ${underlyingModelSql(sql`coalesce(${attempt.model}, '')`)}))
     AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }
@@ -498,6 +503,20 @@ export type ReviewCandidateOptions = {
 };
 
 /** Shared by worker selection and uncapped operations queue counts. */
+/**
+ * 지금 입력(matchingSource — 같은 원본·판정 시각·스캔·정책)에 지금 1차 심사자(제공자·모델)의 자동 판단 보류가 있는가 — 성공·needs_review·유효.
+ * 1차가 이 입력에서 판단 보류를 낸 것이다. 보류 Qwen-v2 재심사가 '판단 보류(ambiguous)' 후보를 맡는 조건이다(held-qwen-retry.ts):
+ * 1차가 잠깐 실패해 기다리는 중(1차 대상에서 잠시 빠진 것)인 후보는 맡지 않는다 — 그 후보는 1차가 다시 본다.
+ */
+export function firstReviewAbstainedPredicate(settings: CrawlSettings): SQL {
+  const reviewer = firstReviewer(settings);
+  if (!reviewer) return sql`false`;
+  return sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+    AND ${crawlReviewAttempts.kind} = 'automatic' AND ${crawlReviewAttempts.provider} = ${reviewer.provider}
+    AND ${crawlReviewAttempts.model} = ${reviewer.model} AND ${crawlReviewAttempts.state} = 'succeeded'
+    AND ${crawlReviewAttempts.outcome}->>'decision' = 'needs_review' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`;
+}
+
 export function reviewCandidatePredicate(settings: CrawlSettings, options: ReviewCandidateOptions = {}): SQL {
   if (!settings.enabled || settings.reviewMode === "off") return sql`false`;
   const scanFresh = sql`(fres.completed_at <= ${reviewSemanticNowSql()} AND fres.completed_at > ${reviewSemanticNowSql()} - interval '24 hours')`;
@@ -782,6 +801,15 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
         eq(crawlReviewAttempts.model, input.model)), eq(crawlReviewAttempts.state, "running")),
     )).orderBy(desc(crawlReviewAttempts.id)).limit(16).for("update");
+    // 위임(DeepSeek·보류 Qwen-v2)이 이 후보를 보는 중이면 비킨다 — 한 후보에 진행 중 시도는 하나다(crawl_review_one_active_idx).
+    // 위 rows 는 1차의 행만 읽어 그 행을 보지 못한다. 그 시도가 끝나면 다음 틱에 다시 본다
+    const [delegated] = await tx.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts).where(and(
+      eq(crawlReviewAttempts.candidateId, locked.candidate.id), eq(crawlReviewAttempts.state, "running"),
+      ne(crawlReviewAttempts.kind, "automatic"))).limit(1).for("share");
+    if (delegated) {
+      if (authority.kind === "legacy") await assertAgentReviewJob(tx, authority.job);
+      return { kind: "skipped", reason: "running" };
+    }
     let ownership: Ai1ReviewReceipt["ownership"];
     if (authority.kind === "legacy") {
       if (await hasLiveAgentReviewItem(tx, locked.candidate.id)) {
@@ -1090,7 +1118,8 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
     delegated ? delegatedReviewIdentity(input.settings, String(input.candidate.signals?.delegatedReviewAttemptId))
-      : and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")),
+      : or(and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")),
+        heldQwenGateFirstSql(input.settings, appliedHeldQwenAttemptSql(input.candidate))),
     eq(crawlReviewAttempts.candidateId, input.candidate.id),
     eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.inputHash, current.inputHash),
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),

@@ -29,6 +29,8 @@ import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
  * CLI 계약은 이 파일의 fixture 만 연다(운영 resolver 는 null). 회로 시계는 주입한다.
  */
 const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
+// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/llm/cli-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/cli-serving-contract")>(),
   resolveCliServingContract: (routeId: string, provider: string, model: string) =>

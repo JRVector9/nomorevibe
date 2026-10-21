@@ -4,6 +4,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { AdminReviewEntry, ReviewSort } from '@/lib/crawl/admin-review';
+import type { HeldQwenBadge } from '@/lib/crawl/held-qwen-retry';
 import { useAdminToast } from '../components/Toast';
 import { reconcileSnapshots } from '../components/selection';
 import { REASON_LABELS } from '../reasons';
@@ -14,6 +15,7 @@ import { BUCKET_NOTE, causeLabel, causeShort } from './causes';
 import { ReviewDetail, entryFacts, safeUrl, waitingDays, type DecidedResult } from './ReviewDetail';
 import { secondVoteView } from './secondVote';
 import { SHORTCUT_TABLE, reviewShortcut } from './shortcuts';
+import { tiebreakBadge } from './tiebreak';
 
 type Reason = { value: string; label: string };
 const VOTE_CHIP = { ok: 'bg-up/10 text-up', bad: 'bg-down/10 text-down', warn: 'bg-warn/10 text-warn', soft: 'bg-bg-soft text-fg-2' } as const;
@@ -41,8 +43,10 @@ export type CauseOption = { value: string; label: string; count: number; href: s
  *
  * 고른 줄은 id 로 든다 — 결정한 줄이 목록에서 빠지면(새로 고침) 자리만으로는 한 줄을 건너뛴다.
  */
-export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, causes, title, footer, pageHref }: {
+export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, causes, title, footer, pageHref, qwenBadges = {} }: {
   entries: AdminReviewEntry[]; reasons: readonly Reason[]; focus?: number;
+  /** 보류 줄의 Qwen-v2 재심사 배지(held-qwen-retry.ts heldQwenBadges) — 후보 id 별 */
+  qwenBadges?: Record<number, HeldQwenBadge>;
   sort: ReviewSort; sortHref: Record<ReviewSort, string>; cause: string; causes: CauseOption[];
   /** 표 카드의 이름 — 지금 보는 구간과 건수 */
   title: React.ReactNode;
@@ -228,6 +232,13 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
                   <td className="px-2 py-1">
                     <div className="flex min-w-0 flex-col leading-[16px]">
                       <span className="truncate font-semibold" title={entry.name}>{entry.name}</span>
+                      {/* 갈림 보류에 Qwen-v2 도 승인한 것 — 목록 맨 앞에 선다. 승인은 사람이 눌러야 발행된다 */}
+                      {(() => {
+                        // 갈림 판가름 배지 — 승인(발행 후보) · DeepSeek 확인 대기 · DeepSeek 확인 안 됨 · 하루 상한
+                        const badge = tiebreakBadge(entry.tiebreak);
+                        return badge && <span className={`w-fit rounded px-1.5 py-px font-semibold ${badge.tone === 'up' ? 'bg-up/10 text-up'
+                          : badge.tone === 'warn' ? 'bg-warn/15 text-warn' : 'bg-bg-soft text-fg-2'}`} title={badge.title}>{badge.label}</span>;
+                      })()}
                       {picked.changed.has(candidate.id) && <span className="text-warn" title="고른 뒤 후보 내용이 바뀌어 고른 것을 풀었습니다 — 다시 읽고 고르세요">내용 바뀜 · 다시 고르세요</span>}
                       <span className="flex min-w-0 items-baseline gap-2">
                         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener" tabIndex={-1}
@@ -248,6 +259,8 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
                   </td>
                   <td className="whitespace-nowrap px-2 py-1">
                     {chip ? <span title={typeof entry.review?.confidence === 'number' ? `확신 ${entry.review.confidence.toFixed(2)}` : undefined} className={`rounded px-1.5 py-0.5 font-semibold ${chip.className}`}>{chip.label}</span> : <span className="text-fg-3">—</span>}
+                    {qwenBadges[candidate.id] && <span title={qwenBadges[candidate.id].title}
+                      className={`ml-1 rounded px-1.5 py-0.5 font-semibold ${VOTE_CHIP[qwenBadges[candidate.id].tone]}`}>{qwenBadges[candidate.id].label}</span>}
                   </td>
                   <td className="truncate px-2 py-1">
                     {vote ? <span title={vote.title} className={`rounded px-1.5 py-0.5 font-semibold ${VOTE_CHIP[vote.tone]}`}>{vote.label}</span> : <span className="text-fg-3">—</span>}

@@ -15,6 +15,8 @@ import { ensureSchema, resetTables } from "./setup";
 
 /** 외부 모델 호출만 바꾼다. 올리기·고르기·기록·lease 는 실제 DB 로 돈다 */
 const gateway = vi.hoisted(() => vi.fn());
+// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/agent-review-gateway", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/crawl/agent-review-gateway")>(), reviewWithGateway: gateway,
 }));

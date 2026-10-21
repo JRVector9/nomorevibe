@@ -7,8 +7,10 @@ import { assertJobLeaseAtWallTime, withJobLeaseWrite } from "@/lib/jobs/control"
 import type { JobContext } from "@/lib/jobs/runner";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { lockedAuditHold, type AuditHoldSettings } from "./settings";
-import { secondOpinionVote } from "./audit-second-opinions";
+import { lockedSettings, type AuditHoldSettings } from "./settings";
+import { secondOpinionVotesField, type SecondOpinionVoteRow } from "./audit-second-opinions";
+import { QWEN_AUTO_MIN_CONFIDENCE, secondOpinionFamily, secondRejectHolds } from "./second-opinion-rules";
+import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -60,9 +62,10 @@ const column = (alias: string) => (name: string) => sql`${sql.identifier(alias)}
  * 보류할 수 있는 제품 — 공개(seeded)이고 주인이 없다: 검증 전이고 클레임하지 않았고 메이커 권한(product_maker_members)도 없다.
  * verified 는 주인이 확인된 것이라 들지 않는다. 이미 보류된 것도 뺀다. alias 는 products 를 부르는 이름이다
  */
-function unownedPublic(alias: string): SQL {
+function unownedPublic(alias: string, options: { includeHeld?: boolean } = {}): SQL {
   const c = column(alias);
-  return sql`(${c("status")} = 'seeded' and ${c("claimed_at")} is null and ${c("verified_at")} is null and ${c("audit_hold_at")} is null
+  const notHeld = options.includeHeld ? sql`` : sql` and ${c("audit_hold_at")} is null`;
+  return sql`(${c("status")} = 'seeded' and ${c("claimed_at")} is null and ${c("verified_at")} is null${notHeld}
     and not exists (select 1 from ${productMakerMembers} m where m.product_id = ${c("id")} and m.revoked_at is null))`;
 }
 
@@ -93,22 +96,84 @@ async function markOpenItemsReleased(tx: ProductTransaction, productIds: number[
     isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
 }
 
-/** 그 항목에 두 번째 모델의 거절·승인이 있다(product_audit_second_opinions) */
-const secondReject = (alias: string) => secondOpinionVote(column(alias)("id"), "reject");
-const secondApprove = (alias: string) => secondOpinionVote(column(alias)("id"), "approve");
+/**
+ * 보류 후보 — 보류의 까닭이 될 수 있는 감사 항목(holdableItem)이고 그 제품이 주인 없는 공개 제품이다. 이미 보류된 제품도 든다
+ * (그 보류의 까닭인 항목). 둘째 문(holdGate)은 보지 않는다 — Qwen-v2 자동 의견(audit-second-opinion-auto.ts)이 물을 것을 고르고,
+ * 그 의견이 둘째 문을 바꾼다. itemAlias·productAlias 는 product_audit_items·products 를 부르는 이름이다
+ */
+export function holdCandidate(itemAlias: string, productAlias: string, minConfidence: number): SQL {
+  return sql`(${column(itemAlias)("product_id")} = ${column(productAlias)("id")} and ${holdableItem(itemAlias, minConfidence)}
+    and ${unownedPublic(productAlias, { includeHeld: true })})`;
+}
+
+/** 그 항목의 두 번째 의견(모델·결정, product_audit_second_opinions) */
+const secondVotes = (alias: string) => secondOpinionVotesField(column(alias)("id"));
+
+/**
+ * 보류의 둘째 문이 읽는 감사 항목 — 감사 사유, 두 번째 의견들, 이 거절을 낸 감사 모델(coalesce(항목의 ai_model, 그 감사의 model), 0112).
+ * model 이 없으면 감사 모델의 규칙은 보지 않는다(옛 호출부·옮겨 적기의 승인)
+ */
+export type HoldGateItem = { reason: string | null | undefined; opinions: readonly HoldGateOpinion[]; model?: string | null;
+  /** 이 감사 거절의 확신(ai_confidence) — Qwen 이 감사한 거절은 QWEN_AUTO_MIN_CONFIDENCE 이상이어야 보류의 까닭이 된다 */
+  confidence?: number | null };
+/** 두 번째 의견 한 줄 — 출처(source)·확신은 자동 의견(qwen-v2-auto)을 가르는 데 쓴다 */
+export type HoldGateOpinion = SecondOpinionVoteRow & { source?: string | null; confidence?: number | null };
+/**
+ * 보류를 가르는 때의 조건 — autoOpinions: Qwen-v2 자동 의견(qwenAuto.auditSecondOpinion)이 켜져 있다. 꺼져 있으면 자동 의견의 거절은
+ * 보류의 까닭이 아니다(grok 같은 옮겨 적은 의견은 그대로 센다). 켜져 있어도 자동 의견은 확신이 0.90 이상일 때만 센다(승인·거절 모두)
+ */
+export type HoldGateOptions = { autoOpinions?: boolean };
+
+/** 이 의견을 지금 보류에서 세는가 — 자동 의견은 확신이 있고 문턱 이상이며, 거절이면 그 단계가 켜져 있을 때만 */
+function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions): boolean {
+  if (opinion.source !== QWEN_V2_AUTO_SOURCE) return true;
+  if (typeof opinion.confidence !== "number" || opinion.confidence < QWEN_AUTO_MIN_CONFIDENCE) return false;
+  return opinion.decision !== "reject" || Boolean(options.autoOpinions);
+}
+
+/**
+ * 두 번째 의견들이 보류에 무엇을 말하나 — 거절(모델별 규칙 secondRejectHolds 를 지난 것만)·승인(모델을 가리지 않는다).
+ * 모델별 규칙(second-opinion-rules.ts SECOND_OPINION_REJECT_RULES): grok 의 거절은 늘 센다. Qwen 의 거절은 카탈로그·디렉터리 같은 항목
+ * (감사 사유 갈래가 '남의 플랫폼·목록 페이지'이거나 directory·catalog·awesome·curated list·list of)에서 세지 않는다 — 그 항목은 '갈림'에서 사람이 본다
+ */
+export function secondOpinionStance(item: HoldGateItem): { secondReject: boolean; secondApprove: boolean } {
+  return { secondReject: item.opinions.some((opinion) => opinion.decision === "reject" && secondRejectHolds(opinion.model, item.reason)),
+    secondApprove: item.opinions.some((opinion) => opinion.decision === "approve") };
+}
 
 /**
  * 확신 문턱(holdableItem)을 지난 항목의 둘째 문 — 확신만으로는 가를 수 없었다(settings-schema.ts DEFAULT_AUDIT_HOLD).
- * (a) 사유 갈래가 허용 목록(auditHold.categories)에 들고, 두 번째 모델이 승인하지 않았다 — 갈래는 감사 화면의 칩과 같은 분류
- *     (classifyAuditReason)다. 회사 소개 갈래의 정규식은 "marketing copy·promotional landing" 으로 SaaS 첫 화면도 잡는다 —
- *     다른 모델이 열어 보고 승인했으면 목록에 두고 '갈림'으로 사람에게 넘긴다. 또는
- * (b) 두 번째 모델도 거절했다(auditHold.secondOpinionReject 가 켜져 있을 때) — 갈래와 상관없이.
- * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기와 새 답이 모두 이 함수로 가른다.
+ * (a) 사유 갈래가 허용 목록(auditHold.categories)에 들고, 두 번째 모델이 승인하지 않았고, 이 거절을 낸 감사 모델의 거절을 이 항목에서
+ *     세는 모델이다 — 갈래는 감사 화면의 칩과 같은 분류(classifyAuditReason)다. 회사 소개 갈래의 정규식은 "marketing copy·promotional
+ *     landing" 으로 SaaS 첫 화면도 잡는다 — 다른 모델이 열어 보고 승인했으면 목록에 두고 '갈림'으로 사람에게 넘긴다.
+ *     모델별 규칙은 두 번째 의견과 같은 표다(second-opinion-rules.ts secondRejectHolds): Qwen-v2 는 진짜 둘러보기 카탈로그·디렉터리를
+ *     가끔 거절하고 확신이 늘 0.95 나 1 이라 문턱으로 가를 수 없다 — Qwen 이 감사한(남은 감사 모델 바꾸기 뒤) 카탈로그·디렉터리 같은
+ *     거절(갈래 platform 이거나 사유에 directory·catalog·awesome·curated list·list of)은 갈래로 걸지 않고 목록에 둔 채 사람이 본다. 또는
+ * (b) 두 번째 모델도 거절했다(auditHold.secondOpinionReject 가 켜져 있을 때) — 갈래와 상관없이, 모델별 규칙을 지난 거절만(secondOpinionStance —
+ *     Qwen 의 두 번째 거절도 카탈로그 같은 항목에서는 세지 않는다). 같은 모델의 두 번째 의견은 묻지 않는다(audit-second-opinion-auto.ts).
+ * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기·새 답·의견 옮겨 적기가 모두 이 함수로 가른다.
  */
-export function holdGate(item: { reason: string | null | undefined; secondReject: boolean; secondApprove: boolean },
-  hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">): boolean {
-  return (hold.categories.includes(classifyAuditReason(item.reason)) && !item.secondApprove) || (hold.secondOpinionReject && item.secondReject);
+export function holdGates(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">, options: HoldGateOptions = {}) {
+  // Qwen 이 감사한 거절은 확신이 있고 0.90 이상일 때만 사람 없이 보류한다 — 없거나 낮으면 사람의 목록에 둔다
+  if (item.model && secondOpinionFamily(item.model) === "qwen" && (typeof item.confidence !== "number" || item.confidence < QWEN_AUTO_MIN_CONFIDENCE)) {
+    return { byCategory: false, bySecondOpinion: false };
+  }
+  const { secondReject, secondApprove } = secondOpinionStance({ ...item, opinions: item.opinions.filter((opinion) => countedOpinion(opinion, options)) });
+  const primaryCounts = !item.model || secondRejectHolds(item.model, item.reason);
+  return {
+    byCategory: hold.categories.includes(classifyAuditReason(item.reason)) && !secondApprove && primaryCounts,
+    bySecondOpinion: hold.secondOpinionReject && secondReject,
+  };
 }
+
+export function holdGate(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">, options: HoldGateOptions = {}): boolean {
+  const gates = holdGates(item, hold, options);
+  return gates.byCategory || gates.bySecondOpinion;
+}
+
+/** 그 항목의 거절을 낸 감사 모델 — 비어 있으면(0112 전 답) 그 감사가 시작할 때의 모델이다. alias 는 product_audit_items 를 부르는 이름이다 */
+export const auditItemModel = (alias: string) => sql<string>`coalesce(${column(alias)("ai_model")},
+  (select ac.model from ${productAuditCampaigns} ac where ac.id = ${column(alias)("campaign_id")}))`;
 
 /**
  * 감사 답이 보류로 이어질 수 있는가 — 답을 적는 트랜잭션이 제품 잠금을 잡을지 미리 가른다(켜짐·거절·확신 문턱).
@@ -126,13 +191,15 @@ export function verdictMayHold(outcome: { decision: string; confidence?: number 
  * 상태가 바뀌지 않아 트리거(0057)가 적지 않는다.
  */
 export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId: number; productId: number; slug: string }): Promise<boolean> {
-  const hold = await lockedAuditHold(tx);
+  const settings = await lockedSettings(tx);
+  const hold = settings.auditHold;
   if (!hold.enabled) return false;
   const [item] = await tx.select({ campaignId: productAuditItems.campaignId, aiReason: productAuditItems.aiReason,
-    aiConfidence: productAuditItems.aiConfidence, secondReject: sql<boolean>`${secondReject("product_audit_items")}`,
-    secondApprove: sql<boolean>`${secondApprove("product_audit_items")}` })
+    aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items"), model: auditItemModel("product_audit_items") })
     .from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
-  if (!item || !holdGate({ reason: item.aiReason, secondReject: item.secondReject, secondApprove: item.secondApprove }, hold)) return false;
+  const gates = item ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence }, hold,
+    { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }) : null;
+  if (!item || !gates || (!gates.byCategory && !gates.bySecondOpinion)) return false;
   const [held] = await tx.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: input.itemId })
     .where(and(eq(products.id, input.productId), eq(products.slug, input.slug), unownedPublic("products"),
       sql`exists (select 1 from ${productAuditItems} i where i.id = ${input.itemId} and i.product_id = ${input.productId}
@@ -142,10 +209,8 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
   await tx.insert(productEvidenceAudit).values({ slug: input.slug, actor: AUDIT_HOLD_ACTOR, action: AUDIT_HOLD_ACTION,
     reason: `ai_reject · audit:${classifyAuditReason(item.aiReason)}`,
     metadata: { itemId: input.itemId, campaignId: item.campaignId, aiConfidence: item.aiConfidence, minConfidence: hold.minConfidence,
-      // 어느 문으로 걸렸나 — 두 번째 모델이 승인하지 않은 허용 갈래인지, 두 번째 모델도 거절했는지
-      category: classifyAuditReason(item.aiReason),
-      byCategory: hold.categories.includes(classifyAuditReason(item.aiReason)) && !item.secondApprove,
-      bySecondOpinion: hold.secondOpinionReject && item.secondReject } });
+      // 어느 문으로 걸렸나 — 두 번째 모델이 승인하지 않은 허용 갈래인지, 두 번째 모델도 거절했는지. 그 거절을 낸 감사 모델(0112)
+      category: classifyAuditReason(item.aiReason), auditModel: item.model, ...gates } });
   await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_HOLD_PURGE });
   return true;
 }
@@ -179,7 +244,7 @@ export async function releaseAuditHold(tx: ProductTransaction,
  * 한 틱에 AUDIT_HOLD_SWEEP_BATCH 건(지난 60초에 보류·풀기로 적힌 지우기 줄만큼 뺀다 — 새 답이 바로 건 보류까지 합쳐 지우기 잡이
  * 따라잡는 만큼), SWEEP_MS 안에서만 — 오래된 항목부터. 걸기 전에 먼저 유지가 남았는데 풀리지 않은 보류를 푼다(healKeptHolds).
  */
-export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSettings): Promise<number> {
+export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSettings, options: HoldGateOptions = {}): Promise<number> {
   const lease = ctx.lease;
   if (!lease) return 0;
   const startedAt = Date.now();
@@ -189,7 +254,7 @@ export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSett
     inArray(cdnPurges.reason, [AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE]), sql`${cdnPurges.createdAt} > now() - interval '60 seconds'`));
   const room = Math.max(0, AUDIT_HOLD_SWEEP_BATCH - (recent?.count ?? 0));
   if (room === 0) return 0;
-  const candidates = await sweepCandidates(hold, startedAt, room);
+  const candidates = await sweepCandidates(hold, startedAt, room, options);
   let held = 0;
   for (const row of candidates) {
     if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > SWEEP_MS) break;
@@ -243,19 +308,19 @@ const CANDIDATE_PAGE = 500;
  * 허용 밖 갈래(글·문서·기타)가 앞자리를 영영 차지해 쓸기가 나아가지 않는다. 그 몫은 사람이 정할 때까지 남으므로(2026-10-21 추정 1천여 건)
  * 틱마다 몇 쪽을 다시 읽는다 — id·주소·사유만이다.
  */
-async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room: number) {
+async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room: number, options: HoldGateOptions) {
   const picked: { item_id: number; product_id: number; slug: string }[] = [];
   for (let afterId = 0; picked.length < room && Date.now() - startedAt <= SWEEP_MS;) {
     const page = await db.execute<{ item_id: number; product_id: number; slug: string; ai_reason: string | null;
-      second_reject: boolean; second_approve: boolean }>(sql`
-      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondReject("i")} as second_reject,
-             ${secondApprove("i")} as second_approve
+      opinions: HoldGateOpinion[]; ai_model: string | null; ai_confidence: number | null }>(sql`
+      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondVotes("i")} as opinions, ${auditItemModel("i")} as ai_model,
+             i.ai_confidence
         from ${productAuditItems} i join ${products} p on p.id = i.product_id
        where ${holdableItem("i", hold.minConfidence)} and ${unownedPublic("p")} and i.id > ${afterId}
        order by i.id limit ${CANDIDATE_PAGE}`);
     for (const row of page) {
-      const gate = { reason: row.ai_reason, secondReject: row.second_reject, secondApprove: row.second_approve };
-      if (picked.length < room && holdGate(gate, hold)) picked.push(row);
+      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions, model: row.ai_model, confidence: row.ai_confidence },
+        hold, options)) picked.push(row);
     }
     if (page.length < CANDIDATE_PAGE) break;
     afterId = page[page.length - 1].item_id;

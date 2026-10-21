@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 import { mergeWithDefaults, settingsUnreadable } from "@/lib/crawl/settings";
+import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -217,7 +218,8 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   for (const [routeId, key] of TEXT_ROUTES) add(routeId, "abcllm", models?.[key]);
   add("product-intro-check", "claude-cli", models?.introCheck);
   const audit = snapshot.auditCampaign;
-  if (audit) add("product-audit", audit.provider === "abcllm" ? "abcllm" : "claude-cli", audit.model);
+  // Qwen 직접 심사(gpu3090, 0112)는 공통 슬롯을 거치지 않는다 — 게이트웨이도 CLI 도 아니라 open 이 되어도 미뤄지지 않는다
+  if (audit && audit.provider !== QWEN_AUDIT_PROVIDER) add("product-audit", audit.provider === "abcllm" ? "abcllm" : "claude-cli", audit.model);
   return [...uses.values()];
 }
 

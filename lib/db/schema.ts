@@ -738,6 +738,8 @@ export type NewProduct = typeof products.$inferInsert;
 export * from './agent-evidence-schema';
 export * from './operations-schema';
 export * from './second-review-schema';
+// 2차 갈림 판가름(Qwen-v2) 기록 — second_reviews 와 따로 둔 까닭은 그 파일 머리에 적었다
+export * from './gate-split-tiebreak-schema';
 export * from './translation-schema';
 export * from './news-schema';
 export * from './product-audit-schema';

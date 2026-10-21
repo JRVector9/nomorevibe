@@ -41,6 +41,8 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
 // 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
+// Qwen-v2 단계(gpu3090 직접 호출)는 DB·네트워크를 쓴다 — tests/product-audit-job.test.ts 가 감사 묻기와의 관계를 본다
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit, loadAuditInput: mocks.input,
   recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finishCampaign, lockAuditDispatchItem: mocks.auditItem }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));

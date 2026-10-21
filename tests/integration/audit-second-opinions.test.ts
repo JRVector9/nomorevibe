@@ -60,7 +60,7 @@ describe("두 번째 의견 옮겨 적기", () => {
       line(open, { error: "timeout" }), line(open, { grokDecision: "maybe" }), line(open, { grokConfidence: 2 }), {},
     ]);
     expect(result).toEqual({ read: 12, inserted: 2, updated: 0, released: 0, dryRun: false,
-      skipped: { error: 1, invalid: 3, duplicate: 1, missing: 1, product_mismatch: 1, not_open: 3 } });
+      skipped: { error: 1, invalid: 3, duplicate: 1, missing: 1, product_mismatch: 1, not_open: 3, switched_off: 0 } });
     const rows = await opinions();
     expect(rows.map((row) => [row.itemId, row.productId, row.model, row.decision, row.confidence, row.source])).toEqual([
       [open.itemId, open.productId, "grok-4-fast", "reject", 0.9, "grok-cli-batch"],
@@ -84,7 +84,7 @@ describe("두 번째 의견 옮겨 적기", () => {
     await run([line(existing, { grokDecision: "approve" })]);
     const before = await opinions();
     expect(await run([line(fresh), line(existing), line(fresh, { error: "boom" })], true)).toEqual({ read: 3, inserted: 1, updated: 1, released: 0, dryRun: true,
-      skipped: { error: 1, invalid: 0, duplicate: 0, missing: 0, product_mismatch: 0, not_open: 0 } });
+      skipped: { error: 1, invalid: 0, duplicate: 0, missing: 0, product_mismatch: 0, not_open: 0, switched_off: 0 } });
     expect(await opinions()).toEqual(before);
   });
 

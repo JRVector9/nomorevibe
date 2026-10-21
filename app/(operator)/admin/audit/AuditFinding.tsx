@@ -16,6 +16,8 @@ export type AuditFindingView = {
   heldAt?: string | null;
   /** 다른 모델의 두 번째 의견 — 없으면 없음 */
   second?: SecondOpinionView[];
+  /** 남은 감사 모델 바꾸기 뒤 바꾼 모델이 낸 답이면 그 이름('qwen-v2') — 시작 모델의 답이면 없음 */
+  answeredBy?: string | null;
 };
 
 
@@ -62,6 +64,7 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
       <td className="whitespace-nowrap px-2 py-2 text-fg-2">{finding.category}</td>
       <td className="min-w-[7.5rem] whitespace-nowrap px-2 py-2 font-mono text-fg-2">
         {typeof finding.confidence === 'number' ? finding.confidence.toFixed(2) : '—'}
+        {finding.answeredBy && <span title="이 답을 낸 감사 모델" className="ml-1 font-sans text-fg-3">{finding.answeredBy}</span>}
         <span className="block font-sans text-fg-3">{finding.reviewedAt ?? ''}</span>
       </td>
       <td className="px-3 py-2">

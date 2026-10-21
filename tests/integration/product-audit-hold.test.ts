@@ -25,6 +25,8 @@ import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
+// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("server-only", () => ({}));
 
 /** 외부 모델 호출만 바꾼다. 올리기·답 적기·보류·쓸기·lease 는 실제 DB 로 돈다 */

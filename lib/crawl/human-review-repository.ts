@@ -1,6 +1,6 @@
-import { and, asc, desc, eq, inArray, not, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, not, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews } from '@/lib/db/schema';
+import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews, type DecisionReason } from '@/lib/db/schema';
 import { assertJobLeaseAtWallTime, requestJob, type JobLease } from '@/lib/jobs/control';
 import { readItemStage } from '@/lib/jobs/items/repository';
 import { candidateRevisionHash, lockedInput } from './admin-review';
@@ -11,16 +11,19 @@ import { getSettings } from './settings';
 import { reviewApprovalPredicate } from './agent-review-repository';
 import { DEEPSEEK_MIN_CONFIDENCE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import type { DeepSeekReviewResult } from './deepseek-review';
+import { heldQwenOwns } from './held-qwen-retry-policy';
 
 export type HumanReviewClaim = {
   attemptId: number; repo: string; candidateRevision: string; input: ReviewInput; generation: number; lease: JobLease;
 };
 const JOB = 'human-deepseek-review';
 
-export async function humanReviewRepos(ids: number[]): Promise<string[]> {
+/** skipReasons — 보류 Qwen-v2 재심사가 맡은 사유(heldQwenOwnedReasons). 같은 후보를 두 모델이 따로 가르지 않는다 */
+export async function humanReviewRepos(ids: number[], skipReasons: readonly string[] = []): Promise<string[]> {
   if (!ids.length) return [];
   const rows = await db.select({ repo: crawlCandidates.repo }).from(crawlCandidates).where(and(
     inArray(crawlCandidates.id, ids), eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.decidedBy, 'auto'),
+    skipReasons.length ? or(isNull(crawlCandidates.reason), notInArray(crawlCandidates.reason, [...skipReasons] as DecisionReason[])) : undefined,
   )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id));
   return rows.map(row => row.repo);
 }
@@ -37,7 +40,9 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
     if (!current || !current.settings.enabled || !current.settings.humanReview.enabled
       || current.candidate.state !== 'needs_review' || current.candidate.decidedBy !== 'auto'
       || current.candidate.publishedSlug || current.document.productUrl !== current.candidate.productUrl
-      || current.input.validUntil <= new Date()) return null;
+      || current.input.validUntil <= new Date()
+      // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽만 가른다 — 같은 잠긴 설정 행으로 재므로 두 claim 이 한 후보에 겹치지 않는다
+      || heldQwenOwns(current.settings, current.candidate.reason)) return null;
     const { candidate, input } = current;
     const pending = await tx.select({ id: secondReviews.id }).from(secondReviews).where(and(
       eq(secondReviews.candidateId, candidate.id), eq(secondReviews.status, 'pending'),

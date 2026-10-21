@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
-  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(),
+  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -17,11 +17,13 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
   auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons, auditDecisionHistory: mocks.decisions,
-  listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons,
+  listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons, switchAuditReviewer: mocks.switchReviewer,
   GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
 vi.mock('@/lib/crawl/product-audit-hold', () => ({ releaseAllAuditHolds: mocks.releaseAll }));
-vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold }));
+// Qwen-v2 자동 단계의 상태도 DB 를 센다
+vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatus: mocks.qwenStatus }));
+vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold, setQwenAutoStep: mocks.setQwenAuto }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
 vi.mock('@/lib/operations/admin-log', () => ({ recordAdminAction: mocks.log, recordAdminActions: mocks.log }));
 // 내려달라는 요청 집계도 DB를 읽는다 — CI 단위 테스트에는 DB가 없다
@@ -37,26 +39,34 @@ vi.mock('@/lib/domain/products/intro-requests', () => ({
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
 import { cancelAudit, decideAuditFinding, fixIntroRequest, releaseAuditHolds, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
-  saveAuditHold, startAudit } from '@/app/(operator)/admin/audit/actions';
+  saveAuditHold, startAudit, switchAuditModel } from '@/app/(operator)/admin/audit/actions';
+import { saveQwenAutoStep } from '@/app/(operator)/admin/qwen-auto-actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
-import { DEFAULT_AUDIT_HOLD } from '@/lib/crawl/settings-schema';
+import { DEFAULT_AUDIT_HOLD, DEFAULT_QWEN_AUTO } from '@/lib/crawl/settings-schema';
 
 const campaign = {
   id: 7, startedAt: new Date('2026-09-18T12:00:00Z'), startedBy: 'jr', reason: '첫 감사', promptVersion: '2026-09-18.2',
   rulesVersion: '2026-09-18.1', provider: 'abcllm', model: '[MLX] gpt-oss-120b', reauditKept: false, status: 'running', finishedAt: null,
 };
 const counts = { total: 100, reviewed: 40, reject: 3, needsReview: 1, openReject: 3, openNeedsReview: 1, openAgreed: 2, openSplit: 1,
-  removed: 0, kept: 0, failed: 0, skipped: 0 };
+  openDisagree: 4, openQwenCatalog: 5, removed: 0, kept: 0, failed: 0, skipped: 0 };
+/** Qwen-v2 자동 단계 상태(audit-second-opinion-auto.ts QwenAutoStatus) */
+const qwenStatusOf = (over: Record<string, unknown> = {}) => ({ model: 'qwen3.8-flash-next', url: 'http://100.77.43.63:8090/v1', promptVersion: '2026-10-21.v2',
+  audit: { enabled: true, perTick: 10, lastHour: 12, lastDay: 340, remaining: 2_415 },
+  published: { enabled: true, perTick: 10, lastHour: 6, lastDay: 129, keptHour: 4, keptDay: 97, remaining: 3 },
+  lastRunAt: '2026-10-21T06:59:00.000Z', lastSuccessAt: '2026-10-21T06:59:00.000Z', lastError: null, givenUp: 0, endpointBackoff: null, ...over });
 const finding = (id: number, slug: string, over: Record<string, unknown> = {}) => ({
   id, slug, name: `이름 ${slug}`, url: `https://${slug}.test`, category: 'Productivity',
   reason: 'pageText shows only a sign-in form', confidence: 0.95, reviewedAt: new Date('2026-09-18T12:30:00Z'), owned: false,
   heldAt: null, second: [], ...over,
 });
 /** 감사 개요 — 보류 수와 보류 설정(product-audit.ts AuditOverview)까지 */
-const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, paused: null, stalled: false, held: 0, hold: DEFAULT_AUDIT_HOLD, ...over });
+const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, paused: null, stalled: false, held: 0, hold: DEFAULT_AUDIT_HOLD,
+  qwenAuto: DEFAULT_QWEN_AUTO, switchTo: null, ...over });
+const QWEN = { provider: 'qwen-direct', model: 'qwen3.8-flash-next' };
 /** 제품을 고르는 체크박스 — 보류 설정 폼의 켬·갈래·두 번째 모델 칸은 제품을 싣지 않는다 */
 const productCheckboxes = (html: string) => (html.match(/<input type="checkbox"[^>]*>/g) ?? [])
-  .filter((box) => !/name="(enabled|secondOpinionReject|category)"/.test(box));
+  .filter((box) => !/name="(enabled|secondOpinionReject|category|auditSecondOpinion-enabled|publishedFilter-enabled)"/.test(box));
 const takedowns = (pending: number) => ({
   pending, overdue: 0, oldestHours: pending ? 2 : null, handled24h: { removed: 0, dismissed: 0 }, last30d: { removed: 0, dismissed: 0 },
   lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null },
@@ -83,6 +93,7 @@ beforeEach(() => {
   mocks.decisions.mockResolvedValue([]);
   mocks.introQueue.mockResolvedValue([]);
   mocks.introCount.mockResolvedValue(0);
+  mocks.qwenStatus.mockResolvedValue(qwenStatusOf());
 });
 
 describe('내릴 후보 화면', () => {
@@ -203,6 +214,26 @@ describe('내릴 후보 화면', () => {
     // 따로 노는 "이 감사 중단" 폼은 두지 않는다
     expect(html).not.toContain('멈춰도 아무것도 내려가지 않고');
     expect(html).toContain('멈춘 감사가 열려 있습니다');
+  });
+
+  it('남은 감사 모델 바꾸기(0112) — 바꿀 수 있을 때만 버튼을 두고, 바꾼 감사는 머리에 "모델 전환: 시작 → 지금 (시각)"과 바꾼 뒤 답한 수를 보인다', async () => {
+    expect(await render()).not.toContain('남은 감사 모델 바꾸기');
+    mocks.overview.mockResolvedValue(overviewOf({ switchTo: QWEN }));
+    const html = await render();
+    expect(html).toContain('남은 감사 모델 바꾸기…');
+    expect(html).toContain('이 감사 중단');
+    expect(html).not.toContain('모델 전환:');
+
+    mocks.overview.mockResolvedValue(overviewOf({ campaign: { ...campaign, currentProvider: 'qwen-direct', currentModel: 'qwen3.8-flash-next',
+      switchedAt: new Date('2026-10-21T08:00:00Z'), switchedBy: 'jr' }, counts: { ...counts, answeredByCurrent: 1234 } }));
+    mocks.findings.mockResolvedValue([finding(11, 'by-qwen', { aiProvider: 'qwen-direct', confidence: 1 }), finding(12, 'by-gpt', { aiProvider: null })]);
+    const switched = await render();
+    expect(switched).toContain('모델 전환: gpt-oss-120b → qwen-v2');
+    expect(switched).toContain('· jr)');
+    expect(switched).toContain('바꾼 뒤 답 1,234건');
+    expect(switched).not.toContain('남은 감사 모델 바꾸기…');
+    // 줄마다 Qwen 이 낸 답에만 모델 이름을 붙인다
+    expect(switched.match(/title="이 답을 낸 감사 모델"[^>]*>qwen-v2</g)).toHaveLength(1);
   });
 
   it('갈래 그대로 CSV 로 내보낸다', async () => {
@@ -351,9 +382,71 @@ describe('감사 보류 화면(0110)', () => {
     mocks.groups.mockClear();
     const split = await render({ tab: 'audit', view: 'split' });
     expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: 'split' });
-    expect(split).toMatch(/aria-current="page"[^>]*>갈림 \(2차 승인\) (<!-- -->)?1/);
+    expect(split).toMatch(/aria-current="page"[^>]*>갈림 \(2차 승인·카탈로그\) (<!-- -->)?1/);
     // 갈린 것은 사람이 한 건씩 본다 — 묶어 내리기가 없다
     expect(mocks.groups).not.toHaveBeenCalled();
+  });
+
+  it('Qwen 의견 — grok 배지 옆에 qwen 배지, Qwen·grok 의견 다름·Qwen 거절(카탈로그 예외) 갈래로 거른다(묶어 내리기 없음)', async () => {
+    mocks.findings.mockResolvedValue([
+      finding(61, 'differ', { second: [{ model: 'grok-4.7', decision: 'reject', confidence: 0.9 }, { model: 'qwen3.8-flash-next', decision: 'approve', confidence: 1 }] }),
+      finding(62, 'catalog', { reason: 'A curated directory of AI tools.', second: [{ model: 'qwen3.8-flash-next', decision: 'reject', confidence: 0.95 }] }),
+    ]);
+    const differ = await render({ tab: 'audit', view: 'disagree' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: 'disagree' });
+    expect(mocks.reasons).toHaveBeenLastCalledWith(7, 'reject', 'disagree');
+    expect(differ).toMatch(/aria-current="page"[^>]*>Qwen·grok 의견 다름 (<!-- -->)?4/);
+    expect(differ).toMatch(/>grok(<!-- -->)?: (<!-- -->)?거절(<!-- -->)? 0.90<\/span>/);
+    expect(differ).toMatch(/>qwen(<!-- -->)?: (<!-- -->)?승인(<!-- -->)?<\/span>/);
+    expect(differ).toMatch(/>qwen(<!-- -->)?: (<!-- -->)?거절(<!-- -->)? 0.95<\/span>/);
+    expect(differ).toContain('title="두 번째 의견 · qwen3.8-flash-next"');
+    expect(differ).toContain('href="/admin/audit?tab=audit&amp;view=qwen_catalog"');
+
+    mocks.groups.mockClear();
+    const catalog = await render({ tab: 'audit', view: 'qwen_catalog' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: 'qwen_catalog' });
+    expect(catalog).toMatch(/aria-current="page"[^>]*>Qwen 거절\(카탈로그 예외\) (<!-- -->)?5/);
+    expect(catalog).toContain('curated list');
+    expect(mocks.groups).not.toHaveBeenCalled();
+  });
+
+  it('Qwen-v2 자동 단계 — 켬/끔·틱당 수·지난 1시간/24시간·남은 것·마지막 오류를 보이고, 설정 칸을 지금 값으로 그린다', async () => {
+    mocks.qwenStatus.mockResolvedValue(qwenStatusOf({ lastError: { code: 'qwen_timeout', detail: null, target: 'audit', at: '2026-10-21T07:00:00.000Z' },
+      lastSuccessAt: '2026-10-21T06:59:00.000Z', givenUp: 2 }));
+    const qwenAuto = { ...DEFAULT_QWEN_AUTO, auditSecondOpinion: { enabled: true, perTick: 10 } };
+    mocks.overview.mockResolvedValue(overviewOf({ qwenAuto }));
+    const html = await render({ tab: 'audit' });
+    expect(mocks.qwenStatus).toHaveBeenCalledWith({ auditHold: DEFAULT_AUDIT_HOLD, qwenAuto });
+    const panel = html.slice(html.indexOf('aria-label="Qwen-v2 자동 단계"'), html.indexOf('보류 모두 풀기'));
+    expect(panel).toMatch(/Qwen-v2 두 번째 의견/);
+    expect(panel).toMatch(/지난 1시간 (<!-- -->)?12(<!-- -->)? · 24시간 (<!-- -->)?340/);
+    expect(panel).toMatch(/남은 것 <b[^>]*>2,415<\/b>/);
+    expect(panel).toMatch(/유지로 닫음 (<!-- -->)?4/);
+    expect(panel).toMatch(/남은 것 <b[^>]*>3<\/b>/);
+    expect(panel).toContain('qwen3.8-flash-next');
+    expect(panel).toContain('2026-10-21.v2');
+    expect(panel).toMatch(/마지막 오류: <span class="font-mono">qwen_timeout<\/span>/);
+    expect(panel).toContain('감사 두 번째 의견');
+    expect(panel).toMatch(/그만 물은 것 (<!-- -->)?2/);
+    // 스위치는 settings qwenAuto 의 지금 값으로 그린다 — 공개분 거르기는 기본(꺼짐) 그대로
+    expect(panel).toMatch(/name="auditSecondOpinion-enabled" checked=""/);
+    expect(panel).toMatch(/name="auditSecondOpinion-perTick"[^>]*value="10"/);
+    expect(panel).toMatch(/name="publishedFilter-enabled"(?! checked)/);
+    expect(panel).toMatch(/name="publishedFilter-perTick"[^>]*value="10"/);
+    // 바꾸기 전에는 저장을 열지 않는다(확인 창 — 켤 때 사유를 받는다)
+    expect(panel.match(/<button type="button" disabled=""[^>]*>저장…<\/button>/g)).toHaveLength(2);
+    expect(panel).not.toContain('모두 물러납니다');
+
+    // gpu3090 이 탈 나 모두가 물러나는 중이면 그 시각·코드를 보인다(워커가 적은 운영 관측)
+    mocks.qwenStatus.mockResolvedValue(qwenStatusOf({ endpointBackoff: { until: '2026-10-21T07:05:00.000Z', code: 'qwen_http_503', failures: 2 } }));
+    const backoff = await render({ tab: 'audit' });
+    expect(backoff).toMatch(/모두 물러납니다/);
+    expect(backoff).toMatch(/<span class="font-mono">qwen_http_503<\/span>, 연속 (<!-- -->)?2(<!-- -->)?번/);
+
+    // 다른 탭에서는 세지 않는다
+    mocks.qwenStatus.mockClear();
+    await render({ tab: 'history' });
+    expect(mocks.qwenStatus).not.toHaveBeenCalled();
   });
 });
 
@@ -433,11 +526,31 @@ describe('내릴 후보 서버 액션', () => {
     ]);
   });
 
+  it('남은 감사 모델 바꾸기 — 로그인한 사람으로, 화면이 본 심사자와 사유를 함께 보낸다. 감사를 읽지 못하면 부르지 않는다', async () => {
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '빨리']])))
+      .toMatchObject({ error: expect.any(String) });
+    expect(await switchAuditModel(decision([['campaign', 'x'], ['expectedProvider', 'abcllm'], ['expectedModel', 'm'], ['reason', '빨리']])))
+      .toMatchObject({ error: expect.stringContaining('새로고침') });
+    expect(mocks.switchReviewer).not.toHaveBeenCalled();
+
+    mocks.switchReviewer.mockResolvedValueOnce({ ok: false, error: '그 사이 다른 곳에서 바뀌었습니다.' });
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '']])))
+      .toEqual({ error: '그 사이 다른 곳에서 바뀌었습니다.' });
+    mocks.switchReviewer.mockResolvedValueOnce({ ok: true, from: { provider: 'abcllm', model: '[MLX] gpt-oss-120b' }, to: QWEN, unanswered: 15_300 });
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '빨리']])))
+      .toEqual({ message: expect.stringContaining('남은 15,300건을 qwen-v2') });
+    expect(mocks.switchReviewer).toHaveBeenLastCalledWith({ campaignId: 7, expected: { provider: 'abcllm', model: '[MLX] gpt-oss-120b' },
+      reason: '빨리', by: 'jr' });
+    expect(mocks.revalidate).toHaveBeenCalledWith('/admin/audit');
+  });
+
   it('보류 설정 — 로그인한 사람으로, 화면이 본 값과 함께 보낸다. 문턱이 0.80 아래면 쓰지 않는다', async () => {
     const expected = JSON.stringify(DEFAULT_AUDIT_HOLD);
     mocks.setHold.mockResolvedValue({ ok: true, auditHold: { ...DEFAULT_AUDIT_HOLD, enabled: false } });
     expect(await saveAuditHold(null, decision([['expected', expected], ['minConfidence', '0.97'], ['category', 'company'], ['category', 'company'],
       ['category', 'constructor'], ['reason', '오탐 확인']]))).toMatchObject({ message: expect.stringContaining('이미 건 보류는 남아') });
+    // 감사 보류는 origin/main 모양 그대로 — Qwen-v2 자동 단계는 이 폼이 쓰지 않는다(settings qwenAuto, 따로 setter)
     expect(mocks.setHold).toHaveBeenCalledWith({ next: { enabled: false, minConfidence: 0.97, categories: ['company'], secondOpinionReject: false },
       expected: DEFAULT_AUDIT_HOLD, actor: 'jr', reason: '오탐 확인' });
 
@@ -451,6 +564,28 @@ describe('내릴 후보 서버 액션', () => {
     mocks.setHold.mockResolvedValue({ ok: false, issues: ['그 사이 다른 곳에서 바뀌었습니다.'] });
     expect(await saveAuditHold(null, decision([['expected', expected], ['enabled', 'on'], ['minConfidence', '0.95']])))
       .toEqual({ error: '그 사이 다른 곳에서 바뀌었습니다.' });
+  });
+
+  it('Qwen-v2 자동 단계 스위치 — 로그인한 사람으로, 화면이 본 값·사유와 함께 그 단계만 보낸다', async () => {
+    const off = JSON.stringify({ enabled: false, perTick: 10 }), on = JSON.stringify({ enabled: true, perTick: 5 });
+    mocks.setQwenAuto.mockResolvedValue({ ok: true, step: 'auditSecondOpinion', before: { enabled: false, perTick: 10 }, after: { enabled: true, perTick: 5 }, dryRun: false });
+    expect(await saveQwenAutoStep(null, decision([['step', 'auditSecondOpinion'], ['next', on], ['expected', off], ['reason', '적체 회복']])))
+      .toEqual({ message: expect.stringContaining('켰습니다') });
+    expect(mocks.setQwenAuto).toHaveBeenCalledWith({ step: 'auditSecondOpinion', next: { enabled: true, perTick: 5 }, expected: { enabled: false, perTick: 10 },
+      actor: 'jr', reason: '적체 회복' });
+    expect(mocks.revalidate).toHaveBeenCalledWith('/admin/audit');
+
+    mocks.setQwenAuto.mockClear();
+    expect(await saveQwenAutoStep(null, decision([['step', 'review'], ['next', on], ['expected', off]]))).toMatchObject({ error: expect.any(String) });
+    expect(await saveQwenAutoStep(null, decision([['step', 'auditSecondOpinion'], ['next', '{'], ['expected', off]]))).toMatchObject({ error: expect.any(String) });
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await saveQwenAutoStep(null, decision([['step', 'auditSecondOpinion'], ['next', on], ['expected', off]]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.setQwenAuto).not.toHaveBeenCalled();
+
+    // 켜는 바꿈의 사유·compare-and-set 은 setter 가 가른다 — 그 말을 그대로 돌려준다
+    mocks.setQwenAuto.mockResolvedValue({ ok: false, issues: ['사람 없이 정하는 일을 켜는 바꿈은 까닭을 적어야 합니다.'] });
+    expect(await saveQwenAutoStep(null, decision([['step', 'splitTiebreak'], ['next', on], ['expected', off], ['reason', '']])))
+      .toEqual({ error: '사람 없이 정하는 일을 켜는 바꿈은 까닭을 적어야 합니다.' });
   });
 
   it('보류 모두 풀기 — 로그인한 사람으로 풀고, 푼 수와 까닭을 작업 로그에 한 줄 남긴다', async () => {

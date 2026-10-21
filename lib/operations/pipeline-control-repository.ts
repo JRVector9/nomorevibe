@@ -87,7 +87,10 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
           AND o.observed_at >= localtimestamp - interval '24 hours'), '[]'::jsonb),
       'reviewSettings', (SELECT s."values" FROM crawl_settings s WHERE s.id = 1),
       -- product_audit_one_running_idx: 실행 중 감사는 많아야 하나다
-      'auditCampaign', (SELECT jsonb_build_object('provider', a.provider, 'model', a.model) FROM product_audit_campaigns a WHERE a.status = 'running')
+      -- 남은 감사 모델 바꾸기(0112) 뒤면 바꾼 심사자가 묻는다(product-audit-reviewer.ts auditReviewer 와 같은 규칙)
+      'auditCampaign', (SELECT jsonb_build_object('provider', CASE WHEN a.current_provider IS NOT NULL AND a.current_model IS NOT NULL THEN a.current_provider ELSE a.provider END,
+          'model', CASE WHEN a.current_provider IS NOT NULL AND a.current_model IS NOT NULL THEN a.current_model ELSE a.model END)
+        FROM product_audit_campaigns a WHERE a.status = 'running')
     ) AS snapshot FROM c`);
   return controlSnapshotSchema.parse(row?.snapshot);
 }

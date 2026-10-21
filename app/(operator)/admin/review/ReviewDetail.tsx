@@ -12,6 +12,7 @@ import { approvalNote, causeLabel, modelsAgree, recommendDecision } from './caus
 import { entryVersion, type ReviewDecisionState } from './contract';
 import { ReasonText } from './ReasonText';
 import { revealInPanel, reviewShortcut } from './shortcuts';
+import { SPLIT_TIEBREAK_ACTOR, TIEBREAK_APPROVE_BADGE, tiebreakApproved, tiebreakDeepseekLine, tiebreakSummary } from './tiebreak';
 
 /** 성공한 한 건 결정 — 알림과 되돌리기가 쓴다 */
 export type DecidedResult = Extract<NonNullable<ReviewDecisionState>, { ok: true }>;
@@ -271,11 +272,26 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
         </p>
       ))}
 
+      {/* 갈림 판가름 — 관문에서 갈린 보류를 세 번째 모델(Qwen-v2)에 물은 답. 승인이면 발행하지 않고 사람이 확인한다 */}
+      {entry.tiebreak && (
+        <p className={`rounded-lg border px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2 ${
+          tiebreakApproved(entry.tiebreak) ? 'border-up/40 bg-up/5' : entry.tiebreak.decision === 'reject' ? 'border-down/40 bg-down/5' : 'border-line bg-bg-soft'}`}>
+          <b className="font-semibold">{tiebreakApproved(entry.tiebreak) ? TIEBREAK_APPROVE_BADGE : '갈림 판가름'}</b>
+          <span className="ml-1.5 font-mono text-fg-3">{entry.tiebreak.model} · {entry.tiebreak.promptVersion}</span>
+          {typeof entry.tiebreak.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.tiebreak.confidence.toFixed(2)}</span> : null}
+          <span className="mt-0.5 block font-semibold">{tiebreakSummary(entry.tiebreak)}</span>
+          {entry.tiebreak.reason ? <span className="mt-1 block"><ReasonText text={entry.tiebreak.reason} limit={400} /></span> : null}
+          {/* DeepSeek 확인 — Qwen-v2 가 거부했을 때 둘째 모델의 판단. 둘 다 거부해야 사람 없이 닫는다 */}
+          {tiebreakDeepseekLine(entry.tiebreak) && <span className="mt-1 block font-semibold">{tiebreakDeepseekLine(entry.tiebreak)}</span>}
+          {entry.tiebreak.deepseek?.reason ? <span className="mt-0.5 block"><ReasonText text={entry.tiebreak.deepseek.reason} limit={400} /></span> : null}
+        </p>
+      )}
+
       <p className="text-[13px] text-fg-2">
         {bucket
           ? <b className="font-semibold text-down">{causeLabel(bucket)}</b>
           : <>{STATES[candidate.state]} · {candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '사유 없음'}</>}
-        {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : candidate.decidedBy === 'deepseek' ? 'DeepSeek 위임 판단' : STATUS[entry.status]}
+        {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : candidate.decidedBy === 'deepseek' ? 'DeepSeek 위임 판단' : candidate.decidedBy === 'qwen-v2' ? 'Qwen-v2 보류 재심사 판단' : STATUS[entry.status]}
       </p>
       {/* 판정 당시 기록된 사유. 아래 규칙 흔적은 지금 규칙으로 다시 계산한 것이라 기준이 바뀌면 달라진다 */}
       {stop && <p className="text-[13px] text-fg-2">
@@ -353,7 +369,10 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
       <p className="text-[13px] text-fg-3">저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
 
       {entry.latest && <div className="rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
-        <p className="font-semibold">{entry.latest.kind === 'delegated' ? 'DeepSeek 위임 판단 기록' : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
+        {/* Qwen-v2 위임 기록은 actor 로 가른다 — 갈림 판가름 qwen-v2-auto, 보류 재심사 qwen-v2:<판>(둘 다 provider qwen-direct) */}
+        <p className="font-semibold">{entry.latest.kind === 'delegated' ? (entry.latest.actor === SPLIT_TIEBREAK_ACTOR ? 'Qwen-v2 갈림 판가름 기록'
+          : entry.latest.actor?.startsWith('qwen-v2:') ? 'Qwen-v2 보류 재심사 기록' : entry.latest.provider === 'qwen-direct' ? 'Qwen-v2 판단 기록'
+          : 'DeepSeek 위임 판단 기록') : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {(entry.latest.kind === 'automatic' || entry.latest.kind === 'delegated') && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
         {entry.latest.actor && <p>담당자: {entry.latest.actor}</p>}
         {entry.latest.reason && <p className="whitespace-pre-line"><ReasonText text={entry.latest.reason} korean={entry.latest.reasonKo} /></p>}

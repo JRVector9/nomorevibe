@@ -129,6 +129,11 @@ export type DecisionReason =
    * 사유다(REVIEW_RETRIABLE_REASONS 에 없다). 다시 집으면 같은 승인이 되풀이돼 "승인됐지만 발행은 막힌" 상태에 갇힌다.
    */
   | "second_review_split"
+  /**
+   * 관문에서 갈린 보류(second_review_split)를 세 번째 모델(gpu3090 Qwen-v2)도 거부해 1차 승인 1 : 거부 2 로 닫았다(2026-10-21,
+   * lib/crawl/gate-split-tiebreak.ts). 사람의 거부 사유와 가르려고 따로 둔다. 사람은 거부 목록에서 다시 승인할 수 있다.
+   */
+  | "second_review_split_qwen_reject"
   /** Automatic first review exhausted its attempts; a person must decide. */
   | "ai_review_exhausted"
   /** A requested source refresh ended without a newer GitHub document. */

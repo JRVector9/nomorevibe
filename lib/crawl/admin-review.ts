@@ -1,4 +1,4 @@
-import { sameReviewModel } from "./review-model-identity";
+import { sameUnderlyingModel } from "./review-model-identity";
 import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -23,6 +23,7 @@ import { adminAuditRow } from '@/lib/operations/admin-log';
 import { lockPipelineInputStages } from './pipeline-stage-context';
 import { applyAdminEvidenceRefreshCompletion, lockAdminEvidenceRefreshCompletion } from './evidence-refresh-completion';
 import { kstDayStart, type FreshWindows } from '@/lib/operations/windows';
+import { splitTiebreakApprovedFirst, splitTiebreakVerdicts, type SplitTiebreakView } from './gate-split-tiebreak-read';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -489,6 +490,8 @@ export type AdminReviewEntry = {
     provider: string | null; status: string; trigger: string; errorCode: string | null;
     /** 1차와 같은 모델이라 셈에서 뺀 표 */
     echo: boolean; isFallback?: boolean }[];
+  /** 갈림 보류에 Qwen-v2 가 낸 판가름(gate-split-tiebreak.ts) — 없으면 null. current 이고 승인이면 «Qwen-v2 승인 — 발행 후보» 배지 */
+  tiebreak?: SplitTiebreakView | null;
 };
 
 /**
@@ -564,7 +567,10 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       ? sql`${repoNumber('stargazers_count')} >= ${options.minStars}` : undefined);
   const where = stale ? and(base, not(stale)) : base;
   const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
-    db.select().from(crawlCandidates).where(where).orderBy(orderBy(options.sort ?? ""))
+    // Qwen-v2 도 승인한 갈림 보류가 어떤 정렬보다 먼저다 — 사람이 확인만 하면 되는 것(gate-split-tiebreak-read.ts).
+    // 보류가 든 목록에서만 — 거부·발행 목록은 늘 거짓이라 색인 순서를 그대로 쓴다. after(id 다음부터 이어 읽기)는 id 순이어야 이어진다
+    db.select().from(crawlCandidates).where(where)
+      .orderBy(...(options.after || !(states as readonly string[]).includes('needs_review') ? [] : [splitTiebreakApprovedFirst]), orderBy(options.sort ?? ""))
       .limit(limit + 1).offset(Math.max(0, options.offset ?? 0)),
     db.select({ total: sql<number>`count(*)::int` }).from(crawlCandidates).where(where),
     stale ? db.select({ hidden: sql<number>`count(*)::int` }).from(crawlCandidates).where(and(base, stale)) : Promise.resolve([{ hidden: 0 }]),
@@ -588,7 +594,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       eq(crawlReviewAttempts.state, 'succeeded')))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
-  const seconds = await secondReviewsFor(ids);
+  const [seconds, tiebreaks] = await Promise.all([secondReviewsFor(ids), splitTiebreakVerdicts(ids)]);
   // 지은 한 줄 소개 — 소개 없음으로 멈춘 후보의 상세가 쓴다
   const taglines = await db.select().from(crawlTaglines).where(inArray(crawlTaglines.repo, repos));
   const observations = scans.length ? await db.select().from(agentRepositoryObservations)
@@ -637,7 +643,8 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
         status: row.status, trigger: row.trigger, errorCode: row.errorCode, isFallback: Boolean(row.fallbackForId),
-        echo: sameReviewModel(row.firstModel, row.model) })),
+        echo: sameUnderlyingModel(row.firstModel, row.model) })),
+      tiebreak: tiebreaks.get(candidate.id) ?? null,
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,

@@ -3,18 +3,26 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlSettings, operationsAudit, productEvidenceAudit } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
-import { adminAuditRow, settingsChanges } from "@/lib/operations/admin-log";
+import { adminAuditRow, settingsChanges, type ActorKind } from "@/lib/operations/admin-log";
 import {
   auditHoldSchema,
   crawlSettingsSchema,
   DEFAULT_CRAWL_SETTINGS,
+  DEFAULT_QWEN_AUTO,
+  heldQwenRetrySchema,
+  qwenAutoStepSchema,
+  splitTiebreakSchema,
   type CrawlSettings,
+  type QwenAutoSettings,
+  type QwenAutoStep,
 } from "./settings-schema";
 import { isAuditReasonCategory } from "./audit-reason-category";
 import { auditHoldWidens, sameAuditHold } from "./audit-hold-policy";
 import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { requestJob } from "@/lib/jobs/control";
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 const ROW_ID = 1;
@@ -51,7 +59,10 @@ function mergeSecondReview(stored: unknown) {
     : null;
   const voters = Array.isArray(saved.voters) && saved.voters.length ? saved.voters
     : legacy ?? DEFAULT_CRAWL_SETTINGS.secondReview.voters;
-  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
+  // 옛 가지가 적던 splitTiebreak 칸은 버린다(지금은 qwenAuto.splitTiebreak) — 스키마가 모르는 칸이라 남겨 두면 읽기가 깨진다
+  const { splitTiebreak: _retired, ...rest } = saved;
+  void _retired;
+  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...rest, voters };
 }
 
 /**
@@ -66,11 +77,41 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
   const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   const categories = object && Array.isArray(object.categories)
     ? [...new Set(object.categories.filter(isAuditReasonCategory))] : object?.categories;
-  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...object,
+  // 이 가지의 앞 커밋이 감사 보류 안에 적던 Qwen-v2 자동 단계 칸(지금은 최상위 qwenAuto)은 버린다 — strict 라 남겨 두면
+  // 시험·스테이징 DB 의 감사 보류가 통째로 깨진 것(꺼짐)으로 읽힌다
+  const { autoSecondOpinion: _retiredOpinion, publishedFilter: _retiredFilter, ...current } = object ?? {};
+  void _retiredOpinion; void _retiredFilter;
+  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...current,
     ...(categories === undefined ? {} : { categories }) }) : null;
   if (parsed?.success) return parsed.data;
   logger.error("crawl.audit_hold_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
   return { ...DEFAULT_CRAWL_SETTINGS.auditHold, enabled: false };
+}
+
+const QWEN_AUTO_STEP_SCHEMAS = {
+  auditSecondOpinion: qwenAutoStepSchema, publishedFilter: qwenAutoStepSchema, splitTiebreak: splitTiebreakSchema, heldRetry: heldQwenRetrySchema,
+} as const satisfies Record<QwenAutoStep, unknown>;
+
+const plainObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * 저장된 행의 Qwen-v2 자동 단계(qwenAuto) — 행의 나머지와 따로, 단계마다 따로 읽는다. 칸이 없거나(옛 코드가 저장해 버린 행·첫 배포)
+ * 단계가 없거나 깨졌으면 그 단계는 꺼짐이다(DEFAULT_QWEN_AUTO). 빠진 칸을 기본값으로 채우지 않는다 — 사람 없이 정하는 일은 누군가 켰을 때만 돈다
+ */
+export function storedQwenAuto(stored: unknown): QwenAutoSettings {
+  const raw = plainObject(stored) ? stored.qwenAuto : undefined;
+  const object = plainObject(raw) ? raw : null;
+  if (raw !== undefined && !object) logger.error("crawl.qwen_auto_settings_invalid", { issues: ["not_object"] });
+  const read = <K extends QwenAutoStep>(step: K): QwenAutoSettings[K] => {
+    const value = object?.[step];
+    if (value === undefined) return DEFAULT_QWEN_AUTO[step];
+    const parsed = QWEN_AUTO_STEP_SCHEMAS[step].safeParse(value);
+    if (parsed.success) return parsed.data as QwenAutoSettings[K];
+    logger.error("crawl.qwen_auto_settings_invalid", { step, issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) });
+    return DEFAULT_QWEN_AUTO[step];
+  };
+  return { auditSecondOpinion: read("auditSecondOpinion"), publishedFilter: read("publishedFilter"), splitTiebreak: read("splitTiebreak"),
+    heldRetry: read("heldRetry") };
 }
 
 /** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
@@ -91,6 +132,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
     rising: { ...DEFAULT_CRAWL_SETTINGS.rising, ...((raw.rising as object) ?? {}) },
     auditHold: storedAuditHold(raw),
+    qwenAuto: storedQwenAuto(raw),
     secondReview: mergeSecondReview(raw.secondReview),
   };
 
@@ -102,7 +144,8 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
   logger.error("crawl.settings_invalid", {
     issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
   });
-  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold };
+  // Qwen-v2 자동 단계도 저장된 값을 따로 읽어 둔다(storedQwenAuto) — 화면이 지금 값을 보이고 compare-and-set 이 맞물리게
+  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold, qwenAuto: merged.qwenAuto };
   unreadable.add(fallback);
   return fallback;
 }
@@ -126,7 +169,8 @@ export type SaveResult =
  * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
  */
 export function settingsFormVersion(settings: CrawlSettings): string {
-  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null };
+  // Qwen-v2 자동 단계는 감사·심사 화면이 따로 바꾼다(setQwenAutoStep) — 판에 넣으면 그 스위치를 누를 때마다 열린 폼이 거절된다
+  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null, qwenAuto: null };
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
 }
 
@@ -141,6 +185,8 @@ function applyPatch(current: CrawlSettings, patch: unknown) {
     humanReview: current.humanReview,
     // 감사 보류는 감사 화면의 스위치(setAuditHold)만 바꾼다 — 크롤 설정 폼·기본값 되돌리기가 공개 목록을 건드리지 않게
     auditHold: current.auditHold,
+    // Qwen-v2 자동 단계는 그 스위치(setQwenAutoStep)만 바꾼다 — 크롤 설정 폼·기본값 되돌리기가 사람 없이 정하는 일을 켜거나 끄지 않게
+    qwenAuto: current.qwenAuto,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(current.classify, raw.classify),
@@ -310,8 +356,111 @@ export async function setAuditHold(input: { next: AuditHoldSettings; expected: A
  * 끄기가 commit 된 뒤에는 새 보류가 하나도 commit 되지 않는다. 잠금 순서는 다른 설정 쓰기와 같다(stage → 설정 행).
  */
 export async function lockedAuditHold(tx: ProductTransaction): Promise<AuditHoldSettings> {
+  return (await lockedSettings(tx)).auditHold;
+}
+
+/** 같은 잠금으로 읽은 설정 전체 — 감사 보류와 Qwen-v2 자동 단계를 한 번에 보는 쓰기(보류 걸기·풀기)가 쓴다 */
+export async function lockedSettings(tx: ProductTransaction): Promise<CrawlSettings> {
   const [row] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("share");
-  return mergeWithDefaults(row?.values).auditHold;
+  return mergeWithDefaults(row?.values);
+}
+
+/** 단계를 켜면 다음 틱을 바로 부를 잡 */
+const QWEN_AUTO_JOB: Record<QwenAutoStep, string> = {
+  auditSecondOpinion: "product-audit", publishedFilter: "product-audit", splitTiebreak: "second-review", heldRetry: "human-deepseek-review",
+};
+
+const sameValue = (left: unknown, right: unknown): boolean => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
+/** 배열은 순서 없이(사유 목록), 객체는 열쇠 차례 없이 견준다 */
+function canonical(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonical).map((item) => JSON.stringify(item)).sort();
+  if (plainObject(value)) return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  return value;
+}
+
+export type QwenAutoStepResult<K extends QwenAutoStep = QwenAutoStep> =
+  { ok: true; step: K; before: QwenAutoSettings[K]; after: QwenAutoSettings[K]; dryRun: boolean } | { ok: false; issues: string[] };
+
+/**
+ * 사람 없이 정하는 일을 넓히는 바꿈인가 — 켬, 또는 켜 둔 채 틱당 수·시간 예산·하루 자동 거부 상한을 올리거나 맡는 사유를 더하는 것.
+ * 넓히는 바꿈은 까닭을 꼭 받는다(좁히는 바꿈은 받지 않는다)
+ */
+function qwenAutoWidens(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  if (after.enabled !== true) return false;
+  if (before.enabled !== true) return true;
+  const raised = (key: string) => typeof after[key] === "number" && typeof before[key] === "number" && (after[key] as number) > (before[key] as number);
+  const added = Array.isArray(after.reasons) && Array.isArray(before.reasons)
+    && after.reasons.some((reason) => !(before.reasons as unknown[]).includes(reason));
+  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added;
+}
+
+/**
+ * Qwen-v2 자동 단계 하나를 바꾼다 — 감사 화면·심사 큐의 스위치와 scripts/ops/set-qwen-auto.ts 가 부른다. 감사 보류(setAuditHold)와 같은 길이다:
+ * DR writer fence(첫 잠금) → stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 그 단계의 칸만 쓴다(compare-and-set).
+ * 넓히는 바꿈(켬, 켜 둔 채 수·예산·상한 올림·사유 더함)은 사유를 꼭 받는다.
+ *
+ * 배포 주의: 관문(발행 조건·2차 심사·심사 큐)을 읽는 모든 앱(M3·mini 의 웹·scheduler·reviewer·publisher·text 등)이 이 단계를 아는 SHA 로
+ * 바뀌기 전에는 어느 단계도 켜지 않는다 — 옛 코드는 qwenAuto 를 모르고(꺼짐으로 버린다), 보류 재심사가 넣은 승인을 관문이 다르게 읽을 수 있다.
+ * 성공·거절 모두 같은 트랜잭션에서 작업 로그(qwen-auto-settings)에 남긴다. 끄면 그 단계의 쓰기가 쓰는 순간 다시 읽어 바로 멈춘다.
+ * dryRun 이면 읽기 전용 트랜잭션에서 같은 검사만 하고 쓰지 않는다(작업 로그도 남기지 않는다). database 는 운영 스크립트가 따로 연 연결이다
+ */
+export async function setQwenAutoStep<K extends QwenAutoStep>(input: {
+  step: K; next: QwenAutoSettings[K]; expected: QwenAutoSettings[K]; actor: string; reason?: string | null; actorKind?: ActorKind;
+  dryRun?: boolean; database?: Pick<typeof db, "transaction">;
+}): Promise<QwenAutoStepResult<K>> {
+  const database = input.database ?? db;
+  const run = async (tx: ProductTransaction): Promise<QwenAutoStepResult<K>> => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 스위치도 작업 로그도 쓰지 않는다(운영 스크립트의 따로 연 연결도 같다)
+    if (!input.dryRun && !currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+    // 읽기 전용(dry-run)은 잠그지 않는다 — 행 잠금은 읽기 전용 트랜잭션에서 쓸 수 없다
+    if (!input.dryRun) await lockPipelineInputStages(tx);
+    if (!input.dryRun) await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const query = tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID));
+    const [row] = input.dryRun ? await query : await query.for("update");
+    const before = storedQwenAuto(row?.values)[input.step] as QwenAutoSettings[K];
+    const reason = input.reason?.trim().slice(0, 500) || null;
+    const audit = async (ok: boolean, error: string | null, after: unknown = before) => {
+      if (input.dryRun) return;
+      await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: "qwen-auto-settings", target: "crawl_settings",
+        detail: { step: input.step, before, after, requested: input.next, reason }, ok, error }, input.actorKind));
+    };
+    if (!sameValue(before, input.expected)) {
+      await audit(false, "stale_state");
+      return { ok: false, issues: ["그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 값을 확인한 뒤 다시 해 주세요."] };
+    }
+    const parsed = QWEN_AUTO_STEP_SCHEMAS[input.step].safeParse(input.next);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => `qwenAuto.${input.step}.${issue.path.join(".")}: ${issue.message}`);
+      await audit(false, issues.join(" · "));
+      return { ok: false, issues };
+    }
+    const after = parsed.data as QwenAutoSettings[K];
+    if (qwenAutoWidens(before as Record<string, unknown>, after as Record<string, unknown>) && !reason) {
+      await audit(false, "reason_required");
+      return { ok: false, issues: ["사람 없이 정하는 일을 켜거나 넓히는 바꿈(켬·틱당 수·예산·상한 올림·사유 더함)은 까닭을 적어야 합니다."] };
+    }
+    if (input.dryRun) return { ok: true, step: input.step, before, after, dryRun: true };
+    // 이 단계의 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도 끄기는 되어야 하고, 깨진 칸·없는 단계를 기본값으로 채우지 않는다
+    const stored = (row?.values ?? {}) as Record<string, unknown>;
+    const qwenAuto = plainObject(stored.qwenAuto) ? stored.qwenAuto : {};
+    const values = { ...stored, qwenAuto: { ...qwenAuto, [input.step]: after } };
+    await tx.update(crawlSettings).set({ values: values as CrawlSettings, updatedBy: input.actor.slice(0, 120), updatedAt: new Date() })
+      .where(eq(crawlSettings.id, ROW_ID));
+    logger.info("crawl.qwen_auto_set", { updatedBy: input.actor, step: input.step, before, after });
+    await audit(true, null, after);
+    if (after.enabled && !before.enabled) await requestJob(QWEN_AUTO_JOB[input.step], tx);
+    return { ok: true, step: input.step, before, after, dryRun: false };
+  };
+  return input.dryRun ? database.transaction(run, { accessMode: "read only" }) : database.transaction(run);
+}
+
+/**
+ * 쓰는 트랜잭션이 그 자리에서 Qwen-v2 자동 단계의 스위치를 다시 읽는다 — 설정 행을 SHARE 로 잡아 setQwenAutoStep 의 FOR UPDATE 와 줄을 세운다.
+ * 끄기가 commit 된 뒤에는 그 단계의 새 쓰기가 하나도 commit 되지 않는다. 잠금 순서는 lockedAuditHold 와 같다(stage → … → 설정 행)
+ */
+export async function lockedQwenAuto(tx: ProductTransaction): Promise<QwenAutoSettings> {
+  const [row] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("share");
+  return storedQwenAuto(row?.values);
 }
 
 /** 누가 언제 바꿨는지 (화면 표시용) */

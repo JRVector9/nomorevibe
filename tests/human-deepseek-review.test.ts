@@ -3,8 +3,11 @@ import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), save: vi.fn(), ready: vi.fn(), settings: vi.fn(), overview: vi.fn(), repos: vi.fn(),
-  claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(),
+  claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(), qwen: vi.fn(), confirm: vi.fn(),
 }));
+vi.mock('@/lib/crawl/held-qwen-retry', () => ({ runHeldQwenRetry: mocks.qwen }));
+// 2차 갈림 판가름의 DeepSeek 확인(gate-split-confirm.ts) — 통합 시험(tests/integration/gate-split-tiebreak.test.ts)이 DB 로 본다
+vi.mock('@/lib/crawl/gate-split-confirm', () => ({ runSplitTiebreakConfirmations: mocks.confirm }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
 vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
 vi.mock('@/lib/operations/dr/web-gate', () => ({ webWriteAction: (fn: unknown) => fn }));
@@ -137,6 +140,27 @@ describe('human queue worker', () => {
     mocks.repos.mockResolvedValue(['a/one', 'b/two', 'c/three']);
     mocks.claim.mockResolvedValue({ input }); mocks.infer.mockResolvedValue({ ok: true, outcome: verdict });
     mocks.record.mockResolvedValue('applied');
+    mocks.qwen.mockResolvedValue({ started: 0, rejected: 0, pipeline: 0, held: 0, failed: 0, reapplied: 0 });
+    mocks.confirm.mockResolvedValue({ calls: 0 });
+  });
+  // M3 DeepSeek 은 이 잡만 쓴다 — 갈림 판가름 확인은 위임의 호출이 다 끝난 뒤에 차례로, 위임을 꺼도 돈다
+  it('runs the split tiebreak DeepSeek confirmation after delegation, never alongside it, even with delegation off', async () => {
+    let inFlight = 0, max = 0;
+    mocks.infer.mockImplementation(async () => {
+      inFlight++; max = Math.max(max, inFlight);
+      await new Promise(resolve => setTimeout(resolve, 5)); inFlight--;
+      return { ok: true, outcome: verdict };
+    });
+    mocks.confirm.mockImplementation(async () => { inFlight++; max = Math.max(max, inFlight); inFlight--; return { calls: 1 }; });
+    expect(await reviewHumanQueue(ctx())).toEqual({ done: false });
+    expect(mocks.infer).toHaveBeenCalledTimes(2);
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(mocks.confirm.mock.invocationCallOrder[0]).toBeGreaterThan(Math.max(...mocks.infer.mock.invocationCallOrder));
+    expect(max).toBe(1);
+    mocks.settings.mockResolvedValue({ enabled: true, humanReview: { enabled: false } });
+    mocks.confirm.mockResolvedValue({ calls: 0 });
+    expect(await reviewHumanQueue(ctx())).toEqual({ done: true });
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
   });
   it('off performs cleanup but no inference', async () => {
     mocks.settings.mockResolvedValue({ enabled: true, humanReview: { enabled: false } });
@@ -144,7 +168,19 @@ describe('human queue worker', () => {
   });
   it('takes only human/confirmation stages, deduplicates and bounds starts', async () => {
     await reviewHumanQueue(ctx());
-    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3]); expect(mocks.infer).toHaveBeenCalledTimes(2);
+    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], []); expect(mocks.infer).toHaveBeenCalledTimes(2);
+  });
+  // 보류 Qwen-v2 재심사(held-qwen-retry.ts)는 같은 잡의 앞부분 — DeepSeek 위임을 꺼도 돌고, 맡은 사유는 DeepSeek 이 집지 않는다
+  it('runs the held Qwen-v2 pass first, even with DeepSeek off, and hands its reasons away from DeepSeek', async () => {
+    const qwenAuto = { heldRetry: { enabled: true, perTick: 10, budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } };
+    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: false }, qwenAuto });
+    mocks.qwen.mockResolvedValue({ started: 2, rejected: 1, pipeline: 1, held: 0, failed: 0, reapplied: 0 });
+    expect(await reviewHumanQueue(ctx())).toEqual({ done: false });
+    expect(mocks.qwen).toHaveBeenCalledTimes(1); expect(mocks.infer).not.toHaveBeenCalled();
+    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: true, generation: 3 }, qwenAuto });
+    await reviewHumanQueue(ctx());
+    expect(mocks.qwen.mock.invocationCallOrder[1]).toBeLessThan(mocks.repos.mock.invocationCallOrder[0]);
+    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], ['no_description', 'ai_review_exhausted', 'ambiguous']);
   });
   it('bounds starts even when every result becomes superseded', async () => {
     mocks.record.mockResolvedValue('superseded'); await reviewHumanQueue(ctx());

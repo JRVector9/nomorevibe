@@ -778,6 +778,34 @@
       "when": 1794086400022,
       "tag": "0110_audit_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1794086400023,
+      "tag": "0111_qwen_second_opinion",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1794086400024,
+      "tag": "0112_audit_reviewer_switch",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1794086400025,
+      "tag": "0113_gate_split_tiebreak",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1794086400026,
+      "tag": "0114_gate_split_deepseek",
+      "breakpoints": true
     }
   ]
 }

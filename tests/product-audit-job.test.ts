@@ -5,13 +5,15 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 
 const mocks = vi.hoisted(() => ({ campaign: vi.fn(), settings: vi.fn(), candidates: vi.fn(), pending: vi.fn(),
-  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), finish: vi.fn(), gateway: vi.fn(), agent: vi.fn() }));
+  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), finish: vi.fn(), gateway: vi.fn(), agent: vi.fn(), qwen: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
 // 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
+// Qwen-v2 단계(gpu3090 직접 호출) — 쓰기·호출은 tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기는 감사 묻기와의 관계만
+vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: mocks.qwen }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
   loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
 // These job units do not open a database; open/draining admission is covered by cli-model-capacity-callers.test.ts.
@@ -34,8 +36,43 @@ beforeEach(() => {
   mocks.pending.mockResolvedValue([{ id: 7, slug: "app" }]);
   mocks.input.mockResolvedValue({ snapshot: {}, inputHash: "h", source: {} });
   mocks.gateway.mockResolvedValue(verdict);
+  mocks.qwen.mockResolvedValue(null);
 });
 afterEach(() => vi.useRealTimers());
+
+it("Qwen-v2 단계는 감사 묻기와 나란히 돌고, 틱은 그 단계가 끝난 뒤에 닫힌다 — 감사의 60초 호출 여유를 빼앗지 않는다", async () => {
+  let finishQwen!: () => void;
+  mocks.qwen.mockImplementation(() => new Promise<null>((resolve) => { finishQwen = () => resolve(null); }));
+  mocks.gateway.mockImplementation(async () => {
+    await new Promise(resolve => setTimeout(resolve, 5_000));
+    return verdict;
+  });
+  const ctx = context();
+  let closed = false;
+  const running = auditPublishedProducts(ctx).then((outcome) => { closed = true; return outcome; });
+  await vi.advanceTimersByTimeAsync(5_000);
+  // 단계가 아직 도는 동안에도 감사는 60초 호출을 시작했고 답을 적었다
+  expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 60_000 }));
+  expect(mocks.record).toHaveBeenCalled();
+  expect(mocks.qwen).toHaveBeenCalledWith(ctx, expect.objectContaining({ enabled: true }));
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(closed).toBe(false);
+  finishQwen();
+  expect(await running).toEqual({ done: false });
+  expect(closed).toBe(true);
+});
+
+it("감사 묻기가 실패해도 Qwen-v2 단계가 끝난 뒤에 실패를 넘긴다", async () => {
+  let finishQwen!: () => void;
+  mocks.qwen.mockImplementation(() => new Promise<null>((resolve) => { finishQwen = () => resolve(null); }));
+  mocks.campaign.mockRejectedValue(new Error("campaign_read_failed"));
+  let settled = false;
+  const running = auditPublishedProducts(context()).catch((error: Error) => { settled = true; return error.message; });
+  await vi.advanceTimersByTimeAsync(100);
+  expect(settled).toBe(false);
+  finishQwen();
+  expect(await running).toBe("campaign_read_failed");
+});
 
 it("stores a normal thirty-second gateway response instead of exhausting an audit attempt at twenty-four seconds", async () => {
   mocks.gateway.mockImplementation(async (_input, options) => {

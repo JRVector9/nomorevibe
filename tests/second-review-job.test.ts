@@ -6,6 +6,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
   candidate: vi.fn(), document: vi.fn(), input: vi.fn(), admit: vi.fn(), canStart: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
+  tiebreak: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings }));
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
@@ -14,6 +15,8 @@ vi.mock("@/lib/crawl/second-review-ownership", () => ({ admitLegacySecondReview:
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000 }));
 vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
+// 갈림 판가름은 따로 시험한다(tests/integration/gate-split-tiebreak.test.ts) — 여기서는 틱이 그것을 나란히 띄우고 기다리는지만 본다
+vi.mock("@/lib/crawl/gate-split-tiebreak", () => ({ runGateSplitTiebreak: mocks.tiebreak }));
 vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
   // 판단을 합치는 규칙은 진짜를 쓴다 — 잡이 그것을 제대로 부르는지가 이 테스트의 요점이다
   combineVerdicts: (await importOriginal<typeof import("@/lib/crawl/second-review")>()).combineVerdicts,
@@ -35,6 +38,7 @@ beforeEach(() => {
   mocks.input.mockResolvedValue({ snapshot: {} });
   mocks.canStart.mockResolvedValue(true);
   mocks.record.mockResolvedValue({ state: "recorded" });
+  mocks.tiebreak.mockResolvedValue({ calls: 0 });
   // Unit orchestration only: DB authority is exercised by the unmocked integration suite.
   mocks.admit.mockImplementation(async (id: number) => {
     const input = await mocks.input();
@@ -267,4 +271,31 @@ it("preserves a genuine lane error ahead of model defer after all lanes settle",
   });
   await expect(secondReviewCandidates(context())).rejects.toBe(original);
   expect(mocks.record).not.toHaveBeenCalled();
+});
+
+it("갈림 판가름을 같은 lease·틱 마감으로 표 심사와 나란히 띄우고, 표 심사가 단계에 막혀도 돌린다", async () => {
+  const before = Date.now();
+  mocks.canStart.mockResolvedValue(false);
+  expect(await secondReviewCandidates(context())).toEqual({ done: false, deferred: "stage_blocked" });
+  expect(mocks.tiebreak).toHaveBeenCalledExactlyOnceWith(expect.anything(), context().lease, { deadlineAt: expect.any(Number) });
+  const { deadlineAt } = mocks.tiebreak.mock.calls[0][2] as { deadlineAt: number };
+  expect(deadlineAt).toBeGreaterThanOrEqual(before + 100_000);
+  expect(deadlineAt).toBeLessThanOrEqual(Date.now() + 108_000);
+});
+
+it("표 심사가 끝나도 갈림 판가름이 끝나기를 기다리고, 판가름의 오류는 틱을 실패로 남긴다", async () => {
+  let finish!: () => void;
+  const order: string[] = [];
+  mocks.tiebreak.mockImplementation(() => new Promise<void>(resolve => { finish = () => { order.push("tiebreak"); resolve(); }; }));
+  mocks.record.mockImplementation(async () => { order.push("vote"); setTimeout(() => finish(), 5); return { state: "recorded" }; });
+  await secondReviewCandidates(context());
+  expect(order).toEqual(["vote", "tiebreak"]);
+
+  const lost = new Error("job_lease_lost");
+  mocks.tiebreak.mockRejectedValue(lost);
+  await expect(secondReviewCandidates(context())).rejects.toBe(lost);
+  // 표 심사의 오류가 먼저다 — 판가름을 기다린 뒤 그 오류를 그대로 던진다
+  const vote = new Error("vote failure");
+  mocks.admit.mockRejectedValue(vote);
+  await expect(secondReviewCandidates(context())).rejects.toBe(vote);
 });

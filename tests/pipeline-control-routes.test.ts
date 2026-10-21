@@ -140,6 +140,9 @@ describe("capacity open is judged only on the combinations in use", () => {
       { routeId: "product-audit", provider: "abcllm", model: "audit-gw" }]));
     expect(implicit.some(use => use.routeId === "grok-session-check")).toBe(false);
     expect(usedModelRoutes(snapshot({ auditCampaign: null }), MODELS).some(use => use.routeId === "product-audit")).toBe(false);
+    // 남은 감사 모델 바꾸기(0112)로 Qwen 직접 심사가 묻는 감사는 공통 슬롯을 거치지 않는다
+    expect(usedModelRoutes(snapshot({ auditCampaign: { provider: "qwen-direct", model: "qwen3.8-flash-next" } }), MODELS)
+      .some(use => use.routeId === "product-audit")).toBe(false);
   });
 
   it("treats unreadable settings and empty model values as unknown and refuses open", () => {
