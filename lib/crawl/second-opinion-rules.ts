@@ -22,6 +22,14 @@ export function sameOpinionModel(a: string | null | undefined, b: string | null 
   return Boolean(a && b && bare(a) && bare(a) === bare(b));
 }
 
+/**
+ * 사람 없이 정하는 자동 단계의 확신 하한 — Qwen-v2 의 답은 확신이 있고 이 값 이상일 때만 자동으로 반영한다(보류 걸기·풀기, 공개분 유지,
+ * 갈림 판가름 거부, 보류 재심사). 아래면 판단만 남기고 사람에게 둔다(DeepSeek 위임의 하한과 같다)
+ */
+export const QWEN_AUTO_MIN_CONFIDENCE = 0.9;
+/** 확신이 있고 하한 이상인가 */
+export const qwenConfident = (confidence: number | null | undefined): boolean => typeof confidence === "number" && confidence >= QWEN_AUTO_MIN_CONFIDENCE;
+
 /** 카탈로그·디렉터리 같은 항목을 가르는 낱말 — 감사 사유(감사 모델이 쓴 사유)에서 찾는다. SQL 쪽은 같은 글을 ~* 로 쓴다 */
 export const CATALOG_LIKE_REASON = /directory|catalog|awesome|curated list|list of/i;
 

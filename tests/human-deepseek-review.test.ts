@@ -150,12 +150,12 @@ describe('human queue worker', () => {
   });
   // 보류 Qwen-v2 재심사(held-qwen-retry.ts)는 같은 잡의 앞부분 — DeepSeek 위임을 꺼도 돌고, 맡은 사유는 DeepSeek 이 집지 않는다
   it('runs the held Qwen-v2 pass first, even with DeepSeek off, and hands its reasons away from DeepSeek', async () => {
-    const review = { qwenHeldRetry: { enabled: true, perTick: 10, budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } };
-    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: false }, review });
+    const qwenAuto = { heldRetry: { enabled: true, perTick: 10, budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } };
+    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: false }, qwenAuto });
     mocks.qwen.mockResolvedValue({ started: 2, rejected: 1, pipeline: 1, held: 0, failed: 0, reapplied: 0 });
     expect(await reviewHumanQueue(ctx())).toEqual({ done: false });
     expect(mocks.qwen).toHaveBeenCalledTimes(1); expect(mocks.infer).not.toHaveBeenCalled();
-    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: true, generation: 3 }, review });
+    mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: true, generation: 3 }, qwenAuto });
     await reviewHumanQueue(ctx());
     expect(mocks.qwen.mock.invocationCallOrder[1]).toBeLessThan(mocks.repos.mock.invocationCallOrder[0]);
     expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], ['no_description', 'ai_review_exhausted', 'ambiguous']);

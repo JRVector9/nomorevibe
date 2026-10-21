@@ -1,0 +1,714 @@
+/**
+ * 시험 고정본 — origin/main 55389b48 의 lib/crawl/settings-schema.ts 그대로(옛 코드). 새 코드가 쓴 크롤 설정 행을 옛 코드가 읽고 쓰는지
+ * (배포가 도는 동안·되돌림) tests/qwen-auto-settings.test.ts 가 이 스키마로 본다. 고치지 않는다 — 옛 코드의 모양이 기준이다.
+ */
+import { z } from "zod";
+import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
+import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "@/lib/crawl/audit-reason-category";
+
+/**
+ * 크롤 기준.
+ *
+ * 코드 상수가 아니라 데이터다. 어드민 화면에서 바꿀 수 있어야 하고, 바꾼 뒤 재배포 없이
+ * 곧바로 적용돼야 한다. 원본(crawl_documents)을 보관하므로 판정 기준을 바꾸면
+ * GitHub을 다시 긁지 않고 재판정된다 — 기준을 실험하는 비용이 거의 없다.
+ *
+ * 필터를 추가할 때는 이 스키마에 필드 하나와 기본값만 넣으면 된다. 마이그레이션은 없다
+ * (jsonb 한 컬럼에 담기므로). 어드민 폼 검증도 같은 스키마를 쓴다.
+ */
+
+/** GitHub 검색 정렬. 표본 분포를 크게 바꾼다 */
+export const searchSortSchema = z.enum(["relevance", "recent"]).describe(
+  // 실측: 같은 100건에서 고유 레포가 relevance 63개 vs recent 2개.
+  // recent는 방금 활발히 커밋한 소수 레포에 몰린다.
+  "relevance는 레포가 넓게 흩어지고, recent는 최신 활동에 몰린다",
+);
+
+/** Show HN 게시물로 넣은 프론티어 항목의 signal 라벨 — 수집 잡(jobs/hn-show.ts)과 흔적 게이트(jobs/fetch.ts)가 같이 쓴다 */
+export const SHOW_HN_SIGNAL = "Show HN";
+
+const discoverSchema = z.object({
+  sourceBuffer: z.object({ enabled: z.boolean() }).strict().default({ enabled: false }),
+  /** 켜져 있는 검색 신호. 신호별 수율을 비교하려면 개별로 끌 수 있어야 한다 */
+  queries: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(40),
+        /**
+         * 어느 검색을 타는지.
+         *
+         * commits는 커밋 메시지를 찾는다(트레일러 신호). 결과에 레포 메타가 없어 배포 여부를
+         * 모른 채 프론티어에 넣고, 그중 상당수가 no_homepage로 거부된다(실측 206건 중 122건).
+         * repositories는 결과에 homepage가 실려 오므로 배포된 레포만 골라 넣을 수 있다.
+         */
+        kind: z.enum(["commits", "repositories"]).default("commits"),
+        /** GitHub 검색 문자열. repositories면 `topic:` 같은 레포 검색 수식어를 쓴다 */
+        query: z.string().min(1).max(200),
+        enabled: z.boolean(),
+        /** 이 신호로 발견한 레포의 조사 우선순위 */
+        priority: z.number().int().min(0).max(1000),
+        /** 검색 설정의 과거 호환용 힌트. 제작 AI 확정이나 공개 builder에 사용하지 않는다. */
+        builder: z.string().min(1).max(40).nullable().default(null),
+        /**
+         * 이 신호로 찾은 레포는 AI 코딩 도구의 흔적(루트의 CLAUDE.md·.cursor 같은 파일, 최근 커밋의 Co-authored-by)이
+         * 있어야 들여보낸다(jobs/fetch.ts, ai-evidence-gate.ts). 검색어가 "AI로 만들었다"를 말하지 않는 신호 — 한국어
+         * README 전체를 긁는 `있습니다 in:readme` 같은 언어 표식 — 에 쓴다. 2026-10-02 표본 26건 중 17건에 흔적이 있었다.
+         * 없으면 요구하지 않는다 — 저장돼 있던 신호의 모양(과 seed 의 설정 해시)을 바꾸지 않으려고 기본값을 채우지 않는다.
+         */
+        requireEvidence: z.boolean().optional(),
+      }),
+    )
+    .min(1),
+  /** 최근 N일 이내의 커밋만 본다 */
+  windowDays: z.number().int().min(1).max(3650),
+  sort: searchSortSchema,
+  /** 한 틱에 볼 검색 페이지 수. rate limit(30회/분)을 고려해 낮게 유지한다 */
+  pagesPerTick: z.number().int().min(1).max(10),
+  /**
+   * Show HN 수집.
+   *
+   * GitHub 검색과 반대 방향이다 — 만든 사람이 배포했다고 직접 올린 목록에서 시작한다.
+   * 다른 수집원과 마찬가지로 배포 없이 끊을 수 있어야 하므로 데이터로 둔다.
+   */
+  showHn: z.object({
+    enabled: z.boolean(),
+    /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
+    priority: z.number().int().min(0).max(1000),
+    /** 검색 신호의 requireEvidence 와 같다 — Show HN 게시물에는 AI 조건이 없어 흔적으로 거른다(발행분 트레일러 0.8%) */
+    requireEvidence: z.boolean().optional(),
+  }).strict().default({ enabled: true, priority: 120 }),
+});
+
+const judgeSchema = z.object({
+  /** Fresh public GitHub repositories at or above this count bypass content and AI review. */
+  autoApproveMinStars: z.number().int().min(500).max(10_000_000).default(500),
+  /** Legacy saved value, retained for old receipts. New decisions do not use an upper star limit. */
+  maxStars: z.number().int().min(0).max(1_000_000),
+  /** 하한. 0이 기본이다 */
+  minStars: z.number().int().min(0).max(100_000),
+  /** 마지막 푸시가 이보다 오래되면 죽은 프로젝트로 본다 */
+  maxPushAgeDays: z.number().int().min(1).max(3650),
+  excludeForks: z.boolean(),
+  /**
+   * 조직 계정 레포를 제외할지.
+   *
+   * 기본값이 false인 이유는 실측이다. 표본 341개에서 large_oss로 거른 52건 중 39건이
+   * "조직 계정인데 스타 1000 이하"였고, 그 안에 nodetool.ai·smithers.sh·albyhub.com 같은
+   * 실제 배포 제품이 섞여 있었다. 계정 종류로 한 번 더
+   * 거르면 소규모 팀이 통째로 빠진다.
+   */
+  excludeOrganizations: z.boolean(),
+  /**
+   * 레포 설명에 이 문구가 있으면 개인 프로필로 본다.
+   *
+   * 이름과 URL에는 단서가 없는데 설명에만 있는 경우가 있다 — evansstepanov("My very simple
+   * personal landing page app"), villoro.com("Personal blog build with Astro")이 그렇게 통과했다.
+   * 한 단어짜리는 넣지 않는다. "personal"만 보면 personal-finance-tracker가 걸린다.
+   *
+   * 2026-09-18부터 하는 일이 반대다. 찾는 일은 그대로지만, 찾으면 거부가 아니라 통과이고
+   * 이름 패턴까지 이긴다. 그래서 틀렸을 때의 방향도 반대다 — 예전에는 붙잡아 두는 쪽으로
+   * 틀렸고 지금은 내보내는 쪽으로 틀린다. 넓은 문구를 더하기 전에 그것을 생각해야 한다.
+   */
+  personalSiteKeywords: z.array(z.string().min(3).max(60)).max(100),
+  /**
+   * 개인 프로필로 보는 레포 이름·루트 배포 호스트 패턴.
+   *
+   * excludedRepoPatterns 보다 먼저 본다. 걸리면 거부가 아니라 통과다 — 이력·포트폴리오·개인
+   * 홈페이지는 Profile 카테고리로 발행하기로 했다(2026-09-18). personalSiteKeywords 도 같은 편이
+   * 됐다: 문구를 찾는 일은 그대로고, 찾았을 때 하는 일만 거부에서 통과로 바뀌었다.
+   */
+  profileRepoPatterns: z.array(z.string().min(1).max(120)).max(100),
+  /**
+   * 개인 것이 아니면 제품도 아닌 프로필 패턴 — 분류기가 Profile 이라고 해야 발행한다.
+   *
+   * 블로그가 그렇다. 개인 블로그면 Profile 이고, 아니면 회사·주제 블로그라 읽을거리지 제품이
+   * 아니다. 제3의 경우가 없다. 반면 `*.github.io` 는 내용이 아니라 자리라서 진짜 제품이 올라온다
+   * (AIRaML, Mathematical Art) — 그래서 여기 넣지 않는다.
+   *
+   * 규칙은 이것을 가릴 수 없다. 실측(2026-09-18, `*-blog` 로 통과한 30건): 분류기가 개인 블로그
+   * 22건을 Profile 로, 회사·브랜드 블로그 7건(제품 공식 블로그·마케팅 코치·병원·여행 브랜드)을
+   * 전부 다른 카테고리로 갈랐다 — 30건에서 어긋난 것이 없었다. 그 답을 버리지 않고 쓴다.
+   */
+  profileOnlyPatterns: z.array(z.string().min(1).max(120)).max(100),
+  /** homepage가 이 도메인이면 배포물이 아니다 */
+  blockedHomepageDomains: z.array(z.string().min(1).max(120)).max(200),
+  /** 레포 이름이 이 패턴이면 제외 (* 와일드카드) */
+  excludedRepoPatterns: z.array(z.string().min(1).max(120)).max(200),
+  /**
+   * 레포 이름이 이 패턴이면 거부하지 않고 보류한다 — AI 가 가른다(2026-09-19).
+   *
+   * 이름만으로는 회사 소개 사이트·링크 모음인지 제품 사이트인지 못 가른다. 제외 패턴과 같은 자리에서 보고,
+   * 개인 프로필 패턴·키워드가 똑같이 먼저 이긴다. 뒤의 확실한 거부(스타·방치·HTTP)가 걸리면 그쪽이 이긴다.
+   */
+  heldRepoPatterns: z.array(z.string().min(1).max(120)).max(100),
+  /**
+   * 이 생성기로 만들어진 페이지는 문서일 수 있다 — 2026-09-19 부터 거부하지 않고 보류해 AI 가 가른다.
+   *
+   * 실측에서 심사 큐의 GitHub Pages 23건 중 10건이 문서 생성기 흔적을 남겼고, 그중 범용
+   * 생성기(jekyll·hugo)를 뺀 8건이 실제 문서였다. 그러나 라이브러리·CLI 도 올리게 되자 이 규칙이 거부한 것의
+   * 79%가 문서 도구로 만든 프로젝트 홈페이지였다(rules.ts 참고).
+   */
+  docsGenerators: z.array(z.string().min(2).max(40)).max(50),
+  /**
+   * 페이지 제목이 이것과 정확히 같으면 손대지 않은 스캐폴드다.
+   *
+   * 프레임워크가 만들어 준 기본 제목을 그대로 배포한 것은 아직 제품이 아니다. 부분 일치가
+   * 아니라 정확 일치로 본다 — "Create Next App Alternatives" 같은 진짜 제품을 치지 않게.
+   */
+  placeholderTitles: z.array(z.string().min(2).max(60)).max(100),
+  /**
+   * 빈 페이지·대기 화면의 제목(* 와일드카드). 배포 주소가 제품이 아니라 로그인 벽·기본 페이지·
+   * 공사 중 화면을 보여 준다. placeholderTitles 와 따로 둔다 — 저장된 설정이 그 목록을 덮고 있어
+   * 새 항목을 거기에 더하면 적용되지 않는다(2026-09-11 확인).
+   */
+  stubPageTitles: z.array(z.string().min(2).max(60)).max(100),
+  /**
+   * 제작자의 사이트가 아닌 주소(뒤쪽 일치). 글·초대·양식·패키지 목록 페이지는 쓸 수 있는 제품이 아니다.
+   * blockedHomepageDomains 와 따로 두는 이유는 위와 같다.
+   */
+  thirdPartyHosts: z.array(z.string().min(3).max(120)).max(200),
+  /**
+   * 제목이 스스로 문서라고 말하는 것.
+   *
+   * 주소와 생성기로는 못 잡는다 — owner.github.io/repo 아래에 문서와 웹앱이 섞여 있어
+   * 규칙이 판단을 미루는데, 그중 상당수는 제목만 봐도 문서다.
+   * 실측(2026-09-10, 보류 576건): 29건이 걸렸고 눈으로 확인한 오탐은 없었다.
+   *
+   * 스캐폴드 제목과 달리 정확 일치가 아니라 와일드카드를 쓴다. 대신 제목의 끝만 보고,
+   * 짧은 제목에만 건다 — "Documentation Hub"나 "Docsy"처럼 앞이나 안에 품고 있을 뿐인
+   * 진짜 제품, 그리고 마지막 단어가 우연히 docs인 한 문장짜리 소개문을 치지 않기 위해서다
+   * (그 경계는 기존 테스트가 지키고 있다. rules.ts의 DOCS_TITLE_MAX_WORDS 참고).
+   */
+  docsTitlePatterns: z.array(z.string().min(2).max(60)).max(50),
+  /**
+   * 본문이 "설치해서 쓰라"고 말하는 것.
+   *
+   * 실측(2026-09-10): owner.github.io 하위 경로 509건을 전부 열어 보니 359건이 배포물이
+   * 아니라 소개 페이지였다. 제목·주소·생성기로는 하나도 못 걸렀는데, 본문 첫머리에는
+   * 그대로 적혀 있었다 — `npm install`, `Download for macOS`, 문서 목차.
+   *
+   * 2026-09-19 부터 설치·내려받기 문구는 넣지 않는다 — 설치해서 쓰는 도구와 내려받는 앱도 올린다.
+   * 남은 것은 문서·넘김 껍데기와 "진짜 데이터가 아니다"라고 스스로 밝힌 문구다.
+   *
+   * 소문자로 맞춘 본문에서 찾는다. 정규식이 아니라 그냥 들어 있는지만 본다.
+   */
+  landingPhrases: z.array(z.string().min(2).max(60)).max(120),
+  /**
+   * 문서 사이트의 목차 낱말.
+   *
+   * 한 낱말은 진짜 제품 페이지에도 흔하다("Getting Started" 버튼). 여러 개가 함께 있으면
+   * 목차일 수 있다 — 2026-09-19 부터 거부하지 않고 보류한다. 라이브러리 홈페이지에도 흔했다(표본 20건 중 19건).
+   */
+  docsNavPhrases: z.array(z.string().min(2).max(60)).max(60),
+  /** 이 수 이상 함께 나오면 문서 사이트로 본다. 실측에서 3이 오탐 없이 68건을 갈랐다 */
+  docsNavThreshold: z.number().int().min(2).max(10),
+  /**
+   * "이 페이지에서 뭔가 할 수 있다"는 표시.
+   *
+   * 설치 명령이 있다고 다 소개 페이지가 아니다. 로그인·가격·대시보드가 있으면 그 페이지가
+   * 곧 제품이고, 설치 문구는 개발자용 곁다리다. 실측(발행분 표본 134건): 이 신호를 넣기
+   * 전 오탐 13건, 넣은 뒤 0건. 대신 맞는 것도 절반쯤 놓친다 — 놓친 것은 사람에게 가므로
+   * 그 방향의 실패가 안전하다.
+   */
+  usableSignals: z.array(z.string().min(2).max(60)).max(60),
+  /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
+  holdAmbiguous: z.boolean(),
+});
+
+/**
+ * 카테고리 분류 기준.
+ *
+ * 판정 규칙과 같은 이유로 코드 상수가 아니라 데이터다. 분류가 어긋날 때 고쳐야 하는 것은
+ * 이 문장인데, 상수로 두면 한 줄을 고치려고 재배포를 해야 한다.
+ *
+ * summary는 지금 프롬프트에 있는 문장을 그대로 옮긴 것이다. include/exclude가 비어 있으면
+ * 렌더 결과가 기존 프롬프트와 한 글자도 다르지 않다 — 옮기는 것만으로 분류가 바뀌면 안 된다.
+ */
+export const categoryDefinitionSchema = z.object({
+  summary: z.string().min(1).max(300),
+  /** 애매할 때 여기에 넣을 것 */
+  include: z.array(z.string().min(1).max(120)).max(12),
+  /** 잘못 분류된 것을 볼 때마다 쌓는다. "무엇 → 어느 카테고리" 형태로 쓴다 */
+  exclude: z.array(z.string().min(1).max(120)).max(12),
+}).strict();
+
+/** 열거형 키라 18개가 모두 있어야 하고 모르는 카테고리는 거부된다 */
+export const categoryDefinitionsSchema = z.record(z.enum(CATEGORIES), categoryDefinitionSchema);
+export type CategoryDefinition = z.infer<typeof categoryDefinitionSchema>;
+export type CategoryDefinitions = Record<Category, CategoryDefinition>;
+
+const definition = (summary: string): CategoryDefinition => ({ summary, include: [], exclude: [] });
+
+export const DEFAULT_CATEGORY_DEFINITIONS: CategoryDefinitions = {
+  Plugin: {
+    summary: "기존 앱·에디터·브라우저·AI 도구에 설치해 기능을 확장하는 플러그인·확장 프로그램",
+    include: ["브라우저 확장", "IDE·에디터 플러그인", "설치 가능한 호스트 앱 확장"],
+    exclude: ["에이전트가 읽는 설치 가능한 SKILL.md 패키지 → Skill", "독립 CLI·라이브러리·MCP 서버 → Dev", "플러그인 소개 글·링크 모음은 제품 아님"],
+  },
+  Skill: {
+    summary: "AI 에이전트에 설치·연결하여 반복 사용하도록 패키징된 스킬",
+    include: ["SKILL.md와 사용법·호스트가 명시된 에이전트 스킬", "직접 설치 가능한 스킬 묶음"],
+    exclude: ["일반 프롬프트 모음·연구 문서·튜토리얼은 제품 아님", "스킬을 개발·관리하는 독립 도구 → Dev", "기능 확장 코드 플러그인 → Plugin"],
+  },
+  Productivity: definition("개인·팀의 일정, 문서, 메모, 작업 및 워크플로 도구"),
+  Dev: definition("코딩, API, SDK, 테스트, 인프라 및 개발자 도구"),
+  Design: definition("UI/UX, 그래픽, 3D 및 시각 디자인 도구"),
+  Business: definition("CRM, HR, 회사 운영, 프로젝트 운영 및 업무 협업"),
+  Marketing: definition("광고, SEO, 영업 지원, 소셜 발행 및 고객 성장"),
+  Finance: definition("투자, 은행, 회계, 결제 및 금융 분석"),
+  Commerce: definition("쇼핑, 마켓플레이스, 소매, 주문 및 상품 탐색"),
+  Education: definition("교육, 학습, 튜터링, 강의 및 학업"),
+  Health: definition("신체·정신 건강, 웰니스 및 의료 지원"),
+  Media: definition("영상, 오디오, 음악, 스토리 및 뉴스의 제작·편집·소비"),
+  Games: definition("비디오게임, 게임 제작 도구 및 게임 커뮤니티"),
+  Social: definition("메시징, 커뮤니티, 데이팅 및 소셜 네트워크"),
+  Data: definition("분석, 데이터베이스, BI, 데이터 처리 및 시각화"),
+  Security: definition("개인정보, 인증, 사이버보안 및 사기 방지"),
+  Lifestyle: definition("여행, 음식, 집, 취미 및 개인 생활 서비스"),
+  Sports: definition("운동, 스포츠 경기, 팀 운영 및 피트니스"),
+  /**
+   * 유일하게 include/exclude를 비워 두지 않은 항목이다.
+   *
+   * 나머지 열일곱은 프롬프트에 있던 문장을 그대로 옮긴 것이라 비워야 결과가 같지만, 이것은
+   * 새로 만든 갈래라 옮길 문장이 없다. 경계를 적지 않으면 소재를 따라 샌다 — 이 갈래가 없던
+   * 동안 wendyliga.com("A blog about technology, programming, and life")이 Media로 발행됐다.
+   */
+  Profile: {
+    summary: "특정 개인을 소개하는 것 자체가 목적인 사이트 — 이력, 포트폴리오, 개인 홈페이지, 개인 블로그",
+    include: ["이력서·CV", "작업물을 모아 보이는 개인 포트폴리오", "이름을 내건 개인 홈페이지", "개인이 혼자 쓰는 블로그"],
+    exclude: [
+      "회사·단체·행사 소개 사이트 → Business",
+      "남이 자기 이력서·포트폴리오를 만드는 도구 → Productivity",
+      "여러 사람이 글을 올리는 매체·뉴스 → Media",
+    ],
+  },
+  Other: definition("정보가 부족하거나 어느 분류에도 명확히 맞지 않음"),
+};
+
+const defaultClassify = { definitions: DEFAULT_CATEGORY_DEFINITIONS };
+
+/** AI 소식. 새 글은 기본으로 곧바로 공개한다 — 관리자는 내릴 것만 고른다 */
+const defaultNews = { autoApprove: true, disabledSources: [] as string[] };
+
+/** 홈 '지금 뜨는 프로젝트'의 마지막 스타 확인 기간 — 코드 기본값은 RISING_FRESH_DAYS(lib/domain/products/repository.ts)와 같다 */
+const defaultRising = { freshDays: 7 };
+
+/**
+ * 감사 보류(0110)의 기본값 — 켬, 확신 0.95, 사유 갈래 넷. 확신은 묶어 내리기의 문턱(GROUP_REMOVE_MIN_CONFIDENCE)과 같다.
+ * 2026-10-21 프로드: 처리 안 된 거부 6,558건 중 0.95 이상·주인 없음이 2,754건이었고, 거부의 6,477건이 아직 공개 목록에 떠 있었다.
+ *
+ * 확신만으로는 모자랐다 — 감사 #4 의 0.95 이상·주인 없는 거부 50건을 grok 으로 다시 가르니 엄격히 82%(경계 포함 92%)만 맞았고,
+ * 확신은 0.95~0.97 과 0.90~0.94 로 갈려 문턱을 올려도 나아지지 않았다. 사유 갈래(audit-reason-category.ts)로는 갈렸다:
+ * 빈 화면·회사 소개·남의 플랫폼 31/31(쇼핑몰은 표본이 없지만 같은 무리), 글·문서 4/8, 기타 5/9, 로그인 1/2.
+ * 틀린 것은 MkDocs·Docusaurus 로 만든 프로젝트 홈을 "문서"로, SaaS 첫 화면을 "광고 문구뿐"으로, 페이지 대신 README 로 가른 것이었다.
+ * 그래서 맞았던 갈래만 기본으로 보류한다. 나머지는 지금처럼 목록에 둔 채 사람을 기다린다.
+ * 다른 모델(grok)도 같은 항목을 거절했으면 갈래와 상관없이 보류한다(secondOpinionReject) — 두 모델이 따로 같은 답을 낸 것이다.
+ * 그 모델이 승인했으면 갈래로는 걸지 않는다 — 회사 소개 갈래가 "광고 문구뿐"으로 잡는 SaaS 첫 화면을 다른 모델이 열어 보고 승인한 것이다.
+ */
+export const DEFAULT_AUDIT_HOLD: { enabled: boolean; minConfidence: number; categories: AuditReasonCategory[]; secondOpinionReject: boolean } =
+  { enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"], secondOpinionReject: true };
+/** 문턱의 하한 — 그 아래로 내리면 모델이 틀린 몫(1차 심사 실측 정확도 85%)이 사람 눈 없이 목록에서 빠진다 */
+export const AUDIT_HOLD_MIN_CONFIDENCE_FLOOR = 0.8;
+
+const defaultAgentEvidence = {
+  enabled: false,
+  enforceEligibility: false,
+  displayObservedFacts: false,
+  backgroundRefreshDays: 1,
+  detectorVersion: "2026-09-14.1",
+  policyVersion: "2026-09-06.1",
+};
+
+/**
+ * 2차 심사. 1차와 다른 모델이 같은 입력을 따로 본다.
+ * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
+ * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
+ */
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
+
+export const reviewVoterSchema = z.object({
+  provider: z.enum(["claude-cli", "abcllm", "grok-cli"]),
+  model: z.string().trim().min(1).max(160)
+    // 게이트웨이 이름은 "[MLX] gpt-oss-120b" 처럼 대괄호·공백이 들어간다. 제어 문자와
+    // 셸·따옴표 문자는 막는다 — 지금은 JSON 본문으로만 나가지만, 이름은 좁게 받는 편이 낫다
+    .regex(/^[^\p{Cc}"'`\\;$]+$/u),
+})
+  // CLI 쪽(claude-cli·grok-cli) 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
+  .refine((value) => value.provider === "abcllm" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
+    { path: ["model"], message: "CLI 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
+
+/**
+ * 감사 보류 설정의 모양 — 저장된 행에서 따로 읽는다(settings.ts storedAuditHold). 행의 다른 칸이 깨져도 이 값은 그대로 읽고,
+ * 이 값이 깨졌으면 꺼진 것으로 읽는다 — 끈 스위치가 기본값(켬)으로 되돌아가면 안 된다.
+ */
+export const auditHoldSchema = z.object({
+  enabled: z.boolean(),
+  minConfidence: z.number().min(AUDIT_HOLD_MIN_CONFIDENCE_FLOOR).max(1),
+  /** 보류하는 사유 갈래 — 사유 문장을 감사 화면의 칩과 같은 분류(classifyAuditReason)로 나눈 것. 비면 아무것도 보류하지 않는다 */
+  categories: z.array(z.enum(AUDIT_REASON_KEYS as [AuditReasonCategory, ...AuditReasonCategory[]]))
+    .max(AUDIT_REASON_KEYS.length)
+    .refine((categories) => new Set(categories).size === categories.length, { message: "같은 갈래를 두 번 넣을 수 없다" }),
+  /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
+  secondOpinionReject: z.boolean(),
+}).strict();
+
+export const crawlSettingsSchema = z.object({
+  /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
+  enabled: z.boolean(),
+  reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
+  /** 사람 큐의 판단을 M3 Ultra 로컬 DeepSeek에 맡긴다. 토글 세대가 이전 실행을 차단한다. */
+  humanReview: z.object({
+    enabled: z.boolean().default(false),
+    generation: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  }).default({ enabled: false, generation: 0 }),
+  /**
+   * 1차 심사를 누가 보나. 2차와 같은 모양이라 같은 스키마를 쓴다.
+   *
+   * 비어 있으면 예전대로 claude-cli 와 CRAWL_REVIEW_MODEL 환경변수를 쓴다 — 저장된 설정에
+   * 이 칸이 없는 배포 환경이 그대로 돌아야 해서다. 데이터로 둔 이유는 나머지 기준과 같다:
+   * 모델을 갈아 끼우는 데 재배포가 필요하면 비교 실험을 못 한다.
+   *
+   * 실측(2026-09-18, 정답을 가려놓고 매긴 홀드아웃 40건, 보류는 빼고 결정분만):
+   *   claude-cli sonnet      21/25 (84%) · 잘못 승인 1 · 실패 0
+   *   abcllm gpt-oss-120b    22/26 (85%) · 잘못 승인 3 · 실패 0 · 무료·무제한
+   * 게이트웨이는 한도가 없어 enforce 로 올릴 때 발행이 심사 속도에 묶이지 않는다.
+   */
+  firstReview: reviewVoterSchema.optional(),
+  /**
+   * 한 틱에 동시에 띄우는 1차 심사 수.
+   *
+   * 2로 박혀 있던 때는 주기가 60초라 시간당 120건이 상한이었다. 발행이 시간당 213건이라
+   * enforce 를 켜면 심사가 병목이 된다 — 모델이 느려서가 아니라 이 숫자 때문이었다.
+   * 실측(2026-09-18, 게이트웨이 40건): 한 건 평균 7.7초, 틱 예산은 24초.
+   * 데이터로 둔 이유는 사내 게이트웨이가 공용이라서다. 부하를 보며 배포 없이 올리고 내려야 한다.
+   */
+  reviewConcurrency: z.number().int().min(1).max(16).default(2),
+  discover: discoverSchema,
+  judge: judgeSchema,
+  classify: z.object({ definitions: categoryDefinitionsSchema }).strict().default(defaultClassify),
+  agentEvidence: z.object({
+    enabled: z.boolean(),
+    enforceEligibility: z.boolean(),
+    displayObservedFacts: z.boolean(),
+    /** Clean public scans only; candidates, unfinished work and retry deadlines keep their existing cadence. */
+    backgroundRefreshDays: z.number().int().min(1).max(365).default(1),
+    detectorVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
+    policyVersion: z.string().regex(/^[a-zA-Z0-9.-]{1,40}$/),
+  }).default(defaultAgentEvidence),
+  secondReview: z.object({
+    enabled: z.boolean(),
+    /**
+     * 누가 다시 보나 — 모델마다 한 표.
+     *
+     * claude-cli 는 사용 한도가 있고, abcllm(사내 게이트웨이)은 한도가 없는 대신 모델 목록이
+     * 예고 없이 바뀐다. 그래서 배포 없이 갈아 끼울 수 있어야 한다. 성향이 서로 다른 모델을
+     * 세울수록 좋다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄된다(2026-09-12 평가).
+     */
+    voters: z.array(reviewVoterSchema)
+      .min(1).max(3)
+      /*
+       * 같은 모델을 두 번 세우면 표가 아니라 메아리다. 제공자가 달라도 막는다 —
+       * 2차 기록의 유일 색인이 (후보, 입력, 모델)이라 한쪽 행이 조용히 사라진다.
+       */
+      .refine((voters) => new Set(voters.map((voter) => voter.model)).size === voters.length,
+        { message: "같은 모델을 두 번 세울 수 없다" }),
+    /**
+     * 1차 AI 도 못 가른 것까지 2차에 올릴지.
+     *
+     * 그 건들은 1차가 표를 내지 않으므로 사내 모델 둘이 같은 결론을 내야 일치가 된다.
+     * 사람이 판정한 80건(전부 1차가 보류했던 것)에서 성향이 반대인 두 모델이 일치한 56건 중
+     * 55건이 사람과 같았다. 지금 그 건들은 통째로 사람 몫이라, 켜면 사람이 볼 양이 줄어든다.
+     */
+    fallbacks: z.array(reviewVoterSchema).max(2).optional(),
+    includeAiHeld: z.boolean().default(false),
+    /** 규칙만 통과한 공개분 중 무작위로 다시 볼 비율 — 자동 공개의 실제 정확도를 잰다 */
+    sampleRate: z.number().min(0).max(0.5),
+    /**
+     * 확신이 이 값 이상이어야 표로 센다 — Claude 계열(1차·claude-cli)에만 건다.
+     * 사내 모델은 틀릴 때도 0.9~1.0 을 달아 확신이 신호가 아니었다(2026-09-12, 130건).
+     */
+    agreeAt: z.number().min(0.5).max(1),
+  }).default(defaultSecondReview),
+  news: z.object({
+    /** 끄면 새 글이 승인 대기로 들어간다 */
+    autoApprove: z.boolean(),
+    /** 수집하지 않을 출처 key (lib/news/sources.ts) */
+    disabledSources: z.array(z.string().regex(/^[a-z0-9-]{1,60}$/)).max(100),
+  }).default(defaultNews),
+  /**
+   * 공개 목록의 '지금 뜨는 프로젝트'(급상승).
+   *
+   * 크롤 기준은 아니지만 배포 없이 바꿔야 하는 운영 값이라 같은 행에 둔다. 갱신 잡이 밀리는 정도(한 바퀴 2~3일)를
+   * 보며 조정한다 — 근거는 repository.ts RISING_FRESH_DAYS. 저장된 행에 없으면 기본값으로 읽는다.
+   */
+  rising: z.object({
+    /** 마지막 스타 확인이 이 일수보다 오래된 제품은 뺀다 */
+    freshDays: z.number().int().min(1).max(30),
+  }).strict().default(defaultRising),
+  /**
+   * 감사 보류 — 발행분 감사가 확신 minConfidence 이상으로 "제품 아님"이라 했고, 그 사유 갈래가 categories 에 들거나 두 번째 모델도
+   * 거절한(secondOpinionReject) 주인 없는 공개 제품을 사람이 정할 때까지 공개 목록에서 뺀다(lib/crawl/product-audit-hold.ts). 끄면 새로 보류하지 않고, 이미 건 보류는 사람이 정하거나 모두 풀 때까지 남는다.
+   * 감사 화면(/admin/audit)이 따로 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(settings.ts applyPatch).
+   */
+  auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
+});
+
+export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
+export type AgentDiscoveryQuery = CrawlSettings["discover"]["queries"][number];
+
+/** Discovery hints only: a topic may describe runtime functionality, not AI-assisted development. */
+export const ADDITIONAL_AGENT_DISCOVERY_QUERIES: readonly AgentDiscoveryQuery[] = [
+  {label:"Grok Build 기여 표기 탐색",kind:"commits",query:"Co-authored-by: Grok",enabled:true,priority:70,builder:null},
+  {label:"Kimi CLI 기여 표기 탐색",kind:"commits",query:"Co-authored-by: Kimi",enabled:true,priority:65,builder:null},
+  {label:"GLM 관련 저장소 탐색",kind:"repositories",query:"topic:glm",enabled:true,priority:50,builder:null},
+  {label:"DeepSeek 관련 저장소 탐색",kind:"repositories",query:"topic:deepseek",enabled:true,priority:45,builder:null},
+  {label:"OpenRouter 관련 저장소 탐색",kind:"repositories",query:"topic:openrouter",enabled:true,priority:40,builder:null},
+  /**
+   * 개발에 AI를 썼다고 스스로 붙인 토픽. 실측 모집단(2026-09-09)을 라벨 옆에 남긴다 —
+   * 커밋 검색은 180일에 6,600만 건이라 다 훑을 수 없지만, 이쪽은 4자릿수라 한 주기에 끝난다.
+   * 게다가 레포 검색이라 homepage가 실려 와 배포 없는 것을 프론티어에 넣지 않는다.
+   * topic:ai-agent(30,341)는 넣지 않았다 — 실행 기능을 설명할 뿐 개발에 AI를 썼다는 뜻이 아니다.
+   */
+  {label:"Cursor 관련 저장소 탐색",kind:"repositories",query:"topic:cursor-ai",enabled:true,priority:55,builder:null},        // 921
+  {label:"Codex CLI 관련 저장소 탐색",kind:"repositories",query:"topic:codex-cli",enabled:true,priority:52,builder:null},     // 2,569
+  {label:"AI 생성 표기 저장소 탐색",kind:"repositories",query:"topic:ai-generated",enabled:true,priority:48,builder:null},    // 1,031
+  // 가장 크다. 한 주기에 다 못 훑어도 순회가 다른 신호를 굶기지 않으므로 우선순위만 낮춘다.
+  {label:"Claude Code 관련 저장소 탐색",kind:"repositories",query:"topic:claude-code",enabled:true,priority:35,builder:null}, // 70,152
+];
+
+/** Explicit rollout helper. Reading stored settings never calls this or changes a maker's queries. */
+export function mergeAdditionalAgentDiscoveryQueries(existing: readonly AgentDiscoveryQuery[]):AgentDiscoveryQuery[] {
+  const merged = existing.map(query => ({...query}));
+  const key = (query:AgentDiscoveryQuery) => `${query.kind}:${query.query.trim().replace(/\s+/g," ").toLowerCase()}`;
+  for (const query of ADDITIONAL_AGENT_DISCOVERY_QUERIES) {
+    if (!merged.some(current => current.label === query.label || key(current) === key(query))) merged.push({...query});
+  }
+  return merged;
+}
+
+/** 기본값. 실측을 근거로 잡았다 (수율 42%, 노이즈는 대형 OSS와 개인 홈페이지) */
+export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
+  enabled: false, // 켜는 것은 명시적 행위여야 한다
+  reviewMode: "off",
+  humanReview: { enabled: false, generation: 0 },
+  reviewConcurrency: 2,
+  agentEvidence: defaultAgentEvidence,
+  news: defaultNews,
+  rising: defaultRising,
+  auditHold: DEFAULT_AUDIT_HOLD,
+  secondReview: defaultSecondReview,
+  classify: defaultClassify,
+  discover: {
+    sourceBuffer: { enabled: false },
+    queries: [
+      { label: "Claude 커밋 트레일러", kind: "commits", query: "Co-authored-by: Claude", enabled: true, priority: 100, builder: "Claude" },
+      // 실측으로 켰다. 표본 132개에서 통과율 23%로 Claude 신호(19%)보다 높았고,
+      // 두 신호가 같이 찾은 레포는 5%뿐이라 거의 겹치지 않는 집합을 데려온다.
+      { label: "Codex 커밋 트레일러", kind: "commits", query: "Co-authored-by: Codex", enabled: true, priority: 90, builder: "Codex" },
+      // 실측(2026-08-29, 최근 180일): 4,326개 레포, 상위 100건 중 52%에 homepage. 커밋 신호의
+      // 41%보다 높고, 레포 검색이라 homepage 없는 것은 애초에 넣지 않는다. topic은 어떤 AI가
+      // 만들었는지 말하지 않으므로 builder는 비운다. claude-code(61k, 43%)·cursor-ai(575, 46%)·
+      // codex-cli(2.3k, 33%)·ai-generated(596, 41%)는 같은 방식으로 /admin에서 더할 수 있다.
+      { label: "vibe-coding 토픽", kind: "repositories", query: "topic:vibe-coding", enabled: true, priority: 80, builder: null },
+      ...ADDITIONAL_AGENT_DISCOVERY_QUERIES.map(query => ({...query})),
+    ],
+    windowDays: 3,
+    sort: "recent",
+    pagesPerTick: 10,
+    showHn: { enabled: true, priority: 120 },
+  },
+  judge: {
+    autoApproveMinStars: 500,
+    maxStars: 99999,
+    minStars: 0,
+    maxPushAgeDays: 180,
+    excludeForks: true,
+    excludeOrganizations: false,
+    personalSiteKeywords: [
+      "personal blog",
+      "personal site",
+      "personal website",
+      "personal landing",
+      "my portfolio",
+      "portfolio website",
+      "개인 블로그",
+      "개인 홈페이지",
+    ],
+    /**
+     * 개인 프로필로 보는 이름·루트 호스트 패턴.
+     *
+     * excludedRepoPatterns 와 같은 글자가 겹치지만 하는 일이 반대다 — 여기 걸리면 거부가 아니라
+     * 통과하고 Profile 로 분류된다. 같은 목록을 재활용하지 않고 따로 둔 이유는 `*.github.io` 다:
+     * 루트(`owner.github.io`)는 개인 홈페이지지만 하위 경로(`owner.github.io/repo`)는 그 위에
+     * 얹힌 배포물이라 여전히 사람이 갈라야 한다(심사 큐 대부분이 이것이다). 제외 목록에서 빼면
+     * 그 보류가 통째로 사라져 실측 70%가 배포물이 아닌 것들이 자동 승인된다.
+     */
+    profileRepoPatterns: [
+      "*.github.io",
+      "*-portfolio",
+      "*-blog",
+      "*-resume",
+      "*-personal-site",
+      "*-personal-website",
+    ],
+    profileOnlyPatterns: ["*-blog"],
+    blockedHomepageDomains: [
+      "github.com",
+      "instagram.com",
+      "x.com",
+      "twitter.com",
+      "linkedin.com",
+      "medium.com",
+      "notion.site",
+      "youtube.com",
+      "discord.gg",
+      // 패키지·모드 등록처. 배포물이 아니라 배포물의 등록 페이지다 (실데이터에서 넷 다 나왔다)
+      "npmjs.com",
+      "crates.io",
+      "modrinth.com",
+      "pypi.org",
+      "wordpress.org",
+      // 같은 성격인데 빠져 있었다 — 발행된 제품에서 rubygems 패키지 페이지가 나왔다
+      "rubygems.org",
+      "packagist.org",
+      "nuget.org",
+      "hex.pm",
+      "pub.dev",
+      "hub.docker.com",
+      "marketplace.visualstudio.com",
+      "chromewebstore.google.com",
+      "addons.mozilla.org",
+      // 문서 호스팅. docs 라벨 규칙에 안 걸리는 형태다 (suews.readthedocs.io를 봤다)
+      "readthedocs.io",
+    ],
+    /**
+     * 목록은 그대로지만 이 중 여섯은 더 이상 여기서 거부되지 않는다 — profileRepoPatterns 가
+     * 먼저 걸러 통과시킨다. 그래도 빼지 않는 이유는 아래 "호스트 제외 패턴" 보류 때문이다:
+     * `owner.github.io/repo` 처럼 호스트만 걸리고 루트가 아닌 것은 여전히 사람이 갈라야 한다.
+     */
+    excludedRepoPatterns: [
+      "*.github.io",
+      "documentation",
+      "dotfiles",
+      "*-portfolio",
+      "*-blog",
+      "*-resume",
+      // 학술 패키지 (Pathfinder.jl을 실제로 봤다)
+      "*.jl",
+      "*-personal-site",
+      "*-personal-website",
+    ],
+    /**
+     * 2026-09-19 에 제외 패턴에서 옮겼다. 블라인드 표본(새 기준): `*-website` 거부 18건 중 6건,
+     * `awesome-*` 거부 8건 중 5건이 올려야 할 것이었다 — 앱 사이트, 검색되는 디렉터리.
+     * 나머지는 회사·대행사·행사 사이트와 단순 링크 모음이라 AI 가 거부한다.
+     */
+    heldRepoPatterns: ["*-website", "awesome-*"],
+    /**
+     * 실측(2026-08-30, 원본 1445건): 정확히 이 제목으로 배포된 것이 5건 있었고 전부 발행돼
+     * 목록에 "Create Next App"이 셋, "Document"와 "Svelte app"이 하나씩 올라 있었다.
+     * "Home"은 5건이 걸렸지만 진짜 제목일 수 있어 넣지 않는다 — 이미 다른 규칙이 처리했다.
+     * 지금 걸리는 것이 없는 항목도 프레임워크 기본값이라 넣어 둔다.
+     */
+    /**
+     * 실측(2026-09-11, 사람 승인 142 · 자동 공개 3,698 · 대기 349)으로 골랐다. 사람 승인분에서 0건.
+     * "redirecting"·"* storybook" 은 사람이 승인한 것이 하나씩 있어 뺐다 — AI 심사에 맡긴다.
+     * "home"·"app" 처럼 흔한 제목도 뺐다.
+     */
+    stubPageTitles: [
+      "overview – vercel", "overview - vercel", "login – vercel", "log in to vercel",
+      "hello world", "hello world!", "hello, world!", "my google ai studio app",
+      "* test report", "* test reports", "allure report",
+      "under construction", "coming soon", "under maintenance", "site under maintenance",
+      "404", "404: not_found", "404 not found", "page not found", "not found", "site not found", "deployment not found",
+      "index of /", "welcome to nginx!", "it works!", "domain for sale", "this domain is for sale", "untitled", "document", "new tab",
+    ],
+    /**
+     * 실측: 자동 공개분의 디스코드 초대 4 · Substack 글 3 · Product Hunt 1 · AWS 워크숍 1. 사람 승인분 0.
+     * 기본 차단 목록과 겹치는 것(youtube·npmjs·pypi)도 넣는다 — 프로드에 저장된 차단 목록에는 빠져 있다.
+     */
+    thirdPartyHosts: [
+      "workshops.aws", "docs.google.com", "drive.google.com", "forms.gle", "youtube.com", "youtu.be", "loom.com",
+      "linktr.ee", "bit.ly", "discord.gg", "discord.com", "calendly.com", "npmjs.com", "pypi.org", "figma.com",
+      "gamma.app", "producthunt.com", "devpost.com", "typeform.com", "tally.so", "substack.com",
+    ],
+    placeholderTitles: [
+      "create next app",
+      "next app",
+      "react app",
+      "vite app",
+      "vite + react",
+      "vite + react + ts",
+      "vite + vue",
+      "vite + svelte",
+      "nuxt app",
+      "svelte app",
+      "document",
+      "untitled",
+      // 리다이렉트 껍데기. 실측 보류 576건에서 3건 (2026-09-10)
+      "redirecting",
+    ],
+    /**
+     * 실측 509건에 걸어 고른 것만 남겼다(2026-09-10). 확실한 것만 넣는다 —
+     * "다운로드"·"下载"·"on this page"·"view on github"는 진짜 앱 페이지에도 흔해서 뺐다.
+     * 이 목록으로 509건 중 136건이 갈렸고 그중 3건이 오탐이었다(2.2%).
+     */
+    landingPhrases: [
+      /**
+       * 설치 명령("npm install"·"brew install"·"curl -fsSL" …)과 내려받기("download for mac" …)는
+       * 2026-09-19 에 뺐다. CLI·플러그인·라이브러리·데스크톱 앱의 소개·설치·다운로드 페이지도 올린다고
+       * 사용자가 정했다. 이 문구들로 AI 가 보기도 전에 거부된 것이 563건이었다(재판정 실측).
+       */
+      /**
+       * 문서·넘김 껍데기.
+       *
+       * "skip to main content"는 뺐다. 문서 생성기의 chrome이기도 하지만 **접근성 스킵
+       * 링크**라 잘 만든 웹앱에는 다 있다. 실측(발행분 700건 중 129건이 이것으로 걸렸고,
+       * 무작위 9건을 열어 보니 6건이 진짜 제품이었다) — 접근성을 지킨 사이트를 벌주는
+       * 규칙이 된다.
+       */
+      "keyboard shortcuts press", "if it does not open automatically",
+      /**
+       * 스스로 "이건 진짜 데이터가 아니다"라고 밝힌 것.
+       *
+       * 실측 5건이 걸리고 오탐 0건이다. "demo"·"prototype"은 진짜 앱에도 흔해서 넣지
+       * 않는다 — 넣었더니 교사용 도구·견적 앱·브라우저 게임이 걸렸다.
+       */
+      "synthetic data", "this is a demo", "演示数据", "示例数据", "画面案",
+      "デモデータ", "데모 데이터", "예시 데이터",
+    ],
+    docsNavPhrases: [
+      "getting started", "quick start", "quickstart", "installation", "api reference",
+      "cli reference", "configuration", "changelog", "troubleshooting", "reference",
+      "시작하기", "설치",
+    ],
+    docsNavThreshold: 3,
+    usableSignals: [
+      "sign in", "log in", "sign up", "get api key", "book demo", "pricing", "dashboard",
+      "로그인", "가입하기", "登录", "ログイン",
+    ],
+    docsTitlePatterns: [
+      // 끝에 오는 것만 본다. "Documentation Hub"처럼 앞에 오면 진짜 제품일 수 있다
+      "*documentation",
+      "documentation",
+      "* docs",
+      "docs",
+    ],
+    docsGenerators: [
+      "mkdocs",
+      "docusaurus",
+      "sphinx",
+      "pkgdown",
+      "vitepress",
+      "docsify",
+      "gitbook",
+      "mdbook",
+      "quarto",
+      "bookdown",
+      "readthedocs",
+      "starlight",
+      "nextra",
+    ],
+    holdAmbiguous: true,
+  },
+};

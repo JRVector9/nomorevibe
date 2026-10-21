@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, sql, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, gateSplitTiebreaks, secondReviews } from "@/lib/db/schema";
+import { endpointBackoffActive, readQwenEndpointBackoff } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION } from "./qwen-direct-review";
 
 /**
@@ -65,7 +66,11 @@ export type SplitTiebreakStatus = {
   ineligible: number; exhausted: number;
   /** 최근 24시간 */
   day: { processed: number; rejected: number };
+  /** 이 판의 마지막 실패(멈춤·단계 전환은 오류가 아니다)와 마지막으로 답을 받은 때 — 마지막 성공이 더 늦으면 그 뒤 다시 받은 것이다 */
   lastError: { code: string; at: string } | null;
+  lastSuccessAt: string | null;
+  /** gpu3090 을 부르는 모두가 물러나는 중이면 그 끝(qwen-endpoint-backoff.ts — 워커가 적은 관측) */
+  backoffUntil: string | null;
 };
 
 /** 심사 큐 머리의 판가름 줄 — 한 번에 센다(표가 작다: 갈림 보류 수 × 판) */
@@ -75,7 +80,7 @@ export async function splitTiebreakStatus(): Promise<SplitTiebreakStatus> {
   const [counts] = await db.select({
     processed: sql<number>`count(*) filter (where ${t.state} = 'succeeded')::int`,
     rejected: sql<number>`count(*) filter (where ${t.applied} = 'rejected')::int`,
-    heldReject: sql<number>`count(*) filter (where ${t.applied} in ('held_minority', 'held_catalog'))::int`,
+    heldReject: sql<number>`count(*) filter (where ${t.applied} in ('held_minority', 'held_catalog', 'held_low_confidence', 'held_not_enforce'))::int`,
     ineligible: sql<number>`count(*) filter (where ${t.state} = 'ineligible')::int`,
     exhausted: sql<number>`count(*) filter (where ${t.state} = 'failed' and ${t.failureCount} >= ${maxFailures})::int`,
     dayProcessed: sql<number>`count(*) filter (where ${t.state} = 'succeeded' and ${t.completedAt} > ${since}::timestamp)::int`,
@@ -92,11 +97,17 @@ export async function splitTiebreakStatus(): Promise<SplitTiebreakStatus> {
         and ${t.promptVersion} = ${QWEN_V2_PROMPT_VERSION}
         and (${t.state} in ('succeeded', 'ineligible') or (${t.state} = 'failed' and ${t.failureCount} >= ${maxFailures})))`));
   const [error] = await db.select({ code: t.errorCode, at: t.completedAt }).from(t)
-    .where(and(eq(t.state, "failed"), isNotNull(t.errorCode), isNotNull(t.completedAt))).orderBy(desc(t.completedAt)).limit(1);
+    .where(and(eq(t.state, "failed"), isNotNull(t.errorCode), isNotNull(t.completedAt), eq(t.promptVersion, QWEN_V2_PROMPT_VERSION),
+      notInArray(t.errorCode, ["stage_draining", "qwen_cancelled"]))).orderBy(desc(t.completedAt)).limit(1);
+  const [success] = await db.select({ at: t.completedAt }).from(t)
+    .where(and(eq(t.state, "succeeded"), isNotNull(t.completedAt), eq(t.promptVersion, QWEN_V2_PROMPT_VERSION))).orderBy(desc(t.completedAt)).limit(1);
+  const backoff = await readQwenEndpointBackoff().catch(() => null);
   return {
     processed: counts?.processed ?? 0, rejected: counts?.rejected ?? 0, approvedWaiting: waiting?.count ?? 0,
     heldReject: counts?.heldReject ?? 0, remaining: open?.count ?? 0, ineligible: counts?.ineligible ?? 0, exhausted: counts?.exhausted ?? 0,
     day: { processed: counts?.dayProcessed ?? 0, rejected: counts?.dayRejected ?? 0 },
     lastError: error?.code && error.at ? { code: error.code, at: error.at.toISOString() } : null,
+    lastSuccessAt: success?.at?.toISOString() ?? null,
+    backoffUntil: endpointBackoffActive(backoff) ? backoff.retryAt : null,
   };
 }

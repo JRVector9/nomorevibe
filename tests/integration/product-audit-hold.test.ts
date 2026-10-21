@@ -110,7 +110,7 @@ it("테스트의 두 사유는 감사 화면의 갈래로 회사 소개·글 문
   expect(classifyAuditReason(COMPANY)).toBe("company");
   expect(classifyAuditReason(CONTENT)).toBe("content");
   expect(DEFAULT_AUDIT_HOLD).toEqual({ enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"],
-    secondOpinionReject: true, autoSecondOpinion: { enabled: true, perTick: 10 }, publishedFilter: { enabled: true, perTick: 10 } });
+    secondOpinionReject: true });
 });
 
 describe("새 답이 같은 커밋에서 보류한다", () => {
@@ -591,9 +591,7 @@ describe("리뷰 회귀 — 꺼진 스위치는 기본값으로 되살아나지 
     await corrupt(`jsonb_set(values, '{auditHold}', '"on"')`);
     expect((await getSettings()).auditHold.enabled).toBe(false);
     await corrupt(`jsonb_set(values, '{auditHold}', '{"enabled": true, "minConfidence": 0.97, "categories": ["company", "retired", "company"], "secondOpinionReject": false}')`);
-    // 새 칸(Qwen-v2 자동 단계 둘)이 없던 행은 그 칸만 기본값으로 채운다
-    expect((await getSettings()).auditHold).toEqual({ enabled: true, minConfidence: 0.97, categories: ["company"], secondOpinionReject: false,
-      autoSecondOpinion: DEFAULT_AUDIT_HOLD.autoSecondOpinion, publishedFilter: DEFAULT_AUDIT_HOLD.publishedFilter });
+    expect((await getSettings()).auditHold).toEqual({ enabled: true, minConfidence: 0.97, categories: ["company"], secondOpinionReject: false });
     // 다른 칸이 깨진 행 — 읽기는 기본값으로 돌아가지만 보류는 저장된 값, 끄기는 된다
     await corrupt(`jsonb_set(values, '{reviewConcurrency}', '"bad"')`);
     const before = (await getSettings()).auditHold;

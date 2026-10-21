@@ -39,6 +39,12 @@ export const QWEN_V2_ADDENDUM_SHA256 = "a0228a0227c7c7e3a611dda2d60037ee2ddc4250
 
 export type QwenDirectConfig = { baseUrl: string; model: string; apiKey: string | null };
 
+/*
+ * AUDIT_SECOND_OPINION_MODEL 은 웹과 모든 워커에서 같아야 한다 — 같은 모델 규칙(두 번째 의견을 같은 모델에 묻지 않음)·자동 의견의 멱등(이 모델·이 판의
+ * 의견이 있는가)·화면의 수를 이 이름으로 견준다. 다르게 두면 워커는 이미 물은 항목을 다른 이름으로 다시 묻고, 화면은 남은 것을 잘못 센다.
+ * 같은 모델 규칙은 감사 답의 ai_provider='qwen-direct' 를 먼저 본다(이름이 달라도 Qwen 직접 심사가 답한 항목은 묻지 않는다).
+ */
+
 /**
  * 부를 곳 — 환경변수가 없으면 기본값. 부를 때마다 읽는다(시험·배포가 바꿀 수 있게). 주소는 http(s) 만, 계정 정보가 든 주소는 받지 않는다.
  * 고칠 수 없는 값이면 null — 부르는 쪽은 qwen_not_configured 로 받는다

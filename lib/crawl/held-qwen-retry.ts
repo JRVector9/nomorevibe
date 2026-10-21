@@ -16,8 +16,10 @@ import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
 import { mergeWithDefaults } from "./settings";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoff,
-  withQwenSecondarySlot } from "./qwen-endpoint-backoff";
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
+import { endpointBackoffActive, noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff,
+  readQwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
 import { reviewSemanticNow, reviewSemanticNowSql } from "./review-replay-context";
@@ -81,7 +83,7 @@ export function heldQwenEndpointFailure(code: string | null | undefined): boolea
 }
 /**
  * 후보의 세 번에 드는 실패 — 그 입력 때문에 난 것(형식·입력 초과·요청 거절)만. 부르는 곳의 탈은 후보 탓이 아니라 세지 않는다 —
- * 그동안은 heldQwenBackoffUntil 이 부르는 빈도를 줄이고, 후보마다 15분을 기다린다. 제공자의 고정 코드 목록이라 SQL 도 같은 목록을 쓴다
+ * 그동안은 gpu3090 을 부르는 모두가 함께 물러나고(qwen-endpoint-backoff.ts), 후보마다 15분을 기다린다. 제공자의 고정 코드 목록이라 SQL 도 같은 목록을 쓴다
  */
 const COUNTED_FAILURES = ["qwen_invalid_json", "qwen_input_too_large", "qwen_http_400", "qwen_http_413", "qwen_http_422"] as const;
 const countedFailure = (row: Pick<CrawlReviewAttempt, "state" | "errorCode">) =>
@@ -136,6 +138,8 @@ export async function heldQwenCandidates(settings: CrawlSettings, model: string,
 export async function releaseLostHeldQwenAttempts(lease: JobLease): Promise<number> {
   if (lease.name !== JOB) throw new Error("held_qwen_job_required");
   return db.transaction(async (tx) => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 시도 행도 후보도 쓰지 않는다
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const rows = await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: "owner_lost", completedAt: new Date(), retryAfter: new Date() })
       .where(and(qwenRows, eq(crawlReviewAttempts.state, "running"), sql`${crawlReviewAttempts.leaseToken} IS DISTINCT FROM ${lease.token}`,
         sql`${crawlReviewAttempts.startedAt} < now() - ${STALE_RUNNING_MS} * interval '1 millisecond'`))
@@ -158,6 +162,8 @@ export async function requestHeldQwenSourceRefresh(settings: CrawlSettings, leas
   const actor = heldQwenActor(QWEN_V2_PROMPT_VERSION);
   const now = reviewSemanticNowSql();
   return db.transaction(async (tx) => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 시도 행도 후보도 쓰지 않는다
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     await lockPipelineInputStages(tx);
     const candidates = await tx.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, productUrl: crawlCandidates.productUrl })
       .from(crawlCandidates).where(and(
@@ -220,26 +226,6 @@ export async function requestHeldQwenSourceRefresh(settings: CrawlSettings, leas
   });
 }
 
-/**
- * 심사 큐 화면이 보이는 물러남 — 이 재심사의 마지막 판단·실패 행들로 어림한다(함께 쓰는 물러나기와 같은 곡선). 화면은 웹 프로세스라
- * 워커의 함께 쓰는 물러나기(qwen-endpoint-backoff.ts, 프로세스 안의 값)를 읽을 수 없어 행으로 잰다. 실제로 부르지 않게 막는 것은 워커의
- * 함께 쓰는 물러나기다(runHeldQwenRetry) — 다른 쪽이 만난 탈로 쉬는 것은 여기 보이지 않는다.
- */
-export async function heldQwenBackoffUntil(now = new Date()): Promise<Date | null> {
-  const recent = await db.select({ state: crawlReviewAttempts.state, errorCode: crawlReviewAttempts.errorCode, completedAt: crawlReviewAttempts.completedAt })
-    .from(crawlReviewAttempts).where(and(qwenRows, inArray(crawlReviewAttempts.state, ["failed", "succeeded"]), isNotNull(crawlReviewAttempts.completedAt)))
-    .orderBy(desc(crawlReviewAttempts.completedAt), desc(crawlReviewAttempts.id)).limit(8);
-  let streak = 0;
-  for (const row of recent) {
-    if (row.state === "failed" && heldQwenEndpointFailure(row.errorCode)) streak++;
-    else if (row.state === "failed" && row.errorCode === "owner_lost") continue;
-    else break;
-  }
-  if (!streak || !recent[0]?.completedAt) return null;
-  const until = new Date(recent[0].completedAt.getTime() + qwenBackoffMs(streak));
-  return until > now ? until : null;
-}
-
 /** 지금 입력의 이 세대에 맞는 Qwen-v2 시도 행 */
 function generationAttempts(tx: ProductTransaction, candidateId: number, input: ReviewInput, actor: string, model: string) {
   return tx.select().from(crawlReviewAttempts).where(and(qwenRows, eq(crawlReviewAttempts.candidateId, candidateId),
@@ -270,6 +256,8 @@ export async function claimHeldQwen(repo: string, lease: JobLease, model: string
   const actor = heldQwenActor(QWEN_V2_PROMPT_VERSION);
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   const result = await db.transaction(async (tx): Promise<ClaimResult> => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 시도 행도 후보도 쓰지 않는다
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
     if (ai1.mode === "draining" || ai2.mode === "draining") return { kind: "skipped", reason: "draining" };
@@ -381,6 +369,8 @@ export async function recordHeldQwen(claim: HeldQwenClaim, call: HeldQwenCallRes
   if (claim.lease.name !== JOB) throw new Error("held_qwen_job_required");
   const requests: Awaited<ReturnType<typeof requestJob>>[] = [];
   return db.transaction(async (tx) => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 시도 행도 후보도 쓰지 않는다
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
     const current = await lockedInput(tx, claim.repo);
@@ -472,15 +462,19 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     const poll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
     poll.unref?.();
     let call: HeldQwenCallResult;
+    let callStartedAt = 0;
     try {
       // 두 번째 자리(두 번째 의견·공개분 거르기·갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
-      call = await withQwenSecondarySlot(async () => !room() || qwenEndpointBackingOff()
-        ? { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" }
-        : callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request: options.request, env: options.env,
-          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }));
+      call = await withQwenSecondarySlot(async () => {
+        if (!room() || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" };
+        callStartedAt = Date.now();
+        return callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request: options.request, env: options.env,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal });
+      });
     } finally { clearInterval(poll); }
-    if (call.ok) noteQwenEndpointSuccess();
-    else if (heldQwenEndpointFailure(call.code)) noteQwenEndpointFailure(call.code as QwenDirectErrorCode);
+    // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
+    if (call.ok) await noteQwenEndpointSuccess(callStartedAt);
+    else if (heldQwenEndpointFailure(call.code)) await noteQwenEndpointFailure(call.code as QwenDirectErrorCode);
     const state = await recordHeldQwen(claimed.claim, call);
     if (state === "rejected") tick.rejected++;
     if (state === "pipeline") tick.pipeline++;
@@ -527,12 +521,13 @@ export async function heldQwenRetryStatus(settings: CrawlSettings, now = new Dat
         AND (fres.completed_at IS NULL OR fres.completed_at > now() - interval '24 hours')))::int AS expired
     FROM crawl_candidates c WHERE c.state = 'needs_review' AND c.decided_by = 'auto' AND c.published_slug IS NULL
       AND c.reason IN (${sql.join(policy.reasons.map((reason) => sql`${reason}`), sql`, `)})`) : [{ waiting: 0, expired: 0 }];
-  const backoff = await heldQwenBackoffUntil(now);
+  // gpu3090 을 부르는 모두가 함께 쓰는 물러나기 — 워커가 적은 관측(이 화면은 웹 프로세스라 워커의 값을 바로 읽지 못한다)
+  const backoff = await readQwenEndpointBackoff().catch(() => null);
   return { enabled: policy.enabled, perTick: policy.perTick, budgetSeconds: policy.budgetSeconds, reasons: [...policy.reasons],
     model: config?.model ?? null, configured: config !== null,
     day: { processed: audit?.processed ?? 0, pipeline: audit?.pipeline ?? 0, rejected: audit?.rejected ?? 0, held: audit?.held ?? 0, failed: failures?.count ?? 0 },
     lastError: last?.code && last.at ? { code: last.code, at: last.at.toISOString() } : null,
-    backoffUntil: backoff?.toISOString() ?? null, waiting: Number(queue?.waiting ?? 0), expired: Number(queue?.expired ?? 0) };
+    backoffUntil: endpointBackoffActive(backoff, now.getTime()) ? backoff.retryAt : null, waiting: Number(queue?.waiting ?? 0), expired: Number(queue?.expired ?? 0) };
 }
 
 export type HeldQwenBadge = { label: string; title: string; tone: "soft" | "ok" | "warn" };

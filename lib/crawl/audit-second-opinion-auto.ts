@@ -10,9 +10,10 @@ import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
 import { auditItemModel, holdCandidate } from "./product-audit-hold";
 import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
-import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
+import { endpointBackoffActive, noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, readQwenEndpointBackoff,
+  withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
-import { decidePublishedSecondReview, notePublishedSecondReviewOpinion } from "./published-second-review";
+import { applyPublishedAutoOpinion, type PublishedAutoResult } from "./published-second-review";
 import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectReview } from "./qwen-direct-review";
 import type { AuditHoldSettings } from "./settings";
@@ -22,12 +23,12 @@ import type { CrawlSettings } from "./settings-schema";
  * Qwen-v2 자동 단계(2026-10-21) — 감사 잡(jobs/product-audit.ts)이 틱마다 감사 묻기와 나란히 한 번 돈다. gpu3090 의 Qwen 을 게이트웨이 밖에서
  * 바로 부르므로(qwen-direct-review.ts) 게이트웨이 자리·공통 슬롯을 쓰지 않는다(M3 DeepSeek 과 같다). 한 번에 한 호출이다.
  *
- * 1. 감사 두 번째 의견(auditHold.autoSecondOpinion): 보류 후보(확신 문턱 이상·주인 없음·사람 결정 없음·그 제품의 마지막 항목, 이미 보류된 것 포함)
+ * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 보류 후보(확신 문턱 이상·주인 없음·사람 결정 없음·그 제품의 마지막 항목, 이미 보류된 것 포함)
  *    가운데 이 모델·이 판의 의견이 없는 것을 묻고, grok 옮겨 적기와 같은 쓰기(writeAuditSecondOpinions — 덮어쓰기·보류 다시 가르기·승인이면 풀기)로
  *    출처 qwen-v2-auto 를 적는다. 거절은 쓸기가 다음 틱부터 분당 20건씩 건다(Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
  *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
  *    coalesce(ai_model, 그 감사가 시작할 때의 model)이 같은 모델 — 0112 전 답은 ai_model 이 비어 있고 시작 모델이 답했다).
- * 2. 공개분 2차 거르기(auditHold.publishedFilter): 공개분 2차가 사람 확인(needs_human)으로 넘긴 행 가운데 이 모델·이 판의 판단이 없는 것을
+ * 2. 공개분 2차 거르기(qwenAuto.publishedFilter, 기본 꺼짐): 공개분 2차가 사람 확인(needs_human)으로 넘긴 행 가운데 이 모델·이 판의 판단이 없는 것을
  *    묻는다. 승인이면 사람의 '유지'와 같은 길로 닫고(누가 qwen-v2-auto), 거절·판단 보류면 판단만 적어 사람 확인 목록 앞에 둔다.
  *    이 길로는 내리지도 숨기지도 않는다.
  *
@@ -192,7 +193,7 @@ export async function runQwenSecondOpinions(ctx: JobContext<null>, settings: Cra
 }
 
 async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: QwenAutoTally): Promise<void> {
-  const { autoSecondOpinion: audit, publishedFilter: published } = settings.auditHold;
+  const { auditSecondOpinion: audit, publishedFilter: published } = settings.qwenAuto;
   const lease = ctx.lease;
   // 수집 스위치는 비상 정지다 — 모델을 부르는 다른 잡처럼 여기서도 멈춘다
   if (!lease || !settings.enabled || (!audit.enabled && !published.enabled)) return;
@@ -217,7 +218,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     audit.enabled ? await auditTargets(settings.auditHold, config.model, given("a:"), audit.perTick) : [],
   );
   if (!queue.length) return;
-  const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && Date.now() - startedAt < STEP_MS
+  // 새 호출은 한 호출의 제한 시간과 기록 여유가 다 남을 때만, 그리고 누가 서버 탈을 만나 함께 쓰는 물러나기가 걸리면 곧바로 멈춘다
+  const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && Date.now() - startedAt < STEP_MS && !qwenEndpointBackingOff()
     && (ctx.deadlineAt === undefined || ctx.deadlineAt - Date.now() >= QWEN_AUTO_CALL_TIMEOUT_MS + WRITE_MARGIN_MS);
   const failItem = (target: Target, code: string) => {
     tally.failed += 1;
@@ -226,21 +228,35 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   let ran = false;
   for (const target of queue) {
     if (!canStart()) break;
-    const input = target.kind === "audit" ? await loadAuditInput(target.slug, settings) : await publishedInput(target, settings);
+    // 입력을 만들다 실패한 항목(입력 상한 초과 등)은 그 항목의 실패로 적고 넘어간다 — 한 항목이 단계를 막거나 틱마다 같은 자리에서 멈추지 않게
+    let input: ReviewInput | null;
+    try {
+      input = target.kind === "audit" ? await loadAuditInput(target.slug, settings) : await publishedInput(target, settings);
+    } catch (error) {
+      const code = error instanceof Error && /^[a-z0-9_]{3,60}$/.test(error.message) ? error.message : "input_error";
+      failItem(target, code);
+      observation.lastError = { code, detail: null, target: target.kind, at: now() };
+      ran = true;
+      continue;
+    }
     if (!input) { failItem(target, "no_source"); ran = true; continue; }
     if (!canStart()) break;
     ran = true;
     let review: QwenDirectReview | null;
+    let callStartedAt = 0;
     try {
       // 두 번째 자리(갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 기다리는 동안 바뀐다
-      review = await withQwenSecondarySlot(async () => canStart() && !qwenEndpointBackingOff()
-        ? reviewWithQwenDirect(input, { timeoutMs: QWEN_AUTO_CALL_TIMEOUT_MS, signal: ctx.signal }) : null);
+      review = await withQwenSecondarySlot(async () => {
+        if (!canStart()) return null;
+        callStartedAt = Date.now();
+        return reviewWithQwenDirect(input, { timeoutMs: QWEN_AUTO_CALL_TIMEOUT_MS, signal: ctx.signal });
+      });
     } catch (error) {
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
       if (qwenEndpointFailure(error.code)) {
         // 부르는 곳의 탈 — 이 틱의 나머지는 부르지 않고 gpu3090 을 부르는 모두가 물러난다. 항목에는 아무것도 적지 않는다
-        noteQwenEndpointFailure(error.code);
+        await noteQwenEndpointFailure(error.code);
         tally.endpointError = error.code;
         observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
         break;
@@ -250,11 +266,16 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       continue;
     }
     if (!review) break;
-    noteQwenEndpointSuccess();
+    // 다른 쪽(감사의 Qwen 직접 심사 등)이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다 — 다음 항목은 canStart 가 막는다
+    await noteQwenEndpointSuccess(callStartedAt);
     delete observation.failures[target.key];
     observation.lastSuccessAt = now();
-    if (target.kind === "audit") await writeAudit(target, review, input, lease, tally);
-    else await writePublished(target, review, input, lease, tally);
+    const written = target.kind === "audit" ? await writeAudit(target, review, input, lease, tally)
+      : await writePublished(target, review, input, lease, tally);
+    // 쓰는 순간 그 단계가 꺼져 있었다 — 이 틱의 나머지는 부르지 않는다
+    if (written === "switched_off") break;
+    // 그 사이 사람이 정했거나 내려갔다 — 다시 묻지 않게 항목 실패로 센다
+    if (written === "not_open") failItem(target, "not_open");
   }
   if (!ran) return;
   ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, publishedAsked: tally.published.asked,
@@ -262,29 +283,32 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   await saveObservation(lease, { ...observation, lastRunAt: now() });
 }
 
-async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease, tally: QwenAutoTally): Promise<void> {
+async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease, tally: QwenAutoTally):
+  Promise<"written" | "not_open" | "switched_off"> {
   const { outcome } = review;
   const result = await writeAuditSecondOpinions(db, [{ itemId: target.itemId, productId: target.productId, model: review.model,
     decision: outcome.decision, confidence: outcome.confidence ?? null, reason: outcome.reason?.trim().slice(0, 2_000) || null,
-    inputHash: input.inputHash, promptVersion: review.promptVersion }], { dryRun: false, source: QWEN_V2_AUTO_SOURCE, lease });
+    inputHash: input.inputHash, promptVersion: review.promptVersion }], { dryRun: false, source: QWEN_V2_AUTO_SOURCE, lease,
+    auto: { actor: QWEN_V2_AUTO_ACTOR } });
   tally.audit.asked += 1;
-  if (result.inserted + result.updated === 0) { tally.audit.skipped += 1; return; }
+  if (result.skipped.switched_off) { tally.audit.skipped += 1; return "switched_off"; }
+  if (result.inserted + result.updated === 0) { tally.audit.skipped += 1; return "not_open"; }
   tally.audit.released += result.released;
   if (outcome.decision === "approve") tally.audit.approve += 1;
   else if (outcome.decision === "reject") tally.audit.reject += 1;
   else tally.audit.needsReview += 1;
+  return "written";
 }
 
 async function writePublished(target: PublishedTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease,
-  tally: QwenAutoTally): Promise<void> {
+  tally: QwenAutoTally): Promise<PublishedAutoResult> {
   const opinion = autoOpinion(review, input);
   tally.published.asked += 1;
-  const written = opinion.decision === "approve"
-    ? await decidePublishedSecondReview({ id: target.id, slug: target.slug, decision: "keep", actor: QWEN_V2_AUTO_ACTOR, autoOpinion: opinion, lease })
-    : await notePublishedSecondReviewOpinion({ id: target.id, slug: target.slug, autoOpinion: opinion, lease });
-  if (!written) tally.published.skipped += 1;
-  else if (opinion.decision === "approve") tally.published.kept += 1;
-  else tally.published.noted += 1;
+  const written = await applyPublishedAutoOpinion({ id: target.id, slug: target.slug, autoOpinion: opinion, lease });
+  if (written === "kept") tally.published.kept += 1;
+  else if (written === "noted") tally.published.noted += 1;
+  else tally.published.skipped += 1;
+  return written;
 }
 
 export type QwenAutoStatus = {
@@ -294,15 +318,19 @@ export type QwenAutoStatus = {
   lastRunAt: string | null; lastSuccessAt: string | null; lastError: QwenAutoObservation["lastError"];
   /** 항목만의 실패로 더 묻지 않는 수 */
   givenUp: number;
+  /** gpu3090 을 부르는 모두가 물러나는 중이면 그 끝과 까닭(qwen-endpoint-backoff.ts — Qwen 직접 감사도 이 동안 묻지 않는다) */
+  endpointBackoff: { until: string; code: string | null; failures: number } | null;
 };
 
 /** 감사 화면의 Qwen-v2 단계 상태 — 켬/끔, 지난 1시간·24시간에 적은 수, 남은 것, 마지막 오류 */
-export async function qwenSecondOpinionStatus(hold: AuditHoldSettings): Promise<QwenAutoStatus> {
+export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "auditHold" | "qwenAuto">): Promise<QwenAutoStatus> {
+  const hold = settings.auditHold;
+  const steps = settings.qwenAuto;
   const config = qwenDirectConfig();
   const model = config?.model ?? "";
   const observation = await readQwenAutoObservation(model);
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
-  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft]] = await Promise.all([
+  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff] = await Promise.all([
     db.select({
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
@@ -320,14 +348,16 @@ export async function qwenSecondOpinionStatus(hold: AuditHoldSettings): Promise<
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${productAuditItems} i, ${products} p
       where ${auditOpinionWanted(hold, model, given("a:"))}`),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${secondReviews} s where ${publishedOpinionWanted(model, given("p:"))}`),
+    readQwenEndpointBackoff().catch(() => null),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,
-    audit: { enabled: hold.autoSecondOpinion.enabled, perTick: hold.autoSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
+    audit: { enabled: steps.auditSecondOpinion.enabled, perTick: steps.auditSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
       remaining: auditLeft?.count ?? 0 },
-    published: { enabled: hold.publishedFilter.enabled, perTick: hold.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
+    published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,
     givenUp: Object.values(observation.failures).filter((failure) => failure.count >= QWEN_AUTO_ITEM_ATTEMPTS).length,
+    endpointBackoff: endpointBackoffActive(backoff) ? { until: backoff.retryAt, code: backoff.lastError, failures: backoff.failures } : null,
   };
 }

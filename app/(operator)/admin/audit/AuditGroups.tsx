@@ -9,7 +9,7 @@ import { secondOpinionLabel } from './second-opinion-label';
 
 export type AuditGroupView = {
   category: string; total: number;
-  items: { id: number; slug: string; name: string; url: string; confidence: number; second?: SecondOpinionView[] }[];
+  items: { id: number; slug: string; name: string; url: string; confidence: number; second?: SecondOpinionView[]; answeredBy?: string }[];
 };
 /** 묶음의 범위 — 감사 화면의 갈래(product-audit.ts GROUP_SCOPES) */
 export type AuditGroupScopeView = 'held' | 'agreed' | 'reject';
@@ -53,7 +53,7 @@ export function AuditGroups({ groups, minConfidence, max, scope }: {
       <ConfirmAction open={picked !== null} onOpenChange={(open) => { if (!open) setPicked(null); }}
         title={`${SCOPE_LABELS[scope]} · ${picked?.category ?? ''} ${n(picked?.items.length ?? 0)}건을 내립니다 — 이름을 한 번 훑어 주세요`}
         targets={picked?.items.map((item) => [item.name, item.url.replace(/^https?:\/\//, ''), item.confidence.toFixed(2),
-          ...(item.second ?? []).map(secondOpinionLabel)].join(' · '))}
+          ...(item.answeredBy ? [`감사: ${item.answeredBy}`] : []), ...(item.second ?? []).map(secondOpinionLabel)].join(' · '))}
         summary={<ul>
           <li>범위: {SCOPE_LABELS[scope]} — 내리기 전에 다시 확인해, 그 사이 범위에서 빠진 것(보류가 풀림·의견이 바뀜)은 건너뜁니다.</li>
           <li>사이트에서 곧바로 사라지고, 같은 주소를 다시 수집하거나 등록할 수 없게 막힙니다.</li>

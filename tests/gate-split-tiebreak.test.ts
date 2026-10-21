@@ -2,11 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { SecondReviewStatus } from "@/lib/db/schema";
 import { splitRejectVerdict } from "@/lib/crawl/gate-split-tiebreak";
 import { QWEN_V2_AUTO_SOURCE } from "@/lib/crawl/qwen-direct-review";
-import { mergeWithDefaults, settingsFormVersion, storedSplitTiebreak } from "@/lib/crawl/settings";
-import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { SPLIT_TIEBREAK_ACTOR, tiebreakApproved, tiebreakSummary } from "@/app/(operator)/admin/review/tiebreak";
 
-/** 2차 갈림 판가름의 순수한 부분 — 다수 규칙, 스위치 읽기(깨지면 꺼짐), 화면 문구 */
+/** 2차 갈림 판가름의 순수한 부분 — 다수 규칙, 화면 문구 */
 const vote = (secondDecision: string | null, extra: { model?: string; status?: SecondReviewStatus; secondReason?: string; firstModel?: string } = {}) => ({
   status: extra.status ?? "needs_human" as SecondReviewStatus, secondDecision, secondReason: extra.secondReason ?? "Only a docs page",
   model: extra.model ?? "[MLX] qwen3.8-27b", firstModel: extra.firstModel ?? "grok-4.7",
@@ -45,36 +43,7 @@ describe("splitRejectVerdict", () => {
   });
 });
 
-describe("storedSplitTiebreak", () => {
-  it("칸이 없으면 기본값(켬·10), 일부만 있으면 나머지를 채운다", () => {
-    expect(storedSplitTiebreak(undefined)).toEqual({ enabled: true, perTick: 10 });
-    expect(storedSplitTiebreak({ perTick: 3 })).toEqual({ enabled: true, perTick: 3 });
-    expect(mergeWithDefaults({}).secondReview.splitTiebreak).toEqual({ enabled: true, perTick: 10 });
-  });
-
-  it("깨진 값은 꺼짐으로 읽는다 — 켬(기본값)으로 되살아나지 않는다", () => {
-    for (const raw of [null, "on", [], { enabled: "yes" }, { enabled: true, perTick: 0 }, { enabled: true, perTick: 51 }, { enabled: true, extra: 1 }]) {
-      expect(storedSplitTiebreak(raw), JSON.stringify(raw)).toEqual({ enabled: false, perTick: 10 });
-    }
-    // 행의 나머지는 그대로 읽힌다
-    const settings = mergeWithDefaults({ enabled: true, secondReview: { splitTiebreak: { enabled: "yes" } } });
-    expect(settings.enabled).toBe(true);
-    expect(settings.secondReview.splitTiebreak.enabled).toBe(false);
-  });
-
-  it("행의 다른 칸이 깨져 기본값으로 돌아가도 이 스위치는 저장된 값을 읽는다", () => {
-    const settings = mergeWithDefaults({ enabled: "broken", secondReview: { splitTiebreak: { enabled: false, perTick: 4 } } });
-    expect(settings.enabled).toBe(false);
-    expect(settings.secondReview.splitTiebreak).toEqual({ enabled: false, perTick: 4 });
-  });
-
-  it("크롤 설정 폼의 판에 들지 않는다 — 스위치를 눌러도 열린 폼이 거절되지 않는다", () => {
-    const on = DEFAULT_CRAWL_SETTINGS;
-    const off = { ...on, secondReview: { ...on.secondReview, splitTiebreak: { enabled: false, perTick: 3 } } };
-    expect(settingsFormVersion(off)).toBe(settingsFormVersion(on));
-    expect(settingsFormVersion({ ...on, secondReview: { ...on.secondReview, agreeAt: 0.9 } })).not.toBe(settingsFormVersion(on));
-  });
-});
+// 스위치 읽기(없거나 깨지면 꺼짐)·폼 판은 tests/qwen-auto-settings.test.ts(qwenAuto.splitTiebreak)가 본다
 
 describe("심사 큐 문구", () => {
   const view = { decision: "approve" as const, confidence: 0.95, reason: "Usable", model: QWEN, promptVersion: "2026-10-21.v2",

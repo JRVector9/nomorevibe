@@ -5,7 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, gateSplitTiebreaks, jobs, products,
   secondReviews } from "@/lib/db/schema";
-import { changeReviewMode, getSettings, saveSettings, setSplitTiebreak } from "@/lib/crawl/settings";
+import { changeReviewMode, getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { REVIEW_SYSTEM_PROMPT } from "@/lib/crawl/agent-review";
@@ -73,7 +73,15 @@ beforeEach(async () => {
   vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   await saveSettings({ enabled: true, secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], sampleRate: 0 } }, "test");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "gate split fixture" })).toMatchObject({ ok: true });
+  // 기본 꺼짐이다 — 이 파일은 켜고 시작한다(화면·운영 스크립트와 같은 setter)
+  expect(await turn({ enabled: true, perTick: 10 })).toMatchObject({ ok: true });
 });
+
+/** 판가름 스위치를 바꾼다 — compare-and-set, 켤 때 사유 */
+async function turn(next: { enabled: boolean; perTick: number }, options: { expected?: { enabled: boolean; perTick: number }; reason?: string; actor?: string } = {}) {
+  return setQwenAutoStep({ step: "splitTiebreak", next, expected: options.expected ?? (await getSettings()).qwenAuto.splitTiebreak,
+    actor: options.actor ?? "test", reason: options.reason ?? "테스트" });
+}
 
 /** 1차 AI 가 승인하고 관문 표(2차)가 vote 로 답해 사람에게 넘어온 후보 — 운영의 두 모델 승인 관문 그대로 */
 async function split(index: number, vote: "approve" | "reject" | "needs_review" = "reject", options: { firstConfidence?: number; reason?: string } = {}) {
@@ -188,34 +196,73 @@ it("같은 관문 세대는 한 번만 묻는다 — 새 1차 판단으로 관�
 
 it("스위치를 끄면 묻지 않는다 — 깨진 값은 꺼진 것으로 읽고, 크롤 설정 폼은 이 값을 바꾸지 못한다", async () => {
   const { candidate } = await split(0);
-  expect((await getSettings()).secondReview.splitTiebreak).toEqual({ enabled: true, perTick: 10 });
-  expect(await setSplitTiebreak({ next: { enabled: false, perTick: 10 }, expected: { enabled: true, perTick: 10 }, actor: "test" }))
-    .toMatchObject({ ok: true, splitTiebreak: { enabled: false } });
-  // 화면이 본 값이 지금 값과 다르면 바꾸지 않는다(compare-and-set)
-  expect(await setSplitTiebreak({ next: { enabled: true, perTick: 10 }, expected: { enabled: true, perTick: 10 }, actor: "stale" })).toMatchObject({ ok: false });
+  const floor = await auditFloor();
+  expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 10 });
+  expect(await turn({ enabled: false, perTick: 10 }, { expected: { enabled: true, perTick: 10 } }))
+    .toMatchObject({ ok: true, after: { enabled: false } });
+  // 화면이 본 값이 지금 값과 다르면 바꾸지 않는다(compare-and-set). 켤 때는 사유가 있어야 한다
+  expect(await turn({ enabled: true, perTick: 10 }, { expected: { enabled: true, perTick: 10 }, actor: "stale" })).toMatchObject({ ok: false });
+  expect(await turn({ enabled: true, perTick: 10 }, { reason: " " })).toMatchObject({ ok: false });
+  // 바꾼 것은 operations_audit 에 남는다 — 갈림 판가름 스위치도 같다
+  expect((await auditRowsAfter(floor, "qwen-auto-settings")).sort((x, y) => x.id - y.id)).toMatchObject([
+    { actor: "test", ok: true, detail: { step: "splitTiebreak", before: { enabled: true }, after: { enabled: false } } },
+    { actor: "stale", ok: false, error: "stale_state" }, { ok: false, error: "reason_required" }]);
   await tick();
   expect(requests).toHaveLength(0);
   expect(await tiebreaksOf(candidate.id)).toHaveLength(0);
 
   // 일반 저장·기본값 되돌리기는 이 칸을 건드리지 않는다
-  expect(await saveSettings({ secondReview: { splitTiebreak: { enabled: true, perTick: 10 } } }, "form")).toMatchObject({ ok: true });
-  expect((await getSettings()).secondReview.splitTiebreak.enabled).toBe(false);
+  expect(await saveSettings({ qwenAuto: { splitTiebreak: { enabled: true, perTick: 10 } } } as never, "form")).toMatchObject({ ok: true });
+  expect((await getSettings()).qwenAuto.splitTiebreak.enabled).toBe(false);
 
-  // 저장된 값이 깨졌으면 켬(기본값)으로 되살아나지 않는다
+  // 저장된 값이 깨졌으면 켬으로 되살아나지 않는다
   const [row] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
-  const values = row.values as { secondReview: Record<string, unknown> };
-  await db.update(crawlSettings).set({ values: { ...values, secondReview: { ...values.secondReview, splitTiebreak: { enabled: "yes", perTick: 10 } } } })
+  const values = row.values as { qwenAuto: Record<string, unknown> };
+  await db.update(crawlSettings).set({ values: { ...values, qwenAuto: { ...values.qwenAuto, splitTiebreak: { enabled: "yes", perTick: 10 } } } })
     .where(eq(crawlSettings.id, 1));
-  expect((await getSettings()).secondReview.splitTiebreak).toEqual({ enabled: false, perTick: 10 });
+  expect((await getSettings()).qwenAuto.splitTiebreak.enabled).toBe(false);
   await tick();
   expect(requests).toHaveLength(0);
   expect(await candidateOf(candidate.id)).toMatchObject({ state: "needs_review", reason: "second_review_split" });
 
   // 깨진 값에서도 화면은 지금 값(꺼짐)을 보고 켤 수 있다
-  expect(await setSplitTiebreak({ next: { enabled: true, perTick: 2 }, expected: { enabled: false, perTick: 10 }, actor: "test" })).toMatchObject({ ok: true });
+  expect(await turn({ enabled: true, perTick: 2 })).toMatchObject({ ok: true });
   await tick();
   expect(requests).toHaveLength(1);
   expect(await candidateOf(candidate.id)).toMatchObject({ state: "rejected" });
+});
+
+it("답을 받는 사이 스위치를 끄면 거부로 닫지 않는다 — 기록 트랜잭션이 스위치를 다시 읽는다", async () => {
+  const { candidate } = await split(0);
+  const floor = await auditFloor();
+  reply = async () => {
+    expect(await turn({ enabled: false, perTick: 10 })).toMatchObject({ ok: true });
+    return reject();
+  };
+  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(requests).toHaveLength(1);
+  expect(await candidateOf(candidate.id)).toMatchObject({ state: "needs_review", reason: "second_review_split" });
+  expect(await tiebreaksOf(candidate.id)).toMatchObject([{ state: "succeeded", decision: "reject", applied: "switch_off" }]);
+  expect(await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.kind, "delegated"))).toHaveLength(0);
+  expect(await auditRowsAfter(floor, "candidate-split-tiebreak-reject")).toHaveLength(0);
+});
+
+it("사람 없이 거부로 닫는 것은 적용 모드에서, 확신 0.90 이상일 때만이다 — 아니면 답만 남기고 사람에게 둔다", async () => {
+  const low = await split(0);
+  reply = async () => ({ status: 200, outcome: { decision: "reject", reason: "The page is only a placeholder.", confidence: 0.8 } });
+  await tick();
+  expect(await candidateOf(low.candidate.id)).toMatchObject({ state: "needs_review", reason: "second_review_split" });
+  expect(await tiebreaksOf(low.candidate.id)).toMatchObject([{ state: "succeeded", decision: "reject", confidence: 0.8, applied: "held_low_confidence" }]);
+
+  // 관찰 모드 — 확신이 높아도 닫지 않는다
+  const observed = await split(1);
+  expect(await changeReviewMode({ mode: "observe", expectedMode: "enforce", actor: "test", reason: "observe fixture" })).toMatchObject({ ok: true });
+  reply = async () => reject();
+  await tick();
+  expect(await candidateOf(observed.candidate.id)).toMatchObject({ state: "needs_review", reason: "second_review_split" });
+  expect(await tiebreaksOf(observed.candidate.id)).toMatchObject([{ state: "succeeded", decision: "reject", applied: "held_not_enforce" }]);
+  expect(await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.kind, "delegated"))).toHaveLength(0);
+  expect(await splitTiebreakStatus()).toMatchObject({ rejected: 0, heldReject: 2 });
 });
 
 it("부르는 곳이 탈 나면 후보·관문을 그대로 두고 물러난다 — 항목의 실패로 세지 않는다", async () => {

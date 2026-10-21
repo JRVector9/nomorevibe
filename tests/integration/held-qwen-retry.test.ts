@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, products, secondReviews } from "@/lib/db/schema";
-import { changeReviewMode, getSettings, saveSettings, setHeldQwenRetry, setHumanReviewEnabled } from "@/lib/crawl/settings";
+import { changeReviewMode, getSettings, saveSettings, setHumanReviewEnabled, setQwenAutoStep } from "@/lib/crawl/settings";
 import { loadReviewInput, reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { judgeRevision } from "@/lib/crawl/rules";
@@ -17,7 +17,7 @@ import { heldQwenBadges, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/cra
 import { heldQwenOwnedReasons } from "@/lib/crawl/held-qwen-retry-policy";
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { qwenEndpointBackingOff, qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
-import { DEFAULT_HELD_QWEN_RETRY } from "@/lib/crawl/settings-schema";
+import { DEFAULT_HELD_QWEN_RETRY, type QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import { enqueueSecondReviewsFixture as enqueueSecondReviews, recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
@@ -35,6 +35,8 @@ type Reply = { status?: number; outcome?: Record<string, unknown>; raw?: string 
 const replies: Reply[] = [];
 const requests: { url: string; body: { model: string; messages: { role: string; content: string }[] } }[] = [];
 let server: Server;
+/** 답하기 전에 한 번 할 일(스위치 끄기 등) — 답을 받는 사이에 바뀐 것을 흉내 낸다 */
+let beforeReply: (() => Promise<void>) | null = null;
 function reply(...values: Reply[]) { replies.push(...values); }
 const outcome = (decision: "approve" | "reject" | "needs_review", confidence = 0.97): Reply =>
   ({ outcome: { decision, reason: `Qwen says ${decision}`, evidenceIds: ["product"], confidence } });
@@ -44,8 +46,9 @@ beforeAll(async () => {
   server = createServer((request: IncomingMessage, response: ServerResponse) => {
     let text = "";
     request.on("data", (chunk) => { text += chunk; });
-    request.on("end", () => {
+    request.on("end", async () => {
       requests.push({ url: request.url ?? "", body: JSON.parse(text) });
+      if (beforeReply) { const run = beforeReply; beforeReply = null; await run(); }
       const next = replies.shift() ?? outcome("needs_review", 0.5);
       response.writeHead(next.status ?? 200, { "content-type": "application/json" });
       response.end(next.raw ?? JSON.stringify({ model: "qwen3.8-flash-next", choices: [{ finish_reason: "stop",
@@ -73,6 +76,7 @@ beforeEach(async () => {
   await resetTables();
   replies.length = 0;
   requests.length = 0;
+  beforeReply = null;
   resetQwenAuditBackoff();
   classify.mockReset().mockResolvedValue(null);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
@@ -81,7 +85,14 @@ beforeEach(async () => {
   vi.stubEnv("AUDIT_SECOND_OPINION_MODEL", "");
   await saveSettings({ enabled: true, secondReview: { enabled: true, voters: [QWEN_VOTER, OTHER_VOTER], sampleRate: 0, agreeAt: 0.85, includeAiHeld: false } }, "test");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "held qwen test" })).toMatchObject({ ok: true });
+  // 기본 꺼짐이다 — 이 파일은 켜고 시작한다(화면·운영 스크립트와 같은 setter)
+  expect(await setHeldQwenRetry({ ...DEFAULT_HELD_QWEN_RETRY, enabled: true })).toMatchObject({ ok: true });
 });
+
+/** 보류 재심사 스위치를 바꾼다 — compare-and-set, 켤 때 사유 */
+async function setHeldQwenRetry(next: QwenAutoSettings["heldRetry"], expected?: QwenAutoSettings["heldRetry"], reason = "테스트") {
+  return setQwenAutoStep({ step: "heldRetry", next, expected: expected ?? (await getSettings()).qwenAuto.heldRetry, actor: "test", reason });
+}
 
 /** 보류 후보 한 건 — 원본은 신선하고 소개가 있다 */
 async function held(index: number, reason: "no_description" | "ai_review_exhausted" | "ambiguous" | "second_review_split" = "ai_review_exhausted") {
@@ -267,38 +278,62 @@ describe("보류 Qwen-v2 재심사", () => {
 
   it("스위치를 끄면 부르지 않고, 진행 중 결과도 적용하지 않으며, 관문도 그 승인을 받지 않는다", async () => {
     const { row } = await held(0);
-    const current = (await getSettings()).review.qwenHeldRetry;
-    expect(await setHeldQwenRetry({ next: { ...current, enabled: false }, expected: current, actor: "test" })).toMatchObject({ ok: true });
+    const current = (await getSettings()).qwenAuto.heldRetry;
+    expect(await setHeldQwenRetry({ ...current, enabled: false }, current)).toMatchObject({ ok: true });
     await tick();
     expect(requests).toHaveLength(0);
     expect(heldQwenOwnedReasons(await getSettings())).toEqual([]);
 
     // 켜서 승인을 넣은 뒤 다시 끄면 발행 조건이 그 승인을 받지 않는다
-    const off = (await getSettings()).review.qwenHeldRetry;
-    await setHeldQwenRetry({ next: { ...off, enabled: true }, expected: off, actor: "test" });
+    const off = (await getSettings()).qwenAuto.heldRetry;
+    await setHeldQwenRetry({ ...off, enabled: true }, off);
     reply(outcome("approve", 0.95));
     await tick();
     expect(await candidateRow(row.id)).toMatchObject({ state: "approved" });
     await enqueueSecondReviews(await getSettings());
     for (const gate of await db.select().from(secondReviews)) await vote(gate, "approve");
-    const on = (await getSettings()).review.qwenHeldRetry;
-    await setHeldQwenRetry({ next: { ...on, enabled: false }, expected: on, actor: "test" });
+    const on = (await getSettings()).qwenAuto.heldRetry;
+    await setHeldQwenRetry({ ...on, enabled: false }, on);
     const approvable = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings()));
     expect(approvable).toHaveLength(0);
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
   });
 
+  it("답을 받는 사이 스위치를 끄면 적용하지 않는다 — 기록 트랜잭션이 스위치를 다시 읽는다", async () => {
+    const floor = await auditFloor();
+    const { row } = await held(0);
+    reply(outcome("reject", 0.99));
+    beforeReply = async () => {
+      const current = (await getSettings()).qwenAuto.heldRetry;
+      expect(await setHeldQwenRetry({ ...current, enabled: false }, current)).toMatchObject({ ok: true });
+    };
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(requests).toHaveLength(1);
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", decidedBy: "auto" });
+    expect(await qwenAttempts(row.id)).toMatchObject([{ state: "superseded", errorCode: "input_or_switch_changed" }]);
+    expect(await auditRowsAfter(floor, "candidate-qwen-held-review")).toHaveLength(0);
+  });
+
+  it("적용 모드가 아니면 묻지 않는다 — 사람 없이 정하는 일은 적용 모드에서만", async () => {
+    await held(0);
+    expect(await changeReviewMode({ mode: "observe", expectedMode: "enforce", actor: "test", reason: "observe fixture" })).toMatchObject({ ok: true });
+    reply(outcome("reject", 0.99));
+    await tick();
+    expect(requests).toHaveLength(0);
+    expect(await qwenAttempts()).toHaveLength(0);
+  });
+
   it("스위치는 화면이 본 값과 같을 때만 바뀌고, 크롤 설정 폼은 바꾸지 못하며, 깨진 값은 꺼짐으로 읽는다", async () => {
-    const current = (await getSettings()).review.qwenHeldRetry;
-    expect(current).toEqual(DEFAULT_HELD_QWEN_RETRY);
-    expect(await setHeldQwenRetry({ next: { ...current, perTick: 3 }, expected: { ...current, perTick: 7 }, actor: "test" }))
-      .toMatchObject({ ok: false });
-    await saveSettings({ review: { qwenHeldRetry: { ...current, enabled: false } } }, "test");
-    expect((await getSettings()).review.qwenHeldRetry.enabled).toBe(true);
+    const current = (await getSettings()).qwenAuto.heldRetry;
+    expect(current).toEqual({ ...DEFAULT_HELD_QWEN_RETRY, enabled: true });
+    expect(DEFAULT_HELD_QWEN_RETRY.enabled).toBe(false);
+    expect(await setHeldQwenRetry({ ...current, perTick: 3 }, { ...current, perTick: 7 })).toMatchObject({ ok: false });
+    await saveSettings({ qwenAuto: { heldRetry: { ...current, enabled: false } } } as never, "test");
+    expect((await getSettings()).qwenAuto.heldRetry.enabled).toBe(true);
     const [row] = await db.select().from(crawlSettings);
-    await db.update(crawlSettings).set({ values: { ...row.values, review: { qwenHeldRetry: { enabled: "yes", perTick: 10 } } } });
-    expect((await getSettings()).review.qwenHeldRetry.enabled).toBe(false);
+    await db.update(crawlSettings).set({ values: { ...row.values, qwenAuto: { ...(row.values as { qwenAuto: object }).qwenAuto, heldRetry: { enabled: "yes", perTick: 10 } } } });
+    expect((await getSettings()).qwenAuto.heldRetry.enabled).toBe(false);
   });
 
   it("부르는 곳이 탈 나면 이 틱의 나머지를 부르지 않고 물러나며, 15분 뒤 다시 본다 — 형식 오류는 다음 후보로 넘어간다", async () => {
@@ -336,15 +371,15 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(await humanReviewRepos([exhausted.row.id, split.row.id], heldQwenOwnedReasons(await getSettings()))).toEqual([split.row.repo]);
     expect(await withHumanJob(lease => claimHumanReview(exhausted.row.repo, lease))).toBeNull();
 
-    const current = (await getSettings()).review.qwenHeldRetry;
-    await setHeldQwenRetry({ next: { ...current, enabled: false }, expected: current, actor: "test" });
+    const current = (await getSettings()).qwenAuto.heldRetry;
+    await setHeldQwenRetry({ ...current, enabled: false }, current);
     expect(await humanReviewRepos([exhausted.row.id], heldQwenOwnedReasons(await getSettings()))).toEqual([exhausted.row.repo]);
     const claim = await withHumanJob(lease => claimHumanReview(exhausted.row.repo, lease));
     expect(claim).not.toBeNull();
 
     // DeepSeek 이 보는 중(진행 중 행)에 Qwen-v2 를 다시 켜도 같은 후보를 집지 않는다 — 한 후보에 진행 중 시도는 하나다
-    const off = (await getSettings()).review.qwenHeldRetry;
-    await setHeldQwenRetry({ next: { ...off, enabled: true }, expected: off, actor: "test" });
+    const off = (await getSettings()).qwenAuto.heldRetry;
+    await setHeldQwenRetry({ ...off, enabled: true }, off);
     reply(outcome("reject", 0.99));
     const result = await withHumanJob(async lease => runHeldQwenRetry({ lease, hasBudget: () => true, log: () => {} }, await getSettings()));
     expect(result.started).toBe(0);

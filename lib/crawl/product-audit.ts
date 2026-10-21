@@ -7,16 +7,16 @@ import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repos
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { getSettings, type AuditHoldSettings } from "./settings";
-import { auditHoldCount, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
+import { auditHoldCount, auditItemModel, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
 import { countedSecondReject, secondOpinionFilter, secondOpinionsField, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
-import type { CrawlSettings } from "./settings-schema";
+import type { CrawlSettings, QwenAutoSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
-import { auditReviewer, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
+import { auditReviewer, auditReviewerLabel, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
 import { qwenDirectConfig } from "./qwen-direct-review";
 
 /**
@@ -208,11 +208,13 @@ export async function switchAuditReviewer(input: { campaignId: number; expected:
     if (sameAuditReviewer(from, to)) return refuse("already_switched", "이미 이 모델로 묻고 있습니다.");
     await tx.update(productAuditCampaigns).set({ currentProvider: QWEN_AUDIT_PROVIDER, currentModel: to.model, switchedAt: sql`now()`,
       switchedBy: input.by.slice(0, 120) }).where(eq(productAuditCampaigns.id, campaign.id));
+    // 새 모델이 실제로 물을 것만 센다 — 답이 없고 시도가 남았고 원본이 있으며 제품이 아직 떠 있는 것(pendingAuditItems 와 같은 조건, 물러나기 중인 것 포함)
     const [row] = await tx.select({ count: sql<number>`count(*)::int` }).from(productAuditItems)
-      .where(and(eq(productAuditItems.campaignId, campaign.id), isNull(productAuditItems.aiDecision)));
-    const unanswered = row?.count ?? 0;
-    await log(true, null, { unanswered });
-    return { ok: true as const, from: from!, to, unanswered };
+      .innerJoin(products, eq(products.id, productAuditItems.productId))
+      .where(and(eq(productAuditItems.campaignId, campaign.id), unanswered, listed));
+    const askable = row?.count ?? 0;
+    await log(true, null, { unanswered: askable });
+    return { ok: true as const, from: from!, to, unanswered: askable };
   });
 }
 
@@ -255,6 +257,20 @@ export async function markAuditNoSource(itemId: number, lease: JobLease): Promis
     await assertJobLease(tx, lease);
     await tx.update(productAuditItems).set({ errorCode: "no_source" })
       .where(and(eq(productAuditItems.id, itemId), isNull(productAuditItems.aiDecision)));
+  });
+}
+
+/**
+ * 입력을 만들다 실패한 항목(입력 상한 초과 등) — 모델을 부르지 않은 실패라 시도 행은 없고, 항목의 시도로 세어 물러난다(recordAuditResult 의
+ * 셈과 같다: 1분에서 두 배씩 30분까지). 시도를 다 쓰면 '답 못 받음'이다. 쓰기는 DR writer fence → … → 작업 lease 의 한 커밋이다
+ */
+export async function markAuditInputFailed(itemId: number, code: string, lease: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, async (tx) => {
+    const [item] = await tx.select().from(productAuditItems).where(eq(productAuditItems.id, itemId)).for("update");
+    if (!item || item.aiDecision) return;
+    const backoffMs = Math.min(30 * 60_000, 60_000 * 2 ** item.attempts);
+    await tx.update(productAuditItems).set({ attempts: item.attempts + 1, errorCode: code.slice(0, 120),
+      retryAt: sql`now() + ${backoffMs} * interval '1 millisecond'` }).where(eq(productAuditItems.id, item.id));
   });
 }
 
@@ -355,7 +371,7 @@ export type AuditCounts = {
   openReject: number; openNeedsReview: number;
   /**
    * 그 거절 중 두 번째 모델도 거절한 것(두 모델 모두 거절 — 카탈로그 예외로 세지 않은 Qwen 거절은 빠진다), 갈림(두 번째 모델 승인 또는
-   * 카탈로그 예외 Qwen 거절), Qwen·grok 의견 다름, Qwen 거절(카탈로그 제외) — audit-second-opinions.ts
+   * 카탈로그 예외 Qwen 거절), Qwen·grok 의견 다름, Qwen 거절(카탈로그 예외) — audit-second-opinions.ts
    */
   openAgreed: number; openSplit: number; openDisagree: number; openQwenCatalog: number;
   removed: number; kept: number;
@@ -377,6 +393,8 @@ export type AuditOverview = {
   held: number;
   /** 감사 보류 스위치와 문턱(크롤 설정 auditHold) */
   hold: AuditHoldSettings;
+  /** Qwen-v2 자동 단계(크롤 설정 qwenAuto — 감사 화면은 두 번째 의견·공개분 거르기를 바꾼다) */
+  qwenAuto: QwenAutoSettings;
   /**
    * 남은 감사 모델 바꾸기(0112)로 바꿀 수 있는 심사자 — 감사가 돌고 있고 멈춘 감사가 아니고 아직 그것으로 묻지 않을 때만.
    * 아니면 null(버튼을 보이지 않는다). 모델은 이 웹 프로세스의 Qwen 설정(qwenDirectConfig)이다
@@ -390,7 +408,8 @@ export async function productAuditOverview(): Promise<AuditOverview> {
   const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, openAgreed: 0, openSplit: 0,
     openDisagree: 0, openQwenCatalog: 0, removed: 0, kept: 0, failed: 0, skipped: 0, answeredByCurrent: 0 };
   const hold = settings.auditHold;
-  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold, switchTo: null };
+  const qwenAuto = settings.qwenAuto;
+  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold, qwenAuto, switchTo: null };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
   const failed = sql`${productAuditItems.aiDecision} is null
     and (${productAuditItems.errorCode} is not distinct from 'no_source' or ${productAuditItems.attempts} >= ${MAX_REVIEW_ATTEMPTS})`;
@@ -405,12 +424,12 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     needsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review')::int`,
     openReject: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open})::int`,
     openNeedsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review' and ${open})::int`,
-    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql, reasonSql)})::int`,
-    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql, reasonSql)})::int`,
+    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql, reasonSql, primarySql)})::int`,
+    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql, reasonSql, primarySql)})::int`,
     openDisagree: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
-      and ${secondOpinionFilter("disagree", itemIdSql, reasonSql)})::int`,
+      and ${secondOpinionFilter("disagree", itemIdSql, reasonSql, primarySql)})::int`,
     openQwenCatalog: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
-      and ${secondOpinionFilter("qwen_catalog", itemIdSql, reasonSql)})::int`,
+      and ${secondOpinionFilter("qwen_catalog", itemIdSql, reasonSql, primarySql)})::int`,
     removed: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'removed')::int`,
     kept: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'kept')::int`,
     failed: sql<number>`count(*) filter (where ${failed})::int`,
@@ -432,7 +451,7 @@ export async function productAuditOverview(): Promise<AuditOverview> {
   const target = qwen ? { provider: QWEN_AUDIT_PROVIDER, model: qwen.model } : null;
   const switchTo = campaign.status === "running" && !auditCampaignStalled(campaign) && target && !sameAuditReviewer(auditReviewer(campaign), target)
     ? target : null;
-  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign), held, hold, switchTo };
+  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign), held, hold, qwenAuto, switchTo };
 }
 
 export type AuditFindingRow = {
@@ -449,6 +468,8 @@ export type AuditFindingRow = {
 /** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
 const itemIdSql = sql`${productAuditItems.id}`;
 const reasonSql = sql`${productAuditItems.aiReason}`;
+/** 그 항목의 감사 답을 낸 쪽 — 감사 모델의 카탈로그 예외(Qwen 이 감사한 카탈로그 같은 거절)를 갈림에 넣는다 */
+const primarySql = { provider: sql`${productAuditItems.aiProvider}`, model: auditItemModel("product_audit_items") };
 
 const findingColumns = {
   id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
@@ -459,7 +480,7 @@ const findingColumns = {
 /** 열린 거절·보류 목록의 조건 — 이 감사의 이 결정이고, 사람이 손대지 않았고, 제품이 떠 있다. second 면 두 번째 의견으로 더 거른다 */
 function openFindings(campaignId: number, decision: "reject" | "needs_review", second?: SecondOpinionFilter) {
   return and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision), isNull(productAuditItems.humanDecision),
-    listed, ...(second ? [secondOpinionFilter(second, itemIdSql, reasonSql)] : []));
+    listed, ...(second ? [secondOpinionFilter(second, itemIdSql, reasonSql, primarySql)] : []));
 }
 
 /**
@@ -597,7 +618,7 @@ export const GROUP_REMOVE_MAX = 50;
  * 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
  */
 const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
-  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql, reasonSql)}`);
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql, reasonSql, primarySql)}`);
 const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
   and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
 
@@ -620,7 +641,9 @@ export type AuditRemovalGroup = {
   category: string;
   total: number;
   /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다. second 는 두 번째 의견(확인 창의 배지) */
-  items: { id: number; slug: string; name: string; url: string; confidence: number; second: SecondOpinionView[] }[];
+  items: { id: number; slug: string; name: string; url: string; confidence: number; second: SecondOpinionView[];
+    /** 그 거절을 낸 감사 모델의 화면 이름(qwen-v2·gpt-oss-120b) — 확인 창이 누가 답했는지 보인다 */
+    answeredBy: string }[];
 };
 
 /**
@@ -632,6 +655,8 @@ export async function auditRemovalGroups(campaignId: number, scope: AuditGroupSc
     id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
     confidence: sql<number>`${productAuditItems.aiConfidence}`.as("confidence"),
     second: sql<SecondOpinionView[]>`${secondOpinionsField(itemIdSql)}`.as("second"),
+    aiProvider: sql<string | null>`${productAuditItems.aiProvider}`.as("ai_provider"),
+    auditModel: sql<string>`${auditItemModel("product_audit_items")}`.as("audit_model"),
     rank: sql<number>`(row_number() over (partition by ${products.category} order by ${productAuditItems.aiConfidence} desc, ${productAuditItems.id}))::int`.as("rank"),
     total: sql<number>`(count(*) over (partition by ${products.category}))::int`.as("total"),
   }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
@@ -642,7 +667,8 @@ export async function auditRemovalGroups(campaignId: number, scope: AuditGroupSc
   const groups = new Map<string, AuditRemovalGroup>();
   for (const row of rows) {
     const group = groups.get(row.category) ?? { category: row.category, total: row.total, items: [] };
-    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence, second: row.second });
+    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence, second: row.second,
+      answeredBy: auditReviewerLabel({ provider: row.aiProvider ?? "", model: row.auditModel ?? "" }) });
     groups.set(row.category, group);
   }
   return [...groups.values()];

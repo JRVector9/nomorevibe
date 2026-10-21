@@ -15,7 +15,9 @@ import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirec
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { sameReviewModel } from "./review-model-identity";
-import { sameOpinionModel, secondRejectHolds } from "./second-opinion-rules";
+import { qwenConfident, sameOpinionModel, secondRejectHolds } from "./second-opinion-rules";
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { secondReviewGeneration } from "./second-review-input";
 import { getSettings } from "./settings";
 import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
@@ -48,9 +50,11 @@ import type { CrawlSettings } from "./settings-schema";
 
 export { SPLIT_QWEN_REJECT_REASON, SPLIT_TIEBREAK_MAX_FAILURES } from "./gate-split-tiebreak-read";
 
-/** 한 번 부르는 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). MIN_CALL_MS 보다 짧게 남으면 새로 부르지 않는다 */
+/**
+ * 한 번 부르는 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 이 시간과 기록 여유가 다 남을 때만 새로 부른다 — 줄인 제한 시간으로
+ * 부르지 않으니 틱 끝 때문에 난 시간 초과가 서버 탈로 셈되지 않는다(틱 끝에 끊긴 호출은 멈춤 qwen_cancelled 이다)
+ */
 const CALL_TIMEOUT_MS = 20_000;
-const MIN_CALL_MS = 8_000;
 const WRITE_MARGIN_MS = 2_000;
 /**
  * 이 틱에서 판가름이 쓰는 시간 — 2차 잡 틱(108초) 안이다. 표 심사와 나란히 돌지만 표 심사가 일찍 끝나면 틱이 이만큼 길어지고,
@@ -86,7 +90,9 @@ function liveCallsAllowed(): boolean {
   try { assertLiveReviewAdapterAllowed(); return true; } catch { return false; }
 }
 
-const switchOn = (settings: CrawlSettings) => settings.enabled && settings.secondReview.enabled && settings.secondReview.splitTiebreak.enabled;
+/** 칸이 없는 설정 객체(부분 설정)는 꺼진 것으로 — 저장된 행은 mergeWithDefaults 가 qwenAuto 를 늘 채운다(기본 꺼짐) */
+const switchOn = (settings: CrawlSettings) => settings.enabled && settings.secondReview.enabled
+  && Boolean((settings.qwenAuto as CrawlSettings["qwenAuto"] | undefined)?.splitTiebreak.enabled);
 
 /** 부르는 곳의 탈인가 — 저장된 오류 코드로 가른다. 멈춤(qwen_cancelled)과 우리 쪽 코드는 아니다 */
 function endpointCode(code: string | null): boolean {
@@ -198,6 +204,8 @@ async function currentGate(tx: ProductTransaction, domain: Domain, hint: Hint): 
 
 async function claimSplitTiebreak(hint: Hint, lease: JobLease, now: Date, env: QwenEnv): Promise<ClaimResult> {
   return db.transaction<ClaimResult>(async tx => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 판가름 행도 후보도 쓰지 않는다
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
     if (ai1.mode === "draining" || ai2.mode === "draining") return { kind: "stop", reason: "stage_draining" };
@@ -257,6 +265,7 @@ type Settled = "rejected" | "kept" | "held" | "failed" | "superseded";
 /** 받은 답을 쓴다 — 잡을 때 본 것이 하나라도 바뀌었으면 답만 남기고 후보는 건드리지 않는다 */
 async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobLease): Promise<Settled> {
   return db.transaction(async tx => {
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const now = new Date();
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
@@ -293,6 +302,9 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
       || gate.rows.map(item => item.id).join() !== claim.gateIds.join()) return finish({ ...answer, applied: "superseded" }, "superseded");
     if (outcome.decision !== "reject") return finish({ ...answer, applied: "kept_human" }, "kept");
     if (!switchOn(domain.settings)) return finish({ ...answer, applied: "switch_off" }, "held");
+    // 사람 없이 거부로 닫는 것은 적용 모드에서만(reopenOrphanedGateHolds 와 같다)이고 확신이 0.90 이상일 때만이다 — 아니면 답만 남긴다
+    if (domain.settings.reviewMode !== "enforce") return finish({ ...answer, applied: "held_not_enforce" }, "held");
+    if (!qwenConfident(outcome.confidence)) return finish({ ...answer, applied: "held_low_confidence" }, "held");
     const verdict = splitRejectVerdict(gate.rows, outcome, model);
     if (verdict !== "apply") return finish({ ...answer, applied: verdict === "catalog" ? "held_catalog" : "held_minority" }, "held");
     const attemptId = await applySplitReject(tx, { claim, domain, gate, outcome, model, tiebreakId: row.id, now });
@@ -355,11 +367,11 @@ export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLeas
     ctx.log("crawl.split_tiebreak_backoff", { error: backoff });
     return { ...tick, stopped: `backoff:${backoff}` };
   }
-  const perTick = settings.secondReview.splitTiebreak.perTick;
+  const perTick = settings.qwenAuto.splitTiebreak.perTick;
   const hints = await splitHints(perTick * HINT_FACTOR, new Date());
   for (const hint of hints) {
     const left = () => deadlineAt - Date.now() - WRITE_MARGIN_MS;
-    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < MIN_CALL_MS) break;
+    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < CALL_TIMEOUT_MS || qwenEndpointBackingOff()) break;
     let claimed: ClaimResult;
     try { claimed = await claimSplitTiebreak(hint, lease, new Date(), options.env); }
     catch (error) {
@@ -367,6 +379,7 @@ export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLeas
       if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
       ctx.log("crawl.split_tiebreak_claim_failed", { candidateId: hint.candidateId, error: error.message });
       await db.transaction(async tx => {
+        if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
         await markIneligible(tx, hint, error.message, new Date(), await lockedRow(tx, hint.candidateId, hint.generationKey),
           qwenDirectConfig(options.env)?.model ?? "unconfigured");
         await assertJobLeaseAtWallTime(tx, lease);
@@ -382,15 +395,19 @@ export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLeas
     const poll = setInterval(() => { if (!ctx.hasBudget() || Date.now() >= deadlineAt) controller.abort(); }, 250);
     poll.unref?.();
     let result: CallResult;
+    let callStartedAt = 0;
     try {
       // 두 번째 자리(감사 두 번째 의견·공개분 거르기와 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
-      result = await withQwenSecondarySlot(async () => left() < MIN_CALL_MS || qwenEndpointBackingOff()
-        ? { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 }
-        : callQwen(claimed.claim.input, { timeoutMs: Math.max(1, Math.min(CALL_TIMEOUT_MS, left())),
-          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal, request: options.request, env: options.env }));
+      result = await withQwenSecondarySlot(async () => {
+        if (left() < CALL_TIMEOUT_MS || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
+        callStartedAt = Date.now();
+        return callQwen(claimed.claim.input, { timeoutMs: CALL_TIMEOUT_MS,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal, request: options.request, env: options.env });
+      });
     } finally { clearInterval(poll); }
-    if (result.ok) noteQwenEndpointSuccess();
-    else if (endpointCode(result.code)) noteQwenEndpointFailure(result.code as QwenDirectErrorCode);
+    // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
+    if (result.ok) await noteQwenEndpointSuccess(callStartedAt);
+    else if (endpointCode(result.code)) await noteQwenEndpointFailure(result.code as QwenDirectErrorCode);
     tick[await settleSplitTiebreak(claimed.claim, result, lease)]++;
     if (!result.ok) {
       ctx.log("crawl.split_tiebreak_failed", { candidateId: hint.candidateId, error: result.code, detail: result.detail });

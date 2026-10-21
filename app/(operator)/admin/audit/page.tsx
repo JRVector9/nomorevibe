@@ -9,6 +9,8 @@ import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupA
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
 import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
+import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
 import { auditReviewer, auditReviewerLabel, auditReviewerSwitched, QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
@@ -36,18 +38,18 @@ const PAGE_SIZE = 50;
  * 갈래 — 모델이 "아니다"라고 한 것과 "모르겠다"고 한 것. 둘 다 사람이 본다.
  * 보류 중: 감사 보류로 이미 공개 목록에서 빠져 사람을 기다리는 것(회차와 상관없이, 오래된 것부터) — 있으면 이 갈래부터 연다.
  * 두 모델 모두 거절·갈림·의견 다름·Qwen 카탈로그: 내릴 후보를 두 번째 의견(audit-second-opinions.ts)으로 거른 것. 모두 거절은 보류의 까닭이 되는
- * 두 번째 거절이 있는 것, 갈림은 두 번째 모델이 승인했거나 카탈로그·디렉터리 같아 Qwen 거절을 세지 않은 것, Qwen 거절(카탈로그 제외)은 그 뒤의 것만
+ * 두 번째 거절이 있는 것, 갈림은 두 번째 모델이 승인했거나 카탈로그·디렉터리 같아 Qwen 거절(의견·감사 답)을 세지 않은 것, Qwen 거절(카탈로그 예외)은 그 뒤의 것만
  */
 const VIEWS = {
   held: { label: "보류 중(목록에서 빠짐)", empty: "보류 중인 것이 없습니다." },
   reject: { label: "내릴 후보", empty: "사람이 볼 내릴 후보가 없습니다." },
   agreed: { label: "두 모델 모두 거절", empty: "두 번째 모델도 거절한 내릴 후보가 없습니다." },
   split: { label: "갈림 (2차 승인·카탈로그)", empty: "두 번째 모델이 승인했거나 카탈로그 같아 Qwen 거절을 세지 않은 내릴 후보가 없습니다.",
-    hint: "두 번째 모델이 승인했거나, 카탈로그·디렉터리 같아 Qwen 거절을 보류의 까닭으로 세지 않은 것 — 사람이 한 건씩 봅니다" },
+    hint: "두 번째 모델이 승인했거나, 카탈로그·디렉터리 같아 Qwen 거절(두 번째 의견·Qwen 이 낸 감사 답)을 보류의 까닭으로 세지 않은 것 — 사람이 한 건씩 봅니다" },
   disagree: { label: "Qwen·grok 의견 다름", empty: "Qwen 과 grok 의 의견이 다른 내릴 후보가 없습니다.",
     hint: "두 모델의 두 번째 의견이 모두 있고 결정이 다른 것" },
-  qwen_catalog: { label: "Qwen 거절(카탈로그 제외)", empty: "카탈로그·디렉터리 같아 Qwen 거절을 보류에서 뺀 내릴 후보가 없습니다.",
-    hint: "Qwen 이 거절했지만 카탈로그·디렉터리 같아(사유 갈래 '남의 플랫폼·목록' 또는 directory·catalog·awesome·list of) 그 거절로는 보류하지 않은 것" },
+  qwen_catalog: { label: "Qwen 거절(카탈로그 예외)", empty: "카탈로그·디렉터리 같아 Qwen 거절을 보류에서 뺀 내릴 후보가 없습니다.",
+    hint: "Qwen 이 거절했지만(두 번째 의견이든 감사 답이든) 카탈로그·디렉터리 같아(사유 갈래 '남의 플랫폼·목록' 또는 directory·catalog·awesome·curated list·list of) 그 거절로는 보류하지 않은 것" },
   needs_review: { label: "판단 보류", empty: "AI가 판단을 미룬 것이 없습니다." },
 } as const satisfies Record<string, { label: string; empty: string; hint?: string }>;
 type View = keyof typeof VIEWS;
@@ -94,7 +96,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
     disagree: counts.openDisagree, qwen_catalog: counts.openQwenCatalog, needs_review: counts.openNeedsReview };
   // Qwen-v2 자동 단계의 상태 — 감사 탭에서만 읽는다(남은 수를 센다)
-  const qwen = tab === "audit" ? await qwenSecondOpinionStatus(overview.hold) : null;
+  const qwen = tab === "audit" ? await qwenSecondOpinionStatus({ auditHold: overview.hold, qwenAuto: overview.qwenAuto }) : null;
   // 보류 갈래의 사유는 패널의 갈래별 수에도 쓴다 — 감사 탭이면 늘 읽는다(보류된 것만, 수천 건 안)
   const heldReasonIds = tab === "audit" ? groupAuditReasons(await heldFindingReasons()) : null;
   const second = (SECOND_OPINION_FILTERS as readonly string[]).includes(view) ? view as SecondOpinionFilter : undefined;
@@ -387,6 +389,20 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
         {byCategory.length > 0 && <> 갈래별: {byCategory.map((key) => `${AUDIT_REASON_CATEGORIES[key].label} ${count(heldReasons![key].length)}`).join(" · ")}</>}
       </p>
       {qwen && <QwenStatus status={qwen} now={now} />}
+      {qwen && <div className="flex flex-col gap-1">
+        <QwenAutoStepSwitch key={`a:${JSON.stringify(overview.qwenAuto.auditSecondOpinion)}`} step="auditSecondOpinion"
+          value={overview.qwenAuto.auditSecondOpinion} title="Qwen-v2 감사 두 번째 의견" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
+          enableNotes={["보류 후보마다 gpu3090 Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto). 확신 0.90 이상만 보류에 반영합니다.",
+            "승인은 그 항목의 보류를 풉니다(작업 로그에 남습니다).",
+            hold.secondOpinionReject ? "거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
+              : "두 번째 모델 거절로 보류가 꺼져 있어 거절은 보류의 까닭이 되지 않습니다(기록만 남습니다).",
+            "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다."]} />
+        <QwenAutoStepSwitch key={`p:${JSON.stringify(overview.qwenAuto.publishedFilter)}`} step="publishedFilter"
+          value={overview.qwenAuto.publishedFilter} title="Qwen-v2 공개분 2차 거르기" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
+          enableNotes={["공개분 2차가 사람 확인으로 넘긴 행을 Qwen-v2 로 한 번 더 봅니다(감사 잡).",
+            "승인(확신 0.90 이상)이면 사람의 '유지'와 같은 길로 닫습니다 — 누가 qwen-v2-auto. 내리지도 숨기지도 않습니다.",
+            "거절·판단 보류·낮은 확신이면 행을 그대로 두고 «Qwen-v2도 거절»·«판단 보류»로 사람 확인 목록 앞에 둡니다."]} />
+      </div>}
       {/* 저장된 값이 바뀌면 새로 그린다 — 오류가 나면 고친 값을 그대로 둔다 */}
       <AuditHoldSettingsForm key={JSON.stringify(hold)} hold={hold} />
       <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
@@ -418,6 +434,9 @@ function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
         남은 것 <b className="font-semibold">{count(published.remaining)}</b></p>
       <p className="text-fg-3">{status.model ?? "모델 설정 오류"} · {status.url ?? "주소 설정 오류"} · 글 {status.promptVersion} ·
         마지막으로 돈 때 {at(status.lastRunAt)}{status.givenUp > 0 && ` · 답을 못 받아 그만 물은 것 ${count(status.givenUp)}건`}</p>
+      {status.endpointBackoff && <p className="text-warn">gpu3090 이 탈 나 {at(status.endpointBackoff.until)}까지 모두 물러납니다
+        (<span className="font-mono">{status.endpointBackoff.code ?? "qwen_unreachable"}</span>, 연속 {count(status.endpointBackoff.failures)}번) —
+        Qwen 직접 감사·두 번째 의견·공개분 거르기·갈림 판가름·보류 재심사가 그동안 묻지 않습니다.</p>}
       {lastError && <p className={recovered ? "text-fg-3" : "text-warn"}>마지막 오류: <span className="font-mono">{lastError.code}</span>
         {lastError.detail && ` (${lastError.detail})`} · {ERROR_TARGET[lastError.target] ?? lastError.target} · {at(lastError.at)}
         {recovered && ` — 그 뒤 ${at(status.lastSuccessAt)}에 다시 받음`}</p>}

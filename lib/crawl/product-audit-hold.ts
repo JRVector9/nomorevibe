@@ -7,9 +7,10 @@ import { assertJobLeaseAtWallTime, withJobLeaseWrite } from "@/lib/jobs/control"
 import type { JobContext } from "@/lib/jobs/runner";
 import { classifyAuditReason } from "./audit-reason-category";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { lockedAuditHold, type AuditHoldSettings } from "./settings";
+import { lockedSettings, type AuditHoldSettings } from "./settings";
 import { secondOpinionVotesField, type SecondOpinionVoteRow } from "./audit-second-opinions";
-import { secondRejectHolds } from "./second-opinion-rules";
+import { QWEN_AUTO_MIN_CONFIDENCE, secondOpinionFamily, secondRejectHolds } from "./second-opinion-rules";
+import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -112,7 +113,23 @@ const secondVotes = (alias: string) => secondOpinionVotesField(column(alias)("id
  * 보류의 둘째 문이 읽는 감사 항목 — 감사 사유, 두 번째 의견들, 이 거절을 낸 감사 모델(coalesce(항목의 ai_model, 그 감사의 model), 0112).
  * model 이 없으면 감사 모델의 규칙은 보지 않는다(옛 호출부·옮겨 적기의 승인)
  */
-export type HoldGateItem = { reason: string | null | undefined; opinions: readonly SecondOpinionVoteRow[]; model?: string | null };
+export type HoldGateItem = { reason: string | null | undefined; opinions: readonly HoldGateOpinion[]; model?: string | null;
+  /** 이 감사 거절의 확신(ai_confidence) — Qwen 이 감사한 거절은 QWEN_AUTO_MIN_CONFIDENCE 이상이어야 보류의 까닭이 된다 */
+  confidence?: number | null };
+/** 두 번째 의견 한 줄 — 출처(source)·확신은 자동 의견(qwen-v2-auto)을 가르는 데 쓴다 */
+export type HoldGateOpinion = SecondOpinionVoteRow & { source?: string | null; confidence?: number | null };
+/**
+ * 보류를 가르는 때의 조건 — autoOpinions: Qwen-v2 자동 의견(qwenAuto.auditSecondOpinion)이 켜져 있다. 꺼져 있으면 자동 의견의 거절은
+ * 보류의 까닭이 아니다(grok 같은 옮겨 적은 의견은 그대로 센다). 켜져 있어도 자동 의견은 확신이 0.90 이상일 때만 센다(승인·거절 모두)
+ */
+export type HoldGateOptions = { autoOpinions?: boolean };
+
+/** 이 의견을 지금 보류에서 세는가 — 자동 의견은 확신이 있고 문턱 이상이며, 거절이면 그 단계가 켜져 있을 때만 */
+function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions): boolean {
+  if (opinion.source !== QWEN_V2_AUTO_SOURCE) return true;
+  if (typeof opinion.confidence !== "number" || opinion.confidence < QWEN_AUTO_MIN_CONFIDENCE) return false;
+  return opinion.decision !== "reject" || Boolean(options.autoOpinions);
+}
 
 /**
  * 두 번째 의견들이 보류에 무엇을 말하나 — 거절(모델별 규칙 secondRejectHolds 를 지난 것만)·승인(모델을 가리지 않는다).
@@ -136,8 +153,12 @@ export function secondOpinionStance(item: HoldGateItem): { secondReject: boolean
  *     Qwen 의 두 번째 거절도 카탈로그 같은 항목에서는 세지 않는다). 같은 모델의 두 번째 의견은 묻지 않는다(audit-second-opinion-auto.ts).
  * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기·새 답·의견 옮겨 적기가 모두 이 함수로 가른다.
  */
-export function holdGates(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">) {
-  const { secondReject, secondApprove } = secondOpinionStance(item);
+export function holdGates(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">, options: HoldGateOptions = {}) {
+  // Qwen 이 감사한 거절은 확신이 있고 0.90 이상일 때만 사람 없이 보류한다 — 없거나 낮으면 사람의 목록에 둔다
+  if (item.model && secondOpinionFamily(item.model) === "qwen" && (typeof item.confidence !== "number" || item.confidence < QWEN_AUTO_MIN_CONFIDENCE)) {
+    return { byCategory: false, bySecondOpinion: false };
+  }
+  const { secondReject, secondApprove } = secondOpinionStance({ ...item, opinions: item.opinions.filter((opinion) => countedOpinion(opinion, options)) });
   const primaryCounts = !item.model || secondRejectHolds(item.model, item.reason);
   return {
     byCategory: hold.categories.includes(classifyAuditReason(item.reason)) && !secondApprove && primaryCounts,
@@ -145,8 +166,8 @@ export function holdGates(item: HoldGateItem, hold: Pick<AuditHoldSettings, "cat
   };
 }
 
-export function holdGate(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">): boolean {
-  const gates = holdGates(item, hold);
+export function holdGate(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">, options: HoldGateOptions = {}): boolean {
+  const gates = holdGates(item, hold, options);
   return gates.byCategory || gates.bySecondOpinion;
 }
 
@@ -170,12 +191,14 @@ export function verdictMayHold(outcome: { decision: string; confidence?: number 
  * 상태가 바뀌지 않아 트리거(0057)가 적지 않는다.
  */
 export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId: number; productId: number; slug: string }): Promise<boolean> {
-  const hold = await lockedAuditHold(tx);
+  const settings = await lockedSettings(tx);
+  const hold = settings.auditHold;
   if (!hold.enabled) return false;
   const [item] = await tx.select({ campaignId: productAuditItems.campaignId, aiReason: productAuditItems.aiReason,
     aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items"), model: auditItemModel("product_audit_items") })
     .from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
-  const gates = item ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model }, hold) : null;
+  const gates = item ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence }, hold,
+    { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }) : null;
   if (!item || !gates || (!gates.byCategory && !gates.bySecondOpinion)) return false;
   const [held] = await tx.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: input.itemId })
     .where(and(eq(products.id, input.productId), eq(products.slug, input.slug), unownedPublic("products"),
@@ -221,7 +244,7 @@ export async function releaseAuditHold(tx: ProductTransaction,
  * 한 틱에 AUDIT_HOLD_SWEEP_BATCH 건(지난 60초에 보류·풀기로 적힌 지우기 줄만큼 뺀다 — 새 답이 바로 건 보류까지 합쳐 지우기 잡이
  * 따라잡는 만큼), SWEEP_MS 안에서만 — 오래된 항목부터. 걸기 전에 먼저 유지가 남았는데 풀리지 않은 보류를 푼다(healKeptHolds).
  */
-export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSettings): Promise<number> {
+export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSettings, options: HoldGateOptions = {}): Promise<number> {
   const lease = ctx.lease;
   if (!lease) return 0;
   const startedAt = Date.now();
@@ -231,7 +254,7 @@ export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSett
     inArray(cdnPurges.reason, [AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE]), sql`${cdnPurges.createdAt} > now() - interval '60 seconds'`));
   const room = Math.max(0, AUDIT_HOLD_SWEEP_BATCH - (recent?.count ?? 0));
   if (room === 0) return 0;
-  const candidates = await sweepCandidates(hold, startedAt, room);
+  const candidates = await sweepCandidates(hold, startedAt, room, options);
   let held = 0;
   for (const row of candidates) {
     if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > SWEEP_MS) break;
@@ -285,17 +308,19 @@ const CANDIDATE_PAGE = 500;
  * 허용 밖 갈래(글·문서·기타)가 앞자리를 영영 차지해 쓸기가 나아가지 않는다. 그 몫은 사람이 정할 때까지 남으므로(2026-10-21 추정 1천여 건)
  * 틱마다 몇 쪽을 다시 읽는다 — id·주소·사유만이다.
  */
-async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room: number) {
+async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room: number, options: HoldGateOptions) {
   const picked: { item_id: number; product_id: number; slug: string }[] = [];
   for (let afterId = 0; picked.length < room && Date.now() - startedAt <= SWEEP_MS;) {
     const page = await db.execute<{ item_id: number; product_id: number; slug: string; ai_reason: string | null;
-      opinions: SecondOpinionVoteRow[]; ai_model: string | null }>(sql`
-      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondVotes("i")} as opinions, ${auditItemModel("i")} as ai_model
+      opinions: HoldGateOpinion[]; ai_model: string | null; ai_confidence: number | null }>(sql`
+      select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondVotes("i")} as opinions, ${auditItemModel("i")} as ai_model,
+             i.ai_confidence
         from ${productAuditItems} i join ${products} p on p.id = i.product_id
        where ${holdableItem("i", hold.minConfidence)} and ${unownedPublic("p")} and i.id > ${afterId}
        order by i.id limit ${CANDIDATE_PAGE}`);
     for (const row of page) {
-      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions, model: row.ai_model }, hold)) picked.push(row);
+      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions, model: row.ai_model, confidence: row.ai_confidence },
+        hold, options)) picked.push(row);
     }
     if (page.length < CANDIDATE_PAGE) break;
     afterId = page[page.length - 1].item_id;

@@ -194,7 +194,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       <Link href="/admin#human-review" className="dash-pill">사람 검토 DeepSeek 위임: {settings.humanReview.enabled ? '켜짐 · M3 Ultra' : '꺼짐'} · 설정 →</Link>
       {/* 사람 큐를 거르는 gpu3090 Qwen-v2 둘 — 관문 갈림 판가름(2차 잡)과 보류 재심사(사람 검토 잡). 배지도 따로다: 판가름 «Qwen-v2 승인 — 발행 후보»,
           재심사 «Qwen-v2: 승인 의견»·«Qwen-v2: 판단 보류» */}
-      <SplitTiebreakSwitch enabled={settings.secondReview.splitTiebreak.enabled} perTick={settings.secondReview.splitTiebreak.perTick} status={tiebreak} />
+      <SplitTiebreakSwitch enabled={settings.qwenAuto.splitTiebreak.enabled} perTick={settings.qwenAuto.splitTiebreak.perTick} status={tiebreak} />
       <HeldQwenRetryPanel key={heldQwen ? JSON.stringify([heldQwen.enabled, heldQwen.perTick, heldQwen.budgetSeconds, heldQwen.reasons]) : 'none'} status={heldQwen} />
 
       <TakedownStrip summary={takedowns} />

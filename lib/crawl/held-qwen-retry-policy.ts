@@ -21,10 +21,10 @@ export const heldQwenActor = (promptVersion: string) => `${HELD_QWEN_ACTOR}:${pr
 /** 거부·승인으로 적용하는 확신의 하한 — DeepSeek 위임(DEEPSEEK_MIN_CONFIDENCE)과 같다. 아래면 판단 보류로 둔다 */
 export const HELD_QWEN_MIN_CONFIDENCE = 0.9;
 
-/** 칸이 없는 설정 객체(부분 설정을 넘기는 호출)는 꺼진 것으로 읽는다 — 저장된 행은 mergeWithDefaults 가 늘 채운다 */
+/** 칸이 없는 설정 객체(부분 설정을 넘기는 호출)는 꺼진 것으로 읽는다 — 저장된 행은 mergeWithDefaults 가 늘 채운다(qwenAuto.heldRetry, 기본 꺼짐) */
 const OFF: HeldQwenRetrySettings = { ...DEFAULT_HELD_QWEN_RETRY, enabled: false };
 export function heldQwenRetry(settings: CrawlSettings): HeldQwenRetrySettings {
-  return (settings.review as CrawlSettings["review"] | undefined)?.qwenHeldRetry ?? OFF;
+  return (settings.qwenAuto as CrawlSettings["qwenAuto"] | undefined)?.heldRetry ?? OFF;
 }
 
 /** 이 사유의 보류를 지금 Qwen-v2 가 맡는가 — DeepSeek 위임은 맡은 것을 집지 않는다(human-review-repository.ts) */

@@ -101,13 +101,13 @@ describe('delegated claim', () => {
   });
   // 보류 Qwen-v2 재심사가 맡은 사유는 DeepSeek 이 집지 않는다 — 같은 잠긴 설정으로 재고, 끄면 다시 DeepSeek 몫이다
   it('leaves reasons owned by the held Qwen-v2 retry alone', async () => {
-    const owned = { ...current.settings, reviewMode: 'enforce', review: { qwenHeldRetry: { enabled: true, perTick: 10, budgetSeconds: 40,
-      reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } } };
+    const owned = { ...current.settings, reviewMode: 'enforce', qwenAuto: { heldRetry: { enabled: true, perTick: 10,
+      budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } } };
     current.candidate.reason = 'ai_review_exhausted';
     current.settings = owned as typeof current.settings;
     reads = [[], [], []];
     expect(await claimHumanReview(candidate.repo, lease)).toBeNull(); expect(writes).toHaveLength(0);
-    current.settings = { ...owned, review: { qwenHeldRetry: { ...owned.review.qwenHeldRetry, enabled: false } } } as typeof current.settings;
+    current.settings = { ...owned, qwenAuto: { ...owned.qwenAuto, heldRetry: { ...owned.qwenAuto.heldRetry, enabled: false } } } as typeof current.settings;
     expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
   });
   it('claims the shared candidate slot with exact source, generation and lease', async () => {

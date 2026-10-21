@@ -347,9 +347,12 @@ it("every admin server action and every write route handler goes through the web
   const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true })
     .flatMap(entry => entry.isDirectory() ? walk(path.join(dir, entry.name)) : [path.join(dir, entry.name)]);
   const files = walk(path.join(root, "app"));
-  const actionFiles = files.filter(file => file.endsWith(`${path.sep}actions.ts`) && readFileSync(file, "utf8").startsWith('"use server"')
-    || file.endsWith(`${path.sep}actions.ts`) && readFileSync(file, "utf8").startsWith("'use server'"));
-  expect(actionFiles.length).toBeGreaterThanOrEqual(15);
+  // actions.ts 와 그 옆의 *-actions.ts(human-review-actions·source-buffer-actions·qwen-auto-actions 등) 모두
+  const isActionFile = (file: string) => /(?:^|-)actions\.ts$/.test(path.basename(file));
+  const actionFiles = files.filter(file => isActionFile(file) && /^(['"])use server\1/.test(readFileSync(file, "utf8")));
+  expect(actionFiles.length).toBeGreaterThanOrEqual(18);
+  expect(actionFiles.map(file => path.basename(file))).toEqual(expect.arrayContaining(["human-review-actions.ts", "source-buffer-actions.ts",
+    "qwen-auto-actions.ts"]));
   let wrapped = 0;
   for (const file of actionFiles) {
     const source = readFileSync(file, "utf8");
@@ -357,8 +360,9 @@ it("every admin server action and every write route handler goes through the web
     expect(source.match(/^export async function (\w+)/gm)?.filter(line => !line.endsWith("codexOperation")) ?? [], file).toEqual([]);
     wrapped += source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)?.length ?? 0;
   }
-  // 0110 감사 보류 — 보류 설정 저장·보류 모두 풀기(admin/audit/actions.ts) 두 개가 더해졌다. 0112 남은 감사 모델 바꾸기 하나가 더해졌다
-  expect(wrapped).toBe(57);
+  // 0110 감사 보류 — 보류 설정 저장·보류 모두 풀기(admin/audit/actions.ts) 두 개가 더해졌다. 0112 남은 감사 모델 바꾸기 하나가 더해졌다.
+  // *-actions.ts 도 센다 — 사람 검토 위임·원본 공급 조절·Qwen-v2 자동 단계 스위치 셋
+  expect(wrapped).toBe(60);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

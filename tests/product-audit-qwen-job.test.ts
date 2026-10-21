@@ -3,6 +3,7 @@ import type { JobContext } from "@/lib/jobs/runner";
 import { auditPublishedProducts, qwenAuditBackoffMs, qwenAuditConcurrency, resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { qwenEndpointBackingOff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 
@@ -11,14 +12,15 @@ import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
  * 감사 행·일감·기록은 이 파일이 흉내 낸다(DB 를 여는 쪽은 tests/integration/product-audit-qwen.test.ts).
  */
 const mocks = vi.hoisted(() => ({ campaign: vi.fn(), settings: vi.fn(), candidates: vi.fn(), pending: vi.fn(),
-  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), finish: vi.fn(), gateway: vi.fn() }));
+  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), inputFailed: vi.fn(), finish: vi.fn(), gateway: vi.fn() }));
 // Qwen-v2 두 번째 의견 단계(감사 잡 틱 안에서 나란히 돈다)는 tests/integration/audit-second-opinion-auto.test.ts 가 본다 — 여기 가짜 서버의 호출 수는 감사 묻기만
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
-  loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
+  loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, markAuditInputFailed: mocks.inputFailed,
+  finishAuditCampaign: mocks.finish }));
 vi.mock("@/lib/llm/capacity-repository", () => ({
   readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
 }));
@@ -134,14 +136,14 @@ describe("바꾼 감사는 Qwen 에게 묻는다", () => {
 });
 
 describe("동시 호출과 틱 예산", () => {
-  it("자리 둘(기본)이 틱이 끝날 때까지 잇달아 묻는다 — 3초 호출이면 한 틱에 40건, 남은 시간이 6초 아래면 새로 시작하지 않는다", async () => {
+  it("자리 둘(기본)이 틱이 끝날 때까지 잇달아 묻는다 — 3초 호출이면 한 틱에 30건, 한 호출의 제한 시간(20초)이 다 남지 않으면 새로 시작하지 않는다", async () => {
     const { state } = endpoint({ ms: 3_000 });
     const t0 = Date.now();
     await tick();
     expect(state.maxInFlight).toBe(2);
-    expect(recorded().filter((call) => call.ok)).toHaveLength(40);
-    // 틱 끝 = 65초 - 저장 여유 2초 = 63초. 새 호출은 57초까지만
-    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(57_000);
+    expect(recorded().filter((call) => call.ok)).toHaveLength(30);
+    // 틱 끝 = 65초 - 저장 여유 2초 = 63초. 새 호출은 43초(= 63 - 20)까지만
+    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(43_000);
     expect(state.aborted).toBe(0);
   });
 
@@ -150,18 +152,68 @@ describe("동시 호출과 틱 예산", () => {
     const { state } = endpoint({ ms: 3_000 });
     await tick();
     expect(state.maxInFlight).toBe(4);
-    expect(recorded()).toHaveLength(80);
+    expect(recorded()).toHaveLength(60);
     expect(mocks.pending).toHaveBeenCalledWith(4, 160);
   });
 
-  it("틱 끝에 걸린 호출은 끊고 적지 않는다 — 시도를 쓰지 않는다", async () => {
-    const { state } = endpoint({ ms: 8_000 });
+  it("줄인 제한 시간으로 부르지 않는다 — 틱 끝에 걸려 끊기는 호출이 없고, 서버 탈로 세는 일도 없다", async () => {
+    const { state, fetcher } = endpoint({ ms: 8_000 });
+    const t0 = Date.now();
     await tick();
-    // 자리마다 0·8·…·56초에 시작(56초에 남은 7초 ≥ 6초), 56초 것은 64초에 끝나 63초 끝에 걸린다
-    expect(state.starts).toHaveLength(16);
-    expect(state.aborted).toBe(2);
-    expect(recorded()).toHaveLength(14);
+    // 자리마다 0·8·…·40초에 시작(40초에 남은 23초 ≥ 20초, 48초에는 15초라 시작하지 않는다)
+    expect(state.starts).toHaveLength(12);
+    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(43_000);
+    expect(state.aborted).toBe(0);
+    expect(recorded()).toHaveLength(12);
     expect(recorded().every((call) => call.ok)).toBe(true);
+    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(12);
+  });
+
+  it("러너 예산이 먼저 끝나 끊긴 호출은 적지 않고 서버 탈로도 세지 않는다", async () => {
+    const { state } = endpoint({ ms: 8_000 });
+    const startedAt = Date.now();
+    const result = await tick(context({ hasBudget: () => Date.now() - startedAt < 5_000 }));
+    expect(result).toEqual({ value: { done: false } });
+    expect(state.aborted).toBe(2);
+    expect(recorded()).toHaveLength(0);
+    expect(qwenEndpointBackingOff()).toBe(false);
+  });
+
+  it("입력을 만들다 실패한 항목은 그 항목의 실패로 적고 넘어간다 — 잡을 실패시키지 않고 다음 항목을 묻는다", async () => {
+    endpoint({ ms: 3_000 });
+    vi.stubEnv("AUDIT_QWEN_CONCURRENCY", "1");
+    mocks.input.mockImplementation(async (slug: string) => {
+      if (slug === "p0") throw new Error("review_input_too_large");
+      if (slug === "p1") throw new Error("Unexpected token < in JSON");
+      return reviewInput();
+    });
+    expect(await tick()).toEqual({ value: { done: false } });
+    expect(mocks.inputFailed.mock.calls.map(([itemId, code]) => [itemId, code])).toEqual([[100, "review_input_too_large"], [101, "input_error"]]);
+    expect(recorded()[0]).toEqual(expect.objectContaining({ itemId: 102, ok: true }));
+  });
+
+  it("한 자리가 서버 탈을 만나면 같은 틱의 다른 자리도 바로 멈춘다 — 물러나기는 틱이 끝나기 전에 걸린다", async () => {
+    const starts: number[] = [];
+    let backingOffWhileOtherInFlight: boolean | null = null;
+    const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
+      const call = starts.push(Date.now()) - 1;
+      // 첫 호출은 0.1초 만에 503, 둘째 호출은 3초 걸려 답한다
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(resolve, call === 0 ? 100 : 3_000);
+        init.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal?.reason); }, { once: true });
+      });
+      if (call === 0) return new Response("{}", { status: 503 });
+      if (call === 1) backingOffWhileOtherInFlight = qwenEndpointBackingOff();
+      return new Response(body(JSON.stringify(outcome)), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const result = await tick() as { error?: Error };
+    expect(result.error?.message).toBe("product_audit_endpoint_error:qwen_http_503");
+    // 둘째 자리는 띄운 호출의 답만 적고 새 호출을 시작하지 않는다
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(backingOffWhileOtherInFlight).toBe(true);
+    expect(recorded().map((call) => [call.itemId, call.ok])).toEqual([[100, false], [101, true]]);
   });
 
   it("틱 도중 감사가 중단되면 새 호출을 시작하지 않는다(5초마다 다시 본다)", async () => {

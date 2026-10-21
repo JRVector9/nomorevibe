@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
-import { mergeWithDefaults, storedHeldQwenRetry } from "@/lib/crawl/settings";
-import { DEFAULT_CRAWL_SETTINGS, DEFAULT_HELD_QWEN_RETRY, type CrawlSettings } from "@/lib/crawl/settings-schema";
+import { mergeWithDefaults, storedQwenAuto } from "@/lib/crawl/settings";
+import { DEFAULT_CRAWL_SETTINGS, DEFAULT_HELD_QWEN_RETRY, DEFAULT_QWEN_AUTO, type CrawlSettings } from "@/lib/crawl/settings-schema";
 
+/** 보류 재심사를 켠 설정 — 기본은 꺼짐이다(qwenAuto.heldRetry) */
+const ON = { ...DEFAULT_HELD_QWEN_RETRY, enabled: true };
 const settings = (patch: Partial<CrawlSettings> = {}): CrawlSettings => ({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: "enforce",
+  qwenAuto: { ...DEFAULT_QWEN_AUTO, heldRetry: ON },
   secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: true,
     voters: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, { provider: "abcllm", model: "[MLX] gpt-oss-120b" }] }, ...patch });
 type Row = Parameters<typeof heldQwenGateFirst>[1];
@@ -11,9 +14,10 @@ const attempt: Row = { kind: "delegated", provider: "qwen-direct", actor: "qwen-
   outcome: { decision: "approve", reason: "ok", evidenceIds: ["product"], confidence: 0.95 }, model: "qwen3.8-flash-next" };
 
 describe("보류 Qwen-v2 재심사 정책", () => {
-  it("기본값은 켬·세 사유·한 틱 10건이고, 적용 모드에서만 맡는다", () => {
-    expect(DEFAULT_CRAWL_SETTINGS.review.qwenHeldRetry).toEqual({ enabled: true, perTick: 10, budgetSeconds: 40,
+  it("기본값은 꺼짐·세 사유·한 틱 10건이고, 켜도 적용 모드에서만 맡는다", () => {
+    expect(DEFAULT_CRAWL_SETTINGS.qwenAuto.heldRetry).toEqual({ enabled: false, perTick: 10, budgetSeconds: 40,
       reasons: ["no_description", "ai_review_exhausted", "ambiguous"] });
+    expect(heldQwenOwns({ ...settings(), qwenAuto: DEFAULT_QWEN_AUTO }, "ai_review_exhausted")).toBe(false);
     expect(heldQwenOwns(settings(), "ai_review_exhausted")).toBe(true);
     expect(heldQwenOwns(settings(), "repo_deleted")).toBe(false);
     expect(heldQwenOwns(settings(), "suspected_spam")).toBe(false);
@@ -33,7 +37,7 @@ describe("보류 Qwen-v2 재심사 정책", () => {
 
   it("관문은 켜진 스위치·적용 모드·2차 심사·성공한 승인 행에서만 Qwen-v2 를 1차 승인으로 받는다", () => {
     expect(heldQwenGateFirst(settings(), attempt)).toBe(true);
-    expect(heldQwenGateFirst(settings({ review: { qwenHeldRetry: { ...DEFAULT_HELD_QWEN_RETRY, enabled: false } } }), attempt)).toBe(false);
+    expect(heldQwenGateFirst(settings({ qwenAuto: { ...DEFAULT_QWEN_AUTO, heldRetry: { ...ON, enabled: false } } }), attempt)).toBe(false);
     expect(heldQwenGateFirst(settings({ secondReview: { ...settings().secondReview, enabled: false } }), attempt)).toBe(false);
     expect(heldQwenGateFirst(settings({ reviewMode: "observe" }), attempt)).toBe(false);
     expect(heldQwenGateFirst(settings(), { ...attempt, state: "failed" })).toBe(false);
@@ -42,14 +46,14 @@ describe("보류 Qwen-v2 재심사 정책", () => {
     expect(heldQwenGateFirst(settings(), { ...attempt, kind: "automatic" })).toBe(false);
   });
 
-  it("저장된 값은 따로 읽는다 — 없으면 기본값, 깨졌으면 꺼짐, 일부만 있으면 나머지를 채운다", () => {
-    expect(storedHeldQwenRetry({})).toEqual(DEFAULT_HELD_QWEN_RETRY);
-    expect(storedHeldQwenRetry({ review: {} })).toEqual(DEFAULT_HELD_QWEN_RETRY);
-    expect(storedHeldQwenRetry({ review: { qwenHeldRetry: { perTick: 3 } } })).toEqual({ ...DEFAULT_HELD_QWEN_RETRY, perTick: 3 });
-    expect(storedHeldQwenRetry({ review: { qwenHeldRetry: { perTick: 0 } } }).enabled).toBe(false);
-    expect(storedHeldQwenRetry({ review: { qwenHeldRetry: { reasons: ["repo_deleted"] } } }).enabled).toBe(false);
-    expect(storedHeldQwenRetry({ review: null }).enabled).toBe(false);
-    // 행의 다른 칸이 깨져 기본값으로 돌아가도 끈 스위치는 꺼진 채다
-    expect(mergeWithDefaults({ enabled: "yes", review: { qwenHeldRetry: { ...DEFAULT_HELD_QWEN_RETRY, enabled: false } } }).review.qwenHeldRetry.enabled).toBe(false);
+  it("저장된 값은 따로 읽는다 — 없거나 깨졌으면 꺼짐(빠진 칸을 채우지 않는다)", () => {
+    expect(storedQwenAuto({}).heldRetry).toEqual(DEFAULT_HELD_QWEN_RETRY);
+    expect(storedQwenAuto({ qwenAuto: {} }).heldRetry.enabled).toBe(false);
+    expect(storedQwenAuto({ qwenAuto: { heldRetry: ON } }).heldRetry).toEqual(ON);
+    expect(storedQwenAuto({ qwenAuto: { heldRetry: { ...ON, perTick: 0 } } }).heldRetry.enabled).toBe(false);
+    expect(storedQwenAuto({ qwenAuto: { heldRetry: { ...ON, reasons: ["repo_deleted"] } } }).heldRetry.enabled).toBe(false);
+    expect(storedQwenAuto({ qwenAuto: { heldRetry: { enabled: true } } }).heldRetry.enabled).toBe(false);
+    // 행의 다른 칸이 깨져 기본값으로 돌아가도 켠 스위치는 저장된 값으로 읽는다
+    expect(mergeWithDefaults({ enabled: "yes", qwenAuto: { heldRetry: ON } }).qwenAuto.heldRetry.enabled).toBe(true);
   });
 });

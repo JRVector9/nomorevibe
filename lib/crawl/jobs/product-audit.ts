@@ -9,7 +9,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
-import { finishAuditCampaign, loadAuditInput, markAuditNoSource, pendingAuditItems, recordAuditResult,
+import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoSource, pendingAuditItems, recordAuditResult,
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { runQwenSecondOpinions } from "@/lib/crawl/audit-second-opinion-auto";
@@ -19,7 +19,8 @@ import { qwenDirectConfig, qwenEndpointFailure, QwenDirectError, reviewWithQwenD
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
-import { qwenBackoffMs, qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoff,
+  resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
@@ -44,7 +45,7 @@ const REVIEWER_DOWN = new Set(["not_configured", "auth", "missing_cli", "model_u
  */
 export async function auditPublishedProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
-  await sweepAuditHolds(ctx, settings.auditHold);
+  await sweepAuditHolds(ctx, settings.auditHold, { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled });
   /*
    * Qwen-v2 단계(감사 두 번째 의견·공개분 2차 거르기, audit-second-opinion-auto.ts)는 감사 묻기와 나란히 돈다 — gpu3090 에 바로 한 번에
    * 한 호출이라 게이트웨이 자리를 쓰지 않고, 새 호출은 30초 안에만 시작해 틱(예산 70초)을 늘리지 않는다. 앞에 두면 감사 묻기가
@@ -52,6 +53,9 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
    * gpu3090 동시 호출의 끝(qwen-endpoint-backoff.ts): 감사 Qwen 직접 심사의 자리(qwenAuditConcurrency, 기본 2·최대 4) + 두 번째 자리 1.
    * 두 번째 자리는 이 단계(두 번째 의견·공개분 거르기)와 2차 잡의 갈림 판가름이 프로세스 안에서 나눠 쓴다 — 두 잡이 겹쳐 돌아도 기본 3·최대 5.
    * 감사는 틱 내내(65초) 자리를 다 쓰고 이 단계는 30초만 쓴다. 누가 서버 탈을 만나든 모두 함께 물러난다.
+   * 운영 주의: PIPELINE_BACKGROUND_CONSUMER_JOBS 에 product-audit 을 넣으면 이 잡 전체(쓸기·Qwen 직접 감사·이 단계)가 배경 consumer 줄에서만 돌고,
+   * 그 줄은 공통 모델 슬롯이 open 일 때만 돈다(scripts/worker.ts runConsumerLane). Qwen 직접 심사는 공통 슬롯을 쓰지 않으니 slot 모드가 open 이
+   * 아니면 product-audit 을 그 목록에서 빼 둔다 — 그러지 않으면 보류 쓸기와 Qwen 단계가 함께 멈춘다.
    * 감사 묻기가 끝나도(실패해도) 단계가 끝날 때까지 기다린 뒤 틱을 닫는다 — 쓰기가 lease 를 놓은 뒤에 남지 않게.
    */
   const opinions = runQwenSecondOpinions(ctx, settings);
@@ -196,11 +200,6 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
 
 /** 한 호출의 제한 시간 — 실측(2026-10-21 50건) 2.2~4.7초의 다섯 배쯤. 이보다 오래 걸리면 서버가 붐비거나 탈 난 것이라 물러난다 */
 const QWEN_CALL_TIMEOUT_MS = 20_000;
-/**
- * 새 호출을 시작할 여유. 게이트웨이 길은 한 호출의 전체 제한 시간(60초)이 남아야 시작해 틱 하나에 자리마다 한 건이었다.
- * Qwen 은 몇 초면 끝나므로 이만큼만 남아도 시작하고, 틱 끝에 걸린 호출은 끊는다 — 끊긴 호출은 적지 않아 시도를 쓰지 않는다
- */
-const QWEN_MIN_START_MS = 6_000;
 /** 감사 중단·모델 바꿈·수집 스위치를 틱 도중에 다시 보는 간격 — 호출마다 보면 한 틱에 수십 번 설정을 읽는다 */
 const QWEN_CONTROL_CHECK_MS = 5_000;
 /** 한 번에 읽어 둘 일감 — 자리마다 틱 하나(65초)에 3초씩 스무 건 남짓이라 넉넉히 */
@@ -231,8 +230,8 @@ const neverItemFailure = (code: QwenDirectErrorCode) =>
 /**
  * Qwen 직접 심사로 묻는 감사의 틱(0112) — gpu3090 vLLM 을 게이트웨이 없이 부른다(qwen-direct-review.ts). 게이트웨이 길과 다른 것:
  *  - 자리 수는 qwenAuditConcurrency(기본 2, 최대 4). 공통 모델 슬롯을 거치지 않는다 — 게이트웨이도 Claude CLI 도 아니다.
- *  - 틱(TICK_MS, 러너 예산 70초 안)이 끝날 때까지 자리마다 다음 것을 잇달아 묻는다. 남은 시간이 QWEN_MIN_START_MS 보다 적으면 새로
- *    시작하지 않고, 틱 끝에 걸린 호출은 끊는다(적지 않는다 — 다음 틱이 처음부터 본다).
+ *  - 틱(TICK_MS, 러너 예산 70초 안)이 끝날 때까지 자리마다 다음 것을 잇달아 묻는다. 한 호출의 제한 시간(20초)이 다 남지 않으면 새로
+ *    시작하지 않는다 — 줄인 제한 시간으로 부르지 않으니 틱 끝 때문에 끊긴 호출이 서버 탈로 셈되지 않는다(끊긴 것은 적지 않는다).
  *  - 감사 중단·모델 바꿈·수집 스위치를 QWEN_CONTROL_CHECK_MS 마다 다시 보고, 바뀌었으면 새 호출을 멈춘다(이미 띄운 호출의 답은 적는다).
  *  - 부르는 곳의 탈(qwenEndpointFailure — 제한 시간·닿지 않음·401/403/404/429/5xx): 이 틱의 새 호출을 멈추고 잡을 실패로 남기며
  *    (운영센터에 드러난다) 1분·2분·4분…15분 동안 묻지 않는다. 그동안의 틱도 실패로 남긴다 — 감사가 서 있는 것이 보이게.
@@ -244,7 +243,7 @@ const neverItemFailure = (code: QwenDirectErrorCode) =>
 async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAuditCampaign; reviewer: AuditReviewer; settings: CrawlSettings;
   startedAt: number; lease: JobLease }): Promise<JobOutcome<null>> {
   const { campaign, reviewer, settings, startedAt, lease } = value;
-  if (qwenEndpoint.retryAt > Date.now()) {
+  if (qwenEndpointBackingOff()) {
     ctx.log("product_audit.endpoint_backoff", { campaign: campaign.id, failures: qwenEndpoint.failures, waitMs: qwenEndpoint.retryAt - Date.now() });
     throw new Error(`product_audit_endpoint_backoff:${qwenEndpoint.lastError ?? "qwen_unreachable"}`);
   }
@@ -260,9 +259,10 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
   // 저장 여유를 남긴 틱 끝 — 여기에 걸린 호출은 끊는다
   const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity) - WRITE_MARGIN_MS;
   const remaining = () => deadlineAt - Date.now();
-  const healthyAtStart = qwenEndpoint.failures === 0;
   let reviewed = 0, failed = 0, noSource = 0;
   let endpoint: QwenDirectErrorCode | null = null;
+  // 답을 받은 호출 중 가장 늦게 띄운 것의 시각 — 다른 쪽이 그 뒤에 적은 탈(물러나기)은 이 틱의 답으로 풀지 않는다
+  let lastAnsweredStartAt = 0;
   // 감사가 멈췄거나·심사자가 바뀌었거나·수집 스위치가 꺼졌다 — 새 호출을 시작하지 않는다
   let stopped = false;
   let checkedAt = Date.now();
@@ -276,20 +276,32 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
     })().finally(() => { checking = null; });
     await checking;
   };
-  const canStart = () => !endpoint && !stopped && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= QWEN_MIN_START_MS;
+  // 한 호출의 제한 시간이 다 남아야 시작한다 — 틱 끝에 걸려 끊긴 호출은 서버 탈이 아니다(적지 않는다). 누가 서버 탈을 만나 함께 쓰는
+  // 물러나기(qwen-endpoint-backoff.ts)가 걸리면 같은 틱의 다른 자리도 곧바로 멈춘다
+  const canStart = () => !endpoint && !stopped && !ctx.signal?.aborted && ctx.hasBudget() && !qwenEndpointBackingOff()
+    && remaining() >= QWEN_CALL_TIMEOUT_MS;
 
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
     for (let item = queue.shift(); item; item = queue.shift()) {
       if (!canStart()) return;
       await recheck();
       if (!canStart()) return;
-      const input = await loadAuditInput(item.slug, settings);
+      // 입력을 만들다 실패한 항목(입력 상한 초과 등)이 매 틱 같은 자리를 막거나 잡을 실패시키지 않게 그 항목의 실패로 적고 넘어간다
+      let input: Awaited<ReturnType<typeof loadAuditInput>>;
+      try { input = await loadAuditInput(item.slug, settings); }
+      catch (caught) {
+        failed += 1;
+        await markAuditInputFailed(item.id, caught instanceof Error && /^[a-z0-9_]{3,60}$/.test(caught.message) ? caught.message : "input_error", lease);
+        continue;
+      }
       if (!canStart()) return;
       if (!input) {
         noSource += 1;
         await markAuditNoSource(item.id, lease);
         continue;
       }
+      // 시도로 셀지는 부르는 순간의 서버 상태로 — 같은 틱의 다른 자리가 막 탈을 만났을 수 있다
+      const healthy = qwenEndpoint.failures === 0 || reviewed > 0;
       const callStartedAt = new Date();
       const controller = new AbortController();
       const abort = () => controller.abort();
@@ -313,6 +325,7 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
         promptVersion: review?.promptVersion ?? QWEN_V2_PROMPT_VERSION, input };
       if (review) {
         reviewed += 1;
+        lastAnsweredStartAt = Math.max(lastAnsweredStartAt, callStartedAt.getTime());
         await recordAuditResult({ ...call, ok: true, outcome: review.outcome }, lease, settings.auditHold);
         continue;
       }
@@ -322,8 +335,12 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
         await recordAuditResult({ ...call, ok: false, error: code, counted: true }, lease);
         continue;
       }
-      endpoint ??= code;
-      await recordAuditResult({ ...call, ok: false, error: code, counted: !neverItemFailure(code) && (healthyAtStart || reviewed > 0) }, lease);
+      if (!endpoint) {
+        endpoint = code;
+        // 바로 모두 물러나게 한다 — 이 틱에서 이미 답을 받았으면 연속 탈을 처음부터 센다
+        await noteQwenEndpointFailure(code, { freshStreak: reviewed > 0 });
+      }
+      await recordAuditResult({ ...call, ok: false, error: code, counted: !neverItemFailure(code) && healthy }, lease);
       return;
     }
   }));
@@ -332,13 +349,9 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
   const failure = settled.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;
   if (endpoint) {
-    qwenEndpoint.failures = reviewed > 0 ? 1 : qwenEndpoint.failures + 1;
-    const waitMs = qwenAuditBackoffMs(qwenEndpoint.failures);
-    qwenEndpoint.retryAt = Date.now() + waitMs;
-    qwenEndpoint.lastError = endpoint;
-    ctx.log("product_audit.endpoint_error", { campaign: campaign.id, failures: qwenEndpoint.failures, waitMs });
+    ctx.log("product_audit.endpoint_error", { campaign: campaign.id, failures: qwenEndpoint.failures, waitMs: Math.max(0, qwenEndpoint.retryAt - Date.now()) });
     throw new Error(`product_audit_endpoint_error:${endpoint}`);
   }
-  if (reviewed > 0) resetQwenAuditBackoff();
+  if (reviewed > 0) await noteQwenEndpointSuccess(lastAnsweredStartAt);
   return { done: false };
 }
