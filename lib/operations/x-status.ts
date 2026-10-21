@@ -5,7 +5,7 @@ import { createHmac } from "node:crypto";
  *
  * 받는 쪽은 app/api/ops/x-status/route.ts, 보내는 쪽 계약은 docs/operations/2026-10-18-x-status-report-runbook.md 다.
  * 받는 웹에 비밀이 없으면 주소는 404 이고(DB 를 보지 않는다) 조치에도 띄우지 않는다 — 배포만으로는 아무것도 바뀌지 않는다.
- * 본문은 정해진 칸뿐이다. 자유 글자는 짧은 오류 코드 하나이고, 게시물 본문·작성자·저장소 이름은 받지 않는다.
+ * 본문은 정해진 칸뿐이다. 자유 글자는 짧은 코드(오류, v2 의 검색어 사유)뿐이고, 게시물 본문·작성자·저장소 이름은 받지 않는다.
  */
 export const X_STATUS_KEY = "x-status";
 export const X_STATUS_SECRET_ENV = "X_STATUS_REPORT_SECRET";
@@ -25,8 +25,12 @@ export const X_STATUS_SIGNATURE_HEADER = "x-nmv-signature";
 const SIGNING_PREFIX = "nomorevibe-x-status-v1";
 
 export type XStatusMode = "live" | "dry-run" | "disabled";
-export type XStatusReport = {
-  v: 1;
+/**
+ * 그날 검색어(v2, 2026-10-21) — products: 웹이 고른 우리 제품 저장소(/api/ops/x-query) · default: 고정 검색어.
+ * reason 은 고정 검색어로 돈 까닭(not_configured·timeout·network·http_404·invalid_response·empty 등 짧은 코드), 아니면 null.
+ */
+export type XStatusQuery = { source: "products" | "default"; repositories: number; reason: string | null };
+export type XStatusReport = ({ v: 1 } | { v: 2; query: XStatusQuery }) & {
   mode: XStatusMode;
   /** 오늘(UTC) 예약한 읽기 수와 하루 상한 */
   reads: { used: number; limit: number };
@@ -66,6 +70,9 @@ export function signXStatus(secret: string, timestamp: number, body: string | Ui
 
 const MODES: readonly string[] = ["live", "dry-run", "disabled"];
 const REPORT_KEYS = ["v", "mode", "reads", "candidates", "lastRunAt", "lastSuccessAt", "error"];
+/** v2 는 v1 에 검색어(query) 한 칸이 더 있다 — 옛 수집기의 v1 도 그대로 받는다 */
+const REPORT_KEYS_V2 = [...REPORT_KEYS, "query"];
+const QUERY_SOURCES: readonly string[] = ["products", "default"];
 const ERROR_CODE = /^[a-z][a-z0-9_]{0,47}$/;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const MAX_COUNT = 1_000;
@@ -87,7 +94,9 @@ function instant(value: unknown, notAfterMs: number): string | null | undefined 
 
 /** 받은 본문의 엄격한 형식 — 칸이 더 있거나 빠지거나 범위를 벗어나면 null */
 export function parseXStatusReport(value: unknown, sentAt: number): XStatusReport | null {
-  if (!isRecord(value) || !hasExactKeys(value, REPORT_KEYS) || value.v !== 1) return null;
+  if (!isRecord(value) || (value.v !== 1 && value.v !== 2) || !hasExactKeys(value, value.v === 1 ? REPORT_KEYS : REPORT_KEYS_V2)) return null;
+  const query = value.v === 2 ? parseQuery(value.query) : null;
+  if (value.v === 2 && !query) return null;
   const { mode, reads, candidates, error } = value;
   if (typeof mode !== "string" || !MODES.includes(mode)) return null;
   if (!isRecord(reads) || !hasExactKeys(reads, ["used", "limit"])) return null;
@@ -99,7 +108,17 @@ export function parseXStatusReport(value: unknown, sentAt: number): XStatusRepor
   // 성공도 한 번의 실행이다 — 실행 없이 성공이 있거나 마지막 실행보다 뒤일 수 없다
   if (lastSuccessAt !== null && (lastRunAt === null || Date.parse(lastSuccessAt) > Date.parse(lastRunAt))) return null;
   if (error !== null && (typeof error !== "string" || !ERROR_CODE.test(error))) return null;
-  return { v: 1, mode: mode as XStatusMode, reads: { used, limit }, candidates, lastRunAt, lastSuccessAt, error: error as string | null };
+  const fields = { mode: mode as XStatusMode, reads: { used, limit }, candidates, lastRunAt, lastSuccessAt, error: error as string | null };
+  return query ? { v: 2, ...fields, query } : { v: 1, ...fields };
+}
+
+/** v2 의 검색어 칸 — 출처·저장소 수·짧은 사유 코드뿐(저장소 이름은 받지 않는다) */
+function parseQuery(value: unknown): XStatusQuery | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["source", "repositories", "reason"])) return null;
+  const { source, repositories, reason } = value;
+  if (typeof source !== "string" || !QUERY_SOURCES.includes(source) || !countUpTo(repositories, MAX_COUNT)) return null;
+  if (reason !== null && (typeof reason !== "string" || !ERROR_CODE.test(reason))) return null;
+  return { source: source as XStatusQuery["source"], repositories, reason: reason as string | null };
 }
 
 /** 저장한 줄을 읽는다 — 같은 형식 검사에 sentAt·signedWith 까지 */

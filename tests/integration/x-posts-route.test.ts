@@ -1,12 +1,13 @@
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { operationsObservations, socialPostObservations, socialPosts } from "@/lib/db/schema";
+import { operationsObservations, products, socialPostObservations, socialPosts } from "@/lib/db/schema";
 import { clearAllMemos } from "@/lib/cache/memo";
 import { POST } from "@/app/api/ops/x-posts/route";
 import { signXPosts, X_POSTS_KEY } from "@/lib/operations/x-posts";
 import { signXStatus, X_STATUS_PREVIOUS_SECRET_ENV, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
-import { ensureSchema } from "./setup";
+import { listTalk } from "@/lib/social/talk";
+import { ensureSchema, resetTables } from "./setup";
 
 /*
  * SNS 화제 C안 T18: X 수집기의 게시물 보고를 실제 PostgreSQL 로 받는다.
@@ -91,6 +92,33 @@ it("사용할 수 없다고 온 글은 내리고, 관리자가 숨긴 글은 그
   expect([response.status, await response.json()]).toEqual([200, { accepted: true, inserted: 0, updated: 0, gone: 1 }]);
   expect((await posts()).map(row => [row.externalId, row.state, row.stateReason])).toEqual([
     ["1980000000000000001", "gone", "source_unavailable"], ["1980000000000000002", "hidden", "admin"]]);
+});
+
+it("v2 보고는 저장소가 없거나 여럿인 글도 넣는다 — 공개 제품을 가리킨 글만 그 저장소 글, 나머지는 공개 화면에 오르지 않는 site 글", async () => {
+  await resetTables();
+  await db.insert(products).values({ slug: "xp-ours", name: "ours", url: "https://xp-ours.example", tagline: "A useful product", description: "d",
+    category: "Dev", repoUrl: "https://github.com/Ours/Product", stars: 10, status: "seeded", source: "crawler", verifyToken: "v-xp-ours", editTokenHash: "a".repeat(64) });
+  const metrics = (like: number) => ({ like, reply: 6, repost: 9, quote: 2 });
+  const v2 = (id: string, repositories: string[], like = 40) => ({ id, createdAt: minutesAgo(120), repositories, metrics: metrics(like) });
+  const response = await POST(signed({ v: 2, observedAt: minutesAgo(1), unavailable: [], posts: [
+    v2("1980000000000000011", ["Acme/Tool"]),
+    v2("1980000000000000012", ["other/lib", "Ours/Product"], 100),
+    v2("1980000000000000013", ["other/lib", "more/lib"], 500),
+    v2("1980000000000000014", [], 500),
+  ] }, now()));
+  expect([response.status, await response.json()]).toEqual([200, { accepted: true, inserted: 4, updated: 0, gone: 0 }]);
+  expect((await posts()).map(row => [row.externalId, row.linkTarget, row.repositoryKey, row.linkUrl, row.title])).toEqual([
+    ["1980000000000000011", "repo", "acme/tool", "https://github.com/Acme/Tool", ""],
+    ["1980000000000000012", "repo", "ours/product", "https://github.com/Ours/Product", ""],
+    ["1980000000000000013", "site", null, "https://github.com/other/lib", ""],
+    ["1980000000000000014", "site", null, "https://x.com/i/web/status/1980000000000000014", ""],
+  ]);
+  // 공개 화면은 공개 제품을 정말 가리킨 글만 — site 글은 순위에도 '아직 공개 제품이 아닌 저장소' 수에도 들지 않는다
+  const board = await listTalk({ mode: "now" });
+  expect(board.entries.map(entry => [entry.repositoryKey, entry.posts.map(item => item.externalId)])).toEqual([["ours/product", ["1980000000000000012"]]]);
+  // acme/tool(저장소 하나, 58점) 하나뿐 — 심사 중인지 모르는지는 다른 파일이 남긴 후보에 달려 합만 본다
+  expect(board.unlisted.active + board.unlisted.unknown).toBe(1);
+  await resetTables();
 });
 
 it("하루 보고의 서명이나 틀린 형식은 DB 앞에서 거절한다", async () => {

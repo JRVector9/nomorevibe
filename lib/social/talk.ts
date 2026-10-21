@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/schema";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { taglineKo } from "@/lib/domain/products/korean-tagline";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { listedByDefault, notAuditHeld, notDown, repoGone } from "@/lib/domain/products/repository";
 import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } from "./talk-score";
 
@@ -252,6 +253,17 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
     unlisted: await unlistedCounts(since, now, new Set(groups.map(group => group.repositoryKey))),
     checkedAt: await lastCheckedAt(),
   };
+}
+
+/** 화제의 공개 제품 조건(publicProduct) 그대로 — X 검색어의 저장소 고르기(x-query-receive.ts)가 쓴다 */
+export const talkPublicProduct = () => publicProduct();
+
+/** 이 저장소 열쇠(소문자 owner/repo) 중 공개 제품의 저장소인 것 — 여러 저장소를 가리킨 X 글을 어느 제품에 붙일지(x-posts-receive.ts) */
+export async function publicRepositoryKeys(tx: ProductTransaction, keys: readonly string[]): Promise<Set<string>> {
+  if (!keys.length) return new Set();
+  const rows = await tx.select({ key: sql<string>`substring(${PRODUCT_IDENTITY} from '^https://github[.]com/(.+)$')` }).from(products)
+    .where(and(sql`${PRODUCT_IDENTITY} in (${sql.join(keys.map(key => sql`${"https://github.com/" + key}`), sql`, `)})`, publicProduct()));
+  return new Set(rows.map(row => row.key));
 }
 
 async function lastCheckedAt(): Promise<Date | null> {

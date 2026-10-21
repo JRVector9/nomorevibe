@@ -52,6 +52,48 @@ describe("게시물 보고 형식", () => {
   });
 });
 
+describe("게시물 보고 v2 — 검색이 돌려준 글을 버리지 않는다(2026-10-21)", () => {
+  const v2post = (id: string, repositories: string[], patch: Record<string, unknown> = {}) => ({
+    id, createdAt: "2026-10-20T12:00:00.000Z", repositories, metrics: { like: 40, reply: 6, repost: 9, quote: 2 }, ...patch,
+  });
+  const v2 = (posts: unknown[], patch: Record<string, unknown> = {}) => ({ v: 2, observedAt: "2026-10-21T00:10:01.000Z", posts, unavailable: [], ...patch });
+
+  it("저장소 0~5곳을 싣는 글을 받는다 — v1 칸이 섞이거나, 6곳 이상이거나, 대소문자만 다른 겹침이면 거절한다", () => {
+    const body = v2([v2post("1980000000000000001", ["Acme/Tool"]), v2post("1980000000000000002", ["a/b", "c/d"]), v2post("1980000000000000003", [])]);
+    expect(parseXPostsReport(body, NOW_S)).toEqual(body);
+    expect(parseXPostsReport(v2([post()]), NOW_S)).toBeNull();
+    expect(parseXPostsReport(report({ posts: [v2post("1980000000000000001", ["a/b"])] }), NOW_S)).toBeNull();
+    expect(parseXPostsReport(v2([v2post("1980000000000000001", ["a/1", "a/2", "a/3", "a/4", "a/5", "a/6"])]), NOW_S)).toBeNull();
+    expect(parseXPostsReport(v2([v2post("1980000000000000001", ["Acme/Tool", "acme/tool"])]), NOW_S)).toBeNull();
+    expect(parseXPostsReport(v2([v2post("1980000000000000001", ["acme/.."])]), NOW_S)).toBeNull();
+    expect(parseXPostsReport(v2([v2post("1980000000000000001", ["a/b"], { text: "private" })]), NOW_S)).toBeNull();
+    expect(parseXPostsReport({ ...v2([]), v: 3 }, NOW_S)).toBeNull();
+  });
+
+  it("저장소 하나는 repo 글, 여럿이면 처음 나오는 공개 제품의 저장소 글, 공개 제품이 없거나 저장소가 없으면 site 글(열쇠 없음)", () => {
+    const parsed = parseXPostsReport(v2([
+      v2post("1980000000000000001", ["Acme/Tool"]),
+      v2post("1980000000000000002", ["other/lib", "Ours/Product", "ours/second"]),
+      v2post("1980000000000000003", ["other/lib", "more/lib"]),
+      v2post("1980000000000000004", []),
+    ]), NOW_S)!;
+    const base = { kind: "link", title: "", postedAt: new Date("2026-10-20T12:00:00.000Z"), frontPage: false, points: 58, comments: 6 };
+    expect(xSocialPosts(parsed, new Set(["ours/product", "ours/second"]))).toEqual([
+      { ...base, externalId: "1980000000000000001", linkUrl: "https://github.com/Acme/Tool", linkTarget: "repo", repositoryKey: "acme/tool" },
+      { ...base, externalId: "1980000000000000002", linkUrl: "https://github.com/Ours/Product", linkTarget: "repo", repositoryKey: "ours/product" },
+      { ...base, externalId: "1980000000000000003", linkUrl: "https://github.com/other/lib", linkTarget: "site", repositoryKey: null },
+      { ...base, externalId: "1980000000000000004", linkUrl: "https://x.com/i/web/status/1980000000000000004", linkTarget: "site", repositoryKey: null },
+    ]);
+    // 공개 제품을 모르면(확인 전) 여러 저장소 글은 공개 화면에 오르지 않는 site 글이다
+    expect(xSocialPosts(parsed)[1]).toMatchObject({ linkTarget: "site", repositoryKey: null });
+  });
+
+  it("옛 수집기의 v1 보고는 예전과 똑같이 저장소 글이 된다", () => {
+    expect(xSocialPosts(parseXPostsReport(report(), NOW_S)!, new Set())).toEqual(xSocialPosts(parseXPostsReport(report(), NOW_S)!));
+    expect(xSocialPosts(parseXPostsReport(report(), NOW_S)!)[0]).toMatchObject({ linkTarget: "repo", repositoryKey: "acme/tool" });
+  });
+});
+
 describe("게시물 보고 받기 — DB 앞 검사", () => {
   beforeEach(() => { vi.stubEnv(X_STATUS_SECRET_ENV, SECRET); vi.stubEnv(X_STATUS_PREVIOUS_SECRET_ENV, OLD); });
   afterEach(() => vi.unstubAllEnvs());

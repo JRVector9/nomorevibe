@@ -2,8 +2,9 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKLOG_KEYS } from "@/lib/operations/attention";
-import { readXStatus, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
+import { parseXStatusReport, readXStatus, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
 import { buildActions, deriveStatus, splitActions, type ActionInputs } from "@/app/(operator)/admin/status/attention";
+import { xSummary } from "@/app/(operator)/admin/status/flow-model";
 import type { ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { humanOverview } from "./fixtures/human-queue";
 
@@ -59,6 +60,36 @@ describe("x-status 읽기", () => {
     expect(readXStatus([], NOW).state).toBe("missing");
     vi.stubEnv(X_STATUS_SECRET_ENV, "short");
     expect(readXStatus([], NOW).state).toBe("unconfigured");
+  });
+});
+
+describe("하루 보고 v2 — 그날 검색어 출처(2026-10-21)", () => {
+  const NOW_S = Math.floor(NOW.getTime() / 1000);
+  const v1 = Object.fromEntries(Object.entries(report()).filter(([key]) => key !== "sentAt" && key !== "signedWith"));
+  const v2 = (query: unknown) => ({ ...v1, v: 2, query });
+
+  it("v1 은 그대로, v2 는 검색어 칸(출처·저장소 수·짧은 사유)을 더 받는다", () => {
+    expect(parseXStatusReport(v1, NOW_S)).toEqual(v1);
+    const products = v2({ source: "products", repositories: 12, reason: null });
+    expect(parseXStatusReport(products, NOW_S)).toEqual(products);
+    expect(parseXStatusReport(v2({ source: "default", repositories: 0, reason: "http_404" }), NOW_S)).toMatchObject({ v: 2, query: { reason: "http_404" } });
+    expect(readXStatus([row({ ...products, sentAt: NOW_S, signedWith: "current" })], NOW, true)).toMatchObject({ state: "ok", report: { v: 2, query: { repositories: 12 } } });
+  });
+
+  it("검색어 칸이 없거나 어긋나면 거절한다 — 저장소 이름·검색어 글자는 받지 않는다", () => {
+    for (const query of [undefined, null, { source: "products", repositories: 1 }, { source: "github", repositories: 1, reason: null },
+      { source: "products", repositories: -1, reason: null }, { source: "default", repositories: 0, reason: "Timed out" },
+      { source: "products", repositories: 1, reason: null, list: ["acme/tool"] }]) {
+      expect(parseXStatusReport(v2(query), NOW_S), JSON.stringify(query)).toBeNull();
+    }
+    expect(parseXStatusReport({ ...v1, query: { source: "products", repositories: 1, reason: null } }, NOW_S)).toBeNull();
+  });
+
+  it("운영센터 X 칸은 v2 보고의 검색어 출처를 함께 적는다", () => {
+    const view = (query: unknown) => readXStatus([row({ ...v2(query), sentAt: NOW_S, signedWith: "current" })], NOW, true);
+    expect(xSummary(view({ source: "products", repositories: 12, reason: null })).note).toContain("검색 우리 저장소 12곳");
+    expect(xSummary(view({ source: "default", repositories: 0, reason: "timeout" })).note).toContain("고정 검색어(timeout)");
+    expect(xSummary(readXStatus([row(report())], NOW, true)).note).not.toContain("검색");
   });
 });
 

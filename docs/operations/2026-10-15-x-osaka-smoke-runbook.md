@@ -46,15 +46,49 @@ X 사용 목적 승인 기록은 아직 확인하지 못했다. 토큰/API200을
 | `X_STATUS_REPORT_SECRET` | 웹 두 앱과 **같은 값**, 32바이트 이상·공백 없음. 없으면 아무것도 보내지 않는다 |
 | `X_STATUS_REPORT_URL` | `https://nomorevibe.com/api/ops/x-status` — 매 실행(dry-run 포함) 하루 상태 |
 | `X_POSTS_REPORT_URL` | `https://nomorevibe.com/api/ops/x-posts` — live 수집이 끝난 실행에서만 게시물 |
+| `X_QUERY_URL` | `https://nomorevibe.com/api/ops/x-query` — 매 실행(dry-run 포함) 그날 검색할 우리 제품 저장소를 묻는다. 없으면 고정 검색어 |
 
 비밀이 있는데 주소가 하나도 없거나 https 가 아닌 주소면 설정 오류로 멈춘다(요청·예약 없음).
 보내기는 한 번뿐이고(10초 제한) 결과는 `status.json` 의 `reports`(`posts`·`status`: 응답 코드 또는 `timeout`·`network`)에만 남는다.
 보내기가 실패해도 수집 결과·예약 장부는 그대로다. **보고를 다시 받으려고 수집을 다시 돌리지 않는다.**
 수집기는 운영 DB 자격 증명을 갖지 않는다 — DB 에 쓰는 것은 웹이다.
 
+## 검색어 — 우리 제품 저장소(2026-10-21)
+
+고정 검색어(`X_COLLECTOR_QUERY`, `url:github.com (launch OR … ) has:links`)로는 10-21 까지 7일 동안 본 저장소 17곳 중
+우리 제품이 1곳이라 /talk 에 X 글이 오르지 못했다(사용자 지시로 변경). 이제 수집기는 매 실행 처음에 웹에 그날 검색할
+저장소를 묻고(`X_QUERY_URL`, 서명 POST 한 번·10초), 답으로 검색어를 만든다.
+
+```text
+(url:"github.com/owner/repo" OR url:"github.com/owner2/repo2" OR …) -is:retweet      ← 감싼 전체가 512자 이하
+```
+
+- `url:` 은 글의 주소(url·expanded_url)를 낱말로 잘라 맞춘다(docs.x.com 연산자 표). 빗금·점이 든 경로는 따옴표로 묶는다
+  (엔터프라이즈 연산자 안내의 `url:"/developer"`). 따옴표 경로가 실제 X 응답에서 기대대로 맞는지는 **첫 실제 실행에서 확인한다**(PENDING).
+  낱말 맞춤이라 이름이 더 긴 저장소(`owner/repo-plus`)·그 저장소의 이슈 주소도 잡힐 수 있다 — 글이 가리킨 저장소는 수집기가 주소에서 다시 읽는다.
+- 하루 10~13곳이 든다(이름 15~25자 기준. 저장소 하나가 `17 + 이름 길이`자, 이음말 ` OR ` 4자). 512자 검사는 `runXPilot` 한 곳이다.
+- 웹이 고르는 법(`lib/social/x-query.ts`, `/api/ops/x-query`): 공개 제품(/talk 와 같은 조건 — seeded·verified, 응답 있음, 기본 목록,
+  감사 보류 아님, 저장소 살아 있음) 중 github.com 저장소가 있는 것, 저장소마다 먼저 등록된 제품 하나.
+  1. **차례**(약 160자, 하루 3~4곳): 제품 id 순으로 지난 차례가 멈춘 곳 다음부터 — 끝에 닿으면 처음으로. 웹이 관측 표 `x-query` 줄에
+     `{day, after, next}` 를 적어 날마다 이어 가므로 제품이 늘어도 건너뛰거나 겹치지 않는다. 같은 날 다시 물으면 같은 목록이다(dry-run·재실행이 차례를 넘기지 않는다).
+     한 바퀴는 공개 제품 수 ÷ 3~4 일이다 — 하루 읽기 10건 안에서는 긴 꼬리를 자주 볼 수 없다.
+  2. **먼저 볼 것**(남은 자리, 7~9곳): 스타가 느는 제품(홈 '지금 뜨는' 조건, 하루 평균 증가 큰 순)과 14일 안에 오른 제품(새것 순)을 번갈아.
+- 묻는 주소가 없거나, 묻기가 실패(시간 초과·연결·404·503·형식)하거나, 목록이 비면 **고정 검색어로 그날 읽기를 쓴다**. 어느 쪽이었는지는
+  `status.json`(·실행 결과 한 줄)의 `query` 에 남는다: `{"source":"products","repositories":12,"reason":null}` 또는
+  `{"source":"default","repositories":0,"reason":"timeout"}`(`not_configured`·`network`·`http_404`·`invalid_response`·`empty`·`invalid_query`).
+  저장소 이름·검색어 글자·비밀은 남기지 않는다.
+- 묻기는 예약 장부보다 **먼저** 끝난다. 그 뒤 순서는 그대로다 — 정확한 검색어로 계획 검사 → 실행 관문 → 자정 직전 60초 → 장부 → X 요청 1번.
+  우리 저장소 검색어가 계획 검사에 걸리면 고정 검색어로 다시 검사한다(`invalid_query`). 묻기(10초)와 X 요청(20초)은 자정 직전 60초 안에 든다.
+- **답한 웹만 새 보고 형식(v2)을 받는다고 본다.** 묻기가 실패한 날은 옛 웹일 수 있어 게시물·하루 보고를 v1(예전 그대로)로 보낸다.
+  - 게시물 v2: 반응 수가 모두 있는 공개 글을 **모두** 보낸다(저장소 0~5곳, 그날 검색한 우리 저장소가 앞). 웹은 저장소 하나면 그 저장소 글,
+    여럿이면 처음 나오는 공개 제품의 저장소 글, 공개 제품이 없거나 저장소가 없으면 `site` 글(저장소 열쇠 없음 — 링크는 첫 저장소 또는 X 게시물 주소)로 둔다.
+    `site` 글은 /talk·홈·상세·'아직 공개 제품이 아닌 저장소' 수에 오르지 않고 `/admin/talk` 에만 보인다(목록 표에 '제품 사이트'·저장소 '—'로 나온다).
+    본문·작성자는 여전히 보내지도 저장하지도 않는다.
+  - 하루 상태 v2: `query`(출처·저장소 수·사유) 한 칸이 더 있다. 운영센터 X 칸에 "검색 우리 저장소 N곳" / "고정 검색어(사유)"로 보인다.
+
 ## 하루 10개 계약
 
-한 recent-search 요청에서 최근24시간 최대10게시물을 **관련도순**(`sort_order=relevancy`)으로 읽는다.
+한 recent-search 요청에서 최근24시간 최대10게시물을 **관련도순**(`sort_order=relevancy`)으로 읽는다. 검색어는 위의 우리 제품 저장소 검색어(못 물으면 고정 검색어)다.
 관련도 순서의 기준은 X 가 공개하지 않는다(값은 `recency`·`relevancy` 둘뿐). 검색 결과 즉시 lookup, pagination,
 자동 재시도는 없다. **많이 읽고 저장만10개로 줄이는 방식이 아니다.** 실제 고유 저장소 후보는
 중복·링크 없음·여러 저장소 연결 때문에10개보다 적을 수 있다.
@@ -98,9 +132,9 @@ root 전용 env의 `X_COLLECTION_LIVE=1`, `X_USE_CASE_APPROVED=1`을 설정해�
 ## 빌드·갱신·복구
 
 ```sh
-npx vitest run tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts tests/x-posts.test.ts
+npx vitest run tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts tests/x-posts.test.ts tests/x-query.test.ts
 npx tsc --noEmit
-npx eslint lib/social/x-pilot.ts lib/social/x-collector.ts lib/social/x-report.ts scripts/x-collector.ts tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts
+npx eslint lib/social/x-pilot.ts lib/social/x-collector.ts lib/social/x-report.ts lib/social/x-query.ts scripts/x-collector.ts tests/x-api-pilot.test.ts tests/x-collector.test.ts tests/x-collector-config.test.ts tests/x-report.test.ts tests/x-query.test.ts
 node_modules/.bin/esbuild scripts/x-collector.ts --bundle --platform=node --target=node24 --format=esm --outfile=/private/tmp/x-collector.mjs
 shasum -a 256 /private/tmp/x-collector.mjs
 ```
@@ -110,6 +144,25 @@ SHA256을 대조한 뒤 current 링크만 교체한다. unit 원본은 `deploy/x
 장부 디렉터리와 env를 새 릴리스로 복사하거나 초기화하지 않는다. 서비스 실행 전에 live gate를 확인한다.
 rollback은 이전 release로 current 링크만 돌리고, 필요하면 timer를 중단한다.
 이 서비스는 M3/mini 앱·DB migration을 요구하지 않으며 이번 작업으로13개 core 앱을 재배포하지 않았다.
+
+### 우리 제품 저장소 검색어 배포 순서(2026-10-21 변경)
+
+**웹 먼저, 수집기 나중.** DB migration·잡 카탈로그 변경은 없다. 순서를 거꾸로 해도 깨지지는 않는다 — 옛 웹에 물으면 404 라
+수집기는 고정 검색어·v1 보고로 돈다. 다만 두 쪽이 다 바뀐 다음 실행부터 효과가 난다.
+
+1. 웹 두 앱(M3·mini)을 이 변경을 담은 main 으로 재배포한다(평소 웹 배포 절차. 워커는 필요 없다 — 웹만 받는다).
+   확인: 서명 없는 `POST https://nomorevibe.com/api/ops/x-query` 가 **401**(앱 JSON, `cache-control: private, no-store`)이면 켜진 것이다.
+   404 면 그 웹에 비밀이 없거나 아직 옛 웹이다 — 여러 번 보내 두 웹 모두 401 인지 본다. Cloudflare 가 막으면(403·HTML) 이 주소도
+   [보고 runbook](2026-10-18-x-status-report-runbook.md)의 예외 규칙에 더한다.
+2. osaka 수집기: 위 빌드 명령으로 bundle 을 만들고 새 release 로 배치한다(current 링크만 교체, 장부·상태 폴더는 그대로).
+3. root 전용 env 를 백업(root 0600)한 뒤 `X_QUERY_URL=https://nomorevibe.com/api/ops/x-query` 한 줄을 더한다. 전문을 출력하지 않는다.
+4. 임시 상태 폴더(`X_STATE_DIR`)로 `--dry-run` 1회 — X 요청·예약 0. 결과 한 줄의 `query.source` 가 `products`, `repositories` 가 10 안팎인지 본다
+   (웹 로그 `x_query.served` 에도 남는다). 이 dry-run 도 하루 보고를 보내므로 다음 정기 실행 전까지 운영센터 X 칸이 시험 실행으로 보이고,
+   그날 차례를 연다(같은 날 정기 실행은 같은 목록을 쓴다).
+5. 다음 00:10 UTC 정기 실행 뒤 `status.json` 의 `query`·`reports`(posts·status 200)와 `/admin/talk` 의 X 글을 본다.
+
+되돌리기: 수집기는 이전 release 로 current 링크만 돌린다(옛 수집기 v1 은 새 웹이 그대로 받는다). 웹을 되돌리면 묻기가 404 가 되어 수집기가
+알아서 고정 검색어로 돈다. `X_QUERY_URL` 을 지우면 예전 동작(고정 검색어·v1 보고)이다.
 
 ## 마지막 단계 — Mautic 정리
 

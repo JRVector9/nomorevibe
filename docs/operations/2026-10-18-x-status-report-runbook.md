@@ -40,15 +40,17 @@ Tailscale 로 끌어오는 길 대신 이 길을 고른 까닭은 v8 계획(공�
 
 | 칸 | 값 | 규칙 |
 | --- | --- | --- |
-| `v` | `1` | 판 번호. 다른 값은 400 |
+| `v` | `1` · `2` | 판 번호. 다른 값은 400. `2` 는 아래 칸에 `query` 한 칸이 더 있다(2026-10-21) |
 | `mode` | `live` · `dry-run` · `disabled` | 실제 수집 · 시험 실행 · 일부러 끔 |
 | `reads.used` / `reads.limit` | 정수 | 0 ≤ used ≤ limit ≤ 1,000. 오늘(UTC) 예약한 읽기 수 / 하루 상한(지금 10) |
 | `candidates` | 정수 0~1,000 | 마지막 실행이 남긴 고유 저장소 후보 수 |
 | `lastRunAt` | UTC ISO 또는 `null` | 마지막 실행 시각. 보낸 시각(+1초)보다 뒤일 수 없다 |
 | `lastSuccessAt` | UTC ISO 또는 `null` | 마지막 정상 실행. `lastRunAt` 이 있어야 하고 그보다 뒤일 수 없다 |
-| `error` | `null` 또는 코드 | `^[a-z][a-z0-9_]{0,47}$` — 본문에서 유일한 자유 글자 |
+| `error` | `null` 또는 코드 | `^[a-z][a-z0-9_]{0,47}$` — 본문에서 유일한 자유 글자(v2 는 `query.reason` 도) |
+| `query`(v2 만) | `{"source","repositories","reason"}` | 그날 검색어. `source` 는 `products`(웹이 고른 우리 제품 저장소) · `default`(고정 검색어), `repositories` 0~1,000, `reason` 은 `null` 또는 `error` 와 같은 꼴의 코드(고정 검색어로 돈 까닭) |
 
 칸이 더 있거나 빠지면 400 이다. 게시물 본문·작성자·저장소 이름·토큰·원 응답은 보내지 않는다.
+수집기는 그날 검색 저장소 묻기(아래 "검색 저장소 묻기")에 답을 받았을 때만 v2 로 보내고, 그 밖에는 v1 이다 — 옛 웹도 계속 받는다.
 
 수집기 `status.json`(`runXCollector` 결과)에서 채우는 법:
 
@@ -187,6 +189,19 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
 
 한 ID 는 `posts`·`unavailable` 을 통틀어 한 번만 나온다. 칸이 더 있거나 빠지면 400. 본문·작성자·프로필·원 응답은 보내지 않는다(재배포는 ID 중심).
 
+**v2(2026-10-21) — 검색이 돌려준 글을 버리지 않는다.** `v: 2` 이고 `posts[]` 의 `repository` 대신 `repositories`(0~5곳, 대소문자를 무시해도
+겹치지 않게)를 싣는다. 반응 네 칸이 모두 있는 공개 글이면 저장소가 없거나 여럿이어도 싣는다. 나머지 칸·서명·검사는 v1 과 같다.
+웹이 넣는 모양(마이그레이션 없음 — `social_posts` 의 `site` 는 저장소 열쇠가 없다):
+
+| 가리킨 저장소 | `link_target` | `repository_key` | `link_url` |
+| --- | --- | --- | --- |
+| 하나 | `repo` | 그 저장소 | `https://github.com/<저장소>` (v1 과 같다) |
+| 여럿, 그중 공개 제품이 있음 | `repo` | 보낸 순서에서 처음 나오는 공개 제품의 저장소(같은 트랜잭션에서 `products` 를 본다) | 그 저장소 |
+| 여럿, 공개 제품 없음 | `site` | 없음 | 첫 저장소 |
+| 없음 | `site` | 없음 | `https://x.com/i/web/status/<ID>` |
+
+`site` 글은 공개 화면(/talk·홈·상세·'아직 공개 제품이 아닌 저장소' 수)에 오르지 않고 `/admin/talk` 에만 보인다.
+
 웹이 쓰는 값: 제목은 비우고(화면은 "X 게시물"로 그린다), 링크는 `https://github.com/<repository>`, 점수 = `like + repost×2`,
 댓글 칸 = `reply`. 화제 자격은 점수 50 이상, 출처 무게 0.6(`lib/social/talk-score.ts`).
 
@@ -196,3 +211,22 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
 
 확인(읽기 전용): `select value, observed_at from operations_observations where key = 'x-posts';`,
 `select external_id, repository_key, points, comments, state, last_seen_at from social_posts where source = 'x' order by last_seen_at desc limit 20;`
+
+## 검색 저장소 묻기(x-query) — 2026-10-21
+
+수집기가 매 실행 처음(예약 장부보다 먼저) 그날 검색할 우리 제품 저장소를 묻는다. 고르는 법과 수집기 쪽 동작은
+[osaka runbook](2026-10-15-x-osaka-smoke-runbook.md)의 "검색어 — 우리 제품 저장소"다.
+
+- 받는 주소: `POST https://nomorevibe.com/api/ops/x-query` — 공개 주소가 하나 더 는다. Cloudflare 예외가 필요하면 이 주소도 함께 둔다.
+- 받는 코드: `app/api/ops/x-query/route.ts`, `lib/operations/x-query-receive.ts`, 형식은 `lib/operations/x-query.ts`, 고르기는 `lib/social/x-query.ts`.
+- 비밀·머리·검사 순서는 하루 보고와 같다. 다른 점만:
+  - 서명 머리는 `nomorevibe-x-query-v1` — 다른 두 주소의 서명은 여기서 401 이다.
+  - 본문은 `{"v":1,"day":"YYYY-MM-DD"}` 하나(256바이트까지). `day` 는 `x-nmv-timestamp` 의 UTC 날짜와 같아야 한다(아니면 400). 오류 코드 머리는 `x_query_`.
+  - 단조·속도 제한은 없다. 대신 관측 표의 `x-query` 한 줄(`{v:1, day, after, next}`, 그날 차례가 시작한 곳·다음 날 시작할 곳)을 쓰기 TX 에서
+    잠그고 날이 바뀐 첫 물음에만 고쳐 쓴다 — 같은 날 다시 물으면 같은 목록이다. 이 줄을 쓰므로 DR 쓰기 관문을 지난다(fenced 사이트면 503).
+  - 공개 제품 읽기는 복제본에서 한다(안 되면 주 DB). 공개 제품 수만큼 작은 줄을 하루 한두 번 읽는다.
+- 200 본문: `{"v":1,"day":"2026-10-21","repositories":["owner/repo",…]}` — 소문자 owner/repo, 감싼 검색어 512자 안에 드는 만큼(10~13곳).
+  수집기는 날짜가 다르거나, 40곳을 넘거나, 이름 꼴이 어긋나면 받지 않고 고정 검색어로 돈다.
+- 이 주소에 답한 웹은 게시물·하루 보고 v2 를 받는다(같은 변경으로 들어왔다). 수집기는 답을 받은 날만 v2 로 보낸다.
+
+확인(읽기 전용): `select value, observed_at from operations_observations where key = 'x-query';` · 웹 로그 `x_query.served`(day·repositories·candidates·next).
