@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
 import { cancelProductAudit, GROUP_REMOVE_MAX, GROUP_SCOPES, keepAuditedProduct, removeAuditedProduct, removeAuditedProducts,
-  startProductAudit, type AuditGroupScope } from '@/lib/crawl/product-audit';
+  startProductAudit, switchAuditReviewer, type AuditGroupScope } from '@/lib/crawl/product-audit';
+import { auditReviewerLabel } from '@/lib/crawl/product-audit-reviewer';
 import { releaseAllAuditHolds } from '@/lib/crawl/product-audit-hold';
 import { isAuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { setAuditHold } from '@/lib/crawl/settings';
@@ -131,6 +132,28 @@ export const restartStalledAudit = webWriteAction(async function restartStalledA
   revalidatePath('/admin/audit');
   revalidatePath('/admin/status');
   return { message: `감사 #${campaignId}을 닫고 #${result.campaignId}을 열었습니다 — ${result.enrolled.toLocaleString('ko-KR')}건.` };
+});
+
+/**
+ * 남은 감사 모델 바꾸기(0112) — 진행 중인 감사의 아직 답이 없는 항목을 Qwen-v2(gpu3090 직접)로 묻는다. 이미 답한 것은 그대로다.
+ * 화면이 본 심사자(expected)를 잠근 감사 행과 견줘 다르면 바꾸지 않는다(compare-and-set). 사유는 꼭 받는다 —
+ * 성공·거절 모두 switchAuditReviewer 가 같은 트랜잭션에서 작업 로그(audit-switch-model)에 남긴다.
+ */
+export const switchAuditModel = webWriteAction(async function switchAuditModel(form: FormData): Promise<AuditActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const campaignId = Number(form.get('campaign'));
+  const expected = { provider: String(form.get('expectedProvider') ?? ''), model: String(form.get('expectedModel') ?? '') };
+  if (!Number.isSafeInteger(campaignId) || campaignId <= 0 || !expected.provider || !expected.model) {
+    return { error: '감사를 읽지 못했습니다. 새로고침해주세요.' };
+  }
+  const result = await switchAuditReviewer({ campaignId, expected, reason: String(form.get('reason') ?? ''), by: admin.login });
+  if (!result.ok) return { error: result.error };
+  logger.info('admin.product_audit_reviewer_switched', { campaign: campaignId, from: result.from, to: result.to, unanswered: result.unanswered,
+    login: admin.login });
+  revalidatePath('/admin/audit');
+  revalidatePath('/admin/status');
+  return { message: `감사 #${campaignId}의 남은 ${result.unanswered.toLocaleString('ko-KR')}건을 ${auditReviewerLabel(result.to)}(으)로 묻습니다. 이미 답한 것은 그대로입니다.` };
 });
 
 /**

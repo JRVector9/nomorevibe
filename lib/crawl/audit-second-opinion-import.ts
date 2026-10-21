@@ -6,7 +6,7 @@ import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { holdGate, releaseAuditHold } from "./product-audit-hold";
+import { auditItemModel, holdGate, releaseAuditHold } from "./product-audit-hold";
 import { lockedAuditHold, storedAuditHold, type AuditHoldSettings } from "./settings";
 
 /**
@@ -110,7 +110,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
       }
       const ids = [...new Set(batch.map((row) => row.itemId))];
       const items = new Map((await tx.select({ id: productAuditItems.id, productId: productAuditItems.productId, slug: products.slug,
-        aiReason: productAuditItems.aiReason,
+        aiReason: productAuditItems.aiReason, model: auditItemModel("product_audit_items"),
         open: sql<boolean>`(${productAuditItems.aiDecision} = 'reject' and ${productAuditItems.humanDecision} is null
           and coalesce(${products.status} in ('seeded', 'verified'), false))` })
         .from(productAuditItems).leftJoin(products, eq(products.id, productAuditItems.productId))
@@ -136,7 +136,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
         const [settings] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, 1));
         const hold = storedAuditHold(settings?.values);
         const opinions = [...after.values()];
-        result.released += (await heldBy(tx, approvals)).filter((itemId) => releasable(items.get(itemId)!.aiReason,
+        result.released += (await heldBy(tx, approvals)).filter((itemId) => releasable(items.get(itemId)!,
           opinions.filter((row) => row.itemId === itemId), hold)).length;
         return;
       }
@@ -166,7 +166,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
           decision: productAuditSecondOpinions.decision }).from(productAuditSecondOpinions).where(inArray(productAuditSecondOpinions.itemId, held));
         for (const itemId of held) {
           const item = items.get(itemId)!;
-          if (!releasable(item.aiReason, opinions.filter((row) => row.itemId === itemId), hold)) continue;
+          if (!releasable(item, opinions.filter((row) => row.itemId === itemId), hold)) continue;
           if (await releaseAuditHold(tx, { productId: item.productId, slug: item.slug!, actor: `import:${source}`, reason: "second_approve" })) {
             result.released += 1;
           }
@@ -180,8 +180,9 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
 }
 
 /** 덮어쓴 뒤의 의견으로 보류의 둘째 문(holdGate — 모델별 거절 규칙 포함)이 더는 맞지 않는가 — 맞지 않으면 승인이 보류를 푼다 */
-function releasable(reason: string | null, opinions: { model: string; decision: string }[], hold: AuditHoldSettings): boolean {
-  return !holdGate({ reason, opinions }, hold);
+function releasable(item: { aiReason: string | null; model: string | null }, opinions: { model: string; decision: string }[],
+  hold: AuditHoldSettings): boolean {
+  return !holdGate({ reason: item.aiReason, opinions, model: item.model }, hold);
 }
 
 /** 이 승인 줄들 가운데 지금 그 항목으로 보류된 제품의 항목 id */

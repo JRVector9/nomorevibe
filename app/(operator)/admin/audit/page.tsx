@@ -9,11 +9,12 @@ import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupA
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
 import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { auditReviewer, auditReviewerLabel, auditReviewerSwitched, QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
 import { AuditFinding } from "./AuditFinding";
 import { AuditGroups } from "./AuditGroups";
-import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit } from "./AuditControls";
+import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit, SwitchAuditModel } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
 import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
@@ -227,6 +228,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                   {findings.map((finding) => (
                     <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
                       reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label,
+                      // 남은 감사 모델 바꾸기 뒤 Qwen 이 낸 답 — 확신이 늘 0.95·1.00 이라 사람이 가려 읽는다
+                      answeredBy: finding.aiProvider === QWEN_AUDIT_PROVIDER ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) : null,
                       reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
                       heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
                   ))}
@@ -422,9 +425,12 @@ function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
   );
 }
 
-/** 지금 감사가 어디까지 왔고, 무엇으로, 누가 열었는지. 새 감사는 여기서 연다 */
+/**
+ * 지금 감사가 어디까지 왔고, 무엇으로, 누가 열었는지. 새 감사는 여기서 연다.
+ * 남은 감사 모델 바꾸기(0112) 뒤면 '모델 전환: 시작 모델 → 지금 모델 (시각)'과 바꾼 뒤 답한 수를 보인다
+ */
 function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }) {
-  const { campaign, counts, paused, stalled } = overview;
+  const { campaign, counts, paused, stalled, switchTo } = overview;
   const running = campaign?.status === "running";
   const percent = counts.total ? Math.floor((counts.reviewed / counts.total) * 100) : 0;
   return (
@@ -446,6 +452,13 @@ function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }
               {campaign.reauditKept && " · 유지 판정 포함"}
             </span>
           </div>
+          {auditReviewerSwitched(campaign) && (
+            <p className="text-[13px] text-fg-2">
+              <b className="font-semibold">모델 전환: {auditReviewerLabel(campaign)} → {auditReviewerLabel(auditReviewer(campaign))}</b>
+              {campaign.switchedAt && ` (${formatListTime(campaign.switchedAt, now)}${campaign.switchedBy ? ` · ${campaign.switchedBy}` : ""})`}
+              {` · 바꾼 뒤 답 ${count(counts.answeredByCurrent ?? 0)}건 · 그 전 답은 그대로`}
+            </p>
+          )}
           <p className="text-[13px] text-fg-2">{campaign.reason}</p>
           <p className="text-[13px] tabular-nums text-fg-2">
             검토 <b className="font-semibold">{count(counts.reviewed)}</b> / {count(counts.total)} ({percent}%) ·
@@ -455,7 +468,14 @@ function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }
             {counts.skipped > 0 && ` · 묻기 전에 내려가 건너뜀 ${count(counts.skipped)}`}
           </p>
           {paused && <p className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px] leading-[1.7] text-fg-2">{paused}</p>}
-          {running && !stalled && <CancelAudit />}
+          {running && !stalled && (
+            <div className="flex flex-wrap items-center gap-2">
+              {switchTo && <SwitchAuditModel campaignId={campaign.id} unanswered={Math.max(0, counts.total - counts.reviewed - counts.failed - counts.skipped)}
+                from={{ ...auditReviewer(campaign), label: auditReviewerLabel(auditReviewer(campaign)) }}
+                to={{ model: switchTo.model, label: auditReviewerLabel(switchTo) }} />}
+              <CancelAudit />
+            </div>
+          )}
         </>
       ) : (
         <p className="text-[13px] text-fg-2">아직 연 감사가 없습니다.</p>

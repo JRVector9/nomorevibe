@@ -8,7 +8,9 @@ import { logger } from "@/lib/observability/logger";
 import type { ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
-import { holdCandidate } from "./product-audit-hold";
+import { auditItemModel, holdCandidate } from "./product-audit-hold";
+import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
+import { qwenEndpointBackingOff } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
 import { decidePublishedSecondReview, notePublishedSecondReviewOpinion } from "./published-second-review";
 import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
@@ -23,13 +25,16 @@ import type { CrawlSettings } from "./settings-schema";
  * 1. 감사 두 번째 의견(auditHold.autoSecondOpinion): 보류 후보(확신 문턱 이상·주인 없음·사람 결정 없음·그 제품의 마지막 항목, 이미 보류된 것 포함)
  *    가운데 이 모델·이 판의 의견이 없는 것을 묻고, grok 옮겨 적기와 같은 쓰기(writeAuditSecondOpinions — 덮어쓰기·보류 다시 가르기·승인이면 풀기)로
  *    출처 qwen-v2-auto 를 적는다. 거절은 쓸기가 다음 틱부터 분당 20건씩 건다(Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
- *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다.
+ *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
+ *    coalesce(ai_model, 그 감사가 시작할 때의 model)이 같은 모델 — 0112 전 답은 ai_model 이 비어 있고 시작 모델이 답했다).
  * 2. 공개분 2차 거르기(auditHold.publishedFilter): 공개분 2차가 사람 확인(needs_human)으로 넘긴 행 가운데 이 모델·이 판의 판단이 없는 것을
  *    묻는다. 승인이면 사람의 '유지'와 같은 길로 닫고(누가 qwen-v2-auto), 거절·판단 보류면 판단만 적어 사람 확인 목록 앞에 둔다.
  *    이 길로는 내리지도 숨기지도 않는다.
  *
  * 두 갈래가 번갈아 한 줄로 선다(갈래마다 perTick 까지). 새 호출은 STEP_MS 안에서만 시작하고, 틱의 끝까지 호출 하나(CALL_TIMEOUT_MS)와
- * 기록 여유가 남아야 한다. 모델 호출은 트랜잭션 밖이고, 쓰기는 한 건마다 DR writer fence → … → 작업 lease 의 한 커밋이다.
+ * 기록 여유가 남아야 한다. 감사가 Qwen 직접 심사로 바뀌었으면(0112) 같은 서버를 감사 자리(AUDIT_QWEN_CONCURRENCY, 기본 2)가 틱 내내 쓰고
+ * 이 단계는 한 자리로 30초만 쓴다 — gpu3090 동시 호출은 감사 자리 + 1 을 넘지 않고, 감사가 먼저다. 감사가 서버 탈로 물러나는 동안
+ * (qwen-endpoint-backoff.ts)에는 이 단계도 부르지 않는다. 모델 호출은 트랜잭션 밖이고, 쓰기는 한 건마다 DR writer fence → … → 작업 lease 의 한 커밋이다.
  * 부르는 곳의 탈(닿지 않음·시간 초과·5xx·404·401/403·429)이면 이 틱의 나머지를 멈추고(다음 틱에 다시) 마지막 오류를 관측에 남긴다.
  * 항목만의 실패(형식 오류·400·입력 초과·원본 없음)는 그 항목을 두 번까지만 묻는다(관측의 failures). 이 단계는 잡을 실패시키지 않는다.
  */
@@ -71,13 +76,14 @@ const bareModel = (model: SQL) => sql`lower(regexp_replace(trim(${model}), '^\\[
 const bareModelValue = (model: string) => model.trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
 
 /**
- * 물을 감사 항목 — 보류 후보(holdCandidate)이고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 시도가 같은 모델이 아니며(같은 모델 규칙),
+ * 물을 감사 항목 — 보류 후보(holdCandidate)이고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
  * 수집 원본이 있다(loadAuditInput 이 입력을 만들 수 있다). 지금 보류의 까닭인 항목 먼저 — 승인이면 목록에 돌아온다 — 그다음 오래된 것부터
  */
 function auditOpinionWanted(hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
   return sql`${holdCandidate("i", "p", hold.minConfidence)}
     and not exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.model = ${model}
       and o.prompt_version = ${QWEN_V2_PROMPT_VERSION})
+    and coalesce(i.ai_provider, '') <> ${QWEN_AUDIT_PROVIDER} and ${bareModel(auditItemModel("i"))} <> ${bareModelValue(model)}
     and not exists (select 1 from ${productAuditAttempts} a where a.item_id = i.id and a.outcome is not null
       and ${bareModel(sql`a.model`)} = ${bareModelValue(model)})
     and exists (select 1 from ${crawlCandidates} c join ${crawlDocuments} d on d.repo = c.repo where c.published_slug = p.slug)
@@ -189,6 +195,11 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   const lease = ctx.lease;
   // 수집 스위치는 비상 정지다 — 모델을 부르는 다른 잡처럼 여기서도 멈춘다
   if (!lease || !settings.enabled || (!audit.enabled && !published.enabled)) return;
+  // 감사의 Qwen 직접 심사가 서버 탈로 물러나는 중이면 같은 서버를 부르지 않는다 — 감사가 먼저다
+  if (qwenEndpointBackingOff()) {
+    ctx.log("qwen_second_opinion.backoff", { skipped: true });
+    return;
+  }
   const startedAt = Date.now();
   const config = qwenDirectConfig();
   const observation = await readQwenAutoObservation(config?.model ?? "");

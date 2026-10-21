@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
-  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(),
+  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -17,7 +17,7 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
   auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons, auditDecisionHistory: mocks.decisions,
-  listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons,
+  listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons, switchAuditReviewer: mocks.switchReviewer,
   GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
 vi.mock('@/lib/crawl/product-audit-hold', () => ({ releaseAllAuditHolds: mocks.releaseAll }));
@@ -39,7 +39,7 @@ vi.mock('@/lib/domain/products/intro-requests', () => ({
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
 import { cancelAudit, decideAuditFinding, fixIntroRequest, releaseAuditHolds, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
-  saveAuditHold, startAudit } from '@/app/(operator)/admin/audit/actions';
+  saveAuditHold, startAudit, switchAuditModel } from '@/app/(operator)/admin/audit/actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
 import { DEFAULT_AUDIT_HOLD } from '@/lib/crawl/settings-schema';
 
@@ -60,7 +60,9 @@ const finding = (id: number, slug: string, over: Record<string, unknown> = {}) =
   heldAt: null, second: [], ...over,
 });
 /** 감사 개요 — 보류 수와 보류 설정(product-audit.ts AuditOverview)까지 */
-const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, paused: null, stalled: false, held: 0, hold: DEFAULT_AUDIT_HOLD, ...over });
+const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, paused: null, stalled: false, held: 0, hold: DEFAULT_AUDIT_HOLD,
+  switchTo: null, ...over });
+const QWEN = { provider: 'qwen-direct', model: 'qwen3.8-flash-next' };
 /** 제품을 고르는 체크박스 — 보류 설정 폼의 켬·갈래·두 번째 모델 칸은 제품을 싣지 않는다 */
 const productCheckboxes = (html: string) => (html.match(/<input type="checkbox"[^>]*>/g) ?? [])
   .filter((box) => !/name="(enabled|secondOpinionReject|category|autoSecondOpinion|publishedFilter)"/.test(box));
@@ -211,6 +213,26 @@ describe('내릴 후보 화면', () => {
     // 따로 노는 "이 감사 중단" 폼은 두지 않는다
     expect(html).not.toContain('멈춰도 아무것도 내려가지 않고');
     expect(html).toContain('멈춘 감사가 열려 있습니다');
+  });
+
+  it('남은 감사 모델 바꾸기(0112) — 바꿀 수 있을 때만 버튼을 두고, 바꾼 감사는 머리에 "모델 전환: 시작 → 지금 (시각)"과 바꾼 뒤 답한 수를 보인다', async () => {
+    expect(await render()).not.toContain('남은 감사 모델 바꾸기');
+    mocks.overview.mockResolvedValue(overviewOf({ switchTo: QWEN }));
+    const html = await render();
+    expect(html).toContain('남은 감사 모델 바꾸기…');
+    expect(html).toContain('이 감사 중단');
+    expect(html).not.toContain('모델 전환:');
+
+    mocks.overview.mockResolvedValue(overviewOf({ campaign: { ...campaign, currentProvider: 'qwen-direct', currentModel: 'qwen3.8-flash-next',
+      switchedAt: new Date('2026-10-21T08:00:00Z'), switchedBy: 'jr' }, counts: { ...counts, answeredByCurrent: 1234 } }));
+    mocks.findings.mockResolvedValue([finding(11, 'by-qwen', { aiProvider: 'qwen-direct', confidence: 1 }), finding(12, 'by-gpt', { aiProvider: null })]);
+    const switched = await render();
+    expect(switched).toContain('모델 전환: gpt-oss-120b → qwen-v2');
+    expect(switched).toContain('· jr)');
+    expect(switched).toContain('바꾼 뒤 답 1,234건');
+    expect(switched).not.toContain('남은 감사 모델 바꾸기…');
+    // 줄마다 Qwen 이 낸 답에만 모델 이름을 붙인다
+    expect(switched.match(/title="이 답을 낸 감사 모델"[^>]*>qwen-v2</g)).toHaveLength(1);
   });
 
   it('갈래 그대로 CSV 로 내보낸다', async () => {
@@ -488,6 +510,25 @@ describe('내릴 후보 서버 액션', () => {
       expect.objectContaining({ action: 'audit-cancel', target: 'campaign:7' }),
       expect.objectContaining({ action: 'audit-start', target: 'campaign:8' }),
     ]);
+  });
+
+  it('남은 감사 모델 바꾸기 — 로그인한 사람으로, 화면이 본 심사자와 사유를 함께 보낸다. 감사를 읽지 못하면 부르지 않는다', async () => {
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '빨리']])))
+      .toMatchObject({ error: expect.any(String) });
+    expect(await switchAuditModel(decision([['campaign', 'x'], ['expectedProvider', 'abcllm'], ['expectedModel', 'm'], ['reason', '빨리']])))
+      .toMatchObject({ error: expect.stringContaining('새로고침') });
+    expect(mocks.switchReviewer).not.toHaveBeenCalled();
+
+    mocks.switchReviewer.mockResolvedValueOnce({ ok: false, error: '그 사이 다른 곳에서 바뀌었습니다.' });
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '']])))
+      .toEqual({ error: '그 사이 다른 곳에서 바뀌었습니다.' });
+    mocks.switchReviewer.mockResolvedValueOnce({ ok: true, from: { provider: 'abcllm', model: '[MLX] gpt-oss-120b' }, to: QWEN, unanswered: 15_300 });
+    expect(await switchAuditModel(decision([['campaign', '7'], ['expectedProvider', 'abcllm'], ['expectedModel', '[MLX] gpt-oss-120b'], ['reason', '빨리']])))
+      .toEqual({ message: expect.stringContaining('남은 15,300건을 qwen-v2') });
+    expect(mocks.switchReviewer).toHaveBeenLastCalledWith({ campaignId: 7, expected: { provider: 'abcllm', model: '[MLX] gpt-oss-120b' },
+      reason: '빨리', by: 'jr' });
+    expect(mocks.revalidate).toHaveBeenCalledWith('/admin/audit');
   });
 
   it('보류 설정 — 로그인한 사람으로, 화면이 본 값과 함께 보낸다. 문턱이 0.80 아래면 쓰지 않는다', async () => {

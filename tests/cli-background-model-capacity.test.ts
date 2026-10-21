@@ -282,7 +282,7 @@ it("audit: open with a contract binds the audit item, runs reviewWithAgent's exa
   expect(terminalEvidence()).toMatchObject({ ending: "exited", exitCode: 0 });
   expect(mocks.reconcile.mock.invocationCallOrder[0]).toBeLessThan(mocks.recordAudit.mock.invocationCallOrder[0]);
   expect(mocks.recordAudit.mock.calls).toEqual([[{ itemId: 7, startedAt: expect.any(Date), provider: "claude-cli", model: AUDIT_MODEL,
-    input: auditInput, ok: true, outcome: expect.objectContaining({ decision: "approve", evidenceIds: ["product"] }) }, ctx.lease,
+    promptVersion: REVIEW_PROMPT_VERSION, input: auditInput, ok: true, outcome: expect.objectContaining({ decision: "approve", evidenceIds: ["product"] }) }, ctx.lease,
     DEFAULT_CRAWL_SETTINGS.auditHold]]);
   const [spawned] = await recorded();
   expect(spawned.argv).toEqual(reviewCliArgs(AUDIT_MODEL));

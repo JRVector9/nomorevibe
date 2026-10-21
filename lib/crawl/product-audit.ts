@@ -1,10 +1,11 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
+import { crawlCandidates, crawlDocuments, operationsAudit, products, productAuditAttempts, productAuditCampaigns, productAuditItems,
   type ProductAuditCampaign } from "@/lib/db/schema";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repository";
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { adminAuditRow } from "@/lib/operations/admin-log";
 import { getSettings, type AuditHoldSettings } from "./settings";
 import { auditHoldCount, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
 import { countedSecondReject, secondOpinionFilter, secondOpinionsField, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
@@ -15,6 +16,8 @@ import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { loadReviewInput } from "./agent-review-repository";
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
   type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
+import { auditReviewer, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
+import { qwenDirectConfig } from "./qwen-direct-review";
 
 /**
  * 발행분 감사 — 올리고, 묻고, 적고, 사람이 정한다.
@@ -165,6 +168,54 @@ export function auditCampaignStalled(campaign: Pick<ProductAuditCampaign, "statu
     && (campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION);
 }
 
+export type SwitchAuditReviewerResult = { ok: true; from: AuditReviewer; to: AuditReviewer; unanswered: number } | { ok: false; error: string };
+
+/**
+ * 남은 감사 모델 바꾸기(0112, 2026-10-21 사용자 지시) — 진행 중인 감사의 아직 답이 없는 항목을 gpu3090 Qwen 직접 심사(qwen-v2)로 묻는다.
+ *
+ * 감사 #4 는 abcllm gpt-oss-120b 로 시간당 130~170건(호출 14초·오류 6%)이라 남은 1만5천여 건에 나흘이 걸렸다. Qwen-v2 는 감사 거절 50건에서
+ * 사람 판단과 46건(92%)이 맞았고 한 건 3초 안팎·오류 0이다. 새 감사(#5, 남은 것만)를 여는 대신 이 감사의 심사자만 바꾼다 —
+ * 항목 id·보류의 까닭(products.audit_hold_item_id)·두 번째 의견(item_id)·'그 제품의 마지막 항목' 규칙과 감사 화면의 거절 목록이 모두
+ * 이 감사의 항목에 걸려 있어, 새 감사를 열면 그 목록이 화면에서 사라지고 같은 제품에 항목이 둘이 된다.
+ *
+ * 이미 답한 항목은 건드리지 않는다. 시작 때의 provider·model 도 그대로 두고 current_* 에 적는다. 바꾸는 조건(잠근 감사 행에서 본다):
+ * 사유가 있고, 감사가 돌고 있고, 글이 바뀌어 멈춘 감사가 아니고, 화면이 본 심사자(expected)가 지금도 그대로다(compare-and-set).
+ * 성공·거절 모두 같은 트랜잭션에서 작업 로그(operations_audit audit-switch-model)에 한 줄 남긴다. 네트워크는 부르지 않는다.
+ * 바꾼 뒤 잡의 다음 틱부터 새 심사자로 묻는다 — 이미 띄운 옛 호출의 답은 그 호출의 심사자 이름으로 적힌다.
+ */
+export async function switchAuditReviewer(input: { campaignId: number; expected: { provider: string; model: string }; reason: string; by: string }):
+  Promise<SwitchAuditReviewerResult> {
+  const reason = input.reason.trim().slice(0, 500);
+  const config = qwenDirectConfig();
+  const to: AuditReviewer | null = config ? { provider: QWEN_AUDIT_PROVIDER, model: config.model } : null;
+  return db.transaction(async (tx) => {
+    const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, input.campaignId)).for("update");
+    const from = campaign ? auditReviewer(campaign) : null;
+    const log = async (ok: boolean, error: string | null, extra: Record<string, unknown> = {}) => tx.insert(operationsAudit).values(
+      await adminAuditRow(input.by, { action: "audit-switch-model", target: `campaign:${input.campaignId}`,
+        detail: { expected: input.expected, from, to, reason: reason || null, ...extra }, ok, error }));
+    const refuse = async (code: string, error: string) => {
+      await log(false, code);
+      return { ok: false as const, error };
+    };
+    if (!reason) return refuse("reason_required", "왜 바꾸는지 적어 주세요. 작업 로그에 남습니다.");
+    if (!campaign || campaign.status !== "running") return refuse("not_running", "진행 중인 감사가 아닙니다. 새로고침해주세요.");
+    if (auditCampaignStalled(campaign)) return refuse("stalled", "심사 글이 바뀌어 멈춘 감사입니다. 모델을 바꾸지 말고 중단하고 새로 시작하세요.");
+    if (!sameAuditReviewer(from, input.expected)) {
+      return refuse("stale_state", "그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 모델을 확인한 뒤 다시 해 주세요.");
+    }
+    if (!to) return refuse("qwen_not_configured", "Qwen 서버 설정(AUDIT_SECOND_OPINION_URL·_MODEL)을 읽지 못했습니다.");
+    if (sameAuditReviewer(from, to)) return refuse("already_switched", "이미 이 모델로 묻고 있습니다.");
+    await tx.update(productAuditCampaigns).set({ currentProvider: QWEN_AUDIT_PROVIDER, currentModel: to.model, switchedAt: sql`now()`,
+      switchedBy: input.by.slice(0, 120) }).where(eq(productAuditCampaigns.id, campaign.id));
+    const [row] = await tx.select({ count: sql<number>`count(*)::int` }).from(productAuditItems)
+      .where(and(eq(productAuditItems.campaignId, campaign.id), isNull(productAuditItems.aiDecision)));
+    const unanswered = row?.count ?? 0;
+    await log(true, null, { unanswered });
+    return { ok: true as const, from: from!, to, unanswered };
+  });
+}
+
 
 // ─────────────────────────── 묻기 (잡) ───────────────────────────
 
@@ -209,7 +260,8 @@ export async function markAuditNoSource(itemId: number, lease: JobLease): Promis
 
 /**
  * 공통 슬롯 dispatch 의 도메인 증명(05c-5). 감사 행을 잠그고, 아직 답이 없고 시도가 남았으며 원본이 있는 같은 감사의 행인지,
- * 감사가 돌고 있고 굳힌 제공자·모델·글 버전이 그대로인지, 입력을 읽은 제품이 이 행의 제품인지 본다. 아니면 null(묻지 않는다).
+ * 감사가 돌고 있고 지금 묻는 제공자·모델(auditReviewer — 남은 감사 모델 바꾸기 뒤면 바꾼 것)·글 버전이 그대로인지, 입력을 읽은 제품이
+ * 이 행의 제품인지 본다. 아니면 null(묻지 않는다). value.campaign 의 provider·model 은 잡이 부를 때의 심사자다.
  * attempts 는 그 시점의 사진이다 — 세는 규칙은 recordAuditResult 그대로다.
  */
 export async function lockAuditDispatchItem(tx: ProductTransaction, value: { itemId: number; slug: string;
@@ -219,16 +271,20 @@ export async function lockAuditDispatchItem(tx: ProductTransaction, value: { ite
   const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId)).for("share");
   if (!campaign || campaign.status !== "running" || campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION
     || campaign.promptVersion !== value.campaign.promptVersion || campaign.rulesVersion !== value.campaign.rulesVersion
-    || campaign.provider !== value.campaign.provider || campaign.model !== value.campaign.model) return null;
+    || !sameAuditReviewer(auditReviewer(campaign), value.campaign)) return null;
   const [product] = await tx.select({ slug: products.slug, status: products.status }).from(products).where(eq(products.id, item.productId));
   if (!product || product.slug !== value.slug || !(LISTED as readonly string[]).includes(product.status)) return null;
   return { productId: item.productId, attempts: item.attempts };
 }
 
-export type AuditCall = { itemId: number; startedAt: Date; provider: string; model: string; input: ReviewInput };
+/**
+ * 한 번의 호출 — 누가(provider·model) 어떤 글의 판(promptVersion)으로 물었는지까지. 감사 도중 모델을 바꾸면(0112) 한 감사에 두 심사자의
+ * 답이 섞이므로 감사 행이 아니라 호출이 적는다. promptVersion 이 없으면 그 감사의 글이다(시도 행의 prompt_version 이 빈다)
+ */
+export type AuditCall = { itemId: number; startedAt: Date; provider: string; model: string; promptVersion?: string; input: ReviewInput };
 
 /**
- * 한 번의 호출을 적는다. 호출 기록은 늘 남기고, 항목은 답을 받았을 때만 채운다.
+ * 한 번의 호출을 적는다. 호출 기록은 늘 남기고, 항목은 답을 받았을 때만 채운다 — 누가 답했는지(ai_provider·ai_model)도 함께.
  *
  * counted: 이 항목의 시도로 셀지. 심사자 자체가 없는 실패(키 없음·모델 없음)는 항목 탓이 아니라
  * 세지 않는다 — 세면 키 하나 빠진 동안 10,751건이 시도를 다 써 버린다.
@@ -255,13 +311,14 @@ export async function recordAuditResult(call: AuditCall & (
     if (!item || item.aiDecision) return;
     await tx.insert(productAuditAttempts).values({
       itemId: item.id, startedAt: call.startedAt, provider: call.provider.slice(0, 80), model: call.model.slice(0, 160),
-      inputHash: call.input.inputHash, source: call.input.source,
+      promptVersion: call.promptVersion?.slice(0, 40) ?? null, inputHash: call.input.inputHash, source: call.input.source,
       outcome: call.ok ? call.outcome : null, errorCode: call.ok ? null : call.error.slice(0, 120),
     });
     if (call.ok) {
       await tx.update(productAuditItems).set({
         aiDecision: call.outcome.decision, aiReason: call.outcome.reason, aiConfidence: call.outcome.confidence ?? null,
-        aiCategory: call.outcome.category ?? null, sourceHash: auditSourceHash(call.input), reviewedAt: sql`now()`,
+        aiCategory: call.outcome.category ?? null, aiProvider: call.provider.slice(0, 80), aiModel: call.model.slice(0, 160),
+        sourceHash: auditSourceHash(call.input), reviewedAt: sql`now()`,
         attempts: item.attempts + 1, errorCode: null, retryAt: null,
       }).where(eq(productAuditItems.id, item.id));
       if (product?.id === item.productId) await holdAuditedProduct(tx, { itemId: item.id, productId: product.id, slug: product.slug });
@@ -306,6 +363,8 @@ export type AuditCounts = {
   failed: number;
   /** 묻기 전에 목록에서 내려가 건너뛴 것 — 이것까지 더해야 끝난 감사의 수가 맞는다 */
   skipped: number;
+  /** 남은 감사 모델 바꾸기(0112) 뒤 지금 심사자가 답한 것 — 바꾸지 않았으면 0 */
+  answeredByCurrent: number;
 };
 export type AuditOverview = {
   campaign: ProductAuditCampaign | null;
@@ -318,18 +377,27 @@ export type AuditOverview = {
   held: number;
   /** 감사 보류 스위치와 문턱(크롤 설정 auditHold) */
   hold: AuditHoldSettings;
+  /**
+   * 남은 감사 모델 바꾸기(0112)로 바꿀 수 있는 심사자 — 감사가 돌고 있고 멈춘 감사가 아니고 아직 그것으로 묻지 않을 때만.
+   * 아니면 null(버튼을 보이지 않는다). 모델은 이 웹 프로세스의 Qwen 설정(qwenDirectConfig)이다
+   */
+  switchTo: AuditReviewer | null;
 };
 
 export async function productAuditOverview(): Promise<AuditOverview> {
   const [[campaign], held, settings] = await Promise.all([
     db.select().from(productAuditCampaigns).orderBy(desc(productAuditCampaigns.id)).limit(1), auditHoldCount(), getSettings()]);
   const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, openAgreed: 0, openSplit: 0,
-    openDisagree: 0, openQwenCatalog: 0, removed: 0, kept: 0, failed: 0, skipped: 0 };
+    openDisagree: 0, openQwenCatalog: 0, removed: 0, kept: 0, failed: 0, skipped: 0, answeredByCurrent: 0 };
   const hold = settings.auditHold;
-  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold };
+  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold, switchTo: null };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
   const failed = sql`${productAuditItems.aiDecision} is null
     and (${productAuditItems.errorCode} is not distinct from 'no_source' or ${productAuditItems.attempts} >= ${MAX_REVIEW_ATTEMPTS})`;
+  // 바꾼 뒤의 심사자가 답한 것 — 바꾸지 않은 감사는 세지 않는다(옛 항목의 ai_* 는 비어 있다)
+  const current = campaign.currentProvider && campaign.currentModel ? auditReviewer(campaign) : null;
+  const byCurrent = current
+    ? sql`${productAuditItems.aiProvider} = ${current.provider} and ${productAuditItems.aiModel} = ${current.model}` : sql`false`;
   const [counts] = await db.select({
     total: sql<number>`count(*)::int`,
     reviewed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} is not null)::int`,
@@ -348,6 +416,7 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     failed: sql<number>`count(*) filter (where ${failed})::int`,
     skipped: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} is null and not (${failed})
       and (${products.status} is null or ${products.status} not in ('seeded', 'verified')))::int`,
+    answeredByCurrent: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} is not null and ${byCurrent})::int`,
   }).from(productAuditItems).leftJoin(products, eq(products.id, productAuditItems.productId))
     .where(eq(productAuditItems.campaignId, campaign.id));
   let paused: string | null = null;
@@ -359,7 +428,11 @@ export async function productAuditOverview(): Promise<AuditOverview> {
         + "두 글의 판단을 한 목록에 섞지 않도록 멈췄습니다. 이 감사를 중단하고 새로 시작하세요.";
     }
   }
-  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign), held, hold };
+  const qwen = qwenDirectConfig();
+  const target = qwen ? { provider: QWEN_AUDIT_PROVIDER, model: qwen.model } : null;
+  const switchTo = campaign.status === "running" && !auditCampaignStalled(campaign) && target && !sameAuditReviewer(auditReviewer(campaign), target)
+    ? target : null;
+  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign), held, hold, switchTo };
 }
 
 export type AuditFindingRow = {
@@ -369,6 +442,8 @@ export type AuditFindingRow = {
   heldAt: Date | null;
   /** 다른 모델의 두 번째 의견(audit-second-opinions.ts) — 없으면 빈 목록 */
   second: SecondOpinionView[];
+  /** 이 답을 낸 제공자(0112) — 비어 있으면 그 감사가 시작할 때의 심사자다. 남은 감사 모델 바꾸기 뒤의 답을 화면이 가른다 */
+  aiProvider: string | null;
 };
 
 /** 감사 항목 id·감사 사유 — 두 번째 의견 조건이 바깥 항목을 가리킨다(모델별 거절 규칙이 사유를 본다) */
@@ -378,7 +453,7 @@ const reasonSql = sql`${productAuditItems.aiReason}`;
 const findingColumns = {
   id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
   reason: productAuditItems.aiReason, confidence: productAuditItems.aiConfidence, reviewedAt: productAuditItems.reviewedAt,
-  owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql),
+  owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql), aiProvider: productAuditItems.aiProvider,
 };
 
 /** 열린 거절·보류 목록의 조건 — 이 감사의 이 결정이고, 사람이 손대지 않았고, 제품이 떠 있다. second 면 두 번째 의견으로 더 거른다 */

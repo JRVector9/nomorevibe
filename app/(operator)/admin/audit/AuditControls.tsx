@@ -6,7 +6,7 @@ import { resultToast, useAdminToast } from '../components/Toast';
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, type AuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { auditHoldWidens, sameAuditHold } from '@/lib/crawl/audit-hold-policy';
 import { QWEN_AUTO_MAX_PER_TICK, type CrawlSettings } from '@/lib/crawl/settings-schema';
-import { cancelAudit, releaseAuditHolds, restartStalledAudit, saveAuditHold, startAudit, type AuditActionState } from './actions';
+import { cancelAudit, releaseAuditHolds, restartStalledAudit, saveAuditHold, startAudit, switchAuditModel, type AuditActionState } from './actions';
 
 type AuditHold = CrawlSettings['auditHold'];
 
@@ -240,5 +240,41 @@ export function RestartStalledAudit({ campaignId, from, to }: { campaignId: numb
         return result;
       }}
       trigger={(open) => <button type="button" className="admin-button" data-tone="primary" onClick={open}>이 감사 중단 → 새 감사 시작</button>} />
+  );
+}
+
+/**
+ * 남은 감사 모델 바꾸기(0112) — 진행 중인 감사의 아직 답이 없는 항목을 Qwen-v2(gpu3090 직접)로 묻는다. 확인 창이 지금 → 바꿀 모델과
+ * 남은 수를 보이고 사유를 꼭 받는다(서버도 사유 없이는 바꾸지 않는다). 화면이 본 심사자(from)를 함께 보내 그 사이 바뀌었으면 거절된다.
+ */
+export function SwitchAuditModel({ campaignId, from, to, unanswered }: {
+  campaignId: number;
+  /** 지금 묻는 심사자 — 서버가 잠근 감사 행과 견준다 */
+  from: { provider: string; model: string; label: string };
+  to: { model: string; label: string };
+  unanswered: number;
+}) {
+  const toast = useAdminToast();
+  return (
+    <ConfirmAction tone="neutral" title={`감사 #${campaignId}의 남은 것을 ${to.label}(으)로 묻습니다`} confirmLabel="남은 감사 모델 바꾸기"
+      summary={<ul>
+        <li>모델: {from.label} → {to.label} ({to.model}, gpu3090 직접 — 게이트웨이를 거치지 않습니다)</li>
+        <li>아직 답이 없는 {unanswered.toLocaleString('ko-KR')}건을 새 모델이 묻습니다. 이미 답한 것은 그대로 남고, 답마다 어느 모델이 답했는지 기록됩니다.</li>
+        <li>Qwen 의 확신은 늘 0.95 나 1.00 이라 거절은 대부분 자동 보류 문턱을 넘습니다. 카탈로그·디렉터리 같은 거절은 보류하지 않고 목록에 둔 채 사람이 봅니다.</li>
+        <li>되돌리는 버튼은 없습니다. 멈추려면 &lsquo;이 감사 중단&rsquo;을 누르세요.</li>
+      </ul>}
+      note={{ label: '왜 바꾸는지 (꼭 적어 주세요 · 작업 로그에 남습니다)', placeholder: '예: 남은 1만5천 건을 하루 안에 끝내려고', maxLength: 500 }}
+      onConfirm={async ({ note }) => {
+        const form = new FormData();
+        form.set('campaign', String(campaignId));
+        form.set('expectedProvider', from.provider);
+        form.set('expectedModel', from.model);
+        form.set('reason', note ?? '');
+        const result = await switchAuditModel(form);
+        toast.show(resultToast(result, { message: result?.message ?? '남은 감사 모델을 바꿨습니다', link: { label: '기록 보기', href: '/admin/activity?group=takedown' } }));
+        return result;
+      }}
+      trigger={(open) => <button type="button" onClick={open}
+        className="rounded-lg border border-accent px-3 py-1.5 text-[13px] font-semibold text-accent">남은 감사 모델 바꾸기…</button>} />
   );
 }

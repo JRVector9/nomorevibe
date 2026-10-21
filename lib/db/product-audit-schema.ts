@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, real, boolean, jsonb, index, uniqueIndex, check } from "drizzle-orm/pg-core";
 import type { ReviewOutcome, ReviewSource } from "@/lib/crawl/agent-review-contract";
+import type { AuditProvider } from "@/lib/crawl/product-audit-reviewer";
 
 /**
  * 발행분 감사 — 이미 공개된 제품을 지금의 1차 심사 글로 한 번 더 본다.
@@ -30,14 +31,24 @@ export const productAuditCampaigns = pgTable("product_audit_campaigns", {
   /**
    * 이 감사가 어떤 기준으로 도는지 — 시작할 때 굳히고 바꾸지 않는다.
    *
-   * 제공자·모델은 잡이 설정이 아니라 이 행에서 읽는다. 도중에 1차 심사자를 갈아 끼워도 한 감사
-   * 안의 판단은 한 모델의 것이다. 프롬프트·규칙 버전은 코드가 정하므로, 배포로 바뀌면 잡이 이
-   * 감사를 멈춘다(lib/crawl/jobs/product-audit.ts) — 두 글의 판단을 한 목록에 섞지 않는다.
+   * 제공자·모델은 잡이 설정이 아니라 이 행에서 읽는다. 도중에 1차 심사자 설정을 갈아 끼워도 감사는 따라가지 않는다 —
+   * 감사의 심사자를 바꾸는 것은 사람이 감사 화면에서 사유를 적고 누르는 '남은 감사 모델 바꾸기'뿐이다(아래 current_*, 0112).
+   * 프롬프트·규칙 버전은 코드가 정하므로, 배포로 바뀌면 잡이 이 감사를 멈춘다(lib/crawl/jobs/product-audit.ts) —
+   * 두 글의 판단을 한 목록에 섞지 않는다.
    */
   promptVersion: varchar("prompt_version", { length: 40 }).notNull(),
   rulesVersion: varchar("rules_version", { length: 40 }).notNull(),
   provider: varchar("provider", { length: 80 }).notNull(),
   model: varchar("model", { length: 160 }).notNull(),
+  /**
+   * 남은 감사 모델 바꾸기(0112) — 아직 답이 없는 항목을 이 심사자로 묻는다. 비어 있으면 위의 provider·model 이다(product-audit-reviewer.ts).
+   * 위의 두 칸은 이 감사가 무엇으로 시작했는지의 기록이라 바꾸지 않는다. 이미 답한 항목은 그대로고, 답마다 누가 답했는지는
+   * 항목의 ai_provider·ai_model 과 시도 행이 적는다. 바꾼 사유는 작업 로그(operations_audit audit-switch-model)에 남는다.
+   */
+  currentProvider: varchar("current_provider", { length: 80 }).$type<AuditProvider>(),
+  currentModel: varchar("current_model", { length: 160 }),
+  switchedAt: timestamp("switched_at"),
+  switchedBy: varchar("switched_by", { length: 120 }),
   /** "유지 판정도 다시 보기" — 사람이 유지로 둔 것까지 다시 넣었는지 */
   reauditKept: boolean("reaudit_kept").notNull().default(false),
   status: varchar("status", { length: 20 }).$type<ProductAuditStatus>().notNull().default("running"),
@@ -73,6 +84,12 @@ export const productAuditItems = pgTable("product_audit_items", {
   aiReason: text("ai_reason"),
   aiConfidence: doublePrecision("ai_confidence"),
   aiCategory: varchar("ai_category", { length: 40 }),
+  /**
+   * 이 답을 낸 심사자(0112) — 감사 도중 모델을 바꾸면 한 감사에 두 모델의 답이 섞인다. 비어 있으면 그 감사의 provider·model 이 답했다
+   * (0112 전 행). 같은 모델에 두 번째 의견을 묻지 않는 규칙과 모델별 보류 규칙(second-opinion-rules.ts)이 coalesce(이 칸, 감사)로 읽는다
+   */
+  aiProvider: varchar("ai_provider", { length: 80 }),
+  aiModel: varchar("ai_model", { length: 160 }),
   reviewedAt: timestamp("reviewed_at"),
   /** 모델이 답하지 못한 횟수. MAX_REVIEW_ATTEMPTS 에 닿으면 더 묻지 않는다 */
   attempts: integer("attempts").notNull().default(0),
@@ -118,6 +135,8 @@ export const productAuditAttempts = pgTable("product_audit_attempts", {
   completedAt: timestamp("completed_at").notNull().defaultNow(),
   provider: varchar("provider", { length: 80 }).notNull(),
   model: varchar("model", { length: 160 }).notNull(),
+  /** 이 호출이 쓴 글의 판(0112) — Qwen 직접 심사는 QWEN_V2_PROMPT_VERSION. 비어 있으면 그 감사의 prompt_version 이다(0112 전 행) */
+  promptVersion: varchar("prompt_version", { length: 40 }),
   inputHash: varchar("input_hash", { length: 64 }).notNull(),
   source: jsonb("source").$type<ReviewSource>().notNull(),
   outcome: jsonb("outcome").$type<ReviewOutcome>(),

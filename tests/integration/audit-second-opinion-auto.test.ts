@@ -10,11 +10,12 @@ import { REVIEW_SYSTEM_PROMPT } from "@/lib/crawl/agent-review";
 import { classifyAuditReason } from "@/lib/crawl/audit-reason-category";
 import { auditReasonCategorySql, catalogLikeReasonSql } from "@/lib/crawl/audit-second-opinions";
 import { QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus, readQwenAutoObservation } from "@/lib/crawl/audit-second-opinion-auto";
-import { listAuditFindings, startProductAudit } from "@/lib/crawl/product-audit";
+import { listAuditFindings, startProductAudit, switchAuditReviewer } from "@/lib/crawl/product-audit";
+import { qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_ADDENDUM } from "@/lib/crawl/qwen-direct-review";
 import { catalogLikeAuditReason } from "@/lib/crawl/second-opinion-rules";
 import { publishedInputHash, publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
-import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { auditPublishedProducts, qwenAuditConcurrency } from "@/lib/crawl/jobs/product-audit";
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables } from "./setup";
@@ -65,6 +66,7 @@ beforeEach(async () => {
   server.calls.length = 0;
   server.status = 200;
   server.down = false;
+  resetQwenAuditBackoff();
   vi.stubGlobal("fetch", vi.fn(fakeQwen));
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" }, reviewConcurrency: 1 }, "test");
 });
@@ -281,6 +283,67 @@ describe("감사 두 번째 의견", () => {
       publishedFilter: { enabled: true, perTick: 4 } });
     await tick();
     expect(server.calls).toHaveLength(0);
+  });
+});
+
+describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
+  /** 감사를 열고 일부만 답을 적는다(0112 전 gpt-oss 의 답 — 누가 답했는지 칸이 비어 있다). 나머지는 답이 없다 */
+  async function partly(answered: string[], pending: string[]) {
+    for (const repo of [...answered, ...pending]) await listed(repo);
+    const started = await startProductAudit({ startedBy: "jr", reason: "감사 #4", reauditKept: false });
+    if (!started.ok) throw new Error(started.error);
+    for (const repo of answered) {
+      await db.update(productAuditItems).set({ aiDecision: "reject", aiConfidence: 0.97, aiReason: CONTENT, reviewedAt: sql`now()`, attempts: 1 })
+        .where(eq(productAuditItems.slug, repo.split("/")[1]));
+    }
+    expect(await switchAuditReviewer({ campaignId: started.campaignId, expected: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
+      reason: "남은 것을 Qwen 으로", by: "jr" })).toMatchObject({ ok: true });
+    return started.campaignId;
+  }
+
+  it("gpu3090 동시 호출은 감사 자리 + 두 번째 의견 1 을 넘지 않고, Qwen 이 감사한 항목에는 두 번째 의견을 묻지 않는다", async () => {
+    const answered = ["g/old-1", "g/old-2", "g/old-3"], pending = ["g/new-1", "g/new-2", "g/new-3", "g/new-4", "g/new-5", "g/new-6"];
+    await partly(answered, pending);
+    for (const repo of pending) server.answers.set(repo, { decision: "reject", reason: CONTENT, confidence: 0.97 });
+    const flight = { now: 0, max: 0, second: 0, secondMax: 0 };
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      const repo = JSON.parse(String(JSON.parse(String(init?.body)).messages[1].content).split("\n")[1]).product.repo as string;
+      const second = answered.includes(repo);
+      flight.now += 1; flight.max = Math.max(flight.max, flight.now);
+      if (second) { flight.second += 1; flight.secondMax = Math.max(flight.secondMax, flight.second); }
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return await fakeQwen(url, init);
+      } finally { flight.now -= 1; if (second) flight.second -= 1; }
+    }));
+
+    expect(await tick()).toMatchObject({ status: "completed" });
+    // 감사(남은 6건)와 두 번째 의견(0112 전 gpt-oss 의 거절 3건 — 지금 감사 모델이 Qwen 이어도 그 답은 gpt-oss 가 냈다)을 함께 물었다
+    expect(askedRepos().sort()).toEqual([...answered, ...pending].sort());
+    expect(flight.max).toBeLessThanOrEqual(qwenAuditConcurrency() + 1);
+    expect(flight.max).toBeGreaterThan(1);
+    expect(flight.secondMax).toBe(1);
+    const newItem = await item("new-1");
+    expect([newItem.aiProvider, newItem.aiModel, newItem.aiDecision]).toEqual(["qwen-direct", "qwen3.8-flash-next", "reject"]);
+    expect((await opinions()).map((row) => row.itemId).sort((a, b) => a - b))
+      .toEqual(await Promise.all(["old-1", "old-2", "old-3"].map(async (slug) => (await item(slug)).id)));
+
+    // 감사가 끝나 Qwen 이 답한 거절도 보류 후보가 됐지만 같은 모델이라 묻지 않는다
+    server.calls.length = 0;
+    await tick();
+    expect(askedRepos()).toEqual([]);
+    expect((await qwenSecondOpinionStatus((await getSettings()).auditHold)).audit.remaining).toBe(0);
+  });
+
+  it("감사의 Qwen 직접 심사가 서버 탈로 물러나는 동안에는 두 번째 의견도 부르지 않는다", async () => {
+    await judged([{ repo: "b/one", reason: CONTENT }]);
+    qwenEndpointBackoff.failures = 1;
+    qwenEndpointBackoff.retryAt = Date.now() + 60_000;
+    await tick();
+    expect(server.calls).toHaveLength(0);
+    resetQwenAuditBackoff();
+    await tick();
+    expect(askedRepos()).toEqual(["b/one"]);
   });
 });
 

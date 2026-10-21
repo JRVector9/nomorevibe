@@ -160,8 +160,8 @@ it.each([
   const ctx = context("product-audit");
   expect(await auditPublishedProducts(ctx)).toEqual({ done: false });
   expect(cli.mock.calls).toEqual([[auditInput, { model, timeoutMs, signal: expect.any(AbortSignal) }]]);
-  expect(mocks.recordAudit.mock.calls).toEqual([[{ itemId: 7, startedAt: expect.any(Date), provider, model, input: auditInput,
-    ok: true, outcome: verdict.outcome }, ctx.lease, DEFAULT_CRAWL_SETTINGS.auditHold]]);
+  expect(mocks.recordAudit.mock.calls).toEqual([[{ itemId: 7, startedAt: expect.any(Date), provider, model, promptVersion: REVIEW_PROMPT_VERSION,
+    input: auditInput, ok: true, outcome: verdict.outcome }, ctx.lease, DEFAULT_CRAWL_SETTINGS.auditHold]]);
   expect(mocks.read).toHaveBeenCalledTimes(1);
   expect(ctx.log).toHaveBeenCalledWith("product_audit.reviewed", { campaign: 4, reviewed: 1, failed: 0, noSource: 0 });
 });
