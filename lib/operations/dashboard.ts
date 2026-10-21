@@ -334,12 +334,14 @@ export async function todayPublications(now = new Date(), limit = 6): Promise<To
   }>(sql`
     WITH recent AS (
       SELECT ${products.slug} AS slug, ${products.name} AS name, ${products.tagline} AS tagline,
-        ${products.category} AS category, ${products.createdAt} AS created_at, ${korean} AS korean
+        ${products.category} AS category, ${products.createdAt} AS created_at, ${korean} AS korean,
+        coalesce(${products.verifiedAt}, ${products.createdAt}) AS listed_at
       FROM ${products} WHERE ${listedSince(sql`${end} - interval '24 hours'`)} AND ${products.createdAt} <= ${end}
     ), totals AS (
+      -- 짧은 창은 24시간 창(listedSince)과 같은 등재 시각 기준 — 확인이 늦은 제품이 1시간·오늘에 다른 기준으로 잡히지 않게
       SELECT count(*)::int AS total, count(*) FILTER (WHERE korean)::int AS korean_total,
-        count(*) FILTER (WHERE created_at >= ${end} - interval '1 hour')::int AS total_hour,
-        count(*) FILTER (WHERE created_at >= ${kstDayStart(end)})::int AS total_today
+        count(*) FILTER (WHERE listed_at >= ${end} - interval '1 hour')::int AS total_hour,
+        count(*) FILTER (WHERE listed_at >= ${kstDayStart(end)})::int AS total_today
       FROM recent
     )
     SELECT totals.total, totals.korean_total, totals.total_hour, totals.total_today, latest.* FROM totals LEFT JOIN LATERAL (

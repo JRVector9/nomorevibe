@@ -1,6 +1,7 @@
 import type { JobRole, JobLane } from "@/lib/jobs/catalog";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { COLLECTOR_JOBS, COLLECTOR_NAMES, isAdditiveField, type JobTallySummary, type TallyWindow } from "@/lib/jobs/tally";
+import { COLLECTOR_EVENTS } from "@/lib/jobs/collector-events";
 import type { JobDeferralSummary } from "@/lib/jobs/deferral-observation";
 import { isPausedJob } from "@/lib/jobs/status";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -49,58 +50,8 @@ export { COLLECTOR_JOBS };
 const collectorNames = COLLECTOR_NAMES;
 const collectorRoles = new Set(COLLECTOR_JOBS.map(job => job.role));
 
-/** Exact known event/counter names: arbitrary log strings and numeric IDs never become browser data. */
-const EVENTS: Record<string, { label: string; fields: string[]; error?: boolean; waiting?: boolean }> = {
-  "crawl.seeded": { label: "탐색 결과", fields: ["discovered", "drained", "page", "incompleteWindows"] },
-  "crawl.seed_latest_scanned": { label: "최신 탐색 결과", fields: ["discovered", "page", "incompleteWindows"] },
-  "crawl.seed_admission": { label: "탐색 수용 확인", fields: ["throttled"] },
-  "crawl.seed_failed": { label: "탐색 항목 오류", fields: [], error: true },
-  "crawl.seed_incomplete": { label: "탐색 이어서 처리", fields: ["page"], waiting: true },
-  "crawl.fetched": { label: "원본 수집 결과", fields: ["fetched", "skipped", "failed", "gated", "drained"] },
-  "crawl.fetch_recovered": { label: "중단 수집 회수", fields: ["recovered"] },
-  "crawl.fetch_rate_limited": { label: "원본 공급자 한도 대기", fields: [], waiting: true },
-  "crawl.fetch_auth_unavailable": { label: "원본 수집 인증 확인 필요", fields: [], error: true },
-  "crawl.show_hn_seeded": { label: "Show HN 수집 결과", fields: ["discovered", "examined", "backlogPages", "drained"] },
-  "crawl.show_hn_failed": { label: "Show HN 항목 오류", fields: ["page"], error: true },
-  "social.hn_talk_collected": { label: "HN 화제 수집 결과", fields: ["found", "inserted", "updated", "observed", "missing", "gone", "expired", "complete"] },
-  "social.hn_talk_failed": { label: "HN 화제 검색 오류", fields: ["page"], error: true },
-  "social.hn_talk_lookup_failed": { label: "HN 화제 다시 묻기 오류", fields: [], error: true },
-  "evidence.refresh_batch": { label: "공개 근거 수집 결과", fields: ["attempted", "succeeded", "failed", "factsChanged", "eventsInserted", "mediaInserted"] },
-  "evidence.product_refresh_failed": { label: "공개 근거 항목 오류", fields: [], error: true },
-  "evidence.initial_refresh_queue_failed": { label: "근거 수집 요청 오류", fields: [], error: true },
-  "agent_evidence.scanned": { label: "개발 AI 조사 결과", fields: ["observations", "cached", "failed"] },
-  "agent_evidence.failed": { label: "개발 AI 조사 오류", fields: [], error: true },
-  "agent_evidence.attach_failed": { label: "개발 AI 근거 연결 오류", fields: [], error: true },
-  "agent_evidence.deferred": { label: "개발 AI 조사 재시도 대기", fields: [], waiting: true },
-  "agent_evidence.disabled": { label: "개발 AI 수집 설정 꺼짐", fields: [] },
-  "agent_evidence.github_headroom_low": { label: "개발 AI 조사 GitHub 잔량 부족", fields: ["remaining", "limit"], waiting: true },
-  // items 모드 컨트롤러 틱(GitHub 호출 없음) — 스캔은 consumer 가 맡는다
-  "agent_scan.queue_filled": { label: "개발 AI 조사 대기열 채우기", fields: ["upserted", "gone"] },
-  "agent_scan.admin_consumed": { label: "관리자 추가 수집 완료 처리", fields: ["consumed"] },
-  "ai_level.tick": { label: "AI 단계 확인 결과", fields: ["checked", "due", "verified", "restUsed"] },
-  "ai_level.rate_limited": { label: "AI 단계 공급자 한도 대기", fields: [], waiting: true },
-  "ai_level.graphql_low": { label: "AI 단계 공급자 잔량 부족", fields: ["remaining"], waiting: true },
-  "product_stars.refreshed": { label: "저장소·스타 확인 결과", fields: ["examined", "updated", "ok", "missing", "empty", "blocked", "unknown", "renamed", "archived", "batches", "failed"] },
-  "product_stars.waiting": { label: "저장소·스타 공급자 대기", fields: ["examined", "updated", "batches"], waiting: true },
-  "product_star_observation.closed": { label: "스타 관측 회차 닫힘", fields: ["runs"] },
-  "product_star_observation.collected": { label: "스타 관측 결과", fields: ["examined", "recorded", "batches", "targets"] },
-  "product_star_observation.waiting": { label: "스타 관측 공급자 대기", fields: ["examined", "recorded", "batches"], waiting: true },
-  "readme_refresh.done": { label: "README 갱신 결과", fields: ["refreshed", "failed", "superseded"] },
-  "uptime.idle": { label: "응답 점검 대상 없음", fields: ["checked"] },
-  "uptime.checked": { label: "서비스 응답 결과", fields: ["alive", "down", "unknown"] },
-  "uptime.broad_failure_held": { label: "응답 점검 광역 실패 보류", fields: ["attempted", "down", "unknown"], error: true },
-  // split claims 모드(0104): 제출분(Oracle 등) 반영, home claim 이 멈춘 까닭(차단기 열림·policy 에 없는 instance·fenced)
-  "uptime.split_applied": { label: "응답 점검 제출분 반영", fields: ["remote", "applied", "held", "confirmRequested", "returned", "stale", "lost"] },
-  "uptime.split_blocked": { label: "응답 점검 분담 확인 멈춤", fields: ["breakerOpen", "unconfigured", "fenced"], error: true },
-  "uptime.split_result_invalid": { label: "응답 점검 결과 모양 오류", fields: ["invalid"], error: true },
-  "uptime.split_clock_skew": { label: "응답 점검 시계 어긋남(확인 쉼)", fields: ["skewMs"], error: true },
-  "news.refreshed": { label: "소식 수집 결과", fields: ["added", "failed", "autoApprove", "unfinished"] },
-  "thumbnail.refreshed": { label: "이미지 수집 결과", fields: ["examined", "filled", "defaults", "skipped", "failed"] },
-  "repo_review.idle": { label: "저장소 재확인 대상 없음", fields: ["reviewed"] },
-  "repo_review.reviewed": { label: "저장소 재확인 결과", fields: ["keep", "human", "delist_candidate", "delisted", "unknown", "capped", "operatorKeep"] },
-  "repo_review.blocked": { label: "저장소 재확인 공급자 대기", fields: ["keep", "human", "delist_candidate", "delisted", "unknown", "capped", "operatorKeep"], waiting: true },
-  "repo_review.capped": { label: "자동 내리기 한도 대기", fields: ["limit", "capped"], waiting: true },
-};
+/** Exact known event/counter names: arbitrary log strings and numeric IDs never become browser data(목록은 lib/jobs/collector-events.ts — 누적도 같은 목록을 먼저 싣는다). */
+const EVENTS = COLLECTOR_EVENTS;
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -152,16 +103,28 @@ function result(row: Observation, name: string): CollectorResult | null {
  * 숫자 없는 이벤트(오류·대기 알림)는 나온 횟수(times)로 보인다.
  */
 function totalsOf(window: TallyWindow): CollectorTotals {
-  const events: CollectorEvent[] = [];
+  // 이벤트별 합 — 다른 이벤트로 접는 필드(foldInto)는 그쪽에 더한다. 더하지 않는 필드(noSum)·더해서 뜻이 없는 필드는 뺀다
+  const sums = new Map<string, Record<string, number>>();
+  const add = (event: string, field: string, value: number) => {
+    const counts = sums.get(event) ?? {};
+    counts[field] = (counts[field] ?? 0) + value;
+    sums.set(event, counts);
+  };
   for (const [event, definition] of Object.entries(EVENTS)) {
-    const counts: CollectorEvent["counts"] = {};
     for (const field of definition.fields) {
       // 조사 결과의 failed 는 예전 관측에서 상태를 잃었다 — 마지막 회차 표시(result)와 같이 세지 않는다
-      if (!isAdditiveField(field) || (event === "agent_evidence.scanned" && field === "failed")) continue;
+      if (!isAdditiveField(field) || definition.noSum?.includes(field) || (event === "agent_evidence.scanned" && field === "failed")) continue;
       const value = count(window[`${event}#${field}`]);
-      if (value) counts[field] = value;
+      if (!value) continue;
+      add(definition.foldInto?.fields.includes(field) ? definition.foldInto.event : event, field, value);
     }
-    const times = count(window[event]) ?? 0;
+  }
+  const events: CollectorEvent[] = [];
+  for (const [event, definition] of Object.entries(EVENTS)) {
+    const counts = sums.get(event) ?? {};
+    // 나온 횟수는 대기·오류 알림이거나 숫자를 싣지 않은 이벤트에만 보인다(결과 요약은 회차 수와 같아 겹친다)
+    const occurred = count(window[event]) ?? 0;
+    const times = occurred && (definition.waiting || definition.error || Object.keys(counts).length === 0) ? occurred : 0;
     if (Object.keys(counts).length || times) events.push({ label: definition.label, counts, ...(times ? { times } : {}) });
   }
   return { ticks: count(window["@ok"]) ?? 0, failed: count(window["@failed"]) ?? 0, events };

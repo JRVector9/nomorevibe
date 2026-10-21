@@ -15,6 +15,8 @@ import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { COLLECTOR_NAMES, createTally, jobTallyUpsert } from "./tally";
+// 누적 실패는 오류 code·잘린 message 만 — drizzle 이 감싼 message 의 SQL·params 를 로그에 남기지 않는다
+import { dbErrorFields } from "@/lib/db/error-fields";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -246,7 +248,7 @@ export async function runJob<C>(
       // savepoint 로 그 문장만 되돌리고 남긴다
       if (tally) {
         try { await tx.transaction(async sp => { await sp.execute(jobTallyUpsert(name, { ...tally.counts(), "@ok": 1 })); }); }
-        catch (error) { logger.warn("job.tally_failed", { job: name, error }); }
+        catch (error) { logger.warn("job.tally_failed", { job: name, ...dbErrorFields(error) }); }
       }
       if (batchResult) {
         const key = `batch-result:${batchResult.instanceId}:${name}`;
@@ -279,7 +281,7 @@ export async function runJob<C>(
       await db.transaction(async tx => {
         if (!await writerSiteActive(tx)) return;
         await tx.execute(jobTallyUpsert(name, { "@failed": 1 }, { failed: true }));
-      }).catch(tallyError => logger.warn("job.tally_failed", { job: name, error: tallyError }));
+      }).catch(tallyError => logger.warn("job.tally_failed", { job: name, ...dbErrorFields(tallyError) }));
     }
     const durationMs = Date.now() - startedAt;
     logger.error("job.failed", { job: name, durationMs, error });

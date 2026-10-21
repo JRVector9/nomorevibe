@@ -1,6 +1,7 @@
 import { notLike, sql, type SQL } from "drizzle-orm";
 import { operationsObservations } from "@/lib/db/schema";
 import { JOB_CATALOG, type JobRole } from "./catalog";
+import { COLLECTOR_EVENTS } from "./collector-events";
 
 /**
  * 수집기 회차 누적 — 잡마다 operations_observations 한 줄(job-tally:<job>). 워커가 runJob 에 tally 를 켤 때만 쓴다.
@@ -9,7 +10,7 @@ import { JOB_CATALOG, type JobRole } from "./catalog";
  * 크롤러 활동 표가 멈춘 것처럼 보였다. 그래서 같은 이벤트 숫자를 시간 묶음에 더해 둔다 — 새 예약 잡 없이 runner 가 틱을 끝내며 쓴다.
  *
  * - 묶음 열쇠는 "h<YYYY-MM-DDTHH>|<지표>"(정시, 최근 25칸)와 "m<YYYY-MM-DDTHH:MM>|<지표>"(10분, 최근 7칸). DB 시계(UTC)다.
- * - 지표는 "<이벤트>#<필드>"(그 틱의 숫자 합), 숫자를 싣지 않은 이벤트는 "<이벤트>"(나온 횟수), 틱 자체는 "@ok"·"@failed".
+ * - 지표는 "<이벤트>#<필드>"(그 틱의 숫자 합)와 "<이벤트>"(나온 횟수), 틱 자체는 "@ok"·"@failed".
  * - 한 줄 upsert 가 지난 값과 합치고 창 밖 묶음을 버린다. 두 프로세스가 같이 써도(역할 인계 중) ON CONFLICT 가 행을 잠그고 더한다.
  * - 실패한 틱은 "@failed"와 lastFailedAt 만 남긴다(그 틱의 이벤트는 job:<name> 처럼 세지 않는다). 미룬 틱은 defer:<job> 이 맡는다.
  * - 화면은 이 키를 크롤러 활동에서만 따로 읽는다 — 관측 표 전체 읽기(operationsData·진행 판정)는 WITHOUT_JOB_TALLIES 로 뺀다.
@@ -31,7 +32,7 @@ const IDENTIFIER = /(^id|Id|Ids)$/;
 export const isAdditiveField = (field: string) => !NOT_ADDITIVE.has(field) && !IDENTIFIER.test(field);
 const EVENT = /^[a-z][a-z0-9_.]{0,63}$/;
 const FIELD = /^[A-Za-z][A-Za-z0-9_]{0,31}$/;
-/** 한 틱에 싣는 지표 수 상한 — 열쇠 수가 묶음마다 이만큼을 넘지 않는다 */
+/** 한 틱에 싣는, 화면이 모르는 지표 수 상한 — 화면이 아는 지표(collector-events.ts)는 이 수와 따로 늘 싣는다 */
 export const TALLY_METRICS_PER_TICK = 48;
 const VALUE_MAX = 1_000_000_000;
 
@@ -39,24 +40,30 @@ export type TallyEvent = { event: string; counts: Record<string, number | boolea
 
 /**
  * 한 틱의 이벤트를 지표별 합으로 모은다. 0 은 싣지 않는다(빈 틱이 열쇠를 늘리지 않게). runner 가 ctx.log 마다 넣는다 —
- * 관측에 남기는 마지막 12개가 아니라 그 틱의 모든 이벤트다. 숫자를 하나도 싣지 않은 이벤트(오류·대기 알림)는 나온 횟수로 센다.
+ * 관측에 남기는 마지막 12개가 아니라 그 틱의 모든 이벤트다. 이벤트마다 나온 횟수("<이벤트>")도 센다 — 한도·인증 대기처럼
+ * 숫자를 함께 싣는 알림도 몇 번 났는지 보인다.
+ * 화면이 아는 이벤트·필드(collector-events.ts)는 늘 싣고, 그 밖의 것은 한 틱에 TALLY_METRICS_PER_TICK 개까지만 싣는다 —
+ * 틱 끝에 남기는 요약(crawl.fetched·evidence.refresh_batch)이 앞선 잡다한 이벤트에 밀려 잘리지 않게.
  */
 export function createTally() {
   const totals = new Map<string, number>();
-  const add = (metric: string, value: number) => {
-    if (!totals.has(metric) && totals.size >= TALLY_METRICS_PER_TICK) return;
+  let others = 0;
+  const add = (metric: string, value: number, known: boolean) => {
+    if (!totals.has(metric)) {
+      if (!known && others >= TALLY_METRICS_PER_TICK) return;
+      if (!known) others++;
+    }
     totals.set(metric, Math.min(VALUE_MAX, (totals.get(metric) ?? 0) + value));
   };
   return {
     add({ event, counts }: TallyEvent) {
       if (!EVENT.test(event)) return;
-      let numbers = 0;
+      const definition = Object.hasOwn(COLLECTOR_EVENTS, event) ? COLLECTOR_EVENTS[event] : null;
+      add(event, 1, definition !== null);
       for (const [field, value] of Object.entries(counts)) {
         if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || !FIELD.test(field) || !isAdditiveField(field)) continue;
-        numbers++;
-        if (value > 0) add(`${event}#${field}`, Math.min(VALUE_MAX, value));
+        if (value > 0) add(`${event}#${field}`, Math.min(VALUE_MAX, value), definition?.fields.includes(field) === true);
       }
-      if (numbers === 0) add(event, 1);
     },
     counts: (): Record<string, number> => Object.fromEntries(totals),
   };

@@ -306,6 +306,22 @@ describe("회차 누적·미룸·실패", () => {
     expect(report.totalsReadFailed).toBe(false);
   });
 
+  it("한도·인증 대기로 끝난 회차의 원본 확보는 «원본 수집 결과»에 더하고, 대기는 나온 횟수로 보인다", () => {
+    const report = build({ tallies: [tally({ hour: { "@ok": 3, "crawl.fetched": 2, "crawl.fetched#fetched": 10,
+      "crawl.fetch_rate_limited": 1, "crawl.fetch_rate_limited#fetched": 4, "crawl.fetch_auth_unavailable": 1 } })], deferrals: [] });
+    expect(report.jobs.find(item => item.name === "crawl-fetch")?.totals?.hour.events).toEqual([
+      { label: "원본 수집 결과", counts: { fetched: 14 } },
+      { label: "원본 공급자 한도 대기", counts: {}, times: 1 },
+      { label: "원본 수집 인증 확인 필요", counts: {}, times: 1 },
+    ]);
+  });
+
+  it("다시 센 창(HN 화제 found·observed)은 누적에 더하지 않는다", () => {
+    const report = build({ tallies: [{ ...tally({ day: { "@ok": 48, "social.hn_talk_collected": 48,
+      "social.hn_talk_collected#found": 4800, "social.hn_talk_collected#observed": 4700, "social.hn_talk_collected#inserted": 12 } }), job: "hn-talk" }], deferrals: [] });
+    expect(report.jobs.find(item => item.name === "hn-talk")?.totals?.day.events).toEqual([{ label: "HN 화제 수집 결과", counts: { inserted: 12 } }]);
+  });
+
   it("못 읽었으면 누적·미룸을 0 이 아니라 미확인으로 둔다", () => {
     const report = build({ tallies: null, deferrals: null });
     expect(report.jobs.every(row => row.totals === null && row.deferredHour === null)).toBe(true);

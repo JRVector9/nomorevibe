@@ -2,27 +2,38 @@ import { describe, expect, it } from "vitest";
 import { createTally, jobTallyKey, summarizeJobTallies, tallyCounts, TALLY_METRICS_PER_TICK } from "@/lib/jobs/tally";
 
 describe("한 틱의 지표 합", () => {
-  it("숫자 필드는 더하고, 0·참거짓·자리 값은 빼고, 숫자 없는 이벤트는 나온 횟수로 센다", () => {
+  it("숫자 필드는 더하고, 0·참거짓·자리 값은 빼고, 이벤트마다 나온 횟수를 센다", () => {
     expect(tallyCounts([
       { event: "crawl.fetched", counts: { fetched: 3, skipped: 0, drained: true } },
       { event: "crawl.fetched", counts: { fetched: 2, skipped: 1 } },
       { event: "crawl.seeded", counts: { discovered: 4, page: 12, incompleteWindows: 2 } },
       { event: "crawl.show_hn_failed", counts: { page: 3 } },
       { event: "crawl.fetch_rate_limited", counts: {} },
-      { event: "crawl.fetch_rate_limited", counts: {} },
-    ])).toEqual({ "crawl.fetched#fetched": 5, "crawl.fetched#skipped": 1, "crawl.seeded#discovered": 4,
-      "crawl.show_hn_failed": 1, "crawl.fetch_rate_limited": 2 });
+    ])).toEqual({ "crawl.fetched": 2, "crawl.fetched#fetched": 5, "crawl.fetched#skipped": 1, "crawl.seeded": 1, "crawl.seeded#discovered": 4,
+      "crawl.show_hn_failed": 1, "crawl.fetch_rate_limited": 1 });
   });
 
-  it("이름 모양이 틀리거나 음수·소수는 버리고, 지표 수에 상한을 둔다", () => {
+  it("한도 대기로 끝난 회차의 실제 모양({ fetched, resetAt }) — 나온 횟수와 그때까지 확보한 수를 모두 남긴다", () => {
+    // lib/crawl/jobs/fetch.ts: ctx.log("crawl.fetch_rate_limited", { fetched: tally.fetched, resetAt: retryAt.toISOString() })
+    // runner 는 숫자·참거짓만 넘긴다(resetAt 글자는 빠진다)
+    expect(tallyCounts([{ event: "crawl.fetch_rate_limited", counts: { fetched: 7 } }]))
+      .toEqual({ "crawl.fetch_rate_limited": 1, "crawl.fetch_rate_limited#fetched": 7 });
+    expect(tallyCounts([{ event: "crawl.fetch_auth_unavailable", counts: { fetched: 0 } }])).toEqual({ "crawl.fetch_auth_unavailable": 1 });
+  });
+
+  it("이름 모양이 틀리거나 음수·소수·번호(…Id)는 버리고, 화면이 모르는 지표에만 상한을 둔다", () => {
     expect(tallyCounts([{ event: "DROP|x", counts: { a: 1 } }, { event: "ok.event", counts: { "bad field": 1, minus: -1, half: 0.5, good: 2, scanId: 7, id: 3 } }]))
-      .toEqual({ "ok.event#good": 2 });
+      .toEqual({ "ok.event": 1, "ok.event#good": 2 });
     const tally = createTally();
-    for (let index = 0; index < TALLY_METRICS_PER_TICK + 10; index++) tally.add({ event: `e${index}`, counts: { n: 1 } });
-    expect(Object.keys(tally.counts())).toHaveLength(TALLY_METRICS_PER_TICK);
+    for (let index = 0; index < TALLY_METRICS_PER_TICK + 10; index++) tally.add({ event: `e${index}`, counts: {} });
+    // 늦게 오는 요약(crawl.fetched)은 상한과 상관없이 싣는다
+    tally.add({ event: "crawl.fetched", counts: { fetched: 9 } });
+    const counts = tally.counts();
+    expect(Object.keys(counts).filter((key) => key.startsWith("e"))).toHaveLength(TALLY_METRICS_PER_TICK);
+    expect(counts).toMatchObject({ "crawl.fetched": 1, "crawl.fetched#fetched": 9 });
     // 이미 있는 지표는 상한을 넘어도 더한다
-    tally.add({ event: "e0", counts: { n: 4 } });
-    expect(tally.counts()["e0#n"]).toBe(5);
+    tally.add({ event: "e0", counts: {} });
+    expect(tally.counts().e0).toBe(2);
   });
 });
 
