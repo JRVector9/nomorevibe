@@ -4,6 +4,7 @@ import { crawlCandidates, products, secondReviews } from '@/lib/db/schema';
 import { lockProductGeneration } from '@/lib/domain/products/generation';
 import { setStatusWithAudit } from '@/lib/domain/products/repository';
 import { lockPipelineInputStages } from './pipeline-stage-context';
+import { classifyAuditReason } from './audit-reason-category';
 
 /** The finding, product transition, and human decision must succeed together. */
 export async function decidePublishedSecondReview(input: {
@@ -30,8 +31,12 @@ export async function decidePublishedSecondReview(input: {
     )).for('update');
     if (!current) return false;
 
+    // 누가 왜 내렸는지 남긴다 — 사유는 감사(audit:<갈래>)처럼 2차 의견의 갈래로 적는다
     if (input.decision === 'ban' && !(await setStatusWithAudit({ id: product.id, slug: input.slug,
-      status: 'banned', action: 'admin.product.ban' }, tx))) return false;
+      status: 'banned', action: 'admin.product.ban', actor: input.actor.slice(0, 120),
+      reason: `second_review:${classifyAuditReason(finding.secondReason)}`,
+      metadata: { source: 'second-review', secondReviewId: finding.id, trigger: finding.trigger, signals: finding.signals,
+        model: finding.model, secondConfidence: finding.secondConfidence } }, tx))) return false;
     await tx.update(secondReviews).set({ status: 'resolved', resolution: input.decision === 'ban' ? 'banned' : 'kept',
       resolvedBy: input.actor.slice(0, 120), resolvedAt: new Date() }).where(eq(secondReviews.id, current.id));
     return true;

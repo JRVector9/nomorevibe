@@ -10,7 +10,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { recordAi2Attempt, recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
-  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type ProductStatus, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
@@ -299,7 +299,23 @@ export function combineVotes(first: Verdict, second: Vote[], options: {
   return { status: "needs_human", decision, votes: all.length };
 }
 
+/**
+ * 공개분 표본은 공개된 뒤 이틀 안의 것만 본다. 공개 시각은 제품 행이 생긴 때(products.created_at)다.
+ *
+ * 전에는 후보의 decided_at 으로 쟀다. 그 칸은 사람·DeepSeek 결정에만 적히고 규칙·AI 1차가 올린 것은 비어 있어
+ * (2026-10-21 프로드 자동 공개 44,261건 전부 NULL, 최근 이틀 공개 71건은 deepseek) 공개분 표본이 한 행도 생기지 않았다.
+ */
 const PUBLISHED_LOOKBACK_MS = 48 * 3600_000;
+const PUBLIC_STATUSES: ProductStatus[] = ["seeded", "verified"];
+/** 사람이 승인해 올린 것(admin)은 사람이 이미 봤다. 규칙·AI 1차(auto)·DeepSeek 처럼 사람 아닌 쪽이 정한 것만 다시 본다 */
+const automatedPublication = (decidedBy: string | null) => decidedBy !== null && decidedBy !== "admin";
+/**
+ * 공개분은 제품·모델마다 한 번만 본다 — 입력 세대로 가르지 않는다. 원본이 하루 지나면(REVIEW_FRESH_MS) 입력 해시가
+ * 바뀌어, 세대로 가르면 이틀 안에 같은 제품을 다시 뽑고 사람을 기다리던 표까지 닫는다.
+ * 표를 내기 전에 입력이 바뀌어 닫힌 행과 뺀 모델의 행만 그 모델의 몫이 아니다.
+ */
+const publishedVoteTaken = (row: Pick<SecondReview, "status" | "resolution">) =>
+  !(row.status === "resolved" && (row.resolution === "superseded" || row.resolution === "model_removed"));
 
 /** 공개분은 slug 당 한 번 — slug 가 80자까지라 그대로는 input_hash(64)에 안 들어간다 */
 export function publishedInputHash(slug: string): string {
@@ -314,7 +330,7 @@ const PUBLISHED_LIMIT = 25;
  *  - ai_decided: 규칙이 못 가른 보류 후보를 AI 1차가 승인·거부로 가른 것 — 확신을 낸 1차만.
  *    확신이 없던 옛 1차(프롬프트 2026-09-11.2 이전)는 일치 기준에 닿을 수 없어 전부 "사람 확인"이 된다.
  *    배포 직후 프로드에서 그렇게 쌓였다 — 새 프롬프트가 다시 보면 그 판단으로 올린다.
- *  - risk / sample: 규칙만 통과해 최근 공개된 것 중 위험 신호가 있거나 표본에 든 것
+ *  - risk / sample: 사람이 아닌 쪽(규칙·AI·DeepSeek)이 승인해 최근 공개된 것 중 위험 신호가 있거나 표본에 든 것
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Date | undefined, lease: JobLease): Promise<number> {
@@ -424,17 +440,23 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       generationKey: secondReviewGeneration(row.firstAttemptId, row, "ai_approved"), inputHash: row.inputHash }))));
   }
 
+  const publishedSince = new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS);
+  // 지금 세운 모델 중 이 공개분을 아직 안 본 것이 있다 — 다 본 것이 2,000건 상한을 차지하지 않게 SQL 에서 거른다
+  const unsampled = sql`exists(select 1 from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
+    where not exists(select 1 from ${secondReviews} s where s.candidate_id = ${crawlCandidates.id} and s.published_slug = ${crawlCandidates.publishedSlug}
+      and regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i') = v.model
+      and not (s.status = 'resolved' and coalesce(s.resolution, '') in ('superseded', 'model_removed'))))`;
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
     productUrl: crawlCandidates.productUrl, pageMeta: crawlDocuments.pageMeta, pageStatus: crawlDocuments.pageStatus, documentUrl: crawlDocuments.productUrl })
     .from(crawlCandidates).innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
-    .where(and(eq(crawlCandidates.state, "published"), eq(crawlCandidates.decidedBy, "auto"), isNotNull(crawlCandidates.publishedSlug),
-      gte(crawlCandidates.decidedAt, new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS))))
+    .innerJoin(products, eq(products.slug, crawlCandidates.publishedSlug))
+    // 원본 주소가 바뀐 것은 아래 잠금에서 입력을 못 만든다 — 매 틱 몫만 차지하지 않게 여기서 뺀다
+    .where(and(eq(crawlCandidates.state, "published"), ne(crawlCandidates.decidedBy, "admin"), eq(crawlDocuments.productUrl, crawlCandidates.productUrl),
+      inArray(products.status, PUBLIC_STATUSES), gte(products.createdAt, publishedSince), unsampled))
+    // 새로 공개된 것부터 — 원본이 신선할 때 본다
+    .orderBy(desc(products.createdAt), desc(products.id))
     .limit(2_000);
-  const previousPublished = published.length ? await db.select({ candidateId: secondReviews.candidateId, generationKey: secondReviews.generationKey, model: secondReviews.model })
-    .from(secondReviews).where(inArray(secondReviews.candidateId, published.map(row => row.id))) : [];
-  const publishedModels = new Set(previousPublished.map(row => `${row.candidateId}:${row.generationKey}:${canonicalReviewModel(row.model ?? "")}`));
   const publishedRows: (typeof secondReviews.$inferInsert)[] = [];
-  let publishedCount = 0;
   for (const row of published) {
     const meta = (row.pageMeta ?? {}) as { title?: unknown; readmeSample?: unknown };
     const facts = pageFactsFromDocument({ productUrl: row.documentUrl, pageStatus: row.pageStatus, pageMeta: row.pageMeta });
@@ -442,17 +464,11 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       textSample: facts.textSample ?? null, readme: typeof meta.readmeSample === "string" ? meta.readmeSample : null });
     const sampled = inSample(row.repo, settings.secondReview.sampleRate);
     if (!signals.length && !sampled) continue;
-    const [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id));
-    const [document] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.repo, row.repo)).limit(1);
-    if (!candidate || !document) continue;
-    const input = await loadReviewInput(candidate, document, settings);
-    const generationKey = secondReviewGeneration(null, input);
-    const missingVoters = voters.filter(voter => !publishedModels.has(`${row.id}:${generationKey}:${canonicalReviewModel(voter.model)}`));
-    if (!missingVoters.length) continue;
-    publishedRows.push(...missingVoters.map((voter) => ({ ...voter, candidateId: row.id, repo: row.repo, publishedSlug: row.slug,
-      trigger: (signals.length ? "risk" : "sample") as SecondReviewTrigger, signals,
-      firstDecision: "approve", firstConfidence: null, firstAttemptId: null, generationKey, inputHash: publishedInputHash(row.slug!) })));
-    if (++publishedCount >= PUBLISHED_LIMIT) break;
+    // 후보만 고른다. 어느 모델이 볼지는 잠근 뒤 지금 표로 다시 정한다
+    publishedRows.push({ ...voters[0], candidateId: row.id, repo: row.repo, publishedSlug: row.slug,
+      trigger: signals.length ? "risk" : "sample", signals,
+      firstDecision: "approve", firstConfidence: null, firstAttemptId: null, inputHash: publishedInputHash(row.slug!) });
+    if (publishedRows.length >= PUBLISHED_LIMIT) break;
   }
   rows.push(...publishedRows);
   const candidateIds = [...new Set([...rows.map(row => row.candidateId), ...loneIds])].sort((a, b) => a - b);
@@ -460,14 +476,14 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
   let count = 0;
   for (const candidateId of candidateIds) count += await controllerWrite(lease, candidateId, async (tx, domain, events) => {
     const { candidate, document, input, settings: current } = domain;
-    if (!candidate || !document || !input || !current.enabled || !current.secondReview.enabled || candidate.decidedBy !== "auto") return 0;
+    if (!candidate || !document || !input || !current.enabled || !current.secondReview.enabled) return 0;
     const currentVoters = [...new Map(current.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
     const hints = rows.filter(row => row.candidateId === candidateId);
     const gate = loneIds.includes(candidateId) || hints.some(row => row.trigger === "ai_approved");
     const first = currentFirst(domain, gate);
     let proposed: (typeof secondReviews.$inferInsert)[];
     if (gate) {
-      if (current.reviewMode !== "enforce" || candidate.state !== "approved" || candidate.publishedSlug
+      if (current.reviewMode !== "enforce" || candidate.decidedBy !== "auto" || candidate.state !== "approved" || candidate.publishedSlug
         || !freshFirst(domain, first, semanticNow) || first.outcome?.decision !== "approve") return 0;
       const independent = currentVoters.filter(voter => !sameReviewModel(first.model, voter.model));
       if (!independent.length) {
@@ -479,18 +495,23 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
         firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, "ai_approved"), inputHash: input.inputHash }));
     } else if (hints.some(row => row.publishedSlug)) {
       if (candidate.state !== "published" || !candidate.publishedSlug || !domain.publishedProductId
-        || candidate.publishedSlug !== hints[0]?.publishedSlug || !candidate.decidedAt
-        || candidate.decidedAt < new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS)) return 0;
+        || !automatedPublication(candidate.decidedBy) || candidate.publishedSlug !== hints[0]?.publishedSlug) return 0;
+      // 제품 생성 잠금은 도메인 접두에서 잡았다 — 공개 시각과 상태를 그 아래에서 다시 읽는다
+      const [product] = await tx.select({ createdAt: products.createdAt, status: products.status }).from(products)
+        .where(eq(products.id, domain.publishedProductId));
+      if (!product || !PUBLIC_STATUSES.includes(product.status) || product.createdAt < publishedSince) return 0;
       const meta = document.pageMeta as { title?: unknown; readmeSample?: unknown } | null;
       const facts = pageFactsFromDocument(document);
       const signals = riskSignals({ name: typeof meta?.title === "string" ? meta.title : candidate.repo, productUrl: candidate.productUrl,
         textSample: facts.textSample ?? null, readme: typeof meta?.readmeSample === "string" ? meta.readmeSample : null });
       if (!signals.length && !inSample(candidate.repo, current.secondReview.sampleRate)) return 0;
-      proposed = currentVoters.map(voter => ({ ...voter, candidateId, repo: candidate.repo, publishedSlug: candidate.publishedSlug,
-        trigger: signals.length ? "risk" : "sample", signals, firstDecision: "approve", firstConfidence: null,
-        firstAttemptId: null, generationKey: secondReviewGeneration(null, input), inputHash: publishedInputHash(candidate.publishedSlug!) }));
+      proposed = currentVoters.filter(voter => !domain.votes.some(existing => existing.publishedSlug === candidate.publishedSlug
+        && sameReviewModel(existing.model, voter.model) && publishedVoteTaken(existing)))
+        .map(voter => ({ ...voter, candidateId, repo: candidate.repo, publishedSlug: candidate.publishedSlug,
+          trigger: signals.length ? "risk" : "sample", signals, firstDecision: "approve", firstConfidence: null,
+          firstAttemptId: null, generationKey: secondReviewGeneration(null, input), inputHash: publishedInputHash(candidate.publishedSlug!) }));
     } else {
-      if (candidate.state !== "needs_review" || candidate.reason === "second_review_split" || candidate.publishedSlug
+      if (candidate.decidedBy !== "auto" || candidate.state !== "needs_review" || candidate.reason === "second_review_split" || candidate.publishedSlug
         || !freshFirst(domain, first, semanticNow)) return 0;
       const decision = first.outcome?.decision;
       if (!(decision === "approve" || decision === "reject" || current.secondReview.includeAiHeld && decision === "needs_review")

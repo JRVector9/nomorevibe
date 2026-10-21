@@ -132,6 +132,13 @@ async function repoAutoBannedSection(): Promise<InboxSectionData> {
     items: rows.map((row) => ({ id: row.slug, name: row.name, since: row.since, why: "저장소 소실 자동 차단 · 현재 근거를 확인" })) };
 }
 
+const SPAM_CONFIDENCE: Record<string, string> = { high: "높음", medium: "중간", low: "낮음" };
+/** 스팸 재검사(spam-rescan.ts)는 확신을 high·medium·low 글자로 적는다. 숫자로 적힌 기록도 그대로 읽는다 */
+function spamConfidence(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return `확신 ${value.toFixed(2)}`;
+  return typeof value === "string" && Object.hasOwn(SPAM_CONFIDENCE, value) ? `확신 ${SPAM_CONFIDENCE[value]}` : null;
+}
+
 /** 스팸 자동 차단 — attentionCounts 의 spamAutoBans.day 와 같은 조건(지난 24시간의 자동 차단 기록) */
 async function spamPreview(now: Date): Promise<InboxItem[]> {
   const rows = await db.select({ id: productEvidenceAudit.id, slug: productEvidenceAudit.slug, name: products.name, status: products.status,
@@ -141,7 +148,7 @@ async function spamPreview(now: Date): Promise<InboxItem[]> {
       eq(productEvidenceAudit.reason, SPAM_AUTO_BAN_REASON), sql`${productEvidenceAudit.createdAt} > ${at(now)} - interval '24 hours'`))
     .orderBy(asc(productEvidenceAudit.createdAt), asc(productEvidenceAudit.id)).limit(INBOX_PREVIEW);
   return rows.map((row) => {
-    const confidence = typeof row.metadata.confidence === "number" ? `확신 ${row.metadata.confidence.toFixed(2)}` : null;
+    const confidence = spamConfidence(row.metadata.confidence);
     const state = row.status === "banned" ? "차단 중" : "차단 풀림";
     return { id: String(row.id), name: row.name ?? row.slug ?? "(이름 없음)", since: row.since,
       why: [state, confidence].filter(Boolean).join(" · ") };

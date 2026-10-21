@@ -70,8 +70,9 @@ beforeAll(async () => {
     { productId: id("intro-stale"), checkedTagline: "예전 소개", outcome: "needs_editor" },
   ]);
 
+  // 스팸 재검사는 확신을 high·medium·low 글자로 적는다(spam-rescan.ts)
   const ban = (slug: string, createdAt: Date) => ({ slug, actor: SPAM_AUTO_BAN_ACTOR, action: "admin.product.ban", reason: SPAM_AUTO_BAN_REASON,
-    metadata: { confidence: 0.97, status: "banned" }, createdAt });
+    metadata: { confidence: "high", score: 9, status: "banned" }, createdAt });
   await db.insert(productEvidenceAudit).values([ban("spam-new", ago(3)), ban("spam-old", ago(30))]);
   await db.insert(productEvidenceAudit).values({ slug: "auto-gone", actor: "auto:repo-gone", action: "admin.product.ban", reason: "repo_gone", createdAt: ago(2) });
 
@@ -121,7 +122,7 @@ it("줄은 오래 기다린 것부터이고, 첫 줄이 가장 오래된 것이�
   expect(data("repoGone").items.map((item) => item.id)).toEqual(["gone-web", "gone-lib"]);
   expect(data("audit").items).toEqual([expect.objectContaining({ name: "audit-open 이름", why: "제품이 아님 · 확신 0.96" })]);
   expect(data("intro").items).toEqual([expect.objectContaining({ id: "intro-open", why: "근거로는 무엇인지 알 수 없음" })]);
-  expect(data("spam").items).toEqual([expect.objectContaining({ name: "spam-new 이름", why: "차단 중 · 확신 0.97" })]);
+  expect(data("spam").items).toEqual([expect.objectContaining({ name: "spam-new 이름", why: "차단 중 · 확신 높음" })]);
   // 시각은 UTC ISO — 기준 시각에서 잰 나이가 심은 값과 같다
   const hours = (iso: string | null) => Math.round((now.getTime() - new Date(iso!).getTime()) / 3_600_000);
   expect(hours(data("takedown").items[0].since)).toBe(30);
