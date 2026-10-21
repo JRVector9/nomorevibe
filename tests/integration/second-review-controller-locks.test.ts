@@ -535,7 +535,8 @@ async function publishedFixture() {
   const [product] = await db.insert(products).values({ slug, url: f.candidate.productUrl!, repoUrl: `https://github.com/${f.candidate.repo}`,
     name: "the quick way to plan all of your week with friends", tagline: "Manage projects", description: "Deployed app", category: "Dev",
     source: "crawler", status: "seeded", verifyToken: randomUUID(), editTokenHash: "a".repeat(64) }).returning();
-  await db.update(crawlCandidates).set({ state: "published", publishedSlug: slug, decidedAt: new Date() }).where(eq(crawlCandidates.id, f.candidate.id));
+  // 자동 결정은 decided_at 을 적지 않는다 — 공개 시각은 제품 행이 생긴 때다
+  await db.update(crawlCandidates).set({ state: "published", publishedSlug: slug, decidedAt: null }).where(eq(crawlCandidates.id, f.candidate.id));
   await db.update(crawlDocuments).set({ pageMeta: { title: product.name, description: "Manage projects", textSample: "Create tasks" } })
     .where(eq(crawlDocuments.id, f.document.id));
   return { ...f, product };

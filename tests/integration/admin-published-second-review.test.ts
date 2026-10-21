@@ -29,8 +29,8 @@ async function finding(slug: string, status: 'needs_human' | 'resolved' = 'needs
   const [candidate] = await db.insert(crawlCandidates).values({ repo: `owner/${slug}`, productUrl: `https://${slug}.test`,
     publishedSlug: slug, state: 'published', reason: 'passed', decidedBy: 'auto' }).returning();
   const [row] = await db.insert(secondReviews).values({ candidateId: candidate.id, repo: candidate.repo,
-    publishedSlug: slug, trigger: 'risk', firstDecision: 'approve', inputHash: 'a'.repeat(64), model: 'reviewer',
-    secondDecision: 'reject', status, resolution: status === 'resolved' ? 'kept' : null }).returning();
+    publishedSlug: slug, trigger: 'risk', signals: ['store_or_messenger'], firstDecision: 'approve', inputHash: 'a'.repeat(64), model: 'reviewer',
+    secondDecision: 'reject', secondReason: 'A Telegram channel, not a product.', status, resolution: status === 'resolved' ? 'kept' : null }).returning();
   return { ...row, candidate };
 }
 
@@ -79,7 +79,9 @@ it('bans the reviewed product and records the authenticated resolution', async (
   expect(await decide(row.id, 'reviewed', 'ban')).toEqual({ message: '내렸습니다.' });
   expect((await db.select().from(products))[0].status).toBe('banned');
   expect((await db.select().from(secondReviews))[0]).toMatchObject({ status: 'resolved', resolution: 'banned', resolvedBy: 'reviewer' });
-  expect(await db.select().from(productEvidenceAudit)).toMatchObject([{ slug: 'reviewed', action: 'admin.product.ban' }]);
+  // 누가(로그인)·왜(2차 의견의 갈래)를 남긴다 — 전에는 actor 'admin'·사유 없음이었다
+  expect(await db.select().from(productEvidenceAudit)).toMatchObject([{ slug: 'reviewed', action: 'admin.product.ban', actor: 'reviewer',
+    reason: 'second_review:platform', metadata: { source: 'second-review', secondReviewId: row.id, trigger: 'risk', signals: ['store_or_messenger'], status: 'banned' } }]);
 });
 
 it('lets only one concurrent decision change a finding', async () => {

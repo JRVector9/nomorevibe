@@ -61,14 +61,14 @@ async function firstReview(repo: string, decision: 'approve' | 'reject' | 'needs
   return attempt;
 }
 
-/** 규칙만 통과해 방금 공개된 제품 */
+/** 규칙만 통과해 방금 공개된 제품 — 자동 결정은 decided_at 을 적지 않는다. 공개 시각은 제품 행이 생긴 때다 */
 async function published(repo: string, title: string) {
   const candidate = await held(repo, title);
   const slug = productSlug(repo.split('/')[1]);
   await db.insert(products).values({ slug, url: candidate.productUrl!, repoUrl: `https://github.com/${repo}`,
     name: title, tagline: '제품', description: '배포된 제품', category: 'Dev', status: 'seeded', source: 'crawler',
     verifyToken: randomUUID(), editTokenHash: 'a'.repeat(64) });
-  await db.update(crawlCandidates).set({ state: 'published', publishedSlug: slug, decidedAt: new Date() })
+  await db.update(crawlCandidates).set({ state: 'published', publishedSlug: slug })
     .where(eq(crawlCandidates.id, candidate.id));
   return candidate;
 }

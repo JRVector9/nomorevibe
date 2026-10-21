@@ -26,5 +26,8 @@ export function banReasonLabel(value: string): string {
   // 감사로 내린 것은 사유 갈래를 함께 남긴다(product-audit.ts auditBanReason) — 'audit:shop' → '감사: 쇼핑몰·판매'
   const audit = /^audit:(\w+)$/.exec(value)?.[1];
   if (audit) return `감사: ${isAuditReasonCategory(audit) ? AUDIT_REASON_CATEGORIES[audit].label : audit}`;
+  // 공개분 2차 심사에서 사람이 내린 것(published-second-review.ts) — 'second_review:login' → '2차 심사: 로그인 화면만'
+  const second = /^second_review:(\w+)$/.exec(value)?.[1];
+  if (second) return `2차 심사: ${isAuditReasonCategory(second) ? AUDIT_REASON_CATEGORIES[second].label : second}`;
   return BAN_REASONS.find((reason) => reason.value === value)?.label ?? value;
 }
