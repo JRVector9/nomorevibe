@@ -212,8 +212,14 @@ describe("감사 두 번째 의견", () => {
     expect(server.calls).toHaveLength(1);
     expect(await opinions()).toEqual([]);
     expect((await readQwenAutoObservation("qwen3.8-flash-next")).lastError).toMatchObject({ code: "qwen_http_503", target: "audit" });
-
+    // gpu3090 을 부르는 모두가 함께 물러난다(qwen-endpoint-backoff.ts — 첫 탈은 1분) — 그동안은 부르지 않는다
+    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
     server.status = 200;
+    await tick();
+    expect(server.calls).toHaveLength(1);
+
+    // 물러남이 끝나면 다시 부른다
+    resetQwenAuditBackoff();
     server.down = true;
     expect(await tick()).toMatchObject({ status: "completed" });
     expect(server.calls).toHaveLength(2);
@@ -223,8 +229,11 @@ describe("감사 두 번째 의견", () => {
     expect(down.failures).toEqual({});
 
     server.down = false;
+    resetQwenAuditBackoff();
     await tick();
     expect(server.calls).toHaveLength(5);
+    // 답을 받으면 물러나기도 처음으로
+    expect(qwenEndpointBackoff.failures).toBe(0);
     expect(await opinions()).toHaveLength(3);
     const status = await qwenSecondOpinionStatus((await getSettings()).auditHold);
     expect(status.lastError).toMatchObject({ code: "qwen_unreachable" });
@@ -414,6 +423,7 @@ describe("공개분 2차 거르기", () => {
     expect((await readQwenAutoObservation("qwen3.8-flash-next")).lastError).toMatchObject({ code: "qwen_http_502", target: "published" });
 
     server.status = 200;
+    resetQwenAuditBackoff();
     await tick();
     expect(await rowOf(row.id)).toMatchObject({ status: "resolved", resolution: "kept", resolvedBy: "qwen-v2-auto" });
   });

@@ -8,6 +8,8 @@ import {
   auditHoldSchema,
   crawlSettingsSchema,
   DEFAULT_CRAWL_SETTINGS,
+  DEFAULT_SPLIT_TIEBREAK,
+  splitTiebreakSchema,
   type CrawlSettings,
 } from "./settings-schema";
 import { isAuditReasonCategory } from "./audit-reason-category";
@@ -51,7 +53,22 @@ function mergeSecondReview(stored: unknown) {
     : null;
   const voters = Array.isArray(saved.voters) && saved.voters.length ? saved.voters
     : legacy ?? DEFAULT_CRAWL_SETTINGS.secondReview.voters;
-  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
+  return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters, splitTiebreak: storedSplitTiebreak(saved.splitTiebreak) };
+}
+
+export type SplitTiebreakSettings = CrawlSettings["secondReview"]["splitTiebreak"];
+
+/**
+ * 저장된 갈림 판가름 스위치(secondReview.splitTiebreak) — 감사 보류(storedAuditHold)처럼 따로 읽는다. 칸이 없으면 기본값(켬, 첫 배포의 뜻),
+ * 있는데 깨졌으면 꺼짐. 깨진 값이 기본값(켬)으로 되살아나 사람 큐의 후보를 거부하기 시작하면 안 된다. 일부 칸만 있으면 나머지를 기본값으로 채운다.
+ */
+export function storedSplitTiebreak(raw: unknown): SplitTiebreakSettings {
+  if (raw === undefined) return { ...DEFAULT_SPLIT_TIEBREAK };
+  const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  const parsed = object ? splitTiebreakSchema.safeParse({ ...DEFAULT_SPLIT_TIEBREAK, ...object }) : null;
+  if (parsed?.success) return parsed.data;
+  logger.error("crawl.split_tiebreak_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
+  return { ...DEFAULT_SPLIT_TIEBREAK, enabled: false };
 }
 
 /** 깨진 감사 보류 설정을 읽은 값 — 보류도, Qwen-v2 자동 단계 둘도 모두 꺼진다 */
@@ -117,7 +134,9 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
   logger.error("crawl.settings_invalid", {
     issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
   });
-  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold };
+  // 갈림 판가름 스위치도 저장된 값을 따로 읽어 둔다(storedSplitTiebreak) — 화면이 지금 값을 보이고 compare-and-set 이 맞물리게
+  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold,
+    secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, splitTiebreak: merged.secondReview.splitTiebreak } };
   unreadable.add(fallback);
   return fallback;
 }
@@ -141,7 +160,9 @@ export type SaveResult =
  * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
  */
 export function settingsFormVersion(settings: CrawlSettings): string {
-  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null };
+  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null,
+    // 갈림 판가름 스위치는 심사 큐가 따로 바꾼다(setSplitTiebreak) — 판에 넣으면 그 스위치를 누를 때마다 열린 폼이 거절된다
+    secondReview: { ...settings.secondReview, splitTiebreak: null } };
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
 }
 
@@ -162,7 +183,9 @@ function applyPatch(current: CrawlSettings, patch: unknown) {
     agentEvidence: { ...current.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
     news: { ...current.news, ...((raw.news as object) ?? {}) },
     rising: { ...current.rising, ...((raw.rising as object) ?? {}) },
-    secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}) },
+    secondReview: { ...current.secondReview, ...((raw.secondReview as object) ?? {}),
+      // 갈림 판가름은 심사 큐의 스위치(setSplitTiebreak)만 바꾼다 — 폼·기본값 되돌리기가 사람 큐의 자동 거부를 켜거나 끄지 않게
+      splitTiebreak: current.secondReview.splitTiebreak },
   };
 }
 
@@ -328,6 +351,42 @@ export async function setAuditHold(input: { next: AuditHoldSettings; expected: A
 export async function lockedAuditHold(tx: ProductTransaction): Promise<AuditHoldSettings> {
   const [row] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("share");
   return mergeWithDefaults(row?.values).auditHold;
+}
+
+/**
+ * 갈림 판가름 스위치·한 틱의 수를 바꾼다 — 심사 큐(/admin/review)가 부른다. 감사 보류(setAuditHold)와 같은 길이다:
+ * stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 쓴다. 이 칸만 바꿔 행의 다른 칸이 깨져 있어도 끄기는 된다.
+ * 끄면 다음 호출부터 묻지 않고, 이미 받은 답도 거부로 반영하지 않는다(gate-split-tiebreak.ts 가 쓰는 순간 다시 읽는다).
+ */
+export async function setSplitTiebreak(input: { next: SplitTiebreakSettings; expected: SplitTiebreakSettings; actor: string }):
+  Promise<{ ok: true; splitTiebreak: SplitTiebreakSettings } | { ok: false; issues: string[] }> {
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+    const stored = (row.values ?? {}) as Record<string, unknown>;
+    const secondReview = stored.secondReview !== null && typeof stored.secondReview === "object" && !Array.isArray(stored.secondReview)
+      ? stored.secondReview as Record<string, unknown> : {};
+    const before = storedSplitTiebreak(secondReview.splitTiebreak);
+    const audit = (ok: boolean, error: string | null, after = before) => adminAuditRow(input.actor, { action: "split-tiebreak-settings",
+      target: "crawl_settings", detail: { before, after, requested: input.next }, ok, error });
+    if (before.enabled !== input.expected.enabled || before.perTick !== input.expected.perTick) {
+      await tx.insert(operationsAudit).values(await audit(false, "stale_state"));
+      return { ok: false, issues: ["그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 값을 확인한 뒤 다시 해 주세요."] };
+    }
+    const parsed = splitTiebreakSchema.safeParse(input.next);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => `secondReview.splitTiebreak.${issue.path.join(".")}: ${issue.message}`);
+      await tx.insert(operationsAudit).values(await audit(false, issues.join(" · ")));
+      return { ok: false, issues };
+    }
+    const values = { ...stored, secondReview: { ...secondReview, splitTiebreak: parsed.data } };
+    await tx.update(crawlSettings).set({ values: values as CrawlSettings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
+    logger.info("crawl.split_tiebreak_set", { updatedBy: input.actor, before, after: parsed.data });
+    await tx.insert(operationsAudit).values(await audit(true, null, parsed.data));
+    if (parsed.data.enabled && !before.enabled) await requestJob("second-review", tx);
+    return { ok: true, splitTiebreak: parsed.data };
+  });
 }
 
 /** 누가 언제 바꿨는지 (화면 표시용) */

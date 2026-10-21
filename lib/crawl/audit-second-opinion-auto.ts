@@ -10,7 +10,7 @@ import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
 import { auditItemModel, holdCandidate } from "./product-audit-hold";
 import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
-import { qwenEndpointBackingOff } from "./qwen-endpoint-backoff";
+import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { loadAuditInput } from "./product-audit";
 import { decidePublishedSecondReview, notePublishedSecondReviewOpinion } from "./published-second-review";
 import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
@@ -33,9 +33,10 @@ import type { CrawlSettings } from "./settings-schema";
  *
  * 두 갈래가 번갈아 한 줄로 선다(갈래마다 perTick 까지). 새 호출은 STEP_MS 안에서만 시작하고, 틱의 끝까지 호출 하나(CALL_TIMEOUT_MS)와
  * 기록 여유가 남아야 한다. 감사가 Qwen 직접 심사로 바뀌었으면(0112) 같은 서버를 감사 자리(AUDIT_QWEN_CONCURRENCY, 기본 2)가 틱 내내 쓰고
- * 이 단계는 한 자리로 30초만 쓴다 — gpu3090 동시 호출은 감사 자리 + 1 을 넘지 않고, 감사가 먼저다. 감사가 서버 탈로 물러나는 동안
- * (qwen-endpoint-backoff.ts)에는 이 단계도 부르지 않는다. 모델 호출은 트랜잭션 밖이고, 쓰기는 한 건마다 DR writer fence → … → 작업 lease 의 한 커밋이다.
- * 부르는 곳의 탈(닿지 않음·시간 초과·5xx·404·401/403·429)이면 이 틱의 나머지를 멈추고(다음 틱에 다시) 마지막 오류를 관측에 남긴다.
+ * 이 단계는 2차 갈림 판가름과 나눠 쓰는 두 번째 자리 하나(withQwenSecondarySlot)로 30초만 쓴다 — gpu3090 동시 호출은 감사 자리 + 1 을
+ * 넘지 않고(qwen-endpoint-backoff.ts), 감사가 먼저다. 누가 서버 탈을 만나든 모두 함께 물러난다. 모델 호출은 트랜잭션 밖이고, 쓰기는 한 건마다 DR writer fence → … → 작업 lease 의 한 커밋이다.
+ * 부르는 곳의 탈(닿지 않음·시간 초과·5xx·404·401/403·429)이면 이 틱의 나머지를 멈추고 함께 쓰는 물러나기(1분부터 두 배씩 15분까지)를 걸며
+ * 마지막 오류를 관측에 남긴다.
  * 항목만의 실패(형식 오류·400·입력 초과·원본 없음)는 그 항목을 두 번까지만 묻는다(관측의 failures). 이 단계는 잡을 실패시키지 않는다.
  */
 export const QWEN_AUTO_OBSERVATION = "qwen-second-opinion";
@@ -229,14 +230,17 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     if (!input) { failItem(target, "no_source"); ran = true; continue; }
     if (!canStart()) break;
     ran = true;
-    let review: QwenDirectReview;
+    let review: QwenDirectReview | null;
     try {
-      review = await reviewWithQwenDirect(input, { timeoutMs: QWEN_AUTO_CALL_TIMEOUT_MS, signal: ctx.signal });
+      // 두 번째 자리(갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 기다리는 동안 바뀐다
+      review = await withQwenSecondarySlot(async () => canStart() && !qwenEndpointBackingOff()
+        ? reviewWithQwenDirect(input, { timeoutMs: QWEN_AUTO_CALL_TIMEOUT_MS, signal: ctx.signal }) : null);
     } catch (error) {
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
       if (qwenEndpointFailure(error.code)) {
-        // 부르는 곳의 탈 — 이 틱의 나머지는 부르지 않는다. 항목에는 아무것도 적지 않는다
+        // 부르는 곳의 탈 — 이 틱의 나머지는 부르지 않고 gpu3090 을 부르는 모두가 물러난다. 항목에는 아무것도 적지 않는다
+        noteQwenEndpointFailure(error.code);
         tally.endpointError = error.code;
         observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
         break;
@@ -245,6 +249,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
       continue;
     }
+    if (!review) break;
+    noteQwenEndpointSuccess();
     delete observation.failures[target.key];
     observation.lastSuccessAt = now();
     if (target.kind === "audit") await writeAudit(target, review, input, lease, tally);

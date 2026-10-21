@@ -22,6 +22,8 @@ import { modelHealth } from "@/lib/operations/dashboard";
 import { humanQueueOverview, taglineProgress } from "@/lib/crawl/review-overview";
 import { ReviewStatusChips } from "./ReviewStatusChips";
 import { ReviewStageRail } from "./ReviewStageRail";
+import { splitTiebreakStatus } from "@/lib/crawl/gate-split-tiebreak-read";
+import { SplitTiebreakSwitch } from "./SplitTiebreakSwitch";
 import { ScrollToHash } from "../ScrollToHash";
 import "../status/dashboard/dashboard.css";
 import "./review.css";
@@ -70,6 +72,8 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   // 모델 상태도 갈래 셈을 기다릴 까닭이 없어 같이 띄운다
   const translation = translationProgress().catch(() => null);
   const modelsLoad = modelHealth(settings).catch(() => null);
+  // 갈림 판가름(Qwen-v2) 줄 — 못 읽어도 큐는 그린다
+  const tiebreakLoad = splitTiebreakStatus().catch(() => null);
   // 구간·2차 칩·사람 몫의 수는 운영센터와 같은 humanQueueOverview 하나에서 온다 — 두 화면의 숫자가 갈리지 않게
   const [takedowns, causes, overview, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), humanQueueOverview(settings), candidateStateCounts(), publicationChange24h()]);
   const decisions = overview.aiDecisions;
@@ -77,9 +81,10 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
     judge: stateCounts.new, ...overview.stages, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
   };
   // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, taglines] = await Promise.all([
+  const [models, taglines, tiebreak] = await Promise.all([
     modelsLoad,
     taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
+    tiebreakLoad,
   ]);
 
   /*
@@ -177,6 +182,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
       <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0}
         inflow={overview.wait?.in24h ?? null} />
       <Link href="/admin#human-review" className="dash-pill">사람 검토 DeepSeek 위임: {settings.humanReview.enabled ? '켜짐 · M3 Ultra' : '꺼짐'} · 설정 →</Link>
+      <SplitTiebreakSwitch enabled={settings.secondReview.splitTiebreak.enabled} perTick={settings.secondReview.splitTiebreak.perTick} status={tiebreak} />
 
       <TakedownStrip summary={takedowns} />
 

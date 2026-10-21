@@ -19,7 +19,7 @@ import { qwenDirectConfig, qwenEndpointFailure, QwenDirectError, reviewWithQwenD
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
-import { qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenBackoffMs, qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 
 /**
  * 틱의 길이와 새 호출을 시작할 여유.
@@ -49,8 +49,9 @@ export async function auditPublishedProducts(ctx: JobContext<null>): Promise<Job
    * Qwen-v2 단계(감사 두 번째 의견·공개분 2차 거르기, audit-second-opinion-auto.ts)는 감사 묻기와 나란히 돈다 — gpu3090 에 바로 한 번에
    * 한 호출이라 게이트웨이 자리를 쓰지 않고, 새 호출은 30초 안에만 시작해 틱(예산 70초)을 늘리지 않는다. 앞에 두면 감사 묻기가
    * 60초 호출을 시작할 여유(TICK_MS)를 잃고, 뒤에 두면 감사가 도는 동안 영영 차례가 오지 않는다. 이 단계는 잡을 실패시키지 않는다.
-   * 감사가 Qwen 직접 심사로 바뀌었으면(0112) gpu3090 동시 호출은 감사 자리(qwenAuditConcurrency, 기본 2·최대 4) + 이 단계 1 이 끝이다.
-   * 감사는 틱 내내(65초) 자리를 다 쓰고 이 단계는 한 자리로 30초만 쓴다. 감사가 서버 탈로 물러나는 동안에는 이 단계도 부르지 않는다.
+   * gpu3090 동시 호출의 끝(qwen-endpoint-backoff.ts): 감사 Qwen 직접 심사의 자리(qwenAuditConcurrency, 기본 2·최대 4) + 두 번째 자리 1.
+   * 두 번째 자리는 이 단계(두 번째 의견·공개분 거르기)와 2차 잡의 갈림 판가름이 프로세스 안에서 나눠 쓴다 — 두 잡이 겹쳐 돌아도 기본 3·최대 5.
+   * 감사는 틱 내내(65초) 자리를 다 쓰고 이 단계는 30초만 쓴다. 누가 서버 탈을 만나든 모두 함께 물러난다.
    * 감사 묻기가 끝나도(실패해도) 단계가 끝날 때까지 기다린 뒤 틱을 닫는다 — 쓰기가 lease 를 놓은 뒤에 남지 않게.
    */
   const opinions = runQwenSecondOpinions(ctx, settings);
@@ -206,9 +207,6 @@ const QWEN_CONTROL_CHECK_MS = 5_000;
 const QWEN_QUEUE_PER_SLOT = 40;
 export const QWEN_AUDIT_DEFAULT_CONCURRENCY = 2;
 export const QWEN_AUDIT_MAX_CONCURRENCY = 4;
-/** 부르는 곳이 탈 났을 때 물러나는 시간 — 1분에서 두 배씩, 15분까지. 한 틱에서라도 답을 받으면 처음부터 센다 */
-const QWEN_BACKOFF_BASE_MS = 60_000;
-const QWEN_BACKOFF_MAX_MS = 15 * 60_000;
 
 /** 동시 호출 수 — AUDIT_QWEN_CONCURRENCY(기본 2, 최대 4). 1차 심사의 reviewConcurrency(공유 게이트웨이 몫)와 따로다 */
 export function qwenAuditConcurrency(env: Readonly<Record<string, string | undefined>> = process.env): number {
@@ -216,11 +214,13 @@ export function qwenAuditConcurrency(env: Readonly<Record<string, string | undef
   return Number.isSafeInteger(value) && value >= 1 ? Math.min(value, QWEN_AUDIT_MAX_CONCURRENCY) : QWEN_AUDIT_DEFAULT_CONCURRENCY;
 }
 
-export function qwenAuditBackoffMs(failures: number): number {
-  return Math.min(QWEN_BACKOFF_MAX_MS, QWEN_BACKOFF_BASE_MS * 2 ** Math.max(0, failures - 1));
-}
+/** 부르는 곳이 탈 났을 때 물러나는 시간 — 1분에서 두 배씩, 15분까지. 한 틱에서라도 답을 받으면 처음부터 센다 */
+export const qwenAuditBackoffMs = qwenBackoffMs;
 
-/** 부르는 곳이 연달아 탈 난 틱 수와 다시 물어볼 시각 — 두 번째 의견 단계와 함께 읽는다(qwen-endpoint-backoff.ts) */
+/**
+ * 부르는 곳이 연달아 탈 난 틱 수와 다시 물어볼 시각 — gpu3090 을 부르는 모든 쪽(두 번째 의견·공개분 거르기·갈림 판가름)과 함께 쓴다
+ * (qwen-endpoint-backoff.ts). 누가 탈을 만나든 감사도 물러나고, 감사가 탈을 만나면 다른 쪽도 물러난다
+ */
 const qwenEndpoint = qwenEndpointBackoff;
 export { resetQwenAuditBackoff };
 

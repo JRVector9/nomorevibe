@@ -324,7 +324,20 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
-const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
+/**
+ * 2차 갈림 판가름(lib/crawl/gate-split-tiebreak.ts, 2026-10-21) — 관문에서 1차 승인·2차 반대로 갈려 사람에게 넘어온 후보를 gpu3090 Qwen-v2 에
+ * 한 번 더 묻는다. Qwen-v2 도 거부하면 거부로 닫고, 승인이면 발행하지 않고 사람 큐 맨 앞에 둔다. perTick 은 2차 잡 한 틱에 묻는 수의 상한이다.
+ * 저장된 값은 settings.ts storedSplitTiebreak 가 따로 읽는다 — 칸이 없으면 기본값(켬), 있는데 깨졌으면 꺼짐.
+ * 심사 큐(/admin/review)의 스위치(setSplitTiebreak)만 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다.
+ */
+export const splitTiebreakSchema = z.object({
+  enabled: z.boolean(),
+  perTick: z.number().int().min(1).max(50),
+}).strict();
+export const DEFAULT_SPLIT_TIEBREAK: { enabled: boolean; perTick: number } = { enabled: true, perTick: 10 };
+
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85,
+  splitTiebreak: DEFAULT_SPLIT_TIEBREAK };
 
 export const reviewVoterSchema = z.object({
   provider: z.enum(["claude-cli", "abcllm", "grok-cli"]),
@@ -441,6 +454,8 @@ export const crawlSettingsSchema = z.object({
      * 사내 모델은 틀릴 때도 0.9~1.0 을 달아 확신이 신호가 아니었다(2026-09-12, 130건).
      */
     agreeAt: z.number().min(0.5).max(1),
+    /** 갈림 판가름 — 위 splitTiebreakSchema 의 설명 */
+    splitTiebreak: splitTiebreakSchema.default(DEFAULT_SPLIT_TIEBREAK),
   }).default(defaultSecondReview),
   news: z.object({
     /** 끄면 새 글이 승인 대기로 들어간다 */
