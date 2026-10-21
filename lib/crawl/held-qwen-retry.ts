@@ -16,6 +16,8 @@ import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
 import { mergeWithDefaults } from "./settings";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
+import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoff,
+  withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
 import { reviewSemanticNow, reviewSemanticNowSql } from "./review-replay-context";
@@ -40,7 +42,10 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
  *
  * 같은 잡(human-deepseek-review)의 앞부분에서 돈다 — 새 카탈로그 잡이 없다. 한 틱에 perTick 개·budgetSeconds 초까지.
  * claim·기록은 각각 짧은 트랜잭션이고 모델 호출은 그 사이(트랜잭션 밖)다. 같은 입력 세대(입력·원본 해시, 덧붙임 판, 모델)마다
- * 판단은 한 번, 실패는 15분 뒤 세 번까지. 부르는 곳의 탈(닿지 않음·시간 초과·5xx 등)이면 이 틱을 멈추고 1분부터 30분까지 물러난다.
+ * 판단은 한 번, 실패는 15분 뒤 세 번까지. 부르는 곳의 탈(닿지 않음·시간 초과·5xx 등)이면 이 틱을 멈추고, gpu3090 을 부르는 모두와 함께
+ * 물러난다(qwen-endpoint-backoff.ts — 1분부터 두 배씩 15분까지, 누가 탈을 만나든 감사·두 번째 의견·공개분 거르기·갈림 판가름도 함께 쉰다).
+ * 동시 호출: 감사 Qwen 직접 심사가 아닌 쪽(이 재심사·두 번째 의견·공개분 거르기·갈림 판가름)은 프로세스의 두 번째 자리 하나를 나눠
+ * 한 번에 한 호출만 띄운다(withQwenSecondarySlot) — 잡들이 겹쳐 돌아도 gpu3090 동시 호출은 감사 자리(2~4) + 1 이다.
  */
 const JOB = "human-deepseek-review";
 /** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다 */
@@ -48,8 +53,6 @@ export const HELD_QWEN_CALL_TIMEOUT_MS = 15_000;
 const MAX_FAILURES = 3;
 const RETRY_MS = 15 * 60_000;
 const STALE_RUNNING_MS = 120_000;
-const BACKOFF_MS = 60_000;
-const MAX_BACKOFF_MS = 30 * 60_000;
 
 export type HeldQwenClaim = {
   attemptId: number; candidateId: number; repo: string; reason: HeldQwenReason; candidateRevision: string;
@@ -65,7 +68,12 @@ export type HeldQwenTick = {
   skipped?: "disabled" | "not_configured" | "backoff"; backoffUntil?: string;
 };
 
-const qwenRows = and(eq(crawlReviewAttempts.kind, "delegated"), eq(crawlReviewAttempts.provider, HELD_QWEN_PROVIDER))!;
+/**
+ * 이 재심사의 시도 행만 — actor 'qwen-v2:<판>' 으로 가른다. 같은 provider(qwen-direct)·kind(delegated)를 쓰는 다른 Qwen-v2 일
+ * (예: 2차 갈림 판가름의 'qwen-v2-auto')의 진행 중 행을 주인 없음으로 닫거나 물러남·상태·배지에 섞지 않는다.
+ */
+const qwenRows = and(eq(crawlReviewAttempts.kind, "delegated"), eq(crawlReviewAttempts.provider, HELD_QWEN_PROVIDER),
+  sql`${crawlReviewAttempts.actor} LIKE ${`${HELD_QWEN_ACTOR}:%`}`)!;
 
 /** 실패 코드가 부르는 곳의 탈인가 — 제공자의 코드만 견준다(owner_lost 같은 우리 쪽 코드는 탈이 아니다) */
 export function heldQwenEndpointFailure(code: string | null | undefined): boolean {
@@ -212,7 +220,11 @@ export async function requestHeldQwenSourceRefresh(settings: CrawlSettings, leas
   });
 }
 
-/** 부르는 곳의 탈이 이어졌으면 언제까지 물러날지 — 마지막 판단·실패 행들로 잰다(따로 상태를 두지 않는다) */
+/**
+ * 심사 큐 화면이 보이는 물러남 — 이 재심사의 마지막 판단·실패 행들로 어림한다(함께 쓰는 물러나기와 같은 곡선). 화면은 웹 프로세스라
+ * 워커의 함께 쓰는 물러나기(qwen-endpoint-backoff.ts, 프로세스 안의 값)를 읽을 수 없어 행으로 잰다. 실제로 부르지 않게 막는 것은 워커의
+ * 함께 쓰는 물러나기다(runHeldQwenRetry) — 다른 쪽이 만난 탈로 쉬는 것은 여기 보이지 않는다.
+ */
 export async function heldQwenBackoffUntil(now = new Date()): Promise<Date | null> {
   const recent = await db.select({ state: crawlReviewAttempts.state, errorCode: crawlReviewAttempts.errorCode, completedAt: crawlReviewAttempts.completedAt })
     .from(crawlReviewAttempts).where(and(qwenRows, inArray(crawlReviewAttempts.state, ["failed", "succeeded"]), isNotNull(crawlReviewAttempts.completedAt)))
@@ -224,7 +236,7 @@ export async function heldQwenBackoffUntil(now = new Date()): Promise<Date | nul
     else break;
   }
   if (!streak || !recent[0]?.completedAt) return null;
-  const until = new Date(recent[0].completedAt.getTime() + Math.min(MAX_BACKOFF_MS, BACKOFF_MS * 2 ** (streak - 1)));
+  const until = new Date(recent[0].completedAt.getTime() + qwenBackoffMs(streak));
   return until > now ? until : null;
 }
 
@@ -275,7 +287,8 @@ export async function claimHeldQwen(repo: string, lease: JobLease, model: string
     const [active] = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.state, "running"))).for("update");
     if (active) {
-      if (active.kind !== "delegated" || active.provider !== HELD_QWEN_PROVIDER || active.leaseToken === lease.token) {
+      if (active.kind !== "delegated" || active.provider !== HELD_QWEN_PROVIDER || !active.actor?.startsWith(`${HELD_QWEN_ACTOR}:`)
+        || active.leaseToken === lease.token) {
         await assertJobLeaseAtWallTime(tx, lease);
         return { kind: "skipped", reason: "running" };
       }
@@ -443,8 +456,8 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
   tick.refreshed = await requestHeldQwenSourceRefresh(settings, lease, policy.perTick);
   const config = qwenDirectConfig(options.env ?? process.env);
   if (!config) return { ...tick, skipped: "not_configured" };
-  const backoff = await heldQwenBackoffUntil();
-  if (backoff) return { ...tick, skipped: "backoff", backoffUntil: backoff.toISOString() };
+  // gpu3090 을 부르는 누군가가 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts)
+  if (qwenEndpointBackingOff()) return { ...tick, skipped: "backoff", backoffUntil: new Date(qwenEndpointBackoff.retryAt).toISOString() };
   const sliceEnd = Date.now() + policy.budgetSeconds * 1000;
   const room = () => !ctx.signal?.aborted && ctx.hasBudget() && sliceEnd - Date.now() >= HELD_QWEN_CALL_TIMEOUT_MS
     && (ctx.deadlineAt === undefined || ctx.deadlineAt - Date.now() >= HELD_QWEN_CALL_TIMEOUT_MS + 2_000);
@@ -460,15 +473,20 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     poll.unref?.();
     let call: HeldQwenCallResult;
     try {
-      call = await callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request: options.request, env: options.env,
-        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal });
+      // 두 번째 자리(두 번째 의견·공개분 거르기·갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
+      call = await withQwenSecondarySlot(async () => !room() || qwenEndpointBackingOff()
+        ? { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" }
+        : callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request: options.request, env: options.env,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }));
     } finally { clearInterval(poll); }
+    if (call.ok) noteQwenEndpointSuccess();
+    else if (heldQwenEndpointFailure(call.code)) noteQwenEndpointFailure(call.code as QwenDirectErrorCode);
     const state = await recordHeldQwen(claimed.claim, call);
     if (state === "rejected") tick.rejected++;
     if (state === "pipeline") tick.pipeline++;
     if (state === "held") tick.held++;
     if (state === "failed") tick.failed++;
-    // 부르는 곳의 탈이면 이 틱의 나머지를 부르지 않는다 — 다음 틱은 heldQwenBackoffUntil 이 물린다
+    // 부르는 곳의 탈이면 이 틱의 나머지를 부르지 않는다 — 다음 틱부터는 함께 쓰는 물러나기가 물린다
     if (!call.ok && (heldQwenEndpointFailure(call.code) || call.code === "qwen_cancelled")) break;
   }
   return tick;
@@ -528,26 +546,27 @@ export async function heldQwenBadges(entries: { candidateId: number; reason: str
   const wanted = entries.filter((entry) => entry.inputHash && entry.sourceRevisionHash);
   if (!wanted.length) return {};
   const rows = await db.select().from(crawlReviewAttempts)
-    .where(and(qwenRows, inArray(crawlReviewAttempts.candidateId, wanted.map((entry) => entry.candidateId)),
-      sql`${crawlReviewAttempts.actor} LIKE ${`${HELD_QWEN_ACTOR}:%`}`))
+    .where(and(qwenRows, inArray(crawlReviewAttempts.candidateId, wanted.map((entry) => entry.candidateId))))
     .orderBy(asc(crawlReviewAttempts.candidateId), desc(crawlReviewAttempts.id));
   const badges: Record<number, HeldQwenBadge> = {};
+  // 보류 재심사의 배지 — 갈림 판가름(gate-split-tiebreak.ts)의 «Qwen-v2 승인 — 발행 후보»와 갈래가 다르다는 것을 마우스를 올리면 밝힌다
+  const source = "보류 재심사(소개 없음·재시도 소진·판단 보류) · ";
   for (const entry of wanted) {
     const mine = rows.filter((row) => row.candidateId === entry.candidateId && row.inputHash === entry.inputHash
       && row.sourceRevisionHash === entry.sourceRevisionHash);
     const latest = mine.find((row) => row.state !== "superseded" && !(row.state === "failed" && row.errorCode === "owner_lost"));
     if (!latest) continue;
     const confidence = typeof latest.outcome?.confidence === "number" ? ` · 확신 ${latest.outcome.confidence.toFixed(2)}` : "";
-    if (latest.state === "running") badges[entry.candidateId] = { label: "Qwen-v2: 보는 중", title: "Qwen-v2 가 지금 이 입력을 보고 있습니다", tone: "soft" };
+    if (latest.state === "running") badges[entry.candidateId] = { label: "Qwen-v2: 보는 중", title: `${source}Qwen-v2 가 지금 이 입력을 보고 있습니다`, tone: "soft" };
     else if (latest.state === "failed") {
       const failed = mine.filter(countedFailure).length;
       badges[entry.candidateId] = { label: "Qwen-v2: 판단 보류", tone: "warn",
-        title: `Qwen-v2 호출 실패 ${latest.errorCode ?? "unknown"}${countedFailure(latest) ? ` · ${failed}/${MAX_FAILURES}회` : ""}${failed < MAX_FAILURES ? " — 15분 뒤 다시 봅니다" : " — 사람이 정합니다"}` };
+        title: `${source}Qwen-v2 호출 실패 ${latest.errorCode ?? "unknown"}${countedFailure(latest) ? ` · ${failed}/${MAX_FAILURES}회` : ""}${failed < MAX_FAILURES ? " — 15분 뒤 다시 봅니다" : " — 사람이 정합니다"}` };
     } else if (latest.outcome?.decision === "approve") {
-      badges[entry.candidateId] = { label: "Qwen-v2: 승인 의견", tone: "ok", title: `Qwen-v2 는 승인했지만 ${entry.reason === "no_description"
+      badges[entry.candidateId] = { label: "Qwen-v2: 승인 의견", tone: "ok", title: `${source}Qwen-v2 는 승인했지만 ${entry.reason === "no_description"
         ? "소개가 없어 발행할 수 없습니다 — 소개를 적고 승인하세요" : "2차 관문에 Qwen 과 다른 투표 모델이 없어 사람에게 남겼습니다"}${confidence} · ${latest.outcome.reason.slice(0, 200)}` };
     } else if (latest.outcome) {
-      badges[entry.candidateId] = { label: "Qwen-v2: 판단 보류", tone: "soft", title: `Qwen-v2 판단 보류${confidence} · ${latest.outcome.reason.slice(0, 200)}` };
+      badges[entry.candidateId] = { label: "Qwen-v2: 판단 보류", tone: "soft", title: `${source}Qwen-v2 판단 보류${confidence} · ${latest.outcome.reason.slice(0, 200)}` };
     }
   }
   return badges;

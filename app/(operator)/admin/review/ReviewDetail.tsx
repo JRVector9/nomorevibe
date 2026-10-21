@@ -366,8 +366,10 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
       <p className="text-[13px] text-fg-3">저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
 
       {entry.latest && <div className="rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
+        {/* Qwen-v2 위임 기록은 actor 로 가른다 — 갈림 판가름 qwen-v2-auto, 보류 재심사 qwen-v2:<판>(둘 다 provider qwen-direct) */}
         <p className="font-semibold">{entry.latest.kind === 'delegated' ? (entry.latest.actor === SPLIT_TIEBREAK_ACTOR ? 'Qwen-v2 갈림 판가름 기록'
-          : entry.latest.provider === 'qwen-direct' ? 'Qwen-v2 보류 재심사 기록' : 'DeepSeek 위임 판단 기록') : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
+          : entry.latest.actor?.startsWith('qwen-v2:') ? 'Qwen-v2 보류 재심사 기록' : entry.latest.provider === 'qwen-direct' ? 'Qwen-v2 판단 기록'
+          : 'DeepSeek 위임 판단 기록') : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {(entry.latest.kind === 'automatic' || entry.latest.kind === 'delegated') && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
         {entry.latest.actor && <p>담당자: {entry.latest.actor}</p>}
         {entry.latest.reason && <p className="whitespace-pre-line"><ReasonText text={entry.latest.reason} korean={entry.latest.reasonKo} /></p>}
