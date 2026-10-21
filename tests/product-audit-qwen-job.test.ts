@@ -116,6 +116,28 @@ describe("바꾼 감사는 Qwen 에게 묻는다", () => {
     expect(mocks.record.mock.calls[0][2]).toEqual(DEFAULT_CRAWL_SETTINGS.auditHold);
   });
 
+  it("새 후보가 기다려도 Qwen 으로 바꾼 감사는 양보하지 않는다 — 게이트웨이 자리를 쓰지 않는다", async () => {
+    const { fetcher } = endpoint();
+    mocks.candidates.mockResolvedValue([{ id: 1 }]);
+    mocks.pending.mockResolvedValue([{ id: 7, slug: "app" }]);
+    const ctx = context();
+    await tick(ctx);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(ctx.log).not.toHaveBeenCalledWith("product_audit.yielded", expect.anything());
+    expect(mocks.candidates).not.toHaveBeenCalled();
+  });
+
+  it("바꾸지 않은 감사는 새 후보가 기다리면 지금처럼 양보한다", async () => {
+    const { fetcher } = endpoint();
+    mocks.campaign.mockResolvedValue({ ...switched, currentProvider: null, currentModel: null });
+    mocks.candidates.mockResolvedValue([{ id: 1 }]);
+    const ctx = context();
+    await tick(ctx);
+    expect(ctx.log).toHaveBeenCalledWith("product_audit.yielded", { campaign: 4 });
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.pending).not.toHaveBeenCalled();
+  });
+
   it("바꾸지 않은 감사는 지금처럼 게이트웨이로 묻는다 — Qwen 을 부르지 않는다", async () => {
     const { fetcher } = endpoint();
     mocks.campaign.mockResolvedValue({ ...switched, currentProvider: null, currentModel: null });
