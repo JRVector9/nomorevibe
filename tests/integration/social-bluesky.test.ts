@@ -17,10 +17,12 @@ const HOUR = 3_600_000;
 const BOT = "did:plc:hzebgrkbc42iyxsrmwsdjnej";
 const HUMAN = "did:plc:ltjj43huonogytm4szn5hzkx";
 const ago = (hours: number) => new Date(NOW.getTime() - hours * HOUR);
+const repoLink = (repo: string) => ({ repositoryKey: repo, linkUrl: `https://github.com/${repo}`, linkTarget: "repo" as const });
 const bsky = (rkey: string, repo: string | null, points: number, extra: Partial<BlueskyTalkPost> = {}): BlueskyTalkPost => ({
   externalId: `${extra.did ?? HUMAN}/${rkey}`, kind: "link", title: "",
   linkUrl: repo ? `https://github.com/${repo}` : "https://acme.github.io/", linkTarget: repo ? "repo" : "site", repositoryKey: repo,
-  postedAt: ago(10), points, comments: 1, frontPage: false, did: HUMAN, labelHold: null, repositories: repo ? 1 : 0, ...extra,
+  postedAt: ago(10), points, comments: 1, frontPage: false, did: HUMAN, labelHold: null,
+  candidates: repo ? [{ repositoryKey: repo, linkUrl: `https://github.com/${repo}`, linkTarget: "repo" }] : [], ...extra,
 });
 async function product(repo: string) {
   const slug = repo.replace("/", "-");
@@ -130,30 +132,36 @@ it("/talk 에는 공개 제품에 이어진 보이는 Bluesky 글만 반응 5부
     bsky("3mygaaaaaaaa1", "acme/app", 12),
     bsky("3mygaaaaaaaa2", "acme/low", 4),
     bsky("3mygaaaaaaaa3", "acme/bot", 50, { did: BOT, externalId: `${BOT}/3mygaaaaaaaa3` }),
-    bsky("3mygaaaaaaaa4", null, 40, { linkUrl: "https://github.com/acme/app", linkTarget: "site", repositories: 2 }),
+    bsky("3mygaaaaaaaa4", null, 40, { linkUrl: "https://github.com/acme/one", linkTarget: "site", candidates: [repoLink("acme/one"), repoLink("acme/two")] }),
+    // 여러 저장소 중 공개 제품(acme/app)이 있으면 그 저장소에 붙는다(X 보고와 같은 규칙)
+    bsky("3mygaaaaaaaa6", null, 8, { linkUrl: "https://github.com/acme/none", linkTarget: "site", candidates: [repoLink("acme/none"), repoLink("acme/app")] }),
   ], ago(1));
   await recordBlueskyPosts([bsky("3mygaaaaaaaa5", "acme/stale", 30, { postedAt: ago(40) })], ago(30));
   await holdBotPosts([BOT], ago(72), ago(1));
 
   const board = await listTalk({ mode: "now", now: NOW });
   expect(board.entries.map(entry => [entry.repositoryKey, entry.sources, entry.posts.map(post => post.externalId)])).toEqual([
-    ["acme/app", ["bluesky"], [`${HUMAN}/3mygaaaaaaaa1`]],
+    ["acme/app", ["bluesky"], [`${HUMAN}/3mygaaaaaaaa1`, `${HUMAN}/3mygaaaaaaaa6`]],
   ]);
-  expect((await productTalk(board.entries[0].product.id, "https://github.com/acme/app", NOW))?.posts.map(post => post.source)).toEqual(["bluesky"]);
+  expect((await productTalk(board.entries[0].product.id, "https://github.com/acme/app", NOW))?.posts.map(post => post.source)).toEqual(["bluesky", "bluesky"]);
 
   // ?source=bluesky 를 거르기로 읽는다(모르는 출처는 전체)
   expect(talkAdminFilter({ source: "bluesky" }).source).toBe("bluesky");
   expect(talkAdminFilter({ source: "mastodon" }).source).toBe("all");
   const filter: TalkAdminFilter = { ...talkAdminFilter({ source: "bluesky" }), sort: "points" };
   const page = await listTalkPostsPage(filter, { now: NOW, page: 1 });
-  expect(page.summary.source.bluesky).toBe(5);
+  expect(page.summary.source.bluesky).toBe(6);
   expect(page.rows.map(row => [row.externalId.split("/")[1], row.talk.shown, row.talk.reasons.map(reason => reason.code)])).toEqual([
     ["3mygaaaaaaaa3", false, ["bot"]],
     ["3mygaaaaaaaa4", false, ["multi_repo"]],
     ["3mygaaaaaaaa5", false, ["bluesky_stale"]],
     ["3mygaaaaaaaa1", true, []],
+    ["3mygaaaaaaaa6", true, []],
     ["3mygaaaaaaaa2", false, ["below"]],
   ]);
+  expect(page.rows.find(row => row.externalId.endsWith("/3mygaaaaaaaa6"))).toMatchObject({
+    repositoryKey: "acme/app", linkUrl: "https://github.com/acme/app", linkTarget: "repo", product: { slug: "acme-app" },
+  });
   // 다른 출처를 고르면 Bluesky 글은 빠진다
   expect((await listTalkPostsPage({ ...filter, source: "hn" }, { now: NOW, page: 1 })).total).toBe(0);
 });

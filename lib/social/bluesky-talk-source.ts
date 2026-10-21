@@ -128,12 +128,17 @@ const isGithub = (url: string) => {
 /** 같은 저장소의 주소가 여럿이면 저장소 자체 > 저장소 안 > PR > 이슈 순으로 하나를 고른다 */
 const TARGET_ORDER: SocialLinkTarget[] = ["repo", "path", "pull", "issue"];
 
+/** 글이 가리킨 저장소 하나 — 열쇠와 그 저장소의 주소 중 고른 것 */
+export type BlueskyRepositoryLink = { repositoryKey: string; linkUrl: string; linkTarget: SocialLinkTarget };
+
 /**
- * 글의 링크를 우리 칸으로 — 저장소 하나만 가리키면 그 키를 단다. 저장소가 둘 이상이면(목록·비교 글) 어느 한 곳의 화제로 세지 않도록
- * 키 없이 site 로 두고 주소는 첫 GitHub 주소를 남긴다(관리자 화면은 '저장소 여럿'으로 읽는다 — talk-reasons.ts). 저장소가 아닌 GitHub 주소
+ * 글의 링크를 우리 칸으로 — 저장소 하나만 가리키면 그 키를 단다. 저장소가 둘 이상이면(목록·비교 글) 여기서는 키 없이 site 로 두고
+ * 주소는 첫 GitHub 주소를 남긴다. 기록할 때 그중 공개 제품의 저장소가 있으면 그 저장소에 붙인다(X 보고와 같은 규칙 — bluesky-talk-store.ts).
+ * 공개 제품 저장소가 없으면 키 없이 남고 관리자 화면은 '저장소 여럿'으로 읽는다(talk-reasons.ts). 저장소가 아닌 GitHub 주소
  * (사용자·조직 페이지·gist·github.io)도 키 없이 site. 링크가 하나도 없으면 null(검색이 카드 안 인용 글 따위로 맞춘 글).
  */
-export function blueskyLink(urls: readonly string[]): { linkUrl: string; linkTarget: SocialLinkTarget; repositoryKey: string | null; repositories: number } | null {
+export function blueskyLink(urls: readonly string[]): { linkUrl: string; linkTarget: SocialLinkTarget; repositoryKey: string | null;
+  /** 글이 가리킨 저장소들(나온 차례) */ candidates: BlueskyRepositoryLink[] } | null {
   if (!urls.length) return null;
   const repos = new Map<string, { url: string; target: SocialLinkTarget }[]>();
   for (const url of urls) {
@@ -141,13 +146,13 @@ export function blueskyLink(urls: readonly string[]): { linkUrl: string; linkTar
     const target = repo ? githubLinkTarget(url) : null;
     if (repo && target) repos.set(repo, [...repos.get(repo) ?? [], { url, target }]);
   }
-  if (repos.size === 1) {
-    const [[key, links]] = [...repos];
+  const candidates = [...repos].map(([repositoryKey, links]) => {
     const best = [...links].sort((a, b) => TARGET_ORDER.indexOf(a.target) - TARGET_ORDER.indexOf(b.target))[0];
-    return { linkUrl: best.url, linkTarget: best.target, repositoryKey: key, repositories: 1 };
-  }
+    return { repositoryKey, linkUrl: best.url, linkTarget: best.target };
+  });
+  if (candidates.length === 1) return { ...candidates[0], candidates };
   const github = urls.find(isGithub);
-  return { linkUrl: github ?? urls[0], linkTarget: "site", repositoryKey: null, repositories: repos.size };
+  return { linkUrl: github ?? urls[0], linkTarget: "site", repositoryKey: null, candidates };
 }
 
 /** Bluesky 검토 서비스(기본 labeler) — 이곳이 단 라벨은 모두 검토 결과다 */
@@ -194,8 +199,8 @@ export type BlueskyTalkPost = SocialPostInput & {
   did: string;
   /** 라벨로 숨길 까닭(label:<값>) — 없으면 null */
   labelHold: string | null;
-  /** 글이 가리킨 서로 다른 저장소 수 */
-  repositories: number;
+  /** 글이 가리킨 저장소들(나온 차례) — 둘 이상이면 기록할 때 공개 제품 저장소를 고른다 */
+  candidates: BlueskyRepositoryLink[];
 };
 
 const parseTime = (value: string | undefined) => {
@@ -220,11 +225,10 @@ export function blueskyTalkPost(raw: unknown, now: Date): BlueskyTalkPost | null
   if (sortAt === null) return null;
   const link = blueskyLink(blueskyPostLinks(view));
   if (!link) return null;
-  const { repositories, ...target } = link;
   return {
-    externalId, kind: "link", title: "", ...target, postedAt: new Date(sortAt),
+    externalId, kind: "link", title: "", ...link, postedAt: new Date(sortAt),
     points: Math.min(COUNT_MAX, (view.likeCount ?? 0) + (view.repostCount ?? 0) * 2), comments: Math.min(COUNT_MAX, view.replyCount ?? 0),
-    frontPage: false, did: view.author.did, labelHold: blueskyLabelHold(blueskyBlockingLabels(view, now)), repositories,
+    frontPage: false, did: view.author.did, labelHold: blueskyLabelHold(blueskyBlockingLabels(view, now)),
   };
 }
 

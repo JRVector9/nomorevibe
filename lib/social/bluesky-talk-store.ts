@@ -4,7 +4,7 @@ import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { BLUESKY_BOT_HOLD, type BlueskyTalkPost } from "./bluesky-talk-source";
 import { writeSocialPosts } from "./repository";
-import { PRODUCT_IDENTITY } from "./talk";
+import { PRODUCT_IDENTITY, publicRepositoryKeys } from "./talk";
 
 /**
  * Bluesky 글 쓰기 — 넣기·덮기·관측은 다른 출처와 같은 writeSocialPosts, 그 위에 Bluesky 만의 숨김(라벨·봇)을 같은 트랜잭션에서 건다.
@@ -16,13 +16,31 @@ import { PRODUCT_IDENTITY } from "./talk";
 /** 수집기가 건 숨김(관리자가 건 것이 아닌) — 다시 묻기·내리기·풀기의 대상 */
 const SYSTEM_HOLD = sql`(state = 'hidden' and (state_reason = ${BLUESKY_BOT_HOLD} or state_reason like 'label:%'))`;
 
-/** 글을 남기고 라벨 숨김을 맞춘다 */
+/** 글을 남기고 라벨 숨김을 맞춘다. attributed: 여러 저장소 중 공개 제품 저장소에 붙인 글 수 */
 export async function recordBlueskyPosts(posts: readonly BlueskyTalkPost[], observedAt: Date, lease?: JobLease) {
-  if (!posts.length) return { inserted: 0, updated: 0, observed: 0, held: 0, released: 0 };
+  if (!posts.length) return { inserted: 0, updated: 0, observed: 0, held: 0, released: 0, attributed: 0 };
   return withJobLeaseWrite(lease, async tx => {
-    const written = await writeSocialPosts(tx, "bluesky", posts, observedAt, { periodic: false });
-    return { ...written, ...await applyLabelHolds(tx, posts, observedAt) };
+    const resolved = await attributeMultiRepository(tx, posts);
+    const written = await writeSocialPosts(tx, "bluesky", resolved.posts, observedAt, { periodic: false });
+    return { ...written, ...await applyLabelHolds(tx, resolved.posts, observedAt), attributed: resolved.attributed };
   });
+}
+
+/**
+ * 여러 저장소를 가리킨 글 — 그중 공개 제품의 저장소가 있으면 나온 차례로 첫 공개 제품 저장소에 붙인다(X 보고 xSocialPosts 와 같은 규칙).
+ * 없으면 키 없이 둔다. 다시 기록할 때마다 다시 고르므로 제품이 공개되거나 내려가면 따라 바뀐다.
+ */
+async function attributeMultiRepository(tx: ProductTransaction, posts: readonly BlueskyTalkPost[]) {
+  const keys = [...new Set(posts.filter(post => post.candidates.length > 1).flatMap(post => post.candidates.map(item => item.repositoryKey)))];
+  const publicKeys = await publicRepositoryKeys(tx, keys);
+  let attributed = 0;
+  const resolved = posts.map(post => {
+    const pick = post.candidates.length > 1 ? post.candidates.find(item => publicKeys.has(item.repositoryKey)) : undefined;
+    if (!pick) return post;
+    attributed += 1;
+    return { ...post, ...pick };
+  });
+  return { posts: resolved, attributed };
 }
 
 /**

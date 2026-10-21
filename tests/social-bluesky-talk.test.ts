@@ -47,7 +47,7 @@ const context = (cursor: BlueskyTalkCursor | null = null, hasBudget = () => true
 const sleep = vi.fn(async () => {});
 
 beforeEach(() => {
-  mocks.record.mockReset().mockImplementation(async (posts: unknown[]) => ({ inserted: posts.length, updated: 0, observed: posts.length, held: 0, released: 0 }));
+  mocks.record.mockReset().mockImplementation(async (posts: unknown[]) => ({ inserted: posts.length, updated: 0, observed: posts.length, held: 0, released: 0, attributed: 0 }));
   mocks.recheck.mockReset().mockResolvedValue([]);
   mocks.heavy.mockReset().mockResolvedValue([]);
   mocks.bots.mockReset().mockResolvedValue(0);
@@ -101,7 +101,8 @@ describe('게시물 읽기', () => {
       externalId: `${DID}/3mygbhpmh762y`, kind: 'link', title: '', linkUrl: 'https://github.com/Weaviate/weaviate', linkTarget: 'repo',
       repositoryKey: 'weaviate/weaviate', postedAt: new Date('2026-10-21T23:10:44.000Z'),
       // 점수 = 좋아요 4 + 재게시 3×2, 댓글 = 답글(인용은 세지 않는다)
-      points: 10, comments: 2, frontPage: false, did: DID, labelHold: null, repositories: 1,
+      points: 10, comments: 2, frontPage: false, did: DID, labelHold: null,
+      candidates: [{ repositoryKey: 'weaviate/weaviate', linkUrl: 'https://github.com/Weaviate/weaviate', linkTarget: 'repo' }],
     });
     expect(JSON.stringify(post)).not.toMatch(/secret body|someone\.bsky|Some One|cdn\.bsky/);
   });
@@ -113,17 +114,21 @@ describe('게시물 읽기', () => {
       embed: { $type: 'app.bsky.embed.recordWithMedia', media: { $type: 'app.bsky.embed.external', external: { uri: 'https://github.com/acme/media' } } } } });
     expect(blueskyTalkPost(media, NOW)).toMatchObject({ repositoryKey: 'acme/media' });
     expect(blueskyLink(['https://github.com/acme/app/issues/7', 'https://github.com/acme/app'])).toEqual({
-      linkUrl: 'https://github.com/acme/app', linkTarget: 'repo', repositoryKey: 'acme/app', repositories: 1,
+      linkUrl: 'https://github.com/acme/app', linkTarget: 'repo', repositoryKey: 'acme/app',
+      candidates: [{ repositoryKey: 'acme/app', linkUrl: 'https://github.com/acme/app', linkTarget: 'repo' }],
     });
     expect(blueskyLink(['https://github.com/NixOS/nixpkgs/pull/576814'])).toMatchObject({ linkTarget: 'pull', repositoryKey: 'nixos/nixpkgs' });
   });
 
   it('저장소가 여럿이거나 저장소가 아닌 GitHub 주소는 키 없이 site 로 남기고, 링크가 없으면 버린다', () => {
     expect(blueskyLink(['https://example.com/blog', 'https://github.com/acme/one', 'https://github.com/acme/two'])).toEqual({
-      linkUrl: 'https://github.com/acme/one', linkTarget: 'site', repositoryKey: null, repositories: 2,
+      linkUrl: 'https://github.com/acme/one', linkTarget: 'site', repositoryKey: null, candidates: [
+        { repositoryKey: 'acme/one', linkUrl: 'https://github.com/acme/one', linkTarget: 'repo' },
+        { repositoryKey: 'acme/two', linkUrl: 'https://github.com/acme/two', linkTarget: 'repo' },
+      ],
     });
     expect(blueskyLink(['https://news.ycombinator.com/item?id=1', 'https://github.com/sponsors/acme'])).toEqual({
-      linkUrl: 'https://github.com/sponsors/acme', linkTarget: 'site', repositoryKey: null, repositories: 0,
+      linkUrl: 'https://github.com/sponsors/acme', linkTarget: 'site', repositoryKey: null, candidates: [],
     });
     expect(blueskyLink(['https://acme.github.io/app/'])).toMatchObject({ linkTarget: 'site', repositoryKey: null });
     expect(blueskyTalkPost(view('3mygb000000aa', []), NOW)).toBeNull();

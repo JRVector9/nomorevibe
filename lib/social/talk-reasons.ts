@@ -97,9 +97,9 @@ export function talkVerdict(post: TalkVerdictPost, placement: TalkPlacement, now
   const reasons: TalkReason[] = [];
   if (post.state === "gone") reasons.push(reason("gone", "원문 삭제"));
   if (post.state === "hidden") reasons.push(hiddenReason(post.stateReason));
-  // 저장소 주소인데 키가 없다 — 여러 저장소를 가리킨 글(Bluesky)은 어느 한 곳의 화제로 세지 않는다
+  // 저장소 주소인데 키가 없다 — 여러 저장소를 가리켰는데 그중 공개 제품 저장소가 없던 글(Bluesky·X)
   if (!post.repositoryKey) reasons.push(post.linkUrl && repoFromUrl(post.linkUrl)
-    ? reason("multi_repo", "저장소 여럿 — 한 저장소만 가리킨 글만 셉니다")
+    ? reason("multi_repo", "저장소 여럿 — 공개 제품 저장소가 없어 어느 한 곳에도 세지 않음")
     : reason("no_repo", "저장소 아님 — 저장소 모양이 아닌 주소"));
   else {
     if (post.excluded) reasons.push(reason("excluded", "저장소 빼기"));

@@ -88,7 +88,7 @@ describe('왜 /talk 에 없나', () => {
     expect(labels(talkVerdict(bsky({ state: 'hidden', stateReason: 'admin' }), none, NOW))).toEqual(['숨김']);
     // 저장소 주소인데 키가 없다 — 저장소 여럿을 가리킨 글
     expect(talkVerdict(bsky({ linkTarget: 'site', repositoryKey: null, product: null, linkUrl: 'https://github.com/acme/one' }), none, NOW).reasons)
-      .toEqual([{ code: 'multi_repo', label: '저장소 여럿 — 한 저장소만 가리킨 글만 셉니다' }]);
+      .toEqual([{ code: 'multi_repo', label: '저장소 여럿 — 공개 제품 저장소가 없어 어느 한 곳에도 세지 않음' }]);
     expect(labels(talkVerdict(bsky({ linkTarget: 'site', repositoryKey: null, product: null, linkUrl: 'https://github.com/sponsors/acme' }), none, NOW)))
       .toEqual(['저장소 아님 — 저장소 모양이 아닌 주소']);
     expect(talkVerdict(bsky({ lastSeenAt: new Date(NOW.getTime() - 25 * HOUR) }), none, NOW).reasons)

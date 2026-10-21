@@ -176,7 +176,8 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
   const purged = await purgeGoneBlueskyPosts(new Date(startedAt.getTime() - BLUESKY_GONE_PURGE_MS), ctx.lease);
   const complete = discovered && !truncated && !lookupFailed && !rateLimited;
   ctx.log("social.bluesky_talk_collected", {
-    found: posts.length, unlinked: posts.filter(post => !post.repositoryKey).length, multi: posts.filter(post => post.repositories > 1).length,
+    found: posts.length, unlinked: posts.filter(post => !post.repositoryKey).length, multi: posts.filter(post => post.candidates.length > 1).length,
+    attributed: recorded.attributed + refreshed.attributed,
     skipped, inserted: recorded.inserted, updated: recorded.updated + refreshed.updated, observed: recorded.observed + refreshed.observed,
     held: recorded.held + refreshed.held, released: recorded.released + refreshed.released, heavy: heavy.length, bots,
     missing: missing.length, rechecked, gone, expired, purged, pages, requests, complete, truncated,

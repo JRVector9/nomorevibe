@@ -29,10 +29,11 @@ export const COLLECTOR_EVENTS: Record<string, CollectorEventDefinition> = {
   "social.hn_talk_failed": { label: "HN 화제 검색 오류", fields: ["page"], error: true },
   "social.hn_talk_lookup_failed": { label: "HN 화제 다시 묻기 오류", fields: [], error: true },
   // Bluesky: found·unlinked·multi·skipped·observed·missing·heavy 는 회차마다 같은 창을 다시 센 수다 — 누적에 더하지 않는다
-  // unlinked: 저장소 키 없이 남긴 글(multi: 그중 저장소 여럿), held·bots: 라벨·봇으로 숨긴 글, gone: 다시 물어 없던 글, purged: 지운 지 7일 지나 행째 지운 글
+  // unlinked: 저장소 키 없이 읽은 글, multi: 저장소 여럿(attributed: 그중 공개 제품 저장소에 붙인 글), held·bots: 라벨·봇으로 숨긴 글,
+  // gone: 다시 물어 없던 글, purged: 내린 지 7일 지나 행째 지운 글
   "social.bluesky_talk_collected": { label: "Bluesky 화제 수집 결과",
-    fields: ["found", "unlinked", "multi", "skipped", "inserted", "updated", "observed", "held", "released", "heavy", "bots", "missing", "rechecked", "gone", "expired", "purged", "requests", "complete", "truncated"],
-    noSum: ["found", "unlinked", "multi", "skipped", "observed", "missing", "heavy"] },
+    fields: ["found", "unlinked", "multi", "attributed", "skipped", "inserted", "updated", "observed", "held", "released", "heavy", "bots", "missing", "rechecked", "gone", "expired", "purged", "requests", "complete", "truncated"],
+    noSum: ["found", "unlinked", "multi", "attributed", "skipped", "observed", "missing", "heavy"] },
   "social.bluesky_talk_failed": { label: "Bluesky 화제 검색 오류", fields: ["page"], error: true },
   "social.bluesky_talk_lookup_failed": { label: "Bluesky 화제 다시 묻기 오류", fields: [], error: true },
   "evidence.refresh_batch": { label: "공개 근거 수집 결과", fields: ["attempted", "succeeded", "failed", "factsChanged", "eventsInserted", "mediaInserted"] },
