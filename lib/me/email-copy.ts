@@ -36,7 +36,7 @@ export type EmailContent = { subject: string; text: string; html: string };
  * 알림 payload 가운데 메일 글에 쓰는 것 — 내려간 까닭(followed_delisted), 팔로한 분야 묶음의 분야·수(category_new).
  * 발송함에 넣을 때와 꺼내 쓸 때 모두 이 함수로 거른다
  */
-export type EmailDetail = { reason?: "down" | "removed"; categories?: { category: string; count: number }[]; total?: number; others?: number };
+export type EmailDetail = { reason?: "down" | "removed"; target?: "feedback" | "reaction"; categories?: { category: string; count: number }[]; total?: number; others?: number };
 export type DigestItem = { kind: EmailKind; product: EmailProduct; url: string; detail?: EmailDetail };
 
 const count = (value: unknown): number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
@@ -45,6 +45,8 @@ export function emailDetail(kind: string, value: unknown): EmailDetail {
   const payload = value && typeof value === "object" ? value as Record<string, unknown> : {};
   // 알림함(lib/me/notification-view.ts)과 같게 «down» 이 아니면 목록에서 내려간 것으로 본다
   if (kind === "followed_delisted") return { reason: payload.reason === "down" ? "down" : "removed" };
+  // 알림함 줄은 원래 payload(feedbackId)를, 발송함은 줄 세울 때 적은 target 을 넘긴다
+  if (kind === "maker_reply") return { target: payload.target === "feedback" || typeof payload.feedbackId === "string" ? "feedback" : "reaction" };
   if (kind !== "category_new") return {};
   const categories = (Array.isArray(payload.categories) ? payload.categories : []).flatMap((item) => {
     const entry = item && typeof item === "object" ? item as Record<string, unknown> : {};

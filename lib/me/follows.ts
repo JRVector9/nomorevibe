@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products, productUpdates } from "@/lib/db/schema";
 import { userFollows } from "@/lib/db/me-schema";
@@ -42,8 +42,9 @@ export async function follow(userId: number, key: FollowKey): Promise<{ created:
   return onPrimary(async () => {
     if (!await targetExists(key)) throw new PublicAuthError(404, "follow_not_found");
     return db.transaction(async (tx) => {
-      const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
-      if (!user) throw new PublicAuthError(404, "follow_not_found");
+      // 탈퇴(행을 FOR UPDATE 로 잠근다)와 줄을 세운다 — 탈퇴가 끝난 뒤 깨어난 팔로는 줄을 다시 만들지 않는다
+      const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("update");
+      if (!user) throw new PublicAuthError(401, "login_required");
       const [existing] = await tx.select({ userId: userFollows.userId }).from(userFollows).where(and(eq(userFollows.userId, userId),
         eq(userFollows.targetType, key.targetType), eq(userFollows.targetKey, key.targetKey)));
       if (existing) return { created: false };

@@ -110,7 +110,10 @@ export async function enqueueNotificationEmails(rows: readonly NotificationEmail
       select n.user_id, n.kind, n.dedupe_key, jsonb_build_object('notificationId', n.id, 'setting', n.setting,
              'product', case when ${products.id} is null then null else jsonb_build_object('slug', ${products.slug}, 'name', ${products.name}) end)
              || case when n.kind = 'followed_delisted' then jsonb_build_object('detail', jsonb_build_object('reason',
-                  case when ${notifications.payload}->>'reason' = 'down' then 'down' else 'removed' end)) else '{}'::jsonb end
+                  case when ${notifications.payload}->>'reason' = 'down' then 'down' else 'removed' end))
+             -- 메이커 답장은 의견 탭(댓글)·써봤어요 탭(한 줄)에서만 보인다 — 메일 링크도 알림함과 같은 곳으로
+             when n.kind = 'maker_reply' then jsonb_build_object('detail', jsonb_build_object('target',
+                  case when ${notifications.payload} ? 'feedbackId' then 'feedback' else 'reaction' end)) else '{}'::jsonb end
         from (values ${sql.join(chunk.map((row) => sql`(${row.id}::bigint, ${row.userId}::int, ${row.kind}::varchar, ${row.productId ?? null}::int,
           ${notificationEmailDedupeKey(row.userId, row.dedupeKey)}::varchar, ${row.setting}::varchar)`), sql`, `)}) as n(id, user_id, kind, product_id, dedupe_key, setting)
         join ${publicUsers} on ${publicUsers.id} = n.user_id and ${publicUsers.deletedAt} is null
@@ -143,6 +146,7 @@ function itemUrl(locale: Locale, kind: EmailKind, product: EmailProduct, detail:
   const categories = detail.categories ?? [];
   const path = kind === "category_new" ? (categories.length && !detail.others ? `/c/${categories[0].category}?sort=recent` : ME_TAB_PATHS.following)
     : kind === "followed_delisted" && detail.reason !== "down" ? ME_TAB_PATHS.following
+      : kind === "maker_reply" ? (detail.target === "feedback" ? ME_TAB_PATHS.opinions : ME_TAB_PATHS.tried)
       : product ? `/p/${product.slug}` : ME_TAB_PATHS.alerts;
   return `${siteOrigin()}${localePath(locale, path)}`;
 }

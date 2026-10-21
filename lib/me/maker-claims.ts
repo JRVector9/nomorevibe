@@ -266,6 +266,9 @@ async function recordOwnerMembership(product: ClaimProduct, userId: number, gith
       .from(products).where(eq(products.id, product.id));
     // GitHub 을 읽는 사이 저장소 주소가 바뀌었거나 내려갔으면 그 확인은 이 행의 것이 아니다
     if (!current || !(PUBLIC_STATUSES as readonly string[]).includes(current.status) || current.repoUrl !== product.repoUrl) return false;
+    // 탈퇴(계정 행 FOR UPDATE)와 줄을 세운다 — 탈퇴한 계정에 운영자 자격을 다시 만들지 않는다
+    const [member] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("share");
+    if (!member) return false;
     const recheckAt = sql`now() + ${MAKER_RECHECK_DAYS} * interval '1 day'`;
     await tx.insert(productMakerMembers).values({ productId: product.id, userId, role: "owner", githubUserId, method: "github_repo_owner", recheckAt })
       .onConflictDoUpdate({ target: [productMakerMembers.productId, productMakerMembers.userId], set: {

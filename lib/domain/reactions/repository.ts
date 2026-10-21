@@ -4,6 +4,7 @@ import { db, onPrimary } from "@/lib/db";
 import { clickEvents, products, rateLimits } from "@/lib/db/schema";
 import { makerReplies, productReactions } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
+import { PublicAuthError } from "@/lib/domain/accounts/errors";
 import { getProductIdentity } from "@/lib/domain/products/detail-view";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { productVisitorHash } from "@/lib/domain/products/visitors";
@@ -133,9 +134,19 @@ async function dropReplies(tx: Transaction, ids: string[]) {
  * 랭킹 제외는 쓸 때마다 다시 정한다 — 그 시간 제품의 변경이 넘쳤거나(REACTION_FLOOD_PER_HOUR) 신뢰할 IP 없는 익명 줄 한도를
  * 넘었을 때만. 실제로 바뀐 쓰기만 센다(같은 값을 다시 보내는 것으로 넘치게 할 수 없다).
  */
+/**
+ * 로그인 쓰기는 계정 행을 먼저(FOR SHARE) 잡는다 — 탈퇴(FOR UPDATE 뒤 평가를 지운다)가 끝난 뒤 깨어난 쓰기는 401 로 멈추고,
+ * 평가 행·제품 잠금을 쥐기 전에 기다리므로 탈퇴와 서로 막히지 않는다
+ */
+async function lockLiveUser(tx: Transaction, userId: number): Promise<void> {
+  const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("share");
+  if (!user) throw new PublicAuthError(401, "login_required");
+}
+
 export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { untrustedIp?: boolean; now?: Date } = {}) {
   const now = options.now ?? new Date();
   return onPrimary(() => db.transaction(async (tx) => {
+    if (owner.userId) await lockLiveUser(tx, owner.userId);
     const product = await findProduct(tx, slug);
     if (!product) throw new ReactionError("reaction_not_found", 404);
     const hash = owner.visitor ? productVisitorHash(slug, owner.visitor) : null;
@@ -281,6 +292,7 @@ export async function listBrowserReactions(slugs: string[], visitor: string): Pr
 export async function mergeBrowserReactions(userId: number, slugs: string[], visitor: string): Promise<{ merged: number }> {
   if (slugs.length === 0) return { merged: 0 };
   return onPrimary(() => db.transaction(async (tx) => {
+    await lockLiveUser(tx, userId);
     const targets = await tx.select({ id: products.id, slug: products.slug }).from(products)
       .where(and(inArray(products.slug, slugs), ne(products.status, "banned"))).orderBy(asc(products.id));
     let merged = 0;

@@ -228,7 +228,8 @@ describe("email-outbox-send", () => {
     expect(body.subject).toContain("Project one");
     expect(body.headers["List-Unsubscribe-Post"]).toBe("List-Unsubscribe=One-Click");
     expect(body.headers["List-Unsubscribe"]).toMatch(new RegExp(`^<${ORIGIN}/api/me/notification-settings/unsubscribe\\?token=${reader.id}\\.makerReply\\.`));
-    expect(body.text).toContain(`${ORIGIN}/p/one`);
+    // 한 줄에 단 답장(feedbackId 없음)은 써봤어요 탭에서 보인다 — 메일 링크도 알림함과 같은 곳
+    expect(body.text).toContain(`${ORIGIN}/me/tried`);
     const [sent] = await rows();
     expect(sent).toMatchObject({ state: "accepted", attempts: 1, lastError: null });
     expect(sent.sentAt).toBeInstanceOf(Date);

@@ -112,6 +112,10 @@ describe("알림 메일 글", () => {
     expect(removed.subject).toBe("목록에서 내려감: 메모장X");
     expect(removed.text).not.toContain("접속이 안 돼");
     expect((await instantEmail("en", "followed_delisted", null, links, emailDetail("followed_delisted", {}))).text).toContain("was removed from the list");
+    // 메이커 답장 메일은 알림함처럼 의견 탭(댓글)·써봤어요 탭(한 줄)으로 — 알림 payload(feedbackId)와 발송함 payload(target) 둘 다 읽는다
+    expect(emailDetail("maker_reply", { feedbackId: "7b1c2e3f-0000-4000-8000-000000000001" })).toEqual({ target: "feedback" });
+    expect(emailDetail("maker_reply", { target: "feedback" })).toEqual({ target: "feedback" });
+    expect(emailDetail("maker_reply", { excerpt: "고마워요" })).toEqual({ target: "reaction" });
     const one = emailDetail("category_new", { total: 12, categories: [{ category: "dev", count: 12 }], others: 0 });
     const many = emailDetail("category_new", { total: 15, categories: [{ category: "dev", count: 12 }, { category: "design", count: 3 }, { category: "nope", count: 9 }], others: 1 });
     expect(one).toEqual({ categories: [{ category: "dev", count: 12 }], total: 12, others: 0 });
@@ -121,7 +125,7 @@ describe("알림 메일 글", () => {
     expect(ko.text).toContain("팔로한 분야 개발 도구 외 1개 분야에 새 프로젝트 15개가 올라왔어요.");
     expect(ko.text).not.toContain("새 프로젝트가 올라왔어요: 새 프로젝트");
     expect((await digestEmail("en", [{ kind: "category_new", product: null, url: links.open, detail: one }], 1, links)).text).toContain("12 new projects arrived in Developer");
-    expect(emailDetail("maker_reply", { reason: "down" })).toEqual({});
+    expect(emailDetail("followed_release", { reason: "down" })).toEqual({});
     expect(emailDetail("category_new", { categories: "x" })).toEqual({});
   });
 
