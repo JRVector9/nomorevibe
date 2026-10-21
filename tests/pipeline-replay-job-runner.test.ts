@@ -9,7 +9,7 @@ vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<type
 vi.mock("@/lib/db", () => ({ db: { transaction: fake.transaction, update: fake.update } }));
 vi.mock("@/lib/jobs/role-leader", () => ({ assertRoleLease: fake.role, RoleLeaseLostError: class extends Error {} }));
 vi.mock("@/lib/jobs/batch-repository",()=>({assertJobBatchAdmission:fake.batch,batchResultObservation:()=>null,JobBatchBlockedError:class extends Error{}}));
-vi.mock("@/lib/observability/logger", () => ({ logger: { info: vi.fn(), error: vi.fn() } }));
+vi.mock("@/lib/observability/logger", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
 import { runJob } from "@/lib/jobs/runner";
 
 beforeEach(() => {
@@ -17,10 +17,14 @@ beforeEach(() => {
   fake.batch.mockResolvedValue(null);
   fake.transaction.mockImplementation(async (work: (tx: unknown) => Promise<unknown>) => {
     fake.traces.push("transaction");
-    return work({
+    const tx = {
       insert: () => ({ values: () => ({ onConflictDoNothing: async () => {}, onConflictDoUpdate: async () => {} }) }),
       update: () => ({ set: () => ({ where: () => ({ returning: async () => [{ cursor: null, requestedVersion: 1, name: "crawl-agent-review" }] }) }) }),
-    });
+      // 수집기(crawl-fetch) ACK 의 회차 누적(job-tally) — 같은 TX 안 savepoint 라 바깥 transaction 수는 그대로다
+      execute: async () => { fake.traces.push("tally"); return []; },
+      transaction: async (inner: (sp: unknown) => Promise<unknown>) => inner(tx),
+    };
+    return work(tx);
   });
   fake.update.mockImplementation(() => ({ set: (values: Record<string, unknown>) => ({ where: () => {
     if (values.workerSeenAt) return { returning: () => { fake.traces.push("heartbeat"); return fake.heartbeat ?? Promise.resolve([{ name: "crawl-agent-review" }]); } };
@@ -61,9 +65,11 @@ it.each(["crawl-agent-review", "second-review"])("keeps the real claim and compl
 
 it("does not change ordinary jobs outside a replay database scope", async () => {
   fake.scope.mockReturnValue(undefined);
-  await expect(runJob("crawl-fetch", async () => ({ done: true }))).resolves.toMatchObject({ status: "completed" });
+  await expect(runJob("crawl-fetch", async () => ({ done: true }), { tally: true })).resolves.toMatchObject({ status: "completed" });
   expect(fake.transaction).toHaveBeenCalledTimes(2);
   expect(fake.batch).toHaveBeenCalledOnce();
+  // 워커(tally)로 돈 격리 replay 밖의 수집기는 같은 ACK TX 안 savepoint 로 회차 누적을 더한다
+  expect(fake.traces).toContain("tally");
 });
 
 it.each([false, true])("awaits an in-flight real heartbeat before finishing (handler throws=%s)", async failure => {

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { CrawlerActivity } from "@/app/(operator)/admin/status/CrawlerActivity";
+import { CollectorTotalsDetail, CrawlerActivity } from "@/app/(operator)/admin/status/CrawlerActivity";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { STATUS_TABS } from "@/app/(operator)/admin/status/action-links";
@@ -117,5 +117,39 @@ describe("read-only collector activity", () => {
     expect(out).toContain("오류 이벤트 1 · 보존분");
     expect(out).not.toContain("항목 오류 0");
     expect(out).not.toContain(">회차 성공<");
+  });
+
+  it("최근 결과에 마지막 성공 뒤의 실패·미룸을 먼저 적고, 누적 칸에 최근 1시간·24시간 합을 적는다", () => {
+    const success = new Date(now.getTime() - 120_000), later = new Date(now.getTime() - 30_000).toISOString();
+    const value = buildCrawlerActivity({ settings: { ...DEFAULT_CRAWL_SETTINGS, enabled: true }, roles: [], throughput: null, now,
+      jobs: [{ name: "crawl-fetch", lastRunAt: success, lastSuccessAt: success, nextScheduledAt: null, notBefore: null, lockedAt: null,
+        leaseToken: null, requestedVersion: 1, processedVersion: 1, lastError: null, runs: 10 }],
+      observations: [{ key: "job:crawl-fetch", observedAt: success, value: { done: true, durationMs: 900, events: [
+        { event: "crawl.fetched", counts: { fetched: 2, skipped: 0, failed: 0, gated: 0, drained: true } }] } }],
+      tallies: [{ job: "crawl-fetch", lastFailedAt: null, hour: { "@ok": 58, "crawl.fetched#fetched": 120, "crawl.fetch_rate_limited": 2 },
+        day: { "@ok": 1400, "@failed": 3, "crawl.fetched#fetched": 2400 } }],
+      deferrals: [{ job: "crawl-fetch", reason: "model_capacity", lastDeferredAt: later, lastHour: 5, lastHourByReason: { model_capacity: 5 } }] });
+    const out = html(value);
+    expect(out).toContain("미룸 · 모델 자리(model_capacity)");
+    expect(out).toContain("최근 1시간 5회");
+    expect(out).toContain("마지막 성공 회차");
+    expect(out).toContain("누적 · 최근 1시간 / 24시간");
+    expect(out).toContain("최근 1시간 · 회차 58 · 미룸 5");
+    expect(out).toContain("원본 수집 결과 원본 확보 120");
+    expect(out).toContain("원본 공급자 한도 대기 2회");
+    expect(out).toContain("최근 24시간 · 회차 1,400 · 실패 3");
+    expect(out).toContain("원본 확보 2,400");
+    // 작업 상세 창 조각도 같은 숫자
+    const detail = renderToStaticMarkup(createElement(CollectorTotalsDetail, { row: value.jobs.find(row => row.name === "crawl-fetch")!, now: now.toISOString() }));
+    expect(detail).toContain("마지막 성공 뒤 미룸 · 모델 자리(model_capacity)");
+    expect(detail).toContain("최근 24시간 · 회차 1,400 · 실패 3");
+  });
+
+  it("누적을 못 읽었으면 미확인이라 적는다", () => {
+    const value = buildCrawlerActivity({ settings: DEFAULT_CRAWL_SETTINGS, jobs: [], observations: [], roles: [], throughput: null, now,
+      tallies: null, deferrals: [] });
+    const out = html(value);
+    expect(out).toContain("회차 누적을 읽지 못했습니다");
+    expect(out).toContain("누적 미확인");
   });
 });

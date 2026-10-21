@@ -55,7 +55,7 @@ async function main() {
     ]);
     const result = await runEvidenceWorker({ once: args.includes('--once'), intervalMs: intervalSeconds * 1000, signal }, {
       request: name => requestJob(name), seen: markWorkerSeen,
-      run: (name, runOptions) => runJob(name, JOBS[name], { ...runOptions, budgetMs: 25_000 }),
+      run: (name, runOptions) => runJob(name, JOBS[name], { ...runOptions, budgetMs: 25_000, tally: true }),
       report, log: runtimeLog,
     });
     runtimeLog('evidence_worker.stopped', result);

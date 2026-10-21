@@ -1,5 +1,7 @@
-import { JOB_CATALOG, type JobRole, type JobLane } from "@/lib/jobs/catalog";
+import type { JobRole, JobLane } from "@/lib/jobs/catalog";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
+import { COLLECTOR_JOBS, COLLECTOR_NAMES, isAdditiveField, type JobTallySummary, type TallyWindow } from "@/lib/jobs/tally";
+import type { JobDeferralSummary } from "@/lib/jobs/deferral-observation";
 import { isPausedJob } from "@/lib/jobs/status";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
@@ -13,7 +15,9 @@ type Observation = { key: string; value: Record<string, unknown>; observedAt: Da
 type RoleOwner = { role: string; ownerInstanceId: string | null; secondsUntilExpiry: number | null };
 type QueueMetrics = { measuredAt: string; stages: { key: string; waiting: number; deferred?: number }[] };
 export type CollectorState = "disabled" | "paused" | "running" | "stale-lock" | "retrying" | "queued" | "error" | "never-run" | "idle";
-export type CollectorEvent = { label: string; counts: Record<string, number | boolean> };
+export type CollectorEvent = { label: string; counts: Record<string, number | boolean>; /** 숫자 없는 이벤트(오류·대기)가 창 안에 나온 횟수 */ times?: number };
+/** 회차 누적 한 창(job-tally:<job>) — ticks 는 성공 회차, failed 는 실패 회차, events 는 아래 EVENTS 로 거른 이벤트별 합 */
+export type CollectorTotals = { ticks: number; failed: number; events: CollectorEvent[] };
 export type CollectorResult = { name: string; observedAt: string; durationMs: number | null; done: boolean | null;
   outcome: "item-errors" | "event-errors" | "provider-error" | "waiting" | "completed" | "unknown"; itemErrors: number | null;
   errorEvents: number; providerError: boolean; events: CollectorEvent[] };
@@ -21,7 +25,15 @@ export type CollectorRow = { name: string; role: JobRole; lane: JobLane; state: 
   enabled: boolean; paused: boolean;
   intervalMs: number | null; lastRunAt: string | null; lastSuccessAt: string | null; nextScheduledAt: string | null;
   retryAt: string | null; runs: number | null; waiting: number | null; deferred: number | null;
-  error: "timeout" | "rate-limited" | "authentication" | "job-error" | null; note: string | null; latest: CollectorResult | null };
+  error: "timeout" | "rate-limited" | "authentication" | "job-error" | null; note: string | null; latest: CollectorResult | null;
+  /** 최근 1시간·24시간 누적. 누적을 못 읽었으면(보류) null, 아직 쓴 적이 없으면 0 인 창 */
+  totals: { hour: CollectorTotals; day: CollectorTotals } | null;
+  /** 마지막 성공 회차보다 나중에 미룬 틱(defer:<job>) — 지난 성공 숫자가 그대로 남아 멈춘 것처럼 보이지 않게 */
+  lastDeferred: { reason: string; at: string; lastHour: number } | null;
+  /** 마지막 성공 회차보다 나중에 실패한 틱(job-tally:<job> lastFailedAt) */
+  lastFailedAt: string | null;
+  /** 최근 1시간 미룬 횟수(defer:<job>) — 미룸을 못 읽었으면 null */
+  deferredHour: number | null };
 /** kind consumer: 역할 lease·후보 없이 claim 으로 일하는 consumer(agent-scan·uptime 등) — 담당·예비가 아니고 역할 작업 줄이 없다 */
 export type CollectorInstance = { instanceId: string; role: JobRole; kind: "primary" | "standby" | "unknown" | "consumer";
   state: "active" | "standby" | "stale" | "stopping" | "unknown"; observedAt: string | null; runtimeStale: boolean;
@@ -29,12 +41,12 @@ export type CollectorInstance = { instanceId: string; role: JobRole; kind: "prim
     state: "idle" | "polling" | "running" | "stopping" | "standby" | "stale" | "unknown" | "other-job"; startedAt: string | null }[] };
 export type CrawlerActivityReport = { measuredAt: string; jobs: CollectorRow[]; instances: CollectorInstance[];
   recent: CollectorResult[]; roleReadFailed: boolean; queueReadFailed: boolean;
+  /** 누적(job-tally)·미룸(defer) 을 읽지 못했는가 — 못 읽은 것은 0 이 아니라 미확인이다 */
+  totalsReadFailed: boolean; deferralsReadFailed: boolean;
   x: { state: "manual-pilot"; scheduled: false; lastRunAt: null } };
-const EXTERNAL_COLLECTORS = new Set(["uptime-ping", "news-refresh", "product-thumbnail-refresh", "product-repo-review"]);
-/** Every crawler catalog job is included, including future jobs without a display description. */
-export const COLLECTOR_JOBS = JOB_CATALOG.filter((job): job is typeof job & { role: JobRole } =>
-  job.role === "crawler" || (job.role !== "scheduler" && EXTERNAL_COLLECTORS.has(job.name)));
-const collectorNames = new Set(COLLECTOR_JOBS.map(job => job.name));
+/** Every crawler catalog job is included, including future jobs without a display description(목록은 lib/jobs/tally.ts — runner 누적과 같다). */
+export { COLLECTOR_JOBS };
+const collectorNames = COLLECTOR_NAMES;
 const collectorRoles = new Set(COLLECTOR_JOBS.map(job => job.role));
 
 /** Exact known event/counter names: arbitrary log strings and numeric IDs never become browser data. */
@@ -135,6 +147,26 @@ function result(row: Observation, name: string): CollectorResult | null {
       : errorEvents > 0 ? "event-errors" : waiting ? "waiting" : scanStatusUnknown ? "unknown" : "completed", itemErrors, errorEvents, providerError, events };
 }
 
+/**
+ * 누적 한 창을 화면 숫자로 — 이 파일의 EVENTS 에 있는 이벤트·필드만(임의의 로그 글자는 브라우저로 가지 않는다), 더해서 뜻이 있는 필드만.
+ * 숫자 없는 이벤트(오류·대기 알림)는 나온 횟수(times)로 보인다.
+ */
+function totalsOf(window: TallyWindow): CollectorTotals {
+  const events: CollectorEvent[] = [];
+  for (const [event, definition] of Object.entries(EVENTS)) {
+    const counts: CollectorEvent["counts"] = {};
+    for (const field of definition.fields) {
+      // 조사 결과의 failed 는 예전 관측에서 상태를 잃었다 — 마지막 회차 표시(result)와 같이 세지 않는다
+      if (!isAdditiveField(field) || (event === "agent_evidence.scanned" && field === "failed")) continue;
+      const value = count(window[`${event}#${field}`]);
+      if (value) counts[field] = value;
+    }
+    const times = count(window[event]) ?? 0;
+    if (Object.keys(counts).length || times) events.push({ label: definition.label, counts, ...(times ? { times } : {}) });
+  }
+  return { ticks: count(window["@ok"]) ?? 0, failed: count(window["@failed"]) ?? 0, events };
+}
+
 function enabled(name: string, settings: CrawlSettings): boolean {
   if (name === "crawl-fetch") return settings.enabled;
   if (name === "crawl-seed") return settings.enabled && settings.discover.queries.some(query => query.enabled);
@@ -205,8 +237,14 @@ function instanceRows(observations: Observation[], roles: RoleOwner[] | null, no
 }
 
 export function buildCrawlerActivity(input: { settings: CrawlSettings; jobs: CollectorJobInput[];
-  observations: Observation[]; roles: RoleOwner[] | null; throughput: QueueMetrics | null; now: Date }): CrawlerActivityReport {
+  observations: Observation[]; roles: RoleOwner[] | null; throughput: QueueMetrics | null; now: Date;
+  /** 수집기 회차 누적(readJobTallies) — 못 읽었으면 null. 넘기지 않으면(undefined) 누적 칸을 그리지 않는다 */
+  tallies?: JobTallySummary[] | null;
+  /** 미룬 이유(defer:<job>, readDeferrals) — 못 읽었으면 null */
+  deferrals?: JobDeferralSummary[] | null }): CrawlerActivityReport {
   const { settings, observations, roles, throughput, now } = input;
+  const tallies = input.tallies === undefined ? undefined : input.tallies === null ? null : new Map(input.tallies.map(row => [row.job, row]));
+  const deferrals = new Map((input.deferrals ?? []).map(row => [row.job, row]));
   const latest = new Map<string, CollectorResult>();
   // Filter before limit. Review/publish/text observations cannot crowd out collector results.
   for (const row of observations) {
@@ -235,13 +273,27 @@ export function buildCrawlerActivity(input: { settings: CrawlSettings; jobs: Col
       : retryAt ? "retrying" : job && job.requestedVersion > job.processedVersion ? "queued"
       : error ? "error" : !job?.lastRunAt ? "never-run" : "idle";
     const queue = catalog.name === "crawl-fetch" ? throughput?.stages.find(stage => stage.key === "fetch") : null;
+    const recentResult = latest.get(catalog.name) ?? null;
+    // 마지막 성공 회차보다 나중의 미룸·실패만 — 그보다 오래된 것은 이미 지난 일이다
+    const since = Date.parse(recentResult?.observedAt ?? iso(job?.lastSuccessAt) ?? "") || -Infinity;
+    const deferral = deferrals.get(catalog.name);
+    const deferredAt = iso(deferral?.lastDeferredAt);
+    const tally = tallies?.get(catalog.name);
+    const failedAt = iso(tally?.lastFailedAt);
     return { name: catalog.name, role: catalog.role, lane: catalog.lane ?? "main", state, enabled: isEnabled, paused, intervalMs: catalog.intervalMs,
       lastRunAt: iso(job?.lastRunAt), lastSuccessAt: iso(job?.lastSuccessAt), nextScheduledAt: iso(job?.nextScheduledAt),
       retryAt, runs: count(job?.runs), waiting: count(queue?.waiting), deferred: count(queue?.deferred),
       error, note: catalog.name === "product-repo-review" ? "재확인 결과에 따라 제품을 내릴 수 있습니다. 여기서는 활동만 관측합니다." : null,
-      latest: latest.get(catalog.name) ?? null };
+      latest: recentResult,
+      totals: tallies === null || tallies === undefined ? null : { hour: totalsOf(tally?.hour ?? {}), day: totalsOf(tally?.day ?? {}) },
+      lastDeferred: deferral && deferredAt && Date.parse(deferredAt) > since
+        ? { reason: deferral.reason, at: deferredAt, lastHour: count(deferral.lastHour) ?? 0 } : null,
+      lastFailedAt: failedAt && Date.parse(failedAt) > since ? failedAt : null,
+      deferredHour: input.deferrals === null || input.deferrals === undefined ? null : count(deferral?.lastHour) ?? 0 };
   });
   return { measuredAt: now.toISOString(), jobs, instances: instanceRows(observations, roles, now.getTime()),
     recent: [...latest.values()].sort((a,b) => Date.parse(b.observedAt) - Date.parse(a.observedAt)).slice(0,30),
-    roleReadFailed: roles === null, queueReadFailed: throughput === null, x: { state: "manual-pilot", scheduled: false, lastRunAt: null } };
+    roleReadFailed: roles === null, queueReadFailed: throughput === null,
+    totalsReadFailed: input.tallies === null, deferralsReadFailed: input.deferrals === null,
+    x: { state: "manual-pilot", scheduled: false, lastRunAt: null } };
 }

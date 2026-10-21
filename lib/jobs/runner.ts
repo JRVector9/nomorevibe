@@ -14,6 +14,7 @@ import { assertJobBatchAdmission, batchResultObservation, JobBatchBlockedError, 
 import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
+import { COLLECTOR_NAMES, createTally, jobTallyUpsert } from "./tally";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -59,7 +60,12 @@ export async function runJob<C>(
   handler: (ctx: JobContext<C>) => Promise<JobOutcome<C>>,
   options: { budgetMs?: number; requestedOnly?: boolean; signal?: AbortSignal; roleLease?: RoleLease;
     /** 미룬 이유 관측(defer:<job>, lib/jobs/deferral-observation.ts). 결과·lease·일정에는 끼어들지 않고, 실패해도 무시한다 */
-    onDeferred?: (reason: JobDeferredReason | "batch_blocked") => Promise<void> } = {},
+    onDeferred?: (reason: JobDeferredReason | "batch_blocked") => Promise<void>;
+    /**
+     * 수집기 회차 누적(job-tally:<job>, lib/jobs/tally.ts)을 남길지 — 미룸 관측처럼 워커(scripts/worker.ts)가 켠다.
+     * 직접 부른 한 틱(시험·운영 확인 스크립트)은 남기지 않는다. 결과·lease·일정에는 끼어들지 않는다
+     */
+    tally?: boolean } = {},
 ): Promise<RunResult> {
   const noteDeferred = async (reason: JobDeferredReason | "batch_blocked") => {
     try { await options.onDeferred?.(reason); } catch { /* 관측 실패는 틱 결과를 바꾸지 않는다 */ }
@@ -136,6 +142,8 @@ export async function runJob<C>(
   timer.unref();
   const stopHeartbeat = async () => { clearInterval(timer); await renewing; };
   const events: Array<{event:string;counts:Record<string,number|boolean>}> = [];
+  // 수집기 회차 누적(job-tally:<job>, lib/jobs/tally.ts) — 관측의 마지막 12개가 아니라 이 틱의 모든 이벤트를 더한다. 격리 replay 는 쓰지 않는다
+  const tally = options.tally === true && COLLECTOR_NAMES.has(name) && !currentReplayDb() ? createTally() : null;
   const ctx: JobContext<C> = {
     get cursor() { return cursor; },
     lease,
@@ -151,8 +159,10 @@ export async function runJob<C>(
     hasBudget: () => !lost && !options.signal?.aborted && Date.now() - startedAt < (options.budgetMs ?? 25_000),
     log: (event, fields) => {
       logger.info(event, { job: name, ...fields });
-      events.push({event:event.slice(0,100),counts:Object.fromEntries(Object.entries(fields ?? {}).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean')) as Record<string,number|boolean>});
+      const entry = {event:event.slice(0,100),counts:Object.fromEntries(Object.entries(fields ?? {}).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)||typeof v==='boolean')) as Record<string,number|boolean>};
+      events.push(entry);
       if(events.length>12)events.shift();
+      tally?.add(entry);
     },
   };
   try {
@@ -232,6 +242,12 @@ export async function runJob<C>(
       const value = { ...(batchResult ? {batchResult:{...batchResult,recordedAt:batchRecordedAt}} : {}), requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
       await tx.insert(operationsObservations).values({key:`job:${name}`,value,observedAt})
         .onConflictDoUpdate({target:operationsObservations.key,set:{value,observedAt}});
+      // 같은 ACK TX 에서 누적에 더한다 — job:<name> 의 마지막 회차와 어긋나지 않게. 누적이 실패해도(모양이 틀린 옛 줄 등) 틱은 성공이다:
+      // savepoint 로 그 문장만 되돌리고 남긴다
+      if (tally) {
+        try { await tx.transaction(async sp => { await sp.execute(jobTallyUpsert(name, { ...tally.counts(), "@ok": 1 })); }); }
+        catch (error) { logger.warn("job.tally_failed", { job: name, error }); }
+      }
       if (batchResult) {
         const key = `batch-result:${batchResult.instanceId}:${name}`;
         await tx.insert(operationsObservations).values({key,value:{batchResult:{...batchResult,recordedAt:batchRecordedAt}},observedAt})
@@ -258,6 +274,13 @@ export async function runJob<C>(
       lockedAt: null, leaseToken: null, lastError: message.slice(0, 2000),
       notBefore: sql`case when ${PAUSED} then ${jobs.notBefore} else now() + interval '30 seconds' end`, updatedAt: sql`now()`,
     }).where(owned);
+    // 이 lease 가 아직 제 것일 때만 누적에 "@failed"·lastFailedAt 을 남긴다(넘겨준 lease 의 실패는 그쪽 것이다). 관측일 뿐이라 실패해도 무시한다
+    if (tally && !lost && !(error instanceof JobLeaseLostError)) {
+      await db.transaction(async tx => {
+        if (!await writerSiteActive(tx)) return;
+        await tx.execute(jobTallyUpsert(name, { "@failed": 1 }, { failed: true }));
+      }).catch(tallyError => logger.warn("job.tally_failed", { job: name, error: tallyError }));
+    }
     const durationMs = Date.now() - startedAt;
     logger.error("job.failed", { job: name, durationMs, error });
     return { status: "failed", error: message, durationMs };

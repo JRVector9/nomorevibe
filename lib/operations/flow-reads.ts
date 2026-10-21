@@ -4,6 +4,7 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { crawlReviewAttempts, crawlTaglines, productAuditAttempts, productEmbeddings, productIntroChecks, productKoreanTaglines,
   productSearchProfiles, productTranslations, secondReviews, textTranslations } from "@/lib/db/schema";
 import { readJobDeferrals, type JobDeferralSummary } from "@/lib/jobs/deferral-observation";
+import { READ_JOB_TALLIES, summarizeJobTallies, type JobTallySummary } from "@/lib/jobs/tally";
 import { FIRST_MODEL_CALL_SQL, SECOND_VOTED_SQL } from "./dashboard";
 import { DB_CLOCK_SQL, replicaCache } from "./replica-cache";
 import type { ModelSlot } from "./stage-registry";
@@ -198,5 +199,17 @@ export function readDeferrals(fresh: boolean): Promise<ReplicaRead<DeferralsRead
     const read = await readJobDeferrals(<T,>(load: () => Promise<T>) => load());
     if (read.state !== "ready") throw new Error(`deferrals_${read.reason}`);
     return { at: read.at, jobs: read.jobs };
+  }, fresh);
+}
+
+/** 수집기 회차 누적(job-tally:<job>) — 크롤러 활동 표의 최근 1시간·24시간 칸 */
+export type TalliesRead = { at: string; jobs: JobTallySummary[] };
+const tallyCache = replicaCache<TalliesRead>({ event: "operations.job_tallies_unavailable", ttlMs: 15_000, bypass: true });
+
+/** 복제본 전용 · 15초 캐시(새로고침이 건너뛰고 다시 쓴다). 창은 읽은 DB 시각 기준으로 더한다 */
+export function readTallies(fresh: boolean): Promise<ReplicaRead<TalliesRead>> {
+  return tallyCache("tally", async (replica) => {
+    const [row] = await replica.execute<{ at: string; rows: unknown }>(READ_JOB_TALLIES);
+    return { at: row.at, jobs: summarizeJobTallies(row.at, row.rows) };
   }, fresh);
 }

@@ -22,7 +22,8 @@ import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
 import { sourceBufferCsrf } from "./source-buffer-csrf";
-import { CrawlerActivity } from "./CrawlerActivity";
+import { CollectorTotalsDetail, CrawlerActivity } from "./CrawlerActivity";
+import { readDeferrals, readTallies } from "@/lib/operations/flow-reads";
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
@@ -397,8 +398,11 @@ export default async function StatusPage() {
   // 수동 새로고침(5초 쿠키)이면 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts) — 지금 숫자는 원래 렌더마다 읽는다
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   // 조치할 일과 머리 칩에 드는 것만 기다린다 — 나머지는 아래 Suspense 조각이 따로 센다
-  const [inputs, acks] = await Promise.all([loadActionInputs(settings),
-    attentionAcks().catch((error) => { warn("operations.attention_acks_unavailable")(error); return new Map(); })]);
+  // 크롤러 활동의 누적·미룸은 복제본 전용 15초 캐시라 기다려도 싸다 — 못 읽으면 그 칸만 미확인(보류)
+  const [inputs, acks, tallies, deferrals] = await Promise.all([loadActionInputs(settings),
+    attentionAcks().catch((error) => { warn("operations.attention_acks_unavailable")(error); return new Map(); }),
+    readTallies(fresh).catch(() => ({ ok: false as const, reason: "error" as const })),
+    readDeferrals(fresh).catch(() => ({ ok: false as const, reason: "error" as const }))]);
   const derived = deriveStatus(inputs);
   const { ops, overview, roles, models, attention, downCount } = inputs;
   const now = ops.fetchedAt;
@@ -412,6 +416,12 @@ export default async function StatusPage() {
   after(async () => {
     if (await webWritable()) await recordAttentionSample(actionCounts(actions)).catch(warn("operations.attention_sample_failed"));
   });
+
+  const crawlerReport = buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
+    roles: roles?.roles ?? null, throughput: inputs.throughput, now: new Date(now),
+    tallies: tallies.ok ? tallies.value.jobs : null, deferrals: deferrals.ok ? deferrals.value.jobs : null });
+  // 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만, 서버가 그린 조각으로 넘긴다
+  const jobTotals = Object.fromEntries(crawlerReport.jobs.map((row) => [row.name, <CollectorTotalsDetail key={row.name} row={row} now={now} />]));
 
   const { agent, web, quota, health, healthObservation } = derived;
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
@@ -504,8 +514,7 @@ export default async function StatusPage() {
       <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
         verdict={verdict} flow={flowDetail}
         enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}
-        crawlers={<CrawlerActivity report={buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
-          roles: roleRows, throughput: inputs.throughput, now: new Date(now) })}/>}
+        crawlers={<CrawlerActivity report={crawlerReport}/>} jobTotals={jobTotals}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
         data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}
