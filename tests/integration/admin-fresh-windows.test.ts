@@ -1,8 +1,9 @@
 import { beforeAll, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
-import { todayPublications } from "@/lib/operations/dashboard";
+import { crawlFrontier, products } from "@/lib/db/schema";
+import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { kstDayStart } from "@/lib/operations/windows";
 import { ensureSchema, resetTables } from "./setup";
 
@@ -43,4 +44,16 @@ it("최근 24시간 발행 옆의 1시간·오늘은 한국 0시에서 끊는다
   expect(await todayPublications(now, 0)).toEqual({ total24h: 3, korean24h: 0, windows: { hour: 2, today: 1 }, latest: [] });
   // 하루 뒤 같은 시각 — 하나도 24시간 안에 없다
   expect(await todayPublications(new Date("2026-10-21T15:10:00Z"), 0)).toMatchObject({ total24h: 0, windows: { hour: 0, today: 0 } });
+});
+
+it("수동 새로고침(fresh)은 1분 캐시를 건너뛰어 방금 들어온 것을 센다", async () => {
+  await db.delete(crawlFrontier);
+  // 다른 파일이 담은 7일 값과 섞이지 않게 3일 창으로 센다
+  const before = await signalYields(DEFAULT_CRAWL_SETTINGS, 3);
+  await db.insert(crawlFrontier).values({ repo: "fresh/one", signal: "fresh-signal", discoveredAt: new Date() });
+  expect(await signalYields(DEFAULT_CRAWL_SETTINGS, 3)).toEqual(before);
+  const fresh = await signalYields(DEFAULT_CRAWL_SETTINGS, 3, { fresh: true });
+  expect(fresh.find((row) => row.signal === "fresh-signal")).toMatchObject({ enqueued: 1, enqueuedWindows: { hour: 1, today: 1 } });
+  // 새로 센 값을 캐시에 다시 썼다 — 다음 자동 갱신도 그 값
+  expect(await signalYields(DEFAULT_CRAWL_SETTINGS, 3)).toEqual(fresh);
 });

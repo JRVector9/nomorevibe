@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * 운영센터 개편 v8 PR5 — 새 숫자의 읽기 규칙.
  *
  * - 새 숫자는 복제본에서만 읽고(readReplicaOnly), 복제본 문제든 읽다 던진 오류든 "보류"다. 주 DB 로 넘기지 않는다.
- * - 캐시: 흐름 15초·근거 20초는 새로고침(ops_fresh)이 건너뛰고 결과를 캐시에 다시 쓴다. 60초·10분은 건너뛰지 않는다.
+ * - 캐시: 흐름 15초·근거 20초는 새로고침(ops_fresh)이 건너뛰고 결과를 캐시에 다시 쓴다. 60초는 분당 상한 안에서 건너뛰고, 10분은 건너뛰지 않는다.
  *   DB 시각이 더 늦은 값을 더 이른 값으로 덮지 않는다(숫자가 뒤로 가지 않는다).
  * - 지금 숫자(pipelineFlow·제어 상태·처리 지표)는 렌더마다 읽되, 같은 렌더 안에서는 React cache() 로 한 번만.
  */
@@ -100,7 +100,7 @@ describe("복제본 전용 캐시", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("60초·10분 캐시는 새로고침도 건너뛰지 않는다", async () => {
+  it("새로고침을 받지 않는 캐시(7일 10분)는 새로고침도 건너뛰지 않는다", async () => {
     const read = replicaCache<{ at: string }>({ event: "test.read", ttlMs: 60_000, bypass: false, now });
     const load = vi.fn(async () => ({ at: stamp(clock / 1000) }));
     await read("k", load);
@@ -137,7 +137,7 @@ describe("복제본 전용 캐시", () => {
 });
 
 describe("들어오는 곳 나눔(GitHub / Show HN)", () => {
-  it("복제본 전용 · 60초 캐시 · 실패는 보류(주 DB 로 넘기지 않는다)", async () => {
+  it("복제본 전용 · 60초 캐시 · 새로고침은 건너뛴다 · 실패는 보류(주 DB 로 넘기지 않는다)", async () => {
     const execute = vi.fn(async () => [{ at: stamp(2), signals: [{ signal: "Show HN", count: 23 }, { signal: "bad", count: -1 }] }]);
     const transaction = vi.fn(async (load: (tx: unknown) => Promise<unknown>, config: unknown) => {
       expect(config).toEqual({ accessMode: "read only" });
@@ -148,6 +148,8 @@ describe("들어오는 곳 나눔(GitHub / Show HN)", () => {
     expect(first).toEqual({ ok: true, value: { at: stamp(2), signals: [{ signal: "Show HN", count: 23 }] } });
     await readSourceSplit(new Date(Date.UTC(2026, 9, 18, 0, 10, 30)));
     expect(transaction).toHaveBeenCalledTimes(1);
+    await readSourceSplit(new Date(Date.UTC(2026, 9, 18, 0, 10, 31)), true);
+    expect(transaction).toHaveBeenCalledTimes(2);
     // 다음 시가 되면 이번 시 범위가 바뀌어 새로 센다 — 복제본이 내려가 있으면 보류
     mocks.replica.mockResolvedValueOnce({ ok: false, reason: "down" });
     await expect(readSourceSplit(new Date(Date.UTC(2026, 9, 18, 1, 0, 5)))).resolves.toEqual({ ok: false, reason: "down" });

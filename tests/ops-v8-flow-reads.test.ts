@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * 운영센터 개편 v8 PR6 — 흐름 상세 탭의 새 숫자 읽기.
- * 모델 자리 24h(+1시간) 60초 · 7일 10분(새로고침도 건너뛰지 않는다) · 미룬 이유 15초(새로고침이 건너뛰고 다시 쓴다).
+ * 모델 자리 24h(+1시간) 60초(새로고침이 분당 3번까지 건너뛴다) · 7일 10분(새로고침도 건너뛰지 않는다) · 미룬 이유 15초(새로고침이 건너뛰고 다시 쓴다).
  * 모두 복제본 전용이고 실패는 보류. 탭은 지금 숫자를 레일·장부·처리 지표와 같은 렌더의 cache() 결과로 나눠 쓴다.
  */
 const mocks = vi.hoisted(() => ({
@@ -59,7 +59,7 @@ beforeEach(() => {
 });
 
 describe("모델 자리 24h · 7일", () => {
-  it("24h(+1시간)는 복제본 전용 60초 캐시 — 새로고침도 건너뛰지 않는다", async () => {
+  it("24h(+1시간)는 복제본 전용 60초 캐시 — 새로고침은 분당 3번까지만 건너뛴다", async () => {
     const transaction = replicaWith([{ at: stamp(1), slots: [{ slot: "first", observed: "m", calls1h: 3, failed1h: 1, calls: 9, failed: 2, agree1h: null, agree: null }] }]);
     const first = await readModelSlotWindows(slots);
     expect(first).toMatchObject({ ok: true, value: { at: stamp(1), window: "24h", rows: [{ slot: "first", calls1h: 3, failed: 2 }] } });
@@ -69,6 +69,12 @@ describe("모델 자리 24h · 7일", () => {
     vi.setSystemTime(new Date(Date.UTC(2026, 9, 18, 1, 1, 1)));
     await readModelSlotWindows(slots);
     expect(transaction).toHaveBeenCalledTimes(2);
+    // 새로고침 — 이 1분 안의 읽기(01:01:01)와 합쳐 셋까지. 넷째는 담긴 값
+    for (const second of [2, 3, 4]) {
+      vi.setSystemTime(new Date(Date.UTC(2026, 9, 18, 1, 1, second)));
+      await readModelSlotWindows(slots, true);
+    }
+    expect(transaction).toHaveBeenCalledTimes(4);
   });
 
   it("7일은 10분 캐시, 복제본을 못 읽으면 보류", async () => {

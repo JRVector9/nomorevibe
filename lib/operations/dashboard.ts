@@ -11,6 +11,8 @@ import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { sharedStore } from "@/lib/cache/shared";
+import { sharedLoader } from "./shared-cache";
 import { kstDayStart, type FreshWindows } from "./windows";
 
 /**
@@ -135,31 +137,21 @@ function readOnly<T extends Record<string, unknown>>(query: SQL) {
 }
 
 /**
- * 시간별·신호별 집계는 화면이 10초마다 불러도 인스턴스마다 1분에 한 번만 센다(home-pulse 와 같은 방식).
+ * 시간별·신호별 집계는 화면이 10초마다 불러도 1분에 한 번만 센다. 웹 여러 대가 Valkey 로 같은 값을 나눠 써
+ * 요청이 닿는 웹마다 숫자가 앞뒤로 흔들리지 않는다(shared-cache.ts, Valkey 가 없으면 인스턴스 캐시).
  * 키는 집계 창이 바뀌는 단위다. 실패는 담아 두지 않는다 — 다음 요청이 다시 센다.
+ * 수동 새로고침(fresh)은 인스턴스당 1분에 3번까지 건너뛰고 새로 센 값을 두 층에 다시 쓴다.
  */
 const CACHE_TTL_MS = 60_000;
 
-function cachedLoader<T>() {
-  let entry: { key: string; expiresAt: number; value: Promise<T> } | null = null;
-  return async (key: string, nowMs: number, load: () => Promise<T>): Promise<T> => {
-    if (entry?.key === key && nowMs < entry.expiresAt) return entry.value;
-    const current = { key, expiresAt: nowMs + CACHE_TTL_MS, value: load() };
-    entry = current;
-    try {
-      return await current.value;
-    } catch (error) {
-      if (entry === current) entry = null;
-      throw error;
-    }
-  };
-}
+const hourlyCache = sharedLoader<HourlySeries>({ namespace: "admin:hourly-throughput", ttlMs: CACHE_TTL_MS, store: sharedStore });
+const signalCache = sharedLoader<Omit<SignalYield, "requireEvidence">[]>({ namespace: "admin:signal-yields", ttlMs: CACHE_TTL_MS, store: sharedStore });
 
-const hourlyCache = cachedLoader<HourlySeries>();
-const signalCache = cachedLoader<Omit<SignalYield, "requireEvidence">[]>();
+/** fresh — 수동 새로고침(운영센터·크롤 설정의 ops_fresh 쿠키) */
+export type CacheReadOptions = { fresh?: boolean };
 
-export async function hourlyThroughput(now = new Date()): Promise<HourlySeries> {
-  return hourlyCache(String(Math.floor(now.getTime() / 3_600_000)), now.getTime(), () => loadHourly(now));
+export async function hourlyThroughput(now = new Date(), options: CacheReadOptions = {}): Promise<HourlySeries> {
+  return hourlyCache(String(Math.floor(now.getTime() / 3_600_000)), () => loadHourly(now), options.fresh);
 }
 
 /**
@@ -294,9 +286,9 @@ export async function modelHealth(settings: CrawlSettings, now = new Date()): Pr
 }
 
 /** 최근 days 일 동안 frontier 에 들어온 레포를 신호별로 — published = 후보 state published, gated = 후보 reason 'ai_evidence_not_found' */
-export async function signalYields(settings: CrawlSettings, days = 7): Promise<SignalYield[]> {
+export async function signalYields(settings: CrawlSettings, days = 7, options: CacheReadOptions = {}): Promise<SignalYield[]> {
   const now = new Date();
-  const rows = await signalCache(String(days), now.getTime(), () => loadSignals(now, days));
+  const rows = await signalCache(String(days), () => loadSignals(now, days), options.fresh);
   // 설정은 담아 둔 집계에 섞지 않는다 — 흔적 요구를 바꾸면 바로 보인다
   return rows.map((row) => ({ ...row, requireEvidence: row.signal === SHOW_HN_SIGNAL
     ? settings.discover.showHn.requireEvidence === true

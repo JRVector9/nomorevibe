@@ -166,8 +166,8 @@ const EMPTY_FLOW: PipelineFlow = { stages: [], bottleneck: null, published: 0 };
 export async function FlowDetailSlot({ inputs, derived, actions, fresh }: FlowSlotProps) {
   const slots = resolveModelSlots(inputs.settings);
   const [flow, completions, control, hourly, split, evidence, day, week, deferrals] = await Promise.all([
-    flowOnce().catch(() => EMPTY_FLOW), completionsOnce(), controlStatusOnce(), hourlyOnce().catch(() => null), sourceSplitOnce(),
-    evidenceFor(inputs, fresh), readModelSlotWindows(slots), readModelSlotWeek(slots), readDeferrals(fresh)]);
+    flowOnce().catch(() => EMPTY_FLOW), completionsOnce(), controlStatusOnce(), hourlyOnce(fresh).catch(() => null), sourceSplitOnce(fresh),
+    evidenceFor(inputs, fresh), readModelSlotWindows(slots, fresh), readModelSlotWeek(slots), readDeferrals(fresh)]);
   const now = inputs.ops.fetchedAt;
   return <FlowDetailView now={now} settings={inputs.settings} models={inputs.models} held={inputs.ops.held} quota={derived.quota}
     throughput={inputs.throughput} workerProgress={derived.workerProgress} human={inputs.overview} jobs={inputs.jobStates}

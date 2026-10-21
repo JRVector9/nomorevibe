@@ -14,5 +14,8 @@ import { readPipelineControlStatus } from "@/lib/operations/pipeline-control-sta
 export const flowOnce = cache(() => pipelineFlow());
 export const controlStatusOnce = cache(() => readPipelineControlStatus());
 export const completionsOnce = cache(() => readPipelineCompletions());
-/** 시간별 타일은 지금도 인스턴스 60초 캐시다 — 같은 렌더의 타일·흐름 상세 막대가 한 번 받게 */
-export const hourlyOnce = cache(() => hourlyThroughput());
+/**
+ * 시간별 타일은 60초 캐시다(웹 여러 대가 Valkey 로 나눠 쓴다) — 같은 렌더의 타일·흐름 상세 막대가 한 번 받게.
+ * fresh(수동 새로고침)면 그 캐시를 건너뛴다(분당 상한, dashboard.ts). 같은 렌더는 늘 같은 fresh 로 부른다
+ */
+export const hourlyOnce = cache((fresh: boolean = false) => hourlyThroughput(undefined, { fresh }));

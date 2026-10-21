@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { currentAdmin } from "@/lib/auth/admin";
@@ -22,6 +23,7 @@ import { voterChoices } from "./review/voters";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
 import { describeReset } from "./settings/reset-diff";
 import { SettingsApplyLine } from "./settings/SettingsApplyLine";
+import { OPS_FRESH_COOKIE } from "./status/fresh";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -56,6 +58,8 @@ export default async function AdminPage() {
   if (!admin) redirect("/admin/login");
 
   const now = new Date();
+  // 머리 갱신 줄의 "새로고침"(5초 쿠키)이면 신호별 수율의 1분 캐시를 건너뛴다(분당 상한, dashboard.ts)
+  const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const [settings, meta, counts, apply] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts(),
     // 적용 확인도 덤이다 — 관측을 못 읽어도 설정은 고칠 수 있어야 한다
     readSettingsApply().catch((error) => {
@@ -64,7 +68,7 @@ export default async function AdminPage() {
     })]);
   // 성과는 덤이다 — 집계가 실패해도 설정은 고칠 수 있어야 한다
   const [yields, listed] = await Promise.all([
-    signalYields(settings, 7).catch((error) => {
+    signalYields(settings, 7, { fresh }).catch((error) => {
       logger.warn("admin.signal_yields_unavailable", { error });
       return [];
     }),

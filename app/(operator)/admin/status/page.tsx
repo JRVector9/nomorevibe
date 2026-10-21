@@ -128,8 +128,8 @@ async function PipelineCompletionsSlot() {
   return <PipelineCompletions status={await completionsOnce()} />;
 }
 
-async function KpiSlot({ derived }: { derived: DerivedStatus }) {
-  const hourly = await hourlyOnce().catch(warn("operations.hourly_unavailable"));
+async function KpiSlot({ derived, fresh }: { derived: DerivedStatus; fresh: boolean }) {
+  const hourly = await hourlyOnce(fresh).catch(warn("operations.hourly_unavailable"));
   return <KpiStrip series={hourly} textPending={derived.health?.pendingGeneration ?? null} verifyPending={derived.health?.pendingVerification ?? null} />;
 }
 
@@ -139,8 +139,8 @@ async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeo
     signals={derived.workerProgress?.stages} liveness={derived.workerProgress?.liveness} />;
 }
 
-async function SignalSlot({ settings }: { settings: CrawlSettings }) {
-  const rows = await signalYields(settings).catch(warn("operations.signals_unavailable"));
+async function SignalSlot({ settings, fresh }: { settings: CrawlSettings; fresh: boolean }) {
+  const rows = await signalYields(settings, 7, { fresh }).catch(warn("operations.signals_unavailable"));
   return rows ? <SignalTable rows={rows} /> : <p className="dash-card dash-4">신호별 수율을 읽지 못했습니다.</p>;
 }
 
@@ -395,7 +395,7 @@ export default async function StatusPage() {
   if (!admin) redirect("/admin/login");
 
   const settings = await getSettings();
-  // 수동 새로고침(5초 쿠키)이면 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts) — 지금 숫자는 원래 렌더마다 읽는다
+  // 수동 새로고침(5초 쿠키)이면 15·20초 캐시와 1분 집계 캐시를 건너뛴다(fresh.ts, 1분 집계는 분당 상한) — 지금 숫자는 원래 렌더마다 읽는다
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   // 조치할 일과 머리 칩에 드는 것만 기다린다 — 나머지는 아래 Suspense 조각이 따로 센다
   // 크롤러 활동의 누적·미룸은 복제본 전용 15초 캐시라 기다려도 싸다 — 못 읽으면 그 칸만 미확인(보류)
@@ -459,7 +459,7 @@ export default async function StatusPage() {
   const dashboard = (
     <>
       <div className="ops-phone-rest">
-        <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} fresh={fresh} /></Suspense>
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
         {/* 레일 오른쪽의 빈 4칸(1,181px 이상) — 들어오는 곳·발행 후 보강·설정 전환(v8). 레일 높이 안, 칸마다 따로 흐른다 */}
         <FlowSideCells variant="rail" {...flowSlot} />
@@ -469,7 +469,7 @@ export default async function StatusPage() {
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
-        <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} fresh={fresh} /></Suspense>
         <Suspense fallback={<CardPending span="dash-12" label="최근 24시간 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
       </div>
