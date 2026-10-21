@@ -32,6 +32,8 @@ export function FoundReposBox({ csrfToken, linked, login, repos }: { csrfToken: 
       case "owner_mismatch": return t("projects.claim.owner_mismatch", { repo });
       case "repo_not_found": return t("projects.claim.repo_not_found", { repo });
       case "repo_not_public": return t("projects.claim.repo_not_public", { repo });
+      case "repo_unverified": return t("projects.claim.repo_unverified", { repo });
+      case "repo_replaced": return t("projects.claim.repo_replaced", { repo });
       case "not_found": return t("projects.claim.not_found");
       case "no_github_repo": return t("projects.claim.no_github_repo");
       default: return t("projects.claim.github_unavailable");

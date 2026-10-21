@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { badgeTextWidth, escapeXml, formatBadgeCount, listedBadgeSvg, triedBadgeSvg, verifiedBadgeSvg } from "@/lib/domain/products/badge";
-import { cardFontOrder, clampCardText } from "@/lib/me/share-card";
+import { cardFontOrder, cardScripts, clampCardText, drawableText, fontCoverage, shareCardPng } from "@/lib/me/share-card";
 import nextConfig from "@/next.config";
 
 describe("README 배지", () => {
@@ -68,4 +68,53 @@ describe("공유 카드 글꼴", () => {
   it("standalone 빌드에 글꼴 폴더가 실린다", () => {
     expect(nextConfig.outputFileTracingIncludes?.["/\\[locale\\]/p/\\[slug\\]/share-card.png"]).toEqual(["./assets/fonts/*.woff"]);
   });
+});
+
+describe("공유 카드 — 밖으로 글꼴을 받으러 가지 않는다", () => {
+  const font = (name: string) => readFileSync(path.join(process.cwd(), "assets/fonts", name));
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it("WOFF cmap 에서 글리프가 있는 글자를 읽는다 — KR 은 한글·라틴, SC 는 간체·가나, 이모지는 어디에도 없다", () => {
+    const kr = fontCoverage(font("noto-sans-kr-400.woff"));
+    const sc = fontCoverage(font("noto-sans-sc-700.woff"));
+    for (const char of ["A", "가", "힣", "★", "…", " "]) expect(kr.has(char.codePointAt(0)!), char).toBe(true);
+    for (const char of ["汉", "か"]) expect(sc.has(char.codePointAt(0)!), char).toBe(true);
+    for (const char of ["漢", "🚀", "ế", "ภ"]) expect(kr.has(char.codePointAt(0)!), char).toBe(false);
+    expect(sc.has("🚀".codePointAt(0)!)).toBe(false);
+  });
+
+  it("카드 언어의 글꼴만 싣고, 그 글꼴에 없는 글자를 담은 글꼴만 더 싣는다", async () => {
+    expect(await cardScripts("ko", "tiny-cron 자연어 일정을 cron 식으로 🚀")).toEqual(["kr"]);
+    expect(await cardScripts("en", "Turns plain words into cron")).toEqual(["kr"]);
+    expect(await cardScripts("en", "汉字 tool")).toEqual(["kr", "sc"]);
+    expect(await cardScripts("zh-Hans", "简体 한글")).toEqual(["sc", "kr"]);
+    expect(await cardScripts("zh-Hant", "繁體")).toEqual(["tc"]);
+  });
+
+  it("그릴 수 없는 글자는 뺀다 — 이모지·베트남어 성조·태국어", () => {
+    const covers = fontCoverage(font("noto-sans-kr-700.woff"));
+    const fonts = [{ script: "kr" as const, weight: 700 as const, data: new ArrayBuffer(0), covers }];
+    expect(drawableText("🚀 Rocket ✨ Tiếng ภาษา 한글", fonts, 700)).toBe(" Rocket  Ting  한글");
+    expect(drawableText("e\u0301", fonts, 700)).toBe("é");
+    expect(drawableText("한글 abc", [], 400)).toBe(" abc");
+  });
+
+  it("이모지·드문 글자가 있는 카드도 네트워크 없이 PNG 를 그린다", async () => {
+    const outbound: string[] = [];
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (/^https?:/.test(url)) {
+        outbound.push(url);
+        throw new Error("network disabled in tests");
+      }
+      return real(input, init);
+    }));
+    const png = await shareCardPng({ name: "🚀 Rocket", tagline: "Tiếng Việt ภาษาไทย 漢字 かな 한글 ✨", brandLine: "AI로 만든 서비스",
+      chips: [{ text: "GitHub ★ 12" }, { text: "Hacker News 🔥 30", hn: true }], url: "nomorevibe.example/p/rocket", date: "2026-10-20 기준" }, "en");
+    const bytes = Buffer.from(png);
+    expect(bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    expect(bytes.readUInt32BE(16)).toBe(1200);
+    expect(outbound).toEqual([]);
+  }, 60_000);
 });

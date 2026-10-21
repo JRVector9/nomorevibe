@@ -15,10 +15,20 @@ export type NotificationView = {
 
 export type NotificationSource = {
   id: number; kind: NotificationKind; payload: Record<string, unknown>; createdAt: Date; readAt: Date | null;
-  product: { slug: string; name: string; ogImage: string | null; category: string } | null;
+  /** listed 가 false 면 차단된 제품 — 상세가 404 라 그리로 보내지 않는다 */
+  product: { slug: string; name: string; ogImage: string | null; category: string; listed: boolean } | null;
 };
 
-const text = (value: unknown, max = 80): string | null => typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+/**
+ * 글자 수(코드 포인트)로 자른다 — UTF-16 으로 자르면 이모지가 반쪽(외톨이 서로게이트)으로 남고, JSON.stringify 가 그것을 \ud83d 로 적어
+ * jsonb 가 문장째 거절한다(lib/crawl/readme.ts 와 같은 일). 알림 payload 에 넣는 글은 모두 이것으로 자른다
+ */
+export function clipText(value: string, max: number): string {
+  const chars = Array.from(value);
+  return chars.length > max ? chars.slice(0, max).join("") : value;
+}
+
+const text = (value: unknown, max = 80): string | null => typeof value === "string" && value.trim() ? clipText(value.trim(), max) : null;
 const count = (value: unknown): number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
 const uuid = (value: unknown): string | null => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 
@@ -43,7 +53,8 @@ function line(t: Translator<"me">, { key, plain = {}, bold }: Line): Notificatio
 export function renderNotification(row: NotificationSource, t: Translator<"me">, labels: (category: Category) => string, locale: Locale): NotificationView {
   const payload = row.payload ?? {};
   const name = row.product?.name ?? text(payload.name) ?? t("alerts.removedProduct");
-  const productPath = row.product ? `/p/${row.product.slug}` : ME_TAB_PATHS.alerts;
+  // 차단된 제품의 상세는 404 다 — 팔로 탭(«목록에서 내려감» 줄과 풀기)으로 보낸다
+  const productPath = !row.product ? ME_TAB_PATHS.alerts : row.product.listed ? `/p/${row.product.slug}` : ME_TAB_PATHS.following;
   let parts: NotificationPart[];
   let path = productPath;
   let quote: string | null = null;
@@ -53,8 +64,8 @@ export function renderNotification(row: NotificationSource, t: Translator<"me">,
       const maker = text(payload.maker, 40);
       parts = maker ? line(t, { key: "alerts.line.makerReply", bold: { maker, name } }) : line(t, { key: "alerts.line.makerReplyAnonymous", bold: { name } });
       quote = text(payload.excerpt, 120);
-      const feedbackId = uuid(payload.feedbackId);
-      if (feedbackId) path = `/feedback/${feedbackId}`;
+      // 답장은 내 의견·써봤어요 탭에서만 보인다(댓글 상세·제품 상세에는 없다) — 댓글이면 의견 탭, 한 줄이면 써봤어요 탭
+      path = uuid(payload.feedbackId) ? ME_TAB_PATHS.opinions : ME_TAB_PATHS.tried;
       break;
     }
     case "followed_release":

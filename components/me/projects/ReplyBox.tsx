@@ -9,9 +9,12 @@ import { makerErrorKey, makerRequest } from "./maker-request";
 
 const LIMIT = 1000;
 
-/** 받은 의견 하나의 답장 — 처음 쓰기와 고치기가 같은 칸이다(대상 하나에 답장 하나) */
-export function ReplyBox({ csrfToken, targetType, targetId, reply }: {
-  csrfToken: string; targetType: MakerReplyTarget; targetId: string; reply: InboxItem["reply"];
+/**
+ * 받은 의견 하나의 답장 — 처음 쓰기와 고치기가 같은 칸이다(대상 하나에 답장 하나).
+ * 알림을 받을 글쓴이가 없으면(익명 한 줄·탈퇴·내 글, notifiable=false) 알림이 간다고 말하지 않는다. 서버가 알렸는지(notified)를 돌려준다
+ */
+export function ReplyBox({ csrfToken, targetType, targetId, reply, notifiable }: {
+  csrfToken: string; targetType: MakerReplyTarget; targetId: string; reply: InboxItem["reply"]; notifiable: boolean;
 }) {
   const t = useTranslations("me");
   const locale = useLocale();
@@ -34,7 +37,8 @@ export function ReplyBox({ csrfToken, targetType, targetId, reply }: {
     const saved = result.data.reply;
     setCurrent({ id: saved.id, body: saved.body, reviewState: saved.reviewState, updatedAt: saved.updatedAt });
     setOpen(false);
-    setNotice({ ok: true, text: saved.reviewState === "held" ? t("projects.reply.held") : saved.created ? t("projects.reply.sent") : t("projects.reply.updated") });
+    setNotice({ ok: true, text: saved.reviewState === "held" ? t("projects.reply.held") : saved.notified ? t("projects.reply.sent")
+      : saved.created ? t("projects.reply.sentQuiet") : t("projects.reply.updated") });
   }
 
   return (
@@ -43,13 +47,15 @@ export function ReplyBox({ csrfToken, targetType, targetId, reply }: {
         <div className="me-proj-reply-mine">
           <p className="me-proj-sub">{t("projects.reply.mine", { time: formatRelativeTime(current.updatedAt, now, locale) })}</p>
           <p className="me-proj-quote">{current.body}</p>
+          {/* 예전에 검토 대기로 남은 답장 — 글쓴이에게 보이지 않는다. 고쳐 저장하면 공개된다 */}
+          {current.reviewState !== "accepted" && <p className="me-proj-notice is-bad">{t("projects.reply.held")}</p>}
         </div>
       )}
       {open ? (
         <form className="me-proj-reply-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
           <label className="sr-only" htmlFor={`${id}-reply`}>{t("projects.reply.label")}</label>
           <textarea id={`${id}-reply`} className="me-proj-textarea" value={draft} maxLength={LIMIT} rows={3} autoFocus
-            placeholder={t("projects.reply.placeholder")} onChange={(event) => setDraft(event.target.value)} />
+            placeholder={t(notifiable ? "projects.reply.placeholder" : "projects.reply.placeholderQuiet")} onChange={(event) => setDraft(event.target.value)} />
           <div className="me-proj-foot">
             <span className="me-proj-count">{t("projects.reply.count", { count: draft.trim().length, max: LIMIT })}</span>
             <div className="me-proj-acts">

@@ -4,13 +4,15 @@ import { db, onPrimary } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { makerReplies, productMakerMembers, productReactions, userSavedProducts } from "@/lib/db/me-schema";
-import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
+import { publicIdentities } from "@/lib/db/public-user-schema";
 import { githubUserConnections } from "@/lib/db/github-user-schema";
 import { initialFeedbackReview, type FeedbackKind } from "@/lib/domain/feedback/contract";
+import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
 import { visitMetrics } from "@/lib/domain/products/clicks";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import * as productRepository from "@/lib/domain/products/repository";
 import { updateSchema } from "@/lib/domain/products/schema";
+import { hiddenByDefault } from "@/lib/domain/products/visibility";
 import { isGithubRepositoryName } from "@/lib/github/repositories";
 import { PUBLIC_PRIVATE_HEADERS, PublicAuthError, publicAuthErrorResponse } from "@/lib/domain/accounts/request-auth";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
@@ -18,7 +20,9 @@ import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 import { logger } from "@/lib/observability/logger";
 import type { MakerMethod, MakerReplyTarget, MakerRole, ReactionVerdict } from "./contract";
 import { MakerError, nextRecheckDate } from "./maker-claims";
+import { clipText } from "./notification-view";
 import { notify } from "./notify";
+import { listedOwnerSql, renamedOwnerSql } from "./owner-key-sql";
 
 /**
  * 내 프로젝트 탭(MY5·MY6) 읽기·쓰기 — 확인한 프로젝트 목록과 숫자, 내 저장소 찾기, 받은 의견과 답장, 소개 고치기.
@@ -52,17 +56,19 @@ export async function findMyRepos(userId: number): Promise<{ linked: boolean; lo
   if (!login) return { linked, login: null, repos: [] };
   const owner = login.toLowerCase();
   const rows = await onPrimary(() => db.execute<{ id: number; slug: string; name: string; tagline: string; repo_url: string; repo_renamed_to: string | null; listed_iso: string }>(sql`
-    select p.id, p.slug, p.name, p.tagline, p.repo_url, p.repo_renamed_to,
-      to_char(coalesce(p.verified_at, p.created_at), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as listed_iso
-    from products p
-    where p.status in ('seeded', 'verified')
-      -- 후보는 저장소 주인 열쇠 색인으로 고른다(0108, lib/me/follows.ts 와 같은 식). 아래 줄이 정확한 조건이다
-      and (substring(lower(p.repo_url) from '^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$') = ${owner}
-        or (p.repo_renamed_to is not null and nullif(lower(split_part(p.repo_renamed_to, '/', 1)), '') = ${owner}))
-      and lower(coalesce(split_part(p.repo_renamed_to, '/', 1),
-        substring(p.repo_url from '^https?://(?:www[.])?github[.]com/([^/]+)/[^/]+/?$'))) = ${owner}
-      and not exists (select 1 from product_maker_members m where m.product_id = p.id and m.user_id = ${userId} and m.revoked_at is null)
-    order by coalesce(p.verified_at, p.created_at) desc, p.id desc
+    select ${products.id} as id, ${products.slug} as slug, ${products.name} as name, ${products.tagline} as tagline,
+      ${products.repoUrl} as repo_url, ${products.repoRenamedTo} as repo_renamed_to,
+      to_char(coalesce(${products.verifiedAt}, ${products.createdAt}), 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as listed_iso
+    from ${products}
+    where ${products.status} in ('seeded', 'verified')
+      -- 후보는 저장소 주인 열쇠 색인으로 고른다(owner-key-sql.ts). 아래 줄이 정확한 조건이다
+      and (${listedOwnerSql} = ${owner} or (${products.repoRenamedTo} is not null and ${renamedOwnerSql} = ${owner}))
+      and lower(coalesce(split_part(${products.repoRenamedTo}, '/', 1),
+        substring(${products.repoUrl} from '^https?://(?:www[.])?github[.]com/([^/]+)/[^/]+/?$'))) = ${owner}
+      -- ?·# 가 붙은 주소는 저장소로 읽지 않는다(확인하면 no_github_repo — maker-claims.ts productRepoRef)
+      and ${products.repoUrl} !~ '[?#]'
+      and not exists (select 1 from product_maker_members m where m.product_id = ${products.id} and m.user_id = ${userId} and m.revoked_at is null)
+    order by coalesce(${products.verifiedAt}, ${products.createdAt}) desc, ${products.id} desc
     limit 50
   `));
   return { linked, login, repos: rows.map((row) => ({
@@ -78,66 +84,77 @@ export async function hasMakerProjects(userId: number): Promise<boolean> {
   return Boolean(row);
 }
 
-/** 내 프로젝트에 들어온 공개 의견(로그인 댓글)과 공개 한 줄(써봤어요) — 답장 여부와 함께. 계정 하나의 확인한 제품만 */
+/**
+ * 내 프로젝트에 들어온 공개 의견(로그인 댓글)과 공개 한 줄(써봤어요) — 답장 여부와 함께. 계정 하나의 확인한 제품만.
+ * 써봤어요를 끄면(PRODUCT_REACTIONS_ENABLED) 한 줄은 빼고 의견만 본다.
+ * author_deleted: 댓글 글쓴이가 탈퇴했다(이름이 비면 탈퇴, 한 줄은 이름이 늘 비어 «방문자»). notifiable: 답하면 알림을 받을 계정이 있다
+ */
 function inboxSource(userId: number) {
   return sql`
     with mine as (select product_id from product_maker_members where user_id = ${userId} and revoked_at is null),
     items as (
       select 'feedback'::text as target_type, f.id as target_id, f.product_id, f.kind, null::text as verdict, f.title, f.body,
-        case when u.deleted_at is null then u.display_name end as author_name, false as tried_verified, f.created_at as at
+        case when u.deleted_at is null then u.display_name end as author_name, u.deleted_at is not null as author_deleted,
+        (u.deleted_at is null and u.id <> ${userId}) as notifiable, false as tried_verified, f.created_at as at
       from product_feedback f join mine using (product_id) join public_users u on u.id = f.author_user_id
       where f.review_state = 'accepted'
-      union all
-      select 'reaction', r.id, r.product_id, null, r.verdict, null, r.comment, null, r.tried_verified, r.updated_at
-      from product_reactions r join mine using (product_id)
-      where r.comment_state = 'accepted'
+      ${productReactionsEnabled() ? sql`union all
+      select 'reaction', r.id, r.product_id, null, r.verdict, null, r.comment, null, false,
+        coalesce(ru.deleted_at is null and ru.id <> ${userId}, false), r.tried_verified, r.updated_at
+      from product_reactions r join mine using (product_id) left join public_users ru on ru.id = r.user_id
+      where r.comment_state = 'accepted'` : sql``}
     )`;
 }
+
+/** 답장을 기다린다 — 공개된 답장이 없다. 검토에 걸린(held) 옛 답장은 글쓴이에게 보이지 않으므로 아직 기다리는 것으로 센다 */
+const awaitingReply = sql`not exists (select 1 from maker_replies mr where mr.target_type = i.target_type and mr.target_id = i.target_id and mr.review_state = 'accepted')`;
 
 /** 답장 기다림 수 — 메이커가 /me 를 열 때 내 프로젝트 탭으로 열지 정한다(Q3: 기다림이 있을 때만) */
 export async function makerPendingReplies(userId: number): Promise<number> {
   // /me 를 열 때마다 부른다 — 운영자가 아닌 대부분의 계정은 색인 한 번으로 끝낸다
   if (!(await hasMakerProjects(userId))) return 0;
   const [row] = await onPrimary(() => db.execute<{ n: number }>(sql`${inboxSource(userId)}
-    select count(*)::int as n from items i
-    where not exists (select 1 from maker_replies mr where mr.target_type = i.target_type and mr.target_id = i.target_id)`));
+    select count(*)::int as n from items i where ${awaitingReply}`));
   return Number(row?.n ?? 0);
 }
 
 export type InboxItem = {
   targetType: MakerReplyTarget; targetId: string; productId: number; productSlug: string; productName: string;
   kind: FeedbackKind | null; verdict: ReactionVerdict | null; title: string | null; body: string; authorName: string | null;
-  triedVerified: boolean; createdAt: string;
+  authorDeleted: boolean; notifiable: boolean; triedVerified: boolean; createdAt: string;
   reply: { id: string; body: string; reviewState: "accepted" | "held" | "rejected"; updatedAt: string } | null;
 };
 
-/** 받은 의견 — 답장 기다림이 먼저, 그 안에서 새것부터(waitingFirst). 전체 보기는 새것부터 */
-export async function makerInbox(userId: number, options: { limit: number; waitingFirst?: boolean }): Promise<{ items: InboxItem[]; waiting: number; total: number }> {
+/** 받은 의견 한 쪽의 수 — 전체 보기는 이만큼씩 넘긴다 */
+export const INBOX_PAGE = 50;
+
+/** 받은 의견 — 답장 기다림이 먼저, 그 안에서 새것부터(waitingFirst). 전체 보기는 새것부터, offset 으로 쪽을 넘긴다 */
+export async function makerInbox(userId: number, options: { limit: number; offset?: number; waitingFirst?: boolean }): Promise<{ items: InboxItem[]; waiting: number; total: number }> {
   const limit = Math.max(1, Math.min(options.limit, 100));
+  const offset = Math.max(0, Math.min(Math.trunc(options.offset ?? 0), 100_000));
   return onPrimary(async () => {
     const rows = await db.execute<{
       target_type: MakerReplyTarget; target_id: string; product_id: number; slug: string; name: string; kind: FeedbackKind | null;
-      verdict: ReactionVerdict | null; title: string | null; body: string; author_name: string | null; tried_verified: boolean; at_iso: string;
+      verdict: ReactionVerdict | null; title: string | null; body: string; author_name: string | null; author_deleted: boolean; notifiable: boolean;
+      tried_verified: boolean; at_iso: string;
       reply_id: string | null; reply_body: string | null; reply_state: "accepted" | "held" | "rejected" | null; reply_iso: string | null;
     }>(sql`${inboxSource(userId)}
-      select i.target_type, i.target_id, i.product_id, p.slug, p.name, i.kind, i.verdict, i.title, i.body, i.author_name, i.tried_verified,
-        to_char(i.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at_iso,
+      select i.target_type, i.target_id, i.product_id, p.slug, p.name, i.kind, i.verdict, i.title, i.body, i.author_name, i.author_deleted, i.notifiable,
+        i.tried_verified, to_char(i.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at_iso,
         mr.id as reply_id, mr.body as reply_body, mr.review_state as reply_state,
         to_char(mr.updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as reply_iso
       from items i join products p on p.id = i.product_id
       left join maker_replies mr on mr.target_type = i.target_type and mr.target_id = i.target_id
-      order by ${options.waitingFirst ? sql`(mr.id is null) desc,` : sql``} i.at desc, i.target_id
-      limit ${limit}`);
+      order by ${options.waitingFirst ? sql`(mr.id is null or mr.review_state <> 'accepted') desc,` : sql``} i.at desc, i.target_id
+      limit ${limit} offset ${offset}`);
     const [counts] = await db.execute<{ total: number; waiting: number }>(sql`${inboxSource(userId)}
-      select count(*)::int as total, count(*) filter (where not exists (
-        select 1 from maker_replies mr where mr.target_type = i.target_type and mr.target_id = i.target_id))::int as waiting
-      from items i`);
+      select count(*)::int as total, count(*) filter (where ${awaitingReply})::int as waiting from items i`);
     return {
       total: Number(counts?.total ?? 0), waiting: Number(counts?.waiting ?? 0),
       items: rows.map((row) => ({
         targetType: row.target_type, targetId: row.target_id, productId: Number(row.product_id), productSlug: row.slug, productName: row.name,
-        kind: row.kind, verdict: row.verdict, title: row.title, body: row.body, authorName: row.author_name, triedVerified: row.tried_verified,
-        createdAt: row.at_iso,
+        kind: row.kind, verdict: row.verdict, title: row.title, body: row.body, authorName: row.author_name, authorDeleted: row.author_deleted === true,
+        notifiable: row.notifiable === true, triedVerified: row.tried_verified, createdAt: row.at_iso,
         reply: row.reply_id ? { id: row.reply_id, body: row.reply_body ?? "", reviewState: row.reply_state ?? "accepted", updatedAt: row.reply_iso ?? row.at_iso } : null,
       })),
     };
@@ -147,15 +164,20 @@ export async function makerInbox(userId: number, options: { limit: number; waiti
 export type MakerProject = {
   productId: number; slug: string; name: string; tagline: string; description: string;
   status: "public" | "review" | "hidden"; role: MakerRole; method: MakerMethod; nextRecheckAt: string;
+  /** 배지·공유 카드를 내주는 제품(공개 목록에 오른 것 — lib/me/share.ts 와 같은 규칙) */
+  shareable: boolean;
+  /** 공유 카드 주소에 붙여 소개를 고치면 새 그림을 받게 한다 */
+  updatedAt: string;
   stars: number | null; visits7d: number; tried: number; good: number; meh: number; bad: number; feedback: number; waiting: number; saves: number;
 };
 
-/** 확인한 프로젝트 카드 — 상태·역할·다음 재확인과 숫자(스타, 7일 유효 방문, 써본 사람과 평가 셋, 의견, 답장 기다림, 저장) */
+/** 확인한 프로젝트 카드 — 상태·역할·다음 재확인과 숫자(스타, 7일 유효 방문, 써본 사람과 평가 셋, 의견, 답장 기다림, 저장). 써봤어요를 끄면 써본 사람·평가는 0 */
 export async function makerProjects(userId: number): Promise<MakerProject[]> {
   return onPrimary(async () => {
     const rows = await db.select({
       productId: products.id, slug: products.slug, name: products.name, tagline: products.tagline, description: products.description,
-      productStatus: products.status, stars: products.stars, role: productMakerMembers.role, method: productMakerMembers.method,
+      productStatus: products.status, category: products.category, source: products.source, claimedAt: products.claimedAt, updatedAt: products.updatedAt,
+      stars: products.stars, role: productMakerMembers.role, method: productMakerMembers.method,
       verifiedAt: productMakerMembers.verifiedAt, recheckAt: productMakerMembers.recheckAt,
     }).from(productMakerMembers).innerJoin(products, eq(products.id, productMakerMembers.productId))
       .where(and(eq(productMakerMembers.userId, userId), isNull(productMakerMembers.revokedAt)))
@@ -163,7 +185,7 @@ export async function makerProjects(userId: number): Promise<MakerProject[]> {
     if (rows.length === 0) return [];
     const ids = rows.map((row) => row.productId);
     const [reactions, feedback, saves, waiting, visits] = await Promise.all([
-      db.select({
+      !productReactionsEnabled() ? [] : db.select({
         productId: productReactions.productId, tried: sql<number>`count(*)::int`,
         good: sql<number>`count(*) filter (where ${productReactions.verdict} = 'good')::int`,
         meh: sql<number>`count(*) filter (where ${productReactions.verdict} = 'meh')::int`,
@@ -175,9 +197,7 @@ export async function makerProjects(userId: number): Promise<MakerProject[]> {
       db.select({ productId: userSavedProducts.productId, n: sql<number>`count(*)::int` }).from(userSavedProducts)
         .where(inArray(userSavedProducts.productId, ids)).groupBy(userSavedProducts.productId),
       db.execute<{ product_id: number; n: number }>(sql`${inboxSource(userId)}
-        select i.product_id, count(*)::int as n from items i
-        where not exists (select 1 from maker_replies mr where mr.target_type = i.target_type and mr.target_id = i.target_id)
-        group by i.product_id`),
+        select i.product_id, count(*)::int as n from items i where ${awaitingReply} group by i.product_id`),
       visitMetrics(rows.map((row) => row.slug)),
     ]);
     const by = <T extends { productId: number }>(list: T[]) => new Map(list.map((row) => [row.productId, row]));
@@ -185,9 +205,12 @@ export async function makerProjects(userId: number): Promise<MakerProject[]> {
     const waitingBy = new Map(waiting.map((row) => [Number(row.product_id), Number(row.n)]));
     return rows.map((row) => {
       const reaction = reactionBy.get(row.productId);
+      const status = (PUBLIC_STATUSES as readonly string[]).includes(row.productStatus) ? "public" : row.productStatus === "banned" ? "hidden" : "review";
       return {
-        productId: row.productId, slug: row.slug, name: row.name, tagline: row.tagline, description: row.description,
-        status: (PUBLIC_STATUSES as readonly string[]).includes(row.productStatus) ? "public" : row.productStatus === "banned" ? "hidden" : "review",
+        productId: row.productId, slug: row.slug, name: row.name, tagline: row.tagline, description: row.description, status,
+        // 주인 없는 수집 개인 프로필은 목록에서 빠진다 — 배지·카드도 404 다(share.ts)
+        shareable: status === "public" && !(hiddenByDefault(row.category) && row.source === "crawler" && !row.claimedAt),
+        updatedAt: row.updatedAt.toISOString(),
         role: row.role, method: row.method, nextRecheckAt: nextRecheckDate(row.verifiedAt, row.recheckAt).toISOString(),
         stars: row.stars, visits7d: visits.get(row.slug)?.validVisits ?? 0,
         tried: reaction?.tried ?? 0, good: reaction?.good ?? 0, meh: reaction?.meh ?? 0, bad: reaction?.bad ?? 0,
@@ -206,7 +229,10 @@ async function activeMember(executor: ProductTransaction | typeof db, userId: nu
 
 export type ReplyInput = { targetType: MakerReplyTarget; targetId: string; body: string };
 
-/** 답장 본문 검사 — 1~1000자, 형식만 본다. 링크가 많으면(피드백과 같은 기준) 검토 대기(held)로 둔다 */
+/**
+ * 답장 본문 검사 — 1~1000자. 링크는 피드백과 같은 기준(넷부터 검토 대상)이지만 답장을 검토하는 곳이 없어 받지 않는다(reply_too_many_links) —
+ * 보류해 두면 아무도 풀지 못해 글쓴이에게 끝내 보이지 않는다
+ */
 export function parseReplyInput(value: unknown): ReplyInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new MakerError("reply_invalid", 400);
   const input = value as Record<string, unknown>;
@@ -216,16 +242,20 @@ export function parseReplyInput(value: unknown): ReplyInput {
     || typeof input.body !== "string") throw new MakerError("reply_invalid", 400);
   const body = input.body.replace(/\r\n?/g, "\n").trim();
   if (!body || body.length > REPLY_LIMIT) throw new MakerError("reply_invalid", 400);
+  if (initialFeedbackReview(body, false).state !== "accepted") throw new MakerError("reply_too_many_links", 400);
   return { targetType: input.targetType, targetId: input.targetId.toLowerCase(), body };
 }
 
-export type SavedReply = { id: string; body: string; reviewState: "accepted" | "held" | "rejected"; updatedAt: string; created: boolean };
+/** notified: 이번 쓰기로 글쓴이 알림이 생겼다(익명 한 줄·탈퇴한 글쓴이·내 글·고치기면 false) */
+export type SavedReply = { id: string; body: string; reviewState: "accepted" | "held" | "rejected"; updatedAt: string; created: boolean; notified: boolean };
 
 /**
  * 답장 쓰기·고치기 — 대상(공개된 의견·한 줄) 하나에 답장 하나. 그 제품의 운영자(풀리지 않은 행)만 쓴다(아니면 403).
- * 처음 공개된 답장이면 글쓴이에게 알림 하나(maker_reply:<답장 id>). 고치기는 알림을 다시 보내지 않는다
+ * 처음 공개된 답장이면 글쓴이에게 알림 하나(maker_reply:<답장 id>). 고치기는 알림을 다시 보내지 않는다.
+ * 써봤어요를 끄면 한 줄에는 답하지 못한다(404)
  */
 export async function upsertMakerReply(userId: number, input: ReplyInput): Promise<SavedReply> {
+  if (input.targetType === "reaction" && !productReactionsEnabled()) throw new MakerError("target_not_found", 404);
   const review = initialFeedbackReview(input.body, false);
   const saved = await onPrimary(() => db.transaction(async (tx) => {
     // 같은 대상의 동시 답장을 한 줄로 세운다
@@ -248,23 +278,22 @@ export async function upsertMakerReply(userId: number, input: ReplyInput): Promi
     return { reply, previousState: previous?.reviewState ?? null, recipient: target.recipient, product };
   }));
   const { reply, previousState, recipient, product } = saved;
+  let notified = false;
   // 처음 공개될 때만 — 고치기는 dedupe 로도 막히지만 부르지 않는다
   if (reply.reviewState === "accepted" && previousState !== "accepted" && recipient !== null && recipient !== userId) {
     try {
-      const [author] = await onPrimary(() => db.select({ deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, recipient)));
-      if (author && author.deletedAt === null) {
-        // 알림함 한 줄(lib/me/notification-view.ts)이 읽는 모양 — 답한 메이커의 GitHub login, 답장 앞부분, 댓글이면 원문 주소
-        const { login } = await githubLoginOf(userId);
-        await notify({ userId: recipient, kind: "maker_reply", productId: reply.productId, dedupeKey: `maker_reply:${reply.id}`,
-          payload: { name: product?.name ?? null, ...(login ? { maker: `@${login}` } : {}), excerpt: reply.body.slice(0, 120),
-            ...(reply.targetType === "feedback" ? { feedbackId: reply.targetId } : {}) } });
-      }
+      // 알림함 한 줄(lib/me/notification-view.ts)이 읽는 모양 — 답한 메이커의 GitHub login, 답장 앞부분, 댓글이면 원문 주소.
+      // 탈퇴한 글쓴이는 notify 가 같은 문장에서 거른다
+      const { login } = await githubLoginOf(userId);
+      notified = await notify({ userId: recipient, kind: "maker_reply", productId: reply.productId, dedupeKey: `maker_reply:${reply.id}`,
+        payload: { name: product?.name ?? null, ...(login ? { maker: `@${login}` } : {}), excerpt: clipText(reply.body, 120),
+          ...(reply.targetType === "feedback" ? { feedbackId: reply.targetId } : {}) } });
     } catch (error) {
       // 답장은 이미 남았다 — 알림 실패로 답장을 되돌리지 않는다
       logger.warn("maker.reply_notify_failed", { replyId: reply.id, error });
     }
   }
-  return { id: reply.id, body: reply.body, reviewState: reply.reviewState, updatedAt: reply.updatedAt.toISOString(), created: previousState === null };
+  return { id: reply.id, body: reply.body, reviewState: reply.reviewState, updatedAt: reply.updatedAt.toISOString(), created: previousState === null, notified };
 }
 
 export type IntroInput = { productId: number; tagline?: string; description?: string };
