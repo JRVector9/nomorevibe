@@ -12,6 +12,10 @@ const HOUR_MS = 3_600_000;
 const now = new Date(Math.floor(Date.now() / HOUR_MS) * HOUR_MS + 30 * 60_000);
 const ago = (minutes: number, plusSeconds = 0) => new Date(now.getTime() - minutes * 60_000 + plusSeconds * 1000);
 const DAY = 1440;
+/** 한국 날짜의 0시(UTC 시각) — 한국은 서머타임이 없어 늘 UTC+9 다 */
+const KST_MS = 9 * HOUR_MS;
+const kstMidnight = (at: Date) => Math.floor((at.getTime() + KST_MS) / 86_400_000) * 86_400_000 - KST_MS;
+const today = (...times: Date[]) => times.filter((time) => time.getTime() >= kstMidnight(now)).length;
 
 const settings: CrawlSettings = {
   ...DEFAULT_CRAWL_SETTINGS,
@@ -133,22 +137,29 @@ it("reports each model slot over the last hour", async () => {
 it("yields per discovery signal over the last 7 days", async () => {
   const yields = await signalYields(settings);
   expect(yields).toHaveLength(3);
-  expect(yields[0]).toEqual({ signal: "Claude 커밋 트레일러", enqueued: 2, published: 1, gated: 0, requireEvidence: false });
+  // 7일 합 옆의 짧은 창 — 20분 전 발견은 최근 1시간·오늘, 이틀 전 발견은 7일에만. 실제 시각(정시+30분)에서 재므로 오늘은 늘 들어간다
+  expect(yields[0]).toEqual({ signal: "Claude 커밋 트레일러", enqueued: 2, published: 1, gated: 0, requireEvidence: false,
+    enqueuedWindows: { hour: 1, today: 1 }, gatedWindows: { hour: 0, today: 0 } });
   expect(yields.slice(1)).toEqual(expect.arrayContaining([
-    { signal: "readme", enqueued: 1, published: 0, gated: 1, requireEvidence: true },
-    { signal: "Show HN", enqueued: 1, published: 0, gated: 0, requireEvidence: true },
+    { signal: "readme", enqueued: 1, published: 0, gated: 1, requireEvidence: true,
+      enqueuedWindows: { hour: 1, today: 1 }, gatedWindows: { hour: 1, today: 1 } },
+    { signal: "Show HN", enqueued: 1, published: 0, gated: 0, requireEvidence: true,
+      enqueuedWindows: { hour: 0, today: 0 }, gatedWindows: { hour: 0, today: 0 } },
   ]));
 });
 
 it("lists the last 24 hours of listed products with their discovery signal", async () => {
-  expect(await todayPublications(now)).toEqual({ total24h: 2, korean24h: 1, latest: [
+  // 오늘(한국 0시부터)은 2시간 전 제품이 어제 것일 수 있다 — 지금 시각으로 기대값을 센다
+  expect(await todayPublications(now)).toEqual({ total24h: 2, korean24h: 1, windows: { hour: 1, today: today(ago(10), ago(120)) }, latest: [
     { slug: "korean-app", name: "한글 메모장", tagline: "Notes for teams", category: "Productivity",
       signal: "Claude 커밋 트레일러", createdAt: ago(10).toISOString(), korean: true },
     { slug: "english-app", name: "English App", tagline: "Plain notes", category: "Productivity",
       signal: null, createdAt: ago(120).toISOString(), korean: false },
   ] });
   expect(await todayPublications(now, 1)).toMatchObject({ total24h: 2, latest: [{ slug: "korean-app" }] });
-  expect(await todayPublications(new Date(now.getTime() + 3 * 86_400_000))).toEqual({ total24h: 0, korean24h: 0, latest: [] });
+  expect(await todayPublications(new Date(now.getTime() + 3 * 86_400_000))).toEqual({ total24h: 0, korean24h: 0, windows: { hour: 0, today: 0 }, latest: [] });
+  // 수만 셀 때(limit 0)는 목록 없이 같은 수
+  expect(await todayPublications(now, 0)).toEqual({ total24h: 2, korean24h: 1, windows: { hour: 1, today: today(ago(10), ago(120)) }, latest: [] });
 });
 
 it("counts what needs a person", async () => {

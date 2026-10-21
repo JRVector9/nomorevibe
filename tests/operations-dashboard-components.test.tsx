@@ -242,12 +242,18 @@ describe("모델·조치·신호", () => {
 
   it("신호 표는 게이트가 켜진 신호에만 거른 수를 적는다", () => {
     const out = html(createElement(SignalTable, { rows: [
-      { signal: "Claude 커밋 트레일러", enqueued: 44077, published: 4923, gated: 0, requireEvidence: false },
-      { signal: "한국어 README (AI 흔적 필요)", enqueued: 37, published: 3, gated: 20, requireEvidence: true },
+      { signal: "Claude 커밋 트레일러", enqueued: 44077, published: 4923, gated: 0, requireEvidence: false,
+        enqueuedWindows: { hour: 1234, today: 5678 }, gatedWindows: { hour: 0, today: 0 } },
+      { signal: "한국어 README (AI 흔적 필요)", enqueued: 37, published: 3, gated: 20, requireEvidence: true,
+        enqueuedWindows: { hour: 0, today: 2 }, gatedWindows: { hour: 0, today: 1 } },
     ] }));
     expect(out).toContain("44,077");
     expect(out).toContain("20 거름");
     expect(out.match(/—/g)?.length ?? 0).toBeGreaterThan(0);
+    // 7일 합 옆에 최근 1시간 유입(+)과 오늘 수(title)를 단다
+    expect(out).toContain(">1시간</th>");
+    expect(out).toContain('title="오늘(0시부터) 5,678">+1,234</td>');
+    expect(out).toContain(">+0</td>");
   });
 
   it("선 그래프는 점 수만큼 좌표를 찍고 끝점에 원을 둔다", () => {

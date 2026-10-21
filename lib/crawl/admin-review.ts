@@ -22,6 +22,7 @@ import { lockFrontierIdentity } from './repository';
 import { adminAuditRow } from '@/lib/operations/admin-log';
 import { lockPipelineInputStages } from './pipeline-stage-context';
 import { applyAdminEvidenceRefreshCompletion, lockAdminEvidenceRefreshCompletion } from './evidence-refresh-completion';
+import { kstDayStart, type FreshWindows } from '@/lib/operations/windows';
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -353,18 +354,26 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
   };
 }
 
-/** Rolling publication-state change, using the same DB clock as the transition trigger. */
-export async function publicationChange24h(now?: Date): Promise<{ added: number; removed: number; net: number }> {
+/**
+ * Rolling publication-state change, using the same DB clock as the transition trigger.
+ * windows — 같은 창 안에서 최근 1시간·오늘(한국 0시부터)의 순증감(FILTER, 같은 시각 색인 훑기). 24시간 순증감은 처리량이 고르면
+ * 늘 비슷해 멈춘 것처럼 보여 옆에 단다.
+ */
+export async function publicationChange24h(now?: Date): Promise<{ added: number; removed: number; net: number; windows: FreshWindows }> {
   const end = now ? sql`${now.toISOString()}::timestamp` : sql`(current_timestamp at time zone 'UTC')`;
-  const rows = await db.execute<{ added: number; removed: number; net: number }>(sql`
+  const rows = await db.execute<{ added: number; removed: number; net: number; net_hour: number; net_today: number }>(sql`
     select count(*) filter(where delta = 1)::int as added,
            count(*) filter(where delta = -1)::int as removed,
-           coalesce(sum(delta), 0)::int as net
+           coalesce(sum(delta), 0)::int as net,
+           coalesce(sum(delta) filter(where occurred_at >= ${end} - interval '1 hour'), 0)::int as net_hour,
+           coalesce(sum(delta) filter(where occurred_at >= ${kstDayStart(end)}), 0)::int as net_today
     from crawl_publication_changes
     where occurred_at >= ${end} - interval '24 hours'
       and occurred_at <= ${end}
   `);
-  return rows[0];
+  const [row] = rows;
+  return { added: Number(row.added), removed: Number(row.removed), net: Number(row.net),
+    windows: { hour: Number(row.net_hour), today: Number(row.net_today) } };
 }
 
 /**

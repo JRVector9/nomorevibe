@@ -145,7 +145,7 @@ async function SignalSlot({ settings }: { settings: CrawlSettings }) {
 
 async function TodaySlot({ down, now }: { down: number; now: string }) {
   const today = await todayPublications().catch(warn("operations.today_unavailable"));
-  return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">오늘 발행 집계를 읽지 못했습니다.</p>;
+  return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">최근 24시간 발행 집계를 읽지 못했습니다.</p>;
 }
 
 async function ManualSlot() {
@@ -460,7 +460,7 @@ export default async function StatusPage() {
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
         <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
-        <Suspense fallback={<CardPending span="dash-12" label="오늘 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="최근 24시간 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
       </div>
     </>

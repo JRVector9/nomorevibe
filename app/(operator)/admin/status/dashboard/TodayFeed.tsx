@@ -1,16 +1,21 @@
 import type { TodayPublications } from "@/lib/operations/dashboard";
 import { formatListTime } from "@/lib/format/time";
+import { freshWindowsLabel, WINDOW_TITLE } from "@/lib/operations/windows";
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 
-/** 오늘 무엇이 올라갔나 — 24시간 수와 한국어 비율, 마지막 여섯 건 */
+/**
+ * 최근 무엇이 올라갔나 — 24시간 수와 한국어 비율, 마지막 여섯 건.
+ * 전에는 "오늘 발행"이라 적었지만 한국 날짜가 아니라 굴러가는 24시간이다. 24시간 합은 고르게 발행되면 늘 비슷해
+ * 멈춘 것처럼 보여, 최근 1시간·오늘(한국 0시부터) 수를 옆에 단다.
+ */
 export function TodayFeed({ today, down, now }: { today: TodayPublications; down: number; now: string }) {
   const korean = today.total24h > 0 ? Math.round((today.korean24h / today.total24h) * 100) : 0;
   return (
-    <section className="dash-card dash-12" aria-label="오늘 발행">
+    <section className="dash-card dash-12" aria-label="최근 24시간 발행">
       <div className="dash-card-h">
-        <h2>오늘 발행 · {n(today.total24h)}건</h2>
-        <small>한국어 소개 {n(today.korean24h)} ({korean}%) · 응답 없음으로 가려진 제품 {n(down)}</small>
+        <h2>최근 24시간 발행 · {n(today.total24h)}건</h2>
+        <small><span title={WINDOW_TITLE}>{freshWindowsLabel(today.windows)}</span> · 한국어 소개 {n(today.korean24h)} ({korean}%) · 응답 없음으로 가려진 제품 {n(down)}</small>
       </div>
       {today.latest.length === 0 ? <p className="text-[13px] text-fg-3">최근 24시간에 발행된 제품이 없습니다.</p> : (
         <div className="dash-feed">

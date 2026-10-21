@@ -32,7 +32,8 @@ export default async function AdminInboxPage() {
         <h1 className="text-[22px] font-extrabold tracking-tight">오늘 할 일</h1>
         <p className="text-[14px] font-semibold text-fg-2"
           title="처리는 최근 24시간에 사람이 내린 심사 결정과 내려달라는 요청 처리를 더한 수, 남은 일은 아래 칸의 수를 더한 것">
-          오늘 처리 <span className="font-mono">{inbox.done === null ? "?" : count(inbox.done)}</span>건
+          {/* 한국 날짜의 오늘이 아니라 굴러가는 24시간이다 — "오늘 처리"로 적으면 0시에 0으로 돌아갈 것처럼 읽힌다 */}
+          최근 24시간 처리 <span className="font-mono">{inbox.done === null ? "?" : count(inbox.done)}</span>건
           {" · "}남은 일 <span className="font-mono">{count(inbox.remaining)}</span>건{inbox.failed > 0 && " 이상"}
         </p>
         <p className="w-full text-[13px] text-fg-3">
