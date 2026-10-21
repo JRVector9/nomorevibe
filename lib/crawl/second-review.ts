@@ -23,6 +23,7 @@ import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease 
 import { canonicalReviewModel, sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
+import { heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** All isolated AI2 mutations take this before candidate/row/job locks. Live workers are unchanged. */
 async function lockReplaySecondReviewMutation(tx: ProductTransaction): Promise<void> {
@@ -132,7 +133,9 @@ function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttemp
   return [...domain.attempts].reverse().find(row => row.kind === "automatic" && row.state === "succeeded"
     && (row.provider === "claude-cli" || row.provider === "abcllm" || reviewer?.provider === "grok-cli"
       && row.provider === reviewer.provider && row.model === reviewer.model)
-    && (!gate || reviewer && row.provider === reviewer.provider && row.model === reviewer.model));
+    && (!gate || reviewer && row.provider === reviewer.provider && row.model === reviewer.model)
+    // 관문은 보류 Qwen-v2 의 승인에도 붙는다 — 독립 투표자가 있을 때만(held-qwen-retry-policy.ts)
+    || gate && heldQwenGateFirst(domain.settings, row));
 }
 
 function freshFirst(domain: ControllerDomain, first: CrawlReviewAttempt | undefined, now: Date): first is CrawlReviewAttempt {
@@ -147,9 +150,10 @@ function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now
   if (!candidate || !document || !input) return false;
   const identity = domain.attempts.find(first => first.id === row.firstAttemptId);
   const reviewer = firstReviewer(settings);
-  const first = [...domain.attempts].reverse().find(attempt => attempt.kind === "automatic" && attempt.state === "succeeded"
+  const first = [...domain.attempts].reverse().find(attempt => (attempt.kind === "automatic" && attempt.state === "succeeded"
     && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || reviewer?.provider === "grok-cli"
       && attempt.provider === reviewer.provider && attempt.model === reviewer.model)
+    || row.trigger === "ai_approved" && heldQwenGateFirst(settings, attempt))
     && (row.trigger !== "ai_approved" || identity && attempt.provider === identity.provider && attempt.model === identity.model));
   return (!row.publishedSlug || Boolean(domain.publishedProductId)) && secondReviewInputMatches(row,
     { candidate, document, settings, input, first, root: domain.votes.find(root => root.id === row.fallbackForId) }, now);
@@ -411,8 +415,9 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       confidence: sql<number | null>`(${crawlReviewAttempts.outcome}->>'confidence')::float`.as("confidence"),
     }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
       .where(and(eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"), isNull(crawlCandidates.publishedSlug),
-        eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.state, "succeeded"),
-        eq(crawlReviewAttempts.provider, reviewer.provider), eq(crawlReviewAttempts.model, reviewer.model)))
+        eq(crawlReviewAttempts.state, "succeeded"),
+        or(and(eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.provider, reviewer.provider),
+          eq(crawlReviewAttempts.model, reviewer.model)), heldQwenGateFirstSql(settings))))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
       .as("approved_latest");
     const gateRequired = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)

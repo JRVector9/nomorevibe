@@ -378,6 +378,29 @@ export const auditHoldSchema = z.object({
   publishedFilter: qwenAutoStepSchema,
 }).strict();
 
+/**
+ * 사람 대기 보류 중 Qwen-v2 가 다시 보는 사유(lib/crawl/held-qwen-retry.ts). 규칙·1차·발행이 사람에게 넘긴 것 중
+ * 모델이 근거를 보고 가를 수 있는 셋이다 — 원본 소실(repo_deleted)·스팸 의심(suspected_spam)은 따로 안전한 길이 있어 넣지 않는다.
+ */
+export const HELD_QWEN_REASONS = ["no_description", "ai_review_exhausted", "ambiguous"] as const;
+export type HeldQwenReason = (typeof HELD_QWEN_REASONS)[number];
+
+/**
+ * 보류 Qwen-v2 재심사의 스위치. 감사 보류처럼 저장된 행에서 따로 읽는다(settings.ts storedHeldQwenRetry) — 칸이 없으면 기본값(켬),
+ * 있는데 깨졌으면 꺼짐. 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(심사 큐의 스위치 setHeldQwenRetry 만 바꾼다).
+ */
+export const heldQwenRetrySchema = z.object({
+  enabled: z.boolean(),
+  /** 한 틱(1분)에 새로 부르는 수 */
+  perTick: z.number().int().min(1).max(50),
+  /** 한 틱에 이 일에 쓰는 시간(초). 같은 잡의 DeepSeek 위임이 나머지를 쓴다 */
+  budgetSeconds: z.number().int().min(10).max(60),
+  reasons: z.array(z.enum(HELD_QWEN_REASONS)).max(HELD_QWEN_REASONS.length)
+    .refine((reasons) => new Set(reasons).size === reasons.length, { message: "같은 사유를 두 번 넣을 수 없다" }),
+}).strict();
+export type HeldQwenRetrySettings = z.infer<typeof heldQwenRetrySchema>;
+export const DEFAULT_HELD_QWEN_RETRY: HeldQwenRetrySettings = { enabled: true, perTick: 10, budgetSeconds: 40, reasons: [...HELD_QWEN_REASONS] };
+
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
@@ -479,6 +502,8 @@ export const crawlSettingsSchema = z.object({
    * 감사 화면(/admin/audit)이 따로 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(settings.ts applyPatch).
    */
   auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
+  /** 사람 대기 보류를 Qwen-v2 가 다시 본다(lib/crawl/held-qwen-retry.ts). 심사 큐(/admin/review)의 스위치가 따로 바꾼다 */
+  review: z.object({ qwenHeldRetry: heldQwenRetrySchema }).strict().default({ qwenHeldRetry: DEFAULT_HELD_QWEN_RETRY }),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
@@ -524,6 +549,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   news: defaultNews,
   rising: defaultRising,
   auditHold: DEFAULT_AUDIT_HOLD,
+  review: { qwenHeldRetry: DEFAULT_HELD_QWEN_RETRY },
   secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {

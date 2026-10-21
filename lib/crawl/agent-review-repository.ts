@@ -28,6 +28,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
+import { heldQwenGateFirstSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -176,8 +177,9 @@ function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): S
 }
 
 function matchingSource(settings: CrawlSettings, delegated = false): SQL {
+  // 보류 Qwen-v2 의 승인(성공·승인 행만)도 지금 1차 심사자의 판단처럼 관문에 선다(held-qwen-retry-policy.ts)
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
-    AND ${delegated ? delegatedReviewIdentity(settings) : sql`${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}`}
+    AND ${delegated ? delegatedReviewIdentity(settings) : sql`((${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}) OR ${heldQwenGateFirstSql(settings)})`}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -1090,7 +1092,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
     delegated ? delegatedReviewIdentity(input.settings, String(input.candidate.signals?.delegatedReviewAttemptId))
-      : and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")),
+      : or(and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")), heldQwenGateFirstSql(input.settings)),
     eq(crawlReviewAttempts.candidateId, input.candidate.id),
     eq(crawlReviewAttempts.state, "succeeded"), eq(crawlReviewAttempts.inputHash, current.inputHash),
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),

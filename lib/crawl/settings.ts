@@ -10,7 +10,9 @@ import {
   DEFAULT_CRAWL_SETTINGS,
   DEFAULT_SPLIT_TIEBREAK,
   splitTiebreakSchema,
+  heldQwenRetrySchema,
   type CrawlSettings,
+  type HeldQwenRetrySettings,
 } from "./settings-schema";
 import { isAuditReasonCategory } from "./audit-reason-category";
 import { auditHoldWidens, sameAuditHold } from "./audit-hold-policy";
@@ -105,6 +107,24 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
   return AUDIT_HOLD_OFF;
 }
 
+/**
+ * 저장된 행의 보류 Qwen-v2 재심사 설정(review.qwenHeldRetry) — 감사 보류와 같이 행의 나머지와 따로 읽는다.
+ * 칸이 없으면 기본값(켬, 세 사유), 있는데 깨졌으면 꺼짐. 끈 스위치가 다른 칸의 손상 때문에 켬으로 되살아나면 안 된다.
+ * 일부 칸만 있으면 나머지를 기본값으로 채운다(새 칸을 더한 배포).
+ */
+export function storedHeldQwenRetry(stored: unknown): HeldQwenRetrySettings {
+  const value = (stored ?? {}) as Record<string, unknown>;
+  const review = value.review;
+  if (review === undefined) return DEFAULT_CRAWL_SETTINGS.review.qwenHeldRetry;
+  const raw = review !== null && typeof review === "object" && !Array.isArray(review) ? (review as Record<string, unknown>).qwenHeldRetry : null;
+  if (raw === undefined) return DEFAULT_CRAWL_SETTINGS.review.qwenHeldRetry;
+  const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  const parsed = object ? heldQwenRetrySchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.review.qwenHeldRetry, ...object }) : null;
+  if (parsed?.success) return parsed.data;
+  logger.error("crawl.held_qwen_retry_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
+  return { ...DEFAULT_CRAWL_SETTINGS.review.qwenHeldRetry, enabled: false };
+}
+
 /** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
 const unreadable = new WeakSet<CrawlSettings>();
 export function settingsUnreadable(settings: CrawlSettings): boolean {
@@ -123,6 +143,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
     rising: { ...DEFAULT_CRAWL_SETTINGS.rising, ...((raw.rising as object) ?? {}) },
     auditHold: storedAuditHold(raw),
+    review: { qwenHeldRetry: storedHeldQwenRetry(raw) },
     secondReview: mergeSecondReview(raw.secondReview),
   };
 
@@ -134,8 +155,9 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
   logger.error("crawl.settings_invalid", {
     issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
   });
-  // 갈림 판가름 스위치도 저장된 값을 따로 읽어 둔다(storedSplitTiebreak) — 화면이 지금 값을 보이고 compare-and-set 이 맞물리게
-  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold,
+  // 갈림 판가름 스위치·보류 Qwen-v2 재심사도 저장된 값을 따로 읽어 둔다(storedSplitTiebreak·storedHeldQwenRetry) — 화면이 지금 값을 보이고
+  // compare-and-set 이 맞물리게
+  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold, review: merged.review,
     secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, splitTiebreak: merged.secondReview.splitTiebreak } };
   unreadable.add(fallback);
   return fallback;
@@ -160,7 +182,7 @@ export type SaveResult =
  * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
  */
 export function settingsFormVersion(settings: CrawlSettings): string {
-  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null,
+  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null, review: null,
     // 갈림 판가름 스위치는 심사 큐가 따로 바꾼다(setSplitTiebreak) — 판에 넣으면 그 스위치를 누를 때마다 열린 폼이 거절된다
     secondReview: { ...settings.secondReview, splitTiebreak: null } };
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
@@ -177,6 +199,8 @@ function applyPatch(current: CrawlSettings, patch: unknown) {
     humanReview: current.humanReview,
     // 감사 보류는 감사 화면의 스위치(setAuditHold)만 바꾼다 — 크롤 설정 폼·기본값 되돌리기가 공개 목록을 건드리지 않게
     auditHold: current.auditHold,
+    // 보류 Qwen-v2 재심사도 심사 큐의 스위치(setHeldQwenRetry)만 바꾼다
+    review: current.review,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(current.classify, raw.classify),
@@ -386,6 +410,46 @@ export async function setSplitTiebreak(input: { next: SplitTiebreakSettings; exp
     await tx.insert(operationsAudit).values(await audit(true, null, parsed.data));
     if (parsed.data.enabled && !before.enabled) await requestJob("second-review", tx);
     return { ok: true, splitTiebreak: parsed.data };
+  });
+}
+
+/**
+ * 보류 Qwen-v2 재심사의 스위치·한 틱 수·시간·사유를 바꾼다 — 심사 큐(/admin/review)가 부른다. 감사 보류(setAuditHold)와 같은 길이다:
+ * stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 이 칸만 쓴다. 다르면 쓰지 않고 실패 줄만 남긴다.
+ * 끄면 다음 claim·기록부터 새 판단을 적용하지 않고, 관문도 Qwen-v2 승인을 1차 승인으로 받지 않는다(held-qwen-retry-policy.ts).
+ */
+export async function setHeldQwenRetry(input: { next: HeldQwenRetrySettings; expected: HeldQwenRetrySettings; actor: string; reason?: string }):
+  Promise<{ ok: true; qwenHeldRetry: HeldQwenRetrySettings } | { ok: false; issues: string[] }> {
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+    const before = storedHeldQwenRetry(row.values);
+    const reason = input.reason?.trim().slice(0, 500) || null;
+    const audit = (ok: boolean, error: string | null, after = before) => adminAuditRow(input.actor, { action: "held-qwen-retry-settings",
+      target: "crawl_settings", detail: { before, after, requested: input.next, reason }, ok, error });
+    const same = (a: HeldQwenRetrySettings, b: HeldQwenRetrySettings) => a.enabled === b.enabled && a.perTick === b.perTick
+      && a.budgetSeconds === b.budgetSeconds && a.reasons.length === b.reasons.length && a.reasons.every((value) => b.reasons.includes(value));
+    const expected = heldQwenRetrySchema.safeParse(input.expected);
+    if (!expected.success || !same(before, expected.data)) {
+      await tx.insert(operationsAudit).values(await audit(false, "stale_state"));
+      return { ok: false, issues: ["그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 값을 확인한 뒤 다시 해 주세요."] };
+    }
+    const parsed = heldQwenRetrySchema.safeParse(input.next);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => `review.qwenHeldRetry.${issue.path.join(".")}: ${issue.message}`);
+      await tx.insert(operationsAudit).values(await audit(false, issues.join(" · ")));
+      return { ok: false, issues };
+    }
+    // 이 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도(읽기는 기본값으로 돌아간다) 끄기는 되어야 하고, 깨진 칸을 기본값으로 덮지 않는다
+    const stored = (row.values ?? {}) as Record<string, unknown>;
+    const review = stored.review !== null && typeof stored.review === "object" && !Array.isArray(stored.review) ? stored.review as Record<string, unknown> : {};
+    const values = { ...stored, review: { ...review, qwenHeldRetry: parsed.data } };
+    await tx.update(crawlSettings).set({ values: values as CrawlSettings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
+    logger.info("crawl.held_qwen_retry_set", { updatedBy: input.actor, before, after: parsed.data });
+    await tx.insert(operationsAudit).values(await audit(true, null, parsed.data));
+    if (parsed.data.enabled && !before.enabled) await requestJob("human-deepseek-review", tx);
+    return { ok: true, qwenHeldRetry: parsed.data };
   });
 }
 

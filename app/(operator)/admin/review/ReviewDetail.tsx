@@ -288,7 +288,7 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
         {bucket
           ? <b className="font-semibold text-down">{causeLabel(bucket)}</b>
           : <>{STATES[candidate.state]} · {candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '사유 없음'}</>}
-        {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : candidate.decidedBy === 'deepseek' ? 'DeepSeek 위임 판단' : STATUS[entry.status]}
+        {' · '}{candidate.decidedBy === 'admin' ? '관리자 결정' : candidate.decidedBy === 'deepseek' ? 'DeepSeek 위임 판단' : candidate.decidedBy === 'qwen-v2' ? 'Qwen-v2 보류 재심사 판단' : STATUS[entry.status]}
       </p>
       {/* 판정 당시 기록된 사유. 아래 규칙 흔적은 지금 규칙으로 다시 계산한 것이라 기준이 바뀌면 달라진다 */}
       {stop && <p className="text-[13px] text-fg-2">
@@ -366,7 +366,8 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
       <p className="text-[13px] text-fg-3">저장소 연결: {entry.relationship} · 근거 수집: {entry.scanState}</p>
 
       {entry.latest && <div className="rounded-lg bg-bg-soft p-3 text-[13px] leading-relaxed text-fg-2">
-        <p className="font-semibold">{entry.latest.kind === 'delegated' ? (entry.latest.actor === SPLIT_TIEBREAK_ACTOR ? 'Qwen-v2 갈림 판가름 기록' : 'DeepSeek 위임 판단 기록') : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
+        <p className="font-semibold">{entry.latest.kind === 'delegated' ? (entry.latest.actor === SPLIT_TIEBREAK_ACTOR ? 'Qwen-v2 갈림 판가름 기록'
+          : entry.latest.provider === 'qwen-direct' ? 'Qwen-v2 보류 재심사 기록' : 'DeepSeek 위임 판단 기록') : entry.latest.kind === 'admin_override' ? '관리자 결정 기록' : entry.latest.kind === 'evidence_refresh' ? '추가 수집 접수 기록' : '최근 AI·규칙 심사 기록'}</p>
         {(entry.latest.kind === 'automatic' || entry.latest.kind === 'delegated') && <p>{entry.latest.provider ?? '실행기 미확인'}{entry.latest.model ? ` · ${entry.latest.model}` : ''} · {entry.latest.decision ?? entry.latest.state}</p>}
         {entry.latest.actor && <p>담당자: {entry.latest.actor}</p>}
         {entry.latest.reason && <p className="whitespace-pre-line"><ReasonText text={entry.latest.reason} korean={entry.latest.reasonKo} /></p>}

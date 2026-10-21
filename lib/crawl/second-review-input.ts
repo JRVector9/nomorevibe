@@ -14,6 +14,7 @@ import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
+import { heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
@@ -51,10 +52,12 @@ export function secondReviewInputMatches(row: SecondReview, current: {
     || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return false;
   if (!row.publishedSlug) {
     const reviewer = firstReviewer(settings);
+    // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
+    const heldQwen = Boolean(first && row.trigger === "ai_approved" && heldQwenGateFirst(settings, first));
     if (!first || !first.model?.trim() || first.id !== row.firstAttemptId || first.candidateId !== row.candidateId
-      || first.kind !== "automatic" || first.state !== "succeeded"
+      || !heldQwen && (first.kind !== "automatic" || first.state !== "succeeded"
       || !["claude-cli", "abcllm", "grok-cli"].includes(first.provider ?? "")
-      || (first.provider === "grok-cli" && (reviewer?.provider !== first.provider || reviewer.model !== first.model))
+      || (first.provider === "grok-cli" && (reviewer?.provider !== first.provider || reviewer.model !== first.model)))
       || first.inputHash !== input.inputHash || first.sourceRevisionHash !== input.sourceRevisionHash
       || first.policyHash !== input.policyHash || first.promptVersion !== REVIEW_PROMPT_VERSION || first.rulesVersion !== REVIEW_RULES_VERSION
       || first.outcome?.decision !== row.firstDecision || (first.outcome?.confidence ?? null) !== (row.firstConfidence ?? null)
@@ -158,8 +161,9 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
         .where(and(eq(crawlReviewAttempts.id, row.firstAttemptId), eq(crawlReviewAttempts.candidateId, row.candidateId))) : null;
     const [gateFirst] = identityQuery ? await (lockGate ? identityQuery.for("share") : identityQuery) : [];
     const firstQuery = executor.select().from(crawlReviewAttempts).where(and(
-      eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.kind, "automatic"),
-      eq(crawlReviewAttempts.state, "succeeded"), firstReviewProviderPredicate(settings),
+      eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.state, "succeeded"),
+      or(and(eq(crawlReviewAttempts.kind, "automatic"), firstReviewProviderPredicate(settings)),
+        row.trigger === "ai_approved" ? heldQwenGateFirstSql(settings) : undefined),
       gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     [first] = await (lockGate ? firstQuery.for("share") : firstQuery);
