@@ -11,7 +11,7 @@ import { MeSavedCount } from "./MeTabs";
 const STATS = [["tried", "tried"], ["saved", "saved"], ["opinions", "opinions"], ["following", "following"]] as const;
 
 /** 마이페이지 머리 — 아바타·닉네임·가입일·로그인 수단, 숫자 넷(누르면 그 탭). 휴대폰은 줄여 쌓는다 */
-export function MeHead({ summary, locale, t, now }: { summary: MeSummary; locale: Locale; t: Translator<"me">; now: Date }) {
+export function MeHead({ summary, locale, t, now, showTried = true }: { summary: MeSummary; locale: Locale; t: Translator<"me">; now: Date; showTried?: boolean }) {
   const { user, counts, providers, isMaker } = summary;
   return (
     <section className="me-head" aria-labelledby="me-name">
@@ -33,7 +33,7 @@ export function MeHead({ summary, locale, t, now }: { summary: MeSummary; locale
         </p>
       </div>
       <nav className="me-stats" aria-label={t("head.stats")}>
-        {STATS.map(([tab, key]) => (
+        {STATS.filter(([tab]) => showTried || tab !== "tried").map(([tab, key]) => (
           <Link key={tab} prefetch={false} className="me-stat" href={localePath(locale, tab === "saved" ? ME_SAVED_LINK : ME_TAB_PATHS[tab])}>
             <b>{key === "saved" ? <MeSavedCount initial={counts.saved} /> : formatNumber(counts[key], locale)}</b>
             <span>{t(`tabs.${tab}`)}</span>

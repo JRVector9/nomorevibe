@@ -15,14 +15,17 @@ const LANGS: BadgeLang[] = ["en", "ko"];
 /**
  * 배지·공유 카드 복사(MY8) — 내 프로젝트 탭(MY5)이 프로젝트마다 그린다(SNS 설계 T12·T13, 시안 M5).
  * 배지 주소는 그대로(/badge/<slug>.svg) 두고 종류·글자만 뒤에 붙인다. 복사가 안 되는 브라우저에서는 글자를 골라 두어 직접 복사하게 한다.
- * 배지 링크에는 ?via=badge, 공유 링크에는 ?via=share 를 붙인다(유입 분류는 순위 설계에서).
+ * 배지 링크에는 ?via=badge, 공유 링크에는 ?via=share 를 붙인다(유입 분류는 순위 설계에서). 두 링크 모두 지금 화면의 언어 주소다 —
+ * 앞붙이기 없는 주소는 한국어로 열린다(proxy.ts). 카드 그림 주소에는 version(소개를 고친 시각)을 붙여, 고치면 브라우저·CDN 이 새 그림을 받는다.
+ * 써봤어요를 끄면(tried=false) «써본 사람 수» 배지는 고르지 않는다.
  * README 에 붙일 절대 주소(origin)는 서버가 넘긴다 — NEXT_PUBLIC_SITE_URL 은 운영 이미지 빌드 때 비어 있어, 브라우저에서 읽으면
  * 서버가 그린 주소와 달라 하이드레이션이 깨진다(React #418).
  */
-export function ShareKit({ slug, name, origin }: { slug: string; name: string; origin: string }) {
+export function ShareKit({ slug, name, origin, version, tried = true }: { slug: string; name: string; origin: string; version?: string; tried?: boolean }) {
   const t = useTranslations("me");
   const locale = useLocale();
-  const [variant, setVariant] = useState<Variant>("listed");
+  const [picked, setVariant] = useState<Variant>("listed");
+  const variant: Variant = tried ? picked : "listed";
   const [lang, setLang] = useState<BadgeLang>("en");
   const [status, setStatus] = useState<StatusKey | "">("");
   const markdownRef = useRef<HTMLPreElement>(null);
@@ -31,10 +34,10 @@ export function ShareKit({ slug, name, origin }: { slug: string; name: string; o
 
   const query = new URLSearchParams({ ...(variant === "tried" ? { style: "tried" } : {}), ...(lang === "ko" ? { lang: "ko" } : {}) }).toString();
   const badgePath = `/badge/${encodeURIComponent(slug)}.svg${query ? `?${query}` : ""}`;
-  const badgeLink = `${origin}/p/${encodeURIComponent(slug)}?via=badge`;
+  const badgeLink = `${origin}${localePath(locale, `/p/${encodeURIComponent(slug)}`)}?via=badge`;
   const markdown = `[![nomorevibe](${origin}${badgePath})](${badgeLink})`;
   const html = `<a href="${badgeLink}"><img src="${origin}${badgePath}" alt="nomorevibe" height="20"></a>`;
-  const cardPath = localePath(locale, `/p/${encodeURIComponent(slug)}/share-card.png`);
+  const cardPath = localePath(locale, `/p/${encodeURIComponent(slug)}/share-card.png${version ? `?v=${encodeURIComponent(version)}` : ""}`);
   const shareLink = `${origin}${localePath(locale, `/p/${encodeURIComponent(slug)}`)}?via=share`;
 
   async function copy(text: string, target: HTMLElement | null, done: StatusKey) {
@@ -52,9 +55,11 @@ export function ShareKit({ slug, name, origin }: { slug: string; name: string; o
     <section className="me-share" aria-label={t("share.title")}>
       <h3 className="me-share-h">{t("share.badge")}</h3>
       <div className="me-share-opts">
-        <span className="me-share-seg" role="group" aria-label={t("share.variantLabel")}>
-          {VARIANTS.map((value) => <button key={value} type="button" aria-pressed={variant === value} onClick={() => setVariant(value)}>{t(`share.variant.${value}`)}</button>)}
-        </span>
+        {tried && (
+          <span className="me-share-seg" role="group" aria-label={t("share.variantLabel")}>
+            {VARIANTS.map((value) => <button key={value} type="button" aria-pressed={variant === value} onClick={() => setVariant(value)}>{t(`share.variant.${value}`)}</button>)}
+          </span>
+        )}
         <span className="me-share-seg" role="group" aria-label={t("share.langLabel")}>
           {LANGS.map((value) => <button key={value} type="button" aria-pressed={lang === value} onClick={() => setLang(value)}>{t(`share.lang.${value}`)}</button>)}
         </span>

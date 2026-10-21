@@ -1,6 +1,7 @@
 import "./projects.css";
 import Link from "next/link";
 import { ShareKit } from "@/components/me/ShareKit";
+import { productReactionsEnabled } from "@/lib/domain/reactions/flags";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { formatDate, formatNumber, formatRelativeTime } from "@/lib/i18n/format";
 import type { Locale } from "@/lib/i18n/locales";
@@ -8,22 +9,28 @@ import { localePath } from "@/lib/i18n/routing";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { ME_TAB_PATHS } from "@/lib/me/contract";
 import { siteOrigin } from "@/lib/site";
-import { findMyRepos, makerInbox, makerProjects, type InboxItem, type MakerProject } from "@/lib/me/maker";
+import { findMyRepos, INBOX_PAGE, makerInbox, makerProjects, type InboxItem, type MakerProject } from "@/lib/me/maker";
 import { FoundReposBox } from "./FoundReposBox";
 import { IntroEditor } from "./IntroEditor";
 import { ReplyBox } from "./ReplyBox";
 
 type Translator = Awaited<ReturnType<typeof getTranslator<"me">>>;
 
-/** 내 프로젝트 탭 — 위에서부터 «더 확인할 저장소 → 내 프로젝트 → 받은 의견»(시안 3.6). view=inbox 면 받은 의견 전체 */
-export async function ProjectsView({ userId, csrfToken, view }: { userId: number; csrfToken: string; view: "default" | "inbox" }) {
+/**
+ * 내 프로젝트 탭 — 위에서부터 «더 확인할 저장소 → 내 프로젝트 → 받은 의견»(시안 3.6). view=inbox 면 받은 의견 전체를 50개씩 쪽으로(page).
+ * 써봤어요를 끄면(PRODUCT_REACTIONS_ENABLED) 써본 사람 숫자·한 줄·«써본 사람 수» 배지를 그리지 않는다
+ */
+export async function ProjectsView({ userId, csrfToken, view, page = 1 }: { userId: number; csrfToken: string; view: "default" | "inbox"; page?: number }) {
   const locale = await getRequestLocale();
   const t = await getTranslator(locale, "me");
   const now = new Date();
   const projectsHref = localePath(locale, ME_TAB_PATHS.projects);
+  const reactions = productReactionsEnabled();
 
   if (view === "inbox") {
-    const inbox = await makerInbox(userId, { limit: 100 });
+    const current = Number.isSafeInteger(page) && page > 1 ? Math.min(page, 2_000) : 1;
+    const inbox = await makerInbox(userId, { limit: INBOX_PAGE, offset: (current - 1) * INBOX_PAGE });
+    const pageHref = (target: number) => `${projectsHref}?view=inbox${target > 1 ? `&page=${target}` : ""}`;
     return (
       <section className="me-proj">
         <div className="me-proj-head">
@@ -31,6 +38,12 @@ export async function ProjectsView({ userId, csrfToken, view }: { userId: number
           <Link prefetch={false} className="me-proj-btn is-ghost" href={projectsHref}>{t("projects.inbox.back")}</Link>
         </div>
         <InboxList items={inbox.items} csrfToken={csrfToken} t={t} locale={locale} now={now} />
+        {(current > 1 || current * INBOX_PAGE < inbox.total) && (
+          <nav className="me-proj-acts" aria-label={t("projects.inbox.pages")}>
+            {current > 1 && <Link prefetch={false} className="me-proj-btn is-ghost" href={pageHref(current - 1)}>{t("projects.inbox.newer")}</Link>}
+            {current * INBOX_PAGE < inbox.total && <Link prefetch={false} className="me-proj-btn" href={pageHref(current + 1)}>{t("projects.inbox.older")}</Link>}
+          </nav>
+        )}
       </section>
     );
   }
@@ -43,7 +56,7 @@ export async function ProjectsView({ userId, csrfToken, view }: { userId: number
         <p className="me-proj-kpis">
           <span><b>{formatNumber(projects.length, locale)}</b>{t("projects.kpi.projects")}</span>
           <span><b>{formatNumber(inbox.waiting, locale)}</b>{t("projects.kpi.waiting")}</span>
-          <span><b>{formatNumber(tried, locale)}</b>{t("projects.kpi.tried")}</span>
+          {reactions && <span><b>{formatNumber(tried, locale)}</b>{t("projects.kpi.tried")}</span>}
         </p>
       )}
       <FoundReposBox csrfToken={csrfToken} linked={found.linked} login={found.login} repos={found.repos} />
@@ -56,7 +69,7 @@ export async function ProjectsView({ userId, csrfToken, view }: { userId: number
         <>
           <h2 className="me-proj-h2">{t("projects.list.title")}</h2>
           <ul className="me-proj-list">
-            {projects.map((project) => <ProjectCard key={project.productId} project={project} csrfToken={csrfToken} t={t} locale={locale} now={now} />)}
+            {projects.map((project) => <ProjectCard key={project.productId} project={project} csrfToken={csrfToken} t={t} locale={locale} now={now} reactions={reactions} />)}
           </ul>
           <div className="me-proj-head">
             <h2 className="me-proj-h2">{t("projects.inbox.title", { count: formatNumber(inbox.waiting, locale) })}</h2>
@@ -71,11 +84,11 @@ export async function ProjectsView({ userId, csrfToken, view }: { userId: number
   );
 }
 
-function ProjectCard({ project, csrfToken, t, locale, now }: { project: MakerProject; csrfToken: string; t: Translator; locale: Locale; now: Date }) {
+function ProjectCard({ project, csrfToken, t, locale, now, reactions }: { project: MakerProject; csrfToken: string; t: Translator; locale: Locale; now: Date; reactions: boolean }) {
   const metrics = [
     { label: t("projects.metric.stars"), value: project.stars },
     { label: t("projects.metric.visits"), value: project.visits7d },
-    { label: t("projects.metric.tried"), value: project.tried },
+    ...(reactions ? [{ label: t("projects.metric.tried"), value: project.tried }] : []),
     { label: t("projects.metric.feedback"), value: project.feedback },
   ];
   return (
@@ -99,14 +112,15 @@ function ProjectCard({ project, csrfToken, t, locale, now }: { project: MakerPro
         ))}
       </dl>
       <p className="me-proj-kpi-line">
-        <span>{t("projects.kpiLine", { good: formatNumber(project.good, locale), meh: formatNumber(project.meh, locale), bad: formatNumber(project.bad, locale) })}</span>
+        {reactions && <span>{t("projects.kpiLine", { good: formatNumber(project.good, locale), meh: formatNumber(project.meh, locale), bad: formatNumber(project.bad, locale) })}</span>}
         <span>{t("projects.saves", { count: formatNumber(project.saves, locale) })}</span>
         {project.waiting > 0 && <span className="is-hot">{t("projects.waiting", { count: formatNumber(project.waiting, locale) })}</span>}
       </p>
       <IntroEditor csrfToken={csrfToken} productId={project.productId} tagline={project.tagline} description={project.description}>
         <Link prefetch={false} className="me-proj-btn" href={localePath(locale, `/p/${encodeURIComponent(project.slug)}`)}>{t("projects.open")}</Link>
       </IntroEditor>
-      <ShareKit slug={project.slug} name={project.name} origin={siteOrigin()} />
+      {/* 배지·공유 카드는 공개 목록에 오른 제품만 내준다(lib/me/share.ts) — 검토 중·숨김·주인 없는 개인 프로필이면 404 라 그리지 않는다 */}
+      {project.shareable && <ShareKit slug={project.slug} name={project.name} origin={siteOrigin()} version={String(Date.parse(project.updatedAt))} tried={reactions} />}
     </li>
   );
 }
@@ -120,14 +134,14 @@ function InboxList({ items, csrfToken, t, locale, now }: { items: InboxItem[]; c
           <p className="me-proj-item-h">
             <span className="me-proj-chip is-kind">{item.kind ? t(`projects.inbox.kind.${item.kind}`) : t("projects.inbox.kind.reaction")}</span>
             <span>{item.productName}</span>
-            <span>· {item.authorName ?? t("projects.inbox.visitor")}</span>
+            <span>· {item.authorName ?? (item.authorDeleted ? t("account.deletedName") : t("projects.inbox.visitor"))}</span>
             {item.triedVerified && <span>· {t("projects.inbox.tried")}</span>}
             {item.verdict && <span className={`me-proj-verdict is-${item.verdict}`}>{t(`projects.inbox.verdict.${item.verdict}`)}</span>}
             <time dateTime={item.createdAt}>· {formatRelativeTime(item.createdAt, now, locale)}</time>
           </p>
           {item.title && <p className="me-proj-item-title">{item.title}</p>}
           <p className="me-proj-quote">{item.body}</p>
-          <ReplyBox csrfToken={csrfToken} targetType={item.targetType} targetId={item.targetId} reply={item.reply} />
+          <ReplyBox csrfToken={csrfToken} targetType={item.targetType} targetId={item.targetId} reply={item.reply} notifiable={item.notifiable} />
         </li>
       ))}
     </ul>

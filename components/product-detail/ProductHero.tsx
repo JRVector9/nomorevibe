@@ -13,7 +13,7 @@ import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { repositoryOperator } from "@/lib/domain/products/github-owner";
 import { isHealthCurrent } from "@/lib/domain/products/health-freshness";
 import { InstallPrompt } from "./InstallPrompt";
-import { SaveButton } from "./SaveButton";
+import { SaveButton, savableProduct } from "./SaveButton";
 import { ShareButton } from "./ShareButton";
 
 /** 홈 '지금 뜨는'과 같은 순위 — 20위 안일 때만 배지 */
@@ -125,7 +125,7 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
               </>
             )}
             <ShareButton title={product.name} path={localePath(locale, `/p/${product.slug}`)} />
-            <SaveButton slug={product.slug} name={product.name} />
+            <SaveButton slug={product.slug} name={product.name} listed={savableProduct(product, unclaimed)} />
             {follow?.project}
           </div>
           {product.repoGone && (

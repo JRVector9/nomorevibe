@@ -3,9 +3,16 @@
  * 화면·API·표(drizzle/0108_mypage.sql)가 같은 값을 쓰도록 여기 한곳에 둔다(마이페이지 시안 2026-10-18, Q1–Q7 권장안).
  */
 
-/** 탭 순서 = 모은 것 → 남긴 것 → 받는 소식 → 설정. 메이커는 확인한 프로젝트가 있을 때만 맨 앞에 붙는다 */
+/** 탭 순서 = 모은 것 → 남긴 것 → 받는 소식 → 설정. 내 프로젝트는 확인한 프로젝트가 있거나 GitHub 로 로그인한 계정에만 맨 앞에 붙는다 */
 export const ME_TABS = ["projects", "saved", "tried", "opinions", "following", "alerts", "account"] as const;
 export type MeTab = (typeof ME_TABS)[number];
+/**
+ * 내 프로젝트 탭·메뉴를 보일까 — 확인한 메이커와, 아직 확인하지 않은 GitHub 계정(이미 등재된 내 저장소를 찾아 확인하는 곳이 그 탭뿐이다).
+ * 탭 줄(MeTabs)과 아바타 메뉴(AccountMenu)가 같은 규칙을 쓴다
+ */
+export function showsProjectsTab(account: { isMaker: boolean; providers: readonly { provider: string }[] } | null | undefined): boolean {
+  return Boolean(account && (account.isMaker || account.providers.some((item) => item.provider === "github")));
+}
 /** 각 탭 주소(로케일 앞붙이기 전). 저장이 /me 기본 탭이다(Q1) */
 export const ME_TAB_PATHS: Record<MeTab, string> = {
   projects: "/me/projects",

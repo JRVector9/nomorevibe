@@ -221,8 +221,11 @@ export const products = pgTable("products", {
   index("products_search_idx").using("gin", table.searchVector),
   /** 홈 'AI로 제작' 필터(0063) — 근거가 있는 행만 */
   index("products_ai_level_idx").on(table.aiLevel).where(sql`${table.aiLevel} is not null`),
-  /** 저장소 주인 열쇠(0108) — 메이커 팔로·내 저장소 찾기·주소로 확인. 식은 lib/me/follows.ts·maker.ts·maker-claims.ts 와 같다 */
-  index("products_listed_owner_idx").on(sql`substring(lower(${table.repoUrl}) from '^https?://(?:www\.)?github\.com/([a-z0-9-]+)/[^/]+/?$')`),
+  /**
+   * 저장소 주인 열쇠(0108) — 메이커 팔로·내 저장소 찾기·주소로 확인. 식은 lib/me/follows.ts·maker.ts·maker-claims.ts 와 같다.
+   * 템플릿 글자 안이라 `\\.` 로 적는다 — `\.` 는 점(.)만 남아 0108 의 색인·질의와 다른 식이 된다
+   */
+  index("products_listed_owner_idx").on(sql`substring(lower(${table.repoUrl}) from '^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')`),
   index("products_renamed_owner_idx").on(sql`nullif(lower(split_part(${table.repoRenamedTo}, '/', 1)), '')`).where(sql`${table.repoRenamedTo} is not null`),
   index("products_renamed_to_idx").on(sql`lower(${table.repoRenamedTo})`).where(sql`${table.repoRenamedTo} is not null`),
 ]);

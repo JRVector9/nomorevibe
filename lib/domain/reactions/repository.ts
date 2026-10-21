@@ -1,9 +1,12 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNull, ne, or, sql } from "drizzle-orm";
-import { db, onPrimary, onReplica } from "@/lib/db";
+import { db, onPrimary } from "@/lib/db";
 import { clickEvents, products, rateLimits } from "@/lib/db/schema";
 import { makerReplies, productReactions } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
+import { PublicAuthError } from "@/lib/domain/accounts/errors";
+import { getProductIdentity } from "@/lib/domain/products/detail-view";
+import { publicRead } from "@/lib/domain/products/public-reads";
 import { productVisitorHash } from "@/lib/domain/products/visitors";
 import type { ReactionTag } from "@/lib/me/contract";
 import {
@@ -17,6 +20,8 @@ import {
  * 열쇠가 둘이다: 로그인하면 user_id, 아니면 제품별 방문자 해시(productVisitorHash, /go 의 click_events 와 같은 값).
  * 두 고유 색인을 한 ON CONFLICT 로 함께 지킬 수 없어, 쓰기는 모두 제품별 advisory lock 안에서 읽고 고른 뒤 쓴다.
  * 익명 행은 user_id 가 비어 있을 때만 그 브라우저의 것이다 — 계정 행에 남은 해시로는 로그아웃한 브라우저가 읽지 못한다.
+ * 로그인한 쓰기는 이 브라우저의 익명 행을 읽지도 가져가지도 않는다 — 익명 행은 써봤어요 탭의 «옮기기»(mergeBrowserReactions)로만
+ * 계정에 붙는다(공용 PC 에서 남이 남긴 평가가 묻지도 않고 내 계정에 붙지 않게).
  */
 
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -30,6 +35,8 @@ const REACTION_LOCK = 6983;
 const HOUR = 3_600;
 /** 신뢰할 IP 가 없을 때 제품 하나에 시간당 랭킹에 세는 새 익명 줄 — 넘으면 받기는 하되 랭킹·공개 요약에서 뺀다 */
 export const UNTRUSTED_NEW_ANONYMOUS_PER_HOUR = 30;
+/** 제품 하나에 시간당 랭킹에 세는 평가 변경 — 넘은 변경은 받기는 하되 랭킹·공개 요약에서 뺀다 */
+export const REACTION_FLOOD_PER_HOUR = 120;
 
 const toMine = (row: ReactionRow): ReactionMine => ({
   verdict: row.verdict, tags: row.tags as ReactionTag[], comment: row.comment, commentState: row.commentState,
@@ -52,20 +59,20 @@ async function summaryOf(source: Executor, productId: number): Promise<ReactionS
   return row && row.tried >= REACTION_SUMMARY_MIN ? row : null;
 }
 
-/** 이 계정의 행과 이 브라우저 해시를 쥔 행(누구 것이든) */
+/** 이 계정의 행과 이 브라우저 해시를 쥔 행(누구 것이든) — 해시를 쥔 행은 쓰기가 해시를 옮길지 정할 때만 본다 */
 function ownedRows(source: Executor, productId: number, userId: number | null, hash: string | null): Promise<ReactionRow[]> {
   const keys = [userId ? eq(productReactions.userId, userId) : undefined, hash ? eq(productReactions.visitorHash, hash) : undefined].filter(Boolean);
   if (keys.length === 0) return Promise.resolve([]);
   return source.select().from(productReactions).where(and(eq(productReactions.productId, productId), or(...keys)));
 }
 
-/** 내 평가 — 계정 행이 먼저, 없으면 아직 합치지 않은 이 브라우저의 익명 행 */
+/** 내 평가 — 로그인하면 계정 행만, 아니면 이 브라우저의 익명 행. 로그인했어도 익명 행으로 넘어가지 않는다(합치기는 묻고 나서만) */
 function currentOf(rows: ReactionRow[], userId: number | null, hash: string | null): ReactionRow | undefined {
-  return (userId ? rows.find((row) => row.userId === userId) : undefined)
-    ?? (hash ? rows.find((row) => row.visitorHash === hash && row.userId === null) : undefined);
+  if (userId) return rows.find((row) => row.userId === userId);
+  return hash ? rows.find((row) => row.visitorHash === hash && row.userId === null) : undefined;
 }
 
-async function lockProduct(tx: Transaction, productId: number): Promise<void> {
+export async function lockProduct(tx: Transaction, productId: number): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(${REACTION_LOCK}, ${productId})`);
 }
 
@@ -98,30 +105,48 @@ export function reactionRateKey(visitor: string): string | null {
 
 const sameTags = (left: string[], right: string[]) => left.length === right.length && left.every((tag, index) => tag === right[index]);
 
-export async function readReaction(slug: string, owner: ReactionOwner): Promise<{ mine: ReactionMine | null; summary: ReactionSummary | null }> {
-  const product = await onReplica(() => findProduct(db, slug));
+/**
+ * 상세 판 읽기 — 상세를 볼 때마다 부른다. 제품은 상세와 같은 공개 읽기 캐시(identity)로, 요약은 30초 공개 읽기 캐시로 읽는다.
+ * 로그인하면 계정 행만 주 DB 에서 찾는다. 익명은 이 브라우저가 평가했다고 기억할 때만(reacted) 찾는다 — 처음 보는 제품마다
+ * 주 DB 를 묻지 않는다. 기억이 지워졌어도 판의 평가 단추는 평가만 보내 남은 태그·한 줄을 지우지 않는다.
+ */
+export async function readReaction(slug: string, owner: ReactionOwner, options: { reacted?: boolean } = {}): Promise<{ mine: ReactionMine | null; summary: ReactionSummary | null }> {
+  const product = await publicRead("detail", ["identity", slug], () => getProductIdentity(slug));
   if (!product) throw new ReactionError("reaction_not_found", 404);
-  const hash = owner.visitor ? productVisitorHash(slug, owner.visitor) : null;
+  const hash = !owner.userId && owner.visitor && options.reacted !== false ? productVisitorHash(slug, owner.visitor) : null;
   const [mine, summary] = await Promise.all([
     owner.userId || hash ? onPrimary(async () => currentOf(await ownedRows(db, product.id, owner.userId, hash), owner.userId, hash)) : undefined,
-    onReplica(() => summaryOf(db, product.id)),
+    publicRead("count", ["reaction-summary", product.id], () => summaryOf(db, product.id)),
   ]);
   return { mine: mine ? toMine(mine) : null, summary };
 }
 
-/**
- * 평가 저장(바꾸기 포함). 바뀐 것이 없으면 쓰지 않는다. 한 행은 KST 하루 REACTION_CHANGES_PER_DAY 번까지 바뀐다.
- * - 로그인: 계정 행 → 없으면 이 브라우저의 익명 행에 user_id 를 붙인다(행 하나). 둘 다 있으면 익명 행을 지운다.
- * - 익명: 이 브라우저 해시를 계정 행이 쥐고 있으면(로그아웃한 브라우저) 그 행에서 해시를 떼고 새 행을 만든다.
- */
 /** 지운 평가에 달린 메이커 답장도 함께 지운다 — 대상 없는 답장을 남기지 않는다 */
 async function dropReplies(tx: Transaction, ids: string[]) {
   if (ids.length) await tx.delete(makerReplies).where(and(eq(makerReplies.targetType, "reaction"), inArray(makerReplies.targetId, ids)));
 }
 
-export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { flood?: boolean; untrustedIp?: boolean; now?: Date } = {}) {
+/**
+ * 평가 저장(바꾸기 포함). 바뀐 것이 없으면 쓰지 않는다. 한 행은 KST 하루 REACTION_CHANGES_PER_DAY 번까지 바뀐다.
+ * 보내지 않은 태그·한 줄(undefined)은 남겨 둔 값을 그대로 둔다 — 판의 평가 단추는 평가만 보낸다.
+ * - 로그인: 계정 행만 고친다(없으면 새로). 이 브라우저의 익명 행은 그대로 두고, 그 행이 쥔 해시도 가져오지 않는다.
+ * - 익명: 이 브라우저 해시를 계정 행이 쥐고 있으면(로그아웃한 브라우저) 그 행에서 해시를 떼고 새 행을 만든다.
+ * 랭킹 제외는 쓸 때마다 다시 정한다 — 그 시간 제품의 변경이 넘쳤거나(REACTION_FLOOD_PER_HOUR) 신뢰할 IP 없는 익명 줄 한도를
+ * 넘었을 때만. 실제로 바뀐 쓰기만 센다(같은 값을 다시 보내는 것으로 넘치게 할 수 없다).
+ */
+/**
+ * 로그인 쓰기는 계정 행을 먼저(FOR SHARE) 잡는다 — 탈퇴(FOR UPDATE 뒤 평가를 지운다)가 끝난 뒤 깨어난 쓰기는 401 로 멈추고,
+ * 평가 행·제품 잠금을 쥐기 전에 기다리므로 탈퇴와 서로 막히지 않는다
+ */
+async function lockLiveUser(tx: Transaction, userId: number): Promise<void> {
+  const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("share");
+  if (!user) throw new PublicAuthError(401, "login_required");
+}
+
+export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { untrustedIp?: boolean; now?: Date } = {}) {
   const now = options.now ?? new Date();
   return onPrimary(() => db.transaction(async (tx) => {
+    if (owner.userId) await lockLiveUser(tx, owner.userId);
     const product = await findProduct(tx, slug);
     if (!product) throw new ReactionError("reaction_not_found", 404);
     const hash = owner.visitor ? productVisitorHash(slug, owner.visitor) : null;
@@ -130,21 +155,15 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
     const rows = await ownedRows(tx, product.id, owner.userId, hash);
     const current = currentOf(rows, owner.userId, hash);
     const holder = hash ? rows.find((row) => row.visitorHash === hash && row.id !== current?.id) : undefined;
-    let claimHash = hash !== null;
-    if (holder && holder.userId === null) {
-      // 계정 평가가 이 브라우저의 익명 평가를 대신한다 — 한 사람 한 줄
-      await tx.delete(productReactions).where(eq(productReactions.id, holder.id));
-      await dropReplies(tx, [holder.id]);
-    } else if (holder && !owner.userId) {
-      await tx.update(productReactions).set({ visitorHash: null }).where(eq(productReactions.id, holder.id));
-    } else if (holder) {
-      // 같은 브라우저의 다른 계정 행 — 해시를 가져오지 않는다
-      claimHash = false;
-    }
-    const visitorHash = claimHash ? hash : current?.visitorHash ?? null;
-    const userId = owner.userId ?? current?.userId ?? null;
-    const same = current && current.verdict === input.verdict && sameTags(current.tags, input.tags) && current.comment === input.comment;
-    if (current && same && current.userId === userId && current.visitorHash === visitorHash) {
+    // 로그아웃한 브라우저 — 계정 행에서 이 브라우저 해시를 떼고 익명 행이 갖는다
+    if (holder && !owner.userId) await tx.update(productReactions).set({ visitorHash: null }).where(eq(productReactions.id, holder.id));
+    // 로그인: 다른 행(이 브라우저의 익명 행·다른 계정 행)이 쥔 해시는 가져오지 않는다
+    const visitorHash = hash && !(holder && owner.userId) ? hash : current?.visitorHash ?? null;
+    const userId = owner.userId;
+    const tags = input.tags ?? (current?.tags as ReactionTag[] | undefined) ?? [];
+    const comment = input.comment === undefined ? current?.comment ?? null : input.comment;
+    const same = current && current.verdict === input.verdict && sameTags(current.tags, tags) && current.comment === comment;
+    if (current && same && current.visitorHash === visitorHash) {
       return { mine: toMine(current), summary: await summaryOf(tx, product.id) };
     }
     const changes = same ? current.changesToday : nextChangeCount(current ?? null, now);
@@ -152,10 +171,10 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
 
     let commentState = current?.commentState ?? null;
     let commentReason = current?.commentReason ?? null;
-    if (input.comment !== (current?.comment ?? null)) {
+    if (comment !== (current?.comment ?? null)) {
       // 메이커 답장은 옛 한 줄에 단 것이다 — 한 줄이 바뀌거나 지워지면 함께 지운다
       if (current) await dropReplies(tx, [current.id]);
-      if (input.comment === null) {
+      if (comment === null) {
         commentState = null;
         commentReason = null;
       } else {
@@ -164,19 +183,25 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
         if (!await withinQuota(tx, `reaction-comment:hour:${author}`, 5, HOUR) || !await withinQuota(tx, `reaction-comment:day:${author}`, 20, 24 * HOUR)) {
           throw new ReactionError("reaction_rate_limited", 429);
         }
-        ({ state: commentState, reason: commentReason } = reviewReactionComment(input.comment));
+        ({ state: commentState, reason: commentReason } = reviewReactionComment(comment));
       }
     }
-    // 신뢰할 IP 가 없으면 쿠키를 새로 받아 오는 익명 연타를 IP 묶음이 막지 못한다 — 제품마다 새 익명 줄을 세어 넘친 것은 랭킹에서 뺀다
-    const capped = !current && !userId && options.untrustedIp
-      ? !await withinQuota(tx, `reaction-anonymous-new:product:${product.id}`, UNTRUSTED_NEW_ANONYMOUS_PER_HOUR, HOUR) : false;
+    // 소유만 바뀌면(해시만 옮김) 랭킹 제외도 그대로 둔다
+    let rankingExcluded = current?.rankingExcluded ?? false;
+    if (!same) {
+      const flood = !await withinQuota(tx, `reaction:product:${slug}`, REACTION_FLOOD_PER_HOUR, HOUR);
+      // 신뢰할 IP 가 없으면 쿠키를 새로 받아 오는 익명 연타를 IP 묶음이 막지 못한다 — 제품마다 새 익명 줄을 세어 넘친 것은 랭킹에서 뺀다.
+      // 뺐던 익명 줄을 고쳐 다시 세게 하는 것도 새 줄로 센다(고치기로 한도를 돌아가지 못하게)
+      const capped = !flood && !userId && options.untrustedIp && (!current || current.rankingExcluded)
+        ? !await withinQuota(tx, `reaction-anonymous-new:product:${product.id}`, UNTRUSTED_NEW_ANONYMOUS_PER_HOUR, HOUR) : false;
+      rankingExcluded = flood || capped;
+    }
     const values = {
-      verdict: input.verdict, tags: input.tags, comment: input.comment, commentState, commentReason,
+      verdict: input.verdict, tags, comment, commentState, commentReason,
       triedVerified: Boolean(current?.triedVerified) || (hash ? await clickedRecently(tx, slug, hash) : false),
-      rankingExcluded: Boolean(current?.rankingExcluded) || Boolean(options.flood) || capped,
-      source: input.source, device: input.device, locale: input.locale, userId, visitorHash,
+      rankingExcluded, source: input.source, device: input.device, locale: input.locale, userId, visitorHash,
     };
-    // 소유만 바뀌면(익명 행에 계정을 붙임) 하루 횟수·바꾼 때를 그대로 둔다
+    // 소유만 바뀌면(해시만 옮김) 하루 횟수·바꾼 때를 그대로 둔다
     const counted = same ? {} : { changesToday: changes, updatedAt: now };
     let row: ReactionRow | undefined;
     if (current) {
@@ -193,7 +218,7 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
   }));
 }
 
-/** 내 평가 지우기 — 로그인이면 계정 행과 아직 합치지 않은 이 브라우저의 익명 행을 함께 */
+/** 내 평가 지우기 — 로그인이면 계정 행만(이 브라우저의 익명 행은 남의 것일 수 있어 그대로 둔다), 아니면 이 브라우저의 익명 행 */
 export function deleteReaction(slug: string, owner: ReactionOwner): Promise<{ deleted: boolean; summary: ReactionSummary | null }> {
   return onPrimary(() => db.transaction(async (tx) => {
     const product = await findProduct(tx, slug);
@@ -201,9 +226,9 @@ export function deleteReaction(slug: string, owner: ReactionOwner): Promise<{ de
     const hash = owner.visitor ? productVisitorHash(slug, owner.visitor) : null;
     if (!owner.userId && !hash) return { deleted: false, summary: await summaryOf(tx, product.id) };
     await lockProduct(tx, product.id);
-    const anonymous = hash ? and(eq(productReactions.visitorHash, hash), isNull(productReactions.userId)) : undefined;
-    const deleted = await tx.delete(productReactions).where(and(eq(productReactions.productId, product.id),
-      owner.userId ? or(eq(productReactions.userId, owner.userId), anonymous) : anonymous)).returning({ id: productReactions.id });
+    const deleted = await tx.delete(productReactions).where(and(eq(productReactions.productId, product.id), owner.userId
+      ? eq(productReactions.userId, owner.userId) : and(eq(productReactions.visitorHash, hash!), isNull(productReactions.userId))))
+      .returning({ id: productReactions.id });
     await dropReplies(tx, deleted.map((row) => row.id));
     return { deleted: deleted.length > 0, summary: await summaryOf(tx, product.id) };
   }));
@@ -241,12 +266,22 @@ export function listUserReactions(userId: number, limit = 500): Promise<Reaction
   return onPrimary(async () => (await listQuery(eq(productReactions.userId, userId)).limit(limit)).map(toItem));
 }
 
-/** 이 브라우저가 기억한 slug 중 이 쿠키의 익명 행만 — slug 없이는 찾을 수 없다(해시가 제품마다 다르다, Q4) */
+/**
+ * 이 브라우저가 기억한 slug 중 이 쿠키의 익명 행만 — slug 없이는 찾을 수 없다(해시가 제품마다 다르다, Q4).
+ * slug 로 제품 id 를 먼저 찾고 (product_id, visitor_hash) 짝마다 색인 한 번씩 찾는다 — 해시만으로는 표 전체를 훑는다.
+ */
 export async function listBrowserReactions(slugs: string[], visitor: string): Promise<ReactionListItem[]> {
-  const bySlug = new Map(slugs.map((slug) => [slug, productVisitorHash(slug, visitor)]));
-  const hashes = [...bySlug.values()].filter((hash): hash is string => hash !== null);
-  if (hashes.length === 0) return [];
-  const rows = await onPrimary(() => listQuery(and(inArray(productReactions.visitorHash, hashes), isNull(productReactions.userId))));
+  const bySlug = new Map(slugs.flatMap((slug) => {
+    const hash = productVisitorHash(slug, visitor);
+    return hash ? [[slug, hash] as const] : [];
+  }));
+  if (bySlug.size === 0) return [];
+  const rows = await onPrimary(async () => {
+    const targets = await db.select({ id: products.id, slug: products.slug }).from(products).where(and(inArray(products.slug, [...bySlug.keys()]), reactionListVisible));
+    if (targets.length === 0) return [];
+    const pairs = targets.map((target) => and(eq(productReactions.productId, target.id), eq(productReactions.visitorHash, bySlug.get(target.slug)!)));
+    return listQuery(and(or(...pairs), isNull(productReactions.userId)));
+  });
   return rows.filter((row) => bySlug.get(row.slug) === row.reaction.visitorHash).map(toItem);
 }
 
@@ -257,6 +292,7 @@ export async function listBrowserReactions(slugs: string[], visitor: string): Pr
 export async function mergeBrowserReactions(userId: number, slugs: string[], visitor: string): Promise<{ merged: number }> {
   if (slugs.length === 0) return { merged: 0 };
   return onPrimary(() => db.transaction(async (tx) => {
+    await lockLiveUser(tx, userId);
     const targets = await tx.select({ id: products.id, slug: products.slug }).from(products)
       .where(and(inArray(products.slug, slugs), ne(products.status, "banned"))).orderBy(asc(products.id));
     let merged = 0;

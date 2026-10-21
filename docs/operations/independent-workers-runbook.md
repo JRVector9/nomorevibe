@@ -354,12 +354,12 @@ DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-
 
 | 역할 | pool 상한 | RAM 상한 | CPU 상한 | 제공하는 외부 자격 정보 |
 |---|---:|---:|---:|---|
-| 웹 | 8 | 1536 MiB | 2 | OAuth·세션·방문자 키·관리자/cron 접수 토큰 |
+| 웹 | 8 | 1536 MiB | 2 | OAuth·세션·방문자 키·관리자/cron 접수 토큰, 일반 로그인 `PUBLIC_AUTH_SECRET`, 메일을 켤 때 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM` |
 | 크롤러 | 4 | 1536 MiB | 1 | GitHub token |
 | 리뷰 | 3 | 2 GiB | 1 | 리뷰용 Claude CLI token |
 | 발행 | 3 | 1536 MiB | 1 | Codex access token 또는 OpenAI API key |
 | 소개·사유 번역 | 3 | 512 MiB | 1 | ABCLLM API key |
-| 집계 | 3 | 1 GiB | 1 | 없음 |
+| 집계 | 3 | 1 GiB | 1 | GitHub Feedback App 키; 메일을 켤 때 웹과 같은 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM`·`PUBLIC_AUTH_SECRET` |
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
 
@@ -368,6 +368,13 @@ migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 운영 초
 31이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
 CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장하지 않는다. 8 vCPU/16 GiB 예시는
 측정을 시작할 동거형 예산이며 호스트 장애까지 견디는 무중단 구성은 아니다.
+
+알림 메일(MY7)은 웹·발행·수집·집계 어디서 알림이 생기든 DB 설정만 보고 `email_outbox`에 줄을 세우고,
+집계(maintenance)의 `email-outbox-send`만 보낸다. 그래서 메일을 켤 때는 두 웹과 집계 주·예비 넷에 같은
+`LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM`·`PUBLIC_AUTH_SECRET`(끄기 링크 서명)을 두고 집계를 먼저 배포한다.
+배포 사전 점검(`deploy_shared_images.py`)은 넷의 값이 다르면 멈춘다. 집계에 키가 없으면 줄을 닫지 않고
+`me.email_sender_unconfigured` 경고만 남기며, 하루 안에 못 보낸 줄은 보내지 않고 닫고(`expired`) 닫힌 줄은 30일 뒤
+`email-weekly-digest`가 지운다. 키·도메인·한도 오류(Resend 401·403·429)는 시도로 세지 않고 5분 뒤 다시 본다.
 
 로그는 컨테이너당 10 MiB × 3개로 회전한다. 비루트 프로세스, `no-new-privileges`, capability 제거,
 Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/재수집량과 pool 상한을 함께 조정한다.

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { clearAllMemos } from "@/lib/cache/memo";
 import { db } from "@/lib/db";
-import { clickEvents, products, rateLimits } from "@/lib/db/schema";
+import { clickEvents, operationsAudit, products, rateLimits } from "@/lib/db/schema";
 import { makerReplies, productReactions } from "@/lib/db/me-schema";
 import { publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { csrfForToken, newPublicSession } from "@/lib/domain/accounts/session";
@@ -30,6 +31,8 @@ beforeEach(async () => {
   vi.stubEnv("NEXT_PUBLIC_SITE_URL", ORIGIN);
   vi.stubEnv("VISITOR_HASH_SECRET", "integration-visitor-hash-secret-32-characters");
   vi.stubEnv("TRUSTED_PROXY_HOPS", "0");
+  // 제품·요약은 공개 읽기 캐시(30초)를 탄다 — 앞 테스트의 값을 넘기지 않는다
+  clearAllMemos();
   await resetTables();
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -67,9 +70,9 @@ async function put(slug: string, body: Record<string, unknown>, options: Call = 
   const route = await reactions();
   return route.PUT(new Request(url(slug), { method: "PUT", headers: headersFor(options, true), body: JSON.stringify(body) }), context(slug));
 }
-async function get(slug: string, options: Call = {}) {
+async function get(slug: string, options: Call = {}, query = "") {
   const route = await reactions();
-  return route.GET(new Request(url(slug), { headers: headersFor({ ...options, origin: null }) }), context(slug));
+  return route.GET(new Request(`${url(slug)}${query}`, { headers: headersFor({ ...options, origin: null }) }), context(slug));
 }
 async function remove(slug: string, options: Call = {}) {
   const route = await reactions();
@@ -195,21 +198,39 @@ describe("logged-in reactions keyed by user_id", () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it("attaches this browser's anonymous row instead of creating a second one, also under concurrent writes", async () => {
-    await seed();
-    await put("try-tool", { verdict: "meh", comment: "로그인 전에 남김" }, { visitor: VISITOR });
+  it("never shows or takes over this browser's anonymous row for a logged-in account — only the explicit merge moves it", async () => {
+    const product = await seed();
+    const maker = await login("메이커");
+    // 공용 PC: A 가 로그아웃한 채 남긴 평가와 그 한 줄에 단 메이커 답장
+    await put("try-tool", { verdict: "meh", tags: ["slow"], comment: "로그인 전에 남김" }, { visitor: VISITOR });
     const [anonymous] = await rows();
+    await db.insert(makerReplies).values({ productId: product.id, targetType: "reaction", targetId: anonymous.id, authorUserId: maker.user.id, body: "고마워요!" });
     const session = await login();
-    // 로그인했지만 아직 합치지 않은 이 브라우저의 평가를 내 평가로 보여 준다
-    expect((await (await get("try-tool", { visitor: VISITOR, session })).json()).mine).toMatchObject({ verdict: "meh" });
+    // B 가 같은 브라우저로 로그인 — A 의 평가를 B 의 것으로 보여 주지 않는다
+    expect((await (await get("try-tool", { visitor: VISITOR, session })).json()).mine).toBeNull();
     const results = await Promise.all([
-      put("try-tool", { verdict: "good", comment: "로그인 전에 남김" }, { visitor: VISITOR, session }),
-      put("try-tool", { verdict: "bad", comment: "로그인 전에 남김" }, { visitor: VISITOR, session }),
+      put("try-tool", { verdict: "good" }, { visitor: VISITOR, session }),
+      put("try-tool", { verdict: "bad" }, { visitor: VISITOR, session }),
     ]);
     expect(results.map((response) => response.status)).toEqual([200, 200]);
+    const written = await results[0].json();
+    expect(written).toMatchObject({ signedIn: true, mine: { tags: [], comment: null } });
     const all = await rows();
-    expect(all).toHaveLength(1);
-    expect(all[0]).toMatchObject({ id: anonymous.id, userId: session.user.id, visitorHash: hashOf("try-tool"), changesToday: 3 });
+    expect(all).toHaveLength(2);
+    // A 의 행·한 줄·답장은 그대로, 해시도 A 의 행이 쥔다
+    expect(all.find((row) => row.id === anonymous.id)).toMatchObject({ userId: null, verdict: "meh", tags: ["slow"], comment: "로그인 전에 남김", visitorHash: hashOf("try-tool") });
+    expect(all.find((row) => row.userId === session.user.id)).toMatchObject({ visitorHash: null, tags: [], comment: null });
+    expect(await db.select().from(makerReplies)).toHaveLength(1);
+    // B 가 지워도 B 의 행만
+    expect(await (await remove("try-tool", { visitor: VISITOR, session })).json()).toMatchObject({ deleted: true, signedIn: true });
+    expect(await rows()).toEqual([expect.objectContaining({ id: anonymous.id, userId: null })]);
+    expect((await (await get("try-tool", { visitor: VISITOR })).json()).mine).toMatchObject({ verdict: "meh", comment: "로그인 전에 남김" });
+    // «옮기기»를 누르면 그때 계정에 붙는다
+    const route = await merge();
+    const merged = await route.POST(new Request(`${ORIGIN}/api/me/reactions/merge`, { method: "POST", headers: headersFor({ visitor: VISITOR, session }, true), body: JSON.stringify({ slugs: ["try-tool"] }) }));
+    expect(await merged.json()).toEqual({ merged: 1 });
+    expect(await rows()).toEqual([expect.objectContaining({ id: anonymous.id, userId: session.user.id, comment: "로그인 전에 남김" })]);
+    expect((await (await get("try-tool", { visitor: VISITOR, session })).json()).mine).toMatchObject({ verdict: "meh" });
   });
 
   it("serializes an account write and an anonymous write from the same browser without unique violations", async () => {
@@ -230,7 +251,7 @@ describe("logged-in reactions keyed by user_id", () => {
     expect(all.filter((row) => row.userId)).toHaveLength(6);
   });
 
-  it("replaces this browser's anonymous row when the account already rated on another device", async () => {
+  it("keeps this browser's anonymous row when the account already rated on another device", async () => {
     await seed();
     const session = await login();
     await put("try-tool", { verdict: "good" }, { visitor: OTHER_VISITOR, session });
@@ -238,8 +259,10 @@ describe("logged-in reactions keyed by user_id", () => {
     expect(await rows()).toHaveLength(2);
     await put("try-tool", { verdict: "meh" }, { visitor: VISITOR, session });
     const all = await rows();
-    expect(all).toHaveLength(1);
-    expect(all[0]).toMatchObject({ userId: session.user.id, verdict: "meh", visitorHash: hashOf("try-tool") });
+    expect(all).toHaveLength(2);
+    // 계정 행만 바뀌고, 이 브라우저 해시는 익명 행이 그대로 쥔다
+    expect(all.find((row) => row.userId === session.user.id)).toMatchObject({ verdict: "meh", visitorHash: hashOf("try-tool", OTHER_VISITOR) });
+    expect(all.find((row) => row.userId === null)).toMatchObject({ verdict: "bad", visitorHash: hashOf("try-tool") });
   });
 
   it("never shows an account row to the logged-out browser and gives that browser its own row", async () => {
@@ -362,6 +385,29 @@ describe("anti-abuse", () => {
   });
 });
 
+describe("detail panel reads", () => {
+  it("serves the public summary from the 30-second public read cache", async () => {
+    await seed();
+    for (const visitor of [randomUUID(), randomUUID(), randomUUID()]) await put("try-tool", { verdict: "good" }, { visitor });
+    expect((await (await get("try-tool")).json()).summary).toEqual({ tried: 3, good: 3, meh: 0, bad: 0 });
+    await put("try-tool", { verdict: "bad" }, { visitor: randomUUID() });
+    // 상세를 볼 때마다 다시 세지 않는다 — 30초 안에는 담아 둔 값
+    expect((await (await get("try-tool")).json()).summary).toEqual({ tried: 3, good: 3, meh: 0, bad: 0 });
+    clearAllMemos();
+    expect((await (await get("try-tool")).json()).summary).toEqual({ tried: 4, good: 3, meh: 0, bad: 1 });
+  });
+
+  it("skips the anonymous lookup when this browser does not remember the product, but always reads the account row", async () => {
+    await seed();
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    expect((await (await get("try-tool", { visitor: VISITOR }, "?reacted=0")).json()).mine).toBeNull();
+    expect((await (await get("try-tool", { visitor: VISITOR })).json()).mine).toMatchObject({ verdict: "good" });
+    const session = await login();
+    await put("try-tool", { verdict: "meh" }, { session });
+    expect(await (await get("try-tool", { visitor: VISITOR, session }, "?reacted=0")).json()).toMatchObject({ mine: { verdict: "meh" }, signedIn: true, csrfToken: session.csrf });
+  });
+});
+
 describe("public summary", () => {
   it("shows counts only from three non-excluded people", async () => {
     await seed();
@@ -371,12 +417,117 @@ describe("public summary", () => {
     expect(second.summary).toBeNull();
     expect((await (await get("try-tool")).json()).summary).toBeNull();
     const third = await (await put("try-tool", { verdict: "good" }, { visitor: visitors[2] })).json();
+    // 쓰기 응답의 요약은 바로 그 TX 의 값이다
     expect(third.summary).toEqual({ tried: 3, good: 2, meh: 1, bad: 0 });
+    clearAllMemos();
     expect((await (await get("try-tool")).json()).summary).toEqual({ tried: 3, good: 2, meh: 1, bad: 0 });
     await db.update(productReactions).set({ rankingExcluded: true }).where(eq(productReactions.visitorHash, hashOf("try-tool", visitors[2])));
+    clearAllMemos();
     expect((await (await get("try-tool")).json()).summary).toBeNull();
     await put("try-tool", { verdict: "bad" }, { visitor: visitors[3] });
     expect((await (await remove("try-tool", { visitor: visitors[3] })).json()).summary).toBeNull();
+  });
+});
+
+describe("verdict-only writes", () => {
+  it("keeps the saved tags, comment and maker reply when the panel sends only a verdict", async () => {
+    const product = await seed();
+    const maker = await login("메이커");
+    await put("try-tool", { verdict: "good", tags: ["easy", "useful"], comment: "정말 좋아요" }, { visitor: VISITOR });
+    const [row] = await rows();
+    await db.insert(makerReplies).values({ productId: product.id, targetType: "reaction", targetId: row.id, authorUserId: maker.user.id, body: "고마워요!" });
+    // 판이 내 평가를 못 읽은 채 눌러도(평가만 보낸다) 남긴 것을 지우지 않는다
+    const response = await put("try-tool", { verdict: "meh" }, { visitor: VISITOR });
+    expect((await response.json()).mine).toMatchObject({ verdict: "meh", tags: ["easy", "useful"], comment: "정말 좋아요", commentState: "accepted" });
+    expect((await rows())[0]).toMatchObject({ id: row.id, verdict: "meh", tags: ["easy", "useful"], comment: "정말 좋아요" });
+    expect(await db.select().from(makerReplies)).toHaveLength(1);
+    // 비우려면 빈 값을 보낸다
+    await put("try-tool", { verdict: "meh", tags: [], comment: null }, { visitor: VISITOR });
+    expect((await rows())[0]).toMatchObject({ tags: [], comment: null });
+    expect(await db.select().from(makerReplies)).toHaveLength(0);
+  });
+});
+
+describe("ranking exclusion is decided per write", () => {
+  const floodKey = "reaction:product:try-tool";
+
+  it("re-includes a row written during a flood once it is changed again outside the flood", async () => {
+    await seed();
+    await db.insert(rateLimits).values({ key: floodKey, count: 120, resetAt: sql`now() + interval '1 hour'` });
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(true);
+    // 같은 값을 다시 보내도 바뀌지 않는다
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(true);
+    await db.delete(rateLimits).where(eq(rateLimits.key, floodKey));
+    await put("try-tool", { verdict: "meh" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(false);
+  });
+
+  it("counts only real changes toward the flood, so resending the same value cannot flood a product", async () => {
+    await seed();
+    await db.insert(rateLimits).values({ key: floodKey, count: 118, resetAt: sql`now() + interval '1 hour'` });
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    for (let index = 0; index < 3; index += 1) expect((await put("try-tool", { verdict: "good" }, { visitor: VISITOR })).status).toBe(200);
+    await put("try-tool", { verdict: "bad" }, { visitor: OTHER_VISITOR });
+    expect((await rows()).map((row) => row.rankingExcluded)).toEqual([false, false]);
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, floodKey)))[0].count).toBe(120);
+    // 실패한 쓰기(하루 변경 한도)는 세지 않는다
+    await db.update(productReactions).set({ changesToday: 10 }).where(eq(productReactions.visitorHash, hashOf("try-tool")));
+    expect((await put("try-tool", { verdict: "meh" }, { visitor: VISITOR })).status).toBe(429);
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, floodKey)))[0].count).toBe(120);
+  });
+
+  it("without a trusted IP, re-including an over-cap anonymous row by editing it counts against the same cap", async () => {
+    const product = await seed();
+    const capKey = `reaction-anonymous-new:product:${product.id}`;
+    await db.insert(rateLimits).values({ key: capKey, count: 30, resetAt: sql`now() + interval '1 hour'` });
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(true);
+    // 한도가 찬 동안 고쳐도 다시 세지 않는다
+    await put("try-tool", { verdict: "meh" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(true);
+    await db.delete(rateLimits).where(eq(rateLimits.key, capKey));
+    await put("try-tool", { verdict: "bad" }, { visitor: VISITOR });
+    expect((await rows())[0].rankingExcluded).toBe(false);
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, capKey)))[0].count).toBe(1);
+    // 세는 줄을 고치는 것은 한도를 쓰지 않는다
+    await put("try-tool", { verdict: "good" }, { visitor: VISITOR });
+    expect((await db.select().from(rateLimits).where(eq(rateLimits.key, capKey)))[0].count).toBe(1);
+  });
+});
+
+describe("held comment review", () => {
+  it("lists held comments oldest first and lets an administrator publish or hide what they saw", async () => {
+    const { heldReactionComments, reviewHeldReactionComment } = await import("@/lib/domain/reactions/review");
+    await seed();
+    await put("try-tool", { verdict: "good", comment: "설명은 docs.example.com/start 참고" }, { visitor: VISITOR });
+    await put("try-tool", { verdict: "bad", comment: "@spam_seller 연락" }, { visitor: OTHER_VISITOR });
+    await put("try-tool", { verdict: "good", comment: "좋아요 ㅋㅋㅋㅋㅋㅋㅋㅋ" }, { visitor: randomUUID() });
+    const queue = await heldReactionComments();
+    expect(queue.count).toBe(2);
+    expect(queue.items.map((item) => [item.comment, item.reason, item.signedIn])).toEqual([
+      ["설명은 docs.example.com/start 참고", "link", false], ["@spam_seller 연락", "mention", false],
+    ]);
+    const [first, second] = queue.items;
+    // 글쓴이가 그 사이 고쳤으면 본 글이 아니라 공개하지 않는다
+    await put("try-tool", { verdict: "good", comment: "가이드는 docs.example.com/guide" }, { visitor: VISITOR });
+    await expect(reviewHeldReactionComment({ id: first.id, comment: first.comment, decision: "accepted", adminLogin: "ops" })).rejects.toMatchObject({ code: "reaction_conflict", status: 409 });
+    await reviewHeldReactionComment({ id: first.id, comment: "가이드는 docs.example.com/guide", decision: "accepted", adminLogin: "ops" });
+    await reviewHeldReactionComment({ id: second.id, comment: second.comment, decision: "rejected", adminLogin: "ops" });
+    expect((await rows()).filter((row) => row.commentState !== "accepted").map((row) => row.commentState)).toEqual(["rejected"]);
+    expect((await db.select().from(productReactions).where(eq(productReactions.id, first.id)))[0]).toMatchObject({ commentState: "accepted", commentReason: "link" });
+    expect((await heldReactionComments()).count).toBe(0);
+    // 이미 정한 것은 다시 바꾸지 않는다
+    await expect(reviewHeldReactionComment({ id: second.id, comment: second.comment, decision: "accepted", adminLogin: "ops" })).rejects.toMatchObject({ code: "reaction_conflict" });
+    await expect(reviewHeldReactionComment({ id: "not-a-uuid", comment: "x", decision: "accepted", adminLogin: "ops" })).rejects.toMatchObject({ code: "reaction_invalid" });
+    // 운영 기록은 resetTables 가 비우지 않는다 — 이 테스트의 대상만 본다
+    const audit = (await db.select().from(operationsAudit).where(eq(operationsAudit.action, "reaction.comment_review")))
+      .filter((entry) => entry.target === first.id || entry.target === second.id);
+    expect(audit.map((entry) => [entry.target, (entry.detail as { decision: string }).decision, entry.actor])).toEqual(expect.arrayContaining([
+      [first.id, "accepted", "ops"], [second.id, "rejected", "ops"],
+    ]));
+    expect(audit).toHaveLength(2);
   });
 });
 
@@ -442,10 +593,27 @@ describe("tried tab lists", () => {
     expect((await (await list(null)).json()).reactions).toEqual([]);
     // slug 를 모르면 찾을 수 없다
     expect((await (await list(VISITOR, "")).json()).reactions).toEqual([]);
-    // 계정에 붙은 행은 로그아웃한 브라우저 목록에 나오지 않는다
+    // 로그인해 쓴 평가는 이 브라우저의 익명 행을 건드리지 않는다. «옮기기»로 계정에 붙은 행은 목록에 나오지 않는다
     const session = await login();
     await put("first", { verdict: "good" }, { visitor: VISITOR, session });
+    expect((await (await list(VISITOR)).json()).reactions.map((item: { slug: string }) => item.slug).sort()).toEqual(["first", "second"]);
+    const route2 = await merge();
+    await route2.POST(new Request(`${ORIGIN}/api/me/reactions/merge`, { method: "POST", headers: headersFor({ visitor: VISITOR, session }, true), body: JSON.stringify({ slugs: ["first"] }) }));
     expect((await (await list(VISITOR)).json()).reactions.map((item: { slug: string }) => item.slug)).toEqual(["second"]);
+  });
+
+  it("limits the unauthenticated browser list per browser", async () => {
+    await seed("first");
+    await put("first", { verdict: "good" }, { visitor: VISITOR });
+    const route = await browserList();
+    const list = () => route.GET(new Request(`${ORIGIN}/api/me/reactions/browser?slugs=first`, { headers: { cookie: `nmv_visitor=${VISITOR}` } }));
+    expect((await (await list()).json()).reactions).toHaveLength(1);
+    await db.update(rateLimits).set({ count: 300 }).where(eq(rateLimits.key, `reaction-browser:visitor:${reactionRateKey(VISITOR)}`));
+    const limited = await list();
+    expect(limited.status).toBe(429);
+    expect(await limited.json()).toEqual({ error: "reaction_rate_limited" });
+    // 다른 브라우저는 따로 센다
+    expect((await route.GET(new Request(`${ORIGIN}/api/me/reactions/browser?slugs=first`, { headers: { cookie: `nmv_visitor=${OTHER_VISITOR}` } }))).status).toBe(200);
   });
 });
 
@@ -485,6 +653,16 @@ describe("first-login merge", () => {
     expect(bySlug("other-browser")).toEqual([expect.objectContaining({ userId: null, visitorHash: hashOf("other-browser", OTHER_VISITOR) })]);
     // 다시 합쳐도 바뀌지 않는다
     expect(await (await postMerge(["only-anon", "anon-newer", "mine-newer"], { visitor: VISITOR, session })).json()).toEqual({ merged: 0 });
+  });
+
+  it("accepts a full chunk of 100 long slugs in one request", async () => {
+    const slugs = Array.from({ length: 100 }, (_, index) => `long-product-name-${String(index).padStart(3, "0")}-${"x".repeat(60)}`.slice(0, 60));
+    await seed(slugs[99]);
+    await put(slugs[99], { verdict: "good" }, { visitor: VISITOR });
+    const session = await login();
+    const response = await postMerge(slugs, { visitor: VISITOR, session });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ merged: 1 });
   });
 });
 

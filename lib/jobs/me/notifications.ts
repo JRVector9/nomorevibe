@@ -20,20 +20,27 @@ const PUBLIC_STATUSES = ["seeded", "verified"] as const;
 const followedProductIds = sql`(select case when f.target_key ~ '^[0-9]{1,9}$' then f.target_key::int end
   from ${userFollows} f where f.target_type = 'product')`;
 
-/** purgeId = 끝까지 읽은 id, floor = 처음 시작한 곳(그 앞의 차단은 알리지 않는다) */
-export type DelistedCursor = { purgeId: number; floor?: number };
+/**
+ * purgeId = 끝까지 읽은 id, floor = 처음 시작한 곳(그 앞의 차단은 알리지 않는다).
+ * down = 이미 알린 «닿지 않음» — 제품 id → 내려가기 시작한 시각(ISO). 그 시각 전에 팔로한 사람은 첫 알림 때 이미 다 받았다
+ */
+export type DelistedCursor = { purgeId: number; floor?: number; down?: Record<string, string> };
 /**
  * cdn_purges id 는 sequence 라 트랜잭션이 늦게 commit 되면 낮은 id 가 커서 뒤에 나타난다 — 틱마다 커서 앞 500개를 다시 본다(floor 아래로는 가지 않는다).
+ * 다시 보는 것은 하루 안에 적힌 줄만이다 — 늦은 commit 은 그보다 훨씬 짧고, 90일 지나 지운 알림(notification-prune)을 새로 넣지 않는다.
  * dedupe_key 에 purge id 가 있어 다시 봐도 한 줄이고, 팔로한 사람이 있는 줄만 다시 넣어 본다.
  */
 const PURGE_OVERLAP = 500;
+/** 한 틱에 보는 «닿지 않음» 후보 수 — 팔로된 공개 제품 가운데 7일 안에 내려간 것 */
+const DOWN_LIMIT = 500;
 
 /**
  * 팔로한 프로젝트가 목록에서 빠지면 알린다(followed_delisted). 내리는 길이 아홉 갈래라(관리자 차단·내려달라는 요청·감사·
  * 재검토·스팸·저장소 사라짐·가동 자동 차단 …) 길마다 끼우지 않고 둘을 본다.
  * - 상태가 공개에서 빠짐: DB 트리거가 같은 트랜잭션에 적는 cdn_purges(0057)를 id 순서로 따라 읽는다. 처음에는 지금 끝에서 시작한다.
+ *   그 줄이 적히기 전에 팔로한 사람에게만 보낸다(풀렸다 다시 내려간 제품을 그 사이 팔로한 사람이 옛 차단까지 받지 않게).
  * - 닿지 않음(연속 실패, 목록의 notDown): 상태 열이 없다 — 팔로된 공개 제품 가운데 지금 가려진 것을, 내려가기 시작한 날 하나로 묶는다.
- *   그날 전에 팔로한 사람에게만, 7일 안에 시작된 것만 보낸다.
+ *   그날 전에 팔로한 사람에게만, 7일 안에 시작된 것만 보낸다. 한 번 보낸 (제품, 시작 시각)은 커서에 남겨 틱마다 다시 넣어 보지 않는다.
  */
 export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>): Promise<JobOutcome<DelistedCursor>> {
   let cursor = ctx.cursor;
@@ -42,14 +49,19 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
     cursor = { purgeId: row.max };
   }
   const floor = cursor.floor ?? cursor.purgeId;
-  cursor = { purgeId: cursor.purgeId, floor };
+  const notifiedDown = cursor.down ?? {};
+  cursor = { purgeId: cursor.purgeId, floor, down: notifiedDown };
   let removed = 0;
   let scanned = Math.max(cursor.purgeId - PURGE_OVERLAP, floor);
+  const reached = cursor.purgeId;
   for (let round = 0; round < 10 && ctx.hasBudget(); round += 1) {
+    // 적힌 시각은 마이크로초까지 글자로 — 시간대 없는 UTC 벽시계다
     const rows = await db.select({ id: cdnPurges.id, reason: cdnPurges.reason, productId: products.id, status: products.status,
+      createdAt: sql<string>`to_char(${cdnPurges.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
       followed: sql<boolean>`exists (select 1 from ${userFollows} f where f.target_type = 'product' and f.target_key = ${products.id}::text)` })
       .from(cdnPurges).leftJoin(products, eq(products.slug, cdnPurges.slug))
-      .where(gt(cdnPurges.id, scanned)).orderBy(asc(cdnPurges.id)).limit(200);
+      .where(and(gt(cdnPurges.id, scanned), sql`(${cdnPurges.id} > ${reached} or ${cdnPurges.createdAt} > (now() at time zone 'UTC') - interval '1 day')`))
+      .orderBy(asc(cdnPurges.id)).limit(200);
     if (!rows.length) break;
     const delisted = rows.filter((row) => row.productId !== null && row.status !== null && row.followed
       && row.reason !== "takedown" && row.reason !== "deleted" && !(PUBLIC_STATUSES as readonly string[]).includes(row.status));
@@ -57,33 +69,40 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
       let total = 0;
       for (const row of delisted) {
         total += await notifyFollowers({ targetType: "product", targetKeys: [String(row.productId)], kind: "followed_delisted", productId: row.productId,
-          payload: { reason: "removed" }, dedupeKey: `followed_delisted:${row.productId}:removed:${row.id}` }, tx);
+          payload: { reason: "removed" }, dedupeKey: `followed_delisted:${row.productId}:removed:${row.id}`, followedBefore: row.createdAt }, tx);
       }
       return total;
     });
     scanned = rows[rows.length - 1].id;
     if (scanned > cursor.purgeId) {
-      cursor = { purgeId: scanned, floor };
+      cursor = { ...cursor, purgeId: scanned };
       await ctx.save(cursor);
     }
     if (rows.length < 200) break;
   }
 
+  const since = sql`coalesce(${productHealth.downSince}, ${products.repoMissingSince})`;
   const hidden = await db.select({ id: products.id, downSince: productHealth.downSince, repoMissingSince: products.repoMissingSince })
     .from(products).leftJoin(productHealth, eq(productHealth.slug, products.slug))
-    .where(and(sql`${products.id} in ${followedProductIds}`, inArray(products.status, [...PUBLIC_STATUSES]), listedByDefault, sql`not ${notDown}`));
+    .where(and(sql`${products.id} in ${followedProductIds}`, inArray(products.status, [...PUBLIC_STATUSES]), listedByDefault, sql`not ${notDown}`,
+      // 시간대 없는 UTC 벽시계 열이다
+      sql`${since} > (now() at time zone 'UTC') - interval '7 days'`))
+    .orderBy(sql`${since} desc`, asc(products.id)).limit(DOWN_LIMIT);
   const recent = hidden.flatMap((row) => {
     const since = row.downSince ?? row.repoMissingSince;
     return since && Date.now() - since.getTime() < 7 * DAY_MS ? [{ id: row.id, since }] : [];
   });
-  const down = recent.length ? await withJobLeaseWrite(ctx.lease, async (tx) => {
+  // 이미 보낸 것은 넣어 보지 않는다. 다시 살아나 후보에서 빠진 제품은 커서에서도 지운다(다음에 내려가면 새 시작 시각이다)
+  const fresh = recent.filter((row) => notifiedDown[String(row.id)] !== row.since.toISOString());
+  const down = fresh.length ? await withJobLeaseWrite(ctx.lease, async (tx) => {
     let total = 0;
-    for (const row of recent) {
+    for (const row of fresh) {
       total += await notifyFollowers({ targetType: "product", targetKeys: [String(row.id)], kind: "followed_delisted", productId: row.id,
         payload: { reason: "down" }, dedupeKey: `followed_delisted:${row.id}:down:${formatDay(row.since)}`, followedBefore: row.since }, tx);
     }
     return total;
   }) : 0;
+  cursor = { ...cursor, down: Object.fromEntries(recent.map((row) => [String(row.id), row.since.toISOString()])) };
   if (removed || down) ctx.log("notifications.delisted", { removed, down });
   return { done: true, cursor };
 }

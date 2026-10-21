@@ -72,7 +72,7 @@
 .me-kvs > .me-kv:first-child { border-top: 0; padding-top: 0; }
 .me-kv-l { display: flex; gap: 10px; align-items: center; min-width: 0; flex: 1 1 auto; }
 .me-kv-x { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
-.me-kv > .me-btn, .me-kv > .me-note { flex: none; }
+.me-kv > .me-btn, .me-kv > .me-aside { flex: none; }
 .me-kv-t { font-weight: 500; overflow-wrap: anywhere; }
 .me-kv-s { font-size: 13px; color: var(--text-2); line-height: 1.5; }
 .me-logo { width: 32px; height: 32px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 13px; font-weight: 600; flex: none; background: var(--bg-soft); color: var(--text); }
@@ -82,7 +82,8 @@
 .me-state-warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .me-state-off { color: var(--text-2); background: var(--bg-hover); }
 .me-state-kind { color: var(--text); background: var(--bg-card); border: 1px solid var(--border); }
-.me-hint, .me-note { font-size: 13px; color: var(--text-2); line-height: 1.5; }
+/* 덧붙임 글은 me-aside — me-note 는 알림 탭의 한 줄(alerts.css)이라, 그 css 가 남은 채 다른 탭으로 옮겨도 모양이 섞이지 않게 이름을 나눈다 */
+.me-hint, .me-aside { font-size: 13px; color: var(--text-2); line-height: 1.5; }
 .me-desc { font-size: 14px; color: var(--text-2); line-height: 1.6; }
 .me-down { color: var(--down); }
 .me-error { font-size: 13px; color: var(--down); }

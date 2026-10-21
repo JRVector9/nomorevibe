@@ -1,13 +1,18 @@
 import { describe, expect, it } from "vitest";
+import { commentLength, commentMaxLength } from "@/components/feedback/ReactionFields";
 import {
-  kstDay, nextChangeCount, normalizeReactionComment, parseReactionSlugs, REACTION_CHANGES_PER_DAY, reviewReactionComment, validateReactionWrite,
+  kstDay, nextChangeCount, normalizeReactionComment, parseReactionSlugs, REACTION_CHANGES_PER_DAY, REACTION_MERGE_BODY_BYTES, readReactionJson,
+  reviewReactionComment, validateReactionWrite,
 } from "@/lib/domain/reactions/contract";
 
 describe("써봤어요 입력 검사", () => {
-  it("평가·태그·한 줄·출처·기기·언어를 받고 기본값을 채운다", () => {
+  it("평가·태그·한 줄·출처·기기·언어를 받고 기본값을 채운다 — 보내지 않은 태그·한 줄은 undefined(남겨 둔 값을 둔다)", () => {
     expect(validateReactionWrite({ verdict: "good" })).toEqual({
-      verdict: "good", tags: [], comment: null, source: "panel", device: null, locale: "ko", trapped: false,
+      verdict: "good", tags: undefined, comment: undefined, source: "panel", device: null, locale: "ko", trapped: false,
     });
+    // 빈 값으로 보내면 지운다
+    expect(validateReactionWrite({ verdict: "good", tags: [], comment: null })).toMatchObject({ tags: [], comment: null });
+    expect(validateReactionWrite({ verdict: "good", tags: null, comment: "  " })).toMatchObject({ tags: [], comment: null });
     expect(validateReactionWrite({ verdict: "bad", tags: ["slow", "easy", "slow"], comment: "  느려요  ", source: "sheet", device: "phone", locale: "zh-Hant" }))
       .toEqual({ verdict: "bad", tags: ["easy", "slow"], comment: "느려요", source: "sheet", device: "phone", locale: "zh-Hant", trapped: false });
     // 모르는 언어는 기본 언어로 둔다
@@ -56,7 +61,15 @@ describe("익명 한 줄 자동 검사", () => {
     ["연락 주세요 someone@mail.example.kr", "link"],
     ["메일 me@example.net", "link"],
     ["텔레그램 @spam_seller", "mention"],
-    ["ㅋㅋㅋㅋㅋㅋㅋㅋ", "repeated"],
+    // 웃음·울음·문장 부호·이모지·숫자를 늘여 쓰는 것은 흔한 말투 — 보류하지 않는다
+    ["좋아요 ㅋㅋㅋㅋㅋㅋㅋㅋㅋㅋ", null],
+    ["ㅠㅠㅠㅠㅠㅠㅠㅠ 안 열려요", null],
+    ["哈哈哈哈哈哈哈哈 好用", null],
+    ["최고!!!!!!!!!", null],
+    ["대박........ 😂😂😂😂😂😂😂😂", null],
+    ["100000000원 아꼈어요", null],
+    ["aaaaaaaa", "repeated"],
+    ["좋좋좋좋좋좋좋좋", "repeated"],
     ["최고 최고 최고 최고", "repeated"],
     ["무료 크레딧 드려요", "lure"],
   ])("%s → %s", (comment, reason) => {
@@ -86,5 +99,29 @@ describe("하루 변경 횟수 — KST 자정에 다시 센다", () => {
     expect(nextChangeCount({ changesToday: full, updatedAt: new Date("2026-10-19T16:00:00Z") }, new Date("2026-10-20T14:00:00Z"))).toBeNull();
     // UTC 로 같은 날이어도 KST 로 다음 날이면 다시(09:30 KST → 다음 날 08:30 KST)
     expect(nextChangeCount({ changesToday: full, updatedAt: new Date("2026-10-20T00:30:00Z") }, new Date("2026-10-20T23:30:00Z"))).toBe(1);
+  });
+});
+
+describe("몸통 상한", () => {
+  const request = (body: string) => new Request("https://nomorevibe.example/api", { method: "POST", headers: { "content-type": "application/json" }, body });
+
+  it("쓰기는 4KB, 합치기는 긴 slug 100개가 드는 상한까지 받는다", async () => {
+    const slugs = JSON.stringify({ slugs: Array.from({ length: 100 }, (_, index) => `p${index}-${"x".repeat(80)}`.slice(0, 80)) });
+    expect(Buffer.byteLength(slugs)).toBeGreaterThan(8_000);
+    await expect(readReactionJson(request(slugs))).rejects.toMatchObject({ code: "reaction_invalid", status: 400 });
+    expect(await readReactionJson(request(slugs), REACTION_MERGE_BODY_BYTES)).toEqual(JSON.parse(slugs));
+    await expect(readReactionJson(request(" ".repeat(REACTION_MERGE_BODY_BYTES + 1)), REACTION_MERGE_BODY_BYTES)).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+describe("한 줄 칸의 maxLength", () => {
+  it("남은 코드 포인트만큼만 더 받는다 — 140자를 넘게 들어가지 않고, 다 차면 더 받지 않는다", () => {
+    expect(commentMaxLength("")).toBe(140);
+    expect(commentMaxLength("가".repeat(140))).toBe(140);
+    expect(commentMaxLength("😀".repeat(70))).toBe(140 + 70);
+    // 다 찬 칸에서는 한 글자도 더 들어가지 않는다(가운데에 넣어도 뒤를 자르지 않는다)
+    const full = "가".repeat(139) + "😀";
+    expect(commentLength(full)).toBe(140);
+    expect(commentMaxLength(full)).toBe(full.length);
   });
 });

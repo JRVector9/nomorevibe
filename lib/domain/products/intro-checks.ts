@@ -34,13 +34,16 @@ const MAKER_JUNK = sql`(btrim(${products.tagline}) ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-
 
 export type IntroTask = { product: ProductFields; check: ProductIntroCheck | null };
 
+/** GitHub 로 확인한 운영자가 있는 제품 — claimed_at 은 비어 있어도(maker-claims.ts) 운영자가 고친 소개를 검수가 덮지 않는다 */
+const hasActiveMaker = sql`exists (select 1 from product_maker_members m where m.product_id = ${products.id} and m.revoked_at is null)`;
+
 /** AI 가 지은 소개인지, 메이커가 적은 소개인지 — 무엇을 바꿔도 되는지가 다르다(decideIntro) */
 export const introOrigin = (source: ProductFields["taglineSource"]): "ai" | "maker" => source === "maker" ? "maker" : "ai";
 
 /**
  * 검수할 소개 — 주인 없는 공개 수집 제품의 AI 소개와 쓸모없어 보이는 메이커 소개. 최신 것부터 — 새로 발행된
  * 것이 먼저 검수를 받는다. 아직 안 본 것, 소개가 바뀐 것, 실패가 다시 볼 때가 된 것.
- * 검수가 고쳐 쓴 소개(ai_fixed)와 사람이 적은 소개(editor)는 다시 보지 않는다.
+ * 검수가 고쳐 쓴 소개(ai_fixed)와 사람이 적은 소개(editor)는 다시 보지 않는다. 운영자로 확인된 계정이 있는 제품도 보지 않는다.
  */
 export async function pendingIntroChecks(limit: number): Promise<IntroTask[]> {
   const rows = await db.select({ product: FIELDS, check: productIntroChecks })
@@ -50,6 +53,7 @@ export async function pendingIntroChecks(limit: number): Promise<IntroTask[]> {
       inArray(products.status, ["seeded", "verified"]),
       eq(products.source, "crawler"),
       isNull(products.claimedAt),
+      sql`not ${hasActiveMaker}`,
       sql`(${inArray(products.taglineSource, [...AI_SOURCES])} or (${products.taglineSource} = 'maker' and ${MAKER_JUNK}))`,
       sql`(${productIntroChecks.productId} is null
         or ${productIntroChecks.checkedTagline} <> ${products.tagline}
@@ -80,10 +84,10 @@ const sameCheck = (a: ProductIntroCheck | undefined, b: ProductIntroCheck | null
 export async function recordIntroCheck(task: IntroTask, lease: JobLease, result: IntroCheckRecord): Promise<IntroCheckRecordOutcome> {
   return db.transaction(async (tx) => {
     await lockPipelineInputStages(tx);
-    const [product] = await tx.select({ ...FIELDS, source: products.source, claimedAt: products.claimedAt })
+    const [product] = await tx.select({ ...FIELDS, source: products.source, claimedAt: products.claimedAt, maker: sql<boolean>`${hasActiveMaker}` })
       .from(products).where(eq(products.id, task.product.id)).for("update");
     if (!product || (product.status !== "seeded" && product.status !== "verified") || product.source !== "crawler"
-      || product.claimedAt || product.tagline !== task.product.tagline || product.taglineSource !== task.product.taglineSource
+      || product.claimedAt || product.maker || product.tagline !== task.product.tagline || product.taglineSource !== task.product.taglineSource
       || product.description !== task.product.description) return null;
     const [current] = await tx.select().from(productIntroChecks)
       .where(eq(productIntroChecks.productId, product.id)).for("update");

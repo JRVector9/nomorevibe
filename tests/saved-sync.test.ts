@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { forgetAccountCopy, reconcileSaved } from "@/components/home/saved";
+import { savableProduct } from "@/components/product-detail/SaveButton";
 
 describe("reconcileSaved — 계정 목록이 기준, 이 브라우저 것은 묻는다(L4)", () => {
   it("첫 로그인: 서버에 없는 이 브라우저 저장은 지우지 않고 옮길 거리로, 서버에만 있는 것은 더한다", () => {
@@ -55,18 +56,30 @@ describe("forgetAccountCopy — 로그아웃하면 내려받은 사본을 지운
   });
 });
 
+describe("savableProduct — 상세 책갈피는 계정이 받는 제품(savedPublic)에만", () => {
+  it("검증·시드 제품만, 개인 프로필은 주인이 있을 때만", () => {
+    expect(savableProduct({ status: "verified", category: "Dev" }, true)).toBe(true);
+    expect(savableProduct({ status: "seeded", category: "Dev" }, true)).toBe(true);
+    expect(savableProduct({ status: "unverified", category: "Dev" }, false)).toBe(false);
+    expect(savableProduct({ status: "seeded", category: "Profile" }, true)).toBe(false);
+    expect(savableProduct({ status: "seeded", category: "Profile" }, false)).toBe(true);
+  });
+});
+
 /* ── 브라우저 쪽 동기화 — localStorage·window·fetch 를 바꿔 끼운다 ── */
 
 type Call = { url: string; method: string; headers: Record<string, string>; body?: string };
 type Route = (call: Call) => Response | Promise<Response>;
 
-function browser(initial: Record<string, unknown> = {}) {
+function browser(initial: Record<string, unknown> = {}, { broken = false } = {}) {
   const store = new Map(Object.entries(initial).map(([key, value]) => [key, JSON.stringify(value)]));
   const target = new EventTarget();
+  // broken: 저장소를 끈 WebView — 읽기·쓰기가 모두 던진다
+  const guard = <T,>(run: () => T) => () => { if (broken) throw new DOMException("denied", "SecurityError"); return run(); };
   vi.stubGlobal("localStorage", {
-    getItem: (key: string) => store.get(key) ?? null,
-    setItem: (key: string, value: string) => void store.set(key, String(value)),
-    removeItem: (key: string) => void store.delete(key),
+    getItem: (key: string) => guard(() => store.get(key) ?? null)(),
+    setItem: (key: string, value: string) => guard(() => void store.set(key, String(value)))(),
+    removeItem: (key: string) => guard(() => void store.delete(key))(),
   });
   vi.stubGlobal("window", {
     addEventListener: target.addEventListener.bind(target),
@@ -86,7 +99,8 @@ function server(route: Route) {
   return calls;
 }
 
-const loggedIn = (call: Call, saved: string[]) => call.url === "/api/me/summary" ? Response.json({ user: { id: 7, displayName: "하늘" }, csrfToken: "c".repeat(64) })
+const ME = "/api/me?view=header";
+const loggedIn = (call: Call, saved: string[], savedVersion?: string) => call.url === ME ? Response.json({ user: { id: 7, displayName: "하늘" }, csrfToken: "c".repeat(64), savedVersion })
   : call.url === "/api/me/saved?view=slugs" ? Response.json({ slugs: saved }) : null;
 
 async function load() {
@@ -107,7 +121,7 @@ describe("브라우저 동기화", () => {
     await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("none"));
     saved.toggleSaved("b");
     expect(storage.read("nmb-saved-v1")).toEqual(["a", "b"]);
-    expect(calls.map((call) => call.url)).toEqual(["/api/me/summary"]);
+    expect(calls.map((call) => call.url)).toEqual([ME]);
   });
 
   it("로그인 중 책갈피는 CSRF 를 붙여 서버에도 쓰고, 서버 수를 머리 점에 준다", async () => {
@@ -155,7 +169,7 @@ describe("브라우저 동기화", () => {
     const storage = browser({ "nmb-saved-v1": ["local", "gone"] });
     let account = ["s1"];
     const calls = server((call) => {
-      if (call.url === "/api/me/saved/merge") {
+      if (call.url === "/api/me/saved" && call.method === "POST") {
         account = ["local", ...account];
         return Response.json({ merged: 1, skipped: 1, total: 2 });
       }
@@ -164,7 +178,7 @@ describe("브라우저 동기화", () => {
     const saved = await load();
     await vi.waitFor(() => expect(saved.savedAccountSnapshot().offer).toBe(2));
     expect(await saved.mergeBrowserSaved()).toBe(true);
-    const merge = calls.find((call) => call.url === "/api/me/saved/merge")!;
+    const merge = calls.find((call) => call.url === "/api/me/saved" && call.method === "POST")!;
     expect(JSON.parse(merge.body!)).toEqual({ slugs: ["local", "gone"] });
     expect(saved.savedAccountSnapshot()).toMatchObject({ offer: 0, notice: { kind: "merged", merged: 1, skipped: 1 } });
     // 건너뛴 주소(내려간 제품)는 이 브라우저에서도 빠진다
@@ -241,7 +255,7 @@ describe("브라우저 동기화", () => {
     const calls = server((call) => loggedIn(call, []) ?? Response.json({}, { status: 500 }));
     const saved = await load();
     await vi.waitFor(() => expect(saved.savedAccountSnapshot().serverCount).toBe(0));
-    expect(calls.map((call) => call.url)).toEqual(["/api/me/summary", "/api/me/saved?view=slugs"]);
+    expect(calls.map((call) => call.url)).toEqual([ME, "/api/me/saved?view=slugs"]);
   });
 
   it("계정을 묻는 동안 누른 책갈피도 로그인이 확인되면 보낸다", async () => {
@@ -249,12 +263,138 @@ describe("브라우저 동기화", () => {
     let answer!: () => void;
     const asked = new Promise<void>((resolve) => { answer = resolve; });
     const calls = server(async (call) => {
-      if (call.url === "/api/me/summary") await asked;
+      if (call.url === ME) await asked;
       return loggedIn(call, []) ?? Response.json({ saved: true, total: 1 });
     });
     const saved = await load();
     saved.toggleSaved("early");
     answer();
     await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT" && call.url === "/api/me/saved/early")).toBe(true));
+  });
+
+  it("저장 판이 지난번과 같으면 계정 목록을 다시 받지 않고, 다르면 받는다", async () => {
+    const storage = browser({ "nmb-saved-v1": ["s1", "mine"], "nmb-saved-sync-v1": { user: 7, base: ["s1"], pending: {}, version: "1:100" } });
+    let calls = server((call) => loggedIn(call, ["s1"], "1:100") ?? Response.json({}, { status: 500 }));
+    let saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot()).toMatchObject({ serverCount: 1, offer: 1 }));
+    expect(calls.map((call) => call.url)).toEqual([ME]);
+    // 다른 기기에서 저장했다 — 판이 바뀌었다
+    calls = server((call) => loggedIn(call, ["s2", "s1"], "2:200") ?? Response.json({}, { status: 500 }));
+    saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().serverCount).toBe(2));
+    expect(calls.map((call) => call.url)).toEqual([ME, "/api/me/saved?view=slugs"]);
+    expect(storage.read("nmb-saved-sync-v1")).toEqual({ user: 7, base: ["s2", "s1"], pending: {}, version: "2:200" });
+    expect(storage.read("nmb-saved-v1")).toEqual(["s1", "mine", "s2"]);
+  });
+
+  it("계정이 받지 않은 저장(목록에 없는 제품 404)은 이 브라우저에서도 되돌리고 알린다 — 옮길 거리로 남기지 않는다", async () => {
+    const storage = browser({ "nmb-saved-v1": [] });
+    server((call) => loggedIn(call, []) ?? Response.json({ error: "product_not_found" }, { status: 404 }));
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("user"));
+    saved.toggleSaved("draft");
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().notice).toEqual({ kind: "unavailable" }));
+    expect(storage.read("nmb-saved-v1")).toEqual([]);
+    expect((storage.read("nmb-saved-sync-v1") as { pending: object }).pending).toEqual({});
+  });
+
+  it("옮길 것이 상한보다 많으면 최근 것부터 상한만큼 보내고, 보내지 않은 것은 지우지 않고 다시 묻는다", async () => {
+    const local = Array.from({ length: 600 }, (_, index) => `s-${index}`);
+    const storage = browser({ "nmb-saved-v1": local });
+    let account: string[] = [];
+    const calls = server((call) => {
+      if (call.url === "/api/me/saved" && call.method === "POST") {
+        account = (JSON.parse(call.body!) as { slugs: string[] }).slugs.slice().reverse();
+        return Response.json({ merged: account.length, skipped: 0, total: account.length });
+      }
+      return loggedIn(call, account) ?? Response.json({}, { status: 500 });
+    });
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().offer).toBe(600));
+    expect(await saved.mergeBrowserSaved()).toBe(true);
+    const sent = (JSON.parse(calls.find((call) => call.method === "POST")!.body!) as { slugs: string[] }).slugs;
+    expect(sent).toEqual(local.slice(-500));
+    expect(storage.read("nmb-saved-v1")).toHaveLength(600);
+    expect(saved.savedAccountSnapshot()).toMatchObject({ serverCount: 500, offer: 100 });
+  });
+
+  it("옮기는 중에 뺀 저장은 합치기가 끝난 뒤 빼기를 보낸다 — 늦게 끝난 합치기가 되살리지 않는다", async () => {
+    const storage = browser({ "nmb-saved-v1": ["x", "y"] });
+    let account: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const order: string[] = [];
+    const calls = server(async (call) => {
+      if (call.url === "/api/me/saved" && call.method === "POST") {
+        await gate;
+        account = [...(JSON.parse(call.body!) as { slugs: string[] }).slugs].reverse();
+        order.push("merge");
+        return Response.json({ merged: 2, skipped: 0, total: 2 });
+      }
+      if (call.url === "/api/me/saved/x" && call.method === "DELETE") {
+        account = account.filter((slug) => slug !== "x");
+        order.push("delete");
+        return Response.json({ saved: false, total: account.length });
+      }
+      return loggedIn(call, account) ?? Response.json({}, { status: 500 });
+    });
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().offer).toBe(2));
+    const merged = saved.mergeBrowserSaved();
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true));
+    saved.toggleSaved("x", false);
+    // 합치기가 끝나기 전에는 빼기를 보내지 않는다
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+    release();
+    expect(await merged).toBe(true);
+    await vi.waitFor(() => expect(order).toEqual(["merge", "delete"]));
+    await vi.waitFor(() => expect((storage.read("nmb-saved-sync-v1") as { pending: object }).pending).toEqual({}));
+    expect(account).toEqual(["y"]);
+    expect(storage.read("nmb-saved-v1")).toEqual(["y"]);
+  });
+
+  it("첫 문서에서 로그인 상태를 묻지 못해도 그동안 누른 것을 버리지 않고, 다시 물어 답을 받으면 보낸다", async () => {
+    const storage = browser({ "nmb-saved-v1": ["s1"] });
+    let down = true;
+    const calls = server((call) => down && call.url === ME ? Response.json({ error: "public_auth_unavailable" }, { status: 503 })
+      : loggedIn(call, ["s1"]) ?? Response.json({ saved: false, total: 0 }));
+    const saved = await load();
+    await vi.waitFor(() => expect(calls.filter((call) => call.url === ME)).toHaveLength(1));
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("none"));
+    down = false;
+    // 저장 탭(서버가 그린 계정 목록)에서 뺐다 — 누를 때 다시 묻고, 로그인이 확인되면 빼기를 보낸다
+    saved.toggleSaved("s1", false);
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "DELETE" && call.url === "/api/me/saved/s1")).toBe(true));
+    expect(saved.savedAccountSnapshot().status).toBe("user");
+    expect(storage.read("nmb-saved-v1")).toEqual([]);
+  });
+
+  it("지난 계정 기록이 있는데 묻지 못했으면 쌓아 두고, 나중에 답을 받으면(화면 복귀 등) 그 문서 안에서 보낸다", async () => {
+    browser({ "nmb-saved-v1": ["s1"], "nmb-saved-sync-v1": { user: 7, base: ["s1"], pending: {} } });
+    let down = true;
+    const calls = server((call) => down && call.url === ME ? Response.json({ error: "down" }, { status: 502 })
+      : loggedIn(call, ["s1"]) ?? Response.json({ saved: false, total: 0 }));
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("none"));
+    down = false;
+    // 머리 메뉴가 다시 물어 로그인 답을 받았다
+    const store = await import("@/components/me/account-store");
+    await store.loadMeState();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("user"));
+    saved.toggleSaved("s1", false);
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "DELETE" && call.url === "/api/me/saved/s1")).toBe(true));
+  });
+
+  it("저장소를 쓸 수 없는 브라우저도 이 문서 안에서는 빼기·되돌리기를 서버에 보낸다", async () => {
+    browser({}, { broken: true });
+    const calls = server((call) => loggedIn(call, ["s1"]) ?? Response.json({ saved: call.method === "PUT", total: 0 }));
+    const saved = await load();
+    await vi.waitFor(() => expect(saved.savedAccountSnapshot().status).toBe("user"));
+    await vi.waitFor(() => expect(calls.some((call) => call.url === "/api/me/saved?view=slugs")).toBe(true));
+    saved.toggleSaved("s1", false);
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "DELETE" && call.url === "/api/me/saved/s1")).toBe(true));
+    saved.toggleSaved("s1", true);
+    await vi.waitFor(() => expect(calls.some((call) => call.method === "PUT" && call.url === "/api/me/saved/s1")).toBe(true));
   });
 });

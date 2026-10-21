@@ -17,6 +17,7 @@ const card = async (locale: string, slug: string) => (await import("@/app/(publi
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   vi.stubEnv("NEXT_PUBLIC_SITE_URL", ORIGIN);
+  vi.stubEnv("PRODUCT_REACTIONS_ENABLED", "true");
   await resetTables();
   await db.execute(sql`TRUNCATE product_reactions RESTART IDENTITY CASCADE`);
   clearAllMemos();
@@ -65,6 +66,28 @@ describe("GET /badge/<slug>.svg", () => {
     expect(await shareCardData("phish-wallet", "ko")).toBeNull();
   });
 
+  it("주인 없는 수집 개인 프로필은 목록에 없어 배지·공유 카드가 404 — 본인이 클레임했거나 등록한 프로필은 내준다", async () => {
+    await product("someone-portfolio", "seeded", { category: "Profile", source: "crawler" });
+    await product("claimed-portfolio", "seeded", { category: "Profile", source: "crawler", claimedAt: new Date() });
+    await product("registered-portfolio", "verified", { category: "Profile", source: "skill" });
+    for (const query of ["", "?style=tried", "?lang=ko"]) expect((await badge("someone-portfolio.svg", query)).status, query).toBe(404);
+    expect((await card("ko", "someone-portfolio")).status).toBe(404);
+    const { shareCardData } = await import("@/lib/me/share");
+    expect(await shareCardData("someone-portfolio", "en")).toBeNull();
+    expect((await badge("claimed-portfolio.svg")).status).toBe(200);
+    expect((await badge("registered-portfolio.svg")).status).toBe(200);
+    expect(await shareCardData("claimed-portfolio", "en")).not.toBeNull();
+  });
+
+  it("써봤어요를 끄면(PRODUCT_REACTIONS_ENABLED) «tried by» 배지·카드 칩을 내지 않는다", async () => {
+    const seeded = await product("tiny-cron", "seeded", { stars: 5 });
+    await reactions(seeded.id, 12);
+    vi.stubEnv("PRODUCT_REACTIONS_ENABLED", "false");
+    expect(await (await badge("tiny-cron.svg", "?style=tried")).text()).toContain(">listed</text>");
+    const { shareCardData } = await import("@/lib/me/share");
+    expect((await shareCardData("tiny-cron", "ko"))!.chips.map((chip) => chip.text)).toEqual(["GitHub ★ 5", "개발 도구"]);
+  });
+
   it("?style=tried 는 써본 사람 3명부터 숫자, 그 전에는 기본 배지", async () => {
     const seeded = await product("tiny-cron", "seeded");
     const verified = await product("checked", "verified");
@@ -82,6 +105,8 @@ describe("GET /p/<slug>/share-card.png", () => {
   it("공개 제품은 1200×630 PNG, 내려간·없는 제품·모르는 언어는 404", async () => {
     await product("tiny-cron", "seeded", { stars: 214 });
     await product("gone", "banned");
+    // 글꼴은 저장소 파일이다 — 그리는 동안 네트워크를 부르지 않는다
+    const network = vi.spyOn(globalThis, "fetch");
     const response = await card("ko", "tiny-cron");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
@@ -92,6 +117,10 @@ describe("GET /p/<slug>/share-card.png", () => {
     expect(png.readUInt32BE(16)).toBe(1200);
     expect(png.readUInt32BE(20)).toBe(630);
     expect((await card("en", "tiny-cron")).status).toBe(200);
+    expect((await card("zh-Hant", "tiny-cron")).status).toBe(200);
+    // next/og 는 렌더러 wasm 을 data: 주소로 읽는다 — 밖(http·https)으로 나간 요청만 센다
+    expect(network.mock.calls.map(([url]) => String(url)).filter((url) => /^https?:/.test(url))).toEqual([]);
+    network.mockRestore();
     expect((await card("ko", "gone")).status).toBe(404);
     expect((await card("ko", "missing")).status).toBe(404);
     expect((await card("fr", "tiny-cron")).status).toBe(404);

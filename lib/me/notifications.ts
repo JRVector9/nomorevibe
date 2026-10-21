@@ -12,6 +12,7 @@ import { logger } from "@/lib/observability/logger";
 import type { FollowTarget, NotificationKind } from "./contract";
 import { enqueueNotificationEmails } from "./email-outbox";
 import { makerKeyOf } from "./follow-keys";
+import { clipText } from "./notification-view";
 
 /**
  * 알림 만들기(L7·Q7)와 알림함 읽기. 발행·사실 수집 워커도 부르므로 server-only 를 붙이지 않는다.
@@ -47,12 +48,14 @@ async function quietly(event: string, fields: Record<string, unknown>, run: () =
 /**
  * 팔로한 계정마다 한 줄 — 한 문장(INSERT … SELECT)이라 팔로가 많아도 왕복은 하나다. 같은 (계정, dedupe_key) 는 건너뛴다.
  * followedBefore 가 있으면 그 전에 팔로한 계정만(내려가기 시작한 뒤 팔로한 사람에게 '내려갔어요'를 보내지 않게).
+ * DB 시각을 그대로 넘길 때는 글자(timestamptz, 마이크로초까지)로 준다 — Date 는 밀리초에서 잘려 같은 밀리초 안의 팔로를 놓친다.
  * 넣은 줄의 «즉시» 메일은 같은 executor(부른 쪽 lease 쓰기)로 발송함에 넣는다. 넣은 수
  */
 export async function notifyFollowers(input: {
   targetType: FollowTarget; targetKeys: string[]; kind: NotificationKind; productId?: number | null;
-  payload?: Record<string, unknown>; dedupeKey: string; followedBefore?: Date | null;
+  payload?: Record<string, unknown>; dedupeKey: string; followedBefore?: Date | string | null;
 }, executor: Executor = db): Promise<number> {
+  const before = input.followedBefore instanceof Date ? input.followedBefore.toISOString() : input.followedBefore ?? null;
   if (!input.targetKeys.length) return 0;
   const keys = sql.join(input.targetKeys.map((key) => sql`${key}`), sql`, `);
   const rows = await onPrimary(() => executor.execute<InsertedRow>(sql`
@@ -61,7 +64,7 @@ export async function notifyFollowers(input: {
       from ${userFollows} f
       join ${publicUsers} u on u.id = f.user_id and u.deleted_at is null
      where f.target_type = ${input.targetType} and f.target_key in (${keys})
-       ${input.followedBefore ? sql`and f.created_at < ${input.followedBefore.toISOString()}::timestamptz` : sql``}
+       ${before ? sql`and f.created_at < ${before}::timestamptz` : sql``}
     on conflict (user_id, dedupe_key) do nothing
     ${INSERTED}`));
   if (rows.length) await queueEmails(rows, executor);
@@ -104,7 +107,7 @@ export function notifyNewReleases(productId: number, lease?: JobLease): Promise<
       let total = 0;
       for (const update of updates) {
         total += await notifyFollowers({ targetType: "product", targetKeys: [String(productId)], kind: "followed_release", productId,
-          payload: { title: update.title.slice(0, 80), updateId: update.id }, dedupeKey: `followed_release:${update.id}` }, tx);
+          payload: { title: clipText(update.title, 80), updateId: update.id }, dedupeKey: `followed_release:${update.id}` }, tx);
       }
       return total;
     });
@@ -133,20 +136,20 @@ export const NOTIFICATION_PAGE = 30;
 
 export type NotificationRow = {
   id: number; kind: NotificationKind; payload: Record<string, unknown>; createdAt: Date; readAt: Date | null;
-  product: { slug: string; name: string; ogImage: string | null; category: string } | null;
+  product: { slug: string; name: string; ogImage: string | null; category: string; listed: boolean } | null;
 };
 
 export async function listNotifications(userId: number, options: { before?: number; limit?: number } = {}): Promise<{ items: NotificationRow[]; nextCursor: number | null }> {
   const limit = Math.min(Math.max(options.limit ?? NOTIFICATION_PAGE, 1), 50);
   const rows = await onPrimary(() => db.select({ id: notifications.id, kind: notifications.kind, payload: notifications.payload,
     createdAt: notifications.createdAt, readAt: notifications.readAt,
-    slug: products.slug, name: products.name, ogImage: products.ogImage, category: products.category })
+    slug: products.slug, name: products.name, ogImage: products.ogImage, category: products.category, status: products.status })
     .from(notifications).leftJoin(products, eq(products.id, notifications.productId))
     .where(and(eq(notifications.userId, userId), options.before ? sql`(${notifications.createdAt}, ${notifications.id}) < (
       select n.created_at, n.id from ${notifications} n where n.id = ${options.before} and n.user_id = ${userId})` : undefined))
     .orderBy(desc(notifications.createdAt), desc(notifications.id)).limit(limit + 1));
-  const items = rows.slice(0, limit).map(({ slug, name, ogImage, category, ...row }) => ({
-    ...row, product: slug && name && category ? { slug, name, ogImage, category } : null,
+  const items = rows.slice(0, limit).map(({ slug, name, ogImage, category, status, ...row }) => ({
+    ...row, product: slug && name && category ? { slug, name, ogImage, category, listed: status !== "banned" } : null,
   }));
   return { items, nextCursor: rows.length > limit ? items[items.length - 1].id : null };
 }

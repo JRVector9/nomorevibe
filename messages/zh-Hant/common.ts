@@ -67,6 +67,7 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "saved.mergeFailed": "暫時無法移動。此瀏覽器中的列表保持不變。",
   "saved.limit": "最多可收藏 {limit} 個專案。請先移除不再需要的專案。",
   "saved.close": "關閉",
+  "saved.unavailable": "此專案目前不在列表中，未能收藏到帳號。",
   "bell.label": "通知",
   "bell.unread": "通知 — {count} 則未讀",
   "bell.empty": "沒有新通知",

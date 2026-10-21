@@ -17,6 +17,8 @@ export const userSavedProducts = pgTable("user_saved_products", {
 }, (table) => [
   primaryKey({ columns: [table.userId, table.productId] }),
   index("user_saved_products_user_created_idx").on(table.userId, table.createdAt.desc()),
+  /** 0109 — 제품 삭제 cascade·제품별 저장 수 */
+  index("user_saved_products_product_idx").on(table.productId),
   check("user_saved_products_source_check", sql`${table.source} in ('web', 'merge')`),
 ]);
 
@@ -84,6 +86,8 @@ export const notifications = pgTable("notifications", {
   index("notifications_user_created_idx").on(table.userId, table.createdAt.desc()),
   index("notifications_unread_idx").on(table.userId, table.createdAt.desc()).where(sql`${table.readAt} is null`),
   index("notifications_created_idx").on(table.createdAt),
+  /** 0109 — 제품 삭제 cascade */
+  index("notifications_product_idx").on(table.productId),
   check("notifications_kind_check", sql`${table.kind} in ('maker_reply', 'followed_release', 'followed_delisted', 'maker_new_project', 'category_new', 'comment_reviewed', 'new_listing_mine', 'inbox_new')`),
   check("notifications_payload_check", sql`jsonb_typeof(${table.payload}) = 'object'`),
 ]);
@@ -127,6 +131,8 @@ export const emailOutbox = pgTable("email_outbox", {
 }, (table) => [
   uniqueIndex("email_outbox_dedupe_idx").on(table.dedupeKey),
   index("email_outbox_pending_idx").on(table.nextAttemptAt).where(sql`${table.state} = 'pending'`),
+  /** 0109 — 계정 삭제 */
+  index("email_outbox_user_idx").on(table.userId),
   check("email_outbox_state_check", sql`${table.state} in ('pending', 'accepted', 'rejected', 'unknown', 'skipped')`),
   check("email_outbox_attempts_check", sql`${table.attempts} between 0 and 10`),
   check("email_outbox_payload_check", sql`jsonb_typeof(${table.payload}) = 'object'`),
@@ -163,6 +169,8 @@ export const makerReplies = pgTable("maker_replies", {
 }, (table) => [
   uniqueIndex("maker_replies_target_idx").on(table.targetType, table.targetId),
   index("maker_replies_product_idx").on(table.productId, table.createdAt.desc()),
+  /** 0109 — 계정 삭제 */
+  index("maker_replies_author_idx").on(table.authorUserId),
   check("maker_replies_target_type_check", sql`${table.targetType} in ('reaction', 'feedback')`),
   check("maker_replies_review_check", sql`${table.reviewState} in ('accepted', 'held', 'rejected')`),
   check("maker_replies_body_check", sql`char_length(btrim(${table.body})) between 1 and 1000`),

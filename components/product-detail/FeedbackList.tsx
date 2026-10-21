@@ -8,6 +8,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { FeedbackView } from "@/lib/domain/feedback/contract";
 import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
+import { loadMeState, recheckMeState } from "@/components/me/account-store";
 
 export { FeedbackDeliveryStatus };
 
@@ -75,6 +76,22 @@ function CompactFeedbackItem({ feedback }: { feedback: FeedbackView }) {
   );
 }
 
+/**
+ * 내 의견(보류 포함). 로그아웃이면 묻지 않고 null — 머리 메뉴가 받아 둔 로그인 상태(account-store)를 나눠 쓴다.
+ * 401 을 "로그아웃" 신호로 쓰면 브라우저가 상세를 열 때마다 콘솔에 오류를 남기고 세션 조회도 한 번 더 한다.
+ * 로그인 상태를 모르면(error) 예전처럼 물어 401 로 안다. 로그아웃 답은 오래되거나 화면으로 돌아오면 account-store 가 다시 묻는다(다른 탭 로그인).
+ */
+export async function loadMineFeedback(slug: string, signal?: AbortSignal): Promise<FeedbackView[] | null> {
+  const me = await loadMeState();
+  if (me.status !== "error" && !me.account) return null;
+  const response = await fetch(`/api/me/feedback?slug=${encodeURIComponent(slug)}`, { cache: "no-store", signal });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error("feedback_unavailable");
+  const data = await response.json() as { feedback: FeedbackView[] };
+  if (!Array.isArray(data.feedback)) throw new Error("feedback_unavailable");
+  return data.feedback;
+}
+
 export function FeedbackList({ slug, children, settings }: { slug: string; children?: ReactNode; settings?: ReactNode }) {
   const t = useTranslations("detail");
   const locale = useLocale();
@@ -114,21 +131,17 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
         setPublicTotal(null);
         setPublicError(receiptIds.current.size ? "feedback.refreshPublicFailed" : "feedback.loadPublicFailed");
       }).finally(() => { if (current()) setPublicLoaded(true); }),
-      fetch(`/api/me/feedback?slug=${encodeURIComponent(slug)}`, { cache: "no-store", signal }).then(async (response) => {
-        if (response.status === 401) {
-          if (!current()) return;
+      loadMineFeedback(slug, signal).then((feedback) => {
+        if (!current()) return;
+        if (!feedback) {
           mineAuthor.current = null;
           setMine(null);
           setMineError(null);
           setView("public");
           return;
         }
-        if (!response.ok) throw new Error("feedback_unavailable");
-        const data = await response.json() as { feedback: FeedbackView[] };
-        if (!Array.isArray(data.feedback)) throw new Error("feedback_unavailable");
-        if (!current()) return;
-        mineAuthor.current = data.feedback[0]?.authorUserId ?? null;
-        setMine(data.feedback);
+        mineAuthor.current = feedback[0]?.authorUserId ?? null;
+        setMine(feedback);
         setMineError(null);
       }).catch(() => {
         if (current()) setMineError(receiptIds.current.size ? "feedback.refreshMineFailed" : "feedback.loadMineFailed");
@@ -161,6 +174,8 @@ export function FeedbackList({ slug, children, settings }: { slug: string; child
       setMineLoaded(true);
       setMineError(null);
       setShowAll(false);
+      // 의견을 올렸으면 로그인한 것이다 — 이 화면이 아는 로그아웃 답(다른 탭에서 로그인)은 버리고 다시 물은 뒤 내 의견을 읽는다
+      void recheckMeState();
       void load();
     };
     window.addEventListener(FEEDBACK_SUBMITTED_EVENT, refresh);

@@ -6,6 +6,9 @@ import { emailLoginChallenges, publicIdentities, publicSessions, publicUsers } f
 import { csrfForToken, hashSessionToken, newPublicSession } from "@/lib/domain/accounts/session";
 import type { LoginEmail } from "@/lib/domain/accounts/email-delivery";
 
+// /api/me 가 머리 값(lib/me/summary → lib/me/saved)을 읽는다 — 서버 전용 표시는 vitest 에서 비운다
+vi.mock("server-only", () => ({}));
+
 async function loginModule() {
   const loaded = await import("@/lib/domain/accounts/email-login").catch(() => null);
   expect(loaded, "transactional email login is not implemented").not.toBeNull();

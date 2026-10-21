@@ -12,7 +12,7 @@ export async function makerRequest<T>(path: string, method: "POST" | "PUT", csrf
   }
 }
 
-const OWN_ERRORS = ["github_login_required", "invalid_repo_url", "repo_not_listed", "rate_limited", "not_a_member", "target_not_found"] as const;
+const OWN_ERRORS = ["github_login_required", "invalid_repo_url", "repo_not_listed", "rate_limited", "not_a_member", "target_not_found", "reply_too_many_links"] as const;
 
 type ErrorKey = `projects.error.${(typeof OWN_ERRORS)[number] | "session" | "invalid" | "generic"}`;
 

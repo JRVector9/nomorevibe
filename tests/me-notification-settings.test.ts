@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NOTIFICATION_KINDS } from "@/lib/me/contract";
 import {
-  DEFAULT_NOTIFICATION_SETTINGS, EMAIL_SETTING_FOR_KIND, maskEmail, parseNotificationSettingsInput, weeklyKinds,
+  DEFAULT_NOTIFICATION_SETTINGS, EMAIL_SETTING_FOR_KIND, parseNotificationSettingsInput, weeklyKinds,
 } from "@/lib/me/notification-settings";
 import { signUnsubscribeToken, verifyUnsubscribeToken } from "@/lib/me/unsubscribe";
-import { emailRetryDelayMs, kstClock, notificationEmailDedupeKey } from "@/lib/me/email-outbox";
-import { digestEmail, instantEmail } from "@/lib/me/email-copy";
+import { emailRetryDelayMs, emailSenderConfigured, kstClock, notificationEmailDedupeKey } from "@/lib/me/email-outbox";
+import { digestEmail, emailDetail, instantEmail } from "@/lib/me/email-copy";
 import { sendEmail } from "@/lib/domain/accounts/email-delivery";
 import { LOCALES } from "@/lib/i18n/locales";
 
@@ -32,12 +32,6 @@ describe("알림 설정 입력 검사", () => {
     });
     expect(weeklyKinds(DEFAULT_NOTIFICATION_SETTINGS).sort()).toEqual(["category_new", "followed_delisted", "followed_release"]);
     expect(weeklyKinds({ ...DEFAULT_NOTIFICATION_SETTINGS, followedProject: "off", followedCategory: "off" })).toEqual([]);
-  });
-
-  it("메일 주소는 앞 두 글자와 도메인만 보인다", () => {
-    expect(maskEmail("hanul@example.com")).toBe("ha***@example.com");
-    expect(maskEmail("a@example.com")).toBe("a***@example.com");
-    expect(maskEmail("broken")).toBe("***");
   });
 });
 
@@ -85,6 +79,18 @@ describe("발송함 계산", () => {
   it("다시 보내기 간격은 1·5·15·60분", () => {
     expect([1, 2, 3, 4, 5].map(emailRetryDelayMs)).toEqual([60_000, 300_000, 900_000, 3_600_000, 3_600_000]);
   });
+
+  it("보내는 쪽은 발신 키·보내는 주소와 끄기 링크 서명 비밀(32자 이상)이 모두 있어야 보낼 수 있다", () => {
+    vi.stubEnv("LOGIN_EMAIL_API_KEY", "re_test");
+    vi.stubEnv("LOGIN_EMAIL_FROM", "alerts@example.com");
+    vi.stubEnv("PUBLIC_AUTH_SECRET", SECRET);
+    expect(emailSenderConfigured()).toBe(true);
+    vi.stubEnv("PUBLIC_AUTH_SECRET", "short");
+    expect(emailSenderConfigured()).toBe(false);
+    vi.stubEnv("PUBLIC_AUTH_SECRET", SECRET);
+    vi.stubEnv("LOGIN_EMAIL_FROM", " ");
+    expect(emailSenderConfigured()).toBe(false);
+  });
 });
 
 describe("알림 메일 글", () => {
@@ -99,6 +105,30 @@ describe("알림 메일 글", () => {
     expect(mail.text).toContain(links.unsubscribe);
     expect(mail.html).not.toMatch(/<img/i);
   });
+  it("내려간 까닭과 팔로한 분야 묶음을 알림함처럼 쓴다", async () => {
+    const down = await instantEmail("ko", "followed_delisted", { slug: "one", name: "메모장X" }, links, emailDetail("followed_delisted", { reason: "down" }));
+    expect(down.subject).toContain("잠시 내려감");
+    const removed = await instantEmail("ko", "followed_delisted", { slug: "one", name: "메모장X" }, links, emailDetail("followed_delisted", { reason: "removed" }));
+    expect(removed.subject).toBe("목록에서 내려감: 메모장X");
+    expect(removed.text).not.toContain("접속이 안 돼");
+    expect((await instantEmail("en", "followed_delisted", null, links, emailDetail("followed_delisted", {}))).text).toContain("was removed from the list");
+    // 메이커 답장 메일은 알림함처럼 의견 탭(댓글)·써봤어요 탭(한 줄)으로 — 알림 payload(feedbackId)와 발송함 payload(target) 둘 다 읽는다
+    expect(emailDetail("maker_reply", { feedbackId: "7b1c2e3f-0000-4000-8000-000000000001" })).toEqual({ target: "feedback" });
+    expect(emailDetail("maker_reply", { target: "feedback" })).toEqual({ target: "feedback" });
+    expect(emailDetail("maker_reply", { excerpt: "고마워요" })).toEqual({ target: "reaction" });
+    const one = emailDetail("category_new", { total: 12, categories: [{ category: "dev", count: 12 }], others: 0 });
+    const many = emailDetail("category_new", { total: 15, categories: [{ category: "dev", count: 12 }, { category: "design", count: 3 }, { category: "nope", count: 9 }], others: 1 });
+    expect(one).toEqual({ categories: [{ category: "dev", count: 12 }], total: 12, others: 0 });
+    expect(many.categories).toEqual([{ category: "dev", count: 12 }, { category: "design", count: 3 }]);
+    const ko = await digestEmail("ko", [{ kind: "category_new", product: null, url: links.open, detail: one }, { kind: "category_new", product: null, url: links.open, detail: many }], 2, links);
+    expect(ko.text).toContain("팔로한 분야 개발 도구에 새 프로젝트 12개가 올라왔어요.");
+    expect(ko.text).toContain("팔로한 분야 개발 도구 외 1개 분야에 새 프로젝트 15개가 올라왔어요.");
+    expect(ko.text).not.toContain("새 프로젝트가 올라왔어요: 새 프로젝트");
+    expect((await digestEmail("en", [{ kind: "category_new", product: null, url: links.open, detail: one }], 1, links)).text).toContain("12 new projects arrived in Developer");
+    expect(emailDetail("followed_release", { reason: "down" })).toEqual({});
+    expect(emailDetail("category_new", { categories: "x" })).toEqual({});
+  });
+
   it("네 언어 모두 즉시 메일·주간 요약을 만든다", async () => {
     for (const locale of LOCALES) {
       const instant = await instantEmail(locale, "followed_release", null, links);
@@ -112,7 +142,7 @@ describe("알림 메일 글", () => {
 
 describe("알림 메일 보내기(Resend)", () => {
   const email = { to: "reader@example.com", subject: "s", text: "t", html: "<p>t</p>", idempotencyKey: "nmv-email-1", headers: { "List-Unsubscribe": "<https://x/u>" } };
-  it("같은 키·보내는 주소를 쓰고, 한도·겹친 요청은 다시 보낼 수 있게 unknown", async () => {
+  it("같은 키·보내는 주소를 쓰고, 겹친 요청·5xx 는 unknown, 키·도메인·한도 문제는 unavailable, 나머지 4xx 만 rejected", async () => {
     vi.stubEnv("LOGIN_EMAIL_API_KEY", "re_test");
     vi.stubEnv("LOGIN_EMAIL_FROM", "alerts@example.com");
     const fetcher = vi.fn(async () => new Response("{}", { status: 200 }));
@@ -120,9 +150,13 @@ describe("알림 메일 보내기(Resend)", () => {
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("nmv-email-1");
     expect(JSON.parse(init.body as string)).toMatchObject({ from: "alerts@example.com", to: ["reader@example.com"], headers: email.headers });
-    for (const [status, state] of [[429, "unknown"], [409, "unknown"], [422, "rejected"], [500, "unknown"]] as const) {
-      expect(await sendEmail(email, (async () => new Response("{}", { status })) as unknown as typeof fetch)).toBe(state);
+    for (const [status, state] of [[401, "unavailable"], [403, "unavailable"], [429, "unavailable"], [409, "unknown"], [422, "rejected"], [400, "rejected"], [500, "unknown"]] as const) {
+      expect(await sendEmail(email, (async () => new Response("{}", { status })) as unknown as typeof fetch), String(status)).toBe(state);
     }
+    const named = (name: string) => (async () => Response.json({ statusCode: 422, name, message: "x" }, { status: 422 })) as unknown as typeof fetch;
+    expect(await sendEmail(email, named("invalid_from_address"))).toBe("unavailable");
+    expect(await sendEmail(email, named("validation_error"))).toBe("rejected");
+    expect(await sendEmail(email, (async () => new Response("not json", { status: 422 })) as unknown as typeof fetch)).toBe("rejected");
     expect(await sendEmail(email, (async () => { throw new Error("network"); }) as unknown as typeof fetch)).toBe("unknown");
   });
 });

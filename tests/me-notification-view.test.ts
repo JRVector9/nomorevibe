@@ -3,7 +3,8 @@ import { translatedCategory } from "@/components/home/i18n";
 import { createTranslator } from "@/lib/i18n/messages";
 import type { NotificationKind } from "@/lib/me/contract";
 import { categoryOfKey, makerKey, makerKeyOf, parseFollowKey } from "@/lib/me/follow-keys";
-import { groupByDay, renderNotification, type NotificationSource } from "@/lib/me/notification-view";
+import { followLabels } from "@/components/me/follow-labels";
+import { clipText, groupByDay, renderNotification, type NotificationSource } from "@/lib/me/notification-view";
 import { categoryDigestWeek } from "@/lib/jobs/me/notifications";
 import { me as koMe } from "@/messages/ko/me";
 import { me as enMe } from "@/messages/en/me";
@@ -14,7 +15,7 @@ const ko = createTranslator("me", koMe);
 const en = createTranslator("me", enMe);
 const koCategory = (category: Parameters<typeof translatedCategory>[0]) => translatedCategory(category, createTranslator("labels", koLabels));
 const enCategory = (category: Parameters<typeof translatedCategory>[0]) => translatedCategory(category, createTranslator("labels", enLabels));
-const product = { slug: "memo-x", name: "메모장X", ogImage: null, category: "Productivity" };
+const product = { slug: "memo-x", name: "메모장X", ogImage: null, category: "Productivity", listed: true };
 
 function row(kind: NotificationKind, payload: Record<string, unknown> = {}, change: Partial<NotificationSource> = {}): NotificationSource {
   return { id: 7, kind, payload, createdAt: new Date("2026-10-20T03:00:00Z"), readAt: null, product, ...change };
@@ -33,8 +34,12 @@ describe("알림 한 줄", () => {
     const reply = renderNotification(row("maker_reply", { maker: "@example-dev", excerpt: "다음 버전에 넣을게요.", feedbackId: "6f8b1c3e-2f7a-4b1d-9c8e-0a1b2c3d4e5f" }), ko, koCategory, "ko");
     expect(plain(reply.parts)).toBe("@example-dev 님이 메모장X에 남긴 내 글에 답장했어요.");
     expect(bold(reply.parts)).toEqual(["@example-dev", "메모장X"]);
-    expect(reply).toMatchObject({ quote: "다음 버전에 넣을게요.", href: "/feedback/6f8b1c3e-2f7a-4b1d-9c8e-0a1b2c3d4e5f", label: "메이커 답장" });
-    expect(plain(renderNotification(row("maker_reply"), ko, koCategory, "ko").parts)).toBe("메이커가 메모장X에 남긴 내 글에 답장했어요.");
+    // 답장은 내 의견·써봤어요 탭에서만 보인다 — 댓글 상세·제품 상세로 보내지 않는다
+    expect(reply).toMatchObject({ quote: "다음 버전에 넣을게요.", href: "/me/opinions", label: "메이커 답장" });
+    const anonymous = renderNotification(row("maker_reply"), ko, koCategory, "ko");
+    expect(plain(anonymous.parts)).toBe("메이커가 메모장X에 남긴 내 글에 답장했어요.");
+    expect(anonymous.href).toBe("/me/tried");
+    expect(renderNotification(row("maker_reply", { feedbackId: "6f8b1c3e-2f7a-4b1d-9c8e-0a1b2c3d4e5f" }), en, enCategory, "en").href).toBe("/en/me/opinions");
 
     expect(plain(renderNotification(row("followed_delisted", { reason: "down" }), ko, koCategory, "ko").parts)).toBe("메모장X 접속이 안 돼 목록에서 잠시 내려갔어요.");
     expect(plain(renderNotification(row("followed_delisted", { reason: "removed" }), ko, koCategory, "ko").parts)).toBe("메모장X 목록에서 내려갔어요.");
@@ -56,19 +61,40 @@ describe("알림 한 줄", () => {
     expect(plain(one.parts)).toBe("디자인에 이번 주 새 프로젝트 12개");
     expect(one).toMatchObject({ href: "/c/design?sort=recent", tile: { name: "디자인", ogImage: null, category: "Design" }, label: "팔로한 분야" });
     const many = renderNotification(row("category_new", { total: 30, categories: [{ category: "dev", count: 20 }, { category: "design", count: 10 }], others: 1 }, { product: null }), en, enCategory, "en");
-    expect(plain(many.parts)).toBe(`30 new projects this week in ${enCategory("Dev")} and 1 more categories`);
+    expect(plain(many.parts)).toBe(`New this week in ${enCategory("Dev")} and 1 more: 30`);
     expect(bold(many.parts)).toEqual([enCategory("Dev")]);
     expect(many.href).toBe("/en/me/following");
+    // 하나·여럿 모두 말이 된다(영어 단수·복수)
+    const single = renderNotification(row("category_new", { total: 1, categories: [{ category: "dev", count: 1 }], others: 0 }, { product: null }), en, enCategory, "en");
+    expect(plain(single.parts)).toBe(`New this week in ${enCategory("Dev")}: 1`);
+    expect(plain(renderNotification(row("inbox_new", { count: 1 }), en, enCategory, "en").parts)).toBe("New feedback on 메모장X: 1");
   });
 
   it("깨진 payload·지워진 제품도 그린다 — 다른 사람 값이 섞일 틈이 없다", () => {
     const broken = renderNotification(row("followed_release", { title: 42 }, { product: null }), ko, koCategory, "ko");
     expect(plain(broken.parts)).toBe("내려간 프로젝트 새 릴리스 ");
     expect(broken.href).toBe("/me/alerts");
-    expect(renderNotification(row("maker_reply", { feedbackId: "../../admin" }), ko, koCategory, "ko").href).toBe("/p/memo-x");
+    expect(renderNotification(row("maker_reply", { feedbackId: "../../admin" }), ko, koCategory, "ko").href).toBe("/me/tried");
     expect(plain(renderNotification(row("inbox_new", { count: 3 }), ko, koCategory, "ko").parts)).toBe("메모장X에 새 의견 3개가 왔어요.");
     expect(renderNotification(row("new_listing_mine", { repo: "hanul/kbd" }), ko, koCategory, "ko")).toMatchObject({ href: "/me/projects" });
     expect(renderNotification(row("followed_release", {}, { readAt: new Date() }), ko, koCategory, "ko").read).toBe(true);
+  });
+
+  it("차단된 팔로 제품은 404 상세가 아니라 팔로 탭으로 보낸다", () => {
+    const banned = renderNotification(row("followed_delisted", { reason: "removed" }, { product: { ...product, listed: false } }), en, enCategory, "en");
+    expect(banned).toMatchObject({ href: "/en/me/following", tile: { name: "메모장X" } });
+    expect(renderNotification(row("followed_release", { title: "v2" }, { product: { ...product, listed: false } }), ko, koCategory, "ko").href).toBe("/me/following");
+  });
+
+  it("알림 글은 글자(코드 포인트)로 잘라 이모지를 반쪽으로 남기지 않는다", () => {
+    const title = `${"가".repeat(79)}🚀 끝`;
+    expect(title.slice(0, 80)).toMatch(/\ud83d$/);
+    const cut = clipText(title, 80);
+    expect(cut).toBe(`${"가".repeat(79)}🚀`);
+    expect(JSON.stringify(cut)).not.toMatch(/\\ud83d/);
+    expect(clipText("짧다", 80)).toBe("짧다");
+    const view = renderNotification(row("maker_reply", { excerpt: `${"a".repeat(119)}🚀b` }), ko, koCategory, "ko");
+    expect(view.quote).toBe(`${"a".repeat(119)}🚀`);
   });
 });
 
@@ -107,6 +133,15 @@ describe("팔로 열쇠", () => {
     expect(makerKeyOf("https://github.com/twitter/bootstrap", "twbs/bootstrap")).toBe("twbs");
     expect(makerKeyOf("https://example.com/app")).toBeNull();
     expect(makerKey("Under_Score")).toBeNull();
+  });
+});
+
+describe("팔로 단추 글자", () => {
+  it("로그인 권하는 글은 팔로하면 실제로 받는 것만 말한다 — 메이커 답장은 팔로로 오지 않는다", () => {
+    const product = followLabels(ko, "product", "a").loginBody, maker = followLabels(ko, "maker", "a").loginBody, category = followLabels(ko, "category", "a").loginBody;
+    expect(new Set([product, maker, category]).size).toBe(3);
+    for (const body of [product, maker, category, ko("following.desc.product"), ko("following.empty.body")]) expect(body).not.toContain("답장");
+    for (const body of [followLabels(en, "product", "a").loginBody, en("following.desc.product"), en("following.empty.body")]) expect(body).not.toMatch(/repl/i);
   });
 });
 

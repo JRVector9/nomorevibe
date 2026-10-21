@@ -174,11 +174,32 @@ class ReleaseSafetyTests(unittest.TestCase):
     def test_integration_preflight_accepts_minimum_worker_credential_scope(self):
         apps = self.integration_apps()
         publisher_keys = {'RELEASE_TAG', 'NEXT_PUBLIC_SITE_URL', 'GITHUB_FEEDBACK_DELIVERY_ENABLED', 'GITHUB_FEEDBACK_APP_ID', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY'}
-        maintenance_keys = publisher_keys | {'WORKER_ROLE'}
+        # 알림 메일을 켜면 maintenance 가 보내므로 발신 키·끄기 링크 서명 비밀도 받는다
+        maintenance_keys = publisher_keys | {'WORKER_ROLE', 'LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM', 'PUBLIC_AUTH_SECRET'}
         for short in ('publisher-mini', 'publisher-m3', 'maintenance-mini', 'maintenance-m3'):
             allowed = maintenance_keys if short.startswith('maintenance') else publisher_keys
             apps[short]['env'] = '\n'.join(line for line in apps[short]['env'].splitlines() if line.split('=', 1)[0] in allowed) + '\n'
         self.assertTrue(release.github_integration_preflight(FakeClient(apps), apps)['configurationMatched'])
+
+    def test_integration_preflight_requires_maintenance_mail_keys_when_email_is_enabled(self):
+        for key in ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM', 'PUBLIC_AUTH_SECRET'):
+            apps = self.integration_apps()
+            apps['maintenance-m3']['env'] = release.replace_setting(apps['maintenance-m3']['env'], key, '')
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key + '_missing'):
+                release.github_integration_preflight(FakeClient(apps), apps)
+            apps = self.integration_apps()
+            apps['maintenance-mini']['env'] = release.replace_setting(apps['maintenance-mini']['env'], key, 'x' * 40)
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key + '_mismatch') as raised:
+                release.github_integration_preflight(FakeClient(apps), apps)
+            self.assertNotIn('mail-secret', str(raised.exception))
+        # 메일을 끈 웹(키 없음)이면 maintenance 에도 키가 없어야 한다 — GitHub 로그인만으로 운영하는 지금 모양은 그대로 통과한다
+        apps = self.integration_apps()
+        for short in ('web-mini', 'web-m3', 'maintenance-mini', 'maintenance-m3'):
+            apps[short]['env'] = '\n'.join(line for line in apps[short]['env'].splitlines() if not line.startswith('LOGIN_EMAIL_')) + '\n'
+        self.assertTrue(release.github_integration_preflight(FakeClient(apps), apps)['configurationMatched'])
+        apps['maintenance-mini']['env'] += 'LOGIN_EMAIL_API_KEY=mail-secret\nLOGIN_EMAIL_FROM=login@example.test\n'
+        with self.assertRaisesRegex(ValueError, 'LOGIN_EMAIL_maintenance_only'):
+            release.github_integration_preflight(FakeClient(apps), apps)
 
     def test_integration_preflight_defaults_legacy_missing_flags_to_false(self):
         apps = self.integration_apps(False)

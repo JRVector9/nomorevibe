@@ -1,6 +1,7 @@
 import "@/components/me/opinions.css";
 import { MeLoginRequired } from "@/components/me/MeLoginRequired";
 import { OpinionList } from "@/components/me/OpinionList";
+import { opinionDetailMessages } from "@/components/me/opinion-messages";
 import { I18nProvider } from "@/lib/i18n/context";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
@@ -16,5 +17,6 @@ export default async function MeOpinionsPage() {
   const [locale, session] = await Promise.all([getRequestLocale(), getMeSession()]);
   if (!session) return <MeLoginRequired tab="opinions" />;
   const [detail, opinions] = await Promise.all([getDictionary(locale, "detail"), listMyOpinions(session.user.id)]);
-  return <I18nProvider locale={locale} dictionaries={{ detail }}><OpinionList opinions={opinions} /></I18nProvider>;
+  // 상세 사전은 탭이 쓰는 몫만 싣고, '지금'은 이 탭을 그린 때(틀은 탭을 옮겨도 다시 그리지 않는다)
+  return <I18nProvider locale={locale} dictionaries={{ detail: opinionDetailMessages(detail) }} now={new Date().toISOString()}><OpinionList opinions={opinions} /></I18nProvider>;
 }

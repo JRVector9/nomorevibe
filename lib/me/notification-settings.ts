@@ -4,8 +4,10 @@ import { notificationSettings } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { emailLoginConfigured } from "@/lib/domain/accounts/email-delivery";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { isLocale, type Locale } from "@/lib/i18n/locales";
+import { DEFAULT_LOCALE, isLocale, type Locale } from "@/lib/i18n/locales";
+import { pathLocale } from "@/lib/i18n/routing";
 import { EMAIL_SETTING_CHOICES, type EmailMode, type EmailSettingKey, type NotificationKind } from "./contract";
+import { maskEmail } from "./profile";
 
 /**
  * 알림 설정(MY7, 로그인 설계 L8) — 사이트 안 알림함은 늘 켜져 있고, 여기서는 메일로 받을지만 정한다.
@@ -84,41 +86,35 @@ function view(row: SettingsRow | undefined): NotificationSettingsView {
   };
 }
 
-/** 메일 받는 주소 — 확인된 이메일 신원. 설정에 고른 신원이 있으면 그것, 없으면 가장 최근에 확인한 것 */
+/**
+ * 메일 받는 주소 — 확인된 이메일 신원. 이메일 신원은 이메일 로그인이 새 계정을 만들 때만 생겨 계정마다 하나다
+ * (notification_settings.email_identity_id 는 읽지도 쓰지도 않는다)
+ */
 export type EmailIdentity = { id: number; address: string };
 async function settingsRow(userId: number): Promise<SettingsRow | undefined> {
   const [row] = await db.select().from(notificationSettings).where(eq(notificationSettings.userId, userId));
   return row;
 }
-async function emailIdentity(userId: number, preferredId: number | null): Promise<EmailIdentity | null> {
-  const rows = await db.select({ id: publicIdentities.id, address: publicIdentities.subject }).from(publicIdentities)
+async function emailIdentity(userId: number): Promise<EmailIdentity | null> {
+  const [row] = await db.select({ id: publicIdentities.id, address: publicIdentities.subject }).from(publicIdentities)
     .where(and(eq(publicIdentities.userId, userId), eq(publicIdentities.provider, "email")))
-    .orderBy(desc(publicIdentities.verifiedAt), desc(publicIdentities.id)).limit(10);
-  return rows.find((row) => row.id === preferredId) ?? rows[0] ?? null;
+    .orderBy(desc(publicIdentities.verifiedAt), desc(publicIdentities.id)).limit(1);
+  return row ?? null;
 }
 
 /** 메일을 받을 사람 — 탈퇴했거나 이메일 신원이 없으면 null */
 export async function emailRecipient(userId: number): Promise<{ settings: NotificationSettingsView; identity: EmailIdentity } | null> {
   const [user] = await db.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt)));
   if (!user) return null;
-  const row = await settingsRow(userId);
-  const identity = await emailIdentity(userId, row?.emailIdentityId ?? null);
+  const [row, identity] = await Promise.all([settingsRow(userId), emailIdentity(userId)]);
   return identity ? { settings: view(row), identity } : null;
-}
-
-/** 보여 줄 주소 — 앞 두 글자와 도메인만. 한 글자 주소는 한 글자만 */
-export function maskEmail(address: string): string {
-  const at = address.lastIndexOf("@");
-  if (at <= 0) return "***";
-  const local = address.slice(0, at);
-  return `${local.slice(0, local.length > 2 ? 2 : 1)}***${address.slice(at)}`;
 }
 
 export type NotificationSettingsResponse = {
   settings: NotificationSettingsView;
   /** 메일 발신 설정이 있는가(LOGIN_EMAIL_*) — 없으면 화면은 메일 칸을 모두 숨긴다 */
   emailConfigured: boolean;
-  /** 메일 받는 주소(가린 것). 이메일 신원이 없으면 null */
+  /** 메일 받는 주소(가린 것, 계정 탭과 같은 lib/me/profile.ts 의 maskEmail). 이메일 신원이 없으면 null */
   emailAddress: string | null;
   /** 발신 설정이 있고 이메일 신원도 있다 — 이때만 메일 칸을 보인다 */
   emailAvailable: boolean;
@@ -126,8 +122,7 @@ export type NotificationSettingsResponse = {
 
 export async function readNotificationSettings(userId: number): Promise<NotificationSettingsResponse> {
   return onPrimary(async () => {
-    const row = await settingsRow(userId);
-    const identity = await emailIdentity(userId, row?.emailIdentityId ?? null);
+    const [row, identity] = await Promise.all([settingsRow(userId), emailIdentity(userId)]);
     const emailConfigured = emailLoginConfigured();
     return { settings: view(row), emailConfigured, emailAddress: identity ? maskEmail(identity.address) : null, emailAvailable: emailConfigured && identity !== null };
   });
@@ -146,14 +141,12 @@ async function liveUser(tx: ProductTransaction, userId: number): Promise<boolean
 export async function saveNotificationSettings(userId: number, input: NotificationSettingsInput): Promise<NotificationSettingsResponse> {
   await onPrimary(() => db.transaction(async (tx) => {
     if (!await liveUser(tx, userId)) return;
-    const identity = await emailIdentity(userId, null);
     const modes = Object.fromEntries(EMAIL_SETTING_KEYS.filter((key) => input[key] !== undefined).map((key) => [key, input[key]]));
     const common = {
       ...modes,
       ...(input.digestWeekday !== undefined ? { digestWeekday: input.digestWeekday } : {}),
       ...(input.digestHour !== undefined ? { digestHour: input.digestHour } : {}),
       ...(input.locale !== undefined ? { locale: input.locale } : {}),
-      ...(identity ? { emailIdentityId: identity.id } : {}),
     };
     await tx.insert(notificationSettings).values({
       userId, ...common, ...(input.newsOptIn !== undefined ? { newsOptInAt: input.newsOptIn ? sql`now()` : null } : {}),
@@ -172,7 +165,8 @@ export async function saveNotificationSettings(userId: number, input: Notificati
 export const UNSUBSCRIBE_KEYS = [...EMAIL_SETTING_KEYS, "weekly", "news"] as const;
 export type UnsubscribeKey = (typeof UNSUBSCRIBE_KEYS)[number];
 
-export async function turnOffEmail(userId: number, key: UnsubscribeKey): Promise<void> {
+/** 끄기 링크가 처음 행을 만들면 그 메일의 언어(locale)를 적는다 — 있던 행의 언어는 그대로 둔다 */
+export async function turnOffEmail(userId: number, key: UnsubscribeKey, locale?: Locale): Promise<void> {
   await onPrimary(() => db.transaction(async (tx) => {
     // 탈퇴했으면(행이 지워졌거나 deleted_at) 끌 것이 없다 — 설정 행을 다시 만들지 않는다
     if (!await liveUser(tx, userId)) return;
@@ -181,8 +175,26 @@ export async function turnOffEmail(userId: number, key: UnsubscribeKey): Promise
     const change: Record<string, unknown> = key === "news" ? { newsOptInAt: null }
       : key === "weekly" ? Object.fromEntries(EMAIL_SETTING_KEYS.filter((name) => current[name] === "weekly").map((name) => [name, "off"]))
         : { [key]: "off" };
-    await tx.insert(notificationSettings).values({ userId, ...change }).onConflictDoUpdate({
+    await tx.insert(notificationSettings).values({ userId, ...change, ...(locale ? { locale } : {}) }).onConflictDoUpdate({
       target: notificationSettings.userId, set: { ...change, updatedAt: sql`now()` },
     });
   }));
+}
+
+/**
+ * 메일 글의 언어를 적는다 — 이메일 로그인을 마친 화면의 언어(돌아갈 주소의 언어). 메일은 이메일 신원이 있는 계정만 받고 그 신원은 이메일 로그인으로만 생기므로,
+ * 알림 설정을 한 번도 열지 않은 계정도 마지막으로 로그인한 화면의 언어로 메일을 받는다. 알림 설정 저장(PUT)도 그 화면의 언어를 적는다.
+ * 탈퇴한 계정에는 행을 만들지 않는다. 메일은 덤이라 던지지 않는다
+ */
+export async function rememberEmailLocale(userId: number, returnTo: string | null | undefined): Promise<void> {
+  try {
+    // 돌아갈 주소(로그인한 화면이 넘긴 것)의 언어 — 한국어는 접두어가 없다
+    const locale = (returnTo ? pathLocale(returnTo) : null) ?? DEFAULT_LOCALE;
+    await onPrimary(() => db.execute(sql`
+      insert into ${notificationSettings} (user_id, locale)
+      select ${publicUsers.id}, ${locale} from ${publicUsers} where ${publicUsers.id} = ${userId} and ${publicUsers.deletedAt} is null
+      on conflict (user_id) do update set locale = excluded.locale, updated_at = now() where ${notificationSettings.locale} <> excluded.locale`));
+  } catch {
+    // 로그인을 막지 않는다 — 다음 로그인·설정 저장 때 다시 적는다
+  }
 }

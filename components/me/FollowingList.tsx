@@ -56,7 +56,7 @@ export function FollowingList({ initial }: { initial: FollowList }) {
 
   const shown = (target: FollowTarget) => group === "all" || group === target;
   const visibleProducts = expanded || group === "product" ? products : products.slice(0, PRODUCT_PREVIEW);
-  const rowLabels = (target: FollowTarget, name: string) => followLabels(t,
+  const rowLabels = (target: FollowTarget, name: string) => followLabels(t, target,
     target === "product" ? t("follow.product", { name }) : target === "maker" ? t("follow.maker", { login: name }) : t("follow.category", { category: name }));
 
   return (
@@ -75,9 +75,9 @@ export function FollowingList({ initial }: { initial: FollowList }) {
             <h2 id="following-products" className="me-box-title">{t("following.group.product")} <span className="me-count">{formatNumber(counts.product, locale)}</span></h2>
             <p className="me-desc">{t("following.desc.product")}</p>
             <ul className="me-rows">
-              {visibleProducts.map((item) => (
-                <li key={item.key} className="me-row">
-                  <Link prefetch={false} href={localePath(locale, `/p/${item.slug}`)} className="me-row-main">
+              {visibleProducts.map((item) => {
+                const body = (
+                  <>
                     <ProductIcon name={item.name} ogImage={item.ogImage?.startsWith("/") ? item.ogImage : null} size={40} category={item.category} />
                     <span className="me-row-text">
                       <span className="me-row-title">{item.name}</span>
@@ -86,10 +86,17 @@ export function FollowingList({ initial }: { initial: FollowList }) {
                           : item.latest ? `${item.latest.title} · ${formatRelativeTime(item.latest.at, now, locale)}` : t("following.product.quiet")}
                       </span>
                     </span>
-                  </Link>
-                  <FollowButton target="product" targetKey={item.key} initial variant="row" labels={rowLabels("product", item.name)} onChange={track("product", item.key)} />
-                </li>
-              ))}
+                  </>
+                );
+                return (
+                  <li key={item.key} className="me-row">
+                    {/* 차단된 제품의 상세는 404 다 — 링크 없이 이름과 «목록에서 내려감», 풀기 단추만 */}
+                    {item.listed ? <Link prefetch={false} href={localePath(locale, `/p/${item.slug}`)} className="me-row-main">{body}</Link>
+                      : <div className="me-row-main">{body}</div>}
+                    <FollowButton target="product" targetKey={item.key} initial variant="row" labels={rowLabels("product", item.name)} onChange={track("product", item.key)} />
+                  </li>
+                );
+              })}
             </ul>
             {visibleProducts.length < products.length && (
               <button type="button" className="me-more" onClick={() => setExpanded(true)}>{t("following.more", { count: formatNumber(products.length - visibleProducts.length, locale) })}</button>

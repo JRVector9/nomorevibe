@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products, productUpdates } from "@/lib/db/schema";
 import { userFollows } from "@/lib/db/me-schema";
@@ -8,24 +8,13 @@ import { PublicAuthError } from "@/lib/domain/accounts/errors";
 import type { Category } from "@/lib/domain/products/categories";
 import { FOLLOW_TARGETS, type FollowTarget } from "./contract";
 import { categoryOfKey, FOLLOW_LIMIT, parseFollowKey, type FollowKey } from "./follow-keys";
+import { listedOwnerSql, ownedBySql, renamedOwnerSql } from "./owner-key-sql";
 
-/**
- * SQL 쪽 같은 열쇠 둘 — 등록한 주소의 계정과 옮겨 간 계정. 상세가 보여 주는 주인은 둘 중 하나다.
- * 두 식은 0108 의 색인(products_listed_owner_idx·products_renamed_owner_idx)과 글자까지 같아야 색인을 탄다 — 아니면 제품 전부를 정규식으로 훑는다
- */
-const listedOwner = sql<string | null>`substring(lower(${products.repoUrl}) from '^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')`;
-const renamedOwner = sql<string | null>`nullif(lower(split_part(${products.repoRenamedTo}, '/', 1)), '')`;
 const visibleProduct = ne(products.status, "banned");
-
-/** 옮겨 간 계정 쪽은 부분 색인(repo_renamed_to is not null)이라 그 조건을 함께 적는다 */
-function ownedBy(keys: string[]) {
-  const list = sql.join(keys.map((key) => sql`${key}`), sql`, `);
-  return sql`(${listedOwner} in (${list}) or (${products.repoRenamedTo} is not null and ${renamedOwner} in (${list})))`;
-}
 
 /**
  * 메이커 열쇠마다 공개 프로젝트 수와 GitHub 에 적힌 대로의 이름(대소문자) — 제품마다 열쇠가 둘일 수 있어 펼쳐 센다.
- * 펼치기 전에 색인으로 그 열쇠의 제품만 고른다(ownedBy)
+ * 펼치기 전에 색인으로 그 열쇠의 제품만 고른다(ownedBySql)
  */
 async function makerProjects(keys: string[]): Promise<Array<{ key: string; login: string; projects: number }>> {
   const list = sql.join(keys.map((key) => sql`${key}`), sql`, `);
@@ -33,17 +22,17 @@ async function makerProjects(keys: string[]): Promise<Array<{ key: string; login
     select k.key, min(k.login) as login, count(distinct ${products.id})::int as projects
       from ${products}
      cross join lateral (values
-       (${listedOwner}, substring(${products.repoUrl} from '(?i)^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')),
-       (${renamedOwner}, nullif(split_part(${products.repoRenamedTo}, '/', 1), ''))
+       (${listedOwnerSql}, substring(${products.repoUrl} from '(?i)^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')),
+       (${renamedOwnerSql}, nullif(split_part(${products.repoRenamedTo}, '/', 1), ''))
      ) as k(key, login)
-     where ${products.status} in ('seeded', 'verified') and ${ownedBy(keys)} and k.key in (${list})
+     where ${products.status} in ('seeded', 'verified') and ${ownedBySql(keys)} and k.key in (${list})
      group by k.key`);
 }
 
 /** 팔로할 대상이 지금 있는가 — 상세가 열리는 제품(차단 아님), 그 주인, 알려진 분야 */
 async function targetExists({ targetType, targetKey }: FollowKey): Promise<boolean> {
   if (targetType === "category") return true;
-  const where = targetType === "product" ? and(eq(products.id, Number(targetKey)), visibleProduct) : and(visibleProduct, ownedBy([targetKey]));
+  const where = targetType === "product" ? and(eq(products.id, Number(targetKey)), visibleProduct) : and(visibleProduct, ownedBySql([targetKey]));
   const [row] = await db.select({ id: products.id }).from(products).where(where).limit(1);
   return Boolean(row);
 }
@@ -53,8 +42,9 @@ export async function follow(userId: number, key: FollowKey): Promise<{ created:
   return onPrimary(async () => {
     if (!await targetExists(key)) throw new PublicAuthError(404, "follow_not_found");
     return db.transaction(async (tx) => {
-      const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
-      if (!user) throw new PublicAuthError(404, "follow_not_found");
+      // 탈퇴(행을 FOR UPDATE 로 잠근다)와 줄을 세운다 — 탈퇴가 끝난 뒤 깨어난 팔로는 줄을 다시 만들지 않는다
+      const [user] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("update");
+      if (!user) throw new PublicAuthError(401, "login_required");
       const [existing] = await tx.select({ userId: userFollows.userId }).from(userFollows).where(and(eq(userFollows.userId, userId),
         eq(userFollows.targetType, key.targetType), eq(userFollows.targetKey, key.targetKey)));
       if (existing) return { created: false };

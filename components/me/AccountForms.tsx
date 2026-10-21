@@ -7,7 +7,7 @@ import { formatDate } from "@/lib/i18n/format";
 import type { MessageKey } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import { DISPLAY_NAME_CHANGE_DAYS } from "@/lib/me/contract";
-import { DISPLAY_NAME_MAX, DISPLAY_NAME_MIN } from "@/lib/me/profile";
+import { DISPLAY_NAME_INPUT_MAX, DISPLAY_NAME_MAX, DISPLAY_NAME_MIN, displayNameDraft } from "@/lib/me/profile";
 import { patchMeAccount } from "./account-store";
 
 /** 계정 탭의 쓰기 단추들 — 닉네임, 내 데이터 받기, 계정 삭제, 로그아웃. 쓰기는 모두 x-csrf-token 을 붙인다 */
@@ -44,7 +44,9 @@ export function ProfileForm({ csrfToken, displayName, nextNameChangeAt }: { csrf
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "error"; key: ErrorKey | "account.nicknameSaved" } | null>(null);
   const locked = next !== null && Date.parse(next) > now.getTime();
-  const length = [...draft.trim()].length;
+  // 서버(normalizeDisplayName)와 같게 센다 — NFC·가운데 공백 하나로 맞춘 뒤 코드 포인트로
+  const normalized = displayNameDraft(draft);
+  const length = [...normalized].length;
   const valid = length >= DISPLAY_NAME_MIN && length <= DISPLAY_NAME_MAX;
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -87,14 +89,14 @@ export function ProfileForm({ csrfToken, displayName, nextNameChangeAt }: { csrf
       {open && (
         <form id={formId} className="me-edit" onSubmit={submit} aria-label={t("account.nicknameNew")}>
           <label className="me-edit-k" htmlFor={`${formId}-input`}>{t("account.nicknameNew")}</label>
-          <input id={`${formId}-input`} className="me-input" value={draft} maxLength={DISPLAY_NAME_MAX + 8} autoComplete="off" autoFocus disabled={busy}
+          <input id={`${formId}-input`} className="me-input" value={draft} maxLength={DISPLAY_NAME_INPUT_MAX} autoComplete="off" autoFocus disabled={busy}
             aria-invalid={!valid || undefined} onChange={(event) => setDraft(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }} />
           <div className="me-edit-foot">
             <span className={`me-count${length > DISPLAY_NAME_MAX ? " over" : ""}`}>{length}/{DISPLAY_NAME_MAX}</span>
             <span className="me-acts">
               <button type="button" className="me-btn" onClick={() => setOpen(false)} disabled={busy}>{t("account.nicknameCancel")}</button>
-              <button type="submit" className="me-btn me-btn-pri" disabled={busy || !valid || draft.trim() === name}>{t("account.nicknameSave")}</button>
+              <button type="submit" className="me-btn me-btn-pri" disabled={busy || !valid || normalized === name}>{t("account.nicknameSave")}</button>
             </span>
           </div>
         </form>

@@ -1,6 +1,7 @@
 import { AlertSettings } from "@/components/me/AlertSettings";
 import { AlertsView } from "@/components/me/AlertsView";
 import { MeLoginRequired } from "@/components/me/MeLoginRequired";
+import { MeNow } from "@/components/me/MeNow";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { loadInbox } from "@/lib/me/inbox";
 import { meMetadata } from "@/lib/me/metadata";
@@ -14,5 +15,5 @@ export default async function MeAlertsPage() {
   const session = await getMeSession();
   if (!session) return <MeLoginRequired tab="alerts" />;
   const inbox = await loadInbox(session.user.id, await getRequestLocale());
-  return <AlertsView initial={inbox} settings={<AlertSettings userId={session.user.id} />} />;
+  return <MeNow><AlertsView initial={inbox} settings={<AlertSettings csrfToken={session.csrfToken} />} /></MeNow>;
 }

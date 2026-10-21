@@ -1,7 +1,7 @@
 import { eq, inArray, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { jobs, productHealth, products, productUpdates, rateLimits } from "@/lib/db/schema";
+import { cdnPurges, jobs, productHealth, products, productUpdates, rateLimits } from "@/lib/db/schema";
 import { notifications, userFollows } from "@/lib/db/me-schema";
 import { publicSessions, publicUsers } from "@/lib/db/public-user-schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
@@ -237,6 +237,18 @@ describe("알림 만들기", () => {
     expect(rows.some((row) => row.userId === stranger.id)).toBe(false);
   });
 
+  it("followed_release — 제목은 글자로 자른다. 이모지가 80번째에 걸려도 팔로한 사람 모두에게 들어간다", async () => {
+    const { notifyNewReleases } = await import("@/lib/me/notifications");
+    const [a, b] = [await user(), await user()];
+    const p = await product({ status: "verified" });
+    await db.insert(userFollows).values([a, b].map((who) => ({ userId: who.id, targetType: "product" as const, targetKey: String(p.id) })));
+    const title = `${"v".repeat(79)}🚀 release`;
+    await db.insert(productUpdates).values({ slug: p.slug, sourceKind: "github_release", dedupeKey: "emoji", title, observedAt: new Date(), publishedAt: new Date() });
+    expect(await notifyNewReleases(p.id)).toBe(2);
+    const rows = await db.select().from(notifications);
+    expect(rows.map((row) => row.payload.title)).toEqual([`${"v".repeat(79)}🚀`, `${"v".repeat(79)}🚀`]);
+  });
+
   it("알림 넣기가 실패해도 부른 쪽(메이커 업데이트·심사)은 그대로 끝난다", async () => {
     const { createMakerUpdate } = await import("@/lib/domain/evidence/maker");
     const { notifyCommentReviewed } = await import("@/lib/me/notifications");
@@ -266,6 +278,43 @@ describe("알림 만들기", () => {
     expect(await notifyMakerNewProject(p.slug)).toBe(0);
     expect(await notifyMakerNewProject(profile.slug)).toBe(0);
     expect(await db.select().from(notifications)).toEqual([expect.objectContaining({ userId: a.id, kind: "maker_new_project", productId: p.id, payload: { maker: "Memo-Lab" } })]);
+  });
+});
+
+describe("알림함과 팔로 탭의 차단된 제품", () => {
+  it("차단된 팔로 제품의 알림은 404 상세 대신 팔로 탭으로, 팔로 탭 줄은 listed=false", async () => {
+    const a = await user();
+    const p = await product();
+    await db.insert(userFollows).values({ userId: a.id, targetType: "product", targetKey: String(p.id) });
+    await db.insert(notifications).values({ userId: a.id, kind: "followed_delisted", productId: p.id, payload: { reason: "removed" }, dedupeKey: "d1" });
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, p.id));
+    const body = await inbox(a, "?locale=en");
+    expect(body.items).toEqual([expect.objectContaining({ href: "/en/me/following", tile: expect.objectContaining({ name: p.name }) })]);
+    expect((await list(a)).products).toEqual([expect.objectContaining({ productId: p.id, listed: false })]);
+  });
+});
+
+describe("상세 머리의 메이커 팔로", () => {
+  async function makerSlot(p: { id: number; name: string; repoUrl: string | null }, observed: string | null) {
+    const { productFollowSlots } = await import("@/components/me/FollowSlot");
+    const slot = productFollowSlots(p, observed)?.maker as { type: (props: unknown) => Promise<{ props: { targetKey: string; name: string } } | null>; props: unknown } | null;
+    return slot ? slot.type(slot.props) : null;
+  }
+
+  it("머리가 보여 주는 주인과 서버가 받는 열쇠가 같을 때만 단추를 단다 — 옮긴 직후(repo_renamed_to 전)에는 달지 않는다", async () => {
+    const p = await product({ repoUrl: "https://github.com/old-owner/app" });
+    // 사실 수집은 옮겨 간 정식 주소를 먼저 안다 — 하루 저장소 확인이 repo_renamed_to 를 적기 전
+    expect(await makerSlot(p, "https://github.com/NewOrg/app")).toBeNull();
+    const a = await user();
+    expect((await put(a, { targetType: "maker", targetKey: "neworg" })).status).toBe(404);
+    await db.update(products).set({ repoRenamedTo: "NewOrg/app" }).where(eq(products.id, p.id));
+    const { clearAllMemos } = await import("@/lib/cache/memo");
+    clearAllMemos();
+    expect((await makerSlot(p, "https://github.com/NewOrg/app"))?.props).toMatchObject({ targetKey: "neworg", name: "NewOrg" });
+    expect((await put(a, { targetType: "maker", targetKey: "neworg" })).status).toBe(200);
+    // 옮기지 않은 저장소는 그대로
+    const same = await product({ repoUrl: "https://github.com/Memo-Lab/widget" });
+    expect((await makerSlot(same, null))?.props).toMatchObject({ targetKey: "memo-lab", name: "Memo-Lab" });
   });
 });
 
@@ -307,7 +356,7 @@ describe("알림 잡", () => {
 
     // 처음에는 지금 끝에서 시작한다 — 그 전에 내려간 것(before)은 알리지 않는다
     const start = await sendDelistedNotifications(ctx<{ purgeId: number }>().ctx);
-    expect(start.cursor).toEqual({ purgeId: expect.any(Number), floor: start.cursor?.purgeId });
+    expect(start.cursor).toEqual({ purgeId: expect.any(Number), floor: start.cursor?.purgeId, down: {} });
     expect(await db.select().from(notifications)).toEqual([]);
 
     await db.update(products).set({ status: "banned" }).where(eq(products.id, banned.id));
@@ -317,6 +366,49 @@ describe("알림 잡", () => {
     expect(rows.map((row) => [row.userId, row.productId, row.payload]).sort()).toEqual([
       [a.id, banned.id, { reason: "removed" }], [a.id, down.id, { reason: "down" }],
     ].sort());
+  });
+
+  it("notification-delisted — 차단 줄이 적힌 뒤 팔로한 사람에게는 그 차단을 알리지 않고, 하루 넘은 줄은 다시 보지 않는다", async () => {
+    const { sendDelistedNotifications } = await import("@/lib/jobs/me/notifications");
+    const [early, later] = [await user(), await user()];
+    const [first, old] = [await product(), await product()];
+    await db.insert(userFollows).values([first, old].map((p) => ({ userId: early.id, targetType: "product" as const, targetKey: String(p.id), createdAt: new Date(Date.now() - 3_600_000) })));
+    const start = await sendDelistedNotifications(ctx<{ purgeId: number }>().ctx);
+    // 차단 → 풀기 → 그 사이 later 가 팔로 → 다시 차단. 두 번째 차단만 later 에게 간다
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, first.id));
+    await db.update(products).set({ status: "seeded" }).where(eq(products.id, first.id));
+    await db.insert(userFollows).values({ userId: later.id, targetType: "product", targetKey: String(first.id) });
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, first.id));
+    const next = await sendDelistedNotifications(ctx(start.cursor ?? null).ctx);
+    const rows = await db.select().from(notifications);
+    expect(rows.filter((row) => row.userId === early.id)).toHaveLength(2);
+    expect(rows.filter((row) => row.userId === later.id)).toHaveLength(1);
+
+    // 지운 지 오래된(하루 넘은) 줄은 커서 앞 500개 안이어도 다시 넣지 않는다 — 90일 뒤 지운 알림이 새로 생기지 않게
+    await db.update(products).set({ status: "banned" }).where(eq(products.id, old.id));
+    const after = await sendDelistedNotifications(ctx(next.cursor ?? null).ctx);
+    await db.update(cdnPurges).set({ createdAt: new Date(Date.now() - 2 * 86_400_000) });
+    await db.delete(notifications);
+    await sendDelistedNotifications(ctx(after.cursor ?? null).ctx);
+    expect(await db.select().from(notifications)).toEqual([]);
+  });
+
+  it("notification-delisted — 닿지 않음 알림은 (제품, 시작 시각)마다 한 번 넣고 커서에 남긴다. 다시 살아나면 지운다", async () => {
+    const { sendDelistedNotifications } = await import("@/lib/jobs/me/notifications");
+    const a = await user();
+    const p = await product();
+    const since = new Date(Date.now() - 86_400_000);
+    await db.insert(userFollows).values({ userId: a.id, targetType: "product", targetKey: String(p.id), createdAt: new Date(since.getTime() - 86_400_000) });
+    await db.insert(productHealth).values({ slug: p.slug, status: 0, failures: 3, downSince: since, checkedAt: new Date() });
+    const first = await sendDelistedNotifications(ctx<{ purgeId: number; down?: Record<string, string> }>().ctx);
+    expect(first.cursor?.down).toEqual({ [String(p.id)]: since.toISOString() });
+    expect(await db.select().from(notifications)).toHaveLength(1);
+    // 커서에 남은 것은 다시 넣어 보지 않는다 — 알림을 지워도 다시 생기지 않는 것으로 확인한다
+    await db.delete(notifications);
+    const second = await sendDelistedNotifications(ctx(first.cursor ?? null).ctx);
+    expect(await db.select().from(notifications)).toEqual([]);
+    await db.update(productHealth).set({ failures: 0, downSince: null }).where(eq(productHealth.slug, p.slug));
+    expect((await sendDelistedNotifications(ctx(second.cursor ?? null).ctx)).cursor?.down).toEqual({});
   });
 
   it("notification-delisted — 커서 뒤의 차단만 보고 다시 돌아도 한 줄", async () => {

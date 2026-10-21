@@ -764,6 +764,13 @@
       "when": 1794086400020,
       "tag": "0108_mypage",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1794086400021,
+      "tag": "0109_mypage_review",
+      "breakpoints": true
     }
   ]
 }

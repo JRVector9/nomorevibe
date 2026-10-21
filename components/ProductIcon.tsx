@@ -45,12 +45,15 @@ export function ProductIcon({
   ogImage,
   size,
   category,
+  loading,
 }: {
   name: string;
   ogImage: string | null;
   size: number;
   /** 모노그램 바탕색을 정하는 분야. 없으면 이름으로 색을 고른다 */
   category?: string | null;
+  /** lazy 면 화면 가까이 올 때 받는다 — 숨은(display:none) 사본은 받지 않는다. 없으면 바로 받는다 */
+  loading?: "lazy" | "eager";
 }) {
   const presentation = ogImage ? thumbnailPresentation(ogImage) : null;
   if (ogImage && presentation?.icon) {
@@ -67,6 +70,7 @@ export function ProductIcon({
         alt={name}
         width={size}
         height={size}
+        loading={loading}
         className="shrink-0 rounded-[10px] border border-line bg-bg-soft object-contain"
         style={{ width: size, height: size, padding }}
       />

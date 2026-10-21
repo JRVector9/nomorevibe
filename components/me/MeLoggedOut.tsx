@@ -27,7 +27,7 @@ export function MeLoggedOut({ locale, t, loginEnabled }: { locale: Locale; t: Tr
             </Suspense>
             <Link prefetch={false} className="me-link" href={localePath(locale, "/")}>{t("out.continue")}</Link>
           </div>
-        ) : <p className="me-note" role="status">{t("out.unavailable")}</p>}
+        ) : <p className="me-aside" role="status">{t("out.unavailable")}</p>}
       </div>
       <ul className="me-ben">
         {BENEFITS.map(([icon, key]) => (
