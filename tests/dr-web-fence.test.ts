@@ -357,7 +357,7 @@ it("every admin server action and every write route handler goes through the web
     expect(source.match(/^export async function (\w+)/gm)?.filter(line => !line.endsWith("codexOperation")) ?? [], file).toEqual([]);
     wrapped += source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)?.length ?? 0;
   }
-  expect(wrapped).toBe(53);
+  expect(wrapped).toBe(54);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

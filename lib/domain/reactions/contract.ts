@@ -17,10 +17,15 @@ export const REACTION_SUMMARY_MIN = 3;
 export const TRIED_VERIFY_DAYS = 7;
 /** 이 브라우저 목록·합치기가 한 번에 받는 slug 수 */
 export const REACTION_SLUG_BATCH = 100;
+/** 평가 쓰기 몸통 상한 — 한 줄 140자를 \u 로 적어도 든다 */
+export const REACTION_BODY_BYTES = 4 * 1024;
+/** 합치기 몸통 상한 — slug 100개(각 80자)와 따옴표·쉼표가 든다 */
+export const REACTION_MERGE_BODY_BYTES = 10 * 1024;
 
 export type ReactionDevice = "phone" | "desktop";
+/** tags·comment 가 undefined 면 보내지 않은 것 — 남겨 둔 값을 그대로 둔다(판의 평가 단추는 평가만 보낸다) */
 export type ReactionWrite = {
-  verdict: ReactionVerdict; tags: ReactionTag[]; comment: string | null;
+  verdict: ReactionVerdict; tags: ReactionTag[] | undefined; comment: string | null | undefined;
   source: ReactionSource; device: ReactionDevice | null; locale: Locale;
   /** 숨은 칸(봇 미끼)에 값이 있었다 — 성공처럼 답하고 버린다 */
   trapped: boolean;
@@ -37,7 +42,7 @@ export type ReactionListItem = ReactionMine & {
 };
 
 export type ReactionErrorCode = "reaction_invalid" | "reaction_not_found" | "reaction_rate_limited" | "reaction_change_limited"
-  | "reaction_refused" | "reaction_unavailable" | "reactions_disabled" | "visitor_required";
+  | "reaction_refused" | "reaction_unavailable" | "reactions_disabled" | "visitor_required" | "reaction_conflict";
 
 export class ReactionError extends Error {
   constructor(public readonly code: ReactionErrorCode, public readonly status: number) {
@@ -49,9 +54,8 @@ export class ReactionError extends Error {
 const SLUG = /^[a-z0-9][a-z0-9-]{0,79}$/;
 export const isReactionSlug = (value: unknown): value is string => typeof value === "string" && SLUG.test(value);
 
-/** 몸통은 읽기 전에 막는다 — 한 줄 140자를 \u 로 적어도 4KB 안에 든다 */
-export async function readReactionJson(request: Request): Promise<unknown> {
-  const limit = 4 * 1024;
+/** 몸통은 읽기 전에 막는다 */
+export async function readReactionJson(request: Request, limit = REACTION_BODY_BYTES): Promise<unknown> {
   if (request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") throw new ReactionError("reaction_invalid", 415);
   if (Number(request.headers.get("content-length")) > limit || !request.body) throw new ReactionError("reaction_invalid", 400);
   const reader = request.body.getReader();
@@ -85,11 +89,14 @@ export function validateReactionWrite(input: unknown): ReactionWrite {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new ReactionError("reaction_invalid", 400);
   const value = input as Record<string, unknown>;
   if (!REACTION_VERDICTS.includes(value.verdict as ReactionVerdict)) throw new ReactionError("reaction_invalid", 400);
-  const rawTags = value.tags ?? [];
-  if (!Array.isArray(rawTags) || rawTags.some((tag) => !REACTION_TAGS.includes(tag as ReactionTag))) throw new ReactionError("reaction_invalid", 400);
-  // 같은 태그를 두 번 보내면 한 번으로 — 순서는 고정 어휘 순서
-  const tags = REACTION_TAGS.filter((tag) => rawTags.includes(tag));
-  if (tags.length > REACTION_TAG_LIMIT) throw new ReactionError("reaction_invalid", 400);
+  let tags: ReactionTag[] | undefined;
+  if (value.tags !== undefined) {
+    const rawTags = value.tags ?? [];
+    if (!Array.isArray(rawTags) || rawTags.some((tag) => !REACTION_TAGS.includes(tag as ReactionTag))) throw new ReactionError("reaction_invalid", 400);
+    // 같은 태그를 두 번 보내면 한 번으로 — 순서는 고정 어휘 순서
+    tags = REACTION_TAGS.filter((tag) => rawTags.includes(tag));
+    if (tags.length > REACTION_TAG_LIMIT) throw new ReactionError("reaction_invalid", 400);
+  }
   const source = value.source ?? "panel";
   if (!REACTION_SOURCES.includes(source as ReactionSource)) throw new ReactionError("reaction_invalid", 400);
   const device = value.device ?? null;
@@ -97,7 +104,7 @@ export function validateReactionWrite(input: unknown): ReactionWrite {
   const trap = value.website;
   if (trap !== undefined && typeof trap !== "string") throw new ReactionError("reaction_invalid", 400);
   return {
-    verdict: value.verdict as ReactionVerdict, tags, comment: normalizeReactionComment(value.comment),
+    verdict: value.verdict as ReactionVerdict, tags, comment: value.comment === undefined ? undefined : normalizeReactionComment(value.comment),
     source: source as ReactionSource, device, locale: isLocale(value.locale) ? value.locale : DEFAULT_LOCALE,
     trapped: Boolean(trap?.trim()),
   };
@@ -106,15 +113,15 @@ export function validateReactionWrite(input: unknown): ReactionWrite {
 /** 바로 걸리는 주소꼴 — 흔한 최상위 도메인만 본다("Node.js"·"v2.0" 같은 말은 걸지 않는다) */
 const LINK = /https?:\/\/|www\.|\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|app|dev|co|kr|me|ly|gg|so|to|xyz|site|online|info|biz|link|click|top|shop|store|page|cc|tv|us|uk|jp|cn|ru|in)\b/i;
 const MENTION = /(?:^|[^\p{L}\p{N}_.])@[\p{L}\p{N}_][\p{L}\p{N}_.-]{1,}|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}.-]+\.[a-z]{2,}/iu;
-/** 같은 글자 여덟 번 이상, 같은 낱말 네 번 이상 */
-const REPEATED_CHARACTER = /(.)\1{7,}/u;
+/** 같은 글자 여덟 번 이상, 같은 낱말 네 번 이상. 웃음·울음(ㅋ·ㅎ·ㅠ, 哈)·문장 부호·이모지·숫자를 늘여 쓰는 것은 흔한 말투라 세지 않는다 */
+const REPEATED_CHARACTER = /([^\s\p{P}\p{S}\p{N}\u3131-\u318e哈呵嘿])\1{7,}/u;
 const REPEATED_WORD = /(?:^|\s)(\S+)(?:\s+\1){3,}(?:\s|$)/u;
 /** 제품 스팸 검사기의 미끼 문구(lib/crawl/spam-signals.ts LURE_PHRASES)와 같은 결의 말 */
 const LURE = /visit this (?:link|page) to download|download the application|click the download button|free download for windows|무료\s*크레딧|텔레그램|카톡\s*문의|오픈\s*채팅/i;
 
 /**
- * 익명 한 줄 자동 검사 — 걸리면 거부하지 않고 사람에게 넘긴다(보류). 로그인 댓글(initialFeedbackReview)은 링크 넷부터지만,
- * 익명 한 줄은 링크 하나부터 보류한다. 이유는 comment_reason(40자)에 남는다.
+ * 익명 한 줄 자동 검사 — 걸리면 거부하지 않고 사람에게 넘긴다(보류, /admin/reactions 가 공개·숨김을 정한다).
+ * 로그인 댓글(initialFeedbackReview)은 링크 넷부터지만, 익명 한 줄은 링크 하나부터 보류한다. 이유는 comment_reason(40자)에 남는다.
  */
 export function reviewReactionComment(comment: string): { state: Exclude<ReactionCommentState, "rejected">; reason: string | null } {
   if (LINK.test(comment)) return { state: "held", reason: "link" };

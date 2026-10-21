@@ -62,19 +62,19 @@ export function ipBucket(ip: string): string {
  * 쓰기 한도(피드백 설계 4.2) — 계정 또는 이 브라우저 시간당 30, 신뢰할 수 있는 IP 가 있으면 IP 묶음(IPv6 는 /64) 시간당 60.
  * 쿠키를 지우고 다시 오는 연타는 IP 묶음이 막는다. IP 는 해시로만 rate_limits 열쇠에 남는다.
  * 신뢰할 IP 가 없을 때의 익명 연타는 제품마다 새 익명 줄 한도(putReaction untrustedIp)가 랭킹에서 뺀다.
+ * 제품 하나의 변경 급증(시간당 120)은 putReaction 이 실제로 바뀐 쓰기만 세어 랭킹에서 뺀다.
+ * 이 브라우저 목록 읽기(browser)는 같은 모양에 따로 센다 — 한 번에 slug 100개의 해시를 만들고 주 DB 를 읽는다.
  */
-export async function enforceReactionLimits(request: Request, userId: number | null, visitor: string | null): Promise<void> {
+const LIMITS = { write: { prefix: "reaction", owner: 30, ip: 60 }, browser: { prefix: "reaction-browser", owner: 300, ip: 1_200 } } as const;
+
+export async function enforceReactionLimits(request: Request, userId: number | null, visitor: string | null, kind: keyof typeof LIMITS = "write"): Promise<void> {
+  const limits = LIMITS[kind];
   const visitorKey = visitor ? reactionRateKey(visitor) : null;
   const owner = userId ? `user:${userId}` : visitorKey ? `visitor:${visitorKey}` : null;
-  if (owner && !await rateLimit(`reaction:${owner}`, 30, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
+  if (owner && !await rateLimit(`${limits.prefix}:${owner}`, limits.owner, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
   const ip = trustedClientIp(request);
   const ipKey = ip ? productVisitorHash("ip:", ipBucket(ip)) : null;
-  if (ipKey && !await rateLimit(`reaction:ip:${ipKey}`, 60, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
-}
-
-/** 제품 하나에 들어오는 신호가 시간당 120 을 넘으면 받기는 하되 랭킹·공개 요약에서 뺀다 */
-export async function reactionFlood(slug: string): Promise<boolean> {
-  return !await rateLimit(`reaction:product:${slug}`, 120, HOUR_MS);
+  if (ipKey && !await rateLimit(`${limits.prefix}:ip:${ipKey}`, limits.ip, HOUR_MS)) throw new ReactionError("reaction_rate_limited", 429);
 }
 
 export function reactionErrorResponse(error: unknown): Response {

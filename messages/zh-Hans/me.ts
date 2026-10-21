@@ -200,6 +200,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "try.error.changes": "今天不能再修改这条评价了，明天可以再改。",
   "try.error.invalid": "无法发送此内容。一句话最多 140 个字符。",
   "try.error.failed": "未能保存，请稍后再试。",
+  "try.error.load": "未能读取你的评价，请稍后再点一次。",
   "tried.filter": "按评价筛选",
   "tried.all": "全部",
   "tried.edit": "修改",

@@ -200,6 +200,7 @@ export const me = defineCatalog<typeof KoreanMe>()({
   "try.error.changes": "You can't change this rating again today. Try again tomorrow.",
   "try.error.invalid": "This can't be sent. Notes are up to 140 characters.",
   "try.error.failed": "Couldn't save. Please try again in a moment.",
+  "try.error.load": "Couldn't load your rating. Please tap again in a moment.",
   "tried.filter": "Filter by rating",
   "tried.all": "All",
   "tried.edit": "Edit",

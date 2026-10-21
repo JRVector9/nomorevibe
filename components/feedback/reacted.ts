@@ -1,8 +1,9 @@
 import { BROWSER_LIST_LIMIT, BROWSER_REACTED_KEY } from "@/lib/me/contract";
 
 /**
- * 이 브라우저가 평가한 제품 slug(Q4) — localStorage, 최근 것이 앞, 최대 500개.
+ * 이 브라우저가 익명으로 평가한 제품 slug(Q4) — localStorage, 최근 것이 앞, 최대 500개.
  * 익명 평가 행은 제품별 해시라 서버가 방문자 기준으로 모아 찾을 수 없다. 로그아웃 목록과 계정으로 옮기기가 이 목록으로 찾는다.
+ * 계정으로 남긴 평가는 넣지 않는다(이 브라우저의 익명 행이 아니다). 서버에 익명 행이 없다고 확인된 slug 는 뺀다.
  */
 
 const CHUNK = 100;
@@ -35,6 +36,35 @@ export function rememberReacted(slug: string): void {
 
 export function forgetReacted(slug: string): void {
   persist(reactedSlugs().filter((item) => item !== slug));
+}
+
+/** 이 브라우저가 이 제품을 익명으로 평가했다고 기억하나 — 저장소를 못 읽으면 null(모름: 서버가 찾아본다) */
+export function hasReacted(slug: string): boolean | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(BROWSER_REACTED_KEY) ?? "[]") as unknown;
+    return Array.isArray(value) ? value.includes(slug) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 물어본 slug 중 이 쿠키의 익명 행이 없다고 답한 것을 뺀다 — 옮긴·지운 평가, 계정으로 남긴 평가 */
+export function pruneReacted(asked: string[], found: string[]): void {
+  const kept = new Set(found);
+  const missing = new Set(asked.filter((slug) => !kept.has(slug)));
+  if (missing.size) persist(reactedSlugs().filter((slug) => !missing.has(slug)));
+}
+
+/** 이 브라우저 목록(/api/me/reactions/browser) — 100개씩 함께 보낸다. 하나라도 못 읽으면 던진다(빼지 않는다) */
+export async function fetchBrowserReactions<T extends { slug: string }>(slugs: string[]): Promise<T[]> {
+  const batches = await Promise.all(reactedChunks(slugs).map(async (chunk) => {
+    const response = await fetch(`/api/me/reactions/browser?slugs=${encodeURIComponent(chunk.join(","))}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("reactions_unavailable");
+    return ((await response.json()) as { reactions: T[] }).reactions;
+  }));
+  const found = batches.flat();
+  pruneReacted(slugs, found.map((item) => item.slug));
+  return found;
 }
 
 /** 100개씩 나눠 보낸다 — /api/me/reactions/browser 와 /merge 의 한 번 상한 */
@@ -74,17 +104,13 @@ function postponed(userId: number): boolean {
 export async function browserReactionsToMerge(userId: number): Promise<string[]> {
   if (postponed(userId)) return [];
   const done = new Set(mergedSlugs()[userId] ?? []);
-  const found: string[] = [];
-  for (const slugs of reactedChunks(reactedSlugs().filter((slug) => !done.has(slug)))) {
-    try {
-      const response = await fetch(`/api/me/reactions/browser?slugs=${encodeURIComponent(slugs.join(","))}`, { cache: "no-store" });
-      if (!response.ok) return [];
-      found.push(...((await response.json()) as { reactions: { slug: string }[] }).reactions.map((item) => item.slug));
-    } catch {
-      return [];
-    }
+  const slugs = reactedSlugs().filter((slug) => !done.has(slug));
+  if (slugs.length === 0) return [];
+  try {
+    return (await fetchBrowserReactions(slugs)).map((item) => item.slug);
+  } catch {
+    return [];
   }
-  return found;
 }
 
 /**
@@ -106,6 +132,9 @@ export async function mergeBrowserReactions(userId: number, csrfToken: string, s
   }
   const records = mergedSlugs();
   writeJson(MERGED_KEY, { ...records, [userId]: [...new Set([...(records[userId] ?? []), ...slugs])].slice(-BROWSER_LIST_LIMIT) });
+  // 옮긴 평가는 이제 계정 행이다 — 이 브라우저의 익명 목록에서 뺀다
+  const moved = new Set(slugs);
+  persist(reactedSlugs().filter((slug) => !moved.has(slug)));
   return merged;
 }
 
