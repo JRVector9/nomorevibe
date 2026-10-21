@@ -5,7 +5,7 @@ import { operationsObservations, products } from "@/lib/db/schema";
 import { RISING_FRESH_DAYS, RISING_MAX_STARS, risingFreshDays, starGainPerDay } from "@/lib/domain/products/repository";
 import { logger } from "@/lib/observability/logger";
 import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
-import { PRODUCT_IDENTITY, talkPublicProduct } from "@/lib/social/talk";
+import { talkPublicProduct } from "@/lib/social/talk";
 import { planXQueryRepositories, type XQueryCandidate } from "@/lib/social/x-query";
 import { parseXQueryRequest, xQueryDigest, X_QUERY_KEY, X_QUERY_MAX_BODY_BYTES, type XQueryRequest } from "./x-query";
 import { readBody } from "./x-status-receive";
@@ -62,6 +62,8 @@ export async function verifyXQueryRequest(request: Request, nowMs = Date.now()):
   return { ok: true, value: { request: parsed, sentAt, signedWith: current ? "current" : "previous" } };
 }
 
+/** products_repository_identity_idx 와 같은 식(lib/social/talk.ts·admin.ts) */
+const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
 /** 정규화한 저장소 주소에서 소문자 owner/repo — github.com 저장소 주소가 아니면 null */
 const REPOSITORY = sql<string | null>`substring(${PRODUCT_IDENTITY} from '^https://github[.]com/([a-z0-9-]+/[a-z0-9_.-]+)$')`;
 

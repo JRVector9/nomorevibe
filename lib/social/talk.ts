@@ -20,7 +20,7 @@ import { repositoryTalkScore, TALK_VISIBLE_MS, talkQualifies, type TalkMode } fr
 export const TALK_DETAIL_MS = 90 * 86_400_000;
 const RANKED_TARGETS: SocialLinkTarget[] = ["repo", "path"];
 /** products_repository_identity_idx 와 같은 식 — 저장소 키로 제품을 찾을 때 이 인덱스를 탄다(ai-level-refresh.ts) */
-export const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
+const PRODUCT_IDENTITY = sql`regexp_replace(regexp_replace(lower(rtrim(${products.repoUrl}, '/')), '^https?://(www[.])?', 'https://'), '[.]git$', '')`;
 /** 쓸 때 만든다 — 모듈을 불러오는 것만으로 제품 조건을 읽지 않게(홈 화면 테스트가 그 모듈을 가짜로 바꾼다) */
 const publicProduct = () => and(inArray(products.status, ["seeded", "verified"]), notDown, listedByDefault, notAuditHeld, sql`not ${repoGone}`);
 const notExcluded = sql`not exists (select 1 from ${socialTalkDecisions} d where d.repository_key = ${socialPosts.repositoryKey} and d.excluded)`;
