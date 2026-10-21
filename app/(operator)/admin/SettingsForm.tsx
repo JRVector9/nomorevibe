@@ -81,8 +81,20 @@ export function SettingsForm({ settings, version = "", yields = {}, secondContro
   settings: CrawlSettings; version?: string; yields?: Record<string, SignalYieldView>; secondControls?: React.ReactNode;
 }) {
   const [generation, setGeneration] = useState(0);
+  /*
+   * 다른 곳(다른 탭·심사 큐의 2차 표 바꾸기)에서 설정 판이 바뀐 채로 다시 그려지면(자동 갱신·새로고침), 고친 것이 없을 때만 폼을 새 값으로
+   * 다시 연다 — 기준 값(baseline)과 판(formVersion)이 옛 값에 머물면 저장이 늘 거절된다. 고친 것이 있으면 그대로 두고(저장이 옛 판으로
+   * 거절된다), 이 폼이 막 저장한 판이면 다시 열지 않는다("저장했습니다"를 남긴다).
+   */
+  const [dirty, setDirty] = useState(false);
+  const [saved, setSaved] = useState<string | null>(null);
+  const [seenVersion, setSeenVersion] = useState(version);
+  if (version !== seenVersion && !dirty) {
+    setSeenVersion(version);
+    if (version !== saved) setGeneration((g) => g + 1);
+  }
   return <SettingsFormBody key={generation} settings={settings} version={version} yields={yields} secondControls={secondControls}
-    onRevert={() => setGeneration((g) => g + 1)} />;
+    onRevert={() => setGeneration((g) => g + 1)} onDirtyChange={setDirty} onSaved={setSaved} />;
 }
 
 /** 바뀐 값이 있는 채로 떠나려 할 때 묻는다 — 창 닫기·새로고침·외부 이동은 beforeunload, 관리자 안의 이동은 링크 클릭 */
@@ -115,10 +127,16 @@ function useLeaveGuard(dirty: boolean, onLeave: (href: string) => void) {
   }, [dirty, onLeave]);
 }
 
-function SettingsFormBody({ settings, version, yields, secondControls, onRevert }: {
+function SettingsFormBody({ settings, version, yields, secondControls, onRevert, onDirtyChange, onSaved }: {
   settings: CrawlSettings; version: string; yields: Record<string, SignalYieldView>; secondControls?: React.ReactNode; onRevert: () => void;
+  onDirtyChange?: (dirty: boolean) => void; onSaved?: (version: string) => void;
 }) {
-  const [state, action, pending] = useActionState<SaveState, FormData>(saveCrawlSettings, null);
+  // 저장된 판은 저장 결과와 같은 차례에 바깥(SettingsForm)에 알린다 — 다시 그린 새 판이 이 폼이 막 저장한 것인지 가른다
+  const [state, action, pending] = useActionState<SaveState, FormData>(async (previous, form) => {
+    const result = await saveCrawlSettings(previous, form);
+    if (result?.ok && result.version) onSaved?.(result.version);
+    return result;
+  }, null);
   const router = useRouter();
   /*
    * 폼이 그린 값의 판. 저장에 성공했을 때만 새 판으로 바꾼다 — 같은 화면의 2차 표 바로 바꾸기·기본값 되돌리기가 판을 바꿔도
@@ -153,6 +171,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert 
   const usage = searchUsage(pages);
   const summary = changes.length > 3 ? `${changes.slice(0, 3).join(" · ")} 외 ${changes.length - 3}개` : changes.join(" · ");
   const dirty = changes.length > 0;
+  useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
   useLeaveGuard(dirty, setLeaving);
 
   return (

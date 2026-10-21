@@ -14,6 +14,7 @@ import { formatDetailTime } from "@/lib/format/time";
 import { cancelRankingPolicy } from "./actions";
 import { RankingPolicyForm } from "./RankingPolicyForm";
 import styles from "./ranking.module.css";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "랭킹 설정 — NoMoreVibe", robots: { index: false } };
@@ -159,7 +160,7 @@ export default async function AdminRankingPage() {
   );
 
   return (
-    <main className={styles.page}>
+    <main className={styles.page}><PageStamp />
       <header className={styles.header}>
         <div>
           <p className={styles.eyebrow}>시즌 운영</p>

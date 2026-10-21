@@ -10,6 +10,7 @@ import { homeTalkLineup, listTalk } from "@/lib/social/talk";
 import { TALK_VISIBLE_MS } from "@/lib/social/talk-score";
 import { TalkHomeBoard, type TalkHomeRow } from "./TalkHomeBoard";
 import { TalkPostsBoard } from "./TalkPostsBoard";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "SNS 화제 — NoMoreVibe", robots: { index: false } };
@@ -39,7 +40,7 @@ export default async function AdminTalkPage() {
   const publicOn = talkPublicEnabled();
 
   return (
-    <main className="mx-auto max-w-[1100px] px-6 pb-20">
+    <main className="mx-auto max-w-[1100px] px-6 pb-20"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="text-[22px] font-extrabold tracking-tight">SNS 화제</h1>
         <span className="text-[13px] text-fg-3">{admin.login}</span>

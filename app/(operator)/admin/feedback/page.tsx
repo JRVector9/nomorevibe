@@ -7,6 +7,7 @@ import { feedbackAdminQueue } from "@/lib/domain/feedback/repository";
 import type { FeedbackReviewState } from "@/lib/domain/feedback/contract";
 import { FeedbackItem } from "@/components/product-detail/FeedbackList";
 import { FeedbackReviewForm } from "./FeedbackReviewForm";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "피드백 검수 — NoMoreVibe", robots: { index: false } };
@@ -26,7 +27,7 @@ export default async function AdminFeedbackPage({ searchParams }: { searchParams
   const queue = await feedbackAdminQueue({ state, q, cursor });
   const next = new URLSearchParams({ state, q });
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
-  return <main className="space-y-5 p-5">
+  return <main className="space-y-5 p-5"><PageStamp />
     <h1 className="text-[22px] font-semibold">피드백 검수</h1>
     <p className="text-[14px] text-fg-2">원문을 확인하고 공개 승인·숨김·복원을 선택하세요. 처리자·사유·시각이 기록됩니다. 오래된 댓글부터 표시합니다.</p>
     <form className="flex flex-wrap gap-3" action="/admin/feedback">

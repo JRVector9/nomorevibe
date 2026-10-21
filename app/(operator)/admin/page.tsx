@@ -24,6 +24,7 @@ import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
 import { describeReset } from "./settings/reset-diff";
 import { SettingsApplyLine } from "./settings/SettingsApplyLine";
 import { OPS_FRESH_COOKIE } from "./status/fresh";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -107,7 +108,7 @@ export default async function AdminPage() {
   ];
 
   return (
-    <main className="mx-auto flex max-w-[1220px] flex-col gap-5 px-8 pb-12 pt-7 max-sm:px-4">
+    <main className="mx-auto flex max-w-[1220px] flex-col gap-5 px-8 pb-12 pt-7 max-sm:px-4"><PageStamp />
       <header className="flex flex-col gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="text-[26px] font-bold tracking-tight">크롤 설정</h1>

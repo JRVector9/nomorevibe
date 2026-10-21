@@ -19,6 +19,7 @@ import { OperationsDialog } from './OperationsDialog';
 import { JobTimeline } from './JobTimeline';
 import { JobsStrip } from './dashboard/JobsStrip';
 import { CollectionSwitch } from './CollectionSwitch';
+import { useLiveRefreshEnabled } from '../components/LiveBar';
 import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { STATUS_TABS, type StatusTab } from './action-links';
 import type { FlowVerdict } from './flow-model';
@@ -62,7 +63,7 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   const roles=[...ROLES,...splitRoles.map(row=>row.role)];
   const selected=roles.find(key=>key===params.get('worker'))??null;
   const [message,setMessage]=useState(''),[pending,start]=useTransition(),[phoneFull,setPhoneFull]=useState(false);
-  const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
+  const router=useRouter();const liveRefresh=useLiveRefreshEnabled();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
   /** 주소의 탭·상세만 바꾼다. 전체 현황은 기본이라 ?tab= 을 뺀다 */
   function show(patch:Partial<Record<'tab'|'job'|'worker',string|null>>){
     const next=new URLSearchParams(params.toString());
@@ -98,7 +99,7 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   function request(name:string){start(async()=>{const result=await requestOperation(name);setMessage(result.error??result.message??'');router.refresh();});}
   const aiButton=<button className="primary" onClick={()=>show({tab:'ai'})}>AI 연결·설정</button>;
   return <div className="ops-center">
-    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">워커 관측 15초 · 화면 10초 · 자동 갱신·새로고침·마지막 갱신은 맨 위 줄</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
+    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">워커 관측 15초 · 화면 {liveRefresh?'10초':'자동 갱신 꺼짐'} · 자동 갱신·새로고침·마지막 갱신은 맨 위 줄</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
       {/* 폰 흐름 미니(v8 N6) — 단추와 한 항목, 기본 폭 0 이라 단추 줄바꿈이 지금과 같다. 남는 폭만 쓰고 이름 → 점 → 사라짐 */}
       <button type="button" className="ops-flow-mini-in" title={verdict.title} aria-label={`${verdict.text} — 흐름 상세 보기`} onClick={()=>show({tab:'flow'})}>
         <span className="dash-pill" data-tone={DOT[verdict.tone]}><i className="dash-dot" data-tone={DOT[verdict.tone]} aria-hidden/>{verdict.short}</span>

@@ -15,7 +15,8 @@ const number = (value: number) => value.toLocaleString('ko-KR');
 const fixedState = (state: CellState): Exclude<CellState, 'value'> => state === 'value' ? 'unknown' : state;
 const missing = (state: CellState) => STATES[fixedState(state)];
 const missingTitle = (state: CellState, detail: string | null) => `${STATE_TITLES[fixedState(state)]}${detail ? ` (${detail})` : ''}`;
-const missingClass = (state: CellState) => state === 'deferred' || state === 'none' ? 'text-fg-3 italic opacity-80' : 'text-fg-3';
+// 밝은 화면에서도 글자 대비 4.5:1 을 넘게(fg-3 은 흰 바탕에 3.6:1) — 흐린 느낌은 기울임으로만 준다
+const missingClass = (state: CellState) => state === 'deferred' || state === 'none' ? 'text-fg-2 italic' : 'text-fg-2';
 const note = 'mt-1 text-[13px] text-fg-3';
 
 function Values({ row }: { row: WindowMetric }) {

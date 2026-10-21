@@ -53,7 +53,7 @@ describe("머리말 칩", () => {
 
   it("24h 발행 옆에 최근 1시간·오늘(0시부터) 순증감을 단다", () => {
     const out = html(createElement(ReviewStatusChips, { models: null, human: null, publication: { net: 40, windows: { hour: 2, today: -1 } }, takedowns: 0 }));
-    expect(out).toContain('24h 발행 <span class="font-mono">+40</span> · 1시간 <span class="font-mono">+2</span> · 오늘 <span class="font-mono">-1</span>');
+    expect(out).toContain('24h 발행 <span class="font-mono">+40</span> · 1시간 <span class="font-mono">+2</span> · 오늘(0시부터) <span class="font-mono">-1</span>');
     expect(out).toContain("한국 시각(KST) 0시부터");
   });
 

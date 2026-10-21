@@ -63,6 +63,8 @@ import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
 import { FlowDetailSlot } from "./FlowDetail";
 import { flowVerdict, otherModelSlots } from "./flow-model";
 import { OPS_FRESH_COOKIE } from "./fresh";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
+import { withDeadline } from "@/lib/operations/deadline";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -129,7 +131,7 @@ async function PipelineCompletionsSlot() {
 }
 
 async function KpiSlot({ derived, fresh }: { derived: DerivedStatus; fresh: boolean }) {
-  const hourly = await hourlyOnce(fresh).catch(warn("operations.hourly_unavailable"));
+  const hourly = await withDeadline(hourlyOnce(fresh)).catch(warn("operations.hourly_unavailable"));
   return <KpiStrip series={hourly} textPending={derived.health?.pendingGeneration ?? null} verifyPending={derived.health?.pendingVerification ?? null} />;
 }
 
@@ -140,12 +142,12 @@ async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeo
 }
 
 async function SignalSlot({ settings, fresh }: { settings: CrawlSettings; fresh: boolean }) {
-  const rows = await signalYields(settings, 7, { fresh }).catch(warn("operations.signals_unavailable"));
+  const rows = await withDeadline(signalYields(settings, 7, { fresh })).catch(warn("operations.signals_unavailable"));
   return rows ? <SignalTable rows={rows} /> : <p className="dash-card dash-4">신호별 수율을 읽지 못했습니다.</p>;
 }
 
 async function TodaySlot({ down, now }: { down: number; now: string }) {
-  const today = await todayPublications().catch(warn("operations.today_unavailable"));
+  const today = await withDeadline(todayPublications()).catch(warn("operations.today_unavailable"));
   return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">최근 24시간 발행 집계를 읽지 못했습니다.</p>;
 }
 
@@ -164,17 +166,21 @@ const crawlerReportFor = cache(async (inputs: Awaited<ReturnType<typeof loadActi
 });
 
 async function CrawlerActivitySlot({ inputs, fresh }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; fresh: boolean }) {
-  return <CrawlerActivity report={await crawlerReportFor(inputs, fresh)} />;
+  const report = await withDeadline(crawlerReportFor(inputs, fresh)).catch(warn("operations.crawler_activity_unavailable"));
+  return report ? <CrawlerActivity report={report} /> : <p className="ops-note">크롤러 활동을 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
 }
 
 /** 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만 */
 async function JobTotalsSlot({ name, inputs, fresh }: { name: string; inputs: Awaited<ReturnType<typeof loadActionInputs>>; fresh: boolean }) {
-  const row = (await crawlerReportFor(inputs, fresh)).jobs.find((job) => job.name === name);
+  const report = await withDeadline(crawlerReportFor(inputs, fresh)).catch(() => null);
+  if (!report) return <p className="ops-note">누적을 제때 읽지 못했습니다 — 미확인.</p>;
+  const row = report.jobs.find((job) => job.name === name);
   return row ? <CollectorTotalsDetail row={row} now={inputs.ops.fetchedAt} /> : null;
 }
 
 async function ManualSlot() {
-  return <ManualClassification candidates={await manualCandidates()} />;
+  const candidates = await withDeadline(manualCandidates()).catch(warn("operations.manual_candidates_unavailable"));
+  return candidates ? <ManualClassification candidates={candidates} /> : <p className="ops-note">분류할 후보를 제때 읽지 못했습니다 — 미확인.</p>;
 }
 
 /**
@@ -182,7 +188,7 @@ async function ManualSlot() {
  * 따로 흘려보낸다. 못 세면 이 줄만 비운다.
  */
 async function TranslationProgressSlot({ now }: { now: string }) {
-  const progress = await translationProgress().catch(warn("operations.translation_unavailable"));
+  const progress = await withDeadline(translationProgress()).catch(warn("operations.translation_unavailable"));
   return progress ? <TranslationProgress progress={progress} now={now} /> : <TranslationProgressPending failed />;
 }
 
@@ -192,7 +198,7 @@ function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
 }
 
 async function StarObservationSlot({ now }: { now: string }) {
-  const page = await getStarGrowthPage({ now: new Date(now), limit: 0 }).catch(warn("operations.star_observation_unavailable"));
+  const page = await withDeadline(getStarGrowthPage({ now: new Date(now), limit: 0 })).catch(warn("operations.star_observation_unavailable"));
   return <StarObservationCard page={page} />;
 }
 
@@ -203,10 +209,12 @@ async function StarObservationSlot({ now }: { now: string }) {
 async function DiagnosticsPanels({ inputs, derived }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus }) {
   const { jobStates, evidenceSummary, downCount, ops } = inputs;
   const now = ops.fetchedAt;
-  const [frontier, candidates, rejections, rankingSeason, down, topClicked, search] = await Promise.all([
+  const read = await withDeadline(Promise.all([
     frontierCounts(), candidateCounts(), rejectionBreakdown(), getCurrentSeason(), downProducts(), topClickedSince(30),
     searchLogSummary(7).catch(() => null),
-  ]);
+  ])).catch(warn("operations.diagnostics_unavailable"));
+  if (!read) return <p className="mt-3 text-[13px] text-fg-2">진단 지표를 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
+  const [frontier, candidates, rejections, rankingSeason, down, topClicked, search] = read;
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = !rankingSeason?.refreshedAt || Date.parse(now) - rankingSeason.refreshedAt.getTime() > RANKING_STALE_MS;
   const evidenceJob = derived.states.get("product-evidence-refresh");
@@ -529,7 +537,7 @@ export default async function StatusPage() {
   );
 
   return (
-    <main className="pb-10">
+    <main className="pb-10"><PageStamp />
       <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
         verdict={verdict} flow={flowDetail}
         enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}

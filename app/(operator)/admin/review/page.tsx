@@ -25,6 +25,7 @@ import { ReviewStageRail } from "./ReviewStageRail";
 import { ScrollToHash } from "../ScrollToHash";
 import "../status/dashboard/dashboard.css";
 import "./review.css";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
@@ -151,7 +152,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const pageHref = { prev: page > 1 ? query({ page: page - 1 }) : null, next: page < pages ? query({ page: page + 1 }) : null };
 
   return (
-    <main className="rq">
+    <main className="rq"><PageStamp />
       <header className="rq-top">
         <div className="l">
           <h1 className="text-[22px] font-extrabold tracking-tight">심사 큐</h1>

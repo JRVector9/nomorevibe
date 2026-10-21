@@ -19,6 +19,7 @@ import { ProductRow } from "./ProductRow";
 import { repoReviewView } from "./repo-review-view";
 import { pageWindow } from "../paging";
 import { PRODUCT_FILTERS, PRODUCT_SORTS, type ProductAdminSort, type ProductFilterName } from "./filters";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "제품 — NoMoreVibe", robots: { index: false } };
@@ -111,7 +112,7 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const publicOriginMissing = !isPublicOrigin(origin);
 
   return (
-    <main className="flex flex-col gap-2.5 pb-10 pt-6">
+    <main className="flex flex-col gap-2.5 pb-10 pt-6"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3">
         <h1 className="text-[22px] font-extrabold tracking-tight">제품</h1>
         <span className="text-[13px] text-fg-3">

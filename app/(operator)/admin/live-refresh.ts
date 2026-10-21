@@ -19,19 +19,31 @@ export function refreshPolicy(pathname: string): RefreshPolicy {
   if (under("/admin/review")) return { intervalMs: 30_000, idleMs: 60_000 };
   // 크롤 설정 — 2차 표 모델 목록을 게이트웨이에 묻는다. 30초
   if (pathname === "/admin") return { intervalMs: 30_000, idleMs: 15_000 };
+  // 오늘 할 일 — 칸 열네 개를 주 DB 에서 센다(사람 몫·조치 수). 30초·손 뗀 지 1분
+  if (under("/admin/inbox")) return { intervalMs: 30_000, idleMs: 60_000 };
   // 나머지 목록 — 누르려던 줄이 다시 그려지며 밀리지 않게, 15초 동안 조작이 없을 때만
   return { intervalMs: 15_000, idleMs: 15_000 };
 }
 
-/** 이번 차례를 건너뛰는 까닭. null 이면 읽는다 */
-export type PauseReason = "hidden" | "editing" | "unsaved" | "active";
+/** 이번 차례를 건너뛰는 까닭. null 이면 읽는다. stuck 은 다시 읽기가 오래 끝나지 않아 기다리는 것 */
+export type PauseReason = "hidden" | "editing" | "unsaved" | "active" | "stuck";
 
 export const PAUSE_LABELS: Record<PauseReason, string> = {
   hidden: "창이 가려져 쉼",
   editing: "입력 중이라 잠시 멈춤",
-  unsaved: "저장하지 않은 변경이 있어 멈춤",
+  unsaved: "저장하지 않은 변경·열린 확인 창이 있어 멈춤",
   active: "조작 중이라 잠시 멈춤",
+  stuck: "다시 읽기가 오래 걸려 끝나기를 기다리는 중",
 };
+
+/**
+ * 저장하지 않은 변경이 있는가 — 화면이 직접 알리는 [data-dirty](설정 폼·감사 보류·일괄 선택·준비한 결정 등)와
+ * 열린 확인 창(ConfirmAction, dialog.admin-confirm[open]). 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다.
+ */
+export const UNSAVED_SELECTOR = "[data-dirty], dialog.admin-confirm[open]";
+export function hasUnsaved(root: Pick<ParentNode, "querySelector"> | null | undefined): boolean {
+  return !!root?.querySelector(UNSAVED_SELECTOR);
+}
 
 export function pauseReason(input: { visible: boolean; editing: boolean; unsaved: boolean; idleForMs: number; idleMs: number }): PauseReason | null {
   if (!input.visible) return "hidden";
@@ -76,10 +88,53 @@ export function clockLabel(value: string | null | undefined): string {
   return formatDetailTime(value).split(" ")[1] ?? "—";
 }
 
-/** 두 ISO 시각 중 늦은 것 — 레이아웃이 그린 시각과 화면을 옮긴 뒤 배지를 다시 받은 시각 중 */
-export function laterOf(a: string, b: string | null | undefined): string {
-  return b && Date.parse(b) > Date.parse(a) ? b : a;
-}
-
-/** 다시 읽기가 이만큼 끝나지 않으면 막힌 것으로 보고 다음 차례에 다시 부른다(느린 조각 하나가 갱신을 영영 막지 않게) */
+/** 다시 읽기가 이만큼 끝나지 않으면 막힌 것으로 보고 한 번만 다시 부른다(느린 조각 하나가 갱신을 영영 막지 않게) */
 export const BUSY_LIMIT_MS = 60_000;
+
+/**
+ * 자동 갱신의 차례 — 언제 다시 읽을지만 정한다(화면·라우터는 LiveBar 가 잇는다). 시험이 시계를 넘겨 확인한다.
+ * - 조작(누르기·키·바퀴·스크롤)은 input() 으로 알린다 — 화면마다 정한 시간 동안 쉰다.
+ * - 다시 읽는 중에는 또 부르지 않는다. 1분 넘게 끝나지 않으면 한 번만 다시 부르고, 그 뒤에는 끝날 때까지(settled) 쉰다 —
+ *   막힌 렌더 위에 렌더를 끝없이 겹치지 않는다.
+ * - 수동 새로고침은 이 차례와 따로다(LiveBar 의 다른 transition) — 자동 갱신이 도는 중에도 누를 수 있다.
+ */
+export function createRefreshScheduler(now: () => number = () => Date.now()) {
+  let lastInput = -Infinity;
+  let started: number | null = null;
+  let retried = false;
+  return {
+    input() { lastInput = now(); },
+    tick(state: { visible: boolean; editing: boolean; unsaved: boolean; idleMs: number; manualBusy?: boolean }): { refresh: boolean; paused: PauseReason | null } {
+      const reason = pauseReason({ ...state, idleForMs: now() - lastInput });
+      if (reason) return { refresh: false, paused: reason };
+      if (state.manualBusy) return { refresh: false, paused: null };
+      if (started !== null) {
+        const stuck = now() - started >= BUSY_LIMIT_MS;
+        if (!stuck) return { refresh: false, paused: null };
+        if (retried) return { refresh: false, paused: "stuck" };
+        retried = true;
+      }
+      started = now();
+      return { refresh: true, paused: null };
+    },
+    /** 창 복귀·뒤로 가기처럼 조작 시간과 상관없이 곧바로 읽을 때 — 다시 읽는 중이면 겹치지 않는다 */
+    now(): boolean {
+      if (started !== null && now() - started < BUSY_LIMIT_MS) return false;
+      started = now();
+      return true;
+    },
+    settled() { started = null; retried = false; },
+  };
+}
+export type RefreshScheduler = ReturnType<typeof createRefreshScheduler>;
+
+/**
+ * 메뉴 배지를 합친다 — 새로 받은 값(next)이 "셀 수 없었다"(unknown)고 한 칸은 전에 보이던 값을 둔다.
+ * 처음 프로세스가 떴거나 뒤에서 다시 세는 중인 칸이 깜빡이며 사라지지 않게. 나머지는 새 값(없으면 배지 없음)이다.
+ */
+export function mergeBadges<B>(previous: Partial<Record<string, B>> | undefined, next: { badges?: Partial<Record<string, B>>; unknown?: readonly string[] }):
+  Partial<Record<string, B>> {
+  const merged: Partial<Record<string, B>> = { ...(next.badges ?? {}) };
+  for (const key of next.unknown ?? []) if (previous?.[key] !== undefined) merged[key] = previous[key];
+  return merged;
+}

@@ -11,7 +11,7 @@ vi.mock("@/lib/db", () => ({
   db: new Proxy({}, { get: () => { throw new Error("primary db touched"); } }),
 }));
 
-import { freshBudget, sharedLoader } from "@/lib/operations/shared-cache";
+import { freshBudget, sharedLoader, sharedStale } from "@/lib/operations/shared-cache";
 import { replicaCache } from "@/lib/operations/replica-cache";
 
 let clock = 0;
@@ -81,6 +81,61 @@ describe("1분 집계 캐시(sharedLoader)", () => {
     const slow = vi.fn(async () => ({ n: 4 }));
     await Promise.all([get("same", slow), get("same", slow), get("same", slow, true)]);
     expect(slow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("1분 집계 캐시 — 숫자가 뒤로 가지 않게", () => {
+  it("나눠 쓰는 층의 값이 이 웹이 쥔 값보다 먼저 센 것이면 받지 않는다", async () => {
+    const store = fakeStore();
+    const web = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 60_000, store, now });
+    await web("k", async () => ({ n: 2 }), true);
+    // 다른 웹이 더 일찍 센 값을 늦게 써 넣었다
+    store.set("t:k", { v: { n: 1 }, measuredAt: clock - 30_000 }, clock + 60_000);
+    expect(await web("k", vi.fn(async () => ({ n: 9 })))).toEqual({ n: 2 });
+    // 더 늦게 센 값은 받는다
+    store.set("t:k", { v: { n: 3 }, measuredAt: clock + 1 }, clock + 60_000);
+    expect(await web("k", vi.fn(async () => ({ n: 9 })))).toEqual({ n: 3 });
+  });
+});
+
+describe("기다리지 않는 공유 값(sharedStale) — 메뉴 배지", () => {
+  it("처음엔 null 을 주고 뒤에서 센다 · ttl 동안 그대로 · 지나면 지난 값을 주며 한 번만 다시 센다 · stale 넘으면 null", async () => {
+    const store = fakeStore();
+    const badge = sharedStale<number>({ namespace: "b", ttlMs: 30_000, staleMs: 300_000, store, now });
+    const load = vi.fn(async () => 7);
+    expect(await badge.get("k", load)).toBeNull();
+    await badge.settled("k");
+    expect(await badge.get("k", load)).toBe(7);
+    clock += 29_000;
+    expect(await badge.get("k", load)).toBe(7);
+    expect(load).toHaveBeenCalledTimes(1);
+    clock += 2_000;
+    load.mockResolvedValue(8);
+    expect(await Promise.all([badge.get("k", load), badge.get("k", load)])).toEqual([7, 7]);
+    await badge.settled("k");
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(await badge.get("k", load)).toBe(8);
+    clock += 300_000;
+    load.mockRejectedValue(new Error("db"));
+    expect(await badge.get("k", load)).toBeNull();
+  });
+
+  it("다른 웹이 세는 중(표시)이면 다시 세지 않고, 그 웹이 쓴 값을 받는다 — ttl 에 한 번", async () => {
+    const store = fakeStore();
+    const webA = sharedStale<number>({ namespace: "b", ttlMs: 30_000, staleMs: 300_000, store, now });
+    const webB = sharedStale<number>({ namespace: "b", ttlMs: 30_000, staleMs: 300_000, store, now });
+    const loadA = vi.fn(async () => 1), loadB = vi.fn(async () => 2);
+    await webA.get("k", loadA); await webA.settled("k");
+    expect(await webB.get("k", loadB)).toBe(1);
+    clock += 31_000;
+    // A 가 다시 세기를 맡았다(표시) — 같은 때 B 는 세지 않는다
+    await webA.get("k", loadA); await webA.settled("k");
+    await webB.get("k", loadB); await webB.settled("k");
+    expect(loadA).toHaveBeenCalledTimes(2);
+    expect(loadB).not.toHaveBeenCalled();
+    // 운영센터가 막 센 값을 넣으면 다른 웹도 그 값을 본다
+    webA.put("k", 5);
+    expect(await webB.get("k", loadB)).toBe(5);
   });
 });
 

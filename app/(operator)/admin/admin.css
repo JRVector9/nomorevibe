@@ -131,11 +131,12 @@ html[data-admin-theme="dark"] body:has(.admin-area) {
 .admin-content{overflow-wrap:anywhere;min-width:0;padding:0 24px 20px;width:100%;max-width:1520px;margin:0 auto}
 .admin-content:focus{outline:none}
 /* 모든 관리자 화면 머리의 갱신 줄(LiveBar) — 오른쪽에 작게. 좁은 화면에서는 줄을 바꾼다 */
-.admin-live-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 12px;padding:8px 0 0;font-size:13px;color:var(--color-fg-3)}
+.admin-live-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 12px;padding:8px 0 0;font-size:13px;color:var(--color-fg-2)}
 .admin-live-bar time{font-family:var(--font-mono,ui-monospace,monospace);font-variant-numeric:tabular-nums;color:var(--color-fg-2)}
 .admin-live-bar button{display:inline-flex;align-items:center;min-height:28px;border:1px solid var(--color-line);border-radius:8px;padding:0 10px;font-size:13px;font-weight:600;color:var(--color-fg-2);background:var(--color-bg-card)}
 .admin-live-bar button:hover{color:var(--color-fg)}
-.admin-live-bar button:disabled{opacity:.5}
+.admin-live-bar button[aria-disabled="true"]{opacity:.6;cursor:progress}
+@media (max-width:760px){.admin-live-bar button{min-height:44px;min-width:44px}}
 .admin-live-bar .admin-live-toggle[aria-checked="false"]{border-style:dashed}
 .admin-content>main{width:100%;max-width:none;margin:0;padding-left:0;padding-right:0}
 .admin-content h1{letter-spacing:-.7px}

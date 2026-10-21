@@ -47,7 +47,7 @@ export function ReviewStatusChips({ models, human, publication, takedowns, inflo
       </span>}
       <span title={`발행 순증감(올라간 수 - 내려간 수). ${WINDOW_TITLE}`}>
         <Chip tone={publication.net > 0 ? "ok" : publication.net < 0 ? "warn" : undefined}>24h 발행 <span className="font-mono">{signed(publication.net)}</span>
-          {publication.windows && <> · 1시간 <span className="font-mono">{signed(publication.windows.hour)}</span> · 오늘 <span className="font-mono">{signed(publication.windows.today)}</span></>}</Chip>
+          {publication.windows && <> · 1시간 <span className="font-mono">{signed(publication.windows.hour)}</span> · 오늘(0시부터) <span className="font-mono">{signed(publication.windows.today)}</span></>}</Chip>
       </span>
       <Chip tone={takedowns > 0 ? "bad" : undefined}>내려달라는 요청 <span className="font-mono">{n(takedowns)}</span></Chip>
     </div>

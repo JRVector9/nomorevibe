@@ -4,7 +4,9 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import { crawlCandidates, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth, productIntroChecks,
   products } from "@/lib/db/schema";
-import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { sharedStore } from "@/lib/cache/shared";
+import { sharedLoader } from "./shared-cache";
+import { sharedHumanQueueOverview } from "./shared-reads";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { getSettings } from "@/lib/crawl/settings";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
@@ -176,7 +178,7 @@ async function settle(key: InboxKey, load: () => Promise<InboxSectionData>): Pro
 export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   // 여러 칸이 함께 쓰는 수 — 한 번만 부른다. 실패는 각 칸이 받아 그 칸만 "불러오지 못함"이 된다
   const takedowns = takedownSummary();
-  const overview = getSettings().then((settings) => humanQueueOverview(settings, now));
+  const overview = getSettings().then((settings) => sharedHumanQueueOverview(settings));
   const attention = attentionCounts(now);
   // 아무도 기다리지 않는 사이에 실패해도 처리되지 않은 거부로 남지 않게
   for (const shared of [takedowns, overview, attention]) shared.catch(() => undefined);
@@ -252,4 +254,14 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
     results: { takedown, introRequest, feedback, human, agreed, audit, down, intro, translations, repoGone: gone, repoAutoBanned, spam },
     done: [decided, handled],
   };
+}
+
+/**
+ * 오늘 할 일 화면의 읽기 — 칸 열네 개(주 DB)를 웹 여러 대·열린 창이 Valkey 로 30초 나눠 쓴다(shared-cache.ts).
+ * 화면은 센 시각(fetchedAt)을 "… 기준"으로 보인다. 수동 새로고침(fresh)은 분당 상한 안에서 건너뛴다.
+ */
+const inboxCache = sharedLoader<InboxSnapshot>({ namespace: "admin:inbox", ttlMs: 30_000, store: sharedStore });
+
+export function sharedInbox(fresh = false): Promise<InboxSnapshot> {
+  return inboxCache("inbox", () => loadInbox(), fresh);
 }

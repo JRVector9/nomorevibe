@@ -16,7 +16,7 @@ export function kstDayStart(end: SQL): SQL {
 /** 짧은 창 둘 — 1시간·오늘. 합계 옆에 "최근 1시간 +N · 오늘(0시부터) N"으로 단다 */
 export type FreshWindows = { hour: number; today: number };
 
-export const WINDOW_TITLE = "최근 1시간은 지금부터 60분 전까지, 오늘은 한국 시각(KST) 0시부터 지금까지입니다.";
+export const WINDOW_TITLE = "최근 1시간은 60분 전부터 지금까지, 오늘은 한국 시각(KST) 0시부터 지금까지입니다.";
 
 const fmt = (value: number) => value.toLocaleString("ko-KR");
 
