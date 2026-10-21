@@ -34,20 +34,34 @@ beforeEach(() => {
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true };
 });
 
-it('GitHub 저장소를 가리킨 글만 남기고, Show HN 과 첫 화면 여부를 읽는다', () => {
+it('GitHub 저장소를 가리킨 글은 저장소 키를 달고, Show HN 과 첫 화면 여부를 읽는다', () => {
   expect(hnTalkPost(hit('1', 'https://github.com/Shaongitbd/Doory', { _tags: ['story', 'show_hn', 'front_page'] }))).toEqual({
     externalId: '1', kind: 'show', title: 'Post 1', linkUrl: 'https://github.com/Shaongitbd/Doory', linkTarget: 'repo',
     repositoryKey: 'shaongitbd/doory', postedAt: new Date(1_792_400_000_000), points: 40, comments: 7, frontPage: true,
   });
   expect(hnTalkPost(hit('2', 'https://github.com/golang/go/issues/82345'))).toMatchObject({ kind: 'link', linkTarget: 'issue', repositoryKey: 'golang/go' });
-  // 제품 사이트·사용자 페이지는 저장소를 알 수 없다 — 추측하지 않는다
-  expect(hnTalkPost(hit('3', 'https://doory.art'))).toBeNull();
-  expect(hnTalkPost(hit('4', 'https://github.com/acme'))).toBeNull();
-  expect(hnTalkPost(hit('5', null))).toBeNull();
-  // 제목 없는 글은 보여 줄 것이 없다
-  expect(hnTalkPost(hit('6', 'https://github.com/acme/app', { title: '   ' }))).toBeNull();
   // 점수·댓글이 비어 오면 0으로 둔다
   expect(hnTalkPost(hit('7', 'https://github.com/acme/app', { points: null, num_comments: undefined }))).toMatchObject({ points: 0, comments: 0 });
+});
+
+it('검색이 돌려준 글은 저장소 모양이 아니어도 버리지 않고 저장소 키 없이(site) 남긴다', () => {
+  // 저장소를 알 수 없는 주소 — 추측하지 않고 키를 비운다
+  for (const [id, url] of [
+    ['3', 'https://doory.art'], ['4', 'https://github.com/acme'], ['8', 'https://acme.github.io/app/'],
+    ['9', 'https://gist.github.com/acme/0123abcd'], ['10', 'https://github.com/orgs/acme/discussions/1'],
+    ['11', 'https://github.blog/2026-10-01-changelog/'], ['12', 'https://github.com.evil.example/acme/app'],
+  ] as const) {
+    expect(hnTalkPost(hit(id, url)), url).toEqual({
+      externalId: id, kind: 'link', title: `Post ${id}`, linkUrl: url, linkTarget: 'site', repositoryKey: null,
+      postedAt: new Date(1_792_400_000_000), points: 40, comments: 7, frontPage: false,
+    });
+  }
+  // 주소·제목이 없거나 http(s) 가 아니면 보여 줄 것이 없다
+  expect(hnTalkPost(hit('5', null))).toBeNull();
+  expect(hnTalkPost(hit('13', '   '))).toBeNull();
+  expect(hnTalkPost(hit('14', 'javascript:alert(1)'))).toBeNull();
+  expect(hnTalkPost(hit('15', 'not a url'))).toBeNull();
+  expect(hnTalkPost(hit('6', 'https://github.com/acme/app', { title: '   ' }))).toBeNull();
 });
 
 it('저장소 안의 어디를 가리키는지 나눈다', () => {
@@ -77,7 +91,7 @@ it('창을 다 읽고 남기고, 돌아오지 않은 글은 ID로 다시 물어 
   const request: CappedRequest = async url => {
     urls.push(String(url));
     return String(url).includes('search_by_date')
-      ? json({ nbPages: 1, hits: [hit('1', 'https://github.com/acme/app'), hit('2', 'https://example.com')] })
+      ? json({ nbPages: 1, hits: [hit('1', 'https://github.com/acme/app'), hit('2', 'https://acme.github.io'), hit('3', null), hit('4', 'https://github.com/acme/x', { title: '' })] })
       // 901만 돌아온다 — 900은 지워졌다
       : json({ nbPages: 1, hits: [hit('901', 'https://github.com/acme/old')] });
   };
@@ -85,13 +99,17 @@ it('창을 다 읽고 남기고, 돌아오지 않은 글은 ID로 다시 물어 
   const outcome = await collectHnTalk(ctx, request, () => NOW);
 
   expect(outcome).toEqual({ done: true, cursor: { lastRunAt: NOW.toISOString() } });
-  expect(mocks.record).toHaveBeenNthCalledWith(1, 'hn', [expect.objectContaining({ externalId: '1' })], NOW, undefined);
+  // 저장소가 아닌 주소도 남기고, 주소·제목 없는 글만 버린 수로 센다
+  expect(mocks.record).toHaveBeenNthCalledWith(1, 'hn', [
+    expect.objectContaining({ externalId: '1', repositoryKey: 'acme/app' }),
+    expect.objectContaining({ externalId: '2', linkTarget: 'site', repositoryKey: null }),
+  ], NOW, undefined);
   expect(mocks.missing).toHaveBeenCalledWith('hn', new Date(NOW.getTime() - HN_TALK_WINDOW_MS), NOW);
   expect(new URL(urls[1]).searchParams.get('tags')).toBe('story,(story_900,story_901)');
   expect(mocks.record).toHaveBeenNthCalledWith(2, 'hn', [expect.objectContaining({ externalId: '901' })], NOW, undefined);
   expect(mocks.gone).toHaveBeenCalledWith([31], NOW, undefined);
   expect(mocks.expire).toHaveBeenCalledWith(new Date(NOW.getTime() - 90 * 86_400_000), undefined);
-  expect(ctx.log).toHaveBeenCalledWith('social.hn_talk_collected', expect.objectContaining({ found: 1, missing: 2, gone: 1, complete: true }));
+  expect(ctx.log).toHaveBeenCalledWith('social.hn_talk_collected', expect.objectContaining({ found: 2, unlinked: 1, skipped: 2, missing: 2, gone: 1, complete: true }));
 });
 
 it('여러 페이지면 끝까지 읽는다', async () => {

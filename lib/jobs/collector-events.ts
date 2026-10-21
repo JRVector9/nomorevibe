@@ -22,9 +22,10 @@ export const COLLECTOR_EVENTS: Record<string, CollectorEventDefinition> = {
   "crawl.fetch_auth_unavailable": { label: "원본 수집 인증 확인 필요", fields: ["fetched"], error: true, foldInto: { event: "crawl.fetched", fields: ["fetched"] } },
   "crawl.show_hn_seeded": { label: "Show HN 수집 결과", fields: ["discovered", "examined", "backlogPages", "drained"] },
   "crawl.show_hn_failed": { label: "Show HN 항목 오류", fields: ["page"], error: true },
-  // found·observed 는 30분마다 최근 72시간 창을 다시 센 수다 — 누적에 더하지 않는다
-  "social.hn_talk_collected": { label: "HN 화제 수집 결과", fields: ["found", "inserted", "updated", "observed", "missing", "gone", "expired", "complete"],
-    noSum: ["found", "observed"] },
+  // found·observed·unlinked·skipped 는 30분마다 최근 72시간 창을 다시 센 수다 — 누적에 더하지 않는다
+  // unlinked: 저장소 키 없이 남긴 글(github.io·gist 등), skipped: 주소·제목이 없어 버린 글
+  "social.hn_talk_collected": { label: "HN 화제 수집 결과", fields: ["found", "unlinked", "skipped", "inserted", "updated", "observed", "missing", "gone", "expired", "complete"],
+    noSum: ["found", "observed", "unlinked", "skipped"] },
   "social.hn_talk_failed": { label: "HN 화제 검색 오류", fields: ["page"], error: true },
   "social.hn_talk_lookup_failed": { label: "HN 화제 다시 묻기 오류", fields: [], error: true },
   "evidence.refresh_batch": { label: "공개 근거 수집 결과", fields: ["attempted", "succeeded", "failed", "factsChanged", "eventsInserted", "mediaInserted"] },
