@@ -94,16 +94,21 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
    * "기다리는 후보가 하나라도 있으면"으로 두었을 때는 감사가 영영 돌지 않았다. 2026-09-18 프로드에서
    * 문은 여덟 번 모두 100건으로 찼고, 전부 이미 심사받은 보류 건이 24시간마다 다시 도는 것이었다
    * (새 후보 0건). 그 재심사에 양보할 이유는 없다 — observe 에서는 결과가 반영되지도 않는다.
+   *
+   * Qwen 직접 심사(gpu3090)로 바꾼 감사는 양보하지 않는다 — 양보는 공유 게이트웨이 자리를 새 후보에게 비켜 주려는 것인데,
+   * Qwen 직접 심사는 게이트웨이를 쓰지 않는다. 2026-10-21 바꾼 뒤 프로드에서는 새 후보가 늘 있어 틱마다 양보만 하고
+   * 한 건도 묻지 않았다(product_audit.yielded).
    */
-  if ((await listReviewCandidates(settings, 1, { unreviewedOnly: true })).length) {
+  // 누가 볼지는 감사 행에 적혀 있다 — 남은 감사 모델 바꾸기(0112) 뒤면 바꾼 심사자다. Qwen 직접 심사는 따로 돈다(아래 auditWithQwen)
+  const reviewer = auditReviewer(campaign);
+  const direct = reviewer.provider === QWEN_AUDIT_PROVIDER;
+  if (!direct && (await listReviewCandidates(settings, 1, { unreviewedOnly: true })).length) {
     ctx.log("product_audit.yielded", { campaign: campaign.id });
     return { done: true };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("product audit requires a valid worker job lease");
-  // 누가 볼지는 감사 행에 적혀 있다 — 남은 감사 모델 바꾸기(0112) 뒤면 바꾼 심사자다. Qwen 직접 심사는 따로 돈다(아래 auditWithQwen)
-  const reviewer = auditReviewer(campaign);
-  if (reviewer.provider === QWEN_AUDIT_PROVIDER) return auditWithQwen(ctx, { campaign, reviewer, settings, startedAt, lease });
+  if (direct) return auditWithQwen(ctx, { campaign, reviewer, settings, startedAt, lease });
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const queue = await pendingAuditItems(campaign.id, concurrency * 4);
   if (!queue.length) {
