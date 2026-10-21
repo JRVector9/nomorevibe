@@ -13,7 +13,7 @@ import { listedOwnerSql, ownedBySql, renamedOwnerSql } from "./owner-key-sql";
 const visibleProduct = ne(products.status, "banned");
 
 /**
- * 메이커 열쇠마다 공개 프로젝트 수와 GitHub 에 적힌 대로의 이름(대소문자) — 제품마다 열쇠가 둘일 수 있어 펼쳐 센다.
+ * 메이커 열쇠마다 공개 프로젝트 수와 GitHub 에 적힌 대로의 이름(대소문자) — 제품마다 열쇠가 둘일 수 있어 펼쳐 센다. 감사 보류는 공개 목록 밖이라 세지 않는다.
  * 펼치기 전에 색인으로 그 열쇠의 제품만 고른다(ownedBySql)
  */
 async function makerProjects(keys: string[]): Promise<Array<{ key: string; login: string; projects: number }>> {
@@ -25,7 +25,7 @@ async function makerProjects(keys: string[]): Promise<Array<{ key: string; login
        (${listedOwnerSql}, substring(${products.repoUrl} from '(?i)^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')),
        (${renamedOwnerSql}, nullif(split_part(${products.repoRenamedTo}, '/', 1), ''))
      ) as k(key, login)
-     where ${products.status} in ('seeded', 'verified') and ${ownedBySql(keys)} and k.key in (${list})
+     where ${products.status} in ('seeded', 'verified') and ${products.auditHoldAt} is null and ${ownedBySql(keys)} and k.key in (${list})
      group by k.key`);
 }
 

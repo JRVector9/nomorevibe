@@ -100,6 +100,8 @@ export const productAuditItems = pgTable("product_audit_items", {
   index("product_audit_items_kept_idx").on(table.productId, table.keepUntil).where(sql`${table.humanDecision} = 'kept'`),
   // Search generation and health audits look up the latest available reviewer note.
   index("product_audit_items_latest_reason_idx").on(table.productId, table.id.desc()).where(sql`${table.aiReason} is not null`),
+  // 감사 보류(0110) — 그 제품의 더 새 항목 찾기와 보류를 풀 때 그 제품의 열린 항목에 '풀었음'을 적는 쓰기
+  index("product_audit_items_product_id_idx").on(table.productId, table.id),
 ]);
 
 /**
@@ -145,7 +147,6 @@ export const productAuditSecondOpinions = pgTable("product_audit_second_opinions
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("product_audit_second_opinions_item_model_idx").on(table.itemId, table.model),
-  index("product_audit_second_opinions_product_idx").on(table.productId),
   check("product_audit_second_opinions_decision_check", sql`${table.decision} in ('approve', 'reject', 'needs_review')`),
   check("product_audit_second_opinions_reason_check", sql`char_length(${table.reason}) <= 2000`),
 ]);

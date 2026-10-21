@@ -6,8 +6,9 @@ import { promisify } from "node:util";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { cdnPurges, productAuditCampaigns, productAuditItems, productAuditSecondOpinions, productEvidenceAudit, products } from "@/lib/db/schema";
+import { cdnPurges, crawlSettings, productAuditCampaigns, productAuditItems, productAuditSecondOpinions, productEvidenceAudit, products } from "@/lib/db/schema";
 import { importAuditSecondOpinions, type SecondOpinionLine } from "@/lib/crawl/audit-second-opinion-import";
+import { getSettings, setAuditHold } from "@/lib/crawl/settings";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 
 /** DR writer fence 가 닫힌 쓰기 거부만 바꿔 본다 — 나머지는 실제 DB */
@@ -22,6 +23,8 @@ vi.mock("@/lib/operations/dr/epoch", async (original) => ({ ...await original<ty
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   fence.active = true;
+  // 보류 설정은 기본값(켬·두 번째 거절 셈)에서 시작한다
+  await db.delete(crawlSettings);
   await db.delete(productAuditItems);
   await db.delete(productAuditCampaigns);
   await resetTables();
@@ -138,6 +141,18 @@ describe("승인 의견이 보류를 푼다", () => {
 
     expect(await run([line(target, { model: "grok-4-fast", grokDecision: "approve" })], true)).toMatchObject({ released: 1 });
     expect(await run([line(target, { model: "grok-4-fast", grokDecision: "approve" })])).toMatchObject({ updated: 1, released: 1 });
+    expect((await product(target.productId)).auditHoldAt).toBeNull();
+  });
+
+  it("푸는지는 덮어쓴 뒤의 의견과 지금 설정으로 보류 조건을 다시 갈라 정한다 — 두 번째 거절을 세지 않게 꺼 두었으면 거절이 남아도 승인이 푼다", async () => {
+    const target = await auditItem("gate");
+    await run([line(target, { model: "grok-4-fast", grokDecision: "reject" })]);
+    await hold(target);
+    const expected = (await getSettings()).auditHold;
+    expect(await setAuditHold({ next: { ...expected, secondOpinionReject: false }, expected, actor: "jr" })).toMatchObject({ ok: true });
+    // 사유 'x' 는 허용 갈래가 아니다(기타) — 두 번째 거절을 세지 않으면 이 보류의 까닭이 남지 않는다
+    expect(await run([line(target, { model: "grok-5", grokDecision: "approve" })], true)).toMatchObject({ released: 1 });
+    expect(await run([line(target, { model: "grok-5", grokDecision: "approve" })])).toMatchObject({ released: 1 });
     expect((await product(target.productId)).auditHoldAt).toBeNull();
   });
 

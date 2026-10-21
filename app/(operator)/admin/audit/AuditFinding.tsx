@@ -5,6 +5,7 @@ import { ConfirmAction } from '../components/ConfirmAction';
 import { ReasonText } from '../review/ReasonText';
 import type { SecondOpinionView } from '@/lib/crawl/audit-second-opinions';
 import { decideAuditFinding, type AuditActionState } from './actions';
+import { secondOpinionLabel } from './second-opinion-label';
 
 export type AuditFindingView = {
   id: number; slug: string; name: string; url: string; category: string;
@@ -17,9 +18,6 @@ export type AuditFindingView = {
   second?: SecondOpinionView[];
 };
 
-const SECOND_LABELS = { approve: '승인', reject: '거절', needs_review: '판단 보류' } as const;
-/** 'grok-4-fast' → 'grok' — 줄에는 모델 갈래만, 전체 이름은 마우스를 올리면 */
-const modelFamily = (model: string) => model.split(/[-\s/:]/)[0] || model;
 
 /**
  * 감사가 짚은 제품 한 줄. 폼 하나가 제품 하나다 — 고르는 칸도, 모두 고르기도 두지 않는다.
@@ -44,8 +42,7 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
           {(finding.second ?? []).map((opinion) => (
             <span key={opinion.model} title={`두 번째 의견 · ${opinion.model}`}
               className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${opinion.decision === 'reject' ? 'bg-down/10 text-down' : opinion.decision === 'approve' ? 'bg-up/10 text-up' : 'bg-bg-soft text-fg-2'}`}>
-              {modelFamily(opinion.model)}: {SECOND_LABELS[opinion.decision] ?? opinion.decision}
-              {opinion.decision !== 'approve' && typeof opinion.confidence === 'number' ? ` ${opinion.confidence.toFixed(2)}` : ''}
+              {secondOpinionLabel(opinion)}
             </span>
           ))}
           <span title={finding.url} className="min-w-0 truncate font-mono text-fg-3">{finding.url.replace(/^https?:\/\//, '')}</span>

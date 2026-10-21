@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { cdnPurges, productAuditItems, productEvidenceAudit, products } from "@/lib/db/schema";
+import { cdnPurges, productAuditCampaigns, productAuditItems, productEvidenceAudit, products } from "@/lib/db/schema";
 import { productMakerMembers } from "@/lib/db/me-schema";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, withJobLeaseWrite } from "@/lib/jobs/control";
@@ -45,9 +45,14 @@ const RELEASE_BATCH = 200;
 
 /**
  * 보류를 푸는 까닭 — 제품 기록의 사유로 남는다. second_approve 는 두 번째 의견을 옮겨 적을 때 그 항목을 다른 모델이 승인한 것
- * (audit-second-opinion-import.ts) — 사람의 유지와 같은 길로 풀되 사람 결정으로 적지는 않는다
+ * (audit-second-opinion-import.ts) — 사람의 유지와 같은 길로 풀되 사람 결정으로 적지는 않는다. owned 는 주인이 생긴 것
+ * (도메인 검증·클레임 markVerified, 메이커 확인 recordOwnerMembership) — 보류는 주인 없는 것에만 건다
  */
-export type AuditHoldRelease = "kept" | "banned" | "unbanned" | "release_all" | "second_approve";
+export type AuditHoldRelease = "kept" | "banned" | "unbanned" | "release_all" | "second_approve" | "owned";
+/** 풀면 목록에 돌아오는 까닭 — Cloudflare 지우기 줄을 적는다(차단은 트리거가, 차단 해제는 다음 사본이 맡는다) */
+const RELISTS: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "owned"]);
+/** 사람(또는 두 번째 모델)이 그 제품을 본 까닭 — 그 제품의 열린 항목으로 다시 걸지 않는다 */
+const SETTLES: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "unbanned"]);
 
 const column = (alias: string) => (name: string) => sql`${sql.identifier(alias)}.${sql.identifier(name)}`;
 
@@ -63,15 +68,29 @@ function unownedPublic(alias: string): SQL {
 
 /**
  * 보류의 까닭이 될 수 있는 감사 항목 — AI 거절이고 확신이 문턱 이상이며 사람이 아직 정하지 않았고 보류를 푼 적도 없다.
- * 그 제품의 마지막 항목이어야 한다(새 감사가 다시 물었으면 새 답을 기다린다). 그 제품의 어느 항목이든 살아 있는 유지가 있으면 들지 않는다
+ * 그 제품의 마지막 항목이어야 한다 — 새 감사가 다시 물었으면 새 답을 기다린다. 다만 답이 없는 새 항목은 그 감사가 돌고 있을 때만
+ * 가린다: 중단됐거나 끝난 감사의 답 없는 항목(묻기 전에 멈춤·원본 없음·시도 소진)은 이제 답이 오지 않는다 — 옛 거절이 그대로 까닭이다.
+ * 그 제품의 어느 항목이든 살아 있는 유지가 있으면 들지 않는다
  */
 function holdableItem(alias: string, minConfidence: number): SQL {
   const c = column(alias);
   return sql`(${c("ai_decision")} = 'reject' and ${c("ai_confidence")} >= ${minConfidence}
     and ${c("human_decision")} is null and ${c("hold_released_at")} is null
-    and not exists (select 1 from ${productAuditItems} n where n.product_id = ${c("product_id")} and n.id > ${c("id")})
+    and not exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
+      where n.product_id = ${c("product_id")} and n.id > ${c("id")} and (n.ai_decision is not null or nc.status = 'running'))
     and not exists (select 1 from ${productAuditItems} k where k.product_id = ${c("product_id")}
       and k.human_decision = 'kept' and k.keep_until > now()))`;
+}
+
+/**
+ * 그 제품들의 답이 있는 열린 항목에 '풀었음'을 적는다 — 사람이(또는 두 번째 모델의 승인이) 보류를 풀면 그 제품은 지금 감사의 어느
+ * 거절로도 다시 걸지 않는다. 보류의 까닭이 된 항목만 적으면 더 새 거절이나 90일 지난 유지 뒤에 쓸기가 다시 건다.
+ * 답이 아직 없는 항목은 적지 않는다 — 그 답은 사람이 보기 전의 새 판단이다
+ */
+async function markOpenItemsReleased(tx: ProductTransaction, productIds: number[]): Promise<void> {
+  if (!productIds.length) return;
+  await tx.update(productAuditItems).set({ holdReleasedAt: sql`now()` }).where(and(inArray(productAuditItems.productId, productIds),
+    isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
 }
 
 /** 그 항목에 두 번째 모델의 거절·승인이 있다(product_audit_second_opinions) */
@@ -139,23 +158,16 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
  */
 export async function releaseAuditHold(tx: ProductTransaction,
   input: { productId: number; slug: string; actor: string; reason: AuditHoldRelease }): Promise<boolean> {
-  if (input.reason === "unbanned") {
-    await tx.update(productAuditItems).set({ holdReleasedAt: sql`now()` }).where(and(eq(productAuditItems.productId, input.productId),
-      isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt)));
-  }
+  // 차단 해제는 보류가 없었어도 사람이 목록에 돌려놓은 것이다
+  if (input.reason === "unbanned") await markOpenItemsReleased(tx, [input.productId]);
   const [current] = await tx.select({ heldAt: products.auditHoldAt, itemId: products.auditHoldItemId }).from(products)
     .where(and(eq(products.id, input.productId), isNotNull(products.auditHoldAt)));
   if (!current) return false;
   await tx.update(products).set({ auditHoldAt: null, auditHoldItemId: null }).where(eq(products.id, input.productId));
-  if (input.reason === "second_approve" && current.itemId !== null) {
-    await tx.update(productAuditItems).set({ holdReleasedAt: sql`now()` })
-      .where(and(eq(productAuditItems.id, current.itemId), isNull(productAuditItems.holdReleasedAt)));
-  }
+  if (SETTLES.has(input.reason) && input.reason !== "unbanned") await markOpenItemsReleased(tx, [input.productId]);
   await tx.insert(productEvidenceAudit).values({ slug: input.slug, actor: input.actor.slice(0, 120), action: AUDIT_RELEASE_ACTION,
     reason: input.reason, metadata: { itemId: current.itemId } });
-  if (input.reason === "kept" || input.reason === "second_approve") {
-    await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_RELEASE_PURGE });
-  }
+  if (RELISTS.has(input.reason)) await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_RELEASE_PURGE });
   return true;
 }
 
@@ -164,13 +176,20 @@ export async function releaseAuditHold(tx: ProductTransaction,
  *
  * 제품 하나가 한 트랜잭션이다(스팸 재검사와 같은 길): DR writer fence → stage → 제품 세대 → 항목 → 보류 → 작업 lease.
  * 이미 걸린 것·그 사이 사람이 정한 것은 holdAuditedProduct 의 조건이 걸러 몇 번 돌아도 한 번만 걸린다.
- * 한 틱에 AUDIT_HOLD_SWEEP_BATCH 건, SWEEP_MS 안에서만 — 오래된 항목부터.
+ * 한 틱에 AUDIT_HOLD_SWEEP_BATCH 건(지난 60초에 보류·풀기로 적힌 지우기 줄만큼 뺀다 — 새 답이 바로 건 보류까지 합쳐 지우기 잡이
+ * 따라잡는 만큼), SWEEP_MS 안에서만 — 오래된 항목부터. 걸기 전에 먼저 유지가 남았는데 풀리지 않은 보류를 푼다(healKeptHolds).
  */
 export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSettings): Promise<number> {
   const lease = ctx.lease;
-  if (!hold.enabled || (!hold.categories.length && !hold.secondOpinionReject) || !lease) return 0;
+  if (!lease) return 0;
   const startedAt = Date.now();
-  const candidates = await sweepCandidates(hold, startedAt);
+  await healKeptHolds(ctx, lease, startedAt);
+  if (!hold.enabled || (!hold.categories.length && !hold.secondOpinionReject)) return 0;
+  const [recent] = await db.select({ count: sql<number>`count(*)::int` }).from(cdnPurges).where(and(
+    inArray(cdnPurges.reason, [AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE]), sql`${cdnPurges.createdAt} > now() - interval '60 seconds'`));
+  const room = Math.max(0, AUDIT_HOLD_SWEEP_BATCH - (recent?.count ?? 0));
+  if (room === 0) return 0;
+  const candidates = await sweepCandidates(hold, startedAt, room);
   let held = 0;
   for (const row of candidates) {
     if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > SWEEP_MS) break;
@@ -189,6 +208,33 @@ export async function sweepAuditHolds(ctx: JobContext<null>, hold: AuditHoldSett
   return held;
 }
 
+/** 보류의 까닭이 된 항목이나 그보다 새 항목에 사람의 유지가 있다 — 그 보류는 풀려 있어야 한다 */
+const keptSinceHold = sql`exists (select 1 from ${productAuditItems} k where k.product_id = ${products.id}
+  and k.human_decision = 'kept' and k.id >= ${products.auditHoldItemId})`;
+
+/**
+ * 유지가 남았는데 풀리지 않은 보류를 푼다 — 배포 순서의 틈을 메운다. 공유 배포는 reviewer 를 웹보다 먼저 올려, 옛 웹의 유지는
+ * human_decision 만 적고 보류를 풀지 않는다. 스위치와 상관없이 돈다(푸는 일이다). 잠금은 유지와 같다(stage → 제품 세대).
+ */
+async function healKeptHolds(ctx: JobContext<null>, lease: NonNullable<JobContext<null>["lease"]>, startedAt: number): Promise<number> {
+  const rows = await db.select({ id: products.id, slug: products.slug }).from(products)
+    .where(and(isNotNull(products.auditHoldAt), keptSinceHold)).orderBy(asc(products.id)).limit(AUDIT_HOLD_SWEEP_BATCH);
+  let healed = 0;
+  for (const row of rows) {
+    if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > SWEEP_MS) break;
+    if (await withJobLeaseWrite(lease, async (tx) => {
+      await lockPipelineInputStages(tx);
+      if (!(await lockProductGeneration(tx, row.id, row.slug))) return false;
+      const [still] = await tx.select({ id: products.id }).from(products).where(and(eq(products.id, row.id), isNotNull(products.auditHoldAt), keptSinceHold));
+      const changed = still ? await releaseAuditHold(tx, { productId: row.id, slug: row.slug, actor: AUDIT_HOLD_ACTOR, reason: "kept" }) : false;
+      await assertJobLeaseAtWallTime(tx, lease);
+      return changed;
+    })) healed += 1;
+  }
+  if (healed) ctx.log("product_audit.hold_healed", { healed });
+  return healed;
+}
+
 /** 쓸기가 한 번에 읽는 쪽 크기 — 사유 문장까지 읽는다 */
 const CANDIDATE_PAGE = 500;
 
@@ -197,9 +243,9 @@ const CANDIDATE_PAGE = 500;
  * 허용 밖 갈래(글·문서·기타)가 앞자리를 영영 차지해 쓸기가 나아가지 않는다. 그 몫은 사람이 정할 때까지 남으므로(2026-10-21 추정 1천여 건)
  * 틱마다 몇 쪽을 다시 읽는다 — id·주소·사유만이다.
  */
-async function sweepCandidates(hold: AuditHoldSettings, startedAt: number) {
+async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room: number) {
   const picked: { item_id: number; product_id: number; slug: string }[] = [];
-  for (let afterId = 0; picked.length < AUDIT_HOLD_SWEEP_BATCH && Date.now() - startedAt <= SWEEP_MS;) {
+  for (let afterId = 0; picked.length < room && Date.now() - startedAt <= SWEEP_MS;) {
     const page = await db.execute<{ item_id: number; product_id: number; slug: string; ai_reason: string | null;
       second_reject: boolean; second_approve: boolean }>(sql`
       select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondReject("i")} as second_reject,
@@ -209,7 +255,7 @@ async function sweepCandidates(hold: AuditHoldSettings, startedAt: number) {
        order by i.id limit ${CANDIDATE_PAGE}`);
     for (const row of page) {
       const gate = { reason: row.ai_reason, secondReject: row.second_reject, secondApprove: row.second_approve };
-      if (picked.length < AUDIT_HOLD_SWEEP_BATCH && holdGate(gate, hold)) picked.push(row);
+      if (picked.length < room && holdGate(gate, hold)) picked.push(row);
     }
     if (page.length < CANDIDATE_PAGE) break;
     afterId = page[page.length - 1].item_id;
@@ -220,7 +266,8 @@ async function sweepCandidates(hold: AuditHoldSettings, startedAt: number) {
 /**
  * 보류를 모두 푼다 — 감사 화면의 '보류 모두 풀기'. 문턱을 잘못 잡았을 때 되돌리는 길이다. 아무것도 내리지 않는다.
  *
- * RELEASE_BATCH 건씩 한 트랜잭션으로 — 제품 행을 id 순서로 잠근다. 푼 항목은 '풀었음'을 적어 쓸기가 다시 걸지 않는다(새 감사의 새 항목은 걸릴 수 있다).
+ * RELEASE_BATCH 건씩 한 트랜잭션으로 — 제품 행을 id 순서로 잠근다. 그 제품들의 답이 있는 열린 항목에 '풀었음'을 적어 쓸기가 다시 걸지
+ * 않는다(새 감사의 새 항목은 걸릴 수 있다).
  * Cloudflare 는 목록만 지운다(빈 slug 의 한 줄, cdn/purge.ts) — 상세는 엣지 사본이 5분 안에 다시 채운다.
  * 제품마다 적으면 수천 줄이 차단·내려달라는 요청의 지우기를 한 시간 넘게 밀어낸다.
  */
@@ -233,11 +280,7 @@ export async function releaseAllAuditHolds(input: { by: string; note: string | n
         .where(isNotNull(products.auditHoldAt)).orderBy(asc(products.id)).limit(RELEASE_BATCH).for("update");
       if (!rows.length) return 0;
       await tx.update(products).set({ auditHoldAt: null, auditHoldItemId: null }).where(inArray(products.id, rows.map((row) => row.id)));
-      const itemIds = rows.flatMap((row) => row.itemId === null ? [] : [row.itemId]);
-      if (itemIds.length) {
-        await tx.update(productAuditItems).set({ holdReleasedAt: sql`now()` })
-          .where(and(inArray(productAuditItems.id, itemIds), isNull(productAuditItems.holdReleasedAt)));
-      }
+      await markOpenItemsReleased(tx, rows.map((row) => row.id));
       await tx.insert(productEvidenceAudit).values(rows.map((row) => ({ slug: row.slug, actor: input.by.slice(0, 120),
         action: AUDIT_RELEASE_ACTION, reason: "release_all" as const, metadata: { itemId: row.itemId, note: input.note } })));
       await tx.insert(cdnPurges).values({ slug: "", reason: AUDIT_RELEASE_PURGE });

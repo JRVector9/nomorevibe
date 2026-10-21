@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { clickEvents, productEvidenceSources, products, productStarObservationRuns, productStarObservations, rateLimits } from "@/lib/db/schema";
+import { cdnPurges, clickEvents, productEvidenceAudit, productEvidenceSources, products, productStarObservationRuns, productStarObservations,
+  rateLimits } from "@/lib/db/schema";
 import { makerReplies, notifications, productMakerMembers, productReactions, userSavedProducts } from "@/lib/db/me-schema";
 import { productFeedback } from "@/lib/db/product-feedback-schema";
 import { publicIdentities, publicSessions, publicUsers } from "@/lib/db/public-user-schema";
@@ -322,6 +323,22 @@ describe("POST /api/maker/claims — GitHub 저장소 주인 확인", () => {
     release();
     expect((await ownerClaim)[0].result).toBe("verified");
     expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  /** 감사 보류(0110)는 주인 없는 것에만 건다 — 운영자 확인으로 주인이 생기면 같은 세대 잠금 안에서 풀고, 카드도 공유할 수 있다 */
+  it("감사 보류된 제품을 운영자로 확인하면 보류를 풀고 기록·지우기 줄을 남긴다 — 배지·공유 카드도 내준다", async () => {
+    const session = await account();
+    const tiny = await product("tiny-cron", "https://github.com/hanul/tiny-cron", { auditHoldAt: new Date(), auditHoldItemId: 9 });
+    await seen(tiny, 11);
+    upstream["/repos/hanul/tiny-cron"] = repo(11, hanul, "tiny-cron");
+    expect((await claim(session, { productIds: [tiny.id] })).body.results?.map((item) => item.result)).toEqual(["verified"]);
+    const [after] = await db.select().from(products).where(eq(products.id, tiny.id));
+    expect(after.auditHoldAt).toBeNull();
+    const [release] = await db.select().from(productEvidenceAudit).where(and(eq(productEvidenceAudit.slug, "tiny-cron"),
+      eq(productEvidenceAudit.action, "audit.hold.release")));
+    expect(release).toMatchObject({ actor: `maker:${session.user.id}`, reason: "owned" });
+    expect(await db.select({ slug: cdnPurges.slug, reason: cdnPurges.reason }).from(cdnPurges)).toEqual([{ slug: "tiny-cron", reason: "audit_release" }]);
+    expect((await makerProjects(session.user.id))[0]).toMatchObject({ slug: "tiny-cron", shareable: true });
   });
 
   it("같은 저장소의 답(있음·없음)은 10분 담아 GitHub 을 다시 부르지 않는다", async () => {

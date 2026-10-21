@@ -108,7 +108,7 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     expect(byKey.has("audit-held")).toBe(false);
     const held = { ...inputs, attention: { ...inputs.attention!, auditHeld: 1_234 } } as ActionInputs;
     const row = buildActions(held, deriveStatus(held)).find((item) => item.key === "audit-held");
-    expect(row).toMatchObject({ tone: "hold", count: 1_234, unit: "건", action: { href: "/admin/audit?tab=audit" } });
+    expect(row).toMatchObject({ tone: "hold", count: 1_234, unit: "건", action: { href: "/admin/audit?tab=audit&view=held" } });
     expect(text(row!)).toContain("차단이 아닙니다");
   });
 

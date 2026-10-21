@@ -7,7 +7,7 @@ import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repos
 import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { getSettings, type AuditHoldSettings } from "./settings";
 import { auditHoldCount, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
-import { secondOpinionFilter, secondOpinionsField, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
+import { secondOpinionFilter, secondOpinionsField, secondOpinionVote, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
@@ -508,38 +508,57 @@ export const GROUP_REMOVE_MIN_CONFIDENCE = 0.95;
 export const GROUP_REMOVE_MAX = 50;
 
 /** 묶을 수 있는 것 — 아직 아무도 손대지 않았고, 떠 있고, 주인이 없고, 확신이 문턱 이상인 거부 */
+/**
+ * 묶을 수 있는 것 — 거절, 사람이 아직 정하지 않음, 확신 문턱 이상, 그리고 갈리지 않음: 두 번째 모델이 승인했고 거절은 없는 것(갈림)은
+ * 사람이 한 건씩 본다. SaaS 첫 화면을 "광고 문구뿐"으로 잡은 오탐이 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
+ */
 const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
-  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE));
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql)}`);
 const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
   and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
+
+/** 묶음의 범위 — 감사 화면의 갈래. 보류 중(held)·두 모델 모두 거절(agreed)·내릴 후보 전체(reject) */
+export const GROUP_SCOPES = ["held", "agreed", "reject"] as const;
+export type AuditGroupScope = (typeof GROUP_SCOPES)[number];
+
+/**
+ * 범위를 잠근 뒤 다시 보는 조건 — 오래된 화면이 그 사이 풀린 보류(승인 옮겨 적기·유지)나 바뀐 의견을 내리지 않게.
+ * held: 그 제품이 지금 이 항목으로 보류 중. agreed: 이 항목에 두 번째 모델의 거절이 있다
+ */
+function groupScope(scope: AuditGroupScope): SQL | undefined {
+  if (scope === "held") return sql`exists (select 1 from ${products} hp where hp.id = ${productAuditItems.productId}
+    and hp.audit_hold_at is not null and hp.audit_hold_item_id = ${productAuditItems.id})`;
+  return scope === "agreed" ? secondOpinionVote(itemIdSql, "reject") : undefined;
+}
 
 export type AuditRemovalGroup = {
   /** 제품의 지금 분류 — 모델의 분류(ai_category)는 승인할 때만 붙어 거부에는 거의 비어 있다 */
   category: string;
   total: number;
-  /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다 */
-  items: { id: number; slug: string; name: string; url: string; confidence: number }[];
+  /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다. second 는 두 번째 의견(확인 창의 배지) */
+  items: { id: number; slug: string; name: string; url: string; confidence: number; second: SecondOpinionView[] }[];
 };
 
 /**
- * 묶음 — 큰 것부터. 묶음마다 확신 높은 순으로 한 번에 내릴 만큼만.
- * scope 로 좁힌다: 보류 중인 것만(held), 두 모델 모두 거절한 것만(agreed). 내리는 길은 그대로다(removeAuditedProducts)
+ * 묶음 — 큰 것부터. 묶음마다 확신 높은 순으로 한 번에 내릴 만큼만. 내리는 길은 그대로다(removeAuditedProducts — 같은 범위를 잠근 뒤 다시 본다).
+ * reject·agreed 는 이 감사의 항목, held 는 감사 회차와 상관없이 보류의 까닭이 된 항목(지난 감사의 보류까지)이다
  */
-export async function auditRemovalGroups(campaignId: number, scope?: "held" | SecondOpinionFilter): Promise<AuditRemovalGroup[]> {
-  const narrowed = scope === "held" ? isNotNull(products.auditHoldAt) : scope ? secondOpinionFilter(scope, itemIdSql) : undefined;
+export async function auditRemovalGroups(campaignId: number, scope: AuditGroupScope = "reject"): Promise<AuditRemovalGroup[]> {
   const ranked = db.select({
     id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
     confidence: sql<number>`${productAuditItems.aiConfidence}`.as("confidence"),
+    second: sql<SecondOpinionView[]>`${secondOpinionsField(itemIdSql)}`.as("second"),
     rank: sql<number>`(row_number() over (partition by ${products.category} order by ${productAuditItems.aiConfidence} desc, ${productAuditItems.id}))::int`.as("rank"),
     total: sql<number>`(count(*) over (partition by ${products.category}))::int`.as("total"),
   }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`, narrowed)).as("ranked");
+    .where(and(scope === "held" ? undefined : eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`, groupScope(scope)))
+    .as("ranked");
   const rows = await db.select().from(ranked).where(lte(ranked.rank, GROUP_REMOVE_MAX))
     .orderBy(desc(ranked.total), asc(ranked.category), asc(ranked.rank));
   const groups = new Map<string, AuditRemovalGroup>();
   for (const row of rows) {
     const group = groups.get(row.category) ?? { category: row.category, total: row.total, items: [] };
-    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence });
+    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence, second: row.second });
     groups.set(row.category, group);
   }
   return [...groups.values()];
@@ -551,11 +570,12 @@ export type AuditBatchResult = { removed: string[]; failed: { slug: string; erro
  * 사람이 이름을 훑고 고른 묶음을 내린다 — 한 건씩 내리기와 같은 길(잠금·차단·기록)을 한 건마다 따로 탄다.
  * 한 건이 실패해도 나머지는 내린다. 그 사이 사람이 결정했거나, 문턱 밖이거나, 주인이 생긴 것은 건너뛴다.
  */
-export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string }): Promise<AuditBatchResult> {
+export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string; scope?: AuditGroupScope }): Promise<AuditBatchResult> {
   if (input.items.length > GROUP_REMOVE_MAX) throw new Error(`audit_batch_over_${GROUP_REMOVE_MAX}`);
   const result: AuditBatchResult = { removed: [], failed: [] };
+  const only = and(groupableItem, groupScope(input.scope ?? "reject"));
   for (const item of input.items) {
-    const done = await removeOne({ ...item, by: input.by }, groupableItem);
+    const done = await removeOne({ ...item, by: input.by }, only);
     if (done.ok) result.removed.push(item.slug);
     else result.failed.push({ slug: item.slug, error: done.error });
   }

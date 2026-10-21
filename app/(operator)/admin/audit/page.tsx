@@ -102,7 +102,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   // 갈래를 바꾸면(view) 사유 거르기는 푼다 — 두 갈래의 사유는 섞여 세지 않는다
   const href = (nextView: View, nextPage = 1, nextReason: AuditReasonCategory | null = nextView === view ? reason : null) => {
     const params = new URLSearchParams({ tab: "audit" });
-    if (nextView !== defaultView) params.set("view", nextView);
+    // 보류 갈래는 늘 view=held 를 싣는다 — 보류가 다 풀린 뒤에 그 주소로 와도 보류 갈래다
+    if (nextView === "held" || nextView !== defaultView) params.set("view", nextView);
     if (nextReason) params.set("reason", nextReason);
     if (nextPage > 1) params.set("page", String(nextPage));
     return `/admin/audit${params.size ? `?${params}` : ""}`;
@@ -172,7 +173,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 
       {campaign && (
         <>
-          <AuditGroups groups={groups} minConfidence={GROUP_REMOVE_MIN_CONFIDENCE} max={GROUP_REMOVE_MAX} />
+          {(view === "reject" || view === "held" || view === "agreed") &&
+            <AuditGroups groups={groups} minConfidence={GROUP_REMOVE_MIN_CONFIDENCE} max={GROUP_REMOVE_MAX} scope={view} />}
 
           <nav className="flex flex-wrap items-center gap-1.5">
             {(Object.keys(VIEWS) as View[]).map((name) => (
@@ -367,7 +369,8 @@ function HoldPanel({ overview, heldReasons }: { overview: AuditOverview; heldRea
         보류 중 <b className="font-semibold text-warn">{count(held)}</b>건 — 차단이 아니라 공개 목록·검색·sitemap 에서만 빠졌습니다.
         {byCategory.length > 0 && <> 갈래별: {byCategory.map((key) => `${AUDIT_REASON_CATEGORIES[key].label} ${count(heldReasons![key].length)}`).join(" · ")}</>}
       </p>
-      <AuditHoldSettingsForm hold={hold} />
+      {/* 저장된 값이 바뀌면 새로 그린다 — 오류가 나면 고친 값을 그대로 둔다 */}
+      <AuditHoldSettingsForm key={JSON.stringify(hold)} hold={hold} />
       <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
         <ReleaseAllHolds held={held} />
         <span className="text-[13px] text-fg-3">끄거나 문턱·갈래를 좁혀도 이미 건 보류는 남습니다. 모두 풀면 목록에 돌아오고, 감사 거절 목록에는 그대로 남습니다.</span>

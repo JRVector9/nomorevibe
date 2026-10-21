@@ -16,7 +16,9 @@ const CARD_CACHE = "public, max-age=3600, s-maxage=86400, stale-while-revalidate
 export const GET = withRoute("products.share_card", async (_req: Request, { params }: Params) => {
   const { locale, slug } = await params;
   const data = isLocale(locale) ? await shareCardData(slug, locale) : null;
-  if (!data || !isLocale(locale)) return NextResponse.json({ error: "not_found" }, { status: 404, headers: { "cache-control": "public, max-age=300" } });
+  // 404 도 그 제품의 태그를 단다 — 감사 보류가 풀리면 그 지우기(p-<slug>)가 이 사본도 지운다. 주소 모양이 아니면 달지 않는다
+  if (!data || !isLocale(locale)) return NextResponse.json({ error: "not_found" }, { status: 404,
+    headers: { "cache-control": "public, max-age=300", ...(/^[a-z0-9-]{1,80}$/.test(slug) ? { "cache-tag": `p-${slug}` } : {}) } });
   const png = await shareCardPng(data, locale);
   return new NextResponse(new Uint8Array(png), {
     headers: { "content-type": "image/png", "cache-control": CARD_CACHE, "cache-tag": `p-${slug}` },

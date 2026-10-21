@@ -485,8 +485,11 @@ describe("ranking read models", () => {
     expect(state.preview.map((item) => item.slug)).toContain("rank-two");
   });
 
-  /** 감사 보류(0110) — 보류는 주인 없는 것에만 걸리지만, 걸린 뒤 검증돼도 사람이 풀기 전까지 순위·시즌 띠에 없다 */
-  it("hides audit-held products from public rankings and season strips but keeps them in the admin preview", async () => {
+  /**
+   * 감사 보류(0110) — 보류는 주인 없는 것에만 걸리고 검증되면 풀린다(markVerified). 그래도 보류된 검증 제품이 있으면 순위를 매기기 전에
+   * 뺀다(refresh.ts) — 공개 순위가 그 줄을 빼 번호가 비지 않게. 그래서 관리자 미리보기(같은 계산)에도 없다
+   */
+  it("hides audit-held products from public rankings, season strips and the ranking calculation itself", async () => {
     await materializeRanking();
     const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
     await db.insert(productClickDaily).values([
@@ -501,7 +504,7 @@ describe("ranking read models", () => {
     expect((await getSeasonRanking({ seasonKey: "2026-W34", order: "trending", limit: 10 })).items.map((item) => item.slug)).not.toContain("rank-two");
     expect((await getAllTimeRanking({ limit: 10 })).map((item) => item.slug)).toEqual(["rank-one"]);
     expect((await getVerifiedList(10)).map((item) => item.slug)).not.toContain("rank-two");
-    expect((await getRankingAdminState(NOW)).preview.map((item) => item.slug)).toContain("rank-two");
+    expect((await getRankingAdminState(NOW)).preview.map((item) => item.slug)).not.toContain("rank-two");
 
     // 시즌 띠·sitemap 이 여는 시즌 — 그 시즌의 줄이 모두 보류면 빈 시즌이다
     expect(await seasonKeysWithEntries(["2026-W34"])).toEqual(["2026-W34"]);

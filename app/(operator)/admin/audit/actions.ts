@@ -2,8 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
-import { cancelProductAudit, GROUP_REMOVE_MAX, keepAuditedProduct, removeAuditedProduct, removeAuditedProducts,
-  startProductAudit } from '@/lib/crawl/product-audit';
+import { cancelProductAudit, GROUP_REMOVE_MAX, GROUP_SCOPES, keepAuditedProduct, removeAuditedProduct, removeAuditedProducts,
+  startProductAudit, type AuditGroupScope } from '@/lib/crawl/product-audit';
 import { releaseAllAuditHolds } from '@/lib/crawl/product-audit-hold';
 import { isAuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { setAuditHold } from '@/lib/crawl/settings';
@@ -82,7 +82,8 @@ export const cancelAudit = webWriteAction(async function cancelAudit(): Promise<
  * 묶어 내리기(ADM-07) — 사람이 이름을 훑고 확인한 묶음을 한 번에 내린다. 최대 GROUP_REMOVE_MAX 건.
  *
  * 한 건씩 내리기와 같은 길을 한 건마다 탄다(removeAuditedProducts). 화면이 보낸 것을 그대로 믿지 않는다 —
- * 확신 문턱·주인 없음·아직 아무도 손대지 않음을 잠근 뒤 다시 보고, 맞지 않는 것은 건너뛴다.
+ * 확신 문턱·주인 없음·아직 아무도 손대지 않음·갈리지 않음과 묶음의 범위(scope — 보류 중이면 지금도 그 항목으로 보류 중인지,
+ * 두 모델 모두 거절이면 거절 의견이 있는지)를 잠근 뒤 다시 보고, 맞지 않는 것은 건너뛴다. 범위는 작업 로그의 group 에 남긴다.
  */
 export const removeAuditGroup = webWriteAction(async function removeAuditGroup(form: FormData): Promise<AuditGroupResult> {
   const admin = await currentAdmin();
@@ -90,16 +91,19 @@ export const removeAuditGroup = webWriteAction(async function removeAuditGroup(f
   const ids = form.getAll('item').map(Number);
   const slugs = form.getAll('slug').map(String);
   const group = String(form.get('group') ?? '').slice(0, 40);
+  const scopeValue = String(form.get('scope') ?? 'reject');
+  if (!(GROUP_SCOPES as readonly string[]).includes(scopeValue)) return { error: '묶음의 범위를 읽지 못했습니다. 새로고침해주세요.' };
+  const scope = scopeValue as AuditGroupScope;
   if (!ids.length || ids.length !== slugs.length || ids.some((id) => !Number.isSafeInteger(id) || id <= 0) || slugs.some((slug) => !slug)) {
     return { error: '고른 제품을 읽지 못했습니다. 새로고침해주세요.' };
   }
   if (ids.length > GROUP_REMOVE_MAX) return { error: `한 번에 ${GROUP_REMOVE_MAX}건까지 내립니다.` };
   const items = ids.map((itemId, index) => ({ itemId, slug: slugs[index] }));
-  const result = await removeAuditedProducts({ items, by: admin.login });
+  const result = await removeAuditedProducts({ items, by: admin.login, scope });
   const failed = new Map(result.failed.map((item) => [item.slug, item.error]));
   await recordAdminActions(admin.login, items.map((item) => ({ action: 'audit-remove', target: item.slug,
-    detail: { itemId: item.itemId, group, bulk: items.length }, ok: !failed.has(item.slug), error: failed.get(item.slug) ?? null })));
-  logger.info('admin.product_audit_group_removed', { group, removed: result.removed.length, failed: result.failed.length, login: admin.login });
+    detail: { itemId: item.itemId, group, scope, bulk: items.length }, ok: !failed.has(item.slug), error: failed.get(item.slug) ?? null })));
+  logger.info('admin.product_audit_group_removed', { group, scope, removed: result.removed.length, failed: result.failed.length, login: admin.login });
   revalidatePath('/admin/audit');
   revalidatePath('/admin/products');
   return { removed: result.removed.length, failed: result.failed.length };

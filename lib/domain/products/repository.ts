@@ -703,6 +703,8 @@ export async function markVerified(
       ))
       .returning();
     if (!updated) return false;
+    // 주인이 생겼다 — 감사 보류는 주인 없는 것에만 건다. 같은 세대 잠금 안에서 풀어 목록에 돌려놓는다(검증된 제품은 보류된 채로 두지 않는다)
+    await releaseAuditHold(tx, { productId: id, slug, actor: "system:verified", reason: "owned" });
     const repository = updated.repoUrl ? normalizeTypedLink("repository", updated.repoUrl) : null;
     if (repository) {
       const [link] = await tx.select({ id: productLinks.id }).from(productLinks)

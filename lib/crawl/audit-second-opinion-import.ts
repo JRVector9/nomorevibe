@@ -1,20 +1,21 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
-import { productAuditItems, productAuditSecondOpinions, products } from "@/lib/db/schema";
+import { crawlSettings, productAuditItems, productAuditSecondOpinions, products } from "@/lib/db/schema";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { releaseAuditHold } from "./product-audit-hold";
+import { holdGate, releaseAuditHold } from "./product-audit-hold";
+import { lockedAuditHold, storedAuditHold, type AuditHoldSettings } from "./settings";
 
 /**
  * 두 번째 의견 옮겨 적기(0110) — 밖에서 돌린 grok 일괄 결과(JSONL)를 product_audit_second_opinions 에 넣는다.
  * scripts/ops/import-audit-second-opinions.ts 가 부른다. 읽는 SQL 은 audit-second-opinions.ts 에 있다.
  *
- * 승인 의견이 지금 그 항목으로 보류된 제품에 오면 같은 트랜잭션에서 보류를 푼다 — 그 항목에 거절 의견이 하나도 남지 않았을 때만
- * (거절이 있으면 두 번째 모델 거절로 다시 걸 까닭이다). 보류는 늘 시스템이 건다(사람이 거는 보류는 없다). 푸는 길은 유지와 같고
- * (releaseAuditHold — 기록·Cloudflare 지우기 줄), 누가는 import:<source>, 그 항목에는 '풀었음'을 적어 쓸기가 다시 걸지 않는다.
- * 판단 보류 의견은 걸지도 풀지도 않는다.
+ * 승인 의견이 지금 그 항목으로 보류된 제품에 오면 같은 트랜잭션에서 보류를 다시 가른다 — 덮어쓴 뒤의 의견과 지금 설정으로
+ * 보류의 둘째 문(holdGate)이 더는 맞지 않으면 푼다(거절 의견이 남아 두 번째 거절이 켜져 있으면 그대로 둔다). 보류는 늘 시스템이
+ * 건다(사람이 거는 보류는 없다). 푸는 길은 유지와 같고(releaseAuditHold — 기록·Cloudflare 지우기 줄), 누가는 import:<source>,
+ * 그 제품의 답이 있는 열린 항목에는 '풀었음'을 적어 쓸기가 다시 걸지 않는다. 판단 보류 의견은 걸지도 풀지도 않는다.
  */
 
 /** JSONL 한 줄 — 일괄 도구가 쓴 이름 그대로 */
@@ -90,6 +91,7 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
       }
       const ids = [...new Set(batch.map((row) => row.itemId))];
       const items = new Map((await tx.select({ id: productAuditItems.id, productId: productAuditItems.productId, slug: products.slug,
+        aiReason: productAuditItems.aiReason,
         open: sql<boolean>`(${productAuditItems.aiDecision} = 'reject' and ${productAuditItems.humanDecision} is null
           and coalesce(${products.status} in ('seeded', 'verified'), false))` })
         .from(productAuditItems).leftJoin(products, eq(products.id, productAuditItems.productId))
@@ -112,8 +114,11 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
           else result.inserted += 1;
           after.set(`${row.itemId}:${row.model}`, row);
         }
-        result.released += (await heldBy(tx, approvals)).filter((itemId) =>
-          ![...after.values()].some((row) => row.itemId === itemId && row.decision === "reject")).length;
+        const [settings] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, 1));
+        const hold = storedAuditHold(settings?.values);
+        const opinions = [...after.values()];
+        result.released += (await heldBy(tx, approvals)).filter((itemId) => releasable(items.get(itemId)!.aiReason,
+          opinions.filter((row) => row.itemId === itemId).map((row) => row.decision), hold)).length;
         return;
       }
       // 승인이 보류를 풀 수 있는 제품의 세대를 의견을 적기 전에 잡는다 — 제품 id 순
@@ -133,12 +138,15 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
         if (row.inserted) result.inserted += 1;
         else result.updated += 1;
       }
-      // 잠근 뒤 다시 본다 — 지금 그 항목으로 보류됐고, 덮어쓴 뒤에도 그 항목에 거절 의견이 하나도 없다
-      const rejected = new Set((await tx.select({ itemId: productAuditSecondOpinions.itemId }).from(productAuditSecondOpinions)
-        .where(and(inArray(productAuditSecondOpinions.itemId, ids), eq(productAuditSecondOpinions.decision, "reject")))).map((row) => row.itemId));
-      for (const itemId of await heldBy(tx, approvals.filter((row) => locked.has(row.productId)))) {
-        if (rejected.has(itemId)) continue;
+      // 잠근 뒤 다시 본다 — 지금 그 항목으로 보류됐고, 덮어쓴 뒤의 의견과 지금 설정으로는 둘째 문이 맞지 않는다
+      const held = await heldBy(tx, approvals.filter((row) => locked.has(row.productId)));
+      if (!held.length) return;
+      const hold = await lockedAuditHold(tx);
+      const opinions = await tx.select({ itemId: productAuditSecondOpinions.itemId, decision: productAuditSecondOpinions.decision })
+        .from(productAuditSecondOpinions).where(inArray(productAuditSecondOpinions.itemId, held));
+      for (const itemId of held) {
         const item = items.get(itemId)!;
+        if (!releasable(item.aiReason, opinions.filter((row) => row.itemId === itemId).map((row) => row.decision), hold)) continue;
         if (await releaseAuditHold(tx, { productId: item.productId, slug: item.slug!, actor: `import:${source}`, reason: "second_approve" })) {
           result.released += 1;
         }
@@ -147,6 +155,11 @@ export async function importAuditSecondOpinions(database: Database, lines: Secon
     await (options.dryRun ? database.transaction(run, { accessMode: "read only" }) : database.transaction(run));
   }
   return result;
+}
+
+/** 덮어쓴 뒤의 의견으로 보류의 둘째 문(holdGate)이 더는 맞지 않는가 — 맞지 않으면 승인이 보류를 푼다 */
+function releasable(reason: string | null, decisions: string[], hold: AuditHoldSettings): boolean {
+  return !holdGate({ reason, secondReject: decisions.includes("reject"), secondApprove: decisions.includes("approve") }, hold);
 }
 
 /** 이 승인 줄들 가운데 지금 그 항목으로 보류된 제품의 항목 id */

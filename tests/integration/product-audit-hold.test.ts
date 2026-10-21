@@ -6,16 +6,18 @@ import { cdnPurges, crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewA
 import { notifications, productMakerMembers, userFollows } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
 import * as crawl from "@/lib/crawl/repository";
-import { getSettings, resetSettings, saveSettings, setAuditHold } from "@/lib/crawl/settings";
+import { getSettings, lockedAuditHold, resetSettings, saveSettings, setAuditHold, storedAuditHold } from "@/lib/crawl/settings";
 import { DEFAULT_AUDIT_HOLD } from "@/lib/crawl/settings-schema";
 import { classifyAuditReason } from "@/lib/crawl/audit-reason-category";
-import { keepAuditedProduct, productAuditOverview, recordAuditResult, removeAuditedProduct, removeAuditedProducts,
+import { auditRemovalGroups, keepAuditedProduct, productAuditOverview, recordAuditResult, removeAuditedProduct, removeAuditedProducts,
   startProductAudit } from "@/lib/crawl/product-audit";
 import { AUDIT_HOLD_SWEEP_BATCH, releaseAllAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { importAuditSecondOpinions } from "@/lib/crawl/audit-second-opinion-import";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { banProduct, unbanProduct } from "@/lib/domain/products/manage";
 import { getPublicList } from "@/lib/domain/products/view";
+import { markVerified } from "@/lib/domain/products/repository";
+import { loadInbox } from "@/lib/operations/inbox";
 import { productHistory } from "@/lib/domain/products/history";
 import { purgeTags } from "@/lib/cdn/purge";
 import { sendDelistedNotifications } from "@/lib/jobs/me/notifications";
@@ -86,7 +88,7 @@ const purges = () => db.select({ slug: cdnPurges.slug, reason: cdnPurges.reason 
 const listedSlugs = async () => (await getPublicList(100)).map((row) => row.slug).sort();
 const turn = async (next: Partial<typeof DEFAULT_AUDIT_HOLD>) => {
   const expected = (await getSettings()).auditHold;
-  expect(await setAuditHold({ next: { ...expected, ...next }, expected, actor: "jr" })).toMatchObject({ ok: true });
+  expect(await setAuditHold({ next: { ...expected, ...next }, expected, actor: "jr", reason: "테스트" })).toMatchObject({ ok: true });
 };
 
 /** 감사를 열고 모델의 답을 직접 적는다 — 쓸기가 밀린 것을 거는지 본다(답을 적는 길을 타지 않는다) */
@@ -184,12 +186,26 @@ describe("보류의 경계 — 쓸기와 새 답이 같은 조건을 쓴다", ()
   it("차단된 것·문턱 밖은 걸지 않고, 새 감사가 다시 물으면 옛 항목으로는 걸지 않는다", async () => {
     await judged([{ repo: "e/banned" }, { repo: "e/edge", confidence: 0.95 }, { repo: "e/below", confidence: 0.9499 }, { repo: "e/requeued" }]);
     await db.update(products).set({ status: "banned" }).where(eq(products.slug, "banned"));
-    // 다음 감사가 같은 제품을 다시 올렸다 — 새 답을 기다린다
+    // 다음 감사(지금 돌고 있다)가 같은 제품을 다시 올렸다 — 새 답을 기다린다. 글이 옛 판이라 잡은 묻지 않고 멈춰 있다
     const [next] = await db.insert(productAuditCampaigns).values({ startedBy: "jr", reason: "다시", promptVersion: "x", rulesVersion: "x",
-      provider: "abcllm", model: "m", status: "cancelled" }).returning();
+      provider: "abcllm", model: "m", status: "running" }).returning();
     await db.insert(productAuditItems).values({ campaignId: next.id, productId: (await productOf("requeued")).id, slug: "requeued" });
     await tick();
     expect(await heldSlugs()).toEqual(["edge"]);
+  });
+
+  it("끝났거나 중단된 감사의 답 없는 새 항목은 옛 거절을 가리지 않는다 — 옮겨 적은 두 번째 거절도 옛 항목으로 건다", async () => {
+    await judged([{ repo: "z/company" }, { repo: "z/doc", reason: CONTENT }, { repo: "z/doc-plain", reason: CONTENT }]);
+    const older = { company: await item("company"), doc: await item("doc") };
+    // 두 번째 감사가 셋을 다시 올렸지만 답하기 전에 중단됐다
+    await start({ reason: "두 번째", reauditKept: true });
+    await db.update(productAuditCampaigns).set({ status: "cancelled" }).where(eq(productAuditCampaigns.status, "running"));
+    expect((await item("company")).id).not.toBe(older.company.id);
+    await importAuditSecondOpinions(db, [{ auditResultId: older.doc.id, productId: older.doc.productId, grokDecision: "reject", grokConfidence: 0.9,
+      model: "grok-4-fast" }], { dryRun: false, source: "grok-cli-batch" });
+    await tick();
+    expect(await heldSlugs()).toEqual(["company", "doc"]);
+    expect((await productOf("company")).auditHoldItemId).toBe(older.company.id);
   });
 });
 
@@ -198,7 +214,12 @@ describe("쓸기", () => {
     await judged(Array.from({ length: AUDIT_HOLD_SWEEP_BATCH + 5 }, (_, index) => ({ repo: `w/p${index}` })));
     await tick();
     expect(await heldSlugs()).toEqual(Array.from({ length: AUDIT_HOLD_SWEEP_BATCH }, (_, index) => `p${index}`));
+    // 지난 60초에 적힌 보류 지우기 줄만큼 빼고 건다 — 지우기 잡이 따라잡을 만큼만
     await tick();
+    expect(await heldSlugs()).toHaveLength(AUDIT_HOLD_SWEEP_BATCH);
+    await db.update(cdnPurges).set({ createdAt: sql`now() - interval '2 minutes'` });
+    await tick();
+    await db.update(cdnPurges).set({ createdAt: sql`now() - interval '2 minutes'` });
     await tick();
     expect(await heldSlugs()).toHaveLength(AUDIT_HOLD_SWEEP_BATCH + 5);
     expect(await holdRows("audit.hold")).toHaveLength(AUDIT_HOLD_SWEEP_BATCH + 5);
@@ -416,6 +437,185 @@ describe("팔로한 사람", () => {
     await sendDelistedNotifications({ ...context, cursor: second.cursor as never });
     const rows = await db.select().from(notifications);
     expect(rows.map((row) => [row.userId, row.kind, row.payload])).toEqual([[user.id, "followed_delisted", { reason: "removed" }]]);
+  });
+});
+
+describe("리뷰 회귀 — 푼 보류가 다시 걸리지 않는다", () => {
+  /** 두 감사가 같은 제품을 회사 소개로 거절했다 — 첫 감사의 항목으로 보류된 뒤 두 번째 감사의 새 거절이 생긴다 */
+  async function twoRejects(repo: string) {
+    await judged([{ repo }]);
+    await tick();
+    await start({ reason: "두 번째", reauditKept: true });
+    await db.update(productAuditItems).set({ aiDecision: "reject", aiConfidence: 0.97, aiReason: COMPANY, reviewedAt: sql`now()`, attempts: 1 })
+      .where(sql`${productAuditItems.aiDecision} is null`);
+    await db.update(productAuditCampaigns).set({ status: "done" });
+    const slug = repo.split("/")[1];
+    const rows = await db.select().from(productAuditItems).where(eq(productAuditItems.slug, slug)).orderBy(asc(productAuditItems.id));
+    return { slug, older: rows[0], newer: rows[1] };
+  }
+
+  it("보류 모두 풀기 — 더 새 거절이 있어도 다음 틱에 다시 걸지 않는다(그 제품의 답이 있는 열린 항목에 '풀었음')", async () => {
+    const { slug, older, newer } = await twoRejects("s1/alpha");
+    expect((await productOf(slug)).auditHoldItemId).toBe(older.id);
+    expect(await releaseAllAuditHolds({ by: "jr", note: "문턱을 잘못 잡음" })).toBe(1);
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+    for (const row of [older, newer]) expect((await db.select().from(productAuditItems).where(eq(productAuditItems.id, row.id)))[0].holdReleasedAt).toBeInstanceOf(Date);
+  });
+
+  it("옛 보류 항목으로 유지하면 더 새 열린 거절로도, 90일이 지나도 다시 걸지 않는다", async () => {
+    const { slug, older } = await twoRejects("s2/beta");
+    expect(await keepAuditedProduct({ itemId: older.id, slug, by: "jr", note: "" })).toEqual({ ok: true });
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+    await db.update(productAuditItems).set({ keepUntil: sql`now() - interval '1 minute'` }).where(eq(productAuditItems.id, older.id));
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+  });
+
+  it("승인을 옮겨 적어 풀면 더 새 거절로도 다시 걸지 않는다", async () => {
+    const { slug, older } = await twoRejects("s1/gamma");
+    expect(await importAuditSecondOpinions(db, [{ auditResultId: older.id, productId: older.productId, grokDecision: "approve", grokConfidence: 0.8,
+      model: "grok-4-fast" }], { dryRun: false, source: "grok-cli-batch" })).toMatchObject({ released: 1 });
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+    expect(slug).toBe("gamma");
+  });
+
+  it("차단 해제는 답이 있는 항목에만 '풀었음'을 적는다 — 돌고 있는 감사의 답 없는 항목은 사람이 보기 전의 새 판단이다", async () => {
+    await judged([{ repo: "u2/item" }]);
+    await start({ reason: "두 번째", reauditKept: true });
+    expect(await banProduct("item")).toMatchObject({ ok: true });
+    expect(await unbanProduct("item")).toMatchObject({ ok: true });
+    const rows = await db.select().from(productAuditItems).where(eq(productAuditItems.slug, "item")).orderBy(asc(productAuditItems.id));
+    expect(rows.map((row) => [row.aiDecision, row.holdReleasedAt !== null])).toEqual([["reject", true], [null, false]]);
+  });
+
+  it("옛 웹이 유지만 적고 보류를 풀지 않았어도 쓸기가 푼다(배포 순서)", async () => {
+    await judged([{ repo: "heal/kept" }]);
+    await tick();
+    const held = await productOf("kept");
+    await db.update(productAuditItems).set({ humanDecision: "kept", humanBy: "old-web", humanAt: sql`now()`, keepUntil: sql`now() + interval '90 days'` })
+      .where(eq(productAuditItems.id, held.auditHoldItemId!));
+    await turn({ enabled: false });
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+    expect((await holdRows("audit.hold.release")).map((row) => [row.slug, row.actor, row.reason])).toEqual([["kept", "system:audit-hold", "kept"]]);
+  });
+});
+
+describe("리뷰 회귀 — 주인이 생기면 보류를 푼다", () => {
+  it("도메인 검증(markVerified) — 같은 세대 잠금 안에서 풀고 목록에 돌려놓는다. 검증된 제품은 다시 보류하지 않는다", async () => {
+    await judged([{ repo: "own/verified" }]);
+    await tick();
+    const product = await productOf("verified");
+    expect(await markVerified(product.id, "verified", product.verifyToken, { verifyMethod: "meta", verifiedAt: new Date(), claimedAt: new Date() })).toBe(true);
+    expect(await productOf("verified")).toMatchObject({ status: "verified", auditHoldAt: null });
+    expect((await holdRows("audit.hold.release")).map((row) => [row.actor, row.reason])).toEqual([["system:verified", "owned"]]);
+    expect((await purges()).at(-1)).toEqual({ slug: "verified", reason: "audit_release" });
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+    expect(await listedSlugs()).toEqual(["verified"]);
+  });
+});
+
+describe("리뷰 회귀 — 묶어 내리기의 범위", () => {
+  const vote = async (slug: string, decision: "approve" | "reject") => {
+    const row = await item(slug);
+    await db.insert(productAuditSecondOpinions).values({ itemId: row.id, productId: row.productId, model: "grok-4-fast", decision, confidence: 0.9,
+      reason: "second", source: "test" });
+  };
+  const ids = async (slugs: string[]) => Promise.all(slugs.map(async (slug) => ({ itemId: (await item(slug)).id, slug })));
+
+  it("두 번째 모델이 승인한(갈림) 것은 묶지도 내리지도 않는다", async () => {
+    await judged([{ repo: "g1/split" }, { repo: "g1/plain" }]);
+    await vote("split", "approve");
+    const campaignId = (await item("plain")).campaignId;
+    expect((await auditRemovalGroups(campaignId)).flatMap((group) => group.items.map((row) => row.slug))).toEqual(["plain"]);
+    const result = await removeAuditedProducts({ by: "jr", items: await ids(["split", "plain"]) });
+    expect(result.removed).toEqual(["plain"]);
+    expect(result.failed.map((row) => row.slug)).toEqual(["split"]);
+  });
+
+  it("보류 범위는 잠근 뒤에도 그 항목으로 보류 중이어야 내린다 — 오래된 화면이 그 사이 풀린 보류를 내리지 않는다. 지난 감사의 보류도 묶는다", async () => {
+    await judged([{ repo: "g2/released" }, { repo: "g2/held" }]);
+    await tick();
+    // 새 감사를 열어도 보류 범위의 묶음에는 지난 감사의 보류가 든다
+    await start({ reason: "두 번째" });
+    await db.update(productAuditCampaigns).set({ status: "done" });
+    const latest = (await db.select().from(productAuditCampaigns).orderBy(asc(productAuditCampaigns.id))).at(-1)!.id;
+    const olderItems = await db.select().from(productAuditItems).where(sql`${productAuditItems.campaignId} <> ${latest}`).orderBy(asc(productAuditItems.id));
+    const groups = await auditRemovalGroups(latest, "held");
+    expect(groups.flatMap((group) => group.items.map((row) => row.id)).sort()).toEqual(olderItems.map((row) => row.id).sort());
+    const stale = olderItems.map((row) => ({ itemId: row.id, slug: row.slug }));
+    // 그 사이 승인을 옮겨 적어 하나가 풀렸다
+    const released = olderItems.find((row) => row.slug === "released")!;
+    await importAuditSecondOpinions(db, [{ auditResultId: released.id, productId: released.productId, grokDecision: "approve", model: "grok-4-fast" }],
+      { dryRun: false, source: "grok-cli-batch" });
+    const result = await removeAuditedProducts({ by: "jr", items: stale, scope: "held" });
+    expect(result.removed).toEqual(["held"]);
+    expect(result.failed.map((row) => row.slug)).toEqual(["released"]);
+    expect((await productOf("released")).status).toBe("seeded");
+  });
+
+  it("두 모델 모두 거절 범위는 잠근 뒤에도 거절 의견이 있어야 내린다", async () => {
+    await judged([{ repo: "g3/agreed" }, { repo: "g3/single" }]);
+    await vote("agreed", "reject");
+    const result = await removeAuditedProducts({ by: "jr", items: await ids(["agreed", "single"]), scope: "agreed" });
+    expect(result.removed).toEqual(["agreed"]);
+    expect(result.failed.map((row) => row.slug)).toEqual(["single"]);
+  });
+});
+
+describe("리뷰 회귀 — 꺼진 스위치는 기본값으로 되살아나지 않는다", () => {
+  const raw = async () => (await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1)))[0].values as Record<string, unknown>;
+  const corrupt = (sqlText: string) => db.execute(sql.raw(`update crawl_settings set values = ${sqlText} where id = 1`));
+
+  it("끈 뒤 행의 다른 칸이 깨져도 꺼진 채로 읽고 걸지 않는다", async () => {
+    await turn({ enabled: false });
+    await judged([{ repo: "off/one" }]);
+    await corrupt(`jsonb_set(values, '{reviewConcurrency}', '"bad"')`);
+    expect((await getSettings()).auditHold.enabled).toBe(false);
+    expect(await db.transaction((tx) => lockedAuditHold(tx))).toMatchObject({ enabled: false });
+    await tick();
+    expect(await heldSlugs()).toEqual([]);
+  });
+
+  it("칸이 없으면 기본값(켬), 칸이 깨졌으면 꺼짐, 모르는 갈래는 버린다 — 칸만 바꾸는 저장은 깨진 다른 칸을 덮지 않는다", async () => {
+    await corrupt(`values - 'auditHold'`);
+    expect(storedAuditHold(await raw())).toEqual(DEFAULT_AUDIT_HOLD);
+    await corrupt(`jsonb_set(values, '{auditHold}', '{"enabled": true, "minConfidence": 0.5}')`);
+    expect((await getSettings()).auditHold).toMatchObject({ enabled: false });
+    await corrupt(`jsonb_set(values, '{auditHold}', '"on"')`);
+    expect((await getSettings()).auditHold.enabled).toBe(false);
+    await corrupt(`jsonb_set(values, '{auditHold}', '{"enabled": true, "minConfidence": 0.97, "categories": ["company", "retired", "company"], "secondOpinionReject": false}')`);
+    expect((await getSettings()).auditHold).toEqual({ enabled: true, minConfidence: 0.97, categories: ["company"], secondOpinionReject: false });
+    // 다른 칸이 깨진 행 — 읽기는 기본값으로 돌아가지만 보류는 저장된 값, 끄기는 된다
+    await corrupt(`jsonb_set(values, '{reviewConcurrency}', '"bad"')`);
+    const before = (await getSettings()).auditHold;
+    expect(before).toMatchObject({ minConfidence: 0.97 });
+    expect(await setAuditHold({ next: { ...before, enabled: false }, expected: before, actor: "jr" })).toMatchObject({ ok: true });
+    expect((await raw()).reviewConcurrency).toBe("bad");
+    expect((await getSettings()).auditHold.enabled).toBe(false);
+  });
+
+  it("넓히는 바꿈은 까닭 없이 쓰지 않는다", async () => {
+    const expected = (await getSettings()).auditHold;
+    expect(await setAuditHold({ next: { ...expected, minConfidence: 0.9 }, expected, actor: "jr" })).toMatchObject({ ok: false });
+    expect(await setAuditHold({ next: { ...expected, categories: [...expected.categories, "content"] }, expected, actor: "jr", reason: " " }))
+      .toMatchObject({ ok: false });
+    expect(await setAuditHold({ next: { ...expected, minConfidence: 0.99 }, expected, actor: "jr" })).toMatchObject({ ok: true });
+  });
+});
+
+describe("리뷰 회귀 — 받은편지함", () => {
+  it("새 감사를 열어도 지난 감사의 보류가 감사 칸의 할 일로 남는다", async () => {
+    await judged([{ repo: "inbox/held" }]);
+    await tick();
+    await start({ reason: "두 번째" });
+    await db.update(productAuditCampaigns).set({ status: "done" });
+    const audit = (await loadInbox()).results.audit;
+    expect(audit).toMatchObject({ ok: true, data: { count: 1, note: expect.stringContaining("보류 중(목록에서 빠짐) 1건") } });
   });
 });
 

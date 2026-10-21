@@ -333,6 +333,21 @@ export const reviewVoterSchema = z.object({
   .refine((value) => value.provider === "abcllm" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
     { path: ["model"], message: "CLI 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
 
+/**
+ * 감사 보류 설정의 모양 — 저장된 행에서 따로 읽는다(settings.ts storedAuditHold). 행의 다른 칸이 깨져도 이 값은 그대로 읽고,
+ * 이 값이 깨졌으면 꺼진 것으로 읽는다 — 끈 스위치가 기본값(켬)으로 되돌아가면 안 된다.
+ */
+export const auditHoldSchema = z.object({
+  enabled: z.boolean(),
+  minConfidence: z.number().min(AUDIT_HOLD_MIN_CONFIDENCE_FLOOR).max(1),
+  /** 보류하는 사유 갈래 — 사유 문장을 감사 화면의 칩과 같은 분류(classifyAuditReason)로 나눈 것. 비면 아무것도 보류하지 않는다 */
+  categories: z.array(z.enum(AUDIT_REASON_KEYS as [AuditReasonCategory, ...AuditReasonCategory[]]))
+    .max(AUDIT_REASON_KEYS.length)
+    .refine((categories) => new Set(categories).size === categories.length, { message: "같은 갈래를 두 번 넣을 수 없다" }),
+  /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
+  secondOpinionReject: z.boolean(),
+}).strict();
+
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
@@ -431,16 +446,7 @@ export const crawlSettingsSchema = z.object({
    * 거절한(secondOpinionReject) 주인 없는 공개 제품을 사람이 정할 때까지 공개 목록에서 뺀다(lib/crawl/product-audit-hold.ts). 끄면 새로 보류하지 않고, 이미 건 보류는 사람이 정하거나 모두 풀 때까지 남는다.
    * 감사 화면(/admin/audit)이 따로 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(settings.ts applyPatch).
    */
-  auditHold: z.object({
-    enabled: z.boolean(),
-    minConfidence: z.number().min(AUDIT_HOLD_MIN_CONFIDENCE_FLOOR).max(1),
-    /** 보류하는 사유 갈래 — 사유 문장을 감사 화면의 칩과 같은 분류(classifyAuditReason)로 나눈 것. 비면 아무것도 보류하지 않는다 */
-    categories: z.array(z.enum(AUDIT_REASON_KEYS as [AuditReasonCategory, ...AuditReasonCategory[]]))
-      .max(AUDIT_REASON_KEYS.length)
-      .refine((categories) => new Set(categories).size === categories.length, { message: "같은 갈래를 두 번 넣을 수 없다" }),
-    /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
-    secondOpinionReject: z.boolean(),
-  }).strict().default(DEFAULT_AUDIT_HOLD),
+  auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;

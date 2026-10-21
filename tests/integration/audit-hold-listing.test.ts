@@ -6,7 +6,9 @@ vi.mock("server-only", () => ({}));
 
 const { db } = await import("@/lib/db");
 const { crawlCandidates, crawlDocuments, products, productUpdates } = await import("@/lib/db/schema");
-const { userSavedProducts } = await import("@/lib/db/me-schema");
+const { userFollows, userSavedProducts } = await import("@/lib/db/me-schema");
+const { releaseAuditHold } = await import("@/lib/crawl/product-audit-hold");
+const { listFollows } = await import("@/lib/me/follows");
 const { publicUsers } = await import("@/lib/db/public-user-schema");
 const { getDiscoveryList, getNewThisWeek, getPublicList, getUnclaimedList } = await import("@/lib/domain/products/view");
 const { categoryCounts, countProducts, getRisingRank, listProductRows, listRecentlyDiscovered } = await import("@/lib/domain/products/repository");
@@ -112,6 +114,27 @@ describe("감사 보류된 제품은 공개 목록에서 빠진다", () => {
     await db.update(products).set({ auditHoldAt: null }).where(eq(products.slug, "held-tool"));
     expect(slugs(await listIndexableSlugs(100))).toEqual(["held-tool", "plain-tool"]);
     expect(productIndexable((await getProductIdentity("held-tool"))!)).toBe(true);
+  });
+
+  it("보류가 풀리면 sitemap 의 lastmod 가 그 시각으로 온다 — updated_at 은 고치지 않는다", async () => {
+    await db.update(products).set({ source: "skill", status: "verified", verifiedAt: new Date(),
+      updatedAt: sql`now() - interval '30 days'` as unknown as Date });
+    const [held] = await db.select().from(products).where(eq(products.slug, "held-tool"));
+    await db.transaction(async (tx) => {
+      expect(await releaseAuditHold(tx, { productId: held.id, slug: held.slug, actor: "jr", reason: "kept" })).toBe(true);
+    });
+    const rows = await listIndexableSlugs(100);
+    const released = rows.find((row) => row.slug === "held-tool")!;
+    const plain = rows.find((row) => row.slug === "plain-tool")!;
+    expect(Date.now() - released.updatedAt.getTime()).toBeLessThan(60_000);
+    expect(Date.now() - plain.updatedAt.getTime()).toBeGreaterThan(29 * 86_400_000);
+    expect((await db.select().from(products).where(eq(products.slug, "held-tool")))[0].updatedAt.getTime()).toBe(held.updatedAt.getTime());
+  });
+
+  it("팔로 탭의 메이커 공개 프로젝트 수는 보류된 제품을 세지 않는다", async () => {
+    const [user] = await db.insert(publicUsers).values({ displayName: "팔로" }).returning();
+    await db.insert(userFollows).values({ userId: user.id, targetType: "maker", targetKey: "acme" });
+    expect((await listFollows(user.id)).makers.map((maker) => maker.projects)).toEqual([1]);
   });
 
   it("상세는 열리고, 배지·공유 카드는 내주지 않는다", async () => {

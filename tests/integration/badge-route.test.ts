@@ -52,4 +52,17 @@ describe("배지", () => {
     expect((await badge("gone")).status).toBe(404);
     expect((await badge("nobody")).status).toBe(404);
   });
+
+  /** 감사 보류(0110) — 보류 중이면 404 이고, 그 404 도 p-<slug> 태그를 달아 보류가 풀릴 때의 지우기가 이 사본도 지운다 */
+  it("감사 보류 중인 제품은 404 이고 그 404 에도 제품 태그를 단다 — 주소 모양이 아니면 달지 않는다", async () => {
+    await product("held", "seeded");
+    const { db } = await import("@/lib/db");
+    const { products } = await import("@/lib/db/schema");
+    const { eq } = await import("drizzle-orm");
+    await db.update(products).set({ auditHoldAt: new Date() }).where(eq(products.slug, "held"));
+    const held = await badge("held.svg");
+    expect(held.status).toBe(404);
+    expect(held.headers.get("cache-tag")).toBe("p-held");
+    expect((await badge("Not A Slug")).headers.get("cache-tag")).toBeNull();
+  });
 });

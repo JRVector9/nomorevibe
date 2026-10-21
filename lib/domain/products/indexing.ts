@@ -1,6 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, takedownRequests, type Product } from "@/lib/db/schema";
+import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, productEvidenceAudit, products, takedownRequests,
+  type Product } from "@/lib/db/schema";
 import { repoGone } from "./repository";
 
 /**
@@ -89,6 +90,15 @@ export const indexingFields = {
   takedownPending: sql<boolean>`${takedownPending}`.as("takedown_pending"),
 };
 
+/**
+ * sitemap 의 lastmod — 제품이 마지막으로 바뀐 때와 감사 보류가 마지막으로 풀린 때 중 늦은 것. 보류가 풀리면 다시 색인되는 페이지라
+ * 검색엔진이 늦지 않게 다시 오도록 한다. updated_at 을 고치면 그 값을 세대로 쓰는 생존 확인 증거(uptime_gates)가 풀려서 따로 읽는다.
+ * 열 이름을 표 이름으로 못 박는다 — 표 하나를 읽는 select 의 고른 칸에서 drizzle 은 열을 표 이름 없이 그려, 안쪽 별칭(a.slug)이 가로챈다
+ */
+const productColumn = (name: string) => sql`${sql.identifier("products")}.${sql.identifier(name)}`;
+export const sitemapLastModified = sql`greatest(${productColumn("updated_at")}, (select max(a.created_at) from ${productEvidenceAudit} a
+  where a.slug = ${productColumn("slug")} and a.action = 'audit.hold.release'))`.mapWith(products.updatedAt);
+
 /** 위 규칙의 SQL 판 — products 를 별칭 없이 읽는 쿼리의 where 에 쓴다(sitemap) */
 export const indexableProduct = sql`(${products.status} in ('seeded', 'verified')
   and not ${takedownPending} and ${products.auditHoldAt} is null
@@ -102,7 +112,7 @@ export const indexableProduct = sql`(${products.status} in ('seeded', 'verified'
  */
 export async function listIndexableSlugs(limit: number): Promise<{ slug: string; updatedAt: Date }[]> {
   return db
-    .select({ slug: products.slug, updatedAt: products.updatedAt })
+    .select({ slug: products.slug, updatedAt: sitemapLastModified })
     .from(products)
     .where(indexableProduct)
     .orderBy(desc(sql`coalesce(${products.verifiedAt}, ${products.createdAt})`), products.slug)

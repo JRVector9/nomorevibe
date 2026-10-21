@@ -18,7 +18,7 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
   auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons, auditDecisionHistory: mocks.decisions,
   listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons,
-  GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95,
+  GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
 vi.mock('@/lib/crawl/product-audit-hold', () => ({ releaseAllAuditHolds: mocks.releaseAll }));
 vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold }));
@@ -318,16 +318,20 @@ describe('감사 보류 화면(0110)', () => {
     expect(html).not.toContain('format=csv');
   });
 
-  it('보류가 없으면 내릴 후보부터 — 설정 폼은 지금 값을 싣고, 허용 갈래만 켜져 있다', async () => {
+  it('보류가 없으면 내릴 후보부터 — 설정 칸은 지금 값으로 그리고, 바꾸기 전에는 저장을 열지 않는다', async () => {
     const html = await render({ tab: 'audit' });
     expect(mocks.held).not.toHaveBeenCalled();
     expect(mocks.findings).toHaveBeenCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: undefined });
-    const form = forms(html).find((chunk) => chunk.includes('name="minConfidence"'))!;
-    expect(form).toContain(`value="${JSON.stringify(DEFAULT_AUDIT_HOLD).replaceAll('"', '&quot;')}"`);
-    expect(form).toMatch(/name="enabled" checked=""/);
-    expect(form).toMatch(/name="secondOpinionReject" checked=""/);
-    for (const key of ['placeholder', 'company', 'platform', 'shop']) expect(form).toContain(`name="category" checked="" value="${key}"`);
-    for (const key of ['login', 'content', 'other']) expect(form).toContain(`name="category" value="${key}"`);
+    const panel = html.slice(html.indexOf('aria-labelledby="audit-hold-title"'), html.indexOf('보류 모두 풀기'));
+    expect(panel).toMatch(/name="enabled" checked=""/);
+    expect(panel).toMatch(/name="minConfidence" value="0.95"/);
+    expect(panel).toMatch(/name="secondOpinionReject" checked=""/);
+    for (const key of ['placeholder', 'company', 'platform', 'shop']) expect(panel).toContain(`name="category" checked="" value="${key}"`);
+    for (const key of ['login', 'content', 'other']) expect(panel).toContain(`name="category" value="${key}"`);
+    // 저장은 확인 창(ConfirmAction)을 거친다 — 바꾼 것이 없으면 열지 않는다
+    expect(panel).toMatch(/<button type="button" disabled=""[^>]*>보류 설정 저장…<\/button>/);
+    // 보류 갈래 주소는 늘 view=held 를 싣는다
+    expect(html).toContain('href="/admin/audit?tab=audit&amp;view=held"');
   });
 
   it('두 모델 모두 거절·갈림 갈래 — 두 번째 의견으로 거르고, 줄마다 그 의견을 보인다. 모두 거절은 묶어 내리기를 그 무리로', async () => {
@@ -397,11 +401,22 @@ describe('내릴 후보 서버 액션', () => {
 
     mocks.removeMany.mockResolvedValue({ removed: ['s-0'], failed: [{ slug: 's-1', error: '이미 처리됐거나' }] });
     expect(await removeAuditGroup(group(2))).toEqual({ removed: 1, failed: 1 });
-    expect(mocks.removeMany).toHaveBeenCalledWith({ items: [{ itemId: 100, slug: 's-0' }, { itemId: 101, slug: 's-1' }], by: 'jr' });
+    expect(mocks.removeMany).toHaveBeenCalledWith({ items: [{ itemId: 100, slug: 's-0' }, { itemId: 101, slug: 's-1' }], by: 'jr', scope: 'reject' });
     expect(mocks.log).toHaveBeenCalledWith('jr', [
-      expect.objectContaining({ action: 'audit-remove', target: 's-0', ok: true, detail: expect.objectContaining({ group: 'Commerce', bulk: 2 }) }),
+      expect.objectContaining({ action: 'audit-remove', target: 's-0', ok: true, detail: expect.objectContaining({ group: 'Commerce', scope: 'reject', bulk: 2 }) }),
       expect.objectContaining({ action: 'audit-remove', target: 's-1', ok: false }),
     ]);
+
+    // 범위를 실어 보내면 서버가 잠근 뒤 그 범위를 다시 본다 — 모르는 범위는 아무것도 내리지 않는다
+    const held = group(1);
+    held.set('scope', 'held');
+    await removeAuditGroup(held);
+    expect(mocks.removeMany).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'held' }));
+    const forged = group(1);
+    forged.set('scope', 'everything');
+    mocks.removeMany.mockClear();
+    expect(await removeAuditGroup(forged)).toMatchObject({ error: expect.any(String) });
+    expect(mocks.removeMany).not.toHaveBeenCalled();
   });
 
   it('멈춘 감사 다시 열기 — 그 감사를 바꿔 여는 한 번의 시작이고, 중단과 시작을 각각 남긴다', async () => {
