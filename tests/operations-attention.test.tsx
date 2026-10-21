@@ -82,7 +82,7 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     throughput: null, models: null, accounts: null, apps: null, takedowns: null, modelServers: null,
     roles: { roles: [{ role: "maintenance", reason: "standby_active", ownerKind: "standby", ownerRelease: null, epoch: 3 }], scheduler: { freshReplicas: 2, alarm: false } },
     attention: {
-      auditRejectsOpen: 0, healthOverdue: 90, healthTargetPerHour: 3_000, introNeedsEditor: 0, auditCampaign: null, cdnPurgesPending: 0,
+      auditRejectsOpen: 0, auditHeld: 0, healthOverdue: 90, healthTargetPerHour: 3_000, introNeedsEditor: 0, auditCampaign: null, cdnPurgesPending: 0,
       repoGone: { installable: 0, website: 0 }, spamAutoBans: { day: 0, banned: 0 },
       repoHealth: { tracked: 100, checked24h: 4, states: {} }, repoReview: { pending: 0, delistCandidates: 0, human: 0, kept: 0, oldestHours: null },
     },
@@ -102,6 +102,14 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     expect(text(byKey.get("repo-coverage")!)).toContain("GitHub 저장소·스타 확인 작업이 밀리거나");
     expect(text(byKey.get("standby")!)).toContain("생존 확인·지표 집계");
     expect(renderToStaticMarkup(createElement(Fragment, null, byKey.get("jobs")!.detail))).toContain('title="product-evidence-refresh"');
+  });
+
+  it("감사 보류로 목록에서 빠진 것이 있으면 감사 탭의 보류 갈래로 보낸다 — 차단이 아니라고 적는다", () => {
+    expect(byKey.has("audit-held")).toBe(false);
+    const held = { ...inputs, attention: { ...inputs.attention!, auditHeld: 1_234 } } as ActionInputs;
+    const row = buildActions(held, deriveStatus(held)).find((item) => item.key === "audit-held");
+    expect(row).toMatchObject({ tone: "hold", count: 1_234, unit: "건", action: { href: "/admin/audit?tab=audit&view=held" } });
+    expect(text(row!)).toContain("차단이 아닙니다");
   });
 
   it("숫자 칸마다 단위를 단다 — 퍼센트는 숫자와 %, 상태 글자는 '상태'", () => {

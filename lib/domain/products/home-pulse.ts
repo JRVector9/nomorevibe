@@ -14,7 +14,7 @@ import { agentClientLabel } from "@/lib/domain/evidence/agents/view";
 import { clickChangePercent } from "@/lib/domain/ranking/math";
 import { CATEGORIES, type Category } from "./schema";
 import { logger } from "@/lib/observability/logger";
-import { listedByDefault, listedByDefaultAs } from "./repository";
+import { listedByDefault, listedByDefaultAs, notAuditHeld, notAuditHeldAs } from "./repository";
 
 const DAY_MS = 86_400_000;
 const LISTED: ProductStatus[] = ["verified", "seeded"];
@@ -150,8 +150,9 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
   const releasedAt = sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`;
   const newVersion = and(
     inArray(products.status, LISTED),
-    // 주인 없는 개인 프로필은 공개 목록에 없다 — 집계·리더보드에서도 뺀다(repository.ts listedByDefault)
+    // 주인 없는 개인 프로필·감사 보류는 공개 목록에 없다 — 집계·리더보드에서도 뺀다(repository.ts listedByDefault·notAuditHeld)
     listedByDefault,
+    notAuditHeld,
     eq(productUpdates.visible, true),
     sql`${productUpdates.makerDeletedAt} is null`,
     inArray(productUpdates.sourceKind, ["github_release", "maker"]),
@@ -178,7 +179,7 @@ export async function loadHomePulse(now: Date): Promise<HomePulse> {
              (count(*) filter (where ${bornAt} >= ${weekAt} and ${bornAt} < ${asOfAt}))::int as born,
              (count(*) filter (where ${bornAt} >= ${prevAt} and ${bornAt} < ${weekAt}))::int as born_prev
         from ${products} p ${bornOf}
-       where p.status in ('verified', 'seeded') and coalesce(p.verified_at, p.created_at) < ${asOfAt} and ${listedByDefaultAs("p")}
+       where p.status in ('verified', 'seeded') and coalesce(p.verified_at, p.created_at) < ${asOfAt} and ${listedByDefaultAs("p")} and ${notAuditHeldAs("p")}
        group by p.category`),
     db
       .select({
@@ -238,7 +239,7 @@ async function loadTools(asOfAt: ReturnType<typeof at>): Promise<NonNullable<Hom
     with repos as (
       select distinct lower(c.repo) as repo_key, p.slug
         from ${products} p join ${crawlCandidates} c on c.published_slug = p.slug
-       where p.status in ('verified', 'seeded') and coalesce(p.verified_at, p.created_at) < ${asOfAt} and ${listedByDefaultAs("p")}),
+       where p.status in ('verified', 'seeded') and coalesce(p.verified_at, p.created_at) < ${asOfAt} and ${listedByDefaultAs("p")} and ${notAuditHeldAs("p")}),
     latest as (
       select distinct on (repository_key) id, repository_key from ${agentRepositoryScans}
        where state in ('complete', 'partial') and scope = ''

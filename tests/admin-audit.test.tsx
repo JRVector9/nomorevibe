@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
+  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -16,8 +17,11 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, listAuditFindings: mocks.findings, startProductAudit: mocks.start,
   cancelProductAudit: mocks.cancel, removeAuditedProduct: mocks.remove, keepAuditedProduct: mocks.keep,
   auditRemovalGroups: mocks.groups, removeAuditedProducts: mocks.removeMany, auditFindingReasons: mocks.reasons, auditDecisionHistory: mocks.decisions,
-  GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95,
+  listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons,
+  GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
+vi.mock('@/lib/crawl/product-audit-hold', () => ({ releaseAllAuditHolds: mocks.releaseAll }));
+vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
 vi.mock('@/lib/operations/admin-log', () => ({ recordAdminAction: mocks.log, recordAdminActions: mocks.log }));
 // 내려달라는 요청 집계도 DB를 읽는다 — CI 단위 테스트에는 DB가 없다
@@ -32,19 +36,27 @@ vi.mock('@/lib/domain/products/intro-requests', () => ({
 }));
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
-import { cancelAudit, decideAuditFinding, fixIntroRequest, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
-  startAudit } from '@/app/(operator)/admin/audit/actions';
+import { cancelAudit, decideAuditFinding, fixIntroRequest, releaseAuditHolds, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
+  saveAuditHold, startAudit } from '@/app/(operator)/admin/audit/actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
+import { DEFAULT_AUDIT_HOLD } from '@/lib/crawl/settings-schema';
 
 const campaign = {
   id: 7, startedAt: new Date('2026-09-18T12:00:00Z'), startedBy: 'jr', reason: '첫 감사', promptVersion: '2026-09-18.2',
   rulesVersion: '2026-09-18.1', provider: 'abcllm', model: '[MLX] gpt-oss-120b', reauditKept: false, status: 'running', finishedAt: null,
 };
-const counts = { total: 100, reviewed: 40, reject: 3, needsReview: 1, openReject: 3, openNeedsReview: 1, removed: 0, kept: 0, failed: 0, skipped: 0 };
-const finding = (id: number, slug: string) => ({
+const counts = { total: 100, reviewed: 40, reject: 3, needsReview: 1, openReject: 3, openNeedsReview: 1, openAgreed: 2, openSplit: 1,
+  removed: 0, kept: 0, failed: 0, skipped: 0 };
+const finding = (id: number, slug: string, over: Record<string, unknown> = {}) => ({
   id, slug, name: `이름 ${slug}`, url: `https://${slug}.test`, category: 'Productivity',
   reason: 'pageText shows only a sign-in form', confidence: 0.95, reviewedAt: new Date('2026-09-18T12:30:00Z'), owned: false,
+  heldAt: null, second: [], ...over,
 });
+/** 감사 개요 — 보류 수와 보류 설정(product-audit.ts AuditOverview)까지 */
+const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, paused: null, stalled: false, held: 0, hold: DEFAULT_AUDIT_HOLD, ...over });
+/** 제품을 고르는 체크박스 — 보류 설정 폼의 켬·갈래·두 번째 모델 칸은 제품을 싣지 않는다 */
+const productCheckboxes = (html: string) => (html.match(/<input type="checkbox"[^>]*>/g) ?? [])
+  .filter((box) => !/name="(enabled|secondOpinionReject|category)"/.test(box));
 const takedowns = (pending: number) => ({
   pending, overdue: 0, oldestHours: pending ? 2 : null, handled24h: { removed: 0, dismissed: 0 }, last30d: { removed: 0, dismissed: 0 },
   lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null },
@@ -56,7 +68,9 @@ const forms = (html: string) => html.split('<form').slice(1).map((chunk) => chun
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.admin.mockResolvedValue({ login: 'jr' });
-  mocks.overview.mockResolvedValue({ campaign, counts, paused: null, stalled: false });
+  mocks.overview.mockResolvedValue(overviewOf());
+  mocks.held.mockResolvedValue([]);
+  mocks.heldReasons.mockResolvedValue([]);
   mocks.findings.mockResolvedValue([finding(11, 'login-wall'), finding(12, 'docs-site'), finding(13, 'agency')]);
   mocks.groups.mockResolvedValue([]);
   mocks.reasons.mockResolvedValue([
@@ -99,7 +113,9 @@ describe('내릴 후보 화면', () => {
     expect(html).toContain('aria-label="내릴 사유 갈래"');
     expect(html).toMatch(/aria-current="page"[^>]*>전체 3/);
     for (const label of ['로그인 화면만', '글·문서·강의', '회사·서비스 소개']) expect(html).toContain(`${label} 1`);
-    expect(html).not.toContain('쇼핑몰·판매');
+    // 0건 갈래는 칩에 없다(보류 설정 칸은 모든 갈래를 보인다)
+    const chips = html.slice(html.indexOf('aria-label="내릴 사유 갈래"'), html.indexOf('</nav>', html.indexOf('aria-label="내릴 사유 갈래"')));
+    expect(chips).not.toContain('쇼핑몰·판매');
     expect(html).toContain('href="/admin/audit?tab=audit&amp;reason=login"');
     expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined });
 
@@ -136,8 +152,8 @@ describe('내릴 후보 화면', () => {
       expect(decisions[index]).toContain('value="keep"');
     }
     // 화면의 체크박스는 "유지 판정도 다시 보기" 하나뿐이다 — 제품을 고르는 칸이 아니다
-    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
-    expect(html).toMatch(/type="checkbox"[^>]*name="reauditKept"/);
+    expect(productCheckboxes(html)).toHaveLength(1);
+    expect(productCheckboxes(html)[0]).toContain('name="reauditKept"');
     expect(forms(html).find((form) => form.includes('type="checkbox"'))).not.toContain('name="slug"');
     // 다른 폼으로 값을 실어 보내는 form 속성(재검수 화면의 일괄 차단 방식)도 없다
     expect(html).not.toMatch(/\sform="/);
@@ -171,7 +187,7 @@ describe('내릴 후보 화면', () => {
     expect(html).toContain('묶어 내리기');
     expect(html).toMatch(/Commerce<\/b><span[^>]*>137건/);
     expect(html).toContain('2건 내리기…');
-    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
+    expect(productCheckboxes(html)).toHaveLength(1);
     // 판단 보류에는 묶음이 없다
     mocks.groups.mockClear();
     expect(await render({ view: 'needs_review' })).not.toContain('묶어 내리기');
@@ -179,7 +195,7 @@ describe('내릴 후보 화면', () => {
   });
 
   it('심사 글이 바뀌어 멈춘 감사는 "진행 중"이 아니라 "멈춤 · 사람 필요"이고, 중단 → 새 감사 버튼 하나를 둔다', async () => {
-    mocks.overview.mockResolvedValue({ campaign, counts, paused: '두 글의 판단을 섞지 않도록 멈췄습니다', stalled: true });
+    mocks.overview.mockResolvedValue(overviewOf({ paused: '두 글의 판단을 섞지 않도록 멈췄습니다', stalled: true }));
     const html = await render();
     expect(html).toContain('멈춤 · 사람 필요');
     expect(html).not.toMatch(/>진행 중</);
@@ -269,11 +285,75 @@ describe('내릴 후보 화면', () => {
   });
 
   it('끝난 감사 뒤에는 재감사를 열 수 있다', async () => {
-    mocks.overview.mockResolvedValue({ campaign: { ...campaign, status: 'done' }, counts, paused: null, stalled: false });
+    mocks.overview.mockResolvedValue(overviewOf({ campaign: { ...campaign, status: 'done' } }));
     const html = await render();
     expect(html).toMatch(/<button type="submit"[^>]*>재감사 시작<\/button>/);
     expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*>재감사 시작/);
     expect(html).not.toContain('이 감사 중단');
+  });
+});
+
+describe('감사 보류 화면(0110)', () => {
+  it('보류 중인 것이 있으면 그 갈래부터 오래된 것부터 연다 — 줄마다 "보류 중(목록에서 빠짐)"이고 탭에도 수가 붙는다', async () => {
+    mocks.overview.mockResolvedValue(overviewOf({ held: 2 }));
+    mocks.held.mockResolvedValue([finding(41, 'held-agency', { heldAt: new Date('2026-10-21T01:00:00Z'), reason: 'a consulting agency site' })]);
+    mocks.heldReasons.mockResolvedValue([{ id: 41, reason: 'a consulting agency site' }, { id: 42, reason: 'coming soon placeholder' }]);
+    const html = await render({ tab: 'audit' });
+    expect(mocks.held).toHaveBeenCalledWith({ limit: 50, offset: 0, ids: undefined });
+    expect(mocks.findings).not.toHaveBeenCalled();
+    expect(mocks.groups).toHaveBeenCalledWith(7, 'held');
+    expect(html).toMatch(/aria-current="page"[^>]*>보류 중\(목록에서 빠짐\) (<!-- -->)?2/);
+    expect(html).toMatch(/<span class="td-count">보류 (<!-- -->)?2<\/span>/);
+    expect(html).toContain('>보류 중(목록에서 빠짐)</span>');
+    // 다른 갈래로 가는 주소에는 view 를 싣는다 — 기본 갈래가 보류다
+    expect(html).toContain('href="/admin/audit?tab=audit&amp;view=reject"');
+    // 패널 — 켬·문턱·허용 갈래·두 번째 모델, 보류 중 수와 갈래별 수
+    expect(html).toContain('자동 보류');
+    expect(html).toContain('확신 0.95 이상 · 주인 없는 공개 제품 · 갈래 빈 화면·오류·준비 중, 회사·서비스 소개, 남의 플랫폼·목록 페이지, 쇼핑몰·판매');
+    expect(html).toContain('두 번째 모델이 승인한 것은 갈래로 걸지 않음');
+    expect(html).toContain('두 번째 모델도 거절하면 갈래와 상관없이');
+    expect(html).toMatch(/갈래별: (<!-- -->)?빈 화면·오류·준비 중 1 · 회사·서비스 소개 1/);
+    expect(html).toContain('보류 모두 풀기');
+    // 보류 갈래는 CSV 로 내보내지 않는다
+    expect(html).not.toContain('format=csv');
+  });
+
+  it('보류가 없으면 내릴 후보부터 — 설정 칸은 지금 값으로 그리고, 바꾸기 전에는 저장을 열지 않는다', async () => {
+    const html = await render({ tab: 'audit' });
+    expect(mocks.held).not.toHaveBeenCalled();
+    expect(mocks.findings).toHaveBeenCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: undefined });
+    const panel = html.slice(html.indexOf('aria-labelledby="audit-hold-title"'), html.indexOf('보류 모두 풀기'));
+    expect(panel).toMatch(/name="enabled" checked=""/);
+    expect(panel).toMatch(/name="minConfidence" value="0.95"/);
+    expect(panel).toMatch(/name="secondOpinionReject" checked=""/);
+    for (const key of ['placeholder', 'company', 'platform', 'shop']) expect(panel).toContain(`name="category" checked="" value="${key}"`);
+    for (const key of ['login', 'content', 'other']) expect(panel).toContain(`name="category" value="${key}"`);
+    // 저장은 확인 창(ConfirmAction)을 거친다 — 바꾼 것이 없으면 열지 않는다
+    expect(panel).toMatch(/<button type="button" disabled=""[^>]*>보류 설정 저장…<\/button>/);
+    // 보류 갈래 주소는 늘 view=held 를 싣는다
+    expect(html).toContain('href="/admin/audit?tab=audit&amp;view=held"');
+  });
+
+  it('두 모델 모두 거절·갈림 갈래 — 두 번째 의견으로 거르고, 줄마다 그 의견을 보인다. 모두 거절은 묶어 내리기를 그 무리로', async () => {
+    mocks.findings.mockResolvedValue([
+      finding(51, 'both', { second: [{ model: 'grok-4-fast', decision: 'reject', confidence: 0.9 }] }),
+      finding(52, 'split', { second: [{ model: 'grok-4-fast', decision: 'approve', confidence: 0.8 }] }),
+    ]);
+    const agreed = await render({ tab: 'audit', view: 'agreed' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: 'agreed' });
+    expect(mocks.reasons).toHaveBeenLastCalledWith(7, 'reject', 'agreed');
+    expect(mocks.groups).toHaveBeenLastCalledWith(7, 'agreed');
+    expect(agreed).toMatch(/aria-current="page"[^>]*>두 모델 모두 거절 (<!-- -->)?2/);
+    expect(agreed).toMatch(/>grok(<!-- -->)?: (<!-- -->)?거절(<!-- -->)? 0.90<\/span>/);
+    expect(agreed).toMatch(/>grok(<!-- -->)?: (<!-- -->)?승인(<!-- -->)?<\/span>/);
+    expect(agreed).toContain('title="두 번째 의견 · grok-4-fast"');
+
+    mocks.groups.mockClear();
+    const split = await render({ tab: 'audit', view: 'split' });
+    expect(mocks.findings).toHaveBeenLastCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: 'split' });
+    expect(split).toMatch(/aria-current="page"[^>]*>갈림 \(2차 승인\) (<!-- -->)?1/);
+    // 갈린 것은 사람이 한 건씩 본다 — 묶어 내리기가 없다
+    expect(mocks.groups).not.toHaveBeenCalled();
   });
 });
 
@@ -321,11 +401,22 @@ describe('내릴 후보 서버 액션', () => {
 
     mocks.removeMany.mockResolvedValue({ removed: ['s-0'], failed: [{ slug: 's-1', error: '이미 처리됐거나' }] });
     expect(await removeAuditGroup(group(2))).toEqual({ removed: 1, failed: 1 });
-    expect(mocks.removeMany).toHaveBeenCalledWith({ items: [{ itemId: 100, slug: 's-0' }, { itemId: 101, slug: 's-1' }], by: 'jr' });
+    expect(mocks.removeMany).toHaveBeenCalledWith({ items: [{ itemId: 100, slug: 's-0' }, { itemId: 101, slug: 's-1' }], by: 'jr', scope: 'reject' });
     expect(mocks.log).toHaveBeenCalledWith('jr', [
-      expect.objectContaining({ action: 'audit-remove', target: 's-0', ok: true, detail: expect.objectContaining({ group: 'Commerce', bulk: 2 }) }),
+      expect.objectContaining({ action: 'audit-remove', target: 's-0', ok: true, detail: expect.objectContaining({ group: 'Commerce', scope: 'reject', bulk: 2 }) }),
       expect.objectContaining({ action: 'audit-remove', target: 's-1', ok: false }),
     ]);
+
+    // 범위를 실어 보내면 서버가 잠근 뒤 그 범위를 다시 본다 — 모르는 범위는 아무것도 내리지 않는다
+    const held = group(1);
+    held.set('scope', 'held');
+    await removeAuditGroup(held);
+    expect(mocks.removeMany).toHaveBeenLastCalledWith(expect.objectContaining({ scope: 'held' }));
+    const forged = group(1);
+    forged.set('scope', 'everything');
+    mocks.removeMany.mockClear();
+    expect(await removeAuditGroup(forged)).toMatchObject({ error: expect.any(String) });
+    expect(mocks.removeMany).not.toHaveBeenCalled();
   });
 
   it('멈춘 감사 다시 열기 — 그 감사를 바꿔 여는 한 번의 시작이고, 중단과 시작을 각각 남긴다', async () => {
@@ -340,6 +431,38 @@ describe('내릴 후보 서버 액션', () => {
       expect.objectContaining({ action: 'audit-cancel', target: 'campaign:7' }),
       expect.objectContaining({ action: 'audit-start', target: 'campaign:8' }),
     ]);
+  });
+
+  it('보류 설정 — 로그인한 사람으로, 화면이 본 값과 함께 보낸다. 문턱이 0.80 아래면 쓰지 않는다', async () => {
+    const expected = JSON.stringify(DEFAULT_AUDIT_HOLD);
+    mocks.setHold.mockResolvedValue({ ok: true, auditHold: { ...DEFAULT_AUDIT_HOLD, enabled: false } });
+    expect(await saveAuditHold(null, decision([['expected', expected], ['minConfidence', '0.97'], ['category', 'company'], ['category', 'company'],
+      ['category', 'constructor'], ['reason', '오탐 확인']]))).toMatchObject({ message: expect.stringContaining('이미 건 보류는 남아') });
+    expect(mocks.setHold).toHaveBeenCalledWith({ next: { enabled: false, minConfidence: 0.97, categories: ['company'], secondOpinionReject: false },
+      expected: DEFAULT_AUDIT_HOLD, actor: 'jr', reason: '오탐 확인' });
+
+    mocks.setHold.mockClear();
+    expect(await saveAuditHold(null, decision([['expected', expected], ['enabled', 'on'], ['minConfidence', '0.5']]))).toMatchObject({ error: expect.any(String) });
+    expect(await saveAuditHold(null, decision([['expected', '{'], ['enabled', 'on'], ['minConfidence', '0.95']]))).toMatchObject({ error: expect.any(String) });
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await saveAuditHold(null, decision([['expected', expected], ['minConfidence', '0.95']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.setHold).not.toHaveBeenCalled();
+
+    mocks.setHold.mockResolvedValue({ ok: false, issues: ['그 사이 다른 곳에서 바뀌었습니다.'] });
+    expect(await saveAuditHold(null, decision([['expected', expected], ['enabled', 'on'], ['minConfidence', '0.95']])))
+      .toEqual({ error: '그 사이 다른 곳에서 바뀌었습니다.' });
+  });
+
+  it('보류 모두 풀기 — 로그인한 사람으로 풀고, 푼 수와 까닭을 작업 로그에 한 줄 남긴다', async () => {
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await releaseAuditHolds(decision([['note', 'x']]))).toMatchObject({ error: expect.any(String) });
+    expect(mocks.releaseAll).not.toHaveBeenCalled();
+
+    mocks.releaseAll.mockResolvedValue(1234);
+    expect(await releaseAuditHolds(decision([['note', ' 문턱을 잘못 잡음 ']]))).toMatchObject({ message: expect.stringContaining('1,234건') });
+    expect(mocks.releaseAll).toHaveBeenCalledWith({ by: 'jr', note: '문턱을 잘못 잡음' });
+    expect(mocks.log).toHaveBeenCalledWith('jr', { action: 'audit-hold-release-all', target: 'product_audit',
+      detail: { released: 1234, note: '문턱을 잘못 잡음' } });
   });
 
   it('재감사는 체크박스를 켰을 때만 유지 판정까지 다시 본다', async () => {

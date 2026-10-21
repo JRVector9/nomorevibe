@@ -4,6 +4,7 @@ import {
   crawlCandidates, crawlReviewAttempts, operationsAudit, productAuditItems, productEvidenceAudit, productRepoReviews, products,
 } from "@/lib/db/schema";
 import { githubOwnerFromRepositoryUrl } from "./github-owner";
+import { AUDIT_HOLD_ACTION, AUDIT_RELEASE_ACTION } from "@/lib/crawl/product-audit-hold";
 
 /**
  * 제품 하나의 기록(2026-10-08 UX 감사 ADM-20) — 관리자 상세의 '이 제품의 기록'.
@@ -14,7 +15,8 @@ import { githubOwnerFromRepositoryUrl } from "./github-owner";
  * - review: 이 제품이 된 후보의 심사 기록(crawl_review_attempts) — 끝난 자동 심사와 관리자 결정(admin_override)
  * - audit: 발행분 감사(product_audit_items)의 AI 판정과 사람 결정
  * - repo_review: 저장소가 사라진 웹사이트의 2단계 판정(product_repo_reviews)과 운영자 결정 — 한 행이라 마지막 것만 남아 있다
- * - status: 차단·해제 감사 행(product_evidence_audit) — 자동 차단(스팸 재검사)·내려달라는 요청 처리도 여기 남는다
+ * - status: 차단·해제 감사 행(product_evidence_audit) — 자동 차단(스팸 재검사)·내려달라는 요청 처리도 여기 남는다.
+ *   감사 보류를 걸고 푼 행(audit.hold·audit.hold.release, lib/crawl/product-audit-hold.ts)도 여기다
  *
  * 관리자 차단은 작업 로그와 차단 감사 행에 한 번씩, 두 줄로 보인다 — 누가 눌렀는지와 상태가 바뀐 것은 다른 기록이다.
  * 각 출처에서 limit 건까지만 읽고 합친 뒤 다시 자른다.
@@ -71,7 +73,8 @@ export async function productHistory(slug: string, limit = PRODUCT_HISTORY_LIMIT
       .orderBy(desc(productAuditItems.id)).limit(limit),
     db.select().from(productRepoReviews).where(eq(productRepoReviews.productId, product.id)),
     db.select().from(productEvidenceAudit)
-      .where(and(eq(productEvidenceAudit.slug, slug), inArray(productEvidenceAudit.action, ["admin.product.ban", "admin.product.unban"])))
+      .where(and(eq(productEvidenceAudit.slug, slug),
+        inArray(productEvidenceAudit.action, ["admin.product.ban", "admin.product.unban", AUDIT_HOLD_ACTION, AUDIT_RELEASE_ACTION])))
       .orderBy(desc(productEvidenceAudit.id)).limit(limit),
   ]);
 

@@ -1,8 +1,7 @@
 import { z } from "zod";
 import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
-import { mergeWithDefaults } from "@/lib/crawl/settings";
-import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { mergeWithDefaults, settingsUnreadable } from "@/lib/crawl/settings";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -205,8 +204,8 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   const add = (routeId: string, provider: string, model: string | null | undefined) =>
     uses.set(JSON.stringify([routeId, provider, model || null]), { routeId, provider, model: model || null });
   const settings = mergeWithDefaults(snapshot.reviewSettings);
-  // 손상된 행은 기본값 객체 그대로 돌아온다 — 읽지 못한 것으로 본다
-  if (settings === DEFAULT_CRAWL_SETTINGS) for (const routeId of ["crawl-agent-review", "second-review", "grok-session-check"]) add(routeId, "unknown", null);
+  // 손상된 행은 기본값으로 돌아온다 — 읽지 못한 것으로 본다
+  if (settingsUnreadable(settings)) for (const routeId of ["crawl-agent-review", "second-review", "grok-session-check"]) add(routeId, "unknown", null);
   else {
     const first = settings.firstReview ?? { provider: "claude-cli", model: models?.crawlReview };
     add("crawl-agent-review", first.provider, first.model);

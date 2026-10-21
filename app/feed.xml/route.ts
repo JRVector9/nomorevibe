@@ -77,6 +77,8 @@ export const GET = withRoute("feed", async (req: Request) => {
     headers: {
       "content-type": "application/rss+xml; charset=utf-8",
       "cache-control": "public, max-age=300",
+      // 목록 화면과 같은 태그 — 제품이 내려가거나 감사 보류가 걸리고 풀릴 때 목록 지우기(lists)가 이 사본도 지운다
+      "cache-tag": "html,lists",
     },
   });
 });

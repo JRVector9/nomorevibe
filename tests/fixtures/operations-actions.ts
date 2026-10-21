@@ -66,7 +66,7 @@ export function brokenActionInputs(): ActionInputs {
       { key: "first", label: "1차 심사", model: "gpt-oss-120b", calls1h: 5, failed1h: 5, avgSeconds: 3, agreement1h: null, lastSuccessAt: null },
     ],
     attention: {
-      auditRejectsOpen: 7, healthOverdue: 172, healthTargetPerHour: 6_796, introNeedsEditor: 9,
+      auditRejectsOpen: 7, auditHeld: 0, healthOverdue: 172, healthTargetPerHour: 6_796, introNeedsEditor: 9,
       auditCampaign: { id: 3, promptVersion: "2026-09-19.3", current: false, unanswered: 5_176 }, cdnPurgesPending: 2,
       repoGone: { installable: 0, website: 141 }, spamAutoBans: { day: 50, banned: 257 },
       repoHealth: { tracked: 1_000, checked24h: 40, states: {} },

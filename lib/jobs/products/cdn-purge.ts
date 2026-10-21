@@ -25,7 +25,8 @@ export async function purgeRemovedProducts(
       isNull(cdnPurges.purgedAt),
       sql`${cdnPurges.purgedAt} < now() - ${CONFIRM_AFTER_SECONDS} * interval '1 second'`,
     )))
-    .orderBy(asc(cdnPurges.id))
+    // 차단·내려달라는 요청·삭제가 먼저다 — 감사 보류를 걸고 푼 줄(audit_hold·audit_release)은 목록이 늦게 바뀌어도 되는 몫이다
+    .orderBy(sql`(${cdnPurges.reason} in ('audit_hold', 'audit_release'))`, asc(cdnPurges.id))
     .limit(PURGE_BATCH);
   if (due.length === 0) return { done: true };
 

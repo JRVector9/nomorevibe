@@ -5,6 +5,7 @@ import { productMakerMembers } from "@/lib/db/me-schema";
 import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
 import { githubRequest } from "@/lib/crawl/github";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { releaseAuditHold } from "@/lib/crawl/product-audit-hold";
 import { isGithubNumericId, isGithubRepositoryName } from "@/lib/github/repositories";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
@@ -276,6 +277,8 @@ async function recordOwnerMembership(product: ClaimProduct, userId: number, gith
       } });
     // products.claimed_at·builder 는 건드리지 않는다 — 그 칸은 도메인 검증(verify.ts)이 수정 키를 주는 근거라,
     // 여기서 채우면 진짜 도메인 주인의 클레임을 막고 자격이 풀려도 되돌릴 수 없다. 운영자 여부는 product_maker_members 로만 본다
+    // 주인이 생겼으니 감사 보류는 같은 세대 잠금 안에서 푼다 — 보류는 주인 없는 것에만 건다(lib/crawl/product-audit-hold.ts)
+    await releaseAuditHold(tx, { productId: product.id, slug: product.slug, actor: `maker:${userId}`, reason: "owned" });
     return true;
   }));
 }

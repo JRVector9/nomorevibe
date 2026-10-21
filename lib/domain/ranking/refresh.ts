@@ -4,6 +4,7 @@ import {
   eq,
   gte,
   inArray,
+  isNull,
   lt,
   lte,
   sql,
@@ -314,6 +315,8 @@ async function calculateRankingSnapshotAt(
       eq(products.status, "verified"),
       gte(products.verifiedAt, eligibleSince),
       lt(products.verifiedAt, cutoff),
+      // 감사 보류는 순위를 매기기 전에 뺀다 — 공개 순위(view.ts)가 빼는 줄 때문에 번호가 비지 않게. 검증되면 보류가 풀리므로(markVerified) 보통은 없다
+      isNull(products.auditHoldAt),
     ));
   if (candidates.length === 0) return [];
 

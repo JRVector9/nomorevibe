@@ -20,8 +20,9 @@ export function purgeConfig(env: Record<string, string | undefined> = process.en
   return zoneId && token ? { zoneId, token } : null;
 }
 
+/** 빈 slug 의 줄은 목록(lists)만 지운다 — 감사 보류를 한꺼번에 풀 때 제품마다 줄을 적지 않는다(lib/crawl/product-audit-hold.ts) */
 export function purgeTags(slugs: string[]): string[] {
-  return [...new Set(slugs.flatMap((slug) => [`p-${slug}`, `og-${slug}`])), "lists"];
+  return [...new Set(slugs.filter(Boolean).flatMap((slug) => [`p-${slug}`, `og-${slug}`])), "lists"];
 }
 
 export async function purgeByTags(config: PurgeConfig, tags: string[], fetchImpl: typeof fetch = fetch): Promise<PurgeResult> {

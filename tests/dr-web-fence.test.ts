@@ -357,7 +357,8 @@ it("every admin server action and every write route handler goes through the web
     expect(source.match(/^export async function (\w+)/gm)?.filter(line => !line.endsWith("codexOperation")) ?? [], file).toEqual([]);
     wrapped += source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)?.length ?? 0;
   }
-  expect(wrapped).toBe(54);
+  // 0110 감사 보류 — 보류 설정 저장·보류 모두 풀기(admin/audit/actions.ts) 두 개가 더해졌다
+  expect(wrapped).toBe(56);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

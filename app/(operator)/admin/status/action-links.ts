@@ -45,6 +45,8 @@ export const ACTION_LINKS = {
   productsSpamBanned: productFilter("스팸 자동 차단"),
   takedowns: "/admin/audit?tab=requests",
   audit: "/admin/audit",
+  /** 감사 탭의 '보류 중' 갈래 */
+  auditHeld: "/admin/audit?tab=audit&view=held",
   githubAccounts: "/admin/github-accounts",
   feedbackHeld: "/admin/feedback?state=held",
   productTranslationsFailed: "/admin/translations?state=failed",

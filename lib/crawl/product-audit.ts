@@ -4,8 +4,10 @@ import { crawlCandidates, crawlDocuments, products, productAuditAttempts, produc
   type ProductAuditCampaign } from "@/lib/db/schema";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repository";
-import { assertJobLease, type JobLease } from "@/lib/jobs/control";
-import { getSettings } from "./settings";
+import { assertJobLease, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { getSettings, type AuditHoldSettings } from "./settings";
+import { auditHoldCount, heldPublic, holdAuditedProduct, releaseAuditHold, verdictMayHold } from "./product-audit-hold";
+import { secondOpinionFilter, secondOpinionsField, secondOpinionVote, type SecondOpinionFilter, type SecondOpinionView } from "./audit-second-opinions";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer } from "./agent-review";
 import { classifyAuditReason } from "./audit-reason-category";
@@ -18,7 +20,8 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
  * 발행분 감사 — 올리고, 묻고, 적고, 사람이 정한다.
  *
  * 감사 기록은 product_audit_* 셋에 남긴다. 사람이 "내리기"를 누를 때만 제품 차단도 함께 기록한다.
- * 모델의 답으로는 아무것도 바뀌지 않는다 — 스키마 주석(lib/db/product-audit-schema.ts)에 까닭이 있다.
+ * 모델의 답으로 제품 상태는 바뀌지 않는다 — 스키마 주석(lib/db/product-audit-schema.ts)에 까닭이 있다. 확신 높은 거부만
+ * 사람이 볼 때까지 공개 목록에서 뺀다(감사 보류, product-audit-hold.ts).
  */
 
 /** 공개 목록에 떠 있는 상태 — 감사 대상이자 "아직 내릴 수 있는" 상태 */
@@ -230,11 +233,23 @@ export type AuditCall = { itemId: number; startedAt: Date; provider: string; mod
  * counted: 이 항목의 시도로 셀지. 심사자 자체가 없는 실패(키 없음·모델 없음)는 항목 탓이 아니라
  * 세지 않는다 — 세면 키 하나 빠진 동안 10,751건이 시도를 다 써 버린다.
  * 물러나기는 1차 심사 잡과 같다: 1분에서 시작해 두 배씩, 30분까지.
+ *
+ * hold: 감사 보류 설정(product-audit-hold.ts). 확신 높은 거절이면 제품 쓰기와 같은 잠금 순서(DR writer fence → stage → 제품 세대
+ * → 항목)로 열고, 쓸기와 같은 조건(holdAuditedProduct — 사유 갈래·두 번째 모델의 거절)이 맞으면 같은 커밋에서 공개 목록에서 뺀다.
+ * 세대를 잠그지 못하면(그 사이 지워짐) 답만 적는다 — 놓친 것은 다음 틱의 쓸기가 건다.
  */
 export async function recordAuditResult(call: AuditCall & (
   { ok: true; outcome: ReviewOutcome } | { ok: false; error: string; counted: boolean }
-), lease: JobLease): Promise<void> {
-  await db.transaction(async (tx) => {
+), lease: JobLease, hold: AuditHoldSettings | null = null): Promise<void> {
+  const holding = call.ok && verdictMayHold(call.outcome, hold);
+  await withJobLeaseWrite(lease, async (tx) => {
+    let product: { id: number; slug: string } | null = null;
+    if (holding) {
+      await lockPipelineInputStages(tx);
+      const [row] = await tx.select({ id: products.id, slug: products.slug }).from(productAuditItems)
+        .innerJoin(products, eq(products.id, productAuditItems.productId)).where(eq(productAuditItems.id, call.itemId));
+      if (row && await lockProductGeneration(tx, row.id, row.slug)) product = row;
+    }
     const [item] = await tx.select().from(productAuditItems).where(eq(productAuditItems.id, call.itemId)).for("update");
     await assertJobLease(tx, lease);
     if (!item || item.aiDecision) return;
@@ -249,6 +264,7 @@ export async function recordAuditResult(call: AuditCall & (
         aiCategory: call.outcome.category ?? null, sourceHash: auditSourceHash(call.input), reviewedAt: sql`now()`,
         attempts: item.attempts + 1, errorCode: null, retryAt: null,
       }).where(eq(productAuditItems.id, item.id));
+      if (product?.id === item.productId) await holdAuditedProduct(tx, { itemId: item.id, productId: product.id, slug: product.slug });
     } else if (call.counted) {
       const backoffMs = Math.min(30 * 60_000, 60_000 * 2 ** item.attempts);
       await tx.update(productAuditItems).set({
@@ -280,6 +296,8 @@ export type AuditCounts = {
   total: number; reviewed: number; reject: number; needsReview: number;
   /** 사람이 아직 손대지 않았고 제품이 아직 떠 있는 것 — 목록에 보이는 수 */
   openReject: number; openNeedsReview: number;
+  /** 그 거절 중 두 번째 모델도 거절한 것(두 모델 모두 거절)과, 두 번째 모델은 승인한 것(갈림) — audit-second-opinions.ts */
+  openAgreed: number; openSplit: number;
   removed: number; kept: number;
   /** 원본이 없거나 시도를 다 써서 답을 못 받은 것 */
   failed: number;
@@ -293,12 +311,19 @@ export type AuditOverview = {
   paused: string | null;
   /** 심사 글이 바뀌어 사람이 중단하고 새로 열어야 하는 감사(auditCampaignStalled) */
   stalled: boolean;
+  /** 감사 보류로 공개 목록에서 빠져 사람을 기다리는 수 — 회차와 상관없이(product-audit-hold.ts) */
+  held: number;
+  /** 감사 보류 스위치와 문턱(크롤 설정 auditHold) */
+  hold: AuditHoldSettings;
 };
 
 export async function productAuditOverview(): Promise<AuditOverview> {
-  const [campaign] = await db.select().from(productAuditCampaigns).orderBy(desc(productAuditCampaigns.id)).limit(1);
-  const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, removed: 0, kept: 0, failed: 0, skipped: 0 };
-  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false };
+  const [[campaign], held, settings] = await Promise.all([
+    db.select().from(productAuditCampaigns).orderBy(desc(productAuditCampaigns.id)).limit(1), auditHoldCount(), getSettings()]);
+  const empty: AuditCounts = { total: 0, reviewed: 0, reject: 0, needsReview: 0, openReject: 0, openNeedsReview: 0, openAgreed: 0, openSplit: 0,
+    removed: 0, kept: 0, failed: 0, skipped: 0 };
+  const hold = settings.auditHold;
+  if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
   const failed = sql`${productAuditItems.aiDecision} is null
     and (${productAuditItems.errorCode} is not distinct from 'no_source' or ${productAuditItems.attempts} >= ${MAX_REVIEW_ATTEMPTS})`;
@@ -309,6 +334,8 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     needsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review')::int`,
     openReject: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open})::int`,
     openNeedsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review' and ${open})::int`,
+    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql)})::int`,
+    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql)})::int`,
     removed: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'removed')::int`,
     kept: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'kept')::int`,
     failed: sql<number>`count(*) filter (where ${failed})::int`,
@@ -318,7 +345,6 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     .where(eq(productAuditItems.campaignId, campaign.id));
   let paused: string | null = null;
   if (campaign.status === "running") {
-    const settings = await getSettings();
     if (!settings.enabled) paused = "크롤 설정의 수집 스위치가 꺼져 있어 멈춰 있습니다. 켜면 이어서 봅니다.";
     else if (auditCampaignStalled(campaign)) {
       paused = `시작한 뒤 심사 글이 바뀌었습니다(글 ${campaign.promptVersion}·규칙 ${campaign.rulesVersion} → `
@@ -326,35 +352,69 @@ export async function productAuditOverview(): Promise<AuditOverview> {
         + "두 글의 판단을 한 목록에 섞지 않도록 멈췄습니다. 이 감사를 중단하고 새로 시작하세요.";
     }
   }
-  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign) };
+  return { campaign, counts: counts ?? empty, paused, stalled: auditCampaignStalled(campaign), held, hold };
 }
 
 export type AuditFindingRow = {
   id: number; slug: string; name: string; url: string; category: string;
   reason: string | null; confidence: number | null; reviewedAt: Date | null; owned: boolean;
+  /** 감사 보류로 공개 목록에서 빠진 시각(product-audit-hold.ts) — 없으면 null */
+  heldAt: Date | null;
+  /** 다른 모델의 두 번째 의견(audit-second-opinions.ts) — 없으면 빈 목록 */
+  second: SecondOpinionView[];
 };
 
-/** 사람이 볼 것 — 아직 아무도 손대지 않았고 제품이 아직 떠 있는 것. 주인 없는 것 먼저, 확신 높은 순. ids 가 있으면 그 항목만(사유 갈래 거르기) */
+/** 감사 항목 id — 두 번째 의견 조건이 바깥 항목을 가리킨다 */
+const itemIdSql = sql`${productAuditItems.id}`;
+
+const findingColumns = {
+  id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
+  reason: productAuditItems.aiReason, confidence: productAuditItems.aiConfidence, reviewedAt: productAuditItems.reviewedAt,
+  owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql),
+};
+
+/** 열린 거절·보류 목록의 조건 — 이 감사의 이 결정이고, 사람이 손대지 않았고, 제품이 떠 있다. second 면 두 번째 의견으로 더 거른다 */
+function openFindings(campaignId: number, decision: "reject" | "needs_review", second?: SecondOpinionFilter) {
+  return and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision), isNull(productAuditItems.humanDecision),
+    listed, ...(second ? [secondOpinionFilter(second, itemIdSql)] : []));
+}
+
+/**
+ * 사람이 볼 것 — 아직 아무도 손대지 않았고 제품이 아직 떠 있는 것. 주인 없는 것 먼저, 확신 높은 순. ids 가 있으면 그 항목만(사유 갈래 거르기).
+ * second: 두 모델 모두 거절(agreed)·갈림(split)만 — 거절에만 뜻이 있다
+ */
 export async function listAuditFindings(campaignId: number, decision: "reject" | "needs_review",
-  { limit, offset, ids }: { limit: number; offset: number; ids?: number[] }): Promise<AuditFindingRow[]> {
+  { limit, offset, ids, second }: { limit: number; offset: number; ids?: number[]; second?: SecondOpinionFilter }): Promise<AuditFindingRow[]> {
   if (ids && ids.length === 0) return [];
-  return db.select({
-    id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
-    reason: productAuditItems.aiReason, confidence: productAuditItems.aiConfidence, reviewedAt: productAuditItems.reviewedAt,
-    owned,
-  }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision),
-      isNull(productAuditItems.humanDecision), listed, ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
+  return db.select(findingColumns).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
+    .where(and(openFindings(campaignId, decision, second), ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
     .orderBy(owned, sql`${productAuditItems.aiConfidence} desc nulls last`, asc(productAuditItems.id))
     .limit(limit).offset(offset);
 }
 
+/**
+ * 감사 보류로 목록에서 빠져 사람을 기다리는 것 — 오래 기다린 것부터. 감사 회차와 상관없이 보류의 까닭이 된 항목을 잇는다
+ * (products_audit_hold_idx). 유지·내리기는 그 항목으로 누른다
+ */
+export async function listHeldFindings({ limit, offset, ids }: { limit: number; offset: number; ids?: number[] }): Promise<AuditFindingRow[]> {
+  if (ids && ids.length === 0) return [];
+  return db.select(findingColumns).from(products).innerJoin(productAuditItems, eq(productAuditItems.id, products.auditHoldItemId))
+    .where(and(heldPublic, ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
+    .orderBy(asc(products.auditHoldAt), asc(products.id)).limit(limit).offset(offset);
+}
+
+/** 보류 중인 것 전부의 사유 — 보류 갈래마다 몇 건인지 세고 거르는 데만 쓴다(auditFindingReasons 와 같은 셈) */
+export async function heldFindingReasons(): Promise<{ id: number; reason: string | null }[]> {
+  return db.select({ id: productAuditItems.id, reason: productAuditItems.aiReason }).from(products)
+    .innerJoin(productAuditItems, eq(productAuditItems.id, products.auditHoldItemId)).where(heldPublic);
+}
+
 /** 사람이 볼 것 전부의 사유 — 사유 갈래(audit-reason-category)를 세고 거르는 데만 쓴다. 감사 하나에 수천 건이라 한 번에 읽는다 */
-export async function auditFindingReasons(campaignId: number, decision: "reject" | "needs_review"): Promise<{ id: number; reason: string | null }[]> {
+export async function auditFindingReasons(campaignId: number, decision: "reject" | "needs_review",
+  second?: SecondOpinionFilter): Promise<{ id: number; reason: string | null }[]> {
   return db.select({ id: productAuditItems.id, reason: productAuditItems.aiReason })
     .from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision),
-      isNull(productAuditItems.humanDecision), listed));
+    .where(openFindings(campaignId, decision, second));
 }
 
 // ─────────────────────────── 사람의 결정 ───────────────────────────
@@ -414,16 +474,26 @@ export async function auditDecisionHistory(limit = 100) {
     .where(isNotNull(productAuditItems.humanAt)).orderBy(desc(productAuditItems.humanAt), desc(productAuditItems.id)).limit(limit);
 }
 
-/** 그대로 둔다. KEEP_DAYS 동안, 페이지가 그대로인 한 다음 감사에서 빠진다 */
+/**
+ * 그대로 둔다. KEEP_DAYS 동안, 페이지가 그대로인 한 다음 감사에서 빠진다.
+ * 보류 중이면 같은 커밋에서 풀어 목록에 돌려놓는다(product-audit-hold.ts) — 그래서 내리기와 같은 잠금 순서(stage → 제품 세대 → 항목)를 탄다.
+ * 폼의 slug 가 이 항목의 제품과 지금도 같은지는 세대 잠금이 본다.
+ */
 export async function keepAuditedProduct(input: { itemId: number; slug: string; by: string; note: string }): Promise<AuditDecisionResult> {
-  const rows = await db.update(productAuditItems).set({
-    humanDecision: "kept", humanBy: input.by.slice(0, 120), humanAt: sql`now()`,
-    humanNote: input.note.trim().slice(0, 500) || null,
-    keepUntil: sql`now() + ${KEEP_DAYS} * interval '1 day'`,
-  }).where(and(eq(productAuditItems.id, input.itemId), isNull(productAuditItems.humanDecision),
-    sql`exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId} and ${products.slug} = ${input.slug})`))
-    .returning({ id: productAuditItems.id });
-  return rows.length ? { ok: true } : { ok: false, error: STALE };
+  return db.transaction(async (tx) => {
+    await lockPipelineInputStages(tx);
+    const [item] = await tx.select({ productId: productAuditItems.productId }).from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
+    if (!item || !(await lockProductGeneration(tx, item.productId, input.slug))) return { ok: false, error: STALE };
+    const rows = await tx.update(productAuditItems).set({
+      humanDecision: "kept", humanBy: input.by.slice(0, 120), humanAt: sql`now()`,
+      humanNote: input.note.trim().slice(0, 500) || null,
+      keepUntil: sql`now() + ${KEEP_DAYS} * interval '1 day'`,
+    }).where(and(eq(productAuditItems.id, input.itemId), eq(productAuditItems.productId, item.productId), isNull(productAuditItems.humanDecision)))
+      .returning({ id: productAuditItems.id });
+    if (!rows.length) return { ok: false, error: STALE };
+    await releaseAuditHold(tx, { productId: item.productId, slug: input.slug, actor: input.by, reason: "kept" });
+    return { ok: true };
+  });
 }
 
 // ─────────────────────────── 묶어 내리기 ───────────────────────────
@@ -438,34 +508,57 @@ export const GROUP_REMOVE_MIN_CONFIDENCE = 0.95;
 export const GROUP_REMOVE_MAX = 50;
 
 /** 묶을 수 있는 것 — 아직 아무도 손대지 않았고, 떠 있고, 주인이 없고, 확신이 문턱 이상인 거부 */
+/**
+ * 묶을 수 있는 것 — 거절, 사람이 아직 정하지 않음, 확신 문턱 이상, 그리고 갈리지 않음: 두 번째 모델이 승인했고 거절은 없는 것(갈림)은
+ * 사람이 한 건씩 본다. SaaS 첫 화면을 "광고 문구뿐"으로 잡은 오탐이 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
+ */
 const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
-  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE));
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql)}`);
 const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
   and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
+
+/** 묶음의 범위 — 감사 화면의 갈래. 보류 중(held)·두 모델 모두 거절(agreed)·내릴 후보 전체(reject) */
+export const GROUP_SCOPES = ["held", "agreed", "reject"] as const;
+export type AuditGroupScope = (typeof GROUP_SCOPES)[number];
+
+/**
+ * 범위를 잠근 뒤 다시 보는 조건 — 오래된 화면이 그 사이 풀린 보류(승인 옮겨 적기·유지)나 바뀐 의견을 내리지 않게.
+ * held: 그 제품이 지금 이 항목으로 보류 중. agreed: 이 항목에 두 번째 모델의 거절이 있다
+ */
+function groupScope(scope: AuditGroupScope): SQL | undefined {
+  if (scope === "held") return sql`exists (select 1 from ${products} hp where hp.id = ${productAuditItems.productId}
+    and hp.audit_hold_at is not null and hp.audit_hold_item_id = ${productAuditItems.id})`;
+  return scope === "agreed" ? secondOpinionVote(itemIdSql, "reject") : undefined;
+}
 
 export type AuditRemovalGroup = {
   /** 제품의 지금 분류 — 모델의 분류(ai_category)는 승인할 때만 붙어 거부에는 거의 비어 있다 */
   category: string;
   total: number;
-  /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다 */
-  items: { id: number; slug: string; name: string; url: string; confidence: number }[];
+  /** 확신 높은 순으로 GROUP_REMOVE_MAX 건까지 — 다음 묶음은 이것을 내린 뒤에 온다. second 는 두 번째 의견(확인 창의 배지) */
+  items: { id: number; slug: string; name: string; url: string; confidence: number; second: SecondOpinionView[] }[];
 };
 
-/** 묶음 — 큰 것부터. 묶음마다 확신 높은 순으로 한 번에 내릴 만큼만 */
-export async function auditRemovalGroups(campaignId: number): Promise<AuditRemovalGroup[]> {
+/**
+ * 묶음 — 큰 것부터. 묶음마다 확신 높은 순으로 한 번에 내릴 만큼만. 내리는 길은 그대로다(removeAuditedProducts — 같은 범위를 잠근 뒤 다시 본다).
+ * reject·agreed 는 이 감사의 항목, held 는 감사 회차와 상관없이 보류의 까닭이 된 항목(지난 감사의 보류까지)이다
+ */
+export async function auditRemovalGroups(campaignId: number, scope: AuditGroupScope = "reject"): Promise<AuditRemovalGroup[]> {
   const ranked = db.select({
     id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
     confidence: sql<number>`${productAuditItems.aiConfidence}`.as("confidence"),
+    second: sql<SecondOpinionView[]>`${secondOpinionsField(itemIdSql)}`.as("second"),
     rank: sql<number>`(row_number() over (partition by ${products.category} order by ${productAuditItems.aiConfidence} desc, ${productAuditItems.id}))::int`.as("rank"),
     total: sql<number>`(count(*) over (partition by ${products.category}))::int`.as("total"),
   }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`)).as("ranked");
+    .where(and(scope === "held" ? undefined : eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`, groupScope(scope)))
+    .as("ranked");
   const rows = await db.select().from(ranked).where(lte(ranked.rank, GROUP_REMOVE_MAX))
     .orderBy(desc(ranked.total), asc(ranked.category), asc(ranked.rank));
   const groups = new Map<string, AuditRemovalGroup>();
   for (const row of rows) {
     const group = groups.get(row.category) ?? { category: row.category, total: row.total, items: [] };
-    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence });
+    group.items.push({ id: row.id, slug: row.slug, name: row.name, url: row.url, confidence: row.confidence, second: row.second });
     groups.set(row.category, group);
   }
   return [...groups.values()];
@@ -477,11 +570,12 @@ export type AuditBatchResult = { removed: string[]; failed: { slug: string; erro
  * 사람이 이름을 훑고 고른 묶음을 내린다 — 한 건씩 내리기와 같은 길(잠금·차단·기록)을 한 건마다 따로 탄다.
  * 한 건이 실패해도 나머지는 내린다. 그 사이 사람이 결정했거나, 문턱 밖이거나, 주인이 생긴 것은 건너뛴다.
  */
-export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string }): Promise<AuditBatchResult> {
+export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string; scope?: AuditGroupScope }): Promise<AuditBatchResult> {
   if (input.items.length > GROUP_REMOVE_MAX) throw new Error(`audit_batch_over_${GROUP_REMOVE_MAX}`);
   const result: AuditBatchResult = { removed: [], failed: [] };
+  const only = and(groupableItem, groupScope(input.scope ?? "reject"));
   for (const item of input.items) {
-    const done = await removeOne({ ...item, by: input.by }, groupableItem);
+    const done = await removeOne({ ...item, by: input.by }, only);
     if (done.ok) result.removed.push(item.slug);
     else result.failed.push({ slug: item.slug, error: done.error });
   }

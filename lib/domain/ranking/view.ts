@@ -23,7 +23,7 @@ import {
 } from "@/lib/db/schema";
 import { topClickedSince } from "@/lib/domain/products/clicks";
 import { taglineKoField } from "@/lib/domain/products/korean-tagline";
-import { aiLevelPredicate, notDown, repoGoneField, type ListOptions } from "@/lib/domain/products/repository";
+import { aiLevelPredicate, notAuditHeld, notDown, repoGoneField, type ListOptions } from "@/lib/domain/products/repository";
 import { observedToolPredicate } from "@/lib/domain/products/observed-tool";
 import type { Category } from "@/lib/domain/products/schema";
 import {
@@ -133,8 +133,10 @@ export async function getSeasonRanking(options: {
   const conditions = [
     eq(rankingEntries.seasonId, season.id),
     eq(products.status, "verified"),
-    // 공개 목록과 같은 기준으로 닿지 않는 제품을 가린다. 어드민 미리보기는 이 조회를 쓰지 않는다
+    // 공개 목록과 같은 기준으로 닿지 않는 제품·감사 보류를 가린다. 어드민 미리보기는 이 조회를 쓰지 않는다.
+    // 보류는 주인 없는 것에만 걸리지만, 걸린 뒤 검증돼도 사람이 풀기 전까지는 목록 밖이다
     notDown,
+    notAuditHeld,
   ];
   if (options.order !== "trending") {
     conditions.push(lte(rankingEntries.rank, summary.policy.leaderboard.limit));
@@ -295,6 +297,7 @@ export async function getAllTimeRanking(options: {
     .where(and(
       eq(products.status, "verified"),
       notDown,
+      notAuditHeld,
       slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
     ));
   const bySlug = new Map(rows.map((row) => [row.slug, row]));
@@ -314,6 +317,7 @@ export async function getAllTimeRanking(options: {
       .where(and(
         eq(products.status, "verified"),
         notDown,
+        notAuditHeld,
         slugArrayPredicate(products.slug, totals.map((row) => row.slug)),
         hasSearchQuery(options.query) ? productSearchPredicate(options.query!) : undefined,
         options.observedTool ? observedToolPredicate(options.observedTool) : undefined,

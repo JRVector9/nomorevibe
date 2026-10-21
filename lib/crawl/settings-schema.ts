@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
+import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
 
 /**
  * 크롤 기준.
@@ -288,6 +289,23 @@ const defaultNews = { autoApprove: true, disabledSources: [] as string[] };
 /** 홈 '지금 뜨는 프로젝트'의 마지막 스타 확인 기간 — 코드 기본값은 RISING_FRESH_DAYS(lib/domain/products/repository.ts)와 같다 */
 const defaultRising = { freshDays: 7 };
 
+/**
+ * 감사 보류(0110)의 기본값 — 켬, 확신 0.95, 사유 갈래 넷. 확신은 묶어 내리기의 문턱(GROUP_REMOVE_MIN_CONFIDENCE)과 같다.
+ * 2026-10-21 프로드: 처리 안 된 거부 6,558건 중 0.95 이상·주인 없음이 2,754건이었고, 거부의 6,477건이 아직 공개 목록에 떠 있었다.
+ *
+ * 확신만으로는 모자랐다 — 감사 #4 의 0.95 이상·주인 없는 거부 50건을 grok 으로 다시 가르니 엄격히 82%(경계 포함 92%)만 맞았고,
+ * 확신은 0.95~0.97 과 0.90~0.94 로 갈려 문턱을 올려도 나아지지 않았다. 사유 갈래(audit-reason-category.ts)로는 갈렸다:
+ * 빈 화면·회사 소개·남의 플랫폼 31/31(쇼핑몰은 표본이 없지만 같은 무리), 글·문서 4/8, 기타 5/9, 로그인 1/2.
+ * 틀린 것은 MkDocs·Docusaurus 로 만든 프로젝트 홈을 "문서"로, SaaS 첫 화면을 "광고 문구뿐"으로, 페이지 대신 README 로 가른 것이었다.
+ * 그래서 맞았던 갈래만 기본으로 보류한다. 나머지는 지금처럼 목록에 둔 채 사람을 기다린다.
+ * 다른 모델(grok)도 같은 항목을 거절했으면 갈래와 상관없이 보류한다(secondOpinionReject) — 두 모델이 따로 같은 답을 낸 것이다.
+ * 그 모델이 승인했으면 갈래로는 걸지 않는다 — 회사 소개 갈래가 "광고 문구뿐"으로 잡는 SaaS 첫 화면을 다른 모델이 열어 보고 승인한 것이다.
+ */
+export const DEFAULT_AUDIT_HOLD: { enabled: boolean; minConfidence: number; categories: AuditReasonCategory[]; secondOpinionReject: boolean } =
+  { enabled: true, minConfidence: 0.95, categories: ["placeholder", "company", "platform", "shop"], secondOpinionReject: true };
+/** 문턱의 하한 — 그 아래로 내리면 모델이 틀린 몫(1차 심사 실측 정확도 85%)이 사람 눈 없이 목록에서 빠진다 */
+export const AUDIT_HOLD_MIN_CONFIDENCE_FLOOR = 0.8;
+
 const defaultAgentEvidence = {
   enabled: false,
   enforceEligibility: false,
@@ -314,6 +332,21 @@ export const reviewVoterSchema = z.object({
   // CLI 쪽(claude-cli·grok-cli) 이름은 명령 인자로 나가므로 예전 규칙 그대로 좁게 받는다
   .refine((value) => value.provider === "abcllm" || /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(value.model),
     { path: ["model"], message: "CLI 모델 이름은 영숫자와 . _ : / - 만 쓸 수 있다" });
+
+/**
+ * 감사 보류 설정의 모양 — 저장된 행에서 따로 읽는다(settings.ts storedAuditHold). 행의 다른 칸이 깨져도 이 값은 그대로 읽고,
+ * 이 값이 깨졌으면 꺼진 것으로 읽는다 — 끈 스위치가 기본값(켬)으로 되돌아가면 안 된다.
+ */
+export const auditHoldSchema = z.object({
+  enabled: z.boolean(),
+  minConfidence: z.number().min(AUDIT_HOLD_MIN_CONFIDENCE_FLOOR).max(1),
+  /** 보류하는 사유 갈래 — 사유 문장을 감사 화면의 칩과 같은 분류(classifyAuditReason)로 나눈 것. 비면 아무것도 보류하지 않는다 */
+  categories: z.array(z.enum(AUDIT_REASON_KEYS as [AuditReasonCategory, ...AuditReasonCategory[]]))
+    .max(AUDIT_REASON_KEYS.length)
+    .refine((categories) => new Set(categories).size === categories.length, { message: "같은 갈래를 두 번 넣을 수 없다" }),
+  /** 두 번째 모델(product_audit_second_opinions)도 거절한 것은 갈래와 상관없이 보류한다 — 확신 문턱은 그대로 건다 */
+  secondOpinionReject: z.boolean(),
+}).strict();
 
 export const crawlSettingsSchema = z.object({
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
@@ -408,6 +441,12 @@ export const crawlSettingsSchema = z.object({
     /** 마지막 스타 확인이 이 일수보다 오래된 제품은 뺀다 */
     freshDays: z.number().int().min(1).max(30),
   }).strict().default(defaultRising),
+  /**
+   * 감사 보류 — 발행분 감사가 확신 minConfidence 이상으로 "제품 아님"이라 했고, 그 사유 갈래가 categories 에 들거나 두 번째 모델도
+   * 거절한(secondOpinionReject) 주인 없는 공개 제품을 사람이 정할 때까지 공개 목록에서 뺀다(lib/crawl/product-audit-hold.ts). 끄면 새로 보류하지 않고, 이미 건 보류는 사람이 정하거나 모두 풀 때까지 남는다.
+   * 감사 화면(/admin/audit)이 따로 바꾼다 — 크롤 설정 폼·기본값 되돌리기는 이 값을 건드리지 않는다(settings.ts applyPatch).
+   */
+  auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;
@@ -452,6 +491,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
   agentEvidence: defaultAgentEvidence,
   news: defaultNews,
   rising: defaultRising,
+  auditHold: DEFAULT_AUDIT_HOLD,
   secondReview: defaultSecondReview,
   classify: defaultClassify,
   discover: {

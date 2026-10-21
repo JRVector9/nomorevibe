@@ -3,7 +3,8 @@ import { db } from "@/lib/db";
 import { cdnPurges, products, productHealth } from "@/lib/db/schema";
 import { notifications, userFollows } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
-import { listedByDefault, notDown } from "@/lib/domain/products/repository";
+import { listedByDefault, notAuditHeld, notDown } from "@/lib/domain/products/repository";
+import { AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE } from "@/lib/crawl/product-audit-hold";
 import { periodContaining } from "@/lib/domain/ranking/period";
 import { formatDay } from "@/lib/format/time";
 import { withJobLeaseWrite } from "@/lib/jobs/control";
@@ -31,6 +32,11 @@ export type DelistedCursor = { purgeId: number; floor?: number; down?: Record<st
  * dedupe_key 에 purge id 가 있어 다시 봐도 한 줄이고, 팔로한 사람이 있는 줄만 다시 넣어 본다.
  */
 const PURGE_OVERLAP = 500;
+/**
+ * 내려감이 아닌 지우기 줄 — 내려달라는 요청·삭제, 그리고 감사 보류를 걸고 푼 줄(product-audit-hold.ts). 보류는 내린 것이 아니라 알리지 않는다.
+ * 보류 줄을 다시 보는 사이(하루) 그 제품이 차단되면 상태만 보고는 내려간 줄로 읽힌다 — 차단은 트리거가 따로 적은 줄로 한 번만 알린다
+ */
+const NOT_DELISTED = new Set(["takedown", "deleted", AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE]);
 /** 한 틱에 보는 «닿지 않음» 후보 수 — 팔로된 공개 제품 가운데 7일 안에 내려간 것 */
 const DOWN_LIMIT = 500;
 
@@ -64,7 +70,7 @@ export async function sendDelistedNotifications(ctx: JobContext<DelistedCursor>)
       .orderBy(asc(cdnPurges.id)).limit(200);
     if (!rows.length) break;
     const delisted = rows.filter((row) => row.productId !== null && row.status !== null && row.followed
-      && row.reason !== "takedown" && row.reason !== "deleted" && !(PUBLIC_STATUSES as readonly string[]).includes(row.status));
+      && !NOT_DELISTED.has(row.reason) && !(PUBLIC_STATUSES as readonly string[]).includes(row.status));
     if (delisted.length) removed += await withJobLeaseWrite(ctx.lease, async (tx) => {
       let total = 0;
       for (const row of delisted) {
@@ -135,7 +141,7 @@ export async function sendCategoryDigest(ctx: JobContext<CategoryDigestCursor>, 
   // products 의 시각 열은 시간대 없는 UTC 벽시계다
   const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
   const counts = new Map((await db.select({ category: products.category, total: sql<number>`count(*)::int` }).from(products)
-    .where(and(inArray(products.status, [...PUBLIC_STATUSES]), listedByDefault,
+    .where(and(inArray(products.status, [...PUBLIC_STATUSES]), listedByDefault, notAuditHeld,
       sql`${listedAt} >= (${from}::timestamptz at time zone 'UTC') and ${listedAt} < (${until}::timestamptz at time zone 'UTC')`))
     .groupBy(products.category)).map((row) => [row.category.toLowerCase(), row.total]));
 

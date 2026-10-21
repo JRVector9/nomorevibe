@@ -177,6 +177,7 @@ export async function makerProjects(userId: number): Promise<MakerProject[]> {
     const rows = await db.select({
       productId: products.id, slug: products.slug, name: products.name, tagline: products.tagline, description: products.description,
       productStatus: products.status, category: products.category, source: products.source, claimedAt: products.claimedAt, updatedAt: products.updatedAt,
+      auditHoldAt: products.auditHoldAt,
       stars: products.stars, role: productMakerMembers.role, method: productMakerMembers.method,
       verifiedAt: productMakerMembers.verifiedAt, recheckAt: productMakerMembers.recheckAt,
     }).from(productMakerMembers).innerJoin(products, eq(products.id, productMakerMembers.productId))
@@ -208,8 +209,8 @@ export async function makerProjects(userId: number): Promise<MakerProject[]> {
       const status = (PUBLIC_STATUSES as readonly string[]).includes(row.productStatus) ? "public" : row.productStatus === "banned" ? "hidden" : "review";
       return {
         productId: row.productId, slug: row.slug, name: row.name, tagline: row.tagline, description: row.description, status,
-        // 주인 없는 수집 개인 프로필은 목록에서 빠진다 — 배지·카드도 404 다(share.ts)
-        shareable: status === "public" && !(hiddenByDefault(row.category) && row.source === "crawler" && !row.claimedAt),
+        // 주인 없는 수집 개인 프로필·감사 보류는 목록에서 빠진다 — 배지·카드도 404 다(share.ts)
+        shareable: status === "public" && !row.auditHoldAt && !(hiddenByDefault(row.category) && row.source === "crawler" && !row.claimedAt),
         updatedAt: row.updatedAt.toISOString(),
         role: row.role, method: row.method, nextRecheckAt: nextRecheckDate(row.verifiedAt, row.recheckAt).toISOString(),
         stars: row.stars, visits7d: visits.get(row.slug)?.validVisits ?? 0,

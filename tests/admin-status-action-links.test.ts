@@ -23,13 +23,19 @@ function auditTabs(): string[] {
   return [...body.matchAll(/(\w+):/g)].map((match) => match[1]);
 }
 
+/** 감사 화면의 갈래(VIEWS)도 page.tsx 안의 상수다 — 키 줄만 읽는다 */
+function auditViews(): string[] {
+  const body = source("app/(operator)/admin/audit/page.tsx").match(/const VIEWS = \{([\s\S]*?)\n\} as const/)?.[1] ?? "";
+  return [...body.matchAll(/^\s+(\w+): \{/gm)].map((match) => match[1]);
+}
+
 /** 경로마다 받는 쿼리와 그 값 — 받는 화면이 실제로 읽는 상수 */
 const QUERY: Record<string, Record<string, readonly string[]>> = {
   "/admin": {},
   "/admin/status": { tab: STATUS_TABS, job: JOB_NAMES },
   "/admin/review": { stage: STAGE_KEYS, sort: REVIEW_SORTS.filter(Boolean), second: SECOND_FILTER_KEYS },
   "/admin/products": { filter: Object.keys(PRODUCT_FILTERS), sort: Object.keys(PRODUCT_SORTS) },
-  "/admin/audit": { tab: auditTabs() },
+  "/admin/audit": { tab: auditTabs(), view: auditViews() },
   "/admin/github-accounts": {},
   "/admin/feedback": { state: ["accepted", "held", "rejected", "all"] },
   "/admin/translations": { state: ["pending", "ready", "failed", "reviewed", "all"] },

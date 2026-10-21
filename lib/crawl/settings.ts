@@ -5,13 +5,17 @@ import { crawlSettings, operationsAudit, productEvidenceAudit } from "@/lib/db/s
 import { logger } from "@/lib/observability/logger";
 import { adminAuditRow, settingsChanges } from "@/lib/operations/admin-log";
 import {
+  auditHoldSchema,
   crawlSettingsSchema,
   DEFAULT_CRAWL_SETTINGS,
   type CrawlSettings,
 } from "./settings-schema";
+import { isAuditReasonCategory } from "./audit-reason-category";
+import { auditHoldWidens, sameAuditHold } from "./audit-hold-policy";
 import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { requestJob } from "@/lib/jobs/control";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 const ROW_ID = 1;
 
@@ -50,6 +54,31 @@ function mergeSecondReview(stored: unknown) {
   return { ...DEFAULT_CRAWL_SETTINGS.secondReview, ...saved, voters };
 }
 
+/**
+ * 저장된 행의 감사 보류 설정 — 행의 나머지와 따로 읽는다. 칸이 없으면 기본값(켬, 첫 배포의 뜻), 있는데 깨졌으면 꺼짐.
+ * 끈 스위치가 다른 칸의 손상이나 깨진 값 때문에 기본값(켬)으로 되살아나면 안 된다. 모르는 갈래는 버리고(코드에서 갈래를 지운 뒤에도
+ * 읽히게) 겹친 갈래는 하나로 둔다. 일부 칸만 있으면 나머지를 기본값으로 채운다(새 칸을 더한 배포).
+ */
+export function storedAuditHold(stored: unknown): AuditHoldSettings {
+  const value = (stored ?? {}) as Record<string, unknown>;
+  if (value.auditHold === undefined) return DEFAULT_CRAWL_SETTINGS.auditHold;
+  const raw = value.auditHold;
+  const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
+  const categories = object && Array.isArray(object.categories)
+    ? [...new Set(object.categories.filter(isAuditReasonCategory))] : object?.categories;
+  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...object,
+    ...(categories === undefined ? {} : { categories }) }) : null;
+  if (parsed?.success) return parsed.data;
+  logger.error("crawl.audit_hold_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
+  return { ...DEFAULT_CRAWL_SETTINGS.auditHold, enabled: false };
+}
+
+/** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
+const unreadable = new WeakSet<CrawlSettings>();
+export function settingsUnreadable(settings: CrawlSettings): boolean {
+  return unreadable.has(settings);
+}
+
 export function mergeWithDefaults(stored: unknown): CrawlSettings {
   const raw = (stored ?? {}) as Record<string, unknown>;
   const merged = {
@@ -61,6 +90,7 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, ...((raw.agentEvidence as object) ?? {}) },
     news: { ...DEFAULT_CRAWL_SETTINGS.news, ...((raw.news as object) ?? {}) },
     rising: { ...DEFAULT_CRAWL_SETTINGS.rising, ...((raw.rising as object) ?? {}) },
+    auditHold: storedAuditHold(raw),
     secondReview: mergeSecondReview(raw.secondReview),
   };
 
@@ -68,11 +98,13 @@ export function mergeWithDefaults(stored: unknown): CrawlSettings {
   if (parsed.success) return parsed.data;
 
   // 저장된 값이 손상된 경우. 수집을 멈추는 대신 기본값으로 돌아가되 반드시 남긴다 —
-  // 조용히 다른 기준으로 도는 것이 최악이다.
+  // 조용히 다른 기준으로 도는 것이 최악이다. 감사 보류만은 저장된 값을 따로 읽어 둔다(storedAuditHold — 끈 것은 꺼진 채로)
   logger.error("crawl.settings_invalid", {
     issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`),
   });
-  return DEFAULT_CRAWL_SETTINGS;
+  const fallback = { ...DEFAULT_CRAWL_SETTINGS, auditHold: merged.auditHold };
+  unreadable.add(fallback);
+  return fallback;
 }
 
 export async function getSettings(): Promise<CrawlSettings> {
@@ -90,11 +122,11 @@ export type SaveResult =
  * 크롤 설정 폼이 그린 값의 판.
  *
  * 폼은 열어 둔 채로 몇 시간이 갈 수 있고, 저장하면 그린 값 전체를 보낸다. 그 사이 다른 곳(다른 탭의 수집 끄기,
- * 심사 큐의 2차 표 전환)이 바꾼 값을 옛 값으로 덮지 않도록 저장이 이 판을 견준다. 소식·카테고리·리뷰 모드는
+ * 심사 큐의 2차 표 전환)이 바꾼 값을 옛 값으로 덮지 않도록 저장이 이 판을 견준다. 소식·카테고리·리뷰 모드·감사 보류는
  * 다른 화면이 고치고 이 폼이 보내지 않으므로 판에 넣지 않는다 — 넣으면 상관없는 저장마다 폼이 거절된다.
  */
 export function settingsFormVersion(settings: CrawlSettings): string {
-  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null };
+  const edited = { ...settings, reviewMode: null, humanReview: null, classify: null, news: null, auditHold: null };
   return createHash("sha256").update(JSON.stringify(edited)).digest("hex").slice(0, 32);
 }
 
@@ -107,6 +139,8 @@ function applyPatch(current: CrawlSettings, patch: unknown) {
     // A general or stale settings form cannot change the publication gate.
     reviewMode: current.reviewMode,
     humanReview: current.humanReview,
+    // 감사 보류는 감사 화면의 스위치(setAuditHold)만 바꾼다 — 크롤 설정 폼·기본값 되돌리기가 공개 목록을 건드리지 않게
+    auditHold: current.auditHold,
     discover: { ...current.discover, ...((raw.discover as object) ?? {}) },
     judge: { ...current.judge, ...((raw.judge as object) ?? {}) },
     classify: mergeClassify(current.classify, raw.classify),
@@ -214,8 +248,8 @@ export async function setSourceBufferEnabled(input: { enabled: boolean; expected
     const before = current.discover.sourceBuffer.enabled;
     const audit = (ok: boolean, error: string | null) => adminAuditRow(input.actor, { action: "source-buffer", target: "crawl_settings",
       detail: { before, after: ok ? input.enabled : before, expected: input.expectedEnabled, requested: input.enabled, reason: input.reason }, ok, error });
-    // 깨진 행은 기본값 객체 그대로 돌아온다(mergeWithDefaults) — 읽지 못한 것으로 본다
-    if (current === DEFAULT_CRAWL_SETTINGS) {
+    // 깨진 행은 기본값으로 돌아온다(mergeWithDefaults) — 읽지 못한 것으로 본다
+    if (settingsUnreadable(current)) {
       await tx.insert(operationsAudit).values(await audit(false, "settings_unreadable"));
       return { ok: false, issues: ["저장된 크롤 설정을 읽지 못해 바꾸지 않았습니다. 설정 화면을 먼저 확인해 주세요."] };
     }
@@ -229,6 +263,55 @@ export async function setSourceBufferEnabled(input: { enabled: boolean; expected
     await tx.insert(operationsAudit).values(await audit(true, null));
     return { ok: true };
   });
+}
+
+export type AuditHoldSettings = CrawlSettings["auditHold"];
+
+/**
+ * 감사 보류의 스위치·문턱·사유 갈래를 바꾼다 — 감사 화면(/admin/audit)이 부른다. 원본 공급 조절(setSourceBufferEnabled)과 같은 길이다:
+ * stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 쓴다. 깨진 행을 기본값으로 읽었으면 쓰지 않는다.
+ * 끄면 새 보류만 멈춘다 — 이미 건 보류는 사람이 정하거나 '보류 모두 풀기'를 누를 때까지 남는다(product-audit-hold.ts).
+ */
+export async function setAuditHold(input: { next: AuditHoldSettings; expected: AuditHoldSettings; actor: string; reason?: string }):
+  Promise<{ ok: true; auditHold: AuditHoldSettings } | { ok: false; issues: string[] }> {
+  return db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
+    const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("update");
+    const before = storedAuditHold(row.values);
+    const reason = input.reason?.trim().slice(0, 500) || null;
+    const audit = (ok: boolean, error: string | null, after = before) => adminAuditRow(input.actor, { action: "audit-hold-settings",
+      target: "crawl_settings", detail: { before, after, requested: input.next, reason }, ok, error });
+    if (!sameAuditHold(before, input.expected)) {
+      await tx.insert(operationsAudit).values(await audit(false, "stale_state"));
+      return { ok: false, issues: ["그 사이 다른 곳에서 바뀌었습니다. 새로고침해 지금 값을 확인한 뒤 다시 해 주세요."] };
+    }
+    const parsed = auditHoldSchema.safeParse(input.next);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => `auditHold.${issue.path.join(".")}: ${issue.message}`);
+      await tx.insert(operationsAudit).values(await audit(false, issues.join(" · ")));
+      return { ok: false, issues };
+    }
+    if (auditHoldWidens(before, parsed.data) && !reason) {
+      await tx.insert(operationsAudit).values(await audit(false, "reason_required"));
+      return { ok: false, issues: ["보류를 넓히는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬)은 까닭을 적어야 합니다."] };
+    }
+    // 이 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도(읽기는 기본값으로 돌아간다) 끄기는 되어야 하고, 깨진 칸을 기본값으로 덮지 않는다
+    const values = { ...((row.values ?? {}) as Record<string, unknown>), auditHold: parsed.data };
+    await tx.update(crawlSettings).set({ values: values as CrawlSettings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
+    logger.info("crawl.audit_hold_set", { updatedBy: input.actor, before, after: parsed.data });
+    await tx.insert(operationsAudit).values(await audit(true, null, parsed.data));
+    return { ok: true, auditHold: parsed.data };
+  });
+}
+
+/**
+ * 보류를 거는 트랜잭션이 그 자리에서 스위치를 다시 읽는다 — 설정 행을 SHARE 로 잡아 setAuditHold 의 FOR UPDATE 와 줄을 세운다.
+ * 끄기가 commit 된 뒤에는 새 보류가 하나도 commit 되지 않는다. 잠금 순서는 다른 설정 쓰기와 같다(stage → 설정 행).
+ */
+export async function lockedAuditHold(tx: ProductTransaction): Promise<AuditHoldSettings> {
+  const [row] = await tx.select({ values: crawlSettings.values }).from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for("share");
+  return mergeWithDefaults(row?.values).auditHold;
 }
 
 /** 누가 언제 바꿨는지 (화면 표시용) */
@@ -247,7 +330,7 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
     const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for('update');
     const current = mergeWithDefaults(row.values);
-    if (current === DEFAULT_CRAWL_SETTINGS || current.humanReview.generation !== input.expectedGeneration) {
+    if (settingsUnreadable(current) || current.humanReview.generation !== input.expectedGeneration) {
       return { ok: false, issues: ['그 사이 설정이 바뀌었거나 읽지 못했습니다. 새로고침해주세요.'] };
     }
     if (current.humanReview.enabled === input.enabled) return { ok: true, settings: current };

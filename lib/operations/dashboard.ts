@@ -5,6 +5,7 @@ import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, product
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
+import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
@@ -50,6 +51,8 @@ export type TodayPublications = { total24h: number; korean24h: number; latest: R
 export type AttentionCounts = {
   /** 마지막 감사에서 AI 가 내리자고 했는데 아직 사람이 보지 않은 것 — /admin/audit 의 숫자와 같다(제품이 아직 떠 있는 것만) */
   auditRejectsOpen: number;      // product_audit_items where ai_decision = 'reject' and human_decision is null
+  /** 감사 보류로 공개 목록에서 빠져 사람을 기다리는 수 — /admin/audit '보류 중'과 같다(product-audit-hold.ts heldPublic) */
+  auditHeld: number;
   /** 생존 확인 대상(웹사이트로 여는 공개 제품)만 센다 — 설치형은 확인하지 않으므로 늘 밀린 것으로 보이게 된다 */
   healthOverdue: number;         // listed products (status seeded|verified) whose product_health.checked_at is null or older than 6 hours
   /** 생존 확인이 따라가야 할 시간당 건수 — 웹사이트 공개 제품 수 ÷ 재확인 간격(시간) */
@@ -349,13 +352,14 @@ const REPO_STATES = [
 
 export async function attentionCounts(now = new Date()): Promise<AttentionCounts> {
   const [[row], introNeedsEditor, [campaign], [repo], [review]] = await Promise.all([
-    readOnly<{ audit: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number;
+    readOnly<{ audit: number; held: number; health: number; websites: number; purges: number; gone_installable: number; gone_website: number;
       spam_day: number; spam_banned: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
           WHERE ${productAuditItems.campaignId} = (SELECT max(${productAuditCampaigns.id}) FROM ${productAuditCampaigns})
             AND ${productAuditItems.aiDecision} = 'reject' AND ${productAuditItems.humanDecision} IS NULL
             AND ${products.status} IN ('seeded', 'verified')) AS audit,
+        (SELECT count(*)::int FROM ${products} WHERE ${heldPublic}) AS held,
         (SELECT count(*)::int FROM ${products} LEFT JOIN ${productHealth} ON ${productHealth.slug} = ${products.slug}
           WHERE ${products.status} IN ('seeded', 'verified') AND ${products.accessMode} = 'website'
             AND (${productHealth.checkedAt} IS NULL
@@ -399,7 +403,7 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
   ]);
   // 한 바퀴를 재확인 간격 안에 돌려면 시간당 몇 건을 봐야 하나 — 제품이 늘면 목표도 는다(고정값 3,224 는 1만9천 개 때 것)
   const healthTargetPerHour = Math.ceil(Number(row?.websites ?? 0) / (RECHECK_AFTER_MINUTES / 60));
-  return { auditRejectsOpen: Number(row?.audit ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor,
+  return { auditRejectsOpen: Number(row?.audit ?? 0), auditHeld: Number(row?.held ?? 0), healthOverdue: Number(row?.health ?? 0), healthTargetPerHour, introNeedsEditor,
     cdnPurgesPending: Number(row?.purges ?? 0),
     repoGone: { installable: Number(row?.gone_installable ?? 0), website: Number(row?.gone_website ?? 0) },
     spamAutoBans: { day: Number(row?.spam_day ?? 0), banned: Number(row?.spam_banned ?? 0) },

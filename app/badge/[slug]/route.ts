@@ -16,6 +16,9 @@ const BADGE_CACHE = "public, max-age=3600, stale-while-revalidate=86400";
  * `?style=tried` 는 써본 사람이 3명 이상일 때 «tried by N», 그 전에는(써봤어요를 껐을 때도) 기본 배지와 같다. `?lang=ko` 는 한국어 글자.
  * 없거나 내려간 제품, 검증 진행 중(unverified — 누구나 아무 주소로 등록한다)인 제품, 목록에서 빼는 주인 없는 개인 프로필은 404다 — 배지가 없는 것이 곧 정보다.
  */
+/** 캐시 태그에 실을 수 있는 주소 — 제품 slug 의 모양(영소문자·숫자·하이픈) */
+const SLUG_TAG = /^[a-z0-9-]{1,80}$/;
+
 export const GET = withRoute("products.badge", async (req: Request, { params }: Params) => {
   const { slug: raw } = await params;
   // 마크다운에서 이미지처럼 읽히도록 .svg를 붙여 부를 수 있게 한다
@@ -25,7 +28,9 @@ export const GET = withRoute("products.badge", async (req: Request, { params }: 
 
   const product = await publicProductIdentity(slug);
   if (!product) {
-    return NextResponse.json({ error: "공개된 제품에만 배지를 내줍니다" }, { status: 404, headers: { "cache-control": "public, max-age=300" } });
+    // 404 도 그 제품의 태그를 단다 — 감사 보류가 풀리거나 검증되면 그 지우기(p-<slug>)가 이 사본도 지운다. 주소 모양이 아니면 달지 않는다
+    return NextResponse.json({ error: "공개된 제품에만 배지를 내줍니다" }, { status: 404,
+      headers: { "cache-control": "public, max-age=300", ...(SLUG_TAG.test(slug) ? { "cache-tag": `p-${slug}` } : {}) } });
   }
   const tried = query.get("style") === "tried" ? await productTriedCount(product.id) : 0;
   const svg = tried >= TRIED_BADGE_MIN ? triedBadgeSvg(product.name, tried, lang)

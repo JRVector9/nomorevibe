@@ -5,7 +5,7 @@ import { productReadyLocales } from "@/lib/i18n/metadata";
 import { isLocale, LOCALES, type Locale } from "@/lib/i18n/locales";
 import { localePath } from "@/lib/i18n/routing";
 import { CATEGORIES } from "./categories";
-import { indexableProduct } from "./indexing";
+import { indexableProduct, sitemapLastModified } from "./indexing";
 import { hiddenByDefault } from "./visibility";
 import { getCurrentSeason, getSeasonHistory } from "@/lib/domain/ranking/view";
 import { seasonKeysWithEntries } from "@/lib/domain/ranking/season-entries";
@@ -32,7 +32,7 @@ export async function productSitemapEntries(locale: Locale, range: number): Prom
   }
   return onReplica(async () => {
     const rows = await db.select({ id: products.id, slug: products.slug, name: products.name,
-      tagline: products.tagline, description: products.description, updatedAt: products.updatedAt,
+      tagline: products.tagline, description: products.description, updatedAt: sitemapLastModified,
       contentEligible: sql<boolean>`not exists (select 1 from ${productIntroChecks} i
         where i.product_id = ${products.id} and i.checked_tagline = ${products.tagline} and i.outcome = 'needs_editor')`,
     }).from(products).where(and(indexableProduct,

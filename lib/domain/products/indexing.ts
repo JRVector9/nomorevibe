@@ -1,6 +1,7 @@
 import { desc, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, products, takedownRequests, type Product } from "@/lib/db/schema";
+import { agentRepositoryObservations, agentRepositoryScans, crawlCandidates, productEvidenceAudit, products, takedownRequests,
+  type Product } from "@/lib/db/schema";
 import { repoGone } from "./repository";
 
 /**
@@ -13,6 +14,7 @@ import { repoGone } from "./repository";
  * 1. 공개(seeded·verified)가 아니면 색인하지 않는다 — 차단(banned)·미검증(unverified).
  * 2. 처리되지 않은 내려달라는 요청(takedown_requests.handled_at is null)이 있으면 색인하지 않는다. 요청이 오는 즉시다(D1).
  *    둠(dismissed)으로 처리되면 다시 색인한다. 내림(removed)이면 차단돼 1번에 걸린다.
+ *    감사 보류(products.audit_hold_at, 0110)도 같다 — 사람이 정할 때까지 공개 목록에서 빠지고 색인하지 않는다. 유지로 풀리면 다시 색인한다.
  * 3. 주인이 있는 제품(view.ts isUnclaimed 의 반대 — 등록하거나 클레임한 것)은 색인한다.
  *    단 설치형의 저장소가 사라졌다고 확정되면(repository.ts repoGone) 공개 목록이 가리는 것과 같이(notDown) 색인하지 않는다.
  *    웹사이트는 사이트가 살아 있을 수 있어 목록에 남으므로 색인도 남는다.
@@ -37,6 +39,8 @@ import { repoGone } from "./repository";
 
 /** 색인 판단에 드는 값 — 상세의 제품 행(detail-view.ts PublicProduct)에 indexingFields 를 더하면 모두 있다 */
 export type IndexingFacts = Pick<Product, "status" | "source" | "claimedAt" | "accessMode" | "category"> & {
+  /** 감사 보류 시각(lib/crawl/product-audit-hold.ts) — 있으면 색인하지 않는다 */
+  auditHoldAt?: Date | null;
   /** repository.ts repoGoneField 로 읽은 값 */
   repoGone?: boolean;
   /** indexingFields.aiEvidence */
@@ -48,7 +52,7 @@ export type IndexingFacts = Pick<Product, "status" | "source" | "claimedAt" | "a
 /** 위 규칙의 JS 판 — 상세 generateMetadata 의 robots 가 쓴다. 참이면 색인해도 된다 */
 export function productIndexable(product: IndexingFacts): boolean {
   if (product.status !== "seeded" && product.status !== "verified") return false;
-  if (product.takedownPending) return false;
+  if (product.takedownPending || product.auditHoldAt) return false;
   const gone = product.repoGone === true;
   const owned = product.source !== "crawler" || product.claimedAt !== null;
   if (owned) return !(product.accessMode !== "website" && gone);
@@ -86,9 +90,18 @@ export const indexingFields = {
   takedownPending: sql<boolean>`${takedownPending}`.as("takedown_pending"),
 };
 
+/**
+ * sitemap 의 lastmod — 제품이 마지막으로 바뀐 때와 감사 보류가 마지막으로 풀린 때 중 늦은 것. 보류가 풀리면 다시 색인되는 페이지라
+ * 검색엔진이 늦지 않게 다시 오도록 한다. updated_at 을 고치면 그 값을 세대로 쓰는 생존 확인 증거(uptime_gates)가 풀려서 따로 읽는다.
+ * 열 이름을 표 이름으로 못 박는다 — 표 하나를 읽는 select 의 고른 칸에서 drizzle 은 열을 표 이름 없이 그려, 안쪽 별칭(a.slug)이 가로챈다
+ */
+const productColumn = (name: string) => sql`${sql.identifier("products")}.${sql.identifier(name)}`;
+export const sitemapLastModified = sql`greatest(${productColumn("updated_at")}, (select max(a.created_at) from ${productEvidenceAudit} a
+  where a.slug = ${productColumn("slug")} and a.action = 'audit.hold.release'))`.mapWith(products.updatedAt);
+
 /** 위 규칙의 SQL 판 — products 를 별칭 없이 읽는 쿼리의 where 에 쓴다(sitemap) */
 export const indexableProduct = sql`(${products.status} in ('seeded', 'verified')
-  and not ${takedownPending}
+  and not ${takedownPending} and ${products.auditHoldAt} is null
   and case when ${products.source} <> 'crawler' or ${products.claimedAt} is not null
     then not (${products.accessMode} <> 'website' and ${repoGone})
     else ${products.category} <> 'Profile' and not ${repoGone} and ${confirmedAiEvidence} end)`;
@@ -99,7 +112,7 @@ export const indexableProduct = sql`(${products.status} in ('seeded', 'verified'
  */
 export async function listIndexableSlugs(limit: number): Promise<{ slug: string; updatedAt: Date }[]> {
   return db
-    .select({ slug: products.slug, updatedAt: products.updatedAt })
+    .select({ slug: products.slug, updatedAt: sitemapLastModified })
     .from(products)
     .where(indexableProduct)
     .orderBy(desc(sql`coalesce(${products.verifiedAt}, ${products.createdAt})`), products.slug)

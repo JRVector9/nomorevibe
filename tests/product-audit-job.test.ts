@@ -10,6 +10,8 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
 vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
+// 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
+vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
   loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
 // These job units do not open a database; open/draining admission is covered by cli-model-capacity-callers.test.ts.
@@ -46,7 +48,8 @@ it("stores a normal thirty-second gateway response instead of exhausting an audi
   await vi.advanceTimersByTimeAsync(30_000);
   expect(await running).toEqual({ done: false });
   expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 60_000 }));
-  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ itemId: 7, ok: true, outcome: verdict.outcome }), ctx.lease);
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ itemId: 7, ok: true, outcome: verdict.outcome }), ctx.lease,
+    DEFAULT_CRAWL_SETTINGS.auditHold);
 });
 
 it("does not start a call when the runner cannot leave the full provider timeout and storage margin", async () => {
@@ -120,5 +123,5 @@ it("keeps a shorter CLI provider within its own timeout instead of demanding gat
   mocks.agent.mockResolvedValue(verdict);
   await auditPublishedProducts(context({ deadlineAt: Date.now() + 25_000 }));
   expect(mocks.agent).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 20_000 }));
-  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ ok: true }), expect.anything());
+  expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ ok: true }), expect.anything(), expect.anything());
 });

@@ -4,7 +4,7 @@ import type { ProductTranslationSelection } from './translation-policy';
 import {and,asc,eq,inArray,isNotNull,sql} from 'drizzle-orm';
 import {db} from '@/lib/db';
 import {products,type TaglineSource} from '@/lib/db/schema';
-import {listedByDefault,notDown,repoGone,starGainPerDay} from './repository';
+import {listedByDefault,notAuditHeld,notDown,repoGone,starGainPerDay} from './repository';
 import {taglineKo} from './korean-tagline';
 import {STAR_TIERS,type PopularSort,type StarTier} from './stars';
 
@@ -18,7 +18,7 @@ const fields={id:products.id,slug:products.slug,name:products.name,tagline:produ
  stars:sql<number>`${products.stars}`,ownerType:products.ownerType,starsAt:sql<string|null>`${products.starsAt}::text`,
  accessMode:products.accessMode,aiLevel:products.aiLevel,makerName:products.makerName};
 // 저장소가 사라진 제품의 스타는 마지막으로 본 옛 값이라 구간에 넣지 않는다(repository.ts repoGone)
-function publicStars(f:PopularFilters){return and(inArray(products.status,['seeded','verified']),notDown,listedByDefault,sql`not ${repoGone}`,
+function publicStars(f:PopularFilters){return and(inArray(products.status,['seeded','verified']),notDown,listedByDefault,notAuditHeld,sql`not ${repoGone}`,
  sql`${products.stars}>=2000 and ${products.stars}<100000`,f.personal?eq(products.ownerType,'User'):undefined,
  f.ai?isNotNull(products.aiLevel):undefined,f.category?eq(products.category,f.category):undefined);}
 const inTier=(tier:StarTier)=>{const t=STAR_TIERS.find(t=>t.key===tier)!;return sql`${products.stars}>=${t.min} and ${products.stars}<${t.max}`;};

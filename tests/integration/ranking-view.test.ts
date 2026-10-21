@@ -26,6 +26,7 @@ import {
   getSeasonRanking,
 } from "@/lib/domain/ranking/view";
 import { DOWN_THRESHOLD } from "@/lib/domain/products/health";
+import { seasonKeysWithEntries } from "@/lib/domain/ranking/season-entries";
 import { getVerifiedList } from "@/lib/domain/products/view";
 import { ensureSchema, resetTables } from "./setup";
 
@@ -482,6 +483,33 @@ describe("ranking read models", () => {
     const state = await getRankingAdminState(NOW);
     expect(state.activeMetrics.eligibleProducts).toBe(3);
     expect(state.preview.map((item) => item.slug)).toContain("rank-two");
+  });
+
+  /**
+   * 감사 보류(0110) — 보류는 주인 없는 것에만 걸리고 검증되면 풀린다(markVerified). 그래도 보류된 검증 제품이 있으면 순위를 매기기 전에
+   * 뺀다(refresh.ts) — 공개 순위가 그 줄을 빼 번호가 비지 않게. 그래서 관리자 미리보기(같은 계산)에도 없다
+   */
+  it("hides audit-held products from public rankings, season strips and the ranking calculation itself", async () => {
+    await materializeRanking();
+    const today = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    await db.insert(productClickDaily).values([
+      { slug: "rank-one", day: today, clicks: 10 },
+      { slug: "rank-two", day: today, clicks: 15 },
+    ]);
+    await db.update(products).set({ auditHoldAt: new Date() }).where(eq(products.slug, "rank-two"));
+
+    const weekly = await getSeasonRanking({ seasonKey: "2026-W34", limit: 10 });
+    expect(weekly.items.map((item) => item.slug)).not.toContain("rank-two");
+    expect(weekly.items.length).toBeGreaterThan(0);
+    expect((await getSeasonRanking({ seasonKey: "2026-W34", order: "trending", limit: 10 })).items.map((item) => item.slug)).not.toContain("rank-two");
+    expect((await getAllTimeRanking({ limit: 10 })).map((item) => item.slug)).toEqual(["rank-one"]);
+    expect((await getVerifiedList(10)).map((item) => item.slug)).not.toContain("rank-two");
+    expect((await getRankingAdminState(NOW)).preview.map((item) => item.slug)).not.toContain("rank-two");
+
+    // 시즌 띠·sitemap 이 여는 시즌 — 그 시즌의 줄이 모두 보류면 빈 시즌이다
+    expect(await seasonKeysWithEntries(["2026-W34"])).toEqual(["2026-W34"]);
+    await db.update(products).set({ auditHoldAt: new Date() }).where(eq(products.status, "verified"));
+    expect(await seasonKeysWithEntries(["2026-W33", "2026-W34"])).toEqual([]);
   });
 
   it("returns an admin preview and handles a missing season safely", async () => {

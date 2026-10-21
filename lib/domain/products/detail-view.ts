@@ -175,6 +175,8 @@ export type PublicProduct = StarObservation & Pick<Product,
   | "createdAt"
   | "updatedAt"
 > & {
+  /** 감사 보류 시각(lib/crawl/product-audit-hold.ts) — 있으면 상세는 열리되 noindex·배지 없음 */
+  auditHoldAt?: Date | null;
   /** GitHub 저장소가 사라졌다고 확정됐다(repository.ts repoGone) — 스타는 이미 비워 두고, 화면은 저장소 링크·설치 안내 대신 알린다 */
   repoGone?: boolean;
   /** 색인 판단(indexing.ts productIndexable)에 드는 두 값 — AI 근거 확인, 처리 전 내려달라는 요청 */
@@ -251,6 +253,8 @@ async function findPublicProduct(slug: string): Promise<PublicProduct | null> {
       verifiedAt: true,
       createdAt: true,
       updatedAt: true,
+      // 감사 보류면 상세는 열리되 noindex 다(indexing.ts productIndexable)
+      auditHoldAt: true,
     },
     // 상세 메타데이터의 robots 가 이 행 하나로 정해진다(UX-08) — sitemap 과 같은 규칙(indexing.ts)
     extras: { ...repoGoneField, ...indexingFields, ...taglineKoField, ...productTranslationEligibilityField },

@@ -47,6 +47,7 @@ export const EVIDENCE_AUDIT_LABELS: Record<string, string> = {
   "maker.update.delete": "메이커 업데이트 삭제", "maker.profile.save": "메이커 정보 저장", "maker.links.replace": "메이커 링크 바꿈",
   "maker.links.remove": "메이커 링크 지움", "maker.media.replace": "메이커 이미지 바꿈", "maker.provenance.replace": "빌드 출처 바꿈(메이커)",
   "system.provenance.replace": "빌드 출처 바꿈(시스템)",
+  "audit.hold": "감사 보류 · 목록에서 빠짐", "audit.hold.release": "감사 보류 풀림",
 };
 
 export const HISTORY_KIND_LABELS: Record<ProductHistoryKind, string> = {
@@ -76,18 +77,29 @@ const HISTORY_ACTION_LABELS: Record<ProductHistoryKind, Record<string, string>> 
     "ai-keep": "AI · 유지", "ai-delist_candidate": "AI · 내릴 후보", "ai-human": "AI · 사람 확인",
     "operator-keep": "운영자 · 유지", "operator-delist": "운영자 · 내림",
   },
-  status: { "admin.product.ban": "차단됨", "admin.product.unban": "차단 풀림" },
+  status: { "admin.product.ban": "차단됨", "admin.product.unban": "차단 풀림", "audit.hold": "감사 보류 · 목록에서 빠짐",
+    "audit.hold.release": "감사 보류 풀림" },
 };
 
 export function historyActionLabel(kind: ProductHistoryKind, action: string): string {
   return HISTORY_ACTION_LABELS[kind][action] ?? action;
 }
 
+/** 감사 보류 기록의 사유 — 건 까닭(AI 거절)과 푼 까닭(product-audit-hold.ts AuditHoldRelease) */
+const HOLD_NOTE_LABELS: Record<string, string> = {
+  kept: "유지로 정함", banned: "차단됨", unbanned: "차단 해제", release_all: "보류 모두 풀기", ai_reject: "AI 거절",
+  second_approve: "두 번째 모델이 승인",
+};
+
 /** 기록 줄의 사유 — 차단 사유 코드는 라벨로 */
 export function historyNote(kind: ProductHistoryKind, action: string, note: string | null): string | null {
   if (!note) return null;
   const ban = (kind === "status" && action === "admin.product.ban")
     || (kind === "admin" && (action === "product-ban" || action === "product-auto-ban-uptime"));
+  // 보류는 'ai_reject · audit:company' 처럼 감사 갈래를, 풀림은 까닭 하나를 적는다
+  if (kind === "status" && (action === "audit.hold" || action === "audit.hold.release")) {
+    return note.split(" · ").map((part) => HOLD_NOTE_LABELS[part] ?? banReasonLabel(part)).join(" · ");
+  }
   return ban ? note.split(" · ").map(banReasonLabel).join(" · ") : note;
 }
 

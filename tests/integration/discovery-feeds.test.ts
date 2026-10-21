@@ -83,6 +83,8 @@ describe("feed.xml", () => {
     const parsed = new XMLParser({ ignoreAttributes: false }).parse(await res.text());
 
     expect(res.headers.get("content-type")).toContain("application/rss+xml");
+    // 목록 화면과 같은 태그 — 내림·감사 보류의 목록 지우기(lists)가 피드 사본도 지운다
+    expect(res.headers.get("cache-tag")).toBe("html,lists");
     type Item = { title: string; link: string; description: string; category: string[] };
     const raw = parsed.rss.channel.item as Item | Item[];
     const items = Array.isArray(raw) ? raw : [raw];

@@ -133,6 +133,13 @@ export const products = pgTable("products", {
   claimedAt: timestamp("claimed_at"),
   // 주인에게 클레임 초대(레포 이슈)를 보냈다고 운영자가 표시한 시각. 두 번 보내지 않기 위한 기록이다.
   claimInvitedAt: timestamp("claim_invited_at"),
+  /**
+   * 감사 보류(0110) — AI 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품. 사람이 정할 때까지 공개 목록에서 뺀다
+   * (repository.ts notAuditHeld). 상태는 그대로다. 걸고 푸는 길은 lib/crawl/product-audit-hold.ts 에 모은다.
+   * auditHoldItemId 는 보류의 까닭이 된 감사 항목(product_audit_items.id) — 외래 키는 그 표와 같은 까닭으로 걸지 않는다.
+   */
+  auditHoldAt: timestamp("audit_hold_at"),
+  auditHoldItemId: integer("audit_hold_item_id"),
   verifyToken: varchar("verify_token", { length: 80 }).notNull(),
   verifyMethod: varchar("verify_method", { length: 10 }), // 'file' | 'meta'
   verifiedAt: timestamp("verified_at"),
@@ -228,6 +235,8 @@ export const products = pgTable("products", {
   index("products_listed_owner_idx").on(sql`substring(lower(${table.repoUrl}) from '^https?://(?:www\\.)?github\\.com/([a-z0-9-]+)/[^/]+/?$')`),
   index("products_renamed_owner_idx").on(sql`nullif(lower(split_part(${table.repoRenamedTo}, '/', 1)), '')`).where(sql`${table.repoRenamedTo} is not null`),
   index("products_renamed_to_idx").on(sql`lower(${table.repoRenamedTo})`).where(sql`${table.repoRenamedTo} is not null`),
+  /** 관리자 '보류 중' 목록(오래된 것부터)과 수(0110) — 보류된 행만 담는다 */
+  index("products_audit_hold_idx").on(table.auditHoldAt, table.id).where(sql`${table.auditHoldAt} is not null`),
 ]);
 
 // OG 이미지 사본 — 로컬 디스크는 재배포/다중 인스턴스에서 유실되므로 DB에 저장

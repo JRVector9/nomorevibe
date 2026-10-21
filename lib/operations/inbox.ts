@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { crawlCandidates, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth, productIntroChecks,
   products } from "@/lib/db/schema";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { getSettings } from "@/lib/crawl/settings";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
 import { countProducts, repoGone, repoGoneAutoBanned, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
@@ -83,6 +84,14 @@ async function auditPreview(): Promise<InboxItem[]> {
   return rows.map((row) => ({ id: String(row.id), name: row.name,
     why: [row.reason ? clip(row.reason) : "사유 없음", row.confidence !== null && `확신 ${row.confidence.toFixed(2)}`].filter(Boolean).join(" · "),
     since: row.since }));
+}
+
+/** 지난 감사의 항목으로 보류 중인 공개 제품 — 마지막 감사의 거절(auditRejectsOpen)에 이미 든 보류는 두 번 세지 않는다 */
+async function heldOutsideLatestCampaign(): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
+    .innerJoin(productAuditItems, eq(productAuditItems.id, products.auditHoldItemId))
+    .where(and(heldPublic, sql`${productAuditItems.campaignId} <> (select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`));
+  return row?.count ?? 0;
 }
 
 /** 응답 없음 — health.ts downProductCount 와 같은 조건(DOWN_THRESHOLD 회 이상 연속 실패, 죽기 시작한 시각 있음, 공개) */
@@ -205,8 +214,11 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
         items: await candidatePreview(ids.agreed, (row) => rejects.has(row.id) ? "두 모델 모두 거절" : "두 모델 모두 승인") };
     }),
     settle("audit", async () => {
-      const [counts, items] = await Promise.all([attention, auditPreview()]);
-      return { count: counts.auditRejectsOpen, items };
+      const [counts, items, heldElsewhere] = await Promise.all([attention, auditPreview(), heldOutsideLatestCampaign()]);
+      // 보류 중인 것은 이미 목록에서 빠져 사람을 기다린다 — 감사 화면의 '보류 중' 갈래가 오래된 것부터 보인다.
+      // 지난 감사의 보류도 할 일로 센다 — 새 감사를 열어 마지막 감사의 거절이 0 이 되어도 보류 수천 건이 칸에서 사라지지 않게
+      return { count: counts.auditRejectsOpen + heldElsewhere, items,
+        note: counts.auditHeld > 0 ? `보류 중(목록에서 빠짐) ${count(counts.auditHeld)}건` : undefined };
     }),
     settle("down", async () => {
       const [total, items] = await Promise.all([downProductCount(), downPreview()]);
