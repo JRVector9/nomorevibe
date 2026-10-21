@@ -125,7 +125,7 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
     clientHydrationSnapshot,
     serverHydrationSnapshot,
   );
-  // 로그인 기능이 꺼져 있으면 계정 요약(/api/me/summary)을 묻지 않는다 — 저장 동기화·아래 탭 점이 404 를 받지 않게
+  // 로그인 기능이 꺼져 있으면 로그인 상태(/api/me?view=header)를 묻지 않는다 — 저장 동기화·아래 탭 점이 404 를 받지 않게
   if (!authEnabled) markAuthDisabled();
   // 로그인 중이면 계정의 저장 수(MY2)
   const hasSaved = useSavedCount() > 0;

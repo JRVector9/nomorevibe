@@ -12,10 +12,11 @@ import { stripLocale } from "@/lib/i18n/routing";
 import { ME_TAB_PATHS, SAVED_LIMIT } from "@/lib/me/contract";
 import "./saved-sync.css";
 
-/** 저장 동기화가 알릴 말 — 옮긴 수·건너뛴 수·실패·상한 */
+/** 저장 동기화가 알릴 말 — 옮긴 수·건너뛴 수·실패·상한·목록에 없는 제품 */
 export function savedNoticeText(notice: SavedNotice, t: Translator<"common">, locale: Locale): string {
   if (notice.kind === "limit") return t("saved.limit", { limit: formatNumber(SAVED_LIMIT, locale) });
   if (notice.kind === "mergeFailed") return t("saved.mergeFailed");
+  if (notice.kind === "unavailable") return t("saved.unavailable");
   const merged = t("saved.merged", { count: formatNumber(notice.merged, locale) });
   return notice.skipped > 0 ? `${merged} ${t("saved.mergeSkipped", { count: formatNumber(notice.skipped, locale) })}` : merged;
 }

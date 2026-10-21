@@ -1,6 +1,10 @@
-import { getPublicSession, PublicAuthError, publicAuthErrorResponse, PUBLIC_PRIVATE_HEADERS, requirePublicAuthEnabled } from "@/lib/domain/accounts/request-auth";
+import { getPublicSession, PublicAuthError, publicAuthErrorResponse, PUBLIC_PRIVATE_HEADERS, requirePublicAuthEnabled, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
+import { onPrimary } from "@/lib/db";
 import { DEFAULT_LOCALE, isLocale } from "@/lib/i18n/locales";
-import { listSaved, SAVED_FILTERS, SAVED_SORTS, savedSlugs } from "@/lib/me/saved";
+import { SAVED_LIMIT } from "@/lib/me/contract";
+import { listSaved, MERGE_BODY_BYTES, mergeSaved, readSavedJson, readSlugList, SAVED_FILTERS, SAVED_SORTS, savedSlugs } from "@/lib/me/saved";
+import { webWriteRoute } from "@/lib/operations/dr/web-gate";
+import { rateLimit } from "@/lib/rate-limit";
 
 /** 값이 없으면 기본, 모르는 값이면 400 */
 function choice<T extends string>(value: string | null, choices: readonly T[], fallback: T): T {
@@ -31,3 +35,18 @@ export async function GET(request: Request) {
     return publicAuthErrorResponse(error);
   }
 }
+
+/**
+ * 첫 로그인 합치기(L4) — 이 브라우저 저장 목록을 계정으로. 두 번 보내도 한 번만 들어간다.
+ * 목록 주소에 둔다 — /api/me/saved/<이름> 은 모두 제품 주소(slug)라, 거기 고정 이름을 두면 같은 이름의 제품을 넣고 빼지 못한다
+ */
+export const POST = webWriteRoute(async (request: Request): Promise<Response> => {
+  try {
+    const user = await requirePublicMutation(request);
+    if (!await onPrimary(() => rateLimit(`me-saved-merge:${user.id}`, 10, 60 * 60_000))) throw new PublicAuthError(429, "saved_rate_limited");
+    const slugs = readSlugList(await readSavedJson(request, MERGE_BODY_BYTES), SAVED_LIMIT);
+    return Response.json(await mergeSaved(user.id, slugs), { headers: PUBLIC_PRIVATE_HEADERS });
+  } catch (error) {
+    return publicAuthErrorResponse(error);
+  }
+}, publicAuthErrorResponse);

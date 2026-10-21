@@ -10,6 +10,7 @@ import { ProjectCard } from "@/components/home/ProjectCard";
 import { toggleSaved } from "@/components/home/saved";
 import { SavedMergePrompt, savedNoticeText } from "@/components/home/SavedToast";
 import { useSavedAccount, useSavedSlugs } from "@/components/home/useSavedSlugs";
+import { recheckMeState } from "@/components/me/account-store";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatDate, formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
@@ -37,7 +38,8 @@ function SavedRow({ item, onRemove, children }: { item: SavedItem; onRemove: () 
   const icon = item.ogImage?.startsWith("/") && !item.ogImage.startsWith("//") ? item.ogImage : null;
   return (
     <li className="me-srow">
-      <span className="me-srow-icon" aria-hidden="true"><ProductIcon name={item.name} ogImage={icon} size={44} category={item.category} /></span>
+      {/* PC 에서는 이 행이 숨는다 — 늦게 받기라 숨은 동안 아이콘을 받지 않는다 */}
+      <span className="me-srow-icon" aria-hidden="true"><ProductIcon name={item.name} ogImage={icon} size={44} category={item.category} loading="lazy" /></span>
       <div className="me-srow-body">
         <h3 className="me-srow-name"><Link prefetch={false} href={localePath(locale, `/p/${item.slug}`)} className="card-link">{item.name}</Link></h3>
         <ProductTagline translation={item.translation} tagline={item.tagline} taglineKo={item.taglineKo} source={item.taglineSource} className="me-srow-tagline" showSource={false} />
@@ -65,7 +67,7 @@ function SavedMine({ item, row = false }: { item: SavedAccountItem; row?: boolea
   );
 }
 
-/** PC 는 운영 카드(ProjectCard) 세 칸, 휴대폰은 한 줄 행 — 화면 폭으로 하나만 보인다(saved.css) */
+/** PC 는 운영 카드(ProjectCard) 세 칸, 휴대폰은 한 줄 행 — 화면 폭으로 하나만 보인다(saved.css). 아이콘은 둘 다 늦게 받아 숨은 쪽은 받지 않는다 */
 function SavedList<T extends SavedItem>({ items, onRemove, mine }: { items: T[]; onRemove: (item: T) => void; mine?: (item: T, row: boolean) => ReactNode }) {
   const now = useServerNow();
   return (
@@ -155,6 +157,8 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
   const account = useSavedAccount();
   const [query, setQuery] = useState<Query>(DEFAULT_QUERY);
   const [page, setPage] = useState<SavedPage | null>(initial);
+  /** 지금 그린 쪽의 조건 — «더 보기» 커서는 이 조건의 것이다. 바꾼 조건을 받는 중이거나 못 받았으면(옛 조건의 쪽) «더 보기»를 막는다 */
+  const [shown, setShown] = useState<Query>(DEFAULT_QUERY);
   // 서버가 첫 쪽을 못 읽었으면 다시 시도 단추부터
   const [status, setStatus] = useState<"ready" | "loading" | "more" | "error">(initial ? "ready" : "error");
   const [removed, setRemoved, holdUndo] = useUndo<SavedAccountItem>();
@@ -176,6 +180,7 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
       setPage((current) => cursor && current
         ? { ...body, items: [...current.items, ...body.items.filter((item) => !current.items.some((entry) => entry.slug === item.slug))] }
         : body);
+      setShown(next);
       setStatus("ready");
     } catch {
       if (!controller.signal.aborted) setStatus("error");
@@ -206,6 +211,11 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
     setRemoved(null);
   }
 
+  // 서버는 로그인으로 그렸는데 이 화면이 로그아웃 답을 들고 있으면(다른 탭에서 로그인) 다시 물어 저장 동기화를 잇는다
+  useEffect(() => {
+    if (account.status === "none") void recheckMeState();
+  }, [account.status]);
+
   const offer = account.status === "user" && account.offer > 0
     ? <SavedMergePrompt className="me-saved-merge" count={account.offer} onMerged={() => void load(query)} />
     : null;
@@ -224,7 +234,8 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
   }
 
   const filtered = query.filter !== "all" || query.category !== null;
-  if (!filtered && page.counts.all === 0 && !removed) {
+  // 마지막 하나를 뺐을 때도 빈 화면이다 — 되돌리기 알림은 그대로 뜬다
+  if (!filtered && page.counts.all === 0) {
     return (
       <section className="me-saved" aria-labelledby="me-saved-title">
         <h2 id="me-saved-title" className="sr-only">{t("saved.title")}</h2>
@@ -278,7 +289,7 @@ export function SavedAccountList({ initial }: { initial: SavedPage | null }) {
         <SavedList items={page.items} onRemove={remove} mine={(item, row) => <SavedMine item={item} row={row} />} />
       )}
       {page.nextCursor && (
-        <button type="button" className="more-btn" disabled={status === "more"} onClick={() => void load(query, page.nextCursor!)}>
+        <button type="button" className="more-btn" disabled={status === "more" || shown !== query} onClick={() => void load(shown, page.nextCursor!)}>
           {status === "more" ? t("saved.loading") : t("saved.more", { count: count(Math.min(PAGE_SIZE, Math.max(0, page.total - page.items.length))) })}
         </button>
       )}

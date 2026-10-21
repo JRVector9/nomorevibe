@@ -57,7 +57,7 @@ export function ProjectTile({ slug, name, ogImage, size, installable = false, ai
           fetchPriority={priority ? "high" : undefined}
         />
       ) : (
-        <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} category={category} /></span>
+        <span className="tile-icon"><ProductIcon name={name} ogImage={internalImage} size={size === 64 ? 96 : 64} category={category} loading={priority ? "eager" : "lazy"} /></span>
       )}
       {installable && <span className="tile-flag">{t("card.installable")}</span>}
       {ai && <span className="tile-flag tile-flag-ai">AI</span>}
