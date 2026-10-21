@@ -283,3 +283,70 @@ describe("consumer instances", () => {
     expect(report.instances.find(row => row.instanceId === "m3-crawler")).toMatchObject({ kind: "primary", state: "active" });
   });
 });
+
+describe("회차 누적·미룸·실패", () => {
+  const tally = (patch: Partial<{ hour: Record<string, number>; day: Record<string, number>; lastFailedAt: string | null }> = {}) =>
+    ({ job: "crawl-fetch", hour: {}, day: {}, lastFailedAt: null, ...patch });
+
+  it("누적은 EVENTS 에 있는 이벤트·더할 수 있는 필드만 보이고, 숫자 없는 이벤트는 횟수로 센다", () => {
+    const report = build({ tallies: [tally({
+      hour: { "@ok": 58, "@failed": 1, "crawl.fetched#fetched": 120, "crawl.fetched#skipped": 30, "crawl.fetch_rate_limited": 3,
+        "crawl.seeded#page": 9, "secret.event#token": 5 },
+      day: { "@ok": 1400, "crawl.fetched#fetched": 2400 },
+    })], deferrals: [] });
+    const row = report.jobs.find(item => item.name === "crawl-fetch")!;
+    expect(row.totals?.hour).toEqual({ ticks: 58, failed: 1, events: [
+      { label: "원본 수집 결과", counts: { fetched: 120, skipped: 30 } },
+      { label: "원본 공급자 한도 대기", counts: {}, times: 3 },
+    ] });
+    expect(row.totals?.day).toEqual({ ticks: 1400, failed: 0, events: [{ label: "원본 수집 결과", counts: { fetched: 2400 } }] });
+    // 누적이 없는 수집기도 0 인 창이다(읽지 못한 것과 다르다)
+    expect(report.jobs.find(item => item.name === "crawl-seed")?.totals).toEqual({ hour: { ticks: 0, failed: 0, events: [] }, day: { ticks: 0, failed: 0, events: [] } });
+    expect(row.deferredHour).toBe(0);
+    expect(report.totalsReadFailed).toBe(false);
+  });
+
+  it("한도·인증 대기로 끝난 회차의 원본 확보는 «원본 수집 결과»에 더하고, 대기는 나온 횟수로 보인다", () => {
+    const report = build({ tallies: [tally({ hour: { "@ok": 3, "crawl.fetched": 2, "crawl.fetched#fetched": 10,
+      "crawl.fetch_rate_limited": 1, "crawl.fetch_rate_limited#fetched": 4, "crawl.fetch_auth_unavailable": 1 } })], deferrals: [] });
+    expect(report.jobs.find(item => item.name === "crawl-fetch")?.totals?.hour.events).toEqual([
+      { label: "원본 수집 결과", counts: { fetched: 14 } },
+      { label: "원본 공급자 한도 대기", counts: {}, times: 1 },
+      { label: "원본 수집 인증 확인 필요", counts: {}, times: 1 },
+    ]);
+  });
+
+  it("다시 센 창(HN 화제 found·observed)은 누적에 더하지 않는다", () => {
+    const report = build({ tallies: [{ ...tally({ day: { "@ok": 48, "social.hn_talk_collected": 48,
+      "social.hn_talk_collected#found": 4800, "social.hn_talk_collected#observed": 4700, "social.hn_talk_collected#inserted": 12 } }), job: "hn-talk" }], deferrals: [] });
+    expect(report.jobs.find(item => item.name === "hn-talk")?.totals?.day.events).toEqual([{ label: "HN 화제 수집 결과", counts: { inserted: 12 } }]);
+  });
+
+  it("못 읽었으면 누적·미룸을 0 이 아니라 미확인으로 둔다", () => {
+    const report = build({ tallies: null, deferrals: null });
+    expect(report.jobs.every(row => row.totals === null && row.deferredHour === null)).toBe(true);
+    expect(report).toMatchObject({ totalsReadFailed: true, deferralsReadFailed: true });
+    // 넘기지 않으면(다른 화면) 미확인 알림도 없다
+    expect(build()).toMatchObject({ totalsReadFailed: false, deferralsReadFailed: false });
+  });
+
+  it("마지막 성공보다 나중의 미룸·실패만 보인다", () => {
+    const success = new Date(now.getTime() - 60_000);
+    const observations = [observation("job:crawl-fetch", { done: true, durationMs: 800, events: [] }, success)];
+    const later = new Date(now.getTime() - 10_000).toISOString(), earlier = new Date(now.getTime() - 300_000).toISOString();
+    const deferral = (job: string, at: string) => ({ job, reason: "source_buffer", lastDeferredAt: at, lastHour: 4, lastHourByReason: { source_buffer: 4 } });
+    const report = build({ observations, jobs: [job("crawl-fetch", { lastSuccessAt: success })],
+      tallies: [tally({ lastFailedAt: later }), { ...tally({ lastFailedAt: later }), job: "crawl-seed" }],
+      deferrals: [deferral("crawl-fetch", later), deferral("hn-show-seed", earlier)] });
+    const fetch = report.jobs.find(row => row.name === "crawl-fetch")!;
+    expect(fetch.lastDeferred).toEqual({ reason: "source_buffer", at: later, lastHour: 4 });
+    expect(fetch.lastFailedAt).toBe(later);
+    expect(fetch.deferredHour).toBe(4);
+    // 성공 기록이 없는 잡은 미룸·실패가 그대로 보인다. 지난 성공보다 오래된 미룸은 보이지 않는다
+    expect(report.jobs.find(row => row.name === "crawl-seed")?.lastFailedAt).toBe(later);
+    const old = build({ observations: [observation("job:hn-show-seed", { done: true, events: [] }, success)],
+      deferrals: [deferral("hn-show-seed", earlier)] }).jobs.find(row => row.name === "hn-show-seed")!;
+    expect(old.lastDeferred).toBeNull();
+    expect(old.deferredHour).toBe(4);
+  });
+});

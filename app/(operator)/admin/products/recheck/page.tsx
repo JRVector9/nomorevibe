@@ -5,6 +5,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings } from "@/lib/crawl/settings";
 import { recheckPublishedProducts, recheckableCount } from "@/lib/domain/products/recheck";
 import { BanHits } from "./BanHits";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "발행분 재검수 — NoMoreVibe", robots: { index: false } };
@@ -34,7 +35,7 @@ export default async function RecheckPage({ searchParams }: {
   const done = next >= total;
 
   return (
-    <main className="mx-auto max-w-[900px] px-6 pb-20">
+    <main className="mx-auto max-w-[900px] px-6 pb-20"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="text-[22px] font-extrabold tracking-tight">발행분 재검수</h1>
         <span className="text-[13px] text-fg-3">

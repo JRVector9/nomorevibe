@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { currentAdmin } from "@/lib/auth/admin";
@@ -7,7 +8,8 @@ import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
 import { getSettings, getSettingsMeta, resetChanges, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { formatListTime } from "@/lib/format/time";
-import { signalYields } from "@/lib/operations/dashboard";
+import { signalYields, sumWindows, todayPublications } from "@/lib/operations/dashboard";
+import { freshWindowsLabel, WINDOW_TITLE, type FreshWindows } from "@/lib/operations/windows";
 import { readSettingsApply } from "@/lib/operations/settings-apply";
 import { logger } from "@/lib/observability/logger";
 import { SettingsForm } from "./SettingsForm";
@@ -21,6 +23,8 @@ import { voterChoices } from "./review/voters";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
 import { describeReset } from "./settings/reset-diff";
 import { SettingsApplyLine } from "./settings/SettingsApplyLine";
+import { OPS_FRESH_COOKIE } from "./status/fresh";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robots: { index: false } };
@@ -28,12 +32,22 @@ export const metadata: Metadata = { title: "크롤 설정 — NoMoreVibe", robot
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 const chip = "inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold";
 
-function Figure({ label, value, note }: { label: string; value: string; note: string }) {
+/**
+ * 머리 숫자 한 칸. windows — 7일 합 옆의 최근 1시간·오늘(한국 0시부터) 수. 7일 합은 고르게 들어오면 늘 비슷해 멈춘 것처럼 보였다.
+ * 못 읽었으면 null(그 줄을 "—"로 둔다), 짧은 창이 뜻이 없는 칸은 undefined(줄을 그리지 않는다).
+ */
+function Figure({ label, value, note, windows, windowsNote, estimate }: { label: string; value: string; note: string;
+  windows?: FreshWindows | null; windowsNote?: string;
+  /** 실측이 아니라 설정으로 계산한 값 — 흐리게, 점선 테두리로 그려 멈춘 실측처럼 보이지 않게 한다 */
+  estimate?: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-[12px] border border-line bg-bg-card px-4 py-3.5">
+    <div className={`flex min-w-0 flex-col gap-0.5 rounded-[12px] border bg-bg-card px-4 py-3.5 ${estimate ? "border-dashed border-line text-fg-2" : "border-line"}`}
+      title={estimate}>
       <span className="text-[13px] font-semibold text-fg-2">{label}</span>
-      <span className="text-[26px] font-bold tabular-nums">{value}</span>
+      <span className={`text-[26px] font-bold tabular-nums ${estimate ? "text-fg-3" : ""}`}>{value}</span>
       <span className="text-[13px] text-fg-3">{note}</span>
+      {windows !== undefined && <span className="text-[13px] font-medium tabular-nums text-fg-2" title={`${windowsNote ? `${windowsNote} ` : ""}${WINDOW_TITLE}`}>
+        {windows ? freshWindowsLabel(windows) : "최근 1시간 · 오늘 — 읽지 못함"}</span>}
     </div>
   );
 }
@@ -48,6 +62,8 @@ export default async function AdminPage() {
   if (!admin) redirect("/admin/login");
 
   const now = new Date();
+  // 머리 갱신 줄의 "새로고침"(5초 쿠키)이면 신호별 수율의 1분 캐시를 건너뛴다(분당 상한, dashboard.ts)
+  const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const [settings, meta, counts, apply] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts(),
     // 적용 확인도 덤이다 — 관측을 못 읽어도 설정은 고칠 수 있어야 한다
     readSettingsApply().catch((error) => {
@@ -55,10 +71,17 @@ export default async function AdminPage() {
       return null;
     })]);
   // 성과는 덤이다 — 집계가 실패해도 설정은 고칠 수 있어야 한다
-  const yields = await signalYields(settings, 7).catch((error) => {
-    logger.warn("admin.signal_yields_unavailable", { error });
-    return [];
-  });
+  const [yields, listed] = await Promise.all([
+    signalYields(settings, 7, { fresh }).catch((error) => {
+      logger.warn("admin.signal_yields_unavailable", { error });
+      return [];
+    }),
+    // 발행의 짧은 창은 발행 시각(목록에 오른 시각) 기준 — 수만 센다(limit 0)
+    todayPublications(now, 0).catch((error) => {
+      logger.warn("admin.publication_windows_unavailable", { error });
+      return null;
+    }),
+  ]);
   const currentVoter = settings.secondReview.voters[0] ?? null;
   const waiting = counts.needs_review ?? 0;
   const drift = settingsDrift(settings);
@@ -67,6 +90,8 @@ export default async function AdminPage() {
   const enqueued = yields.reduce((sum, row) => sum + row.enqueued, 0);
   const published = yields.reduce((sum, row) => sum + row.published, 0);
   const gated = yields.reduce((sum, row) => sum + row.gated, 0);
+  const enqueuedWindows = sumWindows(yields.map((row) => row.enqueuedWindows));
+  const gatedWindows = sumWindows(yields.map((row) => row.gatedWindows));
   const usage = searchUsage(settings.discover.pagesPerTick);
   const signalsOn = settings.discover.queries.filter((q) => q.enabled).length + (settings.discover.showHn.enabled ? 1 : 0);
   const listsDrifted = LIST_KEYS.filter((key) => missingDefaults(key, settings.judge[key]).length > 0).length;
@@ -83,7 +108,7 @@ export default async function AdminPage() {
   ];
 
   return (
-    <main className="mx-auto flex max-w-[1220px] flex-col gap-5 px-8 pb-12 pt-7 max-sm:px-4">
+    <main className="mx-auto flex max-w-[1220px] flex-col gap-5 px-8 pb-12 pt-7 max-sm:px-4"><PageStamp />
       <header className="flex flex-col gap-2.5">
         <div className="flex flex-wrap items-center gap-2.5">
           <h1 className="text-[26px] font-bold tracking-tight">크롤 설정</h1>
@@ -104,10 +129,14 @@ export default async function AdminPage() {
       </header>
 
       <section aria-label="최근 7일" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Figure label="7일 수집" value={fmt(enqueued)} note={`신호 ${yields.length}개에서 들어온 후보`} />
-        <Figure label="7일 발행" value={fmt(published)} note={enqueued ? `수집의 ${((published / enqueued) * 100).toFixed(1)}%` : "—"} />
-        <Figure label="AI 흔적 없어 보류" value={fmt(gated)} note="흔적 필요 신호에서만" />
-        <Figure label="검색 사용량" value={usage.percent} note={`시간당 ${fmt(usage.perHour)}회 / 한도 1,800회`} />
+        <Figure label="7일 수집" value={fmt(enqueued)} note={`신호 ${yields.length}개에서 들어온 후보`} windows={enqueuedWindows} />
+        <Figure label="7일 발행" value={fmt(published)} note={enqueued ? `7일 수집의 ${((published / enqueued) * 100).toFixed(1)}%` : "—"}
+          windows={listed?.windows ?? null} windowsNote="짧은 창은 발행 시각(목록에 오른 시각) 기준이라 7일 수집분이 아닌 제품도 셉니다." />
+        <Figure label="AI 흔적 없어 보류" value={fmt(gated)} note="흔적 필요 신호에서만" windows={gatedWindows}
+          windowsNote="짧은 창은 그 시간에 수집된 후보 중 보류된 수입니다." />
+        {/* 실측이 아니다 — 틱당 페이지 × 시간당 틱으로 계산해 설정을 바꿀 때만 바뀐다 */}
+        <Figure label="검색 사용량 · 설정상 예상치" value={usage.percent} note={`시간당 ${fmt(usage.perHour)}회 / 한도 1,800회 · 실측 아님`}
+          estimate="실제 호출 수가 아니라 설정(틱당 페이지 × 시간당 수집 틱)으로 계산한 예상치입니다. 설정을 바꿀 때만 바뀝니다." />
       </section>
 
       <div className="flex flex-wrap items-start gap-5">

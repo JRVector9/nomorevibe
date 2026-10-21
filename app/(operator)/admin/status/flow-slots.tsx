@@ -23,11 +23,11 @@ export const evidenceFor = cache((inputs: ActionInputs, fresh: boolean): Promise
     return { ok: false as const, reason: "error" as const };
   }));
 
-/** 레일 옆 칸과 흐름 상세 탭이 같은 렌더에서 나눔을 한 번만 받게(인스턴스 캐시 60초와 별개) */
-export const sourceSplitOnce = cache(() => readSourceSplit());
+/** 레일 옆 칸과 흐름 상세 탭이 같은 렌더에서 나눔을 한 번만 받게(60초 캐시와 별개). 새로고침이면 그 캐시를 건너뛴다 */
+export const sourceSplitOnce = cache((fresh: boolean = false) => readSourceSplit(undefined, fresh));
 
-export async function SourceCellSlot({ inputs }: Pick<FlowSlotProps, "inputs">) {
-  const split = await sourceSplitOnce();
+export async function SourceCellSlot({ inputs, fresh = false }: Pick<FlowSlotProps, "inputs"> & { fresh?: boolean }) {
+  const split = await sourceSplitOnce(fresh);
   return <SourceCell summary={sourceSummary(split, inputs.settings)} x={xSummary(readXStatus(inputs.ops.observations, inputs.ops.fetchedAt))} />;
 }
 
@@ -60,7 +60,7 @@ export function FlowSideCells({ variant, ...props }: FlowSlotProps & { variant: 
   return (
     <div className={variant === "rail" ? "dash-4 ops-v8-side" : "ops-v8-cells"} aria-label="흐름 요약 — 들어오는 곳 · 발행 후 보강 · 설정 전환">
       <div className="ops-v8-cells-in">
-        <Suspense fallback={<FlowCellPending label="들어오는 곳" />}><SourceCellSlot inputs={props.inputs} /></Suspense>
+        <Suspense fallback={<FlowCellPending label="들어오는 곳" />}><SourceCellSlot inputs={props.inputs} fresh={props.fresh} /></Suspense>
         <Suspense fallback={<FlowCellPending label="발행 후 보강 12단계" />}><EnrichmentCellSlot {...props} /></Suspense>
         <Suspense fallback={<FlowCellPending label="설정 전환 · 재해 복구" />}><TransitionCellSlot /></Suspense>
       </div>

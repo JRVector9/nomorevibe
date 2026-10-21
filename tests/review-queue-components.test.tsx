@@ -51,6 +51,12 @@ describe("머리말 칩", () => {
     expect(out).toContain('data-tone="bad"');
   });
 
+  it("24h 발행 옆에 최근 1시간·오늘(0시부터) 순증감을 단다", () => {
+    const out = html(createElement(ReviewStatusChips, { models: null, human: null, publication: { net: 40, windows: { hour: 2, today: -1 } }, takedowns: 0 }));
+    expect(out).toContain('24h 발행 <span class="font-mono">+40</span> · 1시간 <span class="font-mono">+2</span> · 오늘(0시부터) <span class="font-mono">-1</span>');
+    expect(out).toContain("한국 시각(KST) 0시부터");
+  });
+
   it("모델 관측이 없으면 모델 칩을 빼고 나머지는 그린다", () => {
     const out = html(createElement(ReviewStatusChips, { models: null, human: null, publication: { net: -3 }, takedowns: 0 }));
     expect(out).not.toContain("1차");
@@ -89,11 +95,13 @@ describe("구간 레일과 할 일", () => {
   });
 });
 
-describe("오늘 목표 칩", () => {
+describe("24h 목표 칩", () => {
   it("24시간 사람 처리가 0인데 들어온 것이 있으면 주황, 목표와 처리 수를 함께 적는다", () => {
     const out = html(createElement(ReviewStatusChips, { models: null, human: { approve: 0, reject: 0 }, publication: { net: 0 }, takedowns: 0, inflow: 238 }));
     expect(out).toMatch(/data-tone="warn"[^>]*>.*24h 사람 처리/);
-    expect(out).toContain('오늘 목표 <span class="font-mono">238</span>건 / 처리 <span class="font-mono">0</span>건');
+    // 굴러가는 24시간이라 "오늘"이라 부르지 않는다
+    expect(out).toContain('24h 목표 <span class="font-mono">238</span>건 / 처리 <span class="font-mono">0</span>건');
+    expect(out).not.toContain("오늘 목표");
   });
 
   it("처리했거나 들어온 것이 없으면 주황이 아니다", () => {

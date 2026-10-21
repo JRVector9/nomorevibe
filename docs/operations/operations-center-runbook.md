@@ -48,6 +48,19 @@ docker exec nomorevibe-db-1 psql -U nomorevibe -d nomorevibe -c "select key,obse
 
 rollback은 새 퍼블리셔를 drain하고 이전 이미지/환경을 복구한다. 추가 테이블은 남겨도 이전 코드와 호환된다. 이전 퍼블리셔로 되돌리면 AI 실패 시 규칙 fallback 발행 정책도 복구된다. DB 복원은 기본 rollback 절차가 아니다.
 
+## 관리자 화면 자동 갱신·수집기 누적 (2026-10-21, codex/admin-live-numbers)
+
+- 모든 관리자 화면 머리의 갱신 줄(LiveBar)이 화면마다 10~30초로 다시 읽는다(`app/(operator)/admin/live-refresh.ts` refreshPolicy).
+  사람 몫·오늘 할 일·메뉴 배지·1분 집계는 웹 여러 대가 Valkey 로 나눠 쓴다(`lib/operations/shared-cache.ts`, 열쇠 `nmv:memo:<release>:*`).
+  Valkey 가 없거나 느리면(150ms) 인스턴스 캐시로 돌아간다.
+- 워커는 수집기 성공 틱마다 `operations_observations` 의 `job-tally:<job>` 한 줄(정시 25칸·10분 7칸)을 고친다. 새 예약 잡·마이그레이션은 없다.
+- **rollback**: 이전 코드는 관측 표 전체 읽기에서 `job-tally:` 줄을 거르지 않는다(운영센터 브라우저 데이터가 커지고 작업 상세의 원본 JSON 에 섞인다).
+  이전 이미지로 되돌린 뒤 운영 주 DB 에서 한 번 지운다 — 다시 이 판으로 올리면 처음부터 다시 쌓인다.
+
+```sql
+DELETE FROM operations_observations WHERE key LIKE 'job-tally:%';
+```
+
 ## Claude 예비 분류 (Deppy-aibox 통합)
 
 Deppy-aibox `814144a2d37cb60359486219393f93f32c7267fc`의 core/provider-claude 모듈을 `lib/vendor/deppy-aibox`에 Apache-2.0 라이선스와 함께 포함했다. 별도 aibox 서버 대신 기존 connect-agent가 제공자 모듈의 PTY 실행·URL 추출·토큰 캡처를 사용한다.

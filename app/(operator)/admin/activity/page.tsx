@@ -11,6 +11,7 @@ import { ACTION_GROUPS, actionLabel, targetLabel, type ActionGroup } from "./lab
 import { OperatorName } from "./OperatorName";
 import { activityFilter, activityLog } from "./query";
 import { isScriptRow, summaryLine, summaryLines } from "./summary";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 로그 — NoMoreVibe", robots: { index: false } };
@@ -65,7 +66,7 @@ export default async function AdminActivityPage({ searchParams }: Props) {
     ? "border-accent bg-accent-soft font-semibold text-accent" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"}`;
 
   return (
-    <main className="flex min-w-0 flex-col gap-3 pb-10 pt-6">
+    <main className="flex min-w-0 flex-col gap-3 pb-10 pt-6"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-3">
         <h1 className="text-[22px] font-extrabold tracking-tight">작업 로그</h1>
         <span className="text-[13px] text-fg-3">관리자가 바꾼 것 전부 — 덧붙이기만 하고 고치거나 지울 수 없습니다 · 전체 {count(total)}건</span>

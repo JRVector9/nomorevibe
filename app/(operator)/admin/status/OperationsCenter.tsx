@@ -18,11 +18,10 @@ import './dashboard/flow.css';
 import { OperationsDialog } from './OperationsDialog';
 import { JobTimeline } from './JobTimeline';
 import { JobsStrip } from './dashboard/JobsStrip';
-import { LiveRefresh } from './LiveRefresh';
 import { CollectionSwitch } from './CollectionSwitch';
+import { useLiveRefreshEnabled } from '../components/LiveBar';
 import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { STATUS_TABS, type StatusTab } from './action-links';
-import { OPS_FRESH_COOKIE, OPS_FRESH_SECONDS } from './fresh';
 import type { FlowVerdict } from './flow-model';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
@@ -37,8 +36,6 @@ const SPLIT_IDLE='대기 · 기존 방식(legacy)';
 const TAB_LABELS:Record<StatusTab,string>={overview:'전체 현황',jobs:'작업 흐름',crawlers:'크롤러 활동',ai:'AI 연결',manual:'수동 분류',diagnostics:'진단',flow:'흐름 상세'};
 /** 흐름 판정의 점 색 — 회색(일감 없음·멈춤)은 색을 달지 않는다 */
 const DOT:Record<FlowVerdict['tone'],'ok'|'warn'|'bad'|undefined>={ok:'ok',warn:'warn',bad:'bad',idle:undefined};
-/** 머리의 "마지막 갱신 13:38:20" — 서버가 읽은 시각(KST)의 시:분:초 */
-const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
 /**
  * 전체 현황 탭은 서버가 그린 조각(attention·dashboard·statusChips·diagnostics·manual)을 12칸 격자에 놓는다.
  * 숫자를 모으는 쿼리는 page.tsx 에, 상호작용(탭·상세 창·작업 요청)은 여기에 둔다.
@@ -48,7 +45,9 @@ const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
  * 바꿀 때는 history.replaceState 로 주소만 바꾼다 — Next 가 useSearchParams 와 맞춰 주고(공식 문서 "Native History API"),
  * router.replace 와 달리 force-dynamic 인 이 페이지의 서버 조회 전체를 탭 하나 누를 때마다 다시 돌리지 않는다.
  */
-export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual,crawlers,controls,splitRoles=[],verdict,enrichmentDot,flow}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode;crawlers:React.ReactNode;controls?:React.ReactNode;
+export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboard,statusChips,diagnostics,manual,crawlers,controls,splitRoles=[],verdict,enrichmentDot,flow,jobTotals={}}:{jobs:OperationJob[];data:Awaited<ReturnType<typeof operationsData>>;reviewMode:string;enabled:boolean;attention:React.ReactNode;dashboard:React.ReactNode;statusChips:React.ReactNode;diagnostics:React.ReactNode;manual:React.ReactNode;crawlers:React.ReactNode;controls?:React.ReactNode;
+  /** 수집기 작업 상세의 최근 1시간·24시간 누적(서버가 그린 조각, 열쇠는 잡 이름) — 마지막 회차만으로는 1분 잡이 늘 같아 보였다 */
+  jobTotals?:Record<string,React.ReactNode>;
   /** 서비스 관측 표 끝에 더하는 분리 역할 행(lib/operations/split-service-roles.ts) — versioned 이거나 후보가 있을 때만 온다 */
   splitRoles?:SplitServiceRoleRow[];
   /** 판정 알약(v8) — 조치와 같은 동기 입력으로 서버가 센 것. 넓은 화면은 탭 줄 끝, 폰은 AI 연결·설정 단추 옆 흐름 미니 */
@@ -64,7 +63,7 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   const roles=[...ROLES,...splitRoles.map(row=>row.role)];
   const selected=roles.find(key=>key===params.get('worker'))??null;
   const [message,setMessage]=useState(''),[pending,start]=useTransition(),[phoneFull,setPhoneFull]=useState(false);
-  const router=useRouter();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
+  const router=useRouter();const liveRefresh=useLiveRefreshEnabled();const snapshots=new Map(data.observations.map(o=>[o.key,o]));
   /** 주소의 탭·상세만 바꾼다. 전체 현황은 기본이라 ?tab= 을 뺀다 */
   function show(patch:Partial<Record<'tab'|'job'|'worker',string|null>>){
     const next=new URLSearchParams(params.toString());
@@ -98,11 +97,9 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   const warns=(key:string)=>/없음|지연|필요|failed/.test(status(key));
   const jobPaused=!!job?.notBefore&&Date.parse(job.notBefore)-Date.parse(data.fetchedAt)>PAUSED_AFTER_MS;
   function request(name:string){start(async()=>{const result=await requestOperation(name);setMessage(result.error??result.message??'');router.refresh();});}
-  /** 수동 새로고침만 5초 쿠키를 건다 — 서버가 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts). 자동 갱신(LiveRefresh)은 걸지 않는다 */
-  function refreshFresh(){document.cookie=`${OPS_FRESH_COOKIE}=1; Max-Age=${OPS_FRESH_SECONDS}; Path=/admin/status; SameSite=Strict`;start(()=>router.refresh());}
   const aiButton=<button className="primary" onClick={()=>show({tab:'ai'})}>AI 연결·설정</button>;
   return <div className="ops-center">
-    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">마지막 갱신 <time dateTime={data.fetchedAt}>{clock(data.fetchedAt)}</time> · 워커 관측 15초 · 화면 10초</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/><LiveRefresh/><button disabled={pending} onClick={refreshFresh}>새로고침</button>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
+    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">워커 관측 15초 · 화면 {liveRefresh?'10초':'자동 갱신 꺼짐'} · 자동 갱신·새로고침·마지막 갱신은 맨 위 줄</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
       {/* 폰 흐름 미니(v8 N6) — 단추와 한 항목, 기본 폭 0 이라 단추 줄바꿈이 지금과 같다. 남는 폭만 쓰고 이름 → 점 → 사라짐 */}
       <button type="button" className="ops-flow-mini-in" title={verdict.title} aria-label={`${verdict.text} — 흐름 상세 보기`} onClick={()=>show({tab:'flow'})}>
         <span className="dash-pill" data-tone={DOT[verdict.tone]}><i className="dash-dot" data-tone={DOT[verdict.tone]} aria-hidden/>{verdict.short}</span>
@@ -149,6 +146,6 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
       {controls}
     </div>}
     {selected&&<OperationsDialog labelledBy="worker-title" onClose={()=>show({worker:null})}><div className="ops-worker-detail"><div className="ops-row"><div><div className="ops-eyebrow">워커 상세</div><h2 id="worker-title">{ROLE_LABELS[selected]}</h2><code>{selected}</code></div><span className="ops-badge">{status(selected)}</span><button onClick={()=>show({worker:null})}>닫기</button></div><p>{DESCRIPTIONS[selected]}</p>{selected!=='db'&&<div><h3>인스턴스별 관측</h3>{instancesFor(selected).length?instancesFor(selected).map(instance=><div className="ops-job-item" key={instance.key}><div><strong>{instance.instanceId}</strong><code>{instance.key}</code><small>{formatDetailTime(instance.observedAt)} · {String(instance.value.release??'릴리스 미확인')} · RSS {typeof (instance.value.supervisorRssBytes??instance.value.rssBytes)==='number'?`${Math.round(Number(instance.value.supervisorRssBytes??instance.value.rssBytes)/1024/1024)}MB`:'미확인'}</small></div><span className={`ops-badge ${new Date(data.fetchedAt).getTime()-new Date(instance.observedAt).getTime()>45_000?'warn':'ok'}`}>{new Date(data.fetchedAt).getTime()-new Date(instance.observedAt).getTime()>45_000?'관측 지연':'정상 관측'}</span></div>):<div className="ops-note">관측된 인스턴스가 없습니다.</div>}</div>}<div className="ops-detail-grid"><div><h3>담당 작업과 실행 조건</h3>{owned.length?owned.map(j=><div className="ops-job-item" key={j.name}><div><strong>{JOB_LABELS[j.name]??j.name}</strong><code>{j.name}</code><small>{j.status} · 다음 예약 {formatDetailTime(j.nextScheduledAt)}</small>{snapshots.get(`job:${j.name}`)&&<small>최근 회차 {Number(snapshots.get(`job:${j.name}`)!.value.durationMs)/1000}초 · {formatDetailTime(snapshots.get(`job:${j.name}`)!.observedAt)}</small>}</div><button onClick={()=>show({worker:null,job:j.name})}>상세</button></div>):<div className="ops-note">예약 잡을 소비하지 않는 서비스입니다.</div>}</div><div><h3>최근 인스턴스 상태</h3><dl className="ops-facts"><div><dt>현재 작업</dt><dd>{typeof runtime?.currentJob==='string'?JOB_LABELS[runtime.currentJob]??runtime.currentJob:'관측된 실행 작업 없음'}</dd></div><div><dt>작업 시작</dt><dd>{formatDetailTime(runtime?.jobStartedAt as string|number|undefined,'기록 없음')}</dd></div><div><dt>마지막 진행</dt><dd>{formatDetailTime(runtime?.lastProgressAt as string|number|undefined,'기록 없음')}</dd></div><div><dt>프로세스 시작</dt><dd>{formatDetailTime(runtime?.bootedAt as string|number|undefined,'기록 없음')}</dd></div><div><dt>감시 프로세스 RSS</dt><dd>{typeof (runtime?.supervisorRssBytes??runtime?.rssBytes)==='number'?`${Math.round(Number(runtime?.supervisorRssBytes??runtime?.rssBytes)/1024/1024)}MB`:'관측 없음'}</dd></div><div><dt>릴리스</dt><dd>{String(runtime?.release??'관측 없음')}</dd></div></dl><div className="ops-trace">{selected==='reviewer'?`AI 심사 모드: ${reviewMode}. 회차 성공은 모델 호출 성공과 별개입니다.`:selected==='publisher'?`AI 분류 실패는 보류합니다. 분류 보류 ${data.held}건.`:'저장된 프로세스 관측입니다. 컨테이너 상태와 전체 후보 처리율을 추정하지 않습니다.'}</div>{selected==='publisher'&&<button onClick={()=>show({worker:null,tab:'ai'})}>AI 연결·모델 설정 보기 →</button>}</div></div></div></OperationsDialog>}
-    {job&&<OperationsDialog labelledBy="job-title" onClose={()=>show({job:null})}><div className="ops-row"><h2 id="job-title">{JOB_LABELS[job.name]??job.name}</h2><button onClick={()=>show({job:null})}>닫기</button></div><code>{job.name}</code><dl className="ops-facts">{[['상태',job.status],['요청 / 처리',`${job.requestedVersion} / ${job.processedVersion}`],['마지막 실행',formatDetailTime(job.lastRunAt,'기록 없음')],['마지막 성공',formatDetailTime(job.lastSuccessAt,'기록 없음')],['다음 예약',formatDetailTime(job.nextScheduledAt,'기록 없음')],['재시도 가능',formatDetailTime(job.notBefore,'기록 없음')],['누적 실행 회차',job.runs],['마지막 오류',job.lastError??'없음']].map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl><details open><summary>최근 회차의 처리 결과</summary><pre>{snapshots.get(`job:${job.name}`)?JSON.stringify(snapshots.get(`job:${job.name}`)!.value,null,2):"수집된 회차 결과 없음"}</pre></details><details><summary>저장된 재개 위치</summary><pre>{job.cursor}</pre></details>{job.name!=='heartbeat'&&<><p className="ops-note">실행 요청은 접수이며 완료가 아닙니다. 공급자 대기·항목별 재시도 상한·재시도 가능 시각을 유지합니다.{jobPaused&&' 사람이 중단한 작업은 여기서 재개하지 않습니다.'}</p><button disabled={pending||jobPaused||job.requestedVersion>job.processedVersion} onClick={()=>request(job.name)}>작업 실행 요청</button></>}{message&&<p role="status">{message}</p>}</OperationsDialog>}
+    {job&&<OperationsDialog labelledBy="job-title" onClose={()=>show({job:null})}><div className="ops-row"><h2 id="job-title">{JOB_LABELS[job.name]??job.name}</h2><button onClick={()=>show({job:null})}>닫기</button></div><code>{job.name}</code><dl className="ops-facts">{[['상태',job.status],['요청 / 처리',`${job.requestedVersion} / ${job.processedVersion}`],['마지막 실행',formatDetailTime(job.lastRunAt,'기록 없음')],['마지막 성공',formatDetailTime(job.lastSuccessAt,'기록 없음')],['다음 예약',formatDetailTime(job.nextScheduledAt,'기록 없음')],['재시도 가능',formatDetailTime(job.notBefore,'기록 없음')],['누적 실행 회차',job.runs],['마지막 오류',job.lastError??'없음']].map(([k,v])=><div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}</dl>{jobTotals[job.name]&&<details open><summary>최근 1시간 · 24시간 누적</summary>{jobTotals[job.name]}</details>}<details open><summary>최근 회차의 처리 결과</summary><pre>{snapshots.get(`job:${job.name}`)?JSON.stringify(snapshots.get(`job:${job.name}`)!.value,null,2):"수집된 회차 결과 없음"}</pre></details><details><summary>저장된 재개 위치</summary><pre>{job.cursor}</pre></details>{job.name!=='heartbeat'&&<><p className="ops-note">실행 요청은 접수이며 완료가 아닙니다. 공급자 대기·항목별 재시도 상한·재시도 가능 시각을 유지합니다.{jobPaused&&' 사람이 중단한 작업은 여기서 재개하지 않습니다.'}</p><button disabled={pending||jobPaused||job.requestedVersion>job.processedVersion} onClick={()=>request(job.name)}>작업 실행 요청</button></>}{message&&<p role="status">{message}</p>}</OperationsDialog>}
   </div>;
 }

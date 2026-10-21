@@ -49,6 +49,9 @@ describe('pipeline completions UI', () => {
     expect(html).toContain('후보 1 · 결정 기준');
     expect(html).toContain('>미계산<');
     expect(html).toContain('>해당 없음<');
+    // 설계상 늘 같은 글자인 칸은 흐리게·기울여 그리고 까닭을 title 로 단다 — 멈춘 숫자처럼 보이지 않게
+    expect(html).toMatch(/class="py-1 text-right text-fg-2 italic" title="설계상 이 화면에서 세지 않는 값입니다\(늘 미계산\)[^"]*"[^>]*>미계산</);
+    expect(html).toMatch(/title="이 단계에는 해당하지 않는 지표입니다\(늘 해당 없음\)[^"]*">해당 없음</);
     for (const row of DEFERRED) expect(html).toContain(row.label);
     expect(html).toContain('pipeline-capacity-live');
     expect(html).not.toMatch(/<button|<form|<input|href=/);

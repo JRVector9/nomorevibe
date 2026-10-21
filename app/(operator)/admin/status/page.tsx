@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { cache, Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
@@ -22,8 +22,9 @@ import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
 import { sourceBufferCsrf } from "./source-buffer-csrf";
-import { CrawlerActivity } from "./CrawlerActivity";
-import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
+import { CollectorTotalsDetail, CrawlerActivity } from "./CrawlerActivity";
+import { readDeferrals, readTallies } from "@/lib/operations/flow-reads";
+import { buildCrawlerActivity, COLLECTOR_JOBS } from "@/lib/operations/crawler-activity";
 import { signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
@@ -62,6 +63,8 @@ import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
 import { FlowDetailSlot } from "./FlowDetail";
 import { flowVerdict, otherModelSlots } from "./flow-model";
 import { OPS_FRESH_COOKIE } from "./fresh";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
+import { withDeadline } from "@/lib/operations/deadline";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "운영센터 — NoMoreVibe", robots: { index: false } };
@@ -127,8 +130,8 @@ async function PipelineCompletionsSlot() {
   return <PipelineCompletions status={await completionsOnce()} />;
 }
 
-async function KpiSlot({ derived }: { derived: DerivedStatus }) {
-  const hourly = await hourlyOnce().catch(warn("operations.hourly_unavailable"));
+async function KpiSlot({ derived, fresh }: { derived: DerivedStatus; fresh: boolean }) {
+  const hourly = await withDeadline(hourlyOnce(fresh)).catch(warn("operations.hourly_unavailable"));
   return <KpiStrip series={hourly} textPending={derived.health?.pendingGeneration ?? null} verifyPending={derived.health?.pendingVerification ?? null} />;
 }
 
@@ -138,18 +141,46 @@ async function StageSlot({ inputs, derived }: { inputs: Awaited<ReturnType<typeo
     signals={derived.workerProgress?.stages} liveness={derived.workerProgress?.liveness} />;
 }
 
-async function SignalSlot({ settings }: { settings: CrawlSettings }) {
-  const rows = await signalYields(settings).catch(warn("operations.signals_unavailable"));
+async function SignalSlot({ settings, fresh }: { settings: CrawlSettings; fresh: boolean }) {
+  const rows = await withDeadline(signalYields(settings, 7, { fresh })).catch(warn("operations.signals_unavailable"));
   return rows ? <SignalTable rows={rows} /> : <p className="dash-card dash-4">신호별 수율을 읽지 못했습니다.</p>;
 }
 
 async function TodaySlot({ down, now }: { down: number; now: string }) {
-  const today = await todayPublications().catch(warn("operations.today_unavailable"));
-  return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">오늘 발행 집계를 읽지 못했습니다.</p>;
+  const today = await withDeadline(todayPublications()).catch(warn("operations.today_unavailable"));
+  return today ? <TodayFeed today={today} down={down} now={now} /> : <p className="dash-card dash-12">최근 24시간 발행 집계를 읽지 못했습니다.</p>;
+}
+
+/**
+ * 크롤러 활동 — 회차 누적(job-tally)·미룸(defer)을 복제본 전용 15초 캐시로 읽어 함께 짓는다. 첫 그림을 기다리게 하지 않게
+ * 따로 흘려보내고(복제본이 느려도 나머지 화면은 나간다), 같은 렌더의 표·작업 상세 창이 한 번만 읽는다(React cache).
+ */
+const crawlerReportFor = cache(async (inputs: Awaited<ReturnType<typeof loadActionInputs>>, fresh: boolean) => {
+  const [tallies, deferrals] = await Promise.all([
+    readTallies(fresh).catch(() => ({ ok: false as const, reason: "error" as const })),
+    readDeferrals(fresh).catch(() => ({ ok: false as const, reason: "error" as const })),
+  ]);
+  return buildCrawlerActivity({ settings: inputs.settings, jobs: inputs.jobStates, observations: inputs.ops.observations,
+    roles: inputs.roles?.roles ?? null, throughput: inputs.throughput, now: new Date(inputs.ops.fetchedAt),
+    tallies: tallies.ok ? tallies.value.jobs : null, deferrals: deferrals.ok ? deferrals.value.jobs : null });
+});
+
+async function CrawlerActivitySlot({ inputs, fresh }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; fresh: boolean }) {
+  const report = await withDeadline(crawlerReportFor(inputs, fresh)).catch(warn("operations.crawler_activity_unavailable"));
+  return report ? <CrawlerActivity report={report} /> : <p className="ops-note">크롤러 활동을 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
+}
+
+/** 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만 */
+async function JobTotalsSlot({ name, inputs, fresh }: { name: string; inputs: Awaited<ReturnType<typeof loadActionInputs>>; fresh: boolean }) {
+  const report = await withDeadline(crawlerReportFor(inputs, fresh)).catch(() => null);
+  if (!report) return <p className="ops-note">누적을 제때 읽지 못했습니다 — 미확인.</p>;
+  const row = report.jobs.find((job) => job.name === name);
+  return row ? <CollectorTotalsDetail row={row} now={inputs.ops.fetchedAt} /> : null;
 }
 
 async function ManualSlot() {
-  return <ManualClassification candidates={await manualCandidates()} />;
+  const candidates = await withDeadline(manualCandidates()).catch(warn("operations.manual_candidates_unavailable"));
+  return candidates ? <ManualClassification candidates={candidates} /> : <p className="ops-note">분류할 후보를 제때 읽지 못했습니다 — 미확인.</p>;
 }
 
 /**
@@ -157,7 +188,7 @@ async function ManualSlot() {
  * 따로 흘려보낸다. 못 세면 이 줄만 비운다.
  */
 async function TranslationProgressSlot({ now }: { now: string }) {
-  const progress = await translationProgress().catch(warn("operations.translation_unavailable"));
+  const progress = await withDeadline(translationProgress()).catch(warn("operations.translation_unavailable"));
   return progress ? <TranslationProgress progress={progress} now={now} /> : <TranslationProgressPending failed />;
 }
 
@@ -167,7 +198,7 @@ function TranslationProgressPending({ failed = false }: { failed?: boolean }) {
 }
 
 async function StarObservationSlot({ now }: { now: string }) {
-  const page = await getStarGrowthPage({ now: new Date(now), limit: 0 }).catch(warn("operations.star_observation_unavailable"));
+  const page = await withDeadline(getStarGrowthPage({ now: new Date(now), limit: 0 })).catch(warn("operations.star_observation_unavailable"));
   return <StarObservationCard page={page} />;
 }
 
@@ -178,10 +209,12 @@ async function StarObservationSlot({ now }: { now: string }) {
 async function DiagnosticsPanels({ inputs, derived }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus }) {
   const { jobStates, evidenceSummary, downCount, ops } = inputs;
   const now = ops.fetchedAt;
-  const [frontier, candidates, rejections, rankingSeason, down, topClicked, search] = await Promise.all([
+  const read = await withDeadline(Promise.all([
     frontierCounts(), candidateCounts(), rejectionBreakdown(), getCurrentSeason(), downProducts(), topClickedSince(30),
     searchLogSummary(7).catch(() => null),
-  ]);
+  ])).catch(warn("operations.diagnostics_unavailable"));
+  if (!read) return <p className="mt-3 text-[13px] text-fg-2">진단 지표를 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
+  const [frontier, candidates, rejections, rankingSeason, down, topClicked, search] = read;
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = !rankingSeason?.refreshedAt || Date.parse(now) - rankingSeason.refreshedAt.getTime() > RANKING_STALE_MS;
   const evidenceJob = derived.states.get("product-evidence-refresh");
@@ -394,7 +427,7 @@ export default async function StatusPage() {
   if (!admin) redirect("/admin/login");
 
   const settings = await getSettings();
-  // 수동 새로고침(5초 쿠키)이면 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts) — 지금 숫자는 원래 렌더마다 읽는다
+  // 수동 새로고침(5초 쿠키)이면 15·20초 캐시와 1분 집계 캐시를 건너뛴다(fresh.ts, 1분 집계는 분당 상한) — 지금 숫자는 원래 렌더마다 읽는다
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   // 조치할 일과 머리 칩에 드는 것만 기다린다 — 나머지는 아래 Suspense 조각이 따로 센다
   const [inputs, acks] = await Promise.all([loadActionInputs(settings),
@@ -412,6 +445,10 @@ export default async function StatusPage() {
   after(async () => {
     if (await webWritable()) await recordAttentionSample(actionCounts(actions)).catch(warn("operations.attention_sample_failed"));
   });
+
+  // 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만, 서버가 따로 흘려보내는 조각으로 넘긴다
+  const jobTotals = Object.fromEntries(COLLECTOR_JOBS.map(({ name }) => [name,
+    <Suspense key={name} fallback={<p className="ops-note" aria-busy="true">누적을 읽는 중…</p>}><JobTotalsSlot name={name} inputs={inputs} fresh={fresh} /></Suspense>]));
 
   const { agent, web, quota, health, healthObservation } = derived;
   const probes: ConnectionProbe[] = (["claude", "codex"] as const).map((provider) => ({
@@ -449,7 +486,7 @@ export default async function StatusPage() {
   const dashboard = (
     <>
       <div className="ops-phone-rest">
-        <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="지금 처리량" />}><KpiSlot derived={derived} fresh={fresh} /></Suspense>
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
         {/* 레일 오른쪽의 빈 4칸(1,181px 이상) — 들어오는 곳·발행 후 보강·설정 전환(v8). 레일 높이 안, 칸마다 따로 흐른다 */}
         <FlowSideCells variant="rail" {...flowSlot} />
@@ -459,8 +496,8 @@ export default async function StatusPage() {
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
-        <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} /></Suspense>
-        <Suspense fallback={<CardPending span="dash-12" label="오늘 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} fresh={fresh} /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="최근 24시간 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
       </div>
     </>
@@ -500,12 +537,12 @@ export default async function StatusPage() {
   );
 
   return (
-    <main className="pb-10">
+    <main className="pb-10"><PageStamp />
       <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
         verdict={verdict} flow={flowDetail}
         enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}
-        crawlers={<CrawlerActivity report={buildCrawlerActivity({ settings, jobs: inputs.jobStates, observations: ops.observations,
-          roles: roleRows, throughput: inputs.throughput, now: new Date(now) })}/>}
+        crawlers={<Suspense fallback={<p className="ops-note" aria-busy="true">크롤러 활동을 읽는 중…</p>}><CrawlerActivitySlot inputs={inputs} fresh={fresh} /></Suspense>}
+        jobTotals={jobTotals}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
         data={{ ...ops, observations: ops.observations.filter((row) => row.key !== ATTENTION_HISTORY_KEY) }}

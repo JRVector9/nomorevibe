@@ -11,6 +11,9 @@ import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { sharedStore } from "@/lib/cache/shared";
+import { sharedLoader } from "./shared-cache";
+import { kstDayStart, type FreshWindows } from "./windows";
 
 /**
  * 운영 센터 대시보드 — 읽기만 한다.
@@ -43,10 +46,16 @@ export type ModelHealth = {
   lastSuccessAt: string | null;  // ISO
 };
 
-export type SignalYield = { signal: string; enqueued: number; published: number; gated: number; requireEvidence: boolean };
+/**
+ * 신호별 수율(7일). enqueuedWindows·gatedWindows 는 같은 쿼리에서 FILTER 로 센 짧은 창(최근 1시간·오늘 0시부터) —
+ * 7일 합계는 처리량이 고르면 늘 비슷해 멈춘 것처럼 보여 옆에 단다. 발행 수(published)는 후보의 지금 상태라 창을 달지 않는다.
+ */
+export type SignalYield = { signal: string; enqueued: number; published: number; gated: number; requireEvidence: boolean;
+  enqueuedWindows: FreshWindows; gatedWindows: FreshWindows };
 
 export type RecentPublication = { slug: string; name: string; tagline: string; category: string; signal: string | null; createdAt: string; korean: boolean };
-export type TodayPublications = { total24h: number; korean24h: number; latest: RecentPublication[] };
+/** 최근 24시간에 목록에 오른 제품 — windows 는 그중 최근 1시간·오늘(한국 0시부터)에 오른 수(발행 시각 기준) */
+export type TodayPublications = { total24h: number; korean24h: number; windows: FreshWindows; latest: RecentPublication[] };
 
 export type AttentionCounts = {
   /** 마지막 감사에서 AI 가 내리자고 했는데 아직 사람이 보지 않은 것 — /admin/audit 의 숫자와 같다(제품이 아직 떠 있는 것만) */
@@ -128,31 +137,21 @@ function readOnly<T extends Record<string, unknown>>(query: SQL) {
 }
 
 /**
- * 시간별·신호별 집계는 화면이 10초마다 불러도 인스턴스마다 1분에 한 번만 센다(home-pulse 와 같은 방식).
+ * 시간별·신호별 집계는 화면이 10초마다 불러도 1분에 한 번만 센다. 웹 여러 대가 Valkey 로 같은 값을 나눠 써
+ * 요청이 닿는 웹마다 숫자가 앞뒤로 흔들리지 않는다(shared-cache.ts, Valkey 가 없으면 인스턴스 캐시).
  * 키는 집계 창이 바뀌는 단위다. 실패는 담아 두지 않는다 — 다음 요청이 다시 센다.
+ * 수동 새로고침(fresh)은 인스턴스당 1분에 3번까지 건너뛰고 새로 센 값을 두 층에 다시 쓴다.
  */
 const CACHE_TTL_MS = 60_000;
 
-function cachedLoader<T>() {
-  let entry: { key: string; expiresAt: number; value: Promise<T> } | null = null;
-  return async (key: string, nowMs: number, load: () => Promise<T>): Promise<T> => {
-    if (entry?.key === key && nowMs < entry.expiresAt) return entry.value;
-    const current = { key, expiresAt: nowMs + CACHE_TTL_MS, value: load() };
-    entry = current;
-    try {
-      return await current.value;
-    } catch (error) {
-      if (entry === current) entry = null;
-      throw error;
-    }
-  };
-}
+const hourlyCache = sharedLoader<HourlySeries>({ namespace: "admin:hourly-throughput", ttlMs: CACHE_TTL_MS, store: sharedStore });
+const signalCache = sharedLoader<Omit<SignalYield, "requireEvidence">[]>({ namespace: "admin:signal-yields", ttlMs: CACHE_TTL_MS, store: sharedStore });
 
-const hourlyCache = cachedLoader<HourlySeries>();
-const signalCache = cachedLoader<Omit<SignalYield, "requireEvidence">[]>();
+/** fresh — 수동 새로고침(운영센터·크롤 설정의 ops_fresh 쿠키) */
+export type CacheReadOptions = { fresh?: boolean };
 
-export async function hourlyThroughput(now = new Date()): Promise<HourlySeries> {
-  return hourlyCache(String(Math.floor(now.getTime() / 3_600_000)), now.getTime(), () => loadHourly(now));
+export async function hourlyThroughput(now = new Date(), options: CacheReadOptions = {}): Promise<HourlySeries> {
+  return hourlyCache(String(Math.floor(now.getTime() / 3_600_000)), () => loadHourly(now), options.fresh);
 }
 
 /**
@@ -287,9 +286,9 @@ export async function modelHealth(settings: CrawlSettings, now = new Date()): Pr
 }
 
 /** 최근 days 일 동안 frontier 에 들어온 레포를 신호별로 — published = 후보 state published, gated = 후보 reason 'ai_evidence_not_found' */
-export async function signalYields(settings: CrawlSettings, days = 7): Promise<SignalYield[]> {
+export async function signalYields(settings: CrawlSettings, days = 7, options: CacheReadOptions = {}): Promise<SignalYield[]> {
   const now = new Date();
-  const rows = await signalCache(String(days), now.getTime(), () => loadSignals(now, days));
+  const rows = await signalCache(String(days), () => loadSignals(now, days), options.fresh);
   // 설정은 담아 둔 집계에 섞지 않는다 — 흔적 요구를 바꾸면 바로 보인다
   return rows.map((row) => ({ ...row, requireEvidence: row.signal === SHOW_HN_SIGNAL
     ? settings.discover.showHn.requireEvidence === true
@@ -297,32 +296,55 @@ export async function signalYields(settings: CrawlSettings, days = 7): Promise<S
 }
 
 async function loadSignals(now: Date, days: number): Promise<Omit<SignalYield, "requireEvidence">[]> {
-  const rows = await readOnly<{ signal: string; enqueued: number; published: number; gated: number }>(sql`
+  // 짧은 창은 7일 창의 부분집합이라 같은 훑기에서 FILTER 로만 센다(한국 0시는 늘 7일 안이다)
+  const hour = sql`${crawlFrontier.discoveredAt} > ${at(now)} - interval '1 hour'`;
+  const today = sql`${crawlFrontier.discoveredAt} >= ${kstDayStart(at(now))}`;
+  const gatedReason = sql`${crawlCandidates.reason} = 'ai_evidence_not_found'`;
+  const rows = await readOnly<{ signal: string; enqueued: number; published: number; gated: number;
+    enqueued_hour: number; enqueued_today: number; gated_hour: number; gated_today: number }>(sql`
     SELECT ${crawlFrontier.signal} AS signal, count(*)::int AS enqueued,
       count(*) FILTER (WHERE ${crawlCandidates.state} = 'published')::int AS published,
-      count(*) FILTER (WHERE ${crawlCandidates.reason} = 'ai_evidence_not_found')::int AS gated
+      count(*) FILTER (WHERE ${gatedReason})::int AS gated,
+      count(*) FILTER (WHERE ${hour})::int AS enqueued_hour, count(*) FILTER (WHERE ${today})::int AS enqueued_today,
+      count(*) FILTER (WHERE ${gatedReason} AND ${hour})::int AS gated_hour,
+      count(*) FILTER (WHERE ${gatedReason} AND ${today})::int AS gated_today
     FROM ${crawlFrontier} LEFT JOIN ${crawlCandidates} ON ${crawlCandidates.repo} = ${crawlFrontier.repo}
     WHERE ${crawlFrontier.discoveredAt} > ${at(now)} - ${days}::int * interval '1 day'
     GROUP BY 1 ORDER BY enqueued DESC, signal
   `);
-  return rows.map((row) => ({ signal: row.signal, enqueued: Number(row.enqueued), published: Number(row.published), gated: Number(row.gated) }));
+  return rows.map((row) => ({ signal: row.signal, enqueued: Number(row.enqueued), published: Number(row.published), gated: Number(row.gated),
+    enqueuedWindows: { hour: Number(row.enqueued_hour), today: Number(row.enqueued_today) },
+    gatedWindows: { hour: Number(row.gated_hour), today: Number(row.gated_today) } }));
 }
 
-/** 지난 24시간에 목록에 오른 제품. 신호는 발행한 후보(published_slug)의 프론티어 행에서 — 메이커 등록분은 null */
+/** 신호별 줄의 짧은 창을 더한다 — 크롤 설정 머리의 "7일 수집" 옆 숫자 */
+export function sumWindows(rows: readonly FreshWindows[]): FreshWindows {
+  return rows.reduce((sum, row) => ({ hour: sum.hour + row.hour, today: sum.today + row.today }), { hour: 0, today: 0 });
+}
+
+/**
+ * 지난 24시간에 목록에 오른 제품. 신호는 발행한 후보(published_slug)의 프론티어 행에서 — 메이커 등록분은 null.
+ * limit 0 이면 수만 센다(크롤 설정 머리의 발행 창).
+ */
 export async function todayPublications(now = new Date(), limit = 6): Promise<TodayPublications> {
   const end = at(now);
   const rows = await readOnly<{
-    total: number; korean_total: number; slug: string | null; name: string; tagline: string; category: string;
+    total: number; korean_total: number; total_hour: number; total_today: number; slug: string | null; name: string; tagline: string; category: string;
     signal: string | null; created_at: string; korean: boolean;
   }>(sql`
     WITH recent AS (
       SELECT ${products.slug} AS slug, ${products.name} AS name, ${products.tagline} AS tagline,
-        ${products.category} AS category, ${products.createdAt} AS created_at, ${korean} AS korean
+        ${products.category} AS category, ${products.createdAt} AS created_at, ${korean} AS korean,
+        coalesce(${products.verifiedAt}, ${products.createdAt}) AS listed_at
       FROM ${products} WHERE ${listedSince(sql`${end} - interval '24 hours'`)} AND ${products.createdAt} <= ${end}
     ), totals AS (
-      SELECT count(*)::int AS total, count(*) FILTER (WHERE korean)::int AS korean_total FROM recent
+      -- 짧은 창은 24시간 창(listedSince)과 같은 등재 시각 기준 — 확인이 늦은 제품이 1시간·오늘에 다른 기준으로 잡히지 않게
+      SELECT count(*)::int AS total, count(*) FILTER (WHERE korean)::int AS korean_total,
+        count(*) FILTER (WHERE listed_at >= ${end} - interval '1 hour')::int AS total_hour,
+        count(*) FILTER (WHERE listed_at >= ${kstDayStart(end)})::int AS total_today
+      FROM recent
     )
-    SELECT totals.total, totals.korean_total, latest.* FROM totals LEFT JOIN LATERAL (
+    SELECT totals.total, totals.korean_total, totals.total_hour, totals.total_today, latest.* FROM totals LEFT JOIN LATERAL (
       SELECT recent.slug, recent.name, recent.tagline, recent.category, ${iso(sql`recent.created_at`)} AS created_at, recent.korean,
         (SELECT ${crawlFrontier.signal} FROM ${crawlCandidates} JOIN ${crawlFrontier} ON ${crawlFrontier.repo} = ${crawlCandidates.repo}
           WHERE ${crawlCandidates.publishedSlug} = recent.slug ORDER BY ${crawlCandidates.id} DESC LIMIT 1) AS signal
@@ -333,6 +355,7 @@ export async function todayPublications(now = new Date(), limit = 6): Promise<To
   return {
     total24h: Number(rows[0]?.total ?? 0),
     korean24h: Number(rows[0]?.korean_total ?? 0),
+    windows: { hour: Number(rows[0]?.total_hour ?? 0), today: Number(rows[0]?.total_today ?? 0) },
     latest: rows.filter((row) => row.slug !== null).map((row) => ({
       slug: row.slug!, name: row.name, tagline: row.tagline, category: row.category,
       signal: row.signal, createdAt: row.created_at, korean: row.korean,

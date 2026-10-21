@@ -16,6 +16,7 @@ import {
   DECLARATION_LABELS, EVIDENCE_AUDIT_LABELS, FACT_LABELS, HISTORY_KIND_LABELS, LINK_KIND_LABELS, PRODUCT_STATUS_LABELS,
   RELATIONSHIP_LABELS, SOURCE_STATE_LABELS, UPDATE_SOURCE_LABELS, historyActionLabel, historyNote, labelOf,
 } from "./labels";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "제품 근거 — NoMoreVibe", robots: { index: false } };
@@ -63,7 +64,7 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
   const activityHref = `/admin/activity?target=${encodeURIComponent(view.product.slug)}`;
 
   return (
-    <main className="mx-auto max-w-[980px] px-4 pb-20 sm:px-6">
+    <main className="mx-auto max-w-[980px] px-4 pb-20 sm:px-6"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="min-w-0 break-words text-[22px] font-extrabold tracking-tight">{view.product.name}</h1>
         <span className="font-mono text-[13px] text-fg-3">{view.product.slug}</span>

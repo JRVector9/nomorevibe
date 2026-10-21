@@ -3,10 +3,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
-import { loadInbox } from "@/lib/operations/inbox";
+import { cookies } from "next/headers";
+import { sharedInbox } from "@/lib/operations/inbox";
+import { OPS_FRESH_COOKIE } from "../status/fresh";
 import { assembleInbox } from "./inbox-model";
 import { InboxCard } from "./InboxCard";
 import "./inbox.css";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "오늘 할 일 — NoMoreVibe", robots: { index: false } };
@@ -22,17 +25,19 @@ export default async function AdminInboxPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const snapshot = await loadInbox();
+  // 웹 여러 대가 30초 나눠 쓰는 읽기 — 머리 갱신 줄의 "새로고침"(5초 쿠키)이면 건너뛴다
+  const snapshot = await sharedInbox((await cookies()).has(OPS_FRESH_COOKIE));
   const inbox = assembleInbox(snapshot.results, snapshot.done);
   const now = snapshot.fetchedAt;
 
   return (
-    <main className="flex flex-col gap-3 pb-10 pt-6">
+    <main className="flex flex-col gap-3 pb-10 pt-6"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-line pb-3">
         <h1 className="text-[22px] font-extrabold tracking-tight">오늘 할 일</h1>
         <p className="text-[14px] font-semibold text-fg-2"
           title="처리는 최근 24시간에 사람이 내린 심사 결정과 내려달라는 요청 처리를 더한 수, 남은 일은 아래 칸의 수를 더한 것">
-          오늘 처리 <span className="font-mono">{inbox.done === null ? "?" : count(inbox.done)}</span>건
+          {/* 한국 날짜의 오늘이 아니라 굴러가는 24시간이다 — "오늘 처리"로 적으면 0시에 0으로 돌아갈 것처럼 읽힌다 */}
+          최근 24시간 처리 <span className="font-mono">{inbox.done === null ? "?" : count(inbox.done)}</span>건
           {" · "}남은 일 <span className="font-mono">{count(inbox.remaining)}</span>건{inbox.failed > 0 && " 이상"}
         </p>
         <p className="w-full text-[13px] text-fg-3">

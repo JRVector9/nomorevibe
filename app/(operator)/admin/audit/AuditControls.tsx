@@ -30,8 +30,10 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
   const onOff = (value: boolean) => (value ? '켬' : '끔');
   const labels = (keys: readonly AuditReasonCategory[]) => keys.map((key) => AUDIT_REASON_CATEGORIES[key].label).join(', ') || '없음';
   const toggle = (key: AuditReasonCategory) => setCategories((now) => now.includes(key) ? now.filter((item) => item !== key) : [...now, key]);
+  // 고친 값이 있는 동안은 자동 갱신을 멈춘다(data-dirty) — 다시 그리면 새 설정 값(key)으로 다시 열려 고친 값을 잃는다
+  const edited = !valid || changed;
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" data-dirty={edited || undefined}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-fg-2">
         <label className="flex min-h-10 items-center gap-2">
           <input type="checkbox" name="enabled" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />

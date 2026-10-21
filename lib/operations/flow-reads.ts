@@ -4,7 +4,9 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { crawlReviewAttempts, crawlTaglines, productAuditAttempts, productEmbeddings, productIntroChecks, productKoreanTaglines,
   productSearchProfiles, productTranslations, secondReviews, textTranslations } from "@/lib/db/schema";
 import { readJobDeferrals, type JobDeferralSummary } from "@/lib/jobs/deferral-observation";
+import { READ_JOB_TALLIES, summarizeJobTallies, type JobTallySummary } from "@/lib/jobs/tally";
 import { FIRST_MODEL_CALL_SQL, SECOND_VOTED_SQL } from "./dashboard";
+import { sharedStore } from "@/lib/cache/shared";
 import { DB_CLOCK_SQL, replicaCache } from "./replica-cache";
 import type { ModelSlot } from "./stage-registry";
 import type { ReplicaRead } from "./replica-hold";
@@ -16,7 +18,8 @@ import { agentScanByClaims, readAgentScanMode, type AgentScanModeState } from "@
  * 운영센터 개편 v8 의 새 숫자 — 지금 화면에 없던 수만 여기서 읽는다. 지금 있는 숫자는 지금처럼 렌더마다 읽는다(render-reads.ts).
  *
  * 모두 복제본 전용(readReplicaOnly)이고, 못 읽으면 보류다. 값마다 DB 시각(at)을 달아 화면이 "기준 08:44:02 (DB)"로 보인다.
- * 캐시는 인스턴스마다 따로라 m3·mini 가 같은 시각 근처에서 조금 다른 수를 보일 수 있다 — 그래서 DB 시각을 단다.
+ * 1분·10분 캐시는 웹 여러 대가 Valkey 로 나눠 쓴다(replicaCache shared) — 인스턴스마다 따로 담으면 요청이 닿는 웹마다 숫자가
+ * 앞뒤로 흔들렸다. 15·20초 캐시는 인스턴스마다 따로다(새로고침이 건너뛴다). 그래서 DB 시각을 단다.
  */
 
 /** 이번 시(정시부터 DB 지금까지) 프론티어에 들어온 레포를 신호별로 — 들어오는 곳 칸의 GitHub / Show HN 나눔 */
@@ -31,7 +34,9 @@ const SOURCE_SPLIT_SQL = sql`
       WHERE f.discovered_at >= date_trunc('hour', clock.at) AND f.discovered_at <= clock.at GROUP BY f.signal
     ) s), '[]'::jsonb) AS signals`;
 
-const splitCache = replicaCache<SourceSplit>({ event: "operations.source_split_unavailable", ttlMs: 60_000, bypass: false });
+/** 60초 · 웹 여러 대가 나눠 쓴다 · 수동 새로고침은 인스턴스당 1분에 3번까지 건너뛴다(근거 판정과 같은 상한) */
+const splitCache = replicaCache<SourceSplit>({ event: "operations.source_split_unavailable", ttlMs: 60_000, bypass: true, perMinute: 3,
+  shared: { store: sharedStore, namespace: "admin:source-split" } });
 
 function signalRows(value: unknown): SourceSplit["signals"] {
   if (!Array.isArray(value)) return [];
@@ -39,8 +44,8 @@ function signalRows(value: unknown): SourceSplit["signals"] {
     ? [{ signal: row.signal as string, count: row.count as number }] : []);
 }
 
-/** 복제본 전용 · 60초 캐시(새로고침도 건너뛰지 않는다) · 열쇠는 이번 시 — 정시가 지나면 새로 센다 */
-export function readSourceSplit(now = new Date()): Promise<ReplicaRead<SourceSplit>> {
+/** 복제본 전용 · 60초 캐시(새로고침이 분당 3번까지 건너뛴다) · 열쇠는 이번 시 — 정시가 지나면 새로 센다 */
+export function readSourceSplit(now = new Date(), fresh = false): Promise<ReplicaRead<SourceSplit>> {
   return splitCache(String(Math.floor(now.getTime() / 3_600_000)), async (replica) => {
     const [row] = await replica.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL jit = off`);
@@ -48,7 +53,7 @@ export function readSourceSplit(now = new Date()): Promise<ReplicaRead<SourceSpl
       return tx.execute<{ at: string; signals: unknown }>(SOURCE_SPLIT_SQL);
     }, { accessMode: "read only" });
     return { at: row.at, signals: signalRows(row.signals) };
-  });
+  }, fresh);
 }
 
 /** 보강 근거 3단계(공개 근거·개발 AI 근거·AI 단계)의 판정 — 배포 관문과 같은 SQL·같은 판정, 복제본에서 */
@@ -169,10 +174,12 @@ function slotWindowRows(value: unknown): SlotWindow[] {
     calls: count(row.calls), failed: count(row.failed), agree1h: ratio(row.agree1h), agree: ratio(row.agree) }] : []);
 }
 
-const slotDayCache = replicaCache<SlotWindows>({ event: "operations.model_slots_unavailable", ttlMs: 60_000, bypass: false });
-const slotWeekCache = replicaCache<SlotWindows>({ event: "operations.model_slots_week_unavailable", ttlMs: 10 * 60_000, bypass: false });
+const slotDayCache = replicaCache<SlotWindows>({ event: "operations.model_slots_unavailable", ttlMs: 60_000, bypass: true, perMinute: 3,
+  shared: { store: sharedStore, namespace: "admin:model-slots-24h" } });
+const slotWeekCache = replicaCache<SlotWindows>({ event: "operations.model_slots_week_unavailable", ttlMs: 10 * 60_000, bypass: false,
+  shared: { store: sharedStore, namespace: "admin:model-slots-7d" } });
 
-function readSlots(read: typeof slotDayCache, slots: readonly SlotRef[], window: "24h" | "7d", timeout: string) {
+function readSlots(read: typeof slotDayCache, slots: readonly SlotRef[], window: "24h" | "7d", timeout: string, fresh = false) {
   return read(JSON.stringify(slots.map((slot) => [slot.key, slot.model])), async (replica) => {
     const [row] = await replica.transaction(async (tx) => {
       await tx.execute(sql`SET LOCAL jit = off`);
@@ -180,12 +187,12 @@ function readSlots(read: typeof slotDayCache, slots: readonly SlotRef[], window:
       return tx.execute<{ at: string; slots: unknown }>(modelSlotCallsSql(slots, window));
     }, { accessMode: "read only" });
     return { at: row.at, window, rows: slotWindowRows(row.slots) };
-  });
+  }, fresh);
 }
 
-/** 모델 자리 24h(+최근 1시간) — 복제본 전용 · 60초 캐시(새로고침도 건너뛰지 않는다) */
-export const readModelSlotWindows = (slots: readonly SlotRef[]) => readSlots(slotDayCache, slots, "24h", "5s");
-/** 모델 자리 7일 참고 — 복제본 전용 · 10분 캐시(두 표의 7일 훑기라 새로고침도 건너뛰지 않는다) */
+/** 모델 자리 24h(+최근 1시간) — 복제본 전용 · 60초 캐시(웹 여러 대가 나눠 쓴다 · 새로고침이 분당 3번까지 건너뛴다) */
+export const readModelSlotWindows = (slots: readonly SlotRef[], fresh = false) => readSlots(slotDayCache, slots, "24h", "5s", fresh);
+/** 모델 자리 7일 참고 — 복제본 전용 · 10분 캐시(두 표의 7일 훑기라 새로고침도 건너뛰지 않는다 · 웹 여러 대가 나눠 쓴다) */
 export const readModelSlotWeek = (slots: readonly SlotRef[]) => readSlots(slotWeekCache, slots, "7d", "10s");
 
 /** 잡을 미룬 이유(defer:<job>, PR4) — 최근 1시간 */
@@ -198,5 +205,17 @@ export function readDeferrals(fresh: boolean): Promise<ReplicaRead<DeferralsRead
     const read = await readJobDeferrals(<T,>(load: () => Promise<T>) => load());
     if (read.state !== "ready") throw new Error(`deferrals_${read.reason}`);
     return { at: read.at, jobs: read.jobs };
+  }, fresh);
+}
+
+/** 수집기 회차 누적(job-tally:<job>) — 크롤러 활동 표의 최근 1시간·24시간 칸 */
+export type TalliesRead = { at: string; jobs: JobTallySummary[] };
+const tallyCache = replicaCache<TalliesRead>({ event: "operations.job_tallies_unavailable", ttlMs: 15_000, bypass: true });
+
+/** 복제본 전용 · 15초 캐시(새로고침이 건너뛰고 다시 쓴다). 창은 읽은 DB 시각 기준으로 더한다 */
+export function readTallies(fresh: boolean): Promise<ReplicaRead<TalliesRead>> {
+  return tallyCache("tally", async (replica) => {
+    const [row] = await replica.execute<{ at: string; rows: unknown }>(READ_JOB_TALLIES);
+    return { at: row.at, jobs: summarizeJobTallies(row.at, row.rows) };
   }, fresh);
 }

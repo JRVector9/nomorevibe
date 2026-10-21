@@ -21,6 +21,7 @@ import { takedownHistory, takedownQueue, takedownSummary } from "@/lib/domain/pr
 import { DISMISS_REASONS, formatWait, isBurst, isDismissReason, senderLabel, takedownSignal, type TakedownSummary } from "@/lib/domain/products/takedown-view";
 import "../status/dashboard/dashboard.css";
 import "./takedown.css";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -112,7 +113,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const signal = takedownSignal(summary);
   const auditOpen = open.reject + open.needs_review;
   return (
-    <main className="flex flex-col gap-3 pb-10 pt-6">
+    <main className="flex flex-col gap-3 pb-10 pt-6"><PageStamp />
       <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-line pb-3">
         <div className="flex flex-wrap items-baseline gap-3">
           <h1 className="text-[22px] font-extrabold tracking-tight">내릴 후보</h1>

@@ -16,7 +16,10 @@ describe("원본 공급 조절 칸", () => {
   it("기본(꺼짐)·판정 기록 없음을 그대로 말하고 켜기 단추를 둔다", () => {
     const html = renderToStaticMarkup(<SourceBufferCard enabled={false} observation={undefined} csrf={CSRF} />);
     expect(html).toContain("꺼짐(disabled) · 기본값");
-    expect(html).toContain("기록 없음 — 켠 뒤 첫 수집 회차에 생깁니다");
+    // 꺼져 있으면 판정을 남기지 않는다 — 멈춘 기록이 아니라고 흐리게 적는다
+    expect(html).toContain("꺼짐 · 기록 없음");
+    expect(html).toContain("멈춘 숫자가 아닙니다");
+    expect(html).toContain("text-fg-3");
     expect(html).toContain("조절 켜기…");
     expect(html).not.toContain("조절 끄기…");
   });
@@ -38,6 +41,12 @@ describe("원본 공급 조절 칸", () => {
       observation={decision({ blocked: false, reason: "ready", revision: 3 })} csrf={CSRF} />);
     expect(html).toContain("새 원본 받음 · 후단 여유(ready)");
     expect(html).toContain("켜져 있던 때의 기록");
+  });
+
+  it("켰는데 아직 판정이 없으면 첫 회차를 기다린다고 적는다", () => {
+    const html = renderToStaticMarkup(<SourceBufferCard enabled observation={undefined} csrf={CSRF} />);
+    expect(html).toContain("기록 없음 — 켠 뒤 첫 수집 회차에 생깁니다");
+    expect(html).not.toContain("꺼짐 · 기록 없음");
   });
 
   it("판정 기록 모양이 다르면 짐작하지 않는다", () => {

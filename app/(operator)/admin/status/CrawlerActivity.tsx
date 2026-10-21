@@ -4,6 +4,7 @@ import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { formatDetailTime, formatListTime } from "@/lib/format/time";
 import { ScrollTable } from "../components/ScrollTable";
 import { ACTION_LINKS } from "./action-links";
+import { deferralLabel } from "./flow-model";
 import "./crawler-activity.css";
 
 const jobLabel = (name: string) => name === "ai-level-refresh" ? "AI 제작 단계 확인" : JOB_LABELS[name] ?? name;
@@ -28,6 +29,27 @@ const n = (value: number) => value.toLocaleString("ko-KR");
 function counters(value: Record<string, number | boolean>) {
   return Object.entries(value).map(([key, value]) => `${COUNTERS[key] ?? key} ${typeof value === "boolean" ? value ? "예" : "아니오" : n(value)}`).join(" · ");
 }
+type Totals = NonNullable<CrawlerActivityReport["jobs"][number]["totals"]>["hour"];
+/** 누적 한 창의 이벤트 — "원본 수집 결과 원본 확보 120 · 건너뜀 30", 숫자 없는 이벤트는 "원본 공급자 한도 대기 3회" */
+function eventLine(event: Totals["events"][number]) {
+  const numbers = counters(event.counts);
+  return `${event.label}${numbers ? ` ${numbers}` : ""}${event.times ? ` ${n(event.times)}회` : ""}`;
+}
+/** 누적 한 창의 머리 — "회차 60 · 실패 1 · 미룸 3" */
+function tickLine(totals: Totals, deferred: number | null) {
+  return [`회차 ${n(totals.ticks)}`, totals.failed ? `실패 ${n(totals.failed)}` : null, deferred ? `미룸 ${n(deferred)}` : null].filter(Boolean).join(" · ");
+}
+const TOTALS_NOTE = "성공 회차의 숫자를 10분(최근 1시간)·정시(최근 24시간) 단위로 묶어 더합니다 — 최근 1시간은 최대 10분, 24시간은 이번 시를 포함한 24칸입니다. 실패한 회차의 숫자는 더하지 않고 횟수만 셉니다.";
+function TotalsCell({ row, failed }: { row: CrawlerActivityReport["jobs"][number]; failed: boolean }) {
+  if (!row.totals) return <span className="crawler-muted">{failed ? "누적 미확인" : "누적 없음"}</span>;
+  return <div className="crawler-totals" title={TOTALS_NOTE}>
+    {([["최근 1시간", row.totals.hour, row.deferredHour], ["최근 24시간", row.totals.day, null]] as const).map(([label, totals, deferred]) => <div key={label}>
+      <span>{label} · {tickLine(totals, deferred)}</span>
+      {totals.events.length ? totals.events.slice(0, 3).map((event, index) => <small key={index}>{eventLine(event)}</small>)
+        : <small>{totals.ticks ? "숫자를 남기지 않은 회차" : "회차 없음"}</small>}
+    </div>)}
+  </div>;
+}
 function Tone({ state, children }: { state: string; children: React.ReactNode }) {
   const tone = ["error", "stale-lock", "stale", "item-errors", "event-errors", "provider-error"].includes(state) ? "bad"
     : ["paused", "disabled", "retrying", "unknown", "waiting"].includes(state) ? "warn" : state === "running" || state === "active" ? "ok" : "muted";
@@ -41,6 +63,24 @@ function ResultStatus({ result }: { result: CrawlerActivityReport["recent"][numb
     : result.outcome === "waiting" ? "공급자·다음 회차 대기" : "회차 성공"}</Tone>;
 }
 
+/**
+ * 운영센터 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만(누적은 수집기에만 쌓는다). 서버가 그려 창에 넘긴다.
+ * 마지막 성공보다 나중에 실패·미룬 회차가 있으면 먼저 적는다.
+ */
+export function CollectorTotalsDetail({ row, now }: { row: CrawlerActivityReport["jobs"][number]; now: string }) {
+  return <div className="crawler-activity">
+    {row.lastFailedAt && <p>마지막 성공 뒤 실패한 회차 · <time dateTime={row.lastFailedAt}>{formatListTime(row.lastFailedAt, now)}</time></p>}
+    {row.lastDeferred && <p>마지막 성공 뒤 미룸 · {deferralLabel(row.lastDeferred.reason)} · <time dateTime={row.lastDeferred.at}>{formatListTime(row.lastDeferred.at, now)}</time></p>}
+    <p className="crawler-muted">{TOTALS_NOTE}</p>
+    {row.totals ? <ul className="crawler-detail-totals">
+      {([["최근 1시간", row.totals.hour, row.deferredHour], ["최근 24시간", row.totals.day, null]] as const).map(([label, totals, deferred]) => <li key={label}>
+        <strong>{label} · {tickLine(totals, deferred)}</strong>
+        {totals.events.map((event, index) => <span key={index}>{eventLine(event)}</span>)}
+      </li>)}
+    </ul> : <p className="crawler-muted">누적을 읽지 못했거나 아직 없습니다.</p>}
+  </div>;
+}
+
 /** A server-rendered slot: the browser receives only this bounded read-only projection. */
 export function CrawlerActivity({ report }: { report: CrawlerActivityReport }) {
   const { measuredAt: now, jobs, instances, recent } = report;
@@ -52,15 +92,21 @@ export function CrawlerActivity({ report }: { report: CrawlerActivityReport }) {
       <p>탐색부터 원본·근거·스타·사이트·소식·이미지 수집까지, 역할이 다른 수집기도 함께 봅니다. 회차 성공과 항목별 수집 성공은 별개입니다.</p>
       <div className="crawler-links"><Link href={ACTION_LINKS.collectorSettings} prefetch={false}>검색 신호 설정 →</Link><Link href={ACTION_LINKS.githubAccounts} prefetch={false}>GitHub 수집 계정 →</Link></div>
       {report.queueReadFailed && <p className="crawler-notice">대기 집계를 읽지 못했습니다. 미확인은 대기 0건을 뜻하지 않습니다.</p>}
+      {(report.totalsReadFailed || report.deferralsReadFailed) && <p className="crawler-notice">{report.totalsReadFailed ? "회차 누적" : "미룬 기록"}을 읽지 못했습니다(복제본 보류). 미확인은 0건을 뜻하지 않습니다.</p>}
       <ScrollTable label="수집기 활동 표"><table className="crawler-table">
-        <thead><tr><th scope="col">수집기 · 역할/줄</th><th scope="col">현재 상태</th><th scope="col">대기</th><th scope="col">마지막 실행 · 성공</th><th scope="col">다음 예약 · 재시도</th><th scope="col">최근 결과</th></tr></thead>
+        <thead><tr><th scope="col">수집기 · 역할/줄</th><th scope="col">현재 상태</th><th scope="col">대기</th><th scope="col">마지막 실행 · 성공</th><th scope="col">다음 예약 · 재시도</th><th scope="col">최근 결과</th><th scope="col" title={TOTALS_NOTE}>누적 · 최근 1시간 / 24시간</th></tr></thead>
         <tbody>{jobs.map(row => <tr key={row.name}>
           <th scope="row"><strong>{jobLabel(row.name)}</strong><code>{row.name}</code><small>{ROLE_LABELS[row.role]} · {LANES[row.lane]} · {row.intervalMs === null ? "요청 시" : `${n(row.intervalMs / 60_000)}분 주기`}</small>{row.note && <small className="crawler-note">{row.note}</small>}</th>
           <td><Tone state={row.state}>{STATES[row.state]}</Tone>{!row.enabled && row.state !== "disabled" && <small>설정 꺼짐 · 현재 회차 관측</small>}{row.paused && row.state !== "paused" && <small>사람이 중단 요청</small>}{row.error && <small>최근 오류 · {ERROR_LABELS[row.error]}</small>}{row.runs !== null && <small>누적 {n(row.runs)}회</small>}</td>
           <td><span>{row.waiting === null ? "대기 미확인" : `대기 ${n(row.waiting)}`}</span>{row.deferred !== null && <small>재시도 예약 {n(row.deferred)}</small>}</td>
           <td><time title={formatDetailTime(row.lastRunAt)} dateTime={row.lastRunAt ?? undefined}>{formatListTime(row.lastRunAt, now, "실행 기록 없음")}</time><small>성공 {formatListTime(row.lastSuccessAt, now, "기록 없음")}</small></td>
           <td><time title={formatDetailTime(row.nextScheduledAt)} dateTime={row.nextScheduledAt ?? undefined}>{formatListTime(row.nextScheduledAt, now, "예약 미확인")}</time>{row.retryAt && <small>재시도 {formatListTime(row.retryAt, now)}</small>}</td>
-          <td>{row.latest ? <><ResultStatus result={row.latest}/><small>{formatListTime(row.latest.observedAt, now)}{row.latest.durationMs !== null ? ` · ${(row.latest.durationMs / 1000).toFixed(1)}초` : ""}</small>{row.latest.itemErrors === null && <small>항목 오류 미집계</small>}</> : <span className="crawler-muted">회차 결과 없음</span>}</td>
+          <td>
+            {/* 마지막 성공보다 나중에 실패·미룬 틱 — 지난 성공 숫자만 남아 멈춘 것처럼 보이지 않게 먼저 적는다 */}
+            {row.lastFailedAt && <><Tone state="error">실패한 회차</Tone><small><time dateTime={row.lastFailedAt} title={formatDetailTime(row.lastFailedAt)}>{formatListTime(row.lastFailedAt, now)}</time></small></>}
+            {row.lastDeferred && <><Tone state="waiting">미룸 · {deferralLabel(row.lastDeferred.reason)}</Tone><small><time dateTime={row.lastDeferred.at} title={formatDetailTime(row.lastDeferred.at)}>{formatListTime(row.lastDeferred.at, now)}</time>{row.lastDeferred.lastHour > 0 ? ` · 최근 1시간 ${n(row.lastDeferred.lastHour)}회` : ""}</small></>}
+            {row.latest ? <>{(row.lastFailedAt || row.lastDeferred) && <small>마지막 성공 회차</small>}<ResultStatus result={row.latest}/><small>{formatListTime(row.latest.observedAt, now)}{row.latest.durationMs !== null ? ` · ${(row.latest.durationMs / 1000).toFixed(1)}초` : ""}</small>{row.latest.itemErrors === null && <small>항목 오류 미집계</small>}</> : <span className="crawler-muted">회차 결과 없음</span>}</td>
+          <td><TotalsCell row={row} failed={report.totalsReadFailed} /></td>
         </tr>)}</tbody>
       </table></ScrollTable>
     </section>
@@ -79,7 +125,7 @@ export function CrawlerActivity({ report }: { report: CrawlerActivityReport }) {
 
     <section className="dash-card">
       <div className="dash-card-h"><h2>수집기별 최근 실행</h2><small>최근 결과 {recent.length}개 · 최대 30개</small></div>
-      <p>수집기마다 저장된 가장 최근 성공 회차입니다. 전체 실행 이력은 저장되지 않으며, 이후 실패한 회차는 위 표의 최근 오류로 확인합니다. 숫자는 그 회차의 관측값입니다.</p>
+      <p>수집기마다 저장된 가장 최근 성공 회차입니다. 전체 실행 이력은 저장되지 않으며, 이후 실패·미룬 회차는 위 표의 최근 결과에 먼저 적습니다. 숫자는 그 회차의 관측값이고, 최근 1시간·24시간 합계는 위 표의 누적 칸에 있습니다.</p>
       {recent.length === 0 ? <p className="crawler-muted">저장된 수집 회차 결과가 없습니다.</p> : <div className="crawler-results">{recent.map(result => <details key={result.name}>
         <summary><strong>{jobLabel(result.name)}</strong><time dateTime={result.observedAt}>{formatListTime(result.observedAt, now)}</time><ResultStatus result={result}/>{result.durationMs !== null && <span>{(result.durationMs / 1000).toFixed(1)}초</span>}</summary>
         {result.itemErrors === null && <p className="crawler-muted">항목 오류 미집계 — 오류가 없다고 판단할 수 없습니다.</p>}

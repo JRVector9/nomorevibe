@@ -11,6 +11,7 @@ import { readJobBatchMode } from "@/lib/jobs/batch-repository";
 import { readReplicaOrHold } from "@/lib/operations/replica-hold";
 import { TranslationRetryForm } from "./TranslationRetryForm";
 import { translationOwnerText } from "./owner";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robots: { index: false, follow: false } };
@@ -46,7 +47,7 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   if (locale) next.set("locale", locale);
   if (field) next.set("field", field);
   if (queue.nextCursor) next.set("cursor", queue.nextCursor);
-  return <main className="mx-auto max-w-5xl space-y-5 p-5">
+  return <main className="mx-auto max-w-5xl space-y-5 p-5"><PageStamp />
     <h1 className="text-[22px] font-semibold">공개 번역</h1>
     <p className="text-[14px] leading-6 text-fg-2">공개 제품의 언어별 수요 기록입니다. 한국어 심사 사유 번역과 별개이며, 중단된 소개 검수를 재개하지 않습니다. {owner.page}</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[780px] text-left text-[13px]">

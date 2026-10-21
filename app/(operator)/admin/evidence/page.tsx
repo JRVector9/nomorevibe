@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import { EvidenceSettingsForm } from "./EvidenceSettingsForm";
+import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "근거 수집 설정 — NoMoreVibe", robots: { index: false } };
@@ -12,7 +13,7 @@ export default async function AdminEvidencePage() {
   if (!admin) redirect("/admin/login");
   const settings = await currentEvidenceSettings();
   return (
-    <main className="mx-auto max-w-[900px] px-6 pb-20">
+    <main className="mx-auto max-w-[900px] px-6 pb-20"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="text-[22px] font-extrabold tracking-tight">근거 수집 설정</h1>
         <p className="text-[13px] text-fg-3">외부 근거의 주기와 실패 기준</p>

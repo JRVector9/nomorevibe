@@ -5,6 +5,10 @@
  * 그렇다고 화면에 따로 적으면 상한이 두 곳에 생긴다.
  */
 
+/** 결정이 기대는 판 — 서버가 "본 뒤에 바뀜"을 가르는 세 해시(입력·원본·후보). 화면은 본 판으로만 결정한다 */
+export const entryVersion = (entry: { inputHash?: string | null; sourceRevisionHash?: string | null; candidateRevisionHash: string }) =>
+  `${entry.inputHash ?? ''}|${entry.sourceRevisionHash ?? ''}|${entry.candidateRevisionHash}`;
+
 /** 한 번에 처리할 최대 건수. 실수로 큐 전체를 뒤집는 것을 막는다 */
 export const MAX_BULK_DECISIONS = 50;
 

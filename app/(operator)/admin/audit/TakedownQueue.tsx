@@ -6,6 +6,7 @@ import { fixIntroRequest, resolveIntroRequestAction, type AuditActionState } fro
 import { ConfirmAction } from "../components/ConfirmAction";
 import { ScrollTable } from "../components/ScrollTable";
 import { resultError, useAdminToast } from "../components/Toast";
+import { resolveSelection } from "../components/selection";
 import {
   DISMISS_REASONS, formatWait, groupTakedowns, senderLabel, waitTone,
   type GroupMode, type IntroRequestEntry, type TakedownEntry,
@@ -37,7 +38,8 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
   const [sort, setSort] = useState<Sort>("oldest");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [active, setActive] = useState<string | null>(entries[0]?.slug ?? null);
+  /** 고른 한 건과 그 자리 — 다시 읽은 목록에서 빠지면 자리만 남는다(같은 자리의 다른 요청으로 말없이 바꾸지 않는다) */
+  const [active, setActive] = useState<{ slug: string; index: number } | null>(entries[0] ? { slug: entries[0].slug, index: 0 } : null);
   const [confirm, setConfirm] = useState<string[] | null>(null);
   const [bulk, bulkAction, bulkPending] = useActionState<BulkTakedownState, FormData>(resolveTakedownRequests, null);
   const detailRef = useRef<{ confirmRemove: () => void; focusDismiss: () => void } | null>(null);
@@ -51,7 +53,14 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
   }, [entries, query, sort]);
   const groups = useMemo(() => groupTakedowns(visible, mode), [visible, mode]);
   const order = groups.flatMap((group) => group.entries);
-  const current = order.find((entry) => entry.slug === active) ?? order[0] ?? null;
+  /*
+   * 자동 갱신·처리 뒤 고른 요청이 빠지면(이 화면·다른 곳에서 처리, 검색에 가려짐) 상세를 비우고 알린다 — 같은 자리의 다른 요청을
+   * 보이면 그대로 X·Enter 로 읽지 않은 제품을 내리게 된다. 처음 열 때(고른 것이 없을 때)만 첫 줄로 서고, 선 줄을 고른 것으로 잡는다.
+   */
+  const { current, lost } = resolveSelection(order, active?.slug ?? null, (entry) => entry.slug);
+  if (active === null && current) setActive({ slug: current.slug, index: 0 });
+  const pick = (slug: string) => setActive({ slug, index: Math.max(0, order.findIndex((entry) => entry.slug === slug)) });
+  const position = Math.min(Math.max(0, active?.index ?? 0), Math.max(0, order.length - 1));
   // 처리 결과로 줄이 빠지면 고른 것도 정리한다(없어진 slug 를 들고 있지 않게)
   const live = new Set(entries.map((entry) => entry.slug));
   const picked = [...selected].filter((slug) => live.has(slug));
@@ -61,10 +70,15 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
       const target = event.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (event.metaKey || event.ctrlKey || event.altKey || order.length === 0) return;
-      const index = Math.max(0, order.findIndex((entry) => entry.slug === current?.slug));
-      if (event.key === "j") setActive(order[Math.min(order.length - 1, index + 1)].slug);
-      else if (event.key === "k") setActive(order[Math.max(0, index - 1)].slug);
-      else if (event.key === " " && current) {
+      // 고른 것이 빠졌으면 J/K 는 그 자리의 줄을 다시 고르기만 한다
+      if (!current) {
+        if (event.key === "j" || event.key === "k") pick(order[position].slug);
+        return;
+      }
+      const index = Math.max(0, order.findIndex((entry) => entry.slug === current.slug));
+      if (event.key === "j") pick(order[Math.min(order.length - 1, index + 1)].slug);
+      else if (event.key === "k") pick(order[Math.max(0, index - 1)].slug);
+      else if (event.key === " ") {
         event.preventDefault();
         setSelected((now) => { const next = new Set(now); if (next.has(current.slug)) next.delete(current.slug); else next.add(current.slug); return next; });
       } else if (event.key === "x") detailRef.current?.confirmRemove();
@@ -72,7 +86,7 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [order, current]);
+  });
 
   const toggle = (slug: string) => setSelected((now) => { const next = new Set(now); if (next.has(slug)) next.delete(slug); else next.add(slug); return next; });
   const allChecked = order.length > 0 && order.every((entry) => selected.has(entry.slug));
@@ -137,7 +151,7 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
               {groups.map((group) => (
                 <GroupRows key={group.key} title={group.title} detail={group.detail} together={group.together} mode={mode}
                   entries={group.entries} selected={selected} current={current?.slug ?? null}
-                  onPick={setActive} onToggle={toggle}
+                  onPick={pick} onToggle={toggle}
                   onRemoveAll={() => setConfirm(group.entries.map((entry) => entry.slug))}
                   onSelectAll={() => setSelected((now) => new Set([...now, ...group.entries.map((entry) => entry.slug)]))} />
               ))}
@@ -148,6 +162,11 @@ export function TakedownQueue({ entries }: { entries: TakedownEntry[] }) {
       </section>
 
       {current && <TakedownDetail key={current.slug} entry={current} handleRef={detailRef} />}
+      {lost && <aside className="td-detail" role="status" aria-label="고른 요청">
+        <h2>고른 요청이 목록에서 빠졌습니다</h2>
+        <p className="td-note">처리됐거나(이 화면이나 다른 곳에서) 검색·묶기에 가려졌을 수 있습니다. 내리기·두기 단축키(X·D)는 다시 고를 때까지 쉽니다.</p>
+        <button type="button" className="td-btn" onClick={() => pick(order[position].slug)}>같은 자리의 요청 보기</button>
+      </aside>}
     </div>
   );
 }

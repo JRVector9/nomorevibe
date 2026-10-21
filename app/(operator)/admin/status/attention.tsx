@@ -23,8 +23,10 @@ import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
 import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
 import { listGitHubCollectorApps } from "@/lib/crawl/github-apps";
 import { getSettings } from "@/lib/crawl/settings";
-import { humanQueueOverview } from "@/lib/crawl/review-overview";
-import { humanFlowLabel, humanWaitLabel } from "@/lib/crawl/human-queue";
+import { sharedHumanQueueOverview } from "@/lib/operations/shared-reads";
+import { sharedStore } from "@/lib/cache/shared";
+import { sharedStale } from "@/lib/operations/shared-cache";
+import { humanFlowLabel, humanWaitLabel, type HumanQueueOverview } from "@/lib/crawl/human-queue";
 import { recentSecondReviewFailures } from "@/lib/crawl/second-review";
 import { SPAM_DETECTOR_VERSION } from "@/lib/crawl/spam-signals";
 import { MAX_AUTO_BANS_PER_DAY } from "@/lib/jobs/products/spam-rescan";
@@ -52,7 +54,7 @@ export type ActionInputs = {
   jobBatch: Awaited<ReturnType<typeof readJobBatchMode>>;
   evidenceSummary: Awaited<ReturnType<typeof getEvidenceStatusSummary>>;
   downCount: number;
-  overview: Awaited<ReturnType<typeof humanQueueOverview>>;
+  overview: HumanQueueOverview;
   secondFailures: Awaited<ReturnType<typeof recentSecondReviewFailures>>;
   throughput: Awaited<ReturnType<typeof pipelineThroughput>> | null;
   models: Awaited<ReturnType<typeof modelHealth>> | null;
@@ -75,7 +77,8 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
   const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply] = await Promise.all([
     operationsData(), listJobStates(), readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
-    humanQueueOverview(settings), recentSecondReviewFailures(),
+    // 사람 몫은 웹 여러 대·화면 여러 개가 30초 나눠 쓴다(shared-reads.ts) — 메뉴 배지도 이 읽기를 거친다
+    sharedHumanQueueOverview(settings), recentSecondReviewFailures(),
     pipelineThroughput(settings).catch(warn("operations.throughput_unavailable")),
     modelHealth(settings).catch(warn("operations.models_unavailable")),
     attentionCounts().catch(warn("operations.attention_unavailable")),
@@ -526,29 +529,31 @@ export function actionCounts(items: ActionItem[]): Record<string, number> {
  *
  * 레이아웃은 모든 관리자 화면 앞에 서므로 화면을 기다리게 하지 않는다 — 30초 들고 있고, 그 뒤 5분 안이면 지난 값을 주며
  * 뒤에서 다시 센다. 처음(프로세스가 막 떴을 때)이거나 5분 넘게 묵었으면 배지 없이 그리고 뒤에서 센다.
+ * 웹 여러 대가 Valkey 로 같은 수를 나눠 쓰고, 다시 세기(조치 입력 25개 남짓의 조회)도 30초에 한 대만 한다(sharedStale) —
+ * 관리자 화면을 몇 개 열어 두든 주 DB 에 더하는 일은 30초에 한 번이다.
  * 운영센터가 그릴 때마다 rememberCriticalCount 로 이 값을 맞춘다 — 운영센터를 열어 둔 동안 배지와 화면의 수가 같다.
- * 세기에 실패하면 배지를 달지 않는다(null).
+ * 세기에 실패하면 지난 값을 그대로 두고, 5분이 넘으면 배지를 달지 않는다(null).
  */
-const CRITICAL_TTL_MS = 30_000;
-const CRITICAL_STALE_MS = 5 * 60_000;
-let critical: { count: number; at: number } | null = null;
-let counting: Promise<number | null> | null = null;
+const criticalCount = sharedStale<number>({ namespace: "admin:critical-actions", ttlMs: 30_000, staleMs: 5 * 60_000, store: sharedStore });
 
 export function rememberCriticalCount(items: ActionItem[]): number {
-  critical = { count: items.filter((item) => item.tone === "critical").length, at: Date.now() };
-  return critical.count;
+  const count = items.filter((item) => item.tone === "critical").length;
+  criticalCount.put("count", count);
+  return count;
 }
 
 export async function criticalActionCount(): Promise<number | null> {
-  const age = critical ? Date.now() - critical.at : Infinity;
-  if (critical && age < CRITICAL_TTL_MS) return critical.count;
-  counting ??= (async () => {
-    const inputs = await loadActionInputs(await getSettings());
-    const items = buildActions(inputs, deriveStatus(inputs));
-    const count = rememberCriticalCount(items);
-    // 아무도 운영센터를 열지 않는 날에도 24시간 변화를 잴 수 있게 시간별 수를 남긴다(55분에 한 번만 적는다)
-    await recordAttentionSample(actionCounts(items)).catch(warn("operations.attention_sample_failed"));
-    return count;
-  })().catch(warn("operations.critical_count_failed")).finally(() => { counting = null; });
-  return critical && age < CRITICAL_STALE_MS ? critical.count : null;
+  return criticalCount.get("count", async () => {
+    try {
+      const inputs = await loadActionInputs(await getSettings());
+      const items = buildActions(inputs, deriveStatus(inputs));
+      const count = items.filter((item) => item.tone === "critical").length;
+      // 아무도 운영센터를 열지 않는 날에도 24시간 변화를 잴 수 있게 시간별 수를 남긴다(55분에 한 번만 적는다)
+      await recordAttentionSample(actionCounts(items)).catch(warn("operations.attention_sample_failed"));
+      return count;
+    } catch (error) {
+      warn("operations.critical_count_failed")(error);
+      throw error;
+    }
+  });
 }

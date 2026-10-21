@@ -38,6 +38,19 @@ export function bulkAutoNote(selected: readonly AdminReviewEntry[], decision: De
   return notes.size === 1 ? [...notes][0] ?? '' : '';
 }
 
+/** 보낼 폼 — 줄마다 고른 때의 판(입력·원본·후보 해시)을 싣는다 */
+export function bulkDecisionForm(selected: readonly AdminReviewEntry[], decision: Decision, values: { reason?: string; note?: string }): FormData {
+  const form = new FormData();
+  form.set('decision', decision);
+  form.set('reason', values.reason ?? '');
+  form.set('note', values.note || bulkAutoNote(selected, decision));
+  for (const entry of selected) {
+    form.append('selected', packSelection({ repo: entry.candidate.repo, inputHash: entry.inputHash,
+      sourceRevisionHash: entry.sourceRevisionHash, candidateRevisionHash: entry.candidateRevisionHash }));
+  }
+  return form;
+}
+
 /**
  * 같은 갈래는 같은 판단이다.
  *
@@ -48,11 +61,12 @@ export function bulkAutoNote(selected: readonly AdminReviewEntry[], decision: De
  * 거친다(ADM-06) — 거부는 사유를 꼭 고른다(ADM-11). 끝나면 알림에 되돌리기를 단다(ADM-12).
  */
 export function BulkDecision({ selected, reasons, title, onDone }: {
+  /** 고른 때의 줄(판 포함) — 표(ReviewConsole)가 고른 순간의 줄을 들고 있다가 넘긴다. 다시 읽은 목록의 판으로 바꾸지 않는다 */
   selected: readonly AdminReviewEntry[]; reasons: readonly Reason[];
   /** 표 카드의 이름 — 지금 보는 구간과 건수 */
   title: React.ReactNode;
-  /** 처리한 뒤 — 표가 고른 줄을 비운다 */
-  onDone: () => void;
+  /** 처리한 뒤 — 표가 고른 줄을 비운다. 보낸 후보 id 를 넘긴다 */
+  onDone: (ids: number[]) => void;
 }) {
   const toast = useAdminToast();
   const [picked, setPicked] = useState<Decision | null>(null);
@@ -60,14 +74,7 @@ export function BulkDecision({ selected, reasons, title, onDone }: {
   const over = selected.length > MAX_BULK_DECISIONS;
 
   async function confirm(decision: Decision, values: { reason?: string; note?: string }) {
-    const form = new FormData();
-    form.set('decision', decision);
-    form.set('reason', values.reason ?? '');
-    form.set('note', values.note || bulkAutoNote(selected, decision));
-    for (const entry of selected) {
-      form.append('selected', packSelection({ repo: entry.candidate.repo, inputHash: entry.inputHash,
-        sourceRevisionHash: entry.sourceRevisionHash, candidateRevisionHash: entry.candidateRevisionHash }));
-    }
+    const form = bulkDecisionForm(selected, decision, values);
     const result = await decideCrawlCandidates(null, form);
     if (!result || result.error) return result ?? { error: '처리하지 못했습니다' };
     const decided = result.decided ?? [];
@@ -79,7 +86,7 @@ export function BulkDecision({ selected, reasons, title, onDone }: {
       link: { label: '기록 보기', href: '/admin/activity' },
       undo: decided.length ? { run: () => undoCandidateDecisions(decided) } : undefined,
     });
-    onDone();
+    onDone(selected.map((entry) => entry.candidate.id));
     return null;
   }
 

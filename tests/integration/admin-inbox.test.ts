@@ -110,7 +110,7 @@ it("칸마다 수는 처리 화면이 쓰는 함수의 값과 같다", async () 
   // 심은 값 그대로
   expect([summary.pending, summary.overdue, overview.stages.human, attention.auditRejectsOpen, down, attention.introNeedsEditor,
     attention.repoGone.installable + attention.repoGone.website, attention.spamAutoBans.day]).toEqual([2, 1, 2, 1, 2, 1, 2, 1]);
-  // 오늘 처리 — 심사 결정 0(사람 결정 없음) + 요청 처리 1
+  // 최근 24시간 처리 — 심사 결정 0(사람 결정 없음) + 요청 처리 1
   expect(inbox.done).toEqual([0, 1]);
 });
 
