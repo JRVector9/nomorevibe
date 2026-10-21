@@ -33,9 +33,12 @@ import type { CrawlSettings } from "./settings-schema";
  *    관문 세대(secondReviewGeneration)가 같은지 본다. 원본(sourceRevisionHash)이나 판정 정책(policyHash)이 그 뒤 바뀌었으면 묻지 않는다 —
  *    새 원본을 보지 않은 답으로 닫지 않는다(ineligible, 사람에게 남김). 24시간 신선도는 보지 않는다 — 갈림 보류는 원본을 다시 받지 않아
  *    신선도를 걸면 하루 지난 것은 영영 대상이 되지 않는다.
- *  - Qwen-v2 거부: 관문 표 중 독립 모델의 거부가 있고 승인이 없을 때만(1차 승인 1 : 거부 2) 거부로 닫는다. 사람·DeepSeek 결정과 같은 길로
- *    쓴다 — 결정 기록(crawl_review_attempts kind=delegated, actor qwen-v2-auto), 작업 로그(operations_audit, actorKind model,
- *    { promptVersion, model }), 사람 결정 위 쓰기 검사(pipeline_evidence_events). 사유는 second_review_split_qwen_reject.
+ *  - Qwen-v2 거부: 관문 표 중 독립 모델의 거부가 있고 승인이 없을 때(1차 승인 1 : 거부 2), 확신 0.90 이상이고 적용 모드일 때 — 그래도
+ *    여기서 닫지 않는다. 답을 적고 applied = awaiting_deepseek 로 두면 둘째 단계(gate-split-confirm.ts, 사람 검토 잡)가 M3 DeepSeek 에
+ *    같은 관문 입력으로 따로 묻고, DeepSeek 도 거부해야(원래 확신 0.70 이상) 닫는다(사용자 결정 2안, 2026-10-21 — 실측 30건에서 Qwen-v2
+ *    혼자 16건 중 1건 틀림, 둘 다 거부 11건 0건 틀림). 닫는 길은 사람·DeepSeek 결정과 같다 — 결정 기록(crawl_review_attempts
+ *    kind=delegated, actor qwen-v2-auto), 작업 로그(operations_audit, actorKind model, 두 모델의 판단), 사람 결정 위 쓰기 검사
+ *    (pipeline_evidence_events). 사유는 second_review_split_qwen_reject.
  *    카탈로그·디렉터리 같은 거부는 Qwen-v2 가 진짜 둘러보기 카탈로그를 가끔 거부해 세지 않는다(second-opinion-rules.ts) — 사람에게 남긴다.
  *  - Qwen-v2 승인: 발행하지 않는다. 답을 남기고 사람 큐 맨 앞에 «Qwen-v2 승인 — 발행 후보»로 세운다(gate-split-tiebreak-read.ts).
  *  - 보류·실패: 그대로 사람 몫이다.
@@ -80,18 +83,19 @@ type Claim = {
   tiebreakId: number; candidateId: number; repo: string; generationKey: string; firstAttemptId: number;
   input: ReviewInput; candidateRevision: string; gateIds: number[]; startedAt: Date;
 };
+export type { Claim as SplitTiebreakClaim, Domain as SplitTiebreakDomain, Gate as SplitTiebreakGate, Hint as SplitTiebreakHint };
 type ClaimResult = { kind: "claimed"; claim: Claim } | { kind: "skipped" } | { kind: "stop"; reason: string };
 type CallResult = { ok: true; review: QwenDirectReview } | { ok: false; code: string; detail: string | null; latencyMs: number };
-export type SplitTiebreakTick = { calls: number; rejected: number; kept: number; held: number; failed: number; superseded: number; skipped: number;
-  stopped: string | null };
+export type SplitTiebreakTick = { calls: number; rejected: number; awaiting: number; kept: number; held: number; failed: number; superseded: number;
+  skipped: number; stopped: string | null };
 
 /** 같은 조건으로 실제 모델 어댑터도 막힌다 — replay·고정 응답 범위에서는 판가름을 아예 돌리지 않는다(읽기·쓰기도 없다) */
-function liveCallsAllowed(): boolean {
+export function liveCallsAllowed(): boolean {
   try { assertLiveReviewAdapterAllowed(); return true; } catch { return false; }
 }
 
 /** 칸이 없는 설정 객체(부분 설정)는 꺼진 것으로 — 저장된 행은 mergeWithDefaults 가 qwenAuto 를 늘 채운다(기본 꺼짐) */
-const switchOn = (settings: CrawlSettings) => settings.enabled && settings.secondReview.enabled
+export const switchOn = (settings: CrawlSettings) => settings.enabled && settings.secondReview.enabled
   && Boolean((settings.qwenAuto as CrawlSettings["qwenAuto"] | undefined)?.splitTiebreak.enabled);
 
 /** 부르는 곳의 탈인가 — 저장된 오류 코드로 가른다. 멈춤(qwen_cancelled)과 우리 쪽 코드는 아니다 */
@@ -144,7 +148,7 @@ async function splitHints(limit: number, now: Date): Promise<Hint[]> {
 }
 
 /** 이 세대의 판가름 행 — 있으면 잠근다 */
-async function lockedRow(tx: ProductTransaction, candidateId: number, generationKey: string): Promise<GateSplitTiebreak | undefined> {
+export async function lockedRow(tx: ProductTransaction, candidateId: number, generationKey: string): Promise<GateSplitTiebreak | undefined> {
   const [row] = await tx.select().from(gateSplitTiebreaks).where(and(eq(gateSplitTiebreaks.candidateId, candidateId),
     eq(gateSplitTiebreaks.generationKey, generationKey), eq(gateSplitTiebreaks.promptVersion, QWEN_V2_PROMPT_VERSION))).for("update");
   return row;
@@ -169,8 +173,9 @@ type Gate = { rows: SecondReview[]; first: CrawlReviewAttempt; input: ReviewInpu
 /**
  * 잠근 후보의 지금 관문 — 이 세대의 열린 관문 행, 그 1차 판단, 저장된 관문 입력. 쓰는 트랜잭션도 같은 검사를 다시 한다.
  * 잠금 차례는 후보 → 원본 → 설정 → 개발 근거(lockedInput) → 1차 판단 → 관문 행 → 판가름 행이다(2차 기록과 같은 앞부분).
+ * DeepSeek 확인(gate-split-confirm.ts)도 같은 검사·같은 차례로 잡고 쓴다.
  */
-async function currentGate(tx: ProductTransaction, domain: Domain, hint: Hint): Promise<Gate> {
+export async function currentGate(tx: ProductTransaction, domain: Domain, hint: Hint): Promise<Gate> {
   const { candidate, document, input: live } = domain;
   if (candidate.id !== hint.candidateId || candidate.state !== "needs_review" || candidate.reason !== "second_review_split"
     || candidate.decidedBy !== "auto" || candidate.publishedSlug) return { gone: true };
@@ -237,7 +242,8 @@ async function claimSplitTiebreak(hint: Hint, lease: JobLease, now: Date, env: Q
     }
     const values = { state: "running" as const, model: config.model, firstAttemptId: gate.first.id, inputHash: gate.input.inputHash,
       sourceRevisionHash: gate.input.sourceRevisionHash, decision: null, confidence: null, reason: null, applied: null, decisionAttemptId: null,
-      errorCode: null, errorDetail: null, failureCount, latencyMs: null, leaseToken: lease.token, startedAt: now, completedAt: null, retryAfter: null };
+      errorCode: null, errorDetail: null, failureCount, latencyMs: null, leaseToken: lease.token, startedAt: now, completedAt: null, retryAfter: null,
+      ...DEEPSEEK_CLEARED };
     const [row] = existing
       ? await tx.update(gateSplitTiebreaks).set(values).where(eq(gateSplitTiebreaks.id, existing.id)).returning({ id: gateSplitTiebreaks.id })
       : await tx.insert(gateSplitTiebreaks).values({ ...values, candidateId: hint.candidateId, repo: hint.repo,
@@ -260,7 +266,12 @@ async function callQwen(input: ReviewInput, options: { timeoutMs: number; signal
   }
 }
 
-type Settled = "rejected" | "kept" | "held" | "failed" | "superseded";
+type Settled = "rejected" | "awaiting" | "kept" | "held" | "failed" | "superseded";
+
+/** 다시 묻는 판가름의 DeepSeek 확인 칸 — 비운다 */
+const DEEPSEEK_CLEARED = { qwenOutcome: null, deepseekState: null, deepseekModel: null, deepseekOutcome: null, deepseekErrorCode: null,
+  deepseekErrorDetail: null, deepseekFailureCount: 0, deepseekLatencyMs: null, deepseekLeaseToken: null, deepseekStartedAt: null,
+  deepseekCompletedAt: null, deepseekRetryAfter: null } as const;
 
 /** 받은 답을 쓴다 — 잡을 때 본 것이 하나라도 바뀌었으면 답만 남기고 후보는 건드리지 않는다 */
 async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobLease): Promise<Settled> {
@@ -293,7 +304,7 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
     }
     const { outcome, model, latencyMs } = result.review;
     const answer = { state: "succeeded" as const, model, decision: outcome.decision, confidence: outcome.confidence ?? null,
-      reason: outcome.reason.slice(0, 2000), latencyMs, errorCode: null, errorDetail: null, retryAfter: null };
+      reason: outcome.reason.slice(0, 2000), latencyMs, errorCode: null, errorDetail: null, retryAfter: null, qwenOutcome: outcome };
     // 단계 전환 중에는 후보를 바꾸지 않는다 — 답은 버리고 잠깐 뒤 다시 묻는다(세지 않는다)
     if (ai1.mode === "draining" || ai2.mode === "draining") return finish({ state: "failed", errorCode: "stage_draining", latencyMs,
       retryAfter: new Date(now.getTime() + SPLIT_TIEBREAK_ENDPOINT_BACKOFF_MS) }, "failed");
@@ -307,8 +318,8 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
     if (!qwenConfident(outcome.confidence)) return finish({ ...answer, applied: "held_low_confidence" }, "held");
     const verdict = splitRejectVerdict(gate.rows, outcome, model);
     if (verdict !== "apply") return finish({ ...answer, applied: verdict === "catalog" ? "held_catalog" : "held_minority" }, "held");
-    const attemptId = await applySplitReject(tx, { claim, domain, gate, outcome, model, tiebreakId: row.id, now });
-    return finish({ ...answer, applied: "rejected", decisionAttemptId: attemptId }, "rejected");
+    // 여기서 닫지 않는다 — M3 DeepSeek 이 같은 입력으로 따로 거부해야 닫는다(둘째 단계, 사람 검토 잡이 M3 를 쓰는 차례에 묻는다)
+    return finish({ ...answer, applied: "awaiting_deepseek", deepseekState: "waiting" }, "awaiting");
   });
 }
 
@@ -316,10 +327,14 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
  * 거부로 닫는다 — DeepSeek 위임 판단(human-review-repository.ts recordHumanReview)과 같은 기록을 같은 트랜잭션에 남긴다:
  * 결정 기록(kind=delegated) · 후보 상태 · 작업 로그. 사람 결정 위 쓰기 검사는 관문이 후보를 바꾸기 직전에 남기는 것과 같다.
  * 관문 행은 다음 2차 틱이 decided_elsewhere 로 닫는다(사람이 거부했을 때와 같다).
+ * 결정 기록의 판단은 Qwen-v2 의 것이고, 확인한 DeepSeek 의 판단(confirmation)은 작업 로그의 metadata·후보 signals 에 함께 남긴다 —
+ * { qwen: { model, promptVersion, confidence }, deepseek: { model, confidence } }. DeepSeek 확인(gate-split-confirm.ts)만 부른다.
  */
-async function applySplitReject(tx: ProductTransaction, input: { claim: Claim; domain: Domain; gate: Extract<Gate, { rows: SecondReview[] }>;
-  outcome: ReviewOutcome; model: string; tiebreakId: number; now: Date }): Promise<number> {
-  const { claim, domain: { candidate }, gate, outcome, model, tiebreakId, now } = input;
+export async function applySplitReject(tx: ProductTransaction, input: { claim: Claim; domain: Domain; gate: Extract<Gate, { rows: SecondReview[] }>;
+  outcome: ReviewOutcome; model: string; tiebreakId: number; now: Date; confirmation: { model: string; outcome: ReviewOutcome } }): Promise<number> {
+  const { claim, domain: { candidate }, gate, outcome, model, tiebreakId, now, confirmation } = input;
+  const verdicts = { qwen: { model, promptVersion: QWEN_V2_PROMPT_VERSION, confidence: outcome.confidence ?? null },
+    deepseek: { model: confirmation.model, confidence: confirmation.outcome.confidence ?? null } };
   await recordHumanDecisionOverride(tx, { stage: "ai2", candidateId: candidate.id, firstAttemptId: claim.firstAttemptId, secondReviewId: gate.rows[0].id });
   const [count] = await tx.select({ count: sql<number>`count(*)::int` }).from(crawlReviewAttempts).where(and(
     eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, "delegated"), eq(crawlReviewAttempts.actor, QWEN_V2_AUTO_SOURCE)));
@@ -332,11 +347,11 @@ async function applySplitReject(tx: ProductTransaction, input: { claim: Claim; d
     startedAt: claim.startedAt, completedAt: now, validUntil: claim.input.validUntil,
   }).returning({ id: crawlReviewAttempts.id });
   const previousStop = (candidate.signals ?? {}).stoppedAt ?? null;
-  const detail = `${model} reject: ${outcome.reason}`.slice(0, 300);
+  const detail = `${model} + ${confirmation.model} reject: ${outcome.reason}`.slice(0, 300);
   const updated = await tx.update(crawlCandidates).set({ state: "rejected", reason: SPLIT_QWEN_REJECT_REASON, decidedBy: "auto", decidedAt: now, updatedAt: now,
     signals: { ...(candidate.signals ?? {}), stoppedAt: { rule: "2차 갈림 판가름", detail },
       splitTiebreak: { id: tiebreakId, attemptId: attempt.id, model, promptVersion: QWEN_V2_PROMPT_VERSION, decision: outcome.decision,
-        confidence: outcome.confidence ?? null, generationKey: claim.generationKey, previousStop } },
+        confidence: outcome.confidence ?? null, generationKey: claim.generationKey, previousStop, deepseek: verdicts.deepseek } },
   }).where(and(eq(crawlCandidates.id, candidate.id), eq(crawlCandidates.state, "needs_review"),
     eq(crawlCandidates.reason, "second_review_split"), eq(crawlCandidates.decidedBy, "auto"))).returning({ id: crawlCandidates.id });
   // 후보는 이 트랜잭션이 잠그고 다시 확인했다 — 여기서 바뀌었다면 기록을 함께 되감는다
@@ -344,7 +359,8 @@ async function applySplitReject(tx: ProductTransaction, input: { claim: Claim; d
   await tx.insert(operationsAudit).values({ actor: QWEN_V2_AUTO_SOURCE, actorKind: "model", ok: true,
     action: "candidate-split-tiebreak-reject", target: candidate.repo,
     detail: { candidateId: candidate.id, tiebreakId, attemptId: attempt.id, firstAttemptId: claim.firstAttemptId, generationKey: claim.generationKey,
-      secondReviewIds: gate.rows.map(row => row.id), metadata: { promptVersion: QWEN_V2_PROMPT_VERSION, model }, outcome } });
+      secondReviewIds: gate.rows.map(row => row.id), metadata: { promptVersion: QWEN_V2_PROMPT_VERSION, model, ...verdicts }, outcome,
+      deepseekOutcome: confirmation.outcome } });
   return attempt.id;
 }
 
@@ -355,7 +371,7 @@ async function applySplitReject(tx: ProductTransaction, input: { claim: Claim; d
 export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLease, options: {
   deadlineAt: number; request?: typeof fetch; env?: QwenEnv;
 }): Promise<SplitTiebreakTick> {
-  const tick: SplitTiebreakTick = { calls: 0, rejected: 0, kept: 0, held: 0, failed: 0, superseded: 0, skipped: 0, stopped: null };
+  const tick: SplitTiebreakTick = { calls: 0, rejected: 0, awaiting: 0, kept: 0, held: 0, failed: 0, superseded: 0, skipped: 0, stopped: null };
   if (!liveCallsAllowed()) return { ...tick, stopped: "replay" };
   if (lease.name !== "second-review") throw new JobLeaseLostError();
   const deadlineAt = Math.min(options.deadlineAt, ctx.deadlineAt ?? Infinity, Date.now() + LANE_MS);

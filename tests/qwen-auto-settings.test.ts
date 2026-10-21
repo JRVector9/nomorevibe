@@ -8,7 +8,7 @@ import * as originMain from "./fixtures/settings-schema-55389b48";
  * 읽고 쓰는 배포·되돌림에서 감사 보류가 깨지지 않고, 옛 코드가 지운 자동 단계가 켬으로 되살아나지 않는다.
  */
 const enabledEverywhere: QwenAutoSettings = {
-  auditSecondOpinion: { enabled: true, perTick: 7 }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12 },
+  auditSecondOpinion: { enabled: true, perTick: 7 }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
   heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] },
 };
 /** 새 코드가 운영자 문턱을 바꾸고 네 단계를 켠 뒤 저장한 행 — saveSettings 는 파싱한 설정 전체를 쓴다 */
@@ -54,7 +54,17 @@ describe("storedQwenAuto — 없거나 깨지면 그 단계만 꺼짐", () => {
   it("행의 다른 칸이 깨져 기본값으로 돌아가도 자동 단계는 저장된 값을 읽는다", () => {
     const settings = mergeWithDefaults({ enabled: "broken", qwenAuto: { splitTiebreak: { enabled: true, perTick: 4 } } });
     expect(settings.enabled).toBe(false);
-    expect(settings.qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 4 });
+    // 하루 자동 거부 상한이 없던 값(이 칸 전)은 설계한 기본 상한(50)으로 읽는다 — 안전 상한이라 기본값이 곧 설계값이다
+    expect(settings.qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 4, dailyRejectCap: 50 });
+  });
+
+  it("하루 자동 거부 상한 — 0~500 정수. 깨지면 그 단계가 꺼진다", () => {
+    expect(DEFAULT_QWEN_AUTO.splitTiebreak).toEqual({ enabled: false, perTick: 10, dailyRejectCap: 50 });
+    expect(storedQwenAuto({ qwenAuto: { splitTiebreak: { enabled: true, perTick: 4, dailyRejectCap: 0 } } }).splitTiebreak)
+      .toEqual({ enabled: true, perTick: 4, dailyRejectCap: 0 });
+    for (const dailyRejectCap of [-1, 501, 2.5, "50"]) {
+      expect(storedQwenAuto({ qwenAuto: { splitTiebreak: { enabled: true, perTick: 4, dailyRejectCap } } }).splitTiebreak.enabled, String(dailyRejectCap)).toBe(false);
+    }
   });
 
   it("크롤 설정 폼의 판에 들지 않는다 — 스위치를 눌러도 열린 폼이 거절되지 않는다", () => {

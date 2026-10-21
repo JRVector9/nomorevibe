@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
-import { check, doublePrecision, index, integer, pgTable, serial, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import type { ReviewOutcome } from "@/lib/crawl/agent-review-contract";
+import { check, doublePrecision, index, integer, jsonb, pgTable, serial, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 
 /**
  * 2차 갈림 판가름(lib/crawl/gate-split-tiebreak.ts, 2026-10-21) — 두 모델 승인 관문에서 1차 승인·2차 반대로 갈려 사람에게 넘어온
@@ -11,12 +12,16 @@ import { check, doublePrecision, index, integer, pgTable, serial, text, timestam
  * 같은 1차 판단의 모든 관문 행을 읽는다. 판가름은 표가 아니라 사람 큐를 거르는 의견이라 따로 둔다.
  *
  * - state: running(묻는 중) · succeeded(답을 받음) · failed(실패 — retry_after 뒤 다시) · ineligible(관문 입력을 그대로 다시 만들 수 없음)
- * - applied: 답으로 무엇을 했나 — rejected(자동 거부) · kept_human(승인·보류 — 사람에게 남김) · held_minority(거부지만 다수가 아님)
- *   · held_catalog(카탈로그 예외) · switch_off(답을 받는 사이 꺼짐) · superseded(답을 받는 사이 후보·관문이 바뀜)
+ * - applied: 답으로 무엇을 했나 — awaiting_deepseek(Qwen-v2 거부 — DeepSeek 확인을 기다림, 0114) · rejected(두 모델이 따로 거부해 자동 거부)
+ *   · kept_human(승인·보류 — 사람에게 남김) · held_minority(거부지만 다수가 아님) · held_catalog(카탈로그 예외) · held_low_confidence
+ *   · held_not_enforce · held_deepseek(DeepSeek 이 거부로 확인하지 않음) · held_deepseek_error(DeepSeek 항목 탓 실패 소진)
+ *   · held_daily_cap(하루 자동 거부 상한) · switch_off(답을 받는 사이 꺼짐) · superseded(답을 받는 사이 후보·관문이 바뀜)
+ * - deepseek_*: 둘째 단계(DeepSeek 확인, lib/crawl/gate-split-confirm.ts — 사람 검토 잡이 M3 에 묻는다). 0114
  *
  * crawl_candidates 를 외래 키로 걸지 않는다(second_reviews 와 같다) — 마이그레이션이 바쁜 후보 표를 잠그지 않게.
  */
 export type GateSplitTiebreakState = "running" | "succeeded" | "failed" | "ineligible";
+export type GateSplitDeepseekState = "waiting" | "running" | "succeeded" | "failed";
 
 export const gateSplitTiebreaks = pgTable("gate_split_tiebreaks", {
   id: serial("id").primaryKey(),
@@ -47,12 +52,30 @@ export const gateSplitTiebreaks = pgTable("gate_split_tiebreaks", {
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
   retryAfter: timestamp("retry_after"),
+  /** Qwen-v2 의 답 전체(검증한 ReviewOutcome) — 두 모델이 거부해 닫을 때 결정 기록에 그대로 쓴다 */
+  qwenOutcome: jsonb("qwen_outcome").$type<ReviewOutcome>(),
+  deepseekState: varchar("deepseek_state", { length: 20 }).$type<GateSplitDeepseekState>(),
+  deepseekModel: varchar("deepseek_model", { length: 160 }),
+  /** DeepSeek 의 원래 답 — 사람 검토 위임의 0.90 문턱을 걸기 전 */
+  deepseekOutcome: jsonb("deepseek_outcome").$type<ReviewOutcome>(),
+  deepseekErrorCode: varchar("deepseek_error_code", { length: 60 }),
+  deepseekErrorDetail: varchar("deepseek_error_detail", { length: 80 }),
+  deepseekFailureCount: integer("deepseek_failure_count").notNull().default(0),
+  deepseekLatencyMs: integer("deepseek_latency_ms"),
+  deepseekLeaseToken: varchar("deepseek_lease_token", { length: 80 }),
+  deepseekStartedAt: timestamp("deepseek_started_at"),
+  /** 확인을 마친 때 — 하루 자동 거부 상한(KST 0시부터)도 이 시각으로 센다 */
+  deepseekCompletedAt: timestamp("deepseek_completed_at"),
+  deepseekRetryAfter: timestamp("deepseek_retry_after"),
 }, (table) => [
   uniqueIndex("gate_split_tiebreaks_generation_idx").on(table.candidateId, table.generationKey, table.promptVersion),
   index("gate_split_tiebreaks_completed_idx").on(table.completedAt.desc()),
   check("gate_split_tiebreaks_state_check", sql`${table.state} in ('running', 'succeeded', 'failed', 'ineligible')`),
   check("gate_split_tiebreaks_decision_check", sql`${table.decision} is null or ${table.decision} in ('approve', 'reject', 'needs_review')`),
   check("gate_split_tiebreaks_reason_check", sql`char_length(${table.reason}) <= 2000`),
+  check("gate_split_tiebreaks_deepseek_state_check",
+    sql`${table.deepseekState} is null or ${table.deepseekState} in ('waiting', 'running', 'succeeded', 'failed')`),
+  index("gate_split_tiebreaks_deepseek_idx").on(table.deepseekState, table.deepseekRetryAfter).where(sql`${table.deepseekState} is not null`),
 ]);
 
 export type GateSplitTiebreak = typeof gateSplitTiebreaks.$inferSelect;

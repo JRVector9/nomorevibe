@@ -15,7 +15,7 @@ import { BUCKET_NOTE, causeLabel, causeShort } from './causes';
 import { ReviewDetail, entryFacts, safeUrl, waitingDays, type DecidedResult } from './ReviewDetail';
 import { secondVoteView } from './secondVote';
 import { SHORTCUT_TABLE, reviewShortcut } from './shortcuts';
-import { TIEBREAK_APPROVE_BADGE, tiebreakApproved } from './tiebreak';
+import { tiebreakBadge } from './tiebreak';
 
 type Reason = { value: string; label: string };
 const VOTE_CHIP = { ok: 'bg-up/10 text-up', bad: 'bg-down/10 text-down', warn: 'bg-warn/10 text-warn', soft: 'bg-bg-soft text-fg-2' } as const;
@@ -233,8 +233,12 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
                     <div className="flex min-w-0 flex-col leading-[16px]">
                       <span className="truncate font-semibold" title={entry.name}>{entry.name}</span>
                       {/* 갈림 보류에 Qwen-v2 도 승인한 것 — 목록 맨 앞에 선다. 승인은 사람이 눌러야 발행된다 */}
-                      {entry.tiebreak && tiebreakApproved(entry.tiebreak) && <span className="w-fit rounded bg-up/10 px-1.5 py-px font-semibold text-up"
-                        title={`갈림 판가름(관문 2차 반대 뒤 세 번째 표) · ${entry.tiebreak.model}${typeof entry.tiebreak.confidence === 'number' ? ` · 확신 ${entry.tiebreak.confidence.toFixed(2)}` : ''}`}>{TIEBREAK_APPROVE_BADGE}</span>}
+                      {(() => {
+                        // 갈림 판가름 배지 — 승인(발행 후보) · DeepSeek 확인 대기 · DeepSeek 확인 안 됨 · 하루 상한
+                        const badge = tiebreakBadge(entry.tiebreak);
+                        return badge && <span className={`w-fit rounded px-1.5 py-px font-semibold ${badge.tone === 'up' ? 'bg-up/10 text-up'
+                          : badge.tone === 'warn' ? 'bg-warn/15 text-warn' : 'bg-bg-soft text-fg-2'}`} title={badge.title}>{badge.label}</span>;
+                      })()}
                       {picked.changed.has(candidate.id) && <span className="text-warn" title="고른 뒤 후보 내용이 바뀌어 고른 것을 풀었습니다 — 다시 읽고 고르세요">내용 바뀜 · 다시 고르세요</span>}
                       <span className="flex min-w-0 items-baseline gap-2">
                         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener" tabIndex={-1}

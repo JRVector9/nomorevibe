@@ -29,8 +29,8 @@ describe("set-qwen-auto", () => {
     const result = await run(["--step=splitTiebreak", "--enable", "--per-tick=5", "--reason=적체 회복", "--dry-run"]);
     expect(result.code).toBe(0);
     expect(result.json).toEqual({ command: "set-qwen-auto", step: "splitTiebreak", dryRun: true, ok: true,
-      before: { enabled: false, perTick: 10 }, after: { enabled: true, perTick: 5 } });
-    expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: false, perTick: 10 });
+      before: { enabled: false, perTick: 10, dailyRejectCap: 50 }, after: { enabled: true, perTick: 5, dailyRejectCap: 50 } });
+    expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: false, perTick: 10, dailyRejectCap: 50 });
     expect(await auditRowsAfter(floor)).toHaveLength(0);
     // 켜는 바꿈은 dry-run 에서도 사유를 받는다
     const refused = await run(["--step=splitTiebreak", "--enable", "--dry-run"]);
@@ -62,6 +62,15 @@ describe("set-qwen-auto", () => {
     expect((await auditRowsAfter(floor, "qwen-auto-settings")).map((audit) => audit.actor).sort()).toEqual(["ops:jr", "ops:tester"]);
   });
 
+  it("갈림 판가름의 하루 자동 거부 상한을 바꾼다 — 다른 단계에는 줄 수 없다", async () => {
+    const result = await run(["--step=splitTiebreak", "--enable", "--daily-reject-cap=20", "--reason=적체 회복", "--by=jr"]);
+    expect(result.code).toBe(0);
+    expect(result.json).toMatchObject({ ok: true, after: { enabled: true, perTick: 10, dailyRejectCap: 20 } });
+    expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 10, dailyRejectCap: 20 });
+    expect(() => parseSetQwenAutoArgs(["--step=heldRetry", "--daily-reject-cap=5"])).toThrow("qwen_auto_usage");
+    expect(parseSetQwenAutoArgs(["--step=splitTiebreak", "--daily-reject-cap=0"], { USER: "jr" })).toMatchObject({ enable: null, dailyRejectCap: 0 });
+  });
+
   it("범위를 넘는 값은 쓰지 않는다 — 거절도 작업 로그에 남긴다", async () => {
     const floor = await auditFloor();
     const result = await run(["--step=auditSecondOpinion", "--enable", "--per-tick=99", "--reason=x"]);
@@ -81,6 +90,6 @@ describe("set-qwen-auto", () => {
     expect(() => parseSetQwenAutoArgs(["--step=splitTiebreak", "--enable", "--per-tick=-1"])).toThrow("qwen_auto_invalid_number");
     expect(() => parseSetQwenAutoArgs(["--step=splitTiebreak", "--enable", "--by=a b"])).toThrow("qwen_auto_invalid_by");
     expect(parseSetQwenAutoArgs(["--step=publishedFilter", "--per-tick=4"], { USER: "jr" }))
-      .toEqual({ step: "publishedFilter", enable: null, perTick: 4, budgetSeconds: null, reason: null, by: "jr", dryRun: false });
+      .toEqual({ step: "publishedFilter", enable: null, perTick: 4, budgetSeconds: null, dailyRejectCap: null, reason: null, by: "jr", dryRun: false });
   });
 });

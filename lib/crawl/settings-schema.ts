@@ -322,14 +322,20 @@ const defaultAgentEvidence = {
  * 실측(2026-09-11, 사람이 결정한 50건): opus 단독 86% 일치·실패 0·최대 13.5초. 1차(sonnet v2)와
  * 결론이 같은 41건 중 40건이 사람과 일치했고, 둘 다 확신 ≥0.85 인 14건은 모두 일치했다.
  */
+/** 갈림 판가름이 하루(KST 0시부터)에 사람 없이 거부로 닫는 수의 기본 상한 — 사용자 결정(2026-10-21). 넘으면 나머지는 «하루 상한»으로 사람에게 */
+export const SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP = 50;
+
 /**
  * 2차 갈림 판가름(lib/crawl/gate-split-tiebreak.ts, 2026-10-21) — 관문에서 1차 승인·2차 반대로 갈려 사람에게 넘어온 후보를 gpu3090 Qwen-v2 에
- * 한 번 더 묻는다. Qwen-v2 도 거부하면 거부로 닫고, 승인이면 발행하지 않고 사람 큐 맨 앞에 둔다. perTick 은 2차 잡 한 틱에 묻는 수의 상한이다.
- * qwenAuto.splitTiebreak 에 둔다(아래 qwenAutoSchema).
+ * 한 번 더 묻는다. Qwen-v2 가 거부하면 M3 DeepSeek 이 같은 입력으로 따로 확인하고(gate-split-confirm.ts), 둘 다 거부해야 거부로 닫는다.
+ * 승인이면 발행하지 않고 사람 큐 맨 앞에 둔다. perTick 은 2차 잡 한 틱에 Qwen-v2 에 묻는 수의 상한이다.
+ * dailyRejectCap: 하루(KST)에 사람 없이 거부로 닫는 수의 상한(0 이면 닫지 않는다). 빠진 행(이 칸 전의 값)은 기본 50 으로 읽는다 — 안전 상한이라
+ * 기본값이 곧 설계한 값이다. qwenAuto.splitTiebreak 에 둔다(아래 qwenAutoSchema).
  */
 export const splitTiebreakSchema = z.object({
   enabled: z.boolean(),
   perTick: z.number().int().min(1).max(50),
+  dailyRejectCap: z.number().int().min(0).max(500).default(SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP),
 }).strict();
 
 const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
@@ -410,7 +416,7 @@ export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitT
 /** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
 export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
   auditSecondOpinion: { enabled: false, perTick: 10 }, publishedFilter: { enabled: false, perTick: 10 },
-  splitTiebreak: { enabled: false, perTick: 10 }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
+  splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
 };
 
 export const crawlSettingsSchema = z.object({

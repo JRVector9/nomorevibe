@@ -12,7 +12,7 @@ import { approvalNote, causeLabel, modelsAgree, recommendDecision } from './caus
 import { entryVersion, type ReviewDecisionState } from './contract';
 import { ReasonText } from './ReasonText';
 import { revealInPanel, reviewShortcut } from './shortcuts';
-import { SPLIT_TIEBREAK_ACTOR, TIEBREAK_APPROVE_BADGE, tiebreakApproved, tiebreakSummary } from './tiebreak';
+import { SPLIT_TIEBREAK_ACTOR, TIEBREAK_APPROVE_BADGE, tiebreakApproved, tiebreakDeepseekLine, tiebreakSummary } from './tiebreak';
 
 /** 성공한 한 건 결정 — 알림과 되돌리기가 쓴다 */
 export type DecidedResult = Extract<NonNullable<ReviewDecisionState>, { ok: true }>;
@@ -281,6 +281,9 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
           {typeof entry.tiebreak.confidence === 'number' ? <span className="ml-1.5 font-mono text-fg-3">확신 {entry.tiebreak.confidence.toFixed(2)}</span> : null}
           <span className="mt-0.5 block font-semibold">{tiebreakSummary(entry.tiebreak)}</span>
           {entry.tiebreak.reason ? <span className="mt-1 block"><ReasonText text={entry.tiebreak.reason} limit={400} /></span> : null}
+          {/* DeepSeek 확인 — Qwen-v2 가 거부했을 때 둘째 모델의 판단. 둘 다 거부해야 사람 없이 닫는다 */}
+          {tiebreakDeepseekLine(entry.tiebreak) && <span className="mt-1 block font-semibold">{tiebreakDeepseekLine(entry.tiebreak)}</span>}
+          {entry.tiebreak.deepseek?.reason ? <span className="mt-0.5 block"><ReasonText text={entry.tiebreak.deepseek.reason} limit={400} /></span> : null}
         </p>
       )}
 

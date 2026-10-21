@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, sql, notInArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, gateSplitTiebreaks, secondReviews } from "@/lib/db/schema";
+import { kstDayStart } from "@/lib/operations/windows";
 import { endpointBackoffActive, readQwenEndpointBackoff } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION } from "./qwen-direct-review";
 
@@ -40,6 +41,9 @@ export type SplitTiebreakView = {
   model: string; promptVersion: string; applied: string | null; at: string | null;
   /** 지금 후보의 관문 세대에 붙은 답인가 — 아니면 지난 입력의 답이라 배지를 달지 않는다 */
   current: boolean;
+  /** DeepSeek 확인(gate-split-confirm.ts) — Qwen-v2 가 거부했을 때만. 답이 없으면 decision 이 비고, 마지막 실패가 errorCode 다 */
+  deepseek: { state: string; model: string | null; decision: string | null; confidence: number | null; reason: string | null;
+    errorCode: string | null } | null;
 };
 
 /** 후보마다 마지막 판가름 — 상세의 «Qwen-v2 판가름» 칸과 목록의 배지 */
@@ -49,17 +53,28 @@ export async function splitTiebreakVerdicts(candidateIds: number[]): Promise<Map
     candidateId: t.candidateId, decision: t.decision, confidence: t.confidence, reason: t.reason, model: t.model,
     promptVersion: t.promptVersion, applied: t.applied, completedAt: t.completedAt,
     current: sql<boolean>`(${liveVerdict})`,
+    deepseekState: t.deepseekState, deepseekModel: t.deepseekModel, deepseekOutcome: t.deepseekOutcome, deepseekErrorCode: t.deepseekErrorCode,
   }).from(t).innerJoin(crawlCandidates, eq(crawlCandidates.id, t.candidateId))
     .where(and(inArray(t.candidateId, candidateIds), eq(t.state, "succeeded")))
     .orderBy(t.candidateId, desc(t.completedAt), desc(t.id));
   return new Map(rows.map(row => [row.candidateId, { decision: row.decision, confidence: row.confidence, reason: row.reason,
     model: row.model, promptVersion: row.promptVersion, applied: row.applied, at: row.completedAt?.toISOString() ?? null,
-    current: Boolean(row.current) }]));
+    current: Boolean(row.current),
+    deepseek: row.deepseekState ? { state: row.deepseekState, model: row.deepseekModel, decision: row.deepseekOutcome?.decision ?? null,
+      confidence: row.deepseekOutcome?.confidence ?? null, reason: row.deepseekOutcome?.reason ?? null, errorCode: row.deepseekErrorCode } : null }]));
 }
 
 export type SplitTiebreakStatus = {
   /** 이 판으로 답을 받은 수 · 그중 거부로 닫은 수 · 승인이라 사람을 기다리는 지금 후보 수 · 거부지만 다수가 아니거나 카탈로그라 남긴 수 */
   processed: number; rejected: number; approvedWaiting: number; heldReject: number;
+  /** Qwen-v2 거부 — DeepSeek 확인을 기다리는 수 · 오늘(KST 0시부터) 두 모델 거부로 닫은 수 */
+  awaitingDeepseek: number; rejectedToday: number;
+  /** 사람에게 남긴 까닭 — DeepSeek 이 거부로 확인하지 않음(실패 소진 포함) · 하루 상한 · 카탈로그 예외 */
+  held: { deepseek: number; dailyCap: number; catalog: number };
+  /** DeepSeek 확인의 마지막 실패(멈춤·단계 전환은 오류가 아니다)·마지막으로 답을 받은 때·물러나 다시 묻는 때 */
+  deepseekLastError: { code: string; at: string } | null;
+  deepseekLastSuccessAt: string | null;
+  deepseekRetryAt: string | null;
   /** 아직 답이 없는 지금 갈림 보류(관문 세대 기준) — 실패 뒤 기다리는 것 포함 */
   remaining: number;
   /** 관문 입력을 그대로 다시 만들 수 없어 사람에게 남긴 것(원본·정책이 바뀜 등) · 항목 탓 실패를 다 쓴 것 */
@@ -76,7 +91,9 @@ export type SplitTiebreakStatus = {
 /** 심사 큐 머리의 판가름 줄 — 한 번에 센다(표가 작다: 갈림 보류 수 × 판) */
 export async function splitTiebreakStatus(): Promise<SplitTiebreakStatus> {
   const maxFailures = SPLIT_TIEBREAK_MAX_FAILURES;
-  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const now = new Date();
+  const since = new Date(now.getTime() - 24 * 3600_000).toISOString();
+  const today = kstDayStart(sql`${now.toISOString()}::timestamp`);
   const [counts] = await db.select({
     processed: sql<number>`count(*) filter (where ${t.state} = 'succeeded')::int`,
     rejected: sql<number>`count(*) filter (where ${t.applied} = 'rejected')::int`,
@@ -85,6 +102,11 @@ export async function splitTiebreakStatus(): Promise<SplitTiebreakStatus> {
     exhausted: sql<number>`count(*) filter (where ${t.state} = 'failed' and ${t.failureCount} >= ${maxFailures})::int`,
     dayProcessed: sql<number>`count(*) filter (where ${t.state} = 'succeeded' and ${t.completedAt} > ${since}::timestamp)::int`,
     dayRejected: sql<number>`count(*) filter (where ${t.applied} = 'rejected' and ${t.completedAt} > ${since}::timestamp)::int`,
+    awaitingDeepseek: sql<number>`count(*) filter (where ${t.applied} = 'awaiting_deepseek')::int`,
+    rejectedToday: sql<number>`count(*) filter (where ${t.applied} = 'rejected' and ${t.deepseekCompletedAt} >= ${today})::int`,
+    heldDeepseek: sql<number>`count(*) filter (where ${t.applied} in ('held_deepseek', 'held_deepseek_error'))::int`,
+    heldDailyCap: sql<number>`count(*) filter (where ${t.applied} = 'held_daily_cap')::int`,
+    heldCatalog: sql<number>`count(*) filter (where ${t.applied} = 'held_catalog')::int`,
   }).from(t).where(eq(t.promptVersion, QWEN_V2_PROMPT_VERSION));
   const [waiting] = await db.select({ count: sql<number>`count(distinct ${t.candidateId})::int` }).from(t)
     .innerJoin(crawlCandidates, eq(crawlCandidates.id, t.candidateId)).where(and(eq(t.decision, "approve"), liveVerdict));
@@ -102,7 +124,21 @@ export async function splitTiebreakStatus(): Promise<SplitTiebreakStatus> {
   const [success] = await db.select({ at: t.completedAt }).from(t)
     .where(and(eq(t.state, "succeeded"), isNotNull(t.completedAt), eq(t.promptVersion, QWEN_V2_PROMPT_VERSION))).orderBy(desc(t.completedAt)).limit(1);
   const backoff = await readQwenEndpointBackoff().catch(() => null);
+  const [deepseekError] = await db.select({ code: t.deepseekErrorCode, at: t.deepseekCompletedAt }).from(t)
+    .where(and(isNotNull(t.deepseekErrorCode), isNotNull(t.deepseekCompletedAt), eq(t.promptVersion, QWEN_V2_PROMPT_VERSION),
+      notInArray(t.deepseekErrorCode, ["stage_draining", "cancelled"]))).orderBy(desc(t.deepseekCompletedAt)).limit(1);
+  const [deepseekSuccess] = await db.select({ at: t.deepseekCompletedAt }).from(t)
+    .where(and(eq(t.deepseekState, "succeeded"), isNotNull(t.deepseekCompletedAt), eq(t.promptVersion, QWEN_V2_PROMPT_VERSION)))
+    .orderBy(desc(t.deepseekCompletedAt)).limit(1);
+  const [retry] = await db.select({ at: sql<Date | null>`max(${t.deepseekRetryAfter})` }).from(t)
+    .where(and(eq(t.applied, "awaiting_deepseek"), eq(t.deepseekState, "failed"), sql`${t.deepseekRetryAfter} > ${now.toISOString()}::timestamp`));
+  const retryAt = retry?.at ? new Date(retry.at) : null;
   return {
+    awaitingDeepseek: counts?.awaitingDeepseek ?? 0, rejectedToday: counts?.rejectedToday ?? 0,
+    held: { deepseek: counts?.heldDeepseek ?? 0, dailyCap: counts?.heldDailyCap ?? 0, catalog: counts?.heldCatalog ?? 0 },
+    deepseekLastError: deepseekError?.code && deepseekError.at ? { code: deepseekError.code, at: deepseekError.at.toISOString() } : null,
+    deepseekLastSuccessAt: deepseekSuccess?.at?.toISOString() ?? null,
+    deepseekRetryAt: retryAt && !Number.isNaN(retryAt.getTime()) ? retryAt.toISOString() : null,
     processed: counts?.processed ?? 0, rejected: counts?.rejected ?? 0, approvedWaiting: waiting?.count ?? 0,
     heldReject: counts?.heldReject ?? 0, remaining: open?.count ?? 0, ineligible: counts?.ineligible ?? 0, exhausted: counts?.exhausted ?? 0,
     day: { processed: counts?.dayProcessed ?? 0, rejected: counts?.dayRejected ?? 0 },
