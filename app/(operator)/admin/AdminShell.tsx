@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminNav, type NavBadges } from "./AdminNav";
+import { laterOf } from "./live-refresh";
 import { AdminIcon } from "./components/AdminIcon";
 import { CommandSearch } from "./components/CommandSearch";
+import { LiveBar } from "./components/LiveBar";
 import { ADMIN_THEME_SCRIPT, ThemeToggle } from "./components/ThemeToggle";
 import { AdminToastProvider } from "./components/Toast";
 
@@ -18,14 +20,41 @@ function InlineScript({ html }: { html: string }) {
 }
 
 /**
+ * 화면을 옮긴 뒤 메뉴 배지를 다시 받는다 — 공유 레이아웃은 <Link> 이동에서 다시 그려지지 않는다(Next 문서 "layouts … do not rerender").
+ * 자동 갱신·새로고침(router.refresh)은 레이아웃까지 다시 그리므로 그때는 레이아웃이 준 배지(renderedAt)가 더 늦다 — 늦은 쪽을 보인다.
+ * 첫 그리기에서는 부르지 않는다(레이아웃이 방금 셌다). 앞 요청은 다음 이동에서 끊는다.
+ */
+function useLiveBadges(pathname: string, badges: NavBadges | undefined, renderedAt: string) {
+  const [fetched, setFetched] = useState<{ badges: NavBadges; at: string } | null>(null);
+  const first = useRef(true);
+  const load = useCallback((signal?: AbortSignal) => {
+    fetch("/admin/nav-badges", { cache: "no-store", signal })
+      .then((response) => response.ok ? response.json() as Promise<{ badges?: NavBadges; at?: string }> : null)
+      .then((body) => { if (body?.badges && typeof body.at === "string") setFetched({ badges: body.badges, at: body.at }); })
+      .catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    if (pathname === "/admin/login") return;
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [pathname, load]);
+  const shownAt = laterOf(renderedAt, fetched?.at);
+  return { badges: fetched && shownAt === fetched.at ? fetched.badges : badges, shownAt };
+}
+
+/**
  * Page bodies remain server components; this boundary only owns navigation.
  * account — 로그인한 관리자(사이드바 아래 로그아웃 옆에 보인다). badges — AdminNav 의 NavBadges(열쇠는 메뉴 href).
+ * renderedAt — 레이아웃을 그린 서버 시각. 머리의 갱신 줄(LiveBar)이 "마지막 갱신"으로 보인다.
  */
-export function AdminShell({ children, badges, account }: { children: React.ReactNode; badges?: NavBadges; account?: string | null }) {
+export function AdminShell({ children, badges, account, renderedAt }: { children: React.ReactNode; badges?: NavBadges; account?: string | null; renderedAt: string }) {
   const pathname = usePathname();
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
   const [railExpanded, setRailExpanded] = useState(false);
+  const live = useLiveBadges(pathname, badges, renderedAt);
   if (pathname === "/admin/login") return <div className="admin-login-area">{children}</div>;
   const expanded = expandedOn === pathname;
   return <AdminToastProvider>
@@ -47,7 +76,7 @@ export function AdminShell({ children, badges, account }: { children: React.Reac
         <div id="admin-sidebar-menu" className={`admin-sidebar-menu${expanded ? " is-expanded" : ""}`}>
           {/* 전역 검색(⌘K, ADM-05) — 메뉴 맨 위. 단축키는 어느 화면에서든 듣는다 */}
           <CommandSearch />
-          <AdminNav current={pathname} badges={badges} />
+          <AdminNav current={pathname} badges={live.badges} />
           <div className="admin-sidebar-bottom">
             <ThemeToggle />
             {account && <div className="admin-account">
@@ -62,7 +91,10 @@ export function AdminShell({ children, badges, account }: { children: React.Reac
           </div>
         </div>
       </aside>
-      <div className="admin-content" id="admin-content" tabIndex={-1}>{children}</div>
+      <div className="admin-content" id="admin-content" tabIndex={-1}>
+        <LiveBar shownAt={live.shownAt} />
+        {children}
+      </div>
     </div>
   </AdminToastProvider>;
 }

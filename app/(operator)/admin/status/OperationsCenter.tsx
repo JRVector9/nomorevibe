@@ -18,11 +18,9 @@ import './dashboard/flow.css';
 import { OperationsDialog } from './OperationsDialog';
 import { JobTimeline } from './JobTimeline';
 import { JobsStrip } from './dashboard/JobsStrip';
-import { LiveRefresh } from './LiveRefresh';
 import { CollectionSwitch } from './CollectionSwitch';
 import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { STATUS_TABS, type StatusTab } from './action-links';
-import { OPS_FRESH_COOKIE, OPS_FRESH_SECONDS } from './fresh';
 import type { FlowVerdict } from './flow-model';
 export type OperationJob = { name:string; status:string; lastRunAt:string|null; lastSuccessAt:string|null; nextScheduledAt:string|null; notBefore:string|null; workerSeenAt:string|null; requestedVersion:number; processedVersion:number; runs:number; lastError:string|null; cursor:string };
 const ROLES=['app','scheduler','crawler','reviewer','publisher','text','maintenance','db','connect-agent'];
@@ -37,8 +35,6 @@ const SPLIT_IDLE='대기 · 기존 방식(legacy)';
 const TAB_LABELS:Record<StatusTab,string>={overview:'전체 현황',jobs:'작업 흐름',crawlers:'크롤러 활동',ai:'AI 연결',manual:'수동 분류',diagnostics:'진단',flow:'흐름 상세'};
 /** 흐름 판정의 점 색 — 회색(일감 없음·멈춤)은 색을 달지 않는다 */
 const DOT:Record<FlowVerdict['tone'],'ok'|'warn'|'bad'|undefined>={ok:'ok',warn:'warn',bad:'bad',idle:undefined};
-/** 머리의 "마지막 갱신 13:38:20" — 서버가 읽은 시각(KST)의 시:분:초 */
-const clock=(value:string)=>formatDetailTime(value).split(' ')[1]??'—';
 /**
  * 전체 현황 탭은 서버가 그린 조각(attention·dashboard·statusChips·diagnostics·manual)을 12칸 격자에 놓는다.
  * 숫자를 모으는 쿼리는 page.tsx 에, 상호작용(탭·상세 창·작업 요청)은 여기에 둔다.
@@ -100,11 +96,9 @@ export function OperationsCenter({jobs,data,reviewMode,enabled,attention,dashboa
   const warns=(key:string)=>/없음|지연|필요|failed/.test(status(key));
   const jobPaused=!!job?.notBefore&&Date.parse(job.notBefore)-Date.parse(data.fetchedAt)>PAUSED_AFTER_MS;
   function request(name:string){start(async()=>{const result=await requestOperation(name);setMessage(result.error??result.message??'');router.refresh();});}
-  /** 수동 새로고침만 5초 쿠키를 건다 — 서버가 새 숫자의 15·20초 캐시를 건너뛴다(fresh.ts). 자동 갱신(LiveRefresh)은 걸지 않는다 */
-  function refreshFresh(){document.cookie=`${OPS_FRESH_COOKIE}=1; Max-Age=${OPS_FRESH_SECONDS}; Path=/admin/status; SameSite=Strict`;start(()=>router.refresh());}
   const aiButton=<button className="primary" onClick={()=>show({tab:'ai'})}>AI 연결·설정</button>;
   return <div className="ops-center">
-    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">마지막 갱신 <time dateTime={data.fetchedAt}>{clock(data.fetchedAt)}</time> · 워커 관측 15초 · 화면 10초</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/><LiveRefresh/><button disabled={pending} onClick={refreshFresh}>새로고침</button>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
+    <header className="ops-header compact"><div><h1>운영센터</h1><span className="ops-snapshot-inline">워커 관측 15초 · 화면 10초 · 자동 갱신·새로고침·마지막 갱신은 맨 위 줄</span></div><div className="ops-actions"><CollectionSwitch enabled={enabled}/>{verdict?<span className="ops-ai-bundle">{aiButton}<span className="ops-flow-mini">
       {/* 폰 흐름 미니(v8 N6) — 단추와 한 항목, 기본 폭 0 이라 단추 줄바꿈이 지금과 같다. 남는 폭만 쓰고 이름 → 점 → 사라짐 */}
       <button type="button" className="ops-flow-mini-in" title={verdict.title} aria-label={`${verdict.text} — 흐름 상세 보기`} onClick={()=>show({tab:'flow'})}>
         <span className="dash-pill" data-tone={DOT[verdict.tone]}><i className="dash-dot" data-tone={DOT[verdict.tone]} aria-hidden/>{verdict.short}</span>

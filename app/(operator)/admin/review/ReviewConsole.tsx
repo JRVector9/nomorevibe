@@ -55,7 +55,13 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
   const [help, setHelp] = useState(false);
   const found = entries.findIndex((entry) => entry.candidate.id === selection.id);
   const index = found >= 0 ? found : Math.min(selection.index, entries.length - 1);
-  const selected = entries[index];
+  /*
+   * 다시 읽은 목록(자동 갱신·일괄 결정 뒤)에서 보던 후보가 빠졌으면 — 다른 곳에서 처리됐거나 구간을 옮겼다 — 같은 자리의 다른 후보로
+   * 말없이 바꾸지 않는다: 그대로 A/R 을 누르면 읽지 않은 후보를 결정하게 된다. 다시 고를 때까지 상세를 비우고 알린다.
+   * 결정 뒤 다음 줄로 옮길 때(decided)는 다음 후보 id 를 고르므로 여기에 걸리지 않는다. id 0 은 "자리만 지킨다"는 뜻이다.
+   */
+  const lost = found < 0 && selection.id !== 0 && entries.length > 0;
+  const selected = lost ? undefined : entries[index];
   const selectable = useMemo(() => entries.filter((entry) => !!entry.inputHash && !!entry.sourceRevisionHash
     && entry.candidate.state !== 'published' && !entry.candidate.publishedSlug), [entries]);
   const tableRef = useRef<HTMLTableElement>(null);
@@ -115,9 +121,10 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
   /** 한 건 결정이 기록됐다 — 알림을 띄우고 다음 줄로. 결정한 줄이 목록에 남아도(진행 중 목록의 승인) 빠져도 같은 줄에 선다 */
   function decided(entry: AdminReviewEntry, result: DecidedResult) {
     const at = entries.indexOf(entry);
-    const next = entries[at + 1] ?? entries[at - 1] ?? entry;
+    const next = entries[at + 1] ?? entries[at - 1];
     focusRow.current = true;
-    setSelection({ id: next.candidate.id, index: at });
+    // 마지막 한 건이었으면 자리만 지킨다(id 0) — 다시 읽은 목록의 같은 자리 후보가 선다
+    setSelection({ id: next?.candidate.id ?? 0, index: at });
     setChecked((current) => { const copy = new Set(current); copy.delete(entry.candidate.id); return copy; });
     toast.show({
       message: `${result.decision === 'approve' ? '승인함' : '거부함'} · ${entry.name}`,
@@ -186,7 +193,7 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
               const vote = secondVoteView(entry.seconds);
               const bucket = entry.bucket ?? entry.verdict?.cause ?? null;
               const canDecide = selectable.includes(entry);
-              const active = row === index;
+              const active = !lost && row === index;
               const reasonText = candidate.reason ? REASON_LABELS[candidate.reason] ?? candidate.reason : '—';
               const deployUrl = safeUrl(candidate.productUrl);
               const productUrl = deployUrl ? { href: deployUrl, host: new URL(deployUrl).host } : null;
@@ -247,6 +254,10 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
         className="rounded-[12px] border border-line bg-bg-card outline-none lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto">
         {selected ? <ReviewDetail key={`${selected.candidate.id}:${selected.candidateRevisionHash}`} entry={selected} reasons={reasons}
           onDecided={(result) => decided(selected, result)} />
+          : lost ? <div role="status" className="flex flex-col items-start gap-2 p-4 text-[13px] text-fg-2">
+            <p>보던 후보가 새로 읽은 목록에서 빠졌습니다 — 다른 곳에서 처리됐거나 구간이 바뀌었을 수 있습니다. 결정하려면 줄을 다시 고르세요.</p>
+            <button type="button" onClick={() => select(index)} className="font-semibold text-accent hover:text-fg">같은 자리의 후보 보기</button>
+          </div>
           : <p className="p-4 text-[13px] text-fg-3">고른 후보가 없습니다.</p>}
       </aside>
       <ShortcutHelp open={help} onClose={() => setHelp(false)} />
