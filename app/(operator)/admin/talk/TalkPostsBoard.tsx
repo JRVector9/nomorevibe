@@ -10,25 +10,34 @@ export type TalkPostRow = {
   source: string;
   kind: "link" | "show";
   title: string;
+  /** 원문(HN 토론·X 게시물) */
   discussionUrl: string;
+  /** 글이 가리킨 주소(http(s) 가 아니면 null)와 그 호스트 */
+  linkUrl: string | null;
+  linkHost: string;
   linkTarget: string;
   repositoryKey: string | null;
   points: number;
   comments: number;
+  frontPage: boolean;
   postedAt: string;
+  firstSeenAt: string;
+  lastSeenAt: string;
   state: "visible" | "hidden" | "gone";
   excluded: boolean;
   product: { slug: string; status: string } | null;
+  /** 지금 /talk 에 보이는지, 아니면 왜 아닌지(lib/social/talk-reasons.ts) */
+  talk: { shown: boolean; rank: number | null; reasons: string[] };
 };
 
 const STATE_LABEL: Record<TalkPostRow["state"], { text: string; className: string }> = {
   visible: { text: "보임", className: "border-up/40 bg-up/10 text-up" },
   hidden: { text: "숨김", className: "border-line bg-bg-soft text-fg-3" },
-  gone: { text: "원문 지워짐", className: "border-down/40 bg-down/5 text-down" },
+  gone: { text: "원문 삭제", className: "border-down/40 bg-down/5 text-down" },
 };
-const TARGET_LABEL: Record<string, string> = { repo: "저장소", path: "저장소 안", issue: "이슈", pull: "PR", site: "제품 사이트" };
+const TARGET_LABEL: Record<string, string> = { repo: "저장소", path: "저장소 안", issue: "이슈", pull: "PR", site: "저장소 아님" };
 
-/** 화제 글 — 고른 글을 숨기거나 다시 보이고, 저장소째 화제에서 뺀다. now 는 서버가 그린 시각 */
+/** 수집한 글 — 고른 글을 숨기거나 다시 보이고, 저장소째 화제에서 뺀다. now 는 서버가 그린 시각 */
 export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string }) {
   const [state, action, pending] = useActionState<TalkActionState, FormData>(decideTalkPosts, null);
   const [excludeState, exclude, excluding] = useActionState<TalkActionState, FormData>(excludeTalkRepository, null);
@@ -54,18 +63,19 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
         <div aria-live="polite">{message(state)}{message(excludeState)}</div>
       </form>
       <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
-        <ScrollTable label="화제 글">
-          <table className="w-full min-w-[900px] text-[13px]">
+        <ScrollTable label="수집한 글">
+          <table className="w-full min-w-[1100px] text-[13px]">
             <thead className="text-left text-fg-3">
               <tr className="border-b border-line">
-                <th className="px-3 py-2"><input type="checkbox" aria-label="모두 선택" checked={allSelected}
+                <th className="px-3 py-2"><input type="checkbox" aria-label="이 쪽 모두 선택" checked={allSelected}
                   onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))} /></th>
                 <th className="px-3 py-2 font-semibold">출처</th>
                 <th className="px-3 py-2 font-semibold">글</th>
                 <th className="px-3 py-2 font-semibold">점수 · 댓글</th>
-                <th className="px-3 py-2 font-semibold">게시</th>
+                <th className="px-3 py-2 font-semibold">게시 · 확인</th>
                 <th className="px-3 py-2 font-semibold">저장소 · 연결 제품</th>
                 <th className="px-3 py-2 font-semibold">상태</th>
+                <th className="px-3 py-2 font-semibold">/talk</th>
               </tr>
             </thead>
             <tbody>
@@ -75,17 +85,28 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                     <input type="checkbox" form="talk-posts" name="id" value={row.id} checked={selected.has(row.id)} onChange={() => toggle(row.id)}
                       aria-label={`${row.title} 선택`} disabled={row.state === "gone"} />
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 text-fg-2">{row.source}{row.kind === "show" ? " · 메이커 글" : ""}</td>
-                  <td className="px-3 py-2">
+                  <td className="whitespace-nowrap px-3 py-2 text-fg-2">
+                    {row.source}{row.kind === "show" ? " · 메이커 글" : ""}
+                    {row.frontPage && <span className="block text-fg-3">첫 화면</span>}
+                  </td>
+                  <td className="max-w-[360px] px-3 py-2">
                     <a href={row.discussionUrl} target="_blank" rel="noopener noreferrer" className="font-semibold hover:underline">{row.title}</a>
-                    <span className="ml-1 text-fg-3">({TARGET_LABEL[row.linkTarget] ?? row.linkTarget})</span>
+                    <span className="block break-all text-fg-3">
+                      {row.linkUrl ? <a href={row.linkUrl} target="_blank" rel="noopener noreferrer nofollow" className="hover:underline">{row.linkHost}</a> : row.linkHost}
+                      {" "}({TARGET_LABEL[row.linkTarget] ?? row.linkTarget})
+                    </span>
                   </td>
                   <td className="whitespace-nowrap px-3 py-2 font-mono">{row.points} · {row.comments}</td>
-                  <td className="whitespace-nowrap px-3 py-2 text-fg-3">{formatListTime(row.postedAt, now)}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-fg-3">
+                    <span className="text-fg-2">{formatListTime(row.postedAt, now)}</span>
+                    <span className="block">처음 {formatListTime(row.firstSeenAt, now)}</span>
+                    <span className="block">마지막 {formatListTime(row.lastSeenAt, now)}</span>
+                  </td>
                   <td className="px-3 py-2">
                     <span className="font-mono text-[13px]">{row.repositoryKey ?? "—"}</span>
                     <span className="block text-fg-3">
-                      {row.product ? <a href={`/p/${row.product.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{row.product.slug} · {row.product.status}</a> : "제품 없음"}
+                      {row.product ? <a href={`/p/${row.product.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{row.product.slug} · {row.product.status}</a>
+                        : row.repositoryKey ? "제품 없음" : "저장소 없음"}
                     </span>
                     {row.repositoryKey && (
                       <form action={exclude} className="mt-1">
@@ -102,9 +123,19 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                     <span className={`whitespace-nowrap rounded-full border px-2 py-0.5 text-[13px] font-semibold ${STATE_LABEL[row.state].className}`}>{STATE_LABEL[row.state].text}</span>
                     {row.excluded && <span className="mt-1 block text-[13px] text-down">저장소 빠짐</span>}
                   </td>
+                  <td className="min-w-[180px] px-3 py-2">
+                    {row.talk.shown
+                      ? <span className="whitespace-nowrap rounded-full border border-up/40 bg-up/10 px-2 py-0.5 text-[13px] font-semibold text-up">보임 · {row.talk.rank}위</span>
+                      : <span className="whitespace-nowrap rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-3">안 보임</span>}
+                    {row.talk.reasons.length > 0 && (
+                      <ul className="mt-1 flex flex-col gap-0.5 text-[13px] text-fg-2">
+                        {row.talk.reasons.map(reason => <li key={reason}>{reason}</li>)}
+                      </ul>
+                    )}
+                  </td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="px-3 py-6 text-center text-fg-3">최근 7일 동안 기록한 화제 글이 없습니다.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={8} className="px-3 py-6 text-center text-fg-3">조건에 맞는 글이 없습니다.</td></tr>}
             </tbody>
           </table>
         </ScrollTable>

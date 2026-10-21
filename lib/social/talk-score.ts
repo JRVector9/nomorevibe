@@ -16,11 +16,18 @@ export const TALK_HALF_LIFE_MS = 36 * 3_600_000;
 /** /talk·홈에 글이 보이는 기간 */
 export const TALK_VISIBLE_MS = 7 * 86_400_000;
 
+/** 화면에 오를 자격의 기준값 — 관리자 화면도 이 값으로 '점수 미달'을 적는다 */
+export const TALK_THRESHOLD = {
+  hn: { points: 30, comments: 15 },
+  geeknews: { showPoints: 3, linkPoints: 5 },
+  x: { points: 50 },
+} as const;
+
 /** 화면에 오를 자격 — 하나라도 넘어야 한다. X·GeekNews 는 수집을 붙일 때 실제 분포로 다시 정한다 */
 export function talkQualifies(post: TalkPostInput): boolean {
-  if (post.source === "hn") return post.points >= 30 || post.comments >= 15;
-  if (post.source === "geeknews") return post.points >= (post.kind === "show" ? 3 : 5);
-  return post.points >= 50;
+  if (post.source === "hn") return post.points >= TALK_THRESHOLD.hn.points || post.comments >= TALK_THRESHOLD.hn.comments;
+  if (post.source === "geeknews") return post.points >= (post.kind === "show" ? TALK_THRESHOLD.geeknews.showPoints : TALK_THRESHOLD.geeknews.linkPoints);
+  return post.points >= TALK_THRESHOLD.x.points;
 }
 
 export const postScore = (post: TalkPostInput) =>

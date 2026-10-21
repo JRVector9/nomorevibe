@@ -8,6 +8,7 @@ import type { SocialLinkTarget, SocialPostKind } from "@/lib/db/social-schema";
  * Show HN 수집기(hn-show-seed)는 저장소 주소만 프론티어에 넣고 글은 버린다. 이것은 반대로 글을 남긴다:
  * 남이 소개한 글까지 포함해 주소가 github.com 인 글을 점수와 함께 읽는다.
  * 실측(2026-10-20): 최근 72시간·10점 이상 19건, 한 페이지로 끝났다.
+ * 검색은 주소의 낱말로 맞추므로 저장소가 아닌 주소(github.io·gist·사용자 페이지 등)도 돌아온다 — 버리지 않고 저장소 키 없이 남긴다.
  */
 export const HN_SEARCH_BY_DATE = "https://hn.algolia.com/api/v1/search_by_date";
 export const HN_SEARCH = "https://hn.algolia.com/api/v1/search";
@@ -38,7 +39,8 @@ export type HnTalkPost = {
   title: string;
   linkUrl: string;
   linkTarget: SocialLinkTarget;
-  repositoryKey: string;
+  /** 소문자 owner/repo. 저장소 모양이 아닌 주소(site)는 null */
+  repositoryKey: string | null;
   postedAt: Date;
   points: number;
   comments: number;
@@ -81,22 +83,37 @@ export function githubLinkTarget(url: string): SocialLinkTarget | null {
   return "path";
 }
 
-/** 알골리아 글 하나를 우리 글로 — GitHub 저장소를 가리키지 않으면 버린다 */
-export function hnTalkPost(hit: HnHit): HnTalkPost | null {
-  const url = hit.url?.trim();
+/** http(s) 주소만 링크로 남긴다 */
+function usableUrl(value: string | null | undefined): string | null {
+  const url = value?.trim();
   if (!url) return null;
-  const repo = repoFromUrl(url);
-  const linkTarget = githubLinkTarget(url);
-  if (!repo || !linkTarget) return null;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "https:" || protocol === "http:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 알골리아 글 하나를 우리 글로. 검색이 돌려준 글은 버리지 않는다(관리자 화면에서 모두 본다).
+ * 저장소 모양 주소(github.com/owner/repo…)만 저장소 키를 달고, 나머지(github.io·gist·사용자 페이지·다른 사이트)는
+ * 키 없이 site 로 남긴다 — 저장소를 추측하지 않으므로 /talk 에는 오르지 않는다. 주소·제목이 없으면 보여 줄 것이 없어 null.
+ */
+export function hnTalkPost(hit: HnHit): HnTalkPost | null {
+  const url = usableUrl(hit.url);
+  if (!url) return null;
   const title = (hit.title ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
   if (!title) return null;
+  const repo = repoFromUrl(url);
+  const target = repo ? githubLinkTarget(url) : null;
   return {
     externalId: hit.objectID,
     kind: hit._tags.includes("show_hn") ? "show" : "link",
     title,
     linkUrl: url,
-    linkTarget,
-    repositoryKey: repo.toLowerCase(),
+    linkTarget: repo && target ? target : "site",
+    repositoryKey: repo && target ? repo.toLowerCase() : null,
     postedAt: new Date(hit.created_at_i * 1000),
     points: hit.points ?? 0,
     comments: hit.num_comments ?? 0,
