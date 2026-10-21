@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ProductIcon } from "@/components/ProductIcon";
 import { useLocale, useServerNow, useTranslations } from "@/lib/i18n/context";
 import { formatDate, formatNumber, formatRelativeTime } from "@/lib/i18n/format";
 import { NOTIFICATION_RETENTION_DAYS } from "@/lib/me/contract";
 import { groupByDay, type NotificationView } from "@/lib/me/notification-view";
 import type { Inbox } from "@/lib/me/inbox";
-import { setUnreadCount } from "./account-store";
+import { seedUnreadCount, setUnreadCount, useUnreadCount } from "./account-store";
 import { sendRead } from "./AlertBell";
 import { NotificationText } from "./NotificationText";
 import "./alerts.css";
@@ -15,6 +15,8 @@ import "./alerts.css";
 /**
  * 알림 탭(시안 3.4 ⑦⑧) — 넓은 화면은 알림함과 설정을 나란히, 휴대폰은 알림함 | 알림 설정 두 칸 전환.
  * 안 읽은 줄은 바탕과 점으로 가르고, 누르면 읽음으로 바꾼 뒤 그 제품(또는 대상)으로 간다. 설정 칸은 MY7 이 채운다.
+ * 안 읽은 수는 종·탭·아바타 메뉴와 같은 숫자(useUnreadCount)다 — 넓은 화면에서 이 탭 위의 종으로 «모두 읽음»을 눌러도 여기가 따라간다
+ * (수가 0 이 되면 모든 줄을 읽음으로 그린다).
  */
 export function AlertsView({ initial, settings }: { initial: Inbox; settings: ReactNode }) {
   const t = useTranslations("me");
@@ -23,28 +25,26 @@ export function AlertsView({ initial, settings }: { initial: Inbox; settings: Re
   const [view, setView] = useState<"inbox" | "settings">("inbox");
   const [items, setItems] = useState<NotificationView[]>(initial.items);
   const [cursor, setCursor] = useState(initial.nextCursor);
-  const [unread, setUnread] = useState(initial.unread);
+  const unread = useUnreadCount(initial.unread);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const isRead = (item: NotificationView) => item.read || unread === 0;
 
-  function applyUnread(value: number) {
-    setUnread(value);
-    setUnreadCount(value);
-  }
+  // 서버가 방금 센 수 — 이 화면이 아직 숫자를 모를 때만(뒤로 가기로 돌아온 옛 화면이 새 숫자를 덮지 않게)
+  useEffect(() => { seedUnreadCount(initial.unread); }, [initial.unread]);
 
   async function readAll() {
     setBusy(true);
+    // 남은 수는 sendRead 가 같은 숫자(store)에 적는다
     const left = await sendRead({ all: true });
     setBusy(false);
     if (left === null) return setFailed(true);
     setItems((current) => current.map((item) => ({ ...item, read: true })));
-    applyUnread(left);
   }
 
   function open(item: NotificationView) {
-    if (item.read) return;
+    if (isRead(item)) return;
     setItems((current) => current.map((row) => row.id === item.id ? { ...row, read: true } : row));
-    applyUnread(Math.max(0, unread - 1));
     void sendRead({ ids: [item.id] });
   }
 
@@ -58,7 +58,7 @@ export function AlertsView({ initial, settings }: { initial: Inbox; settings: Re
       const page = await response.json() as Inbox;
       setItems((current) => [...current, ...page.items.filter((item) => !current.some((row) => row.id === item.id))]);
       setCursor(page.nextCursor);
-      applyUnread(page.unread);
+      setUnreadCount(page.unread);
     } catch {
       setFailed(true);
     } finally {
@@ -91,10 +91,10 @@ export function AlertsView({ initial, settings }: { initial: Inbox; settings: Re
             <ul className="me-notes">
               {rows.map((item) => (
                 <li key={item.id}>
-                  <a href={item.href} className={item.read ? "me-note" : "me-note unread"} onClick={() => open(item)}>
+                  <a href={item.href} className={isRead(item) ? "me-note" : "me-note unread"} onClick={() => open(item)}>
                     {item.tile ? <ProductIcon name={item.tile.name} ogImage={item.tile.ogImage?.startsWith("/") ? item.tile.ogImage : null} size={36} category={item.tile.category} />
                       : <span className="me-note-tile" aria-hidden="true" />}
-                    <span className="me-note-kind">{item.label}{!item.read && <span className="sr-only"> · {t("alerts.unread")}</span>}</span>
+                    <span className="me-note-kind">{item.label}{!isRead(item) && <span className="sr-only"> · {t("alerts.unread")}</span>}</span>
                     <time className="me-note-time" dateTime={item.createdAt}>
                       {group === "today" ? formatRelativeTime(item.createdAt, now, locale) : formatDate(item.createdAt, now, locale)}
                     </time>
