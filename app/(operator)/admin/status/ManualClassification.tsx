@@ -12,6 +12,13 @@ export function ManualClassification({ candidates }: { candidates: Awaited<Retur
   const [pending, start] = useTransition();
   const [search, setSearch] = useState('');
   const candidate = candidates.find(c => c.repo === selected);
+  /*
+   * 고른 때의 원본 판(sourceHash) — 자동 갱신으로 같은 후보의 원본이 바뀌어도 본 판으로 보내 서버가 거절하게 한다(새 판을 말없이 보내지 않는다).
+   * 분류·사유를 고친 동안은 자동 갱신을 멈춘다(data-dirty).
+   */
+  const [seenHash, setSeenHash] = useState(candidates[0]?.sourceHash ?? '');
+  const changed = !!candidate && candidate.sourceHash !== seenHash;
+  const edited = !!candidate && (reason.trim() !== '' || category !== (candidate.category ?? ''));
   return <>
     <section className="ops-panel">
       <h2>수동 카테고리 지정</h2>
@@ -25,16 +32,18 @@ export function ManualClassification({ candidates }: { candidates: Awaited<Retur
         <div className="ops-candidate-list">
           {candidates.filter(c => (c.repo + ' ' + c.name).toLowerCase().includes(search.toLowerCase())).map(c =>
             <button key={c.repo} aria-pressed={selected === c.repo} onClick={() => {
-              setSelected(c.repo); setCategory(c.category ?? ''); setReason(''); setMessage('');
+              setSelected(c.repo); setCategory(c.category ?? ''); setReason(''); setMessage(''); setSeenHash(c.sourceHash);
             }}>
               <strong>{c.name}</strong><small>{c.repo}</small><span>{c.category ?? '분류 대기'}</span>
             </button>)}
         </div>
         {!candidates.length && <p>현재 분류할 승인 후보가 없습니다.</p>}
       </section>
-      <section className="ops-panel">
+      <section className="ops-panel" data-dirty={edited || changed || undefined}>
         {candidate ? <>
           <div className="ops-eyebrow">발행 검토</div><h2>{candidate.name}</h2>
+          {changed && <p role="alert" className="ops-note">이 후보의 원본이 방금 바뀌었습니다 — 아래는 새 내용입니다.{' '}
+            <button type="button" onClick={() => setSeenHash(candidate.sourceHash)}>새 내용을 읽었습니다</button></p>}
           <p><a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener">{candidate.repo} ↗</a></p>
           <p>{candidate.url && /^https?:\/\//.test(candidate.url) && <a href={candidate.url} target="_blank" rel="noreferrer noopener">서비스 방문 ↗</a>}</p>
           <p>{candidate.description || '수집된 소개가 없습니다.'}</p>
@@ -45,8 +54,8 @@ export function ManualClassification({ candidates }: { candidates: Awaited<Retur
           </select>
           <label htmlFor="manual-reason">지정 사유</label>
           <textarea id="manual-reason" value={reason} maxLength={500} onChange={e => setReason(e.target.value)} placeholder="확인한 기능과 분류 이유를 입력해주세요." />
-          <button className="primary" disabled={pending || !category || reason.trim().length < 3} onClick={() => start(async () => {
-            const result = await saveManualCategory({ repo: candidate.repo, sourceHash: candidate.sourceHash, category, reason });
+          <button className="primary" disabled={pending || changed || !category || reason.trim().length < 3} onClick={() => start(async () => {
+            const result = await saveManualCategory({ repo: candidate.repo, sourceHash: seenHash, category, reason });
             setMessage(result.error ?? result.message ?? '');
           })}>{pending ? '저장 중…' : '분류 저장·발행 검토 요청'}</button>
           <p role="status">{message}</p>

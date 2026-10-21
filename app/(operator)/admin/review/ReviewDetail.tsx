@@ -9,7 +9,7 @@ import { REASON_LABELS, REVIEW_QUICK_REASONS } from '../reasons';
 import { approveWithTagline, collectCandidateEvidence } from './actions';
 import { RuleTrace } from './RuleTrace';
 import { approvalNote, causeLabel, modelsAgree, recommendDecision } from './causes';
-import type { ReviewDecisionState } from './contract';
+import { entryVersion, type ReviewDecisionState } from './contract';
 import { ReasonText } from './ReasonText';
 import { revealInPanel, reviewShortcut } from './shortcuts';
 
@@ -78,6 +78,13 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
    * 상세는 후보마다 새로 그려져(key) 고른 것이 다음 후보로 넘어가지 않는다.
    */
   const [intent, setIntent] = useState<'approve' | 'reject' | null>(null);
+  /*
+   * 본 판 — 처음 그린 후보의 해시. 다시 읽은 목록에서 같은 후보의 내용이 바뀌면(상세는 id 로만 새로 그린다) 새 내용을 보이되
+   * "후보 내용이 바뀌었습니다"를 띄우고, 확인할 때까지 결정을 막는다. 결정은 본 판으로 보낸다(서버가 그 사이 바뀐 것을 거절한다).
+   */
+  const [seen, setSeen] = useState(() => ({ version: entryVersion(entry), inputHash: entry.inputHash ?? '',
+    sourceRevisionHash: entry.sourceRevisionHash ?? '', candidateRevisionHash: entry.candidateRevisionHash }));
+  const changed = seen.version !== entryVersion(entry);
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +94,7 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
 
   function decide(decision: 'approve' | 'reject', values: { reason: string; note: string } = { reason, note }) {
     if (pending) return;
+    if (changed) { setError('후보 내용이 바뀌었습니다 — 바뀐 내용을 확인한 뒤 결정해 주세요.'); return; }
     if (decision === 'reject' && !values.reason) {
       setIntent('reject');
       setError('거부 사유를 골라주세요.');
@@ -95,9 +103,9 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
     }
     const form = new FormData();
     form.set('repo', candidate.repo);
-    form.set('inputHash', entry.inputHash ?? '');
-    form.set('sourceRevisionHash', entry.sourceRevisionHash ?? '');
-    form.set('candidateRevisionHash', entry.candidateRevisionHash);
+    form.set('inputHash', seen.inputHash);
+    form.set('sourceRevisionHash', seen.sourceRevisionHash);
+    form.set('candidateRevisionHash', seen.candidateRevisionHash);
     form.set('decision', decision);
     form.set('reason', decision === 'reject' ? values.reason : '');
     // 승인 단추를 바로 눌러도 두 모델이 같거나 AI 승인을 따르는 것이면 그 사유로 남긴다
@@ -141,13 +149,24 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
 
   const identity = <>
     <input type="hidden" name="repo" value={candidate.repo} />
-    <input type="hidden" name="inputHash" value={entry.inputHash ?? ''} />
-    <input type="hidden" name="sourceRevisionHash" value={entry.sourceRevisionHash ?? ''} />
-    <input type="hidden" name="candidateRevisionHash" value={entry.candidateRevisionHash} />
+    <input type="hidden" name="inputHash" value={seen.inputHash} />
+    <input type="hidden" name="sourceRevisionHash" value={seen.sourceRevisionHash} />
+    <input type="hidden" name="candidateRevisionHash" value={seen.candidateRevisionHash} />
   </>;
+  function acceptChange() {
+    setSeen({ version: entryVersion(entry), inputHash: entry.inputHash ?? '', sourceRevisionHash: entry.sourceRevisionHash ?? '',
+      candidateRevisionHash: entry.candidateRevisionHash });
+    setIntent(null);
+    setError(null);
+  }
 
+  // A/R 로 결정을 준비해 둔 동안은 자동 갱신을 멈춘다(data-dirty, 관리자 머리 갱신 줄)
   return (
-    <div className="flex flex-col gap-3 p-4">
+    <div className="flex flex-col gap-3 p-4" data-dirty={intent !== null || changed || undefined}>
+      {changed && <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/50 bg-warn/10 px-3 py-2 text-[13px] text-fg">
+        <span>후보 내용이 바뀌었습니다 — 아래는 새로 읽은 내용입니다. 다시 읽은 뒤 결정하세요.</span>
+        <button type="button" onClick={acceptChange} className="font-semibold text-accent hover:text-fg">바뀐 내용으로 결정하기</button>
+      </div>}
       <div>
         <h2 className="text-[15px] font-bold leading-snug">{entry.name}</h2>
         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener"

@@ -5,9 +5,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import type { AdminReviewEntry, ReviewSort } from '@/lib/crawl/admin-review';
 import { useAdminToast } from '../components/Toast';
+import { reconcileSnapshots } from '../components/selection';
 import { REASON_LABELS } from '../reasons';
 import { undoCandidateDecisions } from './actions';
 import { BulkDecision } from './BulkDecision';
+import { entryVersion } from './contract';
 import { BUCKET_NOTE, causeLabel, causeShort } from './causes';
 import { ReviewDetail, entryFacts, safeUrl, waitingDays, type DecidedResult } from './ReviewDetail';
 import { secondVoteView } from './secondVote';
@@ -22,6 +24,7 @@ const AI_CHIP: Record<string, { label: string; className: string }> = {
 };
 
 export type CauseOption = { value: string; label: string; count: number; href: string };
+
 
 /**
  * 심사 표와 오른쪽 상세.
@@ -51,7 +54,13 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
   const toast = useAdminToast();
   const initial = Math.max(0, entries.findIndex((entry) => entry.candidate.id === focus));
   const [selection, setSelection] = useState({ id: entries[initial]?.candidate.id ?? 0, index: initial });
-  const [checked, setChecked] = useState<Set<number>>(new Set());
+  /*
+   * 일괄로 고른 줄 — 고른 때의 줄(판: 입력·원본·후보 해시)을 그대로 든다. 다시 읽은 목록의 판을 보내면 서버의 "본 뒤에 바뀜" 검사가
+   * 헛돈다. 판이 바뀐 줄은 풀린 것으로 보이고 "내용 바뀜"을 단다(다시 누르면 새 판으로 고른다). 고른 것이 있으면 자동 갱신을 멈춘다(data-dirty).
+   */
+  const [checked, setChecked] = useState<Map<number, AdminReviewEntry>>(new Map());
+  /** 이 화면에서 일괄 처리한 후보 — 목록에서 빠져도 "다른 곳에서 처리됨"이라 말하지 않는다 */
+  const [processed, setProcessed] = useState<Set<number>>(new Set());
   const [help, setHelp] = useState(false);
   const found = entries.findIndex((entry) => entry.candidate.id === selection.id);
   const index = found >= 0 ? found : Math.min(selection.index, entries.length - 1);
@@ -62,8 +71,12 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
    */
   const lost = found < 0 && selection.id !== 0 && entries.length > 0;
   const selected = lost ? undefined : entries[index];
+  // 자리만 지키던 선택(id 0)은 처음 선 후보로 잡는다 — 다음에 다시 읽어도 그 후보를 따라간다
+  if (selection.id === 0 && selected) setSelection({ id: selected.candidate.id, index });
   const selectable = useMemo(() => entries.filter((entry) => !!entry.inputHash && !!entry.sourceRevisionHash
     && entry.candidate.state !== 'published' && !entry.candidate.publishedSlug), [entries]);
+  const picked = reconcileSnapshots(checked, selectable, (entry) => entry.candidate.id, entryVersion);
+  const isChecked = (id: number) => checked.has(id) && !picked.changed.has(id);
   const tableRef = useRef<HTMLTableElement>(null);
   // 다음 그리기에서 고른 줄로 포커스를 옮길지 — J/K·결정 뒤에만
   const focusRow = useRef(false);
@@ -74,9 +87,12 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
     focusRow.current = moveFocus;
     setSelection({ id: next.candidate.id, index: entries.indexOf(next) });
   };
+  /** 판이 바뀐 줄을 다시 누르면 새 판으로 고른다 */
   const toggle = (id: number) => setChecked((current) => {
-    const next = new Set(current);
-    if (next.has(id)) next.delete(id); else next.add(id);
+    const next = new Map(current);
+    const entry = selectable.find((item) => item.candidate.id === id);
+    if (next.has(id) && !picked.changed.has(id)) next.delete(id);
+    else if (entry) next.set(id, entry);
     return next;
   });
 
@@ -125,7 +141,7 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
     focusRow.current = true;
     // 마지막 한 건이었으면 자리만 지킨다(id 0) — 다시 읽은 목록의 같은 자리 후보가 선다
     setSelection({ id: next?.candidate.id ?? 0, index: at });
-    setChecked((current) => { const copy = new Set(current); copy.delete(entry.candidate.id); return copy; });
+    setChecked((current) => { const copy = new Map(current); copy.delete(entry.candidate.id); return copy; });
     toast.show({
       message: `${result.decision === 'approve' ? '승인함' : '거부함'} · ${entry.name}`,
       link: { label: '기록 보기', href: `/admin/activity?target=${encodeURIComponent(result.repo)}` },
@@ -133,7 +149,8 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
     });
   }
 
-  const allChecked = selectable.length > 0 && selectable.every((entry) => checked.has(entry.candidate.id));
+  const allChecked = selectable.length > 0 && selectable.every((entry) => isChecked(entry.candidate.id));
+  const lostByMe = lost && processed.has(selection.id);
 
   /** 누를 때마다 내림차순 → 오름차순 → 기본(들어온 차례)으로 돈다 */
   const sortHead = (label: string, cycle: readonly [ReviewSort, ReviewSort?], hint: string) => {
@@ -149,10 +166,10 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
   };
 
   return (
-    <div className="rq-work">
+    <div className="rq-work" data-dirty={picked.send.length > 0 || undefined}>
       <section aria-labelledby="review-list-title" className="min-w-0 overflow-hidden rounded-[12px] border border-line bg-bg-card">
-        <BulkDecision title={title} reasons={reasons} onDone={() => setChecked(new Set())}
-          selected={selectable.filter((entry) => checked.has(entry.candidate.id))} />
+        <BulkDecision title={title} reasons={reasons} selected={picked.send}
+          onDone={(ids) => { setChecked(new Map()); setProcessed((now) => new Set([...now, ...ids])); }} />
         <div className="admin-table-scroll" role="region" aria-label="심사 후보 표">
         {/* 칸 폭을 고정한다 — 자동 배치는 남는 폭을 숫자 칸에 나눠 줘 이름이 몇 글자로 잘렸다. 이름 칸은 남는 폭 전부(최소 180px) */}
         <table ref={tableRef} role="grid" aria-labelledby="review-list-title" className="w-full min-w-[720px] table-fixed text-[13px] tabular-nums">
@@ -161,7 +178,7 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
             <tr role="row">
               <th className="w-9 px-3 py-2">
                 <input type="checkbox" aria-label="이 쪽 모두 선택" className="size-4 accent-accent" checked={allChecked}
-                  onChange={() => setChecked(allChecked ? new Set() : new Set(selectable.map((entry) => entry.candidate.id)))} />
+                  onChange={() => setChecked(allChecked ? new Map() : new Map(selectable.map((entry) => [entry.candidate.id, entry])))} />
               </th>
               <th className="min-w-[180px] px-2 py-2 font-semibold">후보</th>
               <th className="px-2 py-1 font-semibold" title={BUCKET_NOTE}>
@@ -198,19 +215,20 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
               const deployUrl = safeUrl(candidate.productUrl);
               const productUrl = deployUrl ? { href: deployUrl, host: new URL(deployUrl).host } : null;
               return (
-                <tr key={`${candidate.id}:${entry.candidateRevisionHash}`} role="row" tabIndex={0} data-review-row={candidate.id}
+                <tr key={candidate.id} role="row" tabIndex={0} data-review-row={candidate.id}
                   onClick={() => select(row, false)} onFocus={(event) => { if (event.target === event.currentTarget && !active) select(row, false); }} aria-selected={active}
                   className={`cursor-pointer border-t border-line outline-none focus-visible:shadow-[inset_0_0_0_2px_var(--color-accent)] ${active ? 'bg-accent-soft' : 'hover:bg-bg-hover'}`}>
                   <td className={`px-3 py-1 ${active ? 'shadow-[inset_3px_0_0_var(--color-accent)]' : ''}`} onClick={(event) => event.stopPropagation()}>
                     {canDecide && (
                       <input type="checkbox" aria-label={`${entry.name} 선택`} className="size-4 accent-accent" tabIndex={-1}
-                        checked={checked.has(candidate.id)} onChange={() => toggle(candidate.id)} />
+                        checked={isChecked(candidate.id)} onChange={() => toggle(candidate.id)} />
                     )}
                   </td>
                   {/* 승인 전에 저장소와 배포 페이지를 바로 열어 본다 — 링크는 탭 순서에서 빼 J/K·Enter 흐름을 지킨다(상세에도 같은 링크가 있다) */}
                   <td className="px-2 py-1">
                     <div className="flex min-w-0 flex-col leading-[16px]">
                       <span className="truncate font-semibold" title={entry.name}>{entry.name}</span>
+                      {picked.changed.has(candidate.id) && <span className="text-warn" title="고른 뒤 후보 내용이 바뀌어 고른 것을 풀었습니다 — 다시 읽고 고르세요">내용 바뀜 · 다시 고르세요</span>}
                       <span className="flex min-w-0 items-baseline gap-2">
                         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener" tabIndex={-1}
                           title={`GitHub 에서 열기 — ${candidate.repo}`} className="min-w-0 truncate font-mono text-fg-3 hover:text-accent hover:underline">{candidate.repo} ↗</a>
@@ -245,17 +263,19 @@ export function ReviewConsole({ entries, reasons, focus, sort, sortHref, cause, 
         </table>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line px-3 py-2 text-[13px] text-fg-3">
-          <span>{checked.size}건 선택 · J/K 줄 · Enter 열기 · Space 선택 · A/R 결정 · N/P 쪽</span>
+          <span>{picked.send.length}건 선택{picked.changed.size ? ` · 내용이 바뀌어 푼 ${picked.changed.size}건` : ''}{picked.gone ? ` · 목록에서 빠진 ${picked.gone}건 제외` : ''} · J/K 줄 · Enter 열기 · Space 선택 · A/R 결정 · N/P 쪽</span>
           <button type="button" onClick={() => setHelp(true)} className="text-accent hover:text-fg">단축키 전부 (?)</button>
           {footer}
         </div>
       </section>
       <aside data-review-panel tabIndex={-1} aria-label="고른 후보의 근거와 결정"
         className="rounded-[12px] border border-line bg-bg-card outline-none lg:sticky lg:top-4 lg:max-h-[calc(100dvh-2rem)] lg:overflow-y-auto">
-        {selected ? <ReviewDetail key={`${selected.candidate.id}:${selected.candidateRevisionHash}`} entry={selected} reasons={reasons}
+        {/* 후보마다 새로 그린다(id) — 같은 후보의 내용이 바뀌면 상세가 "내용이 바뀌었습니다"를 띄운다(본 판으로만 결정한다) */}
+        {selected ? <ReviewDetail key={selected.candidate.id} entry={selected} reasons={reasons}
           onDecided={(result) => decided(selected, result)} />
           : lost ? <div role="status" className="flex flex-col items-start gap-2 p-4 text-[13px] text-fg-2">
-            <p>보던 후보가 새로 읽은 목록에서 빠졌습니다 — 다른 곳에서 처리됐거나 구간이 바뀌었을 수 있습니다. 결정하려면 줄을 다시 고르세요.</p>
+            <p>{lostByMe ? '처리한 후보가 목록에서 빠졌습니다. 다음 줄을 고르세요.'
+              : '보던 후보가 새로 읽은 목록에서 빠졌습니다 — 처리됐거나 구간이 바뀌었을 수 있습니다. 결정하려면 줄을 다시 고르세요.'}</p>
             <button type="button" onClick={() => select(index)} className="font-semibold text-accent hover:text-fg">같은 자리의 후보 보기</button>
           </div>
           : <p className="p-4 text-[13px] text-fg-3">고른 후보가 없습니다.</p>}

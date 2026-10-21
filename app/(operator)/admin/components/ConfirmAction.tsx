@@ -77,7 +77,8 @@ export function ConfirmAction({ title, targets, summary, confirmLabel, tone = "d
   return (
     <>
       {trigger?.(() => setOpen(true))}
-      <dialog ref={dialogRef} className="admin-confirm" data-tone={tone} aria-labelledby={`${id}-title`}
+      {/* 열린 동안은 자동 갱신을 멈춘다(data-dirty) — 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다(예: 수집 끄기 → 켜기) */}
+      <dialog ref={dialogRef} className="admin-confirm" data-tone={tone} aria-labelledby={`${id}-title`} data-dirty={isOpen || undefined}
         aria-describedby={summary ? `${id}-summary` : undefined}
         // 창 안의 키는 화면 단축키(J/K/X 등)로 새지 않게 한다. Esc 는 닫는다 — 처리 중에는 결과를 잃으므로 막는다
         onKeyDown={(event) => {

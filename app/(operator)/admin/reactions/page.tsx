@@ -29,7 +29,8 @@ export default async function AdminReactionsPage() {
     <p className="text-[14px] text-fg-2">링크·멘션·반복·미끼 문구로 보류한 한 줄입니다. 공개하면 제품 메이커가 보고 답장할 수 있고, 숨기면 글쓴이에게만 보입니다. 처리자와 시각은 작업 로그에 남습니다.</p>
     <p className="text-[14px] text-fg-2">보류 {queue.count.toLocaleString("ko-KR")}건{queue.count > queue.items.length ? ` · 오래된 ${queue.items.length.toLocaleString("ko-KR")}건만 표시` : ""}</p>
     {queue.items.length === 0 && <p className="text-[14px]">보류한 한 줄이 없습니다.</p>}
-    {queue.items.map((item) => <section key={`${item.id}-${item.updatedAt}`} className="space-y-3 rounded-xl border border-line p-4">
+    {/* id 로만 그린다 — 글쓴이가 고치면 폼이 본 글을 들고 "바뀌었습니다"를 띄운다(다시 그리면 본 적 없는 글을 공개하게 된다) */}
+    {queue.items.map((item) => <section key={item.id} className="space-y-3 rounded-xl border border-line p-4">
       <Link prefetch={false} href={`/p/${item.slug}`} className="text-[14px] underline">{item.productName}</Link>
       <p className="break-words text-[15px]">{item.comment}</p>
       <p className="text-[13px] text-fg-3">{REASONS[item.reason ?? ""] ?? item.reason ?? "사유 없음"} · {item.signedIn ? "로그인 계정" : "방문자"} · {formatDetailTime(item.updatedAt)}</p>
