@@ -4,7 +4,7 @@
 .me-olist { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--bg-card); }
 .me-orow { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 8px 14px; padding: 16px 18px; border-bottom: 1px solid var(--border); align-items: center; }
 .me-orow:last-child { border-bottom: 0; }
-.me-mi { width: 44px; height: 44px; border-radius: 10px; font-size: 19px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: var(--text); flex: none; }
+.me-mi { display: flex; flex: none; }
 .me-orow-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .me-orow-n { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
 .me-orow-n:hover { color: var(--accent-ink); }

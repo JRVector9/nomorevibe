@@ -1,5 +1,6 @@
 import { publicAuthErrorResponse, PUBLIC_PRIVATE_HEADERS, requirePublicMutation } from "@/lib/domain/accounts/request-auth";
 import { exportAccount } from "@/lib/me/account";
+import { exportFileName } from "@/lib/me/profile";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 
 /**
@@ -10,9 +11,8 @@ export const POST = webWriteRoute(async (request: Request) => {
   try {
     const user = await requirePublicMutation(request);
     const data = await exportAccount(user.id);
-    const day = data.exportedAt.slice(0, 10).replaceAll("-", "");
     return new Response(JSON.stringify(data, null, 2), { headers: { ...PUBLIC_PRIVATE_HEADERS, "Content-Type": "application/json; charset=utf-8",
-      "Content-Disposition": `attachment; filename="nomorevibe-my-data-${day}.json"`, "X-Content-Type-Options": "nosniff" } });
+      "Content-Disposition": `attachment; filename="${exportFileName(data.exportedAt)}"`, "X-Content-Type-Options": "nosniff" } });
   } catch (error) {
     return publicAuthErrorResponse(error);
   }

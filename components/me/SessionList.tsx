@@ -73,7 +73,7 @@ export function SessionList({ csrfToken, sessions: initial }: { csrfToken: strin
                   </span>
                 </div>
               </div>
-              {session.current ? <span className="me-note">{t("account.session.inUse")}</span>
+              {session.current ? <span className="me-aside">{t("account.session.inUse")}</span>
                 : <button type="button" className="me-btn me-btn-sm" disabled={busy !== null} onClick={() => revoke(session)}
                   aria-label={t("account.session.logoutDevice", { device: session.deviceLabel ?? t("account.session.unknown") })}>{t("account.session.logout")}</button>}
             </li>

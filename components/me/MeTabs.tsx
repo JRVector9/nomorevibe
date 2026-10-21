@@ -26,7 +26,7 @@ export function MeSavedCount({ initial }: { initial: number }) {
 }
 
 /**
- * 마이페이지 탭 줄 — 탭마다 주소가 따로 있다. 내 프로젝트는 확인한 프로젝트가 있을 때만 맨 앞에 붙는다.
+ * 마이페이지 탭 줄 — 탭마다 주소가 따로 있다. 내 프로젝트는 확인한 프로젝트가 있거나 GitHub 계정일 때만 맨 앞에 붙는다(showsProjectsTab).
  * 숫자(counts)는 로그인했을 때만 붙고, 알림은 안 읽은 수만 빨간 표시로. 왼쪽·오른쪽 화살표로 옆 탭에 초점을 옮긴다.
  */
 export function MeTabs({ showProjects = false, counts }: { showProjects?: boolean; counts?: Partial<Record<MeTab, number>> }) {

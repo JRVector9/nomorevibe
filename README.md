@@ -380,7 +380,7 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 | `product-search-verify` | 1분 | text 워커가 키워드를 근거와 대조 |
 | `product-search-health` | 15분 | maintenance에서 해시·검색 사본·재시도·정체 감시 |
 | `notification-delisted` | 5분 | 내려감 알림은 급하지 않다. 처음에는 `cdn_purges` 끝에서 시작한다 |
-| `notification-category-digest` | 15분 | 주기 일정에는 시각이 없어 틱마다 월요일 09:00(KST)부터 하루 안인지 본다 |
+| `notification-category-digest` | 15분 | 주기 일정에는 시각이 없어 틱마다 그 주 시작(월요일 00:00 KST)부터 24시간 안인지 본다 — 기본 주간 메일(월요일 09:00)보다 먼저 쓴다 |
 | `notification-prune` | 1시간 | 보관 90일, 틱마다 최대 5만 줄 |
 
 기존 Dokploy/GitHub Actions의 HTTP 스케줄과 evidence wrapper는 전환 때 중지한다.

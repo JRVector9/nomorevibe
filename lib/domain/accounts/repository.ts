@@ -19,11 +19,20 @@ export async function limitEmailLogin(email: string, ip: string | null): Promise
 }
 
 type ChallengeInput = { id: string; email: string; codeHash: string; browserNonceHash: string; returnTo: string };
+type AccountTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/**
+ * 한 이메일의 로그인 흐름 잠금(트랜잭션 끝까지) — 코드 보내기·코드 확인·계정 삭제(lib/me/account.ts)가 먼저 잡는다.
+ * 코드 확인은 이 잠금 → 챌린지 행 → 계정 행(FOR SHARE) 순서다. 계정 삭제도 계정 행보다 이것을 먼저 잡아야 교착하지 않는다
+ */
+export async function lockPublicEmail(tx: AccountTransaction, email: string): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`public-email:${email}`}, 0))`);
+}
 
 export async function replaceEmailChallenge(input: ChallengeInput): Promise<void> {
   await onPrimary(() => db.transaction(async (tx) => {
     // Both replacement and consumption acquire the same email lock first.
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`public-email:${input.email}`}, 0))`);
+    await lockPublicEmail(tx, input.email);
     await tx.update(emailLoginChallenges).set({ consumedAt: sql`now()` })
       .where(and(eq(emailLoginChallenges.email, input.email), isNull(emailLoginChallenges.consumedAt)));
     await tx.insert(emailLoginChallenges).values({ ...input, expiresAt: sql`now() + interval '10 minutes'` });
@@ -42,7 +51,7 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
   const result = await onPrimary(() => db.transaction(async (tx) => {
     const [initial] = await tx.select({ email: emailLoginChallenges.email }).from(emailLoginChallenges).where(eq(emailLoginChallenges.id, input.challengeId));
     if (!initial) return null;
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`public-email:${initial.email}`}, 0))`);
+    await lockPublicEmail(tx, initial.email);
     const [challenge] = await tx.select().from(emailLoginChallenges).where(eq(emailLoginChallenges.id, input.challengeId)).for("update");
     const [clock] = await tx.execute<{ now: string }>(sql`select now()`);
     const now = new Date(clock.now);

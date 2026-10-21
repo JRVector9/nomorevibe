@@ -8,8 +8,14 @@ import { MeAvatar } from "@/components/me/MeAvatar";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
-import { ME_SAVED_LINK, ME_TAB_PATHS } from "@/lib/me/contract";
+import { ME_SAVED_LINK, ME_TAB_PATHS, showsProjectsTab } from "@/lib/me/contract";
 import { useMeAccount, useUnreadCount } from "@/components/me/account-store";
+
+/** 화살표로 옮길 항목 — 끝에서 처음으로 돈다. 초점이 판 밖(아바타 단추, -1)이면 ↓ 는 첫 항목, ↑ 는 마지막 항목(로그아웃) */
+export function nextMenuIndex(index: number, length: number, down: boolean): number {
+  if (index < 0) return down ? 0 : length - 1;
+  return (index + (down ? 1 : -1) + length) % length;
+}
 
 /**
  * 머리의 계정 자리 — 로그아웃이면 로그인 링크, 로그인이면 이니셜 아바타와 메뉴(마이페이지 시안 머리 그림).
@@ -53,7 +59,7 @@ export function AccountMenu() {
     const items = [...(root.current?.querySelectorAll<HTMLElement>(".account-panel a, .account-panel button") ?? [])];
     const index = items.indexOf(document.activeElement as HTMLElement);
     event.preventDefault();
-    items[(index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+    items[nextMenuIndex(index, items.length, event.key === "ArrowDown")]?.focus();
   }
 
   async function logout() {
@@ -80,7 +86,7 @@ export function AccountMenu() {
     : provider?.provider === "email" ? t("account.viaEmail") : null;
   const links = [
     ["account.mypage", ME_TAB_PATHS.saved],
-    ...(account.isMaker ? [["account.projects", ME_TAB_PATHS.projects] as const] : []),
+    ...(showsProjectsTab(account) ? [["account.projects", ME_TAB_PATHS.projects] as const] : []),
     ["account.saved", ME_SAVED_LINK],
     ["account.tried", ME_TAB_PATHS.tried],
     ["account.opinions", ME_TAB_PATHS.opinions],

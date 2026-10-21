@@ -5,6 +5,16 @@ import { eq } from "drizzle-orm";
 // OG 이미지 복사는 바깥 네트워크를 탄다 — 발행 자체를 보는 테스트에서는 끈다
 vi.mock("@/lib/domain/products/og", () => ({ cacheOgImage: vi.fn().mockResolvedValue(null) }));
 
+// 발행 뒤 알림 두 가지는 그대로 돌리되, 부른 값(lease)을 볼 수 있게 감싼다
+vi.mock("@/lib/me/notifications", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/me/notifications")>();
+  return { ...actual, notifyMakerNewProject: vi.fn(actual.notifyMakerNewProject) };
+});
+vi.mock("@/lib/me/maker-claims", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/me/maker-claims")>();
+  return { ...actual, notifyNewListingMine: vi.fn(actual.notifyNewListingMine) };
+});
+
 // 분류도 바깥을 탄다. 기본은 "못 했다"로 두어 규칙 폴백을 확인하고, 필요한 테스트에서만 값을 준다
 const classifyCategory = vi.fn().mockResolvedValue(null);
 const classifyCategories = vi.fn().mockImplementation(async (inputs: unknown[]) => inputs.map(() => null));
@@ -751,10 +761,22 @@ describe("발행 뒤 마이페이지 알림", () => {
       meta: { owner: { id: 4242, type: "User", login: "someone" }, full_name: "someone/og-app" },
       pageMeta: { title: "My App", description: "페이지가 말하는 소개", ogImage: "https://my-app.test/og.png" },
     });
+    const { notifyMakerNewProject } = await import("@/lib/me/notifications");
+    const { notifyNewListingMine } = await import("@/lib/me/maker-claims");
+    // 앞 테스트가 부른 기록을 지운다 — 이 후보의 부름만 본다
+    for (const mock of [vi.mocked(cacheOgImage), vi.mocked(notifyMakerNewProject), vi.mocked(notifyNewListingMine)]) mock.mockClear();
     vi.mocked(cacheOgImage).mockRejectedValueOnce(new Error("og_down"));
     await tick();
-    expect(vi.mocked(cacheOgImage)).toHaveBeenCalled();
-    expect(await products.findByUrl("https://my-app.test")).toMatchObject({ status: "seeded", ogImage: null });
+    const product = await products.findByUrl("https://my-app.test");
+    expect(product).toMatchObject({ status: "seeded", ogImage: null });
+    const lease = expect.objectContaining({ name: "crawl-publish", token: expect.any(String) });
+    expect(vi.mocked(cacheOgImage)).toHaveBeenCalledWith("https://my-app.test/og.png", product!.slug, "background", lease);
+    expect(vi.mocked(notifyMakerNewProject)).toHaveBeenCalledWith(product!.slug, lease);
+    expect(vi.mocked(notifyNewListingMine)).toHaveBeenCalledWith(expect.objectContaining({ slug: product!.slug }), lease);
+    // 알림이 OG 단계보다 먼저다 — OG 가 실패해도 이미 넣었다
+    const ogAt = vi.mocked(cacheOgImage).mock.invocationCallOrder[0];
+    expect(vi.mocked(notifyMakerNewProject).mock.invocationCallOrder[0]).toBeLessThan(ogAt);
+    expect(vi.mocked(notifyNewListingMine).mock.invocationCallOrder[0]).toBeLessThan(ogAt);
     const rows = await db.select().from(notifications);
     expect(rows.map((row) => [row.userId, row.kind]).sort()).toEqual([[owner.id, "new_listing_mine"], [fan.id, "maker_new_project"]].sort());
   });

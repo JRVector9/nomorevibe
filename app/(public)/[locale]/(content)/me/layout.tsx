@@ -7,6 +7,7 @@ import { I18nProvider } from "@/lib/i18n/context";
 import { getDictionary } from "@/lib/i18n/dictionary";
 import { createTranslator } from "@/lib/i18n/messages";
 import { getRequestLocale } from "@/lib/i18n/server";
+import { showsProjectsTab } from "@/lib/me/contract";
 import { getMeSession } from "@/lib/me/session";
 import { getMeSummary, type MeSummary } from "@/lib/me/summary";
 
@@ -33,7 +34,7 @@ export default async function MeLayout({ children }: { children: React.ReactNode
         <h1 className="sr-only">{t("page.title")}</h1>
         {summary ? <MeHead summary={summary} locale={locale} t={t} now={new Date()} />
           : !session && <MeLoggedOut locale={locale} t={t} loginEnabled={publicUserAuthEnabled()} />}
-        <MeTabs showProjects={summary?.isMaker ?? false} counts={counts} />
+        <MeTabs showProjects={showsProjectsTab(summary)} counts={counts} />
         {children}
       </main>
     </I18nProvider>

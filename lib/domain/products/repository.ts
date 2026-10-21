@@ -6,7 +6,7 @@ import { isAiLevel, type AiLevel } from "@/lib/domain/evidence/ai-level-labels";
 import { aiLevelRepositoryKey } from "@/lib/domain/evidence/ai-level-store";
 import { and, desc, eq, inArray, isNotNull, isNull, like, ne, notInArray, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { productMakerMembers } from "@/lib/db/me-schema";
+import { productMakerMembers, userFollows } from "@/lib/db/me-schema";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { DOWN_THRESHOLD } from "./health";
 import { uptimeNegativeAllowed } from "./uptime-negative-gate";
@@ -779,6 +779,8 @@ export async function removeProductAndEvidence(id: number, slug: string): Promis
     await tx.update(crawlCandidates)
       .set({ publishedSlug: null, updatedAt: new Date() })
       .where(eq(crawlCandidates.publishedSlug, slug));
+    // 제품 팔로는 FK 없는 글자 열쇠(id)라 같이 지운다 — 남기면 팔로 탭에는 안 보이는데 머리 숫자·팔로 상한(500)에는 남아 풀 수 없다
+    await tx.delete(userFollows).where(and(eq(userFollows.targetType, "product"), eq(userFollows.targetKey, String(id))));
     await tx.delete(products).where(and(eq(products.id, id), eq(products.slug, slug)));
 
     for (const hash of hashes) {

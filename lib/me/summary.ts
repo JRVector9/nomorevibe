@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { githubUserConnections } from "@/lib/db/github-user-schema";
-import { publicIdentities, publicUsers } from "@/lib/db/public-user-schema";
+import { publicIdentities } from "@/lib/db/public-user-schema";
 import { reactionListVisible } from "@/lib/domain/reactions/repository";
 import { savedPublic } from "./saved";
 
@@ -12,6 +12,7 @@ export type MeProvider = { provider: "github" | "email"; login: string | null };
 export type MeSummary = { user: { id: number; displayName: string; createdAt: string }; counts: MeCounts; isMaker: boolean; providers: MeProvider[] };
 
 type CountRow = { saved: unknown; tried: unknown; opinions: unknown; following: unknown; unread_alerts: unknown; is_maker: unknown };
+type UserCountRow = CountRow & { display_name: string; created_iso: string; deleted: boolean };
 type IdentityRow = { provider: string; providerLogin: string | null; githubLogin: string | null };
 
 const count = (value: unknown) => {
@@ -36,24 +37,27 @@ export function shapeMeSummary(user: { id: number; displayName: string; createdA
   };
 }
 
-/** 한 계정의 머리 숫자. 바뀐 직후에도 맞아야 해서 주 DB 에서 읽는다. 저장·써봤어요는 탭과 같은 공개 조건으로 센다. 탈퇴한 계정은 null */
+/**
+ * 한 계정의 머리 숫자. 바뀐 직후에도 맞아야 해서 주 DB 에서 읽는다. 저장·써봤어요는 탭과 같은 공개 조건으로 센다. 탈퇴한 계정은 null.
+ * 계정 행과 숫자는 한 문장이다 — 계정을 먼저 읽고 숫자를 기다리는 왕복을 두지 않는다(로그인한 모든 화면의 머리가 부른다)
+ */
 export function getMeSummary(userId: number): Promise<MeSummary | null> {
   return onPrimary(async () => {
-    const [user] = await db.select({ id: publicUsers.id, displayName: publicUsers.displayName, createdAt: publicUsers.createdAt, deletedAt: publicUsers.deletedAt })
-      .from(publicUsers).where(eq(publicUsers.id, userId));
-    if (!user || user.deletedAt) return null;
-    const [[counts], identities] = await Promise.all([
-      db.execute<CountRow>(sql`select
-        (select count(*) from user_saved_products s join products on products.id = s.product_id where s.user_id = ${userId} and ${savedPublic}) as saved,
-        (select count(*) from product_reactions r join products on products.id = r.product_id where r.user_id = ${userId} and ${reactionListVisible}) as tried,
-        (select count(*) from product_feedback where author_user_id = ${userId}) as opinions,
-        (select count(*) from user_follows where user_id = ${userId}) as following,
-        (select count(*) from notifications where user_id = ${userId} and read_at is null) as unread_alerts,
-        exists(select 1 from product_maker_members where user_id = ${userId} and revoked_at is null) as is_maker`),
+    const [[row], identities] = await Promise.all([
+      db.execute<UserCountRow>(sql`select u.display_name, u.deleted_at is not null as deleted,
+        to_char(u.created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_iso,
+        (select count(*) from user_saved_products s join products on products.id = s.product_id where s.user_id = u.id and ${savedPublic}) as saved,
+        (select count(*) from product_reactions r join products on products.id = r.product_id where r.user_id = u.id and ${reactionListVisible}) as tried,
+        (select count(*) from product_feedback where author_user_id = u.id) as opinions,
+        (select count(*) from user_follows where user_id = u.id) as following,
+        (select count(*) from notifications where user_id = u.id and read_at is null) as unread_alerts,
+        exists(select 1 from product_maker_members where user_id = u.id and revoked_at is null) as is_maker
+        from public_users u where u.id = ${userId}`),
       db.select({ provider: publicIdentities.provider, providerLogin: publicIdentities.providerLogin, githubLogin: githubUserConnections.githubLogin })
         .from(publicIdentities).leftJoin(githubUserConnections, eq(githubUserConnections.userId, publicIdentities.userId))
         .where(eq(publicIdentities.userId, userId)).orderBy(publicIdentities.id),
     ]);
-    return shapeMeSummary(user, counts, identities);
+    if (!row || row.deleted) return null;
+    return shapeMeSummary({ id: userId, displayName: row.display_name, createdAt: new Date(row.created_iso) }, row, identities);
   });
 }

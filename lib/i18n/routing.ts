@@ -64,7 +64,8 @@ export function safePublicReturnUrl(value: unknown, fallback: string = "/"): str
     if (decoded.startsWith("//") || /[\\\u0000-\u0020\u007f]/.test(decoded)) return fallback;
     const logical = stripLocale(decoded);
     if (isLocaleExcludedPath(logical)) return fallback;
-    const publicRoute = /^(?:\/|\/(?:rising|popular|login|launch|policy)\/?|\/c\/[^/]+\/?|\/p\/[^/]+(?:\/github)?\/?|\/rankings\/[^/]+\/?|\/feedback\/[^/]+\/?|\/me(?:\/(?:projects|tried|opinions|following|alerts|account))?\/?)$/;
+    // 공개 화면(app/(public)/[locale] 의 page)마다 한 갈래 — tests/me-account.test.ts 가 화면 목록과 맞는지 본다
+    const publicRoute = /^(?:\/|\/(?:rising|popular|talk|login|launch|policy)\/?|\/c\/[^/]+\/?|\/p\/[^/]+(?:\/github)?\/?|\/rankings\/[^/]+\/?|\/feedback\/[^/]+\/?|\/me(?:\/(?:projects|tried|opinions|following|alerts|account))?\/?)$/;
     if (!publicRoute.test(logical)) return fallback;
     const locale = pathLocale(parsed.pathname) ?? DEFAULT_LOCALE;
     return localePath(locale, `${parsed.pathname}${suffix}`);

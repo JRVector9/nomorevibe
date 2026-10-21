@@ -1,5 +1,6 @@
 import { FollowingList } from "@/components/me/FollowingList";
 import { MeLoginRequired } from "@/components/me/MeLoginRequired";
+import { MeNow } from "@/components/me/MeNow";
 import { listFollows } from "@/lib/me/follows";
 import { meMetadata } from "@/lib/me/metadata";
 import { getMeSession } from "@/lib/me/session";
@@ -11,5 +12,5 @@ export const generateMetadata = () => meMetadata("following");
 export default async function MeFollowingPage() {
   const session = await getMeSession();
   if (!session) return <MeLoginRequired tab="following" />;
-  return <FollowingList initial={await listFollows(session.user.id)} />;
+  return <MeNow><FollowingList initial={await listFollows(session.user.id)} /></MeNow>;
 }
