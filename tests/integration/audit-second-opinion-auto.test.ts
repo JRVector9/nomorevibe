@@ -8,7 +8,7 @@ import { getSettings, saveSettings, setAuditHold, setQwenAutoStep } from "@/lib/
 import { REVIEW_SYSTEM_PROMPT } from "@/lib/crawl/agent-review";
 import { classifyAuditReason } from "@/lib/crawl/audit-reason-category";
 import { auditReasonCategorySql, catalogLikeReasonSql } from "@/lib/crawl/audit-second-opinions";
-import { QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus, readQwenAutoObservation } from "@/lib/crawl/audit-second-opinion-auto";
+import { QWEN_AUTO_CALL_TIMEOUT_MS, QWEN_AUTO_MIN_START_MS, QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus, readQwenAutoObservation } from "@/lib/crawl/audit-second-opinion-auto";
 import { auditRemovalGroups, listAuditFindings, removeAuditedProducts, startProductAudit, switchAuditReviewer } from "@/lib/crawl/product-audit";
 import { qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
@@ -34,7 +34,7 @@ vi.mock("@/lib/crawl/product-audit", async (original) => {
  * Qwen-v2 자동 단계(audit-second-opinion-auto.ts) — 감사 잡 틱 안에서 gpu3090 Qwen 을 바로 불러(가짜 서버) 감사 거절에 두 번째 의견을 적고,
  * 공개분 2차의 사람 확인 행을 한 번 더 본다. 쓰기·보류·풀기·lease 는 실제 DB 로 돈다. 감사 묻기는 닫힌 감사라 돌지 않는다.
  */
-type Answer = { decision: "approve" | "reject" | "needs_review"; confidence?: number; reason?: string } | "invalid" | number;
+type Answer = { decision: "approve" | "reject" | "needs_review"; confidence?: number; reason?: string } | "invalid" | "timeout" | number;
 const server = vi.hoisted(() => ({
   answers: new Map<string, unknown>(), status: 200, down: false, before: null as (() => Promise<void>) | null,
   calls: [] as { url: string; repo: string; body: { messages: { role: string; content: string }[]; model: string }; headers: unknown }[],
@@ -50,6 +50,8 @@ async function fakeQwen(url: string | URL | Request, init?: RequestInit): Promis
   if (server.status !== 200) return new Response("{}", { status: server.status });
   const answer = (server.answers.get(repo) ?? { decision: "approve" }) as Answer;
   if (typeof answer === "number") return new Response("{}", { status: answer });
+  // 제한 시간을 다 쓴 시간 초과 — 제공자는 TimeoutError 를 qwen_timeout 으로 읽는다
+  if (answer === "timeout") throw new DOMException("deadline", "TimeoutError");
   const content = answer === "invalid" ? "판단할 수 없습니다"
     : JSON.stringify({ decision: answer.decision, reason: answer.reason ?? `Qwen says ${answer.decision}.`, evidenceIds: ["product"],
       confidence: answer.confidence ?? 0.95 });
@@ -261,6 +263,18 @@ describe("감사 두 번째 의견", () => {
     const status = await readStatus();
     expect(status.lastError).toMatchObject({ code: "qwen_unreachable" });
     expect(status.lastSuccessAt! > status.lastError!.at).toBe(true);
+  });
+
+  it("한 번의 진짜 시간 초과는 그 항목의 실패로 세고 다음 항목을 묻는다 — 물러나지 않는다(45초 제한·15초 시작)", async () => {
+    expect([QWEN_AUTO_CALL_TIMEOUT_MS, QWEN_AUTO_MIN_START_MS]).toEqual([45_000, 15_000]);
+    await judged([{ repo: "t/slow", reason: CONTENT }, { repo: "t/fine", reason: CONTENT }]);
+    server.answers.set("t/slow", "timeout");
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(askedRepos()).toEqual(["t/slow", "t/fine"]);
+    expect(qwenEndpointBackoff).toMatchObject({ failures: 0, retryAt: 0 });
+    expect((await opinions()).map((row) => row.itemId)).toEqual([(await item("fine")).id]);
+    const observation = await readQwenAutoObservation("qwen3.8-flash-next");
+    expect(observation.failures[`a:${(await item("slow")).id}`]).toMatchObject({ code: "qwen_timeout", count: 1 });
   });
 
   it("항목만의 실패(형식 오류·400)는 다음 항목으로 넘어가고 두 번까지만 묻는다", async () => {

@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JobContext } from "@/lib/jobs/runner";
-import { auditPublishedProducts, qwenAuditBackoffMs, qwenAuditConcurrency, resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
+import { auditPublishedProducts, latencyStats, QWEN_CALL_TIMEOUT_MS, QWEN_MIN_START_MS, qwenAuditBackoffMs, qwenAuditConcurrency,
+  resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
-import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
-import { qwenEndpointBackingOff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { QWEN_V2_PROMPT_VERSION, reviewWithQwenDirect } from "@/lib/crawl/qwen-direct-review";
+import { qwenEndpointBackingOff, qwenEndpointBackoff, qwenSoftFailures } from "@/lib/crawl/qwen-endpoint-backoff";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 
@@ -12,7 +13,8 @@ import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
  * 감사 행·일감·기록은 이 파일이 흉내 낸다(DB 를 여는 쪽은 tests/integration/product-audit-qwen.test.ts).
  */
 const mocks = vi.hoisted(() => ({ campaign: vi.fn(), settings: vi.fn(), candidates: vi.fn(), pending: vi.fn(),
-  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), inputFailed: vi.fn(), finish: vi.fn(), gateway: vi.fn() }));
+  input: vi.fn(), record: vi.fn(), noSource: vi.fn(), inputFailed: vi.fn(), finish: vi.fn(), gateway: vi.fn(),
+  realReview: null as typeof import("@/lib/crawl/qwen-direct-review").reviewWithQwenDirect | null }));
 // Qwen-v2 두 번째 의견 단계(감사 잡 틱 안에서 나란히 돈다)는 tests/integration/audit-second-opinion-auto.test.ts 가 본다 — 여기 가짜 서버의 호출 수는 감사 묻기만
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
@@ -21,6 +23,12 @@ vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
   loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, markAuditInputFailed: mocks.inputFailed,
   finishAuditCampaign: mocks.finish }));
+// 진짜 제공자를 그대로 부르되 넘긴 제한 시간을 본다
+vi.mock("@/lib/crawl/qwen-direct-review", async (original) => {
+  const actual = await original<typeof import("@/lib/crawl/qwen-direct-review")>();
+  mocks.realReview = actual.reviewWithQwenDirect;
+  return { ...actual, reviewWithQwenDirect: vi.fn(actual.reviewWithQwenDirect) };
+});
 vi.mock("@/lib/llm/capacity-repository", () => ({
   readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
 }));
@@ -42,8 +50,9 @@ const outcome = { decision: "reject", reason: 'pageText: "Acme" — a marketing 
 const body = (content: string) => JSON.stringify({ model: QWEN_MODEL, choices: [{ finish_reason: "stop", message: { content } }],
   usage: { prompt_tokens: 5_000, completion_tokens: 120 } });
 
-/** 가짜 vLLM — 부를 때마다 ms 만큼 걸린다. 몇 개가 동시에 떠 있었는지, 언제 시작했는지 센다. 끊으면 AbortError */
-function endpoint(options: { ms?: number; respond?: (call: number) => Response | Error } = {}) {
+/** 가짜 vLLM — 부를 때마다 ms 만큼 걸린다. 몇 개가 동시에 떠 있었는지, 언제 시작했는지 센다. 끊으면 AbortError.
+ * respond 가 Error 를 돌려주면 그만큼 기다린 뒤 던진다 — TimeoutError(DOMException)는 제공자가 시간 초과(qwen_timeout)로 읽는다 */
+function endpoint(options: { ms?: number | ((call: number) => number); respond?: (call: number) => Response | Error } = {}) {
   const state = { inFlight: 0, maxInFlight: 0, starts: [] as number[], aborted: 0, urls: [] as string[], heads: [] as Headers[] };
   const fetcher = vi.fn(async (url: string, init: RequestInit) => {
     const call = state.starts.length;
@@ -54,7 +63,7 @@ function endpoint(options: { ms?: number; respond?: (call: number) => Response |
     state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, options.ms ?? 3_000);
+        const timer = setTimeout(resolve, typeof options.ms === "function" ? options.ms(call) : options.ms ?? 3_000);
         init.signal?.addEventListener("abort", () => { clearTimeout(timer); state.aborted += 1; reject(init.signal?.reason); }, { once: true });
       });
     } finally { state.inFlight -= 1; }
@@ -66,10 +75,13 @@ function endpoint(options: { ms?: number; respond?: (call: number) => Response |
   return { state, fetcher };
 }
 
+/** 마지막으로 만든 문맥 — 틱이 남긴 로그를 본다 */
+let lastContext: JobContext<null> | null = null;
 const context = (over: Partial<JobContext<null>> = {}): JobContext<null> => {
   const startedAt = Date.now();
-  return { cursor: null, save: vi.fn(), hasBudget: () => Date.now() - startedAt < 70_000, deadlineAt: startedAt + 70_000, log: vi.fn(),
+  lastContext = { cursor: null, save: vi.fn(), hasBudget: () => Date.now() - startedAt < 70_000, deadlineAt: startedAt + 70_000, log: vi.fn(),
     lease: { name: "product-audit", token: "owned", requestedVersion: 1 }, ...over };
+  return lastContext;
 };
 /** 한 틱을 끝까지 — 러너 예산(70초)을 흘려 보낸다 */
 async function tick(ctx = context()) {
@@ -81,6 +93,7 @@ const recorded = () => mocks.record.mock.calls.map(([call]) => call);
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(reviewWithQwenDirect).mockImplementation(mocks.realReview!);
   vi.useFakeTimers();
   resetQwenAuditBackoff();
   vi.stubEnv("AUDIT_SECOND_OPINION_URL", QWEN_URL);
@@ -158,15 +171,19 @@ describe("바꾼 감사는 Qwen 에게 묻는다", () => {
 });
 
 describe("동시 호출과 틱 예산", () => {
-  it("자리 둘(기본)이 틱이 끝날 때까지 잇달아 묻는다 — 3초 호출이면 한 틱에 30건, 한 호출의 제한 시간(20초)이 다 남지 않으면 새로 시작하지 않는다", async () => {
+  it("자리 둘(기본)이 틱이 끝날 때까지 잇달아 묻는다 — 3초 호출이면 한 틱에 34건, 틱 끝까지 15초가 안 남으면 새로 시작하지 않는다", async () => {
     const { state } = endpoint({ ms: 3_000 });
     const t0 = Date.now();
     await tick();
     expect(state.maxInFlight).toBe(2);
-    expect(recorded().filter((call) => call.ok)).toHaveLength(30);
-    // 틱 끝 = 65초 - 저장 여유 2초 = 63초. 새 호출은 43초(= 63 - 20)까지만
-    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(43_000);
+    expect(recorded().filter((call) => call.ok)).toHaveLength(34);
+    // 틱 끝 = 65초. 새 호출은 50초(= 65 - 15)까지만
+    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(50_000);
     expect(state.aborted).toBe(0);
+    expect([QWEN_CALL_TIMEOUT_MS, QWEN_MIN_START_MS]).toEqual([45_000, 15_000]);
+    // 틱의 호출 시간·시간 초과 수를 남긴다
+    const log = vi.mocked(lastContext!.log).mock.calls.find(([event]) => event === "product_audit.reviewed")?.[1];
+    expect(log).toMatchObject({ reviewed: 34, timeouts: 0, cutoff: 0, latency: { count: 34, avgMs: 3_000, p90Ms: 3_000, maxMs: 3_000 } });
   });
 
   it("AUDIT_QWEN_CONCURRENCY 는 4 까지만 — 그보다 크게 적어도 넷만 동시에 띄운다", async () => {
@@ -174,22 +191,48 @@ describe("동시 호출과 틱 예산", () => {
     const { state } = endpoint({ ms: 3_000 });
     await tick();
     expect(state.maxInFlight).toBe(4);
-    expect(recorded()).toHaveLength(60);
+    expect(recorded()).toHaveLength(68);
     expect(mocks.pending).toHaveBeenCalledWith(4, 160);
   });
 
-  it("줄인 제한 시간으로 부르지 않는다 — 틱 끝에 걸려 끊기는 호출이 없고, 서버 탈로 세는 일도 없다", async () => {
+  it("틱 끝이 가까우면 줄인 제한 시간으로 부른다 — 끝에 걸리지 않은 답은 그대로 적는다", async () => {
     const { state, fetcher } = endpoint({ ms: 8_000 });
     const t0 = Date.now();
     await tick();
-    // 자리마다 0·8·…·40초에 시작(40초에 남은 23초 ≥ 20초, 48초에는 15초라 시작하지 않는다)
-    expect(state.starts).toHaveLength(12);
-    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(43_000);
+    // 자리마다 0·8·…·48초에 시작(48초에 남은 17초 ≥ 15초 — 제한 시간 15초로, 56초에는 9초라 시작하지 않는다)
+    expect(state.starts).toHaveLength(14);
+    expect(Math.max(...state.starts) - t0).toBeLessThanOrEqual(50_000);
     expect(state.aborted).toBe(0);
-    expect(recorded()).toHaveLength(12);
+    expect(recorded()).toHaveLength(14);
     expect(recorded().every((call) => call.ok)).toBe(true);
     expect(qwenEndpointBackingOff()).toBe(false);
-    expect(fetcher).toHaveBeenCalledTimes(12);
+    expect(fetcher).toHaveBeenCalledTimes(14);
+    const timeouts = vi.mocked(reviewWithQwenDirect).mock.calls.map(([, options]) => options?.timeoutMs);
+    expect(timeouts.slice(0, 2)).toEqual([45_000, 45_000]);
+    expect(timeouts.slice(-2)).toEqual([15_000, 15_000]);
+  });
+
+  it("틱 끝까지 16초 남았으면 시작하고 제한 시간은 min(45초, 남은 시간 − 저장 여유)=14초 — 그 끝에 걸린 것은 아무것도 세지 않는다", async () => {
+    // 첫 호출은 줄인 제한 시간(14초)에 제공자가 끊고, 둘째는 틱 끝(남은 시간 0)에 잡이 끊는다 — 어느 쪽이든 틱 끝 때문이다
+    const { state } = endpoint({ ms: (call) => (call === 0 ? 13_900 : 20_000), respond: () => new DOMException("deadline", "TimeoutError") });
+    const startedAt = Date.now();
+    const result = await tick(context({ deadlineAt: startedAt + 16_000 }));
+    expect(result).toEqual({ value: { done: false } });
+    expect(state.starts).toHaveLength(2);
+    expect(vi.mocked(reviewWithQwenDirect).mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([14_000, 14_000]);
+    // 서버 탈도 항목의 시도도 아니다 — 적지 않고 물러나지 않는다
+    expect(recorded()).toHaveLength(0);
+    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(qwenSoftFailures.streak).toBe(0);
+    const log = vi.mocked(lastContext!.log).mock.calls.find(([event]) => event === "product_audit.reviewed")?.[1];
+    expect(log).toMatchObject({ reviewed: 0, timeouts: 0, cutoff: 2 });
+  });
+
+  it("틱 끝까지 15초가 안 남으면 시작하지 않는다", async () => {
+    const { fetcher } = endpoint({ ms: 3_000 });
+    const startedAt = Date.now();
+    expect(await tick(context({ deadlineAt: startedAt + 14_000 }))).toEqual({ value: { done: false } });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("러너 예산이 먼저 끝나 끊긴 호출은 적지 않고 서버 탈로도 세지 않는다", async () => {
@@ -311,6 +354,29 @@ describe("부르는 곳의 탈에서 물러나기", () => {
     expect([1, 2, 3, 4, 5, 9].map(qwenAuditBackoffMs)).toEqual([60_000, 120_000, 240_000, 480_000, 900_000, 900_000]);
   });
 
+  it("한 번의 진짜 시간 초과(45초를 다 썼다)는 그 항목의 시도로 세고 물러나지 않는다 — 잡도 실패로 남지 않고 다음 항목을 묻는다", async () => {
+    // 첫 호출만 45초를 넘겨 제공자가 시간 초과로 끊는다(가짜는 45초에 TimeoutError 를 던진다)
+    endpoint({ ms: (call) => (call === 0 ? 45_000 : 3_000), respond: (call) => (call === 0 ? new DOMException("deadline", "TimeoutError")
+      : new Response(body(JSON.stringify(outcome)))) });
+    vi.stubEnv("AUDIT_QWEN_CONCURRENCY", "1");
+    expect(await run(70_000)).toEqual({ value: { done: false } });
+    expect(recorded()[0]).toEqual(expect.objectContaining({ itemId: 100, ok: false, error: "qwen_timeout", counted: true }));
+    expect(recorded().slice(1).every((call) => call.ok)).toBe(true);
+    expect(recorded().length).toBeGreaterThan(1);
+    expect(qwenEndpointBackingOff()).toBe(false);
+    // 그 뒤 답을 받아 붐빔 연속은 처음부터
+    expect(qwenSoftFailures.streak).toBe(0);
+  });
+
+  it("진짜 시간 초과가 성공 없이 세 번 잇달면 서버 탈이다 — 모두 물러나고 잡을 실패로 남긴다", async () => {
+    endpoint({ ms: 45_000, respond: () => new DOMException("deadline", "TimeoutError") });
+    vi.stubEnv("AUDIT_QWEN_CONCURRENCY", "3");
+    expect((await run(70_000)).error?.message).toBe("product_audit_endpoint_error:qwen_timeout");
+    expect(recorded().map((call) => [call.error, call.counted])).toEqual([["qwen_timeout", true], ["qwen_timeout", true], ["qwen_timeout", true]]);
+    expect(qwenEndpointBackingOff()).toBe(true);
+    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_timeout" });
+  });
+
   it("멀쩡하던 중의 5xx 는 그 항목의 시도로 세고, 이미 탈 난 동안의 5xx 는 세지 않는다", async () => {
     const { fetcher } = endpoint({ ms: 100, respond: () => new Response("{}", { status: 503 }) });
     vi.stubEnv("AUDIT_QWEN_CONCURRENCY", "1");
@@ -329,5 +395,13 @@ describe("부르는 곳의 탈에서 물러나기", () => {
     expect(recorded()[0]).toEqual(expect.objectContaining({ itemId: 100, ok: false, error: "qwen_invalid_json", counted: true }));
     expect(recorded().slice(1).every((call) => call.ok)).toBe(true);
     expect(recorded().length).toBeGreaterThan(10);
+  });
+});
+
+describe("틱의 호출 시간", () => {
+  it("수·평균·p90·최대를 ms 로 — 없으면 비운다", () => {
+    expect(latencyStats([])).toEqual({ count: 0, avgMs: null, p90Ms: null, maxMs: null });
+    expect(latencyStats([12_000, 2_500, 19_800, 11_000, 9_000, 10_000, 13_000, 14_000, 15_000, 16_000]))
+      .toEqual({ count: 10, avgMs: 12_230, p90Ms: 16_000, maxMs: 19_800 });
   });
 });

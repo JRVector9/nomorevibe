@@ -18,7 +18,7 @@ import { mergeWithDefaults } from "./settings";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
-import { endpointBackoffActive, noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff,
+import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff,
   readQwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
@@ -499,7 +499,8 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
     if (call.ok) await noteQwenEndpointSuccess(callStartedAt);
-    else if (heldQwenEndpointFailure(call.code)) await noteQwenEndpointFailure(call.code as QwenDirectErrorCode);
+    // 서버 탈인지는 함께 쓰는 셈이 가른다 — 붐빔(진짜 시간 초과·429)은 부르는 쪽 모두를 통틀어 세 번 잇달아야 탈이다
+    const outage = !call.ok && heldQwenEndpointFailure(call.code) && (await noteQwenCallFailure(call.code as QwenDirectErrorCode)).outage;
     let state: HeldQwenRecordState;
     try { state = await recordHeldQwen(claimed.claim, call); }
     catch (error) {
@@ -515,7 +516,7 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     if (state === "held") tick.held++;
     if (state === "failed") tick.failed++;
     // 부르는 곳의 탈이면 이 틱의 나머지를 부르지 않는다 — 다음 틱부터는 함께 쓰는 물러나기가 물린다
-    if (!call.ok && (heldQwenEndpointFailure(call.code) || call.code === "qwen_cancelled")) break;
+    if (!call.ok && (outage || call.code === "qwen_cancelled")) break;
   }
   return tick;
 }

@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // 관측 기록(운영 관측 qwen-endpoint)은 DB 를 쓴다 — 여기서는 프로세스 안의 값만 본다(통합 시험이 관측을 본다)
 vi.mock("@/lib/db", () => ({ db: { transaction: async () => undefined, select: () => ({ from: () => ({ where: async () => [] }) }) } }));
-import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoff, resetQwenAuditBackoff,
-  withQwenSecondarySlot } from "@/lib/crawl/qwen-endpoint-backoff";
+import { noteQwenAnswered, noteQwenCallFailure, noteQwenEndpointFailure, noteQwenEndpointSuccess, QWEN_SOFT_FAILURE_STREAK, qwenBackoffMs,
+  qwenEndpointBackingOff, qwenEndpointBackoff, qwenSoftFailures, resetQwenAuditBackoff, withQwenSecondarySlot } from "@/lib/crawl/qwen-endpoint-backoff";
 import { qwenAuditBackoffMs } from "@/lib/crawl/jobs/product-audit";
 
 /**
@@ -32,6 +32,48 @@ describe("함께 쓰는 물러나기", () => {
     expect(qwenEndpointBackoff).toMatchObject({ failures: 2, retryAt: now + 120_000 });
     await noteQwenEndpointSuccess(now + 1);
     expect(qwenEndpointBackoff).toEqual({ failures: 0, retryAt: 0, lastError: null, failedAt: 0 });
+    expect(qwenSoftFailures).toEqual({ streak: 0, lastCode: null });
+  });
+});
+
+describe("무엇이 서버 탈인가 — noteQwenCallFailure", () => {
+  it("닿지 않음·5xx·401/403/404 는 한 번이면 바로 탈이다", async () => {
+    for (const code of ["qwen_unreachable", "qwen_http_503", "qwen_http_500", "qwen_http_401", "qwen_http_403", "qwen_http_404"] as const) {
+      resetQwenAuditBackoff();
+      expect(await noteQwenCallFailure(code), code).toEqual({ outage: true, soft: false });
+      expect(qwenEndpointBackingOff(), code).toBe(true);
+    }
+  });
+
+  it("진짜 시간 초과·429 는 부르는 쪽 모두를 통틀어 성공 없이 세 번 잇달아야 탈이다 — 한 번은 물러나지 않는다", async () => {
+    expect(QWEN_SOFT_FAILURE_STREAK).toBe(3);
+    expect(await noteQwenCallFailure("qwen_timeout")).toEqual({ outage: false, soft: true });
+    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(await noteQwenCallFailure("qwen_http_429")).toEqual({ outage: false, soft: true });
+    expect(qwenSoftFailures).toEqual({ streak: 2, lastCode: "qwen_http_429" });
+    expect(await noteQwenCallFailure("qwen_timeout")).toEqual({ outage: true, soft: true });
+    expect(qwenEndpointBackingOff()).toBe(true);
+    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_timeout" });
+    // 탈로 센 뒤에는 연속을 처음부터 센다
+    expect(qwenSoftFailures.streak).toBe(0);
+  });
+
+  it("사이에 답(성공·서버가 답한 항목 탓 실패)이 끼면 연속을 끊는다 — 멈춤은 끊지 않는다", async () => {
+    await noteQwenCallFailure("qwen_timeout");
+    await noteQwenCallFailure("qwen_timeout");
+    await noteQwenEndpointSuccess(Date.now());
+    expect(qwenSoftFailures.streak).toBe(0);
+    await noteQwenCallFailure("qwen_timeout");
+    await noteQwenCallFailure("qwen_timeout");
+    expect(await noteQwenCallFailure("qwen_invalid_json")).toEqual({ outage: false, soft: false });
+    expect(qwenSoftFailures.streak).toBe(0);
+    await noteQwenCallFailure("qwen_timeout");
+    await noteQwenCallFailure("qwen_timeout");
+    expect(await noteQwenCallFailure("qwen_cancelled")).toEqual({ outage: false, soft: false });
+    expect(qwenSoftFailures.streak).toBe(2);
+    noteQwenAnswered();
+    expect(qwenSoftFailures.streak).toBe(0);
+    expect(qwenEndpointBackingOff()).toBe(false);
   });
 });
 

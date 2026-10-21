@@ -20,7 +20,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { secondReviewGeneration } from "./second-review-input";
 import { getSettings } from "./settings";
-import { noteQwenEndpointFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
+import { noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import type { CrawlSettings } from "./settings-schema";
 
 /**
@@ -65,6 +65,8 @@ const WRITE_MARGIN_MS = 2_000;
  */
 const LANE_MS = 45_000;
 const ITEM_RETRY_MS = 15 * 60_000;
+/** 탈이 아닌 429(붐빔) 뒤 다시 묻는 때 */
+const BUSY_RETRY_MS = 60_000;
 /**
  * 단계 전환(draining) 중에 받은 답은 버리고 이만큼 뒤에 다시 묻는다. 부르는 곳의 탈(시간 초과·연결·5xx·404·429)은 gpu3090 을 부르는
  * 모두와 함께 물러나고(qwen-endpoint-backoff.ts — 1분부터 두 배씩 15분까지), 그 항목은 물러남이 끝날 때 다시 묻는다
@@ -274,7 +276,8 @@ const DEEPSEEK_CLEARED = { qwenOutcome: null, deepseekState: null, deepseekModel
   deepseekCompletedAt: null, deepseekRetryAfter: null } as const;
 
 /** 받은 답을 쓴다 — 잡을 때 본 것이 하나라도 바뀌었으면 답만 남기고 후보는 건드리지 않는다 */
-async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobLease): Promise<Settled> {
+/** outage: 함께 쓰는 셈(qwen-endpoint-backoff.ts noteQwenCallFailure)이 서버 탈로 가른 실패 — 이 항목의 실패로 세지 않는다 */
+async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobLease, outage = false): Promise<Settled> {
   return db.transaction(async tx => {
     if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const now = new Date();
@@ -294,11 +297,12 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
       return settled;
     };
     if (!result.ok) {
-      // 멈춤은 다음 틱에 바로, 부르는 곳의 탈은 잠깐 뒤에 — 둘 다 이 항목의 실패로 세지 않는다
-      const cancelled = result.code === "qwen_cancelled", endpoint = endpointCode(result.code);
-      const failureCount = cancelled || endpoint ? row.failureCount : row.failureCount + 1;
-      // 부르는 곳의 탈은 함께 쓰는 물러나기가 끝날 때(부르는 쪽이 이미 걸었다) 다시 묻는다
-      const retryAt = cancelled ? now.getTime() : endpoint ? Math.max(now.getTime(), qwenEndpointBackoff.retryAt) : now.getTime() + ITEM_RETRY_MS;
+      // 멈춤은 다음 틱에 바로, 서버 탈은 함께 쓰는 물러나기가 끝날 때 — 둘 다 이 항목의 실패로 세지 않는다. 탈이 아닌 429 는 세지 않고
+      // 잠깐 뒤에, 탈이 아닌 한 번의 진짜 시간 초과는 그 항목의 실패로 센다(qwen-endpoint-backoff.ts — 붐빔은 세 번 잇달아야 탈이다)
+      const cancelled = result.code === "qwen_cancelled", busy = !outage && result.code === "qwen_http_429";
+      const failureCount = cancelled || outage || busy ? row.failureCount : row.failureCount + 1;
+      const retryAt = cancelled ? now.getTime() : outage ? Math.max(now.getTime(), qwenEndpointBackoff.retryAt)
+        : busy ? now.getTime() + BUSY_RETRY_MS : now.getTime() + ITEM_RETRY_MS;
       return finish({ state: "failed", errorCode: result.code.slice(0, 60), errorDetail: result.detail, latencyMs: result.latencyMs,
         failureCount, retryAfter: new Date(retryAt) }, "failed");
     }
@@ -423,12 +427,13 @@ export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLeas
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
     if (result.ok) await noteQwenEndpointSuccess(callStartedAt);
-    else if (endpointCode(result.code)) await noteQwenEndpointFailure(result.code as QwenDirectErrorCode);
-    tick[await settleSplitTiebreak(claimed.claim, result, lease)]++;
+    const outage = !result.ok && endpointCode(result.code) && (await noteQwenCallFailure(result.code as QwenDirectErrorCode)).outage;
+    tick[await settleSplitTiebreak(claimed.claim, result, lease, outage)]++;
     if (!result.ok) {
       ctx.log("crawl.split_tiebreak_failed", { candidateId: hint.candidateId, error: result.code, detail: result.detail });
       // 부르는 곳의 탈이거나 멈추라는 신호면 이 틱은 더 부르지 않는다
-      if (result.code === "qwen_cancelled" || endpointCode(result.code)) { tick.stopped = result.code; break; }
+      // 서버 탈이거나 멈추라는 신호면 이 틱은 더 부르지 않는다 — 탈이 아닌 붐빔(한 번의 시간 초과·429)은 다음 후보로 간다
+      if (result.code === "qwen_cancelled" || outage) { tick.stopped = result.code; break; }
     }
   }
   if (hints.length) ctx.log("crawl.split_tiebreak", { ...tick, hinted: hints.length });
