@@ -14,7 +14,7 @@ import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
-import { sameReviewModel } from "./review-model-identity";
+import { sameUnderlyingModel } from "./review-model-identity";
 import { qwenConfident, sameOpinionModel, secondRejectHolds } from "./second-opinion-rules";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
@@ -115,7 +115,7 @@ export function splitRejectVerdict(gates: Pick<SecondReview, "status" | "secondD
   qwen: { decision: string; reason: string | null }, model: string): "apply" | "minority" | "catalog" | "not_reject" {
   if (qwen.decision !== "reject") return "not_reject";
   const independent = gates.filter(row => (row.status === "needs_human" || row.status === "agreed")
-    && !sameReviewModel(row.firstModel, row.model) && !sameOpinionModel(row.model, model));
+    && !sameUnderlyingModel(row.firstModel, row.model) && !sameOpinionModel(row.model, model));
   const rejects = independent.filter(row => row.secondDecision === "reject");
   if (!rejects.length || independent.some(row => row.secondDecision === "approve")) return "minority";
   if (![qwen.reason, ...rejects.map(row => row.secondReason)].every(reason => secondRejectHolds(model, reason))) return "catalog";

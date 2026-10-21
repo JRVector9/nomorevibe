@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeWithDefaults, settingsFormVersion, storedQwenAuto } from "@/lib/crawl/settings";
+import { mergeWithDefaults, settingsFormVersion, storedAuditHold, storedQwenAuto } from "@/lib/crawl/settings";
 import { auditHoldSchema, crawlSettingsSchema, DEFAULT_AUDIT_HOLD, DEFAULT_CRAWL_SETTINGS, DEFAULT_QWEN_AUTO, QWEN_AUTO_STEPS, type QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import * as originMain from "./fixtures/settings-schema-55389b48";
 
@@ -56,6 +56,13 @@ describe("storedQwenAuto — 없거나 깨지면 그 단계만 꺼짐", () => {
     expect(settings.enabled).toBe(false);
     // 하루 자동 거부 상한이 없던 값(이 칸 전)은 설계한 기본 상한(50)으로 읽는다 — 안전 상한이라 기본값이 곧 설계값이다
     expect(settings.qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 4, dailyRejectCap: 50 });
+  });
+
+  it("이 가지의 앞 커밋이 감사 보류 안에 적던 자동 단계 칸은 버리고 읽는다 — strict 라도 감사 보류가 깨지지 않는다", () => {
+    const stale = { ...DEFAULT_AUDIT_HOLD, minConfidence: 0.97, autoSecondOpinion: { enabled: true, perTick: 10 }, publishedFilter: { enabled: true, perTick: 10 } };
+    expect(storedAuditHold({ auditHold: stale })).toEqual({ ...DEFAULT_AUDIT_HOLD, minConfidence: 0.97 });
+    // 그 칸은 자동 단계를 켜지 않는다 — 자동 단계는 최상위 qwenAuto 만 읽는다
+    expect(mergeWithDefaults({ enabled: true, auditHold: stale }).qwenAuto.auditSecondOpinion.enabled).toBe(false);
   });
 
   it("하루 자동 거부 상한 — 0~500 정수. 깨지면 그 단계가 꺼진다", () => {

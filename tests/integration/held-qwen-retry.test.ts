@@ -5,7 +5,8 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, products, secondReviews } from "@/lib/db/schema";
 import { changeReviewMode, getSettings, saveSettings, setHumanReviewEnabled, setQwenAutoStep } from "@/lib/crawl/settings";
-import { loadReviewInput, reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
+import { listReviewCandidates, loadReviewInput, reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
+import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { judgeRevision } from "@/lib/crawl/rules";
 import { runJob } from "@/lib/jobs/runner";
@@ -170,13 +171,11 @@ describe("보류 Qwen-v2 재심사", () => {
     // 2차 전에는 발행하지 않는다
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
-    expect(await enqueueSecondReviews(await getSettings())).toBe(2);
+    // 같은 Qwen(게이트웨이 이름 '[gpu3090] ')은 자리 표시만 달라 되풀이 표다 — 관문 행을 세우지 않는다. 독립 투표자(second-test)만 본다
+    expect(await enqueueSecondReviews(await getSettings())).toBe(1);
     const gates = await db.select().from(secondReviews).orderBy(secondReviews.id);
-    expect(gates.map((gate) => gate.model).sort()).toEqual([OTHER_VOTER.model, QWEN_VOTER.model].sort());
+    expect(gates.map((gate) => gate.model)).toEqual([OTHER_VOTER.model]);
     expect(gates.every((gate) => gate.trigger === "ai_approved" && gate.firstAttemptId === attempt.id && gate.firstModel === "qwen3.8-flash-next")).toBe(true);
-
-    // 같은 Qwen(게이트웨이 이름)의 승인만으로는 열리지 않는다 — 독립 투표자(second-test)의 승인이 있어야 한다
-    await vote(gates.find((gate) => gate.model === QWEN_VOTER.model)!, "approve");
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
     await vote(gates.find((gate) => gate.model === OTHER_VOTER.model)!, "approve");
@@ -192,9 +191,8 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(await candidateRow(row.id)).toMatchObject({ state: "approved", reason: "passed" });
     await enqueueSecondReviews(await getSettings());
     const gates = await db.select().from(secondReviews).orderBy(secondReviews.id);
-    await vote(gates.find((gate) => gate.model === QWEN_VOTER.model)!, "approve");
     await vote(gates.find((gate) => gate.model === OTHER_VOTER.model)!, "approve");
-    // 두 표가 모두 승인한 뒤 독립 투표자(second-test)를 빼고 같은 Qwen(게이트웨이 이름)만 남긴다 — 남은 승인은 Qwen-v2 와 같은 모델뿐이다
+    // 독립 투표자(second-test)가 승인한 뒤 그 투표자를 빼고 같은 Qwen(게이트웨이 이름)만 남긴다 — 남은 칸은 Qwen-v2 와 같은 모델뿐이다
     await saveSettings({ secondReview: { enabled: true, voters: [QWEN_VOTER] } }, "test");
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
@@ -418,6 +416,116 @@ describe("보류 Qwen-v2 재심사", () => {
     await tick();
     expect(requests).toHaveLength(1);
     expect(await candidateRow(row.id)).toMatchObject({ state: "rejected", decidedBy: "qwen-v2" });
+  });
+
+  it("1차가 잠깐 실패해 다시 볼 차례를 기다리는 판단 보류는 맡지 않는다 — 1차의 판단 보류가 지금 입력에 있어야 한다", async () => {
+    const { row, document } = await held(0, "ambiguous");
+    const input = await loadReviewInput(row, document, await getSettings());
+    // 1차가 시간 초과로 실패했고 다시 볼 때를 기다린다(판단 보류는 없다) — 1차 대상에서 잠시 빠졌을 뿐 1차 몫이다
+    await db.insert(crawlReviewAttempts).values({ candidateId: row.id, kind: "automatic", state: "failed",
+      inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot,
+      source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "claude-cli",
+      model: "test-model", attemptNumber: 1, errorCode: "timeout", retryAfter: new Date(Date.now() + 15 * 60_000),
+      validUntil: input.validUntil, startedAt: new Date(), completedAt: new Date() });
+    reply(outcome("reject", 0.95));
+    await tick();
+    expect(requests).toHaveLength(0);
+    expect(await qwenAttempts(row.id)).toHaveLength(0);
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "ambiguous", decidedBy: "auto" });
+    // 다른 1차 심사자(지금 설정이 아닌 모델)의 판단 보류도 이 입력의 1차 판단 보류가 아니다
+    await db.insert(crawlReviewAttempts).values({ candidateId: row.id, kind: "automatic", state: "succeeded",
+      inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot,
+      source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "claude-cli",
+      model: "other-model", attemptNumber: 2, outcome: { decision: "needs_review", reason: "unclear", evidenceIds: ["product"], confidence: 0.5 },
+      validUntil: input.validUntil, startedAt: new Date(), completedAt: new Date() });
+    await tick();
+    expect(requests).toHaveLength(0);
+    // 지금 1차 심사자가 판단 보류를 내면 맡는다
+    await firstAbstained(row, document);
+    await tick();
+    expect(requests).toHaveLength(1);
+  });
+
+  it("같은 Qwen 의 대체 모델이 있으면 승인을 관문에 넣지 않는다 — 독립 칸을 같은 모델이 대신 채우지 못한다", async () => {
+    const floor = await auditFloor();
+    const SUPA = { provider: "abcllm" as const, model: "[supa] Qwen3.8-27B-NVFP4" };
+    await saveSettings({ secondReview: { enabled: true, voters: [SUPA], fallbacks: [QWEN_VOTER], sampleRate: 0, agreeAt: 0.85, includeAiHeld: false } }, "test");
+    const { row } = await held(0);
+    reply(outcome("approve", 0.95));
+    await tick();
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted", decidedBy: "auto" });
+    expect((await auditRowsAfter(floor, "candidate-qwen-held-review"))[0].detail).toMatchObject({ result: "held", cause: "no_independent_voter" });
+    expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("독립 칸의 투표자가 실패해 같은 모델의 대체 모델이 답하면 그 칸은 비어 있다 — 1차와 같은 가중치의 표로는 발행하지 않는다", async () => {
+    // 보류 재심사가 아니어도 같다: 1차가 '[MLX] qwen3.8-flash-next', 대체 모델이 '[gpu3090] qwen3.8-flash-next'(자리 표시만 다르다)
+    const SUPA = { provider: "abcllm" as const, model: "[supa] Qwen3.8-27B-NVFP4" };
+    await setQwenAutoStep({ step: "heldRetry", next: { ...DEFAULT_HELD_QWEN_RETRY, enabled: false }, expected: (await getSettings()).qwenAuto.heldRetry, actor: "test" });
+    await saveSettings({ firstReview: { provider: "abcllm", model: "[MLX] qwen3.8-flash-next" },
+      secondReview: { enabled: true, voters: [SUPA], fallbacks: [QWEN_VOTER], sampleRate: 0, agreeAt: 0.85, includeAiHeld: false } }, "test");
+    const { row, document } = await held(0);
+    const input = await loadReviewInput(row, document, await getSettings());
+    await db.insert(crawlReviewAttempts).values({ candidateId: row.id, kind: "automatic", state: "succeeded",
+      inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot,
+      source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "abcllm",
+      model: "[MLX] qwen3.8-flash-next", attemptNumber: 1, outcome: { decision: "approve", reason: "A usable app", evidenceIds: ["product"], confidence: 0.95 },
+      validUntil: input.validUntil, startedAt: new Date(), completedAt: new Date() });
+    await db.update(crawlCandidates).set({ state: "approved", reason: "passed" }).where(eq(crawlCandidates.id, row.id));
+    expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+    const [gate] = await db.select().from(secondReviews);
+    expect(gate.model).toBe(SUPA.model);
+    // 독립 투표자가 실패한다 — 남은 대체 모델은 같은 가중치의 Qwen 뿐이다
+    await recordSecondReviewFixture(gate.id, { ok: false, error: "timeout", model: SUPA.model, provider: "abcllm" });
+    const fallback = (await db.select().from(secondReviews).orderBy(secondReviews.id)).find((item) => item.fallbackForId === gate.id)!;
+    expect(fallback.model).toBe(QWEN_VOTER.model);
+    await vote(fallback, "approve");
+    // 그 표는 되풀이라 "일치"가 아니고, 발행 조건도 그 칸을 채운 것으로 보지 않는다
+    expect((await db.select().from(secondReviews).where(eq(secondReviews.id, fallback.id)))[0].status).toBe("needs_human");
+    const approvable = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings()));
+    expect(approvable).toHaveLength(0);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("소개 없음의 «승인 의견»은 소개를 지어 후보가 풀려도 관문의 1차 승인이 아니다 — 1차가 다시 본다", async () => {
+    const { row } = await held(0, "no_description");
+    reply(outcome("approve", 0.97));
+    await tick();
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "no_description" });
+    expect((await candidateRow(row.id)).signals?.heldQwenAttemptId).toBeUndefined();
+    // 소개 잡이 한 줄을 지어 후보를 푼다(recordTaglineResult 의 성공 갈래 그대로)
+    const released = await runJob<null>("crawl-tagline", async (ctx) => {
+      const [task] = await pendingTaglines(10);
+      expect(task?.candidate.id).toBe(row.id);
+      expect(await recordTaglineResult(task, ctx.lease!, { kind: "success", tagline: "할 일을 정리하는 앱", source: "page", model: "test" }))
+        .toMatchObject({ stored: true, released: true });
+      return { done: true };
+    });
+    expect(released).toMatchObject({ status: "completed" });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "approved", reason: "passed" });
+    // Qwen-v2 의 의견은 관문에 넣은 승인이 아니다 — 관문 행을 세우지 않고 발행 조건도 통과하지 않는다
+    expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+    expect(await db.select().from(secondReviews)).toHaveLength(0);
+    const approvable = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings()));
+    expect(approvable).toHaveLength(0);
+    // 1차가 다시 볼 차례다
+    expect((await listReviewCandidates(await getSettings(), 10)).map((candidate) => candidate.id)).toContain(row.id);
+  });
+
+  it("한 후보의 입력을 만들다 탈이 나도 그 후보만 건너뛰고 나머지를 본다", async () => {
+    const broken = await held(0), fine = await held(1);
+    // 소개가 너무 길어 1차 입력 상한(64KB)을 넘는다 — lockedInput 이 던진다
+    const huge = "\u0001".repeat(6000);
+    await db.update(crawlDocuments).set({ repoMeta: { description: huge }, pageMeta: { title: "Held 0", description: huge } })
+      .where(eq(crawlDocuments.id, broken.document.id));
+    reply(outcome("reject", 0.97));
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(requests).toHaveLength(1);
+    expect(await candidateRow(fine.row.id)).toMatchObject({ state: "rejected", decidedBy: "qwen-v2" });
+    expect(await candidateRow(broken.row.id)).toMatchObject({ state: "needs_review", decidedBy: "auto" });
   });
 
   it("원본이 24시간 지나 입력이 만료된 보류는 원본을 다시 받게 한다 — 하루 안에 받은 것·이 원본으로 이미 판단한 것은 다시 받지 않는다", async () => {

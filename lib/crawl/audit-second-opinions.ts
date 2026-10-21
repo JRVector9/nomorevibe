@@ -1,7 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import { productAuditSecondOpinions } from "@/lib/db/schema";
 import { AUDIT_REASON_RULES } from "./audit-reason-category";
-import { CATALOG_EXCEPTION_FAMILIES, CATALOG_LIKE_REASON } from "./second-opinion-rules";
+import { CATALOG_EXCEPTION_FAMILIES, CATALOG_LIKE_REASON, QWEN_AUTO_MIN_CONFIDENCE } from "./second-opinion-rules";
+import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 
 /**
  * 감사 답에 대한 두 번째 의견(0110) — 다른 모델이 같은 감사 항목을 다시 본 것(product_audit_second_opinions).
@@ -47,10 +48,15 @@ const exceptedFamily = CATALOG_EXCEPTION_FAMILIES.length
   ? sql`${secondOpinionFamilySql(sql`o2.model`)} in (${sql.join(CATALOG_EXCEPTION_FAMILIES.map((family) => sql`${family}`), sql`, `)})`
   : sql`false`;
 
-/** 그 항목에 보류의 까닭이 되는 두 번째 거절이 있다 — secondRejectHolds 의 SQL. reason 은 그 항목의 감사 사유(ai_reason) */
-export function countedSecondReject(itemId: SQL, reason: SQL): SQL {
+/**
+ * 그 항목에 보류의 까닭이 되는 두 번째 거절이 있다 — secondRejectHolds·holdGates 의 SQL. reason 은 그 항목의 감사 사유(ai_reason).
+ * Qwen-v2 자동 의견(source qwen-v2-auto)의 거절은 그 단계(qwenAuto.auditSecondOpinion)가 켜져 있고 확신이 0.90 이상일 때만 센다
+ * (product-audit-hold.ts countedOpinion 과 같다). autoOpinions 는 그 스위치다
+ */
+export function countedSecondReject(itemId: SQL, reason: SQL, autoOpinions: boolean): SQL {
   return sql`exists (select 1 from ${productAuditSecondOpinions} o2 where o2.item_id = ${itemId} and o2.decision = 'reject'
-    and not (${exceptedFamily} and ${catalogLikeReasonSql(reason)}))`;
+    and not (${exceptedFamily} and ${catalogLikeReasonSql(reason)})
+    and (o2.source is distinct from ${QWEN_V2_AUTO_SOURCE} or (${autoOpinions} and o2.confidence >= ${QWEN_AUTO_MIN_CONFIDENCE})))`;
 }
 
 /** 그 항목의 두 번째 거절 가운데 카탈로그 예외로 세지 않은 것(Qwen 거절·카탈로그 같은 항목)이 있다 */
@@ -92,12 +98,17 @@ export function primaryCatalogExcluded(primary: { provider: SQL; model: SQL }, r
   return sql`((coalesce(${primary.provider}, '') = 'qwen-direct' or ${secondOpinionFamilySql(primary.model)} = 'qwen') and ${catalogLikeReasonSql(reason)})`;
 }
 
-/** primary 를 주면 감사 모델의 카탈로그 예외(primaryCatalogExcluded)도 갈림·Qwen 카탈로그 예외 갈래에 넣는다 */
-export function secondOpinionFilter(filter: SecondOpinionFilter, itemId: SQL, reason: SQL, primary?: { provider: SQL; model: SQL }): SQL {
+/**
+ * primary 를 주면 감사 모델의 카탈로그 예외(primaryCatalogExcluded)도 갈림·Qwen 카탈로그 예외 갈래에 넣는다.
+ * autoOpinions: Qwen-v2 자동 의견 단계(qwenAuto.auditSecondOpinion)가 켜져 있는가 — 꺼져 있으면 그 거절은 '두 모델 모두 거절'에 들지 않는다
+ */
+export function secondOpinionFilter(filter: SecondOpinionFilter, itemId: SQL, reason: SQL,
+  options: { primary?: { provider: SQL; model: SQL }; autoOpinions: boolean }): SQL {
+  const { primary, autoOpinions } = options;
   const primaryExcluded = primary ? primaryCatalogExcluded(primary, reason) : sql`false`;
-  if (filter === "agreed") return countedSecondReject(itemId, reason);
+  if (filter === "agreed") return countedSecondReject(itemId, reason, autoOpinions);
   if (filter === "split") {
-    return sql`(not ${countedSecondReject(itemId, reason)} and (${secondOpinionVote(itemId, "approve")} or ${excludedSecondReject(itemId, reason)}
+    return sql`(not ${countedSecondReject(itemId, reason, autoOpinions)} and (${secondOpinionVote(itemId, "approve")} or ${excludedSecondReject(itemId, reason)}
       or ${primaryExcluded}))`;
   }
   if (filter === "qwen_catalog") return sql`(${excludedSecondReject(itemId, reason)} or ${primaryExcluded})`;

@@ -1,9 +1,16 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { crawlSettings, jobs } from "@/lib/db/schema";
 import { getSettings, saveSettings } from "@/lib/crawl/settings";
 import { parseSetQwenAutoArgs, setQwenAutoMain } from "@/scripts/ops/set-qwen-auto";
 import { auditFloor, auditRowsAfter, ensureSchema, TEST_DATABASE_URL } from "./setup";
+
+/** DR writer fence — 켜면 이 DB 가 fence 된 것으로 읽힌다(lib/operations/dr/epoch.ts writerSiteActive) */
+const fenced = vi.hoisted(() => ({ on: false }));
+vi.mock("@/lib/operations/dr/epoch", async (original) => {
+  const actual = await original<typeof import("@/lib/operations/dr/epoch")>();
+  return { ...actual, writerSiteActive: async (tx: Parameters<typeof actual.writerSiteActive>[0]) => !fenced.on && actual.writerSiteActive(tx) };
+});
 
 /**
  * 운영 스크립트(scripts/ops/set-qwen-auto.ts) — 화면과 같은 setter 로 Qwen-v2 자동 단계 하나를 켜고 끈다. 자기 DB 연결(QWEN_AUTO_DATABASE_URL)로
@@ -18,6 +25,7 @@ async function run(args: string[], over: Record<string, string | undefined> = {}
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  fenced.on = false;
   await db.delete(crawlSettings);
   await db.delete(jobs);
   await saveSettings({ enabled: true }, "test");
@@ -69,6 +77,31 @@ describe("set-qwen-auto", () => {
     expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 10, dailyRejectCap: 20 });
     expect(() => parseSetQwenAutoArgs(["--step=heldRetry", "--daily-reject-cap=5"])).toThrow("qwen_auto_usage");
     expect(parseSetQwenAutoArgs(["--step=splitTiebreak", "--daily-reject-cap=0"], { USER: "jr" })).toMatchObject({ enable: null, dailyRejectCap: 0 });
+  });
+
+  it("켜 둔 채 넓히는 바꿈(틱당 수·상한 올림·사유 더함)도 까닭을 받는다 — 좁히는 바꿈은 받지 않는다", async () => {
+    expect((await run(["--step=splitTiebreak", "--enable", "--reason=적체 회복"])).code).toBe(0);
+    const raised = await run(["--step=splitTiebreak", "--per-tick=20"]);
+    expect(raised.code).toBe(1);
+    expect(raised.json).toMatchObject({ ok: false, issues: [expect.stringContaining("까닭")] });
+    expect((await run(["--step=splitTiebreak", "--daily-reject-cap=80"])).code).toBe(1);
+    expect((await run(["--step=splitTiebreak", "--per-tick=20", "--reason=처리량"])).code).toBe(0);
+    // 내리는 것은 까닭 없이 된다
+    expect((await run(["--step=splitTiebreak", "--per-tick=5", "--daily-reject-cap=10"])).code).toBe(0);
+    expect((await getSettings()).qwenAuto.splitTiebreak).toEqual({ enabled: true, perTick: 5, dailyRejectCap: 10 });
+    // 보류 재심사 — 예산을 올리는 것도 넓히는 바꿈이다
+    expect((await run(["--step=heldRetry", "--enable", "--reason=적체 회복"])).code).toBe(0);
+    expect((await run(["--step=heldRetry", "--budget-seconds=60"])).code).toBe(1);
+    expect((await run(["--step=heldRetry", "--budget-seconds=20"])).code).toBe(0);
+  });
+
+  it("fence 된 DB 에는 쓰지 않는다 — DR writer fence 가 첫 잠금이고, dry-run 은 읽기만 해 그대로 된다", async () => {
+    const floor = await auditFloor();
+    fenced.on = true;
+    await expect(run(["--step=splitTiebreak", "--enable", "--reason=적체 회복"])).rejects.toThrow("site_fenced");
+    expect((await getSettings()).qwenAuto.splitTiebreak.enabled).toBe(false);
+    expect(await auditRowsAfter(floor)).toHaveLength(0);
+    expect((await run(["--step=splitTiebreak", "--enable", "--reason=적체 회복", "--dry-run"])).code).toBe(0);
   });
 
   it("범위를 넘는 값은 쓰지 않는다 — 거절도 작업 로그에 남긴다", async () => {

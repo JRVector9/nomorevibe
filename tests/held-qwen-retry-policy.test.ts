@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
+import { heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns, heldQwenSameModelFallback } from "@/lib/crawl/held-qwen-retry-policy";
+import { sameReviewModel, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
+import { combineVerdicts } from "@/lib/crawl/second-review";
 import { mergeWithDefaults, storedQwenAuto } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS, DEFAULT_HELD_QWEN_RETRY, DEFAULT_QWEN_AUTO, type CrawlSettings } from "@/lib/crawl/settings-schema";
 
@@ -10,8 +12,10 @@ const settings = (patch: Partial<CrawlSettings> = {}): CrawlSettings => ({ ...DE
   secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: true,
     voters: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, { provider: "abcllm", model: "[MLX] gpt-oss-120b" }] }, ...patch });
 type Row = Parameters<typeof heldQwenGateFirst>[1];
-const attempt: Row = { kind: "delegated", provider: "qwen-direct", actor: "qwen-v2:2026-10-21.v2", state: "succeeded",
+const attempt: Row = { id: 41, kind: "delegated", provider: "qwen-direct", actor: "qwen-v2:2026-10-21.v2", state: "succeeded",
   outcome: { decision: "approve", reason: "ok", evidenceIds: ["product"], confidence: 0.95 }, model: "qwen3.8-flash-next" };
+/** applyOutcome 이 관문에 넣은 승인 — 후보 signals.heldQwenAttemptId 가 그 시도 id 다 */
+const applied = { signals: { heldQwenAttemptId: 41 } };
 
 describe("보류 Qwen-v2 재심사 정책", () => {
   it("기본값은 꺼짐·세 사유·한 틱 10건이고, 켜도 적용 모드에서만 맡는다", () => {
@@ -31,19 +35,49 @@ describe("보류 Qwen-v2 재심사 정책", () => {
     expect(heldQwenIndependentVoters(settings(), "qwen3.8-flash-next").map((voter) => voter.model)).toEqual(["[MLX] gpt-oss-120b"]);
     const onlyQwen = settings({ secondReview: { ...settings().secondReview, voters: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }] } });
     expect(heldQwenGateable(onlyQwen, "qwen3.8-flash-next")).toBe(false);
-    expect(heldQwenGateFirst(onlyQwen, attempt)).toBe(false);
+    expect(heldQwenGateFirst(onlyQwen, attempt, applied)).toBe(false);
     expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(true);
   });
 
   it("관문은 켜진 스위치·적용 모드·2차 심사·성공한 승인 행에서만 Qwen-v2 를 1차 승인으로 받는다", () => {
-    expect(heldQwenGateFirst(settings(), attempt)).toBe(true);
-    expect(heldQwenGateFirst(settings({ qwenAuto: { ...DEFAULT_QWEN_AUTO, heldRetry: { ...ON, enabled: false } } }), attempt)).toBe(false);
-    expect(heldQwenGateFirst(settings({ secondReview: { ...settings().secondReview, enabled: false } }), attempt)).toBe(false);
-    expect(heldQwenGateFirst(settings({ reviewMode: "observe" }), attempt)).toBe(false);
-    expect(heldQwenGateFirst(settings(), { ...attempt, state: "failed" })).toBe(false);
-    expect(heldQwenGateFirst(settings(), { ...attempt, outcome: { ...attempt.outcome!, decision: "needs_review" } })).toBe(false);
-    expect(heldQwenGateFirst(settings(), { ...attempt, provider: "m3-deepseek", actor: "m3-deepseek:3" })).toBe(false);
-    expect(heldQwenGateFirst(settings(), { ...attempt, kind: "automatic" })).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, applied)).toBe(true);
+    expect(heldQwenGateFirst(settings({ qwenAuto: { ...DEFAULT_QWEN_AUTO, heldRetry: { ...ON, enabled: false } } }), attempt, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings({ secondReview: { ...settings().secondReview, enabled: false } }), attempt, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings({ reviewMode: "observe" }), attempt, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings(), { ...attempt, state: "failed" }, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings(), { ...attempt, outcome: { ...attempt.outcome!, decision: "needs_review" } }, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings(), { ...attempt, provider: "m3-deepseek", actor: "m3-deepseek:3" }, applied)).toBe(false);
+    expect(heldQwenGateFirst(settings(), { ...attempt, kind: "automatic" }, applied)).toBe(false);
+  });
+
+  it("관문은 applyOutcome 이 실제로 넣은 승인만 받는다 — 후보 signals.heldQwenAttemptId 가 그 시도여야 한다(소개 없음의 승인 의견은 아니다)", () => {
+    expect(heldQwenGateFirst(settings(), attempt, { signals: {} })).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, { signals: { heldQwenAttemptId: 40 } })).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, null)).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, { signals: { heldQwenAttemptId: "41" } })).toBe(true);
+  });
+
+  it("같은 Qwen 의 대체 모델이 있으면 관문에 넣지 않는다 — 독립 칸이 실패하면 그 대체 모델이 칸을 채운다", () => {
+    const withFallback = settings({ secondReview: { ...settings().secondReview, fallbacks: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }] } });
+    expect(heldQwenSameModelFallback(withFallback, "qwen3.8-flash-next")).toBe(true);
+    expect(heldQwenGateable(withFallback, "qwen3.8-flash-next")).toBe(false);
+    expect(heldQwenGateFirst(withFallback, attempt, applied)).toBe(false);
+    // 운영의 대체 모델(qwen3-coder:30b)은 다른 모델이다
+    const coder = settings({ secondReview: { ...settings().secondReview, fallbacks: [{ provider: "abcllm", model: "qwen3-coder:30b" }] } });
+    expect(heldQwenGateable(coder, "qwen3.8-flash-next")).toBe(true);
+  });
+
+  it("독립 표인지는 자리 표시를 모두 떼고 가른다 — 칸 맞추기(sameReviewModel)는 [MLX] 만 뗀다", () => {
+    expect(sameReviewModel("[gpu3090] qwen3.8-flash-next", "qwen3.8-flash-next")).toBe(false);
+    expect(sameUnderlyingModel("[gpu3090] qwen3.8-flash-next", "qwen3.8-flash-next")).toBe(true);
+    expect(sameUnderlyingModel("[MLX] gpt-oss-120b", "gpt-oss-120b")).toBe(true);
+    expect(sameUnderlyingModel("[supa] Qwen3.8-27B-NVFP4", "qwen3.8-flash-next")).toBe(false);
+    expect(sameUnderlyingModel("", "")).toBe(false);
+    // 같은 Qwen 의 표는 자리 표시가 달라도 되풀이라 "일치"로 적지 않는다
+    const first = { decision: "approve" as const, confidence: 0.95, model: "qwen3.8-flash-next" };
+    expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, 0.85, false))
+      .toBe("needs_human");
+    expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, 0.85, false)).toBe("agreed");
   });
 
   it("저장된 값은 따로 읽는다 — 없거나 깨졌으면 꺼짐(빠진 칸을 채우지 않는다)", () => {

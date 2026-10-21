@@ -409,6 +409,7 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     openDisagree: 0, openQwenCatalog: 0, removed: 0, kept: 0, failed: 0, skipped: 0, answeredByCurrent: 0 };
   const hold = settings.auditHold;
   const qwenAuto = settings.qwenAuto;
+  const second = { primary: primarySql, autoOpinions: qwenAuto.auditSecondOpinion.enabled };
   if (!campaign) return { campaign: null, counts: empty, paused: null, stalled: false, held, hold, qwenAuto, switchTo: null };
   const open = sql`${productAuditItems.humanDecision} is null and ${products.status} in ('seeded', 'verified')`;
   const failed = sql`${productAuditItems.aiDecision} is null
@@ -424,12 +425,12 @@ export async function productAuditOverview(): Promise<AuditOverview> {
     needsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review')::int`,
     openReject: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open})::int`,
     openNeedsReview: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'needs_review' and ${open})::int`,
-    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql, reasonSql, primarySql)})::int`,
-    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql, reasonSql, primarySql)})::int`,
+    openAgreed: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("agreed", itemIdSql, reasonSql, second)})::int`,
+    openSplit: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open} and ${secondOpinionFilter("split", itemIdSql, reasonSql, second)})::int`,
     openDisagree: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
-      and ${secondOpinionFilter("disagree", itemIdSql, reasonSql, primarySql)})::int`,
+      and ${secondOpinionFilter("disagree", itemIdSql, reasonSql, second)})::int`,
     openQwenCatalog: sql<number>`count(*) filter (where ${productAuditItems.aiDecision} = 'reject' and ${open}
-      and ${secondOpinionFilter("qwen_catalog", itemIdSql, reasonSql, primarySql)})::int`,
+      and ${secondOpinionFilter("qwen_catalog", itemIdSql, reasonSql, second)})::int`,
     removed: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'removed')::int`,
     kept: sql<number>`count(*) filter (where ${productAuditItems.humanDecision} = 'kept')::int`,
     failed: sql<number>`count(*) filter (where ${failed})::int`,
@@ -477,10 +478,15 @@ const findingColumns = {
   owned, heldAt: products.auditHoldAt, second: secondOpinionsField(itemIdSql), aiProvider: productAuditItems.aiProvider,
 };
 
+/** Qwen-v2 자동 의견 단계가 켜져 있는가 — 꺼져 있으면 그 거절은 '두 모델 모두 거절'·묶어 내리기의 까닭이 아니다(holdGates 와 같다) */
+async function autoOpinionsOn(): Promise<boolean> {
+  return (await getSettings()).qwenAuto.auditSecondOpinion.enabled;
+}
+
 /** 열린 거절·보류 목록의 조건 — 이 감사의 이 결정이고, 사람이 손대지 않았고, 제품이 떠 있다. second 면 두 번째 의견으로 더 거른다 */
-function openFindings(campaignId: number, decision: "reject" | "needs_review", second?: SecondOpinionFilter) {
+function openFindings(campaignId: number, decision: "reject" | "needs_review", second: SecondOpinionFilter | undefined, autoOpinions: boolean) {
   return and(eq(productAuditItems.campaignId, campaignId), eq(productAuditItems.aiDecision, decision), isNull(productAuditItems.humanDecision),
-    listed, ...(second ? [secondOpinionFilter(second, itemIdSql, reasonSql, primarySql)] : []));
+    listed, ...(second ? [secondOpinionFilter(second, itemIdSql, reasonSql, { primary: primarySql, autoOpinions })] : []));
 }
 
 /**
@@ -491,7 +497,7 @@ export async function listAuditFindings(campaignId: number, decision: "reject" |
   { limit, offset, ids, second }: { limit: number; offset: number; ids?: number[]; second?: SecondOpinionFilter }): Promise<AuditFindingRow[]> {
   if (ids && ids.length === 0) return [];
   return db.select(findingColumns).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(openFindings(campaignId, decision, second), ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
+    .where(and(openFindings(campaignId, decision, second, second ? await autoOpinionsOn() : false), ...(ids ? [inArray(productAuditItems.id, ids)] : [])))
     .orderBy(owned, sql`${productAuditItems.aiConfidence} desc nulls last`, asc(productAuditItems.id))
     .limit(limit).offset(offset);
 }
@@ -518,7 +524,7 @@ export async function auditFindingReasons(campaignId: number, decision: "reject"
   second?: SecondOpinionFilter): Promise<{ id: number; reason: string | null }[]> {
   return db.select({ id: productAuditItems.id, reason: productAuditItems.aiReason })
     .from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(openFindings(campaignId, decision, second));
+    .where(openFindings(campaignId, decision, second, second ? await autoOpinionsOn() : false));
 }
 
 // ─────────────────────────── 사람의 결정 ───────────────────────────
@@ -617,9 +623,9 @@ export const GROUP_REMOVE_MAX = 50;
  * 모델이 승인했거나 카탈로그 예외로 세지 않은 Qwen 거절이 있는 것)은 사람이 한 건씩 본다. SaaS 첫 화면을 "광고 문구뿐"으로 잡은 오탐이
  * 이 무리에 몰려 있었다(settings-schema.ts DEFAULT_AUDIT_HOLD)
  */
-const groupable = and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
-  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql, reasonSql, primarySql)}`);
-const groupableItem = and(groupable, sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
+const groupable = (autoOpinions: boolean) => and(eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision),
+  gte(productAuditItems.aiConfidence, GROUP_REMOVE_MIN_CONFIDENCE), sql`not ${secondOpinionFilter("split", itemIdSql, reasonSql, { primary: primarySql, autoOpinions })}`);
+const groupableItem = (autoOpinions: boolean) => and(groupable(autoOpinions), sql`not exists (select 1 from ${products} where ${products.id} = ${productAuditItems.productId}
   and (${products.claimedAt} is not null or ${products.status} = 'verified'))`);
 
 /** 묶음의 범위 — 감사 화면의 갈래. 보류 중(held)·두 모델 모두 거절(agreed)·내릴 후보 전체(reject) */
@@ -630,10 +636,10 @@ export type AuditGroupScope = (typeof GROUP_SCOPES)[number];
  * 범위를 잠근 뒤 다시 보는 조건 — 오래된 화면이 그 사이 풀린 보류(승인 옮겨 적기·유지)나 바뀐 의견을 내리지 않게.
  * held: 그 제품이 지금 이 항목으로 보류 중. agreed: 이 항목에 보류의 까닭이 되는 두 번째 거절이 있다(모델별 규칙 — 카탈로그 같은 항목의 Qwen 거절은 빠진다)
  */
-function groupScope(scope: AuditGroupScope): SQL | undefined {
+function groupScope(scope: AuditGroupScope, autoOpinions: boolean): SQL | undefined {
   if (scope === "held") return sql`exists (select 1 from ${products} hp where hp.id = ${productAuditItems.productId}
     and hp.audit_hold_at is not null and hp.audit_hold_item_id = ${productAuditItems.id})`;
-  return scope === "agreed" ? countedSecondReject(itemIdSql, reasonSql) : undefined;
+  return scope === "agreed" ? countedSecondReject(itemIdSql, reasonSql, autoOpinions) : undefined;
 }
 
 export type AuditRemovalGroup = {
@@ -651,6 +657,7 @@ export type AuditRemovalGroup = {
  * reject·agreed 는 이 감사의 항목, held 는 감사 회차와 상관없이 보류의 까닭이 된 항목(지난 감사의 보류까지)이다
  */
 export async function auditRemovalGroups(campaignId: number, scope: AuditGroupScope = "reject"): Promise<AuditRemovalGroup[]> {
+  const autoOpinions = await autoOpinionsOn();
   const ranked = db.select({
     id: productAuditItems.id, slug: products.slug, name: products.name, url: products.url, category: products.category,
     confidence: sql<number>`${productAuditItems.aiConfidence}`.as("confidence"),
@@ -660,7 +667,7 @@ export async function auditRemovalGroups(campaignId: number, scope: AuditGroupSc
     rank: sql<number>`(row_number() over (partition by ${products.category} order by ${productAuditItems.aiConfidence} desc, ${productAuditItems.id}))::int`.as("rank"),
     total: sql<number>`(count(*) over (partition by ${products.category}))::int`.as("total"),
   }).from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(scope === "held" ? undefined : eq(productAuditItems.campaignId, campaignId), groupable, listed, sql`not ${owned}`, groupScope(scope)))
+    .where(and(scope === "held" ? undefined : eq(productAuditItems.campaignId, campaignId), groupable(autoOpinions), listed, sql`not ${owned}`, groupScope(scope, autoOpinions)))
     .as("ranked");
   const rows = await db.select().from(ranked).where(lte(ranked.rank, GROUP_REMOVE_MAX))
     .orderBy(desc(ranked.total), asc(ranked.category), asc(ranked.rank));
@@ -683,7 +690,8 @@ export type AuditBatchResult = { removed: string[]; failed: { slug: string; erro
 export async function removeAuditedProducts(input: { items: { itemId: number; slug: string }[]; by: string; scope?: AuditGroupScope }): Promise<AuditBatchResult> {
   if (input.items.length > GROUP_REMOVE_MAX) throw new Error(`audit_batch_over_${GROUP_REMOVE_MAX}`);
   const result: AuditBatchResult = { removed: [], failed: [] };
-  const only = and(groupableItem, groupScope(input.scope ?? "reject"));
+  const autoOpinions = await autoOpinionsOn();
+  const only = and(groupableItem(autoOpinions), groupScope(input.scope ?? "reject", autoOpinions));
   for (const item of input.items) {
     const done = await removeOne({ ...item, by: input.by }, only);
     if (done.ok) result.removed.push(item.slug);

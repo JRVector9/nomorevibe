@@ -21,6 +21,8 @@ import { auditHoldWidens, sameAuditHold } from "./audit-hold-policy";
 import { noteSettingsRead, storedSettingsVersion } from "./settings-version";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { requestJob } from "@/lib/jobs/control";
+import { currentReplayDb } from "@/lib/db/replay-scope";
+import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 
 const ROW_ID = 1;
@@ -75,7 +77,11 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
   const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : null;
   const categories = object && Array.isArray(object.categories)
     ? [...new Set(object.categories.filter(isAuditReasonCategory))] : object?.categories;
-  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...object,
+  // 이 가지의 앞 커밋이 감사 보류 안에 적던 Qwen-v2 자동 단계 칸(지금은 최상위 qwenAuto)은 버린다 — strict 라 남겨 두면
+  // 시험·스테이징 DB 의 감사 보류가 통째로 깨진 것(꺼짐)으로 읽힌다
+  const { autoSecondOpinion: _retiredOpinion, publishedFilter: _retiredFilter, ...current } = object ?? {};
+  void _retiredOpinion; void _retiredFilter;
+  const parsed = object ? auditHoldSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS.auditHold, ...current,
     ...(categories === undefined ? {} : { categories }) }) : null;
   if (parsed?.success) return parsed.data;
   logger.error("crawl.audit_hold_settings_invalid", { issues: parsed?.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) ?? ["not_object"] });
@@ -376,8 +382,25 @@ export type QwenAutoStepResult<K extends QwenAutoStep = QwenAutoStep> =
   { ok: true; step: K; before: QwenAutoSettings[K]; after: QwenAutoSettings[K]; dryRun: boolean } | { ok: false; issues: string[] };
 
 /**
+ * 사람 없이 정하는 일을 넓히는 바꿈인가 — 켬, 또는 켜 둔 채 틱당 수·시간 예산·하루 자동 거부 상한을 올리거나 맡는 사유를 더하는 것.
+ * 넓히는 바꿈은 까닭을 꼭 받는다(좁히는 바꿈은 받지 않는다)
+ */
+function qwenAutoWidens(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  if (after.enabled !== true) return false;
+  if (before.enabled !== true) return true;
+  const raised = (key: string) => typeof after[key] === "number" && typeof before[key] === "number" && (after[key] as number) > (before[key] as number);
+  const added = Array.isArray(after.reasons) && Array.isArray(before.reasons)
+    && after.reasons.some((reason) => !(before.reasons as unknown[]).includes(reason));
+  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added;
+}
+
+/**
  * Qwen-v2 자동 단계 하나를 바꾼다 — 감사 화면·심사 큐의 스위치와 scripts/ops/set-qwen-auto.ts 가 부른다. 감사 보류(setAuditHold)와 같은 길이다:
- * stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 그 단계의 칸만 쓴다(compare-and-set). 켜는 바꿈은 사유를 꼭 받는다.
+ * DR writer fence(첫 잠금) → stage → 설정 행 FOR UPDATE 로 잠그고, 화면이 본 값(expected)과 견준 뒤에만 그 단계의 칸만 쓴다(compare-and-set).
+ * 넓히는 바꿈(켬, 켜 둔 채 수·예산·상한 올림·사유 더함)은 사유를 꼭 받는다.
+ *
+ * 배포 주의: 관문(발행 조건·2차 심사·심사 큐)을 읽는 모든 앱(M3·mini 의 웹·scheduler·reviewer·publisher·text 등)이 이 단계를 아는 SHA 로
+ * 바뀌기 전에는 어느 단계도 켜지 않는다 — 옛 코드는 qwenAuto 를 모르고(꺼짐으로 버린다), 보류 재심사가 넣은 승인을 관문이 다르게 읽을 수 있다.
  * 성공·거절 모두 같은 트랜잭션에서 작업 로그(qwen-auto-settings)에 남긴다. 끄면 그 단계의 쓰기가 쓰는 순간 다시 읽어 바로 멈춘다.
  * dryRun 이면 읽기 전용 트랜잭션에서 같은 검사만 하고 쓰지 않는다(작업 로그도 남기지 않는다). database 는 운영 스크립트가 따로 연 연결이다
  */
@@ -387,6 +410,8 @@ export async function setQwenAutoStep<K extends QwenAutoStep>(input: {
 }): Promise<QwenAutoStepResult<K>> {
   const database = input.database ?? db;
   const run = async (tx: ProductTransaction): Promise<QwenAutoStepResult<K>> => {
+    // DR writer fence 가 첫 잠금이다 — fence 된 DB 에는 스위치도 작업 로그도 쓰지 않는다(운영 스크립트의 따로 연 연결도 같다)
+    if (!input.dryRun && !currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     // 읽기 전용(dry-run)은 잠그지 않는다 — 행 잠금은 읽기 전용 트랜잭션에서 쓸 수 없다
     if (!input.dryRun) await lockPipelineInputStages(tx);
     if (!input.dryRun) await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
@@ -410,9 +435,9 @@ export async function setQwenAutoStep<K extends QwenAutoStep>(input: {
       return { ok: false, issues };
     }
     const after = parsed.data as QwenAutoSettings[K];
-    if (after.enabled && !before.enabled && !reason) {
+    if (qwenAutoWidens(before as Record<string, unknown>, after as Record<string, unknown>) && !reason) {
       await audit(false, "reason_required");
-      return { ok: false, issues: ["사람 없이 정하는 일을 켜는 바꿈은 까닭을 적어야 합니다."] };
+      return { ok: false, issues: ["사람 없이 정하는 일을 켜거나 넓히는 바꿈(켬·틱당 수·예산·상한 올림·사유 더함)은 까닭을 적어야 합니다."] };
     }
     if (input.dryRun) return { ok: true, step: input.step, before, after, dryRun: true };
     // 이 단계의 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도 끄기는 되어야 하고, 깨진 칸·없는 단계를 기본값으로 채우지 않는다

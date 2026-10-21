@@ -1,4 +1,4 @@
-import { sameReviewModel } from "./review-model-identity";
+import { sameUnderlyingModel } from "./review-model-identity";
 import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
@@ -643,7 +643,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
       seconds: seconds.filter(item => item.candidateId === candidate.id).map(row => ({ decision: row.secondDecision,
         confidence: row.secondConfidence, reason: row.secondReason, reasonKo: null, model: row.model, provider: row.provider,
         status: row.status, trigger: row.trigger, errorCode: row.errorCode, isFallback: Boolean(row.fallbackForId),
-        echo: sameReviewModel(row.firstModel, row.model) })),
+        echo: sameUnderlyingModel(row.firstModel, row.model) })),
       tiebreak: tiebreaks.get(candidate.id) ?? null,
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,

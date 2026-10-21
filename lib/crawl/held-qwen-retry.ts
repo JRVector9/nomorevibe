@@ -4,13 +4,13 @@ import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, operationsAudit, secondReviews,
   type CrawlReviewAttempt } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, JobLeaseLostError, requestJob, type JobLease } from "@/lib/jobs/control";
 import { readItemStage } from "@/lib/jobs/items/repository";
 import type { JobContext } from "@/lib/jobs/runner";
 import { recordHumanDecisionOverride } from "@/lib/operations/pipeline-evidence-ledger";
 import { candidateRevisionHash, lockedInput } from "./admin-review";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, validateReviewOutcome, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
-import { reviewCandidatePredicate } from "./agent-review-repository";
+import { firstReviewAbstainedPredicate } from "./agent-review-repository";
 import { hasLiveAgentReviewItem } from "./agent-review-ownership";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
@@ -104,20 +104,20 @@ function sameGeneration(actor: string, model: string): SQL {
 /**
  * 이번 틱에 볼 후보 — 오래 기다린 것부터. 지금 입력이 유효하고(원본·스캔이 24시간 안), 이 세대의 판단이 없고, 기다리거나 보는 중이 아니며,
  * 실패를 다 쓰지 않은 것. 독립 투표자가 생겨 다시 관문에 넣을 수 있게 된 "승인 의견"은 모델을 다시 부르지 않고 넣으려고 고른다.
- * 판단 보류(ambiguous)는 AI 1차가 지금 볼 것이 아닐 때만 — 1차가 이 입력에서 판단 보류를 냈거나 다른 까닭으로 1차 대상이 아닐 때다.
+ * 판단 보류(ambiguous)는 1차가 지금 입력에서 판단 보류를 냈을 때만(firstReviewAbstainedPredicate) — 1차가 잠깐 실패해 기다리는 중인 것은 1차 몫이다.
  */
 export async function heldQwenCandidates(settings: CrawlSettings, model: string, limit: number): Promise<{ id: number; repo: string }[]> {
   const policy = heldQwenRetry(settings);
   if (!policy.reasons.length) return [];
   const actor = heldQwenActor(QWEN_V2_PROMPT_VERSION);
   const now = reviewSemanticNowSql();
-  const q = { kind: sql`q.kind`, provider: sql`q.provider`, actor: sql`q.actor`, state: sql`q.state`, outcome: sql`q.outcome`, model: sql`q.model` };
+  const q = { id: sql`q.id`, kind: sql`q.kind`, provider: sql`q.provider`, actor: sql`q.actor`, state: sql`q.state`, outcome: sql`q.outcome`, model: sql`q.model` };
   const rows = await db.execute<{ id: number; repo: string }>(sql`
     SELECT c.id, c.repo FROM crawl_candidates c
     WHERE c.state = 'needs_review' AND c.decided_by = 'auto' AND c.published_slug IS NULL
       AND c.reason IN (${sql.join(policy.reasons.map((reason) => sql`${reason}`), sql`, `)})
-      AND (c.reason <> 'ambiguous' OR NOT EXISTS (SELECT 1 FROM ${crawlCandidates}
-        WHERE ${crawlCandidates.id} = c.id AND ${reviewCandidatePredicate(settings)}))
+      AND (c.reason <> 'ambiguous' OR EXISTS (SELECT 1 FROM ${crawlCandidates}
+        WHERE ${crawlCandidates.id} = c.id AND ${firstReviewAbstainedPredicate(settings)}))
       AND EXISTS (SELECT 1 FROM crawl_documents fd
         LEFT JOIN LATERAL (SELECT fs.id, fs.completed_at FROM agent_repository_scans fs
           WHERE fs.repository_key = lower(c.repo) AND fs.scope = '' ORDER BY fs.started_at DESC, fs.id DESC LIMIT 1) fres ON true
@@ -126,7 +126,7 @@ export async function heldQwenCandidates(settings: CrawlSettings, model: string,
           AND (fres.completed_at IS NULL OR (fres.completed_at <= ${now} AND fres.completed_at > ${now} - interval '24 hours'))
           AND NOT EXISTS (SELECT 1 FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)}
             AND (q.state = 'running' OR q.state = 'failed' AND q.retry_after > clock_timestamp()
-              OR q.state = 'succeeded' AND NOT (c.reason <> 'no_description' AND ${heldQwenGateFirstSql(settings, q)})))
+              OR q.state = 'succeeded' AND NOT (c.reason <> 'no_description' AND ${heldQwenGateFirstSql(settings, null, q)})))
           AND (SELECT count(*) FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)} AND q.state = 'failed'
             AND q.error_code IN (${sql.join(COUNTED_FAILURES.map((code) => sql`${code}`), sql`, `)})) < ${MAX_FAILURES})
     ORDER BY coalesce(c.judged_at, c.updated_at) ASC, c.id ASC
@@ -283,11 +283,12 @@ export async function claimHeldQwen(repo: string, lease: JobLease, model: string
       await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: "owner_lost", completedAt: new Date(), retryAfter: new Date() })
         .where(eq(crawlReviewAttempts.id, active.id));
     }
-    // 판단 보류는 1차가 지금 볼 것이 아닐 때만 — 1차가 이 입력을 다시 보거나 1차 항목이 살아 있으면 비킨다
+    // 판단 보류는 1차가 지금 입력에서 판단 보류를 냈을 때만 — 1차가 잠깐 실패해 기다리는 중이거나 1차 항목이 살아 있으면 비킨다.
+    // "1차 대상이 아니다"로 재면 1차가 잠깐 실패해 대상에서 빠진 동안 Qwen-v2 가 가로챈다(그 사이 1차가 잡으려 하면 진행 중 시도가 둘이 된다)
     if (reason === "ambiguous") {
-      const [ai1Due] = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates)
-        .where(and(eq(crawlCandidates.id, candidate.id), reviewCandidatePredicate(settings)));
-      if (ai1Due || await hasLiveAgentReviewItem(tx, candidate.id)) {
+      const [abstained] = await tx.select({ id: crawlCandidates.id }).from(crawlCandidates)
+        .where(and(eq(crawlCandidates.id, candidate.id), firstReviewAbstainedPredicate(settings)));
+      if (!abstained || await hasLiveAgentReviewItem(tx, candidate.id)) {
         await assertJobLeaseAtWallTime(tx, lease);
         return { kind: "skipped", reason: "first_review_due" };
       }
@@ -419,6 +420,21 @@ export async function recordHeldQwen(claim: HeldQwenClaim, call: HeldQwenCallRes
   });
 }
 
+/** 틱을 멈춰야 하는 탈 — lease 를 잃었거나 DR fence 됐다. 그 밖(입력 만들기 등)은 그 후보만의 탈이다 */
+const fatalTickError = (error: unknown) => error instanceof JobLeaseLostError || error instanceof DrWriterFencedError;
+const tickErrorCode = (error: unknown) => error instanceof Error && /^[a-z0-9_]{3,60}$/.test(error.message) ? error.message : "unknown";
+
+/** 기록하지 못한 시도를 실패로 닫는다 — 우리 lease 의 진행 중 행만. 입력 상한 초과는 세는 실패라 세 번이면 그만 묻는다 */
+async function failHeldQwenAttempt(claim: HeldQwenClaim, code: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+    const now = new Date();
+    await tx.update(crawlReviewAttempts).set({ state: "failed", errorCode: code, completedAt: now, retryAfter: new Date(now.getTime() + RETRY_MS) })
+      .where(and(eq(crawlReviewAttempts.id, claim.attemptId), eq(crawlReviewAttempts.state, "running"), eq(crawlReviewAttempts.leaseToken, claim.lease.token)));
+    await assertJobLeaseAtWallTime(tx, claim.lease);
+  });
+}
+
 /** 한 번 부른다 — 트랜잭션 밖. 실패는 제공자의 고정 코드로만 돌려준다 */
 async function callQwen(input: ReviewInput, options: { timeoutMs: number; signal?: AbortSignal; request?: typeof fetch;
   env?: Readonly<Record<string, string | undefined>> }): Promise<HeldQwenCallResult> {
@@ -454,7 +470,16 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
   const candidates = await heldQwenCandidates(settings, config.model, policy.perTick * 3);
   for (const candidate of candidates) {
     if (tick.started >= policy.perTick || !room()) break;
-    const claimed = await claimHeldQwen(candidate.repo, lease, config.model);
+    let claimed: ClaimResult;
+    // 한 후보의 입력을 만들다 난 탈(입력 상한 초과 등)이 이 틱과 뒤의 DeepSeek 위임을 멈추지 않게 그 후보만 건너뛴다.
+    // lease 를 잃었거나 fence 됐으면 그대로 던진다(쓰기를 멈춘다)
+    try { claimed = await claimHeldQwen(candidate.repo, lease, config.model); }
+    catch (error) {
+      if (fatalTickError(error)) throw error;
+      tick.failed++;
+      ctx.log("crawl.held_qwen_claim_failed", { candidateId: candidate.id, error: tickErrorCode(error) });
+      continue;
+    }
     if (claimed.kind === "reapplied") { tick.reapplied++; tick.pipeline++; continue; }
     if (claimed.kind !== "claimed") continue;
     tick.started++;
@@ -475,7 +500,16 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
     if (call.ok) await noteQwenEndpointSuccess(callStartedAt);
     else if (heldQwenEndpointFailure(call.code)) await noteQwenEndpointFailure(call.code as QwenDirectErrorCode);
-    const state = await recordHeldQwen(claimed.claim, call);
+    let state: HeldQwenRecordState;
+    try { state = await recordHeldQwen(claimed.claim, call); }
+    catch (error) {
+      if (fatalTickError(error)) throw error;
+      // 기록 트랜잭션이 입력을 다시 만들다 탈 났다 — 그 시도를 실패로 닫고(입력 상한은 세는 실패) 다음 후보로
+      tick.failed++;
+      ctx.log("crawl.held_qwen_record_failed", { candidateId: claimed.claim.candidateId, error: tickErrorCode(error) });
+      await failHeldQwenAttempt(claimed.claim, tickErrorCode(error) === "review_input_too_large" ? "qwen_input_too_large" : "record_error");
+      continue;
+    }
     if (state === "rejected") tick.rejected++;
     if (state === "pipeline") tick.pipeline++;
     if (state === "held") tick.held++;

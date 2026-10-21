@@ -11,10 +11,10 @@ import { loadReviewInput } from "./agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { sameReviewModel } from "./review-model-identity";
+import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
-import { heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
+import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
@@ -49,11 +49,11 @@ export function secondReviewInputMatches(row: SecondReview, current: {
     || root.resolution !== "fallback" || !settings.secondReview.voters.some(voter => voter.provider === root.provider
       && sameReviewModel(voter.model, root.model)))) return false;
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
-    || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return false;
+    || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return false;
   if (!row.publishedSlug) {
     const reviewer = firstReviewer(settings);
     // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
-    const heldQwen = Boolean(first && row.trigger === "ai_approved" && heldQwenGateFirst(settings, first));
+    const heldQwen = Boolean(first && row.trigger === "ai_approved" && heldQwenGateFirst(settings, first, candidate));
     if (!first || !first.model?.trim() || first.id !== row.firstAttemptId || first.candidateId !== row.candidateId
       || !heldQwen && (first.kind !== "automatic" || first.state !== "succeeded"
       || !["claude-cli", "abcllm", "grok-cli"].includes(first.provider ?? "")
@@ -152,7 +152,7 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
   if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
-  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameReviewModel(row.firstModel, row.model))) return null;
+  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return null;
   let first: CrawlReviewAttempt | undefined;
   if (!row.publishedSlug) {
     // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)
@@ -163,7 +163,7 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
     const firstQuery = executor.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, row.candidateId), eq(crawlReviewAttempts.state, "succeeded"),
       or(and(eq(crawlReviewAttempts.kind, "automatic"), firstReviewProviderPredicate(settings)),
-        row.trigger === "ai_approved" ? heldQwenGateFirstSql(settings) : undefined),
+        row.trigger === "ai_approved" ? heldQwenGateFirstSql(settings, appliedHeldQwenAttemptSql(candidate)) : undefined),
       gateFirst ? sql`${crawlReviewAttempts.provider} IS NOT DISTINCT FROM ${gateFirst.provider} AND ${crawlReviewAttempts.model} IS NOT DISTINCT FROM ${gateFirst.model}` : undefined,
     )).orderBy(desc(crawlReviewAttempts.id)).limit(1);
     [first] = await (lockGate ? firstQuery.for("share") : firstQuery);

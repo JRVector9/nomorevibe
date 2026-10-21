@@ -33,6 +33,9 @@ export function HeldQwenRetryPanel({ status }: { status: HeldQwenStatus | null }
   const changed = edited.enabled !== current.enabled || edited.perTick !== current.perTick || edited.budgetSeconds !== current.budgetSeconds
     || edited.reasons.length !== current.reasons.length || edited.reasons.some((reason) => !current.reasons.includes(reason));
   const enabling = edited.enabled && !current.enabled;
+  // 켜 둔 채 수·예산을 올리거나 사유를 더하는 것도 넓히는 바꿈이다 — 서버(setQwenAutoStep)와 같이 까닭을 꼭 받는다
+  const widening = enabling || Boolean(current && edited.enabled && current.enabled && (edited.perTick > current.perTick
+    || edited.budgetSeconds > current.budgetSeconds || edited.reasons.some((reason) => !current.reasons.includes(reason))));
   const { day } = status;
   return <div id="held-qwen" className="flex flex-col gap-2 rounded-[10px] border border-line px-4 py-3 text-[13px]" data-dirty={changed || undefined}>
     <span id="held-qwen-title" className="text-[14px] font-semibold">보류를 Qwen-v2 가 다시 보기</span>
@@ -80,7 +83,8 @@ export function HeldQwenRetryPanel({ status }: { status: HeldQwenStatus | null }
           {enabling && <li>거부(확신 0.90 이상)는 사람 없이 끝냅니다 — 적용 모드에서만. 승인(확신 0.90 이상)은 자동 경로로 되돌려 2차 관문을 그대로 지납니다.</li>}
           {enabling && <li>켜 둔 동안 DeepSeek 위임은 이 사유를 집지 않습니다.</li>}
         </ul>}
-        note={{ label: enabling ? '왜 켜는지 (꼭 적어 주세요 · 작업 로그에 남습니다)' : '바꾸는 까닭 (선택 · 작업 로그에 남습니다)', optional: !enabling, maxLength: 500 }}
+        note={{ label: enabling ? '왜 켜는지 (꼭 적어 주세요 · 작업 로그에 남습니다)' : widening ? '왜 넓히는지 (꼭 적어 주세요 · 작업 로그에 남습니다)'
+          : '바꾸는 까닭 (선택 · 작업 로그에 남습니다)', optional: !widening, maxLength: 500 }}
         onConfirm={async ({ note }) => {
           const form = new FormData();
           form.set('step', 'heldRetry');

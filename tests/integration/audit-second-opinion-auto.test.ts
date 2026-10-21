@@ -328,6 +328,20 @@ describe("감사 두 번째 의견", () => {
     expect(await turn("auditSecondOpinion", { enabled: false, perTick: 10 })).toMatchObject({ ok: true });
     await tick();
     expect(await heldSlugs()).toEqual(["grok"]);
+    // 감사 화면의 '두 모델 모두 거절'과 그 묶어 내리기도 같은 규칙이다 — 꺼진 단계의 자동 거절은 두 번째 모델의 거절로 세지 않는다
+    const campaignId = (await item("auto")).campaignId;
+    const agreed = async () => (await listAuditFindings(campaignId, "reject", { limit: 50, offset: 0, second: "agreed" })).map((row) => row.slug).sort();
+    const agreedGroup = async () => (await auditRemovalGroups(campaignId, "agreed")).flatMap((group) => group.items.map((entry) => entry.slug)).sort();
+    expect(await agreed()).toEqual(["grok"]);
+    expect(await agreedGroup()).toEqual(["grok"]);
+    // 켜도 확신 0.90 아래의 자동 거절은 세지 않는다
+    await db.update(productAuditSecondOpinions).set({ confidence: 0.85 }).where(eq(productAuditSecondOpinions.source, "qwen-v2-auto"));
+    expect(await turn("auditSecondOpinion", { enabled: true, perTick: 10 })).toMatchObject({ ok: true });
+    expect(await agreed()).toEqual(["grok"]);
+    await db.update(productAuditSecondOpinions).set({ confidence: 0.9 }).where(eq(productAuditSecondOpinions.source, "qwen-v2-auto"));
+    expect(await agreed()).toEqual(["auto", "grok"]);
+    expect(await agreedGroup()).toEqual(["auto", "grok"]);
+    expect(await turn("auditSecondOpinion", { enabled: false, perTick: 10 })).toMatchObject({ ok: true });
     // 켜면 다음 쓸기가 건다 — 같은 판의 의견이 있어 다시 묻지 않는다
     expect(await turn("auditSecondOpinion", { enabled: true, perTick: 10 })).toMatchObject({ ok: true });
     await tick();

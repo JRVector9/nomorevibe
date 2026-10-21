@@ -35,6 +35,8 @@ export function QwenAutoStepSwitch({ step, value, title, maxPerTick, enableNotes
   const extraChanged = Boolean(extra && extraCount !== extraValue);
   const changed = valid && (next.enabled !== value.enabled || next.perTick !== value.perTick || extraChanged);
   const enabling = enabled && !value.enabled;
+  // 켜 둔 채 틱당 수·상한을 올리는 것도 넓히는 바꿈이다 — 서버(setQwenAutoStep)와 같이 까닭을 꼭 받는다
+  const widening = enabling || (enabled && value.enabled && (count > value.perTick || Boolean(extra && extraCount > extraValue)));
   const edited = !valid || changed;
   const onOff = (on: boolean) => (on ? '켬' : '끔');
   return (
@@ -69,7 +71,8 @@ export function QwenAutoStepSwitch({ step, value, title, maxPerTick, enableNotes
           {enabling && enableNotes.map((line) => <li key={line}>{line}</li>)}
           {!next.enabled && value.enabled && <li>끄면 다음 쓰기부터 멈춥니다 — 받는 중인 답도 반영하지 않습니다.</li>}
         </ul>}
-        note={{ label: enabling ? '왜 켜는지 (꼭 적어 주세요 · 작업 로그에 남습니다)' : '바꾸는 까닭 (선택 · 작업 로그에 남습니다)', optional: !enabling, maxLength: 500 }}
+        note={{ label: enabling ? '왜 켜는지 (꼭 적어 주세요 · 작업 로그에 남습니다)' : widening ? '왜 넓히는지 (꼭 적어 주세요 · 작업 로그에 남습니다)'
+          : '바꾸는 까닭 (선택 · 작업 로그에 남습니다)', optional: !widening, maxLength: 500 }}
         onConfirm={async ({ note }) => {
           const form = new FormData();
           form.set('step', step);
