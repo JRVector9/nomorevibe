@@ -14,5 +14,5 @@ export default async function MeAlertsPage() {
   const session = await getMeSession();
   if (!session) return <MeLoginRequired tab="alerts" />;
   const inbox = await loadInbox(session.user.id, await getRequestLocale());
-  return <AlertsView initial={inbox} settings={<AlertSettings userId={session.user.id} />} />;
+  return <AlertsView initial={inbox} settings={<AlertSettings csrfToken={session.csrfToken} />} />;
 }

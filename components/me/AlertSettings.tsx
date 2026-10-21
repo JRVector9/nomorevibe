@@ -11,8 +11,7 @@ type RowKey = `alertSettings.row.${EmailSettingKey | "commentReviewed"}`;
 type NoteKey = `alertSettings.note.${"followedProject" | "followedMaker" | "followedCategory" | "newListingMine"}`;
 type StatusKey = "alertSettings.saving" | "alertSettings.saved" | "alertSettings.saveFailed" | "alertSettings.rateLimited";
 type WeekdayKey = `alertSettings.weekday.${0 | 1 | 2 | 3 | 4 | 5 | 6}`;
-type Loaded = { data: NotificationSettingsResponse; csrf: string };
-type Load = { status: "loading" } | { status: "failed" } | ({ status: "ready" } & Loaded);
+type Load = { status: "loading" } | { status: "failed" } | { status: "ready"; data: NotificationSettingsResponse };
 
 /** 시안 3.4 ⑧ 차례 — 내 의견 검토 결과는 메일 칸 없이 «사이트 안만» */
 const ROWS: ({ key: EmailSettingKey; label: RowKey; note?: NoteKey } | { key: null; label: RowKey; note?: undefined })[] = [
@@ -27,21 +26,20 @@ const ROWS: ({ key: EmailSettingKey; label: RowKey; note?: NoteKey } | { key: nu
 const WEEKDAYS = [1, 2, 3, 4, 5, 6, 0];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
-async function loadSettings(signal?: AbortSignal): Promise<Loaded> {
-  const [me, settings] = await Promise.all([
-    fetch("/api/me", { cache: "no-store", signal }), fetch("/api/me/notification-settings", { cache: "no-store", signal }),
-  ]);
-  const session = await me.json();
-  if (!me.ok || !settings.ok || typeof session.csrfToken !== "string") throw new Error("alert_settings_unavailable");
-  return { data: await settings.json(), csrf: session.csrfToken };
+async function loadSettings(signal?: AbortSignal): Promise<NotificationSettingsResponse> {
+  const response = await fetch("/api/me/notification-settings", { cache: "no-store", signal });
+  if (!response.ok) throw new Error("alert_settings_unavailable");
+  return response.json();
 }
 
 /**
  * 알림 설정(MY7) — 알림 탭(MY4)이 알림함 옆에 그린다. 사이트 안 알림함은 늘 켜져 있고 메일만 고른다.
- * 메일 발신 설정이 없으면(지금 운영) 메일 칸을 모두 숨기고 «사이트 안»만, 주소가 없으면 주소를 연결하라는 말만 보인다.
- * 단추마다 바로 저장한다 — 실패하면 마지막으로 저장된 값으로 되돌린다.
+ * 메일 발신 설정이 없으면(지금 운영) 메일 칸을 모두 숨기고 «사이트 안»만, 이메일 신원이 없으면(GitHub 계정) 아직 받을 수 없다는 말만 보인다.
+ * CSRF 열쇠는 알림 탭(서버)이 세션에서 넘긴다.
+ * 단추마다 바로 저장하되 한 번에 하나씩 차례로 보낸다 — 앞 저장이 끝난 뒤 보내므로 응답마다 앞서 저장한 칸이 모두 담긴다.
+ * 화면은 «마지막으로 저장된 값 + 아직 보내는 중인 바꿈»이다. 하나가 실패하면 그 바꿈만 빠지고 뒤에 줄 선 바꿈은 그대로 저장된다.
  */
-export function AlertSettings({ userId }: { userId: number }) {
+export function AlertSettings({ csrfToken }: { csrfToken: string }) {
   const t = useTranslations("me");
   const locale = useLocale();
   const [load, setLoad] = useState<Load>({ status: "loading" });
@@ -49,39 +47,51 @@ export function AlertSettings({ userId }: { userId: number }) {
   const [status, setStatus] = useState<StatusKey | "">("");
   const [digest, setDigest] = useState<{ weekday: number; hour: number } | null>(null);
   const saved = useRef<NotificationSettingsResponse | null>(null);
-  const generation = useRef(0);
+  const pending = useRef<{ patch: NotificationSettingsInput }[]>([]);
+  const queue = useRef<Promise<void>>(Promise.resolve());
+  const failure = useRef<StatusKey | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadSettings(controller.signal).then((loaded) => {
-      saved.current = loaded.data;
-      setLoad({ status: "ready", ...loaded });
+    void loadSettings(controller.signal).then((data) => {
+      saved.current = data;
+      setLoad({ status: "ready", data });
     }).catch(() => { if (!controller.signal.aborted) setLoad({ status: "failed" }); });
     return () => controller.abort();
-  }, [userId, attempt]);
+  }, [attempt]);
 
-  const save = useCallback(async (patch: NotificationSettingsInput) => {
-    if (load.status !== "ready") return;
-    const current = ++generation.current;
-    const csrf = load.csrf;
-    setLoad({ status: "ready", csrf, data: { ...load.data, settings: { ...load.data.settings, ...patch } } });
+  /** 저장된 값 위에 아직 보내는 중인 바꿈을 차례로 얹어 그린다 */
+  const show = useCallback(() => {
+    const base = saved.current;
+    if (!base) return;
+    const settings = pending.current.reduce((current, item) => ({ ...current, ...item.patch }), base.settings);
+    setLoad({ status: "ready", data: { ...base, settings } });
+  }, []);
+
+  const save = useCallback((patch: NotificationSettingsInput) => {
+    if (!saved.current) return;
+    const item = { patch };
+    pending.current = [...pending.current, item];
+    failure.current = null;
+    show();
     setStatus("alertSettings.saving");
-    try {
-      const response = await fetch("/api/me/notification-settings", {
-        method: "PUT", cache: "no-store",
-        headers: { "content-type": "application/json", "x-csrf-token": csrf },
-        body: JSON.stringify({ ...patch, locale }),
-      });
-      if (!response.ok) throw new Error(response.status === 429 ? "rate_limited" : "save_failed");
-      const data: NotificationSettingsResponse = await response.json();
-      saved.current = data;
-      if (current === generation.current) { setLoad({ status: "ready", data, csrf }); setStatus("alertSettings.saved"); }
-    } catch (error) {
-      if (current !== generation.current) return;
-      if (saved.current) setLoad({ status: "ready", data: saved.current, csrf });
-      setStatus(error instanceof Error && error.message === "rate_limited" ? "alertSettings.rateLimited" : "alertSettings.saveFailed");
-    }
-  }, [load, locale]);
+    queue.current = queue.current.then(async () => {
+      try {
+        const response = await fetch("/api/me/notification-settings", {
+          method: "PUT", cache: "no-store",
+          headers: { "content-type": "application/json", "x-csrf-token": csrfToken },
+          body: JSON.stringify({ ...patch, locale }),
+        });
+        if (!response.ok) throw new Error(response.status === 429 ? "rate_limited" : "save_failed");
+        saved.current = await response.json() as NotificationSettingsResponse;
+      } catch (error) {
+        failure.current = error instanceof Error && error.message === "rate_limited" ? "alertSettings.rateLimited" : "alertSettings.saveFailed";
+      }
+      pending.current = pending.current.filter((entry) => entry !== item);
+      show();
+      if (!pending.current.length) setStatus(failure.current ?? "alertSettings.saved");
+    });
+  }, [csrfToken, locale, show]);
 
   const hourLabel = (hour: number) => new Intl.DateTimeFormat(LOCALE_CONFIG[locale].intl, { hour: "numeric", timeZone: "UTC" })
     .format(new Date(Date.UTC(2026, 0, 5, hour)));
@@ -108,7 +118,7 @@ export function AlertSettings({ userId }: { userId: number }) {
     <section className="me-alert-set" aria-labelledby="me-alert-set-title">
       {title}
       <p className="me-alert-set-desc">{email ? t("alertSettings.siteAlwaysEmail") : t("alertSettings.siteAlways")}</p>
-      {!email && <p className="me-alert-set-note">{data.emailConfigured ? t("alertSettings.emailNeedsAddress") : t("alertSettings.emailLater")}</p>}
+      {!email && <p className="me-alert-set-note">{data.emailConfigured ? t("alertSettings.emailGithubOnly") : t("alertSettings.emailLater")}</p>}
       <ul className="me-alert-set-rows">
         {email && data.emailAddress && (
           <li className="me-alert-set-row">

@@ -265,6 +265,11 @@ def github_integration_preflight(client, apps):
             if value(short, key) not in ('true', 'false'):
                 raise ValueError(f'{short}_{key}_invalid')
         matched(key, names)
+    mail_keys = ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM')
+    web_mail = any(envs[short].get(key, '').strip() for short in web for key in mail_keys)
+    if not web_mail and any(envs[short].get(key, '').strip() for short in READ_ONLY_MAINTENANCE for key in mail_keys):
+        # 웹이 메일 칸을 숨기는데 maintenance 만 보내면 화면과 메일이 어긋난다
+        raise ValueError('LOGIN_EMAIL_maintenance_only')
     if ((flags['GITHUB_STAR_ENABLED'] or flags['PRODUCT_FEEDBACK_ENABLED']) and not flags['PUBLIC_USER_AUTH_ENABLED']
             or flags['GITHUB_FEEDBACK_DELIVERY_ENABLED'] and not flags['PRODUCT_FEEDBACK_ENABLED']):
         raise ValueError('github_integration_flag_dependency')
@@ -272,10 +277,12 @@ def github_integration_preflight(client, apps):
         public_secret = matched('PUBLIC_AUTH_SECRET', web, True)
         if len(public_secret) < 32 or any(public_secret == value(short, 'AUTH_SECRET') for short in web):
             raise ValueError('PUBLIC_AUTH_SECRET_invalid_or_reused')
-        mail_keys = ('LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM')
-        if any(envs[short].get(key, '').strip() for short in web for key in mail_keys):
+        if web_mail:
             for key in mail_keys:
                 matched(key, web, True)
+            # 알림 메일은 maintenance 의 email-outbox-send 가 보낸다 — 두 maintenance 도 같은 발신 키와 끄기 링크 서명 비밀을 가져야 한다
+            for key in mail_keys + ('PUBLIC_AUTH_SECRET',):
+                matched(key, web + tuple(READ_ONLY_MAINTENANCE), True)
         elif not flags['GITHUB_STAR_ENABLED']:
             raise ValueError('public_auth_login_method_missing')
     if any(flags.values()):

@@ -52,7 +52,7 @@ describe("GET·PUT /api/me/notification-settings", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(await response.json()).toEqual({
       settings: { makerReply: "instant", followedProject: "weekly", followedMaker: "off", followedCategory: "weekly", newListingMine: "instant", digestWeekday: 1, digestHour: 9, newsOptIn: false, locale: "ko" },
-      emailConfigured: false, emailAddress: "ha***@example.com", emailAvailable: false,
+      emailConfigured: false, emailAddress: "ha•••@example.com", emailAvailable: false,
     });
     expect((await get({ origin: ORIGIN })).status).toBe(401);
     configureEmail();
@@ -68,7 +68,7 @@ describe("GET·PUT /api/me/notification-settings", () => {
     expect((await saved.json()).settings).toMatchObject({ makerReply: "weekly", followedProject: "weekly", digestWeekday: 3, digestHour: 20, newsOptIn: true, locale: "en" });
     const [first] = await db.select().from(notificationSettings).where(eq(notificationSettings.userId, reader.id));
     expect(first.newsOptInAt).toBeInstanceOf(Date);
-    expect(first.emailIdentityId).not.toBeNull();
+    expect(first.emailIdentityId).toBeNull();
     await db.update(notificationSettings).set({ newsOptInAt: new Date("2026-01-01T00:00:00Z") });
     await put(reader.headers, { newsOptIn: true, followedMaker: "instant" });
     const [second] = await db.select().from(notificationSettings);
@@ -101,15 +101,16 @@ describe("GET·PUT /api/me/notification-settings", () => {
 });
 
 describe("notify → 발송함", () => {
-  it("«즉시»이고 주소가 있으면 한 줄, 주간·끔·사이트 안 종류·발신 설정 없음·주소 없음이면 넣지 않는다", async () => {
+  it("«즉시»이고 주소가 있으면 한 줄, 주간·끔·사이트 안 종류·주소 없음이면 넣지 않는다 — 부른 프로세스의 발신 설정은 보지 않는다", async () => {
     const { notify } = await import("@/lib/me/notify");
     const reader = await member("읽는이", "hanul@example.com");
     const noAddress = await member("주소없음");
     const item = await product("one");
+    // 발행·수집·maintenance 처럼 LOGIN_EMAIL_* 가 없는 프로세스가 만든 알림도 줄을 세운다(보낼지는 maintenance 가 정한다)
     expect(await notify({ userId: reader.id, kind: "maker_reply", productId: item.id, dedupeKey: "maker_reply:1" })).toBe(true);
-    expect(await rows()).toEqual([]);
+    expect((await rows()).map((row) => row.dedupeKey)).toEqual([`email:${reader.id}:maker_reply:1`]);
+    await db.delete(emailOutbox);
 
-    configureEmail();
     expect(await notify({ userId: reader.id, kind: "maker_reply", productId: item.id, dedupeKey: "maker_reply:2" })).toBe(true);
     expect(await notify({ userId: reader.id, kind: "maker_reply", productId: item.id, dedupeKey: "maker_reply:2" })).toBe(false);
     await notify({ userId: reader.id, kind: "followed_release", productId: item.id, dedupeKey: "followed_release:1" });
@@ -161,12 +162,12 @@ describe("notify → 발송함", () => {
     ]));
     const [update] = await db.insert(productUpdates).values({ slug: item.slug, sourceKind: "github_release", dedupeKey: "r1", title: "v1", observedAt: new Date(), publishedAt: new Date() }).returning();
 
-    // 발신 설정이 없으면 알림함에만 넣는다
+    // 발신 설정이 없는 프로세스(발행·수집)가 넣어도 «즉시»인 계정은 줄을 선다
     expect(await notifyMakerNewProject(item.slug)).toBe(5);
-    expect(await rows()).toEqual([]);
+    expect((await rows()).map((row) => [row.userId, row.kind])).toEqual([[instant.id, "maker_new_project"]]);
     await db.delete(notifications);
+    await db.delete(emailOutbox);
 
-    configureEmail();
     expect(await notifyNewReleases(item.id)).toBe(5);
     expect(await notifyMakerNewProject(item.slug)).toBe(5);
     expect(await notifyCommentReviewed({ id: crypto.randomUUID(), productId: item.id, authorUserId: instant.id }, "accepted")).toBe(1);
@@ -254,14 +255,91 @@ describe("email-outbox-send", () => {
     expect((await rows())[0]).toMatchObject({ state: "rejected", lastError: "rejected" });
   });
 
-  it("발신 설정이 없으면 남은 줄을 skipped 로 닫고 네트워크를 부르지 않는다", async () => {
+  it("보내는 프로세스에 발신 키·끄기 링크 비밀이 없으면 줄을 건드리지 않고 기다리는 수만 세며 네트워크를 부르지 않는다", async () => {
     await queued();
-    vi.stubEnv("LOGIN_EMAIL_API_KEY", "");
     const network = vi.fn(async () => new Response("{}"));
     vi.stubGlobal("fetch", network);
-    expect(await (await outbox()).sendPendingEmails()).toMatchObject({ skipped: 1 });
+    const { sendPendingEmails } = await outbox();
+    vi.stubEnv("LOGIN_EMAIL_API_KEY", "");
+    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, accepted: 0 });
+    configureEmail();
+    vi.stubEnv("PUBLIC_AUTH_SECRET", "too-short");
+    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, unknown: 0 });
     expect(network).not.toHaveBeenCalled();
-    expect((await rows())[0]).toMatchObject({ state: "skipped", lastError: "email_unconfigured" });
+    expect((await rows())[0]).toMatchObject({ state: "pending", attempts: 0, lastError: null });
+    // 설정을 고치면 그 줄을 그대로 보낸다
+    vi.stubEnv("PUBLIC_AUTH_SECRET", SECRET);
+    expect(await sendPendingEmails()).toMatchObject({ accepted: 1, waiting: 0 });
+    expect(network).toHaveBeenCalledTimes(1);
+  });
+
+  it("키·도메인·한도 거절(401·403·429)은 시도로 세지 않고 미루며 그 틱을 멈춘다 — 발송함이 rejected 로 비지 않는다", async () => {
+    const { reader } = await queued();
+    const { notify } = await import("@/lib/me/notify");
+    await notify({ userId: reader.id, kind: "maker_reply", dedupeKey: "maker_reply:2" });
+    const { sendPendingEmails } = await outbox();
+    for (const status of [401, 403, 429]) {
+      await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
+      const refused = vi.fn(async () => new Response("{}", { status }));
+      expect(await sendPendingEmails({ fetcher: refused as unknown as typeof fetch }), String(status)).toMatchObject({ deferred: 1, rejected: 0, retry: 0 });
+      expect(refused).toHaveBeenCalledTimes(1);
+      const states = await rows();
+      expect(states.map((row) => [row.state, row.attempts])).toEqual([["pending", 0], ["pending", 0]]);
+      const deferred = states.find((row) => row.lastError === "unavailable")!;
+      expect(deferred.nextAttemptAt.getTime() - Date.now()).toBeGreaterThan(4 * 60_000);
+    }
+    await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
+    const fetcher = vi.fn(async () => new Response("{}"));
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 2 });
+  });
+
+  it("글을 짓지 못하면(DB·문구) 보내지 않았으므로 시도로 세지 않고 미룬다", async () => {
+    await queued();
+    const fetcher = vi.fn(async () => new Response("{}"));
+    const { sendPendingEmails } = await outbox();
+    await db.execute(sql`ALTER TABLE notification_settings RENAME COLUMN locale TO locale_test_moved`);
+    try {
+      for (let round = 0; round < 6; round += 1) {
+        await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
+        expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ deferred: 1, unknown: 0 });
+      }
+    } finally {
+      await db.execute(sql`ALTER TABLE notification_settings RENAME COLUMN locale_test_moved TO locale`);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    expect((await rows())[0]).toMatchObject({ state: "pending", attempts: 0, lastError: "compose_failed" });
+    await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 1 });
+  });
+
+  it("하루 안에 못 보낸 줄은 보내지 않고 닫고, 30일 지난 닫힌 줄은 지운다 — 발신 설정이 없어도", async () => {
+    const reader = await member("읽는이", "hanul@example.com");
+    const hours = (value: number) => new Date(Date.now() - value * 3_600_000);
+    await db.insert(emailOutbox).values([
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "fresh", createdAt: hours(1), nextAttemptAt: hours(1) },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "stale-never-sent", createdAt: hours(25), nextAttemptAt: hours(25) },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "stale-maybe-sent", attempts: 2, createdAt: hours(30), nextAttemptAt: hours(29) },
+      { userId: reader.id, kind: "maker_reply", dedupeKey: "old-accepted", state: "accepted", createdAt: hours(31 * 24) },
+      { userId: reader.id, kind: "weekly_digest", dedupeKey: "old-empty", state: "skipped", createdAt: hours(31 * 24) },
+      { userId: reader.id, kind: "weekly_digest", dedupeKey: "recent-empty", state: "skipped", createdAt: hours(29 * 24) },
+    ]);
+    const { pruneEmailOutbox, sendPendingEmails } = await outbox();
+    // 설정을 늦게 켜도 하루 지난 줄은 잡지 않는다
+    configureEmail();
+    const fetcher = vi.fn(async () => new Response("{}"));
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 1 });
+    vi.stubEnv("LOGIN_EMAIL_API_KEY", "");
+    expect(await pruneEmailOutbox()).toEqual({ expired: 2, deleted: 2 });
+    const byKey = Object.fromEntries((await rows()).map((row) => [row.dedupeKey, [row.state, row.lastError]]));
+    expect(byKey).toEqual({
+      fresh: ["accepted", null], "stale-never-sent": ["skipped", "expired"], "stale-maybe-sent": ["unknown", "expired"], "recent-empty": ["skipped", null],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    const { runJob } = await import("@/lib/jobs/runner");
+    const { queueEmailDigests } = await import("@/lib/jobs/me/email");
+    await db.update(emailOutbox).set({ createdAt: hours(31 * 24) });
+    expect(await runJob("email-weekly-digest", queueEmailDigests)).toMatchObject({ status: "completed" });
+    expect(await rows()).toEqual([]);
   });
 
   it("잡 러너의 lease 안에서 보내고 주간 요약 잡도 돈다", async () => {
@@ -372,7 +450,57 @@ describe("분야 묶음과 주간 메일 요약", () => {
     expect((await db.select().from(notifications)).map((row) => row.kind)).toEqual(["category_new"]);
     const { queueWeeklyDigests } = await outbox();
     expect(await queueWeeklyDigests({ now: new Date("2026-10-19T00:00:00Z") })).toEqual({ queued: 1, empty: 0 }); // 월요일 09:00 KST
-    expect((await rows())[0].payload).toMatchObject({ week: "2026-W43", total: 1, items: [{ kind: "category_new", product: null }] });
+    const [digest] = await rows();
+    expect(digest.payload).toEqual({ week: "2026-W43", total: 1, items: [{ kind: "category_new", product: null,
+      detail: { categories: [{ category: "other", count: 1 }], total: 1, others: 0 } }] });
+    const fetcher = vi.fn(async () => new Response("{}"));
+    expect(await (await outbox()).sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 1 });
+    const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.text).toContain("팔로한 분야 기타에 새 프로젝트 1개가 올라왔어요.");
+    expect(body.text).toContain(`${ORIGIN}/c/other?sort=recent`);
+  });
+
+  it("팔로한 프로젝트가 내려간 까닭(내려감·접속 안 됨)을 메일에 싣는다 — 목록에서 내려간 제품은 팔로 탭으로", async () => {
+    configureEmail();
+    const { notifyFollowers } = await import("@/lib/me/notifications");
+    const reader = await member("읽는이", "hanul@example.com");
+    await put(reader.headers, { followedProject: "instant", locale: "en" });
+    const item = await product("gone");
+    await db.insert(userFollows).values({ userId: reader.id, targetType: "product", targetKey: String(item.id) });
+    for (const reason of ["removed", "down"]) {
+      await notifyFollowers({ targetType: "product", targetKeys: [String(item.id)], kind: "followed_delisted", productId: item.id, payload: { reason }, dedupeKey: `followed_delisted:${reason}` });
+    }
+    const queuedRows = await rows();
+    expect(queuedRows.map((row) => (row.payload.detail as { reason: string }).reason)).toEqual(["removed", "down"]);
+    const fetcher = vi.fn(async () => new Response("{}"));
+    expect(await (await outbox()).sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 2 });
+    const [removed, down] = fetcher.mock.calls.map((call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string));
+    expect(removed.subject).toBe("Removed from the list: Project gone");
+    expect(removed.text).toContain(`${ORIGIN}/en/me/following`);
+    expect(removed.text).not.toContain(`/p/gone`);
+    expect(down.subject).toBe("Temporarily delisted: Project gone");
+    expect(down.text).toContain(`${ORIGIN}/en/p/gone`);
+  });
+
+  it("주간 요약 알림 수·줄은 계정마다 따로, 고른 주간 종류만 센다", async () => {
+    configureEmail();
+    const first = await member("첫째", "first@example.com");
+    const second = await member("둘째", "second@example.com");
+    await put(second.headers, { makerReply: "weekly", followedProject: "off" });
+    const item = await product("one");
+    const at = new Date("2026-10-18T00:00:00Z");
+    await db.insert(notifications).values([
+      ...Array.from({ length: 22 }, (_, index) => ({ userId: first.id, kind: "followed_release" as const, productId: item.id, dedupeKey: `r:${index}`, createdAt: new Date(at.getTime() + index * 1_000) })),
+      { userId: first.id, kind: "maker_reply", productId: item.id, dedupeKey: "m:1", createdAt: at },
+      { userId: second.id, kind: "maker_reply", productId: item.id, dedupeKey: "m:1", createdAt: at },
+      { userId: second.id, kind: "followed_release", productId: item.id, dedupeKey: "r:1", createdAt: at },
+    ]);
+    expect(await (await outbox()).queueWeeklyDigests({ now: new Date("2026-10-19T01:00:00Z") })).toEqual({ queued: 2, empty: 0 });
+    const byUser = new Map((await rows()).map((row) => [row.userId, row.payload as { total: number; items: { kind: string }[] }]));
+    expect(byUser.get(first.id)!.total).toBe(22);
+    expect(byUser.get(first.id)!.items).toHaveLength(20);
+    expect(new Set(byUser.get(first.id)!.items.map((entry) => entry.kind))).toEqual(new Set(["followed_release"]));
+    expect(byUser.get(second.id)).toMatchObject({ total: 1, items: [{ kind: "maker_reply" }] });
   });
 });
 
@@ -383,6 +511,15 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
       method, ...(method === "POST" ? { headers: { "content-type": "application/x-www-form-urlencoded" }, body: "List-Unsubscribe=One-Click" } : {}),
     }));
   };
+  it("HEAD(링크 검사기·curl -I)는 GET 처리기로 오지만 끄지 않는다", async () => {
+    const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
+    const reader = await member("읽는이", "hanul@example.com");
+    // Next 는 HEAD 에 GET 처리기를 쓰고 request.method 는 "HEAD" 그대로다(next/dist/.../auto-implement-methods)
+    const head = await (await unsubscribeRoute()).GET(new Request(`${ORIGIN}/api/me/notification-settings/unsubscribe?token=${encodeURIComponent(signUnsubscribeToken(reader.id, "weekly"))}&lang=ko`, { method: "HEAD" }));
+    expect(head.status).toBe(200);
+    expect(await db.select().from(notificationSettings)).toEqual([]);
+  });
+
   it("GET 은 확인 화면만, POST 가 서명한 칸 하나를 끈다 — 고친 열쇠는 아무것도 바꾸지 않는다", async () => {
     const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
     const reader = await member("읽는이", "hanul@example.com");
@@ -424,6 +561,17 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
     expect((await call("GET", signUnsubscribeToken(999_999, "news"))).status).toBe(200);
   });
 
+  it("끄기 링크가 처음 행을 만들면 그 메일의 언어를 적고, 있던 행의 언어는 그대로 둔다", async () => {
+    const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
+    const fresh = await member("새로", "fresh@example.com");
+    const known = await member("있던", "known@example.com");
+    await put(known.headers, { locale: "zh-Hant" });
+    expect((await call("POST", signUnsubscribeToken(fresh.id, "makerReply"), "en")).status).toBe(200);
+    expect((await call("POST", signUnsubscribeToken(known.id, "makerReply"), "en")).status).toBe(200);
+    const locales = Object.fromEntries((await db.select().from(notificationSettings)).map((row) => [row.userId, [row.locale, row.makerReply]]));
+    expect(locales).toEqual({ [fresh.id]: ["en", "off"], [known.id]: ["zh-Hant", "off"] });
+  });
+
   it("탈퇴한 계정(deleted_at)의 끄기 링크는 설정 행을 다시 만들지 않는다 — 설정 저장도 같다", async () => {
     const { signUnsubscribeToken } = await import("@/lib/me/unsubscribe");
     const { saveNotificationSettings } = await import("@/lib/me/notification-settings");
@@ -433,5 +581,39 @@ describe("GET·POST /api/me/notification-settings/unsubscribe", () => {
     expect((await call("POST", signUnsubscribeToken(gone.id, "weekly"))).status).toBe(200);
     await saveNotificationSettings(gone.id, { followedProject: "instant" });
     expect(await db.select().from(notificationSettings)).toEqual([]);
+  });
+});
+
+describe("메일 글의 언어", () => {
+  it("이메일 로그인을 마친 화면(돌아갈 주소)의 언어를 적어, 알림 설정을 열지 않은 계정도 그 언어로 받는다", async () => {
+    const { startEmailLogin } = await import("@/lib/domain/accounts/email-login");
+    const verify = await import("@/app/api/auth/user/email/verify/route");
+    const codes: { challengeId: string; code: string }[] = [];
+    const login = async (returnTo: string) => {
+      const nonce = newPublicSession().token;
+      const started = await startEmailLogin({ email: "reader@example.com", browserNonce: nonce, ip: "192.0.2.1", returnTo }, async (email) => { codes.push(email); return "accepted"; });
+      const { code } = codes.find((entry) => entry.challengeId === started.challengeId)!;
+      const response = await verify.POST(new Request(`${ORIGIN}/api/auth/user/email/verify`, {
+        method: "POST", headers: { origin: ORIGIN, cookie: `nmv_login_nonce=${nonce}`, "content-type": "application/json", "x-csrf-token": csrfForToken(nonce, "login") },
+        body: JSON.stringify({ challengeId: started.challengeId, code }),
+      }));
+      expect(response.status).toBe(200);
+      return (await response.json()).user.id as number;
+    };
+    const userId = await login("/en/p/test");
+    expect(await db.select({ locale: notificationSettings.locale }).from(notificationSettings)).toEqual([{ locale: "en" }]);
+    await db.insert(notifications).values({ userId, kind: "maker_reply", dedupeKey: "maker_reply:1" });
+    const { enqueueNotificationEmails, sendPendingEmails } = await outbox();
+    const [row] = await db.select().from(notifications);
+    expect(await enqueueNotificationEmails([{ id: row.id, userId, kind: "maker_reply", dedupeKey: row.dedupeKey }])).toBe(1);
+    configureEmail();
+    const fetcher = vi.fn(async () => new Response("{}"));
+    expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ accepted: 1 });
+    const body = JSON.parse((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(body.subject).toMatch(/^A maker replied/);
+    expect(body.headers["List-Unsubscribe"]).toContain("lang=en");
+    // 다음 로그인 화면의 언어가 바뀌면 따라간다(한국어는 접두어 없음)
+    expect(await login("/p/test")).toBe(userId);
+    expect(await db.select({ locale: notificationSettings.locale }).from(notificationSettings)).toEqual([{ locale: "ko" }]);
   });
 });
