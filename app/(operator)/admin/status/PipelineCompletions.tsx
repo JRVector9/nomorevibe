@@ -2,17 +2,30 @@ import { DEFERRED, type CellState, type PipelineCompletions as Snapshot, type Qu
 import { formatDetailTime } from '@/lib/format/time';
 
 const STATES: Record<Exclude<CellState, 'value'>, string> = { unknown: '미확인', deferred: '미계산', none: '해당 없음' };
+/**
+ * 값이 없는 칸의 까닭 — 마우스·화면 낭독기에. 미계산·해당 없음은 설계상 늘 같은 글자라 흐리게·기울여 그려
+ * 멈춘 숫자처럼 보이지 않게 한다(미확인은 읽지 못한 것이라 다음 갱신에서 바뀔 수 있다).
+ */
+const STATE_TITLES: Record<Exclude<CellState, 'value'>, string> = {
+  unknown: '이번에 읽지 못했습니다 — 0건이 아닙니다. 다음 갱신에서 다시 읽습니다.',
+  deferred: '설계상 이 화면에서 세지 않는 값입니다(늘 미계산). 이유와 설계는 아래 "정의 · 측정 도구 대응 · 미계산 항목"에 있습니다.',
+  none: '이 단계에는 해당하지 않는 지표입니다(늘 해당 없음).',
+};
 const number = (value: number) => value.toLocaleString('ko-KR');
-const missing = (state: CellState) => STATES[state === 'value' ? 'unknown' : state];
+const fixedState = (state: CellState): Exclude<CellState, 'value'> => state === 'value' ? 'unknown' : state;
+const missing = (state: CellState) => STATES[fixedState(state)];
+const missingTitle = (state: CellState, detail: string | null) => `${STATE_TITLES[fixedState(state)]}${detail ? ` (${detail})` : ''}`;
+const missingClass = (state: CellState) => state === 'deferred' || state === 'none' ? 'text-fg-3 italic opacity-80' : 'text-fg-3';
 const note = 'mt-1 text-[13px] text-fg-3';
 
 function Values({ row }: { row: WindowMetric }) {
-  if (row.state !== 'value' || !row.values) return <td colSpan={2} className="py-1 text-right text-fg-3">{missing(row.state)}</td>;
+  if (row.state !== 'value' || !row.values) return <td colSpan={2} className={`py-1 text-right ${missingClass(row.state)}`}
+    title={missingTitle(row.state, row.note)}>{missing(row.state)}</td>;
   return <><td className="py-1 text-right font-mono">{number(row.values['1h'])}</td><td className="py-1 pl-2 text-right font-mono">{number(row.values['24h'])}</td></>;
 }
 
 function Waiting({ row }: { row: QueueMetric }) {
-  if (row.state !== 'value' || row.count === null) return <span className="text-fg-3">{missing(row.state)}</span>;
+  if (row.state !== 'value' || row.count === null) return <span className={missingClass(row.state)} title={missingTitle(row.state, row.note)}>{missing(row.state)}</span>;
   return <>{number(row.count)}{row.aged && row.oldestMin !== null && <span className="text-fg-2"> · 최장 {number(row.oldestMin)}분</span>}</>;
 }
 

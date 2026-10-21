@@ -26,9 +26,13 @@ export function SourceBufferCard({ enabled, observation, csrf }: {
         <div><dt className="text-fg-3">설정(discover.sourceBuffer)</dt>
           <dd className="mt-1 font-semibold">{enabled ? '켜짐(enabled)' : '꺼짐(disabled) · 기본값'}</dd></div>
         <div><dt className="text-fg-3">마지막 판정</dt>
-          <dd className="mt-1 font-semibold">{!observation ? '기록 없음 — 켠 뒤 첫 수집 회차에 생깁니다'
+          {/* 기본값(꺼짐)이면 판정을 남기지 않는다 — 멈춘 기록처럼 보이지 않게 흐리게 "꺼짐 · 기록 없음"으로 적는다 */}
+          {!observation && !enabled
+            ? <dd className="mt-1 font-semibold text-fg-3" title="원본 공급 조절이 꺼져 있어 수집 회차가 판정을 남기지 않습니다. 켜면 다음 수집 회차부터 생깁니다.">
+              꺼짐 · 기록 없음<span className="block text-[13px] font-normal">켜면 다음 수집 회차부터 판정이 남습니다 — 멈춘 숫자가 아닙니다</span></dd>
+            : <dd className="mt-1 font-semibold">{!observation ? '기록 없음 — 켠 뒤 첫 수집 회차에 생깁니다'
             : !decision?.success ? '판정 기록을 읽지 못했습니다'
-            : <>{decision.data.blocked ? '새 원본 보류(blocked)' : '새 원본 받음'} · {REASONS[decision.data.reason]} · 판(revision) {decision.data.revision.toLocaleString('ko-KR')}</>}</dd></div>
+            : <>{decision.data.blocked ? '새 원본 보류(blocked)' : '새 원본 받음'} · {REASONS[decision.data.reason]} · 판(revision) {decision.data.revision.toLocaleString('ko-KR')}</>}</dd>}</div>
         {observation && <div><dt className="text-fg-3">판정 시각(DB)</dt>
           <dd className="mt-1 font-semibold"><time dateTime={observation.observedAt}>{formatDetailTime(observation.observedAt)}</time></dd></div>}
       </dl>

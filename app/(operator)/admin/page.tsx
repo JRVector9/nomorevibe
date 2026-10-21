@@ -35,12 +35,15 @@ const chip = "inline-flex h-6 items-center gap-1.5 whitespace-nowrap rounded-ful
  * 머리 숫자 한 칸. windows — 7일 합 옆의 최근 1시간·오늘(한국 0시부터) 수. 7일 합은 고르게 들어오면 늘 비슷해 멈춘 것처럼 보였다.
  * 못 읽었으면 null(그 줄을 "—"로 둔다), 짧은 창이 뜻이 없는 칸은 undefined(줄을 그리지 않는다).
  */
-function Figure({ label, value, note, windows, windowsNote }: { label: string; value: string; note: string;
-  windows?: FreshWindows | null; windowsNote?: string }) {
+function Figure({ label, value, note, windows, windowsNote, estimate }: { label: string; value: string; note: string;
+  windows?: FreshWindows | null; windowsNote?: string;
+  /** 실측이 아니라 설정으로 계산한 값 — 흐리게, 점선 테두리로 그려 멈춘 실측처럼 보이지 않게 한다 */
+  estimate?: string }) {
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 rounded-[12px] border border-line bg-bg-card px-4 py-3.5">
+    <div className={`flex min-w-0 flex-col gap-0.5 rounded-[12px] border bg-bg-card px-4 py-3.5 ${estimate ? "border-dashed border-line text-fg-2" : "border-line"}`}
+      title={estimate}>
       <span className="text-[13px] font-semibold text-fg-2">{label}</span>
-      <span className="text-[26px] font-bold tabular-nums">{value}</span>
+      <span className={`text-[26px] font-bold tabular-nums ${estimate ? "text-fg-3" : ""}`}>{value}</span>
       <span className="text-[13px] text-fg-3">{note}</span>
       {windows !== undefined && <span className="text-[13px] font-medium tabular-nums text-fg-2" title={`${windowsNote ? `${windowsNote} ` : ""}${WINDOW_TITLE}`}>
         {windows ? freshWindowsLabel(windows) : "최근 1시간 · 오늘 — 읽지 못함"}</span>}
@@ -130,7 +133,9 @@ export default async function AdminPage() {
           windows={listed?.windows ?? null} windowsNote="짧은 창은 발행 시각(목록에 오른 시각) 기준이라 7일 수집분이 아닌 제품도 셉니다." />
         <Figure label="AI 흔적 없어 보류" value={fmt(gated)} note="흔적 필요 신호에서만" windows={gatedWindows}
           windowsNote="짧은 창은 그 시간에 수집된 후보 중 보류된 수입니다." />
-        <Figure label="검색 사용량" value={usage.percent} note={`시간당 ${fmt(usage.perHour)}회 / 한도 1,800회`} />
+        {/* 실측이 아니다 — 틱당 페이지 × 시간당 틱으로 계산해 설정을 바꿀 때만 바뀐다 */}
+        <Figure label="검색 사용량 · 설정상 예상치" value={usage.percent} note={`시간당 ${fmt(usage.perHour)}회 / 한도 1,800회 · 실측 아님`}
+          estimate="실제 호출 수가 아니라 설정(틱당 페이지 × 시간당 수집 틱)으로 계산한 예상치입니다. 설정을 바꿀 때만 바뀝니다." />
       </section>
 
       <div className="flex flex-wrap items-start gap-5">
