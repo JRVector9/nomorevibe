@@ -137,6 +137,10 @@ reviewer 워커(M3, 예비 mini) ── Tailscale ──▶ m1-studio 화면 서
    ```
    끝에 찍히는 상태가 `"ok":true,"sandbox":true,"fonts":{"ko":true,"ja":true,"zh":true}` 인지 본다. 아니면 `/var/nmvrender/logs/render.log`.
    선택: `sudo scripts/ops/screen-render.sh pf-enable`.
+   - 포트가 이미 쓰이면 `--port` 로 바꾼다. 운영(2026-10-22)은 m1 의 8790 을 다른 `python -m http.server` 가 쓰고 있어 **8791** 이다
+     (`SCREEN_RENDER_URL=http://100.111.160.31:8791`, 허용 M3 `100.92.77.66`·mini `100.116.119.93`).
+   - **macOS 방화벽**: 켜져 있으면 install·upgrade 가 node 의 실제 파일을 `socketfilterfw --add/--unblockapp` 로 허용한다(아래 '방화벽').
+   - 설치 스크립트의 마지막 상태 확인은 m1 자신의 Tailscale IP 에서 부른다 — 서버의 허용 목록에 `--host` 도 넣는다(그 IP 는 m1 의 프로세스만 쓴다, 토큰은 그대로 필요).
 2. **Tailscale ACL**(쓰고 있다면): M3·mini → m1:8790 만 열어 둔다.
 3. **reviewer 환경**(M3 주·mini 예비 둘 다, Dokploy 비밀): `SCREEN_RENDER_URL=http://<m1 Tailscale IP>:8790`, `SCREEN_RENDER_TOKEN=<sudo cat /var/nmvrender/token>`.
    모델은 `AUDIT_SECOND_OPINION_URL`(m1 의 같은 Qwen VLM)을 그대로 쓴다. 다른 서버를 쓰려면 `SCREEN_REVIEW_MODEL_URL`·`_MODEL`·`_API_KEY`.
@@ -145,9 +149,27 @@ reviewer 워커(M3, 예비 mini) ── Tailscale ──▶ m1-studio 화면 서
    새 줄이 요청을 받지 못한다(크롤러 관문 시간 초과와 같은 까닭 — 잡을 더하는 릴리스는 scheduler 먼저).
 5. **켜기**: 모든 앱이 새 SHA 가 된 뒤 감사 화면(감사 탭 → 자동 보류 칸 → '화면 판별')에서 켠다(사유 필요, '답으로 닫기'는 기본 켬 —
    처음 한두 시간 의견만 보려면 끄고 켠다). 처음엔 틱당 1 로 한두 시간 본다.
-   `scripts/ops/set-qwen-auto.ts` 로도 된다.
+   `scripts/ops/set-qwen-auto.ts --step=screenReview --enable --per-tick=1 --reason="…"` 로도 된다.
 6. **볼 것**: 감사 탭 화면 판별 줄(지난 1시간·남은 것·서버 상태), 작업 로그 `screen_review.ran`, 정책 처리 탭의 'm1 화면 자동 유지·숨김'(누가 qwen-vision-auto), 감사 탭 '화면 판별 대기' 수(#615),
    운영센터의 `audit-screen-review` 경보(`screen_review_not_configured`·`screen_render_unreachable`·`screen_render_fonts_missing`·`screen_model_outage`).
+
+### 방화벽 — Homebrew 로 node 를 올린 뒤 꼭 다시 허용한다
+
+macOS 응용 프로그램 방화벽은 **프로그램의 실제 파일** 단위로 들어오는 연결을 막는다. 2026-10-22 첫 설치 때 서버는 `100.111.160.31:8791` 에서
+듣고 있었지만 방화벽이 node 를 막아 M3·mini·m1 자신의 연결이 모두 실패했다(`netstat` 에 LISTEN 인데 curl 은 000). 화면 서버는
+`/opt/homebrew/bin/node`(Cellar 판으로 가는 링크)로 뜨므로 **`brew upgrade node` 를 하면 실제 경로가 바뀌어 다시 막힌다** — 증상은 감사 탭
+화면 판별 줄의 `screen_render_unreachable` 경보, M3·mini 에서 `curl http://100.111.160.31:8791/v1/health` 가 000(허용되면 토큰 없이 401).
+
+```sh
+# m1-studio 에서 — 지금 node 의 실제 파일을 방화벽에 허용하고 상태를 본다
+sudo scripts/ops/screen-render.sh firewall
+# 스크립트가 없을 때(같은 일):
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add "$(realpath /opt/homebrew/bin/node)"
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp "$(realpath /opt/homebrew/bin/node)"
+```
+
+node 의 큰 판이 바뀌면(예: 26 → 27) 화면 서버가 새 판으로 뜨는지도 본다: `sudo scripts/ops/screen-render.sh status`(데몬 상태·상태 응답).
+허용은 node 프로그램 전체에 걸린다 — m1 에서 같은 node 로 바깥에 여는 다른 서버도 들어오는 연결을 받게 된다. 화면 서버 자신은 허용 IP·토큰을 따로 본다.
 
 끄기: 감사 화면 스위치(쓰는 순간 다시 보므로 바로 멈춘다). 되돌리기: 정책 처리 탭에서 그날의 화면 판별 실행을 되돌린다. 화면 서버만 내릴 때:
 `sudo scripts/ops/screen-render.sh uninstall`(잡은 `screen_render_unreachable` 로 물러난다).
