@@ -1,16 +1,23 @@
 // 가짜 모델 CLI — 실제 claude/grok/codex 를 부르지 않고 프로세스가 끝나는 모양만 재현한다.
 // FAKE_CLI_MODE 로 동작을 고르고, FAKE_CLI_RECORD 디렉터리에 argv·stdin·pid 를 남긴다(spawn 여부·byte 동일성 확인용).
 import { spawn } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const mode = process.env.FAKE_CLI_MODE ?? "ok";
 const realCliOnPath = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
   .some(dir => ["claude", "grok", "codex"].some(name => existsSync(path.join(dir, name))));
+// 테스트는 기록 디렉터리를 짧게 훑으며 파일마다 JSON.parse 한다. writeFileSync 는 빈 파일을 먼저 만들므로 그 사이에 읽으면
+// "Unexpected end of JSON input" 이 난다 — 옆(부모) 디렉터리에 다 쓴 뒤 rename 으로 한 번에 들여놓는다.
+function writeRecord(dir, text) {
+  const temporary = path.join(path.dirname(dir), `.fake-cli-record-${process.pid}.json.tmp`);
+  writeFileSync(temporary, text);
+  renameSync(temporary, path.join(dir, `${process.pid}.json`));
+}
 function record(extra = {}) {
   const dir = process.env.FAKE_CLI_RECORD;
   if (!dir) return;
-  writeFileSync(path.join(dir, `${process.pid}.json`), JSON.stringify({ mode, pid: process.pid, argv: process.argv.slice(2),
+  writeRecord(dir, JSON.stringify({ mode, pid: process.pid, argv: process.argv.slice(2),
     env: { PATH: process.env.PATH ?? null, CLAUDE_CODE_MAX_OUTPUT_TOKENS: process.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS ?? null,
       CLAUDECODE: process.env.CLAUDECODE ?? null }, realCliOnPath, ...extra }));
 }
