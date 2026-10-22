@@ -223,6 +223,8 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 웹·crawler·reviewer·publisher 공통 이미지 릴리스는 운영 절차의
 `scripts/ops/deploy_shared_images.py`로 사전 검사, 순차 배포, 단계별 상태 확인을
 한 번에 실행할 수 있다. 실패한 단계에서 중단하고 권한 0600의 복구 스냅샷을 남긴다.
+진행 줄마다 UTC 시각과 앱·관문별 소요 시간을 남기고, 두 서버의 새 이미지 받기는 동시에 한다.
+이미지가 나오자마자 받기만 먼저 하는 `prepull`과 세 역할을 함께 올리는 선택 모드 `--parallel-roles`(위험과 관문 변화는 운영 절차 참고)가 있다.
 `RELEASE_TAG`만 보고 최신 소스라고 판단하지 않는다. 실제 남은 운영 검증은 [PENDING.md](PENDING.md)에 기록한다.
 
 [관리자 상태](https://m3ultra.tail02799e.ts.net/admin/status)는 최근 구간의 수집·심사·발행·생존 확인 처리 속도와
