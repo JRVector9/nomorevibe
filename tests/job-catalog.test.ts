@@ -107,6 +107,18 @@ describe('lanesForRole', () => {
     expect(crawler[0]).toContain('crawl-fetch');
     expect(crawler[0]).not.toContain('product-evidence-refresh');
     expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
-    for (const role of ['reviewer', 'publisher', 'text', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
+    for (const role of ['reviewer', 'publisher', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
+  });
+
+  it('text 는 키워드 검수만 따로 도는 줄에 두고 나머지는 기본 줄에서 차례로 돈다', () => {
+    const text = lanesForRole('text');
+    expect(text).toEqual([jobsForRole('text').filter(name => name !== 'product-search-verify'), ['product-search-verify']]);
+    expect(text[0]).toEqual(expect.arrayContaining(['reason-translate', 'product-search-profile', 'product-tagline-ko', 'product-translate']));
+  });
+
+  // 모델 호출 동안 연결을 쥐는 text 잡은 없다 — 줄 안의 동시 호출(검수 4·짓기 2)도 짧은 기록 TX 만 겹친다.
+  // 줄마다 한 연결이면 줄끼리 기다리지 않는다. 줄이 풀보다 많아지면 풀(lib/db/pool.ts·host-budget.ts)을 다시 센다
+  it('text 풀이 줄마다 하나씩 동시에 쥐는 연결을 담는다', () => {
+    expect(dbPoolConfig({ WORKER_ROLE: 'text' }).max).toBeGreaterThanOrEqual(lanesForRole('text').length);
   });
 });

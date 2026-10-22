@@ -64,6 +64,41 @@ it.each(['legacy', 'versioned'] as const)('keeps the production %s crawler fetch
   }
 });
 
+it.each([
+  ['legacy', 'product-search-verify', 'product-search-profile'], ['versioned', 'product-search-verify', 'product-search-profile'],
+  ['legacy', 'product-search-profile', 'product-search-verify'], ['versioned', 'product-search-profile', 'product-search-verify'],
+] as const)('keeps the production %s text lanes apart: a held %s does not block %s', async (mode, held, other) => {
+  const controller = new AbortController();
+  const entered = runtimeGate();
+  const release = runtimeGate();
+  let otherFinished = false;
+  let heldFinished = false;
+  const work = runWorker({ role: 'text', once: true, signal: controller.signal }, {
+    names: batchJobsForRole('text', mode), lanes: batchLanesForRole('text', mode),
+    seen: async () => {}, pending: async () => [held, other],
+    run: async name => {
+      if (name === held) {
+        entered.release();
+        await release.promise;
+        heldFinished = true;
+      } else if (name === other) {
+        await entered.promise;
+        otherFinished = true;
+      }
+      return { status: 'completed' };
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(otherFinished).toBe(true));
+    expect(heldFinished).toBe(false);
+  } finally {
+    controller.abort();
+    entered.release();
+    release.release();
+    await work;
+  }
+});
+
 it('keeps the production translation batch serial while its first call is held', async () => {
   const controller = new AbortController();
   const entered = runtimeGate();

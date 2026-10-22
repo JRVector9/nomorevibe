@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "verify";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -58,8 +58,12 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다.
    */
   { name: "product-search-profile", role: "text", intervalMs: 60_000 },
-  /** 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김) */
-  { name: "product-search-verify", role: "text", intervalMs: 60_000 },
+  /**
+   * 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김).
+   * 틱이 76초 남짓으로 기본 줄 시간의 44%를 써, 1분 주기 잡들이 시간당 18~22틱에 머물렀다(2026-10-19 실측) — 따로 도는 줄에 둔다.
+   * 모델이 gpt-oss 가 아니라(supa) 심사와 다투지 않는다. 대신 기본 줄이 빨라져 키워드 짓기·번역의 gpt-oss 호출이 는다
+   */
+  { name: "product-search-verify", role: "text", intervalMs: 60_000, lane: "verify" },
   /**
    * 의미 검색의 제품 벡터 — 서버 Mac 의 bge-m3(llama-server)로 임베딩한다. 키워드가 바뀌면 글이 바뀌어 다시 임베딩하므로
    * 키워드 짓기와 같은 text 워커에 둔다. 게이트웨이를 쓰지 않아 심사와 다투지 않는다.
