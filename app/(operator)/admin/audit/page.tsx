@@ -28,7 +28,9 @@ import { DISMISS_REASONS, formatWait, isBurst, isDismissReason, senderLabel, tak
 import "../status/dashboard/dashboard.css";
 import "./takedown.css";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
-import { listPolicyRuns, policyFilterOptions } from "@/lib/crawl/audit-policy";
+import { AUDIT_BACKLOG_OVERDUE_DAYS, auditThroughput, expiringKeepCount, KEEP_EXTEND_WITHIN_DAYS, listPolicyRuns, policyFilterOptions,
+  type AuditThroughput } from "@/lib/crawl/audit-policy";
+import { KeepExtend } from "./KeepExtend";
 import { PolicyBuilder, type PolicyPreset } from "./PolicyBuilder";
 import { PolicyRuns, type PolicyRunRow } from "./PolicyRuns";
 import { ImportOpinions } from "./ImportOpinions";
@@ -93,7 +95,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
-  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport] = await Promise.all([
+  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport, throughput, expiringKeeps] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
@@ -101,6 +103,9 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "policy" ? policyFilterOptions() : Promise.resolve(null),
     tab === "policy" ? listPolicyRuns() : Promise.resolve([]),
     tab === "policy" ? latestStagedImport() : Promise.resolve(null),
+    // 처리 속도·적체 — 감사 탭은 한 줄, 정책 처리 탭은 날마다. 못 읽어도 화면은 그린다
+    tab === "audit" || tab === "policy" ? auditThroughput().catch(() => null) : Promise.resolve(null),
+    tab === "policy" ? expiringKeepCount() : Promise.resolve(0),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
@@ -180,9 +185,11 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           열린 감사 거절을 한 건씩 누르지 않고 <b className="font-semibold">정책으로</b> 닫습니다. 거르기를 만들어 미리 보고(수·사유 갈래별 수·표본·건너뛸 것과 까닭),
           손댈 수를 그대로 적어 적용합니다. 적용은 몇십 건씩 나눠 돌고, 실행 하나를 통째로 되돌릴 수 있습니다. 주인 있는 제품은 묶어서 내리지 않습니다.
         </p>
+        {throughput && <ThroughputPanel throughput={throughput} detailed />}
         <PolicyBuilder reviewers={policyOptions?.reviewers ?? []} sources={policyOptions?.sources ?? []} presets={policyPresets(campaign)}
           initialPreset={preset ?? null} />
         <ImportOpinions staged={stagedImport ? { ...stagedImport, createdAt: formatListTime(stagedImport.createdAt, now) } : null} />
+        <KeepExtend expiring={expiringKeeps} withinDays={KEEP_EXTEND_WITHIN_DAYS} />
         <PolicyRuns runs={policyRuns.map((run): PolicyRunRow => ({ ...run, createdAt: formatListTime(run.createdAt, now),
           appliedAt: run.appliedAt ? formatListTime(run.appliedAt, now) : null, undoneAt: run.undoneAt ? formatListTime(run.undoneAt, now) : null,
           label: POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
@@ -205,6 +212,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
         확신이 아주 높은 것은 같은 분류끼리 묶어 이름을 훑고 한 번에 내릴 수 있습니다.
       </p>
 
+      {throughput && <ThroughputPanel throughput={throughput} detailed={false} />}
       <CampaignPanel overview={overview} now={now} />
       <HoldPanel overview={overview} heldReasons={heldReasonIds} qwen={qwen} now={now} />
 
@@ -256,6 +264,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
                       // 남은 감사 모델 바꾸기 뒤 Qwen 이 낸 답 — 확신이 늘 0.95·1.00 이라 사람이 가려 읽는다
                       answeredBy: finding.aiProvider === QWEN_AUDIT_PROVIDER ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) : null,
                       reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
+                      waitDays: finding.reviewedAt ? Math.max(0, Math.floor((now.getTime() - finding.reviewedAt.getTime()) / 86_400_000)) : null,
                       heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
                   ))}
                 </tbody>
@@ -278,6 +287,51 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       )}
       </>}
     </main>
+  );
+}
+
+/**
+ * 처리 속도 — 사람이 닫은 수(유지·내리기, 정책 포함)와 새로 들어온 AI 거절을 날마다 견주고, 어제까지 7일 평균으로 다 닫는 날을 낸다.
+ * 줄지 않으면 '줄지 않음 — 하루 N건 더 닫아야'. 가장 오래 기다린 것과 문턱(AUDIT_BACKLOG_OVERDUE_DAYS)을 넘은 수.
+ * detailed 면 지난 14일 표까지(정책 처리 탭), 아니면 한 줄(감사 탭)
+ */
+function ThroughputPanel({ throughput, detailed }: { throughput: AuditThroughput; detailed: boolean }) {
+  const t = throughput;
+  const per = (value: number) => value.toLocaleString("ko-KR", { maximumFractionDigits: 1 });
+  const verdict = t.open === 0 ? "남은 것 없음"
+    : t.daysToClear !== null ? `지금 속도면 약 ${count(t.daysToClear)}일 뒤 다 닫힘`
+      : `줄지 않음 — 하루 ${per(Math.max(1, t.incomingPerDay - t.closedPerDay))}건 더 닫아야 줄기 시작`;
+  const stale = t.oldestWaitDays !== null && t.oldestWaitDays > AUDIT_BACKLOG_OVERDUE_DAYS;
+  const max = Math.max(1, ...t.days.map((day) => Math.max(day.closed, day.incoming)));
+  return (
+    <section className="flex flex-col gap-2 rounded-[12px] border border-line bg-bg-card p-4 text-[13px]" aria-labelledby="audit-throughput-title">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 id="audit-throughput-title" className="text-[14.5px] font-bold">처리 속도</h2>
+        <span className="tabular-nums text-fg-2">
+          열린 거절 <b className="font-semibold">{count(t.open)}</b>건(보류 중 {count(t.held)}) · 하루 닫음 <b className="font-semibold">{per(t.closedPerDay)}</b> /
+          들어옴 <b className="font-semibold">{per(t.incomingPerDay)}</b>(어제까지 7일 평균) · <b className={`font-semibold ${t.daysToClear === null && t.open > 0 ? "text-warn" : ""}`}>{verdict}</b>
+        </span>
+      </div>
+      <p className={`tabular-nums ${stale ? "text-warn" : "text-fg-2"}`}>
+        가장 오래 기다린 것 {t.oldestWaitDays === null ? "—" : `${count(t.oldestWaitDays)}일`} · {AUDIT_BACKLOG_OVERDUE_DAYS}일 넘게 기다린 것 {count(t.overdue)}건
+        {stale && ` — 메뉴 배지와 오늘 할 일에 보입니다(${AUDIT_BACKLOG_OVERDUE_DAYS}일 넘은 것이 없어지면 꺼집니다)`}
+        {!detailed && <> · <Link href="/admin/audit?tab=policy" className="text-accent hover:underline">정책으로 닫기 →</Link></>}
+      </p>
+      {detailed && (
+        <table className="w-full max-w-[640px] text-left tabular-nums">
+          <caption className="sr-only">지난 14일 닫은 수와 들어온 수</caption>
+          <thead className="text-fg-3"><tr><th className="py-1 font-semibold">날짜</th><th className="py-1 font-semibold">들어옴</th><th className="py-1 font-semibold">닫음</th></tr></thead>
+          <tbody>{t.days.map((day) => (
+            <tr key={day.day} className="border-t border-line">
+              <td className="whitespace-nowrap py-1 pr-3 font-mono text-fg-3">{day.day.slice(5)}</td>
+              <td className="w-[45%] py-1 pr-2"><span className="inline-block h-2 rounded-sm bg-warn/60 align-middle" style={{ width: `${Math.round((day.incoming / max) * 100)}%` }} />
+                <span className="ml-1.5">{count(day.incoming)}</span></td>
+              <td className="w-[45%] py-1"><span className="inline-block h-2 rounded-sm bg-accent align-middle" style={{ width: `${Math.round((day.closed / max) * 100)}%` }} />
+                <span className="ml-1.5">{count(day.closed)}</span></td>
+            </tr>))}</tbody>
+        </table>
+      )}
+    </section>
   );
 }
 

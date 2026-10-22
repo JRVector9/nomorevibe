@@ -18,6 +18,8 @@ export type AuditFindingView = {
   second?: SecondOpinionView[];
   /** 남은 감사 모델 바꾸기 뒤 바꾼 모델이 낸 답이면 그 이름('qwen-v2') — 시작 모델의 답이면 없음 */
   answeredBy?: string | null;
+  /** 감사 답을 받고 사람을 기다린 날 — 오래된 것을 줄에서 바로 본다 */
+  waitDays?: number | null;
 };
 
 
@@ -66,6 +68,7 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
         {typeof finding.confidence === 'number' ? finding.confidence.toFixed(2) : '—'}
         {finding.answeredBy && <span title="이 답을 낸 감사 모델" className="ml-1 font-sans text-fg-3">{finding.answeredBy}</span>}
         <span className="block font-sans text-fg-3">{finding.reviewedAt ?? ''}</span>
+        {typeof finding.waitDays === 'number' && <span title="감사 답을 받고 사람을 기다린 날" className="block font-sans text-fg-3">대기 {finding.waitDays.toLocaleString('ko-KR')}일</span>}
       </td>
       <td className="px-3 py-2">
         <form action={action} className="flex flex-col items-end gap-1.5">

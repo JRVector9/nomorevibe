@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   admin: vi.fn(), revalidate: vi.fn(), preview: vi.fn(), start: vi.fn(), apply: vi.fn(), undoStart: vi.fn(), undo: vi.fn(), exceptions: vi.fn(),
   options: vi.fn(), runs: vi.fn(), overview: vi.fn(), takedownSummary: vi.fn(), introCount: vi.fn(),
   staged: vi.fn(), stage: vi.fn(), importPreview: vi.fn(), importStart: vi.fn(), discard: vi.fn(),
+  throughput: vi.fn(), expiring: vi.fn(), keepPreview: vi.fn(), keepStart: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async (original) => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -13,6 +14,8 @@ vi.mock('next/cache', () => ({ revalidatePath: mocks.revalidate }));
 vi.mock('@/lib/crawl/audit-policy', () => ({
   previewAuditPolicy: mocks.preview, startAuditPolicyRun: mocks.start, applyAuditPolicyChunk: mocks.apply, startAuditPolicyUndo: mocks.undoStart,
   undoAuditPolicyChunk: mocks.undo, policyRunExceptions: mocks.exceptions, policyFilterOptions: mocks.options, listPolicyRuns: mocks.runs,
+  auditThroughput: mocks.throughput, expiringKeepCount: mocks.expiring, previewKeepExtend: mocks.keepPreview, startKeepExtendRun: mocks.keepStart,
+  AUDIT_BACKLOG_OVERDUE_DAYS: 7, KEEP_EXTEND_WITHIN_DAYS: 30,
 }));
 vi.mock('@/lib/crawl/audit-second-opinion-upload', () => ({ latestStagedImport: mocks.staged, stageImportLines: mocks.stage, previewImport: mocks.importPreview,
   startImportApply: mocks.importStart, discardImport: mocks.discard, IMPORT_STAGE_MAX_LINES: 500 }));
@@ -26,8 +29,9 @@ vi.mock('@/lib/domain/products/takedown', () => ({ takedownSummary: mocks.takedo
 vi.mock('@/lib/domain/products/intro-requests', () => ({ introRequestQueue: vi.fn(), pendingIntroRequestCount: mocks.introCount }));
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
-import { applyPolicyChunkAction, discardImportAction, policyRunExceptionsAction, previewAuditPolicyAction, previewImportAction, stageImportAction,
-  startImportApplyAction, startPolicyRunAction, startPolicyUndoAction, undoPolicyChunkAction } from '@/app/(operator)/admin/audit/policy-actions';
+import { applyPolicyChunkAction, discardImportAction, policyRunExceptionsAction, previewAuditPolicyAction, previewImportAction, previewKeepExtendAction,
+  stageImportAction, startImportApplyAction, startKeepExtendAction, startPolicyRunAction, startPolicyUndoAction,
+  undoPolicyChunkAction } from '@/app/(operator)/admin/audit/policy-actions';
 import { ACTION_GROUPS, ACTION_LABELS, targetLabel } from '@/app/(operator)/admin/activity/labels';
 import { describePolicyFilter, EMPTY_POLICY_FILTER, policyFilterSchema, policyStartSchema, stratifiedQuotas } from '@/lib/crawl/audit-policy-filter';
 import { DEFAULT_AUDIT_HOLD, DEFAULT_QWEN_AUTO } from '@/lib/crawl/settings-schema';
@@ -37,6 +41,10 @@ const campaign = { id: 4, startedAt: new Date('2026-10-14T00:00:00Z'), startedBy
 const progress = (over: Record<string, unknown> = {}) => ({ runId: 9, kind: 'close', action: 'remove', status: 'applying', planned: 10, pending: 5,
   applied: 5, skipped: 0, cancelled: 0, undone: 0, blocked: 0, waiting: null, done: false, ...over });
 const filter = { ...EMPTY_POLICY_FILTER, confidenceMin: 0.95, held: 'held' as const, second: 'agreed' as const };
+/** 처리 속도(lib/crawl/audit-policy.ts AuditThroughput) — 2026-10-22 프로드와 비슷한 모양: 들어옴 400·닫음 0 */
+const throughputOf = (over: Record<string, unknown> = {}) => ({ open: 7_450, held: 2_490, overdue: 6_100, oldestWaitDays: 8,
+  days: Array.from({ length: 14 }, (_, index) => ({ day: `2026-10-${String(9 + index).padStart(2, '0')}`, closed: 0, incoming: 400 })),
+  closedPerDay: 0, incomingPerDay: 400, daysToClear: null, ...over });
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,6 +55,8 @@ beforeEach(() => {
     lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null } });
   mocks.introCount.mockResolvedValue(0);
   mocks.staged.mockResolvedValue(null);
+  mocks.expiring.mockResolvedValue(42);
+  mocks.throughput.mockResolvedValue(throughputOf());
   mocks.options.mockResolvedValue({ latestCampaignId: 4, reviewers: [{ key: 'abcllm|[MLX] gpt-oss-120b', provider: 'abcllm', model: '[MLX] gpt-oss-120b', count: 6_965 }],
     sources: [{ source: 'grok-cli-batch', count: 2_755 }] });
   mocks.runs.mockResolvedValue([{ id: 3, kind: 'close', action: 'keep', status: 'applying', planned: 120, note: '적체', createdBy: 'jr',
@@ -68,6 +78,21 @@ describe('정책 처리 화면', () => {
     // 적용 단추는 미리보기와 수 적기 전에는 없다
     expect(html).not.toContain('건 내리기</button>');
     expect(mocks.preview).not.toHaveBeenCalled();
+  });
+
+  it('처리 속도 — 하루 닫음·들어옴·다 닫는 날(줄지 않으면 얼마나 더 닫아야 하는지)·가장 오래 기다린 것, 곧 끝나는 유지 수', async () => {
+    const html = renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }));
+    expect(html).toContain('처리 속도');
+    expect(html).toMatch(/열린 거절 <b[^>]*>7,450<\/b>건/);
+    expect(html).toContain('줄지 않음 — 하루 400건 더 닫아야 줄기 시작');
+    expect(html).toMatch(/가장 오래 기다린 것 (<!-- -->)?8일/);
+    expect(html).toContain('메뉴 배지와 오늘 할 일에 보입니다');
+    expect(html).toContain('10-22');
+    expect(html).toMatch(/30(<!-- -->)?일 안에 끝나는 유지 <b[^>]*>42<\/b>건/);
+    mocks.throughput.mockResolvedValue(throughputOf({ closedPerDay: 900, daysToClear: 15, oldestWaitDays: 3, overdue: 0 }));
+    const faster = renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }));
+    expect(faster).toContain('지금 속도면 약 15일 뒤 다 닫힘');
+    expect(faster).not.toContain('메뉴 배지와 오늘 할 일에 보입니다');
   });
 
   it('다른 탭에서는 정책 데이터를 읽지 않는다', async () => {
@@ -149,6 +174,22 @@ describe('두 번째 의견 올리기 서버 액션', () => {
     expect(mocks.importStart).toHaveBeenCalledWith({ runId: 5, supersede: false, expected: 1, by: 'jr' });
     mocks.discard.mockResolvedValue(true);
     expect(await discardImportAction(5)).toEqual({ ok: true, value: { discarded: true } });
+  });
+});
+
+describe('유지 연장 서버 액션', () => {
+  it('기간은 90·180·365일만, 수는 1 이상 — 로그인한 사람으로. 페이지 그대로인 것만이 기본이다', async () => {
+    expect(await startKeepExtendAction({ days: 30, expected: 3 })).toMatchObject({ ok: false });
+    expect(await startKeepExtendAction({ days: 90, expected: 0 })).toMatchObject({ ok: false });
+    expect(mocks.keepStart).not.toHaveBeenCalled();
+    mocks.keepStart.mockResolvedValue({ ok: true, runId: 8, planned: 3 });
+    expect(await startKeepExtendAction({ days: 180, expected: 3, note: '연장' })).toEqual({ ok: true, value: { runId: 8, planned: 3 } });
+    expect(mocks.keepStart).toHaveBeenCalledWith({ days: 180, unchangedOnly: true, expected: 3, note: '연장', by: 'jr' });
+    mocks.keepPreview.mockResolvedValue({ eligible: 3 });
+    await previewKeepExtendAction(false);
+    expect(mocks.keepPreview).toHaveBeenLastCalledWith({ unchangedOnly: false });
+    await previewKeepExtendAction(undefined);
+    expect(mocks.keepPreview).toHaveBeenLastCalledWith({ unchangedOnly: true });
   });
 });
 

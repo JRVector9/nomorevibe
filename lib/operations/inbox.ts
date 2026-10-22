@@ -8,6 +8,7 @@ import { sharedStore } from "@/lib/cache/shared";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
+import { AUDIT_BACKLOG_OVERDUE_DAYS, openBacklogStats } from "@/lib/crawl/audit-policy";
 import { getSettings } from "@/lib/crawl/settings";
 import { humanInboxNote } from "@/lib/crawl/human-queue";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
@@ -74,6 +75,16 @@ async function candidatePreview(ids: number[], why: (row: { id: number; reason: 
     .from(crawlCandidates).where(inArray(crawlCandidates.id, ids))
     .orderBy(sql`${since} asc nulls last`, asc(crawlCandidates.id)).limit(INBOX_PREVIEW);
   return rows.map((row) => ({ id: String(row.id), name: row.repo, why: why(row), since: row.since }));
+}
+
+/** 감사 거절 칸의 덧말 — 7일 넘게 기다린 수·가장 오래 기다린 날(정책 처리로 닫으라는 신호), 보류 중인 수 */
+export function auditInboxNote(held: number, backlog: { overdue: number; oldestWaitDays: number | null } | null): string | undefined {
+  const parts = [
+    backlog && backlog.overdue > 0 ? `${AUDIT_BACKLOG_OVERDUE_DAYS}일 넘게 기다림 ${count(backlog.overdue)}건${backlog.oldestWaitDays !== null
+      ? ` · 가장 오래 ${count(backlog.oldestWaitDays)}일` : ""} — 정책 처리로 닫기` : null,
+    held > 0 ? `보류 중(목록에서 빠짐) ${count(held)}건` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 /** 감사 거절 — attentionCounts 의 auditRejectsOpen 과 같은 조건(마지막 감사, AI 거절, 사람 손 안 탐, 아직 공개) */
@@ -218,11 +229,12 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
         items: await candidatePreview(ids.agreed, (row) => rejects.has(row.id) ? "두 모델 모두 거절" : "두 모델 모두 승인") };
     }),
     settle("audit", async () => {
-      const [counts, items, heldElsewhere] = await Promise.all([attention, auditPreview(), heldOutsideLatestCampaign()]);
+      const [counts, items, heldElsewhere, backlog] = await Promise.all([attention, auditPreview(), heldOutsideLatestCampaign(),
+        openBacklogStats().catch(() => null)]);
       // 보류 중인 것은 이미 목록에서 빠져 사람을 기다린다 — 감사 화면의 '보류 중' 갈래가 오래된 것부터 보인다.
-      // 지난 감사의 보류도 할 일로 센다 — 새 감사를 열어 마지막 감사의 거절이 0 이 되어도 보류 수천 건이 칸에서 사라지지 않게
-      return { count: counts.auditRejectsOpen + heldElsewhere, items,
-        note: counts.auditHeld > 0 ? `보류 중(목록에서 빠짐) ${count(counts.auditHeld)}건` : undefined };
+      // 지난 감사의 보류도 할 일로 센다 — 새 감사를 열어 마지막 감사의 거절이 0 이 되어도 보류 수천 건이 칸에서 사라지지 않게.
+      // 7일(AUDIT_BACKLOG_OVERDUE_DAYS) 넘게 기다린 것은 따로 적는다 — 메뉴 배지와 같은 수. 색은 주황 그대로다(약속 시간이 없다)
+      return { count: counts.auditRejectsOpen + heldElsewhere, items, note: auditInboxNote(counts.auditHeld, backlog) };
     }),
     settle("down", async () => {
       const [total, items] = await Promise.all([downProductCount(), downPreview()]);

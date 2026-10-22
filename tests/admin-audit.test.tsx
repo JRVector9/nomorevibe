@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
-  held: vi.fn(), heldReasons: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
+  held: vi.fn(), heldReasons: vi.fn(), setHold: vi.fn(), throughput: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -24,6 +24,9 @@ vi.mock('@/lib/crawl/product-audit', () => ({
 vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatus: mocks.qwenStatus }));
 vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold, setQwenAutoStep: mocks.setQwenAuto }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
+// 처리 속도·적체(0116)도 DB 를 센다
+vi.mock('@/lib/crawl/audit-policy', () => ({ auditThroughput: mocks.throughput, AUDIT_BACKLOG_OVERDUE_DAYS: 7, KEEP_EXTEND_WITHIN_DAYS: 30,
+  expiringKeepCount: async () => 0, listPolicyRuns: async () => [], policyFilterOptions: async () => null }));
 vi.mock('@/lib/operations/admin-log', () => ({ recordAdminAction: mocks.log, recordAdminActions: mocks.log }));
 // 내려달라는 요청 집계도 DB를 읽는다 — CI 단위 테스트에는 DB가 없다
 vi.mock('@/lib/domain/products/takedown', () => ({
@@ -87,6 +90,7 @@ beforeEach(() => {
     { id: 11, reason: 'pageText shows only a sign-in form' }, { id: 12, reason: 'a documentation site' }, { id: 13, reason: 'a consulting agency site' },
   ]);
   mocks.translations.mockResolvedValue(new Map());
+  mocks.throughput.mockResolvedValue(null);
   mocks.takedownSummary.mockResolvedValue(takedowns(0));
   mocks.takedownQueue.mockResolvedValue([]);
   mocks.takedownHistory.mockResolvedValue([]);
@@ -169,6 +173,18 @@ describe('내릴 후보 화면', () => {
     // 다른 폼으로 값을 실어 보내는 form 속성(재검수 화면의 일괄 차단 방식)도 없다
     expect(html).not.toMatch(/\sform="/);
     expect(html).not.toMatch(/전체 선택|모두 선택|일괄|선택 차단|모두 내리기|선택한 것/);
+  });
+
+  it('줄마다 기다린 날을 보이고, 감사 탭 위에 처리 속도 한 줄(가장 오래 기다린 것·정책 처리로)을 둔다', async () => {
+    mocks.throughput.mockResolvedValue({ open: 3, held: 0, overdue: 3, oldestWaitDays: 34, days: [], closedPerDay: 1.5, incomingPerDay: 0.5, daysToClear: 3 });
+    const html = await render({ tab: 'audit' });
+    // 2026-09-18 12:30 에 답을 받았다 — 오늘(테스트 시각)까지 센 날
+    expect(html).toMatch(/대기 (<!-- -->)?[0-9,]+(<!-- -->)?일/);
+    expect(html).toContain('지금 속도면 약 3일 뒤 다 닫힘');
+    expect(html).toMatch(/가장 오래 기다린 것 (<!-- -->)?34일/);
+    expect(html).toContain('href="/admin/audit?tab=policy"');
+    // 표는 정책 처리 탭에만
+    expect(html).not.toContain('지난 14일 닫은 수와 들어온 수');
   });
 
   it('주소를 새 탭으로 열고, 지금 분류·AI 사유·확신을 보인다', async () => {
