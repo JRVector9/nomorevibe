@@ -61,15 +61,24 @@ export function countBadge(count: number | null | undefined, tone: NavBadgeTone,
  * 보이는 글자는 짧게("요청 3 · 소개 2"), title 은 갈래와 수를 모두 적는다 — title 이 있으면 화면 낭독기는 보이는 글자 대신 title 만 읽는다.
  * 전에는 소개만 있을 때 title 이 "소개 수정 요청"(수 없음)이라 낭독·툴팁에서 수가 사라졌고, 요청이 있을 때는 title 이 없어 무슨 요청인지 몰랐다.
  */
-export function auditBadge(takedowns: { pending: number; overdue: number } | null, introRequests: number): NavBadge | undefined {
+export function auditBadge(takedowns: { pending: number; overdue: number } | null, introRequests: number,
+  /**
+   * 감사 거절 적체(0116) — 문턱(lib/crawl/audit-policy.ts AUDIT_BACKLOG_OVERDUE_DAYS, 7일)을 넘게 기다린 열린 거절의 수와 가장 오래 기다린 날.
+   * 넘은 것이 없으면(0) 배지에 들지 않는다 — 하루 수백 건씩 들어오는 수로 걸면 배지가 늘 켜진다
+   */
+  auditBacklog: { overdue: number; oldestWaitDays: number | null } | null = null): NavBadge | undefined {
   const n = (value: number) => value.toLocaleString("ko-KR");
   const pending = takedowns && takedowns.pending > 0 ? takedowns : null;
   const intro = introRequests > 0 ? introRequests : 0;
-  if (!pending && !intro) return undefined;
-  // 메뉴 배지는 합계 하나만 — "요청 2 · 소개 1"처럼 길면 메뉴 이름 칸이 한 글자 폭으로 줄어 세로로 쌓였다. 내역은 title(낭독 글자)
-  const label = n((pending?.pending ?? 0) + intro);
+  const backlog = auditBacklog && auditBacklog.overdue > 0 ? auditBacklog : null;
+  if (!pending && !intro && !backlog) return undefined;
   const title = [pending && `내려달라는 요청 ${n(pending.pending)}건${pending.overdue > 0 ? `(24시간 넘음 ${n(pending.overdue)}건)` : ""}`,
-    intro && `소개 수정 요청 ${n(intro)}건`].filter(Boolean).join(" · ");
+    intro && `소개 수정 요청 ${n(intro)}건`,
+    backlog && `감사 거절 7일 넘게 기다림 ${n(backlog.overdue)}건${backlog.oldestWaitDays !== null ? `(가장 오래 ${n(backlog.oldestWaitDays)}일)` : ""}`]
+    .filter(Boolean).join(" · ");
+  // 메뉴 배지는 합계 하나만 — "요청 2 · 소개 1"처럼 길면 메뉴 이름 칸이 한 글자 폭으로 줄어 세로로 쌓였다. 내역은 title(낭독 글자).
+  // 감사 적체(수천 건)는 요청·소개가 없을 때만 글자가 된다 — 더하면 24시간 약속이 있는 요청 수가 그 안에 묻힌다. 적체는 빨강이 아니다
+  const label = pending || intro ? n((pending?.pending ?? 0) + intro) : n(backlog!.overdue);
   return { label, tone: pending && takedownSignal(pending)?.tone === "bad" ? "critical" : "warn", title };
 }
 

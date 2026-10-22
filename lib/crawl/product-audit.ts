@@ -152,6 +152,34 @@ async function liveKeptProducts(tx: ProductTransaction, settings: CrawlSettings)
   return kept;
 }
 
+/**
+ * 유지한 항목의 페이지가 그때와 같은가 — liveKeptProducts 와 같은 셈(수집 원본으로 심사 입력의 product 부분 해시를 다시 만든다).
+ * same: 유지할 때 본 그 페이지 그대로 · changed: 바뀜(다음 감사에 기한과 상관없이 다시 든다) · no_source: 수집 원본이 없어 가를 수 없음.
+ * 곧 끝나는 유지를 연장할 때(audit-policy.ts) 바뀌지 않은 것만 고른다 — 내용이 그대로인 한 같은 판단을 되풀이하지 않게
+ */
+export async function keptContentStatus(rows: readonly { itemId: number; productId: number; sourceHash: string | null }[]):
+  Promise<Map<number, "same" | "changed" | "no_source">> {
+  const status = new Map<number, "same" | "changed" | "no_source">();
+  if (!rows.length) return status;
+  const settings = await getSettings();
+  const current = new Map<number, string>();
+  const productIds = [...new Set(rows.map((row) => row.productId))];
+  for (let index = 0; index < productIds.length; index += 500) {
+    const found = await db.select({ productId: products.id, candidate: crawlCandidates, document: crawlDocuments }).from(products)
+      .innerJoin(crawlCandidates, eq(crawlCandidates.publishedSlug, products.slug))
+      .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
+      .where(inArray(products.id, productIds.slice(index, index + 500)));
+    for (const row of found) {
+      current.set(row.productId, auditSourceHash(createReviewInput(row.candidate, row.document, auditSettings(settings), { scan: null, observations: [] })));
+    }
+  }
+  for (const row of rows) {
+    const hash = current.get(row.productId);
+    status.set(row.itemId, !hash || !row.sourceHash ? "no_source" : hash === row.sourceHash ? "same" : "changed");
+  }
+  return status;
+}
+
 /** 멈춘다. 아무것도 내리지 않고, 지금까지 찾은 것은 목록에 남는다 */
 export async function cancelProductAudit(): Promise<boolean> {
   const rows = await db.update(productAuditCampaigns).set({ status: "cancelled", finishedAt: sql`now()` })

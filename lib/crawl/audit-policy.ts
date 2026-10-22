@@ -13,7 +13,7 @@ import { auditReasonCategorySql, secondOpinionFilter, secondOpinionsField, type 
 import { describePolicyFilter, policyFilterSchema, stratifiedQuotas, type PolicyAction, type PolicyFilter, type PolicyStart } from "./audit-policy-filter";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { AUDIT_HOLD_ACTION, AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE, auditItemModel, releaseAuditHold, unownedPublic } from "./product-audit-hold";
-import { auditBanReason, GROUP_REMOVE_MIN_CONFIDENCE } from "./product-audit";
+import { auditBanReason, GROUP_REMOVE_MIN_CONFIDENCE, keptContentStatus } from "./product-audit";
 import { getSettings, lockedSettings } from "./settings";
 import { importHoldEffect } from "./audit-import-gate";
 
@@ -609,8 +609,36 @@ const importOpinion: RunHandler = {
   },
 };
 
+/**
+ * 유지 연장 — 곧 끝나는 유지의 기한을 늦춘다(keep_until = max(지금 기한, 지금) + 일). 만들 때 본 기한이 그대로인 것만(그 사이 사람이 다시
+ * 정했거나 다른 연장이 있었으면 건너뜀). 되돌리기는 연장한 그 기한이 그대로일 때만 원래 기한으로
+ */
+const extendKeep: RunHandler = {
+  cdnPerProduct: false,
+  async apply(tx, run, row) {
+    const payload = row.payload as { keepUntil: string };
+    const days = Number((run.options as { days?: number }).days ?? 90);
+    const [updated] = await tx.execute<{ keep_until: string }>(sql`
+      update ${productAuditItems} set keep_until = greatest(keep_until, now()) + ${days} * interval '1 day'
+       where id = ${row.itemId} and human_decision = 'kept' and keep_until = ${payload.keepUntil}::timestamp
+      returning to_char(keep_until, ${OPINION_TIME}) as keep_until`);
+    if (!updated) return skipped("changed");
+    return { state: "applied", before: { keepUntil: payload.keepUntil }, after: { keepUntil: updated.keep_until } };
+  },
+  async undo(tx, run, row) {
+    const before = row.before as { keepUntil: string };
+    const [after] = await tx.select({ after: productAuditPolicyRunItems.after }).from(productAuditPolicyRunItems).where(eq(productAuditPolicyRunItems.id, row.id));
+    const extended = (after?.after as { keepUntil?: string } | null)?.keepUntil;
+    if (!extended) return blocked("keep_changed");
+    const restored = await tx.execute<{ id: number }>(sql`
+      update ${productAuditItems} set keep_until = ${before.keepUntil}::timestamp
+       where id = ${row.itemId} and human_decision = 'kept' and keep_until = ${extended}::timestamp returning id`);
+    return restored.length ? { state: "undone" } : blocked("keep_changed");
+  },
+};
+
 const HANDLERS: Record<string, RunHandler> = { "close:remove": closeRemove, "close:keep": closeKeep, "close:release": closeRelease,
-  "import:import": importOpinion };
+  "import:import": importOpinion, "extend:extend": extendKeep };
 
 function handlerOf(run: ProductAuditPolicyRun): RunHandler {
   const handler = HANDLERS[`${run.kind}:${run.action}`];
@@ -870,4 +898,146 @@ export async function policyRunExceptions(runId: number, limit = 200) {
     .from(productAuditPolicyRunItems).leftJoin(products, eq(products.id, productAuditPolicyRunItems.productId))
     .where(and(eq(productAuditPolicyRunItems.runId, runId), inArray(productAuditPolicyRunItems.state, ["undo_blocked", "skipped"])))
     .orderBy(asc(productAuditPolicyRunItems.state), asc(productAuditPolicyRunItems.id)).limit(limit);
+}
+
+// ─────────────────────────── 처리 속도·적체 ───────────────────────────
+
+/**
+ * 적체 경보의 문턱 — 가장 오래 기다린 열린 거절이 이만큼 넘으면 메뉴 배지·오늘 할 일에 '오래 기다림'을 세운다.
+ *
+ * 7일인 까닭: (1) 감사 답·Qwen-v2 두 번째 의견·자동 보류는 하루 안에 끝난다 — 일주일 넘게 열린 것은 사람 말고는 닫을 길이 없다.
+ * (2) 하루 300~500건이 들어온다(2026-10-22) — 수로 문턱을 잡으면(예: 1,000건) 늘 켜져 있다. 나이로 잡으면 운영자가 일주일에 한 번
+ * 정책으로 닫는 한 꺼진다. (3) 보류된 것은 이미 목록에서 빠졌지만 보류 아닌 거절(0.95 미만·갈림)은 공개 목록에 떠 있다 — 일주일을
+ * 공개 목록에 제품 아닌 것을 둬도 되는 상한으로 잡았다. 빨강(긴급)은 쓰지 않는다 — 약속 시간(내려달라는 요청 24시간)이 있는 일만 빨강이다.
+ */
+export const AUDIT_BACKLOG_OVERDUE_DAYS = 7;
+
+export type OpenBacklogStats = { open: number; held: number; overdue: number; oldestWaitDays: number | null };
+
+/** 열린 거절의 적체 — 정책 처리의 대상과 같은 정의. 수·보류 중·문턱을 넘은 것·가장 오래 기다린 날 */
+export async function openBacklogStats(): Promise<OpenBacklogStats> {
+  const ctx = await policyContext();
+  if (!ctx) return { open: 0, held: 0, overdue: 0, oldestWaitDays: null };
+  const [row] = await db.execute<OpenBacklogStats & { oldest: number | null }>(sql`
+    select count(*)::int as open, count(*) filter (where p.audit_hold_at is not null)::int as held,
+      count(*) filter (where i.reviewed_at <= now() - ${AUDIT_BACKLOG_OVERDUE_DAYS} * interval '1 day')::int as overdue,
+      floor(extract(epoch from (now() - min(i.reviewed_at))) / 86400)::int as oldest
+      ${FROM} where ${universeSql(ctx.latest)}`);
+  return { open: row?.open ?? 0, held: row?.held ?? 0, overdue: row?.overdue ?? 0, oldestWaitDays: row?.oldest ?? null };
+}
+
+export type AuditThroughput = OpenBacklogStats & {
+  /** 한국 날짜마다 — 사람이 닫은 것(유지·내리기, 정책 포함)과 새로 들어온 AI 거절 */
+  days: { day: string; closed: number; incoming: number }[];
+  /** 어제까지 7일 하루 평균 */
+  closedPerDay: number; incomingPerDay: number;
+  /** 지금 속도로 다 닫는 데 걸릴 날 — 줄지 않으면 null */
+  daysToClear: number | null;
+};
+
+/** 처리 속도 — 지난 14일(한국 날짜) 닫은 수와 들어온 수, 어제까지 7일 평균으로 다 닫는 날 */
+export async function auditThroughput(): Promise<AuditThroughput> {
+  const kstDay = (column: SQL) => sql`((${column} + interval '9 hours')::date)`;
+  const [backlog, closed, incoming, [today]] = await Promise.all([
+    openBacklogStats(),
+    db.execute<{ day: string; n: number }>(sql`select ${kstDay(sql`human_at`)}::text as day, count(*)::int as n from ${productAuditItems}
+      where human_decision is not null and human_at >= now() - interval '15 days' group by 1`),
+    db.execute<{ day: string; n: number }>(sql`select ${kstDay(sql`reviewed_at`)}::text as day, count(*)::int as n from ${productAuditItems}
+      where ai_decision = 'reject' and reviewed_at >= now() - interval '15 days' group by 1`),
+    db.execute<{ day: string }>(sql`select ${kstDay(sql`now()`)}::text as day`),
+  ]);
+  const closedBy = new Map([...closed].map((row) => [row.day, row.n]));
+  const incomingBy = new Map([...incoming].map((row) => [row.day, row.n]));
+  const base = Date.parse(`${today.day}T00:00:00Z`);
+  const days = Array.from({ length: 14 }, (_, index) => {
+    const day = new Date(base - (13 - index) * 86_400_000).toISOString().slice(0, 10);
+    return { day, closed: closedBy.get(day) ?? 0, incoming: incomingBy.get(day) ?? 0 };
+  });
+  // 오늘은 아직 끝나지 않았다 — 평균은 어제까지 7일
+  const week = days.slice(-8, -1);
+  const closedPerDay = week.reduce((sum, day) => sum + day.closed, 0) / 7;
+  const incomingPerDay = week.reduce((sum, day) => sum + day.incoming, 0) / 7;
+  const net = closedPerDay - incomingPerDay;
+  return { ...backlog, days, closedPerDay, incomingPerDay,
+    daysToClear: backlog.open === 0 ? 0 : net > 0 ? Math.ceil(backlog.open / net) : null };
+}
+
+// ─────────────────────────── 유지 연장 ───────────────────────────
+
+export const KEEP_EXTEND_WITHIN_DAYS = 30;
+
+type KeepCandidate = { item_id: number; product_id: number; slug: string; name: string; url: string; keep_until: string; source_hash: string | null;
+  days_left: number };
+
+/** 곧 끝나는 유지의 조건 — 기한이 withinDays 안이고, 제품이 떠 있고, 그 제품의 가장 늦은 유지인 것 */
+const expiringKeep = (withinDays: number) => sql`i.human_decision = 'kept' and i.keep_until > now()
+  and i.keep_until <= now() + ${withinDays} * interval '1 day' and p.status in ('seeded', 'verified')
+  and not exists (select 1 from ${productAuditItems} k where k.product_id = i.product_id and k.human_decision = 'kept' and k.keep_until > i.keep_until)`;
+
+async function keepCandidates(withinDays: number): Promise<KeepCandidate[]> {
+  return [...await db.execute<KeepCandidate>(sql`
+    select i.id as item_id, i.product_id, p.slug, p.name, p.url, to_char(i.keep_until, ${OPINION_TIME}) as keep_until, i.source_hash,
+      ceil(extract(epoch from (i.keep_until - now())) / 86400)::int as days_left
+      from ${productAuditItems} i join ${products} p on p.id = i.product_id where ${expiringKeep(withinDays)}
+     order by i.keep_until, i.id`)];
+}
+
+/** 곧 끝나는 유지의 수 — 화면 머리(무겁지 않게 페이지 해시는 세지 않는다) */
+export async function expiringKeepCount(withinDays = KEEP_EXTEND_WITHIN_DAYS): Promise<number> {
+  const [row] = await db.execute<{ n: number }>(sql`select count(*)::int as n from ${productAuditItems} i join ${products} p on p.id = i.product_id
+    where ${expiringKeep(withinDays)}`);
+  return row?.n ?? 0;
+}
+
+export type KeepExtendPreview = { withinDays: number; expiring: number; same: number; changed: number; noSource: number;
+  /** 이 설정으로 연장할 수 — 사람이 적을 수 */
+  eligible: number; unchangedOnly: boolean;
+  sample: { itemId: number; slug: string; name: string; url: string; daysLeft: number; content: "same" | "changed" | "no_source" }[] };
+
+async function keepSelection(withinDays: number, unchangedOnly: boolean) {
+  const rows = await keepCandidates(withinDays);
+  const status = await keptContentStatus(rows.map((row) => ({ itemId: row.item_id, productId: row.product_id, sourceHash: row.source_hash })));
+  const content = (row: KeepCandidate) => status.get(row.item_id) ?? "no_source";
+  return { rows, content, picked: rows.filter((row) => !unchangedOnly || content(row) === "same") };
+}
+
+/**
+ * 유지 연장 미리보기 — 곧 끝나는 유지와 그 페이지가 유지할 때와 같은지(같음·바뀜·원본 없음). 바뀐 것은 기한과 상관없이 다음 감사에 다시 든다
+ * (startProductAudit liveKeptProducts) — 그대로인 것만 연장하면(기본) 같은 판단을 되풀이하지 않으면서 바뀐 페이지는 다시 본다
+ */
+export async function previewKeepExtend(input: { withinDays?: number; unchangedOnly: boolean }): Promise<KeepExtendPreview> {
+  const withinDays = input.withinDays ?? KEEP_EXTEND_WITHIN_DAYS;
+  const { rows, content, picked } = await keepSelection(withinDays, input.unchangedOnly);
+  const count = (kind: "same" | "changed" | "no_source") => rows.filter((row) => content(row) === kind).length;
+  return { withinDays, expiring: rows.length, same: count("same"), changed: count("changed"), noSource: count("no_source"), eligible: picked.length,
+    unchangedOnly: input.unchangedOnly, sample: rows.slice(0, 20).map((row) => ({ itemId: row.item_id, slug: row.slug, name: row.name, url: row.url,
+      daysLeft: row.days_left, content: content(row) })) };
+}
+
+/** 유지 연장 실행을 만든다 — 적은 수가 지금 고른 수와 같을 때만. 만들 때의 기한을 항목마다 굳힌다(그 사이 바뀐 것은 적용이 건너뛴다) */
+export async function startKeepExtendRun(input: { withinDays?: number; days: number; unchangedOnly: boolean; expected: number; note: string; by: string }):
+  Promise<PolicyResult<{ runId: number; planned: number }>> {
+  const withinDays = input.withinDays ?? KEEP_EXTEND_WITHIN_DAYS;
+  const { picked } = await keepSelection(withinDays, input.unchangedOnly);
+  if (picked.length !== input.expected) {
+    return { ok: false, error: `지금 연장할 수는 ${picked.length.toLocaleString("ko-KR")}건입니다(적은 수 ${input.expected.toLocaleString("ko-KR")}건). 다시 미리 보세요.` };
+  }
+  try {
+    return await db.transaction(async (tx) => {
+      await assertWritable(tx);
+      const [run] = await tx.insert(productAuditPolicyRuns).values({ kind: "extend", action: "extend", status: "applying", planned: picked.length,
+        filter: { withinDays, unchangedOnly: input.unchangedOnly },
+        options: { days: input.days, withinDays, unchangedOnly: input.unchangedOnly,
+          filterText: `${withinDays}일 안에 끝나는 유지${input.unchangedOnly ? "(페이지 그대로인 것만)" : ""} → ${input.days}일 연장` },
+        note: input.note.trim().slice(0, 500) || null, createdBy: input.by.slice(0, 120) }).returning({ id: productAuditPolicyRuns.id });
+      for (let index = 0; index < picked.length; index += INSERT_BATCH) {
+        await tx.insert(productAuditPolicyRunItems).values(picked.slice(index, index + INSERT_BATCH).map((row) => ({ runId: run.id, itemId: row.item_id,
+          productId: row.product_id, slug: row.slug, payload: { keepUntil: row.keep_until } })));
+      }
+      return { ok: true as const, runId: run.id, planned: picked.length };
+    });
+  } catch (error) {
+    if (uniqueViolation(error) === "product_audit_policy_runs_one_active_idx") return { ok: false, error: ACTIVE_RUN };
+    throw error;
+  }
 }
