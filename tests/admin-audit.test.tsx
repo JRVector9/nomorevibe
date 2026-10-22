@@ -55,7 +55,8 @@ const counts = { total: 100, reviewed: 40, reject: 3, needsReview: 1, openReject
   openDisagree: 4, openQwenCatalog: 5, removed: 0, kept: 0, failed: 0, skipped: 0 };
 /** Qwen-v2 자동 단계 상태(audit-second-opinion-auto.ts QwenAutoStatus) */
 const qwenStatusOf = (over: Record<string, unknown> = {}) => ({ model: 'qwen3.8-flash-next', url: 'http://100.77.43.63:8090/v1', promptVersion: '2026-10-21.v2',
-  audit: { enabled: true, perTick: 10, lastHour: 12, lastDay: 340, remaining: 2_415 },
+  audit: { enabled: true, perTick: 10, lastHour: 12, lastDay: 340, remaining: 2_415, scope: 'all', autoClose: true },
+  autoClose: { day: '2026-10-22', kept: 37, held: 512, undone: 0, minConfidence: 0.9 },
   published: { enabled: true, perTick: 10, lastHour: 6, lastDay: 129, keptHour: 4, keptDay: 97, remaining: 3 },
   lastRunAt: '2026-10-21T06:59:00.000Z', lastSuccessAt: '2026-10-21T06:59:00.000Z', lastError: null, givenUp: 0, endpointBackoff: null, ...over });
 const finding = (id: number, slug: string, over: Record<string, unknown> = {}) => ({
@@ -69,7 +70,7 @@ const overviewOf = (over: Record<string, unknown> = {}) => ({ campaign, counts, 
 const QWEN = { provider: 'qwen-direct', model: 'qwen3.8-flash-next' };
 /** 제품을 고르는 체크박스 — 보류 설정 폼의 켬·갈래·두 번째 모델 칸은 제품을 싣지 않는다 */
 const productCheckboxes = (html: string) => (html.match(/<input type="checkbox"[^>]*>/g) ?? [])
-  .filter((box) => !/name="(enabled|secondOpinionReject|category|auditSecondOpinion-enabled|publishedFilter-enabled)"/.test(box));
+  .filter((box) => !/name="(enabled|secondOpinionReject|category|auditSecondOpinion-enabled|auditSecondOpinion-autoClose|publishedFilter-enabled)"/.test(box));
 const takedowns = (pending: number) => ({
   pending, overdue: 0, oldestHours: pending ? 2 : null, handled24h: { removed: 0, dismissed: 0 }, last30d: { removed: 0, dismissed: 0 },
   lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null },
@@ -432,7 +433,7 @@ describe('감사 보류 화면(0110)', () => {
   it('Qwen-v2 자동 단계 — 켬/끔·틱당 수·지난 1시간/24시간·남은 것·마지막 오류를 보이고, 설정 칸을 지금 값으로 그린다', async () => {
     mocks.qwenStatus.mockResolvedValue(qwenStatusOf({ lastError: { code: 'qwen_timeout', detail: null, target: 'audit', at: '2026-10-21T07:00:00.000Z' },
       lastSuccessAt: '2026-10-21T06:59:00.000Z', givenUp: 2 }));
-    const qwenAuto = { ...DEFAULT_QWEN_AUTO, auditSecondOpinion: { enabled: true, perTick: 10 } };
+    const qwenAuto = { ...DEFAULT_QWEN_AUTO, auditSecondOpinion: { enabled: true, perTick: 10, scope: 'all' as const, autoClose: true } };
     mocks.overview.mockResolvedValue(overviewOf({ qwenAuto }));
     const html = await render({ tab: 'audit' });
     expect(mocks.qwenStatus).toHaveBeenCalledWith({ auditHold: DEFAULT_AUDIT_HOLD, qwenAuto });
@@ -447,9 +448,16 @@ describe('감사 보류 화면(0110)', () => {
     expect(panel).toMatch(/마지막 오류: <span class="font-mono">qwen_timeout<\/span>/);
     expect(panel).toContain('감사 두 번째 의견');
     expect(panel).toMatch(/그만 물은 것 (<!-- -->)?2/);
+    // 범위·답으로 닫기 — 오늘(UTC) 자동으로 유지·숨긴 수, 실행·되돌리기는 정책 처리로
+    expect(panel).toContain('열린 거절 전부');
+    expect(panel).toMatch(/답으로 닫기<\/b>/);
+    expect(panel).toMatch(/자동 유지 (<!-- -->)?37(<!-- -->)? · (<!-- -->)?자동 숨김 (<!-- -->)?512/);
+    expect(panel).toContain('href="/admin/audit?tab=policy"');
     // 스위치는 settings qwenAuto 의 지금 값으로 그린다 — 공개분 거르기는 기본(꺼짐) 그대로
     expect(panel).toMatch(/name="auditSecondOpinion-enabled" checked=""/);
     expect(panel).toMatch(/name="auditSecondOpinion-perTick"[^>]*value="10"/);
+    expect(panel).toMatch(/<select name="auditSecondOpinion-scope"[^>]*>[^]*?<option value="all" selected="">열린 거절 전부<\/option>/);
+    expect(panel).toMatch(/name="auditSecondOpinion-autoClose" checked=""/);
     expect(panel).toMatch(/name="publishedFilter-enabled"(?! checked)/);
     expect(panel).toMatch(/name="publishedFilter-perTick"[^>]*value="10"/);
     // 바꾸기 전에는 저장을 열지 않는다(확인 창 — 켤 때 사유를 받는다)

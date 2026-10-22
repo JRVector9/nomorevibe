@@ -393,9 +393,32 @@ export const DEFAULT_HELD_QWEN_RETRY: HeldQwenRetrySettings = { enabled: false, 
 export const qwenAutoStepSchema = z.object({ enabled: z.boolean(), perTick: z.number().int().min(1).max(QWEN_AUTO_MAX_PER_TICK) }).strict();
 
 /**
+ * 감사 두 번째 의견이 물을 것(2026-10-22 사용자 결정 "승인은 유지, 거절은 숨김"):
+ *  - hold: 보류 후보(확신 문턱 이상·주인 없음 — product-audit-hold.ts holdCandidate)만. 0.95 아래의 열린 거절 3,848건은 묻지 않는다
+ *  - all: 지금 감사의 열린 AI 거절 전부(감사 화면·정책 처리의 대상과 같다 — 공개 상태·사람 결정 없음, 주인 있는 것 포함)
+ */
+export const AUDIT_OPINION_SCOPES = ["hold", "all"] as const;
+export type AuditOpinionScope = (typeof AUDIT_OPINION_SCOPES)[number];
+
+/**
+ * 감사 두 번째 의견 단계(qwenAuto.auditSecondOpinion) — 켬/끔·틱당 수에 더해 묻는 범위(scope)와 그 답으로 닫기(autoClose, lib/crawl/audit-auto-close.ts).
+ * 켬/끔·틱당 수가 없거나 깨지면 그 단계는 꺼짐이다(다른 단계와 같다). scope·autoClose 는 없으면 기본값(all·켬)으로 읽는다 — 사용자 결정(2026-10-22)으로
+ * 이 칸 전의 운영 행이 배포만으로 새 기본값을 탄다. 이 칸을 모르는 옛 코드(strict)는 이 칸이 저장된 행을 깨진 단계(꺼짐)로 읽는다 — 안전한 쪽이다
+ */
+export const auditSecondOpinionSchema = z.object({
+  enabled: z.boolean(),
+  perTick: z.number().int().min(1).max(QWEN_AUTO_MAX_PER_TICK),
+  scope: z.enum(AUDIT_OPINION_SCOPES).default("all"),
+  /** 답으로 닫는다 — 승인(확신 0.90 이상·다른 모델 거절 없음)은 유지, 거절(확신 0.90 이상·주인 없음)은 숨김(보류). 내리지는 않는다 */
+  autoClose: z.boolean().default(true),
+}).strict();
+export type AuditSecondOpinionSettings = z.infer<typeof auditSecondOpinionSchema>;
+
+/**
  * gpu3090 Qwen-v2 자동 단계 넷(2026-10-21) — 모두 기본 꺼짐. 켜는 것은 compare-and-set·확인 창의 사유·작업 로그를 거친다(settings.ts setQwenAutoStep,
  * 화면 또는 scripts/ops/set-qwen-auto.ts).
- *  - auditSecondOpinion: 감사 보류 후보에 두 번째 의견을 받아 적는다(감사 잡). 승인은 보류를 풀고 거절은 쓸기가 건다
+ *  - auditSecondOpinion: 감사 거절(scope — 보류 후보 또는 열린 거절 전부)에 두 번째 의견을 받아 적는다(감사 잡). autoClose 면 승인은 유지,
+ *    거절은 숨김으로 닫는다(audit-auto-close.ts). 아니면 승인은 보류를 풀고 거절은 쓸기가 건다
  *  - publishedFilter: 공개분 2차의 사람 확인 행을 한 번 더 본다(감사 잡). 승인이면 사람의 '유지'와 같은 길로 닫는다
  *  - splitTiebreak: 관문 갈림 보류에 세 번째 표를 묻는다(2차 잡). 거부 다수면 거부로 닫는다
  *  - heldRetry: 소개 없음·재시도 소진·판단 보류를 다시 본다(사람 검토 잡). 거부는 끝내고 승인은 관문으로 되돌린다
@@ -405,7 +428,7 @@ export const qwenAutoStepSchema = z.object({ enabled: z.boolean(), perTick: z.nu
  * 옛 코드가 저장해 이 칸이 사라지면 새 코드는 없는 것을 꺼짐으로 읽는다(settings.ts storedQwenAuto) — 칸이나 단계가 없거나 깨졌으면 그 단계는 꺼짐이다.
  */
 export const qwenAutoSchema = z.object({
-  auditSecondOpinion: qwenAutoStepSchema,
+  auditSecondOpinion: auditSecondOpinionSchema,
   publishedFilter: qwenAutoStepSchema,
   splitTiebreak: splitTiebreakSchema,
   heldRetry: heldQwenRetrySchema,
@@ -415,7 +438,7 @@ export type QwenAutoStep = keyof QwenAutoSettings;
 export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry"] as const satisfies readonly QwenAutoStep[];
 /** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
 export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
-  auditSecondOpinion: { enabled: false, perTick: 10 }, publishedFilter: { enabled: false, perTick: 10 },
+  auditSecondOpinion: { enabled: false, perTick: 10, scope: "all", autoClose: true }, publishedFilter: { enabled: false, perTick: 10 },
   splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
 };
 

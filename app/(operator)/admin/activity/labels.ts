@@ -11,6 +11,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "split-tiebreak-settings": "갈림 판가름 설정",
   "candidate-split-tiebreak-reject": "Qwen-v2 갈림 판가름 거부",
   "audit-hold-auto-release": "Qwen-v2 의견으로 감사 보류 풂",
+  "audit-auto-keep": "Qwen-v2 의견으로 감사 거절 자동 유지",
+  "audit-auto-hold": "Qwen-v2 의견으로 감사 거절 자동 숨김",
   "published-second-auto-keep": "Qwen-v2 공개분 자동 유지",
   "human-review-deepseek": "DeepSeek 사람 검토 전환",
   "candidate-reject": "후보 거부",
@@ -135,7 +137,8 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
-    "audit-hold-settings", "audit-hold-release-all", "audit-switch-model", "audit-hold-auto-release", "published-second-auto-keep",
+    "audit-hold-settings", "audit-hold-release-all", "audit-switch-model", "audit-hold-auto-release", "audit-auto-keep", "audit-auto-hold",
+    "published-second-auto-keep",
     "audit-policy-apply", "audit-policy-undo",
     "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
   review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-deepseek-decision", "candidate-qwen-held-review", "candidate-split-tiebreak-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",

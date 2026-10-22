@@ -1,8 +1,8 @@
 /** Qwen-v2 자동 단계 하나를 켜고 끈다 — 화면 없이(운영 승인을 받은 뒤). 화면과 같은 setter(lib/crawl/settings.ts setQwenAutoStep)를 지난다:
  * 지금 값과 견주는 compare-and-set, 켤 때 꼭 받는 사유, 같은 트랜잭션의 작업 로그(operations_audit qwen-auto-settings, 누가 ops:<이름>).
  *   QWEN_AUTO_DATABASE_URL=... node --import tsx scripts/ops/set-qwen-auto.ts --step=<단계> --enable|--disable [--per-tick=N] [--budget-seconds=N]
- *     [--daily-reject-cap=N] --reason="왜" [--by=<이름>] [--dry-run]
- * 단계: auditSecondOpinion(감사 두 번째 의견)·publishedFilter(공개분 2차 거르기)·splitTiebreak(갈림 판가름, --daily-reject-cap 도 — 하루 KST
+ *     [--daily-reject-cap=N] [--scope=hold|all] [--auto-close=on|off] --reason="왜" [--by=<이름>] [--dry-run]
+ * 단계: auditSecondOpinion(감사 두 번째 의견, --scope 묻는 범위·--auto-close 답으로 닫기도)·publishedFilter(공개분 2차 거르기)·splitTiebreak(갈림 판가름, --daily-reject-cap 도 — 하루 KST
  * 자동 거부 상한)·heldRetry(보류 재심사, --budget-seconds 도). --enable·--disable 없이 수만 주면 켬/끔은 그대로 둔다. --dry-run 은 읽기 전용 트랜잭션에서 같은 검사만 하고 쓰지 않는다.
  * DB URL 은 환경변수로만 받는다(argv·출력에 쓰지 않음). 출력은 단계·전/후 값·거절 까닭뿐이다. exit 0=바꿈(또는 dry-run 통과), 1=오류·거절. */
 import { resolve } from "node:path";
@@ -13,7 +13,7 @@ const STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRe
 const OVERRIDES = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"] as const;
 
 export type SetQwenAutoCommand = { step: QwenAutoStep; enable: boolean | null; perTick: number | null; budgetSeconds: number | null;
-  dailyRejectCap: number | null; reason: string | null; by: string; dryRun: boolean };
+  dailyRejectCap: number | null; scope: "hold" | "all" | null; autoClose: boolean | null; reason: string | null; by: string; dryRun: boolean };
 
 const value = (args: readonly string[], name: string) => args.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
 const count = (raw: string | undefined) => {
@@ -24,7 +24,7 @@ const count = (raw: string | undefined) => {
 
 export function parseSetQwenAutoArgs(args: readonly string[], env: Readonly<Record<string, string | undefined>> = process.env): SetQwenAutoCommand {
   const known = ["--enable", "--disable", "--dry-run"];
-  const named = ["step", "per-tick", "budget-seconds", "daily-reject-cap", "reason", "by"];
+  const named = ["step", "per-tick", "budget-seconds", "daily-reject-cap", "scope", "auto-close", "reason", "by"];
   const unknown = args.filter((arg) => !known.includes(arg) && !named.some((name) => arg.startsWith(`--${name}=`)));
   if (unknown.length) throw new Error("qwen_auto_usage");
   const step = value(args, "step");
@@ -36,10 +36,20 @@ export function parseSetQwenAutoArgs(args: readonly string[], env: Readonly<Reco
   const dailyRejectCap = count(value(args, "daily-reject-cap"));
   if (budgetSeconds !== null && step !== "heldRetry") throw new Error("qwen_auto_usage");
   if (dailyRejectCap !== null && step !== "splitTiebreak") throw new Error("qwen_auto_usage");
-  if (enable === null && perTick === null && budgetSeconds === null && dailyRejectCap === null) throw new Error("qwen_auto_nothing_to_change");
+  const rawScope = value(args, "scope");
+  const rawAutoClose = value(args, "auto-close");
+  if ((rawScope !== undefined || rawAutoClose !== undefined) && step !== "auditSecondOpinion") throw new Error("qwen_auto_usage");
+  if (rawScope !== undefined && rawScope !== "hold" && rawScope !== "all") throw new Error("qwen_auto_usage");
+  if (rawAutoClose !== undefined && rawAutoClose !== "on" && rawAutoClose !== "off") throw new Error("qwen_auto_usage");
+  const scope = rawScope === undefined ? null : rawScope as "hold" | "all";
+  const autoClose = rawAutoClose === undefined ? null : rawAutoClose === "on";
+  if (enable === null && perTick === null && budgetSeconds === null && dailyRejectCap === null && scope === null && autoClose === null) {
+    throw new Error("qwen_auto_nothing_to_change");
+  }
   const by = (value(args, "by") ?? env.USER ?? "cli").trim();
   if (!/^[A-Za-z0-9._-]{1,40}$/.test(by)) throw new Error("qwen_auto_invalid_by");
-  return { step: step as QwenAutoStep, enable, perTick, budgetSeconds, dailyRejectCap, reason: value(args, "reason")?.trim() || null, by, dryRun: args.includes("--dry-run") };
+  return { step: step as QwenAutoStep, enable, perTick, budgetSeconds, dailyRejectCap, scope, autoClose, reason: value(args, "reason")?.trim() || null, by,
+    dryRun: args.includes("--dry-run") };
 }
 
 export async function setQwenAutoMain(args: readonly string[], env: Readonly<Record<string, string | undefined>> = process.env,
@@ -58,7 +68,8 @@ export async function setQwenAutoMain(args: readonly string[], env: Readonly<Rec
     const expected = storedQwenAuto(row?.values)[command.step];
     const next = { ...expected, ...(command.enable === null ? {} : { enabled: command.enable }),
       ...(command.perTick === null ? {} : { perTick: command.perTick }), ...(command.budgetSeconds === null ? {} : { budgetSeconds: command.budgetSeconds }),
-      ...(command.dailyRejectCap === null ? {} : { dailyRejectCap: command.dailyRejectCap }) };
+      ...(command.dailyRejectCap === null ? {} : { dailyRejectCap: command.dailyRejectCap }),
+      ...(command.scope === null ? {} : { scope: command.scope }), ...(command.autoClose === null ? {} : { autoClose: command.autoClose }) };
     const result = await setQwenAutoStep({ step: command.step, next: next as never, expected: expected as never, actor: `ops:${command.by}`,
       reason: command.reason, actorKind: "token", dryRun: command.dryRun, database: database as never });
     write(`${JSON.stringify(result.ok ? { command: "set-qwen-auto", step: command.step, dryRun: command.dryRun, ok: true, before: result.before, after: result.after }

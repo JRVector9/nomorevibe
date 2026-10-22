@@ -36,6 +36,8 @@ import { PolicyRuns, type PolicyRunRow } from "./PolicyRuns";
 import { ImportOpinions } from "./ImportOpinions";
 import { latestStagedImport } from "@/lib/crawl/audit-second-opinion-upload";
 import { QWEN_VISION_M1_SOURCE } from "@/lib/crawl/audit-import-sources";
+import { AUTO_CLOSE_KEEP_DAYS, AUTO_CLOSE_MIN_CONFIDENCE, autoCloseToday, autoRunLabel, type AutoCloseToday } from "@/lib/crawl/audit-auto-close";
+import type { QwenAutoSettings } from "@/lib/crawl/settings-schema";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -95,7 +97,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
-  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport, throughput, expiringKeeps] = await Promise.all([
+  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport, throughput, expiringKeeps, autoToday] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
@@ -106,6 +108,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     // 처리 속도·적체 — 감사 탭은 한 줄, 정책 처리 탭은 날마다. 못 읽어도 화면은 그린다
     tab === "audit" || tab === "policy" ? auditThroughput().catch(() => null) : Promise.resolve(null),
     tab === "policy" ? expiringKeepCount() : Promise.resolve(0),
+    // 감사 두 번째 의견이 오늘(UTC) 답으로 닫은 수 — 못 읽어도 화면은 그린다
+    tab === "policy" ? autoCloseToday().catch(() => null) : Promise.resolve(null),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
@@ -190,9 +194,11 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           initialPreset={preset ?? null} />
         <ImportOpinions staged={stagedImport ? { ...stagedImport, createdAt: formatListTime(stagedImport.createdAt, now) } : null} />
         <KeepExtend expiring={expiringKeeps} withinDays={KEEP_EXTEND_WITHIN_DAYS} />
+        <AutoClosePanel step={overview.qwenAuto.auditSecondOpinion} today={autoToday} />
         <PolicyRuns runs={policyRuns.map((run): PolicyRunRow => ({ ...run, createdAt: formatListTime(run.createdAt, now),
           appliedAt: run.appliedAt ? formatListTime(run.appliedAt, now) : null, undoneAt: run.undoneAt ? formatListTime(run.undoneAt, now) : null,
-          label: POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
+          auto: run.auto?.action ?? null,
+          label: run.auto ? autoRunLabel(run.auto) : POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
       </>}
 
       {tab === "history" && <>
@@ -291,7 +297,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 }
 
 /**
- * 처리 속도 — 사람이 닫은 수(유지·내리기, 정책 포함)와 새로 들어온 AI 거절을 날마다 견주고, 어제까지 7일 평균으로 다 닫는 날을 낸다.
+ * 처리 속도 — 닫은 수(사람의 유지·내리기, 정책, m1 자동 유지 포함)와 새로 들어온 AI 거절을 날마다 견주고, 어제까지 7일 평균으로 다 닫는 날을 낸다.
  * 줄지 않으면 '줄지 않음 — 하루 N건 더 닫아야'. 가장 오래 기다린 것과 문턱(AUDIT_BACKLOG_OVERDUE_DAYS)을 넘은 수.
  * detailed 면 지난 14일 표까지(정책 처리 탭), 아니면 한 줄(감사 탭)
  */
@@ -331,6 +337,29 @@ function ThroughputPanel({ throughput, detailed }: { throughput: AuditThroughput
             </tr>))}</tbody>
         </table>
       )}
+    </section>
+  );
+}
+
+/**
+ * 감사 두 번째 의견의 답으로 닫기(audit-auto-close.ts) — 켬/끔, 오늘(UTC) 자동으로 유지·숨긴 수, 규칙과 되돌리는 길. 실행은 아래 정책 실행 목록의
+ * 'm1 자동 유지·숨김 · 날짜(UTC)'다
+ */
+function AutoClosePanel({ step, today }: { step: QwenAutoSettings["auditSecondOpinion"]; today: AutoCloseToday | null }) {
+  const on = step.enabled && step.autoClose;
+  return (
+    <section className="flex flex-col gap-1.5 rounded-[12px] border border-line bg-bg-card p-4 text-[13px] text-fg-2" aria-labelledby="audit-auto-close-title">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 id="audit-auto-close-title" className="text-[14.5px] font-bold text-fg">m1 자동 닫기 (Qwen-v2 두 번째 의견)</h2>
+        <span className={`rounded px-1.5 py-0.5 font-semibold ${on ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>{on ? "켬" : "끔"}</span>
+        {today && <span className="tabular-nums">오늘({today.day} UTC) 자동 유지 <b className="font-semibold text-fg">{count(today.kept)}</b> ·
+          자동 숨김 <b className="font-semibold text-fg">{count(today.held)}</b>{today.undone > 0 && ` · 그중 되돌림 ${count(today.undone)}`}</span>}
+      </div>
+      <p>승인(확신 {AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델의 거절 없음) → 유지 {AUTO_CLOSE_KEEP_DAYS}일(보류 중이면 풂) ·
+        주인 없는 제품의 거절(확신 {AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델이 승인했어도) → 숨김(보류). 그 밖(확신 낮음·판단 보류·다른 모델이 거절한 승인·주인 있는 제품의 거절·되돌린 항목)은 열어 둡니다.
+        아무것도 내리지 않습니다 — 내리기는 위 정책으로 사람이 합니다.</p>
+      <p className="text-fg-3">하루(UTC)·행동마다 아래 &lsquo;m1 자동 …&rsquo; 실행 하나에 적힙니다. 그 실행을 되돌리면 그날 자동으로 한 것만 돌아갑니다 — 유지는 지우고 풀었던 보류를 다시 걸고,
+        숨김은 보류를 풀어 다시 걸지 않습니다. Qwen 의견은 남아 다시 묻지 않습니다. 끄려면 감사 거절 탭의 &lsquo;Qwen-v2 감사 두 번째 의견&rsquo;에서 답으로 닫기를 끕니다.</p>
     </section>
   );
 }
@@ -508,10 +537,13 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
       {qwen && <div className="flex flex-col gap-1">
         <QwenAutoStepSwitch key={`a:${JSON.stringify(overview.qwenAuto.auditSecondOpinion)}`} step="auditSecondOpinion"
           value={overview.qwenAuto.auditSecondOpinion} title="Qwen-v2 감사 두 번째 의견" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
-          enableNotes={[`보류 후보마다 ${qwenDirectServerLabel()} Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto). 확신 0.90 이상만 보류에 반영합니다.`,
-            "승인은 그 항목의 보류를 풉니다(작업 로그에 남습니다).",
-            hold.secondOpinionReject ? "거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
-              : "두 번째 모델 거절로 보류가 꺼져 있어 거절은 보류의 까닭이 되지 않습니다(기록만 남습니다).",
+          choices={[{ name: "scope", label: "묻는 범위", widens: "all",
+            options: [{ value: "all", label: "열린 거절 전부" }, { value: "hold", label: "보류 후보만" }] }]}
+          toggles={[{ name: "autoClose", label: "답으로 닫기(승인 유지·거절 숨김)" }]}
+          enableNotes={[`${qwenDirectServerLabel()} Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto) — 범위가 '열린 거절 전부'면 지금 감사의 열린 거절 모두(확신·주인과 상관없이), '보류 후보만'이면 보류 후보.`,
+            `답으로 닫기: 승인(확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델 거절 없음)은 유지 ${AUTO_CLOSE_KEEP_DAYS}일로 닫고, 주인 없는 제품의 거절(확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상)은 숨깁니다(보류). 내리지 않습니다 — 정책 처리 탭의 'm1 자동 …' 실행으로 되돌립니다.`,
+            hold.secondOpinionReject ? "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
+              : "답으로 닫기가 꺼져 있으면 승인은 그 항목의 보류를 풀고, 거절은 기록만 남습니다(두 번째 모델 거절로 보류가 꺼져 있음).",
             "감사 답을 같은 Qwen 이 낸 항목은 묻지 않습니다."]} />
         <QwenAutoStepSwitch key={`p:${JSON.stringify(overview.qwenAuto.publishedFilter)}`} step="publishedFilter"
           value={overview.qwenAuto.publishedFilter} title="Qwen-v2 공개분 2차 거르기" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
@@ -541,12 +573,16 @@ function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
   const at = (iso: string | null) => iso ? formatListTime(new Date(iso), now) : "—";
   const onOff = (on: boolean) => <span className={`rounded px-1.5 py-0.5 font-semibold ${on ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>
     {on ? "켬" : "끔"}</span>;
-  const { audit, published, lastError } = status;
+  const { audit, published, lastError, autoClose } = status;
   const recovered = lastError && status.lastSuccessAt && status.lastSuccessAt > lastError.at;
   return (
     <div className="flex flex-col gap-1 border-t border-line pt-3 text-[13px] tabular-nums text-fg-2" aria-label="Qwen-v2 자동 단계">
       <p><b className="font-semibold">Qwen-v2 두 번째 의견</b> {onOff(audit.enabled)} 틱마다 {count(audit.perTick)}건 ·
+        {audit.scope === "all" ? " 열린 거절 전부" : " 보류 후보만"} ·
         지난 1시간 {count(audit.lastHour)} · 24시간 {count(audit.lastDay)} · 남은 것 <b className="font-semibold">{count(audit.remaining)}</b></p>
+      <p><b className="font-semibold">답으로 닫기</b> {onOff(audit.enabled && audit.autoClose)} 오늘({autoClose.day} UTC) 자동 유지 {count(autoClose.kept)} ·
+        자동 숨김 {count(autoClose.held)}{autoClose.undone > 0 && ` · 그중 되돌림 ${count(autoClose.undone)}`} — 확신 {autoClose.minConfidence.toFixed(2)} 이상만 ·
+        {" "}<Link href="/admin/audit?tab=policy" className="text-accent hover:underline">실행·되돌리기 →</Link></p>
       <p><b className="font-semibold">공개분 2차 거르기</b> {onOff(published.enabled)} 틱마다 {count(published.perTick)}건 ·
         지난 1시간 {count(published.lastHour)}(유지로 닫음 {count(published.keptHour)}) · 24시간 {count(published.lastDay)}(유지로 닫음 {count(published.keptDay)}) ·
         남은 것 <b className="font-semibold">{count(published.remaining)}</b></p>

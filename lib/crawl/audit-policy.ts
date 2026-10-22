@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { cdnPurges, operationsAudit, productAuditCampaigns, productAuditItems, productAuditPolicyRunItems, productAuditPolicyRuns,
   productAuditSecondOpinions, productEvidenceAudit, products, takedownRequests, type ProductAuditPolicyRun } from "@/lib/db/schema";
@@ -12,10 +12,12 @@ import { AUDIT_REASON_CATEGORIES, classifyAuditReason, type AuditReasonCategory 
 import { auditReasonCategorySql, secondOpinionFilter, secondOpinionsField, type SecondOpinionView } from "./audit-second-opinions";
 import { describePolicyFilter, policyFilterSchema, stratifiedQuotas, type PolicyAction, type PolicyFilter, type PolicyStart } from "./audit-policy-filter";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { AUDIT_HOLD_ACTION, AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE, auditItemModel, releaseAuditHold, unownedPublic } from "./product-audit-hold";
+import { AUDIT_HOLD_ACTION, AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE, auditItemModel, releaseAuditHold, unownedPublic,
+  unreleasedOpenItems } from "./product-audit-hold";
 import { auditBanReason, GROUP_REMOVE_MIN_CONFIDENCE, keptContentStatus } from "./product-audit";
 import { getSettings, lockedSettings } from "./settings";
 import { importHoldEffect } from "./audit-import-gate";
+import { autoRunInfo, type AutoRunInfo } from "./audit-auto-close";
 
 /**
  * 감사 정책 처리(0116, 2026-10-22) — 열린 감사 거절을 거르기로 골라 한 번에 닫는다. 미리 보고, 수를 적어 적용하고, 실행 하나를 통째로 되돌린다.
@@ -56,8 +58,15 @@ const FROM = sql`from ${productAuditItems} i join ${products} p on p.id = i.prod
 /** 주인 없는 공개 제품(보류 중 포함) — 보류와 같은 정의(product-audit-hold.ts unownedPublic): seeded·클레임 없음·검증 없음·메이커 권한 없음 */
 const unownedSql = () => unownedPublic("p", { includeHeld: true });
 
-/** 감사 화면이 보이는 열린 거절 — 마지막 감사의 것과, 지난 감사의 항목으로 보류 중인 것(그 제품에 마지막 감사의 열린 거절이 없을 때) */
-function universeSql(latest: number): SQL {
+/**
+ * 감사 화면이 보이는 열린 거절 — 마지막 감사의 것과, 지난 감사의 항목으로 보류 중인 것(그 제품에 마지막 감사의 열린 거절이 없을 때).
+ * 별칭은 i(product_audit_items)·p(products)다. Qwen-v2 감사 두 번째 의견(audit-second-opinion-auto.ts scope all)도 같은 대상을 묻는다
+ */
+export function openAuditRejectUniverse(latest: number | SQL): SQL {
+  return universeSql(latest);
+}
+
+function universeSql(latest: number | SQL): SQL {
   return sql`(i.ai_decision = 'reject' and i.human_decision is null and p.status in ('seeded', 'verified')
     and (i.campaign_id = ${latest} or (p.audit_hold_at is not null and p.audit_hold_item_id = i.id
       and not exists (select 1 from ${productAuditItems} n where n.product_id = i.product_id and n.campaign_id = ${latest}
@@ -320,6 +329,8 @@ type RunHandler = {
   undo: (tx: ProductTransaction, run: ProductAuditPolicyRun, row: RunRow, by: string) => Promise<UndoOutcome>;
   /** 제품마다 Cloudflare 지우기 줄을 적는가(차단·차단 해제 — 트리거) — 그러면 지난 60초의 줄 수로 늦춘다 */
   cdnPerProduct: boolean;
+  /** 되돌려 목록이 바뀐 묶음의 목록 지우기 줄의 까닭 — 기본은 보류를 다시 건 것(audit_hold). 자동 숨김을 되돌리면 푼 것(audit_release) */
+  undoPurge?: string;
 };
 
 const skipped = (reason: string): ApplyOutcome => ({ state: "skipped", reason });
@@ -336,13 +347,6 @@ async function recheck(tx: ProductTransaction, run: ProductAuditPolicyRun, itemI
       from (${baseSql(filter, run.action as PolicyAction, { ...ctx, latest: latestOf(run) }, sql`i.id = ${itemId}`)}) b
       join ${products} hp on hp.id = b.product_id`);
   return row ?? null;
-}
-
-/** 그 제품의 답이 있는 열린 항목 중 아직 '풀었음'이 없는 것 — 보류를 풀면 releaseAuditHold 가 '풀었음'을 적는 항목(되돌릴 때 지운다) */
-async function unreleasedOpenItems(tx: ProductTransaction, productId: number): Promise<number[]> {
-  const rows = await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(and(eq(productAuditItems.productId, productId),
-    isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
-  return rows.map((row) => row.id);
 }
 
 /**
@@ -637,10 +641,42 @@ const extendKeep: RunHandler = {
   },
 };
 
+/**
+ * 감사 두 번째 의견의 자동 숨김(audit-auto-close.ts) — 적용은 감사 잡이 의견을 적는 트랜잭션에서 이미 했다(이 실행은 처음부터 '적용함').
+ * 되돌리기는 그 숨김이 그대로일 때만(사람이 정하지 않았고, 상태가 그대로고, 그 실행이 건 보류 — 시각·항목 — 가 아직 걸려 있음) 보류를 풀고,
+ * 그 제품의 답이 있는 열린 항목에 '풀었음'을 적는다(policy_release — 쓸기·자동 숨김이 다시 걸지 않는다). 운영자가 '숨기지 말라'고 정한 것이다.
+ * Qwen 의견은 남는다 — 같은 모델·판으로 다시 묻지 않고 사람이 본다
+ */
+const autoHold: RunHandler = {
+  cdnPerProduct: false,
+  undoPurge: AUDIT_RELEASE_PURGE,
+  async apply() {
+    return skipped("changed");
+  },
+  async undo(tx, run, row, by) {
+    const before = row.before as { status: string };
+    const state = await undoState(tx, row, sql`(p.audit_hold_at = ri.applied_at and p.audit_hold_item_id = ri.item_id)`);
+    if (!state?.product_ok) return blocked("product_changed");
+    if (state.human_decision !== null) return blocked("decision_changed");
+    if (state.status !== before.status || state.status_touched) return blocked("status_changed");
+    if (!state.held || !state.extra) return blocked("hold_changed");
+    const released = await releaseAuditHold(tx, { productId: row.productId, slug: row.slug, actor: by, reason: "policy_release", purge: "none",
+      metadata: { policyRunId: run.id, undo: "auto_hold" } });
+    if (!released) throw new PolicyUndoConflict("hold_changed");
+    return { state: "undone", relisted: true };
+  },
+};
+
 const HANDLERS: Record<string, RunHandler> = { "close:remove": closeRemove, "close:keep": closeKeep, "close:release": closeRelease,
   "import:import": importOpinion, "extend:extend": extendKeep };
 
+/**
+ * 자동 실행(options.auto, audit-auto-close.ts)은 kind·action 이 아니라 options.auto.action 이 뜻이다 — 자동 유지는 사람의 유지와 같은 칸이라
+ * 정책 유지의 되돌리기(closeKeep)를 그대로 쓰고, 자동 숨김은 autoHold 다
+ */
 function handlerOf(run: ProductAuditPolicyRun): RunHandler {
+  const auto = autoRunInfo(run);
+  if (auto) return auto.action === "keep" ? closeKeep : autoHold;
   const handler = HANDLERS[`${run.kind}:${run.action}`];
   if (!handler) throw new Error(`policy_handler_missing:${run.kind}:${run.action}`);
   return handler;
@@ -825,7 +861,7 @@ export async function undoAuditPolicyChunk(input: { runId: number; by: string; l
     });
     if (outcome?.state === "undone" && outcome.relisted) relisted = true;
   }
-  if (relisted) await listPurge(AUDIT_HOLD_PURGE);
+  if (relisted) await listPurge(handler.undoPurge ?? AUDIT_HOLD_PURGE);
   await finishIfDone(run.id, "undoing", input.by);
   return policyRunProgress(run.id);
 }
@@ -846,7 +882,7 @@ async function finishIfDone(runId: number, phase: "applying" | "undoing", by: st
     const count = (state: string) => states.filter((row) => row.state === state).reduce((sum, row) => sum + row.count, 0);
     const reasons = (state: string) => Object.fromEntries(states.filter((row) => row.state === state && row.reason).map((row) => [row.reason, row.count]));
     const common = { runId, kind: run.kind, policy: run.action, filter: run.filter, filterText: (run.options as { filterText?: string }).filterText ?? null,
-      options: run.options, planned: run.planned, note: run.note, createdBy: run.createdBy };
+      options: run.options, planned: run.planned, note: run.note, createdBy: run.createdBy, auto: autoRunInfo(run) };
     if (phase === "applying") {
       await tx.update(productAuditPolicyRuns).set({ status: "applied", appliedAt: sql`now()` }).where(eq(productAuditPolicyRuns.id, runId));
       await tx.insert(operationsAudit).values(await adminAuditRow(by, { action: "audit-policy-apply", target: `policy-run:${runId}`,
@@ -870,15 +906,23 @@ export type PolicyRunView = {
   id: number; kind: string; action: string; status: string; planned: number; note: string | null; createdBy: string; createdAt: Date;
   appliedAt: Date | null; undoBy: string | null; undoneAt: Date | null; filterText: string; options: Record<string, unknown>;
   counts: Record<string, number>;
+  /** 감사 두 번째 의견의 자동 실행(audit-auto-close.ts)이면 그 뜻 — 사람이 만든 실행은 null */
+  auto: AutoRunInfo | null;
 };
 
 /**
  * 최근 실행 — 상태와 항목 상태별 수. 적용 중·되돌리기 중인 것이 맨 위. 버린 올리기와 올리다 만 올리기(staging — 창을 닫았거나 끊김,
- * 아무것도 적지 않았다)는 빼고, 검사만 한 올리기(staged)는 '검사함 · 적용 전'으로 보인다
+ * 아무것도 적지 않았다)는 빼고, 검사만 한 올리기(staged)는 '검사함 · 적용 전'으로 보인다.
+ * 감사 두 번째 의견의 자동 실행(하루·행동마다 하나)은 사람이 만든 실행을 밀어내지 않게 따로 autoLimit 개(기본 이레 치)까지 함께 보인다
  */
-export async function listPolicyRuns(limit = 15): Promise<PolicyRunView[]> {
-  const runs = await db.select().from(productAuditPolicyRuns).where(sql`${productAuditPolicyRuns.status} not in ('discarded', 'staging')`)
-    .orderBy(sql`(${productAuditPolicyRuns.status} in ('applying', 'undoing')) desc`, desc(productAuditPolicyRuns.id)).limit(limit);
+export async function listPolicyRuns(limit = 15, autoLimit = 14): Promise<PolicyRunView[]> {
+  const isAuto = sql`((${productAuditPolicyRuns.options}->'auto') is not null)`;
+  const select = (auto: boolean, count: number) => db.select().from(productAuditPolicyRuns)
+    .where(and(sql`${productAuditPolicyRuns.status} not in ('discarded', 'staging')`, auto ? isAuto : sql`not ${isAuto}`))
+    .orderBy(sql`(${productAuditPolicyRuns.status} in ('applying', 'undoing')) desc`, desc(productAuditPolicyRuns.id)).limit(count);
+  const [manual, automatic] = await Promise.all([select(false, limit), select(true, autoLimit)]);
+  const active = (run: ProductAuditPolicyRun) => run.status === "applying" || run.status === "undoing";
+  const runs = [...manual, ...automatic].sort((a, b) => Number(active(b)) - Number(active(a)) || b.id - a.id);
   if (!runs.length) return [];
   const counts = await db.select({ runId: productAuditPolicyRunItems.runId, state: productAuditPolicyRunItems.state, count: sql<number>`count(*)::int` })
     .from(productAuditPolicyRunItems).where(inArray(productAuditPolicyRunItems.runId, runs.map((run) => run.id)))
@@ -887,7 +931,7 @@ export async function listPolicyRuns(limit = 15): Promise<PolicyRunView[]> {
     id: run.id, kind: run.kind, action: run.action, status: run.status, planned: run.planned, note: run.note, createdBy: run.createdBy,
     createdAt: run.createdAt, appliedAt: run.appliedAt, undoBy: run.undoBy, undoneAt: run.undoneAt, options: run.options,
     filterText: (run.options as { filterText?: string }).filterText ?? "",
-    counts: Object.fromEntries(counts.filter((row) => row.runId === run.id).map((row) => [row.state, row.count])),
+    counts: Object.fromEntries(counts.filter((row) => row.runId === run.id).map((row) => [row.state, row.count])), auto: autoRunInfo(run),
   }));
 }
 
@@ -927,7 +971,7 @@ export async function openBacklogStats(): Promise<OpenBacklogStats> {
 }
 
 export type AuditThroughput = OpenBacklogStats & {
-  /** 한국 날짜마다 — 사람이 닫은 것(유지·내리기, 정책 포함)과 새로 들어온 AI 거절 */
+  /** 한국 날짜마다 — 닫은 것(사람의 유지·내리기, 정책, m1 자동 유지 포함 — human_decision)과 새로 들어온 AI 거절 */
   days: { day: string; closed: number; incoming: number }[];
   /** 어제까지 7일 하루 평균 */
   closedPerDay: number; incomingPerDay: number;

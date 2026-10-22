@@ -13,8 +13,10 @@ const n = (value: number) => value.toLocaleString('ko-KR');
 export type PolicyRunRow = {
   id: number; kind: string; action: string; status: string; planned: number; note: string | null; createdBy: string; createdAt: string;
   appliedAt: string | null; undoBy: string | null; undoneAt: string | null; filterText: string; counts: Record<string, number>;
-  /** 화면 이름 — 내리기·유지·보류 풀기·의견 올리기·유지 연장 */
+  /** 화면 이름 — 내리기·유지·보류 풀기·의견 올리기·유지 연장·m1 자동 유지·숨김 */
   label: string;
+  /** 감사 두 번째 의견의 자동 실행(lib/crawl/audit-auto-close.ts)이면 그 행동 — 사람이 만든 실행은 null */
+  auto?: 'keep' | 'hold' | null;
 };
 
 type Exception = { itemId: number; slug: string; state: string; reason: string | null; name: string | null; url: string | null };
@@ -70,7 +72,11 @@ function RunItem({ run }: { run: PolicyRunRow }) {
         {canResumeUndo && <button type="button" className="admin-button" data-tone="primary" onClick={() => loop.loop(run.id, 'undo')}>되돌리기 이어서</button>}
         {canUndo && <ConfirmAction tone="danger" title={`정책 #${run.id}(${run.label})을 되돌립니다`} confirmLabel="되돌리기"
           summary={<ul>
-            <li>이 실행이 적용한 것만 실행 전 상태로 돌립니다 — 내림은 차단을 풀고, 유지·보류 풀기는 사람 결정을 지우고 풀었던 보류를 다시 겁니다.</li>
+            {run.auto === 'hold' ? <li>이 실행이 숨긴 것만 되돌립니다 — 보류를 풀어 목록에 돌려놓고, 그 제품의 열린 항목에 &lsquo;풀었음&rsquo;을 적어 쓸기·자동 숨김이 다시 걸지 않게 합니다.
+              Qwen 의견은 남아 다시 묻지 않습니다 — 사람이 봅니다.</li>
+              : run.auto === 'keep' ? <li>이 실행이 자동으로 유지한 것만 되돌립니다 — 유지를 지우고 그때 풀었던 보류를 다시 겁니다. Qwen 의견은 남아 다시 묻지 않습니다 — 사람이 봅니다.</li>
+              : <li>이 실행이 적용한 것만 실행 전 상태로 돌립니다 — 내림은 차단을 풀고, 유지·보류 풀기는 사람 결정을 지우고 풀었던 보류를 다시 겁니다.</li>}
+            {run.auto && <li>지금까지 적힌 것만 되돌립니다. 되돌리는 동안·뒤에 자동으로 닫는 것은 새 실행에 적힙니다 — 멈추려면 감사 거절 탭에서 답으로 닫기를 끕니다.</li>}
             <li>그 뒤에 바뀐 것(다시 정함·차단 해제·보류가 다시 걸림·주인이 생김·유지 연장 등)은 손대지 않고 &lsquo;되돌리지 못함&rsquo;으로 까닭과 함께 남깁니다.</li>
             {status === 'applying' && <li>아직 적용하지 않은 {n(count('pending'))}건은 취소합니다.</li>}
             {run.kind === 'import' && <li>올린 의견은 덮어쓰기 전으로 돌립니다(없었으면 지움). 올린 거절 때문에 그 뒤 감사 잡이 건 보류는 풀지 않습니다 —

@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { crawlSettings, operationsAudit, productAuditItems, productAuditSecondOpinions, products } from "@/lib/db/schema";
@@ -8,6 +8,7 @@ import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { auditItemModel, holdGate, releaseAuditHold, type HoldGateOpinion, type HoldGateOptions } from "./product-audit-hold";
 import { lockedQwenAuto, lockedSettings, storedAuditHold, storedQwenAuto, type AuditHoldSettings } from "./settings";
+import { autoCloseOpinion, type AutoCloseResult } from "./audit-auto-close";
 
 /**
  * 두 번째 의견 옮겨 적기(0110) — 밖에서 돌린 grok 일괄 결과(JSONL)를 product_audit_second_opinions 에 넣는다.
@@ -37,6 +38,8 @@ export type SecondOpinionImport = {
   released: number;
   skipped: Record<SecondOpinionSkip, number>;
   dryRun: boolean;
+  /** 답으로 닫기(auto.close, audit-auto-close.ts)를 본 쓰기만 — 유지·숨김한 수와 열어 둔 까닭별 수 */
+  autoClose?: { kept: number; held: number; left: Record<string, number> };
 };
 
 /** 쓸 의견 한 줄 — promptVersion 은 그 의견을 받은 글의 판(Qwen-v2 자동 의견), grok 일괄은 null */
@@ -98,9 +101,11 @@ function emptyResult(read: number, dryRun: boolean): SecondOpinionImport {
  * DR writer fence 는 lease 와 상관없이 늘 첫 잠금이다.
  * auto: Qwen-v2 자동 의견(audit-second-opinion-auto.ts) — 쓰는 순간 그 단계의 스위치(qwenAuto.auditSecondOpinion)를 잠근 설정 행에서 다시 보고
  * 꺼져 있으면 아무것도 쓰지 않는다(switched_off). 그 의견이 푼 보류는 작업 로그(audit-hold-auto-release, actor 모델)에도 남긴다.
+ * auto.close: 같은 트랜잭션에서 그 답으로 닫는다(audit-auto-close.ts — 승인은 유지, 거절은 숨김. 스위치 autoClose 는 잠근 설정 행에서 다시 본다).
+ * 그때는 승인·거절 모두 제품 세대를 잡고, 의견을 적기 전에 감사 항목을 잠근다(보류 쓸기와 같은 차례: 세대 → 항목 → 설정 행).
  */
 export async function writeAuditSecondOpinions(database: Database, rows: SecondOpinionRow[],
-  options: { dryRun: boolean; source: string; lease?: JobLease; auto?: { actor: string } },
+  options: { dryRun: boolean; source: string; lease?: JobLease; auto?: { actor: string; close?: boolean } },
   result: SecondOpinionImport = emptyResult(rows.length, options.dryRun)):
   Promise<SecondOpinionImport> {
   const source = options.source.trim().slice(0, 40) || "import";
@@ -144,10 +149,16 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
           opinions.filter((row) => row.itemId === itemId), hold, gate)).length;
         return;
       }
-      // 승인이 보류를 풀 수 있는 제품의 세대를 의견을 적기 전에 잡는다 — 제품 id 순
+      // 승인이 보류를 풀 수 있는 제품의 세대를 의견을 적기 전에 잡는다 — 제품 id 순. 답으로 닫으면(auto.close) 거절도 숨길 수 있어 모두 잡는다
+      const closing = Boolean(options.auto?.close);
       const locked = new Set<number>();
-      for (const row of [...new Map(approvals.map((row) => [row.productId, row])).values()].sort((a, b) => a.productId - b.productId)) {
+      for (const row of [...new Map((closing ? accepted : approvals).map((row) => [row.productId, row])).values()].sort((a, b) => a.productId - b.productId)) {
         if (await lockProductGeneration(tx, row.productId, items.get(row.itemId)!.slug!)) locked.add(row.productId);
+      }
+      // 사람의 결정(유지·내리기)·정책 처리와 같은 항목 잠금으로 줄을 세운다 — 세대 뒤, 설정 행 앞(보류 쓸기와 같은 차례)
+      if (closing) {
+        await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(inArray(productAuditItems.id, accepted.map((row) => row.itemId)))
+          .orderBy(asc(productAuditItems.id)).for("update");
       }
       // 자동 의견은 쓰는 순간 그 단계의 스위치를 다시 본다 — 끈 뒤에 받은 답은 쓰지 않는다(잠금은 보류 걸기와 같은 차례: 세대 뒤 설정 행)
       if (options.auto && !(await lockedQwenAuto(tx)).auditSecondOpinion.enabled) {
@@ -167,6 +178,21 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
       for (const row of written) {
         if (row.inserted) result.inserted += 1;
         else result.updated += 1;
+      }
+      // 답으로 닫는다 — 승인은 유지(보류면 같은 길로 풀고), 거절은 숨김. 일지·작업 로그는 audit-auto-close.ts 가 같은 커밋에 적는다.
+      // 유지로 푼 제품은 아래 승인 풀기가 다시 보지 않는다(이제 보류가 없다)
+      if (closing && options.auto) {
+        const settings = await lockedSettings(tx);
+        const tally = result.autoClose ??= { kept: 0, held: 0, left: {} };
+        for (const row of accepted) {
+          const outcome: AutoCloseResult = locked.has(row.productId)
+            ? await autoCloseOpinion(tx, { itemId: row.itemId, productId: row.productId, slug: items.get(row.itemId)!.slug!, model: row.model,
+              decision: row.decision, confidence: row.confidence, promptVersion: row.promptVersion, actor: options.auto.actor, settings })
+            : { action: null, skip: "changed" };
+          if (outcome.action === null) tally.left[outcome.skip] = (tally.left[outcome.skip] ?? 0) + 1;
+          else if (outcome.action === "kept") tally.kept += 1;
+          else tally.held += 1;
+        }
       }
       // 잠근 뒤 다시 본다 — 지금 그 항목으로 보류됐고, 덮어쓴 뒤의 의견과 지금 설정으로는 둘째 문이 맞지 않는다
       const held = await heldBy(tx, approvals.filter((row) => locked.has(row.productId)));
