@@ -48,7 +48,14 @@ export function feedbackAppConfig() {
   return { ...feedbackAppSigningConfig(), slug };
 }
 
-function data<T>(result: GithubResult<T>): T {
+/**
+ * App 자격(개인 키·App ID)이 거절된 것 — 그 설치·연동의 문제가 아니라 모든 연동이 같이 실패한다. 연동을 끄는 확정 실패로 보지 않는다
+ * (503 — reconcile·전달의 확정 실패 목록 400·401·403·404·409·410·422 밖). 개인 키가 폐기되거나 잘못 바뀌면 App JWT 요청이 401 이 된다.
+ */
+export const GITHUB_APP_CREDENTIAL_CODES: ReadonlySet<string> = new Set(["github_app_credentials_rejected", "github_app_mismatch"]);
+
+/** auth: "app" 은 App JWT 로 부른 요청(설치 조회·토큰 발급) — 그 401 은 App 자격 거절이다 */
+function data<T>(result: GithubResult<T>, auth: "app" | "installation" = "installation"): T {
   if (result.outcome === "confirmed_success") {
     if (!result.data) throw new GithubInstallationError(503, "github_installation_invalid_response");
     return result.data;
@@ -57,7 +64,27 @@ function data<T>(result: GithubResult<T>): T {
   if (result.outcome === "unknown") throw new GithubInstallationError(503, "github_installation_unknown", details);
   if (result.code === "github_rate_limited") throw new GithubInstallationError(503, "github_installation_rate_limited", details);
   if (result.status === 404) throw new GithubInstallationError(409, "github_installation_missing", details);
+  if (auth === "app" && result.status === 401) throw new GithubInstallationError(503, "github_app_credentials_rejected", details);
   throw new GithubInstallationError(result.status === 401 || result.status === 403 ? 403 : 503, "github_installation_unavailable", details);
+}
+
+/**
+ * App 자격 확인 — App JWT 로 GET /app. 연동마다 확인하기 전에 한 번 부른다(lib/domain/github-webhooks/reconcile.ts reconcileGithubBindings).
+ * 401·403·404 는 App 자격 거절(개인 키 폐기·잘못 바꿈·없는 App), 돌려준 App 의 id·slug 가 설정과 다르면 App 불일치(다른 App 의 ID·키를 넣음) —
+ * 둘 다 연동을 끄지 않는다. 닿지 않음·5xx·한도는 그대로 던진다(부르는 쪽이 비확정으로 보고 연동마다 확인을 이어 간다).
+ */
+export async function verifyFeedbackAppCredentials(options: GithubInstallationOptions = {}): Promise<{ id: number; slug: string | null }> {
+  const config = feedbackAppSigningConfig();
+  let jwt: string;
+  try { jwt = appJwt(config.id, config.privateKey); } catch { throw new GithubInstallationError(503, "github_feedback_unconfigured"); }
+  const result = await requestWithinDeadline<{ id?: unknown; slug?: unknown }>({ path: "/app", token: jwt, auth: "app" }, options);
+  if (result.outcome === "confirmed_rejection" && result.code !== "github_rate_limited" && [401, 403, 404].includes(result.status ?? 0)) {
+    throw new GithubInstallationError(503, "github_app_credentials_rejected", { providerCode: result.code });
+  }
+  const app = data(result, "app");
+  const slug = process.env.GITHUB_FEEDBACK_APP_SLUG?.trim() || null;
+  if (app.id !== config.id || (slug !== null && typeof app.slug === "string" && app.slug !== slug)) throw new GithubInstallationError(503, "github_app_mismatch");
+  return { id: config.id, slug: typeof app.slug === "string" ? app.slug : null };
 }
 
 export async function getFeedbackInstallationToken(input: { installationId: number; repositoryId: number }, options: GithubInstallationOptions = {}): Promise<FeedbackInstallationCredential> {
@@ -67,7 +94,7 @@ export async function getFeedbackInstallationToken(input: { installationId: numb
   try { jwt = appJwt(config.id, config.privateKey); } catch { throw new GithubInstallationError(503, "github_feedback_unconfigured"); }
   const installation = data(await requestWithinDeadline<{ id?: unknown; app_id?: unknown; suspended_at?: unknown; repository_selection?: unknown; permissions?: { issues?: unknown; metadata?: unknown } }>({
     path: `/app/installations/${input.installationId}`, token: jwt, auth: "app",
-  }, options));
+  }, options), "app");
   if (installation.id !== input.installationId || installation.app_id !== config.id) throw new GithubInstallationError(403, "github_installation_mismatch");
   if (installation.suspended_at !== null) throw new GithubInstallationError(409, "github_installation_suspended");
   if (installation.repository_selection !== "selected") throw new GithubInstallationError(409, "github_installation_selection_required");
@@ -75,7 +102,7 @@ export async function getFeedbackInstallationToken(input: { installationId: numb
   const minted = data(await requestWithinDeadline<{ token?: unknown; expires_at?: unknown; permissions?: Record<string, unknown>; repositories?: { id?: unknown }[]; repository_selection?: unknown }>({
     path: `/app/installations/${input.installationId}/access_tokens`, token: jwt, auth: "app", method: "POST",
     body: { repository_ids: [input.repositoryId], permissions: { issues: "write", metadata: "read" } },
-  }, options));
+  }, options), "app");
   const expiresAt = typeof minted.expires_at === "string" ? Date.parse(minted.expires_at) : NaN;
   if (typeof minted.token !== "string" || !/^ghs_[A-Za-z0-9_.-]{16,4090}$/.test(minted.token)
     || !Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 3_720_000) throw new GithubInstallationError(503, "github_installation_token_invalid");

@@ -6,7 +6,8 @@ import { githubIssueOutbox } from "@/lib/db/github-issue-outbox-schema";
 import { githubWebhookEvents } from "@/lib/db/github-webhook-schema";
 import { githubRequest } from "@/lib/github/client";
 import { parseGithubRepositoryResponse } from "@/lib/github/repositories";
-import { getFeedbackInstallationToken, GithubInstallationError, verifyFeedbackInstallation } from "@/lib/domain/github-installations/credentials";
+import { getFeedbackInstallationToken, GITHUB_APP_CREDENTIAL_CODES, GithubInstallationError, verifyFeedbackAppCredentials,
+  verifyFeedbackInstallation } from "@/lib/domain/github-installations/credentials";
 import { withinFeedbackDeadline, type FeedbackProviderOptions } from "@/lib/domain/feedback/github/deliver";
 import { feedbackDatabaseWrite, feedbackSql } from "@/lib/domain/feedback/github/database";
 import { cancelBindingFeedbackOutbox } from "@/lib/domain/feedback/github/outbox";
@@ -72,18 +73,85 @@ async function loadCurrentBinding(productId: number, options: FeedbackProviderOp
   }, options.deadlineAt);
 }
 
-/** A live result may update only the revision that was verified; it never enables a disabled binding. */
-export async function reconcileGithubBinding(productId: number, options: FeedbackProviderOptions): Promise<string> {
+/** 연동 하나를 GitHub 에서 확인한 결과 — 쓰기 전에 모아 둔다(reconcileGithubBindings 가 모두를 보고 정한다) */
+type BindingVerification = {
+  binding: GithubProductBinding;
+  repository: Awaited<ReturnType<typeof verifyFeedbackInstallation>>["repository"] | null;
+  errorCode: string | null; definite: boolean; retryAt: number | null;
+  /** 자격 계열의 확정 실패(401·403 — 우리 쪽 403 으로 바꾼 것 — 과 설치 없음 404) — 모두가 이것이면 연동 탓이 아니다 */
+  credential: boolean;
+};
+
+async function verifyBinding(productId: number, options: FeedbackProviderOptions): Promise<BindingVerification | null> {
   const binding = await loadCurrentBinding(productId, options);
-  if (!binding) return "skipped";
-  let repository: Awaited<ReturnType<typeof verifyFeedbackInstallation>>["repository"] | null = null;
-  let errorCode: string | null = null, definite = false, retryAt: number | null = null;
+  if (!binding) return null;
+  let repository: BindingVerification["repository"] = null;
+  let errorCode: string | null = null, definite = false, retryAt: number | null = null, credential = false;
   try { ({ repository } = await withinFeedbackDeadline(() => (options.verify ?? verifyFeedbackInstallation)(binding, options), options.deadlineAt, options.signal)); }
   catch (error) {
     errorCode = error instanceof GithubInstallationError ? error.providerCode ?? error.code : "github_installation_verification_unavailable";
     retryAt = error instanceof GithubInstallationError && error.providerCode === "github_rate_limited" ? Math.max(Date.now(), error.retryAt ?? Date.now() + 60_000) : null;
     definite = error instanceof GithubInstallationError && error.providerCode !== "github_rate_limited" && [400, 401, 403, 404, 409, 410, 422].includes(error.status);
+    credential = definite && error instanceof GithubInstallationError && (error.status === 403 || error.code === "github_installation_missing");
   }
+  return { binding, repository, errorCode, definite, retryAt, credential };
+}
+
+/** 모두가 자격 오류로 실패해 끄지 않고 둔 연동을 다시 볼 때까지 — 잡이 실패해 30초마다 다시 돌아도 GitHub 를 두드리지 않게 */
+const SYSTEMIC_RETRY_MS = 15 * 60_000;
+
+/** A live result may update only the revision that was verified; it never enables a disabled binding. */
+export async function reconcileGithubBinding(productId: number, options: FeedbackProviderOptions): Promise<string> {
+  const verification = await verifyBinding(productId, options);
+  return verification ? applyBindingVerification(productId, verification, options, false) : "skipped";
+}
+
+export type GithubBindingsReconcile = {
+  states: string[];
+  /**
+   * 연동 탓이 아니라 App 자격 문제로 본 까닭 — 연동은 끄지 않았다. 잡이 이것을 던져 운영센터가 긴급으로 올린다.
+   * github_app_credentials_rejected·github_app_mismatch: GET /app 확인이 거절 · github_bindings_all_rejected: 확인한 연동 둘 이상이 모두 자격 오류
+   */
+  credentialFailure: string | null;
+};
+
+/**
+ * 연동 여럿을 한꺼번에 확인한다(maintenance github-integration-reconcile). 연동 하나의 401·403·설치 없음은 그 연동을 끄고 남은 전달을
+ * 취소하는 확정 실패다(reconcileGithubBinding) — 그런데 App 개인 키가 폐기되거나 잘못 바뀌거나 App ID 가 다른 App 을 가리키면
+ * 모든 연동이 같은 까닭으로 한꺼번에 실패하고, 메이커가 다시 연결하기 전에는 되살릴 수 없게 모두 꺼졌다(경보도 없었다). 그래서:
+ * 1. 먼저 App 자격을 확인한다(GET /app). 거절이면 어떤 연동도 확인·쓰기 하지 않고 credentialFailure 를 돌려준다.
+ * 2. 연동마다 확인만 하고(쓰기 없음) 결과를 모은다.
+ * 3. 확인한 연동이 둘 이상인데 모두 자격 계열 확정 실패면 App 자격 문제로 본다 — 끄지 않고 까닭만 적고 15분 뒤 다시 본다.
+ *    둘이 동시에 정말 앱을 지웠을 수도 있지만 15분 창 안에 모두가 그럴 일은 드물고, 잘못 끄면 되돌릴 수 없다(사람이 보고 끈다).
+ * 4. 그 밖에는 연동마다 지금처럼 쓴다.
+ */
+export async function reconcileGithubBindings(productIds: readonly number[], options: FeedbackProviderOptions & {
+  appCheck?: (options: FeedbackProviderOptions) => Promise<unknown>; hasBudget?: () => boolean;
+}): Promise<GithubBindingsReconcile> {
+  if (!productIds.length) return { states: [], credentialFailure: null };
+  try { await withinFeedbackDeadline(() => (options.appCheck ?? verifyFeedbackAppCredentials)(options), options.deadlineAt, options.signal); }
+  catch (error) {
+    if (error instanceof GithubInstallationError && GITHUB_APP_CREDENTIAL_CODES.has(error.code)) return { states: productIds.map(() => "held"), credentialFailure: error.code };
+    // 확인이 닿지 않으면(시간 초과·5xx·한도·설정 없음) 연동마다 확인하는 길도 같은 까닭으로 비확정이 된다 — 그대로 이어 간다
+  }
+  const verified: [number, BindingVerification | null][] = [];
+  for (const productId of productIds) {
+    if (options.hasBudget && !options.hasBudget()) break;
+    if (options.signal?.aborted || Date.now() >= options.deadlineAt - 6_000) break;
+    verified.push([productId, await verifyBinding(productId, options)]);
+  }
+  const checked = verified.flatMap(([, verification]) => verification ? [verification] : []);
+  const systemic = checked.length >= 2 && checked.every((verification) => verification.credential);
+  const states: string[] = [];
+  for (const [productId, verification] of verified) states.push(verification ? await applyBindingVerification(productId, verification, options, systemic) : "skipped");
+  return { states, credentialFailure: systemic ? "github_bindings_all_rejected" : null };
+}
+
+/** hold: 확정 실패도 끄지 않는다(App 자격 문제로 본 회차) — 까닭만 적고 15분 뒤 다시 본다 */
+async function applyBindingVerification(productId: number, verification: BindingVerification, options: FeedbackProviderOptions, hold: boolean): Promise<string> {
+  const { binding, repository, errorCode } = verification;
+  const definite = verification.definite && !hold;
+  const retryAt = hold ? Date.now() + SYSTEMIC_RETRY_MS : verification.retryAt;
   return feedbackDatabaseWrite(options.lease, async tx => {
     const [product] = await feedbackSql(tx, options.deadlineAt, () => tx.select().from(products).where(eq(products.id, productId)).for("update"));
     const [current] = await feedbackSql(tx, options.deadlineAt, () => tx.select().from(githubProductBindings).where(eq(githubProductBindings.productId, productId)).for("update"));
@@ -96,7 +164,7 @@ export async function reconcileGithubBinding(productId: number, options: Feedbac
       return "disabled";
     }
     await feedbackSql(tx, options.deadlineAt, () => tx.update(githubProductBindings).set({ updatedAt: new Date(), verificationRetryAt: retryAt === null ? null : new Date(retryAt), ...(repository?.id === binding.repositoryId ? { lastVerifiedAt: new Date(), repositoryFullName: repository.fullName, repositoryUrl: repository.htmlUrl, blockedReason: null } : { blockedReason: errorCode ?? "github_installation_verification_unavailable" }) }).where(eq(githubProductBindings.productId, productId)));
-    return repository?.id === binding.repositoryId ? "verified" : "unknown";
+    return repository?.id === binding.repositoryId ? "verified" : hold ? "held" : "unknown";
   }, options.deadlineAt);
 }
 

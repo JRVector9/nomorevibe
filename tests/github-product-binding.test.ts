@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { getFeedbackInstallationToken, verifyFeedbackInstallation } from "@/lib/domain/github-installations/credentials";
+import { getFeedbackInstallationToken, verifyFeedbackAppCredentials, verifyFeedbackInstallation } from "@/lib/domain/github-installations/credentials";
 import type { GithubProductBinding } from "@/lib/db/github-binding-schema";
 import { verifyMakerGithubRepository, verifyMakerInstallationAccess } from "@/lib/domain/github-installations/authorization";
 vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
@@ -251,4 +251,47 @@ it("never chains a late installation read into token minting after cancellation"
   vi.stubGlobal("fetch", fetch);
   await expect(getFeedbackInstallationToken({ installationId: 12, repositoryId: 42 }, { deadlineAt: Date.now() + 1000, signal: controller.signal })).rejects.toMatchObject({ providerCode: "github_timeout" });
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * App 자격 거절 — 개인 키가 폐기되거나 잘못 바뀌면 App JWT 요청이 401 이다. 그 설치·연동의 문제가 아니라 모든 연동이 같이 실패하므로
+ * 연동을 끄는 확정 실패(우리 쪽 403)로 보지 않고 github_app_credentials_rejected(503)로 던진다. 설치 토큰의 401·403 은 그대로다.
+ */
+describe("Feedback App 자격 거절", () => {
+  it("설치 조회·토큰 발급(App JWT)의 401 은 App 자격 거절(503)이다", async () => {
+    github([json({ message: "A JSON web token could not be decoded" }, 401)]);
+    await expect(getFeedbackInstallationToken({ installationId: 12, repositoryId: 42 }))
+      .rejects.toMatchObject({ status: 503, code: "github_app_credentials_rejected", providerCode: "github_unauthorized" });
+    github([json(installation), json({ message: "Bad credentials" }, 401)]);
+    await expect(getFeedbackInstallationToken({ installationId: 12, repositoryId: 42 })).rejects.toMatchObject({ status: 503, code: "github_app_credentials_rejected" });
+  });
+
+  it("설치의 403(정지·권한)과 설치 토큰의 401 은 지금처럼 그 연동의 확정 실패(403)다", async () => {
+    github([json({ message: "forbidden" }, 403)]);
+    await expect(getFeedbackInstallationToken({ installationId: 12, repositoryId: 42 })).rejects.toMatchObject({ status: 403, code: "github_installation_unavailable" });
+    github([json(installation), json(credential(), 201), json({ message: "Bad credentials" }, 401)]);
+    await expect(verifyFeedbackInstallation({ installationId: 12, repositoryId: 42 })).rejects.toMatchObject({ status: 403, code: "github_installation_unavailable" });
+  });
+
+  it("GET /app — 설정한 App 이면 통과, 401·403·404 는 자격 거절, id·slug 가 다르면 App 불일치, 닿지 않으면 그대로 던진다", async () => {
+    const fetch = github([json({ id: 123, slug: "nmv-feedback" })]);
+    await expect(verifyFeedbackAppCredentials()).resolves.toEqual({ id: 123, slug: "nmv-feedback" });
+    expect(fetch.mock.calls[0][0]).toBe("https://api.github.com/app");
+    for (const status of [401, 403, 404]) {
+      github([json({ message: "nope" }, status)]);
+      await expect(verifyFeedbackAppCredentials(), String(status)).rejects.toMatchObject({ status: 503, code: "github_app_credentials_rejected" });
+    }
+    github([json({ id: 999, slug: "nmv-feedback" })]);
+    await expect(verifyFeedbackAppCredentials()).rejects.toMatchObject({ code: "github_app_mismatch" });
+    github([json({ id: 123, slug: "someone-else" })]);
+    await expect(verifyFeedbackAppCredentials()).rejects.toMatchObject({ code: "github_app_mismatch" });
+    // 슬러그를 두지 않은 워커는 id 만 견준다
+    vi.stubEnv("GITHUB_FEEDBACK_APP_SLUG", "");
+    github([json({ id: 123, slug: "someone-else" })]);
+    await expect(verifyFeedbackAppCredentials()).resolves.toMatchObject({ id: 123 });
+    github([json({}, 502)]);
+    await expect(verifyFeedbackAppCredentials()).rejects.toMatchObject({ code: "github_installation_unknown" });
+    vi.stubEnv("GITHUB_FEEDBACK_APP_PRIVATE_KEY", "");
+    await expect(verifyFeedbackAppCredentials()).rejects.toMatchObject({ code: "github_feedback_unconfigured" });
+  });
 });
