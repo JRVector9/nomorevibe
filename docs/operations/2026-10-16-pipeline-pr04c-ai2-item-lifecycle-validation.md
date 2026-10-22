@@ -48,7 +48,7 @@ C동결ddfbb의 최종 wholefile **20PASS/153.25초/실제exit0**를 root 원로
 
 root wholeDB **181파일2,132PASS/기존TODO1,611.49초, 실제exit0**: `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55508/nomorevibe_test PIPELINE_TEST_LOG_PREFIX=/tmp/nomorevibe-pr04c1b-root-db node /tmp/nomorevibe-pr04c1b-db-diagnostics-20261016.mjs`. 원로그 `/tmp/nomorevibe-pr04c1b-root-db-full-20261016.log`, 실제 lock진단 `/tmp/nomorevibe-pr04c1b-root-db-locks-20261016.jsonl`. 새DB에 migration 후 whole실행했고 기존intentional job.failed 로그는 최종Vitest PASS와 구분했다. 이 whole 시작시 c1a initialfixture/Cddfbb driver였으므로 마지막test-only 보강의 개별검증을 별도로 기록한다. source4개는 동일동결 SHA다.
 
-C최종test **606행/SHA7e56b75026e50be5060a26238bedf86bca74fb92eb50a8aace5dca33f8c624e6**. 실제 초기화 Drizzle instance의 원 transaction을 receiver/args/config/result/예외 그대로 통과하는 임시관찰로 정확히 renew TX와 writer TX의 start/end를 기록한다. 기존 실제 pg_blocking_pids를 유지하고 `[start1,end1,start2,end2]` 및 count2를 검증한다. holder·execution drain 후 descriptor를 복원한다. A독립읽기재리뷰/root직접리뷰 추가P1/P2 0, C해당short1PASS/19skip16.22초·whole tsc/scopedlint0(`/tmp/nomorevibe-pr04c1b-c-renew-order-short-green-20261016.log`). 원90초body·최초fixturecore·기존defaulttimeout·source는 변경0이다.
+C최종test **606행/SHA7e56b75026e50be5060a26238bedf86bca74fb92eb50a8aace5dca33f8c624e6**. 실제 초기화 Drizzle instance의 원 transaction을 receiver/args/config/result/예외 그대로 통과하는 임시관찰로 정확히 renew TX와 writer TX의 start/end를 기록한다. 기존 실제 pg_blocking_pids를 유지하고 `[start1,end1,start2,end2]` 및 count2를 검증한다. holder·execution drain 후 descriptor를 복원한다. A독립읽기재리뷰/root직접리뷰 추가P1/P2 0, C해당short1PASS/19skip16.22초·whole tsc/scopedlint0(`/tmp/nomorevibe-pr04c1b-c-renew-order-short-green-20261016.log`). 원90초body·최초fixturecore·기존defaulttimeout·source는 변경0이다. **2026-10-22 갱신:** 사용자가 CI 시간 하한을 줄이려고 이 원90초 실시간 대기를 짧은 lease 로 바꾸는 시험 변경을 승인했다. 운영 기본값(90초 lease·15초 연장)과 운영 경로 동작은 그대로이고, 통합 시험만 `executeSecondReviewItem` 의 `lease` 로 짧은 TTL·연장 간격을 주입한다. 근거·전후 시간은 아래 [2026-10-22 통합 시험 시간 단축](#2026-10-22-통합-시험-시간-단축) 절에 있다.
 
 root는 독립 임시WT `/Users/jr/Desktop/projects/nomorevibe-pipeline-ai2-drain-mutant`에서 **await heartbeat 한줄만 제거**했다. mutant sourceSHA557a69b3…a2d4d1/같은test7e56/같은55507순차실행은 실제 **1FAIL/19skip16.59초·exit1**이며 trace `[start1,start2,end1,end2]`의 정확한 순서assertion이 실패했다. 원본source64ed 같은test 재실행은 **1PASS/19skip16.28초·exit0**. `/tmp/nomorevibe-pr04c1b-root-renew-order-{mutant,current-green}-20261016.log`. 이는 새생산결함 RED가 아니라 테스트 감도검증이다. 임시source는 원본WT/Git에 반영하지 않았다.
 
@@ -61,3 +61,29 @@ root whole후 own후보/문서/vote/item/제품/CDN/job/settings/replay schema·
 feature405dace 후 mainc7754651을 정상merge한 HEADd0ff7b9다. squash ancestry add/add는 c1a최종test6bbc와 해당계획/검증을 main에서 보존하고 c1b최신handoff/delivery를 유지해해결했다. source4개와 C7e56 SHA는 모두 원동결과동일이다. 최신main의 c1afixture단독 **2PASS/5.79초 actualexit0**: `/tmp/nomorevibe-pr04c1b-root-main-integrated-wall-20261016.log`. 전체DB2132PASS와 마지막두 test-only개별검증을구분한다.
 
 root최종rawreadback의 own후보/문서/vote/item/제품/CDN/job/settings/replay schema·role·guard·function·타connection 모두0, 3stagelegacy1contract0/PUBLIC USAGEtrue CREATEfalse·기본timeout0/1s를직접확인했다. `/tmp/nomorevibe-pr04c1b-root-final-readback-20261016.log`. root55508 **STOP/exited0/OOMfalse** 직접확인(`/tmp/nomorevibe-pr04c1b-root-stop-20261016.log`). A/B/C/root의전용4DB 모두 readback/STOP 반환완료, 타suitefixture/append-onlyaudit는보존한다. 모든source/test소유권은root에반환됐고 미해결P1/P2 0이다. PR필수CI/정상merge/mainCI 및 운영적용은별도다.
+
+## 2026-10-22 통합 시험 시간 단축
+
+사용자 결정(2026-10-22): CI 시간의 하한을 정하던 두 통합 시험 파일을 줄인다. 위 "원90초body 변경0" 규칙은 이 결정으로 바뀐다. 운영 기본값·동작은 바꾸지 않는다.
+
+**주입한 값과 운영 기본값(그대로)**
+
+- `lib/crawl/second-review-item-lifecycle.ts`: `SECOND_REVIEW_ITEM_LEASE = { ttlMs: STALE_LOCK_MS(90초), renewEveryMs: 15초 }` 로 이름만 붙였다. 호환 adapter `executeSecondReviewItem` 만 선택 인자 `lease` 를 받는다. 주지 않으면 이 운영 값이다. consumer 진입(`executeSecondReviewConsumerItem`)은 주입을 받지 않는다. 그 모델 슬롯 claim 이 운영 lease 를 직접 쓰기 때문이다. 주입 값은 `renewEveryMs < ttlMs`, TTL 1ms~1시간 정수만 받는다.
+- `lib/operations/pipeline-replay-fixed-input.ts`·`pipeline-replay-model-runner.ts`: `FixedInputTiming` 에 선택 값 `workerIntervalMs` 를 더했다. 운영 `FIXED_INPUT_TIMING`·replay CLI 는 이 값을 주지 않아 reviewer 워커가 기본 5초로 폴링한다. 구간·lead·drain 은 원래부터 manifest·timing 으로 주입되던 값이라 시험 값만 줄였다.
+
+**같은 불변식을 보는 근거**
+
+- lease 만료·재획득·fencing: 만료 시각은 그대로 claim·연장 UPDATE 의 DB `clock_timestamp()+ttl` 이고 시계를 속이지 않는다. 시험 lease 는 6초/1초(운영과 같은 1/6 비율)다. 같은 owner·token·epoch 가 연장으로 원래 만료를 실제로 넘기고, 그 사이 경쟁 claim 은 `running` 이다(원 장기 case 와 같은 단언에 `lease_until-updated_at` 이 주입 TTL 인지 확인을 더했다). 만료 뒤 새 owner 의 재획득(epoch+1)과 늦은 원 writer 거절은 기존 takeover case 가 그대로 본다. 짧은 lease 라 실제 DB 시계 만료 뒤에만 재획득되는 case 를 하나 더했다(`reclaims an abandoned item only after its actual DB-clock expiry`).
+- 연장 실패·연장 대기 drain: 첫 연장 전에 관찰 설치·행 잠금을 마치거나 연장 실패 뒤에도 lease 가 살아 있음을 단언하는 두 case 는 18초/3초를 쓴다(준비·단언 시간 수백 ms 보다 넉넉하다). `[start1,end1,start2,end2]` 순서 단언은 그대로다.
+- 운영 기본값: 주입하지 않은 실제 claim 이 DB 에 90초를 쓰는지(`dispatches once when two actual executions compete`), 상수가 90초/15초인지 통합 시험이 확인한다. 단위 시험은 기존대로 90초 claim·15초 연장을 fake timer 로 보고, 주입 값이 claim·모든 연장에 쓰이며 잘못된 값은 claim 전에 거절되는지 더 본다.
+- replay drain·replay 의미·manifest 구간: 같은 runner·scheduler·워커·consumer·계량기·수집기 경로다. 고정 입력 10건 구간은 8초다. 실측 마지막 호출은 legacy 1.6초, items 3.6~5.0초다(워커 5초 폴링 때는 5.5초·7.6초). drain case 는 구간 2초·답 4초·끊기 1초다(전: 12초·20초·2초). 첫 호출은 구간 시작 뒤 0.1~0.4초라 구간 끝에 반드시 진행 중이다. 끊는 실행의 상한(구간 끝+1초)은 답(호출+4초)보다 앞선다. legacy 2건·items 1건의 진행 중 호출 수, budget·장부 정산, `replay_drain_calls_cut` 단언은 바뀌지 않았다. lead 1초는 실측 적재 0.2초 안팎보다 길어 marker 가 구간 시작 전이라는 단언을 그대로 지킨다.
+- 시험 이름: `renews the same actual owner beyond its original 90-second expiry before settling` 은 `... original lease expiry ...` 로 바뀌었다. 위 계획 문서의 `-t 'original 90-second expiry'` 명령은 이제 `-t 'original lease expiry'` 로 고른다.
+
+**전후 시간(로컬 전용 PG17 컨테이너, 파일 단독)**
+
+| 파일 | 전 | 후 |
+| --- | --- | --- |
+| `tests/integration/second-review-item-lifecycle.test.ts` | 159.5초(20 tests) | 22.0초(21 tests) |
+| `tests/integration/pipeline-replay-fixed-input.test.ts` | 304.7초 | 83.5초 |
+
+replay 파일의 남은 시간은 고정 입력 전체 구간 실행 다섯 번(각 약 9초), drain case 두 개(각 약 10초), 격리 DB 두 개 생성·migration(약 6.5초)이다. 더 줄이려면 첫 두 case 의 실행을 공유하는 구조 변경이 필요하다(이번에는 하지 않았다).

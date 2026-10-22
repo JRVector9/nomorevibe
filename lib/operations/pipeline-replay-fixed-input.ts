@@ -151,7 +151,11 @@ export function fixedInputRunConditions(manifest: FixedInputRunManifest): FixedI
     secondReviewFallbacks: manifest.secondReviewFallbacks ?? null };
 }
 export type FixedInputRunManifest = z.infer<typeof fixedInputRunManifestSchema>;
-export type FixedInputTiming = { minimumWindowMs: number; leadMs: number; drainMs: number; collectMs: number };
+/**
+ * replay 실행 시간 값. 운영 replay(scripts/pipeline-replay-fixed-input.ts)는 언제나 FIXED_INPUT_TIMING 이다.
+ * workerIntervalMs 는 통합 시험만 준다(2026-10-22): 없으면 reviewer 워커가 운영과 같은 기본 간격(5초)으로 잡을 본다.
+ */
+export type FixedInputTiming = { minimumWindowMs: number; leadMs: number; drainMs: number; collectMs: number; workerIntervalMs?: number };
 export const FIXED_INPUT_TIMING: FixedInputTiming = Object.freeze({ minimumWindowMs: LIVE_MIN_WINDOW_MS, leadMs: FIXED_INPUT_LEAD_MS,
   drainMs: FIXED_INPUT_DRAIN_MS, collectMs: FIXED_INPUT_COLLECT_MS });
 
