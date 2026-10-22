@@ -81,7 +81,9 @@ it("끝난 실제 수집의 후보 수를 같은 쓰기 TX 에서 날마다 이�
   // 속도 제한(60초)을 지나게 받은 시각을 뒤로 민다 — 실제로는 하루에 한 번이다
   const later = () => db.update(operationsObservations).set({ observedAt: sql`(now() at time zone 'utc') - interval '61 seconds'` })
     .where(eq(operationsObservations.key, X_STATUS_KEY));
-  const at = (hours: number) => new Date(Math.floor(Date.now() / 1000) * 1000 - hours * 3_600_000).toISOString();
+  // 기준 시각은 한 번만 — 부를 때마다 Date.now() 를 다시 읽으면 보낸 값과 기대값 사이에 초가 넘어가 1초 어긋났다(CI 간헐 실패)
+  const base = Math.floor(Date.now() / 1000) * 1000;
+  const at = (hours: number) => new Date(base - hours * 3_600_000).toISOString();
   const sentAt = now() - 100;
   expect((await POST(signed(body({ candidates: 0, lastRunAt: at(49), lastSuccessAt: at(49) }), sentAt))).status).toBe(200);
   expect(await runs()).toEqual({ zeroRuns: 1, zeroSince: at(49), lastCompletedRunAt: at(49), lastCandidates: 0 });
