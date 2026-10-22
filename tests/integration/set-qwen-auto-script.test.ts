@@ -130,6 +130,10 @@ describe("set-qwen-auto", () => {
     expect(() => parseSetQwenAutoArgs(["--step=auditSecondOpinion", "--scope=everything"])).toThrow("qwen_auto_usage");
     expect(() => parseSetQwenAutoArgs(["--step=auditSecondOpinion", "--auto-close=yes"])).toThrow("qwen_auto_usage");
     expect(parseSetQwenAutoArgs(["--step=auditSecondOpinion", "--auto-close=off"], { USER: "jr" })).toMatchObject({ enable: null, scope: null, autoClose: false });
+    // 화면 판별도 이 스크립트로 켠다(2026-10-22 운영에서 단계 목록에 없어 막혔다) — 답으로 닫기는 받고 범위는 받지 않는다
+    expect(parseSetQwenAutoArgs(["--step=screenReview", "--enable", "--per-tick=1", "--auto-close=on", "--reason=x"], { USER: "jr" }))
+      .toMatchObject({ step: "screenReview", enable: true, perTick: 1, autoClose: true, scope: null });
+    expect(() => parseSetQwenAutoArgs(["--step=screenReview", "--scope=all"])).toThrow("qwen_auto_usage");
   });
 
   it("감사 두 번째 의견의 범위·답으로 닫기 — 끄고 좁히는 것은 까닭 없이, 넓히는 것은 까닭을 받는다", async () => {
