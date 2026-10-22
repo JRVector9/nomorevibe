@@ -4,8 +4,9 @@ on:
   push:
     branches: [main]
   # draft PR 은 검사를 돌리지 않는다(아래 scope·check). ready for review 로 바꾸면 그 이벤트로 전체 검사가 돈다.
+  # draft 로 되돌리면(converted_to_draft) 다시 돌아 실패하는 check 가 예전 초록 check 를 대신한다.
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
 
 permissions:

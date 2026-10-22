@@ -77,7 +77,8 @@ describe("CI 워크플로", () => {
   });
 
   it("draft PR 은 검사를 돌리지 않고 check 만 실패한다 — ready for review 로 바꾸면 전체 검사가 돈다", () => {
-    expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
+    // draft 로 되돌려도 다시 돌아 실패하는 check 가 예전 초록 check 를 대신한다
+    expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review", "converted_to_draft"]);
     expect(jobs.scope.if).toBe("github.event.pull_request.draft != true");
     // scope 를 건너뛰면 따라서 건너뛰도록: check 말고는 모두 scope 를 기다리고, always() 로 건너뛰기를 무시하지 않는다
     for (const [name, job] of Object.entries(jobs)) {

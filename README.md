@@ -130,7 +130,8 @@ ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열여덟 파일(제품 번역 ledg
 기록을 갱신한다(`--plan 6`은 배정만 보여 준다).
 
 draft PR은 CI를 돌리지 않는다. 검사 잡은 모두 건너뛰고 필수 `check`만 "draft PR — CI not run; mark ready for review"로
-실패해 draft head에 초록 `check`가 남지 않는다. ready for review로 바꾸면 그 이벤트로 전체 CI가 돈다.
+실패해 draft head에 초록 `check`가 남지 않는다(초록이던 PR을 draft로 되돌려도 다시 돌아 실패하는 `check`가 대신한다).
+ready for review로 바꾸면 그 이벤트로 전체 CI가 돈다.
 같은 PR의 새 커밋은 이전 실행을 취소하며, 서로 다른 PR은 별도로 실행한다. main push와 수동 실행은 실행마다 따로 끝까지 돈다.
 같은 저장소 PR 실행이 검사를 모두 통과하면 검사한 트리를 `ci-tested-tree-<트리>` artifact로 남긴다. main push의 병합 커밋
 트리가 그 PR의 성공한 실행이 남긴 트리와 같으면 검사 잡을 다시 돌리지 않고 `check`가 그 실행을 근거로 통과한다
