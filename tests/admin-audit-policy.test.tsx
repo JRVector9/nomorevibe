@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   admin: vi.fn(), revalidate: vi.fn(), preview: vi.fn(), start: vi.fn(), apply: vi.fn(), undoStart: vi.fn(), undo: vi.fn(), exceptions: vi.fn(),
   options: vi.fn(), runs: vi.fn(), overview: vi.fn(), takedownSummary: vi.fn(), introCount: vi.fn(),
   staged: vi.fn(), stage: vi.fn(), importPreview: vi.fn(), importStart: vi.fn(), discard: vi.fn(),
-  throughput: vi.fn(), expiring: vi.fn(), keepPreview: vi.fn(), keepStart: vi.fn(),
+  throughput: vi.fn(), expiring: vi.fn(), keepPreview: vi.fn(), keepStart: vi.fn(), autoToday: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async (original) => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -24,6 +24,9 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   listAuditFindings: vi.fn(), listHeldFindings: vi.fn(), GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
 vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatus: vi.fn() }));
+// 오늘 답으로 닫은 수도 DB 를 센다 — 규칙·이름은 실제 모듈 그대로
+vi.mock('@/lib/crawl/audit-auto-close', async (original) => ({ ...await original<typeof import('@/lib/crawl/audit-auto-close')>(),
+  autoCloseToday: mocks.autoToday }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: async () => new Map() }));
 vi.mock('@/lib/domain/products/takedown', () => ({ takedownSummary: mocks.takedownSummary, takedownQueue: vi.fn(), takedownHistory: vi.fn() }));
 vi.mock('@/lib/domain/products/intro-requests', () => ({ introRequestQueue: vi.fn(), pendingIntroRequestCount: mocks.introCount }));
@@ -57,6 +60,7 @@ beforeEach(() => {
   mocks.staged.mockResolvedValue(null);
   mocks.expiring.mockResolvedValue(42);
   mocks.throughput.mockResolvedValue(throughputOf());
+  mocks.autoToday.mockResolvedValue({ day: '2026-10-22', kept: 0, held: 0, undone: 0 });
   mocks.options.mockResolvedValue({ latestCampaignId: 4, reviewers: [{ key: 'abcllm|[MLX] gpt-oss-120b', provider: 'abcllm', model: '[MLX] gpt-oss-120b', count: 6_965 }],
     sources: [{ source: 'grok-cli-batch', count: 2_755 }] });
   mocks.runs.mockResolvedValue([{ id: 3, kind: 'close', action: 'keep', status: 'applying', planned: 120, note: '적체', createdBy: 'jr',
@@ -95,10 +99,38 @@ describe('정책 처리 화면', () => {
     expect(faster).not.toContain('메뉴 배지와 오늘 할 일에 보입니다');
   });
 
+  it('m1 자동 닫기 — 오늘(UTC) 자동 유지·숨김 수와 규칙, 자동 실행은 \'m1 자동 …\' 이름으로 목록에 서고 되돌리기 창이 무엇이 돌아가는지 말한다', async () => {
+    const auto = (action: 'keep' | 'hold') => ({ by: 'qwen-v2-auto', action, day: '2026-10-22', model: 'qwen3.8-flash-next', promptVersion: '2026-10-21.v2', minConfidence: 0.9 });
+    mocks.autoToday.mockResolvedValue({ day: '2026-10-22', kept: 37, held: 512, undone: 3 });
+    mocks.overview.mockResolvedValue({ campaign, counts: { openReject: 0, openNeedsReview: 0 }, held: 0, hold: DEFAULT_AUDIT_HOLD, paused: null, stalled: false, switchTo: null,
+      qwenAuto: { ...DEFAULT_QWEN_AUTO, auditSecondOpinion: { enabled: true, perTick: 10, scope: 'all', autoClose: true } } });
+    mocks.runs.mockResolvedValue([
+      { id: 12, kind: 'close', action: 'release', status: 'applied', planned: 512, note: '자동', createdBy: 'qwen-v2-auto', createdAt: new Date('2026-10-22T01:00:00Z'),
+        appliedAt: new Date('2026-10-22T01:00:00Z'), undoBy: null, undoneAt: null, filterText: 'Qwen-v2 거절 → 숨김', options: { auto: auto('hold') },
+        counts: { applied: 509, undone: 3 }, auto: auto('hold') },
+      { id: 11, kind: 'close', action: 'keep', status: 'applied', planned: 37, note: '자동', createdBy: 'qwen-v2-auto', createdAt: new Date('2026-10-22T01:00:00Z'),
+        appliedAt: new Date('2026-10-22T01:00:00Z'), undoBy: null, undoneAt: null, filterText: 'Qwen-v2 승인 → 유지', options: { auto: auto('keep') },
+        counts: { applied: 37 }, auto: auto('keep') }]);
+    const html = renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }));
+    expect(mocks.autoToday).toHaveBeenCalled();
+    const panel = html.slice(html.indexOf('id="audit-auto-close-title"'), html.indexOf('id="audit-policy-runs-title"'));
+    expect(panel).toContain('m1 자동 닫기');
+    expect(panel).toMatch(/자동 유지 <b[^>]*>37<\/b>/);
+    expect(panel).toMatch(/자동 숨김 <b[^>]*>512<\/b>/);
+    expect(panel).toMatch(/그중 되돌림 (<!-- -->)?3/);
+    expect(panel).toContain('아무것도 내리지 않습니다');
+    expect(html).toContain('정책 #12 · m1 자동 숨김 · 2026-10-22(UTC)');
+    expect(html).toContain('정책 #11 · m1 자동 유지 · 2026-10-22(UTC)');
+    // 못 읽어도 화면은 그린다
+    mocks.autoToday.mockRejectedValue(new Error('db'));
+    expect(renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }))).toContain('m1 자동 닫기');
+  });
+
   it('다른 탭에서는 정책 데이터를 읽지 않는다', async () => {
     await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'history' }) }).catch(() => null);
     expect(mocks.options).not.toHaveBeenCalled();
     expect(mocks.runs).not.toHaveBeenCalled();
+    expect(mocks.autoToday).not.toHaveBeenCalled();
   });
 });
 
@@ -218,7 +250,7 @@ describe('정책 거르기·표본', () => {
     expect(describePolicyFilter(filter, { branch: (key) => key })).toBe('확신 0.95 이상 · 보류 중 · 2차 두 모델 모두 거절(보류에 세는 거절)');
     expect(describePolicyFilter(EMPTY_POLICY_FILTER, { branch: (key) => key })).toBe('열린 거절 전체');
     const grouped = new Set(Object.values(ACTION_GROUPS).flatMap((group) => [...group.actions] as string[]));
-    for (const action of ['audit-policy-apply', 'audit-policy-undo']) {
+    for (const action of ['audit-policy-apply', 'audit-policy-undo', 'audit-auto-keep', 'audit-auto-hold']) {
       expect(ACTION_LABELS[action]).toBeTruthy();
       expect(grouped.has(action)).toBe(true);
     }

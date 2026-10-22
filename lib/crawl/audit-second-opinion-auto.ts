@@ -1,14 +1,18 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditItems, productAuditSecondOpinions,
-  products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
-import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditCampaigns, productAuditItems,
+  productAuditPolicyRunItems, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
+import { lockProductGeneration } from "@/lib/domain/products/generation";
+import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import type { JobContext } from "@/lib/jobs/runner";
 import { logger } from "@/lib/observability/logger";
 import type { ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
-import { auditItemModel, holdCandidate } from "./product-audit-hold";
+import { AUTO_CLOSE_MIN_CONFIDENCE, autoClosableSql, autoCloseOpinion, autoCloseToday, type AutoCloseResult, type AutoCloseToday } from "./audit-auto-close";
+import { openAuditRejectUniverse } from "./audit-policy";
+import { AUDIT_HOLD_PURGE, AUDIT_HOLD_SWEEP_BATCH, AUDIT_RELEASE_PURGE, auditItemModel, holdCandidate } from "./product-audit-hold";
+import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
 import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, readQwenEndpointBackoff,
   withQwenSecondarySlot } from "./qwen-endpoint-backoff";
@@ -16,16 +20,20 @@ import { loadAuditInput } from "./product-audit";
 import { applyPublishedAutoOpinion, type PublishedAutoResult } from "./published-second-review";
 import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, reviewWithQwenDirect,
   type QwenDirectReview } from "./qwen-direct-review";
-import type { AuditHoldSettings } from "./settings";
-import type { CrawlSettings } from "./settings-schema";
+import { lockedSettings, type AuditHoldSettings } from "./settings";
+import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
 
 /**
  * Qwen-v2 자동 단계(2026-10-21) — 감사 잡(jobs/product-audit.ts)이 틱마다 감사 묻기와 나란히 한 번 돈다. gpu3090 의 Qwen 을 게이트웨이 밖에서
  * 바로 부르므로(qwen-direct-review.ts) 게이트웨이 자리·공통 슬롯을 쓰지 않는다(M3 DeepSeek 과 같다). 한 번에 한 호출이다.
  *
- * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 보류 후보(확신 문턱 이상·주인 없음·사람 결정 없음·그 제품의 마지막 항목, 이미 보류된 것 포함)
- *    가운데 이 모델·이 판의 의견이 없는 것을 묻고, grok 옮겨 적기와 같은 쓰기(writeAuditSecondOpinions — 덮어쓰기·보류 다시 가르기·승인이면 풀기)로
- *    출처 qwen-v2-auto 를 적는다. 거절은 쓸기가 다음 틱부터 분당 20건씩 건다(Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
+ * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 묻는 범위(scope)는 지금 감사의 열린 AI 거절 전부(all — 감사 화면·정책 처리의 대상,
+ *    공개 상태·사람 결정 없음, 주인 있는 것과 확신 0.95 아래 포함) 또는 보류 후보만(hold — 확신 문턱 이상·주인 없음·그 제품의 마지막 항목, 이미 보류된 것 포함).
+ *    그 가운데 이 모델·이 판의 의견이 없는 것을 지금 보류의 까닭인 것 → 보류 후보 → 첫 감사의 확신 높은 것 → id 차례로 묻고, grok 옮겨 적기와 같은 쓰기
+ *    (writeAuditSecondOpinions — 덮어쓰기·보류 다시 가르기·승인이면 풀기)로 출처 qwen-v2-auto 를 적는다. autoClose 면 같은 커밋에서 그 답으로 닫는다
+ *    (audit-auto-close.ts — 승인은 유지, 주인 없는 것의 거절은 숨김, 그 밖은 열어 둠). 답으로 닫기 전에 받아 둔 이 판의 답(다시 묻지 않는다)은
+ *    따라잡기(catchUpAutoClose)가 모델을 부르지 않고 틱마다 조금씩 그 답으로 닫는다. 아니면 거절은 쓸기가 다음 틱부터 분당 20건씩 건다
+ *    (Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
  *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
  *    coalesce(ai_model, 그 감사가 시작할 때의 model)이 같은 모델 — 0112 전 답은 ai_model 이 비어 있고 시작 모델이 답했다).
  * 2. 공개분 2차 거르기(qwenAuto.publishedFilter, 기본 꺼짐): 공개분 2차가 사람 확인(needs_human)으로 넘긴 행 가운데 이 모델·이 판의 판단이 없는 것을
@@ -53,6 +61,8 @@ export const QWEN_AUTO_CALL_TIMEOUT_MS = 45_000;
 /** 새 호출을 시작할 수 있는 틱의 남은 시간 — 부하 중 p95 쯤. 더 짧으면 제한 시간을 그 안으로 줄인다 */
 export const QWEN_AUTO_MIN_START_MS = 15_000;
 const WRITE_MARGIN_MS = 2_000;
+/** 이미 받은 답으로 닫는 따라잡기가 틱에서 쓰는 시간의 상한 — 모델을 부르지 않는다(보류 쓸기의 SWEEP_MS 와 같다) */
+const CATCH_UP_MS = 3_000;
 /** 항목만의 실패를 몇 번까지 다시 묻나 */
 export const QWEN_AUTO_ITEM_ATTEMPTS = 2;
 /** 관측에 남기는 항목 실패의 수 — 넘으면 오래된 것부터 버린다 */
@@ -71,24 +81,35 @@ export type QwenAutoObservation = {
 };
 
 export type QwenAutoTally = {
-  audit: { asked: number; approve: number; reject: number; needsReview: number; released: number; skipped: number };
+  audit: { asked: number; approve: number; reject: number; needsReview: number; released: number; skipped: number;
+    /** 답으로 닫은 것(audit-auto-close.ts) — 유지·숨김. caughtUp 은 그중 이미 받아 둔 답으로 닫은 것(모델을 부르지 않음) */
+    autoKept: number; autoHeld: number; caughtUp: number };
   published: { asked: number; kept: number; noted: number; skipped: number };
   failed: number; endpointError: string | null;
 };
 
-const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0 },
+const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null });
 
 /** 앞의 게이트웨이 자리 표시('[gpu3090] ')를 뗀 소문자 모델 이름 — second-opinion-rules.ts sameOpinionModel 과 같다 */
 const bareModel = (model: SQL) => sql`lower(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''))`;
 const bareModelValue = (model: string) => model.trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
 
+/** 지금(마지막) 감사 — 감사 화면·정책 처리가 보는 감사와 같다. 끝난 뒤에도 그 감사의 열린 거절을 묻는다 */
+const latestCampaign = sql`(select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`;
+
+/** 묻는 범위 — all: 지금 감사의 열린 AI 거절 전부(정책 처리의 대상과 같다), hold: 보류 후보(holdCandidate) */
+function auditScope(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">): SQL {
+  return scope === "hold" ? holdCandidate("i", "p", hold.minConfidence)
+    : sql`(i.product_id = p.id and ${openAuditRejectUniverse(latestCampaign)})`;
+}
+
 /**
- * 물을 감사 항목 — 보류 후보(holdCandidate)이고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
- * 수집 원본이 있다(loadAuditInput 이 입력을 만들 수 있다). 지금 보류의 까닭인 항목 먼저 — 승인이면 목록에 돌아온다 — 그다음 오래된 것부터
+ * 물을 감사 항목 — 범위(auditScope)에 들고, 이 모델·이 판의 의견이 없고, 감사 답을 낸 심사자·시도가 같은 모델이 아니며(같은 모델 규칙),
+ * 수집 원본이 있다(loadAuditInput 이 입력을 만들 수 있다)
  */
-function auditOpinionWanted(hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
-  return sql`${holdCandidate("i", "p", hold.minConfidence)}
+function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">, model: string, skip: readonly number[]): SQL {
+  return sql`${auditScope(scope, hold)}
     and not exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.model = ${model}
       and o.prompt_version = ${QWEN_V2_PROMPT_VERSION})
     and coalesce(i.ai_provider, '') <> ${QWEN_AUDIT_PROVIDER} and ${bareModel(auditItemModel("i"))} <> ${bareModelValue(model)}
@@ -98,11 +119,16 @@ function auditOpinionWanted(hold: Pick<AuditHoldSettings, "minConfidence">, mode
     ${skip.length ? sql`and i.id not in (${sql.join(skip.map((id) => sql`${id}`), sql`, `)})` : sql``}`;
 }
 
-async function auditTargets(hold: AuditHoldSettings, model: string, skip: readonly number[], limit: number): Promise<AuditTarget[]> {
+/**
+ * 묻는 차례 — 지금 보류의 까닭인 항목(승인이면 목록에 돌아온다) → 보류 후보(거절이면 쓸기·자동 숨김이 곧 건다) → 첫 감사의 확신 높은 것 → id.
+ * 한 틱에 limit(perTick) 건까지 — 공개분 2차 거르기와 번갈아 한 줄로 서고(interleave), 갈림 판가름·보류 재심사와는 두 번째 자리를 한 호출씩 나눠 쓴다
+ */
+async function auditTargets(scope: AuditOpinionScope, hold: AuditHoldSettings, model: string, skip: readonly number[], limit: number): Promise<AuditTarget[]> {
   const rows = await db.execute<{ item_id: number; product_id: number; slug: string }>(sql`
     select i.id as item_id, p.id as product_id, p.slug from ${productAuditItems} i, ${products} p
-     where ${auditOpinionWanted(hold, model, skip)}
-     order by coalesce(p.audit_hold_item_id = i.id, false) desc, i.id limit ${limit}`);
+     where ${auditOpinionWanted(scope, hold, model, skip)}
+     order by coalesce(p.audit_hold_item_id = i.id, false) desc, (${holdCandidate("i", "p", hold.minConfidence)}) desc,
+       i.ai_confidence desc nulls last, i.id limit ${limit}`);
   return rows.map((row) => ({ kind: "audit", key: `a:${row.item_id}`, itemId: row.item_id, productId: row.product_id, slug: row.slug }));
 }
 
@@ -208,7 +234,6 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     ctx.log("qwen_second_opinion.backoff", { skipped: true });
     return;
   }
-  const startedAt = Date.now();
   const config = qwenDirectConfig();
   const observation = await readQwenAutoObservation(config?.model ?? "");
   const now = () => new Date().toISOString();
@@ -218,10 +243,13 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       target: audit.enabled ? "audit" : "published", at: now() } });
     return;
   }
+  // 답으로 닫기 전에 받아 둔 이 판의 답(배포 전·꺼 두었던 동안)으로 먼저 닫는다 — 모델을 부르지 않고 시작 창(STEP_MS) 밖에서
+  if (audit.enabled && audit.autoClose) await catchUpAutoClose(ctx, lease, settings, config.model, tally);
+  const startedAt = Date.now();
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
   const queue = interleave(
     published.enabled ? await publishedTargets(config.model, given("p:"), published.perTick) : [],
-    audit.enabled ? await auditTargets(settings.auditHold, config.model, given("a:"), audit.perTick) : [],
+    audit.enabled ? await auditTargets(audit.scope, settings.auditHold, config.model, given("a:"), audit.perTick) : [],
   );
   if (!queue.length) return;
   // 새 호출은 시작 창(STEP_MS) 안에서 틱 끝까지 15초 이상 남을 때만, 그리고 누가 서버 탈을 만나 함께 쓰는 물러나기가 걸리면 곧바로 멈춘다.
@@ -283,7 +311,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     await noteQwenEndpointSuccess(callStartedAt);
     delete observation.failures[target.key];
     observation.lastSuccessAt = now();
-    const written = target.kind === "audit" ? await writeAudit(target, review, input, lease, tally)
+    const written = target.kind === "audit" ? await writeAudit(target, review, input, lease, tally, audit.autoClose)
       : await writePublished(target, review, input, lease, tally);
     // 쓰는 순간 그 단계가 꺼져 있었다 — 이 틱의 나머지는 부르지 않는다
     if (written === "switched_off") break;
@@ -291,26 +319,77 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     if (written === "not_open") failItem(target, "not_open");
   }
   if (!ran) return;
-  ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, publishedAsked: tally.published.asked,
+  ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, auditKept: tally.audit.autoKept,
+    auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, publishedAsked: tally.published.asked,
     publishedKept: tally.published.kept, failed: tally.failed, endpointError: tally.endpointError !== null });
   await saveObservation(lease, { ...observation, lastRunAt: now() });
 }
 
-async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease, tally: QwenAutoTally):
+/**
+ * 한 답을 적는다 — close(이 틱이 읽은 autoClose)면 같은 트랜잭션에서 그 답으로 닫는다. 스위치는 쓰는 트랜잭션이 잠근 설정 행에서 다시 본다
+ * (이 틱의 값이 꺼짐이면 세대·항목을 잡지 않고 옛 길로만 적는다 — 그 사이 켠 것은 다음 틱부터)
+ */
+async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease, tally: QwenAutoTally, close: boolean):
   Promise<"written" | "not_open" | "switched_off"> {
   const { outcome } = review;
   const result = await writeAuditSecondOpinions(db, [{ itemId: target.itemId, productId: target.productId, model: review.model,
     decision: outcome.decision, confidence: outcome.confidence ?? null, reason: outcome.reason?.trim().slice(0, 2_000) || null,
     inputHash: input.inputHash, promptVersion: review.promptVersion }], { dryRun: false, source: QWEN_V2_AUTO_SOURCE, lease,
-    auto: { actor: QWEN_V2_AUTO_ACTOR } });
+    auto: { actor: QWEN_V2_AUTO_ACTOR, close } });
   tally.audit.asked += 1;
   if (result.skipped.switched_off) { tally.audit.skipped += 1; return "switched_off"; }
   if (result.inserted + result.updated === 0) { tally.audit.skipped += 1; return "not_open"; }
   tally.audit.released += result.released;
+  tally.audit.autoKept += result.autoClose?.kept ?? 0;
+  tally.audit.autoHeld += result.autoClose?.held ?? 0;
   if (outcome.decision === "approve") tally.audit.approve += 1;
   else if (outcome.decision === "reject") tally.audit.reject += 1;
   else tally.audit.needsReview += 1;
   return "written";
+}
+
+/**
+ * 이미 받은 답으로 닫는 따라잡기 — 이 모델·이 판의 자동 의견이 있어 다시 묻지 않는 열린 거절 가운데(묻는 범위 그대로) 그 답으로 닫을 수 있는 것
+ * (autoClosableSql — autoCloseVerdict 와 같은 규칙)을 오래된 것부터 닫는다. 답으로 닫기 전(2026-10-22 배포 전·스위치를 꺼 두었던 동안)에 받은 답이다.
+ * 운영자가 되돌린 항목(정책 실행 항목이 되돌림·되돌리지 못함)은 다시 닫지 않는다.
+ * 한 틱에 보류 쓸기와 같은 수(지난 60초에 적힌 보류·풀기 지우기 줄만큼 뺀다)와 CATCH_UP_MS 안에서만. 제품 하나가 한 트랜잭션이고 잠금은
+ * 의견을 적는 쓰기와 같은 차례다: DR writer fence → stage → 제품 세대 → 감사 항목 → 설정 행 → 자동 실행 행 → 작업 lease
+ */
+async function catchUpAutoClose(ctx: JobContext<null>, lease: JobLease, settings: CrawlSettings, model: string, tally: QwenAutoTally): Promise<void> {
+  const startedAt = Date.now();
+  const [recent] = await db.select({ count: sql<number>`count(*)::int` }).from(cdnPurges).where(and(
+    sql`${cdnPurges.reason} in (${AUDIT_HOLD_PURGE}, ${AUDIT_RELEASE_PURGE})`, sql`${cdnPurges.createdAt} > now() - interval '60 seconds'`));
+  const room = Math.max(0, AUDIT_HOLD_SWEEP_BATCH - (recent?.count ?? 0));
+  if (room === 0) return;
+  const step = settings.qwenAuto.auditSecondOpinion;
+  const rows = await db.execute<{ item_id: number; product_id: number; slug: string; model: string; decision: string; confidence: number | null;
+    prompt_version: string | null }>(sql`
+    select i.id as item_id, p.id as product_id, p.slug, o.model, o.decision, o.confidence, o.prompt_version
+      from ${productAuditItems} i, ${products} p, ${productAuditSecondOpinions} o
+     where ${auditScope(step.scope, settings.auditHold)} and o.item_id = i.id and o.source = ${QWEN_V2_AUTO_SOURCE} and o.model = ${model}
+       and o.prompt_version = ${QWEN_V2_PROMPT_VERSION} and ${autoClosableSql(settings.auditHold.enabled)}
+       -- 운영자가 되돌린 것(자동 실행이든 정책 실행이든)은 같은 답으로 다시 닫지 않는다 — 되돌림은 '사람이 본다'는 뜻이다
+       and not exists (select 1 from ${productAuditPolicyRunItems} ri where ri.item_id = i.id and ri.state in ('undone', 'undo_blocked'))
+     order by i.id limit ${room}`);
+  for (const row of rows) {
+    if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > CATCH_UP_MS) break;
+    const outcome = await withJobLeaseWrite(lease, async (tx): Promise<AutoCloseResult | null> => {
+      await lockPipelineInputStages(tx);
+      if (!(await lockProductGeneration(tx, row.product_id, row.slug))) return null;
+      await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(eq(productAuditItems.id, row.item_id)).for("update");
+      const locked = await lockedSettings(tx);
+      // 쓰는 순간 그 단계가 꺼졌으면 닫지 않는다(답으로 닫기는 autoCloseOpinion 이 잠근 값으로 본다)
+      const result = locked.qwenAuto.auditSecondOpinion.enabled ? await autoCloseOpinion(tx, { itemId: row.item_id, productId: row.product_id,
+        slug: row.slug, model: row.model, decision: row.decision, confidence: row.confidence, promptVersion: row.prompt_version,
+        actor: QWEN_V2_AUTO_ACTOR, settings: locked }) : null;
+      await assertJobLeaseAtWallTime(tx, lease);
+      return result;
+    });
+    if (outcome?.action === "kept") tally.audit.autoKept += 1;
+    else if (outcome?.action === "held") tally.audit.autoHeld += 1;
+    if (outcome?.action) tally.audit.caughtUp += 1;
+  }
+  if (tally.audit.caughtUp) ctx.log("qwen_second_opinion.caught_up", { caughtUp: tally.audit.caughtUp, candidates: rows.length });
 }
 
 async function writePublished(target: PublishedTarget, review: QwenDirectReview, input: ReviewInput, lease: JobLease,
@@ -326,7 +405,9 @@ async function writePublished(target: PublishedTarget, review: QwenDirectReview,
 
 export type QwenAutoStatus = {
   model: string | null; url: string | null; promptVersion: string;
-  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number };
+  audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean };
+  /** 오늘(UTC) 답으로 닫은 수(audit-auto-close.ts) — 유지·숨김(되돌린 것 포함)·되돌린 수, 그 확신 하한 */
+  autoClose: AutoCloseToday & { minConfidence: number };
   published: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; keptHour: number; keptDay: number; remaining: number };
   lastRunAt: string | null; lastSuccessAt: string | null; lastError: QwenAutoObservation["lastError"];
   /** 항목만의 실패로 더 묻지 않는 수 */
@@ -343,7 +424,7 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
   const model = config?.model ?? "";
   const observation = await readQwenAutoObservation(model);
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
-  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff] = await Promise.all([
+  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today] = await Promise.all([
     db.select({
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
@@ -359,14 +440,16 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
     }).from(secondReviews).where(and(sql`${secondReviews.autoOpinion} is not null`, sql`${secondReviews.autoOpinion}->>'model' = ${model}`,
       sql`${secondReviews.autoOpinion}->>'promptVersion' = ${QWEN_V2_PROMPT_VERSION}`)),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${productAuditItems} i, ${products} p
-      where ${auditOpinionWanted(hold, model, given("a:"))}`),
+      where ${auditOpinionWanted(steps.auditSecondOpinion.scope, hold, model, given("a:"))}`),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${secondReviews} s where ${publishedOpinionWanted(model, given("p:"))}`),
     readQwenEndpointBackoff().catch(() => null),
+    autoCloseToday(),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,
     audit: { enabled: steps.auditSecondOpinion.enabled, perTick: steps.auditSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
-      remaining: auditLeft?.count ?? 0 },
+      remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose },
+    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE },
     published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,

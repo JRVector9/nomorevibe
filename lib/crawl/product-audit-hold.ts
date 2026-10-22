@@ -81,9 +81,11 @@ export function unownedPublic(alias: string, options: { includeHeld?: boolean } 
  * 가린다: 중단됐거나 끝난 감사의 답 없는 항목(묻기 전에 멈춤·원본 없음·시도 소진)은 이제 답이 오지 않는다 — 옛 거절이 그대로 까닭이다.
  * 그 제품의 어느 항목이든 살아 있는 유지가 있으면 들지 않는다
  */
-function holdableItem(alias: string, minConfidence: number): SQL {
+function holdableItem(alias: string, minConfidence: number | null): SQL {
   const c = column(alias);
-  return sql`(${c("ai_decision")} = 'reject' and ${c("ai_confidence")} >= ${minConfidence}
+  // null: 확신을 보지 않는다 — Qwen-v2 자동 숨김(audit-auto-close.ts)은 두 번째 모델의 확신 높은 거절이 까닭이라 첫 감사의 확신과 상관없다
+  const confident = minConfidence === null ? sql`` : sql` and ${c("ai_confidence")} >= ${minConfidence}`;
+  return sql`(${c("ai_decision")} = 'reject'${confident}
     and ${c("human_decision")} is null and ${c("hold_released_at")} is null
     and not exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
       where n.product_id = ${c("product_id")} and n.id > ${c("id")} and (n.ai_decision is not null or nc.status = 'running'))
@@ -100,6 +102,16 @@ async function markOpenItemsReleased(tx: ProductTransaction, productIds: number[
   if (!productIds.length) return;
   await tx.update(productAuditItems).set({ holdReleasedAt: sql`now()` }).where(and(inArray(productAuditItems.productId, productIds),
     isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
+}
+
+/**
+ * 그 제품의 답이 있는 열린 항목 중 아직 '풀었음'이 없는 것 — 보류를 풀면 releaseAuditHold 가 '풀었음'을 적는 항목(정책 처리·자동 유지를
+ * 되돌릴 때 지운다)
+ */
+export async function unreleasedOpenItems(tx: ProductTransaction, productId: number): Promise<number[]> {
+  const rows = await tx.select({ id: productAuditItems.id }).from(productAuditItems).where(and(eq(productAuditItems.productId, productId),
+    isNull(productAuditItems.humanDecision), isNull(productAuditItems.holdReleasedAt), isNotNull(productAuditItems.aiDecision)));
+  return rows.map((row) => row.id);
 }
 
 /**
@@ -201,27 +213,34 @@ export function verdictMayHold(outcome: { decision: string; confidence?: number 
  * 조건이 그대로일 때만 걸고, 걸었으면 true. Cloudflare 지우기 줄(그 상세의 p-<slug> 와 lists)을 같은 커밋에 적는다 —
  * 상태가 바뀌지 않아 트리거(0057)가 적지 않는다.
  */
-export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId: number; productId: number; slug: string }): Promise<boolean> {
+export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId: number; productId: number; slug: string;
+  /**
+   * Qwen-v2 자동 숨김(audit-auto-close.ts) — 두 번째 모델의 확신 높은 거절이 까닭이라 둘째 문(holdGates)과 첫 감사의 확신 문턱을 보지 않는다.
+   * 나머지는 그대로다: 스위치(auditHold.enabled), 주인 없는 공개 제품·보류 없음(unownedPublic), 열린 거절·풀었음 없음·그 제품의 마지막 항목·
+   * 살아 있는 유지 없음(holdableItem). 제품 기록의 누가는 actor, 더 남길 것은 metadata(정책 실행 번호 등)
+   */
+  auto?: { actor: string; metadata: Record<string, unknown> } }): Promise<boolean> {
   const settings = await lockedSettings(tx);
   const hold = settings.auditHold;
   if (!hold.enabled) return false;
   const [item] = await tx.select({ campaignId: productAuditItems.campaignId, aiReason: productAuditItems.aiReason,
     aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items"), model: auditItemModel("product_audit_items") })
     .from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
-  const gates = item ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence }, hold,
+  const gates = item && !input.auto ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence }, hold,
     { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }) : null;
-  if (!item || !gates || (!gates.byCategory && !gates.bySecondOpinion)) return false;
+  if (!item || (!input.auto && (!gates || (!gates.byCategory && !gates.bySecondOpinion)))) return false;
   const [held] = await tx.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: input.itemId })
     .where(and(eq(products.id, input.productId), eq(products.slug, input.slug), unownedPublic("products"),
       sql`exists (select 1 from ${productAuditItems} i where i.id = ${input.itemId} and i.product_id = ${input.productId}
-        and ${holdableItem("i", hold.minConfidence)})`))
+        and ${holdableItem("i", input.auto ? null : hold.minConfidence)})`))
     .returning({ id: products.id });
   if (!held) return false;
-  await tx.insert(productEvidenceAudit).values({ slug: input.slug, actor: AUDIT_HOLD_ACTOR, action: AUDIT_HOLD_ACTION,
-    reason: `ai_reject · audit:${classifyAuditReason(item.aiReason)}`,
+  const category = classifyAuditReason(item.aiReason);
+  await tx.insert(productEvidenceAudit).values({ slug: input.slug, actor: (input.auto?.actor ?? AUDIT_HOLD_ACTOR).slice(0, 120), action: AUDIT_HOLD_ACTION,
+    reason: `${input.auto ? "second_reject" : "ai_reject"} · audit:${category}`,
     metadata: { itemId: input.itemId, campaignId: item.campaignId, aiConfidence: item.aiConfidence, minConfidence: hold.minConfidence,
       // 어느 문으로 걸렸나 — 두 번째 모델이 승인하지 않은 허용 갈래인지, 두 번째 모델도 거절했는지. 그 거절을 낸 감사 모델(0112)
-      category: classifyAuditReason(item.aiReason), auditModel: item.model, ...gates } });
+      category, auditModel: item.model, ...(gates ?? { byCategory: false, bySecondOpinion: true, auto: true }), ...input.auto?.metadata } });
   await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_HOLD_PURGE });
   return true;
 }

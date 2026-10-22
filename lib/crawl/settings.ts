@@ -6,6 +6,7 @@ import { logger } from "@/lib/observability/logger";
 import { adminAuditRow, settingsChanges, type ActorKind } from "@/lib/operations/admin-log";
 import {
   auditHoldSchema,
+  auditSecondOpinionSchema,
   crawlSettingsSchema,
   DEFAULT_CRAWL_SETTINGS,
   DEFAULT_QWEN_AUTO,
@@ -89,7 +90,7 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
 }
 
 const QWEN_AUTO_STEP_SCHEMAS = {
-  auditSecondOpinion: qwenAutoStepSchema, publishedFilter: qwenAutoStepSchema, splitTiebreak: splitTiebreakSchema, heldRetry: heldQwenRetrySchema,
+  auditSecondOpinion: auditSecondOpinionSchema, publishedFilter: qwenAutoStepSchema, splitTiebreak: splitTiebreakSchema, heldRetry: heldQwenRetrySchema,
 } as const satisfies Record<QwenAutoStep, unknown>;
 
 const plainObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -382,16 +383,17 @@ export type QwenAutoStepResult<K extends QwenAutoStep = QwenAutoStep> =
   { ok: true; step: K; before: QwenAutoSettings[K]; after: QwenAutoSettings[K]; dryRun: boolean } | { ok: false; issues: string[] };
 
 /**
- * 사람 없이 정하는 일을 넓히는 바꿈인가 — 켬, 또는 켜 둔 채 틱당 수·시간 예산·하루 자동 거부 상한을 올리거나 맡는 사유를 더하는 것.
- * 넓히는 바꿈은 까닭을 꼭 받는다(좁히는 바꿈은 받지 않는다)
+ * 사람 없이 정하는 일을 넓히는 바꿈인가 — 켬, 또는 켜 둔 채 틱당 수·시간 예산·하루 자동 거부 상한을 올리거나 맡는 사유를 더하는 것,
+ * 감사 두 번째 의견의 범위를 열린 거절 전부(all)로 넓히거나 답으로 닫기(autoClose)를 켜는 것. 넓히는 바꿈은 까닭을 꼭 받는다(좁히는 바꿈은 받지 않는다)
  */
-function qwenAutoWidens(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+export function qwenAutoWidens(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
   if (after.enabled !== true) return false;
   if (before.enabled !== true) return true;
   const raised = (key: string) => typeof after[key] === "number" && typeof before[key] === "number" && (after[key] as number) > (before[key] as number);
   const added = Array.isArray(after.reasons) && Array.isArray(before.reasons)
     && after.reasons.some((reason) => !(before.reasons as unknown[]).includes(reason));
-  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added;
+  const wider = (after.scope === "all" && before.scope !== "all") || (after.autoClose === true && before.autoClose !== true);
+  return raised("perTick") || raised("budgetSeconds") || raised("dailyRejectCap") || added || wider;
 }
 
 /**
@@ -437,7 +439,7 @@ export async function setQwenAutoStep<K extends QwenAutoStep>(input: {
     const after = parsed.data as QwenAutoSettings[K];
     if (qwenAutoWidens(before as Record<string, unknown>, after as Record<string, unknown>) && !reason) {
       await audit(false, "reason_required");
-      return { ok: false, issues: ["사람 없이 정하는 일을 켜거나 넓히는 바꿈(켬·틱당 수·예산·상한 올림·사유 더함)은 까닭을 적어야 합니다."] };
+      return { ok: false, issues: ["사람 없이 정하는 일을 켜거나 넓히는 바꿈(켬·틱당 수·예산·상한 올림·사유 더함·범위 넓힘·답으로 닫기 켬)은 까닭을 적어야 합니다."] };
     }
     if (input.dryRun) return { ok: true, step: input.step, before, after, dryRun: true };
     // 이 단계의 칸만 바꾼다 — 행의 다른 칸이 깨져 있어도 끄기는 되어야 하고, 깨진 칸·없는 단계를 기본값으로 채우지 않는다

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { mergeWithDefaults, settingsFormVersion, storedAuditHold, storedQwenAuto } from "@/lib/crawl/settings";
-import { auditHoldSchema, crawlSettingsSchema, DEFAULT_AUDIT_HOLD, DEFAULT_CRAWL_SETTINGS, DEFAULT_QWEN_AUTO, QWEN_AUTO_STEPS, type QwenAutoSettings } from "@/lib/crawl/settings-schema";
+import { mergeWithDefaults, qwenAutoWidens, settingsFormVersion, storedAuditHold, storedQwenAuto } from "@/lib/crawl/settings";
+import { auditHoldSchema, crawlSettingsSchema, DEFAULT_AUDIT_HOLD, DEFAULT_CRAWL_SETTINGS, DEFAULT_QWEN_AUTO, QWEN_AUTO_STEPS, qwenAutoStepSchema,
+  type QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import * as originMain from "./fixtures/settings-schema-55389b48";
 
 /**
@@ -8,7 +9,7 @@ import * as originMain from "./fixtures/settings-schema-55389b48";
  * 읽고 쓰는 배포·되돌림에서 감사 보류가 깨지지 않고, 옛 코드가 지운 자동 단계가 켬으로 되살아나지 않는다.
  */
 const enabledEverywhere: QwenAutoSettings = {
-  auditSecondOpinion: { enabled: true, perTick: 7 }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
+  auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
   heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] },
 };
 /** 새 코드가 운영자 문턱을 바꾸고 네 단계를 켠 뒤 저장한 행 — saveSettings 는 파싱한 설정 전체를 쓴다 */
@@ -77,6 +78,43 @@ describe("storedQwenAuto — 없거나 깨지면 그 단계만 꺼짐", () => {
   it("크롤 설정 폼의 판에 들지 않는다 — 스위치를 눌러도 열린 폼이 거절되지 않는다", () => {
     const off = DEFAULT_CRAWL_SETTINGS;
     expect(settingsFormVersion({ ...off, qwenAuto: enabledEverywhere })).toBe(settingsFormVersion(off));
+  });
+});
+
+describe("감사 두 번째 의견의 범위·답으로 닫기(2026-10-22)", () => {
+  it("기본은 열린 거절 전부·답으로 닫기 켬 — 단계 자체는 꺼짐", () => {
+    expect(DEFAULT_QWEN_AUTO.auditSecondOpinion).toEqual({ enabled: false, perTick: 10, scope: "all", autoClose: true });
+  });
+
+  it("빠진 범위·닫기 칸은 새 기본값으로 읽는다 — 운영 행({enabled, perTick})이 배포만으로 새 기본을 탄다(켬·틱당 수는 그대로)", () => {
+    expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 10 } } }).auditSecondOpinion)
+      .toEqual({ enabled: true, perTick: 10, scope: "all", autoClose: true });
+    expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 4, scope: "hold" } } }).auditSecondOpinion)
+      .toEqual({ enabled: true, perTick: 4, scope: "hold", autoClose: true });
+    expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: { enabled: true, perTick: 4, autoClose: false } } }).auditSecondOpinion)
+      .toEqual({ enabled: true, perTick: 4, scope: "all", autoClose: false });
+  });
+
+  it("범위·닫기 칸이 깨지면 그 단계만 꺼진다", () => {
+    for (const broken of [{ enabled: true, perTick: 4, scope: "everything" }, { enabled: true, perTick: 4, autoClose: "yes" }]) {
+      expect(storedQwenAuto({ qwenAuto: { auditSecondOpinion: broken } }).auditSecondOpinion, JSON.stringify(broken)).toEqual(DEFAULT_QWEN_AUTO.auditSecondOpinion);
+    }
+    // 공개분 2차 거르기는 범위·닫기 칸을 모른다(strict) — 옮겨 적으면 그 단계가 꺼진다
+    expect(storedQwenAuto({ qwenAuto: { publishedFilter: { enabled: true, perTick: 4, scope: "all" } } }).publishedFilter.enabled).toBe(false);
+  });
+
+  it("이 칸을 모르는 옛 코드(strict)는 새 칸이 저장된 단계를 깨진 것(꺼짐)으로 읽는다 — 켜지는 쪽으로 틀리지 않는다", () => {
+    expect(qwenAutoStepSchema.safeParse({ enabled: true, perTick: 10, scope: "all", autoClose: true }).success).toBe(false);
+  });
+
+  it("범위를 넓히거나 답으로 닫기를 켜는 바꿈은 넓히는 바꿈이다(까닭을 받는다) — 좁히는 바꿈은 아니다", () => {
+    const on = { enabled: true, perTick: 10, scope: "hold", autoClose: false };
+    expect(qwenAutoWidens(on, { ...on, scope: "all" })).toBe(true);
+    expect(qwenAutoWidens(on, { ...on, autoClose: true })).toBe(true);
+    expect(qwenAutoWidens({ ...on, scope: "all", autoClose: true }, on)).toBe(false);
+    expect(qwenAutoWidens(on, { ...on, perTick: 5 })).toBe(false);
+    // 끄는 바꿈은 넓히지 않는다
+    expect(qwenAutoWidens(on, { ...on, enabled: false, scope: "all", autoClose: true })).toBe(false);
   });
 });
 

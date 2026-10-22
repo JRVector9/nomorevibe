@@ -125,10 +125,14 @@ const vote = async (slug: string, model: string, decision: "approve" | "reject" 
   await db.insert(productAuditSecondOpinions).values({ itemId: row.id, productId: row.productId, model, decision, confidence: 0.9,
     reason: "earlier", source: promptVersion ? "qwen-v2-auto" : "grok-cli-batch", promptVersion });
 };
-/** Qwen-v2 자동 단계 하나를 바꾼다 — 화면·운영 스크립트와 같은 setter(compare-and-set·켤 때 사유) */
+/**
+ * Qwen-v2 자동 단계 하나를 바꾼다 — 화면·운영 스크립트와 같은 setter(compare-and-set·켤 때 사유). 이 파일은 감사 두 번째 의견의 옛 범위
+ * (보류 후보만)·답으로 닫기 끔을 본다 — 열린 거절 전부·답으로 닫기는 audit-auto-close.test.ts 가 본다
+ */
 const turn = async (step: "auditSecondOpinion" | "publishedFilter", next: { enabled: boolean; perTick: number }, reason = "테스트") => {
   const expected = (await getSettings()).qwenAuto[step];
-  return setQwenAutoStep({ step, next, expected, actor: "jr", reason });
+  const value = step === "auditSecondOpinion" ? { scope: "hold" as const, autoClose: false, ...next } : next;
+  return setQwenAutoStep({ step, next: value as never, expected, actor: "jr", reason });
 };
 const readStatus = async () => qwenSecondOpinionStatus(await getSettings());
 
@@ -173,7 +177,7 @@ describe("감사 두 번째 의견", () => {
     expect(hold.metadata).toMatchObject({ category: "content", byCategory: false, bySecondOpinion: true });
 
     const status = await readStatus();
-    expect(status.audit).toEqual({ enabled: true, perTick: 10, lastHour: 2, lastDay: 2, remaining: 0 });
+    expect(status.audit).toEqual({ enabled: true, perTick: 10, lastHour: 2, lastDay: 2, remaining: 0, scope: "hold", autoClose: false });
     expect(status).toMatchObject({ model: "qwen3.8-flash-next", url: "http://100.77.43.63:8090/v1", promptVersion: "2026-10-21.v2", lastError: null });
   });
 
