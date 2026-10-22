@@ -11,7 +11,7 @@ export function JobControl({ name, paused, notBefore, version, csrf }: { name: s
   const [shown] = useState({ paused, notBefore, version });
   const changed = shown.paused !== paused || shown.notBefore !== notBefore || shown.version !== version;
   const router = useRouter();
-  return <form className="mt-4 space-y-2 border-t border-line pt-3" onSubmit={event => {
+  return <form data-dirty={reason.trim() ? true : undefined} className="mt-4 space-y-2 border-t border-line pt-3" onSubmit={event => {
     event.preventDefault();
     if (changed) return;
     start(async () => {
