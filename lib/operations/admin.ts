@@ -7,6 +7,7 @@ import { WITHOUT_JOB_DEFERRALS } from '@/lib/jobs/deferral-observation';
 import { WITHOUT_JOB_TALLIES } from '@/lib/jobs/tally';
 import { serviceInstancesFromObservations } from './instance';
 import { adminAuditRow } from './admin-log';
+import { adminJobControlVersions } from './admin-job-control';
 export async function requestAdminJob(name:string,actor:string) {
   if(name==='heartbeat'||!JOB_NAMES.includes(name))throw new Error('실행 요청할 수 없는 작업입니다.');
   return db.transaction(async tx=>{
@@ -24,11 +25,12 @@ export async function operationsData() {
   // 미룸(defer:)·수집기 누적(job-tally:)은 따로 읽는다 — 이 목록은 브라우저(운영센터 상세)까지 간다
   const observations=await db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS,WITHOUT_JOB_TALLIES));
   const dbLatencyMs=Date.now()-start;
-  const [audit,held]=await Promise.all([
+  const [audit,held,jobControlVersions]=await Promise.all([
     db.select().from(operationsAudit).orderBy(desc(operationsAudit.createdAt)).limit(20),
     // 보류는 1시간 뒤 저절로 다시 분류한다 — 가장 이른 재시도 시각을 함께 낸다(화면이 "사람이 지정해야"로만 읽혔다)
     db.select({count:sql<number>`count(*)::int`,nextRetryAt:sql`min(${categoryDecisions.retryAt}) filter (where ${categoryDecisions.retryAt} > now())`.mapWith(categoryDecisions.retryAt)}).from(categoryDecisions).where(sql`category is null and exists(select 1 from crawl_candidates c where c.repo=${categoryDecisions.repo} and c.state='approved')`),
+    adminJobControlVersions(),
   ]);
   const serialized=observations.map(row=>({...row,observedAt:row.observedAt.toISOString()}));
-  return {fetchedAt:new Date().toISOString(),observations:serialized,serviceInstances:serviceInstancesFromObservations(serialized),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count,heldNextRetryAt:held[0].nextRetryAt?held[0].nextRetryAt.toISOString():null};
+  return {fetchedAt:new Date().toISOString(),observations:serialized,serviceInstances:serviceInstancesFromObservations(serialized),dbLatencyMs,audit:audit.map(row=>({...row,createdAt:row.createdAt.toISOString()})),held:held[0].count,heldNextRetryAt:held[0].nextRetryAt?held[0].nextRetryAt.toISOString():null,jobControlVersions};
 }

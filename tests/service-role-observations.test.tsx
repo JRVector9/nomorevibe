@@ -105,7 +105,7 @@ describe("operations center: service observation rows", () => {
     params.value = query;
     const { OperationsCenter } = await import("@/app/(operator)/admin/status/OperationsCenter");
     const data = { fetchedAt: new Date(NOW).toISOString(), observations: rows, serviceInstances: serviceInstancesFromObservations(rows),
-      dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null };
+      dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null, jobControlVersions: {} };
     return renderToStaticMarkup(<OperationsCenter jobs={jobs} data={data} reviewMode="first" enabled attention={null} dashboard={null}
       statusChips={null} diagnostics={null} manual={null} crawlers={null} splitRoles={splitRoles} />);
   }
