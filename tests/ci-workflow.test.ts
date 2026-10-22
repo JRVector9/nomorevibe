@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+import { findTestedRun } from "@/scripts/ci-reuse.mjs";
 
 /**
  * 필수 `check` 와 배포 스크립트가 기대는 CI 모양을 지킨다.
@@ -11,6 +12,7 @@ import { describe, expect, it } from "vitest";
 type Step = { name?: string; id?: string; uses?: string; run?: string; if?: string; env?: Record<string, string> };
 type Job = { needs?: string | string[]; if?: string; steps: Step[]; strategy?: { matrix?: { shard?: number[] } } };
 const workflow = parse(readFileSync(path.join(__dirname, "..", ".github/workflows/ci.yml"), "utf8")) as {
+  on: { pull_request: { types: string[] } };
   concurrency: { group: string; "cancel-in-progress": string };
   jobs: Record<string, Job>;
 };
@@ -25,7 +27,7 @@ describe("CI 워크플로", () => {
     expect(gated).toEqual(["build", "integration", "integration-ledger", "lint", "typecheck", "unit"]);
     expect(needs(jobs.check).sort()).toEqual(["scope", ...gated].sort());
     expect(jobs.check.if).toBe("always()");
-    const verdict = jobs.check.steps[0];
+    const verdict = jobs.check.steps.find((step) => step.name === "Required branch-protection result")!;
     for (const name of gated) expect(verdict.env?.TEST_RESULTS).toContain(`needs.${name}.result`);
     expect(verdict.run).toContain("true/false) [[ \"$REUSED_RUN\" =~ ^[0-9]+$ ]]; expected=skipped");
   });
@@ -72,5 +74,40 @@ describe("CI 워크플로", () => {
         if (step.uses && !step.uses.startsWith("./")) expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
       }
     }
+  });
+
+  it("draft PR 은 검사를 돌리지 않고 check 만 실패한다 — ready for review 로 바꾸면 전체 검사가 돈다", () => {
+    expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
+    expect(jobs.scope.if).toBe("github.event.pull_request.draft != true");
+    // scope 를 건너뛰면 따라서 건너뛰도록: check 말고는 모두 scope 를 기다리고, always() 로 건너뛰기를 무시하지 않는다
+    for (const [name, job] of Object.entries(jobs)) {
+      if (name === "scope" || name === "check") continue;
+      expect(needs(job), name).toContain("scope");
+      expect(job.if ?? "", name).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
+    }
+    // check 는 draft 에서도 돈다(if: always()) — 첫 단계가 실패해 초록 check 를 남기지 않고, 뒤 단계(트리 기록)는 돌지 않는다
+    expect(jobs.check.if).toBe("always()");
+    const [draft, ...rest] = jobs.check.steps;
+    expect(draft.if).toBe("github.event.pull_request.draft == true");
+    expect(draft.run).toContain("draft PR — CI not run; mark ready for review");
+    expect(draft.run).toContain("exit 1");
+    for (const step of rest) expect(step.if ?? "").not.toMatch(/always\(\)|failure\(\)/);
+  });
+
+  it("main 재사용은 check 가 실패한 실행(draft 실행 포함)을 근거로 쓰지 않는다", async () => {
+    const repo = "JRVector9/nomorevibe", sha = "a".repeat(40), tree = "b".repeat(40), head = "c".repeat(40);
+    const api = (checkConclusion: string) => async (url: string) => {
+      if (url.endsWith(`/commits/${sha}/pulls`)) return [{ number: 1, merge_commit_sha: sha, merged_at: "2026-10-22T00:00:00Z",
+        base: { ref: "main", repo: { full_name: repo } }, head: { sha: head, repo: { full_name: repo } } }];
+      if (url.includes("/actions/artifacts?name=")) return { artifacts: [{ name: `ci-tested-tree-${tree}`, expired: false,
+        workflow_run: { id: 7, head_sha: head, head_repository_id: 1, repository_id: 1 } }] };
+      if (url.endsWith("/actions/runs/7")) return { id: 7, event: "pull_request", path: ".github/workflows/ci.yml", head_sha: head,
+        repository: { full_name: repo }, head_repository: { full_name: repo } };
+      if (url.includes("/actions/runs/7/jobs")) return { jobs: [{ name: "check", status: "completed", conclusion: checkConclusion }] };
+      throw new Error(url);
+    };
+    const sleep = async () => {};
+    expect(await findTestedRun({ repo, sha, tree, api: api("failure"), sleep })).toEqual({ reason: "tested_run_not_successful" });
+    expect(await findTestedRun({ repo, sha, tree, api: api("success"), sleep })).toMatchObject({ runId: 7, prNumber: 1 });
   });
 });
