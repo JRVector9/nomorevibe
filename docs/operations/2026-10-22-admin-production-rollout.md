@@ -4,6 +4,10 @@
 2026-10-22 20:27 UTC(10-23 05:27 KST)에 M3·mini의 **15개 앱, 20개 컨테이너**를 확인했다.
 공개 서비스는 [nomorevibe.com](https://nomorevibe.com)이다. 이 배포 기록 이후의 문서 전용 main 변경은 운영 코드 SHA와 구분한다.
 
+같은 날 22:55 UTC에 읽기 전용 monitor 1개와 Oracle의 별도 Kuma 수신기를 추가했다.
+현재 16 Dokploy 앱/21컨테이너의 구성과 감시 드릴 결과는 [후속 감시 연결 기록](2026-10-22-worker-monitor-rollout.md)을 따른다.
+아래의 15앱/20컨테이너와 알림 미연결 설명은 20:27 UTC 배포 당시의 이력이다.
+
 ## 병합과 이미지
 
 - [#620](https://github.com/JRVector9/nomorevibe/pull/620): Vite 8.3.3 보안 패치.
@@ -70,7 +74,8 @@ Git 빌드 앱은 mini text·maintenance 2개를 먼저 함께 올리고, 모두
 - 문의·답장·잡 상태를 바꾸는 운영 시험이나 이메일/Telegram 전송은 하지 않았다. 문의함은 수동 접수이며 메일함 연동이 아니다.
 - 20:27:29 UTC DB 재확인: 화면 검수 enabled/autoClose true·**perTick 1**, auditHold **minConfidence 0.95**. 918건 파일을 실제 일괄 적용하지 않았다.
 - agent-scan·connect 앱의 autoDeploy만 migration 중 잠시 껐다가 **원래 true로 복원**했다. 그 밖의 설정은 보존했다.
-- 외부 monitor Push URL은 미설정이다. mini의 기존 독립 Uptime Kuma/Telegram 채널은 발견했지만 worker Push·M3/mini 밖 deadman 연결은 남아 있다.
+- 이 배포 시각에는 외부 monitor Push URL이 미설정이었다. mini의 기존 Uptime Kuma/Telegram 채널을 발견했고,
+  worker Push·M3/mini 밖 deadman 연결은 [후속 감시 연결 기록](2026-10-22-worker-monitor-rollout.md)에서 이어 진행했다.
 - 자동 HTML purge는 토큰이 없어 skipped였다. 관리자 페이지는 공개 CDN 캐시 대상이 아니며 공개 페이지의 기존 TTL은 유지했다.
 
 ## 실행 중 확인한 주의

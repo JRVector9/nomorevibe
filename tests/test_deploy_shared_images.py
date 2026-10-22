@@ -647,7 +647,7 @@ class OracleOfflineRoutingTests(unittest.TestCase):
 
 
 class FleetInventoryTests(unittest.TestCase):
-    """PR11d: read-only coverage of all 13 production Dokploy apps plus connect-agent; `run` stays the same 8 apps."""
+    """Read-only coverage of the 16-app fleet; the shared-image release stays at 8 apps by default."""
 
     def setUp(self):
         self.sha = 'b' * 40
@@ -656,7 +656,7 @@ class FleetInventoryTests(unittest.TestCase):
     REGISTERED_CONSUMERS = ('agent-scan-consumer-m3',)
 
     def fleet(self, release_tag=None):
-        return {short: {'sourceType': 'docker' if short in release.APPS or short in release.CONSUMER_APPS else 'github',
+        return {short: {'sourceType': 'docker' if short in release.APPS or short in release.CONSUMER_APPS or short in release.AUXILIARY_APPS else 'github',
                         'applicationStatus': 'done', 'replicas': 1,
                         'env': 'RELEASE_TAG=' + (release_tag or self.sha) + '\nSECRET_TOKEN=do-not-print\n', 'appName': 'service-' + short}
                 for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS}
@@ -676,9 +676,9 @@ class FleetInventoryTests(unittest.TestCase):
         client = FakeClient(self.fleet())
         result = release.inventory(client, self.sha)
         self.assertEqual(client.requests, [])
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (15, True, []))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (16, True, []))
         self.assertEqual({short: row['deployedBy'] for short, row in result['apps'].items()},
-                         {short: 'run' if short in release.APPS or short in release.CONSUMER_APPS else 'manual-git-build'
+                         {short: 'manual-docker' if short in release.AUXILIARY_APPS else 'run' if short in release.APPS or short in release.CONSUMER_APPS else 'manual-git-build'
                           for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS})
         self.assertNotIn('do-not-print', json.dumps(result))
         self.assertEqual((result['splitRoleApps'], result['oracle']), ('none_registered', 'outside_dokploy'))
@@ -703,6 +703,38 @@ class FleetInventoryTests(unittest.TestCase):
                                                           'serverId': release.M3[0], 'appName': 'app-text'}):
             self.assertEqual(client.app('text-m3')['name'], 'nomorevibe-text-m3')
 
+    def test_monitor_inventory_reports_a_stale_or_failed_auxiliary_without_exposing_push_urls(self):
+        for drift, pending in (({'env': 'RELEASE_TAG=' + 'a' * 40 + '\nPUSH_URL=https://receiver.invalid/private-token\n'}, ['monitor-m3']),
+                               ({'env': 'PUSH_URL=https://receiver.invalid/private-token\n'}, ['monitor-m3']),
+                               ({'applicationStatus': 'error'}, [])):
+            apps = self.fleet()
+            apps['monitor-m3'].update(drift)
+            client = FakeClient(apps)
+            with self.subTest(drift=tuple(drift)):
+                result = release.inventory(client, self.sha)
+                self.assertEqual(result['appCount'], 16)
+                self.assertFalse(result['complete'])
+                self.assertEqual(result['pending'], pending)
+                self.assertEqual(result['apps']['monitor-m3']['deployedBy'], 'manual-docker')
+                self.assertNotIn('private-token', json.dumps(result))
+                self.assertEqual(client.requests, [])
+
+    def test_monitor_identity_requires_its_registered_app_server_and_docker_monitor_stage(self):
+        self.assertEqual(release.app_metadata('monitor-m3'),
+                         ('WbGj-YxQGHNEoGElyTLBq', 'nomorevibe-monitor-m3', release.M3, 'monitor'))
+        identity = {'applicationId': 'WbGj-YxQGHNEoGElyTLBq', 'name': 'nomorevibe-monitor-m3', 'serverId': release.M3[0],
+                    'appName': 'nomorevibe-monitor-m3-7i7xmc', 'sourceType': 'docker', 'dockerBuildStage': 'monitor'}
+        client = release.Dokploy('unused-key')
+        with patch.object(client, 'request', return_value=identity) as request:
+            self.assertEqual(client.app('monitor-m3'), identity)
+            request.assert_called_once_with('application.one?applicationId=WbGj-YxQGHNEoGElyTLBq')
+        for drift in ({'applicationId': 'other-app'}, {'name': 'nomorevibe-crawler-m3'}, {'serverId': release.MINI[0]},
+                      {'sourceType': 'github'}, {'dockerBuildStage': 'worker'}, {'dockerBuildStage': 'runner'},
+                      {'dockerBuildStage': None}):
+            with self.subTest(drift=drift), patch.object(client, 'request', return_value=dict(identity, **drift)):
+                with self.assertRaisesRegex(ValueError, 'monitor-m3_identity_mismatch'):
+                    client.app('monitor-m3')
+
     def test_main_inventory_accepts_only_sha_and_exits_nonzero_when_incomplete(self):
         for extra in (['--worker-image', 'x'], ['--snapshot', '/private/tmp/x.json'], ['--migration-verified'], []):
             arguments = ['inventory'] + (['--sha', self.sha] if extra else []) + extra
@@ -724,6 +756,52 @@ class FleetInventoryTests(unittest.TestCase):
                     self.assertEqual(caught.exception.code, code)
             self.assertNotIn('operator-secret', output.getvalue())
             self.assertEqual(json.loads(output.getvalue())['complete'], code is None)
+
+
+class AuxiliaryReleaseIsolationTests(unittest.TestCase):
+    """Auxiliary commands and healthchecks must survive a normal shared-image release unchanged."""
+
+    def setUp(self):
+        ReleaseSafetyTests.setUp(self)
+
+    def test_default_baseline_and_run_never_read_or_deploy_the_auxiliary_monitor(self):
+        apps = ReleaseSafetyTests.apps(self)
+        # A broken auxiliary must not block a shared-image release or be rewritten by it.
+        apps['monitor-m3'] = {'sourceType': 'docker', 'applicationStatus': 'error', 'env': 'RELEASE_TAG=older\n',
+                              'dockerBuildStage': 'monitor', 'command': 'tini -- watch-worker-progress'}
+        client = FakeClient(apps)
+        with patch.object(client, 'app', wraps=client.app) as read_app, \
+             patch.object(client, 'latest', wraps=client.latest) as read_latest, \
+             patch.object(release, 'probe', return_value={'ready': True}):
+            state = release.baseline(client, self.target)
+        self.assertEqual(tuple(state['apps']), release.ORDER)
+        self.assertEqual([call.args[0] for call in read_app.call_args_list], list(release.ORDER))
+        self.assertEqual([call.args[0] for call in read_latest.call_args_list], list(release.ORDER))
+        for parallel in (False, True):
+            deployed = []
+            with self.subTest(parallel=parallel), patch.object(release, 'save_snapshot'), \
+                 patch.object(release, 'stage_and_deploy', side_effect=lambda _c, short, _t, _k, _p: deployed.append(short) or {'app': short}), \
+                 patch.object(release, 'monitor_gate', return_value={}), patch.object(release, 'public_gate', return_value={}), \
+                 patch.object(release, 'purge_html', return_value={}), redirect_stdout(io.StringIO()):
+                release.deploy(client, self.target, 'unused-token', state, '/private/tmp/unused-snapshot.json', parallel_roles=parallel)
+                self.assertCountEqual(deployed, release.ORDER)
+                self.assertEqual(len(deployed), 8)
+        self.assertEqual(client.requests, [])
+        self.assertEqual(apps['monitor-m3']['command'], 'tini -- watch-worker-progress')
+
+    def test_restore_rejects_monitor_before_keychain_or_dokploy_even_if_snapshot_lists_it(self):
+        with patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy, redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                release.main(['restore', '--snapshot', '/private/tmp/unused-snapshot.json', '--app', 'monitor-m3'])
+            keychain.assert_not_called()
+            dokploy.assert_not_called()
+        client = FakeClient({})
+        with patch.object(release, 'read_snapshot', return_value={'apps': {'monitor-m3': {}}}), \
+             patch.object(client, 'app', wraps=client.app) as read_app:
+            with self.assertRaisesRegex(ValueError, 'app_missing_from_snapshot'):
+                release.restore(client, '/private/tmp/unused-snapshot.json', 'monitor-m3', 'unused-token')
+            read_app.assert_not_called()
+        self.assertEqual(client.requests, [])
 
 
 AI_CONSUMERS = ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-mini', 'ai2-consumer-m3')
@@ -803,12 +881,12 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet = {short: {'sourceType': 'docker', 'applicationStatus': 'done', 'replicas': 1, 'env': 'RELEASE_TAG=' + self.new_sha + '\n'}
                  for short in tuple(release.KNOWN_APPS) + CONSUMERS}
         result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete']), (15, True))
+        self.assertEqual((result['appCount'], result['complete']), (16, True))
         self.assertEqual(result['consumerApps'], {**dict.fromkeys(AI_CONSUMERS, 'unregistered'), 'agent-scan-consumer-m3': 'registered'})
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (19, False, ['ai2-consumer-m3']))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (20, False, ['ai2-consumer-m3']))
         self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'registered'))
         self.assertEqual({short: result['apps'][short]['deployedBy'] for short in CONSUMERS}, dict.fromkeys(CONSUMERS, 'run'))
 

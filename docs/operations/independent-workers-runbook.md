@@ -4,6 +4,8 @@
 운영은 M3 다섯 역할·scheduler 2복제본, mini의 다섯 역할 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
 실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
 A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고서를 따른다.
+2026-10-22 현재 connect-agent·agent-scan 소비자·M3 monitor를 포함한 16 Dokploy 앱/21컨테이너다.
+mini와 외부 Oracle Osaka의 Kuma 수신기 연결·장애 드릴 결과는 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)을 따른다.
 
 ## 구성과 실행 계약
 
@@ -476,6 +478,9 @@ DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
 
+별도 M3 monitor의 실제 설정은 pool 1·512 MiB·0.5 CPU다. 아래 초기 합계에는 monitor 연결이 빠져 있으므로
+현재 예산을 계산할 때 1개를 추가한다. monitor에는 전용 SELECT DB 계정과 두 Push URL만 제공한다.
+
 웹 1개와 6역할의 pool 상한 합계는 26이다. 웹 복제본과 connect-agent pool 1개를 더하면 35이며
 migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 운영 초기 웹 pool을 각각 6으로 설정하면 합계는
 31이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
@@ -633,8 +638,8 @@ scheduler 및 다섯 역할의 생존, 예정 시각과 최근 부팅을 읽기 
 소진으로 끝나면 `source_refresh_failed` 사유로 심사 큐의 `직접 판단` 단계에 넘긴다.
 첫 사례는 1차 심사 기록을 보고 직접 승인·거부하고, 두 번째는 현재 저장소와 제품을 확인한 뒤 결정하거나
 관리자에서 추가 수집을 요청한다. 작업 실행 요청만 반복해도 재시도 상한은 초기화되지 않는다.
-현재 CLI 자체의 주기 실행과 외부 알림은 배치되지 않았으므로 관리자 화면 또는 수동 호출만으로
-자동 경보가 준비됐다고 보고하지 않는다.
+2026-10-22부터 별도 M3 watcher가 이 판정을 주기적으로 읽어 mini·Oracle Kuma에 Push를 보낸다.
+관리자 화면이나 CLI 정상 응답만으로 실제 경보 전달까지 검증됐다고 보지 않으며, 아래의 수신·장애 드릴을 함께 확인한다.
 
 ### 독립 failover 감시
 
@@ -646,24 +651,33 @@ DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON
 0 정상, 1 판별 불가, 2 경보다. 인계 중 예비가 활성인 상태는 용량 여유가 사라진 경보로 표시한다(같은 릴리스의 건강한 주가 기다리면
 예비가 넘겨주기로 놓으므로 1~2분 안에 풀린다 — 위 "역할 후보 운영·교체" 6).
 
-`docker build --target monitor -t nomorevibe-monitor:<commit> .`로 CLI 없는 경량 감시 이미지를
-만든다. 웹·scheduler와 별도 M3 Dokploy 앱, `autoDeploy=false`, `WORKER_ROLE=monitor`,
-DB pool1, 30초 Push 루프를 사용한다. 환경에 `DATABASE_URL`(읽기 전용 계정),
-`MONITOR_PUSH_URL`(mini Uptime Kuma의 전용 Push monitor URL)을 설정한다. URL은 로그에
-출력하지 않는다. `CONNECT_AGENT_URL`의 설정 여부는 publisher와 일치시킨다. 진행 판정의
-발행 적격 큐가 이 변수의 존재에 따라 분류 완료 조건을 적용하므로, 서로 다르면 거짓 경보가
-될 수 있다. 감시자는 이 URL에 직접 접속하지 않는다. Push monitor의 heartbeat timeout은
-최소 90초 이상으로 맞춰 일시적
-전환 1표본을 허용한다. 연속 2회 이상에서 `down`, 정상 회복 때 바로 `up`을 보낸다.
-Push 실패가 나면 URL·응답 본문 없이 오류만 기록하며 전송을 재시도한다. 컨테이너 healthcheck는
-최근 검사 완료만 보며 DB 장애를 숨기지 않도록 JSON은 `unknown`으로 남긴다.
+운영은 웹·scheduler와 별도 M3 Dokploy 앱 `nomorevibe-monitor-m3`를 사용한다.
+`autoDeploy=false`, `WORKER_ROLE=monitor`, DB pool 1·512 MiB·0.5 CPU이며 기존 worker digest를 재사용한다.
+실행 명령은 `node --import tsx scripts/watch-failover-readiness.ts`, healthcheck는
+`node --import tsx scripts/monitor-healthcheck.ts`로 각각 지정한다. worker 기본 명령이나 healthcheck를 그대로 두지 않는다.
+향후 CLI 없는 이미지를 따로 만들 때는 `docker build --target monitor -t nomorevibe-monitor:<commit> .`를 쓴다.
+공통 8앱의 배포 성공만으로 monitor까지 교체됐다고 보지 말고 실제 digest·release·명령·health를 확인한다.
+
+`DATABASE_URL`은 전용 SELECT 계정의 주 DB 직접 연결(5432)이다. 운영 계정은
+`nomorevibe_monitor_20261022`, connection limit 2·기본 읽기 전용·statement timeout 10초이며 25개 업무 표의
+SELECT와 UPDATE 거절을 확인했다. 표 목록은 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)에 있다.
+진행 판정은 주 DB의 `db`를 사용하므로 `READ_DATABASE_URL`만 넣어서는 연결되지 않는다.
+현재 발행 적격 큐는 `CONNECT_AGENT_URL` 유무에 의존하지 않는다. 감시자에게 publisher의 URL·인증을 복사하지 않는다.
+
+`MONITOR_PUSH_URL`은 mini Kuma, `MONITOR_EXTERNAL_PUSH_URL`은 외부 Oracle Osaka Kuma다. URL은 로그에 출력하지 않는다.
+신규 monitor 앱에만 `mounts.create`로 `/etc/resolv.conf`를 지정해 Tailscale DNS `100.100.100.100`을 사용했다.
+기존 호스트·컨테이너의 DNS 설정은 바꾸지 않는다. 양 수신기의 heartbeat timeout은 운영에서 120초이며 최소 90초 이상이어야 한다.
+검사·전송 뒤 30초 쉬고, 연속 2회 `alarm` 또는 `unknown`이면 `down`, 정상 회복은 즉시 `up`을 보낸다.
+Push 실패는 다음 검사에서 다시 전송한다. 컨테이너 healthcheck는 최근 90초 이내 검사 완료만 보므로
+DB 장애 때 JSON이 `unknown`이어도 검사 루프가 돌면 healthy일 수 있다. Push 성공은 `receipts`와 수신기에서 따로 확인한다.
 
 운영 연결 순서는 감시자 계정 SELECT 범위 확인 → Kuma Push monitor 생성 → `MONITOR_PUSH_URL`
 주입 → 앱 배포/이미지 commit 확인 → CLI 정상·Push 최근 UP 확인 → mini 예비 하나 일시 중지로
 DOWN/회복 확인 → monitor 중지로 Push heartbeat timeout 확인 → 모두 원복이다. 알림
 수신 경로는 실제 수신으로 확인한다. mini 호스트 자체가 사라지면 Kuma도 멈추므로 독립된
-외부 deadman 또는 두 번째 감시 위치가 추가로 필요하다. 이 절차는 아직 운영 검증으로
-기록하지 않는다.
+외부 수신기가 필요하다. 2026-10-22에 mini 예비 중단의 양쪽 DOWN/UP, monitor 중단 뒤 121초 timeout DOWN과
+재시작 UP, Oracle Telegram의 두 드릴 DOWN/UP 4건 API 수락을 확인했다.
+단말 읽음·전체 호스트 장애와 구분하고 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)의 실제 증거와 남은 범위를 따른다.
 
 외부 수신기를 연결할 때는 같은 monitor에 `MONITOR_EXTERNAL_PUSH_URL`을 추가한다. mini·M3 밖에서
 호스팅하는 별도 Uptime Kuma의 Push URL이며 HTTPS와 주 수신기와 다른 hostname을 요구한다.
@@ -673,6 +687,10 @@ timeout을 90초 이상으로 설정하고 실제 DOWN·회복 수신과 monitor
 `primary`/`external`·성공 여부·시각만 남긴다. URL·응답 본문은 남기지 않는다. `externalReceiverConfigured`
 표시는 설정 여부일 뿐 실제 알림 수신 증거가 아니다. 외부 수신기를 연결하지 않은 기존 설정도
 계속 실행되지만 mini와 함께 감시가 사라지는 한계는 그대로다.
+실제 운영은 M3·mini와 다른 데이터센터의 Oracle `onetwoday`(`ap-osaka-1`)에 전용 Kuma 2.3.2를 둔다.
+SQLite 데이터는 전용 볼륨에 보존하고 3001은 loopback에만 바인딩하며 Tailscale HTTPS 8443으로 받는다.
+수신기의 재시작·데이터 보존과 관리자 자격 정보 보관도 감시 대상에 포함한다. Watcher를 systemd로 옮길 때는
+상주 실행한다. 매번 새로 띄우는 timer/oneshot은 연속 불량 표본을 초기화하므로 현재 두 표본 판정과 같지 않다.
 
 DB 드라이버는 `postgres` 3.4.9로 고정했다. `lib/db/pool.ts`는 대기 중인 정확한 요청을 취소하기 위해
 해당 버전의 내부 연결 경계를 사용한다. 업그레이드 시 단순 타입 검사만으로 호환성을 판단하지 말고
