@@ -22,8 +22,11 @@ export const POLICY_ACTION_LABELS: Record<PolicyAction, string> = {
 export const POLICY_KEEP_DAYS = [90, 180, 365] as const;
 export type PolicyKeepDays = (typeof POLICY_KEEP_DAYS)[number];
 
-/** 두 번째 의견으로 거르기 — any: 가리지 않음, none: 없음, reject/approve: 그 결정의 의견이 있음(출처를 고르면 그 출처의 것만), agreed·split: 감사 화면의 갈래 그대로 */
-export const POLICY_SECOND = ["any", "none", "reject", "approve", "agreed", "split"] as const;
+/**
+ * 두 번째 의견으로 거르기 — any: 가리지 않음, none: 없음, reject/approve: 그 결정의 의견이 있음(출처를 고르면 그 출처의 것만), agreed·split: 감사 화면의
+ * 갈래 그대로, m1_split: 엇갈림 — 확신 0.90 이상인 m1(Qwen-v2 자동 의견)과 다른 모델이 반대로 정했다(m1 자동 닫기가 열어 둔 것, audit-text-gate.ts m1SplitSql)
+ */
+export const POLICY_SECOND = ["any", "none", "reject", "approve", "agreed", "split", "m1_split"] as const;
 export type PolicySecond = (typeof POLICY_SECOND)[number];
 export const POLICY_SECOND_LABELS: Record<PolicySecond, string> = {
   any: "가리지 않음",
@@ -32,6 +35,20 @@ export const POLICY_SECOND_LABELS: Record<PolicySecond, string> = {
   approve: "승인 의견 있음",
   agreed: "두 모델 모두 거절(보류에 세는 거절)",
   split: "갈림(2차 승인·카탈로그 예외)",
+  m1_split: "엇갈림(m1 과 다른 모델이 반대)",
+};
+
+/**
+ * 수집 본문의 양으로 거르기(2026-10-22 "글이 적은 페이지는 화면을 보고 판정한다") — wait: 화면 판별 대기(글이 적고 화면 판정이 아직 없음),
+ * thin: 글이 적음(화면 판정 여부와 상관없이), text: 글이 충분함. 글이 적다 = 수집 본문 300자 아래이거나 원본 없음(audit-text-gate.ts)
+ */
+export const POLICY_SCREEN = ["any", "wait", "thin", "text"] as const;
+export type PolicyScreen = (typeof POLICY_SCREEN)[number];
+export const POLICY_SCREEN_LABELS: Record<PolicyScreen, string> = {
+  any: "가리지 않음",
+  wait: "화면 판별 대기(글 적음·화면 판정 없음)",
+  thin: "글 적음(300자 아래·원본 없음)",
+  text: "글 충분(300자 이상)",
 };
 
 const confidence = z.number().min(0).max(1).nullable();
@@ -57,12 +74,14 @@ export const policyFilterSchema = z.object({
   waitMaxDays: days,
   /** 제품의 지금 상태 — 비면 공개(seeded·verified) 모두 */
   statuses: z.array(z.enum(["seeded", "verified"])).max(2),
+  /** 수집 본문의 양(화면 판별 대기) — 이 칸 전에 만든 실행의 거르기는 칸이 없어 '가리지 않음'으로 읽는다 */
+  screen: z.enum(POLICY_SCREEN).default("any"),
 }).strict();
 export type PolicyFilter = z.infer<typeof policyFilterSchema>;
 
 export const EMPTY_POLICY_FILTER: PolicyFilter = {
   reviewers: [], confidenceMin: null, confidenceBelow: null, held: "any", second: "any", secondSource: null, branches: [],
-  owner: "any", waitMinDays: null, waitMaxDays: null, statuses: [],
+  owner: "any", waitMinDays: null, waitMaxDays: null, statuses: [], screen: "any",
 };
 
 export const policyRequestSchema = z.object({
@@ -168,5 +187,6 @@ export function describePolicyFilter(filter: PolicyFilter, labels: { branch: (ke
   if (filter.waitMinDays !== null) parts.push(`${filter.waitMinDays}일 넘게 기다림`);
   if (filter.waitMaxDays !== null) parts.push(`${filter.waitMaxDays}일 안`);
   if (filter.statuses.length) parts.push(`상태 ${filter.statuses.join("·")}`);
+  if (filter.screen && filter.screen !== "any") parts.push(POLICY_SCREEN_LABELS[filter.screen]);
   return parts.join(" · ") || "열린 거절 전체";
 }

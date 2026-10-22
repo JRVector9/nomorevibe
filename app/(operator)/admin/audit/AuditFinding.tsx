@@ -4,6 +4,7 @@ import { startTransition, useActionState, useState } from 'react';
 import { ConfirmAction } from '../components/ConfirmAction';
 import { ReasonText } from '../review/ReasonText';
 import type { SecondOpinionView } from '@/lib/crawl/audit-second-opinions';
+import { THIN_PAGE_TEXT_CHARS } from '@/lib/crawl/second-opinion-rules';
 import { decideAuditFinding, type AuditActionState } from './actions';
 import { secondOpinionLabel } from './second-opinion-label';
 
@@ -20,7 +21,17 @@ export type AuditFindingView = {
   answeredBy?: string | null;
   /** 감사 답을 받고 사람을 기다린 날 — 오래된 것을 줄에서 바로 본다 */
   waitDays?: number | null;
+  /** 수집 본문 글자 수(원본 없으면 null) — 300자 아래면 글만 본 m1 의 답으로 닫지 않는다(audit-text-gate.ts). 비어 있으면(undefined) 모름 */
+  textLength?: number | null;
+  /** 화면을 보고 판정한 의견(qwen-vision-m1·qwen-vision-auto)이 있다 */
+  screenJudged?: boolean;
+  /** 엇갈림 — 확신 0.90 이상인 m1 과 다른 모델이 반대로 정했다(m1 자동 닫기가 열어 둔 것). 두 모델의 결정·사유를 펴지 않고도 보인다 */
+  m1Split?: boolean;
 };
+
+/** 화면 판별 대기 — 글이 적고(원본 없음 포함) 화면 판정이 아직 없다 */
+export const screenWaiting = (finding: Pick<AuditFindingView, 'textLength' | 'screenJudged'>) =>
+  finding.textLength !== undefined && (finding.textLength === null || finding.textLength < THIN_PAGE_TEXT_CHARS) && !finding.screenJudged;
 
 
 /**
@@ -35,6 +46,9 @@ export type AuditFindingView = {
 export function AuditFinding({ finding }: { finding: AuditFindingView }) {
   const [state, action, pending] = useActionState<AuditActionState, FormData>(decideAuditFinding, null);
   const [expanded, setExpanded] = useState(false);
+  const second = finding.second ?? [];
+  // 엇갈린 것은 두 모델의 사유를 늘 보인다(두 줄로 접어) — 그 밖은 사유를 펼 때만
+  const showReasons = second.some((opinion) => opinion.reason) && (expanded || finding.m1Split);
   return (
     <tr className="border-t border-line align-top">
       <td className="w-full max-w-0 px-3 py-2">
@@ -43,8 +57,12 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
           {finding.owned && <span className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 text-fg-3">주인 있음</span>}
           {finding.heldAt && <span title={`${finding.heldAt}부터 공개 목록에서 빠짐 — 차단이 아닙니다`}
             className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 font-semibold text-warn">보류 중(목록에서 빠짐)</span>}
-          {(finding.second ?? []).map((opinion) => (
-            <span key={opinion.model} title={`두 번째 의견 · ${opinion.model}`}
+          {finding.m1Split && <span title="확신 0.90 이상인 m1(Qwen-v2, 글만 봄)과 다른 모델이 반대로 정했습니다 — m1 자동 닫기가 열어 두었습니다. 아래 두 모델의 사유를 보고 정하세요"
+            className="shrink-0 rounded bg-warn/15 px-1.5 py-0.5 font-semibold text-warn">엇갈림</span>}
+          {screenWaiting(finding) && <span title={`수집한 페이지 글이 ${finding.textLength === null ? '없습니다(원본 없음)' : `${finding.textLength}자뿐입니다`} — 글만 본 m1 의 답으로는 닫지 않고 화면을 보고 판정합니다`}
+            className="shrink-0 rounded bg-bg-soft px-1.5 py-0.5 font-semibold text-fg-2">화면 판별 대기</span>}
+          {second.map((opinion) => (
+            <span key={opinion.model} title={`두 번째 의견 · ${opinion.model}${opinion.source ? ` · ${opinion.source}` : ''}`}
               className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${opinion.decision === 'reject' ? 'bg-down/10 text-down' : opinion.decision === 'approve' ? 'bg-up/10 text-up' : 'bg-bg-soft text-fg-2'}`}>
               {secondOpinionLabel(opinion)}
             </span>
@@ -60,6 +78,18 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
             </button>
           ) : <p className="text-fg-3">사유 없음</p>}
         </div>
+        {showReasons && (
+          <ul className="mt-1 flex flex-col gap-0.5 border-l-2 border-line pl-2" aria-label="두 번째 의견의 사유">
+            {second.filter((opinion) => opinion.reason).map((opinion) => (
+              <li key={opinion.model} className="flex min-w-0 items-start gap-2">
+                <span title={`${opinion.model}${opinion.source ? ` · ${opinion.source}` : ''}`}
+                  className={`shrink-0 font-semibold ${opinion.decision === 'reject' ? 'text-down' : opinion.decision === 'approve' ? 'text-up' : 'text-fg-2'}`}>
+                  {secondOpinionLabel(opinion)}</span>
+                <span className={`min-w-0 flex-1 leading-[1.6] text-fg-2 ${expanded ? 'whitespace-pre-line' : 'line-clamp-2'}`}>{opinion.reason}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {state?.error && <p className="mt-1 text-down">{state.error}</p>}
         {state?.message && <p className="mt-1 text-up">{state.message}</p>}
       </td>

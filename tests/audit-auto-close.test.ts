@@ -6,8 +6,8 @@ import { AUTO_CLOSE_KEEP_DAYS, AUTO_CLOSE_MIN_CONFIDENCE, autoCloseVerdict, auto
  * 감사 두 번째 의견으로 닫는 규칙(2026-10-22 "승인은 유지, 거절은 숨김") — 무엇을 할지만 가르는 순수 함수. 쓰기·일지·되돌리기는
  * tests/integration/audit-auto-close.test.ts 가 본다
  */
-const open: AutoCloseState = { open: true, otherReject: false, unowned: true, held: false, settled: false, keptElsewhere: false, superseded: false,
-  reverted: false };
+const open: AutoCloseState = { open: true, otherReject: false, otherApprove: false, thinText: false, unowned: true, held: false, settled: false,
+  keptElsewhere: false, superseded: false, reverted: false };
 const on = { autoClose: true, holdEnabled: true };
 const verdict = (decision: string, confidence: number | null, state: Partial<AutoCloseState> = {}, switches: Partial<typeof on> = {}) =>
   autoCloseVerdict({ decision, confidence }, { ...open, ...state }, { ...on, ...switches });
@@ -42,7 +42,8 @@ describe("autoCloseVerdict", () => {
     expect(verdict("approve", 0.95, {}, { holdEnabled: false })).toEqual({ action: "keep" });
   });
 
-  it("거절 — 주인 없는 것만 숨긴다. 다른 모델의 승인·첫 감사의 확신과 상관없다. 이미 보류·푼 적 있음·살아 있는 유지·더 새 답·스위치 끔은 열어 둔다", () => {
+  it("거절 — 주인 없는 것만 숨긴다. 첫 감사의 확신과 상관없다. 이미 보류·푼 적 있음·살아 있는 유지·더 새 답·스위치 끔은 열어 둔다", () => {
+    // 다른 모델의 거절은 숨김을 막지 않는다(같은 쪽)
     expect(verdict("reject", 0.95, { otherReject: true })).toEqual({ action: "hold" });
     expect(verdict("reject", 0.95, { unowned: false })).toEqual({ action: null, skip: "owned" });
     expect(verdict("reject", 0.95, { held: true })).toEqual({ action: null, skip: "held_already" });
@@ -50,6 +51,29 @@ describe("autoCloseVerdict", () => {
     expect(verdict("reject", 0.95, { keptElsewhere: true })).toEqual({ action: null, skip: "kept" });
     expect(verdict("reject", 0.95, { superseded: true })).toEqual({ action: null, skip: "superseded" });
     expect(verdict("reject", 0.95, {}, { holdEnabled: false })).toEqual({ action: null, skip: "hold_off" });
+  });
+});
+
+describe("글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () => {
+  it("글이 적은 페이지는 승인·거절 모두 닫지 않는다 — 화면 판별 대기. 엇갈림·주인·보류 스위치보다 먼저 가른다", () => {
+    expect(verdict("approve", 1, { thinText: true })).toEqual({ action: null, skip: "thin_text" });
+    expect(verdict("reject", 1, { thinText: true })).toEqual({ action: null, skip: "thin_text" });
+    expect(verdict("approve", 1, { thinText: true, otherReject: true })).toEqual({ action: null, skip: "thin_text" });
+    expect(verdict("reject", 1, { thinText: true, otherApprove: true, unowned: false })).toEqual({ action: null, skip: "thin_text" });
+    // 꺼짐·확신 낮음·열린 거절 아님·되돌림은 그대로 먼저다
+    expect(verdict("reject", 0.5, { thinText: true })).toEqual({ action: null, skip: "low_confidence" });
+    expect(verdict("reject", 1, { thinText: true, open: false })).toEqual({ action: null, skip: "not_open" });
+    expect(verdict("reject", 1, { thinText: true, reverted: true })).toEqual({ action: null, skip: "reverted" });
+    expect(verdict("reject", 1, { thinText: true }, { autoClose: false })).toEqual({ action: null, skip: "off" });
+  });
+
+  it("다른 모델이 승인했으면 숨기지 않는다 — 엇갈림(승인 쪽과 같다). 주인 있음·보류 스위치 끔·이미 보류보다 먼저 엇갈림으로 적는다", () => {
+    expect(verdict("reject", 0.95, { otherApprove: true })).toEqual({ action: null, skip: "split" });
+    expect(verdict("reject", 0.95, { otherApprove: true, unowned: false })).toEqual({ action: null, skip: "split" });
+    expect(verdict("reject", 0.95, { otherApprove: true, held: true })).toEqual({ action: null, skip: "split" });
+    expect(verdict("reject", 0.95, { otherApprove: true }, { holdEnabled: false })).toEqual({ action: null, skip: "split" });
+    // 다른 모델의 승인은 m1 의 승인을 막지 않는다
+    expect(verdict("approve", 0.95, { otherApprove: true })).toEqual({ action: "keep" });
   });
 });
 

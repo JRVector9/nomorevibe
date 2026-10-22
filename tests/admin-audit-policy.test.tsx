@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   admin: vi.fn(), revalidate: vi.fn(), preview: vi.fn(), start: vi.fn(), apply: vi.fn(), undoStart: vi.fn(), undo: vi.fn(), exceptions: vi.fn(),
   options: vi.fn(), runs: vi.fn(), overview: vi.fn(), takedownSummary: vi.fn(), introCount: vi.fn(),
   staged: vi.fn(), stage: vi.fn(), importPreview: vi.fn(), importStart: vi.fn(), discard: vi.fn(),
-  throughput: vi.fn(), expiring: vi.fn(), keepPreview: vi.fn(), keepStart: vi.fn(), autoToday: vi.fn(),
+  throughput: vi.fn(), expiring: vi.fn(), keepPreview: vi.fn(), keepStart: vi.fn(), autoToday: vi.fn(), screenCounts: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async (original) => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -28,6 +28,8 @@ vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatu
 vi.mock('@/lib/crawl/audit-auto-close', async (original) => ({ ...await original<typeof import('@/lib/crawl/audit-auto-close')>(),
   autoCloseToday: mocks.autoToday }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: async () => new Map() }));
+// 화면 판별 대기·엇갈림의 수도 DB 를 센다
+vi.mock('@/lib/crawl/audit-screen-review', () => ({ screenReviewCounts: mocks.screenCounts }));
 vi.mock('@/lib/domain/products/takedown', () => ({ takedownSummary: mocks.takedownSummary, takedownQueue: vi.fn(), takedownHistory: vi.fn() }));
 vi.mock('@/lib/domain/products/intro-requests', () => ({ introRequestQueue: vi.fn(), pendingIntroRequestCount: mocks.introCount }));
 
@@ -61,6 +63,7 @@ beforeEach(() => {
   mocks.expiring.mockResolvedValue(42);
   mocks.throughput.mockResolvedValue(throughputOf());
   mocks.autoToday.mockResolvedValue({ day: '2026-10-22', kept: 0, held: 0, undone: 0 });
+  mocks.screenCounts.mockResolvedValue({ screenWait: 0, screenWaitPublic: 0, split: 0 });
   mocks.options.mockResolvedValue({ latestCampaignId: 4, reviewers: [{ key: 'abcllm|[MLX] gpt-oss-120b', provider: 'abcllm', model: '[MLX] gpt-oss-120b', count: 6_965 }],
     sources: [{ source: 'grok-cli-batch', count: 2_755 }] });
   mocks.runs.mockResolvedValue([{ id: 3, kind: 'close', action: 'keep', status: 'applying', planned: 120, note: '적체', createdBy: 'jr',
@@ -123,7 +126,29 @@ describe('정책 처리 화면', () => {
     expect(html).toContain('정책 #11 · m1 자동 유지 · 2026-10-22(UTC)');
     // 못 읽어도 화면은 그린다
     mocks.autoToday.mockRejectedValue(new Error('db'));
+    mocks.screenCounts.mockRejectedValue(new Error('db'));
     expect(renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }))).toContain('m1 자동 닫기');
+  });
+
+  it('m1 자동 닫기 — 글이 적은 페이지(화면 판별 대기)·엇갈림 규칙과 그 수, 그 무리를 거르는 자주 쓰는 거르기', async () => {
+    mocks.screenCounts.mockResolvedValue({ screenWait: 1_234, screenWaitPublic: 1_000, split: 87 });
+    const html = renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy' }) }));
+    const panel = html.slice(html.indexOf('id="audit-auto-close-title"'), html.indexOf('id="audit-policy-runs-title"'));
+    expect(panel).toMatch(/300(<!-- -->)?자 아래/);
+    expect(panel).toContain('다른 모델의 승인 없음');
+    expect(panel).toMatch(/화면 판별 대기 <b[^>]*>1,234<\/b>건/);
+    expect(panel).toMatch(/그중 공개 중 1,000/);
+    expect(panel).toMatch(/엇갈림 <b[^>]*>87<\/b>건/);
+    expect(panel).toContain('href="/admin/audit?tab=policy&amp;preset=screen-wait"');
+    expect(panel).toContain('href="/admin/audit?tab=policy&amp;preset=m1-split"');
+    // 자주 쓰는 거르기와 거르기 칸
+    expect(html).toContain('화면 판별 대기(글 적음)');
+    expect(html).toContain('엇갈림 · m1 과 다른 모델이 반대');
+    expect(html).toContain('페이지 글(화면 판별)');
+    expect(html).toContain('엇갈림(m1 과 다른 모델이 반대)');
+    // ?preset=screen-wait 로 열면 그 거르기가 채워진다
+    const preset = renderToStaticMarkup(await AdminAuditPage({ searchParams: Promise.resolve({ tab: 'policy', preset: 'screen-wait' }) }));
+    expect(preset).toMatch(/<option value="wait" selected="">화면 판별 대기/);
   });
 
   it('다른 탭에서는 정책 데이터를 읽지 않는다', async () => {
@@ -232,6 +257,12 @@ describe('정책 거르기·표본', () => {
     expect(policyFilterSchema.safeParse({ ...EMPTY_POLICY_FILTER, secondSource: "x'; drop" }).success).toBe(false);
     expect(policyFilterSchema.safeParse({ ...EMPTY_POLICY_FILTER, secondSource: 'qwen-vision-m1' }).success).toBe(true);
     expect(policyStartSchema.safeParse({ filter: EMPTY_POLICY_FILTER, action: 'keep', expected: 5, note: '', keepDays: 365 }).success).toBe(true);
+    // 화면 판별 칸 — 이 칸 전에 만든 실행의 거르기(칸 없음)는 '가리지 않음'으로 읽는다(되돌리기·이어서 적용이 다시 읽는다)
+    const old: Partial<typeof EMPTY_POLICY_FILTER> = { ...EMPTY_POLICY_FILTER };
+    delete old.screen;
+    expect(policyFilterSchema.parse(old)).toEqual(EMPTY_POLICY_FILTER);
+    expect(policyFilterSchema.safeParse({ ...EMPTY_POLICY_FILTER, screen: 'wait', second: 'm1_split' }).success).toBe(true);
+    expect(policyFilterSchema.safeParse({ ...EMPTY_POLICY_FILTER, screen: 'blind' }).success).toBe(false);
   });
 
   it('층별 몫 — 갈래마다 수에 비례하고, 남은 것이 있는 갈래는 적어도 한 건, 합은 스무 건(수가 적으면 그 수)', () => {
@@ -249,8 +280,10 @@ describe('정책 거르기·표본', () => {
   it('거르기 한 줄 요약과 작업 로그 이름', () => {
     expect(describePolicyFilter(filter, { branch: (key) => key })).toBe('확신 0.95 이상 · 보류 중 · 2차 두 모델 모두 거절(보류에 세는 거절)');
     expect(describePolicyFilter(EMPTY_POLICY_FILTER, { branch: (key) => key })).toBe('열린 거절 전체');
+    expect(describePolicyFilter({ ...EMPTY_POLICY_FILTER, second: 'm1_split', screen: 'wait' }, { branch: (key) => key }))
+      .toBe('2차 엇갈림(m1 과 다른 모델이 반대) · 화면 판별 대기(글 적음·화면 판정 없음)');
     const grouped = new Set(Object.values(ACTION_GROUPS).flatMap((group) => [...group.actions] as string[]));
-    for (const action of ['audit-policy-apply', 'audit-policy-undo', 'audit-auto-keep', 'audit-auto-hold']) {
+    for (const action of ['audit-policy-apply', 'audit-policy-undo', 'audit-auto-keep', 'audit-auto-hold', 'audit-auto-split']) {
       expect(ACTION_LABELS[action]).toBeTruthy();
       expect(grouped.has(action)).toBe(true);
     }

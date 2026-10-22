@@ -24,6 +24,8 @@ import { QWEN_V2_AUTO_SOURCE, QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirec
   type QwenDirectReview } from "./qwen-direct-review";
 import { lockedSettings, type AuditHoldSettings } from "./settings";
 import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
+import { thinPageTextSql } from "./audit-text-gate";
+import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-review";
 
 /**
  * Qwen-v2 자동 단계(2026-10-21) — 감사 잡(jobs/product-audit.ts)이 틱마다 감사 묻기와 나란히 한 번 돈다. gpu3090 의 Qwen 을 게이트웨이 밖에서
@@ -31,9 +33,10 @@ import type { AuditOpinionScope, CrawlSettings } from "./settings-schema";
  *
  * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 묻는 범위(scope)는 지금 감사의 열린 AI 거절 전부(all — 감사 화면·정책 처리의 대상,
  *    공개 상태·사람 결정 없음, 주인 있는 것과 확신 0.95 아래 포함) 또는 보류 후보만(hold — 확신 문턱 이상·주인 없음·그 제품의 마지막 항목, 이미 보류된 것 포함).
- *    그 가운데 이 모델·이 판의 의견이 없는 것을 지금 보류의 까닭인 것 → 보류 후보 → 첫 감사의 확신 높은 것 → id 차례로 묻고, grok 옮겨 적기와 같은 쓰기
+ *    그 가운데 이 모델·이 판의 의견이 없는 것을 공개 중(보류 아님) → 보류 중, 각각 첫 감사의 확신 높은 것 → id 차례로 묻고(글이 적은 페이지는
+ *    닫을 수 있는 것을 다 물은 뒤 같은 차례로), grok 옮겨 적기와 같은 쓰기
  *    (writeAuditSecondOpinions — 덮어쓰기·보류 다시 가르기·승인이면 풀기)로 출처 qwen-v2-auto 를 적는다. autoClose 면 같은 커밋에서 그 답으로 닫는다
- *    (audit-auto-close.ts — 승인은 유지, 주인 없는 것의 거절은 숨김, 그 밖은 열어 둠). 답으로 닫기 전에 받아 둔 이 판의 답(다시 묻지 않는다)은
+ *    (audit-auto-close.ts — 승인은 유지, 주인 없는 것의 거절은 숨김, 글이 적은 페이지·엇갈림·그 밖은 열어 둠). 답으로 닫기 전에 받아 둔 이 판의 답(다시 묻지 않는다)은
  *    따라잡기(catchUpAutoClose)가 모델을 부르지 않고 틱마다 조금씩 그 답으로 닫는다. 아니면 거절은 쓸기가 다음 틱부터 분당 20건씩 건다
  *    (Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않는다).
  *    감사 모델이 같은 Qwen 이었던 항목은 묻지 않는다 — 같은 모델의 두 번째 의견은 뜻이 없다(답을 낸 심사자 ai_provider 가 qwen-direct 이거나,
@@ -85,12 +88,15 @@ export type QwenAutoObservation = {
 export type QwenAutoTally = {
   audit: { asked: number; approve: number; reject: number; needsReview: number; released: number; skipped: number;
     /** 답으로 닫은 것(audit-auto-close.ts) — 유지·숨김. caughtUp 은 그중 이미 받아 둔 답으로 닫은 것(모델을 부르지 않음) */
-    autoKept: number; autoHeld: number; caughtUp: number };
+    autoKept: number; autoHeld: number; caughtUp: number;
+    /** 답으로 닫지 않고 열어 둔 것 중 글이 적은 페이지(화면 판별 대기)·엇갈림(다른 모델이 반대) */
+    leftThin: number; leftSplit: number };
   published: { asked: number; kept: number; noted: number; skipped: number };
   failed: number; endpointError: string | null;
 };
 
-const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0 },
+const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
+  leftThin: 0, leftSplit: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null });
 
 /** 앞의 게이트웨이 자리 표시('[gpu3090] ')를 뗀 소문자 모델 이름 — second-opinion-rules.ts sameOpinionModel 과 같다 */
@@ -122,15 +128,17 @@ function auditOpinionWanted(scope: AuditOpinionScope, hold: Pick<AuditHoldSettin
 }
 
 /**
- * 묻는 차례 — 지금 보류의 까닭인 항목(승인이면 목록에 돌아온다) → 보류 후보(거절이면 쓸기·자동 숨김이 곧 건다) → 첫 감사의 확신 높은 것 → id.
- * 한 틱에 limit(perTick) 건까지 — 공개분 2차 거르기와 번갈아 한 줄로 서고(interleave), 갈림 판가름·보류 재심사와는 두 번째 자리를 한 호출씩 나눠 쓴다
+ * 묻는 차례(2026-10-22 사용자 결정 "공개 먼저") — 지금 공개 목록에 떠 있는 것(보류 아님)을 첫 감사의 확신 높은 순으로, 그다음 보류 중인 것을
+ * 같은 순으로 → id. 다만 글이 적은 페이지(audit-text-gate.ts — m1 의 답은 의견으로만 남고 아무것도 닫지 않는다)는 닫을 수 있는 것을 다 물은
+ * 뒤에 같은 차례(공개 먼저·확신 높은 순)로 묻는다 — 닫지 못할 답에 자리를 먼저 쓰지 않게.
+ * 한 틱에 limit(perTick) 건까지 — 공개분 2차 거르기와 번갈아 한 줄로 서고(interleave), 갈림 판가름·보류 재심사와는 두 번째 자리를 한 호출씩
+ * 나눠 쓴다(이 차례는 감사 갈래 안의 차례라 다른 갈래의 몫은 그대로다)
  */
 async function auditTargets(scope: AuditOpinionScope, hold: AuditHoldSettings, model: string, skip: readonly number[], limit: number): Promise<AuditTarget[]> {
   const rows = await db.execute<{ item_id: number; product_id: number; slug: string }>(sql`
     select i.id as item_id, p.id as product_id, p.slug from ${productAuditItems} i, ${products} p
      where ${auditOpinionWanted(scope, hold, model, skip)}
-     order by coalesce(p.audit_hold_item_id = i.id, false) desc, (${holdCandidate("i", "p", hold.minConfidence)}) desc,
-       i.ai_confidence desc nulls last, i.id limit ${limit}`);
+     order by ${thinPageTextSql(sql`p.id`)}, (p.audit_hold_at is not null), i.ai_confidence desc nulls last, i.id limit ${limit}`);
   return rows.map((row) => ({ kind: "audit", key: `a:${row.item_id}`, itemId: row.item_id, productId: row.product_id, slug: row.slug }));
 }
 
@@ -330,7 +338,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   }
   if (!ran) return;
   ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, auditKept: tally.audit.autoKept,
-    auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, publishedAsked: tally.published.asked,
+    auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, auditLeftThin: tally.audit.leftThin, auditLeftSplit: tally.audit.leftSplit,
+    publishedAsked: tally.published.asked,
     publishedKept: tally.published.kept, failed: tally.failed, endpointError: tally.endpointError !== null });
   await saveObservation(lease, { ...observation, lastRunAt: now() });
 }
@@ -352,6 +361,8 @@ async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: 
   tally.audit.released += result.released;
   tally.audit.autoKept += result.autoClose?.kept ?? 0;
   tally.audit.autoHeld += result.autoClose?.held ?? 0;
+  tally.audit.leftThin += result.autoClose?.left.thin_text ?? 0;
+  tally.audit.leftSplit += result.autoClose?.left.split ?? 0;
   if (outcome.decision === "approve") tally.audit.approve += 1;
   else if (outcome.decision === "reject") tally.audit.reject += 1;
   else tally.audit.needsReview += 1;
@@ -425,6 +436,8 @@ export type QwenAutoStatus = {
   audit: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; remaining: number; scope: AuditOpinionScope; autoClose: boolean };
   /** 오늘(UTC) 답으로 닫은 수(audit-auto-close.ts) — 유지·숨김(되돌린 것 포함)·되돌린 수, 그 확신 하한 */
   autoClose: AutoCloseToday & { minConfidence: number };
+  /** 답으로 닫지 않고 열어 둔 무리 — 화면 판별 대기(글이 적은 페이지)·엇갈림(audit-screen-review.ts). 못 읽으면 null */
+  screen: ScreenReviewCounts | null;
   published: { enabled: boolean; perTick: number; lastHour: number; lastDay: number; keptHour: number; keptDay: number; remaining: number };
   lastRunAt: string | null; lastSuccessAt: string | null; lastError: QwenAutoObservation["lastError"];
   /** 항목만의 실패로 더 묻지 않는 수 */
@@ -441,7 +454,7 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
   const model = config?.model ?? "";
   const observation = await readQwenAutoObservation(model);
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
-  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today] = await Promise.all([
+  const [[auditRow], [publishedRow], [auditLeft], [publishedLeft], backoff, today, screen] = await Promise.all([
     db.select({
       hour: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '1 hour')::int`,
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
@@ -462,12 +475,13 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
     readQwenEndpointBackoff().catch(() => null),
     // 일지(0116)를 못 읽어도 상태 칸은 그린다
     autoCloseToday().catch(() => ({ day: utcDay(), kept: 0, held: 0, undone: 0 })),
+    screenReviewCounts().catch(() => null),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,
     audit: { enabled: steps.auditSecondOpinion.enabled, perTick: steps.auditSecondOpinion.perTick, lastHour: auditRow?.hour ?? 0, lastDay: auditRow?.day ?? 0,
       remaining: auditLeft?.count ?? 0, scope: steps.auditSecondOpinion.scope, autoClose: steps.auditSecondOpinion.autoClose },
-    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE },
+    autoClose: { ...today, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE }, screen,
     published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,

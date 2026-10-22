@@ -28,6 +28,8 @@ vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations
 vi.mock('@/lib/crawl/audit-policy', () => ({ auditThroughput: mocks.throughput, AUDIT_BACKLOG_OVERDUE_DAYS: 7, KEEP_EXTEND_WITHIN_DAYS: 30,
   expiringKeepCount: async () => 0, listPolicyRuns: async () => [], policyFilterOptions: async () => null }));
 vi.mock('@/lib/operations/admin-log', () => ({ recordAdminAction: mocks.log, recordAdminActions: mocks.log }));
+// 화면 판별 대기·엇갈림의 수(정책 처리 탭)도 DB 를 센다 — 감사 거절 탭은 Qwen 상태(qwenSecondOpinionStatus.screen)로 받는다
+vi.mock('@/lib/crawl/audit-screen-review', () => ({ screenReviewCounts: async () => null }));
 // 내려달라는 요청 집계도 DB를 읽는다 — CI 단위 테스트에는 DB가 없다
 vi.mock('@/lib/domain/products/takedown', () => ({
   takedownSummary: mocks.takedownSummary, takedownQueue: mocks.takedownQueue, takedownHistory: mocks.takedownHistory,
@@ -405,6 +407,44 @@ describe('감사 보류 화면(0110)', () => {
     expect(split).toMatch(/aria-current="page"[^>]*>갈림 \(2차 승인·카탈로그\) (<!-- -->)?1/);
     // 갈린 것은 사람이 한 건씩 본다 — 묶어 내리기가 없다
     expect(mocks.groups).not.toHaveBeenCalled();
+  });
+
+  it('엇갈림·화면 판별 대기 — 줄에 배지를 보이고, 엇갈린 줄은 두 모델의 사유를 펴지 않고도 보인다', async () => {
+    mocks.findings.mockResolvedValue([
+      finding(71, 'split', { m1Split: true, textLength: 2_400, screenJudged: false, second: [
+        { model: 'grok-4.7', decision: 'approve', confidence: 0.9, source: 'grok-cli-batch', reason: 'A usable SaaS landing with sign-up.' },
+        { model: 'qwen3.8-flash-next', decision: 'reject', confidence: 0.95, source: 'qwen-v2-auto', reason: 'Only marketing copy.' }] }),
+      finding(72, 'thin', { m1Split: false, textLength: 12, screenJudged: false, second: [
+        { model: 'qwen3.8-flash-next', decision: 'reject', confidence: 1, source: 'qwen-v2-auto', reason: 'pageText is only the title.' }] }),
+      finding(73, 'judged', { m1Split: false, textLength: null, screenJudged: true, second: [] }),
+    ]);
+    const html = await render({ tab: 'audit', view: 'reject' });
+    const row = (slug: string) => html.slice(html.indexOf(`이름 ${slug}`), html.indexOf('</tr>', html.indexOf(`이름 ${slug}`)));
+    expect(row('split')).toContain('>엇갈림</span>');
+    expect(row('split')).toContain('A usable SaaS landing with sign-up.');
+    expect(row('split')).toContain('Only marketing copy.');
+    expect(row('split')).not.toContain('화면 판별 대기');
+    expect(row('split')).toContain('title="두 번째 의견 · grok-4.7 · grok-cli-batch"');
+    // 엇갈리지 않은 줄의 두 번째 의견 사유는 사유를 펼 때만(접힌 첫 화면에는 없다)
+    expect(row('thin')).toContain('>화면 판별 대기</span>');
+    expect(row('thin')).toMatch(/12(<!-- -->)?자뿐입니다/);
+    expect(row('thin')).not.toContain('pageText is only the title.');
+    expect(row('thin')).not.toContain('>엇갈림</span>');
+    // 화면 판정이 있으면 대기가 아니다
+    expect(row('judged')).not.toContain('화면 판별 대기');
+  });
+
+  it('Qwen 상태 칸 — 열어 둔 무리(화면 판별 대기·엇갈림)의 수와 정책 처리로 가는 길', async () => {
+    mocks.qwenStatus.mockResolvedValue(qwenStatusOf({ screen: { screenWait: 321, screenWaitPublic: 300, split: 45 } }));
+    const html = await render({ tab: 'audit' });
+    expect(html).toMatch(/화면 판별 대기 <b[^>]*>321<\/b>/);
+    expect(html).toMatch(/공개 중 (<!-- -->)?300/);
+    expect(html).toMatch(/엇갈림 <b[^>]*>45<\/b>/);
+    expect(html).toContain('href="/admin/audit?tab=policy&amp;preset=screen-wait"');
+    expect(html).toContain('href="/admin/audit?tab=policy&amp;preset=m1-split"');
+    // 수를 못 읽었으면(null) 줄을 그리지 않는다
+    mocks.qwenStatus.mockResolvedValue(qwenStatusOf({ screen: null }));
+    expect(await render({ tab: 'audit' })).not.toContain('열어 둔 무리');
   });
 
   it('Qwen 의견 — grok 배지 옆에 qwen 배지, Qwen·grok 의견 다름·Qwen 거절(카탈로그 예외) 갈래로 거른다(묶어 내리기 없음)', async () => {

@@ -18,6 +18,7 @@ import { auditBanReason, GROUP_REMOVE_MIN_CONFIDENCE, keptContentStatus } from "
 import { getSettings, lockedSettings } from "./settings";
 import { importHoldEffect } from "./audit-import-gate";
 import { autoRunInfo, type AutoRunInfo } from "./audit-auto-close";
+import { m1SplitSql, pageTextLengthSql, screenJudgedSql, screenWaitSql, thinPageTextSql } from "./audit-text-gate";
 
 /**
  * 감사 정책 처리(0116, 2026-10-22) — 열린 감사 거절을 거르기로 골라 한 번에 닫는다. 미리 보고, 수를 적어 적용하고, 실행 하나를 통째로 되돌린다.
@@ -85,6 +86,17 @@ function secondSql(filter: PolicyFilter, ctx: PolicyContext): SQL | null {
     case "approve": return opinion("approve");
     case "agreed": return secondOpinionFilter("agreed", sql`i.id`, sql`i.ai_reason`, options);
     case "split": return secondOpinionFilter("split", sql`i.id`, sql`i.ai_reason`, options);
+    case "m1_split": return m1SplitSql(sql`i.id`);
+  }
+}
+
+/** 수집 본문의 양 — 화면 판별 대기·글 적음·글 충분(audit-text-gate.ts) */
+function screenSql(filter: PolicyFilter): SQL | null {
+  switch (filter.screen ?? "any") {
+    case "any": return null;
+    case "wait": return screenWaitSql(sql`i.id`, sql`p.id`);
+    case "thin": return thinPageTextSql(sql`p.id`);
+    case "text": return sql`not ${thinPageTextSql(sql`p.id`)}`;
   }
 }
 
@@ -110,6 +122,8 @@ export function policyFilterSql(filter: PolicyFilter, ctx: PolicyContext): SQL {
   if (filter.waitMinDays !== null) parts.push(sql`i.reviewed_at <= now() - ${filter.waitMinDays} * interval '1 day'`);
   if (filter.waitMaxDays !== null) parts.push(sql`i.reviewed_at > now() - ${filter.waitMaxDays} * interval '1 day'`);
   if (filter.statuses.length) parts.push(sql`p.status in (${sql.join(filter.statuses.map((status) => sql`${status}`), sql`, `)})`);
+  const screen = screenSql(filter);
+  if (screen) parts.push(screen);
   return parts.length ? sql`(${sql.join(parts, sql` and `)})` : sql`true`;
 }
 
@@ -158,7 +172,10 @@ async function policyContext(latestOverride?: number): Promise<PolicyContext | n
 export type PolicyPreviewRow = {
   itemId: number; productId: number; slug: string; name: string; url: string; status: string; reason: string | null; confidence: number | null;
   branch: AuditReasonCategory; skip: string | null; held: boolean; owned: boolean; provider: string; model: string; waitDays: number | null;
+  /** 두 번째 의견 — 출처·사유까지(엇갈림의 까닭을 표본에서 본다) */
   second: SecondOpinionView[];
+  /** 수집 본문 글자 수(원본 없으면 null)·화면 판정이 있는가·엇갈림(m1 과 다른 모델이 반대) — audit-text-gate.ts */
+  textLength: number | null; screenJudged: boolean; m1Split: boolean;
 };
 
 export type PolicyPreview = {
@@ -182,11 +199,16 @@ export type PolicyPreview = {
 
 type RawRow = { item_id: number; product_id: number; campaign_id: number; slug: string; name: string; url: string; status: string; reason: string | null;
   confidence: number | null; branch: AuditReasonCategory; skip: string | null; held: boolean; owned: boolean; provider: string; model: string;
-  wait_days: number | null; second?: SecondOpinionView[] };
+  wait_days: number | null; second?: SecondOpinionView[]; text_length?: number | null; screen_judged?: boolean; m1_split?: boolean };
 
 const toRow = (row: RawRow): PolicyPreviewRow => ({ itemId: row.item_id, productId: row.product_id, slug: row.slug, name: row.name, url: row.url,
   status: row.status, reason: row.reason, confidence: row.confidence === null ? null : Number(row.confidence), branch: row.branch, skip: row.skip,
-  held: row.held, owned: row.owned, provider: row.provider, model: row.model, waitDays: row.wait_days, second: row.second ?? [] });
+  held: row.held, owned: row.owned, provider: row.provider, model: row.model, waitDays: row.wait_days, second: row.second ?? [],
+  textLength: row.text_length ?? null, screenJudged: Boolean(row.screen_judged), m1Split: Boolean(row.m1_split) });
+
+/** 표본·건너뛸 것의 예에만 싣는 것 — 두 번째 의견(출처·사유), 수집 본문 글자 수, 화면 판정, 엇갈림(쪽마다 몇십 줄이라 줄마다 센다) */
+const sampleExtras = sql`${secondOpinionsField(sql`b.item_id`, { reasons: true })} as second, ${pageTextLengthSql(sql`b.product_id`)} as text_length,
+  ${screenJudgedSql(sql`b.item_id`)} as screen_judged, ${m1SplitSql(sql`b.item_id`)} as m1_split`;
 
 const branchLabel = (key: AuditReasonCategory) => AUDIT_REASON_CATEGORIES[key]?.label ?? key;
 
@@ -227,12 +249,12 @@ export async function previewAuditPolicy(input: { filter: PolicyFilter; action: 
     : sql`0`;
   const [sample, examples] = await Promise.all([
     eligible ? db.execute<RawRow>(sql`
-      select b.*, ${secondOpinionsField(sql`b.item_id`)} as second from (
+      select b.*, ${sampleExtras} from (
         select b0.*, row_number() over (partition by b0.branch order by md5(b0.item_id::text || ${seed})) as rn
           from (${base}) b0 where b0.skip is null) b
        where b.rn <= ${quotaCase} order by b.branch, b.rn`) : Promise.resolve([] as RawRow[]),
     skipCounts.size ? db.execute<RawRow>(sql`
-      select b.*, ${secondOpinionsField(sql`b.item_id`)} as second from (
+      select b.*, ${sampleExtras} from (
         select b0.*, row_number() over (partition by b0.skip order by md5(b0.item_id::text || ${seed})) as rn
           from (${base}) b0 where b0.skip is not null) b
        where b.rn <= ${SKIP_EXAMPLES} order by b.skip, b.rn`) : Promise.resolve([] as RawRow[]),
@@ -538,10 +560,10 @@ const importOpinion: RunHandler = {
     const line = row.payload as ImportPayload;
     const options = run.options as ImportOptions;
     const [item] = await tx.execute<{ open: boolean; reason: string | null; confidence: number | null; model: string | null; status: string;
-      held_at: string | null; hold_item_id: number | null }>(sql`
+      held_at: string | null; hold_item_id: number | null; thin_text: boolean }>(sql`
       select (i.ai_decision = 'reject' and i.human_decision is null and p.status in ('seeded', 'verified')) as open,
         i.ai_reason as reason, i.ai_confidence as confidence, ${auditItemModel("i")} as model, p.status,
-        to_char(p.audit_hold_at, ${OPINION_TIME}) as held_at, p.audit_hold_item_id as hold_item_id
+        to_char(p.audit_hold_at, ${OPINION_TIME}) as held_at, p.audit_hold_item_id as hold_item_id, ${thinPageTextSql(sql`p.id`)} as thin_text
         from ${productAuditItems} i join ${products} p on p.id = i.product_id
        where i.id = ${row.itemId} and p.id = ${row.productId} and p.slug = ${row.slug}`);
     if (!item) return skipped("product_changed");
@@ -561,7 +583,7 @@ const importOpinion: RunHandler = {
       const opinions = await tx.select({ model: productAuditSecondOpinions.model, decision: productAuditSecondOpinions.decision,
         source: productAuditSecondOpinions.source, confidence: productAuditSecondOpinions.confidence })
         .from(productAuditSecondOpinions).where(eq(productAuditSecondOpinions.itemId, row.itemId));
-      const effect = importHoldEffect({ item: { reason: item.reason, model: item.model, confidence: item.confidence }, opinions,
+      const effect = importHoldEffect({ item: { reason: item.reason, model: item.model, confidence: item.confidence, thinText: item.thin_text }, opinions,
         line: { decision: line.decision, confidence: line.confidence, shot: line.shot, source: options.source, model: line.model },
         hold: settings.auditHold, options: { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }, supersede: Boolean(options.supersede) });
       if (effect.release) {

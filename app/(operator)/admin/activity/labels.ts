@@ -13,6 +13,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "audit-hold-auto-release": "Qwen-v2 의견으로 감사 보류 풂",
   "audit-auto-keep": "Qwen-v2 의견으로 감사 거절 자동 유지",
   "audit-auto-hold": "Qwen-v2 의견으로 감사 거절 자동 숨김",
+  "audit-auto-split": "Qwen-v2 와 다른 모델이 엇갈려 감사 거절을 열어 둠",
   "published-second-auto-keep": "Qwen-v2 공개분 자동 유지",
   "human-review-deepseek": "DeepSeek 사람 검토 전환",
   "candidate-reject": "후보 거부",
@@ -137,7 +138,7 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
-    "audit-hold-settings", "audit-hold-release-all", "audit-switch-model", "audit-hold-auto-release", "audit-auto-keep", "audit-auto-hold",
+    "audit-hold-settings", "audit-hold-release-all", "audit-switch-model", "audit-hold-auto-release", "audit-auto-keep", "audit-auto-hold", "audit-auto-split",
     "published-second-auto-keep",
     "audit-policy-apply", "audit-policy-undo",
     "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },

@@ -9,6 +9,7 @@ import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { auditItemModel, holdGate, releaseAuditHold, type HoldGateOpinion, type HoldGateOptions } from "./product-audit-hold";
 import { lockedQwenAuto, lockedSettings, storedAuditHold, storedQwenAuto, type AuditHoldSettings } from "./settings";
 import { autoCloseOpinion, type AutoCloseResult } from "./audit-auto-close";
+import { thinPageTextSql } from "./audit-text-gate";
 
 /**
  * 두 번째 의견 옮겨 적기(0110) — 밖에서 돌린 grok 일괄 결과(JSONL)를 product_audit_second_opinions 에 넣는다.
@@ -101,11 +102,13 @@ function emptyResult(read: number, dryRun: boolean): SecondOpinionImport {
  * DR writer fence 는 lease 와 상관없이 늘 첫 잠금이다.
  * auto: Qwen-v2 자동 의견(audit-second-opinion-auto.ts) — 쓰는 순간 그 단계의 스위치(qwenAuto.auditSecondOpinion)를 잠근 설정 행에서 다시 보고
  * 꺼져 있으면 아무것도 쓰지 않는다(switched_off). 그 의견이 푼 보류는 작업 로그(audit-hold-auto-release, actor 모델)에도 남긴다.
+ * auto.qwenSwitch false: Qwen-v2 단계의 스위치를 보지 않는다 — 다른 모델의 자동 판정(화면 판정, audit-screen-review.ts markScreenJudged)이 같은 쓰기를
+ * 지나며 푼 보류를 작업 로그에 남길 때. 그 판정의 스위치는 부르는 쪽이 본다.
  * auto.close: 같은 트랜잭션에서 그 답으로 닫는다(audit-auto-close.ts — 승인은 유지, 거절은 숨김. 스위치 autoClose 는 잠근 설정 행에서 다시 본다).
  * 그때는 승인·거절 모두 제품 세대를 잡고, 의견을 적기 전에 감사 항목을 잠근다(보류 쓸기와 같은 차례: 세대 → 항목 → 설정 행).
  */
 export async function writeAuditSecondOpinions(database: Database, rows: SecondOpinionRow[],
-  options: { dryRun: boolean; source: string; lease?: JobLease; auto?: { actor: string; close?: boolean } },
+  options: { dryRun: boolean; source: string; lease?: JobLease; auto?: { actor: string; close?: boolean; qwenSwitch?: boolean } },
   result: SecondOpinionImport = emptyResult(rows.length, options.dryRun)):
   Promise<SecondOpinionImport> {
   const source = options.source.trim().slice(0, 40) || "import";
@@ -120,7 +123,9 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
       const items = new Map((await tx.select({ id: productAuditItems.id, productId: productAuditItems.productId, slug: products.slug,
         aiReason: productAuditItems.aiReason, aiConfidence: productAuditItems.aiConfidence, model: auditItemModel("product_audit_items"),
         open: sql<boolean>`(${productAuditItems.aiDecision} = 'reject' and ${productAuditItems.humanDecision} is null
-          and coalesce(${products.status} in ('seeded', 'verified'), false))` })
+          and coalesce(${products.status} in ('seeded', 'verified'), false))`,
+        // 글이 적은 항목에서는 글만 본 m1 의견을 보류에서 세지 않는다(audit-text-gate.ts) — 승인 풀기도 같은 셈
+        thinText: thinPageTextSql(sql`${productAuditItems.productId}`) })
         .from(productAuditItems).leftJoin(products, eq(products.id, productAuditItems.productId))
         .where(inArray(productAuditItems.id, ids))).map((item) => [item.id, item]));
       const accepted = batch.filter((row) => {
@@ -161,7 +166,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
           .orderBy(asc(productAuditItems.id)).for("update");
       }
       // 자동 의견은 쓰는 순간 그 단계의 스위치를 다시 본다 — 끈 뒤에 받은 답은 쓰지 않는다(잠금은 보류 걸기와 같은 차례: 세대 뒤 설정 행)
-      if (options.auto && !(await lockedQwenAuto(tx)).auditSecondOpinion.enabled) {
+      if (options.auto && options.auto.qwenSwitch !== false && !(await lockedQwenAuto(tx)).auditSecondOpinion.enabled) {
         result.skipped.switched_off += accepted.length;
         if (options.lease) await assertJobLeaseAtWallTime(tx, options.lease);
         return;
@@ -226,11 +231,12 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
 
 /**
  * 덮어쓴 뒤의 의견으로 보류의 둘째 문(holdGate — 모델별 거절 규칙·자동 의견의 확신 하한 포함)이 더는 맞지 않는가 — 맞지 않으면 승인이
- * 보류를 푼다. 자동 의견의 승인은 확신 0.90 이상일 때만 세므로 그보다 낮으면 풀지 않는다(의견만 남고 사람이 본다)
+ * 보류를 푼다. 자동 의견의 승인은 확신 0.90 이상일 때만 세므로 그보다 낮으면 풀지 않는다(의견만 남고 사람이 본다). 글이 적은 항목에서는
+ * 글만 본 자동 의견을 세지 않아 그 승인으로도 풀지 않는다 — 화면 판정(audit-screen-review.ts)을 기다린다
  */
-function releasable(item: { aiReason: string | null; model: string | null; aiConfidence: number | null }, opinions: HoldGateOpinion[],
+function releasable(item: { aiReason: string | null; model: string | null; aiConfidence: number | null; thinText: boolean }, opinions: HoldGateOpinion[],
   hold: AuditHoldSettings, options: HoldGateOptions): boolean {
-  return !holdGate({ reason: item.aiReason, opinions, model: item.model, confidence: item.aiConfidence }, hold, options);
+  return !holdGate({ reason: item.aiReason, opinions, model: item.model, confidence: item.aiConfidence, thinText: item.thinText }, hold, options);
 }
 
 /** 이 승인 줄들 가운데 지금 그 항목으로 보류된 제품의 항목 id */

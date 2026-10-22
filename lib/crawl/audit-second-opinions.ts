@@ -4,6 +4,7 @@ import { AUDIT_REASON_RULES } from "./audit-reason-category";
 import { CATALOG_EXCEPTION_FAMILIES, CATALOG_LIKE_REASON, QWEN_AUTO_MIN_CONFIDENCE } from "./second-opinion-rules";
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 import { CONFIDENCE_FLOOR_SOURCES } from "./audit-import-sources";
+import { otherModelApproveSql, thinPageTextSql } from "./audit-text-gate";
 
 /**
  * 감사 답에 대한 두 번째 의견(0110) — 다른 모델이 같은 감사 항목을 다시 본 것(product_audit_second_opinions).
@@ -51,13 +52,15 @@ const exceptedFamily = CATALOG_EXCEPTION_FAMILIES.length
 
 /**
  * 그 항목에 보류의 까닭이 되는 두 번째 거절이 있다 — secondRejectHolds·holdGates 의 SQL. reason 은 그 항목의 감사 사유(ai_reason).
- * Qwen-v2 자동 의견(source qwen-v2-auto)의 거절은 그 단계(qwenAuto.auditSecondOpinion)가 켜져 있고 확신이 0.90 이상일 때만 센다
- * (product-audit-hold.ts countedOpinion 과 같다). autoOpinions 는 그 스위치다
+ * Qwen-v2 자동 의견(source qwen-v2-auto)의 거절은 그 단계(qwenAuto.auditSecondOpinion)가 켜져 있고 확신이 0.90 이상이며, 그 제품의 수집 본문이
+ * 적지 않고(글이 적은 페이지는 화면을 보고 판정한다), 다른 모델이 같은 항목을 승인하지 않았을 때만(엇갈림) 센다 — product-audit-hold.ts
+ * countedOpinion 과 같다(audit-text-gate.ts). autoOpinions 는 그 스위치다
  */
 export function countedSecondReject(itemId: SQL, reason: SQL, autoOpinions: boolean): SQL {
   return sql`exists (select 1 from ${productAuditSecondOpinions} o2 where o2.item_id = ${itemId} and o2.decision = 'reject'
     and not (${exceptedFamily} and ${catalogLikeReasonSql(reason)})
-    and (o2.source is distinct from ${QWEN_V2_AUTO_SOURCE} or (${autoOpinions} and o2.confidence >= ${QWEN_AUTO_MIN_CONFIDENCE}))
+    and (o2.source is distinct from ${QWEN_V2_AUTO_SOURCE} or (${autoOpinions} and o2.confidence >= ${QWEN_AUTO_MIN_CONFIDENCE}
+      and not ${thinPageTextSql(sql`o2.product_id`)} and not ${otherModelApproveSql("o2")}))
     and ${flooredSourceCounts})`;
 }
 
@@ -76,12 +79,15 @@ export function excludedSecondReject(itemId: SQL, reason: SQL): SQL {
     and ${exceptedFamily} and ${catalogLikeReasonSql(reason)})`;
 }
 
-export type SecondOpinionView = { model: string; decision: "approve" | "reject" | "needs_review"; confidence: number | null };
+export type SecondOpinionView = { model: string; decision: "approve" | "reject" | "needs_review"; confidence: number | null;
+  /** 그 의견의 출처(grok-cli-batch·qwen-v2-auto·qwen-vision-m1 …)와 사유 — reasons 로 읽은 줄에만(감사 줄·정책 미리보기가 엇갈림의 까닭을 보인다) */
+  source?: string; reason?: string | null };
 
-/** 화면 줄에 실을 두 번째 의견 — 모델 이름순. 없으면 빈 목록 */
-export function secondOpinionsField(itemId: SQL) {
+/** 화면 줄에 실을 두 번째 의견 — 모델 이름순. 없으면 빈 목록. reasons 면 출처·사유(2천 자까지)도 싣는다 */
+export function secondOpinionsField(itemId: SQL, options: { reasons?: boolean } = {}) {
+  const more = options.reasons ? sql`, 'source', o2.source, 'reason', o2.reason` : sql``;
   return sql<SecondOpinionView[]>`(select coalesce(json_agg(json_build_object('model', o2.model, 'decision', o2.decision,
-    'confidence', o2.confidence) order by o2.model), '[]'::json) from ${productAuditSecondOpinions} o2 where o2.item_id = ${itemId})`;
+    'confidence', o2.confidence${more}) order by o2.model), '[]'::json) from ${productAuditSecondOpinions} o2 where o2.item_id = ${itemId})`;
 }
 
 /** 보류의 둘째 문(holdGate)이 읽는 의견 — 모델·결정, 그리고 자동 의견을 가르는 출처·확신 */

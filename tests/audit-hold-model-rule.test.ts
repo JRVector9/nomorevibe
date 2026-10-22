@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { holdGate, holdGates } from "@/lib/crawl/product-audit-hold";
 import { classifyAuditReason } from "@/lib/crawl/audit-reason-category";
 import { DEFAULT_AUDIT_HOLD } from "@/lib/crawl/settings-schema";
+import { THIN_PAGE_TEXT_CHARS, thinPageText } from "@/lib/crawl/second-opinion-rules";
 
 /**
  * 감사 보류의 모델별 규칙(0112) — Qwen-v2 가 낸 감사 거절(남은 감사 모델 바꾸기 뒤)은 확신이 늘 0.95·1.00 이라 문턱으로 가를 수 없다.
@@ -87,5 +88,56 @@ describe("gpt-oss·옛 호출부는 그대로", () => {
   it("모델을 넘기지 않는 호출부(두 번째 의견 옮겨 적기)는 모델별 규칙을 보지 않는다", () => {
     expect(holdGate({ reason: DIRECTORY, ...none }, DEFAULT_AUDIT_HOLD)).toBe(true);
     expect(holdGate({ reason: COMPANY, ...grok("approve") }, DEFAULT_AUDIT_HOLD)).toBe(false);
+  });
+});
+
+describe("글만 본 m1 — 글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () => {
+  const qwen = "qwen3.8-flash-next";
+  const gpt = { reason: COMPANY, model: "[MLX] gpt-oss-120b", confidence: 0.97 };
+  const noCategory = { ...DEFAULT_AUDIT_HOLD, categories: [] };
+  const m1 = (decision: "approve" | "reject", confidence = 0.97) => ({ model: qwen, decision, source: "qwen-v2-auto", confidence });
+  const on = { autoOpinions: true };
+
+  it("글이 적은 항목에서는 m1 의 거절이 보류의 까닭이 아니다(쓸기가 숨기지 않는다) — grok·화면 재판정의 거절은 그대로 센다", () => {
+    expect(holdGates({ ...gpt, opinions: [m1("reject")], thinText: true }, noCategory, on)).toEqual({ byCategory: false, bySecondOpinion: false });
+    expect(holdGates({ ...gpt, opinions: [m1("reject")], thinText: false }, noCategory, on)).toEqual({ byCategory: false, bySecondOpinion: true });
+    expect(holdGates({ ...gpt, opinions: [m1("reject"), { model: "grok-4.7", decision: "reject" }], thinText: true }, noCategory, on))
+      .toEqual({ byCategory: false, bySecondOpinion: true });
+    const vision = { model: "qwen3.8-flash-next+vision", decision: "reject", source: "qwen-vision-m1", confidence: 0.95 };
+    expect(holdGates({ ...gpt, opinions: [vision], thinText: true }, noCategory, on)).toEqual({ byCategory: false, bySecondOpinion: true });
+  });
+
+  it("글이 적은 항목에서는 m1 의 승인도 세지 않는다 — 갈래 보류를 풀지 않고 화면 판정을 기다린다", () => {
+    expect(holdGate({ ...gpt, opinions: [m1("approve")], thinText: true }, DEFAULT_AUDIT_HOLD, on)).toBe(true);
+    expect(holdGate({ ...gpt, opinions: [m1("approve")], thinText: false }, DEFAULT_AUDIT_HOLD, on)).toBe(false);
+    // 화면을 본 승인(확신 하한 이상)은 그대로 갈래 보류를 막는다
+    const vision = { model: "qwen3.8-flash-next+vision", decision: "approve", source: "qwen-vision-auto", confidence: 0.95 };
+    expect(holdGate({ ...gpt, opinions: [m1("reject"), vision], thinText: true }, DEFAULT_AUDIT_HOLD, on)).toBe(false);
+  });
+
+  it("다른 모델이 승인한 항목에서는 m1 의 거절을 세지 않는다(엇갈림 — 사람이 본다). grok 의 거절은 그대로 센다", () => {
+    const grokApprove = { model: "grok-4.7", decision: "approve" };
+    expect(holdGates({ ...gpt, opinions: [m1("reject"), grokApprove] }, noCategory, on)).toEqual({ byCategory: false, bySecondOpinion: false });
+    // 확신이 낮은 승인이라도 다른 모델의 승인이면 엇갈림이다
+    const weakVision = { model: "qwen3.8-flash-next+vision", decision: "approve", source: "qwen-vision-m1", confidence: 0.5 };
+    expect(holdGates({ ...gpt, opinions: [m1("reject"), weakVision] }, noCategory, on)).toEqual({ byCategory: false, bySecondOpinion: false });
+    // 같은 모델(게이트웨이 자리 표시만 다름)의 승인은 다른 모델이 아니다
+    expect(holdGates({ ...gpt, opinions: [m1("reject"), { model: `[gpu3090] ${qwen}`, decision: "approve" }] }, noCategory, on))
+      .toEqual({ byCategory: false, bySecondOpinion: true });
+    expect(holdGates({ ...gpt, opinions: [{ model: "grok-4.7", decision: "reject" }, { model: "gemini", decision: "approve" }] }, noCategory, on))
+      .toEqual({ byCategory: false, bySecondOpinion: true });
+  });
+});
+
+describe("thinPageText — 수집 본문이 적은가(감사 입력과 같은 자르기)", () => {
+  it("300자 아래·없음은 적다, 앞뒤 공백은 세지 않고 글자(코드 포인트)로 센다", () => {
+    expect(THIN_PAGE_TEXT_CHARS).toBe(300);
+    expect(thinPageText(null)).toBe(true);
+    expect(thinPageText("")).toBe(true);
+    expect(thinPageText("a".repeat(299))).toBe(true);
+    expect(thinPageText("a".repeat(300))).toBe(false);
+    expect(thinPageText(`   ${"a".repeat(299)}   `)).toBe(true);
+    expect(thinPageText("가".repeat(300))).toBe(false);
+    expect(thinPageText("😀".repeat(299))).toBe(true);
   });
 });

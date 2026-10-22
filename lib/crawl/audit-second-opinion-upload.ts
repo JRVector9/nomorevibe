@@ -6,6 +6,7 @@ import { ACTIVE_RUN, assertWritable, type PolicyResult } from "./audit-policy";
 import { importHoldEffect, supersedeCandidate, type ImportBlocker } from "./audit-import-gate";
 import { IMPORT_SOURCES, parseImportLine, type ImportOpinion, type ImportSource } from "./audit-import-sources";
 import { secondOpinionVotesField } from "./audit-second-opinions";
+import { thinPageTextSql } from "./audit-text-gate";
 import { auditItemModel, type HoldGateOpinion } from "./product-audit-hold";
 import { getSettings } from "./settings";
 
@@ -150,8 +151,8 @@ export async function previewImport(input: { runId: number; supersede: boolean }
   for (let afterId = 0; ;) {
     const page = await db.execute<{ id: number; item_id: number; slug: string; payload: ImportOpinion; name: string | null; url: string | null; open: boolean;
       audit_reason: string | null; audit_confidence: number | null; audit_model: string | null; held_by_item: boolean; held: boolean;
-      opinions: HoldGateOpinion[] }>(sql`
-      select ri.id, ri.item_id, ri.slug, ri.payload, p.name, p.url,
+      opinions: HoldGateOpinion[]; thin_text: boolean }>(sql`
+      select ri.id, ri.item_id, ri.slug, ri.payload, p.name, p.url, ${thinPageTextSql(sql`i.product_id`)} as thin_text,
         coalesce(i.ai_decision = 'reject' and i.human_decision is null and p.status in ('seeded', 'verified') and p.slug = ri.slug, false) as open,
         i.ai_reason as audit_reason, i.ai_confidence as audit_confidence, ${auditItemModel("i")} as audit_model,
         coalesce(p.audit_hold_at is not null and p.audit_hold_item_id = i.id, false) as held_by_item, coalesce(p.audit_hold_at is not null, false) as held,
@@ -172,7 +173,8 @@ export async function previewImport(input: { runId: number; supersede: boolean }
       preview.heldApprovals += 1;
       const opinions = [...row.opinions.filter((opinion) => opinion.model !== line.model),
         { model: line.model, decision: line.decision, source: options.source, confidence: line.confidence }];
-      const effect = (supersede: boolean) => importHoldEffect({ item: { reason: row.audit_reason, model: row.audit_model, confidence: row.audit_confidence },
+      const effect = (supersede: boolean) => importHoldEffect({ item: { reason: row.audit_reason, model: row.audit_model, confidence: row.audit_confidence,
+        thinText: row.thin_text },
         opinions, line: { ...line, source: options.source }, hold: settings.auditHold, options: gate, supersede });
       const plain = effect(false);
       if (plain.release === "gate") {

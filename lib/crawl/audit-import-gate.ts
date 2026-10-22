@@ -32,7 +32,8 @@ const view = (opinion: HoldGateOpinion) => ({ model: opinion.model, source: opin
   confidence: typeof opinion.confidence === "number" ? opinion.confidence : null });
 
 export function importHoldEffect(input: {
-  item: { reason: string | null; model: string | null; confidence: number | null };
+  /** thinText: 그 제품의 수집 본문이 적다(audit-text-gate.ts) — 글만 본 m1 의견은 보류에서 세지 않는다 */
+  item: { reason: string | null; model: string | null; confidence: number | null; thinText?: boolean };
   /** 이 줄을 덮어쓴 뒤 그 항목의 의견 전부 */
   opinions: HoldGateOpinion[];
   line: { decision: string; confidence: number | null; shot: boolean; source: string; model: string };
@@ -40,10 +41,11 @@ export function importHoldEffect(input: {
   options: HoldGateOptions;
   supersede: boolean;
 }): ImportHoldEffect {
-  const gateItem = { reason: input.item.reason, model: input.item.model, confidence: input.item.confidence };
+  const gateItem = { reason: input.item.reason, model: input.item.model, confidence: input.item.confidence, thinText: input.item.thinText };
   const gates = holdGates({ ...gateItem, opinions: input.opinions }, input.hold, input.options);
   if (!gates.byCategory && !gates.bySecondOpinion) return { release: "gate", superseded: [], blockers: [] };
-  const countedReject = (opinion: HoldGateOpinion) => opinion.decision === "reject" && countedOpinion(opinion, input.options)
+  const countedReject = (opinion: HoldGateOpinion) => opinion.decision === "reject"
+    && countedOpinion(opinion, input.options, { opinions: input.opinions, thinText: input.item.thinText })
     && secondRejectHolds(opinion.model, input.item.reason);
   const textRejects = input.opinions.filter((opinion) => countedReject(opinion) && !SCREENSHOT_SOURCES.has(opinion.source ?? ""));
   const qualifies = input.line.decision === "approve" && input.line.shot && SCREENSHOT_SOURCES.has(input.line.source)

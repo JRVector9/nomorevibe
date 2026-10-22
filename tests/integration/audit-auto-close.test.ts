@@ -11,7 +11,8 @@ import { writeAuditSecondOpinions } from "@/lib/crawl/audit-second-opinion-impor
 import { autoCloseToday, utcDay } from "@/lib/crawl/audit-auto-close";
 import { applyAuditPolicyChunk, listPolicyRuns, previewAuditPolicy, startAuditPolicyRun, startAuditPolicyUndo, undoAuditPolicyChunk } from "@/lib/crawl/audit-policy";
 import { EMPTY_POLICY_FILTER } from "@/lib/crawl/audit-policy-filter";
-import { startProductAudit } from "@/lib/crawl/product-audit";
+import { listAuditFindings, startProductAudit } from "@/lib/crawl/product-audit";
+import { screenReviewCounts, screenReviewQueue } from "@/lib/crawl/audit-screen-review";
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
@@ -51,6 +52,9 @@ const CONTENT = 'pageText: "Getting started" — a documentation site for a libr
 const CATALOG = "The page is an awesome list of documentation links for many tools, not one product";
 /** 빈 화면 갈래 */
 const EMPTY = "The page text is empty; only shows a title and a JavaScript bundle";
+/** 수집 본문 — 300자 이상이라 글만 본 m1 의 답으로 닫을 수 있다(audit-text-gate.ts). THIN 은 화면 판별 대기 */
+const RICH = "쓸 수 있는 앱 — 가입하고 바로 씁니다. ".repeat(14);
+const THIN = "쓸 수 있는 앱";
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -71,7 +75,7 @@ beforeEach(async () => {
 afterEach(() => vi.unstubAllGlobals());
 
 let sequence = 0;
-async function listed(repo: string, over: Partial<typeof products.$inferInsert> = {}, document = true) {
+async function listed(repo: string, over: Partial<typeof products.$inferInsert> = {}, document = true, text = RICH) {
   const slug = repo.split("/")[1];
   const url = `https://${slug}.test`;
   const [product] = await db.insert(products).values({
@@ -81,16 +85,16 @@ async function listed(repo: string, over: Partial<typeof products.$inferInsert> 
   if (!document) return product;
   await crawl.putDocument({ repo, productUrl: url, pageStatus: 200,
     repoMeta: { description: "레포", stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: "User" } },
-    pageMeta: { title: slug, textSample: "쓸 수 있는 앱" } });
+    pageMeta: { title: slug, textSample: text } });
   await db.insert(crawlCandidates).values({ repo, productUrl: url, state: "published", reason: "passed", decidedBy: "auto",
     publishedSlug: slug, judgedAt: new Date(), decidedAt: new Date() });
   return product;
 }
 type Row = { repo: string; confidence?: number; reason?: string; over?: Partial<typeof products.$inferInsert>; document?: boolean;
-  provider?: string; model?: string };
+  provider?: string; model?: string; text?: string };
 /** 감사를 열고 답을 직접 적은 뒤 닫는다 — 틱은 쓸기와 Qwen-v2 단계만 돈다 */
 async function judged(rows: Row[]) {
-  for (const row of rows) await listed(row.repo, row.over, row.document ?? true);
+  for (const row of rows) await listed(row.repo, row.over, row.document ?? true, row.text ?? RICH);
   await startProductAudit({ startedBy: "jr", reason: "감사", reauditKept: false });
   for (const row of rows) {
     await db.update(productAuditItems).set({ aiDecision: "reject", aiConfidence: row.confidence ?? 0.97, aiReason: row.reason ?? COMPANY,
@@ -135,18 +139,25 @@ const answerDirectly = async (slug: string, decision: "approve" | "reject", conf
 };
 
 describe("묻는 범위", () => {
-  it("열린 거절 전부 — 확신 0.95 아래·주인 있는 것까지 묻는다. 지금 보류의 까닭 → 보류 후보 → 확신 높은 순 → id", async () => {
+  it("열린 거절 전부 — 확신 0.95 아래·주인 있는 것까지 묻는다. 공개 중(확신 높은 순) → 보류 중 → 글이 적은 페이지(같은 차례) → id", async () => {
     await judged([{ repo: "o/low", confidence: 0.6, reason: CONTENT }, { repo: "o/mid", confidence: 0.8, reason: CONTENT },
       { repo: "o/cand", confidence: 0.96, reason: CONTENT }, { repo: "o/owned", confidence: 0.97, over: { claimedAt: new Date() } },
       { repo: "o/verified", confidence: 0.9, over: { status: "verified", verifiedAt: new Date() } }, { repo: "o/held", confidence: 0.97 },
+      { repo: "o/held-low", confidence: 0.6, reason: CONTENT },
+      // 글이 적은 페이지는 m1 의 답이 닫지 못한다 — 닫을 수 있는 것을 다 물은 뒤에(공개 먼저·확신 높은 순)
+      { repo: "o/thin", confidence: 0.99, reason: CONTENT, text: THIN }, { repo: "o/thin-held", confidence: 0.99, text: THIN },
       // 같은 모델 규칙(감사 답을 같은 Qwen 이 냄)·수집 원본 없음·내려간 제품은 묻지 않는다
       { repo: "o/same", confidence: 0.6, provider: "qwen-direct", model: "qwen3.8-flash-next" }, { repo: "o/nodoc", confidence: 0.6, document: false },
       { repo: "o/banned", confidence: 0.6, over: { status: "banned" } }]);
+    // 보류 중인 것 — 쓸기가 이 틱에 회사 소개(o/held·o/thin-held, 확신 0.97·0.99)를 걸고, o/held-low 는 지난 보류로 둔다
+    await db.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: sql`(select id from product_audit_items where slug = 'held-low')` })
+      .where(eq(products.slug, "held-low"));
+    expect(await turn({ perTick: 20 })).toMatchObject({ ok: true });
     expect(await tick()).toMatchObject({ status: "completed" });
-    // 쓸기가 이 틱에 회사 소개(o/held)를 걸었다 — 그 보류의 까닭이 먼저
-    expect(server.calls).toEqual(["o/held", "o/cand", "o/owned", "o/verified", "o/mid", "o/low"]);
+    expect(await heldSlugs()).toEqual(["held", "held-low", "thin-held"]);
+    expect(server.calls).toEqual(["o/owned", "o/cand", "o/verified", "o/mid", "o/low", "o/held", "o/held-low", "o/thin", "o/thin-held"]);
     const status = await qwenSecondOpinionStatus(await getSettings());
-    expect(status.audit).toMatchObject({ enabled: true, scope: "all", autoClose: true, remaining: 0, lastHour: 6 });
+    expect(status.audit).toMatchObject({ enabled: true, scope: "all", autoClose: true, remaining: 0, lastHour: 9 });
   });
 
   it("보류 후보만(scope hold) — 확신 문턱 아래·주인 있는 것은 묻지 않는다", async () => {
@@ -321,7 +332,9 @@ describe("답으로 닫기", () => {
     await judged([{ repo: "c/approve", confidence: 0.6, reason: CONTENT }, { repo: "c/catalog", confidence: 0.97, reason: CATALOG },
       { repo: "c/owned", confidence: 0.6, reason: CONTENT, over: { claimedAt: new Date() } }, { repo: "c/split", confidence: 0.6, reason: CONTENT },
       { repo: "c/weak", confidence: 0.6, reason: CONTENT }, { repo: "c/old", confidence: 0.6, reason: CONTENT },
-      { repo: "c/edge", confidence: 0.6, reason: CONTENT }]);
+      { repo: "c/edge", confidence: 0.6, reason: CONTENT },
+      // 글이 적은 페이지·다른 모델이 승인한 거절(엇갈림)은 받아 둔 답으로도 닫지 않는다
+      { repo: "c/thin", confidence: 0.6, reason: CONTENT, text: THIN }, { repo: "c/rsplit", confidence: 0.6, reason: CONTENT }]);
     const earlier = async (slug: string, decision: "approve" | "reject", confidence: number, promptVersion = QWEN_V2_PROMPT_VERSION) => {
       const row = await item(slug);
       await db.insert(productAuditSecondOpinions).values({ itemId: row.id, productId: row.productId, model: "qwen3.8-flash-next", decision, confidence,
@@ -337,6 +350,9 @@ describe("답으로 닫기", () => {
     // 문턱 그대로(real 0.9) — SQL 의 미리 거르기도 문턱 안으로 본다
     await earlier("edge", "approve", 0.9);
     await earlier("old", "approve", 0.95, "2026-10-01.v1");
+    await earlier("thin", "reject", 0.95);
+    await earlier("rsplit", "reject", 0.95);
+    await vote("rsplit", "grok-4.7", "approve");
     server.answers.set("c/old", { decision: "approve", confidence: 0.95 });
     // 답으로 닫기가 꺼져 있으면 따라잡지 않는다
     expect(await turn({ autoClose: false })).toMatchObject({ ok: true });
@@ -370,6 +386,115 @@ describe("답으로 닫기", () => {
     expect(await db.select().from(productAuditSecondOpinions)).toEqual([]);
     expect(await heldSlugs()).toEqual([]);
     expect(await autoRuns()).toEqual([]);
+  });
+});
+
+describe("글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () => {
+  it("글이 적은 페이지는 승인·거절 모두 닫지 않는다 — 의견만 남고 화면 판별 대기에 든다. 쓸기도 m1 거절로 숨기지 않고 m1 승인으로 풀지 않는다", async () => {
+    await judged([{ repo: "t/rich", confidence: 0.97, reason: CONTENT }, { repo: "t/thin", confidence: 0.97, reason: CONTENT, text: THIN },
+      // 회사 소개 갈래 — 쓸기가 첫 감사의 갈래로 건다(첫 감사의 갈래 보류는 그대로다)
+      { repo: "t/thin-held", confidence: 0.97, text: THIN },
+      // 299자 — 문턱 바로 아래
+      { repo: "t/edge", confidence: 0.6, reason: CONTENT, text: "가".repeat(299) }]);
+    server.answers.set("t/rich", { decision: "reject", confidence: 0.95 });
+    server.answers.set("t/thin", { decision: "reject", confidence: 1 });
+    server.answers.set("t/thin-held", { decision: "approve", confidence: 1 });
+    server.answers.set("t/edge", { decision: "approve", confidence: 1 });
+    expect(await tick()).toMatchObject({ status: "completed" });
+    // 닫을 수 있는 것(글 충분)을 먼저 묻고, 글이 적은 것도 묻는다(의견은 남는다)
+    expect(server.calls).toEqual(["t/rich", "t/thin", "t/edge", "t/thin-held"]);
+    expect((await db.select().from(productAuditSecondOpinions)).map((row) => row.source)).toEqual(Array(4).fill("qwen-v2-auto"));
+    // 글 충분한 거절만 숨긴다 — 글이 적은 거절은 숨기지 않고, 글이 적은 승인은 유지하지도 갈래 보류를 풀지도 않는다
+    expect(await heldSlugs()).toEqual(["rich", "thin-held"]);
+    expect(await keptSlugs()).toEqual([]);
+    expect(await db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.action, "audit.hold.release"))).toEqual([]);
+    // 다음 틱 — 쓸기도 글이 적은 페이지의 m1 거절(확신 0.97 · 글·문서 갈래 — 두 번째 모델 거절로만 걸 수 있다)로 숨기지 않는다
+    await tick();
+    expect(await heldSlugs()).toEqual(["rich", "thin-held"]);
+    // 같은 쓰기를 바로 불러도 열어 둔 까닭은 화면 판별 대기다(다른 판으로 다시 답함)
+    expect((await answerDirectly("thin", "reject", 1, "2026-10-30.v3")).autoClose).toEqual({ kept: 0, held: 0, left: { thin_text: 1 } });
+    expect((await answerDirectly("edge", "approve", 1, "2026-10-30.v3")).autoClose).toEqual({ kept: 0, held: 0, left: { thin_text: 1 } });
+
+    // 화면 판별 대기 — 공개 중 먼저(확신 높은 순), 그다음 보류 중. 글 충분한 것은 들지 않는다
+    const queue = await screenReviewQueue();
+    expect(queue.map((row) => [row.slug, row.held, row.textLength])).toEqual([["thin", false, 8], ["edge", false, 299], ["thin-held", true, 8]]);
+    expect(queue[0]).toMatchObject({ url: "https://thin.test", pageText: THIN, owned: false,
+      audit: { confidence: 0.97, reason: CONTENT, category: "content", model: "[MLX] gpt-oss-120b" } });
+    expect(queue[0].opinions).toEqual([expect.objectContaining({ model: "qwen3.8-flash-next", decision: "reject", source: "qwen-v2-auto",
+      reason: "again" })]);
+    expect(await screenReviewCounts()).toEqual({ screenWait: 3, screenWaitPublic: 2, split: 0 });
+    const status = await qwenSecondOpinionStatus(await getSettings());
+    expect(status.screen).toEqual({ screenWait: 3, screenWaitPublic: 2, split: 0 });
+    // 정책 처리의 거르기 — 화면 판별 대기·글 적음·글 충분
+    const preview = async (screen: "wait" | "thin" | "text") =>
+      (await previewAuditPolicy({ filter: { ...EMPTY_POLICY_FILTER, screen }, action: "keep" })).matched;
+    expect([await preview("wait"), await preview("thin"), await preview("text")]).toEqual([3, 3, 1]);
+    const sample = (await previewAuditPolicy({ filter: { ...EMPTY_POLICY_FILTER, screen: "wait" }, action: "keep" })).sample;
+    expect(sample.find((row) => row.slug === "thin")).toMatchObject({ textLength: 8, screenJudged: false, m1Split: false });
+  });
+
+  it("답으로 닫기를 꺼도 쓸기는 글이 적은 페이지·다른 모델이 승인한 것을 m1 거절(두 번째 모델 거절)로 숨기지 않는다", async () => {
+    expect(await turn({ autoClose: false })).toMatchObject({ ok: true });
+    await judged([{ repo: "w/rich", reason: CONTENT }, { repo: "w/thin", reason: CONTENT, text: THIN }, { repo: "w/split", reason: CONTENT },
+      { repo: "w/grok", reason: CONTENT, text: THIN }]);
+    await vote("split", "grok-4.7", "approve");
+    // 글이 적어도 grok 의 거절은 그대로 센다
+    await vote("grok", "grok-4.7", "reject");
+    for (const repo of ["w/rich", "w/thin", "w/split", "w/grok"]) server.answers.set(repo, { decision: "reject", confidence: 0.97 });
+    await tick();
+    expect(server.calls.sort()).toEqual(["w/grok", "w/rich", "w/split", "w/thin"]);
+    await tick();
+    expect(await heldSlugs()).toEqual(["grok", "rich"]);
+    // 감사 화면의 '두 모델 모두 거절'도 같은 셈이다(SQL) — 엇갈린 것은 '갈림'에 든다
+    const [campaign] = await db.select().from(productAuditCampaigns);
+    const slugs = async (second: "agreed" | "split") => (await listAuditFindings(campaign.id, "reject", { limit: 50, offset: 0, second }))
+      .map((row) => row.slug).sort();
+    expect(await slugs("agreed")).toEqual(["grok", "rich"]);
+    expect(await slugs("split")).toEqual(["split"]);
+  });
+
+  it("다른 모델이 승인했으면 숨기지 않는다 — 엇갈림으로 열어 두고 두 모델의 결정·사유를 작업 로그·감사 줄·정책 처리 표본에 남긴다", async () => {
+    await judged([{ repo: "x/reject", confidence: 0.6, reason: CONTENT }, { repo: "x/approve", confidence: 0.6, reason: CONTENT },
+      { repo: "x/owned", confidence: 0.6, reason: CONTENT, over: { claimedAt: new Date() } }, { repo: "x/hide", confidence: 0.6, reason: CONTENT }]);
+    await vote("reject", "grok-4.7", "approve");
+    await vote("approve", "grok-4.7", "reject");
+    await vote("owned", "qwen3.8-flash-next+vision", "approve", "qwen-vision-m1");
+    // 같은 모델(게이트웨이 자리 표시만 다름)의 승인은 엇갈림이 아니다
+    await vote("hide", "[gpu3090] qwen3.8-flash-next", "approve");
+    server.answers.set("x/reject", { decision: "reject", confidence: 0.95 });
+    server.answers.set("x/approve", { decision: "approve", confidence: 0.95 });
+    server.answers.set("x/owned", { decision: "reject", confidence: 0.95 });
+    server.answers.set("x/hide", { decision: "reject", confidence: 0.95 });
+    const floor = await auditFloor();
+    await tick();
+    expect(await heldSlugs()).toEqual(["hide"]);
+    expect(await keptSlugs()).toEqual([]);
+    const splits = await auditRowsAfter(floor, "audit-auto-split");
+    expect(splits.map((row) => row.target).sort()).toEqual(["approve", "owned", "reject"]);
+    expect(splits.find((row) => row.target === "reject")).toMatchObject({ actor: "qwen-v2-auto", actorKind: "model", ok: true, detail: {
+      itemId: (await item("reject")).id, aiConfidence: 0.6, category: "content",
+      m1: { model: "qwen3.8-flash-next", decision: "reject", confidence: 0.95, promptVersion: QWEN_V2_PROMPT_VERSION, reason: "Qwen says reject." },
+      others: [{ model: "grok-4.7", source: "grok-cli-batch", decision: "approve", confidence: 0.9, reason: "earlier" }] } });
+    expect(splits.find((row) => row.target === "owned")).toMatchObject({ detail: { others: [{ model: "qwen3.8-flash-next+vision", source: "qwen-vision-m1" }] } });
+    expect(splits.find((row) => row.target === "approve")).toMatchObject({ detail: { m1: { decision: "approve" }, others: [{ decision: "reject" }] } });
+    // 감사 줄 — 엇갈림 표시와 두 모델의 사유
+    const [campaign] = await db.select().from(productAuditCampaigns);
+    const rows = await listAuditFindings(campaign.id, "reject", { limit: 50, offset: 0 });
+    const row = rows.find((finding) => finding.slug === "reject")!;
+    expect(row).toMatchObject({ m1Split: true, screenJudged: false, textLength: [...RICH.trim()].length });
+    expect(row.second.map((opinion) => [opinion.model, opinion.decision, opinion.source, opinion.reason])).toEqual([
+      ["grok-4.7", "approve", "grok-cli-batch", "earlier"], ["qwen3.8-flash-next", "reject", "qwen-v2-auto", "Qwen says reject."]]);
+    expect(rows.find((finding) => finding.slug === "hide")?.m1Split).toBe(false);
+    // 정책 처리의 '엇갈림' 거르기와 수
+    const preview = await previewAuditPolicy({ filter: { ...EMPTY_POLICY_FILTER, second: "m1_split" }, action: "keep" });
+    expect(preview.matched).toBe(3);
+    expect(preview.sample.every((sampled) => sampled.m1Split && sampled.second.every((opinion) => opinion.reason))).toBe(true);
+    expect((await screenReviewCounts()).split).toBe(3);
+    // 엇갈린 것은 다음 틱에도 다시 묻거나 닫지 않는다
+    server.calls.length = 0;
+    await tick();
+    expect(server.calls).toEqual([]);
+    expect(await heldSlugs()).toEqual(["hide"]);
   });
 });
 

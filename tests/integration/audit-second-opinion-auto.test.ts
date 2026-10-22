@@ -99,7 +99,8 @@ async function listed(repo: string, over: Partial<typeof products.$inferInsert> 
   }).returning();
   await crawl.putDocument({ repo, productUrl: url, pageStatus: 200,
     repoMeta: { description: "레포", stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: "User" } },
-    pageMeta: { title: slug, textSample: "쓸 수 있는 앱" } });
+    // 300자 이상 — 글이 적은 페이지는 글만 본 m1 의 의견을 보류에서 세지 않는다(audit-text-gate.ts, audit-auto-close.test.ts 가 본다)
+    pageMeta: { title: slug, textSample: "쓸 수 있는 앱 — 가입하고 바로 씁니다. ".repeat(14) } });
   const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl: url, state: "published", reason: "passed", decidedBy: "auto",
     publishedSlug: slug, judgedAt: new Date(), decidedAt: new Date() }).returning();
   return { product, candidate };
@@ -145,8 +146,8 @@ describe("감사 두 번째 의견", () => {
     server.answers.set("a/content", { decision: "reject", reason: "Only documentation." });
 
     expect(await tick()).toMatchObject({ status: "completed" });
-    // 문턱 아래·주인 있는 것은 보류 후보가 아니라 묻지 않는다. 지금 보류된 것(쓸기가 이 틱에 건 회사 소개)이 먼저
-    expect(askedRepos()).toEqual(["a/company", "a/content"]);
+    // 문턱 아래·주인 있는 것은 보류 후보가 아니라 묻지 않는다. 공개 중인 것이 먼저, 지금 보류된 것(쓸기가 이 틱에 건 회사 소개)이 뒤(공개 먼저, 2026-10-22)
+    expect(askedRepos()).toEqual(["a/content", "a/company"]);
     const call = server.calls[0];
     expect(call.url).toBe("http://100.77.43.63:8090/v1/chat/completions");
     expect(call.headers).toEqual({ "Content-Type": "application/json" });
