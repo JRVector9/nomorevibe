@@ -13,12 +13,14 @@
 ## 실제 검증
 
 - monitor 기존/신규 2파일 8개 PASS: 주/외부 수신 실패 격리, DOWN/회복, 비밀 비노출, 구성 거부.
-- 관리자 action·기존 표시 4파일 40개 PASS, 작업 로그 13개 PASS. 단위/UI 합계 61개.
+- 관리자 action·기존 표시 4파일 40개 PASS, 작업 로그 13개·DR 웹 관문 13개 PASS. 단위/UI 합계 74개.
 - 전용 pgvector PostgreSQL 17(127.0.0.1:55439) 2파일 27개 PASS: 신규 20개·기존 job-control 7개.
   실행 중 성공/실패/deferred 뒤 멈춤 유지, 유효 retry 복원, 동시 변경·ABA, batch/fence 거부 포함.
 - Next 16.3.8 local guide 확인, next typegen·tsc --noEmit·변경 코드/테스트 ESLint·git diff --check PASS.
 - root와 독립 검토 담당이 구현·잠금 순서·폼 snapshot을 확인했다. 수동 전체 unit/DB는 PR마다 반복하지 않는 AGENTS 정책을 따른다.
 - 처음 로컬 HTTP 시험은 sandbox listen EPERM으로 실패했고 승인 후 같은 시험이 통과했다.
+- PR 첫 CI의 unit 한 묶음은 새 관리자 액션 추가로 웹 관문 테스트의 고정 개수가 71→72가 되어 실패했다(3,031 PASS/1 FAIL).
+  기대 개수와 새 액션의 탐지 확인을 추가했고 해당 관문+job action 27개가 통과했다. 보호 검사는 유지했다.
 
 ## 운영 연결 상태
 
