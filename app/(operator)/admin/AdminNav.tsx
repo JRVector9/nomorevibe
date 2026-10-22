@@ -18,6 +18,8 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
       { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인", icon: "check" },
       // /admin/products 아래에 두지 않는다 — 아래에 두면 제품과 함께 선택된 것으로 보인다
       { href: "/admin/audit", label: "내릴 후보", hint: "요청·AI가 걸러낸 발행분", icon: "down" },
+      { href: "/admin/requests", label: "문의 접수", hint: "받은 메일 수동 기록·처리", icon: "inbox" },
+      { href: "/admin/maker-replies", label: "메이커 답장 검수", hint: "답장 공개·숨김·복원", icon: "file" },
       { href: "/admin/feedback", label: "피드백 검수", hint: "보류·공개 글 숨김·복원", icon: "file" },
       { href: "/admin/reactions", label: "써봤어요 검수", hint: "보류한 한 줄 공개·숨김", icon: "file" },
       { href: "/admin/translations", label: "공개 번역", hint: "언어별 실패·제한 재요청", icon: "file" },

@@ -13,7 +13,7 @@ export const AUDIT_TAB_HREF = "/admin/audit?tab=audit";
  * 칸의 차례 — 급한 것부터. 내려달라는 요청은 24시간 안에 처리한다고 상세 페이지에 약속했으므로 맨 위,
  * 그다음 심사(직접 판단 → 확정만), 감사, 제품 목록의 거르기들.
  */
-export const INBOX_KEYS = ["takedown", "introRequest", "feedback", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"] as const satisfies readonly InboxKey[];
+export const INBOX_KEYS = ["takedown", "introRequest", "feedback", "makerReply", "contact", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"] as const satisfies readonly InboxKey[];
 
 /** 칸마다 이름, 할 일 한 줄, 처리하는 화면 */
 export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; href: string; action: string }> = {
@@ -23,6 +23,10 @@ export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; hre
     href: ACTION_LINKS.takedowns, action: "요청 탭에서 처리" },
   feedback: { title: "보류된 피드백", hint: "원문을 확인하고 공개 승인하거나 거절합니다. 이미 공개된 글도 검수 화면에서 숨길 수 있습니다.",
     href: ACTION_LINKS.feedbackHeld, action: "피드백 검수" },
+  makerReply: { title: "보류된 메이커 답장", hint: "원문과 답장을 확인하고 공개 승인하거나 숨깁니다.",
+    href: "/admin/maker-replies", action: "답장 검수" },
+  contact: { title: "열린 문의", hint: "contact@로 받은 메일 중 수동으로 접수한 문의를 처리합니다. 회신은 기존 메일함에서 보냅니다.",
+    href: "/admin/requests", action: "문의 처리" },
   human: { title: "직접 판단", hint: "AI가 결론을 내지 못한 후보 — 직접 승인하거나 거부합니다.",
     href: ACTION_LINKS.reviewHuman, action: "심사 큐에서 판단" },
   agreed: { title: "확정만 하면 됨", hint: "두 모델이 같은 결론을 낸 후보 — 보고 확정만 누릅니다.",

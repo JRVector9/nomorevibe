@@ -111,7 +111,7 @@ describe("한 개념 한 규칙 — 심각도", () => {
     expect(sectionTone("takedown", { count: 2, overdue: 0, items: [] })).toBe("warn");
     expect(sectionTone("takedown", { count: 2, overdue: 1, items: [] })).toBe("critical");
     expect(sectionTone("human", { count: 900, items: [] })).toBe("warn");
-    const keys: InboxKey[] = ["takedown", "introRequest", "feedback", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"];
+    const keys: InboxKey[] = ["takedown", "introRequest", "feedback", "makerReply", "contact", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"];
     const results = Object.fromEntries(keys.map((key) => [key, ok(key === "down" ? 2 : 0)])) as Record<InboxKey, InboxSectionResult>;
     expect(assembleInbox(results, []).sections.find((section) => section.key === "down")?.tone).toBe("critical");
   });

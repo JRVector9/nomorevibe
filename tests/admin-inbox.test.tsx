@@ -15,11 +15,11 @@ const results = (over: Partial<Record<InboxKey, InboxSectionResult>> = {}) =>
 
 describe("assembleInbox", () => {
   it("급한 차례 — 요청, 소개 수정 요청, 직접 판단, 확정만, 감사, 응답 없음, 소개, 저장소, 스팸", () => {
-    expect(INBOX_KEYS).toEqual(["takedown", "introRequest", "feedback", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"]);
+    expect(INBOX_KEYS).toEqual(["takedown", "introRequest", "feedback", "makerReply", "contact", "human", "agreed", "audit", "down", "intro", "translations", "repoGone", "repoAutoBanned", "spam"]);
     expect(Object.keys(INBOX_SECTIONS).sort()).toEqual([...INBOX_KEYS].sort());
     const inbox = assembleInbox(results(Object.fromEntries(INBOX_KEYS.map((key, index) => [key, section(index + 1)]))), [3, 1]);
     expect(inbox.sections.map((item) => item.key)).toEqual([...INBOX_KEYS]);
-    expect(inbox.remaining).toBe(78);
+    expect(inbox.remaining).toBe(105);
     expect(inbox.done).toBe(4);
     expect(inbox.clear).toEqual([]);
   });
@@ -27,7 +27,7 @@ describe("assembleInbox", () => {
   it("빈 칸은 아래로 모으고, 못 읽은 칸은 제자리에 둔다", () => {
     const inbox = assembleInbox(results({ spam: section(2), agreed: { ok: false }, down: section(615) }), [0, null]);
     expect(inbox.sections.map((item) => [item.key, item.state])).toEqual([["agreed", "failed"], ["down", "work"], ["spam", "work"]]);
-    expect(inbox.clear.map((item) => item.key)).toEqual(["takedown", "introRequest", "feedback", "human", "audit", "intro", "translations", "repoGone", "repoAutoBanned"]);
+    expect(inbox.clear.map((item) => item.key)).toEqual(["takedown", "introRequest", "feedback", "makerReply", "contact", "human", "audit", "intro", "translations", "repoGone", "repoAutoBanned"]);
     expect(inbox.remaining).toBe(617);
     expect(inbox.failed).toBe(1);
     // 못 읽은 조각은 빼고 더한다
@@ -50,9 +50,11 @@ describe("assembleInbox", () => {
   it("칸마다 처리 화면으로 보낸다 — 운영센터와 같은 주소, 감사는 감사 탭", () => {
     const links = Object.values(ACTION_LINKS) as string[];
     for (const key of INBOX_KEYS) {
-      if (key === "audit") continue;
+      if (key === "audit" || key === "makerReply" || key === "contact") continue;
       expect(links, key).toContain(INBOX_SECTIONS[key].href);
     }
+    expect(INBOX_SECTIONS.makerReply.href).toBe("/admin/maker-replies");
+    expect(INBOX_SECTIONS.contact.href).toBe("/admin/requests");
     expect(INBOX_SECTIONS.audit.href).toBe(AUDIT_TAB_HREF);
     // /admin/audit 이 ?tab=audit 을 읽는다
     const audit = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/audit/page.tsx"), "utf8");

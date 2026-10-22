@@ -164,11 +164,17 @@ export const makerReplies = pgTable("maker_replies", {
   authorUserId: integer("author_user_id").notNull().references(() => publicUsers.id),
   body: varchar("body", { length: 1000 }).notNull(),
   reviewState: varchar("review_state", { length: 16 }).$type<"accepted" | "held" | "rejected">().notNull().default("accepted"),
+  /** 작성자 수정·관리자 검토마다 증가 — 오래된 검토 폼의 ABA 경합을 막는다(0117) */
+  reviewVersion: integer("review_version").notNull().default(1),
+  /** 관리자 숨김 뒤에는 글을 고쳐도 사람이 공개할 때까지 보류한다 */
+  reviewRequired: boolean("review_required").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("maker_replies_target_idx").on(table.targetType, table.targetId),
   index("maker_replies_product_idx").on(table.productId, table.createdAt.desc()),
+  index("maker_replies_review_queue_idx").on(table.reviewState, table.createdAt, table.id),
+  check("maker_replies_review_version_check", sql`${table.reviewVersion} > 0`),
   /** 0109 — 계정 삭제 */
   index("maker_replies_author_idx").on(table.authorUserId),
   check("maker_replies_target_type_check", sql`${table.targetType} in ('reaction', 'feedback')`),
