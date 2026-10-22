@@ -59,6 +59,8 @@ describe("CI 워크플로", () => {
     for (const name of ["publish-worker-image", "publish-web-image"]) {
       const job = jobs[name];
       expect(needs(job)).toEqual(["scope", "check"]);
+      // 재사용한 main 실행은 검사 잡이 skipped 다 — 상태 함수가 없으면 암묵 success() 로 이미지 잡도 건너뛴다
+      expect(job.if).toMatch(/^!cancelled\(\) &&/);
       expect(job.if).toContain("needs.check.result == 'success'");
       const digestKeys = job.steps.flatMap((step) => Object.keys(step.env ?? {}).filter((key) => /DIGEST$/.test(key)));
       expect(digestKeys).toEqual(["DIGEST"]);
@@ -81,10 +83,12 @@ describe("CI 워크플로", () => {
     expect(workflow.on.pull_request.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review", "converted_to_draft"]);
     expect(jobs.scope.if).toBe("github.event.pull_request.draft != true");
     // scope 를 건너뛰면 따라서 건너뛰도록: check 말고는 모두 scope 를 기다리고, always() 로 건너뛰기를 무시하지 않는다
+    // 이미지 잡만 !cancelled() 를 쓴다 — main push 이고 check 가 success 일 때만이라 draft 에서는 여전히 돌지 않는다
     for (const [name, job] of Object.entries(jobs)) {
       if (name === "scope" || name === "check") continue;
       expect(needs(job), name).toContain("scope");
-      expect(job.if ?? "", name).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
+      const condition = name.startsWith("publish-") ? (job.if ?? "").replace(/^!cancelled\(\) &&/, "") : job.if ?? "";
+      expect(condition, name).not.toMatch(/always\(\)|failure\(\)|cancelled\(\)/);
     }
     // check 는 draft 에서도 돈다(if: always()) — 첫 단계가 실패해 초록 check 를 남기지 않고, 뒤 단계(트리 기록)는 돌지 않는다
     expect(jobs.check.if).toBe("always()");
