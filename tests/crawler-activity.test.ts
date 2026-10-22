@@ -322,6 +322,16 @@ describe("회차 누적·미룸·실패", () => {
     expect(report.jobs.find(item => item.name === "hn-talk")?.totals?.day.events).toEqual([{ label: "HN 화제 수집 결과", counts: { inserted: 12 } }]);
   });
 
+  it("Bluesky 화제는 새로 넣은 글·숨김·다시 묻기·요청 수만 더하고, 다시 센 창(found·missing·heavy)은 더하지 않는다", () => {
+    const report = build({ tallies: [{ ...tally({ day: { "@ok": 48, "social.bluesky_talk_collected": 48,
+      "social.bluesky_talk_collected#found": 19_000, "social.bluesky_talk_collected#missing": 14_000, "social.bluesky_talk_collected#heavy": 190,
+      "social.bluesky_talk_collected#inserted": 1_200, "social.bluesky_talk_collected#bots": 380, "social.bluesky_talk_collected#requests": 770 } }),
+      job: "bluesky-talk" }], deferrals: [] });
+    expect(report.jobs.find(item => item.name === "bluesky-talk")?.totals?.day.events).toEqual([
+      { label: "Bluesky 화제 수집 결과", counts: { inserted: 1_200, bots: 380, requests: 770 } },
+    ]);
+  });
+
   it("못 읽었으면 누적·미룸을 0 이 아니라 미확인으로 둔다", () => {
     const report = build({ tallies: null, deferrals: null });
     expect(report.jobs.every(row => row.totals === null && row.deferredHour === null)).toBe(true);

@@ -2,6 +2,7 @@ import type { JobContext, JobOutcome } from "./runner";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { seedFromShowHN } from "@/lib/crawl/jobs/hn-show";
 import { collectHnTalk } from "@/lib/social/hn-talk";
+import { collectBlueskyTalk } from "@/lib/social/bluesky-talk";
 import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
@@ -69,6 +70,9 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** HN에서 GitHub 저장소를 가리킨 글을 점수와 함께 남긴다 — 화제 화면의 재료, 프론티어에는 넣지 않는다 */
   "hn-talk": (ctx) => collectHnTalk(ctx),
+
+  /** Bluesky 에서 GitHub 를 가리킨 게시물을 반응 수와 함께 남긴다 — 봇·라벨 글은 숨겨 두고, 지워진 글은 내린다 */
+  "bluesky-talk": (ctx) => collectBlueskyTalk(ctx),
 
   /** 프론티어에서 꺼낸 레포의 원본(레포 메타 + 배포 페이지)을 확보한다 */
   "crawl-fetch": fetchCrawlDocuments,

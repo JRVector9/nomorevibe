@@ -159,7 +159,7 @@ describe("오류 화면", () => {
 });
 
 describe("게재 기준", () => {
-  it("다른 화면이 가리키는 앵커를 모두 갖고, 이메일 주소를 싣지 않는다", async () => {
+  it("다른 화면이 가리키는 앵커를 모두 갖고, 공개 연락처는 contact@nomorevibe.com 하나다", async () => {
     const html = await render(PolicyPage());
 
     expect((await policyMetadata()).title).toBe("게재 기준 — nomorevibe");
@@ -170,8 +170,11 @@ describe("게재 기준", () => {
     expect(html).toContain("24시간 안에 확인");
     expect(html).toContain("확인하기 전에도 바로 검색엔진 노출을 멈춥니다");
     expect(html).toContain("운영자 미확인");
-    expect(html).not.toMatch(/[\w.+-]+@[\w-]+\.[\w.]+/);
-    expect(html).not.toContain("mailto:");
+    // 공개 연락처(2026-10-22 사용자 결정, Bluesky 개발자 지침 5) — 그 밖의 주소는 싣지 않는다
+    expect(html).toContain('href="mailto:contact@nomorevibe.com"');
+    expect(html).toContain("SNS 화제 글·자료 출처에 관한 요청, 삭제 요청, 신고는");
+    expect(new Set(html.match(/[\w.+-]+@[\w-]+\.[\w.]+/g))).toEqual(new Set(["contact@nomorevibe.com"]));
+    expect(html).not.toContain("공개 이메일 주소는 두지 않습니다");
   });
 });
 

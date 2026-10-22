@@ -427,5 +427,8 @@ export const detail = {
   "talk.xPost": "X 게시물",
   "talk.viewOnX": "X에서 보기",
   "talk.xHeadline": "X 반응 {points} · 답글 {comments}",
+  "talk.bskyPost": "Bluesky 게시물",
+  "talk.viewOnBluesky": "Bluesky에서 보기",
+  "talk.bskyHeadline": "Bluesky 반응 {points} · 답글 {comments}",
   "feedback.deletedAuthor": "탈퇴한 사용자",
 } as const;

@@ -552,7 +552,7 @@ describe("evidence product detail components", () => {
     expect(html).toMatch(/<a [^>]*href="\/launch#verify"[^>]*>1분 만에 확인하기<\/a>/);
     expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
     expect(textOf(html)).toContain("CLI를 쓰지 않나요? GitHub 로그인으로 확인하는 방법은 준비 중입니다.");
-    // 공개 이메일은 두지 않는다(D5)
+    // 이 상자에는 이메일을 싣지 않는다 — 공개 연락처는 /policy#contact 에만(2026-10-22)
     expect(html).not.toMatch(/mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
     expect(html).not.toContain("운영 주체와 연락");
     // 내려달라는 요청 — 갈래 둘과 소개 수정 요청(UX-18), 운영자 확인 방법, 처리 약속과 절차 링크, 연락처 칸 없음(UX-19, D5)

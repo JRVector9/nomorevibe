@@ -39,7 +39,9 @@ export const policy = defineCatalog<typeof KoreanPolicy>()({
   "takedown.withinDay": "我們會在 24 小時內審核，並從列表和詳細頁面中下架專案。",
   "takedown.misuse": "如果請求疑似惡作劇或由非營運者提出，我們可能會保留專案。",
   "contact.title": "聯絡我們",
-  "contact.before": "我們不提供公開電子郵件地址。有關專案的請求請透過該專案詳細頁面的請求表單提交。營運者可執行 ",
+  "contact.before": "有關專案的請求請透過該專案詳細頁面的請求表單提交。營運者可執行 ",
   "contact.after": "驗證所有權後，自行修改簡介。",
   "contact.correction": "如果您無法自行修改簡介，例如安裝型專案無法驗證所有權，請在詳細頁面的請求表單中選擇「請求修改簡介」，說明錯誤及應如何更正。管理員審核後會修改簡介。此請求與下架請求不同，不會停止向搜尋引擎開放。",
+  "contact.emailBefore": "除站內請求表單外，有關 SNS 熱議貼文與資料來源的請求、刪除請求和檢舉也可寄至 ",
+  "contact.emailAfter": "。我們會定期查看。",
 });

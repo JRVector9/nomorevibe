@@ -4,8 +4,9 @@ import { jobs, products, socialPosts, socialTalkDecisions, type SocialPostState,
 import { PRODUCT_IDENTITY, publicProductChecks, talkGroups } from "./talk";
 import { shownPostIds, talkPlacement, talkVerdict, type TalkProductCheck } from "./talk-reasons";
 
-/** 카탈로그의 HN 화제 수집 잡(lib/jobs/catalog.ts) */
+/** 카탈로그의 HN·Bluesky 화제 수집 잡(lib/jobs/catalog.ts) */
 const HN_TALK_JOB = "hn-talk";
+const BLUESKY_TALK_JOB = "bluesky-talk";
 export const REPOSITORY_KEY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/;
 
 /** 모은 글 한 쪽 */
@@ -29,7 +30,7 @@ const pick = <T extends string>(raw: unknown, values: readonly T[], fallback: T)
 /** ?source=&state=&link=&talk=&sort= 를 거르기로 */
 export function talkAdminFilter(params: Record<string, unknown>): TalkAdminFilter {
   return {
-    source: pick(params.source, ["all", "hn", "x", "geeknews"] as const, "all"),
+    source: pick(params.source, ["all", "hn", "x", "geeknews", "bluesky"] as const, "all"),
     state: pick(params.state, ["all", "visible", "hidden", "gone"] as const, "all"),
     link: pick(params.link, ["all", "product", "none", "site"] as const, "all"),
     talk: pick(params.talk, ["all", "on", "off"] as const, "all"),
@@ -74,7 +75,7 @@ async function talkAdminSummary(shown: number): Promise<TalkAdminSummary> {
     lastSeenAt: sql<string | null>`max(${socialPosts.lastSeenAt})::text`,
   }).from(socialPosts).groupBy(socialPosts.source, socialPosts.state);
   const summary: TalkAdminSummary = {
-    total: 0, source: { hn: 0, x: 0, geeknews: 0 }, state: { visible: 0, hidden: 0, gone: 0 },
+    total: 0, source: { hn: 0, x: 0, geeknews: 0, bluesky: 0 }, state: { visible: 0, hidden: 0, gone: 0 },
     link: { product: 0, none: 0, site: 0 }, talk: { on: shown, off: 0 }, lastSeenAt: {},
   };
   for (const row of rows) {
@@ -110,7 +111,7 @@ async function productsByKey(keys: readonly string[]): Promise<Map<string, TalkP
 }
 
 /**
- * 관리자 화면의 모은 글 — 보관 중인 모든 글(HN·X, 보임·숨김·지워짐, 저장소 없는 글까지)을 거르고 한 쪽씩.
+ * 관리자 화면의 모은 글 — 보관 중인 모든 글(HN·X·Bluesky, 보임·숨김·지워짐, 저장소 없는 글까지)을 거르고 한 쪽씩.
  * 보관은 90일(수집 잡이 지난 글을 지운다)이라 따로 창을 걸지 않는다.
  * 글마다 지금 /talk 에 보이는지와 아니면 왜인지(talkVerdict)를 붙인다. /talk 조건은 talkGroups 가 공개 화면과 같은 식으로 읽는다.
  */
@@ -180,8 +181,9 @@ export async function setTalkHomeDecision(repositoryKey: string, decision: TalkH
 }
 
 /** 수집 잡의 마지막 회차 */
-export async function hnTalkJobState() {
+export async function hnTalkJobState(name = HN_TALK_JOB) {
   const [row] = await db.select({ lastRunAt: jobs.lastRunAt, lastError: jobs.lastError, cursor: jobs.cursor })
-    .from(jobs).where(eq(jobs.name, HN_TALK_JOB)).limit(1);
+    .from(jobs).where(eq(jobs.name, name)).limit(1);
   return row ?? null;
 }
+export const blueskyTalkJobState = () => hnTalkJobState(BLUESKY_TALK_JOB);

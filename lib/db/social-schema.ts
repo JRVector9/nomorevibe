@@ -7,13 +7,14 @@ import { boolean, check, index, integer, pgTable, primaryKey, serial, text, time
  * 글의 주소·제목·점수·시각만 담는다. 본문·댓글·작성자는 담지 않는다(SNS 화제·홍보 설계 2026-10-18, 운영·법무).
  * 출처가 같은 글을 다시 보여 주면 점수·댓글만 덮어쓰고, 시각별 값은 social_post_observations 에 쌓는다.
  *
- * - source: hn(Hacker News) · geeknews · x — 지금 수집하는 것은 hn 뿐이다
+ * - source: hn(Hacker News) · geeknews · x · bluesky — hn·bluesky 는 crawler 잡이, x 는 osaka 수집기 보고가 넣는다
  * - kind: show 는 만든 사람이 직접 올린 글(Show HN·Show GN), link 는 남이 소개한 글
  * - link_target: 글 주소가 저장소 자체(repo)인지, 그 저장소의 이슈·PR·다른 경로인지, 제품 사이트(site)인지
  * - repository_key: 소문자 owner/repo. 제품 사이트를 가리키는 글(site)은 비운다
  * - state: visible 보임 · hidden 관리자가 숨김 · gone 원문이 지워짐(다시 보이면 되살린다)
+ *   Bluesky 는 수집기도 숨긴다 — state_reason 이 bot_suspected(봇으로 보이는 계정)·label:<값>(라벨 붙은 글)이면 수집기가 건 것이다
  */
-export type SocialSource = "hn" | "geeknews" | "x";
+export type SocialSource = "hn" | "geeknews" | "x" | "bluesky";
 export type SocialPostKind = "link" | "show";
 export type SocialLinkTarget = "repo" | "issue" | "pull" | "path" | "site";
 export type SocialPostState = "visible" | "hidden" | "gone";
@@ -43,7 +44,7 @@ export const socialPosts = pgTable("social_posts", {
   uniqueIndex("social_posts_source_external_idx").on(table.source, table.externalId),
   index("social_posts_repository_idx").on(table.repositoryKey, table.postedAt.desc()).where(sql`${table.repositoryKey} is not null`),
   index("social_posts_posted_idx").on(table.postedAt.desc()),
-  check("social_posts_source_check", sql`${table.source} in ('hn','geeknews','x')`),
+  check("social_posts_source_check", sql`${table.source} in ('hn','geeknews','x','bluesky')`),
   check("social_posts_kind_check", sql`${table.kind} in ('link','show')`),
   check("social_posts_link_target_check", sql`${table.linkTarget} in ('repo','issue','pull','path','site')`),
   check("social_posts_repository_check", sql`(${table.linkTarget} = 'site' and ${table.repositoryKey} is null)
