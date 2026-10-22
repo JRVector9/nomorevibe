@@ -51,3 +51,6 @@ next-env.d.ts
 
 # 환경변수 템플릿은 커밋한다 (실제 값이 없는 예시 파일)
 !.env.example
+
+# ESLint 캐시(CI lint 잡이 --cache-location 으로 쓴다)
+.eslintcache

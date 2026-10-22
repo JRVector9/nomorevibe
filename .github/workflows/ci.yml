@@ -3,22 +3,37 @@ name: CI
 on:
   push:
     branches: [main]
+  # draft PR 은 검사를 돌리지 않는다(아래 scope·check). ready for review 로 바꾸면 그 이벤트로 전체 검사가 돈다.
+  # draft 로 되돌리면(converted_to_draft) 다시 돌아 실패하는 check 가 예전 초록 check 를 대신한다.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# PR 은 새 커밋이 이전 실행을 취소한다. main push·수동 실행은 실행마다 따로 끝까지 돈다 —
+# 연달아 병합해도 앞 커밋의 이미지 발행을 취소하거나 대기 중인 실행을 밀어내지 않는다.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # draft PR 이면 scope 를 건너뛰고, scope 를 needs 로 가진 모든 잡(검사·이미지)이 따라서 건너뛴다. check 만 돌아 실패한다.
   scope:
+    if: github.event.pull_request.draft != true
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # main push 의 검사 재사용 조회(scripts/ci-reuse.mjs): 병합된 PR·그 PR 실행·artifact 를 읽기만 한다
+      actions: read
+      pull-requests: read
     outputs:
       code_changed: ${{ steps.detect.outputs.code_changed }}
+      run_tests: ${{ steps.plan.outputs.run_tests }}
+      reused_run: ${{ steps.plan.outputs.reused_run }}
+      tree: ${{ steps.tree.outputs.tree }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -27,18 +42,45 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      - run: node --test scripts/ci-scope.node-test.mjs
+      - run: node --test scripts/ci-scope.node-test.mjs scripts/ci-reuse.node-test.mjs
       - id: detect
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD_SHA: ${{ github.sha }}
         run: node scripts/ci-scope.mjs
+      # 이 실행이 검사하는 트리(PR 은 refs/pull/N/merge 의 트리). 모든 잡이 같은 github.sha 를 checkout 한다.
+      - id: tree
+        run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"
+      # main push 에서 같은 트리를 같은 저장소 PR 이 이미 검사했으면 그 실행을 다시 쓴다. 조회가 실패하면 아래 plan 이 전체 검사로 둔다.
+      - id: reuse
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CODE_CHANGED: ${{ steps.detect.outputs.code_changed }}
+          HEAD_SHA: ${{ github.sha }}
+          HEAD_TREE: ${{ steps.tree.outputs.tree }}
+        run: node scripts/ci-reuse.mjs
+      - id: plan
+        env:
+          CODE_CHANGED: ${{ steps.detect.outputs.code_changed }}
+          REUSE_OUTCOME: ${{ steps.reuse.outcome }}
+          REUSE_RUN_TESTS: ${{ steps.reuse.outputs.run_tests }}
+          REUSED_RUN: ${{ steps.reuse.outputs.reused_run }}
+        run: |
+          if [ "$CODE_CHANGED" = false ]; then
+            printf 'run_tests=false\nreused_run=\n' >> "$GITHUB_OUTPUT"
+          elif [ "$CODE_CHANGED" = true ] && [ "$REUSE_OUTCOME" = success ] && [ "$REUSE_RUN_TESTS" = false ] \
+            && [[ "$REUSED_RUN" =~ ^[0-9]+$ ]]; then
+            printf 'run_tests=false\nreused_run=%s\n' "$REUSED_RUN" >> "$GITHUB_OUTPUT"
+          else
+            printf 'run_tests=true\nreused_run=\n' >> "$GITHUB_OUTPUT"
+          fi
 
-  quality:
+  typecheck:
     needs: scope
-    if: needs.scope.outputs.code_changed == 'true'
+    if: needs.scope.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,47 +89,65 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # npm ci 의 audit 요청은 레지스트리가 느릴 때 몇 분씩 걸린다(잡이 늘어 더 자주 걸린다). 보안 경고는 Dependabot 이 맡는다.
+      - run: npm ci --no-audit --no-fund
+      # tsc 증분 기록(tsconfig incremental). 파일 내용 해시로 바뀐 파일·영향받는 파일만 다시 검사한다. main 에서만 저장한다.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tsconfig.tsbuildinfo
+          key: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-
       - run: npx next typegen
       - run: npx tsc --noEmit
       - run: npm run check:i18n
-      - run: npm run lint
-      - run: npm test
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tsconfig.tsbuildinfo
+          key: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+
+  lint:
+    needs: scope
+    if: needs.scope.outputs.run_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # 파일 내용 기준 ESLint 캐시 — 바뀌지 않은 파일은 다시 lint 하지 않는다(설정이 바뀌면 ESLint 가 캐시를 버린다)
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eslintcache
+          key: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-
+      - run: npm run lint -- --cache --cache-strategy content --cache-location .eslintcache
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eslintcache
+          key: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
       - run: python3 -m unittest tests/test_deploy_shared_images.py
       - run: python3 -m unittest tests/test_oracle_runtime.py
       - run: python3 -m unittest tests/test_oracle_activation.py
       - run: python3 -m unittest tests/test_oracle_activation_check.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_ddl.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_replication.py
-      - run: npm run build
-        env:
-          DATABASE_URL: postgres://build:build@localhost:5432/build
-      # 주요 화면의 첫 로드 JS(br)가 기준선(scripts/bundle-baseline.json)보다 10% 넘게 커지면 실패한다(PERF-06)
-      - run: node scripts/bundle-size.mjs
 
-  integration:
+  unit:
     needs: scope
-    if: needs.scope.outputs.code_changed == 'true'
+    if: needs.scope.outputs.run_tests == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
-    services:
-      postgres:
-        # 의미 검색 벡터(0059)가 pgvector 를 쓴다 — 프로드와 같은 0.8.6
-        image: pgvector/pgvector:0.8.6-pg17
-        env:
-          POSTGRES_USER: nomorevibe
-          POSTGRES_PASSWORD: nomorevibe
-          POSTGRES_DB: nomorevibe_test
-        ports: ["55435:5432"]
-        options: >-
-          --health-cmd "pg_isready -U nomorevibe"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -96,115 +156,234 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - name: Check product translation ledger against the fresh test database
-        if: matrix.shard == 1
+      - run: npm ci --no-audit --no-fund
+      - run: npm test -- --shard=${{ matrix.shard }}/2
+
+  build:
+    needs: scope
+    if: needs.scope.outputs.run_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # Turbopack 빌드 캐시(약 350MB). 커서 PR 은 main 것을 읽기만 하고 main 에서만 저장한다.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: nmv-next-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-next-v1-${{ hashFiles('package-lock.json') }}-
+      # 타입 검사는 typecheck 잡이 같은 트리를 맡는다(check 가 둘 다 요구한다) — next build 안의 같은 tsc 는 건너뛴다
+      - run: npm run build
         env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
-      - name: Check product translation dispatch after the restored ledger baseline
-        if: matrix.shard == 1
+          DATABASE_URL: postgres://build:build@localhost:5432/build
+          SKIP_NEXT_TYPECHECK: "1"
+      # 주요 화면의 첫 로드 JS(br)가 기준선(scripts/bundle-baseline.json)보다 10% 넘게 커지면 실패한다(PERF-06)
+      - run: node scripts/bundle-size.mjs
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: nmv-next-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+
+  integration:
+    needs: scope
+    if: needs.scope.outputs.run_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # 묶음마다 runner 안의 전용 DB. 이미지 받기·기동은 npm ci 와 겹쳐 돈다.
+      - run: scripts/ci-test-postgres.sh start
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: scripts/ci-test-postgres.sh wait
+      # 파일 시간 기록(tests/integration/durations.json)으로 나눈 묶음. 묶음 안 파일은 직렬이고, 직렬 ledger 파일은 아래 잡이 맡는다.
+      - name: Integration shard ${{ matrix.shard }}/6
         env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
-      - name: Check Korean tagline ledger after the restored product translation baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/product-tagline-ko-capacity-ledger.test.ts
-      - name: Check Korean tagline dispatch after the restored ledger baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/korean-tagline-capacity-dispatch.test.ts
-      - name: Check crawl tagline ledger after the restored Korean baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/model-capacity-crawl-tagline-ledger.test.ts
-      - name: Check crawl tagline dispatch after the restored ledger baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/crawl-tagline-capacity-dispatch.test.ts
-      - name: Check search-verify dispatch after the restored crawl baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/search-verify-capacity-dispatch.test.ts
-      - name: Check websearch query ledger after the restored search-verify baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/model-capacity-websearch-query-ledger.test.ts
-      - name: Check CLI process ledger after the restored websearch baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/model-capacity-cli-ledger.test.ts
-      - name: Check background CLI capacity callers after the restored CLI ledger baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/cli-background-model-capacity.test.ts
-      - name: Check AI1 and AI2 CLI capacity dispatch after the restored CLI ledger baseline
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/review-cli-capacity-dispatch.test.ts
-      - name: Check reason translation ledger against the fresh test database
-        if: matrix.shard == 1
-        env:
-          TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-        run: npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
-      - name: Check reason translation dispatch after the restored ledger baseline
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
-      - name: Check text profile dispatch against the fresh test database
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
-      - name: Check AI1 native item flow against the fresh test database
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
-      - name: Check AI2 native item flow against the fresh test database
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
-      - name: Check AI2 consumer against the fresh test database
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/pipeline-consumer.test.ts
-      - name: Check AI1 consumer after the restored AI2 row baseline
-        if: matrix.shard == 1
-        run: npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-      # Each runner owns a separate Postgres service; files within a shard stay serial.
-      - run: npm run test:integration -- --shard=${{ matrix.shard }}/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts --exclude tests/integration/model-capacity-cli-ledger.test.ts --exclude tests/integration/cli-background-model-capacity.test.ts --exclude tests/integration/review-cli-capacity-dispatch.test.ts
+          SHARD: ${{ matrix.shard }}
+          INTEGRATION_DURATIONS_OUT: ${{ runner.temp }}/integration-durations-${{ matrix.shard }}.json
+        run: |
+          read -r -a excludes <<< "$(node scripts/integration-shards.mjs --exclude-args)"
+          npm run test:integration -- --shard="$SHARD/6" "${excludes[@]}"
+      # 갱신: node scripts/integration-durations.mjs --run <이 실행 id>
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-durations-${{ matrix.shard }}
+          path: ${{ runner.temp }}/integration-durations-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  integration-ledger:
+    needs: scope
+    if: needs.scope.outputs.run_tests == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TEST_DATABASE_URL: postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/ci-test-postgres.sh start
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: scripts/ci-test-postgres.sh wait
+      # 빈 DB 에서 정해진 순서로 하나씩(scripts/integration-shards.mjs 의 SERIAL_FILES). 각 파일은 끝날 때 행 기준 상태를
+      # 복원하고, 뒤 파일은 그 기준 위에서 돈다 — 순서를 바꾸거나 다른 파일과 섞지 않는다.
+      - name: Ledger and dispatch files in fixed order on a fresh database
+        run: |
+          mapfile -t files < <(node scripts/integration-shards.mjs --serial)
+          test "${#files[@]}" -gt 0
+          for index in "${!files[@]}"; do
+            echo "::group::$((index + 1))/${#files[@]} ${files[$index]}"
+            INTEGRATION_DURATIONS_OUT="$RUNNER_TEMP/integration-durations-ledger-$((index + 1)).json" \
+              npm run test:integration -- "${files[$index]}"
+            echo "::endgroup::"
+          done
+      - if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: integration-durations-ledger
+          path: ${{ runner.temp }}/integration-durations-ledger-*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   check:
-    needs: [scope, quality, integration]
+    needs: [scope, typecheck, lint, unit, build, integration, integration-ledger]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
+      # 필수 check 는 if 로 건너뛰면 통과로 보인다 — draft 는 건너뛰지 않고 실패시켜 draft head 에 초록 check 가 남지 않게 한다
+      # (main 재사용도 check 성공만 근거로 쓰므로 draft 실행은 근거가 되지 않는다).
+      - name: Draft PRs do not run CI
+        if: github.event.pull_request.draft == true
+        run: |
+          echo "::error title=Draft PR::draft PR — CI not run; mark ready for review"
+          exit 1
       - name: Required branch-protection result
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
           CODE_CHANGED: ${{ needs.scope.outputs.code_changed }}
-          QUALITY_RESULT: ${{ needs.quality.result }}
-          INTEGRATION_RESULT: ${{ needs.integration.result }}
+          RUN_TESTS: ${{ needs.scope.outputs.run_tests }}
+          REUSED_RUN: ${{ needs.scope.outputs.reused_run }}
+          TEST_RESULTS: >-
+            ${{ needs.typecheck.result }} ${{ needs.lint.result }} ${{ needs.unit.result }} ${{ needs.build.result }}
+            ${{ needs.integration.result }} ${{ needs.integration-ledger.result }}
         run: |
           test "$SCOPE_RESULT" = success
-          if [ "$CODE_CHANGED" = true ]; then
-            test "$QUALITY_RESULT" = success
-            test "$INTEGRATION_RESULT" = success
-          elif [ "$CODE_CHANGED" = false ]; then
-            test "$QUALITY_RESULT" = skipped
-            test "$INTEGRATION_RESULT" = skipped
-          else
-            exit 1
+          case "$CODE_CHANGED/$RUN_TESTS" in
+            true/true) expected=success ;;
+            # 같은 트리를 같은 저장소 PR 실행이 검사했다(scope 의 재사용 조회가 실행 id 를 남겼다)
+            true/false) [[ "$REUSED_RUN" =~ ^[0-9]+$ ]]; expected=skipped ;;
+            false/false) expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          for result in $TEST_RESULTS; do test "$result" = "$expected"; done
+          if [ -n "$REUSED_RUN" ]; then
+            echo "Tests reused from https://github.com/$GITHUB_REPOSITORY/actions/runs/$REUSED_RUN" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+      # 실제로 검사를 다 돈 PR 실행만 검사한 트리를 남긴다. main 병합 뒤 scope 가 이 이름으로 찾아 같은 트리면 검사를 다시 쓴다.
+      - name: Record the tested tree
+        if: >-
+          success() && github.event_name == 'pull_request' && needs.scope.outputs.run_tests == 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          TREE: ${{ needs.scope.outputs.tree }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          [[ "$TREE" =~ ^[0-9a-f]{40}$ ]]
+          printf 'tree=%s\nhead=%s\nmerge=%s\nrun=%s\n' "$TREE" "$HEAD_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/tested-tree.txt"
+      - if: >-
+          success() && github.event_name == 'pull_request' && needs.scope.outputs.run_tests == 'true' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-tested-tree-${{ needs.scope.outputs.tree }}
+          path: ${{ runner.temp }}/tested-tree.txt
+          retention-days: 30
+          overwrite: true
+
+  # main 이 PR 검사를 다시 쓴 커밋에서도 다음 PR 이 읽을 캐시(tsc·ESLint·Turbopack)를 최신으로 둔다. check 와 이미지는 기다리지 않는다.
+  refresh-caches:
+    needs: scope
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.scope.outputs.code_changed == 'true' && needs.scope.outputs.run_tests == 'false'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tsconfig.tsbuildinfo
+          key: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eslintcache
+          key: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: nmv-next-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+          restore-keys: nmv-next-v1-${{ hashFiles('package-lock.json') }}-
+      - run: npx next typegen
+      - run: npx tsc --noEmit
+      - run: npm run lint -- --cache --cache-strategy content --cache-location .eslintcache
+      - run: npm run build
+        env:
+          DATABASE_URL: postgres://build:build@localhost:5432/build
+          SKIP_NEXT_TYPECHECK: "1"
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tsconfig.tsbuildinfo
+          key: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eslintcache
+          key: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: nmv-next-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
 
   publish-worker-image:
     needs: [scope, check]
+    # 재사용한 main 실행은 검사 잡이 skipped 라, 상태 함수가 없으면 암묵 success() 가 이 잡까지 건너뛴다
     if: >-
+      !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
@@ -223,6 +402,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # 빌드 캐시는 GHA 캐시(10GB 한도·밀려나면 전부 다시 빌드) 대신 같은 패키지의 buildcache 태그에 둔다.
+      # 이미 있는 층은 다시 올리지 않고, 캐시 내보내기가 실패해도 이미지 발행은 실패시키지 않는다.
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -235,8 +416,8 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/JRVector9/nomorevibe
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,scope=worker,mode=max
+          cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache
+          cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
       - name: Record worker digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -246,7 +427,9 @@ jobs:
 
   publish-web-image:
     needs: [scope, check]
+    # 재사용한 main 실행은 검사 잡이 skipped 라, 상태 함수가 없으면 암묵 success() 가 이 잡까지 건너뛴다
     if: >-
+      !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
@@ -269,6 +452,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN }}
         run: test "$(gh api user/packages/container/nomorevibe-runtime-web --jq .visibility)" = private
+      # 빌드 캐시는 비공개 웹 패키지의 buildcache 태그에 둔다(builder 단계 층에 빌드 키가 든다 — 공개 위치에 두지 않는다).
+      # next build 안의 tsc 는 건너뛴다: 같은 트리를 typecheck 잡이 검사했고 이 잡은 그 check 가 성공한 뒤에만 돈다.
       - id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -278,12 +463,14 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: ghcr.io/jrvector9/nomorevibe-runtime-web:${{ github.sha }}
-          build-args: NEXT_DEPLOYMENT_ID=${{ github.sha }}
+          build-args: |
+            NEXT_DEPLOYMENT_ID=${{ github.sha }}
+            SKIP_NEXT_TYPECHECK=1
           secrets: NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,scope=web,mode=max
+          cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache
+          cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
       - name: Record web digest
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
