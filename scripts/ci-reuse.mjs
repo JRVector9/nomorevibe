@@ -7,7 +7,8 @@
  *
  * 재사용은 아래가 모두 맞을 때만 한다. 하나라도 어긋나거나 API 가 실패하면 전체 검사를 돈다.
  *  - 이 커밋을 merge_commit_sha 로 가진, main 으로 병합된 같은 저장소 PR 이 정확히 하나다(fork PR 은 늘 전체 검사).
- *  - 그 PR head 로 돈 CI(.github/workflows/ci.yml, pull_request) 실행이 성공으로 끝났다.
+ *  - 그 PR head 로 돈 CI(.github/workflows/ci.yml, pull_request) 실행의 `check` 잡(최신 시도)이 성공했다.
+ *    실행 전체의 결론은 보지 않는다 — check 가 기다리지 않는 잡(PR 이미지 미리 빌드)이 아직 돌거나 실패해도 검사 결과는 그대로다.
  *  - 그 실행의 `check` 잡이 실제 검사를 마친 뒤 올린 `ci-tested-tree-<트리>` artifact 가 있고, 그 트리가 이 커밋의 트리와 같다.
  *    (artifact 는 문서만 바뀐 실행에서는 올리지 않는다 — 검사를 실제로 돌린 트리만 증거가 된다.)
  */
@@ -55,9 +56,11 @@ export async function findTestedRun({ repo, sha, tree, api, sleep = ms => new Pr
 
   for (const artifact of candidates) {
     const run = await api(`/repos/${repo}/actions/runs/${artifact.workflow_run.id}`);
-    if (run?.event === 'pull_request' && run.status === 'completed' && run.conclusion === 'success'
-      && run.path === WORKFLOW_PATH && run.head_sha === headSha
-      && run.repository?.full_name === repo && run.head_repository?.full_name === repo) {
+    if (run?.event !== 'pull_request' || run.path !== WORKFLOW_PATH || run.head_sha !== headSha
+      || run.repository?.full_name !== repo || run.head_repository?.full_name !== repo) continue;
+    const listed = await api(`/repos/${repo}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
+    const checks = (listed?.jobs ?? []).filter(job => job?.name === 'check');
+    if (checks.length === 1 && checks[0].status === 'completed' && checks[0].conclusion === 'success') {
       return { runId: run.id, runAttempt: run.run_attempt, runUrl: run.html_url, prNumber: pull.number, headSha };
     }
   }

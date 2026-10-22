@@ -2,12 +2,13 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# audit 요청은 레지스트리가 느릴 때 몇 분씩 걸린다(설치 결과와 무관하다). 보안 경고는 Dependabot 이 맡는다.
+RUN npm ci --no-audit --no-fund
 
 FROM node:24-alpine AS worker-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --no-audit --no-fund
 
 FROM node:24-alpine AS builder
 WORKDIR /app
