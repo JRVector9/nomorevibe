@@ -6,6 +6,16 @@
 
 ---
 
+## 공통 이미지 배포 빠르게 — 2026-10-22 (코드·단위 테스트만, 운영 실행 전)
+
+`deploy_shared_images.py`의 시각·소요 시간 기록, 두 서버 동시 pre-pull, `prepull`, 짧은 확인 간격(2·3초), 선택 모드 `--parallel-roles`.
+절차·위험은 [운영 절차](docs/operations/independent-workers-runbook.md) "시각·소요 시간, 동시 pre-pull, `prepull`"·"`--parallel-roles`".
+
+- **순차 기준선**: 다음 실제 릴리스(기본 순차)의 마지막 `summary`로 앱·관문별 초를 처음 기록한다. 지금까지는 전체 3분11초~4분16초만 안다.
+- **`--parallel-roles` 첫 사용**: 기준선과 전체 시간을 비교하고, 한 번 관문(한도 180초)이 몇 초에 통과하는지, 세 역할 동시 재시작 동안
+  경보·일감 끊김이 있었는지 본다. Dokploy가 동시 배포 요청을 실제로 나란히 처리하는지(줄 세우는지)도 앱 줄의 `at`·`seconds`로 확인한다.
+- **동시 pre-pull·`prepull`**: 두 서버 줄의 `seconds`, 그리고 `prepull`을 먼저 돌렸을 때 `run`의 `preflight.durations.prePull`이 줄었는지.
+
 ## Bluesky 화제 수집 — 2026-10-22 (배포 전)
 
 설계·실측·지침 대응은 [`docs/operations/2026-10-22-bluesky-talk.md`](docs/operations/2026-10-22-bluesky-talk.md). 잡 `bluesky-talk`(crawler, 30분), migration `0115_social_posts_bluesky`.

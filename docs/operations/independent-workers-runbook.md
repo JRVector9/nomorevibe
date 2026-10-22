@@ -171,6 +171,67 @@ python3 scripts/ops/deploy_shared_images.py restore \
 릴리스에서 첫 앱 시작부터 마지막 앱 완료까지의 시간을 기록해 전체 소요시간
 개선 여부를 따로 판정한다.
 
+#### 시각·소요 시간, 동시 pre-pull, `prepull` (2026-10-22)
+
+- **진행 줄**: `plan`·`run`·`prepull`·`restore`가 내는 줄은 모두 JSON이고 맨 앞 `at`에 UTC 시각(초)이 있다.
+  앱 줄과 관문 줄에는 걸린 `seconds`가 붙는다. `plan`/`run`의 계획 줄 `preflight`는 사전 검사의
+  `baseline`·`gate:crawler`·`prePull` 시간과 전체 초다. `run`의 마지막 줄 `summary`는 앱·관문별
+  `durations`와 `totalSeconds`, `mode`다. 멈춘 경우에도 그때까지의 `summary`를 남기고, `stopped` 줄의
+  `touched`는 설정을 바꿨을 수 있는 앱(스냅샷에서 되돌릴 후보)이다.
+- **pre-pull**: 새 두 이미지를 mini와 M3에서 **동시에** 받는다(예전에는 mini 다음 M3). 검사는 같다
+  (arm64·OCI revision·비공개 웹 이미지 안의 빌드 키). 한 서버가 실패해도 다른 서버를 끝까지 기다려 두 결과를 남긴 뒤 멈춘다.
+- **`prepull`**: main CI의 `publish-worker-image`·`publish-web-image`가 끝나는 대로 같은 pre-pull만 먼저 한다.
+  GitHub 계정·main SHA·웹 패키지 비공개를 확인하고, Dokploy는 두 웹의 빌드 키만 **읽는다**(앱 설정·배포는 바꾸지 않는다).
+  Git checkout 확인과 baseline은 하지 않는다. `run`은 pre-pull을 그대로 다시 하므로(이미 받은 층은 내려받지 않는다)
+  관문이 줄지 않고, `run`의 사전 검사(baseline 등 수십 초)와 겹쳐 돌리면 받기 시간이 그만큼 앞당겨진다.
+
+  ```sh
+  python3 scripts/ops/deploy_shared_images.py prepull \
+    --sha "$RELEASE_SHA" --worker-image "$WORKER_IMAGE" --web-image "$WEB_IMAGE"
+  ```
+- **확인 간격**: 앱 배포 확인 2초(예전 5초 — 한 번에 Dokploy 읽기 두 번이고, SSH 상태 확인은 Dokploy가 `done`을 낸 뒤에만 한다),
+  감시 관문 3초(예전 5초 — 한 번에 컨테이너 안에서 tsx 확인 둘을 띄운다). 공개 health 관문은 그대로다.
+
+#### `--parallel-roles` (선택, 기본은 순차)
+
+기본(순차)은 위와 같다: publisher → reviewer → crawler 역할마다 mini 예비 → M3 주 → (`--consumer`로 고른 소비자 앱)
+→ 그 역할의 감시 관문. `--parallel-roles`를 `plan`/`run`에 주면 순서가 다음처럼 바뀐다. `plan`은 바뀐 순서를
+계획 줄의 `mode`·`rollout`으로 보여 주기만 한다.
+
+1. 세 역할의 mini 예비(publisher-mini·reviewer-mini·crawler-mini)를 **동시에** 올린다.
+2. 세 역할의 M3 주를 **동시에** 올린다.
+3. 고른 소비자 앱이 있으면 mini 쪽들을 함께, 다음에 M3 쪽들을 함께 올린다(부모 역할의 주 뒤·관문 앞은 순차와 같다).
+4. 감시 관문을 **한 번** 본다: crawler-m3 컨테이너에서 failover readiness·worker progress가 전체 `ok`이고 세 역할이 모두
+   `ready`일 때까지, 한도 180초(역할 하나의 관문은 120초).
+5. 웹은 순차와 같이 mini → M3 한 대씩 올리고 공개 관문을 본다.
+
+묶음마다 먼저 모든 앱이 사전 검사 뒤 그대로인지 읽기만 하고, 하나라도 바뀌었으면 그 묶음의 어느 앱에도 쓰지 않는다.
+묶음 안의 한 앱이 실패해도 이미 요청한 다른 앱은 끝까지 기다려 결과를 남긴 뒤 멈춘다(Dokploy 배포는 중간에 거둘 수 없다).
+
+관문이 달라지는 점과 위험:
+
+- **세 역할이 같은 때 재시작한다.** 2단계에서 세 역할의 주가 함께 내려갔다 뜬다. 예비는 lease 소유자의 릴리스와 자기
+  릴리스가 다르면 넘겨받지 않으므로(`lib/jobs/role-leader.ts`) 순차와 마찬가지로 새 주가 lease를 다시 잡는다. 순차는 한 역할씩
+  번갈아 수십 초 멈추지만, 병렬은 세 역할의 작업과 진행 중이던 일감이 **같은 수십 초 동안 함께** 멈추고 끊긴다.
+  M3에서 세 컨테이너가 동시에 떠 CPU·DB 연결도 잠깐 몰린다.
+- **관문이 역할마다가 아니라 한 번이다.** 순차는 publisher 관문이 실패하면 reviewer·crawler가 옛 릴리스 그대로라 publisher 쌍만
+  되돌리면 된다. 병렬은 관문을 볼 때 이미 여섯 앱(+소비자 앱)이 새 릴리스다. 관문이 실패하면 `touched`의 앱을 스냅샷에서
+  하나씩 모두 되돌리고 failover 상태를 다시 확인한다.
+- 1단계와 2단계 사이에는 세 역할 모두 readiness `release_mismatch`(경보)다. 외부 감시(Uptime Kuma Push)가 이 구간을 경보로
+  볼 수 있다. 순차도 역할마다 같은 구간이 있지만 한 역할씩이다.
+- 새 릴리스가 부팅부터 실패하면 1단계에서 세 예비가 모두 확인 시간 초과로 멈춘다. 주는 옛 릴리스로 계속 일하므로 예비 셋을 되돌린다.
+
+쓰는 때: DB·catalog 변화가 없고 lease·failover·역할 시작 코드를 건드리지 않는 릴리스. migration 규칙(`--migration-verified`와
+운영 journal 읽기 확인)과 **scheduler 먼저** 규칙(새 catalog 잡이 있으면 scheduler를 공통 배포 전에 올려 새 잡 행을 확인)은 그대로이며
+둘 다 `run` 앞에서 끝나야 한다. 나머지 릴리스와 판단이 서지 않을 때는 기본(순차)으로 한다.
+
+예상 효과(실측 아님, 2026-10-22 기준 순차 8앱 3분11초~4분16초): 역할 부분이 앱 여섯 대·관문 세 번에서 앱 두 묶음·관문 한 번이
+되어 1분~1분 40초 줄 것으로 본다. 앱별 시간은 이번 변경 전까지 기록되지 않았으므로 다음 실제 릴리스의 `summary`로 순차·병렬을 비교한다.
+
+git 빌드 앱(scheduler·text·maintenance)은 이 도구가 올리지 않는다. 공통 배포가 끝난 뒤(동시에 하지 않는다) 앱마다
+`RELEASE_TAG` 한 줄만 바꾸고 예비 → 주 순으로 배포한다. 쌍끼리는 서로 기다릴 까닭이 없으므로 text 쌍·maintenance 쌍·scheduler를
+함께 진행해도 되고, 새 catalog 잡이 있으면 scheduler만 공통 배포 **전에** 올린다.
+
 ### GitHub 수집 PAT 관리자 등록
 
 관리자 `/admin/github-accounts`에서 공개 저장소 읽기용 PAT를 등록·교체한다. 등록 시
