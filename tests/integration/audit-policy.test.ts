@@ -2,7 +2,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlSettings, productAuditCampaigns, productAuditItems, productAuditPolicyRunItems, productAuditPolicyRuns,
-  productAuditSecondOpinions, productEvidenceAudit, products } from "@/lib/db/schema";
+  productAuditSecondOpinions, productEvidenceAudit, products, takedownRequests } from "@/lib/db/schema";
 import { productMakerMembers } from "@/lib/db/me-schema";
 import { publicUsers } from "@/lib/db/public-user-schema";
 import { applyAuditPolicyChunk, listPolicyRuns, policyRunExceptions, policyRunProgress, previewAuditPolicy, startAuditPolicyRun,
@@ -27,6 +27,7 @@ beforeEach(async () => {
   // product_audit_campaigns 를 CASCADE 로 비운다 — 다른 파일이 남긴 시도(product_audit_attempts)까지
   await resetTables();
   await db.delete(crawlSettings);
+  await db.delete(takedownRequests);
 });
 
 let sequence = 0;
@@ -199,6 +200,29 @@ describe("적용 — 수를 적고, 나눠서, 한 번만", () => {
     expect((await productOf(fine.productId)).status).toBe("banned");
   });
 
+  it("그 제품의 다른 항목도 본다 — 살아 있는 유지가 있거나 더 새 감사 답이 있으면 내리지 않는다", async () => {
+    const old = await campaign();
+    await campaign();
+    const keptElsewhere = await finding("kept-elsewhere");
+    const superseded = await finding("superseded");
+    const run = await start("remove", 2);
+    if (!run.ok) throw new Error(run.error);
+    // 실행을 만든 뒤 사람이 지난 감사의 항목을 유지로 정했다(보류 목록은 보류 항목으로 결정한다)
+    await db.insert(productAuditItems).values({ campaignId: old.id, productId: keptElsewhere.productId, slug: "kept-elsewhere", aiDecision: "reject",
+      aiConfidence: 0.97, aiReason: COMPANY, humanDecision: "kept", humanBy: "jr", humanAt: new Date(), keepUntil: sql`now() + interval '30 days'` });
+    expect((await previewAuditPolicy({ filter: filterOf(), action: "remove" })).skipped).toEqual([expect.objectContaining({ reason: "kept", count: 1 })]);
+    // 실행을 만든 뒤 새 감사가 그 제품을 승인했다 — 실행이 굳힌 감사의 옛 거절로 내리지 않는다
+    const newer = await campaign();
+    await db.insert(productAuditItems).values({ campaignId: newer.id, productId: superseded.productId, slug: "superseded", aiDecision: "approve",
+      aiConfidence: 0.9, aiReason: "fine", reviewedAt: new Date() });
+    const { progress } = await applyAll(run.runId);
+    expect(progress).toMatchObject({ applied: 0, skipped: 2 });
+    expect(Object.fromEntries((await policyRunExceptions(run.runId)).map((row) => [row.slug, row.reason]))).toEqual({
+      "kept-elsewhere": "kept", superseded: "superseded" });
+    expect((await productOf(keptElsewhere.productId)).status).toBe("seeded");
+    expect((await productOf(superseded.productId)).status).toBe("seeded");
+  });
+
   it("주인 있는 제품(클레임·검증·메이커 권한)은 거르기를 '주인 있음'으로 골라도 묶어서 내리지 않는다", async () => {
     await campaign();
     await finding("claimed", { product: { claimedAt: new Date() } });
@@ -322,6 +346,45 @@ describe("되돌리기", () => {
       extended: "keep_changed", claimed: "owned_now" });
     expect(await db.select({ slug: cdnPurges.slug, reason: cdnPurges.reason }).from(cdnPurges).orderBy(asc(cdnPurges.id)))
       .toEqual([{ slug: "", reason: "audit_release" }, { slug: "", reason: "audit_hold" }]);
+  });
+
+  it("내려달라는 요청이 기다리거나 그 뒤 '내림'으로 처리된 제품은 차단을 풀지 않는다 — 이미 차단된 제품의 요청 처리는 차단 줄을 남기지 않는다", async () => {
+    await campaign();
+    const pending = await finding("pending");
+    const handled = await finding("handled");
+    const before = await finding("before");
+    await db.insert(takedownRequests).values({ slug: "before", handledAt: sql`now() - interval '1 day'`, handledBy: "jr", outcome: "dismissed" });
+    const run = await start("remove", 3);
+    if (!run.ok) throw new Error(run.error);
+    await applyAll(run.runId);
+    await db.insert(takedownRequests).values({ slug: "pending", reason: "주인입니다" });
+    await db.insert(takedownRequests).values({ slug: "handled", handledAt: sql`now() + interval '1 minute'`, handledBy: "jr", outcome: "removed" });
+    expect(await undoAll(run.runId)).toMatchObject({ undone: 1, blocked: 2 });
+    expect(Object.fromEntries((await policyRunExceptions(run.runId)).map((row) => [row.slug, row.reason]))).toEqual({ pending: "takedown", handled: "takedown" });
+    expect((await productOf(pending.productId)).status).toBe("banned");
+    expect((await productOf(handled.productId)).status).toBe("banned");
+    expect((await productOf(before.productId)).status).toBe("seeded");
+  });
+
+  it("유지를 되돌릴 때 그 뒤 사람이 차단·차단 해제했거나 다른 항목을 유지로 정했으면 보류를 다시 걸지 않는다", async () => {
+    const old = await campaign();
+    await campaign();
+    const touched = await finding("touched", { held: true });
+    const keptOther = await finding("kept-other", { held: true });
+    const run = await start("keep", 2);
+    if (!run.ok) throw new Error(run.error);
+    await applyAll(run.runId);
+    const { setStatusWithAudit } = await import("@/lib/domain/products/repository");
+    await setStatusWithAudit({ id: touched.productId, slug: "touched", status: "banned", action: "admin.product.ban", actor: "other" });
+    await setStatusWithAudit({ id: touched.productId, slug: "touched", status: "seeded", action: "admin.product.unban", actor: "other" });
+    await db.insert(productAuditItems).values({ campaignId: old.id, productId: keptOther.productId, slug: "kept-other", aiDecision: "reject",
+      aiConfidence: 0.97, aiReason: COMPANY, humanDecision: "kept", humanBy: "other", humanAt: new Date(), keepUntil: sql`now() + interval '90 days'` });
+    expect(await undoAll(run.runId)).toMatchObject({ undone: 0, blocked: 2 });
+    expect(Object.fromEntries((await policyRunExceptions(run.runId)).map((row) => [row.slug, row.reason]))).toEqual({
+      touched: "status_changed", "kept-other": "hold_changed" });
+    expect((await productOf(touched.productId)).auditHoldAt).toBeNull();
+    expect((await productOf(keptOther.productId)).auditHoldAt).toBeNull();
+    expect((await itemOf(keptOther.itemId)).humanDecision).toBe("kept");
   });
 
   it("적용 중에 되돌리면 남은 것은 취소하고 적용한 것만 되돌린다", async () => {

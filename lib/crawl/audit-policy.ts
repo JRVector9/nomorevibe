@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { cdnPurges, operationsAudit, productAuditCampaigns, productAuditItems, productAuditPolicyRunItems, productAuditPolicyRuns,
-  productAuditSecondOpinions, productEvidenceAudit, products, type ProductAuditPolicyRun } from "@/lib/db/schema";
+  productAuditSecondOpinions, productEvidenceAudit, products, takedownRequests, type ProductAuditPolicyRun } from "@/lib/db/schema";
 import { productMakerMembers } from "@/lib/db/me-schema";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { setStatusWithAudit, uniqueViolation } from "@/lib/domain/products/repository";
@@ -105,7 +105,8 @@ export function policyFilterSql(filter: PolicyFilter, ctx: PolicyContext): SQL {
 
 /**
  * 행동마다 건너뛸 까닭 — 거르기에 들어도 이 행동으로는 손대지 않는 것. 내리기는 지금 묶어 내리기의 문턱(groupableItem)을 그대로 지키고
- * (주인 있음 → 확신 0.95 미만 → 갈림) 두 번째 모델의 승인도 뺀다. 차례가 곧 보이는 까닭이다
+ * (주인 있음 → 확신 0.95 미만 → 갈림) 두 번째 모델의 승인도 뺀다. 그 제품의 다른 항목도 본다 — 살아 있는 유지가 있거나(사람이 지난 감사의
+ * 보류 항목을 유지로 정함) 더 새 감사 답이 있으면(보류 조건 holdableItem 과 같은 뜻) 내리지 않는다. 차례가 곧 보이는 까닭이다
  */
 function skipSql(action: PolicyAction | "release", ctx: PolicyContext): SQL {
   if (action === "remove") {
@@ -115,6 +116,9 @@ function skipSql(action: PolicyAction | "release", ctx: PolicyContext): SQL {
       when i.ai_confidence is null or i.ai_confidence < ${GROUP_REMOVE_MIN_CONFIDENCE} then 'low_confidence'
       when ${split} then 'split'
       when exists (select 1 from ${productAuditSecondOpinions} o4 where o4.item_id = i.id and o4.decision = 'approve') then 'second_approve'
+      when exists (select 1 from ${productAuditItems} k4 where k4.product_id = i.product_id and k4.human_decision = 'kept'
+        and k4.keep_until > now()) then 'kept'
+      when exists (select 1 from ${productAuditItems} n4 where n4.product_id = i.product_id and n4.id > i.id and n4.ai_decision is not null) then 'superseded'
       else null end)`;
   }
   if (action === "release") return sql`(case when p.audit_hold_at is null then 'not_held' else null end)`;
@@ -303,7 +307,7 @@ export async function startAuditPolicyRun(input: PolicyStart & { by: string }): 
 }
 
 type RunRow = { id: number; itemId: number; productId: number; slug: string; payload: Record<string, unknown> | null;
-  before: Record<string, unknown> | null };
+  before: Record<string, unknown> | null; after: Record<string, unknown> | null };
 type ApplyOutcome = { state: "applied"; before: Record<string, unknown>; after?: Record<string, unknown>; relisted?: boolean }
   | { state: "skipped"; reason: string };
 type UndoOutcome = { state: "undone"; relisted?: boolean } | { state: "undo_blocked"; reason: string };
@@ -340,14 +344,19 @@ async function unreleasedOpenItems(tx: ProductTransaction, productId: number): P
 }
 
 /**
- * 보류를 다시 건다 — 되돌리기가 그 실행이 푼 보류를 원래 시각·원래 항목으로. 제품이 지금도 주인 없는 공개 제품이고 보류가 없을 때만.
+ * 보류를 다시 건다 — 되돌리기가 그 실행이 푼 보류를 원래 시각·원래 항목으로. 제품이 지금도 주인 없는 공개 제품이고 보류가 없고,
+ * 그 제품에 살아 있는 유지가 없고 보류 항목에 사람 결정이 없을 때만(못 걸면 그 항목의 되돌리기 전체를 버리고 '되돌리지 못함').
  * 그 실행이 '풀었음'을 적은 항목(releasedIds, 적용 트랜잭션의 시각과 같은 것만)은 지운다. 제품 기록에 보류 줄을 남긴다
  */
 async function restoreHold(tx: ProductTransaction, input: { run: ProductAuditPolicyRun; row: RunRow; by: string; heldAt: string; holdItemId: number;
   releasedIds: number[] }): Promise<boolean> {
+  // 보류를 걸 수 있는 그대로인가(holdableItem 의 뜻): 주인 없는 공개 제품, 보류 없음, 그 제품에 살아 있는 유지 없음, 보류 항목에 사람 결정 없음
   const [held] = await tx.update(products).set({ auditHoldAt: sql`${input.heldAt}::timestamp`, auditHoldItemId: input.holdItemId })
     .where(and(eq(products.id, input.row.productId), eq(products.slug, input.row.slug), sql`${products.auditHoldAt} is null`,
-      unownedPublic("products"))).returning({ id: products.id });
+      unownedPublic("products"),
+      sql`not exists (select 1 from ${productAuditItems} k where k.product_id = ${products.id} and k.human_decision = 'kept' and k.keep_until > now())`,
+      sql`exists (select 1 from ${productAuditItems} h where h.id = ${input.holdItemId} and h.product_id = ${products.id} and h.human_decision is null)`))
+    .returning({ id: products.id });
   if (!held) return false;
   if (input.releasedIds.length) {
     await tx.update(productAuditItems).set({ holdReleasedAt: null }).where(and(inArray(productAuditItems.id, input.releasedIds),
@@ -365,11 +374,17 @@ const productBefore = (row: { status: string; held_at: string | null; hold_item_
 /** 되돌리기가 읽는 지금의 항목·제품 — 시각 비교는 SQL 에서(자바스크립트 Date 는 마이크로초를 버린다) */
 async function undoState(tx: ProductTransaction, row: RunRow, extra: SQL = sql`true`) {
   const [state] = await tx.execute<{ product_ok: boolean; status: string | null; held: boolean; unowned: boolean; human_decision: string | null;
-    decided_by_run: boolean; extra: boolean }>(sql`
+    decided_by_run: boolean; extra: boolean; status_touched: boolean; takedown: boolean }>(sql`
     select (p.id is not null and p.slug = ri.slug) as product_ok, p.status, coalesce(p.audit_hold_at is not null, false) as held,
       coalesce(p.claimed_at is null and p.verified_at is null and not exists (select 1 from ${productMakerMembers} m
         where m.product_id = p.id and m.revoked_at is null), false) as unowned,
-      i.human_decision, coalesce(i.human_at = ri.applied_at, false) as decided_by_run, coalesce(${extra}, false) as extra
+      i.human_decision, coalesce(i.human_at = ri.applied_at, false) as decided_by_run, coalesce(${extra}, false) as extra,
+      -- 그 실행 뒤 누가 차단·차단 해제를 눌렀다(제품 화면·요청 처리) — 사람이 그 제품을 다시 정했다
+      exists (select 1 from ${productEvidenceAudit} a where a.slug = ri.slug and a.action in ('admin.product.ban', 'admin.product.unban')
+        and a.created_at > ri.applied_at) as status_touched,
+      -- 내려달라는 요청이 기다리고 있거나, 그 실행 뒤 '내림'으로 처리됐다 — 이미 차단된 제품의 요청 처리는 차단 줄을 남기지 않는다
+      exists (select 1 from ${takedownRequests} t where t.slug = ri.slug
+        and (t.handled_at is null or (t.outcome = 'removed' and t.handled_at > ri.applied_at))) as takedown
       from ${productAuditPolicyRunItems} ri join ${productAuditItems} i on i.id = ri.item_id left join ${products} p on p.id = ri.product_id
      where ri.id = ${row.id}`);
   return state;
@@ -399,6 +414,7 @@ const closeRemove: RunHandler = {
     if (!state?.product_ok) return blocked("product_changed");
     if (state.human_decision !== "removed" || !state.decided_by_run) return blocked("decision_changed");
     if (state.status !== "banned" || !state.extra) return blocked("status_changed");
+    if (state.takedown) return blocked("takedown");
     if (before.heldAt && !state.unowned) return blocked("owned_now");
     const unbanned = await setStatusWithAudit({ id: row.productId, slug: row.slug, status: before.status as "seeded" | "verified",
       action: "admin.product.unban", actor: by.slice(0, 120), reason: "audit_policy_undo",
@@ -425,7 +441,8 @@ const closeKeep: RunHandler = {
     if (current.skip) return skipped(current.skip);
     const kept = await tx.update(productAuditItems).set({ humanDecision: "kept", humanBy: by.slice(0, 120), humanAt: sql`now()`,
       humanNote: humanNote(run), keepUntil: sql`now() + ${keepDaysOf(run)} * interval '1 day'` })
-      .where(and(eq(productAuditItems.id, row.itemId), isNull(productAuditItems.humanDecision))).returning({ id: productAuditItems.id });
+      .where(and(eq(productAuditItems.id, row.itemId), isNull(productAuditItems.humanDecision)))
+      .returning({ keepUntil: sql<string>`to_char(${productAuditItems.keepUntil}, 'YYYY-MM-DD"T"HH24:MI:SS.US')` });
     if (!kept.length) return skipped("changed");
     let releasedIds: number[] = [];
     let relisted = false;
@@ -435,15 +452,18 @@ const closeKeep: RunHandler = {
         metadata: { policyRunId: run.id } });
       if (!relisted) releasedIds = [];
     }
-    return { state: "applied", before: { ...productBefore(current), releasedIds }, relisted };
+    return { state: "applied", before: { ...productBefore(current), releasedIds }, after: { keepUntil: kept[0].keepUntil }, relisted };
   },
   async undo(tx, run, row, by) {
     const before = row.before as { status: string; heldAt: string | null; holdItemId: number | null; releasedIds?: number[] };
-    const state = await undoState(tx, row, sql`i.keep_until = ri.applied_at + ${keepDaysOf(run)} * interval '1 day'`);
+    // 적용이 적은 기한 그대로인가 — 적용 때 글자로 남긴 값과 견준다(세션 시간대의 일광 절약에 흔들리지 않게)
+    const keptUntil = (row.after as { keepUntil?: string } | null)?.keepUntil;
+    const state = await undoState(tx, row, keptUntil ? sql`i.keep_until = ${keptUntil}::timestamp`
+      : sql`i.keep_until = ri.applied_at + ${keepDaysOf(run)} * interval '1 day'`);
     if (!state?.product_ok) return blocked("product_changed");
     if (state.human_decision !== "kept" || !state.decided_by_run) return blocked("decision_changed");
     if (!state.extra) return blocked("keep_changed");
-    if (state.status !== before.status) return blocked("status_changed");
+    if (state.status !== before.status || state.status_touched) return blocked("status_changed");
     if (before.heldAt && state.held) return blocked("hold_changed");
     if (before.heldAt && (!state.unowned || state.status !== "seeded")) return blocked("owned_now");
     await tx.update(productAuditItems).set({ humanDecision: null, humanBy: null, humanAt: null, humanNote: null, keepUntil: null })
@@ -540,8 +560,10 @@ async function step<T extends ApplyOutcome | UndoOutcome>(row: RunRow, expected:
         });
         return blocked(reason) as T;
       }
-      // 이 항목만의 오류 — 까닭을 남기고 다음 항목으로(실행을 막지 않는다). 운영 로그에 코드만
+      // 이 항목만의 오류 — 운영 로그에 코드만. 적용이면 까닭을 남기고 다음 항목으로(트랜잭션이 버려져 아무것도 바뀌지 않았고, 항목은 열린 채라
+      // 다음 정책이 다시 고른다). 되돌리기면 던진다 — 적용한 채로 남겨 '되돌리기 이어서'가 다시 시도한다(잠깐의 연결 끊김으로 영영 못 되돌리지 않게)
       logger.error("audit_policy.item_failed", { runItem: row.id, item: row.itemId, error: error instanceof Error ? error.message.slice(0, 200) : "unknown" });
+      if (expected === "applied") throw error;
       await db.transaction(async (tx) => {
         await assertWritable(tx);
         await tx.update(productAuditPolicyRunItems).set(expected === "pending" ? { state: "skipped", reason: "error" } : { state: "undo_blocked", reason: "error" })
@@ -554,7 +576,8 @@ async function step<T extends ApplyOutcome | UndoOutcome>(row: RunRow, expected:
 
 async function nextRows(runId: number, state: "pending" | "applied", limit: number): Promise<RunRow[]> {
   return db.select({ id: productAuditPolicyRunItems.id, itemId: productAuditPolicyRunItems.itemId, productId: productAuditPolicyRunItems.productId,
-    slug: productAuditPolicyRunItems.slug, payload: productAuditPolicyRunItems.payload, before: productAuditPolicyRunItems.before })
+    slug: productAuditPolicyRunItems.slug, payload: productAuditPolicyRunItems.payload, before: productAuditPolicyRunItems.before,
+    after: productAuditPolicyRunItems.after })
     .from(productAuditPolicyRunItems).where(and(eq(productAuditPolicyRunItems.runId, runId), eq(productAuditPolicyRunItems.state, state)))
     .orderBy(asc(productAuditPolicyRunItems.id)).limit(limit);
 }

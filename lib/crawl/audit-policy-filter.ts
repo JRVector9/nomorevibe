@@ -83,6 +83,8 @@ export const POLICY_SKIP_LABELS: Record<string, string> = {
   low_confidence: "확신 0.95 미만 — 묶어서 내리지 않습니다",
   split: "갈림(2차 승인·카탈로그 예외) — 사람이 한 건씩 봅니다",
   second_approve: "두 번째 모델이 승인 — 모델이 갈려 내리지 않습니다",
+  kept: "그 제품에 살아 있는 유지가 있음(다른 항목을 사람이 유지로 정함)",
+  superseded: "그 제품에 더 새 감사 답이 있음 — 옛 거절로 내리지 않습니다",
   not_held: "보류 중이 아님",
   changed: "미리본 뒤 바뀜(사람이 정함·내려감·거르기 밖)",
   product_changed: "제품이 지워졌거나 주소(slug)가 바뀜",
@@ -98,6 +100,8 @@ export const POLICY_UNDO_BLOCK_LABELS: Record<string, string> = {
   keep_changed: "그 뒤 유지 기한이 바뀜(연장 등)",
   product_changed: "제품이 지워졌거나 주소(slug)가 바뀜",
   opinion_changed: "그 뒤 두 번째 의견이 다시 적힘",
+  takedown: "내려달라는 요청이 기다리거나 그 뒤 '내림'으로 처리됨 — 차단을 풀지 않습니다",
+  error: "되돌리다 오류",
 };
 
 export const POLICY_RUN_STATUS_LABELS: Record<string, string> = {
