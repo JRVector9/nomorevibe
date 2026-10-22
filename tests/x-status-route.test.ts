@@ -123,7 +123,8 @@ describe("검사 순서 — 크기 → 시각 → 서명 → 형식, 모두 DB �
 
   it("서명이 맞아도 형식이 엄격하지 않으면 400·415 — 자유 글자는 짧은 오류 코드 하나뿐이다", async () => {
     const invalid: unknown[] = [
-      { ...report, note: "free text" }, { ...report, v: 2 }, { ...report, mode: "on" }, Object.fromEntries(Object.entries(report).filter(([key]) => key !== "error")),
+      { ...report, note: "free text" }, { ...report, v: 2 }, { ...report, v: 3 }, { ...report, v: 4, query: { source: "popular", minLikes: 50 } },
+      { ...report, mode: "on" }, Object.fromEntries(Object.entries(report).filter(([key]) => key !== "error")),
       { ...report, reads: { used: 11, limit: 10 } }, { ...report, reads: { used: -1, limit: 10 } }, { ...report, reads: { used: 1.5, limit: 10 } },
       { ...report, reads: { used: 1, limit: 10, extra: 1 } }, { ...report, reads: { used: 1, limit: 1_001 } }, { ...report, candidates: 1_001 },
       { ...report, candidates: "3" }, { ...report, lastRunAt: "2026-10-18 00:10:01" }, { ...report, lastRunAt: "2026-02-30T00:00:00.000Z" },
@@ -145,7 +146,9 @@ describe("검사 순서 — 크기 → 시각 → 서명 → 형식, 모두 DB �
 describe("받기 — 관문 → 단조 → 속도 → 한 줄 쓰기", () => {
   it("받으면 fence 확인 → 저장된 줄 읽기 → 쓰기 TX 첫 lock(fence SHARE) → x-status 한 줄 upsert", async () => {
     const minimal = { ...report, mode: "dry-run", reads: { used: 0, limit: 10 }, candidates: 0, lastSuccessAt: null, error: "use_case_not_approved" };
-    for (const body of [report, minimal]) {
+    // v3(2026-10-22 수집기)는 그날 검색어 칸이 하나 더 있다
+    const v3 = { ...report, v: 3, query: { source: "popular", minLikes: 50 } };
+    for (const body of [report, minimal, v3]) {
       // fence 캐시(5초)를 비워 매번 관문 읽기부터 본다
       clearAllMemos(); fake.calls.length = 0; fake.values.length = 0;
       expect(await post(signed(body))).toMatchObject({ status: 200, body: { accepted: true } });

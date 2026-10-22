@@ -263,9 +263,6 @@ export async function listTalk(options: { mode: TalkMode; now?: Date; limit?: nu
   };
 }
 
-/** 화제의 공개 제품 조건(publicProduct) 그대로 — X 검색어의 저장소 고르기(x-query-receive.ts)가 쓴다 */
-export const talkPublicProduct = () => publicProduct();
-
 /** 이 저장소 열쇠(소문자 owner/repo) 중 공개 제품의 저장소인 것 — 여러 저장소를 가리킨 X 글을 어느 제품에 붙일지(x-posts-receive.ts) */
 export async function publicRepositoryKeys(tx: ProductTransaction, keys: readonly string[]): Promise<Set<string>> {
   if (!keys.length) return new Set();

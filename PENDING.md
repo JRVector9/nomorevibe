@@ -23,12 +23,12 @@
 
 배포·첫 실제 수집 기록은 `docs/CODEX_HANDOFF.md` "2026-10-20 SNS 화제 C안·X 수집 연결". 아직 직접 확인하지 않은 것:
 
-- **X 관련도순 첫 결과**(10-21 09:10 KST 정기 실행): 점수 분포·50점 자격 도달 수·제품 매칭 수를 10-20 최신순(0~2점, 자격 0)과 비교한다.
-  여전히 자격 도달이 없으면 X 자격 기준(`lib/social/talk-score.ts`)을 실제 분포로 다시 정하거나, 하루 읽기 일부로 전날 글 반응을 다시 확인한다.
-- **X 우리 제품 저장소 검색어(2026-10-21 코드, 배포 전)**: 웹 → osaka 수집기 순서로 배포하고 `X_QUERY_URL` 을 넣는다
-  ([osaka runbook](docs/operations/2026-10-15-x-osaka-smoke-runbook.md) "우리 제품 저장소 검색어 배포 순서"). 첫 정기 실행 뒤
-  `status.json` 의 `query.source` 가 `products` 인지, `url:"github.com/owner/repo"`(따옴표 경로, docs.x.com 의 낱말 맞춤)가 실제로 글을 돌려주는지,
-  `/admin/talk` 에 저장소 없음·여럿인 X 글(`site`)도 남는지 본다. 며칠 내내 0건이면 따옴표 경로 맞춤을 다시 확인한다(X 에 실제로 물어 본 적 없음).
+- **X GitHub 화제 검색어 `url:github.com min_likes:50`(2026-10-22 코드, 배포 전)**: 10-21 관련도순 결과(최고 35점·50점 0건, 7일 동안 본 저장소 17곳 중
+  제품 1곳)와 #590 우리 제품 저장소 검색어 뒤의 사용자 결정. 웹 → osaka 수집기 순서로 배포하고 osaka env 의 `X_QUERY_URL` 줄을 지운다
+  ([osaka runbook](docs/operations/2026-10-15-x-osaka-smoke-runbook.md) "배포 — GitHub 화제 검색어", dry-run 은 같은 문서의 고친 방법으로).
+  첫 정기 실행 뒤 볼 것: **우리 요금제가 `min_likes:` 를 받는지**(문서에 없음 — `status.json` 의 `httpStatus` 200 이면 받음, 400·`http_error` 면 거절이니
+  타이머를 멈추고 사용자에게 다시 묻는다), 돌려준 글 수·점수 분포, 공개 제품을 가리킨 글 수와 `/admin/talk` 의 `site` 글,
+  하루 상태 `reports.status` 200(400·`statusV1` 이면 웹이 옛 판). 관측 표의 `x-query` 줄은 남아도 무해하다(지우려면 사용자 승인).
 - **X 24시간 표시 규칙의 실제 동작**: 다시 잡히지 않은 X 글이 하루 뒤 /talk·홈·상세에서 빠지는지(공개를 켠 뒤, 또는 관리자 미리보기로).
 - **X 하루 보고 끊김 조치**: 26시간 넘게 보고가 없을 때 운영센터 조치가 뜨는지 — 정상이면 매일 00:10 UTC 보고가 들어와 뜨지 않는다.
 - **X 사용 목적 승인 기록**: 스위치는 사용자 지시로 켰다. X 쪽 승인 기록은 이 저장소에 없다([정책 확인 기록](docs/operations/2026-10-14-x-api-policy-and-pilot.md)).

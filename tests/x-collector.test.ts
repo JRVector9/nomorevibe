@@ -35,6 +35,9 @@ it("durably reserves ten before HTTP and does not read the search results again"
   expect(request).toHaveBeenCalledOnce();
   const url = new URL((request.mock.calls as unknown as [string][])[0][0]);
   expect([url.searchParams.get("sort_order"), url.searchParams.get("max_results")]).toEqual(["relevancy", "10"]);
+  // Only posts that link to github.com and are already widely liked (2026-10-22).
+  expect(url.searchParams.get("query")).toBe("(url:github.com min_likes:50) -is:retweet");
+  expect(result.query).toEqual({ source: "popular", minLikes: 50 });
   const stored = await readFile(join(stateDir, "observations.json"), "utf8");
   expect(stored).not.toMatch(/private-raw-text|private-author|private-token/);
   expect(JSON.parse(stored)).toMatchObject({ expiresAt: "2026-10-16T04:00:00.000Z",

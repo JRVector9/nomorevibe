@@ -14,7 +14,7 @@ export const X_POSTS_KEY = "x-posts";
 export const X_POSTS_MAX_BODY_BYTES = 16_384;
 /** 수집기는 하루 한 번 검색 한 페이지(최대 10건)만 읽는다 */
 export const X_POSTS_MAX_POSTS = 10;
-/** v2 글 하나가 싣는 저장소 — 수집기가 그날 검색한 우리 저장소를 앞에 둔다. 10건 × 5곳 × 가장 긴 이름도 본문 상한 안이다 */
+/** v2 글 하나가 싣는 저장소 — 수집기는 글이 가리킨 순서대로 싣는다. 10건 × 5곳 × 가장 긴 이름도 본문 상한 안이다 */
 export const X_POSTS_MAX_REPOSITORIES = 5;
 const SIGNING_PREFIX = "nomorevibe-x-posts-v1";
 const METRIC_MAX = 1_000_000_000;

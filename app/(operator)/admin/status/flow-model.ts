@@ -178,10 +178,11 @@ export function xSummary(view: XStatusView): CellSummary {
   const report = view.report;
   const mode = report?.mode === "live" ? "실제 수집(live)" : report?.mode === "dry-run" ? "시험 실행(dry-run)" : "꺼짐(disabled)";
   const received = view.receivedAt ? `받은 시각 ${dbClock(view.receivedAt)} (DB)` : "받은 보고 없음";
-  // v2 보고는 그날 검색어 출처를 싣는다 — 우리 제품 저장소(/api/ops/x-query) 또는 고정 검색어와 그 까닭
-  const query = report?.v === 2
-    ? report.query.source === "products" ? ` · 검색 우리 저장소 ${n(report.query.repositories)}곳` : ` · 고정 검색어(${report.query.reason ?? "까닭 없음"})`
-    : "";
+  // v3 보고는 그날 검색어(GitHub 주소·좋아요 하한)를 싣는다. v2 는 #590 수집기의 우리 제품 저장소 또는 고정 검색어와 그 까닭
+  const query = report?.v === 3 ? ` · 검색 GitHub 주소·좋아요 ${n(report.query.minLikes)} 이상`
+    : report?.v === 2
+      ? report.query.source === "products" ? ` · 검색 우리 저장소 ${n(report.query.repositories)}곳` : ` · 고정 검색어(${report.query.reason ?? "까닭 없음"})`
+      : "";
   switch (view.state) {
     case "unconfigured": return { tone: "idle", value: "X 연결 전", note: "받는 주소 꺼짐(비밀 없음)" };
     case "missing": return { tone: "idle", value: "X 연결 전", note: "아직 받은 보고 없음" };

@@ -93,6 +93,42 @@ describe("하루 보고 v2 — 그날 검색어 출처(2026-10-21)", () => {
   });
 });
 
+describe("하루 보고 v3 — GitHub 주소·좋아요 하한 검색어(2026-10-22)", () => {
+  const NOW_S = Math.floor(NOW.getTime() / 1000);
+  const v1 = Object.fromEntries(Object.entries(report()).filter(([key]) => key !== "sentAt" && key !== "signedWith"));
+  const v3 = (query: unknown) => ({ ...v1, v: 3, query });
+  const popular = { source: "popular", minLikes: 50 };
+
+  it("v3 는 검색어 칸(출처 popular·좋아요 하한)을 받는다 — v1·v2(옛 수집기·저장된 줄)도 그대로 받는다", () => {
+    expect(parseXStatusReport(v3(popular), NOW_S)).toEqual(v3(popular));
+    expect(parseXStatusReport(v3({ source: "popular", minLikes: 0 }), NOW_S)).toMatchObject({ v: 3, query: { minLikes: 0 } });
+    expect(parseXStatusReport(v1, NOW_S)).toEqual(v1);
+    const products = { ...v1, v: 2, query: { source: "products", repositories: 12, reason: null } };
+    expect(parseXStatusReport(products, NOW_S)).toEqual(products);
+    expect(readXStatus([row({ ...v3(popular), sentAt: NOW_S, signedWith: "current" })], NOW, true))
+      .toMatchObject({ state: "ok", report: { v: 3, query: { source: "popular", minLikes: 50 } } });
+  });
+
+  it("판과 검색어 칸이 맞지 않으면 거절한다 — 검색어 글자는 받지 않는다", () => {
+    for (const query of [undefined, null, { source: "popular" }, { source: "popular", minLikes: -1 }, { source: "popular", minLikes: 1.5 },
+      { source: "popular", minLikes: "50" }, { source: "popular", minLikes: 1_000_001 }, { source: "products", minLikes: 50 },
+      { source: "products", repositories: 12, reason: null }, { source: "popular", minLikes: 50, query: "url:github.com min_likes:50" }]) {
+      expect(parseXStatusReport(v3(query), NOW_S), JSON.stringify(query)).toBeNull();
+    }
+    expect(parseXStatusReport({ ...v1, v: 2, query: popular }, NOW_S)).toBeNull();
+    expect(parseXStatusReport({ ...v1, query: popular }, NOW_S)).toBeNull();
+    expect(parseXStatusReport({ ...v1, v: 4, query: popular }, NOW_S)).toBeNull();
+  });
+
+  it("운영센터 X 칸은 v3 보고의 검색어를 적고, 옛 v2 줄도 예전처럼 적는다", () => {
+    const view = (value: Record<string, unknown>) => readXStatus([row({ ...value, sentAt: NOW_S, signedWith: "current" })], NOW, true);
+    expect(xSummary(view(v3(popular))).note).toContain("검색 GitHub 주소·좋아요 50 이상");
+    expect(xSummary(view(v3({ source: "popular", minLikes: 1200 }))).note).toContain("좋아요 1,200 이상");
+    expect(xSummary(view({ ...v1, v: 2, query: { source: "products", repositories: 3, reason: null } })).note).toContain("검색 우리 저장소 3곳");
+    expect(xSummary(view(v1)).note).not.toContain("검색");
+  });
+});
+
 describe("조치 — X 보고 끊김/오류", () => {
   const inputs = (observations: unknown[]) => ({
     settings: {},

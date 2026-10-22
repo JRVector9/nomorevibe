@@ -3,14 +3,14 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseXPostsReport, signXPosts } from "@/lib/operations/x-posts";
-import { signXQuery } from "@/lib/operations/x-query";
 import { parseXStatusReport, signXStatus } from "@/lib/operations/x-status";
-import { runXCollector, X_COLLECTOR_QUERY } from "@/lib/social/x-collector";
-import { xSearchQuery, type XObservation } from "@/lib/social/x-pilot";
-import { sendSigned, xPostsReportFrom, xStatusReportFrom } from "@/lib/social/x-report";
+import { runXCollector, X_COLLECTOR_MIN_LIKES, X_COLLECTOR_QUERY } from "@/lib/social/x-collector";
+import { X_QUERY_MAX_LENGTH, xSearchQuery, type XObservation } from "@/lib/social/x-pilot";
+import { sendSigned, xPostsReportFrom, xStatusReportFrom, type XReportConfig } from "@/lib/social/x-report";
 
 const SECRET = "x-status-current-secret-0123456789abcdef";
-const report = { secret: SECRET, statusUrl: "https://nomorevibe.test/api/ops/x-status", postsUrl: "https://nomorevibe.test/api/ops/x-posts", queryUrl: null };
+const report = { secret: SECRET, statusUrl: "https://nomorevibe.test/api/ops/x-status", postsUrl: "https://nomorevibe.test/api/ops/x-posts" } satisfies XReportConfig;
+const popular = { source: "popular", minLikes: 50 } as const;
 const instant = Date.parse("2026-10-15T04:00:00Z"), observedAt = new Date(instant).toISOString();
 const metrics = { like_count: 10, reply_count: 2, retweet_count: 3, quote_count: 4 };
 const observed = { ...metrics, impression_count: null, bookmark_count: null };
@@ -32,7 +32,8 @@ function recorder(status = 200) {
 }
 
 describe("보고 만들기", () => {
-  it("게시물 보고는 저장소 하나·반응 네 칸이 다 있는 공개 글만, 사용 불가는 ID만 담는다", () => {
+  it("게시물 보고(v2)는 반응 네 칸이 다 있는 공개 글을 저장소가 없거나 여럿이어도 싣고(5곳까지), 사용 불가는 ID만 담는다", () => {
+    const six = ["a/one", "b/two", "c/three", "d/four", "e/five", "f/six"];
     const payload = xPostsReportFrom([
       observation("123"),
       observation("124", { linkStatus: "ambiguous", repositories: ["a/b", "c/d"] }),
@@ -40,10 +41,17 @@ describe("보고 만들기", () => {
       observation("126", { availability: "unavailable", repositories: [], linkStatus: "none" }),
       observation("127", { availability: "unknown" }),
       observation("128", { createdAt: null }),
+      observation("129", { repositories: [], linkStatus: "none" }),
+      observation("130", { linkStatus: "ambiguous", repositories: six }),
       observation("123"),
     ], observedAt);
-    expect(payload).toEqual({ v: 1, observedAt, unavailable: ["126"],
-      posts: [{ id: "123", createdAt: "2026-10-15T01:00:00.000Z", repository: "Owner/Skill-Repo", metrics: { like: 10, reply: 2, repost: 3, quote: 4 } }] });
+    const createdAt = "2026-10-15T01:00:00.000Z", counts = { like: 10, reply: 2, repost: 3, quote: 4 };
+    expect(payload).toEqual({ v: 2, observedAt, unavailable: ["126"], posts: [
+      { id: "123", createdAt, repositories: ["Owner/Skill-Repo"], metrics: counts },
+      { id: "124", createdAt, repositories: ["a/b", "c/d"], metrics: counts },
+      { id: "129", createdAt, repositories: [], metrics: counts },
+      { id: "130", createdAt, repositories: six.slice(0, 5), metrics: counts },
+    ] });
     expect(JSON.stringify(payload)).not.toMatch(/private/);
     expect(parseXPostsReport(payload, Math.floor(instant / 1000))).toEqual(payload);
   });
@@ -57,6 +65,16 @@ describe("보고 만들기", () => {
     expect(xStatusReportFrom({ ...base, status: "blocked", reason: "Not A Code", reservedToday: false }))
       .toMatchObject({ error: "unknown", reads: { used: 0 } });
     expect(xStatusReportFrom({ ...base, live: false, status: "planned", reservedToday: false })).toMatchObject({ mode: "dry-run", error: null });
+  });
+
+  it("검색어를 주면 v3(검색어 칸 query), 없으면 v1 — 웹의 엄격한 형식 검사를 그대로 지난다", () => {
+    const base = { live: true, status: "completed", candidates: 3, reservedToday: true, lastRunAt: observedAt, lastSuccessAt: observedAt } as const;
+    const v3 = xStatusReportFrom({ ...base, query: popular });
+    expect(v3).toEqual({ v: 3, mode: "live", reads: { used: 10, limit: 10 }, candidates: 3, lastRunAt: observedAt, lastSuccessAt: observedAt,
+      error: null, query: { source: "popular", minLikes: 50 } });
+    expect(parseXStatusReport(JSON.parse(JSON.stringify(v3)), Math.floor(instant / 1000))).toEqual(v3);
+    expect(xStatusReportFrom(base)).not.toHaveProperty("query");
+    expect(xStatusReportFrom(base).v).toBe(1);
   });
 
   it("보내기는 응답 코드나 실패 종류만 돌려준다", async () => {
@@ -84,9 +102,9 @@ describe("수집기가 보고를 보낸다", () => {
     expect(posts.signature).toBe(signXPosts(SECRET, posts.timestamp, posts.body));
     expect(daily.signature).toBe(signXStatus(SECRET, daily.timestamp, daily.body));
     expect(parseXPostsReport(JSON.parse(posts.body), posts.timestamp)?.posts).toEqual([
-      { id: "123", createdAt: "2026-10-15T01:00:00.000Z", repository: "owner/skill-repo", metrics: { like: 10, reply: 2, repost: 3, quote: 4 } }]);
+      { id: "123", createdAt: "2026-10-15T01:00:00.000Z", repositories: ["owner/skill-repo"], metrics: { like: 10, reply: 2, repost: 3, quote: 4 } }]);
     expect(parseXStatusReport(JSON.parse(daily.body), daily.timestamp))
-      .toMatchObject({ mode: "live", reads: { used: 10, limit: 10 }, candidates: 1, lastSuccessAt: observedAt, error: null });
+      .toMatchObject({ v: 3, mode: "live", reads: { used: 10, limit: 10 }, candidates: 1, lastSuccessAt: observedAt, error: null, query: popular });
     for (const item of sent) expect(item.body).not.toMatch(/private-raw-text|private-author|private-token/);
     expect(await status()).toMatchObject({ status: "completed", reports: { posts: 200, status: 200 } });
   });
@@ -95,7 +113,7 @@ describe("수집기가 보고를 보낸다", () => {
     const { sent, send } = recorder();
     await runXCollector({ ...options(), live: false }, { send });
     expect(sent.map(item => item.url)).toEqual([report.statusUrl]);
-    expect(JSON.parse(sent[0].body)).toMatchObject({ mode: "dry-run", reads: { used: 0 }, lastSuccessAt: observedAt, error: null });
+    expect(JSON.parse(sent[0].body)).toMatchObject({ v: 3, mode: "dry-run", reads: { used: 0 }, lastSuccessAt: observedAt, error: null, query: popular });
   });
 
   it("같은 날 다시 돌면 게시물은 보내지 않고, 하루 한도는 오류가 아니다", async () => {
@@ -130,105 +148,106 @@ describe("수집기가 보고를 보낸다", () => {
   });
 });
 
-describe("검색 저장소 묻기 — 우리 제품 저장소로 검색한다(2026-10-21)", () => {
+describe("검색어 — GitHub 주소가 있고 많이 퍼진 글만(2026-10-22)", () => {
   let stateDir: string;
-  beforeEach(async () => { stateDir = await mkdtemp(join(tmpdir(), "x-query-")); });
+  beforeEach(async () => { stateDir = await mkdtemp(join(tmpdir(), "x-popular-")); });
   afterEach(() => vi.restoreAllMocks());
-  const web = { ...report, queryUrl: "https://nomorevibe.test/api/ops/x-query" };
-  const options = () => ({ stateDir, live: true, useCaseApproved: true, token: "private-token", now: () => instant, report: web });
+  const options = () => ({ stateDir, live: true, useCaseApproved: true, token: "private-token", now: () => instant, report });
   const status = async () => JSON.parse(await readFile(join(stateDir, "status.json"), "utf8"));
   const receipt = () => join(stateDir, "budget-2026-10-15.json");
-  const answer = (repositories: string[], day = "2026-10-15") => new Response(JSON.stringify({ v: 1, day, repositories }), { status: 200 });
-  /** 웹 흉내 — 묻기에는 reply 로, 보고에는 200 으로 */
-  function webWith(reply: (body: string) => Promise<Response> | Response) {
-    const sent: Sent[] = [];
-    const send = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      sent.push({ url: String(url), body: String(init?.body), timestamp: Number(headers.get("x-nmv-timestamp")), signature: headers.get("x-nmv-signature") ?? "" });
-      return String(url) === web.queryUrl ? reply(String(init?.body)) : new Response(null, { status: 200 });
-    });
-    return { sent, send: send as unknown as typeof fetch };
-  }
-  const searched = (request: ReturnType<typeof vi.fn>) => new URL((request.mock.calls as unknown as [string][])[0][0]).searchParams.get("query");
+  const searched = (request: ReturnType<typeof vi.fn>) => new URL((request.mock.calls as unknown as [string][])[0][0]).searchParams;
   const posts = [post("123", ["owner/skill-repo"]), post("124", ["acme/tool", "other/lib"]), post("125", []),
     { ...post("126"), withheld: { country_codes: ["US"] } }];
   const xSearch = () => vi.fn(async () => new Response(JSON.stringify({ data: posts })));
-
-  it("예약 장부보다 먼저 묻고, 답한 저장소로 검색어를 만든다 — 보고는 v2(버리는 글 없음)·검색어 출처까지", async () => {
-    const { sent, send } = webWith(async () => {
-      await expect(readFile(receipt())).rejects.toThrow();
-      return answer(["acme/tool", "owner/skill-repo"]);
+  /** 웹 흉내 — 하루 상태 v3 에 statusV3 로 답한다(옛 웹이면 400). 나머지는 200 */
+  function webWith(statusV3: number) {
+    const sent: Sent[] = [];
+    const send = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers), body = String(init?.body);
+      sent.push({ url: String(url), body, timestamp: Number(headers.get("x-nmv-timestamp")), signature: headers.get("x-nmv-signature") ?? "" });
+      return new Response(null, { status: String(url) === report.statusUrl && JSON.parse(body).v === 3 ? statusV3 : 200 });
     });
+    return { sent, send: send as unknown as typeof fetch };
+  }
+
+  it("검색어는 url:github.com min_likes:50 하나 — 좋아요 하한은 이름 붙은 상수, 감싼 검색어도 짧다", () => {
+    expect(X_COLLECTOR_MIN_LIKES).toBe(50);
+    expect(X_COLLECTOR_QUERY).toBe("url:github.com min_likes:50");
+    expect(xSearchQuery(X_COLLECTOR_QUERY)).toBe("(url:github.com min_likes:50) -is:retweet");
+    expect(xSearchQuery(X_COLLECTOR_QUERY).length).toBeLessThan(X_QUERY_MAX_LENGTH);
+    // 웹 검색 이름(min_faves·min_retweets)은 API 에서 400 이다
+    expect(X_COLLECTOR_QUERY).not.toMatch(/min_faves|min_retweets/);
+  });
+
+  it("웹에 묻지 않고 한 요청·10건·관련도순으로 그 검색어를 보낸다 — 옛 설정에 묻는 주소가 남아 있어도", async () => {
+    const { sent, send } = webWith(200);
+    const leftover = { ...report, queryUrl: "https://nomorevibe.test/api/ops/x-query" } as XReportConfig;
     const request = xSearch();
-    expect(await runXCollector(options(), { request, send })).toMatchObject({ status: "completed", reservedPosts: 10, requests: 1, candidates: 1,
-      query: { source: "products", repositories: 2, reason: null } });
-    expect(searched(request)).toBe(xSearchQuery('url:"github.com/acme/tool" OR url:"github.com/owner/skill-repo"'));
-    expect(sent.map(item => item.url)).toEqual([web.queryUrl, report.postsUrl, report.statusUrl]);
-    const [asked, sentPosts, daily] = sent;
-    expect(JSON.parse(asked.body)).toEqual({ v: 1, day: "2026-10-15" });
-    expect(asked.signature).toBe(signXQuery(SECRET, asked.timestamp, asked.body));
+    expect(await runXCollector({ ...options(), report: leftover }, { request, send })).toMatchObject({ status: "completed", reservedPosts: 10,
+      requests: 1, httpStatus: 200, query: popular });
+    expect(request).toHaveBeenCalledOnce();
+    const params = searched(request);
+    expect([params.get("query"), params.get("max_results"), params.get("sort_order")])
+      .toEqual(["(url:github.com min_likes:50) -is:retweet", "10", "relevancy"]);
+    // 보내는 곳은 두 보고 주소뿐 — 묻기(/api/ops/x-query)가 없다
+    expect(sent.map(item => item.url)).toEqual([report.postsUrl, report.statusUrl]);
+    expect(sent.some(item => item.url.includes("x-query"))).toBe(false);
+  });
+
+  it("검색이 돌려준 글은 버리지 않는다 — 게시물 v2 에 저장소 0~5곳, 하루 상태 v3·status.json 에 검색어 출처와 하한", async () => {
+    const { sent, send } = webWith(200);
+    expect(await runXCollector(options(), { request: xSearch(), send })).toMatchObject({ status: "completed", candidates: 1, query: popular });
+    const [sentPosts, daily] = sent;
+    expect(sentPosts.signature).toBe(signXPosts(SECRET, sentPosts.timestamp, sentPosts.body));
     expect(parseXPostsReport(JSON.parse(sentPosts.body), sentPosts.timestamp)).toMatchObject({ v: 2, unavailable: ["126"], posts: [
       { id: "123", repositories: ["owner/skill-repo"] }, { id: "124", repositories: ["acme/tool", "other/lib"] }, { id: "125", repositories: [] }] });
-    expect(parseXStatusReport(JSON.parse(daily.body), daily.timestamp)).toMatchObject({ v: 2, query: { source: "products", repositories: 2, reason: null } });
-    for (const item of sent) expect(item.body).not.toMatch(/private-raw-text|private-author|private-token/);
-    expect(await status()).toMatchObject({ query: { source: "products", repositories: 2, reason: null }, reports: { posts: 200, status: 200 } });
+    expect(parseXStatusReport(JSON.parse(daily.body), daily.timestamp)).toMatchObject({ v: 3, query: { source: "popular", minLikes: 50 } });
+    for (const item of sent) expect(item.body).not.toMatch(/private-raw-text|private-author|private-token|min_likes/);
+    expect(await status()).toMatchObject({ query: { source: "popular", minLikes: 50 }, httpStatus: 200, reports: { posts: 200, status: 200 } });
+    expect((await status()).reports).not.toHaveProperty("statusV1");
   });
 
-  it("v2 글은 그날 검색한 우리 저장소를 앞에 두고 5곳까지 싣는다", async () => {
-    const { sent, send } = webWith(() => answer(["zeta/ours"]));
-    const many = post("130", ["a/one", "b/two", "c/three", "d/four", "e/five", "zeta/ours"]);
-    await runXCollector(options(), { request: vi.fn(async () => new Response(JSON.stringify({ data: [many] }))), send });
-    expect(JSON.parse(sent[1].body).posts[0].repositories).toEqual(["zeta/ours", "a/one", "b/two", "c/three", "d/four"]);
+  it("v3 를 모르는 웹(400)에는 하루 상태를 검색어 칸 없는 v1 로 한 번 더 보낸다 — 다른 실패는 다시 보내지 않는다", async () => {
+    const old = webWith(400);
+    await runXCollector(options(), { request: xSearch(), send: old.send });
+    expect(old.sent.map(item => item.url)).toEqual([report.postsUrl, report.statusUrl, report.statusUrl]);
+    const again = old.sent[2];
+    expect(again.signature).toBe(signXStatus(SECRET, again.timestamp, again.body));
+    expect(parseXStatusReport(JSON.parse(again.body), again.timestamp)).toMatchObject({ v: 1, mode: "live", reads: { used: 10 }, error: null });
+    expect(JSON.parse(again.body)).not.toHaveProperty("query");
+    expect(await status()).toMatchObject({ query: popular, reports: { posts: 200, status: 400, statusV1: 200 } });
+
+    for (const reply of [429, 503]) {
+      const { sent, send } = webWith(reply);
+      await runXCollector({ ...options(), live: false }, { send });
+      expect(sent.map(item => item.url)).toEqual([report.statusUrl]);
+      expect((await status()).reports).toEqual({ status: reply });
+    }
   });
 
-  it.each([
-    ["network", () => Promise.reject(new Error("private-token"))],
-    ["timeout", () => Promise.reject(Object.assign(new Error("slow"), { name: "TimeoutError" }))],
-    ["http_404", () => new Response("<html>not found</html>", { status: 404 })],
-    ["http_503", () => new Response(JSON.stringify({ error: "x_query_unavailable" }), { status: 503 })],
-    ["invalid_response", () => new Response("not json", { status: 200 })],
-    ["invalid_response", () => answer(["acme/tool"], "2026-10-14")],
-    ["invalid_response", () => answer(['acme/tool" OR from:someone'])],
-  ] as const)("묻기가 실패하면(%s) 고정 검색어로 그날 읽기를 쓰고, 옛 웹일 수 있어 보고는 v1 로 보낸다", async (reason, reply) => {
-    const { sent, send } = webWith(reply);
+  it("X 가 검색어를 거절하면(400) 장부는 되돌리지 않고 http_error 와 httpStatus 를 남긴다 — 같은 날 다시 부르지 않는다", async () => {
+    const { sent, send } = webWith(200);
+    const request = vi.fn(async () => new Response(JSON.stringify({ errors: [{ message: "private-provider-body" }] }), { status: 400 }));
+    expect(await runXCollector(options(), { request, send })).toMatchObject({ status: "stopped", reason: "http_error", reservedPosts: 10,
+      requests: 1, httpStatus: 400, query: popular });
+    expect(JSON.parse(await readFile(receipt(), "utf8"))).toMatchObject({ reservedPosts: 10 });
+    expect(sent.map(item => item.url)).toEqual([report.statusUrl]);
+    expect(JSON.parse(sent[0].body)).toMatchObject({ v: 3, error: "http_error", reads: { used: 10 } });
+    expect(await status()).toMatchObject({ status: "stopped", reason: "http_error", httpStatus: 400 });
+    expect(await readFile(join(stateDir, "status.json"), "utf8")).not.toMatch(/private/);
+    expect(await runXCollector({ ...options(), now: () => instant + 60_000 }, { request, send })).toMatchObject({ reason: "daily_limit", requests: 0 });
+    expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("dry-run 은 X·예약 없이 하루 상태만 — 검색어 칸은 같다", async () => {
+    const { sent, send } = webWith(200);
     const request = xSearch();
-    expect(await runXCollector(options(), { request, send })).toMatchObject({ status: "completed", reservedPosts: 10, requests: 1,
-      query: { source: "default", repositories: 0, reason } });
-    expect(searched(request)).toBe(xSearchQuery(X_COLLECTOR_QUERY));
-    expect(parseXPostsReport(JSON.parse(sent[1].body), sent[1].timestamp)).toMatchObject({ v: 1, posts: [{ id: "123", repository: "owner/skill-repo" }] });
-    expect(JSON.parse(sent[2].body)).toMatchObject({ v: 1 });
-    expect(JSON.parse(sent[2].body)).not.toHaveProperty("query");
-    expect(await status()).toMatchObject({ query: { source: "default", reason } });
-    expect(await readFile(join(stateDir, "status.json"), "utf8")).not.toContain("private-token");
-  });
-
-  it("빈 목록이면 고정 검색어 — 답한 웹은 새 판을 받으므로 보고는 v2", async () => {
-    const { sent, send } = webWith(() => answer([]));
-    const request = xSearch();
-    expect(await runXCollector(options(), { request, send })).toMatchObject({ query: { source: "default", reason: "empty" } });
-    expect(searched(request)).toBe(xSearchQuery(X_COLLECTOR_QUERY));
-    expect(JSON.parse(sent[1].body)).toMatchObject({ v: 2 });
-    expect(JSON.parse(sent[2].body)).toMatchObject({ v: 2, query: { source: "default", repositories: 0, reason: "empty" } });
-  });
-
-  it("묻는 주소가 없으면 예전 그대로 — 고정 검색어, v1 보고, 묻기 없음", async () => {
-    const { sent, send } = webWith(() => answer(["acme/tool"]));
-    expect(await runXCollector({ ...options(), report }, { request: xSearch(), send })).toMatchObject({ query: { source: "default", reason: "not_configured" } });
-    expect(sent.map(item => item.url)).toEqual([report.postsUrl, report.statusUrl]);
-    expect(JSON.parse(sent[0].body)).toMatchObject({ v: 1 });
-  });
-
-  it("묻기는 하루 장부를 바꾸지 않는다 — dry-run 은 묻기만 하고 X·예약이 없고, 같은 날 다시 돌면 X 를 부르지 않는다", async () => {
-    const request = xSearch();
-    const dry = webWith(() => answer(["acme/tool"]));
-    expect(await runXCollector({ ...options(), live: false }, { request, send: dry.send })).toMatchObject({ status: "planned", reservedPosts: 0,
-      query: { source: "products", repositories: 1 } });
+    expect(await runXCollector({ ...options(), live: false }, { request, send })).toMatchObject({ status: "planned", reservedPosts: 0,
+      requests: 0, query: popular });
     expect(request).not.toHaveBeenCalled();
     await expect(readFile(receipt())).rejects.toThrow();
-    expect(JSON.parse(dry.sent[1].body)).toMatchObject({ v: 2, mode: "dry-run", reads: { used: 0 }, query: { source: "products" } });
-    await runXCollector(options(), { request, send: webWith(() => answer(["acme/tool"])).send });
-    expect(await runXCollector({ ...options(), now: () => instant + 60_000 }, { request, send: webWith(() => answer(["acme/tool"])).send }))
-      .toMatchObject({ status: "blocked", reason: "daily_limit", requests: 0 });
-    expect(request).toHaveBeenCalledOnce();
+    expect(sent.map(item => item.url)).toEqual([report.statusUrl]);
+    expect(JSON.parse(sent[0].body)).toMatchObject({ v: 3, mode: "dry-run", reads: { used: 0 }, query: popular });
+    expect(await status()).not.toHaveProperty("httpStatus");
   });
 });

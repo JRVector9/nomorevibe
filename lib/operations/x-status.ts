@@ -6,6 +6,9 @@ import { createHmac } from "node:crypto";
  * 받는 쪽은 app/api/ops/x-status/route.ts, 보내는 쪽 계약은 docs/operations/2026-10-18-x-status-report-runbook.md 다.
  * 받는 웹에 비밀이 없으면 주소는 404 이고(DB 를 보지 않는다) 조치에도 띄우지 않는다 — 배포만으로는 아무것도 바뀌지 않는다.
  * 본문은 정해진 칸뿐이다. 자유 글자는 짧은 코드(오류, v2 의 검색어 사유)뿐이고, 게시물 본문·작성자·저장소 이름은 받지 않는다.
+ *
+ * 판이 셋이다. v1 은 검색어 칸이 없고, v2(#590 수집기)·v3(2026-10-22 수집기)는 그날 검색어 칸(query)이 하나 더 있다.
+ * 지금 수집기는 v3 를 보내고, v3 를 모르는 웹이 400 으로 답하면 v1 로 한 번 더 보낸다(lib/social/x-collector.ts). 웹은 셋을 다 받는다.
  */
 export const X_STATUS_KEY = "x-status";
 export const X_STATUS_SECRET_ENV = "X_STATUS_REPORT_SECRET";
@@ -26,11 +29,16 @@ const SIGNING_PREFIX = "nomorevibe-x-status-v1";
 
 export type XStatusMode = "live" | "dry-run" | "disabled";
 /**
- * 그날 검색어(v2, 2026-10-21) — products: 웹이 고른 우리 제품 저장소(/api/ops/x-query) · default: 고정 검색어.
- * reason 은 고정 검색어로 돈 까닭(not_configured·timeout·network·http_404·invalid_response·empty 등 짧은 코드), 아니면 null.
+ * 그날 검색어(v3, 2026-10-22) — popular: GitHub 주소가 있고 좋아요가 minLikes 개 이상인 글(`url:github.com min_likes:N`).
+ * 검색어 글자는 받지 않는다 — 출처와 하한만.
  */
-export type XStatusQuery = { source: "products" | "default"; repositories: number; reason: string | null };
-export type XStatusReport = ({ v: 1 } | { v: 2; query: XStatusQuery }) & {
+export type XStatusQuery = { source: "popular"; minLikes: number };
+/**
+ * 옛 검색어 칸(v2, 2026-10-21 #590 수집기) — products: 웹이 골라 준 우리 제품 저장소 · default: 고정 검색어, reason 은 그 까닭.
+ * 지금 수집기는 보내지 않는다. 되돌린 옛 수집기의 보고와 저장된 줄을 읽으려고 받는다.
+ */
+export type XStatusQueryV2 = { source: "products" | "default"; repositories: number; reason: string | null };
+export type XStatusReport = ({ v: 1 } | { v: 2; query: XStatusQueryV2 } | { v: 3; query: XStatusQuery }) & {
   mode: XStatusMode;
   /** 오늘(UTC) 예약한 읽기 수와 하루 상한 */
   reads: { used: number; limit: number };
@@ -70,9 +78,11 @@ export function signXStatus(secret: string, timestamp: number, body: string | Ui
 
 const MODES: readonly string[] = ["live", "dry-run", "disabled"];
 const REPORT_KEYS = ["v", "mode", "reads", "candidates", "lastRunAt", "lastSuccessAt", "error"];
-/** v2 는 v1 에 검색어(query) 한 칸이 더 있다 — 옛 수집기의 v1 도 그대로 받는다 */
-const REPORT_KEYS_V2 = [...REPORT_KEYS, "query"];
-const QUERY_SOURCES: readonly string[] = ["products", "default"];
+/** v2·v3 는 v1 에 검색어(query) 한 칸이 더 있다 — 옛 수집기의 v1 도 그대로 받는다 */
+const REPORT_KEYS_QUERY = [...REPORT_KEYS, "query"];
+const QUERY_SOURCES_V2: readonly string[] = ["products", "default"];
+/** 좋아요 하한(min_likes)의 받는 범위 */
+const MIN_LIKES_MAX = 1_000_000;
 const ERROR_CODE = /^[a-z][a-z0-9_]{0,47}$/;
 const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const MAX_COUNT = 1_000;
@@ -94,9 +104,10 @@ function instant(value: unknown, notAfterMs: number): string | null | undefined 
 
 /** 받은 본문의 엄격한 형식 — 칸이 더 있거나 빠지거나 범위를 벗어나면 null */
 export function parseXStatusReport(value: unknown, sentAt: number): XStatusReport | null {
-  if (!isRecord(value) || (value.v !== 1 && value.v !== 2) || !hasExactKeys(value, value.v === 1 ? REPORT_KEYS : REPORT_KEYS_V2)) return null;
-  const query = value.v === 2 ? parseQuery(value.query) : null;
-  if (value.v === 2 && !query) return null;
+  if (!isRecord(value) || (value.v !== 1 && value.v !== 2 && value.v !== 3)
+    || !hasExactKeys(value, value.v === 1 ? REPORT_KEYS : REPORT_KEYS_QUERY)) return null;
+  const queryV2 = value.v === 2 ? parseQueryV2(value.query) : null, query = value.v === 3 ? parseQuery(value.query) : null;
+  if ((value.v === 2 && !queryV2) || (value.v === 3 && !query)) return null;
   const { mode, reads, candidates, error } = value;
   if (typeof mode !== "string" || !MODES.includes(mode)) return null;
   if (!isRecord(reads) || !hasExactKeys(reads, ["used", "limit"])) return null;
@@ -109,16 +120,22 @@ export function parseXStatusReport(value: unknown, sentAt: number): XStatusRepor
   if (lastSuccessAt !== null && (lastRunAt === null || Date.parse(lastSuccessAt) > Date.parse(lastRunAt))) return null;
   if (error !== null && (typeof error !== "string" || !ERROR_CODE.test(error))) return null;
   const fields = { mode: mode as XStatusMode, reads: { used, limit }, candidates, lastRunAt, lastSuccessAt, error: error as string | null };
-  return query ? { v: 2, ...fields, query } : { v: 1, ...fields };
+  return query ? { v: 3, ...fields, query } : queryV2 ? { v: 2, ...fields, query: queryV2 } : { v: 1, ...fields };
+}
+
+/** v3 의 검색어 칸 — 출처(popular)와 좋아요 하한뿐 */
+function parseQuery(value: unknown): XStatusQuery | null {
+  if (!isRecord(value) || !hasExactKeys(value, ["source", "minLikes"])) return null;
+  return value.source === "popular" && countUpTo(value.minLikes, MIN_LIKES_MAX) ? { source: "popular", minLikes: value.minLikes } : null;
 }
 
 /** v2 의 검색어 칸 — 출처·저장소 수·짧은 사유 코드뿐(저장소 이름은 받지 않는다) */
-function parseQuery(value: unknown): XStatusQuery | null {
+function parseQueryV2(value: unknown): XStatusQueryV2 | null {
   if (!isRecord(value) || !hasExactKeys(value, ["source", "repositories", "reason"])) return null;
   const { source, repositories, reason } = value;
-  if (typeof source !== "string" || !QUERY_SOURCES.includes(source) || !countUpTo(repositories, MAX_COUNT)) return null;
+  if (typeof source !== "string" || !QUERY_SOURCES_V2.includes(source) || !countUpTo(repositories, MAX_COUNT)) return null;
   if (reason !== null && (typeof reason !== "string" || !ERROR_CODE.test(reason))) return null;
-  return { source: source as XStatusQuery["source"], repositories, reason: reason as string | null };
+  return { source: source as XStatusQueryV2["source"], repositories, reason: reason as string | null };
 }
 
 /** 저장한 줄을 읽는다 — 같은 형식 검사에 sentAt·signedWith 까지 */
