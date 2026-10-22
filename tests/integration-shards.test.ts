@@ -32,9 +32,10 @@ describe("통합 테스트 시간 기준 묶음(LPT)", () => {
     expect(() => planShards(["a"], {}, 0)).toThrow("integration_shard_count_invalid");
   });
 
-  it("갱신은 새로 잰 값만 덮고 지금 없는 파일은 지운다", () => {
+  it("갱신은 새로 잰 값만 덮고(여러 번 쟀으면 평균) 지금 없는 파일은 지운다", () => {
     expect(mergeDurations({ keep: 1, gone: 2, again: 3 }, [{ files: { again: 4.26, fresh: 5 } }], ["keep", "again", "fresh"]))
       .toEqual({ again: 4.3, fresh: 5, keep: 1 });
+    expect(mergeDurations({ slow: 300 }, [{ files: { slow: 49 } }, { files: { slow: 92.6 } }], ["slow"])).toEqual({ slow: 70.8 });
   });
 
   it("직렬 ledger 파일은 모두 실제로 있고 시간 기록은 읽힌다", () => {

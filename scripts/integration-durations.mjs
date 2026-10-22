@@ -2,12 +2,13 @@
 /**
  * 통합 테스트 파일별 시간 기록(tests/integration/durations.json)을 갱신하고 묶음 배정을 보여 준다.
  *
- *   node scripts/integration-durations.mjs --run <CI run id>     # 그 실행의 integration-durations-* artifact 를 받아 갱신
- *   node scripts/integration-durations.mjs a.json b.json ...     # 묶음 reporter 가 남긴 JSON 을 직접 모아 갱신
- *   node scripts/integration-durations.mjs --plan 6              # 지금 기록으로 6 묶음 배정·예상 시간만 출력(파일을 바꾸지 않는다)
+ *   node scripts/integration-durations.mjs --run <CI run id> [<run id>...]  # 그 실행들의 integration-durations-* artifact 로 갱신
+ *   node scripts/integration-durations.mjs a.json b.json ...                # 묶음 reporter 가 남긴 JSON 을 직접 모아 갱신
+ *   node scripts/integration-durations.mjs --plan 6                         # 지금 기록으로 6 묶음 배정·예상 시간만 출력(쓰지 않는다)
  *
- * 갱신은 이번에 잰 파일만 새 값으로 바꾸고, 저장소에서 사라진 파일은 지운다. 재지 않은 파일(직렬 ledger 잡에서 도는 파일 등)은
- * 예전 값을 둔다. 기록이 오래되어도 결과는 같고 묶음 균형만 나빠진다 — 긴 파일이 크게 바뀌었을 때 갱신한다.
+ * 갱신은 이번에 잰 파일만 새 값(여러 실행이면 평균 — runner 마다 같은 파일이 1.5~2배까지 흔들린다)으로 바꾸고, 저장소에서
+ * 사라진 파일은 지운다. 재지 않은 파일은 예전 값을 둔다. 기록이 오래되어도 결과는 같고 묶음 균형만 나빠진다 —
+ * 긴 파일이 크게 바뀌었을 때 최근 성공한 PR 실행 두세 개로 갱신한다.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -23,14 +24,16 @@ export function listIntegrationFiles(root = process.cwd()) {
     .sort();
 }
 
-/** 예전 기록 위에 새로 잰 값을 덮고, 지금 없는 파일은 뺀다. 키는 경로순으로 둔다 */
+/** 예전 기록 위에 새로 잰 값(같은 파일을 여러 번 쟀으면 평균)을 덮고, 지금 없는 파일은 뺀다. 키는 경로순으로 둔다 */
 export function mergeDurations(previous, reports, existing) {
-  const merged = { ...previous };
+  const measured = new Map();
   for (const report of reports) {
     for (const [file, seconds] of Object.entries(report?.files ?? {})) {
-      if (Number.isFinite(seconds) && seconds >= 0) merged[file] = Math.round(seconds * 10) / 10;
+      if (Number.isFinite(seconds) && seconds >= 0) measured.set(file, [...(measured.get(file) ?? []), seconds]);
     }
   }
+  const merged = { ...previous };
+  for (const [file, values] of measured) merged[file] = Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * 10) / 10;
   const keep = new Set(existing);
   return Object.fromEntries(Object.entries(merged).filter(([file]) => keep.has(file)).sort(([a], [b]) => (a < b ? -1 : 1)));
 }
@@ -61,10 +64,13 @@ function main(argv) {
   }
   let inputs = argv;
   let downloaded;
+  const runs = argv[0] === '--run' ? argv.slice(1) : [];
   if (argv[0] === '--run') {
-    if (!/^\d+$/.test(argv[1] ?? '')) throw new Error('usage: --run <run id>');
+    if (runs.length === 0 || !runs.every(run => /^\d+$/.test(run))) throw new Error('usage: --run <run id> [<run id>...]');
     downloaded = mkdtempSync(join(tmpdir(), 'nmv-integration-durations-'));
-    execFileSync('gh', ['run', 'download', argv[1], '--pattern', 'integration-durations-*', '--dir', downloaded], { stdio: 'inherit' });
+    for (const run of runs) {
+      execFileSync('gh', ['run', 'download', run, '--pattern', 'integration-durations-*', '--dir', join(downloaded, run)], { stdio: 'inherit' });
+    }
     inputs = jsonFilesUnder(downloaded);
   }
   try {
@@ -73,7 +79,7 @@ function main(argv) {
     const files = mergeDurations(readDurations(root), reports, listIntegrationFiles(root));
     const target = resolve(root, DURATIONS_PATH);
     const previous = existsSync(target) ? JSON.parse(readFileSync(target, 'utf8')) : {};
-    const source = argv[0] === '--run' ? `GitHub Actions run ${argv[1]}` : 'local reports';
+    const source = runs.length ? `GitHub Actions runs ${runs.join(', ')}` : 'local reports';
     writeFileSync(target, `${JSON.stringify({ ...previous, source, files }, null, 2)}\n`);
     console.log(`${DURATIONS_PATH}: ${Object.keys(files).length} files (${source})`);
     printPlan(6, root);
