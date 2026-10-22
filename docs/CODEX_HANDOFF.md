@@ -1,6 +1,6 @@
 # 2026-10-16 파이프라인 개발 인계
 
-> **최신 인계(2026-10-22): [docs/operations/2026-10-22-handoff.md](operations/2026-10-22-handoff.md)** — 남은 결정 8가지와 운영 주의. 아래는 그 이전 기록이다.
+> **최신 인계(2026-10-22): [docs/operations/2026-10-22-handoff.md](operations/2026-10-22-handoff.md)** — 관리자·보안 패치 15앱 배포 완료, 남은 검증과 운영 주의. [실제 배포 기록](operations/2026-10-22-admin-production-rollout.md). 아래는 그 이전 기록이다.
 
 ## 재개 — 2026-10-17 01:30 KST (Claude 오케스트레이터)
 
