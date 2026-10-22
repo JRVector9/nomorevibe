@@ -6,6 +6,7 @@ import { Icon } from "@/components/home/icons";
 import { markAuthDisabled, useUnreadCount } from "@/components/me/account-store";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath, stripLocale } from "@/lib/i18n/routing";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 /** '인기' 탭 아이콘 — 트로피. 발견(격자)과 같은 그림을 쓰면 두 탭이 구분되지 않았다(UX-26) */
 function TrophyIcon() {
@@ -66,7 +67,7 @@ export function MobileNav({ authEnabled = false, talkEnabled = false }: { authEn
   const me = pathname === "/me" || pathname.startsWith("/me/");
 
   return (
-    <nav className="mobile-bottom" aria-label={t("navigation.mobile")}>
+    <nav className="mobile-bottom" aria-label={t("navigation.mobile")} data-track-nav="mobile_nav">
       <Link prefetch={false} href={localePath(locale, "/")} className={discover ? "active" : undefined}>
         <Icon name="grid" />
         {t("navigation.discoverShort")}
@@ -77,7 +78,7 @@ export function MobileNav({ authEnabled = false, talkEnabled = false }: { authEn
           {t("navigation.talkShort")}
         </Link>
       )}
-      <button type="button" onClick={focusSearch}>
+      <button type="button" onClick={focusSearch} {...trackAttrs("nav_click", { target: "search", surface: "mobile_nav" })}>
         <Icon name="search" />
         {t("navigation.search")}
       </button>

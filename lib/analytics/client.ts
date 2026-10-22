@@ -1,5 +1,5 @@
 import type { ConsentBlockReason } from "@/lib/analytics/consent";
-import type { AnalyticsEventName, AnalyticsEventParams } from "@/lib/analytics/events";
+import type { AnalyticsEvent, AnalyticsEventName, AnalyticsEventParams } from "@/lib/analytics/events";
 import { ANALYTICS_OPT_OUT_KEY } from "@/lib/analytics/opt-out-key";
 
 /**
@@ -91,6 +91,11 @@ export function track<Name extends AnalyticsEventName>(name: Name, params: Analy
   } catch {
     // 분석은 화면을 막지 않는다
   }
+}
+
+/** 미리 만든 이벤트 묶음을 보낸다 — 화면이 순수 함수로 이벤트를 고르고(시험하기 쉽게) 여기로 넘긴다 */
+export function trackEvents(events: readonly AnalyticsEvent[]): void {
+  for (const event of events) track(event.name, event.params as never);
 }
 
 /**

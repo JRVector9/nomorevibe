@@ -65,13 +65,13 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
    <p>{t("popular.note")} · <Link prefetch={false} href={localePath(locale,"/?metric=popular")}>{t("nav.methodology")}</Link></p>
   </div>
   <div className="filter-top">
-   <nav className="tabs popular-tier-tabs" aria-label={t("popular.tiers")}>
+   <nav className="tabs popular-tier-tabs" aria-label={t("popular.tiers")} data-track-filter="tier">
     {STAR_TIERS.map((tier,index)=>{const active=tier.key===state.tier;
      return <Link prefetch={false} key={tier.key} href={href({tier:tier.key})} className={`tab${active?' active':''}`} aria-current={active?'page':undefined}>
       {t(`tier.${tier.key}`)}{result&&<> <span className="tab-count">{count(result.totals[index])}</span></>}
      </Link>;})}
    </nav>
-   <nav className="chips chips-ai" aria-label={t("nav.filters")}>
+   <nav className="chips chips-ai" aria-label={t("nav.filters")} data-track-filter="">
     <Link prefetch={false} href={href({ai:!state.ai})} className={`chip${state.ai?' chip-dark':''}`} aria-current={state.ai?'true':undefined}>
      {labels("ai.made")}{facets&&<> <span className="chip-count">{count(facets.ai)}</span></>}
     </Link>
@@ -79,7 +79,7 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
      {t("popular.personal")}{facets&&<> <span className="chip-count">{count(facets.personal)}</span></>}
     </Link>
    </nav>
-   <nav className="chips chips-filter popular-categories" aria-label={t("filter.category")}>
+   <nav className="chips chips-filter popular-categories" aria-label={t("filter.category")} data-track-filter="category">
     <Link prefetch={false} href={href({category:null})} className={`chip${state.category?'':' chip-dark'}`} aria-current={state.category?undefined:'true'}>
      {t("filter.all")}{facets&&<> <span className="chip-count">{count(facets.all)}</span></>}
     </Link>
@@ -95,12 +95,12 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
      <h2 id="popular-list-title">{t("popular.range", { range:t(`tierRange.${selected.key}`),category:state.category?translatedCategory(state.category,labels):t("popular.allCategories"),count:count(result.total) })}</h2>
      <p>{t("popular.metricHint")} · {t(state.sort==='rising'?"popular.daily":"popular.stars")}</p>
     </div>
-    <div className="popular-controls">
-     <nav className="tabs tabs-sm" aria-label={t("nav.sort")}>
+    <div className="popular-controls" data-track-filter="reset">
+     <nav className="tabs tabs-sm" aria-label={t("nav.sort")} data-track-filter="sort">
       {SORTS.map(sort=>{const active=state.sort===sort.key;
        return <Link prefetch={false} key={sort.key} href={href({sort:sort.key})} className={`tab${active?' active':''}`} aria-current={active?'true':undefined}>{t(sort.label)}</Link>;})}
      </nav>
-     <nav className="tabs tabs-sm" aria-label={t("nav.view")}>
+     <nav className="tabs tabs-sm" aria-label={t("nav.view")} data-track-filter="view">
       {VIEWS.map(view=>{const active=state.view===view.key;
        return <Link prefetch={false} key={view.key} href={href({view:view.key})} className={`tab tab-icon${active?' active':''}`} aria-current={active?'true':undefined} aria-label={t(view.label)} title={t(view.label)}>
         <Icon name={view.icon} size={16}/>

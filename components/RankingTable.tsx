@@ -67,7 +67,7 @@ export function RankingTable({
 
   return (
     <div className="overflow-x-auto rounded-[12px] border border-line bg-bg-card">
-      <table className="w-full min-w-full sm:min-w-[760px] text-left text-[13px]">
+      <table className="w-full min-w-full sm:min-w-[760px] text-left text-[13px]" data-track-list="table">
         <thead className="text-fg-2">
           <tr>
             <th className="w-8 px-2 py-3 font-medium sm:w-12 sm:px-4">#</th>

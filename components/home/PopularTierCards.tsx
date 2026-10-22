@@ -7,6 +7,7 @@ import { RankedCards } from "@/components/home/RankedCards";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 
 export type PopularTierGroup = { key: string; label: string; range: string; total: number; href: string; items: RankedCardProduct[] };
@@ -47,7 +48,8 @@ export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; 
           {groups.map((tier, index) => (
             <button key={tier.key} ref={(element) => { tabs.current[index] = element; }} type="button" role="tab" id={`${id}-tab-${tier.key}`}
               aria-selected={index === current} aria-controls={`${id}-panel-${tier.key}`} tabIndex={index === current ? 0 : -1}
-              className={`tab${index === current ? " active" : ""}`} onClick={() => setCurrent(index)}>
+              className={`tab${index === current ? " active" : ""}`} onClick={() => setCurrent(index)}
+              {...trackAttrs("select_content", { content_type: "popular_tier", content_id: tier.key, surface: "home" })}>
               {tier.label} <span className="tab-count">{count(tier.total)}</span>
             </button>
           ))}
@@ -56,6 +58,7 @@ export function PopularTierCards({ groups, now }: { groups: PopularTierGroup[]; 
       </div>
       {groups.map((tier, index) => (
         <div key={tier.key} role="tabpanel" id={`${id}-panel-${tier.key}`} aria-labelledby={`${id}-tab-${tier.key}`} hidden={index !== current}
+          data-track-list={`popular_${tier.key}`}
           className="popular-tier-panel">
           <p className="row-note">★ {tier.range} · {t("popular.stars")}</p>
           {tier.items.length ? <RankedCards items={tier.items} now={now} /> : <p className="popular-empty">{t("popular.empty")}</p>}

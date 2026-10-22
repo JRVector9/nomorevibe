@@ -3,6 +3,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslations } from "@/lib/i18n/context";
 import type { MessageKey } from "@/lib/i18n/messages";
+import { trackAttrs } from "@/lib/analytics/attrs";
+import { track } from "@/lib/analytics/client";
 
 type ErrorKey = Extract<MessageKey<"auth">, `error.${string}`>;
 const ERROR_MESSAGES: Record<string, ErrorKey> = {
@@ -56,6 +58,8 @@ export function EmailLoginForm({ returnTo }: { returnTo: string }) {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
       if (challengeId) {
+        // 수단만 보낸다(beacon 이라 바로 옮겨 가도 잃지 않는다). 처음 가입인지는 서버가 안다
+        track("login", { method: "email" });
         window.location.assign(result.returnTo);
       } else {
         setChallengeId(result.challengeId);
@@ -80,7 +84,7 @@ export function EmailLoginForm({ returnTo }: { returnTo: string }) {
       </div>}
       {message && <p className="mt-4 text-[14px] leading-6 text-fg-2" role="status">{t(message)}</p>}
       {error && <p className="mt-4 text-[14px] leading-6 text-down" role="alert">{t(error)}</p>}
-      <button type="submit" disabled={busy || !csrfToken} className="mt-5 min-h-11 w-full rounded-lg bg-accent-solid px-4 py-3 text-[14px] font-semibold text-white disabled:opacity-50">
+      <button type="submit" disabled={busy || !csrfToken} {...(challengeId ? {} : trackAttrs("login_start", { method: "email", surface: "login" }))} className="mt-5 min-h-11 w-full rounded-lg bg-accent-solid px-4 py-3 text-[14px] font-semibold text-white disabled:opacity-50">
         {busy ? t("email.busy") : challengeId ? t("email.submit") : t("email.sendCode")}
       </button>
       {challengeId && <button type="button" disabled={busy} onClick={() => { setChallengeId(""); setCode(""); setMessage(null); setError(null); }} className="mt-3 min-h-11 w-full text-[14px] text-fg-2">{t("email.restart")}</button>}

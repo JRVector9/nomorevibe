@@ -5,6 +5,7 @@ import { useState } from "react";
 import { formatNumber, formatDate } from "@/lib/i18n/format";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 type Filter = "all" | "maker" | "automatic";
 
@@ -54,6 +55,7 @@ export function UpdateTimeline({ updates, now }: { updates: ProductDetailView["u
               type="button"
               role="tab"
               onClick={() => setFilter(item.key)}
+              {...trackAttrs("filter_change", { filter_name: "updates", filter_value: item.key, surface: "product" })}
               aria-selected={filter === item.key}
               className={`inline-flex h-11 items-center rounded-full px-3.5 text-[13px] ${
                 filter === item.key ? "bg-bg-card font-medium text-fg shadow-[0_1px_4px_rgba(0,0,0,0.08)]" : "text-fg-2 hover:text-fg"
@@ -88,7 +90,8 @@ export function UpdateTimeline({ updates, now }: { updates: ProductDetailView["u
         </ol>
       )}
       {visible.length > FIRST && (
-        <button type="button" onClick={() => setExpanded((value) => !value)} className="inline-flex min-h-11 items-center self-start text-[13px] text-accent-ink hover:underline">
+        <button type="button" onClick={() => setExpanded((value) => !value)} className="inline-flex min-h-11 items-center self-start text-[13px] text-accent-ink hover:underline"
+          {...trackAttrs("select_content", { content_type: "updates", content_id: expanded ? "collapse" : "expand", surface: "product" })}>
           {expanded ? t("action.collapse") : t("updates.all", { count: formatNumber(visible.length, locale) })}
         </button>
       )}

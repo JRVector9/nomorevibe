@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "@/lib/i18n/context";
 import type { MessageKey } from "@/lib/i18n/messages";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 type Connection = { githubUserId: number; login: string; state: "active" | "needs_reconnect" | "revoked" };
 type ErrorKey = Extract<MessageKey<"auth">, `error.${string}`>;
@@ -79,7 +80,9 @@ export function GithubConnection({ returnTo = "/", signedIn = false }: { returnT
       </> : <>
         {connection?.state === "needs_reconnect" && <p className="mt-3 text-[14px]" role="status">{t("github.reconnectRequired")}</p>}
         <label className="mt-4 flex items-start gap-2 text-[14px] leading-6"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} disabled={busy} className="mt-1" />{t("github.consent")}</label>
-        <button type="button" disabled={busy || loading || !consent} onClick={connect} className={`mt-4 min-h-11 w-full rounded-lg px-4 py-3 text-[14px] font-semibold disabled:opacity-50 ${signedIn ? "border border-line" : "bg-accent-solid text-white"}`}>{busy ? t("github.busy") : connection?.state === "needs_reconnect" ? t("github.reconnect") : signedIn ? t("github.connect") : t("github.signIn")}</button>
+        <button type="button" disabled={busy || loading || !consent} onClick={connect}
+          {...(signedIn ? trackAttrs("github_connect_start", { kind: "star", surface: "login" }) : trackAttrs("login_start", { method: "github", surface: "login" }))}
+          className={`mt-4 min-h-11 w-full rounded-lg px-4 py-3 text-[14px] font-semibold disabled:opacity-50 ${signedIn ? "border border-line" : "bg-accent-solid text-white"}`}>{busy ? t("github.busy") : connection?.state === "needs_reconnect" ? t("github.reconnect") : signedIn ? t("github.connect") : t("github.signIn")}</button>
       </>}
       {error && <p role="alert" className="mt-3 text-[14px] text-down">{t(error)}</p>}
     </section>

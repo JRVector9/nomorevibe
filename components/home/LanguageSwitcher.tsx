@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { LOCALES, LOCALE_CONFIG } from "@/lib/i18n/locales";
 import { switchLocale } from "@/lib/i18n/routing";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 function subscribeHash(listener: () => void) {
   window.addEventListener("hashchange", listener);
@@ -26,6 +27,7 @@ function LanguageLinks({ query = "" }: { query?: string }) {
             lang={target}
             hrefLang={target}
             aria-current={locale === target ? "true" : undefined}
+            {...trackAttrs("select_content", { content_type: "locale", content_id: target })}
             onClick={(event) => {
               // Read the latest hash/query at click time, including replaceState changes.
               event.currentTarget.href = switchLocale(`${window.location.pathname}${window.location.search}${window.location.hash}`, target);

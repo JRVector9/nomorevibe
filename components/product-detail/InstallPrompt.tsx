@@ -3,8 +3,9 @@
 import { useTranslations } from "@/lib/i18n/context";
 import { useId, useState } from "react";
 import { installationPrompt } from "@/lib/domain/products/access";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
-export function InstallPrompt({ repoUrl }: { repoUrl: string }) {
+export function InstallPrompt({ repoUrl, slug }: { repoUrl: string; slug?: string }) {
   const t = useTranslations("detail");
   const prompt = installationPrompt(repoUrl) ? t("install.prompt", { url: repoUrl }) : null;
   const id = useId();
@@ -27,6 +28,7 @@ export function InstallPrompt({ repoUrl }: { repoUrl: string }) {
   return (
     <div className="contents">
       <button type="button" onClick={copy}
+        {...(slug ? trackAttrs("copy_text", { copy_target: "install_prompt", product_slug: slug }) : {})}
         className="inline-flex min-h-11 items-center rounded-full bg-bg-soft px-5 text-[15px] font-medium text-fg">
         {copied ? t("install.copied") : t("install.copy")}
       </button>

@@ -2,6 +2,7 @@ import { getTranslator } from "@/lib/i18n/dictionary";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { localePath } from "@/lib/i18n/routing";
 import Link from "next/link";
+import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 
 /**
  * 상세가 없을 때 — 없는 주소이거나 내려간 프로젝트(차단·내려달라는 요청)다(2026-10-08 UX 감사 UX-10).
@@ -11,7 +12,8 @@ export default async function ProductNotFound() {
   const locale = await getRequestLocale();
   const [t, common] = await Promise.all([getTranslator(locale, "detail"), getTranslator(locale, "common")]);
   return (
-    <main className="wrap">
+    <main className="wrap" data-track-page-type="not_found">
+      <TrackOnMount name="app_error" params={{ error_code: "product_not_found", page_type: "not_found" }} />
       {/* 위아래 여백은 안쪽에 — .wrap 의 padding 이 바깥 여백 유틸리티를 덮는다(app/home.css) */}
       <section aria-labelledby="not-found-title" className="mx-auto flex max-w-[560px] flex-col gap-3 pb-14 pt-16">
         <h1 id="not-found-title" className="text-[28px] font-semibold leading-[1.2] tracking-[-0.02em] text-fg">{t("notFound.title")}</h1>

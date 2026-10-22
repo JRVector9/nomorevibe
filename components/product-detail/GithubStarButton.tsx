@@ -6,6 +6,7 @@ import { localePath, stripLocale } from "@/lib/i18n/routing";
 import type { DetailTextKey } from "./format";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { StarView } from "@/lib/domain/github-stars/contract";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 const reconnectErrors = new Set(["login_required", "github_not_connected", "github_needs_reconnect"]);
 type ConnectionNeeded = false | "connect" | "reconnect";
@@ -123,8 +124,9 @@ export function GithubStarButton({ slug, stars = null }: { slug: string; stars?:
   const style = `inline-flex min-h-6 items-center gap-1 rounded font-medium outline-offset-4 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent-solid disabled:cursor-wait ${view?.state === "starred" ? "text-accent-ink" : "text-fg"}`;
   const count = <><span aria-hidden className={busy || checking ? "animate-pulse" : undefined}>★</span><span>{displayedStars === null ? t("star.label") : formatNumber(displayedStars, locale)}</span></>;
   return <span className="relative inline-flex items-center" data-testid="github-star-control">
-    {connectionNeeded ? <a href={loginHref} onClick={(event) => { const current = new URL(window.location.href); if (stripLocale(current.pathname) === `/p/${encodeURIComponent(slug)}`) event.currentTarget.href = localePath(locale, `/login?connectGithub=1&returnTo=${encodeURIComponent(`${current.pathname}${current.search}${current.hash}`)}`); }} aria-label={accessibleLabel} title={label} className={style}>{count}</a>
-      : <button type="button" aria-label={accessibleLabel} title={message ? t(message) : label} aria-pressed={view?.state === "starred"} aria-busy={busy || !!view?.pending} disabled={busy || checking} onBlur={() => setShowMessage(false)} onClick={() => { setShowMessage(true); void (retry ? refresh() : toggle()); }} className={style}>
+    {connectionNeeded ? <a href={loginHref} onClick={(event) => { const current = new URL(window.location.href); if (stripLocale(current.pathname) === `/p/${encodeURIComponent(slug)}`) event.currentTarget.href = localePath(locale, `/login?connectGithub=1&returnTo=${encodeURIComponent(`${current.pathname}${current.search}${current.hash}`)}`); }} aria-label={accessibleLabel} title={label} className={style} {...trackAttrs("github_connect_start", { kind: "star", product_slug: slug })}>{count}</a>
+      : <button type="button" aria-label={accessibleLabel} title={message ? t(message) : label} aria-pressed={view?.state === "starred"} aria-busy={busy || !!view?.pending} disabled={busy || checking} onBlur={() => setShowMessage(false)} onClick={() => { setShowMessage(true); void (retry ? refresh() : toggle()); }} className={style}
+        {...(retry ? {} : trackAttrs("github_star", { product_slug: slug, action: view.state === "starred" ? "unstar" : "star" }))}>
         {count}
       </button>}
     {message && <span role="status" className={showMessage ? "absolute left-0 top-full z-20 mt-2 w-64 max-w-[80vw] rounded-lg border border-line bg-bg-card p-3 text-[13px] font-normal leading-5 text-fg-2 shadow-lg" : "sr-only"}>{t(message)}</span>}

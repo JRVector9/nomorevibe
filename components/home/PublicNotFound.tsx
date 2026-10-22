@@ -9,6 +9,7 @@ import { logger } from "@/lib/observability/logger";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
 import { localizeProductList } from "@/lib/i18n/products";
+import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 
 /**
  * 없는 주소 — Next 기본 영어 404 대신 길을 낸다(2026-10-08 UX 감사 UX-10).
@@ -38,7 +39,9 @@ export async function PublicNotFound({ locale }: { locale: Locale }) {
 
   return (
     // 위아래 여백은 안쪽 상자에 — .wrap(app/home.css)이 레이어 밖 규칙이라 main 의 padding 유틸리티를 덮는다(error·global-error 도 같다)
-    <main className="wrap">
+    // data-track-page-type: 방문 분석이 이 화면을 주소의 갈래가 아니라 not_found 로 센다
+    <main className="wrap" data-track-page-type="not_found">
+      <TrackOnMount name="app_error" params={{ error_code: "not_found", page_type: "not_found" }} />
       <div className="pb-16 pt-12">
         <title>{pageTitle(t("notFound.title"))}</title>
         <h1 className="text-[26px] font-semibold tracking-tight">{t("notFound.heading")}</h1>

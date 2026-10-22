@@ -9,6 +9,7 @@ import { localePath, stripLocale } from "@/lib/i18n/routing";
 import { ME_SAVED_LINK, ME_TAB_PATHS, ME_TABS, type MeTab } from "@/lib/me/contract";
 import { useSavedAccount } from "@/components/home/useSavedSlugs";
 import { seedUnreadCount, useUnreadCount } from "./account-store";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 /**
  * 틀(layout)은 탭을 옮겨도 다시 그리지 않는다 — 저장 수는 계정 동기화가 받은 수, 알림 수는 종과 같은 숫자를 따라간다.
@@ -69,7 +70,8 @@ export function MeTabs({ showProjects = false, counts }: { showProjects?: boolea
       {tabs.map((tab) => {
         const count = counts?.[tab] === undefined ? undefined : tab === "saved" ? saved : tab === "alerts" ? alerts : counts[tab];
         return (
-          <Link key={tab} prefetch={false} href={localePath(locale, tab === "saved" ? ME_SAVED_LINK : ME_TAB_PATHS[tab])} className="me-tab" aria-current={active(tab) ? "page" : undefined}>
+          <Link key={tab} prefetch={false} href={localePath(locale, tab === "saved" ? ME_SAVED_LINK : ME_TAB_PATHS[tab])} className="me-tab" aria-current={active(tab) ? "page" : undefined}
+            {...trackAttrs("select_content", { content_type: "me_tab", content_id: tab, surface: "me" })}>
             {t(`tabs.${tab}`)}
             {count !== undefined && (tab === "alerts"
               ? count > 0 && <span className="me-tc me-tc-hot"><span className="sr-only">{t("tabs.unread", { count })}</span><span aria-hidden="true">{formatNumber(count, locale)}</span></span>

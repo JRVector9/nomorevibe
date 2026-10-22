@@ -2,12 +2,14 @@
 
 import { useTranslations } from "@/lib/i18n/context";
 import { useState } from "react";
+import { track } from "@/lib/analytics/client";
 
 /**
  * 공유 — 기기 공유 창(navigator.share)이 있으면 그것으로, 없으면 주소를 복사한다(UX-31).
  * 바깥 링크 화살표(↗)와 헷갈리지 않게 공유 아이콘에 '공유' 글자를 붙인다.
+ * 방문 분석: 실제로 공유했을 때만 share(method native·copy_link). 공유 창을 닫았거나 복사에 실패하면 보내지 않는다.
  */
-export function ShareButton({ title, path }: { title: string; path: string }) {
+export function ShareButton({ title, path, slug }: { title: string; path: string; slug?: string }) {
   const t = useTranslations("detail");
   const [note, setNote] = useState<string | null>(null);
 
@@ -21,6 +23,7 @@ export function ShareButton({ title, path }: { title: string; path: string }) {
     if (navigator.share) {
       try {
         await navigator.share({ title, url });
+        if (slug) track("share", { method: "native", content_type: "product", item_id: slug });
         return;
       } catch (error) {
         // 공유 창을 닫은 것은 실패가 아니다 — 복사로 넘어가지 않는다
@@ -29,6 +32,7 @@ export function ShareButton({ title, path }: { title: string; path: string }) {
     }
     try {
       await navigator.clipboard.writeText(url);
+      if (slug) track("share", { method: "copy_link", content_type: "product", item_id: slug });
       flash(t("share.copied"));
     } catch {
       flash(t("share.failed"));

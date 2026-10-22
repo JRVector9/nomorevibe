@@ -5,6 +5,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { Icon } from "@/components/home/icons";
 import { parseSaved, savedSnapshot, subscribeSaved, toggleSaved } from "@/components/home/saved";
 import { hiddenByDefault } from "@/lib/domain/products/visibility";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 /**
  * 저장할 수 있는 제품인가 — 계정 저장(lib/me/saved.ts savedPublic)과 같은 공개 조건: 검증·시드 제품이고, 개인 프로필은 주인이 있을 때만.
@@ -32,6 +33,7 @@ export function SaveButton({ slug, name, listed = true }: { slug: string; name: 
       aria-pressed={on}
       aria-label={t(on ? "card.unsave" : "card.save", { name })}
       onClick={toggle}
+      {...trackAttrs("product_save", { product_slug: slug, action: on ? "unsave" : "save" })}
       className={`inline-flex h-11 w-11 items-center justify-center rounded-full bg-bg-soft ${on ? "text-accent" : "text-fg"}`}
     >
       <Icon name="bookmark" size={18} />

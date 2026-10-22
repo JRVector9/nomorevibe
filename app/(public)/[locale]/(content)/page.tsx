@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { after } from "next/server";
 import Link from "next/link";
 import { BrowseFilters } from "@/components/BrowseFilters";
+import { TrackOnMount } from "@/components/analytics/TrackOnMount";
 import {
   aiLevelTotals,
   type HomeSort,
@@ -666,6 +667,8 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
           {titleAction && <div>{titleAction}</div>}
         </div>
 
+        {/* 검색 결과가 그려지면 search 한 번 — 검색어 정리(소문자·64자·이메일/숫자 지움)는 분석 런타임이 한다 */}
+        {query && !dbDown && <TrackOnMount name="search" params={{ search_term: query, result_count: resultCount, surface: "search" }} />}
         <BrowseFilters
           state={state}
           counts={facetCounts}
@@ -710,7 +713,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
         )}
 
         {!savedOnly && unclaimed.length > 0 && (
-          <section className="unclaimed-block">
+          <section className="unclaimed-block" data-track-list="unclaimed">
             <h2>{t("home.unclaimed")}</h2>
             <div className="mt-3">
               <ProjectGrid now={now.toISOString()} products={unclaimed} browseState={state} totalCount={unclaimedTotal} start={unclaimedStart} />

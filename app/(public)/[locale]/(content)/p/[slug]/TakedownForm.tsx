@@ -5,6 +5,7 @@ import { formatNumber } from "@/lib/i18n/format";
 import { localePath } from "@/lib/i18n/routing";
 import Link from "next/link";
 import { useId, useState } from "react";
+import { track } from "@/lib/analytics/client";
 import {
   INTRO_REQUEST_MAX, INTRO_REQUEST_MIN,
   type TakedownKind,
@@ -59,6 +60,8 @@ export function TakedownForm({ slug }: { slug: string }) {
         setState("idle");
         return;
       }
+      // 종류만 — 적은 글은 보내지 않는다
+      track("feedback_submit", { product_slug: slug, feedback_kind: intro ? "intro_correction" : `takedown_${kind}` });
       setState("sent");
     } catch {
       setError(t("request.failed"));

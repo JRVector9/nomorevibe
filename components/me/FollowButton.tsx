@@ -6,6 +6,8 @@ import { localePath, safePublicReturnUrl } from "@/lib/i18n/routing";
 import type { FollowTarget } from "@/lib/me/contract";
 import { loadMeState, useMeAccount } from "./account-store";
 import type { FollowLabels } from "./follow-labels";
+import { trackEvents } from "@/lib/analytics/client";
+import type { AnalyticsEvent } from "@/lib/analytics/events";
 
 export type FollowVariant = "hero" | "inline" | "chip" | "row";
 
@@ -41,6 +43,18 @@ function readIntent(target: FollowTarget, targetKey: string): boolean {
 
 function writeIntent(target: FollowTarget, targetKey: string) {
   try { sessionStorage.setItem(INTENT_KEY, JSON.stringify({ target, key: targetKey, at: Date.now() })); } catch { /* 이어 주기는 덧붙이는 일이다 */ }
+}
+
+/**
+ * 팔로가 바뀐 뒤 보낼 분석 이벤트 — 제품은 follow_change(slug), 메이커·분야는 종류만(select_content).
+ * 메이커 열쇠(GitHub 아이디)는 사람을 가리키므로 보내지 않는다.
+ */
+export function followEvents(target: FollowTarget, targetKey: string, following: boolean, variant: FollowVariant): AnalyticsEvent[] {
+  if (target === "product") {
+    const surface = variant === "row" ? "me" : variant === "chip" ? "browse" : "product";
+    return [{ name: "follow_change", params: { product_slug: targetKey, action: following ? "follow" : "unfollow", surface } }];
+  }
+  return [{ name: "select_content", params: { content_type: following ? "follow" : "unfollow", content_id: target } }];
 }
 
 /** 상세 머리 단추 둘(프로젝트·메이커)이 한 번에 묻도록 같은 틱의 물음을 모아 보낸다 — 종류마다 열쇠 하나 */
@@ -107,6 +121,7 @@ export function FollowButton({ target, targetKey, labels, variant = "hero", init
         const code = await response.json().then((body) => body?.error).catch(() => null);
         throw new Error(code === "follow_limit" ? labels.limit : labels.failed);
       }
+      trackEvents(followEvents(target, targetKey, next, variant));
       onChange?.(next);
     } catch (failure) {
       setFollowing(!next);

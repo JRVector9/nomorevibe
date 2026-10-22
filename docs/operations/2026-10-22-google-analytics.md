@@ -115,6 +115,35 @@
 
 `outbound_click`(누름)과 `outbound_visit`(서버가 실제로 보냄)은 따로 센다 — 둘의 차이가 차단기·새 탭 실패 등으로 잃는 몫이다.
 
+## 화면에 단 표시(브라우저 이벤트, PR B)
+
+컴포넌트마다 onClick 에 분석 코드를 흩지 않는다. 화면은 무엇을 보낼지 `data-*` 속성으로 적고(`lib/analytics/attrs.ts`),
+런타임이 문서에 단 클릭 듣개 하나(잡기 단계, 막지 않음)가 읽는다(`lib/analytics/dom.ts`). 서버 응답을 받아야 아는 것
+(공유 성공·써봤어요 저장·팔로 성공·요청 폼 접수·이메일 로그인 성공)만 컴포넌트가 `track()`/`trackEvents()` 를 직접 부른다.
+
+| 표시 | 뜻 |
+| --- | --- |
+| `{...trackAttrs(name, params)}` | 누르면 그 이벤트. `surface` 를 빼면 가장 가까운 `data-track-surface` 나 화면 갈래로 채운다 |
+| `{...trackViewAttrs(name, params)}` | 화면에 절반 넘게 들어오면 화면마다 한 번(`/launch` 단계) |
+| 제품 링크 `/p/<slug>` | 자동 `select_item`. 목록은 위의 `data-track-list`, 없으면 가장 가까운 `id`·`aria-labelledby`. 이름 앞에 화면 갈래를 붙인다 |
+| `/go/<slug>` 링크 | 자동 `outbound_click`. `data-track-kind="repo"` 면 저장소, 없으면 사이트 |
+| `data-track-nav="header\|footer\|mobile_nav"` | 안의 링크는 `nav_click`(target 은 주소 첫 마디, `/` 는 home, `?metric` 은 metrics, `#` 은 붙인다) |
+| `data-track-filter="<이름>"` + `data-track-value` | 안의 링크는 `filter_change` |
+| github.com 링크 | 상세 화면이거나 `data-track-product` 가 있으면 `github_click` |
+| HN·X·Bluesky·Reddit 링크 | `social_outbound_click`(제품은 `data-track-product` 또는 상세 주소) |
+| `/install.sh`·`/skill.md` 링크 | `skill_script_view` |
+| `data-track-page-type="not_found"` | 그 화면의 `page_view` 갈래를 주소 대신 이 값으로 |
+| `data-track-ignore` | 안의 클릭은 보내지 않는다 |
+| `<TrackOnMount name params />` | 그려지면 한 번(검색 결과 수, 404, 오류 경계) |
+
+자주 보게 될 목록 id(`item_list_id`): `home_rising`·`home_new`·`home_project_grid`·`home_unclaimed`·`home_talk`·`home_talk_lead`·
+`home_popular_<tier>`·`search_project_grid`·`browse_project_grid`·`rising_star_growth_list`·`popular_popular_list`·`talk_talk_feature`·
+`talk_entries`·`rankings_table`·`product_related`·`me_me_saved`·`me_tried`·`me_following_products`.
+
+`/launch` 깔때기: `page_view(launch)` → `launch_step_view`(1 install · 2 how_it_works · 3 verify · 4 no_cli) → `skill_install_copy`
+(`install_sh` 첫 화면, `install_sh_verify` 확인 구획) → `launch_command_copy`(launch·verify) → 서버 `skill_script_download` →
+서버 `launch_submitted`·`product_claimed`. 스크립트 펼쳐 보기·원문 링크는 `skill_script_view`.
+
 ## 동의(Consent Mode v2)
 
 | 신호 | `ad_*` 셋 | `analytics_storage` | gtag 를 부르나 |

@@ -6,6 +6,7 @@ import { Icon } from "@/components/home/icons";
 import type { LicensePresentation, LicenseValue } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
 import { GITHUB_LICENSE_GUIDE_URL, LICENSE_GUIDE } from "./license-guide";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 function LicenseSource({ value, observed }: { value: LicenseValue; observed: boolean }) {
   const t = useTranslations("detail");
@@ -76,6 +77,7 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
       <button
         ref={trigger}
         type="button"
+        {...trackAttrs("select_content", { content_type: "dialog", content_id: "license" })}
         aria-haspopup="dialog"
         aria-controls={id}
         aria-label={t("license.open", { label })}

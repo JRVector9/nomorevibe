@@ -1,17 +1,21 @@
 import Script from "next/script";
-import type { AnalyticsEventName, PageViewParams } from "@/lib/analytics/events";
+import { ANALYTICS_EVENT_CATALOG, type AnalyticsEventName, type AnalyticsPageType, type PageViewParams } from "@/lib/analytics/events";
 import {
   analyticsSnapshot, connectAnalyticsRuntime, setAnalyticsSnapshot, type AnalyticsRuntime, type PageViewInput,
 } from "@/lib/analytics/client";
 import { consentDefaultCommands, decideConsent, readConsentSignals, type ConsentBrowser } from "@/lib/analytics/consent";
+import { classifyClick, viewEvent, type ClickContext, type TrackElement } from "@/lib/analytics/dom";
 import { isAnalyticsExcludedPath, pageLocale, pageType } from "@/lib/analytics/routes";
-import { sanitizeParams, sanitizePath, sanitizeUrl, type CleanParams } from "@/lib/analytics/sanitize";
+import { sanitizeParams, sanitizePath, sanitizeSearchTerm, sanitizeUrl, type CleanParams } from "@/lib/analytics/sanitize";
 
 /**
  * 방문 분석의 실제 일 — gtag 준비, 동의, 값 정리, 보내기, 끄기(2026-10-22).
  *
  * 로더(components/analytics/AnalyticsLoader.tsx)가 GA 가 켜진 공개 화면에서만 import() 로 따로 받는다.
  * 첫 로드 JS 에 들어가는 쪽은 lib/analytics/client.ts(track·trackPageView 와 대기열)뿐이다.
+ *
+ * 화면의 분석 표시(lib/analytics/attrs.ts)는 여기서 읽는다 — 문서에 클릭 듣개 하나(잡기 단계라 화면의 onClick 보다 먼저,
+ * 막지 않는다)와 화면마다 data-track-view 를 보는 IntersectionObserver 하나.
  */
 
 type Gtag = (...args: unknown[]) => void;
@@ -21,8 +25,10 @@ const state: {
   measurementId: string | null;
   debug: boolean;
   initialized: boolean;
-  page: { location: string; referrer: string; title: string; key: string } | null;
-} = { measurementId: null, debug: false, initialized: false, page: null };
+  listening: boolean;
+  page: { location: string; referrer: string; title: string; key: string; type: AnalyticsPageType } | null;
+  views: IntersectionObserver | null;
+} = { measurementId: null, debug: false, initialized: false, listening: false, page: null, views: null };
 
 function browser(): AnalyticsWindow | null {
   return typeof window === "undefined" ? null : (window as unknown as AnalyticsWindow);
@@ -80,6 +86,14 @@ function send(name: AnalyticsEventName, params: Record<string, unknown>): void {
   try {
     const win = browser();
     if (!win || isAnalyticsExcludedPath(win.location.pathname)) return;
+    // 검색어는 정리해서 보내고, 남는 것이 없으면(이메일·숫자뿐) 보내지 않는다
+    // 화면 오류 경계는 갈래를 모른다(other) — 지금 화면의 갈래로 채운다
+    if (name === "app_error" && params.page_type === "other" && state.page) params = { ...params, page_type: state.page.type };
+    if (name === "search") {
+      const term = sanitizeSearchTerm(params.search_term);
+      if (!term) return;
+      params = { ...params, search_term: term };
+    }
     const clean = sanitizeParams(params, siteOrigin(win));
     const status = analyticsSnapshot().status;
     if (status === "log") {
@@ -94,6 +108,12 @@ function send(name: AnalyticsEventName, params: Record<string, unknown>): void {
   }
 }
 
+/** 화면이 스스로 밝힌 갈래(data-track-page-type) — 404 화면은 주소가 /p/… 여도 not_found 다 */
+function declaredPageType(win: AnalyticsWindow): AnalyticsPageType | null {
+  const value = win.document?.querySelector?.("[data-track-page-type]")?.getAttribute("data-track-page-type");
+  return value && (ANALYTICS_EVENT_CATALOG.page_view.params.page_type.values ?? []).includes(value) ? value as AnalyticsPageType : null;
+}
+
 /** 같은 주소·같은 갈래를 잇달아 보내지 않는다(같은 링크를 다시 누른 경우, 개발 모드의 두 번 실행) */
 function pageView({ pathname, search, title }: PageViewInput): void {
   try {
@@ -102,11 +122,11 @@ function pageView({ pathname, search, title }: PageViewInput): void {
     const origin = siteOrigin(win) ?? "";
     const location = sanitizeUrl(`${origin}${pathname}${search}`, origin || undefined);
     if (!location) return;
-    const type = pageType(pathname, search);
+    const type = declaredPageType(win) ?? pageType(pathname, search);
     const key = `${location}|${type}`;
     if (state.page?.key === key) return;
     const referrer = state.page?.location ?? sanitizeUrl(win.document?.referrer ?? "", origin || undefined);
-    state.page = { location, referrer, title, key };
+    state.page = { location, referrer, title, key, type };
     const params: PageViewParams = {
       page_location: location,
       page_path: sanitizePath(pathname),
@@ -120,9 +140,60 @@ function pageView({ pathname, search, title }: PageViewInput): void {
       win.gtag("set", { page_location: location, page_referrer: referrer, page_title: title });
     }
     send("page_view", params);
+    watchViews(win);
   } catch {
     // 분석은 화면을 막지 않는다
   }
+}
+
+function clickContext(win: AnalyticsWindow): ClickContext {
+  return { origin: siteOrigin(win) ?? "", pathname: win.location.pathname, search: win.location.search };
+}
+
+/** 문서의 클릭 하나로 화면의 분석 표시를 읽는다 — 가운데 단추(새 탭)도 센다. 막지 않는다 */
+function onClick(event: MouseEvent): void {
+  try {
+    if (event.type === "auxclick" && event.button !== 1) return;
+    const win = browser();
+    const target = event.target as unknown as TrackElement | null;
+    if (!win || !target || typeof target.getAttribute !== "function") return;
+    for (const item of classifyClick(target, clickContext(win))) send(item.name, item.params);
+  } catch {
+    // 분석은 클릭을 막지 않는다
+  }
+}
+
+function listen(win: AnalyticsWindow): void {
+  if (state.listening || !win.document?.addEventListener) return;
+  win.document.addEventListener("click", onClick, { capture: true, passive: true });
+  win.document.addEventListener("auxclick", onClick, { capture: true, passive: true });
+  state.listening = true;
+}
+
+/** 화면에 절반 넘게 들어온 data-track-view 를 화면마다 한 번 보낸다(/launch 단계) */
+function watchViews(win: AnalyticsWindow): void {
+  state.views?.disconnect();
+  state.views = null;
+  const Observer = (win as unknown as { IntersectionObserver?: typeof IntersectionObserver }).IntersectionObserver;
+  if (typeof Observer !== "function" || !win.document?.querySelectorAll) return;
+  const seen = new Set<string>();
+  const observer = new Observer((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer.unobserve(entry.target);
+      const item = viewEvent(entry.target as unknown as TrackElement, clickContext(win));
+      const key = item ? `${item.name}:${JSON.stringify(item.params)}` : "";
+      if (item && !seen.has(key)) {
+        seen.add(key);
+        send(item.name, item.params);
+      }
+    }
+  }, { threshold: 0.5 });
+  state.views = observer;
+  // 화면이 아직 그려지는 중일 수 있어 조금 뒤에 한 번 더 찾는다
+  const scan = () => { if (state.views === observer) win.document.querySelectorAll("[data-track-view]").forEach((element) => observer.observe(element)); };
+  scan();
+  win.setTimeout(scan, 1_000);
 }
 
 /** GA 쿠키(_ga, _ga_<ID>, _gid)를 지운다 — 이 주소와 상위 도메인 모두 */
@@ -165,6 +236,7 @@ function setOptOut(optOut: boolean): void {
   }
   initializeGtag(win, id, state.debug);
   setAnalyticsSnapshot({ status: "on", reason: null });
+  listen(win);
   state.page = null;
   pageView({ pathname: win.location.pathname, search: win.location.search, title: (win.document?.title ?? "").trim() });
 }
@@ -194,8 +266,10 @@ export function startAnalytics({ measurementId, debug, devLog }: {
         setAnalyticsSnapshot({ status: "off", reason: decision.reason });
       }
     }
+    const status = analyticsSnapshot().status;
+    if (status === "on" || status === "log") listen(win);
     connectAnalyticsRuntime(runtime);
-    return { loadScript: analyticsSnapshot().status === "on" };
+    return { loadScript: status === "on" };
   } catch {
     setAnalyticsSnapshot({ status: "off", reason: "disabled" });
     return { loadScript: false };
@@ -213,4 +287,11 @@ export function resetAnalyticsRuntimeForTests(): void {
   state.debug = false;
   state.initialized = false;
   state.page = null;
+  state.views?.disconnect();
+  state.views = null;
+  if (state.listening && typeof document !== "undefined") {
+    document.removeEventListener("click", onClick, { capture: true });
+    document.removeEventListener("auxclick", onClick, { capture: true });
+  }
+  state.listening = false;
 }

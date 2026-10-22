@@ -11,6 +11,7 @@ import type { FeedbackKind, FeedbackView } from "@/lib/domain/feedback/contract"
 import { FEEDBACK_SUBMITTED_EVENT, type FeedbackSubmittedDetail } from "./FeedbackList";
 import { FeedbackDeliveryStatus } from "./FeedbackDeliveryStatus";
 import { FeedbackGithubOptions } from "./FeedbackGithubOptions";
+import { track } from "@/lib/analytics/client";
 
 type Draft = { requestId: string; kind: FeedbackKind; title: string; body: string; serviceDisclosureConsent: boolean; sendToGithub: boolean; githubDisclosureConsent: boolean };
 type Session = { user: { displayName: string } | null; csrfToken: string | null };
@@ -157,6 +158,8 @@ export function FeedbackForm({ slug, githubDeliveryAvailable = false }: { slug: 
       if (controller.signal.aborted) return;
       if (!response.ok || !data.feedback) throw new Error(data.error ?? "feedback_unavailable");
       setSubmitted(data.feedback);
+      // 종류만 — 제목·본문은 보내지 않는다. 같은 요청을 다시 보낸 것(replayed)은 세지 않는다
+      if (data.replayed !== true) track("feedback_submit", { product_slug: slug, feedback_kind: draft.kind });
       setDraft(blank());
       setExpanded(false);
       try { sessionStorage.removeItem(retryKey); } catch { /* A successful receipt remains visible. */ }

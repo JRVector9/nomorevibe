@@ -72,7 +72,7 @@ export function InfoCard({ product, repository, freshness, unclaimed }: {
             <a href={operator.contributor.profileUrl} target="_blank" rel="noopener noreferrer" className={LINK}>@{operator.contributor.login} ↗</a>
           </Row>
         )}
-        {site && <Row label={t("info.website")}><a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className={LINK}>{displayUrl} ↗</a></Row>}
+        {site && <Row label={t("info.website")}><a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={LINK}>{displayUrl} ↗</a></Row>}
         {/* 사라졌다고 확정된 저장소(repoGone)로는 링크를 걸지 않는다 */}
         {repoUrl && product.repoGone && (
           <Row label={t("info.repository")}><span className="font-normal text-fg-2">{t("info.gone")}</span></Row>

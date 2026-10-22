@@ -11,6 +11,7 @@ import { I18nProvider } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import { localizedAlternates, localizedOpenGraph } from "@/lib/i18n/metadata";
 import { DEFAULT_SHARE_IMAGE, shareMetadata } from "@/lib/copy/share";
+import { trackAttrs, trackViewAttrs } from "@/lib/analytics/attrs";
 
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getRequestLocale();
@@ -56,7 +57,8 @@ export default async function LaunchPage() {
           {t("hero.description")}
         </p>
 
-        <div className="surface-dark mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[12px] border border-line bg-[#0a0e16] text-left shadow-2xl">
+        <div className="surface-dark mx-auto mt-9 max-w-[680px] overflow-hidden rounded-[12px] border border-line bg-[#0a0e16] text-left shadow-2xl"
+          {...trackViewAttrs("launch_step_view", { step: "install", step_index: 1 })}>
           <div className="flex items-center gap-1.5 border-b border-line bg-bg-soft px-4 py-[11px]">
             <span className="h-2.5 w-2.5 rounded-full bg-[#ea3943]" />
             <span className="h-2.5 w-2.5 rounded-full bg-[#f6b73c]" />
@@ -65,7 +67,7 @@ export default async function LaunchPage() {
           </div>
           <div className="px-4 py-5 sm:px-6">
             <StepLabel n={1}>{t("install.step")}</StepLabel>
-            <CopyCommand command={install} label={t("command.install")} prompt="$" />
+            <CopyCommand command={install} label={t("command.install")} prompt="$" analytics={trackAttrs("skill_install_copy", { command: "install_sh" })} />
             {/* 출력 예시 — 명령 칸 밖에 두고 흐리게, 복사 대상이 아님을 이름으로 밝힌다 */}
             <div className="mt-3 border-l-2 border-line pl-4 font-mono text-[13px] leading-7 text-fg-2">
               <p className="font-sans">{t("output.title")}</p>
@@ -78,13 +80,13 @@ export default async function LaunchPage() {
             </div>
             <div className="mt-6">
               <StepLabel n={2}>{t("install.launchStep")}</StepLabel>
-              <CopyCommand command={LAUNCH_COMMAND} label={t("command.launch")} />
+              <CopyCommand command={LAUNCH_COMMAND} label={t("command.launch")} analytics={trackAttrs("launch_command_copy", { command_kind: "launch" })} />
             </div>
           </div>
         </div>
 
         <details className="mx-auto mt-4 max-w-[680px] text-left text-[13px] text-fg-2">
-          <summary className="inline-flex min-h-11 cursor-pointer items-center text-accent-ink">{t("script.summary")}</summary>
+          <summary className="inline-flex min-h-11 cursor-pointer items-center text-accent-ink" {...trackAttrs("skill_script_view", { script: "install_sh" })}>{t("script.summary")}</summary>
           <pre className="mt-2 overflow-x-auto rounded-[10px] border border-line bg-bg-soft p-4 font-mono text-[13px] leading-6 text-fg">{installScript(origin)}</pre>
           <p className="mt-2">
             {t("script.description")}{" "}
@@ -93,7 +95,7 @@ export default async function LaunchPage() {
         </details>
       </section>
 
-      <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      <section className="grid grid-cols-1 gap-4 md:grid-cols-3" {...trackViewAttrs("launch_step_view", { step: "how_it_works", step_index: 2 })}>
         {[
           {
             n: "01",
@@ -122,7 +124,7 @@ export default async function LaunchPage() {
       </section>
 
       {/* 상세 페이지 운영자 상자의 '1분 만에 확인하기'가 여기로 온다(/launch#verify) */}
-      <section id="verify" aria-labelledby="verify-title" className="mt-16 scroll-mt-28">
+      <section id="verify" aria-labelledby="verify-title" className="mt-16 scroll-mt-28" {...trackViewAttrs("launch_step_view", { step: "verify", step_index: 3 })}>
         <h2 id="verify-title" className="text-[22px] font-bold tracking-tight">{t("verify.heading")}</h2>
         <p className="mt-2 max-w-[640px] text-[15px] leading-[1.7] text-fg-2">
           {t("verify.description")}
@@ -130,18 +132,18 @@ export default async function LaunchPage() {
         <ol className="mt-6 grid max-w-[680px] grid-cols-1 gap-6">
           <li>
             <StepLabel n={1}>{t("verify.installStep")}</StepLabel>
-            <CopyCommand command={install} label={t("command.install")} prompt="$" />
+            <CopyCommand command={install} label={t("command.install")} prompt="$" analytics={trackAttrs("skill_install_copy", { command: "install_sh_verify" })} />
           </li>
           <li>
             <StepLabel n={2}>{t("verify.launchStep")}</StepLabel>
-            <CopyCommand command={LAUNCH_COMMAND} label={t("command.launch")} />
+            <CopyCommand command={LAUNCH_COMMAND} label={t("command.launch")} analytics={trackAttrs("launch_command_copy", { command_kind: "launch" })} />
             <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">
               {t("verify.file")}
             </p>
           </li>
           <li>
             <StepLabel n={3}>{t("verify.finishStep")}</StepLabel>
-            <CopyCommand command={VERIFY_COMMAND} label={t("command.verify")} />
+            <CopyCommand command={VERIFY_COMMAND} label={t("command.verify")} analytics={trackAttrs("launch_command_copy", { command_kind: "verify" })} />
             <p className="mt-2 text-[13px] leading-[1.7] text-fg-2">
               {t("verify.finish")}
             </p>
@@ -154,7 +156,7 @@ export default async function LaunchPage() {
         </p>
       </section>
 
-      <section aria-labelledby="no-cli-title" className="mt-16 max-w-[680px] rounded-[12px] border border-line bg-bg-card p-[22px]">
+      <section aria-labelledby="no-cli-title" className="mt-16 max-w-[680px] rounded-[12px] border border-line bg-bg-card p-[22px]" {...trackViewAttrs("launch_step_view", { step: "no_cli", step_index: 4 })}>
         <h2 id="no-cli-title" className="text-[17px] font-bold">{t("noCli.heading")}</h2>
         <p className="mt-2 text-[14px] leading-[1.7] text-fg">
           {t("noCli.description")}
