@@ -2,8 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { currentAdmin } from '@/lib/auth/admin';
-import { applyAuditPolicyChunk, policyRunExceptions, previewAuditPolicy, startAuditPolicyRun, startAuditPolicyUndo, undoAuditPolicyChunk,
-  type PolicyPreview, type PolicyRunProgress } from '@/lib/crawl/audit-policy';
+import { applyAuditPolicyChunk, policyRunExceptions, previewAuditPolicy, previewKeepExtend, startAuditPolicyRun, startAuditPolicyUndo,
+  startKeepExtendRun, undoAuditPolicyChunk, type KeepExtendPreview, type PolicyPreview, type PolicyRunProgress } from '@/lib/crawl/audit-policy';
+import { POLICY_KEEP_DAYS } from '@/lib/crawl/audit-policy-filter';
 import { policyRequestSchema, policyStartSchema } from '@/lib/crawl/audit-policy-filter';
 import { isImportSource } from '@/lib/crawl/audit-import-sources';
 import { discardImport, IMPORT_STAGE_MAX_LINES, previewImport, stageImportLines, startImportApply, type ImportPreview,
@@ -161,4 +162,27 @@ export const discardImportAction = webWriteAction(async function discardImportAc
   const discarded = await discardImport({ runId: id });
   revalidatePath('/admin/audit');
   return discarded ? { ok: true, value: { discarded } } : { ok: false, error: '이미 적용했거나 버린 올리기입니다.' };
+});
+
+/** 곧 끝나는 유지의 연장 미리보기 — 읽기만. unchangedOnly: 페이지가 유지할 때와 같은 것만(기본) */
+export const previewKeepExtendAction = webWriteAction(async function previewKeepExtendAction(unchangedOnly: unknown):
+  Promise<PolicyActionResult<KeepExtendPreview>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  return { ok: true, value: await previewKeepExtend({ unchangedOnly: unchangedOnly !== false }) };
+});
+
+/** 유지 연장 실행을 만든다 — 연장할 수를 그대로 적어야. 그 뒤 화면이 applyPolicyChunkAction 을 끝날 때까지 부른다 */
+export const startKeepExtendAction = webWriteAction(async function startKeepExtendAction(input: { days?: unknown; unchangedOnly?: unknown;
+  expected?: unknown; note?: unknown }): Promise<PolicyActionResult<{ runId: number; planned: number }>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const days = Number(input?.days);
+  const expected = Number(input?.expected);
+  if (!(POLICY_KEEP_DAYS as readonly number[]).includes(days) || !Number.isSafeInteger(expected) || expected < 1) return BAD_INPUT;
+  const result = await startKeepExtendRun({ days, unchangedOnly: input.unchangedOnly !== false, expected,
+    note: typeof input.note === 'string' ? input.note.slice(0, 500) : '', by: admin.login });
+  if (!result.ok) return result;
+  logger.info('admin.audit_keep_extend_started', { run: result.runId, days, planned: result.planned, login: admin.login });
+  return { ok: true, value: { runId: result.runId, planned: result.planned } };
 });
