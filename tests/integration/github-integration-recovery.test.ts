@@ -218,6 +218,95 @@ describe("webhook HTTP and maintenance recovery", () => {
     expect(token.mock.calls[0][1]?.deadlineAt).toBe(113_750);
   });
 });
+/**
+ * App 자격 문제는 연동 탓이 아니다 — 개인 키 폐기·잘못 바꿈·다른 App ID 면 모든 연동이 같은 까닭으로 한꺼번에 실패한다.
+ * 전에는 연동마다 확정 실패(401·403·설치 없음)로 보고 모두 끄고 남은 전달을 취소했다(되돌릴 수 없고 경보도 없었다).
+ */
+describe("App 자격 거절 — 모든 연동을 한꺼번에 끄지 않는다", () => {
+  let secondId: number;
+  beforeEach(async () => {
+    [{ id: secondId }] = await db.insert(products).values({ slug: "recovery-two", name: "Recovery two", url: "https://two.example", repoUrl: "https://github.com/Owner/Two", tagline: "Fixture", description: "Fixture", category: "Dev", status: "verified", verifyToken: "v2", editTokenHash: "e2" }).returning({ id: products.id });
+    await db.insert(githubProductBindings).values({ productId: secondId, repositoryId: 43, repositoryFullName: "Owner/Two", repositoryUrl: "https://github.com/Owner/Two", productRepoUrl: "https://github.com/Owner/Two", installationId: 13, consentedByUserId: userId, revision: 1, enabled: true });
+  });
+  const bindings = async () => (await db.select().from(githubProductBindings)).sort((a, b) => a.productId - b.productId);
+
+  it("GET /app 확인이 거절이면 어떤 연동도 확인·쓰기 하지 않고 App 자격 문제를 돌려준다 — 남은 전달도 그대로다", async () => {
+    const row = await outbox();
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubBindings } = await import("@/lib/domain/github-webhooks/reconcile");
+    const verify = vi.fn();
+    const result = await reconcileGithubBindings([productId, secondId], { verify, deadlineAt: Date.now() + 10_000,
+      appCheck: async () => { throw new GithubInstallationError(503, "github_app_credentials_rejected", { providerCode: "github_unauthorized" }); } });
+    expect(result).toEqual({ states: ["held", "held"], credentialFailure: "github_app_credentials_rejected" });
+    expect(verify).not.toHaveBeenCalled();
+    expect((await bindings()).map((item) => [item.enabled, item.revision, item.blockedReason])).toEqual([[true, 1, null], [true, 1, null]]);
+    expect((await db.select().from(githubIssueOutbox).where(eq(githubIssueOutbox.id, row.id)))[0].state).toBe("queued");
+  });
+
+  it("확인한 연동이 모두 401·403·설치 없음이면 끄지 않고 까닭만 적고 15분 뒤 다시 본다 — 남은 전달을 취소하지 않는다", async () => {
+    const row = await outbox();
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubBindings, dueGithubIntegrationTargets } = await import("@/lib/domain/github-webhooks/reconcile");
+    const verify = vi.fn(async (binding: { productId: number }) => {
+      throw binding.productId === productId ? new GithubInstallationError(403, "github_installation_unavailable", { providerCode: "github_unauthorized" })
+        : new GithubInstallationError(409, "github_installation_missing", { providerCode: "github_not_found" });
+    });
+    const options = { verify, appCheck: async () => ({ id: 123 }), deadlineAt: Date.now() + 10_000 };
+    expect(await reconcileGithubBindings([productId, secondId], options)).toEqual({ states: ["held", "held"], credentialFailure: "github_bindings_all_rejected" });
+    const rows = await bindings();
+    expect(rows.map((item) => [item.enabled, item.revision, item.blockedReason])).toEqual([[true, 1, "github_unauthorized"], [true, 1, "github_not_found"]]);
+    for (const item of rows) expect(item.verificationRetryAt!.getTime() - Date.now()).toBeGreaterThan(14 * 60_000);
+    expect((await db.select().from(githubIssueOutbox).where(eq(githubIssueOutbox.id, row.id)))[0].state).toBe("queued");
+    expect((await dueGithubIntegrationTargets(options)).filter((target) => target.kind === "binding")).toEqual([]);
+  });
+
+  it("하나만 실패하고 다른 연동은 확인되면 그 하나는 지금처럼 끄고 남은 전달을 취소한다", async () => {
+    const row = await outbox();
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubBindings } = await import("@/lib/domain/github-webhooks/reconcile");
+    const verify = vi.fn(async (binding: { productId: number }) => {
+      if (binding.productId === productId) throw new GithubInstallationError(403, "github_installation_unavailable", { providerCode: "github_forbidden" });
+      return { repository: { ...repository, id: 43, fullName: "Owner/Two", htmlUrl: "https://github.com/Owner/Two" } };
+    });
+    expect(await reconcileGithubBindings([productId, secondId], { verify, appCheck: async () => ({ id: 123 }), deadlineAt: Date.now() + 10_000 }))
+      .toEqual({ states: ["disabled", "verified"], credentialFailure: null });
+    expect((await bindings()).map((item) => [item.enabled, item.revision])).toEqual([[false, 2], [true, 1]]);
+    expect((await db.select().from(githubIssueOutbox).where(eq(githubIssueOutbox.id, row.id)))[0].state).toBe("cancelled");
+  });
+
+  it("연동이 하나뿐이면 가를 수 없다 — App 확인을 지나면 지금처럼 그 연동의 확정 실패로 끈다", async () => {
+    await db.delete(githubProductBindings).where(eq(githubProductBindings.productId, secondId));
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubBindings } = await import("@/lib/domain/github-webhooks/reconcile");
+    const verify = async () => { throw new GithubInstallationError(403, "github_installation_unavailable", { providerCode: "github_forbidden" }); };
+    expect(await reconcileGithubBindings([productId], { verify, appCheck: async () => ({ id: 123 }), deadlineAt: Date.now() + 10_000 }))
+      .toEqual({ states: ["disabled"], credentialFailure: null });
+  });
+
+  it("App 확인이 닿지 않으면(5xx·시간 초과) 연동마다 확인을 이어 간다 — 그 결과는 비확정이라 끄지 않는다", async () => {
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubBindings } = await import("@/lib/domain/github-webhooks/reconcile");
+    const verify = vi.fn(async () => { throw new GithubInstallationError(503, "github_installation_unknown", { providerCode: "github_server_error" }); });
+    const result = await reconcileGithubBindings([productId, secondId], { verify, deadlineAt: Date.now() + 10_000,
+      appCheck: async () => { throw new GithubInstallationError(503, "github_installation_unknown", { providerCode: "github_server_error" }); } });
+    expect(result).toEqual({ states: ["unknown", "unknown"], credentialFailure: null });
+    expect(verify).toHaveBeenCalledTimes(2);
+    expect((await bindings()).every((item) => item.enabled)).toBe(true);
+  });
+
+  it("잡: App 자격이 거절되면 연동을 끄지 않고 회차를 실패로 남긴다(운영센터 '마지막 회차가 실패한 작업' 긴급)", async () => {
+    const { GithubInstallationError } = await import("@/lib/domain/github-installations/credentials");
+    const { reconcileGithubIntegrations } = await import("@/lib/jobs/github/integration-reconcile");
+    const { runJob, getJobState } = await import("@/lib/jobs/runner");
+    const verify = vi.fn();
+    const result = await runJob<null>("github-integration-reconcile", (ctx) => reconcileGithubIntegrations(ctx, { verify, token: tokenFixture,
+      appCheck: async () => { throw new GithubInstallationError(503, "github_app_credentials_rejected", { providerCode: "github_unauthorized" }); } }));
+    expect(result).toMatchObject({ status: "failed", error: expect.stringContaining("github_app_credentials_rejected: GitHub 가 피드백 App 자격(App JWT)을 거절했습니다 — 연동 2개는 끄지 않았습니다") });
+    expect((await getJobState("github-integration-reconcile"))?.lastError).toContain("GITHUB_FEEDBACK_APP_PRIVATE_KEY");
+    expect(verify).not.toHaveBeenCalled();
+    expect((await bindings()).every((item) => item.enabled && item.revision === 1)).toBe(true);
+  });
+});
 const rawRepo = { id: 42, name: "Repo", owner: { login: "Owner" }, full_name: "Owner/Repo", html_url: repository.htmlUrl, private: false, archived: false, has_issues: true };
 const issue = (state: "open" | "closed") => ({ id: 99, number: 7, state, repository_url: "https://api.github.com/repos/Owner/Repo", url: "https://api.github.com/repos/Owner/Repo/issues/7", html_url: repository.htmlUrl + "/issues/7" });
 const ok = (data: unknown) => ({ outcome: "confirmed_success" as const, status: 200, data, code: null, retryAt: null, requestId: null });
