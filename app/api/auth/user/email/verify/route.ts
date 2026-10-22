@@ -5,6 +5,7 @@ import { publicAuthErrorResponse, PublicAuthError, PUBLIC_PRIVATE_HEADERS, readL
 import { LOGIN_NONCE_COOKIE, loginNonceCookieOptions, PUBLIC_SESSION_COOKIE, publicSessionCookieOptions } from "@/lib/domain/accounts/session";
 import { rememberEmailLocale } from "@/lib/me/notification-settings";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
+import { trackServer } from "@/lib/analytics/server";
 
 export const POST = webWriteRoute(async (request: Request) => {
   try {
@@ -17,6 +18,8 @@ export const POST = webWriteRoute(async (request: Request) => {
     const response = NextResponse.json({ user: result.user, csrfToken: result.csrfToken, returnTo: result.returnTo }, { headers: PUBLIC_PRIVATE_HEADERS });
     response.cookies.set(PUBLIC_SESSION_COOKIE, result.token, publicSessionCookieOptions());
     response.cookies.set(LOGIN_NONCE_COOKIE, "", { ...loginNonceCookieOptions(), maxAge: 0 });
+    // 방문 분석(서버 사실): 새 계정이면 sign_up — 새 계정인지는 서버만 안다. 이메일의 login 은 브라우저가 이 응답을 보고 보낸다(lib/analytics/events.ts)
+    if (result.created) trackServer("sign_up", { method: "email" }, { request, identity: "browser", userId: result.user.id });
     return response;
   } catch (error) {
     return publicAuthErrorResponse(error);

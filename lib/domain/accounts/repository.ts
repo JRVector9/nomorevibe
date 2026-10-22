@@ -66,6 +66,8 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
     const [identity] = await tx.select({ id: publicIdentities.id, userId: publicIdentities.userId }).from(publicIdentities)
       .where(and(eq(publicIdentities.provider, "email"), eq(publicIdentities.subject, challenge.email)));
     let user: PublicUser;
+    /** 이 로그인이 계정을 새로 만들었다 — 분석의 sign_up(서버 사실)과 login 을 가른다 */
+    let created = false;
     if (identity) {
       // 탈퇴와 겹치면 탈퇴가 먼저 끝난 뒤 다시 읽는다 — 탈퇴한 계정에는 세션을 만들지 않는다
       const [found] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName, deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, identity.userId)).for("share");
@@ -75,6 +77,7 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
     } else {
       [user] = await tx.insert(publicUsers).values({ displayName: `참여자-${randomBytes(4).toString("hex")}` }).returning({ id: publicUsers.id, displayName: publicUsers.displayName });
       await tx.insert(publicIdentities).values({ userId: user.id, provider: "email", subject: challenge.email, lastUsedAt: now });
+      created = true;
     }
 
     const session = newPublicSession();
@@ -84,7 +87,7 @@ export async function consumeEmailChallenge(input: VerifyEmailInput) {
     await tx.insert(publicSessions).values({ tokenHash: session.tokenHash, userId: user.id, createdAt: session.createdAt, expiresAt: session.expiresAt,
       provider: "email", deviceLabel: input.deviceLabel ?? null, lastSeenAt: session.createdAt });
     await tx.update(emailLoginChallenges).set({ consumedAt: now }).where(eq(emailLoginChallenges.id, input.challengeId));
-    return { user, token: session.token, expiresAt: session.expiresAt, csrfToken: csrfForToken(session.token, "session"), returnTo: challenge.returnTo };
+    return { user, token: session.token, expiresAt: session.expiresAt, csrfToken: csrfForToken(session.token, "session"), returnTo: challenge.returnTo, created };
   }));
   if (!result) throw new PublicAuthError(400, "invalid_code");
   return result;

@@ -143,6 +143,9 @@ async function lockLiveUser(tx: Transaction, userId: number): Promise<void> {
   if (!user) throw new PublicAuthError(401, "login_required");
 }
 
+/** 쓰기가 한 일 — 분석(reaction_add 는 처음 남긴 평가만)이 본다. 응답에는 싣지 않는다 */
+export type ReactionOutcome = "created" | "changed" | "unchanged";
+
 export function putReaction(slug: string, owner: ReactionOwner, input: ReactionWrite, options: { untrustedIp?: boolean; now?: Date } = {}) {
   const now = options.now ?? new Date();
   return onPrimary(() => db.transaction(async (tx) => {
@@ -164,7 +167,7 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
     const comment = input.comment === undefined ? current?.comment ?? null : input.comment;
     const same = current && current.verdict === input.verdict && sameTags(current.tags, tags) && current.comment === comment;
     if (current && same && current.visitorHash === visitorHash) {
-      return { mine: toMine(current), summary: await summaryOf(tx, product.id) };
+      return { mine: toMine(current), summary: await summaryOf(tx, product.id), outcome: "unchanged" as ReactionOutcome };
     }
     const changes = same ? current.changesToday : nextChangeCount(current ?? null, now);
     if (changes === null) throw new ReactionError("reaction_change_limited", 429);
@@ -214,7 +217,7 @@ export function putReaction(slug: string, owner: ReactionOwner, input: ReactionW
         ? await insert.onConflictDoUpdate({ target: [productReactions.productId, productReactions.userId], targetWhere: sql.raw("user_id is not null"), set }).returning()
         : await insert.onConflictDoUpdate({ target: [productReactions.productId, productReactions.visitorHash], targetWhere: sql.raw("visitor_hash is not null"), set }).returning();
     }
-    return { mine: toMine(row!), summary: await summaryOf(tx, product.id) };
+    return { mine: toMine(row!), summary: await summaryOf(tx, product.id), outcome: (current ? "changed" : "created") as ReactionOutcome };
   }));
 }
 

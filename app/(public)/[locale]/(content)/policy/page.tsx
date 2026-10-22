@@ -142,6 +142,8 @@ export default async function PolicyPage() {
           <li>{t("analytics.device")}</li>
         </ul>
         <p>{t("analytics.notCollected")}</p>
+        <p>{t("analytics.server")}</p>
+        <p>{t("analytics.userId")}</p>
         <p>{t("analytics.purpose")}</p>
         <p>{t("analytics.cookies")}</p>
         <p>{t("analytics.retention")}</p>

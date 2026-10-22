@@ -8,7 +8,8 @@
  * - 값은 문자열·숫자·참거짓만. 제품은 slug 로 가리킨다(이름·주소를 보내지 않는다).
  * - 보내지 않는 것: 이메일·이름·IP·토큰·비밀이 든 주소·길이 제한을 넘는 자유 입력 검색어.
  *   lib/analytics/sanitize.ts 가 금지 키를 지우고 길이를 자른다 — tests/analytics-*.test.ts 가 이 목록 전체를 검사한다.
- * - 로그인한 사람에게 user_id 를 붙이지 않는다(가명 id 는 서버 발신 작업에서 따로 정한다).
+ * - 로그인한 사람에게는 가명 user_id(HMAC, lib/analytics/identity.ts)만 붙인다 — 계정 번호를 그대로 보내지 않는다.
+ *   서버 발신 이벤트와 브라우저 gtag 설정이 같은 값을 쓴다. ANALYTICS_USER_ID_SECRET 이 없으면 붙이지 않는다.
  *
  * GA4 한도: 이벤트 이름 40자, 매개변수 이름 40자, 값 100자, 이벤트당 매개변수 25개.
  */
@@ -229,6 +230,8 @@ export type OutboundVisitParams = {
 /** /install.sh·/skill.md 를 받아 갔다 */
 export type SkillScriptDownloadParams = {
   script: "install_sh" | "skill_md";
+  /** 받은 쪽의 갈래(User-Agent 원문은 보내지 않는다) — 크롤러는 보내지 않는다 */
+  agent_class?: "curl" | "wget" | "browser" | "other";
 };
 
 /** 스킬로 등록이 들어왔다 */
@@ -246,6 +249,41 @@ export type ProductClaimedParams = {
 /** GitHub 연결이 끝났다(로그인·스타 권한·앱 설치) */
 export type GithubConnectedParams = {
   kind: "login" | "star" | "app_install";
+};
+
+/* ── 서버가 보내는 것(PR C 덧붙임) — 브라우저의 '눌렀다'(의도)와 이름을 나눈 '실제로 됐다'(사실) ── */
+
+/** 소유 확인(POST /api/products/{slug}/verify)이 들어왔다 — 스킬이 부른다. 브라우저의 claim_start 와 다른 사실 */
+export type VerifyRequestedParams = {
+  product_slug: string;
+};
+
+/** 소유 확인이 이번에 통과했다(이미 확인된 제품의 재요청은 세지 않는다). 주인 없던 제품이면 product_claimed 도 함께 간다 */
+export type VerifySucceededParams = {
+  product_slug: string;
+  method: "file" | "meta";
+};
+
+/** README 배지 그림을 내줬다 — 사람을 잇지 않는 합계. 캐시(브라우저·GitHub 이미지 프록시 1시간)가 비었을 때만 와서 노출의 하한이다 */
+export type BadgeImpressionParams = {
+  product_slug: string;
+  badge_style: "verified" | "listed" | "tried";
+  badge_lang: "ko" | "en";
+};
+
+/** '써봤어요' 평가가 처음 저장됐다(바꾸기·같은 값 다시 보내기는 세지 않는다) — 브라우저 product_tried 의 사실 쪽 */
+export type ReactionAddParams = {
+  product_slug: string;
+  verdict: "good" | "meh" | "bad";
+  /** 어디서 남겼나(panel·return·sheet·me) */
+  reaction_source: "panel" | "return" | "sheet" | "me";
+  signed_in: "yes" | "no";
+};
+
+/** 상세 요청이 저장됐다(같은 요청의 재전송은 세지 않는다) — 브라우저 feedback_submit 의 사실 쪽 */
+export type FeedbackReceivedParams = {
+  product_slug: string;
+  feedback_kind: "bug" | "feature" | "question";
 };
 
 /** 이벤트 이름 → 매개변수. 새 이름은 이 목록 끝과 ANALYTICS_EVENT_CATALOG 끝에 함께 덧붙인다 */
@@ -282,6 +320,11 @@ export interface AnalyticsEventParams {
   launch_submitted: LaunchSubmittedParams;
   product_claimed: ProductClaimedParams;
   github_connected: GithubConnectedParams;
+  verify_requested: VerifyRequestedParams;
+  verify_succeeded: VerifySucceededParams;
+  badge_impression: BadgeImpressionParams;
+  reaction_add: ReactionAddParams;
+  feedback_received: FeedbackReceivedParams;
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventParams;
@@ -367,11 +410,19 @@ export const ANALYTICS_EVENT_CATALOG: { [Name in AnalyticsEventName]: EventSpec<
   outbound_visit: { source: "server", description: "/go 가 제품 사이트·저장소로 보냈다", params: {
     product_slug: text, link_kind: oneOf(["site", "repo"]), via: optionalText } },
   skill_script_download: { source: "server", description: "/install.sh·/skill.md 를 받아 갔다", params: {
-    script: oneOf(["install_sh", "skill_md"]) } },
+    script: oneOf(["install_sh", "skill_md"]), agent_class: { kind: "string", optional: true, values: ["curl", "wget", "browser", "other"] } } },
   launch_submitted: { source: "server", description: "스킬로 등록이 들어왔다", params: { product_slug: text, source: oneOf(["skill", "other"]) } },
   product_claimed: { source: "server", description: "소유 확인이 끝났다", params: {
     product_slug: text, method: oneOf(["skill_verify", "github", "other"]) } },
   github_connected: { source: "server", description: "GitHub 연결이 끝났다", params: { kind: oneOf(["login", "star", "app_install"]) } },
+  verify_requested: { source: "server", description: "소유 확인 요청이 들어왔다(스킬)", params: { product_slug: text } },
+  verify_succeeded: { source: "server", description: "소유 확인이 이번에 통과했다", params: { product_slug: text, method: oneOf(["file", "meta"]) } },
+  badge_impression: { source: "server", description: "README 배지를 내줬다(합계·캐시가 빈 때만)", params: {
+    product_slug: text, badge_style: oneOf(["verified", "listed", "tried"]), badge_lang: oneOf(["ko", "en"]) } },
+  reaction_add: { source: "server", description: "써봤어요 평가가 처음 저장됐다", params: {
+    product_slug: text, verdict: oneOf(["good", "meh", "bad"]), reaction_source: oneOf(["panel", "return", "sheet", "me"]), signed_in: oneOf(["yes", "no"]) } },
+  feedback_received: { source: "server", description: "상세 요청이 저장됐다", params: {
+    product_slug: text, feedback_kind: oneOf(["bug", "feature", "question"]) } },
 };
 
 export const ANALYTICS_EVENT_NAMES = Object.keys(ANALYTICS_EVENT_CATALOG) as AnalyticsEventName[];

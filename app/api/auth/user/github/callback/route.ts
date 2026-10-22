@@ -8,6 +8,7 @@ import { consumeGithubAuthFlow } from "@/lib/domain/github-user/repository";
 import { DEFAULT_LOCALE } from "@/lib/i18n/locales";
 import { localePath, pathLocale, safePublicReturnUrl } from "@/lib/i18n/routing";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
+import { trackServer } from "@/lib/analytics/server";
 
 export const GET = webWriteRoute(async (request: Request) => {
   let consumedReturnTo: string | undefined;
@@ -25,6 +26,20 @@ export const GET = webWriteRoute(async (request: Request) => {
     const result = await finishGithubAuthorization(input, (returnTo) => { consumedReturnTo = returnTo; });
     const response = NextResponse.redirect(new URL(result.returnTo, githubStarAppConfig().callbackUrl));
     for (const [name, value] of Object.entries(PUBLIC_PRIVATE_HEADERS)) response.headers.set(name, value);
+    // 돌아간 화면이 github.com 을 앞 화면(referrer)으로 받으면 GA 가 새 세션을 연다 — 로그인 앞뒤의 여정이 끊기지 않게 지운다
+    response.headers.set("Referrer-Policy", "no-referrer");
+    /**
+     * 방문 분석(서버 사실): 로그인 중이던 사람이면 스타 권한 연결, 아니면 GitHub 로그인 — 새 계정이면 sign_up 도.
+     * login 은 이메일과 같이 성공한 로그인마다(가입 포함), sign_up 은 새 계정일 때만(lib/analytics/events.ts).
+     */
+    const analytics = { request, identity: "browser", userId: result.user.id } as const;
+    if (input.actorUserId !== null) {
+      trackServer("github_connected", { kind: "star" }, analytics);
+    } else {
+      if (result.created) trackServer("sign_up", { method: "github" }, analytics);
+      trackServer("login", { method: "github" }, analytics);
+      trackServer("github_connected", { kind: "login" }, analytics);
+    }
     response.cookies.set(PUBLIC_SESSION_COOKIE, result.token, publicSessionCookieOptions());
     response.cookies.set(GITHUB_NONCE_COOKIE, "", { ...githubNonceCookieOptions(), maxAge: 0 });
     return response;
@@ -41,6 +56,7 @@ export const GET = webWriteRoute(async (request: Request) => {
     if (returnTo) target.searchParams.set("returnTo", returnTo);
     const response = NextResponse.redirect(target);
     for (const [name, value] of Object.entries(PUBLIC_PRIVATE_HEADERS)) response.headers.set(name, value);
+    response.headers.set("Referrer-Policy", "no-referrer");
     response.cookies.set(GITHUB_NONCE_COOKIE, "", { ...githubNonceCookieOptions(), maxAge: 0 });
     return response;
   }

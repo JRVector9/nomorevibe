@@ -13,7 +13,7 @@ import { ANALYTICS_OPT_OUT_KEY } from "@/lib/analytics/opt-out-key";
  * - 런타임이 이어지기 전의 이벤트는 20개까지 모아 뒀다가 켜지면 보내고, 꺼지면 버린다(자식 컴포넌트의 효과가 로더보다 먼저 돈다).
  * - 런타임이 이벤트마다 정리한 화면 주소(page_location)와 transport_type: "beacon" 을 붙인다(화면을 떠나는 클릭도 잃지 않는다).
  * - GA 가 꺼진 개발 환경에서 GA_DEBUG=1 이면 보냈을 이벤트를 콘솔에 찍는다(status "log").
- * - 로그인한 사람에게도 user_id 를 붙이지 않는다.
+ * - 로그인한 사람에게는 서버가 넘긴 가명 user_id(HMAC, lib/analytics/identity.ts)만 gtag 설정에 붙인다 — 계정 번호는 보내지 않는다.
  */
 
 export type AnalyticsStatus = "pending" | "on" | "log" | "off";

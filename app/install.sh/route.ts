@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { installScript } from "@/lib/domain/products/launch-command";
 import { siteOrigin } from "@/lib/site";
+import { agentClass, trackServer } from "@/lib/analytics/server";
 
 /**
  * 설치 스크립트 — 배포 origin을 서빙 시점에 박아 넣는다.
@@ -8,6 +9,9 @@ import { siteOrigin } from "@/lib/site";
  * 본문은 /launch 의 '스크립트 내용 보기'와 같은 함수에서 나온다.
  */
 export async function GET(req: Request) {
+  // 방문 분석의 '받아 갔다' — 받은 쪽의 갈래만(curl·wget·브라우저). 크롤러는 보내지 않는다(server.ts)
+  const agent = agentClass(req.headers.get("user-agent"));
+  if (agent !== "bot") trackServer("skill_script_download", { script: "install_sh", agent_class: agent }, { request: req, identity: "auto" });
   return new NextResponse(installScript(siteOrigin(req)), {
     headers: { "content-type": "text/x-shellscript; charset=utf-8" },
   });
