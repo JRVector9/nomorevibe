@@ -74,4 +74,12 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "bell.readAll": "全部已读",
   "bell.all": "查看全部通知",
   "bell.failed": "未能加载通知。",
+  "analytics.optOut": "关闭访问分析",
+  "analytics.optIn": "重新开启访问分析",
+  "analytics.statusOn": "此浏览器已开启访问分析。",
+  "analytics.statusOptOut": "你已在此浏览器中关闭访问分析，不会发送任何数据。",
+  "analytics.statusGpc": "由于浏览器发送了 Global Privacy Control 信号，访问分析已关闭。",
+  "analytics.statusDnt": "根据浏览器的 Do Not Track 设置，访问分析已关闭。",
+  "analytics.statusRegion": "由于时区位于欧洲，访问分析已关闭。",
+  "analytics.statusDisabled": "目前未使用访问分析。",
 });

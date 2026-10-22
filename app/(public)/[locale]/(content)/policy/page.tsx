@@ -7,6 +7,8 @@ import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
 import { localizedAlternates, localizedOpenGraph } from "@/lib/i18n/metadata";
 import { DEFAULT_SHARE_IMAGE, shareMetadata } from "@/lib/copy/share";
+import { AnalyticsOptOut } from "@/components/analytics/AnalyticsOptOut";
+import { analyticsEnabled } from "@/lib/analytics/config";
 
 /**
  * 게재 기준(2026-10-08 UX 감사 UX-21, 2026-10-09 운영자 결정 D1·D2·D5).
@@ -22,6 +24,8 @@ import { DEFAULT_SHARE_IMAGE, shareMetadata } from "@/lib/copy/share";
  * - 내려달라는 요청: 접수 즉시 noindex(indexing.ts 2번), 24시간 안 확인(takedown-view.ts TAKEDOWN_OVERDUE_HOURS)
  * 공개 연락처는 CONTACT_EMAIL 하나다(2026-10-22 사용자 결정으로 D5 의 "공개 이메일 없음"을 바꿈 — Bluesky 개발자 지침 5).
  * SNS 화제·자료 출처·삭제 요청·신고를 받고, 프로젝트에 관한 요청은 그대로 사이트 안의 요청 폼으로 받는다.
+ * - 방문 분석(#analytics, 2026-10-22): 모으는 것·목적·처리자·보관·끄는 법. 실제 규칙은 lib/analytics(events·sanitize·consent)와
+ *   docs/operations/2026-10-22-google-analytics.md — 보내는 이벤트나 보관 기간을 바꾸면 여기도 고친다.
  */
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getRequestLocale();
@@ -45,6 +49,7 @@ export default async function PolicyPage() {
     { id: "excluded", title: t("excluded.title") },
     { id: "unclaimed", title: unclaimedLabel },
     { id: "takedown", title: t("takedown.title") },
+    { id: "analytics", title: t("analytics.title") },
     { id: "contact", title: t("contact.title") },
   ];
 
@@ -124,6 +129,26 @@ export default async function PolicyPage() {
           <li>{t("takedown.withinDay")}</li>
           <li>{t("takedown.misuse")}</li>
         </ul>
+      </Section>
+
+      <Section id="analytics" title={t("analytics.title")}>
+        <p>{t("analytics.intro")}</p>
+        <p>{t("analytics.collected")}</p>
+        <ul>
+          <li>{t("analytics.pages")}</li>
+          <li>{t("analytics.clicks")}</li>
+          <li>{t("analytics.search")}</li>
+          <li>{t("analytics.launch")}</li>
+          <li>{t("analytics.device")}</li>
+        </ul>
+        <p>{t("analytics.notCollected")}</p>
+        <p>{t("analytics.purpose")}</p>
+        <p>{t("analytics.cookies")}</p>
+        <p>{t("analytics.retention")}</p>
+        <p>{t("analytics.optOut")}</p>
+        {/* 이 브라우저의 상태와 끄기·다시 켜기 — 브라우저에서만 그린다 */}
+        <AnalyticsOptOut variant="policy" enabled={analyticsEnabled()} />
+        <p>{t("analytics.contact")}</p>
       </Section>
 
       <Section id="contact" title={t("contact.title")}>

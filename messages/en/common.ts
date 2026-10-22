@@ -74,4 +74,12 @@ export const common = defineCatalog<typeof KoreanCommon>()({
   "bell.readAll": "Mark all read",
   "bell.all": "Open the inbox",
   "bell.failed": "Could not load alerts.",
+  "analytics.optOut": "Turn off analytics",
+  "analytics.optIn": "Turn analytics back on",
+  "analytics.statusOn": "Visit analytics is on in this browser.",
+  "analytics.statusOptOut": "You turned off visit analytics in this browser. Nothing is sent.",
+  "analytics.statusGpc": "Visit analytics is off because your browser sends a Global Privacy Control signal.",
+  "analytics.statusDnt": "Visit analytics is off because of your browser's Do Not Track setting.",
+  "analytics.statusRegion": "Visit analytics is off because your time zone is in Europe.",
+  "analytics.statusDisabled": "Visit analytics is not in use right now.",
 });
