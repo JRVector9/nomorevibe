@@ -1,0 +1,50 @@
+[
+  {
+    "key": "openai",
+    "name": "OpenAI",
+    "company": "OpenAI",
+    "url": "https://openai.com/news/rss.xml"
+  },
+  {
+    "key": "google-deepmind",
+    "name": "Google DeepMind",
+    "company": "Google",
+    "url": "https://deepmind.google/blog/rss.xml"
+  },
+  {
+    "key": "google-gemini",
+    "name": "Google Gemini",
+    "company": "Google",
+    "url": "https://blog.google/products-and-platforms/products/gemini/rss/"
+  },
+  {
+    "key": "mistral",
+    "name": "Mistral",
+    "company": "Mistral",
+    "url": "https://mistral.ai/news/rss"
+  },
+  {
+    "key": "cursor",
+    "name": "Cursor",
+    "company": "Cursor",
+    "url": "https://cursor.com/changelog/rss.xml"
+  },
+  {
+    "key": "github",
+    "name": "GitHub",
+    "company": "GitHub",
+    "url": "https://github.blog/changelog/label/copilot/feed/"
+  },
+  {
+    "key": "hugging-face",
+    "name": "Hugging Face",
+    "company": "Hugging Face",
+    "url": "https://huggingface.co/blog/feed.xml"
+  },
+  {
+    "key": "nvidia",
+    "name": "NVIDIA",
+    "company": "NVIDIA",
+    "url": "https://blogs.nvidia.com/feed/"
+  }
+]
