@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   groups: vi.fn(), removeMany: vi.fn(), translations: vi.fn(), log: vi.fn(), reasons: vi.fn(), decisions: vi.fn(),
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
-  held: vi.fn(), heldReasons: vi.fn(), releaseAll: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
+  held: vi.fn(), heldReasons: vi.fn(), setHold: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -20,7 +20,6 @@ vi.mock('@/lib/crawl/product-audit', () => ({
   listHeldFindings: mocks.held, heldFindingReasons: mocks.heldReasons, switchAuditReviewer: mocks.switchReviewer,
   GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
 }));
-vi.mock('@/lib/crawl/product-audit-hold', () => ({ releaseAllAuditHolds: mocks.releaseAll }));
 // Qwen-v2 자동 단계의 상태도 DB 를 센다
 vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatus: mocks.qwenStatus }));
 vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold, setQwenAutoStep: mocks.setQwenAuto }));
@@ -38,7 +37,8 @@ vi.mock('@/lib/domain/products/intro-requests', () => ({
 }));
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
-import { cancelAudit, decideAuditFinding, fixIntroRequest, releaseAuditHolds, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
+import * as auditActions from '@/app/(operator)/admin/audit/actions';
+import { cancelAudit, decideAuditFinding, fixIntroRequest, removeAuditGroup, resolveIntroRequestAction, restartStalledAudit,
   saveAuditHold, startAudit, switchAuditModel } from '@/app/(operator)/admin/audit/actions';
 import { saveQwenAutoStep } from '@/app/(operator)/admin/qwen-auto-actions';
 import { REVIEW_PROMPT_VERSION } from '@/lib/crawl/agent-review-contract';
@@ -344,7 +344,10 @@ describe('감사 보류 화면(0110)', () => {
     expect(html).toContain('두 번째 모델이 승인한 것은 갈래로 걸지 않음');
     expect(html).toContain('두 번째 모델도 거절하면 갈래와 상관없이');
     expect(html).toMatch(/갈래별: (<!-- -->)?빈 화면·오류·준비 중 1 · 회사·서비스 소개 1/);
-    expect(html).toContain('보류 모두 풀기');
+    // '보류 모두 풀기'(모두·되돌릴 수 없음)는 정책 처리의 고른 보류 풀기로 바뀌었다(0116)
+    expect(html).toContain('href="/admin/audit?tab=policy&amp;preset=held"');
+    expect(html).toContain('보류 골라 풀기');
+    expect(html).not.toContain('>보류 모두 풀기<');
     // 보류 갈래는 CSV 로 내보내지 않는다
     expect(html).not.toContain('format=csv');
   });
@@ -353,7 +356,7 @@ describe('감사 보류 화면(0110)', () => {
     const html = await render({ tab: 'audit' });
     expect(mocks.held).not.toHaveBeenCalled();
     expect(mocks.findings).toHaveBeenCalledWith(7, 'reject', { limit: 50, offset: 0, ids: undefined, second: undefined });
-    const panel = html.slice(html.indexOf('aria-labelledby="audit-hold-title"'), html.indexOf('보류 모두 풀기'));
+    const panel = html.slice(html.indexOf('aria-labelledby="audit-hold-title"'), html.indexOf('보류 골라 풀기'));
     expect(panel).toMatch(/name="enabled" checked=""/);
     expect(panel).toMatch(/name="minConfidence" value="0.95"/);
     expect(panel).toMatch(/name="secondOpinionReject" checked=""/);
@@ -417,7 +420,7 @@ describe('감사 보류 화면(0110)', () => {
     mocks.overview.mockResolvedValue(overviewOf({ qwenAuto }));
     const html = await render({ tab: 'audit' });
     expect(mocks.qwenStatus).toHaveBeenCalledWith({ auditHold: DEFAULT_AUDIT_HOLD, qwenAuto });
-    const panel = html.slice(html.indexOf('aria-label="Qwen-v2 자동 단계"'), html.indexOf('보류 모두 풀기'));
+    const panel = html.slice(html.indexOf('aria-label="Qwen-v2 자동 단계"'), html.indexOf('보류 골라 풀기'));
     expect(panel).toMatch(/Qwen-v2 두 번째 의견/);
     expect(panel).toMatch(/지난 1시간 (<!-- -->)?12(<!-- -->)? · 24시간 (<!-- -->)?340/);
     expect(panel).toMatch(/남은 것 <b[^>]*>2,415<\/b>/);
@@ -588,16 +591,8 @@ describe('내릴 후보 서버 액션', () => {
       .toEqual({ error: '사람 없이 정하는 일을 켜는 바꿈은 까닭을 적어야 합니다.' });
   });
 
-  it('보류 모두 풀기 — 로그인한 사람으로 풀고, 푼 수와 까닭을 작업 로그에 한 줄 남긴다', async () => {
-    mocks.admin.mockResolvedValueOnce(null);
-    expect(await releaseAuditHolds(decision([['note', 'x']]))).toMatchObject({ error: expect.any(String) });
-    expect(mocks.releaseAll).not.toHaveBeenCalled();
-
-    mocks.releaseAll.mockResolvedValue(1234);
-    expect(await releaseAuditHolds(decision([['note', ' 문턱을 잘못 잡음 ']]))).toMatchObject({ message: expect.stringContaining('1,234건') });
-    expect(mocks.releaseAll).toHaveBeenCalledWith({ by: 'jr', note: '문턱을 잘못 잡음' });
-    expect(mocks.log).toHaveBeenCalledWith('jr', { action: 'audit-hold-release-all', target: 'product_audit',
-      detail: { released: 1234, note: '문턱을 잘못 잡음' } });
+  it('보류 모두 풀기 액션은 없다 — 고른 보류 풀기는 정책 처리(policy-actions.ts)의 실행으로 하고 되돌릴 수 있다', () => {
+    expect('releaseAuditHolds' in auditActions).toBe(false);
   });
 
   it('재감사는 체크박스를 켰을 때만 유지 판정까지 다시 본다', async () => {

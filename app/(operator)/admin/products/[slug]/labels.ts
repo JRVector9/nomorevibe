@@ -88,7 +88,8 @@ export function historyActionLabel(kind: ProductHistoryKind, action: string): st
 /** 감사 보류 기록의 사유 — 건 까닭(AI 거절)과 푼 까닭(product-audit-hold.ts AuditHoldRelease) */
 const HOLD_NOTE_LABELS: Record<string, string> = {
   kept: "유지로 정함", banned: "차단됨", unbanned: "차단 해제", release_all: "보류 모두 풀기", ai_reject: "AI 거절",
-  second_approve: "두 번째 모델이 승인",
+  second_approve: "두 번째 모델이 승인", policy_release: "정책으로 보류 풂", supersede: "화면 재판정 승인이 글만 본 거절을 대체",
+  policy_undo: "정책 되돌리기로 다시 보류",
 };
 
 /** 기록 줄의 사유 — 차단 사유 코드는 라벨로 */

@@ -11,6 +11,7 @@ import { lockedSettings, type AuditHoldSettings } from "./settings";
 import { secondOpinionVotesField, type SecondOpinionVoteRow } from "./audit-second-opinions";
 import { QWEN_AUTO_MIN_CONFIDENCE, secondOpinionFamily, secondRejectHolds } from "./second-opinion-rules";
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
+import { CONFIDENCE_FLOOR_SOURCES } from "./audit-import-sources";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -50,11 +51,16 @@ const RELEASE_BATCH = 200;
  * (audit-second-opinion-import.ts) — 사람의 유지와 같은 길로 풀되 사람 결정으로 적지는 않는다. owned 는 주인이 생긴 것
  * (도메인 검증·클레임 markVerified, 메이커 확인 recordOwnerMembership) — 보류는 주인 없는 것에만 건다
  */
-export type AuditHoldRelease = "kept" | "banned" | "unbanned" | "release_all" | "second_approve" | "owned";
+export type AuditHoldRelease = "kept" | "banned" | "unbanned" | "release_all" | "second_approve" | "owned" | "policy_release" | "supersede";
+/**
+ * policy_release: 정책 처리(audit-policy.ts)의 '보류 풀기' — 사람이 거르기로 고른 보류만 푼다(사람 결정은 남기지 않는다, 모두 풀기의 고른 판).
+ * supersede: 두 번째 의견 올리기(audit-second-opinion-upload.ts)에서 스크린샷까지 본 출처의 승인이 같은 항목의 텍스트만 본 거절을 대신해
+ * 푼 것 — 사람이 미리보기에서 '대체'를 켰을 때만
+ */
 /** 풀면 목록에 돌아오는 까닭 — Cloudflare 지우기 줄을 적는다(차단은 트리거가, 차단 해제는 다음 사본이 맡는다) */
-const RELISTS: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "owned"]);
+const RELISTS: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "owned", "policy_release", "supersede"]);
 /** 사람(또는 두 번째 모델)이 그 제품을 본 까닭 — 그 제품의 열린 항목으로 다시 걸지 않는다 */
-const SETTLES: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "unbanned"]);
+const SETTLES: ReadonlySet<AuditHoldRelease> = new Set(["kept", "second_approve", "unbanned", "policy_release", "supersede"]);
 
 const column = (alias: string) => (name: string) => sql`${sql.identifier(alias)}.${sql.identifier(name)}`;
 
@@ -124,8 +130,13 @@ export type HoldGateOpinion = SecondOpinionVoteRow & { source?: string | null; c
  */
 export type HoldGateOptions = { autoOpinions?: boolean };
 
-/** 이 의견을 지금 보류에서 세는가 — 자동 의견은 확신이 있고 문턱 이상이며, 거절이면 그 단계가 켜져 있을 때만 */
-function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions): boolean {
+/**
+ * 이 의견을 지금 보류에서 세는가 — 자동 의견은 확신이 있고 문턱 이상이며, 거절이면 그 단계가 켜져 있을 때만. 확신 하한이 있는 올린 출처
+ * (CONFIDENCE_FLOOR_SOURCES — m1 화면 재판정)는 확신이 하한 이상일 때만(승인·거절 모두). SQL 쪽은 audit-second-opinions.ts countedSecondReject
+ */
+export function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions): boolean {
+  const floor = opinion.source ? CONFIDENCE_FLOOR_SOURCES[opinion.source] : undefined;
+  if (floor !== undefined) return typeof opinion.confidence === "number" && opinion.confidence >= floor;
   if (opinion.source !== QWEN_V2_AUTO_SOURCE) return true;
   if (typeof opinion.confidence !== "number" || opinion.confidence < QWEN_AUTO_MIN_CONFIDENCE) return false;
   return opinion.decision !== "reject" || Boolean(options.autoOpinions);

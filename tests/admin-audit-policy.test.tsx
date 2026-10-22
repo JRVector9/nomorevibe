@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), revalidate: vi.fn(), preview: vi.fn(), start: vi.fn(), apply: vi.fn(), undoStart: vi.fn(), undo: vi.fn(), exceptions: vi.fn(),
   options: vi.fn(), runs: vi.fn(), overview: vi.fn(), takedownSummary: vi.fn(), introCount: vi.fn(),
+  staged: vi.fn(), stage: vi.fn(), importPreview: vi.fn(), importStart: vi.fn(), discard: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async (original) => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) }));
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -13,6 +14,8 @@ vi.mock('@/lib/crawl/audit-policy', () => ({
   previewAuditPolicy: mocks.preview, startAuditPolicyRun: mocks.start, applyAuditPolicyChunk: mocks.apply, startAuditPolicyUndo: mocks.undoStart,
   undoAuditPolicyChunk: mocks.undo, policyRunExceptions: mocks.exceptions, policyFilterOptions: mocks.options, listPolicyRuns: mocks.runs,
 }));
+vi.mock('@/lib/crawl/audit-second-opinion-upload', () => ({ latestStagedImport: mocks.staged, stageImportLines: mocks.stage, previewImport: mocks.importPreview,
+  startImportApply: mocks.importStart, discardImport: mocks.discard, IMPORT_STAGE_MAX_LINES: 500 }));
 vi.mock('@/lib/crawl/product-audit', () => ({
   productAuditOverview: mocks.overview, auditDecisionHistory: vi.fn(), auditFindingReasons: vi.fn(), auditRemovalGroups: vi.fn(), heldFindingReasons: vi.fn(),
   listAuditFindings: vi.fn(), listHeldFindings: vi.fn(), GROUP_REMOVE_MAX: 50, GROUP_REMOVE_MIN_CONFIDENCE: 0.95, GROUP_SCOPES: ['held', 'agreed', 'reject'],
@@ -23,8 +26,8 @@ vi.mock('@/lib/domain/products/takedown', () => ({ takedownSummary: mocks.takedo
 vi.mock('@/lib/domain/products/intro-requests', () => ({ introRequestQueue: vi.fn(), pendingIntroRequestCount: mocks.introCount }));
 
 import AdminAuditPage from '@/app/(operator)/admin/audit/page';
-import { applyPolicyChunkAction, policyRunExceptionsAction, previewAuditPolicyAction, startPolicyRunAction, startPolicyUndoAction,
-  undoPolicyChunkAction } from '@/app/(operator)/admin/audit/policy-actions';
+import { applyPolicyChunkAction, discardImportAction, policyRunExceptionsAction, previewAuditPolicyAction, previewImportAction, stageImportAction,
+  startImportApplyAction, startPolicyRunAction, startPolicyUndoAction, undoPolicyChunkAction } from '@/app/(operator)/admin/audit/policy-actions';
 import { ACTION_GROUPS, ACTION_LABELS, targetLabel } from '@/app/(operator)/admin/activity/labels';
 import { describePolicyFilter, EMPTY_POLICY_FILTER, policyFilterSchema, policyStartSchema, stratifiedQuotas } from '@/lib/crawl/audit-policy-filter';
 import { DEFAULT_AUDIT_HOLD, DEFAULT_QWEN_AUTO } from '@/lib/crawl/settings-schema';
@@ -43,6 +46,7 @@ beforeEach(() => {
   mocks.takedownSummary.mockResolvedValue({ pending: 0, overdue: 0, oldestHours: null, handled24h: { removed: 0, dismissed: 0 }, last30d: { removed: 0, dismissed: 0 },
     lastHour: { requests: 0, owners: 0, senders: 0, noReason: 0, topReason: null } });
   mocks.introCount.mockResolvedValue(0);
+  mocks.staged.mockResolvedValue(null);
   mocks.options.mockResolvedValue({ latestCampaignId: 4, reviewers: [{ key: 'abcllm|[MLX] gpt-oss-120b', provider: 'abcllm', model: '[MLX] gpt-oss-120b', count: 6_965 }],
     sources: [{ source: 'grok-cli-batch', count: 2_755 }] });
   mocks.runs.mockResolvedValue([{ id: 3, kind: 'close', action: 'keep', status: 'applying', planned: 120, note: '적체', createdBy: 'jr',
@@ -115,6 +119,36 @@ describe('정책 처리 서버 액션', () => {
     mocks.undoStart.mockResolvedValue({ ok: false, error: '적용한 실행만 되돌릴 수 있습니다.' });
     expect(await startPolicyUndoAction(9)).toEqual({ ok: false, error: '적용한 실행만 되돌릴 수 있습니다.' });
     expect(mocks.undoStart).toHaveBeenCalledWith({ runId: 9, by: 'jr' });
+  });
+});
+
+describe('두 번째 의견 올리기 서버 액션', () => {
+  it('로그인·출처·줄 수·실행 번호를 다시 본다 — 맞지 않으면 부르지 않는다', async () => {
+    mocks.admin.mockResolvedValueOnce(null);
+    expect(await stageImportAction({ runId: null, source: 'qwen-vision-m1', lines: ['{}'], final: true })).toMatchObject({ ok: false, error: expect.stringContaining('권한') });
+    expect(await stageImportAction({ runId: null, source: 'nope', lines: ['{}'], final: true })).toMatchObject({ ok: false });
+    expect(await stageImportAction({ runId: null, source: 'qwen-vision-m1', lines: Array.from({ length: 501 }, () => '{}'), final: true })).toMatchObject({ ok: false });
+    expect(await stageImportAction({ runId: 'x', source: 'qwen-vision-m1', lines: [], final: true })).toMatchObject({ ok: false });
+    expect(await stageImportAction({ runId: null, source: 'qwen-vision-m1', lines: [1, 2], final: true })).toMatchObject({ ok: false });
+    expect(await startImportApplyAction({ runId: 3, supersede: true, expected: 0 })).toMatchObject({ ok: false });
+    expect(mocks.stage).not.toHaveBeenCalled();
+    expect(mocks.importStart).not.toHaveBeenCalled();
+  });
+
+  it('로그인한 사람으로 줄을 넘기고, 대체는 참일 때만 켠다', async () => {
+    mocks.stage.mockResolvedValue({ ok: true, runId: 5, status: 'staged', summary: { read: 1, stored: 1 } });
+    expect(await stageImportAction({ runId: null, source: 'qwen-vision-m1', lines: ['{"a":1}'], final: true })).toMatchObject({ ok: true, value: { runId: 5 } });
+    expect(mocks.stage).toHaveBeenCalledWith({ runId: null, source: 'qwen-vision-m1', lines: ['{"a":1}'], final: true, by: 'jr' });
+    mocks.importPreview.mockResolvedValue({ ok: true, preview: { writable: 1 } });
+    await previewImportAction(5, 'yes');
+    expect(mocks.importPreview).toHaveBeenLastCalledWith({ runId: 5, supersede: false });
+    await previewImportAction(5, true);
+    expect(mocks.importPreview).toHaveBeenLastCalledWith({ runId: 5, supersede: true });
+    mocks.importStart.mockResolvedValue({ ok: true, runId: 5, planned: 2 });
+    expect(await startImportApplyAction({ runId: 5, supersede: 'true', expected: 1 })).toMatchObject({ ok: true });
+    expect(mocks.importStart).toHaveBeenCalledWith({ runId: 5, supersede: false, expected: 1, by: 'jr' });
+    mocks.discard.mockResolvedValue(true);
+    expect(await discardImportAction(5)).toEqual({ ok: true, value: { discarded: true } });
   });
 });
 

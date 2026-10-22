@@ -6,7 +6,7 @@ import { resultToast, useAdminToast } from '../components/Toast';
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, type AuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { auditHoldWidens, sameAuditHold } from '@/lib/crawl/audit-hold-policy';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
-import { cancelAudit, releaseAuditHolds, restartStalledAudit, saveAuditHold, startAudit, switchAuditModel, type AuditActionState } from './actions';
+import { cancelAudit, restartStalledAudit, saveAuditHold, startAudit, switchAuditModel, type AuditActionState } from './actions';
 
 type AuditHold = CrawlSettings['auditHold'];
 
@@ -14,7 +14,7 @@ type AuditHold = CrawlSettings['auditHold'];
  * 감사 보류의 설정 — 켬/끔, 확신 문턱, 보류하는 사유 갈래, 두 번째 모델 거절. 값은 이 화면이 쥐고 있다가(오류가 나도 고친 값이 남는다)
  * 저장을 누르면 확인 창이 지금 값 → 바꿀 값을 보인다. 넓히는 바꿈(켬·문턱 내림·갈래 더함·두 번째 모델 거절 켬)은 까닭을 받는다 —
  * 서버(setAuditHold)도 같은 규칙으로 막는다. 화면이 본 값을 함께 보내 그 사이 바뀌었으면 거절된다. 저장되면 페이지가 새 값으로 다시 그린다(key).
- * 끄거나 좁혀도 이미 건 보류는 남는다 — 풀려면 옆의 '보류 모두 풀기'다.
+ * 끄거나 좁혀도 이미 건 보류는 남는다 — 풀려면 정책 처리의 '보류 풀기'(거르기로 골라, 되돌릴 수 있게)다.
  */
 export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
   const toast = useAdminToast();
@@ -88,30 +88,6 @@ export function AuditHoldSettingsForm({ hold }: { hold: AuditHold }) {
           className="min-h-10 self-start rounded-lg border border-accent bg-accent px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50">
           보류 설정 저장…</button>} />
     </div>
-  );
-}
-
-/** 보류 모두 풀기 — 아무것도 내리지 않고 보류된 제품을 목록에 돌려놓는다. 확인 창에서 까닭을 받는다 */
-export function ReleaseAllHolds({ held }: { held: number }) {
-  const toast = useAdminToast();
-  return (
-    <ConfirmAction tone="neutral" title={`보류 ${held.toLocaleString('ko-KR')}건을 모두 풉니다`} confirmLabel="보류 모두 풀기"
-      summary={<ul>
-        <li>아무것도 내리지 않습니다. 보류된 제품이 공개 목록·검색·sitemap 에 돌아옵니다.</li>
-        <li>푼 제품의 답이 있는 항목은 다시 보류하지 않습니다. 사람 결정은 남기지 않으므로, 지금 감사의 항목은 내릴 후보에 그대로 남고
-          지난 감사의 항목은 다음 감사가 다시 물을 때 보입니다(제품 기록에는 &lsquo;보류 모두 풀기&rsquo;로 남습니다).</li>
-        <li>자동 보류가 켜져 있으면 새 감사 답은 다시 보류될 수 있습니다 — 멈추려면 먼저 끄세요.</li>
-      </ul>}
-      note={{ label: '왜 푸는지 (기록에 남습니다)', placeholder: '예: 문턱을 잘못 잡음', optional: true, maxLength: 500 }}
-      onConfirm={async ({ note }) => {
-        const form = new FormData();
-        form.set('note', note ?? '');
-        const result = await releaseAuditHolds(form);
-        toast.show(resultToast(result, { message: result?.message ?? '보류를 풀었습니다', link: { label: '기록 보기', href: '/admin/activity?group=takedown' } }));
-        return result;
-      }}
-      trigger={(open) => <button type="button" onClick={open} disabled={held === 0}
-        className="min-h-10 rounded-lg border border-line px-3 py-1.5 text-[13px] font-semibold text-fg-2 disabled:opacity-50">보류 모두 풀기</button>} />
   );
 }
 

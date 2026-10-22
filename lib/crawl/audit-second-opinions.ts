@@ -3,6 +3,7 @@ import { productAuditSecondOpinions } from "@/lib/db/schema";
 import { AUDIT_REASON_RULES } from "./audit-reason-category";
 import { CATALOG_EXCEPTION_FAMILIES, CATALOG_LIKE_REASON, QWEN_AUTO_MIN_CONFIDENCE } from "./second-opinion-rules";
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
+import { CONFIDENCE_FLOOR_SOURCES } from "./audit-import-sources";
 
 /**
  * 감사 답에 대한 두 번째 의견(0110) — 다른 모델이 같은 감사 항목을 다시 본 것(product_audit_second_opinions).
@@ -56,8 +57,18 @@ const exceptedFamily = CATALOG_EXCEPTION_FAMILIES.length
 export function countedSecondReject(itemId: SQL, reason: SQL, autoOpinions: boolean): SQL {
   return sql`exists (select 1 from ${productAuditSecondOpinions} o2 where o2.item_id = ${itemId} and o2.decision = 'reject'
     and not (${exceptedFamily} and ${catalogLikeReasonSql(reason)})
-    and (o2.source is distinct from ${QWEN_V2_AUTO_SOURCE} or (${autoOpinions} and o2.confidence >= ${QWEN_AUTO_MIN_CONFIDENCE})))`;
+    and (o2.source is distinct from ${QWEN_V2_AUTO_SOURCE} or (${autoOpinions} and o2.confidence >= ${QWEN_AUTO_MIN_CONFIDENCE}))
+    and ${flooredSourceCounts})`;
 }
+
+/**
+ * 확신 하한이 있는 올린 출처(audit-import-sources.ts CONFIDENCE_FLOOR_SOURCES — m1 화면 재판정)의 의견은 하한 이상일 때만 센다
+ * (product-audit-hold.ts countedOpinion 과 같다). 표가 비면 참
+ */
+const flooredSourceCounts = Object.keys(CONFIDENCE_FLOOR_SOURCES).length
+  ? sql`(case ${sql.join(Object.entries(CONFIDENCE_FLOOR_SOURCES).map(([source, floor]) =>
+    sql`when o2.source = ${source} then coalesce(o2.confidence >= ${floor}, false)`), sql` `)} else true end)`
+  : sql`true`;
 
 /** 그 항목의 두 번째 거절 가운데 카탈로그 예외로 세지 않은 것(Qwen 거절·카탈로그 같은 항목)이 있다 */
 export function excludedSecondReject(itemId: SQL, reason: SQL): SQL {
