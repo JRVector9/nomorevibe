@@ -17,7 +17,7 @@ import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
 import { AuditFinding } from "./AuditFinding";
 import { AuditGroups } from "./AuditGroups";
-import { AuditHoldSettingsForm, CancelAudit, ReleaseAllHolds, RestartStalledAudit, StartAudit, SwitchAuditModel } from "./AuditControls";
+import { AuditHoldSettingsForm, CancelAudit, RestartStalledAudit, StartAudit, SwitchAuditModel } from "./AuditControls";
 import { ScrollTable } from "../components/ScrollTable";
 import { ReasonLanguageToggle, ReasonText } from "../review/ReasonText";
 import { pageWindow } from "../paging";
@@ -31,6 +31,9 @@ import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { listPolicyRuns, policyFilterOptions } from "@/lib/crawl/audit-policy";
 import { PolicyBuilder, type PolicyPreset } from "./PolicyBuilder";
 import { PolicyRuns, type PolicyRunRow } from "./PolicyRuns";
+import { ImportOpinions } from "./ImportOpinions";
+import { latestStagedImport } from "@/lib/crawl/audit-second-opinion-upload";
+import { QWEN_VISION_M1_SOURCE } from "@/lib/crawl/audit-import-sources";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -61,7 +64,7 @@ type View = keyof typeof VIEWS;
 const STATUS: Record<string, string> = { running: "진행 중", done: "끝남", cancelled: "중단됨" };
 const count = (value: number) => value.toLocaleString("ko-KR");
 
-type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string; reason?: string }> };
+type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: string; reason?: string; preset?: string }> };
 
 /**
  * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
@@ -74,7 +77,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const { view: rawView, page: rawPage, tab: rawTab, reason: rawReason } = await searchParams;
+  const { view: rawView, page: rawPage, tab: rawTab, reason: rawReason, preset } = await searchParams;
   // 사유 갈래 — 모델의 사유 문장을 낱말로 나눈 것(audit-reason-category). 판단은 바꾸지 않고 묶어 보기만 한다
   const reason: AuditReasonCategory | null = isAuditReasonCategory(rawReason) ? rawReason : null;
   const parsedPage = Number(rawPage ?? 1);
@@ -90,13 +93,14 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
-  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns] = await Promise.all([
+  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
     tab === "history" ? auditDecisionHistory() : Promise.resolve([]),
     tab === "policy" ? policyFilterOptions() : Promise.resolve(null),
     tab === "policy" ? listPolicyRuns() : Promise.resolve([]),
+    tab === "policy" ? latestStagedImport() : Promise.resolve(null),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
@@ -176,7 +180,9 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           열린 감사 거절을 한 건씩 누르지 않고 <b className="font-semibold">정책으로</b> 닫습니다. 거르기를 만들어 미리 보고(수·사유 갈래별 수·표본·건너뛸 것과 까닭),
           손댈 수를 그대로 적어 적용합니다. 적용은 몇십 건씩 나눠 돌고, 실행 하나를 통째로 되돌릴 수 있습니다. 주인 있는 제품은 묶어서 내리지 않습니다.
         </p>
-        <PolicyBuilder reviewers={policyOptions?.reviewers ?? []} sources={policyOptions?.sources ?? []} presets={policyPresets(campaign)} />
+        <PolicyBuilder reviewers={policyOptions?.reviewers ?? []} sources={policyOptions?.sources ?? []} presets={policyPresets(campaign)}
+          initialPreset={preset ?? null} />
+        <ImportOpinions staged={stagedImport ? { ...stagedImport, createdAt: formatListTime(stagedImport.createdAt, now) } : null} />
         <PolicyRuns runs={policyRuns.map((run): PolicyRunRow => ({ ...run, createdAt: formatListTime(run.createdAt, now),
           appliedAt: run.appliedAt ? formatListTime(run.appliedAt, now) : null, undoneAt: run.undoneAt ? formatListTime(run.undoneAt, now) : null,
           label: POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
@@ -302,6 +308,15 @@ function policyPresets(campaign: AuditOverview["campaign"]): PolicyPreset[] {
     { key: "unheld-alone", label: "확신 0.95 이상 · 보류 아님 · 2차 없음", action: "none",
       hint: "대부분 Qwen 이 감사한 것(카탈로그 예외·확신 문턱으로 보류하지 않은 것)",
       filter: { confidenceMin: 0.95, held: "not_held", second: "none", owner: "unowned" } },
+    { key: "held", label: "보류 중 전체", action: "release",
+      hint: "'보류 모두 풀기'의 고른 판 — 거르기를 더 좁혀 풀거나 유지합니다. 실행째 되돌릴 수 있습니다",
+      filter: { held: "held" } },
+    { key: "m1-approve", label: "m1 화면 재판정 승인", action: "keep",
+      hint: "스크린샷까지 본 m1 Qwen 이 승인한 것 — 표본을 보고 유지합니다(보류면 풀립니다)",
+      filter: { second: "approve", secondSource: QWEN_VISION_M1_SOURCE } },
+    { key: "m1-reject", label: "m1 화면 재판정 거절 · 보류 중", action: "remove",
+      hint: "감사 모델과 스크린샷까지 본 m1 Qwen 이 모두 거절한 보류 — 내리기 후보(두 번째 모델 승인이 있으면 건너뜀)",
+      filter: { second: "reject", secondSource: QWEN_VISION_M1_SOURCE, held: "held", confidenceMin: 0.95, owner: "unowned" } },
   ];
 }
 
@@ -410,7 +425,7 @@ function AuditHistory({ rows, korean, now }: { rows: Awaited<ReturnType<typeof a
 }
 
 /**
- * 감사 보류 — 지금 켜져 있는지, 어떤 문으로 거는지(확신·사유 갈래·두 번째 모델), 보류 중인 수와 갈래별 수. 설정과 '보류 모두 풀기'.
+ * 감사 보류 — 지금 켜져 있는지, 어떤 문으로 거는지(확신·사유 갈래·두 번째 모델), 보류 중인 수와 갈래별 수. 설정과 '보류 골라 풀기'(정책 처리).
  * 보류는 차단이 아니다 — 상태는 그대로이고 상세 주소는 열린다. 사람이 유지·내리기·차단 해제하면 풀린다(product-audit-hold.ts)
  */
 function HoldPanel({ overview, heldReasons, qwen, now }: {
@@ -453,8 +468,9 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
       {/* 저장된 값이 바뀌면 새로 그린다 — 오류가 나면 고친 값을 그대로 둔다 */}
       <AuditHoldSettingsForm key={JSON.stringify(hold)} hold={hold} />
       <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-        <ReleaseAllHolds held={held} />
-        <span className="text-[13px] text-fg-3">끄거나 문턱·갈래를 좁혀도 이미 건 보류는 남습니다. 모두 풀면 목록에 돌아오고, 감사 거절 목록에는 그대로 남습니다.</span>
+        <Link href="/admin/audit?tab=policy&preset=held" className="admin-button">보류 골라 풀기·유지·내리기 →</Link>
+        <span className="text-[13px] text-fg-3">끄거나 문턱·갈래를 좁혀도 이미 건 보류는 남습니다. 정책 처리에서 거르기로 골라 미리 보고 풀며(목록에 돌아오고 감사 거절
+          목록에는 남음), 실행째 되돌릴 수 있습니다 — &lsquo;보류 모두 풀기&rsquo;를 대신합니다.</span>
       </div>
     </section>
   );

@@ -5,6 +5,9 @@ import { currentAdmin } from '@/lib/auth/admin';
 import { applyAuditPolicyChunk, policyRunExceptions, previewAuditPolicy, startAuditPolicyRun, startAuditPolicyUndo, undoAuditPolicyChunk,
   type PolicyPreview, type PolicyRunProgress } from '@/lib/crawl/audit-policy';
 import { policyRequestSchema, policyStartSchema } from '@/lib/crawl/audit-policy-filter';
+import { isImportSource } from '@/lib/crawl/audit-import-sources';
+import { discardImport, IMPORT_STAGE_MAX_LINES, previewImport, stageImportLines, startImportApply, type ImportPreview,
+  type ImportStageSummary } from '@/lib/crawl/audit-second-opinion-upload';
 import { logger } from '@/lib/observability/logger';
 import { webWriteAction } from '@/lib/operations/dr/web-gate';
 
@@ -105,4 +108,57 @@ export const policyRunExceptionsAction = webWriteAction(async function policyRun
   const id = runIdOf(runId);
   if (!id) return BAD_INPUT;
   return { ok: true, value: await policyRunExceptions(id) };
+});
+
+/**
+ * 두 번째 의견 파일 올리기 — 화면이 파일을 줄로 나눠 몇백 줄씩 보낸다(본문 1MB 상한). 첫 묶음은 runId 없이, 마지막 묶음은 final.
+ * 줄은 서버가 다시 읽는다(audit-import-sources.ts). 이 단계는 감사 항목·의견·보류를 바꾸지 않는다
+ */
+export const stageImportAction = webWriteAction(async function stageImportAction(input: { runId?: unknown; source?: unknown; lines?: unknown; final?: unknown }):
+  Promise<PolicyActionResult<{ runId: number; status: string; summary: ImportStageSummary }>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const runId = input?.runId === null || input?.runId === undefined ? null : runIdOf(input.runId);
+  const lines = Array.isArray(input?.lines) && input.lines.every((line) => typeof line === 'string') ? input.lines as string[] : null;
+  if (!isImportSource(input?.source) || !lines || lines.length > IMPORT_STAGE_MAX_LINES || (input.runId != null && runId === null)) return BAD_INPUT;
+  const result = await stageImportLines({ runId, source: input.source, lines, final: input.final === true, by: admin.login });
+  if (!result.ok) return result;
+  return { ok: true, value: { runId: result.runId, status: result.status, summary: result.summary } };
+});
+
+/** 올린 의견의 미리보기 — 읽기만. supersede: 대체를 켠 셈으로 막힌 것을 센다(대체 대상 목록은 늘 보인다) */
+export const previewImportAction = webWriteAction(async function previewImportAction(runId: unknown, supersede: unknown):
+  Promise<PolicyActionResult<ImportPreview>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const id = runIdOf(runId);
+  if (!id) return BAD_INPUT;
+  const result = await previewImport({ runId: id, supersede: supersede === true });
+  if (!result.ok) return result;
+  return { ok: true, value: result.preview };
+});
+
+/** 올린 의견 적용을 시작한다 — 적을 수를 그대로 적어야. 그 뒤 화면이 applyPolicyChunkAction 을 끝날 때까지 부른다 */
+export const startImportApplyAction = webWriteAction(async function startImportApplyAction(input: { runId?: unknown; supersede?: unknown; expected?: unknown }):
+  Promise<PolicyActionResult<{ runId: number; planned: number }>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const id = runIdOf(input?.runId);
+  const expected = Number(input?.expected);
+  if (!id || !Number.isSafeInteger(expected) || expected < 1) return BAD_INPUT;
+  const result = await startImportApply({ runId: id, supersede: input.supersede === true, expected, by: admin.login });
+  if (!result.ok) return result;
+  logger.info('admin.audit_import_started', { run: id, supersede: input.supersede === true, expected, login: admin.login });
+  return { ok: true, value: { runId: result.runId, planned: result.planned } };
+});
+
+/** 적용 전 올리기를 버린다 */
+export const discardImportAction = webWriteAction(async function discardImportAction(runId: unknown): Promise<PolicyActionResult<{ discarded: boolean }>> {
+  const admin = await currentAdmin();
+  if (!admin) return UNAUTHORIZED;
+  const id = runIdOf(runId);
+  if (!id) return BAD_INPUT;
+  const discarded = await discardImport({ runId: id });
+  revalidatePath('/admin/audit');
+  return discarded ? { ok: true, value: { discarded } } : { ok: false, error: '이미 적용했거나 버린 올리기입니다.' };
 });

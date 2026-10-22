@@ -9,12 +9,13 @@ import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-cate
  */
 
 /** 정책이 할 수 있는 일 — 내리기(차단, 지금의 묶어 내리기와 같은 뜻)·유지(사람의 유지와 같은 뜻)·보류 풀기(보류 중인 것만) */
-export const POLICY_ACTIONS = ["remove", "keep"] as const;
+export const POLICY_ACTIONS = ["remove", "keep", "release"] as const;
 export type PolicyAction = (typeof POLICY_ACTIONS)[number];
 
 export const POLICY_ACTION_LABELS: Record<PolicyAction, string> = {
   remove: "내리기(차단)",
   keep: "유지",
+  release: "보류 풀기(목록에 돌려놓기)",
 };
 
 /** 유지의 기간 — 사람의 유지는 90일(KEEP_DAYS). 페이지 내용(source_hash)이 바뀌면 기간과 상관없이 다음 감사에 다시 든다 */
@@ -86,6 +87,7 @@ export const POLICY_SKIP_LABELS: Record<string, string> = {
   kept: "그 제품에 살아 있는 유지가 있음(다른 항목을 사람이 유지로 정함)",
   superseded: "그 제품에 더 새 감사 답이 있음 — 옛 거절로 내리지 않습니다",
   not_held: "보류 중이 아님",
+  not_open: "이제 열린 거절이 아님(사람이 정함·거절이 아님·내려감)",
   changed: "미리본 뒤 바뀜(사람이 정함·내려감·거르기 밖)",
   product_changed: "제품이 지워졌거나 주소(slug)가 바뀜",
   error: "적용 중 오류",

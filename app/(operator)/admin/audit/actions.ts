@@ -5,7 +5,6 @@ import { currentAdmin } from '@/lib/auth/admin';
 import { cancelProductAudit, GROUP_REMOVE_MAX, GROUP_SCOPES, keepAuditedProduct, removeAuditedProduct, removeAuditedProducts,
   startProductAudit, switchAuditReviewer, type AuditGroupScope } from '@/lib/crawl/product-audit';
 import { auditReviewerLabel } from '@/lib/crawl/product-audit-reviewer';
-import { releaseAllAuditHolds } from '@/lib/crawl/product-audit-hold';
 import { isAuditReasonCategory } from '@/lib/crawl/audit-reason-category';
 import { setAuditHold } from '@/lib/crawl/settings';
 import { crawlSettingsSchema } from '@/lib/crawl/settings-schema';
@@ -158,7 +157,7 @@ export const switchAuditModel = webWriteAction(async function switchAuditModel(f
 
 /**
  * 감사 보류의 스위치·문턱·사유 갈래·두 번째 모델 거절을 바꾼다. 화면이 본 값(expected)과 잠근 행을 견줘 다르면 쓰지 않는다 —
- * 작업 로그는 setAuditHold 가 같은 트랜잭션에 남긴다. 끄거나 좁혀도 이미 건 보류는 남는다(풀려면 '보류 모두 풀기').
+ * 작업 로그는 setAuditHold 가 같은 트랜잭션에 남긴다. 끄거나 좁혀도 이미 건 보류는 남는다(풀려면 정책 처리의 '보류 풀기').
  */
 export const saveAuditHold = webWriteAction(async function saveAuditHold(_previous: AuditActionState, form: FormData): Promise<AuditActionState> {
   const admin = await currentAdmin();
@@ -177,22 +176,6 @@ export const saveAuditHold = webWriteAction(async function saveAuditHold(_previo
   logger.info('admin.audit_hold_saved', { login: admin.login, enabled: result.auditHold.enabled });
   revalidatePath('/admin/audit');
   return { message: result.auditHold.enabled ? '보류 설정을 저장했습니다.' : '자동 보류를 껐습니다. 이미 건 보류는 남아 있습니다.' };
-});
-
-/**
- * 보류를 모두 푼다 — 문턱을 잘못 잡았을 때 되돌리는 길. 아무것도 내리지 않고, 푼 제품은 목록에 돌아온다.
- * 푼 항목은 다시 보류하지 않는다(새 감사의 새 항목은 걸릴 수 있다). 제품마다 기록이, 작업 로그에 한 줄이 남는다.
- */
-export const releaseAuditHolds = webWriteAction(async function releaseAuditHolds(form: FormData): Promise<AuditActionState> {
-  const admin = await currentAdmin();
-  if (!admin) return UNAUTHORIZED;
-  const note = String(form.get('note') ?? '').trim().slice(0, 500) || null;
-  const released = await releaseAllAuditHolds({ by: admin.login, note });
-  await recordAdminAction(admin.login, { action: 'audit-hold-release-all', target: 'product_audit', detail: { released, note } });
-  logger.info('admin.audit_hold_released', { released, login: admin.login });
-  revalidatePath('/admin/audit');
-  revalidatePath('/admin/products');
-  return { message: `보류 ${released.toLocaleString('ko-KR')}건을 풀었습니다. 목록에 돌아옵니다.` };
 });
 
 /** 요청 번호 — 폼이 하나만 싣는다 */

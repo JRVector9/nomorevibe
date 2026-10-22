@@ -14,7 +14,8 @@ import { describePolicyFilter, policyFilterSchema, stratifiedQuotas, type Policy
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { AUDIT_HOLD_ACTION, AUDIT_HOLD_PURGE, AUDIT_RELEASE_PURGE, auditItemModel, releaseAuditHold, unownedPublic } from "./product-audit-hold";
 import { auditBanReason, GROUP_REMOVE_MIN_CONFIDENCE } from "./product-audit";
-import { getSettings } from "./settings";
+import { getSettings, lockedSettings } from "./settings";
+import { importHoldEffect } from "./audit-import-gate";
 
 /**
  * 감사 정책 처리(0116, 2026-10-22) — 열린 감사 거절을 거르기로 골라 한 번에 닫는다. 미리 보고, 수를 적어 적용하고, 실행 하나를 통째로 되돌린다.
@@ -108,7 +109,7 @@ export function policyFilterSql(filter: PolicyFilter, ctx: PolicyContext): SQL {
  * (주인 있음 → 확신 0.95 미만 → 갈림) 두 번째 모델의 승인도 뺀다. 그 제품의 다른 항목도 본다 — 살아 있는 유지가 있거나(사람이 지난 감사의
  * 보류 항목을 유지로 정함) 더 새 감사 답이 있으면(보류 조건 holdableItem 과 같은 뜻) 내리지 않는다. 차례가 곧 보이는 까닭이다
  */
-function skipSql(action: PolicyAction | "release", ctx: PolicyContext): SQL {
+function skipSql(action: PolicyAction, ctx: PolicyContext): SQL {
   if (action === "remove") {
     const split = secondOpinionFilter("split", sql`i.id`, sql`i.ai_reason`,
       { primary: { provider: sql`i.ai_provider`, model: auditItemModel("i") }, autoOpinions: ctx.autoOpinions });
@@ -126,7 +127,7 @@ function skipSql(action: PolicyAction | "release", ctx: PolicyContext): SQL {
 }
 
 /** 한 줄 — 미리보기·적용 전 다시 보기·만들기가 같은 SELECT 를 쓴다. extra 는 더 거는 조건(i.id = …) */
-function baseSql(filter: PolicyFilter, action: PolicyAction | "release", ctx: PolicyContext, extra?: SQL): SQL {
+function baseSql(filter: PolicyFilter, action: PolicyAction, ctx: PolicyContext, extra?: SQL): SQL {
   return sql`select i.id as item_id, i.product_id, i.campaign_id, p.slug, p.name, p.url, p.status, i.ai_reason as reason,
       i.ai_confidence as confidence, ${auditReasonCategorySql(sql`i.ai_reason`)} as branch, ${skipSql(action, ctx)} as skip,
       (p.audit_hold_at is not null) as held, (not ${unownedSql()}) as owned,
@@ -138,7 +139,8 @@ function baseSql(filter: PolicyFilter, action: PolicyAction | "release", ctx: Po
 async function policyContext(latestOverride?: number): Promise<PolicyContext | null> {
   const [settings, [row]] = await Promise.all([getSettings(),
     db.select({ id: sql<number | null>`max(${productAuditCampaigns.id})` }).from(productAuditCampaigns)]);
-  const latest = latestOverride ?? row?.id ?? null;
+  // 실행이 굳힌 마지막 감사(정책 처리) — 없으면(올리기·연장) 지금의 마지막 감사
+  const latest = latestOverride || row?.id || null;
   return latest ? { latest, autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled } : null;
 }
 
@@ -262,9 +264,9 @@ export type PolicyRunProgress = {
 
 export type PolicyResult<T> = ({ ok: true } & T) | { ok: false; error: string };
 
-const ACTIVE_RUN = "다른 정책 실행이 적용·되돌리기 중입니다. 그것을 끝내거나 되돌린 뒤에 시작하세요.";
+export const ACTIVE_RUN = "다른 정책 실행이 적용·되돌리기 중입니다. 그것을 끝내거나 되돌린 뒤에 시작하세요.";
 
-async function assertWritable(tx: ProductTransaction): Promise<void> {
+export async function assertWritable(tx: ProductTransaction): Promise<void> {
   if (!(await writerSiteActive(tx))) throw new DrWriterFencedError("site_fenced");
 }
 
@@ -331,7 +333,7 @@ async function recheck(tx: ProductTransaction, run: ProductAuditPolicyRun, itemI
   const filter = policyFilterSchema.parse(run.filter);
   const [row] = await tx.execute<RawRow & { held_at: string | null; hold_item_id: number | null }>(sql`
     select b.*, to_char(hp.audit_hold_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') as held_at, hp.audit_hold_item_id as hold_item_id
-      from (${baseSql(filter, run.action as PolicyAction | "release", { ...ctx, latest: latestOf(run) }, sql`i.id = ${itemId}`)}) b
+      from (${baseSql(filter, run.action as PolicyAction, { ...ctx, latest: latestOf(run) }, sql`i.id = ${itemId}`)}) b
       join ${products} hp on hp.id = b.product_id`);
   return row ?? null;
 }
@@ -477,12 +479,137 @@ const closeKeep: RunHandler = {
   },
 };
 
+/**
+ * 보류 풀기(보류 모두 풀기의 고른 판) — 사람 결정은 남기지 않는다. 그 제품의 답이 있는 열린 항목에 '풀었음'을 적어(SETTLES) 쓸기가 다시
+ * 걸지 않는다. 감사 거절 목록에는 그대로 남는다(사람이 유지·내리기로 닫을 때까지). 되돌리기는 보류를 원래 시각·항목으로 다시 건다
+ */
+const closeRelease: RunHandler = {
+  cdnPerProduct: false,
+  async apply(tx, run, row, by, ctx) {
+    const current = await recheck(tx, run, row.itemId, ctx);
+    if (!current) return skipped("changed");
+    if (current.skip) return skipped(current.skip);
+    const releasedIds = await unreleasedOpenItems(tx, row.productId);
+    const released = await releaseAuditHold(tx, { productId: row.productId, slug: row.slug, actor: by, reason: "policy_release", purge: "none",
+      metadata: { policyRunId: run.id, note: run.note } });
+    if (!released) return skipped("changed");
+    return { state: "applied", before: { ...productBefore(current), releasedIds }, relisted: true };
+  },
+  async undo(tx, run, row, by) {
+    const before = row.before as { status: string; heldAt: string | null; holdItemId: number | null; releasedIds?: number[] };
+    const state = await undoState(tx, row, sql`i.hold_released_at = ri.applied_at`);
+    if (!state?.product_ok) return blocked("product_changed");
+    if (state.human_decision !== null) return blocked("decision_changed");
+    if (state.status !== before.status) return blocked("status_changed");
+    if (state.held || !state.extra) return blocked("hold_changed");
+    if (!state.unowned || state.status !== "seeded") return blocked("owned_now");
+    if (!before.heldAt || !before.holdItemId) return blocked("hold_changed");
+    const held = await restoreHold(tx, { run, row, by, heldAt: before.heldAt, holdItemId: before.holdItemId, releasedIds: before.releasedIds ?? [] });
+    if (!held) throw new PolicyUndoConflict("hold_changed");
+    return { state: "undone", relisted: true };
+  },
+};
+
 /** 되돌리기를 시작한 뒤에 맞지 않음을 알았다 — 트랜잭션을 버리고(이미 지운 결정까지) 그 항목을 되돌리지 못함으로 적는다 */
 class PolicyUndoConflict extends Error {
   constructor(readonly reason: string) { super(`policy_undo_conflict:${reason}`); }
 }
 
-const HANDLERS: Record<string, RunHandler> = { "close:remove": closeRemove, "close:keep": closeKeep };
+/** 올린 의견 한 줄(실행 항목의 payload) — audit-import-sources.ts ImportOpinion */
+type ImportPayload = { model: string; decision: "approve" | "reject" | "needs_review"; confidence: number | null; reason: string | null;
+  inputHash: string | null; shot: boolean };
+type ImportOptions = { source: string; promptVersion: string | null; supersede?: boolean };
+const OPINION_TIME = sql.raw(`'YYYY-MM-DD"T"HH24:MI:SS.US'`);
+
+/**
+ * 두 번째 의견 올리기(audit-second-opinion-upload.ts)의 한 줄 — 옮겨 적기(audit-second-opinion-import.ts)와 같은 뜻이다: 열린 거절에만,
+ * 같은 (항목, 모델)이면 덮어쓰고, 승인이 지금 그 항목으로 보류된 제품에 오면 덮어쓴 뒤의 의견과 지금 설정으로 둘째 문을 다시 가른다.
+ * 맞지 않으면 푼다(second_approve). 사람이 대체를 켰으면 스크린샷까지 본 승인이 글만 본 거절을 대신해 푼다(supersede, audit-import-gate.ts).
+ * 되돌리기는 그 줄이 그대로일 때만(출처·적은 시각) 덮어쓰기 전 의견으로 돌리고(없었으면 지우고), 푼 보류를 원래대로 다시 건다
+ */
+const importOpinion: RunHandler = {
+  cdnPerProduct: false,
+  async apply(tx, run, row) {
+    const line = row.payload as ImportPayload;
+    const options = run.options as ImportOptions;
+    const [item] = await tx.execute<{ open: boolean; reason: string | null; confidence: number | null; model: string | null; status: string;
+      held_at: string | null; hold_item_id: number | null }>(sql`
+      select (i.ai_decision = 'reject' and i.human_decision is null and p.status in ('seeded', 'verified')) as open,
+        i.ai_reason as reason, i.ai_confidence as confidence, ${auditItemModel("i")} as model, p.status,
+        to_char(p.audit_hold_at, ${OPINION_TIME}) as held_at, p.audit_hold_item_id as hold_item_id
+        from ${productAuditItems} i join ${products} p on p.id = i.product_id
+       where i.id = ${row.itemId} and p.id = ${row.productId} and p.slug = ${row.slug}`);
+    if (!item) return skipped("product_changed");
+    if (!item.open) return skipped("not_open");
+    const [existing] = await tx.execute<Record<string, unknown>>(sql`
+      select decision, confidence, reason, input_hash, source, prompt_version, product_id, to_char(created_at, ${OPINION_TIME}) as created_at
+        from ${productAuditSecondOpinions} where item_id = ${row.itemId} and model = ${line.model}`);
+    await tx.insert(productAuditSecondOpinions).values({ itemId: row.itemId, productId: row.productId, model: line.model, decision: line.decision,
+      confidence: line.confidence, reason: line.reason, inputHash: line.inputHash, source: options.source, promptVersion: options.promptVersion })
+      .onConflictDoUpdate({ target: [productAuditSecondOpinions.itemId, productAuditSecondOpinions.model], set: {
+        productId: sql`excluded.product_id`, decision: sql`excluded.decision`, confidence: sql`excluded.confidence`, reason: sql`excluded.reason`,
+        inputHash: sql`excluded.input_hash`, source: sql`excluded.source`, promptVersion: sql`excluded.prompt_version`, createdAt: sql`now()` } });
+    let released: "gate" | "supersede" | null = null;
+    let releasedIds: number[] = [];
+    if (line.decision === "approve" && item.held_at && item.hold_item_id === row.itemId) {
+      const settings = await lockedSettings(tx);
+      const opinions = await tx.select({ model: productAuditSecondOpinions.model, decision: productAuditSecondOpinions.decision,
+        source: productAuditSecondOpinions.source, confidence: productAuditSecondOpinions.confidence })
+        .from(productAuditSecondOpinions).where(eq(productAuditSecondOpinions.itemId, row.itemId));
+      const effect = importHoldEffect({ item: { reason: item.reason, model: item.model, confidence: item.confidence }, opinions,
+        line: { decision: line.decision, confidence: line.confidence, shot: line.shot, source: options.source, model: line.model },
+        hold: settings.auditHold, options: { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }, supersede: Boolean(options.supersede) });
+      if (effect.release) {
+        releasedIds = await unreleasedOpenItems(tx, row.productId);
+        const done = await releaseAuditHold(tx, { productId: row.productId, slug: row.slug, actor: `import:${options.source}`,
+          reason: effect.release === "gate" ? "second_approve" : "supersede", purge: "none",
+          metadata: { policyRunId: run.id, by: run.createdBy, model: line.model, confidence: line.confidence,
+            ...(effect.release === "supersede" ? { superseded: effect.superseded } : {}) } });
+        if (done) released = effect.release;
+        else releasedIds = [];
+      }
+    }
+    return { state: "applied", before: { opinion: existing ?? null, status: item.status, heldAt: item.held_at, holdItemId: item.hold_item_id,
+      releasedIds, released }, relisted: released !== null };
+  },
+  async undo(tx, run, row, by) {
+    const line = row.payload as ImportPayload;
+    const options = run.options as ImportOptions;
+    const before = row.before as { opinion: Record<string, unknown> | null; status: string; heldAt: string | null; holdItemId: number | null;
+      releasedIds: number[]; released: "gate" | "supersede" | null };
+    const [mine] = await tx.execute<{ ours: boolean }>(sql`
+      select coalesce(o.source = ${options.source} and o.created_at = ri.applied_at, false) as ours
+        from ${productAuditPolicyRunItems} ri left join ${productAuditSecondOpinions} o on o.item_id = ri.item_id and o.model = ${line.model}
+       where ri.id = ${row.id}`);
+    if (!mine?.ours) return blocked("opinion_changed");
+    if (before.released) {
+      const state = await undoState(tx, row);
+      if (!state?.product_ok) return blocked("product_changed");
+      if (state.human_decision !== null) return blocked("decision_changed");
+      if (state.status !== before.status) return blocked("status_changed");
+      if (state.held) return blocked("hold_changed");
+      if (!state.unowned || state.status !== "seeded") return blocked("owned_now");
+      if (!before.heldAt || !before.holdItemId
+        || !(await restoreHold(tx, { run, row, by, heldAt: before.heldAt, holdItemId: before.holdItemId, releasedIds: before.releasedIds }))) {
+        throw new PolicyUndoConflict("hold_changed");
+      }
+    }
+    const previous = before.opinion as { decision: string; confidence: number | null; reason: string | null; input_hash: string | null; source: string;
+      prompt_version: string | null; product_id: number; created_at: string } | null;
+    if (!previous) {
+      await tx.delete(productAuditSecondOpinions).where(and(eq(productAuditSecondOpinions.itemId, row.itemId), eq(productAuditSecondOpinions.model, line.model)));
+    } else {
+      await tx.update(productAuditSecondOpinions).set({ decision: previous.decision as ImportPayload["decision"], confidence: previous.confidence,
+        reason: previous.reason, inputHash: previous.input_hash, source: previous.source, promptVersion: previous.prompt_version,
+        productId: previous.product_id, createdAt: sql`${previous.created_at}::timestamp` })
+        .where(and(eq(productAuditSecondOpinions.itemId, row.itemId), eq(productAuditSecondOpinions.model, line.model)));
+    }
+    return { state: "undone", relisted: Boolean(before.released) };
+  },
+};
+
+const HANDLERS: Record<string, RunHandler> = { "close:remove": closeRemove, "close:keep": closeKeep, "close:release": closeRelease,
+  "import:import": importOpinion };
 
 function handlerOf(run: ProductAuditPolicyRun): RunHandler {
   const handler = HANDLERS[`${run.kind}:${run.action}`];
@@ -716,9 +843,12 @@ export type PolicyRunView = {
   counts: Record<string, number>;
 };
 
-/** 최근 실행 — 상태와 항목 상태별 수. 적용 중·되돌리기 중인 것이 맨 위 */
+/**
+ * 최근 실행 — 상태와 항목 상태별 수. 적용 중·되돌리기 중인 것이 맨 위. 버린 올리기와 올리다 만 올리기(staging — 창을 닫았거나 끊김,
+ * 아무것도 적지 않았다)는 빼고, 검사만 한 올리기(staged)는 '검사함 · 적용 전'으로 보인다
+ */
 export async function listPolicyRuns(limit = 15): Promise<PolicyRunView[]> {
-  const runs = await db.select().from(productAuditPolicyRuns).where(sql`${productAuditPolicyRuns.status} <> 'discarded'`)
+  const runs = await db.select().from(productAuditPolicyRuns).where(sql`${productAuditPolicyRuns.status} not in ('discarded', 'staging')`)
     .orderBy(sql`(${productAuditPolicyRuns.status} in ('applying', 'undoing')) desc`, desc(productAuditPolicyRuns.id)).limit(limit);
   if (!runs.length) return [];
   const counts = await db.select({ runId: productAuditPolicyRunItems.runId, state: productAuditPolicyRunItems.state, count: sql<number>`count(*)::int` })

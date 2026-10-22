@@ -20,14 +20,17 @@ export type PolicyPreset = { key: string; label: string; hint: string; filter: P
  * 적용은 손댈 수를 그대로 적어야 열린다. 누르면 서버가 같은 거르기로 다시 골라 수가 같을 때만 실행을 만들고, 화면이 끝날 때까지 나눠 부른다.
  * '그대로 둠'은 미리보기만 하고 아무것도 하지 않는다. 미리보기가 있거나 도는 동안은 자동 갱신을 멈춘다(data-dirty).
  */
-export function PolicyBuilder({ reviewers, sources, presets }: {
+export function PolicyBuilder({ reviewers, sources, presets, initialPreset }: {
   reviewers: { key: string; provider: string; model: string; count: number }[];
   sources: { source: string; count: number }[];
   presets: PolicyPreset[];
+  /** 처음 채울 자주 쓰는 거르기(?preset=) — 감사 탭의 보류 칸이 '보류 골라 풀기·유지'로 연다 */
+  initialPreset?: string | null;
 }) {
   const toast = useAdminToast();
-  const [filter, setFilterState] = useState<PolicyFilter>(EMPTY_POLICY_FILTER);
-  const [action, setActionState] = useState<Choice>('none');
+  const initial = presets.find((preset) => preset.key === initialPreset) ?? null;
+  const [filter, setFilterState] = useState<PolicyFilter>(initial ? { ...EMPTY_POLICY_FILTER, ...initial.filter } : EMPTY_POLICY_FILTER);
+  const [action, setActionState] = useState<Choice>(initial?.action ?? 'none');
   const [preview, setPreview] = useState<PolicyPreview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -174,7 +177,7 @@ export function PolicyBuilder({ reviewers, sources, presets }: {
 
       <div className="flex flex-wrap items-center gap-3 border-t border-line pt-3 text-[13px]">
         <span className="font-semibold text-fg-3">할 일</span>
-        {(['none', 'keep', 'remove'] as Choice[]).map((choice) => (
+        {(['none', 'keep', 'remove', 'release'] as Choice[]).map((choice) => (
           <label key={choice} className="flex min-h-9 items-center gap-1.5">
             <input type="radio" name="policy-action" checked={action === choice} disabled={busy} onChange={() => setAction(choice)} className="size-4 accent-accent" />
             {choice === 'none' ? '그대로 둠(미리보기만)' : POLICY_ACTION_LABELS[choice]}
@@ -187,6 +190,8 @@ export function PolicyBuilder({ reviewers, sources, presets }: {
         갈림 아님 · 두 번째 모델이 승인하지 않음. 나머지는 미리보기에 건너뛸 것으로 까닭과 함께 보입니다. 되돌리기는 차단을 풀고 보류를 다시 겁니다.</p>}
       {action === 'keep' && <p className="text-[13px] text-fg-3">유지는 사람의 유지와 같습니다 — 보류 중이면 풀어 목록에 돌려놓고, 기한 동안·페이지 내용이 그대로인
         동안 다음 감사에서 뺍니다(내용이 바뀌면 기한과 상관없이 다시 봅니다).</p>}
+      {action === 'release' && <p className="text-[13px] text-fg-3">보류 풀기는 &lsquo;보류 모두 풀기&rsquo;의 고른 판입니다 — 고른 보류만 풀어 목록에 돌려놓고 같은 항목으로 다시
+        보류하지 않습니다. 사람 결정은 남기지 않아 감사 거절 목록에는 그대로 남습니다. 보류 중이 아닌 것은 건너뜁니다. 되돌리면 원래 시각·항목으로 다시 보류합니다.</p>}
       {problem && <p className="rounded-lg border border-down/40 bg-down/10 px-3 py-2 text-[13px] text-down" role="alert">{problem}</p>}
 
       {preview && <PreviewPanel preview={preview} action={action} />}
@@ -204,7 +209,7 @@ export function PolicyBuilder({ reviewers, sources, presets }: {
             <input value={typed} inputMode="numeric" onChange={(event) => setTyped(event.target.value)} placeholder={String(preview.eligible)}
               aria-label="손댈 수 다시 적기" className={`${input} w-[7rem] font-mono`} disabled={busy} />
             <button type="button" className="admin-button" data-tone={action === 'remove' ? 'danger' : 'primary'} disabled={!canApply} onClick={apply}>
-              {busy ? '적용 중…' : `${n(preview.eligible)}건 ${action === 'remove' ? '내리기' : '유지'}`}</button>
+              {busy ? '적용 중…' : `${n(preview.eligible)}건 ${action === 'remove' ? '내리기' : action === 'release' ? '보류 풀기' : '유지'}`}</button>
           </div>
         </div>
       )}
@@ -238,7 +243,7 @@ function PreviewPanel({ preview, action }: { preview: PolicyPreview; action: Cho
     <div className="flex flex-col gap-3 border-t border-line pt-3 text-[13px]">
       <p className="tabular-nums text-fg-2">
         <b className="font-semibold">{preview.filterText}</b> — 거르기에 든 것 <b className="font-semibold">{n(preview.matched)}</b>건 ·
-        {action === 'none' ? ' 아무것도 하지 않습니다' : <> {action === 'remove' ? '내릴' : '유지할'} 것 <b className="font-semibold text-accent">{n(preview.eligible)}</b>건
+        {action === 'none' ? ' 아무것도 하지 않습니다' : <> {action === 'remove' ? '내릴' : action === 'release' ? '보류를 풀' : '유지할'} 것 <b className="font-semibold text-accent">{n(preview.eligible)}</b>건
           (그중 보류 중 {n(preview.eligibleHeld)}) · 건너뛸 것 {n(skipped)}건</>}
         {preview.oldestWaitDays !== null && ` · 가장 오래 기다린 것 ${n(preview.oldestWaitDays)}일`}
         {preview.latestCampaignId && ` · 감사 #${preview.latestCampaignId}`}
