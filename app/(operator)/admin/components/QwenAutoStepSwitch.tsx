@@ -19,7 +19,7 @@ type ToggleField = { name: string; label: string };
  * 고친 값이 있는 동안은 자동 갱신을 멈춘다(data-dirty).
  */
 export function QwenAutoStepSwitch({ step, value, title, maxPerTick, enableNotes, extra, choices = [], toggles = [] }: {
-  step: 'auditSecondOpinion' | 'publishedFilter' | 'splitTiebreak';
+  step: 'auditSecondOpinion' | 'publishedFilter' | 'splitTiebreak' | 'screenReview';
   value: StepValue; title: string; maxPerTick: number;
   /** 켤 때(또는 켜 둔 채 넓힐 때) 확인 창에 보일 줄 — 무엇을 사람 없이 정하는지 */
   enableNotes: string[];

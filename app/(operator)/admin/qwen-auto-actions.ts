@@ -11,11 +11,12 @@ export type QwenAutoActionState = { error?: string; message?: string } | null;
 
 const LABEL: Record<QwenAutoStep, string> = {
   auditSecondOpinion: 'Qwen-v2 감사 두 번째 의견', publishedFilter: 'Qwen-v2 공개분 2차 거르기', splitTiebreak: '2차 갈림 판가름(Qwen-v2)',
-  heldRetry: 'Qwen-v2 보류 재심사',
+  heldRetry: 'Qwen-v2 보류 재심사', screenReview: '화면 판별(m1 Qwen 화면+글)',
 };
 const PATHS: Record<QwenAutoStep, string[]> = {
   auditSecondOpinion: ['/admin/audit', '/admin/status'], publishedFilter: ['/admin/audit', '/admin/review'],
   splitTiebreak: ['/admin/review', '/admin'], heldRetry: ['/admin/review', '/admin', '/admin/status'],
+  screenReview: ['/admin/audit', '/admin/status'],
 };
 
 /**

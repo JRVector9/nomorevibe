@@ -108,7 +108,9 @@ function emptyResult(read: number, dryRun: boolean): SecondOpinionImport {
  * 그때는 승인·거절 모두 제품 세대를 잡고, 의견을 적기 전에 감사 항목을 잠근다(보류 쓸기와 같은 차례: 세대 → 항목 → 설정 행).
  */
 export async function writeAuditSecondOpinions(database: Database, rows: SecondOpinionRow[],
-  options: { dryRun: boolean; source: string; lease?: JobLease; auto?: { actor: string; close?: boolean; qwenSwitch?: boolean } },
+  options: { dryRun: boolean; source: string; lease?: JobLease;
+    /** step: 쓰는 순간 다시 볼 스위치(qwenAuto 의 단계) — 기본 감사 두 번째 의견, 화면 판정 잡은 screenReview */
+    auto?: { actor: string; close?: boolean; qwenSwitch?: boolean; step?: "auditSecondOpinion" | "screenReview" } },
   result: SecondOpinionImport = emptyResult(rows.length, options.dryRun)):
   Promise<SecondOpinionImport> {
   const source = options.source.trim().slice(0, 40) || "import";
@@ -166,7 +168,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
           .orderBy(asc(productAuditItems.id)).for("update");
       }
       // 자동 의견은 쓰는 순간 그 단계의 스위치를 다시 본다 — 끈 뒤에 받은 답은 쓰지 않는다(잠금은 보류 걸기와 같은 차례: 세대 뒤 설정 행)
-      if (options.auto && options.auto.qwenSwitch !== false && !(await lockedQwenAuto(tx)).auditSecondOpinion.enabled) {
+      if (options.auto && options.auto.qwenSwitch !== false && !(await lockedQwenAuto(tx))[options.auto.step ?? "auditSecondOpinion"].enabled) {
         result.skipped.switched_off += accepted.length;
         if (options.lease) await assertJobLeaseAtWallTime(tx, options.lease);
         return;
@@ -192,7 +194,7 @@ export async function writeAuditSecondOpinions(database: Database, rows: SecondO
         for (const row of accepted) {
           const outcome: AutoCloseResult = locked.has(row.productId)
             ? await autoCloseOpinion(tx, { itemId: row.itemId, productId: row.productId, slug: items.get(row.itemId)!.slug!, model: row.model,
-              decision: row.decision, confidence: row.confidence, promptVersion: row.promptVersion, actor: options.auto.actor, settings })
+              decision: row.decision, confidence: row.confidence, promptVersion: row.promptVersion, actor: options.auto.actor, settings, source })
             : { action: null, skip: "changed" };
           if (outcome.action === null) tally.left[outcome.skip] = (tally.left[outcome.skip] ?? 0) + 1;
           else if (outcome.action === "kept") tally.kept += 1;

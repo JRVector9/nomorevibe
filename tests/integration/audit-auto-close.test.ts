@@ -415,12 +415,12 @@ describe("글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () =
     expect((await answerDirectly("thin", "reject", 1, "2026-10-30.v3")).autoClose).toEqual({ kept: 0, held: 0, left: { thin_text: 1 } });
     expect((await answerDirectly("edge", "approve", 1, "2026-10-30.v3")).autoClose).toEqual({ kept: 0, held: 0, left: { thin_text: 1 } });
 
-    // 화면 판별 대기 — 공개 중 먼저(확신 높은 순), 그다음 보류 중. 글 충분한 것은 들지 않는다
+    // 화면 판별 대기 — 보류 중 먼저, 그다음 공개 중(확신 높은 순). 글 충분한 것은 들지 않는다
     const queue = await screenReviewQueue();
-    expect(queue.map((row) => [row.slug, row.held, row.textLength])).toEqual([["thin", false, 8], ["edge", false, 299], ["thin-held", true, 8]]);
-    expect(queue[0]).toMatchObject({ url: "https://thin.test", pageText: THIN, owned: false,
+    expect(queue.map((row) => [row.slug, row.held, row.textLength])).toEqual([["thin-held", true, 8], ["thin", false, 8], ["edge", false, 299]]);
+    expect(queue[1]).toMatchObject({ url: "https://thin.test", pageText: THIN, owned: false,
       audit: { confidence: 0.97, reason: CONTENT, category: "content", model: "[MLX] gpt-oss-120b" } });
-    expect(queue[0].opinions).toEqual([expect.objectContaining({ model: "qwen3.8-flash-next", decision: "reject", source: "qwen-v2-auto",
+    expect(queue[1].opinions).toEqual([expect.objectContaining({ model: "qwen3.8-flash-next", decision: "reject", source: "qwen-v2-auto",
       reason: "again" })]);
     expect(await screenReviewCounts()).toEqual({ screenWait: 3, screenWaitPublic: 2, split: 0 });
     const status = await qwenSecondOpinionStatus(await getSettings());

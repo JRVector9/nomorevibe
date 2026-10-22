@@ -10,6 +10,7 @@ import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { reviewHumanQueue } from "@/lib/crawl/jobs/human-review";
 import { checkGrokSession } from "@/lib/crawl/jobs/grok-session";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { reviewThinPagesByScreen } from "@/lib/screen-review/job";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
@@ -85,6 +86,8 @@ export const JOBS: Record<string, AnyJob> = {
   "human-deepseek-review": reviewHumanQueue,
   /** 공개된 제품을 1차 심사 글로 다시 본다 — 찾아 적기만 하고, 내리는 것은 사람이다 */
   "product-audit": auditPublishedProducts,
+  /** 글이 얇은 감사 거절을 그려서 화면과 글로 m1 Qwen 에 묻는다 — 두 번째 의견(qwen-vision-m1)으로 적고 답으로 닫는다 */
+  "audit-screen-review": (ctx) => reviewThinPagesByScreen(ctx as JobContext<null>),
 
   /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
   "crawl-publish": publishCandidates,

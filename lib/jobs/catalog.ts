@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -39,6 +39,11 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 동시 호출이 늘지 않는다. 새 후보가 기다리면 틱마다 먼저 양보한다(lib/crawl/jobs/product-audit.ts).
    */
   { name: "product-audit", role: "reviewer", intervalMs: 60_000 },
+  /**
+   * 화면 판별 — 글이 얇은(JS 로 그리는) 감사 거절을 화면 서버(m1-studio)로 그려 m1 Qwen 에 글+첫 화면으로 묻는다(lib/screen-review/job.ts).
+   * 한 건이 그리기 수~40초 + 묻기 12~90초라 따로 도는 줄(screen)에 둔다 — 기본 줄의 심사·감사를 막지 않는다. 설정 qwenAuto.screenReview 를 켜야 일한다
+   */
+  { name: "audit-screen-review", role: "reviewer", intervalMs: 60_000, lane: "screen" },
   { name: "crawl-publish", role: "publisher", intervalMs: 5 * 60_000 },
   /**
    * 내려간 제품을 Cloudflare 에서 지운다(cdn_purges). 발행 워커는 5분마다 한 번 도는 잡뿐이라 한가하고,

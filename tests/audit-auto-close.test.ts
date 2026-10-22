@@ -75,6 +75,18 @@ describe("글이 적은 페이지·엇갈림(2026-10-22 사용자 결정)", () =
     // 다른 모델의 승인은 m1 의 승인을 막지 않는다
     expect(verdict("approve", 0.95, { otherApprove: true })).toEqual({ action: "keep" });
   });
+
+  it("화면 판정의 답은 글이 적어도 닫는다 — 엇갈림은 화면을 본 의견끼리 센 값(otherReject·otherApprove)으로 가른다", () => {
+    expect(verdict("approve", 0.95, { thinText: true, screen: true })).toEqual({ action: "keep" });
+    expect(verdict("reject", 0.95, { thinText: true, screen: true })).toEqual({ action: "hold" });
+    expect(verdict("approve", 0.95, { thinText: true, screen: true, otherReject: true })).toEqual({ action: null, skip: "split" });
+    expect(verdict("reject", 0.95, { thinText: true, screen: true, otherApprove: true })).toEqual({ action: null, skip: "split" });
+    // 나머지 문은 그대로다
+    expect(verdict("reject", 0.95, { thinText: true, screen: true, unowned: false })).toEqual({ action: null, skip: "owned" });
+    expect(verdict("approve", 0.89, { thinText: true, screen: true })).toEqual({ action: null, skip: "low_confidence" });
+    expect(verdict("approve", 0.95, { thinText: true, screen: true, reverted: true })).toEqual({ action: null, skip: "reverted" });
+    expect(verdict("approve", 0.95, { thinText: true, screen: false })).toEqual({ action: null, skip: "thin_text" });
+  });
 });
 
 describe("autoRunInfo", () => {
@@ -83,6 +95,8 @@ describe("autoRunInfo", () => {
     expect(autoRunInfo({ options })).toEqual(options.auto);
     expect(autoRunLabel(autoRunInfo({ options })!)).toBe("m1 자동 숨김 · 2026-10-22(UTC)");
     expect(autoRunLabel({ ...options.auto, action: "keep" })).toBe("m1 자동 유지 · 2026-10-22(UTC)");
+    // 화면 판정 잡의 실행은 따로 보인다
+    expect(autoRunLabel({ ...options.auto, by: "qwen-vision-auto", action: "keep" })).toBe("m1 화면 자동 유지 · 2026-10-22(UTC)");
     for (const value of [{}, { keepDays: 90 }, { auto: null }, { auto: { action: "remove" } }, null, "x"]) expect(autoRunInfo({ options: value })).toBeNull();
   });
 
