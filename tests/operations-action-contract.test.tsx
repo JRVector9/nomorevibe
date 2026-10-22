@@ -218,20 +218,24 @@ describe("조치 계약 — 키·급·숫자·단위·제목·설명·가는 곳
 });
 
 describe("지금 조치 · 쌓인 일 나누기 계약", () => {
-  it("쌓인 일 열쇠는 이 열두 개다 — x-status 는 운영센터 v8 PR9(X 보고)가 더했다", () => {
+  it("쌓인 일 열쇠는 이 열세 개다 — x-status 는 운영센터 v8 PR9(X 보고)가, x-candidates 는 무음 실패 점검(이틀째 후보 0)이 더했다", () => {
     expect([...BACKLOG_KEYS].sort()).toEqual([
       "audit", "audit-stalled", "evidence-backlog", "health-overdue", "held", "intro", "repo-coverage", "repo-gone", "review", "second", "spam-auto-ban",
-      "x-status",
+      "x-candidates", "x-status",
     ]);
   });
 
   it("쌓인 일 열쇠마다 buildActions 가 세우는 줄이 있다 — 죽은 열쇠가 없다", () => {
-    // x-status 줄은 받는 주소가 켜져 있고(비밀 설정) 보고가 끊기거나 깨졌을 때만 선다 — 여기서는 깨진 보고 한 줄을 더한다
+    // x-status 줄은 받는 주소가 켜져 있고(비밀 설정) 보고가 끊기거나 깨졌을 때만 선다 — 여기서는 오류를 보고한 실제 수집 한 줄을 더한다.
+    // x-candidates 는 끝난 실제 수집이 이틀 잇달아 후보 0 일 때 선다(x-status:runs)
     vi.stubEnv("X_STATUS_REPORT_SECRET", "x".repeat(40));
     try {
       const inputs = calmInputs();
+      const hourAgo = new Date(ACTION_NOW.getTime() - 3_600_000).toISOString();
       const withX: ActionInputs = { ...inputs, ops: { ...inputs.ops, observations: [...inputs.ops.observations,
-        { key: "x-status", value: {}, observedAt: new Date(ACTION_NOW.getTime() - 3_600_000).toISOString() }] } };
+        { key: "x-status", value: { v: 1, mode: "live", reads: { used: 10, limit: 10 }, candidates: 0, lastRunAt: hourAgo, lastSuccessAt: null,
+          error: "http_error", sentAt: Math.floor(ACTION_NOW.getTime() / 1000) - 3_600, signedWith: "current" }, observedAt: hourAgo },
+        { key: "x-status:runs", value: { zeroRuns: 2, zeroSince: hourAgo, lastCompletedRunAt: hourAgo, lastCandidates: 0 }, observedAt: hourAgo }] } };
       const keys = new Set(build(withX, brokenWorkerProgress()).map((item) => item.key));
       for (const key of BACKLOG_KEYS) expect(keys.has(key), key).toBe(true);
     } finally {

@@ -25,8 +25,20 @@ export const ACK_ACTION = 'attention-ack';
 export const BACKLOG_KEYS: ReadonlySet<string> = new Set([
   'review', 'second', 'held', 'audit', 'audit-stalled', 'evidence-backlog', 'health-overdue', 'intro', 'repo-gone',
   'spam-auto-ban', 'repo-coverage',
-  // X 수집기 보고 끊김·오류(운영센터 v8 PR9) — 선택 소스 하나라 늘 hold 다
+  // X 수집기 보고 끊김·오류(운영센터 v8 PR9) — 선택 소스 하나라 hold 다(사흘 넘으면 긴급이 되어 숨김을 뚫는다)
   'x-status',
+  // X 수집이 이틀 넘게 후보 0 — 검색어를 다듬는 동안 일부러 둘 수 있어 숨길 수 있다(8일이면 긴급)
+  'x-candidates',
+]);
+
+/**
+ * 긴급이 아니어도 메뉴 배지(주황)에 세는 보류 — 자동 작업이 조용히 실패하던 것들(2026-10-22 무음 실패 점검).
+ * 제 일 못 하는 작업·바깥 오류로 멈춘 단계·생존 확인 광역 보류·Qwen 물러나기·알림/로그인 메일·랭킹 멈춤·X 전달 어긋남.
+ * 이것들은 운영센터를 열기 전에는 알 길이 없다(로그에만 있었다) — 그래서 메뉴에서 보이게 한다. 쌓인 일(BACKLOG_KEYS)과
+ * 원래 있던 보류는 세지 않는다: 늘 떠 있는 추세이거나 제 화면 배지(심사 큐·감사)가 따로 있어, 배지가 늘 켜져 무뎌지지 않게.
+ */
+export const BADGED_HOLD_KEYS: ReadonlySet<string> = new Set([
+  'job-health', 'stage-upstream', 'uptime-held', 'qwen-backoff', 'email-outbox', 'login-email', 'ranking-stale', 'x-delivery',
 ]);
 export const UNACK_ACTION = 'attention-unack';
 

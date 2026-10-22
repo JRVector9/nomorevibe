@@ -9,7 +9,8 @@ const TONE = { ok: "ok", delayed: "warn", failed: "bad", idle: undefined } as co
 
 /**
  * 작업 생존 띠 — 잡 하나가 칩 하나. 마지막 실행이 주기의 2배를 넘으면 지연(주황 ▲), 5배를 넘으면 크게 지연·오류면 실패(빨강 ■).
- * 규칙은 작업 흐름 탭·진단 표와 같은 jobLateness 하나다(job-lateness.ts).
+ * 규칙은 작업 흐름 탭·진단 표와 같은 jobLateness 하나다(job-lateness.ts). 돌기는 하는데 제 일을 못 하거나 성공이 끊긴 잡(job.health —
+ * 조치할 일과 같은 판단)도 보류면 주황, 긴급이면 빨강이고, 칩에는 마지막 실행 대신 마지막 성공을 적는다.
  * 색만으로 가르지 않는다 — 점 모양과 읽히는 상태 글자가 함께 바뀐다(ADM-31).
  *
  * "지금 돌고 있나"를 한 줄에서 본다. 표 세 벌(오른쪽 표·작업 흐름 탭·접힌 표)에 흩어져 있던 것을 줄였다.
@@ -24,7 +25,8 @@ export function JobsStrip({ jobs, now, onOpen }: { jobs: OperationJob[]; now: st
           return (
             <button type="button" key={job.name} className="dash-job" data-tone={TONE[late.state]} onClick={() => onOpen(job)} title={`${job.name} · ${job.status} · ${late.text}`}>
               <StatusDot state={late.state} label={JOB_LABELS[job.name] ?? job.name} />
-              <small>{late.kind === "paused" ? "멈춤" : job.lastRunAt ? formatAgo(job.lastRunAt, now) : "—"}</small>
+              <small>{late.kind === "paused" ? "멈춤" : late.kind === "degraded" ? `성공 ${formatAgo(job.lastSuccessAt, now, "없음")}`
+                : job.lastRunAt ? formatAgo(job.lastRunAt, now) : "—"}</small>
             </button>
           );
         })}

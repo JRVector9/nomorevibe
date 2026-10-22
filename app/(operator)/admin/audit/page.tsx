@@ -9,6 +9,7 @@ import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, classifyAuditReason, groupA
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { SECOND_OPINION_FILTERS, type SecondOpinionFilter } from "@/lib/crawl/audit-second-opinions";
 import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-second-opinion-auto";
+import { qwenDirectServerLabel } from "@/lib/crawl/qwen-direct-review";
 import { QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
 import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
 import { auditReviewer, auditReviewerLabel, auditReviewerSwitched, QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
@@ -392,7 +393,7 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
       {qwen && <div className="flex flex-col gap-1">
         <QwenAutoStepSwitch key={`a:${JSON.stringify(overview.qwenAuto.auditSecondOpinion)}`} step="auditSecondOpinion"
           value={overview.qwenAuto.auditSecondOpinion} title="Qwen-v2 감사 두 번째 의견" maxPerTick={QWEN_AUTO_MAX_PER_TICK}
-          enableNotes={["보류 후보마다 gpu3090 Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto). 확신 0.90 이상만 보류에 반영합니다.",
+          enableNotes={[`보류 후보마다 ${qwenDirectServerLabel()} Qwen-v2 의 두 번째 의견을 받아 적습니다(감사 잡, 출처 qwen-v2-auto). 확신 0.90 이상만 보류에 반영합니다.`,
             "승인은 그 항목의 보류를 풉니다(작업 로그에 남습니다).",
             hold.secondOpinionReject ? "거절은 두 번째 모델 거절로 보류의 까닭이 됩니다 — 카탈로그·디렉터리 같은 것은 빼고."
               : "두 번째 모델 거절로 보류가 꺼져 있어 거절은 보류의 까닭이 되지 않습니다(기록만 남습니다).",
@@ -416,7 +417,8 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
 const ERROR_TARGET = { audit: "감사 두 번째 의견", published: "공개분 2차 거르기" } as const;
 
 /**
- * Qwen-v2 자동 단계(audit-second-opinion-auto.ts) — gpu3090 Qwen 을 바로 불러 감사 거절에 두 번째 의견을 적고, 공개분 2차의 사람 확인 행을 한 번 더 본다.
+ * Qwen-v2 자동 단계(audit-second-opinion-auto.ts) — Qwen 직접 서버를 바로 불러 감사 거절에 두 번째 의견을 적고, 공개분 2차의 사람 확인 행을 한 번 더 본다.
+ * 서버 이름은 설정에서 읽는다(qwenDirectServerLabel — AUDIT_SECOND_OPINION_LABEL 또는 주소의 호스트).
  * 켬/끔·틱당 수, 지난 1시간·24시간에 적은 수(공개분은 그중 유지로 닫은 수), 남은 것, 마지막 오류
  */
 function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
@@ -434,7 +436,7 @@ function QwenStatus({ status, now }: { status: QwenAutoStatus; now: Date }) {
         남은 것 <b className="font-semibold">{count(published.remaining)}</b></p>
       <p className="text-fg-3">{status.model ?? "모델 설정 오류"} · {status.url ?? "주소 설정 오류"} · 글 {status.promptVersion} ·
         마지막으로 돈 때 {at(status.lastRunAt)}{status.givenUp > 0 && ` · 답을 못 받아 그만 물은 것 ${count(status.givenUp)}건`}</p>
-      {status.endpointBackoff && <p className="text-warn">gpu3090 이 탈 나 {at(status.endpointBackoff.until)}까지 모두 물러납니다
+      {status.endpointBackoff && <p className="text-warn">{qwenDirectServerLabel()} 이(가) 탈 나 {at(status.endpointBackoff.until)}까지 모두 물러납니다
         (<span className="font-mono">{status.endpointBackoff.code ?? "qwen_unreachable"}</span>, 연속 {count(status.endpointBackoff.failures)}번) —
         Qwen 직접 감사·두 번째 의견·공개분 거르기·갈림 판가름·보류 재심사가 그동안 묻지 않습니다.</p>}
       {lastError && <p className={recovered ? "text-fg-3" : "text-warn"}>마지막 오류: <span className="font-mono">{lastError.code}</span>
@@ -491,7 +493,7 @@ function CampaignPanel({ overview, now }: { overview: AuditOverview; now: Date }
             <div className="flex flex-wrap items-center gap-2">
               {switchTo && <SwitchAuditModel campaignId={campaign.id} unanswered={Math.max(0, counts.total - counts.reviewed - counts.failed - counts.skipped)}
                 from={{ ...auditReviewer(campaign), label: auditReviewerLabel(auditReviewer(campaign)) }}
-                to={{ model: switchTo.model, label: auditReviewerLabel(switchTo) }} />}
+                to={{ model: switchTo.model, label: auditReviewerLabel(switchTo), server: qwenDirectServerLabel() }} />}
               <CancelAudit />
             </div>
           )}

@@ -5,8 +5,9 @@ import { operationsObservations } from "@/lib/db/schema";
 import { logger } from "@/lib/observability/logger";
 import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 import {
-  parseXStatusReport, xStatusDigest, xStatusSecrets, X_STATUS_CLOCK_WINDOW_SECONDS, X_STATUS_KEY, X_STATUS_MAX_BODY_BYTES,
-  X_STATUS_MIN_INTERVAL_SECONDS, X_STATUS_SIGNATURE_HEADER, X_STATUS_TIMESTAMP_HEADER, type XStatusReport, type XStatusSecretSlot,
+  completedLiveRun, nextXStatusRuns, parseXStatusReport, parseXStatusRuns, xStatusDigest, xStatusSecrets, X_STATUS_CLOCK_WINDOW_SECONDS, X_STATUS_KEY,
+  X_STATUS_MAX_BODY_BYTES, X_STATUS_MIN_INTERVAL_SECONDS, X_STATUS_RUNS_KEY, X_STATUS_SIGNATURE_HEADER, X_STATUS_TIMESTAMP_HEADER,
+  type XStatusReport, type XStatusSecretSlot,
 } from "./x-status";
 
 /**
@@ -94,10 +95,21 @@ export async function recordXStatus({ report, sentAt, signedWith }: XStatusVerif
   if (stored?.recent) return "rate_limited";
   const value = { ...report, sentAt, signedWith };
   // 쓰기 TX — 웹 관문 범위라 fence SHARE 가 첫 lock 이다. 같은 조건을 다시 걸어 동시에 온 보고 중 하나만 쓴다
-  const written = await db.transaction((tx) => tx.insert(operationsObservations).values({ key: X_STATUS_KEY, value, observedAt: dbNow })
-    .onConflictDoUpdate({ target: operationsObservations.key, set: { value, observedAt: dbNow },
-      setWhere: sql`${storedSentAt} < ${sentAt} and ${operationsObservations.observedAt} <= ${dbNow} - ${minInterval}` })
-    .returning({ key: operationsObservations.key }));
+  const written = await db.transaction(async (tx) => {
+    const rows = await tx.insert(operationsObservations).values({ key: X_STATUS_KEY, value, observedAt: dbNow })
+      .onConflictDoUpdate({ target: operationsObservations.key, set: { value, observedAt: dbNow },
+        setWhere: sql`${storedSentAt} < ${sentAt} and ${operationsObservations.observedAt} <= ${dbNow} - ${minInterval}` })
+      .returning({ key: operationsObservations.key });
+    // 끝난 실제 수집이면 후보 기록(x-status:runs)을 같은 TX 에서 고친다 — 이틀째 후보 0 을 알려면 지난 날이 필요하다
+    if (rows.length && completedLiveRun(report)) {
+      const [prior] = await tx.select({ value: operationsObservations.value }).from(operationsObservations)
+        .where(eq(operationsObservations.key, X_STATUS_RUNS_KEY)).for("update");
+      const next = nextXStatusRuns(parseXStatusRuns(prior?.value), report);
+      if (next) await tx.insert(operationsObservations).values({ key: X_STATUS_RUNS_KEY, value: next, observedAt: dbNow })
+        .onConflictDoUpdate({ target: operationsObservations.key, set: { value: next, observedAt: dbNow } });
+    }
+    return rows;
+  });
   return written.length > 0 ? "accepted" : "not_newer";
 }
 

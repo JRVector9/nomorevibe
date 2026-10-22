@@ -42,7 +42,7 @@ const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "time
 export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("search_profile.skipped", { reason: "no_key" });
-    return { done: true };
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search profile worker requires a job lease");

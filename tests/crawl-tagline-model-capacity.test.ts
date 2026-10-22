@@ -142,7 +142,8 @@ it("re-enters a deferred second on the next tick without asking first again", as
 it("no-key, settings-disabled, reuse and no-evidence jobs remain model-free", async () => {
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
   const ctx = { lease: job, cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn() };
-  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true });
+  // 키가 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_key)으로 넘긴다
+  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } });
   vi.stubEnv("ABCLLM_API_KEY", "unit"); mocks.settings.mockResolvedValueOnce({ enabled: false });
   expect(await writeTaglines(ctx)).toEqual({ done: true });
   const reuse = { ...task, written: { sourceHash: member.sourceHash, errorCode: null } } as TaglineTask;

@@ -262,15 +262,21 @@ describe("email-outbox-send", () => {
     vi.stubGlobal("fetch", network);
     const { sendPendingEmails } = await outbox();
     vi.stubEnv("LOGIN_EMAIL_API_KEY", "");
-    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, accepted: 0 });
+    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, accepted: 0, blocked: "sender_unconfigured" });
+    // 잡은 그 틱을 성공이 아니라 제 일 못 함(degraded)으로 넘긴다 — 전에는 경고 로그뿐이라 운영센터가 초록이었다
+    const { sendEmailOutbox } = await import("@/lib/jobs/me/email");
+    const log = vi.fn();
+    expect(await sendEmailOutbox({ cursor: null, save: async () => {}, hasBudget: () => true, log })).toEqual({ done: true, cursor: null,
+      degraded: { code: "sender_unconfigured", detail: "maintenance 에 발신 설정(LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM·PUBLIC_AUTH_SECRET)이 없어 1통이 기다립니다" } });
+    expect(log).toHaveBeenCalledWith("me.email_outbox_tick", expect.not.objectContaining({ blocked: expect.anything() }));
     configureEmail();
     vi.stubEnv("PUBLIC_AUTH_SECRET", "too-short");
-    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, unknown: 0 });
+    expect(await sendPendingEmails()).toMatchObject({ waiting: 1, skipped: 0, unknown: 0, blocked: "sender_unconfigured" });
     expect(network).not.toHaveBeenCalled();
     expect((await rows())[0]).toMatchObject({ state: "pending", attempts: 0, lastError: null });
     // 설정을 고치면 그 줄을 그대로 보낸다
     vi.stubEnv("PUBLIC_AUTH_SECRET", SECRET);
-    expect(await sendPendingEmails()).toMatchObject({ accepted: 1, waiting: 0 });
+    expect(await sendPendingEmails()).toMatchObject({ accepted: 1, waiting: 0, blocked: null });
     expect(network).toHaveBeenCalledTimes(1);
   });
 
@@ -282,7 +288,8 @@ describe("email-outbox-send", () => {
     for (const status of [401, 403, 429]) {
       await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
       const refused = vi.fn(async () => new Response("{}", { status }));
-      expect(await sendPendingEmails({ fetcher: refused as unknown as typeof fetch }), String(status)).toMatchObject({ deferred: 1, rejected: 0, retry: 0 });
+      expect(await sendPendingEmails({ fetcher: refused as unknown as typeof fetch }), String(status))
+        .toMatchObject({ deferred: 1, rejected: 0, retry: 0, blocked: "provider_unavailable" });
       expect(refused).toHaveBeenCalledTimes(1);
       const states = await rows();
       expect(states.map((row) => [row.state, row.attempts])).toEqual([["pending", 0], ["pending", 0]]);
@@ -302,7 +309,7 @@ describe("email-outbox-send", () => {
     try {
       for (let round = 0; round < 6; round += 1) {
         await db.update(emailOutbox).set({ nextAttemptAt: new Date(Date.now() - 1_000) });
-        expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ deferred: 1, unknown: 0 });
+        expect(await sendPendingEmails({ fetcher: fetcher as unknown as typeof fetch })).toMatchObject({ deferred: 1, unknown: 0, blocked: "compose_failed" });
       }
     } finally {
       await db.execute(sql`ALTER TABLE notification_settings RENAME COLUMN locale_test_moved TO locale`);

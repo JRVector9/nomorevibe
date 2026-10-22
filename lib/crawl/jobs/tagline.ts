@@ -30,7 +30,7 @@ const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "time
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("tagline.skipped", { reason: "no_key" });
-    return { done: true };
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   const settings = await getSettings();
   if (!settings.enabled) {

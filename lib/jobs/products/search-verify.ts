@@ -26,7 +26,7 @@ const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "time
 export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("search_verify.skipped", { reason: "no_key" });
-    return { done: true };
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search keyword verification requires a job lease");

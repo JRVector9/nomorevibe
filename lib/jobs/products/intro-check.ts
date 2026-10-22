@@ -61,7 +61,9 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     reportProviderOutcome(result);
     if (!result.ok && STOP.has(result.error)) {
       ctx.log("intro_check.blocked", { ...counts, error: result.error });
-      return { done: true };
+      // 멈추라는 신호(cancelled)는 배포·종료다. 그 밖(인증·CLI 없음·한도·시간 초과)은 성공이 아니다 — 소개 검수가 일을 못 했다
+      return result.error === "cancelled" ? { done: true }
+        : { done: true, degraded: { code: result.error, detail: `소개 검수 ${INTRO_CHECK_MODEL} 호출 실패` } };
     }
   }
   ctx.log("intro_check.done", { ...counts, drained: false });

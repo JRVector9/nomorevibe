@@ -137,7 +137,8 @@ describe("claims 모드 틱", () => {
     const dead = rows.slice(0, 10);
     respond(new Set(dead.map(row => row.url)));
     const events: Logged[] = [];
-    await pingProducts(tick(events));
+    // 판정을 보류한 회차는 성공이 아니다 — 차단기가 열린 다음 회차도 같은 보류로 이어 센다(조치할 일 uptime-held)
+    expect(await pingProducts(tick(events))).toEqual({ done: false, degraded: { code: "broad_failure_held", detail: "확인 30 · 보류 10 · 모름 0" } });
     for (const row of dead) {
       expect(await failuresOf(row)).toBe(0);
       expect(await claimRow(row.id)).toMatchObject({ state: "idle", last_outcome: "split_broad_failure" });
@@ -155,7 +156,7 @@ describe("claims 모드 틱", () => {
     await oracleSuccess(oracle);
     http.safeFetch.mockClear();
     const next: Logged[] = [];
-    await pingProducts(tick(next));
+    expect(await pingProducts(tick(next))).toEqual({ done: false, degraded: { code: "broad_failure_held", detail: "광역 실패 차단기가 열려 확인을 쉽니다" } });
     expect(http.safeFetch).not.toHaveBeenCalled();
     expect(next.map(row => row.event)).toEqual(["uptime.split_applied", "uptime.split_blocked"]);
     expect(next[1].fields).toEqual({ breakerOpen: 1, unconfigured: 0, fenced: 0 });
@@ -168,7 +169,7 @@ describe("claims 모드 틱", () => {
     for (const instance of ["u1c-stranger", OWNERS.oracle.instanceId]) {
       vi.stubEnv("SERVICE_INSTANCE_ID", instance);
       const events: Logged[] = [];
-      await pingProducts(tick(events));
+      expect(await pingProducts(tick(events))).toMatchObject({ done: false, degraded: { code: "split_unconfigured" } });
       expect(events).toEqual([{ event: "uptime.split_blocked", fields: { unconfigured: 1 } }]);
     }
     expect(http.safeFetch).not.toHaveBeenCalled();

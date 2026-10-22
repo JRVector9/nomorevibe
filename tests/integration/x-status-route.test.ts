@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { operationsObservations } from "@/lib/db/schema";
 import { clearAllMemos } from "@/lib/cache/memo";
 import { POST } from "@/app/api/ops/x-status/route";
-import { signXStatus, X_STATUS_KEY, X_STATUS_PREVIOUS_SECRET_ENV, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
+import { signXStatus, X_STATUS_KEY, X_STATUS_PREVIOUS_SECRET_ENV, X_STATUS_RUNS_KEY, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
 import { ensureSchema } from "./setup";
 
 /*
@@ -27,6 +27,7 @@ const now = () => Math.floor(Date.now() / 1000);
 beforeAll(ensureSchema);
 beforeEach(async () => {
   await db.delete(operationsObservations).where(eq(operationsObservations.key, X_STATUS_KEY));
+  await db.delete(operationsObservations).where(eq(operationsObservations.key, X_STATUS_RUNS_KEY));
   clearAllMemos();
   vi.stubEnv(X_STATUS_SECRET_ENV, SECRET);
   vi.stubEnv(X_STATUS_PREVIOUS_SECRET_ENV, OLD);
@@ -34,6 +35,7 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   await db.delete(operationsObservations).where(eq(operationsObservations.key, X_STATUS_KEY));
+  await db.delete(operationsObservations).where(eq(operationsObservations.key, X_STATUS_RUNS_KEY));
 });
 
 it("꺼진 주소는 404 이고 줄을 만들지 않는다", async () => {
@@ -71,4 +73,28 @@ it("이미 있는 줄의 sentAt 이 깨져 있어도 다음 보고가 덮어쓴�
     observedAt: sql`(now() at time zone 'utc') - interval '2 minutes'` });
   expect((await POST(signed(body(), now()))).status).toBe(200);
   expect((await stored()).value).toMatchObject({ mode: "live", signedWith: "current" });
+});
+
+it("끝난 실제 수집의 후보 수를 같은 쓰기 TX 에서 날마다 이어 센다 — 같은 날 두 번째(daily_limit)·시험 실행은 세지 않는다", async () => {
+  const runs = async () => (await db.select({ value: operationsObservations.value }).from(operationsObservations)
+    .where(eq(operationsObservations.key, X_STATUS_RUNS_KEY)))[0]?.value;
+  // 속도 제한(60초)을 지나게 받은 시각을 뒤로 민다 — 실제로는 하루에 한 번이다
+  const later = () => db.update(operationsObservations).set({ observedAt: sql`(now() at time zone 'utc') - interval '61 seconds'` })
+    .where(eq(operationsObservations.key, X_STATUS_KEY));
+  const at = (hours: number) => new Date(Math.floor(Date.now() / 1000) * 1000 - hours * 3_600_000).toISOString();
+  const sentAt = now() - 100;
+  expect((await POST(signed(body({ candidates: 0, lastRunAt: at(49), lastSuccessAt: at(49) }), sentAt))).status).toBe(200);
+  expect(await runs()).toEqual({ zeroRuns: 1, zeroSince: at(49), lastCompletedRunAt: at(49), lastCandidates: 0 });
+  await later();
+  // 같은 날 두 번째 실행 — 예약 장부가 있어 막혔다(오류 없음·성공 시각은 앞 실행)
+  expect((await POST(signed(body({ candidates: 0, lastRunAt: at(48), lastSuccessAt: at(49) }), sentAt + 1))).status).toBe(200);
+  await later();
+  expect((await POST(signed(body({ mode: "dry-run", reads: { used: 0, limit: 10 }, candidates: 0, lastRunAt: at(30), lastSuccessAt: at(30) }), sentAt + 2))).status).toBe(200);
+  expect(await runs()).toMatchObject({ zeroRuns: 1 });
+  await later();
+  expect((await POST(signed(body({ candidates: 0, lastRunAt: at(25), lastSuccessAt: at(25) }), sentAt + 3))).status).toBe(200);
+  expect(await runs()).toEqual({ zeroRuns: 2, zeroSince: at(49), lastCompletedRunAt: at(25), lastCandidates: 0 });
+  await later();
+  expect((await POST(signed(body({ candidates: 4, lastRunAt: at(1), lastSuccessAt: at(1) }), sentAt + 4))).status).toBe(200);
+  expect(await runs()).toEqual({ zeroRuns: 0, zeroSince: null, lastCompletedRunAt: at(1), lastCandidates: 4 });
 });

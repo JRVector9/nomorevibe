@@ -2,6 +2,7 @@ import { and, desc, eq, inArray, notInArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, operationsObservations, products, socialPosts, socialTalkDecisions, type SocialPostState, type SocialSource, type TalkHomeDecision } from "@/lib/db/schema";
 import { readXStatus, X_STATUS_KEY } from "@/lib/operations/x-status";
+import { readJobDegraded } from "@/lib/operations/job-health";
 import { PRODUCT_IDENTITY, publicProductChecks, talkGroups } from "./talk";
 import { shownPostIds, talkPlacement, talkVerdict, type TalkProductCheck } from "./talk-reasons";
 
@@ -181,11 +182,19 @@ export async function setTalkHomeDecision(repositoryKey: string, decision: TalkH
     .onConflictDoUpdate({ target: socialTalkDecisions.repositoryKey, set: { homeDecision: decision, decidedBy: actor, decidedAt: new Date() } });
 }
 
-/** 수집 잡의 마지막 회차 */
+/**
+ * 수집 잡의 마지막 회차 — 돈 시각(lastRunAt)과 진짜 성공(lastSuccessAt)을 함께, 그리고 검색이 막혀 제 일을 못 한 회차(job:<name> 관측의
+ * degraded — 지금 이어지는 것, lastDegraded — 끊기기 전 마지막 것). 전에는 던진 실패(lastError)만 보여 검색 실패가 "마지막 오류"에 오르지 않았다
+ */
 export async function hnTalkJobState(name = HN_TALK_JOB) {
-  const [row] = await db.select({ lastRunAt: jobs.lastRunAt, lastError: jobs.lastError, cursor: jobs.cursor })
-    .from(jobs).where(eq(jobs.name, name)).limit(1);
-  return row ?? null;
+  const [[row], [observation]] = await Promise.all([
+    db.select({ lastRunAt: jobs.lastRunAt, lastSuccessAt: jobs.lastSuccessAt, lastError: jobs.lastError, cursor: jobs.cursor })
+      .from(jobs).where(eq(jobs.name, name)).limit(1),
+    db.select({ value: operationsObservations.value }).from(operationsObservations).where(eq(operationsObservations.key, `job:${name}`)).limit(1),
+  ]);
+  if (!row) return null;
+  const { current, last } = readJobDegraded(observation?.value);
+  return { ...row, degraded: current, lastDegraded: last };
 }
 export const blueskyTalkJobState = () => hnTalkJobState(BLUESKY_TALK_JOB);
 

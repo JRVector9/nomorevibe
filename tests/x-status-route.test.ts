@@ -15,7 +15,7 @@ const sqlText = (query: unknown) => JSON.stringify((query as { queryChunks?: unk
 /** select(...).from().where() · insert().values().onConflictDoUpdate().returning() — await 하는 순간 한 번 기록한다 */
 function chain(label: string, rows: () => unknown[]): Record<string, unknown> {
   const self: Record<string, unknown> = {};
-  for (const name of ["from", "where", "set", "onConflictDoNothing", "onConflictDoUpdate", "returning"]) self[name] = () => self;
+  for (const name of ["from", "where", "for", "set", "onConflictDoNothing", "onConflictDoUpdate", "returning"]) self[name] = () => self;
   self.values = (value: unknown) => { fake.values.push(value); return self; };
   self.then = (ok: (value: unknown[]) => unknown, bad?: (error: unknown) => unknown) => { fake.calls.push(label); return Promise.resolve(rows()).then(ok, bad); };
   return self;
@@ -27,6 +27,8 @@ const tx = {
     return share ? fake.txRows : [];
   }),
   insert: () => chain("tx:upsert", () => fake.written),
+  // 끝난 실제 수집의 후보 기록(x-status:runs) — 같은 TX 에서 지난 줄을 잠그고 읽는다
+  select: () => chain("tx:runs-read", () => []),
 };
 const fakeDb = {
   execute: vi.fn(async (query: unknown) => {
@@ -152,22 +154,26 @@ describe("받기 — 관문 → 단조 → 속도 → 한 줄 쓰기", () => {
       // fence 캐시(5초)를 비워 매번 관문 읽기부터 본다
       clearAllMemos(); fake.calls.length = 0; fake.values.length = 0;
       expect(await post(signed(body))).toMatchObject({ status: 200, body: { accepted: true } });
-      expect(fake.calls).toEqual(["db:fence-read", "db:read", "db:begin", "tx:fence-share", "tx:upsert"]);
-      expect(fake.values).toEqual([{ key: "x-status", value: { ...body, sentAt: NOW_S, signedWith: "current" }, observedAt: expect.anything() }]);
+      // 끝난 실제 수집(live·오류 없음·이번 실행이 마지막 성공)이면 같은 TX 에서 후보 기록(x-status:runs)도 고친다 — 시험 실행은 건드리지 않는다
+      const completed = body.mode === "live";
+      expect(fake.calls).toEqual(["db:fence-read", "db:read", "db:begin", "tx:fence-share", "tx:upsert", ...(completed ? ["tx:runs-read", "tx:upsert"] : [])]);
+      expect(fake.values).toEqual([{ key: "x-status", value: { ...body, sentAt: NOW_S, signedWith: "current" }, observedAt: expect.anything() },
+        ...(completed ? [{ key: "x-status:runs", value: { zeroRuns: 0, zeroSince: null, lastCompletedRunAt: report.lastRunAt, lastCandidates: 3 }, observedAt: expect.anything() }] : [])]);
     }
   });
 
   it("비밀 교체: 직전 비밀로 서명한 보고도 받고 어느 쪽인지 적는다 — 지금 비밀과 같은 직전 비밀은 쓰지 않는다", async () => {
     vi.stubEnv(X_STATUS_PREVIOUS_SECRET_ENV, OLD);
+    const stored = () => (fake.values as { key: string }[]).filter((row) => row.key === "x-status").at(-1);
     expect((await post(signed(report, { secret: OLD }))).status).toBe(200);
-    expect(fake.values.at(-1)).toMatchObject({ value: { signedWith: "previous" } });
+    expect(stored()).toMatchObject({ value: { signedWith: "previous" } });
     expect((await post(signed(report))).status).toBe(200);
-    expect(fake.values.at(-1)).toMatchObject({ value: { signedWith: "current" } });
+    expect(stored()).toMatchObject({ value: { signedWith: "current" } });
     vi.stubEnv(X_STATUS_PREVIOUS_SECRET_ENV, "");
     expect((await post(signed(report, { secret: OLD }))).status).toBe(401);
     vi.stubEnv(X_STATUS_PREVIOUS_SECRET_ENV, SECRET);
     expect((await post(signed(report))).status).toBe(200);
-    expect(fake.values.at(-1)).toMatchObject({ value: { signedWith: "current" } });
+    expect(stored()).toMatchObject({ value: { signedWith: "current" } });
   });
 
   it("단조: 저장된 보고보다 오래되거나 같으면 409 — 쓰기 TX 를 열지 않는다(되보내기 거절)", async () => {

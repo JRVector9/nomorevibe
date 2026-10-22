@@ -136,7 +136,8 @@ it("disabled intro failures keep the existing per-product failure record and sto
   mocks.recordIntro.mockResolvedValue("failed");
   const ctx = context("product-intro-check");
   const timeout = vi.fn(async () => ({ kind: "timeout" as const }));
-  expect(await checkProductIntros(ctx, timeout)).toEqual({ done: true });
+  // 멈춤 규칙은 그대로 — 다만 성공이 아니라 제 일 못 함(degraded)으로 러너에 넘긴다(성공 시각을 옮기지 않는다)
+  expect(await checkProductIntros(ctx, timeout)).toEqual({ done: true, degraded: { code: "timeout", detail: `소개 검수 ${INTRO_CHECK_MODEL} 호출 실패` } });
   expect(timeout).toHaveBeenCalledTimes(1);
   expect(mocks.recordIntro.mock.calls).toEqual([[tasks[0], ctx.lease, { kind: "failure", error: "timeout" }]]);
   expect(ctx.log).toHaveBeenLastCalledWith("intro_check.blocked", { kept: 0, replaced: 0, needs_editor: 0, failed: 1, error: "timeout" });

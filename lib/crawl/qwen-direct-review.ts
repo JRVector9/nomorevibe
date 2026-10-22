@@ -59,6 +59,17 @@ export function qwenDirectConfig(env: Readonly<Record<string, string | undefined
 }
 
 /**
+ * 화면·경보에 적는 Qwen 직접 서버의 이름 — AUDIT_SECOND_OPINION_LABEL(예: "gpu3090"), 없으면 부르는 주소의 호스트.
+ * 서버를 옮기거나 이름을 바꿔도 코드를 고치지 않는다(전에는 "gpu3090" 을 화면에 박아 두었다).
+ */
+export function qwenDirectServerLabel(env: Readonly<Record<string, string | undefined>> = process.env): string {
+  const label = env.AUDIT_SECOND_OPINION_LABEL?.trim();
+  if (label && label.length <= 40 && /^[\p{L}\p{N} ._:-]+$/u.test(label)) return label;
+  const config = qwenDirectConfig(env);
+  return config ? new URL(config.baseUrl).host : "Qwen 직접 서버";
+}
+
+/**
  * 실패의 고정 코드 — 모델·원본 글은 싣지 않는다.
  *  qwen_timeout: 제한 시간 · qwen_cancelled: 부른 쪽이 멈춤 · qwen_unreachable: 닿지 않음(연결 거절·DNS·끊김)
  *  qwen_http_<status>: 2xx 가 아닌 답 · qwen_invalid_json: 봉투·JSON·스키마·근거 검증 실패(잘린 답 포함, detail 에 까닭)

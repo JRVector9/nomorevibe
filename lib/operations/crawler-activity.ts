@@ -18,7 +18,9 @@ type QueueMetrics = { measuredAt: string; stages: { key: string; waiting: number
 export type CollectorState = "disabled" | "paused" | "running" | "stale-lock" | "retrying" | "queued" | "error" | "never-run" | "idle";
 export type CollectorEvent = { label: string; counts: Record<string, number | boolean>; /** 숫자 없는 이벤트(오류·대기)가 창 안에 나온 횟수 */ times?: number };
 /** 회차 누적 한 창(job-tally:<job>) — ticks 는 성공 회차, failed 는 실패 회차, events 는 아래 EVENTS 로 거른 이벤트별 합 */
-export type CollectorTotals = { ticks: number; failed: number; events: CollectorEvent[] };
+export type CollectorTotals = { ticks: number; failed: number;
+  /** 끝났지만 제 일을 못 한 회차(@degraded — 검색 실패·키 없음 등). ticks 에도 들어 있다. 옛 관측은 0 */
+  degraded?: number; events: CollectorEvent[] };
 export type CollectorResult = { name: string; observedAt: string; durationMs: number | null; done: boolean | null;
   outcome: "item-errors" | "event-errors" | "provider-error" | "waiting" | "completed" | "unknown"; itemErrors: number | null;
   errorEvents: number; providerError: boolean; events: CollectorEvent[] };
@@ -127,7 +129,7 @@ function totalsOf(window: TallyWindow): CollectorTotals {
     const times = occurred && (definition.waiting || definition.error || Object.keys(counts).length === 0) ? occurred : 0;
     if (Object.keys(counts).length || times) events.push({ label: definition.label, counts, ...(times ? { times } : {}) });
   }
-  return { ticks: count(window["@ok"]) ?? 0, failed: count(window["@failed"]) ?? 0, events };
+  return { ticks: count(window["@ok"]) ?? 0, failed: count(window["@failed"]) ?? 0, degraded: count(window["@degraded"]) ?? 0, events };
 }
 
 function enabled(name: string, settings: CrawlSettings): boolean {

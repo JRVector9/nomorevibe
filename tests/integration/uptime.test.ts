@@ -579,15 +579,17 @@ describe("생존 확인 — 광역 실패 보류", () => {
     safeFetch.mockImplementation(async (url: string) => Number(new URL(url).hostname.slice(1, -5)) < failing
       ? null : { finalUrl: url, response: { status: 200, body: { cancel: vi.fn() } } });
     const events: { event: string; fields?: Record<string, unknown> }[] = [];
-    await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
+    const outcome = await pingProducts({ ...tick(), log: (event, fields) => { events.push({ event, fields }); } });
     const rows = new Map((await db.select().from(productHealth)).map((row) => [row.slug, row]));
     const failed = Array.from({ length: failing }, (_, i) => rows.get(`p${i}`)!);
     const alive = Array.from({ length: total - failing }, (_, i) => rows.get(`p${failing + i}`)!);
-    return { events, failed, alive };
+    return { events, failed, alive, outcome };
   }
 
   it("50건 중 40건이 연결조차 안 되면 실패는 세지 않고 확인 시각만 넘긴다 — 성공은 쓴다", async () => {
-    const { events, failed, alive } = await due(50, 40);
+    const { events, failed, alive, outcome } = await due(50, 40);
+    // 판정을 보류한 회차는 성공이 아니다 — 러너가 성공 시각을 옮기지 않고 잇달아 이어지면 조치할 일(uptime-held)이 올린다
+    expect(outcome).toEqual({ done: false, degraded: { code: "broad_failure_held", detail: "확인 50 · 실패 40 · 모름 0" } });
 
     expect(safeFetch).toHaveBeenCalledTimes(50);
     // 연속 실패·죽기 시작한 시각·마지막 응답 코드·일별 확인 수가 그대로다
@@ -604,7 +606,8 @@ describe("생존 확인 — 광역 실패 보류", () => {
   });
 
   it("150건 중 2건 실패는 평소 실패라 그대로 센다", async () => {
-    const { events, failed, alive } = await due(150, 2);
+    const { events, failed, alive, outcome } = await due(150, 2);
+    expect(outcome).toEqual({ done: false });
 
     expect(failed.every((row) => row.failures === 3 && row.status === 0 && row.checkedAt.getTime() > before.getTime())).toBe(true);
     expect(alive).toHaveLength(148);

@@ -51,7 +51,7 @@ export function packBatch<T extends { body: string }>(items: T[]): T[] {
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("translate.skipped", { reason: "no_key" });
-    return { done: true };
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Translation worker requires a job lease");

@@ -86,11 +86,11 @@ describe("제품 벡터 채우기", () => {
     expect(row.model).toBe(EMBEDDING_MODEL);
   });
 
-  it("임베딩 서버가 없으면 실패하지 않고 다음 틱으로 넘긴다", async () => {
+  it("임베딩 서버가 없으면 던지지 않고 다음 틱으로 넘기되, 성공이 아니라 제 일 못 함으로 남긴다(이 워커가 본 서버 상태)", async () => {
     await product("waiting", "seeded");
     const embed = vi.fn(async () => { throw new EmbeddingUnavailableError("timeout"); });
 
-    expect(await refreshProductEmbeddings(ctx, { embed })).toEqual({ done: true });
+    expect(await refreshProductEmbeddings(ctx, { embed })).toEqual({ done: true, degraded: { code: "embedding_unavailable", detail: "임베딩 서버 timeout" } });
     expect(ctx.log).toHaveBeenCalledWith("product_embedding.unavailable", { written: 0, reason: "timeout" });
     expect(await db.select().from(productEmbeddings)).toEqual([]);
   });

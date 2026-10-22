@@ -1,4 +1,4 @@
-import { notLike, sql } from "drizzle-orm";
+import { inArray, notLike, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { dbErrorFields } from "@/lib/db/error-fields";
 import { currentReplayDb } from "@/lib/db/replay-scope";
@@ -166,4 +166,20 @@ export async function readJobDeferrals(replicaOnly: ReplicaOnlyRead): Promise<Jo
   const [row] = result;
   if (typeof row?.at !== "string") return { state: "held", reason: "read_failed" };
   return { state: "ready", at: row.at, jobs: summarizeJobDeferrals(row.at, row.rows) };
+}
+
+/**
+ * 잡 몇 개의 마지막 미룸 까닭 — 주 DB 에서 열쇠(defer:<job>)로만 읽는다. 조치할 일의 성공 끊김 판정이 쓴다(lib/operations/job-health.ts):
+ * 30분 넘게 성공하지 못한 잡만 묻는다 — 평소에는 비어 있어 읽지 않는다.
+ */
+export async function readLastJobDeferrals(names: readonly string[]): Promise<Map<string, { reason: string; at: string }>> {
+  const keys = [...new Set(names)].map(jobDeferralKey).filter((key) => key.length <= KEY_MAX);
+  if (!keys.length) return new Map();
+  const rows = await db.select({ key: operationsObservations.key, value: operationsObservations.value }).from(operationsObservations)
+    .where(inArray(operationsObservations.key, keys));
+  return new Map(rows.flatMap((row) => {
+    const value = row.value as { reason?: unknown; at?: unknown } | null;
+    return typeof value?.reason === "string" && typeof value.at === "string" && Number.isFinite(Date.parse(value.at))
+      ? [[row.key.slice(JOB_DEFERRAL_KEY_PREFIX.length), { reason: value.reason, at: new Date(value.at).toISOString() }] as const] : [];
+  }));
 }

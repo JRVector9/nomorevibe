@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, like, or } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs } from "@/lib/db/schema";
+import { jobs, operationsObservations } from "@/lib/db/schema";
+import { readJobDegraded } from "@/lib/operations/job-health";
 import { runJob, getJobState, listJobStates } from "@/lib/jobs/runner";
 import { JOBS } from "@/lib/jobs/registry";
 import { ensureSchema } from "./setup";
@@ -170,6 +171,77 @@ describe("runJob — 실패 기록", () => {
   it("실행 횟수를 센다 (스케줄이 도는지 확인하는 근거)", async () => {
     for (let i = 0; i < 3; i++) await runJob("counted", async () => ({ done: true }));
     expect((await getJobState("counted"))?.runs).toBe(3);
+  });
+});
+
+/**
+ * 처리기가 실패를 잡고 그냥 돌아오면 러너는 그 틱을 성공으로 적었다(lastSuccessAt=now, lastError=null) — 운영센터가 초록이었다.
+ * 이제 처리기는 degraded 로 돌려주고, 러너는 요청·커서·잠금은 성공처럼 정리하되 성공 시각을 옮기지 않고 job:<name> 에 까닭·연속 횟수를 남긴다.
+ */
+describe("runJob — 제 일 못 한 틱(degraded)", () => {
+  beforeEach(async () => {
+    await db.delete(operationsObservations).where(or(like(operationsObservations.key, "job:%"), like(operationsObservations.key, "job-tally:%")));
+  });
+  const observation = async (name: string) => (await db.select().from(operationsObservations).where(eq(operationsObservations.key, `job:${name}`)))[0]?.value;
+
+  it("성공 시각을 옮기지 않고 요청·커서·잠금은 정리한다 — 까닭과 연속 횟수·시작 시각을 남긴다", async () => {
+    const result = await runJob("degraded-tick", async () => ({ done: false, cursor: { page: 2 }, degraded: { code: "search_failed", detail: "HN 검색 http_503" } }));
+    expect(result).toMatchObject({ status: "completed", done: false, degraded: "search_failed" });
+    const first = await getJobState("degraded-tick");
+    expect(first).toMatchObject({ lastSuccessAt: null, lastError: null, lockedAt: null, leaseToken: null, notBefore: null, cursor: { page: 2 } });
+    expect(first!.processedVersion).toBe(first!.requestedVersion);
+    const one = readJobDegraded(await observation("degraded-tick")).current!;
+    expect(one).toMatchObject({ code: "search_failed", detail: "HN 검색 http_503", critical: false, streak: 1 });
+    expect(one.since).toBe(one.at);
+
+    // 연달아 못 하면 횟수를 더하고 시작 시각은 첫 틱 그대로다. 모양이 틀린 코드는 unknown, 설명은 300자까지
+    await runJob("degraded-tick", async () => ({ done: false, degraded: { code: "Bad Code!", detail: "x".repeat(400) } }));
+    const two = readJobDegraded(await observation("degraded-tick")).current!;
+    expect(two).toMatchObject({ code: "unknown", streak: 2, since: one.since });
+    expect(two.detail).toHaveLength(300);
+    expect((await getJobState("degraded-tick"))?.lastSuccessAt).toBeNull();
+  });
+
+  it("제대로 끝난 틱이 연속을 끊고 마지막 까닭은 lastDegraded 로 남긴다 — 그 뒤 못 한 틱은 지난 성공 시각을 그대로 둔다", async () => {
+    await runJob("degraded-recover", async () => ({ done: true, degraded: { code: "no_key", detail: "키 없음", critical: true } }));
+    await runJob("degraded-recover", async () => ({ done: true }));
+    const recovered = await getJobState("degraded-recover");
+    expect(recovered?.lastSuccessAt).toBeInstanceOf(Date);
+    const value = await observation("degraded-recover");
+    expect(readJobDegraded(value)).toMatchObject({ current: null, last: { code: "no_key", critical: true, streak: 1 } });
+    await runJob("degraded-recover", async () => ({ done: true }));
+    expect(readJobDegraded(await observation("degraded-recover")).last).toMatchObject({ code: "no_key" });
+    const success = (await getJobState("degraded-recover"))?.lastSuccessAt;
+
+    await runJob("degraded-recover", async () => ({ done: true, degraded: { code: "search_failed" } }));
+    const again = await getJobState("degraded-recover");
+    expect(again?.lastSuccessAt?.getTime()).toBe(success?.getTime());
+    // 끊긴 뒤 처음이라 다시 1부터
+    expect(readJobDegraded(await observation("degraded-recover")).current).toMatchObject({ code: "search_failed", streak: 1 });
+  });
+
+  it("던진 실패 뒤의 못 한 틱은 던진 실패 기록을 지우지만 성공으로 세지 않는다", async () => {
+    await runJob("degraded-after-throw", async () => { throw new Error("장애"); });
+    await runJob("degraded-after-throw", async () => ({ done: true, degraded: { code: "embedding_unavailable" } }));
+    expect(await getJobState("degraded-after-throw")).toMatchObject({ lastError: null, lastSuccessAt: null, notBefore: null });
+  });
+
+  it("관리자 /admin/talk 의 수집 줄은 진짜 성공과 지금 이어지는 실패·끝난 실패를 읽는다", async () => {
+    const { hnTalkJobState } = await import("@/lib/social/admin");
+    await runJob("hn-talk", async () => ({ done: false, degraded: { code: "search_failed", detail: "HN 검색 http_503 (1쪽)" } }));
+    expect(await hnTalkJobState()).toMatchObject({ lastSuccessAt: null, lastError: null, lastRunAt: expect.any(Date),
+      degraded: { code: "search_failed", detail: "HN 검색 http_503 (1쪽)", streak: 1 } });
+    await runJob("hn-talk", async () => ({ done: true }));
+    expect(await hnTalkJobState()).toMatchObject({ lastSuccessAt: expect.any(Date), degraded: null, lastDegraded: { code: "search_failed" } });
+  });
+
+  it("수집기 회차 누적에 @ok 와 함께 @degraded 를 센다", async () => {
+    await runJob("hn-talk", async (ctx) => { ctx.log("social.hn_talk_failed", { page: 0 }); return { done: false, degraded: { code: "search_failed" } }; }, { tally: true });
+    await runJob("hn-talk", async () => ({ done: true }), { tally: true });
+    const [row] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, "job-tally:hn-talk"));
+    const counts = (row.value as { counts: Record<string, number> }).counts;
+    const total = (metric: string) => Object.entries(counts).filter(([key]) => key.startsWith("h") && key.endsWith(`|${metric}`)).reduce((sum, [, n]) => sum + n, 0);
+    expect([total("@ok"), total("@degraded")]).toEqual([2, 1]);
   });
 });
 

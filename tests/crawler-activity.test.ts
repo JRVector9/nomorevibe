@@ -295,13 +295,13 @@ describe("회차 누적·미룸·실패", () => {
       day: { "@ok": 1400, "crawl.fetched#fetched": 2400 },
     })], deferrals: [] });
     const row = report.jobs.find(item => item.name === "crawl-fetch")!;
-    expect(row.totals?.hour).toEqual({ ticks: 58, failed: 1, events: [
+    expect(row.totals?.hour).toEqual({ ticks: 58, failed: 1, degraded: 0, events: [
       { label: "원본 수집 결과", counts: { fetched: 120, skipped: 30 } },
       { label: "원본 공급자 한도 대기", counts: {}, times: 3 },
     ] });
-    expect(row.totals?.day).toEqual({ ticks: 1400, failed: 0, events: [{ label: "원본 수집 결과", counts: { fetched: 2400 } }] });
+    expect(row.totals?.day).toEqual({ ticks: 1400, failed: 0, degraded: 0, events: [{ label: "원본 수집 결과", counts: { fetched: 2400 } }] });
     // 누적이 없는 수집기도 0 인 창이다(읽지 못한 것과 다르다)
-    expect(report.jobs.find(item => item.name === "crawl-seed")?.totals).toEqual({ hour: { ticks: 0, failed: 0, events: [] }, day: { ticks: 0, failed: 0, events: [] } });
+    expect(report.jobs.find(item => item.name === "crawl-seed")?.totals).toEqual({ hour: { ticks: 0, failed: 0, degraded: 0, events: [] }, day: { ticks: 0, failed: 0, degraded: 0, events: [] } });
     expect(row.deferredHour).toBe(0);
     expect(report.totalsReadFailed).toBe(false);
   });

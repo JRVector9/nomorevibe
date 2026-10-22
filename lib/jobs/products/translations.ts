@@ -8,7 +8,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
-    return { done: true };
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   if (!ctx.lease) throw new Error("Product translation worker requires a job lease");
   const controller = new AbortController();
