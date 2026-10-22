@@ -73,7 +73,7 @@ function Row({ item, side }: { item: SplitItem; side?: React.ReactNode }) {
       </div>
       {/* 숫자와 가는 곳을 둘 다 — 링크만 두니 열한 줄 중 열 줄이 "얼마나"를 말하지 않았다(2026-10-08) */}
       <div className="dash-todo-side flex shrink-0 flex-col items-end gap-0.5">
-        <span className="n"><Flash value={item.count}>{typeof item.count === "number" ? n(item.count) : item.count}</Flash><small>{item.unit}</small></span>
+        <span className="n" data-text={typeof item.count === "number" ? undefined : ""}><Flash value={item.count}>{typeof item.count === "number" ? n(item.count) : item.count}</Flash><small>{item.unit}</small></span>
         {item.action && <Link href={item.action.href}>{item.action.label}</Link>}
         {side}
       </div>

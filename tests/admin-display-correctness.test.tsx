@@ -92,9 +92,10 @@ describe("메뉴 배지 — 내릴 후보", () => {
   it("title 에 갈래와 수를 모두 적는다 — 소개만 있을 때 수가 사라지던 것, 요청이 있을 때 title 이 없던 것", () => {
     expect(auditBadge(null, 0)).toBeUndefined();
     expect(auditBadge({ pending: 0, overdue: 0 }, 0)).toBeUndefined();
-    expect(auditBadge(null, 2)).toEqual({ label: "소개 2", tone: "warn", title: "소개 수정 요청 2건" });
-    expect(auditBadge({ pending: 3, overdue: 0 }, 0)).toEqual({ label: "요청 3", tone: "warn", title: "내려달라는 요청 3건" });
-    expect(auditBadge({ pending: 1_204, overdue: 1 }, 1_500)).toEqual({ label: "요청 1,204 · 소개 1,500", tone: "critical",
+    expect(auditBadge(null, 2)).toEqual({ label: "2", tone: "warn", title: "소개 수정 요청 2건" });
+    expect(auditBadge({ pending: 3, overdue: 0 }, 0)).toEqual({ label: "3", tone: "warn", title: "내려달라는 요청 3건" });
+    // 배지 글자는 합계 하나 — 갈래별 글자가 길면 사이드바 메뉴 이름이 한 글자 폭으로 줄어 세로로 쌓였다
+    expect(auditBadge({ pending: 1_204, overdue: 1 }, 1_500)).toEqual({ label: "2,704", tone: "critical",
       title: "내려달라는 요청 1,204건(24시간 넘음 1건) · 소개 수정 요청 1,500건" });
     // 화면 낭독기는 title 을 읽는다 — 수가 들어 있어야 한다
     const nav = html(createElement(AdminNav, { current: "/admin/review", badges: { "/admin/audit": auditBadge(null, 2) } }));

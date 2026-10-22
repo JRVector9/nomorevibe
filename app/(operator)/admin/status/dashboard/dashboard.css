@@ -69,7 +69,10 @@
 /* 숫자 칸은 줄을 바꾸지 않는다 — 좁은 카드에서 "75,341"이 한 글자씩 세로로 쌓였다(ADM-17) */
 .dash-table .num{text-align:right;font-family:var(--font-mono);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:64px}
 .dash-signal-name{display:block;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dash-roles th,.dash-roles td{white-space:nowrap;padding-left:6px;padding-right:6px}
+.dash-roles th,.dash-roles td{white-space:nowrap;padding-left:6px;padding-right:6px;vertical-align:top}
+.dash-roles td{padding-top:8px;padding-bottom:8px}
+/* 역할 이름(생존 확인·지표 집계 …)은 두 줄까지 — 한 줄 고정이면 3분의 1 칸에서 오른쪽 열이 잘렸다 */
+.dash-roles td:first-child{white-space:normal;word-break:keep-all;min-width:5.5em;max-width:7.5em}
 .dash-roles .dash-pill{white-space:normal;flex-wrap:wrap;row-gap:0}
 .dash-roles .dash-pill>span{white-space:nowrap}
 .dash-bar{height:6px;border-radius:3px;background:var(--color-bg-soft);overflow:hidden;min-width:60px}
@@ -85,7 +88,7 @@
 
 /* 조치할 일 */
 .dash-todo{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
-.dash-todo li{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--color-line);border-radius:10px}
+.dash-todo li{display:grid;grid-template-columns:4px minmax(0,1fr) minmax(6.5rem,max-content);gap:10px;align-items:center;padding:7px 10px;border:1px solid var(--color-line);border-radius:10px}
 .dash-todo li i{display:block;width:4px;align-self:stretch;border-radius:2px;background:var(--color-fg-3)}
 .dash-todo li[data-tone=bad] i{background:var(--color-down)}
 .dash-todo li[data-tone=warn] i{background:var(--color-warn)}
@@ -98,6 +101,8 @@
 .ops-center button.dash-todo-more{min-height:44px;margin:-12px 0 -14px;padding:0 2px;border:0;background:transparent;color:var(--color-accent);font-size:13px;font-weight:600}
 .ops-center button.dash-todo-more:hover{background:transparent;text-decoration:underline}
 .dash-todo .n{font-size:17px;font-weight:650;font-family:var(--font-mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+/* 숫자가 아닌 값(끊김·주 관측 없음 …)은 고정폭 큰 글자로 그리면 넓게 벌어져 줄이 깨진다 — 본문 글꼴로, 칸 안에서만 */
+.dash-todo .n[data-text]{font-family:var(--font-sans,inherit);font-size:14px;font-weight:700;white-space:normal;max-width:9rem;line-height:1.3}
 /* 숫자 옆 단위 — 건·%·회·상태(ADM-08) */
 .ops-center .dash-todo .n small{display:inline;margin-left:3px;font-family:var(--font-sans,inherit);font-size:12px;font-weight:600;color:var(--color-fg-3)}
 .dash-todo-new{display:inline-block;margin-right:6px;border-radius:999px;padding:0 7px;font-size:12px;line-height:18px;background:var(--color-accent-soft);color:var(--color-accent);vertical-align:1px}
@@ -150,10 +155,12 @@
 @media (max-width:900px){.dash-feed{grid-template-columns:1fr}}
 
 /* 작업 생존 띠 */
-.dash-jobs{display:flex;flex-wrap:wrap;gap:6px}
-.dash-job{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--color-line);border-radius:8px;padding:3px 8px;font-size:13px;color:var(--color-fg-2);background:var(--color-bg-card);cursor:pointer}
+/* 칩을 같은 폭 칸에 — 이름 길이대로 흘리면 줄 끝이 들쭉날쭉하고 시각이 칩마다 다른 자리에 있었다 */
+.dash-jobs{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px}
+.dash-job{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;border:1px solid var(--color-line);border-radius:8px;padding:5px 9px;font-size:13px;color:var(--color-fg-2);background:var(--color-bg-card);cursor:pointer;text-align:left}
+.dash-job>.admin-status{min-width:0;white-space:normal;word-break:keep-all;line-height:1.35}
 .dash-job b{font-weight:600;color:var(--color-fg)}
-.dash-job small{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--color-fg-3)}
+.dash-job small{flex:none;font-variant-numeric:tabular-nums;color:var(--color-fg-3);white-space:nowrap}
 .dash-job[data-tone=bad]{border-color:color-mix(in srgb,var(--color-down) 50%,var(--color-line))}
 .dash-job[data-tone=warn]{border-color:color-mix(in srgb,var(--color-warn) 50%,var(--color-line))}
 .dash-note{font-size:13px;color:var(--color-fg-3);margin-top:8px}

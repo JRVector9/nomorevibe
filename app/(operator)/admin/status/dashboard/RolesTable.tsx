@@ -26,7 +26,7 @@ export function RolesTable({ roles, scheduler, web }: {
       <div className="dash-card-h"><h2>역할 · 주/예비</h2><small title="역할 담당(lease)은 45초마다 갱신, 워커 관측은 15초마다">담당 갱신 45초 · 관측 15초</small></div>
       <ScrollTable label="역할과 예비">
         <table className="dash-table dash-roles">
-          <thead><tr><th>역할</th><th>일하는 쪽</th><th>주 · 예비 릴리스</th><th>담당 기한 · 차례</th></tr></thead>
+          <thead><tr><th>역할</th><th>일하는 쪽</th><th>릴리스</th><th>기한·차례</th></tr></thead>
           <tbody>
             {roles === null && <tr><td colSpan={4}>역할·예비 상태를 읽지 못했습니다.</td></tr>}
             {roles?.map((row) => {
@@ -36,8 +36,9 @@ export function RolesTable({ roles, scheduler, web }: {
                 <tr key={row.role} title={row.epoch !== null ? `${row.role} · 담당 차례(epoch) ${row.epoch}` : row.role}>
                   <td className="font-semibold">{ROLE_LABELS[row.role] ?? row.role}</td>
                   <td title={row.ownerInstanceId ?? "담당 미확인"}><span className="dash-pill" data-tone={tone}><span><span className="dash-dot" data-tone={tone} aria-hidden /> {who}</span>{row.reason !== "ready" && <span>· {READINESS_LABELS[row.reason]}</span>}</span><small className="block text-fg-3">담당 {row.ownerRelease?.slice(0, 7) ?? "미확인"}</small></td>
-                  <td className="font-mono text-[13px]">{row.primaryRelease?.slice(0, 7) ?? "미관측"} · {row.standbyRelease?.slice(0, 7) ?? "미관측"}</td>
-                  <td className="font-mono text-[13px]">{row.secondsUntilExpiry === null ? "미확인" : row.secondsUntilExpiry <= 0 ? "만료" : `${Math.ceil(row.secondsUntilExpiry)}초 남음`} · {row.epoch ?? "—"}
+                  {/* 주·예비와 기한·차례를 두 줄로 — 한 줄로 두면 3분의 1 칸보다 넓어 오른쪽 열이 잘렸다 */}
+                  <td className="text-[13px]"><span className="block">주 <span className="font-mono">{row.primaryRelease?.slice(0, 7) ?? "미관측"}</span></span><span className="block text-fg-3">예비 <span className="font-mono">{row.standbyRelease?.slice(0, 7) ?? "미관측"}</span></span></td>
+                  <td className="text-[13px]"><span className="block">{row.secondsUntilExpiry === null ? "미확인" : row.secondsUntilExpiry <= 0 ? "만료" : `${Math.ceil(row.secondsUntilExpiry)}초 남음`}</span><span className="block text-fg-3">차례 {row.epoch ?? "—"}</span>
                     {/* 주 격리(5분에 세 번 넘게 재시작 → 15분) — 남은 시간이 지나야 주가 담당을 다시 잡는다 */}
                     {row.quarantineSeconds !== null && <small className="block text-warn" title="주가 5분 안에 세 번 넘게 다시 떠 15분 동안 담당을 다시 잡지 못합니다">주 격리 {quarantineLeft(row.quarantineSeconds)} 남음</small>}</td>
                 </tr>
