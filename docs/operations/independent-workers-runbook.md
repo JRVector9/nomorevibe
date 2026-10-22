@@ -151,14 +151,15 @@ pull/arm64/OCI revision과 비공개 웹 이미지 안의 빌드 키 일치를 �
 사전 검사 뒤 기존 설정을 권한 0600 스냅샷에 저장하고 publisher→reviewer→crawler
 각각 mini 예비→M3 주, 마지막으로 mini→M3 웹을 배포한다. 각 앱마다 새 Dokploy
 deployment ID와 `done`, Swarm 1/1, 실행 컨테이너 digest·release·health를
-기다린다. 역할 쌍 뒤에는 `check-failover-readiness.ts`의 전체 `ok`와 해당 역할
-`ready`, `check-worker-progress.ts`의 `ok`를 확인한다. 웹 둘 뒤에는 공개
+기다린다. 역할 쌍 뒤에는 그 역할이 M3 주가 쥔 `ready`이고 다른 역할은 유효한 소유자(`ready` 또는
+`standby_active`)이며 scheduler 두 복제본·`check-worker-progress.ts`가 `ok`인지 확인한다(아래 "관문의 소유자 판정").
+웹 둘 뒤에는 공개
 `/api/health`에서 두 인스턴스의 같은 릴리스를 확인한다. 실패하면 뒤 앱 배포를
 멈추고 스냅샷 경로만 출력한다. 스냅샷에는 환경 비밀값이 있어 공유하거나 Git에
 넣지 않는다.
 
-실패한 단계의 Dokploy 기록과 실제 서비스를 확인한 후, 변경된 앱을 이전
-digest/env로 돌려야 하면 스냅샷에서 **앱 하나씩** 복구한다. 역할 쌍의 한쪽만
+멈춘 뒤에는 원인을 고치고 **같은 목표로 이어 가기**(`run --resume`, 아래)를 먼저 쓴다. 목표 릴리스 자체를 포기할 때만
+스냅샷에서 **앱 하나씩** 복구한다. 역할 쌍은 예비(mini) → 주(M3) 순으로 되돌린다. 역할 쌍의 한쪽만
 복구한 경우 다른 쪽도 이전 릴리스로 맞추고 failover 상태를 다시 확인한다.
 
 ```sh
@@ -166,6 +167,57 @@ python3 scripts/ops/deploy_shared_images.py restore \
   --snapshot "/private/tmp/nomorevibe-release-${RELEASE_SHA:0:7}.json" \
   --app publisher-mini
 ```
+
+`restore`는 그 앱의 실제 실행이 이미 이전 릴리스이고 Swarm update가 진행 중이 아니면(예: Swarm이 새 태스크를 되돌렸다)
+Dokploy 설정만 이전 값으로 되돌리고 **다시 배포하지 않는다**(`"restored": "configuration_only"`). 같은 릴리스로 주를
+재시작하면 같은 릴리스의 예비가 lease를 가져가기 때문이다(아래 #597).
+
+#### Swarm 되돌림·멈춘 배포 이어 가기·관문의 소유자 판정 (2026-10-22, #597 배포)
+
+#597(515b8a10) 공통 배포에서 세 가지가 이어서 일어났다. 원인과 도구의 대응은 다음과 같다.
+
+1. **Swarm 되돌림을 시간 초과로만 봤다.** crawler-m3의 새 태스크가 `No such container`로 실패해 Swarm이 옛 spec(이전 이미지)으로
+   되돌렸는데 Dokploy는 `done`이었다. 도구는 실행 이미지가 끝내 목표와 같아지지 않아 4분 뒤 `crawler-m3_verification_timeout`으로만
+   멈췄다(같은 일이 10-17 maintenance·scheduler에도 있었고 같은 SHA 재배포로 풀렸다).
+   → 이제 Dokploy `done` 뒤 실행이 준비가 아니면 원격 확인이 Swarm `UpdateStatus`와 최근 태스크 오류(걸러 160자)를 함께 읽는다.
+   `rollback_started`·`rollback_completed`면 되돌리기가 끝나기를 기다렸다가(최대 180초) **같은 설정으로 한 번만** 다시 배포하고
+   (`{"app": …, "swarmRollback": …, "taskErrors": […], "action": "redeploy_once"}`), 또 되돌리면
+   `<app>_swarm_rollback_repeated:task_error=…`로 멈춘다. `paused`·`rollback_paused`는 다시 배포하지 않고 바로 멈춘다.
+   시간 초과도 마지막 태스크 오류를 붙인다(`<app>_verification_timeout:task_error=…`).
+2. **섞인 릴리스에서 다시 시작할 수 없었다.** 재시도가 `web-mini_baseline_release_mismatch`로 거절돼 바뀐 워커 여섯 개를 스냅샷에서 손으로
+   되돌린 뒤 처음부터 다시 배포했다.
+   → `plan`/`run --resume --snapshot <멈춘 run 의 스냅샷>`은 **같은 목표**(SHA·두 이미지)로 멈춘 run을 이어 간다. 새 스냅샷은 만들지 않는다
+   (되돌릴 이전 설정은 그 스냅샷에 있다). 앱마다 Dokploy 설정이 스냅샷의 이전 설정 그대로이거나, 그 설정에서 `run`이 바꾸는
+   것(`RELEASE_TAG`·웹의 `NEXT_DEPLOYMENT_ID` 줄과 이미지)만 목표로 바뀐 설정이어야 한다. 그 밖의 차이(다른 env 줄·다른 이미지·
+   복제본 수·명령)는 `<app>_unexplained_drift`로 어느 앱에도 쓰지 않고 멈춘다. 목표 설정인 앱은 실제 실행으로 나눈다:
+   새 릴리스로 healthy면 건너뛰고(`"resume": "already_target"`), 실행이 아직 이전 릴리스면(Swarm 되돌림) Swarm이 안정된 뒤
+   같은 설정으로 다시 배포한다(`"resume": "redeployed"`). 둘 다 아니면 `<app>_resume_runtime_unknown`으로 멈춘다. 사전 감시 관문은
+   쌍의 한쪽만 새 릴리스로 실행 중인 역할의 `release_mismatch`를 받는다. 계획 줄의 `resume`이 앱별 상태다.
+
+   ```sh
+   python3 scripts/ops/deploy_shared_images.py run --resume \
+     --sha "$RELEASE_SHA" --worker-image "$WORKER_IMAGE" --web-image "$WEB_IMAGE" \
+     --snapshot "<멈춘 run 이 출력한 snapshot 경로>" --migration-verified
+   ```
+3. **예비가 쥔 lease 때문에 관문이 끝나지 않았다.** 복구에서 crawler-mini(예비)를 먼저 a9ad31da로 되돌렸는데, crawler-m3(주)는 Swarm
+   되돌림으로 이미 a9ad31da로 돌고 있었다. 이어서 crawler-m3를 같은 릴리스로 다시 배포(재시작)하자 주가 lease를 정상 반납했고, 반납한
+   lease의 릴리스와 같은 릴리스의 예비가 유예 없이 넘겨받았다(`lib/jobs/role-leader.ts` — 20초 유예는 owner 가 남은 만료에만 있다).
+   예비는 스스로 놓지 않고 주는 lease가 살아 있는 동안 기다리기만 하므로 `standby_active`가 계속됐고, 관문은 모든 역할의 `ready`를
+   요구해 `crawler_monitor_gate_timeout`으로 멈췄다. 예비를 scale 0으로 내리면 `standby_missing`이라 관문은 여전히 통과하지 않고(관문은
+   주·예비 두 후보의 최근 관측을 요구한다), 주가 lease를 되찾은 뒤(epoch 148) 예비를 1로 올려야 통과했다. 정상 배포(#602)는 예비가 먼저
+   새 릴리스가 되어 옛 주가 반납한 lease와 릴리스가 달라 넘겨받지 않으므로 문제가 없었다.
+   → **관문의 소유자 판정**: 방금 쌍을 올린 역할은 여전히 M3 주가 쥔 `ready`여야 한다 — 새 릴리스의 M3 주가 역할을 실제로 쥘 수
+   있음을 보는 관문이기 때문이다. 그 역할을 예비가 쥐고 있으면(`standby_active`) 주가 되찾을 때까지 한 번 180초 더 기다린다
+   (`{"handoff": "waiting_for_primary"}` 줄). 다른 역할은 유효한 소유자(`ready` 또는 `standby_active`) 어느 쪽이든 받는다. 배포 전 사전
+   관문은 모든 역할에서 유효한 소유자를 받는다 — 예비가 쥔 역할은 예비를 먼저 올리는 배포에서 주가 되찾는다. `primary_quarantined`·
+   `lease_expired`·`owner_mismatch`·`standby_missing`·`primary_missing`·`release_mismatch`, scheduler `replica_missing`, 진행 경보는 예전처럼
+   막는다. 시간이 넘으면 받지 못한 사유를 붙인다(`crawler_monitor_gate_timeout:crawler=standby_active`). 통과 줄·계획 줄의
+   `standbyActive`는 예비가 일하는 역할이다.
+
+**예비 scale 0으로 lease를 돌리지 않는다.** 예비가 역할을 쥐고 있어도 다음 공통 배포(또는 `run --resume`)는 사전 관문을 지나고, 예비를
+**새 릴리스로** 먼저 올리는 단계에서 예비가 반납한 lease(이전 릴리스)를 새 예비는 넘겨받지 못하므로 기다리던 주가 되찾는다.
+같은 릴리스로 예비만 재시작하면(Dokploy 재배포) 반납 순간 새 예비와 주가 다시 겨루므로 돌려준다는 보장이 없다(#597 복구의
+`return-crawler-primary` 재시작이 그랬다).
 
 이 도구는 릴리스 사이에 운영자가 기다리던 상태 확인을 자동화한다. 다음 실제
 릴리스에서 첫 앱 시작부터 마지막 앱 완료까지의 시간을 기록해 전체 소요시간

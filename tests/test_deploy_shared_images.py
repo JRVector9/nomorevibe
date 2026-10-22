@@ -443,8 +443,10 @@ class ReleaseSafetyTests(unittest.TestCase):
             release.save_snapshot(path, self.target,
                                   {'previous': previous, 'apps': {'publisher-mini': original}})
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
-            with patch.object(release, 'check_app_deployed', return_value={'app': 'publisher-mini'}) as gate:
+            with patch.object(release, 'probe', return_value={'ready': False}) as runtime, \
+                 patch.object(release, 'check_app_deployed', return_value={'app': 'publisher-mini'}) as gate:
                 result = release.restore(client, path, 'publisher-mini', 'token')
+            runtime.assert_called_once_with('publisher-mini', current, previous, detail=True)
             self.assertEqual(result['app'], 'publisher-mini')
             self.assertEqual(client.requests, ['application.saveEnvironment',
                                                'application.saveDockerProvider', 'application.deploy'])
@@ -1061,7 +1063,8 @@ class AgentScanReleaseGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = str(Path(directory) / 'snapshot.json')
             release.save_snapshot(path, self.test.target, {'previous': previous, 'apps': {short: original}})
-            with self.gated(gated), self.probe(*outcomes), \
+            # 실행은 아직 새 릴리스다 — 설정만 되돌리는 길이 아니라 다시 배포하는 길을 본다
+            with self.gated(gated), self.probe(*outcomes), patch.object(release, 'probe', return_value={'ready': False}), \
                  patch.object(release, 'check_app_deployed', return_value={'app': short}):
                 try:
                     return release.restore(client, path, short, 'token')
@@ -1265,8 +1268,10 @@ class ReleaseSpeedTests(unittest.TestCase):
 
     def test_monitor_gate_for_several_roles_waits_until_every_role_is_ready(self):
         def report(reasons):
+            reasons = {'maintenance': 'ready', 'text': 'ready', **reasons}
             readiness = {'overall': 'ok' if all(reason == 'ready' for reason in reasons.values()) else 'alarm',
-                         'roles': [{'role': role, 'reason': reason} for role, reason in reasons.items()]}
+                         'roles': [{'role': role, 'reason': reason} for role, reason in reasons.items()],
+                         'scheduler': {'reason': 'ready'}}
             return json.dumps({'check-failover-readiness.ts': {'overall': readiness['overall'], 'readiness': readiness},
                                'check-worker-progress.ts': {'overall': 'ok'}})
         answers = [report({'publisher': 'ready', 'reviewer': 'release_mismatch', 'crawler': 'ready'}),
@@ -1382,6 +1387,337 @@ class ReleaseSpeedTests(unittest.TestCase):
         line = json.loads(failed.stdout)
         self.assertEqual((line['error'], line['detail']), ('ValueError', 'invalid_release_sha'))
         self.assertTrue(AT.fullmatch(line['at']))
+
+
+class SwarmRollbackResumeTests(unittest.TestCase):
+    """2026-10-22 #597: Swarm 되돌림을 알아채 한 번 다시 배포하고, 멈춘 run 을 --resume 으로 이어 가며, 관문은 유효한 소유자를 받는다."""
+
+    def setUp(self):
+        test = ReleaseSafetyTests('test_replace_setting_requires_one_line')
+        test.setUp()
+        self.test = test
+        self.target = test.target
+        self.previous = {'sha': test.old_sha, 'worker': test.old_worker, 'web': test.old_web}
+
+    # ---- 원격 확인: UpdateStatus·태스크 오류 -------------------------------------------------------------------
+    def run_probe(self, fixture, *, detail=False, image=None):
+        fake = ('import json,os,sys\n'
+                'f=json.loads(os.environ["FAKE_DOCKER"]);a=sys.argv[1:]\n'
+                'if a[:2]==["service","ls"]: print("svc\\t"+f["serviceImage"]+"\\t1/1")\n'
+                'elif a[:2]==["service","inspect"]: print(json.dumps(f["updateStatus"]))\n'
+                'elif a[:2]==["service","ps"]: print("\\n".join(json.dumps(t) for t in f["tasks"]))\n'
+                'elif a[0]=="ps": print("c1")\n'
+                'elif a[0]=="inspect":\n'
+                ' print(json.dumps([{"Config":{"Image":f["containerImage"],"Env":["RELEASE_TAG="+f["sha"]],'
+                '"Labels":{"com.docker.swarm.service.name":"svc"}},"State":{"Running":True,"Health":{"Status":"healthy"}}}]))\n')
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'docker'
+            path.write_text('#!' + sys.executable + '\n' + fake)
+            path.chmod(0o755)
+            args = ['svc', image or self.target['worker'], self.target['sha'], 'worker', '1'] + (['detail'] if detail else [])
+            out = subprocess.run([sys.executable, '-c', release.REMOTE_PROBE, *args], capture_output=True, text=True, check=True,
+                                 env={**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
+                                      'FAKE_DOCKER': json.dumps(fixture)})
+        return json.loads(out.stdout)
+
+    def test_probe_reports_a_swarm_rollback_and_the_failed_task_error_only_when_not_ready(self):
+        rolled_back = {'serviceImage': self.previous['worker'], 'containerImage': self.previous['worker'], 'sha': self.previous['sha'],
+                       'updateStatus': {'State': 'rollback_completed', 'Message': 'rollback completed'},
+                       'tasks': [{'Name': 'svc.1', 'Error': ''},
+                                 {'Name': 'svc.1', 'Error': 'No such container: 6f1c2e\nsecret=<value>' + 'x' * 300}]}
+        result = self.run_probe(rolled_back)
+        self.assertFalse(result['ready'])
+        self.assertEqual(result['updateState'], 'rollback_completed')
+        self.assertEqual(len(result['taskErrors']), 1)
+        error = result['taskErrors'][0]
+        self.assertTrue(error.startswith('No such container: 6f1c2e?secret=?value?'))  # 줄바꿈·꺾쇠는 걸러진다
+        self.assertEqual(len(error), 160)
+        healthy = dict(rolled_back, serviceImage=self.target['worker'], containerImage=self.target['worker'], sha=self.target['sha'],
+                       updateStatus={'State': 'completed'})
+        self.assertNotIn('updateState', self.run_probe(healthy))  # 준비면 Swarm 을 더 읽지 않는다
+        self.assertEqual(self.run_probe(healthy, detail=True)['updateState'], 'completed')
+        never_updated = dict(healthy, updateStatus=None, tasks=[])
+        self.assertTrue(self.run_probe(never_updated, detail=True)['ready'])
+        self.assertNotIn('updateState', self.run_probe(never_updated, detail=True))
+
+    # ---- 확인·한 번 다시 배포 ---------------------------------------------------------------------------------
+    def staged_apps(self, short='crawler-m3'):
+        apps = self.test.apps()
+        apps[short].update({'dockerImage': self.target['worker'], 'env': 'RELEASE_TAG=' + self.target['sha'] + '\n'})
+        return apps
+
+    def test_wait_stops_on_a_swarm_rollback_instead_of_timing_out(self):
+        client = FakeClient(self.staged_apps(), deployment_id='new')
+        evidence = {'ready': False, 'serviceImageMatch': False, 'updateState': 'rollback_completed',
+                    'taskErrors': ['No such container: 6f1c2e']}
+        with patch.object(release, 'probe', return_value=evidence), patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaises(release.SwarmRollback) as raised:
+                release.check_app_deployed(client, 'crawler-m3', self.target, 'old')
+        self.assertEqual(str(raised.exception), 'crawler-m3_swarm_rollback_completed:task_error=No such container: 6f1c2e')
+        self.assertEqual(raised.exception.state, 'rollback_completed')
+        sleep.assert_not_called()  # 4분 시간 초과를 기다리지 않는다
+        # 되돌림이 아니면 예전처럼 기다리고, 시간이 넘으면 마지막 태스크 오류를 붙인다
+        with patch.object(release, 'probe', return_value={'ready': False, 'updateState': 'updating', 'taskErrors': ['task: non-zero exit (1)']}), \
+             patch.object(release.time, 'monotonic', side_effect=[0, 0, 2]), patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(TimeoutError, r'^crawler-m3_verification_timeout:task_error=task: non-zero exit \(1\)$'):
+                release.check_app_deployed(client, 'crawler-m3', self.target, 'old', timeout=1)
+
+    def test_a_rollback_is_redeployed_once_after_swarm_settles(self):
+        client = FakeClient(self.staged_apps())
+        rollback = release.SwarmRollback('crawler-m3', {'updateState': 'rollback_completed', 'taskErrors': ['No such container: 6f1c2e']})
+        output = io.StringIO()
+        with patch.object(release, 'check_app_deployed', side_effect=[rollback, {'app': 'crawler-m3', 'deployment': 'done'}]) as wait, \
+             patch.object(release, 'await_rollback_settled') as settled, redirect_stdout(output):
+            result = release.deploy_app(client, 'crawler-m3', self.target)
+        self.assertEqual(result, {'app': 'crawler-m3', 'deployment': 'done', 'swarmRedeploys': 1})
+        self.assertEqual(client.requests, ['application.deploy', 'application.deploy'])
+        self.assertEqual(wait.call_count, 2)
+        settled.assert_called_once_with(client, 'crawler-m3', self.target)
+        line = lines(output)[0]
+        self.assertEqual((line['app'], line['swarmRollback'], line['taskErrors'], line['action']),
+                         ('crawler-m3', 'rollback_completed', ['No such container: 6f1c2e'], 'redeploy_once'))
+
+    def test_a_second_rollback_stops_with_the_failed_task_error_and_paused_is_never_redeployed(self):
+        client = FakeClient(self.staged_apps())
+        rollback = release.SwarmRollback('crawler-m3', {'updateState': 'rollback_completed', 'taskErrors': ['No such container: 6f1c2e']})
+        with patch.object(release, 'check_app_deployed', side_effect=[rollback, rollback]), \
+             patch.object(release, 'await_rollback_settled'), redirect_stdout(io.StringIO()):
+            with self.assertRaises(release.ReleaseStopped) as raised:
+                release.deploy_app(client, 'crawler-m3', self.target)
+        self.assertEqual(str(raised.exception), 'crawler-m3_swarm_rollback_repeated:task_error=No such container: 6f1c2e')
+        self.assertEqual(client.requests, ['application.deploy', 'application.deploy'])
+        self.assertEqual(release.error_fields(raised.exception)['detail'], str(raised.exception))
+
+        client = FakeClient(self.staged_apps())
+        paused = release.SwarmRollback('crawler-m3', {'updateState': 'paused', 'updateMessage': 'update paused due to failure'})
+        with patch.object(release, 'check_app_deployed', side_effect=[paused]), \
+             patch.object(release, 'await_rollback_settled') as settled, redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(release.ReleaseStopped, '^crawler-m3_swarm_paused:message=update paused due to failure$'):
+                release.deploy_app(client, 'crawler-m3', self.target)
+        self.assertEqual(client.requests, ['application.deploy'])
+        settled.assert_not_called()
+
+    def test_redeploy_waits_for_the_rollback_to_finish_and_stops_on_a_paused_rollback(self):
+        client = FakeClient(self.staged_apps())
+        answers = [{'ready': False, 'updateState': 'rollback_started'}, {'ready': False, 'updateState': 'rollback_completed'}]
+        with patch.object(release, 'probe', side_effect=answers) as remote, patch.object(release.time, 'sleep'):
+            self.assertEqual(release.await_rollback_settled(client, 'crawler-m3', self.target)['updateState'], 'rollback_completed')
+        self.assertEqual(remote.call_count, 2)
+        with patch.object(release, 'probe', return_value={'ready': False, 'updateState': 'rollback_paused', 'taskErrors': ['boom']}), \
+             patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(release.ReleaseStopped, '^crawler-m3_swarm_rollback_paused:task_error=boom$'):
+                release.await_rollback_settled(client, 'crawler-m3', self.target)
+        with patch.object(release, 'probe', return_value={'ready': False, 'updateState': 'rollback_started'}), \
+             patch.object(release.time, 'monotonic', side_effect=[0, 0, 2]), patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(release.ReleaseStopped, '^crawler-m3_swarm_rollback_unsettled$'):
+                release.await_rollback_settled(client, 'crawler-m3', self.target, timeout=1)
+
+    def test_stage_and_restore_go_through_the_rollback_aware_deploy(self):
+        apps = self.test.apps()
+        client = FakeClient(apps)
+        with patch.object(release, 'deploy_app', return_value={'app': 'crawler-m3'}) as deploy:
+            release.stage_and_deploy(client, 'crawler-m3', self.target, 'token', self.previous)
+        deploy.assert_called_once_with(client, 'crawler-m3', self.target)
+        self.assertEqual(client.requests, ['application.saveEnvironment', 'application.saveDockerProvider'])
+
+    # ---- restore: 실행이 이미 이전 릴리스면 설정만 ---------------------------------------------------------------
+    def restore_with(self, evidence):
+        apps = self.staged_apps('publisher-m3')
+        original = dict(apps['publisher-m3'], dockerImage=self.previous['worker'], env='RELEASE_TAG=' + self.previous['sha'] + '\n')
+        client = FakeClient(apps)
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'snapshot.json')
+            release.save_snapshot(path, self.target, {'previous': self.previous, 'apps': {'publisher-m3': original}})
+            with patch.object(release, 'probe', return_value=evidence), \
+                 patch.object(release, 'deploy_app', return_value={'app': 'publisher-m3', 'deployment': 'done'}) as deploy:
+                result = release.restore(client, path, 'publisher-m3', 'token')
+        return result, client.requests, deploy
+
+    def test_restore_only_rewrites_the_configuration_when_swarm_already_runs_the_previous_release(self):
+        result, requests, deploy = self.restore_with({'ready': True, 'updateState': 'rollback_completed'})
+        self.assertEqual((result['restored'], result['runtime'], result['deployment']), ('configuration_only', 'already_previous', 'skipped'))
+        self.assertEqual(requests, ['application.saveEnvironment', 'application.saveDockerProvider'])  # 재시작 없음
+        deploy.assert_not_called()
+        # 실행이 새 릴리스거나 Swarm update 가 아직 진행 중이면 예전처럼 다시 배포한다
+        for evidence in ({'ready': False}, {'ready': True, 'updateState': 'updating'}, {'ready': True, 'updateState': 'rollback_started'}):
+            with self.subTest(evidence=evidence):
+                result, requests, deploy = self.restore_with(evidence)
+                self.assertEqual(result, {'app': 'publisher-m3', 'deployment': 'done'})
+                deploy.assert_called_once()
+                self.assertEqual(deploy.call_args.args[1:], ('publisher-m3', self.previous))
+
+    # ---- --resume ------------------------------------------------------------------------------------------------
+    def mixed_after_597(self):
+        """#597 첫 시도 뒤: publisher·reviewer 쌍과 crawler-mini 는 새 릴리스, crawler-m3 는 설정만 새 릴리스(Swarm 이 되돌림), 웹은 이전."""
+        originals = self.test.apps()
+        for short in ('web-mini', 'web-m3'):
+            originals[short]['buildArgs'] = 'NEXT_DEPLOYMENT_ID=' + self.previous['sha'] + '\n'
+        current = json.loads(json.dumps(originals))
+        for short in ('publisher-mini', 'publisher-m3', 'reviewer-mini', 'reviewer-m3', 'crawler-mini', 'crawler-m3'):
+            env, build_args = release.staged_settings(originals[short], 'worker', self.target['sha'])
+            current[short].update({'dockerImage': self.target['worker'], 'env': env, 'buildArgs': build_args})
+        snapshot = {'target': self.target, 'previous': self.previous, 'apps': originals}
+        return snapshot, current
+
+    def fake_runtime(self, rolled_back=('crawler-m3',), unknown=(), settle='rollback_completed'):
+        def remote(short, app, expected, replicas='any', detail=False):
+            if short in unknown:
+                return {'ready': False}
+            on_target = app['dockerImage'] in (self.target['worker'], self.target['web']) and short not in rolled_back
+            ready = (expected['sha'] == self.target['sha']) == on_target
+            return {'ready': ready, **({'updateState': settle} if detail else {})}
+        return remote
+
+    def test_resume_classifies_each_app_from_the_snapshot_and_the_actual_runtime(self):
+        snapshot, current = self.mixed_after_597()
+        client = FakeClient(current)
+        with patch.object(release, 'probe', side_effect=self.fake_runtime()):
+            state = release.resume_baseline(client, self.target, snapshot)
+        self.assertEqual(state['resume'], {'publisher-mini': 'done', 'publisher-m3': 'done', 'reviewer-mini': 'done', 'reviewer-m3': 'done',
+                                           'crawler-mini': 'done', 'crawler-m3': 'redeploy', 'web-mini': 'previous', 'web-m3': 'previous'})
+        self.assertEqual(state['mixedRoles'], {'crawler': ('release_mismatch',)})
+        self.assertEqual(state['previous'], self.previous)
+        self.assertEqual(client.requests, [])  # 읽기만
+
+    def test_resume_refuses_unexplained_drift_or_unknown_runtime_before_any_write(self):
+        snapshot, current = self.mixed_after_597()
+        drifted = json.loads(json.dumps(current))
+        drifted['reviewer-m3']['env'] += 'EXTRA_FLAG=true\n'
+        cases = [('reviewer-m3_unexplained_drift', drifted, snapshot, {}),
+                 ('resume_snapshot_target_mismatch', current, dict(snapshot, target=dict(self.target, sha='9' * 40)), {}),
+                 ('crawler-m3_resume_runtime_unknown', current, snapshot, {'unknown': ('crawler-m3',)}),
+                 ('crawler-m3_resume_swarm_updating', current, snapshot, {'settle': 'updating'})]
+        image = json.loads(json.dumps(current))
+        image['web-mini']['dockerImage'] = release.IMAGE_PREFIX['web'] + 'sha256:' + '1' * 64
+        cases.append(('web-mini_unexplained_drift', image, snapshot, {}))
+        for code, apps, snap, runtime in cases:
+            with self.subTest(code=code):
+                client = FakeClient(apps)
+                with patch.object(release, 'probe', side_effect=self.fake_runtime(**runtime)) as remote:
+                    with self.assertRaisesRegex(ValueError, '^' + code):
+                        release.resume_baseline(client, self.target, snap)
+                self.assertEqual(client.requests, [])
+                if 'drift' in code or 'mismatch' in code:
+                    remote.assert_not_called()  # 설정 확인이 실행 확인보다 먼저다
+
+    def test_resume_skips_finished_apps_redeploys_the_rolled_back_one_and_keeps_the_original_snapshot(self):
+        snapshot, current = self.mixed_after_597()
+        client = FakeClient(current)
+        with patch.object(release, 'probe', side_effect=self.fake_runtime()):
+            state = release.resume_baseline(client, self.target, snapshot)
+        events, output = [], io.StringIO()
+        with patch.object(release, 'save_snapshot') as save, \
+             patch.object(release, 'stage_and_deploy', side_effect=lambda _c, short, *_a: events.append(('stage', short)) or {'app': short}), \
+             patch.object(release, 'deploy_app', side_effect=lambda _c, short, _t: events.append(('redeploy', short)) or {'app': short}), \
+             patch.object(release, 'monitor_gate', side_effect=lambda _c, role, **_k: events.append(('gate', role)) or {'role': role}), \
+             patch.object(release, 'public_gate', return_value={'publicHealth': 'ok'}), \
+             patch.object(release, 'purge_html', return_value={'htmlPurge': 'skipped'}), redirect_stdout(output):
+            release.deploy(client, self.target, 'token', state, '/private/tmp/stopped.json')
+        save.assert_not_called()  # 되돌릴 이전 설정은 멈춘 run 의 스냅샷에 있다
+        self.assertEqual(events, [('gate', 'publisher'), ('gate', 'reviewer'), ('redeploy', 'crawler-m3'), ('gate', 'crawler'),
+                                  ('stage', 'web-mini'), ('stage', 'web-m3')])
+        out = lines(output)
+        self.assertEqual(out[0]['resumed'], ['publisher-mini', 'publisher-m3', 'reviewer-mini', 'reviewer-m3', 'crawler-mini', 'crawler-m3'])
+        skipped = [line['app'] for line in out if line.get('resume') == 'already_target']
+        self.assertEqual(skipped, ['publisher-mini', 'publisher-m3', 'reviewer-mini', 'reviewer-m3', 'crawler-mini'])
+        self.assertEqual(client.requests, [])
+
+    def test_a_resumed_app_changed_after_the_resume_preflight_is_not_touched(self):
+        snapshot, current = self.mixed_after_597()
+        client = FakeClient(current)
+        current['crawler-m3']['env'] = 'RELEASE_TAG=' + self.previous['sha'] + '\n'
+        with patch.object(release, 'deploy_app') as deploy, self.assertRaisesRegex(ValueError, 'crawler-m3_changed_since_preflight'):
+            release.resume_app(client, 'crawler-m3', self.target, 'token', self.previous, 'redeploy')
+        deploy.assert_not_called()
+
+    def test_main_resume_reads_the_stopped_snapshot_and_lets_the_preflight_gate_accept_the_half_released_pair(self):
+        snapshot, current = self.mixed_after_597()
+        base = ['--sha', self.target['sha'], '--worker-image', self.target['worker'], '--web-image', self.target['web']]
+        for arguments in (['run'] + base + ['--resume'], ['restore', '--snapshot', '/private/tmp/x.json', '--app', 'crawler-m3', '--resume'],
+                          ['prepull'] + base + ['--resume', '--snapshot', '/private/tmp/x.json']):
+            with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    release.main(arguments)
+                keychain.assert_not_called()
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / 'stopped.json')
+            release.save_snapshot(path, self.target, {'previous': self.previous, 'apps': snapshot['apps']})
+            output, client = io.StringIO(), FakeClient(current)
+            with patch.object(release, 'run', side_effect=['operator-secret', self.target['sha'], '']), \
+                 patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+                 patch.object(release, 'Dokploy', return_value=client), \
+                 patch.object(release, 'probe', side_effect=self.fake_runtime()), patch.object(release, 'baseline') as fresh, \
+                 patch.object(release, 'github_integration_preflight', return_value={}), \
+                 patch.object(release, 'agent_scan_release_gate', return_value={'agentScanGate': 'release_gated'}), \
+                 patch.object(release, 'monitor_gate', return_value={'role': 'crawler', 'readiness': 'ready', 'progress': 'ok',
+                                                                     'standbyActive': ['text']}) as gate, \
+                 patch.object(release, 'pre_pull'), patch.object(release, 'deploy') as deploy, redirect_stdout(output):
+                release.main(['run'] + base + ['--resume', '--snapshot', path])
+        fresh.assert_not_called()
+        gate.assert_called_once_with(client, 'crawler', strict=(),
+                                     allow={'crawler': ('release_mismatch',)})
+        plan = lines(output)[-1]
+        self.assertEqual(plan['resume']['crawler-m3'], 'redeploy')
+        self.assertEqual(plan['standbyActive'], ['text'])
+        self.assertEqual(deploy.call_args.args[3]['resume']['web-m3'], 'previous')
+        self.assertEqual(deploy.call_args.args[4], path)
+
+    # ---- 감시 관문: 유효한 소유자 ----------------------------------------------------------------------------------
+    @staticmethod
+    def reports(scheduler='ready', progress='ok', **reasons):
+        roles = {'publisher': 'ready', 'reviewer': 'ready', 'crawler': 'ready', 'maintenance': 'ready', 'text': 'ready', **reasons}
+        readiness = {'overall': 'ok', 'roles': [{'role': role, 'reason': reason} for role, reason in roles.items()],
+                     'scheduler': {'reason': scheduler}}
+        return {'check-failover-readiness.ts': {'overall': 'ok', 'readiness': readiness}, 'check-worker-progress.ts': {'overall': progress}}
+
+    def test_gate_accepts_whichever_valid_holder_except_for_the_role_just_released(self):
+        verdict = release.gate_verdict
+        # 배포 전: 예비가 쥔 역할도 유효한 소유자다(예비를 먼저 올리면 주가 되찾는다)
+        self.assertTrue(verdict(self.reports(crawler='standby_active'), ('crawler',), strict=())['passed'])
+        self.assertEqual(verdict(self.reports(crawler='standby_active'), ('crawler',), strict=())['standbyActive'], ['crawler'])
+        # 방금 올린 역할은 M3 주가 쥐어야 한다 — 예비가 쥐면 넘겨주기를 기다린다
+        held = verdict(self.reports(crawler='standby_active'), ('crawler',))
+        self.assertEqual((held['passed'], held['handoff'], held['blocking']), (False, True, ['crawler=standby_active']))
+        other = verdict(self.reports(text='standby_active'), ('crawler',))
+        self.assertEqual((other['passed'], other['standbyActive']), (True, ['text']))
+        # 유효한 소유자가 아닌 상태와 scheduler·진행은 예전처럼 막는다
+        for reasons, blocking in (({'crawler': 'primary_quarantined'}, 'crawler=primary_quarantined'),
+                                  ({'text': 'lease_expired'}, 'text=lease_expired'), ({'reviewer': 'standby_missing'}, 'reviewer=standby_missing'),
+                                  ({'scheduler': 'replica_missing'}, 'scheduler=replica_missing'), ({'progress': 'alarm'}, 'progress=alarm')):
+            with self.subTest(reasons=reasons):
+                result = verdict(self.reports(**reasons), ('crawler',), strict=())
+                self.assertEqual((result['passed'], result['blocking']), (False, [blocking]))
+        # --resume 의 반쯤 올린 쌍
+        self.assertFalse(verdict(self.reports(crawler='release_mismatch'), ('crawler',), strict=())['passed'])
+        self.assertTrue(verdict(self.reports(crawler='release_mismatch'), ('crawler',), strict=(),
+                                allow={'crawler': ('release_mismatch',)})['passed'])
+        # 보고가 비면(DB 읽기 실패) 통과하지 않는다
+        empty = {'check-failover-readiness.ts': {'overall': 'unknown', 'readiness': None}, 'check-worker-progress.ts': {'overall': 'ok'}}
+        self.assertFalse(verdict(empty, ('crawler',))['passed'])
+
+    def test_gate_waits_longer_for_the_primary_to_take_back_a_standby_held_role(self):
+        client = FakeClient({'crawler-m3': {'appName': 'service-crawler-m3'}})
+        answers = iter([self.reports(crawler='standby_active')] * 3 + [self.reports()])
+        clock = iter([0, 0, 100, 130, 200])  # 시작, 확인 셋(120초 한도를 넘김), 넷째에 주가 되찾음
+        output = io.StringIO()
+        with patch.object(release, 'ssh_python', side_effect=lambda *a, **k: json.dumps(next(answers))), \
+             patch.object(release.time, 'monotonic', side_effect=lambda: next(clock)), patch.object(release.time, 'sleep'), \
+             redirect_stdout(output):
+            self.assertEqual(release.monitor_gate(client, 'crawler'), {'role': 'crawler', 'readiness': 'ready', 'progress': 'ok'})
+        self.assertEqual(lines(output)[0]['handoff'], 'waiting_for_primary')
+        # 더 기다려도 주가 못 되찾으면 받지 못한 사유를 붙여 멈춘다
+        clock = iter([0, 0, 100, 400])
+        with patch.object(release, 'ssh_python', return_value=json.dumps(self.reports(crawler='standby_active'))), \
+             patch.object(release.time, 'monotonic', side_effect=lambda: next(clock)), patch.object(release.time, 'sleep'), \
+             redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(TimeoutError, '^crawler_monitor_gate_timeout:crawler=standby_active$'):
+                release.monitor_gate(client, 'crawler')
+        # 다른 역할의 경보는 넘겨주기가 아니므로 한도를 늘리지 않는다
+        clock = iter([0, 0, 130])
+        with patch.object(release, 'ssh_python', return_value=json.dumps(self.reports(progress='alarm'))), \
+             patch.object(release.time, 'monotonic', side_effect=lambda: next(clock)), patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(TimeoutError, '^crawler_monitor_gate_timeout:progress=alarm$'):
+                release.monitor_gate(client, 'crawler')
 
 
 if __name__ == '__main__':
