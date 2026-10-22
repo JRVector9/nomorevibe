@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {mkdir,readFile,writeFile} from 'node:fs/promises';
+const origin=process.env.NMV_NEWS_PREVIEW_URL||'http://localhost:4178';
+const out=new URL('./qa-results/',import.meta.url);await mkdir(out,{recursive:true});
+const snapshot=JSON.parse(await readFile(new URL('./data.json',import.meta.url),'utf8'));
+const browser=await chromium.launch();const page=await browser.newPage({viewport:{width:1440,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const passed=[];
+try{
+ await page.goto(origin,{waitUntil:'networkidle'});
+ assert.equal(await page.locator('.news-row').count(),9);
+ await page.locator('[data-company-filter="Google"]').click();assert.equal(await page.locator('.news-row:not([data-company="Google"])').count(),0);assert.ok(await page.locator('.news-row').count()>0);passed.push('company filter');
+ await page.locator('[data-company-filter=""]').click();await page.locator('#query').fill('Astra');assert.ok(await page.locator('.news-row').count()>0);assert.match(await page.locator('#news-list').innerText(),/Astra/);
+ await page.locator('#query').fill('테스트_검색결과없음');assert.equal(await page.locator('.news-row').count(),0);assert.match(await page.locator('.empty').innerText(),/조건에 맞는 소식이 없습니다/);await page.locator('#reset-filters').click();passed.push('search and empty/reset');
+ await page.locator('#topic').selectOption('개발');assert.ok(await page.locator('.news-row').count()>0);for(const topic of await page.locator('.news-row .kicker').allTextContents())assert.match(topic,/개발/);await page.locator('#topic').selectOption('');passed.push('topic filter');
+ await page.locator('#more').click();assert.equal(await page.locator('.news-row').count(),18);await page.locator('#more').click();assert.equal(await page.locator('.news-row').count(),snapshot.articles.length);assert.equal(await page.locator('#more').isVisible(),false);passed.push('9 → 18 → all articles');
+ await page.locator('.news-row .save').first().click();assert.equal(await page.locator('#saved-count').innerText(),'1');await page.reload({waitUntil:'networkidle'});assert.equal(await page.locator('#saved-count').innerText(),'1');await page.locator('#saved-toggle').click();assert.equal(await page.locator('.news-row').count(),1);await page.locator('.news-row .save').click();assert.equal(await page.locator('.news-row').count(),0);await page.locator('#saved-toggle').click();passed.push('bookmark persistence and removal');
+ await page.locator('[data-platform="Threads"]').click();assert.equal(await page.locator('.social-post').count(),1);assert.match(await page.locator('.social-post').innerText(),/Mark Zuckerberg/);await page.locator('[data-platform="X"]').click();assert.equal(await page.locator('.social-post').count(),2);await page.locator('[data-platform="all"]').click();passed.push('X / Threads tabs');
+ await page.locator('[data-open-sources]').first().click();assert.equal(await page.locator('#sources-dialog').isVisible(),true);await page.keyboard.press('Escape');assert.equal(await page.locator('#sources-dialog').isVisible(),false);passed.push('source dialog and keyboard dismissal');
+ assert.equal(await page.locator('#videos article').count(),3);assert.equal(await page.locator('#videos a[href^="https://www.youtube.com/watch?v="]').count(),6);assert.equal(await page.locator('#social a[href^="https://"]').count(),3);passed.push('real video/social source links');
+ for(const width of [1440,768,390,320]){await page.setViewportSize({width,height:900});await page.evaluate(()=>scrollTo({top:0,behavior:'instant'}));assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'overflow at '+width);passed.push('no page overflow at '+width)}
+ // Load lazy pictures before full page screenshots.
+ for(const width of [1440,390]){await page.setViewportSize({width,height:1050});await page.evaluate(async()=>{for(let top=0;top<document.body.scrollHeight;top+=650){scrollTo({top,behavior:'instant'});await new Promise(r=>setTimeout(r,40))}scrollTo({top:0,behavior:'instant'});await Promise.all([...document.images].map(img=>img.decode().catch(()=>{})))});assert.deepEqual(await page.locator('img').evaluateAll(images=>images.filter(img=>img.complete&&!img.naturalWidth).map(img=>img.src.slice(0,80))),[]);await page.screenshot({path:new URL(`preview-${width}.png`,out).pathname,fullPage:true});if(width===1440)await page.screenshot({path:new URL('preview-desktop-fold.png',out).pathname});}passed.push('all displayed images decode, screenshots 1440 / 390');
+ const pollPage=await browser.newPage();await pollPage.clock.install();let networkFailed=true;await pollPage.route('**/data.json',route=>networkFailed?route.abort():route.fulfill({contentType:'application/json',body:JSON.stringify(snapshot)}));await pollPage.goto(origin,{waitUntil:'networkidle'});assert.match(await pollPage.locator('#freshness').innerText(),/갱신 연결을 확인할 수 없습니다/);networkFailed=false;await pollPage.clock.runFor(61000);await pollPage.waitForFunction(()=>document.getElementById('freshness').textContent.startsWith('마지막 수집'));await pollPage.close();passed.push('poll connection failure recovers even without new articles');
+ // Single-file download also renders independently of the preview server.
+ await page.goto(new URL('./index.html',import.meta.url).href,{waitUntil:'load'});assert.equal(await page.locator('.news-row').count(),9);await page.locator('[data-open-sources]').first().click();assert.match(await page.locator('#source-explanation').innerText(),/고정 시안/);passed.push('standalone file HTML');
+ assert.deepEqual(errors,[]);passed.push('zero JavaScript page errors');
+ const report={at:new Date().toISOString(),passed};await writeFile(new URL('ui.json',out),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
+}finally{await browser.close()}
