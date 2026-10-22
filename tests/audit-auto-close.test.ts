@@ -6,7 +6,8 @@ import { AUTO_CLOSE_KEEP_DAYS, AUTO_CLOSE_MIN_CONFIDENCE, autoCloseVerdict, auto
  * 감사 두 번째 의견으로 닫는 규칙(2026-10-22 "승인은 유지, 거절은 숨김") — 무엇을 할지만 가르는 순수 함수. 쓰기·일지·되돌리기는
  * tests/integration/audit-auto-close.test.ts 가 본다
  */
-const open: AutoCloseState = { open: true, otherReject: false, unowned: true, held: false, settled: false, keptElsewhere: false, superseded: false };
+const open: AutoCloseState = { open: true, otherReject: false, unowned: true, held: false, settled: false, keptElsewhere: false, superseded: false,
+  reverted: false };
 const on = { autoClose: true, holdEnabled: true };
 const verdict = (decision: string, confidence: number | null, state: Partial<AutoCloseState> = {}, switches: Partial<typeof on> = {}) =>
   autoCloseVerdict({ decision, confidence }, { ...open, ...state }, { ...on, ...switches });
@@ -29,6 +30,9 @@ describe("autoCloseVerdict", () => {
     expect(verdict("reject", 1, {}, { autoClose: false })).toEqual({ action: null, skip: "off" });
     expect(verdict("approve", 1, { open: false })).toEqual({ action: null, skip: "not_open" });
     expect(verdict("reject", 1, { open: false })).toEqual({ action: null, skip: "not_open" });
+    // 운영자가 되돌린 항목은 새 판의 답으로도 다시 닫지 않는다
+    expect(verdict("approve", 1, { reverted: true })).toEqual({ action: null, skip: "reverted" });
+    expect(verdict("reject", 1, { reverted: true })).toEqual({ action: null, skip: "reverted" });
   });
 
   it("승인 — 다른 모델이 거절했으면(갈림) 열어 둔다. 주인·보류·감사 보류 스위치와 상관없이 유지한다", () => {

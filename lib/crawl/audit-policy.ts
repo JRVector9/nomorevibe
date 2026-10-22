@@ -913,9 +913,9 @@ export type PolicyRunView = {
 /**
  * 최근 실행 — 상태와 항목 상태별 수. 적용 중·되돌리기 중인 것이 맨 위. 버린 올리기와 올리다 만 올리기(staging — 창을 닫았거나 끊김,
  * 아무것도 적지 않았다)는 빼고, 검사만 한 올리기(staged)는 '검사함 · 적용 전'으로 보인다.
- * 감사 두 번째 의견의 자동 실행(하루·행동마다 하나)은 사람이 만든 실행을 밀어내지 않게 따로 autoLimit 개까지 함께 보인다
+ * 감사 두 번째 의견의 자동 실행(하루·행동마다 하나)은 사람이 만든 실행을 밀어내지 않게 따로 autoLimit 개(기본 이레 치)까지 함께 보인다
  */
-export async function listPolicyRuns(limit = 15, autoLimit = 6): Promise<PolicyRunView[]> {
+export async function listPolicyRuns(limit = 15, autoLimit = 14): Promise<PolicyRunView[]> {
   const isAuto = sql`((${productAuditPolicyRuns.options}->'auto') is not null)`;
   const select = (auto: boolean, count: number) => db.select().from(productAuditPolicyRuns)
     .where(and(sql`${productAuditPolicyRuns.status} not in ('discarded', 'staging')`, auto ? isAuto : sql`not ${isAuto}`))

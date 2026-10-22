@@ -1,15 +1,17 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditCampaigns, productAuditItems,
-  productAuditPolicyRunItems, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
+  productAuditPolicyRunItems, productAuditPolicyRuns, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
-import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, JobLeaseLostError, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import type { JobContext } from "@/lib/jobs/runner";
 import { logger } from "@/lib/observability/logger";
 import type { ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
-import { AUTO_CLOSE_MIN_CONFIDENCE, autoClosableSql, autoCloseOpinion, autoCloseToday, type AutoCloseResult, type AutoCloseToday } from "./audit-auto-close";
+import { AUTO_CLOSE_MIN_CONFIDENCE, autoClosableSql, autoCloseOpinion, autoCloseToday, utcDay, type AutoCloseResult,
+  type AutoCloseToday } from "./audit-auto-close";
 import { openAuditRejectUniverse } from "./audit-policy";
 import { AUDIT_HOLD_PURGE, AUDIT_HOLD_SWEEP_BATCH, AUDIT_RELEASE_PURGE, auditItemModel, holdCandidate } from "./product-audit-hold";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
@@ -244,7 +246,15 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     return;
   }
   // 답으로 닫기 전에 받아 둔 이 판의 답(배포 전·꺼 두었던 동안)으로 먼저 닫는다 — 모델을 부르지 않고 시작 창(STEP_MS) 밖에서
-  if (audit.enabled && audit.autoClose) await catchUpAutoClose(ctx, lease, settings, config.model, tally);
+  // 따라잡기의 뜻밖의 오류는 남기고 묻기로 넘어간다 — 따라잡기가 묻기를 막지 않게. lease 잃음·fence 는 묻기의 쓰기도 같은 까닭으로 멈춘다
+  if (audit.enabled && audit.autoClose) {
+    try {
+      await catchUpAutoClose(ctx, lease, settings, config.model, tally);
+    } catch (error) {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.catch_up_failed", { code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+    }
+  }
   const startedAt = Date.now();
   const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
   const queue = interleave(
@@ -351,7 +361,7 @@ async function writeAudit(target: AuditTarget, review: QwenDirectReview, input: 
 /**
  * 이미 받은 답으로 닫는 따라잡기 — 이 모델·이 판의 자동 의견이 있어 다시 묻지 않는 열린 거절 가운데(묻는 범위 그대로) 그 답으로 닫을 수 있는 것
  * (autoClosableSql — autoCloseVerdict 와 같은 규칙)을 오래된 것부터 닫는다. 답으로 닫기 전(2026-10-22 배포 전·스위치를 꺼 두었던 동안)에 받은 답이다.
- * 운영자가 되돌린 항목(정책 실행 항목이 되돌림·되돌리지 못함)은 다시 닫지 않는다.
+ * 운영자가 되돌린 항목(정책 실행 항목이 되돌림·되돌리지 못함)과 자동 실행이 이미 손댄 항목은 다시 고르지 않는다.
  * 한 틱에 보류 쓸기와 같은 수(지난 60초에 적힌 보류·풀기 지우기 줄만큼 뺀다)와 CATCH_UP_MS 안에서만. 제품 하나가 한 트랜잭션이고 잠금은
  * 의견을 적는 쓰기와 같은 차례다: DR writer fence → stage → 제품 세대 → 감사 항목 → 설정 행 → 자동 실행 행 → 작업 lease
  */
@@ -368,11 +378,14 @@ async function catchUpAutoClose(ctx: JobContext<null>, lease: JobLease, settings
       from ${productAuditItems} i, ${products} p, ${productAuditSecondOpinions} o
      where ${auditScope(step.scope, settings.auditHold)} and o.item_id = i.id and o.source = ${QWEN_V2_AUTO_SOURCE} and o.model = ${model}
        and o.prompt_version = ${QWEN_V2_PROMPT_VERSION} and ${autoClosableSql(settings.auditHold.enabled)}
-       -- 운영자가 되돌린 것(자동 실행이든 정책 실행이든)은 같은 답으로 다시 닫지 않는다 — 되돌림은 '사람이 본다'는 뜻이다
-       and not exists (select 1 from ${productAuditPolicyRunItems} ri where ri.item_id = i.id and ri.state in ('undone', 'undo_blocked'))
+       -- 운영자가 되돌린 것(자동 실행이든 정책 실행이든)은 다시 닫지 않는다 — 되돌림은 '사람이 본다'는 뜻이다. 자동 실행이 이미 손댄 항목도
+       -- 다시 고르지 않는다(같은 날 같은 실행에 두 번 적을 수 없어 틱마다 같은 자리에 걸린다)
+       and not exists (select 1 from ${productAuditPolicyRunItems} ri join ${productAuditPolicyRuns} r on r.id = ri.run_id where ri.item_id = i.id
+         and (ri.state in ('undone', 'undo_blocked') or (r.options->'auto') is not null))
      order by i.id limit ${room}`);
   for (const row of rows) {
     if (!ctx.hasBudget() || ctx.signal?.aborted || Date.now() - startedAt > CATCH_UP_MS) break;
+    // 한 항목의 뜻밖의 오류(교착 등)는 남기고 다음 항목으로 — 한 항목이 따라잡기를 막지 않게. lease 잃음·fence 는 모든 쓰기가 같은 까닭으로 멈춘다
     const outcome = await withJobLeaseWrite(lease, async (tx): Promise<AutoCloseResult | null> => {
       await lockPipelineInputStages(tx);
       if (!(await lockProductGeneration(tx, row.product_id, row.slug))) return null;
@@ -384,6 +397,10 @@ async function catchUpAutoClose(ctx: JobContext<null>, lease: JobLease, settings
         actor: QWEN_V2_AUTO_ACTOR, settings: locked }) : null;
       await assertJobLeaseAtWallTime(tx, lease);
       return result;
+    }).catch((error: unknown) => {
+      if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+      logger.error("qwen_second_opinion.catch_up_item_failed", { item: row.item_id, code: error instanceof Error ? error.message.slice(0, 80) : "unknown" });
+      return null;
     });
     if (outcome?.action === "kept") tally.audit.autoKept += 1;
     else if (outcome?.action === "held") tally.audit.autoHeld += 1;
@@ -443,7 +460,8 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
       where ${auditOpinionWanted(steps.auditSecondOpinion.scope, hold, model, given("a:"))}`),
     db.execute<{ count: number }>(sql`select count(*)::int as count from ${secondReviews} s where ${publishedOpinionWanted(model, given("p:"))}`),
     readQwenEndpointBackoff().catch(() => null),
-    autoCloseToday(),
+    // 일지(0116)를 못 읽어도 상태 칸은 그린다
+    autoCloseToday().catch(() => ({ day: utcDay(), kept: 0, held: 0, undone: 0 })),
   ]);
   return {
     model: config?.model ?? null, url: config?.baseUrl ?? null, promptVersion: QWEN_V2_PROMPT_VERSION,

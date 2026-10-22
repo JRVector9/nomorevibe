@@ -356,7 +356,7 @@ function AutoClosePanel({ step, today }: { step: QwenAutoSettings["auditSecondOp
           자동 숨김 <b className="font-semibold text-fg">{count(today.held)}</b>{today.undone > 0 && ` · 그중 되돌림 ${count(today.undone)}`}</span>}
       </div>
       <p>승인(확신 {AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델의 거절 없음) → 유지 {AUTO_CLOSE_KEEP_DAYS}일(보류 중이면 풂) ·
-        주인 없는 제품의 거절(확신 {AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상) → 숨김(보류). 그 밖(확신 낮음·판단 보류·모델 갈림·주인 있는 제품의 거절)은 열어 둡니다.
+        주인 없는 제품의 거절(확신 {AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상, 다른 모델이 승인했어도) → 숨김(보류). 그 밖(확신 낮음·판단 보류·다른 모델이 거절한 승인·주인 있는 제품의 거절·되돌린 항목)은 열어 둡니다.
         아무것도 내리지 않습니다 — 내리기는 위 정책으로 사람이 합니다.</p>
       <p className="text-fg-3">하루(UTC)·행동마다 아래 &lsquo;m1 자동 …&rsquo; 실행 하나에 적힙니다. 그 실행을 되돌리면 그날 자동으로 한 것만 돌아갑니다 — 유지는 지우고 풀었던 보류를 다시 걸고,
         숨김은 보류를 풀어 다시 걸지 않습니다. Qwen 의견은 남아 다시 묻지 않습니다. 끄려면 감사 거절 탭의 &lsquo;Qwen-v2 감사 두 번째 의견&rsquo;에서 답으로 닫기를 끕니다.</p>

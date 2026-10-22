@@ -24,7 +24,9 @@ import type { CrawlSettings } from "./settings-schema";
  *  - 거절 · 확신 0.90 이상 · 주인 없음(클레임·검증·메이커 권한 없음) → 숨김(감사 보류, product-audit-hold.ts holdAuditedProduct 의 자동 숨김 길).
  *    첫 감사의 확신·사유 갈래와 상관없이 — 카탈로그 예외(Qwen 거절은 카탈로그·디렉터리 같은 항목에서 세지 않음)도 이 길에는 걸지 않는다(사용자
  *    지시: 갈래와 상관없이). 주인 있는 제품, 이미 보류된 것, 사람·정책이 보류를 푼 항목(hold_released_at), 그 제품에 살아 있는 유지가 있는 것,
- *    더 새 감사 답이 있는 것, 감사 보류 스위치가 꺼진 것은 열어 둔다.
+ *    더 새 감사 답이 있는 것, 감사 보류 스위치가 꺼진 것은 열어 둔다. 다른 모델의 승인은 보지 않는다(보류의 둘째 문 bySecondOpinion 과 같다 — 세는
+ *    두 번째 거절은 다른 모델의 승인이 있어도 건다).
+ *  - 운영자가 그 항목에 대한 정책 실행(자동 실행 포함)을 되돌렸으면 새 판의 답이 와도 닫지 않는다.
  *  - 그 밖(확신 낮음·판단 보류·오류)은 열어 둔다.
  *
  * 보이기·되돌리기: 자동으로 한 일마다 정책 실행 일지(product_audit_policy_runs·_run_items, 0116)에 한 줄 — UTC 하루·행동마다 시스템 실행
@@ -85,9 +87,11 @@ export type AutoCloseState = {
   keptElsewhere: boolean;
   /** 그 제품에 더 새 감사 답(또는 돌고 있는 감사의 새 항목)이 있다 */
   superseded: boolean;
+  /** 운영자가 이 항목에 대한 정책 실행(자동 실행 포함)을 되돌렸다 — 되돌림은 '사람이 본다'는 뜻이라 새 판의 답으로도 다시 닫지 않는다 */
+  reverted: boolean;
 };
-export type AutoCloseSkip = "off" | "needs_review" | "low_confidence" | "not_open" | "split" | "hold_off" | "owned" | "held_already" | "settled"
-  | "kept" | "superseded";
+export type AutoCloseSkip = "off" | "needs_review" | "low_confidence" | "not_open" | "reverted" | "split" | "hold_off" | "owned" | "held_already"
+  | "settled" | "kept" | "superseded";
 export type AutoCloseVerdict = { action: AutoRunAction } | { action: null; skip: AutoCloseSkip };
 
 /**
@@ -99,6 +103,7 @@ export function autoCloseVerdict(opinion: { decision: string; confidence: number
   if (opinion.decision !== "approve" && opinion.decision !== "reject") return { action: null, skip: "needs_review" };
   if (typeof opinion.confidence !== "number" || !(opinion.confidence >= AUTO_CLOSE_MIN_CONFIDENCE)) return { action: null, skip: "low_confidence" };
   if (!state.open) return { action: null, skip: "not_open" };
+  if (state.reverted) return { action: null, skip: "reverted" };
   if (opinion.decision === "approve") return state.otherReject ? { action: null, skip: "split" } : { action: "keep" };
   if (!switches.holdEnabled) return { action: null, skip: "hold_off" };
   if (!state.unowned) return { action: null, skip: "owned" };
@@ -137,7 +142,7 @@ export type AutoCloseInput = { itemId: number; productId: number; slug: string; 
 
 type StateRow = { ai_decision: string | null; human_decision: string | null; settled: boolean; ai_reason: string | null; ai_confidence: number | null;
   campaign_id: number; status: string; slug_ok: boolean; held_at: string | null; hold_item_id: number | null; unowned: boolean; other_reject: boolean;
-  kept_elsewhere: boolean; superseded: boolean };
+  kept_elsewhere: boolean; superseded: boolean; reverted: boolean };
 
 async function readState(tx: ProductTransaction, input: AutoCloseInput): Promise<StateRow | null> {
   const [row] = await tx.execute<StateRow>(sql`
@@ -148,7 +153,8 @@ async function readState(tx: ProductTransaction, input: AutoCloseInput): Promise
         and ${bareModel(sql`o.model`)} <> ${bareModel(sql`${input.model}`)}) as other_reject,
       exists (select 1 from ${productAuditItems} k where k.product_id = i.product_id and k.human_decision = 'kept' and k.keep_until > now()) as kept_elsewhere,
       exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
-        where n.product_id = i.product_id and n.id > i.id and (n.ai_decision is not null or nc.status = 'running')) as superseded
+        where n.product_id = i.product_id and n.id > i.id and (n.ai_decision is not null or nc.status = 'running')) as superseded,
+      exists (select 1 from ${productAuditPolicyRunItems} ri where ri.item_id = i.id and ri.state in ('undone', 'undo_blocked')) as reverted
       from ${productAuditItems} i join ${products} p on p.id = i.product_id
      where i.id = ${input.itemId} and p.id = ${input.productId}`);
   return row ?? null;
@@ -157,7 +163,7 @@ async function readState(tx: ProductTransaction, input: AutoCloseInput): Promise
 const stateOf = (row: StateRow): AutoCloseState => ({
   open: row.ai_decision === "reject" && row.human_decision === null && (row.status === "seeded" || row.status === "verified") && row.slug_ok,
   otherReject: row.other_reject, unowned: row.unowned, held: row.held_at !== null, settled: row.settled, keptElsewhere: row.kept_elsewhere,
-  superseded: row.superseded,
+  superseded: row.superseded, reverted: row.reverted,
 });
 
 /**

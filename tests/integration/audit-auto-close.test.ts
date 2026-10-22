@@ -414,6 +414,9 @@ describe("보이기·되돌리기", () => {
     expect((await item("keep-held")).holdReleasedAt).toBeNull();
     expect(await auditRowsAfter(floor, "audit-policy-undo")).toMatchObject([{ actor: "jr", ok: true,
       detail: { runId: keepRun.id, undone: 2, auto: { action: "keep", by: "qwen-v2-auto" } } }]);
+    // 새 판의 답이 와도(글이 바뀌어 다시 물음) 되돌린 항목은 다시 닫지 않는다 — 의견만 적힌다
+    expect((await answerDirectly("keep-low", "approve", 0.99, "2026-10-30.v3")).autoClose).toEqual({ kept: 0, held: 0, left: { reverted: 1 } });
+    expect(await keptSlugs()).toEqual(["open"]);
 
     expect(await undoAll(holdRun.id)).toMatchObject({ status: "undone", undone: 2, blocked: 0 });
     expect(await heldSlugs()).toEqual(["keep-held"]);
@@ -425,8 +428,9 @@ describe("보이기·되돌리기", () => {
     server.calls.length = 0;
     await tick();
     expect(await heldSlugs()).toEqual(["keep-held"]);
-    expect(server.calls).toEqual([]);
-    // 되돌린 자동 유지는 받아 둔 같은 답으로 다시 닫지 않는다(따라잡기도) — 사람이 본다
+    // 위에서 다른 판으로 덮어쓴 keep-low 만 지금 판으로 다시 묻는다(승인) — 되돌린 항목이라 감사 잡의 쓰기도 닫지 않는다
+    expect(server.calls).toEqual(["u/keep-low"]);
+    // 되돌린 자동 유지는 받아 둔 같은 답으로도(따라잡기) 새 답으로도 다시 닫지 않는다 — 사람이 본다
     expect(await keptSlugs()).toEqual(["open"]);
     expect(await autoCloseToday()).toEqual({ day: utcDay(), kept: 2, held: 2, undone: 4 });
   });
