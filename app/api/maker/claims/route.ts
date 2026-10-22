@@ -3,6 +3,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 import { claimProducts, MakerError, parseClaimInput } from "@/lib/me/maker-claims";
 import { makerErrorResponse, makerFencedResponse, readMakerJson } from "@/lib/me/maker";
+import { trackServer } from "@/lib/analytics/server";
 
 /**
  * 운영자 확인 — {productIds: number[] (20개까지)} 또는 {repoUrl}. 제품마다 GitHub 에 저장소 주인을 물어 결과를 하나씩 돌려준다.
@@ -14,6 +15,10 @@ export const POST = webWriteRoute(async (request: Request) => {
     const input = parseClaimInput(await readMakerJson(request, 4_096));
     if (!(await rateLimit(`maker:claims:user:${user.id}`, 12, 60 * 60_000))) throw new MakerError("rate_limited", 429);
     const results = await claimProducts(user.id, input, { signal: request.signal });
+    // 방문 분석(서버 사실): 이번에 GitHub 저장소 주인으로 확인된 제품마다(이미 확인된 것은 세지 않는다)
+    for (const item of results) {
+      if (item.result === "verified" && item.slug) trackServer("product_claimed", { product_slug: item.slug, method: "github" }, { request, identity: "browser", userId: user.id });
+    }
     return Response.json({ results }, { headers: PUBLIC_PRIVATE_HEADERS });
   } catch (error) {
     return makerErrorResponse(error);

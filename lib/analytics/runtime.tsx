@@ -24,11 +24,13 @@ type AnalyticsWindow = Window & { dataLayer?: unknown[]; gtag?: Gtag } & Record<
 const state: {
   measurementId: string | null;
   debug: boolean;
+  /** 로그인한 사람의 가명 user_id(서버가 넘긴 값, PR C) — 없으면 null */
+  userId: string | null;
   initialized: boolean;
   listening: boolean;
   page: { location: string; referrer: string; title: string; key: string; type: AnalyticsPageType } | null;
   views: IntersectionObserver | null;
-} = { measurementId: null, debug: false, initialized: false, listening: false, page: null, views: null };
+} = { measurementId: null, debug: false, userId: null, initialized: false, listening: false, page: null, views: null };
 
 function browser(): AnalyticsWindow | null {
   return typeof window === "undefined" ? null : (window as unknown as AnalyticsWindow);
@@ -59,6 +61,7 @@ function initializeGtag(win: AnalyticsWindow, measurementId: string, debug: bool
   win[`ga-disable-${measurementId}`] = false;
   if (state.initialized) {
     gtag("consent", "update", { analytics_storage: "granted" });
+    if (state.userId) gtag("set", { user_id: state.userId });
     return;
   }
   for (const command of consentDefaultCommands()) gtag("consent", "default", command);
@@ -70,6 +73,7 @@ function initializeGtag(win: AnalyticsWindow, measurementId: string, debug: bool
     allow_google_signals: false,
     allow_ad_personalization_signals: false,
     ...(debug ? { debug_mode: true } : {}),
+    ...(state.userId ? { user_id: state.userId } : {}),
     ...currentPageFields(win),
   });
   state.initialized = true;
@@ -244,12 +248,14 @@ function setOptOut(optOut: boolean): void {
 const runtime: AnalyticsRuntime = { send, pageView, setOptOut };
 
 /** 로더가 한 번 부른다. 돌려준 loadScript 가 참일 때만 gtag.js 를 불러온다 */
-export function startAnalytics({ measurementId, debug, devLog }: {
-  measurementId: string | null; debug: boolean; devLog: boolean;
+export function startAnalytics({ measurementId, debug, devLog, userId = null }: {
+  measurementId: string | null; debug: boolean; devLog: boolean; userId?: string | null;
 }): { loadScript: boolean } {
   try {
     state.measurementId = measurementId;
     state.debug = debug;
+    // 가명 user_id 는 서버가 HMAC 으로 만든 hex 만 받는다(lib/analytics/identity.ts)
+    state.userId = userId && /^[a-f0-9]{16,64}$/.test(userId) ? userId : null;
     const win = browser();
     if (!win) return { loadScript: false };
     // 관리자·기계용 주소의 404 화면도 공개 틀을 쓴다 — 거기서는 불러오지 않는다
@@ -285,6 +291,7 @@ export function GtagScript({ measurementId }: { measurementId: string }) {
 export function resetAnalyticsRuntimeForTests(): void {
   state.measurementId = null;
   state.debug = false;
+  state.userId = null;
   state.initialized = false;
   state.page = null;
   state.views?.disconnect();

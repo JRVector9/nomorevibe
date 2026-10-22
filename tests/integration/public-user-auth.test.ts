@@ -146,6 +146,8 @@ describe("email login with the final migrated PostgreSQL schema", () => {
     const next = await challenge();
     const second = await loaded.verifyEmailLogin({ ...next, previousToken: first.token });
     expect(second.user.id).toBe(first.user.id);
+    // 처음 확인만 가입(sign_up), 다음부터는 로그인 — 방문 분석이 이 값으로 가른다
+    expect([first.created, second.created]).toEqual([true, false]);
     const headers = { cookie: `nmv_user=${second.token}`, origin: "https://nomorevibe.example", "x-csrf-token": csrfForToken(second.token, "session") };
     expect(await onReplica(() => auth.getPublicSession(new Request("https://nomorevibe.example/api/me", { headers })))).toEqual({ user: second.user, csrfToken: second.csrfToken });
     expect(await auth.getPublicSession(new Request("https://nomorevibe.example/api/me", { headers: { cookie: `nmv_user=${first.token}` } }))).toBeNull();

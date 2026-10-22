@@ -38,6 +38,8 @@ export async function saveGithubUserConnection(input: { actorUserId: number | nu
     if (identity && input.actorUserId !== null && identity.userId !== input.actorUserId) throw new PublicAuthError(409, "github_identity_conflict");
     const userId = input.actorUserId ?? identity?.userId;
     let user;
+    /** 이 연결이 계정을 새로 만들었다 — 분석의 sign_up(서버 사실)과 login 을 가른다 */
+    let created = false;
     if (userId !== undefined) {
       const [found] = await tx.select({ id: publicUsers.id, displayName: publicUsers.displayName, deletedAt: publicUsers.deletedAt }).from(publicUsers).where(eq(publicUsers.id, userId)).for("update");
       // 탈퇴한 계정에는 세션·연결을 다시 만들지 않는다
@@ -45,6 +47,7 @@ export async function saveGithubUserConnection(input: { actorUserId: number | nu
       user = { id: found.id, displayName: found.displayName };
     } else {
       [user] = await tx.insert(publicUsers).values({ displayName: `참여자-${randomBytes(4).toString("hex")}` }).returning({ id: publicUsers.id, displayName: publicUsers.displayName });
+      created = true;
     }
     // 표시용 login 은 로그인할 때마다 고친다(GitHub 에서 이름을 바꿀 수 있다)
     if (identity) await tx.update(publicIdentities).set({ providerLogin: input.githubUser.login, lastUsedAt: sql`now()` }).where(eq(publicIdentities.id, identity.id));
@@ -55,7 +58,7 @@ export async function saveGithubUserConnection(input: { actorUserId: number | nu
     if (isOpaqueToken(input.previousToken)) await tx.update(publicSessions).set({ revokedAt: sql`now()` }).where(eq(publicSessions.tokenHash, hashSessionToken(input.previousToken)));
     await tx.insert(publicSessions).values({ userId: user.id, tokenHash: session.tokenHash, createdAt: session.createdAt, expiresAt: session.expiresAt,
       provider: "github", deviceLabel: input.deviceLabel ?? null, lastSeenAt: session.createdAt });
-    return { user, token: session.token, csrfToken: csrfForToken(session.token, "session") };
+    return { user, token: session.token, csrfToken: csrfForToken(session.token, "session"), created };
   }));
 }
 

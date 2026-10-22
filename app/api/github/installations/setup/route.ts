@@ -5,6 +5,7 @@ import { GITHUB_NONCE_COOKIE, githubNonceCookieOptions } from "@/lib/domain/gith
 import { completeMakerGithubInstallation, feedbackOAuthConfig, requireMakerGithubEnabled } from "@/lib/domain/github-installations/authorization";
 import { GithubInstallationError } from "@/lib/domain/github-installations/credentials";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
+import { trackServer } from "@/lib/analytics/server";
 
 export const GET = webWriteRoute(async (request: Request) => {
   try {
@@ -24,6 +25,8 @@ export const GET = webWriteRoute(async (request: Request) => {
     for (const [name, value] of Object.entries(PUBLIC_PRIVATE_HEADERS)) response.headers.set(name, value);
     response.headers.set("Referrer-Policy", "no-referrer");
     response.cookies.set(GITHUB_NONCE_COOKIE, "", { ...githubNonceCookieOptions(), maxAge: 0 });
+    // 방문 분석(서버 사실): 앱 설치가 끝났다 — 조직 관리자 승인을 기다리는 것(pending)은 아직 세지 않는다
+    if (result.status !== "pending") trackServer("github_connected", { kind: "app_install" }, { request, identity: "browser", userId: session.user.id });
     return response;
   } catch (error) {
     const response = publicAuthErrorResponse(error);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { BADGE_CONTENT_TYPE, listedBadgeSvg, triedBadgeSvg, TRIED_BADGE_MIN, verifiedBadgeSvg } from "@/lib/domain/products/badge";
 import { withRoute } from "@/lib/http/handler";
 import { productTriedCount, publicProductIdentity } from "@/lib/me/share";
+import { trackServer } from "@/lib/analytics/server";
 
 type Params = { params: Promise<{ slug: string }> };
 
@@ -33,8 +34,14 @@ export const GET = withRoute("products.badge", async (req: Request, { params }: 
       headers: { "cache-control": "public, max-age=300", ...(SLUG_TAG.test(slug) ? { "cache-tag": `p-${slug}` } : {}) } });
   }
   const tried = query.get("style") === "tried" ? await productTriedCount(product.id) : 0;
-  const svg = tried >= TRIED_BADGE_MIN ? triedBadgeSvg(product.name, tried, lang)
-    : product.status === "verified" ? verifiedBadgeSvg() : listedBadgeSvg(product.name, lang);
+  const style = tried >= TRIED_BADGE_MIN ? "tried" : product.status === "verified" ? "verified" : "listed";
+  const svg = style === "tried" ? triedBadgeSvg(product.name, tried, lang)
+    : style === "verified" ? verifiedBadgeSvg() : listedBadgeSvg(product.name, lang);
+  /**
+   * 방문 분석: 배지를 내줬다 — 사람을 잇지 않는 합계(aggregate). 브라우저·GitHub 이미지 프록시가 한 시간 들고 있으므로
+   * 캐시가 빈 때만 여기 온다(노출의 하한). README 를 본 사람 수가 아니다.
+   */
+  trackServer("badge_impression", { product_slug: slug, badge_style: style, badge_lang: lang }, { request: req, identity: "aggregate" });
 
   return new NextResponse(svg, {
     headers: { "content-type": BADGE_CONTENT_TYPE, "cache-control": BADGE_CACHE, "cache-tag": `p-${slug}` },

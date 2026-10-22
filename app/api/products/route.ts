@@ -6,6 +6,7 @@ import { errorResponse, tooManyRequests, badJson } from "@/lib/http/respond";
 import { withRoute } from "@/lib/http/handler";
 import { rateLimit, clientIp } from "@/lib/rate-limit";
 import { siteOrigin } from "@/lib/site";
+import { agentClass, trackServer } from "@/lib/analytics/server";
 
 export const POST = withRoute("products.register", async (req: Request) => {
   if (!(await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60 * 1000))) return tooManyRequests();
@@ -27,6 +28,9 @@ export const POST = withRoute("products.register", async (req: Request) => {
 
   const { slug, editToken, verifyToken } = result.value;
   const origin = siteOrigin(req);
+  // 방문 분석의 '등록이 들어왔다' — 스킬은 curl 로 부른다. 토큰·주소는 싣지 않는다
+  trackServer("launch_submitted", { product_slug: slug, source: agentClass(req.headers.get("user-agent")) === "browser" ? "other" : "skill" },
+    { request: req, identity: "auto" });
   return NextResponse.json(
     {
       slug,

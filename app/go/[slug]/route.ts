@@ -10,8 +10,22 @@ import {
 } from "@/lib/domain/products/clicks";
 import { withRoute } from "@/lib/http/handler";
 import { siteOrigin } from "@/lib/site";
+import { trackServer } from "@/lib/analytics/server";
 
 type Params = { params: Promise<{ slug: string }> };
+
+/** /go?via= — 어디서 눌렀는지 표시하는 짧은 코드만 분석에 싣는다(그 밖의 질의는 버린다) */
+const VIA = /^[a-z0-9_-]{1,32}$/;
+
+/** 설치형 제품과 GitHub 주소는 저장소로 나간다 — 화면의 '저장소 열기'와 같은 갈래 */
+function linkKind(product: { url: string; accessMode: string }): "site" | "repo" {
+  if (product.accessMode === "installable") return "repo";
+  try {
+    return new URL(product.url).hostname === "github.com" ? "repo" : "site";
+  } catch {
+    return "site";
+  }
+}
 
 /**
  * 제품으로 나가는 문.
@@ -33,6 +47,15 @@ export const GET = withRoute("products.go", async (req: Request, { params }: Par
 
   const response = NextResponse.redirect(product.url, { status: 302 });
   if (isBotAgent(req.headers.get("user-agent"))) return response;
+
+  /**
+   * 방문 분석의 '실제로 나갔다'(outbound_visit) — 봇을 거른 뒤, 응답을 보낸 다음에 보낸다(이동 시간은 그대로).
+   * DB 의 유효 방문과 다르다: 10분 중복을 묶지 않고, 분석에 동의한 브라우저(_ga)만 센다. 순위의 기준은 여전히 DB 다.
+   */
+  const via = new URL(req.url).searchParams.get("via");
+  trackServer("outbound_visit", {
+    product_slug: product.slug, link_kind: linkKind(product), ...(via && VIA.test(via) ? { via } : {}),
+  }, { request: req, identity: "browser" });
 
   /**
    * 방문자 구분은 우리 쿠키로 한다. 원문은 응답 쿠키에만 쓰고, 기록 전에 제품별 HMAC으로

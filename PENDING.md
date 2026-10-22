@@ -16,6 +16,11 @@
 - **풀렸을 때**: 두 웹에 `GA_MEASUREMENT_ID`(+ 확인 동안 `GA_DEBUG=1`) → 웹만 다시 배포 → 문서의 DebugView 확인 1~8 → `GA_DEBUG` 지우고 웹만 다시 배포.
 - **직접 확인하지 않은 것**: 실제 GA 수신(DebugView), 이동 뒤 제목이 늦게 올 때 1초 기다림이 충분한지, GPC 브라우저에서 요청이 없는지,
   `gtag('set', {page_location…})` 이 향상된 측정 이벤트(스크롤 등)에도 정리한 주소를 쓰는지.
+- **서버 이벤트·여정(PR C)**: 막고 있는 것은 같다(속성) + 웹 스트림의 Measurement Protocol API 비밀.
+  풀렸을 때 두 웹에 `GA_API_SECRET`·`ANALYTICS_USER_ID_SECRET`(두 웹 같은 값)·`GA_PROPERTY_URL` → 웹만 다시 배포 →
+  문서의 '서버 이벤트 확인' 1~8 → 맞춤 측정기준(33개)·핵심 이벤트(8개) 등록 → BigQuery 일별 내보내기 연결.
+  직접 확인하지 않은 것: 실제 MP 수신·검사 주소 응답, BigQuery 에서 서버 이벤트의 세션 키(`ga_session_id`/`session_id`),
+  운영에서 `after()` 가 응답 뒤에 도는지, Cloudflare 가 `CF-IPCountry` 를 원 서버로 넘기는지, 문서의 BigQuery SQL 실행.
 
 ## 공통 이미지 배포 빠르게 — 2026-10-22 (코드·단위 테스트만, 운영 실행 전)
 
