@@ -84,7 +84,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      # npm ci 의 audit 요청은 레지스트리가 느릴 때 몇 분씩 걸린다(잡이 늘어 더 자주 걸린다). 보안 경고는 Dependabot 이 맡는다.
+      - run: npm ci --no-audit --no-fund
       # tsc 증분 기록(tsconfig incremental). 파일 내용 해시로 바뀐 파일·영향받는 파일만 다시 검사한다. main 에서만 저장한다.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -113,7 +114,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       # 파일 내용 기준 ESLint 캐시 — 바뀌지 않은 파일은 다시 lint 하지 않는다(설정이 바뀌면 ESLint 가 캐시를 버린다)
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -150,7 +151,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: npm test -- --shard=${{ matrix.shard }}/2
 
   build:
@@ -166,7 +167,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       # Turbopack 빌드 캐시(약 350MB). 커서 PR 은 main 것을 읽기만 하고 main 에서만 저장한다.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -207,7 +208,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: scripts/ci-test-postgres.sh wait
       # 파일 시간 기록(tests/integration/durations.json)으로 나눈 묶음. 묶음 안 파일은 직렬이고, 직렬 ledger 파일은 아래 잡이 맡는다.
       - name: Integration shard ${{ matrix.shard }}/6
@@ -242,7 +243,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - run: scripts/ci-test-postgres.sh wait
       # 빈 DB 에서 정해진 순서로 하나씩(scripts/integration-shards.mjs 의 SERIAL_FILES). 각 파일은 끝날 때 행 기준 상태를
       # 복원하고, 뒤 파일은 그 기준 위에서 돈다 — 순서를 바꾸거나 다른 파일과 섞지 않는다.
@@ -330,7 +331,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: tsconfig.tsbuildinfo
