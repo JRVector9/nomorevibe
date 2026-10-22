@@ -379,6 +379,103 @@ jobs:
           path: .next/cache
           key: nmv-next-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
 
+  # 같은 저장소 PR 은 검사와 나란히 이미지를 미리 만든다(fork·Dependabot 은 비밀·쓰기 권한이 없어 건너뛴다).
+  # draft PR 은 scope 를 건너뛰므로 이 잡들도 따라서 건너뛴다(runner 를 쓰지 않는다).
+  # 검사한 트리로 태그(`tree-<트리>`)하고 라벨 dev.nomorevibe.tree 를 단다 — main 이 같은 트리면 다시 빌드하지 않고 승격한다.
+  # check 는 이 잡을 기다리지 않는다. 실패하거나 아직 없으면 main 이 예전처럼 소스에서 빌드한다.
+  pr-image-worker:
+    needs: scope
+    if: >-
+      github.event_name == 'pull_request' && needs.scope.outputs.code_changed == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 단일 arm64 manifest(provenance 끔) — main 승격이 설정만 바꿔 같은 층을 그대로 쓴다
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          target: worker
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ghcr.io/jrvector9/nomorevibe-worker:tree-${{ needs.scope.outputs.tree }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/JRVector9/nomorevibe
+            org.opencontainers.image.revision=${{ github.sha }}
+            dev.nomorevibe.tree=${{ needs.scope.outputs.tree }}
+          cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache
+          cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+      - run: scripts/ci-install-crane.sh
+      # main 이 이 이미지를 승격할 수 있는지(단일 arm64 manifest·트리 라벨) 여기서 미리 확인한다 — 쓰지 않는다
+      - env:
+          TREE: ${{ needs.scope.outputs.tree }}
+        run: scripts/ci-promote-image.sh --check ghcr.io/jrvector9/nomorevibe-worker "$TREE"
+
+  pr-image-web:
+    needs: scope
+    if: >-
+      github.event_name == 'pull_request' && needs.scope.outputs.code_changed == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: JRVector9
+          password: ${{ secrets.GHCR_PUSH_TOKEN }}
+      - name: Require private web package
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN }}
+        run: test "$(gh api user/packages/container/nomorevibe-runtime-web --jq .visibility)" = private
+      # deploymentId 는 트리로 굽는다(같은 트리 = 같은 산출물). 두 웹은 같은 이미지라 같은 값을 쓰고, 실행 중 env 의
+      # NEXT_DEPLOYMENT_ID(배포 도구가 main SHA 로 넣는다)는 standalone 서버가 빌드 값으로 덮어쓴다.
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          target: runner
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ghcr.io/jrvector9/nomorevibe-runtime-web:tree-${{ needs.scope.outputs.tree }}
+          build-args: |
+            NEXT_DEPLOYMENT_ID=tree-${{ needs.scope.outputs.tree }}
+            SKIP_NEXT_TYPECHECK=1
+          secrets: NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            dev.nomorevibe.tree=${{ needs.scope.outputs.tree }}
+          cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache
+          cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
+      - run: scripts/ci-install-crane.sh
+      - env:
+          TREE: ${{ needs.scope.outputs.tree }}
+        run: scripts/ci-promote-image.sh --check ghcr.io/jrvector9/nomorevibe-runtime-web "$TREE"
+
+  # main: 같은 트리의 PR 이미지가 있으면 설정의 revision 라벨만 main SHA 로 바꿔 `:<main SHA>` 로 승격한다(층은 그대로,
+  # scripts/ci-promote-image.sh). 없거나 어긋나거나 수동 실행이면 예전처럼 소스에서 빌드한다. 어느 쪽이든 아래
+  # "Record … digest" 단계의 `DIGEST: sha256:` 한 줄이 배포할 digest 다.
   publish-worker-image:
     needs: [scope, check]
     # 재사용한 main 실행은 검사 잡이 skipped 라, 상태 함수가 없으면 암묵 success() 가 이 잡까지 건너뛴다
@@ -396,15 +493,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - if: github.event_name == 'push'
+        run: scripts/ci-install-crane.sh
+      - id: promote
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          TREE: ${{ needs.scope.outputs.tree }}
+        run: scripts/ci-promote-image.sh ghcr.io/jrvector9/nomorevibe-worker "$TREE" "$GITHUB_SHA"
+      - if: steps.promote.outputs.digest == ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # 빌드 캐시는 GHA 캐시(10GB 한도·밀려나면 전부 다시 빌드) 대신 같은 패키지의 buildcache 태그에 둔다.
       # 이미 있는 층은 다시 올리지 않고, 캐시 내보내기가 실패해도 이미지 발행은 실패시키지 않는다.
       - id: build
+        if: steps.promote.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -416,14 +523,16 @@ jobs:
           labels: |
             org.opencontainers.image.source=https://github.com/JRVector9/nomorevibe
             org.opencontainers.image.revision=${{ github.sha }}
+            dev.nomorevibe.tree=${{ needs.scope.outputs.tree }}
           cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache
           cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-worker:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
       - name: Record worker digest
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
+          HOW: ${{ steps.promote.outputs.digest && 'promoted from the PR image of the same tree' || 'built from source' }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          printf 'worker image: ghcr.io/jrvector9/nomorevibe-worker@%s\n' "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf 'worker image: ghcr.io/jrvector9/nomorevibe-worker@%s (%s)\n' "$DIGEST" "$HOW" >> "$GITHUB_STEP_SUMMARY"
 
   publish-web-image:
     needs: [scope, check]
@@ -442,7 +551,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -452,9 +560,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GHCR_PUSH_TOKEN }}
         run: test "$(gh api user/packages/container/nomorevibe-runtime-web --jq .visibility)" = private
+      - if: github.event_name == 'push'
+        run: scripts/ci-install-crane.sh
+      - id: promote
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          TREE: ${{ needs.scope.outputs.tree }}
+        run: scripts/ci-promote-image.sh ghcr.io/jrvector9/nomorevibe-runtime-web "$TREE" "$GITHUB_SHA"
+      - if: steps.promote.outputs.digest == ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # 빌드 캐시는 비공개 웹 패키지의 buildcache 태그에 둔다(builder 단계 층에 빌드 키가 든다 — 공개 위치에 두지 않는다).
       # next build 안의 tsc 는 건너뛴다: 같은 트리를 typecheck 잡이 검사했고 이 잡은 그 check 가 성공한 뒤에만 돈다.
       - id: build
+        if: steps.promote.outputs.digest == ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -469,11 +588,13 @@ jobs:
           secrets: NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
+            dev.nomorevibe.tree=${{ needs.scope.outputs.tree }}
           cache-from: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache
           cache-to: type=registry,ref=ghcr.io/jrvector9/nomorevibe-runtime-web:buildcache,mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true
       - name: Record web digest
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
+          HOW: ${{ steps.promote.outputs.digest && 'promoted from the PR image of the same tree' || 'built from source' }}
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
-          printf 'web image: ghcr.io/jrvector9/nomorevibe-runtime-web@%s\n' "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf 'web image: ghcr.io/jrvector9/nomorevibe-runtime-web@%s (%s)\n' "$DIGEST" "$HOW" >> "$GITHUB_STEP_SUMMARY"
