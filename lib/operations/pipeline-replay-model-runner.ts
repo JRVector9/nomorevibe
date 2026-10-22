@@ -134,7 +134,7 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
       .filter(lane => lane.length);
     const tasks = [
       guarded("scheduler", () => runScheduler({ signal }, { requestDue: control.requestDueJobs, seen: control.markSchedulerSeen })),
-      guarded("worker", () => runWorker({ role: "reviewer", signal }, { names, lanes, pending: () => control.pendingJobNames("reviewer"),
+      guarded("worker", () => runWorker({ role: "reviewer", signal, intervalMs: timing.workerIntervalMs }, { names, lanes, pending: () => control.pendingJobNames("reviewer"),
         seen: control.markWorkerSeen, run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions)) })),
     ];
     if (consumers && manifest.items) {

@@ -8,7 +8,7 @@ import { cdnPurges, crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlS
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import type { AgentReviewResult } from "@/lib/crawl/agent-review";
-import { executeSecondReviewItem } from "@/lib/crawl/second-review-item-lifecycle";
+import { executeSecondReviewItem, SECOND_REVIEW_ITEM_LEASE, type SecondReviewItemLeaseTiming } from "@/lib/crawl/second-review-item-lifecycle";
 import { claimItemSecondReview } from "@/lib/crawl/second-review-ownership";
 import { secondReviewGeneration } from "@/lib/crawl/second-review-input";
 import { publishedInputHash } from "@/lib/crawl/second-review";
@@ -39,6 +39,12 @@ const sentinelName = `pr04c1b-lifecycle-unrelated-${randomUUID().slice(0, 8)}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
   connection: { application_name: "pr04c1b-lifecycle-admin", statement_timeout: 8_000 } });
 type RawRow = Record<string, unknown>;
+// 2026-10-22 사용자 결정: 운영 90초 lease·15초 연장을 실시간으로 기다리지 않는다. 같은 실제 claim·연장·만료 판정(DB clock_timestamp()+ttl)을
+// 운영과 같은 1/6 비율의 짧은 lease 로 돈다. 시계를 속이지 않고 TTL 만 줄인다. 운영 값은 아래 기본 경로 단언과 단위 시험이 지킨다.
+const SHORT_LEASE: SecondReviewItemLeaseTiming = { ttlMs: 6_000, renewEveryMs: 1_000 };
+// 첫 연장 전에 준비(관찰 설치·행 잠금)를 마쳐야 하거나, 연장이 실패한 뒤에도 lease 가 살아 있음을 단언하는 시험은
+// 준비·단언 시간(수백 ms)보다 넉넉한 간격·남은 시간이 필요하다. 같은 1/6 비율로 조금 길게 둔다.
+const MARGIN_LEASE: SecondReviewItemLeaseTiming = { ttlMs: 18_000, renewEveryMs: 3_000 };
 type Execution = { outcome: Awaited<ReturnType<typeof executeSecondReviewItem>> } | { error: unknown };
 let originalSettings: RawRow[] = [], originalJobs: RawRow[] = [], originalStages: RawRow[] = [];
 let baseline: unknown, baselineWithSentinel: unknown, sequence = 0, initialized = false;
@@ -180,6 +186,12 @@ async function publishVersion() {
   const [row] = await admin`SELECT requested_version::text AS version FROM jobs WHERE name='crawl-publish'`;
   return Number(row?.version ?? 0);
 }
+/** 실제 claim·연장이 DB 에서 정한 lease 길이(초). lease_until 과 updated_at 은 같은 UPDATE 의 clock_timestamp() 다. */
+async function leaseSeconds(id: number) {
+  const [row] = await admin`SELECT round(extract(epoch FROM lease_until-updated_at))::int AS seconds
+    FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${id}`}`;
+  return row?.seconds as number | undefined;
+}
 async function released(id: number) {
   expect((await item(id))?.value).toMatchObject({ owner_instance_id: null, owner_boot_id: null, token: null, lease_until: null });
 }
@@ -207,7 +219,9 @@ it("records a short actual item control and atomically releases only its owner",
   await released(row.id);
 });
 
-it("renews the same actual owner beyond its original 90-second expiry before settling", async () => {
+// 원래 운영 90초 lease 를 실시간으로 넘기던 시험이다(2026-10-22 부터 짧은 lease). 같은 owner·token·epoch 가 연장으로 원래 만료를 넘기고,
+// 그 사이 경쟁 claim 은 running 으로 물러나며, 정산 뒤 한 번만 기록·해제하는 것을 같은 실제 경로로 본다.
+it("renews the same actual owner beyond its original lease expiry before settling", async () => {
   const { row } = await fixture(), requested = await publishVersion(), finish = latch();
   let initial: Awaited<ReturnType<typeof item>>, afterExpiry: Awaited<ReturnType<typeof item>>;
   let crossed = false, ended = false, executionResult: Execution | undefined;
@@ -219,11 +233,12 @@ it("renews the same actual owner beyond its original 90-second expiry before set
     await finish.promise;
     return approval();
   });
-  const execution: Promise<Execution> = executeSecondReviewItem({ secondReviewId: row.id, owner })
+  const execution: Promise<Execution> = executeSecondReviewItem({ secondReviewId: row.id, owner, lease: SHORT_LEASE })
     .then(outcome => ({ outcome }), error => ({ error })).finally(() => { ended = true; });
   try {
     await expect.poll(() => initial, { timeout: 8_000, interval: 20 }).toBeDefined();
     expect(initial?.live).toBe(true);
+    expect(await leaseSeconds(row.id)).toBe(SHORT_LEASE.ttlMs / 1_000);
     expect(initial?.value).toMatchObject({ owner_instance_id: owner.instanceId, owner_boot_id: owner.bootId,
       token: expect.any(String), item_epoch: 1,
       stage_epoch: originalStages.find(stage => stage.stage === "ai2")!.epoch });
@@ -233,7 +248,7 @@ it("renews the same actual owner beyond its original 90-second expiry before set
       if (observed?.expiry && observed.expiry !== initial!.expiry && !renewals.includes(observed.expiry)) renewals.push(observed.expiry);
       crossed = clock.crossed;
       return crossed;
-    }, { timeout: 95_000, interval: 250 }).toBe(true);
+    }, { timeout: SHORT_LEASE.ttlMs + 10_000, interval: 250 }).toBe(true);
     afterExpiry = await item(row.id);
     competition = await claimItemSecondReview(row.id, foreign, 90_000);
     expect(ended).toBe(false);
@@ -255,10 +270,11 @@ it("renews the same actual owner beyond its original 90-second expiry before set
   expect(adapters.gateway).toHaveBeenCalledTimes(1);
   expect(await publishVersion()).toBe(requested + 1);
   await released(row.id);
-}, 120_000);
+}, 40_000);
 
-// The original two cases and their core fixture above stay unchanged. Expanded
-// cases use these append-only test helpers and actual production authority.
+// The core fixture above stays unchanged; the long case only shortened its lease
+// on 2026-10-22. Expanded cases use these append-only test helpers and actual
+// production authority.
 async function domainSnapshot(id: number) {
   const [row] = await admin`SELECT jsonb_build_object(
     'vote',(SELECT to_jsonb(s) FROM second_reviews s WHERE id=${id}),
@@ -269,7 +285,8 @@ async function domainSnapshot(id: number) {
   return row.value as { vote: RawRow; candidate: RawRow; chain: RawRow[]; publish: RawRow | null; reviewJob: RawRow | null };
 }
 
-function heldExecution(id: number, options: { signal?: AbortSignal; result?: AgentReviewResult; reject?: Error } = {}) {
+function heldExecution(id: number, options: { signal?: AbortSignal; result?: AgentReviewResult; reject?: Error;
+  lease?: SecondReviewItemLeaseTiming } = {}) {
   const finish = latch();
   let initial: Awaited<ReturnType<typeof item>>, signal: AbortSignal | undefined, ended = false;
   adapters.gateway.mockImplementation(async (_input, transportOptions) => {
@@ -278,7 +295,7 @@ function heldExecution(id: number, options: { signal?: AbortSignal; result?: Age
     if (options.reject) throw options.reject;
     return options.result ?? approval();
   });
-  const execution: Promise<Execution> = executeSecondReviewItem({ secondReviewId: id, owner, signal: options.signal })
+  const execution: Promise<Execution> = executeSecondReviewItem({ secondReviewId: id, owner, signal: options.signal, lease: options.lease })
     .then(outcome => ({ outcome }), error => ({ error })).finally(() => { ended = true; });
   return { execution, finish: finish.resolve, get initial() { return initial; }, get signal() { return signal; },
     get ended() { return ended; }, started: () => expect.poll(() => initial, { timeout: 8_000, interval: 20 }).toBeDefined() };
@@ -319,6 +336,9 @@ it("dispatches once when two actual executions compete for the same item", async
   let result: Execution | undefined;
   try {
     await held.started();
+    // 주입하지 않은 실행은 운영 lease 그대로다: 실제 claim 이 DB 에 90초를 쓴다.
+    expect(SECOND_REVIEW_ITEM_LEASE).toEqual({ ttlMs: 90_000, renewEveryMs: 15_000 });
+    expect(await leaseSeconds(row.id)).toBe(90);
     expect(await executeSecondReviewItem({ secondReviewId: row.id, owner: foreign })).toEqual({ state: "skipped", reason: "running" });
     expect(await item(row.id)).toEqual(held.initial);
     expect(held.ended).toBe(false);
@@ -330,7 +350,7 @@ it("dispatches once when two actual executions compete for the same item", async
 });
 
 it("keeps renewing an aborted caller's owner until an abort-ignoring transport actually settles", async () => {
-  const { row } = await fixture(), controller = new AbortController(), held = heldExecution(row.id, { signal: controller.signal });
+  const { row } = await fixture(), controller = new AbortController(), held = heldExecution(row.id, { signal: controller.signal, lease: SHORT_LEASE });
   let result: Execution | undefined, before: Awaited<ReturnType<typeof domainSnapshot>> | undefined;
   try {
     await held.started(); before = await domainSnapshot(row.id);
@@ -340,6 +360,7 @@ it("keeps renewing an aborted caller's owner until an abort-ignoring transport a
       { timeout: 18_000, interval: 25 }).toBe(true);
     const renewed = await item(row.id);
     expect(renewed?.live).toBe(true);
+    expect(await leaseSeconds(row.id)).toBe(SHORT_LEASE.ttlMs / 1_000);
     expect(identity(renewed!.value)).toEqual(identity(held.initial!.value));
     expect(await domainSnapshot(row.id)).toEqual(before);
     expect(held.ended).toBe(false);
@@ -411,13 +432,13 @@ it("preserves the original transport exception without writer, fallback, request
 });
 
 it("rejects the late original writer after an actual expiry takeover without changing the new owner", async () => {
-  const { row } = await fixture(), held = heldExecution(row.id);
+  const { row } = await fixture(), held = heldExecution(row.id, { lease: SHORT_LEASE });
   let result: Execution | undefined, before: Awaited<ReturnType<typeof domainSnapshot>> | undefined;
   let replacement: Awaited<ReturnType<typeof item>>;
   try {
     await held.started();
-    // Fault injection only: the independent long case above proves natural
-    // 90-second expiry. A replacement token is always issued by actual claim.
+    // Fault injection only: the next case proves reclaim after a natural DB-clock
+    // expiry. A replacement token is always issued by actual claim.
     await admin`UPDATE pipeline_item_leases SET lease_until=clock_timestamp()-interval '1 millisecond'
       WHERE stage='ai2' AND work_key=${`ai2:${row.id}`}`;
     const claimed = await claimItemSecondReview(row.id, foreign, 90_000);
@@ -432,6 +453,25 @@ it("rejects the late original writer after an actual expiry takeover without cha
   expect(result).toMatchObject({ error: { message: "item_lease_lost" } });
   expect(await item(row.id)).toEqual(replacement);
   expect(await domainSnapshot(row.id)).toEqual(before);
+});
+
+// 2026-10-22 추가: 짧은 lease 라 실제 만료를 싸게 볼 수 있다. 연장 없는 실제 claim 은 DB 시계가 만료를 넘기기 전까지 running 으로
+// 남의 claim 을 막고, 넘긴 뒤에만 새 owner 가 다음 epoch 로 가져가 한 번 기록·해제한다.
+it("reclaims an abandoned item only after its actual DB-clock expiry", async () => {
+  const { row } = await fixture(), requested = await publishVersion();
+  expect((await claimItemSecondReview(row.id, foreign, 2_000)).kind).toBe("claimed");
+  const abandoned = await item(row.id);
+  expect(abandoned?.live).toBe(true);
+  expect(await leaseSeconds(row.id)).toBe(2);
+  expect(await executeSecondReviewItem({ secondReviewId: row.id, owner, lease: SHORT_LEASE })).toEqual({ state: "skipped", reason: "running" });
+  expect(await item(row.id)).toEqual(abandoned);
+  expect(adapters.gateway).not.toHaveBeenCalled();
+  await expect.poll(async () => (await item(row.id))?.live, { timeout: 12_000, interval: 50 }).toBe(false);
+  expect(await executeSecondReviewItem({ secondReviewId: row.id, owner, lease: SHORT_LEASE })).toEqual({ state: "recorded" });
+  expect((await item(row.id))?.value).toMatchObject({ item_epoch: (abandoned!.value.item_epoch as number) + 1 });
+  expect(adapters.gateway).toHaveBeenCalledTimes(1);
+  expect(await publishVersion()).toBe(requested + 1);
+  await released(row.id);
 });
 
 it("records a structured transport failure through the existing fallback writer exactly once", async () => {
@@ -485,7 +525,7 @@ it("propagates an unexpected actual renewal error only after transport settles w
         THEN RAISE EXCEPTION 'own_lifecycle_renew_failed'; END IF; RETURN NEW; END $$`);
     await admin.unsafe(`CREATE TRIGGER pr04c1b_lifecycle_renew_failure BEFORE UPDATE ON pipeline_item_leases
       FOR EACH ROW EXECUTE FUNCTION pr04c1b_lifecycle_renew_failure()`);
-    const active = held = heldExecution(row.id);
+    const active = held = heldExecution(row.id, { lease: MARGIN_LEASE });
     await active.started(); before = await domainSnapshot(row.id);
     await expect.poll(() => active.signal?.aborted, { timeout: 18_000, interval: 25 }).toBe(true);
     expect(active.ended).toBe(false);
@@ -504,7 +544,7 @@ it("propagates an unexpected actual renewal error only after transport settles w
 });
 
 it("drains an actual blocked renewal before entering the result writer", async () => {
-  const { row, candidate } = await fixture(), held = heldExecution(row.id), unlock = latch(), locked = latch();
+  const { row, candidate } = await fixture(), held = heldExecution(row.id, { lease: MARGIN_LEASE }), unlock = latch(), locked = latch();
   const blocker = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
     connection: { application_name: "pr04c1b-lifecycle-renew-blocker", statement_timeout: 8_000 } });
   let blocking: Promise<unknown> | undefined, blockerPid: number | undefined, result: Execution | undefined;
