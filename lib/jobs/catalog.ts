@@ -23,9 +23,10 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "hn-talk", role: "crawler", intervalMs: 30 * 60_000 },
   /**
    * Bluesky 화제 글 기록 — 최근 72시간 GitHub 링크 게시물을 모두 남긴다(lib/social/bluesky-talk.ts). 회차당 요청 30번까지·0.5초 간격,
-   * 보통 새 글 1~2 + 반응 큰 글 3 + 다시 묻기 12 = 20번 안팎이라 30분이면 AppView 에 부담이 없고 crawler 시간도 거의 쓰지 않는다
+   * 보통 새 글 1~2 + 반응 큰 글 3 + 다시 묻기 12 = 20번 안팎이다. 2시간마다(2026-10-22 사용자 결정 — 30분에서 늘림): 2시간 사이 새 글은
+   * 보통 첫 쪽(100건) 안팎이고, 다시 묻기 300건이면 72시간 창의 글을 8시간 안팎에 한 번씩 다시 본다(공개 24시간 창 안)
    */
-  { name: "bluesky-talk", role: "crawler", intervalMs: 30 * 60_000 },
+  { name: "bluesky-talk", role: "crawler", intervalMs: 2 * 60 * 60_000 },
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
