@@ -30,6 +30,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "audit-hold-settings": "감사 보류 설정",
   "audit-hold-release-all": "감사 보류 모두 풀기",
   "audit-switch-model": "남은 감사 모델 바꿈",
+  "audit-policy-apply": "감사 정책 적용",
+  "audit-policy-undo": "감사 정책 되돌림",
   "product-ban": "제품 차단",
   "product-auto-ban-uptime": "접속 실패 자동 내림",
   "product-unban": "제품 차단 해제",
@@ -113,6 +115,7 @@ export const TARGET_LABELS: Record<string, string> = {
 };
 const TARGET_PREFIXES: [RegExp, (rest: string) => string][] = [
   [/^campaign:(\d+)$/, (id) => `감사 #${id}`],
+  [/^policy-run:(\d+)$/, (id) => `감사 정책 #${id}`],
   [/^news:(\d+)$/, (id) => `소식 #${id}`],
   [/^news:(\d+)건$/, (count) => `소식 ${count}건`],
   [/^revision:(\d+)$/, (id) => `랭킹 정책 #${id}`],
@@ -133,6 +136,7 @@ export function targetLabel(target: string): { text: string; entity: boolean } {
 export const ACTION_GROUPS = {
   takedown: { label: "내리기·차단", actions: ["takedown-remove", "takedown-dismiss", "audit-remove", "audit-keep", "audit-start", "audit-cancel",
     "audit-hold-settings", "audit-hold-release-all", "audit-switch-model", "audit-hold-auto-release", "published-second-auto-keep",
+    "audit-policy-apply", "audit-policy-undo",
     "product-ban", "product-auto-ban-uptime", "product-unban", "published-second-ban", "published-second-keep", "repo-review-delist", "repo-review-keep", "ban-spam-campaign"] },
   review: { label: "심사", actions: ["candidate-approve", "candidate-reject", "candidate-deepseek-decision", "candidate-qwen-held-review", "candidate-split-tiebreak-reject", "candidate-undo", "evidence-collect", "requeue-resolved", "manual-category",
     "requeue-evidence-gated", "requeue-rejected-under-new-policy", "requeue-rejected-under-held-rules", "reconsider-installable",

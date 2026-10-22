@@ -173,6 +173,74 @@ export const productAuditSecondOpinions = pgTable("product_audit_second_opinions
   check("product_audit_second_opinions_reason_check", sql`char_length(${table.reason}) <= 2000`),
 ]);
 
+/**
+ * 감사 정책 처리(0116, 2026-10-22) — 운영자가 거르기로 고른 감사 항목을 한 번에 닫는 실행 한 번(lib/crawl/audit-policy.ts).
+ *
+ * kind: close(열린 거절을 내리기·유지·보류 풀기) · import(두 번째 의견 파일 올리기) · extend(곧 끝나는 유지 연장).
+ * status: staging·staged(올린 파일을 받는 중·받음 — import 만) → applying(나눠 적용 중) → applied → undoing → undone. discarded 는 버린 올리기다.
+ * 적용 중·되돌리기 중인 실행은 한 번에 하나다(product_audit_policy_runs_one_active_idx). filter 는 사람이 미리 본 거르기 그대로,
+ * summary 는 미리보기가 건너뛴 것과 까닭(import 는 파일 검사 결과)이다. 작업 로그에는 실행마다 한 줄(audit-policy-apply·audit-policy-undo)이 남는다.
+ */
+export type ProductAuditPolicyRunKind = "close" | "import" | "extend";
+export type ProductAuditPolicyRunAction = "remove" | "keep" | "release" | "import" | "extend";
+export type ProductAuditPolicyRunStatus = "staging" | "staged" | "applying" | "applied" | "undoing" | "undone" | "discarded";
+
+export const productAuditPolicyRuns = pgTable("product_audit_policy_runs", {
+  id: serial("id").primaryKey(),
+  kind: varchar("kind", { length: 20 }).$type<ProductAuditPolicyRunKind>().notNull(),
+  action: varchar("action", { length: 20 }).$type<ProductAuditPolicyRunAction>().notNull(),
+  status: varchar("status", { length: 20 }).$type<ProductAuditPolicyRunStatus>().notNull(),
+  filter: jsonb("filter").$type<Record<string, unknown>>().notNull().default({}),
+  options: jsonb("options").$type<Record<string, unknown>>().notNull().default({}),
+  summary: jsonb("summary").$type<Record<string, unknown>>().notNull().default({}),
+  /** 만들 때 고른 항목 수 — 사람이 적은 수와 같아야 만들어진다 */
+  planned: integer("planned").notNull().default(0),
+  note: varchar("note", { length: 500 }),
+  createdBy: varchar("created_by", { length: 120 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  appliedAt: timestamp("applied_at"),
+  undoBy: varchar("undo_by", { length: 120 }),
+  undoStartedAt: timestamp("undo_started_at"),
+  undoneAt: timestamp("undone_at"),
+}, (table) => [
+  uniqueIndex("product_audit_policy_runs_one_active_idx").on(sql`(true)`).where(sql`${table.status} in ('applying', 'undoing')`),
+  check("product_audit_policy_runs_kind_check", sql`${table.kind} in ('close', 'import', 'extend')`),
+  check("product_audit_policy_runs_action_check", sql`${table.action} in ('remove', 'keep', 'release', 'import', 'extend')`),
+  check("product_audit_policy_runs_status_check",
+    sql`${table.status} in ('staging', 'staged', 'applying', 'applied', 'undoing', 'undone', 'discarded')`),
+]);
+
+/**
+ * 실행이 손댈(손댄) 감사 항목 하나. before 는 손대기 전의 제품·항목 상태(되돌리기가 쓴다), after 는 손댄 뒤 값(되돌리기 전에 그대로인지 견준다).
+ * applied_at 은 적용한 트랜잭션의 now() — 그 트랜잭션이 적은 human_at·hold_released_at·의견 created_at 과 같아 "그 뒤에 바뀌었나"를 가른다.
+ * product_audit_items 로 외래 키를 걸지 않는다(0116 — 감사 잡이 쉬지 않고 쓰는 표를 잠그지 않게). 감사 항목은 지우지 않는다.
+ */
+export type ProductAuditPolicyRunItemState = "pending" | "applied" | "skipped" | "cancelled" | "undone" | "undo_blocked";
+
+export const productAuditPolicyRunItems = pgTable("product_audit_policy_run_items", {
+  id: serial("id").primaryKey(),
+  runId: integer("run_id").notNull().references(() => productAuditPolicyRuns.id, { onDelete: "cascade" }),
+  itemId: integer("item_id").notNull(),
+  productId: integer("product_id").notNull(),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  state: varchar("state", { length: 20 }).$type<ProductAuditPolicyRunItemState>().notNull().default("pending"),
+  /** 건너뛴 까닭·되돌리지 못한 까닭 */
+  reason: varchar("reason", { length: 60 }),
+  /** import: 올린 의견 한 줄(읽어 고친 값) */
+  payload: jsonb("payload").$type<Record<string, unknown>>(),
+  before: jsonb("before").$type<Record<string, unknown>>(),
+  after: jsonb("after").$type<Record<string, unknown>>(),
+  appliedAt: timestamp("applied_at"),
+  undoneAt: timestamp("undone_at"),
+}, (table) => [
+  uniqueIndex("product_audit_policy_run_items_run_item_idx").on(table.runId, table.itemId),
+  index("product_audit_policy_run_items_state_idx").on(table.runId, table.state, table.id),
+  check("product_audit_policy_run_items_state_check",
+    sql`${table.state} in ('pending', 'applied', 'skipped', 'cancelled', 'undone', 'undo_blocked')`),
+]);
+
 export type ProductAuditCampaign = typeof productAuditCampaigns.$inferSelect;
 export type ProductAuditItem = typeof productAuditItems.$inferSelect;
 export type ProductAuditSecondOpinion = typeof productAuditSecondOpinions.$inferSelect;
+export type ProductAuditPolicyRun = typeof productAuditPolicyRuns.$inferSelect;
+export type ProductAuditPolicyRunItem = typeof productAuditPolicyRunItems.$inferSelect;

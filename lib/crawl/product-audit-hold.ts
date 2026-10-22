@@ -62,7 +62,7 @@ const column = (alias: string) => (name: string) => sql`${sql.identifier(alias)}
  * 보류할 수 있는 제품 — 공개(seeded)이고 주인이 없다: 검증 전이고 클레임하지 않았고 메이커 권한(product_maker_members)도 없다.
  * verified 는 주인이 확인된 것이라 들지 않는다. 이미 보류된 것도 뺀다. alias 는 products 를 부르는 이름이다
  */
-function unownedPublic(alias: string, options: { includeHeld?: boolean } = {}): SQL {
+export function unownedPublic(alias: string, options: { includeHeld?: boolean } = {}): SQL {
   const c = column(alias);
   const notHeld = options.includeHeld ? sql`` : sql` and ${c("audit_hold_at")} is null`;
   return sql`(${c("status")} = 'seeded' and ${c("claimed_at")} is null and ${c("verified_at")} is null${notHeld}
@@ -222,7 +222,14 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
  * 유지·승인으로 목록에 돌아오면 Cloudflare 지우기 줄을 적는다. 차단은 트리거가 적고, 차단 해제는 목록이 다음 사본(2분 안)에서 채운다.
  */
 export async function releaseAuditHold(tx: ProductTransaction,
-  input: { productId: number; slug: string; actor: string; reason: AuditHoldRelease }): Promise<boolean> {
+  input: { productId: number; slug: string; actor: string; reason: AuditHoldRelease;
+    /**
+     * Cloudflare 지우기 줄 — slug(기본): 목록에 돌아오는 까닭이면 그 상세·목록 줄을 적는다. none: 적지 않는다 — 정책 처리(audit-policy.ts)처럼
+     * 수천 건을 한꺼번에 푸는 쪽이 묶음마다 목록 줄 하나(slug '')를 따로 적는다(releaseAllAuditHolds 와 같은 까닭)
+     */
+    purge?: "slug" | "none";
+    /** 제품 기록(product_evidence_audit)에 더 남길 것 — 정책 실행 번호 등 */
+    metadata?: Record<string, unknown> }): Promise<boolean> {
   // 차단 해제는 보류가 없었어도 사람이 목록에 돌려놓은 것이다
   if (input.reason === "unbanned") await markOpenItemsReleased(tx, [input.productId]);
   const [current] = await tx.select({ heldAt: products.auditHoldAt, itemId: products.auditHoldItemId }).from(products)
@@ -231,8 +238,8 @@ export async function releaseAuditHold(tx: ProductTransaction,
   await tx.update(products).set({ auditHoldAt: null, auditHoldItemId: null }).where(eq(products.id, input.productId));
   if (SETTLES.has(input.reason) && input.reason !== "unbanned") await markOpenItemsReleased(tx, [input.productId]);
   await tx.insert(productEvidenceAudit).values({ slug: input.slug, actor: input.actor.slice(0, 120), action: AUDIT_RELEASE_ACTION,
-    reason: input.reason, metadata: { itemId: current.itemId } });
-  if (RELISTS.has(input.reason)) await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_RELEASE_PURGE });
+    reason: input.reason, metadata: { ...input.metadata, itemId: current.itemId } });
+  if (RELISTS.has(input.reason) && input.purge !== "none") await tx.insert(cdnPurges).values({ slug: input.slug, reason: AUDIT_RELEASE_PURGE });
   return true;
 }
 

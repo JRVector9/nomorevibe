@@ -361,8 +361,9 @@ it("every admin server action and every write route handler goes through the web
     wrapped += source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)?.length ?? 0;
   }
   // 0110 감사 보류 — 보류 설정 저장·보류 모두 풀기(admin/audit/actions.ts) 두 개가 더해졌다. 0112 남은 감사 모델 바꾸기 하나가 더해졌다.
-  // *-actions.ts 도 센다 — 사람 검토 위임·원본 공급 조절·Qwen-v2 자동 단계 스위치 셋
-  expect(wrapped).toBe(60);
+  // *-actions.ts 도 센다 — 사람 검토 위임·원본 공급 조절·Qwen-v2 자동 단계 스위치 셋.
+  // 0116 감사 정책 처리(admin/audit/policy-actions.ts) — 미리보기·실행 만들기·적용 묶음·되돌리기 시작·되돌리기 묶음·예외 목록 여섯
+  expect(wrapped).toBe(66);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

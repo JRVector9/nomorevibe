@@ -28,6 +28,9 @@ import { DISMISS_REASONS, formatWait, isBurst, isDismissReason, senderLabel, tak
 import "../status/dashboard/dashboard.css";
 import "./takedown.css";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
+import { listPolicyRuns, policyFilterOptions } from "@/lib/crawl/audit-policy";
+import { PolicyBuilder, type PolicyPreset } from "./PolicyBuilder";
+import { PolicyRuns, type PolicyRunRow } from "./PolicyRuns";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -64,7 +67,7 @@ type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: strin
  * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
  * 상세 페이지가 내려 준다고 약속했다. 감사의 갈래(?view=)로 들어오면 감사 탭이다.
  */
-const TABS = { requests: "내려달라는 요청", audit: "감사 거절", history: "처리 기록" } as const;
+const TABS = { requests: "내려달라는 요청", audit: "감사 거절", policy: "정책 처리", history: "처리 기록" } as const;
 type Tab = keyof typeof TABS;
 
 export default async function AdminAuditPage({ searchParams }: Props) {
@@ -87,11 +90,13 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
-  const [queue, introRequests, history, auditHistory] = await Promise.all([
+  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
     tab === "history" ? auditDecisionHistory() : Promise.resolve([]),
+    tab === "policy" ? policyFilterOptions() : Promise.resolve(null),
+    tab === "policy" ? listPolicyRuns() : Promise.resolve([]),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
@@ -165,6 +170,17 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           <IntroRequestList entries={introRequests} />
         </>
       )}
+
+      {tab === "policy" && <>
+        <p className="max-w-[80ch] text-[13px] leading-[1.7] text-fg-2">
+          열린 감사 거절을 한 건씩 누르지 않고 <b className="font-semibold">정책으로</b> 닫습니다. 거르기를 만들어 미리 보고(수·사유 갈래별 수·표본·건너뛸 것과 까닭),
+          손댈 수를 그대로 적어 적용합니다. 적용은 몇십 건씩 나눠 돌고, 실행 하나를 통째로 되돌릴 수 있습니다. 주인 있는 제품은 묶어서 내리지 않습니다.
+        </p>
+        <PolicyBuilder reviewers={policyOptions?.reviewers ?? []} sources={policyOptions?.sources ?? []} presets={policyPresets(campaign)} />
+        <PolicyRuns runs={policyRuns.map((run): PolicyRunRow => ({ ...run, createdAt: formatListTime(run.createdAt, now),
+          appliedAt: run.appliedAt ? formatListTime(run.appliedAt, now) : null, undoneAt: run.undoneAt ? formatListTime(run.undoneAt, now) : null,
+          label: POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
+      </>}
 
       {tab === "history" && <>
         <h2 className="text-[15px] font-bold">내려달라는 요청</h2>
@@ -257,6 +273,36 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       </>}
     </main>
   );
+}
+
+/** 정책 실행의 화면 이름(실행 종류:행동) */
+const POLICY_RUN_LABELS: Record<string, string> = {
+  "close:remove": "내리기", "close:keep": "유지", "close:release": "보류 풀기", "import:import": "두 번째 의견 올리기", "extend:extend": "유지 연장",
+};
+
+/**
+ * 자주 쓰는 거르기(2026-10-22 프로드의 큰 무리) — 누르면 거르기와 할 일만 채운다. 적용은 미리보기·수 적기를 거친다.
+ * 이전 모델은 이 감사가 시작할 때의 심사자다(남은 감사 모델 바꾸기 전 답)
+ */
+function policyPresets(campaign: AuditOverview["campaign"]): PolicyPreset[] {
+  const start = campaign ? `${campaign.provider}|${campaign.model}` : null;
+  return [
+    { key: "low", label: "이전 모델 · 확신 0.90–0.95 · 보류 아님 · 2차 없음", action: "none",
+      hint: "확신이 묶어 내리기 문턱(0.95) 아래라 내리기는 건너뜁니다 — 표본을 보고 유지하거나 그대로 둡니다",
+      filter: { reviewers: start ? [start] : [], confidenceMin: 0.9, confidenceBelow: 0.95, held: "not_held", second: "none", owner: "unowned" } },
+    { key: "agreed", label: "두 모델 모두 거절 · 보류 중", action: "remove",
+      hint: "확신 0.95 이상이고 두 번째 모델도 거절해 이미 목록에서 빠진 것 — 내리기 후보",
+      filter: { confidenceMin: 0.95, held: "held", second: "agreed", owner: "unowned" } },
+    { key: "split", label: "모델 갈림 · 2차 승인 · 보류 아님", action: "none",
+      hint: "감사 모델은 거절, 두 번째 모델은 승인 — 내리기는 건너뜁니다. 표본을 보고 유지하거나 그대로 둡니다",
+      filter: { confidenceMin: 0.95, held: "not_held", second: "approve" } },
+    { key: "held-alone", label: "보류 중 · 2차 없음", action: "none",
+      hint: "확신·사유 갈래만으로 보류된 것 — 두 번째 의견이 아직 없다",
+      filter: { confidenceMin: 0.95, held: "held", second: "none", owner: "unowned" } },
+    { key: "unheld-alone", label: "확신 0.95 이상 · 보류 아님 · 2차 없음", action: "none",
+      hint: "대부분 Qwen 이 감사한 것(카탈로그 예외·확신 문턱으로 보류하지 않은 것)",
+      filter: { confidenceMin: 0.95, held: "not_held", second: "none", owner: "unowned" } },
+  ];
 }
 
 /**
