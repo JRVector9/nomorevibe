@@ -138,8 +138,12 @@ ready for review로 바꾸면 그 이벤트로 전체 CI가 돈다.
 (`scripts/ci-reuse.mjs`). 증거가 하나라도 없거나 조회가 실패하면 전체 검사를 돌고, 수동 실행은 늘 전체 검사다.
 재사용한 커밋에서는 `refresh-caches` 잡이 다음 PR이 읽을 tsc·ESLint·Turbopack 캐시를 갱신한다(결과를 기다리지 않는다).
 코드 잡 제한은 15~20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
-main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
-올린다. 빌드 캐시는 각 패키지의 `buildcache` 태그에 둔다. CI 빌드(build 잡·웹 이미지)는 같은 트리를 typecheck 잡이
+같은 저장소 PR(Dependabot 제외)은 검사와 나란히 arm64 웹·워커 이미지를 검사한 트리 태그(`tree-<트리>`, 라벨
+`dev.nomorevibe.tree`)로 미리 올린다. `check`는 이 잡을 기다리지 않는다.
+main의 코드 변경 `check`가 성공하면 같은 트리의 PR 이미지를 층은 그대로 두고 설정의 revision 라벨만 main SHA로 바꿔
+SHA 태그로 승격한다(`scripts/ci-promote-image.sh`, crane). 미리 만든 이미지가 없거나 트리·플랫폼이 어긋나거나 수동 실행이면
+예전처럼 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로 올린다. 어느 쪽이든 이미지 잡 로그의
+`DIGEST: sha256:` 한 줄이 배포할 digest이고 배포 도구의 revision 확인은 그대로다. 빌드 캐시는 각 패키지의 `buildcache` 태그에 둔다. CI 빌드(build 잡·웹 이미지)는 같은 트리를 typecheck 잡이
 검사하므로 `SKIP_NEXT_TYPECHECK=1`로 next build 안의 중복 타입 검사를 건너뛴다(로컬·수동 빌드는 그대로 검사한다).
 웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
 발행한다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
