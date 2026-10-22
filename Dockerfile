@@ -14,23 +14,23 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ARG NEXT_DEPLOYMENT_ID
+# CI 이미지 빌드만 1 을 넘긴다 — 같은 트리를 CI typecheck 잡이 검사하고, 그 `check` 가 통과한 이미지만 배포한다(next.config.ts).
+ARG SKIP_NEXT_TYPECHECK=0
 ENV DATABASE_URL=postgres://build:build@localhost:5432/build
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_DEPLOYMENT_ID=${NEXT_DEPLOYMENT_ID}
-RUN --mount=type=secret,id=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,env=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,required=true npm run build
+ENV SKIP_NEXT_TYPECHECK=${SKIP_NEXT_TYPECHECK}
+# .next/cache(Turbopack 빌드 캐시, 약 350MB)는 실행 이미지에 들어가지 않는다 — 캐시 mount 에 두어 builder 층과 빌드 캐시 내보내기에서 뺀다.
+RUN --mount=type=secret,id=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,env=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,required=true \
+  --mount=type=cache,target=/app/.next/cache \
+  npm run build
 
 FROM node:24-alpine AS worker
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs
-COPY --from=worker-deps --chown=worker:nodejs /app/node_modules ./node_modules
-COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
-COPY --chown=worker:nodejs lib ./lib
-COPY --chown=worker:nodejs scripts ./scripts
-COPY --chown=worker:nodejs drizzle ./drizzle
-# 알림 메일 문구(lib/me/email-copy.ts) — 보낼 때만 늦게 읽는다. 잡 목록은 이 폴더 없이도 올라온다(Oracle release).
-COPY --chown=worker:nodejs messages ./messages
+# 도구 층(시스템 패키지·모델 CLI)은 소스보다 먼저 둔다 — 버전이 그대로면 커밋마다 다시 설치·압축·업로드하지 않고 캐시를 쓴다.
 # Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
@@ -44,6 +44,13 @@ RUN apk add --no-cache --virtual .grok-build bash curl \
   && curl -fsSL https://x.ai/cli/install.sh -o /tmp/grok-install.sh \
   && HOME=/opt/grok GROK_BIN_DIR=/usr/local/bin TARGET=${GROK_CLI_VERSION} bash /tmp/grok-install.sh \
   && rm -f /tmp/grok-install.sh && chmod -R a+rX /opt/grok && apk del .grok-build && grok --version
+COPY --from=worker-deps --chown=worker:nodejs /app/node_modules ./node_modules
+COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
+COPY --chown=worker:nodejs lib ./lib
+COPY --chown=worker:nodejs scripts ./scripts
+COPY --chown=worker:nodejs drizzle ./drizzle
+# 알림 메일 문구(lib/me/email-copy.ts) — 보낼 때만 늦게 읽는다. 잡 목록은 이 폴더 없이도 올라온다(Oracle release).
+COPY --chown=worker:nodejs messages ./messages
 USER worker
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node --import tsx scripts/worker-healthcheck.ts
