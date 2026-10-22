@@ -203,7 +203,8 @@ it('rechecks the actual capability DBwall after a two-backend unique-key wait an
       if (rows.length) { expect(rows).toHaveLength(1); waiterPid = rows[0].pid; return true; } return false;
     }); expect(waiterPid).not.toBe(holderPid); expect(waiterPid).toBeGreaterThan(0);
     expect((await admin`SELECT clock_timestamp()-(capability->>'observedAt')::timestamptz<interval '15 minutes' AS healthy FROM job_batch_candidates WHERE role='translation' AND instance_id=${prefix}`)[0].healthy).toBe(true);
-    await until(async () => (await admin`SELECT clock_timestamp()-(capability->>'observedAt')::timestamptz>interval '15 minutes' AS expired FROM job_batch_candidates WHERE role='translation' AND instance_id=${prefix}`)[0].expired);
+    // The recheck reads the DB wall as a millisecond JS Date (pinCandidateCanary); a microsecond-only expiry would still be fresh there.
+    await until(async () => (await admin`SELECT date_trunc('milliseconds',clock_timestamp())-(capability->>'observedAt')::timestamptz>interval '15 minutes' AS expired FROM job_batch_candidates WHERE role='translation' AND instance_id=${prefix}`)[0].expired);
     release.resolve(); await holding; expect(await acquiring).toBeNull();
     expect((await admin`SELECT owner_instance_id FROM role_leases WHERE role='translation'`)[0]?.owner_instance_id ?? null).toBeNull();
     expect((await anchorRow()).value).toEqual(derived.anchorToPin);
