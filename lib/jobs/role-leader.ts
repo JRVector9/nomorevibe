@@ -134,6 +134,66 @@ export async function releaseRole(lease: RoleLease): Promise<boolean> {
   });
 }
 
+/** 예비 넘겨주기에서 기다리는 주 후보(관측 `candidate:<role>:<instance>`의 boot). */
+export type WaitingPrimary = { instanceId: string; bootId: string };
+/** 기다리는 주의 관측은 5초마다(선출 실패마다) 새로 쓴다. 이보다 오래된 관측은 살아 있다는 근거가 아니다 */
+export const WAITING_PRIMARY_FRESH_SECONDS = 20;
+
+/**
+ * 예비가 쥔 legacy lease 에서만: 같은 릴리스의 주 후보가 격리되지 않은 채 선출을 기다리는지 읽는다(잠그지 않는 읽기).
+ * 주 후보는 phase=standby(선출 실패 대기)·electable=true(host 장부 준비·DB 실패 연속 없음)인 최근 관측이어야 한다.
+ * 이 예비가 아직 그 epoch 의 lease 를 쥐고 있지 않거나 주가 격리 중이면 null 이다. 판정은 DB 시계로 한다.
+ */
+export async function readWaitingPrimary(lease: RoleLease): Promise<WaitingPrimary | null> {
+  if (lease.batchVersion === 1 || lease.kind !== 'standby') return null;
+  return onPrimary(() => db.transaction(async tx => {
+    await boundRoleTransaction(tx);
+    const [row] = await tx.execute<{ owned: boolean; quarantined: boolean }>(sql`SELECT
+        (owner_instance_id = ${lease.instanceId} AND owner_boot_id = ${lease.bootId} AND owner_release = ${lease.release}
+          AND owner_kind = 'standby' AND epoch = ${lease.epoch} AND lease_until > localtimestamp) IS TRUE AS owned,
+        (quarantine_until IS NOT NULL AND quarantine_until > localtimestamp) AS quarantined
+      FROM role_leases WHERE role = ${lease.role}`);
+    if (!row?.owned || row.quarantined) return null;
+    const rows = await tx.execute<{ key: string; value: Record<string, unknown>; age: number }>(sql`SELECT key, value,
+        extract(epoch from (localtimestamp - observed_at))::float8 AS age
+      FROM operations_observations WHERE key LIKE ${`candidate:${lease.role}:%`} ORDER BY key`);
+    for (const { key, value, age } of Array.from(rows)) {
+      if (value.role === lease.role && value.kind === 'primary' && value.phase === 'standby' && value.electable === true &&
+          value.release === lease.release && typeof value.instanceId === 'string' && value.instanceId !== lease.instanceId &&
+          key === `candidate:${lease.role}:${value.instanceId}` && typeof value.bootId === 'string' && value.bootId &&
+          Number.isFinite(Number(age)) && Number(age) >= -5 && Number(age) <= WAITING_PRIMARY_FRESH_SECONDS) {
+        return { instanceId: value.instanceId, bootId: value.bootId };
+      }
+    }
+    return null;
+  }));
+}
+
+/**
+ * 예비 넘겨주기(2026-10-22 #597): drain 을 마친 예비가 부른다. lease 를 지금 만료시키되 owner 칸은 남긴다.
+ * 주 후보는 만료된 lease 를 유예 없이 다음 확인(5초)에서 선출받고(epoch+1·이전 일감 token 무효화는 선출 TX 가 한다),
+ * 예비 쪽(이 예비 포함)은 owner 가 남은 만료의 20초 유예 동안 다시 잡지 못한다 — 그 사이 주가 선출되지 않으면(주도 죽었다)
+ * 유예 뒤 예비가 다시 맡는다. 이 lease 가 지금도 이 boot·epoch 의 유효한 예비 lease 일 때만 바꾼다.
+ */
+export async function yieldRoleToPrimary(lease: RoleLease): Promise<boolean> {
+  if (lease.batchVersion === 1 || lease.kind !== 'standby') return false;
+  return db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) return false;
+    await boundRoleTransaction(tx);
+    if ((await lockJobBatch(tx)).mode !== 'legacy') return false;
+    const [owned] = await tx.select({ role: roleLeases.role }).from(roleLeases).where(and(
+      eq(roleLeases.role, lease.role), eq(roleLeases.ownerInstanceId, lease.instanceId),
+      eq(roleLeases.ownerBootId, lease.bootId), eq(roleLeases.ownerRelease, lease.release),
+      eq(roleLeases.ownerKind, 'standby'), eq(roleLeases.epoch, lease.epoch), gt(roleLeases.leaseUntil, sql`now()`),
+    )).for('update');
+    if (!owned) return false;
+    await tx.update(roleLeases).set({ leaseUntil: sql`now()`, updatedAt: sql`now()` }).where(eq(roleLeases.role, lease.role));
+    for (const name of jobsForRole(lease.role as JobRole)) await tx.update(jobs).set({ leaseToken: null, lockedAt: null })
+      .where(and(eq(jobs.name, name), sql`${jobs.leaseToken} is not null`));
+    return true;
+  });
+}
+
 /** Take this lock before claiming a job; takeover obtains UPDATE on the same row. */
 export async function assertRoleLease(tx: ProductTransaction, lease: RoleLease): Promise<void> {
   if (lease.batchVersion === 1) {
