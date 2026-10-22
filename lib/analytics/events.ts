@@ -204,7 +204,8 @@ export type LoginStartParams = {
 
 /**
  * 로그인·가입 완료(GA4 login·sign_up) — 수단만 보낸다.
- * 이메일은 브라우저가 확인 응답에서, GitHub 는 서버가 OAuth 콜백에서 보낸다(같은 로그인을 양쪽에서 세지 않는다).
+ * login: 이메일은 브라우저가 확인 성공 응답에서, GitHub 는 서버가 OAuth 콜백에서 보낸다(같은 로그인을 양쪽에서 세지 않는다).
+ * sign_up: 새 계정인지는 서버만 안다(이메일 확인 응답에 그 표시가 없다) — 두 수단 모두 서버가 보낸다.
  */
 export type LoginParams = { method: "github" | "email" };
 export type SignUpParams = { method: "github" | "email" };
@@ -361,7 +362,7 @@ export const ANALYTICS_EVENT_CATALOG: { [Name in AnalyticsEventName]: EventSpec<
   nav_click: { source: "client", description: "헤더·푸터·모바일 메뉴를 눌렀다", params: { target: text, surface } },
   login_start: { source: "client", description: "로그인 단추를 눌렀다", params: { method: oneOf(["github", "email"]), surface } },
   login: { source: "both", description: "로그인했다(이메일은 브라우저, GitHub 는 서버)", params: { method: oneOf(["github", "email"]) } },
-  sign_up: { source: "both", description: "처음 가입했다(이메일은 브라우저, GitHub 는 서버)", params: { method: oneOf(["github", "email"]) } },
+  sign_up: { source: "server", description: "처음 가입했다(새 계정은 서버만 안다 — 두 수단 모두 서버)", params: { method: oneOf(["github", "email"]) } },
   app_error: { source: "client", description: "화면 오류 경계에 걸렸다(코드만)", params: { error_code: text, page_type: oneOf(PAGE_TYPES) } },
   outbound_visit: { source: "server", description: "/go 가 제품 사이트·저장소로 보냈다", params: {
     product_slug: text, link_kind: oneOf(["site", "repo"]), via: optionalText } },

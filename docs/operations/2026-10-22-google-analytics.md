@@ -103,7 +103,7 @@
 | `nav_click` | 브라우저 | 헤더·푸터·모바일 메뉴를 눌렀다 | `target`, `surface` |
 | `login_start` | 브라우저 | 로그인 단추를 눌렀다 | `method` (github·email), `surface` |
 | `login` | 둘 다 | 로그인했다(이메일은 브라우저, GitHub 는 서버) | `method` (github·email) |
-| `sign_up` | 둘 다 | 처음 가입했다(이메일은 브라우저, GitHub 는 서버) | `method` (github·email) |
+| `sign_up` | 서버 | 처음 가입했다(새 계정은 서버만 안다 — 두 수단 모두 서버) | `method` (github·email) |
 | `app_error` | 브라우저 | 화면 오류 경계에 걸렸다(코드만) | `error_code`, `page_type` |
 | `outbound_visit` | 서버 | /go 가 제품 사이트·저장소로 보냈다 | `product_slug`, `link_kind` (site·repo), `via`? |
 | `skill_script_download` | 서버 | /install.sh·/skill.md 를 받아 갔다 | `script` (install_sh·skill_md) |
