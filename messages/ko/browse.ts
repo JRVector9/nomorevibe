@@ -348,5 +348,5 @@ export const browse = {
   "talk.bskyPost": "Bluesky 게시물",
   "talk.viewOnBluesky": "Bluesky에서 보기",
   "talk.methodBluesky": "Bluesky 게시물도 본문 없이 반응 수와 링크만 보여 주고 확인한 뒤 24시간 동안만 오릅니다. 봇으로 보이는 계정, 라벨이 붙은 글, 로그아웃한 사람에게 보이지 않기를 원한 계정의 글은 빼고 셉니다",
-  "talk.methodRequest": "글쓴이가 원하면 뺍니다 — 원문을 지우거나, 그 프로젝트 상세 페이지 아래 요청 폼 또는 {email} 로 글 주소를 보내 주세요",
+  "talk.methodRequest": "글쓴이가 원하면 뺍니다 — 원문을 지우거나, {email} 로 글 주소를 보내 주세요. 프로젝트 상세 페이지의 요청 폼은 프로젝트 자체를 내리는 곳이라 SNS 글 빼기에는 쓰지 않습니다",
 } as const;

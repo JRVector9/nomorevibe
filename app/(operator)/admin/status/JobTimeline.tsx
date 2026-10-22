@@ -5,6 +5,7 @@ import { JOB_LABELS, ROLE_LABELS } from '@/lib/operations/contracts';
 import { PAUSED_AFTER_MS } from '@/lib/jobs/status';
 import { formatAgo, formatListTime } from '@/lib/format/time';
 import type { OperationJob } from './OperationsCenter';
+import { jobLateness } from './job-lateness';
 
 /**
  * 한 후보가 발견에서 공개까지 지나는 순서.
@@ -55,12 +56,16 @@ function countdown(at: string | null, now: string): string {
 /** 사람이 멈춘 작업(not_before 가 먼 미래) — "대기 중·다음 39초 후"로 보이면 도는 줄 안다 */
 const paused = (job: OperationJob, now: string) => !!job.notBefore && Date.parse(job.notBefore) - Date.parse(now) > PAUSED_AFTER_MS;
 
-/** 요청됨(대기 중)은 정상 상태라 중립 회색 — 빨강·accent 로 그리면 건강한 작업 흐름이 경보로 덮였다(ADM-14) */
+/**
+ * 배지·번호 원의 색 — 지연·실패 판정은 작업 생존 띠·진단 표와 같은 jobLateness(job-lateness.ts)다.
+ * 정상인데 실행이 요청돼 기다리는 것(대기 중)은 중립 회색 — 빨강·accent 로 그리면 건강한 작업 흐름이 경보로 덮였다(ADM-14).
+ */
 function tone(job: OperationJob, now: string): { badge: string; node: string; label: string } {
-  if (paused(job, now)) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '멈춤' };
-  if (job.lastError) return { badge: 'border-down/40 bg-down/10 text-down', node: 'border-down/40 bg-down/10 text-down', label: '실패' };
+  const late = jobLateness(job, now);
+  if (late.state === 'failed') return { badge: 'border-down/40 bg-down/10 text-down', node: 'border-down/40 bg-down/10 text-down', label: late.text };
+  if (late.state === 'delayed') return { badge: 'border-warn/40 bg-warn/10 text-warn', node: 'border-warn/40 bg-warn/10 text-warn', label: late.text };
+  if (late.state === 'idle') return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: late.kind === 'paused' ? '멈춤' : late.text };
   if (job.requestedVersion > job.processedVersion) return { badge: 'border-line bg-bg-soft text-fg-2', node: 'border-line bg-bg-soft text-fg-2', label: '대기 중' };
-  if (!job.lastSuccessAt) return { badge: 'border-line bg-bg-soft text-fg-3', node: 'border-line bg-bg-card text-fg-3', label: '실행 기록 없음' };
   return { badge: 'border-up/40 bg-up/10 text-up', node: 'border-up/40 bg-up/10 text-up', label: '정상' };
 }
 

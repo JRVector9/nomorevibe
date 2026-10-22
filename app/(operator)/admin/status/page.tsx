@@ -32,6 +32,7 @@ import { catalogJobsForBatch } from "@/lib/jobs/batches";
 import { splitServiceRoleRows } from "@/lib/operations/split-service-roles";
 import { ATTENTION_HISTORY_KEY, attentionAcks, readAttentionHistory, recordAttentionSample } from "@/lib/operations/attention";
 import { webWritable } from "@/lib/operations/dr/web-gate";
+import { readXStatus } from "@/lib/operations/x-status";
 import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
@@ -167,7 +168,9 @@ const crawlerReportFor = cache(async (inputs: Awaited<ReturnType<typeof loadActi
 
 async function CrawlerActivitySlot({ inputs, fresh }: { inputs: Awaited<ReturnType<typeof loadActionInputs>>; fresh: boolean }) {
   const report = await withDeadline(crawlerReportFor(inputs, fresh)).catch(warn("operations.crawler_activity_unavailable"));
-  return report ? <CrawlerActivity report={report} /> : <p className="ops-note">크롤러 활동을 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
+  // X 칸은 이미 읽은 관측 줄의 X 수집기 보고(readXStatus) — 흐름 상세·X 보고 끊김 조치와 같은 값, 새 쿼리 없음
+  return report ? <CrawlerActivity report={report} x={readXStatus(inputs.ops.observations, inputs.ops.fetchedAt)} />
+    : <p className="ops-note">크롤러 활동을 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
 }
 
 /** 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만 */
@@ -218,6 +221,7 @@ async function DiagnosticsPanels({ inputs, derived }: { inputs: Awaited<ReturnTy
   const rejectedTotal = rejections.reduce((sum, r) => sum + r.count, 0);
   const rankingStale = !rankingSeason?.refreshedAt || Date.parse(now) - rankingSeason.refreshedAt.getTime() > RANKING_STALE_MS;
   const evidenceJob = derived.states.get("product-evidence-refresh");
+  const activeJobs = new Set(catalogJobsForBatch(inputs.jobBatch).map((job) => job.name));
   return (
     <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-2">
       <Panel
@@ -240,14 +244,19 @@ async function DiagnosticsPanels({ inputs, derived }: { inputs: Awaited<ReturnTy
               {JOB_NAMES.map((name) => {
                 const state = derived.states.get(name);
                 const role = JOB_CATALOG.find((job) => job.name === name)?.role;
+                // 스케줄러 관측(heartbeat)은 실행되는 잡이 아니다 — 스케줄러가 틱마다 워커 관측 시각만 남긴다(markSchedulerSeen)
+                const heartbeat = name === "heartbeat";
+                // 지금 batch 방식에서 돌지 않는 잡(versioned 전용, 예: 공식 사이트 근거는 legacy 에서 crawler 가 대신 한다) — 고장이 아니다
+                const resting = !heartbeat && !activeJobs.has(name);
                 return (
                   <tr key={name} className="border-t border-line">
                     <td className="py-2" title={name}>{JOB_LABELS[name] ?? name}<span className="block text-[13px] text-fg-3" title={role}>{role ? ROLE_LABELS[role] ?? role : ""}</span></td>
-                    <td className="py-2 text-fg-2">{name === "heartbeat" ? "스케줄러 관측" : jobStatusLabel(state)}</td>
+                    <td className="py-2 text-fg-2">{heartbeat ? "스케줄러 관측" : resting ? `${inputs.jobBatch.mode} 모드라 쉼(정상)` : jobStatusLabel(state)}</td>
                     <td className="py-2 text-fg-2">{formatAgo(state?.workerSeenAt, now, "없음")}</td>
-                    <td className="py-2 text-fg-2">{state?.lastRunAt ? formatAgo(state.lastRunAt, now) : "실행 기록 없음"}</td>
-                    <td className="py-2 text-fg-2">{state ? formatAgo(state.lastSuccessAt, now, "없음") : "—"}</td>
-                    <td className="py-2 font-mono text-fg-2">{state?.runs ?? 0}</td>
+                    <td className="py-2 text-fg-2">{heartbeat ? `스케줄러 마지막 틱 ${formatAgo(state?.workerSeenAt, now, "관측 없음")}`
+                      : state?.lastRunAt ? formatAgo(state.lastRunAt, now) : "실행 기록 없음"}</td>
+                    <td className="py-2 text-fg-2">{heartbeat || !state ? "—" : formatAgo(state.lastSuccessAt, now, "없음")}</td>
+                    <td className="py-2 font-mono text-fg-2">{heartbeat ? "—" : state?.runs ?? 0}</td>
                   </tr>
                 );
               })}
@@ -490,9 +499,10 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-8" label="파이프라인" />}><StageSlot inputs={inputs} derived={derived} /></Suspense>
         {/* 레일 오른쪽의 빈 4칸(1,181px 이상) — 들어오는 곳·발행 후 보강·설정 전환(v8). 레일 높이 안, 칸마다 따로 흐른다 */}
         <FlowSideCells variant="rail" {...flowSlot} />
+        {/* 파이프라인 제어·처리 지표도 지표다 — 폰에서는 역할 표 위가 아니라 "나머지 지표 보기" 아래(ADM-30) */}
+        <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
+        <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       </div>
-      <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
-      <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}

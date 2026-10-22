@@ -116,7 +116,7 @@ describe("파이프라인 레일", () => {
 
 describe("역할 표와 상태 칩", () => {
   const role = (over: Partial<RoleOverview>): RoleOverview => ({ role: "crawler", reason: "ready", ownerInstanceId: "m3-crawler", ownerKind: "primary",
-    ownerRelease: "6170584abc", epoch: 18, secondsUntilExpiry: 30, primaryRelease: "6170584abc", standbyRelease: "6170584abc", ...over });
+    ownerRelease: "6170584abc", epoch: 18, secondsUntilExpiry: 30, quarantineSeconds: null, primaryRelease: "6170584abc", standbyRelease: "6170584abc", ...over });
   const roles = [role({}), role({ role: "maintenance", reason: "standby_active", ownerInstanceId: "mini-maintenance-standby", ownerKind: "standby", ownerRelease: "ce64737xyz", epoch: 9 })];
   const scheduler = { freshReplicas: 2, alarm: false };
   const web = [{ instance: "m3-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }, { instance: "mini-web", release: "6170584abc", observedAt: "2026-10-02T13:53:00.000Z" }];

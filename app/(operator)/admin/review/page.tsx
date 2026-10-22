@@ -189,7 +189,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
         </div>
       </header>
 
-      <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0}
+      <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0} takedownsOverdue={takedowns?.overdue ?? 0}
         inflow={overview.wait?.in24h ?? null} />
       <Link href="/admin#human-review" className="dash-pill">사람 검토 DeepSeek 위임: {settings.humanReview.enabled ? '켜짐 · M3 Ultra' : '꺼짐'} · 설정 →</Link>
       {/* 사람 큐를 거르는 gpu3090 Qwen-v2 둘 — 관문 갈림 판가름(2차 잡)과 보류 재심사(사람 검토 잡). 배지도 따로다: 판가름 «Qwen-v2 승인 — 발행 후보»,

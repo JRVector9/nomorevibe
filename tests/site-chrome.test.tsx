@@ -172,7 +172,9 @@ describe("게재 기준", () => {
     expect(html).toContain("운영자 미확인");
     // 공개 연락처(2026-10-22 사용자 결정, Bluesky 개발자 지침 5) — 그 밖의 주소는 싣지 않는다
     expect(html).toContain('href="mailto:contact@nomorevibe.com"');
-    expect(html).toContain("SNS 화제 글·자료 출처에 관한 요청, 삭제 요청, 신고는");
+    // SNS 화제 글 빼기는 이메일로 — 상세 페이지 요청 폼은 제품을 내리는 곳이라 그리로 보내지 않는다(2026-10-22)
+    expect(html).toContain("SNS 화제 글을 빼 달라는 요청은 상세 페이지의 요청 폼이 아니라 이메일로 받습니다");
+    expect(html).toContain("자료 출처에 관한 요청, 삭제 요청, 신고도 이 주소로 받으며");
     expect(new Set(html.match(/[\w.+-]+@[\w-]+\.[\w.]+/g))).toEqual(new Set(["contact@nomorevibe.com"]));
     expect(html).not.toContain("공개 이메일 주소는 두지 않습니다");
   });

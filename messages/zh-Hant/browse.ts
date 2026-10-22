@@ -351,5 +351,5 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.bskyPost": "Bluesky 貼文",
   "talk.viewOnBluesky": "在 Bluesky 上查看",
   "talk.methodBluesky": "Bluesky 貼文同樣只顯示互動數與連結，每次檢查後保留 24 小時。疑似機器人帳號的貼文、帶標籤的貼文，以及不希望被未登入使用者看到的帳號的貼文不計入",
-  "talk.methodRequest": "作者可要求移除貼文：刪除原文，或透過該專案詳情頁底部的請求表單或 {email} 寄送貼文網址",
+  "talk.methodRequest": "作者可要求移除貼文：刪除原文，或將貼文網址寄至 {email}。專案詳情頁的請求表單用於下架專案本身，請勿用它移除 SNS 貼文",
 });

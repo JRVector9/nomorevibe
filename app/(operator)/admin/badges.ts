@@ -1,12 +1,11 @@
 import "server-only";
-import { countBadge, type NavBadges } from "./AdminNav";
+import { auditBadge, countBadge, type NavBadges } from "./AdminNav";
 import { sharedStore } from "@/lib/cache/shared";
 import { sharedStale } from "@/lib/operations/shared-cache";
 import { sharedHumanQueueOverview } from "@/lib/operations/shared-reads";
 import { getSettings } from "@/lib/crawl/settings";
 import { pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownSummary } from "@/lib/domain/products/takedown";
-import { takedownSignal } from "@/lib/domain/products/takedown-view";
 import { criticalActionCount } from "./status/attention";
 
 /**
@@ -24,7 +23,7 @@ export type NavBadgeSet = { badges: NavBadges; unknown: string[] };
 export async function navBadges(): Promise<NavBadgeSet> {
   // 하나가 실패해도 나머지 배지와 페이지는 그린다
   const [takedown, introRequests, critical, human] = await Promise.all([
-    takedownSummary().then(takedownSignal).then((value) => ({ ok: true as const, value }), () => ({ ok: false as const, value: null })),
+    takedownSummary().then((value) => ({ ok: true as const, value }), () => ({ ok: false as const, value: null })),
     pendingIntroRequestCount().then((value) => ({ ok: true as const, value }), () => ({ ok: false as const, value: 0 })),
     criticalActionCount(),
     humanCount.get("human", async () => (await sharedHumanQueueOverview(await getSettings())).stages.human).catch(() => null),
@@ -34,12 +33,9 @@ export async function navBadges(): Promise<NavBadgeSet> {
     ...(human === null ? ["/admin/review"] : []),
     ...(critical === null ? ["/admin/status"] : []),
   ];
-  const signal = takedown.value, requests = introRequests.value;
   return { unknown, badges: {
     // 내려달라는 요청 — 24시간 넘은 것이 있으면 빨강. 소개 수정 요청(UX-18)은 주황으로만 덧붙인다(약속 시간이 없다)
-    "/admin/audit": signal
-      ? { label: requests > 0 ? `${signal.label} · 소개 ${requests}` : signal.label, tone: signal.tone === "bad" ? "critical" : "warn" }
-      : requests > 0 ? { label: `소개 ${requests.toLocaleString("ko-KR")}`, tone: "warn", title: "소개 수정 요청" } : undefined,
+    "/admin/audit": auditBadge(takedown.value, introRequests.value),
     "/admin/review": countBadge(human, "warn", (count) => `직접 판단 ${count}건`),
     // 운영센터 — 조치할 일의 critical 수(운영센터와 같은 buildActions, 30초 담아 둠·기다리지 않음·실패하면 지난 값)
     "/admin/status": countBadge(critical, "critical", (count) => `긴급 ${count}건`),

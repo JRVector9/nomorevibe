@@ -64,5 +64,5 @@ export const decideTalkHome = webWriteAction(async function decideTalkHome(_prev
   await recordAdminAction(admin.login, { action: `talk-home-${decision ?? "clear"}`, target: key });
   logger.info("admin.talk_home_decided", { login: admin.login, key, decision });
   revalidateTalk();
-  return { ok: decision === "approved" ? `${key} 를 홈 1위에 올릴 수 있게 했습니다.` : decision === "talk_only" ? `${key} 는 /talk 에만 둡니다.` : `${key} 의 홈 결정을 지웠습니다.` };
+  return { ok: decision === "approved" ? `${key} 를 홈 1위에 올릴 수 있게 했습니다.` : decision === "talk_only" ? `${key} 는 /talk 에만 둡니다.` : `${key} 의 홈 결정을 거두고 정하지 않음으로 되돌렸습니다.` };
 });

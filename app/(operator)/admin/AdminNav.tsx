@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { takedownSignal } from "@/lib/domain/products/takedown-view";
 import { AdminIcon, type AdminIconName } from "./components/AdminIcon";
 
 type NavPage = { href: string; label: string; hint: string; icon: AdminIconName };
@@ -53,6 +54,22 @@ export function countBadge(count: number | null | undefined, tone: NavBadgeTone,
   if (!count || count <= 0) return undefined;
   const label = count.toLocaleString("ko-KR");
   return { label, tone, title: title?.(label) };
+}
+
+/**
+ * 내릴 후보 메뉴 배지 — 내려달라는 요청(24시간 넘은 것이 있으면 빨강, takedownSignal 과 같은 규칙)과 소개 수정 요청(주황, 약속 시간이 없다).
+ * 보이는 글자는 짧게("요청 3 · 소개 2"), title 은 갈래와 수를 모두 적는다 — title 이 있으면 화면 낭독기는 보이는 글자 대신 title 만 읽는다.
+ * 전에는 소개만 있을 때 title 이 "소개 수정 요청"(수 없음)이라 낭독·툴팁에서 수가 사라졌고, 요청이 있을 때는 title 이 없어 무슨 요청인지 몰랐다.
+ */
+export function auditBadge(takedowns: { pending: number; overdue: number } | null, introRequests: number): NavBadge | undefined {
+  const n = (value: number) => value.toLocaleString("ko-KR");
+  const pending = takedowns && takedowns.pending > 0 ? takedowns : null;
+  const intro = introRequests > 0 ? introRequests : 0;
+  if (!pending && !intro) return undefined;
+  const label = [pending && `요청 ${n(pending.pending)}`, intro && `소개 ${n(intro)}`].filter(Boolean).join(" · ");
+  const title = [pending && `내려달라는 요청 ${n(pending.pending)}건${pending.overdue > 0 ? `(24시간 넘음 ${n(pending.overdue)}건)` : ""}`,
+    intro && `소개 수정 요청 ${n(intro)}건`].filter(Boolean).join(" · ");
+  return { label, tone: pending && takedownSignal(pending)?.tone === "bad" ? "critical" : "warn", title };
 }
 
 const isActive = (current: string, href: string) => current === href || (href !== "/admin" && current.startsWith(`${href}/`));

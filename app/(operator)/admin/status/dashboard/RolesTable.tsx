@@ -11,6 +11,12 @@ import { READINESS_LABELS, webSummary, type WebStatus } from "../status-summary"
  * 예비가 일하면 주황, 관측이 끊기면 빨강으로 바로 보인다.
  * 역할은 사람이 읽는 이름으로 적고 코드(crawler 등)는 title 로만 둔다(ADM-28). 폰에서는 표만 옆으로 민다(ADM-30).
  */
+/** 격리 남은 시간 "12분 30초"·"40초" */
+const quarantineLeft = (seconds: number) => {
+  const total = Math.ceil(seconds), minutes = Math.floor(total / 60), rest = total % 60;
+  return minutes > 0 ? (rest ? `${minutes}분 ${rest}초` : `${minutes}분`) : `${rest}초`;
+};
+
 export function RolesTable({ roles, scheduler, web }: {
   roles: RoleOverview[] | null; scheduler: { freshReplicas: number; alarm: boolean } | null; web: WebStatus[];
 }) {
@@ -31,7 +37,9 @@ export function RolesTable({ roles, scheduler, web }: {
                   <td className="font-semibold">{ROLE_LABELS[row.role] ?? row.role}</td>
                   <td title={row.ownerInstanceId ?? "담당 미확인"}><span className="dash-pill" data-tone={tone}><span><span className="dash-dot" data-tone={tone} aria-hidden /> {who}</span>{row.reason !== "ready" && <span>· {READINESS_LABELS[row.reason]}</span>}</span><small className="block text-fg-3">담당 {row.ownerRelease?.slice(0, 7) ?? "미확인"}</small></td>
                   <td className="font-mono text-[13px]">{row.primaryRelease?.slice(0, 7) ?? "미관측"} · {row.standbyRelease?.slice(0, 7) ?? "미관측"}</td>
-                  <td className="font-mono text-[13px]">{row.secondsUntilExpiry === null ? "미확인" : row.secondsUntilExpiry <= 0 ? "만료" : `${Math.ceil(row.secondsUntilExpiry)}초 남음`} · {row.epoch ?? "—"}</td>
+                  <td className="font-mono text-[13px]">{row.secondsUntilExpiry === null ? "미확인" : row.secondsUntilExpiry <= 0 ? "만료" : `${Math.ceil(row.secondsUntilExpiry)}초 남음`} · {row.epoch ?? "—"}
+                    {/* 주 격리(5분에 세 번 넘게 재시작 → 15분) — 남은 시간이 지나야 주가 담당을 다시 잡는다 */}
+                    {row.quarantineSeconds !== null && <small className="block text-warn" title="주가 5분 안에 세 번 넘게 다시 떠 15분 동안 담당을 다시 잡지 못합니다">주 격리 {quarantineLeft(row.quarantineSeconds)} 남음</small>}</td>
                 </tr>
               );
             })}

@@ -12,6 +12,11 @@ import { like, or, sql } from "drizzle-orm";
 export type RoleOverview = {
   role: string; reason: ReadinessReason; ownerInstanceId: string | null; ownerKind: string | null;
   ownerRelease: string | null; epoch: number | null; secondsUntilExpiry: number | null;
+  /**
+   * 주 격리가 풀리기까지 남은 초 — 주가 5분에 세 번 넘게 다시 뜨면 15분 동안 담당을 다시 잡지 못한다(role-leader.ts).
+   * 격리 중이 아니거나 이미 풀렸으면 null. 전에는 읽고 버려 표에 "주 격리 중"만 보이고 언제 풀리는지 몰랐다.
+   */
+  quarantineSeconds: number | null;
   primaryRelease: string | null; standbyRelease: string | null;
 };
 
@@ -55,6 +60,7 @@ export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler
       role, reason: report.roles.find((row) => row.role === role)?.reason ?? "primary_missing",
       ownerInstanceId: lease?.ownerInstanceId ?? null, ownerKind: lease?.ownerKind ?? null, ownerRelease: lease?.ownerRelease ?? null,
       epoch: lease?.epoch ?? null, secondsUntilExpiry: lease?.secondsUntilExpiry ?? null,
+      quarantineSeconds: lease?.quarantineSeconds != null && lease.quarantineSeconds > 0 ? lease.quarantineSeconds : null,
       primaryRelease: fresh("primary")?.release ?? null, standbyRelease: fresh("standby")?.release ?? null,
     };
   });

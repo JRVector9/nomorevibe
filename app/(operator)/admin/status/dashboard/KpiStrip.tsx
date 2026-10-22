@@ -6,7 +6,8 @@ const n = (value: number) => value.toLocaleString("ko-KR");
 const pct = (part: number, whole: number) => whole > 0 ? `${Math.round((part / whole) * 100)}%` : "—";
 
 /**
- * 지금 처리량 — 최근 1시간 수와 24시간 모양.
+ * 지금 처리량 — 최근 1시간(60분 전부터 지금까지, 굴러가는 창) 수와 24시간 모양.
+ * 큰 숫자의 창은 심사 큐 칩·모델 연결 카드의 "1h"와 같다(lib/operations/dashboard.ts lastHour) — 1차 심사 수가 화면마다 다르지 않게.
  *
  * 숫자 하나보다 "평소보다 많은가"가 먼저 보여야 한다. 그래서 칸마다 24시간 선을 깐다.
  * 타일 여섯은 격자 2칸씩이라 아래 행의 8칸·4칸 카드와 세로 선이 맞는다.
@@ -20,10 +21,11 @@ export function KpiStrip({ series, textPending, verifyPending }: {
     return <section className="dash-card dash-12" aria-label="지금 처리량"><p className="text-[13px] text-fg-3">처리량을 불러오지 못했습니다. 다음 갱신에서 다시 확인합니다.</p></section>;
   }
   const points = series.points;
-  const last = points[points.length - 1];
-  // 큰 숫자는 이번 시(정시부터 지금까지)다 — 15분 지난 칸을 "24h 평균 …/h" 옆에 두면 처리량이 1/4로 준 줄 안다
-  const elapsed = Math.max(1, Math.round((new Date(series.measuredAt).getTime() - new Date(last.hour).getTime()) / 60_000));
-  const partial = elapsed < 60 ? `이번 시 ${elapsed}분 · ` : "";
+  // 큰 숫자는 최근 1시간(굴러가는 60분)이라 "24h 평균 …/h" 과 바로 견줄 수 있다. 옛 캐시 값(lastHour 없음)이면 이번 시 칸으로 대신하고 그렇게 적는다
+  const hour = points[points.length - 1];
+  const last = series.lastHour ?? hour;
+  const elapsed = Math.max(1, Math.round((new Date(series.measuredAt).getTime() - new Date(hour.hour).getTime()) / 60_000));
+  const partial = series.lastHour ? "최근 1시간 · " : elapsed < 60 ? `이번 시 ${elapsed}분 · ` : "";
   const avg = (pick: (p: typeof last) => number) => Math.round(points.reduce((sum, p) => sum + pick(p), 0) / points.length);
   // firstReviews(끝난 심사)와 firstFailed(실패한 호출)는 겹치지 않는다 — 실패율 분모는 둘의 합(프로드 첫 화면에 "실패 567%"가 떴다)
   const firstTotal = last.firstReviews + last.firstFailed;

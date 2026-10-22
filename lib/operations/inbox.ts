@@ -9,6 +9,7 @@ import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { getSettings } from "@/lib/crawl/settings";
+import { humanInboxNote } from "@/lib/crawl/human-queue";
 import { DOWN_THRESHOLD, downProductCount } from "@/lib/domain/products/health";
 import { countProducts, repoGone, repoGoneAutoBanned, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON } from "@/lib/domain/products/repository";
 import { feedbackAdminQueue } from "@/lib/domain/feedback/repository";
@@ -206,7 +207,8 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
     }),
     settle("human", async () => {
       const { ids, stages, wait } = await overview;
-      return { count: stages.human, note: wait?.stalled ? `2주 넘음 ${count(wait.stalled)}건` : undefined,
+      // 쌓임 경고는 심사 큐·운영센터와 같은 humanBacklogged(500건). 2주 넘은 수는 나이 참고로만 덧붙인다
+      return { count: stages.human, note: humanInboxNote({ stages, wait }),
         items: await candidatePreview(ids.human, (row) => row.reason ?? "") };
     }),
     settle("agreed", async () => {

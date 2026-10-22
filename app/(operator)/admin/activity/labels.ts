@@ -58,6 +58,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "github-collector-token-save": "수집 토큰 저장",
   "github-collector-enable": "수집 계정 켜기",
   "github-collector-disable": "수집 계정 끄기",
+  "github-collector-app-save": "수집 App 저장",
+  "github-collector-app-enable": "수집 App 켜기",
+  "github-collector-app-disable": "수집 App 끄기",
   "ai-connect": "AI 연결",
   "ai-input": "AI 연결 코드 입력",
   "ai-cancel": "AI 연결 취소",
@@ -66,6 +69,17 @@ export const ACTION_LABELS: Record<string, string> = {
   "ai-apply": "AI 모델 적용",
   "export": "목록 내보내기",
   "operator-name": "내 이름 적기",
+  // 검수·재요청 화면(피드백 검수·써봤어요 검수·공개 번역)과 SNS 화제 — 전에는 이름이 없어 코드 그대로 어느 갈래에도 들지 않았다
+  "feedback.review": "피드백 검수",
+  "reaction.comment_review": "써봤어요 한 줄 검수",
+  "product-translation-retry": "공개 번역 재요청",
+  "talk-post-hide": "SNS 글 숨김",
+  "talk-post-show": "SNS 글 다시 보이기",
+  "talk-repository-exclude": "저장소를 화제에서 뺌",
+  "talk-repository-include": "저장소를 화제에 되돌림",
+  "talk-home-approved": "홈 1위 허용",
+  "talk-home-talk_only": "홈 대신 /talk 에만",
+  "talk-home-clear": "홈 1위 결정 거둠(정하지 않음)",
   // 스크립트·잡이 남기는 작업(.crawl-samples·scripts·lib/crawl) — 화면에는 "스크립트" 배지와 함께 보인다
   "requeue-evidence-gated": "근거 관문에 막힌 후보 다시 판정",
   "requeue-rejected-under-new-policy": "새 기준으로 거부분 다시 판정",
@@ -125,10 +139,13 @@ export const ACTION_GROUPS = {
     "reconsider-star-auto", "reconsider-package", "reconcile-crawl-duplicate", "relabel-repo-deleted"] },
   settings: { label: "설정·연결", actions: ["settings-save", "human-review-deepseek", "held-qwen-retry-settings", "qwen-auto-settings", "split-tiebreak-settings", "collection-enabled", "source-buffer", "attention-ack", "attention-unack", "review-mode", "evidence-settings", "ranking-schedule", "ranking-cancel",
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
+    "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply"] },
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name",
-    "normalize-product-names", "revert-product-names"] },
+    "normalize-product-names", "revert-product-names",
+    "feedback.review", "reaction.comment_review", "product-translation-retry",
+    "talk-post-hide", "talk-post-show", "talk-repository-exclude", "talk-repository-include", "talk-home-approved", "talk-home-talk_only", "talk-home-clear"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
 

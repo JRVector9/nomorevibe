@@ -1,6 +1,8 @@
 import { beforeAll, expect, it } from "vitest";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, productAuditCampaigns,
+import { roleOverview } from "@/lib/operations/roles";
+import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, productAuditCampaigns,
   productAuditItems, productHealth, productIntroChecks, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
@@ -116,6 +118,22 @@ it("buckets the last 24 hours oldest first and reuses the cached series", async 
   expect(series.points.reduce((sum, point) => sum + point.discovered, 0)).toBe(2);
 
   expect(await hourlyThroughput(new Date(now.getTime() + 1000))).toBe(series);
+  // 굴러가는 최근 1시간 — 지금은 모든 최근 행이 이번 시 칸 안이라 마지막 칸과 같다
+  expect(series.lastHour).toEqual({ discovered: 2, judged: 2, firstReviews: 1, firstFailed: 1,
+    secondReviews: 2, secondAgreed: 1, published: 1, publishedKorean: 1, keywords: 1 });
+});
+
+it("lastHour is a rolling 60 minutes, the same window as modelHealth's 1h — not the hour since :00", async () => {
+  // 52분 뒤 — 다음 시의 22분. 이번 시 칸에는 아무것도 없지만, 굴러가는 1시간(8분 전 넘게 ~ 지금)에는 8분 전 실패 호출·5분 전 표·3분 전 키워드가 든다
+  const later = new Date(now.getTime() + 52 * 60_000);
+  const series = await hourlyThroughput(later);
+  expect(series.points.at(-1)).toMatchObject({ discovered: 0, judged: 0, firstReviews: 0, firstFailed: 0, secondReviews: 0, keywords: 0 });
+  expect(series.lastHour).toEqual({ discovered: 0, judged: 0, firstReviews: 0, firstFailed: 1,
+    secondReviews: 1, secondAgreed: 0, published: 0, publishedKorean: 0, keywords: 1 });
+  // 심사 큐 칩·모델 연결 카드의 "1h"(modelHealth)와 같은 창 — 1차 호출 수 = 끝난 심사 + 실패
+  const [first] = await modelHealth(settings, later);
+  expect(first.calls1h).toBe(series.lastHour!.firstReviews + series.lastHour!.firstFailed);
+  expect(first.failed1h).toBe(series.lastHour!.firstFailed);
 });
 
 it("reports each model slot over the last hour", async () => {
@@ -168,4 +186,18 @@ it("counts what needs a person", async () => {
   // 진행 중인 감사는 시작 때 프롬프트("test")가 지금 코드와 달라 잡이 건너뛰는 상태다
   expect(await attentionCounts(now)).toMatchObject({ auditRejectsOpen: 1, healthOverdue: 1, healthTargetPerHour: 1, introNeedsEditor: 1,
     auditCampaign: { promptVersion: "test", current: false, unanswered: 0 }, cdnPurgesPending: 0, repoGone: { installable: 0, website: 0 } });
+});
+
+it("roleOverview carries the remaining primary quarantine — it was read and dropped before", async () => {
+  await db.delete(roleLeases).where(eq(roleLeases.role, "crawler"));
+  await db.insert(roleLeases).values({ role: "crawler" });
+  expect((await roleOverview()).roles.find((row) => row.role === "crawler")?.quarantineSeconds).toBeNull();
+  await db.update(roleLeases).set({ quarantineUntil: sql`localtimestamp + interval '15 minutes'` }).where(eq(roleLeases.role, "crawler"));
+  const seconds = (await roleOverview()).roles.find((row) => row.role === "crawler")?.quarantineSeconds;
+  expect(seconds).toBeGreaterThan(14 * 60);
+  expect(seconds).toBeLessThanOrEqual(15 * 60);
+  // 풀린 격리(지난 시각)는 남은 시간이 없다
+  await db.update(roleLeases).set({ quarantineUntil: sql`localtimestamp - interval '1 minute'` }).where(eq(roleLeases.role, "crawler"));
+  expect((await roleOverview()).roles.find((row) => row.role === "crawler")?.quarantineSeconds).toBeNull();
+  await db.delete(roleLeases).where(eq(roleLeases.role, "crawler"));
 });

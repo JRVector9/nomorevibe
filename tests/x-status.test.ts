@@ -5,7 +5,7 @@ import { BACKLOG_KEYS } from "@/lib/operations/attention";
 import { parseXStatusReport, readXStatus, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
 import { buildActions, deriveStatus, splitActions, type ActionInputs } from "@/app/(operator)/admin/status/attention";
 import { xSummary } from "@/app/(operator)/admin/status/flow-model";
-import type { ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
+import { AttentionList, type ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { humanOverview } from "./fixtures/human-queue";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
@@ -185,8 +185,13 @@ describe("조치 — X 보고 끊김/오류", () => {
     expect(BACKLOG_KEYS.has("x-status")).toBe(true);
     const item = xAction([row(report(), 30)])!;
     const samples = [{ at: hoursAgo(24), counts: { "x-status": 6 } }];
-    expect(splitActions([item], { samples, acks: new Map(), now: NOW }).backlog.map((split) => [split.key, split.trend]))
-      .toEqual([["x-status", { delta: 24, hours: 24 }]]);
+    // 수는 지난 시간이라 가만히 있어도 24시간에 24가 는다 — 24시간 변화("↑ 24h +24")로 그리지 않는다
+    expect(item.elapsed).toBe(true);
+    const split = splitActions([item], { samples, acks: new Map(), now: NOW });
+    expect(split.backlog.map((entry) => [entry.key, entry.trend])).toEqual([["x-status", null]]);
+    const out = renderToStaticMarkup(createElement(AttentionList, { urgent: [], backlog: split.backlog, hidden: [], now: NOW.toISOString() }));
+    expect(out).toContain("마지막 정상 뒤 지난 시간");
+    expect(out).not.toContain("↑ 24h");
     const ack = { key: "x-status", actor: "local", at: new Date(hoursAgo(1)), until: new Date(hoursAgo(-167)) };
     expect(splitActions([item], { samples, acks: new Map([["x-status", ack]]), now: NOW }).hidden.map((split) => split.key)).toEqual(["x-status"]);
   });

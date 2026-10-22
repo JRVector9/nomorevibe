@@ -19,14 +19,19 @@ export type TalkPostRow = {
   repositoryKey: string | null;
   points: number;
   comments: number;
+  /** 단위를 단 반응 — HN "90점 · 댓글 20", X·Bluesky "반응 52 · 답글 3"(lib/social/talk-reasons.ts reactionLabel) */
+  reaction: string;
+  /** 출처의 /talk 자격 기준과 넘었는지(talkQualifies·thresholdLabel) */
+  threshold: { met: boolean; rule: string };
   frontPage: boolean;
   postedAt: string;
   firstSeenAt: string;
   lastSeenAt: string;
   state: "visible" | "hidden" | "gone";
   excluded: boolean;
-  product: { slug: string; status: string } | null;
-  /** 지금 /talk 에 보이는지, 아니면 왜 아닌지(lib/social/talk-reasons.ts) */
+  /** statusLabel — 상태 코드의 이름(검증됨·미클레임·검증 대기·차단됨). 코드는 title 로만 */
+  product: { slug: string; status: string; statusLabel: string } | null;
+  /** 지금 /talk 에 오르는지, 아니면 왜 아닌지(lib/social/talk-reasons.ts) — '보임'은 상태(숨김의 반대)에만 쓴다 */
   talk: { shown: boolean; rank: number | null; reasons: string[] };
 };
 
@@ -71,7 +76,7 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                   onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map(row => row.id)))} /></th>
                 <th className="px-3 py-2 font-semibold">출처</th>
                 <th className="px-3 py-2 font-semibold">글</th>
-                <th className="px-3 py-2 font-semibold">점수 · 댓글</th>
+                <th className="px-3 py-2 font-semibold">반응 · 자격 기준</th>
                 <th className="px-3 py-2 font-semibold">게시 · 확인</th>
                 <th className="px-3 py-2 font-semibold">저장소 · 연결 제품</th>
                 <th className="px-3 py-2 font-semibold">상태</th>
@@ -96,7 +101,10 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                       {" "}({TARGET_LABEL[row.linkTarget] ?? row.linkTarget})
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-2 font-mono">{row.points} · {row.comments}</td>
+                  <td className="whitespace-nowrap px-3 py-2">
+                    <span className="font-mono">{row.reaction}</span>
+                    <span className={`block ${row.threshold.met ? "text-fg-2" : "text-fg-3"}`}>{row.threshold.met ? "기준 넘음" : "기준 아래"} · {row.threshold.rule}</span>
+                  </td>
                   <td className="whitespace-nowrap px-3 py-2 text-fg-3">
                     <span className="text-fg-2">{formatListTime(row.postedAt, now)}</span>
                     <span className="block">처음 {formatListTime(row.firstSeenAt, now)}</span>
@@ -105,7 +113,7 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                   <td className="px-3 py-2">
                     <span className="font-mono text-[13px]">{row.repositoryKey ?? "—"}</span>
                     <span className="block text-fg-3">
-                      {row.product ? <a href={`/p/${row.product.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline">{row.product.slug} · {row.product.status}</a>
+                      {row.product ? <a href={`/p/${row.product.slug}`} target="_blank" rel="noopener noreferrer" className="hover:underline" title={row.product.status}>{row.product.slug} · {row.product.statusLabel}</a>
                         : row.repositoryKey ? "제품 없음" : "저장소 없음"}
                     </span>
                     {row.repositoryKey && (
@@ -125,8 +133,8 @@ export function TalkPostsBoard({ rows, now }: { rows: TalkPostRow[]; now: string
                   </td>
                   <td className="min-w-[180px] px-3 py-2">
                     {row.talk.shown
-                      ? <span className="whitespace-nowrap rounded-full border border-up/40 bg-up/10 px-2 py-0.5 text-[13px] font-semibold text-up">보임 · {row.talk.rank}위</span>
-                      : <span className="whitespace-nowrap rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-3">안 보임</span>}
+                      ? <span className="whitespace-nowrap rounded-full border border-up/40 bg-up/10 px-2 py-0.5 text-[13px] font-semibold text-up">오름 · {row.talk.rank}위</span>
+                      : <span className="whitespace-nowrap rounded-full border border-line bg-bg-soft px-2 py-0.5 text-[13px] font-semibold text-fg-3">안 오름</span>}
                     {row.talk.reasons.length > 0 && (
                       <ul className="mt-1 flex flex-col gap-0.5 text-[13px] text-fg-2">
                         {row.talk.reasons.map(reason => <li key={reason}>{reason}</li>)}

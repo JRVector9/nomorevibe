@@ -481,7 +481,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     const received = formatListTime(x.receivedAt, now);
     const mode = x.report?.mode === "live" ? "실제 수집(live)" : "시험 실행(dry-run)";
     actions.push({
-      key: "x-status", tone: "hold", unit: "시간",
+      key: "x-status", tone: "hold", unit: "시간", elapsed: true,
       // 끊김·읽기 실패는 마지막으로 받은 때부터, 오류는 마지막 성공부터(없으면 받은 때부터) — 숫자라야 24시간 변화·숨김이 된다
       count: hoursSince(x.state === "error" ? x.report?.lastSuccessAt ?? x.receivedAt : x.receivedAt),
       title: x.state === "stale" ? "X 수집 보고가 끊겼습니다" : x.state === "error" ? "X 수집기가 오류를 보고했습니다" : "X 수집 보고를 읽지 못했습니다",
@@ -510,7 +510,8 @@ export function splitActions(items: ActionItem[], options: { samples: AttentionS
   for (const item of sortActions(items)) {
     const before = baseline?.counts[item.key];
     const fresh = baseline !== null && before === undefined;
-    const trend = typeof item.count === "number" && typeof before === "number" ? { delta: item.count - before, hours } : null;
+    // 지난 시간을 센 칸(elapsed)은 시간이 가면 저절로 는다 — 24시간 변화로 그리지 않는다
+    const trend = !item.elapsed && typeof item.count === "number" && typeof before === "number" ? { delta: item.count - before, hours } : null;
     const split: SplitItem = { ...item, trend, fresh };
     if (item.tone === "critical" || !BACKLOG_KEYS.has(item.key) || fresh) urgent.push(split);
     else if (options.acks.has(item.key)) hidden.push({ ...split, ack: options.acks.get(item.key) });

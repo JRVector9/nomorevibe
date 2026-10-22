@@ -47,6 +47,15 @@ export function thresholdLabel(source: SocialSource): string {
   return `X 반응 ${TALK_THRESHOLD.x.points}`;
 }
 
+/**
+ * 글 하나의 반응 — 공개 /talk 와 같은 말(talk.score·talk.xScore). HN·GeekNews 는 "점·댓글", X·Bluesky 는 "반응(좋아요 + 재게시×2)·답글".
+ * 단위 없이 "90 · 20"으로 두면 출처마다 뜻이 달라 기준과 견줄 수 없었다.
+ */
+export function reactionLabel(post: Pick<TalkVerdictPost, "source" | "points" | "comments">): string {
+  const n = (value: number) => value.toLocaleString("ko-KR");
+  return post.source === "x" || post.source === "bluesky" ? `반응 ${n(post.points)} · 답글 ${n(post.comments)}` : `${n(post.points)}점 · 댓글 ${n(post.comments)}`;
+}
+
 const reason = (code: TalkReasonCode, label: string): TalkReason => ({ code, label });
 const below = (post: TalkVerdictPost) => reason("below", `점수 미달 — ${thresholdLabel(post.source)} 아래`);
 
@@ -62,11 +71,17 @@ function hiddenReason(stateReason: string | null | undefined): TalkReason {
   return reason("hidden", "숨김");
 }
 
+/** 제품 상태 코드의 이름 — 관리자 제품 화면(PRODUCT_STATUS_LABELS)과 같은 말. 모르는 코드는 그대로 */
+export const PRODUCT_STATUS_NAMES: Readonly<Record<string, string>> = {
+  verified: "검증됨", seeded: "미클레임", unverified: "검증 대기", banned: "차단됨",
+};
+export const productStatusName = (status: string) => PRODUCT_STATUS_NAMES[status] ?? status;
+
 /** 공개 제품이 아닌 까닭 — 상태가 먼저, 그다음 공개 목록 조건 */
 function notPublic(product: TalkProductCheck): TalkReason {
-  const why = !(TALK_PRODUCT_STATUSES as readonly string[]).includes(product.status) ? product.status
+  const why = !(TALK_PRODUCT_STATUSES as readonly string[]).includes(product.status) ? productStatusName(product.status)
     : [product.down && "응답 없음", product.unlisted && "기본 목록 밖", product.auditHeld && "감사 보류", product.repoGone && "저장소 사라짐"]
-      .filter(Boolean).join("·") || product.status;
+      .filter(Boolean).join("·") || productStatusName(product.status);
   return reason("not_public", `공개 제품 아님 — ${why}`);
 }
 
@@ -89,7 +104,7 @@ export function talkVerdict(post: TalkVerdictPost, placement: TalkPlacement, now
   const place = placement.get(post.id);
   if (place) {
     if (place.rank === null) return { shown: false, rank: null, reasons: [below(post)] };
-    if (place.rank > TALK_LIST_LIMIT) return { shown: false, rank: place.rank, reasons: [reason("rank_out", `순위 밖 — ${place.rank}위(${TALK_LIST_LIMIT}위까지 보임)`)] };
+    if (place.rank > TALK_LIST_LIMIT) return { shown: false, rank: place.rank, reasons: [reason("rank_out", `순위 밖 — ${place.rank}위(${TALK_LIST_LIMIT}위까지 오름)`)] };
     // 저장소에 자격 글이 하나라도 있으면 그 저장소의 다른 글도 함께 보인다
     return { shown: true, rank: place.rank, reasons: talkQualifies(post) ? [] : [reason("carried", "같은 저장소의 다른 글로 오름")] };
   }

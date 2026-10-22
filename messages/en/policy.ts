@@ -58,6 +58,6 @@ export const policy = defineCatalog<typeof KoreanPolicy>()({
   "contact.before": "Send project requests through its detail page's request form. Owners can run ",
   "contact.after": " to verify ownership and then edit the description themselves.",
   "contact.correction": "If you cannot edit the description yourself, such as for an installable project whose ownership cannot be verified, choose ‘Request a description correction’ in the detail page's request form. Explain what is wrong and how it should read. An administrator reviews and corrects it. This is separate from a removal request and does not stop search-engine indexing.",
-  "contact.emailBefore": "Besides the request forms on this site, you can send requests about SNS-talk posts and data sources, deletion requests and reports to ",
-  "contact.emailAfter": ". We check it regularly.",
+  "contact.emailBefore": "Requests to remove an SNS-talk post come by email, not through a project page's request form — that form takes down a project or corrects its description. Send the post's address to ",
+  "contact.emailAfter": ". Requests about data sources, deletion requests and reports go to the same address; we check it regularly.",
 });

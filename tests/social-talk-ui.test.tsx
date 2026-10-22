@@ -123,8 +123,9 @@ describe("홈 대표 구획", () => {
     expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b>반응 7 · 답글 1');
     // 집계 기준 문구는 상수와 같은 값을 말한다
     expect(browse["talk.methodThreshold"]).toContain(`Bluesky 반응(좋아요 + 재게시×2) ${TALK_THRESHOLD.bluesky.points} 이상`);
-    // 글 빼기 요청은 요청 폼 또는 공개 연락처로(Bluesky 개발자 지침 5)
-    expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, 그 프로젝트 상세 페이지 아래 요청 폼 또는 contact@nomorevibe.com 로 글 주소를 보내 주세요");
+    // 글 빼기 요청은 공개 연락처로(Bluesky 개발자 지침 5). 상세 페이지 요청 폼은 제품을 내리는 곳이라 SNS 글 빼기로 안내하지 않는다 —
+    // 그 폼으로 오면 제품 내림 요청이 되어 제품이 잘못 내려갈 수 있다(2026-10-22)
+    expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, contact@nomorevibe.com 로 글 주소를 보내 주세요. 프로젝트 상세 페이지의 요청 폼은 프로젝트 자체를 내리는 곳이라 SNS 글 빼기에는 쓰지 않습니다");
   });
 
   it("1위 허용 전이면 목록만, 아무것도 없으면 조용하다고 말한다", () => {

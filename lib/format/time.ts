@@ -88,6 +88,15 @@ export function formatListTime(value: TimeInput, now: Date | string | number, em
   return at.year === today.year ? `${day} ${clock}` : `${at.year}/${day} ${clock}`;
 }
 
+/** 작업 주기 "1분"·"30분"·"2시간"·"1시간 30분" — 요청될 때만 도는 잡(주기 null)은 "요청될 때" */
+export function formatInterval(intervalMs: number | null | undefined): string {
+  if (!intervalMs) return "요청될 때";
+  const minutes = Math.round(intervalMs / 60_000);
+  if (minutes < 60) return `${minutes}분`;
+  const hours = Math.floor(minutes / 60), rest = minutes % 60;
+  return rest ? `${hours}시간 ${rest}분` : `${hours}시간`;
+}
+
 /** 상세 칸의 시각 "2026-10-08 13:38:13 KST" — 지금과 무관하다 */
 export function formatDetailTime(value: TimeInput, empty = EMPTY): string {
   const date = toDate(value);
