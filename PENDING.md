@@ -4,6 +4,11 @@
 코드로 끝낼 수 없어 멈춰 있는 것들. 각 항목은 **막고 있는 것**과 **풀렸을 때 할 일**을
 그대로 실행할 수 있게 적는다. 끝나면 이 파일에서 지운다.
 
+현재 운영 앱 수와 감시 연결은 [2026-10-22 감시 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)이 최신이다.
+이 파일의 이전 날짜에 적힌 13·14앱과 감시 미배포 설명을 현재 상태로 해석하지 않는다.
+화면 검수는 2건 시험 뒤 **틱당 1건으로 복귀**, 기준 **0.95**, 918건 실제 일괄 미적용을 유지한다.
+아래의 구현 당시 설치·증속 설명보다 [최신 인계](docs/operations/2026-10-22-handoff.md)를 우선한다.
+
 ---
 
 ## 화면 판별(글이 얇은 감사 거절을 화면으로) — 2026-10-22 (코드·로컬 시험만, m1 설치·운영 적용 전)
@@ -249,8 +254,9 @@ Grok CLI `grok-4.7`/`low`의 [출처 처리량 실측](docs/operations/2026-10-1
 [현재 커버리지 판정](docs/operations/2026-10-15-evidence-capacity-recovery.md),
 [발행분 재검수](docs/operations/2026-10-15-backlog-published-audit.md),
 [텍스트 복구](docs/operations/2026-10-15-backlog-text-recovery.md)에 후속 수정과 실제 검증 상태를 기록한다.
-외부 monitor 설치·Push/deadman 실제 수신과 과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정도
-별도 검증이 남았다. 소개 검수는 이후 사용자 명시 지시로 재개했다.
+외부 monitor 설치·양쪽 Push UP 확인은 2026-10-22에 완료했다. DOWN/회복·deadman 실제 알림 수신은
+[감시 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)의 드릴 결과를 따른다.
+과거 초기 gate 거절 후보의 fresh 재수집→규칙 판정은 별도 검증이 남았다. 소개 검수는 이후 사용자 명시 지시로 재개했다.
 최신 적체 회복 설정·신규 발굴 중단·현재 처리 상태는
 [적체 회복 기록](docs/operations/2026-10-14-backlog-catchup.md)을 따른다.
 
@@ -365,12 +371,15 @@ scheduler는 M3에서 2복제본이다. 공개 GitHub main은 최신 base의 CI 
   `skipped/alias_of`로 기록되고 새 원본은 저장되지 않았으며 초과 행은 305건 그대로였다.
   장기 관측과 기존 자료 정리는 계속 필요하다.
 
-- **워커 진행 감시의 외부 실행**: `scripts/check-failover-readiness.ts`는 주·예비 후보,
-  lease, scheduler 2복제본과 기존 진행 판정을 함께 내고 별도 monitor 이미지가 30초 간격으로
-  Uptime Kuma Push를 보낼 수 있게 구현했다. 운영 monitor 앱·Push 대상·실제 경보 수신은
-  아직 배포/검증하지 않았다. mini 전체 장애 시 mini의 Kuma도 사라지는 감시 공백이 남아
-  외부 deadman 경로가 필요하다. 운영 예비 중단·감시자 중단·실제 저장 정체·반복 부팅 격리
-  주입도 각각 직접 확인해야 한다.
+- **워커 진행 감시의 장애 드릴·장기 관측**: 2026-10-22 22:55:14 UTC에
+  mini Kuma Push 72·외부 Oracle Osaka Kuma Push 1의 UP과 양쪽 전송 성공을 확인했고, 22:55:44 UTC에 M3 monitor healthy를 직접 조회했다.
+  전용 DB SELECT 계정·pool 1·수신기 heartbeat 120초로 연결했다
+  ([감시 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)). mini maintenance 예비 중단에서 양쪽 DOWN·복구 UP과
+  Oracle의 Telegram DOWN·회복 전송 수락, 원본 설정·M3 lease 복귀를 확인했다. monitor 중단 드릴도 양쪽 마지막 Push
+  121초 뒤 timeout DOWN·재시작 UP과 원본 설정 복귀를 확인했다. Oracle의 두 드릴 DOWN/UP 총4건은 API가 수락했다.
+  남은 범위는 전체 호스트 장애·실제 저장 정체·반복 부팅 격리·장기 관측이다. mini의 별도 Telegram API 응답과
+  수신자 단말의 도착·읽음은 확인하지 않았으며 전송 수락과 구분한다.
+  기존 15앱의 runtime `5ba60a1a`와 다른 앱의 false는 유지한다. 실제 원복 확인 전까지 이 항목을 완료로 표시하지 않는다.
 - **publisher 예비의 새 제품 발행**: mini가 epoch 3으로 인계받고 `crawl-publish` 요청·처리를
   완료했지만 당시 적격 승인 후보가 없어 새 제품 저장은 확인하지 못했다. 이후 승인 행 17건은
   발행 정책의 모든 조건을 만족하는 적격 큐가 아니며 실제 발행 잡은 `no_work`였다. 적격 후보가 생길 때

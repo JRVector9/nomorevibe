@@ -51,7 +51,12 @@ GIT_BUILD_APPS = {
     'scheduler-m3': ('uAjLU7MslLIGpORD9h6LQ', 'nomorevibe-scheduler-m3', M3, 'scheduler'),
     'connect-agent-m3': ('xJK6CoRUOs_bpVVNmJDBF', 'nomorevibe-connect-agent-m3', M3, 'connect-agent'),
 }
-KNOWN_APPS = APPS | GIT_BUILD_APPS
+# Docker auxiliary services have their own command/healthcheck and release procedure.
+# Inventory reads them, while plan/run/restore keep the existing shared-image scope.
+AUXILIARY_APPS = {
+    'monitor-m3': ('WbGj-YxQGHNEoGElyTLBq', 'nomorevibe-monitor-m3', M3, 'monitor'),
+}
+KNOWN_APPS = APPS | GIT_BUILD_APPS | AUXILIARY_APPS
 # AI1/AI2 independent consumer apps (PR06e): the shared worker image running `worker-supervisor.ts --role=reviewer --consumer=ai1|ai2`,
 # one replica each. The Dokploy apps do not exist yet, so ID and name are empty; an empty target is refused before any action, never guessed.
 # `plan`/`run` release only the apps chosen with --consumer, right after their parent role's pair; without it the 8-app release is unchanged.
@@ -286,6 +291,8 @@ class Dokploy:
         if (app.get('applicationId'), app.get('name'), app.get('serverId')) != (app_id, expected_name, server_id):
             raise ValueError(f'{short}_identity_mismatch')
         if (short in APPS or short in CONSUMER_APPS) and app.get('dockerBuildStage') != ('worker' if kind == 'worker' else 'runner'):
+            raise ValueError(f'{short}_identity_mismatch')
+        if short in AUXILIARY_APPS and (app.get('sourceType') != 'docker' or app.get('dockerBuildStage') != 'monitor'):
             raise ValueError(f'{short}_identity_mismatch')
         if not re.fullmatch(r'[a-z0-9-]+', app.get('appName') or ''):
             raise ValueError(f'{short}_invalid_service_name')
@@ -1241,13 +1248,14 @@ def inventory(client, sha):
     apps = {}
     # Unregistered consumer apps are listed, not counted: they may not exist in Dokploy yet.
     registered = tuple(short for short, metadata in CONSUMER_APPS.items() if metadata[0] and metadata[1])
-    for short in ORDER + tuple(GIT_BUILD_APPS) + registered:
+    for short in ORDER + tuple(GIT_BUILD_APPS) + registered + tuple(AUXILIARY_APPS):
         app, latest = client.app(short), client.latest(short)
         try:
             current = setting(app.get('env'), 'RELEASE_TAG')
         except ValueError:
             current = None
-        apps[short] = {'deployedBy': 'run' if short in APPS or short in CONSUMER_APPS else 'manual-git-build', 'sourceType': app.get('sourceType'),
+        deployed_by = 'manual-docker' if short in AUXILIARY_APPS else 'run' if short in APPS or short in CONSUMER_APPS else 'manual-git-build'
+        apps[short] = {'deployedBy': deployed_by, 'sourceType': app.get('sourceType'),
                        'applicationStatus': app.get('applicationStatus'), 'latestDeployment': latest.get('status'),
                        'replicas': app.get('replicas'), 'releaseMatches': current == sha}
     complete = all(row['releaseMatches'] and row['applicationStatus'] == 'done' and row['latestDeployment'] == 'done'

@@ -21,7 +21,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 운영 서비스는 `https://nomorevibe.com`에 배포되어 있다. Dokploy는 main을 사용하며
 M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance와 mini의 웹·다섯 역할 예비,
-총 13개 앱으로 운영한다. 다섯 역할은 DB 역할 lease로 한 후보만 작업한다.
+connect-agent·agent-scan 소비자·읽기 전용 monitor를 합쳐 총 16개 Dokploy 앱/21개 컨테이너로 운영한다.
+다섯 역할은 DB 역할 lease로 한 후보만 작업한다. M3 monitor는 mini Kuma와 Oracle Osaka의 별도 Kuma로
+Push를 보낸다. 연결·UP 확인과 장애 알림 드릴의 완료 여부는
+`docs/operations/2026-10-22-worker-monitor-rollout.md`를 먼저 읽는다.
 공개 GitHub 저장소의 main은 PR 및 최신 base의 CI `check` 성공을 요구한다.
 
 배포·테스트 절차는 `README.md`와 `docs/operations/independent-workers-runbook.md`를 읽는다.

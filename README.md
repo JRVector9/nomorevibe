@@ -4,6 +4,9 @@
 
 운영 서비스: [nomorevibe.com](https://nomorevibe.com) · [공개 GitHub 저장소](https://github.com/JRVector9/nomorevibe)
 
+[2026-10-22 관리자·보안 15앱 배포 기록](docs/operations/2026-10-22-admin-production-rollout.md) ·
+[워커 감시·mini/Oracle Push 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)
+
 [2026-10-14 수집·검수 개선·관리자 크롤러 활동 운영 배포 기록](docs/operations/2026-10-14-pipeline-recovery-rollout.md)
 
 [2026-10-11 기본 도메인 전환 기록](docs/operations/2026-10-11-primary-domain-cutover.md): `www`와 기존 웹 페이지는 새 기본 주소로 이동하며 기존 API·CLI 주소는 호환을 유지한다.
@@ -185,6 +188,9 @@ main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·mai
 계속 main Git 소스로 배포한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
 mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 M3 connect-agent를 포함한
 총14앱·19복제본을 [GitHub 연동 배포 검증](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
+2026-10-22 관리자·보안 릴리스는 agent-scan 소비자를 포함한 15앱/20컨테이너에 배포했고,
+같은 날 읽기 전용 M3 monitor를 추가해 현재 16앱/21컨테이너다. Oracle Osaka의 Kuma 수신기는
+Dokploy 앱 수에 포함하지 않는다. 두 후속 배포의 근거는 위 기록을 따른다.
 두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
@@ -192,7 +198,7 @@ maintenance 점검, text 검수의 예비 저장을 확인했다. publisher 예�
 없어 아직 확인하지 못했다. 역할 앱은 주·예비 이미지가 어긋나지 않도록 자동 배포를 끄고 함께 교체한다.
 2026-09-30 읽기 전용 재확인에서 공통 worker/web 이미지의 운영 8개 앱은 모두 릴리스
 `50b02b7`로 배포 `done`이었고, failover·worker progress는 `ok`, 공개 health는 `ok/db:ok`였다.
-런타임 DB는 PgBouncer(6432), 별도 migration은 PostgreSQL 직접 연결(5432)을 사용한다.
+일반 앱의 런타임 DB는 PgBouncer(6432), migration과 전용 SELECT 계정의 monitor는 PostgreSQL 직접 연결(5432)을 사용한다.
 
 PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 운영 절차](docs/operations/independent-workers-runbook.md)에
 따라 필요한 migration의 종료 코드 0과 각 앱의 이미지 digest 또는 소스 커밋·완료 상태를 확인하고
@@ -211,10 +217,13 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 수집기별 마지막 저장 결과를 모아 보여준다. 과거 회차 전체 로그가 아니며, 측정하지 않은 대기량은
 `미확인`으로 표시한다. X는 자동 수집에 연결하지 않은 수동 API 파일럿으로 구분한다.
 독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
-2는 작업 또는 워커 정체 경보다. 운영 주기 실행·외부 알림 연결은 별도 배포 검증 항목이다.
+2는 작업 또는 워커 정체 경보다.
 새 failover CLI는 주 워커가 정상이어도 mini 예비의 관측이 60초 넘게 끊기면 경보로 기록한다.
-별도 `monitor` 이미지의 30초 감시와 Uptime Kuma Push 연동 절차는 운영 runbook에 있다.
-코드·이미지 검증과 운영 알림 수신 확인은 별개다.
+M3의 별도 monitor가 30초 루프로 mini와 외부 Oracle Osaka의 Kuma에 Push를 보내며,
+두 수신기의 UP과 전송 성공을 확인했다. 운영 monitor는 기존 worker digest를 재사용하고 실행 명령과
+healthcheck를 감시 전용으로 바꿨다. mini 예비 중단·감시자 중단의 두 드릴에서 양쪽 DOWN/UP과
+Oracle Telegram API 전송 수락 4건을 확인했다. 수신자 단말 읽음·전체 호스트 장애·장기 관측과 구분하며
+실제 시각과 남은 범위는 [감시 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)을 따른다.
 
 ## 구조
 
