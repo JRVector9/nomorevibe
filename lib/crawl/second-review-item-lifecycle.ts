@@ -17,6 +17,13 @@ export type SecondReviewItemOutcome =
   | { state: "skipped"; reason: "stage_inactive" | "not_pending" | "input_changed" | "running" | "aborted" }
   | SecondReviewWriteResult;
 
+/** item 소유권의 lease 길이(ttlMs)와 연장 간격(renewEveryMs). 만료 시각은 claim·연장 때 DB clock_timestamp()+ttlMs 로 정한다. */
+export type SecondReviewItemLeaseTiming = { ttlMs: number; renewEveryMs: number };
+/** 운영 값: 90초 lease 를 15초(lease 의 1/6)마다 연장한다. consumer·replay 를 포함한 운영 경로는 언제나 이 값이다. */
+export const SECOND_REVIEW_ITEM_LEASE: Readonly<SecondReviewItemLeaseTiming> = Object.freeze({ ttlMs: STALE_LOCK_MS, renewEveryMs: 15_000 });
+const leaseTimingSchema = z.object({ ttlMs: z.number().int().min(1).max(3_600_000).safe(), renewEveryMs: z.number().int().min(1).safe() }).strict()
+  .refine(value => value.renewEveryMs < value.ttlMs, "renew_every_must_be_below_ttl");
+
 export async function executeSecondReviewConsumerItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
   /** 새 claim·dispatch 만 막는 신호(replay 구간 끝). 이미 보낸 호출은 signal 이 끊기 전까지 끝까지 받는다 */
@@ -30,21 +37,30 @@ export async function executeSecondReviewConsumerItem(input: {
 /** Inactive single-item adapter. No registry or worker consumes this entrypoint. */
 export async function executeSecondReviewItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal;
+  /**
+   * 통합 시험만 짧게 준다(2026-10-22 사용자 결정: 90초 실시간 대기 대신 같은 claim·연장·만료 경로를 짧은 lease 로 돈다).
+   * 생략하면 운영 값 SECOND_REVIEW_ITEM_LEASE 다. 이 adapter 는 모델 슬롯 경로를 타지 않아 claim·연장이 모두 이 값을 쓴다.
+   */
+  lease?: SecondReviewItemLeaseTiming;
 }): Promise<SecondReviewItemOutcome> {
   return executeItem(input, 'compatibility');
 }
 
 async function executeItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal; stopClaims?: AbortSignal; onProviderResult?: (result: AgentReviewResult) => void;
+  lease?: SecondReviewItemLeaseTiming;
 }, purpose: 'consumer' | 'compatibility'): Promise<SecondReviewItemOutcome> {
   const { secondReviewId, owner: ownerValue, signal: callerSignal, stopClaims } = input;
   const id = z.number().int().positive().safe().parse(secondReviewId), owner = itemOwnerSchema.parse(ownerValue);
+  // consumer 는 모델 슬롯 claim 이 운영 lease 를 직접 쓰므로 주입을 받지 않는다(호환 adapter 만 시험 값을 받는다).
+  const { ttlMs, renewEveryMs } = purpose === 'compatibility' && input.lease !== undefined
+    ? leaseTimingSchema.parse(input.lease) : SECOND_REVIEW_ITEM_LEASE;
   if (callerSignal?.aborted || stopClaims?.aborted) return { state: "skipped", reason: "aborted" };
   let claimed: SecondReviewModelClaim | SecondReviewCliModelClaim, capacity: typeof import("./second-review-model-capacity") | undefined;
   let dispatch: Ai2ModelDispatch | undefined, call: PreparedAi2GatewayCall | undefined;
   // CLI 표(05c-4): 고정 CLI 의도 class 만 CLI coordinator 로 간다. 슬롯 deferred 는 아래 기록 전에 던져진다.
   let cli: { capacity: typeof import("./review-cli-model-capacity"); call: PreparedReviewCliCall; dispatch: CliModelDispatch } | undefined;
-  try { claimed = await (purpose === 'consumer' ? claimConsumerItemSecondReview : claimItemSecondReview)(id, owner, STALE_LOCK_MS); }
+  try { claimed = await (purpose === 'consumer' ? claimConsumerItemSecondReview : claimItemSecondReview)(id, owner, ttlMs); }
   catch (error) {
     if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
     if (error instanceof SecondReviewCliModelReservationRequired) {
@@ -71,13 +87,13 @@ async function executeItem(input: {
   const heartbeat = (async () => {
     while (!stopping) {
       await new Promise<void>(resolve => {
-        const timer = setTimeout(resolve, 15_000);
+        const timer = setTimeout(resolve, renewEveryMs);
         cancelDelay = () => { clearTimeout(timer); resolve(); };
       });
       cancelDelay = undefined;
       if (stopping) return;
       try {
-        if (!await renewSecondReviewOwnership(receipt, STALE_LOCK_MS)) { ownerLost.abort(); return; }
+        if (!await renewSecondReviewOwnership(receipt, ttlMs)) { ownerLost.abort(); return; }
       } catch (error) {
         renewalFailure = { error };
         ownerLost.abort();

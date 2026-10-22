@@ -23,7 +23,15 @@ vi.mock("@/lib/crawl/second-review-serving-contract", async load => ({ ...await 
   resolveAi2GatewayServingContract: (model: string) => fake.contracts ? contract("second-review", model) : null }));
 
 const FIRST = "replay-first", SECOND = "replay-second", REPOS = ["fixture/good-one", "fixture/bad-two", "fixture/good-three", "fixture/good-four", "fixture/bad-five", "fixture/good-six"];
-const TIMING = { minimumWindowMs: 10_000, leadMs: 1_500, drainMs: 60_000, collectMs: 10_000 };
+// 시험 시간 값. 2026-10-22 사용자 결정으로 실시간 구간을 줄였다(전: 구간 40초·lead 1.5초·drain 60초·최소 구간 10초, 파일 약 300초).
+// 운영 replay 는 FIXED_INPUT_TIMING(lead 5분·drain 3분·최소 구간 30분, 워커 기본 폴링) 그대로이고 같은 runner·워커·consumer·계량기 경로를 돈다.
+// - workerIntervalMs: reviewer 워커만 운영 5초 대신 1초로 잡을 본다. legacy AI2 잡이 다음 폴링을 5초 기다리지 않을 뿐 실행 경로는 같다.
+// - FULL_WINDOW_MS: 고정 입력 10건이 모두 구간 안에 끝나야 한다. 실측 마지막 호출은 legacy 1.6초·items 3.6~5.0초다
+//   (워커 5초 폴링 때는 5.5초·7.6초). 남는 3초는 consumer 대기(1초)·워커 폴링(1초) 어긋남과 느린 러너 몫이다.
+// - leadMs: 적재(실측 0.2초 안팎)와 0097 marker 가 구간 시작 전에 끝나야 한다.
+// - drainMs: 구간 끝에 진행 중인 호출이 이 상한 안에 끝나는지만 가른다. 호출이 없으면 기다리지 않는다.
+const TIMING = { minimumWindowMs: 1_000, leadMs: 1_000, drainMs: 20_000, collectMs: 10_000, workerIntervalMs: 1_000 };
+const FULL_WINDOW_MS = 8_000;
 let server: Server, original: { stages: Record<string, unknown>[]; capacity: Record<string, unknown> };
 let modules: Awaited<ReturnType<typeof load>>, savedEnv: Record<string, string | undefined> = {};
 async function load() {
@@ -148,7 +156,7 @@ const policy = { version: 1 as const, globalLimit: 2, providerLimits: { fixture:
   routes: [{ routeId: "crawl-agent-review", provider: "abcllm", model: FIRST, providerBudgetId: "fixture", groupId: "fixture" },
     { routeId: "second-review", provider: "abcllm", model: SECOND, providerBudgetId: "fixture", groupId: "fixture" }] };
 const manifest = (sha: string, mode: "legacy" | "items", patch: Record<string, unknown> = {}) => ({ version: 1, runId: `pr01b7-${mode}`, mode,
-  artifactSha256: sha, upstream: fake.origin, durationMs: 40_000,
+  artifactSha256: sha, upstream: fake.origin, durationMs: FULL_WINDOW_MS,
   limits: { maxCalls: 60, maxTokens: 60 * 40_000, perCallTokenUpperBound: 40_000, maxWallMs: 120_000 },
   ...(mode === "items" ? { items: { ai1Consumers: 1, ai2Consumers: 1, capacityPolicy: policy } } : {}), ...patch });
 const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.origin, ABCLLM_API_KEY: "replay-fixture-key" });
@@ -258,12 +266,14 @@ it("refuses item consumers before loading or any call while the serving resolver
 }, 120_000);
 
 // 구간 끝 drain: 정지 신호는 새 claim·새 호출만 막고, 구간 안에서 이미 보낸 호출은 drain 상한 안에서 upstream이 끝나 usage가 남는다.
-// 가짜 게이트웨이가 모든 답을 구간(12초)보다 늦게(20초) 주므로 첫 호출들이 구간 끝에 반드시 진행 중이다.
+// 가짜 게이트웨이가 모든 답을 구간보다 늦게 주므로 첫 호출들이 구간 끝에 반드시 진행 중이다(첫 호출은 실측 구간 시작 뒤 0.1~0.4초).
 // 그 수는 legacy가 심사 동시 수(reviewConcurrency 2), items가 AI1 consumer 하나의 호출 1건이다.
-const HELD = { durationMs: 12_000, budget: { maxConcurrentCalls: 8 } };
+// 끊는 실행은 구간 끝+CUT_DRAIN_MS 에 끊고, 답은 그보다 늦은 HELD_DELAY_MS 에 온다(2026-10-22 전: 구간 12초·답 20초·끊기 2초).
+const HELD_WINDOW_MS = 2_000, HELD_DELAY_MS = 4_000, CUT_DRAIN_MS = 1_000;
+const HELD = { durationMs: HELD_WINDOW_MS, budget: { maxConcurrentCalls: 8 } };
 it("drains legacy calls in flight at the window end into the budget, never into finals, and cuts what outlives the drain limit", async () => {
   const source = await exported();
-  fake.delayMs = 20_000;
+  fake.delayMs = HELD_DELAY_MS;
   const legacy = await run(source, manifest(source.sha, "legacy", HELD)), calls = legacy.meter.calls;
   expect(fake.requests.length).toBe(2);
   expect(calls).toBe(2);
@@ -279,9 +289,9 @@ it("drains legacy calls in flight at the window end into the budget, never into 
   expect(report.evidenceIssues).not.toContain("replay_calls_refused");
 
   await wipe(); fake.requests.length = 0;
-  const cut = await run(source, manifest(source.sha, "legacy", HELD), { ...TIMING, drainMs: 2_000 }), cutCalls = cut.meter.calls;
+  const cut = await run(source, manifest(source.sha, "legacy", HELD), { ...TIMING, drainMs: CUT_DRAIN_MS }), cutCalls = cut.meter.calls;
   expect(cutCalls).toBe(2);
-  expect(cut).toMatchObject({ stop: { reason: "window_end" }, windowEndDrain: { limitMs: 2_000, inFlightAtStop: cutCalls, cutAtLimit: cutCalls },
+  expect(cut).toMatchObject({ stop: { reason: "window_end" }, windowEndDrain: { limitMs: CUT_DRAIN_MS, inFlightAtStop: cutCalls, cutAtLimit: cutCalls },
     meter: { indeterminate: cutCalls, upstreamReportedCalls: 0, chargedTokens: 40_000 * cutCalls } });
   expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "replay_meter",
     issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
@@ -289,7 +299,7 @@ it("drains legacy calls in flight at the window end into the budget, never into 
 
 it("applies the same window-end drain rule to item consumers", async () => {
   const source = await exported();
-  fake.contracts = true; fake.delayMs = 20_000;
+  fake.contracts = true; fake.delayMs = HELD_DELAY_MS;
   const items = await run(source, manifest(source.sha, "items", HELD)), calls = items.meter.calls;
   expect(fake.requests.length).toBe(1);
   expect(calls).toBe(1);
@@ -308,9 +318,9 @@ it("applies the same window-end drain rule to item consumers", async () => {
     issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified"] });
 
   await wipe(); fake.requests.length = 0;
-  const cut = await run(source, manifest(source.sha, "items", HELD), { ...TIMING, drainMs: 2_000 }), cutCalls = cut.meter.calls;
+  const cut = await run(source, manifest(source.sha, "items", HELD), { ...TIMING, drainMs: CUT_DRAIN_MS }), cutCalls = cut.meter.calls;
   expect(cutCalls).toBe(1);
-  expect(cut).toMatchObject({ windowEndDrain: { limitMs: 2_000, inFlightAtStop: cutCalls, cutAtLimit: cutCalls }, meter: { indeterminate: cutCalls } });
+  expect(cut).toMatchObject({ windowEndDrain: { limitMs: CUT_DRAIN_MS, inFlightAtStop: cutCalls, cutAtLimit: cutCalls }, meter: { indeterminate: cutCalls } });
   expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
     issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified", "replay_drain_calls_cut"] });
 }, 300_000);

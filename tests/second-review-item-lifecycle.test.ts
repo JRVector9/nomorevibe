@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewInput } from "@/lib/crawl/agent-review-contract";
 import type { SecondReview } from "@/lib/db/schema";
 import type { SecondReviewItemReceipt } from "@/lib/crawl/second-review-ownership";
-import { executeSecondReviewItem } from "@/lib/crawl/second-review-item-lifecycle";
+import { executeSecondReviewItem, SECOND_REVIEW_ITEM_LEASE } from "@/lib/crawl/second-review-item-lifecycle";
 
 const mocks = vi.hoisted(() => ({ claim: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), dispatch: vi.fn(), timeout: vi.fn() }));
 vi.mock("@/lib/crawl/second-review-ownership", () => ({
@@ -211,6 +211,33 @@ it("renews the original owner every completed 15-second delay without overlappin
   expect(mocks.record.mock.calls[0][0].receipt).toBe(receipt);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(mocks.renew).toHaveBeenCalledTimes(2);
+});
+
+// 2026-10-22: 통합 시험만 짧은 lease 를 주입한다. 주입하지 않으면 위 시험처럼 90초 claim·15초 연장 그대로다.
+it("keeps the production lease by default and uses an injected test lease for the claim and every renewal", async () => {
+  expect(SECOND_REVIEW_ITEM_LEASE).toEqual({ ttlMs: 90_000, renewEveryMs: 15_000 });
+  expect(Object.isFrozen(SECOND_REVIEW_ITEM_LEASE)).toBe(true);
+  vi.useFakeTimers();
+  const transport = gate<typeof successful>();
+  mocks.dispatch.mockReturnValueOnce(transport.promise);
+  const work = executeSecondReviewItem({ secondReviewId: 41, owner: owner(), lease: { ttlMs: 6_000, renewEveryMs: 1_000 } });
+  try {
+    await transportStarted();
+    expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(41, owner(), 6_000);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(mocks.renew).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(mocks.renew).toHaveBeenCalledExactlyOnceWith(receipt, 6_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(mocks.renew).toHaveBeenCalledTimes(2);
+  } finally { transport.resolve(successful); await work; }
+  expect(mocks.record).toHaveBeenCalledTimes(1);
+});
+
+it.each([{ ttlMs: 1_000, renewEveryMs: 1_000 }, { ttlMs: 0, renewEveryMs: 1 }, { ttlMs: 6_000, renewEveryMs: 0 },
+  { ttlMs: 6_000, renewEveryMs: 1.5 }, { ttlMs: 3_600_001, renewEveryMs: 1_000 }, { ttlMs: 6_000 }])("rejects an injected lease %o before claiming", async lease => {
+  await expect(executeSecondReviewItem({ secondReviewId: 41, owner: owner(), lease: lease as typeof SECOND_REVIEW_ITEM_LEASE })).rejects.toThrow();
+  expect(mocks.claim).not.toHaveBeenCalled();
 });
 
 it("keeps renewing after caller abort until the actual transport settles", async () => {
