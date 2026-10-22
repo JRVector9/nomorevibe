@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
+import { batchLanesForRole } from '@/lib/jobs/batches';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { jobRunOptions, runWorker } from '@/scripts/worker';
 
@@ -107,6 +108,22 @@ describe('lanesForRole', () => {
     expect(crawler[0]).toContain('crawl-fetch');
     expect(crawler[0]).not.toContain('product-evidence-refresh');
     expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
-    for (const role of ['reviewer', 'publisher', 'text', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
+    for (const role of ['reviewer', 'publisher', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
+  });
+
+  it('text 는 번역 셋과 키워드 검수를 따로 도는 줄에 두고 나머지는 기본 줄에서 차례로 돈다', () => {
+    const translate = ['reason-translate', 'product-tagline-ko', 'product-translate'];
+    const main = jobsForRole('text').filter(name => name !== 'product-search-verify' && !translate.includes(name));
+    expect(lanesForRole('text')).toEqual([main, translate, ['product-search-verify']]);
+    expect(main).toEqual(expect.arrayContaining(['crawl-tagline', 'product-search-profile', 'product-embedding', 'product-repo-review']));
+    // versioned 에서는 번역 셋이 translation 역할(한 줄)로 가고 text 에는 기본 줄과 검수 줄만 남는다
+    expect(batchLanesForRole('text', 'versioned')).toEqual([main, ['product-search-verify']]);
+    expect(batchLanesForRole('translation', 'versioned')).toEqual([translate]);
+  });
+
+  // 모델 호출 동안 연결을 쥐는 text 잡은 없다 — 줄 안의 동시 호출(검수 4·짓기 2)도 짧은 기록 TX 만 겹친다.
+  // 줄마다 한 연결이면 줄끼리 기다리지 않는다. 줄이 풀보다 많아지면 풀(lib/db/pool.ts·host-budget.ts)을 다시 센다
+  it('text 풀이 줄마다 하나씩 동시에 쥐는 연결을 담는다', () => {
+    expect(dbPoolConfig({ WORKER_ROLE: 'text' }).max).toBeGreaterThanOrEqual(lanesForRole('text').length);
   });
 });

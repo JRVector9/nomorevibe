@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "verify" | "translate";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -46,8 +46,12 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "cdn-purge", role: "publisher", intervalMs: 60_000 },
   // 사용자 동의와 제품별 binding을 확인한 outbox만 처리한다. 기본 플래그는 꺼져 있다.
   { name: "github-feedback-delivery", role: "publisher", intervalMs: 60_000 },
-  // 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
-  { name: "reason-translate", role: "text", intervalMs: 60_000 },
+  /**
+   * 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지).
+   * 번역 셋(사유·한국어 소개·제품 번역)은 기본 줄에서 키워드 짓기와 차례를 다퉈 옛 적체가 18일째 줄지 않았다(2026-10-19 실측) —
+   * 따로 도는 번역 줄에 둔다. 셋끼리는 차례로 돈다(versioned 의 translation 역할과 같다). 그만큼 gpt-oss 동시 호출이 하나 는다
+   */
+  { name: "reason-translate", role: "text", intervalMs: 60_000, lane: "translate" },
   /**
    * 소개 짓기 — 소개가 없어 멈춘 후보의 한 줄을 모델이 짓는다. 번역과 같은 자리(text 워커)에서
    * 1분마다 조금씩. 대기가 비면 곧 끝나고, 다 지으면 후보가 발행 대기로 돌아간다.
@@ -58,8 +62,12 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다.
    */
   { name: "product-search-profile", role: "text", intervalMs: 60_000 },
-  /** 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김) */
-  { name: "product-search-verify", role: "text", intervalMs: 60_000 },
+  /**
+   * 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김).
+   * 틱이 76초 남짓으로 기본 줄 시간의 44%를 써, 1분 주기 잡들이 시간당 18~22틱에 머물렀다(2026-10-19 실측) — 따로 도는 줄에 둔다.
+   * 모델이 gpt-oss 가 아니라(supa) 심사와 다투지 않는다. 대신 기본 줄이 빨라져 키워드 짓기·번역의 gpt-oss 호출이 는다
+   */
+  { name: "product-search-verify", role: "text", intervalMs: 60_000, lane: "verify" },
   /**
    * 의미 검색의 제품 벡터 — 서버 Mac 의 bge-m3(llama-server)로 임베딩한다. 키워드가 바뀌면 글이 바뀌어 다시 임베딩하므로
    * 키워드 짓기와 같은 text 워커에 둔다. 게이트웨이를 쓰지 않아 심사와 다투지 않는다.
@@ -74,9 +82,9 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 한국어 한 줄 소개(UX-13) — 공개 제품의 소개를 게이트웨이 gpt-oss-120b 로 한국어 한 줄로 옮긴다. 같은 text 워커에서 1분마다
    * 8건 묶음으로. 새 제품·홈에 보이는 제품이 먼저고, 나머지 3만여 건은 하루이틀에 걸쳐 채운다(korean-tagline.ts)
    */
-  { name: "product-tagline-ko", role: "text", intervalMs: 60_000 },
+  { name: "product-tagline-ko", role: "text", intervalMs: 60_000, lane: "translate" },
   // Bounded, visible-product demand only; independent of the paused introduction-review queue.
-  { name: "product-translate", role: "text", intervalMs: 60_000 },
+  { name: "product-translate", role: "text", intervalMs: 60_000, lane: "translate" },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
   /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만) */
