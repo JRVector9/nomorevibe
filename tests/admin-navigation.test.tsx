@@ -5,8 +5,10 @@ import { AdminNav, countBadge, NAV_GROUPS } from '@/app/(operator)/admin/AdminNa
 describe('shared administrator navigation', () => {
   it('keeps feedback moderation and the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(17);
+    expect(html.match(/href="\/admin/g)).toHaveLength(19);
     expect(html).toContain('피드백 검수');
+    expect(html).toContain('문의 접수');
+    expect(html).toContain('메이커 답장 검수');
     expect(html).toContain('GitHub 연동');
     expect(html).toContain('운영센터');
     expect(html).toContain('GitHub 수집 계정');
@@ -38,7 +40,7 @@ describe('shared administrator navigation', () => {
 describe('menu groups', () => {
   it('splits daily work from settings and history', () => {
     expect(NAV_GROUPS.map((group) => group.title)).toEqual(['일하기', '설정·기록']);
-    expect(NAV_GROUPS[0].pages.map((page) => page.href)).toEqual(['/admin/inbox', '/admin/status', '/admin/review', '/admin/audit', '/admin/feedback', '/admin/reactions', '/admin/translations', '/admin/github-integrations', '/admin/products', '/admin/talk']);
+    expect(NAV_GROUPS[0].pages.map((page) => page.href)).toEqual(['/admin/inbox', '/admin/status', '/admin/review', '/admin/audit', '/admin/requests', '/admin/maker-replies', '/admin/feedback', '/admin/reactions', '/admin/translations', '/admin/github-integrations', '/admin/products', '/admin/talk']);
     expect(NAV_GROUPS[1].pages.at(-1)?.href).toBe('/admin/activity');
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
     expect(html).toContain('id="admin-nav-group-0">일하기</p><ul aria-labelledby="admin-nav-group-0"');

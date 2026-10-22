@@ -76,6 +76,9 @@ export const ACTION_LABELS: Record<string, string> = {
   "operator-name": "내 이름 적기",
   // 검수·재요청 화면(피드백 검수·써봤어요 검수·공개 번역)과 SNS 화제 — 전에는 이름이 없어 코드 그대로 어느 갈래에도 들지 않았다
   "feedback.review": "피드백 검수",
+  "maker_reply.review": "메이커 답장 검수",
+  "contact_request.create": "문의 수동 접수",
+  "contact_request.update": "문의 처리",
   "reaction.comment_review": "써봤어요 한 줄 검수",
   "product-translation-retry": "공개 번역 재요청",
   "talk-post-hide": "SNS 글 숨김",
@@ -152,7 +155,7 @@ export const ACTION_GROUPS = {
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name",
     "normalize-product-names", "revert-product-names",
-    "feedback.review", "reaction.comment_review", "product-translation-retry",
+    "feedback.review", "maker_reply.review", "contact_request.create", "contact_request.update", "reaction.comment_review", "product-translation-retry",
     "talk-post-hide", "talk-post-show", "talk-repository-exclude", "talk-repository-include", "talk-home-approved", "talk-home-talk_only", "talk-home-clear"] },
 } as const;
 export type ActionGroup = keyof typeof ACTION_GROUPS;
