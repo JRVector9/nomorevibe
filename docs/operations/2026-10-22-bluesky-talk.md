@@ -7,7 +7,7 @@ HN(`hn-talk`)·X 에 이어 세 번째 SNS 화제 출처다. 운영 배포 전 �
 
 | 항목 | 값 |
 | --- | --- |
-| 잡 | `bluesky-talk` · crawler 기본 줄 · 30분 · 틱 40초(`scripts/worker.ts`) |
+| 잡 | `bluesky-talk` · crawler 기본 줄 · 2시간(2026-10-22 30분에서 변경) · 틱 40초(`scripts/worker.ts`) |
 | 읽는 곳 | `https://api.bsky.app/xrpc` 공개 AppView(인증 없음) — `app.bsky.feed.searchPosts`, `app.bsky.feed.getPosts` |
 | 요청 | 회차당 최대 30번, 요청 사이 0.5초 이상, 응답 2MB·10초 상한, 429 를 받으면 그 회차의 남은 요청을 하지 않는다 |
 | User-Agent | `nomorevibe/1.0 (+https://nomorevibe.com)` |
@@ -25,7 +25,7 @@ HN(`hn-talk`)·X 에 이어 세 번째 SNS 화제 출처다. 운영 배포 전 �
 1. **새 글** — 최신 한 쪽(`q=*&domain=github.com&sort=latest&limit=100`)을 읽는다. 지난 회차 끝(10분 겹침) 뒤로 더 있으면
    `q=github.com` 에 `since`·`until` 시간 창을 밀어 내려간다(최대 10쪽).
    - `cursor` 로 다음 쪽을 물으면 403("administrative rules")이라 시간 창을 민다. `q=*` 는 시간 창을 받지 않아(400) 첫 쪽에만 쓴다.
-   - 창을 미는 `q=github.com` 은 본문에 주소 글자가 없는 글(링크 카드만 남긴 글)을 놓친다. 30분 회차면 보통 첫 쪽(`q=*`)으로 끝나 문제가 드물다.
+   - 창을 미는 `q=github.com` 은 본문에 주소 글자가 없는 글(링크 카드만 남긴 글)을 놓친다. 2시간 회차는 새 글이 첫 쪽(100건) 안팎이라 가끔 창 밀기로 넘어간다 — 그 몫의 링크 카드 글은 반응 큰 글 읽기(`sort=top`)가 채운다.
    - 검색은 가린 글을 빼고 주므로 100건이 안 차도(실측 99건) 끝이 아니다 — 응답의 `cursor` 를 "다음 쪽이 있다"는 표시로만 본다.
    - 시각은 밀리초까지 `Z` 로 쓴다(`+00:00`·마이크로초는 400). 창의 기준은 sortAt(작성·색인 시각 중 이른 쪽)이고, 우리 `posted_at` 도 같은 값이다.
    - 장애 뒤라 10쪽으로 모자라면 그 앞은 건너뛴다(`truncated`). 다음 단계의 반응 큰 글 읽기가 그 사이의 반응 큰 글을 채운다.
@@ -97,7 +97,7 @@ HN(`hn-talk`)·X 에 이어 세 번째 SNS 화제 출처다. 운영 배포 전 �
 | 1. 스팸 금지(자동 상호작용·팔로·좋아요) | 읽기만 한다. 계정·로그인·쓰기 없음 |
 | 2-1. 불법 콘텐츠 신고 방법 | /talk "집계 기준"에 "글쓴이가 원하면 뺍니다 — 원문을 지우거나, 그 프로젝트 상세 페이지 아래 요청 폼 또는 contact@nomorevibe.com 로 글 주소를" 안내. 요청 폼·메일 모두 사람이 처리한다 |
 | 2-2·2-3. 금지 콘텐츠·악성 사용자 차단 | 라벨 숨김(성인·검토·로그아웃 비공개), 봇 숨김, 관리자 숨기기·저장소 빼기 |
-| 3. 삭제 요청 처리 | 원문 삭제·계정 내려감은 다시 묻기(공개 화면에 오를 글은 30분마다)로 `gone`, 7일 뒤 행째 삭제. 다시 확인하지 못한 글은 24시간 뒤 공개 화면에서 빠진다 |
+| 3. 삭제 요청 처리 | 원문 삭제·계정 내려감은 다시 묻기(공개 화면에 오를 글은 2시간마다)로 `gone`, 7일 뒤 행째 삭제. 다시 확인하지 못한 글은 24시간 뒤 공개 화면에서 빠진다 |
 | 4. 신고 응답 체계 | 요청 폼 → 관리자 감사함(기존 takedown·소개 수정 요청 흐름), 메일 → 운영자가 직접 처리 |
 | 5. 공개 연락처(정기적으로 보는 이메일) | **contact@nomorevibe.com**(2026-10-22 사용자 결정 A) — 게재 기준 `/policy#contact` 에 SNS 화제·자료 출처 요청, 삭제 요청, 신고용으로 싣고 /talk 집계 기준에도 적는다(`CONTACT_EMAIL`, `lib/copy/brand.ts`). Cloudflare Email Routing 으로 운영자에게 전달 — 사용자가 DNS·전달 규칙을 만든다. **배포 전에 실제로 메일이 도착하는지 확인한다** |
 | 6. 보안 | 저장하는 것이 공개 글의 주소·수뿐이다. 토큰 없음 |
@@ -121,7 +121,7 @@ HN(`hn-talk`)·X 에 이어 세 번째 SNS 화제 출처다. 운영 배포 전 �
    먼저 하지 않으면 공통 배포의 crawler 관문이 `unknown_schedule` 로 멈춘다(2026-10-20 #566 때와 같다).
 3. **공통 8앱**(`deploy_shared_images.py run`) — 웹·crawler 가 새 코드를 받는다. 역할마다 readiness·progress 를 본다.
 4. 그 뒤 평소처럼 text·maintenance 를 같은 release 로 맞춘다(이번 변경은 그 역할 코드에 닿지 않는다).
-5. 배포 뒤 첫 회차(최대 30분 안): 크롤러 활동의 `social.bluesky_talk_collected`, `/admin/talk?source=bluesky`.
+5. 배포 뒤 첫 회차(최대 2시간 안): 크롤러 활동의 `social.bluesky_talk_collected`, `/admin/talk?source=bluesky`.
 
 되돌리기: 잡을 멈추면(운영센터 pause) 수집이 멈추고, 공개 화면의 Bluesky 글은 24시간 안에 빠진다. 글을 지우려면 `DELETE FROM social_posts WHERE source = 'bluesky'`.
 제약은 bluesky 행이 남아 있는 한 되돌리지 않는다.
