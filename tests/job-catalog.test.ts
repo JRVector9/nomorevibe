@@ -54,8 +54,8 @@ it('재수집된 README만 기존 GitHub 인증이 있는 crawler에서 제한�
   });
 });
 
-it('Bluesky 화제 수집은 crawler 기본 줄에서 30분마다, 요청 상한을 다 쓸 수 있는 40초 틱으로 돈다', () => {
-  expect(JOB_CATALOG.find(job => job.name === 'bluesky-talk')).toEqual({ name: 'bluesky-talk', role: 'crawler', intervalMs: 30 * 60_000 });
+it('Bluesky 화제 수집은 crawler 기본 줄에서 2시간마다, 요청 상한을 다 쓸 수 있는 40초 틱으로 돈다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'bluesky-talk')).toEqual({ name: 'bluesky-talk', role: 'crawler', intervalMs: 2 * 60 * 60_000 });
   expect(jobsForRole('crawler')).toContain('bluesky-talk');
   expect(jobRunOptions('bluesky-talk', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 40_000 });
 });

@@ -47,7 +47,7 @@ export const X_FRESH_MS = 24 * 3_600_000;
 export const xFreshSince = (now: Date) => new Date(now.getTime() - X_FRESH_MS);
 /**
  * Bluesky 게시물도 마지막으로 확인한 뒤 24시간만 보인다 — 원문이 지워지면 화면에서도 빠지게(수집기 bluesky-talk 이 제품에 이어진 글을
- * 30분마다 다시 묻는다). 수집이 멈추면 하루 뒤 모두 빠진다.
+ * 2시간마다 다시 묻는다). 수집이 멈추면 하루 뒤 모두 빠진다.
  */
 export const BLUESKY_FRESH_MS = 24 * 3_600_000;
 export const blueskyFreshSince = (now: Date) => new Date(now.getTime() - BLUESKY_FRESH_MS);
