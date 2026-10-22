@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { pageTitle } from "@/lib/copy/brand";
+import { CONTACT_EMAIL, pageTitle } from "@/lib/copy/brand";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator } from "@/lib/i18n/dictionary";
 import { localePath } from "@/lib/i18n/routing";
@@ -20,7 +20,8 @@ import { DEFAULT_SHARE_IMAGE, shareMetadata } from "@/lib/copy/share";
  * - 개인 프로필: 기본 목록에서 가림(visibility.ts), 색인은 본인 확인 뒤(indexing.ts)
  * - AI 근거와 색인: indexing.ts 4번 — 흔적은 사용 주장이지 실행 증명이 아니다(상세 '무엇으로 만들었나'와 같은 말)
  * - 내려달라는 요청: 접수 즉시 noindex(indexing.ts 2번), 24시간 안 확인(takedown-view.ts TAKEDOWN_OVERDUE_HOURS)
- * 공개 이메일 주소는 두지 않는다(D5) — 연락은 사이트 안의 요청 폼으로 받는다.
+ * 공개 연락처는 CONTACT_EMAIL 하나다(2026-10-22 사용자 결정으로 D5 의 "공개 이메일 없음"을 바꿈 — Bluesky 개발자 지침 5).
+ * SNS 화제·자료 출처·삭제 요청·신고를 받고, 프로젝트에 관한 요청은 그대로 사이트 안의 요청 폼으로 받는다.
  */
 export async function generateMetadata(): Promise<Metadata> {
   const locale = await getRequestLocale();
@@ -131,6 +132,9 @@ export default async function PolicyPage() {
         </p>
         <p>
           {t("contact.correction")}
+        </p>
+        <p>
+          {t("contact.emailBefore")}<a href={`mailto:${CONTACT_EMAIL}`} className="text-accent-ink underline underline-offset-4">{CONTACT_EMAIL}</a>{t("contact.emailAfter")}
         </p>
       </Section>
     </main>

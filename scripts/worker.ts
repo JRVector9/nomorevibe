@@ -109,6 +109,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'second-review') return { ...options, budgetMs: 110_000 };
   if (name === 'human-deepseek-review') return { ...options, budgetMs: 110_000 };
   if (name === 'product-thumbnail-refresh') return { ...options, budgetMs: 40_000 };
+  // Bluesky 화제 — 요청 30번 상한·0.5초 간격(lib/social/bluesky-talk.ts). 기본 25초면 다시 묻기를 다 못 한다
+  if (name === 'bluesky-talk') return { ...options, budgetMs: 40_000 };
   return options;
 }
 

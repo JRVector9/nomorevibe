@@ -7,6 +7,12 @@
 
 export const BRAND = "nomorevibe";
 
+/**
+ * 공개 연락처(2026-10-22 사용자 결정 — Bluesky 개발자 지침 5, D5 의 "공개 이메일 없음"을 바꿈). 정기적으로 확인한다.
+ * Cloudflare Email Routing 으로 운영자에게 전달된다. SNS 화제·자료 출처·삭제 요청·신고용이고, 프로젝트 요청은 그대로 상세의 요청 폼.
+ */
+export const CONTACT_EMAIL = "contact@nomorevibe.com";
+
 /** 사이트 한 줄 — 홈 제목과 공유 미리보기에 쓴다 */
 export const SITE_TAGLINE = "AI로 만든 것들, 세상에 나오다.";
 

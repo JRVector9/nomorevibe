@@ -806,6 +806,13 @@
       "when": 1794086400026,
       "tag": "0114_gate_split_deepseek",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1794086400027,
+      "tag": "0115_social_posts_bluesky",
+      "breakpoints": true
     }
   ]
 }

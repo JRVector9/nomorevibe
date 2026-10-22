@@ -9,7 +9,7 @@ import type { TranslatedProduct } from "@/lib/i18n/products";
 import type { TalkEntry, TalkPost, TalkProduct } from "@/lib/social/talk";
 import { TALK_SAMPLE_TARGET } from "@/lib/social/talk-samples";
 import { TalkSparkline } from "./TalkSparkline";
-import { discussionUrl, sourceChip, sourceClass, sourceList } from "./talk-format";
+import { discussionUrl, linkOnly, sourceChip, sourceClass, sourceList } from "./talk-format";
 import "./talk.css";
 
 export type LocalizedTalkEntry = Omit<TalkEntry, "product"> & { product: TranslatedProduct<TalkProduct> };
@@ -27,7 +27,7 @@ export function TalkChips({ posts, t, locale, short = false }: { posts: readonly
       {leadPosts(posts).map(post => (
         <span key={post.id} className={sourceClass(post.source)}>
           <b>{sourceChip(post)}</b>
-          {short ? count(post.points) : t(post.source === "x" ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}
+          {short ? count(post.points) : t(linkOnly(post.source) ? "talk.xScore" : "talk.score", { points: count(post.points), comments: count(post.comments) })}
         </span>
       ))}
     </span>

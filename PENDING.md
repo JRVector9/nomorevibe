@@ -6,6 +6,19 @@
 
 ---
 
+## Bluesky 화제 수집 — 2026-10-22 (배포 전)
+
+설계·실측·지침 대응은 [`docs/operations/2026-10-22-bluesky-talk.md`](docs/operations/2026-10-22-bluesky-talk.md). 잡 `bluesky-talk`(crawler, 30분), migration `0115_social_posts_bluesky`.
+
+- **배포 순서**: (배포 전 contact@nomorevibe.com 전달 확인) → migration 0115 → scheduler 2복제본(새 잡 `bluesky-talk` 의 `next_scheduled_at` 확인) → 공통 8앱 → text·maintenance. scheduler 를 먼저 하지 않으면 crawler 관문이 `unknown_schedule` 로 멈춘다.
+- **운영 첫 회차**: 요청 수(상한 30)·시간(틱 40초)·429 여부·`truncated`(첫 회차는 최근 24시간쯤만 읽어 true 가 정상)를 크롤러 활동 `social.bluesky_talk_collected` 로 본다.
+- **기준 다시 맞추기**: 반응 5(`BLUESKY_TALK_POINTS`)·봇 72시간 15개(`BLUESKY_BOT_POSTS`)를 2주 관측 뒤 실제 분포·오탐(`/admin/talk?source=bluesky&state=hidden`)으로 다시 정한다.
+- **지운 글 내리기**: 다시 묻기(getPosts)가 지운 글을 `gone` 으로 내리고 7일 뒤 지우는지 운영 데이터로 본다(로컬 두 회차에서는 0건).
+- **공개 연락처 contact@nomorevibe.com**(2026-10-22 사용자 결정 A, Bluesky 지침 5): 게재 기준 `/policy#contact`·/talk 집계 기준에 싣는다(D5 의 "공개 이메일 없음"을 바꿈).
+  사용자가 Cloudflare Email Routing(DNS·전달 규칙)을 만든다. **배포 전에** 바깥 주소에서 보낸 메일이 운영자에게 도착하는지 확인한다 — 받지 못하면 배포하지 않는다.
+- **관측 줄 증가량**: Bluesky 는 값이 바뀔 때만 관측을 남긴다. 한 달 뒤 `social_post_observations` 크기를 본다.
+- 후속 후보: Jetstream(인증 없는 firehose)로 옮기기 — 검색 쪽 제한·`q=github.com` 누락이 커지면.
+
 ## SNS 화제·X 수집 — 2026-10-20
 
 배포·첫 실제 수집 기록은 `docs/CODEX_HANDOFF.md` "2026-10-20 SNS 화제 C안·X 수집 연결". 아직 직접 확인하지 않은 것:
