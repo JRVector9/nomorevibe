@@ -49,7 +49,8 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[]): KoreanTaglineTask[
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("tagline_ko.skipped", { reason: "no_key" });
-    return { done: true };
+    // 키가 없으면 아무것도 하지 않는다 — 성공이 아니다(러너가 성공 시각을 옮기지 않고 조치할 일이 올린다)
+    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Korean tagline worker requires a job lease");

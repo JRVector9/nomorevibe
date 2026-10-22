@@ -6,6 +6,19 @@
 
 ---
 
+## 무음 실패 경보(제 일 못 한 작업·메일·X 전달·랭킹·Qwen·생존 확인 보류) — 2026-10-22 (코드·로컬 DB 시험만, 운영 확인 전)
+
+러너가 제 일 못 한 틱(degraded)을 성공으로 적지 않고 `job:<name>` 관측에 까닭·연속 횟수를 남기며, 조치할 일이 그것과 메일 발송함·
+X 보고·랭킹·Qwen 물러나기로 경보한다(`lib/operations/job-health.ts`·`app/(operator)/admin/status/attention.tsx`). 이전 없음·카탈로그 변경 없음.
+
+- **배포 직후 볼 것**: 운영센터 "지금 조치"에 새 줄(`job-health`·`uptime-held`·`stage-upstream`·`qwen-backoff`·`email-outbox`·`login-email`·
+  `ranking-stale`·`x-delivery`·`x-candidates`)이 바로 몇 개 서는지. 서는 것은 지금까지 숨어 있던 실패다 — 까닭 코드로 확인하고, 일부러 그런 것
+  (예: 일부러 키를 뺀 워커)이면 그 잡을 멈추거나 설정을 고친다. 메뉴 배지에 주황 "작업 이상 N건(보류)"이 붙을 수 있다.
+- **직접 확인하지 않은 것**: 운영 데이터에서 성공 끊김 기준(주기 6번·최소 30분)이 일부러 미루는 잡(stage_blocked·source_buffer)을 잘 빼는지,
+  미룸 까닭(`defer:<job>`) 열쇠 읽기가 운영센터 갱신(10초)마다 주 DB 에 부담이 없는지, Resend 거절·발신 설정 없음일 때 실제 발송함 수,
+  X 수집기의 다음 실제 수집에서 `x-status:runs` 가 쌓이는지(첫 기록은 다음 보고부터다 — 이틀째 후보 0 경보는 배포 뒤 이틀이 지나야 설 수 있다),
+  M3 네트워크 장애 때 `uptime-held` 가 30분 안에 서는지.
+
 ## 공통 배포의 Swarm 되돌림·`--resume`·관문 소유자 판정 — 2026-10-22 (코드·단위 테스트만, 운영 실행 전)
 
 #597 배포 실패 대응. 절차는 [운영 절차](docs/operations/independent-workers-runbook.md) "Swarm 되돌림·멈춘 배포 이어 가기·관문의 소유자 판정".

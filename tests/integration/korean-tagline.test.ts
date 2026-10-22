@@ -224,10 +224,13 @@ describe("한국어 한 줄 소개 잡", () => {
     expect((await stored(b.id))?.errorCode).toBe("invalid_output");
   });
 
-  it("키가 없으면 부르지 않는다", async () => {
+  it("키가 없으면 부르지 않고, 성공이 아니라 제 일 못 함(no_key)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {
     await seed({ slug: "nokey" });
     vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_key" });
     expect(gateway).not.toHaveBeenCalled();
+    const [state] = await db.select().from(jobs).where(eq(jobs.name, "product-tagline-ko"));
+    expect(state).toMatchObject({ lastSuccessAt: null, lastError: null });
+    expect(state.processedVersion).toBe(state.requestedVersion);
   });
 });

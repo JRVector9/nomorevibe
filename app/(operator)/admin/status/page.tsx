@@ -58,7 +58,7 @@ import { searchLogSummary } from "@/lib/domain/products/search-log";
 import { SearchHealthPanel } from "./SearchHealthPanel";
 import { ScrollToHash } from "../ScrollToHash";
 import { ScrollTable } from "../components/ScrollTable";
-import { actionCounts, buildActions, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
+import { actionCounts, buildActions, deriveJobHealth, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
 import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./render-reads";
 import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
 import { FlowDetailSlot } from "./FlowDetail";
@@ -442,6 +442,8 @@ export default async function StatusPage() {
   const [inputs, acks] = await Promise.all([loadActionInputs(settings),
     attentionAcks().catch((error) => { warn("operations.attention_acks_unavailable")(error); return new Map(); })]);
   const derived = deriveStatus(inputs);
+  // 작업 띠의 색 — 돈 시각이 아니라 진짜 성공·제 일 못 함으로(조치할 일과 같은 판단)
+  const jobHealth = new Map(deriveJobHealth(inputs, derived.workerProgress).map((issue) => [issue.job, issue]));
   const { ops, overview, roles, models, attention, downCount } = inputs;
   const now = ops.fetchedAt;
 
@@ -562,11 +564,18 @@ export default async function StatusPage() {
         // 지금 batch 상태에서 돌지 않는 versioned 전용 잡은 생존 띠·실행 요청에 올리지 않는다(실패로 보이고 요청해도 안 돈다)
         jobs={catalogJobsForBatch(inputs.jobBatch).map(({ name }) => {
           const job = derived.states.get(name);
+          const health = jobHealth.get(name);
+          // 랭킹은 주기가 없어(집계가 요청한다) 잡 판단에 들지 않는다 — 랭킹 멈춤 조치와 같은 색을 단다
+          const ranking = name === "ranking-refresh" ? actions.find((item) => item.key === "ranking-stale") : undefined;
           return { name, status: jobStatusLabel(job), lastRunAt: job?.lastRunAt?.toISOString() ?? null,
             lastSuccessAt: job?.lastSuccessAt?.toISOString() ?? null, nextScheduledAt: job?.nextScheduledAt?.toISOString() ?? null,
             notBefore: job?.notBefore?.toISOString() ?? null, workerSeenAt: job?.workerSeenAt?.toISOString() ?? null,
             requestedVersion: job?.requestedVersion ?? 0, processedVersion: job?.processedVersion ?? 0, runs: job?.runs ?? 0,
-            lastError: job?.lastError?.slice(0,1000) ?? null, cursor: JSON.stringify(redact(job?.cursor ?? null),null,2).slice(0,8000) };
+            lastError: job?.lastError?.slice(0,1000) ?? null, cursor: JSON.stringify(redact(job?.cursor ?? null),null,2).slice(0,8000),
+            health: health ? { level: health.level, text: health.degraded
+              ? `제 일 못 함 ${health.degraded.code}${health.degraded.detail ? ` (${health.degraded.detail})` : ""} · 연속 ${health.degraded.streak}회`
+              : `성공 없음${health.deferral ? ` · 마지막 미룸 ${health.deferral.reason}` : ""}` }
+              : ranking && ranking.tone !== "clear" ? { level: ranking.tone, text: ranking.title } : null };
         })} />
       <ScrollToHash />
     </main>

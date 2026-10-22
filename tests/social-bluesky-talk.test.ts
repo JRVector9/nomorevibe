@@ -266,7 +266,9 @@ describe('수집 회차', () => {
     const { request } = server(url => url.pathname.endsWith('getPosts') ? json({ posts: [] }) : json({ error: 'Forbidden' }, 403));
     const cursor = { lastRunAt: '2026-10-21T23:00:00.000Z', through: '2026-10-21T23:00:00.000Z' };
     const ctx = context(cursor);
-    expect(await collectBlueskyTalk(ctx, { request, now: () => NOW, sleep })).toEqual({ done: false, cursor });
+    // 새 글을 못 읽은 회차는 성공이 아니다 — 러너에 까닭을 넘긴다(관리자 /admin/talk·조치할 일)
+    expect(await collectBlueskyTalk(ctx, { request, now: () => NOW, sleep }))
+      .toEqual({ done: false, cursor, degraded: { code: 'search_failed', detail: 'Bluesky 검색 최신 http_403' } });
     expect(ctx.log).toHaveBeenCalledWith('social.bluesky_talk_failed', { reason: 'http_403', stage: 'latest', page: 0 });
     expect(mocks.gone).toHaveBeenCalledWith([41], NOW, undefined);
     expect(ctx.save).not.toHaveBeenCalled();
@@ -276,10 +278,12 @@ describe('수집 회차', () => {
     mocks.recheck.mockResolvedValue([{ id: 51, external_id: `${DID}/3mygold00000d` }]);
     const { request, urls } = server(url => url.searchParams.get('sort') === 'top' ? json({}, 429) : json({ posts: [] }));
     const ctx = context();
-    await collectBlueskyTalk(ctx, { request, now: () => NOW, sleep });
+    const outcome = await collectBlueskyTalk(ctx, { request, now: () => NOW, sleep });
     expect(urls).toHaveLength(2);
     expect(mocks.gone).not.toHaveBeenCalled();
     expect(ctx.log).toHaveBeenCalledWith('social.bluesky_talk_lookup_failed', { reason: 'rate_limited' });
+    // 새 글은 읽었지만 지운 글을 내리지 못했다(원문 삭제 존중) — 제 일 못 함
+    expect(outcome).toMatchObject({ done: true, degraded: { code: 'lookup_failed', detail: 'Bluesky 다시 묻기 rate_limited' } });
   });
 
   it('한 회차의 요청은 상한을 넘지 않는다', async () => {

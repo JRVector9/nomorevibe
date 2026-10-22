@@ -199,21 +199,22 @@ export function RestartStalledAudit({ campaignId, from, to }: { campaignId: numb
 }
 
 /**
- * 남은 감사 모델 바꾸기(0112) — 진행 중인 감사의 아직 답이 없는 항목을 Qwen-v2(gpu3090 직접)로 묻는다. 확인 창이 지금 → 바꿀 모델과
+ * 남은 감사 모델 바꾸기(0112) — 진행 중인 감사의 아직 답이 없는 항목을 Qwen-v2(Qwen 직접 서버)로 묻는다. 확인 창이 지금 → 바꿀 모델과
  * 남은 수를 보이고 사유를 꼭 받는다(서버도 사유 없이는 바꾸지 않는다). 화면이 본 심사자(from)를 함께 보내 그 사이 바뀌었으면 거절된다.
  */
 export function SwitchAuditModel({ campaignId, from, to, unanswered }: {
   campaignId: number;
   /** 지금 묻는 심사자 — 서버가 잠근 감사 행과 견준다 */
   from: { provider: string; model: string; label: string };
-  to: { model: string; label: string };
+  /** server: 부르는 Qwen 직접 서버의 이름(AUDIT_SECOND_OPINION_LABEL 또는 주소의 호스트) */
+  to: { model: string; label: string; server: string };
   unanswered: number;
 }) {
   const toast = useAdminToast();
   return (
     <ConfirmAction tone="neutral" title={`감사 #${campaignId}의 남은 것을 ${to.label}(으)로 묻습니다`} confirmLabel="남은 감사 모델 바꾸기"
       summary={<ul>
-        <li>모델: {from.label} → {to.label} ({to.model}, gpu3090 직접 — 게이트웨이를 거치지 않습니다)</li>
+        <li>모델: {from.label} → {to.label} ({to.model}, {to.server} 직접 — 게이트웨이를 거치지 않습니다)</li>
         <li>아직 답이 없는 {unanswered.toLocaleString('ko-KR')}건을 새 모델이 묻습니다. 이미 답한 것은 그대로 남고, 답마다 어느 모델이 답했는지 기록됩니다.</li>
         <li>Qwen 의 확신은 늘 0.95 나 1.00 이라 거절은 대부분 자동 보류 문턱을 넘습니다. 카탈로그·디렉터리 같은 거절은 보류하지 않고 목록에 둔 채 사람이 봅니다.</li>
         <li>되돌리는 버튼은 없습니다. 멈추려면 &lsquo;이 감사 중단&rsquo;을 누르세요.</li>

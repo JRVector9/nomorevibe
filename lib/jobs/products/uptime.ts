@@ -161,7 +161,9 @@ export async function pingProducts(ctx: JobContext<null>): Promise<JobOutcome<nu
   if (errors.length > 0) throw errors[0];
 
   ctx.log("uptime.checked", { alive, down, unknown, autoBanned });
-  // 한 바퀴를 다 돌았는지는 여기서 알 수 없다 — 오래된 것부터 계속 가져오면 그만이다
+  // 한 바퀴를 다 돌았는지는 여기서 알 수 없다 — 오래된 것부터 계속 가져오면 그만이다.
+  // 광역 실패로 보류한 회차는 성공이 아니다 — 판정을 하지 않고 확인 시각만 넘겼다(응답 없음·밀림 수가 0 으로 남는다). 잇달아 이어지면 조치할 일이 올린다
+  if (held) return { done: false, degraded: { code: "broad_failure_held", detail: `확인 ${attempted} · 실패 ${failures.length} · 모름 ${unknown}` } };
   return { done: false };
 }
 
@@ -210,15 +212,16 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   const instanceId = serviceInstanceId();
   const control = await readUptimeSplitControl();
   const entry = instanceId && control.policy ? uptimeSplitHostEntry(control.policy, instanceId) : null;
+  // 확인을 쉰 회차는 성공이 아니다 — 아래 셋은 제 일 못 함(degraded)으로 넘겨 잇달아 이어지면 조치할 일이 올린다
   if (!instanceId || !entry || entry.class !== "home") {
     ctx.log("uptime.split_blocked", { unconfigured: 1 });
-    return { done: false };
+    return { done: false, degraded: { code: "split_unconfigured", detail: "이 인스턴스가 분담 정책의 home 이 아니라 확인하지 않았습니다" } };
   }
   // 이 host 시계가 DB 와 크게 어긋나 있으면 결과가 모두 stale clock 이 된다 — 확인을 쉬고 오류 이벤트로 알린다(반영·sweep 은 했다)
   const skew = await measureUptimeClockSkew();
   if (Math.abs(skew) > UPTIME_SPLIT_CLOCK_GUARD_MS) {
     ctx.log("uptime.split_clock_skew", { skewMs: Math.round(skew) });
-    return { done: false };
+    return { done: false, degraded: { code: "clock_skew", detail: `이 host 시계가 DB 와 ${Math.round(skew / 1000)}초 어긋나 확인을 쉽니다` } };
   }
   const owner = { instanceId, bootId: BOOT_ID };
   const batch = await claimUptimeProducts({ owner, limit: capacity.batch - swept });
@@ -226,6 +229,9 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
     // 차단기 열림은 이 host 의 광역 장애다 — 확인을 쉬고 반영·sweep 만 한다. legacy 로 돌아갔으면 조용히 다음 틱으로
     if (batch.reason !== "mode_legacy") ctx.log("uptime.split_blocked", { breakerOpen: batch.reason === "breaker_open" ? 1 : 0,
       unconfigured: batch.reason === "source_unconfigured" ? 1 : 0, fenced: batch.reason === "site_fenced" ? 1 : 0 });
+    // 차단기가 열린 동안도 광역 실패 보류가 이어지는 것이다(연속을 끊지 않는다). DR fence 는 일부러 멈춘 것이라 성공·실패가 아니다
+    if (batch.reason === "breaker_open") return { done: false, degraded: { code: "broad_failure_held", detail: "광역 실패 차단기가 열려 확인을 쉽니다" } };
+    if (batch.reason === "source_unconfigured") return { done: false, degraded: { code: "split_unconfigured", detail: "분담 확인 출처가 설정되지 않았습니다" } };
     return { done: false };
   }
   if (batch.claims.length === 0) return idle();
@@ -251,12 +257,14 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
 
   // 이미 본 결과라 예산이 끝났거나 앞에서 한 건이 실패했어도 반영한다(legacy 와 같다). 멈추라는 신호면 쓰지 않는다
   const settled = new Set<number>();
+  /** 묶음 적용기가 광역 실패로 보류한 수(split_broad_failure) */
+  let held = 0;
   if (results.length > 0 && !signal?.aborted) {
     try {
       const own = await applyUptimeResults({ lease, own: results, submittedLimit: 0, signal, hasBudget: ctx.hasBudget });
       for (const result of results) settled.add(result.productId);
       autoBanned += own.autoBanned;
-      const held = own.reasons.split_broad_failure ?? 0;
+      held = own.reasons.split_broad_failure ?? 0;
       if (held > 0) ctx.log("uptime.broad_failure_held", { attempted: results.length, down: held, unknown });
     } catch (error) {
       errors.push(error);
@@ -274,6 +282,8 @@ async function pingClaimed(ctx: JobContext<null>, capacity: ReturnType<typeof up
   if (errors.length > 0) throw errors[0];
 
   ctx.log("uptime.checked", { alive, down, unknown, autoBanned });
+  // 묶음 적용기가 광역 실패로 보류한 회차(legacy 보류와 같다)
+  if (held > 0) return { done: false, degraded: { code: "broad_failure_held", detail: `확인 ${results.length} · 보류 ${held} · 모름 ${unknown}` } };
   return { done: false };
 }
 

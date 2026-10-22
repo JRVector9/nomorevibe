@@ -101,9 +101,13 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
 
   // 1. 새 글 — 최신 한 쪽, 모자라면 시간 창을 민다
   let discovered = false, truncated = false;
+  /** 새 글을 읽지 못한 까닭 — 회차를 제 일 못 함으로 남긴다 */
+  let discoveryFailure: string | null = null;
   const latest = await fetchBluesky(blueskySearchUrl({ sort: "latest" }));
-  if (!latest.ok) ctx.log("social.bluesky_talk_failed", { reason: latest.reason, stage: "latest", page: 0 });
-  else {
+  if (!latest.ok) {
+    ctx.log("social.bluesky_talk_failed", { reason: latest.reason, stage: "latest", page: 0 });
+    discoveryFailure = `최신 ${latest.reason}`;
+  } else {
     pages += 1;
     const first = keep(latest.value);
     let until = nextUntil(first, null);
@@ -116,6 +120,7 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
         // 상한에 닿은 것은 오류가 아니다 — 남은 앞쪽을 건너뛴 회차(truncated)로 남는다
         if (page.reason === "request_cap") break;
         ctx.log("social.bluesky_talk_failed", { reason: page.reason, stage: "window", page: pages });
+        discoveryFailure = `시간 창 ${page.reason} (${pages + 1}쪽)`;
         failed = true;
         break;
       }
@@ -145,7 +150,7 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
 
   // 3. 다시 묻기 — 검색이 막혀도 지운 글은 내린다
   const missing = await blueskyPostsToRecheck(since, new Date(startedAt.getTime() - TALK_VISIBLE_MS), startedAt, LOOKUP_REQUESTS * BLUESKY_LOOKUP_BATCH);
-  let rechecked = 0, gone = 0, lookupFailed = false;
+  let rechecked = 0, gone = 0, lookupFailed = false, lookupReason: string | null = null;
   const back: BlueskyTalkPost[] = [];
   for (let index = 0; index < missing.length; index += BLUESKY_LOOKUP_BATCH) {
     if (!ctx.hasBudget()) break;
@@ -157,6 +162,7 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
     if (!result.ok) {
       if (result.reason !== "request_cap") ctx.log("social.bluesky_talk_lookup_failed", { reason: result.reason });
       lookupFailed = result.reason !== "request_cap";
+      lookupReason = result.reason;
       break;
     }
     rechecked += batch.length;
@@ -182,9 +188,11 @@ export async function collectBlueskyTalk(ctx: JobContext<BlueskyTalkCursor>, opt
     held: recorded.held + refreshed.held, released: recorded.released + refreshed.released, heavy: heavy.length, bots,
     missing: missing.length, rechecked, gone, expired, purged, pages, requests, complete, truncated,
   });
-  // 새 글을 못 읽은 회차는 끝 시각을 옮기지 않는다 — 다음 회차가 그 사이를 다시 읽는다
-  if (!discovered) return { done: false, cursor: ctx.cursor };
+  // 새 글을 못 읽은 회차는 끝 시각을 옮기지 않는다 — 다음 회차가 그 사이를 다시 읽는다. 성공도 아니다(러너가 성공 시각을 옮기지 않는다)
+  if (!discovered) return { done: false, cursor: ctx.cursor, degraded: { code: "search_failed", detail: `Bluesky 검색 ${discoveryFailure ?? "실패"}` } };
   const cursor = { lastRunAt: startedAt.toISOString(), through: startedAt.toISOString() };
   await ctx.save(cursor);
+  // 다시 묻기가 막히면 지워진 글을 내리지 못한다(원문 삭제 존중) — 새 글은 읽었어도 제 일을 다 하지 못한 회차다
+  if (lookupFailed) return { done: true, cursor, degraded: { code: "lookup_failed", detail: `Bluesky 다시 묻기 ${lookupReason}` } };
   return { done: true, cursor };
 }

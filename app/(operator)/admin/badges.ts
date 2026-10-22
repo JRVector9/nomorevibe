@@ -6,7 +6,7 @@ import { sharedHumanQueueOverview } from "@/lib/operations/shared-reads";
 import { getSettings } from "@/lib/crawl/settings";
 import { pendingIntroRequestCount } from "@/lib/domain/products/intro-requests";
 import { takedownSummary } from "@/lib/domain/products/takedown";
-import { criticalActionCount } from "./status/attention";
+import { actionBadgeCounts } from "./status/attention";
 
 /**
  * 메뉴 배지 — 레이아웃(처음 그리기·router.refresh)과 GET /admin/nav-badges(화면을 옮긴 뒤, AdminShell)가 같은 값을 쓴다.
@@ -22,22 +22,24 @@ export type NavBadgeSet = { badges: NavBadges; unknown: string[] };
 
 export async function navBadges(): Promise<NavBadgeSet> {
   // 하나가 실패해도 나머지 배지와 페이지는 그린다
-  const [takedown, introRequests, critical, human] = await Promise.all([
+  const [takedown, introRequests, actions, human] = await Promise.all([
     takedownSummary().then((value) => ({ ok: true as const, value }), () => ({ ok: false as const, value: null })),
     pendingIntroRequestCount().then((value) => ({ ok: true as const, value }), () => ({ ok: false as const, value: 0 })),
-    criticalActionCount(),
+    actionBadgeCounts(),
     humanCount.get("human", async () => (await sharedHumanQueueOverview(await getSettings())).stages.human).catch(() => null),
   ]);
   const unknown = [
     ...(!takedown.ok || !introRequests.ok ? ["/admin/audit"] : []),
     ...(human === null ? ["/admin/review"] : []),
-    ...(critical === null ? ["/admin/status"] : []),
+    ...(actions === null ? ["/admin/status"] : []),
   ];
   return { unknown, badges: {
     // 내려달라는 요청 — 24시간 넘은 것이 있으면 빨강. 소개 수정 요청(UX-18)은 주황으로만 덧붙인다(약속 시간이 없다)
     "/admin/audit": auditBadge(takedown.value, introRequests.value),
     "/admin/review": countBadge(human, "warn", (count) => `직접 판단 ${count}건`),
-    // 운영센터 — 조치할 일의 critical 수(운영센터와 같은 buildActions, 30초 담아 둠·기다리지 않음·실패하면 지난 값)
-    "/admin/status": countBadge(critical, "critical", (count) => `긴급 ${count}건`),
+    // 운영센터 — 조치할 일의 critical 수(운영센터와 같은 buildActions, 30초 담아 둠·기다리지 않음·실패하면 지난 값).
+    // 긴급이 없으면 조용히 실패하던 작업의 보류(BADGED_HOLD_KEYS)를 주황으로 — 쌓인 일·원래 있던 보류는 세지 않는다
+    "/admin/status": countBadge(actions?.critical, "critical", (count) => `긴급 ${count}건`)
+      ?? countBadge(actions?.hold, "warn", (count) => `작업 이상 ${count}건(보류)`),
   } };
 }

@@ -179,3 +179,40 @@ export function readXStatus(observations: readonly { key: string; value: unknown
     : report.mode === "disabled" ? "disabled" : stale ? "stale" : report.error ? "error" : "ok";
   return { state, report, receivedAt, ageMs, stale };
 }
+
+/**
+ * 실제 수집(live)을 끝낸 날의 기록 — 하루 보고는 마지막 한 줄만 남아(x-status) "이틀째 후보 0" 을 알 수 없었다.
+ * x-status 줄의 형식은 엄격하다(칸이 하나 더 있으면 "읽지 못함") — 그래서 따로 둔다. 받는 쪽(recordXStatus)이 같은 쓰기 TX 에서 고친다.
+ * - zeroRuns: 후보 0 으로 끝난 실제 수집이 잇달아 몇 번(하루 한 번이라 곧 날 수) · zeroSince: 그 첫 실행 시각
+ * - lastCompletedRunAt·lastCandidates: 마지막으로 끝난 실제 수집과 그 후보 수
+ */
+export const X_STATUS_RUNS_KEY = "x-status:runs";
+export type XStatusRuns = { zeroRuns: number; zeroSince: string | null; lastCompletedRunAt: string | null; lastCandidates: number | null };
+
+/**
+ * 실제 수집이 끝까지 돈 보고인가 — live 이고 오류가 없으며 이번 실행이 곧 마지막 성공이다(수집기는 끝난 실행만 성공 시각을 적는다).
+ * 같은 날 두 번째 실행(daily_limit)은 오류가 없어도 성공 시각이 앞이라 여기 들지 않는다(후보 0 으로 세면 안 된다).
+ */
+export function completedLiveRun(report: Pick<XStatusReport, "mode" | "error" | "lastRunAt" | "lastSuccessAt">): boolean {
+  return report.mode === "live" && report.error === null && report.lastRunAt !== null && report.lastSuccessAt !== null
+    && Date.parse(report.lastSuccessAt) === Date.parse(report.lastRunAt);
+}
+
+export function parseXStatusRuns(value: unknown): XStatusRuns | null {
+  if (!isRecord(value)) return null;
+  const { zeroRuns, zeroSince, lastCompletedRunAt, lastCandidates } = value;
+  const time = (item: unknown) => item === null || (typeof item === "string" && Number.isFinite(Date.parse(item)));
+  if (!countUpTo(zeroRuns, 1_000_000) || !time(zeroSince) || !time(lastCompletedRunAt)
+    || !(lastCandidates === null || countUpTo(lastCandidates, MAX_COUNT))) return null;
+  return { zeroRuns, zeroSince: zeroSince as string | null, lastCompletedRunAt: lastCompletedRunAt as string | null,
+    lastCandidates: lastCandidates as number | null };
+}
+
+/** 받은 보고로 고친 기록 — 끝난 실제 수집이 아니거나(dry-run·막힘·같은 날 두 번째) 이미 센 실행이면 null(그대로 둔다) */
+export function nextXStatusRuns(prior: XStatusRuns | null, report: XStatusReport): XStatusRuns | null {
+  if (!completedLiveRun(report)) return null;
+  if (prior?.lastCompletedRunAt && Date.parse(prior.lastCompletedRunAt) >= Date.parse(report.lastRunAt!)) return null;
+  const zero = report.candidates === 0;
+  return { zeroRuns: zero ? (prior?.zeroRuns ?? 0) + 1 : 0, zeroSince: zero ? prior?.zeroSince ?? report.lastRunAt : null,
+    lastCompletedRunAt: report.lastRunAt, lastCandidates: report.candidates };
+}

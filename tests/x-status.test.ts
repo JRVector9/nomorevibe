@@ -2,7 +2,7 @@ import { createElement, Fragment } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKLOG_KEYS } from "@/lib/operations/attention";
-import { parseXStatusReport, readXStatus, X_STATUS_SECRET_ENV } from "@/lib/operations/x-status";
+import { completedLiveRun, nextXStatusRuns, parseXStatusReport, parseXStatusRuns, readXStatus, X_STATUS_SECRET_ENV, type XStatusReport } from "@/lib/operations/x-status";
 import { buildActions, deriveStatus, splitActions, type ActionInputs } from "@/app/(operator)/admin/status/attention";
 import { xSummary } from "@/app/(operator)/admin/status/flow-model";
 import { AttentionList, type ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
@@ -151,7 +151,9 @@ describe("조치 — X 보고 끊김/오류", () => {
   it("주소가 켜져 있어도 연결 전(보고 없음)·정상·꺼짐 보고는 띄우지 않는다", () => {
     vi.stubEnv(X_STATUS_SECRET_ENV, SECRET);
     const before = actions([]).map((item) => item.key);
-    for (const observations of [[], [row(report())], [row(report({ mode: "disabled", error: "state_error" }), 300)]]) {
+    // 정상 보고는 같은 실행의 게시물 보고(x-posts)도 받은 상태다 — 받지 못했으면 전달 어긋남(x-delivery)이 선다(아래)
+    const delivered = { key: "x-posts", value: { v: 1, observedAt: hoursAgo(4), posts: 3, unavailable: 0 }, observedAt: hoursAgo(4) };
+    for (const observations of [[], [row(report()), delivered], [row(report({ mode: "disabled", error: "state_error" }), 300)]]) {
       expect(xAction(observations), JSON.stringify(observations)).toBeUndefined();
       expect(actions(observations).map((item) => item.key)).toEqual(before);
     }
@@ -194,5 +196,83 @@ describe("조치 — X 보고 끊김/오류", () => {
     expect(out).not.toContain("↑ 24h");
     const ack = { key: "x-status", actor: "local", at: new Date(hoursAgo(1)), until: new Date(hoursAgo(-167)) };
     expect(splitActions([item], { samples, acks: new Map([["x-status", ack]]), now: NOW }).hidden.map((split) => split.key)).toEqual(["x-status"]);
+  });
+});
+
+/**
+ * 무음 실패 점검(2026-10-22) — 하루 보고는 후보 수만 싣고 게시물 전달 결과는 osaka 의 status.json 에만 있었다.
+ * 웹이 받은 게시물 보고(x-posts)의 수집 시각과 끝난 실제 수집을 견주고(전달 어긋남), 끝난 실제 수집의 후보 수를 날마다 이어 센다(이틀째 0).
+ */
+describe("끝난 실제 수집 기록(x-status:runs)", () => {
+  const base = { v: 1, mode: "live", reads: { used: 10, limit: 10 }, candidates: 0, lastRunAt: hoursAgo(1), lastSuccessAt: hoursAgo(1), error: null } as XStatusReport;
+  it("live·오류 없음·이번 실행이 곧 마지막 성공일 때만 끝난 실제 수집이다 — 같은 날 두 번째(daily_limit)·시험 실행·막힘은 아니다", () => {
+    expect(completedLiveRun(base)).toBe(true);
+    expect(completedLiveRun({ ...base, lastSuccessAt: hoursAgo(25) })).toBe(false);
+    expect(completedLiveRun({ ...base, mode: "dry-run" })).toBe(false);
+    expect(completedLiveRun({ ...base, error: "http_error" })).toBe(false);
+  });
+
+  it("후보 0 이면 이어 세고 첫 실행 시각을 남긴다 — 후보가 나오면 끊고, 이미 센 실행·끝나지 않은 실행은 그대로 둔다", () => {
+    const day1 = nextXStatusRuns(null, { ...base, lastRunAt: hoursAgo(49), lastSuccessAt: hoursAgo(49) })!;
+    expect(day1).toEqual({ zeroRuns: 1, zeroSince: hoursAgo(49), lastCompletedRunAt: hoursAgo(49), lastCandidates: 0 });
+    const day2 = nextXStatusRuns(day1, { ...base, lastRunAt: hoursAgo(25), lastSuccessAt: hoursAgo(25) })!;
+    expect(day2).toMatchObject({ zeroRuns: 2, zeroSince: hoursAgo(49) });
+    expect(nextXStatusRuns(day2, { ...base, lastRunAt: hoursAgo(25), lastSuccessAt: hoursAgo(25) })).toBeNull();
+    expect(nextXStatusRuns(day2, { ...base, lastSuccessAt: hoursAgo(25) })).toBeNull();
+    expect(nextXStatusRuns(day2, { ...base, candidates: 4 })).toEqual({ zeroRuns: 0, zeroSince: null, lastCompletedRunAt: hoursAgo(1), lastCandidates: 4 });
+    expect(parseXStatusRuns(day2)).toEqual(day2);
+    expect(parseXStatusRuns({ ...day2, zeroRuns: -1 })).toBeNull();
+    expect(parseXStatusRuns(null)).toBeNull();
+  });
+});
+
+describe("조치 — X 전달 어긋남·이틀째 후보 0·사흘 넘은 끊김", () => {
+  const inputs = (observations: unknown[]) => ({
+    settings: {},
+    ops: { fetchedAt: NOW.toISOString(), observations, serviceInstances: [], dbLatencyMs: 1, audit: [], held: 0, heldNextRetryAt: null },
+    jobStates: [], evidenceSummary: { due: 0, stale: 0, failed: 0, oldestDueHours: null }, downCount: 0, overview: humanOverview(), secondFailures: [],
+    throughput: null, models: null, accounts: null, apps: null, takedowns: null, modelServers: null, roles: null, attention: null,
+  }) as unknown as ActionInputs;
+  const find = (observations: unknown[], key: string) => { const value = inputs(observations); return buildActions(value, deriveStatus(value)).find((item) => item.key === key); };
+  const text = (item: ActionItem | undefined) => renderToStaticMarkup(createElement(Fragment, null, item?.detail)).replace(/<[^>]*>/g, "");
+  const posts = (runHoursAgo: number) => ({ key: "x-posts", value: { v: 1, sentAt: 1, signedWith: "current", observedAt: hoursAgo(runHoursAgo), posts: 3, unavailable: 0 },
+    observedAt: hoursAgo(runHoursAgo) });
+  const runs = (zeroRuns: number) => ({ key: "x-status:runs", value: { zeroRuns, zeroSince: hoursAgo(50), lastCompletedRunAt: hoursAgo(4), lastCandidates: 0 }, observedAt: hoursAgo(4) });
+
+  it("끝난 실제 수집이 후보를 냈는데 같은 실행의 게시물 보고를 받지 못했으면 보류, 사흘(세 번) 넘게 어긋나면 긴급", () => {
+    vi.stubEnv(X_STATUS_SECRET_ENV, SECRET);
+    expect(find([row(report()), posts(4)], "x-delivery")).toBeUndefined();
+    const missing = find([row(report())], "x-delivery")!;
+    expect(missing).toMatchObject({ tone: "hold", count: 3, unit: "건", title: "X 수집 결과가 웹에 들어오지 않았습니다", action: { href: "/admin/status?tab=crawlers" } });
+    expect(text(missing)).toContain("마지막으로 받은 게시물 보고 없음");
+    expect(text(missing)).toContain("X_POSTS_REPORT_URL");
+    expect(find([row(report()), posts(28)], "x-delivery")).toMatchObject({ tone: "hold" });
+    expect(find([row(report()), posts(80)], "x-delivery")).toMatchObject({ tone: "critical" });
+    // 후보가 없거나 끝나지 않은 실행(시험 실행·같은 날 두 번째)은 게시물을 보내지 않을 수 있다
+    for (const patch of [{ candidates: 0 }, { mode: "dry-run" }, { lastSuccessAt: hoursAgo(28) }]) expect(find([row(report(patch))], "x-delivery"), JSON.stringify(patch)).toBeUndefined();
+    vi.stubEnv(X_STATUS_SECRET_ENV, "");
+    expect(find([row(report())], "x-delivery")).toBeUndefined();
+  });
+
+  it("끝난 실제 수집이 이틀 잇달아 후보 0 이면 보류(숨길 수 있는 쌓인 일), 8일이면 긴급 — 시험 실행이면 세우지 않는다", () => {
+    vi.stubEnv(X_STATUS_SECRET_ENV, SECRET);
+    const zero = report({ candidates: 0 });
+    expect(find([row(zero), runs(1)], "x-candidates")).toBeUndefined();
+    const item = find([row(zero), runs(2)], "x-candidates")!;
+    expect(item).toMatchObject({ tone: "hold", count: 2, unit: "일", title: "X 수집이 이틀 넘게 후보를 내지 못했습니다" });
+    expect(text(item)).toContain("끝난 실제 수집 2번이 잇달아 후보 0건");
+    expect(BACKLOG_KEYS.has("x-candidates")).toBe(true);
+    expect(find([row(zero), runs(8)], "x-candidates")).toMatchObject({ tone: "critical" });
+    expect(find([row(report({ mode: "dry-run", candidates: 0 })), runs(5)], "x-candidates")).toBeUndefined();
+  });
+
+  it("끊김·오류가 사흘(72시간)을 넘으면 긴급 — 확인함으로 숨겨도 긴급은 지금 조치에 선다", () => {
+    vi.stubEnv(X_STATUS_SECRET_ENV, SECRET);
+    expect(find([row(report({ mode: "dry-run" }), 71)], "x-status")).toMatchObject({ tone: "hold", count: 71 });
+    const stale = find([row(report({ mode: "dry-run" }), 72)], "x-status")!;
+    expect(stale).toMatchObject({ tone: "critical", count: 72 });
+    expect(find([row(report({ error: "http_error", lastRunAt: hoursAgo(3), lastSuccessAt: hoursAgo(80) }), 3)], "x-status")).toMatchObject({ tone: "critical", count: 80 });
+    const ack = { key: "x-status", actor: "local", at: new Date(hoursAgo(1)), until: new Date(hoursAgo(-167)) };
+    expect(splitActions([stale], { samples: [], acks: new Map([["x-status", ack]]), now: NOW }).urgent.map((item) => item.key)).toEqual(["x-status"]);
   });
 });

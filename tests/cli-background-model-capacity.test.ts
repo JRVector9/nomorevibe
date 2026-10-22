@@ -210,8 +210,8 @@ it("intro: a grandchild holding the pipe leaves the dispatch indeterminate (proc
   const ctx = context("product-intro-check");
   let grandchild: number | undefined;
   try {
-    // 출력은 버리고 기존 실패 기록·멈춤 규칙(cli_error)을 그대로 탄다
-    expect(await checkProductIntros(ctx)).toEqual({ done: true });
+    // 출력은 버리고 기존 실패 기록·멈춤 규칙(cli_error)을 그대로 탄다 — 성공이 아니라 제 일 못 함으로 넘긴다
+    expect(await checkProductIntros(ctx)).toEqual({ done: true, degraded: { code: "cli_error", detail: expect.stringContaining("소개 검수") } });
     const [spawned] = await recorded();
     grandchild = spawned.grandchild;
     expect(mocks.reconcile).not.toHaveBeenCalled();

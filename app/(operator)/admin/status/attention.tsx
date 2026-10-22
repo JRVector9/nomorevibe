@@ -16,8 +16,15 @@ import { FAILOVER_ROLES } from "@/lib/operations/failover-readiness";
 import { JOB_LABELS, ROLE_LABELS, type AgentStatus } from "@/lib/operations/contracts";
 import { readSearchHealth, searchHealthAlerts } from "@/lib/operations/search-health-model";
 import { modelServerHealth } from "@/lib/operations/model-servers";
-import { attentionBaseline, BACKLOG_KEYS, recordAttentionSample, type AttentionAck, type AttentionSample } from "@/lib/operations/attention";
-import { readXStatus, X_STATUS_STALE_HOURS } from "@/lib/operations/x-status";
+import { attentionBaseline, BACKLOG_KEYS, BADGED_HOLD_KEYS, recordAttentionSample, type AttentionAck, type AttentionSample } from "@/lib/operations/attention";
+import { completedLiveRun, parseXStatusRuns, readXStatus, X_STATUS_RUNS_KEY, X_STATUS_STALE_HOURS } from "@/lib/operations/x-status";
+import { X_POSTS_KEY } from "@/lib/operations/x-posts";
+import { jobHealthIssues, jobsNeedingDeferralReason, type JobHealthIssue } from "@/lib/operations/job-health";
+import { readLastJobDeferrals } from "@/lib/jobs/deferral-observation";
+import { emailHealth, emailOutboxLevel, loginEmailLevel } from "@/lib/operations/email-health";
+import { QWEN_ENDPOINT_OBSERVATION } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenDirectServerLabel } from "@/lib/crawl/qwen-direct-review";
+import { RANKING_STALE_MS } from "@/lib/domain/ranking/view";
 import { takedownSummary } from "@/lib/domain/products/takedown";
 import { formatWait, isBurst } from "@/lib/domain/products/takedown-view";
 import { listGitHubCollectorAccounts, parseCoreQuota } from "@/lib/crawl/github-accounts";
@@ -64,6 +71,13 @@ export type ActionInputs = {
   apps: Awaited<ReturnType<typeof listGitHubCollectorApps>> | null;
   takedowns: Awaited<ReturnType<typeof takedownSummary>> | null;
   modelServers: Awaited<ReturnType<typeof modelServerHealth>> | null;
+  /**
+   * 30분 넘게 성공하지 못한 잡의 마지막 미룸 까닭(defer:<job>) — 일부러 미룬 잡을 고장으로 부르지 않게(job-health.ts).
+   * 못 읽었으면 null — 그때는 까닭 모를 성공 끊김을 경보하지 않는다. 없으면(옛 입력) null 과 같다
+   */
+  jobDeferrals?: Awaited<ReturnType<typeof readLastJobDeferrals>> | null;
+  /** 알림 메일 발송함·로그인 코드 메일의 최근 결과(email-health.ts) — 못 읽었으면 null */
+  email?: Awaited<ReturnType<typeof emailHealth>> | null;
 };
 
 /** 한 묶음이 실패해도 화면은 나가야 한다 — 그 칸만 비운다 */
@@ -74,8 +88,12 @@ const warn = (event: string) => (error: unknown) => {
 
 /** 조치할 일과 머리말 칩이 읽는 것 — 서로 기다릴 까닭이 없어 한꺼번에 띄운다 */
 export async function loadActionInputs(settings: CrawlSettings): Promise<ActionInputs> {
-  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply] = await Promise.all([
-    operationsData(), listJobStates(), readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
+  const jobStatesRead = listJobStates();
+  // 성공이 30분 넘게 끊긴 잡만 미룸 까닭을 묻는다(열쇠 몇 개 — 평소에는 묻지 않는다)
+  const jobDeferralsRead = jobStatesRead.then((states) => readLastJobDeferrals(jobsNeedingDeferralReason(states, new Date())))
+    .catch(warn("operations.job_deferrals_unavailable"));
+  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email] = await Promise.all([
+    operationsData(), jobStatesRead, readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     // 사람 몫은 웹 여러 대·화면 여러 개가 30초 나눠 쓴다(shared-reads.ts) — 메뉴 배지도 이 읽기를 거친다
     sharedHumanQueueOverview(settings), recentSecondReviewFailures(),
@@ -88,9 +106,48 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     takedownSummary().catch(warn("operations.takedowns_unavailable")),
     modelServerHealth().catch(warn("operations.model_servers_unavailable")),
     readSettingsApply().catch(warn("operations.settings_apply_unavailable")),
+    jobDeferralsRead,
+    emailHealth().catch(warn("operations.email_health_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers };
+  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email };
 }
+
+const LEGACY_BATCH = { mode: "legacy", writerContractVersion: 0 } as const;
+const asDate = (value: Date | string | null | undefined) => value ? new Date(value) : null;
+/**
+ * 잡마다 진짜 성공이 끊겼거나 제 일 못 한 틱이 이어지는지(lib/operations/job-health.ts) — 조치할 일과 작업 띠가 같은 판단을 쓴다.
+ * 워커·스케줄러 관측이 끊긴 역할은 그 경보가 먼저 말하므로 뺀다.
+ */
+export function deriveJobHealth(inputs: ActionInputs, workerProgress: DerivedStatus["workerProgress"] | null): JobHealthIssue[] {
+  const silentRoles = new Set<string>((workerProgress?.liveness ?? []).filter((row) => row.alarm).map((row) => row.role));
+  return jobHealthIssues({
+    jobs: inputs.jobStates.map((row) => ({ name: row.name, lastRunAt: asDate(row.lastRunAt), lastSuccessAt: asDate(row.lastSuccessAt),
+      lastError: row.lastError, notBefore: asDate(row.notBefore), runs: typeof row.runs === "number" ? row.runs : 0 })),
+    observations: inputs.ops.observations, deferrals: inputs.jobDeferrals ?? null, batch: inputs.jobBatch ?? LEGACY_BATCH,
+    silentRoles, now: new Date(inputs.ops.fetchedAt),
+  });
+}
+
+/** 잡 하나의 "제 일 못 함·성공 끊김" 한 줄 — 까닭 코드는 그대로(고칠 때 찾을 말), 설명은 처리기가 적은 짧은 글 */
+function jobHealthLine(issue: JobHealthIssue, now: string) {
+  const degraded = issue.degraded;
+  return <>{job(issue.job)} {degraded
+    ? <>제 일 못 함 <span className="font-mono">{degraded.code}</span>{degraded.detail ? `(${degraded.detail})` : ""} 연속 {n(degraded.streak)}회</>
+    : "성공 없음"} · 마지막 성공 {formatListTime(issue.lastSuccessAt, now, "없음")}{issue.deferral ? <> · 마지막 미룸 <span className="font-mono">{issue.deferral.reason}</span></> : null}</>;
+}
+/** 처리기의 제 일 못 함 중 따로 세운 조치가 맡는 것 — 작업 묶음 줄에 겹쳐 세우지 않는다 */
+const DEDICATED_DEGRADED = (issue: JobHealthIssue) => issue.kind === "degraded"
+  && ((issue.job === "uptime-ping" && issue.degraded?.code === "broad_failure_held") || issue.job === "email-outbox-send");
+const maxTone = (...tones: ("hold" | "critical" | null | undefined)[]) =>
+  tones.includes("critical") ? "critical" as const : tones.includes("hold") ? "hold" as const : null;
+/** 보류에서 긴급까지 — job-health.ts 의 JOB_ESCALATE_FACTOR 와 같은 4배 */
+const ESCALATE = 4;
+/** Qwen 직접 서버 물러나기 — 1분에서 두 배씩 15분까지라 n번째 탈 전까지 누적은 Σ min(15, 2^(k-1))분: 6번째 = 30분, 12번째 = 2시간 */
+const QWEN_HOLD_FAILURES = 6;
+const QWEN_CRITICAL_FAILURES = 12;
+/** X 하루 보고 — 하루 한 번이라 3일(보고 세 번)을 넘기면 긴급, 후보 0 은 이틀(두 번)이면 보류·그 4배면 긴급 */
+const X_CRITICAL_HOURS = 72;
+const X_ZERO_HOLD_RUNS = 2;
 
 /** 조치할 일과 화면 조각이 함께 쓰는 판단 — 웹 인스턴스, 워커 진행, 검색 점검, GitHub 한도, AI 연결 */
 export function deriveStatus(inputs: ActionInputs) {
@@ -145,6 +202,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   const { ageMs, states, web, healthObservation, health, quota, agent, agentInstance, workerProgress } = derived;
   const now = ops.fetchedAt;
   const failedJobs = jobStates.filter((row) => row.lastError);
+  const healthIssues = deriveJobHealth(inputs, workerProgress);
   const actions: ActionItem[] = [];
   const unavailable = [[roles, "roles", "역할·예비", ACTION_LINKS.roles], [models, "models", "모델", ACTION_LINKS.models],
     [throughput, "throughput", "저장 진행", ACTION_LINKS.jobs], [attention, "attention", "제품 운영 집계", ACTION_LINKS.jobs]] as const;
@@ -227,6 +285,20 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     });
   }
   /**
+   * 돌기는 하는데 제 일을 못 하는 작업(job-health.ts) — 던지지 않고 실패를 삼키거나(검색 실패·키 없음·서버 없음), 미루기만 하며 성공하지 못한다.
+   * 전에는 lastRunAt 만 보고 초록이었다. 보류: 성공이 주기 6번(최소 30분) 넘게 끊김 또는 제 일 못 함이 잇달아 2번(최소 30분어치), 긴급: 그 4배.
+   */
+  const jobIssues = healthIssues.filter((issue) => !DEDICATED_DEGRADED(issue));
+  if (jobIssues.length > 0) {
+    const critical = jobIssues.some((issue) => issue.level === "critical");
+    actions.push({
+      key: "job-health", tone: critical ? "critical" : "hold", count: jobIssues.length, unit: "개",
+      title: critical ? "작업이 오래 제 일을 하지 못합니다" : "돌기는 하는데 제 일을 하지 못하는 작업",
+      detail: <>{joined(jobIssues.map((issue) => jobHealthLine(issue, now)), " · ")} — 실행은 됐지만 성공으로 세지 않았습니다. 까닭 코드로 설정·키·바깥 서버를 확인합니다.</>,
+      action: { label: "작업 흐름", href: jobIssues.length === 1 ? jobHref(jobIssues[0].job) : ACTION_LINKS.jobs },
+    });
+  }
+  /**
    * 사람 몫 — 심사 큐의 "직접 판단"·"확정만 하면 됨"과 같은 수(humanQueueOverview). 전에는 보류 전체(AI·2차 대기 포함)를
    * "사람이 가려야 할 후보"로, 보류가 아닌 후보까지 센 2차 칩 합을 "2차 심사 확인"으로 보여 심사 큐와 숫자가 갈렸다.
    */
@@ -278,6 +350,19 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "down", tone: "critical", count: downCount, unit: "건", title: "응답하지 않는 공개 제품",
       detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
       action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown },
+    });
+  }
+  /**
+   * 생존 확인의 광역 실패 보류(uptime.ts) — 한 회차의 30% 넘게 실패하면 이 서버 쪽 문제로 보고 세지 않고 확인 시각만 넘긴다.
+   * 그래서 M3 네트워크가 오래 끊겨도 "응답 없음"·"생존 확인 밀림"은 0 으로 남았다. 보류가 잇달아 이어지면(30분어치) 올리고 그 4배면 긴급.
+   */
+  const uptimeHeld = healthIssues.find((issue) => issue.job === "uptime-ping" && issue.kind === "degraded" && issue.degraded?.code === "broad_failure_held");
+  if (uptimeHeld?.degraded) {
+    actions.push({
+      key: "uptime-held", tone: uptimeHeld.level, count: uptimeHeld.degraded.streak, unit: "회", title: "생존 확인이 광역 실패로 판정을 보류하고 있습니다",
+      detail: <>{job("uptime-ping")} 회차가 잇달아 {n(uptimeHeld.degraded.streak)}번 30% 넘게 실패해 이 서버 쪽 문제로 보고 세지 않았습니다(시작 {formatListTime(uptimeHeld.degraded.since, now)}{uptimeHeld.degraded.detail ? ` · 마지막 ${uptimeHeld.degraded.detail}` : ""}).
+        {" "}그동안 응답 없음·생존 확인 밀림 수는 0 으로 보입니다 — 확인하는 서버(M3)의 네트워크·DNS·IP 평판을 확인합니다.</>,
+      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
     });
   }
   /**
@@ -352,6 +437,23 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
     });
   }
+  /**
+   * 바깥 오류로 멈춘 단계(worker-progress.ts upstream_stalled) — 오래(30분) 기다린 일감이 있는데 공급자·작업 오류가 이어진다.
+   * 진행 판정은 이것을 경보로 셌는데 조치에는 오르지 않았다. 다시 띄워도 풀리지 않는다 — 2시간(보류 30분의 4배)이면 긴급.
+   */
+  const upstreamStages = workerProgress?.stages.filter((row) => row.alarm && row.reason === "upstream_stalled") ?? [];
+  if (upstreamStages.length > 0) {
+    const age = (row: typeof upstreamStages[number]) => row.providerErrorMinutes ?? row.oldestMinutes ?? 0;
+    const upstreamJob = upstreamStages.length === 1 ? upstreamStages[0].job : undefined;
+    actions.push({
+      key: "stage-upstream", tone: upstreamStages.some((row) => age(row) >= 30 * ESCALATE) ? "critical" : "hold", count: upstreamStages.length, unit: "단계",
+      title: "바깥 오류로 단계가 나아가지 않습니다",
+      detail: <>{joined(upstreamStages.map((row) => <>{throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage}
+        {typeof row.waiting === "number" ? ` 대기 ${n(row.waiting)}건` : ""} · {formatWait(age(row) / 60)}째{row.errors5m ? ` · 최근 5분 오류 ${n(row.errors5m)}` : ""}</>), " · ")}
+        {" "}— 오래 기다린 일감이 있는데 공급자·작업 오류가 이어집니다. 워커를 다시 띄워도 풀리지 않습니다 — 작업 상세의 마지막 오류와 GitHub 한도·인증·모델 연결을 확인합니다.</>,
+      action: { label: "작업 흐름", href: upstreamJob ? jobHref(upstreamJob) : ACTION_LINKS.jobs },
+    });
+  }
   // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
   const failingModels = (models ?? []).filter((row) => row.calls1h >= 10 && row.failed1h / row.calls1h >= 0.2);
   if (failingModels.length > 0) {
@@ -359,6 +461,27 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "model-failures", tone: "hold", count: failingModels.length, unit: "자리", title: "모델 호출이 자주 실패합니다",
       detail: <>{failingModels.map((row) => `${row.label} ${row.model ? modelName(row.model) : ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
       action: { label: "모델 연결", href: ACTION_LINKS.models },
+    });
+  }
+  /**
+   * Qwen 직접 서버의 물러나기(qwen-endpoint-backoff.ts) — 감사 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 모두 멈춘다.
+   * 감사 화면에만 보였다. 6번째 탈(누적 30분)이면 보류, 12번째(누적 2시간)면 긴급.
+   * 부르는 쪽이 없어 묵은 관측(물러나기도 끝났고 30분 넘게 그대로)은 올리지 않는다.
+   */
+  const qwen = ops.observations.find((row) => row.key === QWEN_ENDPOINT_OBSERVATION)?.value as
+    { failures?: unknown; retryAt?: unknown; lastError?: unknown; at?: unknown } | undefined;
+  const qwenFailures = typeof qwen?.failures === "number" ? qwen.failures : 0;
+  const qwenRetryAt = typeof qwen?.retryAt === "string" ? Date.parse(qwen.retryAt) : Number.NaN;
+  const qwenAt = typeof qwen?.at === "string" ? Date.parse(qwen.at) : Number.NaN;
+  const qwenLive = qwenRetryAt > Date.parse(now) || Date.parse(now) - qwenAt <= 30 * 60_000;
+  if (qwenFailures >= QWEN_HOLD_FAILURES && qwenLive) {
+    actions.push({
+      key: "qwen-backoff", tone: qwenFailures >= QWEN_CRITICAL_FAILURES ? "critical" : "hold", count: qwenFailures, unit: "회",
+      title: `Qwen 직접 서버(${qwenDirectServerLabel()})가 잇달아 실패해 물러나 있습니다`,
+      detail: <>연속 {n(qwenFailures)}번{typeof qwen?.lastError === "string" ? <> · 마지막 <span className="font-mono">{qwen.lastError}</span></> : null}
+        {Number.isFinite(qwenRetryAt) ? ` · 다음 시도 ${formatListTime(new Date(qwenRetryAt).toISOString(), now)}` : ""}
+        {" "}— 그동안 감사 Qwen 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 묻지 않습니다. 서버와 vLLM 이 떠 있는지 확인합니다.</>,
+      action: { label: "감사", href: ACTION_LINKS.audit },
     });
   }
   // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
@@ -397,6 +520,55 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, unit: "건", title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
       detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
       action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+    });
+  }
+  /**
+   * 알림 메일(email-health.ts) — 발신 설정이 없거나 Resend 가 키·도메인·한도로 거절하면 경고 로그만 남기고 미루다 하루 뒤 닫았다.
+   * 발송함의 결과와 보내는 잡의 제 일 못 함(설정 없음·공급자 거절)을 한 줄에 모은다.
+   */
+  const emailJob = healthIssues.find((issue) => issue.job === "email-outbox-send" && issue.kind === "degraded");
+  const outbox = inputs.email?.outbox ?? null;
+  const outboxTone = maxTone(outbox ? emailOutboxLevel(outbox) : null, emailJob?.level);
+  if (outboxTone) {
+    const undelivered = (outbox?.unknown ?? 0) + (outbox?.expired ?? 0) + (outbox?.pendingOverdue ?? 0);
+    actions.push({
+      key: "email-outbox", tone: outboxTone, count: undelivered || outbox?.pending || 0, unit: "통", title: "알림 메일이 나가지 않습니다",
+      detail: <>{outbox ? <>최근 이틀 결과 모름 {n(outbox.unknown)} · 못 보내고 하루 지나 닫음 {n(outbox.expired)} · 거절 {n(outbox.rejected)} · 보냄 {n(outbox.accepted)} · 대기 {n(outbox.pending)}
+        {outbox.pendingOverdue > 0 ? `(1시간 넘음 ${n(outbox.pendingOverdue)}${outbox.oldestPendingMinutes !== null ? `, 가장 오래 ${formatWait(outbox.oldestPendingMinutes / 60)}` : ""})` : ""}</> : "발송함 결과를 읽지 못했습니다"}
+        {emailJob ? <> · {jobHealthLine(emailJob, now)}</> : null}
+        {" "}— maintenance 의 LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM·PUBLIC_AUTH_SECRET 과 Resend 도메인·한도를 확인합니다. 하루가 지난 메일은 보내지 않고 닫습니다.</>,
+      action: { label: "메일 작업", href: jobHref("email-outbox-send") },
+    });
+  }
+  // 로그인 코드 메일 — 웹이 그 자리에서 보낸다(잡이 아니다). 한 통이라도 실패하면 보류, 가장 최근 세 통이 모두 실패면 지금 막힌 것이라 긴급
+  const login = inputs.email?.login ?? null;
+  const loginTone = login ? loginEmailLevel(login) : null;
+  if (login && loginTone) {
+    actions.push({
+      key: "login-email", tone: loginTone, count: login.failed24h, unit: "통",
+      title: loginTone === "critical" ? "로그인 코드 메일이 나가지 않습니다" : "로그인 코드 메일 일부가 실패했습니다",
+      detail: <>최근 24시간 {n(login.total24h)}통 중 거절·결과 모름 {n(login.failed24h)}통{loginTone === "critical" ? " · 가장 최근 세 통이 모두 실패" : ""}
+        {" "}— 웹의 LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM 과 Resend 도메인 인증·한도를 확인합니다. 그동안 메일 로그인은 코드를 받지 못합니다(GitHub 로그인은 그대로).</>,
+      action: { label: "웹 관측", href: ACTION_LINKS.roles },
+    });
+  }
+  /**
+   * 랭킹 집계(ranking-refresh) — 주기가 없어(click-rollup 이 끝나며 요청한다) 작업 띠에서 늘 초록이었고, 진단 탭의 글자색만 바뀌었다.
+   * 공개 화면이 "오래됨"을 붙이는 2시간(RANKING_STALE_MS)이면 보류, 그 4배면 긴급. 한 번도 돌지 않은 새 환경은 세우지 않는다.
+   */
+  const ranking = states.get("ranking-refresh");
+  const rankingSuccess = asDate(ranking?.lastSuccessAt);
+  const rankingAge = rankingSuccess ? Date.parse(now) - rankingSuccess.getTime() : ranking?.lastRunAt ? Number.POSITIVE_INFINITY : null;
+  if (rankingAge !== null && rankingAge > RANKING_STALE_MS && !isPausedJob(ranking)) {
+    const rollup = states.get("click-rollup");
+    actions.push({
+      key: "ranking-stale", tone: rankingAge > RANKING_STALE_MS * ESCALATE ? "critical" : "hold", elapsed: true,
+      count: Number.isFinite(rankingAge) ? Math.floor(rankingAge / 3_600_000) : "없음", unit: Number.isFinite(rankingAge) ? "시간" : "상태",
+      title: "랭킹이 2시간 넘게 갱신되지 않았습니다",
+      detail: <>{job("ranking-refresh")} 마지막 성공 {formatListTime(rankingSuccess?.toISOString() ?? null, now, "없음")}{ranking?.lastError ? " · 마지막 회차 실패" : ""}
+        {" "}· {job("click-rollup")} 마지막 성공 {formatListTime(asDate(rollup?.lastSuccessAt)?.toISOString() ?? null, now, "없음")}
+        {" "}— 집계가 끝나야 랭킹을 요청합니다. 공개 화면은 랭킹에 &ldquo;오래됨&rdquo;을 붙입니다.</>,
+      action: { label: "랭킹 작업", href: jobHref("ranking-refresh") },
     });
   }
   if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
@@ -476,20 +648,55 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   // X 수집기(osaka-smoke)의 하루 보고(v8 PR9) — 이미 읽은 관측 줄에서 꺼낸다(새 쿼리 없음).
   // 받는 주소가 꺼져 있거나(비밀 없음), 아직 보고가 없거나(연결 전), 마지막 보고가 꺼짐(disabled)이면 띄우지 않는다.
   const x = readXStatus(ops.observations, now);
+  const hoursSince = (at: string | null) => at ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(at)) / 3_600_000)) : 0;
   if (x.state === "stale" || x.state === "error" || x.state === "invalid") {
-    const hoursSince = (at: string | null) => at ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(at)) / 3_600_000)) : 0;
     const received = formatListTime(x.receivedAt, now);
     const mode = x.report?.mode === "live" ? "실제 수집(live)" : "시험 실행(dry-run)";
+    // 끊김·읽기 실패는 마지막으로 받은 때부터, 오류는 마지막 성공부터(없으면 받은 때부터) — 숫자라야 24시간 변화·숨김이 된다
+    const hours = hoursSince(x.state === "error" ? x.report?.lastSuccessAt ?? x.receivedAt : x.receivedAt);
     actions.push({
-      key: "x-status", tone: "hold", unit: "시간", elapsed: true,
-      // 끊김·읽기 실패는 마지막으로 받은 때부터, 오류는 마지막 성공부터(없으면 받은 때부터) — 숫자라야 24시간 변화·숨김이 된다
-      count: hoursSince(x.state === "error" ? x.report?.lastSuccessAt ?? x.receivedAt : x.receivedAt),
+      // 하루 한 번 오는 보고가 사흘(세 번) 넘게 없거나 오류가 사흘 넘게 이어지면 긴급 — 확인함(7일 숨김)도 긴급은 가리지 않는다
+      key: "x-status", tone: hours >= X_CRITICAL_HOURS ? "critical" : "hold", unit: "시간", elapsed: true,
+      count: hours,
       title: x.state === "stale" ? "X 수집 보고가 끊겼습니다" : x.state === "error" ? "X 수집기가 오류를 보고했습니다" : "X 수집 보고를 읽지 못했습니다",
       detail: x.state === "stale"
         ? <>마지막 보고 {received}(받은 시각) · {mode} — 하루 한 번 오는 보고가 {X_STATUS_STALE_HOURS}시간 넘게 없습니다. osaka-smoke 의 X 수집 타이머와 보고 전송을 확인합니다.</>
         : x.state === "error"
           ? <>오류 <span className="font-mono">{x.report?.error}</span> · {mode} · 마지막 성공 {formatListTime(x.report?.lastSuccessAt ?? null, now, "없음")} · 받은 시각 {received} — 수집기 상태와 로그를 확인합니다. 일부러 끈 것이면 꺼짐(disabled)으로 보고하게 합니다.</>
           : <>받은 시각 {received} — 저장된 보고의 모양이 지금 코드와 맞지 않습니다. 수집기를 다시 실행해 새 보고를 받습니다.</>,
+      action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
+    });
+  }
+  /**
+   * 게시물 전달 — 하루 보고는 후보 수만 싣고, 게시물 보고(x-posts)를 웹이 거절했는지는 osaka 의 status.json 에만 남았다.
+   * 끝난 실제 수집(completedLiveRun)이 후보를 냈으면 같은 실행의 게시물 보고가 먼저 와 있어야 한다(수집기는 게시물을 먼저 보낸다) —
+   * 웹이 받은 게시물 보고의 수집 시각이 그 실행보다 앞이면 전달이 어긋났다. 사흘(세 번) 넘게 어긋나면 긴급.
+   */
+  if (x.state === "ok" && x.report && completedLiveRun(x.report) && x.report.candidates > 0) {
+    const posts = ops.observations.find((row) => row.key === X_POSTS_KEY);
+    const postsRunAt = typeof (posts?.value as { observedAt?: unknown } | undefined)?.observedAt === "string"
+      ? Date.parse((posts!.value as { observedAt: string }).observedAt) : Number.NaN;
+    const runAt = Date.parse(x.report.lastRunAt!);
+    if (!(postsRunAt >= runAt)) {
+      const missedHours = Number.isFinite(postsRunAt) ? Math.floor((runAt - postsRunAt) / 3_600_000) : null;
+      actions.push({
+        key: "x-delivery", tone: missedHours !== null && missedHours >= X_CRITICAL_HOURS ? "critical" : "hold", count: x.report.candidates, unit: "건",
+        title: "X 수집 결과가 웹에 들어오지 않았습니다",
+        detail: <>{formatListTime(x.report.lastRunAt, now)} 실제 수집이 후보 {n(x.report.candidates)}건을 냈는데 같은 실행의 게시물 보고를 받지 못했습니다
+          {" "}· 마지막으로 받은 게시물 보고 {Number.isFinite(postsRunAt) ? formatListTime(new Date(postsRunAt).toISOString(), now) : "없음"}
+          {" "}— osaka-smoke 의 status.json(reports.posts)에 웹이 돌려준 응답이 있습니다. 서명 비밀·주소(X_POSTS_REPORT_URL)·형식을 확인합니다.</>,
+        action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
+      });
+    }
+  }
+  // 후보 0 이 이틀 — 끝난 실제 수집이 잇달아 후보를 내지 못했다(검색어·요금제·연산자 문제). 그 4배(8일)면 긴급
+  const xRuns = parseXStatusRuns(ops.observations.find((row) => row.key === X_STATUS_RUNS_KEY)?.value);
+  if ((x.state === "ok" || x.state === "error") && x.report?.mode === "live" && xRuns && xRuns.zeroRuns >= X_ZERO_HOLD_RUNS) {
+    actions.push({
+      key: "x-candidates", tone: xRuns.zeroRuns >= X_ZERO_HOLD_RUNS * ESCALATE ? "critical" : "hold", count: xRuns.zeroRuns, unit: "일",
+      title: "X 수집이 이틀 넘게 후보를 내지 못했습니다",
+      detail: <>끝난 실제 수집 {n(xRuns.zeroRuns)}번이 잇달아 후보 0건(처음 {formatListTime(xRuns.zeroSince, now, "모름")}) — 읽기는 하루 10건을 그대로 씁니다.
+        {" "}검색어(좋아요 하한)와 X 검색 응답 코드를 확인합니다.</>,
       action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
     });
   }
@@ -526,7 +733,7 @@ export function actionCounts(items: ActionItem[]): Record<string, number> {
 }
 
 /**
- * 메뉴의 "긴급 N건" 배지 — 운영센터와 같은 buildActions 로 센 critical 수.
+ * 메뉴의 "긴급 N건" 배지 — 운영센터와 같은 buildActions 로 센 critical 수. 긴급이 없으면 작업 이상 보류(BADGED_HOLD_KEYS)를 주황으로 단다.
  *
  * 레이아웃은 모든 관리자 화면 앞에 서므로 화면을 기다리게 하지 않는다 — 30초 들고 있고, 그 뒤 5분 안이면 지난 값을 주며
  * 뒤에서 다시 센다. 처음(프로세스가 막 떴을 때)이거나 5분 넘게 묵었으면 배지 없이 그리고 뒤에서 센다.
@@ -534,27 +741,37 @@ export function actionCounts(items: ActionItem[]): Record<string, number> {
  * 관리자 화면을 몇 개 열어 두든 주 DB 에 더하는 일은 30초에 한 번이다.
  * 운영센터가 그릴 때마다 rememberCriticalCount 로 이 값을 맞춘다 — 운영센터를 열어 둔 동안 배지와 화면의 수가 같다.
  * 세기에 실패하면 지난 값을 그대로 두고, 5분이 넘으면 배지를 달지 않는다(null).
+ * 나눠 쓰는 값의 모양이 숫자 하나에서 {긴급·보류}로 바뀌어 이름공간을 새로 쓴다 — 배포 중 옛 웹이 둔 숫자를 새 웹이 잘못 읽지 않게.
  */
-const criticalCount = sharedStale<number>({ namespace: "admin:critical-actions", ttlMs: 30_000, staleMs: 5 * 60_000, store: sharedStore });
+export type ActionBadgeCounts = { critical: number; hold: number };
+const badgeCounts = sharedStale<ActionBadgeCounts>({ namespace: "admin:action-badge", ttlMs: 30_000, staleMs: 5 * 60_000, store: sharedStore });
 
-export function rememberCriticalCount(items: ActionItem[]): number {
-  const count = items.filter((item) => item.tone === "critical").length;
-  criticalCount.put("count", count);
-  return count;
+export function countBadgeActions(items: ActionItem[]): ActionBadgeCounts {
+  return { critical: items.filter((item) => item.tone === "critical").length,
+    hold: items.filter((item) => item.tone === "hold" && BADGED_HOLD_KEYS.has(item.key)).length };
 }
 
-export async function criticalActionCount(): Promise<number | null> {
-  return criticalCount.get("count", async () => {
+export function rememberCriticalCount(items: ActionItem[]): number {
+  const counts = countBadgeActions(items);
+  badgeCounts.put("count", counts);
+  return counts.critical;
+}
+
+export async function actionBadgeCounts(): Promise<ActionBadgeCounts | null> {
+  return badgeCounts.get("count", async () => {
     try {
       const inputs = await loadActionInputs(await getSettings());
       const items = buildActions(inputs, deriveStatus(inputs));
-      const count = items.filter((item) => item.tone === "critical").length;
       // 아무도 운영센터를 열지 않는 날에도 24시간 변화를 잴 수 있게 시간별 수를 남긴다(55분에 한 번만 적는다)
       await recordAttentionSample(actionCounts(items)).catch(warn("operations.attention_sample_failed"));
-      return count;
+      return countBadgeActions(items);
     } catch (error) {
       warn("operations.critical_count_failed")(error);
       throw error;
     }
   });
+}
+
+export async function criticalActionCount(): Promise<number | null> {
+  return (await actionBadgeCounts())?.critical ?? null;
 }

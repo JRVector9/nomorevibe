@@ -84,6 +84,22 @@ export default async function AdminTalkPage({ searchParams }: Props) {
   const pages = Math.max(1, Math.ceil(listed.total / TALK_ADMIN_PAGE_SIZE));
   const count = (n: number) => n.toLocaleString("ko-KR");
   const seen = (source: SocialSource) => summary.lastSeenAt[source] ? formatListTime(summary.lastSeenAt[source]!.toISOString(), now.toISOString()) : "아직 없음";
+  /**
+   * 수집 잡 한 줄 — "마지막 수집"은 진짜 성공 시각이다(전에는 잡을 집은 시각이라 검색이 막혀도 최신으로 보였다).
+   * 검색이 막혀 제 일을 못 한 회차가 이어지면 빨강으로, 끝난 실패는 회색으로 마지막 것을 보인다. 던진 실패(lastError)는 그대로.
+   */
+  const jobLine = (state: typeof job) => {
+    const at = (value: Date | string | null | undefined) => value ? formatListTime(new Date(value).toISOString(), now.toISOString()) : "아직 없음";
+    const failing = state?.degraded;
+    // 끝난 실패는 일주일 안의 것만 — 그보다 오래된 것은 지난 이야기다
+    const past = !failing && state?.lastDegraded && now.getTime() - Date.parse(state.lastDegraded.at) <= 7 * 86_400_000 ? state.lastDegraded : null;
+    return <>
+      {at(state?.lastSuccessAt)}
+      {failing && <span className="text-down"> · 지금 실패 중 <span className="font-mono">{failing.code}</span>{failing.detail ? ` (${failing.detail})` : ""} · 연속 {failing.streak}회 · {at(failing.since)}부터 · 마지막 시도 {at(state?.lastRunAt)}</span>}
+      {past && <span className="text-fg-3"> · 마지막 실패 <span className="font-mono">{past.code}</span> {at(past.at)}</span>}
+      {state?.lastError && <span className="text-down"> · 마지막 오류 {state.lastError.slice(0, 120)}</span>}
+    </>;
+  };
 
   // 거르기를 이어 가고, 거르기가 바뀌면 첫 쪽부터
   const href = (next: Partial<TalkAdminFilter> & { page?: number }) => {
@@ -142,14 +158,12 @@ export default async function AdminTalkPage({ searchParams }: Props) {
         /talk·홈·상세에는 공개 제품에 이어진 글 중 기준({thresholdLabel("hn")}, {thresholdLabel("x")}, {thresholdLabel("bluesky")})을 넘은 저장소만, 최근 {VISIBLE_DAYS}일 글만 오릅니다(X·Bluesky는 마지막 확인 뒤 {X_HOURS}·{BLUESKY_HOURS}시간).
         홈 첫 화면 1위는 여기서 허용한 제품만 오릅니다.
       </p>
-      {/* 세 시각은 뜻이 다르다 — HN·Bluesky 는 잡이 마지막 회차를 시작한 때, X 는 수집기가 보낸 글을 마지막으로 받은 때(글의 마지막 확인) */}
+      {/* 세 시각은 뜻이 다르다 — HN·Bluesky 는 잡이 마지막으로 성공한 때(실패가 이어지면 빨강으로 까닭·마지막 시도), X 는 수집기가 보낸 글을 마지막으로 받은 때(글의 마지막 확인) */}
       <p className="mt-2 text-[13px] text-fg-2">
         공개: <b className={publicOn ? "text-up" : "text-fg"}>{publicOn ? "켜짐" : "꺼짐 — 관리자에게만 미리보기"}</b>
-        {" · "}<span title="hn-talk 잡이 마지막 회차를 시작한 시각">HN 회차 시작: {job?.lastRunAt ? formatListTime(job.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}</span>
-        {job?.lastError && <span className="text-down"> · 마지막 오류 {job.lastError.slice(0, 120)}</span>}
+        {" · "}<span title="hn-talk 잡이 마지막으로 제 일을 끝낸(성공한) 시각 — 검색이 막힌 회차는 성공이 아니다">HN 마지막 성공: {jobLine(job)}</span>
         {" · "}<span title="X 수집기가 보낸 글을 마지막으로 받은 시각(글의 마지막 확인 중 가장 늦은 것)">X 글 마지막 받음: {seen("x")}</span>
-        {" · "}<span title="bluesky-talk 잡이 마지막 회차를 시작한 시각">Bluesky 회차 시작: {blueskyJob?.lastRunAt ? formatListTime(blueskyJob.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}</span>
-        {blueskyJob?.lastError && <span className="text-down"> · 마지막 오류 {blueskyJob.lastError.slice(0, 120)}</span>}
+        {" · "}<span title="bluesky-talk 잡이 마지막으로 제 일을 끝낸(성공한) 시각 — 검색이 막힌 회차는 성공이 아니다">Bluesky 마지막 성공: {jobLine(blueskyJob)}</span>
         {" · "}<a href="/talk" target="_blank" rel="noopener" className="text-accent hover:underline">/talk 미리보기</a>
       </p>
 

@@ -39,7 +39,8 @@ afterEach(() => { if (original === undefined) delete process.env.ABCLLM_API_KEY;
 it("키가 없으면 아무것도 하지 않는다", async () => {
   delete process.env.ABCLLM_API_KEY;
   const ctx = context();
-  expect(await translateReasons(ctx)).toEqual({ done: true });
+  // 아무것도 하지 않은 틱은 성공이 아니다 — 러너가 성공 시각을 옮기지 않고 조치할 일이 올린다
+  expect(await translateReasons(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } });
   expect(mocks.untried).not.toHaveBeenCalled();
   expect(mocks.retry).not.toHaveBeenCalled();
   expect(ctx.log).toHaveBeenCalledWith("translate.skipped", { reason: "no_key" });

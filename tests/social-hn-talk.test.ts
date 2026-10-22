@@ -132,20 +132,22 @@ it('창을 다 못 읽은 회차는 남기기만 하고 지워진 글 판정은 
   expect(ctx.save).not.toHaveBeenCalled();
 });
 
-it('검색이 실패하면 아무것도 쓰지 않는다', async () => {
+it('검색이 실패하면 아무것도 쓰지 않고, 성공이 아니라 제 일 못 함으로 넘긴다', async () => {
   const ctx = context();
   const outcome = await collectHnTalk(ctx, async () => json({ error: 'busy' }, 503), () => NOW);
-  expect(outcome).toEqual({ done: false, cursor: null });
+  // 전에는 그냥 돌아와 러너가 성공으로 적었다(마지막 성공 = 지금, 마지막 오류 없음) — 관리자 화면이 초록이었다
+  expect(outcome).toEqual({ done: false, cursor: null, degraded: { code: 'search_failed', detail: 'HN 검색 http_503 (1쪽)' } });
   expect(mocks.record).not.toHaveBeenCalled();
   expect(ctx.log).toHaveBeenCalledWith('social.hn_talk_failed', { reason: 'http_503', page: 0 });
 });
 
-it('다시 묻기가 실패하면 내리지 않는다', async () => {
+it('다시 묻기가 실패하면 내리지 않고, 새 글은 읽었어도 제 일 못 함(lookup_failed)으로 넘긴다', async () => {
   mocks.missing.mockResolvedValue([{ id: 31, externalId: '900' }]);
   const request: CappedRequest = async url => String(url).includes('search_by_date')
     ? json({ nbPages: 1, hits: [] }) : json({}, 502);
-  await collectHnTalk(context(), request, () => NOW);
+  const outcome = await collectHnTalk(context(), request, () => NOW);
   expect(mocks.gone).not.toHaveBeenCalled();
+  expect(outcome).toEqual({ done: true, cursor: { lastRunAt: NOW.toISOString() }, degraded: { code: 'lookup_failed', detail: 'HN 다시 묻기 http_502' } });
 });
 
 it('수집 전체가 꺼져 있으면 요청하지 않는다', async () => {

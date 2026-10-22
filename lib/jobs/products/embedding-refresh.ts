@@ -44,10 +44,11 @@ export async function refreshProductEmbeddings(
     try {
       vectors = await embed(pending.map((row) => row.text), ctx.signal);
     } catch (error) {
-      // 서버가 없거나 쉬는 것은 이 제품들의 문제가 아니다 — 다음 틱에 다시 본다
+      // 서버가 없거나 쉬는 것은 이 제품들의 문제가 아니다 — 다음 틱에 다시 본다. 다만 성공은 아니다: 이 워커(text)가 본 서버 상태를
+      // 남긴다(웹의 모델 서버 확인은 웹 컨테이너의 EMBEDDING_URL 만 본다 — 워커 쪽 주소가 없거나 닿지 않으면 여기서만 보인다)
       if (!(error instanceof EmbeddingUnavailableError)) throw error;
       ctx.log("product_embedding.unavailable", { written, reason: error.message });
-      return { done: true };
+      return { done: true, degraded: { code: "embedding_unavailable", detail: `임베딩 서버 ${error.message}${written ? ` · 이번 틱 ${written}건은 씀` : ""}` } };
     }
     const values = sql.join(pending.map((row, i) =>
       sql`(${row.id}, ${EMBEDDING_MODEL}, ${row.hash}, ${vectorLiteral(vectors[i])}::halfvec, now())`), sql`, `);

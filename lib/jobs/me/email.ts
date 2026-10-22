@@ -1,5 +1,11 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { pruneEmailOutbox, queueWeeklyDigests, sendPendingEmails } from "@/lib/me/email-outbox";
+import { pruneEmailOutbox, queueWeeklyDigests, sendPendingEmails, type OutboxTick } from "@/lib/me/email-outbox";
+
+const EMAIL_BLOCKED: Record<NonNullable<OutboxTick["blocked"]>, (tick: OutboxTick) => string> = {
+  sender_unconfigured: (tick) => `maintenance 에 발신 설정(LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM·PUBLIC_AUTH_SECRET)이 없어 ${tick.waiting}통이 기다립니다`,
+  provider_unavailable: () => "Resend 가 키·도메인·한도로 거절해 미뤘습니다",
+  compose_failed: () => "메일 글을 짓지 못해 미뤘습니다",
+};
 
 /**
  * 알림 메일 발송함을 비운다 — 이 프로세스에 발신 설정(LOGIN_EMAIL_*·PUBLIC_AUTH_SECRET)이 없으면 줄을 건드리지 않고
@@ -7,7 +13,10 @@ import { pruneEmailOutbox, queueWeeklyDigests, sendPendingEmails } from "@/lib/m
  */
 export async function sendEmailOutbox(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const tick = await sendPendingEmails({ lease: ctx.lease, hasBudget: ctx.hasBudget, signal: ctx.signal });
-  ctx.log("me.email_outbox_tick", tick);
+  const { blocked, ...counts } = tick;
+  ctx.log("me.email_outbox_tick", counts);
+  // 보내지 못한 틱은 성공이 아니다 — 까닭을 러너에 넘겨 운영센터(알림 메일 조치)가 보이게 한다
+  if (blocked) return { done: true, cursor: null, degraded: { code: blocked, detail: EMAIL_BLOCKED[blocked](tick) } };
   return { done: true, cursor: null };
 }
 

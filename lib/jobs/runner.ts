@@ -35,10 +35,21 @@ export type JobContext<C> = {
   signal?: AbortSignal;
 };
 export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_capacity" | "source_buffer";
-export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never }
-  | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never };
+/**
+ * 돌았지만 제 일을 못 했다 — 검색이 실패했거나, 설정·키·서버가 없어 아무것도 하지 않았거나, 판정을 보류한 틱.
+ *
+ * 처리기가 실패를 잡고 그냥 돌아오면 러너는 그 틱을 성공으로 적었다(lastSuccessAt=now, lastError=null) — 운영센터는 초록이었다.
+ * 이것을 돌려주면 러너는 요청·커서·잠금은 성공처럼 정리하되(같은 일을 30초마다 다시 두드리지 않는다) 성공 시각은 옮기지 않고,
+ * job:<name> 관측에 까닭(code·detail)과 연속 횟수(streak)·시작 시각(since)을 남긴다. 조치할 일(job-health.ts)이 그것으로 경보한다.
+ * - code: 짧은 소문자 코드(no_key·search_failed …). 모양이 틀리면 "unknown" 으로 적는다
+ * - detail: 사람이 읽을 짧은 까닭(300자까지). 비밀·주소·본문을 넣지 않는다
+ * - critical: 기다려도 풀리지 않고 해가 큰 것(자격 거절 등) — 연속 횟수를 기다리지 않고 바로 긴급으로 올린다
+ */
+export type JobDegraded = { code: string; detail?: string | null; critical?: boolean };
+export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never; degraded?: JobDegraded }
+  | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never; degraded?: never };
 export type RunResult =
-  | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true }
+  | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true; degraded?: string }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
   | { status: "deferred"; reason: JobDeferredReason; durationMs: number }
   | { status: "failed"; error: string; durationMs: number };
@@ -56,6 +67,31 @@ const LEASE_TAKEOVER = sql`now() - ${STALE_LOCK_MS} * interval '1 millisecond'`;
  * not_before 를 지우거나 30초 재시도로 덮으면 멈춘 작업이 저절로 다시 돈다.
  */
 const PAUSED = sql`${jobs.notBefore} > now() + ${PAUSED_AFTER_MS} * interval '1 millisecond'`;
+
+const DEGRADED_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+/** job:<name> 관측에 싣는 제 일 못 한 틱 — 모양을 고정한다(화면이 그대로 읽는다) */
+export function degradedObservation(degraded: JobDegraded, at: Date) {
+  const detail = typeof degraded.detail === "string" ? degraded.detail.replaceAll("\0", "").slice(0, 300) : "";
+  const iso = at.toISOString();
+  return { code: DEGRADED_CODE.test(degraded.code) ? degraded.code : "unknown", detail: detail || null,
+    critical: degraded.critical === true, at: iso, streak: 1, since: iso };
+}
+
+/**
+ * job:<name> 덮어쓰기. 이번 틱이 제 일 못 한 틱이면 지난 줄의 연속 횟수에 1을 더하고 시작 시각을 이어받는다.
+ * 제대로 끝난 틱이면 연속을 끊고, 마지막으로 못 한 까닭은 lastDegraded 로 남긴다(관리자 화면의 "마지막 오류").
+ */
+const JOB_OBSERVATION_MERGE = sql`excluded.value || CASE
+  WHEN jsonb_typeof(excluded.value->'degraded') = 'object' THEN jsonb_build_object('degraded', (excluded.value->'degraded') || jsonb_build_object(
+    'streak', CASE WHEN jsonb_typeof(${operationsObservations.value}->'degraded'->'streak') = 'number'
+      THEN least((${operationsObservations.value}->'degraded'->>'streak')::numeric + 1, 1000000000) ELSE 1 END,
+    'since', CASE WHEN jsonb_typeof(${operationsObservations.value}->'degraded'->'since') = 'string'
+      THEN ${operationsObservations.value}->'degraded'->'since' ELSE excluded.value->'degraded'->'at' END))
+  WHEN jsonb_typeof(${operationsObservations.value}->'degraded') = 'object'
+    THEN jsonb_build_object('lastDegraded', ${operationsObservations.value}->'degraded')
+  WHEN jsonb_typeof(${operationsObservations.value}->'lastDegraded') = 'object'
+    THEN jsonb_build_object('lastDegraded', ${operationsObservations.value}->'lastDegraded')
+  ELSE '{}'::jsonb END`;
 
 export async function runJob<C>(
   name: string,
@@ -227,7 +263,8 @@ export async function runJob<C>(
         notBefore: sourceReady
           ? sql`case when ${jobs.notBefore} > now() then ${jobs.notBefore} end`
           : sql`case when ${PAUSED} then ${jobs.notBefore} end`,
-        lastSuccessAt: sql`now()`, lastError: null, updatedAt: sql`now()`,
+        // 제 일 못 한 틱은 성공 시각을 옮기지 않는다 — lastSuccessAt 은 진짜 성공만 뜻한다. lastError 는 "던진 틱"이라 지운다
+        ...(outcome.degraded ? {} : { lastSuccessAt: sql`now()` }), lastError: null, updatedAt: sql`now()`,
       }).where(owned).returning({
         name: jobs.name,
         pendingReady: sql<boolean>`${jobs.requestedVersion} > ${jobs.processedVersion} and (${jobs.notBefore} is null or ${jobs.notBefore} <= now())`,
@@ -241,13 +278,15 @@ export async function runJob<C>(
         const [clock] = await tx.execute<{at:string}>(sql`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`);
         batchRecordedAt = clock.at;
       }
-      const value = { ...(batchResult ? {batchResult:{...batchResult,recordedAt:batchRecordedAt}} : {}), requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events };
+      const value = { ...(batchResult ? {batchResult:{...batchResult,recordedAt:batchRecordedAt}} : {}), requestedVersion: lease.requestedVersion, done: outcome.done, durationMs: Date.now()-startedAt, events,
+        ...(outcome.degraded ? { degraded: degradedObservation(outcome.degraded, observedAt) } : {}) };
       await tx.insert(operationsObservations).values({key:`job:${name}`,value,observedAt})
-        .onConflictDoUpdate({target:operationsObservations.key,set:{value,observedAt}});
+        .onConflictDoUpdate({target:operationsObservations.key,set:{value:JOB_OBSERVATION_MERGE,observedAt}});
       // 같은 ACK TX 에서 누적에 더한다 — job:<name> 의 마지막 회차와 어긋나지 않게. 누적이 실패해도(모양이 틀린 옛 줄 등) 틱은 성공이다:
       // savepoint 로 그 문장만 되돌리고 남긴다
       if (tally) {
-        try { await tx.transaction(async sp => { await sp.execute(jobTallyUpsert(name, { ...tally.counts(), "@ok": 1 })); }); }
+        // 제 일 못 한 틱도 회차(@ok)다 — 그중 몇 번이 못 했는지(@degraded)를 따로 센다
+        try { await tx.transaction(async sp => { await sp.execute(jobTallyUpsert(name, { ...tally.counts(), "@ok": 1, ...(outcome.degraded ? { "@degraded": 1 } : {}) })); }); }
         catch (error) { logger.warn("job.tally_failed", { job: name, ...dbErrorFields(error) }); }
       }
       if (batchResult) {
@@ -259,8 +298,11 @@ export async function runJob<C>(
       if (name === "click-rollup" && outcome.done) await requestJob("ranking-refresh", tx);
     });
     const durationMs = Date.now() - startedAt;
-    logger.info("job.completed", { job: name, done: outcome.done, durationMs });
-    return { status: "completed", done: outcome.done, durationMs, ...(sourceContinuation ? { sourceContinuation: true as const } : {}) };
+    const degraded = outcome.degraded ? degradedObservation(outcome.degraded, new Date()).code : null;
+    if (degraded) logger.warn("job.degraded", { job: name, done: outcome.done, durationMs, code: degraded });
+    else logger.info("job.completed", { job: name, done: outcome.done, durationMs });
+    return { status: "completed", done: outcome.done, durationMs, ...(sourceContinuation ? { sourceContinuation: true as const } : {}),
+      ...(degraded ? { degraded } : {}) };
   } catch (error) {
     await stopHeartbeat();
     // fenced DB: 실패 기록도 쓰기다. lease 는 두고(seal 이 회수하거나 만료된다) 멈춘다 — claim 거절과 같은 결과

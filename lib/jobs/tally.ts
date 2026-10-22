@@ -10,7 +10,7 @@ import { COLLECTOR_EVENTS } from "./collector-events";
  * 크롤러 활동 표가 멈춘 것처럼 보였다. 그래서 같은 이벤트 숫자를 시간 묶음에 더해 둔다 — 새 예약 잡 없이 runner 가 틱을 끝내며 쓴다.
  *
  * - 묶음 열쇠는 "h<YYYY-MM-DDTHH>|<지표>"(정시, 최근 25칸)와 "m<YYYY-MM-DDTHH:MM>|<지표>"(10분, 최근 7칸). DB 시계(UTC)다.
- * - 지표는 "<이벤트>#<필드>"(그 틱의 숫자 합)와 "<이벤트>"(나온 횟수), 틱 자체는 "@ok"·"@failed".
+ * - 지표는 "<이벤트>#<필드>"(그 틱의 숫자 합)와 "<이벤트>"(나온 횟수), 틱 자체는 "@ok"·"@failed"·"@degraded"(끝났지만 제 일을 못 한 틱 — @ok 에도 든다).
  * - 한 줄 upsert 가 지난 값과 합치고 창 밖 묶음을 버린다. 두 프로세스가 같이 써도(역할 인계 중) ON CONFLICT 가 행을 잠그고 더한다.
  * - 실패한 틱은 "@failed"와 lastFailedAt 만 남긴다(그 틱의 이벤트는 job:<name> 처럼 세지 않는다). 미룬 틱은 defer:<job> 이 맡는다.
  * - 화면은 이 키를 크롤러 활동에서만 따로 읽는다 — 관측 표 전체 읽기(operationsData·진행 판정)는 WITHOUT_JOB_TALLIES 로 뺀다.
@@ -76,7 +76,7 @@ export function tallyCounts(events: readonly TallyEvent[]): Record<string, numbe
 }
 
 /** 지난 값 열쇠의 모양 — 이 모양이 아니면 합치지 않고 버린다(손으로 고친 줄·옛 모양) */
-const STORED_KEY = String.raw`^(h[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}|m[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2})[|](@ok|@failed|[a-z][a-z0-9_.]{0,63}(#[A-Za-z][A-Za-z0-9_]{0,31})?)$`;
+const STORED_KEY = String.raw`^(h[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}|m[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2})[|](@ok|@failed|@degraded|[a-z][a-z0-9_.]{0,63}(#[A-Za-z][A-Za-z0-9_]{0,31})?)$`;
 const hourOf = (at: SQL) => sql`'h' || to_char(date_trunc('hour', ${at}), 'YYYY-MM-DD"T"HH24')`;
 const tenOf = (at: SQL) => sql`'m' || to_char(date_trunc('hour', ${at}) + floor(extract(minute FROM ${at}) / 10) * interval '10 minutes', 'YYYY-MM-DD"T"HH24:MI')`;
 const iso = (at: SQL) => sql`to_char(${at}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;

@@ -36,9 +36,10 @@ function eventLine(event: Totals["events"][number]) {
   const numbers = counters(event.counts);
   return `${event.label}${numbers ? ` ${numbers}` : ""}${event.times ? ` ${n(event.times)}회` : ""}`;
 }
-/** 누적 한 창의 머리 — "회차 60 · 실패 1 · 미룸 3" */
+/** 누적 한 창의 머리 — "회차 60 · 제 일 못 함 2 · 실패 1 · 미룸 3" */
 function tickLine(totals: Totals, deferred: number | null) {
-  return [`회차 ${n(totals.ticks)}`, totals.failed ? `실패 ${n(totals.failed)}` : null, deferred ? `미룸 ${n(deferred)}` : null].filter(Boolean).join(" · ");
+  return [`회차 ${n(totals.ticks)}`, totals.degraded ? `제 일 못 함 ${n(totals.degraded)}` : null, totals.failed ? `실패 ${n(totals.failed)}` : null,
+    deferred ? `미룸 ${n(deferred)}` : null].filter(Boolean).join(" · ");
 }
 const TOTALS_NOTE = "성공 회차의 숫자를 10분(최근 1시간)·정시(최근 24시간) 단위로 묶어 더합니다 — 최근 1시간은 최대 10분, 24시간은 이번 시를 포함한 24칸입니다. 실패한 회차의 숫자는 더하지 않고 횟수만 셉니다.";
 function TotalsCell({ row, failed }: { row: CrawlerActivityReport["jobs"][number]; failed: boolean }) {

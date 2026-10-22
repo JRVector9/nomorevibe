@@ -220,7 +220,12 @@ function settle(lease: JobLease | undefined, row: OutboxRow, result: Settled, er
   });
 }
 
-export type OutboxTick = { accepted: number; rejected: number; retry: number; unknown: number; skipped: number; deferred: number; waiting: number };
+export type OutboxTick = { accepted: number; rejected: number; retry: number; unknown: number; skipped: number; deferred: number; waiting: number;
+  /**
+   * 이 틱이 보내지 못한 까닭 — 발신 설정 없음(기다리는 줄이 있을 때만), Resend 가 키·도메인·한도로 거절, 글 짓기 실패.
+   * 잡이 이것을 제 일 못 함(degraded)으로 돌려준다 — 전에는 경고 로그뿐이라 운영센터가 초록이었다
+   */
+  blocked: "sender_unconfigured" | "provider_unavailable" | "compose_failed" | null };
 
 /**
  * 발송함을 비운다(email-outbox-send). 한 틱에 limit 통까지, 한 통씩 차례로.
@@ -230,12 +235,15 @@ export type OutboxTick = { accepted: number; rejected: number; retry: number; un
 export async function sendPendingEmails(options: {
   lease?: JobLease; hasBudget?: () => boolean; signal?: AbortSignal; fetcher?: typeof fetch; limit?: number;
 } = {}): Promise<OutboxTick> {
-  const tick: OutboxTick = { accepted: 0, rejected: 0, retry: 0, unknown: 0, skipped: 0, deferred: 0, waiting: 0 };
+  const tick: OutboxTick = { accepted: 0, rejected: 0, retry: 0, unknown: 0, skipped: 0, deferred: 0, waiting: 0, blocked: null };
   if (!emailSenderConfigured()) {
     const [row] = await onPrimary(() => db.execute<{ waiting: number }>(sql`
       select count(*)::int as waiting from (select 1 from ${emailOutbox} where ${emailOutbox.state} = 'pending' limit 1000) pending`));
     tick.waiting = Number(row?.waiting ?? 0);
-    if (tick.waiting) logger.warn("me.email_sender_unconfigured", { waiting: tick.waiting });
+    if (tick.waiting) {
+      logger.warn("me.email_sender_unconfigured", { waiting: tick.waiting });
+      tick.blocked = "sender_unconfigured";
+    }
     return tick;
   }
   // 상한까지 시도하고도 pending 으로 남은 줄(마지막 시도 중 죽었다) — 그 시도의 다음 시각이 지나면 결과를 모르는 채로 닫는다
@@ -256,6 +264,7 @@ export async function sendPendingEmails(options: {
       logger.error("me.email_compose_failed", { error: error instanceof Error ? error.message.slice(0, 120) : "unknown" });
       await settle(options.lease, row, "deferred", "compose_failed");
       tick.deferred += 1;
+      tick.blocked = "compose_failed";
       break;
     }
     if (!composed) {
@@ -272,6 +281,7 @@ export async function sendPendingEmails(options: {
       logger.error("me.email_provider_unavailable", {});
       await settle(options.lease, row, "deferred", "unavailable");
       tick.deferred += 1;
+      tick.blocked = "provider_unavailable";
       break;
     }
     const result: Settled = state === "unknown" && row.attempts < EMAIL_MAX_ATTEMPTS ? "retry" : state;

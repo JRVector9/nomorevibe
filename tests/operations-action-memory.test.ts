@@ -198,6 +198,18 @@ describe("메뉴 긴급 배지", () => {
     expect(calm.props.badges?.["/admin/status"]).toBeUndefined();
   });
 
+  it("긴급이 없으면 조용히 실패하던 작업의 보류를 주황 '작업 이상 N건'으로 단다 — 쌓인 일·원래 있던 보류는 세지 않는다", async () => {
+    const hold = (key: string) => ({ key, tone: "hold" as const, count: 1, unit: "개", title: key, detail: key });
+    const badge = async () => (await AdminLayout({ children: null }) as unknown as { props: { badges?: Record<string, unknown> } }).props.badges?.["/admin/status"];
+    expect(rememberCriticalCount([hold("job-health"), hold("email-outbox"), hold("review"), hold("model-servers")])).toBe(0);
+    expect(await badge()).toEqual({ label: "2", tone: "warn", title: "작업 이상 2건(보류)" });
+    // 긴급이 있으면 긴급 수만 빨강으로
+    rememberCriticalCount([hold("job-health"), { ...hold("down"), tone: "critical" }]);
+    expect(await badge()).toEqual({ label: "1", tone: "critical", title: "긴급 1건" });
+    rememberCriticalCount([hold("review"), hold("model-servers")]);
+    expect(await badge()).toBeUndefined();
+  });
+
   it("다시 센 뒤에도 시간별 수는 55분에 한 번만 남는다", async () => {
     const items = serveInputs();
     rememberCriticalCount(items);

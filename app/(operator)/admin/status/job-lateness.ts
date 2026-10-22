@@ -9,8 +9,10 @@ import type { StatusState } from "../components/StatusDot";
  *
  *   사람이 멈춤(not_before 가 먼 미래)   → idle ○ "멈춤(사람이 중단)"
  *   마지막 회차 오류                      → failed ■ "실패"
+ *   제 일 못 함·성공 끊김이 긴급          → failed ■ (job.health — 조치할 일과 같은 판단, lib/operations/job-health.ts)
  *   실행 기록 없음                        → idle ○ "실행 기록 없음"
  *   마지막 실행이 주기의 5배 이상 지남    → failed ■ "크게 지연"
+ *   제 일 못 함·성공 끊김이 보류          → delayed ▲ — 방금 돌았어도(돈 시각만 보면 실패를 삼킨 잡이 초록이었다)
  *   마지막 실행이 주기의 2배 이상 지남    → delayed ▲ "지연"
  *   그 밖(주기가 없는 잡 포함)            → ok ● "정상"
  *
@@ -21,7 +23,7 @@ export const JOB_STALLED_FACTOR = 5;
 
 export type JobLateness = {
   /** 까닭 — 멈춤·오류·기록 없음·크게 지연·지연·정상 */
-  kind: "paused" | "error" | "never" | "stalled" | "late" | "ok";
+  kind: "paused" | "error" | "degraded" | "never" | "stalled" | "late" | "ok";
   state: StatusState;
   /** 사람이 읽는 상태 — 점 옆·배지·상세 창에 쓴다 */
   text: string;
@@ -31,7 +33,8 @@ export type JobLateness = {
   intervalMs: number | null;
 };
 
-type JobTimes = { name: string; lastRunAt: string | Date | null; lastError: string | null; notBefore: string | Date | null };
+type JobTimes = { name: string; lastRunAt: string | Date | null; lastError: string | null; notBefore: string | Date | null;
+  health?: { level: "hold" | "critical"; text: string } | null };
 
 const ms = (value: string | Date) => typeof value === "string" ? Date.parse(value) : value.getTime();
 
@@ -43,8 +46,10 @@ export function jobLateness(job: JobTimes, now: string | Date): JobLateness {
   const base = { ratio, intervalMs };
   if (job.notBefore && ms(job.notBefore) - at > PAUSED_AFTER_MS) return { ...base, kind: "paused", state: "idle", text: "멈춤(사람이 중단)" };
   if (job.lastError) return { ...base, kind: "error", state: "failed", text: "실패" };
+  if (job.health?.level === "critical") return { ...base, kind: "degraded", state: "failed", text: job.health.text };
   if (lastRun === null) return { ...base, kind: "never", state: "idle", text: "실행 기록 없음" };
   if (ratio !== null && ratio >= JOB_STALLED_FACTOR) return { ...base, kind: "stalled", state: "failed", text: `크게 지연 · 주기의 ${Math.floor(ratio)}배` };
+  if (job.health) return { ...base, kind: "degraded", state: "delayed", text: job.health.text };
   if (ratio !== null && ratio >= JOB_LATE_FACTOR) return { ...base, kind: "late", state: "delayed", text: `지연 · 주기의 ${Math.floor(ratio)}배` };
   return { ...base, kind: "ok", state: "ok", text: "정상" };
 }

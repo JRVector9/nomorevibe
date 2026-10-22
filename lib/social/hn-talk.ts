@@ -59,7 +59,8 @@ export async function collectHnTalk(ctx: JobContext<HnTalkCursor>, request?: Cap
     const result = await fetchHn(hnDiscoverUrl(Math.floor(since.getTime() / 1000), HN_TALK_MIN_POINTS, page), request);
     if (!result.ok) {
       ctx.log("social.hn_talk_failed", { reason: result.reason, page });
-      return { done: false, cursor: ctx.cursor };
+      // 검색이 막힌 회차는 성공이 아니다 — 러너가 성공 시각을 옮기지 않고 까닭을 남긴다(관리자 /admin/talk·조치할 일)
+      return { done: false, cursor: ctx.cursor, degraded: { code: "search_failed", detail: `HN 검색 ${result.reason} (${page + 1}쪽)` } };
     }
     pages += 1;
     const kept = read(result.value);
@@ -78,13 +79,14 @@ export async function collectHnTalk(ctx: JobContext<HnTalkCursor>, request?: Cap
 
   // 지난번에 본 글이 창 안에 있는데 이번에 안 왔다 — ID로 다시 묻는다
   const missing = await postsMissingSince("hn", since, startedAt);
-  let gone = 0;
+  let gone = 0, lookupFailed: string | null = null;
   for (let index = 0; index < missing.length; index += HN_LOOKUP_BATCH) {
     if (!ctx.hasBudget()) break;
     const batch = missing.slice(index, index + HN_LOOKUP_BATCH);
     const result = await fetchHn(hnLookupUrl(batch.map(post => post.externalId)), request);
     if (!result.ok) {
       ctx.log("social.hn_talk_lookup_failed", { reason: result.reason });
+      lookupFailed = result.reason;
       break;
     }
     const back = new Set(result.value.hits.map(hit => hit.objectID));
@@ -96,5 +98,6 @@ export async function collectHnTalk(ctx: JobContext<HnTalkCursor>, request?: Cap
   ctx.log("social.hn_talk_collected", { found: found.length, unlinked: unlinked(found), skipped, ...recorded, pages, missing: missing.length, gone, expired, complete: true });
   const cursor = { lastRunAt: startedAt.toISOString() };
   await ctx.save(cursor);
-  return { done: true, cursor };
+  // 다시 묻기가 막히면 지워진 글을 내리지 못한다(원문 삭제 존중) — 새 글은 읽었어도 제 일을 다 하지 못한 회차다
+  return lookupFailed ? { done: true, cursor, degraded: { code: "lookup_failed", detail: `HN 다시 묻기 ${lookupFailed}` } } : { done: true, cursor };
 }

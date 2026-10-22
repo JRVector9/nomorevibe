@@ -3,7 +3,7 @@ import { inArray, sql } from "drizzle-orm";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { db } from "@/lib/db";
 import { jobs, operationsObservations } from "@/lib/db/schema";
-import { jobDeferralKey, readJobDeferrals, recordJobDeferral, writeJobDeferral } from "@/lib/jobs/deferral-observation";
+import { jobDeferralKey, readJobDeferrals, readLastJobDeferrals, recordJobDeferral, writeJobDeferral } from "@/lib/jobs/deferral-observation";
 import { runJob } from "@/lib/jobs/runner";
 import { operationsData } from "@/lib/operations/admin";
 import { ensureSchema } from "./setup";
@@ -75,4 +75,13 @@ it("keeps the existing primary reads (admin operationsData) as they were — def
   await writeJobDeferral({ key: jobDeferralKey(names.admin), reason: "source_buffer", counts: { source_buffer: 1 } });
   const data = await operationsData();
   expect(data.observations.some(row => row.key.startsWith("defer:"))).toBe(false);
+});
+
+it("성공 끊김 판정용 — 물은 잡의 마지막 미룸 까닭만 열쇠로 읽고, 묻지 않으면 읽지 않는다", async () => {
+  await writeJobDeferral({ key: jobDeferralKey(names.read), reason: "stage_blocked", counts: { stage_blocked: 1 } });
+  await writeJobDeferral({ key: jobDeferralKey(names.merge), reason: "model_capacity", counts: { model_capacity: 1 } });
+  const read = await readLastJobDeferrals([names.read, names.admin]);
+  expect([...read.keys()]).toEqual([names.read]);
+  expect(read.get(names.read)).toEqual({ reason: "stage_blocked", at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/) });
+  expect((await readLastJobDeferrals([])).size).toBe(0);
 });
