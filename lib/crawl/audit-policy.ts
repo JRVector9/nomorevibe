@@ -500,7 +500,7 @@ const closeRelease: RunHandler = {
     const state = await undoState(tx, row, sql`i.hold_released_at = ri.applied_at`);
     if (!state?.product_ok) return blocked("product_changed");
     if (state.human_decision !== null) return blocked("decision_changed");
-    if (state.status !== before.status) return blocked("status_changed");
+    if (state.status !== before.status || state.status_touched) return blocked("status_changed");
     if (state.held || !state.extra) return blocked("hold_changed");
     if (!state.unowned || state.status !== "seeded") return blocked("owned_now");
     if (!before.heldAt || !before.holdItemId) return blocked("hold_changed");
@@ -525,7 +525,8 @@ const OPINION_TIME = sql.raw(`'YYYY-MM-DD"T"HH24:MI:SS.US'`);
  * 두 번째 의견 올리기(audit-second-opinion-upload.ts)의 한 줄 — 옮겨 적기(audit-second-opinion-import.ts)와 같은 뜻이다: 열린 거절에만,
  * 같은 (항목, 모델)이면 덮어쓰고, 승인이 지금 그 항목으로 보류된 제품에 오면 덮어쓴 뒤의 의견과 지금 설정으로 둘째 문을 다시 가른다.
  * 맞지 않으면 푼다(second_approve). 사람이 대체를 켰으면 스크린샷까지 본 승인이 글만 본 거절을 대신해 푼다(supersede, audit-import-gate.ts).
- * 되돌리기는 그 줄이 그대로일 때만(출처·적은 시각) 덮어쓰기 전 의견으로 돌리고(없었으면 지우고), 푼 보류를 원래대로 다시 건다
+ * 되돌리기는 그 줄이 그대로일 때만(출처·적은 시각) 덮어쓰기 전 의견으로 돌리고(없었으면 지우고), 푼 보류를 원래대로 다시 건다.
+ * 올린 거절 때문에 그 뒤 감사 잡의 쓸기가 건 보류는 풀지 않는다 — 그 보류는 정책 처리의 보류 풀기로 고른다
  */
 const importOpinion: RunHandler = {
   cdnPerProduct: false,
@@ -586,7 +587,7 @@ const importOpinion: RunHandler = {
       const state = await undoState(tx, row);
       if (!state?.product_ok) return blocked("product_changed");
       if (state.human_decision !== null) return blocked("decision_changed");
-      if (state.status !== before.status) return blocked("status_changed");
+      if (state.status !== before.status || state.status_touched) return blocked("status_changed");
       if (state.held) return blocked("hold_changed");
       if (!state.unowned || state.status !== "seeded") return blocked("owned_now");
       if (!before.heldAt || !before.holdItemId

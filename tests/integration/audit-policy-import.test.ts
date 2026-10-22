@@ -246,6 +246,19 @@ describe("보류 풀기(보류 모두 풀기의 고른 판)", () => {
     expect((await productOf(two.productId)).auditHoldAt).toBeNull();
     expect(await policyRunExceptions(run.runId)).toEqual([expect.objectContaining({ slug: "two", reason: "decision_changed" })]);
   });
+
+  it("그 뒤 사람이 제품 화면에서 차단했다 풀었으면(목록에 돌려놓음) 보류를 다시 걸지 않는다", async () => {
+    const one = await finding("one", { held: true });
+    const run = await startAuditPolicyRun({ filter: filterOf({ held: "held" }), action: "release", expected: 1, note: "", keepDays: 90, by: "jr" });
+    if (!run.ok) throw new Error(run.error);
+    await applyAll(run.runId);
+    const { setStatusWithAudit } = await import("@/lib/domain/products/repository");
+    await setStatusWithAudit({ id: one.productId, slug: "one", status: "banned", action: "admin.product.ban", actor: "other" });
+    await setStatusWithAudit({ id: one.productId, slug: "one", status: "seeded", action: "admin.product.unban", actor: "other" });
+    expect(await undoAll(run.runId)).toMatchObject({ undone: 0, blocked: 1 });
+    expect(await policyRunExceptions(run.runId)).toEqual([expect.objectContaining({ slug: "one", reason: "status_changed" })]);
+    expect((await productOf(one.productId)).auditHoldAt).toBeNull();
+  });
 });
 
 describe("확신 하한 — m1 거절은 0.90 이상만 '두 모델 모두 거절'로 센다(보류 쓸기·감사 화면과 같은 셈)", () => {
