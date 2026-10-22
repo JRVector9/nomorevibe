@@ -7,7 +7,7 @@ vi.mock("@/app/(operator)/admin/status/actions", () => ({ requestOperation: vi.f
 
 import { OperationsCenter } from "@/app/(operator)/admin/status/OperationsCenter";
 
-const data = { fetchedAt: "2026-10-18T00:00:00.000Z", observations: [], serviceInstances: [], dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null };
+const data = { fetchedAt: "2026-10-18T00:00:00.000Z", observations: [], serviceInstances: [], dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null, jobControlVersions: {} };
 const render = () => renderToStaticMarkup(<OperationsCenter jobs={[]} data={data} reviewMode="enforce" enabled
   attention={<p>ATTENTION</p>} dashboard={<p>DASHBOARD</p>} statusChips={null} diagnostics={<p>DIAGNOSTICS</p>} manual={null} crawlers={null}
   controls={<p>NEW-CONTROLS</p>} />);

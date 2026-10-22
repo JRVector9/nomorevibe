@@ -22,6 +22,7 @@ import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
 import { sourceBufferCsrf } from "./source-buffer-csrf";
+import { jobControlCsrf } from "./job-control-csrf";
 import { CollectorTotalsDetail, CrawlerActivity } from "./CrawlerActivity";
 import { readDeferrals, readTallies } from "@/lib/operations/flow-reads";
 import { buildCrawlerActivity, COLLECTOR_JOBS } from "@/lib/operations/crawler-activity";
@@ -551,6 +552,7 @@ export default async function StatusPage() {
   return (
     <main className="pb-10"><PageStamp />
       <OperationsCenter attention={attentionCards} controls={controls} dashboard={dashboard} statusChips={statusChips} diagnostics={diagnostics}
+        jobControlCsrf={secret ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : undefined}
         verdict={verdict} flow={flowDetail}
         enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}
         crawlers={<Suspense fallback={<p className="ops-note" aria-busy="true">크롤러 활동을 읽는 중…</p>}><CrawlerActivitySlot inputs={inputs} fresh={fresh} /></Suspense>}
