@@ -109,7 +109,7 @@ html[data-admin-theme="dark"] body:has(.admin-area) {
 .admin-nav-group ul{display:flex;flex-direction:column;gap:2px}
 .admin-navigation a{position:relative;display:flex;align-items:flex-start;gap:8px;padding:6px 10px;border-radius:8px;color:var(--color-fg-2);font-size:14px;font-weight:650}
 .admin-navigation a svg{flex:none;margin-top:2px}
-.admin-nav-text{display:flex;flex-direction:column;min-width:0}
+.admin-nav-text{display:flex;flex:1 1 auto;flex-direction:column;min-width:0}
 .admin-navigation .admin-nav-badge{margin-left:auto}
 .admin-navigation small{font-size:11px;font-weight:400;color:var(--color-fg-3)}
 .admin-navigation a:hover{background:var(--color-bg-soft)}

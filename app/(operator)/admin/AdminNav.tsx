@@ -66,7 +66,8 @@ export function auditBadge(takedowns: { pending: number; overdue: number } | nul
   const pending = takedowns && takedowns.pending > 0 ? takedowns : null;
   const intro = introRequests > 0 ? introRequests : 0;
   if (!pending && !intro) return undefined;
-  const label = [pending && `요청 ${n(pending.pending)}`, intro && `소개 ${n(intro)}`].filter(Boolean).join(" · ");
+  // 메뉴 배지는 합계 하나만 — "요청 2 · 소개 1"처럼 길면 메뉴 이름 칸이 한 글자 폭으로 줄어 세로로 쌓였다. 내역은 title(낭독 글자)
+  const label = n((pending?.pending ?? 0) + intro);
   const title = [pending && `내려달라는 요청 ${n(pending.pending)}건${pending.overdue > 0 ? `(24시간 넘음 ${n(pending.overdue)}건)` : ""}`,
     intro && `소개 수정 요청 ${n(intro)}건`].filter(Boolean).join(" · ");
   return { label, tone: pending && takedownSignal(pending)?.tone === "bad" ? "critical" : "warn", title };
