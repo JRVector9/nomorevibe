@@ -248,7 +248,9 @@ describe("로그인된 기기 — GET·DELETE /api/me/sessions", () => {
     const github = await import("@/lib/domain/github-user/repository");
     const tokens = { accessToken: `ghu_${"a".repeat(40)}`, refreshToken: `ghr_${"b".repeat(40)}`, accessExpiresAt: new Date(Date.now() + 3_600_000), refreshExpiresAt: new Date(Date.now() + 7_200_000) };
     const first = await github.saveGithubUserConnection({ actorUserId: null, githubUser: { id: 4242, login: "hanulcoder" }, tokens, deviceLabel: "iPhone · Safari" });
-    await github.saveGithubUserConnection({ actorUserId: null, githubUser: { id: 4242, login: "hanul-renamed" }, tokens, deviceLabel: null });
+    const again = await github.saveGithubUserConnection({ actorUserId: null, githubUser: { id: 4242, login: "hanul-renamed" }, tokens, deviceLabel: null });
+    // 처음 연결만 가입 — GitHub 콜백이 sign_up·login 을 가른다(방문 분석)
+    expect([first.created, again.created]).toEqual([true, false]);
     const [gh] = await db.select().from(publicIdentities).where(eq(publicIdentities.provider, "github"));
     expect(gh).toMatchObject({ userId: first.user.id, providerLogin: "hanul-renamed" });
     const ghSessions = await db.select().from(publicSessions).where(eq(publicSessions.userId, first.user.id));

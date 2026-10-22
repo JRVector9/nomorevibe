@@ -41,6 +41,7 @@ import { AttentionList } from "./dashboard/AttentionList";
 import { SignalTable } from "./dashboard/SignalTable";
 import { TodayFeed } from "./dashboard/TodayFeed";
 import { RepoHealthCard } from "./dashboard/RepoHealthCard";
+import { AnalyticsLinkCard, analyticsPropertyUrl } from "./dashboard/AnalyticsLinkCard";
 import { StatusChips } from "./dashboard/StatusChips";
 import { OperationsGuidance } from "./OperationsGuidance";
 import { StarObservationCard } from "./StarObservationCard";
@@ -499,6 +500,7 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} fresh={fresh} /></Suspense>
         <Suspense fallback={<CardPending span="dash-12" label="최근 24시간 발행" />}><TodaySlot down={downCount} now={now} /></Suspense>
         {attention && <RepoHealthCard health={attention.repoHealth} review={attention.repoReview} />}
+        <AnalyticsLinkCard url={analyticsPropertyUrl()} />
       </div>
     </>
   );

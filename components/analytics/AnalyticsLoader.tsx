@@ -52,21 +52,23 @@ type Runtime = typeof import("@/lib/analytics/runtime");
  * 동의를 먼저 보고(lib/analytics/consent.ts) 꺼진 방문자에게는 gtag.js 를 아예 불러오지 않는다.
  * 분석을 껐다가 다시 켜면(정책 화면·푸터) 그때 불러온다.
  */
-export function AnalyticsLoader({ measurementId, debug, devLog }: { measurementId: string | null; debug: boolean; devLog: boolean }) {
+export function AnalyticsLoader({ measurementId, debug, devLog, userId = null }: {
+  measurementId: string | null; debug: boolean; devLog: boolean; userId?: string | null;
+}) {
   const [Gtag, setGtag] = useState<ComponentType<{ measurementId: string }> | null>(null);
   const on = useSyncExternalStore(subscribeAnalytics, () => analyticsSnapshot().status === "on", () => false);
   useEffect(() => {
     let live = true;
     import("@/lib/analytics/runtime").then((runtime: Runtime) => {
       if (!live) return;
-      runtime.startAnalytics({ measurementId, debug, devLog });
+      runtime.startAnalytics({ measurementId, debug, devLog, userId });
       setGtag(() => runtime.GtagScript);
     }).catch(() => {
       // 묶음을 받지 못하면(네트워크·배포 교체) 이 화면에서는 분석을 쉰다
       setAnalyticsSnapshot({ status: "off", reason: "disabled" });
     });
     return () => { live = false; };
-  }, [measurementId, debug, devLog]);
+  }, [measurementId, debug, devLog, userId]);
   return (
     <>
       {on && Gtag && measurementId && <Gtag measurementId={measurementId} />}

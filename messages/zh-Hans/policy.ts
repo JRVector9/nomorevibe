@@ -47,6 +47,8 @@ export const policy = defineCatalog<typeof KoreanPolicy>()({
   "analytics.launch": "提交与连接：复制技能安装命令、查看或下载安装脚本、提交和所有权验证的各个步骤，以及登录和 GitHub 连接（仅记录方式）。",
   "analytics.device": "GA4 自行收集的内容：浏览器和设备类型、屏幕尺寸、大致位置（国家和城市）以及首次来源。",
   "analytics.notCollected": "我们从不发送：邮箱地址、姓名或昵称、账户编号、在请求表单中填写的内容、令牌或包含机密的网址。项目仅以网址名称（slug）标识。GA4 不保存 IP 地址，只用它估算大致位置后即丢弃。",
+  "analytics.server": "部分记录由我们的服务器直接发送给 GA4：实际前往项目网站或仓库、下载安装脚本、提交与所有权验证、GitHub 登录与连接、已保存的“用过”评价和请求，以及 README 徽章的展示。这些记录不包含 IP 地址或浏览器信息，并通过 GA Cookie 与同一浏览器的访问相关联。如果你关闭了分析、浏览器发送 Global Privacy Control 或 Do Not Track 信号，或请求来自欧洲经济区、英国或瑞士，服务器也不会发送。",
+  "analytics.userId": "对于已登录的用户，我们会用从账户单向生成的化名编号（user_id）代替账户编号一并发送，以便把多台设备上的访问看作同一个人的浏览路径。无法通过这个编号找到你的账户或邮箱。",
   "analytics.purpose": "这些数据仅用于了解哪些页面和功能被使用、访客如何找到并访问项目，以便改进网站。数据由 Google（Google Analytics 4）处理。",
   "analytics.cookies": "开启分析时，GA Cookie（以 _ga 开头）用于识别同一浏览器的再次访问。我们不使用广告 Cookie、广告个性化或 Google 信号（与 Google 账户关联）。",
   "analytics.retention": "GA4 会保留用户和事件级数据 14 个月，之后由 GA4 删除。汇总报告可能保留更久。",

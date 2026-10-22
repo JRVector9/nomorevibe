@@ -8,6 +8,7 @@ import {
 import { deleteReaction, putReaction, readReaction } from "@/lib/domain/reactions/repository";
 import { webWriteRoute } from "@/lib/operations/dr/web-gate";
 import { trustedClientIp } from "@/lib/rate-limit";
+import { trackServer } from "@/lib/analytics/server";
 
 /**
  * 써봤어요 — 내 평가와 공개 요약(GET), 저장·바꾸기(PUT), 지우기(DELETE). 피드백 설계 5.2절.
@@ -59,7 +60,12 @@ export const PUT = webWriteRoute(async (request: Request, context: Context) => {
     // 로그인하지 않았고 쿠키가 없으면 받지 않는다 — 화면은 GET 으로 쿠키를 받고 한 번 다시 보낸다
     if (!requester.userId && !requester.visitor) throw new ReactionError("visitor_required", 400);
     await enforceReactionLimits(request, requester.userId, requester.visitor);
-    const result = await putReaction(slug, { userId: requester.userId, visitor: requester.visitor }, input, { untrustedIp: trustedClientIp(request) === null });
+    const { outcome, ...result } = await putReaction(slug, { userId: requester.userId, visitor: requester.visitor }, input, { untrustedIp: trustedClientIp(request) === null });
+    // 방문 분석(서버 사실): 이 사람이 이 제품에 처음 남긴 평가만 — 바꾸기·같은 값은 세지 않는다(브라우저 product_tried 가 의도를 센다)
+    if (outcome === "created") {
+      trackServer("reaction_add", { product_slug: slug, verdict: input.verdict, reaction_source: input.source, signed_in: requester.userId !== null ? "yes" : "no" },
+        { request, identity: "browser", userId: requester.userId });
+    }
     return Response.json({ ...result, signedIn: requester.userId !== null }, { headers });
   } catch (error) {
     return reactionErrorResponse(error);
