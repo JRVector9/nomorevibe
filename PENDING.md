@@ -6,6 +6,17 @@
 
 ---
 
+## 공통 배포의 Swarm 되돌림·`--resume`·관문 소유자 판정 — 2026-10-22 (코드·단위 테스트만, 운영 실행 전)
+
+#597 배포 실패 대응. 절차는 [운영 절차](docs/operations/independent-workers-runbook.md) "Swarm 되돌림·멈춘 배포 이어 가기·관문의 소유자 판정".
+
+- **Swarm 상태 읽기**: 운영 서버의 `docker service inspect --format '{{json .UpdateStatus}}'`·`docker service ps --no-trunc --format '{{json .}}'` 모양을
+  실제로 본 적이 없다(가짜 docker 로만 시험). 다음 릴리스에서 정상 앱 줄에 지연이 늘지 않았는지(준비가 아닐 때만 두 명령을 더 부른다),
+  다음 Swarm 되돌림 때 `swarmRollback`·`taskErrors` 줄이 실제 오류(`No such container` 등)를 담는지 본다.
+- **Dokploy `done` 직후 UpdateStatus**: swarmkit 이 spec 을 바꾸는 update 마다 UpdateStatus 를 비운다는 전제로 done 뒤의 rollback 을 이번 배포의
+  것으로 본다. Dokploy 가 같은 spec 으로 update 를 건너뛰는 경우가 있는지(재배포 시간이 3~4초였던 #597 restore·재시작) 운영에서 확인한다.
+- **`run --resume` 첫 사용**: 섞인 상태에서 `resume` 앱별 상태가 실제와 맞는지, Dokploy 가 env 를 저장한 그대로 돌려줘 `unexplained_drift` 오탐이 없는지.
+
 ## 방문 분석(GA4) — 2026-10-22 (코드만, 꺼진 채 배포)
 
 켜는 법·이벤트·동의·확인 절차는 [`docs/operations/2026-10-22-google-analytics.md`](docs/operations/2026-10-22-google-analytics.md).

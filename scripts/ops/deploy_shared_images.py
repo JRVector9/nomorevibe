@@ -151,9 +151,35 @@ class Timeline:
             return {'durations': dict(self.seconds), 'totalSeconds': round(time.monotonic() - self.started, 1), **extra}
 
 
+class ReleaseStopped(RuntimeError):
+    """도구가 스스로 멈춘 까닭. 글에는 앱 이름·Swarm 상태·(걸러 낸) Docker 태스크 오류만 있다 — env·비밀값은 없다."""
+
+
+class SwarmRollback(ReleaseStopped):
+    """Dokploy 는 done 인데 Swarm 이 새 태스크를 되돌렸다(rollback_*) 또는 멈췄다(paused)."""
+
+    def __init__(self, short, evidence):
+        self.state = evidence.get('updateState')
+        self.task_errors = list(evidence.get('taskErrors') or [])
+        self.evidence = evidence
+        super().__init__(swarm_detail(f'{short}_swarm_{self.state}', evidence))
+
+
+def swarm_detail(code, evidence):
+    """멈춤 코드 뒤에 가장 최근 태스크 오류(없으면 Swarm 메시지)를 붙인다. 원격 확인이 이미 글자를 걸러 160자로 자른 값이다."""
+    if not evidence:
+        return code
+    if evidence.get('taskErrors'):
+        return code + ':task_error=' + evidence['taskErrors'][0]
+    if evidence.get('updateMessage'):
+        return code + ':message=' + evidence['updateMessage']
+    return code
+
+
 def error_fields(error):
     """실패 줄에 넣을 이름과 코드. 값이 섞일 수 있는 다른 예외는 이름만 낸다(맨 끝 오류 줄과 같은 규칙)."""
-    return {'error': type(error).__name__, 'detail': str(error) if isinstance(error, (ValueError, TimeoutError)) else None}
+    return {'error': type(error).__name__,
+            'detail': str(error) if isinstance(error, (ValueError, TimeoutError, ReleaseStopped)) else None}
 
 
 def validate_target(sha, worker, web):
@@ -367,8 +393,11 @@ def github_integration_preflight(client, apps):
 
 # expected: Dokploy 에 적힌 복제본 수, 또는 'any'(실행 중인 수가 원하는 수와 같기만 하면 — 배포 전 기준선).
 # 웹은 여러 대가 같은 요청을 나눠 받으므로 모든 컨테이너가 새 이미지·릴리스·상태 확인을 통과해야 준비다.
+# 준비가 아니면 Swarm 의 UpdateStatus(updating·completed·paused·rollback_*)와 최근 태스크 오류(예: "No such container")를
+# 걸러 160자로 자른 글로 더한다 — Dokploy 가 done 을 내도 Swarm 이 새 태스크를 옛 spec 으로 되돌린 것을 시간 초과 전에 알아챈다.
 REMOTE_PROBE = r'''import json,subprocess,sys
-service,image,sha,kind,expected=sys.argv[1:]
+service,image,sha,kind,expected=sys.argv[1:6]
+detail=sys.argv[6:]==['detail']
 def command(*args):
  r=subprocess.run(args,capture_output=True,text=True)
  return r.stdout.strip() if r.returncode==0 else ''
@@ -415,6 +444,20 @@ if len(matches)==1:
   ids_seen=sorted({c['instanceId'] for c in checks if c.get('instanceId')})
   if ids_seen: result['instanceId']=','.join(ids_seen)
   result['ready']=bool(result['serviceImageMatch'] and all(c['ok'] for c in checks))
+if len(matches)==1 and (detail or not result['ready']):
+ import re
+ clean=lambda v:re.sub(r'[^A-Za-z0-9 :._/@()=,+-]','?',str(v or ''))[:160]
+ try: status=json.loads(command('docker','service','inspect',service,'--format','{{json .UpdateStatus}}') or 'null')
+ except Exception: status=None
+ if isinstance(status,dict):
+  result['updateState']=clean(status.get('State'))
+  if status.get('Message'): result['updateMessage']=clean(status.get('Message'))
+ errors=[]
+ for line in command('docker','service','ps',service,'--no-trunc','--format','{{json .}}').splitlines()[:8]:
+  try: task=json.loads(line)
+  except Exception: continue
+  if isinstance(task,dict) and task.get('Error'): errors.append(clean(task['Error']))
+ if errors: result['taskErrors']=errors[:3]
 print(json.dumps(result))
 '''
 
@@ -435,11 +478,20 @@ def replicas_allowed(kind, replicas):
     return isinstance(replicas, int) and not isinstance(replicas, bool) and 1 <= replicas <= WEB_MAX_REPLICAS
 
 
-def probe(short, app, target, expected='any'):
+def probe(short, app, target, expected='any', *, detail=False):
+    """detail=True 면 준비여도 Swarm UpdateStatus·태스크 오류를 함께 읽는다(설정만 되돌릴 때 진행 중인 update 가 없는지 본다)."""
     _, _, (_, host), kind = app_metadata(short)
     raw = ssh_python(host, REMOTE_PROBE, app['appName'], target[kind],
-                     target['sha'], kind, str(expected))
+                     target['sha'], kind, str(expected), *(('detail',) if detail else ()))
     return json.loads(raw)
+
+
+# Dokploy 의 done 은 `docker service update` 요청이 끝났다는 뜻일 뿐이다. 새 태스크가 실패하면(2026-10-17 maintenance·scheduler,
+# 2026-10-22 crawler-m3 의 "No such container") Swarm 이 옛 spec 으로 되돌리고 서비스는 옛 이미지로 healthy 다.
+SWARM_ROLLBACK_STATES = ('rollback_started', 'rollback_completed')
+SWARM_STOP_STATES = ('paused', 'rollback_paused')
+# 되돌리기가 끝나기를 기다리는 한도. Swarm 은 되돌린 태스크도 healthcheck 를 거쳐 띄운다.
+SWARM_ROLLBACK_SETTLE_SECONDS = 180
 
 
 def check_app_deployed(client, short, target, previous_id, *, timeout=None, pause=APP_POLL_SECONDS):
@@ -447,6 +499,7 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
         # Swarm 은 한 대씩 새로 띄우고 30초 지켜본 뒤 다음으로 넘어간다 — 복제본마다 시간을 더 준다
         timeout = 240 + 90 * (max(1, client.app(short).get('replicas') or 1) - 1)
     deadline = time.monotonic() + timeout
+    last = None
     while time.monotonic() < deadline:
         try:
             app = client.app(short)
@@ -466,8 +519,56 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
             if evidence.get('ready') is True:
                 return {'app': short, 'deployment': 'done', 'service': 'healthy',
                         'instanceId': evidence.get('instanceId')}
+            # swarmkit 은 spec 을 바꾸는 update 마다 UpdateStatus 를 비우므로, done 뒤에 보이는 rollback 은 이번 배포의 것이다
+            if evidence.get('updateState') in SWARM_ROLLBACK_STATES + SWARM_STOP_STATES:
+                raise SwarmRollback(short, evidence)
+            last = evidence
         time.sleep(pause)
-    raise TimeoutError(f'{short}_verification_timeout')
+    raise TimeoutError(swarm_detail(f'{short}_verification_timeout', last))
+
+
+def await_rollback_settled(client, short, expected, *, timeout=SWARM_ROLLBACK_SETTLE_SECONDS, pause=APP_POLL_SECONDS):
+    """Swarm 이 되돌리기를 끝낼 때까지(rollback_completed) 기다린다. 되돌리는 중에 다시 배포하면 두 update 가 겹친다."""
+    deadline = time.monotonic() + timeout
+    evidence = None
+    while time.monotonic() < deadline:
+        try:
+            evidence = probe(short, client.app(short), expected, 'any')
+        except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
+            evidence = None
+        state = (evidence or {}).get('updateState')
+        if state == 'rollback_completed':
+            return evidence
+        if state in SWARM_STOP_STATES:
+            raise ReleaseStopped(swarm_detail(f'{short}_swarm_{state}', evidence))
+        time.sleep(pause)
+    raise ReleaseStopped(swarm_detail(f'{short}_swarm_rollback_unsettled', evidence))
+
+
+def deploy_app(client, short, expected, *, redeploys=1):
+    """저장된 설정 그대로 application.deploy 를 요청하고 실제 실행을 확인한다.
+
+    Swarm 이 새 태스크를 되돌리면(rollback) 끝나기를 기다렸다가 **같은 설정으로 한 번만** 다시 배포한다
+    ("No such container" 같은 Swarm 시작 경합은 같은 SHA 재배포로 풀렸다). 다시 되돌리면 실패한 태스크 오류를 담아 멈춘다.
+    paused·rollback_paused 는 사람이 봐야 하므로 다시 배포하지 않고 바로 멈춘다."""
+    app_id = app_metadata(short)[0]
+    for attempt in range(redeploys + 1):
+        previous_id = client.latest(short)['deploymentId']
+        client.request('application.deploy', {'applicationId': app_id})
+        try:
+            result = check_app_deployed(client, short, expected, previous_id)
+        except SwarmRollback as rollback:
+            retry = attempt < redeploys and rollback.state in SWARM_ROLLBACK_STATES
+            emit({'app': short, 'swarmRollback': rollback.state, 'taskErrors': rollback.task_errors,
+                  'action': 'redeploy_once' if retry else 'stop'})
+            if not retry:
+                if rollback.state in SWARM_STOP_STATES:
+                    raise
+                raise ReleaseStopped(swarm_detail(f'{short}_swarm_rollback_repeated', rollback.evidence)) from rollback
+            await_rollback_settled(client, short, expected)
+            continue
+        return {**result, 'swarmRedeploys': attempt} if attempt else result
+    raise AssertionError('unreachable')
 
 
 REMOTE_PULL = r'''import json,os,subprocess,sys,tempfile
@@ -678,6 +779,82 @@ def baseline(client, target, consumers=()):
     return {'apps': apps, 'previous': previous}
 
 
+def _lines(value):
+    """설정 비교용: 줄 끝 공백과 앞뒤 빈 줄만 무시한다(값·순서·나머지 줄은 그대로 비교)."""
+    return [line.rstrip() for line in (value or '').strip('\n').splitlines()]
+
+
+def read_snapshot(snapshot_path):
+    path = Path(snapshot_path)
+    if not path.is_absolute() or path.stat().st_mode & 0o077:
+        raise ValueError('snapshot_permissions_or_path_invalid')
+    return json.loads(path.read_text())
+
+
+# --resume·restore 가 실행이 이전 릴리스인 앱을 그대로 두거나 다시 배포해도 되는 Swarm 상태(진행 중인 update·되돌리기가 없다)
+SWARM_SETTLED_STATES = (None, 'completed', 'rollback_completed')
+
+
+def resume_baseline(client, target, snapshot, consumers=()):
+    """`run --resume`: 같은 목표로 멈춘 run 의 스냅샷에서 이어 간다(릴리스가 섞인 상태를 손으로 되돌리지 않는다).
+
+    앱마다 Dokploy 설정이 스냅샷의 이전 설정 그대로(previous)이거나, 그 설정에서 run 이 바꾸는 것(RELEASE_TAG·웹의
+    NEXT_DEPLOYMENT_ID 줄과 이미지)만 이번 목표로 바뀐 설정(target)이어야 한다. 그 밖의 차이는 설명되지 않은 drift 로 보고
+    어느 앱에도 쓰지 않는다. target 앱은 실제 실행으로 다시 나눈다: done(새 릴리스로 healthy — 건너뜀),
+    redeploy(설정만 새 릴리스이고 실행은 이전 릴리스 — Swarm 이 되돌렸다. 같은 설정으로 다시 배포). 셋 다 아니면 멈춘다."""
+    previous = snapshot.get('previous') or {}
+    originals = snapshot.get('apps') or {}
+    if snapshot.get('target') != target:
+        raise ValueError('resume_snapshot_target_mismatch')
+    if (not re.fullmatch(r'[0-9a-f]{40}', str(previous.get('sha'))) or previous['sha'] == target['sha'] or
+            any(not isinstance(previous.get(kind), str) for kind in IMAGE_PREFIX)):
+        raise ValueError('resume_snapshot_previous_invalid')
+    order = release_order(consumers)
+    apps, status, web_key = {}, {}, None
+    for short in order:
+        if short not in originals:
+            raise ValueError(f'{short}_missing_from_snapshot')
+        kind = app_metadata(short)[3]
+        original, app, latest = originals[short], client.app(short), client.latest(short)
+        if (app.get('sourceType') != 'docker' or app.get('applicationStatus') != 'done' or latest.get('status') != 'done' or
+                app.get('autoDeploy') is not False or not replicas_allowed(kind, app.get('replicas'))):
+            raise ValueError(f'{short}_baseline_not_ready')
+        if original.get('dockerImage') != previous[kind] or setting(original.get('env'), 'RELEASE_TAG') != previous['sha']:
+            raise ValueError(f'{short}_resume_snapshot_not_previous')
+        same = (all(app.get(key) == original.get(key) for key in ('appName', 'replicas', 'command', 'sourceType')) and
+                _lines(app.get('buildSecrets')) == _lines(original.get('buildSecrets')))
+        staged_env, staged_args = staged_settings(original, kind, target['sha'])
+        if (same and app.get('dockerImage') == previous[kind] and _lines(app.get('env')) == _lines(original.get('env')) and
+                _lines(app.get('buildArgs')) == _lines(original.get('buildArgs'))):
+            status[short] = 'previous'
+        elif (same and app.get('dockerImage') == target[kind] and _lines(app.get('env')) == _lines(staged_env) and
+                _lines(app.get('buildArgs')) == _lines(staged_args)):
+            status[short] = 'target'
+        else:
+            raise ValueError(f'{short}_unexplained_drift')
+        if kind == 'web':
+            web_key = web_key_of(short, app, web_key)
+        apps[short] = app
+    for short in order:
+        if status[short] == 'previous':
+            if not probe(short, apps[short], previous).get('ready'):
+                raise ValueError(f'{short}_baseline_runtime_not_ready')
+            continue
+        if probe(short, apps[short], target, apps[short].get('replicas')).get('ready'):
+            status[short] = 'done'
+            continue
+        evidence = probe(short, apps[short], previous, detail=True)
+        if not evidence.get('ready'):
+            raise ValueError(swarm_detail(f'{short}_resume_runtime_unknown', evidence))
+        if evidence.get('updateState') not in SWARM_SETTLED_STATES:
+            raise ValueError(f"{short}_resume_swarm_{evidence.get('updateState')}")
+        status[short] = 'redeploy'
+    runtime = {short: target['sha'] if value == 'done' else previous['sha'] for short, value in status.items()}
+    # 쌍의 한쪽만 새 릴리스로 실행 중인 역할은 사전 관문에서 release_mismatch 를 받는다(이어서 그 쌍부터 마저 올린다)
+    mixed = {role: ('release_mismatch',) for role in ROLES if runtime[role + '-mini'] != runtime[role + '-m3']}
+    return {'apps': apps, 'previous': previous, 'resume': status, 'mixedRoles': mixed}
+
+
 def pull_on_host(label, host, target, token, key_hash):
     started = time.monotonic()
     result = json.loads(ssh_python(host, REMOTE_PULL,
@@ -740,15 +917,20 @@ def unchanged_since_preflight(client, short, previous):
     return app
 
 
+def staged_settings(app, kind, sha):
+    """새 릴리스로 바꿀 때 저장하는 env·buildArgs: RELEASE_TAG(웹은 NEXT_DEPLOYMENT_ID 도) 한 줄씩만 바꾼다."""
+    env = replace_setting(app.get('env'), 'RELEASE_TAG', sha)
+    build_args = app.get('buildArgs')
+    if kind == 'web':
+        env = replace_setting(env, 'NEXT_DEPLOYMENT_ID', sha)
+        build_args = replace_setting(build_args, 'NEXT_DEPLOYMENT_ID', sha)
+    return env, build_args
+
+
 def stage_and_deploy(client, short, target, token, previous):
     app = unchanged_since_preflight(client, short, previous)
     app_id, _, _, kind = app_metadata(short)
-    previous_id = client.latest(short)['deploymentId']
-    env = replace_setting(app.get('env'), 'RELEASE_TAG', target['sha'])
-    build_args = app.get('buildArgs')
-    if kind == 'web':
-        env = replace_setting(env, 'NEXT_DEPLOYMENT_ID', target['sha'])
-        build_args = replace_setting(build_args, 'NEXT_DEPLOYMENT_ID', target['sha'])
+    env, build_args = staged_settings(app, kind, target['sha'])
     client.request('application.saveEnvironment', {
         'applicationId': app_id, 'env': env, 'buildArgs': build_args,
         'buildSecrets': app.get('buildSecrets'), 'createEnvFile': app.get('createEnvFile') is True,
@@ -768,34 +950,76 @@ def stage_and_deploy(client, short, target, token, previous):
     if kind == 'web' and (setting(configured.get('env'), 'NEXT_DEPLOYMENT_ID') != target['sha'] or
                           setting(configured.get('buildArgs'), 'NEXT_DEPLOYMENT_ID') != target['sha']):
         raise RuntimeError(f'{short}_saved_web_deployment_id_mismatch')
-    client.request('application.deploy', {'applicationId': app_id})
-    return check_app_deployed(client, short, target, previous_id)
+    return deploy_app(client, short, target)
 
 
-def monitor_gate(client, role, *, roles=None, timeout=120, pause=MONITOR_POLL_SECONDS):
-    """role 의 M3 컨테이너에서 failover readiness·worker progress 를 본다. 둘 다 전체 ok 이고
-    고른 역할(기본은 role 하나, --parallel-roles 의 한 번 관문은 세 역할 모두)이 ready 여야 통과한다."""
+# 역할 lease 를 쥘 수 있는 정상 상태. standby_active 는 주·예비가 모두 살아 있고 같은 릴리스이며 lease 도 유효한데
+# 예비가 일하는 상태다(lib/operations/failover-readiness.ts). 역할은 돌고 있으므로 이번에 배포하지 않은 역할의 이 상태로
+# 배포를 멈추지 않는다. 예비가 다시 시작되면(예비를 먼저 올리는 배포) 주가 되찾고, 예비 넘겨주기가 든 릴리스부터는 예비가 스스로 놓는다.
+VALID_HOLDER_REASONS = frozenset({'ready', 'standby_active'})
+# 방금 주·예비를 새 릴리스로 올린 역할을 예비가 쥐고 있으면 주가 되찾을 때까지 관문을 이만큼 더 기다린다
+# (예비 넘겨주기: 주가 같은 boot 로 60초 이상 대기 → 예비 drain → 주 선출. role-worker.ts ROLE_HANDOFF_*).
+HANDOFF_GATE_EXTRA_SECONDS = 180
+
+
+def gate_verdict(reports, names, *, strict=None, allow=None):
+    """감시 보고 하나를 판정한다. 돌려주는 값: passed·handoff(고른 역할을 예비가 쥠)·standbyActive·blocking(받지 못한 사유).
+
+    - strict(기본은 names): 방금 배포한 역할은 주가 lease 를 쥔 `ready` 여야 한다 — 새 릴리스의 M3 주가 역할을 실제로 쥘 수 있음을
+      보여야 하기 때문이다. 예비가 쥐고 있으면(standby_active) 넘겨주기를 기다린다.
+    - 다른 역할은 유효한 소유자(ready·standby_active) 어느 쪽이든 된다. allow 로 역할별 사유를 더 받는다(--resume 의 반쯤 올린 쌍).
+    - scheduler 두 복제본(ready)과 worker progress 전체 ok 는 그대로 필요하다."""
+    strict = tuple(names if strict is None else strict)
+    allow = allow or {}
+    readiness = reports['check-failover-readiness.ts'].get('readiness') or {}
+    progress = reports['check-worker-progress.ts'].get('overall')
+    reasons = {row.get('role'): row.get('reason') for row in readiness.get('roles') or [] if isinstance(row, dict)}
+    scheduler = (readiness.get('scheduler') or {}).get('reason')
+    blocking = [f'{name}=missing' for name in names if name not in reasons]
+    for name, reason in sorted(reasons.items()):
+        accepted = ({'ready'} if name in strict else set(VALID_HOLDER_REASONS)) | set(allow.get(name, ()))
+        if reason not in accepted:
+            blocking.append(f'{name}={reason}')
+    if scheduler != 'ready':
+        blocking.append(f'scheduler={scheduler}')
+    if progress != 'ok':
+        blocking.append(f'progress={progress}')
+    return {'passed': not blocking, 'blocking': blocking,
+            'handoff': any(reasons.get(name) == 'standby_active' for name in strict),
+            'standbyActive': sorted(name for name, reason in reasons.items() if reason == 'standby_active')}
+
+
+def monitor_gate(client, role, *, roles=None, timeout=120, pause=MONITOR_POLL_SECONDS, strict=None, allow=None):
+    """role 의 M3 컨테이너에서 failover readiness·worker progress 를 본다(판정은 gate_verdict).
+
+    고른 역할(기본은 role 하나, --parallel-roles 의 한 번 관문은 세 역할 모두)은 주가 쥔 ready 여야 하고, 다른 역할은 유효한
+    소유자면 된다. 사전 검사는 strict=() 로 모든 역할에서 유효한 소유자를 받는다. 고른 역할을 예비가 쥐고 있으면 한 번
+    HANDOFF_GATE_EXTRA_SECONDS 만큼 더 기다린다. 시간이 넘으면 마지막으로 본 받지 못한 사유를 오류에 붙인다."""
     names = tuple(roles or (role,))
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
+    extended = False
     short = role + '-m3'
     app = client.app(short)
+    blocking = None
     while time.monotonic() < deadline:
         try:
             reports = json.loads(ssh_python(M3[1], REMOTE_MONITOR, app['appName'], timeout=80))
-            monitor = reports['check-failover-readiness.ts']
-            readiness = monitor.get('readiness') or {}
-            progress = reports['check-worker-progress.ts']
-            statuses = [next((row for row in readiness.get('roles', []) if row.get('role') == name), None) for name in names]
-            if (monitor.get('overall') == 'ok' and readiness.get('overall') == 'ok' and
-                    progress.get('overall') == 'ok' and
-                    all(status and status.get('reason') == 'ready' for status in statuses)):
-                if roles is None:
-                    return {'role': role, 'readiness': 'ready', 'progress': 'ok'}
-                return {'roles': list(names), 'readiness': 'ready', 'progress': 'ok'}
-        except (RuntimeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+            verdict = gate_verdict(reports, names, strict=strict, allow=allow)
+            blocking = verdict['blocking']
+            if verdict['passed']:
+                result = {'role': role} if roles is None else {'roles': list(names)}
+                standby = verdict['standbyActive']
+                return {**result, 'readiness': 'ready', 'progress': 'ok', **({'standbyActive': standby} if standby else {})}
+            if verdict['handoff'] and not extended:
+                extended = True
+                deadline = started + timeout + HANDOFF_GATE_EXTRA_SECONDS
+                emit({'gate': ','.join(names), 'handoff': 'waiting_for_primary', 'standbyActive': verdict['standbyActive']})
+        except (RuntimeError, ValueError, KeyError, TypeError, AttributeError, subprocess.TimeoutExpired):
             pass
         time.sleep(pause)
-    raise TimeoutError(('_'.join(names) if roles is not None else role) + '_monitor_gate_timeout')
+    detail = ('_'.join(names) if roles is not None else role) + '_monitor_gate_timeout'
+    raise TimeoutError(detail + (':' + ','.join(blocking) if blocking else ''))
 
 
 def public_gate(sha, *, attempts=24):
@@ -880,21 +1104,41 @@ def describe_steps(steps):
     return [kind + (':' + ','.join(names) if names else '') for kind, names in steps]
 
 
-def deploy_batch(client, names, target, token, previous, timeline, touched):
+def resume_app(client, short, target, token, previous, status):
+    """--resume 의 앱 하나. previous 는 보통 배포, done 은 건너뛰고, redeploy 는 저장된 새 설정 그대로 다시 배포한다."""
+    if status == 'previous':
+        return stage_and_deploy(client, short, target, token, previous)
+    app = client.app(short)
+    kind = app_metadata(short)[3]
+    if (app.get('dockerImage') != target[kind] or setting(app.get('env'), 'RELEASE_TAG') != target['sha'] or
+            app.get('autoDeploy') is not False or app.get('applicationStatus') != 'done'):
+        raise ValueError(f'{short}_changed_since_preflight')
+    if status == 'done':
+        return {'app': short, 'deployment': 'skipped', 'resume': 'already_target'}
+    return {**deploy_app(client, short, target), 'resume': 'redeployed'}
+
+
+def deploy_batch(client, names, target, token, previous, timeline, touched, resume=None):
     """한 묶음을 올린다. 둘 이상이면 먼저 전부 읽기만 해서 바뀐 앱이 없는지 본 뒤(하나라도 바뀌었으면 아무것도 쓰지 않는다) 동시에 올린다.
     하나가 실패해도 이미 요청한 다른 앱은 끝까지 기다려 결과를 남긴다 — Dokploy 배포는 중간에 거둘 수 없다. 그 뒤 처음 실패를 올린다.
-    touched 에는 설정을 바꿨을 수 있는 앱을 쌓는다(멈췄을 때 되돌릴 후보)."""
+    touched 에는 설정을 바꿨을 수 있는 앱을 쌓는다(멈췄을 때 되돌릴 후보). resume 은 --resume 의 앱별 상태다."""
     def one(short):
         with timeline.step(short):
-            return stage_and_deploy(client, short, target, token, previous)
+            if resume is None:
+                return stage_and_deploy(client, short, target, token, previous)
+            return resume_app(client, short, target, token, previous, resume[short])
+
+    def mark(shorts):
+        touched.extend(short for short in shorts if short not in touched)
 
     if len(names) == 1:
-        touched.append(names[0])
+        mark(names)
         emit({**one(names[0]), 'seconds': timeline.seconds[names[0]]})
         return
     for short in names:
-        unchanged_since_preflight(client, short, previous)
-    touched.extend(names)
+        if resume is None or resume[short] == 'previous':
+            unchanged_since_preflight(client, short, previous)
+    mark(names)
     errors = []
     with ThreadPoolExecutor(max_workers=len(names)) as pool:
         futures = {pool.submit(one, short): short for short in names}
@@ -910,15 +1154,19 @@ def deploy_batch(client, names, target, token, previous, timeline, touched):
 
 
 def deploy(client, target, token, state, snapshot, consumers=(), *, parallel_roles=False):
+    """state['resume'] 가 있으면(--resume) 새 스냅샷을 쓰지 않고 멈춘 run 의 스냅샷을 그대로 쓴다 — 되돌릴 이전 설정이 그 안에 있다."""
     timeline = Timeline()
-    touched = []
+    resume = state.get('resume')
+    # 이어 가기면 앞선 run 이 이미 바꾼 앱부터 되돌릴 후보다
+    touched = [short for short in release_order(consumers) if (resume or {}).get(short, 'previous') != 'previous']
     mode = 'parallel-roles' if parallel_roles else 'sequential'
-    save_snapshot(snapshot, target, state)
-    emit({'snapshot': snapshot, 'preflight': 'passed', 'mode': mode})
+    if resume is None:
+        save_snapshot(snapshot, target, state)
+    emit({'snapshot': snapshot, 'preflight': 'passed', 'mode': mode, **({'resumed': list(touched)} if resume is not None else {})})
     try:
         for kind, names in rollout_steps(consumers, parallel_roles):
             if kind == 'deploy':
-                deploy_batch(client, names, target, token, state['previous'], timeline, touched)
+                deploy_batch(client, names, target, token, state['previous'], timeline, touched, resume)
                 continue
             label = describe_steps([(kind, names)])[0]
             with timeline.step(label):
@@ -932,7 +1180,7 @@ def deploy(client, target, token, state, snapshot, consumers=(), *, parallel_rol
         emit(purge_html())
     except Exception:
         emit({'stopped': True, 'snapshot': snapshot, 'touched': touched,
-              'nextStep': 'restore affected app or pair before retrying'})
+              'nextStep': 'same run with --resume and this snapshot once the cause is fixed, or restore touched apps from it'})
         raise
     finally:
         # 앱·관문마다 걸린 시간 — 다음 속도 개선의 근거로 남긴다
@@ -940,10 +1188,12 @@ def deploy(client, target, token, state, snapshot, consumers=(), *, parallel_rol
 
 
 def restore(client, snapshot_path, short, token):
-    path = Path(snapshot_path)
-    if not path.is_absolute() or path.stat().st_mode & 0o077:
-        raise ValueError('snapshot_permissions_or_path_invalid')
-    snapshot = json.loads(path.read_text())
+    """스냅샷의 이전 설정으로 앱 하나를 되돌린다.
+
+    실제 실행이 이미 이전 릴리스이고 Swarm update 가 진행 중이 아니면(예: Swarm 이 새 태스크를 되돌렸다) 설정만 되돌리고
+    다시 배포하지 않는다. 같은 릴리스로 주를 재시작하면 같은 릴리스의 예비가 lease 를 가져갈 수 있다(2026-10-22 #597 crawler).
+    Swarm 이 되돌리기를 하면(새 태스크 실패) deploy_app 이 끝나기를 기다려 한 번 더 배포한다."""
+    snapshot = read_snapshot(snapshot_path)
     if short not in APPS and short not in CONSUMER_APPS or short not in snapshot.get('apps', {}):
         raise ValueError('app_missing_from_snapshot')
     original = snapshot['apps'][short]
@@ -956,7 +1206,11 @@ def restore(client, snapshot_path, short, token):
         raise ValueError(f'{short}_restore_preflight_mismatch')
     # Crawler code (role pair and agent-scan consumer apps) writes agent scans; check before any Dokploy write.
     agent_scan = agent_scan_release_gate(client, previous['sha']) if app_role(short) == 'crawler' else None
-    previous_id = client.latest(short)['deploymentId']
+    try:
+        evidence = probe(short, current, previous, detail=True)
+    except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
+        evidence = {}
+    runtime_previous = evidence.get('ready') is True and evidence.get('updateState') in SWARM_SETTLED_STATES
     client.request('application.saveEnvironment', {
         'applicationId': app_id, 'env': original['env'],
         'buildArgs': original.get('buildArgs'), 'buildSecrets': original.get('buildSecrets'),
@@ -972,8 +1226,11 @@ def restore(client, snapshot_path, short, token):
     if (configured.get('dockerImage') != previous[kind] or
             setting(configured.get('env'), 'RELEASE_TAG') != previous['sha']):
         raise RuntimeError(f'{short}_restore_configuration_mismatch')
-    client.request('application.deploy', {'applicationId': app_id})
-    result = check_app_deployed(client, short, previous, previous_id)
+    if runtime_previous:
+        result = {'app': short, 'deployment': 'skipped', 'restored': 'configuration_only', 'runtime': 'already_previous',
+                  'instanceId': evidence.get('instanceId')}
+    else:
+        result = deploy_app(client, short, previous)
     return {**result, **agent_scan} if agent_scan else result
 
 
@@ -1081,9 +1338,14 @@ def main(argv=None):
     parser.add_argument('--parallel-roles', action='store_true',
                         help='plan/run: release the three role standbys together, then the three primaries together, '
                              'then one monitor gate for all roles (default: one role pair and gate at a time)')
+    parser.add_argument('--resume', action='store_true',
+                        help='plan/run: continue a stopped run of the same target from its --snapshot (no new snapshot). '
+                             'Every app must be at the snapshot configuration or exactly the staged target configuration')
     args = parser.parse_args(argv)
     if args.action in ('run', 'restore') and not args.snapshot:
         parser.error('--snapshot is required for run/restore')
+    if args.resume and (args.action not in ('plan', 'run') or not args.snapshot):
+        parser.error('--resume is only for plan/run and needs the stopped run\'s --snapshot')
     if args.action == 'restore' and not args.app:
         parser.error('--app is required for restore')
     if args.action == 'inventory' and (not args.sha or args.worker_image or args.web_image or args.snapshot or args.app
@@ -1103,6 +1365,8 @@ def main(argv=None):
         app_metadata(args.app)
     # prepull refuses an invalid release target before Keychain (plan/run keep their check below, unchanged).
     target = validate_target(args.sha, args.worker_image, args.web_image) if args.action == 'prepull' else None
+    # --resume reads the stopped run's private snapshot before Keychain; a missing or shared file is refused here.
+    snapshot = read_snapshot(args.snapshot) if args.resume else None
     key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
                '-s', 'dokploy-api-key', '-w'])
     client = Dokploy(key)
@@ -1124,7 +1388,7 @@ def main(argv=None):
     if run(['git', 'rev-parse', 'HEAD']) != target['sha']:
         raise ValueError('local_checkout_not_target_main')
     with timeline.step('baseline'):
-        state = baseline(client, target, consumers)
+        state = resume_baseline(client, target, snapshot, consumers) if args.resume else baseline(client, target, consumers)
     integration = github_integration_preflight(client, state['apps'])
     changed = run(['git', 'diff', '--name-only', state['previous']['sha'], target['sha'],
                    '--', 'drizzle', 'lib/db/schema.ts', 'scripts/migrate.mjs'])
@@ -1134,14 +1398,18 @@ def main(argv=None):
     migrations = migration_gate(client, target['sha']) if changed else None
     # The crawler pair is always released; refuse code without the agent-scan gate while the control is not legacy.
     agent_scan = agent_scan_release_gate(client, target['sha'])
+    # 배포 전 상태: 모든 역할이 유효한 소유자면 된다(예비가 쥔 역할은 예비를 먼저 올릴 때 주가 되찾는다).
+    # --resume 은 반쯤 올린 쌍의 release_mismatch 도 받는다.
     with timeline.step('gate:crawler'):
-        monitor_gate(client, 'crawler')
+        gate = monitor_gate(client, 'crawler', strict=(), allow=state.get('mixedRoles'))
     with timeline.step('prePull'):
         pre_pull(target, token, setting(state['apps']['web-m3']['env'],
                                         'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
+    standby = gate.get('standbyActive') if isinstance(gate, dict) else None
     emit({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
           'targetRelease': target['sha'], 'mode': 'parallel-roles' if args.parallel_roles else 'sequential',
           'rollout': describe_steps(rollout_steps(consumers, args.parallel_roles)),
+          **({'resume': state['resume']} if args.resume else {}), **({'standbyActive': standby} if standby else {}),
           'githubIntegration': integration, **agent_scan,
           **({'databaseMigrations': migrations} if migrations else {}), 'preflight': timeline.summary()})
     if args.action == 'run':
