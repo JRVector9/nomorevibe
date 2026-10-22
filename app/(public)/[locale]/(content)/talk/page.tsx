@@ -9,7 +9,7 @@ import { discussionUrl, linkOnly, sourceChip, sourceClass, sourceList } from "@/
 import "@/components/social/talk.css";
 import "@/app/(public)/[locale]/(content)/popular/popular.css";
 import { canonicalAlternates } from "@/app/(public)/[locale]/(content)/page";
-import { pageTitle } from "@/lib/copy/brand";
+import { CONTACT_EMAIL, pageTitle } from "@/lib/copy/brand";
 import { I18nProvider } from "@/lib/i18n/context";
 import { getDictionary, getTranslator } from "@/lib/i18n/dictionary";
 import { formatDate, formatDateTime, formatNumber } from "@/lib/i18n/format";
@@ -183,7 +183,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
               <li>{t("talk.methodRemoved")}</li>
               <li>{t("talk.methodX")}</li>
               <li>{t("talk.methodBluesky")}</li>
-              <li>{t("talk.methodRequest")}</li>
+              <li>{t("talk.methodRequest", { email: CONTACT_EMAIL })}</li>
               <li>{t("talk.methodSeparate")}</li>
             </ul>
           </section>

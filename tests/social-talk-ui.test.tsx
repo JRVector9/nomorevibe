@@ -8,6 +8,7 @@ import { detail } from "@/messages/ko/detail";
 import { labels } from "@/messages/ko/labels";
 import type { ProductTalk, TalkPost, TalkStarGrowth } from "@/lib/social/talk";
 import type { LocalizedTalkEntry } from "@/components/social/TalkHero";
+import { CONTACT_EMAIL } from "@/lib/copy/brand";
 import { TALK_THRESHOLD } from "@/lib/social/talk-score";
 
 vi.mock("server-only", () => ({}));
@@ -122,6 +123,8 @@ describe("홈 대표 구획", () => {
     expect(html).toContain('class="talk-src talk-src-bluesky"><b>Bsky</b>반응 7 · 답글 1');
     // 집계 기준 문구는 상수와 같은 값을 말한다
     expect(browse["talk.methodThreshold"]).toContain(`Bluesky 반응(좋아요 + 재게시×2) ${TALK_THRESHOLD.bluesky.points} 이상`);
+    // 글 빼기 요청은 요청 폼 또는 공개 연락처로(Bluesky 개발자 지침 5)
+    expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, 그 프로젝트 상세 페이지 아래 요청 폼 또는 contact@nomorevibe.com 로 글 주소를 보내 주세요");
   });
 
   it("1위 허용 전이면 목록만, 아무것도 없으면 조용하다고 말한다", () => {

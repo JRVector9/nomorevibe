@@ -351,5 +351,5 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.bskyPost": "Bluesky 帖子",
   "talk.viewOnBluesky": "在 Bluesky 上查看",
   "talk.methodBluesky": "Bluesky 帖子同样只显示互动数和链接，每次检查后保留 24 小时。疑似机器人账号的帖子、带标签的帖子，以及不希望被未登录用户看到的账号的帖子不计入",
-  "talk.methodRequest": "作者可要求移除帖子：删除原帖，或在该项目详情页底部的请求表单中填写帖子地址",
+  "talk.methodRequest": "作者可要求移除帖子：删除原帖，或通过该项目详情页底部的请求表单或 {email} 发送帖子地址",
 });

@@ -124,6 +124,7 @@
 ### 2026-10-22 Bluesky 화제 수집 (사용자 지시, PR — 배포 전)
 - 세 번째 SNS 화제 출처. 잡 `bluesky-talk`(crawler, 30분, 회차당 요청 30번까지)이 Bluesky AppView 공개 검색·getPosts 로 최근 72시간 GitHub 링크 게시물을 모두 남긴다(`lib/social/bluesky-talk*.ts`).
   봇(72시간 15개 이상)·라벨(`!no-unauthenticated`·성인·검토·bot) 글은 숨김으로 남기고, 지워진 글은 내린 뒤 7일에 지운다. /talk 자격 반응 5, 확인 24시간.
+- 공개 연락처 contact@nomorevibe.com(사용자 결정 A, Bluesky 지침 5 — D5 의 "공개 이메일 없음"을 바꿈)을 게재 기준·/talk 에 싣는다. 메일 전달(Cloudflare Email Routing)을 배포 전에 확인한다.
 - migration `0115_social_posts_bluesky`(출처 제약에 bluesky). 배포는 migration → scheduler → 공통 8앱 순서. 설계·실측은 `docs/operations/2026-10-22-bluesky-talk.md`, 남은 확인은 `PENDING.md` "Bluesky 화제 수집".
 
 ### 2026-10-20 저녁 Oracle 증설 통합 배포 [#562](https://github.com/JRVector9/nomorevibe/pull/562) (사용자 지시)

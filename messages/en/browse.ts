@@ -351,5 +351,5 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.bskyPost": "Bluesky post",
   "talk.viewOnBluesky": "View on Bluesky",
   "talk.methodBluesky": "Bluesky posts likewise show only reaction counts and a link and stay for 24 hours after each check. Posts from bot-like accounts, labeled posts and accounts that asked not to be shown to logged-out people are left out",
-  "talk.methodRequest": "Authors can have their post removed: delete it at the source, or send its address through the request form at the bottom of that project's page",
+  "talk.methodRequest": "Authors can have their post removed: delete it at the source, or send its address through the request form at the bottom of that project's page or to {email}",
 });

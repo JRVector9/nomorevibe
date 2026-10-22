@@ -13,7 +13,8 @@ const LINK = "text-accent-ink underline underline-offset-2";
  * 운영자 상자 — 막다른 안내가 되지 않게 다음 걸음을 링크로 준다(2026-10-08 UX 감사 UX-18).
  *
  * 웹사이트는 '1분 만에 확인하기'가 설치 → verify 순서를 적은 /launch#verify 로 보낸다. 설치형은 배포 도메인이 없어
- * 명령으로 확인할 수 없으므로(verify.ts) 사이트 안 요청 폼(/policy#contact)으로 보낸다 — 공개 이메일은 두지 않는다(D5).
+ * 명령으로 확인할 수 없으므로(verify.ts) 사이트 안 요청 폼(/policy#contact)으로 보낸다 — 이 상자에는 이메일을 싣지 않는다
+ * (공개 연락처 CONTACT_EMAIL 은 /policy#contact 에만, 2026-10-22).
  * CLI 를 쓰지 않는 운영자의 GitHub 로그인 확인은 아직 없다(D6) — 준비 중이라고 한 줄로만 말하고 누를 것을 만들지 않는다.
  */
 export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { repoUrl: string | null; slug: string; installable?: boolean }) {
