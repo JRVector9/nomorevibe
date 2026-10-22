@@ -51,9 +51,11 @@ function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string) {
  * account — 로그인한 관리자(사이드바 아래 로그아웃 옆에 보인다). badges — AdminNav 의 NavBadges(열쇠는 메뉴 href).
  * renderedAt — 레이아웃을 그린 서버 시각. 배지를 합칠 차례를 가르고, 화면이 그린 시각(PageStamp)이 오기 전 "마지막 갱신" 자리다.
  */
-export function AdminShell({ children, badges, unknownBadges, account, renderedAt }: { children: React.ReactNode; badges?: NavBadges;
+export function AdminShell({ children, badges, unknownBadges, account, renderedAt, analyticsUrl }: { children: React.ReactNode; badges?: NavBadges;
   /** 이번에 셀 수 없었던 배지 칸 — 전에 보이던 값을 둔다 */
-  unknownBadges?: string[]; account?: string | null; renderedAt: string }) {
+  unknownBadges?: string[]; account?: string | null; renderedAt: string;
+  /** GA_PROPERTY_URL(analytics.google.com 일 때만) — 방문·여정·전환은 GA 에서 본다. 없으면 링크를 그리지 않는다 */
+  analyticsUrl?: string | null }) {
   const pathname = usePathname();
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
@@ -90,6 +92,7 @@ export function AdminShell({ children, badges, unknownBadges, account, renderedA
                 <button type="submit" className="admin-sidebar-button" title="로그아웃"><AdminIcon name="logout" size={14} /><span className="admin-sidebar-label">로그아웃</span></button>
               </form>
             </div>}
+            {analyticsUrl && <a href={analyticsUrl} target="_blank" rel="noopener noreferrer" className="admin-sidebar-button" title="Google Analytics — 방문·여정·전환"><AdminIcon name="external" size={14} /><span className="admin-sidebar-label">Google Analytics</span></a>}
             <Link href="/" className="admin-sidebar-button" title="공개 사이트로 이동"><AdminIcon name="external" size={14} /><span className="admin-sidebar-label">공개 사이트로 이동</span></Link>
             <p>수집과 발행은 독립 워커에서 실행됩니다.</p>
           </div>

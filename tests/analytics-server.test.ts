@@ -6,7 +6,7 @@ import {
 } from "@/lib/analytics/identity";
 import { agentClass, buildServerEvent, MP_COLLECT_URL, serverAnalyticsConfig, trackServer, type MeasurementPayload } from "@/lib/analytics/server";
 import { logger } from "@/lib/observability/logger";
-import { analyticsPropertyUrl } from "@/app/(operator)/admin/status/dashboard/AnalyticsLinkCard";
+import { analyticsPropertyUrl } from "@/lib/analytics/property-url";
 
 /**
  * 서버 발신 방문 분석(PR C) — Measurement Protocol 꼴·방문자 잇기·동의·개인정보·꺼짐.

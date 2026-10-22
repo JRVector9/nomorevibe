@@ -341,7 +341,7 @@ img-src     https://*.google-analytics.com https://*.googletagmanager.com
 | `GA_MEASUREMENT_ID` | M3 웹·mini 웹(PR A) | 아님 | 브라우저·서버 모두 꺼짐 |
 | `GA_API_SECRET` | M3 웹·mini 웹 | **비밀** | 서버 이벤트만 꺼짐(브라우저는 그대로) |
 | `ANALYTICS_USER_ID_SECRET` | M3 웹·mini 웹, 같은 값, 32자 이상(`openssl rand -hex 32`) | **비밀** | user_id 없이 보낸다 |
-| `GA_PROPERTY_URL` | M3 웹·mini 웹(운영센터가 웹에 있다) | 아님 | 운영센터 바로가기를 숨긴다 |
+| `GA_PROPERTY_URL` | M3 웹·mini 웹(관리자가 웹에 있다) | 아님 | 관리자 사이드바의 Google Analytics 링크를 숨긴다 |
 | `GA_DEBUG` | 확인하는 동안만 | 아님 | 서버 이벤트에도 `debug_mode` 를 붙인다 |
 
 - 모두 실행 환경(Environment)에만 넣는다(buildSecrets·`NEXT_PUBLIC_` 아님). 비밀은 Dokploy 비밀 설정으로만 — 문서·Git·명령 인자·로그에 남기지 않는다.
