@@ -14,7 +14,11 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -109,6 +113,47 @@ def run(command, *, input_text=None, timeout=45):
     if result.returncode:
         raise RuntimeError(f'command_failed:{command[0]}:{result.returncode}')
     return result.stdout.strip()
+
+
+# 확인 간격(초). 앱 확인은 Dokploy 읽기 두 번이고 SSH 확인은 Dokploy 가 done 을 낸 뒤에만 한다.
+# 감시 관문은 한 번에 컨테이너 안에서 tsx 를 두 번 띄우므로 조금 길게 둔다(예전에는 둘 다 5초).
+APP_POLL_SECONDS = 2
+MONITOR_POLL_SECONDS = 3
+_EMIT_LOCK = threading.Lock()
+
+
+def emit(record):
+    """진행 한 줄을 JSON 으로 낸다. 맨 앞에 UTC 시각(at)을 붙이고, 동시 배포의 여러 스레드가 써도 줄이 섞이지 않는다."""
+    line = json.dumps({'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), **record})
+    with _EMIT_LOCK:
+        print(line, flush=True)
+
+
+class Timeline:
+    """단계별 걸린 시간(초)을 모은다. 마지막 요약 줄은 실패해도 그때까지 끝난 단계의 시간을 남긴다."""
+
+    def __init__(self):
+        self.started = time.monotonic()
+        self.seconds = {}
+        self._lock = threading.Lock()
+
+    @contextmanager
+    def step(self, name):
+        started = time.monotonic()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self.seconds[name] = round(time.monotonic() - started, 1)
+
+    def summary(self, **extra):
+        with self._lock:
+            return {'durations': dict(self.seconds), 'totalSeconds': round(time.monotonic() - self.started, 1), **extra}
+
+
+def error_fields(error):
+    """실패 줄에 넣을 이름과 코드. 값이 섞일 수 있는 다른 예외는 이름만 낸다(맨 끝 오류 줄과 같은 규칙)."""
+    return {'error': type(error).__name__, 'detail': str(error) if isinstance(error, (ValueError, TimeoutError)) else None}
 
 
 def validate_target(sha, worker, web):
@@ -397,7 +442,7 @@ def probe(short, app, target, expected='any'):
     return json.loads(raw)
 
 
-def check_app_deployed(client, short, target, previous_id, *, timeout=None, pause=5):
+def check_app_deployed(client, short, target, previous_id, *, timeout=None, pause=APP_POLL_SECONDS):
     if timeout is None:
         # Swarm 은 한 대씩 새로 띄우고 30초 지켜본 뒤 다음으로 넘어간다 — 복제본마다 시간을 더 준다
         timeout = 240 + 90 * (max(1, client.app(short).get('replicas') or 1) - 1)
@@ -588,6 +633,15 @@ def main_sha_and_token(target):
     return run(['gh', 'auth', 'token'])
 
 
+def web_key_of(short, app, expected=None):
+    """웹의 서버 액션 키: 실행 env 와 빌드 비밀이 같고, 앞서 본 웹과도 같아야 한다. 값은 오류에 넣지 않는다."""
+    runtime_key = setting(app.get('env'), 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY')
+    build_key = setting(app.get('buildSecrets'), 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY')
+    if not runtime_key or runtime_key != build_key or (expected and expected != runtime_key):
+        raise ValueError(f'{short}_web_key_mismatch')
+    return runtime_key
+
+
 def baseline(client, target, consumers=()):
     apps = {}
     release = None
@@ -610,10 +664,7 @@ def baseline(client, target, consumers=()):
             raise ValueError(f'{short}_baseline_release_mismatch')
         old_images[kind] = current_image
         if kind == 'web':
-            runtime_key = setting(app.get('env'), 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY')
-            build_key = setting(app.get('buildSecrets'), 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY')
-            if not runtime_key or runtime_key != build_key or (web_key and web_key != runtime_key):
-                raise ValueError(f'{short}_web_key_mismatch')
+            runtime_key = web_key_of(short, app, web_key)
             if setting(app.get('env'), 'NEXT_DEPLOYMENT_ID') != current_release:
                 raise ValueError(f'{short}_deployment_id_mismatch')
             web_key = runtime_key
@@ -627,15 +678,43 @@ def baseline(client, target, consumers=()):
     return {'apps': apps, 'previous': previous}
 
 
+def pull_on_host(label, host, target, token, key_hash):
+    started = time.monotonic()
+    result = json.loads(ssh_python(host, REMOTE_PULL,
+                                  json.dumps({'worker': target['worker'], 'web': target['web']}),
+                                  target['sha'], key_hash, input_text=token, timeout=180))
+    if result.get('pulled') is not True:
+        raise RuntimeError(f'{label}_prepull_failed')
+    return {'server': label, 'imagesPulled': True, 'seconds': round(time.monotonic() - started, 1)}
+
+
 def pre_pull(target, token, current_web_key):
+    """두 서버가 동시에 받는다(예전에는 mini 다음 M3). 서로 다른 서버라 순서가 필요 없다.
+    한 서버가 실패해도 다른 서버의 받기는 끝까지 기다려 결과를 남긴 뒤, 처음 실패를 그대로 올린다."""
     key_hash = hashlib.sha256(current_web_key.encode()).hexdigest()
-    for label, (_, host) in (('mini', MINI), ('m3', M3)):
-        result = json.loads(ssh_python(host, REMOTE_PULL,
-                                      json.dumps({'worker': target['worker'], 'web': target['web']}),
-                                      target['sha'], key_hash, input_text=token, timeout=180))
-        if result.get('pulled') is not True:
-            raise RuntimeError(f'{label}_prepull_failed')
-        print(json.dumps({'server': label, 'imagesPulled': True}), flush=True)
+    hosts = (('mini', MINI), ('m3', M3))
+    errors = []
+    with ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+        futures = {pool.submit(pull_on_host, label, host, target, token, key_hash): label for label, (_, host) in hosts}
+        for future in as_completed(futures):
+            try:
+                emit(future.result())
+            except Exception as error:
+                errors.append(error)
+                emit({'server': futures[future], 'imagesPulled': False, **error_fields(error)})
+    if errors:
+        raise errors[0]
+
+
+def prepull(client, target):
+    """이미지가 나오자마자 두 서버에 미리 받아 둔다. Dokploy 는 두 웹의 빌드 키만 읽고 앱 설정·배포는 바꾸지 않는다.
+    run 도 같은 받기·검사(arm64·revision·웹 빌드 키)를 다시 하므로, 이 명령은 시간을 당길 뿐 관문을 대신하지 않는다."""
+    token = main_sha_and_token(target)
+    key = None
+    for short in ('web-mini', 'web-m3'):
+        key = web_key_of(short, client.app(short), key)
+    pre_pull(target, token, key)
+    return {'prepull': 'done', 'targetRelease': target['sha']}
 
 
 def save_snapshot(path, target, state):
@@ -649,14 +728,21 @@ def save_snapshot(path, target, state):
     return destination
 
 
-def stage_and_deploy(client, short, target, token, previous):
+def unchanged_since_preflight(client, short, previous):
+    """읽기만 한다: 사전 검사 뒤 앱이 그대로(이전 이미지·릴리스, 자동 배포 꺼짐, 마지막 배포 done)인지."""
     app = client.app(short)
-    app_id, _, _, kind = app_metadata(short)
+    kind = app_metadata(short)[3]
     if (app.get('applicationStatus') != 'done' or app.get('autoDeploy') is not False or
             app.get('dockerImage') != previous[kind] or
             setting(app.get('env'), 'RELEASE_TAG') != previous['sha'] or
             client.latest(short).get('status') != 'done'):
         raise ValueError(f'{short}_changed_since_preflight')
+    return app
+
+
+def stage_and_deploy(client, short, target, token, previous):
+    app = unchanged_since_preflight(client, short, previous)
+    app_id, _, _, kind = app_metadata(short)
     previous_id = client.latest(short)['deploymentId']
     env = replace_setting(app.get('env'), 'RELEASE_TAG', target['sha'])
     build_args = app.get('buildArgs')
@@ -686,7 +772,10 @@ def stage_and_deploy(client, short, target, token, previous):
     return check_app_deployed(client, short, target, previous_id)
 
 
-def monitor_gate(client, role, *, timeout=120, pause=5):
+def monitor_gate(client, role, *, roles=None, timeout=120, pause=MONITOR_POLL_SECONDS):
+    """role 의 M3 컨테이너에서 failover readiness·worker progress 를 본다. 둘 다 전체 ok 이고
+    고른 역할(기본은 role 하나, --parallel-roles 의 한 번 관문은 세 역할 모두)이 ready 여야 통과한다."""
+    names = tuple(roles or (role,))
     deadline = time.monotonic() + timeout
     short = role + '-m3'
     app = client.app(short)
@@ -696,15 +785,17 @@ def monitor_gate(client, role, *, timeout=120, pause=5):
             monitor = reports['check-failover-readiness.ts']
             readiness = monitor.get('readiness') or {}
             progress = reports['check-worker-progress.ts']
-            role_status = next((row for row in readiness.get('roles', []) if row.get('role') == role), None)
+            statuses = [next((row for row in readiness.get('roles', []) if row.get('role') == name), None) for name in names]
             if (monitor.get('overall') == 'ok' and readiness.get('overall') == 'ok' and
                     progress.get('overall') == 'ok' and
-                    role_status and role_status.get('reason') == 'ready'):
-                return {'role': role, 'readiness': 'ready', 'progress': 'ok'}
+                    all(status and status.get('reason') == 'ready' for status in statuses)):
+                if roles is None:
+                    return {'role': role, 'readiness': 'ready', 'progress': 'ok'}
+                return {'roles': list(names), 'readiness': 'ready', 'progress': 'ok'}
         except (RuntimeError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
             pass
         time.sleep(pause)
-    raise TimeoutError(f'{role}_monitor_gate_timeout')
+    raise TimeoutError(('_'.join(names) if roles is not None else role) + '_monitor_gate_timeout')
 
 
 def public_gate(sha, *, attempts=24):
@@ -755,25 +846,97 @@ def purge_html():
             os.close(write_fd)
 
 
-def deploy(client, target, token, state, snapshot, consumers=()):
-    save_snapshot(snapshot, target, state)
-    print(json.dumps({'snapshot': snapshot, 'preflight': 'passed'}), flush=True)
-    try:
-        for role in ('publisher', 'reviewer', 'crawler'):
+ROLES = ('publisher', 'reviewer', 'crawler')
+# --parallel-roles 의 한 번 관문: 세 역할의 주가 함께 다시 떴으므로 역할 하나의 관문(120초)보다 넉넉히 준다.
+# 통과하면 바로 끝나므로 시간 한도는 실패를 알아차리는 데만 쓰인다.
+PARALLEL_GATE_TIMEOUT = 180
+
+
+def rollout_steps(consumers=(), parallel_roles=False):
+    """배포 단계 목록. ('deploy', 앱들)은 한 묶음(둘 이상이면 동시에), ('gate', 역할들)은 감시 관문, ('public', ())은 공개 health.
+
+    기본(순차): 역할마다 mini 예비 → M3 주 → 고른 소비자 앱 → 그 역할의 관문. 실패하면 뒤 역할은 옛 릴리스 그대로다.
+    --parallel-roles: 세 역할의 mini 예비를 함께 → 세 역할의 M3 주를 함께 → 고른 소비자 앱(mini 들 → M3 들) → 관문 한 번(세 역할 모두 ready).
+    어느 쪽이든 예비가 주보다 먼저, 소비자 앱은 부모 역할의 주 뒤·관문 앞이고, 웹은 mini → M3 한 대씩 올린 뒤 공개 관문이다."""
+    steps = []
+    if parallel_roles:
+        for host in ('mini', 'm3'):
+            steps.append(('deploy', tuple(role + '-' + host for role in ROLES)))
+        for host in ('mini', 'm3'):
+            chosen = tuple(app for app in consumers if app.endswith('-consumer-' + host))
+            if chosen:
+                steps.append(('deploy', chosen))
+        steps.append(('gate', ROLES))
+    else:
+        for role in ROLES:
             # Chosen consumer apps run their parent role's code, so they follow that pair and precede its gate.
             for short in (role + '-mini', role + '-m3') + tuple(app for app in consumers if consumer_role(app) == role):
-                print(json.dumps(stage_and_deploy(client, short, target, token,
-                                                  state['previous'])), flush=True)
-            print(json.dumps(monitor_gate(client, role)), flush=True)
-        for short in ('web-mini', 'web-m3'):
-            print(json.dumps(stage_and_deploy(client, short, target, token,
-                                              state['previous'])), flush=True)
-        print(json.dumps(public_gate(target['sha'])), flush=True)
-        print(json.dumps(purge_html()), flush=True)
+                steps.append(('deploy', (short,)))
+            steps.append(('gate', (role,)))
+    return steps + [('deploy', ('web-mini',)), ('deploy', ('web-m3',)), ('public', ())]
+
+
+def describe_steps(steps):
+    return [kind + (':' + ','.join(names) if names else '') for kind, names in steps]
+
+
+def deploy_batch(client, names, target, token, previous, timeline, touched):
+    """한 묶음을 올린다. 둘 이상이면 먼저 전부 읽기만 해서 바뀐 앱이 없는지 본 뒤(하나라도 바뀌었으면 아무것도 쓰지 않는다) 동시에 올린다.
+    하나가 실패해도 이미 요청한 다른 앱은 끝까지 기다려 결과를 남긴다 — Dokploy 배포는 중간에 거둘 수 없다. 그 뒤 처음 실패를 올린다.
+    touched 에는 설정을 바꿨을 수 있는 앱을 쌓는다(멈췄을 때 되돌릴 후보)."""
+    def one(short):
+        with timeline.step(short):
+            return stage_and_deploy(client, short, target, token, previous)
+
+    if len(names) == 1:
+        touched.append(names[0])
+        emit({**one(names[0]), 'seconds': timeline.seconds[names[0]]})
+        return
+    for short in names:
+        unchanged_since_preflight(client, short, previous)
+    touched.extend(names)
+    errors = []
+    with ThreadPoolExecutor(max_workers=len(names)) as pool:
+        futures = {pool.submit(one, short): short for short in names}
+        for future in as_completed(futures):
+            short = futures[future]
+            try:
+                emit({**future.result(), 'seconds': timeline.seconds[short]})
+            except Exception as error:
+                errors.append(error)
+                emit({'app': short, 'failed': True, 'seconds': timeline.seconds.get(short), **error_fields(error)})
+    if errors:
+        raise errors[0]
+
+
+def deploy(client, target, token, state, snapshot, consumers=(), *, parallel_roles=False):
+    timeline = Timeline()
+    touched = []
+    mode = 'parallel-roles' if parallel_roles else 'sequential'
+    save_snapshot(snapshot, target, state)
+    emit({'snapshot': snapshot, 'preflight': 'passed', 'mode': mode})
+    try:
+        for kind, names in rollout_steps(consumers, parallel_roles):
+            if kind == 'deploy':
+                deploy_batch(client, names, target, token, state['previous'], timeline, touched)
+                continue
+            label = describe_steps([(kind, names)])[0]
+            with timeline.step(label):
+                if kind == 'public':
+                    result = public_gate(target['sha'])
+                elif len(names) == 1:
+                    result = monitor_gate(client, names[0])
+                else:
+                    result = monitor_gate(client, 'crawler', roles=names, timeout=PARALLEL_GATE_TIMEOUT)
+            emit({**result, 'seconds': timeline.seconds[label]})
+        emit(purge_html())
     except Exception:
-        print(json.dumps({'stopped': True, 'snapshot': snapshot,
-                          'nextStep': 'restore affected app or pair before retrying'}), flush=True)
+        emit({'stopped': True, 'snapshot': snapshot, 'touched': touched,
+              'nextStep': 'restore affected app or pair before retrying'})
         raise
+    finally:
+        # 앱·관문마다 걸린 시간 — 다음 속도 개선의 근거로 남긴다
+        emit({'summary': timeline.summary(mode=mode)})
 
 
 def restore(client, snapshot_path, short, token):
@@ -904,7 +1067,7 @@ def main(argv=None):
                 raise SystemExit(1) from error
         return oracle_main(actual)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('plan', 'run', 'restore', 'inventory'))
+    parser.add_argument('action', choices=('plan', 'run', 'prepull', 'restore', 'inventory'))
     parser.add_argument('--sha')
     parser.add_argument('--worker-image')
     parser.add_argument('--web-image')
@@ -915,6 +1078,9 @@ def main(argv=None):
     parser.add_argument('--migration-verified', action='store_true',
                         help='assert any DB migration/schema change was applied before rollout; the helper then also '
                              'reads the production migration journal (read-only) and refuses if it is behind or unreadable')
+    parser.add_argument('--parallel-roles', action='store_true',
+                        help='plan/run: release the three role standbys together, then the three primaries together, '
+                             'then one monitor gate for all roles (default: one role pair and gate at a time)')
     args = parser.parse_args(argv)
     if args.action in ('run', 'restore') and not args.snapshot:
         parser.error('--snapshot is required for run/restore')
@@ -924,13 +1090,19 @@ def main(argv=None):
                                        or args.migration_verified):
         parser.error('inventory accepts only --sha')
     if args.action not in ('restore', 'inventory') and not all((args.sha, args.worker_image, args.web_image)):
-        parser.error('--sha, --worker-image, and --web-image are required for plan/run')
+        parser.error('--sha, --worker-image, and --web-image are required for plan/run/prepull')
+    if args.action == 'prepull' and (args.snapshot or args.app or args.migration_verified):
+        parser.error('prepull accepts only --sha, --worker-image and --web-image')
+    if args.parallel_roles and args.action not in ('plan', 'run'):
+        parser.error('--parallel-roles is only for plan/run')
     if args.consumer and (args.action not in ('plan', 'run') or len(set(args.consumer)) != len(args.consumer)):
         parser.error('--consumer is only for plan/run and may not repeat')
     # An unregistered consumer target is refused before Keychain or Dokploy.
     consumers = consumer_apps(args.consumer)
     if args.action == 'restore' and args.app in CONSUMER_APPS:
         app_metadata(args.app)
+    # prepull refuses an invalid release target before Keychain (plan/run keep their check below, unchanged).
+    target = validate_target(args.sha, args.worker_image, args.web_image) if args.action == 'prepull' else None
     key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
                '-s', 'dokploy-api-key', '-w'])
     client = Dokploy(key)
@@ -941,13 +1113,18 @@ def main(argv=None):
             raise SystemExit(2)
         return
     if args.action == 'restore':
-        print(json.dumps(restore(client, args.snapshot, args.app, run(['gh', 'auth', 'token']))))
+        emit(restore(client, args.snapshot, args.app, run(['gh', 'auth', 'token'])))
+        return
+    timeline = Timeline()
+    if args.action == 'prepull':
+        emit({**prepull(client, target), 'summary': timeline.summary()})
         return
     target = validate_target(args.sha, args.worker_image, args.web_image)
     token = main_sha_and_token(target)
     if run(['git', 'rev-parse', 'HEAD']) != target['sha']:
         raise ValueError('local_checkout_not_target_main')
-    state = baseline(client, target, consumers)
+    with timeline.step('baseline'):
+        state = baseline(client, target, consumers)
     integration = github_integration_preflight(client, state['apps'])
     changed = run(['git', 'diff', '--name-only', state['previous']['sha'], target['sha'],
                    '--', 'drizzle', 'lib/db/schema.ts', 'scripts/migrate.mjs'])
@@ -957,20 +1134,23 @@ def main(argv=None):
     migrations = migration_gate(client, target['sha']) if changed else None
     # The crawler pair is always released; refuse code without the agent-scan gate while the control is not legacy.
     agent_scan = agent_scan_release_gate(client, target['sha'])
-    monitor_gate(client, 'crawler')
-    pre_pull(target, token, setting(state['apps']['web-m3']['env'],
-                                    'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
-    print(json.dumps({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
-                      'targetRelease': target['sha'], 'githubIntegration': integration, **agent_scan,
-                      **({'databaseMigrations': migrations} if migrations else {})}), flush=True)
+    with timeline.step('gate:crawler'):
+        monitor_gate(client, 'crawler')
+    with timeline.step('prePull'):
+        pre_pull(target, token, setting(state['apps']['web-m3']['env'],
+                                        'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'))
+    emit({'plan': list(release_order(consumers)), 'currentRelease': state['previous']['sha'],
+          'targetRelease': target['sha'], 'mode': 'parallel-roles' if args.parallel_roles else 'sequential',
+          'rollout': describe_steps(rollout_steps(consumers, args.parallel_roles)),
+          'githubIntegration': integration, **agent_scan,
+          **({'databaseMigrations': migrations} if migrations else {}), 'preflight': timeline.summary()})
     if args.action == 'run':
-        deploy(client, target, token, state, args.snapshot, consumers)
+        deploy(client, target, token, state, args.snapshot, consumers, parallel_roles=args.parallel_roles)
 
 
 if __name__ == '__main__':
     try:
         main()
     except Exception as error:
-        print(json.dumps({'error': type(error).__name__, 'detail': str(error)
-                          if isinstance(error, (ValueError, TimeoutError)) else None}), flush=True)
+        emit(error_fields(error))
         raise SystemExit(1)

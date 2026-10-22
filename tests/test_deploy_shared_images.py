@@ -1125,5 +1125,264 @@ class AgentScanReleaseGateTests(unittest.TestCase):
         self.assertIn(json.loads(result.stdout.strip().splitlines()[-1])['mode'], ('legacy', 'draining', 'items'))
 
 
+AT = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ')
+
+
+def lines(output):
+    return [json.loads(line) for line in output.getvalue().splitlines()]
+
+
+class ReleaseSpeedTests(unittest.TestCase):
+    """2026-10-22: 시각·소요 시간 기록, 두 서버 동시 pre-pull, prepull 명령, 짧은 확인 간격, --parallel-roles."""
+
+    def setUp(self):
+        test = ReleaseSafetyTests('test_replace_setting_requires_one_line')
+        test.setUp()
+        self.test = test
+        self.target = test.target
+        self.previous = {'sha': test.old_sha, 'worker': test.old_worker, 'web': test.old_web}
+
+    def run_deploy(self, *, parallel_roles=False, consumers=(), stage=None, gate=None, unchanged=None):
+        """가짜 단계로 deploy 를 돌리고 (단계 기록, 출력 줄, 예외)를 돌려준다."""
+        events, lock = [], __import__('threading').Lock()
+
+        def record(item):
+            with lock:
+                events.append(item)
+
+        def default_stage(_client, short, _target, _token, _previous):
+            record(short)
+            return {'app': short, 'deployment': 'done', 'service': 'healthy'}
+
+        def default_gate(_client, role, **kwargs):
+            record(('gate', role, kwargs.get('roles'), kwargs.get('timeout')))
+            return {'role': role} if 'roles' not in kwargs else {'roles': list(kwargs['roles'])}
+
+        output, error = io.StringIO(), None
+        with patch.object(release, 'save_snapshot'), \
+             patch.object(release, 'stage_and_deploy', side_effect=stage or default_stage), \
+             patch.object(release, 'unchanged_since_preflight', side_effect=unchanged or (lambda _c, short, _p: record(('check', short)))), \
+             patch.object(release, 'monitor_gate', side_effect=gate or default_gate), \
+             patch.object(release, 'public_gate', side_effect=lambda sha: record('public') or {'publicHealth': 'ok'}), \
+             patch.object(release, 'purge_html', return_value={'htmlPurge': 'skipped'}), redirect_stdout(output):
+            try:
+                release.deploy(None, self.target, 'token', {'apps': {}, 'previous': self.previous}, '/private/tmp/s.json',
+                               consumers, parallel_roles=parallel_roles)
+            except Exception as caught:
+                error = caught
+        return events, lines(output), error
+
+    def test_every_progress_line_has_utc_time_and_the_last_line_sums_up_each_app_and_gate(self):
+        events, out, error = self.run_deploy()
+        self.assertIsNone(error)
+        self.assertTrue(all(AT.fullmatch(line['at']) for line in out))
+        self.assertEqual(events, ['publisher-mini', 'publisher-m3', ('gate', 'publisher', None, None), 'reviewer-mini', 'reviewer-m3',
+                                  ('gate', 'reviewer', None, None), 'crawler-mini', 'crawler-m3', ('gate', 'crawler', None, None),
+                                  'web-mini', 'web-m3', 'public'])
+        self.assertTrue(all(isinstance(line['seconds'], float) for line in out if 'app' in line or 'role' in line))
+        summary = out[-1]['summary']
+        self.assertEqual(summary['mode'], 'sequential')
+        self.assertEqual(list(summary['durations']), list(release.ORDER[:2]) + ['gate:publisher'] + list(release.ORDER[2:4])
+                         + ['gate:reviewer'] + list(release.ORDER[4:6]) + ['gate:crawler', 'web-mini', 'web-m3', 'public'])
+        self.assertIsInstance(summary['totalSeconds'], float)
+
+    def test_a_stopped_release_still_reports_the_durations_so_far(self):
+        def gate(_client, role, **_kwargs):
+            raise TimeoutError(role + '_monitor_gate_timeout')
+        events, out, error = self.run_deploy(gate=gate)
+        self.assertIsInstance(error, TimeoutError)
+        self.assertEqual(events, ['publisher-mini', 'publisher-m3'])
+        self.assertTrue(out[-2]['stopped'])
+        self.assertEqual(out[-2]['touched'], ['publisher-mini', 'publisher-m3'])
+        self.assertEqual(list(out[-1]['summary']['durations']), ['publisher-mini', 'publisher-m3', 'gate:publisher'])
+
+    def test_default_rollout_is_the_previous_sequence_and_parallel_keeps_standby_first_and_consumers_before_the_gate(self):
+        sequential = release.rollout_steps()
+        self.assertEqual([names for kind, names in sequential if kind == 'deploy'], [(short,) for short in release.ORDER])
+        self.assertEqual(release.describe_steps(sequential),
+                         ['deploy:publisher-mini', 'deploy:publisher-m3', 'gate:publisher', 'deploy:reviewer-mini', 'deploy:reviewer-m3',
+                          'gate:reviewer', 'deploy:crawler-mini', 'deploy:crawler-m3', 'gate:crawler', 'deploy:web-mini', 'deploy:web-m3',
+                          'public'])
+        self.assertEqual(release.describe_steps(release.rollout_steps(parallel_roles=True)),
+                         ['deploy:publisher-mini,reviewer-mini,crawler-mini', 'deploy:publisher-m3,reviewer-m3,crawler-m3',
+                          'gate:publisher,reviewer,crawler', 'deploy:web-mini', 'deploy:web-m3', 'public'])
+        self.assertEqual(release.describe_steps(release.rollout_steps(CONSUMERS, True))[:5],
+                         ['deploy:publisher-mini,reviewer-mini,crawler-mini', 'deploy:publisher-m3,reviewer-m3,crawler-m3',
+                          'deploy:ai1-consumer-mini,ai2-consumer-mini', 'deploy:ai1-consumer-m3,ai2-consumer-m3,agent-scan-consumer-m3',
+                          'gate:publisher,reviewer,crawler'])
+
+    def test_parallel_roles_rolls_out_standbys_together_then_primaries_then_one_gate_then_web_one_by_one(self):
+        threading = __import__('threading')
+        barrier = threading.Barrier(3, timeout=5)
+        seen, lock = [], threading.Lock()
+
+        def stage(_client, short, _target, _token, _previous):
+            if not short.startswith('web-'):
+                barrier.wait()  # 셋이 동시에 들어와야 풀린다 — 차례로 돌면 BrokenBarrierError
+            with lock:
+                seen.append(short)
+            return {'app': short}
+        events, out, error = self.run_deploy(parallel_roles=True, stage=stage)
+        self.assertIsNone(error)
+        self.assertEqual(set(seen[:3]), {'publisher-mini', 'reviewer-mini', 'crawler-mini'})
+        self.assertEqual(set(seen[3:6]), {'publisher-m3', 'reviewer-m3', 'crawler-m3'})
+        self.assertEqual(seen[6:], ['web-mini', 'web-m3'])
+        # 묶음마다 먼저 셋 다 읽기 확인, 관문은 crawler-m3 컨테이너에서 세 역할을 한 번에, 한도는 넉넉히
+        self.assertEqual([item for item in events if item[0] == 'check'],
+                         [('check', role + '-' + host) for host in ('mini', 'm3') for role in release.ROLES])
+        self.assertEqual([item for item in events if item[0] == 'gate'],
+                         [('gate', 'crawler', release.ROLES, release.PARALLEL_GATE_TIMEOUT)])
+        self.assertEqual(out[0]['mode'], 'parallel-roles')
+        self.assertEqual(out[-1]['summary']['mode'], 'parallel-roles')
+        self.assertIn('gate:publisher,reviewer,crawler', out[-1]['summary']['durations'])
+
+    def test_parallel_batch_writes_nothing_when_any_app_changed_since_preflight(self):
+        def unchanged(_client, short, _previous):
+            if short == 'reviewer-mini':
+                raise ValueError('reviewer-mini_changed_since_preflight')
+        staged = []
+        events, out, error = self.run_deploy(parallel_roles=True, unchanged=unchanged,
+                                             stage=lambda _c, short, _t, _k, _p: staged.append(short) or {'app': short})
+        self.assertIsInstance(error, ValueError)
+        self.assertEqual(staged, [])
+        self.assertEqual((out[-2]['stopped'], out[-2]['touched']), (True, []))
+
+    def test_parallel_batch_waits_for_every_started_app_then_stops_before_the_gate_and_web(self):
+        def stage(_client, short, _target, _token, _previous):
+            if short == 'reviewer-m3':
+                raise TimeoutError('reviewer-m3_verification_timeout')
+            return {'app': short}
+        events, out, error = self.run_deploy(parallel_roles=True, stage=stage)
+        self.assertEqual(str(error), 'reviewer-m3_verification_timeout')
+        apps = {line['app']: line for line in out if 'app' in line}
+        self.assertEqual(set(apps), {role + '-' + host for role in release.ROLES for host in ('mini', 'm3')})
+        self.assertEqual((apps['reviewer-m3']['failed'], apps['reviewer-m3']['detail']), (True, 'reviewer-m3_verification_timeout'))
+        self.assertFalse(any(item[0] == 'gate' for item in events if isinstance(item, tuple)))
+        self.assertNotIn('public', events)
+        self.assertIn('reviewer-m3', out[-1]['summary']['durations'])
+        # 되돌릴 후보: 두 묶음의 여섯 앱 전부(순차였다면 reviewer 쌍까지만)
+        self.assertEqual(out[-2]['touched'], [role + '-' + host for host in ('mini', 'm3') for role in release.ROLES])
+
+    def test_monitor_gate_for_several_roles_waits_until_every_role_is_ready(self):
+        def report(reasons):
+            readiness = {'overall': 'ok' if all(reason == 'ready' for reason in reasons.values()) else 'alarm',
+                         'roles': [{'role': role, 'reason': reason} for role, reason in reasons.items()]}
+            return json.dumps({'check-failover-readiness.ts': {'overall': readiness['overall'], 'readiness': readiness},
+                               'check-worker-progress.ts': {'overall': 'ok'}})
+        answers = [report({'publisher': 'ready', 'reviewer': 'release_mismatch', 'crawler': 'ready'}),
+                   report(dict.fromkeys(release.ROLES, 'ready'))]
+        client = FakeClient({'crawler-m3': {'appName': 'service-crawler-m3'}})
+        with patch.object(release, 'ssh_python', side_effect=answers) as remote, patch.object(release.time, 'sleep') as sleep:
+            result = release.monitor_gate(client, 'crawler', roles=release.ROLES)
+        self.assertEqual(result, {'roles': list(release.ROLES), 'readiness': 'ready', 'progress': 'ok'})
+        self.assertEqual(remote.call_count, 2)
+        sleep.assert_called_once_with(release.MONITOR_POLL_SECONDS)
+        with patch.object(release, 'ssh_python', return_value=report(dict.fromkeys(release.ROLES, 'ready'))):
+            self.assertEqual(release.monitor_gate(client, 'crawler'), {'role': 'crawler', 'readiness': 'ready', 'progress': 'ok'})
+
+    def test_polling_is_tighter_but_not_continuous(self):
+        import inspect
+        self.assertEqual(inspect.signature(release.check_app_deployed).parameters['pause'].default, release.APP_POLL_SECONDS)
+        self.assertEqual(inspect.signature(release.monitor_gate).parameters['pause'].default, release.MONITOR_POLL_SECONDS)
+        self.assertTrue(2 <= release.APP_POLL_SECONDS <= release.MONITOR_POLL_SECONDS <= 3)
+
+    def test_pre_pull_runs_both_servers_at_the_same_time_and_waits_for_both_on_failure(self):
+        threading = __import__('threading')
+        barrier = threading.Barrier(2, timeout=5)
+        hosts = []
+
+        def remote(host, source, images, sha, key_hash, input_text=None, timeout=None):
+            self.assertEqual((source, sha, input_text, timeout), (release.REMOTE_PULL, self.target['sha'], 'registry-secret', 180))
+            barrier.wait()  # 두 서버가 동시에 받아야 풀린다
+            hosts.append(host)
+            if host == release.MINI[1] and self.fail_mini:
+                raise RuntimeError('command_failed:ssh:1')
+            return json.dumps({'pulled': True})
+        for fail in (False, True):
+            self.fail_mini, hosts[:] = fail, []
+            barrier.reset()
+            output = io.StringIO()
+            with self.subTest(fail=fail), patch.object(release, 'ssh_python', side_effect=remote), redirect_stdout(output):
+                if fail:
+                    with self.assertRaisesRegex(RuntimeError, 'command_failed:ssh:1'):
+                        release.pre_pull(self.target, 'registry-secret', 'sample-key')
+                else:
+                    release.pre_pull(self.target, 'registry-secret', 'sample-key')
+            self.assertEqual(sorted(hosts), sorted((release.MINI[1], release.M3[1])))
+            pulled = {line['server']: line['imagesPulled'] for line in lines(output)}
+            self.assertEqual(pulled, {'mini': not fail, 'm3': True})
+            self.assertNotIn('registry-secret', output.getvalue())
+            self.assertNotIn('sample-key', output.getvalue())
+
+    def test_prepull_reads_only_the_two_web_keys_and_never_writes(self):
+        apps = self.test.apps()
+        client = FakeClient(apps)
+        with patch.object(release, 'main_sha_and_token', return_value='registry-secret'), patch.object(release, 'pre_pull') as pull:
+            self.assertEqual(release.prepull(client, self.target), {'prepull': 'done', 'targetRelease': self.target['sha']})
+        pull.assert_called_once_with(self.target, 'registry-secret', 'sample-key')
+        self.assertEqual(client.requests, [])
+        apps['web-m3']['buildSecrets'] = 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=other-key\n'
+        with patch.object(release, 'main_sha_and_token', return_value='registry-secret'), patch.object(release, 'pre_pull') as pull, \
+             self.assertRaisesRegex(ValueError, 'web-m3_web_key_mismatch') as raised:
+            release.prepull(client, self.target)
+        pull.assert_not_called()
+        self.assertNotIn('other-key', str(raised.exception))
+
+    def test_main_prepull_needs_no_checkout_and_rejects_release_only_arguments_before_keychain(self):
+        base = ['--sha', self.target['sha'], '--worker-image', self.target['worker'], '--web-image', self.target['web']]
+        for arguments in (['prepull'] + base + ['--snapshot', '/private/tmp/x.json'], ['prepull'] + base + ['--migration-verified'],
+                          ['prepull'] + base + ['--consumer', 'agent-scan'], ['prepull'] + base + ['--parallel-roles'],
+                          ['prepull', '--sha', self.target['sha']], ['inventory', '--sha', self.target['sha'], '--parallel-roles']):
+            with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    release.main(arguments)
+                keychain.assert_not_called()
+        with patch.object(release, 'run') as keychain, self.assertRaisesRegex(ValueError, 'invalid_web_image'):
+            release.main(['prepull', '--sha', self.target['sha'], '--worker-image', self.target['worker'], '--web-image', 'web:latest'])
+        keychain.assert_not_called()
+        output = io.StringIO()
+        with patch.object(release, 'run', return_value='operator-secret') as keychain, \
+             patch.object(release, 'Dokploy', return_value=FakeClient(self.test.apps())), \
+             patch.object(release, 'main_sha_and_token', return_value='registry-secret'), patch.object(release, 'pre_pull'), \
+             redirect_stdout(output):
+            release.main(['prepull'] + base)
+        self.assertEqual(keychain.call_count, 1)  # Keychain 만 — git checkout 확인·baseline 이 없다
+        result = lines(output)[-1]
+        self.assertEqual((result['prepull'], result['targetRelease']), ('done', self.target['sha']))
+        self.assertTrue(AT.fullmatch(result['at']))
+        self.assertNotIn('operator-secret', output.getvalue())
+
+    def test_main_plan_prints_the_parallel_rollout_and_preflight_timings_and_run_passes_the_mode(self):
+        apps = self.test.apps()
+        state = {'apps': apps, 'previous': self.previous}
+        base = ['--sha', self.target['sha'], '--worker-image', self.target['worker'], '--web-image', self.target['web'], '--parallel-roles']
+        for action in ('plan', 'run'):
+            output = io.StringIO()
+            arguments = [action] + base + (['--snapshot', '/private/tmp/unused.json'] if action == 'run' else [])
+            with self.subTest(action=action), patch.object(release, 'run', side_effect=['operator-secret', self.target['sha'], '']), \
+                 patch.object(release, 'main_sha_and_token', return_value='registry-secret'), \
+                 patch.object(release, 'Dokploy', return_value=FakeClient(apps)), patch.object(release, 'baseline', return_value=state), \
+                 patch.object(release, 'github_integration_preflight', return_value={}), patch.object(release, 'monitor_gate'), \
+                 patch.object(release, 'agent_scan_release_gate', return_value={'agentScanGate': 'release_gated'}), \
+                 patch.object(release, 'pre_pull'), patch.object(release, 'deploy') as deploy, redirect_stdout(output):
+                release.main(arguments)
+            plan = lines(output)[-1]
+            self.assertEqual(plan['plan'], list(release.ORDER))
+            self.assertEqual(plan['mode'], 'parallel-roles')
+            self.assertEqual(plan['rollout'], release.describe_steps(release.rollout_steps((), True)))
+            self.assertEqual(list(plan['preflight']['durations']), ['baseline', 'gate:crawler', 'prePull'])
+            self.assertEqual(deploy.call_count, int(action == 'run'))
+            if action == 'run':
+                self.assertTrue(deploy.call_args.kwargs['parallel_roles'])
+
+    def test_cli_error_line_has_the_time_and_only_the_error_code(self):
+        failed = subprocess.run([sys.executable, str(SOURCE), 'prepull', '--sha', 'not-a-sha', '--worker-image', 'x', '--web-image', 'y'],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(failed.returncode, 1)
+        line = json.loads(failed.stdout)
+        self.assertEqual((line['error'], line['detail']), ('ValueError', 'invalid_release_sha'))
+        self.assertTrue(AT.fullmatch(line['at']))
+
+
 if __name__ == '__main__':
     unittest.main()
