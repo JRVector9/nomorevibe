@@ -4,23 +4,23 @@ export type XCollectorOptions = {
   useCaseApproved?: boolean;
   token?: string;
   now?: () => number;
-  /** 웹과 주고받는 것(검색 저장소 묻기·게시물·하루 상태). 없으면 묻지도 보내지도 않는다 */
+  /** 웹으로 보내는 보고(게시물·하루 상태). 없으면 보내지 않는다 */
   report?: XReportConfig;
 };
-/** 그날 검색어가 어디서 왔는지(status.json·하루 보고 v2) — 저장소 이름·검색어 글자는 남기지 않는다 */
-export type XQueryUse = { source: "products" | "default"; repositories: number; reason: string | null };
 export type XCollectorResult = {
   status: "planned" | "blocked" | "completed" | "stopped";
   reason?: string;
   reservedPosts: number;
   requests: number;
   candidates: number;
-  query?: XQueryUse;
+  /** 그날 검색어(status.json·실행 결과·하루 보고 v3) — 출처와 좋아요 하한. 검색어 글자는 남기지 않는다 */
+  query: XStatusQuery;
+  /** X 검색 응답의 HTTP 상태 — http_error 로 멈춘 날 400(연산자·검색어 거절)과 429·5xx 를 가른다 */
+  httpStatus?: number;
 };
 type Candidate = { repository: string; reactions: number | null; postCount: number; skillVerified: false };
-type Reports = { posts?: XReportOutcome; status?: XReportOutcome };
-/** ours: 그날 검색한 우리 저장소 · webV2: 묻기에 답한 웹 — 보고 v2 를 받는다 */
-type QueryChoice = { query: string; use: XQueryUse; ours: string[]; webV2: boolean };
+/** statusV1: 하루 보고 v3 가 400 이라 검색어 칸 없는 v1 로 다시 보낸 결과(v3 를 모르는 웹) */
+type Reports = { posts?: XReportOutcome; status?: XReportOutcome; statusV1?: XReportOutcome };
 
 async function syncDirectory(directory: string) {
   const handle = await open(directory, "r");
@@ -71,36 +71,25 @@ async function lastSuccess(stateDir: string): Promise<string | null> {
 }
 
 /**
- * 그날 검색어를 고른다 — 예약 장부보다 먼저(묻기 10초 한 번). 웹이 답한 우리 제품 저장소로 만들고,
- * 묻는 주소가 없거나 묻기가 실패하거나 목록이 비면 고정 검색어(X_COLLECTOR_QUERY)로 돈다 — 그날 읽기를 버리지 않는다.
- * 답을 받은 웹만 보고 v2 를 받는다고 본다. 묻기가 실패한 날은 옛 웹일 수도 있어 v1 로 보낸다.
+ * 게시물은 실제 수집이 끝났고 보낼 것이 있을 때만, 하루 상태는 매 실행 보낸다.
+ * 하루 상태는 검색어 칸이 있는 v3 로 보내고, v3 를 모르는 웹(#590 까지)이 400 으로 답하면 그때만 v1 로 한 번 더 보낸다 —
+ * 형식을 맞추는 것이지 실패를 되풀이하는 재시도가 아니다(400 은 웹이 DB 를 보기 전에 거절해 단조·속도 줄을 남기지 않는다).
  */
-async function chooseQuery(report: XReportConfig | undefined, day: string, send?: typeof fetch): Promise<QueryChoice> {
-  const fallback = (reason: string, webV2 = false): QueryChoice =>
-    ({ query: X_COLLECTOR_QUERY, ours: [], webV2, use: { source: "default", repositories: 0, reason } });
-  if (!report?.queryUrl) return fallback("not_configured");
-  const answer = await requestXQuery(report.queryUrl, report.secret, day, send);
-  if (!answer.ok) return fallback(answer.reason);
-  const built = xRepositoryQuery(answer.repositories);
-  if (!built) return fallback("empty", true);
-  return { query: built.query, ours: built.repositories, webV2: true, use: { source: "products", repositories: built.repositories.length, reason: null } };
-}
-
-/** 게시물은 실제 수집이 끝났고 보낼 것이 있을 때만, 하루 상태는 매 실행 보낸다 */
 async function sendReports(config: XReportConfig, run: { live: boolean; result: XCollectorResult; observed: XObservation[];
-  observedAt: string; day: string; stateDir: string; choice: QueryChoice }, send?: typeof fetch): Promise<Reports> {
+  observedAt: string; day: string; stateDir: string }, send?: typeof fetch): Promise<Reports> {
   const reports: Reports = {};
   if (config.postsUrl && run.live && run.result.status === "completed") {
-    const payload = xPostsReportFrom(run.observed, run.observedAt, run.choice.webV2 ? { version: 2, ours: run.choice.ours } : {});
+    const payload = xPostsReportFrom(run.observed, run.observedAt);
     if (payload.posts.length || payload.unavailable.length) reports.posts = await sendSigned(config.postsUrl, signPosts(config.secret), payload, send);
   }
   if (config.statusUrl) {
-    reports.status = await sendSigned(config.statusUrl, signStatus(config.secret), xStatusReportFrom({
+    const input = {
       live: run.live, status: run.result.status, reason: run.result.reason, candidates: run.result.candidates,
       reservedToday: await exists(join(run.stateDir, `budget-${run.day}.json`)),
       lastRunAt: run.observedAt, lastSuccessAt: await lastSuccess(run.stateDir),
-      ...(run.choice.webV2 ? { query: run.choice.use } : {}),
-    }), send);
+    };
+    reports.status = await sendSigned(config.statusUrl, signStatus(config.secret), xStatusReportFrom({ ...input, query: run.result.query }), send);
+    if (reports.status === 400) reports.statusV1 = await sendSigned(config.statusUrl, signStatus(config.secret), xStatusReportFrom(input), send);
   }
   return reports;
 }
@@ -109,7 +98,8 @@ export async function runXCollector(
   options: XCollectorOptions,
   dependencies: { request?: typeof fetch; send?: typeof fetch } = {},
 ): Promise<XCollectorResult> {
-  const result: XCollectorResult = { status: "planned", reservedPosts: 0, requests: 0, candidates: 0 };
+  const result: XCollectorResult = { status: "planned", reservedPosts: 0, requests: 0, candidates: 0,
+    query: { source: "popular", minLikes: X_COLLECTOR_MIN_LIKES } };
   const now = (options.now ?? Date.now)();
   if (!Number.isFinite(now) || !Number.isFinite(new Date(now).getTime()))
     return { ...result, status: "blocked", reason: "invalid_clock" };
@@ -119,31 +109,22 @@ export async function runXCollector(
     await mkdir(options.stateDir, { recursive: true, mode: 0o700 });
     await chmod(options.stateDir, 0o700);
     let observed: XObservation[] = [];
-    // The day's query comes first: the web's repository list, or the fixed query when that fails.
-    let choice = await chooseQuery(options.report, day, dependencies.send);
     const finish = async () => {
       if (result.status === "completed" || result.status === "planned") await writeCurrent(options.stateDir, "last-success.json", { observedAt });
       const reports = options.report
-        ? await sendReports(options.report, { live: Boolean(options.live), result, observed, observedAt, day, stateDir: options.stateDir, choice }, dependencies.send)
+        ? await sendReports(options.report, { live: Boolean(options.live), result, observed, observedAt, day, stateDir: options.stateDir }, dependencies.send)
         : undefined;
       await writeCurrent(options.stateDir, "status.json", { ...result, day, observedAt, service: "oci-osaka-smoke-x", ...(reports ? { reports } : {}) });
       return result;
     };
     // Validate the exact transport settings before making a persistent reservation.
-    const planFor = (query: string) => runXPilot({ query, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { now: () => now });
-    let plan = await planFor(choice.query);
-    if (plan.status !== "planned" && choice.use.source === "products") {
-      choice = { ...choice, query: X_COLLECTOR_QUERY, ours: [], use: { source: "default", repositories: 0, reason: "invalid_query" } };
-      plan = await planFor(choice.query);
-    }
-    result.query = choice.use;
+    const plan = await runXPilot({ query: X_COLLECTOR_QUERY, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { now: () => now });
     if (plan.status !== "planned") return { ...result, status: "blocked", reason: "invalid_plan" };
     if (!options.live) return await finish();
     const gate = !options.useCaseApproved ? "use_case_not_approved" : !options.token?.trim() ? "bearer_token_missing"
       : /[\s\u007f]/.test(options.token) || options.token.length > 4096 ? "bearer_token_invalid" : null;
     if (gate) { result.status = "blocked"; result.reason = gate; return await finish(); }
-    // The repository lookup (10 seconds) and the request (20 seconds) both fit in this last minute;
-    // do not let a previous day's reservation cross UTC midnight.
+    // A request may take 20 seconds; do not let a previous day's reservation cross UTC midnight.
     if (now % DAY >= DAY - 60_000) {
       result.status = "blocked"; result.reason = "day_boundary"; return await finish();
     }
@@ -161,8 +142,10 @@ export async function runXCollector(
     } finally { await receipt.close(); }
     await syncDirectory(options.stateDir);
     const pilot = await runXPilot({ live: true, useCaseApproved: true, token: options.token,
-      query: choice.query, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { request: dependencies.request, now: () => now });
+      query: X_COLLECTOR_QUERY, searchOnly: true, sortOrder: X_COLLECTOR_SORT_ORDER }, { request: dependencies.request, now: () => now });
     result.requests = pilot.requests.length;
+    const httpStatus = pilot.requests[0]?.status;
+    if (typeof httpStatus === "number") result.httpStatus = httpStatus;
     result.status = pilot.status === "completed" ? "completed" : "stopped";
     if (pilot.reason) result.reason = pilot.reason;
     if (result.status === "completed") observed = pilot.observations;
@@ -179,15 +162,24 @@ export async function runXCollector(
 import { access, chmod, mkdir, open, readFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { XStatusQuery } from "@/lib/operations/x-status";
 import { runXPilot, type XObservation } from "./x-pilot";
-import { xRepositoryQuery } from "./x-query";
-import {
-  requestXQuery, sendSigned, signPosts, signStatus, xPostsReportFrom, xStatusReportFrom, type XReportConfig, type XReportOutcome,
-} from "./x-report";
+import { sendSigned, signPosts, signStatus, xPostsReportFrom, xStatusReportFrom, type XReportConfig, type XReportOutcome } from "./x-report";
 
 const DAY = 86_400_000;
-/** 고정 검색어 — 웹에 저장소를 묻지 못한 날(주소 없음·실패·빈 목록) 그날 읽기를 버리지 않으려고 쓴다 */
-export const X_COLLECTOR_QUERY = 'url:github.com (launch OR launched OR "built with" OR "vibe coding" OR "SKILL.md" OR "agent skill") has:links';
+/**
+ * 검색어의 좋아요 하한 — 이미 많이 퍼진 글만 읽는다(2026-10-22 사용자 지시 "GitHub 주소가 있고 많이 커진 글만").
+ * 공개 /talk 의 X 자격(좋아요 + 재게시×2 ≥ 50, lib/social/talk-score.ts)과 같은 50 에서 시작한다 — 좋아요만 50 이상이면 자격은 늘 넘는다.
+ * 재게시가 많고 좋아요가 50 아래인 글은 빠진다. 실제 분포를 보고 다시 정한다.
+ */
+export const X_COLLECTOR_MIN_LIKES = 50;
+/**
+ * 하루 한 번 보내는 검색어 — GitHub 주소가 있고 좋아요가 하한 이상인 글. runXPilot 이 `(…) -is:retweet` 으로 감싼다.
+ * min_likes: 는 docs.x.com 연산자 표의 참여 연산자(음이 아닌 정수, recent search 에서 쓴다)다. 웹 검색의 min_faves:·min_retweets: 는 API 에서 400 이다.
+ * 우리 요금제에서 받아지는지는 문서에 없다 — 첫 실제 실행의 httpStatus 로 본다(400 이면 거절).
+ * 앞선 검색어: 고정 낱말(`launch OR … has:links`, 관련도순 10-21 최고 35점·50점 0건) → 웹이 골라 준 우리 제품 저장소(#590) → 이것.
+ */
+export const X_COLLECTOR_QUERY = `url:github.com min_likes:${X_COLLECTOR_MIN_LIKES}`;
 /**
  * 하루 한 번 읽는 10개를 최근 24시간에서 관련도순으로 고른다. 최신순은 막 올라온(반응 0~2) 글만 잡혀
  * 화제 자격(X 50점)에 닿지 못했다(2026-10-20 첫 실제 수집). 관련도 순서의 기준은 X 가 공개하지 않는다.

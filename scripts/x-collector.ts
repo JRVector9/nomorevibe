@@ -13,17 +13,16 @@ function reportUrl(value: string | undefined, invalid: () => never): string | nu
 }
 
 /**
- * 웹 설정 — 비밀(32바이트 이상)이 없으면 묻지도 보내지도 않는다. 비밀만 있고 주소가 하나도 없으면 설정 오류.
- * X_QUERY_URL(검색 저장소 묻기)이 없으면 고정 검색어로 돌고 보고는 v1 로 보낸다.
+ * 웹 보고 설정 — 비밀(32바이트 이상)이 없으면 보내지 않는다. 비밀만 있고 주소가 하나도 없으면 설정 오류.
+ * X_QUERY_URL(2026-10-21 검색 저장소 묻기)은 없앴다 — env 에 남아 있어도 읽지 않는다(값이 틀려도 설정 오류가 아니다).
  */
 function reportConfig(environment: Record<string, string | undefined>, invalid: () => never): XReportConfig | undefined {
   const secret = environment.X_STATUS_REPORT_SECRET;
   if (!secret) return undefined;
   if (Buffer.byteLength(secret) < 32 || /[\s\u007f]/.test(secret)) invalid();
   const statusUrl = reportUrl(environment.X_STATUS_REPORT_URL, invalid), postsUrl = reportUrl(environment.X_POSTS_REPORT_URL, invalid);
-  const queryUrl = reportUrl(environment.X_QUERY_URL, invalid);
-  if (!statusUrl && !postsUrl && !queryUrl) invalid();
-  return { secret, statusUrl, postsUrl, queryUrl };
+  if (!statusUrl && !postsUrl) invalid();
+  return { secret, statusUrl, postsUrl };
 }
 
 export function xCollectorConfig(args: string[], environment: Record<string, string | undefined>, host: string): XCollectorOptions {
