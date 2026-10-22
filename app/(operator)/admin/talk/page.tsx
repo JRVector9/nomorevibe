@@ -5,14 +5,16 @@ import { Panel } from "@/components/Panel";
 import { discussionUrl, SOURCE_NAME, sourceChip } from "@/components/social/talk-format";
 import { currentAdmin } from "@/lib/auth/admin";
 import type { SocialSource } from "@/lib/db/schema";
-import { formatListTime } from "@/lib/format/time";
-import { blueskyTalkJobState, hnTalkJobState, listTalkPostsPage, TALK_ADMIN_PAGE_SIZE, talkAdminFilter, type TalkAdminFilter } from "@/lib/social/admin";
+import { formatInterval, formatListTime } from "@/lib/format/time";
+import { JOB_CATALOG } from "@/lib/jobs/catalog";
+import { X_COLLECTOR_SCHEDULE } from "@/lib/operations/x-status";
+import { blueskyTalkJobState, hnTalkJobState, listTalkPostsPage, TALK_ADMIN_PAGE_SIZE, talkAdminFilter, xTalkStatus, type TalkAdminFilter } from "@/lib/social/admin";
 import { blueskyPostKey } from "@/lib/social/bluesky-link";
 import { talkPublicEnabled } from "@/lib/social/flags";
 import { SOCIAL_RETENTION_MS } from "@/lib/social/hn-talk";
 import { BLUESKY_FRESH_MS, homeTalkLineup, listTalk, TALK_LIST_LIMIT, X_FRESH_MS } from "@/lib/social/talk";
-import { thresholdLabel } from "@/lib/social/talk-reasons";
-import { TALK_VISIBLE_MS } from "@/lib/social/talk-score";
+import { productStatusName, reactionLabel, thresholdLabel } from "@/lib/social/talk-reasons";
+import { TALK_VISIBLE_MS, talkQualifies } from "@/lib/social/talk-score";
 import { pageWindow } from "../paging";
 import { TalkHomeBoard, type TalkHomeRow } from "./TalkHomeBoard";
 import { TalkPostsBoard } from "./TalkPostsBoard";
@@ -27,6 +29,8 @@ const RETENTION_DAYS = Math.round(SOCIAL_RETENTION_MS / 86_400_000);
 const VISIBLE_DAYS = Math.round(TALK_VISIBLE_MS / 86_400_000);
 const X_HOURS = Math.round(X_FRESH_MS / 3_600_000);
 const BLUESKY_HOURS = Math.round(BLUESKY_FRESH_MS / 3_600_000);
+/** 수집 주기는 카탈로그에서 읽는다 — 글에 박아 두면 주기를 바꿔도 화면이 옛 주기를 말한다(Bluesky 30분 → 2시간, #597) */
+const every = (job: string) => formatInterval(JOB_CATALOG.find((entry) => entry.name === job)?.intervalMs);
 
 /** 본문을 받지 않는 출처(X·Bluesky)의 글 이름 — 게시물 ID 로 붙인다 */
 function postName(post: { source: SocialSource; title: string; externalId: string }): string {
@@ -46,7 +50,7 @@ function linkOf(url: string): { linkUrl: string | null; linkHost: string } {
 
 /**
  * SNS 화제(C안) 운영 — 홈 1위 확인, 수집한 글 전부(HN·X·Bluesky, 모든 상태) 보기·숨기기, 저장소를 화제에서 빼기.
- * 수집은 crawler 의 hn-talk·bluesky-talk 잡(30분)과 X 보고, 공개 여부는 SNS_TALK_PUBLIC_ENABLED.
+ * 수집은 crawler 의 hn-talk·bluesky-talk 잡(주기는 lib/jobs/catalog.ts)과 osaka X 수집기의 보고, 공개 여부는 SNS_TALK_PUBLIC_ENABLED.
  */
 export default async function AdminTalkPage({ searchParams }: Props) {
   const admin = await currentAdmin();
@@ -57,12 +61,15 @@ export default async function AdminTalkPage({ searchParams }: Props) {
   const parsedPage = Number(first(params.page) ?? 1);
   const page = Number.isSafeInteger(parsedPage) && parsedPage > 0 ? parsedPage : 1;
   const now = new Date();
-  const [board, listed, job, blueskyJob] = await Promise.all([
+  const [board, listed, job, blueskyJob, x] = await Promise.all([
     listTalk({ mode: "now", now, limit: 15 }),
     listTalkPostsPage(filter, { now, page }),
     hnTalkJobState(),
     blueskyTalkJobState(),
+    xTalkStatus(now).catch(() => null),
   ]);
+  // 그날 검색어의 좋아요 하한 — 수집기 보고(v3)에 실려 온다. 아직 못 받았으면 하한 없이 말한다
+  const xMinLikes = x?.report?.v === 3 ? x.report.query.minLikes : null;
   const { summary } = listed;
   const lineup = homeTalkLineup(board.entries);
   const place = (key: string): TalkHomeRow["onHome"] => lineup.lead?.repositoryKey === key ? "lead"
@@ -70,7 +77,7 @@ export default async function AdminTalkPage({ searchParams }: Props) {
     : lineup.rest.some(entry => entry.repositoryKey === key) ? "rest" : null;
   const homeRows: TalkHomeRow[] = board.entries.map(entry => ({
     rank: entry.rank, repositoryKey: entry.repositoryKey, slug: entry.product.slug, name: entry.product.name,
-    best: entry.posts[0] ? `${sourceChip(entry.posts[0], true)} ${entry.posts[0].points}점 · 댓글 ${entry.posts[0].comments}` : "",
+    best: entry.posts[0] ? `${sourceChip(entry.posts[0], true)} ${reactionLabel(entry.posts[0])}` : "",
     decision: entry.homeDecision, onHome: place(entry.repositoryKey),
   }));
   const publicOn = talkPublicEnabled();
@@ -110,8 +117,9 @@ export default async function AdminTalkPage({ searchParams }: Props) {
     ] },
     { title: "/talk", options: [
       { label: "전체", next: { talk: "all" }, active: filter.talk === "all" },
-      { label: "보임", count: summary.talk.on, next: { talk: "on" }, active: filter.talk === "on" },
-      { label: "안 보임", count: summary.talk.off, next: { talk: "off" }, active: filter.talk === "off" },
+      // /talk 에 올랐는지는 '오름' — '보임'은 위 상태 줄의 숨김의 반대(다시 보이기)다
+      { label: "오름", count: summary.talk.on, next: { talk: "on" }, active: filter.talk === "on" },
+      { label: "안 오름", count: summary.talk.off, next: { talk: "off" }, active: filter.talk === "off" },
     ] },
     { title: "순서", options: [
       { label: "최근 게시", next: { sort: "recent" }, active: filter.sort === "recent" },
@@ -126,19 +134,21 @@ export default async function AdminTalkPage({ searchParams }: Props) {
         <span className="text-[13px] text-fg-3">{admin.login}</span>
       </div>
       <p className="mt-2 max-w-[80ch] text-[13.5px] leading-[1.7] text-fg-2">
-        Hacker News에서 주소가 github.com인 글을 30분마다(hn-talk), X에서 GitHub 저장소를 가리킨 게시물을 받아,
-        Bluesky에서 GitHub를 가리킨 게시물을 30분마다(bluesky-talk) 기록합니다.
+        Hacker News에서 주소가 github.com인 글을 {every("hn-talk")}마다(hn-talk), Bluesky에서 GitHub를 가리킨 게시물을 {every("bluesky-talk")}마다(bluesky-talk) 기록합니다.
+        X는 osaka 서버의 X 수집기가 {X_COLLECTOR_SCHEDULE}에 한 번 GitHub 주소가 있고 많이 퍼진 글
+        {xMinLikes !== null && <>(<code className="font-mono text-[13px]">url:github.com min_likes:{xMinLikes}</code> — 좋아요 {xMinLikes} 이상)</>}을 검색해 보내 준 게시물을 기록합니다.
         검색이 돌려준 글은 저장소가 아니어도 버리지 않고 <a href="#posts" className="text-accent hover:underline">수집한 글 전부</a>에 {RETENTION_DAYS}일 동안 남깁니다.
         Bluesky는 봇으로 보이는 계정·라벨 붙은 글도 남기되 숨김(까닭은 /talk 칸)으로 두고, 원문이 지워진 글은 7일 뒤 지웁니다.
         /talk·홈·상세에는 공개 제품에 이어진 글 중 기준({thresholdLabel("hn")}, {thresholdLabel("x")}, {thresholdLabel("bluesky")})을 넘은 저장소만, 최근 {VISIBLE_DAYS}일 글만 오릅니다(X·Bluesky는 마지막 확인 뒤 {X_HOURS}·{BLUESKY_HOURS}시간).
         홈 첫 화면 1위는 여기서 허용한 제품만 오릅니다.
       </p>
+      {/* 세 시각은 뜻이 다르다 — HN·Bluesky 는 잡이 마지막 회차를 시작한 때, X 는 수집기가 보낸 글을 마지막으로 받은 때(글의 마지막 확인) */}
       <p className="mt-2 text-[13px] text-fg-2">
         공개: <b className={publicOn ? "text-up" : "text-fg"}>{publicOn ? "켜짐" : "꺼짐 — 관리자에게만 미리보기"}</b>
-        {" · "}HN 마지막 수집: {job?.lastRunAt ? formatListTime(job.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}
+        {" · "}<span title="hn-talk 잡이 마지막 회차를 시작한 시각">HN 회차 시작: {job?.lastRunAt ? formatListTime(job.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}</span>
         {job?.lastError && <span className="text-down"> · 마지막 오류 {job.lastError.slice(0, 120)}</span>}
-        {" · "}X 마지막 확인: {seen("x")}
-        {" · "}Bluesky 마지막 수집: {blueskyJob?.lastRunAt ? formatListTime(blueskyJob.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}
+        {" · "}<span title="X 수집기가 보낸 글을 마지막으로 받은 시각(글의 마지막 확인 중 가장 늦은 것)">X 글 마지막 받음: {seen("x")}</span>
+        {" · "}<span title="bluesky-talk 잡이 마지막 회차를 시작한 시각">Bluesky 회차 시작: {blueskyJob?.lastRunAt ? formatListTime(blueskyJob.lastRunAt.toISOString(), now.toISOString()) : "아직 없음"}</span>
         {blueskyJob?.lastError && <span className="text-down"> · 마지막 오류 {blueskyJob.lastError.slice(0, 120)}</span>}
         {" · "}<a href="/talk" target="_blank" rel="noopener" className="text-accent hover:underline">/talk 미리보기</a>
       </p>
@@ -149,7 +159,7 @@ export default async function AdminTalkPage({ searchParams }: Props) {
         </Panel>
         <div id="posts" className="scroll-mt-4">
           <Panel title="수집한 글 전부"
-            note={`HN·X·Bluesky에서 모은 글을 상태와 관계없이 모두 보여 줍니다(보관 ${RETENTION_DAYS}일 · 전체 ${count(summary.total)}건, 단추 옆 숫자는 거르기 전 전체 기준). 글마다 지금 /talk에 보이는지, 아니면 왜 아닌지 적습니다(순위는 '지금' 기준, ${TALK_LIST_LIMIT}위까지 보임). 숨긴 글은 다시 수집돼도 숨긴 채로 남습니다. 저장소를 빼면 그 저장소의 모든 글이 화면에서 빠집니다.${board.unlisted.active + board.unlisted.unknown > 0 ? ` 화제인데 아직 공개 제품이 아닌 저장소 ${board.unlisted.active + board.unlisted.unknown}개(심사 중 ${board.unlisted.active}).` : ""}`}>
+            note={`HN·X·Bluesky에서 모은 글을 상태와 관계없이 모두 보여 줍니다(보관 ${RETENTION_DAYS}일 · 전체 ${count(summary.total)}건, 단추 옆 숫자는 거르기 전 전체 기준). 글마다 지금 /talk에 오르는지, 아니면 왜 아닌지 적습니다(순위는 '지금' 기준, ${TALK_LIST_LIMIT}위까지 오름). 상태의 '보임'은 숨기지 않았다는 뜻입니다. 숨긴 글은 다시 수집돼도 숨긴 채로 남습니다. 저장소를 빼면 그 저장소의 모든 글이 화면에서 빠집니다.${board.unlisted.active + board.unlisted.unknown > 0 ? ` 화제인데 아직 공개 제품이 아닌 저장소 ${board.unlisted.active + board.unlisted.unknown}개(심사 중 ${board.unlisted.active}).` : ""}`}>
             <div className="mb-3 flex flex-col gap-2">
               {filterRows.map(row => (
                 <nav key={row.title} className="flex flex-wrap items-center gap-2" aria-label={`${row.title} 거르기`}>
@@ -175,8 +185,10 @@ export default async function AdminTalkPage({ searchParams }: Props) {
                 title: postName(post),
                 discussionUrl: discussionUrl(post), ...linkOf(post.linkUrl), linkTarget: post.linkTarget,
                 repositoryKey: post.repositoryKey, points: post.points, comments: post.comments, frontPage: post.frontPage,
+                reaction: reactionLabel(post), threshold: { met: talkQualifies(post), rule: thresholdLabel(post.source) },
                 postedAt: post.postedAt.toISOString(), firstSeenAt: post.firstSeenAt.toISOString(), lastSeenAt: post.lastSeenAt.toISOString(),
-                state: post.state, excluded: post.excluded, product: post.product ? { slug: post.product.slug, status: post.product.status } : null,
+                state: post.state, excluded: post.excluded,
+                product: post.product ? { slug: post.product.slug, status: post.product.status, statusLabel: productStatusName(post.product.status) } : null,
                 talk: { shown: post.talk.shown, rank: post.talk.rank, reasons: post.talk.reasons.map(reason => reason.label) },
               }))} />
             {pages > 1 && (

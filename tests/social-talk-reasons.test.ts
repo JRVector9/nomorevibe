@@ -56,7 +56,7 @@ describe('왜 /talk 에 없나', () => {
     expect(labels(talkVerdict(post({ excluded: true }), none, NOW))).toEqual(['저장소 빼기']);
     expect(labels(talkVerdict(post({ linkTarget: 'issue' }), none, NOW))).toEqual(['이슈·PR 글 — 제품 상세에만']);
     expect(labels(talkVerdict(post({ product: null, points: 5 }), none, NOW))).toEqual(['공개 제품 아님 — 제품 없음', `점수 미달 — ${thresholdLabel('hn')} 아래`]);
-    expect(labels(talkVerdict(post({ product: { ...publicProduct, status: 'banned', publicProduct: false } }), none, NOW))).toEqual(['공개 제품 아님 — banned']);
+    expect(labels(talkVerdict(post({ product: { ...publicProduct, status: 'banned', publicProduct: false } }), none, NOW))).toEqual(['공개 제품 아님 — 차단됨']);
     expect(labels(talkVerdict(post({ product: { ...publicProduct, publicProduct: false, down: true, auditHeld: true } }), none, NOW)))
       .toEqual(['공개 제품 아님 — 응답 없음·감사 보류']);
     expect(labels(talkVerdict(post({ postedAt: new Date(NOW.getTime() + HOUR) }), none, NOW))).toEqual(['게시 시각이 지금보다 뒤']);

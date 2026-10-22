@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, notInArray, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs, products, socialPosts, socialTalkDecisions, type SocialPostState, type SocialSource, type TalkHomeDecision } from "@/lib/db/schema";
+import { jobs, operationsObservations, products, socialPosts, socialTalkDecisions, type SocialPostState, type SocialSource, type TalkHomeDecision } from "@/lib/db/schema";
+import { readXStatus, X_STATUS_KEY } from "@/lib/operations/x-status";
 import { PRODUCT_IDENTITY, publicProductChecks, talkGroups } from "./talk";
 import { shownPostIds, talkPlacement, talkVerdict, type TalkProductCheck } from "./talk-reasons";
 
@@ -187,3 +188,13 @@ export async function hnTalkJobState(name = HN_TALK_JOB) {
   return row ?? null;
 }
 export const blueskyTalkJobState = () => hnTalkJobState(BLUESKY_TALK_JOB);
+
+/**
+ * X 수집기의 하루 보고(관측 줄 x-status 한 줄) — 운영센터와 같은 readXStatus 로 읽는다. 화면 설명의 검색어(좋아요 하한)를
+ * 보고에서 가져와, 수집기 검색어가 바뀌어도 글이 묵지 않게 한다. 못 읽으면 null.
+ */
+export async function xTalkStatus(now: Date) {
+  const rows = await db.select({ key: operationsObservations.key, value: operationsObservations.value, observedAt: operationsObservations.observedAt })
+    .from(operationsObservations).where(eq(operationsObservations.key, X_STATUS_KEY)).limit(1);
+  return readXStatus(rows, now);
+}

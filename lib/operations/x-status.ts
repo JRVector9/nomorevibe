@@ -20,6 +20,8 @@ export const X_STATUS_MAX_BODY_BYTES = 4_096;
 export const X_STATUS_CLOCK_WINDOW_SECONDS = 300;
 /** 받은 보고 사이의 최소 간격(DB 시계) — 서명·단조를 지난 뒤의 속도 제한. 거절은 아무것도 쓰지 않는다 */
 export const X_STATUS_MIN_INTERVAL_SECONDS = 60;
+/** 수집기가 도는 때 — osaka-smoke 의 타이머가 매일 00:10 UTC(= 09:10 KST)에 한 번 돈다(2026-10-15 osaka runbook). 화면 설명용 */
+export const X_COLLECTOR_SCHEDULE = "매일 09:10 KST";
 /** 하루 한 번(00:10 UTC) 오는 보고가 이만큼 없으면 끊김 */
 export const X_STATUS_STALE_HOURS = 26;
 export const X_STATUS_TIMESTAMP_HEADER = "x-nmv-timestamp";

@@ -58,6 +58,6 @@ export const policy = defineCatalog<typeof KoreanPolicy>()({
   "contact.before": "有关项目的请求请通过该项目详情页的请求表单提交。运营者可运行 ",
   "contact.after": "验证所有权后，自行修改简介。",
   "contact.correction": "如果您无法自行修改简介，例如安装型项目无法验证所有权，请在详情页的请求表单中选择“请求修改简介”，说明错误及应如何更正。管理员审核后会修改简介。此请求与下架请求不同，不会停止向搜索引擎开放。",
-  "contact.emailBefore": "除站内请求表单外，有关 SNS 热议帖子与数据来源的请求、删除请求和举报也可发送至 ",
-  "contact.emailAfter": "。我们会定期查看。",
+  "contact.emailBefore": "移除 SNS 热议帖子的请求通过电子邮件受理，而不是项目详情页的请求表单——该表单用于下架项目或修改简介。请将帖子地址发送至 ",
+  "contact.emailAfter": "。有关数据来源的请求、删除请求和举报也请发送至此地址，我们会定期查看。",
 });

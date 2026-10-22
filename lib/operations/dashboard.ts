@@ -31,7 +31,12 @@ export type HourPoint = {
   published: number; publishedKorean: number;     // publishedKorean = products.name or tagline contains Hangul [가-힣]
   keywords: number;                               // product_search_profiles.generated_at in that hour
 };
-export type HourlySeries = { measuredAt: string; points: HourPoint[] };
+/**
+ * points — 정시 단위 24칸(선). lastHour — 굴러가는 최근 1시간(measuredAt 60분 전부터 지금까지)의 같은 수.
+ * 운영센터 "지금 처리량"의 큰 숫자는 lastHour 다 — 심사 큐 칩·모델 연결 카드의 "1h"(modelHealth)와 같은 창이라 두 화면의 수가 같다.
+ * 전에는 큰 숫자가 이번 시(정시부터)라 정각 직후 0 근처로 떨어지고, 같은 1차 심사 수가 화면마다 달랐다.
+ */
+export type HourlySeries = { measuredAt: string; points: HourPoint[]; lastHour?: Omit<HourPoint, "hour"> };
 
 export type ModelHealth = {
   key: "first" | "second" | "fallback" | "keywords";
@@ -164,39 +169,51 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
   const start = sql`date_trunc('hour', ${end}) - interval '23 hours'`;
   const hourOf = (column: AnyPgColumn) => sql`date_trunc('hour', ${column})`;
   const within = (column: AnyPgColumn) => sql`${column} >= ${start} AND ${column} <= ${end}`;
+  // 굴러가는 최근 1시간 — modelHealth 의 recent 와 같은 경계(60분 전 초과 ~ 지금). 같은 훑기에서 FILTER 로만 센다
+  const recent = (column: AnyPgColumn, extra?: SQL) => extra
+    ? sql`count(*) FILTER (WHERE ${column} > ${end} - interval '1 hour' AND ${extra})::int`
+    : sql`count(*) FILTER (WHERE ${column} > ${end} - interval '1 hour')::int`;
 
-  const rows = await readOnly<{
-    hour: string; discovered: number; judged: number; first_reviews: number; first_failed: number;
-    second_reviews: number; second_agreed: number; published: number; published_korean: number; keywords: number;
-  }>(sql`
+  type Counts = { discovered: number; judged: number; first_reviews: number; first_failed: number;
+    second_reviews: number; second_agreed: number; published: number; published_korean: number; keywords: number };
+  const rows = await readOnly<{ hour: string } & Counts & { [K in keyof Counts as `recent_${K}`]: number }>(sql`
     WITH hours AS (
       SELECT date_trunc('hour', ${end}) - g * interval '1 hour' AS hour FROM generate_series(23, 0, -1) AS g
     ), discovered AS (
-      SELECT ${hourOf(crawlFrontier.discoveredAt)} AS hour, count(*)::int AS n
+      SELECT ${hourOf(crawlFrontier.discoveredAt)} AS hour, count(*)::int AS n, ${recent(crawlFrontier.discoveredAt)} AS recent
       FROM ${crawlFrontier} WHERE ${within(crawlFrontier.discoveredAt)} GROUP BY 1
     ), judged AS (
-      SELECT ${hourOf(crawlCandidates.judgedAt)} AS hour, count(*)::int AS n
+      SELECT ${hourOf(crawlCandidates.judgedAt)} AS hour, count(*)::int AS n, ${recent(crawlCandidates.judgedAt)} AS recent
       FROM ${crawlCandidates} WHERE ${within(crawlCandidates.judgedAt)} GROUP BY 1
     ), first_done AS (
       SELECT ${hourOf(crawlReviewAttempts.completedAt)} AS hour,
         count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'succeeded')::int AS reviews,
-        count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'failed')::int AS failed
+        count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'failed')::int AS failed,
+        ${recent(crawlReviewAttempts.completedAt, sql`${crawlReviewAttempts.state} = 'succeeded'`)} AS recent_reviews,
+        ${recent(crawlReviewAttempts.completedAt, sql`${crawlReviewAttempts.state} = 'failed'`)} AS recent_failed
       FROM ${crawlReviewAttempts} WHERE ${firstModelCall} AND ${within(crawlReviewAttempts.completedAt)} GROUP BY 1
     ), votes AS (
       SELECT ${hourOf(secondReviews.reviewedAt)} AS hour, count(*)::int AS reviews,
-        count(*) FILTER (WHERE ${secondReviews.secondDecision} = ${secondReviews.firstDecision})::int AS agreed
+        count(*) FILTER (WHERE ${secondReviews.secondDecision} = ${secondReviews.firstDecision})::int AS agreed,
+        ${recent(secondReviews.reviewedAt)} AS recent_reviews,
+        ${recent(secondReviews.reviewedAt, sql`${secondReviews.secondDecision} = ${secondReviews.firstDecision}`)} AS recent_agreed
       FROM ${secondReviews} WHERE ${voted} AND ${within(secondReviews.reviewedAt)} GROUP BY 1
     ), listed AS (
-      SELECT ${hourOf(products.createdAt)} AS hour, count(*)::int AS n, count(*) FILTER (WHERE ${korean})::int AS korean
+      SELECT ${hourOf(products.createdAt)} AS hour, count(*)::int AS n, count(*) FILTER (WHERE ${korean})::int AS korean,
+        ${recent(products.createdAt)} AS recent, ${recent(products.createdAt, korean)} AS recent_korean
       FROM ${products} WHERE ${listedSince(start)} AND ${products.createdAt} <= ${end} GROUP BY 1
     ), keywords AS (
-      SELECT ${hourOf(productSearchProfiles.generatedAt)} AS hour, count(*)::int AS n
+      SELECT ${hourOf(productSearchProfiles.generatedAt)} AS hour, count(*)::int AS n, ${recent(productSearchProfiles.generatedAt)} AS recent
       FROM ${productSearchProfiles} WHERE ${within(productSearchProfiles.generatedAt)} GROUP BY 1
     )
     SELECT ${iso(sql`h.hour`)} AS hour, coalesce(d.n, 0) AS discovered, coalesce(j.n, 0) AS judged,
       coalesce(f.reviews, 0) AS first_reviews, coalesce(f.failed, 0) AS first_failed,
       coalesce(v.reviews, 0) AS second_reviews, coalesce(v.agreed, 0) AS second_agreed,
-      coalesce(l.n, 0) AS published, coalesce(l.korean, 0) AS published_korean, coalesce(k.n, 0) AS keywords
+      coalesce(l.n, 0) AS published, coalesce(l.korean, 0) AS published_korean, coalesce(k.n, 0) AS keywords,
+      coalesce(d.recent, 0) AS recent_discovered, coalesce(j.recent, 0) AS recent_judged,
+      coalesce(f.recent_reviews, 0) AS recent_first_reviews, coalesce(f.recent_failed, 0) AS recent_first_failed,
+      coalesce(v.recent_reviews, 0) AS recent_second_reviews, coalesce(v.recent_agreed, 0) AS recent_second_agreed,
+      coalesce(l.recent, 0) AS recent_published, coalesce(l.recent_korean, 0) AS recent_published_korean, coalesce(k.recent, 0) AS recent_keywords
     FROM hours h
     LEFT JOIN discovered d ON d.hour = h.hour LEFT JOIN judged j ON j.hour = h.hour
     LEFT JOIN first_done f ON f.hour = h.hour LEFT JOIN votes v ON v.hour = h.hour
@@ -204,12 +221,18 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
     ORDER BY h.hour
   `);
 
+  const sum = (pick: (row: (typeof rows)[number]) => number) => rows.reduce((total, row) => total + Number(pick(row)), 0);
   return { measuredAt: now.toISOString(), points: rows.map((row) => ({
     hour: row.hour, discovered: Number(row.discovered), judged: Number(row.judged),
     firstReviews: Number(row.first_reviews), firstFailed: Number(row.first_failed),
     secondReviews: Number(row.second_reviews), secondAgreed: Number(row.second_agreed),
     published: Number(row.published), publishedKorean: Number(row.published_korean), keywords: Number(row.keywords),
-  })) };
+  })), lastHour: {
+    discovered: sum((row) => row.recent_discovered), judged: sum((row) => row.recent_judged),
+    firstReviews: sum((row) => row.recent_first_reviews), firstFailed: sum((row) => row.recent_first_failed),
+    secondReviews: sum((row) => row.recent_second_reviews), secondAgreed: sum((row) => row.recent_second_agreed),
+    published: sum((row) => row.recent_published), publishedKorean: sum((row) => row.recent_published_korean), keywords: sum((row) => row.recent_keywords),
+  } };
 }
 
 const MODEL_SLOTS = [

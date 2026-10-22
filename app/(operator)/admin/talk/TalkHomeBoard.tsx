@@ -44,8 +44,10 @@ export function TalkHomeBoard({ rows }: { rows: TalkHomeRow[] }) {
                 className="rounded-md border border-up/40 bg-up/10 px-2 py-1 text-[13px] font-semibold text-up disabled:opacity-40">1위 허용</button>
               <button type="submit" name="decision" value="talk_only" disabled={pending || row.decision === "talk_only"}
                 className="rounded-md border border-line px-2 py-1 text-[13px] disabled:opacity-40">/talk 에만</button>
+              {/* 결정만 거둔다(정하지 않음) — 제품·글은 지우지 않는다. 정하지 않음이면 홈 1위 자리는 건너뛴다 */}
               <button type="submit" name="decision" value="clear" disabled={pending || row.decision === null}
-                className="rounded-md border border-line px-2 py-1 text-[13px] text-fg-3 disabled:opacity-40">지우기</button>
+                title="1위 허용·/talk 에만 결정을 거두고 '정하지 않음'으로 되돌립니다. 제품이나 글은 지우지 않습니다."
+                className="rounded-md border border-line px-2 py-1 text-[13px] text-fg-3 disabled:opacity-40">정하지 않음으로</button>
             </form>
           </li>
         ))}

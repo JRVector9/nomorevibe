@@ -9,6 +9,7 @@ import { Flash } from "./Flash";
 /** 조치 한 칸 — 무엇이·왜 막혔고·어디로 가면 되는지. 막고 있는 순서대로 쌓는다. */
 export type ActionItem = {
   key: string;
+  /** critical 빨강 · hold 주황 · clear 회색(참고 — 아직 작은 백로그). clear 도 할 일이라 초록(정상)으로 그리지 않는다 */
   tone: "critical" | "hold" | "clear";
   count: number | string;
   /** 숫자 옆 단위(건·%·회…). 숫자가 아닌 상태 글자("끊김")는 "상태" — 크기가 다른 값이 한 칸에 섞여 있었다(ADM-08) */
@@ -16,6 +17,11 @@ export type ActionItem = {
   title: string;
   detail: React.ReactNode;
   action?: { label: string; href: string };
+  /**
+   * count 가 쌓인 수가 아니라 지난 시간(예: 마지막 보고 뒤 N시간)이다 — 가만히 있어도 시간마다 늘어
+   * 24시간 변화로 그리면 "↑ 24h +24"가 된다. 변화를 재지 않는다(splitActions).
+   */
+  elapsed?: boolean;
 };
 
 /** 나눈 뒤의 한 칸 — 기준 시각(약 24시간 전) 대비 변화, 새로 생겼는지, 숨긴 사람 */
@@ -41,6 +47,14 @@ export function sortActions<T extends ActionItem>(items: T[]): T[] {
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 
+/**
+ * 띠 색 — critical 빨강, hold 주황, clear 회색. 조치할 일에 선 줄은 모두 할 일이라 초록(정상)이 없다 —
+ * 전에는 clear 를 초록으로 그려 5,000건 아래로 밀린 생존 확인이 "정상"처럼 보였다.
+ */
+export function actionBandTone(tone: ActionItem["tone"]): "bad" | "warn" | undefined {
+  return tone === "critical" ? "bad" : tone === "hold" ? "warn" : undefined;
+}
+
 /** 쌓인 일 칸의 변화 글자 — "↑ 24h +1,203", "↓ 24h −50", "→ 24h 그대로". 기록이 하루가 안 되면 그 시간으로 적는다 */
 export function trendLabel(trend: SplitItem["trend"]): string | null {
   if (!trend) return null;
@@ -50,9 +64,8 @@ export function trendLabel(trend: SplitItem["trend"]): string | null {
 }
 
 function Row({ item, side }: { item: SplitItem; side?: React.ReactNode }) {
-  const tone = item.tone === "critical" ? "bad" : item.tone === "hold" ? "warn" : "ok";
   return (
-    <li data-tone={tone}>
+    <li data-tone={actionBandTone(item.tone)}>
       <i aria-hidden />
       <div className="min-w-0">
         <div className="t" title={item.title}>{item.fresh && <span className="dash-todo-new">새로 생김</span>}{item.title}</div>
@@ -92,7 +105,7 @@ export function AttentionList({ urgent, backlog, hidden, now }: { urgent: SplitI
           <ul className="dash-todo">
             {backlog.map((item) => (
               <Row key={item.key} item={item} side={<>
-                <span className="dash-todo-trend">{trendLabel(item.trend) ?? "변화 기록 없음"}</span>
+                <span className="dash-todo-trend">{item.elapsed ? "마지막 정상 뒤 지난 시간" : trendLabel(item.trend) ?? "변화 기록 없음"}</span>
                 <AttentionAckButton itemKey={item.key} title={item.title} count={item.count} hide />
               </>} />
             ))}

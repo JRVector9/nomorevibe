@@ -95,6 +95,20 @@ export function buildHumanQueueOverview(parts: {
 
 const n = (value: number) => value.toLocaleString("ko-KR");
 
+/**
+ * 직접 판단이 "쌓임"(주황)인 기준 — 심사 큐 구간 탭, 운영센터 파이프라인 레일·흐름 점, 오늘 할 일이 같은 규칙을 쓴다(2026-10-22).
+ * 전에는 심사 큐·운영센터는 500건, 오늘 할 일은 2주 넘은 것으로 경고해 같은 큐가 화면마다 달리 보였다. 나이(최장·2주 넘음)는 참고 글자로만 적는다.
+ */
+export const HUMAN_BACKLOG_LIMIT = 500;
+export const humanBacklogged = (count: number) => count > HUMAN_BACKLOG_LIMIT;
+
+/** 오늘 할 일 직접 판단 칸의 덧말 — 쌓임 경고는 humanBacklogged, 2주 넘은 수는 나이 참고로만 덧붙인다 */
+export function humanInboxNote(overview: Pick<HumanQueueOverview, "stages" | "wait">): string | undefined {
+  const parts = [humanBacklogged(overview.stages.human) && `${n(HUMAN_BACKLOG_LIMIT)}건 넘어 쌓임`,
+    overview.wait?.stalled && `2주 넘음 ${n(overview.wait.stalled)}건`].filter(Boolean);
+  return parts.length ? parts.join(" · ") : undefined;
+}
+
 /** 직접 판단의 나이 한 줄 — 두 화면이 같은 말을 쓴다 */
 export function humanWaitLabel(overview: HumanQueueOverview): string {
   if (overview.stages.human === 0) return "대기 없음";

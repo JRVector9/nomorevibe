@@ -41,7 +41,7 @@ describe("머리말 칩", () => {
     { key: "second", label: "2차 투표", model: "grok-4.7", calls1h: 80, failed1h: 1, avgSeconds: 9, agreement1h: 0.62, lastSuccessAt: null },
   ];
   it("1·2차 모델의 1시간, 24시간 사람 처리·발행, 내려달라는 요청을 한 줄에 적는다", () => {
-    const out = html(createElement(ReviewStatusChips, { models, human: { approve: 198, reject: 14 }, publication: { net: 1156 }, takedowns: 2 }));
+    const out = html(createElement(ReviewStatusChips, { models, human: { approve: 198, reject: 14 }, publication: { net: 1156 }, takedowns: 2, takedownsOverdue: 1 }));
     expect(out).toContain("1차 [MLX] gpt-oss-120b");
     expect(out).toContain("2차 grok-4.7");
     expect(out).toContain("1차와 일치 <span class=\"font-mono\">62%</span>");
@@ -49,6 +49,20 @@ describe("머리말 칩", () => {
     expect(out).toContain("+1,156");
     expect(out.match(/data-tone="warn"/g)?.length).toBeGreaterThanOrEqual(1);
     expect(out).toContain('data-tone="bad"');
+  });
+
+  it("내려달라는 요청 칩은 24시간을 넘긴 것이 있을 때만 빨강, 기다리는 것만 있으면 주황 — 아래 띠·메뉴 배지와 같은 규칙", () => {
+    // 모델·사람 칩이 없고 발행 순증감 0 이면 색이 붙는 칩은 요청 칩 하나다
+    const chip = (overdue: number) => html(createElement(ReviewStatusChips, { models: null, human: null, publication: { net: 0 }, takedowns: 1, takedownsOverdue: overdue }));
+    expect(chip(0)).toContain('data-tone="warn"');
+    expect(chip(0)).not.toContain('data-tone="bad"');
+    expect(chip(1)).toContain('data-tone="bad"');
+    expect(html(createElement(ReviewStatusChips, { models: null, human: null, publication: { net: 0 }, takedowns: 0 }))).not.toContain('data-tone="bad"');
+  });
+
+  it("모델 칩의 1h 는 굴러가는 최근 1시간이라고 밝힌다(운영센터 지금 처리량과 같은 창)", () => {
+    const out = html(createElement(ReviewStatusChips, { models, human: null, publication: { net: 0 }, takedowns: 0 }));
+    expect(out).toContain("1h = 최근 1시간(60분 전부터 지금까지)");
   });
 
   it("24h 발행 옆에 최근 1시간·오늘(0시부터) 순증감을 단다", () => {

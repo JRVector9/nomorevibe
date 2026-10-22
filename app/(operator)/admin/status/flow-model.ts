@@ -1,4 +1,4 @@
-import { humanFlowLabel, humanWaitLabel, type HumanQueueOverview } from "@/lib/crawl/human-queue";
+import { humanBacklogged, humanFlowLabel, humanWaitLabel, type HumanQueueOverview } from "@/lib/crawl/human-queue";
 import { REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
@@ -42,11 +42,11 @@ const REVIEW_SHORT: Record<string, string> = { fetch: "수집", judge: "규칙",
 export const REVIEW_STAGES = PIPELINE_STAGES.filter((row) => row.group === "review");
 export const ENRICHMENT_STAGES = PIPELINE_STAGES.filter((row) => row.group === "enrichment");
 
-/** 사람 심사 — 레일의 사람 칸과 같은 수. 500건이 넘거나 24시간 동안 사람이 처리한 것이 없으면 쌓임(병목 판정과 같은 뜻) */
+/** 사람 심사 — 레일의 사람 칸과 같은 수. 500건이 넘거나(humanBacklogged) 24시간 동안 사람이 처리한 것이 없으면 쌓임(병목 판정과 같은 뜻) */
 function humanDot(human: HumanQueueOverview): StageDot {
   const count = human.stages.human;
   const decided = human.decided24h ? human.decided24h.approve + human.decided24h.reject : null;
-  const tone: FlowTone = count > 500 || (count > 0 && decided === 0) ? "warn" : count > 0 ? "ok" : "idle";
+  const tone: FlowTone = humanBacklogged(count) || (count > 0 && decided === 0) ? "warn" : count > 0 ? "ok" : "idle";
   return { key: "human", short: REVIEW_SHORT.human, label: "사람 심사", tone, text: tone === "warn" ? "쌓임" : tone === "ok" ? "흐름" : "일감 없음" };
 }
 

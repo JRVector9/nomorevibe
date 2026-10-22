@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { ThroughputSnapshot, ThroughputStage } from "@/lib/operations/throughput-model";
 import type { PipelineFlow } from "@/lib/operations/pipeline";
 import type { StageProgress, classifyLiveness } from "@/lib/operations/worker-progress";
-import { FLOW_NOTE, humanFlowLabel, humanWaitLabel, WAIT_REFERENCE, type HumanQueueOverview } from "@/lib/crawl/human-queue";
+import { FLOW_NOTE, humanBacklogged, humanFlowLabel, humanWaitLabel, WAIT_REFERENCE, type HumanQueueOverview } from "@/lib/crawl/human-queue";
 import { JOB_LABELS } from "@/lib/operations/contracts";
 import { ACTION_LINKS } from "../action-links";
 
@@ -77,7 +77,7 @@ export function StageRail({ snapshot, flow, human, signals, liveness }: {
             </li>
           );
         })}
-        <li data-tone={humanQueue > 500 ? "warn" : undefined} title={`사람 확인 · 직접 판단 — 대기는 ${WAIT_REFERENCE} · ${FLOW_NOTE}`}>
+        <li data-tone={humanBacklogged(humanQueue) ? "warn" : undefined} title={`사람 확인 · 직접 판단 — 대기는 ${WAIT_REFERENCE} · ${FLOW_NOTE}`}>
           <span className="t">사람 확인 · 직접 판단</span>
           <span className="n">{n(humanQueue)}</span>
           <span className="s">{humanWaitLabel(human)}</span>
@@ -93,7 +93,7 @@ export function StageRail({ snapshot, flow, human, signals, liveness }: {
             ? <><b>병목은 {bottleneck.label}.</b> 직접 판단 {n(humanQueue)}건 · 확정만 하면 됨 {n(human.stages.agreed)}건이 쌓였는데 24시간 동안 사람이 처리한 것이 없습니다. <Link href={ACTION_LINKS.reviewHuman}>심사 큐에서 처리 →</Link></>
             : bottleneck
             ? <><b>병목은 {bottleneck.label}.</b> {n(bottleneck.waiting)}건이 쌓였는데 24시간 동안 빠진 것이 없습니다{bottleneck.job ? <> · <span title={bottleneck.job}>{JOB_LABELS[bottleneck.job] ?? bottleneck.job}</span> 확인</> : " · 사람이 처리하는 단계"}.</>
-            : humanQueue > 500
+            : humanBacklogged(humanQueue)
               ? <><b>자동 단계는 흐르고 있습니다.</b> 직접 판단 {n(humanQueue)}건이 가장 큰 적체입니다. <Link href={ACTION_LINKS.reviewHuman}>심사 큐에서 처리 →</Link></>
               : <>24시간 흐름 기준으로 막힌 단계가 없습니다.</>}
         </span>

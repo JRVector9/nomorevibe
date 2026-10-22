@@ -58,6 +58,6 @@ export const policy = defineCatalog<typeof KoreanPolicy>()({
   "contact.before": "有關專案的請求請透過該專案詳細頁面的請求表單提交。營運者可執行 ",
   "contact.after": "驗證所有權後，自行修改簡介。",
   "contact.correction": "如果您無法自行修改簡介，例如安裝型專案無法驗證所有權，請在詳細頁面的請求表單中選擇「請求修改簡介」，說明錯誤及應如何更正。管理員審核後會修改簡介。此請求與下架請求不同，不會停止向搜尋引擎開放。",
-  "contact.emailBefore": "除站內請求表單外，有關 SNS 熱議貼文與資料來源的請求、刪除請求和檢舉也可寄至 ",
-  "contact.emailAfter": "。我們會定期查看。",
+  "contact.emailBefore": "移除 SNS 熱議貼文的請求以電子郵件受理，而非專案詳情頁的請求表單——該表單用於下架專案或修改簡介。請將貼文網址寄至 ",
+  "contact.emailAfter": "。有關資料來源的請求、刪除請求和檢舉也請寄至此地址，我們會定期查看。",
 });

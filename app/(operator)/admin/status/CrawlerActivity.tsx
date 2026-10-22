@@ -4,7 +4,8 @@ import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { formatDetailTime, formatListTime } from "@/lib/format/time";
 import { ScrollTable } from "../components/ScrollTable";
 import { ACTION_LINKS } from "./action-links";
-import { deferralLabel } from "./flow-model";
+import { X_COLLECTOR_SCHEDULE, type XStatusView } from "@/lib/operations/x-status";
+import { deferralLabel, xSummary } from "./flow-model";
 import "./crawler-activity.css";
 
 const jobLabel = (name: string) => name === "ai-level-refresh" ? "AI 제작 단계 확인" : JOB_LABELS[name] ?? name;
@@ -81,8 +82,25 @@ export function CollectorTotalsDetail({ row, now }: { row: CrawlerActivityReport
   </div>;
 }
 
+/**
+ * X 칸 — 예약된 크롤러 잡이 아니라 osaka 서버의 X 수집기가 하루 한 번 보고를 보낸다(2026-10-20부터 매일 자동 수집).
+ * 상태는 운영센터 흐름 상세·X 보고 끊김 조치와 같은 readXStatus → xSummary 다. 전에는 "자동 수집 안 함 · 수동 API 파일럿"으로 굳어 있었다.
+ */
+function XCollectorCard({ x }: { x: XStatusView }) {
+  const summary = xSummary(x);
+  const minLikes = x.report?.v === 3 ? x.report.query.minLikes : null;
+  // 색은 흐름 상세의 X 칸과 같다 — 정상 초록, 끊김·오류·모양 어긋남 주황, 연결 전·꺼짐 회색
+  const tone = summary.tone === "ok" ? "ok" : summary.tone === "warn" ? "warn" : "muted";
+  return <section className="dash-card crawler-x"><div className="dash-card-h"><h2>X</h2><span className="crawler-state" data-tone={tone}>{summary.value}</span></div>
+    <p>예약된 크롤러 잡이 아니라 osaka 서버(osaka-smoke)의 X 수집기가 {X_COLLECTOR_SCHEDULE}에 한 번 GitHub 주소가 있고 많이 퍼진 글
+      {minLikes !== null && <>(<code>url:github.com min_likes:{minLikes}</code>)</>}을 검색해 후보 게시물과 하루 보고를 보냅니다. 받은 글은 SNS 화제에서 봅니다.</p>
+    <p className="crawler-muted">{summary.note}</p>
+    <div className="crawler-links"><Link href="/admin/talk?source=x" prefetch={false}>SNS 화제의 X 글 →</Link></div>
+  </section>;
+}
+
 /** A server-rendered slot: the browser receives only this bounded read-only projection. */
-export function CrawlerActivity({ report }: { report: CrawlerActivityReport }) {
+export function CrawlerActivity({ report, x }: { report: CrawlerActivityReport; x?: XStatusView }) {
   const { measuredAt: now, jobs, instances, recent } = report;
   const running = jobs.filter(row => row.state === "running").length;
   const errors = jobs.filter(row => row.error || row.latest?.outcome === "item-errors" || row.latest?.outcome === "event-errors" || row.latest?.outcome === "provider-error").length;
@@ -134,6 +152,6 @@ export function CrawlerActivity({ report }: { report: CrawlerActivityReport }) {
       </details>)}</div>}
     </section>
 
-    <section className="dash-card crawler-x"><div className="dash-card-h"><h2>X</h2><Tone state="disabled">자동 수집 안 함 · 수동 API 파일럿</Tone></div><p>예약된 크롤러가 아닙니다. API 요청은 용도 승인 후 수동으로 실행하는 파일럿입니다. 운영 실행 기록과 연결된 관리자 설정은 없습니다.</p></section>
+    {x ? <XCollectorCard x={x} /> : <section className="dash-card crawler-x"><div className="dash-card-h"><h2>X</h2><Tone state="unknown">보고 미확인</Tone></div><p>X 수집기 보고를 넘겨받지 못했습니다 — 미확인. 운영센터 흐름 상세의 X 칸을 봅니다.</p></section>}
   </div>;
 }

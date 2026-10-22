@@ -5,6 +5,7 @@ import { CollectorTotalsDetail, CrawlerActivity } from "@/app/(operator)/admin/s
 import { buildCrawlerActivity } from "@/lib/operations/crawler-activity";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { STATUS_TABS } from "@/app/(operator)/admin/status/action-links";
+import { readXStatus, X_STATUS_KEY } from "@/lib/operations/x-status";
 
 const now = new Date("2026-10-14T03:00:00Z");
 const report = () => buildCrawlerActivity({ settings: { ...DEFAULT_CRAWL_SETTINGS, enabled: true }, jobs: [], observations: [],
@@ -12,7 +13,25 @@ const report = () => buildCrawlerActivity({ settings: { ...DEFAULT_CRAWL_SETTING
 const html = (value = report()) => renderToStaticMarkup(createElement(CrawlerActivity, { report: value }));
 
 describe("read-only collector activity", () => {
-  it("renders every collector with never-run and unknown waiting states, and a manual unscheduled X pilot", () => {
+  it("X 칸은 흐름 상세와 같은 readXStatus·xSummary 로 실제 상태를 보인다 — 매일 09:10 KST 자동 수집, 검색어는 보고(v3)에서", () => {
+    const record = { v: 3, mode: "live", reads: { used: 10, limit: 10 }, candidates: 4, lastRunAt: "2026-10-14T00:10:01.000Z",
+      lastSuccessAt: "2026-10-14T00:10:01.000Z", error: null, query: { source: "popular", minLikes: 50 }, sentAt: Math.floor(Date.parse("2026-10-14T00:10:05.000Z") / 1000), signedWith: "current" };
+    const ok = renderToStaticMarkup(createElement(CrawlerActivity, { report: report(),
+      x: readXStatus([{ key: X_STATUS_KEY, value: record, observedAt: "2026-10-14T00:10:05.000Z" }], now, true) }));
+    expect(ok).toContain("X 후보 4");
+    expect(ok).toContain('data-tone="ok"');
+    expect(ok).toContain("매일 09:10 KST");
+    expect(ok).toContain("url:github.com min_likes:50");
+    expect(ok).toContain("실제 수집(live)");
+    expect(ok).not.toContain("수동 API 파일럿");
+    // 26시간 넘게 보고가 없으면 끊김(주황) — X 보고 끊김 조치가 여기로 링크한다
+    const stale = renderToStaticMarkup(createElement(CrawlerActivity, { report: report(),
+      x: readXStatus([{ key: X_STATUS_KEY, value: record, observedAt: "2026-10-12T00:10:05.000Z" }], now, true) }));
+    expect(stale).toContain("X 보고 끊김(stale)");
+    expect(stale).toMatch(/<h2>X<\/h2><span class="crawler-state" data-tone="warn">/);
+  });
+
+  it("renders every collector with never-run and unknown waiting states, and the X collector as its own card", () => {
     const out = html();
     expect(out).toContain("수집 대상 탐색");
     expect(out).toContain("Show HN 수집");
@@ -22,9 +41,10 @@ describe("read-only collector activity", () => {
     expect(out).toContain("저장소 사라진 사이트 확인");
     expect(out).toContain("실행 기록 없음");
     expect(out).toContain("대기 미확인");
-    expect(out).toContain("자동 수집 안 함");
-    expect(out).toContain("수동 API 파일럿");
-    expect(out).toContain("용도 승인");
+    // X 는 2026-10-20부터 매일 자동 수집한다 — 옛 "자동 수집 안 함 · 수동 API 파일럿" 글이 남지 않는다
+    expect(out).not.toContain("자동 수집 안 함");
+    expect(out).not.toContain("수동 API 파일럿");
+    expect(out).toContain("보고 미확인");
     expect(out).not.toContain("작업 실행 요청");
     expect(out).not.toContain("product-intro-check");
   });

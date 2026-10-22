@@ -1,8 +1,9 @@
 import { beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products, socialPosts, socialTalkDecisions } from "@/lib/db/schema";
-import { listTalkPostsPage, setSocialPostsState, setTalkExcluded, setTalkHomeDecision, talkAdminFilter, type TalkAdminFilter } from "@/lib/social/admin";
+import { operationsObservations, products, socialPosts, socialTalkDecisions } from "@/lib/db/schema";
+import { X_STATUS_KEY } from "@/lib/operations/x-status";
+import { listTalkPostsPage, setSocialPostsState, setTalkExcluded, setTalkHomeDecision, talkAdminFilter, xTalkStatus, type TalkAdminFilter } from "@/lib/social/admin";
 import { recordSocialPosts } from "@/lib/social/repository";
 import { listTalk } from "@/lib/social/talk";
 import type { HnTalkPost } from "@/lib/social/hn-talk-source";
@@ -74,7 +75,7 @@ it("보관 중인 글은 HN·X, 저장소 없는 글, 7일 지난 글까지 모�
     ["x", "1900000000000000001", false, null, ["no_repo", "x_stale"]],
     ["hn", "5", false, null, ["old"]],
   ]);
-  expect(page.rows.find(row => row.externalId === "3")?.talk.reasons[0].label).toBe("공개 제품 아님 — banned");
+  expect(page.rows.find(row => row.externalId === "3")?.talk.reasons[0].label).toBe("공개 제품 아님 — 차단됨");
   expect(page.rows.find(row => row.externalId === "6")).toMatchObject({ linkUrl: "https://acme.github.io/app/", repositoryKey: null, product: null });
   expect(page.summary).toMatchObject({
     total: 8, source: { hn: 6, x: 2, geeknews: 0 }, state: { visible: 7, hidden: 1, gone: 0 },
@@ -140,4 +141,17 @@ it("저장소 빼기와 홈 결정은 한 줄에 함께 남고 서로 지우지 
   await setTalkHomeDecision("acme/app", null, "admin");
   expect((await db.select().from(socialTalkDecisions))[0].homeDecision).toBeNull();
   await expect(setTalkExcluded("Acme/App", true, "admin", null)).rejects.toThrow("invalid_repository_key");
+});
+
+it("X 하루 보고를 관측 줄 한 줄에서 읽는다 — 화면 설명의 검색어(좋아요 하한)가 수집기 보고(v3)를 따른다", async () => {
+  await db.delete(operationsObservations).where(sql`${operationsObservations.key} = ${X_STATUS_KEY}`);
+  expect((await xTalkStatus(NOW)).report).toBeNull();
+  const value = { v: 3, mode: "live", reads: { used: 10, limit: 10 }, candidates: 4, lastRunAt: "2026-10-18T00:10:01.000Z",
+    lastSuccessAt: "2026-10-18T00:10:01.000Z", error: null, query: { source: "popular", minLikes: 50 },
+    sentAt: Math.floor(Date.parse("2026-10-18T00:10:05.000Z") / 1000), signedWith: "current" };
+  await db.insert(operationsObservations).values({ key: X_STATUS_KEY, value, observedAt: new Date("2026-10-18T00:10:05.000Z") });
+  const view = await xTalkStatus(NOW);
+  expect(view.report).toMatchObject({ v: 3, query: { source: "popular", minLikes: 50 } });
+  expect(view.receivedAt).toBe("2026-10-18T00:10:05.000Z");
+  await db.delete(operationsObservations).where(sql`${operationsObservations.key} = ${X_STATUS_KEY}`);
 });

@@ -46,7 +46,7 @@ export const INBOX_SECTIONS: Record<InboxKey, { title: string; hint: string; hre
 export type InboxSection = (typeof INBOX_SECTIONS)[InboxKey] & {
   key: InboxKey;
   state: "work" | "empty" | "failed";
-  /** critical(빨강): 약속을 넘김 · warn(주황): 사람이 처리할 것 */
+  /** critical(빨강): 약속을 넘김·공개 제품이 열리지 않음 · warn(주황): 사람이 처리할 것 */
   tone: "critical" | "warn";
   data: InboxSectionData | null;
 };
@@ -64,11 +64,19 @@ export type Inbox = {
   done: number | null;
 };
 
+/** 칸 색 — 내려달라는 요청은 24시간을 넘긴 것이 있을 때(takedownSignal 과 같은 규칙), 응답 없음은 운영센터 조치처럼 있으면 늘 critical */
+export function sectionTone(key: InboxKey, data: InboxSectionData | null): InboxSection["tone"] {
+  if (key === "takedown") return (data?.overdue ?? 0) > 0 ? "critical" : "warn";
+  if (key === "down") return (data?.count ?? 0) > 0 ? "critical" : "warn";
+  return "warn";
+}
+
 /**
  * 칸을 차례대로 세우고 합을 낸다.
  *
  * 할 일이 있는 칸과 못 읽은 칸은 정해진 차례 그대로 위에 둔다 — 못 읽은 칸을 아래로 내리면 거기 쌓인 일이
- * 안 보인다. 빈 칸만 아래로 모은다. 내려달라는 요청이 24시간을 넘겼으면 빨강이다.
+ * 안 보인다. 빈 칸만 아래로 모은다. 내려달라는 요청이 24시간을 넘겼으면 빨강이다. 응답 없음은 운영센터 조치(buildActions 의 down)와
+ * 같은 급이라 한 건이라도 있으면 빨강이다 — 전에는 운영센터에서 긴급인 것이 여기서는 주황이었다.
  * done 은 처리 수의 조각들(심사 결정, 요청 처리) — 못 읽은 조각(null)은 빼고 더한다.
  */
 export function assembleInbox(results: Record<InboxKey, InboxSectionResult>, done: readonly (number | null)[]): Inbox {
@@ -78,7 +86,7 @@ export function assembleInbox(results: Record<InboxKey, InboxSectionResult>, don
     return {
       key, ...INBOX_SECTIONS[key], data,
       state: !data ? "failed" : data.count > 0 ? "work" : "empty",
-      tone: key === "takedown" && (data?.overdue ?? 0) > 0 ? "critical" : "warn",
+      tone: sectionTone(key, data),
     };
   });
   const known = done.filter((value): value is number => value !== null);
