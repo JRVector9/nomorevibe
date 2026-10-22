@@ -5,6 +5,7 @@
 #   sudo scripts/ops/screen-render.sh install --sha <main 커밋 40자> --host <m1 Tailscale IPv4> --allow-from <M3 IP>,<mini IP>
 #   sudo scripts/ops/screen-render.sh upgrade --sha <main 커밋 40자>      # 같은 설정으로 판만 바꾼다
 #   sudo scripts/ops/screen-render.sh status
+#   sudo scripts/ops/screen-render.sh firewall                             # Homebrew 로 node 를 올린 뒤: macOS 방화벽에 새 node 를 다시 허용
 #   sudo scripts/ops/screen-render.sh pf-enable | pf-disable                # 선택: OS 방화벽으로 사설망 나가기를 한 번 더 막는다
 #   sudo scripts/ops/screen-render.sh uninstall [--purge]
 #
@@ -96,6 +97,20 @@ fetch_release() { # sha
   ln -sfn "$dir" "$ROOT/current"
 }
 
+# macOS 응용 프로그램 방화벽은 프로그램(실제 파일) 단위로 들어오는 연결을 막는다 — 켜져 있으면 node 를 허용해야 M3·mini 가 닿는다
+# (2026-10-22 첫 설치: 서버는 떴는데 방화벽이 node 를 막아 모든 연결이 실패했다). Homebrew 의 /opt/homebrew/bin/node 는 Cellar 판으로 가는
+# 링크라 node 를 올리면 실제 경로가 바뀐다 — 그때마다 `screen-render.sh firewall` 로 다시 허용한다.
+allow_firewall() { # node
+  local fw=/usr/libexec/ApplicationFirewall/socketfilterfw real
+  [ -x "$fw" ] || return 0
+  "$fw" --getglobalstate 2>/dev/null | grep -qi enabled || { echo "macOS 방화벽 꺼짐 — 허용할 것 없음"; return 0; }
+  real="$(realpath "$1" 2>/dev/null || readlink -f "$1")"
+  [ -x "$real" ] || die "node 실제 경로를 찾지 못했다: $1"
+  "$fw" --add "$real" >/dev/null
+  "$fw" --unblockapp "$real" >/dev/null
+  echo "macOS 방화벽: $real 들어오는 연결 허용"
+}
+
 write_plist() { # node sha
   # shellcheck disable=SC1090
   . "$CONFIG"
@@ -117,7 +132,7 @@ write_plist() { # node sha
     <key>SCREEN_RENDER_HOST</key><string>$HOST</string>
     <key>SCREEN_RENDER_PORT</key><string>$PORT</string>
     <key>SCREEN_RENDER_TOKEN_FILE</key><string>$STATE/token</string>
-    <key>SCREEN_RENDER_ALLOW_FROM</key><string>$ALLOW_FROM</string>
+    <key>SCREEN_RENDER_ALLOW_FROM</key><string>$ALLOW_FROM,$HOST</string>
     <key>SCREEN_RENDER_CONCURRENCY</key><string>$CONCURRENCY</string>
     <key>SCREEN_RENDER_VERSION</key><string>$2</string>
   </dict>
@@ -187,6 +202,7 @@ case "${1:-}" in
     printf 'HOST=%s\nPORT=%s\nALLOW_FROM=%s\nCONCURRENCY=%s\nNODE=%s\n' "$HOST" "$PORT" "$ALLOW_FROM" "$CONCURRENCY" "$NODE" > "$CONFIG"
     fetch_release "$SHA"
     write_plist "$NODE" "$SHA"
+    allow_firewall "$NODE"
     health
     ;;
   upgrade)
@@ -197,6 +213,15 @@ case "${1:-}" in
     . "$CONFIG"
     fetch_release "$2"
     write_plist "$NODE" "$2"
+    allow_firewall "$NODE"
+    health
+    ;;
+  firewall)
+    need_root; need_macos
+    [ -f "$CONFIG" ] || die "먼저 install"
+    # shellcheck disable=SC1090
+    . "$CONFIG"
+    allow_firewall "$NODE"
     health
     ;;
   status)
@@ -231,5 +256,5 @@ case "${1:-}" in
       dscl . -delete "/Groups/$USER_NAME" 2>/dev/null || true
     fi
     ;;
-  *) echo "usage: $0 install|upgrade|status|pf-enable|pf-disable|uninstall" >&2; exit 2 ;;
+  *) echo "usage: $0 install|upgrade|status|firewall|pf-enable|pf-disable|uninstall" >&2; exit 2 ;;
 esac

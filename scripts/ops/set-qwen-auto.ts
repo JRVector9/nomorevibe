@@ -2,14 +2,14 @@
  * 지금 값과 견주는 compare-and-set, 켤 때 꼭 받는 사유, 같은 트랜잭션의 작업 로그(operations_audit qwen-auto-settings, 누가 ops:<이름>).
  *   QWEN_AUTO_DATABASE_URL=... node --import tsx scripts/ops/set-qwen-auto.ts --step=<단계> --enable|--disable [--per-tick=N] [--budget-seconds=N]
  *     [--daily-reject-cap=N] [--scope=hold|all] [--auto-close=on|off] --reason="왜" [--by=<이름>] [--dry-run]
- * 단계: auditSecondOpinion(감사 두 번째 의견, --scope 묻는 범위·--auto-close 답으로 닫기도)·publishedFilter(공개분 2차 거르기)·splitTiebreak(갈림 판가름, --daily-reject-cap 도 — 하루 KST
+ * 단계: auditSecondOpinion(감사 두 번째 의견, --scope 묻는 범위·--auto-close 답으로 닫기도)·screenReview(화면 판별, --auto-close 도)·publishedFilter(공개분 2차 거르기)·splitTiebreak(갈림 판가름, --daily-reject-cap 도 — 하루 KST
  * 자동 거부 상한)·heldRetry(보류 재심사, --budget-seconds 도). --enable·--disable 없이 수만 주면 켬/끔은 그대로 둔다. --dry-run 은 읽기 전용 트랜잭션에서 같은 검사만 하고 쓰지 않는다.
  * DB URL 은 환경변수로만 받는다(argv·출력에 쓰지 않음). 출력은 단계·전/후 값·거절 까닭뿐이다. exit 0=바꿈(또는 dry-run 통과), 1=오류·거절. */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { QwenAutoStep } from "@/lib/crawl/settings-schema";
 
-const STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry"] as const satisfies readonly QwenAutoStep[];
+const STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"] as const satisfies readonly QwenAutoStep[];
 const OVERRIDES = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS"] as const;
 
 export type SetQwenAutoCommand = { step: QwenAutoStep; enable: boolean | null; perTick: number | null; budgetSeconds: number | null;
@@ -38,7 +38,8 @@ export function parseSetQwenAutoArgs(args: readonly string[], env: Readonly<Reco
   if (dailyRejectCap !== null && step !== "splitTiebreak") throw new Error("qwen_auto_usage");
   const rawScope = value(args, "scope");
   const rawAutoClose = value(args, "auto-close");
-  if ((rawScope !== undefined || rawAutoClose !== undefined) && step !== "auditSecondOpinion") throw new Error("qwen_auto_usage");
+  if (rawScope !== undefined && step !== "auditSecondOpinion") throw new Error("qwen_auto_usage");
+  if (rawAutoClose !== undefined && step !== "auditSecondOpinion" && step !== "screenReview") throw new Error("qwen_auto_usage");
   if (rawScope !== undefined && rawScope !== "hold" && rawScope !== "all") throw new Error("qwen_auto_usage");
   if (rawAutoClose !== undefined && rawAutoClose !== "on" && rawAutoClose !== "off") throw new Error("qwen_auto_usage");
   const scope = rawScope === undefined ? null : rawScope as "hold" | "all";
