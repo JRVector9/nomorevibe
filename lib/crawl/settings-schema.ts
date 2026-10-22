@@ -415,6 +415,21 @@ export const auditSecondOpinionSchema = z.object({
 export type AuditSecondOpinionSettings = z.infer<typeof auditSecondOpinionSchema>;
 
 /**
+ * 화면 판별(qwenAuto.screenReview, 2026-10-22) — 크롤러가 글을 읽지 못한(JS 로 그리는) 감사 거절을 화면 서버(m1-studio)로 그려, m1 Qwen 에 그린 뒤 글과
+ * 첫 화면을 함께 묻는다(lib/screen-review/job.ts, 잡 audit-screen-review). 답은 출처 qwen-vision-auto 의 두 번째 의견으로 적고, autoClose 면 같은 커밋에서
+ * 그 답으로 닫는다(승인은 유지·보류 풀기, 주인 없는 것의 거절은 숨김 — 2026-10-22 사용자 결정 "1차에서 글이 적은 화면을 보류로 넘기면 2차에서 직접
+ * 판별하게 해, 화면으로"). 글 단계의 답으로 닫기(auditSecondOpinion.autoClose)와 따로다. 한 건에 그리기 수 초~40초 + 묻기 12~90초라 틱당 상한은 4.
+ * autoClose 는 없으면 켬으로 읽는다(이 칸 전의 행)
+ */
+export const SCREEN_REVIEW_MAX_PER_TICK = 4;
+export const screenReviewSchema = z.object({
+  enabled: z.boolean(),
+  perTick: z.number().int().min(1).max(SCREEN_REVIEW_MAX_PER_TICK),
+  autoClose: z.boolean().default(true),
+}).strict();
+export type ScreenReviewSettings = z.infer<typeof screenReviewSchema>;
+
+/**
  * gpu3090 Qwen-v2 자동 단계 넷(2026-10-21) — 모두 기본 꺼짐. 켜는 것은 compare-and-set·확인 창의 사유·작업 로그를 거친다(settings.ts setQwenAutoStep,
  * 화면 또는 scripts/ops/set-qwen-auto.ts).
  *  - auditSecondOpinion: 감사 거절(scope — 보류 후보 또는 열린 거절 전부)에 두 번째 의견을 받아 적는다(감사 잡). autoClose 면 승인은 유지,
@@ -422,6 +437,7 @@ export type AuditSecondOpinionSettings = z.infer<typeof auditSecondOpinionSchema
  *  - publishedFilter: 공개분 2차의 사람 확인 행을 한 번 더 본다(감사 잡). 승인이면 사람의 '유지'와 같은 길로 닫는다
  *  - splitTiebreak: 관문 갈림 보류에 세 번째 표를 묻는다(2차 잡). 거부 다수면 거부로 닫는다
  *  - heldRetry: 소개 없음·재시도 소진·판단 보류를 다시 본다(사람 검토 잡). 거부는 끝내고 승인은 관문으로 되돌린다
+ *  - screenReview: 글이 얇은 감사 거절을 그려서 화면과 글로 묻는다(화면 판별 잡, 위 screenReviewSchema)
  *
  * 최상위 칸에 둔 까닭(옛 코드와 새 코드가 함께 도는 배포·되돌림): 이 칸을 모르는 옛 코드는 최상위의 모르는 칸을 버리고(strip) 읽는다 —
  * auditHold(strict) 안에 두면 옛 코드가 감사 보류를 통째로 깨진 것(꺼짐)으로 읽고, 옛 코드가 저장하면 문턱이 기본값으로 덮인다.
@@ -432,14 +448,16 @@ export const qwenAutoSchema = z.object({
   publishedFilter: qwenAutoStepSchema,
   splitTiebreak: splitTiebreakSchema,
   heldRetry: heldQwenRetrySchema,
+  screenReview: screenReviewSchema,
 }).strict();
 export type QwenAutoSettings = z.infer<typeof qwenAutoSchema>;
 export type QwenAutoStep = keyof QwenAutoSettings;
-export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry"] as const satisfies readonly QwenAutoStep[];
+export const QWEN_AUTO_STEPS = ["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"] as const satisfies readonly QwenAutoStep[];
 /** 모두 꺼짐 — 칸이 없는 행·깨진 단계도 이 값으로 읽는다 */
 export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
   auditSecondOpinion: { enabled: false, perTick: 10, scope: "all", autoClose: true }, publishedFilter: { enabled: false, perTick: 10 },
   splitTiebreak: { enabled: false, perTick: 10, dailyRejectCap: SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP }, heldRetry: DEFAULT_HELD_QWEN_RETRY,
+  screenReview: { enabled: false, perTick: 2, autoClose: true },
 };
 
 export const crawlSettingsSchema = z.object({

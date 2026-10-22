@@ -23,7 +23,8 @@ import { sameOpinionModel } from "./second-opinion-rules";
  * 내려가면 대상에서 빠진다.
  *
  * 화면 판정 잡이 쓰는 법(따로 만드는 중):
- *  1. screenReviewQueue({ limit, skip }) 로 가져온다 — 공개 중(보류 아님) 먼저, 첫 감사의 확신 높은 순, 그다음 보류 중인 것(m1 의 묻는 차례와 같다).
+ *  1. screenReviewQueue({ limit, skip }) 로 가져온다 — 보류 중인 것 먼저(글만 본 판단으로 숨겨진 것이다 — 2026-10-22 사용자 결정 "1차에서 글이 적은
+ *     화면을 보류로 넘기면 2차에서 직접 판별하게 해, 화면으로"), 그다음 공개 중인 것, 그 안은 첫 감사의 확신 높은 순.
  *     줄마다 열 주소(url — 공개 목록의 그 주소), 수집 본문(pageText, 300자 아래)과 글자 수, 첫 감사의 결정·사유, 이미 있는 두 번째 의견(출처·사유)을 준다.
  *     읽기만 한다 — 잠그거나 '가져감'을 적지 않는다. 같은 프로세스가 한 번에 한 줄씩 판정하고, 실패한 것은 skip 으로 넘긴다(Qwen-v2 단계의 failures 처럼).
  *  2. markScreenJudged(rows, { source, actor, lease }) 로 적는다 — 두 번째 의견 한 줄(product_audit_second_opinions, (항목, 모델)마다 한 줄 덮어쓰기)이고,
@@ -34,7 +35,9 @@ import { sameOpinionModel } from "./second-opinion-rules";
  *     쓰기는 옮겨 적기와 같은 길(audit-second-opinion-import.ts writeAuditSecondOpinions — DR writer fence → stage → 제품 세대 → 의견 → 보류 풀기 →
  *     작업 lease)이다: 열린 거절에만 적고, 승인이 지금 그 항목으로 보류된 제품에 오면 보류의 둘째 문을 다시 가른다(맞지 않으면 푼다 — 화면 판정 출처는
  *     확신 0.90 이상만 센다, 글이 적은 항목의 m1 거절은 세지 않는다). 푼 보류는 작업 로그 audit-hold-auto-release(누가 actor)에 남는다.
- *     유지·숨김(자동 닫기)은 하지 않는다 — 화면 판정으로 닫을지는 그 잡이 정한다. 거절은 보류의 둘째 문에서 두 번째 모델 거절로 센다(확신 0.90 이상).
+ *     유지·숨김(자동 닫기)은 하지 않는다 — 화면 판정으로 닫을지는 그 잡이 정한다(close·step — 화면 판별 잡 lib/screen-review/job.ts 는 화면 판별
+ *     스위치(qwenAuto.screenReview)를 쓰는 순간 다시 보고 같은 커밋에서 그 답으로 닫는다, audit-auto-close.ts). 거절은 보류의 둘째 문에서 두 번째 모델
+ *     거절로 센다(확신 0.90 이상).
  *  3. screenReviewCounts() — 감사 거절 탭의 Qwen 상태 칸·정책 처리 탭이 보이는 수(대기·그중 공개 중·엇갈림).
  */
 
@@ -70,7 +73,7 @@ const pageTextSql = sql<string | null>`(select btrim(coalesce(td.page_meta->>'te
    where tp.id = p.id order by char_length(btrim(coalesce(td.page_meta->>'textSample', ''))) desc, td.id limit 1)`;
 
 /**
- * 화면 판별 대기에서 가져온다 — 공개 중 먼저, 첫 감사의 확신 높은 순, 그다음 보류 중 → 항목 id. skip 은 이번에 넘길 항목 id(판정 실패 등).
+ * 화면 판별 대기에서 가져온다 — 보류 중 먼저, 그다음 공개 중, 그 안은 첫 감사의 확신 높은 순 → 항목 id. skip 은 이번에 넘길 항목 id(판정 실패 등).
  * limit 은 1~200(기본 20)
  */
 export async function screenReviewQueue(options: { limit?: number; skip?: readonly number[] } = {}): Promise<ScreenReviewItem[]> {
@@ -83,7 +86,7 @@ export async function screenReviewQueue(options: { limit?: number; skip?: readon
       to_char(i.reviewed_at, ${TIME}) as reviewed_at, ${secondOpinionsField(sql`i.id`, { reasons: true })} as opinions
       from ${productAuditItems} i, ${products} p
      where ${screenWaiting}${skip.length ? sql` and i.id not in (${sql.join(skip.map((id) => sql`${id}`), sql`, `)})` : sql``}
-     order by (p.audit_hold_at is not null), i.ai_confidence desc nulls last, i.id limit ${limit}`);
+     order by (p.audit_hold_at is null), i.ai_confidence desc nulls last, i.id limit ${limit}`);
   return rows.map((row) => ({ itemId: row.item_id, productId: row.product_id, slug: row.slug, name: row.name, url: row.url,
     held: row.held_at !== null, heldAt: row.held_at, owned: row.owned, pageText: row.text_length === null ? null : row.page_text,
     textLength: row.text_length, opinions: row.opinions,
@@ -121,7 +124,11 @@ const DECISIONS = new Set(["approve", "reject", "needs_review"]);
  * 같은 (항목, 모델)이 둘이면 뒤의 것만. 모양이 틀린 줄이 있으면 아무것도 적지 않고 던진다(screen_judgement_invalid·screen_source_unknown·
  * screen_model_same_as_text_m1). dryRun 이면 읽기 전용으로 셈만 한다. 결과는 옮겨 적기와 같은 셈(적은 수·푼 보류·건너뛴 까닭)
  */
-export async function markScreenJudged(rows: readonly ScreenJudgement[], options: { source: string; actor?: string; lease?: JobLease; dryRun?: boolean }):
+export async function markScreenJudged(rows: readonly ScreenJudgement[], options: { source: string; actor?: string; lease?: JobLease; dryRun?: boolean;
+  /** 같은 커밋에서 그 답으로 닫는다(audit-auto-close.ts — 답으로 닫기 스위치는 감사 두 번째 의견의 autoClose) */
+  close?: boolean;
+  /** 쓰는 순간 다시 볼 그 판정 잡의 스위치 — 꺼져 있으면 아무것도 적지 않는다(switched_off) */
+  step?: "screenReview" }):
   Promise<SecondOpinionImport> {
   if (!SCREEN_REVIEW_SOURCES.has(options.source)) throw new Error("screen_source_unknown");
   const textModel = qwenDirectConfig()?.model ?? QWEN_DIRECT_DEFAULT_MODEL;
@@ -139,5 +146,5 @@ export async function markScreenJudged(rows: readonly ScreenJudgement[], options
       promptVersion: row.promptVersion?.trim().slice(0, 40) || null });
   }
   return writeAuditSecondOpinions(db, [...unique.values()], { dryRun: Boolean(options.dryRun), source: options.source, lease: options.lease,
-    auto: { actor: options.actor ?? options.source, close: false, qwenSwitch: false } });
+    auto: { actor: options.actor ?? options.source, close: options.close ?? false, qwenSwitch: options.step !== undefined, step: options.step } });
 }

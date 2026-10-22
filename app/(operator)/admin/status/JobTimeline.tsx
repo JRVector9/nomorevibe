@@ -33,6 +33,7 @@ const FLOW: Record<string, { reads: string; writes: string }> = {
   'second-review': { reads: 'AI 판단 · 공개분 표본', writes: '2차 판단' },
   'human-deepseek-review': { reads: '사람 검토 대기 · 원본 근거', writes: 'DeepSeek 위임 판단' },
   'product-audit': { reads: '진행 중인 감사 · 공개 제품', writes: '내릴 후보' },
+  'audit-screen-review': { reads: '글이 얇은 감사 거절 · 화면 서버', writes: '화면 의견(qwen-vision-m1) · 유지·숨김' },
   'reason-translate': { reads: '영어 심사 사유', writes: '한국어 번역' },
   'crawl-publish': { reads: '승인', writes: '카테고리 · 공개 제품' },
   'uptime-ping': { reads: '공개 제품', writes: '응답 기록' },

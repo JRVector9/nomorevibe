@@ -12,6 +12,8 @@ import { qwenSecondOpinionStatus, type QwenAutoStatus } from "@/lib/crawl/audit-
 import { qwenDirectServerLabel } from "@/lib/crawl/qwen-direct-review";
 import { QWEN_AUTO_MAX_PER_TICK } from "@/lib/crawl/settings-schema";
 import { QwenAutoStepSwitch } from "../components/QwenAutoStepSwitch";
+import { ScreenReviewPanel } from "./ScreenReviewPanel";
+import { screenReviewStatus, type ScreenReviewStatus } from "@/lib/screen-review/job";
 import { auditReviewer, auditReviewerLabel, auditReviewerSwitched, QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { translationsFor } from "@/lib/crawl/translations";
 import { formatListTime } from "@/lib/format/time";
@@ -120,6 +122,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     disagree: counts.openDisagree, qwen_catalog: counts.openQwenCatalog, needs_review: counts.openNeedsReview };
   // Qwen-v2 자동 단계의 상태 — 감사 탭에서만 읽는다(남은 수를 센다)
   const qwen = tab === "audit" ? await qwenSecondOpinionStatus({ auditHold: overview.hold, qwenAuto: overview.qwenAuto }) : null;
+  // 화면 판별의 상태 — 감사 탭에서만. 못 읽어도 화면은 그린다
+  const screen = tab === "audit" ? await screenReviewStatus({ qwenAuto: overview.qwenAuto }).catch(() => null) : null;
   // 보류 갈래의 사유는 패널의 갈래별 수에도 쓴다 — 감사 탭이면 늘 읽는다(보류된 것만, 수천 건 안)
   const heldReasonIds = tab === "audit" ? groupAuditReasons(await heldFindingReasons()) : null;
   const second = (SECOND_OPINION_FILTERS as readonly string[]).includes(view) ? view as SecondOpinionFilter : undefined;
@@ -224,7 +228,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 
       {throughput && <ThroughputPanel throughput={throughput} detailed={false} />}
       <CampaignPanel overview={overview} now={now} />
-      <HoldPanel overview={overview} heldReasons={heldReasonIds} qwen={qwen} now={now} />
+      <HoldPanel overview={overview} heldReasons={heldReasonIds} qwen={qwen} screen={screen} now={now} />
 
       {campaign && (
         <>
@@ -529,8 +533,8 @@ function AuditHistory({ rows, korean, now }: { rows: Awaited<ReturnType<typeof a
  * 감사 보류 — 지금 켜져 있는지, 어떤 문으로 거는지(확신·사유 갈래·두 번째 모델), 보류 중인 수와 갈래별 수. 설정과 '보류 골라 풀기'(정책 처리).
  * 보류는 차단이 아니다 — 상태는 그대로이고 상세 주소는 열린다. 사람이 유지·내리기·차단 해제하면 풀린다(product-audit-hold.ts)
  */
-function HoldPanel({ overview, heldReasons, qwen, now }: {
-  overview: AuditOverview; heldReasons: Record<AuditReasonCategory, number[]> | null; qwen: QwenAutoStatus | null; now: Date;
+function HoldPanel({ overview, heldReasons, qwen, screen, now }: {
+  overview: AuditOverview; heldReasons: Record<AuditReasonCategory, number[]> | null; qwen: QwenAutoStatus | null; screen: ScreenReviewStatus | null; now: Date;
 }) {
   const { hold, held } = overview;
   const byCategory = heldReasons ? AUDIT_REASON_KEYS.filter((key) => heldReasons[key].length > 0) : [];
@@ -570,6 +574,7 @@ function HoldPanel({ overview, heldReasons, qwen, now }: {
             "승인(확신 0.90 이상)이면 사람의 '유지'와 같은 길로 닫습니다 — 누가 qwen-v2-auto. 내리지도 숨기지도 않습니다.",
             "거절·판단 보류·낮은 확신이면 행을 그대로 두고 «Qwen-v2도 거절»·«판단 보류»로 사람 확인 목록 앞에 둡니다."]} />
       </div>}
+      {screen && <ScreenReviewPanel status={screen} value={overview.qwenAuto.screenReview} now={now} />}
       {/* 저장된 값이 바뀌면 새로 그린다 — 오류가 나면 고친 값을 그대로 둔다 */}
       <AuditHoldSettingsForm key={JSON.stringify(hold)} hold={hold} />
       <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">

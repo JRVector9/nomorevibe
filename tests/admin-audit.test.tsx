@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   takedownSummary: vi.fn(), takedownQueue: vi.fn(), takedownHistory: vi.fn(),
   introQueue: vi.fn(), introCount: vi.fn(), introFix: vi.fn(), introResolve: vi.fn(),
   held: vi.fn(), heldReasons: vi.fn(), setHold: vi.fn(), throughput: vi.fn(), qwenStatus: vi.fn(), switchReviewer: vi.fn(), setQwenAuto: vi.fn(),
+  screenStatus: vi.fn(),
 }));
 vi.mock('@/lib/operations/dr/epoch', async original => ({ ...await original<typeof import('@/lib/operations/dr/epoch')>(), readWriterFence: async () => ({ state: 'active' }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 vi.mock('@/lib/auth/admin', () => ({ currentAdmin: mocks.admin }));
@@ -22,6 +23,7 @@ vi.mock('@/lib/crawl/product-audit', () => ({
 }));
 // Qwen-v2 자동 단계의 상태도 DB 를 센다
 vi.mock('@/lib/crawl/audit-second-opinion-auto', () => ({ qwenSecondOpinionStatus: mocks.qwenStatus }));
+vi.mock('@/lib/screen-review/job', () => ({ screenReviewStatus: mocks.screenStatus }));
 vi.mock('@/lib/crawl/settings', () => ({ setAuditHold: mocks.setHold, setQwenAutoStep: mocks.setQwenAuto }));
 vi.mock('@/lib/crawl/translations', () => ({ translationsFor: mocks.translations }));
 // 처리 속도·적체(0116)도 DB 를 센다
@@ -101,6 +103,7 @@ beforeEach(() => {
   mocks.introQueue.mockResolvedValue([]);
   mocks.introCount.mockResolvedValue(0);
   mocks.qwenStatus.mockResolvedValue(qwenStatusOf());
+  mocks.screenStatus.mockResolvedValue(null);
 });
 
 describe('내릴 후보 화면', () => {
@@ -514,6 +517,45 @@ describe('감사 보류 화면(0110)', () => {
     mocks.qwenStatus.mockClear();
     await render({ tab: 'history' });
     expect(mocks.qwenStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('화면 판별', () => {
+  const screenStatusOf = (over: Record<string, unknown> = {}) => ({ enabled: true, perTick: 2, configured: true, renderHost: '100.70.1.2:8790',
+    model: 'qwen3.8-flash-next+vision', shared: true, promptVersion: '2026-10-21.v2+shot1', lastHour: 41, lastDay: 512, approveDay: 250, rejectDay: 262,
+    remaining: 406, waitingPublic: 120, givenUp: 3, lastRunAt: '2026-10-22T06:59:00.000Z', lastSuccessAt: '2026-10-22T06:59:00.000Z', lastError: null,
+    health: { at: '2026-10-22T06:55:00.000Z', ok: true, version: 'b1f1ba08', sandbox: true, fonts: { ko: true, ja: true, zh: true } },
+    backoff: { render: null, model: null }, ...over });
+
+  it('감사 탭에 켬/끔·남은 것·화면 서버 상태(샌드박스·글꼴)와 스위치를 보인다 — 다른 탭에서는 세지 않는다', async () => {
+    mocks.screenStatus.mockResolvedValue(screenStatusOf());
+    const qwenAuto = { ...DEFAULT_QWEN_AUTO, screenReview: { enabled: true, perTick: 2, autoClose: true } };
+    mocks.overview.mockResolvedValue(overviewOf({ qwenAuto }));
+    const html = await render({ tab: 'audit' });
+    expect(mocks.screenStatus).toHaveBeenCalledWith({ qwenAuto });
+    const panel = html.slice(html.indexOf('aria-label="화면 판별"'), html.indexOf('보류 골라 풀기'));
+    expect(panel).toMatch(/남은 것 <b[^>]*>406<\/b>\(공개 중 (<!-- -->)?120/);
+    expect(panel).toMatch(/승인 (<!-- -->)?250(<!-- -->)? · (<!-- -->)?거절 (<!-- -->)?262/);
+    expect(panel).toContain('qwen3.8-flash-next+vision');
+    expect(panel).toContain('2026-10-21.v2+shot1');
+    expect(panel).toMatch(/샌드박스 (<!-- -->)?켬/);
+    expect(panel).toMatch(/한 (<!-- -->)?✓/);
+    expect(panel).toMatch(/name="screenReview-enabled" checked=""/);
+    expect(panel).toMatch(/name="screenReview-perTick"[^>]*value="2"/);
+    expect(panel).toMatch(/name="screenReview-autoClose" checked=""/);
+
+    mocks.screenStatus.mockResolvedValue(screenStatusOf({ health: { at: '2026-10-22T06:55:00.000Z', ok: false, version: null, sandbox: true,
+      fonts: { ko: false, ja: true, zh: true } }, backoff: { render: { until: '2026-10-22T07:05:00.000Z', code: 'render_unreachable' }, model: null },
+    lastError: { code: 'render_unreachable', stage: 'render', at: '2026-10-22T07:00:00.000Z' } }));
+    const broken = await render({ tab: 'audit' });
+    expect(broken).toMatch(/그리지 않음/);
+    expect(broken).toMatch(/한 (<!-- -->)?✗/);
+    expect(broken).toMatch(/물러나는 중: 화면 서버/);
+    expect(broken).toMatch(/마지막 오류: <span class="font-mono">render_unreachable<\/span>/);
+
+    mocks.screenStatus.mockClear();
+    await render({ tab: 'history' });
+    expect(mocks.screenStatus).not.toHaveBeenCalled();
   });
 });
 

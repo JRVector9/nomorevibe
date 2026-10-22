@@ -4,6 +4,7 @@ import { operationsAudit, productAuditCampaigns, productAuditItems, productAudit
   products } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { classifyAuditReason } from "./audit-reason-category";
+import { SCREEN_REVIEW_SOURCES } from "./audit-import-sources";
 import { POLICY_KEEP_DAYS } from "./audit-policy-filter";
 import { holdAuditedProduct, releaseAuditHold, unownedPublic, unreleasedOpenItems } from "./product-audit-hold";
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
@@ -31,6 +32,10 @@ import type { CrawlSettings } from "./settings-schema";
  *    카탈로그·디렉터리 같은 항목에서 세지 않음)도 이 길에는 걸지 않는다(사용자 지시: 갈래와 상관없이, 2026-10-22 결정에서도 바꾸지 않음).
  *    주인 있는 제품, 이미 보류된 것, 사람·정책이 보류를 푼 항목(hold_released_at), 그 제품에 살아 있는 유지가 있는 것, 더 새 감사 답이 있는 것,
  *    감사 보류 스위치가 꺼진 것은 열어 둔다.
+ *  - 화면 판정의 답(SCREEN_REVIEW_SOURCES — 화면 판별 잡 lib/screen-review/job.ts)은 글이 적은 항목에서도 닫는다 — 그 항목을 보려고 그린 것이다.
+ *    그때 엇갈림은 화면을 본 의견끼리만 가른다: 글만 본 의견(qwen-v2-auto·grok 일괄)은 그 항목에서 대개 '제목만·빈 화면'을 본 것이라
+ *    다른 모델의 거절·승인으로 세지 않는다(화면이 정한다). 확신 하한·주인·되돌림·보류 스위치는 그대로고, 답으로 닫기 스위치는 화면 판별의 것
+ *    (qwenAuto.screenReview.autoClose)이다.
  *  - 엇갈려 열어 둔 것은 작업 로그에 audit-auto-split 한 줄을 남긴다 — m1 과 반대 결정을 낸 모델들의 결정·확신·사유를 함께(2차 갈림
  *    판가름이 두 모델의 판단을 작업 로그에 남기는 것과 같은 꼴). 의견은 product_audit_second_opinions 에 남아 감사 줄이 두 사유를 보인다.
  *  - 운영자가 그 항목에 대한 정책 실행(자동 실행 포함)을 되돌렸으면 새 판의 답이 와도 닫지 않는다.
@@ -80,7 +85,7 @@ export function autoRunInfo(run: { options: unknown }): AutoRunInfo | null {
 
 /** 화면 이름 — 'm1 자동 유지 · 2026-10-22(UTC)' */
 export function autoRunLabel(info: AutoRunInfo): string {
-  return `m1 자동 ${info.action === "keep" ? "유지" : "숨김"} · ${info.day}(UTC)`;
+  return `m1 ${SCREEN_REVIEW_SOURCES.has(info.by) ? "화면 " : ""}자동 ${info.action === "keep" ? "유지" : "숨김"} · ${info.day}(UTC)`;
 }
 
 /** 그 항목이 지금 어떤가 — 잠근 뒤 읽는다 */
@@ -93,6 +98,8 @@ export type AutoCloseState = {
   otherApprove: boolean;
   /** 그 제품의 수집 본문이 적다(300자 아래·원본 없음) — 글만 본 m1 의 답으로 닫지 않는다(화면 판별 대기) */
   thinText: boolean;
+  /** 이 답이 화면 판정이다(SCREEN_REVIEW_SOURCES) — 글이 적어도 닫는다. otherReject·otherApprove 는 화면을 본 의견끼리만 센 값이다 */
+  screen?: boolean;
   /** 주인 없는 공개 제품(seeded·클레임 없음·검증 없음·메이커 권한 없음, 보류 중 포함) */
   unowned: boolean;
   held: boolean;
@@ -120,7 +127,7 @@ export function autoCloseVerdict(opinion: { decision: string; confidence: number
   if (!state.open) return { action: null, skip: "not_open" };
   if (state.reverted) return { action: null, skip: "reverted" };
   // 글이 적은 페이지는 화면을 보고 판정한다 — 엇갈림보다 먼저(그 m1 의견은 보류의 둘째 문에서도 세지 않는다)
-  if (state.thinText) return { action: null, skip: "thin_text" };
+  if (state.thinText && !state.screen) return { action: null, skip: "thin_text" };
   if (opinion.decision === "approve") return state.otherReject ? { action: null, skip: "split" } : { action: "keep" };
   // 다른 모델이 승인했으면 숨기지 않는다 — 승인 쪽과 같이 엇갈림으로 열어 둔다(주인·보류 스위치보다 먼저 — 엇갈림은 늘 기록한다)
   if (state.otherApprove) return { action: null, skip: "split" };
@@ -158,6 +165,8 @@ export type AutoCloseResult = { action: "kept" | "held"; runId: number; released
 
 export type AutoCloseInput = { itemId: number; productId: number; slug: string; model: string; decision: string; confidence: number | null;
   promptVersion: string | null; actor: string;
+  /** 그 의견의 출처 — 화면 판정 출처(SCREEN_REVIEW_SOURCES)면 글이 적어도 닫고, 엇갈림은 화면을 본 의견끼리만 가른다 */
+  source?: string | null;
   /** 잠근 설정 행(lockedSettings)에서 읽은 설정 */
   settings: Pick<CrawlSettings, "auditHold" | "qwenAuto"> };
 
@@ -165,15 +174,23 @@ type StateRow = { ai_decision: string | null; human_decision: string | null; set
   campaign_id: number; status: string; slug_ok: boolean; held_at: string | null; hold_item_id: number | null; unowned: boolean; other_reject: boolean;
   other_approve: boolean; text_length: number | null; kept_elsewhere: boolean; superseded: boolean; reverted: boolean };
 
+const screenSource = (source: string | null | undefined): boolean => Boolean(source && SCREEN_REVIEW_SOURCES.has(source));
+
+/** 화면 판정의 답이면 다른 의견도 화면을 본 출처만 센다 — 별칭 o */
+function screenOnly(source: string | null | undefined): SQL {
+  if (!screenSource(source)) return sql``;
+  return sql`and o.source in (${sql.join([...SCREEN_REVIEW_SOURCES].map((value) => sql`${value}`), sql`, `)})`;
+}
+
 async function readState(tx: ProductTransaction, input: AutoCloseInput): Promise<StateRow | null> {
   const [row] = await tx.execute<StateRow>(sql`
     select i.ai_decision, i.human_decision, (i.hold_released_at is not null) as settled, i.ai_reason, i.ai_confidence, i.campaign_id,
       p.status, (p.slug = ${input.slug}) as slug_ok, to_char(p.audit_hold_at, ${TIME}) as held_at, p.audit_hold_item_id as hold_item_id,
       ${unownedPublic("p", { includeHeld: true })} as unowned,
       exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.decision = 'reject'
-        and ${bareModel(sql`o.model`)} <> ${bareModel(sql`${input.model}`)}) as other_reject,
+        and ${bareModel(sql`o.model`)} <> ${bareModel(sql`${input.model}`)} ${screenOnly(input.source)}) as other_reject,
       exists (select 1 from ${productAuditSecondOpinions} o where o.item_id = i.id and o.decision = 'approve'
-        and ${bareModel(sql`o.model`)} <> ${bareModel(sql`${input.model}`)}) as other_approve,
+        and ${bareModel(sql`o.model`)} <> ${bareModel(sql`${input.model}`)} ${screenOnly(input.source)}) as other_approve,
       ${pageTextLengthSql(sql`p.id`)} as text_length,
       exists (select 1 from ${productAuditItems} k where k.product_id = i.product_id and k.human_decision = 'kept' and k.keep_until > now()) as kept_elsewhere,
       exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
@@ -203,11 +220,13 @@ async function recordSplit(tx: ProductTransaction, input: AutoCloseInput, row: S
     .from(productAuditSecondOpinions).where(eq(productAuditSecondOpinions.itemId, input.itemId));
   const reason = (text: string | null | undefined) => text ? text.slice(0, SPLIT_REASON_LIMIT) : null;
   const mine = opinions.find((opinion) => opinion.model === input.model);
+  // 화면 판정의 엇갈림은 화면을 본 의견끼리다(readState 와 같다)
+  const counted = screenSource(input.source) ? opinions.filter((opinion) => SCREEN_REVIEW_SOURCES.has(opinion.source ?? "")) : opinions;
   await tx.insert(operationsAudit).values({ actor: input.actor.slice(0, 120), actorKind: "model", ok: true, action: AUTO_SPLIT_ACTION,
     target: input.slug.slice(0, 200), detail: {
       itemId: input.itemId, productId: input.productId, aiConfidence: row.ai_confidence, category: classifyAuditReason(row.ai_reason),
       m1: { model: input.model, decision: input.decision, confidence: input.confidence, promptVersion: input.promptVersion, reason: reason(mine?.reason) },
-      others: opposingOpinions({ model: input.model, decision: input.decision }, opinions).map((other) => ({ model: other.model, source: other.source,
+      others: opposingOpinions({ model: input.model, decision: input.decision }, counted).map((other) => ({ model: other.model, source: other.source,
         decision: other.decision, confidence: other.confidence, reason: reason(other.reason) })),
     } });
 }
@@ -226,10 +245,12 @@ async function autoRun(tx: ProductTransaction, input: AutoCloseInput, action: Au
     .orderBy(desc(productAuditPolicyRuns.id)).limit(1).for("update");
   if (found) return found.id;
   const auto: AutoRunInfo = { by: input.actor, action, day, model: input.model, promptVersion: input.promptVersion, minConfidence: AUTO_CLOSE_MIN_CONFIDENCE };
-  const text = `수집 본문 ${THIN_PAGE_TEXT_CHARS}자 이상`;
+  const screen = screenSource(input.source);
+  const text = screen ? "글이 적은 페이지 · 화면 판정끼리" : `수집 본문 ${THIN_PAGE_TEXT_CHARS}자 이상`;
+  const who = screen ? `화면 판정(${input.model})` : `Qwen-v2(${input.model})`;
   const filterText = action === "keep"
-    ? `Qwen-v2(${input.model}) 승인 · 확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상 · 다른 모델 거절 없음 · ${text} → 유지 ${AUTO_CLOSE_KEEP_DAYS}일`
-    : `Qwen-v2(${input.model}) 거절 · 확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상 · 주인 없음 · 다른 모델 승인 없음 · ${text} → 숨김(보류)`;
+    ? `${who} 승인 · 확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상 · 다른 모델 거절 없음 · ${text} → 유지 ${AUTO_CLOSE_KEEP_DAYS}일`
+    : `${who} 거절 · 확신 ${AUTO_CLOSE_MIN_CONFIDENCE.toFixed(2)} 이상 · 주인 없음 · 다른 모델 승인 없음 · ${text} → 숨김(보류)`;
   const [run] = await tx.insert(productAuditPolicyRuns).values({ kind: "close", action: RUN_ACTION[action], status: "applied", appliedAt: sql`now()`,
     planned: 0, filter: { auto: action, decision: action === "keep" ? "approve" : "reject", minConfidence: AUTO_CLOSE_MIN_CONFIDENCE },
     options: { auto, keepDays: AUTO_CLOSE_KEEP_DAYS, filterText }, summary: {},
@@ -258,8 +279,11 @@ async function journal(tx: ProductTransaction, runId: number, input: AutoCloseIn
 export async function autoCloseOpinion(tx: ProductTransaction, input: AutoCloseInput): Promise<AutoCloseResult> {
   const row = await readState(tx, input);
   if (!row) return { action: null, skip: "not_open" };
-  const verdict = autoCloseVerdict({ decision: input.decision, confidence: input.confidence }, stateOf(row),
-    { autoClose: input.settings.qwenAuto.auditSecondOpinion.autoClose, holdEnabled: input.settings.auditHold.enabled });
+  // 화면 판정은 화면 판별의 답으로 닫기 스위치를, 글 단계는 감사 두 번째 의견의 것을 본다(둘 다 잠근 설정 행의 값)
+  const screen = screenSource(input.source);
+  const verdict = autoCloseVerdict({ decision: input.decision, confidence: input.confidence }, { ...stateOf(row), screen },
+    { autoClose: screen ? input.settings.qwenAuto.screenReview.autoClose : input.settings.qwenAuto.auditSecondOpinion.autoClose,
+      holdEnabled: input.settings.auditHold.enabled });
   if (verdict.action === null) {
     if (verdict.skip === "split") await recordSplit(tx, input, row);
     return verdict;

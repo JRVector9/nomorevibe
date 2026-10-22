@@ -12,6 +12,7 @@ import {
   DEFAULT_QWEN_AUTO,
   heldQwenRetrySchema,
   qwenAutoStepSchema,
+  screenReviewSchema,
   splitTiebreakSchema,
   type CrawlSettings,
   type QwenAutoSettings,
@@ -91,6 +92,7 @@ export function storedAuditHold(stored: unknown): AuditHoldSettings {
 
 const QWEN_AUTO_STEP_SCHEMAS = {
   auditSecondOpinion: auditSecondOpinionSchema, publishedFilter: qwenAutoStepSchema, splitTiebreak: splitTiebreakSchema, heldRetry: heldQwenRetrySchema,
+  screenReview: screenReviewSchema,
 } as const satisfies Record<QwenAutoStep, unknown>;
 
 const plainObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -112,7 +114,7 @@ export function storedQwenAuto(stored: unknown): QwenAutoSettings {
     return DEFAULT_QWEN_AUTO[step];
   };
   return { auditSecondOpinion: read("auditSecondOpinion"), publishedFilter: read("publishedFilter"), splitTiebreak: read("splitTiebreak"),
-    heldRetry: read("heldRetry") };
+    heldRetry: read("heldRetry"), screenReview: read("screenReview") };
 }
 
 /** 저장된 행을 읽지 못해 기본값으로 돌아간 설정 — 스위치 하나를 바꾸는 쓰기가 나머지를 기본값으로 덮지 않게 가른다 */
@@ -369,6 +371,7 @@ export async function lockedSettings(tx: ProductTransaction): Promise<CrawlSetti
 /** 단계를 켜면 다음 틱을 바로 부를 잡 */
 const QWEN_AUTO_JOB: Record<QwenAutoStep, string> = {
   auditSecondOpinion: "product-audit", publishedFilter: "product-audit", splitTiebreak: "second-review", heldRetry: "human-deepseek-review",
+  screenReview: "audit-screen-review",
 };
 
 const sameValue = (left: unknown, right: unknown): boolean => JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));

@@ -6,6 +6,23 @@
 
 ---
 
+## 화면 판별(글이 얇은 감사 거절을 화면으로) — 2026-10-22 (코드·로컬 시험만, m1 설치·운영 적용 전)
+
+설계·켜는 순서: `docs/operations/2026-10-22-screen-review-design.md`. 잡 `audit-screen-review`(reviewer screen 줄)·설정 `qwenAuto.screenReview`(기본 꺼짐).
+사용자 결정 "1차에서 글이 적은 화면을 보류로 넘기면 2차에서 직접 판별하게 해, 화면으로" — '화면 판별 대기'(`screenReviewQueue`, 보류 중 먼저)를 그려
+m1 에 글+첫 화면으로 묻고 `markScreenJudged`(출처 `qwen-vision-auto`·모델 `+vision`)로 적은 뒤 같은 커밋에서 그 답으로 닫는다(승인 → 유지·보류 풀기,
+주인 없는 것의 거절 → 숨김, 글만 본 의견은 엇갈림으로 세지 않음). 정책 처리 탭 'm1 화면 자동 유지·숨김' 실행으로 되돌린다.
+**이전 없음, 새 잡 있음 — scheduler 먼저 배포.**
+
+- **막고 있는 것**: m1-studio 화면 서버 설치(`sudo scripts/ops/screen-render.sh install --sha … --host <m1 Tailscale IP> --allow-from <M3>,<mini>`)와
+  reviewer 두 앱의 `SCREEN_RENDER_URL`·`SCREEN_RENDER_TOKEN`. 사람이 m1 에서 해야 한다.
+- **풀렸을 때**: 설치 끝의 상태가 `ok:true · sandbox:true · fonts 한·일·중 true` 인지 → scheduler → 공통 배포 → 감사 화면에서 틱당 1 로 켬 →
+  한두 시간 `screen_review.ran`(renderMs·modelMs)·감사 탭 화면 판별 줄·'화면 판별 대기' 수가 줄어드는지·정책 처리의 qwen-vision-auto 실행을 본다 → 괜찮으면 틱당 2.
+- **처음 확인할 것**: LaunchDaemon(_nmvrender) 아래 Chromium 샌드박스가 뜨는지, 시스템 글꼴 점검, `pf-enable` 뒤에도 워커가 닿는지,
+  글 단계(qwen-v2-auto)의 시간당 수가 화면 판별을 켠 뒤 떨어지지 않는지(m1 동시 호출 +1).
+
+---
+
 ## m1 자동 닫기 규칙 바꿈(글 적은 페이지·엇갈림·공개 먼저) — 2026-10-22 (코드·로컬 DB 시험만, 운영 적용 전)
 
 사용자 결정(2026-10-22): 글이 적은 페이지는 늘 화면을 보고 판정한다 · 다른 모델이 승인했으면 숨기지 않는다 · 엇갈린 것은 까닭을 남긴다 · 공개 먼저 묻는다.

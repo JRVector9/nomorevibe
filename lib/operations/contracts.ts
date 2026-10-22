@@ -30,7 +30,7 @@ export const JOB_LABELS: Record<string, string> = {
   'crawl-judge': '규칙 심사', 'crawl-agent-review': 'AI 후보 심사', 'second-review': '2차 심사', 'reason-translate': '사유 번역', 'crawl-publish': '제품 분류·발행',
   'uptime-ping': '서비스 응답 점검', 'click-rollup': '유효 방문 집계', 'ranking-refresh': '랭킹 갱신',
   'product-evidence-refresh': '제품 근거 갱신', 'agent-evidence-refresh': '개발 AI 근거 갱신', 'news-refresh': 'AI 소식 수집',
-  'product-thumbnail-refresh': '프로젝트 이미지 수집', 'product-audit': '발행분 감사',
+  'product-thumbnail-refresh': '프로젝트 이미지 수집', 'product-audit': '발행분 감사', 'audit-screen-review': '화면 판별(감사)',
   'product-search-profile': '검색 키워드 짓기', 'product-search-verify': '검색 키워드 검수', 'grok-session-check': 'Grok 로그인 확인',
   'product-readme-refresh': 'README 갱신',
   'product-search-health': '검색 데이터 자동 점검',

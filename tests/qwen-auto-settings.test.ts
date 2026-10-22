@@ -10,15 +10,15 @@ import * as originMain from "./fixtures/settings-schema-55389b48";
  */
 const enabledEverywhere: QwenAutoSettings = {
   auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
-  heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] },
+  heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] }, screenReview: { enabled: true, perTick: 3, autoClose: false },
 };
 /** 새 코드가 운영자 문턱을 바꾸고 네 단계를 켠 뒤 저장한 행 — saveSettings 는 파싱한 설정 전체를 쓴다 */
 const writtenByNewCode = crawlSettingsSchema.parse({ ...DEFAULT_CRAWL_SETTINGS, enabled: true,
   auditHold: { ...DEFAULT_AUDIT_HOLD, minConfidence: 0.97, categories: ["company"] }, qwenAuto: enabledEverywhere });
 
 describe("기본값", () => {
-  it("네 자동 단계는 모두 꺼짐으로 나간다 — 칸이 없는 행(첫 배포)도 꺼짐이다", () => {
-    expect(QWEN_AUTO_STEPS).toEqual(["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry"]);
+  it("자동 단계(화면 판별 포함)는 모두 꺼짐으로 나간다 — 칸이 없는 행(첫 배포)도 꺼짐이다", () => {
+    expect(QWEN_AUTO_STEPS).toEqual(["auditSecondOpinion", "publishedFilter", "splitTiebreak", "heldRetry", "screenReview"]);
     for (const step of QWEN_AUTO_STEPS) {
       expect(DEFAULT_QWEN_AUTO[step].enabled, step).toBe(false);
       expect(DEFAULT_CRAWL_SETTINGS.qwenAuto[step].enabled, step).toBe(false);

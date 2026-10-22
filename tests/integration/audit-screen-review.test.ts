@@ -78,7 +78,7 @@ const judgement = async (slug: string, decision: "approve" | "reject" | "needs_r
 };
 
 describe("screenReviewQueue", () => {
-  it("글이 적은(원본 없음 포함) 열린 거절 중 화면 판정이 없는 것 — 공개 중 먼저(확신 높은 순), 그다음 보류 중", async () => {
+  it("글이 적은(원본 없음 포함) 열린 거절 중 화면 판정이 없는 것 — 보류 중 먼저(글만 본 판단으로 숨겨진 것), 그다음 공개 중(확신 높은 순)", async () => {
     await judged([{ repo: "q/rich", confidence: 0.99 }, { repo: "q/low", confidence: 0.6, text: THIN }, { repo: "q/high", confidence: 0.98, text: THIN },
       { repo: "q/nodoc", confidence: 0.7, text: null }, { repo: "q/held", confidence: 0.99, text: THIN, reason: COMPANY },
       { repo: "q/owned", confidence: 0.9, text: THIN, over: { claimedAt: new Date() } },
@@ -92,7 +92,7 @@ describe("screenReviewQueue", () => {
     await opinion("m1", "qwen3.8-flash-next", "reject", "qwen-v2-auto");
     await db.update(productAuditItems).set({ humanDecision: "kept", humanBy: "jr", humanAt: sql`now()`, keepUntil: sql`now() + interval '90 days'` })
       .where(eq(productAuditItems.slug, "kept"));
-    expect(await queued()).toEqual(["high", "owned", "nodoc", "low", "m1", "held"]);
+    expect(await queued()).toEqual(["held", "high", "owned", "nodoc", "low", "m1"]);
     const rows = await screenReviewQueue();
     expect(rows.find((row) => row.slug === "nodoc")).toMatchObject({ textLength: null, pageText: null, held: false });
     expect(rows.find((row) => row.slug === "owned")).toMatchObject({ owned: true });
@@ -101,8 +101,8 @@ describe("screenReviewQueue", () => {
     expect(rows.find((row) => row.slug === "m1")?.opinions).toEqual([expect.objectContaining({ source: "qwen-v2-auto", decision: "reject",
       reason: "earlier" })]);
     // 한 번에 몇 건·넘길 것
-    expect(await queued({ limit: 2 })).toEqual(["high", "owned"]);
-    expect(await queued({ limit: 2, skip: [(await item("high")).id] })).toEqual(["owned", "nodoc"]);
+    expect(await queued({ limit: 2 })).toEqual(["held", "high"]);
+    expect(await queued({ limit: 2, skip: [(await item("held")).id] })).toEqual(["high", "owned"]);
     expect(await screenReviewCounts()).toEqual({ screenWait: 6, screenWaitPublic: 5, split: 0 });
   });
 });
@@ -114,12 +114,12 @@ describe("markScreenJudged", () => {
     await hold("held");
     // 글만 본 m1 의 거절 — 글이 적은 항목이라 보류에서 세지 않는다(세면 승인이 와도 풀리지 않는다)
     await opinion("held", "qwen3.8-flash-next", "reject", "qwen-v2-auto");
-    expect(await queued()).toEqual(["reject", "unsure", "held"]);
+    expect(await queued()).toEqual(["held", "reject", "unsure"]);
     const floor = await auditFloor();
     // 미리 셈만 — 아무것도 적지 않는다
     const dry = await markScreenJudged([await judgement("held", "approve")], { source: QWEN_VISION_AUTO_SOURCE, dryRun: true });
     expect(dry).toMatchObject({ inserted: 1, released: 1, dryRun: true });
-    expect(await queued()).toEqual(["reject", "unsure", "held"]);
+    expect(await queued()).toEqual(["held", "reject", "unsure"]);
 
     const result = await markScreenJudged([await judgement("held", "approve"), await judgement("reject", "reject"), await judgement("unsure", "needs_review"),
       // 글 충분한 항목에도 적을 수는 있다(대기가 아니었을 뿐)
