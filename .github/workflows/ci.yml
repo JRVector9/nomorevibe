@@ -381,7 +381,9 @@ jobs:
 
   publish-worker-image:
     needs: [scope, check]
+    # 재사용한 main 실행은 검사 잡이 skipped 라, 상태 함수가 없으면 암묵 success() 가 이 잡까지 건너뛴다
     if: >-
+      !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
@@ -425,7 +427,9 @@ jobs:
 
   publish-web-image:
     needs: [scope, check]
+    # 재사용한 main 실행은 검사 잡이 skipped 라, 상태 함수가 없으면 암묵 success() 가 이 잡까지 건너뛴다
     if: >-
+      !cancelled() &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       github.ref == 'refs/heads/main' &&
       needs.scope.outputs.code_changed == 'true' && needs.check.result == 'success'
