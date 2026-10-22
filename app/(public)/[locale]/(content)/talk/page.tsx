@@ -90,9 +90,9 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
           {board?.checkedAt && <> · {t("talk.checkedAt", { time: formatDateTime(board.checkedAt, now, locale) })}</>}
         </p>
       </div>
-      <nav className="tabs tabs-sm" aria-label={t("talk.list")}>
+      <nav className="tabs tabs-sm" aria-label={t("talk.list")} data-track-filter="mode">
         {MODES.map(option => (
-          <Link prefetch={false} key={option.key} href={localePath(locale, option.key === "now" ? "/talk" : "/talk?mode=week")}
+          <Link prefetch={false} key={option.key} href={localePath(locale, option.key === "now" ? "/talk" : "/talk?mode=week")} data-track-value={option.key}
             className={`tab${mode === option.key ? " active" : ""}`} aria-current={mode === option.key ? "page" : undefined}>{t(option.label)}</Link>
         ))}
       </nav>
@@ -134,7 +134,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
       )}
 
       <div className="talk-layout">
-        <ol className="talk-entries" aria-label={t("talk.list")}>
+        <ol className="talk-entries" aria-label={t("talk.list")} data-track-list="entries">
           {rest.map(entry => (
             <li key={entry.repositoryKey} className="talk-entry">
               <span className="talk-entry-rank">{entry.rank}</span>
@@ -200,7 +200,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
 function PostLines({ entry, t, locale, now }: { entry: LocalizedTalkEntry; t: Translator<"browse">; locale: Locale; now: Date }) {
   const count = (n: number) => formatNumber(n, locale);
   return (
-    <div className="talk-lines">
+    <div className="talk-lines" data-track-product={entry.sample ? undefined : entry.product.slug}>
       {entry.posts.slice(0, 3).map(post => {
         // X·Bluesky 게시물은 본문을 옮기지 않는다 — 반응 수와 링크만
         const reactions = linkOnly(post.source), x = post.source === "x";

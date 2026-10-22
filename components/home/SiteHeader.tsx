@@ -14,6 +14,7 @@ import { localePath, stripLocale } from "@/lib/i18n/routing";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import "./chrome.css";
 import { ME_SAVED_LINK } from "@/lib/me/contract";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 function subscribeHydration(): () => void {
   return () => {};
@@ -191,11 +192,11 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
   return (
     <header className="nmb-header" data-collapsed={collapsed || undefined}>
       <div className="wrap header-row">
-        <Link prefetch={false} className="brand" href={localePath(locale, "/")} aria-label={t("navigation.home", { brand: BRAND })}>
+        <Link prefetch={false} className="brand" href={localePath(locale, "/")} aria-label={t("navigation.home", { brand: BRAND })} {...trackAttrs("nav_click", { target: "logo", surface: "header" })}>
           <i className="brand-dot" aria-hidden="true" />
           {BRAND}
         </Link>
-        <nav className="navigation" aria-label={t("navigation.main")}>
+        <nav className="navigation" aria-label={t("navigation.main")} data-track-nav="header">
           {talkEnabled && <TalkNavLink />}
           <Suspense fallback={<RisingLink />}>
             <RisingNavLink />
@@ -220,14 +221,14 @@ export function SiteHeader({ authEnabled = false, talkEnabled = false }: { authE
             ? <span className="search-spinner" role="status"><span className="sr-only">{t("search.busy")}</span></span>
             : shortcut && <kbd className="key">{shortcut}</kbd>}
         </form>
-        <button type="button" className="saved-nav" onClick={openSaved} aria-label={t("navigation.saved")}>
+        <button type="button" className="saved-nav" onClick={openSaved} aria-label={t("navigation.saved")} {...trackAttrs("nav_click", { target: "saved", surface: "header" })}>
           <Icon name="bookmark" />
           <i className={`saved-dot${hasSaved ? " on" : ""}`} />
         </button>
         <LanguageSwitcher />
         {authEnabled && <AlertBell />}
-        {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold">{t("account.login")}</Link>}><AccountMenu /></Suspense>}
-        <Link className="primary" href={localePath(locale, "/launch")}>{t("navigation.launch")}</Link>
+        {authEnabled && <Suspense fallback={<Link prefetch={false} href={localePath(locale, "/login")} className="text-[14px] font-semibold" {...trackAttrs("nav_click", { target: "login", surface: "header" })}>{t("account.login")}</Link>}><AccountMenu /></Suspense>}
+        <Link className="primary" href={localePath(locale, "/launch")} {...trackAttrs("nav_click", { target: "launch", surface: "header" })}>{t("navigation.launch")}</Link>
       </div>
     </header>
   );

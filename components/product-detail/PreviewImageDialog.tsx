@@ -4,6 +4,7 @@ import { useTranslations } from "@/lib/i18n/context";
 /* eslint-disable @next/next/no-img-element -- 미리보기와 같은 내부 보관 이미지를 원래 비율로 보여 준다. */
 import { useId, useRef, type ReactNode } from "react";
 import { Icon } from "@/components/home/icons";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 export function PreviewImageDialog({ src, width, height, caption, children }: {
   src: string;
@@ -31,6 +32,7 @@ export function PreviewImageDialog({ src, width, height, caption, children }: {
       <button
         ref={trigger}
         type="button"
+        {...trackAttrs("select_content", { content_type: "dialog", content_id: "preview_image" })}
         aria-haspopup="dialog"
         aria-controls={id}
         aria-label={t("preview.expand", { caption })}

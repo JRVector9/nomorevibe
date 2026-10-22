@@ -258,7 +258,7 @@ export function TriedList({ account, initial, authEnabled }: {
       </div>
       {undoBar}
       {visible.length === 0 ? <p className="tried-status">{t("tried.none")}</p> : (
-        <ul className="tried-list">
+        <ul className="tried-list" data-track-list="tried">
           {visible.map((item) => (
             <TriedRow key={item.slug} item={item} onEdit={edit} editor={editing === item.slug ? (
               <TriedEditor item={item} busy={busy} error={editorError} onSave={(draft, website) => save(item, draft, website)}

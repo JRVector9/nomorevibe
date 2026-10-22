@@ -5,6 +5,7 @@ import { localePath } from "@/lib/i18n/routing";
 import Link from "next/link";
 import { githubOwnerFromRepositoryUrl } from "@/lib/domain/products/github-owner";
 import { TakedownForm } from "@/app/(public)/[locale]/(content)/p/[slug]/TakedownForm";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 /** 글 속 링크 — 색만으로 가려지지 않게 밑줄을 늘 긋는다(A11Y-03) */
 const LINK = "text-accent-ink underline underline-offset-2";
@@ -41,7 +42,7 @@ export function UnclaimedOwnerContact({ repoUrl, slug, installable = false }: { 
           <p className="mt-1 text-[13px] leading-5 text-fg-2">
             {t("owner.verify", { command: "/nomorevibe verify" })}
           </p>
-          <Link prefetch={false} href={localePath(locale, "/launch#verify")}
+          <Link prefetch={false} href={localePath(locale, "/launch#verify")} {...trackAttrs("claim_start", { product_slug: slug, step: "verify" })}
             className="mt-3 inline-flex min-h-11 items-center rounded-full bg-accent-solid px-5 text-[14px] font-medium text-white hover:opacity-90">
             {t("owner.verifyLink")}
           </Link>

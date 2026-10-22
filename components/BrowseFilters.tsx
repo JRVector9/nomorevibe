@@ -61,13 +61,14 @@ export function BrowseFilters({
   return (
     <div>
       <div className="filter-top">
-        <div className="tabs" role="tablist" aria-label={t("filter.sort")}>
+        <div className="tabs" role="tablist" aria-label={t("filter.sort")} data-track-filter="sort">
           {tabs.map((key) => {
             const active = state.sort === key;
             return (
               <Link prefetch={false}
                 key={key}
                 href={hrefWith(state, { sort: key }, locale)}
+                data-track-value={key}
                 className={`tab${active ? " active" : ""}`}
                 role="tab"
                 aria-selected={active}
@@ -78,17 +79,17 @@ export function BrowseFilters({
             );
           })}
         </div>
-        <nav className="chips chips-filter" aria-label={t("filter.category")}>
-          <Link prefetch={false} href={hrefWith(state, { category: undefined }, locale)} className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>{t("filter.all")}</Link>
+        <nav className="chips chips-filter" aria-label={t("filter.category")} data-track-filter="category">
+          <Link prefetch={false} href={hrefWith(state, { category: undefined }, locale)} data-track-value="all" className={`chip${state.category ? "" : " chip-dark"}`} aria-current={state.category ? undefined : "true"}>{t("filter.all")}</Link>
           {categories.map((category) => {
             const active = state.category === category;
             const label = <>{translatedCategory(category, labels)}{showCounts && <> <span className="chip-count">{count(counts[category] ?? 0)}</span></>}</>;
             if (!active && showCounts && (counts[category] ?? 0) === 0) return <span key={category} className="chip" aria-disabled="true">{label}</span>;
-            return <Link prefetch={false} key={category} href={hrefWith(state, { category: active ? undefined : category }, locale)} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>{label}</Link>;
+            return <Link prefetch={false} key={category} href={hrefWith(state, { category: active ? undefined : category }, locale)} data-track-value={active ? "all" : category} className={`chip${active ? " chip-dark" : ""}`} aria-current={active ? "true" : undefined}>{label}</Link>;
           })}
         </nav>
       </div>
-      <div className="filter-summary">
+      <div className="filter-summary" data-track-filter="reset">
         <span>
           {resultLine(state, resultCount, { approximate, listLabel, locale, t, labels })}
           {total > 0 && !narrowed ? ` · ${t("filter.publicTotal", { count: count(total) })}` : ""}

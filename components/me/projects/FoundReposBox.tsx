@@ -7,6 +7,8 @@ import { formatDate } from "@/lib/i18n/format";
 import type { FoundRepo } from "@/lib/me/maker";
 import type { ClaimItem } from "@/lib/me/maker-claims";
 import { makerErrorKey, makerRequest } from "./maker-request";
+import { trackAttrs } from "@/lib/analytics/attrs";
+import { trackEvents } from "@/lib/analytics/client";
 
 type Notice = { key: string; text: string; ok: boolean };
 
@@ -74,7 +76,10 @@ export function FoundReposBox({ csrfToken, linked, login, repos }: { csrfToken: 
         <div className="me-proj-box-x"><h2>{t("projects.found.title")}</h2><p>{body}</p></div>
         {repos.length > 1 && (
           <button type="button" className="me-proj-btn is-primary" disabled={pending !== null}
-            onClick={() => claim({ productIds: repos.slice(0, 20).map((repo) => repo.productId) }, "all")}>{t("projects.found.all")}</button>
+            onClick={() => {
+              trackEvents(repos.slice(0, 20).map((repo) => ({ name: "claim_start", params: { product_slug: repo.slug, step: "claim" } })));
+              void claim({ productIds: repos.slice(0, 20).map((repo) => repo.productId) }, "all");
+            }}>{t("projects.found.all")}</button>
         )}
       </div>
       {repos.length > 0 && (
@@ -85,7 +90,8 @@ export function FoundReposBox({ csrfToken, linked, login, repos }: { csrfToken: 
                 <span className="me-proj-mono">{repo.repo}</span>
                 <span className="me-proj-sub">{repo.tagline} · {t("projects.found.listed", { date: formatDate(repo.listedAt, now, locale) })}</span>
               </div>
-              <button type="button" className="me-proj-btn" disabled={pending !== null} onClick={() => claim({ productIds: [repo.productId] }, `one:${repo.productId}`)}>
+              <button type="button" className="me-proj-btn" disabled={pending !== null} onClick={() => claim({ productIds: [repo.productId] }, `one:${repo.productId}`)}
+                {...trackAttrs("claim_start", { product_slug: repo.slug, step: "claim" })}>
                 {t("projects.found.one")}
               </button>
             </li>

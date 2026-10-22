@@ -89,7 +89,7 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
               {!lead.sample && (
                 <div className="talk-actions">
                   <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
-                  {lead.posts[0] && <a href={discussionUrl(lead.posts[0])} target="_blank" rel="noopener">{t("talk.discussion")} ↗</a>}
+                  {lead.posts[0] && <a href={discussionUrl(lead.posts[0])} target="_blank" rel="noopener" data-track-product={lead.sample ? undefined : lead.product.slug}>{t("talk.discussion")} ↗</a>}
                 </div>
               )}
             </article>

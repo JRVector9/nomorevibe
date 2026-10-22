@@ -11,7 +11,7 @@ export function SiteFooter({ children, locale, messages, analyticsEnabled = fals
 }) {
   const t = createTranslator("common", messages);
   return (
-    <footer className="nmb-footer">
+    <footer className="nmb-footer" data-track-nav="footer">
       <div className="wrap">
         {children}
         <div className="footer">

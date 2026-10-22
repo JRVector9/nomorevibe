@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useTranslations } from "@/lib/i18n/context";
+import type { TrackAttributes } from "@/lib/analytics/attrs";
 
 type CopyResult = "copied" | "selected" | "failed";
 
@@ -26,12 +27,14 @@ export async function copyOrSelect(text: string, target: Node | null): Promise<C
  * 명령은 꺾지 않고 한 줄로 둔다 — 좁은 화면에서는 줄 안에서 가로로 밀린다. 출력 예시와 섞이지 않게 테두리 칸에 담는다.
  * 색은 토큰이라 .surface-dark(터미널) 안에서는 어둡게, 밖에서는 화면 테마대로 그려진다.
  */
-export function CopyCommand({ command, label, prompt }: {
+export function CopyCommand({ command, label, prompt, analytics }: {
   command: string;
   /** 단추가 읽히는 이름 — "설치 명령 복사" */
   label: string;
   /** 명령 앞 표시('$') — 복사되지 않는다 */
   prompt?: string;
+  /** 복사 단추를 누르면 보낼 분석 이벤트(trackAttrs) — 명령 글자는 보내지 않는다 */
+  analytics?: TrackAttributes;
 }) {
   const t = useTranslations("launch");
   const commandRef = useRef<HTMLSpanElement>(null);
@@ -50,7 +53,7 @@ export function CopyCommand({ command, label, prompt }: {
           {prompt && <span aria-hidden="true" className="mr-2 select-none font-normal text-fg-2">{prompt}</span>}
           <span ref={commandRef}>{command}</span>
         </code>
-        <button type="button" onClick={copy} aria-label={t("copy.aria", { label })}
+        <button type="button" onClick={copy} aria-label={t("copy.aria", { label })} {...analytics}
           className="inline-flex min-h-11 shrink-0 items-center rounded-[8px] px-3 text-[13px] font-medium text-fg hover:bg-line">
           {state === "copied" ? t("copy.copiedButton") : t("copy.button")}
         </button>

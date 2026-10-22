@@ -25,7 +25,7 @@ export function ToolsBoard({ tools, state }: { tools: HomePulse["tools"]; state:
           <p className="row-note">{t("tools.note", { scanned: count(tools.scanned), found: count(tools.withTool) })}</p>
         </div>
       </div>
-      <ul className="chips">
+      <ul className="chips" data-track-filter="observedTool">
         {tools.rows.slice(0, 8).map((tool) => (
           <li key={tool.label}>
             <Link prefetch={false} href={hrefWith(state, { observedTool: tool.label }, locale)} className={`chip${state.observedTool === tool.label ? " chip-dark" : ""}`} aria-current={state.observedTool === tool.label ? "true" : undefined}>

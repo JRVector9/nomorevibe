@@ -5,6 +5,7 @@ import "./share-kit.css";
 import { useRef, useState } from "react";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
+import { trackAttrs } from "@/lib/analytics/attrs";
 
 type Variant = "listed" | "tried";
 type BadgeLang = "en" | "ko";
@@ -71,20 +72,22 @@ export function ShareKit({ slug, name, origin, version, tried = true }: { slug: 
           <div className="me-share-code-h">
             <span>{t(`share.${format}`)}</span>
             <button type="button" className="me-share-btn" aria-label={t("share.copyCode", { format: t(`share.${format}`) })}
-              onClick={() => void copy(code, ref.current, "share.copied")}>{t("share.copy")}</button>
+              onClick={() => void copy(code, ref.current, "share.copied")}
+              {...trackAttrs("share", { method: `badge_${format}`, content_type: "product", item_id: slug })}>{t("share.copy")}</button>
           </div>
           <pre ref={ref} tabIndex={0}>{code}</pre>
         </div>
       ))}
       <h3 className="me-share-h">{t("share.card")}</h3>
-      <a className="me-share-card" href={cardPath} target="_blank" rel="noopener">
+      <a className="me-share-card" href={cardPath} target="_blank" rel="noopener" {...trackAttrs("share", { method: "image", content_type: "product", item_id: slug })}>
         <img src={cardPath} alt={t("share.cardAlt", { name })} width={1200} height={630} loading="lazy" />
       </a>
       <p className="me-share-note">{t("share.cardNote")}</p>
       <code className="me-share-link" ref={linkRef}>{shareLink}</code>
       <div className="me-share-acts">
-        <button type="button" className="me-share-btn pri" onClick={() => void copy(shareLink, linkRef.current, "share.linkCopied")}>{t("share.copyLink")}</button>
-        <a className="me-share-btn" href={cardPath} target="_blank" rel="noopener">{t("share.openImage")}</a>
+        <button type="button" className="me-share-btn pri" onClick={() => void copy(shareLink, linkRef.current, "share.linkCopied")}
+          {...trackAttrs("share", { method: "copy_link", content_type: "product", item_id: slug })}>{t("share.copyLink")}</button>
+        <a className="me-share-btn" href={cardPath} target="_blank" rel="noopener" {...trackAttrs("share", { method: "image", content_type: "product", item_id: slug })}>{t("share.openImage")}</a>
       </div>
       <p className="me-share-status" role="status">{status ? t(status) : ""}</p>
     </section>

@@ -15,6 +15,7 @@ import { translatedCategory } from "./i18n";
 import { formatNumber } from "@/lib/i18n/format";
 import type { TimeInput } from "@/lib/format/time";
 import { ProductActivityRow } from "./ProductActivityRow";
+import { trackAttrs } from "@/lib/analytics/attrs";
 import "./cards.css";
 
 /**
@@ -69,6 +70,7 @@ export function ProjectCard({ product, saved, onToggleSave, now, priority = fals
             aria-label={t(saved ? "card.unsave" : "card.save", { name: product.name })}
             aria-pressed={saved}
             onClick={() => onToggleSave(product.slug)}
+            {...trackAttrs("product_save", { product_slug: product.slug, action: saved ? "unsave" : "save" })}
           >
             <Icon name="bookmark" size={16} />
           </button>

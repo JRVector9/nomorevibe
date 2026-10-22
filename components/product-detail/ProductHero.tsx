@@ -115,16 +115,16 @@ export function ProductHero({ product, unclaimed, risingRank, talkRank = null, h
               <span className={`${BUTTON} bg-bg-soft text-down`}>{t("hero.repoGone")}</span>
             ) : installable ? (
               <>
-                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.openRepo")}</a>
-                <InstallPrompt repoUrl={product.repoUrl ?? product.url} />
+                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="repo" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.openRepo")}</a>
+                <InstallPrompt repoUrl={product.repoUrl ?? product.url} slug={product.slug} />
               </>
             ) : (
               <>
-                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.visit")}</a>
+                <a href={`/go/${product.slug}`} target="_blank" rel="nofollow noopener noreferrer" data-track-kind="site" className={`${BUTTON} bg-accent-solid text-white hover:opacity-90`}>{t("hero.visit")}</a>
                 {product.repoUrl && !product.repoGone && <a href={product.repoUrl} target="_blank" rel="noopener noreferrer" aria-label={t("hero.repoLabel")} className={`${BUTTON} bg-bg-soft text-fg`}>GitHub</a>}
               </>
             )}
-            <ShareButton title={product.name} path={localePath(locale, `/p/${product.slug}`)} />
+            <ShareButton title={product.name} path={localePath(locale, `/p/${product.slug}`)} slug={product.slug} />
             <SaveButton slug={product.slug} name={product.name} listed={savableProduct(product, unclaimed)} />
             {follow?.project}
           </div>

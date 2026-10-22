@@ -9,6 +9,8 @@ import { Icon } from "@/components/home/icons";
 import { ReactionFields, type ReactionDraft } from "./ReactionFields";
 import { deleteReactionRequest, phoneWidth, putReactionRequest, readReactionPanel, type ReactionBody, type ReactionPanelState } from "./reaction-api";
 import { forgetReacted, hasReacted, rememberReacted } from "./reacted";
+import { trackEvents } from "@/lib/analytics/client";
+import { triedEvents } from "./try-events";
 
 /**
  * 상세 써보기 판(피드백 설계 M1 A·B, 휴대폰 M2) — 「제품 방문하기」 바로 아래.
@@ -87,6 +89,7 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
     }
     // 이 브라우저 목록에는 익명 평가만 — 계정 평가는 계정 목록에 있다
     if (!result.signedIn) rememberReacted(slug);
+    trackEvents(triedEvents(slug, state.mine, result.mine));
     setLoaded({ csrfToken: result.csrfToken, signedIn: result.signedIn, mine: result.mine, summary: result.summary });
     const verdict = t(`verdict.${result.mine.verdict}`);
     setMessage(done === "picked" ? t("try.savedMore", { verdict }) : t(result.mine.commentState === "held" ? "try.sentHeld" : "try.sent"));
@@ -137,6 +140,7 @@ export function TryPanel({ slug, name }: { slug: string; name: string }) {
     setPending(false);
     if (!result.ok) return setMessage(t(result.errorKey));
     if (!result.signedIn) forgetReacted(slug);
+    trackEvents(triedEvents(slug, loaded.mine, null));
     setLoaded({ csrfToken: result.csrfToken, signedIn: result.signedIn, mine: null, summary: result.summary });
     setMessage(t("try.deleted"));
     close();
