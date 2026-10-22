@@ -78,12 +78,15 @@ describe("assertPublicUrl — 프로덕션 모드", () => {
   });
 
   it("사설 IP로 해석되는 공인 도메인도 차단한다 (DNS 기반 우회 방지)", async () => {
-    // nip.io는 호스트명에 박힌 IP를 그대로 해석해준다 — 공인 DNS명 → 127.0.0.1
+    // nip.io 같은 서비스는 호스트명에 박힌 IP를 그대로 해석해준다 — 공인 DNS명 → 127.0.0.1.
+    // 실제 nip.io 조회는 CI runner 의 DNS 사정으로 실패해 "도메인을 확인할 수 없습니다"가 된 적이 있어, 그 답을 그대로 준다.
+    const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "127.0.0.1", family: 4 }] as never);
     const result = await assertPublicUrl("http://127.0.0.1.nip.io/");
+    expect(lookup).toHaveBeenCalledWith("127.0.0.1.nip.io", { all: true });
     expect(result.ok).toBe(false);
     // DNS 조회 실패가 아니라 "사설 대역"으로 차단돼야 의미가 있다
     if (!result.ok) expect(result.reason).toContain("사설 IP 대역");
-  }, 15_000);
+  });
 
   it("ALLOW_PRIVATE_URLS=1이면 로컬 개발용으로 통과시킨다", async () => {
     process.env.ALLOW_PRIVATE_URLS = "1";
