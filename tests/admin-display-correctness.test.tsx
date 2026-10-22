@@ -45,7 +45,7 @@ describe("작업 늦음 — 세 화면이 한 규칙(jobLateness)", () => {
     expect(jobLateness(job({ name: "bluesky-talk", lastRunAt: minutesAgo(180) }), NOW)).toMatchObject({ kind: "ok", intervalMs: 2 * 3_600_000 });
   });
 
-  const data = { fetchedAt: NOW, observations: [], serviceInstances: [], dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null };
+  const data = { fetchedAt: NOW, observations: [], serviceInstances: [], dbLatencyMs: 3, audit: [], held: 0, heldNextRetryAt: null, jobControlVersions: {} };
   const render = (jobs: OperationJob[]) => html(createElement(OperationsCenter, { jobs, data, reviewMode: "enforce", enabled: true,
     attention: null, dashboard: null, statusChips: null, diagnostics: null, manual: null, crawlers: null }));
   beforeEach(() => { nav.params = new URLSearchParams(); });

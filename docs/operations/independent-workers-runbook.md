@@ -665,10 +665,29 @@ DOWN/회복 확인 → monitor 중지로 Push heartbeat timeout 확인 → 모�
 외부 deadman 또는 두 번째 감시 위치가 추가로 필요하다. 이 절차는 아직 운영 검증으로
 기록하지 않는다.
 
+외부 수신기를 연결할 때는 같은 monitor에 `MONITOR_EXTERNAL_PUSH_URL`을 추가한다. mini·M3 밖에서
+호스팅하는 별도 Uptime Kuma의 Push URL이며 HTTPS와 주 수신기와 다른 hostname을 요구한다.
+서로 다른 hostname만으로 독립된 호스팅이 증명되지는 않는다. 주 수신기와 외부 수신기 모두 heartbeat
+timeout을 90초 이상으로 설정하고 실제 DOWN·회복 수신과 monitor 중단 때의 timeout을 확인한다.
+한 수신기가 실패해도 다른 수신기로 동시에 전송하며, 로그 `monitor.push`의 `receipts`에는
+`primary`/`external`·성공 여부·시각만 남긴다. URL·응답 본문은 남기지 않는다. `externalReceiverConfigured`
+표시는 설정 여부일 뿐 실제 알림 수신 증거가 아니다. 외부 수신기를 연결하지 않은 기존 설정도
+계속 실행되지만 mini와 함께 감시가 사라지는 한계는 그대로다.
+
 DB 드라이버는 `postgres` 3.4.9로 고정했다. `lib/db/pool.ts`는 대기 중인 정확한 요청을 취소하기 위해
 해당 버전의 내부 연결 경계를 사용한다. 업그레이드 시 단순 타입 검사만으로 호환성을 판단하지 말고
 `tests/integration/db-pool-budget.test.ts`를 전용 DB에서 실행해 만료된 쓰기/BEGIN 미실행,
 정상 BEGIN 복구, statement 제한, pipeline 대기, 연결 회전과 트랜잭션 복구를 확인한다.
+
+## 관리자에서 개별 작업 멈춤·재개
+
+`/admin/status?tab=jobs`에서 작업 상세를 열고 사유를 적어 "이 작업 멈춤" 또는 "이 작업 재개"를 누른다.
+현재 legacy 배치의 실제 잡만 지원하며 heartbeat와 native consumer를 쓰는 versioned/draining 배치는 거절한다.
+멈춤은 다음 claim부터 적용한다. 실행 중 모델 호출·잡은 끝까지 처리하고 lease·cursor·요청/처리 판을 유지한다.
+재개는 원래 요청·예약부터 이어 가며, 멈추기 전 아직 유효한 재시도 대기가 있었다면 그 시각도 복원한다.
+다른 작업의 멈춤은 풀지 않는다. 상태가 바뀐 오래된 상세는 닫고 다시 열어 확인한다.
+작업 로그 "제품·소식·작업"에서 `job-pause`·`job-resume`의 운영자·사유·전후 시각을 확인할 수 있다.
+이 버튼은 운영 서버·컨테이너를 중지하거나 실행 중 요청을 강제 취소하는 기능이 아니다.
 
 ## 통합 완료 시 남길 증거
 
