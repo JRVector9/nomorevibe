@@ -76,9 +76,11 @@ it("export keeps the explicit test database guard before parsing or importing DB
 it.each([false, true])("replay report diagnostics require explicit opt-in (%s) without changing the fixed failure", enabled => {
   const env = Object.fromEntries(Object.entries(process.env)
     .filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$|TEST_DATABASE_URL$|NODE_OPTIONS$|NOMOREVIBE_REPLAY_DIAGNOSTICS$)/.test(key)));
-  const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
-    import { reportVerifiedReplayArtifact } from './lib/operations/pipeline-replay-artifact.ts';
-    import { formatCapacityCliError } from './lib/operations/pipeline-capacity-cli.ts';
+  // 저장소 .ts 는 CommonJS 모듈이다(package.json 에 "type" 이 없다). ESM --eval 의 이름 import 는 tsx 가 module.register 로
+  // 도는 Node(22.22.3·24.11.1 미만)에서 export 이름을 못 찾아 default 만 받는다 — 운영 진입점과 같이 require 로 읽는다.
+  const child = spawnSync(process.execPath, ["--import", "tsx", "--eval", `
+    const { reportVerifiedReplayArtifact } = require('./lib/operations/pipeline-replay-artifact.ts');
+    const { formatCapacityCliError } = require('./lib/operations/pipeline-capacity-cli.ts');
     const cpuUsage = process.cpuUsage.bind(process);
     let cpuSamples = 0;
     process.cpuUsage = previous => { cpuSamples++; return cpuUsage(previous); };
