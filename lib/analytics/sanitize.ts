@@ -65,9 +65,10 @@ export function sanitizeSearch(search: string | URLSearchParams): string {
 
 /**
  * 절대 주소를 보낼 꼴로 정리한다. 같은 사이트가 아니면 origin+경로만 남긴다(바깥 주소의 질의는 남의 비밀일 수 있다).
- * 해석하지 못하면 빈 문자열 — 보내지 않는다.
+ * 비었거나 해석하지 못하면 빈 문자열 — 보내지 않는다(앞 화면이 없는 첫 방문).
  */
 export function sanitizeUrl(href: string, siteOrigin?: string): string {
+  if (!href.trim()) return "";
   try {
     const url = new URL(href, siteOrigin);
     if (url.protocol !== "https:" && url.protocol !== "http:") return "";
@@ -92,7 +93,7 @@ export function sanitizePath(pathname: string): string {
 export function sanitizeSearchTerm(term: unknown): string | null {
   if (typeof term !== "string") return null;
   const clean = term.normalize("NFKC").toLowerCase()
-    .replace(EMAIL, " ").replace(LONG_DIGITS, " ").replace(TOKEN_LIKE, " ")
+    .replace(EMAIL, " ").replace(TOKEN_LIKE, " ").replace(LONG_DIGITS, " ")
     .replace(/\s+/g, " ").trim();
   if (!clean) return null;
   return Array.from(clean).slice(0, SEARCH_TERM_MAX).join("").trim() || null;

@@ -1,3 +1,5 @@
+import { ANALYTICS_OPT_OUT_KEY } from "@/lib/analytics/opt-out-key";
+
 /**
  * 방문 분석 동의(Google Consent Mode v2) — 누구에게 켜고 누구에게 끄는가(2026-10-22).
  *
@@ -38,8 +40,7 @@ export function isRestrictedTimeZone(timeZone: string | null | undefined): boole
   return timeZone.startsWith("Europe/") || RESTRICTED_TIME_ZONES.has(timeZone);
 }
 
-/** 이 브라우저에서 분석을 끈 기록 — 값 "1" */
-export const ANALYTICS_OPT_OUT_KEY = "nmv-analytics-opt-out";
+export { ANALYTICS_OPT_OUT_KEY };
 
 export type ConsentSignals = {
   optOut: boolean;

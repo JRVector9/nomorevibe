@@ -163,7 +163,7 @@ describe("게재 기준", () => {
     const html = await render(PolicyPage());
 
     expect((await policyMetadata()).title).toBe("게재 기준 — nomorevibe");
-    for (const id of ["listing", "ai-evidence", "excluded", "unclaimed", "takedown", "contact"]) {
+    for (const id of ["listing", "ai-evidence", "excluded", "unclaimed", "takedown", "analytics", "contact"]) {
       expect(html).toContain(`id="${id}"`);
       expect(hrefs(html)).toContain(`#${id}`);
     }
@@ -175,6 +175,20 @@ describe("게재 기준", () => {
     expect(html).toContain("SNS 화제 글·자료 출처에 관한 요청, 삭제 요청, 신고는");
     expect(new Set(html.match(/[\w.+-]+@[\w-]+\.[\w.]+/g))).toEqual(new Set(["contact@nomorevibe.com"]));
     expect(html).not.toContain("공개 이메일 주소는 두지 않습니다");
+  });
+
+  it("방문 분석(#analytics) — 처리자·모으는 것·보관·끄는 법·광고 기능 없음", async () => {
+    const html = await render(PolicyPage());
+    const section = html.slice(html.indexOf('id="analytics"'), html.indexOf('id="contact"'));
+    expect(section).toContain("Google Analytics 4");
+    expect(section).toContain("광고에는 쓰지 않습니다");
+    expect(section).toContain("14개월");
+    expect(section).toContain("Global Privacy Control");
+    expect(section).toContain("Do Not Track");
+    expect(section).toContain("IP 주소는 GA4가 저장하지 않습니다");
+    expect(section).toContain("유럽 경제 지역·영국·스위스");
+    // 문의는 기존 '연락하기'의 주소 하나로 — 새 주소를 싣지 않는다
+    expect(section).toContain("‘연락하기’");
   });
 });
 

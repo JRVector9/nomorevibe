@@ -6,6 +6,17 @@
 
 ---
 
+## 방문 분석(GA4) — 2026-10-22 (코드만, 꺼진 채 배포)
+
+켜는 법·이벤트·동의·확인 절차는 [`docs/operations/2026-10-22-google-analytics.md`](docs/operations/2026-10-22-google-analytics.md).
+`GA_MEASUREMENT_ID` 가 없으면 아무것도 불러오지 않는다.
+
+- **막고 있는 것**: GA4 속성이 없다(사람이 만든다). 속성의 이벤트 데이터 보관을 **14개월**로, Google 신호·광고 맞춤을 끄고,
+  향상된 측정의 '브라우저 기록 기반 페이지 변경'·사이트 검색·이탈 클릭·양식 상호작용을 끈다 — 정책 화면 `#analytics` 문구가 이 설정을 전제한다.
+- **풀렸을 때**: 두 웹에 `GA_MEASUREMENT_ID`(+ 확인 동안 `GA_DEBUG=1`) → 웹만 다시 배포 → 문서의 DebugView 확인 1~8 → `GA_DEBUG` 지우고 웹만 다시 배포.
+- **직접 확인하지 않은 것**: 실제 GA 수신(DebugView), 이동 뒤 제목이 늦게 올 때 1초 기다림이 충분한지, GPC 브라우저에서 요청이 없는지,
+  `gtag('set', {page_location…})` 이 향상된 측정 이벤트(스크롤 등)에도 정리한 주소를 쓰는지.
+
 ## 공통 이미지 배포 빠르게 — 2026-10-22 (코드·단위 테스트만, 운영 실행 전)
 
 `deploy_shared_images.py`의 시각·소요 시간 기록, 두 서버 동시 pre-pull, `prepull`, 짧은 확인 간격(2·3초), 선택 모드 `--parallel-roles`.
