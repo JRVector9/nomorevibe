@@ -493,12 +493,11 @@ describe("PUT /api/me/maker/replies — 메이커 답장", () => {
     expect(await db.select().from(notifications)).toHaveLength(0);
   });
 
-  it("링크가 넷 이상인 답장은 받지 않는다(검토할 곳이 없다) — 예전에 보류된 답장은 답장 기다림으로 센다", async () => {
-    const { maker, feedback, tiny } = await makerWithInbox();
+  it("링크가 넷 이상인 답장은 보류해 관리자 검수를 기다린다 — 글쓴이가 링크를 줄이면 공개한다", async () => {
+    const { maker, feedback } = await makerWithInbox();
     const links = "https://a.test https://b.test https://c.test https://d.test";
-    expect(await reply(maker, { targetType: "feedback", targetId: feedback.id, body: `참고: ${links}` })).toMatchObject({ status: 400, body: { error: "reply_too_many_links" } });
-    expect(await db.select().from(makerReplies)).toHaveLength(0);
-    await db.insert(makerReplies).values({ productId: tiny.id, targetType: "feedback", targetId: feedback.id, authorUserId: maker.user.id, body: `옛 답장 ${links}`, reviewState: "held" });
+    expect(await reply(maker, { targetType: "feedback", targetId: feedback.id, body: `참고: ${links}` })).toMatchObject({ status: 201, body: { reply: { reviewState: "held", notified: false } } });
+    expect(await db.select().from(makerReplies)).toHaveLength(1);
     expect(await makerPendingReplies(maker.user.id)).toBe(2);
     const inbox = await makerInbox(maker.user.id, { limit: 10, waitingFirst: true });
     expect(inbox).toMatchObject({ total: 2, waiting: 2 });

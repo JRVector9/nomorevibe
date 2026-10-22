@@ -19,6 +19,9 @@ import { introRequestQueue, pendingIntroRequestCount } from "@/lib/domain/produc
 import { takedownQueue, takedownSummary } from "@/lib/domain/products/takedown";
 import { logger } from "@/lib/observability/logger";
 import { attentionCounts } from "./dashboard";
+import { makerReplyQueue } from "./maker-reply-review";
+import { contactRequestSummary } from "./contact-requests";
+import { contactLabels } from "./admin-requests-contract";
 
 /**
  * "오늘 할 일" 받은편지함의 읽기(2026-10-08 UX 감사 ADM-07) — 사람에게 오는 일을 칸마다 센다. 읽기만 한다.
@@ -29,7 +32,7 @@ import { attentionCounts } from "./dashboard";
  * 칸은 따로 읽는다 — 하나가 실패해도 그 칸만 "불러오지 못함"이다(attentionCounts 를 쓰는 네 칸은 함께 실패한다).
  */
 
-export type InboxKey = "takedown" | "introRequest" | "feedback" | "human" | "agreed" | "audit" | "down" | "intro" | "translations" | "repoGone" | "repoAutoBanned" | "spam";
+export type InboxKey = "takedown" | "introRequest" | "feedback" | "makerReply" | "contact" | "human" | "agreed" | "audit" | "down" | "intro" | "translations" | "repoGone" | "repoAutoBanned" | "spam";
 
 /** 미리 보기 한 줄 — 이름, 왜 여기 왔나, 언제부터 기다렸나(ISO, UTC). 심사 후보의 why 는 사유 코드다 */
 export type InboxItem = { id: string; name: string; why: string; since: string | null };
@@ -195,7 +198,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   // 아무도 기다리지 않는 사이에 실패해도 처리되지 않은 거부로 남지 않게
   for (const shared of [takedowns, overview, attention]) shared.catch(() => undefined);
 
-  const [takedown, introRequest, feedback, human, agreed, audit, down, intro, translations, gone, repoAutoBanned, spam, decided, handled] = await Promise.all([
+  const [takedown, introRequest, feedback, makerReply, contact, human, agreed, audit, down, intro, translations, gone, repoAutoBanned, spam, decided, handled] = await Promise.all([
     settle("takedown", async () => {
       const [summary, queue] = await Promise.all([takedowns, takedownQueue(INBOX_PREVIEW)]);
       return {
@@ -215,6 +218,17 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
       const queue = await feedbackAdminQueue({ state: "held", limit: INBOX_PREVIEW });
       return { count: queue.count, items: queue.items.map((item) => ({ id: item.id, name: item.productName,
         why: clip(item.title), since: item.createdAt })) };
+    }),
+    settle("makerReply", async () => {
+      const queue = await makerReplyQueue({ state: "held", limit: INBOX_PREVIEW });
+      return { count: queue.count, items: queue.items.map(({ reply, productName }) => ({
+        id: reply.id, name: productName, why: "메이커 답장 공개 검토", since: reply.createdAt.toISOString(),
+      })) };
+    }),
+    settle("contact", async () => {
+      const queue = await contactRequestSummary(INBOX_PREVIEW);
+      return { count: queue.count, note: "contact@ 수동 접수 · 개인정보는 문의 접수 화면에서만 확인",
+        items: queue.items.map(item => ({ id: item.id, name: `문의 ${item.id.slice(0, 8)}`, why: contactLabels[item.status], since: item.receivedAt.toISOString() })) };
     }),
     settle("human", async () => {
       const { ids, stages, wait } = await overview;
@@ -265,7 +279,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
   ]);
   return {
     fetchedAt: now.toISOString(),
-    results: { takedown, introRequest, feedback, human, agreed, audit, down, intro, translations, repoGone: gone, repoAutoBanned, spam },
+    results: { takedown, introRequest, feedback, makerReply, contact, human, agreed, audit, down, intro, translations, repoGone: gone, repoAutoBanned, spam },
     done: [decided, handled],
   };
 }
@@ -274,7 +288,7 @@ export async function loadInbox(now = new Date()): Promise<InboxSnapshot> {
  * 오늘 할 일 화면의 읽기 — 칸 열네 개(주 DB)를 웹 여러 대·열린 창이 Valkey 로 30초 나눠 쓴다(shared-cache.ts).
  * 화면은 센 시각(fetchedAt)을 "… 기준"으로 보인다. 수동 새로고침(fresh)은 분당 상한 안에서 건너뛴다.
  */
-const inboxCache = sharedLoader<InboxSnapshot>({ namespace: "admin:inbox", ttlMs: 30_000, store: sharedStore });
+const inboxCache = sharedLoader<InboxSnapshot>({ namespace: "admin:inbox:v2", ttlMs: 30_000, store: sharedStore });
 
 export function sharedInbox(fresh = false): Promise<InboxSnapshot> {
   return inboxCache("inbox", () => loadInbox(), fresh);

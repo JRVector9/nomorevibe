@@ -762,3 +762,6 @@ export * from "./source-buffer-schema";
 // SNS 화제 — 글의 주소·제목·점수·시각만(lib/social)
 export * from "./social-schema";
 export * from "./me-schema";
+
+// 비공개 관리자 문의 접수(0117)
+export * from "./admin-contact-schema";

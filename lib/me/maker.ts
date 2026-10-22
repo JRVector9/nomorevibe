@@ -20,8 +20,7 @@ import { WEB_FENCED_RETRY_AFTER } from "@/lib/operations/dr/web-gate";
 import { logger } from "@/lib/observability/logger";
 import type { MakerMethod, MakerReplyTarget, MakerRole, ReactionVerdict } from "./contract";
 import { MakerError, nextRecheckDate } from "./maker-claims";
-import { clipText } from "./notification-view";
-import { notify } from "./notify";
+import { notifyPublishedMakerReply } from "./maker-reply-notify";
 import { listedOwnerSql, renamedOwnerSql } from "./owner-key-sql";
 
 /**
@@ -231,8 +230,7 @@ async function activeMember(executor: ProductTransaction | typeof db, userId: nu
 export type ReplyInput = { targetType: MakerReplyTarget; targetId: string; body: string };
 
 /**
- * 답장 본문 검사 — 1~1000자. 링크는 피드백과 같은 기준(넷부터 검토 대상)이지만 답장을 검토하는 곳이 없어 받지 않는다(reply_too_many_links) —
- * 보류해 두면 아무도 풀지 못해 글쓴이에게 끝내 보이지 않는다
+ * 답장 본문 검사 — 1~1000자. 링크가 넷 이상이면 저장 후 관리자 답장 검수에서 공개 여부를 정한다.
  */
 export function parseReplyInput(value: unknown): ReplyInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new MakerError("reply_invalid", 400);
@@ -243,7 +241,6 @@ export function parseReplyInput(value: unknown): ReplyInput {
     || typeof input.body !== "string") throw new MakerError("reply_invalid", 400);
   const body = input.body.replace(/\r\n?/g, "\n").trim();
   if (!body || body.length > REPLY_LIMIT) throw new MakerError("reply_invalid", 400);
-  if (initialFeedbackReview(body, false).state !== "accepted") throw new MakerError("reply_too_many_links", 400);
   return { targetType: input.targetType, targetId: input.targetId.toLowerCase(), body };
 }
 
@@ -268,33 +265,21 @@ export async function upsertMakerReply(userId: number, input: ReplyInput): Promi
         .where(and(eq(productReactions.id, input.targetId), eq(productReactions.commentState, "accepted"))))[0];
     if (!target) throw new MakerError("target_not_found", 404);
     if (!(await activeMember(tx, userId, target.productId))) throw new MakerError("not_a_member", 403);
-    const [product] = await tx.select({ slug: products.slug, name: products.name }).from(products).where(eq(products.id, target.productId));
-    const [previous] = await tx.select({ id: makerReplies.id, reviewState: makerReplies.reviewState }).from(makerReplies)
+    const [previous] = await tx.select({ id: makerReplies.id, reviewState: makerReplies.reviewState, reviewRequired: makerReplies.reviewRequired }).from(makerReplies)
       .where(and(eq(makerReplies.targetType, input.targetType), eq(makerReplies.targetId, input.targetId)));
+    // 관리자가 숨긴 답장을 고치면 다시 검수한다. 내용 수정으로 숨김 결정을 우회하지 않는다.
+    const reviewState = previous?.reviewRequired ? "held" : review.state;
     const [reply] = previous
-      ? await tx.update(makerReplies).set({ body: input.body, authorUserId: userId, reviewState: review.state, updatedAt: sql`now()` })
+      ? await tx.update(makerReplies).set({ body: input.body, authorUserId: userId, reviewState, reviewVersion: sql`${makerReplies.reviewVersion} + 1`, updatedAt: sql`now()` })
         .where(eq(makerReplies.id, previous.id)).returning()
       : await tx.insert(makerReplies).values({ productId: target.productId, targetType: input.targetType, targetId: input.targetId,
         authorUserId: userId, body: input.body, reviewState: review.state }).returning();
-    return { reply, previousState: previous?.reviewState ?? null, recipient: target.recipient, product };
+    const notified = reply.reviewState === "accepted" && previous?.reviewState !== "accepted"
+      ? await notifyPublishedMakerReply(tx, reply, target.recipient) : false;
+    return { reply, created: !previous, notified };
   }));
-  const { reply, previousState, recipient, product } = saved;
-  let notified = false;
-  // 처음 공개될 때만 — 고치기는 dedupe 로도 막히지만 부르지 않는다
-  if (reply.reviewState === "accepted" && previousState !== "accepted" && recipient !== null && recipient !== userId) {
-    try {
-      // 알림함 한 줄(lib/me/notification-view.ts)이 읽는 모양 — 답한 메이커의 GitHub login, 답장 앞부분, 댓글이면 원문 주소.
-      // 탈퇴한 글쓴이는 notify 가 같은 문장에서 거른다
-      const { login } = await githubLoginOf(userId);
-      notified = await notify({ userId: recipient, kind: "maker_reply", productId: reply.productId, dedupeKey: `maker_reply:${reply.id}`,
-        payload: { name: product?.name ?? null, ...(login ? { maker: `@${login}` } : {}), excerpt: clipText(reply.body, 120),
-          ...(reply.targetType === "feedback" ? { feedbackId: reply.targetId } : {}) } });
-    } catch (error) {
-      // 답장은 이미 남았다 — 알림 실패로 답장을 되돌리지 않는다
-      logger.warn("maker.reply_notify_failed", { replyId: reply.id, error });
-    }
-  }
-  return { id: reply.id, body: reply.body, reviewState: reply.reviewState, updatedAt: reply.updatedAt.toISOString(), created: previousState === null, notified };
+  return { id: saved.reply.id, body: saved.reply.body, reviewState: saved.reply.reviewState,
+    updatedAt: saved.reply.updatedAt.toISOString(), created: saved.created, notified: saved.notified };
 }
 
 export type IntroInput = { productId: number; tagline?: string; description?: string };
