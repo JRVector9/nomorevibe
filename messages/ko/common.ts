@@ -71,4 +71,12 @@ export const common = {
   "bell.readAll": "모두 읽음",
   "bell.all": "알림함 전체 보기",
   "bell.failed": "알림을 불러오지 못했어요.",
+  "analytics.optOut": "방문 분석 끄기",
+  "analytics.optIn": "방문 분석 다시 켜기",
+  "analytics.statusOn": "이 브라우저에서 방문 분석이 켜져 있습니다.",
+  "analytics.statusOptOut": "이 브라우저에서 방문 분석을 껐습니다. 아무것도 보내지 않습니다.",
+  "analytics.statusGpc": "브라우저의 Global Privacy Control 신호에 따라 방문 분석이 꺼져 있습니다.",
+  "analytics.statusDnt": "브라우저의 Do Not Track 설정에 따라 방문 분석이 꺼져 있습니다.",
+  "analytics.statusRegion": "유럽 시간대라 방문 분석이 꺼져 있습니다.",
+  "analytics.statusDisabled": "지금은 방문 분석을 쓰지 않습니다.",
 } as const;
