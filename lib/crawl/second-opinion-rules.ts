@@ -30,6 +30,23 @@ export const QWEN_AUTO_MIN_CONFIDENCE = 0.9;
 /** 확신이 있고 하한 이상인가 */
 export const qwenConfident = (confidence: number | null | undefined): boolean => typeof confidence === "number" && confidence >= QWEN_AUTO_MIN_CONFIDENCE;
 
+/**
+ * 글이 적은 페이지의 문턱(2026-10-22 사용자 결정 "글이 적은 페이지는 늘 화면을 보고 판정한다") — 수집한 본문(crawl_documents.page_meta.textSample,
+ * 감사와 m1 이 product.pageText 로 받는 바로 그 글)이 이 글자 수 아래면 글만 본 판단으로 닫지 않는다(audit-text-gate.ts).
+ *
+ * 300자인 까닭: (1) 본문은 정적 HTML 에서 스크립트·스타일·SVG 를 걷어 낸 보이는 글이다(lib/net/normalize.ts extractTextSample) — JS 로 그리는
+ * 페이지는 여기에 제목·메뉴 몇 낱말만 남는다. 제목만 300자까지 받으므로(page title 상한) 300자 아래는 많아야 제목과 한두 문장이다.
+ * (2) 감사 글과 m1 덧붙임은 pageText 가 비었거나 제목뿐이면 거절하라고 한다(qwen-direct-review.ts QWEN_V2_ADDENDUM 4번) — 그 거절은 화면을
+ * 본 판단이 아니라 글이 없다는 사실이다. (3) m1 화면 재판정(audit-import-sources.ts qwen-vision-m1)이 브라우저로 다시 그린 보류 918건을 고른
+ * 문턱(보이는 정적 글 300자 아래)과 같다. 운영 분포는 재지 않았다 — 바꾸려면 이 값 하나다(JS·SQL 이 같이 읽는다)
+ */
+export const THIN_PAGE_TEXT_CHARS = 300;
+
+/** 수집 본문이 적은가 — 감사 입력과 같은 자르기(앞 6천 자·앞뒤 공백 없음)로, 글자(코드 포인트) 수를 센다(SQL char_length 와 같다). 없으면 적다 */
+export function thinPageText(text: string | null | undefined): boolean {
+  return [...(text ?? "").slice(0, 6_000).trim()].length < THIN_PAGE_TEXT_CHARS;
+}
+
 /** 카탈로그·디렉터리 같은 항목을 가르는 낱말 — 감사 사유(감사 모델이 쓴 사유)에서 찾는다. SQL 쪽은 같은 글을 ~* 로 쓴다 */
 export const CATALOG_LIKE_REASON = /directory|catalog|awesome|curated list|list of/i;
 

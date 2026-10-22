@@ -47,9 +47,28 @@ export function isImportSource(value: unknown): value is ImportSource {
 /** 스크린샷까지 본 출처 — 대체가 '텍스트만 본 거절'을 가를 때 이 출처의 의견은 텍스트만 본 것으로 치지 않는다 */
 export const SCREENSHOT_SOURCES: ReadonlySet<string> = new Set(IMPORT_SOURCE_KEYS.filter((key) => IMPORT_SOURCES[key].screenshot));
 
+/**
+ * 운영 화면 판정(브라우저로 그려 스크린샷까지 보는 판정 잡)의 출처 — 2026-10-22 따로 만드는 중이다. 화면 판별 대기(audit-screen-review.ts)의
+ * 판정은 이 출처로 적으면 대기에서 빠진다(markScreenJudged). 다른 이름을 쓰려면 아래 SCREEN_JUDGE_SOURCES 에 더한다.
+ * 보류에서는 m1 화면 재판정과 같이 확신 0.90 이상만 센다(승인·거절 모두)
+ */
+export const QWEN_VISION_AUTO_SOURCE = "qwen-vision-auto";
+/** 올리기 출처가 아닌 화면 판정 출처와 그 확신 하한 — 올리기 출처는 IMPORT_SOURCES 의 screenshot·confidenceFloor 가 정한다 */
+const SCREEN_JUDGE_SOURCES: Readonly<Record<string, { confidenceFloor: number | null }>> = {
+  [QWEN_VISION_AUTO_SOURCE]: { confidenceFloor: QWEN_AUTO_MIN_CONFIDENCE },
+};
+
+/**
+ * 화면을 보고 판정한 출처 — 스크린샷까지 본 올리기 출처와 운영 화면 판정. 이 출처의 의견(결정과 상관없이 — 판단 보류도)이 있으면 그 항목은
+ * '화면 판별 대기'가 아니다(audit-text-gate.ts screenJudgedSql). 글이 적은 페이지에서 세지 않는 것은 글만 본 m1(qwen-v2-auto)뿐이라 이 출처는 그대로 센다
+ */
+export const SCREEN_REVIEW_SOURCES: ReadonlySet<string> = new Set([...SCREENSHOT_SOURCES, ...Object.keys(SCREEN_JUDGE_SOURCES)]);
+
 /** 보류에서 셀 때 확신 하한이 있는 출처 — product-audit-hold.ts countedOpinion·audit-second-opinions.ts countedSecondReject 가 읽는다 */
-export const CONFIDENCE_FLOOR_SOURCES: Readonly<Record<string, number>> = Object.fromEntries(IMPORT_SOURCE_KEYS
-  .flatMap((key) => IMPORT_SOURCES[key].confidenceFloor === null ? [] : [[key, IMPORT_SOURCES[key].confidenceFloor as number]]));
+export const CONFIDENCE_FLOOR_SOURCES: Readonly<Record<string, number>> = Object.fromEntries([
+  ...IMPORT_SOURCE_KEYS.map((key) => [key, IMPORT_SOURCES[key].confidenceFloor] as const),
+  ...Object.entries(SCREEN_JUDGE_SOURCES).map(([key, spec]) => [key, spec.confidenceFloor] as const),
+].flatMap(([key, floor]) => floor === null ? [] : [[key, floor]]));
 
 export type ImportDecision = "approve" | "reject" | "needs_review";
 /** 읽어 고친 한 줄 — 서버가 항목과 견준다(grok 은 productId, 화면 재판정은 slug) */

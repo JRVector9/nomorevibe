@@ -12,6 +12,7 @@ import { secondOpinionVotesField, type SecondOpinionVoteRow } from "./audit-seco
 import { QWEN_AUTO_MIN_CONFIDENCE, secondOpinionFamily, secondRejectHolds } from "./second-opinion-rules";
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 import { CONFIDENCE_FLOOR_SOURCES } from "./audit-import-sources";
+import { opposingOpinions, thinPageTextSql } from "./audit-text-gate";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -133,7 +134,12 @@ const secondVotes = (alias: string) => secondOpinionVotesField(column(alias)("id
  */
 export type HoldGateItem = { reason: string | null | undefined; opinions: readonly HoldGateOpinion[]; model?: string | null;
   /** 이 감사 거절의 확신(ai_confidence) — Qwen 이 감사한 거절은 QWEN_AUTO_MIN_CONFIDENCE 이상이어야 보류의 까닭이 된다 */
-  confidence?: number | null };
+  confidence?: number | null;
+  /**
+   * 그 제품의 수집 본문이 적다(audit-text-gate.ts thinPageTextSql — 300자 아래·원본 없음). 글만 본 m1 의견(qwen-v2-auto)은 승인·거절 모두
+   * 세지 않는다 — 화면을 보고 판정한다(2026-10-22 사용자 결정). 비어 있으면 적지 않은 것으로 본다(옛 호출부)
+   */
+  thinText?: boolean };
 /** 두 번째 의견 한 줄 — 출처(source)·확신은 자동 의견(qwen-v2-auto)을 가르는 데 쓴다 */
 export type HoldGateOpinion = SecondOpinionVoteRow & { source?: string | null; confidence?: number | null };
 /**
@@ -144,14 +150,20 @@ export type HoldGateOptions = { autoOpinions?: boolean };
 
 /**
  * 이 의견을 지금 보류에서 세는가 — 자동 의견은 확신이 있고 문턱 이상이며, 거절이면 그 단계가 켜져 있을 때만. 확신 하한이 있는 올린 출처
- * (CONFIDENCE_FLOOR_SOURCES — m1 화면 재판정)는 확신이 하한 이상일 때만(승인·거절 모두). SQL 쪽은 audit-second-opinions.ts countedSecondReject
+ * (CONFIDENCE_FLOOR_SOURCES — m1 화면 재판정·운영 화면 판정)는 확신이 하한 이상일 때만(승인·거절 모두). SQL 쪽은 audit-second-opinions.ts
+ * countedSecondReject. item(그 항목의 글 양·의견 전부)을 주면 글만 본 m1 의 두 규칙(audit-text-gate.ts)을 더 건다:
+ *  - 글이 적은 항목(thinText)의 자동 의견은 승인·거절 모두 세지 않는다 — 화면을 보고 판정한다
+ *  - 자동 의견의 거절은 다른 모델이 같은 항목을 승인했으면 세지 않는다(엇갈림 — 숨기지 않고 사람이 본다)
  */
-export function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions): boolean {
+export function countedOpinion(opinion: HoldGateOpinion, options: HoldGateOptions, item?: Pick<HoldGateItem, "opinions" | "thinText">): boolean {
   const floor = opinion.source ? CONFIDENCE_FLOOR_SOURCES[opinion.source] : undefined;
   if (floor !== undefined) return typeof opinion.confidence === "number" && opinion.confidence >= floor;
   if (opinion.source !== QWEN_V2_AUTO_SOURCE) return true;
+  if (item?.thinText) return false;
   if (typeof opinion.confidence !== "number" || opinion.confidence < QWEN_AUTO_MIN_CONFIDENCE) return false;
-  return opinion.decision !== "reject" || Boolean(options.autoOpinions);
+  if (opinion.decision !== "reject") return true;
+  if (!options.autoOpinions) return false;
+  return !item || !opposingOpinions(opinion, item.opinions).length;
 }
 
 /**
@@ -175,13 +187,15 @@ export function secondOpinionStance(item: HoldGateItem): { secondReject: boolean
  * (b) 두 번째 모델도 거절했다(auditHold.secondOpinionReject 가 켜져 있을 때) — 갈래와 상관없이, 모델별 규칙을 지난 거절만(secondOpinionStance —
  *     Qwen 의 두 번째 거절도 카탈로그 같은 항목에서는 세지 않는다). 같은 모델의 두 번째 의견은 묻지 않는다(audit-second-opinion-auto.ts).
  * 판단 보류 의견은 어느 쪽에도 들지 않는다. 갈래 분류가 JS 라 SQL 조건 뒤에 건다. 쓸기·새 답·의견 옮겨 적기가 모두 이 함수로 가른다.
+ * 글만 본 m1(Qwen-v2 자동 의견)은 글이 적은 항목에서 세지 않고, 그 거절은 다른 모델이 승인했으면 세지 않는다(countedOpinion, audit-text-gate.ts) —
+ * 그래서 쓸기도 글이 적은 페이지를 m1 거절로 숨기지 않고, 다른 모델이 승인한 것을 m1 거절로 숨기지 않는다.
  */
 export function holdGates(item: HoldGateItem, hold: Pick<AuditHoldSettings, "categories" | "secondOpinionReject">, options: HoldGateOptions = {}) {
   // Qwen 이 감사한 거절은 확신이 있고 0.90 이상일 때만 사람 없이 보류한다 — 없거나 낮으면 사람의 목록에 둔다
   if (item.model && secondOpinionFamily(item.model) === "qwen" && (typeof item.confidence !== "number" || item.confidence < QWEN_AUTO_MIN_CONFIDENCE)) {
     return { byCategory: false, bySecondOpinion: false };
   }
-  const { secondReject, secondApprove } = secondOpinionStance({ ...item, opinions: item.opinions.filter((opinion) => countedOpinion(opinion, options)) });
+  const { secondReject, secondApprove } = secondOpinionStance({ ...item, opinions: item.opinions.filter((opinion) => countedOpinion(opinion, options, item)) });
   const primaryCounts = !item.model || secondRejectHolds(item.model, item.reason);
   return {
     byCategory: hold.categories.includes(classifyAuditReason(item.reason)) && !secondApprove && primaryCounts,
@@ -224,10 +238,11 @@ export async function holdAuditedProduct(tx: ProductTransaction, input: { itemId
   const hold = settings.auditHold;
   if (!hold.enabled) return false;
   const [item] = await tx.select({ campaignId: productAuditItems.campaignId, aiReason: productAuditItems.aiReason,
-    aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items"), model: auditItemModel("product_audit_items") })
+    aiConfidence: productAuditItems.aiConfidence, opinions: secondVotes("product_audit_items"), model: auditItemModel("product_audit_items"),
+    thinText: thinPageTextSql(sql`${productAuditItems.productId}`) })
     .from(productAuditItems).where(eq(productAuditItems.id, input.itemId));
-  const gates = item && !input.auto ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence }, hold,
-    { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }) : null;
+  const gates = item && !input.auto ? holdGates({ reason: item.aiReason, opinions: item.opinions, model: item.model, confidence: item.aiConfidence,
+    thinText: item.thinText }, hold, { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled }) : null;
   if (!item || (!input.auto && (!gates || (!gates.byCategory && !gates.bySecondOpinion)))) return false;
   const [held] = await tx.update(products).set({ auditHoldAt: sql`now()`, auditHoldItemId: input.itemId })
     .where(and(eq(products.id, input.productId), eq(products.slug, input.slug), unownedPublic("products"),
@@ -349,15 +364,15 @@ async function sweepCandidates(hold: AuditHoldSettings, startedAt: number, room:
   const picked: { item_id: number; product_id: number; slug: string }[] = [];
   for (let afterId = 0; picked.length < room && Date.now() - startedAt <= SWEEP_MS;) {
     const page = await db.execute<{ item_id: number; product_id: number; slug: string; ai_reason: string | null;
-      opinions: HoldGateOpinion[]; ai_model: string | null; ai_confidence: number | null }>(sql`
+      opinions: HoldGateOpinion[]; ai_model: string | null; ai_confidence: number | null; thin_text: boolean }>(sql`
       select i.id as item_id, p.id as product_id, p.slug, i.ai_reason, ${secondVotes("i")} as opinions, ${auditItemModel("i")} as ai_model,
-             i.ai_confidence
+             i.ai_confidence, ${thinPageTextSql(sql`p.id`)} as thin_text
         from ${productAuditItems} i join ${products} p on p.id = i.product_id
        where ${holdableItem("i", hold.minConfidence)} and ${unownedPublic("p")} and i.id > ${afterId}
        order by i.id limit ${CANDIDATE_PAGE}`);
     for (const row of page) {
-      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions, model: row.ai_model, confidence: row.ai_confidence },
-        hold, options)) picked.push(row);
+      if (picked.length < room && holdGate({ reason: row.ai_reason, opinions: row.opinions, model: row.ai_model, confidence: row.ai_confidence,
+        thinText: row.thin_text }, hold, options)) picked.push(row);
     }
     if (page.length < CANDIDATE_PAGE) break;
     afterId = page[page.length - 1].item_id;

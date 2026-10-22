@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { AUDIT_REASON_CATEGORIES, AUDIT_REASON_KEYS, type AuditReasonCategory } from '@/lib/crawl/audit-reason-category';
-import { EMPTY_POLICY_FILTER, POLICY_ACTION_LABELS, POLICY_KEEP_DAYS, POLICY_SECOND, POLICY_SECOND_LABELS, POLICY_SKIP_LABELS,
-  type PolicyAction, type PolicyFilter, type PolicyKeepDays } from '@/lib/crawl/audit-policy-filter';
+import { EMPTY_POLICY_FILTER, POLICY_ACTION_LABELS, POLICY_KEEP_DAYS, POLICY_SCREEN, POLICY_SCREEN_LABELS, POLICY_SECOND, POLICY_SECOND_LABELS,
+  POLICY_SKIP_LABELS, type PolicyAction, type PolicyFilter, type PolicyKeepDays } from '@/lib/crawl/audit-policy-filter';
+import { THIN_PAGE_TEXT_CHARS } from '@/lib/crawl/second-opinion-rules';
 import type { PolicyPreview, PolicyPreviewRow } from '@/lib/crawl/audit-policy';
 import { useAdminToast } from '../components/Toast';
 import { previewAuditPolicyAction, startPolicyRunAction } from './policy-actions';
@@ -163,6 +164,12 @@ export function PolicyBuilder({ reviewers, sources, presets, initialPreset }: {
             onChange={(event) => setFilter({ waitMaxDays: number(event.target.value) })} className={`${input} w-[4.5rem] font-mono`} />
           일 안
         </div>
+        <label className="flex flex-wrap items-center gap-2" title={`수집한 페이지 글이 ${THIN_PAGE_TEXT_CHARS}자 아래(원본 없음 포함)면 글만 본 m1 은 닫지 않습니다 — 화면 판정을 기다립니다`}>
+          <span className="font-semibold text-fg-3">페이지 글(화면 판별)</span>
+          <select value={filter.screen} onChange={(event) => setFilter({ screen: event.target.value as PolicyFilter['screen'] })} className={input}>
+            {POLICY_SCREEN.map((key) => <option key={key} value={key}>{POLICY_SCREEN_LABELS[key]}</option>)}
+          </select>
+        </label>
         <div className="flex flex-wrap items-center gap-3">
           <span className="font-semibold text-fg-3">제품 상태</span>
           {(['seeded', 'verified'] as const).map((status) => (
@@ -280,8 +287,17 @@ function PreviewPanel({ preview, action }: { preview: PolicyPreview; action: Cho
                 <td className="max-w-[360px] px-2 py-1.5 text-fg-2"><span className="mr-1 rounded bg-bg-soft px-1.5 py-0.5 font-semibold">{AUDIT_REASON_CATEGORIES[row.branch]?.label ?? row.branch}</span>
                   <span className="line-clamp-3">{row.reason ?? '사유 없음'}</span></td>
                 <td className="px-2 py-1.5 font-mono">{row.confidence?.toFixed(2) ?? '—'}<span className="block font-sans text-fg-3">{row.model}</span></td>
-                <td className="px-2 py-1.5">{row.second.length ? row.second.map((opinion) => <span key={opinion.model} className="block whitespace-nowrap">{secondOpinionLabel(opinion)}</span>)
-                  : <span className="text-fg-3">없음</span>}</td>
+                <td className="max-w-[320px] px-2 py-1.5">
+                  {row.m1Split && <span className="mb-0.5 inline-block rounded bg-warn/15 px-1.5 font-semibold text-warn" title="확신 0.90 이상인 m1 과 다른 모델이 반대로 정했습니다">엇갈림</span>}
+                  {(row.textLength === null || row.textLength < THIN_PAGE_TEXT_CHARS) && <span className="mb-0.5 ml-1 inline-block rounded bg-bg-soft px-1.5 text-fg-2"
+                    title={row.screenJudged ? '화면 판정이 있습니다' : '글만 본 m1 의 답으로 닫지 않고 화면 판정을 기다립니다'}>
+                    글 {row.textLength === null ? '없음' : `${n(row.textLength)}자`}{row.screenJudged ? ' · 화면 판정 있음' : ' · 화면 판별 대기'}</span>}
+                  {row.second.length ? row.second.map((opinion) => (
+                    <span key={opinion.model} className="block" title={opinion.source ? `${opinion.model} · ${opinion.source}` : opinion.model}>
+                      <span className="whitespace-nowrap font-semibold">{secondOpinionLabel(opinion)}</span>
+                      {opinion.reason && <span className="line-clamp-2 text-fg-2">{opinion.reason}</span>}
+                    </span>))
+                  : <span className="block text-fg-3">없음</span>}</td>
                 <td className="whitespace-nowrap px-2 py-1.5 tabular-nums">{row.waitDays === null ? '—' : `${n(row.waitDays)}일`}{row.held && <span className="block text-warn">보류 중</span>}</td>
               </tr>))}</tbody>
           </table>
