@@ -527,6 +527,23 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
    주 서비스 중단 뒤 mini 예비 선출 및 복귀를 확인했다. crawler 문서·reviewer 1차 심사·
    maintenance ping·text 검수의 새 결과 저장도 확인했다. publisher는 당시 적격 승인 후보가
    없어 새 제품 저장을 확인하지 못했다. 반복 부팅 격리의 운영 주입은 별도 검증이 필요하다.
+6. **예비 넘겨주기(2026-10-22, #597)**. 같은 릴리스의 예비는 주가 정상 반납하면 곧바로, 비정상 종료면 만료 + 20초 뒤 역할을 맡는다.
+   예전에는 예비가 스스로 놓는 길이 없어, 주가 같은 릴리스로 재시작하면(재배포·restore·Swarm 되돌림 뒤 재배포) 다시 뜬 주는 lease가
+   살아 있는 동안 기다리기만 했고 예비가 계속 일했다(readiness `standby_active` — 공통 배포 관문이 멈춰 #597 복구에서 예비를 scale 0으로
+   내려야 했다. 10-17 crawler·reviewer·maintenance, 10-18 publisher, 10-20 maintenance도 같은 일).
+   이제 예비가 쥔 legacy lease는 15초마다 같은 역할의 주 후보 관측(`candidate:<role>:<instance>`)을 읽는다. 같은 릴리스·`phase=standby`
+   (선출 대기)·`electable=true`(host 장부 준비, DB 실패 연속 없음)·최근 20초 안 관측이고 lease 행의 `quarantine_until`이 지났을 때만
+   그 boot를 센다. **같은 주 boot**가 60초(`ROLE_HANDOFF_STABLE_SECONDS`) 이어서 보이면 예비는 자식을 drain하고(drain 동안에도 lease를
+   갱신해 두 자식이 겹치지 않는다) lease를 지금 만료시키되 owner 칸은 남긴다(`yieldRoleToPrimary`). 주는 다음 확인(5초)에서 유예 없이
+   선출되며 epoch+1과 이전 일감 token 무효화는 평소 선출과 같다. 예비 쪽은 owner가 남은 만료의 20초 유예 동안 다시 잡지 못하고,
+   그 사이 주가 선출되지 않으면(주도 죽었다) 유예 뒤 예비가 다시 맡는다. 넘겨준 뒤 15분 안에 다시 맡게 되면 다음 넘겨주기는 두 배 더
+   기다린다(최대 1시간). boot가 바뀌면 처음부터 다시 재므로 반복 재시작하는 주에게는 넘기지 않고, 3회/5분 격리도 그대로다(격리 중에는
+   넘기지 않는다). 넘겨주기 순간 readiness가 몇 초 `lease_expired`일 수 있다. 로그: 예비 `role.primary_handoff` →
+   `role.supervisor_stopped`(`handoffRelease: true`) → `role.primary_handoff_yielded`(`yielded: true`), 주 `role.acquired`.
+   주 관측의 `electable` 칸은 이 릴리스부터 쓰므로 이전 릴리스 주에게는 넘기지 않는다(첫 배포의 예비→주 순서와 맞는다). versioned(batch)
+   역할은 host 순서·readiness로 따로 선출하므로 해당 없다. 끄려면 예비 앱 env에 `ROLE_HANDOFF_STABLE_SECONDS=0`(1–3600초, 잘못된 값은
+   시작 전에 거절). **예비가 역할을 쥐었다고 예비를 scale 0으로 내리지 않는다** — 주가 건강하면 1~2분 안에 돌아오고, 돌아오지 않으면
+   주 관측의 `phase`·`electable`·격리부터 본다.
 
 P0 `check-worker-progress.ts`의 독립 주기 실행·외부 알림 연결은 아직 배치되지 않았다.
 역할 후보는 프로세스 종료·lease 만료를 처리하고, 아래 조건일 때만 저장 정체로 재시작한다.
@@ -535,7 +552,7 @@ P0 `check-worker-progress.ts`의 독립 주기 실행·외부 알림 연결은 �
 scheduler가 정상 예약 중이고 해당 역할에 `no_progress`가 연속 2회이며 같은 역할의
 다른 단계가 저장 진행 또는 제공자 오류를 보이지 않을 때 supervisor를 drain하고
 비정상 종료해 Swarm 재시작을 먼저 시도한다. 기존 역할 lease의 45초 만료·20초
-예비 유예 후 새 주 후보가 재획득한다. 반복 부팅 3회/5분으로 격리되면 같은 릴리스
+예비 유예 후 새 주 후보가 재획득한다(예비가 먼저 맡았으면 위 6의 넘겨주기로 돌아온다). 반복 부팅 3회/5분으로 격리되면 같은 릴리스
 예비가 선출될 수 있다. 예비 후보는 같은 진행 정체를 이유로 무한 재시작하지 않는다.
 역할의 유효한 실행 중 job lease가 있으면 저장 간격만으로 재시작하지 않는다. 실제로 오래
 멈춘 잡은 위 supervisor의 역할별 job timeout이 종료한다.
@@ -626,7 +643,8 @@ scheduler 및 다섯 역할의 생존, 예정 시각과 최근 부팅을 읽기 
 `m3-<role>` 주 후보·`mini-<role>-standby` 예비 후보의 최근 60초 관측, 같은 릴리스,
 유효한 lease의 owner/boot/epoch 일치와 scheduler의 서로 다른 최근 복제본 2개를 별도로 판정한다.
 DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON에 포함한다. 종료 코드는
-0 정상, 1 판별 불가, 2 경보다. 인계 중 예비가 활성인 상태는 용량 여유가 사라진 경보로 표시한다.
+0 정상, 1 판별 불가, 2 경보다. 인계 중 예비가 활성인 상태는 용량 여유가 사라진 경보로 표시한다(같은 릴리스의 건강한 주가 기다리면
+예비가 넘겨주기로 놓으므로 1~2분 안에 풀린다 — 위 "역할 후보 운영·교체" 6).
 
 `docker build --target monitor -t nomorevibe-monitor:<commit> .`로 CLI 없는 경량 감시 이미지를
 만든다. 웹·scheduler와 별도 M3 Dokploy 앱, `autoDeploy=false`, `WORKER_ROLE=monitor`,

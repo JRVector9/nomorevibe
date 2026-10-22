@@ -6,7 +6,8 @@ import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { interruptibleSleep, runtimeLog } from './worker';
 import { superviseWorker, supervisorLimits } from './worker-supervisor';
-import { readRoleLockHolders, releaseRole, renewRole, tryAcquireRole, type RoleCandidate, type RoleLease } from '@/lib/jobs/role-leader';
+import { readRoleLockHolders, readWaitingPrimary, releaseRole, renewRole, tryAcquireRole, yieldRoleToPrimary,
+  type RoleCandidate, type RoleLease, type WaitingPrimary } from '@/lib/jobs/role-leader';
 import { batchLeaseAdmission } from '@/lib/jobs/batch-repository';
 import { dbErrorFields } from '@/lib/db/error-fields';
 import { observe } from '@/lib/operations/observations';
@@ -37,6 +38,13 @@ type Dependencies = {
   health?: (state: RoleRuntimeHealth) => void;
   /** lock 오류(55P03·40P01) 뒤 실패 연속마다 한 번 읽는 진단 */
   lockBlockers?: () => Promise<unknown>;
+  /** 예비 넘겨주기: 예비가 쥔 legacy lease 에서 같은 릴리스의 건강한 주가 기다리는지(readWaitingPrimary) */
+  waitingPrimary?: (lease: RoleLease) => Promise<WaitingPrimary | null>;
+  /** 예비 넘겨주기: drain 을 마친 뒤 lease 를 주에게 넘긴다(yieldRoleToPrimary) */
+  yieldRole?: (lease: RoleLease) => Promise<boolean>;
+  /** 같은 주 boot 가 이만큼 이어서 기다려야 넘긴다. null·없음이면 넘겨주기를 하지 않는다(ROLE_HANDOFF_STABLE_SECONDS=0) */
+  handoffStableMs?: number | null;
+  handoffPollMs?: number;
 };
 export type RoleRuntimeHealth = { dbFailingSince: number | null; dbFailures: number; dbPendingSince: number | null;
   admissionBlockedSince: number | null; admissionReason: string | null };
@@ -46,6 +54,58 @@ export const BATCH_ADMISSION_RELEASE_MS = 2 * 60_000;
 export const ROLE_RENEW_DEADLINE_MS = 10_000;
 export const ROLE_LEASE_WINDOW_MS = 45_000;
 const LOCK_ERRORS = new Set(['55P03', '40P01']);
+
+/**
+ * 예비 넘겨주기(2026-10-22 #597). 같은 릴리스의 예비는 주가 정상 반납하거나 만료(+20초 유예)되면 역할을 맡지만, 예전에는 스스로 놓는 길이
+ * 없어 주가 다시 떠도 예비가 계속 일했다(standby_active — 배포 관문이 멈추고 운영자가 예비를 scale 0 으로 내려야 했다).
+ * 이제 예비가 쥔 legacy lease 는 15초마다 같은 릴리스·격리 아님·선출 가능(electable)인 주 후보의 최근 관측을 읽고, **같은 주 boot** 가
+ * ROLE_HANDOFF_STABLE_SECONDS(기본 60초) 이상 이어서 기다리면 자식을 drain(그 동안도 lease 갱신)한 뒤 lease 를 만료시켜 넘긴다.
+ * 주가 넘겨받지 못해 15분 안에 예비가 다시 선출되면 다음 넘겨주기는 두 배 더 기다린다(최대 1시간) — 반복 재시작하는 주와 주고받지 않는다.
+ */
+export const ROLE_HANDOFF_STABLE_MS = 60_000;
+export const ROLE_HANDOFF_POLL_MS = 15_000;
+export const ROLE_HANDOFF_RETRY_WINDOW_MS = 15 * 60_000;
+export const ROLE_HANDOFF_MAX_STABLE_MS = 60 * 60_000;
+
+/** ROLE_HANDOFF_STABLE_SECONDS: 없으면 60초, 0 이면 넘겨주기 끔, 1–3600 초. 그 밖의 값은 시작 전에 거절한다 */
+export function roleHandoffStableMs(env: Readonly<Record<string, string | undefined>> = process.env): number | null {
+  const raw = env.ROLE_HANDOFF_STABLE_SECONDS;
+  if (raw === undefined || raw === '') return ROLE_HANDOFF_STABLE_MS;
+  const seconds = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(seconds) || seconds > 3_600) throw new Error('Invalid ROLE_HANDOFF_STABLE_SECONDS');
+  return seconds === 0 ? null : seconds * 1_000;
+}
+/** ROLE_HANDOFF_POLL_SECONDS: 없으면 15초, 1–60 초(시험이 짧게 줄인다) */
+export function roleHandoffPollMs(env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const raw = env.ROLE_HANDOFF_POLL_SECONDS;
+  if (raw === undefined || raw === '') return ROLE_HANDOFF_POLL_MS;
+  const seconds = Number(raw);
+  if (!/^\d+$/.test(raw) || seconds < 1 || seconds > 60) throw new Error('Invalid ROLE_HANDOFF_POLL_SECONDS');
+  return seconds * 1_000;
+}
+
+/** 넘겨주기 판단 상태. 기다리는 주의 boot 가 바뀌거나 보이지 않으면 처음부터 다시 잰다 */
+export class PrimaryHandoff {
+  private seen: { bootId: string; since: number } | null = null;
+  private failures = 0;
+  private yieldedAt: number | null = null;
+  constructor(private readonly stableMs: number, private readonly now: () => number = Date.now) {}
+  requiredMs(): number { return Math.min(this.stableMs * 2 ** this.failures, ROLE_HANDOFF_MAX_STABLE_MS); }
+  /** 이번 표본. 같은 주 boot 가 requiredMs 이상 이어서 보였으면 true */
+  observe(primary: WaitingPrimary | null): boolean {
+    if (!primary) { this.seen = null; return false; }
+    const at = this.now();
+    if (this.seen?.bootId !== primary.bootId) this.seen = { bootId: primary.bootId, since: at };
+    return at - this.seen.since >= this.requiredMs();
+  }
+  yielded(): void { this.yieldedAt = this.now(); this.seen = null; }
+  /** 이 예비가 다시 선출됐다. 넘겨준 지 얼마 안 됐으면 주가 받지 못한 것이다 */
+  acquired(): void {
+    if (this.yieldedAt !== null) this.failures = this.now() - this.yieldedAt < ROLE_HANDOFF_RETRY_WINDOW_MS ? this.failures + 1 : 0;
+    this.yieldedAt = null;
+    this.seen = null;
+  }
+}
 
 export function roleHasUnexplainedStall(report: {
   scheduler: { reason: string };
@@ -86,6 +146,9 @@ export function roleCandidateObservationKey(candidate: RoleCandidate): string {
 /** A failed/uncertain renewal aborts the active child; the next election uses a new DB decision. */
 export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSignal, deps: Dependencies): Promise<number> {
   const sleep = deps.sleep ?? interruptibleSleep;
+  // 예비 넘겨주기는 예비 후보·legacy lease 에서만(versioned 는 host 순서·readiness 로 따로 선출한다)
+  const handoff = candidate.kind === 'standby' && deps.waitingPrimary && deps.yieldRole && deps.handoffStableMs
+    ? new PrimaryHandoff(deps.handoffStableMs) : null;
   // 선출·갱신의 DB 실패(throw) 연속. 다른 owner 가 lease 를 쥐어 받은 null·false 는 성공이다(정상 standby).
   const health: RoleRuntimeHealth = { dbFailingSince: null, dbFailures: 0, dbPendingSince: null, admissionBlockedSince: null, admissionReason: null };
   let blockersLogged = false;
@@ -129,13 +192,16 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     }
     runtimeLog('role.acquired', { role: candidate.role, kind: candidate.kind,
       instanceId: candidate.instanceId, epoch: lease.epoch });
+    handoff?.acquired();
     deps.report?.('active', lease.epoch);
     const active = new AbortController();
     const onStop = () => active.abort('shutdown_requested');
     signal.addEventListener('abort', onStop, { once: true });
     if (signal.aborted) onStop();
     let renewing = false, lost = false, checkingProgress = false, stalledSamples = 0, progressRestart = false;
-    let checkingAdmission = false, admissionRelease = false, ended = false;
+    let checkingAdmission = false, admissionRelease = false, ended = false, checkingHandoff = false, handoffRelease = false;
+    // 갱신은 drain 이 시작되면 멈춘다. 넘겨주기 drain 만은 자식이 끝날 때까지 갱신해 주가 그 전에 선출되지 않게 한다(두 자식이 겹치지 않는다).
+    const renewalsStopped = () => active.signal.aborted && !(handoffRelease && !signal.aborted);
     let leaseDeadline = acquiredAt + ROLE_LEASE_WINDOW_MS, renewDeadline: number | null = null;
     const lose = (reason: string) => {
       if (lost || ended) return;
@@ -149,20 +215,20 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     }, 250);
     watchdog.unref();
     const timer = setInterval(() => {
-      if (renewing || lost || ended || active.signal.aborted) return;
+      if (renewing || lost || ended || renewalsStopped()) return;
       if (Date.now() >= leaseDeadline) { lose('role_lease_expired'); return; }
       renewing = true;
       const startedAt = Date.now();
       renewDeadline = Math.min(leaseDeadline, startedAt + ROLE_RENEW_DEADLINE_MS);
       pending();
       void Promise.resolve().then(() => deps.renew(lease)).then(ok => {
-        if (ended || lost || active.signal.aborted) return;
+        if (ended || lost || renewalsStopped()) return;
         if (Date.now() >= renewDeadline!) { lose('role_renew_deadline'); return; }
         succeeded();
         if (!ok) { lost = true; active.abort('role_lease_lost'); }
         else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
       }).catch(error => {
-        if (ended || lost || active.signal.aborted) return;
+        if (ended || lost || renewalsStopped()) return;
         failed('role.renew_unknown', error, { epoch: lease.epoch }); lost = true; active.abort('role_lease_lost');
       }).finally(() => { renewing = false; renewDeadline = null; });
     }, 10_000);
@@ -205,6 +271,23 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       }).finally(() => { checkingAdmission = false; });
     }, 15_000) : null;
     admissionTimer?.unref();
+    // 예비 넘겨주기: 같은 릴리스의 건강한 주 boot 가 충분히 오래 기다리면 자식을 drain 하고 넘긴다
+    const handoffTimer = handoff && lease.batchVersion !== 1 ? setInterval(() => {
+      if (checkingHandoff || lost || handoffRelease || active.signal.aborted) return;
+      checkingHandoff = true;
+      void deps.waitingPrimary!(lease).then(primary => {
+        if (ended || lost || handoffRelease || active.signal.aborted || !handoff.observe(primary)) return;
+        handoffRelease = true;
+        runtimeLog('role.primary_handoff', { role: candidate.role, instanceId: candidate.instanceId, epoch: lease.epoch,
+          primaryInstanceId: primary!.instanceId, primaryBootId: primary!.bootId, waitedMs: handoff.requiredMs() });
+        active.abort('primary_handoff');
+      }).catch(error => {
+        handoff.observe(null);
+        const detail = dbErrorFields(error);
+        runtimeLog('role.primary_handoff_unknown', { role: candidate.role, code: detail.code, errorName: detail.name, message: detail.message });
+      }).finally(() => { checkingHandoff = false; });
+    }, deps.handoffPollMs ?? ROLE_HANDOFF_POLL_MS) : null;
+    handoffTimer?.unref();
     let exitCode = 1, drainTimedOut = false;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     let startDrain: () => void;
@@ -224,9 +307,10 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       clearInterval(timer);
       if (progressTimer) clearInterval(progressTimer);
       if (admissionTimer) clearInterval(admissionTimer);
+      if (handoffTimer) clearInterval(handoffTimer);
       signal.removeEventListener('abort', onStop);
     }
-    runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost, progressRestart, admissionRelease });
+    runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost, progressRestart, admissionRelease, handoffRelease });
     deps.report?.(signal.aborted ? 'stopping' : 'standby', null);
     if (drainTimedOut) return 1; // Never elect another child while the old supervisor is uncertain.
     if (signal.aborted) {
@@ -239,6 +323,17 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       const released = await (deps.release?.(lease) ?? Promise.resolve(false)).catch(() => false);
       runtimeLog('role.batch_admission_released', { role: candidate.role, epoch: lease.epoch, released });
       health.admissionBlockedSince = null; health.admissionReason = null; publish();
+      continue;
+    }
+    if (handoffRelease && exitCode === 0) {
+      // 자식이 깨끗이 끝난 뒤에만 넘긴다. 결과를 모르면(DB 오류) 이 boot 를 끝내 재시작에 맡긴다 — 갱신이 멈춘 lease 는 45초 안에 만료되고
+      // 주는 유예 없이, 새 예비 boot 는 20초 유예 뒤에야 선출에 나선다.
+      let yielded: boolean;
+      try { yielded = await deps.yieldRole!(lease); }
+      catch (error) { failed('role.primary_handoff_unknown', error, { epoch: lease.epoch }); return 1; }
+      runtimeLog('role.primary_handoff_yielded', { role: candidate.role, instanceId: candidate.instanceId, epoch: lease.epoch, yielded });
+      // false 는 이미 이 epoch 의 lease 가 아니라는 뜻이다(다른 후보가 맡았거나 batch·fence 상태) — 다음 선출이 DB 로 다시 정한다
+      if (yielded) handoff!.yielded();
       continue;
     }
     // An unexpected supervisor exit gets the container's existing restart policy.
@@ -269,6 +364,8 @@ export function roleWorkerRecorder(owner: ProcessOwner, env: Readonly<Record<str
 
 async function main() {
   const candidate = parseRoleWorkerArgs(process.argv.slice(2));
+  // 잘못된 넘겨주기 설정은 선출 전에 거절한다
+  const handoffStableMs = roleHandoffStableMs(process.env), handoffPollMs = roleHandoffPollMs(process.env);
   assertHostDbEntry(process.env, { kind: 'role-parent', role: candidate.role });
   // host 장부 자리가 없으면 선출에 나서지 않고 standby 로 남는다(자식·일감을 띄우지 않음)
   const host = startHostBudget(process.env);
@@ -295,9 +392,11 @@ async function main() {
   const stop = () => { phase = 'stopping'; writeLocal(); controller.abort(); };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
+  // electable: 선출에 나설 수 있는 boot(host 장부 준비·DB 실패 연속 없음). 같은 릴리스 예비는 이 값이 true 인 주에게만 넘긴다
   const record = () => { writeLocal(); void observe(roleCandidateObservationKey(candidate), {
     role: candidate.role, kind: candidate.kind, instanceId: candidate.instanceId,
     bootId: candidate.bootId, release: candidate.release, phase, epoch,
+    electable: host.ready() && runtime.dbFailingSince === null,
   }).catch(() => {}); };
   const localTimer = setInterval(writeLocal, 5_000);
   localTimer.unref();
@@ -322,6 +421,7 @@ async function main() {
       },
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       checkAdmission: batchLeaseAdmission, health: state => { runtime = state; }, lockBlockers: readRoleLockHolders,
+      waitingPrimary: readWaitingPrimary, yieldRole: yieldRoleToPrimary, handoffStableMs, handoffPollMs,
       supervise: (lease, signal) => {
         process.env.ROLE_LEASE_ROLE = lease.role;
         process.env.ROLE_LEASE_INSTANCE_ID = lease.instanceId;

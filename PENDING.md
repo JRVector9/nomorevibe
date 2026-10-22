@@ -43,6 +43,18 @@
   경보·일감 끊김이 있었는지 본다. Dokploy가 동시 배포 요청을 실제로 나란히 처리하는지(줄 세우는지)도 앱 줄의 `at`·`seconds`로 확인한다.
 - **동시 pre-pull·`prepull`**: 두 서버 줄의 `seconds`, 그리고 `prepull`을 먼저 돌렸을 때 `run`의 `preflight.durations.prePull`이 줄었는지.
 
+## 예비 넘겨주기(역할 lease) — 2026-10-22 (코드·로컬 DB·로컬 프로세스 시험만, 운영 실행 전)
+
+#597 복구에서 같은 릴리스 예비가 crawler 를 쥐고 놓지 않던 문제의 근본 수정. 절차는
+[운영 절차](docs/operations/independent-workers-runbook.md) "역할 후보 운영·교체" 6. migration·catalog 변화 없음.
+
+- **첫 배포 뒤 lease 위치**: 보통 공통 배포(예비 → 주)라 넘겨주기가 일어나지 않아야 한다. 배포 뒤 다섯 역할 lease 가 모두 M3 주이고
+  `role.primary_handoff` 로그가 없는지 본다(text·maintenance 는 git 빌드 앱 배포 뒤).
+- **실제 넘겨주기 한 번**: 운영자가 따로 승인한 때에만 — 같은 릴리스로 주 하나를 재배포해 예비가 맡았다가 60~120초 안에 주가 되찾는지,
+  그 사이 그 역할의 일감 오류·중복 저장이 없는지, readiness 경보가 몇 초 `lease_expired` 뒤 `ready` 로 돌아오는지 본다.
+- **주 관측 `electable`**: 운영 M3 주들이 host 장부(enforce)를 쓰는지에 따라 `host.ready()` 가 늦게 true 가 되는지, 관측에 `electable: true` 가
+  실제로 실리는지 `operations_observations` 의 `candidate:%` 행으로 확인한다.
+
 ## Bluesky 화제 수집 — 2026-10-22 (배포 전)
 
 설계·실측·지침 대응은 [`docs/operations/2026-10-22-bluesky-talk.md`](docs/operations/2026-10-22-bluesky-talk.md). 잡 `bluesky-talk`(crawler, 30분), migration `0115_social_posts_bluesky`.

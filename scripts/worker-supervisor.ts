@@ -221,7 +221,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const onSignal = () => stop('shutdown_requested', true);
     const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
       ? 'shutdown_requested' : options.signal?.reason === 'progress_stalled'
-        ? 'progress_stalled' : options.signal?.reason === 'batch_admission_blocked' ? 'batch_admission_blocked' : 'role_lease_lost', true);
+        ? 'progress_stalled' : options.signal?.reason === 'batch_admission_blocked' ? 'batch_admission_blocked'
+          : options.signal?.reason === 'primary_handoff' ? 'primary_handoff' : 'role_lease_lost', true);
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
