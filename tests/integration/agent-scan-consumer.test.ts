@@ -48,7 +48,8 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   try {
-    await db.delete(agentRepositoryClaims); await db.delete(githubCollectorApps);
+    // 암호화한 PAT 계정도 지운다 — 남기면 다른 비밀로 복호화하는 github-collector-accounts 가 실패한다
+    await db.delete(agentRepositoryClaims); await db.delete(githubCollectorApps); await db.delete(githubCollectorAccounts);
     if (originalControl) await db.update(agentScanControl).set({ mode: originalControl.mode, drainingFrom: originalControl.drainingFrom,
       epoch: originalControl.epoch, writerContractVersion: originalControl.writerContractVersion }).where(eq(agentScanControl.id, 1));
     await db.delete(crawlSettings);

@@ -90,7 +90,8 @@ beforeAll(async () => {
   inputSentinel = { document, candidate, frontier };
   originalJobs = await db.select().from(jobs).where(inArray(jobs.name, managedJobs)).orderBy(jobs.name);
   originalSettings = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
-  originalStages = await db.select().from(pipelineStageModes);
+  // 행 순서는 앞 파일의 UPDATE 에 따라 바뀐다 — 단계 이름 순으로 비교한다
+  originalStages = await db.select().from(pipelineStageModes).orderBy(pipelineStageModes.stage);
   originalCandidates = await db.select().from(crawlCandidates);
   originalFrontier = await db.select().from(crawlFrontier);
   originalJobRows = [...await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name = ANY(${managedJobs}) ORDER BY name`].map(row => row.value);
@@ -128,7 +129,7 @@ afterAll(async () => {
     await db.delete(jobs).where(eq(jobs.name, sentinel.name));
     expect(await db.select().from(jobs).where(inArray(jobs.name, managedJobs)).orderBy(jobs.name)).toEqual(originalJobs);
     expect(await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1))).toEqual(originalSettings);
-    expect(await db.select().from(pipelineStageModes)).toEqual(originalStages);
+    expect(await db.select().from(pipelineStageModes).orderBy(pipelineStageModes.stage)).toEqual(originalStages);
     if (originalCandidates.length) expect(await db.select().from(crawlCandidates)
       .where(inArray(crawlCandidates.id, originalCandidates.map(row => row.id))).orderBy(crawlCandidates.id))
       .toEqual([...originalCandidates].sort((a, b) => a.id - b.id));

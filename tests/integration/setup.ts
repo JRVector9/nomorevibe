@@ -1,8 +1,10 @@
 import { assertLocalTestDatabase } from "../../scripts/test-database";
 import { execSync } from "node:child_process";
 import { and, eq, gt, sql } from "drizzle-orm";
+import { inject } from "vitest";
 import { db } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
+import { TEST_DATABASE_URL } from "./test-database-url";
 
 /**
  * 통합 테스트용 DB 준비.
@@ -10,16 +12,24 @@ import { operationsAudit } from "@/lib/db/schema";
  * 개발 DB가 아니라 전용 DB(기본 포트 55435)를 쓴다. 테스트가 테이블을 비우므로
  * 실수로 개발 DB를 가리키면 작업 중인 데이터가 날아간다.
  */
-export const TEST_DATABASE_URL =
-  process.env.TEST_DATABASE_URL ?? "postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test";
+export { TEST_DATABASE_URL };
 
 assertLocalTestDatabase(TEST_DATABASE_URL);
 
 let migrated = false;
 
-/** 스키마를 최신 마이그레이션 상태로 맞춘다 (파일당 한 번) */
+/** globalSetup 이 이번 실행에서 이미 migrate 한 DB 주소. vitest 밖에서 불리면 없다 */
+function migratedByGlobalSetup(): string | undefined {
+  try { return inject("integrationSchemaReady"); } catch { return undefined; }
+}
+
+/**
+ * 스키마를 최신 마이그레이션 상태로 맞춘다 (파일당 한 번).
+ * globalSetup(tests/integration/global-setup.ts)이 같은 DB 를 이미 맞췄으면 migrate 를 다시 띄우지 않는다.
+ */
 export function ensureSchema() {
   if (migrated) return;
+  if (migratedByGlobalSetup() === TEST_DATABASE_URL) { migrated = true; return; }
   execSync("npx drizzle-kit migrate", {
     env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL },
     stdio: "pipe",

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 afterEach(() => {
   delete process.env.NEXT_DEPLOYMENT_ID;
+  delete process.env.SKIP_NEXT_TYPECHECK;
   vi.resetModules();
 });
 
@@ -49,5 +50,15 @@ describe("Next.js multi-instance configuration", () => {
     const { default: config } = await import("../next.config");
 
     expect(config.deploymentId).toBeUndefined();
+  });
+
+  it("keeps the build's own type check unless CI says the same tree was already checked", async () => {
+    expect((await import("../next.config")).default.typescript?.ignoreBuildErrors).toBe(false);
+    vi.resetModules();
+    process.env.SKIP_NEXT_TYPECHECK = "true";
+    expect((await import("../next.config")).default.typescript?.ignoreBuildErrors).toBe(false);
+    vi.resetModules();
+    process.env.SKIP_NEXT_TYPECHECK = "1";
+    expect((await import("../next.config")).default.typescript?.ignoreBuildErrors).toBe(true);
   });
 });

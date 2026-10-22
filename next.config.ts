@@ -10,6 +10,13 @@ const nextConfig: NextConfig = {
   deploymentId: process.env.NEXT_DEPLOYMENT_ID || undefined,
 
   /**
+   * next build 안의 타입 검사는 프로젝트 전체 `tsc` 를 한 번 더 돈다(CI 약 1분, arm 이미지 약 34초).
+   * CI 는 같은 트리를 typecheck 잡(`tsc --noEmit`)에서 따로 검사하고, 이미지는 그 검사가 통과한 `check` 뒤에만 배포한다.
+   * 그 두 곳(CI build 잡·CI 이미지 빌드)만 SKIP_NEXT_TYPECHECK=1 로 중복 검사를 건너뛴다. 기본(로컬·수동 빌드)은 그대로 검사한다.
+   */
+  typescript: { ignoreBuildErrors: process.env.SKIP_NEXT_TYPECHECK === "1" },
+
+  /**
    * DB 드라이버를 번들에 넣지 않고 node_modules에 남긴다.
    *
    * 기본 동작은 서버 의존성을 번들에 인라인하는 것인데, 그러면 standalone의

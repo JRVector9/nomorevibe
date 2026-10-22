@@ -100,26 +100,15 @@ maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동�
 docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-tagline-ko-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/korean-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-crawl-tagline-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/crawl-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/search-verify-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-websearch-query-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-cli-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/cli-background-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/review-cli-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
-npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
-npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
-npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
-npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
-npm run test:integration -- tests/integration/pipeline-consumer.test.ts
-npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts --exclude tests/integration/model-capacity-cli-ledger.test.ts --exclude tests/integration/cli-background-model-capacity.test.ts --exclude tests/integration/review-cli-capacity-dispatch.test.ts
+export TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+# 빈 DB 에서 직렬 ledger·호출 파일 18개를 정해진 순서로 하나씩(CI 의 integration-ledger 잡)
+for file in $(node scripts/integration-shards.mjs --serial); do npm run test:integration -- "$file" || break; done
+# 나머지 통합 파일 전체(직렬 파일 제외)
+npm run test:integration -- $(node scripts/integration-shards.mjs --exclude-args)
 ```
+
+`npm run test:integration` 한 번에 공유 테스트 DB 스키마는 globalSetup(`tests/integration/global-setup.ts`)이
+한 번만 migrate 한다. 자기 DB 를 따로 만드는 파일은 스스로 migrate 한다.
 
 DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로드와 같은 0.8.6 이다. 예전 `postgres:17` 컨테이너는
 마이그레이션 0059 에서 `extension "vector" is not available` 로 멈춘다 — 이미지만 바꿔 다시 만든다(같은 볼륨을 붙이면 데이터는 남는다).
@@ -130,14 +119,29 @@ DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로�
 ## GitHub CI와 변경 절차
 
 main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
-변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 타입 생성·TypeScript·lint·
-단위 테스트·빌드와 PostgreSQL 통합 테스트 3개 묶음을 병렬 실행한다. 묶음마다 별도 runner와
-전용 DB를 사용하고, 묶음 안에서는 파일을 직렬 실행한다. 1번 묶음은 빈 DB에서
-텍스트 profile 호출, AI1 native 항목 흐름, AI2 native 항목 흐름, AI2 소비자, AI1 소비자를 차례로 필수 실행한다. 각 파일은 원 행 기준 상태를
-복원하며, 뒤의 세 묶음은 이 다섯 파일을 제외해 모든 통합 파일을 정확히 한 번 실행한다. 같은 PR의 새 커밋은 이전 실행을 취소하며,
-서로 다른 PR은 별도로 실행한다. 코드 잡 제한은 20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
+변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 typecheck(타입 생성·TypeScript·i18n)·
+lint(ESLint·Python unittest)·단위 테스트 2개 묶음·build(번들 크기)와 PostgreSQL 통합 테스트 6개 묶음·직렬 ledger 잡을
+병렬 실행한다. 통합 묶음은 파일 수가 아니라 `tests/integration/durations.json`의 파일별 시간으로 나눈다
+(긴 파일부터 가장 가벼운 묶음에, `scripts/integration-shards.mjs`). 묶음과 ledger 잡은 각자 runner 안의 일회용 DB
+(tmpfs, `fsync`·`synchronous_commit`·`full_page_writes` off)를 쓰고, 묶음 안에서는 파일을 직렬 실행한다.
+ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열여덟 파일(제품 번역 ledger부터 AI1 소비자까지)을 정해진 순서로 하나씩 실행한다.
+각 파일은 원 행 기준 상태를 복원하며, 묶음 실행은 이 열여덟 파일을 제외해 모든 통합 파일을 정확히 한 번 실행한다.
+묶음마다 파일별 시간을 artifact(`integration-durations-*`)로 남기고 `node scripts/integration-durations.mjs --run <실행 id>`로
+기록을 갱신한다(`--plan 6`은 배정만 보여 준다).
+
+draft PR은 CI를 돌리지 않는다. 검사 잡은 모두 건너뛰고 필수 `check`만 "draft PR — CI not run; mark ready for review"로
+실패해 draft head에 초록 `check`가 남지 않는다(초록이던 PR을 draft로 되돌려도 다시 돌아 실패하는 `check`가 대신한다).
+ready for review로 바꾸면 그 이벤트로 전체 CI가 돈다.
+같은 PR의 새 커밋은 이전 실행을 취소하며, 서로 다른 PR은 별도로 실행한다. main push와 수동 실행은 실행마다 따로 끝까지 돈다.
+같은 저장소 PR 실행이 검사를 모두 통과하면 검사한 트리를 `ci-tested-tree-<트리>` artifact로 남긴다. main push의 병합 커밋
+트리가 그 PR의 성공한 실행이 남긴 트리와 같으면 검사 잡을 다시 돌리지 않고 `check`가 그 실행을 근거로 통과한다
+(`scripts/ci-reuse.mjs`). 증거가 하나라도 없거나 조회가 실패하면 전체 검사를 돌고, 수동 실행은 늘 전체 검사다.
+재사용한 커밋에서는 `refresh-caches` 잡이 다음 PR이 읽을 tsc·ESLint·Turbopack 캐시를 갱신한다(결과를 기다리지 않는다).
+코드 잡 제한은 15~20분이다. Actions는 Node 24 런타임의 고정 SHA를 사용한다.
 main의 코드 변경 `check`가 성공하면 arm64 웹·워커 이미지를 각각 한 번 빌드해 GHCR에 SHA 태그로
-올린다. 웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
+올린다. 빌드 캐시는 각 패키지의 `buildcache` 태그에 둔다. CI 빌드(build 잡·웹 이미지)는 같은 트리를 typecheck 잡이
+검사하므로 `SKIP_NEXT_TYPECHECK=1`로 next build 안의 중복 타입 검사를 건너뛴다(로컬·수동 빌드는 그대로 검사한다).
+웹 이미지 `nomorevibe-runtime-web`은 빌드 키가 포함될 수 있으므로 비공개 패키지에
 발행한다. 배포할 때는 태그가 가리키는 digest를 확인해 같은 이미지를 여러 앱에 사용한다.
 
 main은 관리자에게도 PR과 최신 base의 `check` 성공을 요구한다. 강제 푸시·브랜치 삭제를 막고,
@@ -150,55 +154,24 @@ npx next typegen
 npx tsc --noEmit
 npm run lint
 npm test
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-tagline-ko-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/korean-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-crawl-tagline-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/crawl-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/search-verify-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-websearch-query-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-cli-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/cli-background-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/review-cli-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
-npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
-npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
-npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
-npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
-npm run test:integration -- tests/integration/pipeline-consumer.test.ts
-npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-npm run test:integration -- --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts --exclude tests/integration/model-capacity-cli-ledger.test.ts --exclude tests/integration/cli-background-model-capacity.test.ts  # 같은 전용 DB --exclude tests/integration/review-cli-capacity-dispatch.test.ts
+export TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+for file in $(node scripts/integration-shards.mjs --serial); do npm run test:integration -- "$file" || break; done
+npm run test:integration -- $(node scripts/integration-shards.mjs --exclude-args)  # 같은 전용 DB
 npm run build
 ```
 
-CI의 3개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
+CI의 6개 통합 테스트 묶음을 로컬에서 재현할 때는 각 명령에 **서로 다른 전용 DB**를 지정한다.
 같은 DB에서 묶음을 동시에 실행하면 테스트의 테이블 초기화가 서로 충돌한다.
 위 전체 재현도 처음에는 빈 전용 DB를 준비하고 제품 번역 ledger 파일, 제품 번역 호출 파일, 한국어 소개 ledger 파일, 한국어 소개 호출 파일, crawl 소개 ledger 파일, crawl 소개 호출 파일, 검색어 검수 호출 파일, 웹 검색 질의 번역 ledger 파일, CLI 프로세스 ledger 파일, 배경 CLI 호출 파일, AI1·AI2 CLI 호출 파일, 사유 번역 ledger 파일, 사유 번역 호출 파일, 텍스트 profile 파일, AI1 native 항목 파일, AI2 native 항목 파일, AI2 소비자 파일, AI1 소비자 파일을 순서대로 실행한다.
 열여덟 파일은 각 실행 뒤 같은 행 기준 상태를 복원하며 sequence의 정상 증가는 유지한다.
 일부 테스트가 남긴 데이터를 가진 DB에서 소비자 검증의 원형 보호 조건을 완화하지 않는다.
 
 ```bash
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-translation-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/product-tagline-ko-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/korean-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-crawl-tagline-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/crawl-tagline-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/search-verify-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-websearch-query-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/model-capacity-cli-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/cli-background-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/review-cli-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-ledger.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/text-profile-capacity-dispatch.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/agent-review-item-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/second-review-item-model-capacity.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-consumer.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- tests/integration/pipeline-first-consumer.test.ts
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test npm run test:integration -- --shard=1/3 --exclude tests/integration/pipeline-consumer.test.ts --exclude tests/integration/pipeline-first-consumer.test.ts --exclude tests/integration/second-review-item-model-capacity.test.ts --exclude tests/integration/agent-review-item-model-capacity.test.ts --exclude tests/integration/text-profile-capacity-dispatch.test.ts --exclude tests/integration/reason-translation-capacity-ledger.test.ts --exclude tests/integration/reason-translation-capacity-dispatch.test.ts --exclude tests/integration/product-translation-capacity-ledger.test.ts --exclude tests/integration/product-translation-model-capacity.test.ts --exclude tests/integration/product-tagline-ko-capacity-ledger.test.ts --exclude tests/integration/korean-tagline-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-crawl-tagline-ledger.test.ts --exclude tests/integration/crawl-tagline-capacity-dispatch.test.ts --exclude tests/integration/search-verify-capacity-dispatch.test.ts --exclude tests/integration/model-capacity-websearch-query-ledger.test.ts --exclude tests/integration/model-capacity-cli-ledger.test.ts --exclude tests/integration/cli-background-model-capacity.test.ts --exclude tests/integration/review-cli-capacity-dispatch.test.ts
-# 2/3과 3/3은 각각 다른 포트의 별도 DB에서 같은 아홉 exclude를 지정한다.
+export TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
+for file in $(node scripts/integration-shards.mjs --serial); do npm run test:integration -- "$file" || break; done
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55436/nomorevibe_test \
+  npm run test:integration -- --shard=1/6 $(node scripts/integration-shards.mjs --exclude-args)
+# 2/6~6/6은 각각 다른 포트의 별도 DB에서 같은 exclude를 지정한다.
 ```
 
 ## 운영 배포와 상태 확인
