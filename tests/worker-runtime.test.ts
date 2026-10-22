@@ -421,6 +421,8 @@ async function runBudgetEntry(script: string, args: string[], env: NodeJS.Proces
   }
 }
 
+// 실제 진입점 넷을 차례로 새 node+tsx 로 띄운다(각자 전체 import 를 변환·적재). CI 에서 통과한 시간이 2.3~4.7초라 기본 5초를
+// 넘는 실행이 생겼다. 자식마다 4초 SIGTERM·5초 SIGKILL 상한이 있으므로 그 넷을 합친 시간을 준다 — 멈춘 자식은 그 상한이 잡는다.
 it('rejects a wrong declared entry before real CLI heartbeats, role observations or supervisor spawn', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'host-db-entry-'));
   const env = { ...process.env, DATABASE_URL: undefined, READ_DATABASE_URL: undefined, NODE_OPTIONS: undefined,
@@ -446,7 +448,7 @@ it('rejects a wrong declared entry before real CLI heartbeats, role observations
       expect(existsSync(env.WORKER_HEALTH_PATH)).toBe(false);
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
-});
+}, 4 * 5_000 + 5_000);
 
 it('keeps the disabled real worker entry and its original IPC lifecycle reachable', async () => {
   const result = await runBudgetEntry('scripts/worker.ts', ['--role=crawler', '--once'], {

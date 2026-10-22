@@ -189,10 +189,14 @@ async function runBlocked<T>(hold: (tx: postgres.TransactionSql) => Promise<void
     result = run().then(value => { completed = true; return { ok: true as const, value }; },
       error => { completed = true; return { ok: false as const, error }; });
     let state: "blocked" | "completed" | undefined;
-    for (let count = 0; count < 1_000; count++) {
+    // 기다림은 시간으로 정한다. 조회 1,000번은 DB 왕복이 빠를수록(로컬 ~0.2ms) 짧아져, 후보 26개를 처리하는 writer 가
+    // 잠금에 닿기 전에 끝날 수 있었다.
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
       if (completed) { state = "completed"; break; }
       const rows = await admin`SELECT pid FROM pg_stat_activity WHERE ${holderPid} = ANY(pg_blocking_pids(pid))`;
       if (rows.length) { state = "blocked"; break; }
+      await new Promise(resolve => setTimeout(resolve, 5));
     }
     if (!state) throw new Error("actual writer neither completed nor reached database blocker");
     if (state === "completed") {

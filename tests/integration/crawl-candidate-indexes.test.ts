@@ -18,6 +18,10 @@ async function plans(queries: Record<string, SQL>): Promise<Record<string, strin
   const result: Record<string, string> = {};
   try {
     await db.transaction(async tx => {
+      // 두 계획의 비용은 표의 지금 상태(앞 파일이 남긴 행, 지우거나 되돌린 행의 페이지와 인덱스 항목, autovacuum 시점)에도
+      // 달려 있어 CI 묶음에서 pkey 로 뒤집힌 적이 있다. 같은 TX 의 TRUNCATE 로 빈 새 표·인덱스에 fixture 만 두고 보며
+      // (TX 동안 autovacuum 도 이 표를 못 건드린다), 끝의 rollback 이 원래 표를 그대로 돌려놓는다.
+      await tx.execute(sql`truncate crawl_candidates cascade`);
       await tx.execute(sql`
         insert into crawl_candidates (repo, state, published_slug)
         select 'index-fixture/repo-' || g,

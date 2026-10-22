@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, inArray, like } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, jobs,
@@ -21,6 +21,7 @@ import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash, type CapacityManifest } from "@/lib/operations/pipeline-capacity";
 import { ReplayLedger, type ReplayRun } from "@/lib/operations/pipeline-replay-ledger";
 import { openVerifiedReplayHandlerDatabase } from "@/lib/operations/pipeline-replay-database";
+import * as replayFinal from "@/lib/operations/pipeline-replay-final";
 import { withReplayFinalScope } from "@/lib/operations/pipeline-replay-final";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
@@ -521,6 +522,22 @@ it("rolls a retry back when its actual nondeferred recorder wait outlives the jo
     connection: { application_name: "pr04b2-authority-run-blocker", statement_timeout: 8_000 } });
   const locked = barrier<number>(), release = barrier();
   let holding: Promise<unknown> | undefined, writing: Promise<unknown> | undefined, error: unknown;
+  // 첫 job 검사를 통과한 controller TX 가 실제 recorder 에 들어가기 전에 job 이 DB 시계로 끝나기를 기다린다. 그래야 recorder 의
+  // run 행 기다림이 job 의 남은 1초를 쓰지 않는다 — 예전에는 job 만료(1초 뒤)를 보고 풀어 주기까지의 지연이 controller 가 잠금에
+  // 닿기까지 걸린 시간(~0.1초)을 넘으면 replay 연결의 lock_timeout(1초)이 먼저 터져 JobLeaseLostError 대신 쿼리 오류가 났다.
+  const actualRecorder = replayFinal.recordReplaySecondReviewTransition;
+  let retryRecorderCalls = 0;
+  const recorder = vi.spyOn(replayFinal, "recordReplaySecondReviewTransition").mockImplementation(async (tx, binding, requests) => {
+    if (binding.kind === "retry") {
+      retryRecorderCalls++;
+      await until(async () => {
+        const [row] = await admin`SELECT locked_at < clock_timestamp()-interval '90 seconds' AS expired
+          FROM jobs WHERE name='second-review'`;
+        return row.expired;
+      }, "job expired after the first controller job check");
+    }
+    return actualRecorder(tx, binding, requests);
+  });
   try {
     await withReplayController(value, async run => {
       holding = blocker.begin(async tx => {
@@ -540,15 +557,14 @@ it("rolls a retry back when its actual nondeferred recorder wait outlives the jo
                 WHERE ${pid}=ANY(pg_blocking_pids(pid)) AND query ILIKE '%capacity_runs%') AS blocked`;
               return row.blocked;
             }, "actual retry recorder blocked on run row");
-            await until(async () => {
-              const [row] = await admin`SELECT locked_at < clock_timestamp()-interval '90 seconds' AS expired
-                FROM jobs WHERE name='second-review'`;
-              return row.expired;
-            }, "job expired during actual recorder wait");
+            const [job] = await admin`SELECT locked_at < clock_timestamp()-interval '90 seconds' AS expired
+              FROM jobs WHERE name='second-review'`;
+            expect(job.expired).toBe(true);
           } finally { release.resolve(); await holding; }
           error = await writing;
           return { done: true };
         });
+        expect(retryRecorderCalls).toBe(1);
         expect(error).toBeInstanceOf(JobLeaseLostError);
         expect(result).toMatchObject({ status: "failed", error: "job_lease_lost" });
         expect(await candidateSnapshot(value.candidate.id)).toEqual(before);
@@ -558,6 +574,7 @@ it("rolls a retry back when its actual nondeferred recorder wait outlives the jo
     });
   } finally {
     release.resolve(); await Promise.allSettled([...(holding ? [holding] : []), ...(writing ? [writing] : [])]);
+    recorder.mockRestore();
     await blocker.end({ timeout: 3 });
   }
 });

@@ -216,13 +216,17 @@ it.skipIf(process.platform === "win32")("probe 가 실패하면(0 이 아닌 종
 // withRuntimeProcess 는 IPC 를 끊으므로 vitest 워커 안에서 부르지 않고, 운영처럼 tsx 로 띄운 별도 node 프로세스에서 확인한다
 it.skipIf(process.platform === "win32")("reviewer 프로세스는 시작할 때 probe 를 마친 뒤에 일을 시작하고, 다른 역할은 probe 하지 않는다", async () => {
   const claude = await cli("version", "claude 9.9.9");
-  const script = `const { withRuntimeProcess } = await import(${JSON.stringify(path.resolve("scripts/worker.ts"))});
-const { resolveCliServingContract } = await import(${JSON.stringify(path.resolve("lib/llm/cli-serving-contract.ts"))});
-for (const role of ["publisher", "reviewer"]) {
-  const contract = await withRuntimeProcess(role, async () => resolveCliServingContract("crawl-agent-review", "claude-cli", "sonnet"));
-  console.log(JSON.stringify({ event: "test.resolved", role, contract }));
-}`;
-  const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+  // 운영 진입점(tsx scripts/worker.ts)처럼 CommonJS 로 읽는다. ESM -e 의 import 는 tsx 가 module.register 로 도는
+  // Node(22.22.3·24.11.1 미만)에서 .ts 의 export 이름을 못 찾아 default 만 받는다.
+  const script = `const { withRuntimeProcess } = require(${JSON.stringify(path.resolve("scripts/worker.ts"))});
+const { resolveCliServingContract } = require(${JSON.stringify(path.resolve("lib/llm/cli-serving-contract.ts"))});
+(async () => {
+  for (const role of ["publisher", "reviewer"]) {
+    const contract = await withRuntimeProcess(role, async () => resolveCliServingContract("crawl-agent-review", "claude-cli", "sonnet"));
+    console.log(JSON.stringify({ event: "test.resolved", role, contract }));
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });`;
+  const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "-e", script], {
     cwd: process.cwd(), timeout: 15_000, env: { ...process.env, PATH: empty, FAKE_CLI_RECORD: records,
       CLI_SERVING_CONTRACTS: JSON.stringify([ai1]), CLAUDE_CLI: claude, GROK_CLI: path.join(root, "absent-grok") } });
   const lines = stdout.trim().split("\n").map(line => JSON.parse(line) as Record<string, unknown>);
