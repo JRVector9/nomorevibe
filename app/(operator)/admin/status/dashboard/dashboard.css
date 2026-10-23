@@ -116,6 +116,26 @@
 .dash-todo li[data-tone=warn] .n{color:var(--color-warn)}
 .dash-todo li[data-tone=ok] .n{color:var(--color-up)}
 .dash-todo a{font-size:13px;font-weight:600;color:var(--color-accent);white-space:nowrap}
+/* 칸의 장비·LLM 버튼과 그 창(WorkOwnerButtons) — 장비는 테두리, LLM 은 강조색 바탕 */
+.dash-owner{display:flex;flex-wrap:wrap;gap:4px;margin-top:5px}
+.ops-center button.dash-owner-btn{min-height:28px;padding:1px 9px;border:1px solid var(--color-line);border-radius:999px;background:var(--color-bg-soft);color:var(--color-fg-2);font-size:12px;font-weight:600;line-height:20px;white-space:nowrap}
+.ops-center button.dash-owner-btn[data-kind=model]{background:var(--color-accent-soft);color:var(--color-accent);border-color:transparent}
+.ops-center button.dash-owner-btn:hover{border-color:var(--color-accent)}
+.dash-owner-modal{display:flex;flex-direction:column;gap:14px;font-size:13px;line-height:1.55}
+.dash-owner-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ops-center .dash-owner-head h2{font-size:17px;font-weight:750;margin:0}
+.dash-owner-sub{color:var(--color-fg-3);font-size:13px}
+.ops-center button.dash-owner-close{min-height:36px;padding:4px 12px;font-size:13px}
+.ops-center .dash-owner-sec h3{font-size:14px;font-weight:700;margin:0 0 6px}
+.dash-owner-sec[data-focus],.dash-owner-grp[data-focus]{border-color:var(--color-accent);background:var(--color-accent-soft)}
+.dash-owner-sec[data-focus]{border:1px solid var(--color-accent);border-radius:10px;padding:8px 10px}
+.dash-owner-grp{border:1px solid var(--color-line);border-radius:10px;padding:8px 10px;margin-bottom:6px}
+.dash-owner-name{font-weight:700;font-size:14px;overflow-wrap:anywhere}
+.dash-owner-row{border-top:1px solid var(--color-line);margin-top:6px;padding-top:6px}
+.dash-owner-meta{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;color:var(--color-fg-3);overflow-wrap:anywhere}
+.dash-owner-code{font-family:var(--font-mono);font-size:12px;font-weight:400;color:var(--color-fg-3);overflow-wrap:anywhere}
+.dash-owner-how{margin-top:4px;color:var(--color-fg-2)}
+.dash-owner-none,.dash-owner-note{color:var(--color-fg-3)}
 /* 폰 — 숫자·링크·숨김 단추를 설명 아래 한 줄로 내린다(오른쪽 칸이 설명을 좁히지 않게) */
 @media (max-width:700px){
   .dash-todo li{grid-template-columns:4px minmax(0,1fr)}

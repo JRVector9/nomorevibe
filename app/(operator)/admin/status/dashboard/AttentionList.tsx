@@ -5,6 +5,8 @@ import { StatusDot } from "../../components/StatusDot";
 import { AttentionDetail } from "./AttentionDetail";
 import { AttentionAckButton } from "./AttentionAckButton";
 import { Flash } from "./Flash";
+import { WorkOwnerButtons } from "./WorkOwnerButtons";
+import type { ActionWork, WorkOwners } from "../work-owners";
 
 /** 조치 한 칸 — 무엇이·왜 막혔고·어디로 가면 되는지. 막고 있는 순서대로 쌓는다. */
 export type ActionItem = {
@@ -22,6 +24,8 @@ export type ActionItem = {
    * 24시간 변화로 그리면 "↑ 24h +24"가 된다. 변화를 재지 않는다(splitActions).
    */
   elapsed?: boolean;
+  /** 이 일을 하는 작업·서비스 — 칸의 장비·LLM 버튼(work-owners.ts)이 읽는다 */
+  work?: ActionWork;
 };
 
 /** 나눈 뒤의 한 칸 — 기준 시각(약 24시간 전) 대비 변화, 새로 생겼는지, 숨긴 사람 */
@@ -63,13 +67,14 @@ export function trendLabel(trend: SplitItem["trend"]): string | null {
   return trend.delta > 0 ? `↑ ${window} +${n(trend.delta)}` : `↓ ${window} −${n(-trend.delta)}`;
 }
 
-function Row({ item, side }: { item: SplitItem; side?: React.ReactNode }) {
+function Row({ item, side, owners }: { item: SplitItem; side?: React.ReactNode; owners?: WorkOwners }) {
   return (
     <li data-tone={actionBandTone(item.tone)}>
       <i aria-hidden />
       <div className="min-w-0">
         <div className="t" title={item.title}>{item.fresh && <span className="dash-todo-new">새로 생김</span>}{item.title}</div>
         <AttentionDetail>{item.detail}</AttentionDetail>
+        {owners && <WorkOwnerButtons owners={owners} title={item.title} />}
       </div>
       {/* 숫자와 가는 곳을 둘 다 — 링크만 두니 열한 줄 중 열 줄이 "얼마나"를 말하지 않았다(2026-10-08) */}
       <div className="dash-todo-side flex shrink-0 flex-col items-end gap-0.5">
@@ -88,13 +93,15 @@ function Row({ item, side }: { item: SplitItem; side?: React.ReactNode }) {
  * 지금 조치는 critical·새로 생긴 것만, 쌓인 일은 24시간 변화와 "확인함 · 7일 숨김"을 단다(숨김은 작업 로그에 남는다).
  * 세로 한 줄로 두고 왼쪽 띠 색과 오른쪽 숫자(단위 포함)로 무게를 보인다. 설명은 두 줄까지 보이고 넘치면 펼친다.
  */
-export function AttentionList({ urgent, backlog, hidden, now }: { urgent: SplitItem[]; backlog: SplitItem[]; hidden: SplitItem[]; now: string }) {
+export function AttentionList({ urgent, backlog, hidden, now, owners = {} }: { urgent: SplitItem[]; backlog: SplitItem[]; hidden: SplitItem[]; now: string;
+  /** 칸마다 맡은 장비·LLM·작업(work-owners.ts workOwnersByAction) — 없는 칸은 버튼을 달지 않는다 */
+  owners?: Record<string, WorkOwners> }) {
   return (
     <>
       <section className="dash-card dash-6" aria-labelledby="todo-now">
         <div className="dash-card-h"><h2 id="todo-now">지금 조치</h2><small>급한 것·새로 생긴 것 · 급한 것부터</small></div>
         {urgent.length > 0 ? (
-          <ul className="dash-todo">{urgent.map((item) => <Row key={item.key} item={item} />)}</ul>
+          <ul className="dash-todo">{urgent.map((item) => <Row key={item.key} item={item} owners={owners[item.key]} />)}</ul>
         ) : (
           <p className="dash-todo-empty"><StatusDot state="ok" label="지금 손댈 것이 없습니다" /> 실패한 작업·끊긴 워커·새로 생긴 일이 없습니다.</p>
         )}
@@ -104,7 +111,7 @@ export function AttentionList({ urgent, backlog, hidden, now }: { urgent: SplitI
         {backlog.length > 0 ? (
           <ul className="dash-todo">
             {backlog.map((item) => (
-              <Row key={item.key} item={item} side={<>
+              <Row key={item.key} item={item} owners={owners[item.key]} side={<>
                 <span className="dash-todo-trend">{item.elapsed ? "마지막 정상 뒤 지난 시간" : trendLabel(item.trend) ?? "변화 기록 없음"}</span>
                 <AttentionAckButton itemKey={item.key} title={item.title} count={item.count} hide />
               </>} />
@@ -116,7 +123,7 @@ export function AttentionList({ urgent, backlog, hidden, now }: { urgent: SplitI
             <summary>확인함으로 숨긴 것 {n(hidden.length)}건</summary>
             <ul className="dash-todo">
               {hidden.map((item) => (
-                <Row key={item.key} item={item} side={<>
+                <Row key={item.key} item={item} owners={owners[item.key]} side={<>
                   {item.ack && <span className="dash-todo-trend" title={formatListTime(item.ack.at, now)}>
                     {item.ack.actor} 확인 {formatAgo(item.ack.at, now)} · {formatListTime(item.ack.until, now)}까지</span>}
                   <AttentionAckButton itemKey={item.key} title={item.title} count={item.count} hide={false} />
