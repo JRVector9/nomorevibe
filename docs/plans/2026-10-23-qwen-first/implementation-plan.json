@@ -1,5 +1,5 @@
 {
-  "status": "01~10 구현·범위 검증 진행 결과 기록; 11 정확한 통합 SHA 전체 검증 대기; 운영 미실행",
+  "status": "01~11 코드 통합 완료; 정확한 SHA 전체 검증 결과는 PR11 본문·외부 검증 보고서 참조; 운영 미실행",
   "base_sha": "c37ae82fbad208f519bc99ce143a934cf5e05e65",
   "core_prs": [
     "01",
@@ -517,7 +517,7 @@
       "optional_backend_dependency": null,
       "branch": "feat/qwen-first-qwen-screen-prompts",
       "file": "PR-06-qwen-screen-prompts.md",
-      "status": "구현·범위 검증 완료; native 전송 해시 통합 보강 대기",
+      "status": "구현·범위 검증 완료; native wire 관측 보강을11에 통합",
       "design_status": "설계 완료 · 구현 전",
       "proposed_branch": "feat/qwen-first-qwen-screen-prompts",
       "github_pr": {
@@ -784,12 +784,12 @@
       "design_status": "설계 완료 · 구현 전",
       "proposed_branch": "feat/qwen-first-exceptions-independent-audit",
       "github_pr": {
-        "number": null,
-        "url": null,
+        "number": 636,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/636",
         "head_ref": "feat/qwen-first-exceptions-audit-integrated",
-        "base_ref": null,
-        "draft": null,
-        "record_status": "통합 담당자가 발행 후 기록"
+        "base_ref": "feat/qwen-first-intro-recheck-integrated",
+        "draft": true,
+        "record_status": "gh read-only 확인"
       },
       "implementation_validation": {
         "db_http": {
@@ -890,12 +890,12 @@
       "design_status": "조건부: 제품 결정 뒤 착수",
       "proposed_branch": "feat/qwen-first-news-localization",
       "github_pr": {
-        "number": null,
-        "url": null,
+        "number": 637,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/637",
         "head_ref": "feat/qwen-first-news-localization-integrated",
-        "base_ref": null,
-        "draft": null,
-        "record_status": "통합 담당자가 발행 후 기록"
+        "base_ref": "feat/qwen-first-exceptions-audit-integrated",
+        "draft": true,
+        "record_status": "gh read-only 확인"
       },
       "implementation_validation": {
         "db_http": {
@@ -998,18 +998,18 @@
         "09"
       ],
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
-      "branch": "docs/qwen-first-integration-rollout",
+      "branch": "feat/qwen-first-integration-rollout",
       "file": "PR-11-integration-rollout.md",
-      "status": "구현 중; 정확한 통합 SHA의 전체 검증·증거 확정 대기",
+      "status": "코드 통합 완료; 정확한 SHA 전체 검증 결과는 실제 PR11 본문 참조",
       "design_status": "설계 완료 · 구현 전",
       "proposed_branch": "docs/qwen-first-integration-rollout",
       "github_pr": {
-        "number": null,
-        "url": null,
-        "head_ref": null,
-        "base_ref": null,
-        "draft": null,
-        "record_status": "통합 담당자가 발행 후 기록"
+        "number": 638,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/638",
+        "head_ref": "feat/qwen-first-integration-rollout",
+        "base_ref": "feat/qwen-first-news-localization-integrated",
+        "draft": true,
+        "record_status": "gh read-only 확인"
       },
       "implementation_validation": {
         "unit": {
@@ -1026,21 +1026,21 @@
           "lint",
           "required_ci"
         ],
-        "pending_integration_commit": "6c634c6a"
+        "integrated_wire_observation_commit": "6c634c6a"
       },
       "implementation_runtime": {
         "readiness_commit": "980feabe",
-        "wire_observation_pending_commit": "6c634c6a",
         "production_ready": false,
         "automatic_apply_authorized": false,
         "mutations": false,
-        "note": "오프라인 증거의 검토 자격과 실제 운영 승인·실행은 별도다."
+        "note": "오프라인 증거의 검토 자격과 실제 운영 승인·실행은 별도다.",
+        "wire_observation_integrated_commit": "6c634c6a"
       },
       "implementation_result": "오프라인 readiness 도구·CLI·runbook을 구현하고 정확한 최종 통합 SHA의 전체 검사 근거를 확정한다. 실제 운영 승인·실행은 별도다."
     }
   ],
   "status_as_of": "2026-10-23",
-  "implementation_snapshot_sha": "ea612754",
+  "implementation_snapshot_sha": "8a30253fd396b3a63548eb34de828383c0e7053b",
   "validation_policy": {
     "scoped_checks": "PR별 관련 회귀·정적 검사",
     "full_checks": "전체 개발 완료 후 정확한 통합 SHA에서 전체 unit·전용 DB·build 한 번",
@@ -1059,12 +1059,14 @@
   },
   "final_integration": {
     "integrated_sha": null,
-    "validation_artifact": null,
+    "validation_artifact": "https://github.com/JRVector9/nomorevibe/pull/638",
     "migration_count_expected": 124,
-    "fresh_migration_result": "통합 담당자 기록 대기",
-    "full_unit_result": "통합 담당자 기록 대기",
-    "full_integration_result": "통합 담당자 기록 대기",
-    "build_result": "통합 담당자 기록 대기",
-    "required_ci_result": "통합 담당자 기록 대기"
+    "fresh_migration_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "full_unit_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "full_integration_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "build_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "required_ci_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "integrated_sha_source": "PR11 본문 tested_sha: 최종 소스 커밋 고정 후 검사하며 결과는 저장소 외부에 기록",
+    "external_report_directory": "/home/ubuntu/reports/nomorevibe-llm-development-2026-10-23"
   }
 }

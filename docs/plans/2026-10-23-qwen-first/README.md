@@ -2,7 +2,7 @@
 
 GPU Qwen을 빠른 주 처리, M1 Qwen을 비동기 공동 처리에 사용하고 DeepSeek는 충분한 근거의 의미 충돌과 독립 표본 감사만 맡긴다. **11개 PR로 나누며 자동 내림 확인을 먼저 완성한다. M1 사설 경로 준비와 뉴스 제품 결정은 GPU 핵심 개발을 막지 않는다.**
 
-상태: **01~10 구현과 범위 검증 결과를 정리했으며, 11의 정확한 통합 SHA 전체 검증은 대기 중이다. 운영 전환은 실행하지 않았다.** 설계 기준 main은 [c37ae82f](https://github.com/JRVector9/nomorevibe/commit/c37ae82fbad208f519bc99ce143a934cf5e05e65)다. 아래01~11은 계획 식별자이고 실제 GitHub PR은 다음 표에 구분했다. 원래의 업무별 선행 조건·검증·중단 기준은 각 문서에 보존한다. 기계 판독용 상태는 [implementation-plan.json](implementation-plan.json), 상세 실행 기록은 [개발 기록](../../operations/2026-10-23-qwen-first-development.md)에 있다.
+상태: **01~11 코드 통합을 완료했다. 정확한 통합 SHA의 전체 검증 결과는 실제 PR11 본문과 검증 보고서에 기록한다. 운영 전환은 실행하지 않았다.** 설계 기준 main은 [c37ae82f](https://github.com/JRVector9/nomorevibe/commit/c37ae82fbad208f519bc99ce143a934cf5e05e65)다. 아래01~11은 계획 식별자이고 실제 GitHub PR은 다음 표에 구분했다. 원래의 업무별 선행 조건·검증·중단 기준은 각 문서에 보존한다. 기계 판독용 상태는 [implementation-plan.json](implementation-plan.json), 상세 실행 기록은 [개발 기록](../../operations/2026-10-23-qwen-first-development.md)에 있다.
 
 ## PR 분할
 
@@ -29,14 +29,14 @@ GPU Qwen을 빠른 주 처리, M1 Qwen을 비동기 공동 처리에 사용하�
 | 03 | [#630](https://github.com/JRVector9/nomorevibe/pull/630) | 사설 relay·설치물·readiness 범위 10건 | 실제 M1 설치·worker 접근·혼합 추론 |
 | 04 | [#632](https://github.com/JRVector9/nomorevibe/pull/632) | 공통 큐·확인 gate, DB 58건·binding 5건 | 최종 통합 SHA 전체 검사 |
 | 05 | [#633](https://github.com/JRVector9/nomorevibe/pull/633) | 실제 DB/localhost 모델 native 13건 | 실제 모델 품질·운영 confirm 허용 |
-| 06 | [#629](https://github.com/JRVector9/nomorevibe/pull/629) | v3/shot2 명시 선택·근거 provenance, unit 69건 | native 정규화 후 전송 해시 보강을11에 통합 |
-| 07 | [#634](https://github.com/JRVector9/nomorevibe/pull/634) | native 8건+기존 12건=20건 | 최종 잠금 경합·전체 검사 |
-| 08 | [#635](https://github.com/JRVector9/nomorevibe/pull/635) | 사실/교정 별도 native 12건+기존 23건=35건 | 재시작 복구·최종 전체 검사 |
-| 09 | 발행 후 URL 기록 대기 | native 10건+주간 감사 5건=15건 | 후속 잠금 수정·최종 전체 검사 |
-| 10 | 발행 후 URL 기록 대기 | 비공개 초안 native 20건 | 공개 노출 제품 결정·실제 뉴스 의미 검수 |
-| 11 | 발행 후 URL 기록 대기 | 오프라인 readiness 도구·runbook 구현 | 정확한 SHA·fresh 124개 migration·전체 unit/DB/build·필수 CI |
+| 06 | [#629](https://github.com/JRVector9/nomorevibe/pull/629) | v3/shot2 명시 선택·근거 provenance, unit 69건 | native 정규화 후 전송 해시 보강·DB 4건을11에 통합 완료 |
+| 07 | [#634](https://github.com/JRVector9/nomorevibe/pull/634) | native 8건+기존 12건=20건 | 잠금 경합 3건 통과·전체 검사 결과는 PR11 참조 |
+| 08 | [#635](https://github.com/JRVector9/nomorevibe/pull/635) | 사실/교정 별도 native 12건+기존 23건=35건 | 복구 회귀 3건 통과·전체 검사 결과는 PR11 참조 |
+| 09 | [#636](https://github.com/JRVector9/nomorevibe/pull/636) | native 10건+주간 감사 5건=15건 | 잠금 수정·회귀 통합 완료·전체 검사 결과는 PR11 참조 |
+| 10 | [#637](https://github.com/JRVector9/nomorevibe/pull/637) | 비공개 초안 native 20건 | 공개 노출 제품 결정·실제 뉴스 의미 검수 |
+| 11 | [#638](https://github.com/JRVector9/nomorevibe/pull/638) | 오프라인 readiness 도구·runbook 구현 | 정확한 SHA·fresh 124개 migration·전체 unit/DB/build·필수 CI |
 
-앞선 PR은 `gh` 읽기 조회로 draft/head/base를 확인했다. 09~11의 실제 PR URL과 최종 검사 결과는 통합 담당자가 발행·검사 후 표와 JSON에 함께 기록한다. 기존 회귀가 여러 묶음에 겹치므로 위 수치를 합산해 고유 검사 수나 모델 정확도로 보고하지 않는다.
+11개 PR의 draft/head/base를 `gh` 읽기 조회로 확인했다. 최종 검사 SHA·명령·결과·로그 해시는 [실제 PR11 본문](https://github.com/JRVector9/nomorevibe/pull/638)과 외부 검증 보고서에 기록한다. 검증 후 소스 변경으로 검증 SHA가 달라지는 일을 피하기 위해 이 문서에는 결과 위치를 고정한다. 기존 회귀가 여러 묶음에 겹치므로 위 수치를 합산해 고유 검사 수나 모델 정확도로 보고하지 않는다.
 
 현재 회귀의 모델 서버는 localhost 가짜 HTTP 서버다. 단, PR02의 첫 fixture 호출 서명 오류로 합성 입력 3회가 실제 Qwen endpoint에 전달됐다. 그 실행은 성공 검증에서 제외하고 fixture URL 이외 전송 차단 후 재검증했다. [실패·수정 기록](../../operations/2026-10-23-local-model-capacity-validation.md)을 보존하며 운영 DB·설정 변경은 없었다.
 
@@ -117,6 +117,6 @@ AGENTS에 따라 PR별로 변경 범위 회귀와 필요한 정적 검사만 수
 
 ## 산출물 상태
 
-원래 계획의 검증 목록과 실제 범위 실행 기록을 구분한다. 03의 디렉터리 fsync·root 소유 readback 검증은 설치물 보강이며 전원 차단 실험이나 실제 M1 도입 완료가 아니다. 06의 native 정규화 후 wire hash와 `context_strategy:raw` 보강(`6c634c6a`)은11에 통합할 대상으로 남아 있다. 뉴스는 원문·공개 상태를 바꾸지 않는 `draft/needs_review` 저장만 제공하고 기본 비활성이다.
+원래 계획의 검증 목록과 실제 범위 실행 기록을 구분한다. 03의 디렉터리 fsync·root 소유 readback 검증은 설치물 보강이며 전원 차단 실험이나 실제 M1 도입 완료가 아니다. 06의 native 정규화 후 wire hash와 `context_strategy:raw` 보강(`6c634c6a`)은11에 통합했다. 뉴스는 원문·공개 상태를 바꾸지 않는 `draft/needs_review` 저장만 제공하고 기본 비활성이다.
 
-최종 통합 SHA, fresh migration 124개, 전체 unit·전용 DB·build·typecheck·lint·필수 CI의 정확한 결과는 [PR11 최종 기록 표](PR-11-integration-rollout.md)에 통합 담당자가 채운다. 이 칸이 대기 중인 동안 개발 범위 회귀를 전체 통합 또는 운영 승인으로 바꾸어 보고하지 않는다.
+최종 통합 SHA, fresh migration 124개, 전체 unit·전용 DB·build·typecheck·lint·필수 CI의 정확한 결과는 [실제 PR11 본문](https://github.com/JRVector9/nomorevibe/pull/638)과 검증 보고서에 기록한다. 개발 범위 회귀를 운영 승인으로 바꾸어 보고하지 않는다.
