@@ -23,7 +23,7 @@ export async function prepareAssistInput(claim: AssistWorkClaim, value: AssistIn
 export async function recoverAbandonedAssistClaims(lease: JobLease): Promise<number> {
   return withJobLeaseWrite(lease, async tx => {
     const abandoned = await tx.execute<{ id: string }>(sql`select w.id from llm_assist_work w
-      where w.state='claimed' and not exists(select 1 from jobs j where j.name=w.claim_job and j.lease_token=w.claim_job_token
+      where w.state='claimed' and not exists(select 1 from jobs j where j.name=w.claim_job and j.lease_token=w.claim_job_token::text
         and j.locked_at >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond')
       order by w.updated_at for update of w skip locked limit 20`);
     for (const row of abandoned) {

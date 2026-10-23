@@ -35,7 +35,7 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
     const [result] = await tx.insert(llmAssistResults).values({ id: resultId, workId: work.id, workRevision: work.revision,
       capacityRequestId: work.capacityRequestId, backendId: contract.backendId, modelFamily: contract.modelFamily,
       contractHash: localModelContractHash(contract), inputHash: work.inputHash, promptHash: assistPromptHash(input.task),
-      responseHash, outcome: validated.outcome }).onConflictDoNothing({ target: llmAssistResults.capacityRequestId }).returning({ id: llmAssistResults.id });
+      responseHash, input, outcome: validated.outcome }).onConflictDoNothing({ target: llmAssistResults.capacityRequestId }).returning({ id: llmAssistResults.id });
     if (!result) return { recorded: false, applied: false };
     const applied = work.task === "uptime" && await applyUptimeAssist(tx, claim, input, validated.outcome, resultId);
     if (applied) await tx.update(llmAssistResults).set({ applied: true }).where(eq(llmAssistResults.id, resultId));
