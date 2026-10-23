@@ -69,7 +69,7 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
     if (!current || controls.signal?.aborted || (controls.hasBudget && !controls.hasBudget())) return false;
 
     const assist = await enqueueUptimeAssist(tx, { kind: "uptime",
-      product: { ...target, updatedAt: current.productUpdatedAt }, health: { failures: current.failures, status: current.lastStatus!,
+      product: { id: target.id, slug: target.slug, url: target.url, updatedAt: current.productUpdatedAt }, health: { failures: current.failures, status: current.lastStatus!,
         checkedAt: current.checkedAtRevision, downSince: current.downSinceRevision } }, controls.lease?.name ?? "uptime-ping");
     if (assist.confirmationRequired) {
       if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);

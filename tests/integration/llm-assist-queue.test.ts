@@ -39,10 +39,14 @@ describe("비동기 uptime 확인 후보 큐", () => {
   it("confirm은 즉시 내리지 않고 같은 raw 관측을 중복 생성하거나 적체 앞에 반복 노출하지 않는다", async () => {
     await confirm();
     const p = await candidate("assist-confirm");
-    await Promise.all([autoBanUptimeProduct(p), autoBanUptimeProduct(p)]);
+    // Legacy callers pass the full product row; only the current candidate fields belong in the work snapshot.
+    const [fullProduct] = await db.select().from(products).where(eq(products.id, p.id));
+    const [revision] = await db.select({ updatedAt: sql<string>`${products.updatedAt}::text` }).from(products).where(eq(products.id, p.id));
+    await Promise.all([autoBanUptimeProduct(fullProduct), autoBanUptimeProduct(fullProduct)]);
     expect((await db.select().from(products).where(eq(products.id, p.id)))[0].status).toBe("seeded");
     const [work] = await db.select().from(llmAssistWorks);
     if (work.source.kind !== "uptime") throw new Error("unexpected_task");
+    expect(work.source.product).toEqual({ id: p.id, slug: p.slug, url: p.url, updatedAt: revision.updatedAt });
     expect(work.source.product.updatedAt).toMatch(/\.\d{6}$/);
     expect(await db.select().from(llmAssistWorks)).toHaveLength(1);
     expect(await nextUptimeAutoBanTargets(10)).toEqual([]);
