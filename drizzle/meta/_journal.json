@@ -827,6 +827,13 @@
       "when": 1794086400029,
       "tag": "0117_admin_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1794086400030,
+      "tag": "0118_local_model_capacity_terminal",
+      "breakpoints": true
     }
   ]
 }
