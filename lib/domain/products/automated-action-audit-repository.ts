@@ -28,14 +28,14 @@ export async function loadAutomatedDecisions(tx: AuditTransaction, input: { afte
   return rows.flatMap(row => { const parsed = automatedDecisionSchema.safeParse(row); return parsed.success ? [parsed.data] : []; });
 }
 
-export async function loadAutomatedDecision(tx: AuditTransaction, resultId: string): Promise<AutomatedDecision | null> {
+export async function loadAutomatedDecision(tx: AuditTransaction, resultId: string, lock = false): Promise<AutomatedDecision | null> {
   const [row] = await tx.execute(sql`select r.id as "resultId",w.id as "workId",w.product_id as "productId",
     case w.task when 'repo_move' then 'repo' when 'intro_recheck' then 'intro' else w.task end as task,
     r.model_family as "modelFamily",r.completed_at::text as "decidedAt",w.source_hash as "sourceHash",
     r.input_hash as "inputHash",snapshot.input->>'policyVersion' as "policyVersion",snapshot.input->>'promptVersion' as "promptVersion",r.applied,snapshot.input,r.outcome
     from llm_assist_results r join llm_assist_work w on w.id=r.work_id
     cross join lateral (select coalesce(nullif(to_jsonb(r)->'input','null'::jsonb),w.input) as input) snapshot
-    where r.id=${resultId}::uuid for share of r,w`);
+    where r.id=${resultId}::uuid ${lock ? sql`for share of r,w` : sql``}`);
   const parsed = automatedDecisionSchema.safeParse(row);
   return parsed.success ? parsed.data : null;
 }
@@ -47,7 +47,7 @@ async function lockedPeriod(tx: AuditTransaction, periodStart: string, seedHash:
     values (${periodStart}::date,${policyHash},${seedHash},${policy.maxAuditsPerWeek},${policy.maxExceptionsPerWeek}) on conflict do nothing`);
   const [period] = await tx.execute<{ period_start: string; policy_hash: string; seed_hash: string; selected_result_ids: string[] | null;
     exception_count: number }>(sql`select period_start::text,policy_hash,seed_hash,selected_result_ids,exception_count
-      from llm_assist_audit_periods where period_start=${periodStart}::date for update`);
+      from llm_assist_audit_periods where period_start=${periodStart}::date for no key update`);
   if (!period || period.policy_hash !== policyHash || period.seed_hash !== seedHash) throw new Error("audit_period_configuration_changed");
   return period;
 }
@@ -66,8 +66,8 @@ export async function freezeActionAuditPeriod(tx: AuditTransaction, input: { per
   return { periodStart: period.period_start, selectedResultIds: period.selected_result_ids, exceptionCount: period.exception_count };
 }
 
-export async function readActionAuditProduct(tx: AuditTransaction, productId: number) {
-  const [row] = await tx.execute(sql`select id,slug,url,updated_at::text as "updatedAt",status from products where id=${productId} for share`);
+export async function readActionAuditProduct(tx: AuditTransaction, productId: number, lock = false) {
+  const [row] = await tx.execute(sql`select id,slug,url,updated_at::text as "updatedAt",status from products where id=${productId} ${lock ? sql`for share` : sql``}`);
   return row ? actionAuditProductSchema.parse(row) : null;
 }
 
@@ -112,13 +112,13 @@ export async function lockActionAuditCandidate(tx: AuditTransaction, candidateVa
   if (!await lockProductGeneration(tx, candidate.product.id, candidate.product.slug)) return false;
   const current = await readActionAuditProduct(tx, candidate.product.id);
   if (!current || assistHash(current) !== assistHash(candidate.product)) return false;
-  const decision = await loadAutomatedDecision(tx, candidate.decision.resultId);
+  const decision = await loadAutomatedDecision(tx, candidate.decision.resultId, true);
   if (!decision || assistHash(decision) !== assistHash(candidate.decision)) return false;
   const [origin] = await tx.execute(sql`select name from jobs where name=${originJob(decision.task)}
     and (not_before is null or not_before<=clock_timestamp()) for share`);
   if (!origin) return false;
   if (candidate.conflict) {
-    const other = await loadAutomatedDecision(tx, candidate.conflict.otherResultId);
+    const other = await loadAutomatedDecision(tx, candidate.conflict.otherResultId, true);
     if (!other || assistHash(other.outcome) !== candidate.conflict.otherOutcomeHash || !semanticConflictEligible("semantic_conflict", decision, other)) return false;
   }
   return true;
