@@ -11,6 +11,8 @@ import { assistPromptHash } from "./prompts";
 import { lockAssistClaim, type AssistWorkClaim } from "./repository";
 import { assistCandidateSubject } from "./work";
 import { applyRepoMoveResult, lockRepoMoveCandidate, type FreshRepoMoveChecks } from "@/lib/domain/products/repo-move-reviews";
+import { decideRepositoryMove } from "@/lib/domain/products/repo-move-review";
+import { lockProductRepository } from "@/lib/domain/products/repository-identity";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
@@ -22,7 +24,13 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
   return withJobLeaseWrite(claim.lease, async tx => {
     await lockPipelineInputStages(tx);
     const candidate = claim.work.source, subject = assistCandidateSubject(candidate);
-    if (candidate.kind === "repo_move") await lockRepoMoveCandidate(tx, candidate);
+    if (candidate.kind === "repo_move") {
+      if (input.task === "repo") {
+        const decision = decideRepositoryMove(candidate, input, validated.outcome);
+        if (decision.kind === "update_repo_candidate") await lockProductRepository(tx, decision.url);
+      }
+      await lockRepoMoveCandidate(tx, candidate);
+    }
     else if (!await lockProductGeneration(tx, subject.id, subject.slug)) return { recorded: false, applied: false };
     const work = await lockAssistClaim(tx, claim);
     if (!work?.capacityRequestId || work.inputHash !== assistInputHash(input)) return { recorded: false, applied: false };
