@@ -9,7 +9,7 @@ export function relayNativeReadinessVerifier(endpoint: string, env: Readonly<Rec
       let configuration: Readonly<Record<string, string | undefined>> = env;
       if (env.LOCAL_MODEL_RELAY_NATIVE_READBACK_FILE) {
         const file = env.LOCAL_MODEL_RELAY_NATIVE_READBACK_FILE, stat = lstatSync(file);
-        if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o022) || stat.size > 100_000) throw new Error("invalid_readback_file");
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== 0 || (stat.mode & 0o022) || stat.size > 100_000) throw new Error("invalid_readback_file");
         const data = JSON.parse(readFileSync(file, "utf8")) as { contracts?: unknown; verifiedHashes?: unknown };
         configuration = { LOCAL_MODEL_SERVING_CONTRACTS: JSON.stringify(data.contracts), LOCAL_MODEL_VERIFIED_CONTRACT_HASHES: JSON.stringify(data.verifiedHashes) };
       }
