@@ -827,6 +827,55 @@
       "when": 1794086400029,
       "tag": "0117_admin_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1794086400030,
+      "tag": "0118_local_model_capacity_terminal",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1794086400031,
+      "tag": "0119_llm_assist_work",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1794086400032,
+      "tag": "0120_repository_move_assist",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1794086400033,
+      "tag": "0121_intro_assist_recheck",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1794086400034,
+      "tag": "0122_automated_action_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1794086400035,
+      "tag": "0123_news_localization_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1794086400036,
+      "tag": "0124_local_model_capacity_assist_checks",
+      "breakpoints": true
     }
   ]
 }

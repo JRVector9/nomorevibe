@@ -22,6 +22,9 @@ export const classifyPayloadSchema = z.object({
   definitions: categoryDefinitionsSchema.optional(),
 }).strict();
 export const JOB_LABELS: Record<string, string> = {
+  'product-llm-assist-review': '근거 보강·LLM 확인',
+  'product-llm-assist-audit-review': '보강의 독립 모델 감사',
+  'product-automated-action-audit': '자동 조치 표본 선정',
   'github-integration-reconcile': 'GitHub 연동 재조회',
   'github-feedback-delivery': 'GitHub 피드백 전송',
   'email-outbox-send': '알림 메일 보내기', 'email-weekly-digest': '주간 요약 메일 묶기',

@@ -1,7 +1,8 @@
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { DEEPSEEK_REVIEW_MODEL } from "@/lib/crawl/deepseek-review-policy";
 import { qwenDirectConfig, qwenDirectServerLabel, QWEN_DIRECT_DEFAULT_MODEL } from "@/lib/crawl/qwen-direct-review";
-import { screenModelConfig, visionModelName } from "@/lib/screen-review/vision-review";
+import { screenModelConfig, screenPromptConfig, visionModelName } from "@/lib/screen-review/vision-review";
+import { screenRenderConfig } from "@/lib/screen-review/render-client";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { batchJobsForRole, batchOwnerForJob, catalogJobsForBatch, type BatchMode, type BatchRole } from "@/lib/jobs/batches";
 import { jobStatusLabel, type ObservedJob } from "@/lib/jobs/status";
@@ -56,6 +57,9 @@ export type OwnerContext = {
  * 카탈로그에 잡을 더하면 여기에도 적어야 한다(tests/operations-work-owners.test.ts).
  */
 export const JOB_HOW: Readonly<Record<string, string>> = {
+  "product-automated-action-audit": "명시한 주간 한도 안에서 자동 결정의 독립 표본을 고정합니다. 이전 결론은 모델에 숨기고, 모델 호출은 별도 감사 소비자에 맡깁니다.",
+  "product-llm-assist-audit-review": "이전 판정과 다른 기반 모델로 현재 근거를 감사합니다. 같은 Qwen의 GPU·M1은 독립 표가 아니며, 감사는 일반 Qwen 처리와 별도 줄·잡에서 돌아 다음 회차를 막지 않습니다. 불일치는 사람 확인 기록으로 남깁니다.",
+  "product-llm-assist-review": "재접속 근거로 GPU Qwen을 먼저 사용하고, M1은 별도 소비 줄에서 처리합니다. 원 작업이나 확인 소비자를 멈추면 새 호출을 열지 않습니다. 확인이 필수인 후보는 오류·중단 시 보류하며 기존 즉시 내림으로 돌아가지 않습니다.",
   heartbeat: "스케줄러가 살아 있다는 관측만 남깁니다. 후보·제품은 처리하지 않습니다.",
   "crawl-seed": "GitHub 검색으로 새 저장소를 찾아 수집 대기열(프론티어)에 넣습니다. 검색 한도(분당 30회) 안에서 한 회차 몇 쪽씩 읽습니다.",
   "hn-show-seed": "Show HN 새 글에서 배포를 알린 프로젝트를 수집 대기열에 넣습니다(한 번에 100건 상한).",
@@ -292,9 +296,12 @@ function jobModels(job: string, slots: ModelSlot[], ctx: OwnerContext, env: Env)
   }
   if (job === "audit-screen-review" && qwen?.screenReview?.enabled) {
     const config = screenModelConfig(env);
+    const prompt = screenPromptConfig(config);
+    const render = screenRenderConfig(env);
     const server = config ? serverName(config.baseUrl, new URL(config.baseUrl).host) : null;
-    models.push({ full: config ? visionModelName(config.model) : "설정 없음", row: { slot: "화면 판별", job: label(job), provider: "qwen-direct",
-      runsOn: `Qwen 직접 서버 ${server ?? "설정 없음"} · 화면은 화면 서버(SCREEN_RENDER_URL)에서 그림`, source: "크롤 설정 qwenAuto.screenReview 켜짐 · 모델은 환경변수(웹 기준)", stats: null } });
+    models.push({ full: config ? visionModelName(config.model, prompt!.version) : "설정 없음", row: { slot: "화면 판별", job: label(job), provider: "qwen-direct",
+      runsOn: `Qwen 직접 서버 ${server ?? "설정 없음"} · 화면 서버 ${render ? new URL(render.baseUrl).host : "설정 없음(SCREEN_RENDER_URL)"}`,
+      source: `크롤 설정 qwenAuto.screenReview 켜짐 · 판 ${prompt?.version ?? "설정 오류"} · 모델은 환경변수(웹 기준)`, stats: null } });
     if (server) hosts.push({ name: server, row: { instanceId: server, what: "모델 서버 — Qwen 화면 판별", jobs: [label(job)], state: "켜짐", tone: null, release: null, seen: null } });
   }
   return { models, hosts };

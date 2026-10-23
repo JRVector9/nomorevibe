@@ -42,6 +42,11 @@ import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
+import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
+  localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
+  type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch } from "./local-model-capacity-contract";
+import type { JobLease } from "@/lib/jobs/control";
+import type { RoleLease } from "@/lib/jobs/role-leader";
 
 type RequestRow = typeof modelCapacityRequests.$inferSelect;
 const fail = (code: string): never => { throw new Error(code); };
@@ -215,7 +220,111 @@ export async function findOwnPendingModelRequest(value: ModelCapacityRequestIden
 export async function requestModelSlot(value: ModelCapacityRequest): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value);
+  if (checked.provider === "local-direct") fail("local_model_bound_request_required");
   return requestSlot(checked, null);
+}
+
+/** 첫 waiting INSERT부터 기기·모델·owner와 무관한 도메인 작업의 중복을 막는다. */
+export async function requestLocalModelSlot(value: ModelCapacityRequest, target: LocalModelTarget): Promise<ModelSlotResult> {
+  const checked = modelCapacityRequestSchema.parse(value), parsed = localModelTargetSchema.parse(target);
+  if (checked.provider !== "local-direct" || checked.class !== "background" || checked.pool !== "reviewer"
+    || checked.routeId !== localModelRoute(parsed)) fail("invalid_local_model_capacity_identity");
+  return requestSlot(checked, localModelLogicalKey(parsed));
+}
+
+/** 새 직접 호출의 dispatch는 이 고정 도메인 증명 경로만 통과한다. */
+const localDispatches = new WeakSet<object>();
+/** 커밋된 원본 handle만 실제 전송을 한 번 시작할 수 있다. 직렬화된 binding은 권한이 아니다. */
+export function consumeLocalModelDispatch(value: unknown): LocalModelDispatch | null {
+  if (!value || typeof value !== "object" || !localDispatches.has(value)) return null;
+  localDispatches.delete(value);
+  return value as LocalModelDispatch;
+}
+
+export async function dispatchLocalModelCapacity(value: {
+  reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; binding: LocalModelBinding;
+  input: import("./local-model-input").LocalModelInput; job: JobLease; role: RoleLease;
+}): Promise<LocalModelDispatch | null> {
+  const reservationValue = modelCapacityReservationSchema.parse(value.reservation);
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity), binding = localModelBindingSchema.parse(value.binding);
+  if (identity.provider !== binding.provider || identity.model !== binding.model || identity.routeId !== binding.routeId
+    || identity.workKey !== `${binding.logicalWorkKey}:${binding.inputHash}`
+    || identity.class !== "background" || identity.pool !== "reviewer" || identity.owner.instanceId !== value.role.instanceId
+    || identity.owner.bootId !== value.role.bootId || binding.inputHash !== value.input.inputHash
+    || binding.sourceRevisionHash !== value.input.sourceRevisionHash || binding.reviewPolicyHash !== value.input.policyHash
+    || binding.job.name !== value.job.name || binding.job.token !== value.job.token || binding.job.requestedVersion !== value.job.requestedVersion)
+    fail("local_model_dispatch_binding_mismatch");
+  const committed = await transaction(async tx => {
+    const state = await control(tx);
+    if (state.mode !== "open" || !state.policy) return null;
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, reservationValue.requestId)).for("update");
+    if (!owned(row, reservationValue)) return null;
+    sameIdentity(row, identity);
+    const route = state.policy.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+    if (!route || route.groupId !== binding.physicalGroup || route.providerBudgetId !== binding.backendId
+      || row.groupId !== route.groupId || row.providerBudgetId !== route.providerBudgetId || row.state !== "reserved"
+      || row.logicalWorkKey !== binding.logicalWorkKey || row.epoch !== state.epoch || row.revision !== state.revision
+      || row.policyHash !== state.policyHash || await localModelFence(tx, binding.logicalWorkKey, row.requestId)) return null;
+    const { proveLocalModelDomain } = await import("./local-model-domain");
+    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId)) return null;
+    const bindingHash = localModelBindingHash(binding);
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding, dispatchBindingHash: bindingHash,
+      dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId),
+      eq(modelCapacityRequests.state, "reserved"), eq(modelCapacityRequests.token, row.token!),
+      sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+    if (!changed) return null;
+    if (binding.target.kind === "assist") {
+      const { bindAssistModelRequest } = await import("@/lib/domain/llm-assist/model-domain");
+      await bindAssistModelRequest(tx, binding.target, changed.requestId);
+    }
+    const dispatch = localModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash }) as LocalModelDispatch;
+    await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
+    return dispatch;
+  });
+  if (committed) localDispatches.add(committed);
+  return committed;
+}
+
+/** 실제 adapter가 발급한 원본 증인만 받는다. 현재 job·정책이 바뀌어도 과거 물리 호출은 정산한다. */
+export async function reconcileLocalModelTerminal(terminal: unknown): Promise<{ kind: "settled" | "already_settled" }> {
+  const { readLocalModelTerminal } = await import("./local-model-terminal");
+  const native = readLocalModelTerminal(terminal);
+  if (!native) return fail("invalid_local_model_terminal");
+  const evidence = localModelTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
+  const evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    if (!mutex) return fail("model_capacity_control_missing");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
+    if (!owned(row, dispatch as LocalModelDispatch) || row.provider !== "local-direct" || row.class !== "background" || row.pool !== "reviewer"
+      || row.logicalWorkKey !== dispatch.binding.logicalWorkKey || row.routeId !== dispatch.binding.routeId || row.model !== dispatch.binding.model
+      || row.groupId !== dispatch.binding.physicalGroup || row.providerBudgetId !== dispatch.binding.backendId || !row.dispatchedAt
+      || row.dispatchBindingHash !== dispatch.bindingHash || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding))
+      return fail("local_model_terminal_binding_mismatch");
+    if (row.state === "settled") {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) return fail("local_model_terminal_conflict");
+      return { kind: "already_settled" };
+    }
+    if (row.state !== "dispatched" && row.state !== "indeterminate") return fail("local_model_terminal_state_mismatch");
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "settled", terminalEvidence: evidence, terminalEvidenceHash: evidenceHash,
+      settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, "dispatch_settled", row.state, "settled", null, evidence);
+    return { kind: "settled" };
+  });
+}
+
+async function localModelFence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
+  const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
+    ${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    AND (${modelCapacityRequests.logicalWorkKey}=${logicalKey}
+      OR (${logicalKey} ~ '^direct:audit:[1-9][0-9]*:audit$'
+        AND ${modelCapacityRequests.logicalWorkKey}='bg:audit:' || split_part(${logicalKey},':',3))
+      OR (${logicalKey} ~ '^direct:(candidate|split):' AND (
+        (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+          AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',3))
+        OR ${modelCapacityRequests.logicalWorkKey}='ai1:' || split_part(${logicalKey},':',3)
+        OR ${modelCapacityRequests.logicalWorkKey} LIKE 'ai2:' || split_part(${logicalKey},':',3) || ':%')))`).limit(1);
+  return Boolean(blocked);
 }
 
 /** Fixed AI1 logical fence starts with the original waiting INSERT, not dispatch. */
@@ -234,6 +343,9 @@ function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: numb
 async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+      AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-agent-review'
       AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
@@ -266,7 +378,8 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
         : checked.routeId === "product-intro-check" ? introCheckFence(tx, memberKeys, checked.requestId)
           : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
-    if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("ai2:")
+    if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("direct:")
+      ? localModelFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("ai2:")
       ? ai2Fence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("text:profile:")
         ? textProfileFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("bg:")
           ? cliKeyFence(tx, logicalKey, checked.routeId, checked.requestId) : ai1Fence(tx, logicalKey, checked.requestId))) return { kind: "deferred", reason: "capacity" };
@@ -325,6 +438,7 @@ export async function beginModelDispatch(value: ModelCapacityReservation): Promi
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
     if (row && await expireReservation(tx, row)) return { kind: "ownership_lost" };
+    if (row?.provider === "local-direct") fail("local_model_bound_dispatch_required");
     if (row?.logicalWorkKey !== null && row?.logicalWorkKey !== undefined) fail("ai1_bound_dispatch_required");
     if (!owned(row, checked) || row.state !== "reserved" || state.mode !== "open" || row.epoch !== state.epoch
       || row.revision !== state.revision || row.policyHash !== state.policyHash) return { kind: "ownership_lost" };
@@ -365,7 +479,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
   const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
   const websearchBound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
-  const bound = websearchBound.success ? websearchBound : cliModelDispatchSchema.safeParse(value);
+  const cliBound = websearchBound.success ? websearchBound : cliModelDispatchSchema.safeParse(value);
+  const bound = cliBound.success ? cliBound : localModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
@@ -525,6 +640,9 @@ function fixedAi2Identity(value: ModelCapacityRequestIdentity, target: Ai2Target
 async function ai2Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+      AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'second-review'
       AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
@@ -1790,6 +1908,9 @@ function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): 
 async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${logicalKey} ~ '^bg:audit:[1-9][0-9]*$'
+      AND ${modelCapacityRequests.logicalWorkKey}='direct:audit:' || split_part(${logicalKey},':',3) || ':audit'
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
       AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);

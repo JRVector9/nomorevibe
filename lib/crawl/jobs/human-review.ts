@@ -1,7 +1,10 @@
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { getSettings } from '../settings';
 import { humanQueueOverview } from '../review-overview';
-import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos } from '../human-review-repository';
+import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity } from '../human-review-repository';
+import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { REVIEW_PROMPT_VERSION } from '../agent-review-contract';
 import { reviewWithDeepSeek } from '../deepseek-review';
 import { DEEPSEEK_REVIEW_TIMEOUT_MS } from '../deepseek-review-policy';
 import { runHeldQwenRetry } from '../held-qwen-retry';
@@ -56,9 +59,15 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
     poll.unref?.();
     let result: Awaited<ReturnType<typeof reviewWithDeepSeek>>;
     try {
-      result = await reviewWithDeepSeek(claim.input, {
-        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal,
-      });
+      result = await withLocalModelCapacity({ target: { kind: 'candidate', purpose: 'human_deepseek', attemptId: claim.attemptId,
+        candidateId: claim.candidateId, repo: claim.repo }, input: claim.input, lease, promptVersion: REVIEW_PROMPT_VERSION },
+      request => reviewWithDeepSeek(claim.input, { request,
+        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }));
+    } catch (error) {
+      if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      await deferHumanReviewForModelCapacity(claim);
+      ctx.log('crawl.human_review_capacity_deferred', { reason: error.reason });
+      break;
     } finally { clearInterval(poll); }
     const state = await recordHumanReview(claim, result);
     if (state === 'applied') applied++;

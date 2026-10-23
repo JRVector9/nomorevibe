@@ -45,6 +45,7 @@ import { sortActions, type ActionItem, type SplitItem } from "./dashboard/Attent
 import { modelName } from "./dashboard/ModelCards";
 import { MODEL_HEALTH_JOBS, progressStageJobs, type ActionWork } from "./work-owners";
 import { EXPECTED_WEB_INSTANCES, READINESS_LABELS, webSummary, type CollectorQuotaStatus } from "./status-summary";
+import { readAssistQueueStatus } from "@/lib/operations/llm-assist";
 
 /**
  * 조치할 일 — 무엇을 읽어(loadActionInputs) 어떤 줄을 세우는지(buildActions), 그 줄을 "지금 조치"와 "쌓인 일"로 나누는 것(splitActions).
@@ -79,6 +80,7 @@ export type ActionInputs = {
   jobDeferrals?: Awaited<ReturnType<typeof readLastJobDeferrals>> | null;
   /** 알림 메일 발송함·로그인 코드 메일의 최근 결과(email-health.ts) — 못 읽었으면 null */
   email?: Awaited<ReturnType<typeof emailHealth>> | null;
+  assistQueue?: Awaited<ReturnType<typeof readAssistQueueStatus>> | null;
 };
 
 /** 한 묶음이 실패해도 화면은 나가야 한다 — 그 칸만 비운다 */
@@ -93,7 +95,7 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
   // 성공이 30분 넘게 끊긴 잡만 미룸 까닭을 묻는다(열쇠 몇 개 — 평소에는 묻지 않는다)
   const jobDeferralsRead = jobStatesRead.then((states) => readLastJobDeferrals(jobsNeedingDeferralReason(states, new Date())))
     .catch(warn("operations.job_deferrals_unavailable"));
-  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email] = await Promise.all([
+  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email, assistQueue] = await Promise.all([
     operationsData(), jobStatesRead, readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     // 사람 몫은 웹 여러 대·화면 여러 개가 30초 나눠 쓴다(shared-reads.ts) — 메뉴 배지도 이 읽기를 거친다
@@ -109,8 +111,9 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     readSettingsApply().catch(warn("operations.settings_apply_unavailable")),
     jobDeferralsRead,
     emailHealth().catch(warn("operations.email_health_unavailable")),
+    readAssistQueueStatus().catch(warn("operations.assist_queue_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email };
+  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email, assistQueue };
 }
 
 const LEGACY_BATCH = { mode: "legacy", writerContractVersion: 0 } as const;
@@ -211,6 +214,26 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   const failedJobs = jobStates.filter((row) => row.lastError);
   const healthIssues = deriveJobHealth(inputs, workerProgress);
   const actions: ActionItem[] = [];
+  const assist = inputs.assistQueue;
+  if (assist === null) actions.push({ key: "assist-unknown", tone: "hold", count: "미확인", unit: "상태",
+    title: "LLM 보강 큐를 읽지 못했습니다", detail: "조회 실패는 대기 0건이나 모델 종료를 뜻하지 않습니다.", work: { jobs: ["product-llm-assist-review"] } });
+  if (assist?.length) {
+    const assistJobs = [...new Set(assist.flatMap(row => [
+      ["decision_audit", "semantic_exception"].includes(row.task) ? "product-llm-assist-audit-review" : "product-llm-assist-review",
+      ...(row.originJob ? [row.originJob] : []),
+    ]))];
+    const sum = (states: string[]) => assist.filter(row => states.includes(row.state)).reduce((total, row) => total + row.count, 0);
+    const unknown = sum(["indeterminate"]), human = sum(["human", "waiting_evidence"]), capacity = sum(["waiting_capacity"]);
+    const stopped = assist.filter(row => row.confirmationRequired && (!row.dispatchEnabled || !row.applyEnabled))
+      .reduce((total, row) => total + row.count, 0);
+    for (const [key, count, title, detail] of [
+      ["assist-indeterminate", unknown, "보강 호출의 정산을 확인해야 합니다", "원격 종료나 결과 기록이 불명확한 작업을 보존 중입니다. 시간 경과만으로 모델 슬롯을 해제하지 않습니다."],
+      ["assist-human", human, "보강 근거·사람 확인을 기다립니다", "수집 실패·접근 차단·잘못된 출력·의미 충돌은 자동 내림으로 대체하지 않습니다."],
+      ["assist-stopped", stopped, "LLM 확인 후보가 보류 중입니다", "확인 소비나 적용이 꺼져 있습니다. 확인이 필수인 후보는 기존 즉시 내림으로 돌아가지 않습니다."],
+      ["assist-capacity", capacity, "보강 모델 수용량을 기다립니다", "다른 작업과 공유하는 물리 한도로 대기 중이며, 용량 대기는 모델 실패 시도에 포함하지 않습니다."],
+    ] as const) if (count) actions.push({ key, tone: "hold", count, unit: "건", title, detail,
+      action: { label: "보강 소비자", href: jobHref(assistJobs[0]) }, work: { jobs: assistJobs } });
+  }
   const unavailable = [[roles, "roles", "역할·예비", ACTION_LINKS.roles], [models, "models", "모델", ACTION_LINKS.models],
     [throughput, "throughput", "저장 진행", ACTION_LINKS.jobs], [attention, "attention", "제품 운영 집계", ACTION_LINKS.jobs]] as const;
   for (const [value, key, label, href] of unavailable) if (value === null) {

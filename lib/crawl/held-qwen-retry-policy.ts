@@ -93,7 +93,7 @@ export const appliedHeldQwenAttemptSql = (candidate: { signals?: unknown } | nul
 export const appliedHeldQwenAttemptColumn = (signals: AnyPgColumn | SQL): SQL => sql`(${signals}->>'heldQwenAttemptId')`;
 
 /** 앞의 대괄호 덩이를 모두 뗀 모델 이름 — sameOpinionModel·review-model-identity.ts sameUnderlyingModel 의 SQL 짝 */
-export const underlyingModelSql = (name: SQL) => sql`regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', '')`;
+export const underlyingModelSql = (name: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '[+](vision(-shot2)?|prompt-v3)$', '')`;
 
 /**
  * heldQwenGateFirst 의 SQL — crawl_review_attempts 행(또는 같은 열을 가진 별칭)에 건다. appliedAttemptId 는 그 후보에 적용된 시도 id 의 글자 값이다
