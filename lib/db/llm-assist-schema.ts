@@ -48,6 +48,7 @@ export const llmAssistResults = pgTable("llm_assist_results", {
   backendId: varchar("backend_id", { length: 120 }).notNull(), modelFamily: varchar("model_family", { length: 120 }).notNull(),
   contractHash: varchar("contract_hash", { length: 64 }).notNull(), inputHash: varchar("input_hash", { length: 64 }).notNull(),
   promptHash: varchar("prompt_hash", { length: 64 }).notNull(), responseHash: varchar("response_hash", { length: 64 }).notNull(),
+  input: jsonb("input").$type<AssistInput>(),
   outcome: jsonb("outcome").$type<AssistOutcome>().notNull(), applied: boolean("applied").notNull().default(false),
   completedAt: timestamp("completed_at", { mode: "string" }).notNull().defaultNow(),
 }, t => [uniqueIndex("llm_assist_results_request_unique").on(t.capacityRequestId),
