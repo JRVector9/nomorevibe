@@ -1,6 +1,6 @@
 # PR-08 Sonnet 기본 검수를 유지한 needs_editor 명시 재진입
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-intro-recheck` · 설계 기준: `c37ae82f`
+상태: **구현 완료 · scoped 검증 통과** · 제안 브랜치: `feat/qwen-first-intro-recheck` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md), [PR-04](PR-04-work-uptime-candidates.md), [PR-06](PR-06-qwen-screen-prompts.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -74,3 +74,7 @@ Migration: 있음:04의 kind·typed payload/binding을 intro_recheck로 가산 �
 - 보강재진입consumer만끄고기존Sonnet과사람편집흐름을유지한다. 이미바뀐소개는기존originalTagline/originalSource/originalDescription과추가감사로검토한다.
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+## 실제 공통 소비자 통합
+
+명시needs_editor 요청→새page/README/화면수집→Qwen사실판정→별도native 교정문 생성→현재사진CAS/기존decideIntro 적용을 연결했다. 서로다른두request의실제settled·입력/wire/response/contracthash를검증한다. 같은TX에서첫사실결과를기록하고원Sonnet행·attempts·original*는보존한다. 실제 DB/localhost 모델HTTP 신규12+기존23=35건, 공통unit32건, ESLint·Nexttypegen·tsc 통과. 순환import로schema가미초기화되던실패를z.lazy로수정한뒤재검증했다. raw README는실제URL을유지하며현재GitHub저장소의정확한HEAD/README.md대응만가산허용한다. 기본off,실모델·운영DB·배포·활성화는하지않았다.
