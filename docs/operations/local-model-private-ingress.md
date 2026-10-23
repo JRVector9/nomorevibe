@@ -33,7 +33,7 @@ receipt의 주요 필드는 다음과 같다.
 
 **receipt는 HTTP 관측이며 capacity의 native terminal이 아니다.** `response_complete`만으로 모델 슬롯을 해제하지 않는다. PR02의 adapter가 실제 serving 계약·request/body hash·owner/domain/binding·model/finish/usage를 검증해 발급한 불투명 terminal만 정산에 쓴다. response-only 계약의 client abort는 receipt가 나중에 생겼다는 이유만으로 원격 종료 증명으로 승격하지 않는다.
 
-`createLocalModelRelay`의 `verifyNativeReadiness(context)`가 검증된 계약과 실제 관측을 연결하는 확장점이다. 단순 설정 boolean은 없다. hook 없는 기본 entry는 `nativeCapacityReady=false`다. hook을 연결해도 실제 응답의 model·finish_reason·usage 관측이 없거나 generation/배포 판이 불명확하면 준비됐다고 표시하지 않는다. 현 설치물이 PR02의 최종 검증을 대신하지 않는다.
+실행 entry는 `relayNativeReadinessVerifier`를 연결한다. worker와 같은 `LOCAL_MODEL_SERVING_CONTRACTS` 및 운영 readback의 `LOCAL_MODEL_VERIFIED_CONTRACT_HASHES`가 정확히 일치하고, 현재 relay 판·deploymentRevision·model·finish·usage의 실제 정상 응답을 관측한 경우만 `nativeCapacityReady`를 연다. 설정·관측이 없으면 false다. 이는 PR02의 요청별 불투명 terminal 정산을 대신하지 않는다.
 
 ## 승인 전 계획 확인
 
@@ -89,3 +89,5 @@ receipt에는 자동 보존기간 삭제를 적용하지 않는다. 디스크 �
 ## 개발 검증
 
 `tests/local-model-relay.test.ts`는 localhost 가짜 HTTP 서버로 인증·출처·경로·크기·동시1·SSE 원문·client disconnect 후 drain·부분 EOF·timeout·재시작 unknown·receipt·readiness 경계를 검증한다. 운영 M1 설치나 실제 모델 추론을 포함하지 않는다.
+
+LaunchDaemon은 상태 폴더의 `native-readback.json`을 읽는다(없으면 준비 안 됨). 운영 readback 후 `{ "contracts": [검증한 serving 계약], "verifiedHashes": { "backendId": "계약 SHA256" } }`를 root 소유·0644 이하의 일반 파일로 제공한다. 모델 키는 넣지 않는다. relay endpoint와 정확히 같은 계약을 worker에도 등록한다. 설치 스크립트는 이 검증 파일을 자동 생성하지 않는다.

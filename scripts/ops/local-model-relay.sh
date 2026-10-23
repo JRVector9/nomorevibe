@@ -114,6 +114,7 @@ run_entry() {
     LOCAL_MODEL_RELAY_ALLOW_FROM="$ALLOW_FROM,$HOST" LOCAL_MODEL_RELAY_VERSION="$CURRENT_SHA" \
     LOCAL_MODEL_RELAY_DEPLOYMENT_REVISION="$DEPLOYMENT_REVISION" LOCAL_MODEL_RELAY_STATE_DIR="$STATE/receipts" \
     LOCAL_MODEL_RELAY_TOKEN_FILE="$STATE/relay-token" LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE="$STATE/upstream-token" \
+    LOCAL_MODEL_RELAY_NATIVE_READBACK_FILE="$STATE/native-readback.json" \
     "$NODE" --import tsx scripts/local-model-relay/server.ts "$1")
 }
 
@@ -133,7 +134,8 @@ const string=value=>`<string>${xml(value)}</string>`;
 const env={PATH:"/usr/bin:/bin:/usr/sbin:/sbin",TMPDIR:`${state}/tmp/`,NODE_ENV:"production",LOCAL_MODEL_RELAY_HOST:host,
   LOCAL_MODEL_RELAY_PORT:port,LOCAL_MODEL_RELAY_ALLOW_FROM:allow,LOCAL_MODEL_RELAY_VERSION:revision,
   LOCAL_MODEL_RELAY_DEPLOYMENT_REVISION:deployment,LOCAL_MODEL_RELAY_STATE_DIR:`${state}/receipts`,
-  LOCAL_MODEL_RELAY_TOKEN_FILE:`${state}/relay-token`,LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE:`${state}/upstream-token`};
+  LOCAL_MODEL_RELAY_TOKEN_FILE:`${state}/relay-token`,LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE:`${state}/upstream-token`,
+  LOCAL_MODEL_RELAY_NATIVE_READBACK_FILE:`${state}/native-readback.json`};
 fs.writeFileSync(file,`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict>
 <key>Label</key>${string(label)}<key>UserName</key>${string(account)}<key>GroupName</key>${string(account)}
 <key>ProgramArguments</key><array>${[node,"--import","tsx","scripts/local-model-relay/server.ts"].map(string).join("")}</array>

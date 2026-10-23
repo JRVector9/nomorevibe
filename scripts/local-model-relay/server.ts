@@ -2,6 +2,7 @@
 import { localModelRelayConfig } from "./config";
 import { createLocalModelRelay } from "./service";
 import { fileRelayReceiptStore } from "./store";
+import { relayNativeReadinessVerifier } from "./readiness";
 
 const fail = (code: string): never => {
   console.error(JSON.stringify({ event: "local_model_relay.refused", code })); process.exit(1);
@@ -24,7 +25,8 @@ async function main() {
     } catch { fail("status_unavailable"); }
   } else {
     if (typeof process.getuid === "function" && process.getuid() === 0) fail("root_not_allowed");
-    const service = createLocalModelRelay({ ...config, store: fileRelayReceiptStore(config.stateDirectory) });
+    const service = createLocalModelRelay({ ...config, store: fileRelayReceiptStore(config.stateDirectory),
+      verifyNativeReadiness: relayNativeReadinessVerifier(`http://${config.host}:${config.port}/v1/chat/completions`) });
     service.on("error", () => fail("listen_failed"));
     service.listen(config.port, config.host, () => console.log(JSON.stringify({ event: "local_model_relay.listening",
       host: config.host, port: config.port, relayRevision: config.relayRevision, nativeCapacityReady: false })));
