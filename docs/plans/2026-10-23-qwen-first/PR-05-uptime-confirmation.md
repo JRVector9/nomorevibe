@@ -1,6 +1,6 @@
 # PR-05 비동기 uptime 재접속·Qwen 확인과 최종 적용
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-uptime-confirmation` · 설계 기준: `c37ae82f`
+상태: **구현 완료 · scoped 검증 통과** · 제안 브랜치: `feat/qwen-first-uptime-confirmation` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md), [PR-04](PR-04-work-uptime-candidates.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -79,3 +79,7 @@ Migration: 04의공통원장·task payload를사용하면추가migration없음. 
 - 확인consumer와최종적용을중지하고후보·근거를보존한다. 제품복구는자동으로하지않고감사이력으로되돌릴대상을검토한다.
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+## 개발 검증 기록
+
+실제 격리 DB·localhost 가짜 모델 HTTP 서버로 native 소비자 13건이 통과했다. closed→정산·두 감사·purge 원자 적용, alive/blocked/invalid JSON, 응답 중 URL·microsecond revision·관리자 해제, origin/consumer pause, disabled/unmapped/full capacity, abort unknown을 검증했다. M1 응답 대기 중 GPU 적용이 먼저 commit되며 두 backend는 같은 Qwen family로 기록한다. 관련 unit 96건 및 추가 운영센터 회귀 12건, ESLint·Next typegen·tsc 통과. 초기 lease 비교의 varchar/uuid 오류는 명시 cast로 수정했다. 실제 모델·운영 DB·배포·활성화는 수행하지 않았다. 최종 fresh DDL·전체 unit/DB/build는11에서 한 번 수행한다.

@@ -31,3 +31,7 @@ Node `24.22.1`, lockfile에 맞춘 `npm ci`를 사용한다. PR별 변경 범위
 ### PR-04 후보 큐 개발
 
 llm_assist_controls/work/results 및 uptime 공통 helper 후보화를 구현했다. confirm 이후 확인 gate는 latched이며 소비 중단·off 전환이 legacy 즉시 내림으로 되돌아가지 않는다. shadow는 기존 내림을 유지한다. 원문 microsecond revision, 중복 후보 방지, SKIP LOCKED claim과 원 업무 pause를 격리 DB에서 검증했다. scoped DB 58건, ESLint·Next typegen·tsc 통과. 0118 후 migration journal 통합은 대기 중이다.
+
+### PR-05 비동기 소비자
+
+backend별 bounded drain과 native domain/binding·실제 terminal 대조, fresh 페이지 근거·최종 uptime CAS를 연결했다. GPU/M1 병렬 완료를 포함한 실제 DB/가짜 HTTP 13건 통과. 용량 대기 무시도·unknown 보존·pause·새 원시 revision·관리자 해제 보호를 확인했다. source별 input snapshot도 결과에 남긴다. 원격 실모델 품질·운영 허용 기준은 미검증 상태이며 기본 off다.
