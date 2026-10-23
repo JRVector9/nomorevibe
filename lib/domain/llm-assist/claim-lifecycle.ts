@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { llmAssistWorks, modelCapacityRequests } from "@/lib/db/schema";
+import { llmAssistResults, llmAssistWorks, modelCapacityRequests } from "@/lib/db/schema";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { assistInputHash, assistInputSchema, type AssistInput } from "./contracts";
@@ -23,8 +23,9 @@ export async function prepareAssistInput(claim: AssistWorkClaim, value: AssistIn
 export async function recoverAbandonedAssistClaims(lease: JobLease): Promise<number> {
   return withJobLeaseWrite(lease, async tx => {
     const abandoned = await tx.execute<{ id: string }>(sql`select w.id from llm_assist_work w
-      where w.state='claimed' and not exists(select 1 from jobs j where j.name=w.claim_job and j.lease_token=w.claim_job_token::text
-        and j.locked_at >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond')
+      where (w.state='claimed' and not exists(select 1 from jobs j where j.name=w.claim_job and j.lease_token=w.claim_job_token::text
+        and j.locked_at >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'))
+        or (w.state='indeterminate' and exists(select 1 from model_capacity_requests r where r.request_id=w.capacity_request_id and r.state in ('settled','withdrawn')))
       order by w.updated_at for update of w skip locked limit 20`);
     for (const row of abandoned) {
       const [work] = await tx.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, row.id));
@@ -32,7 +33,9 @@ export async function recoverAbandonedAssistClaims(lease: JobLease): Promise<num
       const [capacity] = work.capacityRequestId ? await tx.select().from(modelCapacityRequests)
         .where(eq(modelCapacityRequests.requestId, work.capacityRequestId)).for("share") : [];
       const unknown = Boolean(work.capacityRequestId && (!capacity || !["settled", "withdrawn"].includes(capacity.state)));
-      const attempts = work.attempts + (capacity?.state === "settled" ? 1 : 0);
+      const [counted] = capacity ? await tx.select({ id: llmAssistResults.id }).from(llmAssistResults)
+        .where(and(eq(llmAssistResults.workId, work.id), eq(llmAssistResults.capacityRequestId, capacity.requestId))).limit(1) : [];
+      const attempts = work.attempts + (capacity?.state === "settled" && !counted ? 1 : 0);
       await tx.update(llmAssistWorks).set({ state: unknown ? "indeterminate" : attempts >= 3 ? "human" : "queued",
         revision: work.revision + 1, lastError: unknown ? "abandoned_remote_unknown" : "abandoned_local_claim", attempts,
         ...(unknown ? {} : { claimToken: null, claimJob: null, claimJobToken: null, claimRequestedVersion: null,
