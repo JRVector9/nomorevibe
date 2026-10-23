@@ -118,6 +118,18 @@ describe("맡은 장비·LLM·일정", () => {
     expect(owners.hosts[0].rows.map((row) => row.instanceId)).toEqual(["m3-reviewer"]);
   });
 
+  it("화면 shot2의 판과 recordedModel을 표시하고 렌더 서버와 추론 서버를 구분한다", () => {
+    const ctx = context();
+    ctx.settings.qwenAuto.screenReview.enabled = true;
+    ctx.env = { SCREEN_REVIEW_PROMPT_VERSION: "2026-10-23.v3+shot2", SCREEN_REVIEW_MODEL_URL: "http://model.example:8000/v1",
+      SCREEN_RENDER_URL: "http://render.example:8790", SCREEN_RENDER_TOKEN: "x".repeat(32) };
+    const owners = resolveWorkOwners({ jobs: ["audit-screen-review"] }, ctx)!;
+    expect(owners.models[0].full).toBe("qwen3.8-flash-next+vision-shot2");
+    expect(owners.models[0].rows[0].source).toContain("2026-10-23.v3+shot2");
+    expect(owners.models[0].rows[0].runsOn).toContain("model.example:8000");
+    expect(owners.models[0].rows[0].runsOn).toContain("render.example:8790");
+  });
+
   it("발행 분류 — AI 연결 서비스의 우선·예비 모델과 그 서비스가 도는 장비", () => {
     const owners = resolveWorkOwners({ jobs: ["crawl-publish"], services: ["connect-agent"] }, context())!;
     expect(owners.models.map((model) => [model.name, model.rows[0].slot, model.rows[0].provider])).toEqual([

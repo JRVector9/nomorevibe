@@ -11,6 +11,7 @@ import { localModelContractHash, localModelServingContractsSchema, resolveLocalM
   localModelThinkingFields, type LocalModelServingContract } from "./local-model-serving-contract";
 import { modelCapacityRequestIdentitySchema, type ModelCapacityPolicy } from "./capacity";
 import { requestReservedLocalModel } from "./local-model-terminal";
+import { recordLocalModelWireObservation } from "./local-model-wire-observation";
 
 type Env = Readonly<Record<string, string | undefined>>;
 export type LocalModelCallContext = {
@@ -72,6 +73,8 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
       const body: unknown = JSON.parse(init.body);
       if (!object(body) || typeof body.model !== "string" || body.stream !== false || !Array.isArray(body.messages))
         throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      if (body.context_strategy !== undefined && body.context_strategy !== "raw")
+        throw new ModelCapacityDeferredError("provider_contract_unavailable");
       contract = verifiedLocalModelContract(url, body.model, env);
       if (!contract || !localModelRouteReady(control.policy, context.target, contract, env)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       const maxOutput = body.max_tokens;
@@ -83,9 +86,12 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
         throw new ModelCapacityDeferredError("provider_contract_unavailable");
       // 프롬프트·근거는 그대로 두고 검증한 backend의 실제 thinking 제어만 사용한다.
       const normalized = { ...body };
+      // gateway 전용 metadata를 local OpenAI 서버·사설 relay에 보내지 않는다.
+      delete normalized.context_strategy;
       delete normalized.chat_template_kwargs; delete normalized.enable_thinking; delete normalized.reasoning_effort; delete normalized.thinking_budget;
       Object.assign(normalized, localModelThinkingFields(contract));
       wire = JSON.stringify(normalized);
+      if (Buffer.byteLength(wire) > contract.maxInputBytes) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       const role = roleLeaseFromEnv("reviewer", env);
       if (!role) throw new ModelCapacityDeferredError("owner_unavailable");
       const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: role.instanceId, bootId: role.bootId },
@@ -126,6 +132,7 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
       throw error;
     }
     try {
+      recordLocalModelWireObservation(native.response, digest(wire));
       if (native.terminal) await reconcileLocalModelTerminal(native.terminal);
       else {
         await markModelDispatchIndeterminate(dispatch, "transport_unknown");

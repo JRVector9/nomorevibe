@@ -53,9 +53,12 @@ export const SCREENSHOT_SOURCES: ReadonlySet<string> = new Set(IMPORT_SOURCE_KEY
  * 보류에서는 m1 화면 재판정과 같이 확신 0.90 이상만 센다(승인·거절 모두)
  */
 export const QWEN_VISION_AUTO_SOURCE = "qwen-vision-auto";
+/** 명시 선택한 shot2. 구판의 의견·모델 행과 출처를 섞지 않는다. */
+export const QWEN_VISION_SHOT2_SOURCE = "qwen-vision-shot2-auto";
 /** 올리기 출처가 아닌 화면 판정 출처와 그 확신 하한 — 올리기 출처는 IMPORT_SOURCES 의 screenshot·confidenceFloor 가 정한다 */
 const SCREEN_JUDGE_SOURCES: Readonly<Record<string, { confidenceFloor: number | null }>> = {
   [QWEN_VISION_AUTO_SOURCE]: { confidenceFloor: QWEN_AUTO_MIN_CONFIDENCE },
+  [QWEN_VISION_SHOT2_SOURCE]: { confidenceFloor: QWEN_AUTO_MIN_CONFIDENCE },
 };
 
 /**

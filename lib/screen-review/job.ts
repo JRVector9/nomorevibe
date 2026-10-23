@@ -15,8 +15,8 @@ import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { fontsComplete, type FontCheck } from "./protocol";
 import { requestRender, requestRenderHealth, screenRenderConfig } from "./render-client";
-import { reviewWithScreenshot, screenInput, screenModelConfig, SCREEN_REVIEW_PROMPT_VERSION, SCREEN_REVIEW_SOURCE, sharesQwenEndpoint,
-  visionModelName, type ScreenReview } from "./vision-review";
+import { reviewWithScreenshot, screenInput, screenModelConfig, screenPromptConfig, SCREEN_REVIEW_PROMPT_VERSION, SCREEN_REVIEW_SHOT2_PROMPT_VERSION,
+  SCREEN_REVIEW_SOURCE, sharesQwenEndpoint, visionModelName, type ScreenReview } from "./vision-review";
 
 /**
  * 화면 판별 잡(audit-screen-review, reviewer 의 screen 줄) — '화면 판별 대기'(lib/crawl/audit-screen-review.ts screenReviewQueue — 글이 적거나 원본이
@@ -77,6 +77,11 @@ const backingOff = (side: "render" | "model", now = Date.now()) => screenBackoff
 export type ScreenHealth = { at: string; ok: boolean; version: string | null; sandbox: boolean | null; fonts: FontCheck | null };
 export type ScreenObservation = {
   model: string; promptVersion: string; lastRunAt: string | null; lastSuccessAt: string | null;
+  source?: string;
+  lastReview?: { itemId: number; source: string; model: string; promptVersion: string; promptHash: string | null;
+    wireHash: string | null; inputHash: string; cacheGeneration: string | null; renderedRequestedAt: string | null;
+    renderedReceivedAt: string | null; crawlerObservedAt: string | null; crawlerComplete: null; renderedComplete: boolean | null;
+    screenshotHash: string | null };
   lastError: { code: string; stage: Stage; at: string } | null;
   /** 항목만의 실패 — 키 a:<감사 항목 id> */
   failures: Record<string, { code: string; count: number; at: string }>;
@@ -87,20 +92,22 @@ export type ScreenObservation = {
 export type ScreenTally = { asked: number; approve: number; reject: number; needsReview: number; kept: number; held: number; released: number;
   failed: number; skipped: number; renderMs: number; modelMs: number; outage: string | null };
 
-function emptyObservation(model: string): ScreenObservation {
-  return { model, promptVersion: SCREEN_REVIEW_PROMPT_VERSION, lastRunAt: null, lastSuccessAt: null, lastError: null, failures: {}, health: null,
+function emptyObservation(model: string, promptVersion: string): ScreenObservation {
+  return { model, promptVersion, lastRunAt: null, lastSuccessAt: null, lastError: null, failures: {}, health: null,
     backoff: { render: null, model: null } };
 }
 
 /** 지금 모델·판의 관측 — 모델·판이 바뀌었으면 항목 실패는 버린다 */
-export async function readScreenObservation(model: string): Promise<ScreenObservation> {
+export async function readScreenObservation(model: string, promptVersion: string = SCREEN_REVIEW_PROMPT_VERSION): Promise<ScreenObservation> {
   const [row] = await db.select({ value: operationsObservations.value }).from(operationsObservations)
     .where(eq(operationsObservations.key, SCREEN_REVIEW_OBSERVATION));
   const value = row?.value as Partial<ScreenObservation> | undefined;
-  if (!value || typeof value !== "object") return emptyObservation(model);
-  const same = value.model === model && value.promptVersion === SCREEN_REVIEW_PROMPT_VERSION;
-  return { ...emptyObservation(model), lastRunAt: value.lastRunAt ?? null, lastSuccessAt: value.lastSuccessAt ?? null, lastError: value.lastError ?? null,
+  if (!value || typeof value !== "object") return emptyObservation(model, promptVersion);
+  const same = value.model === model && value.promptVersion === promptVersion;
+  return { ...emptyObservation(model, promptVersion), lastRunAt: same ? value.lastRunAt ?? null : null,
+    lastSuccessAt: same ? value.lastSuccessAt ?? null : null, lastError: same ? value.lastError ?? null : null,
     failures: same && value.failures && typeof value.failures === "object" ? value.failures : {}, health: value.health ?? null,
+    ...(same && value.lastReview ? { lastReview: value.lastReview, source: value.source } : {}),
     backoff: value.backoff ?? { render: null, model: null } };
 }
 
@@ -134,8 +141,10 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
   const env = deps.env ?? process.env;
   const render = screenRenderConfig(env);
   const model = screenModelConfig(env);
-  const recordedModel = model ? visionModelName(model.model) : "";
-  const observation = await readScreenObservation(recordedModel);
+  const prompt = screenPromptConfig(model);
+  const recordedModel = model ? visionModelName(model.model, prompt!.version) : "";
+  const observation = await readScreenObservation(recordedModel, prompt!.version);
+  observation.source = prompt!.source;
   const now = () => new Date().toISOString();
   if (!render || !model) {
     observation.lastError = { code: "screen_review_not_configured", stage: "config", at: now() };
@@ -229,10 +238,12 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     const modelStarted = Date.now();
     let review: ScreenReview;
     try {
-      const reviewInput = screenInput(input, rendered.text);
+      const reviewInput = prompt!.version === SCREEN_REVIEW_SHOT2_PROMPT_VERSION ? input : screenInput(input, rendered.text);
       review = await withLocalModelCapacity({ target: { kind: "audit", purpose: "screen", itemId: target.itemId, slug: target.slug },
-        input: reviewInput, lease, promptVersion: SCREEN_REVIEW_PROMPT_VERSION, env },
-      fetchModel => reviewWithScreenshot(reviewInput, rendered.jpeg, { config: model, timeoutMs, signal: ctx.signal, request: fetchModel }), request);
+        input: reviewInput, lease, promptVersion: prompt!.version, env },
+      fetchModel => reviewWithScreenshot(reviewInput, rendered.jpeg, { config: model, timeoutMs, signal: ctx.signal, request: fetchModel,
+        rendered: { text: rendered.text, textLength: rendered.textLength, requestedUrl: url, finalUrl: rendered.finalUrl, status: rendered.status,
+          requestedAt: new Date(renderStarted).toISOString(), receivedAt: now() } }), request);
     } catch (error) {
       tally.modelMs += Date.now() - modelStarted;
       if (error instanceof ModelCapacityDeferredError) { ctx.log("screen_review.model_deferred", { reason: error.reason }); break; }
@@ -264,6 +275,12 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     if (written === "not_open") { failItem(target, "not_open", "write"); continue; }
     delete observation.failures[`a:${target.itemId}`];
     observation.lastSuccessAt = now();
+    observation.lastReview = { itemId: target.itemId, source: review.source ?? SCREEN_REVIEW_SOURCE, model: review.recordedModel,
+      promptVersion: review.promptVersion, promptHash: review.promptHash ?? null, wireHash: review.wireHash ?? null, inputHash: review.inputHash,
+      cacheGeneration: review.cacheGeneration ?? null, crawlerObservedAt: review.screenEvidence?.crawler_page_text.observed_at ?? null,
+      crawlerComplete: null, renderedRequestedAt: review.screenEvidence?.rendered_page_text.requested_at ?? null,
+      renderedReceivedAt: review.screenEvidence?.rendered_page_text.received_at ?? null,
+      renderedComplete: review.screenEvidence?.rendered_page_text.complete ?? null, screenshotHash: review.screenEvidence?.screenshot.sha256 ?? null };
   }
   ctx.log("screen_review.ran", { asked: tally.asked, approve: tally.approve, reject: tally.reject, needsReview: tally.needsReview, kept: tally.kept,
     held: tally.held, released: tally.released, failed: tally.failed, renderMs: tally.renderMs, modelMs: tally.modelMs, outage: tally.outage !== null });
@@ -284,7 +301,7 @@ async function writeScreenOpinion(target: ScreenReviewItem, review: ScreenReview
   const result = await markScreenJudged([{ itemId: target.itemId, productId: target.productId, model: review.recordedModel,
     decision: outcome.decision, confidence: outcome.confidence ?? null, reason: outcome.reason?.trim().slice(0, 2_000) || null,
     inputHash: review.inputHash, promptVersion: review.promptVersion }],
-  { source: SCREEN_REVIEW_SOURCE, actor: SCREEN_REVIEW_SOURCE, lease, close: true, step: "screenReview" });
+  { source: review.source ?? SCREEN_REVIEW_SOURCE, actor: review.source ?? SCREEN_REVIEW_SOURCE, lease, close: true, step: "screenReview" });
   tally.asked += 1;
   if (result.skipped.switched_off) { tally.skipped += 1; return "switched_off"; }
   if (result.inserted + result.updated === 0) { tally.skipped += 1; return "not_open"; }
@@ -299,6 +316,7 @@ async function writeScreenOpinion(target: ScreenReviewItem, review: ScreenReview
 
 export type ScreenReviewStatus = {
   enabled: boolean; perTick: number; configured: boolean; renderHost: string | null; model: string | null; shared: boolean; promptVersion: string;
+  modelHost?: string | null; source?: string;
   lastHour: number; lastDay: number; approveDay: number; rejectDay: number;
   /** 화면 판별 대기에서 그만 본 것을 뺀 수 · 그중 공개 목록에 떠 있는 것(screenReviewCounts) */
   remaining: number; waitingPublic: number; givenUp: number;
@@ -312,8 +330,9 @@ export async function screenReviewStatus(settings: Pick<CrawlSettings, "qwenAuto
   const env = deps.env ?? process.env;
   const render = screenRenderConfig(env);
   const model = screenModelConfig(env);
-  const recordedModel = model ? visionModelName(model.model) : "";
-  const observation = await readScreenObservation(recordedModel);
+  const prompt = screenPromptConfig(model)!;
+  const recordedModel = model ? visionModelName(model.model, prompt.version) : "";
+  const observation = await readScreenObservation(recordedModel, prompt.version);
   const skipped = givenUp(observation);
   const [[counts], waiting] = await Promise.all([
     db.select({
@@ -321,8 +340,8 @@ export async function screenReviewStatus(settings: Pick<CrawlSettings, "qwenAuto
       day: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours')::int`,
       approveDay: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours' and ${productAuditSecondOpinions.decision} = 'approve')::int`,
       rejectDay: sql<number>`count(*) filter (where ${productAuditSecondOpinions.createdAt} > now() - interval '24 hours' and ${productAuditSecondOpinions.decision} = 'reject')::int`,
-    }).from(productAuditSecondOpinions).where(and(eq(productAuditSecondOpinions.source, SCREEN_REVIEW_SOURCE),
-      eq(productAuditSecondOpinions.model, recordedModel), eq(productAuditSecondOpinions.promptVersion, SCREEN_REVIEW_PROMPT_VERSION))),
+    }).from(productAuditSecondOpinions).where(and(eq(productAuditSecondOpinions.source, prompt.source),
+      eq(productAuditSecondOpinions.model, recordedModel), eq(productAuditSecondOpinions.promptVersion, prompt.version))),
     screenReviewCounts().catch((error: unknown) => {
       logger.warn("screen_review.remaining_failed", { code: error instanceof Error ? error.name : "unknown" });
       return null;
@@ -331,7 +350,8 @@ export async function screenReviewStatus(settings: Pick<CrawlSettings, "qwenAuto
   return {
     enabled: settings.qwenAuto.screenReview.enabled, perTick: settings.qwenAuto.screenReview.perTick, configured: Boolean(render && model),
     renderHost: render ? new URL(render.baseUrl).host : null, model: model ? recordedModel : null, shared: sharesQwenEndpoint(env),
-    promptVersion: SCREEN_REVIEW_PROMPT_VERSION, lastHour: counts?.hour ?? 0, lastDay: counts?.day ?? 0, approveDay: counts?.approveDay ?? 0,
+    modelHost: model ? new URL(model.baseUrl).host : null, source: prompt.source,
+    promptVersion: prompt.version, lastHour: counts?.hour ?? 0, lastDay: counts?.day ?? 0, approveDay: counts?.approveDay ?? 0,
     rejectDay: counts?.rejectDay ?? 0, remaining: Math.max(0, (waiting?.screenWait ?? 0) - skipped.length), waitingPublic: waiting?.screenWaitPublic ?? 0,
     givenUp: skipped.length, lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt,
     lastError: observation.lastError, health: observation.health, backoff: observation.backoff,
