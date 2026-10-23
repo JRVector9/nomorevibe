@@ -17,7 +17,7 @@ export { UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
 const POLICY = "uptime_consecutive_failures";
 
 /** Compare original DB timestamps: JS millisecond rounding must not reopen an older observation. */
-function eligibleObservation() {
+export function eligibleUptimeAutoBanObservation() {
   return and(
     inArray(products.status, ["verified", "seeded"]),
     eq(products.accessMode, "website"),
@@ -45,7 +45,7 @@ export async function nextUptimeAutoBanTargets(limit: number): Promise<PingTarge
   if (!Number.isInteger(limit) || limit < 0 || limit > 200) throw new Error("invalid uptime batch");
   return db.select({ id: products.id, slug: products.slug, url: products.url })
     .from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
-    .where(and(eligibleObservation(), uptimeAssistObservationUnhandled({ id: products.id, url: products.url,
+    .where(and(eligibleUptimeAutoBanObservation(), uptimeAssistObservationUnhandled({ id: products.id, url: products.url,
       updatedAt: products.updatedAt, checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status })))
     .orderBy(asc(productHealth.checkedAt), asc(products.id)).limit(limit);
 }
@@ -64,7 +64,7 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
       checkedAt: productHealth.checkedAt, downSince: productHealth.downSince,
       checkedAtRevision: sql<string>`${productHealth.checkedAt}::text`, downSinceRevision: sql<string>`${productHealth.downSince}::text`,
     }).from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
-      .where(and(eq(products.id, target.id), eq(products.slug, target.slug), eq(products.url, target.url), eligibleObservation()))
+      .where(and(eq(products.id, target.id), eq(products.slug, target.slug), eq(products.url, target.url), eligibleUptimeAutoBanObservation()))
       .for("update");
     if (!current || controls.signal?.aborted || (controls.hasBudget && !controls.hasBudget())) return false;
 

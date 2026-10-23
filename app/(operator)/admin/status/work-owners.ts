@@ -56,6 +56,7 @@ export type OwnerContext = {
  * 카탈로그에 잡을 더하면 여기에도 적어야 한다(tests/operations-work-owners.test.ts).
  */
 export const JOB_HOW: Readonly<Record<string, string>> = {
+  "product-llm-assist-review": "재접속 근거로 GPU Qwen을 먼저 사용하고, M1은 별도 소비 줄에서 처리합니다. 원 작업이나 확인 소비자를 멈추면 새 호출을 열지 않습니다. 확인이 필수인 후보는 오류·중단 시 보류하며 기존 즉시 내림으로 돌아가지 않습니다.",
   heartbeat: "스케줄러가 살아 있다는 관측만 남깁니다. 후보·제품은 처리하지 않습니다.",
   "crawl-seed": "GitHub 검색으로 새 저장소를 찾아 수집 대기열(프론티어)에 넣습니다. 검색 한도(분당 30회) 안에서 한 회차 몇 쪽씩 읽습니다.",
   "hn-show-seed": "Show HN 새 글에서 배포를 알린 프로젝트를 수집 대기열에 넣습니다(한 번에 100건 상한).",

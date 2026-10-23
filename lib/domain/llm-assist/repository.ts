@@ -16,7 +16,7 @@ export type AssistWork = typeof llmAssistWorks.$inferSelect;
 export type AssistWorkClaim = { work: AssistWork; token: string; owner: ModelCapacityOwner; lease: JobLease };
 
 export async function readAssistControl(task: AssistWorkTask, tx: Transaction | typeof db = db): Promise<AssistControl> {
-  const [row] = await tx.select().from(llmAssistControls).where(eq(llmAssistControls.task, task));
+  const [row] = await tx.select().from(llmAssistControls).where(eq(llmAssistControls.task, task)).for("share");
   return row ?? { task, mode: "off", confirmationRequired: false, dispatchEnabled: false, applyEnabled: false, revision: 1 };
 }
 
