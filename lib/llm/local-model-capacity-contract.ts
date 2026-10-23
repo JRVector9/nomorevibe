@@ -11,8 +11,9 @@ const repo = text(200).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
 
 /** 대상은 실제 도메인 행을 찾기 위한 주소다. 이 모양 자체는 호출 권한이 아니다. */
 export const localModelTargetSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("assist"), purpose: z.literal("assist_review"), workId: z.uuid(), workRevision: id,
-    claimToken: z.uuid(), task: assistWorkTaskSchema, subjectId: id, backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/) }).strict(),
+  z.object({ kind: z.literal("assist"), purpose: z.enum(["assist_review", "intro_correction"]), workId: z.uuid(), workRevision: id,
+    claimToken: z.uuid(), task: assistWorkTaskSchema, subjectId: id, backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/) }).strict()
+    .refine(value => value.purpose !== "intro_correction" || value.task === "intro_recheck", "invalid_correction_task"),
   z.object({ kind: z.literal("audit"), purpose: z.enum(["audit", "second_opinion", "screen"]),
     itemId: id, slug: text(80) }).strict(),
   z.object({ kind: z.literal("published"), purpose: z.literal("published_filter"),

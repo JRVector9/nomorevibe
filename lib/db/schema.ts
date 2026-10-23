@@ -766,3 +766,4 @@ export * from "./me-schema";
 // 비공개 관리자 문의 접수(0117)
 export * from "./admin-contact-schema";
 export * from "./llm-assist-schema";
+export * from "./intro-assist-schema";

@@ -16,7 +16,7 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
 
 /** 원격 종료는 native 원장, 업무 조치는 현재 도메인 guard로 각각 증명한다. */
 export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistInput, outcome: AssistOutcome,
-  contract: LocalModelServingContract, responseHash: string, freshRepoChecks?: FreshRepoMoveChecks): Promise<{ recorded: boolean; applied: boolean }> {
+  contract: LocalModelServingContract, responseHash: string, freshRepoChecks?: FreshRepoMoveChecks): Promise<{ recorded: boolean; applied: boolean; resultId?: string; correctionRequired?: boolean }> {
   const validated = validateAssistOutcome(input, outcome);
   if (!validated.ok) throw new Error(validated.error);
   return withJobLeaseWrite(claim.lease, async tx => {
@@ -40,6 +40,11 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
       contractHash: localModelContractHash(contract), inputHash: work.inputHash, promptHash: assistPromptHash(input.task),
       responseHash, input, outcome: validated.outcome }).onConflictDoNothing({ target: llmAssistResults.capacityRequestId }).returning({ id: llmAssistResults.id });
     if (!result) return { recorded: false, applied: false };
+    if (candidate.kind === "intro_recheck" && input.task === "intro" && validated.outcome.action.proposal === "rewrite_candidate") {
+      await tx.update(llmAssistWorks).set({ attempts: work.attempts + 1, updatedAt: sql`clock_timestamp()` }).where(eq(llmAssistWorks.id, work.id));
+      await assertJobLeaseAtWallTime(tx, claim.lease);
+      return { recorded: true, applied: false, resultId, correctionRequired: true };
+    }
     let applied = work.task === "uptime" && await applyUptimeAssist(tx, claim, input, validated.outcome, resultId);
     let domainState: "human" | "obsolete" | null = null;
     if (candidate.kind === "repo_move" && input.task === "repo" && freshRepoChecks) {

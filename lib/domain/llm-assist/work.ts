@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { assistHash } from "./contracts";
 import { repoMoveCandidateSchema } from "@/lib/domain/products/repo-move-review";
+import { introRecheckCandidateSchema } from "@/lib/domain/products/intro-assist";
 
-export const assistWorkTaskSchema = z.enum(["uptime", "repo_move"]);
+export const assistWorkTaskSchema = z.enum(["uptime", "repo_move", "intro_recheck"]);
 export type AssistWorkTask = z.infer<typeof assistWorkTaskSchema>;
 export const ASSIST_WORK_STATES = ["queued", "claimed", "waiting_evidence", "waiting_capacity", "retryable_transport", "human", "done", "obsolete", "indeterminate"] as const;
 export type AssistWorkState = typeof ASSIST_WORK_STATES[number];
@@ -16,10 +17,10 @@ export const uptimeCandidateSchema = z.object({
     checkedAt: z.string().min(1).max(100), downSince: z.string().min(1).max(100) }).strict(),
 }).strict();
 export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchema>>;
-export const assistCandidateSchema = z.union([uptimeCandidateSchema, repoMoveCandidateSchema]);
+export const assistCandidateSchema = z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema]);
 export type AssistCandidate = Readonly<z.infer<typeof assistCandidateSchema>>;
 export function assistCandidateSubject(candidate: AssistCandidate) {
-  return candidate.kind === "uptime" ? candidate.product : candidate.snapshot;
+  return candidate.kind === "uptime" ? candidate.product : candidate.kind === "intro_recheck" ? candidate.snapshot.product : candidate.snapshot;
 }
 export function assistCandidateSourceHash(candidate: AssistCandidate): string {
   return assistHash(assistCandidateSchema.parse(candidate));

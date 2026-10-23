@@ -73,13 +73,22 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
       join products on products.id=w.product_id
       left join product_health ph on ph.slug=products.slug
       left join product_repo_reviews on product_repo_reviews.product_id=products.id
+      left join product_intro_checks on product_intro_checks.product_id=products.id
       where w.task in (${tasks}) and w.state in ('queued','waiting_capacity','retryable_transport')
         and w.next_attempt_at <= clock_timestamp() and w.attempts<3
         and ((w.task='uptime' and products.status in ('seeded','verified') and products.url=w.source->'product'->>'url'
         and products.updated_at::text=w.source->'product'->>'updatedAt'
         and ph.checked_at::text=w.source->'health'->>'checkedAt'
         and ph.failures=(w.source->'health'->>'failures')::int and ph.status=(w.source->'health'->>'status')::int)
-        or (w.task='repo_move' and ${repoMoveSnapshotSelection}=w.source->'snapshot'))
+        or (w.task='repo_move' and ${repoMoveSnapshotSelection}=w.source->'snapshot')
+        or (w.task='intro_recheck' and products.status in ('seeded','verified') and products.source='crawler'
+          and products.url=w.source->'snapshot'->'product'->>'url'
+          and products.updated_at::text=w.source->'snapshot'->'product'->>'updatedAt'
+          and products.tagline=w.source->'snapshot'->'product'->>'tagline'
+          and products.claimed_at is null and not exists(select 1 from product_maker_members m where m.product_id=products.id and m.revoked_at is null)
+          and product_intro_checks.updated_at::text=w.source->'snapshot'->'check'->>'updatedAt'
+          and product_intro_checks.outcome='needs_editor' and product_intro_checks.error_code is null
+          and product_intro_checks.checked_tagline=products.tagline))
         and not exists (select 1 from llm_assist_work active where active.task=w.task and active.product_id=w.product_id
           and active.state in ('claimed','indeterminate'))
       order by w.priority desc,w.next_attempt_at,w.created_at,w.id for update of w skip locked limit 1`);

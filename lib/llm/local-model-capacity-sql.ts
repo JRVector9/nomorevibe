@@ -17,9 +17,10 @@ function target(value: string): string {
     `${value}->>'purpose' IN (${purposes.map(purpose => `'${purpose}'`).join(",")})`, ...extra,
   ]);
   return `(${[
-    base("assist", ["assist_review"], ["workId", "workRevision", "claimToken", "task", "subjectId", "backendId"],
+    base("assist", ["assist_review", "intro_correction"], ["workId", "workRevision", "claimToken", "task", "subjectId", "backendId"],
       [uuid(`${value}->'workId'`), integer(`${value}->'workRevision'`), uuid(`${value}->'claimToken'`),
-        `nmv_local_assist_task_valid(${value}->>'task')`, integer(`${value}->'subjectId'`), match(`${value}->'backendId'`, "^[a-z0-9][a-z0-9-]{0,59}$")]),
+        `nmv_local_assist_task_valid(${value}->>'task')`, `(${value}->>'purpose'='assist_review' OR ${value}->>'task'='intro_recheck')`,
+        integer(`${value}->'subjectId'`), match(`${value}->'backendId'`, "^[a-z0-9][a-z0-9-]{0,59}$")]),
     base("audit", ["audit", "second_opinion", "screen"], ["itemId", "slug"], [integer(`${value}->'itemId'`), string(`${value}->'slug'`, 80)]),
     base("published", ["published_filter"], ["secondReviewId", "slug"], [integer(`${value}->'secondReviewId'`), string(`${value}->'slug'`, 80)]),
     base("candidate", ["held_qwen", "human_deepseek"], ["attemptId", "candidateId", "repo"],

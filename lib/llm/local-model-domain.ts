@@ -40,6 +40,12 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
   if (job.name !== localModelJob(target) || role.role !== "reviewer") return false;
   if (target.kind === "assist") {
     if (!isAssistCapacityInput(input) || !requestId) return false;
+    if (target.purpose === "intro_correction") {
+      if (input.kind !== "llm_assist_correction" || target.task !== "intro_recheck") return false;
+      const { proveIntroCorrectionDomain } = await import("@/lib/domain/products/intro-assist-runtime");
+      return proveIntroCorrectionDomain(tx, { ...target, task: "intro_recheck" }, input, job, role);
+    }
+    if (input.kind !== "llm_assist") return false;
     const { proveAssistModelDomain } = await import("@/lib/domain/llm-assist/model-domain");
     return proveAssistModelDomain(tx, target, input, job, role, requestId);
   }

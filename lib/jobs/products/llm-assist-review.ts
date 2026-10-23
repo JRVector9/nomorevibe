@@ -16,6 +16,8 @@ import { collectRepoMoveInput, checkRepoMoveBeforeApply } from "@/lib/domain/pro
 import { collectUptimeAssist } from "@/lib/domain/products/uptime-delist-review";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { collectIntroRecheckInput, runIntroCorrectionStage } from "@/lib/domain/products/intro-assist-runtime";
+import { completeAssistIntroCorrection } from "@/lib/domain/llm-assist/intro-complete";
 
 const TICK_MS = 100_000;
 /** backend별 drain은 동시에 시작하고 각 결과를 즉시 기록한다. 느린 M1·DeepSeek를 GPU의 앞에 두지 않는다. */
@@ -37,11 +39,13 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
       if (!claim) break;
       counts.claimed++;
       let stage: "collection" | "model" = "collection";
+      let factualRequestId: string | null = null;
       try {
         const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(Math.max(1, Math.min(90_000, remaining() - 1000)))]);
         const candidate = assistCandidateSchema.parse(claim.work.source), subject = assistCandidateSubject(candidate);
         let input: AssistInput;
         if (candidate.kind === "uptime") input = await collectUptimeAssist(candidate, signal);
+        else if (candidate.kind === "intro_recheck") input = await collectIntroRecheckInput(candidate, signal);
         else {
           const collected = await collectRepoMoveInput(candidate, { signal });
           if (collected.kind !== "ready") {
@@ -78,13 +82,34 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
         const saved = await completeAssistClaim(claim, input, parsed.outcome, backend.contract, createHash("sha256").update(raw).digest("hex"), freshRepoChecks);
         if (saved.recorded) counts.recorded++;
         if (saved.applied) counts.applied++;
+        if (saved.correctionRequired && saved.resultId && candidate.kind === "intro_recheck") {
+          const [factsWork] = await db.select({ capacityRequestId: llmAssistWorks.capacityRequestId }).from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
+          factualRequestId = factsWork?.capacityRequestId ?? null;
+          const correction = await runIntroCorrectionStage({ candidate, input, factualResultId: saved.resultId, factual: parsed.outcome,
+            workId: claim.work.id, contract: backend.contract }, async plan => {
+            const response = await withLocalModelCapacity({ target: { kind: "assist", purpose: "intro_correction", workId: claim.work.id,
+              workRevision: claim.work.revision, claimToken: claim.token, task: "intro_recheck", subjectId: subject.id, backendId: backend.backendId },
+              input: plan.capacityInput, lease, promptVersion: plan.promptVersion, allowLegacy: false }, fetchModel =>
+              fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: plan.wire, signal }));
+            const [current] = await db.select({ capacityRequestId: llmAssistWorks.capacityRequestId }).from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
+            if (!current?.capacityRequestId || current.capacityRequestId === factualRequestId) throw new Error("intro_correction_dispatch_missing");
+            return { response, capacityRequestId: current.capacityRequestId };
+          });
+          if (!correction.ok) {
+            await deferAssistClaim(claim, "human", correction.error, { consumesAttempt: true }); counts.human++; continue;
+          }
+          const applied = await completeAssistIntroCorrection(claim, candidate, input, parsed.outcome, correction);
+          if (applied.applied) counts.applied++;
+        }
       } catch (error) {
         const [work] = await db.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
         if (!work || work.state !== "claimed") continue;
         if (work.capacityRequestId) {
           const [capacity] = await db.select({ state: modelCapacityRequests.state }).from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, work.capacityRequestId));
           if (capacity?.state === "settled") {
-            await deferAssistClaim(claim, "waiting_evidence", "post_model_validation_failed", { consumesAttempt: true }); counts.deferred++;
+            const capacityWait = error instanceof ModelCapacityDeferredError;
+            await deferAssistClaim(claim, capacityWait ? "waiting_capacity" : "waiting_evidence", capacityWait ? `capacity_${error.reason}` : "post_model_validation_failed",
+              { consumesAttempt: work.capacityRequestId !== factualRequestId, nextAttemptAt: new Date(Date.now() + 60_000) }); counts.deferred++;
           } else { await deferAssistClaim(claim, "indeterminate", "model_or_commit_unknown"); counts.indeterminate++; }
         } else if (error instanceof ModelCapacityDeferredError) {
           await deferAssistClaim(claim, "waiting_capacity", `capacity_${error.reason}`, { nextAttemptAt: new Date(Date.now() + 60_000) }); counts.deferred++;

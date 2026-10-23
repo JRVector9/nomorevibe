@@ -55,6 +55,11 @@ function introCompleteSourceCurrent(candidate: IntroRecheckCandidate, source: As
   if (source.kind === "page" || source.kind === "rendered_page") return new URL(source.url).href === new URL(product.url).href;
   if ((source.kind === "readme" || source.kind === "repository") && product.repoUrl) {
     const repository = new URL(product.repoUrl), found = new URL(source.url);
+    if (source.kind === "readme" && repository.protocol === "https:" && repository.hostname === "github.com"
+      && !repository.username && !repository.password && !repository.search && !repository.hash && (!repository.port || repository.port === "443")
+      && found.protocol === "https:" && found.hostname === "raw.githubusercontent.com" && !found.username && !found.password
+      && !found.search && !found.hash && (!found.port || found.port === "443")
+      && found.pathname === `${repository.pathname.replace(/\/$/, "").replace(/\.git$/, "")}/HEAD/README.md`) return true;
     return found.origin === repository.origin && (found.pathname.replace(/\/$/, "") === repository.pathname.replace(/\/$/, "")
       || found.pathname.startsWith(`${repository.pathname.replace(/\/$/, "")}/`));
   }

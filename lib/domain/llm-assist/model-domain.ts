@@ -13,6 +13,9 @@ import { assistOriginActive, readAssistControl } from "./repository";
 import { assistCandidateSchema, assistCandidateSourceHash, assistCandidateSubject } from "./work";
 import { lockRepoMoveCandidate } from "@/lib/domain/products/repo-move-reviews";
 import { buildRepoMoveInput } from "@/lib/domain/products/repo-move-review";
+import { introRecheckEligible, validateIntroAssistInput } from "@/lib/domain/products/intro-assist";
+import { readIntroRecheckSnapshot } from "@/lib/domain/products/intro-assist-repository";
+import { assistHash } from "./contracts";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
@@ -36,6 +39,13 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   const control = await readAssistControl(work.task, tx);
   if (!control.dispatchEnabled || control.mode === "off" || control.revision !== work.controlRevision
     || !await assistOriginActive(tx, work.originJob) || !await assistOriginActive(tx, job.name)) return false;
+  if (candidate.kind === "intro_recheck") {
+    const current = await readIntroRecheckSnapshot(subject.id, tx, "update");
+    if (!current || !introRecheckEligible(current) || assistHash(current) !== assistHash(candidate.snapshot)
+      || !validateIntroAssistInput(candidate, value.input) || !value.input.sources.some(source => source.completeness === "complete" && source.text.trim())) return false;
+    await assertJobLeaseAtWallTime(tx, job, "update"); await assertRoleLease(tx, role);
+    return Boolean(requestId);
+  }
   if (candidate.kind === "repo_move") {
     const collected = value.input.sources.filter(source => source.sourceId !== "old_repository");
     if (value.input.task !== "repo" || !isDeepStrictEqual(buildRepoMoveInput(candidate, collected), value.input)

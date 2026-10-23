@@ -26,6 +26,17 @@ const fixture = () => { const candidate = introRecheckCandidate(snapshot())!; co
     evidence: [{ source_id: "current-page", quote: "Create and edit items for the game Margonem." }] } }; };
 
 describe("needs_editor 명시 재진입", () => {
+  it("실제 raw README 주소는 현재 저장소와 HEAD 파일이 정확히 대응할 때만 complete로 허용한다", () => {
+    const candidate = introRecheckCandidate(snapshot())!;
+    const readme = { ...source(), sourceId: "current-readme", kind: "readme" as const,
+      url: "https://raw.githubusercontent.com/acme/margo/HEAD/README.md" };
+    expect(validateIntroAssistInput(candidate, buildIntroAssistInput(candidate, [readme]))).toBe(true);
+    for (const url of ["https://raw.githubusercontent.com/other/margo/HEAD/README.md",
+      "https://raw.githubusercontent.com/acme/margo/main/README.md", "https://raw.githubusercontent.com/acme/margo/HEAD/OTHER.md",
+      "https://raw.githubusercontent.com/acme/margo/HEAD/README.md?repo=other"]) {
+      expect(validateIntroAssistInput(candidate, buildIntroAssistInput(candidate, [{ ...readme, url }]))).toBe(false);
+    }
+  });
   it("성공 needs_editor를 기존 attempts·check revision 그대로 후보화하고 microsecond 변경을 구분한다", () => {
     const original = snapshot(), candidate = introRecheckCandidate(original)!;
     expect(candidate).toMatchObject({ policyVersion: ASSIST_POLICY_VERSION, promptVersion: ASSIST_PROMPT_VERSION, snapshot: { check: { attempts: 2 } } });
