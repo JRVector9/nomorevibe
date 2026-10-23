@@ -70,6 +70,7 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
     await assertJobLeaseAtWallTime(tx, job, "update"); await assertRoleLease(tx, role);
     return Boolean(requestId);
   }
+  if (candidate.kind !== "uptime") return false;
   if (value.input.task !== "uptime" || value.input.subject.id !== candidate.product.id
     || value.input.subject.revision !== candidate.product.updatedAt || value.input.context.requestedUrl !== candidate.product.url
     || value.input.context.failureCount !== candidate.health.failures || value.input.context.requiredFailures !== UPTIME_AUTO_BAN_THRESHOLD

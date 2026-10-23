@@ -25,8 +25,9 @@ export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchem
 export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema, actionAuditCandidateSchema]));
 export type AssistCandidate = Readonly<z.infer<typeof assistCandidateSchema>>;
 export function assistCandidateSubject(candidate: AssistCandidate) {
-  return candidate.kind === "uptime" || candidate.kind === "decision_audit" || candidate.kind === "semantic_exception" ? candidate.product
-    : candidate.kind === "intro_recheck" ? candidate.snapshot.product : candidate.snapshot;
+  if (candidate.kind === "repo_move") return candidate.snapshot;
+  if (candidate.kind === "intro_recheck") return candidate.snapshot.product;
+  return candidate.product;
 }
 export function assistCandidateSourceHash(candidate: AssistCandidate): string {
   return assistHash(assistCandidateSchema.parse(candidate));
