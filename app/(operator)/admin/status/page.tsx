@@ -64,6 +64,7 @@ import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./rend
 import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
 import { FlowDetailSlot } from "./FlowDetail";
 import { flowVerdict, otherModelSlots } from "./flow-model";
+import { workOwnersByAction } from "./work-owners";
 import { OPS_FRESH_COOKIE } from "./fresh";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { withDeadline } from "@/lib/operations/deadline";
@@ -480,6 +481,9 @@ export default async function StatusPage() {
   // 판정 알약(v8) — 조치와 같은 동기 입력만으로 센다. 새 쿼리가 없어 첫 그림을 기다리게 하지 않는다
   const verdict = flowVerdict({ split, throughput: inputs.throughput, workerProgress: derived.workerProgress, human: overview });
   const flowSlot = { inputs, derived, actions, fresh };
+  // 칸마다 맡은 장비·LLM·작업 일정 — 새로 읽지 않고 이미 읽은 역할 담당·서비스 관측·작업 표·설정·AI 연결·모델 집계에서 모은다
+  const owners = workOwnersByAction(actions, { settings, roles: roleRows, instances: ops.serviceInstances, jobs: derived.states,
+    batch: inputs.jobBatch, agent: derived.agent, models, modelServers: inputs.modelServers, now });
 
   /*
    * 전체 현황 — 지금 조치 · 쌓인 일 · 사람 확인 한 줄, 그다음 지표.
@@ -488,7 +492,7 @@ export default async function StatusPage() {
    */
   const attentionCards = (
     <>
-      <AttentionList urgent={split.urgent} backlog={split.backlog} hidden={split.hidden} now={now} />
+      <AttentionList urgent={split.urgent} backlog={split.backlog} hidden={split.hidden} now={now} owners={owners} />
       <p className="dash-card dash-12 ops-human-line">
         사람 확인 <b>{n(overview.stages.human)}</b>건 · {humanWaitLabel(overview)}
         <Link href={ACTION_LINKS.reviewHuman}>→ 심사 큐</Link>

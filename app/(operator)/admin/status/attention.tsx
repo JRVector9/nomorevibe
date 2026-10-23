@@ -43,6 +43,7 @@ import { ACTION_LINKS, jobHref } from "./action-links";
 import { REPO_COVERAGE_TARGET, REPO_REVIEW_OVERDUE_HOURS } from "./dashboard/RepoHealthCard";
 import { sortActions, type ActionItem, type SplitItem } from "./dashboard/AttentionList";
 import { modelName } from "./dashboard/ModelCards";
+import { MODEL_HEALTH_JOBS, progressStageJobs, type ActionWork } from "./work-owners";
 import { EXPECTED_WEB_INSTANCES, READINESS_LABELS, webSummary, type CollectorQuotaStatus } from "./status-summary";
 
 /**
@@ -189,6 +190,12 @@ const job = (name: string) => <span title={name}>{JOB_LABELS[name] ?? name}</spa
 const role = (name: string) => <span title={name}>{ROLE_LABELS[name] ?? name}</span>;
 const joined = (nodes: React.ReactNode[], separator = ", ") =>
   nodes.map((node, index) => <Fragment key={index}>{index > 0 && separator}{node}</Fragment>);
+/** 칸마다 이 일을 맡는 작업·서비스(work-owners.ts) — 같은 일을 하는 칸끼리 같은 묶음을 쓴다 */
+const AI_WORK: ActionWork = { jobs: ["crawl-publish"], services: ["connect-agent"] };
+const SEARCH_WORK: ActionWork = { jobs: ["product-search-health", "product-search-profile", "product-search-verify"] };
+const UPTIME_WORK: ActionWork = { jobs: ["uptime-ping"] };
+const AUDIT_WORK: ActionWork = { jobs: ["product-audit"] };
+const X_WORK: ActionWork = { services: ["x-collector"] };
 
 /**
  * 지금 사람이 손대야 하는 것.
@@ -214,10 +221,10 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   const webState = webSummary(web);
   if (!webState.ready) actions.push({ key: "web", tone: "hold", count: "확인 필요", unit: "상태", title: webState.label,
     detail: "M3·mini 웹의 두 관측 ID와 45초 이내 시각·릴리스를 확인합니다. 개별 웹 복제본 상태는 Dokploy에서 확인합니다.",
-    action: { label: "웹 관측", href: ACTION_LINKS.roles } });
+    action: { label: "웹 관측", href: ACTION_LINKS.roles }, work: { services: ["web"] } });
   if (health) {
     actions.push(...searchHealthAlerts(health).map((alert) => ({ ...alert, unit: "건", key: `search-${alert.key}`,
-      action: { label: "점검 작업", href: ACTION_LINKS.jobs } })));
+      action: { label: "점검 작업", href: ACTION_LINKS.jobs }, work: SEARCH_WORK })));
   }
 
   /**
@@ -236,13 +243,13 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "ai", tone: "critical", count: "끊김", unit: "상태", title: "AI 연결 서비스 관측이 끊겼습니다",
       detail: <>{role("connect-agent")} 마지막 관측 {agentInstance ? formatListTime(agentInstance.observedAt, now) : "없음"} — 발행 워커가 카테고리를 정하지 못해 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "연결 상태", href: ACTION_LINKS.ai },
+      action: { label: "연결 상태", href: ACTION_LINKS.ai }, work: AI_WORK,
     });
   } else if (!classifyReady) {
     actions.push({
       key: "ai", tone: "critical", count: "멈춤", unit: "상태", title: "AI 분류를 받지 않습니다",
       detail: <>{agent.configVersion > 0 ? "새 인증 뒤 모델 검사·적용이 남았습니다" : "적용한 모델 설정이 없습니다"} — 적용할 때까지 발행 워커가 승인 후보를 1시간씩 보류합니다.</>,
-      action: { label: "검사·적용", href: ACTION_LINKS.ai },
+      action: { label: "검사·적용", href: ACTION_LINKS.ai }, work: AI_WORK,
     });
   } else {
     if (failingProviders.length > 0) {
@@ -251,14 +258,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         key: "ai-account", tone: all ? "critical" : "hold", count: `${failingProviders.length}/${configuredProviders.length}`, unit: "계정",
         title: all ? "설정한 AI 계정이 모두 실패합니다" : `${failingProviders.map((provider) => providerName[provider]).join("·")} 계정이 실패합니다 — 예비 모델이 대신 분류 중`,
         detail: <>{failingProviders.map((provider) => `${providerName[provider]} ${agent.accounts?.[provider]?.result}${agent.accounts?.[provider]?.checkedAt ? ` · ${formatListTime(agent.accounts[provider]!.checkedAt!, now)}` : ""}`).join(" · ")} — 다시 인증하고 모델을 검사·적용합니다.</>,
-        action: { label: "다시 인증", href: ACTION_LINKS.ai },
+        action: { label: "다시 인증", href: ACTION_LINKS.ai }, work: AI_WORK,
       });
     }
     if (!agent.configReady) {
       actions.push({
         key: "ai-apply", tone: "hold", count: "대기", unit: "상태", title: "새 인증으로 모델 검사·적용이 남았습니다",
         detail: <>그때까지 기존 설정({agent.config?.primary.model}{agent.config?.fallback ? ` → ${agent.config.fallback.model}` : ""})으로 분류를 계속합니다.</>,
-        action: { label: "검사·적용", href: ACTION_LINKS.ai },
+        action: { label: "검사·적용", href: ACTION_LINKS.ai }, work: AI_WORK,
       });
     }
   }
@@ -267,12 +274,12 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "model-servers", tone: "hold", count: unhealthyServers.length, unit: "대", title: "검색 모델 서버가 응답하지 않습니다",
       detail: <>{unhealthyServers.map((server) => `${server.name} ${server.error}`).join(" · ")} — 검색은 단어 검색으로만 나가고, 새 제품의 의미 검색 벡터가 밀립니다(M3 launchd bot.brut.nmv-*).</>,
-      action: { label: "의미 검색 벡터", href: jobHref("product-embedding") },
+      action: { label: "의미 검색 벡터", href: jobHref("product-embedding") }, work: { jobs: ["product-embedding"] },
     });
   }
   if (!health) {
     actions.push({
-      key: "search-health-missing", tone: "hold", count: "모름", unit: "상태", title: "검색 데이터 점검 결과가 없습니다",
+      key: "search-health-missing", tone: "hold", count: "모름", unit: "상태", title: "검색 데이터 점검 결과가 없습니다", work: { jobs: ["product-search-health"] },
       detail: <>{states.get("product-search-health")?.lastError ? "점검 작업이 마지막 회차에 실패했습니다" : `마지막 점검 ${healthObservation ? formatListTime(healthObservation.observedAt, now) : "없음"} — 45분이 지나면 결과를 믿지 않습니다`}. 키워드 대기 수도 알 수 없습니다.</>,
       action: { label: "점검 작업", href: ACTION_LINKS.jobs },
     });
@@ -281,7 +288,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "jobs", tone: "critical", count: failedJobs.length, unit: "개", title: "마지막 회차가 실패한 작업",
       detail: <>{joined(failedJobs.map((row) => job(row.name)))} — 실패한 작업 뒤의 단계는 새 일감을 받지 못합니다.</>,
-      action: { label: "작업 흐름", href: failedJobs.length === 1 ? jobHref(failedJobs[0].name) : ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: failedJobs.length === 1 ? jobHref(failedJobs[0].name) : ACTION_LINKS.jobs }, work: { jobs: failedJobs.map((row) => row.name) },
     });
   }
   /**
@@ -295,7 +302,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "job-health", tone: critical ? "critical" : "hold", count: jobIssues.length, unit: "개",
       title: critical ? "작업이 오래 제 일을 하지 못합니다" : "돌기는 하는데 제 일을 하지 못하는 작업",
       detail: <>{joined(jobIssues.map((issue) => jobHealthLine(issue, now)), " · ")} — 실행은 됐지만 성공으로 세지 않았습니다. 까닭 코드로 설정·키·바깥 서버를 확인합니다.</>,
-      action: { label: "작업 흐름", href: jobIssues.length === 1 ? jobHref(jobIssues[0].job) : ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: jobIssues.length === 1 ? jobHref(jobIssues[0].job) : ACTION_LINKS.jobs }, work: { jobs: jobIssues.map((issue) => issue.job) },
     });
   }
   /**
@@ -309,7 +316,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         {humanWaitLabel(overview)} · {humanFlowLabel(overview)}.
         {(overview.wait?.stalled ?? 0) > 0 && <> 그중 <span className="font-mono">{n(overview.wait!.stalled)}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
       </>,
-      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman },
+      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman }, work: { jobs: ["crawl-agent-review", "second-review", "human-deepseek-review"] },
     });
   }
   if (overview.stages.agreed + overview.secondPublished > 0) {
@@ -317,7 +324,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "second", tone: "hold", count: overview.stages.agreed + overview.secondPublished, unit: "건", title: "2차 심사 확인",
       detail: <>확정만 하면 됨 {n(overview.stages.agreed)}건(거부 {n(overview.agreed.reject)} · 승인 {n(overview.agreed.approve)}, 그중 만장일치 {n(overview.second.unanimous_reject + overview.second.unanimous_approve)})은 한 번에 확정 · 공개분 {n(overview.secondPublished)}건은 사람이 봅니다. 엇갈린 것은 직접 판단에 들어 있습니다.</>,
       // 비어 있는 구간을 열지 않는다 — 할 일이 있다고 해 놓고 빈 화면을 주면 신뢰를 잃는다
-      action: { label: "2차 심사", href: overview.stages.agreed > 0 ? ACTION_LINKS.reviewAgreed : ACTION_LINKS.reviewPublished },
+      action: { label: "2차 심사", href: overview.stages.agreed > 0 ? ACTION_LINKS.reviewAgreed : ACTION_LINKS.reviewPublished }, work: { jobs: ["second-review"] },
     });
   }
   /**
@@ -335,21 +342,21 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ? modelName(row.model) : "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
         {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
       </>,
-      action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings },
+      action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings }, work: { jobs: ["second-review"] },
     });
   }
   if (ops.held > 0) {
     actions.push({
       key: "held", tone: "hold", count: ops.held, unit: "건", title: "분류를 못 정해 발행이 멈춘 후보",
       detail: <>승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다{ops.heldNextRetryAt ? ` — 다음 ${formatListTime(ops.heldNextRetryAt, now)}` : ""}. 급하면 수동으로 지정합니다.</>,
-      action: { label: "수동 분류", href: ACTION_LINKS.manual },
+      action: { label: "수동 분류", href: ACTION_LINKS.manual }, work: AI_WORK,
     });
   }
   if (downCount > 0) {
     actions.push({
       key: "down", tone: "critical", count: downCount, unit: "건", title: "응답하지 않는 공개 제품",
       detail: <>{DOWN_THRESHOLD}회 넘게 연속으로 실패해 공개 목록에서 빠져 있습니다. 지우거나 차단하지는 않습니다 — 다시 열리면 그대로 돌아옵니다. 끝난 서비스인지는 사람이 보고 정합니다.</>,
-      action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown },
+      action: { label: "응답 없음 목록", href: ACTION_LINKS.productsDown }, work: UPTIME_WORK,
     });
   }
   /**
@@ -362,7 +369,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "uptime-held", tone: uptimeHeld.level, count: uptimeHeld.degraded.streak, unit: "회", title: "생존 확인이 광역 실패로 판정을 보류하고 있습니다",
       detail: <>{job("uptime-ping")} 회차가 잇달아 {n(uptimeHeld.degraded.streak)}번 30% 넘게 실패해 이 서버 쪽 문제로 보고 세지 않았습니다(시작 {formatListTime(uptimeHeld.degraded.since, now)}{uptimeHeld.degraded.detail ? ` · 마지막 ${uptimeHeld.degraded.detail}` : ""}).
         {" "}그동안 응답 없음·생존 확인 밀림 수는 0 으로 보입니다 — 확인하는 서버(M3)의 네트워크·DNS·IP 평판을 확인합니다.</>,
-      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
+      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") }, work: UPTIME_WORK,
     });
   }
   /**
@@ -373,7 +380,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "standby", tone: "critical", count: standbyActive.length, unit: "개", title: "예비가 일하고 있는 역할",
       detail: <>{joined(standbyActive.map((row) => role(row.role)))} — 현재 담당·주 관측·격리 사유를 확인하고 외부 runbook의 주 복귀 절차를 따릅니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
+      action: { label: "역할 표", href: ACTION_LINKS.roles }, work: { roles: standbyActive.map((row) => row.role) },
     });
   }
   // 역할마다 주·예비를 비교한다. 웹만 새로 배포한 정상 상태를 전체 SHA 불일치로 경보하지 않는다.
@@ -384,14 +391,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({ key: `role-${name}`, tone: row?.reason === "standby_missing" || row?.reason === "release_mismatch" ? "hold" : "critical",
       count: reason, unit: "상태", title: `${ROLE_LABELS[name]} · ${reason}`,
       detail: <>현재 담당 {row?.ownerInstanceId ?? "미확인"} · 담당 차례 {row?.epoch ?? "미확인"} — 역할 표의 주·예비 릴리스와 담당 기한을 확인합니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles } });
+      action: { label: "역할 표", href: ACTION_LINKS.roles }, work: { roles: [name] } });
   }
   const workerAlarms = workerProgress?.liveness.filter((row) => row.alarm) ?? [];
   if (workerAlarms.length > 0) {
     actions.push({
       key: "liveness", tone: "critical", count: workerAlarms.length, unit: "개", title: "워커 관측이 끊겼거나 반복 재시작 중",
       detail: <>{joined(workerAlarms.map((row) => <>{role(row.role)} {row.reason === "restart_loop" ? "5분 내 반복 재시작" : "관측 끊김"}</>), " · ")}</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs }, work: { roles: workerAlarms.map((row) => row.role) },
     });
   }
   // 같은 릴리스로 다시 뜬 워커 — 5분 안 세 번이 아니어도 죽고 있다는 뜻이다(2026-10-08 발행 워커가 20분 사이 두 번)
@@ -403,14 +410,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "restarts", tone: "hold", count: restarted.reduce((sum, row) => sum + row.count, 0), unit: "회", title: "최근 1시간 안에 다시 뜬 워커",
       detail: <>{joined(restarted.map((row) => <>{role(row.role)} {row.count}회</>), " · ")} — 배포가 아닌 재시작입니다. 컨테이너 로그(supervisor.stopping 사유)를 봅니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
+      action: { label: "역할 표", href: ACTION_LINKS.roles }, work: { roles: restarted.map((row) => row.role) },
     });
   }
   if (roles && roles.scheduler.freshReplicas < 2) {
     actions.push({
       key: "scheduler-replicas", tone: roles.scheduler.freshReplicas === 0 ? "critical" : "hold", count: `${roles.scheduler.freshReplicas}/2`, unit: "대", title: "스케줄러 복제 관측이 부족합니다",
       detail: <>최근 관측 {roles.scheduler.freshReplicas}대 — scheduler 앱의 두 복제본과 로그를 확인합니다.</>,
-      action: { label: "역할 표", href: ACTION_LINKS.roles },
+      action: { label: "역할 표", href: ACTION_LINKS.roles }, work: { services: ["scheduler"] },
     });
   }
   if (workerProgress?.scheduler.reason === "scheduler_missed") {
@@ -418,14 +425,14 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "scheduler", tone: "critical", count: overdue.length, unit: "개", title: "스케줄러 예약이 밀렸습니다",
       detail: <>{joined(overdue.map(job))}</>,
-      action: { label: "작업 흐름", href: overdue.length === 1 ? jobHref(overdue[0]) : ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: overdue.length === 1 ? jobHref(overdue[0]) : ACTION_LINKS.jobs }, work: { jobs: overdue, services: ["scheduler"] },
     });
   }
   if (workerProgress?.scheduler.reason === "unknown_schedule") {
     actions.push({
       key: "scheduler-unknown", tone: "hold", count: "모름", unit: "상태", title: "스케줄러 예약 상태를 확인할 수 없습니다",
       detail: <>다음 예약 시각이 없는 작업이 있습니다 — 스케줄러 관측과 작업 표를 확인합니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs }, work: { services: ["scheduler"] },
     });
   }
   // 워커는 관측되는데 저장 진행이 없는 단계 — 관측 끊김(liveness)과 달리 프로세스는 살아 있다
@@ -434,7 +441,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "stage-progress", tone: "critical", count: stuckStages.length, unit: "단계", title: "워커는 살아 있는데 단계가 나아가지 않습니다",
       detail: <>{stuckStages.map((row) => throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage).join(" · ")} — 오래 기다린 후보가 있는데 5분간 저장 진행이 없습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs }, work: { jobs: stuckStages.flatMap(progressStageJobs) },
     });
   }
   /**
@@ -451,7 +458,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>{joined(upstreamStages.map((row) => <>{throughput?.stages.find((stage) => stage.key === row.stage)?.label ?? row.stage}
         {typeof row.waiting === "number" ? ` 대기 ${n(row.waiting)}건` : ""} · {formatWait(age(row) / 60)}째{row.errors5m ? ` · 최근 5분 오류 ${n(row.errors5m)}` : ""}</>), " · ")}
         {" "}— 오래 기다린 일감이 있는데 공급자·작업 오류가 이어집니다. 워커를 다시 띄워도 풀리지 않습니다 — 작업 상세의 마지막 오류와 GitHub 한도·인증·모델 연결을 확인합니다.</>,
-      action: { label: "작업 흐름", href: upstreamJob ? jobHref(upstreamJob) : ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: upstreamJob ? jobHref(upstreamJob) : ACTION_LINKS.jobs }, work: { jobs: upstreamStages.flatMap(progressStageJobs) },
     });
   }
   // 1시간 실패율 20% 이상인 모델 자리 — 예비가 받아 주면 "미해결 오류"에는 안 잡힌다(2차 투표 26% 가 숨었다)
@@ -460,7 +467,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "model-failures", tone: "hold", count: failingModels.length, unit: "자리", title: "모델 호출이 자주 실패합니다",
       detail: <>{failingModels.map((row) => `${row.label} ${row.model ? modelName(row.model) : ""} 실패 ${Math.round((row.failed1h / row.calls1h) * 100)}% (${row.failed1h}/${row.calls1h})`).join(" · ")} — 재시도와 예비 모델이 받아 주지만 처리량이 줄고 지연이 늘어납니다.</>,
-      action: { label: "모델 연결", href: ACTION_LINKS.models },
+      action: { label: "모델 연결", href: ACTION_LINKS.models }, work: { jobs: failingModels.map((row) => MODEL_HEALTH_JOBS[row.key]) },
     });
   }
   /**
@@ -481,7 +488,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>연속 {n(qwenFailures)}번{typeof qwen?.lastError === "string" ? <> · 마지막 <span className="font-mono">{qwen.lastError}</span></> : null}
         {Number.isFinite(qwenRetryAt) ? ` · 다음 시도 ${formatListTime(new Date(qwenRetryAt).toISOString(), now)}` : ""}
         {" "}— 그동안 감사 Qwen 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 묻지 않습니다. 서버와 vLLM 이 떠 있는지 확인합니다.</>,
-      action: { label: "감사", href: ACTION_LINKS.audit },
+      action: { label: "감사", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "second-review", "human-deepseek-review", "audit-screen-review"] },
     });
   }
   // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
@@ -498,28 +505,28 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "audit", tone: "hold", count: attention.auditRejectsOpen, unit: "건", title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
       detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
-      action: { label: "내릴 후보", href: ACTION_LINKS.audit },
+      action: { label: "내릴 후보", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "audit-screen-review"] },
     });
   }
   if (attention && attention.auditHeld > 0) {
     actions.push({
       key: "audit-held", tone: "hold", count: attention.auditHeld, unit: "건", title: "감사 보류로 목록에서 빠진 제품이 사람을 기다립니다",
       detail: <>AI 감사가 높은 확신으로 &ldquo;제품 아님&rdquo;이라 해 공개 목록에서만 뺀 것 — 차단이 아닙니다. 내리거나 유지로 정해야 풀립니다.</>,
-      action: { label: "보류 중", href: ACTION_LINKS.auditHeld },
+      action: { label: "보류 중", href: ACTION_LINKS.auditHeld }, work: AUDIT_WORK,
     });
   }
   if (attention?.auditCampaign && !attention.auditCampaign.current) {
     actions.push({
       key: "audit-stalled", tone: "hold", count: attention.auditCampaign.unanswered, unit: "건", title: "발행분 감사가 멈춰 있습니다",
       detail: <>감사 #{attention.auditCampaign.id}은 프롬프트 {attention.auditCampaign.promptVersion}로 시작했는데 지금 코드와 달라 매 틱 건너뜁니다 — 남은 {n(attention.auditCampaign.unanswered)}건은 사람이 중단하고 새 감사를 열어야 다시 봅니다.</>,
-      action: { label: "감사", href: ACTION_LINKS.audit },
+      action: { label: "감사", href: ACTION_LINKS.audit }, work: AUDIT_WORK,
     });
   }
   if (attention && attention.cdnPurgesPending > 0) {
     actions.push({
       key: "cdn-purge", tone: "hold", count: attention.cdnPurgesPending, unit: "건", title: "내린 제품의 CDN 캐시가 지워지지 않았습니다",
       detail: <>10분 넘게 확인되지 않은 지우기 요청 — 발행 워커의 CLOUDFLARE_ZONE_ID·CLOUDFLARE_PURGE_TOKEN 을 확인합니다. 그동안 내린 페이지가 Cloudflare 에 남습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs }, work: { jobs: ["cdn-purge"] },
     });
   }
   /**
@@ -537,7 +544,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         {outbox.pendingOverdue > 0 ? `(1시간 넘음 ${n(outbox.pendingOverdue)}${outbox.oldestPendingMinutes !== null ? `, 가장 오래 ${formatWait(outbox.oldestPendingMinutes / 60)}` : ""})` : ""}</> : "발송함 결과를 읽지 못했습니다"}
         {emailJob ? <> · {jobHealthLine(emailJob, now)}</> : null}
         {" "}— maintenance 의 LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM·PUBLIC_AUTH_SECRET 과 Resend 도메인·한도를 확인합니다. 하루가 지난 메일은 보내지 않고 닫습니다.</>,
-      action: { label: "메일 작업", href: jobHref("email-outbox-send") },
+      action: { label: "메일 작업", href: jobHref("email-outbox-send") }, work: { jobs: ["email-outbox-send"] },
     });
   }
   // 로그인 코드 메일 — 웹이 그 자리에서 보낸다(잡이 아니다). 한 통이라도 실패하면 보류, 가장 최근 세 통이 모두 실패면 지금 막힌 것이라 긴급
@@ -549,7 +556,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       title: loginTone === "critical" ? "로그인 코드 메일이 나가지 않습니다" : "로그인 코드 메일 일부가 실패했습니다",
       detail: <>최근 24시간 {n(login.total24h)}통 중 거절·결과 모름 {n(login.failed24h)}통{loginTone === "critical" ? " · 가장 최근 세 통이 모두 실패" : ""}
         {" "}— 웹의 LOGIN_EMAIL_API_KEY·LOGIN_EMAIL_FROM 과 Resend 도메인 인증·한도를 확인합니다. 그동안 메일 로그인은 코드를 받지 못합니다(GitHub 로그인은 그대로).</>,
-      action: { label: "웹 관측", href: ACTION_LINKS.roles },
+      action: { label: "웹 관측", href: ACTION_LINKS.roles }, work: { services: ["web"] },
     });
   }
   /**
@@ -568,28 +575,28 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>{job("ranking-refresh")} 마지막 성공 {formatListTime(rankingSuccess?.toISOString() ?? null, now, "없음")}{ranking?.lastError ? " · 마지막 회차 실패" : ""}
         {" "}· {job("click-rollup")} 마지막 성공 {formatListTime(asDate(rollup?.lastSuccessAt)?.toISOString() ?? null, now, "없음")}
         {" "}— 집계가 끝나야 랭킹을 요청합니다. 공개 화면은 랭킹에 &ldquo;오래됨&rdquo;을 붙입니다.</>,
-      action: { label: "랭킹 작업", href: jobHref("ranking-refresh") },
+      action: { label: "랭킹 작업", href: jobHref("ranking-refresh") }, work: { jobs: ["ranking-refresh", "click-rollup"] },
     });
   }
   if (evidenceSummary.oldestDueHours !== null && evidenceSummary.oldestDueHours > 72) {
     actions.push({
       key: "evidence-backlog", tone: "hold", count: evidenceSummary.due, unit: "건", title: "제품 근거 갱신이 밀렸습니다",
       detail: <>기한 지난 출처 {n(evidenceSummary.due)}건 · 가장 오래된 것 {Math.round(evidenceSummary.oldestDueHours / 24)}일 — {job("product-evidence-refresh")} 처리량이 출처 수를 못 따라갑니다.</>,
-      action: { label: "근거 갱신 작업", href: jobHref("product-evidence-refresh") },
+      action: { label: "근거 갱신 작업", href: jobHref("product-evidence-refresh") }, work: { jobs: ["product-evidence-refresh", "product-site-evidence-refresh"] },
     });
   }
   if (attention && attention.healthOverdue > 0) {
     actions.push({
       key: "health-overdue", tone: attention.healthOverdue > 5_000 ? "hold" : "clear", count: attention.healthOverdue, unit: "건", title: "생존 확인이 6시간 넘게 밀린 제품",
       detail: <>{job("uptime-ping")} 처리량이 목표(시간당 {n(attention.healthTargetPerHour)})에 못 미치면 쌓입니다.</>,
-      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") },
+      action: { label: "응답 점검 작업", href: jobHref("uptime-ping") }, work: UPTIME_WORK,
     });
   }
   if (attention && attention.introNeedsEditor > 0) {
     actions.push({
       key: "intro", tone: "hold", count: attention.introNeedsEditor, unit: "건", title: "소개 확인이 필요한 제품",
       detail: <>소개 검수가 근거로는 알 수 없다고 한 것{isPausedJob(states.get("product-intro-check")) ? " — 검수 잡은 멈춰 있습니다" : ""}.</>,
-      action: { label: "제품 관리", href: ACTION_LINKS.productsIntro },
+      action: { label: "제품 관리", href: ACTION_LINKS.productsIntro }, work: { jobs: ["product-intro-check"] },
     });
   }
   if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
@@ -602,7 +609,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>GitHub 저장소가 없거나 빈 채로 하루 넘게 이어짐 — 설치형 {n(attention.repoGone.installable)}건은 목록에서 가려짐 · 웹 {n(attention.repoGone.website)}건은 GitHub 표시만 뺌.
         {" "}잡이 github.com 을 다시 열어 정말 없으면 내립니다(하루 100건까지): 확인 대기 {n(review.pending)} · 내릴 후보 {n(review.delistCandidates)} · 사람 확인(옮겨 간 흔적) {n(review.human)} · 저장소 다시 열림 {n(review.kept)}
         {review.oldestHours !== null && <> · 가장 오래 기다린 것 {Math.round(review.oldestHours)}시간</>}.</>,
-      action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone },
+      action: { label: "제품 관리", href: ACTION_LINKS.productsRepoGone }, work: { jobs: ["product-stars-refresh", "product-repo-review"] },
     });
   }
   // 공개 제품 스팸 재검사(product-spam-rescan)가 자동으로 내린 것 — 하루 한도에 닿으면 판정이 잘못 바뀌었을 수 있어 더 내리지 않는다
@@ -614,7 +621,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>지난 24시간에 {n(attention.spamAutoBans.day)}건을 내렸습니다(판정 {SPAM_DETECTOR_VERSION}).{" "}
         {capped ? "더 걸린 것은 내리지 않고 기다립니다 — 판정이 잘못 바뀌지 않았는지 내린 목록부터 보세요." : "잘못 내려간 것은 차단 해제하면 재검사가 다시 내리지 않습니다."}
         {" "}자동 차단으로 남아 있는 것 {n(attention.spamAutoBans.banned)}건.</>,
-      action: { label: "자동 차단 목록", href: ACTION_LINKS.productsSpamBanned },
+      action: { label: "자동 차단 목록", href: ACTION_LINKS.productsSpamBanned }, work: { jobs: ["product-spam-rescan"] },
     });
   }
   // 공개 제품의 GitHub 저장소를 하루에 한 번씩 다 보고 있나(product-stars-refresh) — 배포 직후 첫 바퀴(약 10시간)는 낮다
@@ -623,7 +630,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "repo-coverage", tone: "hold", count: Math.floor(repoCoverage * 100), unit: "%", title: "저장소 확인 범위가 95% 아래입니다",
       detail: <>GitHub 저장소가 있는 공개 제품 {n(attention!.repoHealth.tracked)}개 중 지난 24시간에 확인한 것 {n(attention!.repoHealth.checked24h)}개 — {job("product-stars-refresh")} 작업이 밀리거나 GitHub 한도에 걸렸습니다.</>,
-      action: { label: "작업 흐름", href: ACTION_LINKS.jobs },
+      action: { label: "작업 흐름", href: ACTION_LINKS.jobs }, work: { jobs: ["product-stars-refresh"] },
     });
   }
   // 설정을 저장했는데 10분 넘게 옛 판으로 도는 워커(ADM-19) — 설정 화면 머리의 적용 확인과 같은 판단(settings-apply.ts)
@@ -664,7 +671,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         : x.state === "error"
           ? <>오류 <span className="font-mono">{x.report?.error}</span> · {mode} · 마지막 성공 {formatListTime(x.report?.lastSuccessAt ?? null, now, "없음")} · 받은 시각 {received} — 수집기 상태와 로그를 확인합니다. 일부러 끈 것이면 꺼짐(disabled)으로 보고하게 합니다.</>
           : <>받은 시각 {received} — 저장된 보고의 모양이 지금 코드와 맞지 않습니다. 수집기를 다시 실행해 새 보고를 받습니다.</>,
-      action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
+      action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers }, work: X_WORK,
     });
   }
   /**
@@ -685,7 +692,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         detail: <>{formatListTime(x.report.lastRunAt, now)} 실제 수집이 후보 {n(x.report.candidates)}건을 냈는데 같은 실행의 게시물 보고를 받지 못했습니다
           {" "}· 마지막으로 받은 게시물 보고 {Number.isFinite(postsRunAt) ? formatListTime(new Date(postsRunAt).toISOString(), now) : "없음"}
           {" "}— osaka-smoke 의 status.json(reports.posts)에 웹이 돌려준 응답이 있습니다. 서명 비밀·주소(X_POSTS_REPORT_URL)·형식을 확인합니다.</>,
-        action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
+        action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers }, work: X_WORK,
       });
     }
   }
@@ -697,7 +704,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       title: "X 수집이 이틀 넘게 후보를 내지 못했습니다",
       detail: <>끝난 실제 수집 {n(xRuns.zeroRuns)}번이 잇달아 후보 0건(처음 {formatListTime(xRuns.zeroSince, now, "모름")}) — 읽기는 하루 10건을 그대로 씁니다.
         {" "}검색어(좋아요 하한)와 X 검색 응답 코드를 확인합니다.</>,
-      action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers },
+      action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers }, work: X_WORK,
     });
   }
   return actions;
