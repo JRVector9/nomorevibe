@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { observedLocalModelWireHash } from "@/lib/llm/local-model-wire-observation";
 import { reviewHash, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
 import { gatewayModel, reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "./agent-review-gateway";
 
@@ -153,6 +154,7 @@ export async function reviewWithQwenDirect(input: ReviewInput, opts: {
   const request = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     seen.wireHash = createHash("sha256").update(String(init?.body)).digest("hex");
     const response = await (opts.request ?? fetch)(url, { ...init, redirect: "error" });
+    seen.wireHash = observedLocalModelWireHash(response) ?? seen.wireHash;
     seen.status = response.status;
     return response;
   }) as typeof fetch;

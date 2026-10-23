@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { observedLocalModelWireHash } from "@/lib/llm/local-model-wire-observation";
 import { MAX_REVIEW_INPUT_BYTES, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { IMPORT_SOURCES, QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE, QWEN_VISION_SHOT2_SOURCE } from "@/lib/crawl/audit-import-sources";
 import { qwenDirectConfig, QWEN_V2_PROMPT_VERSION, QWEN_V3_ADDENDUM_SHA256, QWEN_V3_PROMPT_VERSION, QwenDirectError, reviewWithQwenDirect,
@@ -158,7 +159,9 @@ export async function reviewWithScreenshot(input: ReviewInput, jpeg: Buffer, opt
   let wireHash: string | undefined;
   const request = (async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     wireHash = textHash(String(init?.body));
-    return (options.request ?? fetch)(url, init);
+    const response = await (options.request ?? fetch)(url, init);
+    wireHash = observedLocalModelWireHash(response) ?? wireHash;
+    return response;
   }) as typeof fetch;
   const review = await reviewWithQwenDirect(input, { timeoutMs: options.timeoutMs, signal: options.signal, env,
     promptVersion: prompt.qwenPromptVersion, request: withScreenshot(jpeg, request, evidence) });
