@@ -114,6 +114,35 @@ describe("오프라인 rollout 증거 일관성", () => {
     m.contracts.push(planned); m.routing!.m1BackendId = planned.backendId;
     expect(verifyAssistRolloutManifest(m)).toMatchObject({ gpuConfirmEligible: true, gpuM1ConfirmEligible: false });
   });
+  it("선택한 추가 주 처리 backend의 실제 계약·caller·평가를 생략할 수 없다", () => {
+    const unverified = fixture();
+    unverified.contracts.push({ ...contract, backendId: "unverified-primary", physicalGroup: "extra",
+      endpoint: "http://100.64.0.9:8792/v1/chat/completions" });
+    unverified.routing!.primaryBackendIds.push("unverified-primary");
+    const report = verifyAssistRolloutManifest(unverified);
+    expect(report).toMatchObject({ globalCapacityEvidenceComplete: false, gpuConfirmEligible: false, productionEligibleForReview: false });
+    expect(report.blockers.global).toContain("verified_contract_hash_missing:unverified-primary");
+    expect(report.blockers.global).toContain("primary_caller_missing:unverified-primary");
+    expect(report.blockers.evaluation).toContain("backend_comparison_incomplete");
+
+    const missingCaller = fixture(); addM1(missingCaller);
+    missingCaller.inventory!.expectedCallerIds = ["assist-gpu"];
+    missingCaller.inventory!.callers = missingCaller.inventory!.callers.filter(row => row.backendId === "gpu-qwen");
+    missingCaller.inventory!.aliases = missingCaller.inventory!.aliases.filter(row => row.callerId === "assist-gpu");
+    expect(verifyAssistRolloutManifest(missingCaller).blockers.global).toContain("primary_caller_missing:m1-qwen");
+
+    const missingComparison = fixture(); addM1(missingComparison);
+    // 추가 primary는 명명된 M1 역할이 아니어도 평가 대상이다.
+    missingComparison.target = "gpu"; missingComparison.routing!.m1BackendId = null;
+    missingComparison.comparison!.runs = missingComparison.comparison!.runs.filter(row => row.backendId === "gpu-qwen");
+    expect(verifyAssistRolloutManifest(missingComparison).gpuConfirmEligible).toBe(false);
+  });
+  it("M1을 실제 주 처리로 선택한 목록과 GPU 전용 target의 모순을 거부한다", () => {
+    const m = fixture(); addM1(m); m.target = "gpu";
+    expect(verifyAssistRolloutManifest(m).productionEligibleForReview).toBe(false);
+    const duplicate = fixture(); duplicate.routing!.primaryBackendIds.push("gpu-qwen");
+    expect(verifyAssistRolloutManifest(duplicate).productionEligibleForReview).toBe(false);
+  });
   it("GPU backend를 M1 이름으로 재사용해 분산 도입 완료로 세지 않는다", () => {
     const m = fixture(); m.target = "gpu_m1"; m.routing!.m1BackendId = contract.backendId;
     m.m1Ingress = { backendId: contract.backendId, integratedSha: sha, relayRevision: sha, contractHash: localModelContractHash(contract),

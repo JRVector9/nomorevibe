@@ -66,3 +66,11 @@ Node `24.22.1`과 lockfile의 의존성을 사용했다. 범위별 unit/격리 P
 - 최초 전체 unit의 schema 검사는0118 고정 가정으로 실패했다. 최신 CHECK를 비교하도록 보강하자 과거 assist OR 분기가 감사 task에 일반 consumer job을 허용하는 실제 차이를 발견했다. 0124에서 현재 Drizzle과 일치시키고 실제 DB 거절 회귀를 추가한다.
 - 기존 SSRF 단위 검사의 example.com:443 요청은 테스트 전용 외부 연결 가드와 충돌했다. 해당 공인 문서만 명시 허용하며 실제 모델 endpoint 차단을 유지한다.
 - 전용 PostgreSQL 초기 기동 중 일시 연결 reset과 호스트 /tmp inode 소진은 검사 환경 문제로 기록한다. TCP 준비 확인과 /home 전용 TMPDIR로 재검증한다. 운영 데이터나 다른 작업의 임시 파일은 정리하지 않는다.
+
+## 병합 전 재검토의 후속 수정
+
+`c8354a49`를 다시 검토해 두 결함을 재현했다. 최초 uptime shadow는 legacy 내림으로 상태·수정 시각이 바뀌어 소비할 수 없었다. 이제 같은 트랜잭션의 내림 감사 ID, 내림 직후 제품 revision, 원 관측의 raw revision을 후보에 고정한다. claim과 native dispatch는 그 감사와 현재 제품·health를 함께 확인한다. shadow 결과는 기록만 하며 confirm으로 승격하지 않는다. 관리자 해제·제품 변경·감사 연결 불일치·제어 행 누락은 계속 닫힌다.
+
+오프라인 readiness는 `primaryBackendIds`의 추가 backend를 검증 대상에서 빠뜨렸다. 선택한 모든 primary의 실제 계약·readback·물리 한도·native canary·caller·평가 실행을 요구하고, 중복 primary와 M1을 primary로 선택한 GPU 전용 target의 모순을 거절한다. 아직 선택하지 않은 계획상 M1과 비활성 DeepSeek의 누락은 기존처럼 따로 표시한다.
+
+수정 전 실패와 수정 후 범위 회귀·TypeScript·ESLint 결과는 PR11 본문 및 `/tmp/nmv-premerge-fixes-20261023`에 보존한다. 이전 전체 검증은 `c8354a49`에 한정되며 새 수정 SHA의 전체 검증으로 승계하지 않는다. 이 수정은 migration을 추가하거나 운영 설정·DB를 변경하지 않는다.

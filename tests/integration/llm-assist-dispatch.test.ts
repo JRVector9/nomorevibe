@@ -14,6 +14,7 @@ import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/cap
 import { requestModelSlot } from "@/lib/llm/capacity-repository";
 import { localModelContractHash, sameLocalModelFamily, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import { ASSIST_SCHEMA_VERSION } from "@/lib/domain/llm-assist/contracts";
+import { assistCandidateSourceHash } from "@/lib/domain/llm-assist/work";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -55,7 +56,7 @@ function context(signal?: AbortSignal): JobContext<null> {
   return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 }, signal,
     save: async () => {}, hasBudget: () => true, log: () => {} };
 }
-async function fixtureProduct() {
+async function fixtureProduct(options: { shadow?: boolean } = {}) {
   const slug = `${prefix}-${++sequence}`;
   const [row] = await admin`INSERT INTO products(slug,url,name,tagline,description,category,status,verify_token,edit_token_hash,updated_at)
     VALUES(${slug},${`https://${slug}.example/`},${slug},'소개','설명','Other','seeded','fixture',${"x".repeat(64)},clock_timestamp()-interval '7 days')
@@ -64,7 +65,7 @@ async function fixtureProduct() {
   ownedProducts.push(product);
   await admin`INSERT INTO product_health(slug,failures,status,checked_at,down_since)
     VALUES(${product.slug},10,404,clock_timestamp()-interval '1 minute',clock_timestamp()-interval '3 days')`;
-  expect(await autoBanUptimeProduct(product)).toBe(false);
+  expect(await autoBanUptimeProduct(product)).toBe(options.shadow ?? false);
   return product;
 }
 async function status(id: number) { return (await db.select().from(products).where(eq(products.id, id)))[0]?.status; }
@@ -176,6 +177,61 @@ afterAll(async () => {
 });
 
 describe("보강 소비자의 native dispatch와 최종 적용", () => {
+  async function initialShadow() {
+    // confirm latch는 UPDATE로 되돌리지 않는다. 이 파일의 격리 fixture에서 최초 shadow 상태를 만든다.
+    await admin`DELETE FROM llm_assist_controls WHERE task='uptime'`;
+    await admin`INSERT INTO llm_assist_controls(task,mode,dispatch_enabled,revision) VALUES('uptime','shadow',true,2)`;
+    return fixtureProduct({ shadow: true });
+  }
+  for (const finding of ["closed", "alive"] as const) it(`최초 shadow는 legacy 내림 뒤에도 ${finding} 결과를 계량·저장하고 적용하지 않는다`, async () => {
+    const product = await initialShadow(); responseKind = finding;
+    if (finding === "alive") safeFetch.mockResolvedValue({ finalUrl: product.url, response: new Response("<h1>Start your free plan</h1>") });
+    expect(await status(product.id)).toBe("banned");
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(1);
+    expect((await requests())[0]).toMatchObject({ state: "settled" });
+    expect(await work(product.id)).toMatchObject({ state: "done", attempts: 1 });
+    expect(await recordedResults()).toMatchObject([{ applied: false, outcome: { state: { page_state: finding } } }]);
+    expect(await status(product.id)).toBe("banned");
+    expect(await db.select().from(productEvidenceAudit).where(and(eq(productEvidenceAudit.slug, product.slug), eq(productEvidenceAudit.action, "admin.product.ban")))).toHaveLength(1);
+    expect(await db.select().from(operationsAudit).where(and(eq(operationsAudit.target, product.slug), eq(operationsAudit.action, "product-auto-ban-uptime")))).toHaveLength(1);
+    await reviewLlmAssist(context()); expect(calls).toHaveLength(1);
+  });
+  it("shadow 후보를 confirm이나 confirmation latch가 열린 shadow로 승격하지 않는다", async () => {
+    const product = await initialShadow();
+    await admin`UPDATE llm_assist_controls SET mode='confirm',confirmation_required=true,apply_enabled=true WHERE task='uptime'`;
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(0); expect(await status(product.id)).toBe("banned");
+    await admin`UPDATE llm_assist_controls SET mode='shadow',apply_enabled=false WHERE task='uptime'`;
+    // 한 번 열린 confirmation latch가 있는 shadow도 과거 즉시 내림 후보를 재사용할 수 없다.
+    await reviewLlmAssist(context()); expect(calls).toHaveLength(0);
+  });
+  for (const change of ["audit_id", "observed_revision", "administrator_release"] as const) it(`shadow의 ${change} 불일치도 모델 dispatch를 막는다`, async () => {
+    const product = await initialShadow();
+    if (change === "administrator_release") {
+      await admin`INSERT INTO product_evidence_audit(slug,actor,action,created_at)
+        VALUES(${product.slug},'admin','admin.product.unban',clock_timestamp())`;
+    } else {
+      const queued = await work(product.id), source = structuredClone(queued.source);
+      if (source.kind !== "uptime" || !source.shadowBan) throw new Error("shadow_provenance_missing");
+      if (change === "audit_id") source.shadowBan.auditId += 1_000_000;
+      else source.shadowBan.observedProductUpdatedAt = "2000-01-01 00:00:00";
+      await db.update(llmAssistWorks).set({ source, sourceHash: assistCandidateSourceHash(source) }).where(eq(llmAssistWorks.id, queued.id));
+    }
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(0); expect(await recordedResults()).toHaveLength(0);
+    expect(await status(product.id)).toBe("banned");
+  });
+  it("shadow 수집 중 제품 세대가 바뀌면 native dispatch를 거절한다", async () => {
+    const product = await initialShadow();
+    safeFetch.mockImplementationOnce(async () => {
+      await admin`UPDATE products SET updated_at=updated_at+interval '1 microsecond' WHERE id=${product.id}`;
+      return { finalUrl: product.url, response: new Response("<h1>We permanently closed the entire service.</h1>") };
+    });
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(0); expect(await recordedResults()).toHaveLength(0);
+    expect(await status(product.id)).toBe("banned");
+  });
   it("충분한 종료 근거만 native 종료 원장·결과·두 감사·purge와 함께 한 번 적용한다", async () => {
     const product = await fixtureProduct();
     await reviewLlmAssist(context());

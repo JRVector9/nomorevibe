@@ -26,6 +26,12 @@ async function confirm() {
 const owner = { instanceId: "assist-queue-test", bootId: randomUUID() };
 
 describe("비동기 uptime 확인 후보 큐", () => {
+  it("제어 행 누락을 off로 간주해 기존 즉시 내림으로 우회하지 않는다", async () => {
+    await db.delete(llmAssistControls).where(eq(llmAssistControls.task, "uptime"));
+    const p = await candidate("assist-control-missing");
+    await expect(autoBanUptimeProduct(p)).rejects.toThrow("assist_control_missing");
+    expect((await db.select().from(products).where(eq(products.id, p.id)))[0].status).toBe("seeded");
+  });
   it("기본 off는 기존 내림을 보존하고 shadow는 후보와 기존 내림을 함께 기록한다", async () => {
     const off = await candidate("assist-off");
     expect(await autoBanUptimeProduct(off)).toBe(true);

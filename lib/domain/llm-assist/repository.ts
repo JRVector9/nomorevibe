@@ -13,13 +13,16 @@ import { ASSIST_PROMPT_VERSION } from "./prompts";
 import { repoMoveSnapshotSelection } from "@/lib/domain/products/repo-move-snapshots";
 import { actionAuditClaimEligible } from "./audit-runtime";
 import { newsLocalizationClaimEligible } from "./news-runtime";
+import { uptimeAssistSubjectCurrent } from "./uptime-source";
 
 type Transaction = ProductTransaction;
 export type AssistWork = typeof llmAssistWorks.$inferSelect;
 export type AssistWorkClaim = { work: AssistWork; token: string; owner: ModelCapacityOwner; lease: JobLease };
 
-export async function readAssistControl(task: AssistWorkTask, tx: Transaction | typeof db = db): Promise<AssistControl> {
+export async function readAssistControl(task: AssistWorkTask, tx: Transaction | typeof db = db,
+  options: { required?: boolean } = {}): Promise<AssistControl> {
   const [row] = await tx.select().from(llmAssistControls).where(eq(llmAssistControls.task, task)).for("share");
+  if (!row && options.required) throw new Error("assist_control_missing");
   return row ?? { task, mode: "off", confirmationRequired: false, dispatchEnabled: false, applyEnabled: false, revision: 1 };
 }
 
@@ -30,6 +33,7 @@ export async function enqueueUptimeAssist(tx: Transaction, candidateValue: Uptim
   if (!isJobName(originJob)) throw new Error("invalid_assist_origin_job");
   const [control] = await tx.select().from(llmAssistControls).where(eq(llmAssistControls.task, "uptime")).for("share");
   if (!control) throw new Error("assist_control_missing");
+  if (candidate.shadowBan && (control.mode !== "shadow" || control.confirmationRequired)) throw new Error("invalid_uptime_shadow_control");
   const decision = { mode: control.mode, confirmationRequired: control.confirmationRequired };
   if (control.mode === "off" && !control.confirmationRequired) return { ...decision, workId: null, created: false };
   const sourceHash = assistCandidateSourceHash(candidate);
@@ -79,9 +83,9 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
       left join product_intro_checks on product_intro_checks.product_id=products.id
       where w.task in (${tasks}) and w.state in ('queued','waiting_capacity','retryable_transport')
         and w.next_attempt_at <= clock_timestamp() and w.attempts<3
-        and ((w.task='uptime' and products.status in ('seeded','verified') and products.url=w.source->'product'->>'url'
-        and products.updated_at::text=w.source->'product'->>'updatedAt'
+        and ((w.task='uptime' and ${uptimeAssistSubjectCurrent(sql`w.source`, sql`c.mode='shadow' and not c.confirmation_required`)}
         and ph.checked_at::text=w.source->'health'->>'checkedAt'
+        and ph.down_since::text=w.source->'health'->>'downSince'
         and ph.failures=(w.source->'health'->>'failures')::int and ph.status=(w.source->'health'->>'status')::int)
         or (w.task='repo_move' and ${repoMoveSnapshotSelection}=w.source->'snapshot')
         or (w.task='intro_recheck' and products.status in ('seeded','verified') and products.source='crawler'

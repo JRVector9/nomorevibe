@@ -10,7 +10,7 @@ import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-fresh
 import { UPTIME_UNKNOWN_STATUSES } from "./health-record";
 import { setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
-import { enqueueUptimeAssist, uptimeAssistObservationUnhandled } from "@/lib/domain/llm-assist/repository";
+import { enqueueUptimeAssist, readAssistControl, uptimeAssistObservationUnhandled } from "@/lib/domain/llm-assist/repository";
 
 // 보류 기록(health-record)이 같은 경계를 보는데 health → repository 순환을 피하려고 잎 모듈에 둔다
 export { UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
@@ -68,10 +68,12 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
       .for("update");
     if (!current || controls.signal?.aborted || (controls.hasBudget && !controls.hasBudget())) return false;
 
-    const assist = await enqueueUptimeAssist(tx, { kind: "uptime",
+    const candidate = { kind: "uptime" as const,
       product: { id: target.id, slug: target.slug, url: target.url, updatedAt: current.productUpdatedAt }, health: { failures: current.failures, status: current.lastStatus!,
-        checkedAt: current.checkedAtRevision, downSince: current.downSinceRevision } }, controls.lease?.name ?? "uptime-ping");
+        checkedAt: current.checkedAtRevision, downSince: current.downSinceRevision } };
+    const assist = await readAssistControl("uptime", tx, { required: true });
     if (assist.confirmationRequired) {
+      await enqueueUptimeAssist(tx, candidate, controls.lease?.name ?? "uptime-ping");
       if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
       if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
       return false;
@@ -81,14 +83,20 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
       policy: POLICY, threshold: UPTIME_AUTO_BAN_THRESHOLD, consecutiveFailures: current.failures,
       lastStatus: current.lastStatus, checkedAt: current.checkedAt.toISOString(), downSince: current.downSince!.toISOString(),
       productId: target.id, slug: target.slug, url: target.url, previousStatus: current.previousStatus, status: "banned",
+      observedProductUpdatedAt: current.productUpdatedAt, checkedAtRevision: current.checkedAtRevision, downSinceRevision: current.downSinceRevision,
     };
     if (!(await setStatusWithAudit({ id: target.id, slug: target.slug, status: "banned", action: "admin.product.ban",
       actor: "system:uptime", reason: POLICY, metadata }, tx))) return false;
-    await tx.insert(operationsAudit).values({
+    const [banned] = await tx.select({ updatedAt: sql<string>`${products.updatedAt}::text` }).from(products).where(eq(products.id, target.id));
+    const [audit] = await tx.insert(operationsAudit).values({
       actor: "system:uptime", actorKind: "token", action: "product-auto-ban-uptime", target: target.slug,
-      detail: { ...metadata, reason: POLICY,
+      detail: { ...metadata, bannedProductUpdatedAt: banned.updatedAt, reason: POLICY,
         note: `사이트 연속 접속 실패 ${current.failures}회 · 마지막 HTTP ${current.lastStatus} · 확인 ${metadata.checkedAt} · 자동 내림` },
-    });
+    }).returning({ id: operationsAudit.id });
+    if (assist.mode === "shadow") await enqueueUptimeAssist(tx, { ...candidate,
+      product: { ...candidate.product, updatedAt: banned.updatedAt },
+      shadowBan: { auditId: audit.id, observedProductUpdatedAt: current.productUpdatedAt },
+    }, controls.lease?.name ?? "uptime-ping");
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
     if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
     if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");

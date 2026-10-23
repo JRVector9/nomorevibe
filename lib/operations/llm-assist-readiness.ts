@@ -104,13 +104,18 @@ export function verifyAssistRolloutManifest(value: unknown) {
     if (!canary) bucket.push(`native_canary_missing:${backendId}`);
   };
   const routing = m.routing;
-  const requiredBackends = new Set([routing?.gpuBackendId,
+  const requiredBackends = new Set([routing?.gpuBackendId, ...(routing?.primaryBackendIds ?? []),
     ...(m.inventory?.callers.filter(caller => caller.transport === "local-direct").map(caller => caller.backendId) ?? []),
     ...(m.target === "gpu_m1" ? [routing?.m1BackendId] : []),
   ].filter((backend): backend is string => Boolean(backend)));
   for (const backend of requiredBackends) backendEvidence(backend);
   const inventory = m.inventory;
   if (!inventory || inventory.integratedSha !== m.integratedSha || !fresh(inventory.observedAt)) blockers.global.push("active_caller_inventory_missing");
+  for (const backendId of routing?.primaryBackendIds ?? []) {
+    if (!inventory?.callers.some(caller => caller.transport === "local-direct" && caller.backendId === backendId)) {
+      blockers.global.push(`primary_caller_missing:${backendId}`);
+    }
+  }
   if (inventory) {
     if (!sameSet(inventory.expectedCallerIds, inventory.callers.map(caller => caller.callerId))) blockers.global.push("active_caller_inventory_incomplete");
     if (!sameSet(inventory.callers.map(row => row.callerId), inventory.aliases.map(row => row.callerId))) blockers.global.push("physical_alias_inventory_incomplete");
@@ -133,6 +138,10 @@ export function verifyAssistRolloutManifest(value: unknown) {
   if (m.native?.unsettledRequestIds.length) blockers.global.push("native_remote_end_unknown");
   if (m.native && new Set(m.native.canaries.map(row => row.requestId)).size !== m.native.canaries.length) blockers.global.push("duplicate_native_canary");
   if (!routing || !routing.primaryBackendIds.includes(routing.gpuBackendId)) blockers.gpu.push("gpu_routing_missing");
+  if (routing && new Set(routing.primaryBackendIds).size !== routing.primaryBackendIds.length) blockers.gpu.push("duplicate_primary_backend");
+  if (m.target === "gpu" && routing?.m1BackendId && routing.primaryBackendIds.includes(routing.m1BackendId)) {
+    blockers.gpu.push("m1_primary_requires_gpu_m1_target");
+  }
   for (const backendId of routing?.primaryBackendIds ?? []) if (contracts.get(backendId)?.modelFamily !== "qwen3.8-flash-next") blockers.gpu.push(`primary_qwen_required:${backendId}`);
   for (const pair of routing?.independentPairs ?? []) {
     const original = contracts.get(pair.originalBackendId), reviewer = contracts.get(pair.reviewerBackendId);
@@ -158,7 +167,8 @@ export function verifyAssistRolloutManifest(value: unknown) {
   if (comparison) {
     const caseIds = comparison.cases.map(row => row.caseId);
     if (!sameSet(caseIds, comparison.labels.caseIds)) blockers.evaluation.push("independent_labels_incomplete");
-    const expectedBackends = [routing?.gpuBackendId, ...(m.target === "gpu_m1" ? [routing?.m1BackendId] : [])].filter((row): row is string => Boolean(row));
+    const expectedBackends = [routing?.gpuBackendId, ...(routing?.primaryBackendIds ?? []),
+      ...(m.target === "gpu_m1" ? [routing?.m1BackendId] : [])].filter((row): row is string => Boolean(row));
     if (!expectedBackends.every(backendId => comparison.runs.some(run => run.backendId === backendId))
       || new Set(comparison.runs.map(run => run.backendId)).size !== comparison.runs.length) blockers.evaluation.push("backend_comparison_incomplete");
     for (const run of comparison.runs) {

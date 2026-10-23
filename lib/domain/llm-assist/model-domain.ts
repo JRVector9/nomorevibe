@@ -21,6 +21,7 @@ import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-au
 import { resolveLocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import { lockNewsLocalizationRuntimeInput } from "./news-runtime";
 import { lockNewsLocalizationSource } from "@/lib/news/localization-repository";
+import { uptimeAssistSubjectCurrent } from "./uptime-source";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
@@ -87,12 +88,13 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
       && Date.parse(source.observedAt) <= Date.now() && Date.parse(source.observedAt) >= Date.now() - 180_000)) return false;
   const [current] = await tx.select({ id: products.id }).from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
     .where(and(eq(products.id, candidate.product.id), eq(products.url, candidate.product.url), eq(products.accessMode, "website"),
-      sql`${products.status} in ('seeded','verified')`, sql`${products.updatedAt}::text=${candidate.product.updatedAt}`,
+      uptimeAssistSubjectCurrent(sql`(${JSON.stringify(candidate)}::jsonb)`, sql`${control.mode === "shadow" && !control.confirmationRequired}`),
       sql`${productHealth.checkedAt}::text=${candidate.health.checkedAt}`, sql`${productHealth.downSince}::text=${candidate.health.downSince}`,
       eq(productHealth.failures, candidate.health.failures), eq(productHealth.status, candidate.health.status),
       sql`${productHealth.failures}>=${UPTIME_AUTO_BAN_THRESHOLD} and ${productHealth.status} not between 200 and 399
         and ${productHealth.status} not in (401,403,429,999) and ${productHealth.checkedAt} between clock_timestamp()-interval '6 hours' and clock_timestamp()`,
-      uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt, checkedAt: productHealth.checkedAt,
+      uptimeNegativeAllowed({ id: products.id, url: products.url,
+        updatedAt: sql`${candidate.shadowBan?.observedProductUpdatedAt ?? candidate.product.updatedAt}::timestamp`, checkedAt: productHealth.checkedAt,
         failures: productHealth.failures, status: productHealth.status }),
       sql`not exists(select 1 from product_evidence_audit a where a.slug=${products.slug} and a.action='admin.product.unban' and a.created_at>=${productHealth.checkedAt})`)).for("share");
   if (!current) return false;

@@ -57,6 +57,7 @@ export async function applyUptimeAssist(tx: ProductTransaction, claim: AssistWor
   if (control.mode !== "confirm" || !control.confirmationRequired || !control.dispatchEnabled || !control.applyEnabled
     || control.revision !== work.controlRevision) return false;
   const candidate = uptimeCandidateSchema.parse(work.source);
+  if (candidate.shadowBan) return false;
   if (input.subject.id !== candidate.product.id || input.subject.revision !== candidate.product.updatedAt
     || input.context.requestedUrl !== candidate.product.url || input.context.failureCount !== candidate.health.failures) return false;
   if (!input.sources.some(source => source.completeness === "complete" && source.text.trim()

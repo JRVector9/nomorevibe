@@ -46,6 +46,8 @@ node --import tsx scripts/verify-llm-assist-rollout.ts --manifest /검증한/rol
 
 GPU 전용 전환은 M1 설치를 기다리지 않는다. `gpuShadowEligible`와 `gpuConfirmEligible`를 먼저 확인한다. 아직 활성 caller가 아닌 계획상 M1 계약의 증거 누락은 GPU 전용 경로를 막지 않는다. 다만 실제 활성 M1 caller가 있으면 전역 capacity inventory에 반드시 포함한다.
 
+`primaryBackendIds`에 선택한 모든 backend는 계약·readback·caller 등록·native canary·실제 비교 자료의 대상이다. 계획상 backend를 선택한 primary로 적어 증거 검증을 생략할 수 없다. M1을 primary로 선택하면 `target:"gpu_m1"`로 검토하고 실제 M1 ingress 근거를 요구한다.
+
 GPU+M1 단계는 `target:"gpu_m1"`로 평가하고 `gpuM1ShadowEligible`·`gpuM1ConfirmEligible`를 별도로 확인한다. M1은 사설 인증 ingress, worker 접근, 모델 canary와 화면·텍스트 공유 물리 1슬롯을 검증해야 한다. 로컬 가짜 두 HTTP 서버에서 GPU가 먼저 완료됐다는 회귀는 실제 M1의 지연·부하 측정을 대신하지 않는다. 실제 관측 전에는 분산 상시 도입 완료로 보고하지 않는다.
 
 GPU Qwen과 M1 Qwen은 같은 기반 family다. backend·물리 자원·quantization이 달라도 독립 감사 두 표로 세지 않는다. 새 주 처리 경로는 Qwen이며 GPTOSS를 자동 결정의 기본 모델로 선택하지 않는다. Qwen 결정의 이기종 감사에는 검증된 다른 family를 사용한다. 원 family가 unknown이면 추측해 채우지 않는다.
@@ -60,6 +62,8 @@ DeepSeek는 충분한 근거에서 의미가 충돌하는 예외와 제한된 �
 4. 승인된 제한 shadow에서 후보·실제 근거·모델 결과·기권·추가 수집·예외·사람 큐·대기·성공·p95를 분리 측정한다. shadow 후보 생산은 기존 내림이 LLM으로 보호됐다는 의미가 아니다. 설정 동시 6이나 짧은 단건 중앙값을 처리용량으로 환산하지 않는다.
 5. 사람 독립 라벨·업무별 실패 사례·수용 기준을 검토하고 승인한 정확한 정책으로만 confirm/apply를 연다. 새 정상 제품의 오내림, URL 변경, 소개 사실 추가와 메이커 보호를 먼저 확인한다. 실패 횟수·시간 예산·401/403/429/999 제외·광역 실패 보류·일일 저장소 내림 100건·관리자 해제 보호를 완화하지 않는다.
 6. 작은 과거 적체를 명시적으로 산출해 범위·입력 revision을 고정한 뒤 별도 처리한다. 소개 needs_editor는 기존 성공 Sonnet 행·attempts를 초기화하지 않고 명시 요청으로만 재진입시킨다. 뉴스 초안 backend는 기본 off와 공개 노출 보류를 유지한다. 현재 정상으로 관측된 12건 복구를 이 단계에 자동 포함하지 않는다.
+
+최초 uptime shadow는 기존 정책의 내림과 같은 TX에 남긴 감사·제품 revision에 묶어, 이미 내려진 후보의 모델 결과를 기록한다. shadow의 retain 결과도 제품을 복구하지 않으며 어느 결과도 confirm 적용 권한이 없다. 관리자 해제나 제품·관측 변경 뒤에는 그 후보를 보내지 않는다. confirmation latch를 연 뒤의 shadow는 기존 gate를 유지하며 최초 legacy 내림의 예외를 재사용하지 않는다.
 
 ## 중단·drain·되돌림
 

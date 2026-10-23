@@ -21,6 +21,8 @@ export const uptimeCandidateSchema = z.object({
   product: z.object({ id: z.number().int().positive().safe(), slug: z.string().min(1).max(80), url: z.url(), updatedAt: z.string().min(1).max(100) }).strict(),
   health: z.object({ failures: z.number().int().nonnegative().safe(), status: z.number().int().min(0).max(999),
     checkedAt: z.string().min(1).max(100), downSince: z.string().min(1).max(100) }).strict(),
+  // legacy 내림과 같은 TX에서 만든 shadow에만 붙는다. confirm 적용 권한으로 쓸 수 없다.
+  shadowBan: z.object({ auditId: z.number().int().positive().safe(), observedProductUpdatedAt: z.string().min(1).max(100) }).strict().optional(),
 }).strict();
 export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchema>>;
 // intro의 기존 판정기는 CLI 모듈도 참조한다. 순환 import 중 schema 값을 먼저 캡처하지 않는다.
