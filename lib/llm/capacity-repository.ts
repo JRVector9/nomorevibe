@@ -248,6 +248,7 @@ export async function dispatchLocalModelCapacity(value: {
   const reservationValue = modelCapacityReservationSchema.parse(value.reservation);
   const identity = modelCapacityRequestIdentitySchema.parse(value.identity), binding = localModelBindingSchema.parse(value.binding);
   if (identity.provider !== binding.provider || identity.model !== binding.model || identity.routeId !== binding.routeId
+    || identity.workKey !== `${binding.logicalWorkKey}:${binding.inputHash}`
     || identity.class !== "background" || identity.pool !== "reviewer" || identity.owner.instanceId !== value.role.instanceId
     || identity.owner.bootId !== value.role.bootId || binding.inputHash !== value.input.inputHash
     || binding.sourceRevisionHash !== value.input.sourceRevisionHash || binding.reviewPolicyHash !== value.input.policyHash
@@ -317,7 +318,12 @@ async function localModelFence(tx: ProductTransaction, logicalKey: string, ownId
     ${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
     AND (${modelCapacityRequests.logicalWorkKey}=${logicalKey}
       OR (${logicalKey} ~ '^direct:audit:[1-9][0-9]*:audit$'
-        AND ${modelCapacityRequests.logicalWorkKey}='bg:audit:' || split_part(${logicalKey},':',3)))`).limit(1);
+        AND ${modelCapacityRequests.logicalWorkKey}='bg:audit:' || split_part(${logicalKey},':',3))
+      OR (${logicalKey} ~ '^direct:(candidate|split):' AND (
+        (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+          AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',3))
+        OR ${modelCapacityRequests.logicalWorkKey}='ai1:' || split_part(${logicalKey},':',3)
+        OR ${modelCapacityRequests.logicalWorkKey} LIKE 'ai2:' || split_part(${logicalKey},':',3) || ':%')))`).limit(1);
   return Boolean(blocked);
 }
 
@@ -337,6 +343,9 @@ function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: numb
 async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+      AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-agent-review'
       AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
@@ -631,6 +640,9 @@ function fixedAi2Identity(value: ModelCapacityRequestIdentity, target: Ai2Target
 async function ai2Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
+      AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'second-review'
       AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
@@ -1896,6 +1908,9 @@ function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): 
 async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
+      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+    OR (${logicalKey} ~ '^bg:audit:[1-9][0-9]*$'
+      AND ${modelCapacityRequests.logicalWorkKey}='direct:audit:' || split_part(${logicalKey},':',3) || ':audit'
       AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
       AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);

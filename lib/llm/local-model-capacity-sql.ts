@@ -23,9 +23,9 @@ function target(value: string): string {
     base("audit", ["audit", "second_opinion", "screen"], ["itemId", "slug"], [integer(`${value}->'itemId'`), string(`${value}->'slug'`, 80)]),
     base("published", ["published_filter"], ["secondReviewId", "slug"], [integer(`${value}->'secondReviewId'`), string(`${value}->'slug'`, 80)]),
     base("candidate", ["held_qwen", "human_deepseek"], ["attemptId", "candidateId", "repo"],
-      [integer(`${value}->'attemptId'`), integer(`${value}->'candidateId'`), string(`${value}->'repo'`, 200)]),
+      [integer(`${value}->'attemptId'`), integer(`${value}->'candidateId'`), string(`${value}->'repo'`, 200), match(`${value}->'repo'`, "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]),
     base("split", ["qwen_tiebreak", "deepseek_confirm"], ["tiebreakId", "candidateId", "generationKey", "repo"],
-      [integer(`${value}->'tiebreakId'`), integer(`${value}->'candidateId'`), digest(`${value}->'generationKey'`), string(`${value}->'repo'`, 200)]),
+      [integer(`${value}->'tiebreakId'`), integer(`${value}->'candidateId'`), digest(`${value}->'generationKey'`), string(`${value}->'repo'`, 200), match(`${value}->'repo'`, "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]),
   ].join(" OR ")})`;
 }
 
@@ -89,14 +89,15 @@ export const localModelLogicalSql = `(${directLogicalSql} OR ${all([
   "logical_work_key ~ '^direct:assist:[1-9][0-9]{0,15}:[a-z_]{1,32}$'", "class='background' AND pool='reviewer' AND provider='local-direct'",
   "nmv_local_assist_task_valid(split_part(logical_work_key,':',4))",
   "CASE WHEN split_part(logical_work_key,':',3) ~ '^[1-9][0-9]{0,15}$' THEN split_part(logical_work_key,':',3)::numeric BETWEEN 1 AND 9007199254740991 ELSE false END",
-  "route_id LIKE 'local-assist-' || split_part(logical_work_key,':',4) || '-%'", "logical_member_keys IS NULL",
+  "left(route_id,length('local-assist-' || split_part(logical_work_key,':',4) || '-'))='local-assist-' || split_part(logical_work_key,':',4) || '-'",
+  "substring(route_id from length('local-assist-' || split_part(logical_work_key,':',4) || '-')+1) ~ '^[a-z0-9][a-z0-9-]{0,59}$'", "logical_member_keys IS NULL",
 ])})`;
 
 export const localModelDispatchSql = all([
   "dispatch_binding IS NOT NULL AND dispatch_binding_hash ~ '^[a-f0-9]{64}$' AND dispatched_at IS NOT NULL AND state IN ('dispatched','indeterminate','settled','withdrawn')",
   localModelLogicalSql, binding("dispatch_binding"),
   "dispatch_binding->>'logicalWorkKey'=logical_work_key AND dispatch_binding->>'routeId'=route_id AND dispatch_binding->>'provider'=provider AND dispatch_binding->>'model'=model",
-  "dispatch_binding->>'physicalGroup'=group_id",
+  "dispatch_binding->>'physicalGroup'=group_id AND dispatch_binding->>'backendId'=provider_budget_id",
 ]);
 
 export const localModelTerminalSql = all([
@@ -112,4 +113,5 @@ export const localModelTerminalSql = all([
 export const localModelEventTerminalSql = all([
   "kind='dispatch_settled' AND from_state IN ('dispatched','indeterminate') AND to_state='settled'",
   terminal("evidence"), "evidence->'dispatch'->>'requestId'=request_id::text",
+  "evidence->'dispatch'->'epoch'=to_jsonb(epoch) AND evidence->'dispatch'->'revision'=to_jsonb(revision) AND evidence->'dispatch'->>'policyHash'=policy_hash",
 ]);
