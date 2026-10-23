@@ -70,6 +70,12 @@ describe("bounded news fact validation", () => {
     expect(extractNewsPrices("Costs three dollars per million tokens.").unsupported).toBe(true);
     expect(extractNewsPrices("입력 100만 토큰당 100원이다.").unsupported).toBe(true);
     expect(extractNewsPrices("USD 3 per million input tokens.")).toEqual(extractNewsPrices("$3 per million input tokens."));
+    expect(extractNewsPrices("$3 per million input tokens and $unknown for output.").unsupported).toBe(true);
+  });
+  it("preserves thousands separators rather than splitting the monetary amount", () => {
+    expect(extractNewsPrices("$1,000 per 1,000,000 input tokens.")).toEqual({ prices: [
+      { amount: "1000", currency: "USD", perQuantity: "1000000", perUnit: "token", direction: "input" }], unsupported: false });
+    expect(extractNewsPrices("입력 100만 토큰당 1,000달러다.")).toEqual(extractNewsPrices("$1,000 per 1,000,000 input tokens."));
   });
   it("does not mistake a negated general-release statement for a general release", () => {
     const beta = source("Acme releases Atlas Mini in public beta.", "Acme released Atlas Mini in public beta. General availability has not been announced.");

@@ -13,11 +13,11 @@ function factualText(value: string): string {
     .split(/(?<=[.!?。])\s+|\n+/u).filter(clause => !INSTRUCTION.test(clause)).join("\n");
 }
 function clauses(value: string): string[] {
-  return factualText(value).split(/(?<=[.!?。])\s+|\n+|[,;。]|\b(?:and|but)\b|(?:이며|이고|하지만)/iu).map(value => value.trim()).filter(Boolean);
+  return factualText(value).split(/(?<=[.!?。])\s+|\n+|(?<!\d),|,(?!\d)|[;。]|\b(?:and|but)\b|(?:이며|이고|하지만)/iu).map(value => value.trim()).filter(Boolean);
 }
 function claimClauses(value: string): string[] {
   // and/와로 이어진 목적어의 공통 부정을 끊지 않는다: "training data and code are not available".
-  return factualText(value).split(/(?<=[.!?。])\s+|\n+|[,;。]|\bbut\b|하지만/iu).map(value => value.trim()).filter(Boolean);
+  return factualText(value).split(/(?<=[.!?。])\s+|\n+|(?<!\d),|,(?!\d)|[;。]|\bbut\b|하지만/iu).map(value => value.trim()).filter(Boolean);
 }
 function decimal(value: string): string | null {
   const raw = normalize(value);
@@ -74,8 +74,9 @@ function denominators(value: string): { quantity: string; unit: NormalizedNewsPr
   }
   return [...new Map(found.map(row => [`${row.quantity}:${row.unit}`, row])).values()];
 }
+const MONEY_PATTERN = /([$€£]|\bUSD|\bEUR|\bGBP)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(USD|EUR|GBP|dollars?|euros?|pounds?|달러|유로|파운드)/giu;
 function monetaryValues(value: string): { amount: string; currency: NormalizedNewsPrice["currency"] }[] {
-  return [...value.matchAll(/([$€£]|\bUSD|\bEUR|\bGBP)\s*(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(USD|EUR|GBP|dollars?|euros?|pounds?|달러|유로|파운드)/giu)]
+  return [...value.matchAll(MONEY_PATTERN)]
     .flatMap(match => {
       const amount = decimal(match[2] ?? match[3]), measuredCurrency = currency(match[1] ?? match[4]);
       return amount !== null && measuredCurrency ? [{ amount, currency: measuredCurrency }] : [];
@@ -87,8 +88,10 @@ export function extractNewsPrices(value: string): { prices: NormalizedNewsPrice[
   const raw = factualText(value), allMoney = monetaryValues(raw), allDenominators = denominators(raw);
   const rows: NormalizedNewsPrice[] = [];
   const currencyCue = /[$€£¥₩]|\b(?:USD|EUR|GBP|JPY|KRW|CNY|RMB|dollars?|euros?|pounds?|yen|yuan|won)\b|\d\s*(?:달러|유로|파운드|엔|원|위안)/iu;
-  let unsupported = currencyCue.test(raw) && allMoney.length === 0
-    || /[¥₩]|\b(?:JPY|KRW|CNY|RMB|yen|yuan|won)\b|\d\s*(?:엔|원|위안)/iu.test(raw);
+  const unparsedMoney = raw.replace(MONEY_PATTERN, (match: string, prefixCurrency: string | undefined, prefixAmount: string | undefined,
+    suffixAmount: string | undefined, suffixCurrency: string | undefined) =>
+    decimal(prefixAmount ?? suffixAmount ?? "") !== null && currency(prefixCurrency ?? suffixCurrency ?? "") ? " " : match);
+  let unsupported = currencyCue.test(unparsedMoney);
   for (const clause of clauses(raw)) {
     const money = monetaryValues(clause);
     if (!money.length) continue;
