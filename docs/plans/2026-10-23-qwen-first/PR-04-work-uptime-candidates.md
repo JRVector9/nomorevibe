@@ -1,6 +1,6 @@
 # PR-04 보강 작업 큐와 uptime 후보 생산의 첫 경로를 연결한다
 
-상태: **구현 중 · scoped 검증 완료 · PR-02 migration 통합 대기** · 제안 브랜치: `feat/qwen-first-work-uptime-candidates` · 설계 기준: `c37ae82f`
+상태: **구현 완료 · scoped 검증 통과 · PR-05 실호출 통합 검증 중** · 제안 브랜치: `feat/qwen-first-work-uptime-candidates` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -102,3 +102,5 @@ Migration: additive work/result 표·제한된 kind/상태·고유 인덱스와 
 ## 개발 검증 기록 (2026-10-23)
 
 격리 PostgreSQL(127.0.0.1:55571)에 0119 SQL을 직접 적용하고 신규 큐 4건·기존 uptime 54건, 총 58건을 통과했다. ESLint, Next typegen 후 전체 TypeScript 검사도 통과했다. PR-02의 0118 뒤 journal 등록과 최종 통합 재검증은 남아 있다. 기본값은 off이며 운영 DB 변경·배포·모델 호출은 하지 않았다.
+
+0118 다음 journal 등록 및 0119 전체 신규 migration 실행을 확인했다. native assist target/binding과 같은 트랜잭션의 request ID 연결을 포함하며, raw 원본 지문·원 업무/소비자 pause·owner/lease를 dispatch 직전에 재검증한다. 장비·작업 ID·revision이 달라도 동일 업무 fence를 유지한다. 결과별 input snapshot 컬럼을 포함한다. 최종 scoped DB 58건, binding 단위 5건, ESLint·typegen·tsc가 통과했다. 초기 테스트 DB 별칭은 전용 DB 이름 가드로 거절됐고, 가드를 바꾸지 않고 격리 컨테이너 안의 DB 이름을 맞춰 재실행했다.
