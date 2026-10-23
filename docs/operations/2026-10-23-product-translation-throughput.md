@@ -8,7 +8,7 @@
 
 Supa의 실제 모델은 `Inferact/Qwen3.8-27B-NVFP4`이고 gateway 이름은 `[supa] Qwen3.8-27B-NVFP4`다. 2026-10-23 실제 runtime의 context 한도는 98,304 tokens였고, 점검 순간 실행·대기 요청은 0건이었다. 이는 지속 부하나 안전한 추가 동시성의 증거가 아니다.
 
-같은 운영 prompt와 스키마로 실제 필드 30개를 비교했다. 현재 pending 표본 22개와 이미 번역된 공개 제품의 현재 한국어 원문 control 8개를 분리했다. 두 모델에 각 8회 호출했으며 출력은 평가 파일에만 저장했다. 기존 검수 통과는 GPT-OSS 24/30(실제 pending 16/22, control 8/8), Qwen 14/30(pending 12/22, control 2/8)이었다. Qwen 2개 호출은 중첩 JSON 배열로 반환되어 8필드가 `invalid_output`이었고, 한국어 control 2필드는 `too_long`으로 거절됐다. 실패를 정상화하거나 재호출하여 점수를 바꾸지 않았다. HTTP는 모두 200, finish는 모두 stop이었다. 전체 응답 시간 중앙값은 GPT-OSS 8.58초, Qwen 4.33초, 최대는 각각 17.49초와 8.16초였다. 자동 검수 수용률은 번역 정확도와 같지 않으며 사람 정답 라벨이 없는 제한된 비교다.
+같은 운영 prompt와 스키마로 실제 필드 30개를 비교했다. 현재 pending 표본 22개와 이미 번역된 공개 제품의 영문 원문을 한국어 한 줄 소개로 옮기는 별도 control 8개를 분리했다. 두 모델에 각 8회 호출했으며 출력은 평가 파일에만 저장했다. pending은 product-translate의 원래 prompt·validator, 별도 control은 product-tagline-ko의 원래 prompt·validator로 평가했다. 두 작업의 수용률을 합친 값은 단일 작업의 품질 지표가 아니다. 기존 검수 통과는 GPT-OSS 24/30(실제 pending 16/22, control 8/8), Qwen 14/30(pending 12/22, control 2/8)이었다. Qwen 2개 호출은 중첩 JSON 배열로 반환되어 8필드가 `invalid_output`이었고, 한국어 control 2필드는 `too_long`으로 거절됐다. 실패를 정상화하거나 재호출하여 점수를 바꾸지 않았다. HTTP는 모두 200, finish는 모두 stop이었다. 전체 응답 시간 중앙값은 GPT-OSS 8.58초, Qwen 4.33초, 최대는 각각 17.49초와 8.16초였다. 자동 검수 수용률은 번역 정확도와 같지 않으며 사람 정답 라벨이 없는 제한된 비교다. 이 공통 prompt 대조 실험은 초기 기준이며, 사용자 요청에 따른 AI 기준 번역·모델별 prompt 조정·새 표본 평가는 별도 단계로 보존한다.
 
 현재 prompt의 제품 번역은 GPT-OSS를 유지하고 운영 `PRODUCT_TRANSLATION_MODEL`을 설정하지 않는다. Qwen 전용 모델 선택 기능은 준비하지만 실제 전환은 하지 않는다. 공유 gateway·Supa serving 설정도 바꾸지 않는다. 평가 원본은 `/tmp/nmv-qwen-quality-20261023`, 보고서는 `/home/ubuntu/reports/nomorevibe-qwen-translation-quality-2026-10-23`에 보존한다. 배포와 처리량 증거는 별도 운영 보고서에 기록한다.
 
