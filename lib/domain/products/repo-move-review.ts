@@ -72,9 +72,13 @@ export function buildRepoMoveInput(value: RepoMoveCandidate, collected: readonly
   const oldKey = repositoryKey(snapshot.repoUrl)!;
   const redirect = candidate.oldRepository.state === "moved" ? `GitHub redirected https://github.com/${oldKey} to https://github.com/${candidate.oldRepository.to}.`
     : `GitHub repository https://github.com/${oldKey}: ${candidate.oldRepository.state}.`;
+  const pages = collected.filter(source => source.sourceId === "product_page");
+  if (pages.length > 1) throw new Error("duplicate_product_page");
+  const freshPage = pages[0];
+  const page = freshPage ?? candidate.page;
   const sources = [repoMoveSource("old_repository", "metadata", snapshot.repoUrl, redirect,
     snapshot.repoCheckedAt ?? snapshot.updatedAt, candidate.oldRepository.state === "unknown" ? "missing" : "complete", null),
-  ...(candidate.page ? [candidate.page] : []), ...collected];
+  ...(page ? [page] : []), ...collected.filter(source => source.sourceId !== "product_page")];
   return assistInputSchema.parse({ schemaVersion: ASSIST_SCHEMA_VERSION, task: "repo",
     subject: { type: "product", id: snapshot.id, revision: assistHash(snapshot) }, policyVersion: ASSIST_POLICY_VERSION,
     promptVersion: ASSIST_PROMPT_VERSION, sources, context: { oldRepositoryUrl: snapshot.repoUrl, productName: snapshot.name,
@@ -99,7 +103,8 @@ export function decideRepositoryMove(candidateValue: RepoMoveCandidate, input: R
     || assistHash(input.context.candidateRepositoryUrls) !== assistHash(candidate.candidates.map(item => item.url))) {
     return { kind: "human", reason: "source_binding_mismatch" };
   }
-  const boundSources = buildRepoMoveInput(candidate).sources;
+  // 생산 당시 page는 소비자가 재접속한 현재 page로 바뀔 수 있다. 공식 redirect 메타는 원 후보에 고정한다.
+  const boundSources = buildRepoMoveInput(candidate).sources.filter(source => source.sourceId !== "product_page");
   if (boundSources.some(expected => !input.sources.some(source => source.sourceId === expected.sourceId && assistHash(source) === assistHash(expected)))) {
     return { kind: "human", reason: "source_binding_mismatch" };
   }
@@ -120,8 +125,9 @@ export function decideRepositoryMove(candidateValue: RepoMoveCandidate, input: R
     // fork/copy is lineage evidence, never positive evidence that this is a different product.
     if (outcome.state.code_lineage === "fork_or_copy" || outcome.state.project_identity !== "different"
       || candidate.oldRepository.state !== "gone") return { kind: "human", reason: "unverified_unrelated_repository" };
-    if (!candidate.page || candidate.page.completeness !== "complete" || !candidate.page.httpStatus
-      || candidate.page.httpStatus < 200 || candidate.page.httpStatus >= 400) return { kind: "collect_evidence", reason: "product_page_unavailable" };
+    const page = input.sources.find(source => source.sourceId === "product_page");
+    if (!page || page.kind !== "page" || page.completeness !== "complete" || !page.text.trim() || !page.httpStatus
+      || page.httpStatus < 200 || page.httpStatus >= 400) return { kind: "collect_evidence", reason: "product_page_unavailable" };
     return outcome.action.proposal === "delist_candidate" ? { kind: "unrelated_candidate" } : { kind: "human", reason: "model_requires_review" };
   }
   if (outcome.state.relationship !== "same_project" || outcome.action.proposal !== "update_repo_candidate") {

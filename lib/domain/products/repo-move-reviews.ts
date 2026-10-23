@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { productEvidenceAudit, productRepoReviews, products } from "@/lib/db/schema";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { syncRepositoryLink } from "@/lib/domain/evidence/repository-link-sync";
-import { assistHash, assistInputHash, type AssistOutcome } from "@/lib/domain/llm-assist/contracts";
+import { assistHash, assistInputHash, type AssistOutcome, type AssistSource } from "@/lib/domain/llm-assist/contracts";
 import { assistPromptHash } from "@/lib/domain/llm-assist/prompts";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { findRepositoryProduct, lockProductRepository } from "./repository-identity";
@@ -14,7 +14,7 @@ import { repositoryKey, type RepoCheck } from "./repo-review";
 import { readRepoMoveSnapshot } from "./repo-move-snapshots";
 export { readRepoMoveSnapshot } from "./repo-move-snapshots";
 
-export type FreshRepoMoveChecks = { oldRepository: RepoCheck; destination: RepoCheck; checkedAt: string };
+export type FreshRepoMoveChecks = { oldRepository: RepoCheck; destination: RepoCheck; checkedAt: string; page?: AssistSource };
 export type RepoMoveApplyResult = "updated" | "delisted" | "candidate_only" | "protected" | "stale" | "daily_limit" | "human";
 
 /** Shared dispatch calls this before acquiring a physical attempt; stale/protected work must never reach the model. */
@@ -54,6 +54,15 @@ export async function applyRepoMoveResult(tx: ProductTransaction, value: RepoMov
   const ageMs = Date.now() - Date.parse(fresh.checkedAt);
   if (!Number.isFinite(ageMs) || ageMs < -5_000 || ageMs > 60_000 || fresh.destination.state !== "alive"
     || assistHash(fresh.oldRepository) !== assistHash(candidate.oldRepository)) return "stale";
+  if (decision.kind === "unrelated_candidate") {
+    const page = input.sources.find(source => source.sourceId === "product_page"), currentPage = fresh.page;
+    const pageIdentity = (source: AssistSource) => ({ kind: source.kind, url: source.url, text: source.text,
+      completeness: source.completeness, httpStatus: source.httpStatus });
+    if (!page || !currentPage || currentPage.kind !== "page" || currentPage.completeness !== "complete" || !currentPage.text.trim()
+      || Date.parse(currentPage.observedAt) < Date.now() - 60_000 || Date.parse(currentPage.observedAt) > Date.now() + 5_000
+      || !Number.isFinite(Date.parse(currentPage.observedAt))
+      || assistHash(pageIdentity(page)) !== assistHash(pageIdentity(currentPage))) return "stale";
+  }
 
   await lockPipelineInputStages(tx);
   if (decision.kind === "update_repo_candidate") await lockProductRepository(tx, decision.url);

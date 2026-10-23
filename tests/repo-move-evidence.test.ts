@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { checkRepoMoveBeforeApply, collectRepoMoveInput } from "@/lib/domain/products/repo-move-evidence";
-import { repoMoveSource, type RepoMoveCandidate } from "@/lib/domain/products/repo-move-review";
+import { buildRepoMoveInput, repoMoveSource, type RepoMoveCandidate } from "@/lib/domain/products/repo-move-review";
+import { assistHash } from "@/lib/domain/llm-assist/contracts";
 import type { fetchCapped, CappedFetchResult } from "@/lib/net/fetch";
 
 const candidate = (): RepoMoveCandidate => ({ kind: "repo_move", snapshot: { id: 1, slug: "tool", url: "https://tool.example",
@@ -13,6 +14,7 @@ const ok = (url: string, body: string, truncated = false): CappedFetchResult => 
   headers: new Headers(), body: Buffer.from(body), truncated });
 const fetcher = (readme: CappedFetchResult | null = null) => vi.fn<typeof fetchCapped>(async url => {
   if (url.startsWith("https://raw.githubusercontent.com/")) return readme ?? ok(url, "# Tool\nDraw maps with the original Tool project.");
+  if (url === "https://tool.example") return ok(url, "<h1>Current Tool</h1><p>Draw maps today.</p>");
   return ok("https://github.com/new/tool", "<title>Tool</title><main>Draw maps with Tool.</main>");
 });
 
@@ -23,7 +25,9 @@ describe("저장소 비동기 근거 수집", () => {
     expect(result.kind).toBe("ready");
     if (result.kind !== "ready") throw new Error(result.reason);
     expect(result.input.sources.map(source => source.sourceId)).toEqual(["old_repository", "product_page", "old_readme", "candidate_readme_0", "candidate_repository_0"]);
-    expect(request).toHaveBeenCalledTimes(4);
+    expect(request).toHaveBeenCalledTimes(5);
+    expect(result.input.sources.find(source => source.sourceId === "product_page")).toMatchObject({
+      url: "https://tool.example", text: "Current Tool Draw maps today.", completeness: "complete" });
     expect(result.input.sources.find(source => source.sourceId === "candidate_readme_0")).toMatchObject({ completeness: "complete", kind: "readme" });
   });
 
@@ -56,5 +60,27 @@ describe("저장소 비동기 근거 수집", () => {
     expect(await checkRepoMoveBeforeApply(candidate(), { fetch: request })).toMatchObject({ oldRepository: { state: "moved", to: "new/tool" }, destination: { state: "alive" } });
     const checks = await checkRepoMoveBeforeApply(candidate(), { fetch: request });
     expect(Date.parse(checks.checkedAt)).toBeGreaterThanOrEqual(before);
+    expect(checks.page).toMatchObject({ text: "Current Tool Draw maps today.", completeness: "complete" });
+  });
+
+  it("생산 당시 page를 바꾸지 않고 현재 page 한 개만 입력에 남긴다", async () => {
+    const original = candidate(), hash = assistHash(original);
+    const result = await collectRepoMoveInput(original, { fetch: fetcher() });
+    expect(assistHash(original)).toBe(hash);
+    if (result.kind !== "ready") throw new Error(result.reason);
+    expect(result.input.sources.filter(source => source.sourceId === "product_page")).toHaveLength(1);
+    const page = result.input.sources.find(source => source.sourceId === "product_page")!;
+    expect(() => buildRepoMoveInput(original, [page, page])).toThrow("duplicate_product_page");
+  });
+
+  it("옛 저장소가 없는 후보의 현재 page가 blocked/truncated/missing이면 모델 준비를 보류한다", async () => {
+    const original = { ...candidate(), oldRepository: { state: "gone" as const } };
+    for (const page of [{ ok: false as const, reason: "http" as const, status: 403 }, ok(original.snapshot.url, "Current Tool", true),
+      ok(original.snapshot.url, "<h1>Just a moment</h1>"), { ok: false as const, reason: "timeout" as const }]) {
+      const request = vi.fn<typeof fetchCapped>(async url => url === original.snapshot.url ? page
+        : url === original.snapshot.repoUrl ? { ok: false, reason: "http", status: 404 }
+          : url.startsWith("https://raw.githubusercontent.com/") ? ok(url, "# Monitoring SDK") : ok(url, "Monitoring SDK"));
+      expect(await collectRepoMoveInput(original, { fetch: request })).toEqual({ kind: "waiting_evidence", reason: "product_page_unavailable" });
+    }
   });
 });
