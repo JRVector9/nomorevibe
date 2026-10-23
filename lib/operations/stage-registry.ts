@@ -3,6 +3,7 @@ import type { CatalogRole } from "@/lib/jobs/catalog";
 import type { StageKey as CompletionStageKey } from "./pipeline-completions";
 import type { ThroughputStage } from "./throughput-model";
 import type { ProgressStageKey } from "./worker-progress";
+import { koreanTranslationQwenEnabled, KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
 
 /**
  * 운영센터 흐름 단계 — 들어오는 곳(소스) → 심사 흐름 6단계 → 발행 후 보강(운영센터 개편 v8 PR2).
@@ -193,6 +194,9 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
       return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? "EMBEDDING_MODEL", provider: slot.provider,
         model: value || slot.fallback, source: value ? "env" : "default", approximated: slot.approximated };
     }),
+    ...(koreanTranslationQwenEnabled(env) ? [{ stage: "tagline-ko", key: "tagline-ko-qwen", label: "한국어 소개 · GPU Qwen",
+      code: "KOREAN_TRANSLATION_QWEN_ENABLED", provider: "vllm", model: KOREAN_TRANSLATION_QWEN_MODEL,
+      source: "env", approximated: true } satisfies ModelSlot] : []),
   ];
   const order = new Map<string, number>(PIPELINE_STAGES.map((row, index) => [row.key, index]));
   return slots.sort((a, b) => order.get(a.stage)! - order.get(b.stage)!);

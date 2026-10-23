@@ -1,21 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const read = vi.hoisted(() => ({ replica: vi.fn(), home: vi.fn(), queue: vi.fn(), warn: vi.fn() }));
-vi.mock("@/lib/db", () => ({ readReplicaOnly: read.replica }));
+const read = vi.hoisted(() => ({ replica: vi.fn(), home: vi.fn(), queue: vi.fn(), warn: vi.fn(), control: vi.fn() }));
+vi.mock("@/lib/db", () => ({ readReplicaOnly: read.replica, db: { select: () => ({ from: () => ({ where: read.control }) }) } }));
 vi.mock("@/lib/cache/shared", () => ({ sharedStore: null }));
 vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: read.home, koreanTaglineQueue: read.queue }));
 vi.mock("@/lib/observability/logger", () => ({ logger: { warn: read.warn } }));
 
-const value = { eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2,
+const value = { eligible: 10, done: 4, ready: 3, recoveryReady: 0, retryScheduled: 2, blocked: 1, lastHour: 2,
   measuredAt: "2026-10-23T18:00:00.000Z" };
 beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   read.replica.mockImplementation(async (load: (replica: unknown) => Promise<unknown>) => ({ ok: true, value: await load({}) }));
   read.home.mockResolvedValue(["home-one"]);
+  read.control.mockResolvedValue([{ mode: "disabled" }]);
   read.queue.mockResolvedValue(value);
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("한국어 번역 상태 읽기", () => {
   it("복제본 범위에서 같은 홈 목록을 사용하고 동시 읽기와 30초 반복을 공유한다", async () => {
@@ -60,4 +61,32 @@ describe("한국어 번역 상태 읽기", () => {
     expect(await result).toEqual({ ok: false, reason: "error" });
     expect(read.home).not.toHaveBeenCalled();
   });
+});
+
+
+it("does not reuse queue counts from before alternate-model recovery was enabled", async () => {
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
+  const { readKoreanTranslationQueue } = await import("@/lib/operations/korean-translation");
+  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value });
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
+  const expanded = { ...value, ready: 5, recoveryReady: 2 };
+  read.queue.mockResolvedValue(expanded);
+  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value: expanded });
+  expect(read.queue).toHaveBeenCalledTimes(2);
+});
+
+
+it("does not retain disabled-mode recovery counts after the capacity gate closes", async () => {
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
+  const { readKoreanTranslationQueue } = await import("@/lib/operations/korean-translation");
+  const expanded = { ...value, ready: 5, recoveryReady: 2 };
+  read.queue.mockResolvedValue(expanded);
+  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value: expanded });
+  read.control.mockResolvedValue([{ mode: "open" }]);
+  read.queue.mockResolvedValue(value);
+  expect(await readKoreanTranslationQueue()).toEqual({ ok: true, value });
+  expect(read.queue).toHaveBeenCalledTimes(2);
 });

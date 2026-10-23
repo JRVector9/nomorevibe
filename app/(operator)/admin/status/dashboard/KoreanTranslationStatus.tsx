@@ -8,6 +8,9 @@ import { formatAgo } from "@/lib/format/time";
 import { jobHref } from "../action-links";
 import type { OwnerContext, WorkOwners } from "../work-owners";
 import { WorkOwnerButtons } from "./WorkOwnerButtons";
+import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS,
+  koreanTranslationMaxOutputTokens, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 
 const JOB = "product-tagline-ko";
 const n = (value: number) => value.toLocaleString("ko-KR");
@@ -29,11 +32,12 @@ export function koreanTranslationRuntime(ctx: Pick<OwnerContext, "roles" | "inst
     || !worker.value.release || worker.value.release === "unknown" || lease.ownerRelease !== worker.value.release) return "담당·워커 릴리스 미확인";
   if (worker.value.status !== "running") return "담당 워커 실행 미확인";
   const lane = parseRuntimeLanes(worker.value.lanes, role)?.find((row) => row.jobs.includes(JOB));
-  if (!lane) return "기본 줄 관측 없음";
+  if (!lane) return "한국어 번역 줄 관측 없음";
+  const laneLabel = lane.jobs.length === 1 ? "한국어 번역 줄" : "공유 번역 줄";
   if (lane.state === "running" && lane.currentJob === JOB) return "한국어 번역 실행 중";
   if (lane.state === "running" && lane.currentJob) return `같은 줄에서 ${JOB_LABELS[lane.currentJob] ?? lane.currentJob} 실행 중`;
-  if (lane.state === "stopping") return "기본 줄 정지 중";
-  return lane.state === "polling" ? "기본 줄 작업 확인 중" : "기본 줄 대기";
+  if (lane.state === "stopping") return `${laneLabel} 정지 중`;
+  return lane.state === "polling" ? `${laneLabel} 작업 확인 중` : `${laneLabel} 대기`;
 }
 
 /** 0건·집계 보류에도 작업 존재와 실제 상태를 남긴다. */
@@ -46,6 +50,11 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
   return <section id="korean-translation" className="dash-card dash-8" aria-label="제품 소개 한국어 번역">
     <div className="dash-card-h"><h2>제품 소개 한국어 번역</h2><small>{stats ? `집계 ${formatAgo(stats.measuredAt, now)}` : "집계 미확인"}</small></div>
     <p className="dash-note">공개 제품의 기존 소개를 한국어 한 줄로 옮깁니다. 다국어 제품 정보 번역·심사 사유 번역과 별도 작업입니다.</p>
+    <p className="dash-note">번역 요청 한도: 최대 {KOREAN_TRANSLATION_MAX_ITEMS}건·소개 합계 {n(KOREAN_TRANSLATION_LEGACY_MAX_CHARS)}자,
+      출력 {n(koreanTranslationMaxOutputTokens(1))}~{n(koreanTranslationMaxOutputTokens(KOREAN_TRANSLATION_MAX_ITEMS))}토큰.
+      {" "}엄격 용량 제어에서는 기존 요청 한도를 유지합니다.</p>
+    <p className="dash-note">사용 모델 설정: {TRANSLATE_MODEL}{koreanTranslationQwenEnabled() ? " + gpu3090 Qwen 직접 연결" : " (Qwen 추가 연결 꺼짐)"}.
+      {koreanTranslationQwenRecoveryEnabled() && " 품질 검사 기준을 유지하며 한도 도달 항목을 Qwen으로 제한 재검토합니다."}</p>
     {stats ? <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
       <div><dt className="text-fg-3">즉시 처리</dt><dd className="font-mono text-lg">{n(stats.ready)}건</dd></div>
       <div><dt className="text-fg-3">재시도 예약</dt><dd className="font-mono text-lg">{n(stats.retryScheduled)}건</dd></div>
@@ -53,6 +62,8 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
       <div><dt className="text-fg-3">지난 1시간 완료</dt><dd className="font-mono text-lg">{n(stats.lastHour)}건</dd></div>
     </dl> : <p className="dash-note">대기 수 미확인{queue && !queue.ok ? ` — ${replicaHoldText(queue.reason)}` : " — 집계를 읽지 못했습니다"}. 0건을 뜻하지 않습니다.</p>}
     {stats && <p className="dash-note">현재 원문 번역 완료 {n(stats.done)} / 대상 {n(stats.eligible)}건. 이미 한국어인 소개는 제외합니다. 품질 검사 중단은 자동 재시도 한도에 닿은 제품입니다.</p>}
+    {stats && koreanTranslationQwenRecoveryEnabled() && <p className="dash-note">즉시 처리 중 Qwen 제한 재검토 {n(stats.recoveryReady)}건.
+      기존 실패 횟수는 유지하며, 재검토 결과도 같은 품질 검사를 통과해야 저장합니다.</p>}
     <dl className="mt-3 grid gap-1 text-[13px]">
       <div><dt className="inline text-fg-3">작업 상태 </dt><dd className="inline">{job?.state ?? "실행 기록 미확인"}{hasLastError ? " · 최근 실패 기록 있음" : ""}</dd></div>
       <div><dt className="inline text-fg-3">프로세스 상태 </dt><dd className="inline">{runtime}</dd></div>

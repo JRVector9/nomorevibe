@@ -3,6 +3,9 @@ import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/produ
 import type { ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import { translationSystemPrompt } from "./translation-prompts";
+import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS,
+  koreanTranslationMaxOutputTokens, type KoreanTranslationProfile } from "./korean-translation-config";
+import { koreanTranslationRuntimePrompt } from "./korean-translation-prompts";
 
 /**
  * 심사 사유를 한국어로 옮긴다 — 사내 LLM 게이트웨이(abcllm, OpenAI 호환)의 gpt-oss-120b.
@@ -122,17 +125,23 @@ const TAGLINE_SYSTEM = [
 ].join(" ");
 
 export type ProductTaglineKoGatewayItem = Readonly<{ name: string; tagline: string }>;
-function productTaglineKoChatBody(items: readonly ProductTaglineKoGatewayItem[], model: string) {
+function productTaglineKoChatBody(items: readonly ProductTaglineKoGatewayItem[], model: string, profile: KoreanTranslationProfile = "native") {
   return {
     routeId: "product-tagline-ko" as const,
-    system: translationSystemPrompt(TAGLINE_SYSTEM, "product-tagline-ko", model, items.length), user: JSON.stringify(items), temperature: 0.1,
-    // 한글은 토큰을 많이 먹는다 — 한 줄에 150토큰을 넉넉히 잡는다(검색 키워드 16개가 250토큰 안팎이었다)
-    maxTokens: Math.min(3_000, 600 + items.length * 150),
+    system: (profile === "expanded" ? koreanTranslationRuntimePrompt(model, items.length) : null)
+      ?? translationSystemPrompt(TAGLINE_SYSTEM, "product-tagline-ko", model, items.length),
+    user: JSON.stringify(items), temperature: 0.1,
+    // legacy는 한 줄당450토큰·기본1800으로 확대. 예약 증명의 native wire는 기존150·600을 유지한다.
+    maxTokens: koreanTranslationMaxOutputTokens(items.length, profile),
   };
 }
 /** Same ordered model-specific Korean tagline request as legacy HTTP, without raw/schema/thinking additions. */
 export function productTaglineKoGatewayWire(items: readonly ProductTaglineKoGatewayItem[], model: string): string {
   return chatWire(productTaglineKoChatBody(items, model), model);
+}
+/** Enlarged legacy request; the reserved native gateway wire above remains frozen. */
+export function productTaglineKoLegacyWire(items: readonly ProductTaglineKoGatewayItem[], model: string): string {
+  return chatWire(productTaglineKoChatBody(items, model, "expanded"), model);
 }
 /** Actual display name and actually shortened source; original product identity stays separate. */
 export function productTaglineKoSourceHash(item: ProductTaglineKoGatewayItem): string {
@@ -143,7 +152,10 @@ export async function translateTaglinesToKorean(
   items: { name: string; tagline: string }[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
   model = TRANSLATE_MODEL,
 ): Promise<KoreanTaglineBatch> {
-  const result = await chat(productTaglineKoChatBody(items, model), timeoutMs, request, signal, model);
+  if (!items.length || items.length > KOREAN_TRANSLATION_MAX_ITEMS ||
+    items.reduce((count, item) => count + item.tagline.length, 0) > KOREAN_TRANSLATION_LEGACY_MAX_CHARS)
+    return { ok: false, error: "input_too_large" };
+  const result = await chat(productTaglineKoChatBody(items, model, "expanded"), timeoutMs, request, signal, model);
   return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
 }
 

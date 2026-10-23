@@ -46,11 +46,55 @@ beforeEach(async () => {
   seen.length = 0;
   gateway.mockReset();
   vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   vi.stubGlobal("fetch", gateway);
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("한국어 한 줄 소개 잡", () => {
+  it("한 잡 lease로 GPT와 직접 Qwen의 서로 다른 묶음을 병렬 처리하고 실제 모델을 남긴다", async () => {
+    vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+    for (let i = 0; i < 16; i++) await seed();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const calls: { model: string; names: string[] }[] = [];
+    gateway.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const items = JSON.parse(body.messages[1].content) as { name: string; tagline: string }[];
+      calls.push({ model: body.model, names: items.map(item => item.name) });
+      if (body.model !== "qwen3.8-flash-next") await held;
+      return new Response(JSON.stringify({ model: body.model,
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(items.map(korean)) } }] }));
+    });
+    const running = tick();
+    try {
+      await vi.waitFor(() => expect(calls).toHaveLength(2));
+      expect(calls.map(call => call.names.length)).toEqual([8, 8]);
+      expect(new Set(calls.flatMap(call => call.names)).size).toBe(16);
+    } finally { release(); await running; }
+    const rows = await db.select().from(productKoreanTaglines);
+    expect(rows).toHaveLength(16);
+    expect(rows.every(row => row.attempts === 1 && row.errorCode === null && !!row.taglineKo)).toBe(true);
+    expect(rows.filter(row => row.model === "qwen3.8-flash-next")).toHaveLength(8);
+    expect(rows.filter(row => row.model !== "qwen3.8-flash-next")).toHaveLength(8);
+  });
+
+  it("Qwen HTTP 장애가 같은 회차의 GPT 성공을 덮거나 막지 않는다", async () => {
+    vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+    for (let i = 0; i < 9; i++) await seed();
+    gateway.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      if (body.model === "qwen3.8-flash-next") return new Response("unavailable", { status: 503 });
+      const items = JSON.parse(body.messages[1].content) as { name: string; tagline: string }[];
+      return new Response(JSON.stringify({ model: body.model, choices: [{ message: { content: JSON.stringify(items.map(korean)) } }] }));
+    });
+    await tick();
+    const rows = await db.select().from(productKoreanTaglines);
+    expect(rows.filter(row => row.errorCode === null)).toHaveLength(8);
+    expect(rows.find(row => row.model === "qwen3.8-flash-next")).toMatchObject({ errorCode: "http_503", taglineKo: null, attempts: 1 });
+  });
+
   it("keeps the cumulative quality limit after a home retry fails on the network and leaves home", async () => {
     const row = await seed({ slug: "exhausted-home-network", tagline: "Track your daily habits" });
     await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Track your daily habits",

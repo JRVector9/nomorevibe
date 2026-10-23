@@ -45,7 +45,7 @@ const KOREAN_TAGLINE_MIN = 4;
 
 export type KoreanTaglineReject =
   | "empty" | "multiline" | "markup" | "boilerplate" | "too_long" | "too_short"
-  | "not_korean" | "foreign_script" | "name_lost" | "invented_number" | "invented_term";
+  | "not_korean" | "foreign_script" | "name_lost" | "invented_number" | "invented_term" | "qualifier_lost";
 
 /** 링크·마크다운·HTML — 한 줄 소개에 있을 것이 아니다 */
 const MARKUP = /https?:\/\/|www\.|\]\(|\*\*|__|`|^#{1,6}\s|^[-*•]\s|<\/?[a-z][^>]*>/i;
@@ -215,6 +215,13 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   if (mismatchedDate || [...numericLine.replace(GRAMMATICAL_PERSON, "").matchAll(LINE_NUMBER)].some(invented)) {
     return { ok: false, reason: "invented_number" };
   }
+  // Retaining an upper-bound number while deleting its bound changes the claim.
+  // A short summary may omit the numeric claim entirely.
+  const upperBounds = [...source.tagline.matchAll(/\b(?:up\s+to|at\s+most)\s+(\d+(?:[.,]\d+)*)\s*%/gi)];
+  if (!/최대|최고|이하|까지|이내|미만|상한|≤|<=/.test(line) && upperBounds.some(([, value]) => {
+    const number = value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?<![\\d.])${number}\\s*%(?![\\d.])`).test(line);
+  })) return { ok: false, reason: "qualifier_lost" };
   const terms = (line.match(/[A-Za-z][A-Za-z0-9+#]*(?:[.-][A-Za-z0-9+#]+)*/g) ?? []).map((term) => term.toLowerCase());
   if (terms.some((term) => !original.includes(term) && !COMMON_TERMS.has(term) && !(term === "p2p" && peerToPeer))) return { ok: false, reason: "invented_term" };
   return { ok: true, line };
