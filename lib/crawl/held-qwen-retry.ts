@@ -1,4 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, operationsAudit, secondReviews,
@@ -493,9 +495,16 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
       call = await withQwenSecondarySlot(async () => {
         if (!room() || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" };
         callStartedAt = Date.now();
-        return callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request: options.request, env: options.env,
-          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal });
+        return withLocalModelCapacity({ target: { kind: "candidate", purpose: "held_qwen", attemptId: claimed.claim.attemptId,
+          candidateId: claimed.claim.candidateId, repo: claimed.claim.repo }, input: claimed.claim.input, lease,
+          promptVersion: QWEN_V2_PROMPT_VERSION, env: options.env },
+        request => callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request, env: options.env,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
       });
+    } catch (error) {
+      if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      ctx.log("crawl.held_qwen_capacity_deferred", { reason: error.reason });
+      call = { ok: false, code: "qwen_cancelled", detail: "model_capacity_deferred" };
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
     if (call.ok) await noteQwenEndpointSuccess(callStartedAt);

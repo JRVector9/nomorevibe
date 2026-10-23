@@ -1,4 +1,6 @@
 import { and, asc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { db } from "@/lib/db";
 import { gateSplitTiebreaks, type GateSplitTiebreak } from "@/lib/db/schema";
 import { currentReplayDb } from "@/lib/db/replay-scope";
@@ -247,8 +249,15 @@ export async function runSplitTiebreakConfirmations(ctx: Pick<JobContext<null>, 
     const callStartedAt = Date.now();
     let result: DeepSeekReviewResult;
     try {
-      result = await reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: SPLIT_CONFIRM_TIMEOUT_MS, request: options.request,
-        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal });
+      result = await withLocalModelCapacity({ target: { kind: "split", purpose: "deepseek_confirm", tiebreakId: claimed.claim.tiebreakId,
+        candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
+      input: claimed.claim.input, lease, promptVersion: claimed.claim.input.snapshot.policy.promptVersion },
+      request => reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: SPLIT_CONFIRM_TIMEOUT_MS, request,
+        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
+    } catch (error) {
+      if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      ctx.log("crawl.split_confirm_capacity_deferred", { reason: error.reason });
+      result = { ok: false, error: "cancelled" };
     } finally { clearInterval(poll); }
     const latencyMs = Date.now() - callStartedAt;
     if (result.ok) noteConfirmSuccess(callStartedAt);

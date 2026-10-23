@@ -1,4 +1,6 @@
 import { and, eq, isNull, not, sql } from "drizzle-orm";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlReviewAttempts, gateSplitTiebreaks, operationsAudit, secondReviews,
   type CrawlReviewAttempt, type GateSplitTiebreak, type SecondReview } from "@/lib/db/schema";
@@ -421,9 +423,16 @@ export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLeas
       result = await withQwenSecondarySlot(async () => {
         if (left() < CALL_TIMEOUT_MS || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
         callStartedAt = Date.now();
-        return callQwen(claimed.claim.input, { timeoutMs: CALL_TIMEOUT_MS,
-          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal, request: options.request, env: options.env });
+        return withLocalModelCapacity({ target: { kind: "split", purpose: "qwen_tiebreak", tiebreakId: claimed.claim.tiebreakId,
+          candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
+        input: claimed.claim.input, lease, promptVersion: QWEN_V2_PROMPT_VERSION, env: options.env },
+        request => callQwen(claimed.claim.input, { timeoutMs: CALL_TIMEOUT_MS,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal, request, env: options.env }), options.request);
       });
+    } catch (error) {
+      if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      ctx.log("crawl.split_tiebreak_capacity_deferred", { reason: error.reason });
+      result = { ok: false, code: "qwen_cancelled", detail: "model_capacity_deferred", latencyMs: 0 };
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
     if (result.ok) await noteQwenEndpointSuccess(callStartedAt);

@@ -1,4 +1,6 @@
 import { and, eq, sql } from "drizzle-orm";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { db } from "@/lib/db";
 import { operationsObservations, productAuditSecondOpinions } from "@/lib/db/schema";
 import { withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
@@ -227,9 +229,13 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     const modelStarted = Date.now();
     let review: ScreenReview;
     try {
-      review = await reviewWithScreenshot(screenInput(input, rendered.text), rendered.jpeg, { config: model, timeoutMs, signal: ctx.signal, request });
+      const reviewInput = screenInput(input, rendered.text);
+      review = await withLocalModelCapacity({ target: { kind: "audit", purpose: "screen", itemId: target.itemId, slug: target.slug },
+        input: reviewInput, lease, promptVersion: SCREEN_REVIEW_PROMPT_VERSION, env },
+      fetchModel => reviewWithScreenshot(reviewInput, rendered.jpeg, { config: model, timeoutMs, signal: ctx.signal, request: fetchModel }), request);
     } catch (error) {
       tally.modelMs += Date.now() - modelStarted;
+      if (error instanceof ModelCapacityDeferredError) { ctx.log("screen_review.model_deferred", { reason: error.reason }); break; }
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
       // 줄인 제한 시간(틱 끝)에 걸렸다 — 서버 탓도 항목 탓도 아니다
