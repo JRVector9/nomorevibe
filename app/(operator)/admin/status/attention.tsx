@@ -46,6 +46,7 @@ import { modelName } from "./dashboard/ModelCards";
 import { MODEL_HEALTH_JOBS, progressStageJobs, type ActionWork } from "./work-owners";
 import { EXPECTED_WEB_INSTANCES, READINESS_LABELS, webSummary, type CollectorQuotaStatus } from "./status-summary";
 import { readAssistQueueStatus } from "@/lib/operations/llm-assist";
+import { readKoreanTranslationQueue } from "@/lib/operations/korean-translation";
 
 /**
  * 조치할 일 — 무엇을 읽어(loadActionInputs) 어떤 줄을 세우는지(buildActions), 그 줄을 "지금 조치"와 "쌓인 일"로 나누는 것(splitActions).
@@ -81,6 +82,7 @@ export type ActionInputs = {
   /** 알림 메일 발송함·로그인 코드 메일의 최근 결과(email-health.ts) — 못 읽었으면 null */
   email?: Awaited<ReturnType<typeof emailHealth>> | null;
   assistQueue?: Awaited<ReturnType<typeof readAssistQueueStatus>> | null;
+  koreanTranslation?: Awaited<ReturnType<typeof readKoreanTranslationQueue>> | null;
 };
 
 /** 한 묶음이 실패해도 화면은 나가야 한다 — 그 칸만 비운다 */
@@ -95,7 +97,7 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
   // 성공이 30분 넘게 끊긴 잡만 미룸 까닭을 묻는다(열쇠 몇 개 — 평소에는 묻지 않는다)
   const jobDeferralsRead = jobStatesRead.then((states) => readLastJobDeferrals(jobsNeedingDeferralReason(states, new Date())))
     .catch(warn("operations.job_deferrals_unavailable"));
-  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email, assistQueue] = await Promise.all([
+  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email, assistQueue, koreanTranslation] = await Promise.all([
     operationsData(), jobStatesRead, readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     // 사람 몫은 웹 여러 대·화면 여러 개가 30초 나눠 쓴다(shared-reads.ts) — 메뉴 배지도 이 읽기를 거친다
@@ -112,8 +114,9 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     jobDeferralsRead,
     emailHealth().catch(warn("operations.email_health_unavailable")),
     readAssistQueueStatus().catch(warn("operations.assist_queue_unavailable")),
+    readKoreanTranslationQueue().catch(warn("operations.korean_translation_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email, assistQueue };
+  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email, assistQueue, koreanTranslation };
 }
 
 const LEGACY_BATCH = { mode: "legacy", writerContractVersion: 0 } as const;
@@ -622,6 +625,16 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "제품 관리", href: ACTION_LINKS.productsIntro }, work: { jobs: ["product-intro-check"] },
     });
   }
+  if (inputs.koreanTranslation?.ok) {
+    const queue = inputs.koreanTranslation.value;
+    const pending = queue.ready + queue.retryScheduled + queue.blocked;
+    if (pending > 0) actions.push({
+      key: "korean-translation", tone: "hold", count: pending, unit: "건", title: "제품 소개 한국어 번역",
+      detail: <>즉시 처리 {n(queue.ready)} · 재시도 예약 {n(queue.retryScheduled)} · 품질 검사 중단 {n(queue.blocked)}.
+        {" "}지난 1시간 완료 {n(queue.lastHour)}건 — 현재 원문 기준이며 이미 한국어인 소개는 제외합니다.</>,
+      action: { label: "번역 작업", href: jobHref("product-tagline-ko") }, work: { jobs: ["product-tagline-ko"] },
+    });
+  }
   if (attention && attention.repoGone.installable + attention.repoGone.website > 0) {
     const review = attention.repoReview;
     // 2단계(저장소 다시 열어 보기)가 사라졌다고 확정된 뒤 이틀 넘게 끝나지 않은 것이 있으면 맨 앞 급으로
@@ -746,7 +759,8 @@ export function splitActions(items: ActionItem[], options: { samples: AttentionS
   const urgent: SplitItem[] = [], backlog: SplitItem[] = [], hidden: SplitItem[] = [];
   for (const item of sortActions(items)) {
     const before = baseline?.counts[item.key];
-    const fresh = baseline !== null && before === undefined;
+    // 새로 계측한 한국어 번역은 기존 적체다. 옛 기록에 키가 없다는 이유로 장애처럼 승격하지 않는다.
+    const fresh = item.key !== "korean-translation" && baseline !== null && before === undefined;
     // 지난 시간을 센 칸(elapsed)은 시간이 가면 저절로 는다 — 24시간 변화로 그리지 않는다
     const trend = !item.elapsed && typeof item.count === "number" && typeof before === "number" ? { delta: item.count - before, hours } : null;
     const split: SplitItem = { ...item, trend, fresh };

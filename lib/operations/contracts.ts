@@ -42,7 +42,7 @@ export const JOB_LABELS: Record<string, string> = {
   'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 저장소·스타 확인',
   'product-star-observation': '8시간 스타 관측',
   'product-repo-review': '저장소 사라진 사이트 확인',
-  'product-tagline-ko': '한국어 소개 짓기',
+  'product-tagline-ko': '제품 소개 한국어 번역',
   'product-spam-rescan': '공개 제품 스팸 재검사',
   'product-translate': '제품 정보 번역', 'ai-level-refresh': 'AI 제작 단계 확인',
   'product-site-evidence-refresh': '공식 사이트 근거 갱신',

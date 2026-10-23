@@ -20,6 +20,10 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   await db.execute(sql`update llm_assist_controls set mode='off',dispatch_enabled=false,apply_enabled=false where task in ('semantic_exception','decision_audit')`);
+  // 계약 fixture는 id=1을 직접 넣으므로 다음 파일의 자동 ID와 충돌하지 않게 지운다.
+  // 제품의 FK cascade로 work/result/finding을 먼저 지우고 표본 기간을 정리한다. append-only 원장은 건드리지 않는다.
+  await db.execute(sql`delete from products where id=1 and slug='example'`);
+  await db.execute(sql`delete from llm_assist_audit_periods where period_start=${periodStart}::date and seed_hash=${assistHash(seed)}`);
 });
 async function seedDecisions() {
   const workId = randomUUID(), inputHash = assistInputHash(originalInput);

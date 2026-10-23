@@ -218,9 +218,9 @@ describe("조치 계약 — 키·급·숫자·단위·제목·설명·가는 곳
 });
 
 describe("지금 조치 · 쌓인 일 나누기 계약", () => {
-  it("쌓인 일 열쇠는 이 열세 개다 — x-status 는 운영센터 v8 PR9(X 보고)가, x-candidates 는 무음 실패 점검(이틀째 후보 0)이 더했다", () => {
+  it("쌓인 일 열쇠에는 한국어 소개 번역도 들어간다", () => {
     expect([...BACKLOG_KEYS].sort()).toEqual([
-      "audit", "audit-stalled", "evidence-backlog", "health-overdue", "held", "intro", "repo-coverage", "repo-gone", "review", "second", "spam-auto-ban",
+      "audit", "audit-stalled", "evidence-backlog", "health-overdue", "held", "intro", "korean-translation", "repo-coverage", "repo-gone", "review", "second", "spam-auto-ban",
       "x-candidates", "x-status",
     ]);
   });
@@ -232,7 +232,9 @@ describe("지금 조치 · 쌓인 일 나누기 계약", () => {
     try {
       const inputs = calmInputs();
       const hourAgo = new Date(ACTION_NOW.getTime() - 3_600_000).toISOString();
-      const withX: ActionInputs = { ...inputs, ops: { ...inputs.ops, observations: [...inputs.ops.observations,
+      const withX: ActionInputs = { ...inputs, koreanTranslation: { ok: true, value: {
+        eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: ACTION_NOW.toISOString(),
+      } }, ops: { ...inputs.ops, observations: [...inputs.ops.observations,
         { key: "x-status", value: { v: 1, mode: "live", reads: { used: 10, limit: 10 }, candidates: 0, lastRunAt: hourAgo, lastSuccessAt: null,
           error: "http_error", sentAt: Math.floor(ACTION_NOW.getTime() / 1000) - 3_600, signedWith: "current" }, observedAt: hourAgo },
         { key: "x-status:runs", value: { zeroRuns: 2, zeroSince: hourAgo, lastCompletedRunAt: hourAgo, lastCandidates: 0 }, observedAt: hourAgo }] } };

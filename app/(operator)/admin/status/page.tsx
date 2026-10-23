@@ -38,6 +38,7 @@ import { formatAgo, formatDay, formatListTime } from "@/lib/format/time";
 import { KpiStrip } from "./dashboard/KpiStrip";
 import { StageRail } from "./dashboard/StageRail";
 import { RolesTable } from "./dashboard/RolesTable";
+import { KoreanTranslationStatus, koreanTranslationRuntime } from "./dashboard/KoreanTranslationStatus";
 import { ModelCards, type ConnectionProbe } from "./dashboard/ModelCards";
 import { AttentionList } from "./dashboard/AttentionList";
 import { SignalTable } from "./dashboard/SignalTable";
@@ -482,8 +483,9 @@ export default async function StatusPage() {
   const verdict = flowVerdict({ split, throughput: inputs.throughput, workerProgress: derived.workerProgress, human: overview });
   const flowSlot = { inputs, derived, actions, fresh };
   // 칸마다 맡은 장비·LLM·작업 일정 — 새로 읽지 않고 이미 읽은 역할 담당·서비스 관측·작업 표·설정·AI 연결·모델 집계에서 모은다
-  const owners = workOwnersByAction(actions, { settings, roles: roleRows, instances: ops.serviceInstances, jobs: derived.states,
-    batch: inputs.jobBatch, agent: derived.agent, models, modelServers: inputs.modelServers, now });
+  const ownerContext = { settings, roles: roleRows, instances: ops.serviceInstances, jobs: derived.states,
+    batch: inputs.jobBatch, agent: derived.agent, models, modelServers: inputs.modelServers, now };
+  const owners = workOwnersByAction([...actions, { key: "korean-translation", work: { jobs: ["product-tagline-ko"] } }], ownerContext);
 
   /*
    * 전체 현황 — 지금 조치 · 쌓인 일 · 사람 확인 한 줄, 그다음 지표.
@@ -511,6 +513,8 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       </div>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
+      <KoreanTranslationStatus queue={inputs.koreanTranslation} owners={owners["korean-translation"] ?? null}
+        runtime={koreanTranslationRuntime(ownerContext)} hasLastError={!!derived.states.get("product-tagline-ko")?.lastError} now={now} />
       <div className="ops-phone-rest">
         {models ? <ModelCards rows={models} probes={probes} others={otherModelSlots(settings)} /> : <p className="dash-card dash-12">모델 상태를 읽지 못했습니다.</p>}
         <Suspense fallback={<CardPending span="dash-4" label="신호별 수율" />}><SignalSlot settings={settings} fresh={fresh} /></Suspense>

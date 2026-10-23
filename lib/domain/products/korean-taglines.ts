@@ -71,6 +71,50 @@ export async function homeListSlugs(depth = HOME_DEPTH): Promise<string[]> {
   return [...new Set(lists.flat())];
 }
 
+/** 작업 선택과 운영 집계가 같은 현재 원문·품질 한도·재시도 시각을 쓴다. */
+function koreanQueuePredicates(homeSlugs: readonly string[]) {
+  const home = slugArrayPredicate(products.slug, [...homeSlugs]);
+  const current = sql`${k.sourceTagline} = ${products.tagline}`;
+  const fresh = sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline})`;
+  const allowance = sql`(${k.qualityRejections} < ${MAX_REJECTIONS}
+    or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))`;
+  const retry = sql`(${current} and ${k.errorCode} is not null and ${allowance})`;
+  const due = sql`(${k.retryAt} is null or ${k.retryAt} <= now())`;
+  return { home, current, fresh, allowance, retry, due,
+    ready: sql`(${fresh} or (${k.errorCode} is not null and ${allowance} and ${due}))` };
+}
+
+export type KoreanTaglineQueue = {
+  /** 이미 한국어인 소개·비공개 제품을 제외한 현재 대상 */
+  eligible: number;
+  done: number;
+  /** 지금 pendingKoreanTaglines 가 선택할 수 있는 수 */
+  ready: number;
+  /** 같은 원문의 실패이며 재시도 시각이 남은 수 */
+  retryScheduled: number;
+  /** 같은 원문에서 품질 한도 소진 — 홈의 추가 두 번도 반영 */
+  blocked: number;
+  lastHour: number;
+  measuredAt: string;
+};
+
+/** 읽기 전용 운영 집계. homeSlugs 는 작업과 같은 homeListSlugs 결과를 넘긴다. */
+export async function koreanTaglineQueue(homeSlugs: readonly string[]): Promise<KoreanTaglineQueue> {
+  const q = koreanQueuePredicates(homeSlugs);
+  const [row] = await db.select({
+    eligible: sql<number>`count(*)::int`,
+    done: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is null))::int`,
+    ready: sql<number>`(count(*) filter (where ${q.ready}))::int`,
+    retryScheduled: sql<number>`(count(*) filter (where ${q.retry} and not ${q.due}))::int`,
+    blocked: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is not null and not ${q.allowance}))::int`,
+    lastHour: sql<number>`(count(*) filter (where ${q.current} and ${k.errorCode} is null and ${k.updatedAt} > now() - interval '1 hour'))::int`,
+    measuredAt: sql<string>`now()::text`,
+  }).from(products).leftJoin(k, eq(k.productId, products.id)).where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN));
+  return { eligible: Number(row.eligible), done: Number(row.done), ready: Number(row.ready),
+    retryScheduled: Number(row.retryScheduled), blocked: Number(row.blocked), lastHour: Number(row.lastHour),
+    measuredAt: new Date(row.measuredAt).toISOString() };
+}
+
 /**
  * 옮길 공개 제품 — 아직 안 옮겼거나, 소개가 바뀌었거나, 실패를 다시 볼 때가 된 것. 이미 한국어인 소개(isKoreanLine)는 빼고.
  *
@@ -79,10 +123,9 @@ export async function homeListSlugs(depth = HOME_DEPTH): Promise<string[]> {
  * 홈에 보이는 제품은 HOME_EXTRA_REJECTIONS 번 더 본다 — 첫 화면에 원문이 남는 것이 가장 눈에 띈다.
  */
 export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly string[]): Promise<KoreanTaglineTask[]> {
-  const home = slugArrayPredicate(products.slug, [...homeSlugs]);
+  const { home, current: same, ready } = koreanQueuePredicates(homeSlugs);
   const tier = sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then 0
     when ${home} then 1 else 2 end`;
-  const same = sql`${k.sourceTagline} = ${products.tagline}`;
   const rows = await db.select({
     productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
     attempts: sql<number>`case when ${same} then ${k.attempts} else 0 end`,
@@ -92,10 +135,7 @@ export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly s
     .where(and(
       inArray(products.status, PUBLIC),
       NEEDS_KOREAN,
-      sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline}
-        or (${k.errorCode} is not null and (${k.qualityRejections} < ${MAX_REJECTIONS}
-              or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))
-            and (${k.retryAt} is null or ${k.retryAt} <= now())))`,
+      ready,
     ))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
       sql`${products.stars} desc nulls last`, desc(products.id))

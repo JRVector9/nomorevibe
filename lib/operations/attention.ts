@@ -24,7 +24,7 @@ export const ACK_ACTION = 'attention-ack';
  */
 export const BACKLOG_KEYS: ReadonlySet<string> = new Set([
   'review', 'second', 'held', 'audit', 'audit-stalled', 'evidence-backlog', 'health-overdue', 'intro', 'repo-gone',
-  'spam-auto-ban', 'repo-coverage',
+  'spam-auto-ban', 'repo-coverage', 'korean-translation',
   // X 수집기 보고 끊김·오류(운영센터 v8 PR9) — 선택 소스 하나라 hold 다(사흘 넘으면 긴급이 되어 숨김을 뚫는다)
   'x-status',
   // X 수집이 이틀 넘게 후보 0 — 검색어를 다듬는 동안 일부러 둘 수 있어 숨길 수 있다(8일이면 긴급)
