@@ -40,7 +40,7 @@ export function localModelRoute(value: LocalModelTarget): string {
 
 export function localModelJob(value: LocalModelTarget): string {
   const target = localModelTargetSchema.parse(value);
-  if (target.kind === "assist") return "product-llm-assist-review";
+  if (target.kind === "assist") return ["decision_audit", "semantic_exception"].includes(target.task) ? "product-llm-assist-audit-review" : "product-llm-assist-review";
   if (target.purpose === "screen") return "audit-screen-review";
   if (target.purpose === "audit" || target.purpose === "second_opinion" || target.purpose === "published_filter") return "product-audit";
   return target.purpose === "qwen_tiebreak" ? "second-review" : "human-deepseek-review";

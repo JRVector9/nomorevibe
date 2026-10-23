@@ -47,7 +47,7 @@ function binding(value: string): string {
       WHEN 'assist' THEN ${t}->>'subjectId' ELSE ${t}->>'candidateId' END || ':' || CASE WHEN ${t}->>'kind'='assist' THEN ${t}->>'task' ELSE ${t}->>'purpose' END`,
     `${value}->>'routeId'=CASE WHEN ${t}->>'kind'='assist' THEN 'local-assist-' || (${t}->>'task') || '-' || (${t}->>'backendId') ELSE 'local-' || replace(${t}->>'purpose','_','-') END`,
     `(${t}->>'kind'<>'assist' OR ${t}->>'backendId'=${value}->>'backendId')`,
-    `${job}->>'name'=CASE WHEN ${t}->>'kind'='assist' THEN 'product-llm-assist-review' ELSE CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
+    `${job}->>'name'=CASE WHEN ${t}->>'kind'='assist' THEN CASE WHEN ${t}->>'task' IN ('decision_audit','semantic_exception') THEN 'product-llm-assist-audit-review' ELSE 'product-llm-assist-review' END ELSE CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
       WHEN 'second_opinion' THEN 'product-audit' WHEN 'published_filter' THEN 'product-audit'
       WHEN 'qwen_tiebreak' THEN 'second-review' ELSE 'human-deepseek-review' END END`,
   ]);

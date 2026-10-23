@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { assistWorkTaskSchema } from "./work";
+import { assistWorkTaskSchema, isAuditAssistTask } from "./work";
+import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
 import { resolveLocalModelServingContract, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 
 const drainSchema = z.object({ backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
@@ -11,9 +12,12 @@ export function assistBackendDrains(env: Readonly<Record<string, string | undefi
   if (!env.LLM_ASSIST_BACKENDS) return [];
   const drains = z.array(drainSchema).max(4).parse(JSON.parse(env.LLM_ASSIST_BACKENDS));
   if (new Set(drains.map(drain => drain.backendId)).size !== drains.length) throw new Error("duplicate_assist_backend");
-  return drains.map(drain => {
+  const auditEnabled = readActionAuditPolicy(env).enabled;
+  return drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => !isAuditAssistTask(task) || auditEnabled) }))
+    .filter(drain => drain.tasks.length).map(drain => {
     const contract = resolveLocalModelServingContract(drain.backendId, env);
-    if (!contract || contract.modelFamily !== "qwen3.8-flash-next") throw new Error("assist_qwen_backend_required");
+    if (!contract || !["qwen3.8-flash-next", "deepseek-v4.1-flash-1017"].includes(contract.modelFamily)
+      || drain.tasks.some(task => !isAuditAssistTask(task)) && contract.modelFamily !== "qwen3.8-flash-next") throw new Error("assist_qwen_or_audit_backend_required");
     return { ...drain, contract };
   });
 }

@@ -2,8 +2,12 @@ import { z } from "zod";
 import { assistHash } from "./contracts";
 import { repoMoveCandidateSchema } from "@/lib/domain/products/repo-move-review";
 import { introRecheckCandidateSchema } from "@/lib/domain/products/intro-assist";
+import { actionAuditCandidateSchema } from "@/lib/domain/products/automated-action-audit";
 
-export const assistWorkTaskSchema = z.enum(["uptime", "repo_move", "intro_recheck"]);
+export const assistWorkTaskSchema = z.enum(["uptime", "repo_move", "intro_recheck", "decision_audit", "semantic_exception"]);
+export function isAuditAssistTask(task: string): task is "decision_audit" | "semantic_exception" {
+  return task === "decision_audit" || task === "semantic_exception";
+}
 export type AssistWorkTask = z.infer<typeof assistWorkTaskSchema>;
 export const ASSIST_WORK_STATES = ["queued", "claimed", "waiting_evidence", "waiting_capacity", "retryable_transport", "human", "done", "obsolete", "indeterminate"] as const;
 export type AssistWorkState = typeof ASSIST_WORK_STATES[number];
@@ -18,10 +22,11 @@ export const uptimeCandidateSchema = z.object({
 }).strict();
 export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchema>>;
 // intro의 기존 판정기는 CLI 모듈도 참조한다. 순환 import 중 schema 값을 먼저 캡처하지 않는다.
-export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema]));
+export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema, actionAuditCandidateSchema]));
 export type AssistCandidate = Readonly<z.infer<typeof assistCandidateSchema>>;
 export function assistCandidateSubject(candidate: AssistCandidate) {
-  return candidate.kind === "uptime" ? candidate.product : candidate.kind === "intro_recheck" ? candidate.snapshot.product : candidate.snapshot;
+  return candidate.kind === "uptime" || candidate.kind === "decision_audit" || candidate.kind === "semantic_exception" ? candidate.product
+    : candidate.kind === "intro_recheck" ? candidate.snapshot.product : candidate.snapshot;
 }
 export function assistCandidateSourceHash(candidate: AssistCandidate): string {
   return assistHash(assistCandidateSchema.parse(candidate));

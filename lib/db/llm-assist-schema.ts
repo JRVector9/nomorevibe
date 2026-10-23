@@ -10,7 +10,7 @@ export const llmAssistControls = pgTable("llm_assist_controls", {
   confirmationRequired: boolean("confirmation_required").notNull().default(false),
   dispatchEnabled: boolean("dispatch_enabled").notNull().default(false), applyEnabled: boolean("apply_enabled").notNull().default(false),
   revision: bigint("revision", { mode: "number" }).notNull().default(1), updatedAt: timestamp("updated_at", { mode: "string" }).notNull().defaultNow(),
-}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime','repo_move','intro_recheck')`),
+}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime','repo_move','intro_recheck','decision_audit','semantic_exception')`),
   check("llm_assist_control_mode", sql`${t.mode} in ('off','shadow','confirm')`),
   check("llm_assist_control_confirm", sql`${t.mode}<>'confirm' or ${t.confirmationRequired}`),
   check("llm_assist_control_apply", sql`not ${t.applyEnabled} or (${t.dispatchEnabled} and ${t.mode}='confirm')`),
