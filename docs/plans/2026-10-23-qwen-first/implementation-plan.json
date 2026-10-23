@@ -75,7 +75,7 @@
       "branch": "feat/qwen-first-contracts-evaluation",
       "file": "PR-01-contracts-evaluation.md",
       "status": "구현·범위 검증 완료",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-contracts-evaluation",
       "github_pr": {
         "number": 628,
@@ -166,7 +166,7 @@
       "branch": "feat/qwen-first-direct-capacity",
       "file": "PR-02-direct-capacity.md",
       "status": "구현·범위 검증 완료; globalReady=false",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-direct-capacity",
       "github_pr": {
         "number": 631,
@@ -242,7 +242,7 @@
       "branch": "feat/qwen-first-m1-private-ingress",
       "file": "PR-03-m1-private-ingress.md",
       "status": "설치물·범위 검증 완료; 실제 M1 운영 설치·공동 추론 미검증",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-m1-private-ingress",
       "github_pr": {
         "number": 630,
@@ -351,7 +351,7 @@
       "branch": "feat/qwen-first-work-uptime-candidates",
       "file": "PR-04-work-uptime-candidates.md",
       "status": "구현·범위 검증 완료; 기본 off",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-work-uptime-candidates",
       "github_pr": {
         "number": 632,
@@ -442,7 +442,7 @@
       "branch": "feat/qwen-first-uptime-confirmation",
       "file": "PR-05-uptime-confirmation.md",
       "status": "구현·범위 검증 완료; 기본 off",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-uptime-confirmation",
       "github_pr": {
         "number": 633,
@@ -518,7 +518,7 @@
       "branch": "feat/qwen-first-qwen-screen-prompts",
       "file": "PR-06-qwen-screen-prompts.md",
       "status": "구현·범위 검증 완료; native wire 관측 보강을11에 통합",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-qwen-screen-prompts",
       "github_pr": {
         "number": 629,
@@ -535,7 +535,8 @@
         },
         "static": "ESLint·scoped TypeScript 통과; 전체 통합 typecheck 대기",
         "evidence": "PR-06-qwen-screen-prompts.md",
-        "pending_integration_commit": "6c634c6a"
+        "integrated_wire_observation_commit": "6c634c6a",
+        "native_wire_db_passed": 4
       }
     },
     {
@@ -599,7 +600,7 @@
       "branch": "feat/qwen-first-repository-move-integrated",
       "file": "PR-07-repository-move.md",
       "status": "구현·범위 검증 완료; 기본 off",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-repository-move",
       "github_pr": {
         "number": 634,
@@ -688,7 +689,7 @@
       "branch": "feat/qwen-first-intro-recheck-integrated",
       "file": "PR-08-intro-recheck.md",
       "status": "구현·범위 검증 완료; 기본 off",
-      "design_status": "설계 완료 · 구현 전",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-intro-recheck",
       "github_pr": {
         "number": 635,
@@ -780,8 +781,8 @@
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
       "branch": "feat/qwen-first-exceptions-audit-integrated",
       "file": "PR-09-exceptions-independent-audit.md",
-      "status": "공통 소비자 연결·범위 검증 완료; 최종 통합 대기",
-      "design_status": "설계 완료 · 구현 전",
+      "status": "공통 소비자·잠금 수정 통합 완료; 전체 검증 결과는 PR11 참조",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-exceptions-independent-audit",
       "github_pr": {
         "number": 636,
@@ -801,7 +802,7 @@
         "unit": {
           "domain_passed": 10
         },
-        "static": "범위 ESLint·Next typegen·tsc 통과; 후속 잠금 수정은 최종 통합 재검증 대상",
+        "static": "범위 ESLint·Next typegen·tsc 통과; 잠금 수정과 경합 3건은11에 통합",
         "evidence": "../../operations/2026-10-23-automated-action-audit-development.md"
       },
       "implementation_runtime": {
@@ -887,7 +888,7 @@
       "branch": "feat/qwen-first-news-localization-integrated",
       "file": "PR-10-news-localization.md",
       "status": "비공개 초안 backend·범위 검증 완료; 공개 노출 제품 결정 대기",
-      "design_status": "조건부: 제품 결정 뒤 착수",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
       "proposed_branch": "feat/qwen-first-news-localization",
       "github_pr": {
         "number": 637,
@@ -1001,8 +1002,8 @@
       "branch": "feat/qwen-first-integration-rollout",
       "file": "PR-11-integration-rollout.md",
       "status": "코드 통합 완료; 정확한 SHA 전체 검증 결과는 실제 PR11 본문 참조",
-      "design_status": "설계 완료 · 구현 전",
-      "proposed_branch": "docs/qwen-first-integration-rollout",
+      "design_status": "원래 설계 완료; 실제 구현 상태는 status 참조",
+      "proposed_branch": "feat/qwen-first-integration-rollout",
       "github_pr": {
         "number": 638,
         "url": "https://github.com/JRVector9/nomorevibe/pull/638",
