@@ -1,18 +1,18 @@
 import http, { type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { and, eq, like } from "drizzle-orm";
+import { and, eq, getTableColumns } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { safeFetch } = vi.hoisted(() => ({ safeFetch: vi.fn() }));
 vi.mock("@/lib/net/fetch", async original => ({ ...await original<typeof import("@/lib/net/fetch")>(), safeFetch }));
 import { db } from "@/lib/db";
-import { cdnPurges, llmAssistResults, llmAssistWorks, operationsAudit, productEvidenceAudit, productHealth, products } from "@/lib/db/schema";
+import { cdnPurges, llmAssistResults, llmAssistWorks, modelCapacityRequests, operationsAudit, productEvidenceAudit, productHealth, products } from "@/lib/db/schema";
 import { autoBanUptimeProduct } from "@/lib/domain/products/uptime-auto-ban";
 import { reviewLlmAssist } from "@/lib/jobs/products/llm-assist-review";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { requestModelSlot } from "@/lib/llm/capacity-repository";
-import { localModelContractHash, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
+import { localModelContractHash, sameLocalModelFamily, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import { ASSIST_SCHEMA_VERSION } from "@/lib/domain/llm-assist/contracts";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
@@ -38,6 +38,19 @@ function modelOutcome() {
     evidence: [{ source_id: "current-page", quote: alive ? "Start your free plan" : "permanently closed", supports: ["/state/page_state"] }],
     action: { proposal: alive ? "retain" : "delist_candidate", reason_ko: alive ? "현재 이용 경로가 있습니다." : "서비스 전체 종료가 명시되어 있습니다.", missing_items: [] } };
 }
+function nativeResponse() {
+  return { model, choices: [{ finish_reason: "stop", message: { role: "assistant",
+    content: responseKind === "invalid" ? "not JSON" : JSON.stringify(modelOutcome()) } }],
+    usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } };
+}
+async function eventually(check: () => Promise<boolean>) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error("fixture_observation_deadline");
+}
 function context(signal?: AbortSignal): JobContext<null> {
   return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 }, signal,
     save: async () => {}, hasBudget: () => true, log: () => {} };
@@ -57,6 +70,12 @@ async function fixtureProduct() {
 async function status(id: number) { return (await db.select().from(products).where(eq(products.id, id)))[0]?.status; }
 async function work(id: number) { return (await db.select().from(llmAssistWorks).where(eq(llmAssistWorks.productId, id)))[0]; }
 async function requests() { return Array.from(await admin`SELECT * FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`); }
+async function recordedResults() {
+  return db.select(getTableColumns(llmAssistResults)).from(llmAssistResults)
+    .innerJoin(modelCapacityRequests, eq(modelCapacityRequests.requestId, llmAssistResults.capacityRequestId))
+    .where(eq(modelCapacityRequests.ownerInstanceId, prefix));
+}
+// 가짜 HTTP fixture가 끝난 뒤 이 owner의 행만 정리한다. 이 정리는 운영의 remote terminal 증거가 아니다.
 async function cleanFixture() {
   await admin.begin(async tx => {
     await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`;
@@ -95,6 +114,7 @@ beforeAll(async () => {
   originalRole = (await admin`SELECT to_jsonb(c) AS row FROM role_leases c WHERE role='reviewer'`)[0]?.row ?? null;
   originalJobs = (await admin`SELECT to_jsonb(c) AS row FROM jobs c WHERE name=ANY(${jobNames})`).map(row => row.row);
   expect(await admin`SELECT id FROM llm_assist_work WHERE task='uptime'`).toHaveLength(0);
+  expect(await admin`SELECT request_id FROM model_capacity_requests WHERE state IN ('waiting','reserved','dispatched','indeterminate')`).toHaveLength(0);
   server.on("request", async (req, res) => {
     try {
       const chunks: Buffer[] = [];
@@ -103,9 +123,7 @@ beforeAll(async () => {
       await onCall?.();
       if (hold) { hold(res); return; }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ model, choices: [{ finish_reason: "stop", message: { role: "assistant",
-        content: responseKind === "invalid" ? "not JSON" : JSON.stringify(modelOutcome()) } }],
-        usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } }));
+      res.end(JSON.stringify(nativeResponse()));
     } catch { res.destroy(); }
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -144,7 +162,16 @@ afterEach(async () => {
   finally { vi.unstubAllEnvs(); }
 });
 afterAll(async () => {
-  try { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  try {
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    expect((await admin`SELECT to_jsonb(c) AS row FROM model_capacity_control c WHERE id=1`)[0]?.row).toEqual(originalCapacity);
+    expect((await admin`SELECT to_jsonb(c) AS row FROM llm_assist_controls c WHERE task='uptime'`)[0]?.row).toEqual(originalAssist);
+    expect((await admin`SELECT to_jsonb(c) AS row FROM role_leases c WHERE role='reviewer'`)[0]?.row ?? null).toEqual(originalRole);
+    const restoredJobs = (await admin`SELECT to_jsonb(c) AS row FROM jobs c WHERE name=ANY(${jobNames})`).map(row => row.row);
+    expect(restoredJobs).toHaveLength(originalJobs.length);
+    expect(restoredJobs).toEqual(expect.arrayContaining(originalJobs));
+    expect(await requests()).toHaveLength(0);
+  }
   finally { await admin.end(); }
 });
 
@@ -160,7 +187,7 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     expect(request.dispatch_binding).toMatchObject({ totalTokenBound: 50000, chargedTokens: 50000 });
     expect(await status(product.id)).toBe("banned");
     expect(await work(product.id)).toMatchObject({ state: "done", attempts: 1 });
-    expect(await db.select().from(llmAssistResults)).toMatchObject([{ applied: true, capacityRequestId: request.request_id }]);
+    expect(await recordedResults()).toMatchObject([{ applied: true, capacityRequestId: request.request_id }]);
     expect(await db.select().from(productEvidenceAudit).where(and(eq(productEvidenceAudit.slug, product.slug), eq(productEvidenceAudit.action, "admin.product.ban")))).toHaveLength(1);
     expect(await db.select().from(operationsAudit).where(and(eq(operationsAudit.target, product.slug), eq(operationsAudit.action, "product-auto-ban-uptime")))).toHaveLength(1);
     expect(await db.select().from(cdnPurges).where(eq(cdnPurges.slug, product.slug))).toHaveLength(1);
@@ -201,7 +228,7 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     await reviewLlmAssist(context());
     expect(calls).toHaveLength(1); expect((await requests())[0].state).toBe("settled");
     expect(await status(product.id)).toBe("seeded");
-    expect(await db.select().from(llmAssistResults)).toMatchObject([{ applied: false }]);
+    expect(await recordedResults()).toMatchObject([{ applied: false }]);
   });
   it("원 업무 pause는 새 claim을 멈추고 소비자 pause는 dispatch를 멈춘다", async () => {
     const product = await fixtureProduct();
@@ -238,6 +265,62 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     expect((await requests())[0]).toMatchObject({ state: "indeterminate", terminal_evidence: null, settled_at: null });
     expect(await work(product.id)).toMatchObject({ state: "indeterminate", attempts: 0 });
     expect(await status(product.id)).toBe("seeded");
-    expect(await db.select().from(llmAssistResults).where(like(llmAssistResults.backendId, backendId))).toHaveLength(0);
+    expect(await recordedResults()).toHaveLength(0);
+  });
+  it("M1 응답이 대기 중이어도 GPU 결과는 먼저 commit되며 같은 Qwen family가 두 독립 모델이 되지 않는다", async () => {
+    const first = await fixtureProduct(), second = await fixtureProduct();
+    let pendingM1: ServerResponse | null = null;
+    const m1 = http.createServer(async (req, res) => {
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        calls.push({ requestId: String(req.headers["x-nmv-relay-request-id"] ?? ""), body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+        pendingM1 = res;
+      } catch { res.destroy(); }
+    });
+    await new Promise<void>(resolve => m1.listen(0, "127.0.0.1", resolve));
+    const address = m1.address();
+    if (!address || typeof address === "string") throw new Error("fixture_m1_server_missing");
+    const m1Contract: LocalModelServingContract = { ...contract, backendId: "fixture-m1-qwen", physicalGroup: "fixture-m1",
+      endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "fixture-m1-q4" };
+    const parallelPolicy: ModelCapacityPolicy = { ...policy, globalLimit: 2,
+      providerLimits: { [backendId]: 1, [m1Contract.backendId]: 1 }, groupLimits: { "fixture-gpu": 1, "fixture-m1": 1 },
+      poolLimits: { reviewer: 2, text: 1 }, routes: [...policy.routes,
+        { routeId: `local-assist-uptime-${m1Contract.backendId}`, provider: "local-direct", model,
+          providerBudgetId: m1Contract.backendId, groupId: "fixture-m1" }] };
+    for (const [key, value] of Object.entries({ LOCAL_MODEL_SERVING_CONTRACTS: JSON.stringify([contract, m1Contract]),
+      LOCAL_MODEL_VERIFIED_CONTRACT_HASHES: JSON.stringify({ [backendId]: localModelContractHash(contract), [m1Contract.backendId]: localModelContractHash(m1Contract) }),
+      LOCAL_MODEL_PHYSICAL_LIMITS: JSON.stringify({ "fixture-gpu": 1, "fixture-m1": 1 }),
+      LLM_ASSIST_API_KEYS: JSON.stringify({ [backendId]: "fixture-key", [m1Contract.backendId]: "fixture-m1-key" }),
+      LLM_ASSIST_BACKENDS: JSON.stringify([{ backendId, tasks: ["uptime"], maxClaims: 1 }, { backendId: m1Contract.backendId, tasks: ["uptime"], maxClaims: 1 }]) })) vi.stubEnv(key, value);
+    await admin`UPDATE model_capacity_control SET policy=${JSON.stringify(parallelPolicy)}::text::jsonb,
+      policy_hash=${modelCapacityPolicyHash(parallelPolicy)} WHERE id=1`;
+    const running = reviewLlmAssist(context());
+    void running.catch(() => {});
+    try {
+      await eventually(async () => Boolean(pendingM1) && (await requests()).some(row => row.group_id === "fixture-gpu" && row.state === "settled")
+        && (await recordedResults()).length === 1);
+      const middle = await requests();
+      expect(middle).toEqual(expect.arrayContaining([expect.objectContaining({ group_id: "fixture-gpu", state: "settled" }),
+        expect.objectContaining({ group_id: "fixture-m1", state: "dispatched" })]));
+      expect(await recordedResults()).toMatchObject([{ backendId, modelFamily: model, applied: true }]);
+      expect([await status(first.id), await status(second.id)].sort()).toEqual(["banned", "seeded"]);
+      const m1Response = pendingM1 as ServerResponse | null;
+      if (!m1Response) throw new Error("fixture_m1_response_missing");
+      m1Response.writeHead(200, { "content-type": "application/json" }); m1Response.end(JSON.stringify(nativeResponse()));
+      await running;
+      expect(calls).toHaveLength(2);
+      expect((await requests()).map(row => row.state)).toEqual(["settled", "settled"]);
+      expect([await status(first.id), await status(second.id)]).toEqual(["banned", "banned"]);
+      const results = await recordedResults();
+      expect(results).toHaveLength(2);
+      expect(new Set(results.map(result => result.modelFamily))).toEqual(new Set([model]));
+      expect(sameLocalModelFamily(contract, m1Contract)).toBe(true);
+      expect(localModelContractHash(contract)).not.toBe(localModelContractHash(m1Contract));
+    } finally {
+      (pendingM1 as ServerResponse | null)?.destroy(); m1.closeAllConnections();
+      await running.catch(() => {});
+      await new Promise<void>(resolve => m1.close(() => resolve()));
+    }
   });
 });
