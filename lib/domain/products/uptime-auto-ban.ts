@@ -10,6 +10,7 @@ import { RECHECK_AFTER_MINUTES, UPTIME_AUTO_BAN_THRESHOLD } from "./health-fresh
 import { UPTIME_UNKNOWN_STATUSES } from "./health-record";
 import { setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
+import { enqueueUptimeAssist, uptimeAssistObservationUnhandled } from "@/lib/domain/llm-assist/repository";
 
 // 보류 기록(health-record)이 같은 경계를 보는데 health → repository 순환을 피하려고 잎 모듈에 둔다
 export { UPTIME_AUTO_BAN_THRESHOLD } from "./health-freshness";
@@ -44,7 +45,9 @@ export async function nextUptimeAutoBanTargets(limit: number): Promise<PingTarge
   if (!Number.isInteger(limit) || limit < 0 || limit > 200) throw new Error("invalid uptime batch");
   return db.select({ id: products.id, slug: products.slug, url: products.url })
     .from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
-    .where(eligibleObservation()).orderBy(asc(productHealth.checkedAt), asc(products.id)).limit(limit);
+    .where(and(eligibleObservation(), uptimeAssistObservationUnhandled({ id: products.id, url: products.url,
+      updatedAt: products.updatedAt, checkedAt: productHealth.checkedAt, failures: productHealth.failures, status: productHealth.status })))
+    .orderBy(asc(productHealth.checkedAt), asc(products.id)).limit(limit);
 }
 
 type Controls = { lease?: JobLease; signal?: AbortSignal; hasBudget?: () => boolean };
@@ -59,10 +62,20 @@ export async function autoBanUptimeProduct(target: PingTarget, controls: Control
     const [current] = await tx.select({
       productUpdatedAt: sql<string>`${products.updatedAt}::text`, previousStatus: products.status, failures: productHealth.failures, lastStatus: productHealth.status,
       checkedAt: productHealth.checkedAt, downSince: productHealth.downSince,
+      checkedAtRevision: sql<string>`${productHealth.checkedAt}::text`, downSinceRevision: sql<string>`${productHealth.downSince}::text`,
     }).from(products).innerJoin(productHealth, eq(productHealth.slug, products.slug))
       .where(and(eq(products.id, target.id), eq(products.slug, target.slug), eq(products.url, target.url), eligibleObservation()))
       .for("update");
     if (!current || controls.signal?.aborted || (controls.hasBudget && !controls.hasBudget())) return false;
+
+    const assist = await enqueueUptimeAssist(tx, { kind: "uptime",
+      product: { ...target, updatedAt: current.productUpdatedAt }, health: { failures: current.failures, status: current.lastStatus!,
+        checkedAt: current.checkedAtRevision, downSince: current.downSinceRevision } }, controls.lease?.name ?? "uptime-ping");
+    if (assist.confirmationRequired) {
+      if (controls.lease) await assertJobLeaseAtWallTime(tx, controls.lease);
+      if (controls.signal?.aborted) throw new DOMException("uptime cancelled", "AbortError");
+      return false;
+    }
 
     const metadata = {
       policy: POLICY, threshold: UPTIME_AUTO_BAN_THRESHOLD, consecutiveFailures: current.failures,

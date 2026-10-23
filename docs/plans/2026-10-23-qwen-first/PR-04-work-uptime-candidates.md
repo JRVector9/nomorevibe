@@ -1,6 +1,6 @@
 # PR-04 보강 작업 큐와 uptime 후보 생산의 첫 경로를 연결한다
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-work-uptime-candidates` · 설계 기준: `c37ae82f`
+상태: **구현 중 · scoped 검증 완료 · PR-02 migration 통합 대기** · 제안 브랜치: `feat/qwen-first-work-uptime-candidates` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -98,3 +98,7 @@ Migration: additive work/result 표·제한된 kind/상태·고유 인덱스와 
 - 새 후보 생산·소비를 중단하고 work/result·기존 모델 점유를 보존한다. additive 표는 바로 삭제하지 않으며 과거 후보를 일괄 차단하지 않는다.
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+## 개발 검증 기록 (2026-10-23)
+
+격리 PostgreSQL(127.0.0.1:55571)에 0119 SQL을 직접 적용하고 신규 큐 4건·기존 uptime 54건, 총 58건을 통과했다. ESLint, Next typegen 후 전체 TypeScript 검사도 통과했다. PR-02의 0118 뒤 journal 등록과 최종 통합 재검증은 남아 있다. 기본값은 off이며 운영 DB 변경·배포·모델 호출은 하지 않았다.

@@ -27,3 +27,7 @@ Node `24.22.1`, lockfile에 맞춘 `npm ci`를 사용한다. PR별 변경 범위
 - 이 결과는 새 운영 모델의 판정 정확도·실행 종료 계약·운영 연결 완료를 뜻하지 않는다. 물리 호출·도메인 적용은 뒤 PR에서 연결한다.
 
 현재까지 운영 provider 호출·운영 DB 쓰기·서비스 설정 변경은 수행하지 않았다. 새 코드·기능의 준비 상태를 운영 활성화로 보고하지 않는다.
+
+### PR-04 후보 큐 개발
+
+llm_assist_controls/work/results 및 uptime 공통 helper 후보화를 구현했다. confirm 이후 확인 gate는 latched이며 소비 중단·off 전환이 legacy 즉시 내림으로 되돌아가지 않는다. shadow는 기존 내림을 유지한다. 원문 microsecond revision, 중복 후보 방지, SKIP LOCKED claim과 원 업무 pause를 격리 DB에서 검증했다. scoped DB 58건, ESLint·Next typegen·tsc 통과. 0118 후 migration journal 통합은 대기 중이다.
