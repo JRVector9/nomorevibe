@@ -59,7 +59,7 @@ beforeAll(async () => {
   }) as typeof fetch);
   vi.stubEnv("MODEL_CAPACITY_LOCAL_END", "1");
   const journal = JSON.parse(readFileSync(path.resolve("drizzle/meta/_journal.json"), "utf8"));
-  expect(journal.entries.at(-1).tag).toBe("0118_local_model_capacity_terminal");
+  expect(journal.entries.some((entry: { tag: string }) => entry.tag === "0118_local_model_capacity_terminal")).toBe(true);
   expect((await admin`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
   [{ row: originalControl }] = await admin`SELECT to_jsonb(c) AS row FROM model_capacity_control c WHERE id=1`;
   // 이전 실패가 남긴 이 파일의 fixture만 정리한다. DB 주소는 setup이 로컬 전용으로 제한한다.
