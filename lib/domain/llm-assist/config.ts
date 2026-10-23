@@ -8,12 +8,12 @@ const drainSchema = z.object({ backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0
 export type AssistBackendDrain = z.infer<typeof drainSchema> & { contract: LocalModelServingContract };
 
 /** 장비 이름으로 기본 주소·모델·용량을 추측하지 않는다. 새 작업은 검증된 native 경로에서만 열린다. */
-export function assistBackendDrains(env: Readonly<Record<string, string | undefined>> = process.env): AssistBackendDrain[] {
+export function assistBackendDrains(env: Readonly<Record<string, string | undefined>> = process.env, lane: "regular" | "audit" = "regular"): AssistBackendDrain[] {
   if (!env.LLM_ASSIST_BACKENDS) return [];
   const drains = z.array(drainSchema).max(4).parse(JSON.parse(env.LLM_ASSIST_BACKENDS));
   if (new Set(drains.map(drain => drain.backendId)).size !== drains.length) throw new Error("duplicate_assist_backend");
-  const auditEnabled = readActionAuditPolicy(env).enabled;
-  return drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => !isAuditAssistTask(task) || auditEnabled) }))
+  const auditEnabled = lane === "audit" && readActionAuditPolicy(env).enabled;
+  return drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => lane === "audit" ? isAuditAssistTask(task) && auditEnabled : !isAuditAssistTask(task)) }))
     .filter(drain => drain.tasks.length).map(drain => {
     const contract = resolveLocalModelServingContract(drain.backendId, env);
     if (!contract || !["qwen3.8-flash-next", "deepseek-v4.1-flash-1017"].includes(contract.modelFamily)

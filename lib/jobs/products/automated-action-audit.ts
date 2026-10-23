@@ -4,6 +4,7 @@ import { enqueueFrozenActionAudit, freezeActionAuditPeriod, loadAutomatedDecisio
   readActionAuditProduct } from "@/lib/domain/products/automated-action-audit-repository";
 import { assertJobLeaseAtWallTime, withJobLeaseWrite } from "@/lib/jobs/control";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { enqueueSemanticExceptionForResult } from "@/lib/domain/llm-assist/audit-runtime";
 
 /** 주간 표본 producer뿐이다. 모델 호출은 별도 backend drain으로 넘겨 Qwen 정상 처리를 기다리게 하지 않는다. */
 export async function auditAutomatedActions(ctx: JobContext<null>): Promise<JobOutcome<null>> {
@@ -17,7 +18,14 @@ export async function auditAutomatedActions(ctx: JobContext<null>): Promise<JobO
     const sample = selectActionAuditSample(decisions, periodStart, config.seed, config.policy, at);
     const frozen = await freezeActionAuditPeriod(tx, { periodStart, seedHash, policy: config.policy, selected: sample.selected,
       skippedUnknownFamily: sample.skippedUnknownFamily, candidatesClipped: sample.candidatesClipped || decisions.length === config.policy.maxCandidates });
-    let queued = 0, duplicates = 0, obsolete = 0;
+    let queued = 0, duplicates = 0, obsolete = 0, semanticQueued = 0, semanticBudgetExhausted = 0;
+    for (const decision of decisions) {
+      if (ctx.signal?.aborted || !ctx.hasBudget()) break;
+      if (decision.outcome.action.proposal !== "independent_review" || decision.outcome.evidence_quality.status !== "sufficient") continue;
+      const result = await enqueueSemanticExceptionForResult(tx, decision.resultId, "semantic_conflict");
+      if (result === "queued") semanticQueued++;
+      if (result === "budget_exhausted") { semanticBudgetExhausted++; break; }
+    }
     for (const resultId of frozen.selectedResultIds ?? []) {
       if (ctx.signal?.aborted || !ctx.hasBudget()) break;
       const decision = await loadAutomatedDecision(tx, resultId);
@@ -28,7 +36,7 @@ export async function auditAutomatedActions(ctx: JobContext<null>): Promise<JobO
       if (result?.created) queued++; else if (result) duplicates++; else obsolete++;
     }
     await assertJobLeaseAtWallTime(tx, lease);
-    return { periodStart, selected: frozen.selectedResultIds?.length ?? 0, queued, duplicates, obsolete };
+    return { periodStart, selected: frozen.selectedResultIds?.length ?? 0, queued, duplicates, obsolete, semanticQueued, semanticBudgetExhausted };
   });
   ctx.log("action_audit.enqueued", summary);
   return { done: true };

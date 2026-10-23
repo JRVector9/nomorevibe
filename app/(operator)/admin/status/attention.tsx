@@ -218,6 +218,10 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   if (assist === null) actions.push({ key: "assist-unknown", tone: "hold", count: "미확인", unit: "상태",
     title: "LLM 보강 큐를 읽지 못했습니다", detail: "조회 실패는 대기 0건이나 모델 종료를 뜻하지 않습니다.", work: { jobs: ["product-llm-assist-review"] } });
   if (assist?.length) {
+    const assistJobs = [...new Set(assist.flatMap(row => [
+      ["decision_audit", "semantic_exception"].includes(row.task) ? "product-llm-assist-audit-review" : "product-llm-assist-review",
+      ...(row.originJob ? [row.originJob] : []),
+    ]))];
     const sum = (states: string[]) => assist.filter(row => states.includes(row.state)).reduce((total, row) => total + row.count, 0);
     const unknown = sum(["indeterminate"]), human = sum(["human", "waiting_evidence"]), capacity = sum(["waiting_capacity"]);
     const stopped = assist.filter(row => row.confirmationRequired && (!row.dispatchEnabled || !row.applyEnabled))
@@ -228,7 +232,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       ["assist-stopped", stopped, "LLM 확인 후보가 보류 중입니다", "확인 소비나 적용이 꺼져 있습니다. 확인이 필수인 후보는 기존 즉시 내림으로 돌아가지 않습니다."],
       ["assist-capacity", capacity, "보강 모델 수용량을 기다립니다", "다른 작업과 공유하는 물리 한도로 대기 중이며, 용량 대기는 모델 실패 시도에 포함하지 않습니다."],
     ] as const) if (count) actions.push({ key, tone: "hold", count, unit: "건", title, detail,
-      action: { label: "보강 소비자", href: jobHref("product-llm-assist-review") }, work: { jobs: ["product-llm-assist-review"] } });
+      action: { label: "보강 소비자", href: jobHref(assistJobs[0]) }, work: { jobs: assistJobs } });
   }
   const unavailable = [[roles, "roles", "역할·예비", ACTION_LINKS.roles], [models, "models", "모델", ACTION_LINKS.models],
     [throughput, "throughput", "저장 진행", ACTION_LINKS.jobs], [attention, "attention", "제품 운영 집계", ACTION_LINKS.jobs]] as const;

@@ -18,13 +18,21 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { collectIntroRecheckInput, runIntroCorrectionStage } from "@/lib/domain/products/intro-assist-runtime";
 import { completeAssistIntroCorrection } from "@/lib/domain/llm-assist/intro-complete";
+import { collectActionAuditInput, AuditDispatchBudgetExceededError } from "@/lib/domain/llm-assist/audit-runtime";
 
 const TICK_MS = 100_000;
 /** backend별 drain은 동시에 시작하고 각 결과를 즉시 기록한다. 느린 M1·DeepSeek를 GPU의 앞에 두지 않는다. */
 export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  return runAssistLane(ctx, "regular");
+}
+export async function reviewLlmAssistAudit(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  return runAssistLane(ctx, "audit");
+}
+async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): Promise<JobOutcome<null>> {
   if (!ctx.lease) throw new Error("assist_job_lease_required");
+  if (ctx.lease.name !== (lane === "audit" ? "product-llm-assist-audit-review" : "product-llm-assist-review")) throw new Error("assist_job_lease_mismatch");
   const lease = ctx.lease, startedAt = Date.now(), role = roleLeaseFromEnv("reviewer", process.env);
-  const backends = assistBackendDrains();
+  const backends = assistBackendDrains(process.env, lane);
   if (!backends.length) { ctx.log("assist.disabled", {}); return { done: true }; }
   if (!role) return { done: true, degraded: { code: "owner_unavailable", detail: "보강 소비자의 reviewer lease가 없습니다" } };
   const owner = { instanceId: role.instanceId, bootId: role.bootId };
@@ -35,7 +43,7 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
     const apiKey = assistBackendKey(backend.backendId);
     if (!apiKey) { ctx.log("assist.backend_key_missing", { backendId: backend.backendId }); return counts; }
     for (let index = 0; index < backend.maxClaims && ctx.hasBudget() && !ctx.signal?.aborted && remaining() > 15_000; index++) {
-      const claim = await claimAssistWork({ lease, owner, backendId: backend.backendId, tasks: backend.tasks });
+      const claim = await claimAssistWork({ lease, owner, backendId: backend.backendId, tasks: backend.tasks, backendFamily: backend.contract.modelFamily });
       if (!claim) break;
       counts.claimed++;
       let stage: "collection" | "model" = "collection";
@@ -46,6 +54,13 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
         let input: AssistInput;
         if (candidate.kind === "uptime") input = await collectUptimeAssist(candidate, signal);
         else if (candidate.kind === "intro_recheck") input = await collectIntroRecheckInput(candidate, signal);
+        else if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
+          const collected = await collectActionAuditInput(candidate, { signal });
+          if (collected.kind !== "ready") {
+            await deferAssistClaim(claim, collected.kind, collected.reason); counts.deferred++; continue;
+          }
+          input = collected.input;
+        }
         else {
           const collected = await collectRepoMoveInput(candidate, { signal });
           if (collected.kind !== "ready") {
@@ -104,7 +119,9 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
       } catch (error) {
         const [work] = await db.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
         if (!work || work.state !== "claimed") continue;
-        if (work.capacityRequestId) {
+        if (error instanceof AuditDispatchBudgetExceededError) {
+          await deferAssistClaim(claim, "obsolete", "audit_weekly_budget_exhausted"); counts.deferred++; break;
+        } else if (work.capacityRequestId) {
           const [capacity] = await db.select({ state: modelCapacityRequests.state }).from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, work.capacityRequestId));
           if (capacity?.state === "settled") {
             const capacityWait = error instanceof ModelCapacityDeferredError;

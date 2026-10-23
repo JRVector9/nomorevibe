@@ -16,10 +16,13 @@ import { buildRepoMoveInput } from "@/lib/domain/products/repo-move-review";
 import { introRecheckEligible, validateIntroAssistInput } from "@/lib/domain/products/intro-assist";
 import { readIntroRecheckSnapshot } from "@/lib/domain/products/intro-assist-repository";
 import { assistHash } from "./contracts";
+import { lockActionAuditRuntimeInput, AuditDispatchBudgetExceededError } from "./audit-runtime";
+import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
+import { resolveLocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
-  value: AssistCapacityInput, job: JobLease, role: RoleLease, requestId: string): Promise<boolean> {
+  value: AssistCapacityInput, job: JobLease, role: RoleLease, requestId: string, model: string): Promise<boolean> {
   const [initial] = await tx.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, target.workId));
   if (!initial) return false;
   const candidate = assistCandidateSchema.parse(initial.source), subject = assistCandidateSubject(candidate);
@@ -39,6 +42,19 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   const control = await readAssistControl(work.task, tx);
   if (!control.dispatchEnabled || control.mode === "off" || control.revision !== work.controlRevision
     || !await assistOriginActive(tx, work.originJob) || !await assistOriginActive(tx, job.name)) return false;
+  if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
+    const config = readActionAuditPolicy(), contract = resolveLocalModelServingContract(target.backendId);
+    if (!config.enabled || !contract || contract.model !== model
+      || !await lockActionAuditRuntimeInput(tx, candidate, value.input, contract.modelFamily)) return false;
+    // 공통 capacity 제어행이 잠긴 TX다. 실제 dispatch를 현재 UTC 주간 한도로 센다.
+    const [used] = await tx.execute<{ count: number }>(sql`select count(*)::int as count from model_capacity_requests r
+      where r.dispatched_at>=date_trunc('week',clock_timestamp() at time zone 'UTC') at time zone 'UTC'
+        and r.dispatch_binding->'target'->>'task'=${candidate.kind}`);
+    const limit = candidate.kind === "semantic_exception" ? config.policy.maxExceptionsPerWeek : config.policy.maxAuditsPerWeek;
+    if (used.count >= limit) throw new AuditDispatchBudgetExceededError();
+    await assertJobLeaseAtWallTime(tx, job, "update"); await assertRoleLease(tx, role);
+    return true;
+  }
   if (candidate.kind === "intro_recheck") {
     const current = await readIntroRecheckSnapshot(subject.id, tx, "update");
     if (!current || !introRecheckEligible(current) || assistHash(current) !== assistHash(candidate.snapshot)

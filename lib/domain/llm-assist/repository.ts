@@ -11,6 +11,7 @@ import { assistCandidateSourceHash, uptimeCandidateSchema, type AssistControl, t
 import { ASSIST_POLICY_VERSION } from "./contracts";
 import { ASSIST_PROMPT_VERSION } from "./prompts";
 import { repoMoveSnapshotSelection } from "@/lib/domain/products/repo-move-snapshots";
+import { actionAuditClaimEligible } from "./audit-runtime";
 
 type Transaction = ProductTransaction;
 export type AssistWork = typeof llmAssistWorks.$inferSelect;
@@ -63,7 +64,7 @@ export async function assistOriginActive(tx: Transaction, originJob: string): Pr
 
 /** backend들은 같은 큐를 소비한다. 이 함수는 짧은 DB claim만 하며 네트워크 동안 연결을 잡지 않는다. */
 export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapacityOwner; backendId: string;
-  tasks: readonly AssistWorkTask[] }): Promise<AssistWorkClaim | null> {
+  tasks: readonly AssistWorkTask[]; backendFamily?: string }): Promise<AssistWorkClaim | null> {
   if (!input.tasks.length || !input.backendId.trim()) return null;
   return withJobLeaseWrite(input.lease, async tx => {
     const tasks = sql.join(input.tasks.map(task => sql`${task}`), sql`, `);
@@ -88,7 +89,10 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
           and products.claimed_at is null and not exists(select 1 from product_maker_members m where m.product_id=products.id and m.revoked_at is null)
           and product_intro_checks.updated_at::text=w.source->'snapshot'->'check'->>'updatedAt'
           and product_intro_checks.outcome='needs_editor' and product_intro_checks.error_code is null
-          and product_intro_checks.checked_tagline=products.tagline))
+          and product_intro_checks.checked_tagline=products.tagline)
+        or (${actionAuditClaimEligible(input.backendFamily ?? "unknown")}
+          and products.url=w.source->'product'->>'url' and products.updated_at::text=w.source->'product'->>'updatedAt'
+          and products.status=w.source->'product'->>'status'))
         and not exists (select 1 from llm_assist_work active where active.task=w.task and active.product_id=w.product_id
           and active.state in ('claimed','indeterminate'))
       order by w.priority desc,w.next_attempt_at,w.created_at,w.id for update of w skip locked limit 1`);

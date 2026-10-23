@@ -47,7 +47,7 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
     }
     if (input.kind !== "llm_assist") return false;
     const { proveAssistModelDomain } = await import("@/lib/domain/llm-assist/model-domain");
-    return proveAssistModelDomain(tx, target, input, job, role, requestId);
+    return proveAssistModelDomain(tx, target, input, job, role, requestId, model);
   }
   if (isAssistCapacityInput(input)) return false;
   const stages = await lockPipelineInputStages(tx);

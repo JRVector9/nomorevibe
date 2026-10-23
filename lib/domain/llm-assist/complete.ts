@@ -13,6 +13,7 @@ import { assistCandidateSubject } from "./work";
 import { applyRepoMoveResult, lockRepoMoveCandidate, type FreshRepoMoveChecks } from "@/lib/domain/products/repo-move-reviews";
 import { decideRepositoryMove } from "@/lib/domain/products/repo-move-review";
 import { lockProductRepository } from "@/lib/domain/products/repository-identity";
+import { completeActionAuditRuntime } from "./audit-runtime";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
@@ -55,6 +56,11 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
     }
     let applied = work.task === "uptime" && await applyUptimeAssist(tx, claim, input, validated.outcome, resultId);
     let domainState: "human" | "obsolete" | null = null;
+    if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
+      const comparison = await completeActionAuditRuntime(tx, { candidate, workId: work.id, resultId, input,
+        auditorFamily: contract.modelFamily, outcome: validated.outcome });
+      domainState = !comparison ? "obsolete" : comparison.comparison.status === "human_review" ? "human" : null;
+    }
     if (candidate.kind === "repo_move" && input.task === "repo" && freshRepoChecks) {
       const repoResult = await applyRepoMoveResult(tx, candidate, input, validated.outcome, { resultId, workId: work.id }, freshRepoChecks);
       applied = repoResult === "updated" || repoResult === "delisted";
