@@ -17,7 +17,8 @@ export const uptimeCandidateSchema = z.object({
     checkedAt: z.string().min(1).max(100), downSince: z.string().min(1).max(100) }).strict(),
 }).strict();
 export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchema>>;
-export const assistCandidateSchema = z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema]);
+// intro의 기존 판정기는 CLI 모듈도 참조한다. 순환 import 중 schema 값을 먼저 캡처하지 않는다.
+export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema]));
 export type AssistCandidate = Readonly<z.infer<typeof assistCandidateSchema>>;
 export function assistCandidateSubject(candidate: AssistCandidate) {
   return candidate.kind === "uptime" ? candidate.product : candidate.kind === "intro_recheck" ? candidate.snapshot.product : candidate.snapshot;
