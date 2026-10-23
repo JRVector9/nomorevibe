@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { jobs, llmAssistControls, llmAssistWorks } from "@/lib/db/schema";
+import { jobs, llmAssistControls, llmAssistWorks, modelCapacityRequests } from "@/lib/db/schema";
 import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { isJobName } from "@/lib/jobs/catalog";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -112,12 +112,16 @@ export async function deferAssistClaim(claim: AssistWorkClaim, state: Exclude<As
   return withJobLeaseWrite(claim.lease, async tx => {
     const work = await lockAssistClaim(tx, claim);
     if (!work) return false;
-    if (work.capacityRequestId && state !== "indeterminate") throw new Error("assist_remote_terminal_required");
+    if (work.capacityRequestId && state !== "indeterminate") {
+      const [capacity] = await tx.select({ state: modelCapacityRequests.state }).from(modelCapacityRequests)
+        .where(eq(modelCapacityRequests.requestId, work.capacityRequestId)).for("share");
+      if (!capacity || !["settled", "withdrawn"].includes(capacity.state)) throw new Error("assist_remote_terminal_required");
+    }
     const active = state === "indeterminate";
     const [updated] = await tx.update(llmAssistWorks).set({ state, revision: work.revision + 1, lastError: reason.slice(0, 120),
       attempts: work.attempts + (options.consumesAttempt ? 1 : 0), nextAttemptAt: options.nextAttemptAt?.toISOString() ?? work.nextAttemptAt,
       ...(active ? {} : { claimToken: null, claimJob: null, claimJobToken: null, claimRequestedVersion: null,
-        ownerInstanceId: null, ownerBootId: null, backendId: null }), updatedAt: sql`clock_timestamp()`,
+        ownerInstanceId: null, ownerBootId: null, backendId: null, capacityRequestId: null, input: null, inputHash: null }), updatedAt: sql`clock_timestamp()`,
     }).where(and(eq(llmAssistWorks.id, work.id), eq(llmAssistWorks.revision, work.revision))).returning({ id: llmAssistWorks.id });
     return Boolean(updated);
   });
