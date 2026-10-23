@@ -9,13 +9,19 @@ import { lockedInput } from "@/lib/crawl/admin-review";
 import { loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { auditSettings, lockAuditDispatchItem } from "@/lib/crawl/product-audit";
 import { auditReviewer } from "@/lib/crawl/product-audit-reviewer";
-import type { ReviewInput } from "@/lib/crawl/agent-review-contract";
+import { isAssistCapacityInput, type LocalModelInput } from "./local-model-input";
 import { localModelJob, type LocalModelTarget } from "./local-model-capacity-contract";
 
 /** 예약을 잠근 같은 TX에서 실제 행·원본·설정·lease를 다시 증명한다. 외부 boolean 검증기를 받지 않는다. */
-export async function proveLocalModelDomain(tx: ProductTransaction, target: LocalModelTarget, input: ReviewInput,
-  job: JobLease, role: RoleLease, model: string): Promise<boolean> {
+export async function proveLocalModelDomain(tx: ProductTransaction, target: LocalModelTarget, input: LocalModelInput,
+  job: JobLease, role: RoleLease, model: string, requestId?: string): Promise<boolean> {
   if (job.name !== localModelJob(target) || role.role !== "reviewer") return false;
+  if (target.kind === "assist") {
+    if (!isAssistCapacityInput(input) || !requestId) return false;
+    const { proveAssistModelDomain } = await import("@/lib/domain/llm-assist/model-domain");
+    return proveAssistModelDomain(tx, target, input, job, role, requestId);
+  }
+  if (isAssistCapacityInput(input)) return false;
   await lockPipelineInputStages(tx);
   const current = await lockedInput(tx, input.snapshot.product.repo);
   if (!current || !current.settings.enabled || current.input.validUntil <= new Date()

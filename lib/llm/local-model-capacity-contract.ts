@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ModelCapacityDispatch } from "./capacity";
+import { assistWorkTaskSchema } from "@/lib/domain/llm-assist/work";
 
 const id = z.number().int().positive().safe();
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
@@ -10,6 +11,8 @@ const repo = text(200).regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
 
 /** 대상은 실제 도메인 행을 찾기 위한 주소다. 이 모양 자체는 호출 권한이 아니다. */
 export const localModelTargetSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("assist"), purpose: z.literal("assist_review"), workId: z.uuid(), workRevision: id,
+    claimToken: z.uuid(), task: assistWorkTaskSchema, subjectId: id, backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/) }).strict(),
   z.object({ kind: z.literal("audit"), purpose: z.enum(["audit", "second_opinion", "screen"]),
     itemId: id, slug: text(80) }).strict(),
   z.object({ kind: z.literal("published"), purpose: z.literal("published_filter"),
@@ -23,17 +26,20 @@ export type LocalModelTarget = Readonly<z.infer<typeof localModelTargetSchema>>;
 
 export function localModelLogicalKey(value: LocalModelTarget): string {
   const target = localModelTargetSchema.parse(value);
+  if (target.kind === "assist") return `direct:assist:${target.subjectId}:${target.task}`;
   const key = target.kind === "audit" ? target.itemId : target.kind === "published" ? target.secondReviewId
     : target.candidateId;
   return `direct:${target.kind}:${key}:${target.purpose}`;
 }
 
 export function localModelRoute(value: LocalModelTarget): string {
-  return `local-${localModelTargetSchema.parse(value).purpose.replaceAll("_", "-")}`;
+  const target = localModelTargetSchema.parse(value);
+  return target.kind === "assist" ? `local-assist-${target.task}-${target.backendId}` : `local-${target.purpose.replaceAll("_", "-")}`;
 }
 
 export function localModelJob(value: LocalModelTarget): string {
   const target = localModelTargetSchema.parse(value);
+  if (target.kind === "assist") return "product-llm-assist-review";
   if (target.purpose === "screen") return "audit-screen-review";
   if (target.purpose === "audit" || target.purpose === "second_opinion" || target.purpose === "published_filter") return "product-audit";
   return target.purpose === "qwen_tiebreak" ? "second-review" : "human-deepseek-review";
@@ -48,7 +54,8 @@ export const localModelBindingSchema = z.object({
   job: z.object({ name: text(120), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
 }).strict().refine(value => value.logicalWorkKey === localModelLogicalKey(value.target)
   && value.routeId === localModelRoute(value.target) && value.job.name === localModelJob(value.target)
-  && value.totalTokenBound === value.chargedTokens, "invalid_local_model_binding");
+  && value.totalTokenBound === value.chargedTokens
+  && (value.target.kind !== "assist" || value.target.backendId === value.backendId), "invalid_local_model_binding");
 export type LocalModelBinding = Readonly<z.infer<typeof localModelBindingSchema>>;
 
 export const localModelDispatchSchema = z.object({

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { ReviewInput } from "@/lib/crawl/agent-review-contract";
+import type { LocalModelInput } from "./local-model-input";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
@@ -14,7 +14,7 @@ import { requestReservedLocalModel } from "./local-model-terminal";
 
 type Env = Readonly<Record<string, string | undefined>>;
 export type LocalModelCallContext = {
-  target: LocalModelTarget; input: ReviewInput; lease: JobLease; promptVersion: string;
+  target: LocalModelTarget; input: LocalModelInput; lease: JobLease; promptVersion: string;
   env?: Env; allowLegacy?: boolean;
 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");

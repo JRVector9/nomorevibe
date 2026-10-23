@@ -17,6 +17,9 @@ function target(value: string): string {
     `${value}->>'purpose' IN (${purposes.map(purpose => `'${purpose}'`).join(",")})`, ...extra,
   ]);
   return `(${[
+    base("assist", ["assist_review"], ["workId", "workRevision", "claimToken", "task", "subjectId", "backendId"],
+      [uuid(`${value}->'workId'`), integer(`${value}->'workRevision'`), uuid(`${value}->'claimToken'`),
+        `nmv_local_assist_task_valid(${value}->>'task')`, integer(`${value}->'subjectId'`), match(`${value}->'backendId'`, "^[a-z0-9][a-z0-9-]{0,59}$")]),
     base("audit", ["audit", "second_opinion", "screen"], ["itemId", "slug"], [integer(`${value}->'itemId'`), string(`${value}->'slug'`, 80)]),
     base("published", ["published_filter"], ["secondReviewId", "slug"], [integer(`${value}->'secondReviewId'`), string(`${value}->'slug'`, 80)]),
     base("candidate", ["held_qwen", "human_deepseek"], ["attemptId", "candidateId", "repo"],
@@ -40,11 +43,12 @@ function binding(value: string): string {
     string(`${job}->'name'`, 120), uuid(`${job}->'token'`), integer(`${job}->'requestedVersion'`, true),
     `${value}->>'logicalWorkKey'='direct:' || (${t}->>'kind') || ':' || CASE ${t}->>'kind'
       WHEN 'audit' THEN ${t}->>'itemId' WHEN 'published' THEN ${t}->>'secondReviewId'
-      ELSE ${t}->>'candidateId' END || ':' || (${t}->>'purpose')`,
-    `${value}->>'routeId'='local-' || replace(${t}->>'purpose','_','-')`,
-    `${job}->>'name'=CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
+      WHEN 'assist' THEN ${t}->>'subjectId' ELSE ${t}->>'candidateId' END || ':' || CASE WHEN ${t}->>'kind'='assist' THEN ${t}->>'task' ELSE ${t}->>'purpose' END`,
+    `${value}->>'routeId'=CASE WHEN ${t}->>'kind'='assist' THEN 'local-assist-' || (${t}->>'task') || '-' || (${t}->>'backendId') ELSE 'local-' || replace(${t}->>'purpose','_','-') END`,
+    `(${t}->>'kind'<>'assist' OR ${t}->>'backendId'=${value}->>'backendId')`,
+    `${job}->>'name'=CASE WHEN ${t}->>'kind'='assist' THEN 'product-llm-assist-review' ELSE CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
       WHEN 'second_opinion' THEN 'product-audit' WHEN 'published_filter' THEN 'product-audit'
-      WHEN 'qwen_tiebreak' THEN 'second-review' ELSE 'human-deepseek-review' END`,
+      WHEN 'qwen_tiebreak' THEN 'second-review' ELSE 'human-deepseek-review' END END`,
   ]);
 }
 
@@ -73,7 +77,7 @@ function terminal(value: string): string {
   ]);
 }
 
-export const localModelLogicalSql = all([
+const directLogicalSql = all([
   "logical_work_key ~ '^direct:(audit|published|candidate|split):[1-9][0-9]{0,15}:(audit|second_opinion|screen|published_filter|held_qwen|human_deepseek|qwen_tiebreak|deepseek_confirm)$'",
   "class='background' AND pool='reviewer' AND provider='local-direct'",
   "CASE WHEN split_part(logical_work_key,':',3) ~ '^[1-9][0-9]{0,15}$' THEN split_part(logical_work_key,':',3)::numeric BETWEEN 1 AND 9007199254740991 ELSE false END",
@@ -81,6 +85,12 @@ export const localModelLogicalSql = all([
   "logical_member_keys IS NULL",
   "((split_part(logical_work_key,':',2)='audit' AND split_part(logical_work_key,':',4) IN ('audit','second_opinion','screen')) OR (split_part(logical_work_key,':',2)='published' AND split_part(logical_work_key,':',4)='published_filter') OR (split_part(logical_work_key,':',2)='candidate' AND split_part(logical_work_key,':',4) IN ('held_qwen','human_deepseek')) OR (split_part(logical_work_key,':',2)='split' AND split_part(logical_work_key,':',4) IN ('qwen_tiebreak','deepseek_confirm')))",
 ]);
+export const localModelLogicalSql = `(${directLogicalSql} OR ${all([
+  "logical_work_key ~ '^direct:assist:[1-9][0-9]{0,15}:[a-z_]{1,32}$'", "class='background' AND pool='reviewer' AND provider='local-direct'",
+  "nmv_local_assist_task_valid(split_part(logical_work_key,':',4))",
+  "CASE WHEN split_part(logical_work_key,':',3) ~ '^[1-9][0-9]{0,15}$' THEN split_part(logical_work_key,':',3)::numeric BETWEEN 1 AND 9007199254740991 ELSE false END",
+  "route_id LIKE 'local-assist-' || split_part(logical_work_key,':',4) || '-%'", "logical_member_keys IS NULL",
+])})`;
 
 export const localModelDispatchSql = all([
   "dispatch_binding IS NOT NULL AND dispatch_binding_hash ~ '^[a-f0-9]{64}$' AND dispatched_at IS NOT NULL AND state IN ('dispatched','indeterminate','settled','withdrawn')",

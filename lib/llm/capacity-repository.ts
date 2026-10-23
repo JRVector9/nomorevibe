@@ -244,7 +244,7 @@ export function consumeLocalModelDispatch(value: unknown): LocalModelDispatch | 
 
 export async function dispatchLocalModelCapacity(value: {
   reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; binding: LocalModelBinding;
-  input: ReviewInput; job: JobLease; role: RoleLease;
+  input: import("./local-model-input").LocalModelInput; job: JobLease; role: RoleLease;
 }): Promise<LocalModelDispatch | null> {
   const reservationValue = modelCapacityReservationSchema.parse(value.reservation);
   const identity = modelCapacityRequestIdentitySchema.parse(value.identity), binding = localModelBindingSchema.parse(value.binding);
@@ -266,13 +266,17 @@ export async function dispatchLocalModelCapacity(value: {
       || row.logicalWorkKey !== binding.logicalWorkKey || row.epoch !== state.epoch || row.revision !== state.revision
       || row.policyHash !== state.policyHash || await localModelFence(tx, binding.logicalWorkKey, row.requestId)) return null;
     const { proveLocalModelDomain } = await import("./local-model-domain");
-    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model)) return null;
+    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId)) return null;
     const bindingHash = localModelBindingHash(binding);
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding, dispatchBindingHash: bindingHash,
       dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId),
       eq(modelCapacityRequests.state, "reserved"), eq(modelCapacityRequests.token, row.token!),
       sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
     if (!changed) return null;
+    if (binding.target.kind === "assist") {
+      const { bindAssistModelRequest } = await import("@/lib/domain/llm-assist/model-domain");
+      await bindAssistModelRequest(tx, binding.target, changed.requestId);
+    }
     const dispatch = localModelDispatchSchema.parse({ ...reservation(changed), binding, bindingHash }) as LocalModelDispatch;
     await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
     return dispatch;
