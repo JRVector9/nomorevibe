@@ -89,7 +89,8 @@ export const localModelLogicalSql = `(${directLogicalSql} OR ${all([
   "logical_work_key ~ '^direct:assist:[1-9][0-9]{0,15}:[a-z_]{1,32}$'", "class='background' AND pool='reviewer' AND provider='local-direct'",
   "nmv_local_assist_task_valid(split_part(logical_work_key,':',4))",
   "CASE WHEN split_part(logical_work_key,':',3) ~ '^[1-9][0-9]{0,15}$' THEN split_part(logical_work_key,':',3)::numeric BETWEEN 1 AND 9007199254740991 ELSE false END",
-  "route_id LIKE 'local-assist-' || split_part(logical_work_key,':',4) || '-%'", "logical_member_keys IS NULL",
+  "left(route_id,length('local-assist-' || split_part(logical_work_key,':',4) || '-'))='local-assist-' || split_part(logical_work_key,':',4) || '-'",
+  "substring(route_id from length('local-assist-' || split_part(logical_work_key,':',4) || '-')+1) ~ '^[a-z0-9][a-z0-9-]{0,59}$'", "logical_member_keys IS NULL",
 ])})`;
 
 export const localModelDispatchSql = all([
