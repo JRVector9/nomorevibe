@@ -10,7 +10,7 @@ import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
 import type { LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { assistCapacityInput, type AssistCapacityInput } from "./model-input";
 import { assistOriginActive, readAssistControl } from "./repository";
-import { uptimeCandidateSchema } from "./work";
+import { assistCandidateSourceHash, uptimeCandidateSchema } from "./work";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
@@ -26,6 +26,7 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   if (!work || work.task !== target.task || work.productId !== target.subjectId || work.backendId !== target.backendId
     || work.ownerInstanceId !== role.instanceId || work.ownerBootId !== role.bootId || work.claimJob !== job.name
     || work.claimJobToken !== job.token || work.claimRequestedVersion !== job.requestedVersion || work.capacityRequestId
+    || work.sourceHash !== assistCandidateSourceHash(candidate)
     || !work.input || !isDeepStrictEqual(work.input, value.input) || work.inputHash !== value.inputHash
     || !isDeepStrictEqual(assistCapacityInput(work, value.input), value)) return false;
   const control = await readAssistControl(work.task, tx);
