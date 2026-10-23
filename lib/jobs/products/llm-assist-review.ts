@@ -1,0 +1,89 @@
+import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { llmAssistWorks } from "@/lib/db/schema";
+import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
+import { claimAssistWork, deferAssistClaim } from "@/lib/domain/llm-assist/repository";
+import { prepareAssistInput, recoverAbandonedAssistClaims } from "@/lib/domain/llm-assist/claim-lifecycle";
+import { completeAssistClaim } from "@/lib/domain/llm-assist/complete";
+import { assistBackendDrains, assistBackendKey, type AssistBackendDrain } from "@/lib/domain/llm-assist/config";
+import { assistCapacityInput } from "@/lib/domain/llm-assist/model-input";
+import { buildAssistModelRequest, parseAssistModelResponse } from "@/lib/domain/llm-assist/model-request";
+import { uptimeCandidateSchema } from "@/lib/domain/llm-assist/work";
+import { collectUptimeAssist } from "@/lib/domain/products/uptime-delist-review";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+
+const TICK_MS = 100_000;
+/** backend별 drain은 동시에 시작하고 각 결과를 즉시 기록한다. 느린 M1·DeepSeek를 GPU의 앞에 두지 않는다. */
+export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+  if (!ctx.lease) throw new Error("assist_job_lease_required");
+  const lease = ctx.lease, startedAt = Date.now(), role = roleLeaseFromEnv("reviewer", process.env);
+  const backends = assistBackendDrains();
+  if (!backends.length) { ctx.log("assist.disabled", {}); return { done: true }; }
+  if (!role) return { done: true, degraded: { code: "owner_unavailable", detail: "보강 소비자의 reviewer lease가 없습니다" } };
+  const owner = { instanceId: role.instanceId, bootId: role.bootId };
+  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  await recoverAbandonedAssistClaims(lease);
+  const drain = async (backend: AssistBackendDrain) => {
+    const counts = { claimed: 0, recorded: 0, applied: 0, deferred: 0, human: 0, indeterminate: 0 };
+    const apiKey = assistBackendKey(backend.backendId);
+    if (!apiKey) { ctx.log("assist.backend_key_missing", { backendId: backend.backendId }); return counts; }
+    for (let index = 0; index < backend.maxClaims && ctx.hasBudget() && !ctx.signal?.aborted && remaining() > 15_000; index++) {
+      const claim = await claimAssistWork({ lease, owner, backendId: backend.backendId, tasks: backend.tasks });
+      if (!claim) break;
+      counts.claimed++;
+      let stage: "collection" | "model" = "collection";
+      try {
+        const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(Math.max(1, Math.min(90_000, remaining() - 1000)))]);
+        const candidate = uptimeCandidateSchema.parse(claim.work.source);
+        const input = await collectUptimeAssist(candidate, signal);
+        if (!input.sources.some(source => source.completeness === "complete" && source.text.trim())) {
+          await deferAssistClaim(claim, "waiting_evidence", "collection_incomplete"); counts.deferred++; continue;
+        }
+        if (!await prepareAssistInput(claim, input)) {
+          await deferAssistClaim(claim, "obsolete", "control_or_input_changed"); counts.deferred++; continue;
+        }
+        if (!ctx.hasBudget() || signal.aborted || remaining() < 5000) {
+          await deferAssistClaim(claim, "waiting_capacity", "tick_budget", { nextAttemptAt: new Date(Date.now() + 60_000) });
+          counts.deferred++; break;
+        }
+        const request = buildAssistModelRequest(input, backend.contract);
+        stage = "model";
+        const response = await withLocalModelCapacity({ target: { kind: "assist", purpose: "assist_review", workId: claim.work.id,
+          workRevision: claim.work.revision, claimToken: claim.token, task: claim.work.task, subjectId: candidate.product.id, backendId: backend.backendId },
+          input: assistCapacityInput(claim.work, input), lease, promptVersion: input.promptVersion, allowLegacy: false }, fetchModel =>
+          fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+            body: request.wire, signal }));
+        const raw = await response.text();
+        let value: unknown;
+        try { value = JSON.parse(raw); } catch { value = null; }
+        const parsed = parseAssistModelResponse(input, value);
+        if (!parsed.ok) {
+          await deferAssistClaim(claim, "human", parsed.error, { consumesAttempt: true }); counts.human++; continue;
+        }
+        const saved = await completeAssistClaim(claim, input, parsed.outcome, backend.contract, createHash("sha256").update(raw).digest("hex"));
+        if (saved.recorded) counts.recorded++;
+        if (saved.applied) counts.applied++;
+      } catch (error) {
+        const [work] = await db.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
+        if (!work) continue;
+        if (work.capacityRequestId) {
+          await deferAssistClaim(claim, "indeterminate", "model_or_commit_unknown"); counts.indeterminate++;
+        } else if (error instanceof ModelCapacityDeferredError) {
+          await deferAssistClaim(claim, "waiting_capacity", `capacity_${error.reason}`, { nextAttemptAt: new Date(Date.now() + 60_000) }); counts.deferred++;
+          break;
+        } else {
+          await deferAssistClaim(claim, stage === "collection" ? "waiting_evidence" : "human",
+            stage === "collection" ? "collection_failed" : "request_invalid", { consumesAttempt: false }); counts.deferred++;
+        }
+      }
+    }
+    ctx.log("assist.backend_done", { backendId: backend.backendId, ...counts });
+    return counts;
+  };
+  const results = await Promise.allSettled(backends.map(drain));
+  if (results.some(result => result.status === "rejected")) throw new Error("assist_backend_drain_failed");
+  return { done: false };
+}

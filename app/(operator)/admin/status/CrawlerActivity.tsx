@@ -12,7 +12,7 @@ const jobLabel = (name: string) => name === "ai-level-refresh" ? "AI 제작 단�
 const STATES = { disabled: "설정 꺼짐", paused: "사람이 중단", running: "실행 중", "stale-lock": "중단·회수 대기",
   retrying: "재시도 대기", queued: "실행 요청 대기", error: "최근 회차 오류", "never-run": "실행 기록 없음", idle: "다음 예약 대기" };
 const INSTANCE_STATES = { active: "담당 중", standby: "예비 대기", stale: "관측 지연", stopping: "종료 중", unknown: "담당 여부 미확인" };
-const LANES = { main: "기본 줄", sources: "공개 근거 줄", scan: "개발 AI 조사 줄", evidence: "AI 단계 줄", stars: "8시간 스타 줄", screen: "화면 판별 줄" };
+const LANES = { main: "기본 줄", sources: "공개 근거 줄", scan: "개발 AI 조사 줄", evidence: "AI 단계 줄", stars: "8시간 스타 줄", screen: "화면 판별 줄", assist: "근거 보강 줄" };
 const LANE_STATES = { idle: "일감 확인 대기", polling: "요청 확인 중", running: "실행 중", stopping: "종료 중",
   standby: "예비 대기", stale: "관측 지연", unknown: "진행 미확인", "other-job": "다른 역할 작업 중" };
 const ERROR_LABELS = { timeout: "시간 초과", "rate-limited": "공급자 한도", authentication: "인증 확인 필요", "job-error": "실행 오류" };

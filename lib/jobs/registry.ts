@@ -31,6 +31,7 @@ import { refreshSiteEvidenceJob } from "@/lib/jobs/products/site-evidence-refres
 import { refreshProductStars } from "@/lib/jobs/products/stars-refresh";
 import { observeProductStars } from "@/lib/jobs/products/star-observation";
 import { reviewGoneRepositories } from "@/lib/jobs/products/repo-review";
+import { reviewLlmAssist } from "@/lib/jobs/products/llm-assist-review";
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { refreshProductThumbnails } from "@/lib/jobs/products/thumbnail-refresh";
@@ -117,6 +118,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** 등재된 제품이 아직 떠 있는지 확인한다 (기록만 하고 목록은 건드리지 않는다) */
   "uptime-ping": pingProducts,
+  "product-llm-assist-review": reviewLlmAssist,
 
   /** 클릭 원천을 하루 단위로 굴리고 오래된 원천을 지운다 */
   "click-rollup": rollupClicks,
