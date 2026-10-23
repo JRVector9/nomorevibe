@@ -74,3 +74,7 @@ Migration: 있음:04의 task kind·typed payload/binding 제약을 repo_move로 
 - LLM보강과주소자동적용을끄고기존human흐름으로돌린다. 이미변경한URL은이전URL·세대·감사근거로검토하고운영자변경을덮지않는다.
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+## 공통 소비자 통합 검증
+
+실제 DB·localhost 모델 HTTP의 신규8+기존12=20건이 통과했다. 공식redirect 주소CAS/감사, 무관저장소내림, 판정 중 페이지변경·claimed·active maker·동명포크·접근차단·microsecond 변동 보호를 검증했다. 현재 페이지와 README를 다시 수집하며 페이지 의존 조치는 적용 직전 본문/URL/상태/완전성을 다시 비교한다. 공통 통합 unit105건과 typecheck, freshness unit27건·ESLint·최종typegen/tsc도 통과했다. 빈 DB에121개 migration 적용을 확인했다. 실모델·운영 DB·배포·활성화는 수행하지 않았다.
