@@ -128,18 +128,46 @@ describe("홈 대표 구획", () => {
     expect(t("talk.methodRequest", { email: CONTACT_EMAIL })).toBe("글쓴이가 원하면 뺍니다 — 원문을 지우거나, contact@nomorevibe.com 로 글 주소를 보내 주세요. 프로젝트 상세 페이지의 요청 폼은 프로젝트 자체를 내리는 곳이라 SNS 글 빼기에는 쓰지 않습니다");
   });
 
-  it("1위 허용 전이면 목록만, 아무것도 없으면 조용하다고 말한다", () => {
-    expect(render({ rest: [entry(1, "doory")] })).not.toContain("talk-lead");
+  it("실제 항목 하나면 크게 보여주고 없는 목록이나 스타 곡선을 만들지 않는다", () => {
+    const html = render({ rest: [entry(1, "doory", { product: { ...entry(1, "doory").product, stars: null } })] });
+    expect(html).toContain('id="talk-lead-title"><a href="/p/doory">doory</a>');
+    expect(html).not.toContain('class="talk-list"');
+    expect(html).not.toContain('class="talk-lead-chart"');
+    expect(html).not.toContain("★");
+    expect(html).not.toContain("talk-sample");
+  });
+
+  it("아무것도 없으면 조용하다고 말하고 빈 카드나 목록을 만들지 않는다", () => {
     expect(render({})).toContain("지금은 화제가 된 프로젝트가 없습니다.");
+    expect(render({})).not.toContain('class="talk-hero-grid"');
     expect(render({ preview: true })).toContain("미리보기");
   });
 
-  it("실제 항목 네 개를 목록으로만 그리고 예시나 가짜 대표 카드를 추가하지 않는다", () => {
-    const html = render({ rest: [entry(1, "doory"), entry(2, "konnect"), entry(3, "spotatui"), entry(4, "fourth")] });
-    expect(html.match(/class="talk-row"/g)).toHaveLength(4);
-    expect(html.match(/href="\/p\//g)).toHaveLength(4);
-    expect(html).not.toContain("talk-lead");
+  it("허용된 대표가 없어도 실제 첫 항목을 크게 그리고 나머지 세 개만 옆에 둔다", () => {
+    const entries = [entry(1, "doory"), entry(2, "konnect"), entry(3, "spotatui"), entry(4, "fourth")];
+    const html = render({ rest: entries });
+    expect(html).toContain('id="talk-lead-title"><a href="/p/doory">doory</a>');
+    expect(html.match(/class="talk-row"/g)).toHaveLength(3);
+    expect(html).toContain('class="talk-row-name"><a href="/p/konnect">');
+    expect(html.match(/>doory<\/a>/g)).toHaveLength(1);
     expect(html).not.toContain("talk-sample");
     expect(html).not.toContain("예시 프로젝트");
+    expect(entries[0].homeDecision).toBeNull();
+    expect(entries).toHaveLength(4);
+  });
+
+  it("허용된 대표를 우선하되 실제 순위를 표시하고 목록의 1위를 다시 대표로 고르지 않는다", () => {
+    const html = render({ lead: entry(4, "approved", { homeDecision: "approved" }), rest: [entry(1, "waiting")] });
+    expect(html).toContain('id="talk-lead-title"><a href="/p/approved">approved</a>');
+    expect(html).toContain('class="talk-lead-rank">지금 4위</p>');
+    expect(html).toContain('class="talk-row-name"><a href="/p/waiting">');
+    expect(html).not.toContain("지금 1위");
+  });
+
+  it("홈에서 제외된 앞 순위가 있어도 표시할 첫 항목의 실제 순위를 유지한다", () => {
+    const html = render({ rest: [entry(3, "third"), entry(4, "fourth")] });
+    expect(html).toContain('id="talk-lead-title"><a href="/p/third">third</a>');
+    expect(html).toContain('class="talk-lead-rank">지금 3위</p>');
+    expect(html.match(/class="talk-row"/g)).toHaveLength(1);
   });
 });

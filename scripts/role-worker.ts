@@ -408,7 +408,7 @@ async function main() {
       acquire: value => host.ready() ? tryAcquireRole(value, takeover) : Promise.resolve(null), renew: renewRole, release: releaseRole,
       checkProgress: async role => {
         if (candidate.batchVersion === 1) return false;
-        // These roles have a single lane and retain their existing specialized progress policy.
+        // These roles retain their specialized main-work progress policy; the supervisor observes each runtime lane.
         if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
         const report = await readWorkerProgress();
         if (role === 'maintenance') return maintenanceUptimeStalled({

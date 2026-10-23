@@ -315,6 +315,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.note": "在 {sources} 上被讨论的 AI 制作项目 · 每 30 分钟检查一次",
   "talk.description": "nomorevibe 上公开的项目中在社交平台被讨论的项目，附来源、得分及发帖后的 GitHub 星标变化。",
   "talk.lead": "当前第 1",
+  "talk.rankNow": "当前第 {rank}",
   "talk.sourceCount": "{count} 个来源",
   "talk.starsAfterMention": "发帖后的 GitHub 星标",
   "talk.starsAfterObservation": "首次观测后的 GitHub 星标",

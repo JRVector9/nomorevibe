@@ -14,6 +14,8 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  * - 게이트웨이 앞의 Cloudflare 가 파이썬 기본 요청은 막지만(1010) Node fetch 는 통과한다
  */
 export const TRANSLATE_MODEL = process.env.ABCLLM_MODEL?.trim() || "[MLX] gpt-oss-120b";
+/** Public field translation can select a model without changing reason, Korean tagline or live search translation. */
+export const PRODUCT_TRANSLATION_MODEL = process.env.PRODUCT_TRANSLATION_MODEL?.trim() || TRANSLATE_MODEL;
 const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
 
 const SYSTEM = [
@@ -76,15 +78,16 @@ async function chat(
   timeoutMs: number,
   request: typeof fetch,
   signal?: AbortSignal,
+  model = TRANSLATE_MODEL,
 ): Promise<ChatResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: body.routeId, model: TRANSLATE_MODEL });
+  await assertTextModelAdmission({ routeId: body.routeId, model });
   try {
     const response = await request(`${BASE_URL}/v1/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: chatWire(body, TRANSLATE_MODEL),
+      body: chatWire(body, model),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
@@ -167,8 +170,9 @@ export function productTranslationGatewayWire(items: readonly ProductTranslation
 export async function translateProductFields(
   items: { name: string; text: string; field: ProductTranslationField; locale: ProductTranslationLocale }[],
   timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
+  model = PRODUCT_TRANSLATION_MODEL,
 ): Promise<KoreanTaglineBatch> {
-  const result = await chat(productTranslationChatBody(items), timeoutMs, request, signal);
+  const result = await chat(productTranslationChatBody(items), timeoutMs, request, signal, model);
   return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
 }
 

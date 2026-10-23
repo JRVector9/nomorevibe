@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -81,8 +81,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 8건 묶음으로. 새 제품·홈에 보이는 제품이 먼저고, 나머지 3만여 건은 하루이틀에 걸쳐 채운다(korean-tagline.ts)
    */
   { name: "product-tagline-ko", role: "text", intervalMs: 60_000 },
-  // Bounded, visible-product demand only; independent of the paused introduction-review queue.
-  { name: "product-translate", role: "text", intervalMs: 60_000 },
+  // Bounded batches with a sixty-second regular schedule, independent of the long main text cycle; same leases/admission.
+  { name: "product-translate", role: "text", intervalMs: 60_000, lane: "product-translation" },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
   /** 근거 수집·Qwen 확인은 별도 줄에서 처리한다. backend drain은 공통 물리 슬롯을 예약하고 네트워크 중 DB 연결을 놓는다. */

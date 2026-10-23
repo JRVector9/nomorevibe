@@ -12,7 +12,7 @@ export function textProgressStalled(state: TextProgress): boolean {
     !state.persistedWithin10m && !state.inBackoff && !state.providerError;
 }
 
-/** Text jobs share one serial worker. Any persisted output keeps it alive. */
+/** Persisted progress of the serial main text jobs; product translation runs in a separate runtime lane. */
 export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerScheduled'>> {
   const [translationAge, taglines, rows] = await Promise.all([
     oldestPendingTranslationMinutes(), pendingTaglines(1), db.execute<{
