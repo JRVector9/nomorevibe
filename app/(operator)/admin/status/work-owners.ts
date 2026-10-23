@@ -1,7 +1,8 @@
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { DEEPSEEK_REVIEW_MODEL } from "@/lib/crawl/deepseek-review-policy";
 import { qwenDirectConfig, qwenDirectServerLabel, QWEN_DIRECT_DEFAULT_MODEL } from "@/lib/crawl/qwen-direct-review";
-import { screenModelConfig, visionModelName } from "@/lib/screen-review/vision-review";
+import { screenModelConfig, screenPromptConfig, visionModelName } from "@/lib/screen-review/vision-review";
+import { screenRenderConfig } from "@/lib/screen-review/render-client";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { batchJobsForRole, batchOwnerForJob, catalogJobsForBatch, type BatchMode, type BatchRole } from "@/lib/jobs/batches";
 import { jobStatusLabel, type ObservedJob } from "@/lib/jobs/status";
@@ -292,9 +293,12 @@ function jobModels(job: string, slots: ModelSlot[], ctx: OwnerContext, env: Env)
   }
   if (job === "audit-screen-review" && qwen?.screenReview?.enabled) {
     const config = screenModelConfig(env);
+    const prompt = screenPromptConfig(config);
+    const render = screenRenderConfig(env);
     const server = config ? serverName(config.baseUrl, new URL(config.baseUrl).host) : null;
-    models.push({ full: config ? visionModelName(config.model) : "설정 없음", row: { slot: "화면 판별", job: label(job), provider: "qwen-direct",
-      runsOn: `Qwen 직접 서버 ${server ?? "설정 없음"} · 화면은 화면 서버(SCREEN_RENDER_URL)에서 그림`, source: "크롤 설정 qwenAuto.screenReview 켜짐 · 모델은 환경변수(웹 기준)", stats: null } });
+    models.push({ full: config ? visionModelName(config.model, prompt!.version) : "설정 없음", row: { slot: "화면 판별", job: label(job), provider: "qwen-direct",
+      runsOn: `Qwen 직접 서버 ${server ?? "설정 없음"} · 화면 서버 ${render ? new URL(render.baseUrl).host : "설정 없음(SCREEN_RENDER_URL)"}`,
+      source: `크롤 설정 qwenAuto.screenReview 켜짐 · 판 ${prompt?.version ?? "설정 오류"} · 모델은 환경변수(웹 기준)`, stats: null } });
     if (server) hosts.push({ name: server, row: { instanceId: server, what: "모델 서버 — Qwen 화면 판별", jobs: [label(job)], state: "켜짐", tone: null, release: null, seen: null } });
   }
   return { models, hosts };
