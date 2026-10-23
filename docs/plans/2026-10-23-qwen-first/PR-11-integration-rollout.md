@@ -1,10 +1,34 @@
 # PR-11 통합 검증 근거와 단계별 운영 전환·중단 절차를 확정한다
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `docs/qwen-first-integration-rollout` · 설계 기준: `c37ae82f`
+상태: **구현 중 · 정확한 통합 SHA 전체 검증·증거 확정 대기** · 제안 브랜치: `docs/qwen-first-integration-rollout` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md), [PR-04](PR-04-work-uptime-candidates.md), [PR-05](PR-05-uptime-confirmation.md), [PR-06](PR-06-qwen-screen-prompts.md), [PR-07](PR-07-repository-move.md), [PR-08](PR-08-intro-recheck.md), [PR-09](PR-09-exceptions-independent-audit.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
 03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.
+
+## 현재 통합 준비 상태
+
+01~10의 범위 구현과 가짜 HTTP/격리 DB 회귀 결과를 모았다. 오프라인 readiness 도구·CLI·운영 runbook은 `980feabe`에서 구현했고 범위 unit 13건·ESLint·Next typegen·tsc를 통과했다. 이는 제출한 manifest의 일관성 검토이며 실제 운영 상태나 산출물의 진위를 독립 인증하지 않는다. 도구의 `productionReady`, `automaticApplyAuthorized`, `mutations`는 항상 false다.
+
+통합 보강 `6c634c6a`는 native 정규화 이후 실제 전송 wire hash를 텍스트/화면 관측에 연결하고 `context_strategy:raw`만 검증 후 제거한다. 다른 값은 거절하고 기존 legacy 호출의 fallback을 보존한다. 별도 범위의 unit13/DB4 결과가 있으며, 이 변경과03 relay·06 shot2/native hook을 최종 통합할 때 보존해야 한다. 해당 보강의 당시 전체 tsc에는 변경 외 테스트 오류1건이 남아 있어 통과로 기록하지 않았다.
+
+실제 운영 M1 설치·caller/alias readback·새 schema의 사람 독립 라벨/실제 모델 비교·운영 정책 승인은 남아 있다. `globalReady=false`를 유지하며, 이를 아래 코드 전체 검사로 대체하지 않는다.
+
+## 최종 통합 기록 — 통합 담당자 입력 대기
+
+| 항목 | 정확한 결과 |
+|---|---|
+| 통합 SHA | 기록 대기 |
+| 실제 PR URL | 발행 후 기록 대기 |
+| fresh migration journal 124개·적용 hash | 최종 통합 SHA에서 재실행·기록 대기 |
+| 전체 unit | 명령·종료 코드·산출물 hash 기록 대기 |
+| 전체 전용 DB 회귀 | 명령·종료 코드·산출물 hash 기록 대기 |
+| build | 명령·종료 코드·산출물 hash 기록 대기 |
+| typecheck·lint | 같은 SHA의 최종 결과 기록 대기 |
+| GitHub 필수 CI | 같은 SHA/최신 base의 check 결과 기록 대기 |
+| 운영 변경 | 미실행: 배포·운영 DB 쓰기·서버 설정·자동 기능 활성화·12건 해제 없음 |
+
+전체 unit/DB/build는 모든 코드·회귀 합류 뒤 정확한 SHA에서 한 번 수행한다. 실패를 고쳐 새 SHA가 생기면 이전 성공을 새 SHA의 결과로 인용하지 않는다. [개발 기록](../../operations/2026-10-23-qwen-first-development.md)과 [운영 전환 runbook](../../operations/2026-10-23-qwen-first-rollout.md)에 범위 검사·실제 모델 비교·운영 실행을 나누어 남긴다.
 
 ## 문제와 결과
 

@@ -2,7 +2,7 @@
 
 GPU Qwen을 빠른 주 처리, M1 Qwen을 비동기 공동 처리에 사용하고 DeepSeek는 충분한 근거의 의미 충돌과 독립 표본 감사만 맡긴다. **11개 PR로 나누며 자동 내림 확인을 먼저 완성한다. M1 사설 경로 준비와 뉴스 제품 결정은 GPU 핵심 개발을 막지 않는다.**
 
-상태: **설계 완료, 구현·GitHub 코드 PR 생성 전.** 기준 main은 [c37ae82f](https://github.com/JRVector9/nomorevibe/commit/c37ae82fbad208f519bc99ce143a934cf5e05e65)다. 아래01~11은 계획 식별자이며 실제 GitHub PR 번호가 아니다. 변경 파일 경로·신규 제안 파일·가산 migration·검증·완료·중단 조건은 각 PR 문서에 있다. 기계 판독용 계획은 [implementation-plan.json](implementation-plan.json)이다.
+상태: **01~10 구현과 범위 검증 결과를 정리했으며, 11의 정확한 통합 SHA 전체 검증은 대기 중이다. 운영 전환은 실행하지 않았다.** 설계 기준 main은 [c37ae82f](https://github.com/JRVector9/nomorevibe/commit/c37ae82fbad208f519bc99ce143a934cf5e05e65)다. 아래01~11은 계획 식별자이고 실제 GitHub PR은 다음 표에 구분했다. 원래의 업무별 선행 조건·검증·중단 기준은 각 문서에 보존한다. 기계 판독용 상태는 [implementation-plan.json](implementation-plan.json), 상세 실행 기록은 [개발 기록](../../operations/2026-10-23-qwen-first-development.md)에 있다.
 
 ## PR 분할
 
@@ -17,8 +17,28 @@ GPU Qwen을 빠른 주 처리, M1 Qwen을 비동기 공동 처리에 사용하�
 | [07](PR-07-repository-move.md) | 저장소 공식 이전 검증과 주소 변경 후보 | 01, 02, 04 | 있음 |
 | [08](PR-08-intro-recheck.md) | needs_editor 명시 재진입과 Qwen 재검수 | 01, 02, 04, 06 | 있음 |
 | [09](PR-09-exceptions-independent-audit.md) | 제한된 DeepSeek 예외·주간 독립 표본 감사 | 01, 02, 04, 05, 07, 08 | 있음 |
-| [10](PR-10-news-localization.md) | 뉴스 전용 한국어 사본·사실 검증·노출 | 01, 02, 04 | 있음 · 제품 결정 후 |
-| [11](PR-11-integration-rollout.md) | 정확한 통합 SHA 검증 근거·운영 전환 runbook | 01, 02, 04, 05, 06, 07, 08, 09 | 없음 · 문서 PR |
+| [10](PR-10-news-localization.md) | 뉴스 전용 한국어 사실 검증·비공개 초안 | 01, 02, 04 | 있음 · 공개 노출은 제품 결정 후 |
+| [11](PR-11-integration-rollout.md) | 정확한 통합 SHA 검증·readiness 도구·운영 전환 runbook | 01, 02, 04, 05, 06, 07, 08, 09 | 없음 |
+
+## 실제 구현과 검증 상태 (2026-10-23)
+
+| 순번 | 실제 PR | 현재 구현·범위 검증 | 남은 확인 |
+|---|---|---|---|
+| 01 | [#628](https://github.com/JRVector9/nomorevibe/pull/628) | 계약·프롬프트·오프라인 평가, unit 15건 | 실제 근거의 모델 비교 |
+| 02 | [#631](https://github.com/JRVector9/nomorevibe/pull/631) | direct 8개 목적, unit 103건·최종 DB/HTTP 23건 | `globalReady=false`, 실제 caller/alias/readback inventory |
+| 03 | [#630](https://github.com/JRVector9/nomorevibe/pull/630) | 사설 relay·설치물·readiness 범위 10건 | 실제 M1 설치·worker 접근·혼합 추론 |
+| 04 | [#632](https://github.com/JRVector9/nomorevibe/pull/632) | 공통 큐·확인 gate, DB 58건·binding 5건 | 최종 통합 SHA 전체 검사 |
+| 05 | [#633](https://github.com/JRVector9/nomorevibe/pull/633) | 실제 DB/localhost 모델 native 13건 | 실제 모델 품질·운영 confirm 허용 |
+| 06 | [#629](https://github.com/JRVector9/nomorevibe/pull/629) | v3/shot2 명시 선택·근거 provenance, unit 69건 | native 정규화 후 전송 해시 보강을11에 통합 |
+| 07 | [#634](https://github.com/JRVector9/nomorevibe/pull/634) | native 8건+기존 12건=20건 | 최종 잠금 경합·전체 검사 |
+| 08 | [#635](https://github.com/JRVector9/nomorevibe/pull/635) | 사실/교정 별도 native 12건+기존 23건=35건 | 재시작 복구·최종 전체 검사 |
+| 09 | 발행 후 URL 기록 대기 | native 10건+주간 감사 5건=15건 | 후속 잠금 수정·최종 전체 검사 |
+| 10 | 발행 후 URL 기록 대기 | 비공개 초안 native 20건 | 공개 노출 제품 결정·실제 뉴스 의미 검수 |
+| 11 | 발행 후 URL 기록 대기 | 오프라인 readiness 도구·runbook 구현 | 정확한 SHA·fresh 124개 migration·전체 unit/DB/build·필수 CI |
+
+앞선 PR은 `gh` 읽기 조회로 draft/head/base를 확인했다. 09~11의 실제 PR URL과 최종 검사 결과는 통합 담당자가 발행·검사 후 표와 JSON에 함께 기록한다. 기존 회귀가 여러 묶음에 겹치므로 위 수치를 합산해 고유 검사 수나 모델 정확도로 보고하지 않는다.
+
+현재 회귀의 모델 서버는 localhost 가짜 HTTP 서버다. 단, PR02의 첫 fixture 호출 서명 오류로 합성 입력 3회가 실제 Qwen endpoint에 전달됐다. 그 실행은 성공 검증에서 제외하고 fixture URL 이외 전송 차단 후 재검증했다. [실패·수정 기록](../../operations/2026-10-23-local-model-capacity-validation.md)을 보존하며 운영 DB·설정 변경은 없었다.
 
 PR02는 가장 무거운 기초 변경이다. typed direct 계약·가산 DDL, 불투명 종료 증인, 기존 caller 연결, 실제 경합·abort 회귀의 내부 커밋으로 나누고 업무 프롬프트·새 기능을 섞지 않는다. 안전하게 검토할 수 없을 만큼 커지면 그 경계에서 별도 PR로 나누고 계획 식별자를 갱신한다. 기존 capacity·consumer·관측·회수 상태기를 다시 만들지 않는다.
 
@@ -29,10 +49,10 @@ PR02는 가장 무거운 기초 변경이다. typed direct 계약·가산 DDL, �
 - 03은02 뒤 병렬로 준비한다. **GPU 핵심은03을 기다리지 않는다.** 03의 실제 설치·접근 검증을 마친 뒤에만 M1을 실행 backend로 연다. 03은 최종 M1 상시 활용 목표에는 필수이며, 완료 전에는 GPU 우선 단계만 준비됐다고 보고한다.
 - 04 뒤07을, 04·06 뒤08을 병렬 개발할 수 있다. migration·catalog·공통 work/contract 파일은 동시 수정 뒤 각 PR을 최신 base로 재검증한다.
 - 05·07·08이 결정 출처를 기록하면09를 연결한다. 그 전의 충분한 근거 충돌은 pending/사람 큐로 남기며 동기 DeepSeek fallback을 넣지 않는다.
-- 10은 한국어 노출 위치·원문 fallback·요약 범위·게시 검수 제품 결정 뒤 진행한다. 핵심01·02·04·05·06·07·08·09의 릴리스를 막지 않는다.
+- 10의 비공개 초안 backend는 기본 off로 구현했다. 한국어 노출 위치·요약 범위·게시 검수 제품 결정 전에는 공개 조회를 연결하거나 원문 상태를 바꾸지 않는다. 핵심01·02·04·05·06·07·08·09의 운영 전환을 강제하지 않는다.
 - 11은 core의 정확한 통합 SHA에서 검증·운영 전환 근거를 확정한다. 03 또는10을 같은 차수에 포함하면 그 코드까지 넣은 SHA를 검증한다.
 
-각 코드 PR은 main을 base로 한다. 앞 PR 미병합 중에는 의존 브랜치 위에서 작업할 수 있지만 제출 때 선행 커밋과 해당 PR만의 변경을 구분하고, 선행 병합 후 최신 main으로 맞춘다. 배포되지 않은 코드에 의존하는 기능은 등록만으로 활성화하지 않는다.
+현재 draft는 의존 브랜치를 base로 제출했다. 01은 main, 02·03·06은01, 04는02, 05는04, 07은05, 08은07 위에 있으며 09~11도 통합 순서로 연결한다. 이는 위의 업무별 선행 조건과 구분한 제출 순서다. 선행 병합 후 최신 main과 필수 CI를 다시 맞추며, 등록만으로 기능을 활성화하지 않는다.
 
 ## 작업별 분담
 
@@ -43,6 +63,8 @@ PR02는 가장 무거운 기초 변경이다. typed direct 계약·가산 DDL, �
 | 소개 | M1과 공동 처리·적체 소진 | README·현재 화면 재검수 | 충분한 근거의 예외·독립 감사 |
 | 감사 | 다른 기반 모델·규칙 결정의 근거 검토 | 동일 조건의 공동 처리 | Qwen 결정의 정해진 독립 표본 |
 | 뉴스 | 유휴 슬롯으로 공동 처리 | 저우선순위 공동 처리 | 전건 확인하지 않음 |
+
+일반 `product-llm-assist-review`는 GPU/M1 Qwen의 지원 업무를 처리한다. 독립 감사는 별도 `product-llm-assist-audit-review` 잡과 reviewer의 `assist-audit` 줄에서 105초 예산으로 처리하고, `product-automated-action-audit`는 maintenance에서 매시간 20초 예산으로 주간 표본·의미 예외만 생산한다. DeepSeek 응답을 보류한 동안 일반 Qwen이 새 job token으로 다음 호출을 완료하는 회귀를 확인했다. 주간 선정·예외 한도와 실제 UTC 주간 native dispatch 한도는 명시 설정이며, 감사 설정이 없으면 off다.
 
 GPU/M1을 건수50:50으로 고정하지 않는다. 각 backend의 빈 슬롯이 같은 지원 작업 큐를 소비하고, GPU는 한가할 때 비동기 적체도 처리한다. 실제 M1에서 도는 화면·텍스트 추론은 하나의 물리 슬롯을 공유한다. GPU와 M1은 별도 자원이나 같은 Qwen family이므로 두 답의 일치를 독립 감사로 세지 않는다.
 
@@ -81,7 +103,7 @@ PR01에서 모델만·프롬프트만·근거만 바꾸는 비교를 분리하�
 
 AGENTS에 따라 PR별로 변경 범위 회귀와 필요한 정적 검사만 수행한다. 필수 CI는 그대로 유지한다. 수동 전체 unit/전용DB/종합 검증은 **본 차수 개발이 끝난 정확한 통합 SHA에서 한 번** 수행한다. 뉴스가 뒤 차수면 옛 SHA의 통과를 새 코드의 결과로 인용하지 않는다.
 
-단위 검사는 `npx vitest run <해당 PR의 테스트 파일>`로, DB 회귀는 전용 `TEST_DATABASE_URL`을 사용한 `npm run test:integration -- <해당 파일>`로 실행한다. 소스 변경의 타입·lint는 기존 package 명령을 따른다. 새 문서만 추가한 현재 설계 단계에서는 이 코드 검사를 실행한 것으로 기록하지 않는다.
+단위 검사는 `npx vitest run <해당 PR의 테스트 파일>`로, DB 회귀는 전용 `TEST_DATABASE_URL`을 사용한 `npm run test:integration -- <해당 파일>`로 실행한다. 소스 변경의 타입·lint는 기존 package 명령을 따른다. 각 범위 결과는 해당 검사 당시 SHA에 한정한다. 최종 통합 SHA의 전체 검사·필수 CI 결과가 없으면 전체 완료로 기록하지 않는다.
 
 ## 운영 전환과 중단
 
@@ -91,8 +113,10 @@ AGENTS에 따라 PR별로 변경 범위 회귀와 필요한 정적 검사만 수
 
 현재 전체 운영16앱/21컨테이너와 공통 이미지 배포8앱 범위를 구분한다. 기존 [독립 워커 runbook](../../operations/independent-workers-runbook.md)에 따라 필요한 migration 확인 → 새 잡이면 scheduler 선배포 → 공통8앱 → git 빌드 소비자 순으로 계획한다. 역할 쌍은 mini 예비→M3 주, 기본 순차 배포를 사용한다.
 
-인수인계의 **운영 배포·DB 쓰기·자동 적용·차단 해제 승인 조건**은 그대로다. 구현·오프라인 검증·설치물·dry-run·배포 계획을 먼저 구체화하고 실행 직전의 승인 단계로 남긴다. 현재 정상인12건 복구는 코드 PR에 섞지 않는다. 이 문서 작성에서 운영 실행은 하지 않았다.
+인수인계의 **운영 배포·DB 쓰기·자동 적용·차단 해제 승인 조건**은 그대로다. 구현·오프라인 검증·설치물·dry-run·배포 계획을 먼저 구체화하고 실행 직전의 승인 단계로 남긴다. 현재 정상인12건 복구는 코드 PR에 섞지 않는다. 이번 개발에서 운영 배포·DB 쓰기·모델 서버 설정 변경·자동 기능 활성화·12건 차단 해제는 하지 않았다.
 
 ## 산출물 상태
 
-이 폴더는 계획 문서와 JSON 초안만 추가한다. 기존 제품/워커/정책 코드는 수정하지 않았다. PR별 명시된 테스트는 앞으로 실행할 항목이다. 이번 설계 문서는 링크·참조 경로·의존성 무순환·JSON·변경 범위/공백만 검사하며, 이를 코드·모델·운영 검증 통과로 보고하지 않는다.
+원래 계획의 검증 목록과 실제 범위 실행 기록을 구분한다. 03의 디렉터리 fsync·root 소유 readback 검증은 설치물 보강이며 전원 차단 실험이나 실제 M1 도입 완료가 아니다. 06의 native 정규화 후 wire hash와 `context_strategy:raw` 보강(`6c634c6a`)은11에 통합할 대상으로 남아 있다. 뉴스는 원문·공개 상태를 바꾸지 않는 `draft/needs_review` 저장만 제공하고 기본 비활성이다.
+
+최종 통합 SHA, fresh migration 124개, 전체 unit·전용 DB·build·typecheck·lint·필수 CI의 정확한 결과는 [PR11 최종 기록 표](PR-11-integration-rollout.md)에 통합 담당자가 채운다. 이 칸이 대기 중인 동안 개발 범위 회귀를 전체 통합 또는 운영 승인으로 바꾸어 보고하지 않는다.

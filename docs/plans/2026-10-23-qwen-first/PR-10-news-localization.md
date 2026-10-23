@@ -1,10 +1,20 @@
-# PR-10 제품 결정 후 AI 소식 한국어 제목·요약
+# PR-10 비공개 AI 소식 한국어 초안과 사실 검증
 
-상태: **조건부: 제품 결정 뒤 착수** · 제안 브랜치: `feat/qwen-first-news-localization` · 설계 기준: `c37ae82f`
+상태: **비공개 초안 backend·범위 검증 완료 · 공개 노출 제품 결정 대기** · 제안 브랜치: `feat/qwen-first-news-localization-integrated` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md), [PR-04](PR-04-work-uptime-candidates.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
 03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.
+
+## 구현 상태와 실제 검증
+
+실제 통합 브랜치는 `feat/qwen-first-news-localization-integrated`다. GitHub PR URL은 발행 뒤 통합 담당자가 기록한다. 제품 결정 전에는 명시 수요 API `enqueueNewsLocalizationRuntimeDemand`와 공통 Qwen 소비자, `news_localizations`의 `draft/needs_review` 저장까지만 구현했다. `NEWS_LOCALIZATION_BACKEND_ENABLED`와 task 제어는 기본 off다. 공개 화면·원문 `title/summary/state` 쓰기를 연결하지 않았으며 원문 fallback을 유지한다.
+
+news_item FK·nullable product target 제약, 기사별 active/source 고유 키, 정책을 포함한 뉴스 전용 source hash를 사용한다. 이전 기사도 현재 DB 원문 세대가 같으면 처리하며 게시 시각을 새 수집 시각으로 위조하지 않는다. 원격 종료가 불명인 기사는 새 revision으로 같은 논리 작업의 점유를 우회하지 못한다.
+
+실제 DB/localhost 모델 HTTP native 20건이 통과했다. 정상 가격·입출력·한정·가중치 범위의 초안 저장, 의미 변형의 needs_review, pending/hidden·원문 microsecond 변경·응답 중 숨김/제어 중단·중복 수요·feature/origin/consumer 중단·잘못된 JSON·capacity 미허가·오래된 기사 보호를 확인했다. facts/backend unit 28건과 runtime 묶음 44건의 범위 검증, ESLint·Next typegen·tsc 기록이 있다. 서로 겹치는 회귀를 합산하지 않는다.
+
+독립 리뷰에서 문서 전역 분모를 별도 가격 문장에 추정 상속하는 오류를 `2077ca93`으로 닫았다. 단위가 없는 독립 문장/절은 unsupported→needs_review다. 검증 성공도 `bounded_patterns`/`translation_candidate_only`이며 모든 자연어의 의미 정확도나 게시 승인이 아니다. 실제 뉴스 사람 검수·공개 노출 제품 결정·585건 일괄 처리는 실행하지 않았다. [backend 연결 문서](PR-10-backend-integration.md)를 함께 따른다.
 
 ## 문제와 결과
 
@@ -14,11 +24,11 @@
 
 ## 수정 범위
 
-- 제품결정후공식원문과수집을보존하며독립된한국어번역수요큐를추가한다.
+- 공식 원문과 수집을 보존하며 비공개 초안의 명시 수요를 추가한다. 공개 조회 연결은 제품 결정 뒤 수행한다.
 - M1우선/GPU여유슬롯에서원문명·가격분모/입출력·날짜·출시단계·공개범위·한정을정규화하고제목/요약을작성한다.
 - 소스해시·모델·프롬프트버전으로구식결과를거르고원문상태approved/pending/hidden을번역이바꾸지못하게한다.
 - 한국어노출과원문fallback은제품결정에맞춰조회계층에서선택한다.
-- 제품 결정 항목은 한국어 노출 위치·원문 fallback·요약 범위·게시 검수 방식이다. 결정 전에는 계약·fixture 초안까지만 가능하며 공개 노출·585건 일괄 처리는 하지 않는다.
+- 제품 결정 항목은 한국어 노출 위치·요약 범위·게시 검수 방식이다. 결정 전에는 비공개 draft/needs_review 저장까지만 구현하고 공개 노출·585건 일괄 처리는 하지 않는다.
 - 공통 work의 news_item 대상은 typed FK/제약으로 확장하고 기존 product 대상의 무결성을 유지한다. 기존 news-refresh에는 모델 대기를 추가하지 않는다.
 
 ## 포함하지 않는 변경
@@ -43,7 +53,7 @@
 
 - `lib/jobs/news/translations.ts` (신규 제안 경로, 구현 시 확정)
 
-Migration: 있음:news_translations(제안)의 item FK·locale·source hash·한국어 사본·검증/모델/판 버전과 고유 키를 추가하고 공통 큐의 news_item target/kind·binding을 가산 확장한다. news_items 원문·공개 상태를 덮어쓰지 않는다. 실제 번호는 구현 시 최신 main의 journal을 확인해 배정한다.
+Migration: `0123_news_localization_drafts.sql`. news_localizations와 news_item target/FK·source/active 고유 키·binding을 가산 확장한다. news_items 원문·공개 상태를 덮어쓰지 않는다.
 
 ## 검증과 완료 조건
 

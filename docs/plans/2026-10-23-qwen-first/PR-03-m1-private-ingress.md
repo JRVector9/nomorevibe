@@ -1,8 +1,16 @@
 # PR-03 M1 모델의 인증된 사설 호출 경로를 준비한다
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-m1-private-ingress` · 설계 기준: `c37ae82f`
+상태: **구현·범위 검증 완료 · 실제 M1 운영 연결 미검증** · 제안 브랜치: `feat/qwen-first-m1-private-ingress` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-02](PR-02-direct-capacity.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
+
+## 구현 상태와 실제 검증
+
+실제 draft는 [#630](https://github.com/JRVector9/nomorevibe/pull/630)이며 제출 base는01이다. 업무상 native capacity 선행 조건02와 운영 활성화 조건은 유지한다. 사설 relay·인증/IP 허용 목록·durable receipt·설치/회수 도구를 구현했다. 실행 entry는 exact serving 계약 readback hash와 실제 model/finish/usage 관측을 함께 요구하고 검증 파일의 root 소유권을 확인한다. active 생성·receipt rename과 삭제에는 디렉터리 fsync를 반영했다.
+
+최종 relay/readiness 범위 unit 10건과 변경 ESLint·shell 구문 검사를 통과했다. 실제 M1 설치, worker 컨테이너 접근, 모델 canary, 화면·텍스트 혼합 물리 슬롯 검증, 전원 차단 내구성 실험은 하지 않았다. `relayReady`나 설치물 존재를 전체 native/운영 준비 완료로 세지 않는다. native 정규화와 기존 caller 호환성의 통합 보강은11에서 확인한다.
+
+구체적인 설치·readback·중단 절차는 [사설 경로 runbook](../../operations/local-model-private-ingress.md)을 따른다. 이번 개발은 oMLX 설정·모델·운영 서비스를 바꾸지 않았다.
 
 ## 문제와 결과
 

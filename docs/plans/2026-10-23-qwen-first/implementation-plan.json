@@ -1,5 +1,5 @@
 {
-  "status": "설계 완료; 코드 PR·GitHub PR 생성·운영 실행 전",
+  "status": "01~10 구현·범위 검증 진행 결과 기록; 11 정확한 통합 SHA 전체 검증 대기; 운영 미실행",
   "base_sha": "c37ae82fbad208f519bc99ce143a934cf5e05e65",
   "core_prs": [
     "01",
@@ -74,7 +74,25 @@
       "optional_backend_dependency": null,
       "branch": "feat/qwen-first-contracts-evaluation",
       "file": "PR-01-contracts-evaluation.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-contracts-evaluation",
+      "github_pr": {
+        "number": 628,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/628",
+        "head_ref": "feat/qwen-first-contracts-evaluation",
+        "base_ref": "main",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "unit": {
+          "files": 3,
+          "passed": 15
+        },
+        "static": "ESLint·Next typegen·tsc 통과",
+        "evidence": "PR-01-contracts-evaluation.md"
+      }
     },
     {
       "id": "02",
@@ -147,7 +165,34 @@
       "optional_backend_dependency": null,
       "branch": "feat/qwen-first-direct-capacity",
       "file": "PR-02-direct-capacity.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; globalReady=false",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-direct-capacity",
+      "github_pr": {
+        "number": 631,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/631",
+        "head_ref": "feat/qwen-first-direct-capacity",
+        "base_ref": "feat/qwen-first-contracts-evaluation",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "unit": {
+          "files": 11,
+          "passed": 103
+        },
+        "db_http": {
+          "passed": 23,
+          "prior_ddl_regression_passed": 48
+        },
+        "static": "변경 범위 TypeScript·ESLint 통과",
+        "evidence": "../../operations/2026-10-23-local-model-capacity-validation.md",
+        "limitations": [
+          "globalReady=false",
+          "실제 활성 caller/gateway alias/readback inventory 미확인"
+        ],
+        "failure_record": "첫 fixture 호출 서명 오류로 합성 입력 3회가 실제 Qwen endpoint에 전달됐다. 성공 검증에서 제외하고 localhost 이외 전송 차단 후 재검증했다. 운영 DB·설정 변경은 없었다."
+      }
     },
     {
       "id": "03",
@@ -196,7 +241,29 @@
       "optional_backend_dependency": null,
       "branch": "feat/qwen-first-m1-private-ingress",
       "file": "PR-03-m1-private-ingress.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "설치물·범위 검증 완료; 실제 M1 운영 설치·공동 추론 미검증",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-m1-private-ingress",
+      "github_pr": {
+        "number": 630,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/630",
+        "head_ref": "feat/qwen-first-m1-private-ingress",
+        "base_ref": "feat/qwen-first-contracts-evaluation",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "unit": {
+          "passed": 10,
+          "scope": "relay/readiness 최종 범위"
+        },
+        "static": "변경 ESLint·shell 구문 검사 통과",
+        "evidence": "../../operations/local-model-private-ingress.md",
+        "limitations": [
+          "실제 M1 설치·worker 컨테이너 접근·모델 canary·혼합 물리 슬롯 미검증",
+          "전원 차단 내구성 실험 미실행"
+        ]
+      }
     },
     {
       "id": "04",
@@ -283,7 +350,29 @@
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
       "branch": "feat/qwen-first-work-uptime-candidates",
       "file": "PR-04-work-uptime-candidates.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; 기본 off",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-work-uptime-candidates",
+      "github_pr": {
+        "number": 632,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/632",
+        "head_ref": "feat/qwen-first-work-uptime-candidates",
+        "base_ref": "feat/qwen-first-direct-capacity",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "unit": {
+          "passed": 5,
+          "scope": "binding"
+        },
+        "db": {
+          "passed": 58,
+          "scope": "신규 큐·기존 uptime/split"
+        },
+        "static": "ESLint·Next typegen·tsc 통과",
+        "evidence": "PR-04-work-uptime-candidates.md"
+      }
     },
     {
       "id": "05",
@@ -352,7 +441,29 @@
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
       "branch": "feat/qwen-first-uptime-confirmation",
       "file": "PR-05-uptime-confirmation.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; 기본 off",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-uptime-confirmation",
+      "github_pr": {
+        "number": 633,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/633",
+        "head_ref": "feat/qwen-first-uptime-confirmation",
+        "base_ref": "feat/qwen-first-work-uptime-candidates",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "db_http": {
+          "passed": 13,
+          "evidence_commit": "ebfed2f0"
+        },
+        "unit": {
+          "passed": 96,
+          "additional_attention_passed": 12
+        },
+        "static": "ESLint·Next typegen·tsc 통과",
+        "evidence": "PR-05-uptime-confirmation.md"
+      }
     },
     {
       "id": "06",
@@ -406,7 +517,26 @@
       "optional_backend_dependency": null,
       "branch": "feat/qwen-first-qwen-screen-prompts",
       "file": "PR-06-qwen-screen-prompts.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; native 전송 해시 통합 보강 대기",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-qwen-screen-prompts",
+      "github_pr": {
+        "number": 629,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/629",
+        "head_ref": "feat/qwen-first-qwen-screen-prompts",
+        "base_ref": "feat/qwen-first-contracts-evaluation",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "unit": {
+          "files": 9,
+          "passed": 69
+        },
+        "static": "ESLint·scoped TypeScript 통과; 전체 통합 typecheck 대기",
+        "evidence": "PR-06-qwen-screen-prompts.md",
+        "pending_integration_commit": "6c634c6a"
+      }
     },
     {
       "id": "07",
@@ -466,9 +596,33 @@
         "04"
       ],
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
-      "branch": "feat/qwen-first-repository-move",
+      "branch": "feat/qwen-first-repository-move-integrated",
       "file": "PR-07-repository-move.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; 기본 off",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-repository-move",
+      "github_pr": {
+        "number": 634,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/634",
+        "head_ref": "feat/qwen-first-repository-move-integrated",
+        "base_ref": "feat/qwen-first-uptime-confirmation",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "db_http": {
+          "native_passed": 8,
+          "existing_passed": 12,
+          "combined_passed": 20,
+          "evidence_commit": "7fbeedfa"
+        },
+        "unit": {
+          "common_passed": 105,
+          "freshness_passed": 27
+        },
+        "static": "ESLint·Next typegen·tsc 통과",
+        "evidence": "../../operations/2026-10-23-repository-move-development.md"
+      }
     },
     {
       "id": "08",
@@ -531,9 +685,32 @@
         "06"
       ],
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
-      "branch": "feat/qwen-first-intro-recheck",
+      "branch": "feat/qwen-first-intro-recheck-integrated",
       "file": "PR-08-intro-recheck.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현·범위 검증 완료; 기본 off",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-intro-recheck",
+      "github_pr": {
+        "number": 635,
+        "url": "https://github.com/JRVector9/nomorevibe/pull/635",
+        "head_ref": "feat/qwen-first-intro-recheck-integrated",
+        "base_ref": "feat/qwen-first-repository-move-integrated",
+        "draft": true,
+        "record_status": "gh read-only 확인"
+      },
+      "implementation_validation": {
+        "db_http": {
+          "native_passed": 12,
+          "existing_passed": 23,
+          "combined_passed": 35,
+          "evidence_commit": "3c58075e"
+        },
+        "unit": {
+          "common_passed": 32
+        },
+        "static": "ESLint·Next typegen·tsc 통과",
+        "evidence": "PR-08-backend-integration.md"
+      }
     },
     {
       "id": "09",
@@ -545,7 +722,7 @@
         "uptime/repo/intro의결정로그에서층화·무작위표본을재현가능하게선정한다. 감사비율은임의로고정하지않는다.",
         "원판정기반모델을기록하고Qwen원판정은DeepSeek,다른기반모델원판정은Qwen도독립후보로쓴다.",
         "이전결론·이유·confidence를가린독립기대상태와현재실제조치를서버가비교해엇갈림만사람큐/운영센터로보낸다.",
-        "새 producer job 제안명 product-automated-action-audit는 주간의 제한 표본을 공통 큐에 넣고 종료한다. 실제 DeepSeek 호출은 별도 backend drain으로 처리해 Qwen 정상 완료를 막지 않는다.",
+        "product-automated-action-audit는 maintenance에서 매시간 20초 예산으로 주간 표본·의미 예외를 생산한다. 실제 독립 모델 호출은 별도 product-llm-assist-audit-review 잡/assist-audit 줄에서 처리해 일반 Qwen 결과 저장과 다음 회차 lease를 막지 않는다.",
         "10% 예외+잔여5% 감사=14.5% 호출은 계산 예시일 뿐이다. 이번 PR에서 이 비율을 기본 활성화하지 않고 표본·상향·호출 예산을 명시 설정으로 두며 실측 뒤 적용한다.",
         "과거 기록의 모델 family가 unknown이면 임의로 채우지 않는다. 규칙 결정의 근거 검토와 LLM 판정의 이기종 독립 감사를 구분한다."
       ],
@@ -601,9 +778,50 @@
         "08"
       ],
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
-      "branch": "feat/qwen-first-exceptions-independent-audit",
+      "branch": "feat/qwen-first-exceptions-audit-integrated",
       "file": "PR-09-exceptions-independent-audit.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "공통 소비자 연결·범위 검증 완료; 최종 통합 대기",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "feat/qwen-first-exceptions-independent-audit",
+      "github_pr": {
+        "number": null,
+        "url": null,
+        "head_ref": "feat/qwen-first-exceptions-audit-integrated",
+        "base_ref": null,
+        "draft": null,
+        "record_status": "통합 담당자가 발행 후 기록"
+      },
+      "implementation_validation": {
+        "db_http": {
+          "native_passed": 10,
+          "existing_passed": 5,
+          "combined_passed": 15,
+          "evidence_commit": "bfd2eec6"
+        },
+        "unit": {
+          "domain_passed": 10
+        },
+        "static": "범위 ESLint·Next typegen·tsc 통과; 후속 잠금 수정은 최종 통합 재검증 대상",
+        "evidence": "../../operations/2026-10-23-automated-action-audit-development.md"
+      },
+      "implementation_runtime": {
+        "producer": {
+          "job": "product-automated-action-audit",
+          "role": "maintenance",
+          "interval_ms": 3600000,
+          "budget_ms": 20000
+        },
+        "consumer": {
+          "job": "product-llm-assist-audit-review",
+          "role": "reviewer",
+          "lane": "assist-audit",
+          "budget_ms": 105000
+        },
+        "regular_consumer": "product-llm-assist-review",
+        "weekly_budget": "enqueue와 실제 UTC 주간 dispatched 호출을 명시 한도로 제한; 설정 없으면 off",
+        "effects": "비교 기록과 사람 확인만; 자동 차단 해제·소개 복구 없음"
+      },
+      "implementation_migration": "0122_automated_action_audit.sql; 독립 감사 source·binding·주간 멱등 제약의 가산 확장"
     },
     {
       "id": "10",
@@ -611,11 +829,11 @@
       "problem": "뉴스는원문title/summary만저장한다.단순번역은가격분모·출시상태·주장한정을잃을수있고문자열검사만으로잡히지않는다.",
       "result": "입력은원문title/summary/sourceHash/locale,출력은정규화사실과한국어후보다. 서버가가격금액/분모/단위·날짜·단계·불확실성·원문hash를검사한뒤언어별사본에저장한다.",
       "scope": [
-        "제품결정후공식원문과수집을보존하며독립된한국어번역수요큐를추가한다.",
+        "공식 원문과 수집을 보존하며 명시 수요 기반의 비공개 한국어 초안 backend를 기본 off로 추가한다. 공개 노출은 제품 결정 뒤 별도로 연결한다.",
         "M1우선/GPU여유슬롯에서원문명·가격분모/입출력·날짜·출시단계·공개범위·한정을정규화하고제목/요약을작성한다.",
         "소스해시·모델·프롬프트버전으로구식결과를거르고원문상태approved/pending/hidden을번역이바꾸지못하게한다.",
         "한국어노출과원문fallback은제품결정에맞춰조회계층에서선택한다.",
-        "제품 결정 항목은 한국어 노출 위치·원문 fallback·요약 범위·게시 검수 방식이다. 결정 전에는 계약·fixture 초안까지만 가능하며 공개 노출·585건 일괄 처리는 하지 않는다.",
+        "한국어 노출 위치·요약 범위·게시 검수 제품 결정 전에는 draft/needs_review 저장까지만 구현한다. 원문 fallback을 보존하고 공개 노출·585건 일괄 처리는 하지 않는다.",
         "공통 work의 news_item 대상은 typed FK/제약으로 확장하고 기존 product 대상의 무결성을 유지한다. 기존 news-refresh에는 모델 대기를 추가하지 않는다."
       ],
       "not_scope": [
@@ -666,9 +884,58 @@
         "04"
       ],
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
-      "branch": "feat/qwen-first-news-localization",
+      "branch": "feat/qwen-first-news-localization-integrated",
       "file": "PR-10-news-localization.md",
-      "status": "조건부: 제품 결정 뒤 착수"
+      "status": "비공개 초안 backend·범위 검증 완료; 공개 노출 제품 결정 대기",
+      "design_status": "조건부: 제품 결정 뒤 착수",
+      "proposed_branch": "feat/qwen-first-news-localization",
+      "github_pr": {
+        "number": null,
+        "url": null,
+        "head_ref": "feat/qwen-first-news-localization-integrated",
+        "base_ref": null,
+        "draft": null,
+        "record_status": "통합 담당자가 발행 후 기록"
+      },
+      "implementation_validation": {
+        "db_http": {
+          "native_passed": 20,
+          "evidence_commit": "ac902ae3"
+        },
+        "unit": {
+          "facts_backend_passed": 28,
+          "runtime_combined_passed": 44
+        },
+        "static": "범위 ESLint·Next typegen·tsc 통과",
+        "evidence": "PR-10-backend-integration.md",
+        "limitations": [
+          "유한한 패턴 검증이며 실제 뉴스 의미 정확도·게시 승인 아님"
+        ],
+        "price_fix_commit": "2077ca93"
+      },
+      "design_scope": [
+        "제품결정후공식원문과수집을보존하며독립된한국어번역수요큐를추가한다.",
+        "M1우선/GPU여유슬롯에서원문명·가격분모/입출력·날짜·출시단계·공개범위·한정을정규화하고제목/요약을작성한다.",
+        "소스해시·모델·프롬프트버전으로구식결과를거르고원문상태approved/pending/hidden을번역이바꾸지못하게한다.",
+        "한국어노출과원문fallback은제품결정에맞춰조회계층에서선택한다.",
+        "제품 결정 항목은 한국어 노출 위치·원문 fallback·요약 범위·게시 검수 방식이다. 결정 전에는 계약·fixture 초안까지만 가능하며 공개 노출·585건 일괄 처리는 하지 않는다.",
+        "공통 work의 news_item 대상은 typed FK/제약으로 확장하고 기존 product 대상의 무결성을 유지한다. 기존 news-refresh에는 모델 대기를 추가하지 않는다."
+      ],
+      "implementation_runtime": {
+        "consumer": "product-llm-assist-review",
+        "demand_api": "enqueueNewsLocalizationRuntimeDemand",
+        "default_feature_flag": "NEWS_LOCALIZATION_BACKEND_ENABLED unset/false",
+        "storage": "news_localizations draft|needs_review",
+        "public_exposure": false,
+        "original_fields_unchanged": [
+          "title",
+          "summary",
+          "state"
+        ],
+        "source_hash": "newsLocalizationSourceHash; 일반 JSON hash로 대체하지 않음"
+      },
+      "implementation_title": "비공개 AI 소식 한국어 초안과 사실 검증",
+      "implementation_migration": "0123_news_localization_drafts.sql; news_localizations·news_item target/FK·source/active 고유 키·binding 가산 확장"
     },
     {
       "id": "11",
@@ -733,7 +1000,71 @@
       "optional_backend_dependency": "03은 M1 route 활성화에만 필요하며 GPU 구현의 선행 조건은 아니다.",
       "branch": "docs/qwen-first-integration-rollout",
       "file": "PR-11-integration-rollout.md",
-      "status": "설계 완료 · 구현 전"
+      "status": "구현 중; 정확한 통합 SHA의 전체 검증·증거 확정 대기",
+      "design_status": "설계 완료 · 구현 전",
+      "proposed_branch": "docs/qwen-first-integration-rollout",
+      "github_pr": {
+        "number": null,
+        "url": null,
+        "head_ref": null,
+        "base_ref": null,
+        "draft": null,
+        "record_status": "통합 담당자가 발행 후 기록"
+      },
+      "implementation_validation": {
+        "unit": {
+          "readiness_passed": 13,
+          "readiness_commit": "980feabe"
+        },
+        "pending_integration_checks": [
+          "exact_integrated_sha",
+          "fresh_124_migrations",
+          "full_unit",
+          "full_integration",
+          "build",
+          "typecheck",
+          "lint",
+          "required_ci"
+        ],
+        "pending_integration_commit": "6c634c6a"
+      },
+      "implementation_runtime": {
+        "readiness_commit": "980feabe",
+        "wire_observation_pending_commit": "6c634c6a",
+        "production_ready": false,
+        "automatic_apply_authorized": false,
+        "mutations": false,
+        "note": "오프라인 증거의 검토 자격과 실제 운영 승인·실행은 별도다."
+      },
+      "implementation_result": "오프라인 readiness 도구·CLI·runbook을 구현하고 정확한 최종 통합 SHA의 전체 검사 근거를 확정한다. 실제 운영 승인·실행은 별도다."
     }
-  ]
+  ],
+  "status_as_of": "2026-10-23",
+  "implementation_snapshot_sha": "ea612754",
+  "validation_policy": {
+    "scoped_checks": "PR별 관련 회귀·정적 검사",
+    "full_checks": "전체 개발 완료 후 정확한 통합 SHA에서 전체 unit·전용 DB·build 한 번",
+    "required_ci": "저장소 필수 CI 유지; 현재 최종 통합 SHA 결과는 대기",
+    "interpretation": "가짜 HTTP/격리 DB 회귀를 실제 모델 정확도·처리량 또는 운영 검증으로 승계하지 않음"
+  },
+  "operations": {
+    "scope": "이번 Qwen 보강 개발의 변경·실행 여부",
+    "deployed": false,
+    "production_db_written": false,
+    "model_server_configuration_changed": false,
+    "automatic_apply_enabled": false,
+    "unbanned_12_products": false,
+    "global_ready": false,
+    "note": "3회 합성 입력 실제 Qwen fixture 오전송은 별도 실패 기록이며 성공 검증에서 제외했다."
+  },
+  "final_integration": {
+    "integrated_sha": null,
+    "validation_artifact": null,
+    "migration_count_expected": 124,
+    "fresh_migration_result": "통합 담당자 기록 대기",
+    "full_unit_result": "통합 담당자 기록 대기",
+    "full_integration_result": "통합 담당자 기록 대기",
+    "build_result": "통합 담당자 기록 대기",
+    "required_ci_result": "통합 담당자 기록 대기"
+  }
 }
