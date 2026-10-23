@@ -18,7 +18,7 @@ GPU Qwen을 빠른 주 처리, M1 Qwen을 비동기 공동 처리에 사용하�
 | [08](PR-08-intro-recheck.md) | needs_editor 명시 재진입과 Qwen 재검수 | 01, 02, 04, 06 | 있음 |
 | [09](PR-09-exceptions-independent-audit.md) | 제한된 DeepSeek 예외·주간 독립 표본 감사 | 01, 02, 04, 05, 07, 08 | 있음 |
 | [10](PR-10-news-localization.md) | 뉴스 전용 한국어 사실 검증·비공개 초안 | 01, 02, 04 | 있음 · 공개 노출은 제품 결정 후 |
-| [11](PR-11-integration-rollout.md) | 정확한 통합 SHA 검증·readiness 도구·운영 전환 runbook | 01, 02, 04, 05, 06, 07, 08, 09 | 없음 |
+| [11](PR-11-integration-rollout.md) | 정확한 통합 SHA 검증·readiness 도구·운영 전환 runbook | 01, 02, 04, 05, 06, 07, 08, 09 | 0124 CHECK 정규화 |
 
 ## 실제 구현과 검증 상태 (2026-10-23)
 
