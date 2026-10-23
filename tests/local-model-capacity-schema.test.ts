@@ -28,10 +28,14 @@ function checkHistory(name: string) {
 it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migration과 같다", () => {
   expect(checks).toHaveLength(4);
   for (const check of checks) {
-    const latest = checkHistory(check.name).at(-1);
+    const history = checkHistory(check.name);
+    const latest = history.at(-1);
+    const legacy = history.filter(entry => entry.idx < 118).at(-1);
     expect(latest, check.name).toBeDefined();
+    expect(legacy, `${check.name}: legacy constraint`).toBeDefined();
     const expression = new PgDialect().sqlToQuery(check.value).sql;
     expect(latest!.expression === expression, `${check.name}: ${latest!.tag}`).toBe(true);
+    expect(expression.includes(legacy!.expression), `${check.name}: legacy CLI/gateway branches preserved`).toBe(true);
     expect(expression).toMatch(/local_model|local-direct/);
     expect(expression).toMatch(/cli|abcllm/);
   }

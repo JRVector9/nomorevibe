@@ -869,6 +869,13 @@
       "when": 1794086400035,
       "tag": "0123_news_localization_drafts",
       "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1794086400036,
+      "tag": "0124_local_model_capacity_assist_checks",
+      "breakpoints": true
     }
   ]
 }
