@@ -60,7 +60,7 @@ async function accepts(name: string, expression: string, value: ReturnType<typeo
   const row = name === eventCheck ? value.event : value.request;
   // Expression/table come only from immutable repository DDL or pg_constraint, never model/user input.
   const [result] = await admin.unsafe<{ accepted: boolean }[]>(
-    `SELECT (${expression}) AS accepted FROM jsonb_populate_record(NULL::${table},$1::jsonb) AS fixture`, [JSON.stringify(row)]);
+    `SELECT (${expression}) AS accepted FROM jsonb_populate_record(NULL::${table},$1::text::jsonb) AS fixture`, [JSON.stringify(row)]);
   return result.accepted;
 }
 
