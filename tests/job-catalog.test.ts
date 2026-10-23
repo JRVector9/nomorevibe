@@ -113,7 +113,8 @@ describe('lanesForRole', () => {
   it('화면 판별은 reviewer 의 따로 도는 줄(screen)에서 150초 틱으로 돈다 — 기본 줄의 심사·감사를 막지 않는다', () => {
     expect(JOB_CATALOG.find(job => job.name === 'audit-screen-review')).toEqual({ name: 'audit-screen-review', role: 'reviewer', intervalMs: 60_000, lane: 'screen' });
     const reviewer = lanesForRole('reviewer');
-    expect(reviewer).toEqual([jobsForRole('reviewer').filter(name => name !== 'audit-screen-review'), ['audit-screen-review']]);
+    expect(reviewer).toEqual([jobsForRole('reviewer').filter(name => !['audit-screen-review', 'product-llm-assist-review'].includes(name)), ['audit-screen-review'], ['product-llm-assist-review']]);
+    expect(jobRunOptions('product-llm-assist-review', { requestedOnly: true }).budgetMs).toBe(105_000);
     expect(reviewer[0]).toContain('product-audit');
     expect(jobRunOptions('audit-screen-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 150_000 });
   });
