@@ -19,6 +19,7 @@ import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { collectIntroRecheckInput, runIntroCorrectionStage } from "@/lib/domain/products/intro-assist-runtime";
 import { completeAssistIntroCorrection } from "@/lib/domain/llm-assist/intro-complete";
 import { collectActionAuditInput, AuditDispatchBudgetExceededError } from "@/lib/domain/llm-assist/audit-runtime";
+import { collectNewsLocalizationRuntimeInput } from "@/lib/domain/llm-assist/news-runtime";
 
 const TICK_MS = 100_000;
 /** backend별 drain은 동시에 시작하고 각 결과를 즉시 기록한다. 느린 M1·DeepSeek를 GPU의 앞에 두지 않는다. */
@@ -54,6 +55,13 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
         let input: AssistInput;
         if (candidate.kind === "uptime") input = await collectUptimeAssist(candidate, signal);
         else if (candidate.kind === "intro_recheck") input = await collectIntroRecheckInput(candidate, signal);
+        else if (candidate.kind === "news") {
+          const collected = await collectNewsLocalizationRuntimeInput(candidate);
+          if (collected.kind !== "ready") {
+            await deferAssistClaim(claim, "obsolete", collected.reason); counts.deferred++; continue;
+          }
+          input = collected.input;
+        }
         else if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
           const collected = await collectActionAuditInput(candidate, { signal });
           if (collected.kind !== "ready") {

@@ -767,3 +767,4 @@ export * from "./me-schema";
 export * from "./admin-contact-schema";
 export * from "./llm-assist-schema";
 export * from "./intro-assist-schema";
+export * from "./news-localization-schema";

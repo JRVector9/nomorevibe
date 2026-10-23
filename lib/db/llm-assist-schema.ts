@@ -3,6 +3,7 @@ import { bigint, boolean, check, index, integer, jsonb, pgTable, timestamp, uniq
 import type { AssistInput, AssistOutcome } from "@/lib/domain/llm-assist/contracts";
 import type { AssistCandidate, AssistControlMode, AssistWorkState, AssistWorkTask } from "@/lib/domain/llm-assist/work";
 import { products } from "./schema";
+import { newsItems } from "./news-schema";
 
 export const llmAssistControls = pgTable("llm_assist_controls", {
   task: varchar("task", { length: 32 }).$type<AssistWorkTask>().primaryKey(),
@@ -10,7 +11,7 @@ export const llmAssistControls = pgTable("llm_assist_controls", {
   confirmationRequired: boolean("confirmation_required").notNull().default(false),
   dispatchEnabled: boolean("dispatch_enabled").notNull().default(false), applyEnabled: boolean("apply_enabled").notNull().default(false),
   revision: bigint("revision", { mode: "number" }).notNull().default(1), updatedAt: timestamp("updated_at", { mode: "string" }).notNull().defaultNow(),
-}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime','repo_move','intro_recheck','decision_audit','semantic_exception')`),
+}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime','repo_move','intro_recheck','decision_audit','semantic_exception','news')`),
   check("llm_assist_control_mode", sql`${t.mode} in ('off','shadow','confirm')`),
   check("llm_assist_control_confirm", sql`${t.mode}<>'confirm' or ${t.confirmationRequired}`),
   check("llm_assist_control_apply", sql`not ${t.applyEnabled} or (${t.dispatchEnabled} and ${t.mode}='confirm')`),
@@ -18,7 +19,8 @@ export const llmAssistControls = pgTable("llm_assist_controls", {
 
 export const llmAssistWorks = pgTable("llm_assist_work", {
   id: uuid("id").primaryKey(), task: varchar("task", { length: 32 }).$type<AssistWorkTask>().notNull().references(() => llmAssistControls.task),
-  productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
+  productId: integer("product_id").references(() => products.id, { onDelete: "cascade" }),
+  newsItemId: integer("news_item_id").references(() => newsItems.id, { onDelete: "cascade" }),
   originJob: varchar("origin_job", { length: 80 }).notNull(), sourceHash: varchar("source_hash", { length: 64 }).notNull(),
   source: jsonb("source").$type<AssistCandidate>().notNull(),
   policyVersion: varchar("policy_version", { length: 120 }).notNull(), promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
@@ -34,6 +36,9 @@ export const llmAssistWorks = pgTable("llm_assist_work", {
   createdAt: timestamp("created_at", { mode: "string" }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { mode: "string" }).notNull().defaultNow(),
 }, t => [uniqueIndex("llm_assist_work_source_unique").on(t.task, t.productId, t.sourceHash),
   uniqueIndex("llm_assist_work_active_unique").on(t.task, t.productId).where(sql`${t.state} in ('claimed','indeterminate')`),
+  uniqueIndex("llm_assist_news_source_unique").on(t.task, t.newsItemId, t.sourceHash),
+  uniqueIndex("llm_assist_news_active_unique").on(t.task, t.newsItemId).where(sql`${t.state} in ('claimed','indeterminate')`),
+  check("llm_assist_work_target", sql`(${t.task}='news' and ${t.productId} is null and ${t.newsItemId} is not null) or (${t.task}<>'news' and ${t.productId} is not null and ${t.newsItemId} is null)`),
   index("llm_assist_work_due").on(t.nextAttemptAt, t.priority, t.id).where(sql`${t.state} in ('queued','waiting_capacity','retryable_transport')`),
   check("llm_assist_work_state", sql`${t.state} in ('queued','claimed','waiting_evidence','waiting_capacity','retryable_transport','human','done','obsolete','indeterminate')`),
   check("llm_assist_work_revision", sql`${t.revision} between 1 and 9007199254740991 and ${t.attempts} between 0 and 1000`),

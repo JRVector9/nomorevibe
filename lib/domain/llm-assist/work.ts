@@ -3,8 +3,10 @@ import { assistHash } from "./contracts";
 import { repoMoveCandidateSchema } from "@/lib/domain/products/repo-move-review";
 import { introRecheckCandidateSchema } from "@/lib/domain/products/intro-assist";
 import { actionAuditCandidateSchema } from "@/lib/domain/products/automated-action-audit";
+import { newsLocalizationCandidateSchema } from "@/lib/news/localization-work";
+import { newsLocalizationSourceHash } from "@/lib/news/localization-contract";
 
-export const assistWorkTaskSchema = z.enum(["uptime", "repo_move", "intro_recheck", "decision_audit", "semantic_exception"]);
+export const assistWorkTaskSchema = z.enum(["uptime", "repo_move", "intro_recheck", "decision_audit", "semantic_exception", "news"]);
 export function isAuditAssistTask(task: string): task is "decision_audit" | "semantic_exception" {
   return task === "decision_audit" || task === "semantic_exception";
 }
@@ -22,15 +24,17 @@ export const uptimeCandidateSchema = z.object({
 }).strict();
 export type UptimeAssistCandidate = Readonly<z.infer<typeof uptimeCandidateSchema>>;
 // intro의 기존 판정기는 CLI 모듈도 참조한다. 순환 import 중 schema 값을 먼저 캡처하지 않는다.
-export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema, actionAuditCandidateSchema]));
+export const assistCandidateSchema = z.lazy(() => z.union([uptimeCandidateSchema, repoMoveCandidateSchema, introRecheckCandidateSchema, actionAuditCandidateSchema, newsLocalizationCandidateSchema]));
 export type AssistCandidate = Readonly<z.infer<typeof assistCandidateSchema>>;
 export function assistCandidateSubject(candidate: AssistCandidate) {
+  if (candidate.kind === "news") return { id: candidate.news.id, url: candidate.news.url, updatedAt: candidate.news.revision, slug: null };
   if (candidate.kind === "repo_move") return candidate.snapshot;
   if (candidate.kind === "intro_recheck") return candidate.snapshot.product;
   return candidate.product;
 }
 export function assistCandidateSourceHash(candidate: AssistCandidate): string {
-  return assistHash(assistCandidateSchema.parse(candidate));
+  const parsed = assistCandidateSchema.parse(candidate);
+  return parsed.kind === "news" ? newsLocalizationSourceHash(parsed.news) : assistHash(parsed);
 }
 
 export function assistWorkDisposition(reason: "capacity" | "transport" | "missing_evidence" | "semantic_conflict" | "invalid_output"):

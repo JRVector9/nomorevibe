@@ -14,6 +14,8 @@ import { applyRepoMoveResult, lockRepoMoveCandidate, type FreshRepoMoveChecks } 
 import { decideRepositoryMove } from "@/lib/domain/products/repo-move-review";
 import { lockProductRepository } from "@/lib/domain/products/repository-identity";
 import { completeActionAuditRuntime } from "./audit-runtime";
+import { completeNewsLocalizationRuntime } from "./news-runtime";
+import { lockNewsLocalizationSource } from "@/lib/news/localization-repository";
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
@@ -32,7 +34,9 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
       }
       await lockRepoMoveCandidate(tx, candidate);
     }
-    else if (!await lockProductGeneration(tx, subject.id, subject.slug)) return { recorded: false, applied: false };
+    else if (candidate.kind === "news") {
+      if (!await lockNewsLocalizationSource(tx, subject.id)) return { recorded: false, applied: false };
+    } else if (!subject.slug || !await lockProductGeneration(tx, subject.id, subject.slug)) return { recorded: false, applied: false };
     const work = await lockAssistClaim(tx, claim);
     if (!work?.capacityRequestId || work.inputHash !== assistInputHash(input)) return { recorded: false, applied: false };
     const [capacity] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, work.capacityRequestId)).for("share");
@@ -56,6 +60,13 @@ export async function completeAssistClaim(claim: AssistWorkClaim, input: AssistI
     }
     let applied = work.task === "uptime" && await applyUptimeAssist(tx, claim, input, validated.outcome, resultId);
     let domainState: "human" | "obsolete" | null = null;
+    if (candidate.kind === "news") {
+      const completion = await completeNewsLocalizationRuntime(tx, { workId: work.id, resultId, source: candidate, sourceHash: work.sourceHash,
+        inputHash: work.inputHash, policyVersion: work.policyVersion, promptVersion: work.promptVersion, backendId: contract.backendId,
+        modelFamily: contract.modelFamily, modelId: contract.model, contractHash: localModelContractHash(contract),
+        promptHash: assistPromptHash("news"), responseHash, outcome: validated.outcome });
+      domainState = completion.state === "stored" ? completion.status === "needs_review" ? "human" : null : "obsolete";
+    }
     if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
       const comparison = await completeActionAuditRuntime(tx, { candidate, workId: work.id, resultId, input,
         auditorFamily: contract.modelFamily, outcome: validated.outcome });

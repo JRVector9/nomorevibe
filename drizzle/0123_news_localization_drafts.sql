@@ -1,3 +1,24 @@
+-- Add a typed news target; all controls remain off.
+ALTER TABLE llm_assist_controls DROP CONSTRAINT llm_assist_control_task;
+ALTER TABLE llm_assist_controls ADD CONSTRAINT llm_assist_control_task CHECK (task IN ('uptime','repo_move','intro_recheck','decision_audit','semantic_exception','news'));
+INSERT INTO llm_assist_controls(task) VALUES ('news');
+--> statement-breakpoint
+ALTER TABLE llm_assist_work ALTER COLUMN product_id DROP NOT NULL;
+ALTER TABLE llm_assist_work ADD COLUMN news_item_id integer REFERENCES news_items(id) ON DELETE CASCADE;
+ALTER TABLE llm_assist_work ADD CONSTRAINT llm_assist_work_target CHECK
+  ((task='news' AND product_id IS NULL AND news_item_id IS NOT NULL) OR (task<>'news' AND product_id IS NOT NULL AND news_item_id IS NULL));
+CREATE UNIQUE INDEX llm_assist_news_source_unique ON llm_assist_work(task,news_item_id,source_hash);
+CREATE UNIQUE INDEX llm_assist_news_active_unique ON llm_assist_work(task,news_item_id) WHERE state IN ('claimed','indeterminate');
+ALTER TABLE llm_assist_work ADD CONSTRAINT llm_assist_work_news_binding CHECK (task<>'news' OR coalesce(
+  origin_job='news-refresh' AND source->>'locale'='ko' AND source->'news'->'id'=to_jsonb(news_item_id)
+  AND source->'news'->>'state' IN ('approved','pending') AND source->'news'->>'revision' IS NOT NULL
+  AND (input IS NULL OR (input->>'task'='news' AND input->'subject'->>'type'='news_item'
+    AND input->'subject'->'id'=to_jsonb(news_item_id) AND input->>'policyVersion'=policy_version AND input->>'promptVersion'=prompt_version)),false));
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION nmv_local_assist_task_valid(value text) RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT coalesce(value IN ('uptime','repo_move','intro_recheck','decision_audit','semantic_exception','news'), false)
+$$;
+--> statement-breakpoint
 -- PR10 dormant backend. Requires PR04's common llm_assist_* tables and the
 -- parent-owned news_item_id typed-target/task/check/index delta described in
 -- docs/plans/2026-10-23-qwen-first/PR-10-backend-integration.md.

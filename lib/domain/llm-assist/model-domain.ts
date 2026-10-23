@@ -19,6 +19,8 @@ import { assistHash } from "./contracts";
 import { lockActionAuditRuntimeInput, AuditDispatchBudgetExceededError } from "./audit-runtime";
 import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
 import { resolveLocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
+import { lockNewsLocalizationRuntimeInput } from "./news-runtime";
+import { lockNewsLocalizationSource } from "@/lib/news/localization-repository";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
@@ -29,11 +31,13 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   await lockPipelineInputStages(tx);
   if (candidate.kind === "repo_move") {
     if (!await lockRepoMoveCandidate(tx, candidate)) return false;
-  } else if (!await lockProductGeneration(tx, subject.id, subject.slug)) return false;
+  } else if (candidate.kind === "news") {
+    if (!await lockNewsLocalizationSource(tx, subject.id)) return false;
+  } else if (!subject.slug || !await lockProductGeneration(tx, subject.id, subject.slug)) return false;
   const [work] = await tx.select().from(llmAssistWorks).where(and(eq(llmAssistWorks.id, target.workId),
     eq(llmAssistWorks.revision, target.workRevision), eq(llmAssistWorks.claimToken, target.claimToken),
     eq(llmAssistWorks.state, "claimed"))).for("update");
-  if (!work || work.task !== target.task || work.productId !== target.subjectId || work.backendId !== target.backendId
+  if (!work || work.task !== target.task || (work.task === "news" ? work.newsItemId : work.productId) !== target.subjectId || work.backendId !== target.backendId
     || work.ownerInstanceId !== role.instanceId || work.ownerBootId !== role.bootId || work.claimJob !== job.name
     || work.claimJobToken !== job.token || work.claimRequestedVersion !== job.requestedVersion || work.capacityRequestId
     || work.sourceHash !== assistCandidateSourceHash(candidate)
@@ -42,6 +46,11 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   const control = await readAssistControl(work.task, tx);
   if (!control.dispatchEnabled || control.mode === "off" || control.revision !== work.controlRevision
     || !await assistOriginActive(tx, work.originJob) || !await assistOriginActive(tx, job.name)) return false;
+  if (candidate.kind === "news") {
+    if (!await lockNewsLocalizationRuntimeInput(tx, candidate, value.input)) return false;
+    await assertJobLeaseAtWallTime(tx, job, "update"); await assertRoleLease(tx, role);
+    return true;
+  }
   if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
     const config = readActionAuditPolicy(), contract = resolveLocalModelServingContract(target.backendId);
     if (!config.enabled || !contract || contract.model !== model

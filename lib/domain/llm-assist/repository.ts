@@ -12,6 +12,7 @@ import { ASSIST_POLICY_VERSION } from "./contracts";
 import { ASSIST_PROMPT_VERSION } from "./prompts";
 import { repoMoveSnapshotSelection } from "@/lib/domain/products/repo-move-snapshots";
 import { actionAuditClaimEligible } from "./audit-runtime";
+import { newsLocalizationClaimEligible } from "./news-runtime";
 
 type Transaction = ProductTransaction;
 export type AssistWork = typeof llmAssistWorks.$inferSelect;
@@ -71,7 +72,8 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
     const [candidate] = await tx.execute<{ id: string }>(sql`select w.id from llm_assist_work w
       join llm_assist_controls c on c.task=w.task and c.mode in ('shadow','confirm') and c.dispatch_enabled
       join jobs origin on origin.name=w.origin_job and (origin.not_before is null or origin.not_before <= clock_timestamp())
-      join products on products.id=w.product_id
+      left join products on products.id=w.product_id
+      left join news_items on news_items.id=w.news_item_id
       left join product_health ph on ph.slug=products.slug
       left join product_repo_reviews on product_repo_reviews.product_id=products.id
       left join product_intro_checks on product_intro_checks.product_id=products.id
@@ -92,8 +94,10 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
           and product_intro_checks.checked_tagline=products.tagline)
         or (${actionAuditClaimEligible(input.backendFamily ?? "unknown")}
           and products.url=w.source->'product'->>'url' and products.updated_at::text=w.source->'product'->>'updatedAt'
-          and products.status=w.source->'product'->>'status'))
-        and not exists (select 1 from llm_assist_work active where active.task=w.task and active.product_id=w.product_id
+          and products.status=w.source->'product'->>'status')
+        or ${newsLocalizationClaimEligible()})
+        and not exists (select 1 from llm_assist_work active where active.task=w.task
+          and ((active.product_id=w.product_id and w.product_id is not null) or (active.news_item_id=w.news_item_id and w.news_item_id is not null))
           and active.state in ('claimed','indeterminate'))
       order by w.priority desc,w.next_attempt_at,w.created_at,w.id for update of w skip locked limit 1`);
     if (!candidate) return null;
