@@ -72,6 +72,27 @@ describe("bounded news fact validation", () => {
     expect(extractNewsPrices("USD 3 per million input tokens.")).toEqual(extractNewsPrices("$3 per million input tokens."));
     expect(extractNewsPrices("$3 per million input tokens and $unknown for output.").unsupported).toBe(true);
   });
+  it("does not lend a monthly denominator to a separate lifetime price", () => {
+    const pricing = source("X pricing", "X is available now at $1 per month. Lifetime access costs $10.");
+    const parsed = extractNewsPrices(pricing.summary!);
+    expect(parsed).toEqual({ prices: [
+      { amount: "1", currency: "USD", perQuantity: "1", perUnit: "month", direction: "other" },
+    ], unsupported: true });
+    const wrong = output(pricing, "X 요금", "X는 1개월당 1달러이며 평생 이용은 1개월당 10달러에 사용 가능하다.", {
+      names: [{ original: "X", korean: null }], prices: ["1", "10"].map(amount => ({ amount, currency: "USD",
+        per_quantity: "1", per_unit: "month", direction: "other" as const, effective_status: "current" as const })),
+      release: { stage: "unknown", availability: "available", scope: ["product"] },
+    });
+    const result = validateNewsLocalization(pricing, wrong);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.issues).toContainEqual({ code: "unsupported_price_expression", location: "source" });
+    for (const text of ["$1 per month; lifetime costs $10", "$1 per month and lifetime costs $10",
+      "$1 per month, lifetime costs $10"]) expect(extractNewsPrices(text).unsupported).toBe(true);
+    expect(extractNewsPrices("$1 per month. Annual access costs $10 per year.")).toEqual({ prices: [
+      { amount: "1", currency: "USD", perQuantity: "1", perUnit: "month", direction: "other" },
+      { amount: "10", currency: "USD", perQuantity: "1", perUnit: "year", direction: "other" },
+    ], unsupported: false });
+  });
   it("preserves thousands separators rather than splitting the monetary amount", () => {
     expect(extractNewsPrices("$1,000 per 1,000,000 input tokens.")).toEqual({ prices: [
       { amount: "1000", currency: "USD", perQuantity: "1000000", perUnit: "token", direction: "input" }], unsupported: false });

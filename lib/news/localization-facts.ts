@@ -85,7 +85,7 @@ function monetaryValues(value: string): { amount: string; currency: NormalizedNe
 
 /** 지원하는 명시적 가격 형식만 읽는다. 불명확한 표현은 추측하지 않는다. */
 export function extractNewsPrices(value: string): { prices: NormalizedNewsPrice[]; unsupported: boolean } {
-  const raw = factualText(value), allMoney = monetaryValues(raw), allDenominators = denominators(raw);
+  const raw = factualText(value), allMoney = monetaryValues(raw);
   const rows: NormalizedNewsPrice[] = [];
   const currencyCue = /[$€£¥₩]|\b(?:USD|EUR|GBP|JPY|KRW|CNY|RMB|dollars?|euros?|pounds?|yen|yuan|won)\b|\d\s*(?:달러|유로|파운드|엔|원|위안)/iu;
   const unparsedMoney = raw.replace(MONEY_PATTERN, (match: string, prefixCurrency: string | undefined, prefixAmount: string | undefined,
@@ -96,8 +96,9 @@ export function extractNewsPrices(value: string): { prices: NormalizedNewsPrice[
     const money = monetaryValues(clause);
     if (!money.length) continue;
     const explicit = denominators(clause);
-    const denominator = explicit.length === 1 ? explicit[0]
-      : explicit.length === 0 && allDenominators.length === 1 ? allDenominators[0] : null;
+    // 독립 문장·절의 다른 요금에 문서 전체의 유일한 분모를 상속하지 않는다.
+    // 공통 분모가 생략된 표현도 명시적으로 해석할 수 없으면 검토 대상으로 남긴다.
+    const denominator = explicit.length === 1 ? explicit[0] : null;
     const directionValues = directions(clause), directionSet = [...new Set(directionValues)];
     const paired = money.length === 2 && directionSet.length === 2 && /respectively|각각/iu.test(clause);
     if (!denominator || directionSet.length > 1 && !paired) { unsupported = true; continue; }
