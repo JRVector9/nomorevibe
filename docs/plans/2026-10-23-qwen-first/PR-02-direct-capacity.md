@@ -1,6 +1,6 @@
 # PR-02 기존 직접 호출을 공통 모델 슬롯과 종료 장부에 연결한다
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-direct-capacity` · 설계 기준: `c37ae82f`
+상태: **구현 및 격리 회귀 완료 · 운영 global readiness 미확인** · 브랜치: `feat/qwen-first-direct-capacity` · 설계 기준: `c37ae82f`
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -89,3 +89,6 @@ Migration: dispatch_binding/terminal_evidence/logical CHECK에 정확한 direct 
 - 실제 다중 프로세스 경합·abort·재시작·정산 회귀
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+실제 연결한 8개 목적, 0118 DDL, 단위 103개와 격리 DB/HTTP 검증, 첫 fixture 실패 및 수정, 아직 globalReady=false인 이유는
+[구현 검증 기록](../../operations/2026-10-23-local-model-capacity-validation.md)에 남겼다. 실제 모델 처리량이나 운영 readback을 검증한 것으로 해석하지 않는다.
