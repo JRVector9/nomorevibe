@@ -4,6 +4,9 @@ import { productEvidenceAudit, productHealth, productRepoReviews, products, type
   type RepoReviewDecision } from "@/lib/db/schema";
 import { assertJobLeaseAtWallTime, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
 import { lockProductGeneration } from "./generation";
+import type { ProductTransaction } from "./generation";
+import { repoMoveSnapshotSelection } from "./repo-move-snapshots";
+import type { RepoMoveSnapshot } from "./repo-move-review";
 import { repoGone, setStatusWithAudit } from "./repository";
 import { lockPipelineInputStages } from "@/lib/crawl/pipeline-stage-context";
 import { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON } from "./repository";
@@ -29,6 +32,16 @@ const target = sql`${products.status} in ('seeded', 'verified') and ${repoGone}`
  */
 export const MAX_REPO_GONE_DELISTS_PER_DAY = 100;
 
+/** Every automatic repository delist shares this lock, including async relationship results. */
+export async function repoGoneDailyLimitAvailable(tx: ProductTransaction): Promise<boolean> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext('repo-gone-daily-limit'))`);
+  const [row] = await tx.select({ count: sql<number>`count(*)::int` }).from(productEvidenceAudit).where(and(
+    eq(productEvidenceAudit.action, "admin.product.ban"), eq(productEvidenceAudit.actor, REPO_GONE_AUTO_ACTOR),
+    eq(productEvidenceAudit.reason, REPO_GONE_AUTO_REASON), sql`${productEvidenceAudit.createdAt} > clock_timestamp() - interval '24 hours'`,
+  ));
+  return (row?.count ?? 0) < MAX_REPO_GONE_DELISTS_PER_DAY;
+}
+
 /**
  * 운영자를 기다리는 것 — AI 가 keep 이 아니라고 했고, 운영자가 아직 안 봤거나 운영자 결정 뒤에 다시 본 것.
  * products 와 product_repo_reviews 를 별칭 없이 조인한 쿼리에서만 쓴다.
@@ -42,6 +55,7 @@ export type RepoReviewTarget = {
   operatorDecision: string | null;
   /** 생존 확인이 본 사이트 중단 시작 — 페이지를 못 열었을 때 사흘 넘게 죽은 사이트만 내린다 */
   downSince: Date | null;
+  snapshot: RepoMoveSnapshot;
 };
 
 /** 이번에 볼 것 — 아직 안 본 것 먼저, 그다음 다시 볼 때가 지난 것. 운영자가 내린 것은 공개가 아니라 빠진다 */
@@ -50,6 +64,7 @@ export async function dueRepoReviews(limit: number): Promise<RepoReviewTarget[]>
   return db.select({
     id: products.id, slug: products.slug, name: products.name, url: products.url, repoUrl: products.repoUrl,
     renamedTo: products.repoRenamedTo, operatorDecision: productRepoReviews.operatorDecision, downSince: productHealth.downSince,
+    snapshot: repoMoveSnapshotSelection,
   }).from(products)
     .leftJoin(productRepoReviews, eq(productRepoReviews.productId, products.id))
     .leftJoin(productHealth, eq(productHealth.slug, products.slug))
@@ -75,9 +90,13 @@ function reviewValues(record: RepoReviewRecord) {
 
 /** 판정을 적는다. 운영자 결정 칸은 건드리지 않는다 */
 export async function saveRepoReview(record: RepoReviewRecord, lease?: JobLease): Promise<void> {
+  await withJobLeaseWrite(lease, tx => saveRepoReviewIn(tx, record));
+}
+
+export async function saveRepoReviewIn(tx: ProductTransaction, record: RepoReviewRecord): Promise<void> {
   const values = reviewValues(record);
-  await withJobLeaseWrite(lease, (tx) => tx.insert(productRepoReviews).values({ productId: record.productId, ...values })
-    .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } }));
+  await tx.insert(productRepoReviews).values({ productId: record.productId, ...values })
+    .onConflictDoUpdate({ target: productRepoReviews.productId, set: { ...values, reviewedAt: sql`now()` } });
 }
 
 /** 지난 24시간에 잡이 스스로 내린 수 — 하루 한도(MAX_REPO_GONE_DELISTS_PER_DAY)와 견준다 */
@@ -116,6 +135,7 @@ export async function delistGoneRepository(record: RepoReviewRecord & { slug: st
     if (!(await lockProductGeneration(tx, record.productId, record.slug))) return done("skipped");
     const [row] = await tx.select({ status: products.status, gone: sql<boolean>`${repoGone}` }).from(products).where(eq(products.id, record.productId));
     if (!row || !["seeded", "verified"].includes(row.status) || !row.gone) return done("skipped");
+    if (!await repoGoneDailyLimitAvailable(tx)) { await upsert(reviewValues(record)); return done("skipped"); }
     const banned = await setStatusWithAudit({ id: record.productId, slug: record.slug, status: "banned", action: "admin.product.ban",
       actor: REPO_GONE_AUTO_ACTOR, reason: REPO_GONE_AUTO_REASON }, tx);
     if (!banned) return done("skipped");

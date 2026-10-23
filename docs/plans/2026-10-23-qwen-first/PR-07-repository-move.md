@@ -1,6 +1,8 @@
 # PR-07 저장소 공식 이전 확인과 안전한 주소 변경 후보
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-repository-move` · 설계 기준: `c37ae82f`
+상태: **도메인·생산자 구현 및 범위 검증 완료 · 공통 consumer 통합 대기** · 브랜치: `feat/qwen-first-repository-move` · 설계 기준: `c37ae82f`
+
+구현 경계·연결 함수·실행한 검증은 [개발 기록](../../operations/2026-10-23-repository-move-development.md)에 있다. 공식 GitHub redirect가 확인된 단일 후보만 주소 변경 후보로 인정하며, 실제 자동 적용은 기본 off다. 실데이터 평가·운영 적용은 수행하지 않았다.
 
 선행 PR: [PR-01](PR-01-contracts-evaluation.md), [PR-02](PR-02-direct-capacity.md), [PR-04](PR-04-work-uptime-candidates.md). 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
