@@ -14,7 +14,7 @@ import type { DeepSeekReviewResult } from './deepseek-review';
 import { heldQwenOwns } from './held-qwen-retry-policy';
 
 export type HumanReviewClaim = {
-  attemptId: number; repo: string; candidateRevision: string; input: ReviewInput; generation: number; lease: JobLease;
+  attemptId: number; candidateId: number; repo: string; candidateRevision: string; input: ReviewInput; generation: number; lease: JobLease;
 };
 const JOB = 'human-deepseek-review';
 
@@ -65,6 +65,7 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, 'delegated'),
       eq(crawlReviewAttempts.inputHash, input.inputHash), eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash),
       eq(crawlReviewAttempts.actor, deepseekActor(generation)),
+      sql`not (${crawlReviewAttempts.state} = 'superseded' and ${crawlReviewAttempts.errorCode} is not distinct from 'model_capacity_deferred')`,
     )).orderBy(desc(crawlReviewAttempts.id));
     // A model's abstention is final for this input. Failures have bounded retries.
     if (attempts.some(row => row.state === 'succeeded') || attempts.length >= 3
@@ -77,7 +78,18 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       leaseToken: lease.token, validUntil: input.validUntil,
     }).returning({ id: crawlReviewAttempts.id });
     await assertJobLeaseAtWallTime(tx, lease);
-    return { attemptId: attempt.id, repo, candidateRevision: candidateRevisionHash(candidate), input, generation, lease };
+    return { attemptId: attempt.id, candidateId: candidate.id, repo, candidateRevision: candidateRevisionHash(candidate), input, generation, lease };
+  });
+}
+
+/** 슬롯 미발급은 생성·제품 실패가 아니다. 원격 점유 장부는 여기서 해제하지 않는다. */
+export async function deferHumanReviewForModelCapacity(claim: HumanReviewClaim): Promise<void> {
+  await db.transaction(async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.update(crawlReviewAttempts).set({ state: 'superseded', errorCode: 'model_capacity_deferred', completedAt: new Date(), retryAfter: null })
+      .where(and(eq(crawlReviewAttempts.id, claim.attemptId), eq(crawlReviewAttempts.candidateId, claim.candidateId),
+        eq(crawlReviewAttempts.kind, 'delegated'), eq(crawlReviewAttempts.state, 'running'), eq(crawlReviewAttempts.leaseToken, claim.lease.token)));
+    await assertJobLeaseAtWallTime(tx, claim.lease);
   });
 }
 
