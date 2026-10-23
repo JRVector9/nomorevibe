@@ -52,8 +52,10 @@ export async function requestReservedLocalModel(value: LocalModelDispatch, contr
     || dispatch.binding.physicalGroup !== contract.physicalGroup || dispatch.binding.deploymentRevision !== contract.deploymentRevision)
     throw new Error("local_model_transport_contract_mismatch");
   if (init.signal?.aborted) throw new DOMException("local_model_cancelled", "AbortError");
-  const response = request ? await request(url, { ...init, redirect: "error" }) : await gatewayFetch(dispatch.requestId, url,
-    { method: "POST", headers: Object.fromEntries(new Headers(init.headers).entries()), body: init.body, signal: init.signal, redirect: "error" });
+  const headersForRequest = new Headers(init.headers);
+  headersForRequest.set("x-nmv-relay-request-id", dispatch.requestId);
+  const response = request ? await request(url, { ...init, headers: headersForRequest, redirect: "error" }) : await gatewayFetch(dispatch.requestId, url,
+    { method: "POST", headers: Object.fromEntries(headersForRequest.entries()), body: init.body, signal: init.signal, redirect: "error" });
   const reader = response.body?.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;
