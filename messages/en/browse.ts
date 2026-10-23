@@ -315,6 +315,7 @@ export const browse = defineCatalog<typeof schema>()({
   "talk.note": "AI-built projects discussed on {sources} · checked every 30 minutes",
   "talk.description": "Projects listed on nomorevibe that people are discussing on social sites, with the source, the score and GitHub stars since the post.",
   "talk.lead": "No. 1 now",
+  "talk.rankNow": "No. {rank} now",
   "talk.sourceCount": "{count} sources",
   "talk.starsAfterMention": "GitHub stars since the post",
   "talk.starsAfterObservation": "GitHub stars since first observed",

@@ -312,6 +312,7 @@ export const browse = {
   "talk.note": "{sources}에서 이야기된 AI로 만든 프로젝트 · 30분마다 확인",
   "talk.description": "nomorevibe에 공개된 프로젝트 중 SNS 글에서 이야기된 것을 출처·점수·글 뒤 GitHub 스타와 함께 보여 줍니다.",
   "talk.lead": "지금 1위",
+  "talk.rankNow": "지금 {rank}위",
   "talk.sourceCount": "출처 {count}곳",
   "talk.starsAfterMention": "글 뒤 GitHub 스타",
   "talk.starsAfterObservation": "첫 관측 뒤 GitHub 스타",
