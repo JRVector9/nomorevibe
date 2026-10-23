@@ -20,7 +20,7 @@
 |---|---|
 | 통합 SHA | 실제 PR11 본문의 `tested_sha` |
 | 실제 PR URL | [#638](https://github.com/JRVector9/nomorevibe/pull/638) |
-| fresh migration journal 124개·적용 hash | 실제 PR11 본문·외부 검증 보고서 참조 |
+| fresh migration journal 125개·적용 hash | 실제 PR11 본문·외부 검증 보고서 참조 |
 | 전체 unit | 실제 PR11 본문·외부 검증 보고서 참조 |
 | 전체 전용 DB 회귀 | 실제 PR11 본문·외부 검증 보고서 참조 |
 | build | 실제 PR11 본문·외부 검증 보고서 참조 |
@@ -68,7 +68,7 @@
 - `docs/operations/<implementation-date>-qwen-first-validation.md` (신규 제안 경로, 구현 시 확정)
 - `docs/operations/qwen-first-rollout.md` (신규 제안 경로, 구현 시 확정)
 
-Migration: 없음. 앞선 코드 PR이 추가한 migration의 SHA·journal·적용 상태와 호환성을 확인한다. 실제 번호는 구현 시 최신 main의 journal을 확인해 배정한다.
+Migration: `0124_local_model_capacity_assist_checks.sql`. 과거 assist OR 분기의 넓은 잡 허용을 제거하고 현재 Drizzle의 네 CHECK와 일치시킨다. 0118~0123 이력과 CLI/gateway 분기를 보존하며 전체 125개 migration을 새 DB에서 검증한다.
 
 ## 검증과 완료 조건
 

@@ -969,7 +969,7 @@
         "docs/operations/<implementation-date>-qwen-first-validation.md",
         "docs/operations/qwen-first-rollout.md"
       ],
-      "migration": "없음. 앞선 코드 PR이 추가한 migration의 SHA·journal·적용 상태와 호환성을 확인한다.",
+      "migration": "0124: 최신 typed local-assist CHECK로 교체; 기존 CLI/gateway 계약과 migration 이력 보존",
       "tests": [
         "완성된 정확한 통합 SHA의 전체 검증. 통합 테스트는 전용 DB이며 필요한 직렬 ledger 순서를 따른다.",
         "관련 새 잡에 catalog/registry/stage/JOB_HOW/attention.work와 stop/resume 의미가 모두 연결됐는지 확인",
@@ -1019,7 +1019,7 @@
         },
         "pending_integration_checks": [
           "exact_integrated_sha",
-          "fresh_124_migrations",
+          "fresh_125_migrations",
           "full_unit",
           "full_integration",
           "build",
@@ -1061,8 +1061,8 @@
   "final_integration": {
     "integrated_sha": null,
     "validation_artifact": "https://github.com/JRVector9/nomorevibe/pull/638",
-    "migration_count_expected": 124,
-    "fresh_migration_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
+    "migration_count_expected": 125,
+    "fresh_migration_result": "0124 CHECK 정규화 포함 125개; 실제 PR11 본문 exact-SHA 검증 결과 참조",
     "full_unit_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
     "full_integration_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",
     "build_result": "실제 PR11 본문의 exact-SHA 검증 결과 참조",

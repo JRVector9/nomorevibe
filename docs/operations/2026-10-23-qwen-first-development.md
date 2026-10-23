@@ -11,10 +11,10 @@
 | 05 | [#633](https://github.com/JRVector9/nomorevibe/pull/633) | native13; M1 대기 중 GPU 결과가 먼저 commit | 기본 off·실제 confirm 미실행 |
 | 06 | [#629](https://github.com/JRVector9/nomorevibe/pull/629) | 명시 v3/shot2·근거 provenance; unit9파일69 | native 정규화 후 hash 보강은11에 합류 |
 | 07 | [#634](https://github.com/JRVector9/nomorevibe/pull/634) | native8+기존12=20; 공식 이전·현재 페이지·CAS·보호·100/day | 최종 잠금 경합 검사 대기 |
-| 08 | [#635](https://github.com/JRVector9/nomorevibe/pull/635) | native12+기존23=35; 별도 교정 호출·Sonnet 원행 보존 | 재시작 복구·전체 검사 합류 대기 |
-| 09 | 발행 후 URL 기록 대기 | native10+domain5=15; 별도 감사 잡·블라인딩·실제 주간 한도 | 기본 off·후속 잠금 수정 통합 대기 |
-| 10 | 발행 후 URL 기록 대기 | native20; 원문/공개 상태 보존·비공개 draft/needs_review | 기본 off·노출 제품 결정 대기 |
-| 11 | 발행 후 URL 기록 대기 | readiness 도구·runbook 범위 구현 | 정확한 통합 SHA의 전체 검증 대기 |
+| 08 | [#635](https://github.com/JRVector9/nomorevibe/pull/635) | native12+기존23=35; 별도 교정 호출·Sonnet 원행 보존 | 복구 3건 통합·전체 결과는 PR11 참조 |
+| 09 | [#636](https://github.com/JRVector9/nomorevibe/pull/636) | native10+domain5=15; 별도 감사 잡·블라인딩·실제 주간 한도 | 기본 off·잠금 수정/경합 3건 통합 |
+| 10 | [#637](https://github.com/JRVector9/nomorevibe/pull/637) | native20; 원문/공개 상태 보존·비공개 draft/needs_review | 기본 off·노출 제품 결정 대기 |
+| 11 | [#638](https://github.com/JRVector9/nomorevibe/pull/638) | readiness 도구·runbook 범위 구현 | 정확한 통합 SHA의 전체 검증 대기 |
 
 앞선8개 PR의 draft/head/base는 `gh pr list` 읽기 조회로 확인했다. 09~11 URL은 발행 뒤 [계획 JSON](../plans/2026-10-23-qwen-first/implementation-plan.json)의 `github_pr`와 함께 갱신한다. 서로 겹친 기존 회귀를 더해 고유 테스트 수나 모델 정확도로 보고하지 않는다.
 
@@ -22,7 +22,7 @@
 
 Node `24.22.1`과 lockfile의 의존성을 사용했다. 범위별 unit/격리 PostgreSQL·localhost 가짜 HTTP/native 회귀와 필요한 정적 검사를 수행했다. 새 테스트는 자신이 만든 loopback 전용 DB·원격 fixture만 사용하고 원래 singleton·role/job lease·장부 행·immutable trigger 상태를 복구했다. DB 회귀는 실제 역할/업무/용량 원장과 적용 트랜잭션을 검증하지만 실제 모델 품질이나 운영 처리량의 실험은 아니다.
 
-수동 전체 unit·전체 전용 DB·build는 모든 코드·회귀가 합류한 정확한 통합 SHA에서 한 번 수행한다. GitHub 필수 CI는 유지한다. 현재 최종 SHA·fresh124개 migration/적용 hash·전체 검사·필수 CI의 명령/종료 코드/산출물 hash는 [PR11 기록 표](../plans/2026-10-23-qwen-first/PR-11-integration-rollout.md)에 통합 담당자가 채운다. 이 문서는 이를 통과로 대체하지 않는다.
+수동 전체 unit·전체 전용 DB·build는 모든 코드·회귀가 합류한 정확한 통합 SHA에서 한 번 수행한다. GitHub 필수 CI는 유지한다. 현재 최종 SHA·fresh125개 migration/적용 hash·전체 검사·필수 CI의 명령/종료 코드/산출물 hash는 [실제 PR11 본문](https://github.com/JRVector9/nomorevibe/pull/638)과 `/home/ubuntu/reports/nomorevibe-llm-development-2026-10-23`에 기록한다. 이 문서는 이를 통과로 대체하지 않는다.
 
 ## 주요 구현과 보존한 정책
 
@@ -41,7 +41,7 @@ Node `24.22.1`과 lockfile의 의존성을 사용했다. 범위별 unit/격리 P
 4. PR05 reaper의 varchar/uuid lease 비교 오류와 PR08 순환 import의 초기화되지 않은 schema 오류는 명시 cast·지연 schema 초기화로 수정하고 실제 native 흐름을 다시 검증했다.
 5. PR07의 source page freshness와 PR10의 독립 가격 문장에 대한 전역 분모 상속을 보강했다. 뉴스 수정 `2077ca93`은 명시 분모 없는 독립 절을 unsupported→needs_review로 닫고 기존/신규 unit28건을 통과했다.
 6. PR09 pause fixture는 예약 취소 행 자체가 없어야 한다는 과한 기대를 정상 `withdrawn`/미dispatch/attempts0로 고쳤다. 독립 리뷰의 repository/audit 잠금 순서와 reaper 시도 계수 수정은 후속 통합·복구·경합 회귀와 함께 최종 SHA에서 확인한다.
-7. `6c634c6a`의 비권한 WeakMap 관측은 native 정규화 후 실제 전송 hash를 text/vision에 연결하고 raw context_strategy만 검증 후 제거한다. 별도 unit13/native DB4 결과가 있으나 아직11 통합 대상이며 당시 전체 tsc의 기존 테스트 오류1건을 통과로 기록하지 않는다.
+7. `6c634c6a`의 비권한 WeakMap 관측은 native 정규화 후 실제 전송 hash를 text/vision에 연결하고 raw context_strategy만 검증 후 제거한다. 별도 unit13/native DB4와 함께11에 통합했다. 당시 전체 tsc의 테스트 타입 오류1건은8a30253f에서 수정했고 원래 실패를 보존한다.
 
 ## 증거와 다음 기록
 
@@ -59,3 +59,10 @@ Node `24.22.1`과 lockfile의 의존성을 사용했다. 범위별 unit/격리 P
 기존261회/42개 합성 근거의 모델 비교를 새 schema·v3/shot2의 실제 정확도나 생산 용량으로 승계하지 않는다. 실제 근거의 사람 독립 라벨·holdout 비교·오내림/주소 오류/메이커 침범 검수와 운영 정책 승인은 남아 있다.
 
 운영 배포·운영 DB 쓰기·모델 서버 설정 변경·새 자동 기능 활성화·현재 정상인12건 차단 해제는 수행하지 않았다. 코드/범위 검증 완료, 오프라인 증거 검토 자격, 실제 운영 승인·실행을 별도 상태로 기록한다.
+
+최종 전체 검사에서 발견한 수정:
+
+- 신규 assist·독립 감사·감사 생산 잡 3개를 비상 운영에서 명시 중단 분류하고 pause/aging/모델 검증 상태에서도 우회하지 않음을 확인한다.
+- 최초 전체 unit의 schema 검사는0118 고정 가정으로 실패했다. 최신 CHECK를 비교하도록 보강하자 과거 assist OR 분기가 감사 task에 일반 consumer job을 허용하는 실제 차이를 발견했다. 0124에서 현재 Drizzle과 일치시키고 실제 DB 거절 회귀를 추가한다.
+- 기존 SSRF 단위 검사의 example.com:443 요청은 테스트 전용 외부 연결 가드와 충돌했다. 해당 공인 문서만 명시 허용하며 실제 모델 endpoint 차단을 유지한다.
+- 전용 PostgreSQL 초기 기동 중 일시 연결 reset과 호스트 /tmp inode 소진은 검사 환경 문제로 기록한다. TCP 준비 확인과 /home 전용 TMPDIR로 재검증한다. 운영 데이터나 다른 작업의 임시 파일은 정리하지 않는다.
