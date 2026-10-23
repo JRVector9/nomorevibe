@@ -10,8 +10,8 @@ import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(ensureSchema);
 async function resetControl() {
-  await db.delete(llmAssistWorks);
-  await db.delete(llmAssistControls);
+  await db.delete(llmAssistWorks).where(eq(llmAssistWorks.task, "uptime"));
+  await db.delete(llmAssistControls).where(eq(llmAssistControls.task, "uptime"));
   await db.insert(llmAssistControls).values({ task: "uptime" });
 }
 beforeEach(async () => { await resetTables(); await resetControl(); await db.delete(jobs); });
@@ -42,6 +42,7 @@ describe("비동기 uptime 확인 후보 큐", () => {
     await Promise.all([autoBanUptimeProduct(p), autoBanUptimeProduct(p)]);
     expect((await db.select().from(products).where(eq(products.id, p.id)))[0].status).toBe("seeded");
     const [work] = await db.select().from(llmAssistWorks);
+    if (work.source.kind !== "uptime") throw new Error("unexpected_task");
     expect(work.source.product.updatedAt).toMatch(/\.\d{6}$/);
     expect(await db.select().from(llmAssistWorks)).toHaveLength(1);
     expect(await nextUptimeAutoBanTargets(10)).toEqual([]);

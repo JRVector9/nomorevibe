@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { llmAssistWorks } from "@/lib/db/schema";
+import { llmAssistWorks, modelCapacityRequests } from "@/lib/db/schema";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { claimAssistWork, deferAssistClaim } from "@/lib/domain/llm-assist/repository";
@@ -10,7 +10,9 @@ import { completeAssistClaim } from "@/lib/domain/llm-assist/complete";
 import { assistBackendDrains, assistBackendKey, type AssistBackendDrain } from "@/lib/domain/llm-assist/config";
 import { assistCapacityInput } from "@/lib/domain/llm-assist/model-input";
 import { buildAssistModelRequest, parseAssistModelResponse } from "@/lib/domain/llm-assist/model-request";
-import { uptimeCandidateSchema } from "@/lib/domain/llm-assist/work";
+import { assistCandidateSchema, assistCandidateSubject } from "@/lib/domain/llm-assist/work";
+import type { AssistInput } from "@/lib/domain/llm-assist/contracts";
+import { collectRepoMoveInput, checkRepoMoveBeforeApply } from "@/lib/domain/products/repo-move-evidence";
 import { collectUptimeAssist } from "@/lib/domain/products/uptime-delist-review";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
@@ -37,8 +39,16 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
       let stage: "collection" | "model" = "collection";
       try {
         const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(Math.max(1, Math.min(90_000, remaining() - 1000)))]);
-        const candidate = uptimeCandidateSchema.parse(claim.work.source);
-        const input = await collectUptimeAssist(candidate, signal);
+        const candidate = assistCandidateSchema.parse(claim.work.source), subject = assistCandidateSubject(candidate);
+        let input: AssistInput;
+        if (candidate.kind === "uptime") input = await collectUptimeAssist(candidate, signal);
+        else {
+          const collected = await collectRepoMoveInput(candidate, { signal });
+          if (collected.kind !== "ready") {
+            await deferAssistClaim(claim, collected.kind, collected.reason); counts.deferred++; continue;
+          }
+          input = collected.input;
+        }
         if (!input.sources.some(source => source.completeness === "complete" && source.text.trim())) {
           await deferAssistClaim(claim, "waiting_evidence", "collection_incomplete"); counts.deferred++; continue;
         }
@@ -52,7 +62,7 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
         const request = buildAssistModelRequest(input, backend.contract);
         stage = "model";
         const response = await withLocalModelCapacity({ target: { kind: "assist", purpose: "assist_review", workId: claim.work.id,
-          workRevision: claim.work.revision, claimToken: claim.token, task: claim.work.task, subjectId: candidate.product.id, backendId: backend.backendId },
+          workRevision: claim.work.revision, claimToken: claim.token, task: claim.work.task, subjectId: subject.id, backendId: backend.backendId },
           input: assistCapacityInput(claim.work, input), lease, promptVersion: input.promptVersion, allowLegacy: false }, fetchModel =>
           fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
             body: request.wire, signal }));
@@ -63,14 +73,19 @@ export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome
         if (!parsed.ok) {
           await deferAssistClaim(claim, "human", parsed.error, { consumesAttempt: true }); counts.human++; continue;
         }
-        const saved = await completeAssistClaim(claim, input, parsed.outcome, backend.contract, createHash("sha256").update(raw).digest("hex"));
+        const freshRepoChecks = candidate.kind === "repo_move" && ["update_repo_candidate", "delist_candidate"].includes(parsed.outcome.action.proposal)
+          ? await checkRepoMoveBeforeApply(candidate, { signal }) : undefined;
+        const saved = await completeAssistClaim(claim, input, parsed.outcome, backend.contract, createHash("sha256").update(raw).digest("hex"), freshRepoChecks);
         if (saved.recorded) counts.recorded++;
         if (saved.applied) counts.applied++;
       } catch (error) {
         const [work] = await db.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
-        if (!work) continue;
+        if (!work || work.state !== "claimed") continue;
         if (work.capacityRequestId) {
-          await deferAssistClaim(claim, "indeterminate", "model_or_commit_unknown"); counts.indeterminate++;
+          const [capacity] = await db.select({ state: modelCapacityRequests.state }).from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, work.capacityRequestId));
+          if (capacity?.state === "settled") {
+            await deferAssistClaim(claim, "waiting_evidence", "post_model_validation_failed", { consumesAttempt: true }); counts.deferred++;
+          } else { await deferAssistClaim(claim, "indeterminate", "model_or_commit_unknown"); counts.indeterminate++; }
         } else if (error instanceof ModelCapacityDeferredError) {
           await deferAssistClaim(claim, "waiting_capacity", `capacity_${error.reason}`, { nextAttemptAt: new Date(Date.now() + 60_000) }); counts.deferred++;
           break;

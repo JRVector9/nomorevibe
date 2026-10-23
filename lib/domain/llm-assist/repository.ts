@@ -10,6 +10,7 @@ import { assistCandidateSourceHash, uptimeCandidateSchema, type AssistControl, t
   type AssistWorkState, type UptimeAssistCandidate } from "./work";
 import { ASSIST_POLICY_VERSION } from "./contracts";
 import { ASSIST_PROMPT_VERSION } from "./prompts";
+import { repoMoveSnapshotSelection } from "@/lib/domain/products/repo-move-snapshots";
 
 type Transaction = ProductTransaction;
 export type AssistWork = typeof llmAssistWorks.$inferSelect;
@@ -69,14 +70,16 @@ export async function claimAssistWork(input: { lease: JobLease; owner: ModelCapa
     const [candidate] = await tx.execute<{ id: string }>(sql`select w.id from llm_assist_work w
       join llm_assist_controls c on c.task=w.task and c.mode in ('shadow','confirm') and c.dispatch_enabled
       join jobs origin on origin.name=w.origin_job and (origin.not_before is null or origin.not_before <= clock_timestamp())
-      join products p on p.id=w.product_id
-      join product_health ph on ph.slug=p.slug
+      join products on products.id=w.product_id
+      left join product_health ph on ph.slug=products.slug
+      left join product_repo_reviews on product_repo_reviews.product_id=products.id
       where w.task in (${tasks}) and w.state in ('queued','waiting_capacity','retryable_transport')
-        and w.next_attempt_at <= clock_timestamp()
-        and p.status in ('seeded','verified') and p.url=w.source->'product'->>'url'
-        and p.updated_at::text=w.source->'product'->>'updatedAt'
+        and w.next_attempt_at <= clock_timestamp() and w.attempts<3
+        and ((w.task='uptime' and products.status in ('seeded','verified') and products.url=w.source->'product'->>'url'
+        and products.updated_at::text=w.source->'product'->>'updatedAt'
         and ph.checked_at::text=w.source->'health'->>'checkedAt'
-        and ph.failures=(w.source->'health'->>'failures')::int and ph.status=(w.source->'health'->>'status')::int
+        and ph.failures=(w.source->'health'->>'failures')::int and ph.status=(w.source->'health'->>'status')::int)
+        or (w.task='repo_move' and ${repoMoveSnapshotSelection}=w.source->'snapshot'))
         and not exists (select 1 from llm_assist_work active where active.task=w.task and active.product_id=w.product_id
           and active.state in ('claimed','indeterminate'))
       order by w.priority desc,w.next_attempt_at,w.created_at,w.id for update of w skip locked limit 1`);

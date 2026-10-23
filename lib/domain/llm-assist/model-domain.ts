@@ -10,16 +10,20 @@ import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
 import type { LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { assistCapacityInput, type AssistCapacityInput } from "./model-input";
 import { assistOriginActive, readAssistControl } from "./repository";
-import { assistCandidateSourceHash, uptimeCandidateSchema } from "./work";
+import { assistCandidateSchema, assistCandidateSourceHash, assistCandidateSubject } from "./work";
+import { lockRepoMoveCandidate } from "@/lib/domain/products/repo-move-reviews";
+import { buildRepoMoveInput } from "@/lib/domain/products/repo-move-review";
 
 /** 예약→dispatch와 같은 TX에서 대상·근거·pause·lease를 증명하고 request ID를 원자 연결한다. */
 export async function proveAssistModelDomain(tx: ProductTransaction, target: Extract<LocalModelTarget, { kind: "assist" }>,
   value: AssistCapacityInput, job: JobLease, role: RoleLease, requestId: string): Promise<boolean> {
   const [initial] = await tx.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, target.workId));
-  if (!initial || initial.task !== "uptime") return false;
-  const candidate = uptimeCandidateSchema.parse(initial.source);
+  if (!initial) return false;
+  const candidate = assistCandidateSchema.parse(initial.source), subject = assistCandidateSubject(candidate);
   await lockPipelineInputStages(tx);
-  if (!await lockProductGeneration(tx, candidate.product.id, candidate.product.slug)) return false;
+  if (candidate.kind === "repo_move") {
+    if (!await lockRepoMoveCandidate(tx, candidate)) return false;
+  } else if (!await lockProductGeneration(tx, subject.id, subject.slug)) return false;
   const [work] = await tx.select().from(llmAssistWorks).where(and(eq(llmAssistWorks.id, target.workId),
     eq(llmAssistWorks.revision, target.workRevision), eq(llmAssistWorks.claimToken, target.claimToken),
     eq(llmAssistWorks.state, "claimed"))).for("update");
@@ -32,6 +36,14 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   const control = await readAssistControl(work.task, tx);
   if (!control.dispatchEnabled || control.mode === "off" || control.revision !== work.controlRevision
     || !await assistOriginActive(tx, work.originJob) || !await assistOriginActive(tx, job.name)) return false;
+  if (candidate.kind === "repo_move") {
+    const collected = value.input.sources.filter(source => !["old_repository", ...(candidate.page ? ["product_page"] : [])].includes(source.sourceId));
+    if (value.input.task !== "repo" || !isDeepStrictEqual(buildRepoMoveInput(candidate, collected), value.input)
+      || !value.input.sources.some(source => source.sourceId.startsWith("candidate_") && source.completeness === "complete" && source.text.trim()
+        && Date.parse(source.observedAt) <= Date.now() && Date.parse(source.observedAt) >= Date.now() - 180_000)) return false;
+    await assertJobLeaseAtWallTime(tx, job, "update"); await assertRoleLease(tx, role);
+    return Boolean(requestId);
+  }
   if (value.input.task !== "uptime" || value.input.subject.id !== candidate.product.id
     || value.input.subject.revision !== candidate.product.updatedAt || value.input.context.requestedUrl !== candidate.product.url
     || value.input.context.failureCount !== candidate.health.failures || value.input.context.requiredFailures !== UPTIME_AUTO_BAN_THRESHOLD

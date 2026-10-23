@@ -27,3 +27,6 @@ ALTER TABLE llm_assist_work ADD CONSTRAINT llm_assist_work_repo_move_binding CHE
     AND input->'context'->>'oldRepositoryUrl' = source->'snapshot'->>'repoUrl'
   ) IS TRUE)
 ) IS TRUE);
+
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION nmv_local_assist_task_valid(value text) RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT coalesce(value IN ('uptime','repo_move'), false) $$;

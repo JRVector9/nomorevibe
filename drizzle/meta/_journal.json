@@ -841,6 +841,13 @@
       "when": 1794086400031,
       "tag": "0119_llm_assist_work",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1794086400032,
+      "tag": "0120_repository_move_assist",
+      "breakpoints": true
     }
   ]
 }

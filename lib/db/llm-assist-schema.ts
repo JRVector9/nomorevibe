@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { bigint, boolean, check, index, integer, jsonb, pgTable, timestamp, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 import type { AssistInput, AssistOutcome } from "@/lib/domain/llm-assist/contracts";
-import type { AssistControlMode, AssistWorkState, AssistWorkTask, UptimeAssistCandidate } from "@/lib/domain/llm-assist/work";
+import type { AssistCandidate, AssistControlMode, AssistWorkState, AssistWorkTask } from "@/lib/domain/llm-assist/work";
 import { products } from "./schema";
 
 export const llmAssistControls = pgTable("llm_assist_controls", {
@@ -10,7 +10,7 @@ export const llmAssistControls = pgTable("llm_assist_controls", {
   confirmationRequired: boolean("confirmation_required").notNull().default(false),
   dispatchEnabled: boolean("dispatch_enabled").notNull().default(false), applyEnabled: boolean("apply_enabled").notNull().default(false),
   revision: bigint("revision", { mode: "number" }).notNull().default(1), updatedAt: timestamp("updated_at", { mode: "string" }).notNull().defaultNow(),
-}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime')`),
+}, t => [check("llm_assist_control_task", sql`${t.task} in ('uptime','repo_move')`),
   check("llm_assist_control_mode", sql`${t.mode} in ('off','shadow','confirm')`),
   check("llm_assist_control_confirm", sql`${t.mode}<>'confirm' or ${t.confirmationRequired}`),
   check("llm_assist_control_apply", sql`not ${t.applyEnabled} or (${t.dispatchEnabled} and ${t.mode}='confirm')`),
@@ -20,7 +20,7 @@ export const llmAssistWorks = pgTable("llm_assist_work", {
   id: uuid("id").primaryKey(), task: varchar("task", { length: 32 }).$type<AssistWorkTask>().notNull().references(() => llmAssistControls.task),
   productId: integer("product_id").notNull().references(() => products.id, { onDelete: "cascade" }),
   originJob: varchar("origin_job", { length: 80 }).notNull(), sourceHash: varchar("source_hash", { length: 64 }).notNull(),
-  source: jsonb("source").$type<UptimeAssistCandidate>().notNull(),
+  source: jsonb("source").$type<AssistCandidate>().notNull(),
   policyVersion: varchar("policy_version", { length: 120 }).notNull(), promptVersion: varchar("prompt_version", { length: 120 }).notNull(),
   state: varchar("state", { length: 24 }).$type<AssistWorkState>().notNull().default("queued"),
   revision: bigint("revision", { mode: "number" }).notNull().default(1), priority: integer("priority").notNull().default(0),
