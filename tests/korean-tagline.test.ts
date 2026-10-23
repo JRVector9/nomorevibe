@@ -175,3 +175,20 @@ describe("packTaglineBatch", () => {
     expect(packTaglineBatch([task(1, "x".repeat(1201))], 1200)).toEqual([]);
   });
 });
+
+
+describe("bounded percentage claims", () => {
+  const source = { name: "Builder", tagline: "Builder reduces developer costs by up to 72%" };
+  it("rejects an upper bound turned into an unqualified fixed percentage", () => {
+    expect(checkKoreanTagline("Builder는 개발 비용을 72% 절감하는 도구", source))
+      .toEqual({ ok: false, reason: "qualifier_lost" });
+  });
+  it("accepts the bound or a summary that omits the whole numeric claim", () => {
+    expect(checkKoreanTagline("Builder는 개발 비용을 최대 72% 절감하는 도구", source).ok).toBe(true);
+    expect(checkKoreanTagline("Builder는 개발 비용을 줄여주는 도구", source).ok).toBe(true);
+  });
+  it("keeps exact percentages valid when the source itself makes an exact claim", () => {
+    expect(checkKoreanTagline("Builder는 개발 비용을 72% 절감하는 도구",
+      { ...source, tagline: "Builder reduces developer costs by 72%" }).ok).toBe(true);
+  });
+});

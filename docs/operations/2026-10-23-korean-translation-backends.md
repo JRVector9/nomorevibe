@@ -20,6 +20,9 @@
 `KOREAN_TRANSLATION_QWEN_ENABLED=true`로 GPU3090의 고정 vLLM 모델
 `qwen3.8-flash-next`를 사용한다. 번역 전용 프롬프트를 적용하고 응답 모델·종료 상태·
 배열 개수와 각 소개의 품질을 검증한다. 실제 결과 모델을 한국어 소개 캐시에 저장한다.
+운영 Qwen 요약 프롬프트는 수치의 최대 한도·자체 호스팅·베타 등의 범위를 보존한다.
+원문에 `up to` 또는 `at most`가 붙은 백분율을 출력하면서 한도 표현을 지우면
+`qualifier_lost`로 거절한다. 길이 때문에 수치 주장 전체를 생략하는 요약은 허용한다.
 
 `KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED=true`도 설정하면 현재 원문이 일치하고,
 일반 품질 한도 4회 또는 현재 홈의 한도 6회에 정확히 도달한 항목을 Qwen으로 제한
