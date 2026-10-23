@@ -158,13 +158,20 @@ describe("parseKoreanTaglines", () => {
 
 describe("packTaglineBatch", () => {
   const task = (productId: number, tagline: string, attempts = 0) => ({ productId, name: `p${productId}`, tagline, repoUrl: null, attempts });
-  it("차례대로 8건·1,200자까지 묶는다", () => {
+  it("legacy는 차례대로 8건·3,600자, native는 원래 1,200자까지 묶는다", () => {
     expect(packTaglineBatch(Array.from({ length: 12 }, (_, i) => task(i, "x".repeat(50)))).map((t) => t.productId)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
     expect(packTaglineBatch([task(1, "x".repeat(200)), ...Array.from({ length: 8 }, (_, i) => task(i + 2, "y".repeat(190)))]).map((t) => t.productId))
-      .toEqual([1, 2, 3, 4, 5, 6]);
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(packTaglineBatch(Array.from({ length: 8 }, (_, i) => task(i + 1, "x".repeat(300))), 1200)).toHaveLength(4);
+    expect(packTaglineBatch(Array.from({ length: 8 }, (_, i) => task(i + 1, "x".repeat(600))))).toHaveLength(6);
   });
   it("여러 번 실패한 소개는 혼자 보내고, 묶음에는 끼우지 않는다", () => {
     expect(packTaglineBatch([task(1, "a", 2), task(2, "b")]).map((t) => t.productId)).toEqual([1]);
     expect(packTaglineBatch([task(1, "a"), task(2, "b", 3), task(3, "c")]).map((t) => t.productId)).toEqual([1, 3]);
+  });
+  it("첫 항목도 글자 상한을 넘겨 보내지 않고 뒤의 적합한 항목을 고른다", () => {
+    expect(packTaglineBatch([task(1, "x".repeat(3601))])).toEqual([]);
+    expect(packTaglineBatch([task(1, "x".repeat(3601), 3), task(2, "a")]).map(task => task.productId)).toEqual([2]);
+    expect(packTaglineBatch([task(1, "x".repeat(1201))], 1200)).toEqual([]);
   });
 });

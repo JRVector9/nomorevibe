@@ -233,7 +233,7 @@ describe("지금 조치 · 쌓인 일 나누기 계약", () => {
       const inputs = calmInputs();
       const hourAgo = new Date(ACTION_NOW.getTime() - 3_600_000).toISOString();
       const withX: ActionInputs = { ...inputs, koreanTranslation: { ok: true, value: {
-        eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: ACTION_NOW.toISOString(),
+        eligible: 10, done: 4, ready: 3, recoveryReady: 0, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: ACTION_NOW.toISOString(),
       } }, ops: { ...inputs.ops, observations: [...inputs.ops.observations,
         { key: "x-status", value: { v: 1, mode: "live", reads: { used: 10, limit: 10 }, candidates: 0, lastRunAt: hourAgo, lastSuccessAt: null,
           error: "http_error", sentAt: Math.floor(ACTION_NOW.getTime() / 1000) - 3_600, signedWith: "current" }, observedAt: hourAgo },

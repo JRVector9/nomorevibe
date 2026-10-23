@@ -108,7 +108,7 @@ describe('lanesForRole', () => {
     expect(crawler[0]).not.toContain('product-evidence-refresh');
     expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
     for (const role of ['publisher', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
-    expect(lanesForRole('text')).toEqual([jobsForRole('text').filter(name => name !== 'product-translate'), ['product-translate']]);
+    expect(lanesForRole('text')).toEqual([jobsForRole('text').filter(name => !['product-translate', 'product-tagline-ko'].includes(name)), ['product-tagline-ko'], ['product-translate']]);
   });
 
   it('화면 판별은 reviewer 의 따로 도는 줄(screen)에서 150초 틱으로 돈다 — 기본 줄의 심사·감사를 막지 않는다', () => {

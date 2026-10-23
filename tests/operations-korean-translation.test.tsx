@@ -10,7 +10,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 vi.mock("server-only", () => ({}));
 
 const now = ACTION_NOW.toISOString();
-const queue = { eligible: 10, done: 4, ready: 3, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: now };
+const queue = { eligible: 10, done: 4, ready: 3, recoveryReady: 0, retryScheduled: 2, blocked: 1, lastHour: 2, measuredAt: now };
 const base = (over: Partial<OwnerContext> = {}): OwnerContext => ({ settings: {}, batch: null, agent: undefined, models: null,
   now, roles: [{ role: "text", ownerInstanceId: "m3-text", ownerKind: "primary", ownerRelease: "release-a", secondsUntilExpiry: 40 }],
   instances: [{ role: "text", instanceId: "m3-text", observedAt: now,
@@ -57,7 +57,7 @@ describe("한국어 번역의 실제 프로세스", () => {
     expect(koreanTranslationRuntime(runtime("product-tagline-ko"))).toBe("한국어 번역 실행 중");
     expect(koreanTranslationRuntime(runtime("product-search-profile"))).toContain("검색 키워드");
     expect(koreanTranslationRuntime(runtime("product-search-profile"))).not.toContain("한국어 번역 실행 중");
-    expect(koreanTranslationRuntime(runtime(null, { roleJob: "product-translate" }))).toBe("기본 줄 대기");
+    expect(koreanTranslationRuntime(runtime(null, { roleJob: "product-translate" }))).toBe("공유 번역 줄 대기");
   });
   it("담당 만료·관측 지연·릴리스 불일치·관측 누락은 실행으로 표시하지 않는다", () => {
     expect(koreanTranslationRuntime(runtime("product-tagline-ko", { seconds: 46 }))).toBe("담당 워커 관측 지연");
@@ -71,7 +71,7 @@ describe("한국어 번역의 실제 프로세스", () => {
     expect(koreanTranslationRuntime(base({ roles: null }))).toBe("담당 관측 미확인");
     const stopping = runtime(null);
     (stopping.instances[0].value.lanes as { state: string }[])[0].state = "stopping";
-    expect(koreanTranslationRuntime(stopping)).toBe("기본 줄 정지 중");
+    expect(koreanTranslationRuntime(stopping)).toBe("공유 번역 줄 정지 중");
   });
   it("분리 배치에서는 text 대신 실제 translation 담당을 관측한다", () => {
     const ctx = runtime("product-tagline-ko");
@@ -99,7 +99,7 @@ describe("한국어 번역의 실제 프로세스", () => {
     expect(html).toContain('aria-label="제품 소개 한국어 번역"');
     expect(html).toContain("재시도 대기");
     expect(html).toContain("최근 실패 기록 있음");
-    expect(html).toContain("기본 줄 대기");
+    expect(html).toContain("공유 번역 줄 대기");
     expect(html).toContain("M3");
     expect(html).toContain("1분마다");
     expect(html).toContain("0건");
@@ -113,4 +113,24 @@ describe("한국어 번역의 실제 프로세스", () => {
     expect(html).toContain("복제본에 연결되지 않습니다");
     expect(html).not.toContain("0건</dd>");
   });
+});
+
+
+it("shows both configured Korean translation backends and the expanded request budgets", () => {
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");
+  try {
+    const ctx = runtime(null);
+    const owners = resolveWorkOwners({ jobs: ["product-tagline-ko"] }, ctx);
+    expect(owners?.models.some((row) => row.full === "qwen3.8-flash-next"
+      && row.rows.some((entry) => entry.runsOn === "gpu3090 Qwen 직접 연결"))).toBe(true);
+    const html = renderToStaticMarkup(createElement(KoreanTranslationStatus, {
+      queue: { ok: true, value: { ...queue, ready: 5, recoveryReady: 2 } }, owners,
+      runtime: koreanTranslationRuntime(ctx), hasLastError: false, now,
+    }));
+    expect(html).toContain("3,600");
+    expect(html).toContain("2,250~5,400");
+    expect(html).toContain("gpu3090 Qwen 직접 연결");
+    expect(html).toContain("Qwen 제한 재검토 2건");
+  } finally { vi.unstubAllEnvs(); }
 });
