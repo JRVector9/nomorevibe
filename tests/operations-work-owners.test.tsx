@@ -120,7 +120,7 @@ describe("맡은 장비·LLM·일정", () => {
 
   it("화면 shot2의 판과 recordedModel을 표시하고 렌더 서버와 추론 서버를 구분한다", () => {
     const ctx = context();
-    ctx.settings.qwenAuto.screenReview.enabled = true;
+    ctx.settings.qwenAuto!.screenReview.enabled = true;
     ctx.env = { SCREEN_REVIEW_PROMPT_VERSION: "2026-10-23.v3+shot2", SCREEN_REVIEW_MODEL_URL: "http://model.example:8000/v1",
       SCREEN_RENDER_URL: "http://render.example:8790", SCREEN_RENDER_TOKEN: "x".repeat(32) };
     const owners = resolveWorkOwners({ jobs: ["audit-screen-review"] }, ctx)!;
