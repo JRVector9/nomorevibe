@@ -834,6 +834,13 @@
       "when": 1794086400030,
       "tag": "0118_local_model_capacity_terminal",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1794086400031,
+      "tag": "0119_llm_assist_work",
+      "breakpoints": true
     }
   ]
 }
