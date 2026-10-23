@@ -67,7 +67,8 @@ async function record(tx: ProductTransaction, prepared: Awaited<ReturnType<typeo
 }
 async function apply(prepared: Awaited<ReturnType<typeof prepare>>) {
   return db.transaction(async tx => applyRepoMoveResult(tx, prepared.candidate, prepared.input, prepared.outcome, await record(tx, prepared),
-    { oldRepository: prepared.candidate.oldRepository, destination: { state: "alive" }, checkedAt: new Date().toISOString() }));
+    { oldRepository: prepared.candidate.oldRepository, destination: { state: "alive" }, checkedAt: new Date().toISOString(),
+      page: prepared.input.sources.find(source => source.sourceId === "product_page") }));
 }
 const current = async (id: number) => (await db.select().from(products).where(eq(products.id, id)))[0];
 const audits = (slug: string) => db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, slug));

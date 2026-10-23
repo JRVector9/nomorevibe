@@ -37,7 +37,7 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
   if (!control.dispatchEnabled || control.mode === "off" || control.revision !== work.controlRevision
     || !await assistOriginActive(tx, work.originJob) || !await assistOriginActive(tx, job.name)) return false;
   if (candidate.kind === "repo_move") {
-    const collected = value.input.sources.filter(source => !["old_repository", ...(candidate.page ? ["product_page"] : [])].includes(source.sourceId));
+    const collected = value.input.sources.filter(source => source.sourceId !== "old_repository");
     if (value.input.task !== "repo" || !isDeepStrictEqual(buildRepoMoveInput(candidate, collected), value.input)
       || !value.input.sources.some(source => source.sourceId.startsWith("candidate_") && source.completeness === "complete" && source.text.trim()
         && Date.parse(source.observedAt) <= Date.now() && Date.parse(source.observedAt) >= Date.now() - 180_000)) return false;
