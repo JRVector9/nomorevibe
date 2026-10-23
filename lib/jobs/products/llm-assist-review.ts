@@ -61,13 +61,13 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
           }
           input = collected.input;
         }
-        else {
+        else if (candidate.kind === "repo_move") {
           const collected = await collectRepoMoveInput(candidate, { signal });
           if (collected.kind !== "ready") {
             await deferAssistClaim(claim, collected.kind, collected.reason); counts.deferred++; continue;
           }
           input = collected.input;
-        }
+        } else throw new Error("unsupported_assist_candidate");
         if (!input.sources.some(source => source.completeness === "complete" && source.text.trim())) {
           await deferAssistClaim(claim, "waiting_evidence", "collection_incomplete"); counts.deferred++; continue;
         }
