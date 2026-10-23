@@ -20,9 +20,9 @@ function target(value: string): string {
     base("audit", ["audit", "second_opinion", "screen"], ["itemId", "slug"], [integer(`${value}->'itemId'`), string(`${value}->'slug'`, 80)]),
     base("published", ["published_filter"], ["secondReviewId", "slug"], [integer(`${value}->'secondReviewId'`), string(`${value}->'slug'`, 80)]),
     base("candidate", ["held_qwen", "human_deepseek"], ["attemptId", "candidateId", "repo"],
-      [integer(`${value}->'attemptId'`), integer(`${value}->'candidateId'`), string(`${value}->'repo'`, 200)]),
+      [integer(`${value}->'attemptId'`), integer(`${value}->'candidateId'`), string(`${value}->'repo'`, 200), match(`${value}->'repo'`, "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]),
     base("split", ["qwen_tiebreak", "deepseek_confirm"], ["tiebreakId", "candidateId", "generationKey", "repo"],
-      [integer(`${value}->'tiebreakId'`), integer(`${value}->'candidateId'`), digest(`${value}->'generationKey'`), string(`${value}->'repo'`, 200)]),
+      [integer(`${value}->'tiebreakId'`), integer(`${value}->'candidateId'`), digest(`${value}->'generationKey'`), string(`${value}->'repo'`, 200), match(`${value}->'repo'`, "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")]),
   ].join(" OR ")})`;
 }
 
@@ -86,7 +86,7 @@ export const localModelDispatchSql = all([
   "dispatch_binding IS NOT NULL AND dispatch_binding_hash ~ '^[a-f0-9]{64}$' AND dispatched_at IS NOT NULL AND state IN ('dispatched','indeterminate','settled','withdrawn')",
   localModelLogicalSql, binding("dispatch_binding"),
   "dispatch_binding->>'logicalWorkKey'=logical_work_key AND dispatch_binding->>'routeId'=route_id AND dispatch_binding->>'provider'=provider AND dispatch_binding->>'model'=model",
-  "dispatch_binding->>'physicalGroup'=group_id",
+  "dispatch_binding->>'physicalGroup'=group_id AND dispatch_binding->>'backendId'=provider_budget_id",
 ]);
 
 export const localModelTerminalSql = all([
@@ -102,4 +102,5 @@ export const localModelTerminalSql = all([
 export const localModelEventTerminalSql = all([
   "kind='dispatch_settled' AND from_state IN ('dispatched','indeterminate') AND to_state='settled'",
   terminal("evidence"), "evidence->'dispatch'->>'requestId'=request_id::text",
+  "evidence->'dispatch'->'epoch'=to_jsonb(epoch) AND evidence->'dispatch'->'revision'=to_jsonb(revision) AND evidence->'dispatch'->>'policyHash'=policy_hash",
 ]);
