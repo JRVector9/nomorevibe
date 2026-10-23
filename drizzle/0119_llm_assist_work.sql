@@ -57,6 +57,7 @@ CREATE TABLE llm_assist_results (
   backend_id varchar(120) NOT NULL, model_family varchar(120) NOT NULL,
   contract_hash varchar(64) NOT NULL, input_hash varchar(64) NOT NULL,
   prompt_hash varchar(64) NOT NULL, response_hash varchar(64) NOT NULL,
+  input jsonb,
   outcome jsonb NOT NULL,
   applied boolean NOT NULL DEFAULT false,
   completed_at timestamp NOT NULL DEFAULT now(),

@@ -45,7 +45,6 @@ import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
   type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch } from "./local-model-capacity-contract";
-import type { ReviewInput } from "@/lib/crawl/agent-review-contract";
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
 
