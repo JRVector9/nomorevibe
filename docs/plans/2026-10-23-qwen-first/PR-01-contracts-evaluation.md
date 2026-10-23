@@ -1,6 +1,6 @@
 # PR-01 작업별 근거·출력 계약과 오프라인 평가를 고정한다
 
-상태: **설계 완료 · 구현 전** · 제안 브랜치: `feat/qwen-first-contracts-evaluation` · 설계 기준: `c37ae82f`
+상태: **계약·평가 구현 및 범위 검증 완료 · 운영 미연결** · 브랜치: `feat/qwen-first-contracts-evaluation` · 설계 기준: `c37ae82f`
 
 선행 PR: 없음. 이 번호는 설계 순번이며 GitHub PR 번호가 아니다.
 
@@ -62,3 +62,7 @@ Migration: 없음 실제 번호는 구현 시 최신 main의 journal을 확인�
 - 새 평가·계약을 비활성으로 두면 기존 운영 경로와 판정은 그대로다.
 
 공통 정책·실데이터 평가·운영 전환 조건은 [전체 계획](README.md)을 따른다. PR 병합을 운영 쓰기·배포·기능 활성화 승인으로 간주하지 않는다.
+
+## 구현 검증 기록
+
+실제 추가 파일은 serving contract와 `lib/domain/llm-assist/{contracts,prompts,evaluation}.ts`, 오프라인 CLI 및 관련 테스트다. 단위3파일15개·관련 ESLint·Next typegen·전체 TypeScript 검사를 통과했다. 모델 호출·운영 쓰기·새 경로 활성화는 하지 않았다. 상세 상태는 [개발 기록](../../operations/2026-10-23-qwen-first-development.md)을 따른다.
