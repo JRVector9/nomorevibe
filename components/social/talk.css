@@ -28,6 +28,7 @@
 .talk-hero { margin-top: 22px; padding: 18px; border-radius: 20px; background: var(--bg-soft); display: flex; flex-direction: column; gap: 14px; }
 .talk-hero .row-head { align-items: flex-end; }
 .talk-hero-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+.talk-hero-grid > :only-child { grid-column: 1 / -1; }
 .talk-lead { position: relative; background: var(--bg-card); border-radius: 16px; padding: 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .talk-lead-top { display: flex; gap: 14px; align-items: center; min-width: 0; }
 .talk-lead-rank { margin: 0; font-size: 13px; font-weight: 600; color: var(--accent-ink); }
@@ -109,8 +110,3 @@
   .talk-entry .talk-stat { grid-column: 3; flex-direction: row; gap: 8px; align-items: baseline; }
   .talk-feature-main h2 { font-size: 22px; }
 }
-
-/* '예시' 카드(lib/social/talk-samples.ts) — 실제 화제가 모이기 전 빈 자리. 링크 없이, 표시가 늘 보이게 */
-.talk-sample { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border-radius: 6px; border: 1px dashed var(--border-strong); font-size: 13px; font-weight: 600; color: var(--text-2); white-space: nowrap; vertical-align: 1px; }
-.talk-sample-text { color: var(--text-2); }
-.talk-sample-note { margin: 12px 0 0; font-size: 13px; color: var(--text-2); }

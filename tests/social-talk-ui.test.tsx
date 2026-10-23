@@ -134,18 +134,12 @@ describe("홈 대표 구획", () => {
     expect(render({ preview: true })).toContain("미리보기");
   });
 
-  it("'예시' 카드는 표시를 달고 제품·원문 링크 없이 그린다 — 실제 카드는 그대로", async () => {
-    const { talkSamples } = await import("@/lib/social/talk-samples");
-    const [sampleLead, ...samples] = talkSamples(4, 2, NOW, n => `예시 프로젝트 ${n}`);
-    const html = render({ lead: sampleLead, rest: [entry(1, "doory"), ...samples] });
-    expect(html).toContain('id="talk-lead-title">예시 프로젝트 1</h3>');
-    expect(html).toContain("실제 SNS 화제 글이 모이면 이 자리에 실제 프로젝트가 올라옵니다.");
-    expect(html.match(/class="talk-sample"/g)).toHaveLength(4);
-    expect(html).toContain("&#x27;예시&#x27; 카드는 화면 모양을 보여 주는 견본입니다. 실제 화제가 5개 모이면 자동으로 사라집니다.");
-    // 링크는 실제 카드(doory)와 '전체 보기'뿐 — 예시는 /p/ 도 원문 토론도 없다
-    expect(html.match(/href="\/p\//g)).toHaveLength(1);
-    expect(html).not.toContain("news.ycombinator.com");
-    expect(html).not.toContain("자세히 보기");
-    expect(render({ lead: entry(1, "doory"), rest: [entry(2, "konnect")] })).not.toContain("talk-sample");
+  it("실제 항목 네 개를 목록으로만 그리고 예시나 가짜 대표 카드를 추가하지 않는다", () => {
+    const html = render({ rest: [entry(1, "doory"), entry(2, "konnect"), entry(3, "spotatui"), entry(4, "fourth")] });
+    expect(html.match(/class="talk-row"/g)).toHaveLength(4);
+    expect(html.match(/href="\/p\//g)).toHaveLength(4);
+    expect(html).not.toContain("talk-lead");
+    expect(html).not.toContain("talk-sample");
+    expect(html).not.toContain("예시 프로젝트");
   });
 });
