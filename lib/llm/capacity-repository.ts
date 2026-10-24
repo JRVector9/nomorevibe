@@ -18,7 +18,7 @@ import { textProfileDispatchBindingSchema, textProfileDispatchBindingHash, textP
 import type { TextProfileGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { ai1ItemDispatchBindingSchema, ai1ItemDispatchBindingHash, ai1ItemModelDispatchSchema,
   ai1ItemGatewayTerminalEvidenceSchema, type Ai1ItemDispatchBinding, type Ai1ItemModelDispatch } from "@/lib/llm/capacity";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
@@ -28,6 +28,7 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
 import { gatewayNotStartedEvidenceSchema } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
+import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
   modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
   modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
@@ -2101,6 +2102,18 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash, localEnd }));
   if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
   const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
+  if (evidence.kind === "provider_boundary_exit") {
+    const expected = evidence.plan.request, expectedControl = evidence.plan.control;
+    const [exactControl] = await tx.execute<{ at: string }>(sql`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
+      FROM model_capacity_control WHERE id=1`);
+    if (state.fenced || state.mode !== "draining" || state.epoch !== expectedControl.epoch || state.revision !== expectedControl.revision
+      || state.policyHash !== expectedControl.policyHash || exactControl.at !== expectedControl.updatedAt || row.state !== "indeterminate" || row.token === null
+      || createHash("sha256").update(row.token).digest("hex") !== expected.tokenHash
+      || row.epoch !== expected.epoch || row.revision !== expected.revision || row.policyHash !== expected.policyHash
+      || row.providerBudgetId !== expected.providerBudgetId || row.groupId !== expected.groupId
+      || !row.dispatchBinding || !("servingContractHash" in row.dispatchBinding)
+      || row.dispatchBinding.servingContractHash !== expected.servingContractHash) fail("model_capacity_provider_boundary_conflict");
+  }
   if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId
     || evidence.fromState !== row.state || evidence.dispatchAt !== clock.dispatch_at || evidence.bindingHash !== row.dispatchBindingHash
     || evidence.evaluatedAt !== clock.now || evidence.kind === "dr_call_drain" && (evidence.scope !== `model:${row.providerBudgetId}`
@@ -2109,7 +2122,8 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
   if (evidence.kind === "local_call_ended" && (row.state !== "indeterminate" || !localEnd || evidence.endedAt !== localEnd.endedAt
     || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
     || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
-  const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence, terminalEvidenceHash: reviewHash(evidence),
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence,
+    terminalEvidenceHash: evidence.kind === "provider_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
     updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
   if (!changed) fail("model_capacity_release_state_changed");
   await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
