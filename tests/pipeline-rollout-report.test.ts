@@ -127,6 +127,16 @@ describe("reportPipelineObservation", () => {
     expect(report.slots?.all).toEqual({ waitingMs: 1_000, freeWhileWaitingMs: 1_000, fullWhileWaitingMs: 0, unknownWhileWaitingMs: 0, busyMs: 1_000 });
     expect(formatPipelineObservation(report)).toContain("## 슬롯 대기 적분");
   });
+  it("counts pre-dispatch wait cancellation as withdrawn without a reserved slot or remote terminal", () => {
+    const input = observation();
+    input.modelLedger!.events = [{ routeId: "assist", class: "background", kind: "queued", count: 1 },
+      { routeId: "assist", class: "background", kind: "wait_cancelled", count: 1 }];
+    input.modelLedger!.requests = [];
+    const report = reportPipelineObservation(input);
+    expect(report.modelLedger?.routes).toEqual([{ routeId: "assist", class: "background", queued: 1, reserved: 0,
+      dispatched: 0, settled: 0, indeterminate: 0, released: 0, withdrawn: 1, indeterminateRate: null }]);
+    expect(report.slots?.all.busyMs).toBe(0);
+  });
   it("rejects artifacts whose window arithmetic or ledger shape is inconsistent", () => {
     expect(() => parsePipelineObservation({ ...observation(), window: { ...observation().window, collectedAfterEndMs: 1 } }))
       .toThrow("observation_artifact_mismatch");

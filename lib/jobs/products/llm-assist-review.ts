@@ -37,7 +37,8 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
   if (!backends.length) { ctx.log("assist.disabled", {}); return { done: true }; }
   if (!role) return { done: true, degraded: { code: "owner_unavailable", detail: "보강 소비자의 reviewer lease가 없습니다" } };
   const owner = { instanceId: role.instanceId, bootId: role.bootId };
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  const tickDeadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
+  const remaining = () => tickDeadlineAt - Date.now();
   await recoverAbandonedAssistClaims(lease);
   const drain = async (backend: AssistBackendDrain) => {
     const counts = { claimed: 0, recorded: 0, applied: 0, deferred: 0, human: 0, indeterminate: 0 };
@@ -50,7 +51,9 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
       let stage: "collection" | "model" = "collection";
       let factualRequestId: string | null = null;
       try {
-        const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(Math.max(1, Math.min(90_000, remaining() - 1000)))]);
+        const claimBudgetMs = Math.max(1, Math.min(90_000, remaining() - 1000));
+        const admissionDeadlineAt = Date.now() + claimBudgetMs - 5000;
+        const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(claimBudgetMs)]);
         const candidate = assistCandidateSchema.parse(claim.work.source), subject = assistCandidateSubject(candidate);
         let input: AssistInput;
         if (candidate.kind === "uptime") input = await collectUptimeAssist(candidate, signal);
@@ -90,7 +93,8 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
         stage = "model";
         const response = await withLocalModelCapacity({ target: { kind: "assist", purpose: "assist_review", workId: claim.work.id,
           workRevision: claim.work.revision, claimToken: claim.token, task: claim.work.task, subjectId: subject.id, backendId: backend.backendId },
-          input: assistCapacityInput(claim.work, input), lease, promptVersion: input.promptVersion, allowLegacy: false }, fetchModel =>
+          input: assistCapacityInput(claim.work, input), lease, promptVersion: input.promptVersion, allowLegacy: false,
+          waitForCapacity: true, admissionDeadlineAt }, fetchModel =>
           fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
             body: request.wire, signal }));
         const raw = await response.text();
@@ -112,7 +116,8 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
             workId: claim.work.id, contract: backend.contract }, async plan => {
             const response = await withLocalModelCapacity({ target: { kind: "assist", purpose: "intro_correction", workId: claim.work.id,
               workRevision: claim.work.revision, claimToken: claim.token, task: "intro_recheck", subjectId: subject.id, backendId: backend.backendId },
-              input: plan.capacityInput, lease, promptVersion: plan.promptVersion, allowLegacy: false }, fetchModel =>
+              input: plan.capacityInput, lease, promptVersion: plan.promptVersion, allowLegacy: false,
+              waitForCapacity: true, admissionDeadlineAt }, fetchModel =>
               fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: plan.wire, signal }));
             const [current] = await db.select({ capacityRequestId: llmAssistWorks.capacityRequestId }).from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
             if (!current?.capacityRequestId || current.capacityRequestId === factualRequestId) throw new Error("intro_correction_dispatch_missing");

@@ -35,6 +35,14 @@ function checkHistory(name: string) {
       // A callback preserves SQL regex endings such as $' literally in the replacement.
       history.push({ idx: migration.idx, tag: migration.tag, expression: template.replace("%s", () => previous!.expression) });
     }
+    const eventSuffix = /EXECUTE 'ALTER TABLE model_capacity_events ADD CONSTRAINT model_capacity_events_kind_check CHECK \(\('\s*\|\|\s*old_predicate\s*\|\|\s*'([\s\S]*?)';/.exec(statement)?.[1];
+    if (name === "model_capacity_events_kind_check" && eventSuffix) {
+      expect(statement).toContain("substring(pg_get_constraintdef(oid) FROM 7) INTO STRICT old_predicate");
+      const previous = history.at(-1);
+      expect(previous, `${name}: dynamic predecessor`).toBeDefined();
+      history.push({ idx: migration.idx, tag: migration.tag,
+        expression: `(${previous!.expression}${eventSuffix.slice(0, -1).replaceAll("''", "'")}` });
+    }
   }
   return history;
 }
@@ -53,6 +61,17 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
     expect(expression).toMatch(/local_model|local-direct/);
     expect(expression).toMatch(/cli|abcllm/);
   }
+});
+
+it("event kind CHECK는 0126 predecessor 전체를 보존하고 0127 waiting 취소만 엄격하게 추가한다", () => {
+  const name = "model_capacity_events_kind_check", history = checkHistory(name);
+  const previous = history.find(entry => entry.idx === 126)!, latest = history.at(-1)!;
+  const check = getTableConfig(modelCapacityEvents).checks.find(check => check.name === name)!;
+  const expression = new PgDialect().sqlToQuery(check.value).sql;
+  expect(latest.tag).toBe("0127_assist_pending_cancellation");
+  expect(expression).toBe(latest.expression);
+  expect(expression).toBe(`(${previous.expression}) OR coalesce(kind='wait_cancelled' AND from_state='waiting' AND to_state='withdrawn' AND reason IS NULL AND evidence IS NULL,false)`);
+  expect(previous.expression).toContain("nmv_provider_boundary_release_valid(evidence)");
 });
 
 it("member CHECK는 0125 발행 분기 전체와 0126의 exact predecessor 확장을 모두 보존한다", () => {

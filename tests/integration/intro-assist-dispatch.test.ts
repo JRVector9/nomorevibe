@@ -82,9 +82,17 @@ function nativeResponse(body: Record<string, unknown>, stage: ModelStage) {
   return { model, choices: [{ finish_reason: "stop", message: { role: "assistant", content } }],
     usage: { prompt_tokens: 120, completion_tokens: 80, total_tokens: 200 } };
 }
-function context(): JobContext<null> {
-  return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 },
+function context(signal?: AbortSignal): JobContext<null> {
+  return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 }, signal, deadlineAt: Date.now() + 60_000,
     save: async () => {}, hasBudget: () => true, log: () => {} };
+}
+async function eventually(check: () => Promise<boolean>) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error("fixture_observation_deadline");
 }
 async function rawCheck(productId: number) {
   return (await admin`SELECT to_jsonb(c) AS row FROM product_intro_checks c WHERE product_id=${productId}`)[0]?.row as Record<string, unknown>;
@@ -287,7 +295,19 @@ describe("명시 소개 재검수의 실제 native 두 단계", () => {
       expect(await requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(), owner, class: "background", pool: "reviewer",
         routeId: "fixture-intro-blocker", provider: "fixture-provider", model: "blocker" })).toMatchObject({ kind: "granted" });
     };
-    await reviewLlmAssist(context());
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => {
+        const rows = (await requests()).filter(row => row.route_id === routeId);
+        return rows.length === 2 && rows[0].state === "settled" && rows[1].state === "waiting" && rows[1].dispatch_binding === null;
+      });
+      controller.abort(); await running;
+      const rows = (await requests()).filter(row => row.route_id === routeId);
+      expect(rows.map(row => row.state)).toEqual(["settled", "withdrawn"]);
+      expect(rows[1]).toMatchObject({ dispatched_at: null, dispatch_binding: null, terminal_evidence: null, settled_at: null });
+      expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${rows[1].request_id} ORDER BY id`)
+        .toEqual([{ kind: "queued" }, { kind: "wait_cancelled" }]);
+    } finally { controller.abort(); await running; }
     expect(calls.map(call => call.stage)).toEqual(["facts"]); await assertUnchanged(f);
     expect(await work(f.id)).toMatchObject({ state: "waiting_capacity", attempts: 1 });
   });

@@ -70,8 +70,8 @@ beforeAll(async () => {
 },120_000);
 afterAll(async()=>{ await client.end({timeout:5}); if(created)await admin.unsafe(`DROP DATABASE ${name}`); await admin.end({timeout:5}); });
 
-it("127 migrations scan nonempty 0125 data without changing any previous row and preserve all five CHECK predicates",async()=>{
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(127);
+it("the full journal scans nonempty 0125 data without changing any previous row and preserves all five CHECK predicates",async()=>{
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
   expect(await rows()).toEqual(beforeRows);
   const after=await defs();
   const normalize=(v:string)=>v.replace(/::text\[\]|::text|::character varying/g,"").replace(/[()\s]/g,"");

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import type { LocalModelInput } from "./local-model-input";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestLocalModelSlot, dispatchLocalModelCapacity,
-  cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileLocalModelTerminal } from "./capacity-repository";
+  cancelReservedModelSlot, cancelOwnPendingLocalModelRequest, markModelDispatchIndeterminate, reconcileLocalModelTerminal } from "./capacity-repository";
 import { markUnsettledDispatch } from "./capacity-unsettled";
 import { localModelBindingSchema, localModelLogicalKey, localModelRoute, localModelTargetSchema, type LocalModelTarget } from "./local-model-capacity-contract";
 import { localModelContractHash, localModelServingContractsSchema, resolveLocalModelServingContract,
@@ -17,6 +18,10 @@ type Env = Readonly<Record<string, string | undefined>>;
 export type LocalModelCallContext = {
   target: LocalModelTarget; input: LocalModelInput; lease: JobLease; promptVersion: string;
   env?: Env; allowLegacy?: boolean;
+  /** Assist alone may await admission with its original prepared input and caller deadline. Never retries model HTTP. */
+  waitForCapacity?: boolean;
+  /** Absolute admission cutoff supplied by the bounded assist job, before its dispatch headroom. */
+  admissionDeadlineAt?: number;
 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -99,9 +104,23 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
         workKey: `${localModelLogicalKey(context.target)}:${context.input.inputHash}` });
       const pending = await findOwnPendingModelRequest(identity);
       if (pending?.state === "dispatched" || pending?.state === "indeterminate") throw new ModelCapacityDeferredError("dispatched");
-      const slot = await requestLocalModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, context.target);
-      if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
+      const checked = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+      const wait = context.target.kind === "assist" && context.waitForCapacity === true;
+      if (wait && (!init.signal || !Number.isSafeInteger(context.admissionDeadlineAt)))
+        throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      let slot: Awaited<ReturnType<typeof requestLocalModelSlot>> | undefined;
       try {
+        for (;;) {
+          if (wait && (init.signal?.aborted || Date.now() >= context.admissionDeadlineAt!)) throw new ModelCapacityDeferredError("capacity");
+          slot = await requestLocalModelSlot(checked, context.target);
+          if (slot.kind === "granted") break;
+          if (!wait || slot.reason !== "capacity") throw new ModelCapacityDeferredError(slot.reason);
+          // One admission check/second per drain, well inside the unchanged 30s reservation.
+          // Abort ends this wait; it never starts another model request or extends the caller budget.
+          try { await delay(Math.max(1, Math.min(1000, context.admissionDeadlineAt! - Date.now())), undefined, { signal: init.signal! }); }
+          catch { throw new ModelCapacityDeferredError("capacity"); }
+        }
+        if (wait && Date.now() >= context.admissionDeadlineAt!) throw new ModelCapacityDeferredError("capacity");
         if (init.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
         const binding = localModelBindingSchema.parse({ kind: "local_model_direct", version: 1, target: context.target,
           logicalWorkKey: localModelLogicalKey(context.target), routeId: identity.routeId, provider: "local-direct", model: contract.model,
@@ -114,7 +133,10 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
           input: context.input, job: context.lease, role });
         if (!dispatch) throw new ModelCapacityDeferredError("reservation_lost");
       } catch (error) {
-        try { await cancelReservedModelSlot(slot.reservation); }
+        try {
+          if (wait) await cancelOwnPendingLocalModelRequest(checked, context.target);
+          else if (slot?.kind === "granted") await cancelReservedModelSlot(slot.reservation);
+        }
         catch (cleanup) { throw new AggregateError([error, cleanup], "local_model_reservation_cleanup_failed"); }
         throw error;
       }

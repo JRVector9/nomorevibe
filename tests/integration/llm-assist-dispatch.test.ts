@@ -11,7 +11,7 @@ import { cdnPurges, llmAssistResults, llmAssistWorks, modelCapacityRequests, ope
 import { autoBanUptimeProduct } from "@/lib/domain/products/uptime-auto-ban";
 import { reviewLlmAssist } from "@/lib/jobs/products/llm-assist-review";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { requestModelSlot } from "@/lib/llm/capacity-repository";
+import { requestModelSlot, requestLocalModelSlot, cancelReservedModelSlot, cancelOwnPendingLocalModelRequest } from "@/lib/llm/capacity-repository";
 import { localModelContractHash, sameLocalModelFamily, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import { ASSIST_SCHEMA_VERSION } from "@/lib/domain/llm-assist/contracts";
 import { assistCandidateSourceHash } from "@/lib/domain/llm-assist/work";
@@ -345,7 +345,7 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     }
     if (mode === "capacity") expect(await requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(), owner,
       class: "background", pool: "reviewer", routeId: "fixture-blocker", provider: "fixture-provider", model: "blocker" })).toMatchObject({ kind: "granted" });
-    await reviewLlmAssist(context());
+    await reviewLlmAssist(context(mode === "capacity" ? AbortSignal.timeout(150) : undefined));
     expect(calls).toHaveLength(0); expect(await status(product.id)).toBe("seeded");
     expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
   });
@@ -413,6 +413,159 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
       (pendingM1 as ServerResponse | null)?.destroy(); m1.closeAllConnections();
       await running.catch(() => {});
       await new Promise<void>(resolve => m1.close(() => resolve()));
+    }
+  });
+});
+
+
+describe("같은 보강 입력으로 늦은 예약을 소비하고 전송 전 포기를 정산한다", () => {
+  const blocker = () => requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(), owner,
+    class: "background", pool: "reviewer", routeId: "fixture-blocker", provider: "fixture-provider", model: "blocker" });
+  async function pendingFixture() {
+    const product = await fixtureProduct(), queued = await work(product.id);
+    if (!queued) throw new Error("fixture_work_required");
+    const target = { kind: "assist" as const, purpose: "assist_review" as const, workId: queued.id, workRevision: queued.revision,
+      claimToken: randomUUID(), task: "uptime" as const, subjectId: product.id, backendId };
+    const request = { requestId: randomUUID(), owner, class: "background" as const, pool: "reviewer" as const,
+      routeId, provider: "local-direct", model, workKey: `direct:assist:${product.id}:uptime:${"a".repeat(64)}` };
+    return { product, target, request };
+  }
+  it("실제 경합과 타 caller의 늦은 grant 후 같은 입력·ID로 딱 한 번 native dispatch한다", async () => {
+    const product = await fixtureProduct(), occupied = await blocker();
+    expect(occupied.kind).toBe("granted");
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+      const [waiting] = (await requests()).filter(r => r.route_id === routeId), prepared = await work(product.id);
+      expect(prepared?.state).toBe("claimed"); expect(prepared?.inputHash).toBeTruthy(); expect(calls).toHaveLength(0);
+      if (occupied.kind !== "granted") throw new Error("fixture_capacity_required");
+      expect(await cancelReservedModelSlot(occupied.reservation)).toBe(true);
+      expect(await blocker()).toMatchObject({ kind: "deferred", reason: "capacity" }); // grants the older assist, not this caller
+      await running;
+      const rows = (await requests()).filter(r => r.route_id === routeId);
+      expect(rows).toHaveLength(1); expect(rows[0]).toMatchObject({ request_id: waiting.request_id, state: "settled" });
+      expect(rows[0].dispatch_binding.inputHash).toBe(prepared?.inputHash);
+      expect(calls).toHaveLength(1); expect(calls[0].requestId).toBe(waiting.request_id);
+      expect(safeFetch).toHaveBeenCalledTimes(1); // source observedAt is not regenerated while pending
+      expect(await work(product.id)).toMatchObject({ state: "done", attempts: 1 });
+    } finally { controller.abort(); await running; }
+  });
+  it("bounded deadline은 자기 waiting만 취소하고 시도·HTTP·terminal을 만들지 않는다", async () => {
+    const product = await fixtureProduct(); expect((await blocker()).kind).toBe("granted");
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+    controller.abort(); await running;
+    const [row] = (await requests()).filter(r => r.route_id === routeId);
+    expect(row).toMatchObject({ state: "withdrawn", dispatched_at: null, dispatch_binding: null, terminal_evidence: null, settled_at: null });
+    expect(await admin`SELECT kind,from_state,to_state FROM model_capacity_events WHERE request_id=${row.request_id} ORDER BY id`)
+      .toEqual([{ kind: "queued", from_state: null, to_state: "waiting" }, { kind: "wait_cancelled", from_state: "waiting", to_state: "withdrawn" }]);
+    expect(calls).toHaveLength(0); expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
+  });
+  it("runner deadlineAt는 더 긴 claim signal보다 먼저 대기를 끝내고 5초 headroom을 남긴다", async () => {
+    const product = await fixtureProduct(); expect((await blocker()).kind).toBe("granted");
+    const controller = new AbortController(), deadlineAt = Date.now() + 16_000;
+    const running = reviewLlmAssist({ ...context(controller.signal), deadlineAt });
+    try {
+      await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+      // Native signal is still live; advance only the wall-clock admission budget, not DB clocks or HTTP.
+      vi.spyOn(Date, "now").mockReturnValue(deadlineAt - 4999);
+      await running;
+      expect(controller.signal.aborted).toBe(false);
+      expect((await requests()).find(r => r.route_id === routeId)).toMatchObject({ state: "withdrawn", dispatched_at: null });
+      expect(calls).toHaveLength(0); expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
+    } finally { vi.restoreAllMocks(); controller.abort(); await running; }
+  });
+  it("타 caller가 grant한 직후 abort하면 예약만 취소하고 전송하지 않는다", async () => {
+    await fixtureProduct(); const occupied = await blocker();
+    if (occupied.kind !== "granted") throw new Error("fixture_capacity_required");
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+      await cancelReservedModelSlot(occupied.reservation); await blocker();
+      expect((await requests()).find(r => r.route_id === routeId)?.state).toBe("reserved");
+      controller.abort(); await running;
+      const row = (await requests()).find(r => r.route_id === routeId);
+      expect(row).toMatchObject({ state: "withdrawn", dispatch_binding: null, dispatched_at: null });
+      expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${row!.request_id} ORDER BY id`)
+        .toEqual([{ kind: "queued" }, { kind: "reserved" }, { kind: "reservation_cancelled" }]);
+      expect(calls).toHaveLength(0);
+    } finally { controller.abort(); await running; }
+  });
+  for (const change of ["source", "role", "job", "freshness", "control"] as const) it(`폴링 중 ${change} 세대가 바뀌면 늦은 grant도 실제 dispatch 증명을 통과하지 못한다`, async () => {
+    const product = await fixtureProduct(), occupied = await blocker();
+    if (occupied.kind !== "granted") throw new Error("fixture_capacity_required");
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+      if (change === "source") await admin`UPDATE products SET url='https://changed.example/',updated_at=clock_timestamp() WHERE id=${product.id}`;
+      else if (change === "role") await admin`UPDATE role_leases SET lease_until=clock_timestamp()-interval '1 second' WHERE role='reviewer'`;
+      else if (change === "job") await admin`UPDATE jobs SET lease_token=${randomUUID()} WHERE name=${jobName}`;
+      else if (change === "control") await admin`UPDATE llm_assist_controls SET dispatch_enabled=false,apply_enabled=false,revision=revision+1 WHERE task='uptime'`;
+      else vi.spyOn(Date, "now").mockReturnValue(Date.now() - 1000); // observedAt is now in the future; do not recollect it
+      await cancelReservedModelSlot(occupied.reservation); await blocker();
+      if (change === "job") await expect(running).rejects.toThrow("assist_backend_drain_failed");
+      else await running;
+      expect((await requests()).find(r => r.route_id === routeId)).toMatchObject({ state: "withdrawn", dispatch_binding: null, dispatched_at: null });
+      expect(calls).toHaveLength(0); expect(await recordedResults()).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); controller.abort(); await running.catch(() => {}); }
+  });
+  it("dispatch가 먼저 이긴 경합에서는 취소가 실제 binding과 unknown을 지우지 않는다", async () => {
+    await fixtureProduct(); const controller = new AbortController();
+    hold = res => { res.writeHead(200, { "content-type": "application/json" }); res.write('{"model":'); };
+    const running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => calls.length === 1);
+      const row = (await requests()).find(r => r.route_id === routeId);
+      const checked = { requestId: row!.request_id, owner, class: "background" as const, pool: "reviewer" as const,
+        routeId, provider: "local-direct", model, workKey: row!.work_key };
+      const target = row!.dispatch_binding.target;
+      expect(row!.state).toBe("dispatched");
+      expect(await cancelOwnPendingLocalModelRequest(checked, target)).toBe(false);
+      expect((await requests()).find(r => r.request_id === checked.requestId)?.state).toBe("dispatched");
+      controller.abort(); await running;
+      expect(await cancelOwnPendingLocalModelRequest(checked, target)).toBe(false);
+      expect((await requests()).find(r => r.request_id === checked.requestId)).toMatchObject({ state: "indeterminate",
+        dispatch_binding: row!.dispatch_binding, dispatch_binding_hash: row!.dispatch_binding_hash, terminal_evidence: null });
+      expect(calls).toHaveLength(1);
+    } finally { controller.abort(); await running; }
+  });
+  it("다른 owner·boot·논리작업은 취소하지 않고 own unbound waiting만 취소한다", async () => {
+    const { request, target } = await pendingFixture(); expect((await blocker()).kind).toBe("granted");
+    expect(await requestLocalModelSlot(request,target)).toMatchObject({ kind: "deferred", reason: "capacity" });
+    expect(await cancelOwnPendingLocalModelRequest({ ...request, owner: { ...owner, bootId: randomUUID() } },target)).toBe(false);
+    expect(await cancelOwnPendingLocalModelRequest(request,{ ...target, subjectId: target.subjectId+1 })).toBe(false);
+    await expect(cancelOwnPendingLocalModelRequest({ ...request, workKey: "different" },target)).rejects.toThrow("identity_mismatch");
+    expect(await cancelOwnPendingLocalModelRequest(request,target)).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+  it("wait_cancelled DB 분기는 waiting→withdrawn과 null reason/evidence만 허용한다", async () => {
+    const { request, target } = await pendingFixture(); expect((await blocker()).kind).toBe("granted");
+    await requestLocalModelSlot(request, target);
+    for (const [from, to, reason, evidence] of [
+      ["reserved", "withdrawn", null, null], [null, "withdrawn", null, null],
+      ["waiting", "reserved", null, null], ["waiting", null, null, null],
+      ["waiting", "withdrawn", "transport_unknown", null], ["waiting", "withdrawn", null, {}],
+    ] as const) {
+      await expect(admin`INSERT INTO model_capacity_events(request_id,kind,epoch,revision,policy_hash,from_state,to_state,reason,evidence)
+        SELECT request_id,'wait_cancelled',epoch,revision,policy_hash,${from},${to},${reason},${evidence === null ? null : JSON.stringify(evidence)}::text::jsonb
+        FROM model_capacity_requests WHERE request_id=${request.requestId}`).rejects.toMatchObject({ code: "23514", constraint_name: "model_capacity_events_kind_check" });
+    }
+    expect(await cancelOwnPendingLocalModelRequest(request, target)).toBe(true);
+  });
+  it("fenced DB에서는 own waiting도 변경하거나 취소 event를 남기지 않는다", async () => {
+    const { request, target } = await pendingFixture(); expect((await blocker()).kind).toBe("granted");
+    await requestLocalModelSlot(request,target);
+    const [{ row: original }] = await admin`SELECT to_jsonb(f) AS row FROM dr_writer_fence f WHERE id=1`;
+    const [{ identity }] = await admin`SELECT jsonb_build_object('systemIdentifier',(SELECT system_identifier::text FROM pg_control_system()),
+      'databaseOid',(SELECT oid::text FROM pg_database WHERE datname=current_database()),'databaseName',current_database()) AS identity`;
+    try {
+      await admin`UPDATE dr_writer_fence SET state='fenced',reason='operator_fence',fenced_db=${JSON.stringify(identity)}::text::jsonb WHERE id=1`;
+      expect(await cancelOwnPendingLocalModelRequest(request,target)).toBe(false);
+      expect((await requests()).find(r=>r.request_id===request.requestId)?.state).toBe("waiting");
+      expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${request.requestId}`).toEqual([{ kind: "queued" }]);
+    } finally {
+      await admin`UPDATE dr_writer_fence f SET state=r.state,reason=r.reason,fenced_db=r.fenced_db,promotion_id=r.promotion_id
+        FROM jsonb_populate_record(NULL::dr_writer_fence,${JSON.stringify(original)}::text::jsonb)r WHERE f.id=r.id`;
     }
   });
 });

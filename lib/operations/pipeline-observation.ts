@@ -270,7 +270,7 @@ export function reportPipelineObservation(value: unknown) {
     const dispatched = row.counts.dispatch_started ?? 0, indeterminate = row.counts.dispatch_indeterminate ?? 0;
     return { routeId: row.routeId, class: row.class, queued: row.counts.queued ?? 0, reserved: row.counts.reserved ?? 0, dispatched,
       settled: row.counts.dispatch_settled ?? 0, indeterminate, released: row.counts.dispatch_released ?? 0,
-      withdrawn: (row.counts.reservation_cancelled ?? 0) + (row.counts.reservation_expired ?? 0) + (row.counts.wait_expired ?? 0)
+      withdrawn: (row.counts.reservation_cancelled ?? 0) + (row.counts.reservation_expired ?? 0) + (row.counts.wait_expired ?? 0) + (row.counts.wait_cancelled ?? 0)
         + (row.counts.policy_changed ?? 0), indeterminateRate: rate(indeterminate, dispatched) };
   });
   let policy: ModelCapacityPolicy | null = null;

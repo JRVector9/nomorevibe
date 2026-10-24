@@ -9,10 +9,10 @@ import { localModelContractHash, localModelServingContractSchema } from "@/lib/l
 import { withLocalModelCapacity, verifiedLocalModelContract, localModelRouteReady } from "@/lib/llm/local-model-capacity";
 
 const mocks = vi.hoisted(() => ({
-  control: vi.fn(), pending: vi.fn(), requestSlot: vi.fn(), dispatch: vi.fn(), cancel: vi.fn(), mark: vi.fn(), reconcile: vi.fn(), native: vi.fn(),
+  cancelPending: vi.fn(), control: vi.fn(), pending: vi.fn(), requestSlot: vi.fn(), dispatch: vi.fn(), cancel: vi.fn(), mark: vi.fn(), reconcile: vi.fn(), native: vi.fn(),
 }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: mocks.control,
-  findOwnPendingModelRequest: mocks.pending, requestLocalModelSlot: mocks.requestSlot, dispatchLocalModelCapacity: mocks.dispatch,
+  cancelOwnPendingLocalModelRequest: mocks.cancelPending, findOwnPendingModelRequest: mocks.pending, requestLocalModelSlot: mocks.requestSlot, dispatchLocalModelCapacity: mocks.dispatch,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.mark, reconcileLocalModelTerminal: mocks.reconcile }));
 vi.mock("@/lib/llm/local-model-terminal", () => ({ requestReservedLocalModel: mocks.native }));
 
@@ -45,9 +45,9 @@ const run = (request: typeof fetch) => request(contract.endpoint, init);
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.control.mockResolvedValue({ mode: "open", policy }); mocks.pending.mockResolvedValue(null);
-  mocks.requestSlot.mockResolvedValue({ kind: "granted", reservation: {} });
+  mocks.requestSlot.mockReset().mockResolvedValue({ kind: "granted", reservation: {} });
   mocks.dispatch.mockResolvedValue({ requestId: randomUUID(), binding: {} });
-  mocks.mark.mockResolvedValue(true); mocks.reconcile.mockResolvedValue({ kind: "settled" });
+  mocks.cancelPending.mockResolvedValue(true); mocks.mark.mockResolvedValue(true); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.native.mockImplementation(async () => ({ response: new Response("native body"), terminal: {} }));
 });
 
@@ -99,5 +99,98 @@ describe("직접 모델의 실제 admission 경계", () => {
     await expect(withLocalModelCapacity(context(), request => request(contract.endpoint, { ...init, signal: controller.signal })))
       .rejects.toMatchObject({ name: "AbortError" });
     expect(mocks.mark).toHaveBeenCalledWith(expect.anything(), "local_abort"); expect(mocks.reconcile).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("assist의 같은 준비 입력·요청을 유지하는 admission 대기", () => {
+  function assistContext() {
+    const c = context();
+    const assist = { kind: "assist" as const, purpose: "assist_review" as const, workId: randomUUID(), workRevision: 2,
+      claimToken: randomUUID(), task: "uptime" as const, subjectId: 42, backendId: contract.backendId };
+    mocks.control.mockResolvedValue({ mode: "open", policy: { ...policy,
+      routes: [{ ...policy.routes[0], routeId: `local-assist-uptime-${contract.backendId}` }] } });
+    return { ...c, target: assist, lease: { ...c.lease, name: "product-llm-assist-review" }, waitForCapacity: true,
+      admissionDeadlineAt: Date.now() + 10_000 };
+  }
+  it("다른 caller의 늦은 예약을 같은 ID·input으로 소비하고 모델은 한 번만 보낸다", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = assistContext(), id = randomUUID(), signal = new AbortController().signal;
+      mocks.pending.mockResolvedValue({ requestId: id, state: "waiting" });
+      mocks.requestSlot.mockResolvedValueOnce({ kind: "deferred", reason: "capacity" }).mockResolvedValueOnce({ kind: "granted", reservation: {} });
+      const pending = withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal }));
+      const observed = pending.then(response => ({ response }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.native).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await observed).toMatchObject({ response: expect.any(Response) });
+      expect(mocks.requestSlot).toHaveBeenCalledTimes(2);
+      expect(mocks.requestSlot.mock.calls.map(row => row[0].requestId)).toEqual([id, id]);
+      expect(mocks.requestSlot.mock.calls[0][0]).toEqual(mocks.requestSlot.mock.calls[1][0]);
+      expect(mocks.dispatch.mock.calls[0][0].input).toEqual(c.input);
+      expect(mocks.native).toHaveBeenCalledTimes(1);
+      expect(mocks.cancelPending).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("전송 전 deadline은 자기 pending만 정리하고 모델·terminal을 만들지 않는다", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = assistContext(), id = randomUUID(), controller = new AbortController();
+      mocks.pending.mockResolvedValue({ requestId: id, state: "waiting" });
+      mocks.requestSlot.mockResolvedValue({ kind: "deferred", reason: "capacity" });
+      const pending = withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal: controller.signal }));
+      const stopped = pending.then(response => ({ response }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(0); controller.abort(); await vi.advanceTimersByTimeAsync(1000); expect(await stopped).toMatchObject({ error: expect.any(ModelCapacityDeferredError) });
+      expect(mocks.cancelPending).toHaveBeenCalledTimes(1);
+      expect(mocks.cancelPending.mock.calls[0][0]).toMatchObject({ requestId: id });
+      expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.mark).not.toHaveBeenCalled(); expect(mocks.reconcile).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("대기에는 signal과 실제 절대 deadline이 둘 다 있어야 하며 없으면 등록하지 않는다", async () => {
+    const c = assistContext(), signal = new AbortController().signal;
+    await expect(withLocalModelCapacity(c, run)).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
+    await expect(withLocalModelCapacity({ ...c, admissionDeadlineAt: undefined }, request => request(contract.endpoint, { ...init, signal })))
+      .rejects.toMatchObject({ reason: "provider_contract_unavailable" });
+    expect(mocks.requestSlot).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  });
+  it("이미 abort된 호출은 새 예약·HTTP 없이 기존 자기 pending만 정리한다", async () => {
+    const c = assistContext(), controller = new AbortController(); controller.abort();
+    await expect(withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal: controller.signal })))
+      .rejects.toMatchObject({ reason: "capacity" });
+    expect(mocks.requestSlot).not.toHaveBeenCalled(); expect(mocks.cancelPending).toHaveBeenCalledTimes(1);
+    expect(mocks.native).not.toHaveBeenCalled();
+  });
+  it("signal이 살아 있어도 admission deadline이 끝나면 자기 대기를 취소한다", async () => {
+    const c = { ...assistContext(), admissionDeadlineAt: Date.now() + 30 }, signal = new AbortController().signal;
+    mocks.requestSlot.mockResolvedValue({ kind: "deferred", reason: "capacity" });
+    await expect(withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal }))).rejects.toMatchObject({ reason: "capacity" });
+    expect(signal.aborted).toBe(false); expect(mocks.cancelPending).toHaveBeenCalledTimes(1);
+    expect(mocks.dispatch).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  });
+  it("마지막 예약이 headroom 경계를 넘으면 dispatch하지 않고 자기 예약만 정리한다", async () => {
+    vi.useFakeTimers();
+    try {
+      const c = assistContext(), signal = new AbortController().signal;
+      mocks.requestSlot.mockImplementation(async () => {
+        vi.setSystemTime(c.admissionDeadlineAt + 1);
+        return { kind: "granted", reservation: {} };
+      });
+      await expect(withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal }))).rejects.toMatchObject({ reason: "capacity" });
+      expect(mocks.cancelPending).toHaveBeenCalledTimes(1); expect(mocks.dispatch).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+  it("cleanup 오류는 원래 defer와 함께 보존해 고아 대기 정리 실패를 숨기지 않는다", async () => {
+    const c = assistContext(), controller = new AbortController(); controller.abort();
+    const cleanup = new Error("database_unavailable"); mocks.cancelPending.mockRejectedValueOnce(cleanup);
+    const error = await withLocalModelCapacity(c, request => request(contract.endpoint, { ...init, signal: controller.signal })).catch(error => error);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error.errors).toEqual([expect.any(ModelCapacityDeferredError), cleanup]);
+    expect(mocks.native).not.toHaveBeenCalled();
+  });
+  it("기존 nonassist 호출은 opt-in 값이 있어도 한 번 defer하고 대기·신규 취소를 하지 않는다", async () => {
+    mocks.requestSlot.mockResolvedValue({ kind: "deferred", reason: "capacity" });
+    await expect(withLocalModelCapacity({ ...context(), waitForCapacity: true }, run)).rejects.toMatchObject({ reason: "capacity" });
+    expect(mocks.requestSlot).toHaveBeenCalledTimes(1); expect(mocks.cancelPending).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
   });
 });
