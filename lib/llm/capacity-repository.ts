@@ -467,6 +467,30 @@ export async function cancelReservedModelSlot(value: ModelCapacityReservation): 
   });
 }
 
+/** Assist pre-dispatch abandonment only. This is no provider termination evidence.
+ * Never sweeps another request, grants capacity, or alters a dispatched/bound row. */
+export async function cancelOwnPendingLocalModelRequest(value: ModelCapacityRequest, target: LocalModelTarget): Promise<boolean> {
+  const checked = modelCapacityRequestSchema.parse(value), parsed = localModelTargetSchema.parse(target);
+  if (parsed.kind !== "assist" || checked.provider !== "local-direct" || checked.class !== "background"
+    || checked.pool !== "reviewer" || checked.routeId !== localModelRoute(parsed)) fail("invalid_assist_pending_cancellation");
+  return transaction(async tx => {
+    const state = await control(tx);
+    if (state.fenced) return false;
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+    if (!row || !["waiting", "reserved"].includes(row.state) || row.ownerInstanceId !== checked.owner.instanceId
+      || row.ownerBootId !== checked.owner.bootId || row.logicalWorkKey !== localModelLogicalKey(parsed)
+      || row.dispatchBinding !== null || row.dispatchBindingHash !== null || row.dispatchedAt !== null
+      || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null) return false;
+    sameIdentity(row, checked);
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state),
+        sql`${modelCapacityRequests.dispatchBinding} is null and ${modelCapacityRequests.dispatchedAt} is null`)).returning();
+    if (!changed) return false;
+    await event(tx, changed, row.state === "waiting" ? "wait_cancelled" : "reservation_cancelled", row.state, "withdrawn");
+    return true;
+  });
+}
+
 export async function markModelDispatchIndeterminate(value: ModelCapacityDispatch,
   reason: ModelCapacityIndeterminateReason): Promise<boolean> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");

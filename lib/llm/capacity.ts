@@ -24,7 +24,7 @@ export type ModelCapacityPool = z.infer<typeof capacityPool>;
 export type ModelCapacityMode = "disabled" | "open" | "draining";
 export type ModelCapacityState = "waiting" | "reserved" | "dispatched" | "indeterminate" | "withdrawn" | "settled";
 export type ModelCapacityEventKind = "queued" | "reserved" | "dispatch_started" | "reservation_cancelled"
-  | "reservation_expired" | "wait_expired" | "policy_changed" | "dispatch_indeterminate" | "dispatch_settled" | "dispatch_released"
+  | "reservation_expired" | "wait_expired" | "wait_cancelled" | "policy_changed" | "dispatch_indeterminate" | "dispatch_settled" | "dispatch_released"
   | "dispatch_local_ended";
 export type ModelCapacityIndeterminateReason = "transport_unknown" | "local_abort" | "process_exit" | "commit_unknown";
 export type ModelCapacityEventReason = ModelCapacityIndeterminateReason;
