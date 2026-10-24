@@ -1,3 +1,48 @@
+# 2026-10-25 01:16 KST — 통합 DB 회귀 수정·필수 CI 준비
+
+현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root 통합 branch는
+`codex/llm-assist-native-activation-20261025`, HEAD77abdb86이며 사용자 원 WT는 보존했다.
+classifier c3fbeb7f와 repo/pointer77abdb86을 인수했다. 아직 후속 PR·운영0125 적용 전이다.
+
+- root 변경14파일 단위121/121, Next typegen·전체 tsc·변경45 TS/TSX ESLint exit0,
+  운영 Python94건 중92 PASS/2 SKIP를 실제 확인했다.
+- root 전용 PG17/55447에0125 적용 exit0 뒤 통합6파일88건을 실행해67 PASS/21 FAIL이었다.
+  llm-assist-dispatch13·repo-move-dispatch8이 실제 모델 요청0으로 실패했다. 단독 alive 회귀도 같은
+  `model_capacity_requests_dispatch_check` SQL23514였다. 파일 간 fixture 누수라는 최초 가정은 기각했다.
+- 원인: classifier0125는 옛 baseline CHECK를 보존해 최신 main0124의 `local_model_direct` 세 분기를
+  삭제했다. 이는 생산 결함이며 운영 적용하지 않았다. agent live_readiness가0125와 보존 검사를 수정했다.
+  검사 regex의 quoted DDL 누락도 고쳐 최신0124의4개 CHECK와0096 members 전체를 exact left OR로
+  보존했다. classifier 함수·오른쪽 추가분기는 byte 불변이다. 새 PG17/32778 fresh126/126와
+  assist23/local7/repo10/CLI8/classifier17/constraint10, 6파일75/75 PASS다. 보존unit1/1은 root도
+  재실행했다. SQL SHA256은92a79292953ed2855307a5cb0d0b9a96e5675f5c810bebc29d193d19b14254ba다.
+  임시 진단 코드는 제거했다. 실패 원로그는 private operations/integrated-integration.log다.
+- 실제 API readback으로 AI2·M3 maintenance·connect-agent의 staged runtime7키가 후보와 일치함을
+  재확인했다. maintenance 실제 claude2.1.263/codex0.153.4이나 현재592c container에는 새 계약 env가
+  없으므로 readiness 완료라고 하지 않는다. 후속 배포 뒤 실제 제어 도구에서 version probe를 실행한다.
+- 새 사람 검증 표본5개는 기존 개발표본과 겹치지 않게 고정해 사용자에게 분류를 요청했다.
+  확보본문3 complete/1 truncated/1 missing, 실제 HTTP7/모델0/DB쓰기0이며 사람 라벨은 아직 없다.
+  기존 개발29회를 holdout으로 바꾸지 않았다. 적용은 계속false다.
+- DeepSeek grammar는 pinned xgrammar0.2.8/ffi0.1.11 두 wheel의 새 target 격리 설치·모델0 fixture까지만
+  진행하도록 승인했다. live entry/venv/settings/restart/추론 변경은 아직 승인·실행하지 않았다.
+- 운영 스냅샷 검색 범위 실수로 비밀 포함 원문이 도구 출력에 노출된 사실을 사용자에게 알렸다.
+  이후 private 원문 rg를 중단하고 필요한 필드만 추려 비밀을 제외한 결과를 읽는다. 값은 문서에 적지 않는다.
+
+이번 phase 수정파일은 README·독립 워커 runbook·이 handoff·운영전환 기록·0125·보존 회귀다.
+옛55447 DB에는 수정 전0125가 적용돼 있으므로 fresh 증거로 사용하지 않는다. 전체 필수 CI와
+최신 base 병합 뒤 실제 migration·17앱 후속 배포가 남았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+# 실제 성공한75건 재현용. 필요할 때만 반복한다.
+TEST_DATABASE_URL=postgres://test:test@127.0.0.1:32778/nomorevibe_test npm run test:integration -- tests/integration/local-model-assist-constraint-regression.test.ts tests/integration/local-model-capacity.test.ts tests/integration/llm-assist-dispatch.test.ts tests/integration/repo-move-dispatch.test.ts tests/integration/publication-classify-capacity.test.ts tests/integration/model-capacity-cli-ledger.test.ts
+git diff --check
+# source/DB 회귀 성공했다. commit/push/PR와 최신 base 필수CI를 진행한다.
+# 이후 새0125 실제 migration→17앱 고정배포→실제 serving/native 확인→정상 capacity/AI2 전환.
+```
+
+---
+
 # 2026-10-25 KST — 병렬 후속 구현 통합 중
 
 현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root branch는

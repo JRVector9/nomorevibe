@@ -46,6 +46,15 @@
 
 ## 구현·실제 모델에서 발견한 결함
 
+후속 classifier/repo 통합77abdb86에서 root 단위121/121·typegen/tsc/변경TS lint는 통과했지만,
+전용 PG17의6파일88건은67 PASS/21 FAIL이었다. 새0125가 구 baseline CHECK를 보존하면서
+최신0124의 local-direct 세 분기를 빠뜨려 SQL23514로 모델 dispatch 전에 거절했다.
+단독 회귀로도 재현해 fixture 누수 가정은 기각했다. 운영0125 적용 전 발견했고, 보존 검사 regex의
+quoted DDL 누락을 고쳐 최신 predecessor 전체를 보존했다. classifier 추가분기는 byte 불변이다.
+새 PG17 fresh126/126와 assist23/local7/repo10/CLI8/classifier17/constraint10, 6파일75/75를
+실제 통과했다. 수정 보존 unit1/1은 root도 재실행했다.
+이 통합 head의 전체 CI·후속 배포·활성화 성공을 아직 주장하지 않는다.
+
 1. unclear+retain이 done이 되는 누락은 서버 검증을 보강했다. legacy/claims 실제 틱 회귀와 전용 DB 검증을 추가했다.
 2. collector만60초 background 기한을 사용한다. 일반10초·uptime25초·연결/DNS/SSRF/origin/body/취소는 유지한다.
    수집과 모델은 동일 최대90초 신호를 공유하므로60+90초가 아니며 근거의180초 유효기간을 늘리지 않는다.

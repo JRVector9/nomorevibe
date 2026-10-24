@@ -64,3 +64,12 @@ Claude `43e7a76005ca9eddb37059086b38bfa2c5c5ca29e3c864a1dff1ec54aa3f0236`다.
 유효 정산, null provenance 실제 CHECK 거절, string enum/identity null15변종, 종료 후 다른 provider fallback,
 실제 관측의 readiness/stale 차단, missing status의 spawn0, UUID version/variant, 종료 불명·owner/provider 교체 후 member fence를 확인했다.
 구체 명령·최종 테스트 수와 실행 결과는 `docs/CODEX_HANDOFF.md`를 따른다. 실제 모델 호출은 이 구현 단계에서0이다.
+
+## 통합 최신 baseline 회귀 (2026-10-25 KST)
+
+후속 통합에서0125가 최신0124의local-direct CHECK 세 분기를 빠뜨린 SQL23514를 재현했다.
+보존 unit이 quoted DDL을 읽지 못한 원인을 고치고, 최신4개 CHECK0124와members0096 전체를
+정확한 left OR로 보존했다. classifier 함수와5개 오른쪽 추가분기는 byte 불변이다. 운영 적용 전 발견했다.
+새 PG17 fresh126/126와assist23/local7/repo10/CLI8/classifier17/constraint10, 6파일75/75를
+실행해 성공했다. 보존 unit1/1도 root가 재실행했다. SQL SHA256은
+92a79292953ed2855307a5cb0d0b9a96e5675f5c810bebc29d193d19b14254ba다.

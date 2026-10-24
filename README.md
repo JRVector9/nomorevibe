@@ -189,8 +189,10 @@ main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·mai
 mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 M3 connect-agent를 포함한
 총14앱·19복제본을 [GitHub 연동 배포 검증](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
 2026-10-22 관리자·보안 릴리스는 agent-scan 소비자를 포함한 15앱/20컨테이너에 배포했고,
-같은 날 읽기 전용 M3 monitor를 추가해 현재 16앱/21컨테이너다. Oracle Osaka의 Kuma 수신기는
-Dokploy 앱 수에 포함하지 않는다. 두 후속 배포의 근거는 위 기록을 따른다.
+같은 날 읽기 전용 M3 monitor를 추가했고, 2026-10-25 KST M3 AI2 소비자를 생성·배포해
+현재 17앱/22컨테이너다. AI2 소비자의 배포와 `items` 운영 전환은 별도이며, 전환 상태는
+[LLM 보강 운영 기록](docs/operations/2026-10-24-llm-assist-activation.md)을 따른다.
+Oracle Osaka의 Kuma 수신기는 Dokploy 앱 수에 포함하지 않는다.
 두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,
