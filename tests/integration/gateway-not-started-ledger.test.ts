@@ -256,6 +256,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const legacy = inner(after[name]), combined = inner(priorBoundary[name]);
       expect(combined.startsWith(`${legacy.slice(0, -1)} OR `), `${name}: current legacy prefix`).toBe(true);
     }
+    await migrateThrough(126);
+    const priorPendingCancellation = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
     expect(applied.count).toBe(journal.entries.length);
@@ -275,8 +277,15 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     await step.unsafe(`ALTER TABLE model_capacity_events ADD CONSTRAINT f2_boundary_expected CHECK ((${inner(priorBoundary[eventKind])}) OR coalesce(kind='dispatch_released' AND from_state='indeterminate' AND to_state='withdrawn' AND reason IS NULL AND nmv_provider_boundary_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false))`);
     try {
       const expected = await constraintDefs(step, ["f2_boundary_expected"]);
-      expect(current[eventKind], `${eventKind}: entire 0125 predecessor`).toBe(expected.f2_boundary_expected);
+      expect(priorPendingCancellation[eventKind], `${eventKind}: entire 0125 predecessor`).toBe(expected.f2_boundary_expected);
     } finally { await step.unsafe("ALTER TABLE model_capacity_events DROP CONSTRAINT f2_boundary_expected"); }
+    // 0127 also wraps its entire actual predecessor. Keep reason/evidence SQL NULL
+    // and the exact waiting→withdrawn transition in this independently reparsed expectation.
+    await step.unsafe(`ALTER TABLE model_capacity_events ADD CONSTRAINT f2_pending_expected CHECK ((${inner(priorPendingCancellation[eventKind])}) OR coalesce(kind='wait_cancelled' AND from_state='waiting' AND to_state='withdrawn' AND reason IS NULL AND evidence IS NULL,false))`);
+    try {
+      const expected = await constraintDefs(step, ["f2_pending_expected"]);
+      expect(current[eventKind], `${eventKind}: entire 0126 predecessor`).toBe(expected.f2_pending_expected);
+    } finally { await step.unsafe("ALTER TABLE model_capacity_events DROP CONSTRAINT f2_pending_expected"); }
     for (const name of [LEFT[1], ...UNTOUCHED.slice(3).filter(name => name !== eventKind)])
       expect(current[name], `${name}: current unchanged CHECK`).toBe(priorBoundary[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
