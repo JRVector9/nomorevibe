@@ -13,13 +13,16 @@ import { assistOriginActive, lockAssistClaim, readAssistControl, type AssistWork
 import { safeFetch } from "@/lib/net/fetch";
 import { extractTextSample } from "@/lib/net/normalize";
 
+/** 별도 확인 lane만 cold start를 기다린다. uptime-ping과 일반 HTTP의 기한은 바꾸지 않는다. */
+const UPTIME_ASSIST_FETCH_TIMEOUT_MS = 60_000;
+
 /** 본문 상한은 잘림으로 기록한다. null·예외·접근 차단은 종료 증거가 아니다. */
 export async function collectUptimeAssist(candidate: UptimeAssistCandidate, signal?: AbortSignal): Promise<AssistInput> {
   const now = new Date().toISOString();
   let finalUrl: string | null = null;
   let source: AssistSource = { sourceId: "current-page", kind: "page", url: candidate.product.url, observedAt: now,
     revision: assistHash({ url: candidate.product.url, observedAt: now }), text: "", completeness: "missing", httpStatus: null };
-  const fetched = await safeFetch(candidate.product.url, "background", { signal });
+  const fetched = await safeFetch(candidate.product.url, "background", { signal, backgroundTimeoutMs: UPTIME_ASSIST_FETCH_TIMEOUT_MS });
   if (fetched) {
     finalUrl = fetched.finalUrl;
     const reader = fetched.response.body?.getReader();

@@ -4,6 +4,7 @@ import { sharedHttpEnabled, HttpOriginPermitError } from "./http-origin-policy";
 export { HttpOriginPermitError } from "./http-origin-policy";
 
 export const FETCH_TIMEOUT_MS = 10_000;
+const MAX_BACKGROUND_FETCH_TIMEOUT_MS = 60_000;
 const MAX_REDIRECTS = 5;
 const MAX_HTML_BYTES = 2 * 1024 * 1024; // 2MB
 
@@ -35,7 +36,12 @@ export const DEFAULT_HEADERS = {
 export type FetchResult = { finalUrl: string; response: Response };
 
 /** The crawler opts into bounded retries; interactive callers retain null/page results. */
-type PageFetchOptions = { retryTransientErrors?: boolean; signal?: AbortSignal };
+type PageFetchOptions = {
+  retryTransientErrors?: boolean;
+  signal?: AbortSignal;
+  /** Explicit asynchronous confirmation only; one total deadline, bounded to 60 seconds. */
+  backgroundTimeoutMs?: number;
+};
 
 export class PageFetchError extends Error {
   readonly name = "PageFetchError";
@@ -281,6 +287,7 @@ export async function fetchCapped(
  *   10초 하나라 동시 칸을 오래 붙잡지 않고, **같은 origin에는 hop 단위로 한 번에 하나**만 보낸다.
  *   부르는 쪽은 처음 주소의 origin으로만 줄을 세울 수 있어, 서로 다른 세 주소가 같은 서버로
  *   302하면 그 서버에 셋이 동시에 갔다(codex 실측 3). 느린 사이트를 한 번 놓쳐도 다음 바퀴가 본다.
+ *   비동기 재확인은 backgroundTimeoutMs로 전체 기한을 최대 60초까지 명시할 수 있다.
  */
 export type FetchMode = "interactive" | "background";
 
@@ -422,7 +429,12 @@ function awaitGuard<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
  */
 export async function safeFetch(url: string, mode: FetchMode = "interactive", options: PageFetchOptions = {}): Promise<FetchResult | null> {
   const background = mode === "background";
-  const total = background ? cappedRequestSignal(options.signal, FETCH_TIMEOUT_MS) : null;
+  const backgroundTimeoutMs = options.backgroundTimeoutMs ?? FETCH_TIMEOUT_MS;
+  if (options.backgroundTimeoutMs !== undefined && (!background || !Number.isSafeInteger(backgroundTimeoutMs)
+    || backgroundTimeoutMs < 1 || backgroundTimeoutMs > MAX_BACKGROUND_FETCH_TIMEOUT_MS)) {
+    throw new RangeError("backgroundTimeoutMs requires background mode and an integer between 1 and 60000");
+  }
+  const total = background ? cappedRequestSignal(options.signal, backgroundTimeoutMs) : null;
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const signal = total ?? cappedRequestSignal(options.signal, FETCH_TIMEOUT_MS);

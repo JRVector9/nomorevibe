@@ -1,4 +1,53 @@
-# 2026-10-24 — LLM 보강 할 일 1번 검증·누락 수정
+# 2026-10-24 — 비동기 uptime 확인의 긴 재접속 분담 완료
+
+## 현재 목표·완료
+
+사용자 지시: 남은 작업을 병렬로 진행하고 운영 활성화·배포한다. 이 분담은 긴 재확인 코드와 로컬 검증이다.
+기준 `c3f4e8e84f5fdb40f5b65e6f3b27f9e57493b8f1`, WT
+`/Users/jr/Desktop/projects/nomorevibe-uptime-confirm-long-recheck`, 브랜치 `codex/uptime-confirm-long-recheck-20261024`.
+일반 background 10초와 같던 collector의 재접속에만 총 60초 기한을 적용했다.
+운영·모델 서버 쓰기와 배포는 이 분담에서 수행하지 않았으며 상위 작업이 진행한다.
+
+## 수정 파일·설계 결정
+
+- `lib/net/fetch.ts`: background 전용 `backgroundTimeoutMs` 선택 옵션, 1~60,000 정수 검증. 기본값 10초 불변.
+- `lib/domain/products/uptime-delist-review.ts`: 해당 비동기 수집만 60초 명시.
+- `tests/net-fetch-background-timeout.test.ts`, `tests/uptime-assist-reconnect.test.ts`,
+  `tests/uptime-assist-evidence.test.ts`: 긴 기한·기본값·body/redirect/DNS/queue·중단·SSRF·blocked·실제 HTTP 회귀.
+- `docs/operations/2026-10-24-uptime-long-recheck.md`: 설계·증거·재현 명령.
+- `docs/operations/2026-10-24-uptime-confirmation-verification.md`, 이 인계: 단계별 완료 범위 구분.
+
+SSRF/origin/body/원격 정산을 복제하지 않고 기존 safeFetch 경로를 재사용했다. DNS·origin 대기·리다이렉트·본문이
+총기한 하나를 공유하며 caller의 worker 중단·남은 예산이 먼저면 즉시 끊긴다. consumer100초/caller90초 예산과
+uptime-ping25초는 늘리지 않았다. undici의 기본 TCP connect timeout은 그대로이며 서버 응답 대기 예산을 늘렸다.
+실패횟수·unknown401/403/429/999·관리자 보호·본문/텍스트 상한·중단·원격 종료 불명 정책은 그대로다.
+
+## 실제 검사·실패
+
+새 테스트부터 추가해 RED18중12 assertion실패를 관측했다(10초 뒤 응답 상실/60초 미전달/잘못된옵션 허용).
+최소 구현 뒤 같은18 GREEN. 추가 실제 localhost HTTP 회귀까지3파일26통과,
+최종 관련14파일141통과. 실제 HTTP의 일반 요청은150ms 느린응답을 놓치고 긴확인만 complete를 수집했다
+(테스트 타이머만50ms/1.5초로 축소, 프로덕션10,000/60,000 인자별도검증).
+본문 기한 실패뒤 같은origin 후속200. Next typegen+전체tsc, 변경TS5파일ESLint, diff-check 실제exit0.
+Vite 기존 configLoader 경고를 보존했다. 별도collector는 비교만 하고 구현하지 않았다.
+원본 `/tmp/nomorevibe-uptime-confirm-long-recheck-{red,green,native,regression,types}-20261024.log`.
+
+전체unit/DB통합/build/GitHubCI는 실행하지 않았다. Oracle 다른네트워크·실제운영 표본/활성화/배포는 상위작업에 남았다.
+
+## 다음 에이전트 정확한 명령
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-confirm-long-recheck
+git log -1 --oneline
+git status --short
+npm test -- tests/net-fetch-background-timeout.test.ts tests/uptime-assist-evidence.test.ts tests/uptime-assist-reconnect.test.ts tests/net-fetch-deadline.test.ts tests/net-fetch-guard-deadline.test.ts tests/net-fetch-recovery.test.ts tests/net-fetch-settlement.test.ts tests/net-fetch-settlement-adversarial.test.ts tests/net-fetch-undici-abort.test.ts tests/net-fetch-timeout-source.test.ts tests/net-fetch-conditional.test.ts tests/ssrf.test.ts tests/uptime-gate.test.ts tests/crawl-fetch-concurrency.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/net/fetch.ts lib/domain/products/uptime-delist-review.ts tests/net-fetch-background-timeout.test.ts tests/uptime-assist-evidence.test.ts tests/uptime-assist-reconnect.test.ts
+git diff --check
+```
+
+# 2026-10-24 — LLM 보강 할 일 1번 검증·누락 수정(선행 단계)
 
 ## 현재 목표·완료
 
