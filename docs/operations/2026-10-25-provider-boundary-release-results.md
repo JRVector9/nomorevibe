@@ -61,3 +61,7 @@ git diff --check
 5. 같은 request가 withdrawn, settled_at null, 원 binding/C/logical keys 불변이고 release event와 operations audit가 각각 1건인지 확인한다. 사용량과 업무 성공을 주장하지 않는다. 실제 원서비스 복원·새 incarnation readback 뒤 최종 17앱 고정 release를 진행한다.
 
 향후 두 recorder flag는 이미 supervisor/role-worker의 spawn 전 기록 실패 시 fail-closed와 gateway-local-end 경로에서 지원한다. 이 PR은 flag를 바꾸지 않는다. 새 boot에서 정확히 `1`을 쓰고 실제 관측을 확인하는 별도 운영 검토가 필요하다. local call 종료 기록만으로 provider 종료가 되지는 않으며 기존 reclaim의 provider hard deadline 조건은 유지한다. 과거 boot의 누락 사실은 복구되지 않는다.
+
+## 첫 CI의 역사 검사 후속 수정
+
+첫 head `d3eae2bb`의 CI40122428088 unit(1)은 3,211 PASS/2 FAIL이었다. 두 실패 모두 `tests/local-model-capacity-schema.test.ts`가 literal ADD CONSTRAINT만 읽어 0126의 `pg_get_constraintdef`+format 동적 확장을 놓치고 0125를 최신으로 오인한 것이다. 로컬에서도 같은 두 RED를 실행했다. 생산 DDL·guard·hash는 바꾸지 않고 역사 검사에서 실제 FOREACH 대상과 format template을 읽어 선행 expression 전체를 확장하도록 고쳤다. 0125 member 분기 전체 및 신규 오른쪽 분기를 동시에 정확 비교하며 검사를 생략하지 않는다. regex의 `$'` 같은 문자열이 치환 의미로 해석되지 않도록 literal callback을 쓴다. 해당 schema+boundary+CLI 3파일8건을 다시 실행해 PASS했고 scoped lint/diff check도 exit0이다. 전체 CI 결과는 새 push에서 별도로 확인한다.

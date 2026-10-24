@@ -19,10 +19,24 @@ function checkHistory(name: string) {
   // Each additive migration replaces these CHECKs. Compare the final schema with the
   // last replacement for that constraint, even when the latest migration changes other tables.
   const pattern = new RegExp(`ADD CONSTRAINT\\s+"?${name}"?\\s+CHECK\\s*\\(([\\s\\S]*)\\);\\s*$`);
-  return migrations.flatMap(migration => migration.statements.flatMap(statement => {
+  const history: { idx: number; tag: string; expression: string }[] = [];
+  for (const migration of migrations) for (const statement of migration.statements) {
     const match = pattern.exec(statement);
-    return match ? [{ idx: migration.idx, tag: migration.tag, expression: match[1] }] : [];
-  }));
+    if (match) history.push({ idx: migration.idx, tag: migration.tag, expression: match[1] });
+    // 0126 preserves pg_get_constraintdef's entire predecessor with a format template.
+    // Read the affected names and actual template; do not treat the dynamic migration as an absent replacement.
+    const names = /FOREACH n IN ARRAY ARRAY\[([^\]]+)\] LOOP/.exec(statement)?.[1];
+    const template = /EXECUTE format\('ALTER TABLE model_capacity_requests ADD CONSTRAINT %I CHECK \(([\s\S]*?)\)',n,old_predicate\);/.exec(statement)?.[1];
+    if (names?.split(",").map(value => value.trim().replaceAll("'", "")).includes(name) && template) {
+      expect(statement).toContain("substring(pg_get_constraintdef(oid) FROM 7) INTO STRICT old_predicate");
+      const previous = history.at(-1);
+      expect(previous, `${name}: dynamic predecessor`).toBeDefined();
+      expect(template.match(/%s/g)).toHaveLength(1);
+      // A callback preserves SQL regex endings such as $' literally in the replacement.
+      history.push({ idx: migration.idx, tag: migration.tag, expression: template.replace("%s", () => previous!.expression) });
+    }
+  }
+  return history;
 }
 
 it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migration과 같다", () => {
@@ -41,15 +55,17 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
   }
 });
 
-it("발행 분류의 member CHECK도 마지막 migration의 전체 선행 분기와 같다", () => {
+it("member CHECK는 0125 발행 분기 전체와 0126의 exact predecessor 확장을 모두 보존한다", () => {
   const check = getTableConfig(modelCapacityRequests).checks.find(check => check.name === "model_capacity_requests_members_check")!;
   const history = checkHistory(check.name);
   const latest = history.at(-1)!;
-  const previous = history.at(-2)!;
+  const publication = history.find(entry => entry.idx === 125)!;
+  const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0125_publication_classify_cli");
+  expect(latest.tag).toBe("0126_provider_boundary_release");
   expect(expression === latest.expression, check.name).toBe(true);
-  expect(expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
+  expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
+  expect(expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {
