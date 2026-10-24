@@ -44,7 +44,9 @@ function fresh() {
   const receipt = structuredClone(fx.receipt); receipt.owner.identity=plan.owner; receipt.owner.observedAt=iso(20_000);
   receipt.gateways.forEach((g,i)=>{g.identity=plan.gateways[i];g.observedAt=iso(15_000-i*1000);});
   receipt.provider.identity=plan.provider;receipt.provider.observedAt=iso(10_000);receipt.planHash=providerBoundaryPlanHash(plan);
-  return { plan: providerBoundaryPlanSchema.parse(plan), receipt: providerBoundaryReceiptSchema.parse(receipt) };
+  const parsedPlan=providerBoundaryPlanSchema.parse(plan),parsedReceipt=providerBoundaryReceiptSchema.parse(receipt);
+  if(parsedPlan.version!==1||parsedReceipt.version!==1) throw new Error("expected_v1_fixture");
+  return { plan: parsedPlan, receipt: parsedReceipt };
 }
 let frozen: ReturnType<typeof fresh>;
 async function defs() { return Object.fromEntries((await client<{conname:string;def:string}[]>`SELECT conname,pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname=ANY(${names}::text[])`).map(x=>[x.conname,x.def])); }
