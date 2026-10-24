@@ -1,4 +1,4 @@
-# 2026-10-25 08:41 KST — be71 운영 배포 완료, T0·T5 통과, 시간 단축안 정리
+# 2026-10-25 08:42 KST — be71 운영 배포 완료, T0·T5·T10 통과, 시간 단축안 정리
 
 이 기록이 아래의 과거 진행 기록보다 우선한다. 현재 목표는 승인된 LLM 보강 구현·운영 활성화·배포의 완료 기록과 테스트/배포 시간 단축 검토를 문서 PR로 반영하는 것이다. **실제 런타임 작업은 완료했으며, 운영 배포를 다시 실행하지 않는다.** 원 사용자 worktree는 보존했다.
 
@@ -18,7 +18,8 @@
 - Root `/Users/jr/.local/state/nomorevibe-be71-postrollout-observation-v1/`: `activation.safe.json`, `driver-launch.safe.json`, `driver-once/run.started.safe.json`, `series/t0/observation.safe.json`.
 - T0 실제 DB23:31:18.911Z, findings=[]/기존 health 관문 성공, SHA `5b7ad9d09c853ee87717fcf3d904cb45a43e321e0d6510adfe9528d7fee5c271`.
 - **T5 실제 DB23:36:18.894Z**, driver exit0/stderr0/retry0, findings=[]/기존 health 관문 성공. Native 정산30·AI2 검수8, unknown0/구세대0/terminal 누락0. SHA `3d897ad50fad25ba25e1b689cfbb2eb722ce37778c85fadf63a14cacef6a0875`.
-- T10 due23:41:18.360Z, T15 due23:46:18.360Z, h6 due**2026-10-25T05:31:18.360Z(KST14:31:18.360)**. 미래 표본·연속6시간 정상·사람 품질 통과를 주장하지 않는다.
+- **T10 실제 DB23:41:18.849Z**, driver exit0/stderr0/retry0, findings=[]/기존 health 관문 성공. Native 정산69·AI2 검수22, unknown0/구세대0/terminal 누락0. SHA `f306bc6f409b57f3775602e199e27c92fbfc3340bcd9a4d5194bfd13ecdcda74`.
+- T15 due23:46:18.360Z, h6 due**2026-10-25T05:31:18.360Z(KST14:31:18.360)**. 미래 표본·연속6시간 정상·사람 품질 통과를 주장하지 않는다.
 - Driver `/private/tmp/nomorevibe-llm-activation-20261024/historical-owner-observer-driver-v1/observe_due_once.py` SHA `fa6e5b777b737ade9a4b502c46b6404e58c2b5492ce44325a7f80f0996ed89de`; 원 observer `post-historical-owner-rollout-observation-v1/observe_once.py` SHA `b7bad0b0efce97486eae315801cac078467fbe7ea7053ad5b40c7406c19a8215`. Due 뒤 각1회/실패 즉시 중단·재시도0·운영 mutation/model POST0이며 persistent launchd/cron은 추가하지 않았다.
 
 ## 수정 파일·검증·실패 보존
@@ -31,10 +32,10 @@
 
 ## 남은 업무와 다음 명령
 
-- 독립 사람 holdout5 미응답으로 apply false 유지. T5 소개99는 done11/human16/나머지72·공통13/적용0, repo42는 human30/obsolete1/나머지11·공통1/적용0. 감사11490 원작업은 waiting_capacity/attempt0/common0/finding0이며 누적 pre-dispatch withdrawn44건을 새 장애의 증명으로 쓰지 않는다. 뉴스197487의 original_name_missing 및202004·198055 실패는 보존한다. **적체 전체 완료·업무 품질 성공을 주장하지 않는다.**
+- 독립 사람 holdout5 미응답으로 apply false 유지. T10 소개99는 done13/human19/나머지67·공통15/적용0, repo42는 human30/obsolete1/나머지11·공통1/적용0. 감사11490 원작업은 T10에 claimed/attempt0/native waiting1/common0이며 누적 pre-dispatch withdrawn45건을 새 장애의 증명으로 쓰지 않는다. 뉴스197487의 original_name_missing 및202004·198055 실패는 보존한다. **적체 전체 완료·업무 품질 성공을 주장하지 않는다.**
 - 미래 관측은 기존 driver의 실제 결과만 읽는다. 새로운 source/health 실패가 있으면 원문부터 조사하며 자동 재시도·표본 재실행을 하지 않는다.
 - **0127/0128/0129 migrator, 07ef 단건 회수, 경계 중단/복구, capacity open/drain, 원4잡 resume, 생산자 등록/뉴스 재등록은 재실행 금지.** 썸네일은 최초 인계의 보류 범위다.
-- 남은 문서 단계: 독립 읽기 검토→6파일 commit/push→문서 PR 필수 최신-base check 성공→정상 merge→사용자에게 완료와 시간 단축 보고. 앱은 이미 be71로 검증되어 있으므로 문서 main 반영 때문에 재배포하지 않는다.
+- 문서 반영 절차: 독립 읽기 검토·문서 검증을 완료했고 6파일을 문서 전용 PR로 반영한다. 아래 명령으로 실제 PR의 최신-base 필수 check와 병합 상태를 확인한다. 앱은 이미 be71로 검증되어 있으므로 문서 main 반영 때문에 재배포하지 않는다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
@@ -42,14 +43,11 @@ git status --short
 git diff --check
 # 기존 driver는 읽기만 한다. 수동 observe/driver 재시작 금지.
 ps -o pid=,ppid=,etime=,comm= -p 78284
-cat /Users/jr/.local/state/nomorevibe-be71-postrollout-observation-v1/driver-once/t5.result.safe.json
-# due 뒤 생성된 t10/t15/h6.result.safe.json과 series/<label>/observation.safe.json을 읽는다.
-# 아래 문서6개만 add/commit/push하고 실제 새 PR번호로 checks/merge한다.
-git add README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/2026-10-24-llm-assist-activation.md docs/operations/2026-10-25-llm-assist-production-activation.md docs/operations/2026-10-25-deployment-time-review.md
-git diff --cached --check
-git commit -m "docs: record LLM assist activation and deployment timing"
-git push -u origin docs/llm-assist-production-20261025
-# gh pr create --base main --head docs/llm-assist-production-20261025 --body-file <실제작성본문>
+cat /Users/jr/.local/state/nomorevibe-be71-postrollout-observation-v1/driver-once/t10.result.safe.json
+# due 뒤 생성된 t15/h6.result.safe.json과 series/<label>/observation.safe.json을 읽는다.
+gh pr list --state all --head docs/llm-assist-production-20261025 --json number,state,url,mergeCommit
+# 반환된 실제 PR번호로 gh pr checks/gh pr view --json state,mergeCommit을 확인한다.
+# 문서 main 반영으로 앱 재배포·migration·open·resume을 반복하지 않는다.
 ```
 
 ---

@@ -37,6 +37,8 @@ T0 기준 소개99건은 done10/human13/나머지76, native25·공통 결과12·
 
 자동 driver의 **T5는23:36:18.894Z에 실제 통과**했다. native 정산은 시작 후30건, AI2 검수는8건이고 unknown/구세대/terminal 누락은 모두0이다. 기존 역할·scheduler·AI2 health 관문도 통과했다. 소개는 done11/human16/나머지72, 공통 결과13/적용0으로 진행했다. 감사는 여전히 waiting_capacity/attempt0/common0/finding0이며 원 요청을 반복 등록하지 않았다. T5 파일 SHA는 `3d897ad50fad25ba25e1b689cfbb2eb722ce37778c85fadf63a14cacef6a0875`다. 표본 사이의 연속 상태·사람 품질 통과는 주장하지 않는다.
 
+자동 driver의 **T10도23:41:18.849Z에 실제 통과**했다. 시작 후 native 정산69건·AI2 검수22건, unknown/구세대/terminal 누락0, findings=[]/기존 health 관문 성공이다. 소개는 done13/human19/나머지67·공통15/적용0으로 진행했다. 감사 원작업은 관측 시 claimed/attempt0/native waiting1/common0이며 아직 전송·업무 성공을 확인하지 않았다. SHA는 `f306bc6f409b57f3775602e199e27c92fbfc3340bcd9a4d5194bfd13ecdcda74`다. T15·h6는 후속 driver의 실제 결과로 확인한다.
+
 독립 사람 holdout5건은 아직 미응답이다. Uptime은 confirm/확인 필수, 나머지5개는 shadow이며 자동 반영은 모두 false다. Native 정산·개발 테스트·운영 health는 사람 평가를 대신하지 않는다. [테스트·배포 시간 검토](2026-10-25-deployment-time-review.md)는 실제 앱 갱신9분59초, 테스트 중복·검사 범위·병렬화·단계 축소 방안을 분리해 기록했다.
 
 ## c486 초기 배포와 제어 기록 — 과거
