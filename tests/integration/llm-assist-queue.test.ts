@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+const http = vi.hoisted(() => ({ safeFetch: vi.fn(), readBodyCapped: vi.fn(), fetchPage: vi.fn() }));
+vi.mock("@/lib/net/fetch", () => http);
 import { db } from "@/lib/db";
-import { jobs, llmAssistControls, llmAssistWorks, products } from "@/lib/db/schema";
+import { cdnPurges, jobs, llmAssistControls, llmAssistWorks, operationsAudit, productHealth, products } from "@/lib/db/schema";
+import { uptimeControl, uptimeSplitControl } from "@/lib/db/product-uptime-schema";
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 import { claimAssistWork, deferAssistClaim } from "@/lib/domain/llm-assist/repository";
-import { product, takeJobLease } from "./uptime-split-fixture";
+import { pingProducts } from "@/lib/jobs/products/uptime";
+import { OWNERS, product, setSplit, takeJobLease } from "./uptime-split-fixture";
 import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(ensureSchema);
@@ -16,6 +20,7 @@ async function resetControl() {
 }
 beforeEach(async () => { await resetTables(); await resetControl(); await db.delete(jobs); });
 afterAll(resetControl);
+afterEach(() => vi.unstubAllEnvs());
 async function candidate(name: string) {
   const p = await product(name, { health: { failures: 10, status: 404, hoursAgo: 0.02 }, claim: false });
   return p;
@@ -26,6 +31,36 @@ async function confirm() {
 const owner = { instanceId: "assist-queue-test", bootId: randomUUID() };
 
 describe("비동기 uptime 확인 후보 큐", () => {
+  it.each(["legacy", "claims"] as const)("실제 %s 틱의 10번째 실패도 즉시 내림 대신 공통 확인 큐에 넣는다", async mode => {
+    const [originalSplit] = await db.select().from(uptimeSplitControl);
+    const [originalControl] = await db.select().from(uptimeControl);
+    try {
+      await db.update(uptimeControl).set({ observationsEnabled: false, gateEnabled: false });
+      await setSplit(mode);
+      await confirm();
+      vi.stubEnv("SERVICE_INSTANCE_ID", OWNERS.m3.instanceId);
+      vi.stubEnv("UPTIME_BATCH_SIZE", "15");
+      vi.stubEnv("UPTIME_CONCURRENCY", "3");
+      http.safeFetch.mockReset().mockImplementation(async (url: string) => ({ finalUrl: url,
+        response: new Response("Service unavailable", { status: 503 }) }));
+      http.readBodyCapped.mockReset().mockResolvedValue(Buffer.alloc(0));
+      const p = await product(`assist-tick-${mode}`, { health: { failures: 9, status: 503 } });
+      const lease = await takeJobLease();
+      const floor = (await db.select({ id: sql<number>`coalesce(max(id),0)::int` }).from(operationsAudit))[0].id;
+      await pingProducts({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {}, lease });
+      expect(http.safeFetch.mock.calls.map(([url]) => url)).toEqual([p.url]);
+      expect((await db.select().from(productHealth).where(eq(productHealth.slug, p.slug)))[0]).toMatchObject({ failures: 10, status: 503 });
+      expect((await db.select().from(products).where(eq(products.id, p.id)))[0].status).toBe("seeded");
+      expect(await db.select().from(llmAssistWorks)).toMatchObject([{ task: "uptime", state: "queued", productId: p.id,
+        source: { health: { failures: 10, status: 503 } } }]);
+      expect(await db.select().from(llmAssistWorks)).toHaveLength(1);
+      expect(await db.select().from(operationsAudit).where(sql`id>${floor} and action='product-auto-ban-uptime'`)).toHaveLength(0);
+      expect(await db.select().from(cdnPurges).where(eq(cdnPurges.slug, p.slug))).toHaveLength(0);
+    } finally {
+      await setSplit(originalSplit.mode, originalSplit.policy);
+      await db.update(uptimeControl).set({ observationsEnabled: originalControl.observationsEnabled, gateEnabled: originalControl.gateEnabled });
+    }
+  });
   it("제어 행 누락을 off로 간주해 기존 즉시 내림으로 우회하지 않는다", async () => {
     await db.delete(llmAssistControls).where(eq(llmAssistControls.task, "uptime"));
     const p = await candidate("assist-control-missing");

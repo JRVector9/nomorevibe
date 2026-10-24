@@ -37,6 +37,16 @@ describe("assist contracts and server guards", () => {
     expect(validateAssistOutcome({ ...input, context: { ...input.context, failureCount: 9 } }, outcome).ok).toBe(false);
     expect(validateAssistOutcome(input, { ...outcome, state: { page_state: "alive", finding: "active_product" } }).ok).toBe(false);
   });
+  it.each(["retain", "delist_candidate", "collect_evidence", "human_review", "independent_review"])(
+    "unclear 상태의 %s 조치는 근거 수집 또는 사람 확인일 때만 허용한다", proposal => {
+      const unclearInput = { ...input, sources: [{ ...input.sources[0], httpStatus: 503,
+        text: "Service temporarily unavailable. Please try again later." }] };
+      const unclear = { ...outcome, state: { page_state: "unclear", finding: "temporary_maintenance" },
+        evidence_quality: { status: "partial", limitations: ["other"] },
+        evidence: [{ ...outcome.evidence[0], quote: "Service temporarily unavailable" }],
+        action: { proposal, reason_ko: "일시 장애로 현재 서비스 상태를 확인해야 합니다.", missing_items: ["실제 서비스 상태"] } };
+      expect(validateAssistOutcome(unclearInput, unclear).ok).toBe(["collect_evidence", "human_review"].includes(proposal));
+    });
   it("does not equate a fork with an official move or accept a model-authored maker permission", () => {
     const repo = { ...input, task: "repo", context: { oldRepositoryUrl: "https://github.com/old/tool", productName: "Tool", productDescription: "Notes",
       candidateRepositoryUrls: ["https://github.com/new/tool"] } } as AssistInput;

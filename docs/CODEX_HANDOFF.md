@@ -1,3 +1,55 @@
+# 2026-10-24 — LLM 보강 할 일 1번 검증·누락 수정
+
+## 현재 목표·완료
+
+사용자 지시: `docs/operations/2026-10-23-llm-assist-handoff.md`의 할 일 1번부터 진행한다.
+현재 원 작업 폴더는 `b1fb8dd5`이므로 사용자 변경을 보존하고 최신 main `2cc4e36c` 기반 별도 worktree
+`/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, 브랜치 `codex/uptime-pre-delist-check-20261024`를 만들었다.
+기존 PR-04/05 구현이 이미 있어 중복 개발하지 않았다. `unclear + retain`이 사람 대기 대신 done으로 저장되는 결함을
+수정 전 단위/실제 전용 DB 테스트로 재현하고 기존 정책에 맞게 검증기를 수정했다.
+실제 legacy/claims 틱의 10번째 실패가 각각 후보 1건·즉시 내림 0인 회귀도 추가했다.
+
+## 수정 파일·결정
+
+- `lib/domain/llm-assist/contracts.ts`: unclear는 collect_evidence/human_review만 허용한다.
+- `tests/llm-assist-contract.test.ts`, `tests/integration/llm-assist-dispatch.test.ts`,
+  `tests/integration/llm-assist-queue.test.ts`: 허용표·실제 소비자·두 생산 경로 회귀.
+- 최초 운영 인계의 최신 안내, `docs/plans/2026-10-24-uptime-confirmation-verification.md`,
+  `docs/operations/2026-10-24-uptime-confirmation-verification.md`, 이 파일.
+
+기존 실패횟수·시간 제한·401/403/429/999 제외·관리자 해제·광역 보류·세대/CAS·lease를 보존했다.
+새 잡·DDL·모델/운영 설정은 없다. 운영 DB 조회·쓰기·실제 모델 호출·배포·활성화·12건 복구는 0이다.
+collector는 여전히 reviewer 네트워크의 전체 10초 요청이다. 최초 제안의 긴/Oracle 재확인과 “다시 실패하면 내림”은
+구현 완료로 세지 않는다. 후속 PR-05대로 수집 실패는 보류한다. 코드 기본 off와 실제 운영 상태는 구분한다.
+
+## 실제 검증·실패
+
+Node 24.18.0, lockfile npm ci. 새 pgvector0.8.6-pg17 전용 컨테이너
+`nomorevibe-uptime-confirmation-test-20261024`(loopback55447, DB nomorevibe_test)에 migration125개를 적용했다.
+수정 전 unit11 중2 실패(retain/independent_review 허용), 선택한 native 소비자1 실패(done 저장)를 확인했다.
+수정 뒤 unit9파일157건·통합6파일136건 통과, Next typegen·tsc·수정TS4파일 ESLint·diff check exit0.
+전체 unit/전체 DB/build/필수 CI는 실행하지 않았다. 가짜 localhost 모델 검증을 실제 품질로 보고하지 않는다.
+초기 patch의 함수명 불일치는 적용 전 거절됐고 실제 `modelOutcome` 이름으로 수정했다.
+
+## 남은 일·다음 명령
+
+범위 코드 검증과 누락 수정은 끝났다. 긴/다른 네트워크 재확인 설계·실제 독립 라벨/모델 비교·현재 운영 readback·용량/native canary·shadow 관측·confirm 승인이 남는다.
+2~5번도 이미 병합된 구현이 있으므로 각 상태를 먼저 대조한다. 이번 결과를 그 항목의 완료로 승계하지 않는다.
+상세 명령과 결과는 [이번 검증 기록](operations/2026-10-24-uptime-confirmation-verification.md)을 따른다.
+이 컨테이너는 검증 종료 뒤 중지한다. 재검증 때 아래 명령으로 시작한다(데이터는 tmpfs라 migration을 다시 적용한다).
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -1 --oneline
+docker start nomorevibe-uptime-confirmation-test-20261024
+docker exec nomorevibe-uptime-confirmation-test-20261024 pg_isready -h 127.0.0.1 -U nomorevibe -d nomorevibe_test
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55447/nomorevibe_test npm run test:integration -- tests/integration/llm-assist-queue.test.ts tests/integration/llm-assist-dispatch.test.ts
+git diff --check
+```
+
+---
+
 # 2026-10-16 파이프라인 개발 인계
 
 > **최신 인계(2026-10-22): [docs/operations/2026-10-22-handoff.md](operations/2026-10-22-handoff.md)** — 관리자·보안 패치 15앱 배포 완료, 남은 검증과 운영 주의. [실제 배포 기록](operations/2026-10-22-admin-production-rollout.md). 아래는 그 이전 기록이다.

@@ -155,6 +155,9 @@ export function validateAssistOutcome(inputValue: AssistInput, value: unknown):
       return { ok: false, error: "uptime_delist_not_permitted" };
     }
     if (state === "alive" && outcome.action.proposal !== "retain") return { ok: false, error: "alive_requires_retain" };
+    if (state === "unclear" && !["collect_evidence", "human_review"].includes(outcome.action.proposal)) {
+      return { ok: false, error: "unclear_requires_review" };
+    }
   }
   if (input.task === "repo" && outcome.task === "repo") {
     const state = outcome.state;
