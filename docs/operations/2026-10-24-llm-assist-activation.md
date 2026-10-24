@@ -5,10 +5,36 @@
 
 ## 현재 운영 실행
 
+- 후속 릴리스 준비로 gateway9/local2/CLI3·정책25route의 통합 후보를 실제 Zod/canonical hash 및 gateway startup
+  parser로 검증했다. 정책 hash는57fca5f1e18eeaa4c5ede070e639b042776eb9a40193f1ebb35ace8033e31ed5다.
+  기존15개 caller 앱(monitor 제외)의 identity/current592c/done/autoDeploy=false를 대조하고 env만 저장했다.
+  각 full config readback은 env 외 불변이며 deploymentId도 그대로다. 새 env는 다음 배포에서 적용된다.
+  기존 컨테이너·DB control을 바꾸거나 전역 open을 한 단계가 아니다. snapshot과 실제 실행은
+  git밖 integrated-runtime-proposal/environment-{plan,execution}에 보존했다.
+- DeepSeek 현재 두 caller의 normalized tiny11093byte/wire SHA f85e8f7d…는 15:40:12Z 실제1POST로 검증했다.
+  HTTP200/정확model/stop/usage2333+70=2403/reasoning0/완전 JSON 수신, 5026ms/재시도0이었다.
+  계약84168a49…는 jsonSchema=false를 유지하며 감사 경로 지원을 주장하지 않는다.
+- 15:40:20Z actual fetch/ai1/ai2는 모두legacy/epoch1/contract0이었다. AI2는 전역open에서 legacy가
+  미뤄지므로 기존 runbook의 같은 창 전환과 별도 소비자 준비를 진행한다. 15:47Z actual legacy는 정상 진척,
+  AI2 소비자 앱·heartbeat는0이었다. 안전 전환을 --allow-deferred-routes로 대신하지 않는다.
+- PR645 최종 head5b285346의 전체 CI/check(run40104626581)가 성공했다. unit7208/integration3620,
+  build/typecheck/lint도 성공했다. 최신 base에서 15:02:07Z main592c0a1b로 병합했고 동일 tree를
+  main CI40105137707에서 재사용해 두 고정 이미지를 발행했다.
+- 15:07:06Z 공통9앱 배포를 마쳤다. publisher/reviewer/crawler 예비→주와 agent-scan 소비자,
+  웹 mini→M3 순서, 역할별 ready/progress ok, 양 웹 직접·공개 health 및 HTML purge를 확인했다.
+  worker sha256:4333db1d18c2d0424bbc66865a16b1609df17a2a4495db2c6f496ba16f5fe6c4,
+  web sha256:3c3de3538a17a42b8e67308d10395d633e46f603ca6b6439b0a2ed2e513f872e다.
+  배포 전 검사가 agent-scan의 autoDeploy=true를 거절해 설정/실행 불변을 대조한 뒤 해당 필드만 false로 바꿨다.
+  connect-agent도 같은 이유로 autoDeploy만 false로 바꿨고 두 앱 모두 수동 고정 릴리스를 유지한다.
+  6개 Git 빌드 앱은15:17:05Z, monitor 마지막 갱신은15:19:33Z 완료했다. 실제source987개/healthy/spec·명령·healthcheck를
+  대조했고 monitor는 새container177480402ddc의시작뒤자체로그에서양Push UP/ok를확인했다.
+  root inventory16앱 complete=true/pending=[],15:21:30Z 다섯역할과scheduler2 gate ready/progress ok다.
+  배포helper의13guardtests도root가직접성공했다. 사전probe에서PEM multi-line Env파싱·dockerignore제외파일과
+  옛container receipt혼입문제를발견해배포전에수정했다. 자동retry/원복0이다.
 - 14:15:02Z, 실제 primary/active writer fence/lineage·epoch·제어 revision을 잠금·CAS로 확인한 TX에서 uptime만
   `confirm`, `confirmation_required=true`, `dispatch_enabled=false`, `apply_enabled=false`, revision2로 전환했다.
   audit19135. 후보 보존 단계이며 LLM 처리나 자동 적용 활성화가 아니다. 나머지5개 업무는 off다.
-- 14:47:34Z readback은 uptime queued1, 전환 뒤 새 uptime 자동 내림0이다.
+- 15:00:58Z readback은 uptime queued2, 전환 뒤 새 uptime 자동 내림0이다.
   기존 관측·차단 해제·제품 행은 직접 수정하지 않았다. 현재12복구후보가 모두 정상이라는 근거는 없다.
 - abcLLM [PR5](https://github.com/JRVector9/abcLLM/pull/5)를 root가 검토하고274개 격리 회귀를 직접 재실행한 뒤
   main `5ae29cf5a7eb17367a62d0559a7773d41a79a15c`로 병합했다. 기존 M3/mini 이미지 ID와 서비스 spec을
@@ -41,12 +67,17 @@
 
 표본은 실제 스냅샷이지만 라벨 출처는 `codex_independent_pre_model`이며 개발 표본이다. 사람 독립 holdout이나
 운영 오류율0을 주장하지 않는다. source/time/input을 고정한 offline direct 평가로, production domain freshness·
-native admission·원장·전역 용량을 통과했다는 증거도 아니다. 사람에게17건 분류를 요청했고 아직 응답 전이다.
+native admission·원장·전역 용량을 통과했다는 증거도 아니다. 사람에게17건 분류를 요청했으나이후prompt개선에도
+사용한개발표본이므로추후답이와도holdout으로승격하지않는다. 별도미사용snapshot의모델전사람라벨이필요하다.
 
 ## 추가 운영 전제
 
 - GPU actual vLLM C50000/max-num-seqs6, tp4/GPTQ Marlin/KV fp8_e5m2다. 이전262144를 복사하지 않는다.
   기존 Qwen direct 호출은 출력3000을 사용하므로 새 assist2048만으로 contract를 제한하면 기존 호출을 막는다.
+- Supa는기존vector9계정이Tailscale정책에거절됐지만원abc사용자WT운영문서에허용계정jr가명시돼있었다.
+  정상`ssh -l jr supa`로PID1241446의실제argv에서C98304/maxnumseq64/queued60/KVfp8을읽었고,
+  cached modelconfig의modelopt/NVFP4/4bit와vLLM0.30.0설치validation source를확인했다. 사용자에게접속정보
+  추가질문이더필요없다고정정했다. 과거문서65536을현재값으로승계하지않았고재시작/설정변경0이다.
 - M3 실제 서버는oMLX0.7.1rc1이다. abcLLM PR2의mlx_lm.server patch를 이 서버에 적용할 수 없다.
   기존 oMLX는 prompt만 검사하고 요청max_tokens가4096설정을 덮으므로 전체 sequence hard C가 미보장됐다.
   exact source hash에 고정한 입력+유효출력+EOS 사전 거절 patch를 별도로 준비했고 실제 AST 경로9회귀를
