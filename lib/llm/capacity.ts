@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
+import { providerBoundaryPlanSchema, providerBoundaryReceiptSchema, validateProviderBoundary } from "./provider-boundary-contract";
 
 const identity = (max: number) => z.string().min(1).max(max)
   .refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "invalid_identity");
@@ -894,6 +895,8 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
  * 회수는 점유만 푼다: dispatch binding(chargedTokens = C)은 그대로이고 정산(settled)·사용량 증거를 만들지 않는다.
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
+  z.object({ ...releaseBase, kind: z.literal("provider_boundary_exit"), fromState: z.literal("indeterminate"), dispatchAt: isoMillis,
+    bindingHash: sha64, reference: identity(400), plan: providerBoundaryPlanSchema, receipt: providerBoundaryReceiptSchema }).strict(),
   z.object({ ...releaseBase, kind: z.literal("process_group_exit"), dispatchAt: isoMillis,
     termination: z.enum(["client_bound", "provider_bound"]), hardDeadlineMs: z.number().int().min(1).max(86_400_000).nullable(),
     skewBoundMs: z.number().int().min(1).max(600_000), reference: identity(400),
@@ -906,6 +909,10 @@ export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
     skewBoundMs: z.number().int().min(1).max(600_000), reference: identity(400), endedAt: isoMillis,
     localEnd: z.object({ dispatches: positive.max(4096), terminals: positive.max(4096) }).strict() }).strict(),
 ]).refine(value => value.notBefore <= value.evaluatedAt, "release_not_due")
+  .refine(value => value.kind !== "provider_boundary_exit" || validateProviderBoundary(value.plan, value.receipt, value.evaluatedAt)
+    && value.requestId === value.plan.request.requestId && value.owner.instanceId === value.plan.request.owner.instanceId
+    && value.owner.bootId === value.plan.request.owner.bootId && value.dispatchAt === value.plan.request.dispatchAt
+    && value.bindingHash === value.plan.request.bindingHash && value.notBefore === value.receipt.provider.observedAt, "invalid_provider_boundary")
   .refine(value => value.kind !== "process_group_exit" || (value.termination === "client_bound") === (value.hardDeadlineMs === null), "invalid_release_deadline")
   .refine(value => value.kind !== "local_call_ended" || (value.termination === "client_bound") === (value.hardDeadlineMs === null)
     && value.endedAt <= value.notBefore && value.localEnd.dispatches === value.localEnd.terminals, "invalid_local_call_end");
