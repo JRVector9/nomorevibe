@@ -2137,6 +2137,10 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
       || row.providerBudgetId !== expected.providerBudgetId || row.groupId !== expected.groupId
       || !row.dispatchBinding || !("servingContractHash" in row.dispatchBinding)
       || row.dispatchBinding.servingContractHash !== expected.servingContractHash) fail("model_capacity_provider_boundary_conflict");
+    if (evidence.plan.version === 2) {
+      const { assertHistoricalBoundaryOwner } = await import("@/lib/operations/dr/provider-boundary-owner");
+      await assertHistoricalBoundaryOwner(tx, evidence.plan, { owner, dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, localEnd });
+    }
   }
   if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId
     || evidence.fromState !== row.state || evidence.dispatchAt !== clock.dispatch_at || evidence.bindingHash !== row.dispatchBindingHash

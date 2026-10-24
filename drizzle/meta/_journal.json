@@ -904,6 +904,13 @@
       "when": 1794086400040,
       "tag": "0128_macos_provider_boundary_exit",
       "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1794086400041,
+      "tag": "0129_historical_provider_boundary_owner",
+      "breakpoints": true
     }
   ]
 }

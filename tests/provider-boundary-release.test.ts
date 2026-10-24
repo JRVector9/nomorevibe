@@ -26,6 +26,7 @@ it("Docker private PID namespace init 종료는 관측하지 않은 cgroup empty
 it("미완료·누락·오래된·다른 incarnation·종료 순서 역전은 어떤 idle/시간경과로도 승인하지 않는다", () => {
   const { plan, receipt } = boundaryFixture();
   const p = providerBoundaryPlanSchema.parse(plan), r = providerBoundaryReceiptSchema.parse(receipt), now = "2026-10-24T18:13:00.000Z";
+  if (p.version !== 1 || r.version !== 1) throw new Error("expected_v1_fixture");
   expect(validateProviderBoundary(p, r, now)).toBe(true);
   for (const change of [
     { owner: { ...r.owner, observedAt: "2026-10-24T18:11:30.000Z" } },

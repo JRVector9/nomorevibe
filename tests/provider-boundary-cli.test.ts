@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { readBoundaryReleaseFiles } from "@/scripts/ops/model-provider-boundary-release";
-import { providerBoundaryPlanHash } from "@/lib/llm/provider-boundary-contract";
+import { providerBoundaryCanonicalHash, providerBoundaryPlanHash } from "@/lib/llm/provider-boundary-contract";
 import { boundaryFixture } from "./fixtures/provider-boundary-release";
 import { launchdBoundaryFixture } from "./fixtures/provider-boundary-launchd";
+import { historicalOwnerFixture } from "./fixtures/provider-boundary-historical-owner";
 
 it("operator CLI defaults to rollback and pins reviewed plan bytes plus every actual artifact byte hash",()=>{
   const dir=mkdtempSync(join(tmpdir(),"boundary-cli-"));
@@ -43,4 +44,21 @@ it("launchd CLI도 topology 원문 artifact를 실제 재해시하고 없거나 
     writeFileSync(join(dir,`${plan.provider.topologyProofSha256}.json`),"changed");
     expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_artifact_hash");
   } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+it("v2 CLI는 current ingress와 별도로 originalOwner 보조 artifact 원문을 요구한다",()=>{
+  const dir=mkdtempSync(join(tmpdir(),"boundary-history-cli-"));
+  try {
+    const {plan,receipt}=historicalOwnerFixture(),sha=(v:string)=>createHash("sha256").update(v).digest("hex");
+    const artifact=(v:string)=>{const h=sha(v);writeFileSync(join(dir,`${h}.json`),v,{mode:0o600});return h;};
+    plan.beforeArtifactHash=artifact('{"fixture":"before"}');plan.originalOwner.artifactHash=artifact('{"fixture":"supplemental original-owner observations only"}');
+    plan.provider.topologyProofSha256=artifact('{"fixture":"topology"}');receipt.currentIngressOwner.artifactHash=artifact('{"fixture":"current ingress"}');
+    receipt.gateways.forEach((g,i)=>g.artifactHash=artifact(JSON.stringify({fixture:`gateway${i}`})));receipt.provider.artifactHash=artifact('{"fixture":"provider"}');
+    receipt.originalOwnerProofHash=providerBoundaryCanonicalHash(plan.originalOwner);receipt.planHash=providerBoundaryPlanHash(plan);
+    const bytes=JSON.stringify(plan);writeFileSync(join(dir,"plan.json"),bytes,{mode:0o600});writeFileSync(join(dir,"receipt.json"),JSON.stringify(receipt),{mode:0o600});
+    const args=[`--plan=${join(dir,"plan.json")}`,`--plan-sha=${sha(bytes)}`,`--receipt=${join(dir,"receipt.json")}`,`--artifact-dir=${dir}`,"--operator=fixture","--reference=synthetic observations","--database-url-stdin"];
+    expect(readBoundaryReleaseFiles(args).apply).toBe(false);
+    writeFileSync(join(dir,`${plan.originalOwner.artifactHash}.json`),"changed");
+    expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_artifact_hash");
+  }finally{rmSync(dir,{recursive:true,force:true});}
 });
