@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { readBoundaryReleaseFiles } from "@/scripts/ops/model-provider-boundary-release";
 import { providerBoundaryPlanHash } from "@/lib/llm/provider-boundary-contract";
 import { boundaryFixture } from "./fixtures/provider-boundary-release";
+import { launchdBoundaryFixture } from "./fixtures/provider-boundary-launchd";
 
 it("operator CLI defaults to rollback and pins reviewed plan bytes plus every actual artifact byte hash",()=>{
   const dir=mkdtempSync(join(tmpdir(),"boundary-cli-"));
@@ -24,5 +25,22 @@ it("operator CLI defaults to rollback and pins reviewed plan bytes plus every ac
     expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_artifact_hash");
     writeFileSync(join(dir,"plan.json"),`${bytes}\n`);
     expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_plan_file_hash");
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+it("launchd CLI도 topology 원문 artifact를 실제 재해시하고 없거나 바뀌면 실행하지 않는다", () => {
+  const dir=mkdtempSync(join(tmpdir(),"boundary-mac-cli-"));
+  try {
+    const {plan,receipt}=launchdBoundaryFixture(), sha=(v:string)=>createHash("sha256").update(v).digest("hex");
+    const artifact=(v:string)=>{const h=sha(v);writeFileSync(join(dir,`${h}.json`),v,{mode:0o600});return h;};
+    plan.beforeArtifactHash=artifact('{"fixture":"before"}');
+    plan.provider.topologyProofSha256=artifact('{"fixture":"reviewed synthetic topology"}');
+    receipt.owner.artifactHash=artifact('{"fixture":"owner"}');receipt.gateways.forEach((g,i)=>g.artifactHash=artifact(JSON.stringify({fixture:`gateway${i}`})));
+    receipt.provider.artifactHash=artifact('{"fixture":"provider"}');receipt.planHash=providerBoundaryPlanHash(plan);
+    const bytes=JSON.stringify(plan);writeFileSync(join(dir,"plan.json"),bytes);writeFileSync(join(dir,"receipt.json"),JSON.stringify(receipt));
+    const args=[`--plan=${join(dir,"plan.json")}`,`--plan-sha=${sha(bytes)}`,`--receipt=${join(dir,"receipt.json")}`,`--artifact-dir=${dir}`,"--operator=fixture","--reference=synthetic observations","--database-url-stdin"];
+    expect(readBoundaryReleaseFiles(args).apply).toBe(false);
+    writeFileSync(join(dir,`${plan.provider.topologyProofSha256}.json`),"changed");
+    expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_artifact_hash");
   } finally {rmSync(dir,{recursive:true,force:true});}
 });

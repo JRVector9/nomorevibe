@@ -897,6 +897,13 @@
       "when": 1794086400039,
       "tag": "0127_assist_pending_cancellation",
       "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1794086400040,
+      "tag": "0128_macos_provider_boundary_exit",
+      "breakpoints": true
     }
   ]
 }

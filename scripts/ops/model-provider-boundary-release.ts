@@ -24,6 +24,7 @@ export function readBoundaryReleaseFiles(args: readonly string[]) {
   const plan = providerBoundaryPlanSchema.parse(JSON.parse(bytes.toString("utf8")));
   const receipt = providerBoundaryReceiptSchema.parse(JSON.parse(boundedFile(opts.get("receipt")!).toString("utf8")));
   const hashes = [plan.beforeArtifactHash, receipt.owner.artifactHash, ...receipt.gateways.map(g => g.artifactHash), receipt.provider.artifactHash];
+  if (plan.provider.kind === "launchd") hashes.push(plan.provider.topologyProofSha256);
   for (const hash of hashes) if (sha(boundedFile(resolve(opts.get("artifact-dir")!, `${hash}.json`))) !== hash)
     throw new Error("provider_boundary_artifact_hash");
   return { apply, plan, receipt, expectedPlanHash: providerBoundaryPlanHash(plan), operator: opts.get("operator")!, reference: opts.get("reference")! };
