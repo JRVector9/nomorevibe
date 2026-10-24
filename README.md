@@ -104,7 +104,7 @@ docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
 export TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-# 빈 DB 에서 직렬 ledger·호출 파일 18개를 정해진 순서로 하나씩(CI 의 integration-ledger 잡)
+# 빈 DB 에서 직렬 ledger·호출 파일 19개를 정해진 순서로 하나씩(CI 의 integration-ledger 잡)
 for file in $(node scripts/integration-shards.mjs --serial); do npm run test:integration -- "$file" || break; done
 # 나머지 통합 파일 전체(직렬 파일 제외)
 npm run test:integration -- $(node scripts/integration-shards.mjs --exclude-args)
@@ -127,7 +127,7 @@ lint(ESLint·Python unittest)·단위 테스트 2개 묶음·build(번들 크기
 병렬 실행한다. 통합 묶음은 파일 수가 아니라 `tests/integration/durations.json`의 파일별 시간으로 나눈다
 (긴 파일부터 가장 가벼운 묶음에, `scripts/integration-shards.mjs`). 묶음과 ledger 잡은 각자 runner 안의 일회용 DB
 (tmpfs, `fsync`·`synchronous_commit`·`full_page_writes` off)를 쓰고, 묶음 안에서는 파일을 직렬 실행한다.
-ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열여덟 파일(제품 번역 ledger부터 AI1 소비자까지)을 정해진 순서로 하나씩 실행한다.
+ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열아홉 파일(제품 번역 ledger부터 AI1 소비자까지)을 정해진 순서로 하나씩 실행한다.
 각 파일은 원 행 기준 상태를 복원하며, 묶음 실행은 이 열여덟 파일을 제외해 모든 통합 파일을 정확히 한 번 실행한다.
 묶음마다 파일별 시간을 artifact(`integration-durations-*`)로 남기고 `node scripts/integration-durations.mjs --run <실행 id>`로
 기록을 갱신한다(`--plan 6`은 배정만 보여 준다).

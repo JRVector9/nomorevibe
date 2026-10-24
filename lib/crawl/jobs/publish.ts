@@ -12,6 +12,8 @@ import { recordPublicationFailure } from "@/lib/crawl/publication-guard";
 import { requeueInvalidStarApprovals, reviewApprovalPredicate, starAutoApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { requiresProfileCategory } from "@/lib/crawl/rules";
 import { requestJob } from "@/lib/jobs/control";
+import { publicationClassificationAuthority, publicationClassificationPath } from '@/lib/crawl/publication-classify-capacity';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 
 /**
  * 발행 잡 — 통과한 후보를 목록에 올린다. 파이프라인의 마지막 단계다.
@@ -72,9 +74,30 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     let classified: (Category | null)[] = [];
     if (inputs.length > 0) {
       if (process.env.CONNECT_AGENT_URL) {
-        try { classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { inputs, definitions: settings.classify.definitions })).categories; }
-        catch { classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length }); }
-      } else classified = await classifyCategories(inputs, undefined, undefined, undefined, settings.classify.definitions);
+        let nativeRequested = false;
+        try {
+          const payload = { inputs, definitions: settings.classify.definitions };
+          const selected = prepared.flatMap(item => item.classification && inputs.some(input => input.repo === item.candidate.repo)
+            ? [{ candidate: item.candidate, classification: item.classification, decision: decisions.get(item.candidate.repo) ?? null }] : []);
+          const authority = await publicationClassificationAuthority(selected, payload, ctx.lease);
+          nativeRequested = authority !== undefined;
+          classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { ...payload, ...(authority ? { authority } : {}) })).categories;
+        } catch (error) {
+          if (error instanceof ModelCapacityDeferredError || nativeRequested) {
+            // A lost RPC response cannot prove whether the remote native child has ended.
+            ctx.log('crawl.classification_deferred', { count: inputs.length,
+              reason: error instanceof ModelCapacityDeferredError ? error.reason : 'dispatched' });
+            return { done: false };
+          }
+          classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length });
+        }
+      } else {
+        if (await publicationClassificationPath() !== 'legacy') {
+          ctx.log('crawl.classification_deferred', { count: inputs.length, reason: 'provider_contract_unavailable' });
+          return { done: false };
+        }
+        classified = await classifyCategories(inputs, undefined, undefined, undefined, settings.classify.definitions);
+      }
     }
     const categoryByRepo = new Map(inputs.map((input, index) => [input.repo, classified[index] ?? null]));
     const snapshotByRepo = new Map(prepared.flatMap(item => item.classification

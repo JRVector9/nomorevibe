@@ -1,3 +1,43 @@
+# 2026-10-25 KST — 병렬 후속 구현 통합 중
+
+현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root branch는
+`codex/llm-assist-native-activation-20261025`, 원 사용자 WT 변경은 보존했다.
+
+- main592c0a1b의 16앱 배포 뒤 M3 AI2 소비자1앱을 실제 생성·배포했다. 15:57:28Z healthy/heartbeat running,
+  source11/11·고정worker4333·release592c·전용health·network/resources를 확인했다. 총17앱/22컨테이너다.
+  AI2 stage는legacy/epoch1/contract0, globaldisabled/rev1로 유지해 모델·item dispatch0이었다.
+  actual appID S7HvgYAeS4hLimJ3_n5Uf를 배포 registry에 등록했다. 없는 mini host는 실행 대상으로 만들지 않았다.
+  root 운영도구 회귀는 원래3 assertion RED 뒤 기존 inventory fixture를 실제17앱에 맞춰,
+  94건 중92 PASS/2 SKIP했다. 중간 fixture KeyError6·옛16앱 기대3도 숨기지 않는다.
+- 15caller 앱의 새 계약 env는 저장·full readback했지만 아직 다음 코드 배포 전이다. 기존 containerenv는
+  이전값이며 배포ID/RELEASE_TAG는592c로 유지됐다. 전역open/새task dispatch는 아직 하지 않았다.
+- classifier feature d8a90b40을 root가 source/SQL 직접 리뷰하고 인수 중이다. agent 최종 unit124/124,
+  scoped integration85건·fresh migration126/126·typegen/tsc/lint/diffcheck PASS. 전체 CI는 아직 없다.
+  원격 opaque terminal·실제 publisher source/role/job CAS, 종료불명 mutex·fallback 차단,
+  RPC결과유실 defer, manual probe/test guard와 classifier의 readiness 분모를 포함한다.
+  CLI tool의 누락된 startup version probe도 실제 subprocess RED→GREEN으로 고쳤다.
+  검증·전체 수정파일·실패·명령은 operations/2026-10-24-publication-classify-capacity.md와 별도 plan을 따른다.
+  shared handoff 충돌은 root 운영 기록을 보존하고 이 최신 인수 요약으로 해소했다.
+- repo/pointer feature4c8c4541은 root가 production5파일 직접 리뷰했고 이어 인수할 예정이다.
+  agent unit114/114·격리DB46/46·typegen/tsc/lint/diffcheck PASS. 원본93평가파일 hash 불일치0,
+  추가모델0, 기존 개발29회·원점수·AI라벨을 유지했다. uptime schema/prompt hash는 불변이다.
+- DeepSeek grammar는 실제 xgrammar/torch 부재와 모델0 fixture로 strict fallback을 확인했다.
+  jsonSchema=false 계약84168을 유지한다. 격리 dependency staging 가능성만 조사 중이며 기존 guard를 우회하지 않는다.
+
+다음 명령은 root 통합 WT에서 source 인수와 필수 CI를 진행한다. 배포 전 새0125 실제 적용·journal readback,
+후속17앱 고정릴리스, AI2 contract→drain→capacity open→items의 정상 전환과 native canary가 남았다.
+자동 적용은 사람 독립 holdout 전 계속false다. 기존17개 개발표본을 뒤늦게 holdout으로 승격하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+# classifier handoff conflict 해소 후 git cherry-pick --continue
+# git cherry-pick 4c8c45419d67a249e97af6c4137efd6dc186c8f0
+# 두 feature 통합 뒤 최신 origin/main과 CI/check를 확인한다.
+```
+
+---
+
 # 2026-10-24 15:40Z / 10-25 KST — 후속 병렬 구현·실데이터 평가
 
 16앱 main592c0a1b 배포는 아래 기록대로 완료했다. 현재 후속 source PR은 아직 병합하지 않았다.

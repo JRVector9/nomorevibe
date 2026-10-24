@@ -13,6 +13,7 @@ import { db } from '@/lib/db';
 import { operationsAudit } from '@/lib/db/schema';
 import { assertWebWritable, webWriteAction } from '@/lib/operations/dr/web-gate';
 import { COLLECTION_OFF_REASONS, COLLECTION_ON_REASONS } from './collection-reasons';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 export type ActionResult = { message?: string; error?: string; status?: AgentStatus };
 export const requestOperation = webWriteAction(async function requestOperation(name:string):Promise<ActionResult> {
   const admin=await currentAdmin();if(!admin)return {error:'관리자 로그인이 필요합니다.'};
@@ -36,7 +37,9 @@ export async function codexOperation(action:string,data:Record<string,unknown>={
     if(action!=='status')await recordAdminAction(admin.login,{action:`ai-${action}`,target:'connect-agent',detail:{generation:status.generation,configVersion:status.configVersion}});
     if(action!=='status')revalidatePath('/admin/status');return {status};
   } catch(error) {
-    const message=error instanceof Error?error.message:'AI 연결 서비스 요청 실패';
+    const message=error instanceof ModelCapacityDeferredError && (action==='probe'||action==='test')
+      ? '공통 모델 용량 제어가 켜져 있거나 전환 중이면 수동 계정·모델 검사를 실행할 수 없습니다. 운영 제어를 확인해주세요.'
+      : error instanceof Error?error.message:'AI 연결 서비스 요청 실패';
     if(action!=='status')await recordAdminAction(admin.login,{action:`ai-${action}`,target:'connect-agent',ok:false,error:message});
     return {error:message};
   }

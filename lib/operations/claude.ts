@@ -18,6 +18,27 @@ export function isolatedClaudeEnv(home: string): NodeJS.ProcessEnv {
     CLAUDE_CONFIG_DIR: join(home, 'claude'), XDG_CONFIG_HOME: join(home, '.config'),
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '4000' };
 }
+/** Exact invocation shared by the legacy adapter and the native process runner. */
+export function claudeClassificationArgs(model: string, output: 'category' | 'text' = 'category'): string[] {
+  return ['-p', '--output-format', 'json', ...(output === 'category' ? ['--json-schema', JSON.stringify(OUTPUT_SCHEMA)] : []),
+    '--model', model, '--effort', 'high', '--tools', '', '--max-turns', '2', '--no-session-persistence',
+    '--safe-mode', '--disable-slash-commands', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-chrome'];
+}
+export function parseClaudeClassificationResult(result: CliResult, output: 'category' | 'text' = 'category'): CliResult {
+  if (result.kind !== 'exit') return result;
+  let { code, stdout, stderr } = result;
+  try {
+    const envelope = JSON.parse(stdout);
+    if (envelope.is_error) {
+      code = 1;
+      const detail = [envelope.subtype, typeof envelope.result === 'string' ? envelope.result : ''].filter(Boolean).join(' ');
+      stderr += `\nError: ${detail.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]').slice(0, 500)}`;
+    } else if (output === 'text') stdout = typeof envelope.result === 'string' ? envelope.result.trim() : '';
+    else if (envelope.structured_output) stdout = JSON.stringify(envelope.structured_output);
+    else stdout = '';
+  } catch { stdout = ''; }
+  return { kind: 'exit', code, stdout, stderr };
+}
 export const runClaude = (token: string, output: 'category' | 'text' = 'category'): CliRun => async (codexArgs, stdin, timeoutMs) => {
   const home = mkdtempSync(join(tmpdir(), 'nomorevibe-claude-run-'));
   try {
@@ -25,9 +46,7 @@ export const runClaude = (token: string, output: 'category' | 'text' = 'category
       const model = codexArgs[codexArgs.indexOf('-m') + 1];
       // 턴 2: 첫 답이 스키마에 어긋나면 CLI 가 한 번 더 맞춰 볼 수 있어야 한다. 1이면 곧바로 error_max_turns 다.
       // AI 심사(lib/crawl/agent-review.ts)가 같은 설정으로 34% 실패하던 것을 2로 올려 없앴다(2026-09-11).
-      const args = ['-p', '--output-format', 'json', ...(output === 'category' ? ['--json-schema', JSON.stringify(OUTPUT_SCHEMA)] : []),
-        '--model', model, '--effort', 'high', '--tools', '', '--max-turns', '2', '--no-session-persistence',
-        '--safe-mode', '--disable-slash-commands', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--no-chrome'];
+      const args = claudeClassificationArgs(model, output);
       const child = spawn(process.env.CLAUDE_CLI ?? 'claude', args, { cwd: home,
         env: { ...isolatedClaudeEnv(home), CLAUDE_CODE_OAUTH_TOKEN: token }, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
       let stdout = '', stderr = '', bytes = 0, stopped: CliResult | null = null;
@@ -44,19 +63,7 @@ export const runClaude = (token: string, output: 'category' | 'text' = 'category
       child.on('close', code => {
         clearTimeout(timer); killProcessGroup(child.pid);
         if (stopped) { resolve(stopped); return; }
-        try {
-          const envelope = JSON.parse(stdout);
-          if (envelope.is_error) {
-            code = 1;
-            // 무엇이 실패했는지를 버리지 않는다 — 사용 한도·턴 초과를 "요청 실패"와 가르는 근거다(failureReason)
-            const detail = [envelope.subtype, typeof envelope.result === 'string' ? envelope.result : ''].filter(Boolean).join(' ');
-            stderr += `\nError: ${detail.replace(/sk-ant-[A-Za-z0-9_-]+/g, '[REDACTED]').slice(0, 500)}`;
-          }
-          else if (output === 'text') stdout = typeof envelope.result === 'string' ? envelope.result.trim() : '';
-          else if (envelope.structured_output) stdout = JSON.stringify(envelope.structured_output);
-          else stdout = ''; // Only structured output is accepted.
-        } catch { stdout = ''; }
-        resolve({ kind: 'exit', code, stdout, stderr });
+        resolve(parseClaudeClassificationResult({ kind: 'exit', code, stdout, stderr }, output));
       });
       child.stdin.end(stdin);
     });

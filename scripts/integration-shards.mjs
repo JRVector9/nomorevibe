@@ -32,6 +32,7 @@ export const SERIAL_FILES = [
   'tests/integration/model-capacity-cli-ledger.test.ts', // 복원된 웹 검색 기준 위 CLI 프로세스 ledger
   'tests/integration/cli-background-model-capacity.test.ts',
   'tests/integration/review-cli-capacity-dispatch.test.ts', // AI1·AI2 CLI 호출
+  'tests/integration/publication-classify-capacity.test.ts', // publisher→원격 classifier native 종료·source/lease 권한
   'tests/integration/reason-translation-capacity-ledger.test.ts',
   'tests/integration/reason-translation-capacity-dispatch.test.ts',
   'tests/integration/text-profile-capacity-dispatch.test.ts',

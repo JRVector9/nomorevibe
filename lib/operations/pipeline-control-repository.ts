@@ -86,6 +86,10 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
         FROM operations_observations o WHERE o.key LIKE 'service:%:%' AND o.key NOT LIKE 'service:scheduler:%'
           AND o.observed_at >= localtimestamp - interval '24 hours'), '[]'::jsonb),
       'reviewSettings', (SELECT s."values" FROM crawl_settings s WHERE s.id = 1),
+      'classificationObservations', coalesce((SELECT jsonb_agg(jsonb_build_object(
+          'observedAt',to_char(o.observed_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'value',o.value))
+        FROM operations_observations o WHERE o.key LIKE 'service:connect-agent:%'
+          AND o.observed_at BETWEEN (c.at AT TIME ZONE 'UTC')-interval '15 seconds' AND (c.at AT TIME ZONE 'UTC')), '[]'::jsonb),
       -- product_audit_one_running_idx: 실행 중 감사는 많아야 하나다
       -- 남은 감사 모델 바꾸기(0112) 뒤면 바꾼 심사자가 묻는다(product-audit-reviewer.ts auditReviewer 와 같은 규칙)
       'auditCampaign', (SELECT jsonb_build_object('provider', CASE WHEN a.current_provider IS NOT NULL AND a.current_model IS NOT NULL THEN a.current_provider ELSE a.provider END,

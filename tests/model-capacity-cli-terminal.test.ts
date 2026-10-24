@@ -61,6 +61,7 @@ function targetOf(value: Binding) {
     case "product_audit_cli": return { kind: "audit", itemId: 31 } as const;
     case "intro_check_cli": return { kind: "intro", members } as const;
     case "grok_session_cli": return { kind: "grok-session", instanceId: owner.instanceId } as const;
+    case "publication_classify_cli": return { kind: "publication-classify", members: value.members } as const;
   }
 }
 const handle = () => modelCapacityReservationSchema.parse({ requestId: randomUUID(), owner, token: randomUUID(), epoch: 1, revision: 1,

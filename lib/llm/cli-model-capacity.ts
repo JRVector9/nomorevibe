@@ -67,7 +67,13 @@ export function grokCliCallInput(routeId: string, model: string, args: string[],
 
 type CliPlan = Readonly<{ identity: ModelCapacityRequestIdentity; target: CliTarget }>;
 export type CliCapacityRun = Readonly<{ kind: "ran"; result: CliProcessResult } | { kind: "not_started" | "skipped" }>;
+/** The current native child has no physical terminal. Admission refusals never use this error. */
+export class CliPhysicalEndUnknownError extends ModelCapacityDeferredError {
+  constructor(readonly cause?: unknown) { super("dispatched"); this.name = "CliPhysicalEndUnknownError"; }
+}
 export type CliCapacityWork = Readonly<{
+  /** A multi-model caller must never start fallback while this process has no physical terminal. */
+  requireTerminal?: true;
   /** dispatch 커밋 뒤 spawn 직전의 기존 시간 검사(remaining·canStart). false 면 not_started 로 정산하고 업무는 적지 않는다 */
   beforeSpawn: () => boolean;
   /** 슬롯 요청 전 주인·도메인 스냅숏. null 이면 그사이 바뀌었다 */
@@ -120,16 +126,23 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
   let outcome: CliCallOutcome;
   try { outcome = await runReservedCliCall(call, ref, { signal }); }
   catch (error) {
+    let failure: unknown = error;
     try {
       if (!await markModelDispatchIndeterminate(dispatch, signal?.aborted ? "local_abort" : "transport_unknown")) throw new Error("cli_model_dispatch_not_marked");
-    } catch (cleanup) { throw new AggregateError([error, cleanup], "cli_model_transport_cleanup_failed"); }
-    throw error;
+    } catch (cleanup) { failure = new AggregateError([error, cleanup], "cli_model_transport_cleanup_failed"); }
+    if (work.requireTerminal) throw new CliPhysicalEndUnknownError(failure);
+    throw failure;
   }
   // 물리 종료가 업무 기록보다 먼저 정산된다. close 를 못 본 호출(자손이 pipe 를 쥠)은 terminal 없이 점유를 유지한다
   if (outcome.terminal) {
     try { await reconcileCliProcessTerminal(outcome.terminal); }
     catch (error) { await markUnsettledDispatch(dispatch); throw error; }
-  } else if (!await markModelDispatchIndeterminate(dispatch, outcome.indeterminate)) throw new Error("cli_model_dispatch_not_marked");
+  } else {
+    try {
+      if (!await markModelDispatchIndeterminate(dispatch, outcome.indeterminate)) throw new Error("cli_model_dispatch_not_marked");
+    } catch (error) { if (work.requireTerminal) throw new CliPhysicalEndUnknownError(error); throw error; }
+    if (work.requireTerminal) throw new CliPhysicalEndUnknownError();
+  }
   return readCliProcessTerminal(outcome.terminal)?.ending === "not_started" ? { kind: "not_started" } : { kind: "ran", result: outcome.result };
 }
 
