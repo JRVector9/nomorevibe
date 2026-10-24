@@ -1,9 +1,14 @@
 # 2026-10-24 LLM 확인 경로의 운영 전환 기록
 
+> **최신 상태(2026-10-25 KST):** PR649–651/main be71a75a·journal130개(최신0129)·17앱22컨테이너 배포와 capacity open을 완료했다.
+> AI2 items/epoch2/contract1, 6업무 dispatch true/apply false다. M3 미확정 요청도 실제 경계 종료 증거로 회수했다.
+> be71 T0·T5·T10은 실제 통과했고 후속 관측을 자동 실행한다. 독립 사람 평가·적체 완료·미래6시간 통과는 아직 주장하지 않는다.
+> [최신 운영 기록](2026-10-25-llm-assist-production-activation.md)과 [시간 단축 검토](2026-10-25-deployment-time-review.md)를 먼저 읽는다.
+
 사용자가 남은 구현·운영 활성화·배포와 병렬 서브에이전트를 명시 지시했다. 원 사용자 WT를 보존하고
 `nomorevibe-uptime-pre-delist-check`에서 작업한다. 이 문서의 실행과 미실행 항목을 구분한다.
 
-## 현재 운영 실행
+## 당시 운영 실행 — 과거 기록
 
 - 후속 릴리스 준비로 gateway9/local2/CLI3·정책25route의 통합 후보를 실제 Zod/canonical hash 및 gateway startup
   parser로 검증했다. 정책 hash는57fca5f1e18eeaa4c5ede070e639b042776eb9a40193f1ebb35ace8033e31ed5다.
@@ -102,7 +107,7 @@ native admission·원장·전역 용량을 통과했다는 증거도 아니다. 
   기존 caller를 미루거나 누락하므로 그렇게 전환하지 않는다. ConnectAgent의 분류 CLI는 별도 후속 PR에서
   원격 프로세스 내부 reserve→dispatch→native terminal 정산으로 연결 중이다. 기존 제품 모델 설정은 유지한다.
 - Oracle uptime unit은inactive/dead이고 기존 consumer는status-only다. 이를 이미 본문 확인 relay인 것으로 보고하지 않는다.
-- 현재 global capacity는disabled이며 `globalReady=false`, 자동 적용 적격성도false다. 구현·배포와 이 상태를 섞지 않는다.
+- 당시 global capacity는disabled였으며 `globalReady=false`, 자동 적용 적격성도false다. 구현·배포와 이 상태를 섞지 않는다.
 
 ## 검증·산출물
 
