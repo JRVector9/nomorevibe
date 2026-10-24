@@ -16,6 +16,32 @@ const ok = (body: unknown, finalUrl = "https://example.com"): CappedFetchResult 
 });
 
 describe("capped external fetch", () => {
+  it.each([404, 410])("reads HTTP %i only with an explicit accepted-error opt-in", async status => {
+    const request = async () => new Response("Not available", { status });
+    expect(await fetchCapped("https://8.8.8.8/missing", { maxBytes: 32, request }))
+      .toEqual({ ok: false, reason: "http", status });
+    expect(await fetchCapped("https://8.8.8.8/missing", { maxBytes: 32, acceptedErrorStatuses: [404, 410], request }))
+      .toMatchObject({ ok: true, status, body: Buffer.from("Not available") });
+  });
+  it.each([401, 403, 429, 500, 503])("still rejects HTTP %i outside the accepted-error list", async status => {
+    expect(await fetchCapped("https://8.8.8.8/error", { maxBytes: 32, acceptedErrorStatuses: [404, 410],
+      request: async () => new Response("Readable error", { status }) }))
+      .toEqual({ ok: false, reason: "http", status });
+  });
+  it("applies the same strict and prefix byte caps to explicitly accepted HTTP errors", async () => {
+    const request = async () => new Response("123456789", { status: 404, headers: { "content-length": "9" } });
+    expect(await fetchCapped("https://8.8.8.8/error", { maxBytes: 4, acceptedErrorStatuses: [404], request }))
+      .toEqual({ ok: false, reason: "too_large" });
+    expect(await fetchCapped("https://8.8.8.8/error", { maxBytes: 4, acceptedErrorStatuses: [404], allowTruncatedBody: true, request }))
+      .toMatchObject({ ok: true, status: 404, body: Buffer.from("1234"), truncated: true });
+  });
+  it("keeps an accepted-error body stream timeout as a timeout failure", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { controller.error(new DOMException("timed out", "TimeoutError")); },
+    });
+    expect(await fetchCapped("https://8.8.8.8/error", { maxBytes: 32, acceptedErrorStatuses: [410],
+      request: async () => new Response(body, { status: 410 }) })).toEqual({ ok: false, reason: "timeout" });
+  });
   it("returns the complete prefix without waiting for the oversized response tail", async () => {
     let pulls = 0;
     const cancelled = vi.fn();

@@ -196,6 +196,8 @@ export async function fetchCapped(
     allowTruncatedBody?: boolean;
     /** The caller has a cached representation for a conditional 304 response. */
     acceptNotModified?: boolean;
+    /** Preserve explicitly selected HTTP error bodies as bounded observations, not HTTP success. */
+    acceptedErrorStatuses?: readonly number[];
     /** 테스트 전용 주입점. 프로덕션 기본 요청은 연결 시점 DNS도 재검사한다. */
     request?: CappedRequest;
   },
@@ -244,7 +246,7 @@ export async function fetchCapped(
       }
       continue;
     }
-    if (!response.ok) {
+    if (!response.ok && !options.acceptedErrorStatuses?.includes(response.status)) {
       await cancelUnusedBody(response);
       return { ok: false, reason: "http", status: response.status };
     }

@@ -31,7 +31,8 @@ export function actionAuditBackendEligible(candidateValue: ActionAuditCandidate,
 }
 
 async function currentSource(url: string, kind: "page" | "repository" | "readme", signal: AbortSignal): Promise<AssistSource> {
-  const result = await fetchCapped(url, { maxBytes: 128_000, timeoutMs: 8_000, allowTruncatedBody: true, signal });
+  const result = await fetchCapped(url, { maxBytes: 128_000, timeoutMs: 8_000, allowTruncatedBody: true, signal,
+    ...(kind === "page" ? { acceptedErrorStatuses: [404, 410] } : {}) });
   const observedAt = new Date().toISOString();
   if (!result.ok) {
     const status = result.reason === "http" ? result.status : null;
