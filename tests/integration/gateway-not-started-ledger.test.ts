@@ -248,18 +248,18 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of UNTOUCHED) expect(after[name]).toBe(before[name]);
 
-    // Later direct/assist migrations deliberately extend four CHECKs. Keep the
-    // historical 0102 comparison exact, then verify its legacy predicates survive
+    // Later direct/assist migrations extend four CHECKs; 0125 also extends members.
+    // Keep the historical 0102 comparison exact, then verify its legacy predicates survive
     // those later additions on the actual latest schema as well.
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
     expect(applied.count).toBe(journal.entries.length);
     const current = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
-    for (const name of [...LEFT, ...UNTOUCHED.slice(0, 2)]) {
+    for (const name of [...LEFT, ...UNTOUCHED.slice(0, 3)]) {
       const legacy = inner(after[name]), combined = inner(current[name]);
       expect(combined.startsWith(`${legacy.slice(0, -1)} OR `), `${name}: current legacy prefix`).toBe(true);
     }
-    for (const name of UNTOUCHED.slice(2)) expect(current[name], `${name}: current unchanged CHECK`).toBe(after[name]);
+    for (const name of UNTOUCHED.slice(3)) expect(current[name], `${name}: current unchanged CHECK`).toBe(after[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 

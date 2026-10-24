@@ -1,3 +1,41 @@
+# 2026-10-25 01:31 KST — PR646 필수 CI 후속 수정
+
+root branch는 `codex/llm-assist-native-activation-20261025`, PR646의 첫 head fa2455f6이다.
+CI40110815083에서 build/typecheck/lint·unit2·원장/통합4묶음은 성공했지만 unit1와 통합2·4는 실패했다.
+실패를 무시하지 않고 다음 범위만 수정했다. 운영0125 적용/후속 코드 배포/전역open은 아직0이다.
+
+- Drizzle5 CHECK는 최신0124 조건을 갖고 있었으나 classifier OR의 괄호 위치가0125와 byte 불일치였다.
+  닫는 괄호만 이동해5개 전체를 일치시켰고 members exact 회귀도 추가했다. root unit2파일4/4 PASS.
+  migration92a792 hash와 기존 strict 조건은 불변이다.
+- gateway-not-started의 역사 검사에서 현재 members CHECK가0096과 불변이라는 옛 기대를0125의
+  실제 확장에 맞춰 prefix 보존 검사로 옮겼다. 실제 DB 전체파일7/7 PASS.
+- repo lock-order fixture는 새 공식 홈페이지 근거가 없어 advisory lock 전에 올바르게 기권했다.
+  전용DB32779에서 RED를 재현하고 fresh page+단일 Source metadata·판정전제 assertion을 추가해3/3 PASS.
+  실제 pg_locks/pg_blocking_pids 대기 관측과 writer 커밋·무권한 적용 거절은 유지했다. 생산 guard/락 변경0.
+- private followup-git-build-rollout helper는 새7계약 env를 정확히 허용하되 다른 env·mount·secret 변경은
+  거절하도록 별도 준비했다. 실제 RED3 뒤16개 guard 테스트 PASS. 아직 fresh7앱 baseline/실배포 전이다.
+- 운영0125 one-shot helper/계획은 migration-0125-preflight 아래 준비했다. primary5432/active fence1,
+  실제 journal125·이전 hash 일치·원장0/0·제약5validated·DDL권한을 READ ONLY 확인했다. root가 소스를
+  직접 리뷰했고 새 main CI 성공·정확 mergedHEAD 뒤 existing migrator를1회 호출할 예정이다.
+- DeepSeek grammar target 설치·모델0 fixture12PASS 뒤 entry PYTHONPATH1줄만29a9로 전환했다.
+  active0/wait0 확인 후16:24:08Z SIGTERM1회, old80130 종료·new11113·16:26:43Z loaded2/health200을 확인했다.
+  strict POST는 아직0이다. 첫preflight는추가pyc55개 때문에멈췄고 원281파일불변·각pyc source/header/codeobject와
+  실제PID dylib4개의 target경로를 증명해 manifest336을 고정했다. 추가signal0, 계약false84168은 유지한다.
+
+수정파일: operations-schema.ts·schema exact unit·gateway 역사 DB test·repo lock DB test·pipeline runbook와
+이 handoff다. 다음은 새 head commit/push→전체 필수 CI→최신 base merge→migration126→17앱 release다.
+사람5표본 라벨은 대기, 자동적용false다. 운영 명령 준비는 evaluation agent가 private에 보존 중이다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git diff --check
+gh pr view 646 --json headRefOid,baseRefOid,statusCheckRollup,mergeStateStatus
+# first CI 실패 head를 병합하지 않는다. 수정 head push 후 필수 check 실제 성공을 기다린다.
+```
+
+---
+
 # 2026-10-25 01:16 KST — 통합 DB 회귀 수정·필수 CI 준비
 
 현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root 통합 branch는
