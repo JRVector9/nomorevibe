@@ -876,6 +876,13 @@
       "when": 1794086400036,
       "tag": "0124_local_model_capacity_assist_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1794086400037,
+      "tag": "0125_publication_classify_cli",
+      "breakpoints": true
     }
   ]
 }

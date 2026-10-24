@@ -91,7 +91,7 @@ node --import tsx scripts/ops/pipeline-control.ts status --json > control-before
 
 - AI2 consumer는 capacity가 `disabled`면 `disabled`, `draining`이면 `draining`, open이어도 `second-review` 매핑·serving 계약이 없으면 `unmapped`·`provider_contract_unavailable`로 **모든 항목을 미룬다**(`lib/crawl/second-review-ownership.ts:358-371`). AI1 consumer도 같다(`lib/crawl/agent-review-repository.ts:834-845`, provider `rules`만 예외).
 - 반대로 AI2 legacy job은 capacity가 open이면 admission만 있어 **항상 미룬다**(`lib/crawl/jobs/second-review.ts:59-64`). AI1 legacy job에는 native 경로가 있다.
-- 지금 통합 브랜치는 gateway·CLI serving 계약 resolver가 모두 `null`이다. 이 상태에서 stage를 items로 바꾸면 그 stage가 멈춘다. 그래서 도구는 `stage complete --to=items`를 capacity가 open이 아니거나 그 stage가 쓰는 조합(§6-3) 중 serving이 아닌 것이 있으면 **dry-run부터 거절**한다(`items_consumer_defers:*`, exit 3). 멈추는 것을 사용자가 승인한 경우에만 `--allow-stalled-stage`를 붙인다(경고로 남는다). `stage drain --from-mode=legacy`는 경고만 하고, items → draining → legacy 복귀는 막지 않는다.
+- gateway·CLI serving 계약 resolver는 검증된 환경 계약과 실제 CLI 버전을 확인한다. 누락·불일치로 `null`인 상태에서 stage를 items로 바꾸면 그 stage가 멈춘다. 그래서 도구는 `stage complete --to=items`를 capacity가 open이 아니거나 그 stage가 쓰는 조합(§6-3) 중 serving이 아닌 것이 있으면 **dry-run부터 거절**한다(`items_consumer_defers:*`, exit 3). 멈추는 것을 사용자가 승인한 경우에만 `--allow-stalled-stage`를 붙인다(경고로 남는다). `stage drain --from-mode=legacy`는 경고만 하고, items → draining → legacy 복귀는 막지 않는다.
 - 따라서 AI2 canary와 capacity open은 한 작업 창으로 묶인다. 실제 순서는 다음과 같다(각 단계 dry-run 먼저).
   1. 선행: `second-review`(와 쓰는 모든 route)의 serving 계약이 배포 코드에 있다(PR05d gateway, PR05c-6 CLI). AI2 consumer 앱이 떠 있다.
   2. §6-1~6-3: capacity policy 설치(disabled 유지), route 표 확인.
@@ -102,7 +102,8 @@ node --import tsx scripts/ops/pipeline-control.ts status --json > control-before
 ## 3. AI2 canary — legacy → draining → items (consumer 1개)
 
 사전 확인:
-- AI2 consumer 앱 1개: `SERVICE_INSTANCE_ID=ai2-consumer-<id>`, 명령 `node --import tsx scripts/worker-supervisor.ts --role=reviewer --consumer=ai2`, 전용 health 경로. host budget enforcement가 켜진 host에서는 consumer가 시작을 거절한다. 배포 helper에는 consumer 앱이 아직 등록돼 있지 않다(앱 생성은 운영자 작업).
+- AI2 consumer 앱 1개: `SERVICE_INSTANCE_ID=ai2-consumer-<id>`, 명령 `node --import tsx scripts/worker-supervisor.ts --role=reviewer --consumer=ai2`, 전용 health 경로. host budget enforcement 설정은 실제 host control과 배포 source로 확인한다.
+- 2026-10-25 KST M3의 `nomorevibe-ai2-consumer-m3`를 생성·배포했고 공통 배포 helper의 `--consumer ai2`에 등록했다. mini 앱은 생성하지 않았다. 앱의 healthy·heartbeat와 stage `items` 전환은 별도로 확인한다.
 - `status`의 ai2 `consumers` ≥ 1, §2의 capacity 조건.
 
 `E` = `status`의 ai2 epoch.

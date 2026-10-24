@@ -5,6 +5,7 @@ import path from "node:path";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/schema";
 import { logger } from "@/lib/observability/logger";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { DEFAULT_CATEGORY_DEFINITIONS, type CategoryDefinitions } from "./settings-schema";
 
 /**
@@ -254,7 +255,8 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun, models: reado
     let result: CliResult;
     try {
       result = await run(cliArgs(config.model, config.effort), prompt, config.timeoutMs);
-    } catch {
+    } catch (error) {
+      if (error instanceof ModelCapacityDeferredError) throw error;
       result = { kind: "cli_error" };
     }
     if (result.kind === "missing") {

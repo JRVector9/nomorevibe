@@ -3,12 +3,18 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import { classifyCategories, defaultRun, failureReason, type CliRun } from '@/lib/crawl/classify';
-import { classifyPayloadSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus } from './contracts';
+import { classifyCategories, defaultRun, failureReason, OUTPUT_SCHEMA, type CliRun, type CliResult } from '@/lib/crawl/classify';
+import { classifyPayloadSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus, type ClassificationAuthority } from './contracts';
 import { stripAnsi } from '@/lib/vendor/deppy-aibox/core';
 import { claudeProvider } from '@/lib/vendor/deppy-aibox/claude';
-import { isolatedClaudeEnv, killProcessGroup, runClaude, validateClaudeCredential } from './claude';
+import { claudeClassificationArgs, isolatedClaudeEnv, killProcessGroup, parseClaudeClassificationResult, runClaude, validateClaudeCredential } from './claude';
 import { devicePrompt, seal, unseal, validateCredential } from './credential-vault';
+import { publicationClassificationPath, PUBLICATION_CLASSIFY_ROUTE, runPublicationClassificationCall } from '@/lib/crawl/publication-classify-capacity';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { CliPhysicalEndUnknownError } from '@/lib/llm/cli-model-capacity';
+import type { CategoryDefinitions } from '@/lib/crawl/settings-schema';
+import type { ClassifyInput } from '@/lib/crawl/classify';
+import { resolveCliServingContract } from '@/lib/llm/cli-serving-contract';
 
 const SAMPLE = [{ repo: 'verification/sample', url: 'https://example.com', name: 'Task planner', tagline: 'Plan team tasks and deadlines in a shared calendar.', topics: ['productivity'], language: null }];
 /** Single process owns login, classification and CLI refresh. No shared writable auth.json. */
@@ -37,7 +43,15 @@ export class ConnectAgent {
     process.env.CODEX_HOME = this.home;
     delete process.env.CODEX_ACCESS_TOKEN; delete process.env.OPENAI_API_KEY;
   }
-  snapshot(): AgentStatus { return structuredClone({...this.state, serverNow: Date.now(), configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation, classifyReady: this.canClassify()}); }
+  snapshot(): AgentStatus {
+    const classificationContracts = [this.state.config.primary, this.state.config.fallback].flatMap(model => {
+      if (!model) return [];
+      const contract = resolveCliServingContract(PUBLICATION_CLASSIFY_ROUTE, model.model === 'sonnet' ? 'claude-cli' : 'codex-cli', model.model);
+      return contract ? [contract] : [];
+    });
+    return structuredClone({...this.state, classificationCapacityVersion: 1, classificationContracts, serverNow: Date.now(),
+      configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation, classifyReady: this.canClassify()});
+  }
   /**
    * 분류는 한 번이라도 적용한 설정이 있고 계정이 하나라도 있으면 한다. 다시 로그인해 generation 이 올라도 막지 않는다 —
    * 2026-10-08 Codex 재로그인 뒤 적용 전 한 시간 동안 잘 돌던 Claude 예비까지 거부해 발행이 2건에 그쳤다.
@@ -96,6 +110,30 @@ export class ConnectAgent {
     this.startActivity('model',timeout,args[args.indexOf('-m')+1]);
     return (claude ? this.claudeRun ?? runClaude(this.claudeCredential!) : this.run)(args,stdin,timeout);
   };
+  private nativeClassificationRun(payload: { inputs: ClassifyInput[]; definitions?: CategoryDefinitions }, authority: ClassificationAuthority): CliRun {
+    return async (codexArgs, stdin, timeoutMs) => {
+      const model = codexArgs[codexArgs.indexOf('-m') + 1], claude = model === 'sonnet';
+      if (claude ? !this.claudeCredential : !this.credential) return { kind: 'exit', code: 1, stdout: '', stderr: 'authentication required' };
+      this.startActivity('model', timeoutMs, model);
+      const cwd = mkdtempSync(join(tmpdir(), claude ? 'nomorevibe-claude-run-' : 'nomorevibe-classify-run-'));
+      let unknown = false;
+      try {
+        const args = claude ? claudeClassificationArgs(model) : [...codexArgs];
+        // Bind the exact schema bytes in the runner input; do not trust a shared mutable schema pathname.
+        if (!claude) args[args.indexOf('--output-schema') + 1] = 'output-schema.json';
+        const result = await runPublicationClassificationCall({ routeId: PUBLICATION_CLASSIFY_ROUTE,
+          provider: claude ? 'claude-cli' : 'codex-cli', model, command: claude ? process.env.CLAUDE_CLI ?? 'claude' : process.env.CODEX_CLI ?? 'codex',
+          args, stdin, cwd, env: claude ? { ...isolatedClaudeEnv(cwd), CLAUDE_CODE_OAUTH_TOKEN: this.claudeCredential! } : { ...process.env },
+          boundEnvKeys: claude ? ['CLAUDE_CODE_MAX_OUTPUT_TOKENS'] : [], timeoutMs,
+          files: claude ? [] : [{ path: 'output-schema.json', content: JSON.stringify(OUTPUT_SCHEMA) }],
+          maxStdoutBytes: 64 * 1024, maxStderrBytes: 32 * 1024 }, payload, authority, () => this.snapshot());
+        const parsed: CliResult = result.kind === 'exit' ? result : { kind: result.kind === 'missing_cli' ? 'missing'
+          : result.kind === 'cancelled' ? 'cli_error' : result.kind };
+        return claude ? parseClaudeClassificationResult(parsed) : parsed;
+      } catch (error) { unknown = error instanceof CliPhysicalEndUnknownError; throw error; }
+      finally { if (!unknown) rmSync(cwd, { recursive: true, force: true }); }
+    };
+  }
   private stopLogin() {
     if(this.pendingEnter)clearTimeout(this.pendingEnter);this.pendingEnter=null;
     killProcessGroup(this.loginChild?.pid);
@@ -163,13 +201,20 @@ export class ConnectAgent {
     const provider=model==='sonnet'?'claude':'codex';
     this.state.accounts={...this.state.accounts,[provider]:{...this.state.accounts?.[provider],model,result,checkedAt:new Date().toISOString()}};
   }
-  probe(provider: 'codex' | 'claude') {
+  private async manualModelAdmission() {
+    try {
+      // Manual account/configuration checks have no publisher source/job authority.
+      if (await publicationClassificationPath() !== 'legacy') throw new ModelCapacityDeferredError('provider_contract_unavailable');
+    } catch (error) { this.state.busy = null; throw error; }
+  }
+  async probe(provider: 'codex' | 'claude') {
     this.available();
     if(provider!=='codex'&&provider!=='claude')throw new Error('지원하지 않는 AI 제공자입니다.');
     if(provider==='codex'?!this.credential:!this.claudeCredential)throw new Error('계정을 먼저 연결해주세요.');
     const selected=[this.state.config.primary,this.state.config.fallback].find(m=>m&&(m.model==='sonnet')===(provider==='claude'));
     const model=selected??{model:provider==='claude'?'sonnet':'gpt-5.3-codex-spark',effort:'high' as const};
     this.state.busy='account_check';
+    await this.manualModelAdmission();
     void (async()=>{
       try{
         if(provider==='claude') {
@@ -188,10 +233,12 @@ export class ConnectAgent {
     })();
     return this.snapshot();
   }
-  test(configInput: unknown) {
+  async test(configInput: unknown) {
     this.available();if(!this.credential && !this.claudeCredential)throw new Error('Codex 또는 Claude 계정부터 연결해주세요.');
     const config=modelConfigSchema.parse(configInput),id=randomUUID(),generation=this.state.generation;
-    this.state.busy='verification';this.state.verification={id,state:'running',config,generation,results:[]};
+    this.state.busy='verification';
+    await this.manualModelAdmission();
+    this.state.verification={id,state:'running',config,generation,results:[]};
     void (async()=>{
       try {
         let successes = 0;
@@ -215,16 +262,23 @@ export class ConnectAgent {
     return this.snapshot();
   }
   async classify(input: unknown) {
-    this.available();const {inputs,definitions}=classifyPayloadSchema.parse(input);
+    this.available();const {inputs,definitions,authority}=classifyPayloadSchema.parse(input);
     if(!this.canClassify())throw new Error('AI 연결 후 모델 검사·적용이 필요합니다.');
-    this.state.busy='classification';const config=this.state.config;
+    this.state.busy='classification';const config=this.state.config;let unknown = false;
     try {
-      const result=await classifyCategories(inputs,this.routeRun,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:35_000})),(model,result)=>{
+      const native = await publicationClassificationPath() === 'native';
+      if (native && !authority) throw new ModelCapacityDeferredError('owner_unavailable');
+      const run = native ? this.nativeClassificationRun({ inputs, definitions }, authority!) : this.routeRun;
+      const result=await classifyCategories(inputs,run,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:35_000})),(model,result)=>{
         this.checkedAccount(model,result);this.state.lastAttempt={model,result,at:new Date().toISOString(),generation:this.state.generation,configVersion:this.state.configVersion};
       },definitions);
       this.state.lastUsedVersion=this.state.configVersion;
       return { categories: result, configVersion:this.state.configVersion, generation:this.state.generation };
-    } finally { try {this.captureRefresh();}finally{this.state.busy=null;this.state.activity=null;} }
+    } catch (error) { unknown = error instanceof CliPhysicalEndUnknownError; throw error; }
+    finally {
+      if (unknown) this.state.busy = 'classification_unknown';
+      else try {this.captureRefresh();}finally{this.state.busy=null;this.state.activity=null;}
+    }
   }
   close() {this.stopLogin();rmSync(this.home,{recursive:true,force:true});}
 }

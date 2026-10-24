@@ -41,6 +41,17 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
   }
 });
 
+it("발행 분류의 member CHECK도 마지막 migration의 전체 선행 분기와 같다", () => {
+  const check = getTableConfig(modelCapacityRequests).checks.find(check => check.name === "model_capacity_requests_members_check")!;
+  const history = checkHistory(check.name);
+  const latest = history.at(-1)!;
+  const previous = history.at(-2)!;
+  const expression = new PgDialect().sqlToQuery(check.value).sql;
+  expect(latest.tag).toBe("0125_publication_classify_cli");
+  expect(expression === latest.expression, check.name).toBe(true);
+  expect(expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
+});
+
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {
   expect(journal.entries.filter(entry => entry.idx === 118))
     .toEqual([expect.objectContaining({ tag: "0118_local_model_capacity_terminal" })]);

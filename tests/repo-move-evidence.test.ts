@@ -24,7 +24,7 @@ describe("저장소 비동기 근거 수집", () => {
     const result = await collectRepoMoveInput(candidate(), { fetch: request });
     expect(result.kind).toBe("ready");
     if (result.kind !== "ready") throw new Error(result.reason);
-    expect(result.input.sources.map(source => source.sourceId)).toEqual(["old_repository", "product_page", "old_readme", "candidate_readme_0", "candidate_repository_0"]);
+    expect(result.input.sources.map(source => source.sourceId)).toEqual(["old_repository", "product_page", "old_readme", "candidate_readme_0", "product_page_repositories", "candidate_repository_0"]);
     expect(request).toHaveBeenCalledTimes(5);
     expect(result.input.sources.find(source => source.sourceId === "product_page")).toMatchObject({
       url: "https://tool.example", text: "Current Tool Draw maps today.", completeness: "complete" });

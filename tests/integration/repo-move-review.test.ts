@@ -7,7 +7,7 @@ import { normalizeTypedLink } from "@/lib/domain/evidence/contracts";
 import { ASSIST_SCHEMA_VERSION, assistHash, assistInputHash } from "@/lib/domain/llm-assist/contracts";
 import { assistPromptHash } from "@/lib/domain/llm-assist/prompts";
 import { applyRepoMoveResult, readRepoMoveSnapshot } from "@/lib/domain/products/repo-move-reviews";
-import { buildRepoMoveInput, repoMoveSource, type RepoMoveCandidate, type RepoMoveOutcome } from "@/lib/domain/products/repo-move-review";
+import { buildRepoMoveInput, repoMoveSource, repoMovePageRepositoriesSource, type RepoMoveCandidate, type RepoMoveOutcome } from "@/lib/domain/products/repo-move-review";
 import { saveRepoMoveCandidate } from "@/lib/domain/products/repo-move-producer";
 import { dueRepoReviews, MAX_REPO_GONE_DELISTS_PER_DAY } from "@/lib/domain/products/repo-reviews";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -39,7 +39,8 @@ async function prepare(options: { unrelated?: boolean; product?: Partial<typeof 
     page: repoMoveSource("product_page", "page", snapshot.url, "Tool draws maps.", "now", "complete", 200) };
   const readme = repoMoveSource("new_readme", "readme", `https://github.com/${destination}`,
     options.unrelated ? "An unrelated monitoring SDK." : "Tool draws maps. Original Tool repository.", "now", "complete", 200);
-  const input = buildRepoMoveInput(candidate, [readme]);
+  const page = repoMoveSource("product_page", "page", snapshot.url, "Tool draws maps.", new Date().toISOString(), "complete", 200);
+  const input = buildRepoMoveInput(candidate, [readme, page, repoMovePageRepositoriesSource(page, "a".repeat(64), [destination])]);
   const outcome: RepoMoveOutcome = { schema_version: ASSIST_SCHEMA_VERSION, task: "repo",
     evidence_quality: { status: "sufficient", limitations: ["none"] },
     state: options.unrelated ? { project_identity: "different", code_lineage: "independent", official_continuity: "unverified", relationship: "unrelated" }
@@ -67,9 +68,13 @@ async function record(tx: ProductTransaction, prepared: Awaited<ReturnType<typeo
 }
 async function apply(prepared: Awaited<ReturnType<typeof prepare>>) {
   return db.transaction(async tx => applyRepoMoveResult(tx, prepared.candidate, prepared.input, prepared.outcome, await record(tx, prepared),
-    { oldRepository: prepared.candidate.oldRepository, destination: { state: "alive" }, checkedAt: new Date().toISOString(),
-      page: (() => { const page = prepared.input.sources.find(source => source.sourceId === "product_page");
-        return page ? { ...page, observedAt: new Date().toISOString() } : undefined; })() }));
+    fresh(prepared)));
+}
+function fresh(prepared: Awaited<ReturnType<typeof prepare>>) {
+  const observedAt = new Date().toISOString();
+  return { oldRepository: prepared.candidate.oldRepository, destination: { state: "alive" as const }, checkedAt: observedAt,
+    page: { ...prepared.input.sources.find(source => source.sourceId === "product_page")!, observedAt },
+    pageRepositories: { ...prepared.input.sources.find(source => source.sourceId === "product_page_repositories")!, observedAt } };
 }
 const current = async (id: number) => (await db.select().from(products).where(eq(products.id, id)))[0];
 const audits = (slug: string) => db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, slug));
@@ -97,9 +102,26 @@ describe("저장소 공식 이전 CAS", () => {
     await enable();
     await expect(db.transaction(async tx => {
       expect(await applyRepoMoveResult(tx, prepared.candidate, prepared.input, prepared.outcome, await record(tx, prepared),
-        { oldRepository: prepared.candidate.oldRepository, destination: { state: "alive" }, checkedAt: new Date().toISOString() })).toBe("updated");
+        fresh(prepared))).toBe("updated");
       throw new Error("fake_commit_failure");
     })).rejects.toThrow("fake_commit_failure");
+    expect((await current(prepared.product.id)).repoUrl).toBe(prepared.product.repoUrl);
+    expect(await audits(prepared.product.slug)).toHaveLength(0);
+  });
+
+  it.each(["missing", "changed-page", "changed-links", "changed-body", "truncated", "stale"])("URL update도 fresh 홈페이지 연결을 다시 묶는다 (%s)", async change => {
+    const prepared = await prepare();
+    await enable();
+    const checks = fresh(prepared);
+    if (change === "missing") checks.pageRepositories = undefined!;
+    if (change === "changed-page") checks.page = repoMoveSource("product_page", "page", prepared.product.url,
+      "The current product has changed.", checks.checkedAt, "complete", 200);
+    if (change === "changed-links") checks.pageRepositories = repoMovePageRepositoriesSource(checks.page, "a".repeat(64), ["another/project"]);
+    if (change === "changed-body") checks.pageRepositories = repoMovePageRepositoriesSource(checks.page, "b".repeat(64), [prepared.candidate.oldRepository.state === "moved" ? prepared.candidate.oldRepository.to : "new/tool"]);
+    if (change === "truncated") checks.page = { ...checks.page, completeness: "truncated" };
+    if (change === "stale") checks.page = { ...checks.page, observedAt: new Date(Date.now() - 61_000).toISOString() };
+    expect(await db.transaction(async tx => applyRepoMoveResult(tx, prepared.candidate, prepared.input, prepared.outcome,
+      await record(tx, prepared), checks))).toBe("stale");
     expect((await current(prepared.product.id)).repoUrl).toBe(prepared.product.repoUrl);
     expect(await audits(prepared.product.slug)).toHaveLength(0);
   });

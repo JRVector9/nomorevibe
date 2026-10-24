@@ -376,7 +376,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       : checked.routeId === "product-search-verify" ? searchVerifyFence(tx, memberKeys, logicalKey!, checked.requestId)
       : checked.routeId === "product-translate" ? productTranslationFence(tx, memberKeys, checked.requestId)
       : checked.routeId === "product-tagline-ko" ? productTaglineKoFence(tx, memberKeys, checked.requestId)
-        : checked.routeId === "product-intro-check" ? introCheckFence(tx, memberKeys, checked.requestId)
+        : checked.routeId === "product-intro-check" || checked.routeId === "crawl-publish-classify" ? introCheckFence(tx, memberKeys, checked.requestId, checked.routeId)
           : reasonTranslationFence(tx, memberKeys, checked.requestId))) return { kind: "deferred", reason: "capacity" };
     if (!memberKeys && logicalKey !== null && await (logicalKey.startsWith("direct:")
       ? localModelFence(tx, logicalKey, checked.requestId) : logicalKey.startsWith("ai2:")
@@ -1857,20 +1857,22 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
 
 import { cliDispatchBindingSchema, cliDispatchBindingHash, cliModelDispatchSchema, cliModelTerminalEvidenceSchema,
   introCheckInputSchema, introCheckMemberKeys, introCheckLogicalWorkKey, grokSessionLogicalWorkKey,
-  type CliDispatchBinding, type CliModelDispatch, type IntroCheckMember } from "./capacity";
+  publicationClassifyInputSchema, publicationClassifyMemberKeys, publicationClassifyLogicalWorkKey,
+  type CliDispatchBinding, type CliModelDispatch, type IntroCheckMember, type PublicationClassifyMember } from "./capacity";
 import { cliProcessTerminalEvidenceSchema } from "./cli-serving-contract";
 import type { CliProcessTerminal } from "./cli-process-runner";
 /** CLI 호출이 묶이는 고정 대상. AI1·AI2 는 gateway 와 같은 논리 키를, 감사·소개 검수·Grok 세션은 background/reviewer 키를 쓴다. */
 export type CliTarget = Readonly<{ kind: "ai1"; candidateId: number }> | Readonly<{ kind: "ai2"; candidateId: number; vote: number }>
   | Readonly<{ kind: "audit"; itemId: number }> | Readonly<{ kind: "intro"; members: readonly IntroCheckMember[] }>
-  | Readonly<{ kind: "grok-session"; instanceId: string }>;
+  | Readonly<{ kind: "grok-session"; instanceId: string }> | Readonly<{ kind: "publication-classify"; members: readonly PublicationClassifyMember[] }>;
 type FixedCli = Readonly<{ target: CliTarget; logical: string; memberKeys: string[] | null; kinds: readonly CliDispatchBinding["kind"][] }>;
-const CLI_TARGET_KEYS = { ai1: ["candidateId"], ai2: ["candidateId", "vote"], audit: ["itemId"], intro: ["members"], "grok-session": ["instanceId"] } as const;
+const CLI_TARGET_KEYS = { ai1: ["candidateId"], ai2: ["candidateId", "vote"], audit: ["itemId"], intro: ["members"], "grok-session": ["instanceId"], "publication-classify": ["members"] } as const;
 const CLI_FIXED = {
   ai1: { class: "first", routeId: "crawl-agent-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai1_legacy_cli", "ai1_item_cli"] },
   ai2: { class: "second", routeId: "second-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai2_item_cli"] },
   audit: { class: "background", routeId: "product-audit", providers: ["claude-cli"], kinds: ["product_audit_cli"] },
   intro: { class: "background", routeId: "product-intro-check", providers: ["claude-cli"], kinds: ["intro_check_cli"] },
+  "publication-classify": { class: "background", routeId: "crawl-publish-classify", providers: ["claude-cli", "codex-cli"], kinds: ["publication_classify_cli"] },
   "grok-session": { class: "background", routeId: "grok-session-check", providers: ["grok-cli"], kinds: ["grok_session_cli"] },
 } as const;
 const safeId = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
@@ -1884,6 +1886,11 @@ function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): 
     if (!members.success) return fail("invalid_cli_capacity_identity");
     target = Object.freeze({ kind: "intro", members: Object.freeze(members.data) });
     memberKeys = introCheckMemberKeys(members.data); logical = introCheckLogicalWorkKey(members.data);
+  } else if (raw.kind === "publication-classify") {
+    const members = publicationClassifyInputSchema.shape.members.safeParse(raw.members);
+    if (!members.success) return fail("invalid_cli_capacity_identity");
+    target = Object.freeze({ kind: "publication-classify", members: Object.freeze(members.data) });
+    memberKeys = publicationClassifyMemberKeys(members.data); logical = publicationClassifyLogicalWorkKey(members.data);
   } else if (raw.kind === "grok-session") {
     if (raw.instanceId !== value.owner.instanceId) return fail("invalid_cli_capacity_identity");
     target = Object.freeze({ kind: "grok-session", instanceId: raw.instanceId }); logical = grokSessionLogicalWorkKey(raw.instanceId);
@@ -1917,18 +1924,19 @@ async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: 
   return !!blocked;
 }
 /** Any overlapping intro member, or an unbound intro-check call, blocks the batch. */
-async function introCheckFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
+async function introCheckFence(tx: ProductTransaction, keys: readonly string[], ownId: string, routeId = "product-intro-check"): Promise<boolean> {
   const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
       AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
-    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = ${"product-intro-check"}
+    OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
       AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
   return !!blocked;
 }
 function cliFence(tx: ProductTransaction, fixed: FixedCli, ownId: string): Promise<boolean> {
   return fixed.target.kind === "ai1" ? ai1Fence(tx, fixed.logical, ownId) : fixed.target.kind === "ai2" ? ai2Fence(tx, fixed.logical, ownId)
-    : fixed.target.kind === "intro" ? introCheckFence(tx, fixed.memberKeys!, ownId) : cliKeyFence(tx, fixed.logical, CLI_FIXED[fixed.target.kind].routeId, ownId);
+    : fixed.target.kind === "intro" || fixed.target.kind === "publication-classify"
+      ? introCheckFence(tx, fixed.memberKeys!, ownId, CLI_FIXED[fixed.target.kind].routeId) : cliKeyFence(tx, fixed.logical, CLI_FIXED[fixed.target.kind].routeId, ownId);
 }
 /** The fixed CLI target is in the very first waiting INSERT; AI1/AI2 share the gateway key so either transport fences the other. */
 export async function requestCliModelSlot(value: ModelCapacityRequest, target: CliTarget): Promise<ModelSlotResult> {
@@ -1980,6 +1988,9 @@ function cliBindingFits(binding: CliDispatchBinding, fixed: FixedCli, identity: 
       && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
     case "intro_check_cli": return target.kind === "intro" && isDeepStrictEqual(introCheckInputSchema.shape.members.parse(binding.members), target.members)
       && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
+    case "publication_classify_cli": return target.kind === "publication-classify"
+      && isDeepStrictEqual(publicationClassifyInputSchema.shape.members.parse(binding.members), target.members)
+      && ownerFits(binding.publisherRole) && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
     case "grok_session_cli": return target.kind === "grok-session" && binding.instanceId === target.instanceId
       && identity.workKey === `${binding.logicalWorkKey}:${binding.inputHash}`;
   }
@@ -2004,7 +2015,7 @@ export async function finishCliModelCapacityDispatch(tx: ProductTransaction, loc
   return dispatch;
 }
 const CLI_KIND_CLASS: Record<CliDispatchBinding["kind"], RequestRow["class"]> = { ai1_legacy_cli: "first", ai1_item_cli: "first",
-  ai2_item_cli: "second", product_audit_cli: "background", intro_check_cli: "background", grok_session_cli: "background" };
+  ai2_item_cli: "second", product_audit_cli: "background", intro_check_cli: "background", grok_session_cli: "background", publication_classify_cli: "background" };
 /** The historical dispatch rebuilt from the actual locked row; null unless every row column agrees with its immutable binding. */
 function cliRowDispatch(row: RequestRow | undefined): CliModelDispatch | null {
   if (!row?.dispatchedAt || !row.token) return null;
@@ -2014,7 +2025,8 @@ function cliRowDispatch(row: RequestRow | undefined): CliModelDispatch | null {
   const dispatch = parsed.data, binding = dispatch.binding;
   const workKey = binding.kind === "ai1_legacy_cli" ? row.workKey : binding.kind === "ai1_item_cli" || binding.kind === "ai2_item_cli"
     ? `${binding.logicalWorkKey}:${binding.item.bindingHash}` : `${binding.logicalWorkKey}:${binding.inputHash}`;
-  const memberKeys = binding.kind === "intro_check_cli" ? introCheckMemberKeys(binding.members) : null;
+  const memberKeys = binding.kind === "intro_check_cli" ? introCheckMemberKeys(binding.members)
+    : binding.kind === "publication_classify_cli" ? publicationClassifyMemberKeys(binding.members) : null;
   return row.logicalWorkKey === binding.logicalWorkKey && isDeepStrictEqual(row.logicalMemberKeys ?? null, memberKeys)
     && row.routeId === binding.routeId && row.provider === binding.provider && row.model === binding.model
     && row.class === CLI_KIND_CLASS[binding.kind] && row.pool === "reviewer" && row.workKey === workKey

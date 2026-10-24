@@ -647,13 +647,12 @@ class OracleOfflineRoutingTests(unittest.TestCase):
 
 
 class FleetInventoryTests(unittest.TestCase):
-    """Read-only coverage of the 16-app fleet; the shared-image release stays at 8 apps by default."""
+    """Read-only coverage of the 17-app fleet; the shared-image release stays at 8 apps by default."""
 
     def setUp(self):
         self.sha = 'b' * 40
 
-    # 2026-10-20: agent-scan-consumer-m3 is the one consumer app that exists in Dokploy; inventory covers it like an image worker
-    REGISTERED_CONSUMERS = ('agent-scan-consumer-m3',)
+    REGISTERED_CONSUMERS = ('ai2-consumer-m3', 'agent-scan-consumer-m3')
 
     def fleet(self, release_tag=None):
         return {short: {'sourceType': 'docker' if short in release.APPS or short in release.CONSUMER_APPS or short in release.AUXILIARY_APPS else 'github',
@@ -676,7 +675,7 @@ class FleetInventoryTests(unittest.TestCase):
         client = FakeClient(self.fleet())
         result = release.inventory(client, self.sha)
         self.assertEqual(client.requests, [])
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (16, True, []))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (17, True, []))
         self.assertEqual({short: row['deployedBy'] for short, row in result['apps'].items()},
                          {short: 'manual-docker' if short in release.AUXILIARY_APPS else 'run' if short in release.APPS or short in release.CONSUMER_APPS else 'manual-git-build'
                           for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS})
@@ -712,7 +711,7 @@ class FleetInventoryTests(unittest.TestCase):
             client = FakeClient(apps)
             with self.subTest(drift=tuple(drift)):
                 result = release.inventory(client, self.sha)
-                self.assertEqual(result['appCount'], 16)
+                self.assertEqual(result['appCount'], 17)
                 self.assertFalse(result['complete'])
                 self.assertEqual(result['pending'], pending)
                 self.assertEqual(result['apps']['monitor-m3']['deployedBy'], 'manual-docker')
@@ -820,9 +819,9 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
                                               release.IMAGE_PREFIX['web'] + 'sha256:' + 'f' * 64)
 
     def registered(self):
-        """Fixture IDs only — the real Dokploy apps do not exist yet."""
-        return patch.dict(release.CONSUMER_APPS, {short: ('fixture-' + short, 'nomorevibe-' + short, metadata[2], metadata[3])
-                                                  for short, metadata in release.CONSUMER_APPS.items()})
+        """Full two-host fixture fleet, including hosts that production does not run."""
+        return patch.dict(release.CONSUMER_APPS, {short: ('fixture-' + short, 'nomorevibe-' + short,
+            release.MINI if short.endswith('-mini') else release.M3, 'worker') for short in CONSUMERS})
 
     def apps(self):
         apps = ReleaseSafetyTests.apps(self)
@@ -830,14 +829,23 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
             apps[short] = dict(apps['reviewer-m3'], appName='service-' + short)
         return apps
 
-    def test_consumer_apps_are_unregistered_and_outside_the_existing_fleet(self):
-        self.assertEqual(tuple(release.CONSUMER_APPS), CONSUMERS)
+    def test_consumer_apps_have_explicit_host_registration_outside_the_role_fleet(self):
+        self.assertEqual(tuple(release.CONSUMER_APPS), ('ai1-consumer-mini', 'ai1-consumer-m3', 'ai2-consumer-m3', 'agent-scan-consumer-m3'))
         for short, (app_id, name, server, kind) in release.CONSUMER_APPS.items():
-            if short in AI_CONSUMERS:
+            if short.startswith('ai1-'):
                 self.assertEqual((app_id, name, kind), ('', '', 'worker'))
             self.assertEqual(server, release.MINI if short.endswith('-mini') else release.M3)
             self.assertNotIn(short, release.KNOWN_APPS)
         self.assertEqual(release.release_order(), release.ORDER)
+
+    def test_ai2_has_one_actual_m3_app_and_releases_before_the_reviewer_gate(self):
+        self.assertEqual(release.CONSUMER_APPS['ai2-consumer-m3'],
+                         ('S7HvgYAeS4hLimJ3_n5Uf', 'nomorevibe-ai2-consumer-m3', release.M3, 'worker'))
+        self.assertEqual(release.consumer_apps(['ai2']), ('ai2-consumer-m3',))
+        self.assertEqual(release.release_order(release.consumer_apps(['ai2'])),
+                         release.ORDER[:4] + ('ai2-consumer-m3',) + release.ORDER[4:])
+        with self.assertRaisesRegex(ValueError, 'ai2-consumer-mini_unknown_app'):
+            release.app_metadata('ai2-consumer-mini')
 
     def test_the_agent_scan_consumer_app_is_registered_on_m3(self):
         # 2026-10-20: created in Dokploy as a copy of crawler-m3; it is still released only with --consumer agent-scan
@@ -848,7 +856,7 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
     def test_an_unregistered_consumer_is_refused_before_any_dokploy_request(self):
         client = release.Dokploy('unused-key')
         with patch.object(client, 'request') as request:
-            for short in AI_CONSUMERS:
+            for short in ('ai1-consumer-mini', 'ai1-consumer-m3'):
                 with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
                     client.app(short)
                 with self.assertRaisesRegex(ValueError, short + '_app_unregistered'):
@@ -861,7 +869,7 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
 
     def test_main_refuses_unregistered_or_misused_consumer_targets_before_keychain(self):
         base = ['--sha', self.new_sha, '--worker-image', self.target['worker'], '--web-image', self.target['web']]
-        for arguments, error in ((['plan'] + base + ['--consumer', 'ai2'], 'ai2-consumer-mini_app_unregistered'),
+        for arguments, error in ((['plan'] + base + ['--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
                                  (['run'] + base + ['--snapshot', '/private/tmp/x.json', '--consumer', 'ai1'], 'ai1-consumer-mini_app_unregistered'),
                                  (['restore', '--snapshot', '/private/tmp/x.json', '--app', 'ai1-consumer-m3'], 'ai1-consumer-m3_app_unregistered')):
             with self.subTest(arguments=arguments), patch.object(release, 'run') as keychain, patch.object(release, 'Dokploy') as dokploy:
@@ -881,8 +889,9 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet = {short: {'sourceType': 'docker', 'applicationStatus': 'done', 'replicas': 1, 'env': 'RELEASE_TAG=' + self.new_sha + '\n'}
                  for short in tuple(release.KNOWN_APPS) + CONSUMERS}
         result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete']), (16, True))
-        self.assertEqual(result['consumerApps'], {**dict.fromkeys(AI_CONSUMERS, 'unregistered'), 'agent-scan-consumer-m3': 'registered'})
+        self.assertEqual((result['appCount'], result['complete']), (17, True))
+        self.assertEqual(result['consumerApps'], {**dict.fromkeys(('ai1-consumer-mini', 'ai1-consumer-m3'), 'unregistered'),
+            'ai2-consumer-m3': 'registered', 'agent-scan-consumer-m3': 'registered'})
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)

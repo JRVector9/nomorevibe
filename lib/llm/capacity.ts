@@ -1,3 +1,5 @@
+import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
+export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
@@ -822,8 +824,32 @@ export const grokSessionCliDispatchBindingSchema = grokSessionInputSchema.extend
 }).strict().refine(value => value.logicalWorkKey === grokSessionLogicalWorkKey(value.instanceId)
   && value.inputHash === grokSessionInputHash({ instanceId: value.instanceId, model: value.model }), "invalid_grok_session_cli_binding")
   .refine(cliTransportCharge, "invalid_cli_transport_charge");
+export function publicationClassifyMemberKeys(members: readonly PublicationClassifyMember[]): string[] {
+  return publicationClassifyInputSchema.shape.members.parse(members).map(member => `classify:${member.candidateId}`).sort();
+}
+export function publicationClassifyLogicalWorkKey(members: readonly PublicationClassifyMember[]): string {
+  return `bg:publication-classify:${createHash("sha256").update(cliCanonical(publicationClassifyMemberKeys(members))).digest("hex")}`;
+}
+export function publicationClassifyInputHash(input: PublicationClassifyInput): string {
+  const checked = publicationClassifyInputSchema.parse(input);
+  return createHash("sha256").update(cliCanonical({ ...checked,
+    members: checked.members.toSorted((a, b) => a.candidateId - b.candidateId) })).digest("hex");
+}
+export const publicationClassifyCliDispatchBindingSchema = publicationClassifyInputSchema.extend({
+  kind: z.literal("publication_classify_cli"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  routeId: z.literal("crawl-publish-classify"), publisherRole: publicationPublisherRoleSchema, job: cliJob("crawl-publish"),
+  transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive,
+}).strict().refine(value => {
+  const parsed = publicationClassifyInputSchema.safeParse({ members: value.members, provider: value.provider, model: value.model,
+    payloadHash: value.payloadHash, definitionsHash: value.definitionsHash, configHash: value.configHash,
+    generation: value.generation, configVersion: value.configVersion });
+  return parsed.success && value.logicalWorkKey === publicationClassifyLogicalWorkKey(parsed.data.members)
+    && value.inputHash === publicationClassifyInputHash(parsed.data);
+}, "invalid_publication_classify_binding")
+  .refine(cliTransportCharge, "invalid_cli_transport_charge");
 export const cliDispatchBindingSchema = z.discriminatedUnion("kind", [ai1LegacyCliDispatchBindingSchema, ai1ItemCliDispatchBindingSchema,
-  ai2ItemCliDispatchBindingSchema, productAuditCliDispatchBindingSchema, introCheckCliDispatchBindingSchema, grokSessionCliDispatchBindingSchema]);
+  ai2ItemCliDispatchBindingSchema, productAuditCliDispatchBindingSchema, introCheckCliDispatchBindingSchema, grokSessionCliDispatchBindingSchema,
+  publicationClassifyCliDispatchBindingSchema]);
 export type CliDispatchBinding = Readonly<z.infer<typeof cliDispatchBindingSchema>>;
 export function cliDispatchBindingHash(value: CliDispatchBinding): string {
   return createHash("sha256").update(cliCanonical(cliDispatchBindingSchema.parse(value))).digest("hex");
@@ -833,7 +859,9 @@ export const cliModelDispatchSchema = handleSchema.extend({ binding: cliDispatch
   .refine(value => value.bindingHash === createHash("sha256").update(cliCanonical(value.binding)).digest("hex"), "invalid_cli_binding_hash")
   .refine(value => value.binding.kind === "ai1_item_cli" || value.binding.kind === "ai2_item_cli"
     ? value.owner.instanceId === value.binding.item.owner.instanceId && value.owner.bootId === value.binding.item.owner.bootId
-    : value.binding.kind !== "grok_session_cli" || value.owner.instanceId === value.binding.instanceId, "invalid_cli_dispatch_owner")
+    : value.binding.kind === "publication_classify_cli" ? value.owner.instanceId === value.binding.publisherRole.instanceId
+      && value.owner.bootId === value.binding.publisherRole.bootId
+      : value.binding.kind !== "grok_session_cli" || value.owner.instanceId === value.binding.instanceId, "invalid_cli_dispatch_owner")
   .transform(value => value as unknown as CliModelDispatch);
 /** 장부에 남는 정산 증거: 역사적 dispatch 와 runner 증거 원본. 저장된 JSON 은 정산 권한이 아니다 — opaque terminal 만 정산한다. */
 export const cliModelTerminalEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("cli_model_terminal"),

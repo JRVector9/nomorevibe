@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ASSIST_SCHEMA_VERSION } from "@/lib/domain/llm-assist/contracts";
 import { buildRepoMoveInput, decideRepositoryMove, repositoryMoveCandidate, repoMoveCandidateSchema, repoMoveProtected,
-  repoMoveSnapshotMatches, repoMoveSource, type RepoMoveCandidate, type RepoMoveOutcome, type RepoMoveSnapshot } from "@/lib/domain/products/repo-move-review";
+  repoMoveSnapshotMatches, repoMoveSource, repoMovePageRepositoriesSource, type RepoMoveCandidate, type RepoMoveOutcome, type RepoMoveSnapshot } from "@/lib/domain/products/repo-move-review";
 
 const snapshot = (over: Partial<RepoMoveSnapshot> = {}): RepoMoveSnapshot => ({
   id: 7, slug: "tool", url: "https://tool.example", repoUrl: "https://github.com/old/tool", repoLinkVersion: 3,
@@ -24,10 +24,12 @@ const outcome = (over: Partial<RepoMoveOutcome> = {}): RepoMoveOutcome => ({ sch
   ], action: { proposal: "update_repo_candidate", reason_ko: "공식 이전을 확인했습니다.", missing_items: [] }, ...over });
 
 describe("저장소 이전의 독립 근거와 서버 guard", () => {
-  it("공식 redirect·제품 정체성·계보 근거를 모두 가진 단일 후보만 주소 후보가 된다", () => {
+  it("공식 홈페이지 연결·redirect·제품 정체성·계보 근거를 모두 가진 단일 후보만 주소 후보가 된다", () => {
     const source = candidate();
-    expect(decideRepositoryMove(source, buildRepoMoveInput(source, [readme]), outcome())).toMatchObject({ kind: "update_repo_candidate", url: "https://github.com/new/tool" });
-    expect(decideRepositoryMove(source, buildRepoMoveInput(source, [readme]), outcome())).toHaveProperty("officialEvidenceHash", expect.stringMatching(/^[a-f0-9]{64}$/));
+    const current = { ...page, observedAt: new Date().toISOString() };
+    const input = buildRepoMoveInput(source, [readme, current, repoMovePageRepositoriesSource(current, "a".repeat(64), ["new/tool"])]);
+    expect(decideRepositoryMove(source, input, outcome())).toMatchObject({ kind: "update_repo_candidate", url: "https://github.com/new/tool" });
+    expect(decideRepositoryMove(source, input, outcome())).toHaveProperty("officialEvidenceHash", expect.stringMatching(/^[a-f0-9]{64}$/));
   });
 
   it("이름·동일 주인·살아 있는 사이트 링크를 공식 이전으로 승격하지 않는다", () => {

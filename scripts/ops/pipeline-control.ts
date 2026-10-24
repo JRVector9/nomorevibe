@@ -8,6 +8,7 @@ import { open } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { currentModelEnv } from "@/lib/operations/model-env";
+import { probeCliServingContracts } from "@/lib/llm/cli-serving-contract";
 import { formatControlResult, formatControlStatus, formatPipelineControlError, parsePipelineControlArgs,
   pipelineControlDatabaseUrl, type ControlOptions } from "@/lib/operations/pipeline-control";
 
@@ -30,6 +31,8 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
   const policy = file ? await readPolicy(file) : undefined;
   const [{ drizzle }, schema, { createDbClient, dbPoolConfig }, repository, models] = await Promise.all([import("drizzle-orm/postgres-js"),
     import("@/lib/db/schema"), import("@/lib/db/pool"), import("@/lib/operations/pipeline-control-repository"), currentModelEnv()]);
+  // Same local command/version proof as the worker. Remote classifier contracts still come only from its observation.
+  await probeCliServingContracts();
   const client = createDbClient(url, { ...dbPoolConfig({ WORKER_ROLE: "maintenance", DB_POOLER_MODE: env.DB_POOLER_MODE, DB_POOL_MAX: "1" }),
     applicationName: "nomorevibe:pipeline-control" });
   const database = drizzle(client, { schema });

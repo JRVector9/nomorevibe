@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+vi.mock('@/lib/crawl/publication-classify-capacity', () => ({ PUBLICATION_CLASSIFY_ROUTE: 'crawl-publish-classify', publicationClassificationPath: async () => 'legacy' }));
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,7 @@ const original={home:process.env.CODEX_HOME,cli:process.env.CLAUDE_CLI,path:proc
 afterEach(()=>{agent?.close();agent=undefined;for(const dir of dirs.splice(0))rmSync(dir,{recursive:true,force:true});for(const [key,value] of [['CODEX_HOME',original.home],['CLAUDE_CLI',original.cli],['PATH',original.path]]){if(value)process.env[key!]=value;else delete process.env[key!];}});
 const directory=()=>{const dir=mkdtempSync(join(tmpdir(),'claude-test-'));dirs.push(dir);return dir;};
 function create(codex:CliRun,claude:CliRun,hasCodex=true){const dir=directory();writeFileSync(join(dir,'vault.enc'),seal(JSON.stringify({credential:hasCodex?auth:null,claudeCredential:token,appliedGeneration:0,state:{generation:2,configVersion:0,config:DEFAULT_CONFIG}}),secret));agent=new ConnectAgent(dir,secret,codex,claude);return {agent,dir};}
-async function verify(a:ConnectAgent){a.test(DEFAULT_CONFIG);for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));const v=a.snapshot().verification!;return ()=>a.apply({verificationId:v.id,expectedVersion:0,config:DEFAULT_CONFIG});}
+async function verify(a:ConnectAgent){await a.test(DEFAULT_CONFIG);for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));const v=a.snapshot().verification!;return ()=>a.apply({verificationId:v.id,expectedVersion:0,config:DEFAULT_CONFIG});}
 describe('Claude fallback through the Deppy-aibox provider',()=>{
  it.each(['auth','timeout','missing','invalid'] as const)('falls back after Codex %s and retains both encrypted credentials',async reason=>{
   let claudeCalls=0;const {agent:a,dir}=create(async()=>reason==='auth'?{kind:'exit',code:1,stdout:'',stderr:'401 authentication'}:reason==='invalid'?{kind:'exit',code:0,stdout:'wrong',stderr:''}:{kind:reason},async()=>{claudeCalls++;return success;});
@@ -86,7 +87,7 @@ describe('Claude fallback through the Deppy-aibox provider',()=>{
  });
 
  it('reports an account probe separately from model configuration application',async()=>{
-  const {agent:a}=create(async()=>success,async()=>success);a.probe('codex');
+  const {agent:a}=create(async()=>success,async()=>success);await a.probe('codex');
   for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));
   expect(a.snapshot().accounts?.codex?.result).toBe('success');expect(a.snapshot().accounts?.codex?.checkedAt).toBeTruthy();
   expect(a.snapshot().verification).toBe(null);expect(a.snapshot().configReady).toBe(false);
@@ -116,7 +117,7 @@ describe('Claude fallback through the Deppy-aibox provider',()=>{
  });
  it('probes Claude with hi~ and retains the actual reply separately from classification',async()=>{
   let prompt='';const {agent:a}=create(async()=>success,async(_args,stdin)=>{prompt=stdin;return {kind:'exit',code:0,stdout:'Hi! How can I help?',stderr:''};});
-  a.probe('claude');for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));
+  await a.probe('claude');for(let i=0;i<100&&a.snapshot().busy;i++)await new Promise(r=>setTimeout(r,5));
   expect(prompt).toBe('hi~');expect(a.snapshot().accounts?.claude?.result).toBe('success');
   expect(a.snapshot().accounts?.claude?.probe).toMatchObject({prompt:'hi~',reply:'Hi! How can I help?',result:'success'});
   expect(a.snapshot().verification).toBe(null);

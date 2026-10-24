@@ -1,5 +1,7 @@
+import type { CliServingContract } from '@/lib/llm/cli-serving-contract';
 import { z } from 'zod';
 import { categoryDefinitionsSchema } from '@/lib/crawl/settings-schema';
+import { publicationClassifyInputSchema, publicationPublisherRoleSchema } from '@/lib/llm/publication-classify-contract';
 export const MODEL_IDS = ['gpt-5.3-codex-spark', 'gpt-5.6-terra', 'sonnet'] as const;
 const model = z.object({ model: z.enum(MODEL_IDS), effort: z.enum(['high', 'xhigh']) }).strict().refine(v => v.model !== 'sonnet' || v.effort === 'high', 'Claude는 high 강도를 사용합니다.');
 export const modelConfigSchema = z.object({ primary: model, fallback: model.nullable() }).strict()
@@ -20,7 +22,12 @@ export const classifyInputsSchema = z.array(z.object({
 export const classifyPayloadSchema = z.object({
   inputs: classifyInputsSchema,
   definitions: categoryDefinitionsSchema.optional(),
+  authority: publicationClassifyInputSchema.omit({ provider: true, model: true }).extend({
+    version: z.literal(1), publisherRole: publicationPublisherRoleSchema,
+    job: z.object({ name: z.literal('crawl-publish'), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
+  }).strict().optional(),
 }).strict();
+export type ClassificationAuthority = NonNullable<z.infer<typeof classifyPayloadSchema>['authority']>;
 export const JOB_LABELS: Record<string, string> = {
   'product-llm-assist-review': '근거 보강·LLM 확인',
   'product-llm-assist-audit-review': '보강의 독립 모델 감사',
@@ -53,6 +60,8 @@ export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비
   // 분리 역할(batch versioned) — 기존 역할의 잡을 떼어 Oracle 등 다른 host 에서 돈다
   translation: '번역', 'product-health': '서비스 응답 점검', 'site-evidence': '공식 사이트 근거', 'official-news': 'AI 소식 수집' };
 export type AgentStatus = {
+  classificationCapacityVersion?: 1;
+  classificationContracts?: readonly CliServingContract[];
   serverNow?: number;
   activity?: { id: string; kind: 'login' | 'oauth_exchange' | 'model'; startedAt: number; deadlineAt: number; model?: string } | null;
   accounts?: Partial<Record<'codex' | 'claude', { storedAt?: string; checkedAt?: string; result?: string; model?: string; probe?: { prompt: 'hi~'; reply?: string; result: string; model: string; checkedAt: string } }>>;

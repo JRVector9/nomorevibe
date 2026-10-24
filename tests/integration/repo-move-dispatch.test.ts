@@ -155,7 +155,7 @@ beforeEach(async () => {
   fetchCapped.mockReset().mockImplementation(async (url: string) => {
     const product = owned.find(item => item.url === url || url.includes(item.slug));
     if (!product) throw new Error("fixture_external_evidence_request_refused");
-    if (url === product.url) return ok(url, `<h1>${pageText}</h1>`);
+    if (url === product.url) return ok(url, `<h1>${pageText}</h1><a href="${product.candidate.candidates[0].url}">Source code</a>`);
     const readme = mode === "unrelated" ? "Unrelated monitoring SDK." : mode === "fork" ? "Tool fork copied from another author." : "Tool draws maps. Original Tool repository.";
     if (url.startsWith("https://raw.githubusercontent.com/")) return ok(url, readme);
     if (url === product.candidate.snapshot.repoUrl) return mode === "official" ? ok(product.candidate.candidates[0].url, "Tool repository") : { ok: false, reason: "http", status: 404 };
@@ -177,7 +177,7 @@ afterAll(async () => {
   } finally { await admin.end(); }
 });
 describe("저장소 이전 공통 소비자 native 실행", () => {
-  it("공식 GitHub redirect만 native 정산·결과·주소 CAS·감사와 원자 적용한다", async () => {
+  it("공식 홈페이지의 유일한 Source 연결과 GitHub redirect를 검증한 뒤 native 정산·주소 CAS·감사를 원자 적용한다", async () => {
     const product = await fixtureProduct();
     const sourceHash = assistHash(product.candidate);
     await reviewLlmAssist(context());
@@ -191,9 +191,28 @@ describe("저장소 이전 공통 소비자 native 실행", () => {
     expect(await work(product.id)).toMatchObject({ state: "done", attempts: 1 });
     expect(await db.select().from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, product.slug))).toMatchObject([{ action: "product.repository.move" }]);
     const modelSources = JSON.parse((calls[0].body.messages as { content: string }[])[1].content.split("[비신뢰 근거]\n")[1]) as AssistSource[];
-    expect(modelSources.find(source => source.sourceId === "product_page")?.text).toBe("Tool draws maps.");
+    expect(modelSources.find(source => source.sourceId === "product_page")?.text).toBe("Tool draws maps. Source code");
+    expect(modelSources.find(source => source.sourceId === "product_page_repositories")?.text).toContain(`new/${product.slug}`);
     expect(assistHash(product.candidate)).toBe(sourceHash);
     await reviewLlmAssist(context()); expect(calls).toHaveLength(1);
+  });
+  it("GitHub redirect가 있어도 제품 홈페이지의 명시 Source 연결이 없으면 사람 확인으로 보낸다", async () => {
+    const product = await fixtureProduct(), request = fetchCapped.getMockImplementation()!;
+    fetchCapped.mockImplementation(async (url: string) => url === product.url ? ok(url, "<h1>Tool draws maps.</h1>") : request(url));
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(1); expect((await requests())[0]?.state).toBe("settled");
+    expect((await current(product.id)).repoUrl).toBe(product.candidate.snapshot.repoUrl);
+    expect(await results(product.id)).toMatchObject([{ applied: false }]);
+    expect(await work(product.id)).toMatchObject({ state: "human" });
+  });
+  it("URL update도 응답 중 홈페이지가 바뀌면 정산 후 적용하지 않는다", async () => {
+    const product = await fixtureProduct();
+    onCall = async () => { pageText = "Tool has changed its official source notice."; };
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(1); expect((await requests())[0]?.state).toBe("settled");
+    expect((await current(product.id)).repoUrl).toBe(product.candidate.snapshot.repoUrl);
+    expect(await results(product.id)).toMatchObject([{ applied: false }]);
+    expect(await work(product.id)).toMatchObject({ state: "obsolete" });
   });
   it("무관한 SDK는 현재 page가 유지된 경우만 내림 후보를 최종 검증한다", async () => {
     mode = "unrelated"; const product = await fixtureProduct();

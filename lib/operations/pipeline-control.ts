@@ -14,6 +14,7 @@ import { resolveSearchVerifyServingContract, searchVerifyServingContractSchema }
 import { resolveTextProfileServingContract, textProfileServingContractSchema } from "@/lib/llm/text-profile-serving-contract";
 import { resolveWebsearchQueryServingContract, websearchQueryServingContractSchema } from "@/lib/llm/websearch-query-serving-contract";
 import { httpOriginPolicyHash, httpOriginPolicySchema } from "@/lib/net/http-origin-policy";
+import { modelConfigSchema } from './contracts';
 
 /**
  * 운영자 제어 CLI(PR06d)의 순수 부분 — 인자, 판정(dry-run 계획), 출력. DB·파일·네트워크 없음.
@@ -160,12 +161,14 @@ export const controlSnapshotSchema = z.object({
   /** crawl_settings.values 원문(행이 없으면 null). 워커와 같은 mergeWithDefaults로 읽는다 */
   reviewSettings: z.unknown(),
   auditCampaign: z.object({ provider: z.string(), model: z.string() }).strict().nullable(),
+  /** Fresh remote process readback; a missing/ambiguous old-agent observation never removes this caller. */
+  classificationObservations: z.unknown().optional(),
 }).strict();
 export type ControlSnapshot = z.infer<typeof controlSnapshotSchema>;
 type StageRow = ControlSnapshot["stages"][number];
 
 export type RouteStatus = "serving" | "no_contract" | "unmapped" | "admission_only" | "stage_legacy" | "unknown" | "unused";
-export type RouteUse = { routeId: string; provider: string; model: string | null };
+export type RouteUse = { routeId: string; provider: string; model: string | null; remoteContractReady?: boolean };
 export type RouteContract = RouteUse & { status: RouteStatus };
 type RouteSpec = { routeId: string; provider: string; served: ((model: string) => boolean) | null };
 const gateway = (routeId: string, resolve: (model: string) => unknown, schema: z.ZodType<{ model: string }>): RouteSpec => ({
@@ -188,6 +191,8 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
   cli("crawl-agent-review", "claude-cli"), cli("crawl-agent-review", "grok-cli"),
   cli("second-review", "claude-cli"), cli("second-review", "grok-cli"),
   cli("product-intro-check", "claude-cli"), cli("product-audit", "claude-cli"), cli("grok-session-check", "grok-cli"),
+  { routeId: 'crawl-publish-classify', provider: 'codex-cli', served: null },
+  { routeId: 'crawl-publish-classify', provider: 'claude-cli', served: null },
   { routeId: "product-audit", provider: "abcllm", served: null },
 ];
 
@@ -220,7 +225,27 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   const audit = snapshot.auditCampaign;
   // Qwen 직접 심사(gpu3090, 0112)는 공통 슬롯을 거치지 않는다 — 게이트웨이도 CLI 도 아니라 open 이 되어도 미뤄지지 않는다
   if (audit && audit.provider !== QWEN_AUDIT_PROVIDER) add("product-audit", audit.provider === "abcllm" ? "abcllm" : "claude-cli", audit.model);
+  for (const use of classifierModelRoutes(snapshot)) uses.set(JSON.stringify([use.routeId, use.provider, use.model]), use);
   return [...uses.values()];
+}
+
+function classifierModelRoutes(snapshot: ControlSnapshot): RouteUse[] {
+  const unknown = [{ routeId: 'crawl-publish-classify', provider: 'unknown', model: null }];
+  const observations = z.array(z.object({ observedAt: z.iso.datetime(), value: z.record(z.string(), z.unknown()) })).safeParse(snapshot.classificationObservations);
+  if (!observations.success || observations.data.length !== 1) return unknown;
+  const observation = observations.data[0], age = Date.parse(snapshot.now) - Date.parse(observation.observedAt);
+  if (!Number.isFinite(age) || age < 0 || age > 15_000) return unknown;
+  const config = modelConfigSchema.safeParse(observation.value.config);
+  if (!config.success) return unknown;
+  const contracts = z.array(cliServingContractSchema).max(2).safeParse(observation.value.classificationContracts);
+  const ready = observation.value.status === 'running' && observation.value.classifyReady === true && observation.value.busy === null
+    && observation.value.classificationCapacityVersion === 1 && contracts.success;
+  return [config.data.primary, config.data.fallback].flatMap(model => {
+    if (!model) return [];
+    const provider = model.model === 'sonnet' ? 'claude-cli' : 'codex-cli', routeId = 'crawl-publish-classify';
+    return [{ routeId, provider, model: model.model, remoteContractReady: Boolean(ready && contracts.data?.filter(contract =>
+      contract.routeId === routeId && contract.provider === provider && contract.model === model.model).length === 1) }];
+  });
 }
 
 const sameRoute = (a: RouteUse, b: RouteUse) => a.routeId === b.routeId && a.provider === b.provider && a.model === b.model;
@@ -228,9 +253,12 @@ const sameRoute = (a: RouteUse, b: RouteUse) => a.routeId === b.routeId && a.pro
 export function modelRouteContracts(policy: ModelCapacityPolicy | null, ai2Mode: string | null, uses: readonly RouteUse[]): RouteContract[] {
   const rows: RouteContract[] = uses.map(use => {
     const spec = MODEL_ROUTES.find(row => row.routeId === use.routeId && row.provider === use.provider);
-    const status: RouteStatus = use.model === null || !spec ? "unknown" : !spec.served ? "admission_only"
+    const remote = use.routeId === 'crawl-publish-classify' && spec;
+    const status: RouteStatus = use.model === null || !spec ? "unknown" : remote
+      ? !policy?.routes.some(route => sameRoute(route, use)) ? 'unmapped' : use.remoteContractReady === true ? 'serving' : 'no_contract'
+      : !spec.served ? "admission_only"
       : !policy?.routes.some(route => sameRoute(route, use)) ? "unmapped" : spec.served(use.model) ? "serving" : "no_contract";
-    return { ...use, status };
+    return { routeId: use.routeId, provider: use.provider, model: use.model, status };
   });
   for (const route of policy?.routes ?? []) {
     if (!uses.some(use => sameRoute(use, route))) rows.push({ routeId: route.routeId, provider: route.provider, model: route.model, status: "unused" });

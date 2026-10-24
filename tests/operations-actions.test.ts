@@ -6,6 +6,8 @@ vi.mock('@/lib/operations/agent-client',()=>({agentRequest:mocks.agent}));
 vi.mock('@/lib/db',()=>({db:{insert:()=>({values:mocks.audit})}}));
 vi.mock('@/lib/operations/dr/web-gate',async original=>({...await original<typeof import('@/lib/operations/dr/web-gate')>(),assertWebWritable:async()=>{},webWriteAction:<F>(action:F)=>action})); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 lib/db mock 에는 onPrimary 가 없다)
 import { codexOperation } from '@/app/(operator)/admin/status/actions';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { DEFAULT_CONFIG } from '@/lib/operations/contracts';
 beforeEach(()=>{vi.clearAllMocks();});
 
 // 관리자 화면을 여는 사람이면 GitHub 로그인 없이도 다시 인증한다(운영은 로그인 없는 관리자 — ADMIN_LOCAL_LOGIN)
@@ -30,4 +32,9 @@ it('forwards authorization input without putting it in the audit',async()=>{
  expect(await codexOperation('input',{id:'session',code:'private-oauth-code'})).toHaveProperty('status');
  expect(mocks.agent).toHaveBeenCalledWith('input',{id:'session',code:'private-oauth-code'});
  expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain('private-oauth-code');
+});
+it.each(['probe','test'])('explains deferred manual %s through the existing admin error response',async action=>{
+ mocks.admin.mockResolvedValue({login:'local'});mocks.agent.mockRejectedValue(new ModelCapacityDeferredError('provider_contract_unavailable'));
+ const result=await codexOperation(action,action==='test'?{config:DEFAULT_CONFIG}:{provider:'codex'});
+ expect(result.error).toContain('수동 계정·모델 검사');expect(result.error).not.toBe('model_capacity_deferred');
 });

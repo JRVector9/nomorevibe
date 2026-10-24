@@ -104,7 +104,7 @@ docker run -d --name nomorevibe-test-db \
   -e POSTGRES_USER=nomorevibe -e POSTGRES_PASSWORD=nomorevibe -e POSTGRES_DB=nomorevibe_test \
   -p 55435:5432 pgvector/pgvector:0.8.6-pg17
 export TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55435/nomorevibe_test
-# 빈 DB 에서 직렬 ledger·호출 파일 18개를 정해진 순서로 하나씩(CI 의 integration-ledger 잡)
+# 빈 DB 에서 직렬 ledger·호출 파일 19개를 정해진 순서로 하나씩(CI 의 integration-ledger 잡)
 for file in $(node scripts/integration-shards.mjs --serial); do npm run test:integration -- "$file" || break; done
 # 나머지 통합 파일 전체(직렬 파일 제외)
 npm run test:integration -- $(node scripts/integration-shards.mjs --exclude-args)
@@ -127,7 +127,7 @@ lint(ESLint·Python unittest)·단위 테스트 2개 묶음·build(번들 크기
 병렬 실행한다. 통합 묶음은 파일 수가 아니라 `tests/integration/durations.json`의 파일별 시간으로 나눈다
 (긴 파일부터 가장 가벼운 묶음에, `scripts/integration-shards.mjs`). 묶음과 ledger 잡은 각자 runner 안의 일회용 DB
 (tmpfs, `fsync`·`synchronous_commit`·`full_page_writes` off)를 쓰고, 묶음 안에서는 파일을 직렬 실행한다.
-ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열여덟 파일(제품 번역 ledger부터 AI1 소비자까지)을 정해진 순서로 하나씩 실행한다.
+ledger 잡은 빈 DB에서 `SERIAL_FILES`의 열아홉 파일(제품 번역 ledger부터 AI1 소비자까지)을 정해진 순서로 하나씩 실행한다.
 각 파일은 원 행 기준 상태를 복원하며, 묶음 실행은 이 열여덟 파일을 제외해 모든 통합 파일을 정확히 한 번 실행한다.
 묶음마다 파일별 시간을 artifact(`integration-durations-*`)로 남기고 `node scripts/integration-durations.mjs --run <실행 id>`로
 기록을 갱신한다(`--plan 6`은 배정만 보여 준다).
@@ -189,8 +189,10 @@ main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·mai
 mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 M3 connect-agent를 포함한
 총14앱·19복제본을 [GitHub 연동 배포 검증](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
 2026-10-22 관리자·보안 릴리스는 agent-scan 소비자를 포함한 15앱/20컨테이너에 배포했고,
-같은 날 읽기 전용 M3 monitor를 추가해 현재 16앱/21컨테이너다. Oracle Osaka의 Kuma 수신기는
-Dokploy 앱 수에 포함하지 않는다. 두 후속 배포의 근거는 위 기록을 따른다.
+같은 날 읽기 전용 M3 monitor를 추가했고, 2026-10-25 KST M3 AI2 소비자를 생성·배포해
+현재 17앱/22컨테이너다. AI2 소비자의 배포와 `items` 운영 전환은 별도이며, 전환 상태는
+[LLM 보강 운영 기록](docs/operations/2026-10-24-llm-assist-activation.md)을 따른다.
+Oracle Osaka의 Kuma 수신기는 Dokploy 앱 수에 포함하지 않는다.
 두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.
 2026-09-29 릴리스 `20208d3`에서 주 재시작·mini 인계·복귀와 crawler 문서, reviewer 심사,

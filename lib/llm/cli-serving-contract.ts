@@ -52,10 +52,11 @@ export type CliServingContractProbeReport = Readonly<{ index: number | null; rou
 export const CLI_VERSION_PROBE_TIMEOUT_MS = 5_000;
 const MAX_CONTRACT_ENTRIES = 32;
 const MAX_VERSION_OUTPUT_BYTES = 4 * 1024;
-/** 장부 CLI kind(capacity.ts)가 있는 route 와 그 kind 가 받는 CLI. codex 는 kind 가 없어 계약을 열 수 없다(D2) */
+/** 장부 CLI kind(capacity.ts)가 있는 route 와 그 kind 가 받는 CLI. */
 const CLI_CONTRACT_ROUTES: Readonly<Record<string, readonly CliProvider[]>> = {
   "crawl-agent-review": ["claude-cli", "grok-cli"], "second-review": ["claude-cli", "grok-cli"],
   "product-audit": ["claude-cli"], "product-intro-check": ["claude-cli"], "grok-session-check": ["grok-cli"],
+  "crawl-publish-classify": ["claude-cli", "codex-cli"],
 };
 /** 호출자(review-cli-call·cli-model-capacity·classify)가 띄우는 명령과 같은 식 */
 const cliCommand = (provider: CliProvider) => ({ "claude-cli": process.env.CLAUDE_CLI ?? "claude",

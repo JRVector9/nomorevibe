@@ -1,7 +1,8 @@
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
 import { nonProductPurpose } from './product-purpose';
 import { accessFromDocument } from "./rules";
-import type { CrawlCandidate, CrawlDocument, TaglineSource } from "@/lib/db/schema";
+import type { CrawlCandidate, CrawlDocument, CrawlTagline, TaglineSource } from "@/lib/db/schema";
+import type { CrawlSettings } from './settings-schema';
 import { LIMITS, type Category } from "@/lib/domain/products/schema";
 import { normalizedProductName } from "@/lib/domain/products/display-name";
 import * as products from "@/lib/domain/products/repository";
@@ -304,6 +305,20 @@ export async function prepareCandidateClassification(
     language: draft.language,
     readme: typeof document.pageMeta?.readmeSample === "string" ? document.pageMeta.readmeSample : "",
   }, snapshot: prepared.snapshot };
+}
+
+/** Same draft facts, rebuilt from locked source rows before remote classifier dispatch. */
+export function classificationInputFromRows(candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings,
+  written?: CrawlTagline): ClassifyInput | null {
+  const access = accessFromDocument(document, settings);
+  if (!access || publicationSourceChanged(candidate, document)) return null;
+  let draft = draftFrom(candidate.repo, document, access.mode === 'installable');
+  if (!draft.hasDescription && written?.tagline
+    && (written.writtenBy !== null || written.sourceHash === taglineHash(taglineEvidence(candidate.repo, document))))
+    draft = draftFrom(candidate.repo, document, access.mode === 'installable', { text: written.tagline, source: written.source, by: written.writtenBy });
+  return !draft.hasDescription ? null : { repo: candidate.repo, url: access.url, name: draft.name, tagline: draft.tagline,
+    topics: draft.topics, language: draft.language,
+    readme: typeof document.pageMeta?.readmeSample === 'string' ? document.pageMeta.readmeSample : '' };
 }
 
 /**

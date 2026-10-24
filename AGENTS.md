@@ -21,7 +21,8 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 운영 서비스는 `https://nomorevibe.com`에 배포되어 있다. Dokploy는 main을 사용하며
 M3의 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance와 mini의 웹·다섯 역할 예비,
-connect-agent·agent-scan 소비자·읽기 전용 monitor를 합쳐 총 16개 Dokploy 앱/21개 컨테이너로 운영한다.
+connect-agent·agent-scan 소비자·AI2 소비자·읽기 전용 monitor를 합쳐 총 17개 Dokploy 앱/22개 컨테이너로 운영한다.
+AI2 소비자는 M3 1앱이며 stage 전환과 전역 모델 용량 제어 상태는 `docs/CODEX_HANDOFF.md`를 따른다.
 다섯 역할은 DB 역할 lease로 한 후보만 작업한다. M3 monitor는 mini Kuma와 Oracle Osaka의 별도 Kuma로
 Push를 보낸다. 연결·UP 확인과 장애 알림 드릴의 완료 여부는
 `docs/operations/2026-10-22-worker-monitor-rollout.md`를 먼저 읽는다.

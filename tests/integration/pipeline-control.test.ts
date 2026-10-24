@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import postgres from "postgres";
 import { randomInt, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { batchPolicyHash } from "@/lib/jobs/batches";
@@ -329,6 +329,7 @@ it("judges capacity open only on the (route, provider, model) combinations the s
       { routeId: "search-query-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
       { routeId: "crawl-tagline", provider: "abcllm", model: MODEL_ENV.ABCLLM_TAGLINE_MODEL, status: "unmapped" },
       { routeId: "product-intro-check", provider: "claude-cli", model: MODEL_ENV.INTRO_CHECK_MODEL, status: "unmapped" },
+      { routeId: "crawl-publish-classify", provider: "unknown", model: null, status: "unknown" },
       { routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" },
     ]);
     expect(routes).toEqual(expect.arrayContaining([
@@ -357,3 +358,27 @@ it("judges capacity open only on the (route, provider, model) combinations the s
   }
   expect(await readSettings()).toEqual(saved);
 }, 180_000);
+
+it('probes the actual local CLI version before judging its serving contract in the standalone control tool', async () => {
+  const command = join(directory, 'fake-version-only-cli'), record = join(directory, 'version-only-record.json');
+  writeFileSync(command, `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.writeFileSync(${JSON.stringify(record)},JSON.stringify(args));if(JSON.stringify(args)!=='["--version"]')process.exit(90);console.log('fixture-cli 1.0.0');\n`, { mode: 0o700 });
+  const contract = { version: 1, protocol: 'cli-process-v1', routeId: 'product-intro-check', provider: 'claude-cli', model: MODEL_ENV.INTRO_CHECK_MODEL,
+    cliVersion: 'fixture-cli 1.0.0', inputByteCap: 100000, totalTokenBound: 246000, costBoundUsdMicros: null, boundProvenance: 'derived',
+    maxTurns: 2, outputTokensPerTurn: 2000, overheadTokenBound: 20000 };
+  const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { cli: 2 }, groupLimits: { cli: 2 },
+    poolLimits: { reviewer: 2, text: 2 }, weights: { first: 2, second: 1, background: 1 }, maxWaiting: 32, queueTtlMs: 60000, reservationTtlMs: 30000,
+    routes: [{ routeId: contract.routeId, provider: contract.provider, model: contract.model, providerBudgetId: 'cli', groupId: 'cli' }] };
+  await client`UPDATE model_capacity_control SET mode='draining',policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(policy)} WHERE id=1`;
+  const previous = { contracts: env.CLI_SERVING_CONTRACTS, command: env.CLAUDE_CLI };
+  env.CLI_SERVING_CONTRACTS = JSON.stringify([contract]); env.CLAUDE_CLI = command;
+  try {
+    const current = await control('model_capacity_control'), before = await controlRows(), auditBefore = await auditMax();
+    const result = cli('capacity', 'mode', '--to=open', '--from-mode=draining', `--expect-epoch=${current.epoch}`, `--expect-revision=${current.revision}`, ...audit);
+    expect(result.stderr).toBe(''); expect(result.out?.plan.routes).toContainEqual({ routeId: contract.routeId, provider: contract.provider, model: contract.model, status: 'serving' });
+    expect(JSON.parse(readFileSync(record, 'utf8'))).toEqual(['--version']);
+    expect([await controlRows(), await auditMax()]).toEqual([before, auditBefore]);
+  } finally {
+    for (const [key, value] of [['CLI_SERVING_CONTRACTS', previous.contracts], ['CLAUDE_CLI', previous.command]] as const)
+      if (value === undefined) delete env[key]; else env[key] = value;
+  }
+});

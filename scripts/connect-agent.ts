@@ -3,6 +3,8 @@ import { timingSafeEqual } from 'node:crypto';
 import { ConnectAgent } from '../lib/operations/agent';
 import { agentToken } from '../lib/operations/agent-client';
 import { observeService } from '../lib/operations/observations';
+import { ModelCapacityDeferredError } from '../lib/llm/capacity-deferred';
+import { probeCliServingContracts } from '../lib/llm/cli-serving-contract';
 const secret=process.env.OPERATIONS_AGENT_SECRET ?? '';
 if(secret.length<32)throw new Error('OPERATIONS_AGENT_SECRET is required');
 const agent=new ConnectAgent(process.env.CODEX_VAULT_DIR ?? '/var/lib/nomorevibe-codex',secret);
@@ -15,21 +17,26 @@ const server=createServer(async(req,res)=>{
   if(req.method!=='POST'||req.url!=='/rpc'){res.writeHead(404);res.end('{}');return;}
   try {
     let size=0;const chunks:Buffer[]=[];
-    for await(const chunk of req){size+=chunk.length;if(size>65536){res.writeHead(413);res.end('{}');return;}chunks.push(chunk);}
+    // Original data remains capped at 64 KiB; the fixed authority adds at most 8 KiB.
+    for await(const chunk of req){size+=chunk.length;if(size>65536+8192){res.writeHead(413);res.end('{}');return;}chunks.push(chunk);}
     const {action,data}=JSON.parse(Buffer.concat(chunks).toString());let result:unknown;
+    if (Buffer.byteLength(JSON.stringify({ action, data: action === 'classify' && data?.authority
+      ? { ...data, authority: undefined } : data })) > 65536) { res.writeHead(413); res.end('{}'); return; }
     switch(action){
       case 'status':result=agent.snapshot();break;
       case 'connect':result=agent.connect(data?.provider ?? 'codex');break;
       case 'input':result=agent.input(String(data.id),data.code);break;
       case 'cancel':result=agent.cancel(String(data.id));break;
-      case 'probe':result=agent.probe(data.provider);break;
-      case 'test':result=agent.test(data.config);break;
+      case 'probe':result=await agent.probe(data.provider);break;
+      case 'test':result=await agent.test(data.config);break;
       case 'apply':result=agent.apply(data);break;
       case 'classify':result=await agent.classify(data);break;
       default:throw new Error('알 수 없는 작업입니다.');
     }
     res.end(JSON.stringify(result));
-  } catch(error){res.writeHead(409);res.end(JSON.stringify({error:error instanceof Error && !error.message.startsWith('[')?error.message:'요청 형식이 올바르지 않습니다.'}));}
+  } catch(error){res.writeHead(409);res.end(JSON.stringify(error instanceof ModelCapacityDeferredError
+    ? { error: 'model_capacity_deferred', code: 'model_capacity_deferred', reason: error.reason }
+    : {error:error instanceof Error && !error.message.startsWith('[')?error.message:'요청 형식이 올바르지 않습니다.'}));}
 });
 server.requestTimeout=10_000;server.headersTimeout=10_000;server.maxConnections=24;
 let observing=false;
@@ -39,5 +46,5 @@ const timer=setInterval(()=>{
   void observeService('connect-agent',{...state,status:'running',bootedAt:startedAt,release:process.env.RELEASE_TAG??'unknown',connection:state.connection?{id:state.connection.id,provider:state.connection.provider,error:state.connection.error,state:state.connection.state,expiresAt:state.connection.expiresAt}:null,rssBytes:process.memoryUsage().rss})
     .catch(()=>{}).finally(()=>{observing=false;});
 },5000);
-server.listen(Number(process.env.PORT ?? 3020),'0.0.0.0');
+void probeCliServingContracts().then(() => server.listen(Number(process.env.PORT ?? 3020),'0.0.0.0'));
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{clearInterval(timer);server.close();agent.close();process.exit(0);});

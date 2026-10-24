@@ -248,6 +248,12 @@ Dokploy 설정만 이전 값으로 되돌리고 **다시 배포하지 않는다*
 
 #### `--parallel-roles` (선택, 기본은 순차)
 
+2026-10-25 KST 실제 등록된 AI2 소비자는 M3의 `nomorevibe-ai2-consumer-m3` 한 앱이다.
+전체 공유 릴리스에서 기존 agent-scan과 함께 갱신하려면 `plan`과 `run` 모두에
+`--consumer ai2 --consumer agent-scan`을 지정한다. 생성하지 않은 mini AI2 앱은 대상에 넣지 않는다.
+소비자 앱이 healthy여도 stage가 `legacy`이면 항목을 처리하지 않는다. `items` 전환은
+[용량 제어 전환 절차](2026-10-17-pipeline-control-runbook.md)와 실제 제어 행의 CAS를 따른다.
+
 기본(순차)은 위와 같다: publisher → reviewer → crawler 역할마다 mini 예비 → M3 주 → (`--consumer`로 고른 소비자 앱)
 → 그 역할의 감시 관문. `--parallel-roles`를 `plan`/`run`에 주면 순서가 다음처럼 바뀐다. `plan`은 바뀐 순서를
 계획 줄의 `mode`·`rollout`으로 보여 주기만 한다.

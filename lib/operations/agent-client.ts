@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto';
+import { isModelCapacityDeferredReason, ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 export function agentToken(secret: string) { return createHmac('sha256', secret).update('nomorevibe-connect-agent-rpc-v1').digest('hex'); }
 export async function agentRequest<T>(action: string, data: unknown = {}): Promise<T> {
   const url = process.env.CONNECT_AGENT_URL;
@@ -8,6 +9,8 @@ export async function agentRequest<T>(action: string, data: unknown = {}): Promi
     headers: { 'content-type': 'application/json', authorization: `Bearer ${agentToken(secret)}` },
     body: JSON.stringify({ action, data }), signal: AbortSignal.timeout(action === 'classify' ? 85_000 : 10_000) });
   const result = await response.json();
+  if (!response.ok && result.code === 'model_capacity_deferred' && isModelCapacityDeferredReason(result.reason))
+    throw new ModelCapacityDeferredError(result.reason);
   if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'AI 연결 서비스 요청 실패');
   return result as T;
 }

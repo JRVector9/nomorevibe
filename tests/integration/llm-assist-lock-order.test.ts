@@ -1,4 +1,4 @@
-import { randomInt, randomUUID } from "node:crypto";
+import { createHash, randomInt, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -8,7 +8,7 @@ import { completeAssistClaim } from "@/lib/domain/llm-assist/complete";
 import { ASSIST_SCHEMA_VERSION, assistHash, assistInputHash, type AssistInput } from "@/lib/domain/llm-assist/contracts";
 import { assistPromptHash, ASSIST_PROMPT_VERSION } from "@/lib/domain/llm-assist/prompts";
 import type { AssistWorkClaim } from "@/lib/domain/llm-assist/repository";
-import { buildRepoMoveInput, repoMoveSource, type RepoMoveCandidate, type RepoMoveOutcome } from "@/lib/domain/products/repo-move-review";
+import { buildRepoMoveInput, decideRepositoryMove, repoMovePageRepositoriesSource, repoMoveSource, type RepoMoveCandidate, type RepoMoveOutcome } from "@/lib/domain/products/repo-move-review";
 import { readRepoMoveSnapshot } from "@/lib/domain/products/repo-move-snapshots";
 import { lockProductRepository } from "@/lib/domain/products/repository-identity";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
@@ -95,13 +95,18 @@ async function repoClaim() {
   const snapshot = (await readRepoMoveSnapshot(p.id))!, destination = `https://github.com/new/${p.slug}`;
   const candidate: RepoMoveCandidate = { kind: "repo_move", snapshot, oldRepository: { state: "moved", to: `new/${p.slug}` },
     candidates: [{ url: destination, check: { state: "alive" } }], uncheckedRepositoryUrls: [], page: null };
-  const readme = repoMoveSource("candidate_readme_0", "readme", destination, "Tool draws maps. Original Tool repository.", new Date().toISOString(), "complete", 200);
-  const input = buildRepoMoveInput(candidate, [readme]);
+  const observedAt = new Date().toISOString(), html = `<p>Tool draws maps.</p><a href="${destination}">Source code</a>`;
+  const page = repoMoveSource("product_page", "page", p.url, "Tool draws maps. Source code", observedAt, "complete", 200);
+  const repositories = repoMovePageRepositoriesSource(page, createHash("sha256").update(html).digest("hex"), [`new/${p.slug}`]);
+  const readme = repoMoveSource("candidate_readme_0", "readme", destination, "Tool draws maps. Original Tool repository.", observedAt, "complete", 200);
+  const input = buildRepoMoveInput(candidate, [page, repositories, readme]);
   const outcome: RepoMoveOutcome = { schema_version: ASSIST_SCHEMA_VERSION, task: "repo", evidence_quality: { status: "sufficient", limitations: ["none"] },
     state: { project_identity: "matches", code_lineage: "original", official_continuity: "explicit_move", relationship: "same_project" },
     evidence: [{ source_id: readme.sourceId, quote: readme.text, supports: ["/state/project_identity", "/state/code_lineage"] },
       { source_id: "old_repository", quote: input.sources[0].text, supports: ["/state/official_continuity"] }],
     action: { proposal: "update_repo_candidate", reason_ko: "공식 이전 근거를 확인했습니다.", missing_items: [] } };
+  // Exercise the canonical-repo lock path with fresh, uniquely bound official homepage evidence.
+  expect(decideRepositoryMove(candidate, input, outcome)).toMatchObject({ kind: "update_repo_candidate", url: destination });
   const [work] = await db.insert(llmAssistWorks).values({ id: randomUUID(), task: "repo_move", productId: p.id, originJob: "product-repo-review",
     source: candidate, sourceHash: assistHash(candidate), policyVersion: input.policyVersion, promptVersion: input.promptVersion }).returning();
   const claim: AssistWorkClaim = { work, token: randomUUID(), owner: { instanceId: prefix, bootId: randomUUID() },

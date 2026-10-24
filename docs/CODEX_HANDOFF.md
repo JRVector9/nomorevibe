@@ -1,3 +1,229 @@
+# 2026-10-25 01:31 KST — PR646 필수 CI 후속 수정
+
+root branch는 `codex/llm-assist-native-activation-20261025`, PR646의 첫 head fa2455f6이다.
+CI40110815083에서 build/typecheck/lint·unit2·원장/통합4묶음은 성공했지만 unit1와 통합2·4는 실패했다.
+실패를 무시하지 않고 다음 범위만 수정했다. 운영0125 적용/후속 코드 배포/전역open은 아직0이다.
+
+- Drizzle5 CHECK는 최신0124 조건을 갖고 있었으나 classifier OR의 괄호 위치가0125와 byte 불일치였다.
+  닫는 괄호만 이동해5개 전체를 일치시켰고 members exact 회귀도 추가했다. root unit2파일4/4 PASS.
+  migration92a792 hash와 기존 strict 조건은 불변이다.
+- gateway-not-started의 역사 검사에서 현재 members CHECK가0096과 불변이라는 옛 기대를0125의
+  실제 확장에 맞춰 prefix 보존 검사로 옮겼다. 실제 DB 전체파일7/7 PASS.
+- repo lock-order fixture는 새 공식 홈페이지 근거가 없어 advisory lock 전에 올바르게 기권했다.
+  전용DB32779에서 RED를 재현하고 fresh page+단일 Source metadata·판정전제 assertion을 추가해3/3 PASS.
+  실제 pg_locks/pg_blocking_pids 대기 관측과 writer 커밋·무권한 적용 거절은 유지했다. 생산 guard/락 변경0.
+- private followup-git-build-rollout helper는 새7계약 env를 정확히 허용하되 다른 env·mount·secret 변경은
+  거절하도록 별도 준비했다. 실제 RED3 뒤16개 guard 테스트 PASS. 아직 fresh7앱 baseline/실배포 전이다.
+- 운영0125 one-shot helper/계획은 migration-0125-preflight 아래 준비했다. primary5432/active fence1,
+  실제 journal125·이전 hash 일치·원장0/0·제약5validated·DDL권한을 READ ONLY 확인했다. root가 소스를
+  직접 리뷰했고 새 main CI 성공·정확 mergedHEAD 뒤 existing migrator를1회 호출할 예정이다.
+- DeepSeek grammar target 설치·모델0 fixture12PASS 뒤 entry PYTHONPATH1줄만29a9로 전환했다.
+  active0/wait0 확인 후16:24:08Z SIGTERM1회, old80130 종료·new11113·16:26:43Z loaded2/health200을 확인했다.
+  strict POST는 아직0이다. 첫preflight는추가pyc55개 때문에멈췄고 원281파일불변·각pyc source/header/codeobject와
+  실제PID dylib4개의 target경로를 증명해 manifest336을 고정했다. 추가signal0, 계약false84168은 유지한다.
+
+수정파일: operations-schema.ts·schema exact unit·gateway 역사 DB test·repo lock DB test·pipeline runbook와
+이 handoff다. 다음은 새 head commit/push→전체 필수 CI→최신 base merge→migration126→17앱 release다.
+사람5표본 라벨은 대기, 자동적용false다. 운영 명령 준비는 evaluation agent가 private에 보존 중이다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git diff --check
+gh pr view 646 --json headRefOid,baseRefOid,statusCheckRollup,mergeStateStatus
+# first CI 실패 head를 병합하지 않는다. 수정 head push 후 필수 check 실제 성공을 기다린다.
+```
+
+---
+
+# 2026-10-25 01:16 KST — 통합 DB 회귀 수정·필수 CI 준비
+
+현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root 통합 branch는
+`codex/llm-assist-native-activation-20261025`, HEAD77abdb86이며 사용자 원 WT는 보존했다.
+classifier c3fbeb7f와 repo/pointer77abdb86을 인수했다. 아직 후속 PR·운영0125 적용 전이다.
+
+- root 변경14파일 단위121/121, Next typegen·전체 tsc·변경45 TS/TSX ESLint exit0,
+  운영 Python94건 중92 PASS/2 SKIP를 실제 확인했다.
+- root 전용 PG17/55447에0125 적용 exit0 뒤 통합6파일88건을 실행해67 PASS/21 FAIL이었다.
+  llm-assist-dispatch13·repo-move-dispatch8이 실제 모델 요청0으로 실패했다. 단독 alive 회귀도 같은
+  `model_capacity_requests_dispatch_check` SQL23514였다. 파일 간 fixture 누수라는 최초 가정은 기각했다.
+- 원인: classifier0125는 옛 baseline CHECK를 보존해 최신 main0124의 `local_model_direct` 세 분기를
+  삭제했다. 이는 생산 결함이며 운영 적용하지 않았다. agent live_readiness가0125와 보존 검사를 수정했다.
+  검사 regex의 quoted DDL 누락도 고쳐 최신0124의4개 CHECK와0096 members 전체를 exact left OR로
+  보존했다. classifier 함수·오른쪽 추가분기는 byte 불변이다. 새 PG17/32778 fresh126/126와
+  assist23/local7/repo10/CLI8/classifier17/constraint10, 6파일75/75 PASS다. 보존unit1/1은 root도
+  재실행했다. SQL SHA256은92a79292953ed2855307a5cb0d0b9a96e5675f5c810bebc29d193d19b14254ba다.
+  임시 진단 코드는 제거했다. 실패 원로그는 private operations/integrated-integration.log다.
+- 실제 API readback으로 AI2·M3 maintenance·connect-agent의 staged runtime7키가 후보와 일치함을
+  재확인했다. maintenance 실제 claude2.1.263/codex0.153.4이나 현재592c container에는 새 계약 env가
+  없으므로 readiness 완료라고 하지 않는다. 후속 배포 뒤 실제 제어 도구에서 version probe를 실행한다.
+- 새 사람 검증 표본5개는 기존 개발표본과 겹치지 않게 고정해 사용자에게 분류를 요청했다.
+  확보본문3 complete/1 truncated/1 missing, 실제 HTTP7/모델0/DB쓰기0이며 사람 라벨은 아직 없다.
+  기존 개발29회를 holdout으로 바꾸지 않았다. 적용은 계속false다.
+- DeepSeek grammar는 pinned xgrammar0.2.8/ffi0.1.11 두 wheel의 새 target 격리 설치·모델0 fixture까지만
+  진행하도록 승인했다. live entry/venv/settings/restart/추론 변경은 아직 승인·실행하지 않았다.
+- 운영 스냅샷 검색 범위 실수로 비밀 포함 원문이 도구 출력에 노출된 사실을 사용자에게 알렸다.
+  이후 private 원문 rg를 중단하고 필요한 필드만 추려 비밀을 제외한 결과를 읽는다. 값은 문서에 적지 않는다.
+
+이번 phase 수정파일은 README·독립 워커 runbook·이 handoff·운영전환 기록·0125·보존 회귀다.
+옛55447 DB에는 수정 전0125가 적용돼 있으므로 fresh 증거로 사용하지 않는다. 전체 필수 CI와
+최신 base 병합 뒤 실제 migration·17앱 후속 배포가 남았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+# 실제 성공한75건 재현용. 필요할 때만 반복한다.
+TEST_DATABASE_URL=postgres://test:test@127.0.0.1:32778/nomorevibe_test npm run test:integration -- tests/integration/local-model-assist-constraint-regression.test.ts tests/integration/local-model-capacity.test.ts tests/integration/llm-assist-dispatch.test.ts tests/integration/repo-move-dispatch.test.ts tests/integration/publication-classify-capacity.test.ts tests/integration/model-capacity-cli-ledger.test.ts
+git diff --check
+# source/DB 회귀 성공했다. commit/push/PR와 최신 base 필수CI를 진행한다.
+# 이후 새0125 실제 migration→17앱 고정배포→실제 serving/native 확인→정상 capacity/AI2 전환.
+```
+
+---
+
+# 2026-10-25 KST — 병렬 후속 구현 통합 중
+
+현재 목표는 남은 LLM 보강 구현·운영 활성화·배포 전체다. root branch는
+`codex/llm-assist-native-activation-20261025`, 원 사용자 WT 변경은 보존했다.
+
+- main592c0a1b의 16앱 배포 뒤 M3 AI2 소비자1앱을 실제 생성·배포했다. 15:57:28Z healthy/heartbeat running,
+  source11/11·고정worker4333·release592c·전용health·network/resources를 확인했다. 총17앱/22컨테이너다.
+  AI2 stage는legacy/epoch1/contract0, globaldisabled/rev1로 유지해 모델·item dispatch0이었다.
+  actual appID S7HvgYAeS4hLimJ3_n5Uf를 배포 registry에 등록했다. 없는 mini host는 실행 대상으로 만들지 않았다.
+  root 운영도구 회귀는 원래3 assertion RED 뒤 기존 inventory fixture를 실제17앱에 맞춰,
+  94건 중92 PASS/2 SKIP했다. 중간 fixture KeyError6·옛16앱 기대3도 숨기지 않는다.
+- 15caller 앱의 새 계약 env는 저장·full readback했지만 아직 다음 코드 배포 전이다. 기존 containerenv는
+  이전값이며 배포ID/RELEASE_TAG는592c로 유지됐다. 전역open/새task dispatch는 아직 하지 않았다.
+- classifier feature d8a90b40을 root가 source/SQL 직접 리뷰하고 인수 중이다. agent 최종 unit124/124,
+  scoped integration85건·fresh migration126/126·typegen/tsc/lint/diffcheck PASS. 전체 CI는 아직 없다.
+  원격 opaque terminal·실제 publisher source/role/job CAS, 종료불명 mutex·fallback 차단,
+  RPC결과유실 defer, manual probe/test guard와 classifier의 readiness 분모를 포함한다.
+  CLI tool의 누락된 startup version probe도 실제 subprocess RED→GREEN으로 고쳤다.
+  검증·전체 수정파일·실패·명령은 operations/2026-10-24-publication-classify-capacity.md와 별도 plan을 따른다.
+  shared handoff 충돌은 root 운영 기록을 보존하고 이 최신 인수 요약으로 해소했다.
+- repo/pointer feature4c8c4541은 root가 production5파일 직접 리뷰했고 이어 인수할 예정이다.
+  agent unit114/114·격리DB46/46·typegen/tsc/lint/diffcheck PASS. 원본93평가파일 hash 불일치0,
+  추가모델0, 기존 개발29회·원점수·AI라벨을 유지했다. uptime schema/prompt hash는 불변이다.
+- DeepSeek grammar는 실제 xgrammar/torch 부재와 모델0 fixture로 strict fallback을 확인했다.
+  jsonSchema=false 계약84168을 유지한다. 격리 dependency staging 가능성만 조사 중이며 기존 guard를 우회하지 않는다.
+
+다음 명령은 root 통합 WT에서 source 인수와 필수 CI를 진행한다. 배포 전 새0125 실제 적용·journal readback,
+후속17앱 고정릴리스, AI2 contract→drain→capacity open→items의 정상 전환과 native canary가 남았다.
+자동 적용은 사람 독립 holdout 전 계속false다. 기존17개 개발표본을 뒤늦게 holdout으로 승격하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+# classifier handoff conflict 해소 후 git cherry-pick --continue
+# git cherry-pick 4c8c45419d67a249e97af6c4137efd6dc186c8f0
+# 두 feature 통합 뒤 최신 origin/main과 CI/check를 확인한다.
+```
+
+---
+
+# 2026-10-24 15:40Z / 10-25 KST — 후속 병렬 구현·실데이터 평가
+
+16앱 main592c0a1b 배포는 아래 기록대로 완료했다. 현재 후속 source PR은 아직 병합하지 않았다.
+
+- classifier agent의 새 native terminal SQL에서 JSON null provenance가 Zod=false/SQL=true인 실제 RED를
+  재현했다. 두 usage 분기를 IS DISTINCT FROM으로 고쳐 SQL=false/INSERT CHECK23514를 확인했다.
+  native DB12회귀, missing CONNECT_AGENT_URL+open8회귀, caller분모·remote실계약55회귀를 실제 통과했다.
+  최종 타입·lint·fresh migration·legacy ledger 검사는 진행 중이다. probe/test 수동 CLI는 publication 권한을
+  위장하지 않고 disabled에서 보존, open/draining에서 typed defer/spawn0하도록 최소 guard를 승인했다.
+- repo2/intro2/news2의 실제 frozen GPU 평가6회를 완료했다. HTTP200/model/stop/usage6/6,
+  schema6/공통guard2/검증 후 고정 finding+facts match1, p50 3588ms/p95 8188ms다.
+  누적 개발평가29/재시도0/unknown0이며 사람 holdout이 아니다. 원입력·관측시각·라벨·응답을 수정하지 않았다.
+  repo2/intro2는 잘못된 supports pointer로 기권, news2는 domain needs_review로 차단됐다.
+  실제 원문 기반의 별도 synthetic 반례에서 Zed의 fork redirect를 공식 제품 이전으로 바꿀 수 있음을 확인했다.
+  실모델 점수와 구분해 보존하고, 홈페이지의 명시적 Source/Repository unique binding과 fresh apply 재검증,
+  다른 업무의 task-specific supports enum/prompt를 최소 후속 구현하도록 승인했다. 뉴스 의미 parser 변경은 보류다.
+  evaluation agent는 별도 WT에서 진행하며 공통 문서는 root가 취합한다.
+- DeepSeek 두 기존 caller의 exact normalized wire8 fake fixture는 외부 model/DB0으로 통과했다.
+  native contract 후보84168a49c723156bcf7102e49a6ec1943aea9d99a6f9b2bb24a2bc722144bee0는
+  jsonSchema=false와 actual source/config/quant/settings revision만 정정한다. input512KiB/out4096 유지,
+  미래 assist 감사 경로는 추가하지 않는다. root가 source proof·계획을 검토하고 exact11093byte/hashf85e8f7d…
+  tiny wire로 max2000/timeout60s/retry0 실제1POST를 승인했다. 15:40:12Z HTTP200/정확model/stop,
+  usage2333+70=2403/reasoning0/완전 JSON 수신으로 성공했고 DB·env 변경은0이다. native 원장 증거는 별도다.
+- 15:40:20Z 실제 stage를 다시 읽어 fetch/ai1/ai2 모두 legacy/epoch1/writer_contract_version0을 확인했다.
+  첫 조회는 존재하지 않는 contract 열로 실패했고 writer_contract_version으로 정정해 읽었다(쓰기0).
+  AI2 legacy는 전역 open에서 멈추므로 runbook §2의 같은 창 전환과 실제 consumer 준비를 agent가 읽기로 조사 중이다.
+  --allow-deferred-routes로 기존 생산 경로를 누락시키지 않는다.
+
+다음: agent source·migration 직접 리뷰 → 최신 base 전체 CI → 후속 PR 병합 → 새 migration 실제 적용·검증 →
+새 고정 이미지 후속 배포. 실제 caller 계약·native ledger 검증 뒤 dispatch/apply=false로 단계적 활성화한다.
+전역 disabled를 무시하거나 사람 holdout을 AI 라벨로 대체하지 않는다. 기존 사용자 WT 변경은 계속 보존한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-classification-capacity-20261024
+git status --short
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+# root docs 두 파일은 이 WT에 미커밋이다. classifier 통합 전 private patch/commit으로 보존한다.
+# 평가 원문: /private/tmp/nomorevibe-llm-activation-20261024/evaluation/four-task-development-v1/
+# DeepSeek: /private/tmp/nomorevibe-llm-activation-20261024/deepseek-contract-independent/
+```
+
+---
+
+# 2026-10-24 15:22Z / 10-25 KST — 16앱 서비스 릴리스 배포 완료, 후속 연동 진행 중
+
+현재 목표는 사용자 지시의 남은 구현·운영 활성화·배포 전체다. 사용자 승인 아래 병렬 agent3개를
+모두 gpt-6.1-sol/xhigh로 사용한다. 사용자 원 WT의 미커밋 변경은 보존한다.
+
+- PR645를 최신 base2cc4e36c와 최종 head5b285346의 전체 CI/check 성공 뒤 15:02:07Z 병합했다.
+  main은 `592c0a1baeffe4dc6f40a82a3fdcb7ff9f6cf8c0`, 검사한 동일 tree는
+  `fe2cb2eb79982bbc4533b1d978a90c9bbe60ad25`다. run40104626581에서 unit7208/integration3620,
+  build/typecheck/lint/check 모두 성공했다. main run40105137707은 같은 tree 검사를 재사용하고 이미지 발행까지 성공했다.
+  로컬 scoped unit52/DB72/typegen/tsc/변경TS lint도 실제 성공했다.
+- root WT `/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`는 현재 main592c0a1b detached다.
+  최신 실행 문서를 이 WT에 기록 중이며 아직 후속 문서 커밋 전이다. 첫 코드 배포를 위해 SHA를 더 바꾸지 않는다.
+- 실제 공유9앱은 publisher/reviewer/crawler mini→M3, agent-scan 소비자, web mini→M3 순으로
+  15:07:06Z 모두 배포 완료했다. 각 역할 ready/progress ok, 양 웹 직접·공개 health와 HTML purge도 성공했다.
+  worker digest `4333db1d18c2d0424bbc66865a16b1609df17a2a4495db2c6f496ba16f5fe6c4`,
+  web digest `3c3de3538a17a42b8e67308d10395d633e46f603ca6b6439b0a2ed2e513f872e`.
+  root session42052는 exit0. plan/run/snapshot은 private operations/release-592c0a1b-*다.
+- preflight에서 agent-scan autoDeploy=true로 한 번 거절됐다. exact config/runtime를 확인하고 autoDeploy만 false로
+  바꿔 readback한 뒤 계획·실행이 통과했다. connect-agent도 배포 전 autoDeploy만 false로 전환했다.
+  두 앱의 기존 env/build/실행은 당시 불변이고 수동 고정 릴리스 정책을 유지한다.
+- uptime confirm/latch=true/dispatch=false/apply=false/rev2는 유지한다. 15:00:58Z readback 후보2건·새 자동 내림0,
+  capacity disabled/나머지5task off다. 자동 적용 완료라고 보고하지 않는다.
+- agent uptime_recheck가 text-mini→M3, maintenance-mini→M3, scheduler(2replicas), connect-agent의
+  6Git앱을15:17:05Z, monitor를15:19:33Z 완료했다. 각 실제 source987개/healthy/spec·명령·healthcheck를
+  대조했다. monitor 새container177480402ddc의StartedAt 뒤 자체 로그에서 두 Push UP/ok receipt를 확인했다.
+  root도 최신 helper guard13tests를 직접 통과했다. 사전 probe의 PEM Env 파싱·dockerignore 누락·이전container
+  receipt 혼입 문제를 먼저 고쳤고 실패 접근은 git-build-rollout/ROLLOUT.md에 기록했다. 자동retry/원복0.
+  root inventory는16앱 complete=true/pending=[]이고15:21:30Z 최종5역할+두scheduler gate도 ready/progress ok다.
+- agent live_readiness는 별도 WT `nomorevibe-classification-capacity-20261024`에서
+  publication_classify_cli 한 종류를 기존 runner/native ledger에 연결 중이다. RED→GREEN 첫4회귀 후
+  실제 publisher job/role·snapshot/CAS와 DB 제약을 구현한다. 별도 PR/CI/검토·후속 배포가 남았다.
+- agent live_evaluation이 reviewed-caller-proposal에 실제 responseModel/서빙 source와 정정 후보를 모았다.
+  원abc사용자WT의 보존된docs/extra-servers.md가정상Supa명령 `ssh -l jr supa`를명시했다.
+  vector9는정책거절됐지만문서의jr로정상접속해PID1241446/vLLM0.30.0/C98304/maxnumseq64/queued60/KVfp8,
+  actual cached config의 modelopt/NVFP4/4bit와 설치된입력+출력검증source를확인했다. 재시작/설정변경0이다.
+  앞선접속정보질문은더필요없다고사용자에게정정했다. 계약후보의실제source/revision/hash갱신을진행한다.
+  현재 없어진 crawl-tagline 모델 대신 현재 Supa Qwen을 명시 선택하는 운영 변경안을 정했으나 아직 미적용이다.
+- 실제 개발 평가23회와 gateway7회, oMLX 경계HTTP8회를 구분한다. 인용 변형은 계속 거절되며 사람 holdout이 아니다.
+  기존17건은이후prompt개선에도쓴개발표본이므로나중사람답이와도holdout으로승격하지않는다.
+  새모델전사람라벨이있는미사용snapshot holdout은여전히필요하다. 2~5번실제개발평가는repo2/intro2/news2를
+  준비중이며decision_audit는실공통결정0이라가짜원본을만들지않고coverage gap으로남긴다.
+  전역 caller 계약·native ledger canary·사람 검수 누락을
+  가짜 hash/label/terminal로 채우지 않는다. globalReady=false, apply=false다.
+
+수정 파일은 docs/CODEX_HANDOFF.md와 운영 전환 기록이다. API/model/DB 원문·spec/env는
+`/private/tmp/nomorevibe-llm-activation-20261024/` 아래0700/0600으로 보존한다.
+실패와 설계 근거는 아래 역사 기록과 [운영 전환 기록](operations/2026-10-24-llm-assist-activation.md)에 있다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+tail -n 8 /private/tmp/nomorevibe-llm-activation-20261024/operations/release-592c0a1b-run.log
+python3 scripts/ops/deploy_shared_images.py inventory --sha 592c0a1baeffe4dc6f40a82a3fdcb7ff9f6cf8c0
+# 16앱 배포는 완료됐다. inventory와 최종 role gate JSON을 먼저 확인하고 불필요하게 재배포하지 않는다.
+# classifier는 별도 WT에서 진행 중이다. 검토/CI 성공 전에 merge·전역 open을 하지 않는다.
+```
+
+---
+
 # 2026-10-24 14:54Z — 운영 전환 진행 중 최신 체크포인트
 
 현재사용자목표는남은작업전부·운영활성화·배포이며 병렬3agent(gpt-6.1-sol/xhigh)로계속진행중이다.

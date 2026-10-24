@@ -55,6 +55,7 @@ const IN_USE = [
   ["product-search-verify", "abcllm", "vf"], ["reason-translate", "abcllm", "tr"], ["product-translate", "abcllm", "pt"],
   ["product-tagline-ko", "abcllm", "tr"], ["search-query-translate", "abcllm", "tr"], ["crawl-tagline", "abcllm", "tg"],
   ["product-intro-check", "claude-cli", "intro"], ["product-audit", "claude-cli", "sonnet"],
+  ["crawl-publish-classify", "codex-cli", "gpt-5.6-terra"], ["crawl-publish-classify", "claude-cli", "sonnet"],
 ] as const;
 const ALL_SERVED = ["ai1-gw", "ai2-gw", "opus", "grok-4", "pf", "vf", "tr", "pt", "tg", "intro", "sonnet"];
 
@@ -67,6 +68,15 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}, ai2: Partial<Stage> 
     http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
     batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
     agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
+    classificationObservations: [{ observedAt: "2026-10-17T00:00:00.000Z", value: { status: "running", classifyReady: true, busy: null,
+      classificationCapacityVersion: 1, config: { primary: { model: "gpt-5.6-terra", effort: "xhigh" }, fallback: { model: "sonnet", effort: "high" } },
+      classificationContracts: [
+        { version: 1, protocol: "cli-process-v1", routeId: "crawl-publish-classify", provider: "codex-cli", model: "gpt-5.6-terra",
+          cliVersion: "test", inputByteCap: 1000, totalTokenBound: 100_000, costBoundUsdMicros: null, boundProvenance: "declared" },
+        { version: 1, protocol: "cli-process-v1", routeId: "crawl-publish-classify", provider: "claude-cli", model: "sonnet",
+          cliVersion: "test", inputByteCap: 1000, totalTokenBound: 100_000, costBoundUsdMicros: null, boundProvenance: "derived",
+          maxTurns: 2, outputTokensPerTurn: 4000, overheadTokenBound: 1000 },
+      ] } }],
     recentInstances: [], uptimeSplitMode: "legacy", reviewSettings: SETTINGS, auditCampaign: { provider: "claude-cli", model: "sonnet" }, ...overrides };
 }
 const policyFor = (routes: readonly (readonly [string, string, string])[]): ModelCapacityPolicy => ({ version: 1, globalLimit: 4,
@@ -133,7 +143,7 @@ describe("capacity open is judged only on the combinations in use", () => {
   it("reads what each call site passes its resolver from the review settings, model env and the running audit", () => {
     const uses = usedModelRoutes(snapshot(), MODELS);
     expect(uses).toHaveLength(IN_USE.length);
-    expect(uses).toEqual(expect.arrayContaining(IN_USE.map(([routeId, provider, model]) => ({ routeId, provider, model }))));
+    expect(uses).toEqual(expect.arrayContaining(IN_USE.map(([routeId, provider, model]) => expect.objectContaining({ routeId, provider, model }))));
     const implicit = usedModelRoutes(snapshot({ reviewSettings: { secondReview: { voters: [{ provider: "abcllm", model: "ai2-gw" }] } },
       auditCampaign: { provider: "abcllm", model: "audit-gw" } }), MODELS);
     expect(implicit).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: "env-ai1" },
