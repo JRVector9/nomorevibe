@@ -216,24 +216,27 @@ function contracts() {
   serving.ai1 = { ...base, routeId: "crawl-agent-review" }; serving.ai2 = { ...base, routeId: "second-review" };
 }
 
-it("0102: earlier terminal CHECK predicates stay whole on the left (pg_get_constraintdef); only the not_started branch is added", async () => {
+it("0102: exact migration prefixes preserve earlier CHECKs; current constraints retain the legacy branches", async () => {
   await admin.unsafe(`CREATE DATABASE ${stepName}`); stepCreated = true;
   const url = new URL(TEST_DATABASE_URL); url.pathname = `/${stepName}`;
   const step = postgres(url.toString(), { max: 1, onnotice: () => {} });
   const partial = mkdtempSync(path.join(tmpdir(), "f2-0102-migrations-"));
   try {
     mkdirSync(path.join(partial, "meta"));
-    const upTo = journal.entries.filter(entry => entry.idx <= 101);
-    expect(upTo.at(-1)!.tag).toBe("0101_dr_process_group_successor_exit");
-    for (const entry of upTo) copyFileSync(path.join(root, "drizzle", `${entry.tag}.sql`), path.join(partial, `${entry.tag}.sql`));
-    writeFileSync(path.join(partial, "meta/_journal.json"), JSON.stringify({ ...JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"),
-      "utf8")), entries: upTo }));
+    const migrateThrough = async (index: number) => {
+      const entries = journal.entries.filter(entry => entry.idx <= index);
+      for (const entry of entries) copyFileSync(path.join(root, "drizzle", `${entry.tag}.sql`), path.join(partial, `${entry.tag}.sql`));
+      writeFileSync(path.join(partial, "meta/_journal.json"), JSON.stringify({ ...JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"),
+        "utf8")), entries }));
+      await migrate(drizzle(step), { migrationsFolder: partial });
+      const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+      expect(applied.count).toBe(entries.length);
+    };
+    expect(journal.entries.find(entry => entry.idx === 101)!.tag).toBe("0101_dr_process_group_successor_exit");
     await step.unsafe("set statement_timeout = 0");
-    await migrate(drizzle(step), { migrationsFolder: partial });
+    await migrateThrough(101);
     const before = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    expect(applied.count).toBe(journal.entries.length);
+    await migrateThrough(102);
     const after = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const inner = (def: string) => { expect(def.startsWith("CHECK (")).toBe(true); return def.slice("CHECK (".length, -1); };
     for (const name of LEFT) {
@@ -244,6 +247,19 @@ it("0102: earlier terminal CHECK predicates stay whole on the left (pg_get_const
       expect(combined.slice(left.length - 1)).toContain("gateway_not_started");
     }
     for (const name of UNTOUCHED) expect(after[name]).toBe(before[name]);
+
+    // Later direct/assist migrations deliberately extend four CHECKs. Keep the
+    // historical 0102 comparison exact, then verify its legacy predicates survive
+    // those later additions on the actual latest schema as well.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    expect(applied.count).toBe(journal.entries.length);
+    const current = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of [...LEFT, ...UNTOUCHED.slice(0, 2)]) {
+      const legacy = inner(after[name]), combined = inner(current[name]);
+      expect(combined.startsWith(`${legacy.slice(0, -1)} OR `), `${name}: current legacy prefix`).toBe(true);
+    }
+    for (const name of UNTOUCHED.slice(2)) expect(current[name], `${name}: current unchanged CHECK`).toBe(after[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 

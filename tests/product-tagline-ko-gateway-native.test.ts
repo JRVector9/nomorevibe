@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash,
+import { TRANSLATE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
   type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
 import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, productTaglineKoDispatchBindingHash,
   productTaglineKoModelDispatchSchema } from "@/lib/llm/capacity";
@@ -103,12 +103,17 @@ it("sends the original ordered tagline batch once and issues an immutable opaque
     expect(Object.isFrozen(proof?.dispatch.binding.members[0].cache)).toBe(true);
   });
 });
-it("keeps the legacy whole tagline wire and parser independently unchanged", async () => {
+it("triples only legacy output tokens while preserving the frozen native wire and existing parser", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); const batch = items(); let wire = "";
   const result = await translateTaglinesToKorean(batch, 1000, (async (_url, options) => {
     wire = String(options?.body); return new Response(JSON.stringify(envelope()));
   }) as typeof fetch);
-  expect(result).toEqual({ ok: true, outputs }); expect(wire).toBe(originalWire(batch, TRANSLATE_MODEL));
+  expect(result).toEqual({ ok: true, outputs });
+  const original = originalWire(batch, TRANSLATE_MODEL), frozen = JSON.parse(original);
+  expect(productTaglineKoGatewayWire(batch, TRANSLATE_MODEL)).toBe(original);
+  expect(wire).toBe(JSON.stringify({ ...frozen, max_tokens: frozen.max_tokens * 3 }));
+  expect(JSON.parse(wire).max_tokens).toBe(2700);
+  expect({ ...JSON.parse(wire), max_tokens: frozen.max_tokens }).toEqual(frozen);
 });
 it("keeps production unsupported and invalid batches incapable of HTTP or terminal authority", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");

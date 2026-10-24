@@ -7,6 +7,7 @@ import { classifyRepoResponse, decideGoneRepository, MAX_RELATED_LINKS, pageConc
   type RepoCheck, type RepoReviewPage } from "@/lib/domain/products/repo-review";
 import { delistGoneRepository, dueRepoReviews, MAX_REPO_GONE_DELISTS_PER_DAY, repoGoneDelistsLastDay, saveRepoReview,
   type RepoReviewRecord, type RepoReviewTarget } from "@/lib/domain/products/repo-reviews";
+import { saveRepoMoveCandidate } from "@/lib/domain/products/repo-move-producer";
 
 /**
  * 저장소가 사라진 공개 제품을 다시 본다 — github.com 을 지금 열어 정말 없으면 내린다(repo-review.ts).
@@ -93,6 +94,10 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
       pageTitle: page?.title || null, pageExcerpt: note ?? (page?.text ? page.text.slice(0, EXCERPT_CHARS) : null),
     });
     const save = (value: RepoReviewRecord) => oneAtATime(() => saveRepoReview(value, ctx.lease)).then(() => { counts[value.decision]++; });
+    const saveMove = (value: RepoReviewRecord, own: RepoCheck, page: RepoReviewPage | null,
+      related: readonly { key: string; check: RepoCheck }[] = [], unchecked: readonly string[] = []) =>
+      oneAtATime(() => saveRepoMoveCandidate(target, value, own, page, related, unchecked, ctx.lease))
+        .then(saved => { if (saved) counts[value.decision]++; });
     // 하루 확인(stars-refresh)은 github.com/owner/repo 꼴만 묻는다 — 그 밖의 주소는 사라졌다고 판정될 일이 없다
     if (!repo) return save(record("human", "repo_unparsable", null, target.repoUrl));
 
@@ -100,7 +105,7 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
     if (own.state === "unknown") return unknown();
     inARow = 0;
     if (own.state === "alive") return save(record("keep", "repo_alive", null, null));
-    if (own.state === "moved") return save(record("human", "repo_moved", null, `github.com/${own.to}`));
+    if (own.state === "moved") return saveMove(record("human", "repo_moved", null, `github.com/${own.to}`), own, null);
 
     const page = await openPage(target.url);
     if (!pageConclusive(page, target.downSince)) return save(record("human", "page_unavailable", page, null));
@@ -114,7 +119,7 @@ export async function reviewGoneRepositories(ctx: JobContext<null>, dependencies
     }
     const decided = decideGoneRepository(related, keys.slice(MAX_RELATED_LINKS));
     if (!decided) return;
-    if (decided.decision !== "delist_candidate") return save(record(decided.decision, decided.reason, page, decided.note));
+    if (decided.decision !== "delist_candidate") return saveMove(record(decided.decision, decided.reason, page, decided.note), own, page, related, keys.slice(MAX_RELATED_LINKS));
     // 운영자가 전에 '유지'를 골랐거나 하루 한도를 넘었으면 내리지 않고 운영자에게
     if (target.operatorDecision === "keep" || delistsLeft <= 0) {
       if (delistsLeft <= 0) counts.capped++;

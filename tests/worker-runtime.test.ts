@@ -395,24 +395,37 @@ it('reports the longest-running job across lanes with its own start time — the
 });
 
 
+// 새 node+tsx 는 실제 진입점의 전체 import 를 변환·적재한다. CI 의 느린 시작에 여유를 주되 자식 종료 상한은 유한하게 둔다.
+const ENTRY_TERM_MS = 10_000;
+const ENTRY_KILL_MS = 12_000;
+const ENTRY_CLOSE_GRACE_MS = 5_000;
+
 async function runBudgetEntry(script: string, args: string[], env: NodeJS.ProcessEnv) {
+  const startedAt = performance.now();
   const child = spawn(process.execPath, ['--import', 'tsx', script, ...args], {
     cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   let heartbeats = 0;
   let stderr = '';
   let closed = false;
+  let deadlineSignal: NodeJS.Signals | null = null;
   child.stdout?.resume();
   child.stderr?.on('data', data => { stderr = (stderr + String(data)).slice(-4096); });
   child.on('message', value => { if ((value as { type?: string })?.type === 'runtime.heartbeat') heartbeats += 1; });
-  const settled = new Promise<number | null>((resolve, reject) => {
+  const settled = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
     child.once('error', reject);
-    child.once('close', code => { closed = true; resolve(code); });
+    child.once('close', (code, signal) => { closed = true; resolve({ code, signal }); });
   });
   const actualClose = new Promise<void>(resolve => { child.once('close', () => resolve()); });
-  const timeout = setTimeout(() => child.kill('SIGTERM'), 4000);
-  const killTimeout = setTimeout(() => child.kill('SIGKILL'), 5000);
-  try { return { code: await settled, heartbeats, stderr }; }
+  const stopAtDeadline = (signal: NodeJS.Signals) => {
+    if (!closed) { deadlineSignal = signal; child.kill(signal); }
+  };
+  const timeout = setTimeout(() => stopAtDeadline('SIGTERM'), ENTRY_TERM_MS);
+  const killTimeout = setTimeout(() => stopAtDeadline('SIGKILL'), ENTRY_KILL_MS);
+  try {
+    const exit = await settled;
+    return { ...exit, heartbeats, stderr, deadlineSignal, elapsedMs: Math.round(performance.now() - startedAt) };
+  }
   finally {
     if (!closed) child.kill('SIGTERM');
     await actualClose;
@@ -421,8 +434,11 @@ async function runBudgetEntry(script: string, args: string[], env: NodeJS.Proces
   }
 }
 
-// 실제 진입점 넷을 차례로 새 node+tsx 로 띄운다(각자 전체 import 를 변환·적재). CI 에서 통과한 시간이 2.3~4.7초라 기본 5초를
-// 넘는 실행이 생겼다. 자식마다 4초 SIGTERM·5초 SIGKILL 상한이 있으므로 그 넷을 합친 시간을 준다 — 멈춘 자식은 그 상한이 잡는다.
+function entryDiagnostic(script: string, result: Awaited<ReturnType<typeof runBudgetEntry>>) {
+  return `${script}: ${JSON.stringify(result)}`;
+}
+
+// 네 자식은 차례로 실행한다. 외부 테스트 제한도 각 자식의 강제 종료 상한과 마지막 close 정리 시간을 포함한다.
 it('rejects a wrong declared entry before real CLI heartbeats, role observations or supervisor spawn', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'host-db-entry-'));
   const env = { ...process.env, DATABASE_URL: undefined, READ_DATABASE_URL: undefined, NODE_OPTIONS: undefined,
@@ -441,14 +457,16 @@ it('rejects a wrong declared entry before real CLI heartbeats, role observations
       const result = await runBudgetEntry(script, [...args], { ...env, WORKER_ROLE: role,
         HOST_DB_BUDGET: JSON.stringify({ mode: 'enabled', policy,
           process: { kind, role, host: 'm3', release: 'r1', replica: 1, copy: 1 } }) });
-      expect(result.code).toBe(1);
-      expect(result.heartbeats).toBe(0);
-      expect(result.stderr).toMatch(/failed; check/);
+      const diagnostic = entryDiagnostic(script, result);
+      expect(result.code, diagnostic).toBe(1);
+      expect(result.signal, diagnostic).toBeNull();
+      expect(result.heartbeats, diagnostic).toBe(0);
+      expect(result.stderr, diagnostic).toMatch(/failed; check/);
       expect(existsSync(env.ROLE_HEALTH_PATH)).toBe(false);
       expect(existsSync(env.WORKER_HEALTH_PATH)).toBe(false);
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
-}, 4 * 5_000 + 5_000);
+}, 4 * ENTRY_KILL_MS + ENTRY_CLOSE_GRACE_MS);
 
 it('keeps the disabled real worker entry and its original IPC lifecycle reachable', async () => {
   const result = await runBudgetEntry('scripts/worker.ts', ['--role=crawler', '--once'], {
@@ -456,9 +474,11 @@ it('keeps the disabled real worker entry and its original IPC lifecycle reachabl
     HOST_DB_BUDGET: '{"mode":"disabled"}',
   });
   // No DATABASE_URL is supplied: only the pre-existing IPC lifecycle is exercised, no DB/socket/job.
-  expect(result.code).toBe(1);
-  expect(result.heartbeats).toBeGreaterThan(0);
-});
+  const diagnostic = entryDiagnostic('scripts/worker.ts', result);
+  expect(result.code, diagnostic).toBe(1);
+  expect(result.signal, diagnostic).toBeNull();
+  expect(result.heartbeats, diagnostic).toBeGreaterThan(0);
+}, ENTRY_KILL_MS + ENTRY_CLOSE_GRACE_MS);
 
 it('re-ticks the reviewer lane after 1s only when second-review is stage-blocked by AI2 item mode', async () => {
   const sleeps: number[] = [];

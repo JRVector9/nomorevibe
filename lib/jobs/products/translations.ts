@@ -1,4 +1,4 @@
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
 import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
@@ -39,14 +39,14 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     // Account for calls aborted by the tick budget. The final lease check in
     // recordProductTranslations rolls back writes if ownership was actually lost.
     const entries = batch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
-      if (!response.ok) return { task, result: { ok: false, error: response.error, model: TRANSLATE_MODEL } };
+      if (!response.ok) return { task, result: { ok: false, error: response.error, model: PRODUCT_TRANSLATION_MODEL } };
       const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
-      return { task, result: checked.ok ? { ok: true, text: checked.text, model: TRANSLATE_MODEL }
-        : { ok: false, error: `rejected:${checked.reason}`, model: TRANSLATE_MODEL } };
+      return { task, result: checked.ok ? { ok: true, text: checked.text, model: PRODUCT_TRANSLATION_MODEL }
+        : { ok: false, error: `rejected:${checked.reason}`, model: PRODUCT_TRANSLATION_MODEL } };
     });
     const stored = await (outcome.expectation ? recordProductTranslations(entries, ctx.lease, outcome.expectation)
       : recordProductTranslations(entries, ctx.lease));
-    ctx.log("product_translation.tick", { demanded: batch.length, stored,
+    ctx.log("product_translation.tick", { model: PRODUCT_TRANSLATION_MODEL, demanded: batch.length, stored,
       accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error });
     return { done: true };
   } finally {

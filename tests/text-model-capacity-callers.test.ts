@@ -14,7 +14,10 @@ import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/
 const mocks = vi.hoisted(() => ({ tagline: vi.fn(), profile: vi.fn(), verify: vi.fn(), korean: vi.fn(), product: vi.fn(), query: vi.fn(),
   tagTasks: vi.fn(), profiles: vi.fn(), verifications: vi.fn(), koreanTasks: vi.fn(), productTasks: vi.fn(),
   tagWrite: vi.fn(), profileWrite: vi.fn(), verifyWrite: vi.fn(), koreanWrite: vi.fn(), productWrite: vi.fn(),
-  cache: vi.fn(), cacheWrite: vi.fn(), primary: vi.fn(), log: vi.fn() }));
+  cache: vi.fn(), cacheWrite: vi.fn(), primary: vi.fn(), log: vi.fn(), control: vi.fn() }));
+vi.mock("@/lib/llm/capacity-repository", async load => ({
+  ...await load<typeof import("@/lib/llm/capacity-repository")>(), readModelCapacityCallerControl: mocks.control,
+}));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true }) }));
 vi.mock("@/lib/crawl/tagline", async (load) => ({ ...await load<typeof import("@/lib/crawl/tagline")>(), writeTagline: mocks.tagline }));
 vi.mock("@/lib/crawl/tagline-model-capacity", () => ({
@@ -94,6 +97,9 @@ const scenarios = [
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+  vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
+  mocks.control.mockResolvedValue({ mode: "disabled" });
   mocks.tagWrite.mockResolvedValue({ stored: true, released: false });
   mocks.profileWrite.mockResolvedValue(true);
   mocks.verifyWrite.mockResolvedValue(true);
@@ -143,6 +149,8 @@ it("Korean tagline admission does not consume a product attempt or backoff", asy
   mocks.koreanTasks.mockResolvedValue([{ productId: 1, name: "Doc", tagline: "Document tool", repoUrl: null, attempts: 0 }]);
   mocks.korean.mockRejectedValue(failure);
   await expect(writeKoreanTaglines(context("product-tagline-ko"))).rejects.toBe(failure);
+  expect(mocks.control).toHaveBeenCalledOnce();
+  expect(mocks.korean).toHaveBeenCalledOnce();
   expect(mocks.koreanWrite).not.toHaveBeenCalled();
 });
 

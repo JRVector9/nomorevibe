@@ -1,0 +1,22 @@
+{
+  "status": "기존 시험 요약; 새 계약·운영 정확도 성적으로 사용 금지",
+  "date_utc": "2026-10-23",
+  "requests": 261,
+  "synthetic_evidence_cases": 42,
+  "json_valid": 260,
+  "baseline_25_classification": {
+    "gpu_qwen": "17/21",
+    "m1_qwen": "19/21",
+    "m3_deepseek": "20/21",
+    "m3_gptoss": "17/21"
+  },
+  "gpu_same_25_exploratory_prompt_revision": "20/21",
+  "limits": [
+    "실제 운영 프롬프트가 아닌 공통 합성 시험",
+    "수정 프롬프트 작성에 개발 세트 실패를 사용",
+    "추가17건도 실패 유형을 알고 작성한 합성 근거",
+    "지속·혼합 부하나 새 계약의 정확도는 미검증",
+    "뉴스 가격분모 오류는 문자열 검사와 별도 의미 검토에서 발견"
+  ],
+  "development_start": "PR01에서 새 계약의 source/wire/model/evidence hash와 별도 실데이터 검증을 고정한다."
+}

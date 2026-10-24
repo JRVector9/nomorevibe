@@ -192,9 +192,9 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
 ];
 
 /** 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다. */
-export type ModelEnv = { crawlReview: string | null; translate: string; tagline: string; profile: string; verify: string; introCheck: string };
+export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; tagline: string; profile: string; verify: string; introCheck: string };
 const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
-  ["product-translate", "translate"], ["product-tagline-ko", "translate"], ["search-query-translate", "translate"], ["crawl-tagline", "tagline"]] as const;
+  ["product-translate", "productTranslate"], ["product-tagline-ko", "translate"], ["search-query-translate", "translate"], ["crawl-tagline", "tagline"]] as const;
 
 /**
  * 지금 각 호출 지점이 resolver에 넘기는 (route, provider, model). 고르는 식은 firstReviewer·2차 voters+fallbacks·checkGrokSession·

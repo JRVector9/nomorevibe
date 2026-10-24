@@ -7,7 +7,6 @@ import type { Translator } from "@/lib/i18n/messages";
 import { localePath } from "@/lib/i18n/routing";
 import type { TranslatedProduct } from "@/lib/i18n/products";
 import type { TalkEntry, TalkPost, TalkProduct } from "@/lib/social/talk";
-import { TALK_SAMPLE_TARGET } from "@/lib/social/talk-samples";
 import { TalkSparkline } from "./TalkSparkline";
 import { discussionUrl, linkOnly, sourceChip, sourceClass, sourceList } from "./talk-format";
 import "./talk.css";
@@ -35,8 +34,8 @@ export function TalkChips({ posts, t, locale, short = false }: { posts: readonly
 }
 
 /**
- * 홈 첫 화면 대표 구획(SNS 화제 C안) — 1위를 크게, 2~5위는 옆 목록.
- * 1위 자리는 관리자가 허용한 저장소만 오른다(lib/social/talk.ts homeTalkLineup). 허용된 것이 없으면 목록만 보인다.
+ * 홈 첫 화면 대표 구획 — 허용된 대표가 있으면 우선하고, 없으면 이미 홈 목록에 보이는 첫 항목을 크게 그린다.
+ * 표시 크기만 정하며 homeTalkLineup의 승인·제외 결정과 실제 화제 순위는 바꾸지 않는다.
  */
 export function TalkHero({ lead, rest, sources, t, locale, preview }: {
   lead: LocalizedTalkEntry | null;
@@ -48,8 +47,9 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
 }) {
   const count = (n: number) => formatNumber(n, locale);
   const href = (slug: string) => localePath(locale, `/p/${slug}`);
-  const firstPost = lead ? lead.posts.reduce((first, post) => post.postedAt < first.postedAt ? post : first, lead.posts[0]) : null;
-  const sampled = Boolean(lead?.sample) || rest.some(entry => entry.sample);
+  const featured = lead ?? rest[0] ?? null;
+  const rows = lead ? rest : rest.slice(1);
+  const firstPost = featured ? featured.posts.reduce((first, post) => post.postedAt < first.postedAt ? post : first, featured.posts[0]) : null;
   return (
     <section id="talk" className="talk-hero" aria-labelledby="talk-title">
       {preview && <p className="talk-preview" role="note">{t("talk.preview")}</p>}
@@ -60,49 +60,44 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
         </div>
         <Link prefetch={false} className="row-more" href={localePath(locale, "/talk")}>{t("nav.all")} ›</Link>
       </div>
-      {!lead && !rest.length ? <p className="talk-empty" role="status">{t("talk.empty")}</p> : (
+      {!featured ? <p className="talk-empty" role="status">{t("talk.empty")}</p> : (
         <div className="talk-hero-grid">
-          {lead && (
+          {featured && (
             <article className="talk-lead" aria-labelledby="talk-lead-title">
               <div className="talk-lead-top">
-                <ProductIcon name={lead.product.name} ogImage={lead.product.ogImage} size={60} category={lead.product.category} />
+                <ProductIcon name={featured.product.name} ogImage={featured.product.ogImage} size={60} category={featured.product.category} />
                 <div style={{ minWidth: 0 }}>
-                  <p className="talk-lead-rank">{lead.sample ? <span className="talk-sample">{t("talk.sample")}</span> : t("talk.lead")}</p>
-                  <h3 id="talk-lead-title">{lead.sample ? lead.product.name : <Link prefetch={false} href={href(lead.product.slug)}>{lead.product.name}</Link>}</h3>
+                  <p className="talk-lead-rank">{t("talk.rankNow", { rank: count(featured.rank) })}</p>
+                  <h3 id="talk-lead-title"><Link prefetch={false} href={href(featured.product.slug)}>{featured.product.name}</Link></h3>
                 </div>
               </div>
-              {lead.sample ? <p className="talk-lead-tagline talk-sample-text">{t("talk.sampleTagline")}</p> : (
-                <ProductTagline className="talk-lead-tagline" tagline={lead.product.tagline} taglineKo={lead.product.taglineKo}
-                  translation={lead.product.translation} source={lead.product.taglineSource} showSource={false} />
-              )}
-              <TalkChips posts={lead.posts} t={t} locale={locale} />
-              {lead.starGrowth && (
+              <ProductTagline className="talk-lead-tagline" tagline={featured.product.tagline} taglineKo={featured.product.taglineKo}
+                translation={featured.product.translation} source={featured.product.taglineSource} showSource={false} />
+              <TalkChips posts={featured.posts} t={t} locale={locale} />
+              {featured.starGrowth && (
                 <div className="talk-lead-chart">
                   <div>
-                    <b>{lead.starGrowth.delta >= 0 ? "+" : ""}{count(lead.starGrowth.delta)}</b>
-                    <small>{t(lead.starGrowth.basis === "mention" ? "talk.starsAfterMention" : "talk.starsAfterObservation")}</small>
+                    <b>{featured.starGrowth.delta >= 0 ? "+" : ""}{count(featured.starGrowth.delta)}</b>
+                    <small>{t(featured.starGrowth.basis === "mention" ? "talk.starsAfterMention" : "talk.starsAfterObservation")}</small>
                   </div>
-                  <TalkSparkline growth={lead.starGrowth} postedAt={firstPost?.postedAt}
-                    label={`${count(lead.starGrowth.from)} → ${count(lead.starGrowth.to)}`} />
+                  <TalkSparkline growth={featured.starGrowth} postedAt={firstPost?.postedAt}
+                    label={`${count(featured.starGrowth.from)} → ${count(featured.starGrowth.to)}`} />
                 </div>
               )}
-              {!lead.sample && (
-                <div className="talk-actions">
-                  <Link prefetch={false} className="solid" href={href(lead.product.slug)}>{t("talk.details")}</Link>
-                  {lead.posts[0] && <a href={discussionUrl(lead.posts[0])} target="_blank" rel="noopener" data-track-product={lead.sample ? undefined : lead.product.slug}>{t("talk.discussion")} ↗</a>}
-                </div>
-              )}
+              <div className="talk-actions">
+                <Link prefetch={false} className="solid" href={href(featured.product.slug)}>{t("talk.details")}</Link>
+                {featured.posts[0] && <a href={discussionUrl(featured.posts[0])} target="_blank" rel="noopener" data-track-product={featured.product.slug}>{t("talk.discussion")} ↗</a>}
+              </div>
             </article>
           )}
-          {rest.length > 0 && (
+          {rows.length > 0 && (
             <ol className="talk-list" aria-label={t("talk.list")}>
-              {rest.map(entry => (
+              {rows.map(entry => (
                 <li key={entry.repositoryKey} className="talk-row">
                   <span className="talk-row-rank">{entry.rank}</span>
                   <ProductIcon name={entry.product.name} ogImage={entry.product.ogImage} size={40} category={entry.product.category} />
                   <span className="talk-row-name">
-                    {entry.sample ? <span>{entry.product.name} <span className="talk-sample">{t("talk.sample")}</span></span>
-                      : <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>}
+                    <Link prefetch={false} href={href(entry.product.slug)}>{entry.product.name}</Link>
                     <TalkChips posts={entry.posts} t={t} locale={locale} short />
                   </span>
                   <span className="talk-row-stars">
@@ -115,7 +110,6 @@ export function TalkHero({ lead, rest, sources, t, locale, preview }: {
           )}
         </div>
       )}
-      {sampled && <p className="talk-sample-note" role="note">{t("talk.sampleNote", { count: count(TALK_SAMPLE_TARGET) })}</p>}
     </section>
   );
 }

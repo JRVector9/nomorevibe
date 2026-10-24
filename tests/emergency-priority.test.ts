@@ -110,6 +110,16 @@ describe("비상 admission", () => {
       .toEqual([["brand-new-job", "unknown_job"], ["product-audit", "suspended"]]);
   });
 
+  it("새 보강·독립 감사는 모델 검증 여부와 무관하게 미루고 기존 pause도 보존한다", () => {
+    const jobs = ["product-automated-action-audit", "product-llm-assist-audit-review", "product-llm-assist-review"];
+    for (const mode of ["full", "recovering"] as const) {
+      const input = { ...base, mode, verifiedModelJobs: new Set(jobs), due: jobs.map(job => ({ job, overdueMs: 10 * AGING })) };
+      expect(decisions(planEmergencyAdmission(input))).toEqual(jobs.map(job => [job, "suspended"]));
+      expect(decisions(planEmergencyAdmission({ ...input, paused: new Set(jobs) })))
+        .toEqual(jobs.map(job => [job, "paused_preserved"]));
+    }
+  });
+
   it("writer 가 확실하지 않거나 host 가 압박이면 제어만 들인다", () => {
     const work = due(["uptime-ping", 0], ["heartbeat", 0]);
     expect(decisions(planEmergencyAdmission({ ...base, mode: "hold", due: work }))).toEqual([["heartbeat", "admitted"], ["uptime-ping", "hold_control_only"]]);

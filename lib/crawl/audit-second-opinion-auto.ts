@@ -1,4 +1,6 @@
 import { and, eq, sql, type SQL } from "drizzle-orm";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditCampaigns, productAuditItems,
   productAuditPolicyRunItems, productAuditPolicyRuns, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
@@ -306,9 +308,14 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
         const timeoutMs = Math.min(QWEN_AUTO_CALL_TIMEOUT_MS, left() - WRITE_MARGIN_MS);
         shrunk = timeoutMs < QWEN_AUTO_CALL_TIMEOUT_MS;
         callStartedAt = Date.now();
-        return reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal });
+        return withLocalModelCapacity({ target: target.kind === "audit"
+          ? { kind: "audit", purpose: "second_opinion", itemId: target.itemId, slug: target.slug }
+          : { kind: "published", purpose: "published_filter", secondReviewId: target.id, slug: target.slug },
+        input, lease, promptVersion: QWEN_V2_PROMPT_VERSION },
+        request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request }));
       });
     } catch (error) {
+      if (error instanceof ModelCapacityDeferredError) { ctx.log("qwen_auto.model_deferred", { reason: error.reason }); break; }
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
       // 줄인 제한 시간(틱 끝)에 걸렸다 — 아무것도 적지 않고 멈춘다

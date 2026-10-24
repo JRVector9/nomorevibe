@@ -45,18 +45,18 @@ function transition(...args: string[]): TransitionCommand {
   if (command.name === "status") throw new Error("unexpected status");
   return command;
 }
-const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
+const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", productTranslate: "pt", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
 const SETTINGS = { firstReview: { provider: "abcllm", model: "ai1-gw" },
   secondReview: { voters: [{ provider: "abcllm", model: "ai2-gw" }, { provider: "claude-cli", model: "opus" }],
     fallbacks: [{ provider: "grok-cli", model: "grok-4" }, { provider: "claude-cli", model: "opus" }] } };
 const IN_USE = [
   ["crawl-agent-review", "abcllm", "ai1-gw"], ["second-review", "abcllm", "ai2-gw"], ["second-review", "claude-cli", "opus"],
   ["second-review", "grok-cli", "grok-4"], ["grok-session-check", "grok-cli", "grok-4"], ["product-search-profile", "abcllm", "pf"],
-  ["product-search-verify", "abcllm", "vf"], ["reason-translate", "abcllm", "tr"], ["product-translate", "abcllm", "tr"],
+  ["product-search-verify", "abcllm", "vf"], ["reason-translate", "abcllm", "tr"], ["product-translate", "abcllm", "pt"],
   ["product-tagline-ko", "abcllm", "tr"], ["search-query-translate", "abcllm", "tr"], ["crawl-tagline", "abcllm", "tg"],
   ["product-intro-check", "claude-cli", "intro"], ["product-audit", "claude-cli", "sonnet"],
 ] as const;
-const ALL_SERVED = ["ai1-gw", "ai2-gw", "opus", "grok-4", "pf", "vf", "tr", "tg", "intro", "sonnet"];
+const ALL_SERVED = ["ai1-gw", "ai2-gw", "opus", "grok-4", "pf", "vf", "tr", "pt", "tg", "intro", "sonnet"];
 
 type Stage = ControlSnapshot["stages"][number];
 function snapshot(overrides: Partial<ControlSnapshot> = {}, ai2: Partial<Stage> = {}): ControlSnapshot {
@@ -160,6 +160,27 @@ describe("capacity open is judged only on the combinations in use", () => {
     // model env를 받지 못하면 env에서 읽는 text 7개·소개 검수 1개가 미상이다
     expect(planPipelineControl(transition(...open), { ...state, reviewSettings: SETTINGS }, undefined, undefined).blocked)
       .toEqual(["deferred_routes:8"]);
+  });
+
+  it("requires a separate mapping for the selected product model while other translation routes keep their shared model", () => {
+    [...ALL_SERVED, "product-qwen"].forEach(model => mocks.served.add(model));
+    const models = { ...MODELS, productTranslate: "product-qwen" };
+    const uses = usedModelRoutes(snapshot(), models);
+    expect(uses).toEqual(expect.arrayContaining([
+      { routeId: "product-translate", provider: "abcllm", model: "product-qwen" },
+      ...["reason-translate", "product-tagline-ko", "search-query-translate"].map(routeId => ({ routeId, provider: "abcllm", model: "tr" })),
+    ]));
+    const state = snapshot({ capacity: capacity("draining", policyFor(IN_USE)) }, { mode: "items" });
+    const refused = planPipelineControl(transition(...open), state, undefined, models);
+    expect(refused.blocked).toEqual(["deferred_routes:1"]);
+    expect(deferredRoutes(refused.routes ?? [])).toEqual([
+      { routeId: "product-translate", provider: "abcllm", model: "product-qwen", status: "unmapped" },
+    ]);
+    const mapped = policyFor(IN_USE.map(([routeId, provider, model]) =>
+      [routeId, provider, routeId === "product-translate" ? "product-qwen" : model]));
+    const allowed = planPipelineControl(transition(...open), { ...state, capacity: capacity("draining", mapped) }, undefined, models);
+    expect(allowed.blocked).toEqual([]);
+    expect(allowed.routes).toContainEqual({ routeId: "product-translate", provider: "abcllm", model: "product-qwen", status: "serving" });
   });
 
   it("opens without --allow-deferred-routes once every combination in use is mapped and serving, listing the rest as unused", () => {

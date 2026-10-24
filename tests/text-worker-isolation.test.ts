@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { JOB_CATALOG, JOB_ROLES, jobsForRole } from "@/lib/jobs/catalog";
+import { JOB_CATALOG, JOB_ROLES, jobsForRole, lanesForRole } from "@/lib/jobs/catalog";
 import { dbPoolConfig } from "@/lib/db/pool";
 import { SERVICE_ROLES, serviceObservationKey } from "@/lib/operations/instance";
 import { ROLE_LABELS } from "@/lib/operations/contracts";
@@ -42,4 +42,48 @@ it("publication starts while text is blocked, and text jobs remain serial", asyn
   expect(order).toEqual(["reason-translate", "crawl-publish"]);
   release(); await text;
   expect(order).toEqual(["reason-translate", "crawl-publish", "crawl-tagline"]);
+});
+
+it("Korean translation starts once while both the main and multilingual text lanes are blocked", async () => {
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; });
+  const ran: string[] = [];
+  const names = jobsForRole("text"), lanes = lanesForRole("text");
+  const worker = runWorker({ role: "text", once: true }, {
+    names, lanes, seen: async () => {}, pending: async () => ["reason-translate", "product-tagline-ko", "product-translate"],
+    run: async name => { ran.push(name); if (name !== "product-tagline-ko") await blocked; return { status: "completed" }; },
+  });
+  try {
+    await vi.waitFor(() => expect(ran).toContain("product-tagline-ko"));
+    expect(ran).toContain("reason-translate"); expect(ran).toContain("product-translate");
+    expect(ran.filter(name => name === "product-tagline-ko")).toHaveLength(1);
+    expect(lanes.flat().filter(name => name === "product-tagline-ko")).toHaveLength(1);
+  } finally { release(); await worker; }
+});
+
+it("product translation runs while the main text lane is blocked, and releases neither lane's other work", async () => {
+  let releaseProfile!: () => void, releaseTranslation!: () => void;
+  const profile = new Promise<void>(resolve => { releaseProfile = resolve; });
+  const translation = new Promise<void>(resolve => { releaseTranslation = resolve; });
+  const ran: string[] = [];
+  const worker = runWorker({ role: "text", once: true }, {
+    names: jobsForRole("text"), lanes: lanesForRole("text"), seen: async () => {},
+    pending: async () => ["product-search-profile", "product-search-verify", "product-translate"],
+    run: async name => {
+      ran.push(name);
+      if (name === "product-search-profile") await profile;
+      if (name === "product-translate") await translation;
+      return { status: "completed" };
+    },
+  });
+  try {
+    await vi.waitFor(() => expect(ran).toContain("product-translate"));
+    expect(ran).toContain("product-search-profile");
+    expect(ran).not.toContain("product-search-verify");
+    releaseProfile();
+    await vi.waitFor(() => expect(ran).toContain("product-search-verify"));
+    expect(ran.filter(name => name === "product-translate")).toHaveLength(1);
+  } finally {
+    releaseProfile(); releaseTranslation(); await worker;
+  }
 });

@@ -89,6 +89,9 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-audit') return { ...options, budgetMs: 70_000 };
   // 화면 판별 — 그리기(서버 상한 40초) + 묻기(상한 90초). reviewer 의 작업 상한 180초 안(lib/screen-review/job.ts)
   if (name === 'audit-screen-review') return { ...options, budgetMs: 150_000 };
+  if (name === 'product-llm-assist-review') return { ...options, budgetMs: 105_000 };
+  if (name === 'product-llm-assist-audit-review') return { ...options, budgetMs: 105_000 };
+  if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다

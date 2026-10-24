@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen";
+export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -80,11 +80,14 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 한국어 한 줄 소개(UX-13) — 공개 제품의 소개를 게이트웨이 gpt-oss-120b 로 한국어 한 줄로 옮긴다. 같은 text 워커에서 1분마다
    * 8건 묶음으로. 새 제품·홈에 보이는 제품이 먼저고, 나머지 3만여 건은 하루이틀에 걸쳐 채운다(korean-tagline.ts)
    */
-  { name: "product-tagline-ko", role: "text", intervalMs: 60_000 },
-  // Bounded, visible-product demand only; independent of the paused introduction-review queue.
-  { name: "product-translate", role: "text", intervalMs: 60_000 },
+  { name: "product-tagline-ko", role: "text", intervalMs: 60_000, lane: "korean-translation" },
+  // Bounded batches with a sixty-second regular schedule, independent of the long main text cycle; same leases/admission.
+  { name: "product-translate", role: "text", intervalMs: 60_000, lane: "product-translation" },
   /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
   { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
+  /** 근거 수집·Qwen 확인은 별도 줄에서 처리한다. backend drain은 공통 물리 슬롯을 예약하고 네트워크 중 DB 연결을 놓는다. */
+  { name: "product-llm-assist-review", role: "reviewer", intervalMs: 60_000, lane: "assist" },
+  { name: "product-llm-assist-audit-review", role: "reviewer", intervalMs: 60_000, lane: "assist-audit" },
   /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만) */
   { name: "grok-session-check", role: "reviewer", intervalMs: 4 * 60 * 60_000 },
   /**
@@ -107,6 +110,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * crawler는 이미 시간을 넘겨 쓰고 있어 한가한 maintenance에 둔다(위 uptime-ping 설명).
    */
   { name: "news-refresh", role: "maintenance", intervalMs: 60 * 60_000 },
+  { name: "product-automated-action-audit", role: "maintenance", intervalMs: 60 * 60_000 },
   { name: "product-thumbnail-refresh", role: "maintenance", intervalMs: 60_000 },
   /**
    * 검색 문서 채우기. 낡은 행만 골라 고치므로 다 채운 뒤에는 매 틱이 조인 한 번(수십 ms)이다.

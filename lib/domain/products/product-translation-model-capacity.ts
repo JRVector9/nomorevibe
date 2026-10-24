@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TRANSLATE_MODEL, translateProductFields } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATION_MODEL, translateProductFields } from "@/lib/crawl/translate";
 import { prepareProductTranslationGatewayCall, translateProductFieldsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTranslationModelSlot,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTranslationGatewayTerminal } from "@/lib/llm/capacity-repository";
@@ -28,14 +28,14 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   const items = tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
     text: translationSourceText(task.source, task.field) }));
   const legacy = async () => ({ kind: "result" as const,
-    result: await translateProductFields(items, options.timeoutMs, undefined, options.signal) });
+    result: await translateProductFields(items, options.timeoutMs, undefined, options.signal, PRODUCT_TRANSLATION_MODEL) });
   if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-translate" && route.provider === "abcllm" && route.model === TRANSLATE_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "product-translate" && route.provider === "abcllm" && route.model === PRODUCT_TRANSLATION_MODEL))
     throw new ModelCapacityDeferredError("unmapped");
-  const call = prepareProductTranslationGatewayCall(items, { model: TRANSLATE_MODEL, timeoutMs: options.timeoutMs });
+  const call = prepareProductTranslationGatewayCall(items, { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: options.timeoutMs });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" || env.ROLE_LEASE_ROLE === "translation"
     ? roleLeaseFromEnv(env.ROLE_LEASE_ROLE, env) : undefined);
@@ -46,8 +46,8 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   if (!("members" in initial)) throw new Error("product_translation_preparation_invalid");
   const { members, role } = initial;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: role.instanceId, bootId: role.bootId },
-    class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model: TRANSLATE_MODEL,
-    workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: TRANSLATE_MODEL })}` });
+    class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model: PRODUCT_TRANSLATION_MODEL,
+    workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: PRODUCT_TRANSLATION_MODEL })}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);

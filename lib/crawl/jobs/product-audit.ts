@@ -1,5 +1,6 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
@@ -341,8 +342,11 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
       let review: QwenDirectReview | null = null;
       let error: QwenDirectErrorCode | null = null;
       try {
-        review = await reviewWithQwenDirect(input, { timeoutMs, signal: controller.signal, env });
+        review = await withLocalModelCapacity({ target: { kind: "audit", purpose: "audit", itemId: item.id, slug: item.slug },
+          input, lease, promptVersion: QWEN_V2_PROMPT_VERSION, env },
+        request => reviewWithQwenDirect(input, { timeoutMs, signal: controller.signal, env, request }));
       } catch (caught) {
+        if (caught instanceof ModelCapacityDeferredError) { ctx.log("audit.local_model_deferred", { reason: caught.reason }); return; }
         if (!(caught instanceof QwenDirectError)) throw caught;
         error = caught.code;
       } finally {

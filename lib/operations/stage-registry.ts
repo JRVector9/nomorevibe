@@ -3,6 +3,7 @@ import type { CatalogRole } from "@/lib/jobs/catalog";
 import type { StageKey as CompletionStageKey } from "./pipeline-completions";
 import type { ThroughputStage } from "./throughput-model";
 import type { ProgressStageKey } from "./worker-progress";
+import { koreanTranslationQwenEnabled, KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
 
 /**
  * 운영센터 흐름 단계 — 들어오는 곳(소스) → 심사 흐름 6단계 → 발행 후 보강(운영센터 개편 v8 PR2).
@@ -78,9 +79,11 @@ export const PIPELINE_STAGES = Object.freeze([
   stage({ key: "reason-translate", group: "enrichment", label: "사유 번역", code: "reason-translate", jobs: ["reason-translate"], role: "text", headline: true }),
   stage({ key: "audit", group: "enrichment", label: "발행분 감사", code: "product-audit", jobs: ["product-audit", "audit-screen-review"], role: "reviewer",
     headline: true }),
+  stage({ key: "assist-audit", group: "enrichment", label: "보강 독립 감사", code: "product-automated-action-audit",
+    jobs: ["product-automated-action-audit", "product-llm-assist-audit-review"], role: "maintenance" }),
   stage({ key: "stars", group: "enrichment", label: "저장소·스타", code: "product-stars-refresh", jobs: ["product-stars-refresh"], role: "crawler", headline: true }),
   // 진행 판정(worker-progress uptime)은 split claims 모드(0104 제품 단위 분담)에서만 나온다 — legacy 는 maintenance 생존·줄로 본다
-  stage({ key: "uptime", group: "enrichment", label: "응답 점검", code: "uptime-ping", jobs: ["uptime-ping"], role: "maintenance", headline: true,
+  stage({ key: "uptime", group: "enrichment", label: "응답 점검", code: "uptime-ping", jobs: ["uptime-ping", "product-llm-assist-review"], role: "maintenance", headline: true,
     progressKey: "uptime" }),
   stage({ key: "intro-check", group: "enrichment", label: "소개 검수", code: "product-intro-check", jobs: ["product-intro-check"], role: "reviewer", headline: true }),
   // 12칸 밖의 보강 — 카탈로그에 있는 나머지 발행 후 잡
@@ -191,6 +194,9 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
       return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? "EMBEDDING_MODEL", provider: slot.provider,
         model: value || slot.fallback, source: value ? "env" : "default", approximated: slot.approximated };
     }),
+    ...(koreanTranslationQwenEnabled(env) ? [{ stage: "tagline-ko", key: "tagline-ko-qwen", label: "한국어 소개 · GPU Qwen",
+      code: "KOREAN_TRANSLATION_QWEN_ENABLED", provider: "vllm", model: KOREAN_TRANSLATION_QWEN_MODEL,
+      source: "env", approximated: true } satisfies ModelSlot] : []),
   ];
   const order = new Map<string, number>(PIPELINE_STAGES.map((row, index) => [row.key, index]));
   return slots.sort((a, b) => order.get(a.stage)! - order.get(b.stage)!);

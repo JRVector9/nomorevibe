@@ -22,6 +22,9 @@ export const classifyPayloadSchema = z.object({
   definitions: categoryDefinitionsSchema.optional(),
 }).strict();
 export const JOB_LABELS: Record<string, string> = {
+  'product-llm-assist-review': '근거 보강·LLM 확인',
+  'product-llm-assist-audit-review': '보강의 독립 모델 감사',
+  'product-automated-action-audit': '자동 조치 표본 선정',
   'github-integration-reconcile': 'GitHub 연동 재조회',
   'github-feedback-delivery': 'GitHub 피드백 전송',
   'email-outbox-send': '알림 메일 보내기', 'email-weekly-digest': '주간 요약 메일 묶기',
@@ -39,7 +42,7 @@ export const JOB_LABELS: Record<string, string> = {
   'product-search-refresh': '검색 데이터 갱신', 'product-stars-refresh': 'GitHub 저장소·스타 확인',
   'product-star-observation': '8시간 스타 관측',
   'product-repo-review': '저장소 사라진 사이트 확인',
-  'product-tagline-ko': '한국어 소개 짓기',
+  'product-tagline-ko': '제품 소개 한국어 번역',
   'product-spam-rescan': '공개 제품 스팸 재검사',
   'product-translate': '제품 정보 번역', 'ai-level-refresh': 'AI 제작 단계 확인',
   'product-site-evidence-refresh': '공식 사이트 근거 갱신',

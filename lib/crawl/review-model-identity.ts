@@ -14,7 +14,7 @@ export function sameReviewModel(a?: string | null, b?: string | null): boolean {
  * 1차와 같은 모델인지(되풀이 표인지) 가를 때는 sameUnderlyingModel 을 쓴다. SQL 짝은 held-qwen-retry-policy.ts underlyingModelSql.
  */
 export function underlyingReviewModel(model: string): string {
-  return model.trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
+  return model.trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase().replace(/\+(?:vision(?:-shot2)?|prompt-v3)$/, "");
 }
 
 export function sameUnderlyingModel(a?: string | null, b?: string | null): boolean {

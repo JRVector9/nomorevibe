@@ -12,7 +12,7 @@ vi.mock("@/lib/observability/logger", () => ({ logger: { warn: mocks.warn, info:
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { formatControlStatus, statusRouteContracts } from "@/lib/operations/pipeline-control";
 
-const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
+const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", productTranslate: "product-tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
 type Stage = ControlSnapshot["stages"][number];
 const stage = (name: "ai1" | "ai2", extra: Partial<Stage> = {}): Stage => ({ stage: name, mode: "legacy", drainingFrom: null, epoch: 1, contract: 1,
   live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, ...extra });
@@ -60,5 +60,10 @@ describe("모델 경로 계약 읽기", () => {
     const text = formatControlStatus(SNAPSHOT, MODELS);
     for (const row of statusRouteContracts(SNAPSHOT, MODELS)) expect(text).toContain(row.routeId);
     expect(statusRouteContracts(SNAPSHOT, MODELS)).toContainEqual({ routeId: "crawl-agent-review", provider: "abcllm", model: "ai1-gw", status: "unmapped" });
+    expect(statusRouteContracts(SNAPSHOT, MODELS)).toEqual(expect.arrayContaining([
+      { routeId: "product-translate", provider: "abcllm", model: "product-tr", status: "unmapped" },
+      ...["reason-translate", "product-tagline-ko", "search-query-translate"].map(routeId =>
+        ({ routeId, provider: "abcllm", model: "tr", status: "unmapped" })),
+    ]));
   });
 });

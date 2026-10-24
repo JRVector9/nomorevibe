@@ -88,6 +88,20 @@ describe("조치 문구 — 코드 대신 사람이 읽는 이름", () => {
     },
   } as unknown as ActionInputs;
   const actions = buildActions(inputs, deriveStatus(inputs));
+  it("보강의 정산 불명·근거 부족·확인 중단을 실제 큐 상태로 표시한다", () => {
+    const pending: ActionInputs = { ...inputs, assistQueue: [
+      { task: "uptime", state: "indeterminate", count: 1, mode: "off", confirmationRequired: true, dispatchEnabled: false, applyEnabled: false },
+      { task: "uptime", state: "waiting_evidence", count: 2, mode: "off", confirmationRequired: true, dispatchEnabled: false, applyEnabled: false },
+      { task: "uptime", state: "waiting_capacity", count: 3, mode: "confirm", confirmationRequired: true, dispatchEnabled: true, applyEnabled: true },
+    ] };
+    const statuses = buildActions(pending, deriveStatus(pending)).filter(row => row.key.startsWith("assist-"));
+    expect(Object.fromEntries(statuses.map(row => [row.key, row.count]))).toEqual({
+      "assist-indeterminate": 1, "assist-human": 2, "assist-stopped": 3, "assist-capacity": 3,
+    });
+    expect(statuses.every(row => row.work?.jobs?.includes("product-llm-assist-review"))).toBe(true);
+    const unknown = { ...inputs, assistQueue: null };
+    expect(buildActions(unknown, deriveStatus(unknown)).find(row => row.key === "assist-unknown")?.count).toBe("미확인");
+  });
   const byKey = new Map(actions.map((row) => [row.key, row]));
   /** 보이는 글자 — 태그와 title 속성(툴팁)을 뺀다 */
   const text = (row: ActionItem) => renderToStaticMarkup(createElement(Fragment, null, row.detail)).replace(/<[^>]*>/g, "");

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('server-only', () => ({}));
 
-import { CONFIDENCE_FLOOR_SOURCES, detectImportSource, IMPORT_SOURCES, parseImportLine, QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE, SCREEN_REVIEW_SOURCES,
+import { CONFIDENCE_FLOOR_SOURCES, detectImportSource, IMPORT_SOURCES, parseImportLine, QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE, QWEN_VISION_SHOT2_SOURCE, SCREEN_REVIEW_SOURCES,
   SCREENSHOT_SOURCES } from '@/lib/crawl/audit-import-sources';
 import { importHoldEffect } from '@/lib/crawl/audit-import-gate';
 import { countedOpinion } from '@/lib/crawl/product-audit-hold';
@@ -49,11 +49,11 @@ describe('두 번째 의견 파일의 줄 읽기', () => {
     expect(SCREENSHOT_SOURCES.has(QWEN_VISION_M1_SOURCE)).toBe(true);
     expect(SCREENSHOT_SOURCES.has('grok-cli-batch')).toBe(false);
     // 운영 화면 판정(qwen-vision-auto)도 같은 확신 하한(0.90)으로 센다
-    expect(CONFIDENCE_FLOOR_SOURCES).toEqual({ [QWEN_VISION_M1_SOURCE]: 0.9, [QWEN_VISION_AUTO_SOURCE]: 0.9 });
+    expect(CONFIDENCE_FLOOR_SOURCES).toEqual({ [QWEN_VISION_M1_SOURCE]: 0.9, [QWEN_VISION_AUTO_SOURCE]: 0.9, [QWEN_VISION_SHOT2_SOURCE]: 0.9 });
   });
 
   it('화면 판정 출처 — 스크린샷까지 본 올리기 출처와 운영 화면 판정. 글만 본 출처(grok 일괄·m1 자동 의견)는 아니다', () => {
-    expect([...SCREEN_REVIEW_SOURCES].sort()).toEqual([QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE]);
+    expect([...SCREEN_REVIEW_SOURCES].sort()).toEqual([QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE, QWEN_VISION_SHOT2_SOURCE]);
     expect(SCREEN_REVIEW_SOURCES.has('grok-cli-batch')).toBe(false);
     expect(SCREEN_REVIEW_SOURCES.has('qwen-v2-auto')).toBe(false);
   });
