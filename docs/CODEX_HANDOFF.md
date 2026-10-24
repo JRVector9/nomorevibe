@@ -1,3 +1,55 @@
+# 2026-10-24 — 병렬 운영 활성화·배포 진행 중
+
+## 현재 목표와 작업 위치
+
+사용자가 남은 작업 전부, 운영 활성화·배포와 서브에이전트 병렬 실행을 명시 승인했다.
+이번 운영 변경·모델 호출·배포는 이 최신 지시의 범위다. 작업 WT는
+`/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, 브랜치
+`codex/uptime-pre-delist-check-20261024`, HEAD `c3f4e8e8`이다. 원 WT의 사용자 변경을 보존한다.
+서브에이전트는 모두 `gpt-6.1-sol` / `xhigh`: 긴 재접속 구현, 실제 서빙·운영 readback,
+모델을 보기 전 독립 표본 라벨 수집의 세 갈래다.
+
+## 실제 확인과 결정
+
+운영 읽기 전용 readback: migration125개, 최신 배포16앱 `4d8b60bf`, assist6개 제어 모두 off,
+capacity disabled/epoch1/revision1/policy null, assist work와 capacity 요청0. 새 모델 env계약0.
+GPU 실제 vLLM은 C=50000, max-num-seqs=6, tp4, gptq_marlin, KV fp8_e5m2다.
+과거 문서262144를 현재 값으로 사용하지 않는다. 게이트웨이 두 컨테이너는 2026-10-16 배포,
+실제 소스에 PR3 strict-terminal 지원이 없다. 기존 gateway/CLI/text 호출이 함께 계량될 준비 없이
+native assist만 매핑해 전역 open하면 기존 작업이 미뤄지므로 그대로 실행하지 않는다.
+
+긴 재접속 담당은 background 전용 명시 timeout(1..60000ms)과 collector60초를 구현했다.
+기본 background/interactive10초·uptime25초와 SSRF·origin/DNS/redirect/body/abort를 보존한다.
+담당자가 RED18중12실패→GREEN18, 네트워크14파일141 PASS·ESLint·diff check exit0를 보고했고
+최종 typecheck/커밋 대기다. root는 아직 cherry-pick/통합 검증하지 않았다.
+
+실제 복구 후보12개에는 현재503/접속 실패/근거 부족이 섞여 있어 일괄 차단해제하지 않는다.
+독립 라벨의 출처는 `codex_independent_pre_model`이다. 이를 `human_independent`로 바꾸거나
+오프라인 readiness의 사람 독립 holdout 통과를 사칭하지 않는다.
+관리자 해제는 products.updatedAt와 health reset으로 기존 실패열을 리셋하며 새10회 실패만
+새 후보가 되는 기존 정책이다. 영구 면제로 바꾸지 않는다.
+
+## 산출물·검증·남은 일
+
+민감한 읽기 증거는 git 밖 `/private/tmp/nomorevibe-llm-activation-20261024/` 아래 권한0700/0600.
+root는 2026-10-24T14:15:02Z 운영 uptime 제어만 CAS·writer fence·감사 TX로 전환했다: confirm, confirmation_required=true, dispatch/apply=false, revision2, audit19135. 사전·실행 SQL/결과는 operations/ 아래0600으로 보존했다. 이 단계는 후보 보존이며 모델 처리·자동 적용 완료가 아니다. 다른 제어는 아직 off, root 실제 모델 호출·배포0이다. 통합596f4b09에서 root unit5파일40건, DB4파일70건, typegen/tsc/변경TS9파일 ESLint/diff-check exit0을 직접 확인했다. 읽기 전용 별도 코드검토도 새P0/P1/P2 없음. 이전 검증은 바로 아래 기록을 따른다.
+남은 일: 서빙·활성 caller/alias inventory 완성, 필요한 gateway 계약 배포와 native canary,
+실제 모델 비교, 긴 재접속 커밋 통합·필수 CI·보호 main PR 병합, 고정 SHA 이미지 배포,
+후보 보존 latch와 제어값의 단계적 활성화·관측. 검증 불가 항목을 완료로 세지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -1 --oneline
+git fetch origin
+# 긴 재접속 담당 커밋 SHA를 실제 수신한 뒤 cherry-pick하고 범위 검증한다.
+# 배포는 docs/operations/independent-workers-runbook.md의 mini 예비→M3 주 순서와
+# scripts/ops/deploy_shared_images.py plan/run 고정40자 main SHA·digest 절차를 따른다.
+```
+
+
+---
+
 # 2026-10-24 — 비동기 uptime 확인의 긴 재접속 분담 완료
 
 ## 현재 목표·완료
