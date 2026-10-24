@@ -9,7 +9,7 @@ import { uptimeControl, uptimeSplitControl } from "@/lib/db/product-uptime-schem
 import { autoBanUptimeProduct, nextUptimeAutoBanTargets } from "@/lib/domain/products/uptime-auto-ban";
 import { claimAssistWork, deferAssistClaim } from "@/lib/domain/llm-assist/repository";
 import { pingProducts } from "@/lib/jobs/products/uptime";
-import { OWNERS, product, setSplit, takeJobLease } from "./uptime-split-fixture";
+import { OWNERS, dbNow, product, setSplit, takeJobLease } from "./uptime-split-fixture";
 import { ensureSchema, resetTables } from "./setup";
 
 beforeAll(ensureSchema);
@@ -20,7 +20,7 @@ async function resetControl() {
 }
 beforeEach(async () => { await resetTables(); await resetControl(); await db.delete(jobs); });
 afterAll(resetControl);
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 async function candidate(name: string) {
   const p = await product(name, { health: { failures: 10, status: 404, hoursAgo: 0.02 }, claim: false });
   return p;
@@ -47,6 +47,11 @@ describe("비동기 uptime 확인 후보 큐", () => {
       const p = await product(`assist-tick-${mode}`, { health: { failures: 9, status: 503 } });
       const lease = await takeJobLease();
       const floor = (await db.select({ id: sql<number>`coalesce(max(id),0)::int` }).from(operationsAudit))[0].id;
+      // 실제 틱의 관측도 DB 시계에 맞춘다. Mac이 Docker DB보다 몇 ms 빠르면
+      // checked_at <= now() 보호가 올바르게 거절해 확인 큐 대신 미래 관측을 시험하게 된다.
+      const observedAt = await dbNow();
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(observedAt.getTime() - 1_000));
       await pingProducts({ cursor: null, save: async () => {}, hasBudget: () => true, log: () => {}, lease });
       expect(http.safeFetch.mock.calls.map(([url]) => url)).toEqual([p.url]);
       expect((await db.select().from(productHealth).where(eq(productHealth.slug, p.slug)))[0]).toMatchObject({ failures: 10, status: 503 });
