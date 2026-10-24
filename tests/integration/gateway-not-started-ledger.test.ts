@@ -248,18 +248,37 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of UNTOUCHED) expect(after[name]).toBe(before[name]);
 
-    // Later direct/assist migrations extend four CHECKs; 0125 also extends members.
-    // Keep the historical 0102 comparison exact, then verify its legacy predicates survive
-    // those later additions on the actual latest schema as well.
+    // Preserve the historical exact-prefix assertion through 0125. 0126 wraps the entire
+    // predecessor (rather than flattening its OR), so compare that whole predicate separately.
+    await migrateThrough(125);
+    const priorBoundary = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of [...LEFT, ...UNTOUCHED.slice(0, 3)]) {
+      const legacy = inner(after[name]), combined = inner(priorBoundary[name]);
+      expect(combined.startsWith(`${legacy.slice(0, -1)} OR `), `${name}: current legacy prefix`).toBe(true);
+    }
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
     expect(applied.count).toBe(journal.entries.length);
     const current = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
-    for (const name of [...LEFT, ...UNTOUCHED.slice(0, 3)]) {
-      const legacy = inner(after[name]), combined = inner(current[name]);
-      expect(combined.startsWith(`${legacy.slice(0, -1)} OR `), `${name}: current legacy prefix`).toBe(true);
+    for (const name of [LEFT[0], ...UNTOUCHED.slice(0, 3)]) {
+      const previous = inner(priorBoundary[name]);
+      // Reparse the entire captured predecessor on this disposable DB. PostgreSQL can
+      // flatten redundant OR/AND groups during this parse; compare its exact definition,
+      // rather than deleting parentheses or any SQL predicate in the assertion.
+      await step.unsafe(`ALTER TABLE model_capacity_requests ADD CONSTRAINT f2_boundary_expected CHECK ((${previous}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests)))`);
+      try {
+        const expected = await constraintDefs(step, ["f2_boundary_expected"]);
+        expect(current[name], `${name}: entire 0125 predecessor`).toBe(expected.f2_boundary_expected);
+      } finally { await step.unsafe("ALTER TABLE model_capacity_requests DROP CONSTRAINT f2_boundary_expected"); }
     }
-    for (const name of UNTOUCHED.slice(3)) expect(current[name], `${name}: current unchanged CHECK`).toBe(after[name]);
+    const eventKind = "model_capacity_events_kind_check";
+    await step.unsafe(`ALTER TABLE model_capacity_events ADD CONSTRAINT f2_boundary_expected CHECK ((${inner(priorBoundary[eventKind])}) OR coalesce(kind='dispatch_released' AND from_state='indeterminate' AND to_state='withdrawn' AND reason IS NULL AND nmv_provider_boundary_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false))`);
+    try {
+      const expected = await constraintDefs(step, ["f2_boundary_expected"]);
+      expect(current[eventKind], `${eventKind}: entire 0125 predecessor`).toBe(expected.f2_boundary_expected);
+    } finally { await step.unsafe("ALTER TABLE model_capacity_events DROP CONSTRAINT f2_boundary_expected"); }
+    for (const name of [LEFT[1], ...UNTOUCHED.slice(3).filter(name => name !== eventKind)])
+      expect(current[name], `${name}: current unchanged CHECK`).toBe(priorBoundary[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 
