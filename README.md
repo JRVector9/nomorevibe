@@ -4,6 +4,8 @@
 
 운영 서비스: [nomorevibe.com](https://nomorevibe.com) · [공개 GitHub 저장소](https://github.com/JRVector9/nomorevibe)
 
+[LLM 보강·AI2 운영 전환과 최신 배포 기록](docs/operations/2026-10-25-llm-assist-production-activation.md) · [테스트·배포 시간 단축 검토](docs/operations/2026-10-25-deployment-time-review.md)
+
 [2026-10-22 관리자·보안 15앱 배포 기록](docs/operations/2026-10-22-admin-production-rollout.md) ·
 [워커 감시·mini/Oracle Push 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)
 
@@ -91,10 +93,11 @@ npm run dev
 maintenance의 `uptime-ping`은 기본 15건/분·서로 다른 origin 3곳 동시 확인이다.
 `UPTIME_BATCH_SIZE` 상한은 200, `UPTIME_CONCURRENCY` 상한은 16이며 현재 운영 설정은 150/12다.
 같은 origin은 한 번에 하나만 열고 DB 기록은 직렬이다. 같은 제품은 6시간에 한 번 확인한다.
-최근 관측에서 연속 실패가 10회 이상인 공개 웹사이트는 현재 제품·주소를 다시 검사해 자동으로 내리고,
-실제 실패 수·마지막 응답·확인 시각·처리 주체를 제품 기록과 운영 감사에 남긴다.
+최근 관측에서 연속 실패가 10회 이상인 공개 웹사이트는 현재 제품·주소를 다시 검사한다.
+현재 운영은 uptime confirm·확인 필수이므로 직접 내리는 대신 확인 큐에 등록하며, 자동 반영은 `apply_enabled` 관문을 별도로 통과해야 한다(현재 false).
+실제 실패 수·마지막 응답·확인 시각·처리 주체를 기록한다.
 주소 변경이나 과거 실패의 귀속이 불명확하면 다음 실패부터 새로 센다.
-정책과 실제 배포·처리 관측은 [자동 내림 운영 보고서](docs/operations/2026-10-15-uptime-auto-ban.md)를 따른다.
+초기 정책·배포 관측은 [자동 내림 운영 보고서](docs/operations/2026-10-15-uptime-auto-ban.md), 현재 확인 경계는 [LLM 운영 전환 기록](docs/operations/2026-10-25-llm-assist-production-activation.md)을 따른다.
 
 통합 테스트는 **개발 DB가 아닌 전용 DB**를 쓴다. 테이블을 비우므로 개발 DB를 가리키면
 작업 중인 데이터가 날아간다.
@@ -191,7 +194,7 @@ mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 �
 2026-10-22 관리자·보안 릴리스는 agent-scan 소비자를 포함한 15앱/20컨테이너에 배포했고,
 같은 날 읽기 전용 M3 monitor를 추가했고, 2026-10-25 KST M3 AI2 소비자를 생성·배포해
 현재 17앱/22컨테이너다. AI2 소비자의 배포와 `items` 운영 전환은 별도이며, 전환 상태는
-[LLM 보강 운영 기록](docs/operations/2026-10-24-llm-assist-activation.md)을 따른다.
+[최신 LLM 보강 운영 기록](docs/operations/2026-10-25-llm-assist-production-activation.md)을 따른다.
 Oracle Osaka의 Kuma 수신기는 Dokploy 앱 수에 포함하지 않는다.
 두 웹은 로드밸런서 뒤에서
 동작한다. 다섯 역할 모두 M3 주 후보가 작업하고 mini 예비는 같은 릴리스로 대기한다.

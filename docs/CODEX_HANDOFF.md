@@ -1,3 +1,292 @@
+# 2026-10-25 08:41 KST — be71 운영 배포 완료, T0·T5 통과, 시간 단축안 정리
+
+이 기록이 아래의 과거 진행 기록보다 우선한다. 현재 목표는 승인된 LLM 보강 구현·운영 활성화·배포의 완료 기록과 테스트/배포 시간 단축 검토를 문서 PR로 반영하는 것이다. **실제 런타임 작업은 완료했으며, 운영 배포를 다시 실행하지 않는다.** 원 사용자 worktree는 보존했다.
+
+## 완료한 작업과 실제 운영 상태
+
+- PR649–651/main `be71a75aade94858218faca0e2c012ed5dd69dc8`, PR CI40140056000 및 main CI40140565907 전체 성공. Admission polling·미전송 취소·macOS 경계·historical owner 지원을 구현하고 실제 배포했다.
+- **17앱/22컨테이너 최종 검증 통과**. Worker 계열16컨테이너 각각998 source hash, web6 OCI revision/digest/health, API inventory complete=true/pending=[] 확인. Worker digest `fabaff6972ddadd16531b5c6886144ed0fd7ed01e2b43b00089c05ce9c4c637d`, web digest `2c90b0c80048a063f735585b3d0c1eb20b54b1c7b98683defeb80ee93bb67bfa`.
+- DB journal130/최신0129. 0127·0128·0129 각각 한 번 적용. 0129 SQL SHA `9338fb620425136e57878db87db9a9c43a08c74443404e6083889c5c55871821`. M3 07ef는 실제 경계 종료와 원 owner DB 증거로 한 번 회수(audit19452)하고 Mac 새 PID34995/두 모델 loaded, 양 gateway·reviewer를 복구했다. 모델 성공·usage를 생성하지 않았다.
+- Capacity **open** 실제 확인 `2026-10-24T23:23:07.114Z`, audit19453/epoch1/rev2/policy ec1dd 유지. 원4잡 재개·원 생산자 등록은 추가 실행하지 않았다. 6개 assist dispatch true/apply false, uptime 확인 필수·나머지5개 shadow, AI2 items/epoch2/contract1. 모든 Nomorevibe autoDeploy=false 유지.
+- Local-end16앱/child-group11앱, AI2 stop grace60초와 5역할 ready/progress ok·scheduler fresh2·AI2 consumer source998/health exit0 확인. 최종 proof `/Users/jr/.local/state/nomorevibe-final-be71-20261025-v1/actual-final17-verification-v2/verification.safe.json`, SHA `b2ce36894ad6722b6bef28a526e74d626bdf49ab8920a58ed092fd9b077bc58a`.
+- 앱 갱신 실측은 첫 요청23:16:56.188214Z→마지막 Swarm 완료23:26:55.604414975Z, **9분59.416초**. Git6만5분28.016초 중 API/Dokploy 작업 합계29.524초. 최대2개씩 병렬화 시 약2분31초 절감은 **미구현 추정**이며, 전체약6분 목표에는 추가 단계/대기 축소가 필요하다. 좁은 CSS/문구 PR의 DB 회귀 생략·로컬 중복 전체 검사 제거 등 제안은 시간 검토 문서에 기록했고 이번 릴리스에서 새로 적용하지 않았다.
+
+## 실제 관측과 후속 driver
+
+최종 배포 뒤 별도 series 시작은 **2026-10-24T23:31:18.360Z**다. Capacity open 시각과 혼동하지 않는다. Root는 T0를 직접 한 번 기록했고, 후속 driver를 detached PID78284로 실제 시작·시작 영수증·생존 확인했다. **수동 표본/driver를 중복 실행하지 않는다.**
+
+- Root `/Users/jr/.local/state/nomorevibe-be71-postrollout-observation-v1/`: `activation.safe.json`, `driver-launch.safe.json`, `driver-once/run.started.safe.json`, `series/t0/observation.safe.json`.
+- T0 실제 DB23:31:18.911Z, findings=[]/기존 health 관문 성공, SHA `5b7ad9d09c853ee87717fcf3d904cb45a43e321e0d6510adfe9528d7fee5c271`.
+- **T5 실제 DB23:36:18.894Z**, driver exit0/stderr0/retry0, findings=[]/기존 health 관문 성공. Native 정산30·AI2 검수8, unknown0/구세대0/terminal 누락0. SHA `3d897ad50fad25ba25e1b689cfbb2eb722ce37778c85fadf63a14cacef6a0875`.
+- T10 due23:41:18.360Z, T15 due23:46:18.360Z, h6 due**2026-10-25T05:31:18.360Z(KST14:31:18.360)**. 미래 표본·연속6시간 정상·사람 품질 통과를 주장하지 않는다.
+- Driver `/private/tmp/nomorevibe-llm-activation-20261024/historical-owner-observer-driver-v1/observe_due_once.py` SHA `fa6e5b777b737ade9a4b502c46b6404e58c2b5492ce44325a7f80f0996ed89de`; 원 observer `post-historical-owner-rollout-observation-v1/observe_once.py` SHA `b7bad0b0efce97486eae315801cac078467fbe7ea7053ad5b40c7406c19a8215`. Due 뒤 각1회/실패 즉시 중단·재시도0·운영 mutation/model POST0이며 persistent launchd/cron은 추가하지 않았다.
+
+## 수정 파일·검증·실패 보존
+
+문서 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, branch `docs/llm-assist-production-20261025`, base be71. 이번 문서 변경은 `README.md`, `PENDING.md`, `docs/CODEX_HANDOFF.md`, `docs/operations/2026-10-24-llm-assist-activation.md`, 새 `docs/operations/2026-10-25-llm-assist-production-activation.md`, 새 `docs/operations/2026-10-25-deployment-time-review.md` 6개뿐이다. Source WT `/Users/jr/Desktop/projects/nomorevibe-provider-boundary-historical-owner`는 clean be71이다.
+
+이전 구현 단계에서 실제 실행한 최종 검증은 historical-owner 관련 unit26/실PG40/typegen·tsc·scopedlint, 독립 catalog/OID/원장 검토와 위 CI다. 사설 도구는 reader/operation/full plan53+23개, driver7개·observer18개를 실제 검증했다. 최종 웹 검증기만 NEXT_DEPLOYMENT_ID의 기대 갱신을 누락해 처음 실패했으며, 저장한 실제 fixture로 RED4→GREEN7 후 fresh17앱 전체 검증을 통과했다. 문서만 바뀐 뒤 전체 코드 검사를 반복하지 않는다. 실제 `git diff --check` 성공, 기존 `classifyPaths`로 문서6개/codeChanged=false 확인, 상대 링크75개 검사/누락0을 확인했다. PR 필수 check는 별도로 확인한다.
+
+원 owner 교체로 fresh preflight v3/v5가 중단된 경우는 mutation0이었다. v4의 실제 cutoff 뒤 stdout 수집 실패는 waitExitCode를 추정하지 않고 원문을 보존했으며, 그 current owner만 별도 CAS 복구한 뒤 새 계획으로 진행했다. Mac 느린 종료/로딩도 제어 명령을 반복하지 않고 읽기 확인으로 검증했다. 의도적 draining 중 publisher 격리는 강제 clear/가드 생략 없이 정상 용량 재개와 자연 만료 뒤 통과했다. 아래 과거 실패/대기 기록은 이 완료 기록과 구분한다.
+
+## 남은 업무와 다음 명령
+
+- 독립 사람 holdout5 미응답으로 apply false 유지. T5 소개99는 done11/human16/나머지72·공통13/적용0, repo42는 human30/obsolete1/나머지11·공통1/적용0. 감사11490 원작업은 waiting_capacity/attempt0/common0/finding0이며 누적 pre-dispatch withdrawn44건을 새 장애의 증명으로 쓰지 않는다. 뉴스197487의 original_name_missing 및202004·198055 실패는 보존한다. **적체 전체 완료·업무 품질 성공을 주장하지 않는다.**
+- 미래 관측은 기존 driver의 실제 결과만 읽는다. 새로운 source/health 실패가 있으면 원문부터 조사하며 자동 재시도·표본 재실행을 하지 않는다.
+- **0127/0128/0129 migrator, 07ef 단건 회수, 경계 중단/복구, capacity open/drain, 원4잡 resume, 생산자 등록/뉴스 재등록은 재실행 금지.** 썸네일은 최초 인계의 보류 범위다.
+- 남은 문서 단계: 독립 읽기 검토→6파일 commit/push→문서 PR 필수 최신-base check 성공→정상 merge→사용자에게 완료와 시간 단축 보고. 앱은 이미 be71로 검증되어 있으므로 문서 main 반영 때문에 재배포하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git diff --check
+# 기존 driver는 읽기만 한다. 수동 observe/driver 재시작 금지.
+ps -o pid=,ppid=,etime=,comm= -p 78284
+cat /Users/jr/.local/state/nomorevibe-be71-postrollout-observation-v1/driver-once/t5.result.safe.json
+# due 뒤 생성된 t10/t15/h6.result.safe.json과 series/<label>/observation.safe.json을 읽는다.
+# 아래 문서6개만 add/commit/push하고 실제 새 PR번호로 checks/merge한다.
+git add README.md PENDING.md docs/CODEX_HANDOFF.md docs/operations/2026-10-24-llm-assist-activation.md docs/operations/2026-10-25-llm-assist-production-activation.md docs/operations/2026-10-25-deployment-time-review.md
+git diff --cached --check
+git commit -m "docs: record LLM assist activation and deployment timing"
+git push -u origin docs/llm-assist-production-20261025
+# gh pr create --base main --head docs/llm-assist-production-20261025 --body-file <실제작성본문>
+```
+
+---
+
+아래는 해당 시각에 기록한 과거 진행 이력이다. 현재 운영 상태나 실행 지시로 사용하지 않는다.
+
+# 2026-10-25 08:25 KST — 용량 open 실제완료, shared10 배포 중
+
+Git6 실제전체998source/healthy완료23:22:24.204635Z. 새be71controlCLI exactmaintenance/primary5432/journal130/servingroute/classifier검증과dryrunPASS뒤 **capacityopen1회 실제PASS**, audit19453/CLI확인시각23:23:07.114Z/epoch1rev2/ec1dd 유지, unknown0/oldgen0/dispatched0.실제원문 `final-be71-control-journal130-v1/run-1792884184327862000-execute/result.safe.json`. 원4jobresume추가0/producer재등록0.
+
+Quarantine강제clear없이23:23:07 만료뒤 freshsharedplan은15.8초/PASS(standbypublishervalid, 전체progressok). 이미지검증/migration130/가드우회0. **shared10 실제run root session49763 진행중**, snapshot `/Users/jr/.local/state/nomorevibe-final-be71-20261025-v1/shared-snapshot.private.json`. 23:25:02 publisher/reviewer/crawler 새주ready/progressok 검증PASS, 현재웹2갱신중. 이run/배포를재실행하지않는다. 이어monitorLAST→verify_final→inventory→existingguards→최종fleet검증시각기준별도T0→futuredriver/background실제launch검증→6docs정리PR/필수check→속도보고다. 아직T0/후속driver/final17은실행안했다.
+
+단건0129/07efrelease/open/원producer/옛resume markers재실행금지.원사용자WT불변.사람 holdout5 미응답/applyfalse/미래관측미완료유지.
+
+---
+
+# 2026-10-25 08:21 KST — Git6 실제 배포 중, shared 사전 관문 때문에 순서 조정
+
+기존실제0129/07ef회수·모든서버복구완료는아래와같다. 새앱 배포는23:16:56Z부터시작했으며 text-mini/text-m3/maintenance-mini/maintenance-m3는be71 998source/healthy검증완료, scheduler-m3 갱신중이다. root session6585는Git6전체순차배포중이며재실행하지않는다. 새이미지prepull은두서버각10초/전체12초 actualPASS했다.
+
+**순서조정 이유:** 첫 sharedplan은 `crawler_monitor_gate_timeout:publisher=primary_quarantined,progress=alarm`으로앱mutation전에정상거절했다. `publisher-preflight-readonly-v1/reports.private.json` SHA9221b5cbea3cdb006d5340fd299fbfcd3d9b1706fb2b65789a6b62bb4e349a1c. 실제23:16:59Z primaryRO에서는 publisher 예비mini-publisher-standby가유효lease/원releasec486을갖고 quarantineUntil23:23:07.319655, unknown0, capacityDRAIN이었다. 다른역할/scheduler2는정상이다. 의도적DRAIN으로native의존first/second/publish 적체진행0이나 source진행감시는capacitymode를보지않아no_progress가된다. 이것만으로과거3회부팅원인까지확정하지않는다.
+
+루트/독립source리뷰에서새구조적blocker없는경로로 **Git6(특히maintenance-M3be71+journal130/sourcehealthy)완료 → 새be71controlCLI freshdryrun/open정확1회 → backlog실제진행복구+publisher격리자연만료/hand-off → 기존sharedplan/run원guardPASS → monitorLAST/final17**을선택했다. 강제quarantineclear·gate skip·정책완화0이다. 원4잡은이미한번재개됐으므로새resume0. Sharedreviewer교체전에는새assistpolling활성화완료로보고하지않는다. 새unknown발생시기존보존/hold절차를따른다.
+
+현재 capacity는아직DRAIN/open실행0이다. 다음명령은Git6성공뒤에만 `final-be71-control-journal130-v1/run_control_cli.py dry-run capacity mode --to=open --from-mode=draining --expect-epoch=1 --expect-revision=2 --operator=codex:jr-authorized --reason='<실제경계복구·Git6검증완료 후적체처리재개>' --json`, 실제결과검토뒤동일인자로execute1회다. sourceCLI715403…/wrapper432894…/14PASS, actualmaintenancebe71/primary5432/journal130/unknown·oldgen·unavailable·deferred·classifier검증은도구그대로유지한다. 모든관측의T0기준은최종be71fleet검증완료시각으로별도고정하고open시각도따로남긴다.
+
+원WT/6docs미커밋/HEAD=originmainbe71 유지하며실제Gitbuild끝날때까지docscommit/merge0. 사용자의테스트·배포시간축소보고문서는작성완료, 이번actualrollout최종시각만추가대기다.
+
+---
+
+# 2026-10-25 08:13 KST — 07ef 회수·모델/게이트웨이/워커 복구 완료, be71 앱배포 시작
+
+- 목표/승인/원WT보존은아래와같다. 최신앱은아직c486, DB130/0129실제완료, capacitydraining epoch1/rev2/22:21:31.022Z 유지다.
+- v5는owner c36→1ec교체를cutoff전preflight가거절하여marker/mutation0. v6는freshcapture→fullplan→정확identity검사→cutoff를동일실행에서순차진행했다. `ingress-v6/operation.safe.json` SHA b9e0c3d42d33d793edc8f29264218e3dfcf77e89da2c22f22be730f0bf44c09e, `full-v6/full-operation.safe.json` SHA dba20288aca4f2b7e0fbc0e9a44c0ab422655b18c603b9827a59e5d108e28689, canonicalplan1802164a8c65f3016a2d8313b9e560464acd40baea3188174b6f81f7dda5be39. typed/causal독립PASS.
+- **Linux3실제cutoffPASS**, receipt0bca551a894a2f7ade5e48facac99047063c38e043514bb01cb3f21beb656c07. Macdisable+bootout각ack0뒤즉시종료관측은느려실패했고(원문2ffd1ab63c9b04362979bc0f3f84387e2eeecb5085e9e86ce1d3f0f317a2503e), mutation재시도없이ROverify fe4b29d251cda85bd2e9f4379985ed257dcc33b300a7029401865ff5a233bfd6로oldPID/PGID/launchd/listener/TCP종료PASS했다. 전후Linux원stopVersion불변, fullreceipt91ea007faa0054065010c64417192a14e95e58fd28451f462524137d56738abe. independentreceipt504685df…2f8e8.
+- **07ef exactdryrunrollbackPASS→apply1회PASS**, actualaudit19452/events+1/audits+1, withdrawn/provider_boundary_exit, settledNULL, preservedHash375996461fe2e8acc99cc275a086fc5dc1fece7acdefb7f6962245e132de10b3 동일, terminalHash3135c9a83e4c56e7fecb2b53ce663703018536ba4c17db34a6c2ce1e9bfffc3a valid. native성공/usage생성0. `full-v6/release-apply.result.safe.json` 및독립review5ee60fff…1bf5. **release재실행금지.**
+- Macenable/bootstrap각1회완료, 첫ROverify는startupHTTPError였고후속RO에서새PID/두exactmodel loaded/source·설정불변PASS. `provider-mac.verify-restored.1792883507082304000.raw.safe.json` SHA fdcb1a1b948c1a0b0423b7e53346b461902d63de6b16955e4d076868042b3984. 별도RO간이probe는static호출누락으로TypeError, 실제GET0/설정변경0이며실패원문보존했다.
+- **Linux역순restore각1회PASS**: minigateway9bdb2e31d123… /M3gatewayf8501804aee3… /owner5b488c6418ce… newCID/원image·spec/health/source/hostboot검증. 원failedf48estop/별도복구도보존, 재실행0.
+- 앱배포9단계 exactargv 동결 `historical-owner-final-rollout-commands.safe.json` SHA eb6b10915a2323e1384889b81ae502ab39b2e8a2c2fb27fb027de95d819e6898. targetbe71/workerfabaff…/web2c90… 모두CI확정. 실제collector가 `/Users/jr/.local/state/nomorevibe-final-be71-20261025-v1/git7`에서freshc486baseline 수집중이다(원c486/旧0c9스냅샷복사0). 이어 plan/prepull→git7plan→git6deploy→shared10run→monitorLAST→actualfinal17/inventory→newbe71journal130CLI dry/open1회→실제T0/미래driver→docsPR/보고다.
+
+Privatebase와v4도구경로는아래기록을따른다. root만운영mutations, 원producer/뉴스실패행/옛open·resume·migration·release markers재실행금지. 사람5라벨미응답/applyfalse 유지. 사용자추가요청인테스트축소안은시간보고문서에CI실측/세단계제안/중복전체suite반복회피까지추가했다. 실제이번앱배포시간은완료후덧붙인다.
+
+---
+
+# 2026-10-25 08:10 KST — be71 CI/0129 완료, 실제 경계 복구 진행
+
+현재 목표는 사용자가 승인한 남은 LLM 작업·운영 활성화·배포 완료다. 완료 뒤 테스트 과정과 배포 단계 축소 방안을 실측과 함께 보고한다. 원 사용자 WT는 변경하지 않았다.
+
+- PR651 main `be71a75aade94858218faca0e2c012ed5dd69dc8` 병합22:55:03Z, PR CI40140056000 및 main CI40140565907 전체 SUCCESS. Worker digest `fabaff6972ddadd16531b5c6886144ed0fd7ed01e2b43b00089c05ce9c4c637d`, web `2c90b0c80048a063f735585b3d0c1eb20b54b1c7b98683defeb80ee93bb67bfa`. 실제 앱은 아직c486이며 새 이미지 미배포다.
+- **0129 실제 migrator 정확1회 PASS**, DBjournal130/latest0129/SQL9338fb620425136e57878db87db9a9c43a08c74443404e6083889c5c55871821. `migration-0129-preparation/plan-be71a75aade9-20261024T225519643167Z.private.json` SHA f30ad7da9dc5a5c967c92d74e6d9267106b80ffbcf0164ac8eb672b6f6739783. execution-attempt 존재하므로 재실행금지.
+- Capacity는22:21:31.022Z의 draining/epoch1/rev2/ec1dd 그대로, unknown07ef는 아직indeterminate. 원producer/뉴스197487실패/옛open·resume·migration markers 재실행금지. 사람5라벨 미응답/applyfalse.
+- fresh ingress-v3 owner50bf→f48e 자동교체를 실제preflight가 거절했다(모델/종료mutation0). ingress-v4+full-v4 plan(f673e1c283a044d2022ec4f020969bb658ce4fe9f0527a86488f07954acf657e) 독립TSschema·hash검증PASS 뒤 실제cutoff를 시작했다.
+- **23:01:25 owner f48e만 replicas0 CAS1회 실행**, docker wait가검증된뒤 RO bootreader가임의container에서cat실패해 원stdout를받지못했다. gateways/Mac은 중단하지않았다. 원 `ingress-v4/cutoff.started` 및 stderrtransport1792882888527413000 보존. oldCID/task모두404, daemonevents없음. waitExitCode를위조하지않는다.
+- 안전한별도복구: actual currentserviceVersion6235830/replicas0/전체spec 동일/CAS 및 정확draining을확인해 **owner replica1 복구1회 실제PASS**, newCID `c36cbcf44a2ddc8afd33606e1feae37ef23842e85035fcd49817ecbeb5c18473`. `owner-partial-cutoff-restore-once-v1/result.safe.json` SHA df9cc2c07c213e24a8b18d3eaa3d867cc50bc1d246159aa8cc59df959c263452. originalfailedstop의 종료증명은미완성으로보존하며재실행하지않는다. 새계획에서새currentowner를관측·종료할예정이다.
+- 수정은 private RO reader에한정한다. sibling `m3-provider-boundary-operation-v4/verify_ingress_readonly.py` SHA2268d9fce26bddce37a1ffbf6baa81d236c3ca4ea902c68b67efff03a810fa5a, 같은unixEngine의runningcandidate≤8/25s, 정확CID/PID/StartedAt/image 전후일치와hostboot검증유지, cat불가후보다음선택. 원v3불변. agent/root 실제13/13 PASS, RED7보존. eval이opv4/fullv4의경로·hash핀을동결중이다. 새prod코드/추가migration은없다.
+- 새Mac ROinspect(v5) PASS: rawSHA ae5f8a6665122e192156591bf8846bdbfeba928fd20cf6257281d96ba1159d28, transportSHA0cdfe47f0e7a1656c2e3683fc8044017d408b677ab264daa418672a685c7ae1c. 원PID66193/원두engine 그대로, modelcalls0. 새Linuxsnapshot/fullplan은v4tool준비뒤fresh수집한다.
+- Futuredriver root7PASS/agent7+observer18PASS, sourcefa6e5b/helperb7bad0 불변. `historical-owner-observer-driver-v1/BE71_REVIEW_AND_LAUNCH.ko.md` SHAbe532c9dd05871e124cce4648e7a13af085f3bf8a217195b24bba0b09978e9cd. 실제T0/예약/launch0. docs-onlymain후에도be71 998source관측가능한격리fixture확인.
+
+Private base는 `/private/tmp/nomorevibe-llm-activation-20261024/`. 다음은 **v4tool소스핀/독립검토 → 새Linuxsnapshot+Macv5(fresh10분이내) fullplan → 새currentowner/gateway2 cutoff → Macstop/전후ingressverify → be71release dryrun/apply각1회 → Mac새PID/loaded2복구 → Linux역순복구 → 새be71 17앱 배포 → journal130 controlwrapper dryrun/open1회 → 실제T0/후속driver → docsPR/시간보고**다. 기존failedcutoff marker를삭제하거나owner f48e 종료를재시도하지않는다.
+
+---
+
+# 2026-10-25 07:53 KST — PR651/CI40140056000 진행, 모든 운영 도구 최종 검토 완료
+
+최신 source는 clean commit `b14f05abb2b03dc047aa110303b72aa5b484c42c`, rootpush/PR651 https://github.com/JRVector9/nomorevibe/pull/651 완료다. base253d2517. CI40140056000에서unit2/type/lint/build/PRimages/ledger PASS, DB6 shard/필수check 대기(실패0)다. local최종unit26/PG40/tsc/lint PASS, 독립최종13unit/freeze13파일/20CHECK/14OID/catalog·legacybody검토PASS, finalreviewSHA0708fd6bdea90b002e843cdb81a9c4da4a38fbfb0ca4cf9b1d3f8fc48f25070b. 원프리즈459efaa137abc9db04b1a31156c7afc15c371d09f3f4fa8cbedeedfafb1b8ae8.
+
+아직운영은 c486/journal129/draining/unknown07ef1, 새0129/cutoff/release/restore/앱배포0이다. 아래실제준비경로를보존한다:
+
+- 최종Linuxopsv3 operator1479e615ebdcc3618ae51abaef2f8e755aedbfb5069652b5806ea06fae906f21 +44PASS, fullv3 composer57db02a1a4f959c20f7a069585b66bd91f32c6769ca85535d88a36653d3792c1 +23PASS, release-once.py **ffe519160626670041e4a98630e9d4454bc64c8f533bc70827aaeff77589af8d** /SQL9338핀완료. 독립review도원문대조완료. exact실행명령은 `m3-provider-boundary-full-v3/PLAN.ko.md` SHAa74afecbffda70c2db45bc311a29a7980e4f437142d2c1ca94dd64dd6ae7d473. 원proof5901/artifact6d5d/control2abf는재생성하지않고새Linux/Mac snapshot만fresh수집한다.
+- root0129wrapper555b95…/catalog8c3a…/SQL9338… 검토·25PASS/독립25PASS완료. 새main필수CI/OCI후sourceWT를 clean 새 main으로맞춰 `plan --repo /Users/jr/Desktop/projects/nomorevibe-provider-boundary-historical-owner --release <newmain40>` → 실제plan/hash검토→`execute --plan <actual> --plan-sha <actual>` 각1회한다. 기존0128 marker재실행0.
+- 실제M3 model_settingsSHA627e…의 **두exactmodel is_pinned=true, pinnedlist도둘만**임을22:51:58Z RO1회확인했다. `macos-preload-readonly-v1/result.safe.json` SHAefb1d5956b283973d52d8c92dcead722472fe1f27b643c485f62e073a6df287e. startupsource는pinned모델을awaitget_engine하므로추론POST없이자동preload다. preload실패도health200가능하므로기존restore후loaded2/engine형식strict검사는그대로유지한다. adminload POST/설정변경0이다.
+- uptime는기존observer의T5/T10/T15/h6를실제due뒤각한번실행하는작은backgrounddriver를준비중이다. root가T0를직접하고새release/OCI/실제T0를핀해그뒤launch할계획이며아직스케줄/driver실행0이다. persistentlaunchd추가0/자동mutation0/미래관측통과주장0.
+- 배포속도보고초안은readiness/eval의실측검토를받아 root문서 `docs/operations/2026-10-25-deployment-time-review.md`에수정했다. Git6의cached API/빌드는4–7초이고대부분순차Swarm대기다. max2/세wave 계산은2분38.5초로약2분43초절감, 전체예상5분21초(추가최적화전)다. 4–5분은후속목표로구분했다. scheduler2복제본/유지앱별expectedrelease map필요도기록했다. 이번배포의actual시간은완료후추가한다.
+
+현재 root docs6파일미커밋/HEAD253d, 원userWT불변. 다음은 PR651requiredcheck/최신base성공→rootmerge/mainCI정확OCI→rootdocsWTff/codeWTcleannewmain→0129once→freshv3fullplan/physicalexit→단건release/복구→freshnewmain17앱배포→새journal130/release의기존controlCLI로open1회→별도실제T0/후속관측→docsPR/보고다. 사람5라벨미응답/applyfalse와원생산자·뉴스실패행·기존open/resume 재실행금지는유지한다.
+
+---
+
+# 2026-10-25 후속 — historical owner 구현·실PG/운영도구 검증 완료, 새 PR 직전
+
+현재 실제 운영은 **c486/DBjournal129(0128)/capacitydraining epoch1 rev2 updatedAt2026-10-24T22:21:31.022000Z/audit19450/unknown07ef1**이다. 새physicalcutoff/release/restore/0129/앱배포0, 원userWT보존이다. 공개 `/api/health`는22:41Z 실제GET200이다. 사용자요청인시간단축보고는이번배포완료뒤한다.
+
+- eval격리WT `/Users/jr/Desktop/projects/nomorevibe-provider-boundary-historical-owner`, branch `fix/provider-boundary-historical-owner-20261025`, base253d2517. 새v2는originalOwner durable_process_group_exit와currentIngressOwner Linuxnamespace종료를명시분리한다. 원v1/기존birthguard/SQL0126–0128/20CHECK불변. 현재ingressbirth는plan이전만요구하고gateway/provider는dispatch이전을유지, v2provider는launchd전용이다.
+- originalowner는boot98922/열림7/intent8/spawn9/exit23 seq1 PID41/runHasha0e691… 및local_end2616/binding51abd…를같은TX에서기존evaluateLocalCallEnded+정확DBref/hash로재검증한다. v2 직접SQL전이도기존publictriggerOID를유지한STABLE records guard로우회거절한다. oldCID3533/task404와boot는직접같이관측한기록이없어연결동일성주장0이며보조자료뿐이다. 원namespace/ticks/wait값위조0이다.
+- **0129 SQL SHA9338fb620425136e57878db87db9a9c43a08c74443404e6083889c5c55871821**, tag0129_historical_provider_boundary_owner/idx129/when1794086400041/journal130. 새PG8cases+기존5파일합계40PASS, unit6파일25PASS 뒤CLI artifact1추가로최종26재검증중, typegen/tsc/scopedlint PASS다. 초기SQL CASE괄호compile실패/신규bootUUIDparity RED는보존후수정했다. 아직최종commit/PR전이다.
+- 실제localPG catalog `provider-boundary-historical-owner-proof/before-129.catalog.safe.json` SHAcfb2fbdc1fcdc87fdf981d21da2fad4bbaf2417b42e09fda28e90e6f3d12cecd /after130 SHA526a68b5e6bb971867794248743d6e7bd08603389c1bccb9766389f70e859905. root/readiness각재계산으로20CHECK/기존14OID/12나머지function전체/2원publicbody의archive prosrc 동일확인(총19). independentcatalogreview SHA60c45a53…fd545.
+- root0129 wrapper `/private/tmp/nomorevibe-llm-activation-20261024/migration-0129-preparation/run-existing-migrator-once.py` SHA555b95f836463f4a06f0660cac7e85bea0f4c024812210e0153738674102a296, expectedcatalogSHA8c3a3be472c41d87f8cce730c93db2e346aa179f503173f07b3f190842116de2. before14/after19 exactsource/OID·20CHECK·old2bf+new07ef행/events·draining정확5field·primary5432·sourceclean/newmain·O_EXCL/migrator1회/unknownno-retry 보존. root25PASS+readiness25PASS, independentreview SHA6a60111608f3abddc9e7d2fb20ee8fe2e4d403a490945e4e5d2e3525ffe42be4. **실제0129check/plan/execute0**이다.
+- Linuxopsv3 `/m3-provider-boundary-operation-v3/boundary-operator.py` SHA1479e615ebdcc3618ae51abaef2f8e755aedbfb5069652b5806ea06fae906f21, proofbuilder7cd893fd42ab1fde3b544edafd5d0af71a4bcbffa311c881e5a42a7c996ef406. 원action37a2/Enginebaf5/readers/994manifest불변, root44PASS/readiness44PASS. fullv3 `/m3-provider-boundary-full-v3/full-boundary.py` SHA57db02a1a4f959c20f7a069585b66bd91f32c6769ca85535d88a36653d3792c1, root23PASS/readiness23PASS + agentactualtyped9checks. 원10분freshguard유지(한때25분인copy는보존후복구). release-once는0129hash최종핀을uptime가완료중이다. 전체v3 independentreview SHA0abc7a35ae41b016c8a6fd44b4c1a384dc3acc5e13de94a05fb31dbcfa47db64.
+- 원proof는root가local0DB로생성완료: `m3-launchd-boundary-253d-20261025-v1/original-owner-proof/original-owner.proof.safe.json` SHA5901f196634c2074185966b5fe2cf79ac63f47703bdcb63a0e86a55e051cbeda /artifact6d5da8260d77c962b83d5e3bb19e28363ebd2144e33642fb5c57c676d14be81d. 재생성불필요. 이후현재Linux/Mac snapshot은새CI/0129후fresh로수집한다. old22:22 snapshot/옛0c9baseline재사용0.
+- root 새배포 `historical-owner-rollout-preparation-v1`는journal130/0129정확프로필로41PASS(초기fixture applied129누락RED1→130수정GREEN). observer `post-historical-owner-rollout-observation-v1`18PASS, commonSHA9dcba0df7909481fea108f74bcf28104407ca351cfd69a9104b6b04cf269be3a. 실제새release/OCI/T0미정,실행0이다.
+
+root 수정문서는기존5개+새 `docs/operations/2026-10-25-deployment-time-review.md` 총6개다. 새report초안은실측Git6 5분22초중대부분Swarm순차대기(요청4–7초)임을구분한다. 일반17앱API→최종Swarm은8분04초, limitedparallel2wave로약3분절감가능성/변경범위별배포/5workerGit앱공통이미지/사고복구경로분리를권고한다. 실제후속배포시간은완료뒤채운다. 사람holdout5미응답/applyfalse/새6h미완료와원뉴스197487실패행보존은유지한다.
+
+다음정확한순서: evalfinalcommit→rootpush/PR/최신base필수CI→rootmerge/새mainCI정확OCI→docsWTff/sourceWTcleannewmain→0129freshplan/onceexecute→Linuxv3freshprepare(--historical-owner-proof/sha 추가)+Macv3freshinspect/fullplan→owner/gateway2cutoff→전후ingressverify+Macactualstop→fullreceipt/단건dryrunapply→Macrestore/readonlynewprocessverify→Linuxreverse restore→새mainfreshGit7baseline/17앱rollout→새release130 controlwrapper로open1회/별도T0/5/10/15→docs6파일PR. 기존0128/drain/원producer/옛경계종료·원open/resume marker 재실행금지.
+
+---
+
+# 2026-10-25 07:28 KST — 새 경계 검증의 실제 두 차이 확인, 원 owner 증거의 별도 지원 진행
+
+앞의0128/draining 실제완료는 유지한다. 앱은c486, unknown07ef1, 새cutoff/release/restore/배포0이다.
+
+- 실제v2 Linuxprepare는2026-10-24T22:22:20Z owner현재CID9ad69252c7fd2deae4f52f3fe488ab1b389abf30a7b9f8ec7f305aa1713aa838가22:17:22.141Z 시작해 originaldispatch21:18 이후라는 이유로 정상거절했다. 원prepare출력/remote3개를보존하며mutation0이다. 현재owner를원owner로소급하거나birthguard를느슨하게하지않는다.
+- 원3533c5cccd8f5e3987c1c7c9e33cf16164a9fa76527cd0c74d6ebe0460a3f624/taskqux0gtrt6ic877akgncc6ddq8은20:35:46.895Z 시작한실제baseline이있으나 startTicks/pidns는당시수집안됐다. 실제DockerEngine exactCID/Swarm exacttask GET404라기존namespace/waitproof 재구성불가다. oldCID404는모델/namespace종료증거로꾸미지않는다.
+- 원DB에는ownerboot98922의 opened7/intent8/spawn9(seq1 PID41/runHasha0e691d8…)/group_exited23(21:30:20.110Z pgid_esrch_after_sigkill), local_end2616/binding51abd…가실제로있다. 독립readiness와root가 최소additive분기를결정했다: **originalOwner는기존evaluateLocalCallEnded+동일TX exactdurableDB검증의별도typedproof, currentIngressOwner는새Linuxidentity로실제stop**, gateway/provider predispatchguard 및기존v1분기불변. eval이격리WT구현/새SQL0129를준비하고uptime가privateops후속을맞춘다. 아직source준비중이며운영DDL0129/새CI0이다.
+- Macactualinspect첫실패는launchctl print-disabled의actualenabled/disabled 토큰을legacytrue/false로만파싱한 disabled_output_row다. 원v1/실패보존후Macv2parser2줄만최소수정, 실제savedfixtureRED1→26/26GREEN, helperSHAd636fcd6b017d0b3fd90bd39bdd3b209bc79dfb6c9607872c3633e3be4fbb762. 독립26PASS/System/workflow/material불변확인.
+- fullcomposer siblingv2SHA7b1e74d6873e1a3ba20903467937d05939fb93a47688fcec81b298962ad1b74c/release5879fc3c…으로Macv2핀만변경. 실제Macinspect 재실행PASS(모델/신호/DB/쓰기0), `m3-launchd-boundary-253d-20261025-v1/mac-inspect-v2/mac-inspect.raw.safe.json` SHA3a54b28b7de2b57663972d746bd2c4e478318dc924a44655a5ef10b8605164b5 /transportsafe851c258c6659a16d3d772b270bd733d1720f5e589ebdd88b303ca4e1741db610. fullplan은원owner blocker때문에미생성이다.
+- mainCI40138059095 전체SUCCESS와정확253dimages최종receipt `provider-boundary-launchd-main-ci-40138059095/MAIN_CI_IMAGES.safe.json` SHA6909f8c06433ed313116081c5101b9b4a4d2505e0bce84a61483882340455e6e. Worker0bd6cdc2ec78d6fe656e289d8dcfdcb8ab18401c7bf1ee783a786b1c7541a3bc/webc91ca8af1445ce4786bff314722ce05864b01b1e61f749256956f26f984c3d91. **아직앱배포안됨**이며후속source병합시새SHA/OCI를사용한다.
+
+다음작업은새원owner분기/SQL의RED-GREEN·독립review·필수CI를병렬로완료하는것이다. 기존0128/drain/원producer/옛복구marker 재실행0, 사람라벨미응답/applyfalse/새6h미완료. 사용자속도보고의실측초안은c486정상rollout8분04초중Git6순차5분22초, shared10은이미병렬1분29초, main동일tree재사용이미존재를확인했다. 사고복구시간은일반배포시간과구분한다.
+
+---
+
+# 2026-10-25 07:22 KST — PR650 병합253d/0128 실제완료, 새경계 종료 준비
+
+사용자 승인된 전체 LLM 보강 활성화·배포를 계속한다. 이번 배포가 끝나면 실제 시간과 단계 축소 방안을 보고한다. 원 사용자 WT 보존, root만 운영 mutation한다.
+
+- PR650 required CI40137213944 전체PASS 후22:19:27Z main `253d2517363b5306b6d92a829308e97d00438dfe`에 merge했다. 새 mainCI40138059095는 requiredcheck121003776913 PASS/PR검사재사용, worker/web발행PASS다. refresh-cache는 당시진행중이며 전체workflow완료로주장하지않는다. rootdocsWT는253d로ff했고 docs5개미커밋이다. codeWT는clean detached253d다.
+- **0128 actualmigrator 정확1회/exit0/PASS**, journal129/latest0128 SHA63aba80e5eac890da960b4473fc3f2a8f6f9f061526abef285564487631eadca. `migration-0128-preflight/plan-253d2517363b-20261024T221943570974Z.private.json` SHA68dcaa451c60e18752c9a532fe0bac02f97a44b27a10c86577aed6b436fbffd7. actual20CHECK/기존4OID/함수prosrc/old2bf와new07ef행·events 불변을확인했다. execution-attempt marker 재실행금지.
+- freshjournal129 dryrunPASS뒤 **capacitydraining 실제1회**22:21:31.082Z/audit19450, epoch1/rev2/ec1dd, reserved/dispatched0/unknown07ef1. `m3-boundary-control-journal129-v1/run-1792880488443214000-execute/result.safe.json` 읽는다. 새fullboundary cutoff/release/restore/앱배포는아직0.
+- Linuxops v1 복구3개gap은 별도v2 exactowner판별/EngineGET404/원stopVersion ABApin으로해소했다. agent/root/readiness 실제41/41PASS. source96ad2763e44b8fb5b259a310e8444a9f18b4d8e74c6bc65fb72926d63d9c758a. Macaction 최종SHA1e817c3d466c2d0f626ab69ad3d5603fdfdc253ce9c2d1f742bb6a97e18679e4, root25/25PASS. disable→CAS→bootout 각1회, acknowledgement뒤느린종료는readonlyverify만허용/unknownmutation재실행금지. restore enable/bootstrap1회+별도readonlynewprocess/engine검증. 실제missinglabel readonlyprobe가installed launchctl113/exactstderr를확인했다(SHAac5567af6de39cc6d87a6949347804a57caa16367dfb78ff90b737b8691ba6ea).
+- fullcomposer/release private sibling `m3-provider-boundary-full-v1`를 uptime가준비하고readiness독립검토중이다. stdin source-free Mactransport, 원Linuxingress operation불변, fullbeforeplan은전체freshsnapshot뒤/ownerstop전에생성한다. 기존provider/Supa receipt위조0. 아직최종freeze전이므로원문검토후root만실행한다.
+- 새253d runtime control wrapper `final253d-control-journal129-v1`는literalTARGET만치환, actual14/14PASS, SHA2dc907bf88da9083b57507541a9913354d5e13098f559749f449bfdb272e47d5. 아직새runtime없으므로실행0이며fleet완료후freshdryrun/open1회용이다.
+
+다음: freshdrainingcontrol저장→v2ingress snapshot+Macinspect/fullplan→owner/gateway2 cutoff→Mac실제종료/전후ingressverify→typedrequest07efrelease dryrun/apply각1회→Mac/Linuxrestore→fresh253d17앱 배포→open/별도T0/5/10/15. 원producer/뉴스197487실패/기존open·resume 재실행금지. 사람holdout5미응답/applyfalse, 새6h미완료. 세subagent는준비/독립검토/속도보고를병렬진행한다.
+
+---
+
+# 2026-10-25 07:10 KST — Mac 경계 지원 PR650/로컬 검증 완료, 운영 실행 전 CI·도구 검토
+
+목표는 사용자 승인된 전체 LLM 보강·활성화·배포이며 root만 production mutation한다. **사용자 추가 지시: 이번 배포 완료 후 실제 소요 시간과 배포 단계 축소를 포함한 시간 단축 방안을 보고한다. 지금 개선 구현으로 배포 범위를 늘리지 않는다.** 원 사용자 WT는 보존했다. 최신 실제 상태는 앱 전체c486/DBjournal128(0127 완료)/capacityopen epoch1 rev2/ec1dd, 새unknown07ef는 미회수다. 아래 과거0c9배포계획은 실제배포가 아니다.
+
+- 새 source WT `/Users/jr/Desktop/projects/nomorevibe-provider-boundary-launchd`, branch `fix/provider-boundary-launchd-20261025`, clean commit `c289191c3e478d8d2dda31e60f17ce4e1bcd2e2d`. rootpush+PR650 https://github.com/JRVector9/nomorevibe/pull/650 생성, 필수CI 대기다. 기존Linux형식·canonical·20CHECK·현재control/fence/request CAS와증거순서는 유지하고 provider-only launchd typedidentity/exit 및 topologyartifact 재해시를 추가했다. SQL0128 SHA63aba80e5eac890da960b4473fc3f2a8f6f9f061526abef285564487631eadca, journal129/idx128/when1794086400040. **아직 운영0128 DDL/새앱배포/새cutoff0**.
+- agent 실제 unit6파일27/PG4파일32/typegen/tsc/scopedlint PASS, root 최종관련unit3파일10/10 PASS. 독립readiness도unit10/diffcheck PASS 및 보존된 freshPG catalog 재검산으로20CHECK exact/기존4OID/3legacyprosrc/canonical 보존을 확인했다. SQL/TS bootUUID parity1개를 실제RED→GREEN으로 수정, Linux/0126/0127 불변이다. 최종review SHA fbed62b68a20525d575c18ee3801e30d365f74a23f157700caf7117cb29da649, sourcefreeze ee07790adf15b05152ebd54007838cb747595c4c6240bb70c78e3aa6a48685d0.
+- 실제 Mac snapshot: bootsession c6fbcc1e-2e76-4414-b2bd-6a626d211603, PID66193/startSec1792873370/usec784550/PPID1/PGID66193/**SID1공유**/UID501, descendants0/listener8010 PID66193, plist/entry 보존. service gui/501/com.jr.deepseek KeepAlive/RunAtLoadtrue, AbandonProcessGroup 기본false, override없음. 첫capture ValueError/진단 lsof fd필드 오해는원실패보존, localnative재현뒤수정/실진단2회내PASS이며 추가신호0이다. SID전체0을 요구하거나 꾸미지 않는다.
+- 실제 GET `/v1/models/status`22:01:04Z의 GPTOSS는 local batched, DeepSeek는 local VLM이다. 둘다loadedtrue/distributedfalse/clusterNULL/externalNULL. source137개/hash/actualsettings와 실제 model objects→AsyncEngineCore→Scheduler/threadexecutor 원문을 연결했다. **topology proof** `/private/tmp/nomorevibe-llm-activation-20261024/m3-provider-macos-source-review-v1/TOPOLOGY_PROOF.safe.json` SHA40d82bad70a4b7a57c6112dff426aa60aedfafef532fe78bdb0ef6867c088cc4. Optional Splash/distributed 및 비추론sysctl subprocess가 실제존재하므로 package전체subprocess없음은 주장하지 않는다. 이 proof는종료증거가 아니며 old공유process중단은 두모델에영향준다.
+- 추가bounded로그관측도status/errorclass/frame선택0이라 정확한 gateway_error 원인은 미입증이다. 130MB를stdout복사하지 않고targetwindow slice133KB/hash만 읽었다. 자료없음을무오류로 바꾸지 않는다.
+- root `migration-0128-preflight/run-existing-migrator-once.py` SHA5bf51d1ebd0c28984e908a5d263a6511e1efc0d2f87aaa5469360a29bcb162ff, expectedfunctioncatalogSHA364f487ed86a5a3bfd1b6d8ad6eac97f8b63957141b7111af431707bd409c6ae, old0127actual20CHECK exacthash와old2bf+new07ef행/events를보존한다. before4/after10함수 prosrc와기존4OID 보존, plan→execute OID CAS도추가했다. 실제RED3→5PASS 후OID RED1→24PASS, 독립권고OID변경CAS RED1→최종25PASS. 원0127marker재사용0, 0128 실행은새main필수CI/병합후한번만한다. 아직 plan/execute0.
+- 새Linuxingress도구 `m3-provider-boundary-operation-v1`는 준비32testsPASS이나 **실행전독립리뷰에서복구P1두개 발견**: app-copy...owner를nomorevibe접두어로구분하면Python gatewayhealth로오인, removed CID의NoSuch대소문자파서재발. uptime가별도v2로 exactNodeowner/EngineGET404증거+RED→GREEN 보완중이다. 원동결본보존, 아직실제capture/cutoff0. Macstop/verify/restore도구는evaluation이별도private준비중(원격명령0), readiness가독립검토한다.
+- root새rollout `macos-boundary-rollout-preparation-v1`는 oldc486baseline을새로수집하고journal129/0128을요구한다. root41/41PASS, 새observer `post-launchd-rollout-observation-v1`18/18PASS(첫경로fixture실패보존후수정). 아직새target SHA/OCI/T0/actualqueries0. 0c9freshbaseline을새releasebaseline으로옮기지 않는다.
+- `m3-boundary-control-before-rollout-v1` actualdrain **dry-run만**21:56:34Z PASS(controlopen/reserved0/dispatched0/unknown1), 실제mode변경0이다. root는0128을open에서먼저적용후 `m3-boundary-control-journal129-v1`(14guardsPASS)로 freshdry-run/한번drain할계획이다. 기존open/resume/producer marker 재실행0.
+
+수정파일: source9파일은PR650; root미커밋docs5개는아래기록과같다. 사람holdout5 라벨은async질문미응답, applyfalse 유지; 새release6h미완료. 다음:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-provider-boundary-launchd
+gh pr checks 650
+# 최신base필수CI 성공→root병합/mainCI정확image 확인→원사용자WT보존한rootdocsWT만ff.
+# 0128 existingmigrator1회→freshdraining→fullbeforeplan/owner+gateway2+Mac actualexit→typed단건release→restore→새17앱배포→open/actual별도T0/5/10/15.
+# private ops v1은발견된복구P1수정전이므로실행금지. Macaction/source/topology/strictCASreview 완료후root만실행.
+```
+
+---
+
+# 2026-10-25 06:45 KST — mainCI·0127 실제 완료, 새 M3 unknown 조사 후 경계 지원 보완
+
+현재 목표는 승인된 LLM 보강 전체 운영 활성화·배포다. root WT/브랜치는 아래와 같고 원 사용자 WT는 보존했다. 이 최신 기록이 아래 과거 진행 상태보다 우선한다.
+
+- PR649는 main `0c9dd1a2cd508fa4f77df67fa06735f2f24029be`에 병합됐다. PR CI40134327058 전체 SUCCESS, mainCI40134926200 required check120994370266 SUCCESS다. main은 PR 검사 재사용이므로 생략된 테스트를 새 실행이라고 주장하지 않는다.
+- main 발행 worker `ghcr.io/jrvector9/nomorevibe-worker@sha256:7baf5a581c12df83f0216fb91e5e18880a5bae670b9f019759ff44aacde2ba7b`, web `ghcr.io/jrvector9/nomorevibe-runtime-web@sha256:39f2b28bc7bb7079186fcf2eb2f4fb13907ea3abddb32c8fcda0aa8ab3d0cbdf`를 실제 Record digest 단계로 확인했다. `assist-capacity-poll-main-ci-40134926200/MAIN_CI_IMAGES.safe.json` SHA92e4b2f9b3b2a78178efdf4c97239f906db7183e50097e60e851bca28f03d22b.
+- migration0127은 reviewed wrapper로 **실제 한 번 실행 성공**했다. journal128/최신0127, 기존20 CHECK 보존+strict wait_cancelled 추가를 확인했다. migratorInvocations1/exit0, execution-result.safe.json을 읽는다. plan e51771d0bdc6d04b3e080254490e4c41be6154ebe7fb44da5c668f6b7c54181f. **execute marker 재실행 금지**다. 이전 NULL 가정 guard실패는 DDL0였고 실패 증거를 보존했다.
+- 새 rollout root `/Users/jr/.local/state/nomorevibe-admission-0c9dd1a2-20261025-v1`: 실제 Git7 fresh baseline/API17 두 창 CAS 수집 완료다. 새 앱 배포는 아직0이고 모든 앱은 c486이다. 계획 명령은 `admission-fix-rollout-preparation-v1/admission-deployment-0c9dd1a2.commands.safe.json`을 찾는다. 기존 serving-stage/open/resume/producer를 재실행하지 않는다.
+- freshplan에서 새 actual indeterminate `07ef95d7-4f7a-4064-8928-bf5cb81c7970` 발견. AI1/m3-reviewer/GPT-OSS/M3 budget1, dispatch21:18:09.977Z → transport_unknown21:18:11.298Z; attempt114534는 gateway_error(정확 HTTP 원인 불명)다. local_end event2616/dispatch1-terminalCallback1, oldgroup PID41 exit event23/21:30:20.110Z는 실제 있으나 native terminal/usage/settledAt는 없다. callback은 response end **또는 error**이므로 모델 종료 증거로 쓰지 않는다. 지금 unknown0이라고 주장하지 않는다.
+- readonly 조사 정확2회 완료, `unknown-c486-20261025-2139-readonly/summary.safe.json` SHA514f8ec5aff9e071c6edc5cd012b51fd99c291b4bfe636dc272eeb80254c51b2. 추가 조회·신호·재시작0. 기존 reclaim은 provider_deadline_unknown으로 정당하게 차단한다. 0127 waiting/reserved 취소를 bound unknown에 쓰지 않는다.
+- 기존 provider-boundary schema는 Linux systemd+pidNamespace/cgroup만 지원한다. 이번 실제 provider는 macOS launchd/oMLX이므로 이전 Supa receipt나 Linux identity를 위조/재사용할 수 없다. 새 macOS typed 경계 종료 증거 지원을 검토·보완하고 실제 owner→양 gateway→provider 종료 증거를 수집한 뒤 회수해야 한다. 원 provider PID66193와 gateway incarnation은 종료 전 다시 정확히 고정해야 한다.
+- 사용자는 추가 배포 결정이 없으며 미사용 holdout5 사람 라벨만 필요하다고 안내받았다. frozen5 관측을 포함한 async 질문은 미응답이다. 사람 라벨을 임의 생성하지 않고 applyfalse 유지한다. 새 release T0/5/10/15/6h는 아직 시작 전이다.
+
+수정 파일은 root 문서5개(README/PENDING/CODEX_HANDOFF/2026-10-24 activation/새2026-10-25 activation)다. 구현은 격리 WT로 한다. 다음 명령은 읽기 전용이다:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+cat /private/tmp/nomorevibe-llm-activation-20261024/unknown-c486-20261025-2139-readonly/summary.safe.json
+rg --files /private/tmp/nomorevibe-llm-activation-20261024/admission-fix-rollout-preparation-v1
+# migration execution marker/원 producer/기존 경계 종료 marker는 재실행하지 않는다.
+```
+
+---
+
+# 2026-10-25 06:36 KST — PR649 병합0c9dd1a2, mainCI/운영이미지 확인 후0127·17앱 배포
+
+목표는 사용자가 승인한 남은 LLM 보강 업무·전체 운영 활성화·배포다. 세 서브에이전트를 병렬 운영하며 root만 mutation한다. 원 사용자 WT는 보존했다. root WT `/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, docs branch `docs/llm-assist-production-20261025` / HEAD0c9dd1a2cd508fa4f77df67fa06735f2f24029be로 origin/main을ff 반영(아직 docs 미커밋)다. 아래 과거 기록보다 이 최신 상태와 실제 저장소·영수증을 우선한다.
+
+## 실제 완료
+
+- PR648/main 필수 CI40124571973·web/worker 이미지 발행 성공, journal127개(최신0126) 적용·constraints 검증 완료다. 실제 경계 종료에 근거해 unknown 요청2bfed63a…를 withdrawn/provider_boundary_exit로 회수(audit19437)하고 원4서비스를 복구했다. 모델 terminal/upstream usage는 생성하지 않았고 terminal_evidence에는 provider_boundary_exit proof/hash를 저장했으며 settledAtNULL이다. migration/cutoff/release/restore marker 재실행 금지다.
+- abc PR6/main20f76 두gateway 실제 새4source·newcontainer·health200 검증 완료, 점검용 autoDeployfalse도 원true로 복구했다. timeout/한도/라우팅은 보존했다.
+- oMLX Harmony final 종료 수정은 외부 서버의 immutable overlay pair(server e442b3d57f6f / grammar c9904fde07ab)다. production stub preimport와 source615개/나머지613불변을 검증하고 atomic entry422a80…·SIGTERM1회로 old11113 실제종료/new66193로 전환했다. config/model/plist·grammar281 불변, cache374개 및 실제native파일4매핑/health200/loaded2 확인했다. purePython live __file__ 관측은 주장하지 않는다.
+- 같은 max128 wire의 실제 protocol4는 HTTP200/stop/schema/usage81+30/경고없음 PASS, 성공 receipt90fbd720d9c4a838889bb3cc9e89170df0d5300415496c385b840ad555265586. 누적4회=원SupaPASS·M3 length2실패·패치후PASS이며 원실패 보존이다.
+- 정확3env키를16앱에 stage한 receipt9c446c4cad576d0c878faf4819ae665d6a0dab1b31b41bc81d6a20f50f966c42. Qwen 계약/한도·27route정책 ec1dd/flags 외env 불변이다.
+- Git6 완료20:34:51Z→shared10 완료20:36:33Z(양웹·공개health 정상)→monitor-last 완료20:37:32Z/primary+external UP. 실제17앱/22컨테이너, workerlike994source/16컨테이너·web6 OCI/digest/health, localend16앱21컨테이너·group11앱11컨테이너·AI2실SwarmstopGrace60초를 검증했다. 최종 receipt SHA68c42fada25f4f81183cb834128102e72e397154544a77e4d0788bade3ee34e1, inventory complete/pending[]다.
+- 원3키전환 전에 이미 있었던 GA_PROPERTY_URL의 unquoted #주석 해석(API79→Docker43)은 before두파일·literal/rendered exacthash로 확인했다. 새 readonly verifier는 이 한키만 정확 고정하고 나머지env/OCI/health guard는 유지한다. 원 첫 실패 자료를 보존했고 운영 GA 변경/추가배포0이다.
+- capacity open20:44:28.988Z audit19438, epoch1/rev2/ec1dd 유지. 원4pause만 CAS 재개(audits19439–19442/notBeforeNULL), leases/cursors/원요청 보존이다. 6assist dispatchtrue/applyfalse, AI2items epoch2/contract1이다.
+- 새AI2 owner10f71d30…의 durable owner_opened→spawn_intent→spawned/PID·PGID38이 실제child env와 native9요청 owner/binding에 일치한다. 9모두 settled/stop/upstream usage. owner attestation=false/localend0을 종료증거로 과장하지 않는다.
+
+## 현재 진행·새 확인점
+
+- 원감사11490는 fresh collector ready 뒤 원주간2026-10-19/표본/attempt를 보존해 queued rev4로 재등록(audit19445); 영수증 audit-requeue.1792874880254366000.result.safe.json. 새뉴스197487는 기존producer로 createdtrue/work79e9fc13-3678-4c1c-a99c-767a490ab2ed/priority101/rev2/attempt0 등록(audit19447); news-canary.1792874907396294000.result.safe.json. **이 두 one-shot을 반복하지 않는다.** 감사는 아직 native/common/finding0이다. 뉴스는 이후20:54:29Z dispatch→20:54:36Z settled(stop/upstream usage4262+950) 뒤 human/original_name_missing/attempt1/rev12가 됐다. common/draft0이며 재설정·재등록하지 않는다.
+- T0 DB20:45:30.517Z/nativeSettled9, guard20:47:29.940Z 실제PASS. T5 DB20:50:07.988Z/nativeSettled35, reviewed12/pending6; guard20:50:18.201Z 5rolesready/schedulerfresh2/progressok/AI2source994·health0. 두표본 unknown/oldgen/terminal누락0이다. 원T0의 다중행JSON 로컬 파서 오류는 원DBraw 재조회 없이 stream parser sibling과 continuation으로 해결했다.
+- **실제 원인 확정**: 뉴스197487 pending10e1a222…는 잡20:50:31Z 종료 뒤20:50:49Z에 예약되고30초 뒤 만료해 다음60초 재실행 전에 사라졌다. Audit11490 동일owner/boot의 e54a7cb2…와1cd2a73d…는 defer 후 input 재수집의 observedAt 때문에 workKey hash가 달라져 own pending을 못 찾고 logical fence·120초 waiting 만료를 반복했다. Unknown/provider 문제와 구분한다. 증거 `postdeploy-capacity-block-readonly/current-v2.safe.json`·`exact-audit-pair.safe.json` 보존이다.
+- **live_evaluation 구현·로컬 검증 완료**: 격리 WT `/Users/jr/Desktop/projects/nomorevibe-assist-capacity-poll`, branch `fix/assist-capacity-poll-20261025`, base c486 → commit3002fe53e9448762804452bf097976028c71e184 / treebaac0893a52854dc15d5f9ae128b742947fbd5e6. Root가push/PR649 생성, 첫CI40133505043은실패다. unit2/build/type/lint/ledger·DBshard1/2/3/5/6성공, shard4의과거fixture2개실패→최종check도failure다. 최신basec486/head3002그대로, 병합·0127운영DDL·새배포0이다. Assist 두 호출만 동일claim/input/request의 bounded poll1초(기존signal/tick공유), 포기시 control mutex 아래 exact own unbound waiting/reserved만 취소한다. Dispatched/indeterminate/bound 취소금지. Waiting 취소를 reservation_cancelled로 위장하면 집계가 틀려 `wait_cancelled` 신규kind·migration0127/journal128을 최소 추가한다. TTL·모델retry·timeout·정책 한도는 불변이다.
+- Agent 실제 첫 RED 신규2실패/기존6PASS → GREEN, finalunit35·PG62+기존provider-boundary10=72·Nexttypegen/tsc/scopedlint PASS. 독립live_readiness도freeze13파일·35unit·diffcheck 직접확인/P1P2없음, 최종review SHA9aa0a5b416408b3ffc8a1ddb39bd658a95f445468170c6a8db9cd56eb9a83d3c다. 최초32782 plain PG는vector확장부재로 baseline환경실패(제품RED 아님); 소유 vector PG17/127.0.0.1:32783에서 실제127baseline→128 및lategrant·race 검증 중이다. Root 관련unit4파일40/40와 rollout41/41·migrationwrapper15/15를 실제 재실행 PASS했다. live_readiness가 수정금지 독립리뷰, uptime_recheck가 새c486→target용 strict rollout wrapper를 별도 준비한다. Root docs5파일 외 source수정0이다. Localcommit3002fe53의13파일freezeSHAeced02e93bc975b382dc176b5ef6327366fa22dc73a095691344b16a04da3544와actualPG전후20checks 자료를읽는다.
+- C486 T10 DB20:55:09.802Z/native60/reviewed22/pending2, T15 DB21:00:09.691Z/native90/reviewed28/pending4. 완료4표본 모두 unknown/oldgen/terminal누락0·roles5ready·scheduler2·progressok·AI2source994/health0. T15 dispatched1은 정상진행중이며 종료로 주장하지 않는다. Business audit/news common·draft0는 유지한다. 실제4표본 safe집계 `OBSERVATION_RESULT.safe.json` SHAb9423f5ea578434896cc20b6e0162498521235ca453d789b2393767c2395d267 완료다.
+
+- Root 신규0127 실행도구는 `migration-0127-preflight/run-existing-migrator-once.py`다. TARGETd6d11edee571fb08abd102fb803b30fddaff7847097adf907f43efe7ac50aeb7 고정, wrapperSHA64e8c8c6695da48fc6de1b74643d4e5ab807b48cc60d4882cca1f9978a3f7282, 실제16testsPASS다. 독립리뷰가발견한 nonkind CHECK의 plan→execute CAS누락을 exactconstraints비교로수정했고 원guardcopy RED1→GREEN16을실행했다. 최종독립리뷰도16PASS/추가발견없음이다. 병합된새main소스체크를진행했고 mainCI/이미지·freshplan 확인 전이므로 아직 production DDL0/plan0이다. live_evaluation 독립리뷰완료다. 실제 primary21:12:05Z RO는 controlopen/epoch1/rev2/ec1dd/journal127/20validatedchecks를 확인했다. 최초wrapper가 회수된 요청 terminal_evidence도NULL이라고 잘못 가정해 guard실패했으나 DDL0이며 원raw보존이다. 실제 field는 nativeterminal이 아닌 `provider_boundary_exit` proof/hash ecab7f334aaca1d74a7122b4c6e7b1ff7dcd07fd41488d919df613876e61a7a0, event1290과동일하고 settledAtNULL이다. 정확proof·원row/events hash를검사하도록수정하고 같은raw만 재검증PASS했다. 새plan/execute는 병합된새main과 freshprimary를 다시검사한다.
+- Agent fresh PG의 실127/128 schema 관측은 `assist-capacity-poll-proof/{before-127,after-128}.constraints.safe.json`이다. Root는 기존kindpredicate SHAe1122460f555542cce5188b452ca33ee8c6c4b4e344ab9c61abb45e27212291b 및기존전체조건 prefix + exactwait_cancelled분기만추가됨을검증한다. 새로운event를가짜native종료나슬롯반환으로세지않는다.
+- 새strictrollout준비 `admission-fix-rollout-preparation-v1/PLAN.ko.md` / actual41회귀PASS, commonf03b4b…/collector47167a…/verifier3595ca… 동결이다. c486현재fullconfig/env/flags를승인hash로만참조하고 실제freshAPI17/Git7Dockerbaseline은새target·CI·OCI확정뒤수집한다. 이전e0ef baseline재사용·servingstage/open/resume/producer재실행은0이다. 새관측 sibling `post-admission-rollout-observation-v1/observe_once.py` SHA21f53a4e4740c8e8a9c657eba11ad763c581aa61e456c8742a5c748f6f99856e /check_series631ab5e1…f73, root18/18테스트PASS다. 실제새SHA/OCI/T0와sourcepins를고정하며 t0/5/10/15·선택h6를실제due후각한번만수집한다. 새actualquery0/미래6h미완료다.
+
+- **CI 후속 현재 작업**: live_evaluation이두기존fixture만수정해5a37d93caa072526486e3bba697ce1ada4bb12fc로commit했고root가push했다. 새CI40134327058 전체SUCCESS/requiredcheck120993976091 PASS, 실제21:35:51Z root가PR649를squash병합해 main0c9dd1a2cd508fa4f77df67fa06735f2f24029be(treec8eff6def018b422b3c7cf63b6e1e6e35c535f5f)다. mainCI40134926200/운영이미지는readiness가읽기watch중이고 아직0127운영DDL/새17배포0이다. 두case실PG RED2→GREEN2 +gateway7/intro12/assist36/constraint10=65PASS, tsc/lint/diffcheckPASS다. 독립readiness도2파일만변경·생산8파일불변·로그hash 확인/P1P2없음이며 fixture-followup.safe.json SHAc20d6e5f07dde9b9bd59f179430ffd29a09de6dccabb80a344456b54de48f64e다. `tests/integration/gateway-not-started-ledger.test.ts:278`의 exactpredicate기대식이0125+0126까지만재구성해0127strictwait_cancelled분기를빠뜨렸다. `tests/integration/intro-assist-dispatch.test.ts:284`의hasBudget항상true/contextsignal·deadline없음으로실runner와달리90초poll→test20초timeout이다. 실제로0126중간관측+0127strict추가분비교 및 factssettled/correctionwaiting관측후abort로 고쳤다. 생산guard/TTL/모델재시도/시간상한변경0이다. readiness는mainCI40134926200/정확publishjob2digest를읽기watch중이다. 원로그 `assist-capacity-poll-ci-40133505043/integration-4.stdout.private.txt` SHA4f165dd1…c745 보존이다. 전체run최종failure/publishskipped를성공으로바꾸지않는다.
+
+## 경로·테스트·남은 일
+
+Private base `/private/tmp/nomorevibe-llm-activation-20261024/`. 최종17 증거 root는 `/Users/jr/.local/state/nomorevibe-final17-harmony-c486-20261025-v1`, `actual-final17-rendered-ga-v1/verification.safe.json`을 읽는다. 원 실패 actual-final17는 보존한다. 관측 series `/Users/jr/.local/state/nomorevibe-c486-observation-20261025-v1`, since `2026-10-24T20:45:00Z`다. T0 receipt03ea7645…3a481, T5 24fb8713…b2a73. T10/T15 실제완료, 새release 뒤 별도관측이 필요하다.
+
+실제 root 테스트: PR648 신규PG10·관련unit25+DarwinSKIP1/CLI1·schema/경계8, abc신규37, 새stage5+final17 28, stagehelper16, semanticobserver17, renderedGAreader6, streamparser2 PASS다. agent 전체311 등은 root결과와 구별한다. 최종전체CI 성공을 원실패CI 성공으로 바꾸지 않는다.
+
+실패·복구: 원cutoff소문자Docker404→separate provider continuation; gateway done/newcontainer 경합→추가배포 없이 readonly completion; stage cwd배열→V2; preimport torchstub누락→copy수정없는 continuation; marshal bytes참조→모든codeattrs 재귀검증; GA URL literal/render→정확before증명; 다중행JSON→stream parser다. 모든원실패/marker 불변이다. 소개·repo·뉴스의 업무검증 실패도 성공으로 바꾸지 않는다.
+
+현재 root 미커밋 수정5파일은 README.md/PENDING.md/docs/CODEX_HANDOFF.md/docs/operations/2026-10-24-llm-assist-activation.md/새2026-10-25-llm-assist-production-activation.md다. 운영문서/PENDING에는 아직 과거draining 상태가 있어 **실제업무검증 뒤 최신값으로 고쳐 docs PR/필수CI/병합**해야 한다. 사람미사용holdout5 라벨 미응답과 새운영6시간 관측은 실제미완료, applyfalse 유지다. 기존15분e0ef표본은 새release/연속6h 증거가 아니다. 썸네일 및 전역PENDING의 무관한과거프로젝트는 이 인계 범위가 아니다.
+
+다음 정확한 읽기 명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+python3 /private/tmp/nomorevibe-llm-activation-20261024/postdeploy-recorder-business-readonly/observe-readonly.py
+python3 /private/tmp/nomorevibe-llm-activation-20261024/final-activation-operations/c4864a844f60b5855f3cd3fc45564e53d70b4287/invoke_compact.py status
+# C486 T0/5/10/15는 실제완료. live_readiness safe집계를 확인하고 새release관측과 혼합하지 않는다.
+cd /Users/jr/Desktop/projects/nomorevibe-assist-capacity-poll
+git status --short
+# 구현·독립리뷰완료. PR649 CI40134327058은SUCCESS/병합완료다. 현재mainCI40134926200(head0c9dd1a2)을확인한다. 원40133505043(head3002) FAILURE는보존한다. 아직0127운영적용/새배포0.
+gh pr checks 649
+gh run view 40134926200 --json status,conclusion,jobs
+# 최신base필수CI후 root가병합·mainCI이미지확인·0127실제검증·새17앱배포.
+# 새rollout은 admission-fix-rollout-preparation-v1; 기존 e0ef baseline용 도구를 blind replay하지 않는다.
+# audit/news/resume/capacity open/17앱deploy를 blind replay하지 않는다.
+```
+
+---
+
+아래는 과거 단계 기록이다. 현재 상태는 위와 실제 운영 관측을 우선한다.
+
 # 2026-10-25 01:31 KST — PR646 필수 CI 후속 수정
 
 root branch는 `codex/llm-assist-native-activation-20261025`, PR646의 첫 head fa2455f6이다.
@@ -893,7 +1182,7 @@ Root/A READONLY 원인조사로 실제production 연속실행결함을확인: ru
 
 Crawl WT `/Users/jr/Desktop/projects/nomorevibe-crawl-tagline-native` basefd05912d에서B116행/C56행API·hash·nativeoutcome·두phasecontinuation·uniqueness계약을root전체읽고구현인가. C는native3+NEWunit1, B는capacity/repository+NEWunit 및builder를소유한다. **0091_model_capacity_crawl_tagline_terminal B단독예약**. Schema/SQL/journal3파일은root가writingbuilder전체/첫write전ASTprefix 재구성승인3outputs전쓰기0. 새fixedpartial uniqueindex1은phasegeneration+ordinal/state dispatched|indeterminate|settled만. 첫empty physicalsettle과boundedparseoutcome sameTX→ask2재개/최종attempt1; savedJSON은opaqueproof/용량반환권한0/newtable0. Batch/role→S3/domain 잠금순서정정합의. Productionresolvernull/실providerC·종료unknown. A는liveness계획READONLY/Bledger/Cnative 병렬이며모델모두gpt-6.1-sol/xhigh/소유충돌0.
 
-다음root: A69행최소plan전체읽기·새WT `/Users/jr/Desktop/projects/nomorevibe-batch-canary-continuation`/branchcodex/pipeline-pr10d-batch-canary-continuation-20261017/basea994·journal90배정·production4+NEWunit/actual2구현인가완료. 새수정취합후fresh55584이후에서실패7선별(미배정/실제인가전실행0). Root정리정확명령은 `python3 /tmp/nomorevibe-owned-db-cleanup-20261016.py /tmp/nomorevibe-pr05b10-product-tagline-ko-runtime-a-db-owned-20261016.json pr05b10-runtime-initial-root` (SQL반환/독립raw확인완료). 후속liveness/helper전체읽기·sourcefreeze·journal91확인→실제실패7/독립readback·normalcleanup→Koreanactual+validation/shared4正常commit→최신부모보호merge/CIREADME freshfirst2+filesOnly215以上exact1회→draft。나머지text3/physicalhostaggregate·실OracleARM·독립scheduler·leastprivilege/복제·promotion/fencing/RPO/RTO/30분같은품질2배·24h/최종전체는남는다. Canonical oldmergedbranch NEVERPUSH, 원사용자WTsource/Git/push/untracked보존·handoff만sync。
+다음root: A69행최소plan전체읽기·새WT `/Users/jr/Desktop/projects/nomorevibe-batch-canary-continuation`/branchcodex/pipeline-pr10d-batch-canary-continuation-20261017/basea994·journal90배정·production4+NEWunit/actual2구현인가완료. 새수정취합후fresh55584이후에서실패7선별(미배정/실제인가전실행0). Root정리정확명령은 `python3 /tmp/nomorevibe-owned-db-cleanup-20261016.py /tmp/nomorevibe-pr05b10-product-tagline-ko-runtime-a-db-owned-20261016.json pr05b10-runtime-initial-root` (SQL반환/독립raw확인완료). 후속liveness/helper전체읽기·sourcefreeze·journal91확인→실제실패7/독립readback·normalcleanup→Koreanactual+validation/shared4正常commit→최신부모보호merge/CIREADME freshfirst2+filesOnly215以上exact1회→draft.나머지text3/physicalhostaggregate·실OracleARM·독립scheduler·leastprivilege/복제·promotion/fencing/RPO/RTO/30분같은품질2배·24h/최종전체는남는다. Canonical oldmergedbranch NEVERPUSH, 원사용자WTsource/Git/push/untracked보존·handoff만sync.
 
 ## 최신 후속 — 2026-10-16 15:06 UTC Korean actual 격리 병렬 실행 / crawl 계약 검토
 
@@ -1519,18 +1808,18 @@ Canonical4는 `nomorevibe-http-settlement`의handoff/delivery-status/roadmap/PR0
 
 ### 병렬 작업·리뷰·DB
 
-1. **PR10b B구현12파일freeze/root반환**: source7 lib/db host-budget/pool/index와runtime4 entry, tests5。원factory4RED/4control→8GREEN/missingmax1RED→GREEN/final18PASS、관련92+spawn2分離PASS/scoped0。승인actual3만3PASS/tests516ms/총945ms。Root전체diff읽고独立55552readback=agentfinal/stablebaselineexact/public0/permanentDDL·DML0·잔류TEMP/타연결0확인。pg_temp namespace metadata4만원delta보존/wholecatalogfalse。정상STOP/exited0/OOMfalse/자기container-volume정리→**55552retired**。증거`...pr10b-host-runtime-root-independent-proof...json`/`...root-db-cleanup...json`。
-2. C독립review는 production추가P1/P2=0/fixturechild정산P2=1을발견(root수용)。두spawner가SIGTERM처리후close되지않을때finallyKILL에못들어가거나hookallSettled에남는경계다。Actualhang재현전코드finding이며원3PASS는유효。C가같은WT의기존 **tests/worker-runtime.test.ts runBudgetEntry** 및 **tests/integration/host-db-budget.test.ts probe**만보강하도록승인。TERM4→KILL5/TERM15→KILL16 독립timer를await전에설치/actualclose정산、원오류보존、business3it/nativeProbe/SQL/production7/20s·60s불변。/tmp원ASThelperdriver+실제TERM무시tinychild의같은RED→GREEN/두file scoped검사만/DB0/새framework0/Git0。최종반환후root리뷰/인수。
-3. B는PR10b source편집/DB접속0、**PR05b3 positive request→dispatch→terminal caller연결읽기계획** 작성중。기준PR467/실제AI1·AI2·번역·웹query、provider C/terminal gate를확인해가장작은production3–5파일제안。`/tmp/nomorevibe-pr05b3-b-positive-dispatch-plan-20261016.md`。새코드/테스트/provider/SSH/Git0。
-4. A는PR14b 신규5파일local복원도구개발、전용55553source/55554target독점(root반환전접속0)。offline15PASS/scoped최종미확인。**실제최초dump와singleTXrestore는child0이나strictrestore_mismatch46로실패**：source全readback전후exact/targetdata·sequence·LOexact、DB all-role jit=off설정미복원1+CHECK/partialindex/triggerWHEN deparse45차이。원로그/差分보존하고문자열정규화/기대완화로verified만들기0、재dump/재restore0。초기계획Actual1정상합격은미완료。Root가既복원nonemptytarget의negativeAPI만처음1회승인(원선행verifiedflag Assertion에서API0이었음)；독립guard와전후fullcheckpoint/source-targetidentity/restore호출0/childbackend0를보고후반환。新source추가seed/DROP/자동삭제0。도구일부완료를OracleDR완료로표시0。
+1. **PR10b B구현12파일freeze/root반환**: source7 lib/db host-budget/pool/index와runtime4 entry, tests5.원factory4RED/4control→8GREEN/missingmax1RED→GREEN/final18PASS、관련92+spawn2分離PASS/scoped0.승인actual3만3PASS/tests516ms/총945ms.Root전체diff읽고독립55552readback=agentfinal/stablebaselineexact/public0/permanentDDL·DML0·잔류TEMP/타연결0확인.pg_temp namespace metadata4만원delta보존/wholecatalogfalse.정상STOP/exited0/OOMfalse/자기container-volume정리→**55552retired**.증거`...pr10b-host-runtime-root-independent-proof...json`/`...root-db-cleanup...json`.
+2. C독립review는 production추가P1/P2=0/fixturechild정산P2=1을발견(root수용).두spawner가SIGTERM처리후close되지않을때finallyKILL에못들어가거나hookallSettled에남는경계다.Actualhang재현전코드finding이며원3PASS는유효.C가같은WT의기존 **tests/worker-runtime.test.ts runBudgetEntry** 및 **tests/integration/host-db-budget.test.ts probe**만보강하도록승인.TERM4→KILL5/TERM15→KILL16 독립timer를await전에설치/actualclose정산、원오류보존、business3it/nativeProbe/SQL/production7/20s·60s불변./tmp원ASThelperdriver+실제TERM무시tinychild의같은RED→GREEN/두file scoped검사만/DB0/새framework0/Git0.최종반환후root리뷰/인수.
+3. B는PR10b source편집/DB접속0、**PR05b3 positive request→dispatch→terminal caller연결읽기계획** 작성중.기준PR467/실제AI1·AI2·번역·웹query、provider C/terminal gate를확인해가장작은production3–5파일제안.`/tmp/nomorevibe-pr05b3-b-positive-dispatch-plan-20261016.md`.새코드/테스트/provider/SSH/Git0.
+4. A는PR14b 신규5파일local복원도구개발、전용55553source/55554target독점(root반환전접속0).offline15PASS/scoped최종미확인.**실제최초dump와singleTXrestore는child0이나strictrestore_mismatch46로실패**：source全readback전후exact/targetdata·sequence·LOexact、DB all-role jit=off설정미복원1+CHECK/partialindex/triggerWHEN deparse45차이.원로그/差分보존하고문자열정규화/기대완화로verified만들기0、재dump/재restore0.초기계획Actual1정상합격은미완료.Root가既복원nonemptytarget의negativeAPI만처음1회승인(원선행verifiedflag Assertion에서API0이었음)；독립guard와전후fullcheckpoint/source-targetidentity/restore호출0/childbackend0를보고후반환.新source추가seed/DROP/자동삭제0.도구일부완료를OracleDR완료로표시0.
 
-**Retired55515–52/active55553·54(A)/다음55555**。exactmetadata/이미지/스코프/루프백/768MiB는아래06:23절과rootallocationJSON을따른다。원사용자WTbranch/HEADb1fb8dd/source/Git/push불변、handoff만동기화。
+**Retired55515–52/active55553·54(A)/다음55555**.exactmetadata/이미지/스코프/루프백/768MiB는아래06:23절과rootallocationJSON을따른다.원사용자WTbranch/HEADb1fb8dd/source/Git/push불변、handoff만동기화.
 
 ### 다음 정확 동작
 
-PR453WTclean/source同一를고정→`git fetch origin main`로actualmain7f34c475확인→normalmerge main(공유4문서canonical反映/기존全trackednonsharedSHA保護)→normalpush/새CI확인。PR10b C최종2helper회귀/독립reviewclose後12SHA+validation인수、parent3349normalmerge/push초안PR。PR14b A반환후root독립source/targetcheckpoint확인·정상정리/actual실패46를보존한code리뷰、DDLsemantic/DBsettings는별도미완료계약으로남김。
+PR453WTclean/source同一를고정→`git fetch origin main`로actualmain7f34c475확인→normalmerge main(공유4문서canonical反映/기존全trackednonsharedSHA保護)→normalpush/새CI확인.PR10b C최종2helper회귀/독립reviewclose後12SHA+validation인수、parent3349normalmerge/push초안PR.PR14b A반환후root독립source/targetcheckpoint확인·정상정리/actual실패46를보존한code리뷰、DDLsemantic/DBsettings는별도미완료계약으로남김.
 
-残り：PR05positive/terminal/allcallers、독립consumer/30분실처리2배、actualhostaggregate/PgBouncer/roster/principal/heartbeat、OracleARM/live/scale/복제/PR15–17fencing·외부call정산/24h、管理browser。canonical4は`nomorevibe-http-settlement`/oldbranchpush0、Git/공유docs/DBcleanup은root만。
+残り：PR05positive/terminal/allcallers、독립consumer/30분실처리2배、actualhostaggregate/PgBouncer/roster/principal/heartbeat、OracleARM/live/scale/복제/PR15–17fencing·외부call정산/24h、管理browser.canonical4は`nomorevibe-http-settlement`/oldbranchpush0、Git/공유docs/DBcleanup은root만.
 
 ## 후속 진행 — 2026-10-16 06:23 UTC
 
@@ -1560,18 +1849,18 @@ HTTP unread는 heldheaders정상→자연reservationpast→rivalready/sendstart�
 ### 현재 배타 소유권·DB
 
 - B `/root/pr01_final_ai2`: WT `nomorevibe-host-db-runtime`, branchcodex/pipeline-pr10b-host-db-runtime-20261016/base1511f915. source7 lib/db host-budget/pool/index와scripts role-worker/worker-supervisor/worker/scheduler, 관련tests/newintegration만. 실제pool primary/read quota와strictHOST_DB_BUDGET<=16KiB/knownentry/childidentity전파 구현. Mockfactory4RED→GREEN/관련92PASS+spawn2PASS/scoped0 보고. **55552** metadata `/tmp/nomorevibe-host-db-runtime-b-db-owned-20261016.json`, exactID15131648e766b1bfb20496f7b00204a4dcff650b6c113771565933e67acd7b73/B독점. 승인actual3는진짜quota1timeout queuedwrite제거/BEGIN0·disabled2argcontrol·derivedchildenv실factory를각1회 **3PASS0.92s** 보고. Migration/permanentDDL·DML0/TEMP만. 최종raw/catalog/pg_temp別·연결정산/독립readback도구반환대기. Root반환전접속0.
-- A `/root/pr01_final_ai1`: PR14b94행계획root전체읽고NEW5파일승인. WT `nomorevibe-oracle-logical-restore`, branchcodex/pipeline-pr14b-local-logical-restore-20261016/baseaa0c3182. restore_rehearsal.py/restore_contract.py/restore_inventory.sql/test_oracle_dr_restore.py/새runbook만. Source **55553** metadata `/tmp/nomorevibe-logical-restore-source-a-db-owned-20261016.json` ID8b9ba9020dc19406db7d02a0592dd1314132b26c7740bc4088d7c02ebffaa8f7, target **55554** `...logical-restore-target-a-db-owned...json` IDada39483c0efad00948bb5dfef09d6196b4e3bad6ca79f5e01934a1a9c6f3fcc/A독점。新source만migration/fixture승인·target미마이그레이션. 실제dump→singleTXrestore1+nonemptytargetreject1만. Localrootmetadata/fixedCLI/privateboundedarchive/caps/2번emptyguard/childbackend정산·sourceexact/target의도delta/unknownfalse유지. Sourcecap268435456/archive67108864/minfree268435456bytes, output예약 `/tmp/nomorevibe-pr14b-a-rehearsal-20261016`. Dump실패자동재시도·DROP/CASCADE/덮어쓰기·OracleSSH0. Root반환전접속0.
+- A `/root/pr01_final_ai1`: PR14b94행계획root전체읽고NEW5파일승인. WT `nomorevibe-oracle-logical-restore`, branchcodex/pipeline-pr14b-local-logical-restore-20261016/baseaa0c3182. restore_rehearsal.py/restore_contract.py/restore_inventory.sql/test_oracle_dr_restore.py/새runbook만. Source **55553** metadata `/tmp/nomorevibe-logical-restore-source-a-db-owned-20261016.json` ID8b9ba9020dc19406db7d02a0592dd1314132b26c7740bc4088d7c02ebffaa8f7, target **55554** `...logical-restore-target-a-db-owned...json` IDada39483c0efad00948bb5dfef09d6196b4e3bad6ca79f5e01934a1a9c6f3fcc/A독점.新source만migration/fixture승인·target미마이그레이션. 실제dump→singleTXrestore1+nonemptytargetreject1만. Localrootmetadata/fixedCLI/privateboundedarchive/caps/2번emptyguard/childbackend정산·sourceexact/target의도delta/unknownfalse유지. Sourcecap268435456/archive67108864/minfree268435456bytes, output예약 `/tmp/nomorevibe-pr14b-a-rehearsal-20261016`. Dump실패자동재시도·DROP/CASCADE/덮어쓰기·OracleSSH0. Root반환전접속0.
 - C `/root/provider_contract_evidence`: opt-in독립리뷰P1/P2=0/새CI분석완료, 현재PR467실패job읽기만. Source/DB/test/static/Git0.
 
-**55515–51모두retired, 활성55552(B)/55553·54(A), 다음신규55555**. 모두pinnedcf134image/768MiB/loopback/ownscope。Root가배정·독립readback후정상stop/자기container-volume정리만한다. helper `/tmp/nomorevibe-root-owned-db-create-20261016.py`·`/tmp/nomorevibe-owned-db-cleanup-20261016.py`. Retired재접속/재생성/prune0.
+**55515–51모두retired, 활성55552(B)/55553·54(A), 다음신규55555**. 모두pinnedcf134image/768MiB/loopback/ownscope.Root가배정·독립readback후정상stop/자기container-volume정리만한다. helper `/tmp/nomorevibe-root-owned-db-create-20261016.py`·`/tmp/nomorevibe-owned-db-cleanup-20261016.py`. Retired재접속/재생성/prune0.
 
 ### 다음 정확명령·남은 작업
 
-1. PR453 body최신화/새CI관측→PR460 cleanHEAD1511f915에529d4199 normalmerge。old60중execution/artifact/http-origin3제외한 **own57** 새receipt를고정하고incoming7(source6+HTTPtraceSHA2ee39d557d66566689e51f4347434a63ab301d32f49369d3400eceb7a9396198)검사후normalpush한다. Phase `pr460-optin-perf`, 새receipt `/tmp/nomorevibe-pr460-optin-perf-root-local-intake-20261016.json`; helper `/tmp/nomorevibe-root-refresh-role-parent-20261016.py`의ownSHA/shared4충돌경계유지。다른stack무의미갱신/CI반복0.
-2. B최종source/test/actual3/readback반환→root직접리뷰/독립DB확인/정상cleanup→최신460parent인수보존후초안PR。Aoffline/actual2/failure증거/독립readback반환후같은인수。새filehash·작업소유권보존。
-3. PR05positive/terminal/allcaller,독립consumer/30분실처리2배,actualhost aggregate/backend/principalcanary,OracleARM/live/용량/복제、PR15–17독립fencing/외부call drain/24h、관리실browser가남는다。로컬도구·선언·이미지생성을운영완료로쓰지않는다。
+1. PR453 body최신화/새CI관측→PR460 cleanHEAD1511f915에529d4199 normalmerge.old60중execution/artifact/http-origin3제외한 **own57** 새receipt를고정하고incoming7(source6+HTTPtraceSHA2ee39d557d66566689e51f4347434a63ab301d32f49369d3400eceb7a9396198)검사후normalpush한다. Phase `pr460-optin-perf`, 새receipt `/tmp/nomorevibe-pr460-optin-perf-root-local-intake-20261016.json`; helper `/tmp/nomorevibe-root-refresh-role-parent-20261016.py`의ownSHA/shared4충돌경계유지.다른stack무의미갱신/CI반복0.
+2. B최종source/test/actual3/readback반환→root직접리뷰/독립DB확인/정상cleanup→최신460parent인수보존후초안PR.Aoffline/actual2/failure증거/독립readback반환후같은인수.새filehash·작업소유권보존.
+3. PR05positive/terminal/allcaller,독립consumer/30분실처리2배,actualhost aggregate/backend/principalcanary,OracleARM/live/용량/복제、PR15–17독립fencing/외부call drain/24h、관리실browser가남는다.로컬도구·선언·이미지생성을운영완료로쓰지않는다.
 
-Canonical4는WT `nomorevibe-http-settlement`의handoff/delivery-status/roadmap/PR07a-validation이며옛mergedbranchpush0。원사용자WTsource/Git불변。Shared문서·Git/PR·자원정리는root소유。
+Canonical4는WT `nomorevibe-http-settlement`의handoff/delivery-status/roadmap/PR07a-validation이며옛mergedbranchpush0.원사용자WTsource/Git불변.Shared문서·Git/PR·자원정리는root소유.
 
 ## 후속 진행 — 2026-10-16 05:38 UTC
 
