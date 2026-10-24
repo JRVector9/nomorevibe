@@ -9,12 +9,12 @@ import { findRepositoryProduct, lockProductRepository } from "./repository-ident
 import { repoGone, setStatusWithAudit } from "./repository";
 import { REPO_GONE_AUTO_ACTOR, REPO_GONE_AUTO_REASON, repoGoneDailyLimitAvailable } from "./repo-reviews";
 import { decideRepositoryMove, repoMoveCandidateSchema, repoMoveProtected, repoMoveSnapshotMatches,
-  type RepoMoveCandidate, type RepoMoveInput } from "./repo-move-review";
+  repoMoveOfficialPageVerified, type RepoMoveCandidate, type RepoMoveInput } from "./repo-move-review";
 import { repositoryKey, type RepoCheck } from "./repo-review";
 import { readRepoMoveSnapshot } from "./repo-move-snapshots";
 export { readRepoMoveSnapshot } from "./repo-move-snapshots";
 
-export type FreshRepoMoveChecks = { oldRepository: RepoCheck; destination: RepoCheck; checkedAt: string; page?: AssistSource };
+export type FreshRepoMoveChecks = { oldRepository: RepoCheck; destination: RepoCheck; checkedAt: string; page?: AssistSource; pageRepositories?: AssistSource };
 export type RepoMoveApplyResult = "updated" | "delisted" | "candidate_only" | "protected" | "stale" | "daily_limit" | "human";
 
 /** Shared dispatch calls this before acquiring a physical attempt; stale/protected work must never reach the model. */
@@ -62,6 +62,16 @@ export async function applyRepoMoveResult(tx: ProductTransaction, value: RepoMov
       || Date.parse(currentPage.observedAt) < Date.now() - 60_000 || Date.parse(currentPage.observedAt) > Date.now() + 5_000
       || !Number.isFinite(Date.parse(currentPage.observedAt))
       || assistHash(pageIdentity(page)) !== assistHash(pageIdentity(currentPage))) return "stale";
+  }
+  if (decision.kind === "update_repo_candidate") {
+    const page = input.sources.find(source => source.sourceId === "product_page"), links = input.sources.find(source => source.sourceId === "product_page_repositories");
+    const currentPage = fresh.page, currentLinks = fresh.pageRepositories;
+    if (!page || !links || !currentPage || !currentLinks || !repoMoveOfficialPageVerified(candidate, currentPage, currentLinks)
+      || Date.parse(currentPage.observedAt) < Date.now() - 60_000) return "stale";
+    const identity = (source: AssistSource) => ({ sourceId: source.sourceId, kind: source.kind, url: source.url, revision: source.revision,
+      text: source.text, completeness: source.completeness, httpStatus: source.httpStatus });
+    if (assistHash(identity(page)) !== assistHash(identity(currentPage))
+      || assistHash(identity(links)) !== assistHash(identity(currentLinks))) return "stale";
   }
 
   await lockPipelineInputStages(tx);

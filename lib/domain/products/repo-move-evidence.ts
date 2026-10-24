@@ -1,8 +1,10 @@
 import { fetchCapped, type CappedFetchResult } from "@/lib/net/fetch";
+import { createHash } from "node:crypto";
 import { extractTextSample } from "@/lib/net/normalize";
 import { readmeText } from "@/lib/crawl/readme";
 import { assistHash, type AssistSource } from "@/lib/domain/llm-assist/contracts";
-import { buildRepoMoveInput, repoMoveCandidateSchema, repoMoveSource, type RepoMoveCandidate, type RepoMoveInput } from "./repo-move-review";
+import { extractSiteRepositoryKeys } from "@/lib/domain/evidence/providers/site-fingerprint";
+import { buildRepoMoveInput, repoMoveCandidateSchema, repoMoveSource, repoMovePageRepositoriesSource, type RepoMoveCandidate, type RepoMoveInput } from "./repo-move-review";
 import { classifyRepoResponse, repositoryKey, type RepoCheck } from "./repo-review";
 import type { FreshRepoMoveChecks } from "./repo-move-reviews";
 
@@ -40,20 +42,23 @@ async function readmeSource(key: string, sourceId: string, options: EvidenceOpti
   return repoMoveSource(sourceId, "readme", `https://github.com/${key}`, "", observedAt, "missing", 404);
 }
 
-async function productPageSource(candidate: RepoMoveCandidate, options: EvidenceOptions): Promise<AssistSource> {
+async function productPageSource(candidate: RepoMoveCandidate, options: EvidenceOptions): Promise<{ page: AssistSource; pageRepositories: AssistSource }> {
   const observedAt = new Date().toISOString();
   const response = await (options.fetch ?? fetchCapped)(candidate.snapshot.url, { maxBytes: MAX_BYTES, timeoutMs: 8_000,
     allowTruncatedBody: true, signal: options.signal });
   if (!response.ok) {
     const status = response.reason === "http" ? response.status : null;
-    return repoMoveSource("product_page", "page", candidate.snapshot.url, "", observedAt,
+    const page = repoMoveSource("product_page", "page", candidate.snapshot.url, "", observedAt,
       status !== null && [401, 403, 429, 999].includes(status) ? "blocked" : "missing", status);
+    return { page, pageRepositories: repoMovePageRepositoriesSource(page, null, []) };
   }
   const text = extractTextSample(response.body.toString("utf8"), 32_001) ?? "";
   const blocked = [401, 403, 429, 999].includes(response.status)
     || /(?:verify you are human|checking your browser|just a moment|captcha|보안 확인)/i.test(text.slice(0, 2000));
-  return repoMoveSource("product_page", "page", response.finalUrl, text.slice(0, 32_000), observedAt,
+  const page = repoMoveSource("product_page", "page", response.finalUrl, text.slice(0, 32_000), observedAt,
     blocked ? "blocked" : response.truncated || text.length > 32_000 ? "truncated" : text.trim() ? "complete" : "missing", response.status);
+  return { page, pageRepositories: repoMovePageRepositoriesSource(page, createHash("sha256").update(response.body).digest("hex"),
+    extractSiteRepositoryKeys(response.body.toString("utf8"), response.finalUrl)) };
 }
 
 /** No DB connection or model slot is held during evidence collection. */
@@ -71,13 +76,14 @@ export async function collectRepoMoveInput(value: RepoMoveCandidate, options: Ev
   const failed = results.find(result => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
   if (signal.aborted) return { kind: "waiting_evidence", reason: "repository_evidence_timeout" };
-  const values = results.map(result => (result as PromiseFulfilledResult<Awaited<ReturnType<typeof repositoryObservation>> | AssistSource>).value);
+  const values = results.map(result => (result as PromiseFulfilledResult<Awaited<ReturnType<typeof repositoryObservation>> | AssistSource | Awaited<ReturnType<typeof productPageSource>>>).value);
   const observations = values.slice(0, keys.length + 1) as Awaited<ReturnType<typeof repositoryObservation>>[];
   if (observations.some(item => item.check.state === "unknown")) return { kind: "waiting_evidence", reason: "repository_observation_unknown" };
   if (assistHash(observations[0].check) !== assistHash(candidate.oldRepository)
     || observations.slice(1).some(item => item.check.state !== "alive")) return { kind: "obsolete", reason: "repository_observation_changed" };
-  const sources = values.slice(keys.length + 1) as AssistSource[];
-  const page = sources.find(source => source.sourceId === "product_page");
+  const currentPage = values[values.length - 1] as Awaited<ReturnType<typeof productPageSource>>;
+  const sources = [...values.slice(keys.length + 1, -1) as AssistSource[], currentPage.page, currentPage.pageRepositories];
+  const page = currentPage.page;
   if (candidate.oldRepository.state === "gone" && (!page || page.completeness !== "complete" || !page.text.trim())) {
     return { kind: "waiting_evidence", reason: "product_page_unavailable" };
   }
@@ -101,6 +107,6 @@ export async function checkRepoMoveBeforeApply(candidate: RepoMoveCandidate, opt
   const failed = results.find(result => result.status === "rejected");
   if (failed?.status === "rejected") throw failed.reason;
   const observations = results.slice(0, 2).map(result => (result as PromiseFulfilledResult<Awaited<ReturnType<typeof repositoryObservation>>>).value.check);
-  const page = (results[2] as PromiseFulfilledResult<AssistSource>).value;
-  return { oldRepository: observations[0], destination: observations[1], page, checkedAt: new Date().toISOString() };
+  const { page, pageRepositories } = (results[2] as PromiseFulfilledResult<Awaited<ReturnType<typeof productPageSource>>>).value;
+  return { oldRepository: observations[0], destination: observations[1], page, pageRepositories, checkedAt: new Date().toISOString() };
 }

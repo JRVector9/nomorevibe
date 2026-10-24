@@ -5,6 +5,7 @@ export const ASSIST_SCHEMA_VERSION = "2026-10-23.1";
 export const ASSIST_POLICY_VERSION = "2026-10-23.1";
 // 기존 wire 버전과 정상 응답은 유지하고 uptime 출력 계약의 호환 축소를 별도로 식별한다.
 export const UPTIME_EVIDENCE_POINTER_REVISION = "2026-10-24.1";
+export const TASK_EVIDENCE_POINTER_REVISION = "2026-10-25.1";
 export const assistTaskSchema = z.enum(["uptime", "repo", "intro", "audit", "news"]);
 export type AssistTask = z.infer<typeof assistTaskSchema>;
 const identity = z.string().trim().min(1).max(200);
@@ -55,6 +56,12 @@ const quality = z.object({ status: z.enum(["sufficient", "partial", "blocked", "
 }).strict();
 const evidence = z.object({ source_id: identity, quote: z.string().min(1).max(320),
   supports: z.array(z.string().regex(/^\/state\/(?:[a-z_]+|\d+)(?:\/(?:[a-z_]+|\d+))*$/)).min(1).max(8) }).strict();
+const taskEvidence = (paths: readonly [string, ...string[]]) =>
+  z.array(evidence.extend({ supports: z.array(z.enum(paths)).min(1).max(8) })).max(24);
+// 배열의 실제 원소·필드 경로만 노출한다. 해당 응답에 원소가 있는지는 pointerExists가 다시 검사한다.
+const indexedPointers = (name: string, count: number, fields: readonly string[] = []) =>
+  Array.from({ length: count }, (_, index) => [`/state/${name}/${index}`,
+    ...fields.map(field => `/state/${name}/${index}/${field}`)]).flat();
 const action = <T extends [string, ...string[]]>(values: T) => z.object({ proposal: z.enum(values),
   reason_ko: z.string().trim().min(1).max(240), missing_items: z.array(z.string().min(1).max(120)).max(8) }).strict();
 const commonOutcome = z.object({ schema_version: z.literal(ASSIST_SCHEMA_VERSION), task: assistTaskSchema,
@@ -70,24 +77,37 @@ const uptimeOutcome = commonOutcome.extend({ task: z.literal("uptime"),
   action: action(["retain", "delist_candidate", "collect_evidence", "human_review", "independent_review"]),
 }).strict();
 const repoOutcome = commonOutcome.extend({ task: z.literal("repo"),
+  evidence: taskEvidence(["/state/project_identity", "/state/code_lineage", "/state/official_continuity", "/state/relationship"]),
   state: z.object({ project_identity: z.enum(["matches", "different", "unknown"]),
     code_lineage: z.enum(["original", "fork_or_copy", "independent", "unknown"]),
     official_continuity: z.enum(["explicit_move", "author_continuity", "unverified", "contradicted"]), relationship }).strict(),
   action: action(["retain", "update_repo_candidate", "delist_candidate", "collect_evidence", "human_review", "independent_review"]),
 }).strict();
 const introOutcome = commonOutcome.extend({ task: z.literal("intro"),
+  evidence: taskEvidence(["/state/factual_match", "/state/content_kind", "/state/author_protection", "/state/treatment"]),
   state: z.object({ factual_match: z.enum(["supported", "explicit_mismatch", "unsupported_claim", "conflicting", "insufficient"]),
     content_kind: z.enum(["descriptive", "performance_or_value_claim", "name_only_placeholder", "unknown"]),
     author_protection: z.enum(["server_maker_protected", "server_operator", "server_unknown"]), treatment }).strict(),
   action: action(["retain", "rewrite_candidate", "collect_evidence", "human_review", "independent_review"]),
 }).strict();
 const auditOutcome = commonOutcome.extend({ task: z.literal("audit"),
+  evidence: taskEvidence(["/state/audit_subject", "/state/independent_finding", "/state/applicable_rule_ids",
+    ...indexedPointers("applicable_rule_ids", 20)]),
   state: z.object({ audit_subject: z.enum(["uptime", "repo", "intro"]),
     independent_finding: z.enum(["alive", "closed", "parked", "soft_404", "unclear", "same_project", "unrelated", "keep", "rewrite_candidate", "human"]),
     applicable_rule_ids: z.array(identity).max(20) }).strict(),
   action: action(["record_finding", "collect_evidence", "human_review"]),
 }).strict();
-const newsOutcome = commonOutcome.extend({ task: z.literal("news"), state: z.object({
+const newsOutcome = commonOutcome.extend({ task: z.literal("news"),
+  evidence: taskEvidence(["/state/names", "/state/prices", "/state/quantities", "/state/dates", "/state/release",
+    "/state/qualifications", "/state/draft", "/state/release/stage", "/state/release/availability", "/state/release/scope",
+    "/state/draft/title", "/state/draft/summary",
+    ...indexedPointers("names", 12, ["original", "korean"]),
+    ...indexedPointers("prices", 12, ["amount", "currency", "per_quantity", "per_unit", "direction", "effective_status"]),
+    ...indexedPointers("quantities", 16, ["value", "unit", "qualifier"]),
+    ...indexedPointers("dates", 8, ["original", "iso_date", "event"]),
+    ...indexedPointers("release/scope", 8), ...indexedPointers("qualifications", 12)]),
+  state: z.object({
   names: z.array(z.object({ original: z.string().min(1).max(200), korean: text(200).nullable() }).strict()).max(12),
   prices: z.array(z.object({ amount: z.string().min(1).max(40), currency: z.string().min(1).max(40),
     per_quantity: z.string().min(1).max(40), per_unit: z.string().min(1).max(80),

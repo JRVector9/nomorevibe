@@ -45,6 +45,36 @@ export function repoMoveSource(sourceId: string, kind: AssistSource["kind"], url
     revision: assistHash({ url, text: content, completeness, httpStatus }), completeness, httpStatus });
 }
 
+export const REPO_PAGE_REPOSITORIES_VERSION = "repo-page-repositories-2026-10-25.1";
+const pageRepositoriesSchema = z.object({ version: z.literal(REPO_PAGE_REPOSITORIES_VERSION), pageRevision: z.string().min(1),
+  bodyHash: z.string().regex(/^[a-f0-9]{64}$/).nullable(), repositoryKeys: z.array(z.string().refine(value =>
+    repositoryKey(`https://github.com/${value}`) === value)).refine(keys => new Set(keys).size === keys.length) }).strict();
+
+/** 현재 홈페이지의 명시 Source/Repository href를 보이는 글자와 별도로 보존한다. */
+export function repoMovePageRepositoriesSource(page: AssistSource, bodyHash: string | null, repositoryKeys: readonly string[]): AssistSource {
+  const facts = pageRepositoriesSchema.parse({ version: REPO_PAGE_REPOSITORIES_VERSION, pageRevision: page.revision, bodyHash, repositoryKeys });
+  return repoMoveSource("product_page_repositories", "metadata", page.url, JSON.stringify(facts), page.observedAt, page.completeness, page.httpStatus);
+}
+
+/** 저장소 redirect가 제품의 공식 소스 권한을 대신하지 못한다. 옛 큐의 누락 근거도 기권한다. */
+export function repoMoveOfficialPageVerified(candidate: RepoMoveCandidate, page: AssistSource | undefined, source: AssistSource | undefined): boolean {
+  if (!page || !source || page.kind !== "page" || page.sourceId !== "product_page" || source.kind !== "metadata"
+    || source.sourceId !== "product_page_repositories" || page.completeness !== "complete" || source.completeness !== "complete"
+    || !page.text.trim() || !page.url || new URL(page.url).href !== new URL(candidate.snapshot.url).href
+    || source.url !== page.url || source.httpStatus !== page.httpStatus || page.httpStatus === null || page.httpStatus < 200 || page.httpStatus >= 300
+    || source.observedAt !== page.observedAt) return false;
+  const age = Date.now() - Date.parse(page.observedAt);
+  if (!Number.isFinite(age) || age < -5_000 || age > 180_000) return false;
+  if (page.revision !== repoMoveSource(page.sourceId, page.kind, page.url, page.text,
+    page.observedAt, page.completeness, page.httpStatus).revision) return false;
+  if (source.revision !== repoMoveSource(source.sourceId, source.kind, source.url, source.text,
+    source.observedAt, source.completeness, source.httpStatus).revision) return false;
+  let facts: z.infer<typeof pageRepositoriesSchema>;
+  try { facts = pageRepositoriesSchema.parse(JSON.parse(source.text)); } catch { return false; }
+  return facts.pageRevision === page.revision && facts.bodyHash !== null && facts.repositoryKeys.length === 1
+    && [repositoryKey(candidate.snapshot.repoUrl), repositoryKey(candidate.candidates[0].url)].includes(facts.repositoryKeys[0]);
+}
+
 export function repositoryMoveCandidate(snapshot: RepoMoveSnapshot, oldRepository: RepoCheck, page: RepoReviewPage | null,
   related: readonly { key: string; check: RepoCheck }[], unchecked: readonly string[], observedAt: string): RepoMoveCandidate {
   const seen = new Set<string>();
@@ -139,6 +169,10 @@ export function decideRepositoryMove(candidateValue: RepoMoveCandidate, input: R
     || outcome.state.official_continuity !== "explicit_move" || !supports("official_continuity", source => source.sourceId === "old_repository")
     || outcome.state.code_lineage === "independent" || !supports("code_lineage", destinationSource)) {
     return { kind: "human", reason: "official_move_not_verified" };
+  }
+  if (!repoMoveOfficialPageVerified(candidate, input.sources.find(source => source.sourceId === "product_page"),
+    input.sources.find(source => source.sourceId === "product_page_repositories"))) {
+    return { kind: "human", reason: "official_product_repository_not_verified" };
   }
   return { kind: "update_repo_candidate", url: destination.url,
     officialEvidenceHash: assistHash({ old: candidate.oldRepository, destination: destination.url, sources: input.sources.map(source =>
