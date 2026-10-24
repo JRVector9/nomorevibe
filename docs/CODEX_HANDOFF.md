@@ -1,3 +1,311 @@
+# 2026-10-24 14:54Z — 운영 전환 진행 중 최신 체크포인트
+
+현재사용자목표는남은작업전부·운영활성화·배포이며 병렬3agent(gpt-6.1-sol/xhigh)로계속진행중이다.
+이전단계의"운영변경0"은각시점기록이며현재는아니다. 상세실행·실패·증거는
+[운영전환기록](operations/2026-10-24-llm-assist-activation.md)을먼저읽는다.
+
+- root WT `/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, branch `codex/uptime-pre-delist-check-20261024`,
+  HEAD4bc64bac(긴재접속596f4b09·pointer474f1306·DB시계fixture2c630b39·호스팅안내보류4bc64bac).
+  원사용자WT/사용자변경은보존했다. [PR645](https://github.com/JRVector9/nomorevibe/pull/645)는열려있다.
+  474f1306의전체필수CI check성공40102421152; 최종후속은아직push/CI전이다. 검사통과를승계하지않는다.
+- 운영uptime은14:15Z confirm/latch=true/dispatch=false/apply=false/rev2/audit19135다.
+  실제후보1건이보존되고새autoBan0을14:47Z확인했다. capacitydisabled/나머지5taskoff를유지한다.
+- abcLLM PR5를main5ae29cf5로병합·mini→M3실배포완료. 양routerhash0a3f321d…81add0/health200을확인했다.
+  정상운영caller경로모델7회canary성공. 원이미지는양호스트pre-native-20261024태그로보존했다.
+  원abc사용자WT는변경하지않았다. gatewaypublic각요청의실제서버는미확정이다.
+- 실제GPU고정평가18회(옛실패1+새17),schema17/17·guard16/17·최종일치14/17·잘못된내림후보2.
+  pointer와호스팅안내guard를보강했다. 저장응답재생은두오내림거절·인용거절1유지다.
+  라벨은AI독립·개발표본으로사람holdout아님. 사용자에게17건사람분류질문을보냈고응답대기다.
+  최종prompt추가4건은schema4/4·guard3/4·rawfinding4/4·false-delist0, 인용변형1건은계속거절됐다.
+  GPUvision1회도고정색/도형정답·HTTP200/stop/usage176으로성공했다. 평가누적23/재시도0/unknown0.
+- M3oMLX0.7.1rc1은원래prompt만검사하므로hardC패치를새overlay에staging/import검증했다.
+  root9AST테스트PASS.14:43:31Z launchctl SIGTERM1회→구PID48271소멸→새80130을관측,
+  14:45Zreload중503뒤14:47Zhealth200/두모델loaded를확인했다. 강제종료/원본sitepackages·plist·settings변경0.
+  실제HTTP8개중overflow4건모두400·정상4건모두JSON/stop/usage/SSE DONE으로성공했다.
+  이API경계canary는production native ledger증거를대신하지않는다.
+- unsupported ConnectAgent분류CLI는현재gpt-5.6-terra xhigh/sonnet high설정이다(제품서비스기존값).
+  root/agent가직접codexexec를그모델로호출한것은0이다. 별도WT
+  `/Users/jr/Desktop/projects/nomorevibe-classification-capacity-20261024`에서readinessagent가
+  publication_classify_cli1종·remote-native최소연결을구현중이며다음PR로검토/CI/배포한다.
+- root최종코드4bc64bac에서단위52/전용DB72·typegen/전체tsc/변경TS lint가모두exit0이다.
+  session18566/61584는종료했다. 로그는/tmp/nomorevibe-final-activation-{unit,integration,typecheck,lint}-20261024.log.
+
+민감산출물은 `/private/tmp/nomorevibe-llm-activation-20261024/` 아래0600/0700.
+현재남은작업: PR 최종 push/CI/main병합·고정이미지16앱배포, classifier후속구현,
+전체caller/native/서빙·물리alias계약과전역용량준비, 실제사람검수·각task의단계적활성화.
+전역준비/사람검수누락을가짜hash/계약/라벨로통과시키지않는다. 규칙·기한·임계값을완화하지않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -4 --oneline
+gh pr checks 645
+# root 최종 코드 검증 완료: unit52/DB72/typegen/tsc/lint exit0. 최종 문서를 commit/push하고 CI를 확인한다.
+# deploy_shared_images.py는고정main40자SHA+digest·snapshot·mini→M3관문절차를지킨다.
+```
+
+---
+
+# 2026-10-24 — 실제 호스팅 안내 오내림 제안 차단 분담 완료
+
+## 현재 목표·완료와 위치
+
+근거 경로 수정 통합 `474f1306c4cba80f1ccc0504f6aa85db5d1a2c49`의 실제 개발 평가 17건 중,
+HTTP402 결제·배포 중단 안내 2건을 모델이 영구 종료·내림 후보로 제안했고 당시 guard가 통과시켰다.
+상위 작업자가 알려진 전체 안내만 차단하는 더 엄격한 uptime guard와 prompt를 승인했다.
+작업 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-hosting-notice`, 브랜치 `fix/uptime-hosting-notice`는
+위 SHA 기반이다. 운영 원 WT와 다른 분담 변경을 건드리지 않았다.
+
+## 수정 파일·설계
+
+`lib/domain/llm-assist/contracts.ts`: complete 현재 page/rendered_page의 HTTP402 결제 비활성 안내,
+HTTP503 배포 중단 안내에 전체 본문이 일치할 때 `delist_candidate`를
+`uptime_hosting_notice_requires_review`로 거절한다. 단일 요청 추적 ID만 선택적으로 허용한다.
+기존 consumer의 invalid→human 경로를 쓰며 응답 자동 수정·인용 정규화·HTTP402/503 일괄 차단은 없다.
+`prompts.ts`: 해당 안내만으로 영구 종료가 입증되지 않아 unclear/추가 근거·사람 확인을 제안하게 한다.
+`tests/uptime-hosting-notice.test.ts`와 `tests/integration/llm-assist-dispatch.test.ts`에 회귀를 추가했다.
+설계·계획은 `docs/superpowers/{specs,plans}/2026-10-24-uptime-hosting-notice*`,
+실제 측정·hash·검사는 `docs/operations/2026-10-24-uptime-hosting-notice-verification.md`에 있다.
+
+wire 버전과 uptime 경로 revision·JSON Schema hash는 유지하며 새 uptime prompt hash는
+`a9345c8892920d3d2af39bf576ce840559b7e5450f7a7c703b0e4ece78a7f83d`다.
+다른 네 업무의 schema/prompt hash 불변을 실제 비교했다. 기존 큐 wire 마이그레이션은 만들지 않았다.
+
+## 실행 검사·실패
+
+구현 전 unit11 중 새 guard2+prompt1 예상 assertion 실패, 구현 뒤11/11 GREEN.
+구현 전 fake native consumer2회귀는 work가 done이 되어 human 예상 실패, 구현 뒤2/2 GREEN.
+관련 unit7파일49건 PASS, 별도 DB dispatch integration23건 PASS.
+next typegen/전체 tsc/변경TS4파일 ESLint/diff-check 실제 exit0.
+처음 일반 postgres17 이미지의 migration은 vector extension 부재로 테스트 시작 전에 실패했다.
+그 컨테이너는 멈췄고 pgvector0.8.6-pg17의 새 loopback 포트32773에서 검증했다.
+상위 작업자의55447 DB는 쓰지 않았다. Vite 기존 configLoader 경고는 남아 있다.
+전체 unit·전체 DB·build·필수 CI는 이 분담에서 실행하지 않았다.
+
+## 실제 평가와 남은 일
+
+실제17건은 schema17/guard16/검증 후 finding·fact 일치14, 잘못된 내림 제안2,
+p50=2117ms/p95=5122ms였다. 이전 실패1을 합한 실제 모델 호출18, 재시도0, 종료불명0이다.
+라벨은 모델 전 Codex 독립 AI 라벨이며 사람 독립 holdout이 아니다. 자동 적용 부적격·전역 readiness 미충족이다.
+이번 코드 수정 뒤 저장된 실제17응답의 guard만 replay하여 두 오내림 제안은 새 오류로,
+기존 인용 변형1은 기존 quote 오류로 차단됐고14건이 통과했다. 새 prompt의 실제 모델 검증은 아직 없다.
+추가 모델 호출0·운영 DB 접근/변경0·배포0이다. 원본 source/observedAt는 불변이다.
+비공개 증거는 `/private/tmp/nomorevibe-llm-activation-20261024/evaluation/` 0700/0600에 보존한다.
+상위 작업자가 통합·CI·사람 라벨·추가 실제 평가·배포 후 fresh native canary를 조율한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git cherry-pick fix/uptime-hosting-notice
+npx vitest run tests/uptime-hosting-notice.test.ts tests/llm-assist-contract.test.ts tests/llm-assist-evaluation.test.ts tests/uptime-assist-evidence.test.ts tests/llm-assist-capacity-binding.test.ts tests/local-model-serving-contract.test.ts tests/local-model-terminal.test.ts
+# DB 회귀는 현재 사용 중인 DB와 분리한 전용 DB에서 실행한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32773/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/llm-assist-dispatch.test.ts
+npx next typegen
+npx tsc --noEmit --incremental false
+git diff --check
+# 새 실제 호출은 상위 작업자의 별도 승인·새 prompt hash freeze 뒤에만 한다.
+```
+
+---
+
+# 2026-10-24 — 실제 Qwen 근거 경로 오류의 최소 수정 분담 완료
+
+## 현재 목표·완료와 위치
+
+사용자 승인 범위의 운영 전환 준비 중 실제 첫 GPU 응답이 `evidence.supports=["/state/closed"]`를 내는 오류를 확인했다.
+상위 작업자가 uptime만 schema enum과 경로 예시로 고치는 최소 설계를 승인했다.
+작업 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-evidence-pointers`, 브랜치 `fix/uptime-evidence-pointers`,
+기준 SHA `c1b21b252cecd1475c80378a0315fe95e7d4fd04`다. 운영 원 WT와 다른 분담 변경은 건드리지 않았다.
+
+## 수정 파일·설계
+
+`lib/domain/llm-assist/contracts.ts`: uptime supports만 두 실제 필드 경로 enum. 기존 wire .1 유지,
+uptime 경로 계약 revision `2026-10-24.1` 식별. `prompts.ts`: 필드 경로와 상태 값 구분 예시.
+`tests/llm-assist-contract.test.ts`: 실제 오류 구조 RED 및 두 정상 경로 호환 회귀.
+설계·계획은 `docs/superpowers/{specs,plans}/2026-10-24-uptime-evidence-pointers*`, 자세한 실제 증거·hash·명령은
+`docs/operations/2026-10-24-uptime-evidence-pointer-verification.md`에 있다. 이 인계도 갱신했다.
+다른 네 업무의 schema/prompt hash 불변을 실제 비교했다. 전역 wire 상수를 올려 다른 큐를 마이그레이션하지 않는다.
+
+## 실행 검사·실패
+
+RED: 단일 계약 15건 중 새 2건 예상 assertion 실패. GREEN: 같은 15건 통과.
+관련 unit 6파일 38건 PASS, next typegen/전체 tsc/변경 TS3파일 ESLint exit0.
+첫 tsc는 새 WT 생성 route type 누락으로 PageProps 8개 오류였고 typegen 뒤 통과했다. Vite 기존 경고는 보존한다.
+전체 unit·전체 DB·build·필수 CI는 이번 분담에서 실행하지 않았다.
+
+## 실제 평가·남은 일
+
+고정 출처27건 중 complete17건의 첫 실제 모델 요청만 실행했다. HTTP200/model/finish stop/유효 usage를 관측했으나
+잘못된 pointer로 guard 실패해 즉시 중단했다. 재시도0·나머지16미실행·운영 DB/제어/제품/lease 접근과 쓰기0.
+출처 시각을 바꾸지 않았고 production native admission/원장/전역 readiness 통과를 주장하지 않는다.
+라벨은 Codex 독립 AI 사전 라벨이며 사람 독립 라벨이 아니다. 이미 출력 본 첫 실패 표본을 새 holdout으로 세지 않는다.
+비공개 원본은 `/private/tmp/nomorevibe-llm-activation-20261024/evaluation/` 0700/0600으로 보존한다.
+상위 작업자가 통합·필수 CI·새 hash 실제 비교·사람 라벨·배포 후 fresh native canary를 조율한다.
+이 수정 뒤 추가 실제 모델 호출·배포·운영 변경은 하지 않았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git cherry-pick fix/uptime-evidence-pointers
+npx vitest run tests/llm-assist-contract.test.ts tests/llm-assist-evaluation.test.ts tests/uptime-assist-evidence.test.ts tests/llm-assist-capacity-binding.test.ts tests/local-model-serving-contract.test.ts tests/local-model-terminal.test.ts
+git diff --check
+# docs/operations/2026-10-24-uptime-evidence-pointer-verification.md의 새 schema/prompt hash를 사용한다.
+# 실제 추가 호출은 상위 작업자의 새 dataset/계약/예산 고정 뒤에만 한다.
+```
+
+---
+
+# 2026-10-24 — 병렬 운영 활성화·배포 진행 중
+
+## 현재 목표와 작업 위치
+
+사용자가 남은 작업 전부, 운영 활성화·배포와 서브에이전트 병렬 실행을 명시 승인했다.
+이번 운영 변경·모델 호출·배포는 이 최신 지시의 범위다. 작업 WT는
+`/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, 브랜치
+`codex/uptime-pre-delist-check-20261024`, HEAD `c3f4e8e8`이다. 원 WT의 사용자 변경을 보존한다.
+서브에이전트는 모두 `gpt-6.1-sol` / `xhigh`: 긴 재접속 구현, 실제 서빙·운영 readback,
+모델을 보기 전 독립 표본 라벨 수집의 세 갈래다.
+
+## 실제 확인과 결정
+
+운영 읽기 전용 readback: migration125개, 최신 배포16앱 `4d8b60bf`, assist6개 제어 모두 off,
+capacity disabled/epoch1/revision1/policy null, assist work와 capacity 요청0. 새 모델 env계약0.
+GPU 실제 vLLM은 C=50000, max-num-seqs=6, tp4, gptq_marlin, KV fp8_e5m2다.
+과거 문서262144를 현재 값으로 사용하지 않는다. 게이트웨이 두 컨테이너는 2026-10-16 배포,
+실제 소스에 PR3 strict-terminal 지원이 없다. 기존 gateway/CLI/text 호출이 함께 계량될 준비 없이
+native assist만 매핑해 전역 open하면 기존 작업이 미뤄지므로 그대로 실행하지 않는다.
+
+긴 재접속 담당은 background 전용 명시 timeout(1..60000ms)과 collector60초를 구현했다.
+기본 background/interactive10초·uptime25초와 SSRF·origin/DNS/redirect/body/abort를 보존한다.
+담당자가 RED18중12실패→GREEN18, 네트워크14파일141 PASS·ESLint·diff check exit0를 보고했고
+최종 typecheck/커밋 대기다. root는 아직 cherry-pick/통합 검증하지 않았다.
+
+실제 복구 후보12개에는 현재503/접속 실패/근거 부족이 섞여 있어 일괄 차단해제하지 않는다.
+독립 라벨의 출처는 `codex_independent_pre_model`이다. 이를 `human_independent`로 바꾸거나
+오프라인 readiness의 사람 독립 holdout 통과를 사칭하지 않는다.
+관리자 해제는 products.updatedAt와 health reset으로 기존 실패열을 리셋하며 새10회 실패만
+새 후보가 되는 기존 정책이다. 영구 면제로 바꾸지 않는다.
+
+## 산출물·검증·남은 일
+
+민감한 읽기 증거는 git 밖 `/private/tmp/nomorevibe-llm-activation-20261024/` 아래 권한0700/0600.
+root는 2026-10-24T14:15:02Z 운영 uptime 제어만 CAS·writer fence·감사 TX로 전환했다: confirm, confirmation_required=true, dispatch/apply=false, revision2, audit19135. 사전·실행 SQL/결과는 operations/ 아래0600으로 보존했다. 이 단계는 후보 보존이며 모델 처리·자동 적용 완료가 아니다. 다른 제어는 아직 off, root 실제 모델 호출·배포0이다. 통합596f4b09에서 root unit5파일40건, DB4파일70건, typegen/tsc/변경TS9파일 ESLint/diff-check exit0을 직접 확인했다. 읽기 전용 별도 코드검토도 새P0/P1/P2 없음. 이전 검증은 바로 아래 기록을 따른다.
+남은 일: 서빙·활성 caller/alias inventory 완성, 필요한 gateway 계약 배포와 native canary,
+실제 모델 비교, 긴 재접속 커밋 통합·필수 CI·보호 main PR 병합, 고정 SHA 이미지 배포,
+후보 보존 latch와 제어값의 단계적 활성화·관측. 검증 불가 항목을 완료로 세지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -1 --oneline
+git fetch origin
+# 긴 재접속 담당 커밋 SHA를 실제 수신한 뒤 cherry-pick하고 범위 검증한다.
+# 배포는 docs/operations/independent-workers-runbook.md의 mini 예비→M3 주 순서와
+# scripts/ops/deploy_shared_images.py plan/run 고정40자 main SHA·digest 절차를 따른다.
+```
+
+
+---
+
+# 2026-10-24 — 비동기 uptime 확인의 긴 재접속 분담 완료
+
+## 현재 목표·완료
+
+사용자 지시: 남은 작업을 병렬로 진행하고 운영 활성화·배포한다. 이 분담은 긴 재확인 코드와 로컬 검증이다.
+기준 `c3f4e8e84f5fdb40f5b65e6f3b27f9e57493b8f1`, WT
+`/Users/jr/Desktop/projects/nomorevibe-uptime-confirm-long-recheck`, 브랜치 `codex/uptime-confirm-long-recheck-20261024`.
+일반 background 10초와 같던 collector의 재접속에만 총 60초 기한을 적용했다.
+운영·모델 서버 쓰기와 배포는 이 분담에서 수행하지 않았으며 상위 작업이 진행한다.
+
+## 수정 파일·설계 결정
+
+- `lib/net/fetch.ts`: background 전용 `backgroundTimeoutMs` 선택 옵션, 1~60,000 정수 검증. 기본값 10초 불변.
+- `lib/domain/products/uptime-delist-review.ts`: 해당 비동기 수집만 60초 명시.
+- `tests/net-fetch-background-timeout.test.ts`, `tests/uptime-assist-reconnect.test.ts`,
+  `tests/uptime-assist-evidence.test.ts`: 긴 기한·기본값·body/redirect/DNS/queue·중단·SSRF·blocked·실제 HTTP 회귀.
+- `docs/operations/2026-10-24-uptime-long-recheck.md`: 설계·증거·재현 명령.
+- `docs/operations/2026-10-24-uptime-confirmation-verification.md`, 이 인계: 단계별 완료 범위 구분.
+
+SSRF/origin/body/원격 정산을 복제하지 않고 기존 safeFetch 경로를 재사용했다. DNS·origin 대기·리다이렉트·본문이
+총기한 하나를 공유하며 caller의 worker 중단·남은 예산이 먼저면 즉시 끊긴다. consumer100초/caller90초 예산과
+uptime-ping25초는 늘리지 않았다. undici의 기본 TCP connect timeout은 그대로이며 서버 응답 대기 예산을 늘렸다.
+실패횟수·unknown401/403/429/999·관리자 보호·본문/텍스트 상한·중단·원격 종료 불명 정책은 그대로다.
+
+## 실제 검사·실패
+
+새 테스트부터 추가해 RED18중12 assertion실패를 관측했다(10초 뒤 응답 상실/60초 미전달/잘못된옵션 허용).
+최소 구현 뒤 같은18 GREEN. 추가 실제 localhost HTTP 회귀까지3파일26통과,
+최종 관련14파일141통과. 실제 HTTP의 일반 요청은150ms 느린응답을 놓치고 긴확인만 complete를 수집했다
+(테스트 타이머만50ms/1.5초로 축소, 프로덕션10,000/60,000 인자별도검증).
+본문 기한 실패뒤 같은origin 후속200. Next typegen+전체tsc, 변경TS5파일ESLint, diff-check 실제exit0.
+Vite 기존 configLoader 경고를 보존했다. 별도collector는 비교만 하고 구현하지 않았다.
+원본 `/tmp/nomorevibe-uptime-confirm-long-recheck-{red,green,native,regression,types}-20261024.log`.
+
+전체unit/DB통합/build/GitHubCI는 실행하지 않았다. Oracle 다른네트워크·실제운영 표본/활성화/배포는 상위작업에 남았다.
+
+## 다음 에이전트 정확한 명령
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-confirm-long-recheck
+git log -1 --oneline
+git status --short
+npm test -- tests/net-fetch-background-timeout.test.ts tests/uptime-assist-evidence.test.ts tests/uptime-assist-reconnect.test.ts tests/net-fetch-deadline.test.ts tests/net-fetch-guard-deadline.test.ts tests/net-fetch-recovery.test.ts tests/net-fetch-settlement.test.ts tests/net-fetch-settlement-adversarial.test.ts tests/net-fetch-undici-abort.test.ts tests/net-fetch-timeout-source.test.ts tests/net-fetch-conditional.test.ts tests/ssrf.test.ts tests/uptime-gate.test.ts tests/crawl-fetch-concurrency.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/net/fetch.ts lib/domain/products/uptime-delist-review.ts tests/net-fetch-background-timeout.test.ts tests/uptime-assist-evidence.test.ts tests/uptime-assist-reconnect.test.ts
+git diff --check
+```
+
+# 2026-10-24 — LLM 보강 할 일 1번 검증·누락 수정(선행 단계)
+
+## 현재 목표·완료
+
+사용자 지시: `docs/operations/2026-10-23-llm-assist-handoff.md`의 할 일 1번부터 진행한다.
+현재 원 작업 폴더는 `b1fb8dd5`이므로 사용자 변경을 보존하고 최신 main `2cc4e36c` 기반 별도 worktree
+`/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, 브랜치 `codex/uptime-pre-delist-check-20261024`를 만들었다.
+기존 PR-04/05 구현이 이미 있어 중복 개발하지 않았다. `unclear + retain`이 사람 대기 대신 done으로 저장되는 결함을
+수정 전 단위/실제 전용 DB 테스트로 재현하고 기존 정책에 맞게 검증기를 수정했다.
+실제 legacy/claims 틱의 10번째 실패가 각각 후보 1건·즉시 내림 0인 회귀도 추가했다.
+
+## 수정 파일·결정
+
+- `lib/domain/llm-assist/contracts.ts`: unclear는 collect_evidence/human_review만 허용한다.
+- `tests/llm-assist-contract.test.ts`, `tests/integration/llm-assist-dispatch.test.ts`,
+  `tests/integration/llm-assist-queue.test.ts`: 허용표·실제 소비자·두 생산 경로 회귀.
+- 최초 운영 인계의 최신 안내, `docs/plans/2026-10-24-uptime-confirmation-verification.md`,
+  `docs/operations/2026-10-24-uptime-confirmation-verification.md`, 이 파일.
+
+기존 실패횟수·시간 제한·401/403/429/999 제외·관리자 해제·광역 보류·세대/CAS·lease를 보존했다.
+새 잡·DDL·모델/운영 설정은 없다. 운영 DB 조회·쓰기·실제 모델 호출·배포·활성화·12건 복구는 0이다.
+collector는 여전히 reviewer 네트워크의 전체 10초 요청이다. 최초 제안의 긴/Oracle 재확인과 “다시 실패하면 내림”은
+구현 완료로 세지 않는다. 후속 PR-05대로 수집 실패는 보류한다. 코드 기본 off와 실제 운영 상태는 구분한다.
+
+## 실제 검증·실패
+
+Node 24.18.0, lockfile npm ci. 새 pgvector0.8.6-pg17 전용 컨테이너
+`nomorevibe-uptime-confirmation-test-20261024`(loopback55447, DB nomorevibe_test)에 migration125개를 적용했다.
+수정 전 unit11 중2 실패(retain/independent_review 허용), 선택한 native 소비자1 실패(done 저장)를 확인했다.
+수정 뒤 unit9파일157건·통합6파일136건 통과, Next typegen·tsc·수정TS4파일 ESLint·diff check exit0.
+전체 unit/전체 DB/build/필수 CI는 실행하지 않았다. 가짜 localhost 모델 검증을 실제 품질로 보고하지 않는다.
+초기 patch의 함수명 불일치는 적용 전 거절됐고 실제 `modelOutcome` 이름으로 수정했다.
+
+## 남은 일·다음 명령
+
+범위 코드 검증과 누락 수정은 끝났다. 긴/다른 네트워크 재확인 설계·실제 독립 라벨/모델 비교·현재 운영 readback·용량/native canary·shadow 관측·confirm 승인이 남는다.
+2~5번도 이미 병합된 구현이 있으므로 각 상태를 먼저 대조한다. 이번 결과를 그 항목의 완료로 승계하지 않는다.
+상세 명령과 결과는 [이번 검증 기록](operations/2026-10-24-uptime-confirmation-verification.md)을 따른다.
+이 컨테이너는 검증 종료 뒤 중지한다. 재검증 때 아래 명령으로 시작한다(데이터는 tmpfs라 migration을 다시 적용한다).
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -1 --oneline
+docker start nomorevibe-uptime-confirmation-test-20261024
+docker exec nomorevibe-uptime-confirmation-test-20261024 pg_isready -h 127.0.0.1 -U nomorevibe -d nomorevibe_test
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:55447/nomorevibe_test npm run test:integration -- tests/integration/llm-assist-queue.test.ts tests/integration/llm-assist-dispatch.test.ts
+git diff --check
+```
+
+---
+
 # 2026-10-16 파이프라인 개발 인계
 
 > **최신 인계(2026-10-22): [docs/operations/2026-10-22-handoff.md](operations/2026-10-22-handoff.md)** — 관리자·보안 패치 15앱 배포 완료, 남은 검증과 운영 주의. [실제 배포 기록](operations/2026-10-22-admin-production-rollout.md). 아래는 그 이전 기록이다.

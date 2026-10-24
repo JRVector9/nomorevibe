@@ -3,6 +3,8 @@ import { z } from "zod";
 
 export const ASSIST_SCHEMA_VERSION = "2026-10-23.1";
 export const ASSIST_POLICY_VERSION = "2026-10-23.1";
+// 기존 wire 버전과 정상 응답은 유지하고 uptime 출력 계약의 호환 축소를 별도로 식별한다.
+export const UPTIME_EVIDENCE_POINTER_REVISION = "2026-10-24.1";
 export const assistTaskSchema = z.enum(["uptime", "repo", "intro", "audit", "news"]);
 export type AssistTask = z.infer<typeof assistTaskSchema>;
 const identity = z.string().trim().min(1).max(200);
@@ -62,6 +64,7 @@ const relationship = z.enum(["same_project", "unrelated", "unclear"]);
 const treatment = z.enum(["keep", "rewrite_candidate", "human"]);
 
 const uptimeOutcome = commonOutcome.extend({ task: z.literal("uptime"),
+  evidence: z.array(evidence.extend({ supports: z.array(z.enum(["/state/page_state", "/state/finding"])).min(1).max(8) })).max(24),
   state: z.object({ page_state: pageState, finding: z.enum(["active_product", "explicit_shutdown", "domain_parking",
     "missing_requested_resource", "temporary_maintenance", "access_challenge", "insufficient_content", "conflict"]) }).strict(),
   action: action(["retain", "delist_candidate", "collect_evidence", "human_review", "independent_review"]),
@@ -150,11 +153,22 @@ export function validateAssistOutcome(inputValue: AssistInput, value: unknown):
     const { page_state: state, finding } = outcome.state;
     const expectedFinding = { alive: "active_product", closed: "explicit_shutdown", parked: "domain_parking", soft_404: "missing_requested_resource" };
     if (state !== "unclear" && finding !== expectedFinding[state]) return { ok: false, error: "state_finding_mismatch" };
+    // 현재 페이지 전체가 알려진 호스팅 중단 안내뿐이면 제품의 영구 종료를 입증하지 않는다.
+    if (outcome.action.proposal === "delist_candidate" && input.sources.some(source => source.completeness === "complete"
+      && ["page", "rendered_page"].includes(source.kind) && source.url !== null
+      && (source.url === input.context.requestedUrl || source.url === input.context.finalUrl)
+      && (source.httpStatus === 402 && /^Payment required DEPLOYMENT_DISABLED(?:\s+[a-z0-9-]+::[a-z0-9-]+)?$/i.test(source.text.trim())
+        || source.httpStatus === 503 && /^The deployment is currently unavailable DEPLOYMENT_PAUSED(?:\s+[a-z0-9-]+::[a-z0-9-]+)?$/i.test(source.text.trim())))) {
+      return { ok: false, error: "uptime_hosting_notice_requires_review" };
+    }
     if (outcome.action.proposal === "delist_candidate" && (state === "alive" || state === "unclear"
       || input.context.administratorReleased || input.context.failureCount < input.context.requiredFailures)) {
       return { ok: false, error: "uptime_delist_not_permitted" };
     }
     if (state === "alive" && outcome.action.proposal !== "retain") return { ok: false, error: "alive_requires_retain" };
+    if (state === "unclear" && !["collect_evidence", "human_review"].includes(outcome.action.proposal)) {
+      return { ok: false, error: "unclear_requires_review" };
+    }
   }
   if (input.task === "repo" && outcome.task === "repo") {
     const state = outcome.state;

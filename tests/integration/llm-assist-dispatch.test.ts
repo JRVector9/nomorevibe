@@ -28,15 +28,23 @@ const ownedProducts: { id: number; slug: string; url: string }[] = [];
 let contract: LocalModelServingContract, policy: ModelCapacityPolicy;
 let originalCapacity: Record<string, unknown>, originalAssist: Record<string, unknown>, originalRole: Record<string, unknown> | null;
 let originalJobs: Record<string, unknown>[], calls: { requestId: string; body: Record<string, unknown> }[] = [];
-let responseKind: "closed" | "alive" | "invalid" = "closed", onCall: (() => Promise<void>) | null = null;
+let responseKind: "closed" | "alive" | "invalid" | "unclear_retain" | "hosting_disabled" | "hosting_paused" = "closed", onCall: (() => Promise<void>) | null = null;
 let hold: ((res: ServerResponse) => void) | null = null;
 let jobToken = "", sequence = 0;
 
 function modelOutcome() {
+  if (responseKind === "unclear_retain") return { schema_version: ASSIST_SCHEMA_VERSION, task: "uptime",
+    state: { page_state: "unclear", finding: "temporary_maintenance" },
+    evidence_quality: { status: "partial", limitations: ["other"] },
+    evidence: [{ source_id: "current-page", quote: "Service temporarily unavailable", supports: ["/state/page_state"] }],
+    action: { proposal: "retain", reason_ko: "일시 장애로 서비스 상태를 확인해야 합니다.", missing_items: ["현재 서비스 상태"] } };
   const alive = responseKind === "alive";
+  const quote = responseKind === "hosting_disabled" ? "Payment required DEPLOYMENT_DISABLED"
+    : responseKind === "hosting_paused" ? "The deployment is currently unavailable DEPLOYMENT_PAUSED"
+    : alive ? "Start your free plan" : "permanently closed";
   return { schema_version: ASSIST_SCHEMA_VERSION, task: "uptime", state: { page_state: alive ? "alive" : "closed",
     finding: alive ? "active_product" : "explicit_shutdown" }, evidence_quality: { status: "sufficient", limitations: ["none"] },
-    evidence: [{ source_id: "current-page", quote: alive ? "Start your free plan" : "permanently closed", supports: ["/state/page_state"] }],
+    evidence: [{ source_id: "current-page", quote, supports: ["/state/page_state"] }],
     action: { proposal: alive ? "retain" : "delist_candidate", reason_ko: alive ? "현재 이용 경로가 있습니다." : "서비스 전체 종료가 명시되어 있습니다.", missing_items: [] } };
 }
 function nativeResponse() {
@@ -266,6 +274,34 @@ describe("보강 소비자의 native dispatch와 최종 적용", () => {
     expect(calls).toHaveLength(0); expect(await requests()).toHaveLength(0);
     expect(await status(product.id)).toBe("seeded");
     expect(await work(product.id)).toMatchObject({ state: "waiting_evidence", attempts: 0 });
+  });
+  it.each([
+    { status: 402, kind: "hosting_disabled" as const, body: "Payment required DEPLOYMENT_DISABLED" },
+    { status: 503, kind: "hosting_paused" as const, body: "The deployment is currently unavailable DEPLOYMENT_PAUSED" },
+  ])("HTTP $status 호스팅 중단을 종료로 답해도 사람 큐로 보내고 내리지 않는다", async ({ status: httpStatus, kind, body }) => {
+    const product = await fixtureProduct(); responseKind = kind;
+    safeFetch.mockResolvedValue({ finalUrl: product.url, response: new Response(`${body} icn1::example-request`, { status: httpStatus }) });
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(1);
+    expect((await requests())[0].state).toBe("settled");
+    expect(await work(product.id)).toMatchObject({ state: "human", attempts: 1, lastError: "uptime_hosting_notice_requires_review" });
+    expect(await status(product.id)).toBe("seeded");
+    expect(await recordedResults()).toHaveLength(0);
+    expect(await db.select().from(productEvidenceAudit).where(and(eq(productEvidenceAudit.slug, product.slug), eq(productEvidenceAudit.action, "admin.product.ban")))).toHaveLength(0);
+    expect(await db.select().from(operationsAudit).where(and(eq(operationsAudit.target, product.slug), eq(operationsAudit.action, "product-auto-ban-uptime")))).toHaveLength(0);
+    expect(await db.select().from(cdnPurges).where(eq(cdnPurges.slug, product.slug))).toHaveLength(0);
+  });
+  it("unclear를 retain으로 답해도 완료하지 않고 사람 확인으로 남긴다", async () => {
+    const product = await fixtureProduct(); responseKind = "unclear_retain";
+    safeFetch.mockResolvedValue({ finalUrl: product.url,
+      response: new Response("Service temporarily unavailable. Please try again later.", { status: 503 }) });
+    await reviewLlmAssist(context());
+    expect(calls).toHaveLength(1);
+    expect((await requests())[0].state).toBe("settled");
+    expect(await work(product.id)).toMatchObject({ state: "human", attempts: 1, lastError: "unclear_requires_review" });
+    expect(await status(product.id)).toBe("seeded");
+    expect(await db.select().from(operationsAudit).where(and(eq(operationsAudit.target, product.slug), eq(operationsAudit.action, "product-auto-ban-uptime")))).toHaveLength(0);
+    expect(await db.select().from(cdnPurges).where(eq(cdnPurges.slug, product.slug))).toHaveLength(0);
   });
   it("업무 JSON 오류는 실제 물리 종료를 정산하되 사람 검토로 남긴다", async () => {
     const product = await fixtureProduct(); responseKind = "invalid";
