@@ -1,3 +1,64 @@
+# 2026-10-24 — 실제 호스팅 안내 오내림 제안 차단 분담 완료
+
+## 현재 목표·완료와 위치
+
+근거 경로 수정 통합 `474f1306c4cba80f1ccc0504f6aa85db5d1a2c49`의 실제 개발 평가 17건 중,
+HTTP402 결제·배포 중단 안내 2건을 모델이 영구 종료·내림 후보로 제안했고 당시 guard가 통과시켰다.
+상위 작업자가 알려진 전체 안내만 차단하는 더 엄격한 uptime guard와 prompt를 승인했다.
+작업 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-hosting-notice`, 브랜치 `fix/uptime-hosting-notice`는
+위 SHA 기반이다. 운영 원 WT와 다른 분담 변경을 건드리지 않았다.
+
+## 수정 파일·설계
+
+`lib/domain/llm-assist/contracts.ts`: complete 현재 page/rendered_page의 HTTP402 결제 비활성 안내,
+HTTP503 배포 중단 안내에 전체 본문이 일치할 때 `delist_candidate`를
+`uptime_hosting_notice_requires_review`로 거절한다. 단일 요청 추적 ID만 선택적으로 허용한다.
+기존 consumer의 invalid→human 경로를 쓰며 응답 자동 수정·인용 정규화·HTTP402/503 일괄 차단은 없다.
+`prompts.ts`: 해당 안내만으로 영구 종료가 입증되지 않아 unclear/추가 근거·사람 확인을 제안하게 한다.
+`tests/uptime-hosting-notice.test.ts`와 `tests/integration/llm-assist-dispatch.test.ts`에 회귀를 추가했다.
+설계·계획은 `docs/superpowers/{specs,plans}/2026-10-24-uptime-hosting-notice*`,
+실제 측정·hash·검사는 `docs/operations/2026-10-24-uptime-hosting-notice-verification.md`에 있다.
+
+wire 버전과 uptime 경로 revision·JSON Schema hash는 유지하며 새 uptime prompt hash는
+`a9345c8892920d3d2af39bf576ce840559b7e5450f7a7c703b0e4ece78a7f83d`다.
+다른 네 업무의 schema/prompt hash 불변을 실제 비교했다. 기존 큐 wire 마이그레이션은 만들지 않았다.
+
+## 실행 검사·실패
+
+구현 전 unit11 중 새 guard2+prompt1 예상 assertion 실패, 구현 뒤11/11 GREEN.
+구현 전 fake native consumer2회귀는 work가 done이 되어 human 예상 실패, 구현 뒤2/2 GREEN.
+관련 unit7파일49건 PASS, 별도 DB dispatch integration23건 PASS.
+next typegen/전체 tsc/변경TS4파일 ESLint/diff-check 실제 exit0.
+처음 일반 postgres17 이미지의 migration은 vector extension 부재로 테스트 시작 전에 실패했다.
+그 컨테이너는 멈췄고 pgvector0.8.6-pg17의 새 loopback 포트32773에서 검증했다.
+상위 작업자의55447 DB는 쓰지 않았다. Vite 기존 configLoader 경고는 남아 있다.
+전체 unit·전체 DB·build·필수 CI는 이 분담에서 실행하지 않았다.
+
+## 실제 평가와 남은 일
+
+실제17건은 schema17/guard16/검증 후 finding·fact 일치14, 잘못된 내림 제안2,
+p50=2117ms/p95=5122ms였다. 이전 실패1을 합한 실제 모델 호출18, 재시도0, 종료불명0이다.
+라벨은 모델 전 Codex 독립 AI 라벨이며 사람 독립 holdout이 아니다. 자동 적용 부적격·전역 readiness 미충족이다.
+이번 코드 수정 뒤 저장된 실제17응답의 guard만 replay하여 두 오내림 제안은 새 오류로,
+기존 인용 변형1은 기존 quote 오류로 차단됐고14건이 통과했다. 새 prompt의 실제 모델 검증은 아직 없다.
+추가 모델 호출0·운영 DB 접근/변경0·배포0이다. 원본 source/observedAt는 불변이다.
+비공개 증거는 `/private/tmp/nomorevibe-llm-activation-20261024/evaluation/` 0700/0600에 보존한다.
+상위 작업자가 통합·CI·사람 라벨·추가 실제 평가·배포 후 fresh native canary를 조율한다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git cherry-pick fix/uptime-hosting-notice
+npx vitest run tests/uptime-hosting-notice.test.ts tests/llm-assist-contract.test.ts tests/llm-assist-evaluation.test.ts tests/uptime-assist-evidence.test.ts tests/llm-assist-capacity-binding.test.ts tests/local-model-serving-contract.test.ts tests/local-model-terminal.test.ts
+# DB 회귀는 현재 사용 중인 DB와 분리한 전용 DB에서 실행한다.
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32773/nomorevibe_test npx vitest run --config vitest.integration.config.ts tests/integration/llm-assist-dispatch.test.ts
+npx next typegen
+npx tsc --noEmit --incremental false
+git diff --check
+# 새 실제 호출은 상위 작업자의 별도 승인·새 prompt hash freeze 뒤에만 한다.
+```
+
+---
+
 # 2026-10-24 — 실제 Qwen 근거 경로 오류의 최소 수정 분담 완료
 
 ## 현재 목표·완료와 위치

@@ -12,7 +12,9 @@ export const ASSIST_TASK_PROMPTS: Readonly<Record<AssistTask, string>> = {
     "제품 주제와 페이지 상태를 구분한다. 오류·404라는 단어나 HTTP200만으로 판단하지 않는다. 점검·체크포인트·빈 본문은 unclear다. " +
     "네트워크 실패를 종료 본문으로 바꾸지 않는다. 내림은 후보만 제안하고 서버 규칙을 따른다. " +
     `근거 경로 계약 ${UPTIME_EVIDENCE_POINTER_REVISION}: evidence.supports에는 /state/page_state 또는 /state/finding을 쓴다. ` +
-    "page_state 값이 closed여도 근거가 가리키는 필드 경로는 /state/page_state다. /state/closed처럼 상태 값을 경로로 쓰지 않는다.",
+    "page_state 값이 closed여도 근거가 가리키는 필드 경로는 /state/page_state다. /state/closed처럼 상태 값을 경로로 쓰지 않는다. " +
+    "호스팅 보류 규칙 2026-10-24.1: HTTP402 Payment required DEPLOYMENT_DISABLED 또는 HTTP503 DEPLOYMENT_PAUSED처럼 " +
+    "본문 전체가 호스팅 결제·배포 중단 안내뿐이면 영구 종료를 입증하지 않는다. unclear로 판정하고 근거 수집 또는 사람 확인을 제안한다.",
   repo: "옛 저장소와 새 저장소의 제품 정체성, 코드 계보, 공식 이전·저자 연속성을 따로 판단한다. " +
     "공식 이전 또는 충분한 정체성·저자 연속성이 확인되면 same_project, 무관한 SDK·템플릿·다른 제품이면 unrelated다. " +
     "이름만 같거나 공식 승계가 확인되지 않은 포크는 unclear다. 포크는 공식 이전의 증거도 무관한 코드의 증거도 아니다. " +

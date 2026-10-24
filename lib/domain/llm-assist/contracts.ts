@@ -153,6 +153,14 @@ export function validateAssistOutcome(inputValue: AssistInput, value: unknown):
     const { page_state: state, finding } = outcome.state;
     const expectedFinding = { alive: "active_product", closed: "explicit_shutdown", parked: "domain_parking", soft_404: "missing_requested_resource" };
     if (state !== "unclear" && finding !== expectedFinding[state]) return { ok: false, error: "state_finding_mismatch" };
+    // 현재 페이지 전체가 알려진 호스팅 중단 안내뿐이면 제품의 영구 종료를 입증하지 않는다.
+    if (outcome.action.proposal === "delist_candidate" && input.sources.some(source => source.completeness === "complete"
+      && ["page", "rendered_page"].includes(source.kind) && source.url !== null
+      && (source.url === input.context.requestedUrl || source.url === input.context.finalUrl)
+      && (source.httpStatus === 402 && /^Payment required DEPLOYMENT_DISABLED(?:\s+[a-z0-9-]+::[a-z0-9-]+)?$/i.test(source.text.trim())
+        || source.httpStatus === 503 && /^The deployment is currently unavailable DEPLOYMENT_PAUSED(?:\s+[a-z0-9-]+::[a-z0-9-]+)?$/i.test(source.text.trim())))) {
+      return { ok: false, error: "uptime_hosting_notice_requires_review" };
+    }
     if (outcome.action.proposal === "delist_candidate" && (state === "alive" || state === "unclear"
       || input.context.administratorReleased || input.context.failureCount < input.context.requiredFailures)) {
       return { ok: false, error: "uptime_delist_not_permitted" };
