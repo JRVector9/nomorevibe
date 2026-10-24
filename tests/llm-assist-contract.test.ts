@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ASSIST_SCHEMA_VERSION, assistHash, assistInputHash, assistInputSchema, assistJsonSchema,
+import { ASSIST_SCHEMA_VERSION, assistHash, assistInputHash, assistInputSchema, assistJsonSchema, assistOutcomeSchemas,
   validateAssistOutcome, type AssistInput } from "@/lib/domain/llm-assist/contracts";
 import { ASSIST_PROMPT_VERSION, assistPromptHash, buildAssistMessages } from "@/lib/domain/llm-assist/prompts";
 
@@ -14,6 +14,29 @@ const outcome = { schema_version: ASSIST_SCHEMA_VERSION, task: "uptime", state: 
   action: { proposal: "delist_candidate", reason_ko: "서비스 전체의 종료가 명시되어 있습니다.", missing_items: [] } };
 
 describe("assist contracts and server guards", () => {
+  it("실제 Qwen 응답의 상태 값 경로 /state/closed를 uptime 출력 계약에서 거절한다", () => {
+    // 실제 첫 canary의 실패 구조만 재현한다. 원문·운영 cohort는 비공개 산출물에 보존한다.
+    const valuePointer = { ...outcome, evidence: [{ ...outcome.evidence[0], supports: ["/state/closed"] }] };
+    expect(assistOutcomeSchemas.uptime.safeParse(valuePointer).success).toBe(false);
+    expect(validateAssistOutcome(input, valuePointer).ok).toBe(false);
+    expect(assistJsonSchema("uptime")).toMatchObject({ properties: { evidence: { items: { properties: {
+      supports: { items: { enum: ["/state/page_state", "/state/finding"] } },
+    } } } } });
+  });
+  it.each(["/state/page_state", "/state/finding"])("기존의 유효한 uptime 근거 경로 %s는 그대로 허용한다", pointer => {
+    const valid = { ...outcome, evidence: [{ ...outcome.evidence[0], supports: [pointer] }] };
+    expect(assistOutcomeSchemas.uptime.safeParse(valid).success).toBe(true);
+    expect(validateAssistOutcome(input, valid).ok).toBe(true);
+    expect(assistInputSchema.parse(input).schemaVersion).toBe("2026-10-23.1");
+  });
+  it("uptime 메시지가 새 경로 계약과 필드 경로·상태 값의 차이를 설명한다", () => {
+    const content = buildAssistMessages(input)[1].content;
+    expect(content).toContain("2026-10-24.1");
+    expect(content).toContain("/state/page_state");
+    expect(content).toContain("/state/finding");
+    expect(content).toContain("/state/closed");
+    expect(input.promptVersion).toBe("2026-10-23.1");
+  });
   it("preserves raw source revision precision and fences source, policy and prompt changes", () => {
     expect(assistInputSchema.parse(input).subject.revision).toBe("2026-10-23 01:02:03.123456");
     for (const changed of [{ ...input, subject: { ...input.subject, revision: "2026-10-23 01:02:03.123457" } },

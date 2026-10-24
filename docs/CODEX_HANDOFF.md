@@ -1,3 +1,49 @@
+# 2026-10-24 — 실제 Qwen 근거 경로 오류의 최소 수정 분담 완료
+
+## 현재 목표·완료와 위치
+
+사용자 승인 범위의 운영 전환 준비 중 실제 첫 GPU 응답이 `evidence.supports=["/state/closed"]`를 내는 오류를 확인했다.
+상위 작업자가 uptime만 schema enum과 경로 예시로 고치는 최소 설계를 승인했다.
+작업 WT `/Users/jr/Desktop/projects/nomorevibe-uptime-evidence-pointers`, 브랜치 `fix/uptime-evidence-pointers`,
+기준 SHA `c1b21b252cecd1475c80378a0315fe95e7d4fd04`다. 운영 원 WT와 다른 분담 변경은 건드리지 않았다.
+
+## 수정 파일·설계
+
+`lib/domain/llm-assist/contracts.ts`: uptime supports만 두 실제 필드 경로 enum. 기존 wire .1 유지,
+uptime 경로 계약 revision `2026-10-24.1` 식별. `prompts.ts`: 필드 경로와 상태 값 구분 예시.
+`tests/llm-assist-contract.test.ts`: 실제 오류 구조 RED 및 두 정상 경로 호환 회귀.
+설계·계획은 `docs/superpowers/{specs,plans}/2026-10-24-uptime-evidence-pointers*`, 자세한 실제 증거·hash·명령은
+`docs/operations/2026-10-24-uptime-evidence-pointer-verification.md`에 있다. 이 인계도 갱신했다.
+다른 네 업무의 schema/prompt hash 불변을 실제 비교했다. 전역 wire 상수를 올려 다른 큐를 마이그레이션하지 않는다.
+
+## 실행 검사·실패
+
+RED: 단일 계약 15건 중 새 2건 예상 assertion 실패. GREEN: 같은 15건 통과.
+관련 unit 6파일 38건 PASS, next typegen/전체 tsc/변경 TS3파일 ESLint exit0.
+첫 tsc는 새 WT 생성 route type 누락으로 PageProps 8개 오류였고 typegen 뒤 통과했다. Vite 기존 경고는 보존한다.
+전체 unit·전체 DB·build·필수 CI는 이번 분담에서 실행하지 않았다.
+
+## 실제 평가·남은 일
+
+고정 출처27건 중 complete17건의 첫 실제 모델 요청만 실행했다. HTTP200/model/finish stop/유효 usage를 관측했으나
+잘못된 pointer로 guard 실패해 즉시 중단했다. 재시도0·나머지16미실행·운영 DB/제어/제품/lease 접근과 쓰기0.
+출처 시각을 바꾸지 않았고 production native admission/원장/전역 readiness 통과를 주장하지 않는다.
+라벨은 Codex 독립 AI 사전 라벨이며 사람 독립 라벨이 아니다. 이미 출력 본 첫 실패 표본을 새 holdout으로 세지 않는다.
+비공개 원본은 `/private/tmp/nomorevibe-llm-activation-20261024/evaluation/` 0700/0600으로 보존한다.
+상위 작업자가 통합·필수 CI·새 hash 실제 비교·사람 라벨·배포 후 fresh native canary를 조율한다.
+이 수정 뒤 추가 실제 모델 호출·배포·운영 변경은 하지 않았다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git cherry-pick fix/uptime-evidence-pointers
+npx vitest run tests/llm-assist-contract.test.ts tests/llm-assist-evaluation.test.ts tests/uptime-assist-evidence.test.ts tests/llm-assist-capacity-binding.test.ts tests/local-model-serving-contract.test.ts tests/local-model-terminal.test.ts
+git diff --check
+# docs/operations/2026-10-24-uptime-evidence-pointer-verification.md의 새 schema/prompt hash를 사용한다.
+# 실제 추가 호출은 상위 작업자의 새 dataset/계약/예산 고정 뒤에만 한다.
+```
+
+---
+
 # 2026-10-24 — 병렬 운영 활성화·배포 진행 중
 
 ## 현재 목표와 작업 위치

@@ -3,6 +3,8 @@ import { z } from "zod";
 
 export const ASSIST_SCHEMA_VERSION = "2026-10-23.1";
 export const ASSIST_POLICY_VERSION = "2026-10-23.1";
+// 기존 wire 버전과 정상 응답은 유지하고 uptime 출력 계약의 호환 축소를 별도로 식별한다.
+export const UPTIME_EVIDENCE_POINTER_REVISION = "2026-10-24.1";
 export const assistTaskSchema = z.enum(["uptime", "repo", "intro", "audit", "news"]);
 export type AssistTask = z.infer<typeof assistTaskSchema>;
 const identity = z.string().trim().min(1).max(200);
@@ -62,6 +64,7 @@ const relationship = z.enum(["same_project", "unrelated", "unclear"]);
 const treatment = z.enum(["keep", "rewrite_candidate", "human"]);
 
 const uptimeOutcome = commonOutcome.extend({ task: z.literal("uptime"),
+  evidence: z.array(evidence.extend({ supports: z.array(z.enum(["/state/page_state", "/state/finding"])).min(1).max(8) })).max(24),
   state: z.object({ page_state: pageState, finding: z.enum(["active_product", "explicit_shutdown", "domain_parking",
     "missing_requested_resource", "temporary_maintenance", "access_challenge", "insufficient_content", "conflict"]) }).strict(),
   action: action(["retain", "delist_candidate", "collect_evidence", "human_review", "independent_review"]),
