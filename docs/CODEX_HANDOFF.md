@@ -1,3 +1,51 @@
+# 2026-10-24 14:54Z — 운영 전환 진행 중 최신 체크포인트
+
+현재사용자목표는남은작업전부·운영활성화·배포이며 병렬3agent(gpt-6.1-sol/xhigh)로계속진행중이다.
+이전단계의"운영변경0"은각시점기록이며현재는아니다. 상세실행·실패·증거는
+[운영전환기록](operations/2026-10-24-llm-assist-activation.md)을먼저읽는다.
+
+- root WT `/Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check`, branch `codex/uptime-pre-delist-check-20261024`,
+  HEAD4bc64bac(긴재접속596f4b09·pointer474f1306·DB시계fixture2c630b39·호스팅안내보류4bc64bac).
+  원사용자WT/사용자변경은보존했다. [PR645](https://github.com/JRVector9/nomorevibe/pull/645)는열려있다.
+  474f1306의전체필수CI check성공40102421152; 최종후속은아직push/CI전이다. 검사통과를승계하지않는다.
+- 운영uptime은14:15Z confirm/latch=true/dispatch=false/apply=false/rev2/audit19135다.
+  실제후보1건이보존되고새autoBan0을14:47Z확인했다. capacitydisabled/나머지5taskoff를유지한다.
+- abcLLM PR5를main5ae29cf5로병합·mini→M3실배포완료. 양routerhash0a3f321d…81add0/health200을확인했다.
+  정상운영caller경로모델7회canary성공. 원이미지는양호스트pre-native-20261024태그로보존했다.
+  원abc사용자WT는변경하지않았다. gatewaypublic각요청의실제서버는미확정이다.
+- 실제GPU고정평가18회(옛실패1+새17),schema17/17·guard16/17·최종일치14/17·잘못된내림후보2.
+  pointer와호스팅안내guard를보강했다. 저장응답재생은두오내림거절·인용거절1유지다.
+  라벨은AI독립·개발표본으로사람holdout아님. 사용자에게17건사람분류질문을보냈고응답대기다.
+  최종prompt추가4건은schema4/4·guard3/4·rawfinding4/4·false-delist0, 인용변형1건은계속거절됐다.
+  GPUvision1회도고정색/도형정답·HTTP200/stop/usage176으로성공했다. 평가누적23/재시도0/unknown0.
+- M3oMLX0.7.1rc1은원래prompt만검사하므로hardC패치를새overlay에staging/import검증했다.
+  root9AST테스트PASS.14:43:31Z launchctl SIGTERM1회→구PID48271소멸→새80130을관측,
+  14:45Zreload중503뒤14:47Zhealth200/두모델loaded를확인했다. 강제종료/원본sitepackages·plist·settings변경0.
+  실제HTTP8개중overflow4건모두400·정상4건모두JSON/stop/usage/SSE DONE으로성공했다.
+  이API경계canary는production native ledger증거를대신하지않는다.
+- unsupported ConnectAgent분류CLI는현재gpt-5.6-terra xhigh/sonnet high설정이다(제품서비스기존값).
+  root/agent가직접codexexec를그모델로호출한것은0이다. 별도WT
+  `/Users/jr/Desktop/projects/nomorevibe-classification-capacity-20261024`에서readinessagent가
+  publication_classify_cli1종·remote-native최소연결을구현중이며다음PR로검토/CI/배포한다.
+- root최종코드4bc64bac에서단위52/전용DB72·typegen/전체tsc/변경TS lint가모두exit0이다.
+  session18566/61584는종료했다. 로그는/tmp/nomorevibe-final-activation-{unit,integration,typecheck,lint}-20261024.log.
+
+민감산출물은 `/private/tmp/nomorevibe-llm-activation-20261024/` 아래0600/0700.
+현재남은작업: PR 최종 push/CI/main병합·고정이미지16앱배포, classifier후속구현,
+전체caller/native/서빙·물리alias계약과전역용량준비, 실제사람검수·각task의단계적활성화.
+전역준비/사람검수누락을가짜hash/계약/라벨로통과시키지않는다. 규칙·기한·임계값을완화하지않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-uptime-pre-delist-check
+git status --short
+git log -4 --oneline
+gh pr checks 645
+# root 최종 코드 검증 완료: unit52/DB72/typegen/tsc/lint exit0. 최종 문서를 commit/push하고 CI를 확인한다.
+# deploy_shared_images.py는고정main40자SHA+digest·snapshot·mini→M3관문절차를지킨다.
+```
+
+---
+
 # 2026-10-24 — 실제 호스팅 안내 오내림 제안 차단 분담 완료
 
 ## 현재 목표·완료와 위치
