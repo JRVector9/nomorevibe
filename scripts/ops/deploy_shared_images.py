@@ -40,7 +40,7 @@ READ_ONLY_MAINTENANCE = {
     'maintenance-mini': ('T6ATm-paaE03hfSsQX8-S', 'nomorevibe-maintenance-standby-mini', MINI, 'worker'),
     'maintenance-m3': ('7OlFqQdacbyQseQM72E7b', 'nomorevibe-maintenance-m3', M3, 'worker'),
 }
-# The other production Dokploy apps (AGENTS.md: 13 apps, plus connect-agent). They are git-build apps released one by
+# Text, maintenance, both schedulers and connect support the legacy Git build path, released one by
 # one (RELEASE_TAG + application.deploy, standby first); `run` never deploys them and `inventory` only reads them.
 # The versioned split roles (translation, product-health, site-evidence, official-news) have no M3/mini Dokploy app and
 # the Oracle runtime is outside Dokploy (oracle-* actions); an unregistered app is never guessed.
