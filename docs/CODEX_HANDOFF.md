@@ -1,3 +1,52 @@
+# 2026-10-25 — Assist 입장 마감에 native 실행60초 보존
+
+목표는 수집·capacity 대기 뒤 실행시간이 부족한 native 전송을 예방하는 것이다. WT `/Users/jr/Desktop/projects/nomorevibe-assist-admission-deadline-20261025`, branch `codex/assist-admission-deadline-20261025`, base `e7136238`. 부모 지시로 별도 PR 대신 PR658에 cherry-pick한다. 운영 배포는 부모가 조율한다. 원본 WT의 사용자 수정과 handoff는 건드리지 않았다.
+
+- `lib/jobs/products/llm-assist-review.ts`: 기존 claimEnd-5초를 claimEnd-60초로 변경하고 수집 뒤에도 같은 cutoff를 확인한다. collection·대기·intro 사실/교정은 같은 절대 cutoff를 공유한다. claim90초/tick100초/worker105초/AbortSignal·모델·lease·capacity 변경0.
+- `tests/integration/llm-assist-dispatch.test.ts`: runner80초의 늦은 grant, collection31초, collection20초+대기11초 회귀. 관측 helper만 `performance.now`로 바꿔 의도적으로 변경하는 업무 시계와 분리했다.
+- `tests/integration/intro-assist-dispatch.test.ts`: 사실 완료31초 뒤 교정 요청을 새로 열지 않는 회귀. 기존 fixture의60초 deadline은 native60초를 남길 수 없으므로 실제 tick 범위100초로 맞췄다.
+- 실행 계획: `docs/superpowers/plans/2026-10-25-assist-admission-deadline.md`.
+
+실제 검증: 수정 전 새4회귀 모두 native 전송/settled 또는 사실+교정2회로 **RED4개**(9.96초), 수정 후 **GREEN4개**(8.69초). 최종 두 dispatch integration **51/51**(88.46초), capacity/binding unit **16/16**(4.54초), `next typegen` 후 `tsc --noEmit`, 변경3파일 ESLint와 `git diff --check` 성공. 전용 로컬 PG17/pgvector container `nomorevibe-assist-admission-deadline-test-20261025`, port32787을 사용했다. 실제 외부 페이지/모델 호출0이며 모델 HTTP는 로컬 fixture다. 수동 전체unit/전체DB/build는 실행하지 않았다.
+
+실패 보존: 최초 collection+wait 회귀는 관측 시계가20초 이동해 조기실패했으므로 monotonic helper로 고친 뒤 올바른 RED를 확인했다. 최초 전체 통합은50pass/기존 intro 공통슬롯 대기1건5초 timeout(63.33초), 기능 수정 없이 단독1pass와 전체51pass를 확인했다. 최초 tsc는 새 WT의 Next PageProps 미생성8곳 실패, 공식 typegen 후 성공. 기존 Vite CommonJS native-loader 경고는 남는다.
+
+남은 작업은 PR658 담당자의 cherry-pick·필수 최신 base CI와 부모의 병합/배포/운영 관측이다. 운영 감사 보류264건 영수증과 root03 미적용32건은 별도 private 디렉터리에 보존하고 이 코드 커밋에 포함하지 않는다. 정확한 재검증:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-assist-admission-deadline-20261025
+env TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32787/nomorevibe_test npm run test:integration -- tests/integration/llm-assist-dispatch.test.ts tests/integration/intro-assist-dispatch.test.ts
+npm test -- tests/local-model-capacity.test.ts tests/llm-assist-capacity-binding.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/jobs/products/llm-assist-review.ts tests/integration/llm-assist-dispatch.test.ts tests/integration/intro-assist-dispatch.test.ts
+git diff --check
+```
+
+---
+
+# 2026-10-25 — 감사 거절 처리 및 화면 검수 만료 오류 수정
+
+현재 목표는 열린 감사 거절의 실제 처리와 화면 자동검수 복구다. 격리 branch `codex/audit-screen-expiry-20261025`에서 코드/회귀를 수정했다. 운영에서는 근거를 검토한 no-hold 8건만 정식 함수로 처리해 유지7/내림1, 06:35:12Z no-hold 열린 거절 1,626→1,618을 재확인했다. 보류 제품은 다른 담당자 범위다.
+
+화면 route에만 방금 렌더한 URL/시간/JPEG SHA 증명을 요구하고 기존 canonical source/input/policy CAS·현재 제품 URL·job/role 잠금 검증을 유지한 채 archived baseline의 24시간 만료를 대체한다. proof는 transient 인자, 실제 JPEG는 기존 wireHash에 결속하므로 DB schema/terminal JSON 변경은 없다. candidate/assist/기타 감사의 신선도는 유지한다. 기존 checkout/사용자 변경은 보존했다.
+
+실제 검증: 관련 단위8파일45개, 격리 PostgreSQL 통합4파일34개, `next typegen`, `tsc --noEmit`, 수정7파일 eslint, `git diff --check` 통과. 최초 PR 전체 CI의 wire-observation 직접 screen fixture 누락 1건을 보완한 뒤 추가 통합4개 및 해당 파일 eslint도 통과했다. 새 HEAD 필수 CI는 별도 대기한다. 원 domain 복원 RED는 `reservation_lost`, 초기 설정 fixture 실수와 영구binding exact-key CHECK 실패는 operation note에 기록했다. 임시 debug 출력은 제거했다.
+
+코드 배포는 아직 하지 않았다. root가 최종 diff/PR/최신 base 필수 CI/main 반영/공통 배포를 수행한다. provider boundary 복구 중의 draining을 임의로 해제하지 않는다. 배포 후 실제 screen dispatched/settled, asked>0, 대기 감소를 내부 로그/DB로 확인해야 한다. 수동 외부 페이지 조사는 사용자 지시로 중단했다.
+
+자세한 원인·운영 수치·수정 파일·검증 명령·실패 실험·남은 일과 정확한 재조회 명령은 [운영 기록](operations/2026-10-25-audit-rejected-recovery.md)에 있다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-audit-screen-expiry
+git status --short
+git diff --check
+python3 /private/tmp/nomorevibe-audit-reject-20261025/run.py recheck.mjs
+# 기존 수동 8건을 재적용하지 않는다. root 조율 전 배포/open 변경도 하지 않는다.
+```
+
+---
+
 # 2026-10-25 — 단축 배포 기본 절차 적용 완료
 
 사용자의 단축 보고서 적용 요청을 완료했다. 코드 PR653·보완 PR654를 필수 최신 base CI 성공 후 병합했고, 코드 main은 **64a8868dbb0050a716d5c20e08655283ceaaa7ec**다. 앞으로 `npm run deploy -- scope|plan|run`과 `docs/operations/deployment-fast-path.md`를 일반 배포 기본 절차로 사용한다. 원 사용자 WT의 미커밋 파일은 보존했다.

@@ -83,7 +83,7 @@ function nativeResponse(body: Record<string, unknown>, stage: ModelStage) {
     usage: { prompt_tokens: 120, completion_tokens: 80, total_tokens: 200 } };
 }
 function context(signal?: AbortSignal): JobContext<null> {
-  return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 }, signal, deadlineAt: Date.now() + 60_000,
+  return { cursor: null, lease: { name: jobName, token: jobToken, requestedVersion: 0 }, signal, deadlineAt: Date.now() + 100_000,
     save: async () => {}, hasBudget: () => true, log: () => {} };
 }
 async function eventually(check: () => Promise<boolean>) {
@@ -258,6 +258,18 @@ describe("명시 소개 재검수의 실제 native 두 단계", () => {
     expect(calls.map(call => call.stage)).toEqual(["facts"]); expect((await requests())[0].state).toBe("settled");
     await assertUnchanged(f);
     expect(await db.select().from(introAssistCorrections).where(eq(introAssistCorrections.productId, f.id))).toHaveLength(0);
+  });
+  it("사실과 교정은 공유 입장 마감을 사용해 native 60초가 남지 않으면 두 번째 호출을 열지 않는다", async () => {
+    const f = await fixtureProduct(), started = Date.now();
+    fixture.afterFactual = async () => { vi.spyOn(Date, "now").mockReturnValue(started + 31_000); };
+    try {
+      await reviewLlmAssist(context());
+      expect(calls.map(call => call.stage)).toEqual(["facts"]);
+      expect((await requests()).map(row => row.state)).toEqual(["settled"]);
+      await assertUnchanged(f);
+      expect(await work(f.id)).toMatchObject({ state: "waiting_capacity", attempts: 1 });
+      expect(await db.select().from(introAssistCorrections).where(eq(introAssistCorrections.productId, f.id))).toHaveLength(0);
+    } finally { vi.restoreAllMocks(); }
   });
   it("잘못된 교정 JSON도 물리 호출은 정산하되 제품은 바꾸지 않는다", async () => {
     const f = await fixtureProduct(); mode = "invalid_correction";

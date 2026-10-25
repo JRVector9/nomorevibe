@@ -165,9 +165,11 @@ it("records the actual normalized native text wire in both adapter and ledger", 
 });
 
 it("records the normalized image request rather than the pre-normalization screenshot body", async () => {
-  const context = await fixture("screen"), now = new Date().toISOString();
-  const result = await withLocalModelCapacity({ ...context, promptVersion: SCREEN_REVIEW_SHOT2_PROMPT_VERSION }, request =>
-    reviewWithScreenshot(context.input, Buffer.from([255, 216, 255, 217]), { request, timeoutMs: 5000,
+  const context = await fixture("screen"), now = new Date().toISOString(), jpeg = Buffer.from([255, 216, 255, 217]);
+  const result = await withLocalModelCapacity({ ...context, promptVersion: SCREEN_REVIEW_SHOT2_PROMPT_VERSION,
+    screenProof: { requestedUrl: context.input.snapshot.product.url!, requestedAt: now, receivedAt: now,
+      screenshotHash: createHash("sha256").update(jpeg).digest("hex") } }, request =>
+    reviewWithScreenshot(context.input, jpeg, { request, timeoutMs: 5000,
       config: { baseUrl: endpoint.replace(/\/chat\/completions$/, ""), model: "qwen", apiKey: null, screenPromptVersion: SCREEN_REVIEW_SHOT2_PROMPT_VERSION },
       rendered: { text: "Open the application and manage tasks.", textLength: 38, requestedUrl: context.input.snapshot.product.url!,
         finalUrl: context.input.snapshot.product.url!, status: 200, requestedAt: now, receivedAt: now } }));
