@@ -911,6 +911,13 @@
       "when": 1794086400041,
       "tag": "0129_historical_provider_boundary_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1794086400042,
+      "tag": "0130_direct_provider_boot_boundary",
+      "breakpoints": true
     }
   ]
 }

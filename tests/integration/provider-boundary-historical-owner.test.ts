@@ -116,9 +116,9 @@ it("v2는 현재 ingress가 dispatch 뒤 태어나도 strict physical 계약과 
   expect(await physical(await evidence())).toBe(true); expect(await records(frozen.plan)).toBe(true);
 });
 it("nonempty migration은 20 CHECK/전체 public OID와 기존 함수 본문을 보존하고 두 원형을 byte 그대로 보관한다", async () => {
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(130);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
   expect(await rows()).toEqual(beforeRows); expect(await checks()).toEqual(beforeChecks); expect(beforeChecks).toHaveLength(20);
-  const after=await catalog(); expect(beforeFunctions).toHaveLength(14); expect(after).toHaveLength(19);
+  const after=await catalog(); expect(beforeFunctions).toHaveLength(14); expect(after).toHaveLength(20);
   const archived=new Map([["nmv_provider_boundary_release_valid","nmv_provider_boundary_release_v1_0128"],
     ["nmv_provider_boundary_transition_guard","nmv_provider_boundary_transition_guard_v1_0128"]]);
   for (const old of beforeFunctions) {
@@ -128,7 +128,7 @@ it("nonempty migration은 20 CHECK/전체 public OID와 기존 함수 본문을 
   }
   const oldTrigger=beforeFunctions.find(x=>x.name==="nmv_provider_boundary_transition_guard")!.source;
   expect(after.find(x=>x.name==="nmv_provider_boundary_transition_guard")!.source)
-    .toBe(oldTrigger.replace("  RETURN NEW;\nEND", "  IF NEW.terminal_evidence->'plan'->'version'='2'::jsonb AND NOT nmv_boundary_original_owner_records_valid(NEW.terminal_evidence->'plan',to_jsonb(NEW)) THEN RAISE EXCEPTION 'provider_boundary_original_owner_records_mismatch'; END IF;\n  RETURN NEW;\nEND"));
+    .toBe(oldTrigger.replace("  RETURN NEW;\nEND", "  IF NEW.terminal_evidence->'plan'->'version'='2'::jsonb AND NOT nmv_boundary_original_owner_records_valid(NEW.terminal_evidence->'plan',to_jsonb(NEW)) THEN RAISE EXCEPTION 'provider_boundary_original_owner_records_mismatch'; END IF;\n  IF NEW.terminal_evidence->'plan'->'version'='3'::jsonb AND NOT nmv_boot_records_valid(NEW.terminal_evidence->'plan',to_jsonb(NEW)) THEN RAISE EXCEPTION 'provider_boot_boundary_records_mismatch'; END IF;\n  RETURN NEW;\nEND"));
 });
 it("새 originalOwner 필드의 null/누락/잘못된 UUID/중복·과대번호는 TS와 SQL에서 같이 거절한다", async () => {
   const proof=frozen.plan.originalOwner;

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -61,4 +61,17 @@ it("v2 CLI는 current ingress와 별도로 originalOwner 보조 artifact 원문�
     writeFileSync(join(dir,`${plan.originalOwner.artifactHash}.json`),"changed");
     expect(()=>readBoundaryReleaseFiles(args)).toThrow("provider_boundary_artifact_hash");
   }finally{rmSync(dir,{recursive:true,force:true});}
+});
+it('v3 CLI verifies native endpoint/journal/clock/source artifact bytes and never invents gateway artifacts',async()=>{
+ const {bootBoundaryFixture}=await import('./fixtures/provider-boot-boundary');const dir=mkdtempSync(join(tmpdir(),'boundary-boot-cli-'));
+ try{const {plan,receipt}=bootBoundaryFixture(),sha=(v:string)=>createHash('sha256').update(v).digest('hex');
+ const artifact=(name:string)=>{const bytes=JSON.stringify({synthetic:true,name}),hash=sha(bytes);writeFileSync(join(dir,`${hash}.json`),bytes,{mode:0o600});return hash;};
+ plan.beforeArtifactHash=artifact('before');plan.provider.endpointProofHash=artifact('nativeEndpoint');plan.provider.oldJournal.artifactHash=artifact('oldJournal');plan.provider.currentJournal.artifactHash=artifact('currentJournal');
+ plan.bootWitness.artifactHash=artifact('planClock');plan.transport.sourceArtifactHash=artifact('actualRuntimeTransportSources');receipt.owner.artifactHash=artifact('ownerExit');receipt.provider.artifactHash=artifact('providerCurrentBoot');receipt.provider.bootWitness.artifactHash=artifact('receiptClock');receipt.planHash=providerBoundaryPlanHash(plan);
+ const bytes=JSON.stringify(plan);writeFileSync(join(dir,'plan.json'),bytes);writeFileSync(join(dir,'receipt.json'),JSON.stringify(receipt));
+ const args=[`--plan=${join(dir,'plan.json')}`,`--plan-sha=${sha(bytes)}`,`--receipt=${join(dir,'receipt.json')}`,`--artifact-dir=${dir}`,'--operator=fixture','--reference=synthetic reboot proof','--database-url-stdin'];
+ expect(readBoundaryReleaseFiles(args).apply).toBe(false);
+ for(const hash of [plan.provider.endpointProofHash,plan.provider.oldJournal.artifactHash,plan.provider.currentJournal.artifactHash,plan.bootWitness.artifactHash,receipt.provider.bootWitness.artifactHash,plan.transport.sourceArtifactHash]){
+ const file=join(dir,`${hash}.json`),original=readFileSync(file);writeFileSync(file,'changed');expect(()=>readBoundaryReleaseFiles(args)).toThrow('provider_boundary_artifact_hash');writeFileSync(file,original);}
+ }finally{rmSync(dir,{recursive:true,force:true});}
 });
