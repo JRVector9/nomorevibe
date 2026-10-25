@@ -465,6 +465,28 @@ class RuntimeFixtureTests(unittest.TestCase):
             mutate(drift)
             self.assertFalse(release.runtime_health('scheduler-m3', app, drift, sha)['ready'])
 
+    def test_scheduler_mini_compares_approved_argv_with_only_optional_tini(self):
+        sha, app, runtime = self.fixture()
+        argv = ['node', '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=scheduler']
+        tini = ['/sbin/tini', '--']
+        app['replicas'] = 1
+        runtime['serviceSpec']['Mode']['Replicated']['Replicas'] = 1
+        runtime['containers'] = runtime['containers'][:1]
+        for approved, entry, cmd, ready in (
+            (argv, argv, None, True),
+            (argv, None, argv, True),
+            (argv, tini, argv, True),
+            (tini + argv, tini + argv, None, True),
+            (tini + argv, argv, None, False),
+            (argv, ['/bin/sh', '-c'], argv, False),
+            (argv, ['/sbin/tini', '-g', '--'], argv, False),
+            (argv, tini, argv + ['--once'], False),
+        ):
+            with self.subTest(approved=approved, entry=entry, cmd=cmd):
+                app['command'] = ' '.join(approved)
+                runtime['containers'][0]['config'].update(Entrypoint=entry, Cmd=cmd)
+                self.assertEqual(release.runtime_health('scheduler-mini', app, runtime, sha)['ready'], ready)
+
     def test_git_source_revision_requires_exact_label_on_the_running_image(self):
         sha, app, runtime = self.fixture()
         app.update(replicas=1, command=None)

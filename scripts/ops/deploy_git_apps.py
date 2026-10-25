@@ -303,8 +303,10 @@ def runtime_health(short, app, runtime, sha, *, image=None, manifest=None, expec
     expected_argv = shlex.split(app.get('command') or '')
     if not expected_argv and role == 'connect-agent':
         expected_argv = ['node', '--import', 'tsx', 'scripts/connect-agent.ts']
+    approved_argv = [expected_argv] if expected_argv else []
+    # Tini may come from the image; an explicitly approved Tini stays mandatory.
     if expected_argv[:2] != ['/sbin/tini', '--']:
-        expected_argv = ['/sbin/tini', '--'] + expected_argv
+        approved_argv.append(['/sbin/tini', '--'] + expected_argv)
     actual_image = configured_image if '@sha256:' in configured_image else next(iter(images)) if len(images) == 1 else None
     ready = (spec.get('Name') == app['appName'] and len(containers) == app['replicas'] and
              (spec.get('Mode') or {}).get('Replicated', {}).get('Replicas') == app['replicas'])
@@ -317,7 +319,7 @@ def runtime_health(short, app, runtime, sha, *, image=None, manifest=None, expec
             (row.get('state') or {}).get('Health') or {}).get('Status') == 'healthy'
         ready = ready and (env.get('RELEASE_TAG') == sha and
                           sum(line.startswith('RELEASE_TAG=') for line in env_rows) == 1 and
-                          (config.get('Entrypoint') or []) + (config.get('Cmd') or []) == expected_argv and
+                          (config.get('Entrypoint') or []) + (config.get('Cmd') or []) in approved_argv and
                           (config.get('Labels') or {}).get('com.docker.swarm.service.name') == app['appName'])
         if role == 'connect-agent':
             ready = ready and '127.0.0.1:3020/rpc' in health and '401' in health
