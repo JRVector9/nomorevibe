@@ -87,14 +87,14 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
             // A lost RPC response cannot prove whether the remote native child has ended.
             ctx.log('crawl.classification_deferred', { count: inputs.length,
               reason: error instanceof ModelCapacityDeferredError ? error.reason : 'dispatched' });
-            return { done: false };
+            return { done: false, deferred: 'model_capacity' };
           }
           classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length });
         }
       } else {
         if (await publicationClassificationPath() !== 'legacy') {
           ctx.log('crawl.classification_deferred', { count: inputs.length, reason: 'provider_contract_unavailable' });
-          return { done: false };
+          return { done: false, deferred: 'model_capacity' };
         }
         classified = await classifyCategories(inputs, undefined, undefined, undefined, settings.classify.definitions);
       }
