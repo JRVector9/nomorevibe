@@ -35,7 +35,7 @@
 - proof는 typed transient context로 같은 dispatch 검증까지 전달한다. 기존 `wireHash`가 실제 JPEG를 포함한 전체 모델 요청을 영구 결속한다. DB dispatch/terminal/event JSON과 DDL은 변경하지 않는다.
 - candidate, 일반 감사/second opinion, published filter, assist의 기존 신선도와 capacity 계약은 유지한다.
 
-수정 파일은 `lib/llm/{capacity-repository,local-model-capacity-contract,local-model-capacity,local-model-domain}.ts`, `lib/screen-review/job.ts`, `tests/local-model-capacity.test.ts`, `tests/integration/local-model-capacity.test.ts`다.
+수정 파일은 `lib/llm/{capacity-repository,local-model-capacity-contract,local-model-capacity,local-model-domain}.ts`, `lib/screen-review/job.ts`, `tests/local-model-capacity.test.ts`, `tests/integration/local-model-capacity.test.ts`와 `tests/integration/local-model-wire-observation.test.ts`다.
 
 ## 실제 실행한 검증
 
@@ -47,6 +47,9 @@ npm test -- tests/local-model-capacity.test.ts tests/local-model-capacity-contra
 
 env TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32785/nomorevibe_test npm run test:integration -- tests/integration/local-model-capacity.test.ts tests/integration/screen-review.test.ts tests/integration/audit-screen-review.test.ts tests/integration/local-model-assist-constraint-regression.test.ts
 # 4 files / 34 tests passed
+
+env TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32785/nomorevibe_test npm run test:integration -- tests/integration/local-model-wire-observation.test.ts
+# 추가 1 file / 4 tests passed, 해당 파일 eslint 및 diffcheck exit 0
 
 npx next typegen
 # route types generated successfully
@@ -61,6 +64,8 @@ git diff --check
 새 회귀는 7일 전 수집문서와 신선한 화면으로 HTTP를 정확히 한 번 보내고 terminal이 settled 됨을 확인한다. source CAS 변경, 현재 제품 URL 변경, 예약 후 만료된 화면 proof는 추가 HTTP 0회다. 화면 외 오래된 감사는 계속 거절되며 후보/assist 기존 회귀도 통과했다.
 
 ## 실패한 실험과 남은 작업
+
+- PR #658 최초 전체 CI40169780062의 통합 shard4에서 wire-observation의 직접 screen fixture 1건이 새 필수 proof 없이 호출해 거절됐다(같은 shard 나머지 644개 통과). 제품 코드를 느슨하게 하지 않고 fixture에 실제 JPEG·URL·시각 proof를 더했다. 로컬 해당 4개 회귀와 eslint를 다시 통과했다. 최초 CI 실패를 성공으로 덮어 쓰지 않으며 새 HEAD의 필수 CI 성공 전 병합하지 않는다.
 
 - 수정 전 domain을 일시 복원한 올바른 screen 활성 fixture에서 새 회귀는 `reservation_lost`로 실패했다. 수정본 복원 후 GREEN을 확인했다.
 - 첫 fixture는 일반 `saveSettings`로 소유권 있는 screen 설정을 바꿀 수 없어 정식 `setQwenAutoStep`으로 수정했다. 잘못된 fixture 결과를 원인 증거로 쓰지 않는다.

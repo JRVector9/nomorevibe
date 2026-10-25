@@ -1,10 +1,10 @@
 # 2026-10-25 — 감사 거절 처리 및 화면 검수 만료 오류 수정
 
-현재 목표는 열린 감사 거절의 실제 처리와 화면 자동검수 복구다. 격리 branch `codex/audit-screen-expiry-20261025`에서 7개 코드/회귀 파일을 수정했다. 운영에서는 근거를 검토한 no-hold 8건만 정식 함수로 처리해 유지7/내림1, 06:35:12Z no-hold 열린 거절 1,626→1,618을 재확인했다. 보류 제품은 다른 담당자 범위다.
+현재 목표는 열린 감사 거절의 실제 처리와 화면 자동검수 복구다. 격리 branch `codex/audit-screen-expiry-20261025`에서 코드/회귀를 수정했다. 운영에서는 근거를 검토한 no-hold 8건만 정식 함수로 처리해 유지7/내림1, 06:35:12Z no-hold 열린 거절 1,626→1,618을 재확인했다. 보류 제품은 다른 담당자 범위다.
 
 화면 route에만 방금 렌더한 URL/시간/JPEG SHA 증명을 요구하고 기존 canonical source/input/policy CAS·현재 제품 URL·job/role 잠금 검증을 유지한 채 archived baseline의 24시간 만료를 대체한다. proof는 transient 인자, 실제 JPEG는 기존 wireHash에 결속하므로 DB schema/terminal JSON 변경은 없다. candidate/assist/기타 감사의 신선도는 유지한다. 기존 checkout/사용자 변경은 보존했다.
 
-실제 검증: 관련 단위8파일45개, 격리 PostgreSQL 통합4파일34개, `next typegen`, `tsc --noEmit`, 수정7파일 eslint, `git diff --check` 통과. 원 domain 복원 RED는 `reservation_lost`, 초기 설정 fixture 실수와 영구binding exact-key CHECK 실패는 operation note에 기록했다. 임시 debug 출력은 제거했다.
+실제 검증: 관련 단위8파일45개, 격리 PostgreSQL 통합4파일34개, `next typegen`, `tsc --noEmit`, 수정7파일 eslint, `git diff --check` 통과. 최초 PR 전체 CI의 wire-observation 직접 screen fixture 누락 1건을 보완한 뒤 추가 통합4개 및 해당 파일 eslint도 통과했다. 새 HEAD 필수 CI는 별도 대기한다. 원 domain 복원 RED는 `reservation_lost`, 초기 설정 fixture 실수와 영구binding exact-key CHECK 실패는 operation note에 기록했다. 임시 debug 출력은 제거했다.
 
 코드 배포는 아직 하지 않았다. root가 최종 diff/PR/최신 base 필수 CI/main 반영/공통 배포를 수행한다. provider boundary 복구 중의 draining을 임의로 해제하지 않는다. 배포 후 실제 screen dispatched/settled, asked>0, 대기 감소를 내부 로그/DB로 확인해야 한다. 수동 외부 페이지 조사는 사용자 지시로 중단했다.
 
