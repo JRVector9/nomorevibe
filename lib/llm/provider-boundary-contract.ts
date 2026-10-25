@@ -45,7 +45,8 @@ export const originalBoundaryOwnerSchema = z.object({ kind: z.literal("durable_p
 export const providerBoundaryPlanV2Schema = z.object({ version: z.literal(2), kind: z.literal("provider_boundary_plan"), createdAt: at,
   request: providerBoundaryPlanV1Schema.shape.request, control: providerBoundaryPlanV1Schema.shape.control,
   originalOwner: originalBoundaryOwnerSchema, currentIngressOwner: linuxBoundaryProcessIdentitySchema,
-  gateways: z.array(linuxBoundaryProcessIdentitySchema).length(2), provider: launchdIdentitySchema, beforeArtifactHash: sha,
+  gateways: z.array(linuxBoundaryProcessIdentitySchema).length(2),
+  provider: z.union([launchdIdentitySchema, linuxBoundaryProcessIdentitySchema.extend({ kind: z.literal("systemd") })]), beforeArtifactHash: sha,
 }).strict().refine(p => p.originalOwner.instanceId === p.request.owner.instanceId && p.originalOwner.bootId === p.request.owner.bootId
   && p.currentIngressOwner.kind === "container" && p.currentIngressOwner.startedAt <= p.createdAt && p.gateways.every(g => g.kind === "container" && g.startedAt <= p.request.dispatchAt)
   && p.provider.startedAt <= p.request.dispatchAt && p.gateways[0].host !== p.gateways[1].host
@@ -121,7 +122,8 @@ export const providerBoundaryReceiptV1Schema = z.object({ version: z.literal(1),
   owner: linuxExitObservationSchema, gateways: z.array(linuxExitObservationSchema).length(2), provider: boundaryExitObservationSchema }).strict();
 export const providerBoundaryReceiptV2Schema = z.object({ version: z.literal(2), kind: z.literal("provider_boundary_receipt"), planHash: sha,
   originalOwnerProofHash: sha, currentIngressOwner: linuxExitObservationSchema,
-  gateways: z.array(linuxExitObservationSchema).length(2), provider: launchdExitObservationSchema }).strict();
+  gateways: z.array(linuxExitObservationSchema).length(2),
+  provider: z.union([launchdExitObservationSchema, linuxExitObservationSchema.refine(o => o.identity.kind === "systemd", "historical_provider_systemd")]) }).strict();
 export const providerBoundaryReceiptV3Schema=z.object({version:z.literal(3),kind:z.literal("provider_boundary_receipt"),planHash:sha,
  owner:linuxExitObservationSchema,gateways:z.array(z.never()).length(0),provider:z.object({identity:bootProviderIdentitySchema,observedAt:at,
  bootWitness:bootWitnessSchema,artifactHash:sha}).strict()}).strict();
