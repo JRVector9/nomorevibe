@@ -28,7 +28,7 @@ shared = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(shared)
 
 WAVES = (('text-mini', 'maintenance-mini'), ('text-m3', 'maintenance-m3'),
-         ('scheduler-m3', 'connect-agent-m3'))
+         ('scheduler-mini',), ('scheduler-m3', 'connect-agent-m3'))
 ORDER = tuple(short for wave in WAVES for short in wave)
 READINESS_MAX_AGE_SECONDS = 900
 BASELINE_SETTLED_STATES = (None, 'completed', 'rollback_completed')
@@ -47,7 +47,7 @@ def waves(selected):
     selected = tuple(selected)
     if len(set(selected)) != len(selected) or any(short not in ORDER for short in selected):
         raise ValueError('invalid_git_apps')
-    for role in ('text', 'maintenance'):
+    for role in ('text', 'maintenance', 'scheduler'):
         if role + '-m3' in selected and role + '-mini' not in selected:
             raise ValueError(role + '_standby_required')
         if role + '-mini' in selected and role + '-m3' not in selected:
@@ -115,7 +115,7 @@ def validate_contract(short, app, *, mode):
         raise ValueError(short + '_invalid_service_name')
     if app.get('autoDeploy') is not False:
         raise ValueError(short + '_auto_deploy_must_be_disabled')
-    expected_replicas = 2 if kind == 'scheduler' else 1
+    expected_replicas = shared.scheduler_replicas(short) if kind == 'scheduler' else 1
     if type(app.get('replicas')) is not int or app['replicas'] != expected_replicas:
         raise ValueError(short + '_replicas_mismatch')
     if app.get('dockerBuildStage') != ('connect-agent' if kind == 'connect-agent' else 'worker'):

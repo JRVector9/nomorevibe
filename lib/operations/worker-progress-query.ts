@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
-import { and, sql, type SQL } from "drizzle-orm";
-import { operationsObservations } from "@/lib/db/schema";
+import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { modelCapacityControl, operationsObservations, pipelineStageModes } from "@/lib/db/schema";
+import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
@@ -18,14 +19,15 @@ import { latestServiceInstance, serviceInstancesFromObservations } from "./insta
 import { pipelineThroughput } from "./throughput";
 import type { ThroughputSnapshot } from "./throughput-model";
 import { classifyLiveness, classifyScheduler, classifyStage, laneForJob, parseAgentProviderFailure, parseRuntimeLanes, progressStageRole,
-  runtimeLaneStall, type AgentProviderFailure, type ProgressStageInput, type ProgressStageKey, type StageProgress } from "./worker-progress";
+  runtimeLaneStall, TEXT_PROGRESS_STAGE_JOBS, type AgentProviderFailure, type ProgressStageInput, type ProgressStageKey, type StageProgress } from "./worker-progress";
 import { readUptimeSplitStage } from "./uptime-split-repository";
+import { readTextStageProgress } from './text-stage-progress';
 
 type ProgressJob = { name: string; nextScheduledAt: Date | null; notBefore: Date | null; lockedAt?: Date | null;
   leaseToken?: string | null; cursor?: unknown; lastError?: string | null };
 const jobForStage: Record<ProgressStageKey, string> = { fetch: "crawl-fetch", judge: "crawl-judge", first: "crawl-agent-review",
   second: "second-review", publish: "crawl-publish", evidence: "product-evidence-refresh",
-  "agent-evidence": "agent-evidence-refresh", "ai-level": "ai-level-refresh", uptime: "uptime-ping" };
+  "agent-evidence": "agent-evidence-refresh", "ai-level": "ai-level-refresh", uptime: "uptime-ping", ...TEXT_PROGRESS_STAGE_JOBS };
 export type WorkerLaneProgress = { role: string; name: string; jobs: string[]; state: string; currentJob: string | null;
   startedAt: number | null; pollStartedAt: number | null; lastProgressAt: number; pollAgeMs: number | null;
   progressAgeMs: number; reason: string | null; alarm: boolean; restartEligible: boolean };
@@ -39,6 +41,7 @@ const AGENT_PROVIDER_FAILURE_CODES = ["rate_limited"];
 const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${value}`), sql`, `);
 /** consumer 생존 판정 — pipeline-control status 의 consumers 와 같은 기준(claim-control.ts) */
 const CONSUMER_HEARTBEAT_MS = AGENT_SCAN_CONSUMER_HEARTBEAT_MS;
+type ReviewStageMode = Pick<typeof pipelineStageModes.$inferSelect, 'stage' | 'mode' | 'drainingFrom'>;
 
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
   stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
@@ -65,6 +68,8 @@ export function buildWorkerProgress(
   batch: { mode: string; writerContractVersion: number },
   evidence: ProgressStageInput[] = [],
   agentScan: AgentScanModeState | null = null,
+  reviewModes: ReviewStageMode[] = [],
+  capacityMode: typeof modelCapacityControl.$inferSelect.mode = 'disabled',
 ): WorkerProgressReport {
   const instances = serviceInstancesFromObservations(observations);
   const liveness = (["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"] as const).map(role => {
@@ -74,22 +79,43 @@ export function buildWorkerProgress(
     return classifyLiveness(role, observedAt, now,
       typeof instance?.value.restartCount5m === "number" ? instance.value.restartCount5m : 0);
   });
-  const isObserved = (role: "scheduler" | "crawler" | "reviewer" | "publisher" | "maintenance") =>
+  const isObserved = (role: "scheduler" | "crawler" | "reviewer" | "publisher" | "maintenance" | "text") =>
     liveness.some(row => row.role === role && !row.alarm);
   const agentScanConsumerAlive = instances.some(row => row.role === "crawler" && row.instanceId.startsWith(AGENT_SCAN_CONSUMER_PREFIX)
     && (AGENT_SCAN_CONSUMER_LIVE_STATUSES as readonly unknown[]).includes(row.value.status)
     && now.getTime() - new Date(row.observedAt as string | Date).getTime() <= CONSUMER_HEARTBEAT_MS);
   const states = new Map(jobs.map(job => [job.name, job]));
   const agentScanPause = agentScan && agentScan.mode !== "legacy" ? agentScanProviderPause(observations, now) : null;
-  const classified: StageProgress[] = [...throughput.stages, ...evidence].map(stage => {
+  const classified: StageProgress[] = [...throughput.stages, ...evidence].map(input => {
+    // Global model drain prevents AI1/AI2 and all seven text/intro model admissions. Preserve
+    // provider errors and explicit pauses through the existing held classifier.
+    const capacityHeld = capacityMode === 'draining' && (input.key === 'first' || input.key === 'second'
+      || Object.hasOwn(TEXT_PROGRESS_STAGE_JOBS, input.key));
+    const stage = capacityHeld ? { ...input, held: true } : input;
     const stored = states.get(jobForStage[stage.key]);
     // items 의 공급자 대기는 잡 커서가 아니라 consumer 관측에 있다 — legacy 의 retryAfter 처럼 backoff 로 본다(withProviderBackoff 와 같은 보정)
     const job = stage.key === "agent-evidence" && stored && agentScanPause && (!stored.notBefore || agentScanPause > stored.notBefore)
       ? { ...stored, notBefore: agentScanPause } : stored;
-    const classifiedStage = classifyStage(stage, job ?? null, isObserved(progressStageRole(stage.key)), now);
-    const result = stage.key === "agent-evidence" && agentScan && agentScan.mode !== "legacy"
+    const consumer = stage.key === 'first' ? 'ai1' : stage.key === 'second' ? 'ai2' : null;
+    const mode = consumer && reviewModes.find(row => row.stage === consumer);
+    const consumerAlive = consumer !== null && instances.some(row => row.role === 'reviewer'
+      && row.instanceId.startsWith(consumerInstancePrefix(consumer))
+      && (AGENT_SCAN_CONSUMER_LIVE_STATUSES as readonly unknown[]).includes(row.value.status)
+      && now.getTime() - new Date(row.observedAt as string | Date).getTime() <= CONSUMER_HEARTBEAT_MS);
+    const observed = mode && mode.mode === 'items' ? consumerAlive : isObserved(progressStageRole(stage.key));
+    const classifiedStage = classifyStage(stage, job ?? null, observed, now);
+    let result = stage.key === "agent-evidence" && agentScan && agentScan.mode !== "legacy"
       ? agentScanStage(classifiedStage, agentScan, agentScanConsumerAlive) : classifiedStage;
-    return { ...result, job: jobForStage[stage.key], lane: laneForJob(result.role, jobForStage[stage.key]),
+    // The role supervisor cannot repair or own an independent AI consumer. Drain deliberately admits no new work.
+    if (mode && mode.mode !== 'legacy') {
+      result = { ...result, restartEligible: false };
+      if (mode.mode === 'items' && !consumerAlive && result.reason !== 'paused' && !capacityHeld)
+        result = { ...result, reason: 'consumer_missing', alarm: true };
+      else if (mode.mode === 'draining' && ['no_progress', 'worker_missing'].includes(result.reason))
+        result = { ...result, reason: 'backoff', alarm: false };
+    }
+    return { ...result, job: jobForStage[stage.key],
+      lane: mode && mode.mode !== 'legacy' ? `${consumer}-consumer` : laneForJob(result.role, jobForStage[stage.key]),
       waiting: stage.waiting, oldestMinutes: stage.oldestMinutes, completed5m: stage.completed5m,
       progress5m: stage.progress5m, errors5m: stage.errors5m, deferred: stage.deferred,
       ...("providerErrors" in stage ? { providerErrors: stage.providerErrors, providerErrorMinutes: stage.providerErrorMinutes } : {}),
@@ -113,6 +139,8 @@ export function buildWorkerProgress(
   const activeJobs = jobs.filter(job => job.leaseToken && job.lockedAt &&
     now.getTime() - job.lockedAt.getTime() <= STALE_LOCK_MS).map(job => job.name);
   const stages = classified.map(stage => {
+    // A briefly running legacy admission/settlement job is not evidence of independent consumer progress.
+    if (stage.lane === 'ai1-consumer' || stage.lane === 'ai2-consumer') return stage;
     if (stage.reason !== "no_progress" || !stage.job || !activeJobs.includes(stage.job)) return stage;
     const lane = lanes.find(row => row.role === stage.role && row.currentJob === stage.job && row.state === "running");
     let healthyRun = lane && lane.reason === null && lane.startedAt !== null && lane.startedAt <= now.getTime();
@@ -303,20 +331,29 @@ export function withProviderBackoff<J extends { name: string; notBefore: Date | 
   });
 }
 
-export async function readWorkerProgress(now = new Date()) {
-  const [settings, jobs, batch, agentScan] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db)]);
+export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean } = {}) {
+  const [settings, jobs, batch, agentScan, reviewModes, capacity] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
+    db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
+      .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2'])),
+    db.select({ mode: modelCapacityControl.mode }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)),
+  ]);
+  // A missing control row must not fall back to legacy restart authority.
+  if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');
+  if (!capacity[0]) throw new Error('model_capacity_control_missing');
   const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
   const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
   // claim 표로 셀 때는 잡 커서의 스캔 전 실패(legacy 스캔의 기록)를 쓰지 않는다
   const agentClaims = agentScanByClaims(agentScan);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
-  const [throughput, observations, evidence, split] = await Promise.all([
+  const [throughput, observations, evidence, split, text] = await Promise.all([
     pipelineThroughput(settings, now), db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES)),
     evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
       agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims),
     // 응답 점검은 split claims 모드에서만 단계로 본다(legacy 는 지금처럼 maintenance 생존·줄로만 본다)
     readUptimeSplitStage(db),
+    options.includeText === false ? Promise.resolve([]) : readTextStageProgress(),
   ]);
-  return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch, split ? [...evidence, split] : evidence, agentScan);
+  return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
+    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity[0].mode);
 }

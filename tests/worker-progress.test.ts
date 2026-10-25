@@ -126,3 +126,24 @@ it("names evidence stages in plain Korean with the code name alongside", () => {
     expect(label.endsWith(`(${key})`)).toBe(true);
   }
 });
+
+it.each(['reason-translate', 'crawl-tagline', 'keywords', 'keyword-verify', 'product-translate', 'tagline-ko'] as const)(
+  'alerts on independent overdue text work without granting a new restart path: %s', key => {
+    expect(classifyStage({ ...stage, key, oldestMinutes: 15 }, null, true, now))
+      .toMatchObject({ role: 'text', reason: 'no_progress', alarm: true, restartEligible: false });
+    expect(classifyStage({ ...stage, key, oldestMinutes: 8 }, null, true, now).reason).toBe('warming_up');
+    expect(classifyStage({ ...stage, key, waiting: 0, deferred: 4 }, null, true, now))
+      .toMatchObject({ reason: 'backoff', alarm: false, restartEligible: false });
+  },
+);
+
+it('keeps intro-review holds, exhausted attempts and provider faults out of automatic restarts', () => {
+  const intro = { ...stage, key: 'intro-check' as const, oldestMinutes: 60 };
+  expect(classifyStage(intro, null, true, now)).toMatchObject({ role: 'reviewer', alarm: true, restartEligible: false });
+  expect(classifyStage(intro, { notBefore: new Date('2100-01-01') }, true, now))
+    .toMatchObject({ reason: 'paused', alarm: false, restartEligible: false });
+  expect(classifyStage({ ...intro, waiting: 0, manualAttention: 2 }, null, true, now))
+    .toMatchObject({ reason: 'manual_attention', alarm: false, restartEligible: false });
+  expect(classifyStage({ ...intro, errors5m: 1 }, null, true, now))
+    .toMatchObject({ reason: 'upstream_stalled', alarm: true, restartEligible: false });
+});

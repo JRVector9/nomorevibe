@@ -5,6 +5,8 @@ import type { SQL } from "drizzle-orm";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { createReplicaRouter } from "@/lib/db/replica";
 import { evidenceProgress, readWorkerProgress, withProviderBackoff } from "@/lib/operations/worker-progress-query";
+import { readTextStageProgress } from '@/lib/operations/text-stage-progress';
+import type { ThroughputStage } from '@/lib/operations/throughput-model';
 
 /**
  * 배포 관문(readWorkerProgress → check-worker-progress·역할 워커 자동 재시작·장애 전환 감시)의 근거 읽기 고정.
@@ -39,6 +41,8 @@ const fixture = vi.hoisted(() => {
     primary: { transactions: [] as Array<{ config: unknown; statements: SQL[] }> },
     // 응답 점검 분담(0104) 장부는 근거와 따로 읽는다 — 기본은 legacy(관문에 uptime 단계 없음)
     split: { mode: "legacy" as "legacy" | "claims" },
+    capacity: { mode: 'disabled' as 'disabled' | 'open' | 'draining' | null },
+    throughputStages: [] as ThroughputStage[],
   };
 });
 
@@ -56,7 +60,11 @@ function recordingExecutor(log: Log) {
 
 vi.mock("@/lib/db", () => ({ db: { ...recordingExecutor(fixture.primary.transactions),
   // 관문의 관측 읽기는 미룬 이유(defer:<job>) 줄을 빼고 읽는다(운영센터 v8 PR4) — 조건만 붙고 결과는 같다
-  select: () => ({ from: () => Object.assign(Promise.resolve(fixture.observations), { where: async () => fixture.observations }) }) } }));
+  select: () => ({ from: (table: unknown) => ({ where: async () => {
+    const { pipelineStageModes, modelCapacityControl } = await import('@/lib/db/schema');
+    if (table === modelCapacityControl) return fixture.capacity.mode ? [{ mode: fixture.capacity.mode }] : [];
+    return table === pipelineStageModes ? ['ai1', 'ai2'].map(stage => ({ stage, mode: 'legacy', drainingFrom: null })) : fixture.observations;
+  } }) }) } }));
 vi.mock("@/lib/crawl/settings", async () => {
   const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
   return { getSettings: async () => ({ ...DEFAULT_CRAWL_SETTINGS, agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: true } }) };
@@ -67,7 +75,9 @@ vi.mock("@/lib/jobs/batch-repository", () => ({ readJobBatchMode: async () => ({
 vi.mock("@/lib/domain/evidence/agents/claim-control", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/domain/evidence/agents/claim-control")>(),
   readAgentScanMode: async () => ({ mode: "legacy", drainingFrom: null }) }));
-vi.mock("@/lib/operations/throughput", () => ({ pipelineThroughput: async () => ({ measuredAt: fixture.NOW.toISOString(), stages: [] }) }));
+vi.mock("@/lib/operations/throughput", () => ({ pipelineThroughput: async () => ({ measuredAt: fixture.NOW.toISOString(), stages: fixture.throughputStages }) }));
+// Text queues have their own DB-backed regression; this golden fixture isolates the original evidence reader.
+vi.mock('@/lib/operations/text-stage-progress', () => ({ readTextStageProgress: vi.fn(async () => []) }));
 vi.mock("@/lib/operations/uptime-split-repository", async () => {
   const { uptimeSplitStageInput } = await import("@/lib/operations/uptime-split");
   return { readUptimeSplitStage: async () => fixture.split.mode === "legacy" ? null : uptimeSplitStageInput({ at: fixture.NOW.toISOString(),
@@ -94,6 +104,31 @@ const expectedStages = [
 ];
 
 describe("배포 관문 근거 읽기", () => {
+  it('reads global capacity drain on primary and holds eligible first-review demand', async () => {
+    fixture.capacity.mode = 'draining';
+    fixture.throughputStages = [{ key: 'first', enabled: true, waiting: 220, oldestMinutes: 239,
+      completed1m: 0, completed5m: 0, progress5m: 0, errors5m: 0, label: 'AI1', unit: '건',
+      queueNote: '', detail: '', status: 'stalled' }];
+    try {
+      const report = await readWorkerProgress(fixture.NOW, { includeText: false });
+      expect(report.stages.find(stage => stage.stage === 'first')).toMatchObject({ held: true, reason: 'backoff', alarm: false, restartEligible: false });
+    } finally { fixture.capacity.mode = 'disabled'; fixture.throughputStages = []; }
+  });
+
+  it('refuses missing model-capacity control instead of granting restart authority', async () => {
+    fixture.capacity.mode = null;
+    try { await expect(readWorkerProgress(fixture.NOW)).rejects.toThrow('model_capacity_control_missing'); }
+    finally { fixture.capacity.mode = 'disabled'; }
+  });
+
+  it('lets role-local recovery skip the extra read-only text queries while the default monitor includes them', async () => {
+    vi.mocked(readTextStageProgress).mockClear();
+    await readWorkerProgress(fixture.NOW, { includeText: false });
+    expect(readTextStageProgress).not.toHaveBeenCalled();
+    await readWorkerProgress(fixture.NOW);
+    expect(readTextStageProgress).toHaveBeenCalledOnce();
+  });
+
   it("주 DB 에서 같은 SQL·같은 설정으로 읽고 같은 보고서를 낸다", async () => {
     fixture.primary.transactions.length = 0;
     const report = JSON.parse(JSON.stringify(await readWorkerProgress(fixture.NOW)));

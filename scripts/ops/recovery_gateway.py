@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Forced SSH command: bounded fleet observation and same-spec web/monitor recovery.
+
+Install with a root-owned config/source, a from= restricted key and OpenSSH
+restrict. No input is evaluated as shell, no env/source/image/DB is returned.
+"""
+import argparse
+import fcntl
+import http.client
+import io
+import json
+import math
+import os
+import re
+import signal
+import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+
+def bounded_output(argv, *, payload=None, limit=2_000_000, timeout=25):
+    """Bound bytes while reading, kill the whole local command group on expiry."""
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE if payload is not None else subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+    expired = threading.Event()
+
+    def kill():
+        # The leader may exit while a descendant still owns the output pipe.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def deadline():
+        expired.set()
+        kill()
+
+    timer = threading.Timer(timeout, deadline)
+    timer.daemon = True
+    timer.start()
+    try:
+        if payload is not None:
+            process.stdin.write(payload)
+            process.stdin.close()
+        output = process.stdout.read(limit + 1)
+        if len(output) > limit:
+            raise ValueError('command_output_exceeded')
+        process.wait()
+        if process.returncode or expired.is_set():
+            raise ValueError('bounded_command_failed')
+        return output
+    finally:
+        timer.cancel()
+        kill()
+        process.wait()
+        process.stdout.close()
+        if process.stdin is not None and not process.stdin.closed:
+            process.stdin.close()
+
+
+def command(argv):
+    return bounded_output(argv).decode('utf-8')
+
+
+def save(path, value):
+    path = Path(path)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as out:
+        json.dump(value, out)
+        out.flush()
+        os.fsync(out.fileno())
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+WEB_PROBE = """Promise.all(['/api/health','/'].map(async path=>{
+try {const r=await fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000'+path,{signal:AbortSignal.timeout(5000),redirect:'error'});
+if(path==='/api/health'){const j=await r.json();return {ready:r.ok&&j.status==='ok'&&j.db==='ok',db:j.db==='unavailable'?'unavailable':'unknown'};}
+await r.body?.cancel();return {page:r.ok};}catch{return path==='/api/health'?{ready:false,db:'unknown'}:{page:false};}
+})).then(rows=>console.log(JSON.stringify(Object.assign({},...rows))))"""
+PROVIDER_STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'keyword-verify',
+                             'product-translate', 'tagline-ko', 'intro-check'})
+MONITOR_PROBE = """try {const j=JSON.parse(require('fs').readFileSync(process.env.MONITOR_HEALTH_PATH||'/tmp/monitor-health.json','utf8'));
+const allowed=['reason-translate','crawl-tagline','keywords','keyword-verify','product-translate','tagline-ko','intro-check'];
+console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-j.checkedAt>=-1000&&Date.now()-j.checkedAt<90000,
+overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
+...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{})}));}
+catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
+
+
+def _age(value, now):
+    from datetime import datetime
+    try:
+        return now - datetime.fromisoformat(re.sub(r'(\.\d{6})\d+', r'\1', value).replace('Z', '+00:00')).timestamp()
+    except (ValueError, TypeError):
+        return -1
+
+
+def observe(key, cfg, run=command, now=None):
+    now = time.time() if now is None else now
+    result = {'key': key, 'version': None, 'replicas': None, 'settled': False,
+              'ok': False, 'recoverable': False, 'reason': 'probe_unknown'}
+    try:
+        service = json.loads(run(['docker', 'service', 'inspect', cfg['service']]))[0]
+        spec = service['Spec']
+        replicas = spec['Mode']['Replicated']['Replicas']
+        result.update(version=service['Version']['Index'], replicas=replicas)
+        settled = ((service.get('UpdateStatus') or {}).get('State') in (None, 'completed') and
+                   _age(service.get('UpdatedAt'), now) >= 180)
+        result['settled'] = settled
+        if replicas != cfg['replicas'] or replicas <= 0:
+            result['reason'] = 'replica_intent_changed'
+            return result
+        ids = run(['docker', 'ps', '--filter', 'label=com.docker.swarm.service.id=' + service['ID'],
+                   '--filter', 'status=running', '--format', '{{.ID}}']).split()
+        if not ids or len(ids) != replicas or any(not re.fullmatch('[a-f0-9]{12,64}', cid) for cid in ids):
+            result['reason'] = 'replicas_missing'
+            return result
+        containers = json.loads(run(['docker', 'inspect', *ids]))
+        if (not isinstance(containers, list) or len(containers) != len(ids) or
+                any(sum(isinstance(row, dict) and isinstance(row.get('Id'), str) and row['Id'].startswith(cid)
+                        for row in containers) != 1 for cid in ids)):
+            result['reason'] = 'probe_unknown'
+            return result
+        healthy = all((row['State'].get('Health') or {}).get('Status') == 'healthy' for row in containers)
+        if any(_age(row['State'].get('StartedAt'), now) < 180 for row in containers):
+            result['reason'] = 'warming_up'
+            return result
+        if cfg['kind'] == 'web':
+            checks = [json.loads(run(['docker', 'exec', cid, 'node', '-e', WEB_PROBE])) for cid in ids]
+            ready = all(row.get('ready') is True for row in checks)
+            if any(row.get('db') == 'unavailable' for row in checks):
+                result['reason'] = 'database_unavailable'
+            elif ready and any(row.get('page') is not True for row in checks):
+                result.update(reason='web_page_failed', recoverable=settled)
+            elif ready:
+                result.update(reason='ok', ok=True)
+            else:
+                result['reason'] = 'web_not_ready'
+        elif cfg['kind'] == 'monitor':
+            checks = [json.loads(run(['docker', 'exec', cid, 'node', '-e', MONITOR_PROBE])) for cid in ids]
+            if any(check.get('fresh') is not True for check in checks):
+                result.update(reason='monitor_stale', recoverable=settled)
+            else:
+                overall_ok = all(check.get('overall') == 'ok' for check in checks)
+                result.update(reason='ok' if overall_ok else 'pipeline_alarm', ok=overall_ok and healthy)
+                failures = sorted({stage for check in checks for stage in check.get('providerFailures', [])
+                                   if isinstance(stage, str) and stage in PROVIDER_STAGES})
+                if failures or all(isinstance(check.get('providerFailures'), list) for check in checks):
+                    result['providerFailures'] = failures
+        else:
+            result.update(reason='ok' if healthy else 'container_unhealthy', ok=healthy)
+        return result
+    except Exception:
+        return result
+
+
+def probe(config, run=command):
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        services = list(pool.map(lambda item: observe(*item, run=run), config['services'].items()))
+    return {'services': services}
+
+
+def docker_http(path, body):
+    payload = json.dumps(body).encode()
+    request = ('POST ' + path + ' HTTP/1.1\r\nHost: docker\r\nConnection: close\r\n'
+               'Content-Type: application/json\r\nContent-Length: ' + str(len(payload)) + '\r\n\r\n').encode() + payload
+    # Dial the locally configured Docker context without copying Docker credentials
+    # or exposing a general socket/tunnel to the SSH client.
+    output = bounded_output(['docker', 'system', 'dial-stdio'], payload=request, limit=65536)
+
+    class ResponseSocket:
+        def makefile(self, *_):
+            return io.BytesIO(output)
+
+    response = http.client.HTTPResponse(ResponseSocket())
+    response.begin()
+    return response.status
+
+
+def force_update(cfg, version, run=command, exchange=docker_http):
+    service = json.loads(run(['docker', 'service', 'inspect', cfg['service']]))[0]
+    if (service['Version']['Index'] != version or service['Spec']['Name'] != cfg['service'] or
+            not re.fullmatch('[a-z0-9]{25}', service['ID'])):
+        return {'result': 'refused'}
+    spec = service['Spec']
+    task = spec['TaskTemplate']
+    force = task.get('ForceUpdate', 0)
+    if type(force) is not int or not 0 <= force < 2 ** 53:
+        return {'result': 'refused'}
+    task['ForceUpdate'] = force + 1
+    # Engine CAS closes the inspect/update race. All other spec bytes, including
+    # replica intent, rollout policy, release, shutdown grace and auth, stay put.
+    status = exchange('/v1.45/services/' + service['ID'] + '/update?version=' + str(version) + '&registryAuthFrom=spec', spec)
+    return {'result': 'requested' if status == 200 else 'refused' if status == 409 else 'unknown'}
+
+
+def recover(config, key, version, *, now=None, probe_fn=probe, force_fn=force_update):
+    cfg = config['services'].get(key)
+    if not cfg or cfg['kind'] not in ('web', 'monitor'):
+        return {'result': 'refused'}
+    path = Path(config['state'])
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(str(path) + '.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        now = time.time() if now is None else now
+        try:
+            state = json.loads(path.read_text()) if path.exists() else {'attempts': {}}
+            attempts = state['attempts'].get(key, [])
+            if not isinstance(attempts, list) or any(type(at) not in (int, float) or not math.isfinite(at) or at > now for at in attempts):
+                return {'result': 'limited'}
+            attempts = [at for at in attempts if now - at < 86400]
+            if len(attempts) >= 2 or (attempts and now - max(attempts) < 900):
+                return {'result': 'limited'}
+            row = next((row for row in probe_fn(config)['services'] if row['key'] == key), {})
+            if (row.get('version') != version or row.get('replicas') != cfg['replicas'] or
+                    row.get('settled') is not True or row.get('recoverable') is not True):
+                return {'result': 'refused'}
+            # Reserve BEFORE the only mutation: an SSH/API timeout is never proof of non-execution.
+            state['attempts'][key] = attempts + [now]
+            save(path, state)
+            return force_fn(cfg, version)
+        except Exception:
+            return {'result': 'unknown'}
+
+
+def parse_command(value, config):
+    if value == 'probe':
+        return ('probe',)
+    match = re.fullmatch(r'recover ([a-z0-9-]{1,60}) ([0-9]{1,16})', value)
+    if not match or match[1] not in config['services']:
+        raise ValueError('command_denied')
+    return ('recover', match[1], int(match[2]))
+
+
+def read_config(path):
+    config = json.loads(Path(path).read_text())
+    services = config['services']
+    if not isinstance(services, dict) or not 1 <= len(services) <= 30:
+        raise ValueError('invalid_config')
+    for key, cfg in services.items():
+        if (not re.fullmatch('[a-z0-9-]{1,60}', key) or
+                not re.fullmatch('[a-z0-9-]{1,100}', cfg['service']) or
+                cfg['kind'] not in ('web', 'monitor', 'worker', 'scheduler', 'connect-agent') or
+                type(cfg['replicas']) is not int or not 1 <= cfg['replicas'] <= 8):
+            raise ValueError('invalid_config')
+    return config
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', required=True)
+    args = parser.parse_args()
+    try:
+        config = read_config(args.config)
+        action = parse_command(os.environ.get('SSH_ORIGINAL_COMMAND', ''), config)
+        result = probe(config) if action[0] == 'probe' else recover(config, *action[1:])
+        print(json.dumps(result))
+    except Exception:
+        print(json.dumps({'error': 'gateway_denied'}))
+        raise SystemExit(1)
+
+
+if __name__ == '__main__':
+    main()

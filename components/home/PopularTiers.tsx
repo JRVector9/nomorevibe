@@ -5,6 +5,7 @@ import { localePath } from "@/lib/i18n/routing";
 import {Suspense} from 'react';
 import Link from 'next/link';
 import {getPopularGroups} from '@/lib/domain/products/popular';
+import {publicRead} from '@/lib/domain/products/public-reads';
 import {popularHref} from '@/lib/domain/products/stars';
 import {PopularFilter} from './PopularFilter';
 import {PopularTierCards} from './PopularTierCards';
@@ -19,7 +20,7 @@ export async function PopularTiers({personal=false}:{personal?:boolean}){
  const locale=await getRequestLocale();
  const t=await getTranslator(locale,"browse");
  let groups;
- try{groups=await getPopularGroups(personal);}catch(error){
+ try{groups=await publicRead("list", ["popular-groups", personal], () => getPopularGroups(personal));}catch(error){
   logger.warn('home.popular_unavailable',{error});
   return <section className="popular-section" id="popular"><h2>{t("popular.title")}</h2><p role="status">{t("error.load")}</p></section>;
  }

@@ -45,13 +45,8 @@ export type TaglineTask = { candidate: CrawlCandidate; document: CrawlDocument; 
  * 세 번째가 있어야 "증거로는 알 수 없다"(빈 줄)로 남은 후보가 페이지가 바뀌었을 때 다시 불린다.
  * 원본이 그대로면 잡이 해시를 보고 부르지 않고 넘어간다(recordTaglineResult의 reuse).
  */
-export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
-  const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines,
-    readyAgeMinutes: sql<number>`extract(epoch from (localtimestamp - ${crawlCandidates.updatedAt})) / 60` })
-    .from(crawlCandidates)
-    .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
-    .leftJoin(crawlTaglines, eq(crawlTaglines.repo, crawlCandidates.repo))
-    .where(and(
+export function pendingTaglinePredicate() {
+  return and(
       eq(crawlCandidates.state, "needs_review"),
       eq(crawlCandidates.reason, "no_description"),
       inArray(crawlCandidates.decidedBy, ["auto", "admin", "deepseek"]),
@@ -61,7 +56,16 @@ export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
         or (${crawlTaglines.errorCode} is not null and ${crawlTaglines.attempts} < ${MAX_ATTEMPTS}
             and (${crawlTaglines.retryAt} is null or ${crawlTaglines.retryAt} <= now()))
         or ${crawlTaglines.documentAt} is distinct from ${crawlDocuments.fetchedAt})`,
-    ))
+    )!;
+}
+
+export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
+  const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines,
+    readyAgeMinutes: sql<number>`extract(epoch from (localtimestamp - ${crawlCandidates.updatedAt})) / 60` })
+    .from(crawlCandidates)
+    .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
+    .leftJoin(crawlTaglines, eq(crawlTaglines.repo, crawlCandidates.repo))
+    .where(pendingTaglinePredicate())
     // 오래 기다린 것부터. 실패한 것이 새 후보를 밀어내지 않도록 시도 적은 순이 먼저다
     .orderBy(sql`coalesce(${crawlTaglines.attempts}, 0) asc, ${crawlCandidates.updatedAt} asc`)
     .limit(limit);

@@ -1,0 +1,253 @@
+#!/usr/bin/env python3
+"""Independent Oracle loop; uses only forced SSH commands and private Kuma URLs."""
+import argparse
+import fcntl
+import http.client
+import json
+import math
+import os
+import re
+import signal
+import socket
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+
+from recovery_gateway import PROVIDER_STAGES, bounded_output, save
+from incident_notifications import notify, validate_destination
+
+
+REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warming_up',
+           'database_unavailable', 'web_page_failed', 'ok', 'web_not_ready', 'monitor_stale',
+           'pipeline_alarm', 'container_unhealthy', 'native_unit_failed', 'native_unit_inactive', 'native_unit_unknown'}
+
+
+def validate_report(report):
+    if not isinstance(report, dict) or set(report) != {'services'} or not isinstance(report['services'], list) or not 1 <= len(report['services']) <= 30:
+        raise ValueError('invalid_report')
+    keys = set()
+    for row in report['services']:
+        if (not isinstance(row, dict) or set(row) - {'providerFailures'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+                not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
+                row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
+                not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
+                not (row['replicas'] is None or type(row['replicas']) is int and 0 <= row['replicas'] <= 8)):
+            raise ValueError('invalid_report')
+        failures = row.get('providerFailures', [])
+        if (not isinstance(failures, list) or len(failures) > len(PROVIDER_STAGES) or
+                any(not isinstance(stage, str) or stage not in PROVIDER_STAGES for stage in failures) or
+                len(set(failures)) != len(failures)):
+            raise ValueError('invalid_provider_failures')
+        if row['recoverable'] and (row['reason'] not in ('web_page_failed', 'monitor_stale', 'native_unit_failed') or not row['settled'] or row['ok']):
+            raise ValueError('invalid_recovery_claim')
+        keys.add(row['key'])
+    return report
+
+
+def ssh(host, action):
+    argv = ['ssh', '-F', '/dev/null', '-p', '22222', '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes',
+            '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8',
+            '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2',
+            '-o', 'UserKnownHostsFile=' + host['knownHosts'], '-i', host['key'], host['target'], action]
+    return json.loads(bounded_output(argv, limit=32768, timeout=100))
+
+
+def collect(config):
+    def read(item):
+        name, host = item
+        try:
+            report = validate_report(ssh(host, 'probe'))
+            if {row['key'] for row in report['services']} != set(host['services']):
+                raise ValueError('inventory_changed')
+            return name, report
+        except Exception:
+            return name, None
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        return dict(pool.map(read, config['hosts'].items()))
+
+
+def cycle(config, state, reports, *, now=None, recover=None):
+    now = time.time() if now is None else now
+    events = []
+    alarm = False
+    for host in config['hosts']:
+        report = reports.get(host)
+        if report is None:
+            alarm = alarm or any(key.startswith(host + '/') and value.get('bad', 0) >= 2
+                                 for key, value in state['targets'].items())
+            rows = [{'key': 'host', 'ok': False, 'version': None, 'recoverable': False, 'reason': 'probe_unknown'}]
+        else:
+            rows = validate_report(report)['services']
+        for row in rows:
+            key = host + '/' + row['key']
+            old = state['targets'].get(key, {})
+            consecutive = 0 <= now - old.get('at', 0) <= 150 and old.get('version') == row['version']
+            bad = min(3, old.get('bad', 0) + 1) if consecutive and not row['ok'] else (0 if row['ok'] else 1)
+            actionable = (min(3, old.get('actionable', 0) + 1) if consecutive and old.get('reason') == row['reason']
+                          else 1) if row['recoverable'] else 0
+            attempts = old.get('attempts', [])
+            if (not isinstance(attempts, list) or any(type(at) not in (int, float) or not math.isfinite(at) or at > now for at in attempts)):
+                # A clock rollback or corrupt recovery history cannot open a fresh mutation budget.
+                attempts = [now, now]
+            attempts = [at for at in attempts if now - at < 86400]
+            target = {'at': now, 'bad': bad, 'actionable': actionable, 'reason': row['reason'],
+                      'version': row['version'], 'attempts': attempts}
+            # Provider retries refresh database timestamps. The independent,
+            # durable observer measures uninterrupted failure instead of the
+            # age of the last retry. Releases alone do not reset this clock.
+            observations = {}
+            previous = old.get('providerFailures', {})
+            for stage in row.get('providerFailures', []):
+                history = previous.get(stage, {}) if isinstance(previous, dict) else {}
+                if not isinstance(history, dict):
+                    history = {}
+                first, last = history.get('first'), history.get('last')
+                valid = (type(first) in (int, float) and type(last) in (int, float) and
+                         math.isfinite(first) and math.isfinite(last) and 0 <= first <= last <= now and now - last <= 150)
+                first = first if valid else now
+                observations[stage] = {'first': first, 'last': now}
+                if now - first >= 1800:
+                    alarm = True
+                    events.append({'target': key, 'stage': stage, 'reason': 'upstream_stalled'})
+            if observations:
+                target['providerFailures'] = observations
+            state['targets'][key] = target
+            if bad >= 2:
+                alarm = True
+            if (config.get('recover') is True and actionable >= 3 and row['recoverable'] and row['version'] is not None and
+                    len(attempts) < 2 and (not attempts or now - max(attempts) >= 900)):
+                target['attempts'].append(now)
+                save(config['state'], state)
+                try:
+                    result = recover(host, row['key'], row['version'])
+                    outcome = result.get('result') if isinstance(result, dict) else None
+                except Exception:
+                    outcome = None
+                events.append({'target': key, 'recovery': outcome if outcome in ('requested', 'refused', 'limited') else 'unknown'})
+            events.append({'target': key, 'reason': row['reason'], 'bad': bad})
+        if report is not None:
+            state['targets'].pop(host + '/host', None)
+    save(config['state'], state)
+    return {'ok': not alarm, 'events': events}
+
+
+def push(url, ok, *, deadline_seconds=5):
+    # No redirect handling, proxies, response bodies, URL or exception logging.
+    target = urlsplit(url)
+    if target.scheme != 'https' or target.username or target.password or target.fragment:
+        raise ValueError('push_configuration_invalid')
+    query = target.query + ('&' if target.query else '') + urlencode({'status': 'up' if ok else 'down',
+                                                                    'msg': 'Oracle watchdog healthy' if ok else 'Oracle watchdog incident'})
+    connection = http.client.HTTPSConnection(target.hostname, target.port, timeout=5)
+    timer = None
+    try:
+        connection.connect()
+        transport = connection.sock
+
+        def deadline():
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        # Socket idle timeouts alone allow a slow-drip header/body to stop the
+        # monitoring loop indefinitely. Shutdown wakes blocked SSL reads too.
+        timer = threading.Timer(deadline_seconds, deadline)
+        timer.daemon = True
+        timer.start()
+        connection.request('POST', target.path + '?' + query, body=b'')
+        response = connection.getresponse()
+        body = response.read(8193)
+        if response.status != 200 or len(body) > 8192 or json.loads(body).get('ok') is not True:
+            raise ValueError('push_failed')
+    finally:
+        if timer:
+            timer.cancel()
+        connection.close()
+
+
+def deliver(config, ok):
+    targets = [(url, ok) for url in config['pushUrls']] + [(url, True) for url in config.get('heartbeatUrls', [])]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        receipts = list(pool.map(lambda target: safe_push(*target), targets))
+    boundary = len(config['pushUrls'])
+    return {'receipts': receipts[:boundary], 'heartbeatReceipts': receipts[boundary:]}
+
+
+def read_config(path):
+    path = Path(path)
+    if path.stat().st_mode & 0o077:
+        raise ValueError('private_configuration_required')
+    config = json.loads(path.read_text())
+    if type(config.get('recover')) is not bool or not isinstance(config.get('hosts'), dict) or not 1 <= len(config['hosts']) <= 3:
+        raise ValueError('invalid_configuration')
+    for name, host in config['hosts'].items():
+        if (not re.fullmatch('[a-z0-9-]{1,30}', name) or
+                not re.fullmatch(r'[a-z_][a-z0-9_-]*@100\.[0-9.]+', host['target']) or
+                not isinstance(host.get('services'), list) or not host['services'] or len(set(host['services'])) != len(host['services'])):
+            raise ValueError('invalid_configuration')
+        for key in ('key', 'knownHosts'):
+            if not Path(host[key]).is_absolute() or not Path(host[key]).is_file():
+                raise ValueError('missing_ssh_material')
+    if not isinstance(config.get('pushUrls'), list) or not config['pushUrls']:
+        raise ValueError('push_target_required')
+    if not isinstance(config.get('heartbeatUrls', []), list):
+        raise ValueError('invalid_heartbeat_targets')
+    endpoints = []
+    for value in config['pushUrls'] + config.get('heartbeatUrls', []):
+        url = urlsplit(value)
+        if url.scheme != 'https' or not url.hostname or url.username or url.password or url.fragment:
+            raise ValueError('invalid_push_target')
+        # Kuma identifies its Push monitor by path, not status/message query.
+        endpoints.append((url.hostname.lower().rstrip('.'), url.port if url.port is not None else 443, url.path or '/'))
+    boundary = len(config['pushUrls'])
+    if set(endpoints[:boundary]) & set(endpoints[boundary:]):
+        raise ValueError('overlapping_push_targets')
+    if 'incidentNotifications' in config:
+        validate_destination(config['incidentNotifications'])
+    return config
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', required=True)
+    parser.add_argument('--once', action='store_true')
+    args = parser.parse_args()
+    config = read_config(args.config)
+    path = Path(config['state'])
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with open(str(path) + '.lock', 'a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        state = json.loads(path.read_text()) if path.exists() else {'targets': {}}
+        stop = threading.Event()
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+        signal.signal(signal.SIGINT, lambda *_: stop.set())
+        while not stop.is_set():
+            reports = collect(config)
+            result = cycle(config, state, reports, recover=lambda host, key, version:
+                           ssh(config['hosts'][host], 'recover ' + key + ' ' + str(version)))
+            receipts = deliver(config, result['ok'])
+            notifications = notify(config, state, reports, result, receipts)
+            print(json.dumps({'event': 'oracle_watchdog', 'at': time.time(), **result, **receipts,
+                              'notifications': notifications}), flush=True)
+            if args.once:
+                return
+            stop.wait(30)
+
+
+def safe_push(url, ok):
+    try:
+        push(url, ok)
+        return True
+    except Exception:
+        return False
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception:
+        print(json.dumps({'event': 'oracle_watchdog_failed'}), flush=True)
+        raise SystemExit(1)

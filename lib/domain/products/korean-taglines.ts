@@ -73,7 +73,7 @@ export async function homeListSlugs(depth = HOME_DEPTH): Promise<string[]> {
 }
 
 /** 작업 선택과 운영 집계가 같은 현재 원문·품질 한도·재시도 시각을 쓴다. */
-function koreanQueuePredicates(homeSlugs: readonly string[]) {
+export function koreanQueuePredicates(homeSlugs: readonly string[]) {
   const home = slugArrayPredicate(products.slug, [...homeSlugs]);
   const current = sql`${k.sourceTagline} = ${products.tagline}`;
   const fresh = sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline})`;

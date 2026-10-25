@@ -171,8 +171,19 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     let lease: RoleLease | null = null;
     const acquiredAt = Date.now();
     pending();
-    try { lease = await deps.acquire(candidate); succeeded(); }
-    catch (error) { failed('role.acquire_unknown', error); }
+    let acquireTimer: ReturnType<typeof setTimeout> | undefined, acquireTimedOut = false;
+    try {
+      // A half-open DB connection may never return even after the server's statement timeout.
+      // End this boot instead of retrying an election whose commit is still uncertain.
+      lease = await Promise.race([deps.acquire(candidate), new Promise<never>((_resolve, reject) => {
+        acquireTimer = setTimeout(() => { acquireTimedOut = true; reject(new Error('role_acquire_deadline')); }, ROLE_STUCK_UNHEALTHY_MS);
+        acquireTimer.unref?.();
+      })]);
+      succeeded();
+    } catch (error) {
+      if (acquireTimedOut) health.dbFailingSince ??= acquiredAt;
+      failed('role.acquire_unknown', error);
+    } finally { clearTimeout(acquireTimer); }
     if (signal.aborted) {
       // An election already in flight may still commit after SIGTERM. Never start its child.
       if (lease) await deps.release?.(lease).catch(() => false);
@@ -410,7 +421,7 @@ async function main() {
         if (candidate.batchVersion === 1) return false;
         // These roles retain their specialized main-work progress policy; the supervisor observes each runtime lane.
         if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
-        const report = await readWorkerProgress();
+        const report = await readWorkerProgress(undefined, { includeText: false });
         if (role === 'maintenance') return maintenanceUptimeStalled({
           ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',
         });

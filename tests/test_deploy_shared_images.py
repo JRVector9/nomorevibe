@@ -647,7 +647,7 @@ class OracleOfflineRoutingTests(unittest.TestCase):
 
 
 class FleetInventoryTests(unittest.TestCase):
-    """Read-only coverage of the 17-app fleet; the shared-image release stays at 8 apps by default."""
+    """Read-only coverage of the 18-app fleet; the shared-image release stays at 8 apps by default."""
 
     def setUp(self):
         self.sha = 'b' * 40
@@ -664,8 +664,8 @@ class FleetInventoryTests(unittest.TestCase):
         self.assertEqual(release.ORDER, tuple(release.APPS))
         self.assertEqual(len(release.APPS), 8)
         self.assertEqual(sorted(release.GIT_BUILD_APPS), ['connect-agent-m3', 'maintenance-m3', 'maintenance-mini',
-                                                           'scheduler-m3', 'text-m3', 'text-mini'])
-        self.assertEqual(len(set(release.APPS) | set(release.GIT_BUILD_APPS)) - 1, 13)  # connect-agent is outside the 13
+                                                           'scheduler-m3', 'scheduler-mini', 'text-m3', 'text-mini'])
+        self.assertEqual(len(set(release.APPS) | set(release.GIT_BUILD_APPS)) - 1, 14)  # connect-agent is separate
         ids = [metadata[0] for metadata in release.KNOWN_APPS.values()]
         self.assertEqual(len(ids), len(set(ids)))
         for short in release.KNOWN_APPS:
@@ -675,7 +675,7 @@ class FleetInventoryTests(unittest.TestCase):
         client = FakeClient(self.fleet())
         result = release.inventory(client, self.sha)
         self.assertEqual(client.requests, [])
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (17, True, []))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (18, True, []))
         self.assertEqual({short: row['deployedBy'] for short, row in result['apps'].items()},
                          {short: 'manual-docker' if short in release.AUXILIARY_APPS else 'run' if short in release.APPS or short in release.CONSUMER_APPS else 'manual-git-build'
                           for short in tuple(release.KNOWN_APPS) + self.REGISTERED_CONSUMERS})
@@ -711,7 +711,7 @@ class FleetInventoryTests(unittest.TestCase):
             client = FakeClient(apps)
             with self.subTest(drift=tuple(drift)):
                 result = release.inventory(client, self.sha)
-                self.assertEqual(result['appCount'], 17)
+                self.assertEqual(result['appCount'], 18)
                 self.assertFalse(result['complete'])
                 self.assertEqual(result['pending'], pending)
                 self.assertEqual(result['apps']['monitor-m3']['deployedBy'], 'manual-docker')
@@ -889,13 +889,13 @@ class ConsumerAppRegistrationTests(unittest.TestCase):
         fleet = {short: {'sourceType': 'docker', 'applicationStatus': 'done', 'replicas': 1, 'env': 'RELEASE_TAG=' + self.new_sha + '\n'}
                  for short in tuple(release.KNOWN_APPS) + CONSUMERS}
         result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete']), (17, True))
+        self.assertEqual((result['appCount'], result['complete']), (18, True))
         self.assertEqual(result['consumerApps'], {**dict.fromkeys(('ai1-consumer-mini', 'ai1-consumer-m3'), 'unregistered'),
             'ai2-consumer-m3': 'registered', 'agent-scan-consumer-m3': 'registered'})
         fleet['ai2-consumer-m3']['env'] = 'RELEASE_TAG=' + self.old_sha + '\n'
         with self.registered():
             result = release.inventory(FakeClient(fleet), self.new_sha)
-        self.assertEqual((result['appCount'], result['complete'], result['pending']), (20, False, ['ai2-consumer-m3']))
+        self.assertEqual((result['appCount'], result['complete'], result['pending']), (21, False, ['ai2-consumer-m3']))
         self.assertEqual(result['consumerApps'], dict.fromkeys(CONSUMERS, 'registered'))
         self.assertEqual({short: result['apps'][short]['deployedBy'] for short in CONSUMERS}, dict.fromkeys(CONSUMERS, 'run'))
 

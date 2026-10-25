@@ -46,7 +46,7 @@ class GitRolloutTests(unittest.TestCase):
                 'env': 'RELEASE_TAG=' + self.old + '\nWORKER_ROLE=' + role + '\nSECRET_TOKEN=private\n',
                 'buildArgs': 'UNCHANGED=1\n', 'buildSecrets': 'SECRET=private\n',
                 'createEnvFile': False, 'applicationStatus': 'done', 'autoDeploy': False,
-                'replicas': 2 if kind == 'scheduler' else 1,
+                'replicas': 2 if short == 'scheduler-m3' else 1,
                 'command': 'node --import tsx scripts/' + (
                            'connect-agent.ts' if kind == 'connect-agent' else 'worker-supervisor.ts --role=' + role),
             }
@@ -90,7 +90,7 @@ class GitRolloutTests(unittest.TestCase):
     def test_wave_plan_preserves_standby_before_primary_and_caps_at_two(self):
         self.assertEqual(release.waves(tuple(self.apps)), (
             ('text-mini', 'maintenance-mini'), ('text-m3', 'maintenance-m3'),
-            ('scheduler-m3', 'connect-agent-m3')))
+            ('scheduler-mini',), ('scheduler-m3', 'connect-agent-m3')))
         with self.assertRaisesRegex(ValueError, 'standby_required'):
             release.waves(('text-m3',))
         with self.assertRaisesRegex(ValueError, 'invalid_git_apps'):
@@ -104,6 +104,29 @@ class GitRolloutTests(unittest.TestCase):
         self.assertEqual(result['deployed'], [])
         self.assertEqual(self.client.requests, [])
         probe.assert_not_called()
+
+    def test_scheduler_mini_is_verified_before_m3_starts(self):
+        state = self.prepare(('scheduler-mini', 'scheduler-m3'), mode='shared-worker')
+        verified = []
+        def verify(client, short, target, original, previous_id, manifest, **kwargs):
+            if short == 'scheduler-m3':
+                self.assertEqual(verified, ['scheduler-mini'])
+            verified.append(short)
+            return {'app': short, 'deployment': 'done', 'deploymentId': 'new-' + short}
+        with patch.object(release, 'check_deployed', side_effect=verify), tempfile.TemporaryDirectory() as directory:
+            release.deploy(self.client, self.target, state, Path(directory) / 'receipts')
+        self.assertEqual(verified, ['scheduler-mini', 'scheduler-m3'])
+
+    def test_failed_mini_scheduler_verification_never_mutates_m3(self):
+        state = self.prepare(('scheduler-mini', 'scheduler-m3'), mode='shared-worker')
+        def fail(client, short, *args, **kwargs):
+            self.assertEqual(short, 'scheduler-mini')
+            raise release.shared.ReleaseStopped('scheduler-mini_verification_failed')
+        with patch.object(release, 'check_deployed', side_effect=fail), tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(release.GitRolloutStopped):
+                release.deploy(self.client, self.target, state, Path(directory) / 'receipts')
+        self.assertFalse(any(payload['applicationId'] == self.apps['scheduler-m3']['applicationId']
+                             for _, payload in self.client.requests))
 
     def test_already_exact_selected_worker_configuration_causes_zero_deploy(self):
         for short in ('text-mini', 'text-m3'):
@@ -129,13 +152,14 @@ class GitRolloutTests(unittest.TestCase):
             self.prepare()
         self.assertEqual(self.client.requests, [])
 
-    def test_shared_worker_mode_explicitly_converts_five_and_preserves_runtime_contract(self):
+    def test_shared_worker_mode_explicitly_converts_six_and_preserves_runtime_contract(self):
         state = self.prepare(mode='shared-worker')
-        self.assertEqual(state['conversions'], ['text-mini', 'maintenance-mini', 'text-m3', 'maintenance-m3', 'scheduler-m3'])
+        self.assertEqual(state['conversions'], ['text-mini', 'maintenance-mini', 'text-m3', 'maintenance-m3',
+                                                'scheduler-mini', 'scheduler-m3'])
         before = copy.deepcopy(self.apps)
         with tempfile.TemporaryDirectory() as directory:
             result = release.deploy(self.client, self.target, state, Path(directory) / 'receipts')
-        self.assertEqual(len(result['deployed']), 6)
+        self.assertEqual(len(result['deployed']), 7)
         for short, original in before.items():
             expected = copy.deepcopy(original)
             expected['env'] = release.shared.replace_setting(expected['env'], 'RELEASE_TAG', self.new)
@@ -144,7 +168,7 @@ class GitRolloutTests(unittest.TestCase):
             else:
                 expected['buildArgs'] = release.provenance_build_args(expected['buildArgs'], self.new)
             self.assertEqual(self.apps[short], expected)
-        self.assertEqual(sum(path == 'application.saveDockerProvider' for path, _ in self.client.requests), 5)
+        self.assertEqual(sum(path == 'application.saveDockerProvider' for path, _ in self.client.requests), 6)
 
     def test_existing_docker_workers_are_supported_but_connect_source_is_guarded(self):
         for short in self.apps:
@@ -198,7 +222,7 @@ class GitRolloutTests(unittest.TestCase):
             role = short.rpartition('-')[0]
             actual['command'] = (None if short == 'connect-agent-m3' else
                 '/sbin/tini -- node --import tsx scripts/worker-supervisor.ts --role=scheduler'
-                if short == 'scheduler-m3' else
+                if short.startswith('scheduler-') else
                 '/sbin/tini -- node --import tsx scripts/role-worker.ts --role=' + role +
                 (' --kind=standby' if short.endswith('-mini') else ' --kind=primary'))
             with self.subTest(app=short):

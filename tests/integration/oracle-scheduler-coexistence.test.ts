@@ -17,7 +17,8 @@ import { ensureSchema, TEST_DATABASE_URL } from "./setup";
  * PR11g 실제 PostgreSQL. 이 파일이 만들고 지우는 임시 DB 하나와 scheduler 최소권한 role 하나만 쓴다.
  * Oracle scheduler(nomorevibe_oracle_scheduler)와 M3 scheduler 두 복제본(소유자 계정)을 각자 별도 프로세스로 띄워
  * DR fence lock 뒤에 세운 뒤 동시에 풀어 같은 due 요청을 경합시킨다. role lease 없이 jobs 행 잠금과 due 조건만으로
- * 요청이 한 번만 생기는지, fence 된 DB 에서는 세 scheduler 모두 요청 0건인지 확인한다.
+ * 요청이 한 번만 생기는지 확인한다. mini 와 M3 두 복제본의 경합·mini 단독 진행도 확인하고,
+ * fence 된 DB 에서는 Oracle·M3·mini scheduler 모두 요청 0건인지 확인한다.
  */
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const tag = randomBytes(6).toString("hex"), name = `nomorevibe_test_pr11g_${tag}`, password = randomUUID();
@@ -155,7 +156,42 @@ it("an Oracle scheduler racing two M3 replicas adds each due request exactly onc
   expect(services.map(row => row.key)).toEqual([`service:scheduler:${tag}-m3-a`, `service:scheduler:${tag}-m3-b`, `service:scheduler:${tag}-oracle`]);
 }, 120_000);
 
-it("on a fenced database the Oracle scheduler and both M3 replicas request nothing and every schedule stays as it was", async () => {
+it("mini coexists with both M3 replicas and continues due requests alone when M3 processes are absent", async () => {
+  await pool!`UPDATE jobs SET requested_version = 10, processed_version = 10,
+    next_scheduled_at = clock_timestamp() - interval '1 hour' WHERE name = ANY(${pool!.array(LEGACY)}::text[])`;
+  const leases = await rows(pool!`SELECT to_jsonb(r) AS row FROM role_leases r ORDER BY role`);
+  const before = new Map((await schedules()).map(row => [row.name, row]));
+  const holder = await pool!.reserve(), runs: Promise<Run>[] = [];
+  const miniId = `mini-scheduler-${tag}`;
+  try {
+    await holder`BEGIN`;
+    const [{ pid }] = await holder<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+    await holder`SELECT id FROM dr_writer_fence WHERE id = 1 FOR UPDATE`;
+    runs.push(scheduler(`${tag}-m3-a`, undefined, PEER_TIMEOUTS), scheduler(`${tag}-m3-b`, undefined, PEER_TIMEOUTS),
+      scheduler(miniId, undefined, { ...PEER_TIMEOUTS, PHYSICAL_HOST: 'mini' }));
+    await waitForWaiters(pid, 3, 'm3_and_mini_wait_fence');
+  } finally { await holder`ROLLBACK`.catch(() => {}); holder.release(); }
+  const concurrent = await Promise.all(runs);
+  for (const run of concurrent) {
+    expect(run.code).toBe(0);
+    expect(run.output.error).toBeUndefined();
+  }
+  expect(concurrent.reduce((sum, run) => sum + Number(run.output.requested), 0)).toBe(LEGACY.length);
+  for (const row of await schedules()) {
+    if (VERSIONED.includes(row.name)) { expect(row).toEqual(before.get(row.name)); continue; }
+    expect(row).toMatchObject({ requested: 11, processed: 10 });
+  }
+  // One-shot M3 processes have exited. Only a new mini process is started for the next due interval.
+  await pool!`UPDATE jobs SET processed_version = requested_version,
+    next_scheduled_at = clock_timestamp() - interval '1 hour' WHERE name = ANY(${pool!.array(LEGACY)}::text[])`;
+  const alone = await scheduler(miniId, undefined, { PHYSICAL_HOST: 'mini' });
+  expect(alone.code).toBe(0);
+  expect(alone.output).toMatchObject({ principal: OWNER, requested: LEGACY.length });
+  expect((await scheduler(miniId, undefined, { PHYSICAL_HOST: 'mini' })).output.requested).toBe(0);
+  expect(await rows(pool!`SELECT to_jsonb(r) AS row FROM role_leases r ORDER BY role`)).toEqual(leases);
+}, 120_000);
+
+it("on a fenced database Oracle, both M3 replicas, and mini request nothing and every schedule stays as it was", async () => {
   const local = drizzle(pool!, { schema });
   const site = await local.transaction(tx => fence.readDatabaseIdentity(tx));
   const active = await local.transaction(tx => fence.lockWriterFence(tx, "share"));
@@ -165,8 +201,9 @@ it("on a fenced database the Oracle scheduler and both M3 replicas request nothi
   await pool!`UPDATE jobs SET next_scheduled_at = clock_timestamp() - interval '1 hour' WHERE name = ANY(${pool!.array([...LEGACY, ...VERSIONED])}::text[])`;
   const before = await schedules();
   const runs = await Promise.all([scheduler(`${tag}-m3-a`, undefined, PEER_TIMEOUTS), scheduler(`${tag}-m3-b`, undefined, PEER_TIMEOUTS),
-    scheduler(`${tag}-oracle`, ORACLE)]);
+    scheduler(`${tag}-oracle`, ORACLE), scheduler(`mini-scheduler-${tag}`, undefined, { PHYSICAL_HOST: 'mini' })]);
   for (const run of runs) expect(run.output.error).toBeUndefined();
-  expect(runs.map(run => [run.code, run.output.principal, run.output.requested])).toEqual([[0, OWNER, 0], [0, OWNER, 0], [0, ORACLE, 0]]);
+  expect(runs.map(run => [run.code, run.output.principal, run.output.requested]))
+    .toEqual([[0, OWNER, 0], [0, OWNER, 0], [0, ORACLE, 0], [0, OWNER, 0]]);
   expect(await schedules()).toEqual(before);
 }, 120_000);

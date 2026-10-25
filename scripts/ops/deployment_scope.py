@@ -13,10 +13,10 @@ from pathlib import Path, PurePosixPath
 
 
 SCHEMA_VERSION = 1
-RULES_VERSION = 'deployment-scope-v1'
+RULES_VERSION = 'deployment-scope-v2'
 CONSUMER_PARENT_ROLES = {'ai1': 'reviewer', 'ai2': 'reviewer', 'agent-scan': 'crawler'}
-PAIR_ROLES = ('publisher', 'reviewer', 'crawler', 'web', 'text', 'maintenance')
-SINGLE_ROLES = {'scheduler': 'scheduler-m3', 'connect-agent': 'connect-agent-m3', 'monitor': 'monitor-m3'}
+PAIR_ROLES = ('publisher', 'reviewer', 'crawler', 'web', 'text', 'maintenance', 'scheduler')
+SINGLE_ROLES = {'connect-agent': 'connect-agent-m3', 'monitor': 'monitor-m3'}
 SHA = re.compile(r'[0-9a-f]{40}')
 HASH = re.compile(r'[0-9a-f]{64}')
 IMMUTABLE_IMAGE = re.compile(r'(?:[^\s@]+@)?sha256:[0-9a-f]{64}')

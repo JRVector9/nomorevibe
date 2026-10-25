@@ -47,19 +47,20 @@ main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish
 | docs·README·검토된 로컬 운영 도구만 |0개|
 | CSS·확인된 웹 문구 namespace·수동 웹 asset |웹2개|
 | 독립 scheduler/connect/monitor entrypoint |해당 등록 앱|
-| 공통 lib·DB·catalog·Dockerfile·workflow·이미지 승격·미분류 |전체17개|
+| 공통 lib·DB·catalog·Dockerfile·workflow·이미지 승격·미분류 |전체18개|
 
 분류는 허용 목록이다. 다른 history·객체 부재·rename의 이전 경로·미분류는 전체로 복귀한다.
 `lib/jobs/registry.ts`가 handler들을 함께 import하므로 파일 이름만 보고 역할을 좁히지 않는다.
 역할을 선택하면 mini/M3와 등록된 소비자까지 묶고, 이미 목표 상태인 앱은 실제 배포에서 건너뛴다.
 최종 검사는 실제 배포 앱의 새 deployment ID·새 release/image/source와 유지 앱의 원 상태를 모두 확인한다.
 
-text·maintenance·scheduler 다섯 앱은 다음 해당 앱 배포에서 공통 worker immutable digest로 전환한다.
-명령·health·볼륨·registry 설정·`autoDeploy=false`와 scheduler 2복제본을 보존한다.
+text·maintenance·scheduler 여섯 앱은 해당 앱 배포에서 공통 worker immutable digest를 사용한다.
+명령·health·볼륨·registry 설정·`autoDeploy=false`와 scheduler의 M3 2복제본·mini 1복제본을 보존한다.
 connect는 Git stage를 유지하며 `NMV_SOURCE_SHA` build arg/OCI revision 및 Docker COPY 파일의
 SHA256 manifest를 검증한다. 릴리스 환경변수만으로 출처를 인정하지 않는다.
 
-첫 묶음은 mini(text+maintenance), 둘째는 M3(text+maintenance), 셋째는 scheduler+connect다.
+첫 묶음은 mini(text+maintenance), 둘째는 M3(text+maintenance)다.
+mini scheduler를 먼저 검증한 뒤 M3 scheduler+connect를 갱신한다.
 각 묶음 최대2개이며 같은 역할은 예비 완료 뒤 주를 갱신한다. 이후 crawler/reviewer/publisher의
 기존 역할 병렬 경로, 소비자, mini→M3 웹, 마지막 monitor 중 **선택한 앱만** 실행한다.
 실패하면 시작한 동료 결과는 수집하고 다음 묶음을 중단한다. 자동 배포 재요청은 없다.

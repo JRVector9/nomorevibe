@@ -45,21 +45,29 @@ export const introOrigin = (source: ProductFields["taglineSource"]): "ai" | "mak
  * 것이 먼저 검수를 받는다. 아직 안 본 것, 소개가 바뀐 것, 실패가 다시 볼 때가 된 것.
  * 검수가 고쳐 쓴 소개(ai_fixed)와 사람이 적은 소개(editor)는 다시 보지 않는다. 운영자로 확인된 계정이 있는 제품도 보지 않는다.
  */
-export async function pendingIntroChecks(limit: number): Promise<IntroTask[]> {
-  const rows = await db.select({ product: FIELDS, check: productIntroChecks })
-    .from(products)
-    .leftJoin(productIntroChecks, eq(productIntroChecks.productId, products.id))
-    .where(and(
+export function introCheckEligibilityPredicate() {
+  return and(
       inArray(products.status, ["seeded", "verified"]),
       eq(products.source, "crawler"),
       isNull(products.claimedAt),
       sql`not ${hasActiveMaker}`,
       sql`(${inArray(products.taglineSource, [...AI_SOURCES])} or (${products.taglineSource} = 'maker' and ${MAKER_JUNK}))`,
+  )!;
+}
+export function pendingIntroCheckPredicate() {
+  return and(introCheckEligibilityPredicate(),
       sql`(${productIntroChecks.productId} is null
         or ${productIntroChecks.checkedTagline} <> ${products.tagline}
         or (${productIntroChecks.errorCode} is not null and ${productIntroChecks.attempts} < ${MAX_ATTEMPTS}
             and (${productIntroChecks.retryAt} is null or ${productIntroChecks.retryAt} <= now())))`,
-    ))
+  )!;
+}
+
+export async function pendingIntroChecks(limit: number): Promise<IntroTask[]> {
+  const rows = await db.select({ product: FIELDS, check: productIntroChecks })
+    .from(products)
+    .leftJoin(productIntroChecks, eq(productIntroChecks.productId, products.id))
+    .where(pendingIntroCheckPredicate())
     .orderBy(sql`${products.id} desc`)
     .limit(limit);
   return rows.map((row) => ({ product: row.product, check: row.check ?? null }));

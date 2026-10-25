@@ -208,6 +208,35 @@ it('releases an election that completes after shutdown without starting a child'
   expect(await run).toBe(0); expect(supervise).not.toHaveBeenCalled(); expect(release).toHaveBeenCalledExactlyOnceWith(lease);
 });
 
+it.each(['resolve', 'reject'])('exits a wedged election at the unhealthy threshold and ignores its late %s', async settle => {
+  vi.useFakeTimers(); vi.setSystemTime(T0);
+  const logs = captureLogs(), states: RoleRuntimeHealth[] = [], controller = new AbortController();
+  const lease: RoleLease = { ...candidate, epoch: 1 };
+  let grant!: (value: RoleLease) => void, reject!: (error: Error) => void, code: number | undefined;
+  const acquire = vi.fn(() => new Promise<RoleLease>((yes, no) => { grant = yes; reject = no; }));
+  const supervise = vi.fn(async () => 0), release = vi.fn(async () => true);
+  const running = runRoleCandidate(candidate, controller.signal, {
+    acquire, renew: async () => true, supervise, release, health: state => states.push(state),
+  }).then(value => { code = value; });
+  try {
+    await vi.advanceTimersByTimeAsync(ROLE_STUCK_UNHEALTHY_MS - 1);
+    expect(code).toBeUndefined();
+    expect(states.at(-1)).toMatchObject({ dbPendingSince: T0 });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(code).toBe(1);
+    expect(logs.find(log => log.event === 'role.db_unavailable_exit')).toMatchObject({ failingForMs: ROLE_STUCK_UNHEALTHY_MS });
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(supervise).not.toHaveBeenCalled();
+    if (settle === 'resolve') grant(lease); else reject(new Error('late election'));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(supervise).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    controller.abort(); grant(lease); await running;
+  }
+});
+
 it.each(['resolve', 'reject'])('stops a child on a wedged renewal and ignores its late %s', async settle => {
   vi.useFakeTimers(); vi.setSystemTime(T0); captureLogs();
   const controller = new AbortController(), lease: RoleLease = { ...candidate, epoch: 1 };

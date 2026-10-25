@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { afterEach, expect, it, vi } from 'vitest';
-import { monitorPushTargets, pushMonitorTargets } from '@/scripts/watch-failover-readiness';
+import { monitorPushTargets, pushKumaStatus, pushMonitorTargets } from '@/scripts/watch-failover-readiness';
 
 const servers: Server[] = [];
 afterEach(async () => { await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => server.close(() => resolve())))); });
@@ -52,4 +52,35 @@ it('requires a different HTTPS hostname for the external receiver and sanitizes 
     expect(() => monitorPushTargets({ MONITOR_PUSH_URL: 'http://mini.test/api/push/a', MONITOR_EXTERNAL_PUSH_URL: external }))
       .toThrow('monitor_push_configuration_invalid');
   }
+});
+
+it('rejects a receiver redirect without contacting its replacement endpoint', async () => {
+  const destination = await receiver(true);
+  const redirect = createServer((_request, response) => {
+    response.writeHead(307, { location: destination.url });
+    response.end();
+  });
+  servers.push(redirect);
+  await new Promise<void>(resolve => redirect.listen(0, '127.0.0.1', resolve));
+  const address = redirect.address();
+  if (!address || typeof address === 'string') throw new Error('missing_address');
+  await expect(pushKumaStatus(`http://127.0.0.1:${address.port}/api/push/private-token`, 'up', 'worker failover ok'))
+    .rejects.toThrow('monitor_push_failed');
+  expect(destination.requests).toEqual([]);
+});
+
+it.each([true, false])('rejects an oversized receiver response (declared length: %s)', async declared => {
+  const server = createServer((_request, response) => {
+    const body = JSON.stringify({ ok: true, padding: 'x'.repeat(8_192) });
+    response.setHeader('content-type', 'application/json');
+    if (declared) response.setHeader('content-length', Buffer.byteLength(body));
+    else response.write('');
+    response.end(body);
+  });
+  servers.push(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('missing_address');
+  await expect(pushKumaStatus(`http://127.0.0.1:${address.port}/api/push/private-token`, 'up', 'worker failover ok'))
+    .rejects.toThrow('monitor_push_failed');
 });

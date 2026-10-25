@@ -87,7 +87,7 @@ npm run dev
 | `npm run worker -- --role=crawler --once` | 주입된 환경변수로 크롤러 요청을 한 회차 소비 |
 | `npm run scheduler -- --once` | 주입된 환경변수로 주기가 도래한 DB 요청을 한 회차 접수 |
 | `node --import tsx scripts/check-worker-progress.ts` | 수집·심사·scheduler의 일감·저장 진행·생존 상태를 읽기 전용 JSON으로 확인 |
-| `node --import tsx scripts/check-failover-readiness.ts` | 다섯 역할의 주·예비/lease와 scheduler 2복제본 준비 상태를 진행 상태와 함께 확인 |
+| `node --import tsx scripts/check-failover-readiness.ts` | 다섯 역할의 주·예비/lease와 scheduler 최소 2복제본·mini 관측을 진행 상태와 함께 확인 |
 | `npm run crawl:sample` | 판정 시험용 표본 수집 (GitHub 토큰 필요 — 아래 참조) |
 | `npm run crawl:rejudge` | 떠 놓은 표본으로 현재 판정 규칙 재판정 |
 | `npx drizzle-kit generate` / `migrate` | 마이그레이션 생성 / 적용 |
@@ -192,18 +192,20 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55436/nomorevibe_te
 
 기본 절차는 [변경 범위별 단축 배포](docs/operations/deployment-fast-path.md)의
 `npm run deploy -- scope|plan|run`이다. 앱별 실제 baseline으로 필요한 앱만 갱신하고 나머지는 원 상태를
-검증한다. text·maintenance·scheduler 다섯 앱은 다음 해당 앱 배포에서 공통 worker digest로 전환하며
+검증한다. text·maintenance 네 앱과 M3 scheduler는 다음 해당 앱 배포에서 공통 worker digest로 전환하며
 최대2개씩 갱신한다. 배포 후 관측은 별도 작업으로 실행하고 실제 관측 전에는 통과로 기록하지 않는다.
 아래의 Git/공통 이미지 구분은 전환 전 현재 상태와 이전 도구의 설명이다.
 
 운영은 Dokploy를 사용한다. 웹 2개와 crawler·reviewer·publisher의 주·예비 6개는
-main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·maintenance는
-계속 main Git 소스로 배포한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
-mini에는 두 번째 웹과 다섯 역할의 예비를 둬 13개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 M3 connect-agent를 포함한
+main CI가 만든 GHCR 이미지의 digest로 배포한다. M3 scheduler·text·maintenance는
+다음 해당 앱 배포 전까지 main Git 소스를 유지한다. M3에는 웹·scheduler(2복제본)·crawler·reviewer·publisher·text·maintenance,
+mini에는 두 번째 웹과 다섯 역할의 예비·상시 scheduler(1복제본)를 둬 14개 core 앱을 운영한다. 2026-10-11 실제 조회에서는 당시 M3 connect-agent를 포함한
 총14앱·19복제본을 [GitHub 연동 배포 검증](docs/operations/2026-10-11-github-integration-rollout.md)에서 확인했다.
 2026-10-22 관리자·보안 릴리스는 agent-scan 소비자를 포함한 15앱/20컨테이너에 배포했고,
 같은 날 읽기 전용 M3 monitor를 추가했고, 2026-10-25 KST M3 AI2 소비자를 생성·배포해
-현재 17앱/22컨테이너다. AI2 소비자의 배포와 `items` 운영 전환은 별도이며, 전환 상태는
+17앱/22컨테이너가 되었다. 같은 날 mini scheduler를 검증된 기존 worker digest로 추가해 현재 18앱/23컨테이너다.
+mini scheduler는 상시 due 요청을 기록하며 M3의 두 복제본과 DB에서 중복 요청을 합친다.
+AI2 소비자의 배포와 `items` 운영 전환은 별도이며, 전환 상태는
 [최신 LLM 보강 운영 기록](docs/operations/2026-10-25-llm-assist-production-activation.md)을 따른다.
 Oracle Osaka의 Kuma 수신기는 Dokploy 앱 수에 포함하지 않는다.
 두 웹은 로드밸런서 뒤에서

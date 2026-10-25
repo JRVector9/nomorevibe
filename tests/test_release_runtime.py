@@ -56,7 +56,7 @@ def fixture():
         app = {'applicationId': identity, 'name': name, 'serverId': host[0], 'appName': 'service-' + short,
                'sourceType': 'github' if github else 'docker', 'dockerImage': None if github else image,
                'dockerBuildStage': stage, 'applicationStatus': 'done', 'autoDeploy': False,
-               'replicas': 2 if kind == 'scheduler' else 1, 'command': command,
+               'replicas': 2 if short == 'scheduler-m3' else 1, 'command': command,
                'env': '\n'.join(env) + '\n', 'buildArgs': 'NEXT_DEPLOYMENT_ID=' + OLD + '\n' if kind == 'web' else '',
                'buildSecrets': 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=synthetic-key\n' if kind == 'web' else '',
                'owner': 'JRVector9', 'repository': 'nomorevibe', 'branch': 'main', 'buildType': 'dockerfile',
@@ -137,19 +137,21 @@ class RuntimeProofTests(unittest.TestCase):
             receipts[short] = {'deploymentId': 'new-' + short}
         return receipts
 
-    def test_collect_proves_all_17_without_printing_or_mutating_private_originals(self):
+    def test_collect_proves_all_18_without_printing_or_mutating_private_originals(self):
         before = copy.deepcopy(self.client.apps)
         output = io.StringIO()
         with redirect_stdout(output): result = self.collect()
         self.assertEqual(output.getvalue(), '')
-        self.assertEqual(len(result['baseline']), 17)
+        self.assertEqual(len(result['baseline']), 18)
         self.assertEqual(result['apps'], before)
         self.assertEqual(self.client.apps, before)
         self.assertEqual(result['baseline']['connect-agent-m3']['image'], IMAGE_ID)
         self.assertEqual(result['baseline']['scheduler-m3']['release'], OLD)
+        self.assertEqual(result['baseline']['scheduler-mini']['release'], OLD)
 
     def test_baseline_refuses_unknown_status_replica_release_source_health_command_and_mount(self):
         mutations = [lambda: self.client.apps['scheduler-m3'].update(replicas=1),
+            lambda: self.client.apps['scheduler-mini'].update(replicas=2),
             lambda: self.client.apps['text-mini'].update(autoDeploy=True),
             lambda: self.client.deployments['text-mini'].update(status='running'),
             lambda: self.client.rows['text-mini']['containers'][0]['codeHashes'].update({'package-lock.json': '0' * 64}),
@@ -169,7 +171,7 @@ class RuntimeProofTests(unittest.TestCase):
             nonlocal count
             count += 1
             row = copy.deepcopy(self.client.rows[short])
-            if count > 17: row['version']['Index'] += 1
+            if count > len(self.client.apps): row['version']['Index'] += 1
             return row
         with patch.object(runtime.git_rollout, 'inspect_runtime', side_effect=moving):
             with self.assertRaisesRegex(ValueError, 'changed_during_collection'): self.collect()
@@ -233,7 +235,7 @@ class RuntimeProofTests(unittest.TestCase):
         with patch.object(runtime.git_rollout, 'inspect_runtime', side_effect=inspection): self.collect()
         self.assertGreater(maximum, 1)
         self.assertLessEqual(maximum, 4)
-        self.assertEqual(source_reads, 15)
+        self.assertEqual(source_reads, 16)
 
     def test_final_rejects_tampered_selected_baseline_hash(self):
         baseline = self.collect(); baseline['target'] = TARGET

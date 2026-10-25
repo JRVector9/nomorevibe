@@ -15,6 +15,7 @@ import {pageTitle} from '@/lib/copy/brand';
 import {CATEGORY_LABELS} from '@/lib/domain/products/labels';
 import {translatedCategory} from '@/components/home/i18n';
 import {getPopularFacets,getPopularPage,type PopularFacets} from '@/lib/domain/products/popular';
+import {publicRead} from '@/lib/domain/products/public-reads';
 import {STAR_TIERS,parsePopularParams,popularStateHref,type PopularState} from '@/lib/domain/products/stars';
 import {logger} from '@/lib/observability/logger';
 import {PopularList} from './PopularList';
@@ -51,7 +52,11 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  const now=new Date().toISOString();
  let result:Awaited<ReturnType<typeof getPopularPage>>|undefined;
  let facets:PopularFacets|undefined;
- try{[result,facets]=await Promise.all([getPopularPage(state.tier,filters,state.sort,state.page),getPopularFacets(state.tier,filters)]);}
+ // 원본 목록은 보기·언어와 무관하다. 워커 조회는 그대로 두고 공개 읽기만 30초 공유·복제본 경로를 쓴다.
+ try{[result,facets]=await Promise.all([
+  publicRead("list", ["popular-page",state.tier,filters,state.sort,state.page], () => getPopularPage(state.tier,filters,state.sort,state.page)),
+  publicRead("count", ["popular-facets",state.tier,filters], () => getPopularFacets(state.tier,filters)),
+ ]);}
  catch(error){logger.error('popular.list_failed',{error});}
  const narrowed=state.personal||state.ai||Boolean(state.category);
  const href=(patch:Partial<PopularState>)=>localePath(locale,popularStateHref(state,patch));

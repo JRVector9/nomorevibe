@@ -45,9 +45,12 @@ const SOURCES = sql`
 const NEEDS_KOREAN = sql`length(btrim(body)) > 0 and (body !~ '[가-힣]'
   or length(regexp_replace(body, '[^가-힣]', '', 'g'))
      < 0.3 * greatest(1, length(regexp_replace(body, '[^A-Za-z가-힣]', '', 'g'))))`;
+export const TRANSLATION_SOURCE_ROWS_SQL = SOURCES;
+export const TRANSLATION_NEEDS_KOREAN_SQL = NEEDS_KOREAN;
 
-const UNIQUE_SOURCES = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex') as hash, body, max(at) as at
+export const UNIQUE_TRANSLATION_SOURCES_SQL = sql`select encode(sha256(convert_to(body, 'UTF8')), 'hex') as hash, body, max(at) as at
   from (${SOURCES}) src where ${NEEDS_KOREAN} group by 1, 2`;
+const UNIQUE_SOURCES = UNIQUE_TRANSLATION_SOURCES_SQL;
 
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
