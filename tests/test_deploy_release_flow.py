@@ -183,7 +183,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assertLess(self.events.index('preflight-monitor'), self.events.index(('web-mini', 'application.saveEnvironment')))
         self.assertEqual(self.events[-1], 'observer-launched')
         self.assertEqual(self.fleet.call_count, 2)
-        self.assertEqual(len(result['retainedApps']), 15)
+        self.assertEqual(len(result['retainedApps']), 16)
         self.assertEqual(len(self.observations), 1)
 
         for short in ('web-mini', 'web-m3'):

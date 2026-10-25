@@ -1,13 +1,14 @@
 # 독립 워커 운영 절차
 
 일반 릴리스는 [변경 범위별 단축 배포](deployment-fast-path.md)의
-`npm run deploy -- scope|plan|run`을 기본으로 사용한다. 실제17앱의 혼합 baseline과 유지 앱을 검증하며,
-text·maintenance·scheduler는 다음 해당 앱 배포 때 공통 worker digest로 전환한다.
+`npm run deploy -- scope|plan|run`을 기본으로 사용한다. 실제18앱의 혼합 baseline과 유지 앱을 검증하며,
+text·maintenance 네 앱과 M3 scheduler는 다음 해당 앱 배포 때 공통 worker digest로 전환한다.
+mini scheduler는 검증된 worker digest를 이미 사용한다.
 이 문서의 기존 `deploy_shared_images.py`·수동 Git 배포/복구 명령은 이전 경로와 예외 복구를 설명한다.
 새 경로의 once 영수증을 지우거나 이전 도구의 `--resume`를 새 실행에 적용하지 않는다.
 
 이 문서는 로컬 Compose의 실제 실행 명령과 운영 전환 시 지켜야 하는 순서를 정리한다.
-운영은 M3 다섯 역할·scheduler 2복제본, mini의 다섯 역할 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
+운영은 M3 다섯 역할·scheduler 2복제본, mini의 다섯 역할 예비·상시 scheduler 1복제본과 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
 실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
 A/B 통합 검증 기록은 `docs/CODEX_HANDOFF.md`와 해당 릴리스 보고서를 따른다.
 2026-10-22 현재 connect-agent·agent-scan 소비자·M3 monitor를 포함한 16 Dokploy 앱/21컨테이너다.
@@ -18,7 +19,7 @@ mini와 외부 Oracle Osaka의 Kuma 수신기 연결·장애 드릴 결과는 [�
 - 웹 `runner` target, 수집·리뷰·발행·집계·스케줄러는 동일한 `worker` target을 사용한다.
 - 로컬 Compose는 `node --import tsx scripts/worker-supervisor.ts --role=crawler`를 사용한다.
   운영 Dokploy의 다섯 역할은 `scripts/role-worker.ts --role=<role> --kind=primary|standby`를
-  실행하며, scheduler는 `worker-supervisor.ts --role=scheduler` 2복제본이다.
+  실행하며, scheduler는 `worker-supervisor.ts --role=scheduler`로 M3 두 개·mini 한 개를 상시 실행한다.
   역할당 활성 프로세스는 1개다.
 - 워커는 DB 요청만 소비한다. 스케줄러는 10초마다 주기가 도래한 요청을 기록한다.
   웹/어드민 종료와 무관하게 동작하며 스케줄러 중단 시 이미 접수한 요청까지만 처리한다.
@@ -160,7 +161,7 @@ pull/arm64/OCI revision과 비공개 웹 이미지 안의 빌드 키 일치를 �
 각각 mini 예비→M3 주, 마지막으로 mini→M3 웹을 배포한다. 각 앱마다 새 Dokploy
 deployment ID와 `done`, Swarm 1/1, 실행 컨테이너 digest·release·health를
 기다린다. 역할 쌍 뒤에는 그 역할이 M3 주가 쥔 `ready`이고 다른 역할은 유효한 소유자(`ready` 또는
-`standby_active`)이며 scheduler 두 복제본·`check-worker-progress.ts`가 `ok`인지 확인한다(아래 "관문의 소유자 판정").
+`standby_active`)이며 scheduler 최소 두 복제본과 mini의 최근 관측·`check-worker-progress.ts`가 `ok`인지 확인한다(아래 "관문의 소유자 판정").
 웹 둘 뒤에는 공개
 `/api/health`에서 두 인스턴스의 같은 릴리스를 확인한다. 실패하면 뒤 앱 배포를
 멈추고 스냅샷 경로만 출력한다. 스냅샷에는 환경 비밀값이 있어 공유하거나 Git에
@@ -218,7 +219,7 @@ Dokploy 설정만 이전 값으로 되돌리고 **다시 배포하지 않는다*
    있음을 보는 관문이기 때문이다. 그 역할을 예비가 쥐고 있으면(`standby_active`) 주가 되찾을 때까지 한 번 180초 더 기다린다
    (`{"handoff": "waiting_for_primary"}` 줄). 다른 역할은 유효한 소유자(`ready` 또는 `standby_active`) 어느 쪽이든 받는다. 배포 전 사전
    관문은 모든 역할에서 유효한 소유자를 받는다 — 예비가 쥔 역할은 예비를 먼저 올리는 배포에서 주가 되찾는다. `primary_quarantined`·
-   `lease_expired`·`owner_mismatch`·`standby_missing`·`primary_missing`·`release_mismatch`, scheduler `replica_missing`, 진행 경보는 예전처럼
+   `lease_expired`·`owner_mismatch`·`standby_missing`·`primary_missing`·`release_mismatch`, scheduler `replica_missing`·`mini_missing`, 진행 경보는
    막는다. 시간이 넘으면 받지 못한 사유를 붙인다(`crawler_monitor_gate_timeout:crawler=standby_active`). 통과 줄·계획 줄의
    `standbyActive`는 예비가 일하는 역할이다.
 
@@ -605,7 +606,7 @@ maintenance의 `uptime-ping`은 기본 15건/분·HTTP 동시 3개다. 2026-09-2
 다음 교체는 위 4번의 주·예비 릴리스 절차를 따른다. 작업 중 역할당 활성 소비자는 하나만
 허용하고 DB streaming·서버 설정은 변경하지 않는다.
 
-scheduler 2복제본의 DB 요청 합치기 통합 테스트와
+scheduler의 DB 요청 합치기·mini 단독 진행 통합 테스트와
 `SCHEDULER_REPLICA_IDENTITY=1` 설정을 확인했다. 이 옵션에서 각 컨테이너의
 `HOSTNAME`이 관측 키에 포함되므로 고정 `SERVICE_INSTANCE_ID`를 공유하더라도 서로의
 생존 기록을 덮어쓰지 않는다. 두 관측 키와 각 컨테이너 상태, 예약 시각 전진을
@@ -658,7 +659,19 @@ scheduler 및 다섯 역할의 생존, 예정 시각과 최근 부팅을 읽기 
 `check-worker-progress.ts`는 역할별 최신 서비스 하나를 읽는다. 주가 계속 실행되면 mini 예비가
 사라져도 정상으로 보일 수 있다. `node --import tsx scripts/check-failover-readiness.ts`는
 `m3-<role>` 주 후보·`mini-<role>-standby` 예비 후보의 최근 60초 관측, 같은 릴리스,
-유효한 lease의 owner/boot/epoch 일치와 scheduler의 서로 다른 최근 복제본 2개를 별도로 판정한다.
+유효한 lease의 owner/boot/epoch 일치와 scheduler의 서로 다른 최근 복제본 최소 2개를 별도로 판정한다.
+두 M3 복제본만으로 mini 중단을 가리지 않도록 `mini-scheduler-*` 관측도 필수다.
+M3가 단절되어 mini 하나만 남으면 `replica_missing`으로 중복 여유 감소를 알리되 mini의 due 요청은 계속된다.
+`miniFreshReplicas`는 mini 생존 근거이며, 실제 예약 진행은 worker-progress의 예정 시각과 별도로 확인한다.
+
+mini 앱의 표시 이름은 `nomorevibe-scheduler-standby-mini`지만 대기 선출 없이 상시 실행한다.
+복제본 1개, 메모리 256MiB·CPU 0.25, `DB_POOL_MAX=2`, `SERVICE_INSTANCE_ID=mini-scheduler`,
+`SCHEDULER_REPLICA_IDENTITY=1`, `WORKER_ROLE=scheduler`를 유지한다. DB 접속·정확한 릴리스 정보만 필요하며
+모델·CLI·웹 인증 키를 복사하지 않는다. 현재 호스트 DB 예산 강제 설정은 비활성으로 유지한다.
+배포는 mini 검증 후 M3 두 복제본 순서이며 새 catalog가 있으면 두 scheduler 앱을 먼저 올린다.
+17앱 snapshot은 18앱 배포 증거로 재사용하지 않는다. 2026-10-25 M3 scheduler 서비스를 중단한 120초 동안
+mini가 12틱·실패0·자연 due 요청55건을 기록했고 M3 원 spec·두 healthy 컨테이너를 복원했다.
+이는 scheduler 서비스 중단 드릴이며 M3 실제 호스트 단절은 별도 미검증이다.
 DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON에 포함한다. 종료 코드는
 0 정상, 1 판별 불가, 2 경보다. 인계 중 예비가 활성인 상태는 용량 여유가 사라진 경보로 표시한다(같은 릴리스의 건강한 주가 기다리면
 예비가 넘겨주기로 놓으므로 1~2분 안에 풀린다 — 위 "역할 후보 운영·교체" 6).

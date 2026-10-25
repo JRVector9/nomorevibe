@@ -156,6 +156,11 @@ def required_kinds(selected):
     return tuple(kinds)
 
 
+def validate_catalog_scope(additions, selected):
+    if additions and not {'scheduler-mini', 'scheduler-m3'}.issubset(selected):
+        raise ValueError('new_catalog_requires_scheduler_deployment_scope')
+
+
 def new_client():
     return shared.Dokploy(shared.run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
                                      '-s', 'dokploy-api-key', '-w']))
@@ -240,8 +245,7 @@ def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration
         scan = shared.agent_scan_release_gate(client, sha) if any(name.startswith('crawler-') for name in selected) else None
         images = prepull(snapshot, target, selected)
         additions = catalog.catalog_additions(snapshot, sha, ROOT)
-        if additions and 'scheduler-m3' not in selected:
-            raise ValueError('new_catalog_requires_scheduler_deployment_scope')
+        validate_catalog_scope(additions, selected)
         plan.update(target=target, readiness=proof, steps=execution_steps(selected), migrations=migrations,
                     integration=integration, existingGuard=guard, agentScan=scan, prePull=images,
                     catalogAdditions=additions)
@@ -384,8 +388,7 @@ def run_release(plan, execution_dir, *, observe=True):
         additions = catalog.catalog_additions(plan['snapshot'], target['sha'], ROOT)
         if additions != plan.get('catalogAdditions', []):
             raise ValueError('catalog_changed_new_plan_required')
-        if additions and 'scheduler-m3' not in selected:
-            raise ValueError('new_catalog_requires_scheduler_deployment_scope')
+        validate_catalog_scope(additions, selected)
         if migration_changes(plan['snapshot'], target['sha']):
             if not plan.get('migrationVerified'):
                 raise ValueError('database_changes_require_migration_verified')

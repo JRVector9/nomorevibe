@@ -101,7 +101,11 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   const view: View = rawView && Object.hasOwn(VIEWS, rawView) ? rawView as View : defaultView;
   // 소개 수정 요청(UX-18)도 요청 탭에 있다 — 그것만 기다려도 요청 탭을 먼저 연다
   const tab: Tab = rawTab && Object.hasOwn(TABS, rawTab) ? rawTab as Tab : rawView ? "audit" : summary.pending + introPending > 0 ? "requests" : "audit";
-  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport, throughput, expiringKeeps, autoToday, screenCounts] = await Promise.all([
+  const second = (SECOND_OPINION_FILTERS as readonly string[]).includes(view) ? view as SecondOpinionFilter : undefined;
+  const decision = view === "needs_review" ? "needs_review" : "reject";
+  // These read-only groups depend on the overview/tab, not on each other's results.
+  const [queue, introRequests, history, auditHistory, policyOptions, policyRuns, stagedImport, throughput, expiringKeeps,
+    autoToday, screenCounts, qwen, screen, heldReasons, findingReasons] = await Promise.all([
     tab === "requests" ? takedownQueue() : Promise.resolve([]),
     tab === "requests" ? introRequestQueue() : Promise.resolve([]),
     tab === "history" ? takedownHistory() : Promise.resolve([]),
@@ -116,20 +120,19 @@ export default async function AdminAuditPage({ searchParams }: Props) {
     tab === "policy" ? autoCloseToday().catch(() => null) : Promise.resolve(null),
     // 답으로 닫지 않고 열어 둔 무리(화면 판별 대기·엇갈림) — 못 읽어도 화면은 그린다
     tab === "policy" ? screenReviewCounts().catch(() => null) : Promise.resolve(null),
+    tab === "audit" ? qwenSecondOpinionStatus({ auditHold: overview.hold, qwenAuto: overview.qwenAuto }) : Promise.resolve(null),
+    tab === "audit" ? screenReviewStatus({ qwenAuto: overview.qwenAuto }).catch(() => null) : Promise.resolve(null),
+    // 보류 사유는 감사 패널에도 쓴다. 선택한 갈래의 사유와 독립적으로 읽는다.
+    tab === "audit" ? heldFindingReasons() : Promise.resolve(null),
+    campaign && tab === "audit" && view !== "held" ? auditFindingReasons(campaign.id, decision, second) : Promise.resolve(null),
   ]);
   const auditHistoryKorean = auditHistory.length ? await translationsFor(auditHistory.map((row) => row.reason)) : new Map<string, string>();
   const open: Record<View, number> = { held: overview.held, reject: counts.openReject, agreed: counts.openAgreed, split: counts.openSplit,
     disagree: counts.openDisagree, qwen_catalog: counts.openQwenCatalog, needs_review: counts.openNeedsReview };
-  // Qwen-v2 자동 단계의 상태 — 감사 탭에서만 읽는다(남은 수를 센다)
-  const qwen = tab === "audit" ? await qwenSecondOpinionStatus({ auditHold: overview.hold, qwenAuto: overview.qwenAuto }) : null;
-  // 화면 판별의 상태 — 감사 탭에서만. 못 읽어도 화면은 그린다
-  const screen = tab === "audit" ? await screenReviewStatus({ qwenAuto: overview.qwenAuto }).catch(() => null) : null;
   // 보류 갈래의 사유는 패널의 갈래별 수에도 쓴다 — 감사 탭이면 늘 읽는다(보류된 것만, 수천 건 안)
-  const heldReasonIds = tab === "audit" ? groupAuditReasons(await heldFindingReasons()) : null;
-  const second = (SECOND_OPINION_FILTERS as readonly string[]).includes(view) ? view as SecondOpinionFilter : undefined;
-  const decision = view === "needs_review" ? "needs_review" : "reject";
+  const heldReasonIds = heldReasons ? groupAuditReasons(heldReasons) : null;
   const reasonIds = !campaign || tab !== "audit" ? null : view === "held" ? heldReasonIds
-    : groupAuditReasons(await auditFindingReasons(campaign.id, decision, second));
+    : findingReasons ? groupAuditReasons(findingReasons) : null;
   const filteredIds = reason && reasonIds ? reasonIds[reason] : undefined;
   const paging = { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, ids: filteredIds };
   const [findings, groups] = campaign && tab === "audit" ? await Promise.all([

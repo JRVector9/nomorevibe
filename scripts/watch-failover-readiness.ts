@@ -1,7 +1,10 @@
 /** Separate read-only watcher. Kuma Push URL is never written to logs. */
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
+import { fetch as monitorFetch } from 'undici';
 import { readMonitorStatus, type MonitorStatus } from '../lib/operations/failover-monitor';
+import { TEXT_PROGRESS_STAGE_JOBS } from '../lib/operations/worker-progress';
+import { readBodyStrictlyCapped } from '../lib/net/fetch';
 
 export type MonitorCycleState = { badSamples: number };
 export type MonitorPushTarget = { name: 'primary' | 'external'; url: string };
@@ -28,7 +31,14 @@ export async function runMonitorCycle(
 
 export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env.MONITOR_HEALTH_PATH ?? '/tmp/monitor-health.json') {
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall }), { mode: 0o600 });
+  const positive = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) && value > 0;
+  // Stable keys let the independent watchdog age a failure across retries without
+  // persisting provider bodies. Missing progress differs from an observed clear.
+  const providerFailures = status.progress ? Object.keys(TEXT_PROGRESS_STAGE_JOBS).filter(key => status.progress!.stages.some(stage =>
+    stage.stage === key && !['paused', 'no_work', 'manual_attention'].includes(stage.reason) && stage.held !== true
+    && (positive(stage.waiting) || positive(stage.deferred)) && (positive(stage.providerErrors) || positive(stage.errors5m))
+    && [stage.completed5m, stage.progress5m].every(value => value == null || value === 0))) : undefined;
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 
@@ -38,8 +48,15 @@ export async function pushKumaStatus(url: string, state: 'up' | 'down', message:
     if (target.protocol !== 'http:' && target.protocol !== 'https:') throw new Error('unsupported_protocol');
     target.searchParams.set('status', state);
     target.searchParams.set('msg', message);
-    const response = await fetch(target, { method: 'POST', signal: AbortSignal.timeout(5_000) });
-    if (!response.ok || (await response.json() as { ok?: boolean }).ok !== true) {
+    // The configured receivers are privileged internal/external endpoints, not crawler URLs.
+    // Never follow a response to a different receiver or permit an unbounded JSON body.
+    const response = await monitorFetch(target, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(5_000) });
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new Error('non_success_response');
+    }
+    const body = await readBodyStrictlyCapped(response as unknown as Response, 4_096);
+    if (body === null || (JSON.parse(body.toString('utf8')) as { ok?: boolean } | null)?.ok !== true) {
       throw new Error('non_success_response');
     }
   } catch {

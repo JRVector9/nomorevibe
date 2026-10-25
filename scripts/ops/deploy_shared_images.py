@@ -40,7 +40,7 @@ READ_ONLY_MAINTENANCE = {
     'maintenance-mini': ('T6ATm-paaE03hfSsQX8-S', 'nomorevibe-maintenance-standby-mini', MINI, 'worker'),
     'maintenance-m3': ('7OlFqQdacbyQseQM72E7b', 'nomorevibe-maintenance-m3', M3, 'worker'),
 }
-# The other production Dokploy apps (AGENTS.md: 13 apps, plus connect-agent). They are git-build apps released one by
+# Text, maintenance, both schedulers and connect support the legacy Git build path, released one by
 # one (RELEASE_TAG + application.deploy, standby first); `run` never deploys them and `inventory` only reads them.
 # The versioned split roles (translation, product-health, site-evidence, official-news) have no M3/mini Dokploy app and
 # the Oracle runtime is outside Dokploy (oracle-* actions); an unregistered app is never guessed.
@@ -48,6 +48,7 @@ GIT_BUILD_APPS = {
     'text-mini': ('YwCZROZf_V0qgI1coMugP', 'nomorevibe-text-standby-mini', MINI, 'worker'),
     'text-m3': ('Pi0loosJrKsse_UQ0mln9', 'nomorevibe-text-m3', M3, 'worker'),
     **READ_ONLY_MAINTENANCE,
+    'scheduler-mini': ('6RPgSY-jIFtjZYvme26GD', 'nomorevibe-scheduler-standby-mini', MINI, 'scheduler'),
     'scheduler-m3': ('uAjLU7MslLIGpORD9h6LQ', 'nomorevibe-scheduler-m3', M3, 'scheduler'),
     'connect-agent-m3': ('xJK6CoRUOs_bpVVNmJDBF', 'nomorevibe-connect-agent-m3', M3, 'connect-agent'),
 }
@@ -81,6 +82,14 @@ def app_metadata(short):
     if not metadata[0] or not metadata[1]:
         raise ValueError(f'{short}_app_unregistered')
     return metadata
+
+
+def scheduler_replicas(short):
+    """Keep M3's two schedulers and mini's independent always-on scheduler explicit."""
+    replicas = {'scheduler-m3': 2, 'scheduler-mini': 1}
+    if short not in replicas:
+        raise ValueError('unknown_scheduler_app')
+    return replicas[short]
 
 
 def consumer_apps(consumers):

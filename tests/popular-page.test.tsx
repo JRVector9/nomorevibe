@@ -31,6 +31,26 @@ beforeEach(() => {
 });
 
 describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안 보완안)", () => {
+  it("같은 조건의 동시 요청과 보기 전환은 목록·집계를 다시 읽지 않는다", async () => {
+    await Promise.all([render({ page: "2" }), render({ page: "2", view: "cards" })]);
+    expect(getPopularPage).toHaveBeenCalledOnce();
+    expect(getPopularFacets).toHaveBeenCalledOnce();
+
+    await render({ page: "3" });
+    expect(getPopularPage).toHaveBeenCalledTimes(2);
+    expect(getPopularFacets).toHaveBeenCalledOnce();
+    await render({ page: "3", personal: "1" });
+    expect(getPopularPage).toHaveBeenCalledTimes(3);
+    expect(getPopularFacets).toHaveBeenCalledTimes(2);
+  });
+
+  it("실패한 목록은 저장하지 않아 다음 요청에서 다시 읽고 회복한다", async () => {
+    getPopularPage.mockRejectedValueOnce(new Error("db down"));
+    expect(await render()).toContain("목록을 불러오지 못했습니다");
+    expect(await render()).toContain('class="popular-list"');
+    expect(getPopularPage).toHaveBeenCalledTimes(2);
+  });
+
   it("줄마다 순위 · 카드 커버 · 이름 · @소유자 · 한국어 소개 · 분야·계정 · ★와 증감 · 저장을 둔다", async () => {
     const html = await render({ tier: "rising", page: "2" });
     const row = html.match(/<li class="popular-row">([\s\S]*?)<\/li>/)![1];

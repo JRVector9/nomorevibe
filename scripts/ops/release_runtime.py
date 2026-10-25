@@ -57,7 +57,7 @@ def _api_ready(short, app, latest):
         _fail(short, 'api_not_ready')
     replicas = app.get('replicas')
     if type(replicas) is not int or not (1 <= replicas <= shared.WEB_MAX_REPLICAS if kind == 'web' else
-                                       replicas == (2 if kind == 'scheduler' else 1)):
+                                       replicas == (shared.scheduler_replicas(short) if kind == 'scheduler' else 1)):
         _fail(short, 'replicas_mismatch')
     stage = 'runner' if kind == 'web' else kind if kind in ('connect-agent', 'monitor') else 'worker'
     if app.get('dockerBuildStage') != stage:
@@ -250,7 +250,7 @@ def _same_runtime_window(old, current):
 
 
 def collect_baseline(client, repo):
-    """Read all 17 apps with at most four concurrent reads, then prove a stable window.
+    """Read every registered app with at most four concurrent reads, then prove a stable window.
 
     The readback checks actual service/container identities and configuration. It
     does not hash the same remote source bytes a second time.

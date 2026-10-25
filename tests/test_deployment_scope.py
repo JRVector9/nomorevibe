@@ -43,8 +43,9 @@ class DeploymentClassificationTests(unittest.TestCase):
     def classify(self, *changes, **options):
         return scope.classify_changes(list(changes), **METADATA, **options)
 
-    def test_inventory_is_the_actual_17_and_excludes_unregistered_ai1(self):
-        self.assertEqual(len(self.apps), 17)
+    def test_inventory_is_the_actual_18_and_excludes_unregistered_ai1(self):
+        self.assertEqual(len(self.apps), 18)
+        self.assertIn('scheduler-mini', self.apps)
         self.assertIn('ai2-consumer-m3', self.apps)
         self.assertIn('agent-scan-consumer-m3', self.apps)
         self.assertNotIn('ai1-consumer-m3', self.apps)
@@ -113,8 +114,8 @@ class DeploymentClassificationTests(unittest.TestCase):
                 self.assertEqual(self.classify(change(path))['selectedApps'], list(self.apps))
 
     def test_proven_independent_entrypoints_select_their_real_apps(self):
-        cases = {'scripts/scheduler.ts': ['scheduler-m3'],
-                 'scripts/scheduler.sh': ['scheduler-m3'],
+        cases = {'scripts/scheduler.ts': ['scheduler-mini', 'scheduler-m3'],
+                 'scripts/scheduler.sh': ['scheduler-mini', 'scheduler-m3'],
                  'scripts/connect-agent.ts': ['connect-agent-m3'],
                  'scripts/watch-failover-readiness.ts': ['monitor-m3'],
                  'scripts/monitor-healthcheck.ts': ['monitor-m3']}
@@ -134,7 +135,7 @@ class DeploymentClassificationTests(unittest.TestCase):
     def test_mixed_changes_union_and_an_unknown_always_wins(self):
         result = self.classify(change('README.md'), change('app/globals.css'),
                                change('scripts/scheduler.ts'))
-        self.assertEqual(set(result['selectedApps']), {'web-mini', 'web-m3', 'scheduler-m3'})
+        self.assertEqual(set(result['selectedApps']), {'web-mini', 'web-m3', 'scheduler-mini', 'scheduler-m3'})
         self.assertEqual(self.classify(change('app/globals.css'), change('lib/net/fetch.ts'))['mode'], 'full')
 
     def test_rename_and_copy_account_for_old_and_new_path_and_deletion_for_old_path(self):
@@ -159,7 +160,7 @@ class DeploymentClassificationTests(unittest.TestCase):
             self.classify(change('app/globals.css'), requested_apps=['web-m3'])
         result = self.classify(change('app/globals.css'),
                                requested_apps=['web-m3', 'web-mini', 'scheduler-m3'])
-        self.assertEqual(set(result['selectedApps']), {'web-m3', 'web-mini', 'scheduler-m3'})
+        self.assertEqual(set(result['selectedApps']), {'web-m3', 'web-mini', 'scheduler-mini', 'scheduler-m3'})
         with self.assertRaisesRegex(ValueError, 'unknown_requested_app'):
             self.classify(change('README.md'), requested_apps=['ai1-consumer-m3'])
         with self.assertRaisesRegex(ValueError, 'apps_cannot_shrink_scope'):

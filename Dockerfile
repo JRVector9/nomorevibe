@@ -1,16 +1,16 @@
 # Same source and lockfile; independent web and worker runtime targets.
-FROM node:24-alpine AS deps
+FROM node:24.22.1-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # audit 요청은 레지스트리가 느릴 때 몇 분씩 걸린다(설치 결과와 무관하다). 보안 경고는 Dependabot 이 맡는다.
 RUN npm ci --no-audit --no-fund
 
-FROM node:24-alpine AS worker-deps
+FROM node:24.22.1-alpine AS worker-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 
-FROM node:24-alpine AS builder
+FROM node:24.22.1-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -26,7 +26,7 @@ RUN --mount=type=secret,id=NEXT_SERVER_ACTIONS_ENCRYPTION_KEY,env=NEXT_SERVER_AC
   --mount=type=cache,target=/app/.next/cache \
   npm run build
 
-FROM node:24-alpine AS worker
+FROM node:24.22.1-alpine AS worker
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -65,7 +65,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:3020/rpc').then(r=>process.exit(r.status===401?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "--import", "tsx", "scripts/connect-agent.ts"]
 
-FROM node:24-alpine AS monitor
+FROM node:24.22.1-alpine AS monitor
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -81,10 +81,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--import", "tsx", "scripts/watch-failover-readiness.ts"]
 
-FROM node:24-alpine AS emergency-web
+FROM node:24.22.1-alpine AS emergency-web
 # 비상 최소 웹/관리자(PR16) — runner 와 같은 builder 산출물(같은 deploymentId·서버 액션 키)만 담는다.
 # 수집기·모델 CLI·잡 코드는 없고, 일정 관리(scheduler)는 Oracle native release 의 launcher 관문 아래에서 따로 돈다.
-# HOSTNAME 을 고정해야 Docker 가 넣는 컨테이너 이름 대신 모든 주소에서 듣고 아래 loopback health 가 닿는다.
+# HOSTNAME 을 고정해 Docker 가 넣는 컨테이너 이름 대신 모든 주소에서 듣는다.
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -97,12 +97,12 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 USER nextjs
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "server.js"]
 
 # Keep the default final target as the web image for existing docker build callers.
-FROM node:24-alpine AS runner
+FROM node:24.22.1-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -115,4 +115,6 @@ COPY --chown=nextjs:nodejs scripts/entrypoint.sh ./scripts/entrypoint.sh
 RUN chmod +x ./scripts/entrypoint.sh
 USER nextjs
 EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD node -e "fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/api/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["./scripts/entrypoint.sh"]
