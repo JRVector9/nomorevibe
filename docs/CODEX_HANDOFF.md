@@ -1,3 +1,28 @@
+## 배포 runtime command 비교 수정 — 2026-10-26
+
+현재 목표: 정상 scheduler-mini의 init wrapper 없는 effective argv를 정규 배포 사전 검사에서 허용한다. root의 normal plan-a/b는 `scheduler-mini_baseline_runtime_not_ready`에서 읽기 전용으로 중지했고 서비스 배포는 요청하지 않았다. 운영 상태/후속 배포는 root가 계속 소유한다.
+
+전용 WT `/Users/jr/Desktop/projects/nomorevibe-deploy-command-fix-20261026`, branch `codex/deploy-command-fix-20261026`, base `3f3d38ce364cbbf941047827b31f29d46fbae1b9`. 원 사용자 WT 소스는 수정하지 않았다.
+
+수정 파일: `scripts/ops/deploy_git_apps.py`, `tests/test_deploy_git_apps.py`, 이 인계 문서. `runtime_health()`가 승인된 app.command 앞에 `/sbin/tini --`를 무조건 더하던 것이 원인이다. 이제 nonempty 승인 argv 그대로 또는 정확한 선택적 Tini prefix를 허용한다. app.command에 Tini가 명시되어 있으면 그대로 필수이며, arbitrary wrapper/다른 Tini 옵션/추가 앱 인자는 거절한다. 이미지·소스·env·health·복제본·기존 runtime contract 검사는 그대로다.
+
+실제 검증:
+- 신규 scheduler-mini 회귀 1개/8 subcase 중 init 없는 Entrypoint와 Cmd 두 경우의 RED를 먼저 확인했다.
+- `python3 -m unittest discover -s tests -p test_deploy_git_apps.py` → **30 tests PASS**, 2.185초.
+- 전체 Python/JS/DB 종합 검사 및 운영 호출은 하지 않았다. 앱 명령/상태/설정 변경도 없다.
+
+폐기한 동작: 모든 승인 명령에 Tini를 가정하는 방식. 정상 effective argv를 거절한다. 임의 wrapper를 일반적으로 제거하는 완화도 사용하지 않았다.
+
+남은 작업은 root의 PR/필수 CI/병합 후 새 clean main을 사용한 정규 배포 계획이다. 실패한 기존 plan/once 영수증은 보존하고 새 디렉터리로 진행한다. 이미 통과한 scoped 테스트를 추가로 반복하지 않는다.
+
+다음 agent 명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-deploy-command-fix-20261026
+git show --stat --oneline HEAD
+git status --short
+```
+root가 이 commit으로 PR을 생성하고 필수 CI를 따른다. 이 WT에서 push/PR/배포는 실행하지 않았다.
+
 ## Latest CI correction — 2026-10-26 00:40 KST
 
 Current objective unchanged: AI2 GPU3090 Tailscale direct qwen3.8-flash-next primary, abcLLM Supa fallback; both no-thinking, max output10000/combined32000 enforced by exact tokenizer. No production settings/DB/control/service writes yet. PR664 source headfd4b; root now updates the one old circuit log expectation to `ai2:abcllm:${model}` so provider+model isolation remains intact.
