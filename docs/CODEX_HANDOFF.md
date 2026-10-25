@@ -20,6 +20,7 @@
 ## 실제 검사와 실패
 
 - Node CI 21/21 통과, workflow Vitest10/10 통과. ESLint9개·actionlint·bash -n·신규 Python 모듈 py_compile·CLI --help·git diff --check 실제 성공.
+- PR653 첫 CI40147439279의 lint/build는 통과했으나 typecheck가 workflow 회귀의 `with.name: string|boolean`에 직접 startsWith를 호출한 TS2339로 실패했다. typeof 문자열 가드를 넣고 실제 Next typegen·tsc·관련 Vitest10/10·ESLint를 통과했다. 최신 head 필수 CI가 남았다.
 - 최종 deploy glob181개 실행은 1실패/2skip: root가 image-proof 파일을 runtime0으로 잘못 등록한 분류 회귀였다. 해당 허용 항목을 제거해 원래 full 경계를 복구하고 `test_deployment_scope.py`41/41 재검증 성공. 다른 수정 없이 같은 전체 suite를 반복하지 않으며 최종 PR CI를 공동 근거로 사용한다.
 - 관련 release Python: runtime11/readiness24/observer23/monitor10/catalog13 각각 실제 통과. 실행 coordinator flow9개는 실제 localGit/stateful fakeAPI로 web2 순서·실패 중단·CI/profile/digest/attempt/scope/DDL 차단·mixed Git skip·관측 실패 분리를 검증했다. Git27, root 기본10개는 마지막 deploy glob에도 포함했다.
 - scope/manifest/migration의 실제 임시 Git replace 우회, Git 실제 command/tini/Cmdnull·multiline env 불일치와 초기 미생성 모듈 RED를 수정해 관련 회귀 통과. image proof의 새 IMAGE_DIGEST env 때문에 기존 workflow 기대값1실패 후 실제 receipt 연결을 추가 검증해10/10 통과. 저장된 실제17앱 API/runtime와 Git6 오프라인 계약 검증도 성공했으며 실제 운영 배포를 대신한 결과라고 주장하지 않는다.
@@ -32,7 +33,7 @@
 cd /Users/jr/Desktop/projects/nomorevibe-deployment-fast-path
 git status --short
 gh pr list --head feat/deployment-fast-path-20261025 --json number,url,state,headRefOid
-gh pr checks <PR번호>
+gh pr checks 653
 # merge 전에 최신 base/check 성공을 확인한다. main image proof 검증은 release_readiness.resolve_readiness를 읽기 전용 호출한다.
 # 다음 실제 배포: docs/operations/deployment-fast-path.md의 정확한 scope/plan/run 명령을 사용한다.
 # be71 런타임/DDL/unknown 회수/capacity open/원 작업 재개/생산자 등록은 반복하지 않는다.
