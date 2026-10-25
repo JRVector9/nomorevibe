@@ -75,6 +75,13 @@ def save(path, value):
         os.fsync(out.fileno())
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+    # The reservation's directory entry must survive a host power loss before
+    # any recovery action is admitted, not only its temporary file contents.
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 WEB_PROBE = """Promise.all(['/api/health','/'].map(async path=>{

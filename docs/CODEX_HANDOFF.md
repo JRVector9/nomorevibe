@@ -1,5 +1,15 @@
 # 2026-10-25 — 웹·백엔드 자동복구와 Oracle 독립 감시
 
+## Latest checkpoint — final Python hardening
+
+- PR [659](https://github.com/JRVector9/nomorevibe/pull/659), previous head c601841d / base bfe0c8fc. CI40172877420의 필수 check·type/lint/unit2/build/DB통합6/ledger/PR이미지2 모두 실제 성공했다. 아래 Python 보완 commit 뒤 최신 HEAD의 필수 CI를 다시 확인한다.
+- 최종 앱 검사: 전체 unit **569파일7398PASS/9skip**,79.56초. typegen/tsc/i18n/lint(기존4warning)/production build EXIT0, npm audit 모든 등급0. 로그 `/private/tmp/nmv-reliability-unit-final-20261025.log`, `/private/tmp/nmv-reliability-build-merged-final-20261025.log`, `/private/tmp/nmv-reliability-audit-final-20261025.json`.
+- Push의 기존 timer는 connect 뒤 시작해 DNS hang을 제한하지 못했다. 최종 보완은 stdin-only URL/빈env/isolated child와 전체5초 kill·reap·64byte 출력 cap이다. directory rename 뒤 fsync도 추가해 복구 예약의 영속화 실패 시 mutation0을 보장한다. 실제 root 최종 Python **recovery58개(57PASS/1skip), watchdog51PASS**, diff-check 성공. 운영 source는 아직 기존 b3db/34e9이므로 source-only 원자갱신이 남는다.
+- 새18앱 실제 baseline: `/private/tmp/nmv-reliability-baseline18-20261025.private.json`, SHA256 `3df433848330b37879e048b3def646d8890a30b6ff42d0849aa3ec96b7d3cd07`, 모두 be71. 정상 plan에서도 실제 fleet 재검증을 생략하지 않는다.
+- Oracle 최신 전체ok/네PushACKtrue/incidentstate비어있음 확인. 수신경로드릴 acceptedtrue 새2incident→반복0→복원ACK4true→전체ok의 실제 시각을 safe artifact에 보존했다. root키·capacity·모델·producer 변경0.
+- `/private/tmp/nmv-web-db-reconnect-drill-20261025.py` 준비 완료, 문법·오프라인7회귀 통과, 운영실행0. 새web immutable image를 받아 mini 전용internal network/PG/dummyenv에서 DBdown live200·같은PID·readiness503→200을 확인한다. 로컬 PostgreSQL15–17 image 필요, 실제서비스DB/볼륨 접근0.
+- 추가 운영 발견: Osaka agent-scan은 Docker18앱 밖의 native release6e452f83, Node24.19.0/builtin Undici7.29.0이다. 새 main immutable native bundle과 Node24.22.1로 교체하는 경로를 별도 검토 중이다. 의도적 stop 전 native gateway recoverEnabled=false가 필수이며 DB principal·OCI identity·host budget·fence를 보존한다. 아직 unit/release/process 변경0.
+
 ## Current objective / checkpoint 07:26Z
 
 사용자 원 목표 네 가지(웹 자동복원, 백엔드 자동복구, 수집·검토·승인·한글 번역 전 과정 Oracle 감시·복구·관리자 알림, 전 페이지 병목 개선)를 수행 중이다. **목표 미완료: 새 앱 이미지 릴리스와 배포 후 검증이 남는다.** 기존 사용자 WT의 dirty 변경은 보존한다.

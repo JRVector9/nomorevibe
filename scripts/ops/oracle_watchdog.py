@@ -9,6 +9,8 @@ import os
 import re
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -237,10 +239,70 @@ def main():
             stop.wait(30)
 
 
-def safe_push(url, ok):
+PUSH_CHILD = """import json, sys
+# -I excludes CWD/PYTHONPATH. This exact directory is the installed, root-owned
+# watchdog source, never a path supplied by configuration or the receiver.
+sys.path.insert(0, sys.argv[1])
+accepted = False
+try:
+    from oracle_watchdog import push
+    raw = sys.stdin.buffer.read(32769)
+    if len(raw) <= 32768:
+        value = json.loads(raw)
+        if (isinstance(value, dict) and set(value) == {'url', 'ok'} and
+                isinstance(value['url'], str) and type(value['ok']) is bool):
+            push(value['url'], value['ok'])
+            accepted = True
+except Exception:
+    pass
+sys.stdout.write('1\\n' if accepted else '0\\n')
+"""
+
+
+def safe_push(url, ok, *, deadline_seconds=5):
+    """Bound DNS/connect too; neither endpoint nor remote errors enter argv/logs."""
     try:
-        push(url, ok)
-        return True
+        if (not isinstance(url, str) or type(ok) is not bool or
+                type(deadline_seconds) not in (int, float) or not math.isfinite(deadline_seconds) or deadline_seconds <= 0):
+            return False
+        payload = json.dumps({'url': url, 'ok': ok}).encode('utf-8')
+        if len(payload) > 32768:
+            return False
+        process = subprocess.Popen([sys.executable, '-I', '-c', PUSH_CHILD, str(Path(__file__).resolve().parent)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                   env={}, start_new_session=True)
+        expired = threading.Event()
+
+        def kill():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        def deadline():
+            expired.set()
+            kill()
+
+        timer = threading.Timer(min(5, deadline_seconds), deadline)
+        timer.daemon = True
+        timer.start()
+        try:
+            process.stdin.write(payload)
+            process.stdin.close()
+            # Read the cap while streaming, not after capture_output has grown.
+            output = process.stdout.read(65)
+            if len(output) > 64:
+                return False
+            process.wait()
+            return process.returncode == 0 and not expired.is_set() and output == b'1\n'
+        finally:
+            timer.cancel()
+            # A finished leader can leave descendants holding stdout open.
+            kill()
+            process.wait()
+            process.stdout.close()
+            if not process.stdin.closed:
+                process.stdin.close()
     except Exception:
         return False
 

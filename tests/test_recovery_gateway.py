@@ -1,8 +1,10 @@
 import importlib.util
 import json
+import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PATH = Path(__file__).resolve().parents[1] / 'scripts/ops/recovery_gateway.py'
 
@@ -53,6 +55,20 @@ class GatewayTests(unittest.TestCase):
                                 probe_fn=lambda _: {'services': [self.row]}, force_fn=timeout)
         self.assertEqual(result, {'result': 'unknown'})
         self.assertEqual(self.recover()['result'], 'limited')
+
+    def test_failed_directory_durability_never_dispatches_recovery(self):
+        real_fsync = self.g.os.fsync
+
+        def sync_file_only(fd):
+            if stat.S_ISDIR(self.g.os.fstat(fd).st_mode):
+                raise OSError('directory persistence unavailable')
+            return real_fsync(fd)
+
+        with patch.object(self.g.os, 'fsync', side_effect=sync_file_only):
+            self.assertEqual(self.recover(), {'result': 'unknown'})
+        self.assertEqual(self.calls, [])
+        # The uncertain reservation still consumes its budget when it is readable.
+        self.assertEqual(self.recover(), {'result': 'limited'})
 
     def test_never_restarts_model_workers_or_accepts_shell(self):
         self.config['services']['web']['kind'] = 'worker'
