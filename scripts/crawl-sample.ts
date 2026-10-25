@@ -15,6 +15,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { normalizeUrl } from "@/lib/net/normalize";
+import { sampleHomepageStatus } from "@/lib/crawl/sample-homepage";
 
 /** 파일에 남기는 것 — 판정 함수가 받는 입력 그대로다 */
 export type RawSample = {
@@ -133,8 +134,7 @@ async function main() {
   const statuses = new Map<string, number | null>();
   await pooled(targets, 8, async ({ repo, url }) => {
     try {
-      const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(10_000) });
-      statuses.set(repo, res.status);
+      statuses.set(repo, await sampleHomepageStatus(url));
     } catch {
       statuses.set(repo, null);
     }

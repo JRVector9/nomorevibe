@@ -47,9 +47,9 @@ export function createSharedStore(deps: {
   };
   return {
     async get<T>(key: string) {
-      const client = deps.client();
-      if (!client) return null;
       try {
+        const client = deps.client();
+        if (!client) return null;
         const raw = await client.get(sharedKey(deps.release, key));
         if (!raw || typeof raw === "string") return null;
         const entry = deserialize(raw) as { v: T; e: number };
@@ -60,17 +60,21 @@ export function createSharedStore(deps: {
       }
     },
     set<T>(key: string, value: T, expiresAt: number) {
-      const client = deps.client();
-      const ttl = Math.ceil(expiresAt - now());
-      if (!client || ttl <= 0) return;
-      let payload: Buffer;
       try {
-        payload = serialize({ v: value, e: expiresAt });
+        const client = deps.client();
+        const ttl = Math.ceil(expiresAt - now());
+        if (!client || ttl <= 0) return;
+        let payload: Buffer;
+        try {
+          payload = serialize({ v: value, e: expiresAt });
+        } catch (error) {
+          warn("cache.shared_serialize_failed", error);
+          return;
+        }
+        client.set(sharedKey(deps.release, key), payload, { PX: ttl }).catch((error) => warn("cache.shared_set_failed", error));
       } catch (error) {
-        warn("cache.shared_serialize_failed", error);
-        return;
+        warn("cache.shared_set_failed", error);
       }
-      client.set(sharedKey(deps.release, key), payload, { PX: ttl }).catch((error) => warn("cache.shared_set_failed", error));
     },
   };
 }

@@ -22,6 +22,14 @@ beforeEach(() => {
 });
 
 describe("홈 '많이 쓰이는 프로젝트' — 구간 탭 + 발견하기 카드(2026-10-11 시안 안 C)", () => {
+  it("같은 개인 계정 조건의 동시 요청은 한 번 읽고 다른 조건과 섞이지 않는다", async () => {
+    await Promise.all([PopularTiers({}), PopularTiers({})]);
+    expect(getPopularGroups).toHaveBeenCalledOnce();
+    await PopularTiers({ personal: true });
+    expect(getPopularGroups).toHaveBeenCalledTimes(2);
+    expect(getPopularGroups).toHaveBeenLastCalledWith(true);
+  });
+
   it("구간을 발견하기 탭 모양으로 고르고 수를 붙인다 — 첫 구간이 골라져 있다", async () => {
     const html = renderToStaticMarkup(await PopularTiers({}));
     const tabs = html.match(/<div class="tabs" role="tablist"[\s\S]*?<\/div>/)![0];

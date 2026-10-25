@@ -5,7 +5,7 @@ import { pushKumaStatus, runMonitorCycle, type MonitorCycleState } from '@/scrip
 import { monitorHeartbeatIsFresh } from '@/scripts/monitor-healthcheck';
 
 const ready = { measuredAt: '2026-09-29T00:00:00.000Z', overall: 'ok' as const,
-  roles: [], scheduler: { reason: 'ready' as const, alarm: false, freshReplicas: 2 } };
+  roles: [], scheduler: { reason: 'ready' as const, alarm: false, freshReplicas: 3, miniFreshReplicas: 1 } };
 const progress = { measuredAt: ready.measuredAt, overall: 'ok' as const,
   stages: [], scheduler: { role: 'scheduler' as const, reason: 'scheduled' as const,
     alarm: false, overdueJobs: [] }, liveness: [] };

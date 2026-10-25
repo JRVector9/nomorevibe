@@ -22,7 +22,8 @@ export type ReadinessReport = {
   measuredAt: string;
   overall: 'ok' | 'alarm';
   roles: Array<{ role: string; reason: ReadinessReason; alarm: boolean }>;
-  scheduler: { reason: 'ready' | 'replica_missing'; alarm: boolean; freshReplicas: number };
+  scheduler: { reason: 'ready' | 'replica_missing' | 'mini_missing'; alarm: boolean; freshReplicas: number;
+    miniFreshReplicas: number };
 };
 
 const fresh = (age: number) => Number.isFinite(age) && age >= -5 && age <= 60;
@@ -55,11 +56,15 @@ export function classifyFailoverReadiness(
     }
     return { role, reason, alarm: reason !== 'ready' };
   });
-  const freshReplicas = new Set(snapshot.schedulers.filter(row => row.status === 'running' && fresh(row.ageSeconds))
-    .map(row => row.instanceId)).size;
-  const scheduler = freshReplicas >= 2
-    ? { reason: 'ready' as const, alarm: false, freshReplicas }
-    : { reason: 'replica_missing' as const, alarm: true, freshReplicas };
+  const freshInstances = new Set(snapshot.schedulers.filter(row => row.status === 'running' && fresh(row.ageSeconds))
+    .map(row => row.instanceId));
+  const freshReplicas = freshInstances.size;
+  const miniFreshReplicas = [...freshInstances].filter(id => id === 'mini-scheduler' || id.startsWith('mini-scheduler-')).length;
+  // One surviving mini scheduler can keep requesting due work, while redundancy is degraded.
+  // Two M3 replicas alone cannot attest that the independent host is available.
+  const reason: ReadinessReport['scheduler']['reason'] = freshReplicas < 2 ? 'replica_missing'
+    : miniFreshReplicas === 0 ? 'mini_missing' : 'ready';
+  const scheduler = { reason, alarm: reason !== 'ready', freshReplicas, miniFreshReplicas };
   return { measuredAt: new Date().toISOString(), overall: rows.some(row => row.alarm) || scheduler.alarm ? 'alarm' : 'ok',
     roles: rows, scheduler };
 }

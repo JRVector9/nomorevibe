@@ -1,0 +1,21 @@
+# Separate native OpenSSH listener. Tailscale SSH on :22 bypasses authorized_keys
+# options; never send the recovery key through that path.
+Port 22222
+ListenAddress <TAILSCALE_HOST_IPV4>
+HostKey /etc/ssh/ssh_host_ed25519_key
+PidFile /var/run/nomorevibe-recovery-sshd.pid
+AuthorizedKeysFile /usr/local/etc/nomorevibe-recovery-authorized-keys
+AllowUsers jr
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+UsePAM no
+DisableForwarding yes
+PermitTTY no
+MaxSessions 2
+MaxAuthTries 3
+LoginGraceTime 10
+LogLevel ERROR
+ForceCommand env PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/python3 -I /usr/local/libexec/nomorevibe-recovery/gateway.py --config /usr/local/etc/nomorevibe-recovery.json

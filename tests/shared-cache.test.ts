@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSharedStore, createValkeyRoutes, sharedKey, type SharedClient } from "@/lib/cache/shared";
 import { networkRoutes } from "@/lib/db/network-route";
+import { createMemo } from "@/lib/cache/memo";
 
 /**
  * 웹 6대가 함께 쓰는 두 번째 캐시 층(Valkey, 2026-10-07). Valkey 가 없거나 실패해도 읽기를 막지 않는다.
@@ -41,6 +42,34 @@ describe("Valkey 공유 캐시", () => {
   it("릴리스가 다르면 열쇠가 달라 배포 사이 값이 섞이지 않는다", () => {
     expect(sharedKey("aaa", "k")).not.toBe(sharedKey("bbb", "k"));
     expect(sharedKey("aaa", "k")).toMatch(/^nmv:memo:aaa:[0-9a-f]{40}$/);
+  });
+
+  it("연결 생성이 실패해도 원본 읽기와 프로세스 캐시는 계속 동작한다", async () => {
+    const warn = vi.fn();
+    const store = createSharedStore({
+      client: () => { throw new TypeError("Invalid URL"); }, release: "r", now: () => 1_000, warn,
+    });
+    const memo = createMemo<number>({ ttlMs: 30_000, max: 2, now: () => 1_000, shared: { store, namespace: "test" } });
+    const load = vi.fn(async () => 42);
+
+    await expect(memo.get("k", load)).resolves.toBe(42);
+    await expect(memo.get("k", load)).resolves.toBe(42);
+    expect(load).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("cache.shared_get_failed", { error: expect.any(TypeError) });
+  });
+
+  it("쓰기 명령의 동기 실패가 성공한 원본 읽기를 실패로 바꾸지 않는다", async () => {
+    const warn = vi.fn();
+    const client: SharedClient = {
+      get: async () => null,
+      set: () => { throw new Error("client closed"); },
+    };
+    const store = createSharedStore({ client: () => client, release: "r", now: () => 1_000, warn });
+    const memo = createMemo<number>({ ttlMs: 30_000, max: 2, now: () => 1_000, shared: { store, namespace: "test" } });
+
+    await expect(memo.get("k", async () => 42)).resolves.toBe(42);
+    expect(warn).toHaveBeenCalledWith("cache.shared_set_failed", { error: expect.any(Error) });
   });
 
   it("연결이 없거나 명령이 실패하면 없는 것으로 치고, 기록은 1분에 한 번만 남긴다", async () => {

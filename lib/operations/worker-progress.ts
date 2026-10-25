@@ -66,9 +66,15 @@ export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progr
 
 export type ProgressReason = "paused" | "no_work" | "progressing" | "running" | "backoff" |
   "upstream_or_job_error" | "upstream_stalled" | "unknown_age" | "warming_up" | "worker_missing" | "no_progress" | "manual_attention" |
-  /** 건 단위 consumer 가 맡는 단계(items 의 제작 근거 스캔)인데 consumer 관측이 없다 — 역할 워커 재시작으로 고쳐지지 않는다 */
+  /** 건 단위 consumer 가 맡는 단계인데 consumer 관측이 없다 — 역할 워커 재시작으로 고쳐지지 않는다 */
   "consumer_missing";
-export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level" | "uptime";
+export const TEXT_PROGRESS_STAGE_JOBS = {
+  'reason-translate': 'reason-translate', 'crawl-tagline': 'crawl-tagline', keywords: 'product-search-profile',
+  'keyword-verify': 'product-search-verify', 'product-translate': 'product-translate', 'tagline-ko': 'product-tagline-ko',
+  'intro-check': 'product-intro-check',
+} as const;
+export type TextProgressStageKey = keyof typeof TEXT_PROGRESS_STAGE_JOBS;
+export type ProgressStageKey = ThroughputStage["key"] | "evidence" | "agent-evidence" | "ai-level" | "uptime" | TextProgressStageKey;
 /** 보강 근거 단계 이름 — 새 화면 요소에 "쉬운 말(코드)"로 쓴다(운영센터 v8). 지금 화면 글자는 그대로 둔다 */
 export const EVIDENCE_STAGE_LABELS = {
   evidence: "제품 근거(evidence)",
@@ -80,7 +86,7 @@ export type ProgressStageInput = Omit<Pick<ThroughputStage, "key" | "enabled" | 
   /** 일감이 있어도 정책이 일부러 쉬게 한 상태(응답 점검 split 의 home 차단기 열림) — 재시작으로 고칠 수 없는 대기다 */
   held?: boolean;
 };
-export type StageProgress = { role: "crawler" | "reviewer" | "publisher" | "maintenance"; stage: ProgressStageKey;
+export type StageProgress = { role: "crawler" | "reviewer" | "publisher" | "maintenance" | "text"; stage: ProgressStageKey;
   reason: ProgressReason; alarm: boolean; restartEligible?: boolean; manualAttention?: number;
   job?: string; lane?: string; waiting?: number; oldestMinutes?: number | null; completed5m?: number;
   progress5m?: number | null; errors5m?: number | null; deferred?: number; providerErrors?: number; providerErrorMinutes?: number | null;
@@ -88,6 +94,7 @@ export type StageProgress = { role: "crawler" | "reviewer" | "publisher" | "main
 
 /** 단계를 처리하는 역할 — 응답 점검(uptime, split claims 모드에서만 보고)은 maintenance 다 */
 export function progressStageRole(key: ProgressStageKey): StageProgress["role"] {
+  if (Object.hasOwn(TEXT_PROGRESS_STAGE_JOBS, key)) return key === 'intro-check' ? 'reviewer' : 'text';
   return ["fetch", "evidence", "agent-evidence", "ai-level"].includes(key) ? "crawler" : key === "publish" ? "publisher"
     : key === "uptime" ? "maintenance" : "reviewer";
 }
@@ -99,7 +106,8 @@ export function classifyStage(
   now: Date,
 ): StageProgress {
   let reason: ProgressReason;
-  const deferred = ["evidence", "agent-evidence", "ai-level"].includes(stage.key) ? stage.deferred ?? 0 : 0;
+  const textStage = Object.hasOwn(TEXT_PROGRESS_STAGE_JOBS, stage.key);
+  const deferred = textStage || ["evidence", "agent-evidence", "ai-level"].includes(stage.key) ? stage.deferred ?? 0 : 0;
   const errors = Math.max(stage.providerErrors ?? 0, stage.errors5m ?? 0) + (job?.lastError ? 1 : 0);
   if (!stage.enabled || isPausedJob(job ?? undefined, now.getTime())) reason = "paused";
   else if (stage.waiting === 0 && !deferred) reason = (stage.manualAttention ?? 0) > 0 ? "manual_attention" : "no_work";
@@ -111,11 +119,12 @@ export function classifyStage(
   else if (stage.held) reason = "backoff";
   else if (stage.waiting === 0 && deferred > 0) reason = "backoff";
   else if (stage.oldestMinutes === null) reason = "unknown_age";
-  else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : stage.key === "publish" ? 10 : 5)) reason = "warming_up";
+  else if (stage.oldestMinutes < (stage.key === "judge" ? 15 : stage.key === "publish" || textStage ? 10 : 5)) reason = "warming_up";
   else reason = observed ? "no_progress" : "worker_missing";
   return { role: progressStageRole(stage.key), stage: stage.key,
     reason, alarm: reason === "no_progress" || reason === "worker_missing" || reason === "upstream_stalled",
-    restartEligible: reason === "no_progress", manualAttention: stage.manualAttention ?? 0 };
+    // New text/intro observations alert independently; existing role/supervisor recovery retains its own fences.
+    restartEligible: reason === "no_progress" && !textStage, manualAttention: stage.manualAttention ?? 0 };
 }
 
 export type SchedulerReason = "scheduled" | "unknown_schedule" | "worker_missing" | "scheduler_missed";

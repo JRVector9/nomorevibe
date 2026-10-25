@@ -144,6 +144,8 @@ jobs:
       - run: python3 -m unittest tests/test_oracle_activation_check.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_ddl.py
       - run: python3 -B -m unittest discover -s tests -p test_oracle_dr_replication.py
+      - run: python3 -B -m unittest discover -s tests -p 'test_recovery*.py'
+      - run: python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'
 
   unit:
     needs: scope

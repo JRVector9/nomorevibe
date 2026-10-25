@@ -107,6 +107,24 @@ beforeEach(() => {
 });
 
 describe('내릴 후보 화면', () => {
+  it('starts independent audit status and reason reads while throughput is still pending', async () => {
+    let releaseThroughput!: (value: null) => void;
+    const pending = new Promise<null>(resolve => { releaseThroughput = resolve; });
+    mocks.throughput.mockReturnValueOnce(pending);
+    const rendering = render({ tab: 'audit' });
+    try {
+      await vi.waitFor(() => {
+        expect(mocks.qwenStatus).toHaveBeenCalledTimes(1);
+        expect(mocks.screenStatus).toHaveBeenCalledTimes(1);
+        expect(mocks.heldReasons).toHaveBeenCalledTimes(1);
+        expect(mocks.reasons).toHaveBeenCalledWith(7, 'reject', undefined);
+      }, { timeout: 200 });
+    } finally {
+      releaseThroughput(null);
+      await rendering;
+    }
+  });
+
   /** 감사 처리 기록(2026-10-11) — 무엇 때문에 내렸는지 사유 갈래·AI 사유와 함께 본다 */
   it('처리 기록 탭은 감사에서 내리고 둔 것을 사유 갈래·AI 사유·누가 언제와 함께 보인다', async () => {
     mocks.decisions.mockResolvedValue([

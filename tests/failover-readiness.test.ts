@@ -17,6 +17,7 @@ function healthySnapshot() {
     schedulers: [
       { instanceId: 'm3-scheduler-a', status: 'running', release, ageSeconds: 2 },
       { instanceId: 'm3-scheduler-b', status: 'running', release, ageSeconds: 3 },
+      { instanceId: 'mini-scheduler-aabbccddeeff', status: 'running', release, ageSeconds: 4 },
     ],
   };
 }
@@ -29,7 +30,7 @@ it('alarms when the active primary is healthy but its standby has disappeared', 
   expect(report.roles).toContainEqual({ role, reason: 'standby_missing', alarm: true });
 });
 
-it('accepts a complete healthy pair and two scheduler replicas', () => {
+it('accepts a complete healthy pair and scheduler replicas across M3 and mini', () => {
   const report = classifyFailoverReadiness(healthySnapshot(), [role]);
   expect(report).toMatchObject({ overall: 'ok', roles: [{ role, reason: 'ready', alarm: false }],
     scheduler: { reason: 'ready', alarm: false } });
@@ -60,9 +61,28 @@ it.each([
   expect(classifyFailoverReadiness(snapshot, [role]).roles).toContainEqual({ role, reason, alarm: true });
 });
 
-it('alarms when one scheduler replica disappears', () => {
+it('keeps the two-replica minimum when only mini survives M3 loss', () => {
   const snapshot = healthySnapshot();
+  snapshot.schedulers[0].ageSeconds = 70;
   snapshot.schedulers[1].ageSeconds = 70;
   expect(classifyFailoverReadiness(snapshot, [role]).scheduler)
-    .toEqual({ reason: 'replica_missing', alarm: true, freshReplicas: 1 });
+    .toEqual({ reason: 'replica_missing', alarm: true, freshReplicas: 1, miniFreshReplicas: 1 });
+});
+
+it.each(['missing', 'stale', 'stopped', 'future'] as const)('does not let two M3 replicas hide a %s mini scheduler', condition => {
+  const snapshot = healthySnapshot();
+  if (condition === 'missing') snapshot.schedulers.pop();
+  if (condition === 'stale') snapshot.schedulers[2].ageSeconds = 70;
+  if (condition === 'stopped') snapshot.schedulers[2].status = 'stopped';
+  if (condition === 'future') snapshot.schedulers[2].ageSeconds = -10;
+  expect(classifyFailoverReadiness(snapshot, [role]).scheduler)
+    .toEqual({ reason: 'mini_missing', alarm: true, freshReplicas: 2, miniFreshReplicas: 0 });
+});
+
+it('accepts two live schedulers when one is mini and does not double-count an observation', () => {
+  const snapshot = healthySnapshot();
+  snapshot.schedulers[1].ageSeconds = 70;
+  snapshot.schedulers.push({ ...snapshot.schedulers[2] });
+  expect(classifyFailoverReadiness(snapshot, [role]).scheduler)
+    .toEqual({ reason: 'ready', alarm: false, freshReplicas: 2, miniFreshReplicas: 1 });
 });

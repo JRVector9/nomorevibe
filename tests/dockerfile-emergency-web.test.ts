@@ -21,7 +21,7 @@ describe("Dockerfile 비상 최소 웹 target", () => {
 
   it("runner 와 같은 builder 산출물만 복사하고 설치·빌드 비밀·작업 코드는 없다", () => {
     const { base, block } = stage("emergency-web");
-    expect(base).toBe("node:24-alpine");
+    expect(base).toBe("node:24.22.1-alpine");
     const copies = block.split("\n").filter((line) => line.startsWith("COPY"));
     expect(copies).toEqual([
       "COPY --from=builder --chown=nextjs:nodejs /app/public ./public",
@@ -34,7 +34,12 @@ describe("Dockerfile 비상 최소 웹 target", () => {
     }
   });
 
-  it("root 가 아닌 사용자로 server.js 를 tini 아래 돌리고, 자기 health 를 loopback 으로 묻는다", () => {
+  it("모든 Node stage 는 Brotli·내장 fetch 보안 패치가 포함된 같은 버전을 쓴다", () => {
+    expect(stages.filter((row) => row.base.startsWith("node:")).map((row) => row.base))
+      .toEqual(Array(7).fill("node:24.22.1-alpine"));
+  });
+
+  it("root 가 아닌 사용자로 server.js 를 tini 아래 돌린다", () => {
     const { block } = stage("emergency-web");
     const lines = block.split("\n").filter((line) => line && !line.startsWith("#"));
     expect(lines).toContain("USER nextjs");
@@ -42,6 +47,14 @@ describe("Dockerfile 비상 최소 웹 target", () => {
     expect(lines).toContain("ENV HOSTNAME=0.0.0.0");
     expect(lines).toContain('ENTRYPOINT ["/sbin/tini", "--"]');
     expect(lines.at(-1)).toBe('CMD ["node", "server.js"]');
-    expect(block).toMatch(/HEALTHCHECK [^\n]*\\\n\s+CMD node -e "fetch\('http:\/\/127\.0\.0\.1:3000\/api\/health'/);
+  });
+
+  it("두 웹 target 은 실제 listen hostname 으로 DB 없는 liveness 를 검사한다", () => {
+    for (const name of ["emergency-web", "runner"]) {
+      const { block } = stage(name);
+      expect(block).toContain("HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3");
+      expect(block).toContain("fetch('http://'+(process.env.HOSTNAME||'127.0.0.1')+':3000/api/live'");
+      expect(block).not.toContain("/api/health");
+    }
   });
 });

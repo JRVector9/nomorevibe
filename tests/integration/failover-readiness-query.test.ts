@@ -22,15 +22,24 @@ it('reads DB-clock ages, verifies the lease boot ID, and alarms on a stale stand
     { key: 'candidate:crawler:mini-crawler-standby', value: { kind: 'standby', phase: 'standby',
       bootId: 'boot-b', release: 'release-a', epoch: null }, observedAt: sql`localtimestamp` },
     { key: 'service:scheduler:scheduler-one', value: { status: 'running' }, observedAt: sql`localtimestamp` },
-    { key: 'service:scheduler:scheduler-two', value: { status: 'running' }, observedAt: sql`localtimestamp` },
+    { key: 'service:scheduler:mini-scheduler-aabbccddeeff', value: { status: 'running' }, observedAt: sql`localtimestamp` },
   ]);
   const first = await readFailoverReadiness();
   expect(first.roles.find(row => row.role === 'crawler')).toMatchObject({ reason: 'ready', alarm: false });
-  expect(first.scheduler).toMatchObject({ reason: 'ready', freshReplicas: 2 });
+  expect(first.scheduler).toMatchObject({ reason: 'ready', freshReplicas: 2, miniFreshReplicas: 1 });
   await db.update(operationsObservations).set({ observedAt: sql`localtimestamp - interval '70 seconds'` })
     .where(eq(operationsObservations.key, 'candidate:crawler:mini-crawler-standby'));
   const second = await readFailoverReadiness();
   expect(second.roles.find(row => row.role === 'crawler')).toMatchObject({ reason: 'standby_missing', alarm: true });
+});
+
+it('does not let M3-only observations conceal a missing mini scheduler in the DB query', async () => {
+  await db.insert(operationsObservations).values([
+    { key: 'service:scheduler:m3-scheduler-one', value: { status: 'running' }, observedAt: sql`localtimestamp` },
+    { key: 'service:scheduler:m3-scheduler-two', value: { status: 'running' }, observedAt: sql`localtimestamp` },
+  ]);
+  expect((await readFailoverReadiness()).scheduler)
+    .toEqual({ reason: 'mini_missing', alarm: true, freshReplicas: 2, miniFreshReplicas: 0 });
 });
 
 it('emits a machine-readable alarm and exit code 2 from the independent CLI', () => {
