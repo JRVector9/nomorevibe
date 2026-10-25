@@ -1,97 +1,127 @@
-# 2026-10-25 — 웹·백엔드 자동복구/Oracle 독립 감시 진행 중
+# 2026-10-25 — 웹·백엔드 자동복구와 Oracle 독립 감시
 
-## Latest checkpoint — 2026-10-25 07:12Z (최신 사실)
+## Current objective / checkpoint 07:26Z
 
-- 후속 실제운영최종: Oracle 통합refresh 완료/recovertrue/3host19targets/PID3217177. watchdogb3dbd87d·notifier8d5b190c·gateway34e9ef77, M3/mini/Osaka공통gateway도34e9ef77로원자갱신. 최근19targets중readonlymonitor pipeline_alarm만남고나머지18정상/Push4개ACKtrue.
-- miniallowlist를갱신하며0644→0600으로잘못바꿔 jr forced gateway 읽기가막혔고 hostunknown이계속됐다. **비밀없는rootowned서비스allowlist만0644로복원**, Oracle실제mini7probe전부ok/다음cycle19inventory정상 확인. Oracle/native비밀config·key·state는계속0600. 미래allowlist갱신시mode보존필수.
-- 새incident 실제전송증명: 기존pipelineDOWN중 mini전용HTTPS8443수신경로를75초만off(독립자동복원child먼저armed), Oraclepipeline/heartbeat index1 ACKfalse→새2incident Telegram acceptedtrue/sent2/pending0. 동일기존fault 재전송0. 75.035초뒤serve원설정자동복원확인. `/private/tmp/nmv-watchdog-incident-drill-20261025.safe.json` 및 `/private/tmp/nmv-mini-receiver-drill-20261025.py status`. 수신자단말읽음미확인.
+사용자 원 목표 네 가지(웹 자동복원, 백엔드 자동복구, 수집·검토·승인·한글 번역 전 과정 Oracle 감시·복구·관리자 알림, 전 페이지 병목 개선)를 수행 중이다. **목표 미완료: 새 앱 이미지 릴리스와 배포 후 검증이 남는다.** 기존 사용자 WT의 dirty 변경은 보존한다.
 
-- 후속07:19Z: 실제monitor credential로 새2쿼리 reason2552ms/other788ms, defaultreadonlyon/SELECT12/쓰기0/DELETE WHEREfalse=42501 검증완료. `/private/tmp/nmv-monitor-readonly-verify-20261025.safe.json`. scheduler3개 DB관측도각4–11초running.
-- mini단독 운영연속성 실제증명 완료: M3scheduler둘을 CAS로replicas0(별도120초자동복원child를먼저armed), 120.158초동안 mini12ticks/실패0/자연due55요청. M3원spec완전동일복원/2containers둘healthy. `/private/tmp/nmv-scheduler-continuity-drill-20261025.safe.json`; 추가stop/replay불필요. 실PG4파일20PASS(새mini공존·단독진행·fenced0요청 포함), 최종typegen/tsc/i18n/lint0(기존4warning).
-- 상호KumaHTTP점검4/75는 컨테이너MagicDNS ENOTFOUND 오탐이라 이번에만든두monitor만normalAPIdelete완료. 원2/73·3/74보존. receiver ACKfalse 직접incident알림이 이gap을 담당하며 Oraclehost자체중단은 miniheartbeat74deadman이 담당한다. 잘못된상호HTTPhelper 재실행금지。
-- 신규mini를gateway7에등록한뒤 Oracle기존inventory6과불일치가생겨 일시mini hostunknown이생겼다. Oracle2host config의mini inventory도7로맞추고 recovertrue/state그대로재시작해18앱감시로수정완료(최종3hostrefresh는별도)。
-- origin/main 최신은 **bfe0c8fc**(PR658 assist admission recovery)。자체수정과code중복없고handoff만겹친다. 최종commit뒤merge하고최신base필수CI를확인한다. 이다른작업의capacity/ledger/runtime제어를반복하지않는다。
-- 신규notifier watchdog44PASS/recovery56PASS+1skip와독립securityblocking0。source確定: notifier8d5b190c/watchdogb3dbd87d/gateway34e9ef77。통합원자refresh `/private/tmp/nmv-watchdog-integrated-refresh-20261025.py` session59736실행중。기존recovertrue/state/원push4개유지, mini7/Osaka1=3host19targets, SAME기존KumaTelegramnotification1만root메모리→root600설정복사。실제결과확인전완료주장금지。
+- 실제 작업: `/Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery`, branch `codex/reliability-autorecovery-20261025`. 자체 구현 commit `e6bd19b9`, 최신 main `bfe0c8fc`(PR658) 통합 중이다. 충돌은 이 handoff 하나였고 양쪽 기록을 보존했다. 전체 최종 검사·PR/필수 check는 아직이다.
+- 운영 앱은 be71이다. 이번에 mini scheduler만 검증된 같은 be71 worker로 bootstrap했다. 현재 Dokploy **18앱/23컨테이너**, Oracle watchdog **3host/19targets**(M3 11+mini 7+Osaka native 1)다.
+- 모든 병렬 agent는 gpt-6.1-sol/xhigh. 앱 source는 freeze됐다. backend agent만 새 이미지 DB 재연결 격리 드릴의 private 도구를 준비 중이며 운영 실행은 root 담당이다.
 
-- mini scheduler 실제 신규 앱 생성·설정·bootstrap 배포·source/health 검증 완료. ID `6RPgSY-jIFtjZYvme26GD`, name `nomorevibe-scheduler-standby-mini`, service `nomorevibe-scheduler-mini-20261025-fj2hqq`, server mini. 검증된 운영be71 공통 worker `fabaff6972ddadd16531b5c6886144ed0fd7ed01e2b43b00089c05ce9c4c637d`, source998개 일치, done/1/1healthy. DB_URL만 기존scheduler에서 최소복사, pool2/256MiB/.25CPU/replica1/autoDeployfalse/외부port·domain·mount0. private proof `/private/tmp/nmv-mini-scheduler-bootstrap-20261025/verified.safe.json`. 기존17앱 스냅샷을18앱 증거로 재사용하지 않는다. mini gateway inventory7 등록했고 Oracle inventory는 아직17(갱신대기).
-- Osaka native gateway 실제 설치/전용22222systemd listener 활성화, rootownedsource/config600/stateparent700/fromOracle/restrict/forcedcommand/TTYforward금지/고정hostkey. Oracle→Osaka 실제probe ok/agent-scan active, 임의id denied exit1. 첫false 검증 뒤 native recoverEnabled=true, consumer unit/release/env/프로세스 변경0. native SHA402547be31a4b56c71580b8882711712dc7e21fb6bedd454057437258d7e94f5. Oracle3host integration은 아직대기.
-- 최소 monitor role 사전검사 통과(슈퍼/생성/복제/bypass권한0/logintrue/connectionlimit2), 새12표 SELECT만 실제GRANT transaction 완료. SELECT12/쓰기권한0. 실제monitor credential의 최종2쿼리·readonly/write거절 검사는 실행중(session79241). private helper `/private/tmp/nmv-monitor-readonly-grants-20261025.py` inspect/grant/verify; GRANT 반복불필요.
-- text SQL 실제운영 최종분리 READONLY/3초/JIToff/workmem32 각 reason2607.794ms/나머지6개840.082ms 통과. PG실제174k eligible를33개로 오추정한 nested indexlookup을 MATERIALIZED/hashjoin으로 해소. 분리중 하나실패하면 전체unknown(부분lane unknown은 미구현). text globaldrain7개도 canonical dispatch게이트 근거로 held/backoff에 포함, 오류/pause/progress 우선순위보존.
-- 전체unit 저병렬 567파일7367PASS/9skip 및 최종production build EXIT0(`/private/tmp/nmv-reliability-build-final-20261025.log`) 완료. 이후 mini readiness/ops 변경이 있어 최종focused/type/build 필요. 실PG scheduler3process 2PASS(13.77s), native23PASS/recovery56PASS+1skip/watchdog26PASS. web deploy185(2skip)/release81/mini5회귀 통과. 새fixture추가중.
-- 확인된알림gap 보완중: aggregateKuma DOWN동안 신규다른fault알림누락. backend가 `incident_notifications.py`+test와 watchdog최소통합을 구현중(기존Kuma SAME Telegrambot/chat만root600config, perincidentACKdedupe/boundedchild/no rawlogs). security가독립리뷰. receiverACKfalse도독립incident포함. heartbeatproviderFailures=[] 명시복구표시보존도backend소유. 아직운영배치전.
-- Kuma 상호receiver도달성 monitor 기존없음 확인. 신규normalAPI추가 helper 첫시도 실패(부작용/생성여부 확인중), 성공으로 주장금지. `/private/tmp/nmv-kuma-mutual-monitor-setup-20261025.py`, 마지막진단session 별도확인. 현기존pipeline2/73·heartbeat3/74보존.
-- 남은순서: notifier최종검토/Oracle소스원자갱신(기존recovertrue/state보존)+inventory mini7/Osaka1 → 상호receiver/새incident 실제알림증명 → mini상시scheduler 연속성드릴(기존M3둘만 boundedstop/자동복원) → 최종검사/PR/latestbasecheck/main/정상scope-plan-run18앱 → 새Node/liveness/DB일시불통 및Swarm웹복구검증. 다른8d5f recovery의capacity/ledger/정책/producer/observer는 변경금지.
+## Completed work / key design decisions
 
-## Latest checkpoint — 2026-10-25 06:50Z (이하 과거 기록보다 우선)
+- DB-free `/api/live`와 기존 `/api/health` readiness 분리, Docker health는 운영 바인딩 env.HOSTNAME 사용. Node24.22.1/Undici8.12.3/zod4.6.7/vitest4.1.12, patched monitor fetch/redirect 거절/출력 한도와 sample CLI SSRF-safe fetch. npm audit0 실제 확인.
+- Valkey client 생성/동기 set 예외를 DB fallback으로 흡수. 홈 인기5쿼리·popular3쿼리는 기존30초 publicRead/복제본 경로 사용. 권한·개인정보 공통 cache 추가0.
+- 역할 최초 acquire는5분 deadline 뒤 exit1; 불확실 선출 재요청·늦은 성공의 worker 시작 금지.
+- text/소개7단계 독립 수요·성공·retry·소진·hold와 AI1/AI2 legacy/items/draining 분리. 실제 canonical admission 근거로 first/second+text7 global drain은 held/backoff로 분류하되 오류/pause/progress 우선순위 유지. 새 text 감시는 alert-only다.
+- text SQL은 reason/나머지6개 두 READ ONLY 쿼리로 분리(각3초/JIToff/work_mem32MB). 한 쿼리라도 실패하면 전체unknown. PG가 실제174k eligible를33개로 오추정한 random PK lookup은 MATERIALIZED/hashjoin으로 해소했다. 동치405/2460개와 실제 writer 성공 이탈 회귀 검증.
+- `/admin/audit`의 독립 status/reason4묶음을 기존 tab/throughput 조회와 병렬 시작. 권한·조건·cache·외부모델 호출 변경0. 전체42 page source/41익명GET/10browser, 인증 admin22와 회원8 화면을 읽기 검증했다. status 약1MB payload의 불필요 중복은 입증하지 못해 유지했다. 개선 latency 실측은 새 배포 후에 한다.
+- Gateway: 고정 앱만 허용. 180초 안정화+readiness 정상/홈 실패 또는 readonlymonitor stale를 동일 reason/version3회 뒤 재검사하고 Engine CAS로 ForceUpdate만1 증가. 요청 전 영속예약·15분 cooldown·24시간2회·ACK유실도 budget 소비. DB/모델/정책/replica0 임의 복구0.
+- Osaka native: fixed agent-scan unit failed/MainPID0/180초/재귀 cgroup empty 때만 reset-failed→start --job-mode=fail. active/inactive/unknown은 시작하지 않는다. systemd에는 원자적 CAS가 없으므로 의도적 중단 전 recoverEnabled=false 필요.
+- Oracle은 per-incident Telegram ACK dedupe와 receiver ACKfalse 알림을 추가했다. 한 cycle 한4096자 batch/고정 키·원인만/격리 child 전체5초/응답16KiB cap/공식 고정 host·redirect/proxy0. 기존 Kuma SAME bot/chat만 root600 config에 내부 복사, 새 수신자0. ACK유실 시 드문 at-least-once 중복 가능.
 
-- Oracle watchdog **recover=true 활성화**, active/running PID3207834, 기존state보존. gateway해시1cf3fdbadcb63a8a8ab06f183726a796c7c3d3fd29438eb073c5afe7a9826bb7, watchdogd30fb6f713bc034d0c15d162c0546f7ab2f9d57d73bbde5f56e0bb4262434836 실제배치. 고정M3/mini웹·readonlymonitor만제한복구.
-- Oracle pipeline2/heartbeat3, mini pipeline73/heartbeat74 active/네ACKtrue. mini의기존빈serve확인후tailnetHTTPS8443→localhost3001추가. pipeline/heartbeat중복endpoint구성거절.
-- 실제SIGKILL→systemd복귀/NRestarts1. deadman중단: OracleDOWN06:47:36.746/miniDOWN06:47:37.039→재시작UP06:47:52.935/06:47:53.199. OracleTelegram DOWN06:47:37.711Z/UP06:47:53.843Z apiAccepted/receiptPresent/ok=true. private safe증거 `/private/tmp/nmv-watchdog-deadman-drill-20261025.safe.json`, 복원안전timer취소완료.
-- Pythonwatchdog23PASS/recovery33PASS+1skip. 전체unit maxWorkers4 **567파일7367PASS/9skip**,136.45s. 첫12workers1개offlineCLI5초timeout/7366PASS→단독64PASS후전체저병렬통과. 전체typegen/tsc/i18n/lint0(기존4warning). build는컴파일19.7s후agentTDD중helperexport미구현을읽어타입실패; export현재구현/최종안정뒤build재실행.
-- text성공회귀·동치포함통합23PASS. 운영 tagko174.708ms/intro347.842ms. reason단독은3s57014. 원문UNION유일body174185개320.705ms/disk0라TOAST/그룹원인배제; PGeligible추정33개때문text_translations PK17만lookup오추정가능성→backend분리측정/최적화중. monitor배포아직금지.
-- globaldrain회귀RED4→focused67PASS. first/second globaldrain을held/backoff로분류해정상대기restart방지. 실제drain은다른승인회복작업 exact8d5f provider boundary recovery/audit19931(06:31Z), m3-mlx groupLimit1/8d5ff729indeterminate. 타작업capacity/ledger/producer/의도replica0변경0.
-- 회원8routes CUA실제인증본문정상/오류0·쓰기0·민감정보추출0·새탭닫고원Chrome복원. nativeUI라HTTP/timing/console검사는미실행, pageaudit갱신완료.
-- 요구gap추가작업: M3scheduler2개만있어host단절시새due요청중단. webagent가mini상시scheduler1개추가/배포registry영향계획중(운영생성0). securityagent는Osaka fixedunitfailed/MainPID0/180s/emptycgroup만start하는 NEW native_recovery_gateway.py + tests/test_recovery_native*.py TDD구현중(운영설치0). root가watchdog3host통합/키설치예정. 현재enabled2host와혼동금지.
-- rootpending terminal없음. backendSQL소유권반환전중복SQL실행금지. private refresh helper는recoverFalseassert가있어이제그대로재실행거절; configFalse로되돌리지말고소스만별도hash갱신.
+## Operating changes actually verified
 
-## Current objective
-
-사용자 원 목표4개(웹 자동복원, 백엔드 자동복구, 수집·검토·승인·한글 번역 전 과정 Oracle 감시/복구/관리자 알림, 전 페이지 병목 개선)와 병렬 로직·보안 점검을 수행 중이다. **목표 미완료**. 운영 앱 코드는 be71이며 새 앱 릴리스는 아직 배포하지 않았다.
-
-- 작업 WT `/Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery`, branch `codex/reliability-autorecovery-20261025`, base e7136238. 미커밋.
-- 원 WT `/Users/jr/Desktop/projects/nomorevibe`의 dirty 사용자 변경을 보존한다. reset/clean 금지.
-- gpt-6.1-sol/xhigh 병렬: backend는 SQL/실Engine, security는 heartbeat/독립리뷰, web은 페이지 감사 완료 후 실제AI1 정체 읽기조사. root는 Oracle/gateway·운영 배치·통합.
-
-## Completed work / design decisions
-
-- Valkey 생성/동기set 예외 DB fallback, 홈5·popular3쿼리 기존30초 publicRead 캐시/복제본 경로, 역할 최초acquire5분 deadline(불확실 선출 재요청 금지).
-- text/소개7단계 독립 수요·성공·retry·exhausted/hold 감시. AI1/AI2 legacy/items/draining 분리, items는 독립consumer missing/stall로 분류하고 legacy reviewer 재시작 배제. 새text감시는 alert-only.
-- undici8.12.3/zod4.6.7/vitest4.1.12/npm audit0. Node24.22.1-alpine 및 builtinUndici7.30.1 실제확인. monitor patchedfetch/redirect거절/4KiBcap. sampleCLI SSRF-safe fetch. DB-free `/api/live`, 기존readiness `/api/health` 유지.
-- Gateway는 고정 앱 목록만 읽고, settled180초+직접준비정상/홈실패 또는 readonlymonitor stale만 같은spec ForceUpdate1 rolling. Oracle 같은reason/version3연속+로컬재검사+EngineCAS+15분cooldown/일2회. 요청 전 영속예약, ACK유실도 budget소비. 모델/DB/정책/replica0/불확실상태 임의restart금지.
-- child출력·프로세스그룹deadline/Push소켓절대deadline, 상태0600/단일lock/고정로그. 장기provider outage는 retry timestamp 대신 Oracle의 연속관측 first/last로30분경보를 추가중(단계7고정key만 heartbeat에 전달, progress/pause/관측gap이면reset).
-- 전42page소스/41익명GET/10browser 및 **실제인증admin22화면** 검사완료. admin22모두200/main·h1각1/JS·5xx오류0. admin audit responseEnd약3.75초가 남고 SQL 원인 미확정, member 실제계정검증은 미실행.
+- Oracle `onetwoday` watchdog recover=true/enabled/running PID3217177. `/opt/nomorevibe-watchdog` source: watchdog `b3dbd87d4ac0aa10193f182b267ec3776565ecae5d84e160bec3a8b5377b5145`, notifier `8d5b190cdbce8383e6eceb9ecac78b47432f038ec9cbc47e357e7c18d13f8efb`, shared gateway `34e9ef775ab18072575dff44348411d8d40bfd0efb59d94b97188ca516fe8359`. Config/key/known_hosts/state600, dirs700, state/attempts 보존. M3/mini/Osaka shared gateway도 같은 최종 hash다.
+- M3/mini native sshd tailnet22222/launchd `com.nomorevibe.recovery-sshd`, jr-only/publickey/fromOracle/restrict/ForceCommand/TTY·forward금지/hostkey pin. 비밀없는 root-owned 서비스 allowlist만0644(jr 읽기), gateway source0644, state600.
+- Osaka `nomorevibe-recovery-sshd.service`와 root-only22222 설치. config `/etc/nomorevibe-native-recovery/config.json`600, stateparent `/var/lib/nomorevibe-native-recovery`700. native source `/usr/local/libexec/nomorevibe-native-recovery/native_recovery_gateway.py` hash `402547be31a4b56c71580b8882711712dc7e21fb6bedd454057437258d7e94f5`. 실제 Oracle probe ok, id denied1 후 recoverEnabled=true. consumer unit/release/env/프로세스 변경0; 실제 failed 복구 주입은 미실행.
+- mini scheduler ID `6RPgSY-jIFtjZYvme26GD`, service `nomorevibe-scheduler-mini-20261025-fj2hqq`, same be71 worker digest `fabaff6972ddadd16531b5c6886144ed0fd7ed01e2b43b00089c05ce9c4c637d`, source998hash 일치/done/1healthy. 기존 DB_URL만 복사, pool2/256MiB/.25CPU/replica1/autoDeployfalse/port·domain·mount0. Registry/배포 scope/readiness는18앱·mini1/M32를 요구한다.
+- 실제 M3 scheduler둘만 CAS replica0(독립120초 자동복원 먼저 armed). mini단독120.158초/12ticks/실패0/자연due55요청, M3 원spec 완전동일복원·2healthy. 전체 호스트 단절 증명과 구분한다. `/private/tmp/nmv-scheduler-continuity-drill-20261025.safe.json`.
+- monitor role `nomorevibe_monitor_20261022`: 위험 role flags0/logintrue/connectionlimit2 확인 후 새12표 SELECT만 GRANT. 실제 monitor 접속 defaultreadonlyon/SELECT12/쓰기0/DELETE WHEREfalse=42501, 새reason2552ms/other788ms. `/private/tmp/nmv-monitor-readonly-verify-20261025.safe.json`. GRANT 반복 불필요.
+- Oracle Kuma pipeline2/heartbeat3, mini pipeline73/heartbeat74. 기존1/72 유지. mini 신규 tailnet HTTPS8443→localhost3001. Push 네 ACKtrue. 실제 watchdog SIGKILL→systemd 복귀, 중단 deadman 양Kuma DOWN→UP와 Oracle Telegram 두 API 수락 확인. `/private/tmp/nmv-watchdog-deadman-drill-20261025.safe.json`.
+- 기존 pipelineDOWN 중 mini HTTPS8443만75초 차단(독립 자동복원 먼저 armed): pipeline/heartbeat index1 ACKfalse→새2incident Telegram acceptedtrue/sent2/pending0, 동일fault 재전송0. 75.035초뒤 serve 원설정 복원/다음 Push4ACKtrue/추가전송0. `/private/tmp/nmv-watchdog-incident-drill-20261025.safe.json`. 단말 읽음은 미확인.
+- 최신19targets에서 readonlymonitor pipeline_alarm만 남고18정상이다. 새 앱 monitor의 globaldrain/items/text 분류는 아직 be71에 없으므로 새 릴리스 뒤 재판정한다.
 
 ## Modified files
 
-정확한 목록은 `git status --short`. app/api/live, Dockerfile/package/lock, lib/cache/shared, PopularTiers/popular, role-worker, watch-failover-readiness, worker-progress/query/text-stage-progress, canonicalselector export, sample-homepage/CLI, 대응TS/DB/Python회귀와CI, scripts/ops/{recovery_gateway,oracle_watchdog,nomorevibe-oracle-watchdog.service,recovery-sshd.conf.example}, 계획·페이지·보안감사/runbook/handoff. 비밀설정은 저장소밖0600.
+자체 commit e6bd19b9의80파일과 `git diff --stat bfe0c8fc`가 정확한 목록이다. 핵심은 Dockerfile/package/lock/CI, live route, cache/popular/admin-audit, role-worker, worker-progress/query/text-stage-progress/canonical selectors, failover-readiness/monitor, sample fetch, ops recovery/native/notifier/watchdog와 deploy inventory/scope/runtime, 대응 TS/PG/Python 회귀 및 감사·runbook·handoff다. 비밀 설정·운영 영수증은 repo 밖600이다.
 
-## Actual tests and evidence
+## Test commands and actual results
 
-- 전체 nexttypegen+tsc exit0; 전체ESLint exit0(기존4warning). 마지막backend tsc도0. 전체unit/build/CI아직미실행.
-- 페이지61, transport15파일131, backend9파일101 및 격리PG5파일43 이전통과. 최신text 실제writer성공2회귀 RED→GREEN 포함8통합 통과, reviewmode3통과. TS heartbeat신규12와기존cycle/push 총23통과.
-- Python기존42통과, livefixture 기본skip1. root장기provider6회귀 unsupportedmetadata RED→GREEN; 최종전체는추가후재검증 필요.
-- **실제격리DinD Engine29.5.2 acceptance 1개251.412초 통과**: 시간주입없이180초gate, readiness200/home500→200, Oracle3표본→gatewayrequested→task교체, ForceUpdate1외specdeep-equal, worker거절, staleCAS500/out-of-sequence/spec불변. 실제접수후ACKtimeout 첫unknown→새gatewaylimited/변경1회/영속budget1. hostDocker Swarm변경0. `/tmp/nomorevibe-recovery-live-engine.log`.
-- combinedTS7파일37중1개childspawn5초timeout이 있었음. teststartup20초/test30초로HTTP5초경계유지하고ownedAgent종료, 해당2회귀재실행통과. combined전체성공으로쓰지않는다.
-- **운영READ ONLY/statement_timeout3s/JIToff 쿼리** 원본과최신MATERIALIZED최적화 모두57014timeout. 최신plan `/private/tmp/nmv-text-progress-plan-optimized-20261025.json`: cost1018421/taglineko837164(82%), pending47326/47327로필터효과없음. backend가추가최적화조사중. 작은fixture0.497ms를운영성능으로주장금지.
-- 전용PG `nomorevibe-reliability-test-20261025`,127.0.0.1:32784/nomorevibe_test, 테스트계정nomorevibe/nomorevibe. 다른DB정리금지.
+- 초기 전체unit maxWorkers4: **567파일7367PASS/9skip**,136.45초. 먼저12workers에서 offlineCLI5초 timeout1/7366pass였고 단독64pass→저병렬 전체 통과했다. 초기 build agent TDD 중 export 미완성 타입실패→안정 뒤 production build EXIT0. 이후 mini/audit 변경이 있어 최종 wholeunit/type/build를 다시 실행한다.
+- 최신 typegen/tsc/i18n/lint 모두0(기존4warning), 이후 audit 최종 변경은 scoped lint0. audit62/62, globaldrain/readiness94/94, root 최근audit/readiness/drain76/76 통과.
+- 실PG4파일20/20: failover-readiness-query/oracle-scheduler-coexistence/text-stage-progress/review-stage-progress. mini 공존·단독진행·fenced0요청 포함. 별도 text+translation23통합도 통과.
+- Python 최종 watchdog44/44, recovery56PASS+1defaultskip. deploy185 OK(2skip), release81/81, mini5/5, diffcheck/py_compile0.
+- 실제 격리 DinD Engine29.5.2 1 acceptance251.412초 PASS: 실제180초gate/readiness200+home500→200/Oracle3표본→CAS ForceUpdate1/task교체/spec불변/worker거절/staleCAS500 out-of-sequence/실제수락후ACKtimeout unknown→fresh gateway limited·중복0·budget1. host Swarm 변경0, fixture정리완료. `/tmp/nomorevibe-recovery-live-engine.log`.
+- 전용 로컬 PG `nomorevibe-reliability-test-20261025`,127.0.0.1:32784/nomorevibe_test, 계정nomorevibe/passwordnomorevibe. 다른 DB/컨테이너 정리 금지.
 
-## Operating changes / failed approaches
+## Failed approaches / constraints
 
-- Oracle onetwoday watchdog **설치·enabled/running**, recover=false관측모드. `/opt/nomorevibe-watchdog`, root0600 `/etc/nomorevibe-watchdog/config.json`/key/known_hosts, `/var/lib/nomorevibe-watchdog/state.json`. 약33초간격 M3 11+mini6앱.
-- 새OracleKuma Push **monitor2 활성화**, liveACKtrue. Telegram delivery audit **2026-10-25T06:22:03.574Z** monitor2 down ok/apiAccepted/receiptPresent=true. 실제pipelinealarm이며 단말읽음은미확인. 기존monitor1유지. private kuma.json active=false는생성직후stale기록이므로현재권위아님.
-- **TailscaleSSH:22가authorized_keys ForceCommand우회** 실제확인. 전용nativeOpenSSH tailnetIP:22222 launchd `com.nomorevibe.recovery-sshd` 설치: rootownedsource/config/publickey-only/jr-only/Oraclefrom/ForceCommand/forward·TTY금지. 실제hostkeypin. 새key `id`명령 gateway_denied exit1, allowlisted17probe성공. 일반authorized_keys에는이번에추가한효과없는key만제거.
-- 실제웹은localhost거절/env.HOSTNAME health200; gateway맞춤. DockerHealth메타데이터없는기존웹도HTTP정상으로판정. EngineAPI1.54/min1.40가v1.45지원.
-- 현재AI1legacy/AI2items.06:33Z reviewerhealthy, 이전4taskFailed. AI1 draining/model_capacity지연실제로그가있어 webagent가정책/fence원인읽기조사중. AI2오분류만이재부팅전체원인이라고확정금지.
-- 새monitor SELECT권한 **12표** 필요: text_translations,crawl_taglines,product_translations,product_korean_taglines,product_intro_checks,product_maker_members,product_search_profiles,takedown_requests,model_capacity_control,uptime_gates,uptime_observations,pipeline_stage_modes. 운영grant아직0. 반드시쿼리최적화·최소readonlygrant먼저,그뒤monitor배포.
+- Tailscale SSH22는 authorized_keys ForceCommand 우회(shellcommandnotfound 실제확인). 새 ineffective key만 제거하고 기존관리접속 보존, 별도 native22222로 해결했다.
+- mini allowlist 갱신의0644→0600 실수로 jr probe가 막혔다. root-owned 비밀없는 allowlist만0644 복원, 실제mini7probe·다음19target cycle 정상 확인. inventory6→7 불일치 중간window도 수정했다.
+- Kuma 상호HTTP monitor4/75는 컨테이너MagicDNS ENOTFOUND라 오탐. 이번 신규 두monitor만 normalAPI delete, 기존monitor 불변. 재실행 금지. receiver ACKfalse 직접 Telegram + Oraclehostdown 시 mini heartbeat deadman으로 보완했다.
+- 단일 text SQL은3초57014; 원문174185개 집계320ms 자체는 원인 아니었다. 작은fixture 시간으로 운영 성능을 주장하지 않는다. 최종분리 실제각2.61초/.84초 및 monitor 계정2.55초/.79초로 검증했다.
+- 다른 승인 작업의 global capacity draining(exact8d5f provider boundary recovery/audit19931), ledger/fence/producer/원잡/기존 be71 관측 driver는 임의 변경·재실행 금지. 기존 h6 관측은05:31–33Z indeterminate_nonzero/existing_role_health_guard_failed로 중단했다. 새 release 관측과 혼동하지 않는다.
+- private original setup/refresh helper는 recover=false 덮기 또는 once assert가 있다. 재실행하지 않는다. 이번 통합refresh rollback `/etc/nomorevibe-watchdog/pre-integrated-refresh-20261025`와 state를 보존한다.
 
 ## Remaining work / exact next commands
 
-1. backendSQL production3초한도통과, AI1실제정체원인수정. provider관측 Python/gateway회귀/독립리뷰 완료하고 deployedsource갱신.
-2. mini두번째Kuma receiver를Oraclewatchdog에연결해Oracle호스트/deadman도독립경보. recovertrue전환은fixture성공·최종source/config/hash검증뒤; 프로세스강제종료/systemd회복/timeout알림 및 제한복구운영드릴실행.
-3. focused최종/wholeunit+integration+build/독립review→PR/latestbasecheck→정상main병합. 새12표SELECTgrant후 영향runtime을 `npm run deploy -- scope|plan|run`으로배포. be71 observer/activation/capacity/producer등록반복금지.
-4. 실제release/Node/liveness/readiness/감시양receiverACK/DB일시불통·hostfailover/DR범위를각각검증. Osakaagent-scan systemd독립감시·모델/DB장애행렬·member페이지 검증누락점검. fullrequirement audit전 goalcomplete금지.
+1. bfe0 통합 완료→전체unit/type/lint/build→PR/latestbase CI check→main/이미지 증명. 필요없는 전체 검사는 반복하지 않는다.
+2. 깨끗한 target main에서 새18앱 snapshot으로 `npm run deploy -- scope|plan|run`. 이전17앱 snapshot 재사용 금지. 별도 migration 없음(SELECT grant는 이미 완료). 다른8d5f 회복이 guard를 막으면 원인을 읽고 임의 capacity open/unknown 회수/producer 재등록 금지.
+3. 새 이미지 격리 DB 일시불통/live200/readiness503/복귀200, 실제 mini web task 한 개와 standby backend의 Swarm 재생성, 새 monitor 단계/양수신기/Oracle알림 확인. source/health/spec 보존과 실제 결과 기록.
+4. 새 `/admin/audit`와 popular 성능 재측정, 요구행렬/영구DB·모델DR 미검증 범위를 명시하고 완료 판단. 실제 native failed 복구주입·전체호스트동시소실/PITR/RPO/RTO를 단위회귀로 통과 주장하지 않는다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery
 git status --short
+npx next typegen && npx tsc --noEmit && npm run check:i18n && npm run lint
+npx vitest run --maxWorkers=4
+NEXT_TELEMETRY_DISABLED=1 npm run build
 python3 -B -m unittest discover -s tests -p 'test_recovery*.py'
 python3 -B -m unittest discover -s tests -p 'test_oracle_watchdog*.py'
-npx next typegen && npx tsc --noEmit
-TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/text-stage-progress.test.ts tests/integration/review-stage-progress.test.ts
+# 필요시 전용 DB 통합: TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32784/nomorevibe_test npm run test:integration -- tests/integration/failover-readiness-query.test.ts tests/integration/oracle-scheduler-coexistence.test.ts tests/integration/text-stage-progress.test.ts tests/integration/review-stage-progress.test.ts
 ssh onetwoday 'sudo systemctl show nomorevibe-oracle-watchdog.service -p ActiveState -p SubState -p MainPID -p NRestarts'
 ssh onetwoday 'sudo journalctl -u nomorevibe-oracle-watchdog.service -n1 --no-pager -o cat'
-# native: Oracle sudo ssh -F/dev/null -p22222 -i/etc/nomorevibe-watchdog/gateway_ed25519 -oUserKnownHostsFile=/etc/nomorevibe-watchdog/known_hosts -oStrictHostKeyChecking=yes jr@100.92.77.66 probe
-# private installer /private/tmp/nomorevibe-watchdog-setup-20261025.py는재실행하면recover=false/config재작성하므로무분별재실행금지.
+# 新설치/drill/GRANT/기존observer는 반복하지 말고 safe영수증과현재상태를읽는다.
+```
+
+---
+
+# 2026-10-25 — Assist 입장 마감에 native 실행60초 보존
+
+목표는 수집·capacity 대기 뒤 실행시간이 부족한 native 전송을 예방하는 것이다. WT `/Users/jr/Desktop/projects/nomorevibe-assist-admission-deadline-20261025`, branch `codex/assist-admission-deadline-20261025`, base `e7136238`. 부모 지시로 별도 PR 대신 PR658에 cherry-pick한다. 운영 배포는 부모가 조율한다. 원본 WT의 사용자 수정과 handoff는 건드리지 않았다.
+
+- `lib/jobs/products/llm-assist-review.ts`: 기존 claimEnd-5초를 claimEnd-60초로 변경하고 수집 뒤에도 같은 cutoff를 확인한다. collection·대기·intro 사실/교정은 같은 절대 cutoff를 공유한다. claim90초/tick100초/worker105초/AbortSignal·모델·lease·capacity 변경0.
+- `tests/integration/llm-assist-dispatch.test.ts`: runner80초의 늦은 grant, collection31초, collection20초+대기11초 회귀. 관측 helper만 `performance.now`로 바꿔 의도적으로 변경하는 업무 시계와 분리했다.
+- `tests/integration/intro-assist-dispatch.test.ts`: 사실 완료31초 뒤 교정 요청을 새로 열지 않는 회귀. 기존 fixture의60초 deadline은 native60초를 남길 수 없으므로 실제 tick 범위100초로 맞췄다.
+- 실행 계획: `docs/superpowers/plans/2026-10-25-assist-admission-deadline.md`.
+
+실제 검증: 수정 전 새4회귀 모두 native 전송/settled 또는 사실+교정2회로 **RED4개**(9.96초), 수정 후 **GREEN4개**(8.69초). 최종 두 dispatch integration **51/51**(88.46초), capacity/binding unit **16/16**(4.54초), `next typegen` 후 `tsc --noEmit`, 변경3파일 ESLint와 `git diff --check` 성공. 전용 로컬 PG17/pgvector container `nomorevibe-assist-admission-deadline-test-20261025`, port32787을 사용했다. 실제 외부 페이지/모델 호출0이며 모델 HTTP는 로컬 fixture다. 수동 전체unit/전체DB/build는 실행하지 않았다.
+
+실패 보존: 최초 collection+wait 회귀는 관측 시계가20초 이동해 조기실패했으므로 monotonic helper로 고친 뒤 올바른 RED를 확인했다. 최초 전체 통합은50pass/기존 intro 공통슬롯 대기1건5초 timeout(63.33초), 기능 수정 없이 단독1pass와 전체51pass를 확인했다. 최초 tsc는 새 WT의 Next PageProps 미생성8곳 실패, 공식 typegen 후 성공. 기존 Vite CommonJS native-loader 경고는 남는다.
+
+남은 작업은 PR658 담당자의 cherry-pick·필수 최신 base CI와 부모의 병합/배포/운영 관측이다. 운영 감사 보류264건 영수증과 root03 미적용32건은 별도 private 디렉터리에 보존하고 이 코드 커밋에 포함하지 않는다. 정확한 재검증:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-assist-admission-deadline-20261025
+env TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32787/nomorevibe_test npm run test:integration -- tests/integration/llm-assist-dispatch.test.ts tests/integration/intro-assist-dispatch.test.ts
+npm test -- tests/local-model-capacity.test.ts tests/llm-assist-capacity-binding.test.ts
+npx next typegen
+npx tsc --noEmit
+npx eslint lib/jobs/products/llm-assist-review.ts tests/integration/llm-assist-dispatch.test.ts tests/integration/intro-assist-dispatch.test.ts
+git diff --check
+```
+
+---
+
+# 2026-10-25 — 감사 거절 처리 및 화면 검수 만료 오류 수정
+
+현재 목표는 열린 감사 거절의 실제 처리와 화면 자동검수 복구다. 격리 branch `codex/audit-screen-expiry-20261025`에서 코드/회귀를 수정했다. 운영에서는 근거를 검토한 no-hold 8건만 정식 함수로 처리해 유지7/내림1, 06:35:12Z no-hold 열린 거절 1,626→1,618을 재확인했다. 보류 제품은 다른 담당자 범위다.
+
+화면 route에만 방금 렌더한 URL/시간/JPEG SHA 증명을 요구하고 기존 canonical source/input/policy CAS·현재 제품 URL·job/role 잠금 검증을 유지한 채 archived baseline의 24시간 만료를 대체한다. proof는 transient 인자, 실제 JPEG는 기존 wireHash에 결속하므로 DB schema/terminal JSON 변경은 없다. candidate/assist/기타 감사의 신선도는 유지한다. 기존 checkout/사용자 변경은 보존했다.
+
+실제 검증: 관련 단위8파일45개, 격리 PostgreSQL 통합4파일34개, `next typegen`, `tsc --noEmit`, 수정7파일 eslint, `git diff --check` 통과. 최초 PR 전체 CI의 wire-observation 직접 screen fixture 누락 1건을 보완한 뒤 추가 통합4개 및 해당 파일 eslint도 통과했다. 새 HEAD 필수 CI는 별도 대기한다. 원 domain 복원 RED는 `reservation_lost`, 초기 설정 fixture 실수와 영구binding exact-key CHECK 실패는 operation note에 기록했다. 임시 debug 출력은 제거했다.
+
+코드 배포는 아직 하지 않았다. root가 최종 diff/PR/최신 base 필수 CI/main 반영/공통 배포를 수행한다. provider boundary 복구 중의 draining을 임의로 해제하지 않는다. 배포 후 실제 screen dispatched/settled, asked>0, 대기 감소를 내부 로그/DB로 확인해야 한다. 수동 외부 페이지 조사는 사용자 지시로 중단했다.
+
+자세한 원인·운영 수치·수정 파일·검증 명령·실패 실험·남은 일과 정확한 재조회 명령은 [운영 기록](operations/2026-10-25-audit-rejected-recovery.md)에 있다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-audit-screen-expiry
+git status --short
+git diff --check
+python3 /private/tmp/nomorevibe-audit-reject-20261025/run.py recheck.mjs
+# 기존 수동 8건을 재적용하지 않는다. root 조율 전 배포/open 변경도 하지 않는다.
 ```
 
 ---

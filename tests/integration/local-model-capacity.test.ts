@@ -7,18 +7,19 @@ import postgres from "postgres";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-import { products, productAuditCampaigns, productAuditItems, crawlCandidates, jobs, roleLeases } from "@/lib/db/schema";
+import { products, productAuditCampaigns, productAuditItems, crawlCandidates, crawlDocuments, jobs, roleLeases } from "@/lib/db/schema";
 import { putDocument } from "@/lib/crawl/repository";
-import { saveSettings, getSettings } from "@/lib/crawl/settings";
+import { saveSettings, getSettings, setQwenAutoStep } from "@/lib/crawl/settings";
 import { loadAuditInput } from "@/lib/crawl/product-audit";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { reviewWithQwenDirect } from "@/lib/crawl/qwen-direct-review";
+import { reviewWithScreenshot } from "@/lib/screen-review/vision-review";
 import { tryAcquireRole, renewRole, releaseRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { localModelContractHash, localModelServingContractSchema } from "@/lib/llm/local-model-serving-contract";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cancelReservedModelSlot, reconcileLocalModelTerminal, requestLocalModelSlot, requestAi1ModelSlot, requestCliModelSlot,
-  beginModelDispatch } from "@/lib/llm/capacity-repository";
+  beginModelDispatch, dispatchLocalModelCapacity } from "@/lib/llm/capacity-repository";
 import { releaseEvidencedDispatches } from "@/lib/operations/dr/reclaim";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -36,6 +37,7 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits
   groupLimits: { "same-hardware": 1, "other-hardware": 1 }, poolLimits: { reviewer: 4, text: 4 }, weights: { first: 1, second: 1, background: 1 },
   maxWaiting: 20, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: "local-audit", provider: "local-direct", model: "qwen", providerBudgetId: "fixture-direct", groupId: "same-hardware" },
+    { routeId: "local-screen", provider: "local-direct", model: "qwen", providerBudgetId: "fixture-direct", groupId: "same-hardware" },
     { routeId: "local-held-qwen", provider: "local-direct", model: "qwen", providerBudgetId: "fixture-direct", groupId: "same-hardware" },
     { routeId: "local-human-deepseek", provider: "local-direct", model: "deepseek", providerBudgetId: "fixture-other", groupId: "other-hardware" },
     { routeId: "crawl-agent-review", provider: "abcllm", model: "gateway-alias", providerBudgetId: "fixture-other", groupId: "other-hardware" },
@@ -205,6 +207,61 @@ it("도메인 원본·소유권 변경과 fake generic dispatch를 HTTP 전에 �
     await expect(beginModelDispatch(reservation.reservation)).rejects.toThrow("local_model_bound_dispatch_required");
     expect(await cancelReservedModelSlot(reservation.reservation)).toBe(true);
   }
+});
+
+it("오래된 감사 원본도 방금 렌더한 화면은 원본 CAS·스크린샷 wire에 묶어 한 번 판정한다", async () => {
+  const context = await fixture(), now = new Date(), jpeg = Buffer.from("fixture rendered jpeg");
+  const settings = await getSettings();
+  expect(await setQwenAutoStep({ step: "screenReview", next: { ...settings.qwenAuto.screenReview, enabled: true },
+    expected: settings.qwenAuto.screenReview, actor: "fixture", reason: "fresh screenshot admission regression" }))
+    .toMatchObject({ ok: true });
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(now.getTime() - 7 * 86400_000) }).where(eq(crawlDocuments.repo, context.repo));
+  await db.update(productAuditItems).set({ aiDecision: "reject" }).where(eq(productAuditItems.id, context.target.itemId));
+  const input = await loadAuditInput(context.target.slug, await getSettings()); if (!input) throw new Error("fixture_input");
+  expect(input.validUntil.getTime()).toBeLessThan(now.getTime());
+  const screenLease = { ...lease, name: "audit-screen-review" };
+  await db.insert(jobs).values({ name: screenLease.name, leaseToken: screenLease.token, lockedAt: now })
+    .onConflictDoUpdate({ target: jobs.name, set: { leaseToken: screenLease.token, lockedAt: now } });
+  const screen = { ...context, input, lease: screenLease, target: { ...context.target, purpose: "screen" as const },
+    screenProof: { requestedUrl: input.snapshot.product.url!, requestedAt: now.toISOString(), receivedAt: now.toISOString(),
+      screenshotHash: createHash("sha256").update(jpeg).digest("hex") } };
+  const review = () => withLocalModelCapacity(screen, request => reviewWithScreenshot(input, jpeg, { request,
+    config: { baseUrl: endpoint.replace(/\/chat\/completions$/, ""), model: "qwen", apiKey: null }, timeoutMs: 5000 }));
+  expect(await review()).toMatchObject({ outcome: { decision: "approve" } });
+  expect(calls).toBe(1);
+  const row = (await rows()).at(-1);
+  expect(row).toMatchObject({ state: "settled", dispatch_binding: {
+    wireHash: createHash("sha256").update(JSON.stringify(observedWire.at(-1))).digest("hex"),
+  } });
+  expect(row.dispatch_binding).not.toHaveProperty("screenProof");
+  // An immutable render may age after reservation; the dispatch TX must recheck it.
+  const identity = { owner: { instanceId: role.instanceId, bootId: role.bootId }, class: "background" as const,
+    pool: "reviewer" as const, routeId: "local-screen", provider: "local-direct", model: "qwen",
+    workKey: `${row.dispatch_binding.logicalWorkKey}:${input.inputHash}` };
+  const slot = await requestLocalModelSlot({ ...identity, requestId: randomUUID() }, screen.target);
+  expect(slot.kind).toBe("granted");
+  if (slot.kind === "granted") {
+    const expired = new Date(Date.now() - 61_000).toISOString();
+    expect(await dispatchLocalModelCapacity({ reservation: slot.reservation, identity, binding: row.dispatch_binding,
+      input, job: screenLease, role, screenProof: { ...screen.screenProof, requestedAt: expired, receivedAt: expired } })).toBeNull();
+    expect(await cancelReservedModelSlot(slot.reservation)).toBe(true);
+  }
+  expect(calls).toBe(1);
+  await db.update(products).set({ url: "https://changed-product.example" }).where(eq(products.slug, screen.target.slug));
+  await expect(review()).rejects.toMatchObject({ reason: "reservation_lost" });
+  expect(calls).toBe(1);
+  await db.update(products).set({ url: screen.screenProof.requestedUrl }).where(eq(products.slug, screen.target.slug));
+  await db.update(crawlDocuments).set({ pageMeta: { title: "changed baseline" } }).where(eq(crawlDocuments.repo, context.repo));
+  await expect(review()).rejects.toMatchObject({ reason: "reservation_lost" });
+  expect(calls).toBe(1);
+});
+
+it("화면 외 감사는 오래된 원본을 전송하지 않는다", async () => {
+  const context = await fixture();
+  await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 7 * 86400_000) }).where(eq(crawlDocuments.repo, context.repo));
+  const input = await loadAuditInput(context.target.slug, await getSettings()); if (!input) throw new Error("fixture_input");
+  await expect(call({ ...context, input })).rejects.toMatchObject({ reason: "reservation_lost" });
+  expect(calls).toBe(0);
 });
 
 function child(value: unknown): Promise<unknown> {

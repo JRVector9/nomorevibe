@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -52,6 +52,30 @@ beforeEach(() => {
 });
 
 describe("직접 모델의 실제 admission 경계", () => {
+  it("화면 caller는 방금 받은 스크린샷 증거 없이는 예약하지 않는다", async () => {
+    const c = context(), jpeg = Buffer.from("rendered screenshot");
+    const screen = { ...c, target: { ...target, purpose: "screen" as const }, lease: { ...lease, name: "audit-screen-review" } };
+    mocks.control.mockResolvedValue({ mode: "open", policy: { ...policy, routes: [{ ...policy.routes[0], routeId: "local-screen" }] } });
+    const imageWire = JSON.stringify({ ...JSON.parse(wire), messages: [{ role: "user", content: [
+      { type: "image_url", image_url: { url: `data:image/jpeg;base64,${jpeg.toString("base64")}` } },
+    ] }] });
+    const send = (request: typeof fetch) => request(contract.endpoint, { ...init, body: imageWire });
+    await expect(withLocalModelCapacity(screen, send)).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
+    const now = new Date().toISOString(), proof = { requestedUrl: c.input.snapshot.product.url!, requestedAt: now, receivedAt: now,
+      screenshotHash: createHash("sha256").update(jpeg).digest("hex") };
+    for (const screenProof of [
+      { ...proof, receivedAt: new Date(Date.now() - 120_000).toISOString(), requestedAt: new Date(Date.now() - 130_000).toISOString() },
+      { ...proof, receivedAt: new Date(Date.now() + 60_000).toISOString() },
+      { ...proof, requestedUrl: "https://other.example" }, { ...proof, screenshotHash: "a".repeat(64) },
+    ]) await expect(withLocalModelCapacity({ ...screen, screenProof }, send)).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
+    await expect(withLocalModelCapacity({ ...screen, screenProof: proof }, run)).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
+    expect(mocks.requestSlot).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+    await withLocalModelCapacity({ ...screen, screenProof: proof }, send);
+    expect(mocks.dispatch.mock.calls[0][0].screenProof).toEqual(proof);
+    expect(mocks.dispatch.mock.calls[0][0].binding).not.toHaveProperty("screenProof");
+    expect(mocks.dispatch.mock.calls[0][0].binding.wireHash).toBe(createHash("sha256").update(mocks.native.mock.calls[0][3].body).digest("hex"));
+    expect(mocks.native).toHaveBeenCalledTimes(1);
+  });
   it("disabled 기존 호출의 주소·wire·응답을 그대로 두고 신규 작업은 전송하지 않는다", async () => {
     mocks.control.mockResolvedValue({ mode: "disabled", policy: null });
     const base = vi.fn(async () => new Response("legacy"));

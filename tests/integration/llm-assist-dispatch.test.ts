@@ -53,8 +53,8 @@ function nativeResponse() {
     usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 } };
 }
 async function eventually(check: () => Promise<boolean>) {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) {
     if (await check()) return;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
@@ -461,18 +461,54 @@ describe("같은 보강 입력으로 늦은 예약을 소비하고 전송 전 �
       .toEqual([{ kind: "queued", from_state: null, to_state: "waiting" }, { kind: "wait_cancelled", from_state: "waiting", to_state: "withdrawn" }]);
     expect(calls).toHaveLength(0); expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
   });
-  it("runner deadlineAt는 더 긴 claim signal보다 먼저 대기를 끝내고 5초 headroom을 남긴다", async () => {
-    const product = await fixtureProduct(); expect((await blocker()).kind).toBe("granted");
-    const controller = new AbortController(), deadlineAt = Date.now() + 16_000;
+  it("runner deadlineAt가 짧으면 native 60초를 남기고 늦은 grant도 전송하지 않는다", async () => {
+    const product = await fixtureProduct(), occupied = await blocker();
+    if (occupied.kind !== "granted") throw new Error("fixture_capacity_required");
+    const controller = new AbortController(), deadlineAt = Date.now() + 80_000;
     const running = reviewLlmAssist({ ...context(controller.signal), deadlineAt });
     try {
       await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
       // Native signal is still live; advance only the wall-clock admission budget, not DB clocks or HTTP.
-      vi.spyOn(Date, "now").mockReturnValue(deadlineAt - 4999);
+      vi.spyOn(Date, "now").mockReturnValue(deadlineAt - 59_999);
+      await cancelReservedModelSlot(occupied.reservation); await blocker();
       await running;
       expect(controller.signal.aborted).toBe(false);
       expect((await requests()).find(r => r.route_id === routeId)).toMatchObject({ state: "withdrawn", dispatched_at: null });
       expect(calls).toHaveLength(0); expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
+    } finally { vi.restoreAllMocks(); controller.abort(); await running; }
+  });
+  it("수집에 31초를 쓰면 native 60초가 남지 않아 capacity 등록 전 보류한다", async () => {
+    const product = await fixtureProduct(), started = Date.now();
+    safeFetch.mockImplementationOnce(async (url: string) => {
+      vi.spyOn(Date, "now").mockReturnValue(started + 31_000);
+      return { finalUrl: url, response: new Response("<h1>We permanently closed the entire service.</h1>", { status: 200 }) };
+    });
+    try {
+      await reviewLlmAssist(context());
+      expect(calls).toHaveLength(0); expect(await requests()).toHaveLength(0);
+      expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0, lastError: "tick_budget" });
+      expect(await status(product.id)).toBe("seeded");
+    } finally { vi.restoreAllMocks(); }
+  });
+  it("수집과 대기 시간을 합쳐 native 60초가 남지 않으면 늦은 예약을 취소한다", async () => {
+    const product = await fixtureProduct(), occupied = await blocker(), started = Date.now();
+    if (occupied.kind !== "granted") throw new Error("fixture_capacity_required");
+    const clock = vi.spyOn(Date, "now").mockReturnValue(started);
+    safeFetch.mockImplementationOnce(async (url: string) => {
+      clock.mockReturnValue(started + 20_000);
+      return { finalUrl: url, response: new Response("<h1>We permanently closed the entire service.</h1>", { status: 200 }) };
+    });
+    const controller = new AbortController(), running = reviewLlmAssist(context(controller.signal));
+    try {
+      await eventually(async () => (await requests()).some(r => r.route_id === routeId && r.state === "waiting"));
+      clock.mockReturnValue(started + 31_000);
+      await cancelReservedModelSlot(occupied.reservation); await blocker();
+      await running;
+      const row = (await requests()).find(r => r.route_id === routeId);
+      expect(row).toMatchObject({ state: "withdrawn", dispatched_at: null, dispatch_binding: null, terminal_evidence: null });
+      expect(calls).toHaveLength(0); expect(safeFetch).toHaveBeenCalledTimes(1);
+      expect(await work(product.id)).toMatchObject({ state: "waiting_capacity", attempts: 0 });
+      expect(await status(product.id)).toBe("seeded");
     } finally { vi.restoreAllMocks(); controller.abort(); await running; }
   });
   it("타 caller가 grant한 직후 abort하면 예약만 취소하고 전송하지 않는다", async () => {

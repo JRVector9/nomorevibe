@@ -22,6 +22,7 @@ import { collectActionAuditInput, AuditDispatchBudgetExceededError } from "@/lib
 import { collectNewsLocalizationRuntimeInput } from "@/lib/domain/llm-assist/news-runtime";
 
 const TICK_MS = 100_000;
+const NATIVE_EXECUTION_MS = 60_000;
 /** backend별 drain은 동시에 시작하고 각 결과를 즉시 기록한다. 느린 M1·DeepSeek를 GPU의 앞에 두지 않는다. */
 export async function reviewLlmAssist(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   return runAssistLane(ctx, "regular");
@@ -52,7 +53,8 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
       let factualRequestId: string | null = null;
       try {
         const claimBudgetMs = Math.max(1, Math.min(90_000, remaining() - 1000));
-        const admissionDeadlineAt = Date.now() + claimBudgetMs - 5000;
+        // Collection and admission share the claim budget; both intro passes use this same cutoff.
+        const admissionDeadlineAt = Date.now() + claimBudgetMs - NATIVE_EXECUTION_MS;
         const signal = AbortSignal.any([...(ctx.signal ? [ctx.signal] : []), AbortSignal.timeout(claimBudgetMs)]);
         const candidate = assistCandidateSchema.parse(claim.work.source), subject = assistCandidateSubject(candidate);
         let input: AssistInput;
@@ -85,7 +87,7 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
         if (!await prepareAssistInput(claim, input)) {
           await deferAssistClaim(claim, "obsolete", "control_or_input_changed"); counts.deferred++; continue;
         }
-        if (!ctx.hasBudget() || signal.aborted || remaining() < 5000) {
+        if (!ctx.hasBudget() || signal.aborted || Date.now() >= admissionDeadlineAt) {
           await deferAssistClaim(claim, "waiting_capacity", "tick_budget", { nextAttemptAt: new Date(Date.now() + 60_000) });
           counts.deferred++; break;
         }

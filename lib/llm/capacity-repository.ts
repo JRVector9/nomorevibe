@@ -45,7 +45,7 @@ import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
-  type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch } from "./local-model-capacity-contract";
+  type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch, type LocalModelScreenProof } from "./local-model-capacity-contract";
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
 
@@ -244,7 +244,7 @@ export function consumeLocalModelDispatch(value: unknown): LocalModelDispatch | 
 
 export async function dispatchLocalModelCapacity(value: {
   reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; binding: LocalModelBinding;
-  input: import("./local-model-input").LocalModelInput; job: JobLease; role: RoleLease;
+  input: import("./local-model-input").LocalModelInput; job: JobLease; role: RoleLease; screenProof?: LocalModelScreenProof;
 }): Promise<LocalModelDispatch | null> {
   const reservationValue = modelCapacityReservationSchema.parse(value.reservation);
   const identity = modelCapacityRequestIdentitySchema.parse(value.identity), binding = localModelBindingSchema.parse(value.binding);
@@ -267,7 +267,7 @@ export async function dispatchLocalModelCapacity(value: {
       || row.logicalWorkKey !== binding.logicalWorkKey || row.epoch !== state.epoch || row.revision !== state.revision
       || row.policyHash !== state.policyHash || await localModelFence(tx, binding.logicalWorkKey, row.requestId)) return null;
     const { proveLocalModelDomain } = await import("./local-model-domain");
-    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId)) return null;
+    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId, value.screenProof)) return null;
     const bindingHash = localModelBindingHash(binding);
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding, dispatchBindingHash: bindingHash,
       dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId),

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -236,14 +237,17 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     if (timeoutMs < MIN_MODEL_WINDOW_MS) break;
     const shrunk = timeoutMs < SCREEN_MODEL_TIMEOUT_MS;
     const modelStarted = Date.now();
+    const renderedReceivedAt = now();
     let review: ScreenReview;
     try {
       const reviewInput = prompt!.version === SCREEN_REVIEW_SHOT2_PROMPT_VERSION ? input : screenInput(input, rendered.text);
       review = await withLocalModelCapacity({ target: { kind: "audit", purpose: "screen", itemId: target.itemId, slug: target.slug },
-        input: reviewInput, lease, promptVersion: prompt!.version, env },
+        input: reviewInput, lease, promptVersion: prompt!.version, env,
+        screenProof: { requestedUrl: url, requestedAt: new Date(renderStarted).toISOString(), receivedAt: renderedReceivedAt,
+          screenshotHash: createHash("sha256").update(rendered.jpeg).digest("hex") } },
       fetchModel => reviewWithScreenshot(reviewInput, rendered.jpeg, { config: model, timeoutMs, signal: ctx.signal, request: fetchModel,
         rendered: { text: rendered.text, textLength: rendered.textLength, requestedUrl: url, finalUrl: rendered.finalUrl, status: rendered.status,
-          requestedAt: new Date(renderStarted).toISOString(), receivedAt: now() } }), request);
+          requestedAt: new Date(renderStarted).toISOString(), receivedAt: renderedReceivedAt } }), request);
     } catch (error) {
       tally.modelMs += Date.now() - modelStarted;
       if (error instanceof ModelCapacityDeferredError) { ctx.log("screen_review.model_deferred", { reason: error.reason }); break; }

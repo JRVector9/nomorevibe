@@ -46,6 +46,20 @@ export function localModelJob(value: LocalModelTarget): string {
   return target.purpose === "qwen_tiebreak" ? "second-review" : "human-deepseek-review";
 }
 
+/** Fresh render provenance; archived crawl metadata remains revision-bound separately. */
+export const localModelScreenProofSchema = z.object({
+  requestedUrl: z.url().refine(value => /^https?:\/\//.test(value)),
+  requestedAt: z.iso.datetime(), receivedAt: z.iso.datetime(), screenshotHash: hash,
+}).strict();
+export type LocalModelScreenProof = Readonly<z.infer<typeof localModelScreenProofSchema>>;
+
+export function freshLocalModelScreenProof(proof: LocalModelScreenProof | undefined, url: string | null, now = Date.now()): boolean {
+  if (!proof || proof.requestedUrl !== url) return false;
+  const started = Date.parse(proof.requestedAt), received = Date.parse(proof.receivedAt);
+  return Number.isFinite(started) && Number.isFinite(received) && started <= received && received <= now
+    && now - received <= 60_000 && now - started <= 120_000;
+}
+
 export const localModelBindingSchema = z.object({
   kind: z.literal("local_model_direct"), version: z.literal(1), target: localModelTargetSchema,
   logicalWorkKey: text(160), routeId: text(120), provider: z.literal("local-direct"), model: text(200),
