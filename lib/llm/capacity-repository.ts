@@ -2137,6 +2137,11 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
       || row.providerBudgetId !== expected.providerBudgetId || row.groupId !== expected.groupId
       || !row.dispatchBinding || !("servingContractHash" in row.dispatchBinding)
       || row.dispatchBinding.servingContractHash !== expected.servingContractHash) fail("model_capacity_provider_boundary_conflict");
+    if (evidence.plan.version === 3) {
+      const [facts] = await tx.execute<{valid:boolean}>(sql`SELECT nmv_boot_records_valid(${JSON.stringify(evidence.plan)}::text::jsonb,to_jsonb(r)) valid
+        FROM model_capacity_requests r WHERE request_id=${row.requestId}::uuid`);
+      if (facts?.valid !== true) fail("provider_boot_boundary_records_mismatch");
+    }
     if (evidence.plan.version === 2) {
       const { assertHistoricalBoundaryOwner } = await import("@/lib/operations/dr/provider-boundary-owner");
       await assertHistoricalBoundaryOwner(tx, evidence.plan, { owner, dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, localEnd });

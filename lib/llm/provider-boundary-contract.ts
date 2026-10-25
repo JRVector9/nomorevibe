@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
+import { localModelContractHash, localModelServingContractSchema } from "./local-model-serving-contract";
+import { bootInterval, bootMicroseconds, bootProviderIdentitySchema, bootWitnessSchema, bootLocalEndSchema, bootOwnerAssociationSchema, bootTransportSchema, validBootWitness } from "./provider-boot-boundary";
 
 const id = (max = 200) => z.string().min(1).max(max).refine(v => v === v.trim() && !/[\u0000-\u001f\u007f]/.test(v));
 const sha = z.string().regex(/^[a-f0-9]{64}$/), positive = z.number().int().positive().safe();
@@ -49,7 +51,26 @@ export const providerBoundaryPlanV2Schema = z.object({ version: z.literal(2), ki
   && p.provider.startedAt <= p.request.dispatchAt && p.gateways[0].host !== p.gateways[1].host
   && new Set([p.currentIngressOwner, ...p.gateways, p.provider].map(x => `${x.host}:${x.incarnationId}`)).size === 4
   && p.createdAt >= p.request.dispatchAt && p.control.updatedAt <= p.createdAt, "historical_boundary_plan_identity");
-export const providerBoundaryPlanSchema = z.discriminatedUnion("version", [providerBoundaryPlanV1Schema, providerBoundaryPlanV2Schema]);
+const providerBoundaryPlanV3Base = z.object({ version:z.literal(3),kind:z.literal("provider_boundary_plan"),createdAt:at,
+  request:providerBoundaryPlanV1Schema.shape.request,control:providerBoundaryPlanV1Schema.shape.control,owner:linuxBoundaryProcessIdentitySchema,
+  gateways:z.array(z.never()).length(0),provider:bootProviderIdentitySchema,servingContract:localModelServingContractSchema,
+  transport:bootTransportSchema,ownerAssociation:bootOwnerAssociationSchema,localEnd:bootLocalEndSchema,bootWitness:bootWitnessSchema,beforeArtifactHash:sha,
+}).strict();
+export const providerBoundaryPlanV3Schema=providerBoundaryPlanV3Base.refine(p=>{
+  if(!providerBoundaryPlanV3Base.safeParse(p).success)return false;
+  const b=bootInterval(p.bootWitness),provider=p.provider,contract=p.servingContract;
+  return p.owner.kind==="container"&&p.owner.startedAt<=p.request.dispatchAt&&p.createdAt>=p.request.dispatchAt&&bootMicroseconds(p.control.updatedAt)<=bootMicroseconds(p.createdAt)
+    &&p.ownerAssociation.instanceId===p.request.owner.instanceId&&p.ownerAssociation.bootId===p.request.owner.bootId
+    &&contract.endpoint===`http://${provider.endpointAddress}:${provider.endpointPort}/v1/chat/completions`
+    &&contract.physicalGroup===p.request.groupId&&contract.backendId===p.request.providerBudgetId&&localModelContractHash(contract)===p.request.servingContractHash
+    &&validBootWitness(p.bootWitness,provider.currentBootId,p.createdAt)
+    &&bootMicroseconds(p.request.dispatchAt)<b.lower&&bootMicroseconds(p.localEnd.endedAt)<b.lower
+    &&bootMicroseconds(p.localEnd.endedAt)>=bootMicroseconds(p.request.dispatchAt)
+    &&bootMicroseconds(provider.oldJournal.firstAt)<=bootMicroseconds(p.request.dispatchAt)
+    &&bootMicroseconds(provider.oldJournal.lastAt)<b.upper&&bootMicroseconds(provider.currentJournal.firstAt)>=b.lower
+    &&bootMicroseconds(provider.currentJournal.firstAt)<=bootMicroseconds(p.createdAt);
+},"direct_provider_boot_boundary");
+export const providerBoundaryPlanSchema = z.discriminatedUnion("version", [providerBoundaryPlanV1Schema, providerBoundaryPlanV2Schema,providerBoundaryPlanV3Schema]);
 export type ProviderBoundaryPlan = z.infer<typeof providerBoundaryPlanSchema>;
 /** New boundary-only ASCII key order. Never changes historical reviewHash identities. */
 const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
@@ -81,7 +102,10 @@ export const providerBoundaryReceiptV1Schema = z.object({ version: z.literal(1),
 export const providerBoundaryReceiptV2Schema = z.object({ version: z.literal(2), kind: z.literal("provider_boundary_receipt"), planHash: sha,
   originalOwnerProofHash: sha, currentIngressOwner: linuxExitObservationSchema,
   gateways: z.array(linuxExitObservationSchema).length(2), provider: launchdExitObservationSchema }).strict();
-export const providerBoundaryReceiptSchema = z.discriminatedUnion("version", [providerBoundaryReceiptV1Schema, providerBoundaryReceiptV2Schema]);
+export const providerBoundaryReceiptV3Schema=z.object({version:z.literal(3),kind:z.literal("provider_boundary_receipt"),planHash:sha,
+ owner:linuxExitObservationSchema,gateways:z.array(z.never()).length(0),provider:z.object({identity:bootProviderIdentitySchema,observedAt:at,
+ bootWitness:bootWitnessSchema,artifactHash:sha}).strict()}).strict();
+export const providerBoundaryReceiptSchema = z.discriminatedUnion("version", [providerBoundaryReceiptV1Schema, providerBoundaryReceiptV2Schema,providerBoundaryReceiptV3Schema]);
 export type ProviderBoundaryReceipt = z.infer<typeof providerBoundaryReceiptSchema>;
 
 /** Privileged operator observations: hashes bind reviewed raw artifacts; they do not prove physical exit by themselves. */
@@ -99,6 +123,18 @@ function validateProviderBoundaryV1(plan: z.infer<typeof providerBoundaryPlanV1S
 /** v2 original owner authority is re-read from durable DB facts under the existing locked release transaction. */
 export function validateProviderBoundary(plan: ProviderBoundaryPlan, receipt: ProviderBoundaryReceipt, evaluatedAt: string): boolean {
   if (plan.version === 1 && receipt.version === 1) return validateProviderBoundaryV1(plan, receipt, evaluatedAt);
+  if(plan.version===3&&receipt.version===3){
+    if(!providerBoundaryPlanV3Schema.safeParse(plan).success||!providerBoundaryReceiptV3Schema.safeParse(receipt).success)return false;
+    const now=Date.parse(evaluatedAt),a=bootInterval(plan.bootWitness),b=bootInterval(receipt.provider.bootWitness);
+    return at.safeParse(evaluatedAt).success&&receipt.planHash===providerBoundaryPlanHash(plan)
+      &&now>=Date.parse(plan.createdAt)&&now-Date.parse(plan.createdAt)<=30*60_000
+      &&isDeepStrictEqual(receipt.owner.identity,plan.owner)&&isDeepStrictEqual(receipt.provider.identity,plan.provider)
+      &&receipt.owner.observedAt>=plan.createdAt&&receipt.provider.observedAt>=receipt.owner.observedAt
+      &&receipt.provider.observedAt<=evaluatedAt&&now-Date.parse(receipt.provider.observedAt)<=5*60_000
+      &&validBootWitness(receipt.provider.bootWitness,plan.provider.currentBootId,receipt.provider.observedAt)
+      &&receipt.provider.bootWitness.dbBefore>=`${receipt.owner.observedAt.slice(0,23)}000Z`
+      &&a.lower<=b.upper&&b.lower<=a.upper&&bootMicroseconds(plan.localEnd.endedAt)<b.lower&&bootMicroseconds(plan.request.dispatchAt)<b.lower;
+  }
   if (plan.version !== 2 || receipt.version !== 2) return false;
   const now = Date.parse(evaluatedAt);
   if (!at.safeParse(evaluatedAt).success || receipt.planHash !== providerBoundaryPlanHash(plan)

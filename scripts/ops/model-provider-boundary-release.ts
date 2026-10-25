@@ -23,8 +23,10 @@ export function readBoundaryReleaseFiles(args: readonly string[]) {
   if (sha(bytes) !== opts.get("plan-sha")) throw new Error("provider_boundary_plan_file_hash");
   const plan = providerBoundaryPlanSchema.parse(JSON.parse(bytes.toString("utf8")));
   const receipt = providerBoundaryReceiptSchema.parse(JSON.parse(boundedFile(opts.get("receipt")!).toString("utf8")));
-  const hashes = [plan.beforeArtifactHash, receipt.version === 1 ? receipt.owner.artifactHash : receipt.currentIngressOwner.artifactHash, ...receipt.gateways.map(g => g.artifactHash), receipt.provider.artifactHash];
+  const hashes = [plan.beforeArtifactHash, receipt.version === 2 ? receipt.currentIngressOwner.artifactHash : receipt.owner.artifactHash, ...receipt.gateways.map(g => g.artifactHash), receipt.provider.artifactHash];
   if (plan.version === 2) hashes.push(plan.originalOwner.artifactHash);
+  if (plan.version === 3 && receipt.version === 3) hashes.push(plan.provider.endpointProofHash,plan.provider.oldJournal.artifactHash,
+    plan.provider.currentJournal.artifactHash,plan.bootWitness.artifactHash,receipt.provider.bootWitness.artifactHash,plan.transport.sourceArtifactHash);
   if (plan.provider.kind === "launchd") hashes.push(plan.provider.topologyProofSha256);
   for (const hash of hashes) if (sha(boundedFile(resolve(opts.get("artifact-dir")!, `${hash}.json`))) !== hash)
     throw new Error("provider_boundary_artifact_hash");
