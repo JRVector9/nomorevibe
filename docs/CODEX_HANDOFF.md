@@ -1,4 +1,4 @@
-# 2026-10-25 10:02 KST — 단축 도구 main 반영, 이미지 증명 환경 연결 보완
+# 2026-10-25 — 단축 도구 main 반영, 이미지 증명 환경 연결 보완
 
 사용자 목표는 단축 보고서를 다음 배포의 기본 명령으로 적용하는 것이다. 구현 PR653은 최신 전체 필수 CI40148205856 성공 뒤 **main702429e9b98ddc3008674f39e030f4e7c178e14b**에 00:56:43Z 병합했다. 일반 명령은 `npm run deploy -- scope|plan|run`, 상세는 `docs/operations/deployment-fast-path.md`다. 원 사용자 WT는 보존했고 운영 be71 앱·DB·모델·capacity는 변경0이다.
 
@@ -6,7 +6,7 @@ Main CI40148665183의 check는 실제 PR 검사 재사용으로 성공했고 두
 
 현재 WT `/Users/jr/Desktop/projects/nomorevibe-deployment-fast-path`, branch `fix/image-proof-workflow-env-20261025`, base702429e9. 수정은 workflow 두 키를 IMAGE_KIND로 복구, 기존 workflow 회귀의 kind 연결 검사, 새 `tests/ci-image-proof-workflow.test.ts`와 이 handoff다. 새 테스트는 실제 YAML 환경→별도 Node CLI writer→정확 JSON→Python ZIP readiness parser의 worker/web·promote/build 4경로와 고장 키2거절을 검증했다. 실제6/6·신규 strict tsc/ESLint·root 전체 증분 tsc/기존workflow10/10·actionlint 성공. 이 수정의 필수 PR CI→main 병합→실제 latest main readiness API/ZIP 증명 확인이 남았다.
 
-이전 PR의 CI Node22, deploy Python181(2skip), release Python81, 타입·unit2·통합6·ledger·빌드가 모두 실제 성공했다. 처음 type 오류와 빈 job output 생략 문제는 아래 기록대로 수정했고 최신 PR653 CI에서 모두 통과했다. 같은 전체 회귀를 에이전트마다 반복하지 않는다. 다음 실제 배포 전까지 runtime 작업·DDL·unknown 회수·open·원 작업 재개·생산자 등록·기존 observer 재시작은 금지한다. 새 경로의 절감 시간은 아직 실측하지 않았다.
+이전 PR의 CI Node22, deploy Python181(2skip), release Python81, 타입·unit2·통합6·ledger·빌드가 모두 실제 성공했다. 처음 type 오류와 빈 job output 생략 문제는 아래 기록대로 수정했고 최신 PR653 CI에서 모두 통과했다. 같은 전체 회귀를 에이전트마다 반복하지 않는다. 다음 실제 배포 전까지 runtime 작업·DDL·unknown 회수·open·원 작업 재개·생산자 등록·기존 observer 재시작은 금지한다. 새 경로의 절감 시간은 아직 실측하지 않았다. 신규파일의 단독 TypeScript 검사는 성공했으나 root 프로젝트 타입 검사에서 Next의 ProcessEnv.NODE_ENV 필수 확장 때문에 두 subprocess 환경이 실패했다. 명시 NODE_ENV=test를 추가한 뒤 실제 프로젝트 tsc·6회귀·ESLint를 모두 통과했다. 아직 후속 PR 생성 전이라 이 실패로 hosted CI를 다시 돌리지는 않았다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-deployment-fast-path

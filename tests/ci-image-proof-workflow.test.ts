@@ -42,7 +42,7 @@ function writer(step: Step, directory: string, digest: string, profile = "full")
   const [, ...args] = step.run!.trim().split(/\s+/);
   const result = spawnSync(process.execPath, args, {
     cwd: root, encoding: "utf8", timeout: 10_000,
-    env: { PATH: process.env.PATH, ...env, GITHUB_RUN_ID: String(runId), GITHUB_RUN_ATTEMPT: String(runAttempt) },
+    env: { PATH: process.env.PATH, NODE_ENV: "test", ...env, GITHUB_RUN_ID: String(runId), GITHUB_RUN_ATTEMPT: String(runAttempt) },
   });
   return { result, env };
 }
@@ -81,7 +81,7 @@ describe("published image proof workflow integration", () => {
       expect(interpolate(upload!.with!.name, directory, digest, profile)).toBe(`release-image-${kind}-${sha}`);
       const python = spawnSync("python3", ["-I", "-B", "-c", parseInPython,
         path.join(root, "scripts/ops/release_readiness.py"), output, kind, sha, tree, String(runId), String(runAttempt)], {
-        encoding: "utf8", timeout: 10_000, env: { PATH: process.env.PATH },
+        encoding: "utf8", timeout: 10_000, env: { PATH: process.env.PATH, NODE_ENV: "test" },
       });
       expect(python.status, python.stderr).toBe(0);
       expect(JSON.parse(python.stdout)).toEqual(expected);
