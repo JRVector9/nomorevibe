@@ -918,6 +918,13 @@
       "when": 1794086400042,
       "tag": "0130_direct_provider_boot_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1794086400043,
+      "tag": "0131_historical_direct_provider_boot_boundary",
+      "breakpoints": true
     }
   ]
 }

@@ -75,3 +75,26 @@ it('v3 CLI verifies native endpoint/journal/clock/source artifact bytes and neve
  const file=join(dir,`${hash}.json`),original=readFileSync(file);writeFileSync(file,'changed');expect(()=>readBoundaryReleaseFiles(args)).toThrow('provider_boundary_artifact_hash');writeFileSync(file,original);}
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+it('v4 CLI requires original-owner/current-ingress and all native boot artifact bytes', async () => {
+  const { historicalBootBoundaryFixture } = await import('./fixtures/provider-boot-historical-owner');
+  const dir = mkdtempSync(join(tmpdir(), 'boundary-boot-history-cli-'));
+  try {
+    const { plan, receipt } = historicalBootBoundaryFixture(), sha = (v: string) => createHash('sha256').update(v).digest('hex');
+    const artifact = (name: string) => { const bytes = JSON.stringify({ synthetic: true, name }), hash = sha(bytes); writeFileSync(join(dir, `${hash}.json`), bytes, { mode: 0o600 }); return hash; };
+    plan.beforeArtifactHash = artifact('before'); plan.originalOwner.artifactHash = artifact('originalOwner');
+    plan.provider.endpointProofHash = artifact('nativeEndpoint'); plan.provider.oldJournal.artifactHash = artifact('oldJournal'); plan.provider.currentJournal.artifactHash = artifact('currentJournal');
+    plan.bootWitness.artifactHash = artifact('planClock'); plan.transport.sourceArtifactHash = artifact('actualRuntimeTransportSources');
+    receipt.currentIngressOwner.artifactHash = artifact('currentIngressExit'); receipt.provider.artifactHash = artifact('providerCurrentBoot'); receipt.provider.bootWitness.artifactHash = artifact('receiptClock');
+    receipt.originalOwnerProofHash = providerBoundaryCanonicalHash(plan.originalOwner); receipt.planHash = providerBoundaryPlanHash(plan);
+    const bytes = JSON.stringify(plan); writeFileSync(join(dir, 'plan.json'), bytes); writeFileSync(join(dir, 'receipt.json'), JSON.stringify(receipt));
+    const args = [`--plan=${join(dir, 'plan.json')}`, `--plan-sha=${sha(bytes)}`, `--receipt=${join(dir, 'receipt.json')}`, `--artifact-dir=${dir}`, '--operator=fixture', '--reference=synthetic historical reboot proof', '--database-url-stdin'];
+    expect(readBoundaryReleaseFiles(args).apply).toBe(false);
+    for (const hash of [plan.beforeArtifactHash, plan.originalOwner.artifactHash, receipt.currentIngressOwner.artifactHash, receipt.provider.artifactHash,
+      plan.provider.endpointProofHash, plan.provider.oldJournal.artifactHash, plan.provider.currentJournal.artifactHash, plan.bootWitness.artifactHash,
+      receipt.provider.bootWitness.artifactHash, plan.transport.sourceArtifactHash]) {
+      const file = join(dir, `${hash}.json`), original = readFileSync(file); writeFileSync(file, 'changed');
+      expect(() => readBoundaryReleaseFiles(args)).toThrow('provider_boundary_artifact_hash'); writeFileSync(file, original);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

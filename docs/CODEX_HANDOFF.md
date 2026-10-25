@@ -1,5 +1,17 @@
 # 2026-10-25 — 웹·백엔드 자동복구와 Oracle 독립 감시
 
+## 2026-10-25 — 역사 owner + direct native boot V4 (운영 실행0)
+
+- Objective: 종료·교체된 원래 owner의 기존 V2 durable group 증거와 기존 V3 direct native boot 증거를 조합하는 새 plan/receipt4. 기반87ecc4b1, 격리 WT `/Users/jr/Desktop/projects/nomorevibe-provider-boot-historical-v4-20261025`, branch `codex/provider-boot-historical-owner-v4-20261025`.
+- Completed: spec/plan을 `0252c8de`에 먼저 commit하고 root 설계/코드 검토 승인. contract·locked repo records guard·owner helper type·CLI·additive0131/journal132 및 회귀 완료. 기존V1/2/3 SQL bytes/helper OID/body/CHECK 보존, wrapper2는 원문 archive에 delegate. 원래 PG-text local-end hash와 V3 ASCII canonical hash는 같은 event를 각각 검증하며 해시를 혼동하지 않음. 현재 ingress 실제 종료는 별도 증거이며 Swarm exit를 Docker wait ACK로 변환하지 않음.
+- Tests actual: unit/CLI25PASS(6파일), 기존4 actualPG28PASS+최종V4 actualPG9PASS(고유37), stock nonempty130→pending0130+0131 정규 migrate 단1호출→132 PASS. 전후 함수19→34→38/전체132 journal hash/비어있지 않은 request·event·group/20CHECK OID 검증. nexttypegen·tsc·changedeslint(warning0)·diffcheck exit0. 전체 suite/build 미실행.
+- Failed RED: unsupportedV4 unit2/CLI owner분기/PG131≠132·records함수부재·정규UPDATE거절 후 GREEN. 중간 fixture null/PID 불일치·BigInt1.5 refine throw·stock setup 잘못된 connection 이름/unused warning을 실제 회귀로 수정. 자세한 명령과 실패는 [검증 기록](operations/2026-10-25-historical-direct-provider-boot-boundary.md).
+- Files: contract/capacity-repository/owner type/CLI/0131 SQL+journal, 새V4 fixture/unit/PG, 기존 CLI·boot/historical PG 기대값, spec/plan/검증기록/이 격리 handoff.
+- Hash: 0130 unchanged `e9c8f2b84c5f77cab77b6948eac22ebc50c392263f84bd3dfaad294e6ed628ab`;0131 `c40d787adeaf26c1e7a589cbdc54a6ea1b86239b2cf5c170b813e05960cb3ed5`. 합성 카탈로그 `/private/tmp/nomorevibe-provider-boot-historical-v4-validation-20261025/v4-*.safe.json`.
+- Remaining: root+audit_hold 독립 검토 blocker0/commit·push·PR 승인 완료. implementation commit/PR/최신base CI 진행. root만 운영 migration/release 수행. 실제 remote/model/서비스/DB/제품판정0; 기존LLM routes/config 불변. 원본/다른WT/frozen private helper 수정0.
+- Next exact: `git -C /Users/jr/Desktop/projects/nomorevibe-provider-boot-historical-v4-20261025 diff --check`; 검증노트의 targeted 명령과 artifact를 검토. root와 독립 검토 승인 범위에서 구현 commit/push/PR을 진행하고 exact head CI를 확인.
+
+
 ## Latest checkpoint — final Python hardening
 
 - PR [659](https://github.com/JRVector9/nomorevibe/pull/659), previous head c601841d / base bfe0c8fc. CI40172877420의 필수 check·type/lint/unit2/build/DB통합6/ledger/PR이미지2 모두 실제 성공했다. 아래 Python 보완 commit 뒤 최신 HEAD의 필수 CI를 다시 확인한다.
