@@ -2142,9 +2142,14 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
         FROM model_capacity_requests r WHERE request_id=${row.requestId}::uuid`);
       if (facts?.valid !== true) fail("provider_boot_boundary_records_mismatch");
     }
-    if (evidence.plan.version === 2) {
+    if (evidence.plan.version === 2 || evidence.plan.version === 4) {
       const { assertHistoricalBoundaryOwner } = await import("@/lib/operations/dr/provider-boundary-owner");
       await assertHistoricalBoundaryOwner(tx, evidence.plan, { owner, dispatchAt: clock.dispatch_at, bindingHash: row.dispatchBindingHash, localEnd });
+    }
+    if (evidence.plan.version === 4) {
+      const [facts] = await tx.execute<{ valid: boolean }>(sql`SELECT nmv_boot_historical_records_valid(${JSON.stringify(evidence.plan)}::text::jsonb,to_jsonb(r)) valid
+        FROM model_capacity_requests r WHERE request_id=${row.requestId}::uuid`);
+      if (facts?.valid !== true) fail("provider_boot_historical_records_mismatch");
     }
   }
   if (evidence.requestId !== row.requestId || evidence.owner.instanceId !== owner.instanceId || evidence.owner.bootId !== owner.bootId

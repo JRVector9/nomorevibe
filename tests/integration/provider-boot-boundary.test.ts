@@ -50,7 +50,7 @@ beforeAll(async()=>{
  await migrate(drizzle(client),{migrationsFolder:path.join(root,'drizzle')});const g=globalThis as{db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
 },120000);
 afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`DROP DATABASE ${name}`);await admin.end({timeout:5});});
-it('nonempty130→131 preserves CHECK OIDs/rows and accepts the strict new physical boundary',async()=>{expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(131);expect(await rows()).toEqual(beforeRows);expect(await checks()).toEqual(beforeChecks);expect(await physical(await evidence())).toBe(true);});
+it('nonempty130→latest preserves CHECK OIDs/rows and accepts the strict new physical boundary',async()=>{expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);expect(await rows()).toEqual(beforeRows);expect(await checks()).toEqual(beforeChecks);expect(await physical(await evidence())).toBe(true);});
 it('the same strict null/missing/extra/topology matrix is rejected by TypeScript and actual SQL',async()=>{
  const base=await evidence();const matrix=invalidBootBoundaries(frozen);expect(matrix.length).toBeGreaterThan(300);
  for(const value of matrix){const p=value.plan as Record<string,unknown>,r=value.receipt as Record<string,unknown>;if(p&&r&&r.planHash===frozen.receipt.planHash)r.planHash=providerBoundaryCanonicalHash(p);

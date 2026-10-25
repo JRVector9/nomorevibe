@@ -70,7 +70,27 @@ export const providerBoundaryPlanV3Schema=providerBoundaryPlanV3Base.refine(p=>{
     &&bootMicroseconds(provider.oldJournal.lastAt)<b.upper&&bootMicroseconds(provider.currentJournal.firstAt)>=b.lower
     &&bootMicroseconds(provider.currentJournal.firstAt)<=bootMicroseconds(p.createdAt);
 },"direct_provider_boot_boundary");
-export const providerBoundaryPlanSchema = z.discriminatedUnion("version", [providerBoundaryPlanV1Schema, providerBoundaryPlanV2Schema,providerBoundaryPlanV3Schema]);
+const providerBoundaryPlanV4Base = providerBoundaryPlanV3Base.omit({ owner: true }).extend({ version: z.literal(4),
+  originalOwner: originalBoundaryOwnerSchema, currentIngressOwner: linuxBoundaryProcessIdentitySchema }).strict();
+export const providerBoundaryPlanV4Schema = providerBoundaryPlanV4Base.refine(p => {
+  if (!providerBoundaryPlanV4Base.safeParse(p).success) return false;
+  const b = bootInterval(p.bootWitness), provider = p.provider, contract = p.servingContract, original = p.originalOwner, a = p.ownerAssociation;
+  return original.instanceId === p.request.owner.instanceId && original.bootId === p.request.owner.bootId
+    && p.currentIngressOwner.kind === "container" && p.currentIngressOwner.startedAt <= p.createdAt
+    && p.createdAt >= p.request.dispatchAt && bootMicroseconds(p.control.updatedAt) <= bootMicroseconds(p.createdAt)
+    && a.instanceId === original.instanceId && a.bootId === original.bootId
+    && original.groups.some(g => g.spawnedEventId === a.spawnedEventId && g.pid === a.pid && g.runIdHash === a.runIdHash)
+    && p.localEnd.eventId === original.localEndEventId
+    && contract.endpoint === `http://${provider.endpointAddress}:${provider.endpointPort}/v1/chat/completions`
+    && contract.physicalGroup === p.request.groupId && contract.backendId === p.request.providerBudgetId && localModelContractHash(contract) === p.request.servingContractHash
+    && validBootWitness(p.bootWitness, provider.currentBootId, p.createdAt)
+    && bootMicroseconds(p.request.dispatchAt) < b.lower && bootMicroseconds(p.localEnd.endedAt) < b.lower
+    && bootMicroseconds(p.localEnd.endedAt) >= bootMicroseconds(p.request.dispatchAt)
+    && bootMicroseconds(provider.oldJournal.firstAt) <= bootMicroseconds(p.request.dispatchAt)
+    && bootMicroseconds(provider.oldJournal.lastAt) < b.upper && bootMicroseconds(provider.currentJournal.firstAt) >= b.lower
+    && bootMicroseconds(provider.currentJournal.firstAt) <= bootMicroseconds(p.createdAt);
+}, "historical_direct_provider_boot_boundary");
+export const providerBoundaryPlanSchema = z.discriminatedUnion("version", [providerBoundaryPlanV1Schema, providerBoundaryPlanV2Schema,providerBoundaryPlanV3Schema,providerBoundaryPlanV4Schema]);
 export type ProviderBoundaryPlan = z.infer<typeof providerBoundaryPlanSchema>;
 /** New boundary-only ASCII key order. Never changes historical reviewHash identities. */
 const canonical = (value: unknown): string => Array.isArray(value) ? `[${value.map(canonical).join(",")}]`
@@ -105,7 +125,9 @@ export const providerBoundaryReceiptV2Schema = z.object({ version: z.literal(2),
 export const providerBoundaryReceiptV3Schema=z.object({version:z.literal(3),kind:z.literal("provider_boundary_receipt"),planHash:sha,
  owner:linuxExitObservationSchema,gateways:z.array(z.never()).length(0),provider:z.object({identity:bootProviderIdentitySchema,observedAt:at,
  bootWitness:bootWitnessSchema,artifactHash:sha}).strict()}).strict();
-export const providerBoundaryReceiptSchema = z.discriminatedUnion("version", [providerBoundaryReceiptV1Schema, providerBoundaryReceiptV2Schema,providerBoundaryReceiptV3Schema]);
+export const providerBoundaryReceiptV4Schema = providerBoundaryReceiptV3Schema.omit({ owner: true }).extend({ version: z.literal(4),
+  originalOwnerProofHash: sha, currentIngressOwner: linuxExitObservationSchema }).strict();
+export const providerBoundaryReceiptSchema = z.discriminatedUnion("version", [providerBoundaryReceiptV1Schema, providerBoundaryReceiptV2Schema,providerBoundaryReceiptV3Schema,providerBoundaryReceiptV4Schema]);
 export type ProviderBoundaryReceipt = z.infer<typeof providerBoundaryReceiptSchema>;
 
 /** Privileged operator observations: hashes bind reviewed raw artifacts; they do not prove physical exit by themselves. */
@@ -134,6 +156,19 @@ export function validateProviderBoundary(plan: ProviderBoundaryPlan, receipt: Pr
       &&validBootWitness(receipt.provider.bootWitness,plan.provider.currentBootId,receipt.provider.observedAt)
       &&receipt.provider.bootWitness.dbBefore>=`${receipt.owner.observedAt.slice(0,23)}000Z`
       &&a.lower<=b.upper&&b.lower<=a.upper&&bootMicroseconds(plan.localEnd.endedAt)<b.lower&&bootMicroseconds(plan.request.dispatchAt)<b.lower;
+  }
+  if (plan.version === 4 && receipt.version === 4) {
+    if (!providerBoundaryPlanV4Schema.safeParse(plan).success || !providerBoundaryReceiptV4Schema.safeParse(receipt).success) return false;
+    const now = Date.parse(evaluatedAt), a = bootInterval(plan.bootWitness), b = bootInterval(receipt.provider.bootWitness);
+    return at.safeParse(evaluatedAt).success && receipt.planHash === providerBoundaryPlanHash(plan)
+      && receipt.originalOwnerProofHash === providerBoundaryCanonicalHash(plan.originalOwner)
+      && now >= Date.parse(plan.createdAt) && now - Date.parse(plan.createdAt) <= 30 * 60_000
+      && isDeepStrictEqual(receipt.currentIngressOwner.identity, plan.currentIngressOwner) && isDeepStrictEqual(receipt.provider.identity, plan.provider)
+      && receipt.currentIngressOwner.observedAt >= plan.createdAt && receipt.provider.observedAt >= receipt.currentIngressOwner.observedAt
+      && receipt.provider.observedAt <= evaluatedAt && now - Date.parse(receipt.provider.observedAt) <= 5 * 60_000
+      && validBootWitness(receipt.provider.bootWitness, plan.provider.currentBootId, receipt.provider.observedAt)
+      && receipt.provider.bootWitness.dbBefore >= `${receipt.currentIngressOwner.observedAt.slice(0, 23)}000Z`
+      && a.lower <= b.upper && b.lower <= a.upper && bootMicroseconds(plan.localEnd.endedAt) < b.lower && bootMicroseconds(plan.request.dispatchAt) < b.lower;
   }
   if (plan.version !== 2 || receipt.version !== 2) return false;
   const now = Date.parse(evaluatedAt);
