@@ -186,6 +186,7 @@ def migration_changes(snapshot, sha):
 
 def prepull(snapshot, target, selected):
     """Verify only needed images on affected hosts, using preserved registry credentials."""
+    verified_token = shared.main_sha_and_token(target)
     kinds = required_kinds(selected)
     web = snapshot['apps']['web-m3']
     if 'web' in kinds:
@@ -195,7 +196,7 @@ def prepull(snapshot, target, selected):
     else:
         key_hash = ''
     # The same stored web credential will be passed back unchanged to Dokploy.
-    token = web.get('password') or shared.run(['gh', 'auth', 'token'])
+    token = web.get('password') or verified_token
     hosts = sorted({shared.app_metadata(short)[2][1] for short in selected})
     def one(host):
         images = {kind: target[kind] for kind in kinds}
@@ -373,6 +374,8 @@ def run_release(plan, execution_dir, *, observe=True):
         proof['target'] = target
         plan['readiness'] = proof
         git.verify_main(target)
+        # Preserve the original GitHub account/private-web registry guard.
+        shared.main_sha_and_token(target)
         # Every app must still be its exact original before the first service mutation.
         fleet.verify_fleet(client, plan['snapshot'], target, [], {}, ROOT)
         current_impact = impact(plan['snapshot'], target['sha'])

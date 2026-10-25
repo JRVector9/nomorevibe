@@ -535,7 +535,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
           HEAD_TREE: ${{ needs.scope.outputs.tree }}
-          IMAGE_worker: worker
+          IMAGE_KIND: worker
           IMAGE_DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
           TEST_PROFILE: ${{ needs.scope.outputs.test_profile }}
           RULES_VERSION: ${{ needs.scope.outputs.rules_version }}
@@ -617,7 +617,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ github.sha }}
           HEAD_TREE: ${{ needs.scope.outputs.tree }}
-          IMAGE_web: web
+          IMAGE_KIND: web
           IMAGE_DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
           TEST_PROFILE: ${{ needs.scope.outputs.test_profile }}
           RULES_VERSION: ${{ needs.scope.outputs.rules_version }}
