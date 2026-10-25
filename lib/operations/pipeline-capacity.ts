@@ -9,6 +9,7 @@ const date = z.string().datetime().refine(value => new Date(value).toISOString()
 const integer = z.number().int().nonnegative().safe();
 const positive = integer.positive();
 const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli"]), model: text, canonicalModel: text }).strict();
+const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
 const input = z.object({ candidateId: positive, inputHash: hash, sourceRevisionHash: hash,
   readyAt: date, stratum: text, reReview: z.boolean() }).strict();
 export const capacityManifestSchema = z.object({
@@ -16,7 +17,7 @@ export const capacityManifestSchema = z.object({
   mode: z.enum(["fixtures", "model-replay"]), cacheMode: z.enum(["cold", "warm"]),
   referenceTime: date, startedAt: date, endedAt: date,
   inputPolicyHash: hash, fullReviewPolicyHash: hash, comparisonPolicyHash: hash, initialStateHash: hash,
-  models: z.object({ first: identity, second: z.array(identity).max(3), fallbacks: z.array(identity).max(2) }).strict(),
+  models: z.object({ first: identity, second: z.array(secondIdentity).max(3), fallbacks: z.array(secondIdentity).max(2) }).strict(),
   inputs: z.array(input).min(1).max(100_000),
   limits: z.object({ maxCalls: positive.max(1_000_000), maxTokens: positive,
     maxDurationMs: positive.max(86_400_000), concurrency: positive.max(4), perCallTokenUpperBound: positive }).strict(),
@@ -220,8 +221,8 @@ function conditions(manifest: CapacityManifest) {
   const { runId, revision, startedAt, endedAt, fullReviewPolicyHash: exactPolicyHash, models, inputs, limits, ...fixed } = manifest;
   void runId; void revision; void exactPolicyHash;
   const { concurrency, ...budget } = limits; void concurrency;
-  const model = (row: z.infer<typeof identity>) => ({ provider: row.provider, canonicalModel: row.canonicalModel });
-  const pool = (rows: z.infer<typeof identity>[]) => rows.map(model).sort((a, b) => canonical(a).localeCompare(canonical(b)));
+  const model = (row: z.infer<typeof secondIdentity>) => ({ provider: row.provider, canonicalModel: row.canonicalModel });
+  const pool = (rows: z.infer<typeof secondIdentity>[]) => rows.map(model).sort((a, b) => canonical(a).localeCompare(canonical(b)));
   return { ...fixed, durationMs: time(endedAt) - time(startedAt), limits: budget,
     models: { first: model(models.first), second: pool(models.second), fallbacks: pool(models.fallbacks) },
     inputs: inputs.map(({ readyAt, ...row }) => ({ ...row, readyOffsetMs: time(readyAt) - time(startedAt) }))

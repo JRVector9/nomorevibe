@@ -7,12 +7,14 @@ import { itemBindingHash, type Ai2ItemBinding } from '@/lib/jobs/items/types';
 import { ai2DispatchBindingHash, ai2ModelDispatchSchema } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(),
-  prepare: vi.fn(), native: vi.fn(), atomic: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
+  prepare: vi.fn(), serving: vi.fn(), native: vi.fn(), atomic: vi.fn(), fallback: vi.fn(), compatibility: vi.fn(), consumer: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), transport: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mocks.pending, requestAi2ItemModelSlot: mocks.request,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown, reconcileAi2GatewayTerminal: mocks.reconcile }));
 vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi2GatewayCall: mocks.prepare, reviewWithReservedAi2Gateway: mocks.native }));
+vi.mock('@/lib/crawl/second-review-serving-contract', async original => ({ ...await original<typeof import('@/lib/crawl/second-review-serving-contract')>(),
+  resolveAi2GatewayServingContract: mocks.serving }));
 vi.mock('@/lib/crawl/second-review-ownership', async load => ({ ...await load<typeof import('@/lib/crawl/second-review-ownership')>(),
-  claimSecondReviewItemWithModelReservation: mocks.atomic, claimItemSecondReview: mocks.compatibility, claimConsumerItemSecondReview: mocks.consumer,
+  claimSecondReviewItemWithModelReservation: mocks.atomic, fallbackWaitingSecondReview: mocks.fallback, claimItemSecondReview: mocks.compatibility, claimConsumerItemSecondReview: mocks.consumer,
   observeSecondReviewItemDispatch: mocks.observe, renewSecondReviewOwnership: mocks.renew }));
 vi.mock('@/lib/crawl/second-review', () => ({ recordSecondReview: mocks.record }));
 vi.mock('@/lib/crawl/second-review-transport', () => ({ dispatchSecondReviewTransport: mocks.transport, secondReviewTransportTimeoutMs: () => 60_000 }));
@@ -45,19 +47,19 @@ const success = { ok: true as const, outcome: { decision: 'approve' as const, re
 const terminal = Object.freeze({ kind: 'ai2_gateway_terminal' as const });
 function gate<T>() { let resolve!: (value: T) => void, reject!: (error: unknown) => void; const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 beforeEach(() => {
-  vi.resetAllMocks(); value = fixture(); mocks.prepare.mockReturnValue(value.call); mocks.pending.mockResolvedValue(null);
+  vi.resetAllMocks(); value = fixture(); mocks.prepare.mockReturnValue(value.call); mocks.serving.mockReturnValue(null); mocks.pending.mockResolvedValue(null);
   mocks.request.mockResolvedValue({ kind: 'granted', reservation: value.reservation });
   mocks.atomic.mockResolvedValue({ kind: 'claimed', row: value.row, input: value.input, receipt: value.receipt, dispatch: value.dispatch });
   mocks.compatibility.mockRejectedValue(value.intent); mocks.consumer.mockRejectedValue(value.intent);
   mocks.observe.mockResolvedValue({ kind: 'current', row: value.row, input: value.input }); mocks.renew.mockResolvedValue(value.receipt.ownership.lease);
   mocks.native.mockResolvedValue({ result: success, terminal }); mocks.reconcile.mockResolvedValue({ kind: 'settled' }); mocks.unknown.mockResolvedValue(true);
-  mocks.cancel.mockResolvedValue(true); mocks.record.mockResolvedValue({ state: 'recorded' }); mocks.transport.mockResolvedValue(success);
+  mocks.cancel.mockResolvedValue(true); mocks.fallback.mockResolvedValue(false); mocks.record.mockResolvedValue({ state: 'recorded' }); mocks.transport.mockResolvedValue(success);
 });
 afterEach(() => vi.useRealTimers());
 it('does not allocate or dispatch when the production preparation remains unsupported', async () => {
   mocks.prepare.mockReturnValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
-  expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  expect(mocks.pending).toHaveBeenCalledOnce(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
 it('rejects a reason-only or copied intent before preparation or SQL', async () => {
   for (const forged of [new ModelCapacityDeferredError('reservation_required'), { ...value.intent }])
@@ -66,7 +68,7 @@ it('rejects a reason-only or copied intent before preparation or SQL', async () 
 });
 it('resumes the original pending ID and binds only actual owner/chain/input identity', async () => {
   const id = randomUUID(); mocks.pending.mockResolvedValue({ requestId: id, state: 'reserved' });
-  expect((await claimSecondReviewModelCapacity(value.intent)).claim).toMatchObject({ kind: 'claimed', dispatch: value.dispatch });
+  expect(await claimSecondReviewModelCapacity(value.intent)).toMatchObject({ claim: { kind: 'claimed', dispatch: value.dispatch } });
   expect(mocks.request).toHaveBeenCalledExactlyOnceWith({ requestId: id, owner, class: 'second', pool: 'reviewer', routeId: 'second-review', provider: 'abcllm', model: 'Exact Model',
     workKey: `ai2:3:8:${itemBindingHash(value.intent.intent.binding)}` }, { candidateId: 3, vote: 8 });
   expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith({ secondReviewId: 8, owner, expected: value.intent.intent, reservation: value.reservation, identity: mocks.pending.mock.calls[0][0], call: value.call });
@@ -80,10 +82,76 @@ it('waiting and an existing unknown dispatch defer without an item claim', async
 });
 it('cancels only the original reservation after a skipped or failed atomic claim', async () => {
   mocks.atomic.mockResolvedValueOnce({ kind: 'skipped', reason: 'input_changed' });
-  expect((await claimSecondReviewModelCapacity(value.intent)).claim).toEqual({ kind: 'skipped', reason: 'input_changed' });
+  expect(await claimSecondReviewModelCapacity(value.intent)).toMatchObject({ claim: { kind: 'skipped', reason: 'input_changed' } });
   const original = new Error('actual claim SQL failure'); mocks.atomic.mockRejectedValueOnce(original);
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toBe(original);
   expect(mocks.cancel).toHaveBeenCalledTimes(2); expect(mocks.cancel.mock.calls[0][0]).toEqual(value.reservation);
+});
+function localIntent() {
+  return new SecondReviewModelReservationRequired({ ...value.intent.intent, binding: { ...value.intent.intent.binding,
+    reviewer: { provider: 'local-direct', model: value.intent.intent.binding.reviewer.model } } });
+}
+it('hands off only an existing local waiting request after the atomic helper accepts it', async () => {
+  const intent = localIntent(), requestId = randomUUID();
+  mocks.pending.mockResolvedValue({ requestId, state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  mocks.fallback.mockResolvedValue(true);
+  expect(await claimSecondReviewModelCapacity(intent)).toEqual({ kind: 'capacity_fallback' });
+  expect(mocks.fallback).toHaveBeenCalledExactlyOnceWith(intent, requestId);
+  expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
+it('capacity handoff returns a routing change without a model call, item lease or verdict writer', async () => {
+  mocks.consumer.mockRejectedValue(localIntent()); mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' });
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' }); mocks.fallback.mockResolvedValue(true);
+  expect(await executeSecondReviewConsumerItem({ secondReviewId: 8, owner })).toEqual({ state: 'rerouted' });
+  for (const fn of [mocks.atomic, mocks.cancel, mocks.native, mocks.observe, mocks.renew, mocks.reconcile, mocks.record, mocks.transport])
+    expect(fn).not.toHaveBeenCalled();
+});
+it.each(['draining', 'disabled', 'unmapped', 'policy_changed', 'queue_full'] as const)('never hands off a %s refusal', async reason => {
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' }); mocks.request.mockResolvedValue({ kind: 'deferred', reason });
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason });
+  expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+});
+it.each(['dispatched', 'indeterminate'] as const)('never hands off or cancels a %s request', async state => {
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state });
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'dispatched' });
+  for (const fn of [mocks.request, mocks.fallback, mocks.cancel, mocks.atomic]) expect(fn).not.toHaveBeenCalled();
+});
+it('keeps an existing granted reservation on the dispatch path', async () => {
+  mocks.pending.mockResolvedValue({ requestId: value.reservation.requestId, state: 'reserved' });
+  expect(await claimSecondReviewModelCapacity(localIntent())).toHaveProperty('claim');
+  expect(mocks.atomic).toHaveBeenCalledOnce(); expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+});
+it('preserves capacity deferral when the atomic handoff rejects or there is no existing waiting request', async () => {
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'capacity' });
+  expect(mocks.fallback).not.toHaveBeenCalled();
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' });
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'capacity' });
+  expect(mocks.fallback).toHaveBeenCalledOnce();
+  const failure = new Error('actual handoff transaction failure'); mocks.fallback.mockRejectedValue(failure);
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toBe(failure);
+});
+it.each(['waiting', 'reserved'] as const)('hands off a direct preflight failure from an undispatched %s slot', async state => {
+  const intent = localIntent(), requestId = value.reservation.requestId;
+  mocks.pending.mockResolvedValue({ requestId, state }); mocks.prepare.mockResolvedValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
+  mocks.serving.mockReturnValue({ provider: 'local-direct', model: intent.intent.binding.reviewer.model });
+  mocks.request.mockResolvedValue(state === 'reserved' ? { kind: 'granted', reservation: value.reservation } : { kind: 'deferred', reason: 'capacity' });
+  mocks.fallback.mockResolvedValue(true);
+  expect(await claimSecondReviewModelCapacity(intent)).toEqual({ kind: 'capacity_fallback' });
+  expect(mocks.fallback).toHaveBeenCalledExactlyOnceWith(intent, requestId, 'primary_preflight_failed');
+  for (const fn of [mocks.atomic, mocks.cancel, mocks.native]) expect(fn).not.toHaveBeenCalled();
+});
+it('requires an actual configured direct serving contract before allocating a preflight handoff', async () => {
+  mocks.prepare.mockResolvedValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
+  await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
+  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.fallback).not.toHaveBeenCalled();
+});
+it('keeps preflight handoff closed when mapping or policy rejects the bound slot', async () => {
+  const intent = localIntent(); mocks.prepare.mockResolvedValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
+  mocks.serving.mockReturnValue({ provider: 'local-direct', model: intent.intent.binding.reviewer.model });
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'unmapped' });
+  await expect(claimSecondReviewModelCapacity(intent)).rejects.toMatchObject({ reason: 'unmapped' });
+  expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
 it('preserves both the atomic error and actual cancellation failure', async () => {
   const original = new Error('claim'), cleanup = new Error('cancel'); mocks.atomic.mockRejectedValue(original); mocks.cancel.mockRejectedValue(cleanup);

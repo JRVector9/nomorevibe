@@ -233,7 +233,7 @@ export type Vote = Verdict & { provider: SecondReviewProvider | null; model?: st
  */
 function counts(vote: Vote | Verdict, agreeAt: number): boolean {
   if (vote.decision !== "approve" && vote.decision !== "reject") return false;
-  const gateway = "provider" in vote && vote.provider === "abcllm";
+  const gateway = "provider" in vote && (vote.provider === "abcllm" || vote.provider === "local-direct");
   return gateway || (vote.confidence ?? 0) >= agreeAt;
 }
 

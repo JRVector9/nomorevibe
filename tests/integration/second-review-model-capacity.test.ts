@@ -574,7 +574,7 @@ it.each([false, true])("preserves genuine verified %s item replay without granti
   await mode("open");
   if (item) await admin`UPDATE pipeline_stage_modes SET mode='items',epoch=2,writer_contract_version=1 WHERE stage='ai2'`;
   await requestJob("crawl-agent-review");
-  const model = (value: CrawlSettings["secondReview"]["voters"][number]) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
+  const model = <T extends CrawlSettings["secondReview"]["voters"][number]>(value: T) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   const first = configured.firstReview;
   if (!first?.model) throw new Error("AI2 replay fixture requires its exact first model");
   const manifest: CapacityManifest = { version: 1, runId: randomUUID(), revision: "db732d2f", mode: "fixtures", cacheMode: "cold",

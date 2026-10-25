@@ -656,7 +656,7 @@ function fixedAi2Target(value: Ai2Target): Ai2Target {
 function fixedAi2Identity(value: ModelCapacityRequestIdentity, target: Ai2Target): string {
   const logical = `ai2:${target.candidateId}:${target.vote}`;
   if (value.class !== "second" || value.pool !== "reviewer" || value.routeId !== "second-review"
-    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !["abcllm", "local-direct"].includes(value.provider) || !value.workKey.startsWith(`${logical}:`)
     || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_ai2_capacity_identity");
   return logical;
 }
@@ -725,6 +725,7 @@ export async function finishAi2ItemModelCapacityDispatch(tx: ProductTransaction,
   const binding = ai2DispatchBindingSchema.parse(value);
   if (binding.review.candidateId !== proof.target.candidateId || binding.review.vote !== proof.target.vote
     || binding.logicalWorkKey !== proof.row.logicalWorkKey || binding.model !== proof.identity.model
+    || binding.provider !== proof.identity.provider
     || `${binding.logicalWorkKey}:${binding.item.bindingHash}` !== proof.identity.workKey
     || binding.item.owner.instanceId !== proof.identity.owner.instanceId
     || binding.item.owner.bootId !== proof.identity.owner.bootId) fail("ai2_capacity_dispatch_binding_mismatch");
@@ -2193,4 +2194,41 @@ export async function setModelCapacityMode(tx: ProductTransaction, mode: ModelCa
   const [row] = await tx.update(modelCapacityControl).set({ mode, updatedAt: sql`clock_timestamp()` })
     .where(eq(modelCapacityControl.id, 1)).returning();
   return row;
+}
+
+/** Fixed AI2 pre-dispatch handoff. The caller must finish its domain transition
+ * in this same TX or roll back the withdrawal. Never grants provider authority. */
+export type Ai2PreDispatchFallbackReason = "capacity_wait_timeout" | "primary_preflight_failed";
+export async function withdrawUndispatchedAi2ItemForFallback(tx: ProductTransaction, value: {
+  requestId: string; identity: ModelCapacityRequestIdentity; target: Ai2Target; reason: Ai2PreDispatchFallbackReason;
+}): Promise<ReturnType<typeof callerControlSnapshot> | null> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const requestId = modelCapacityRequestSchema.shape.requestId.parse(value.requestId);
+  const reason = ["capacity_wait_timeout", "primary_preflight_failed"].includes(value.reason) ? value.reason : fail("invalid_ai2_fallback_reason");
+  const identity = modelCapacityRequestIdentitySchema.parse(value.identity), target = fixedAi2Target(value.target);
+  const logical = fixedAi2Identity(identity, target);
+  if (identity.provider !== "local-direct") return null;
+  const state = await control(tx), snapshot = callerControlSnapshot(state);
+  const [row] = await tx.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, requestId)).for("update");
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+    && route.provider === identity.provider && route.model === identity.model);
+  if (!row || state.mode !== "open" || !route || !(row.state === "waiting" || reason === "primary_preflight_failed" && row.state === "reserved")
+    || row.workKey !== identity.workKey || row.ownerInstanceId !== identity.owner.instanceId || row.ownerBootId !== identity.owner.bootId
+    || row.class !== identity.class || row.pool !== identity.pool || row.routeId !== identity.routeId
+    || row.provider !== identity.provider || row.model !== identity.model || row.logicalWorkKey !== logical
+    || row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash
+    || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || row.state === "waiting" && (row.token !== null || row.reservedUntil !== null)
+    || row.dispatchBinding !== null || row.dispatchBindingHash !== null
+    || row.dispatchedAt !== null || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null
+    || await ai2Fence(tx, logical, requestId)) return null;
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, requestId), eq(modelCapacityRequests.state, row.state),
+      reason === "capacity_wait_timeout" ? sql`${modelCapacityRequests.queuedAt} <= clock_timestamp() - interval '15 seconds'` : undefined,
+      row.state === "waiting" ? sql`${modelCapacityRequests.queueUntil} > clock_timestamp()`
+        : sql`${modelCapacityRequests.reservedUntil} > clock_timestamp()`)).returning();
+  if (!changed) return null;
+  await event(tx, changed, row.state === "waiting" ? "wait_cancelled" : "reservation_cancelled", row.state, "withdrawn");
+  return snapshot;
 }

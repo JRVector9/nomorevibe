@@ -925,6 +925,13 @@
       "when": 1794086400043,
       "tag": "0131_historical_direct_provider_boot_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1794086400044,
+      "tag": "0132_ai2_local_direct_gateway",
+      "breakpoints": true
     }
   ]
 }

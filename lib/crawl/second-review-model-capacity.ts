@@ -6,29 +6,46 @@ import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedMode
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { itemBindingHash } from '@/lib/jobs/items/types';
 import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted, type PreparedAi2GatewayCall } from './agent-review-gateway';
-import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, type SecondReviewModelClaim } from './second-review-ownership';
+import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, fallbackWaitingSecondReview, type SecondReviewModelClaim } from './second-review-ownership';
 import type { ReviewInput } from './agent-review-contract';
 import type { AgentReviewResult } from './agent-review';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
+import { resolveAi2GatewayServingContract } from './second-review-serving-contract';
 
 /** Called only after the ordinary claim's intent transaction has rolled back.
  * Queue polls and the fixed atomic item/dispatch claim each have short own TXs. */
 export async function claimSecondReviewModelCapacity(intent: SecondReviewModelReservationRequired, signal?: AbortSignal):
-  Promise<{ claim: SecondReviewModelClaim; call: PreparedAi2GatewayCall }> {
+  Promise<{ claim: SecondReviewModelClaim; call: PreparedAi2GatewayCall } | { kind: 'capacity_fallback' }> {
   assertLiveReviewAdapterAllowed();
   if (!(intent instanceof SecondReviewModelReservationRequired)) throw new Error('invalid_second_review_model_intent');
   const expected = structuredClone(intent.intent), { binding, owner } = expected;
   if (signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
-  const call = prepareAi2GatewayCall(expected.input, { model: binding.reviewer.model });
-  if (call.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: 'second', pool: 'reviewer',
-    routeId: 'second-review', provider: 'abcllm', model: binding.reviewer.model,
+    routeId: 'second-review', provider: binding.reviewer.provider, model: binding.reviewer.model,
     workKey: `ai2:${binding.candidateId}:${binding.vote}:${itemBindingHash(binding)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
-  const slot = await requestAi2ItemModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() },
+  const call = await prepareAi2GatewayCall(expected.input, { model: binding.reviewer.model,
+    provider: binding.reviewer.provider as "abcllm" | "local-direct", signal });
+  const requestId = pending?.requestId ?? randomUUID();
+  if (call.kind !== 'prepared') {
+    const contract = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
+    if (signal?.aborted || binding.reviewer.provider !== 'local-direct' || !contract
+      || contract.provider !== binding.reviewer.provider || contract.model !== binding.reviewer.model)
+      throw new ModelCapacityDeferredError('provider_contract_unavailable');
+    const slot = await requestAi2ItemModelSlot({ ...identity, requestId }, { candidateId: binding.candidateId, vote: binding.vote });
+    if ((slot.kind === 'granted' || slot.reason === 'capacity') && !signal?.aborted
+      && await fallbackWaitingSecondReview(intent, requestId, 'primary_preflight_failed')) return { kind: 'capacity_fallback' };
+    throw new ModelCapacityDeferredError(slot.kind === 'granted' ? 'provider_contract_unavailable' : slot.reason);
+  }
+  const slot = await requestAi2ItemModelSlot({ ...identity, requestId },
     { candidateId: binding.candidateId, vote: binding.vote });
-  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
+  if (slot.kind !== 'granted') {
+    if (slot.reason === 'capacity' && binding.reviewer.provider === 'local-direct' && pending?.state === 'waiting'
+      && !signal?.aborted && await fallbackWaitingSecondReview(intent, pending.requestId))
+      return { kind: 'capacity_fallback' };
+    throw new ModelCapacityDeferredError(slot.reason);
+  }
   let claim: SecondReviewModelClaim;
   try {
     if (signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');

@@ -110,7 +110,7 @@ async function prepareFixture(options: { settings?: CrawlSettings; source?: Craw
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
     provider: settings.firstReview!.provider, model: settings.firstReview!.model, attemptNumber: 1,
     outcome: outcome("approve"), validUntil: input.validUntil, completedAt: reference });
-  const model = (value: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
+  const model = <T extends CrawlSettings["secondReview"]["voters"][number]>(value: T) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   const manifest: CapacityManifest = { version: 1, runId: `first-final-${++serial}`, revision: "664777d", mode: "fixtures", cacheMode: "cold",
     referenceTime: reference.toISOString(), startedAt: reference.toISOString(), endedAt: new Date(+reference + 10_000).toISOString(),
     inputPolicyHash: reviewPolicyHash(settings), fullReviewPolicyHash: fullReviewPolicyHash(settings),

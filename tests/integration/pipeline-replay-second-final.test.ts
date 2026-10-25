@@ -69,7 +69,7 @@ async function prepare() {
   const [candidate] = await db.insert(crawlCandidates).values({ repo: document.repo, productUrl: document.productUrl,
     state: "approved", reason: "passed", decidedBy: "auto", judgedAt: reference, updatedAt: reference }).returning();
   const input = createReviewInput(candidate, document, settings, { scan: null, observations: [] }, reference);
-  const model = (value: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
+  const model = <T extends CrawlSettings["secondReview"]["voters"][number]>(value: T) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   const manifest: CapacityManifest = { version: 1, runId: `second-final-${++serial}`, revision: "664777d", mode: "fixtures", cacheMode: "cold",
     referenceTime: reference.toISOString(), startedAt: reference.toISOString(), endedAt: new Date(+reference + 10_000).toISOString(),
     inputPolicyHash: reviewPolicyHash(settings), fullReviewPolicyHash: fullReviewPolicyHash(settings),

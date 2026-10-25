@@ -31,6 +31,7 @@ const positive = integer.positive();
 const json = z.record(z.string(), z.unknown());
 const repo = z.string().min(3).max(200).regex(/^[^\s/]+\/[^\s/]+$/);
 const reviewer = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli"]), model: text }).strict();
+const secondReviewer = reviewer.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
 
 /** 근거 시각은 절대값이 아니라 원래 심사 시작(anchor) 기준 나이(µs)로 둔다. 적재가 같은 나이로 다시 세운다. */
 const fixedInputSchema = z.object({
@@ -131,7 +132,7 @@ export const fixedInputRunManifestSchema = z.object({
   limits: z.object({ maxCalls: positive.max(100_000), maxTokens: positive, perCallTokenUpperBound: positive.max(1_000_000),
     maxWallMs: positive.max(6 * 3_600_000) }).strict(),
   /** 두 실행에 똑같이 적용하는 2차 대체 모델 고정. 없으면 artifact 설정 그대로다. */
-  secondReviewFallbacks: z.array(reviewer).max(2).optional(),
+  secondReviewFallbacks: z.array(secondReviewer).max(2).optional(),
   items: z.object({ ai1Consumers: positive.max(16), ai2Consumers: positive.max(16), capacityPolicy: modelCapacityPolicySchema }).strict().optional(),
   /**
    * PR01b-9: 두 실행에 같은 값으로 선언하는 공통 동시 호출 예산. 계량기 최대 동시 호출이 이 값을 넘으면 budget 미검증이다(강제하지 않는다).
@@ -143,7 +144,7 @@ export const fixedInputRunManifestSchema = z.object({
 const runConditionsSchema = z.object({ upstream: z.string().min(1).max(200), durationMs: positive.max(3 * 3_600_000),
   limits: z.object({ maxCalls: positive.max(100_000), maxTokens: positive, perCallTokenUpperBound: positive.max(1_000_000),
     maxWallMs: positive.max(6 * 3_600_000) }).strict(),
-  secondReviewFallbacks: z.array(reviewer).max(2).nullable() }).strict();
+  secondReviewFallbacks: z.array(secondReviewer).max(2).nullable() }).strict();
 export type FixedInputRunConditions = z.infer<typeof runConditionsSchema>;
 /** 정규화된 manifest(upstream은 이미 자격 증명·경로 없는 origin)에서 비교 대상만 뽑는다. */
 export function fixedInputRunConditions(manifest: FixedInputRunManifest): FixedInputRunConditions {

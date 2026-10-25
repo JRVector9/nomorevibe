@@ -9,7 +9,7 @@ import type { SecondReviewItemReceipt } from "./second-review-ownership";
 export type SecondReviewTransportBinding = Extract<ReviewFixtureCallBinding, { stage: "second" }>;
 
 export function secondReviewTransportTimeoutMs(provider: SecondReviewTransportBinding["provider"]): number {
-  return provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS
+  return provider === "abcllm" || provider === "local-direct" ? REVIEW_GATEWAY_TIMEOUT_MS
     : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
 }
 
@@ -17,6 +17,8 @@ export async function dispatchSecondReviewTransport(binding: SecondReviewTranspo
   options: { timeoutMs: number; signal?: AbortSignal; itemReceipt?: SecondReviewItemReceipt }): Promise<AgentReviewResult> {
   const fixture = await dispatchReviewFixtureCall(binding, input, options);
   if (fixture !== undefined) return fixture;
+  // Direct AI2 requires an atomic item/model dispatch; compatibility paths never send it.
+  if (binding.provider === "local-direct") return { ok: false, error: "not_configured" };
   const adapterOptions = { model: binding.model, timeoutMs: options.timeoutMs, signal: options.signal };
   return binding.provider === "abcllm" ? reviewWithGateway(input, adapterOptions)
     : binding.provider === "grok-cli" ? reviewWithGrokCli(input, adapterOptions)

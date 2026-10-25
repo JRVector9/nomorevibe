@@ -27,6 +27,14 @@ function artifact(duration = WINDOW): LiveCapacityArtifact {
     budget: { status: "unverified" }, quality: null };
 }
 type Options = { attemptId?: number; decision?: "approve" | "reject"; completedMs?: number; gateMs?: number | null; latency?: number; reReview?: boolean };
+it("collects direct AI2 identities without admitting a direct first reviewer", () => {
+  const value = artifact();
+  value.identity.models.second = [{ provider: "local-direct", model: "qwen3.8-flash-next", canonicalModel: "qwen3.8-flash-next" }];
+  value.identity.models.fallbacks = [{ provider: "local-direct", model: "direct-backup", canonicalModel: "direct-backup" }];
+  expect(parseLiveCapacityArtifact(value).identity.models.second[0].provider).toBe("local-direct");
+  Object.assign(value.identity.models.first, { provider: "local-direct" });
+  expect(() => parseLiveCapacityArtifact(value)).toThrow();
+});
 /** completedMs 에 AI1이 끝나고 gateMs 에 필수 AI2 칸이 승인된 자동 세대 하나. */
 function add(value: LiveCapacityArtifact, candidateId: number, options: Options = {}) {
   const id = options.attemptId ?? candidateId * 10, decision = options.decision ?? "approve";

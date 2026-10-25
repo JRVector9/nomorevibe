@@ -71,7 +71,7 @@ async function prepare(source = document) {
     const [stored] = await db.select().from(crawlDocuments).where(eq(crawlDocuments.id, source.id));
     expect(await loadReviewInput(current, stored, await getSettings())).toEqual(input);
   }));
-  const model = (value: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
+  const model = <T extends CrawlSettings["secondReview"]["voters"][number]>(value: T) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   const manifest: CapacityManifest = { version: 1, runId: `atomic-final-${++serial}`, revision: "9601e3b", mode: "fixtures", cacheMode: "cold",
     referenceTime: reference.toISOString(), startedAt: reference.toISOString(), endedAt: new Date(+reference + 10_000).toISOString(),
     inputPolicyHash: reviewPolicyHash(settings), fullReviewPolicyHash: fullReviewPolicyHash(settings),

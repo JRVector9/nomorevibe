@@ -556,7 +556,7 @@ it("rolls back invalidation when the actual job expires between its first check 
   const { STALE_LOCK_MS } = await import("@/lib/jobs/lease");
   const actualRecorder = replayFinal.recordReplaySecondReviewTransition;
   const value = await fixture(), reference = new Date(), policy = settings();
-  const reviewer = (model: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) =>
+  const reviewer = <T extends CrawlSettings["secondReview"]["voters"][number]>(model: T) =>
     ({ ...model, canonicalModel: canonicalReviewModel(model.model) });
   const manifest: CapacityManifest = { version: 1, runId: `pr04-foundation-${randomUUID()}`, revision: "614fac5",
     mode: "fixtures", cacheMode: "cold", referenceTime: reference.toISOString(), startedAt: reference.toISOString(),

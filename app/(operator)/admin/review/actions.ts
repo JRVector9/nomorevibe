@@ -135,6 +135,13 @@ export const switchSecondVoter = webWriteAction(async function switchSecondVoter
   if (!admin) return { error: '권한이 없습니다. 다시 로그인해주세요.' };
   const choice = parseVoterValue(form.get('voter'));
   if (!choice) return { error: '고를 수 있는 모델이 아닙니다.' };
+  // Direct deployments are approved outside this gateway model picker. Preserve
+  // the current identity without turning a submitted name into a new deployment.
+  if (choice.provider === 'local-direct') {
+    const current = (await getSettings()).secondReview.voters;
+    return current.length === 1 && current[0].provider === choice.provider && current[0].model === choice.model
+      ? { message: '이미 이 모델이 2차 표입니다.' } : { error: '직접 연결 모델은 크롤 설정과 서버 연결 계약에서 설정해주세요.' };
+  }
   // 화면 밖에서 만든 요청도 같은 목록 안에서만 받는다
   const allowed = choice.provider === 'grok-cli' ? (GROK_MODELS as readonly string[]).includes(choice.model)
     : choice.provider === 'claude-cli' ? (CLAUDE_MODELS as readonly string[]).includes(choice.model)

@@ -42,8 +42,8 @@ function ai1Call(value: ReviewInput) {
   if (call.kind !== "prepared") throw new Error("fixture_not_prepared");
   return call;
 }
-function ai2Call(value: ReviewInput) {
-  const call = prepareAi2GatewayCall(value, { model, timeoutMs: 2_000 });
+async function ai2Call(value: ReviewInput) {
+  const call = await prepareAi2GatewayCall(value, { model, timeoutMs: 2_000 });
   if (call.kind !== "prepared") throw new Error("fixture_not_prepared");
   return call;
 }
@@ -134,11 +134,11 @@ it("AI1 item and AI2: an already-aborted caller gets not_started without any POS
     expect(first).toMatchObject({ result: { ok: false, error: "cancelled" }, terminal: null });
     expect(readGatewayNotStarted(first.notStarted)).toEqual({ version: 1, kind: "gateway_not_started", dispatch: item });
     await expect(reviewWithReservedAi1ItemGateway(value, item, ai1Call(value))).rejects.toThrow("ai1_item_gateway_call_mismatch");
-    const second = ai2Call(value), vote = ai2Dispatch(value, second);
+    const second = await ai2Call(value), vote = ai2Dispatch(value, second);
     const result = await reviewWithReservedAi2Gateway(value, vote, second, { signal: aborted() });
     expect(result).toMatchObject({ result: { ok: false, error: "cancelled" }, terminal: null });
     expect(readGatewayNotStarted(result.notStarted)).toEqual({ version: 1, kind: "gateway_not_started", dispatch: vote });
-    await expect(reviewWithReservedAi2Gateway(value, vote, ai2Call(value))).rejects.toThrow("ai2_gateway_call_mismatch");
+    await expect(reviewWithReservedAi2Gateway(value, vote, await ai2Call(value))).rejects.toThrow("ai2_gateway_call_mismatch");
     expect(posts).toHaveLength(0);
   });
 });
@@ -184,9 +184,10 @@ it("abandon-side settlement for AI1 item and AI2 dispatches is one-use per reque
     expect(readGatewayNotStarted(settleAi1ItemGatewayNotStarted(call, item))?.dispatch).toEqual(item);
     expect(settleAi1ItemGatewayNotStarted(call, item)).toBeNull();
     expect(() => settleAi1ItemGatewayNotStarted(ai1Call(value), item)).toThrow("ai1_item_gateway_call_mismatch");
-    const second = ai2Call(value), vote = ai2Dispatch(value, second);
+    const second = await ai2Call(value), vote = ai2Dispatch(value, second);
     expect(readGatewayNotStarted(settleAi2GatewayNotStarted(second, vote))?.dispatch).toEqual(vote);
-    expect(() => settleAi2GatewayNotStarted(ai2Call(value), vote)).toThrow("ai2_gateway_call_mismatch");
+    const other = await ai2Call(value);
+    expect(() => settleAi2GatewayNotStarted(other, vote)).toThrow("ai2_gateway_call_mismatch");
     await expect(reviewWithReservedAi2Gateway(value, vote, second)).rejects.toThrow("ai2_gateway_call_mismatch");
     expect(posts).toHaveLength(0);
   });

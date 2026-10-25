@@ -5,7 +5,7 @@ import { sameReviewModel } from "@/lib/crawl/review-model-identity";
  * 서버 액션과 화면이 같은 목록을 쓴다. 게이트웨이 모델은 그때그때 /v1/models 에서 읽는다.
  */
 
-export type VoterProvider = "grok-cli" | "abcllm" | "claude-cli";
+export type VoterProvider = "grok-cli" | "abcllm" | "claude-cli" | "local-direct";
 export type VoterChoice = { value: string; provider: VoterProvider; model: string; label: string; group: string; disabled: string | null };
 
 export const GROK_MODELS = ["grok-4.7"] as const;
@@ -18,7 +18,7 @@ export function parseVoterValue(value: unknown): { provider: VoterProvider; mode
   const at = value.indexOf("|");
   const provider = value.slice(0, at);
   const model = value.slice(at + 1).trim();
-  if (at < 1 || !model || model.length > 160 || !["grok-cli", "abcllm", "claude-cli"].includes(provider)) return null;
+  if (at < 1 || !model || model.length > 160 || !["grok-cli", "abcllm", "claude-cli", "local-direct"].includes(provider)) return null;
   return { provider: provider as VoterProvider, model };
 }
 
@@ -38,7 +38,7 @@ export function voterChoices(gatewayModels: readonly string[] | null, current: {
     ...CLAUDE_MODELS.map((model) => choice("claude-cli", model, `Claude ${model}`, "Claude CLI — 구독 한도")),
   ];
   if (current && !choices.some((item) => item.provider === current.provider && item.model === current.model)) {
-    const provider = (["grok-cli", "abcllm", "claude-cli"].includes(current.provider) ? current.provider : "abcllm") as VoterProvider;
+    const provider = (["grok-cli", "abcllm", "claude-cli", "local-direct"].includes(current.provider) ? current.provider : "abcllm") as VoterProvider;
     choices.unshift(choice(provider, current.model, `${current.model} (지금 · 목록에 없음)`, "지금 세운 표"));
   }
   return choices;

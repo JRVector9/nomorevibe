@@ -244,6 +244,13 @@ const artifact = () => ({ version: 1, scope: "fixed_input_replay", export: { rev
     provider: "abcllm", model: "[MLX] gpt-oss-120b" }, anchorAt: "2026-10-13T01:00:00.000Z", inputHash: H("i"),
     document: { repoMeta: {}, productUrl: "https://example.com", pageStatus: 200, pageMeta: {}, fetchedAgeUs: 1_000_000 }, scan: null, observations: [] }] });
 describe("fixed-input artifact and CLI boundary", () => {
+  it("allows a direct second-review fallback while retaining the fixed first-reviewer boundary", () => {
+    const fallback = { provider: "local-direct", model: "qwen3.8-flash-next" };
+    const run = parseFixedInputRunManifest(manifest({ secondReviewFallbacks: [fallback] }));
+    expect(fixedInputRunConditions(run).secondReviewFallbacks).toEqual([fallback]);
+    const value = artifact(); value.export.firstReviewer.provider = "local-direct";
+    expect(() => parseFixedInputArtifact(value)).toThrow();
+  });
   it("keeps ordinals, unique repositories and production input parity", () => {
     expect(parseFixedInputArtifact(artifact()).inputs).toHaveLength(1);
     const drift = artifact(); drift.inputs[0].inputHash = H("other");

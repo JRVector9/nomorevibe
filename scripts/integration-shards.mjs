@@ -38,6 +38,8 @@ export const SERIAL_FILES = [
   'tests/integration/text-profile-capacity-dispatch.test.ts',
   'tests/integration/agent-review-item-model-capacity.test.ts', // AI1 native 항목 흐름
   'tests/integration/second-review-item-model-capacity.test.ts', // AI2 native 항목 흐름
+  'tests/integration/second-review-capacity-wait-fallback.test.ts', // AI2 전송 전 대체 전환, 빈 ledger 기준 복원
+  'tests/integration/second-review-capacity-priority-query.test.ts', // AI2 예약·대기 실제 조회, 빈 pending/ledger 기준 복원
   'tests/integration/pipeline-consumer.test.ts', // AI2 소비자
   'tests/integration/pipeline-first-consumer.test.ts', // 복원된 AI2 행 기준 위 AI1 소비자
 ];

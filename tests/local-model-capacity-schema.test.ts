@@ -43,6 +43,16 @@ function checkHistory(name: string) {
       history.push({ idx: migration.idx, tag: migration.tag,
         expression: `(${previous!.expression}${eventSuffix.slice(0, -1).replaceAll("''", "'")}` });
     }
+    const ai2Name = /conname='([^']+)'/.exec(statement)?.[1];
+    const ai2Branch = /\$ai2_local\$([\s\S]*?)\$ai2_local\$/.exec(statement)?.[1];
+    if (ai2Name === name && ai2Branch) {
+      const previous = history.at(-1);
+      expect(previous, `${name}: AI2 direct predecessor`).toBeDefined();
+      expect(statement).toContain("substring(pg_get_constraintdef(oid) FROM 7) INTO STRICT old_predicate");
+      expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
+      history.push({ idx: migration.idx, tag: migration.tag,
+        expression: `(${previous!.expression}) OR (${ai2Branch})` });
+    }
   }
   return history;
 }

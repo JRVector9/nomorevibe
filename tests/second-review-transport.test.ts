@@ -123,3 +123,9 @@ it("awaits a live adapter after abort and leaves late-success cancellation to it
   expect(adapters.gateway.mock.calls[0][1].signal).toBe(stopping.signal);
   transport.resolve(answer); expect(await pending).toBe(answer);
 });
+
+it('never sends a direct model through the compatibility CLI or gateway adapters', async () => {
+  expect(await dispatchSecondReviewTransport(binding('local-direct', 'qwen3.8-flash-next'), input(), { timeoutMs: 60_000 }))
+    .toEqual({ ok: false, error: 'not_configured' });
+  noLiveCall();
+});

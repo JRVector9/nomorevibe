@@ -15,7 +15,9 @@ import {bootBoundaryFixture,invalidBootBoundaries} from '../fixtures/provider-bo
 import {TEST_DATABASE_URL} from './setup';
 const root=process.cwd(),name=`nomorevibe_test_boot_${randomUUID().replaceAll('-','')}`,url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
 const admin=postgres(TEST_DATABASE_URL,{max:1,onnotice:()=>{}}),client=postgres(url.toString(),{max:3,prepare:false,onnotice:()=>{}});
-const journal=JSON.parse(readFileSync(path.join(root,'drizzle/meta/_journal.json'),'utf8'));
+const fullJournal=JSON.parse(readFileSync(path.join(root,'drizzle/meta/_journal.json'),'utf8'));
+// This historical window ends at 0131; 0132 intentionally replaces four CHECKs.
+const journal={...fullJournal,entries:fullJournal.entries.filter((entry:{idx:number})=>entry.idx<132)};
 const fx=bootBoundaryFixture(),requestId=randomUUID(),token=randomUUID(),hash='a'.repeat(64),owner=fx.plan.request.owner;
 const binding=localModelBindingSchema.parse({kind:'local_model_direct',version:1,target:{kind:'assist',purpose:'assist_review',workId:randomUUID(),workRevision:30,
  claimToken:randomUUID(),task:'uptime',subjectId:47220,backendId:'gpu3090-qwen'},logicalWorkKey:'direct:assist:47220:uptime',routeId:'local-assist-uptime-gpu3090-qwen',
@@ -30,9 +32,12 @@ async function rows(){return client`SELECT to_jsonb(r) value FROM model_capacity
 async function checks(){return client`SELECT oid::text,conname,pg_get_constraintdef(oid) definition,convalidated FROM pg_constraint WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass) AND contype='c' ORDER BY conname`;}
 async function evidence(plan=frozen.plan,receipt=frozen.receipt){const[clock]=await client`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`;return{version:1,kind:'provider_boundary_exit',requestId,owner,fromState:'indeterminate',dispatchAt:plan.request.dispatchAt,bindingHash:plan.request.bindingHash,notBefore:receipt.provider.observedAt,evaluatedAt:clock.at,operator:'boot-fixture',reference:'synthetic raw boot boundary fixture',plan,receipt};}
 async function physical(value:unknown){return(await client`SELECT nmv_provider_boundary_release_valid(${JSON.stringify(value)}::jsonb) valid`)[0].valid;}
+async function migrateThrough(limit:number){
+ const partial=mkdtempSync(path.join(tmpdir(),'boot-predecessor-'));
+ try{mkdirSync(path.join(partial,'meta'));const entries=journal.entries.filter((e:{idx:number})=>e.idx<limit);for(const e of entries)copyFileSync(path.join(root,'drizzle',`${e.tag}.sql`),path.join(partial,`${e.tag}.sql`));writeFileSync(path.join(partial,'meta/_journal.json'),JSON.stringify({...journal,entries}));await migrate(drizzle(client),{migrationsFolder:partial});}finally{rmSync(partial,{recursive:true,force:true});}
+}
 beforeAll(async()=>{
- await admin.unsafe(`CREATE DATABASE ${name}`);created=true;const partial=mkdtempSync(path.join(tmpdir(),'boot-predecessor-'));
- try{mkdirSync(path.join(partial,'meta'));const entries=journal.entries.filter((e:{idx:number})=>e.idx<130);for(const e of entries)copyFileSync(path.join(root,'drizzle',`${e.tag}.sql`),path.join(partial,`${e.tag}.sql`));writeFileSync(path.join(partial,'meta/_journal.json'),JSON.stringify({...journal,entries}));await migrate(drizzle(client),{migrationsFolder:partial});}finally{rmSync(partial,{recursive:true,force:true});}
+ await admin.unsafe(`CREATE DATABASE ${name}`);created=true;await migrateThrough(130);
  const now=Date.now(),iso=(ago:number)=>new Date(now-ago).toISOString(),micro=(ago:number)=>iso(ago).replace('Z','000Z');
  const plan=structuredClone(fx.plan),receipt=structuredClone(fx.receipt);plan.createdAt=iso(30000);plan.control.updatedAt=micro(40000);plan.control.policyHash=modelCapacityPolicyHash(policy);
  Object.assign(plan.request,{requestId,tokenHash:createHash('sha256').update(token).digest('hex'),policyHash:modelCapacityPolicyHash(policy),bindingHash:localModelBindingHash(binding),dispatchAt:iso(3600000)});
@@ -47,10 +52,10 @@ beforeAll(async()=>{
  const localEvidence={version:1,kind:'gateway_local_end',requestId,owner,bindingHash:plan.request.bindingHash,dispatches:1,terminals:1};
  const[ended]=await client`INSERT INTO model_capacity_events(request_id,kind,from_state,to_state,epoch,revision,policy_hash,evidence,created_at) VALUES(${requestId},'dispatch_local_ended','indeterminate','indeterminate',1,2,${modelCapacityPolicyHash(policy)},${JSON.stringify(localEvidence)}::jsonb,${plan.localEnd.endedAt}) RETURNING id,encode(sha256(convert_to(nmv_boundary_canonical(evidence),'UTF8')),'hex') hash`;
  Object.assign(plan.localEnd,{eventId:Number(ended.id),evidenceHash:ended.hash});receipt.planHash=providerBoundaryPlanHash(plan);beforeRows=await rows();beforeChecks=await checks();expect(await physical(await evidence())).toBe(false);
- await migrate(drizzle(client),{migrationsFolder:path.join(root,'drizzle')});const g=globalThis as{db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
+ await migrateThrough(132);const g=globalThis as{db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
 },120000);
 afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`DROP DATABASE ${name}`);await admin.end({timeout:5});});
-it('nonempty130→latest preserves CHECK OIDs/rows and accepts the strict new physical boundary',async()=>{expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);expect(await rows()).toEqual(beforeRows);expect(await checks()).toEqual(beforeChecks);expect(await physical(await evidence())).toBe(true);});
+it('nonempty130→0131 preserves CHECK OIDs/rows and accepts the strict new physical boundary',async()=>{expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);expect(await rows()).toEqual(beforeRows);expect(await checks()).toEqual(beforeChecks);expect(await physical(await evidence())).toBe(true);});
 it('the same strict null/missing/extra/topology matrix is rejected by TypeScript and actual SQL',async()=>{
  const base=await evidence();const matrix=invalidBootBoundaries(frozen);expect(matrix.length).toBeGreaterThan(300);
  for(const value of matrix){const p=value.plan as Record<string,unknown>,r=value.receipt as Record<string,unknown>;if(p&&r&&r.planHash===frozen.receipt.planHash)r.planHash=providerBoundaryCanonicalHash(p);

@@ -1,7 +1,7 @@
-import { and, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
-import { secondReviews } from '@/lib/db/schema';
+import { modelCapacityRequests, secondReviews } from '@/lib/db/schema';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
@@ -13,11 +13,32 @@ import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle
 // 빈 큐는 1초 뒤 다시 본다 — AI2 행이 생긴 뒤 집기까지의 대기가 종단 지연에 그대로 더해진다. 슬롯 미룸·회로 열림은 5초를 기다린다.
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 1_000, DEFERRED_MS = 5_000;
 type Cursor = { id: number; fallback: boolean };
+type PriorityCursor = { ordinal: number; id: number };
+
+/** Granted reservations and aged waiting requests can be behind the normal keyset. These are hints,
+ * never permits: the lifecycle still checks the full current binding and slot.
+ * Rotate separately so stale hints cannot hide another reservation or waiter. */
+async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, reserved: boolean) {
+  const request = modelCapacityRequests;
+  const [hint] = await onPrimary(() => db.select({ id: secondReviews.id,
+    fallback: sql<boolean>`${secondReviews.fallbackForId} IS NOT NULL`, provider: secondReviews.provider, model: secondReviews.model,
+    reserved: sql<boolean>`${reserved}`, ordinal: request.queueOrdinal }).from(request).innerJoin(secondReviews, and(
+      eq(secondReviews.status, 'pending'), eq(request.provider, secondReviews.provider), eq(request.model, secondReviews.model),
+      sql`${request.logicalWorkKey} = 'ai2:' || ${secondReviews.candidateId}::text || ':' || coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})::text`,
+    )).where(and(eq(request.ownerInstanceId, owner.instanceId), eq(request.ownerBootId, owner.bootId),
+      eq(request.class, 'second'), eq(request.pool, 'reviewer'), eq(request.routeId, 'second-review'), eq(request.state, reserved ? 'reserved' : 'waiting'),
+      reserved ? sql`${request.reservedUntil} > clock_timestamp()` : and(eq(request.provider, 'local-direct'), isNull(secondReviews.fallbackForId),
+        sql`${request.queueUntil} > clock_timestamp()`, sql`${request.queuedAt} <= clock_timestamp() - interval '15 seconds'`),
+      cursor ? or(gt(request.queueOrdinal, cursor.ordinal),
+        and(eq(request.queueOrdinal, cursor.ordinal), gt(secondReviews.id, cursor.id))) : undefined,
+    )).orderBy(asc(request.queueOrdinal), asc(secondReviews.id)).limit(1));
+  return hint;
+}
 
 /** Hints only. The fixed lifecycle rechecks stage, current domain and ownership. */
 async function hints(cursor: Cursor | null) {
   const fallback = sql<boolean>`${secondReviews.fallbackForId} IS NOT NULL`;
-  return onPrimary(() => db.select({ id: secondReviews.id, fallback, provider: secondReviews.provider }).from(secondReviews)
+  return onPrimary(() => db.select({ id: secondReviews.id, fallback, provider: secondReviews.provider, model: secondReviews.model }).from(secondReviews)
     .where(and(eq(secondReviews.status, 'pending'), cursor ? or(
       and(eq(fallback, cursor.fallback), gt(secondReviews.id, cursor.id)),
       cursor.fallback ? isNull(secondReviews.fallbackForId) : undefined,
@@ -30,7 +51,7 @@ export async function runSecondReviewConsumer(input: {
   stopClaims?: AbortSignal;
   /** host 합계 장부(PR10e). 없으면 기존처럼 바로 claim 한다 */
   admit?: (job: string) => Promise<HostAdmission>;
-  /** provider 회로(PR06e). 표마다 provider 가 달라 provider 마다(ai2:<provider>) 센다 */
+  /** provider·model 회로. 같은 provider 의 direct 모델 장애가 fallback 모델을 막지 않게 따로 센다 */
   circuits?: ProviderCircuits;
 }): Promise<{ attempted: number; recorded: number; skipped: number; deferred: number }> {
   const owner = itemOwnerSchema.parse(input.owner), { signal, once, report, stopClaims } = input;
@@ -38,15 +59,44 @@ export async function runSecondReviewConsumer(input: {
   if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
   const result = { attempted: 0, recorded: 0, skipped: 0, deferred: 0 };
   let cursor: Cursor | null = null, pages = 0;
+  let reservedCursor: PriorityCursor | null = null, waitingCursor: PriorityCursor | null = null, resumeFallback = false;
   while (!halt?.aborted) {
     report?.('polling');
-    const queue = await hints(cursor);
-    let deferred = false, completed = false, circuitOpen = false;
+    let reserved = await priorityHint(owner, reservedCursor, true);
+    if (!reserved && reservedCursor) {
+      reservedCursor = null;
+      if (!halt?.aborted) reserved = await priorityHint(owner, null, true);
+    }
+    if (halt?.aborted) break;
+    if (reserved) reservedCursor = { ordinal: reserved.ordinal, id: reserved.id };
+    // After a routing change, let its new fallback reach the normal batch before
+    // another aged waiter can reroute and end that batch again. Reservations stay first.
+    const scanWaiting = !resumeFallback;
+    resumeFallback = false;
+    let waiting: Awaited<ReturnType<typeof priorityHint>> | undefined = scanWaiting ? await priorityHint(owner, waitingCursor, false) : undefined;
+    if (scanWaiting && !waiting && waitingCursor) {
+      waitingCursor = null;
+      if (!halt?.aborted) waiting = await priorityHint(owner, null, false);
+    }
+    if (halt?.aborted) break;
+    if (waiting) waitingCursor = { ordinal: waiting.ordinal, id: waiting.id };
+    const normal = await hints(cursor);
+    const priorities = [reserved, waiting].filter(hint => hint !== undefined);
+    const queue = [...priorities, ...normal];
+    let deferred = false, completed = false, circuitOpen = false, rerouted = false;
     for (const hint of queue) {
-      if (halt?.aborted) break;
-      // 회로가 열린 provider 의 표는 claim 없이 건너뛰고 다른 provider 의 표는 계속 본다
-      const circuit = input.circuits?.admit(`ai2:${hint.provider ?? 'unknown'}`);
-      if (circuit?.admitted === false) { cursor = { id: hint.id, fallback: hint.fallback }; result.deferred++; circuitOpen = true; continue; }
+      if (halt?.aborted || once && result.attempted >= 100) break;
+      const priority = hint === reserved || hint === waiting;
+      if (!priority && priorities.some(prioritized => hint.id === prioritized.id)) {
+        cursor = { id: hint.id, fallback: hint.fallback };
+        continue;
+      }
+      // 회로가 열린 provider·model 의 표만 claim 없이 건너뛰고 다른 모델은 계속 본다
+      const circuit = input.circuits?.admit(`ai2:${hint.provider ?? 'unknown'}:${hint.model ?? 'unknown'}`);
+      if (circuit?.admitted === false) {
+        if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
+        result.deferred++; circuitOpen = true; continue;
+      }
       // host 예산은 프로세스 전체라 모자라면 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
       const host = input.admit
         ? await input.admit('second-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
@@ -54,19 +104,23 @@ export async function runSecondReviewConsumer(input: {
         circuit?.done(); logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: host.reason });
         result.deferred++; deferred = true; break;
       }
-      cursor = { id: hint.id, fallback: hint.fallback };
+      if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
       result.attempted++;
       report?.('running', 'second-review', Date.now());
       try {
         // One awaited lane; neither pool ownership nor HTTP crosses the hint query.
         const written = await executeSecondReviewConsumerItem({ secondReviewId: hint.id, owner, signal,
           ...(stopClaims ? { stopClaims } : {}), ...(circuit ? { onProviderResult: circuit.record } : {}) });
+        if (written.state === 'rerouted') {
+          result.skipped++; cursor = null; rerouted = true; resumeFallback = true;
+          break;
+        }
         if (written.state === 'recorded') { result.recorded++; completed = true; }
         else result.skipped++;
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
         result.deferred++; deferred = true;
-        break;
+        if (!priority) break;
       } finally {
         circuit?.done();
         if (host?.admitted) await host.release().catch(() => {});
@@ -74,8 +128,15 @@ export async function runSecondReviewConsumer(input: {
       }
     }
     pages++;
-    const end = queue.length < PAGE_SIZE;
-    if (end && !deferred && !completed) cursor = null;
+    if (rerouted) {
+      if (once && (pages >= MAX_PAGES || result.attempted >= 100)) break;
+      if (!once) pages = 0;
+      continue;
+    }
+    const end = normal.length < PAGE_SIZE;
+    // An empty normal keyset reached EOF independently of the priority hint.
+    // Repeated stale reservation deferrals must not pin it beyond the last row.
+    if (normal.length === 0 || end && !deferred && !completed) cursor = null;
     if (halt?.aborted || once && (end || deferred || pages >= MAX_PAGES)) break;
     if (completed && !once) pages = 0;
     // Bound scans even when every pending row remains busy. Keep the keyset

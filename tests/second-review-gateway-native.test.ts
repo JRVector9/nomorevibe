@@ -1,5 +1,5 @@
 import { createServer, type ServerResponse } from "node:http";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import { createReviewInput, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -9,7 +9,7 @@ import { ai1DispatchBindingHash, ai1ModelDispatchSchema, ai2DispatchBindingHash,
 import { prepareAi1GatewayCall, readAi1GatewayTerminal, reviewWithReservedAi1Gateway, prepareAi2GatewayCall, readAi2GatewayTerminal, reviewWithGateway, reviewWithReservedAi2Gateway,
   type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
-import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 
 const fixture = vi.hoisted(() => ({ contract: null as Ai2GatewayServingContract | null, ai1Contract: null as Ai1GatewayServingContract | null }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async importOriginal => ({
@@ -41,8 +41,8 @@ function envelope(overrides: Record<string, unknown> = {}) {
     choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(outcome) }, finish_reason: "stop" }],
     usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }, usage_provenance: "upstream_reported", ...overrides };
 }
-function prepared(value: ReviewInput) {
-  const call = prepareAi2GatewayCall(value, { model, timeoutMs: 1_000 });
+async function prepared(value: ReviewInput) {
+  const call = await prepareAi2GatewayCall(value, { model, timeoutMs: 1_000 });
   expect(call.kind).toBe("prepared");
   if (call.kind !== "prepared") throw new Error("fixture_not_prepared");
   return call;
@@ -66,16 +66,20 @@ function dispatch(value: ReviewInput, call: PreparedAi2GatewayCall) {
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: ai2DispatchBindingHash(binding) });
 }
 type Reply = (response: ServerResponse) => void;
-async function server<T>(run: (state: { bodies: string[]; setReply: (reply: Reply) => void }) => Promise<T>) {
+async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: string[]; setTokenCount: (count: number) => void; setReply: (reply: Reply) => void }) => Promise<T>) {
   const bodies: string[] = [], pending = new Set<Promise<void>>(), cleanupErrors: unknown[] = [];
+  const tokenizerBodies: string[] = [];
+  let tokenCount = 100;
   let reply: Reply = response => response.end(JSON.stringify(envelope()));
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
     const task = (async () => {
       let body = "";
       for await (const chunk of request) body += chunk.toString();
-      bodies.push(body);
-      reply(response);
+      if (request.url === "/tokenize") {
+        tokenizerBodies.push(body);
+        response.end(JSON.stringify({ count: tokenCount, max_model_len: fixture.contract?.totalTokenBound, tokens: Array(tokenCount).fill(1) }));
+      } else { bodies.push(body); reply(response); }
       await closed;
     })();
     pending.add(task);
@@ -95,7 +99,7 @@ async function server<T>(run: (state: { bodies: string[]; setReply: (reply: Repl
       model, responseModel: "native-model", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
     fixture.ai1Contract = { ...fixture.contract, routeId: "crawl-agent-review" };
-    value = await run({ bodies, setReply: next => { reply = next; } });
+    value = await run({ bodies, tokenizerBodies, setTokenCount: count => { tokenCount = count; }, setReply: next => { reply = next; } });
   } catch (error) { bodyFailed = true; bodyError = error; }
   finally {
     fixture.contract = null; fixture.ai1Contract = null;
@@ -125,14 +129,14 @@ it("keeps the production second-review resolver unsupported", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   const original = await vi.importActual<typeof import("@/lib/crawl/second-review-serving-contract")>("@/lib/crawl/second-review-serving-contract");
   expect(original.resolveAi2GatewayServingContract(model)).toBeNull();
-  expect(prepareAi2GatewayCall(input(), { model })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+  expect(await prepareAi2GatewayCall(input(), { model })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
   expect(readAi2GatewayTerminal({ kind: "ai2_gateway_terminal" })).toBeNull();
 });
 
 it("sends one native POST with exactly the legacy wire and issues only an immutable original terminal", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ bodies }) => {
-    const value = input(), call = prepared(value), owned = dispatch(value, call);
+    const value = input(), call = await prepared(value), owned = dispatch(value, call);
     let legacyWire = "";
     const request = vi.fn(async (_url, init) => { legacyWire = String(init?.body); return new Response(JSON.stringify(envelope())); });
     const legacy = await reviewWithGateway(value, { model, request: request as typeof fetch });
@@ -151,12 +155,59 @@ it("sends one native POST with exactly the legacy wire and issues only an immuta
   });
 });
 
+it("preserves the historical serving hash without an optional request budget", async () => {
+  await server(async () => {
+    const contract = fixture.contract!;
+    const historical = { version: contract.version, protocol: contract.protocol, routeId: contract.routeId, provider: contract.provider,
+      model: contract.model, responseModel: contract.responseModel, deploymentRevision: contract.deploymentRevision,
+      endpoint: contract.endpoint, totalTokenBound: contract.totalTokenBound };
+    expect(ai2GatewayServingContractHash(contract)).toBe(createHash("sha256").update(JSON.stringify(historical)).digest("hex"));
+  });
+});
+
+it("tokenizes an explicitly mapped alias before sending its bounded raw abcLLM request", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  await server(async ({ bodies, tokenizerBodies }) => {
+    const contract = fixture.contract!;
+    if (contract.provider !== "abcllm") throw new Error("fixture_legacy_contract");
+    fixture.contract = { ...contract, totalTokenBound: 98_304, requestBudget: { requestTokenBound: 32_000, maxOutputTokens: 10_000,
+      tokenizerEndpoint: contract.endpoint.replace("/v1/chat/completions", "/tokenize"), tokenizerModel: "native-model" } };
+    const value = input(), call = await prepared(value);
+    expect(call.totalTokenBound).toBe(98_304);
+    expect(bodies).toHaveLength(0); expect(tokenizerBodies).toHaveLength(1);
+    let historicalWire = "";
+    await reviewWithGateway(value, { model, request: (async (_url, init) => {
+      historicalWire = String(init?.body); return new Response(JSON.stringify(envelope()));
+    }) as typeof fetch });
+    const result = await sendNative(value, dispatch(value, call), call);
+    expect(result.result.ok).toBe(true);
+    const boundedWire = JSON.parse(historicalWire); boundedWire.max_tokens = 10_000;
+    expect(bodies).toEqual([JSON.stringify(boundedWire)]);
+    expect(JSON.parse(tokenizerBodies[0])).toMatchObject({ model: "native-model", add_generation_prompt: true,
+      messages: JSON.parse(historicalWire).messages, chat_template_kwargs: { enable_thinking: false } });
+    expect(readAi2GatewayTerminal(result.terminal)?.provenance).toBe("upstream_reported");
+  });
+});
+
+it("refuses gateway inference when its approved engine tokenizer exceeds the request budget", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  await server(async ({ bodies, tokenizerBodies, setTokenCount }) => {
+    const contract = fixture.contract!;
+    if (contract.provider !== "abcllm") throw new Error("fixture_legacy_contract");
+    fixture.contract = { ...contract, totalTokenBound: 98_304, requestBudget: { requestTokenBound: 32_000, maxOutputTokens: 10_000,
+      tokenizerEndpoint: contract.endpoint.replace("/v1/chat/completions", "/tokenize"), tokenizerModel: "native-model" } };
+    setTokenCount(22_001);
+    expect(await prepareAi2GatewayCall(input(), { model })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    expect(tokenizerBodies).toHaveLength(1); expect(bodies).toHaveLength(0);
+  });
+});
+
 it.each(["length", "invalid-outcome"])("separates %s review failure from strict physical completion", async kind => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant",
       content: kind === "length" ? "unfinished" : "invalid judgment" }, finish_reason: kind === "length" ? "length" : "stop" }] }))));
-    const value = input(), call = prepared(value);
+    const value = input(), call = await prepared(value);
     const result = await sendNative(value, dispatch(value, call), call);
     expect(result.result).toMatchObject({ ok: false, error: kind === "length" ? "output_too_large" : "invalid_output" });
     expect(readAi2GatewayTerminal(result.terminal)?.finishReason).toBe(kind === "length" ? "length" : "stop");
@@ -171,7 +222,7 @@ it.each([
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope(change))));
-    const value = input(), call = prepared(value);
+    const value = input(), call = await prepared(value);
     const result = await sendNative(value, dispatch(value, call), call);
     expect(readAi2GatewayTerminal(result.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown" });
   });
@@ -185,7 +236,7 @@ it.each([
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ bodies, setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope(change))));
-    const value = input(), call = prepared(value);
+    const value = input(), call = await prepared(value);
     const result = await sendNative(value, dispatch(value, call), call);
     expect(result).toMatchObject({ result: { ok: false, error: "invalid_output" }, terminal: null });
     expect(bodies).toHaveLength(1);
@@ -195,7 +246,7 @@ it.each([
 it("rejects copied preparations, different inputs/bindings and repeats before any extra POST", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ bodies }) => {
-    const value = input(), call = prepared(value), owned = dispatch(value, call);
+    const value = input(), call = await prepared(value), owned = dispatch(value, call);
     await expect(sendNative(value, owned, { ...call })).rejects.toThrow("ai2_gateway_call_mismatch");
     const changed = structuredClone(value); changed.snapshot.product.description += " changed";
     await expect(sendNative(changed, owned, call)).rejects.toThrow("ai2_gateway_call_mismatch");
@@ -204,7 +255,7 @@ it("rejects copied preparations, different inputs/bindings and repeats before an
     expect(bodies).toHaveLength(0);
     await sendNative(value, owned, call);
     await expect(sendNative(value, owned, call)).rejects.toThrow("ai2_gateway_call_mismatch");
-    await expect(sendNative(value, owned, prepared(value))).rejects.toThrow("ai2_gateway_call_mismatch");
+    await expect(sendNative(value, owned, await prepared(value))).rejects.toThrow("ai2_gateway_call_mismatch");
     expect(bodies).toHaveLength(1);
   });
 });
@@ -218,7 +269,7 @@ it.each(["http", "redirect", "eof", "json"])("keeps %s failures unknown and neve
       else if (kind === "eof") { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); }
       else response.end("{");
     });
-    const value = input(), call = prepared(value), owned = dispatch(value, call);
+    const value = input(), call = await prepared(value), owned = dispatch(value, call);
     const result = await sendNative(value, owned, call);
     expect(result.terminal).toBeNull(); expect(result.result.ok).toBe(false);
     await expect(sendNative(value, owned, call)).rejects.toThrow("ai2_gateway_call_mismatch");
@@ -229,7 +280,7 @@ it.each(["http", "redirect", "eof", "json"])("keeps %s failures unknown and neve
 it("snapshots input/dispatch/contract before await and ignores global fetch injection", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ bodies }) => {
-    const value = input(), call = prepared(value), owned = dispatch(value, call), originalDispatch = structuredClone(owned);
+    const value = input(), call = await prepared(value), owned = dispatch(value, call), originalDispatch = structuredClone(owned);
     const globalRequest = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("injected_request_not_allowed"));
     try {
       const result = sendNative(value, owned, call);
@@ -252,7 +303,7 @@ it("settles an actual aborted native request without proof or retry", async () =
     let arrived!: () => void;
     const accepted = new Promise<void>(resolve => { arrived = resolve; });
     setReply(() => arrived());
-    const value = input(), call = prepared(value), owned = dispatch(value, call), controller = new AbortController();
+    const value = input(), call = await prepared(value), owned = dispatch(value, call), controller = new AbortController();
     const running = sendNative(value, owned, call, { signal: controller.signal });
     try {
       await Promise.race([accepted, running.then(() => { throw new Error("native_finished_before_request"); })]);
@@ -268,7 +319,7 @@ it("settles an actual aborted native request without proof or retry", async () =
 it("keeps genuine AI1 and AI2 preparations and terminal capabilities separate", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   await server(async ({ bodies }) => {
-    const value = input(), call = prepared(value), owned = dispatch(value, call);
+    const value = input(), call = await prepared(value), owned = dispatch(value, call);
     const ai1Call = prepareAi1GatewayCall(value, { model, timeoutMs: 1_000 });
     if (ai1Call.kind !== "prepared") throw new Error("fixture_ai1_not_prepared");
     await expect(sendNative(value, owned, ai1Call)).rejects.toThrow("ai2_gateway_call_mismatch");
