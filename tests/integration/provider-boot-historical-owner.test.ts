@@ -15,7 +15,9 @@ import {historicalBootBoundaryFixture,invalidHistoricalBootBoundaries} from '../
 import {TEST_DATABASE_URL} from './setup';
 const root=process.cwd(),name=`nomorevibe_test_boot_hist_${randomUUID().replaceAll('-','')}`,url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
 const admin=postgres(TEST_DATABASE_URL,{max:1,onnotice:()=>{}}),client=postgres(url.toString(),{max:3,prepare:false,onnotice:()=>{}});
-const journal=JSON.parse(readFileSync(path.join(root,'drizzle/meta/_journal.json'),'utf8'));
+const fullJournal=JSON.parse(readFileSync(path.join(root,'drizzle/meta/_journal.json'),'utf8'));
+// This historical window ends at 0131; 0132 intentionally replaces four CHECKs.
+const journal={...fullJournal,entries:fullJournal.entries.filter((entry:{idx:number})=>entry.idx<132)};
 const fx=historicalBootBoundaryFixture(),requestId=randomUUID(),token=randomUUID(),hash='a'.repeat(64),owner=fx.plan.request.owner;
 const binding=localModelBindingSchema.parse({kind:'local_model_direct',version:1,target:{kind:'assist',purpose:'assist_review',workId:randomUUID(),workRevision:30,
  claimToken:randomUUID(),task:'uptime',subjectId:47220,backendId:'gpu3090-qwen'},logicalWorkKey:'direct:assist:47220:uptime',routeId:'local-assist-uptime-gpu3090-qwen',
@@ -58,7 +60,7 @@ beforeAll(async()=>{
  saveCatalog('v4-before-130.safe.json',{synthetic:true,rows:beforeRows,checks:beforeChecks,functions:await catalog(),journal:await client`SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id`});
  await migrateThrough(131);beforeFunctions=await catalog();expect(await physical(await evidence())).toBe(false);
  saveCatalog('v4-before-131.safe.json',{synthetic:true,functions:beforeFunctions,journal:await client`SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id`});
- await migrate(drizzle(client),{migrationsFolder:path.join(root,'drizzle')});saveCatalog('v4-after-132.safe.json',{synthetic:true,rows:await rows(),checks:await checks(),functions:await catalog(),journal:await client`SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id`});const g=globalThis as{db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
+ await migrateThrough(132);saveCatalog('v4-after-132.safe.json',{synthetic:true,rows:await rows(),checks:await checks(),functions:await catalog(),journal:await client`SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id`});const g=globalThis as{db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
 },120000);
 afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`DROP DATABASE ${name}`);await admin.end({timeout:5});});
 it('nonempty130→132 preserves CHECK OIDs/rows and accepts a historical group exit after native boot',async()=>{expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(132);expect(await rows()).toEqual(beforeRows);expect(await checks()).toEqual(beforeChecks);expect(await physical(await evidence())).toBe(true);});
@@ -82,7 +84,7 @@ it('stock migrator applies both pending0130+0131 in one call from a nonempty130 
    for(const r of values)await stock.unsafe(`INSERT INTO ${table} OVERRIDING SYSTEM VALUE SELECT (jsonb_populate_record(NULL::${table},$1::jsonb)).*`,[JSON.stringify(r.value)]);}
   expect((await stock`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(130);
   const e=await evidence();expect((await stock`SELECT nmv_provider_boundary_release_valid(${JSON.stringify(e)}::jsonb) valid`)[0].valid).toBe(false);
-  await migrate(drizzle(stock),{migrationsFolder:path.join(root,'drizzle')});
+  await migrateThrough(132,stock);
   const migrated=await stock`SELECT hash,created_at FROM drizzle.__drizzle_migrations ORDER BY id`;
   expect(migrated).toHaveLength(132);expect(migrated.slice(-2).map(r=>r.hash)).toEqual(journal.entries.slice(-2).map((entry:{tag:string})=>createHash('sha256').update(readFileSync(path.join(root,'drizzle',`${entry.tag}.sql`))).digest('hex')));
   for(const table of tables)expect((await stock.unsafe(`SELECT to_jsonb(r) value FROM ${table} r ORDER BY to_jsonb(r)::text`)).map(r=>r.value)).toEqual(before[table]);

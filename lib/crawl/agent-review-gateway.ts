@@ -14,6 +14,7 @@ import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolve
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
+import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
 /** 공통 슬롯 경로의 모든 gateway 전송: 로컬 종료 증인(PR15d)을 거치고, 배경 consumer 줄 범위 안에서만 전송 결과를 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
 const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>) =>
   observeProviderTransport(localEndGatewayFetch(requestId, ...args), args[1]?.signal);
@@ -318,7 +319,7 @@ export function readAi1GatewayTerminal(value: unknown): Ai1GatewayTerminalEviden
 }
 
 function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">
-  & { strictTerminalOptIn?: string }): Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
+  & { strictTerminalOptIn?: string }, direct = false): Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return null;
   let parsed: unknown;
   try { parsed = JSON.parse(body); } catch { return null; }
@@ -337,7 +338,7 @@ function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, 
   if (contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN && parsed.usage_provenance !== "upstream_reported"
     && parsed.usage_provenance !== "gateway_estimated" && parsed.usage_provenance !== "missing_or_invalid") return null;
   let actualUsage: Ai1GatewayTerminalEvidence["actualUsage"] = null;
-  if (parsed.usage_provenance === "upstream_reported" && object(parsed.usage)) {
+  if ((parsed.usage_provenance === "upstream_reported" || direct && parsed.usage_provenance === undefined) && object(parsed.usage)) {
     const { prompt_tokens: inputTokens, completion_tokens: outputTokens, total_tokens: totalTokens } = parsed.usage;
     const safe = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
     if (safe(inputTokens) && safe(outputTokens) && safe(totalTokens)
@@ -410,18 +411,35 @@ const ai2Terminals = new WeakMap<Ai2GatewayTerminal, Ai2GatewayTerminalEvidence>
 const dispatchedAi2Requests = new Set<string>();
 
 /** No caller descriptor or callback can approve an AI2 serving deployment. */
-export function prepareAi2GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
-  PreparedAi2GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
+export async function prepareAi2GatewayCall(input: ReviewInput, options: {
+  model: string; provider?: "abcllm" | "local-direct"; timeoutMs?: number; signal?: AbortSignal;
+}): Promise<PreparedAi2GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS;
+  const provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
-  if (!model || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveAi2GatewayServingContract(model);
+  if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || options.signal?.aborted) return unsupported;
+  if (provider === "abcllm" && !process.env.ABCLLM_API_KEY?.trim()) return unsupported;
+  const resolved = resolveAi2GatewayServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
   const serialized = JSON.stringify(snapshot.snapshot);
-  if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  const wire = gatewayWire(model, serialized);
+  if (contract.provider !== provider || contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  let wire = gatewayWire(model, serialized);
+  if (contract.provider === "local-direct") {
+    const body = JSON.parse(wire);
+    delete body.context_strategy;
+    delete body.reasoning_effort;
+    body.max_tokens = contract.maxOutputTokens;
+    wire = JSON.stringify(body);
+    if (!await verifyAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })) return unsupported;
+  } else if (contract.requestBudget) {
+    const body = JSON.parse(wire);
+    body.max_tokens = contract.requestBudget.maxOutputTokens;
+    wire = JSON.stringify(body);
+    if (!await verifyAi2TokenBudget({ ...contract, ...contract.requestBudget }, wire, { timeoutMs, signal: options.signal })) return unsupported;
+  }
+  if (options.signal?.aborted) return unsupported;
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: ai2GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, inputHash: snapshot.inputHash });
@@ -453,8 +471,9 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
     || binding.routeId !== state.contract.routeId || dispatchedAi2Requests.has(owned.requestId)) throw new Error("ai2_gateway_call_mismatch");
   state.used = true;
   dispatchedAi2Requests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const key = state.contract.provider === "abcllm" ? process.env.ABCLLM_API_KEY?.trim() : null;
+  if (state.contract.provider === "abcllm" && !key)
+    return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
@@ -465,21 +484,29 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
+      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
+      headers: key ? { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
+      body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown native completion keeps its original charge. */ }
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
   } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, state.contract.provider === "local-direct");
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai2GatewayTerminal = Object.freeze({ kind: "ai2_gateway_terminal" });
   const evidence = ai2GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai2_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   ai2Terminals.set(terminal, freeze(evidence));
-  return { result: gatewayResult(snapshot, body), terminal };
+  const budget = state.contract.provider === "local-direct" ? state.contract : state.contract.requestBudget;
+  const result = budget && completed.actualUsage
+    && (completed.actualUsage.inputTokens + budget.maxOutputTokens > budget.requestTokenBound
+      || completed.actualUsage.outputTokens > budget.maxOutputTokens)
+    ? { ok: false as const, error: "invalid_output" as const, detail: "request_token_bound_exceeded" }
+    : gatewayResult(snapshot, body);
+  return { result, terminal };
 }
 
 

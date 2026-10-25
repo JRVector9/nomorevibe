@@ -170,9 +170,15 @@ type StageRow = ControlSnapshot["stages"][number];
 export type RouteStatus = "serving" | "no_contract" | "unmapped" | "admission_only" | "stage_legacy" | "unknown" | "unused";
 export type RouteUse = { routeId: string; provider: string; model: string | null; remoteContractReady?: boolean };
 export type RouteContract = RouteUse & { status: RouteStatus };
-type RouteSpec = { routeId: string; provider: string; served: ((model: string) => boolean) | null };
+type RouteSpec = { routeId: string; provider: string;
+  served: ((model: string, mapping: ModelCapacityPolicy["routes"][number]) => boolean) | null };
 const gateway = (routeId: string, resolve: (model: string) => unknown, schema: z.ZodType<{ model: string }>): RouteSpec => ({
   routeId, provider: "abcllm", served: model => schema.safeParse(structuredClone(resolve(model))).data?.model === model });
+const ai2Gateway = (provider: "abcllm" | "local-direct"): RouteSpec => ({ routeId: "second-review", provider, served: (model, mapping) => {
+  const contract = ai2GatewayServingContractSchema.safeParse(structuredClone(resolveAi2GatewayServingContract(model, provider))).data;
+  return contract?.routeId === "second-review" && contract.provider === provider && contract.model === model
+    && (contract.provider !== "local-direct" || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup);
+} });
 const cli = (routeId: string, provider: CliProvider): RouteSpec => ({ routeId, provider, served: model => {
   const contract = cliServingContractSchema.safeParse(structuredClone(resolveCliServingContract(routeId, provider, model))).data;
   return contract?.routeId === routeId && contract.provider === provider && contract.model === model;
@@ -180,7 +186,7 @@ const cli = (routeId: string, provider: CliProvider): RouteSpec => ({ routeId, p
 /** 공통 모델 슬롯을 거치는 실제 호출 지점. served가 null이면 open에서 항상 미루는 admission 전용 경로다. */
 const MODEL_ROUTES: readonly RouteSpec[] = [
   gateway("crawl-agent-review", resolveAi1GatewayServingContract, ai1GatewayServingContractSchema),
-  gateway("second-review", resolveAi2GatewayServingContract, ai2GatewayServingContractSchema),
+  ai2Gateway("abcllm"), ai2Gateway("local-direct"),
   gateway("product-search-profile", resolveTextProfileServingContract, textProfileServingContractSchema),
   gateway("product-search-verify", resolveSearchVerifyServingContract, searchVerifyServingContractSchema),
   gateway("reason-translate", resolveReasonTranslationServingContract, reasonTranslationServingContractSchema),
@@ -253,11 +259,12 @@ const sameRoute = (a: RouteUse, b: RouteUse) => a.routeId === b.routeId && a.pro
 export function modelRouteContracts(policy: ModelCapacityPolicy | null, ai2Mode: string | null, uses: readonly RouteUse[]): RouteContract[] {
   const rows: RouteContract[] = uses.map(use => {
     const spec = MODEL_ROUTES.find(row => row.routeId === use.routeId && row.provider === use.provider);
+    const mapping = policy?.routes.find(route => sameRoute(route, use));
     const remote = use.routeId === 'crawl-publish-classify' && spec;
     const status: RouteStatus = use.model === null || !spec ? "unknown" : remote
-      ? !policy?.routes.some(route => sameRoute(route, use)) ? 'unmapped' : use.remoteContractReady === true ? 'serving' : 'no_contract'
+      ? !mapping ? 'unmapped' : use.remoteContractReady === true ? 'serving' : 'no_contract'
       : !spec.served ? "admission_only"
-      : !policy?.routes.some(route => sameRoute(route, use)) ? "unmapped" : spec.served(use.model) ? "serving" : "no_contract";
+      : !mapping ? "unmapped" : spec.served(use.model, mapping) ? "serving" : "no_contract";
     return { routeId: use.routeId, provider: use.provider, model: use.model, status };
   });
   for (const route of policy?.routes ?? []) {

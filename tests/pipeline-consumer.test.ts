@@ -3,12 +3,15 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-lifecycle';
+import * as itemLifecycle from '@/lib/crawl/second-review-item-lifecycle';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { parsePipelineConsumerArgs, runPipelineConsumer } from '@/scripts/pipeline-consumer';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 
 const mocks = vi.hoisted(() => ({
   pages: [] as { id: number; fallback: boolean }[][], where: vi.fn(), limit: vi.fn(), select: vi.fn(),
+  reservedPages: [] as ({ id: number; fallback: boolean; reserved: true; ordinal: number } | null)[], reservedJoin: vi.fn(), reservedWhere: vi.fn(), reservedLimit: vi.fn(),
+  waitingPages: [] as ({ id: number; fallback: boolean; reserved: false; ordinal: number } | null)[], waitingJoin: vi.fn(), waitingWhere: vi.fn(), waitingLimit: vi.fn(),
   claim: vi.fn(), compatibility: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), dispatch: vi.fn(),
   sleep: vi.fn(), report: vi.fn(), runtime: vi.fn(),
 }));
@@ -34,11 +37,19 @@ function gate<T>() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
-  vi.resetAllMocks(); mocks.pages = [];
+  vi.resetAllMocks(); mocks.pages = []; mocks.reservedPages = []; mocks.waitingPages = [];
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
-  mocks.select.mockImplementation(() => ({ from: () => ({ where: (condition: SQL) => {
-    mocks.where(condition); return { orderBy: () => ({ limit: mocks.limit }) };
-  } }) }));
+  mocks.reservedLimit.mockImplementation(async () => { const hint = mocks.reservedPages.shift(); return hint ? [hint] : []; });
+  mocks.waitingLimit.mockImplementation(async () => { const hint = mocks.waitingPages.shift(); return hint ? [hint] : []; });
+  mocks.select.mockImplementation((fields: Record<string, unknown>) => ({ from: () => ({ where: (condition: SQL) => {
+    const reserved = 'reserved' in fields;
+    (reserved ? mocks.reservedWhere : mocks.where)(condition);
+    return { orderBy: () => ({ limit: reserved ? mocks.reservedLimit : mocks.limit }) };
+  }, innerJoin: (_table: unknown, condition: SQL) => {
+    const waiting = new PgDialect().sqlToQuery(fields.reserved as SQL).params[0] === false;
+    (waiting ? mocks.waitingJoin : mocks.reservedJoin)(condition); return { where: (condition: SQL) => {
+    (waiting ? mocks.waitingWhere : mocks.reservedWhere)(condition); return { orderBy: () => ({ limit: waiting ? mocks.waitingLimit : mocks.reservedLimit }) };
+  } }; } }) }));
   mocks.claim.mockResolvedValue({ kind: 'skipped', reason: 'running' });
   mocks.compatibility.mockResolvedValue({ kind: 'skipped', reason: 'running' });
   mocks.observe.mockResolvedValue({ kind: 'current', row, input: { actual: 'observed' } });
@@ -107,7 +118,7 @@ it('queries immediately after a short completed page before taking the empty-que
   mocks.sleep.mockImplementation(async () => { abort.abort(); });
   expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal })).toMatchObject({ attempted: 2, recorded: 2 });
   expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5]);
-  expect(mocks.select).toHaveBeenCalledTimes(3); expect(mocks.sleep).toHaveBeenCalledTimes(1);
+  expect(mocks.where).toHaveBeenCalledTimes(3); expect(mocks.sleep).toHaveBeenCalledTimes(1);
 });
 it('advances fallback-first keysets past busy low IDs to later rows without an unbounded scan', async () => {
   mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: true })), [{ id: 25, fallback: false }]];
@@ -140,6 +151,183 @@ it('backs off a typed model refusal and resumes past that hint without a hot loo
   expect(result).toEqual({ attempted: 2, recorded: 0, skipped: 1, deferred: 1 });
   expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5]);
   expect(mocks.sleep).toHaveBeenNthCalledWith(1, 5_000, abort.signal); expect(mocks.record).not.toHaveBeenCalled();
+});
+it('consumes an owned reservation on the next poll while the normal cursor moves past its deferred hint', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(0);
+  const abort = new AbortController(), calls: { id: number; at: number }[] = [];
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }], [{ id: 5, fallback: false }], []];
+  mocks.reservedPages = [null, { id: 4, fallback: false, reserved: true, ordinal: 1 }];
+  mocks.claim.mockImplementation(async (id: number) => {
+    calls.push({ id, at: Date.now() });
+    if (id !== 4) return { kind: 'skipped', reason: 'running' };
+    if (Date.now() === 0) throw new ModelCapacityDeferredError('capacity');
+    return { kind: 'claimed', row, receipt };
+  });
+  mocks.sleep.mockImplementation(async (ms: number) => {
+    vi.setSystemTime(Date.now() + ms);
+    if (mocks.sleep.mock.calls.length >= 2) abort.abort();
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal }))
+    .toEqual({ attempted: 3, recorded: 1, skipped: 1, deferred: 1 });
+  expect(calls).toEqual([{ id: 4, at: 0 }, { id: 4, at: 5_000 }, { id: 5, at: 5_000 }]);
+  expect(mocks.dispatch).toHaveBeenCalledTimes(1); expect(mocks.record).toHaveBeenCalledTimes(1);
+});
+it.each([3, 1000])('keeps the normal keyset when reserved hint %s is outside its next page', async id => {
+  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false })),
+    Array.from({ length: 24 }, (_, index) => ({ id: index + 25, fallback: false })), []];
+  mocks.reservedPages = [null, { id, fallback: false, reserved: true, ordinal: 1 }];
+  await runSecondReviewConsumer({ owner: owner(), once: true });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([
+    ...Array.from({ length: 24 }, (_, index) => index + 1), id,
+    ...Array.from({ length: 24 }, (_, index) => index + 25),
+  ]);
+  const dialect = new PgDialect();
+  expect(dialect.sqlToQuery(mocks.where.mock.calls[1][0]).params).toContain(24);
+  expect(dialect.sqlToQuery(mocks.where.mock.calls[2][0]).params).toContain(48);
+  expect(mocks.reservedLimit.mock.calls.flat().every(limit => limit === 1)).toBe(true);
+});
+it('continues normal work after a stale reserved hint defers and never attempts a duplicate hint', async () => {
+  mocks.reservedPages = [{ id: 4, fallback: false, reserved: true, ordinal: 1 }];
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }]];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 4) throw new ModelCapacityDeferredError('capacity');
+    return { kind: 'claimed', row: { ...row, id }, receipt };
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true }))
+    .toEqual({ attempted: 2, recorded: 1, skipped: 0, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5]);
+  expect(mocks.dispatch).toHaveBeenCalledTimes(1);
+});
+it('rotates reserved hints past stale reservations without changing the normal scan', async () => {
+  const abort = new AbortController();
+  mocks.sleep.mockImplementation(async () => { if (mocks.sleep.mock.calls.length >= 3) abort.abort(); });
+  mocks.reservedPages = [
+    { id: 4, fallback: false, reserved: true, ordinal: 1 },
+    { id: 5, fallback: false, reserved: true, ordinal: 2 },
+    { id: 6, fallback: false, reserved: true, ordinal: 3 },
+  ];
+  mocks.pages = [[{ id: 100, fallback: false }], [{ id: 101, fallback: false }], []];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 4 || id === 5) throw new ModelCapacityDeferredError('capacity');
+    if (id === 6) { abort.abort(); return { kind: 'claimed', row: { ...row, id }, receipt }; }
+    return { kind: 'skipped', reason: 'running' };
+  });
+  await runSecondReviewConsumer({ owner: owner(), signal: abort.signal });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 100, 5, 101, 6]);
+  const dialect = new PgDialect();
+  const second = dialect.sqlToQuery(mocks.reservedWhere.mock.calls[1][0]);
+  const third = dialect.sqlToQuery(mocks.reservedWhere.mock.calls[2][0]);
+  expect(second.params).toEqual(expect.arrayContaining([1, 4]));
+  expect(third.params).toEqual(expect.arrayContaining([2, 5]));
+  expect(second.sql).toContain('queue_ordinal');
+});
+it('queries reserved hints only for the current owner boot and live matching AI2 route/model', async () => {
+  await runSecondReviewConsumer({ owner: owner(), once: true });
+  expect(mocks.reservedWhere).toHaveBeenCalledTimes(1);
+  const dialect = new PgDialect(), query = dialect.sqlToQuery(mocks.reservedWhere.mock.calls[0][0]);
+  const join = dialect.sqlToQuery(mocks.reservedJoin.mock.calls[0][0]);
+  expect(query.params).toEqual(expect.arrayContaining([owner().instanceId, owner().bootId]));
+  for (const column of ['owner_instance_id', 'owner_boot_id', 'reserved_until', 'logical_work_key', 'candidate_id', 'fallback_for_id', 'provider', 'model'])
+    expect(query.sql + join.sql).toContain(column);
+  expect(query.sql).toContain('clock_timestamp()'); expect(query.params).toContain('reserved');
+  expect(mocks.reservedLimit).toHaveBeenCalledExactlyOnceWith(1);
+  for (const [fields] of mocks.select.mock.calls) expect(fields).toHaveProperty('model');
+});
+it('wraps the normal scan at EOF even when a stale reservation defers on every following poll', async () => {
+  const abort = new AbortController();
+  const stale = { id: 1000, fallback: false, reserved: true as const, ordinal: 1 };
+  mocks.reservedPages = [null, stale, null, stale];
+  mocks.limit.mockImplementation(async () => {
+    if (mocks.limit.mock.calls.length === 1) return Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false }));
+    if (mocks.limit.mock.calls.length === 2) return [];
+    const query = new PgDialect().sqlToQuery(mocks.where.mock.calls.at(-1)![0]);
+    return query.params.includes(24) ? [] : [{ id: 4, fallback: false }];
+  });
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 1000) throw new ModelCapacityDeferredError('capacity');
+    return id === 4 && mocks.limit.mock.calls.length >= 3 ? { kind: 'claimed', row, receipt } : { kind: 'skipped', reason: 'running' };
+  });
+  mocks.record.mockImplementation(async () => { abort.abort(); return { state: 'recorded' }; });
+  mocks.sleep.mockImplementation(async () => { if (mocks.sleep.mock.calls.length >= 2) abort.abort(); });
+  expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal })).toMatchObject({ recorded: 1 });
+  expect(mocks.claim.mock.calls.filter(call => call[0] === 4)).toHaveLength(2);
+  const next = new PgDialect().sqlToQuery(mocks.where.mock.calls[2][0]);
+  expect(next.params).not.toContain(24);
+  expect(mocks.limit).toHaveBeenCalledTimes(3); expect(mocks.reservedLimit).toHaveBeenCalledTimes(4);
+});
+it('wraps the reserved scan once at EOF and keeps each priority query bounded to one hint', async () => {
+  mocks.reservedPages = [{ id: 1000, fallback: false, reserved: true, ordinal: 10 }, null,
+    { id: 2000, fallback: false, reserved: true, ordinal: 1 }];
+  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false })), []];
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toMatchObject({ attempted: 26 });
+  expect(mocks.reservedLimit.mock.calls.flat()).toEqual([1, 1, 1]);
+  expect(mocks.limit.mock.calls.flat()).toEqual([24, 24]);
+  const query = new PgDialect().sqlToQuery(mocks.reservedWhere.mock.calls[2][0]);
+  expect(query.params).not.toContain(10); expect(query.params).not.toContain(1000);
+});
+it('bounds a once pass with a priority hint on every page to 100 attempts', async () => {
+  mocks.reservedPages = Array.from({ length: 5 }, (_, index) => ({ id: index + 1000, fallback: false, reserved: true, ordinal: index + 1 }));
+  mocks.pages = Array.from({ length: 5 }, (_, page) => Array.from({ length: 24 }, (_, index) => ({ id: page * 24 + index + 1, fallback: false })));
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 100, recorded: 0, skipped: 100, deferred: 0 });
+  expect(mocks.reservedLimit).toHaveBeenCalledTimes(4); expect(mocks.limit).toHaveBeenCalledTimes(4);
+});
+it('revisits an aged capacity waiter before the normal cursor reaches EOF', async () => {
+  const abort = new AbortController();
+  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false })), [{ id: 5, fallback: false }]];
+  mocks.waitingPages = [null, { id: 1, fallback: false, reserved: false, ordinal: 1 }];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 1 && mocks.waitingLimit.mock.calls.length === 1) throw new ModelCapacityDeferredError('capacity');
+    if (id === 1) { abort.abort(); return { kind: 'skipped', reason: 'running' }; }
+    return { kind: 'skipped', reason: 'running' };
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal })).toMatchObject({ attempted: 2, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([1, 1]);
+  expect(new PgDialect().sqlToQuery(mocks.where.mock.calls[1][0]).params).toContain(1);
+  const query = new PgDialect().sqlToQuery(mocks.waitingWhere.mock.calls[0][0]);
+  expect(query.params).toEqual(expect.arrayContaining(['waiting', 'local-direct', owner().instanceId, owner().bootId]));
+  for (const fragment of ['queued_at', 'queue_until', '15 seconds', 'fallback_for_id']) expect(query.sql).toContain(fragment);
+});
+it('runs a granted reservation before an aged waiter and still makes normal progress', async () => {
+  mocks.reservedPages = [{ id: 1000, fallback: false, reserved: true, ordinal: 10 }];
+  mocks.waitingPages = [{ id: 2000, fallback: false, reserved: false, ordinal: 2 }];
+  mocks.pages = [[{ id: 1000, fallback: false }, { id: 2000, fallback: false }, { id: 3, fallback: false }]];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 2000) throw new ModelCapacityDeferredError('capacity');
+    return { kind: 'skipped', reason: 'running' };
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 3, recorded: 0, skipped: 2, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([1000, 2000, 3]);
+});
+it('keeps separate waiting rotation and caps a once pass with both priorities at 100 attempts', async () => {
+  mocks.reservedPages = Array.from({ length: 4 }, (_, index) => ({ id: index + 1000, fallback: false, reserved: true, ordinal: index + 1 }));
+  mocks.waitingPages = Array.from({ length: 4 }, (_, index) => ({ id: index + 2000, fallback: false, reserved: false, ordinal: index + 10 }));
+  mocks.pages = Array.from({ length: 4 }, (_, page) => Array.from({ length: 24 }, (_, index) => ({ id: page * 24 + index + 1, fallback: false })));
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 100, recorded: 0, skipped: 100, deferred: 0 });
+  const query = new PgDialect().sqlToQuery(mocks.waitingWhere.mock.calls[1][0]);
+  expect(query.params).toEqual(expect.arrayContaining([10, 2000])); expect(query.params).not.toContain(1000);
+  expect(mocks.reservedLimit).toHaveBeenCalledTimes(4); expect(mocks.waitingLimit).toHaveBeenCalledTimes(4);
+});
+it('restarts the normal fallback scan after rerouting before another aged waiter can end the batch', async () => {
+  const abort = new AbortController(), attempted: number[] = [];
+  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false })),
+    [{ id: 25, fallback: false }], [{ id: 200, fallback: true }, { id: 25, fallback: false }]];
+  mocks.reservedPages = [null, { id: 90, fallback: false, reserved: true, ordinal: 1 },
+    { id: 91, fallback: false, reserved: true, ordinal: 2 }];
+  mocks.waitingPages = [null, { id: 1, fallback: false, reserved: false, ordinal: 1 },
+    { id: 2, fallback: false, reserved: false, ordinal: 2 }];
+  const execute = vi.spyOn(itemLifecycle, 'executeSecondReviewConsumerItem').mockImplementation(async input => {
+    attempted.push(input.secondReviewId);
+    if (input.secondReviewId === 1 && mocks.limit.mock.calls.length === 2) return { state: 'rerouted' };
+    if (input.secondReviewId === 200) { abort.abort(); return { state: 'recorded' }; }
+    return { state: 'skipped', reason: 'running' };
+  });
+  try {
+    expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal }))
+      .toEqual({ attempted: 28, recorded: 1, skipped: 27, deferred: 0 });
+    expect(attempted).toEqual([...Array.from({ length: 24 }, (_, index) => index + 1), 90, 1, 91, 200]);
+    expect(new PgDialect().sqlToQuery(mocks.where.mock.calls[2][0]).params).not.toContain(24);
+    expect(mocks.waitingLimit).toHaveBeenCalledTimes(2); expect(mocks.sleep).not.toHaveBeenCalled();
+  } finally { execute.mockRestore(); }
 });
 it('re-polls an empty AI2 queue after 1s while a model deferral still waits 5s', async () => {
   const abort = new AbortController();

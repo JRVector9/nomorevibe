@@ -288,7 +288,7 @@ async function nativeServer(run: (state: { call: PreparedAi2GatewayCall; input: 
       { id: 1, repo: prefix, productUrl: "https://fixture.example", repoMeta: { description: "A usable tool" },
         pageMeta: { title: "Tool", textSample: "A working tool" }, pageStatus: 200, fetchedAt: now } as CrawlDocument,
       DEFAULT_CRAWL_SETTINGS, { scan: null, observations: [] }, now);
-    const call = prepareAi2GatewayCall(input, { model, timeoutMs: 2_500 });
+    const call = await prepareAi2GatewayCall(input, { model, timeoutMs: 2_500 });
     expect(call.kind).toBe("prepared"); if (call.kind !== "prepared") throw new Error("actual_prepared_required");
     await run({ call, input, posts: () => posts });
   } catch (error) { errors.push(error); }

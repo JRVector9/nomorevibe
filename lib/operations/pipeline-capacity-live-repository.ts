@@ -64,7 +64,7 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     const [stored] = await query(sql`select values, ${offset(sql`updated_at`)} as updated_ms from crawl_settings where id = 1`);
     const settings = mergeWithDefaults(stored?.values);
     ensure(settings.firstReview, "live_first_reviewer_unpinned");
-    const model = (row: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) =>
+    const model = <Provider extends LiveCapacityArtifact["identity"]["models"]["second"][number]["provider"]>(row: { provider: Provider; model: string }) =>
       ({ provider: row.provider, model: row.model, canonicalModel: canonicalReviewModel(row.model) });
 
     // 구간 안에서 끝났거나, 구간 안의 AI2 표로 최종이 될 수 있는 자동 AI1 세대. 상관 EXISTS를 OR로 묶으면(first_attempt_id 인덱스 없음)

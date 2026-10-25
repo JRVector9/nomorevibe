@@ -38,6 +38,7 @@ const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: ()
 const work = new Set<Promise<unknown>>(), bodies = new Set<Promise<unknown>>(), hooks = new Set<Promise<unknown>>();
 const candidates = new Map<number, string>(), documents = new Map<number, string>(), productIds = new Map<number, string>();
 const slots = new Set<number>(), managedJobs = ['second-review', 'crawl-publish'];
+let directPrimary = false;
 let baseline: Snapshot, initialized = false, setupWork: Promise<void> | undefined, cleaning: Promise<void> | undefined, serial = 0;
 let triggerAttempted = false;
 const eventFaultBody = "\n      BEGIN IF NEW.kind='dispatch_started' THEN RAISE EXCEPTION 'ai2_runtime_event_fault'; END IF; RETURN NEW; END ";
@@ -68,12 +69,13 @@ function policy(): CrawlSettings {
   return { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: 'enforce',
     firstReview: { provider: 'abcllm', model: 'AI2 native first' }, secondReview: {
       ...structuredClone(DEFAULT_CRAWL_SETTINGS.secondReview), enabled: true,
-      voters: [{ provider: 'abcllm', model }], fallbacks: [{ provider: 'abcllm', model: `${model} backup` }] } };
+      voters: [{ provider: directPrimary ? 'local-direct' : 'abcllm', model }], fallbacks: [{ provider: 'abcllm', model: `${model} backup` }] } };
 }
 const capacityPolicy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { local: 4 }, groupLimits: { engine: 4 },
   poolLimits: { reviewer: 4, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12,
   queueTtlMs: 60_000, reservationTtlMs: 60_000, routes: [model, `${model} backup`].map(value => ({
-    routeId: 'second-review', provider: 'abcllm', model: value, providerBudgetId: 'local', groupId: 'engine' })) };
+    routeId: 'second-review', provider: 'abcllm', model: value, providerBudgetId: 'local', groupId: 'engine' })).concat([{
+      routeId: 'second-review', provider: 'local-direct', model, providerBudgetId: 'local', groupId: 'engine' }]) };
 async function install(mode: 'open' | 'disabled' = 'open') {
   await db.insert(crawlSettings).values({ id: 1, values: policy(), updatedBy: prefix })
     .onConflictDoUpdate({ target: crawlSettings.id, set: { values: policy(), updatedBy: prefix } });
@@ -127,7 +129,8 @@ async function performCleanup() {
     const requests = requestRows.map(row => row.value as Raw);
     for (const row of requests) {
       expect(row.owner_instance_id).toBe(owner.instanceId); expect(ownBoots.has(String(row.owner_boot_id))).toBe(true);
-      expect([row.class, row.pool, row.route_id, row.provider]).toEqual(['second', 'reviewer', 'second-review', 'abcllm']);
+      expect([row.class, row.pool, row.route_id]).toEqual(['second', 'reviewer', 'second-review']);
+      expect(['abcllm', 'local-direct']).toContain(row.provider);
       expect([model, `${model} backup`]).toContain(row.model);
       expect(ids.some(id => String(row.logical_work_key).startsWith(`ai2:${id}:`))).toBe(true);
       expect(baseline.model_capacity_requests.some(old => old.request_id === row.request_id)).toBe(false);
@@ -220,7 +223,7 @@ beforeAll(() => {
     initialized = true;
   })(); return tracked(setupWork, hooks);
 });
-beforeEach(() => tracked((async () => { await setupWork; await cleanup(); await install(); vi.stubEnv('ABCLLM_API_KEY', 'loopback-only'); })(), hooks));
+beforeEach(() => tracked((async () => { await setupWork; await cleanup(); directPrimary = false; await install(); vi.stubEnv('ABCLLM_API_KEY', 'loopback-only'); })(), hooks));
 afterEach(() => tracked(steps([async () => { await setupWork; }, () => drain(bodies), () => drain(work), cleanup,
   async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks, true), () => drain(bodies, true),
@@ -263,7 +266,7 @@ async function fixture(published = false, fallback = false) {
     firstDecision: 'approve', firstConfidence: published ? null : .94, firstModel: published ? null : first.model,
     firstAttemptId: published ? null : first.id, publishedSlug: product?.slug ?? null,
     generationKey: secondReviewGeneration(published ? null : first.id, input, published ? 'sample' : 'ai_approved'),
-    inputHash: published ? publishedInputHash(product!.slug) : input.inputHash, provider: 'abcllm' as const, model };
+    inputHash: published ? publishedInputHash(product!.slug) : input.inputHash, provider: policy().secondReview.voters[0].provider, model };
   const [root] = await db.insert(secondReviews).values({ ...base, ...(fallback ? { status: 'resolved', resolution: 'fallback' } : {}) }).returning();
   expect(await admin`SELECT work_key FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${root.id}`}`).toEqual([]); slots.add(root.id);
   const row = fallback ? (await db.insert(secondReviews).values({ ...base, model: `${model} backup`, fallbackForId: root.id, failureCount: 1 }).returning())[0] : root;
@@ -281,13 +284,19 @@ function envelope() { return { id: 'native-ai2-response', object: 'chat.completi
   choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(outcome) }, finish_reason: 'stop' }],
   usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 }, usage_provenance: 'upstream_reported' }; }
 async function localServer(run: (state: { posts: string[]; received: Promise<void>; release: () => void;
-  setReply: (reply: (response: ServerResponse) => void) => void }) => Promise<void>, held = false, requestedModel = model) {
+  setReply: (reply: (response: ServerResponse) => void) => void }) => Promise<void>, held = false, requestedModel = model,
+  transport: 'abcllm' | 'local-direct' = 'abcllm', budgeted = false) {
   const gate = latch(), received = latch(), pending = new Set<Promise<unknown>>(), posts: string[] = [];
   let reply: (response: ServerResponse) => void = response => { response.end(JSON.stringify(envelope())); };
   const http = createServer((request, response) => {
     const closed = new Promise<void>(done => response.once('close', done));
     const task = (async () => {
-      let body = ''; for await (const chunk of request) body += chunk.toString(); posts.push(body); received.resolve();
+      let body = ''; for await (const chunk of request) body += chunk.toString();
+      if (request.url === '/tokenize') {
+        response.end(JSON.stringify({ count: 100, tokens: Array.from({ length: 100 }, () => 1), max_model_len: 50_000 }));
+        await closed; return;
+      }
+      posts.push(body); received.resolve();
       if (held) await gate.promise;
       if (!response.destroyed) reply(response);
       await closed;
@@ -300,7 +309,14 @@ async function localServer(run: (state: { posts: string[]; received: Promise<voi
     const address = http.address(); if (!address || typeof address === 'string') throw new Error('fixture_address');
     serving.contract = { version: 1, protocol: 'abcllm-raw-total-bound-v1', routeId: 'second-review', provider: 'abcllm',
       model: requestedModel, responseModel: 'local-engine', deploymentRevision: 'loopback-only',
-      endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: 8_000 };
+      endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: budgeted ? 50_000 : 8_000,
+      ...(budgeted ? { requestBudget: { requestTokenBound: 32_000, maxOutputTokens: 10_000,
+        tokenizerEndpoint: `http://127.0.0.1:${address.port}/tokenize`, tokenizerModel: 'local-engine' } } : {}) };
+    if (transport === 'local-direct') serving.contract = { version: 1, protocol: 'ai2-direct-openai-chat-v1',
+      provider: 'local-direct', routeId: 'second-review', model: requestedModel, responseModel: 'local-engine',
+      endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+      tokenizerEndpoint: `http://127.0.0.1:${address.port}/tokenize`, totalTokenBound: 50_000,
+      requestTokenBound: 32_000, maxOutputTokens: 10_000, backendId: 'local', physicalGroup: 'engine', deploymentRevision: 'loopback-direct' };
     await run({ posts, received: received.promise, release: gate.resolve, setReply: value => { reply = value; } });
   } catch (error) { errors.push(error); }
   finally {
@@ -321,7 +337,7 @@ async function reserve(id: number) {
   expect(error).toBeInstanceOf(SecondReviewModelReservationRequired);
   const intent = error as SecondReviewModelReservationRequired;
   expect(await item(id)).toBeUndefined();
-  const call = prepareAi2GatewayCall(intent.intent.input, { model: intent.intent.binding.reviewer.model });
+  const call = await prepareAi2GatewayCall(intent.intent.input, { model: intent.intent.binding.reviewer.model });
   expect(call.kind).toBe('prepared'); if (call.kind !== 'prepared') throw new Error('actual_prepared_required');
   const binding = intent.intent.binding;
   const identity: ModelCapacityRequestIdentity = { owner, class: 'second', pool: 'reviewer', routeId: 'second-review', provider: 'abcllm',
@@ -465,4 +481,41 @@ it('dispatch event INSERT failure rolls back the fresh token and binding before 
     expect(error).toBeDefined(); expect(String((error as { cause?: unknown }).cause ?? error)).toContain('ai2_runtime_event_fault');
     expect(await whole()).toEqual(before); expect(await item(f.row.id)).toBeUndefined(); expect(posts).toHaveLength(0);
   });
+}));
+
+
+it('direct primary commits exact item ownership and native settlement with a 32k budget and no gateway auth', exercise(async () => {
+  directPrimary = true; await install(); const f = await fixture();
+  await localServer(async ({ posts }) => {
+    expect(await execute(f.row.id)).toEqual({ state: 'recorded' }); expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0])).toMatchObject({ model, max_tokens: 10_000, chat_template_kwargs: { enable_thinking: false } });
+    expect(JSON.parse(posts[0])).not.toHaveProperty('context_strategy');
+    const [request] = await capacityRows();
+    expect(request).toMatchObject({ provider: 'local-direct', state: 'settled', logical_work_key: `ai2:${f.candidate.id}:${f.root.id}`,
+      dispatch_binding: { provider: 'local-direct', chargedTokens: 50_000 },
+      terminal_evidence: { actualUsage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } } });
+    expect(await vote(f.row.id)).toMatchObject({ status: 'agreed', second_decision: 'approve', failure_count: 0 });
+  }, false, model, 'local-direct');
+}));
+
+it('verified direct completion with invalid business JSON falls back once to a budgeted abcLLM review under the same vote fence', exercise(async () => {
+  directPrimary = true; await install(); const f = await fixture();
+  await localServer(async ({ posts, setReply }) => {
+    const reply = envelope(); reply.choices[0].message.content = '{}';
+    setReply(response => response.end(JSON.stringify(reply)));
+    expect(await execute(f.row.id)).toEqual({ state: 'recorded' }); expect(posts).toHaveLength(1);
+    expect((await capacityRows())[0]).toMatchObject({ provider: 'local-direct', state: 'settled' });
+    expect(await vote(f.row.id)).toMatchObject({ status: 'resolved', resolution: 'fallback', failure_count: 1 });
+  }, false, model, 'local-direct');
+  const [fallback] = await admin`SELECT id FROM second_reviews WHERE fallback_for_id=${f.root.id}`;
+  expect(fallback).toBeDefined(); slots.add(fallback.id);
+  await localServer(async ({ posts }) => {
+    expect(await execute(fallback.id)).toEqual({ state: 'recorded' }); expect(posts).toHaveLength(1);
+    expect(JSON.parse(posts[0])).toMatchObject({ model: `${model} backup`, max_tokens: 10_000,
+      context_strategy: 'raw', chat_template_kwargs: { enable_thinking: false } });
+    const rows = await capacityRows(); expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.state)).toEqual(['settled', 'settled']);
+    expect(rows.map(row => row.logical_work_key)).toEqual([`ai2:${f.candidate.id}:${f.root.id}`, `ai2:${f.candidate.id}:${f.root.id}`]);
+    expect(await vote(fallback.id)).toMatchObject({ status: 'agreed', second_decision: 'approve', provider: 'abcllm' });
+  }, false, `${model} backup`, 'abcllm', true);
 }));

@@ -237,6 +237,7 @@ function slotJob(slot: ModelSlot): string | undefined {
 }
 
 function runsOn(provider: string | null, model: string): string {
+  if (provider === "local-direct") return "모델 서버 직접 연결";
   if (provider === "vllm" && model === KOREAN_TRANSLATION_QWEN_MODEL) return "gpu3090 Qwen 직접 연결";
   const runner = /^\[([^\]]+)\]/.exec(model)?.[1];
   if (provider === "abcllm") return `abcllm 게이트웨이${runner ? ` · 실행기 ${runner}` : ""}`;

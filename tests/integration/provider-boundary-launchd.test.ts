@@ -19,7 +19,9 @@ const root = fileURLToPath(new URL("../..", import.meta.url)), name = `nomorevib
 const url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
 const client = postgres(url.toString(), { max: 2, prepare: false, onnotice: () => {} });
-const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
+const fullJournal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
+// This historical window ends at 0131; 0132 intentionally replaces four CHECKs.
+const journal = { ...fullJournal, entries: fullJournal.entries.filter((entry: { idx: number }) => entry.idx < 132) };
 const functions = ["nmv_boundary_identity_valid", "nmv_boundary_exit_valid", "nmv_provider_boundary_release_valid"];
 const requestId = randomUUID(), token = randomUUID(), fx = launchdBoundaryFixture(), hash = "a".repeat(64);
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits: { "fixture-m3": 1 }, groupLimits: { m3: 1 },
@@ -46,15 +48,18 @@ async function checks() { return client`SELECT conname,convalidated,pg_get_const
   WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass) AND contype='c' ORDER BY conname`; }
 async function rows() { return client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`; }
 const input = () => ({ ...frozen, expectedPlanHash: providerBoundaryPlanHash(frozen.plan), operator: "launchd-fixture", reference: "synthetic observed-boundary fixture" });
-beforeAll(async () => {
-  await admin.unsafe(`CREATE DATABASE ${name}`); created = true;
+async function migrateThrough(limit: number) {
   const partial = mkdtempSync(path.join(tmpdir(), "launchd-predecessor-"));
   try {
-    mkdirSync(path.join(partial, "meta")); const entries = journal.entries.filter((e: { idx: number }) => e.idx < 128);
+    mkdirSync(path.join(partial, "meta")); const entries = journal.entries.filter((e: { idx: number }) => e.idx < limit);
     for (const e of entries) copyFileSync(path.join(root, "drizzle", `${e.tag}.sql`), path.join(partial, `${e.tag}.sql`));
     writeFileSync(path.join(partial, "meta/_journal.json"), JSON.stringify({ ...journal, entries }));
     await migrate(drizzle(client), { migrationsFolder: partial });
   } finally { rmSync(partial, { recursive: true, force: true }); }
+}
+beforeAll(async () => {
+  await admin.unsafe(`CREATE DATABASE ${name}`); created = true;
+  await migrateThrough(128);
   frozen = fresh(); beforeChecks = await checks();
   beforeFunctions = await client`SELECT proname name,oid::text oid,prosrc source FROM pg_proc WHERE proname=ANY(${functions}::text[]) ORDER BY proname`;
   await client`UPDATE model_capacity_control SET mode='draining',epoch=1,revision=2,policy=${JSON.stringify(policy)}::text::jsonb,
@@ -64,7 +69,7 @@ beforeAll(async () => {
     VALUES(${requestId},${`${binding.logicalWorkKey}:${hash}`},${frozen.plan.request.owner.instanceId},${frozen.plan.request.owner.bootId},'first','reviewer',
     'crawl-agent-review','abcllm','fixture-gptoss','fixture-m3','m3',1,2,${modelCapacityPolicyHash(policy)},'indeterminate',${binding.logicalWorkKey},
     ${JSON.stringify(binding)}::text::jsonb,${ai1DispatchBindingHash(binding)},${frozen.plan.request.dispatchAt},${token},clock_timestamp(),clock_timestamp())`;
-  beforeRows = await rows(); await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
+  beforeRows = await rows(); await migrateThrough(132);
   const globals = globalThis as { db?: unknown; pgClient?: unknown }; globals.db = drizzle(client, { schema }); globals.pgClient = client;
 }, 120000);
 afterAll(async () => { await client.end({ timeout: 5 }); if (created) await admin.unsafe(`DROP DATABASE ${name}`); await admin.end({ timeout: 5 }); });

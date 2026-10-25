@@ -448,7 +448,7 @@ it("keeps a due failed vote unchanged when its actual document source has change
 async function withReplayController<T>(value: Awaited<ReturnType<typeof failedVote>>,
   load: (run: ReplayRun) => Promise<T>, beforeProvision?: (sql: postgres.Sql) => Promise<void>): Promise<T> {
   const reference = new Date(), settings = policy();
-  const reviewer = (model: NonNullable<CrawlSettings["firstReview"]>) =>
+  const reviewer = <T extends CrawlSettings["secondReview"]["voters"][number]>(model: T) =>
     ({ ...model, canonicalModel: canonicalReviewModel(model.model) });
   const manifest: CapacityManifest = { version: 1, runId: `pr04b2-authority-${randomUUID()}`, revision: "0536116",
     mode: "fixtures", cacheMode: "cold", referenceTime: reference.toISOString(), startedAt: reference.toISOString(),

@@ -118,7 +118,7 @@ export const ai2DispatchBindingSchema = z.object({
   rowIdentityHash: sha64, failureCount: z.number().int().nonnegative().safe(), inputPolicyHash: sha64,
   item: z.object({ workKey: identity(160), owner: itemOwnerSchema, token: z.uuid(),
     stageEpoch: positive, itemEpoch: positive, bindingHash: sha64 }).strict(),
-  routeId: z.literal("second-review"), provider: z.literal("abcllm"), model: identity(200),
+  routeId: z.literal("second-review"), provider: z.enum(["abcllm", "local-direct"]), model: identity(200),
   wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
 }).strict()
   .refine(value => value.logicalWorkKey === `ai2:${value.review.candidateId}:${value.review.vote}`, "invalid_ai2_logical_work")

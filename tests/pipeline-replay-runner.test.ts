@@ -39,7 +39,7 @@ function settings(): CrawlSettings {
 }
 function options() {
   const policy = settings();
-  const identity = (value: { provider: "abcllm" | "claude-cli" | "grok-cli"; model: string }) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
+  const identity = <T extends CrawlSettings["secondReview"]["voters"][number]>(value: T) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   const manifest: CapacityManifest = { version: 1, runId: "runner-unit", revision: "9601e3b", mode: "fixtures", cacheMode: "cold",
     referenceTime: reference, startedAt: reference, endedAt: "2001-10-01T00:00:10.000Z",
     inputPolicyHash: reviewPolicyHash(policy), fullReviewPolicyHash: fullReviewPolicyHash(policy), comparisonPolicyHash: comparisonReviewPolicyHash(policy), initialStateHash: hash,

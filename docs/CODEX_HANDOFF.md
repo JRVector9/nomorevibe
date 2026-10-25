@@ -1,3 +1,190 @@
+## Latest CI correction — 2026-10-26 00:40 KST
+
+Current objective unchanged: AI2 GPU3090 Tailscale direct qwen3.8-flash-next primary, abcLLM Supa fallback; both no-thinking, max output10000/combined32000 enforced by exact tokenizer. No production settings/DB/control/service writes yet. PR664 source headfd4b; root now updates the one old circuit log expectation to `ai2:abcllm:${model}` so provider+model isolation remains intact.
+
+CI40207193301 completed: unit1/2,build,type,lint,ledger,PRimages,integration1/3/5/6 PASS. Integration2 had 587PASS/1FAIL (old circuit key expectation, not runtime failure); root fixed test line258 only. Actual scoped PG driver `npm run test:integration -- tests/integration/provider-circuit-breaker.test.ts` executed EXIT0/1file3PASS on owned localhost60839 fixture, log `provider-circuit-breaker-corrected.log` in nmv-ai2-direct-pg-20261026-72a2a015; baseline cleanup passed. Integration4 all54files650tests PASS but upload-artifact CreateArtifact ETIMEDOUT failed job. Raw failures preserved `ci-integration2-head2.log` and `ci-integration4-head2.log` in private rollout dir. Required check remains failed until new-head CI succeeds; no bypass/false full PASS.
+
+Modified files this checkpoint: tests/integration/provider-circuit-breaker.test.ts and docs/CODEX_HANDOFF.md. Next commit/push these after scoped lint+diff, wait required new-head CI; main stillfadb. Agents oracle/backend prepare private official local control/migration wrappers (no ops); independent reviewer latest bootstrap helper SHAce385484f6ef8081415e468e6b383deb48613bbab4884504899c557d725e9f7a found no P1/P2. Existing bootstrap plan→officialdrain→stockmigration133→singleAI2deploy→officialreopen→actualprogress/ordinarygate remains necessary before normal18app release. Preserve original user WT, old failed fixtures/once receipts and no skill use. No direct long32k inference or actual product direct result claimed.
+
+Exact next commands (owned WT): `npx eslint tests/integration/provider-circuit-breaker.test.ts`; `git diff --check`; `git add tests/integration/provider-circuit-breaker.test.ts docs/CODEX_HANDOFF.md`; `git commit -m "test(ai2): expect model-specific circuit identity"`; `git push origin codex/ai2-capacity-cursor-20261025`; `gh pr checks 664`. Operational checkout must be fresh clean main after merge.
+
+## Latest operational preparation — 2026-10-26 00:36 KST
+
+PR664 newhead fd4b3cfd9cd9c04afafff49e051ac06f44b94f54 / CI40207193301. Unit1+2, type,lint,build,serialledger,PRworker/webimagesPASS; most6DBshardsstillrunning,lastrootreadintegration1PASS. No merge/mainimages/deploy/DBwrites yet. Rootdirtyhandoffafterthischeckpointmustnotbeusedascleanoperationalcheckout; createfreshmainWTaftermerge.
+
+Critical runtimefinding: `.dockerignore` excludes scripts/ops. Actualreadonlycontrolattempt inoldAI2container failed Cannotfind/app/scripts/ops/pipeline-control.ts, noDBwrite. Firstattempt blanknodecode/stdin transport wasnotapass; v2privateerrorpreserved. RootswitchedtoofficiallocalCLIinexactcheckoutwithAI2startupenv copiedmemoryonly. Oracle agent preparesprivatewrapper `/Users/jr/.local/state/nomorevibe-reliability-20261025/ai2-local-control/` (Node24.x/operatorPATH+HOMEpreserved, explicitdirect5432PIPELINE_CONTROL_DATABASE_URL, officialdryrun/CAS/audit, freshonceforexecute, capacitymode/policyonly). Backend preparesfreshstockmigrationwrapper; neitherhelperoperationallyexecuted.
+
+Preparedonly private configs at ai2-direct-rollout-20261025T151754Z: configuration-plan.private.json (newGPUroute+settingspatch), serving-contracts-plan.private.json (directprimary+abc32k/10kbudget), prepared-endpoints.safe.json. FreshactualAI2container00:34:19KST GPU/version200 vllm0.28.1rc1.dev388+g8a728663c/modelqwen3.8-flash-next/C50000; Supa/version200v0.30.0/modelInferact/Qwen3.8-27B-NVFP4/C98304. OnlyGETmetadata,noinference. ABCexistingdeploymentrevisionreadbackremains...C98304-seqs64; AI2directenvabsent. AllpreparedconfigsNOTAPPLIED.
+
+BootstrapprivatehelperlatestbackendSHAce385484f6ef8081415e468e6b383deb48613bbab4884504899c557d725e9f7a addsabortonnonAI2newalarmduringobserve; latestindependentreviewdeltaawaited. Basicreviewhash222d145...previousapproved. Usenewfinalreviewedhashonly. planoldopen+exactAI2no_progress, rootdrain+full133migration, deployoneAI2(stilldraining), rootreopen, observe600secnewownerterminal+businesswrite+ordinarygate/fleet. controlupdatedAt mustSQLto_charUTC6digitUS; JSDate3msnotaccepted. Finalverifiedbaselinefeedsnormalfleetplan. SeparatetwoenvAI2contract/redeployafterfullfleet, thenglobalCASsettings/policy/openactualdirectproof. Unknown/manual/assist/nativeonceunchanged.
+
+## PR664 / CI follow-up — 2026-10-26 00:31 KST
+
+PR664 https://github.com/JRVector9/nomorevibe/pull/664 ready, initial head5e17e9d947e3b78c7604aa119636a49e05be31f9 pushed. CI40206663943 unit2FAILED4(AI2union mockshape); real MODEL_ROUTES also lacked directAI2. Oracle fixed pipeline-control.ts and its routes test: exactprovider/model/route/directbackend/group match, oldunknown/unused/stageguardspreserved. Existing4RED→mockfix34PASS/new9RED→sourcefix43PASS(2files); tsc --noEmit --incremental false EXIT0(session51278), changed2ESLint/diff0. FirstCI build/type/lint/unit1/serialledger/PRimages/integration4+6PASS,otherspending; newHEADrequiredCI mustpass.
+
+Privatebootstraphelper /Users/jr/.local/state/nomorevibe-reliability-20261025/ai2-single-bootstrap-20261026.py hash222d1452338e6d670ade150f7a991d9a756f2387f12730cf5c1249a6c8ddaf73 independentlyreviewed,nooperationexecuted. plan/open→rootofficialdrain+133→deploy(stilldraining)→rootofficialreopen→observe. Runtime PROCESS_GROUP_RECORDING=1/instanceai2-consumer-m3/defaultjob180s confirmed. Bootstrap preservesallenvexceptRELEASE_TAG; twoAI2envcontracts require separatelaterredeploy. Backendpreparingfreshmemoryonlylocalstockmigrationwrapper,noops. Oldfailedonce/helperdirs neverreused.
+
+Productionwrite/deploy0. AI2 DATABASE_URL PgBouncer/noMIGRATION_DATABASE_URL; direct5432 samecredentials memoryonly forofficialmigrate.mjs. Existing scripts/ops/pipeline-control.ts supports auditedCASmode/policy/defaultdryrun; prefer inactualAI2startupenv with explicitPIPELINE_CONTROL_DATABASE_URL. Stocklocalmigrator permits actualNode24.x; runtimeimage24.22.1separate.
+
+Next: commitgate2files+thishandoff+operationnote/push→latestPRCI/mainimages→freshcleanmainWT→bootstrapplan+officialdrain/migration→singleAI2progress→normalfleet→twoenvcontract/redeploy+CASpolicy/settings→actualdirectledger/abcproof/health. Bounds32kcombined/10koutputunchanged. OriginaluserWTunchanged.
+
+## Validated implementation checkpoint — 2026-10-26 00:22 KST
+
+Latest objective: GPU3090 direct primary qwen3.8-flash-next at http://100.77.43.63:8090/v1, fallback abcLLM [supa] Qwen3.8-27B-NVFP4, all no-thinking. Combined bound32,000/outputcap10,000/inputbudget22,000 including template/system. Supersedes old25k and STOP entries. No skills; all agents gpt-6.1-sol/xhigh; original checkout read-only.
+
+Completed: exact tokenizer/direct contract, additive0132, reservation cursor plus aged-wait independent priority and rerouted immediate fallback requery,15sec/preflight atomic fallback preserving dispatched/unknown charges, provider/model circuits, settings/domain/artifact/replay support. Admin ModelRows/current picker preserve direct provider without granting new deployment through gateway picker. Independent reviewer no remaining P1/P2 after two starvation fixes and UI preservation.
+
+Actual root tests: consumer/lifecycle/shard6files137PASS, UI3files48PASS, settings/review/schema5files57PASS. Agent transport4files50PASS, artifact4files213PASS. Actual isolatedPG7files50PASS plus final2files20PASS (real prioritySQL4+atomicfallback16). Overlap exists; do not sum unique total. nexttypegenPASS, final npx tsc --noEmit EXIT0(session78305), changed56filesESLint maxwarnings0 EXIT0(session11627), diffcheckPASS. Manual full suite/build not run perPRpolicy; required GH CI remains.
+
+Failed verifications preserved: initial prioritySQL2files19PASS/1FAIL wrong-route negative fixture violated existing logicalCHECK; legal non-AI2 logicalWorkKey:null fixture fixed, no constraint weakened, same restored clean fixture20PASS. Earlier lifecycle union and priority inference type errors fixed; finaltsc0. Earlier direct cleanup failed fixture59008 remains preserved, not reset/reused. Latest successful actualPG fixture localhost60839/private test-db.env in nmv-ai2-direct-pg-20261026-72a2a015 (root-only serial). Logs direct-runtime-integration-final.log and capacity-priority-and-wait-corrected.log.
+
+Files: git status authoritative (~60source/test/doc/migration), scripts/integration-shards.mjs adds2empty-ledger tests toserialCI; design/results in docs/operations/2026-10-26-ai2-direct-primary.md. All source stable, agents handedoff. Branch codex/ai2-capacity-cursor-20261025/basefadb. No new commit/PR/push/productionwrite/deploy yet atcheckpoint; mainfadb/unrelateddocsPR663open. OriginaluserWTunchanged.
+
+Fresh production00:17:55KST: oldabc-only AI2/fallback[], pending288,lastreview21:04:27KST,capacityopen/epoch1/rev2/hash ec1dd63d9264ae29a1df2c6cdb70ac54a4d1adb2ef4898c9f2370d69c3fbf9f0,waiting33/reserved3/dispatched0/indeterminate0,132migrations. Config plan PREPAREDONLY in private ai2-direct-rollout-20261025T151754Z.
+
+Remaining: commit/push/readyPR/latestbaseCI/mainimages; officialcapacitydrain→active0→official133migration→exactAI2bootstrap whiledraining→oldownerexit/newhealth→officialreopen→newbootterminal+businessprogress+unmodifiedoverallok; normalfleetplan/run; separate exactAI2two-envcontracts/redeploy (bootstrap requires runtimeenv preserved); CASsettings+policyroute sharingexistingGPUgroup; actualdirectresult/ledger+abcconnectivity+finalhealth. Backend agent prepares private plan/deploy/observe helper with DBwrite0; independent reviewer consulting. No unknowncharge reset/manualverdict override/assist enable/native or once drill rerun. Oracle monitoring+alerts scope unchanged.
+
+Next exact: `git diff --check`; `git status --short`; `git diff --stat` in thisWT, then commit/PR. Root handles39436/78305/11627/81344/27524 completed with results above. Refresh operational identity/main/images before action. Never rerun ambiguous attempted once directory.
+
+## Current checkpoint — 2026-10-26 / 32k combined, 10k output
+
+This checkpoint supersedes older active/stopped/25k entries below. User resumed implementation and explicitly requested subagents; no skills are used. Objective: AI2 direct GPU3090 `http://100.77.43.63:8090/v1`, model `qwen3.8-flash-next`; fallback remains abcLLM `[supa] Qwen3.8-27B-NVFP4`. Both no-thinking, max output **10,000**, combined input+output **32,000** (input budget22,000). Do not confuse request bound with engine capacity: GPU50,000/Supa98,304. Original user checkout is read-only.
+
+Completed source: AI2-only local-direct settings/provider and exact serving contract, async exact-message tokenizer preflight, provider/group/owner/intent fencing, existing terminal settlement, additive0132 preserving historical migrations, cursor reservation rotation, artifact/replay compatibility. Primary terminal business failure can transition to abc fallback; dispatched/indeterminate physical charges are never cancelled for fallback. Pre-dispatch failures and15sec capacity wait use atomic withdrawal plus fresh lifecycle checks without recording false verdict/failureCount.
+
+Actual tests: root5files57PASS (settings/transport/review/schema); actual isolated PostgreSQL7files50PASS including direct result storage and direct business failure→budgeted abc fallback, all133 migrations and historical SQL compatibility. Agent transport4files50PASS, artifact4files213PASS, cursor2files38PASS, fallback unit4files82PASS (latest). Some overlap exists; do not sum into a unique total. next typegen executed PASS; final tsc/lint still pending. Full manual unit/build/DB not run per PR policy. Latest root integration log: `/Users/jr/.local/state/nomorevibe-reliability-20261025/nmv-ai2-direct-pg-20261026-72a2a015/direct-runtime-integration-final.log`.
+
+Current review: independent agent found aged waiting starvation: a15sec waiting row is not revisited until normal cursor EOF, potentially beyond queue TTL. Oracle agent owns fix in consumer and tests. New16case actual-PG fallback driver written, not yet executed. root alone runs DB tests serially using private `test-db.env` in above fixture (localhost60839); do not assume password or print it. Earlier failed fixture on59008 remains preserved and must not be reused/reset to hide failures. Agent model rule gpt-6.1-sol/xhigh applies.
+
+Modified files: `git status --short` is authoritative (~50 source/test/doc/migration files); all changes in owned WT `/Users/jr/Desktop/projects/nomorevibe-ai2-capacity-cursor-20261025`, branch `codex/ai2-capacity-cursor-20261025`, basefadb527c. No commit/new PR/push/production mutation yet. PR663 remains unrelated open docs PR. Source-only success is not operational completion.
+
+Failures preserved: initial historical CHECK expectation mismatch resolved by historical0131 plus additive133 assertions; first direct integration fixture cleanup assumed abc only (8PASS/2FAIL), corrected and rerun on a fresh fixture (50PASS). First local internal network fixture had no published port; stopped only own container then created fresh owned fixture. Widening Zod safeExtend was type-invalid, replaced with second-stage-only schema. Old Unknown Vitest handle is not a pass. No global unknown-charge recovery/reset or native/once drill rerun.
+
+Remaining: aged waiting fix, actual16casePG execution and any corrections, final scoped checks/independent review, handoff+operation note, PR required latest-base CI/main images, additive migration and audited single-AI2 bootstrap (ordinary deploy blocked by existing AI2 no_progress), real progress then normal full fleet release, CAS settings and capacity route/direct contracts, actual direct result/ledger and live abc endpoint evidence. Keep Oracle monitor+alerts scope, existing assist protection, audit_hold/manual decisions unchanged. Bootstrap must not falsify monitor gates or reset reservations; reviewer examined existing helpers and is completing concrete constraints.
+
+Exact next commands (owned WT):
+```sh
+git status --short
+cat tests/integration/second-review-capacity-wait-fallback.test.ts
+npx vitest run tests/second-review-model-capacity.test.ts tests/pipeline-consumer.test.ts tests/pipeline-consumer-gates.test.ts
+npx tsc --noEmit
+```
+Run PG through Python private-env subprocess, not a command containing credentials. Root tests are serial. Latest unit handle35901 completed EXIT0/57PASS. No currently running root test at checkpoint.
+
+## Active implementation — GPU3090 direct primary / abcLLM Supa fallback
+
+최신사용자지시: GPU3090 Tailscale `http://100.77.43.63:8090/v1`의 `qwen3.8-flash-next`를 AI2주모델로 설정하고 fallback을 기존abcLLM `[supa] Qwen3.8-27B-NVFP4`로 운영적용, 실제동작확인. 모두enable_thinking:false,25k는앞서명시한입력+출력합계. 구현중단해제. 새provider local-direct의AI2전용계약/원소유·논리fence·capacity정산/안전한대체전환을구현하고기존cursor정체초안마무리. 스킬0,원사용자WT읽기전용,기존native/once재실행금지.
+
+현재완료: 기존305ms합성연결시험만. 이번운영변경/배포/신규테스트아직0. 3agent(gpt-6.1-sol/xhigh)가동일격리WT에서transport5파일/SQLschema+additive0132/cursor3파일로분담; root는settings/domain/ownership/capacitycoordinator와통합검증/운영적용. PR663은여전히OPEN문서뿐. mainfadb변함없음.
+
+다음: `git status --short`; `cat lib/crawl/second-review-model-capacity.ts`; 범위검사→isolatedPG→PR필수CI/main이미지→정규deploy선행조건검토→exactapp/settingsCAS→실제결과증가/대체경로검증. 25k tokenizer확인과알려진no_progress가정규deploy를막는bootstrap경계는검토중. 통과하지않은검사/운영설정완료를주장하지않는다.
+
+## Latest correction / Tailscale test complete — 2026-10-25T14:48:07Z
+
+현재 목표는 사용자의 최신 ‘abcLLM 연결 유지’와 GPU3090 Tailscale 주소 시험이다. 앞선 direct-provider 전환 지시는 이 범위에서 수정되었다. 두 구현 agent를 중지했다. 운영 설정/정책/서비스/배포 변경0. GPU3090의 Tailscale 주소 `http://100.77.43.63:8090/v1`로 실제 AI2 컨테이너에서 짧은 합성 POST1회 성공: HTTP200/305ms/qwen3.8-flash-next/JSON정상/stop/input45+output16/reasoning0. GET health200/37ms,models200/10ms/context50000,직전running0/waiting0. 25k 실제 요청·실제 제품검수·fallback 시험은 하지 않았다.
+
+완료: 직접 연결 초안은 private0700/0600+fsync 경로 `gpu3090-tailscale-test-20261025T144726Z`에 보존한 뒤 직접 변경4 tracked파일을 원HEAD로 복원, 새tokenize파일도 해당경로로 이동했다. async prepare/caller 불일치가 남지 않는다. backend SQL agent는 계획만 제시했고 실제schema/migration 변경은 git status상0. 원사용자WT변경0. 이전cursor3파일초안은 보존한다.
+
+수정파일: 이handoff, 새 `docs/operations/2026-10-25-gpu3090-tailscale-test.md`뿐(기존cursor3파일외). 상세 결과/한계/증거는 새노트. 실패: 짧은service ID를 exactlabel filter에 넣은 첫Docker조회는컨테이너0였고, fresh fullservice label/ID검증으로교정. agentVitest session3297은root조회시Unknown process라결과미확인/통과주장금지. 잘못WT에서feasibility문서읽기실패도canonical위치문제로source/운영영향없음. 전체앱/DB테스트 새실행0.
+
+남은일: AI2 cursor 초안의 미완료검토/실제SQL/최종범위검증. GPU3090 primary/fallback의 최종연결구성은 최신사용자요구를 따라 확정해야 하며, 이번은 연결시험만완료. 기존Oracle감시+알림범위유지. 25k는combined가정이었으며긴입력실측미실행. 원고정once/native드릴재실행금지.
+
+다음agent정확한명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-ai2-capacity-cursor-20261025
+git status --short
+cat docs/operations/2026-10-25-gpu3090-tailscale-test.md
+git diff -- lib/crawl/consumers/second.ts tests/pipeline-consumer.test.ts tests/pipeline-consumer-gates.test.ts
+```
+
+## AI2 direct implementation resumed — 2026-10-25 사용자 최신 지시
+
+현재 목표: AI2를 abcLLM API 없이 GPU3090 직접 주 모델, Supa 직접 대체 모델로 연결한다. 두 모델 thinking 비활성화. 사용자에게 25k는 입력+출력 합계라는 가정을 명시했다. 용량 대기 시 제한된 fallback 전이를 구현하되 이미 dispatched/indeterminate인 요청에는 중복 호출을 만들지 않는다. 기존 cursor 초안도 마무리한다. AI2에 대한 구현 중단은 최신 사용자 지시로 해제되었다. Oracle는 감시+알림 범위 유지.
+
+작업 위치: 이 격리 WT `nomorevibe-ai2-capacity-cursor-20261025`, base fadb527c. 원 사용자 WT는 읽기 전용. 스킬 사용 금지. 기존 완료 복구드릴/once 재실행 금지. 현재 소스/테스트 변경은 기존 cursor 3파일뿐이며 직접 연결은 아직 구현/배포되지 않았다. 운영 변경0. 이미 확인한 단순 GET200은 추론 성공 증거가 아니다. 새 테스트 실행0.
+
+설계 검토: AI2 direct는 abcLLM endpoint/key/env 의존을 제거한다. 기존 item ownership/atomic dispatch/논리표 fencing/물리 group/terminal 정산을 보존한다. GPU3090 C50000, Supa C98304를 요청25k와 혼동하지 않는다. 25k request enforcement는 실제 tokenizer 입력+출력상한 검증이 필요하다. 다음: `sed -n '650,780p' lib/llm/capacity-repository.ts`; `cat lib/crawl/second-review-serving-contract.ts`; `git diff -- lib/crawl/consumers/second.ts`.
+
+## Scope and model review — 2026-10-25T14:35:44+00:00 / Oracle 알림만·주/대체모델 연결 판정
+
+사용자가 Oracle2번은감시+Telegram알림만이면된다고명시하고subagent추가독립확인을요청했다. gpt-6.1-sol/xhigh/forknone agent2개(oracle_alert_scope_review,ai2_model_route_review)를추가해source/로컬증거만검토했고모두완료다. 스킬사용0/agent운영0. R7의추가AI2자동재시도/재시작은제외하며기존웹/monitor/native recover설정을변경하지않았다. 이미감지는되고 일부stage가pipeline_alarm한signature로합쳐지는알림공백이있어단계별새incident가실제남은범위다. 복구아이디어는미구현이었음을명시했다.
+
+모델점검: 운영AI2컨테이너출발GEThealth/models/metrics 모두GPU3090·실제Supa에서200. 23:33:57KST GPUqwen3.8-flash-next/C50000, SupaInferact/Qwen3.8-27B-NVFP4/C98304,각running0/waiting0. metadata/순간유휴증거이며추론속도·품질·AI2결과저장시험이아니다. 잘못DB주소를Supa로가정한초기probe는실패자료보존후SSH의supaaliasDNS실주소로교정했다. SupaSSH255는별도접근실패이며직접HTTP정상은확인했다. live59636도terminal,우리livehandle0이다.
+
+운영capacity/serving second-review계약은Supa abcllm한개뿐. GPUlocal계약은다른작업전용. capacitydeferred는fallback기록이전이라대체가발화하지않고cursor결함도모델교체로없어지지않는다. 기존abcllm계약endpoint를검증해직접engine으로쓰는소스가능성은있어무조건새provider필수/일반OpenAIterminal불가라고단정하지않는다. 인증/wire/model/C/물리group한도/요청단일소유/정산검증이필요하다.
+
+변경파일은canonical새문서2개 `docs/operations/2026-10-25-ai2-model-route-feasibility.md`, `docs/operations/2026-10-25-oracle-alert-scope-review.md`, PR분리계획과두ownedhandoff다. 원userWT/source/test/DBrow/정책/설정/서비스/배포/모델POST/Telegram전송/commit/PR변경0이다. raw0700/0600+fsync와SHAmanifest는`/Users/jr/.local/state/nomorevibe-reliability-20261025/model-route-check-20261025T142942Z`에보존했다. 초기없는path/glob탐색실패는local읽기뿐이고모든원자료를보존한다. 앱/통합테스트는새실행0,모든상태는정확한실측/소스범위를구분했다.
+
+남은구현은기존R1초안리뷰/실제SQL/최종검증,사용자요구모델경로의검토가능한최소설계/실제시험이다. 운영설정은바꾸지않았다. 재개지시전임의모델전환/정규배포/assist복원/Oracle중복시작을하지않는다.
+
+다음읽기명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery
+cat docs/operations/2026-10-25-oracle-alert-scope-review.md
+cat docs/operations/2026-10-25-ai2-model-route-feasibility.md
+```
+
+## Live measurement — 2026-10-25T14:23:46+00:00 / 사용자 “실측해” 완료
+
+사용자가 운영 실측을 명시해 읽기 관측을 수행했다. 스킬/추가 agent 없이 root만 진행했고 source/test/설정/DB row/서비스 변경·복구 요청·모델 호출·배포·commit/PR0이다. 기존 중단은 구현/운영 mutation에 유지한다. 우리 live shell handle0이며 primary92593/Oracle29622·61121/fleet54134·16020/progress40432는 모두 terminal이다.
+
+실제 primary5회/120.602초:23:17:45–23:19:45KST AI2 pending264→264/reviewed0, 예약4/예약만료4/dispatch0/settle0, 직전15분 예약28/만료28. consumer동일boot/running/capacityOPEN/unknown0. 별도23:21:47 monitor는waiting266/second no_progress만alarm·liveness0·scheduler정상이다. Oracle19감시 active/PID동일/NRestarts0, pipeline_alarm/actionable0/attempts[]이고AI2processok다. 감지 실패나 Telegram 미전송 고장으로 확대하지 않는다.
+
+정규18서비스/23런타임전부be71/running. reviewer2곳headroomSHA8fc22…가요구4cabb…와달라6assist dispatchfalse는보호조치다. 웹6개Docker healthnull은unhealthy가아니다. 기존배포후observer자동호출은이미있어R9의‘새관측자동화필요’표현을정정한다. private준비복원도구mini-reviewer와실측mini-reviewer-standby대상이름불일치도읽기로확인했으며실행하지않았다.
+
+결과/한계/증거는 canonical `docs/operations/2026-10-25-live-ai2-recovery-measurement.md`에 기록했다. raw0700/0600+fsync `/Users/jr/.local/state/nomorevibe-reliability-20261025/live-measure-20261025T141654Z`와evidenceSHAmanifest를보존한다. 새앱테스트는0, workerprogress exit2는alarm계약이다. 최초prefix부분집계는정규identity로교정했고원자료보존, 기존명령의없는path/glob탐색실패는로컬읽기실패였으며운영변경0이다.
+
+남은R1은기존3파일초안의리뷰·실제SQL·최종회귀/PR및안전한정규배포경로검토다. R7/R9는이번실측에맞춰범위를확정하며재시작/중지해제로원인을덮지않는다. 다음agent는 사용자구현재개지시전source/배포/복원을시작하지않는다.
+
+다음정확한읽기:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery
+cat docs/operations/2026-10-25-live-ai2-recovery-measurement.md
+cat /Users/jr/.local/state/nomorevibe-reliability-20261025/live-measure-20261025T141654Z/verified-summary.safe.json
+git -C /Users/jr/Desktop/projects/nomorevibe-ai2-capacity-cursor-20261025 diff -- lib/crawl/consumers/second.ts tests/pipeline-consumer.test.ts tests/pipeline-consumer-gates.test.ts
+```
+
+## Priority correction — 2026-10-25T14:11:48+00:00 / 운영 자동화·현재 장애 해결 우선
+
+사용자가 PR 최우선은 운영 자동화와 현재 발생 문제 해결이라고 명시했다. 스킬·추가 agent 없이 root가 progress classifier/role supervisor/Oracle gateway/정규 deploy run을 직접 검토했다. 구현 중단을 유지하며 source/test/운영 변경0, 새 테스트/PR/배포0이다.
+
+수정: PR 분리 계획의 최상위 기준을 R1 AI2 실제 정체→R7 원인별 자동복구→새 R9 배포 후 조건부 정상화 자동화로 바꿨다. 그 다음 R2 web/R3 worker/R6 보관본/R5 DB/R4 host/R8 성능이다. R7은 독립 consumer의 restartEligible=false/Oracle pipeline_alarm 비복구라는 의도된 경계를 제거하지 않고 해당 consumer에 맞는 제한 경로를 검토한다. R9는 기존 release gate를 유지하며 원래 허용된 assist dispatch 복원·관측을 연결하는 실제 코드/회귀 단위이고 아직 미구현이다. 시험·문서는 각 PR 완료 조건에 포함한다.
+
+기존 상태/정확한 재개 읽기 명령·실제 테스트 결과는 아래 기록을 보존한다. 이번 파일 수정은 canonical 계획과 두 owned handoff뿐이며 원 user checkout과 R1 3파일 초안은 그대로다. 사용자 재개 전 구현/운영을 시작하지 않는다.
+
+## Status report — 2026-10-25T14:08:54+00:00 / 사용자 요청에 따른 운영 우선순위 PR 정리
+
+사용자가 어디까지 했고 무엇이 남았는지 운영에 중요한 순서로 PR 단위 보고를 요청했다. 스킬·추가 agent 없이 root가 소스/기존 테스트 결과/GitHub PR/PENDING/페이지 감사/마지막 운영 handoff를 직접 대조했다. 구현 중단은 유지한다. 신규 테스트·모델/DB/서비스 조회·배포·장애 주입·commit/push/PR 생성은 0이다.
+
+PR659–662 MERGED, PR663 OPEN/미병합을 이번 gh 조회로 재확인했다. R1 source/test3파일은 여전히 미커밋 초안이고 별도 R1 PR은 없다. 운영 사실은 마지막 12:44Z 실측 기준이지 이번 실시간 상태 확인이 아니다. 원 user checkout 변경0, source/test 추가 수정0이다.
+
+갱신 파일: canonical `docs/superpowers/plans/2026-10-25-reliability-remaining-pr-split.md`와 두 owned WT의 이 handoff. 기존 R 식별자를 유지하며 운영 우선순위 R1(AI2)→R7(Oracle)→R2(web)→R3(worker)→R6(보관본/PITR)→R5(DB)→R4(host)→R8(목표4 성능)을 기록했다. 공통 정규 fleet 배포는 빈 PR 대신 실제 영수증으로 연결한다. 보관본 복구 확인은 DB/호스트 운영 장애 창의 선행조건이며, 긴 Oracle 관측은 후속 작업과 함께 실제 결과만 기록한다.
+
+앱/DB 테스트는 새로 실행하지 않았다. 기록한 문서의 두 owned WT git diff --check는 실제 EXIT0이었다. 기존 테스트 한계/미검증과 source 초안은 바로 아래 STOP 기록을 따른다. 재개 전 다음 agent는 위 계획과 아래 R1 diff 읽기 명령만 참고하며 구현을 자동 재개하지 않는다.
+
+## USER STOP — 2026-10-25T14:04:44Z / 구현 중단·PR 분리 상태 보고
+
+사용자가 **“멈추고, 지금 PR 어떻게 나눠졌는지 보고해”**라고 지시했다. 구현·테스트 신규 실행·PR 생성·배포·장애 주입을 중단한다. 재개 지시 전에는 아래 다음 명령도 실행하지 않는다. 원 사용자 checkout은 수정하지 않았다.
+
+현재 실제 GitHub 상태를 다시 조회했다: PR659(자동복구/Oracle/mini scheduler), PR660(native host reboot 경계), PR661(publisher capacity 유보 보존), PR662(과거 owner 증거 기반 LLM capacity 회수)는 MERGED다. PR663은 검증 문서만의 OPEN/Ready/미병합이다. R1–R7은 후속 예정 단위이며 실제 GitHub 번호가 없다. 최신 조회 30개 PR에 R1 branch PR은 없었다. 새 commit/push/PR/운영 변경은 0이다.
+
+R1 작업은 별도 WT `/Users/jr/Desktop/projects/nomorevibe-ai2-capacity-cursor-20261025`, branch `codex/ai2-capacity-cursor-20261025`, base fadb527cbbb7891cf95ad4f51116d3ec43c21fab에 미커밋 초안으로 보존한다. 수정 source/test는 `lib/crawl/consumers/second.ts`, `tests/pipeline-consumer.test.ts`, `tests/pipeline-consumer-gates.test.ts` 3개다. 예약 전용 keyset/정상 cursor 분리와 기존 claim 검증 경계를 유지하는 설계다. 앞선 7파일97PASS/변경3파일 ESLint EXIT0는 실제 실행 결과이며 최종 완료 검증은 아니다.
+
+중단 시 실행 중이던 단일 테스트 session94173의 기존 결과만 회수했다: `npx vitest run tests/pipeline-consumer.test.ts -t 'wraps the normal scan at EOF'`는 EXIT0, 1PASS/28skip/536ms다. 예상 RED가 아니었으므로 실패했다고 기록하지 않는다. backend 리뷰의 normal EOF wrap P2 지적과 이 회귀의 재현 적절성은 아직 정리되지 않았다. 이 지적에 대한 추가 source 수정은 하지 않았다. 새 wrap/100-attempt 경계 테스트 전체도 아직 재실행하지 않았다. 실제 PostgreSQL JOIN 선택/음성 사례/실행계획은 미검증이다. 로컬 Colima/고정 PG17 이미지의 읽기 확인만 했으며 새 fixture/container/SQL 실행은 0이다.
+
+세 검토 agent는 모두 종료 상태다. 기존 테스트 handle도 terminal이며 현재 우리 실행 중 운영/테스트 handle은 0이다. native 완료 시험·once·복구 예산 및 원 LLM 설정은 보존했다. 수정은 기존 3 source/test 초안과 이 인계 기록 및 PR 분리 계획의 상태 정정뿐이다. 실패했던 단순 cursor rewind 접근, 하네스 OOM/SQL mock 실패와 실제 RED→GREEN 이력은 아래 14:00 checkpoint에 보존한다.
+
+남은 일: 사용자 재개 후 R1 리뷰 지적/회귀 타당성 확인→격리 실제 SQL→최종 범위 검증·문서·실제 PR/필수 CI. 그 뒤 정규 fleet 배포 선행조건을 확인하고 R2–R7을 각각 수행한다. 목표4 성능의 남은 새 릴리스 검증도 별도 유지한다. 전체 목표는 미완료다.
+
+다음 agent의 정확한 읽기 명령(재개 지시 이후):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-ai2-capacity-cursor-20261025
+git status --short
+git diff -- lib/crawl/consumers/second.ts tests/pipeline-consumer.test.ts tests/pipeline-consumer-gates.test.ts
+sed -n '1,48p' /Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery/docs/CODEX_HANDOFF.md
+cat /Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery/docs/superpowers/plans/2026-10-25-reliability-remaining-pr-split.md
+```
+
 # 2026-10-25 — 웹·백엔드 자동복구와 Oracle 독립 감시
 
 ## 2026-10-25 — 역사 owner + direct native boot V4 (운영 실행0)

@@ -3,12 +3,14 @@ import { runFirstReviewConsumer } from '@/lib/crawl/consumers/first';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { createProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { DEFAULT_CRAWL_SETTINGS } from '@/lib/crawl/settings-schema';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 
 /*
  * PR06e AI1/AI2 consumer 의 claim 전 관문 — provider 회로와 host 장부 admission. lifecycle 은 경계만 흉내 낸다(실제 claim 은 integration).
  * 관문이 없으면 lifecycle 인자가 지금과 같고, 관문이 미루면 lifecycle(=claim)을 부르지 않는다.
  */
-const mocks = vi.hoisted(() => ({ pages: [] as unknown[][], select: vi.fn(), limit: vi.fn(), sleep: vi.fn(), first: vi.fn(), second: vi.fn(),
+const mocks = vi.hoisted(() => ({ pages: [] as unknown[][], reservedPages: [] as unknown[][], select: vi.fn(), limit: vi.fn(), reservedLimit: vi.fn(), sleep: vi.fn(), first: vi.fn(), second: vi.fn(),
   settings: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { select: mocks.select }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: () => null }));
@@ -30,9 +32,14 @@ function replies(values: Reply[], written: object) {
   };
 }
 beforeEach(() => {
-  vi.resetAllMocks(); mocks.pages = [];
+  vi.resetAllMocks(); mocks.pages = []; mocks.reservedPages = [];
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
-  mocks.select.mockImplementation(() => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: mocks.limit }) }) }) }));
+  mocks.reservedLimit.mockImplementation(async () => mocks.reservedPages.shift() ?? []);
+  mocks.select.mockImplementation((fields: Record<string, unknown>) => ({ from: () => ({
+    innerJoin: () => ({ where: () => ({ orderBy: () => ({ limit:
+      new PgDialect().sqlToQuery(fields.reserved as SQL).params[0] === false ? async () => [] : mocks.reservedLimit }) }) }),
+    where: () => ({ orderBy: () => ({ limit: mocks.limit }) }),
+  }) }));
   mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true });
 });
 
@@ -80,12 +87,25 @@ it('AI1 judgment, input and no-call results never open the circuit', async () =>
 it('AI2 holds only the failing provider and keeps claiming the healthy provider', async () => {
   const logs: string[] = [];
   const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: (event, fields) => logs.push(`${event}:${fields.key}`) });
-  mocks.pages = [[{ id: 1, fallback: false, provider: 'grok-cli' }, { id: 2, fallback: false, provider: 'abcllm' },
-    { id: 3, fallback: false, provider: 'grok-cli' }, { id: 4, fallback: false, provider: 'abcllm' }]];
+  mocks.pages = [[{ id: 1, fallback: false, provider: 'grok-cli', model: 'grok' }, { id: 2, fallback: false, provider: 'abcllm', model: 'fallback-model' },
+    { id: 3, fallback: false, provider: 'grok-cli', model: 'grok' }, { id: 4, fallback: false, provider: 'abcllm', model: 'fallback-model' }]];
   mocks.second.mockImplementation(replies([{ ok: false, error: 'budget' }, { ok: true }, { ok: true }], { state: 'recorded' }));
   expect(await runSecondReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 3, recorded: 3, skipped: 0, deferred: 1 });
   expect(mocks.second.mock.calls.map(call => call[0].secondReviewId)).toEqual([1, 2, 4]);
-  expect(logs).toEqual(['provider_circuit.opened:ai2:grok-cli']);
+  expect(logs).toEqual(['provider_circuit.opened:ai2:grok-cli:grok']);
+});
+
+it.each([false, true])('AI2 isolates a failing direct model from the same provider fallback (reserved=%s)', async reserved => {
+  const logs: string[] = [];
+  const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: (event, fields) => logs.push(`${event}:${fields.key}`) });
+  const direct = { id: 1, fallback: false, provider: 'abcllm', model: 'gpu3090-qwen' };
+  mocks.pages = [[...(reserved ? [] : [direct]), { id: 2, fallback: true, provider: 'abcllm', model: 'fallback-model' },
+    { ...direct, id: 3 }, { id: 4, fallback: true, provider: 'abcllm', model: 'fallback-model' }]];
+  if (reserved) mocks.reservedPages = [[{ ...direct, reserved: true, ordinal: 1 }]];
+  mocks.second.mockImplementation(replies([{ ok: false, error: 'gateway_error' }, { ok: true }, { ok: true }], { state: 'recorded' }));
+  expect(await runSecondReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 3, recorded: 3, skipped: 0, deferred: 1 });
+  expect(mocks.second.mock.calls.map(call => call[0].secondReviewId)).toEqual([1, 2, 4]);
+  expect(logs).toEqual(['provider_circuit.opened:ai2:abcllm:gpu3090-qwen']);
 });
 
 it.each(['ai1', 'ai2'] as const)('%s host admission defers before any claim, logs the reason, and releases an admitted slot even when the item throws', async stage => {

@@ -5,7 +5,7 @@ import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { pipelineItemLeases, secondReviews, type SecondReview } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { assertJobLeaseAtWallTime, JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
+import { assertJobLeaseAtWallTime, JobLeaseLostError, requestJob, type JobLease } from "@/lib/jobs/control";
 import { assertItemLease, claimItemLease, readItemStage, releaseItemLease, renewItemLease, type ItemStageGuard } from "@/lib/jobs/items/repository";
 import { itemBindingHash, itemBindingSchema, itemOwnerSchema, itemWorkKey, type ItemLease, type ItemOwner } from "@/lib/jobs/items/types";
 import { assertReplayJobAdmission, assertReplayItemExecutionAllowed, registerReplayItemFinalAuthority, registerReplayItemRelease, reserveReplayItemCall } from "@/lib/operations/pipeline-replay-execution";
@@ -20,7 +20,8 @@ import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomain
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
 import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
-  lockCliModelCapacityDispatch, finishCliModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+  lockCliModelCapacityDispatch, finishCliModelCapacityDispatch, withdrawUndispatchedAi2ItemForFallback,
+  type Ai2PreDispatchFallbackReason } from "@/lib/llm/capacity-repository";
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch,
   type CliModelDispatch } from "@/lib/llm/capacity";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -28,6 +29,7 @@ import { resolveAi2GatewayServingContract, ai2GatewayServingContractHash } from 
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract } from "./review-cli-call";
+import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
 export type SecondReviewReceipt = Readonly<{
@@ -74,7 +76,7 @@ function snapshotModelIntent(value: SecondReviewModelIntent, transport: "gateway
       sourceRevisionHash: z.string().regex(/^[a-f0-9]{64}$/), validUntil: z.date() }).strict(),
   }).strict().parse(snapshot);
   if (checked.binding.stage !== "ai2" || (transport === "cli" ? !isReviewCliProvider(checked.binding.reviewer.provider)
-    : checked.binding.reviewer.provider !== "abcllm")
+    : !["abcllm", "local-direct"].includes(checked.binding.reviewer.provider))
     || checked.binding.inputHash !== checked.input.inputHash
     || checked.binding.sourceRevisionHash !== checked.input.sourceRevisionHash)
     throw new Error("invalid_second_review_model_intent");
@@ -341,12 +343,18 @@ async function claimReview(id: number, authority: ClaimAuthority,
           || cli.call.model !== binding.reviewer.model || cli.call.inputHash !== context.input.inputHash || !reviewCliContractMatches(cli.call, contract))
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
       } else {
-        const gateway = reserved as ModelReservation, serving = resolveAi2GatewayServingContract(binding.reviewer.model);
+        const gateway = reserved as ModelReservation, serving = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
         if (!serving || serving.model !== binding.reviewer.model || gateway.call.model !== binding.reviewer.model
           || gateway.call.inputHash !== context.input.inputHash
           || gateway.call.servingContractHash !== ai2GatewayServingContractHash(serving)
           || gateway.call.totalTokenBound !== serving.totalTokenBound)
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        if (serving.provider === "local-direct") {
+          const route = capacity?.policy?.routes.find(route => route.routeId === "second-review"
+            && route.provider === serving.provider && route.model === serving.model);
+          if (!route || route.groupId !== serving.physicalGroup || route.providerBudgetId !== serving.backendId)
+            throw new ModelCapacityDeferredError("provider_contract_unavailable");
+        }
       }
     }
     let ownership: SecondReviewReceipt["ownership"];
@@ -369,7 +377,7 @@ async function claimReview(id: number, authority: ClaimAuthority,
         && route.provider === binding.reviewer.provider && route.model === binding.reviewer.model);
       if (!route) throw new ModelCapacityDeferredError("unmapped");
       if (!reserved) {
-        if (authority.kind === "item" && authority.purpose === "consumer" && binding.reviewer.provider === "abcllm")
+        if (authority.kind === "item" && authority.purpose === "consumer" && ["abcllm", "local-direct"].includes(binding.reviewer.provider))
           throw new SecondReviewModelReservationRequired({ binding, rowIdentityHash: rowIdentityHash(row),
             failureCount: row.failureCount, input: context.input, owner: authority.owner });
         // CLI 표는 계약이 있을 때만 slot 으로 간다. 운영 resolver 는 null 이라 지금은 그대로 미룬다(05c-1 과 같은 결과).
@@ -403,7 +411,7 @@ async function claimReview(id: number, authority: ClaimAuthority,
         rowIdentityHash: rowIdentityHash(row), failureCount: row.failureCount, inputPolicyHash: context.input.policyHash,
         item: { workKey: lease.workKey, owner: lease.owner, token: lease.token, stageEpoch: lease.stageEpoch,
           itemEpoch: lease.itemEpoch, bindingHash: lease.bindingHash },
-        routeId: "second-review", provider: "abcllm", model: reserved.call.model, wireHash: reserved.call.wireHash,
+        routeId: "second-review", provider: reserved.identity.provider as "abcllm" | "local-direct", model: reserved.call.model, wireHash: reserved.call.wireHash,
         servingContractHash: reserved.call.servingContractHash, totalTokenBound: reserved.call.totalTokenBound,
         chargedTokens: reserved.call.totalTokenBound });
       // Every dispatch/event wait precedes this last check of the original item.
@@ -483,4 +491,59 @@ export async function reserveSecondReviewItemReplayCall(receipt: SecondReviewIte
     await assertSecondReviewOwnership(tx, stages.ai2, receipt, row);
     await reserveReplayItemCall(tx, receipt.ownership.lease, request);
   });
+}
+
+class WaitingFallbackRefused extends Error {}
+
+/** Capacity waiting is a routing change, never a failed or completed model
+ * verdict. Withdrawal, fresh domain checks, fallback and wakeup commit together. */
+export async function fallbackWaitingSecondReview(intent: SecondReviewModelReservationRequired, requestId: string,
+  reason: Ai2PreDispatchFallbackReason = "capacity_wait_timeout"): Promise<boolean> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  if (!(intent instanceof SecondReviewModelReservationRequired)) throw new Error("invalid_second_review_model_intent");
+  const expected = snapshotModelIntent(intent.intent), { binding, owner } = expected;
+  if (binding.reviewer.provider !== "local-direct" || binding.fallbackForId !== null || binding.vote !== binding.secondReviewId) return false;
+  const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: "second", pool: "reviewer",
+    routeId: "second-review", provider: binding.reviewer.provider, model: binding.reviewer.model,
+    workKey: `ai2:${binding.candidateId}:${binding.vote}:${itemBindingHash(binding)}` });
+  try {
+    return await onPrimary(() => db.transaction(async tx => {
+      const capacity = await withdrawUndispatchedAi2ItemForFallback(tx, { requestId, identity,
+        target: { candidateId: binding.candidateId, vote: binding.vote }, reason });
+      if (!capacity) throw new WaitingFallbackRefused();
+      const stages = await lockPipelineInputStages(tx), stage = await ai2Stage(tx, stages.ai2);
+      if (stage.mode !== "items" || stage.writerContractVersion < 1) throw new WaitingFallbackRefused();
+      const context = await lockSecondReviewDomain(tx, binding.secondReviewId);
+      const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, binding.secondReviewId));
+      if (!context || !row || row.status !== "pending" || rowIdentityHash(row) !== expected.rowIdentityHash
+        || row.failureCount !== expected.failureCount || !isDeepStrictEqual(secondReviewBinding(context), binding)
+        || !isDeepStrictEqual(context.input, expected.input) || await chainIsBusy(tx, row)) throw new WaitingFallbackRefused();
+      if (reason === "primary_preflight_failed") {
+        const primary = resolveAi2GatewayServingContract(row.model!, row.provider!);
+        if (!primary || primary.provider !== row.provider || primary.model !== row.model) throw new WaitingFallbackRefused();
+      }
+      const attempted = await tx.select({ model: secondReviews.model }).from(secondReviews).where(and(
+        eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
+      const excluded = [...context.settings.secondReview.voters.map(voter => voter.model), ...attempted.map(vote => vote.model)];
+      const eligible = (context.settings.secondReview.fallbacks ?? []).filter(voter => voter.provider === "abcllm"
+        && !excluded.some(model => sameReviewModel(model, voter.model))
+        && capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
+        && (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
+          return serving?.provider === voter.provider && serving.model === voter.model; })());
+      const backup = eligible.find(voter => !sameUnderlyingModel(row.firstModel, voter.model)) ?? eligible[0];
+      if (!backup) throw new WaitingFallbackRefused();
+      await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,
+        publishedSlug: row.publishedSlug, trigger: row.trigger, signals: row.signals,
+        firstDecision: row.firstDecision, firstConfidence: row.firstConfidence, firstModel: row.firstModel,
+        firstAttemptId: row.firstAttemptId, inputHash: row.inputHash, generationKey: row.generationKey,
+        fallbackForId: row.id, failureCount: row.failureCount });
+      await tx.update(secondReviews).set({ status: "resolved", resolution: "fallback", resolvedAt: sql`clock_timestamp()`,
+        errorCode: reason, errorDetail: null }).where(and(eq(secondReviews.id, row.id), eq(secondReviews.status, "pending")));
+      await requestJob("second-review", tx);
+      return true;
+    }));
+  } catch (error) {
+    if (error instanceof WaitingFallbackRefused) return false;
+    throw error;
+  }
 }

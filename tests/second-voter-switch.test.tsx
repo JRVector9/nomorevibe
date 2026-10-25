@@ -28,6 +28,11 @@ beforeEach(() => {
 });
 
 describe('2차 표 선택지', () => {
+  it('현재 직접 모델의 provider를 게이트웨이로 바꾸지 않는다', () => {
+    const current = { provider: 'local-direct', model: 'qwen3.8-flash-next' };
+    expect(voterChoices(GATEWAY, current, null)[0]).toMatchObject({ ...current, value: 'local-direct|qwen3.8-flash-next' });
+    expect(parseVoterValue('local-direct|qwen3.8-flash-next')).toEqual(current);
+  });
   it('Grok·게이트웨이·Claude 를 묶어 보이고, 1차와 같은 모델은 막는다', () => {
     const choices = voterChoices(GATEWAY, settings.secondReview.voters[0], settings.firstReview.model);
     expect(choices.map((choice) => choice.group)).toEqual(expect.arrayContaining(['Grok CLI — 구독, 주간 한도', '사내 게이트웨이 — 한도 없음', 'Claude CLI — 구독 한도']));
@@ -48,6 +53,14 @@ describe('2차 표 선택지', () => {
 });
 
 describe('2차 표 바꾸기', () => {
+  it('직접 모델의 현재 선택은 보존하고 목록 밖 직접 모델 전환은 막는다', async () => {
+    mocks.settings.mockResolvedValue({ ...settings, secondReview: { ...settings.secondReview,
+      voters: [{ provider: 'local-direct', model: 'qwen3.8-flash-next' }] } });
+    expect(await switchSecondVoter(null, form('local-direct|qwen3.8-flash-next'))).toMatchObject({ message: expect.stringContaining('이미') });
+    expect(await switchSecondVoter(null, form('local-direct|other-engine'))).toHaveProperty('error');
+    expect(mocks.gateway).not.toHaveBeenCalled();
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
   it('고른 표 하나로 바꾸고, 대체와 기준값은 그대로 저장한다', async () => {
     expect(await switchSecondVoter(null, form('abcllm|[supa] Qwen3.8-27B-NVFP4'))).toMatchObject({ message: expect.stringContaining('Qwen3.8') });
     expect(mocks.save).toHaveBeenCalledWith({ secondReview: { ...settings.secondReview,

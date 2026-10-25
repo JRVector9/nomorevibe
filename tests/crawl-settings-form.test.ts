@@ -63,6 +63,13 @@ beforeEach(() => {
 });
 
 describe("검색 신호 편집", () => {
+  it("직접 AI2 모델을 선택된 제공자로 표시하고 저장할 때 보존한다", async () => {
+    const html = render({ ...twoSignals, secondReview: { ...twoSignals.secondReview,
+      voters: [{ provider: "local-direct", model: "qwen3.8-flash-next" }] } });
+    expect(html).toContain('<option value="local-direct" selected="">모델 서버 직접 연결</option>');
+    await saveCrawlSettings(null, submitted({ voterProvider0: "local-direct", voterModel0: "qwen3.8-flash-next" }));
+    expect(saveSettings.mock.calls[0][0].secondReview.voters).toEqual([{ provider: "local-direct", model: "qwen3.8-flash-next" }]);
+  });
   it("관리자가 500스타 이상 자동 승인 기준을 조정하고 기존 상한은 표시하지 않는다", async () => {
     const html = render(twoSignals);
     expect(html).toContain("자동 승인 최소 스타");

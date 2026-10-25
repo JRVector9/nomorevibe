@@ -15,6 +15,7 @@ import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from ".
 
 export type SecondReviewItemOutcome =
   | { state: "skipped"; reason: "stage_inactive" | "not_pending" | "input_changed" | "running" | "aborted" }
+  | { state: "rerouted" }
   | SecondReviewWriteResult;
 
 /** item 소유권의 lease 길이(ttlMs)와 연장 간격(renewEveryMs). 만료 시각은 claim·연장 때 DB clock_timestamp()+ttlMs 로 정한다. */
@@ -72,6 +73,7 @@ async function executeItem(input: {
       capacity = await import("./second-review-model-capacity");
       // The coordinator requires the actual fixed intent instance, not this reason.
       const admitted = await capacity.claimSecondReviewModelCapacity(error as SecondReviewModelReservationRequired, callerSignal);
+      if (!('claim' in admitted)) return { state: 'rerouted' };
       claimed = admitted.claim; dispatch = admitted.claim.dispatch; call = admitted.call;
     }
   }

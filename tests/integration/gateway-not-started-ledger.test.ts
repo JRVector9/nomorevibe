@@ -136,7 +136,7 @@ async function ai1(value = input(), candidateId = ++serial, who = owner) {
   return { value, call, dispatch, requested, candidateId };
 }
 async function ai2(value = input()) {
-  const call = prepareAi2GatewayCall(value, { model, timeoutMs: 2_000 }) as PreparedAi2GatewayCall;
+  const call = await prepareAi2GatewayCall(value, { model, timeoutMs: 2_000 }) as PreparedAi2GatewayCall;
   if (call.kind !== "prepared") throw new Error("actual_prepared_required");
   const id = ++serial;
   const review: Ai2ItemBinding = { stage: "ai2", candidateId: id, secondReviewId: id, vote: id, fallbackForId: null,
@@ -258,9 +258,11 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     await migrateThrough(126);
     const priorPendingCancellation = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    // First prove the original historical boundary through 0131. 0132 intentionally
+    // adds a separate AI2 provider branch to four of these CHECKs.
+    await migrateThrough(131);
     const [applied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    expect(applied.count).toBe(journal.entries.length);
+    expect(applied.count).toBe(journal.entries.filter(entry => entry.idx <= 131).length);
     const current = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     for (const name of [LEFT[0], ...UNTOUCHED.slice(0, 3)]) {
       const previous = inner(priorBoundary[name]);
@@ -288,6 +290,28 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     } finally { await step.unsafe("ALTER TABLE model_capacity_events DROP CONSTRAINT f2_pending_expected"); }
     for (const name of [LEFT[1], ...UNTOUCHED.slice(3).filter(name => name !== eventKind)])
       expect(current[name], `${name}: current unchanged CHECK`).toBe(priorBoundary[name]);
+
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const [latestApplied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    expect(latestApplied.count).toBe(journal.entries.length);
+    const latest = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const ai2Checks = [...LEFT, ...UNTOUCHED.slice(0, 2)];
+    const ai2Migration = readFileSync(path.join(root, "drizzle", `${journal.entries.find(entry => entry.idx === 132)!.tag}.sql`), "utf8");
+    for (const name of ai2Checks) {
+      const statement = ai2Migration.split("--> statement-breakpoint").find(sql => sql.includes(`conname='${name}'`))!;
+      const branch = /\$ai2_local\$([\s\S]*?)\$ai2_local\$/.exec(statement)?.[1];
+      expect(branch, `${name}: additive AI2 branch`).toBeDefined();
+      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
+      // Preserve the whole real 0131 predicate and compare PostgreSQL's own parse
+      // of exactly the additive branch, including both terminal and no-call paths.
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_ai2_expected CHECK ((${inner(current[name])}) OR (${branch}))`);
+      try {
+        const expected = await constraintDefs(step, ["f2_ai2_expected"]);
+        expect(latest[name], `${name}: entire 0131 predecessor`).toBe(expected.f2_ai2_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_ai2_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !ai2Checks.includes(name)))
+      expect(latest[name], `${name}: 0132 unchanged CHECK`).toBe(current[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 

@@ -6,6 +6,7 @@ import { buttonDashed, buttonQuiet } from "./Switch";
 type Model = { provider: string; model: string };
 
 const PROVIDERS = [
+  { value: "local-direct", label: "모델 서버 직접 연결" },
   { value: "abcllm", label: "사내 게이트웨이" },
   { value: "claude-cli", label: "Claude CLI" },
   { value: "grok-cli", label: "Grok CLI" },

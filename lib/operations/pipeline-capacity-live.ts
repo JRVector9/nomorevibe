@@ -32,6 +32,7 @@ const positive = integer.positive();
 /** 구간 시작 기준 ms. DB가 시간대 없는 UTC 벽시계 차이를 직접 계산한 값이다. */
 const offset = z.number().int().safe();
 const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli"]), model: text, canonicalModel: text }).strict();
+const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
 const decision = z.enum(["approve", "reject", "needs_review"]);
 const attempt = z.object({ id: positive, candidateId: positive, inputHash: hash,
   state: z.enum(["running", "succeeded", "failed", "superseded"]), failure: z.enum(["technical", "cancelled"]).nullable(),
@@ -66,7 +67,7 @@ export const liveCapacityArtifactSchema = z.object({
   identity: z.object({ promptVersion: text, rulesVersion: text, inputPolicyHash: hash, comparisonPolicyHash: hash,
     fullReviewPolicyHash: hash, reviewMode: z.enum(["off", "observe", "enforce"]), secondGateRequired: z.boolean(),
     concurrency: positive, settingsUpdatedMs: offset.nullable(),
-    models: z.object({ first: identity, second: z.array(identity).max(16), fallbacks: z.array(identity).max(16) }).strict() }).strict(),
+    models: z.object({ first: identity, second: z.array(secondIdentity).max(16), fallbacks: z.array(secondIdentity).max(16) }).strict() }).strict(),
   stageModes: z.array(z.object({ stage: z.enum(["fetch", "ai1", "ai2"]), mode: z.enum(["legacy", "draining", "items"]),
     epoch: positive, changedSinceStart: z.boolean() }).strict()).max(3),
   modelCapacity: z.object({ mode: z.enum(["disabled", "open", "draining"]), changedSinceStart: z.boolean() }).strict().nullable(),
@@ -84,7 +85,7 @@ export const liveCapacityArtifactSchema = z.object({
 export type LiveCapacityArtifact = z.infer<typeof liveCapacityArtifactSchema>;
 type Attempt = LiveCapacityArtifact["attempts"][number];
 type Vote = LiveCapacityArtifact["votes"][number];
-type Identity = z.infer<typeof identity>;
+type Identity = z.infer<typeof secondIdentity>;
 export type LiveCapacitySource = z.infer<typeof source>;
 
 function ensure(condition: unknown, code: string): asserts condition { if (!condition) throw new Error(code); }
