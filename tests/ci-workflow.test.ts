@@ -80,6 +80,7 @@ describe("CI 워크플로", () => {
       const proof = job.steps.find((step) => step.env?.IMAGE_DIGEST);
       expect(proof?.run).toBe("node scripts/ci-image-receipt.mjs");
       expect(proof?.env?.RELEASE_SHA).toBe("${{ github.sha }}");
+      expect(proof?.env?.IMAGE_KIND).toBe(name === "publish-worker-image" ? "worker" : "web");
       const upload = job.steps.find((step) => typeof step.with?.name === "string" && step.with.name.startsWith("release-image-"));
       expect(upload?.with?.name).toBe(`release-image-${name === "publish-worker-image" ? "worker" : "web"}-${"${{ github.sha }}"}`);
     }
