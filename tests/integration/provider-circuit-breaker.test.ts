@@ -255,7 +255,7 @@ it('opens after consecutive gateway failures, claims nothing while open, and clo
     const abort = new AbortController();
     const running = tracked(runSecondReviewConsumer({ owner, signal: abort.signal, circuits, report: state => { states.push(state); } }));
     try {
-      await vi.waitFor(() => expect(logs).toEqual([{ event: 'provider_circuit.opened', key: 'ai2:abcllm', failures: 2, error: 'gateway_error', openMs: 8_000 }]),
+      await vi.waitFor(() => expect(logs).toEqual([{ event: 'provider_circuit.opened', key: `ai2:abcllm:${model}`, failures: 2, error: 'gateway_error', openMs: 8_000 }]),
         { timeout: 10_000, interval: 50 });
       // 다음 차례(5초 쉰 뒤)도 아직 열려 있다 — 그 차례가 hint 를 읽고 다시 쉴 때까지 기다린 뒤 본다
       await vi.waitFor(() => { expect(states.filter(state => state === 'polling')).toHaveLength(2); expect(states.at(-1)).toBe('idle'); },
