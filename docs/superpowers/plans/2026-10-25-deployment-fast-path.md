@@ -14,7 +14,7 @@
 - [x] Scope agent: `scripts/ops/deployment_scope.py`, `tests/test_deployment_scope.py`. 실제17앱 등록부·ancestor가 증명된 두 tree 차이·rename 양쪽·실제 혼합 baseline을 처리한다. 좁힘 근거가 없으면 전체 대상으로 복귀하며 사용자 대상 옵션은 확장만 허용한다. 실행: `python3 -m unittest discover -s tests -p test_deployment_scope.py`.
 - [x] Git runner agent: `scripts/ops/deploy_git_apps.py`, `tests/test_deploy_git_apps.py`. text/maintenance mini 두 개 → M3 두 개 → scheduler/connect 두 개, 최대 동시2·같은 역할 예비 먼저·후속 wave 실패 중단. worker5는 공통 immutable image로 갱신하고 scheduler 실제2복제본·전체 설정·실제 health를 보존한다. connect는 Git source manifest로 출처를 검증한다. 완료 단계 durable receipts와 한 번 실행 marker를 남기고 자동 재시도하지 않는다. 실행: `python3 -m unittest discover -s tests -p test_deploy_git_apps.py`.
 - [x] Root integration: `scripts/ops/deploy_release.py`, `scripts/ops/release_runtime.py`, 대응 Python tests, package scripts/기본 운영 명령·runbook·AGENTS·handoff. no-op은 credential/API 호출 전 종료. CI check와 필요한 이미지 준비만 기다리고 cache job을 기다리지 않는다. 각 앱의 정확한 기존 설정·release/image·Swarm spec을 보존해 변경 대상은 새 버전, 나머지는 원 버전을 검증한다. 새 DB/catalog 변경은 자동 생략하지 않으며 기존 migration 증명을 요구한다. 장기 관측은 읽기 전용 별도 작업으로 둔다.
-- [ ] Integration/review: 로컬 관련 회귀를 실제 RED→GREEN으로 확인하고 동일 전체 suite를 agent마다 반복하지 않는다. 최종 source에 필요한 Node/Python/workflow 회귀·정적검사 및 필수 PR CI 한 건을 공통 증거로 사용한다. 승인된 변경을 PR로 main 반영하고 실제 결과·제한을 보고한다. 이 운영 도구/CI 변경 자체로 런타임 앱을 불필요하게 재배포하지 않는다.
+- [x] Integration/review: 로컬 관련 회귀를 실제 RED→GREEN으로 확인하고 동일 전체 suite를 agent마다 반복하지 않는다. 최종 source에 필요한 Node/Python/workflow 회귀·정적검사 및 필수 PR CI 한 건을 공통 증거로 사용한다. 승인된 변경을 PR로 main 반영하고 실제 결과·제한을 보고한다. 이 운영 도구/CI 변경 자체로 런타임 앱을 불필요하게 재배포하지 않는다.
 
 ## Verification cases
 
@@ -27,3 +27,5 @@
 - 완료 영수증 없이 재실행하거나 once marker를 재사용하지 않는다. 예약된 장기 관측을 실행 완료로 기록하지 않는다.
 
 코드·DB·원장 안전 관문을 삭제하지 않는다. 독립 사람 holdout/apply=false·기존 h6 관측·원 미확정 회수/모델 종료/생산자 재등록은 이번 작업으로 재실행하지 않는다.
+
+실제 완료: PR653/654 병합, 최종 코드 main64a8868d·PR CI40149298374·main CI40149879165 성공. 실제 GitHub ZIP/immutable image readiness 및 기존 private registry 관문을 읽기 전용으로 통과했다. 새 런타임 배포와 단축 실측은 수행하지 않았다. 상세 영수증과 후속 명령은 최신 handoff에 기록했다.
