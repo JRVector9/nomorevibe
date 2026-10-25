@@ -1,21 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { deferredRoutes, parsePipelineControlArgs, planPipelineControl, usedModelRoutes, type ControlSnapshot, type ModelEnv,
+import { deferredRoutes, modelRouteContracts, parsePipelineControlArgs, planPipelineControl, usedModelRoutes, type ControlSnapshot, type ModelEnv,
   type TransitionCommand } from "@/lib/operations/pipeline-control";
+import type { Ai2DirectServingContract } from "@/lib/crawl/second-review-serving-contract";
 
 // 이 WT의 serving 계약 resolver는 모두 null이다. served에 넣은 model만 계약이 있는 배포처럼 답하게 한다.
 const mocks = vi.hoisted(() => {
   const served = new Set<string>();
+  const ai2Contracts = new Map<string, unknown>();
   const literal = (schema: unknown, key: string) => (schema as { shape: Record<string, { value: unknown }> }).shape[key].value;
   const gateway = (schema: unknown, model: string) => served.has(model) ? { version: 1, protocol: literal(schema, "protocol"),
     routeId: literal(schema, "routeId"), provider: "abcllm", model, responseModel: model, deploymentRevision: "pr06d",
     endpoint: "https://gateway.test/v1/chat/completions", totalTokenBound: 4096 } : null;
-  return { served, gateway };
+  const ai2 = (model: string, provider: string = "abcllm") => {
+    const key = JSON.stringify([provider, model]);
+    if (ai2Contracts.has(key)) return ai2Contracts.get(key);
+    return provider === "abcllm" && served.has(model) ? { version: 1, protocol: "abcllm-raw-total-bound-v1",
+      routeId: "second-review", provider, model, responseModel: model, deploymentRevision: "pr06d",
+      endpoint: "https://gateway.test/v1/chat/completions", totalTokenBound: 4096 } : null;
+  };
+  return { served, gateway, ai2, ai2Contracts };
 });
 vi.mock("@/lib/crawl/agent-review-serving-contract", async load => { const m = await load<typeof import("@/lib/crawl/agent-review-serving-contract")>();
   return { ...m, resolveAi1GatewayServingContract: (model: string) => mocks.gateway(m.ai1GatewayServingContractSchema, model) }; });
 vi.mock("@/lib/crawl/second-review-serving-contract", async load => { const m = await load<typeof import("@/lib/crawl/second-review-serving-contract")>();
-  return { ...m, resolveAi2GatewayServingContract: (model: string) => mocks.gateway(m.ai2GatewayServingContractSchema, model) }; });
+  return { ...m, resolveAi2GatewayServingContract: mocks.ai2 }; });
 vi.mock("@/lib/llm/text-profile-serving-contract", async load => { const m = await load<typeof import("@/lib/llm/text-profile-serving-contract")>();
   return { ...m, resolveTextProfileServingContract: (model: string) => mocks.gateway(m.textProfileServingContractSchema, model) }; });
 vi.mock("@/lib/llm/search-verify-serving-contract", async load => { const m = await load<typeof import("@/lib/llm/search-verify-serving-contract")>();
@@ -86,7 +95,60 @@ const policyFor = (routes: readonly (readonly [string, string, string])[]): Mode
 const capacity = (mode: "draining" | "open", policy: ModelCapacityPolicy) =>
   ({ ...snapshot().capacity, mode, revision: 2, policy, policyHash: modelCapacityPolicyHash(policy) });
 
-beforeEach(() => { mocks.served.clear(); });
+beforeEach(() => { mocks.served.clear(); mocks.ai2Contracts.clear(); });
+
+const direct: Ai2DirectServingContract = { version: 1, protocol: "ai2-direct-openai-chat-v1", routeId: "second-review",
+  provider: "local-direct", model: "direct-ai2", responseModel: "direct-engine", deploymentRevision: "direct-v1",
+  endpoint: "http://gpu.test/v1/chat/completions", tokenizerEndpoint: "http://gpu.test/tokenize",
+  backendId: "local-backend", physicalGroup: "gpu-engine", totalTokenBound: 65_536,
+  requestTokenBound: 32_000, maxOutputTokens: 10_000 };
+const directUse = { routeId: "second-review", provider: "local-direct", model: direct.model };
+function directPolicy(): ModelCapacityPolicy {
+  const policy = policyFor([...IN_USE, ["second-review", "local-direct", direct.model]]);
+  return { ...policy, providerLimits: { ...policy.providerLimits, [direct.backendId]: 4 },
+    groupLimits: { ...policy.groupLimits, [direct.physicalGroup]: 4 }, routes: policy.routes.map(route =>
+      route.provider === "local-direct" ? { ...route, providerBudgetId: direct.backendId, groupId: direct.physicalGroup } : route) };
+}
+
+describe("AI2 direct provider reopen contracts", () => {
+  const open = ["capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"];
+  const key = JSON.stringify([direct.provider, direct.model]);
+  it("reopens capacity and completes items only with the direct startup contract and matching physical mapping", () => {
+    ALL_SERVED.forEach(model => mocks.served.add(model)); mocks.ai2Contracts.set(key, direct);
+    const reviewSettings = { ...SETTINGS, secondReview: { voters: [{ provider: direct.provider, model: direct.model }],
+      fallbacks: [{ provider: "abcllm", model: "ai2-gw" }] } };
+    const policy = directPolicy();
+    const state = snapshot({ reviewSettings, capacity: capacity("draining", policy) }, { mode: "items" });
+    const allowed = planPipelineControl(transition(...open), state, undefined, MODELS);
+    expect(allowed.blocked).toEqual([]); expect(deferredRoutes(allowed.routes ?? [])).toEqual([]);
+    expect(allowed.routes).toContainEqual({ ...directUse, status: "serving" });
+    const complete = transition("stage", "complete", "--stage=ai2", "--draining-from=legacy", "--to=items", "--expect-epoch=1");
+    const draining = snapshot({ reviewSettings, capacity: capacity("open", policy) }, { mode: "draining", drainingFrom: "legacy" });
+    expect(planPipelineControl(complete, draining, undefined, MODELS).blocked).toEqual([]);
+    mocks.ai2Contracts.delete(key);
+    expect(planPipelineControl(transition(...open), state, undefined, MODELS).blocked).toEqual(["deferred_routes:1"]);
+    expect(planPipelineControl(complete, draining, undefined, MODELS).blocked).toEqual(["items_consumer_defers:route_not_serving:ai2"]);
+  });
+  it.each([
+    ["missing", null], ["provider", { provider: "abcllm" }], ["route", { routeId: "crawl-agent-review" }],
+    ["model", { model: "another-engine" }], ["tokenizer", { tokenizerEndpoint: "http://another-gpu.test/tokenize" }],
+    ["backend", { backendId: "another-backend" }], ["physical group", { physicalGroup: "another-engine" }],
+  ])("refuses a missing or mismatched %s contract", (_name, change) => {
+    mocks.ai2Contracts.set(key, change === null ? null : { ...direct, ...change });
+    expect(modelRouteContracts(directPolicy(), "items", [directUse])).toContainEqual({ ...directUse, status: "no_contract" });
+  });
+  it("keeps the same model alias isolated by provider and preserves unknown, unused and legacy statuses", () => {
+    mocks.ai2Contracts.set(key, direct);
+    const abc = { ...directUse, provider: "abcllm" }, unknown = { ...directUse, provider: "unregistered" };
+    const policy = directPolicy();
+    const mapped = { ...policy, routes: [...policy.routes, { ...abc, providerBudgetId: "all", groupId: "all" }] };
+    const rows = modelRouteContracts(mapped, "legacy", [directUse, abc, unknown]);
+    expect(rows).toEqual(expect.arrayContaining([{ ...directUse, status: "serving" }, { ...abc, status: "no_contract" },
+      { ...unknown, status: "unknown" }, { routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" }]));
+    expect(modelRouteContracts(policyFor(IN_USE), "items", [directUse])).toContainEqual({ ...directUse, status: "unmapped" });
+    expect(modelRouteContracts(mapped, "items", [abc])).toContainEqual({ ...directUse, status: "unused" });
+  });
+});
 
 describe("stage → items refuses a stalled consumer by default", () => {
   const complete = ["stage", "complete", "--stage=ai2", "--draining-from=legacy", "--to=items", "--expect-epoch=1"];

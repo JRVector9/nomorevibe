@@ -1,3 +1,13 @@
+## PR664 / CI follow-up — 2026-10-26 00:31 KST
+
+PR664 https://github.com/JRVector9/nomorevibe/pull/664 ready, initial head5e17e9d947e3b78c7604aa119636a49e05be31f9 pushed. CI40206663943 unit2FAILED4(AI2union mockshape); real MODEL_ROUTES also lacked directAI2. Oracle fixed pipeline-control.ts and its routes test: exactprovider/model/route/directbackend/group match, oldunknown/unused/stageguardspreserved. Existing4RED→mockfix34PASS/new9RED→sourcefix43PASS(2files); tsc --noEmit --incremental false EXIT0(session51278), changed2ESLint/diff0. FirstCI build/type/lint/unit1/serialledger/PRimages/integration4+6PASS,otherspending; newHEADrequiredCI mustpass.
+
+Privatebootstraphelper /Users/jr/.local/state/nomorevibe-reliability-20261025/ai2-single-bootstrap-20261026.py hash222d1452338e6d670ade150f7a991d9a756f2387f12730cf5c1249a6c8ddaf73 independentlyreviewed,nooperationexecuted. plan/open→rootofficialdrain+133→deploy(stilldraining)→rootofficialreopen→observe. Runtime PROCESS_GROUP_RECORDING=1/instanceai2-consumer-m3/defaultjob180s confirmed. Bootstrap preservesallenvexceptRELEASE_TAG; twoAI2envcontracts require separatelaterredeploy. Backendpreparingfreshmemoryonlylocalstockmigrationwrapper,noops. Oldfailedonce/helperdirs neverreused.
+
+Productionwrite/deploy0. AI2 DATABASE_URL PgBouncer/noMIGRATION_DATABASE_URL; direct5432 samecredentials memoryonly forofficialmigrate.mjs. Existing scripts/ops/pipeline-control.ts supports auditedCASmode/policy/defaultdryrun; prefer inactualAI2startupenv with explicitPIPELINE_CONTROL_DATABASE_URL. Stocklocalmigrator permits actualNode24.x; runtimeimage24.22.1separate.
+
+Next: commitgate2files+thishandoff+operationnote/push→latestPRCI/mainimages→freshcleanmainWT→bootstrapplan+officialdrain/migration→singleAI2progress→normalfleet→twoenvcontract/redeploy+CASpolicy/settings→actualdirectledger/abcproof/health. Bounds32kcombined/10koutputunchanged. OriginaluserWTunchanged.
+
 ## Validated implementation checkpoint — 2026-10-26 00:22 KST
 
 Latest objective: GPU3090 direct primary qwen3.8-flash-next at http://100.77.43.63:8090/v1, fallback abcLLM [supa] Qwen3.8-27B-NVFP4, all no-thinking. Combined bound32,000/outputcap10,000/inputbudget22,000 including template/system. Supersedes old25k and STOP entries. No skills; all agents gpt-6.1-sol/xhigh; original checkout read-only.
