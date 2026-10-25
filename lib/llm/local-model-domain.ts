@@ -12,7 +12,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { auditSettings, lockAuditDispatchItem } from "@/lib/crawl/product-audit";
 import { auditReviewer } from "@/lib/crawl/product-audit-reviewer";
 import { isAssistCapacityInput, type LocalModelInput } from "./local-model-input";
-import { localModelJob, type LocalModelTarget } from "./local-model-capacity-contract";
+import { freshLocalModelScreenProof, localModelJob, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
 import { readItemStage } from "@/lib/jobs/items/repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
@@ -36,7 +36,7 @@ async function lockDirectInput(tx: ProductTransaction, repo: string) {
 
 /** 예약을 잠근 같은 TX에서 실제 행·원본·설정·lease를 다시 증명한다. 외부 boolean 검증기를 받지 않는다. */
 export async function proveLocalModelDomain(tx: ProductTransaction, target: LocalModelTarget, input: LocalModelInput,
-  job: JobLease, role: RoleLease, model: string, requestId?: string): Promise<boolean> {
+  job: JobLease, role: RoleLease, model: string, requestId?: string, screenProof?: LocalModelScreenProof): Promise<boolean> {
   if (job.name !== localModelJob(target) || role.role !== "reviewer") return false;
   if (target.kind === "assist") {
     if (!isAssistCapacityInput(input) || !requestId) return false;
@@ -56,7 +56,13 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
     if (ai1.mode === "draining" || ai2.mode === "draining") return false;
   }
   const current = await lockDirectInput(tx, input.snapshot.product.repo);
-  if (!current || !current.settings.enabled || current.input.validUntil <= new Date()
+  const now = new Date(), screen = target.kind === "audit" && target.purpose === "screen";
+  // A screen review judges a just-rendered page. Its archived crawl baseline still must match exactly,
+  // but the candidate review's 24h baseline expiry cannot veto that fresh screenshot.
+  if (!current || !current.settings.enabled || (screen
+    ? !freshLocalModelScreenProof(screenProof, input.snapshot.product.url, now.getTime()) || current.document.fetchedAt > now
+      || Boolean(current.scan?.completedAt && current.scan.completedAt > now)
+    : current.input.validUntil <= now)
     || current.input.sourceRevisionHash !== input.sourceRevisionHash) return false;
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;
@@ -78,6 +84,7 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
     // 감사 결과 writer는 product → item 순서다. 그 순서를 뒤집어 행 잠금 교착을 만들지 않는다.
     const [product] = await tx.select().from(products).where(eq(products.slug, target.slug)).for("share");
     if (!product || !["seeded", "verified"].includes(product.status)) return false;
+    if (screen && !freshLocalModelScreenProof(screenProof, product.url)) return false;
     const [item] = await tx.select().from(productAuditItems).where(eq(productAuditItems.id, target.itemId)).for("update");
     if (!item || item.productId !== product.id || item.slug !== target.slug || current.candidate.publishedSlug !== target.slug) return false;
     if (target.purpose === "audit") {
@@ -125,5 +132,6 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
   if (!valid) return false;
   await assertJobLeaseAtWallTime(tx, job, "update");
   await assertRoleLease(tx, role);
-  return true;
+  // Row/job/role locks may have waited since admission. Never dispatch an aged render.
+  return !screen || freshLocalModelScreenProof(screenProof, input.snapshot.product.url);
 }

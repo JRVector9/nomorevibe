@@ -7,7 +7,8 @@ import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestLocalModelSlot, dispatchLocalModelCapacity,
   cancelReservedModelSlot, cancelOwnPendingLocalModelRequest, markModelDispatchIndeterminate, reconcileLocalModelTerminal } from "./capacity-repository";
 import { markUnsettledDispatch } from "./capacity-unsettled";
-import { localModelBindingSchema, localModelLogicalKey, localModelRoute, localModelTargetSchema, type LocalModelTarget } from "./local-model-capacity-contract";
+import { freshLocalModelScreenProof, localModelScreenProofSchema, localModelBindingSchema, localModelLogicalKey, localModelRoute,
+  localModelTargetSchema, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
 import { localModelContractHash, localModelServingContractsSchema, resolveLocalModelServingContract,
   localModelThinkingFields, type LocalModelServingContract } from "./local-model-serving-contract";
 import { modelCapacityRequestIdentitySchema, type ModelCapacityPolicy } from "./capacity";
@@ -22,6 +23,7 @@ export type LocalModelCallContext = {
   waitForCapacity?: boolean;
   /** Absolute admission cutoff supplied by the bounded assist job, before its dispatch headroom. */
   admissionDeadlineAt?: number;
+  screenProof?: LocalModelScreenProof;
 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -55,7 +57,8 @@ export function localModelRouteReady(policy: ModelCapacityPolicy | null, target:
 export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
   run: (request: typeof fetch) => Promise<T>, baseRequest?: typeof fetch): Promise<T> {
   const env = value.env ?? process.env;
-  const context = { ...value, target: structuredClone(value.target), input: structuredClone(value.input), lease: structuredClone(value.lease) };
+  const context = { ...value, target: structuredClone(value.target), input: structuredClone(value.input), lease: structuredClone(value.lease),
+    ...(value.screenProof ? { screenProof: structuredClone(value.screenProof) } : {}) };
   let deferred: ModelCapacityDeferredError | null = null;
   let controlError: unknown;
   let sent = false;
@@ -85,6 +88,18 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
       const maxOutput = body.max_tokens;
       const vision = body.messages.some(message => object(message) && Array.isArray(message.content)
         && message.content.some(part => object(part) && part.type === "image_url"));
+      const isScreen = context.target.kind === "audit" && context.target.purpose === "screen";
+      if (isScreen) {
+        const proof = localModelScreenProofSchema.safeParse(context.screenProof);
+        const images = body.messages.flatMap(message => object(message) && Array.isArray(message.content)
+          ? message.content.filter(part => object(part) && part.type === "image_url") : []);
+        const imageUrl = images.length === 1 && object(images[0].image_url) ? images[0].image_url.url : null;
+        const screenUrl = "snapshot" in context.input ? context.input.snapshot.product.url : null;
+        if (!proof.success || !freshLocalModelScreenProof(proof.data, screenUrl)
+          || typeof imageUrl !== "string" || !/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(imageUrl)
+          || createHash("sha256").update(Buffer.from(imageUrl.slice("data:image/jpeg;base64,".length), "base64")).digest("hex") !== proof.data.screenshotHash)
+          throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      } else if (context.screenProof) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       if (!Number.isSafeInteger(maxOutput) || Number(maxOutput) < 1 || Number(maxOutput) > contract.maxOutputTokens
         || Buffer.byteLength(init.body) > contract.maxInputBytes || contract.totalTokenBound !== contract.contextWindowTokens
         || vision && !contract.capabilities.vision || body.response_format && !contract.capabilities.jsonSchema)
@@ -130,7 +145,7 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
           totalTokenBound: contract.totalTokenBound, chargedTokens: contract.totalTokenBound,
           job: { name: context.lease.name, token: context.lease.token, requestedVersion: context.lease.requestedVersion } });
         dispatch = await dispatchLocalModelCapacity({ reservation: slot.reservation, identity, binding,
-          input: context.input, job: context.lease, role });
+          input: context.input, job: context.lease, role, ...(isScreen ? { screenProof: context.screenProof } : {}) });
         if (!dispatch) throw new ModelCapacityDeferredError("reservation_lost");
       } catch (error) {
         try {
