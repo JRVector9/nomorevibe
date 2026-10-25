@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { launchdBoundaryFixture } from "./provider-boundary-launchd";
+import { boundaryFixture } from "./provider-boundary-release";
 export function historicalOwnerFixture() {
   const old = launchdBoundaryFixture(), { owner, ...base } = old.plan, { owner: ownerExit, ...receiptBase } = old.receipt;
   const originalOwner = { kind: "durable_process_group_exit", ...old.plan.request.owner, openedEventId: 7,
@@ -9,4 +10,10 @@ export function historicalOwnerFixture() {
   const plan = { ...base, version: 2, originalOwner, currentIngressOwner };
   const receipt = { ...receiptBase, version: 2, originalOwnerProofHash: "a".repeat(64), currentIngressOwner: { ...ownerExit, identity: currentIngressOwner } };
   return { plan, receipt };
+}
+/** Synthetic historical owner with the unchanged strict Linux systemd physical boundary. */
+export function historicalSystemdOwnerFixture() {
+  const historical = historicalOwnerFixture(), linux = boundaryFixture();
+  return { plan: { ...historical.plan, provider: linux.plan.provider },
+    receipt: { ...historical.receipt, provider: linux.receipt.provider } };
 }
