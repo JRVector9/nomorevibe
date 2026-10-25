@@ -36,8 +36,8 @@ const find = (overrides, extra = {}) => findTestedRun({ repo: REPO, sha: SHA, tr
 test('같은 저장소 PR 실행의 check 가 같은 트리를 통과시켰으면 그 실행을 다시 쓴다(이미지 잡이 돌거나 실패해도)', async () => {
   const { api, calls } = fixture();
   const found = await findTestedRun({ repo: REPO, sha: SHA, tree: TREE, api, sleep: async () => {} });
-  assert.deepEqual(found, { runId: 101, runAttempt: 1, runUrl: 'https://github.com/x/runs/101', prNumber: 591, headSha: HEAD });
-  assert.equal(calls[1], `/repos/${REPO}/actions/artifacts?name=ci-tested-tree-${TREE}&per_page=100`);
+  assert.deepEqual(found, { runId: 101, runAttempt: 1, runUrl: 'https://github.com/x/runs/101', prNumber: 591, headSha: HEAD, testProfile: 'full', rulesVersion: 'v2' });
+  assert.equal(calls[1], `/repos/${REPO}/actions/artifacts?name=ci-tested-tree-v2-full-${TREE}&per_page=100`);
 });
 
 test('증거가 하나라도 어긋나면 재사용하지 않는다', async () => {
@@ -98,6 +98,40 @@ test('main push 만 재사용을 찾고, 실패하면 늘 전체 검사로 끝�
   }
   const failed = await planTests({ ...common, eventName: 'push', ref: 'refs/heads/main', api: async () => { throw new Error('github_api_502'); } });
   assert.deepEqual([failed.runTests, failed.reusedRun, failed.reason], [true, '', 'lookup_failed']);
-  const docs = await planTests({ ...common, codeChanged: 'false', eventName: 'push', ref: 'refs/heads/main', api });
+  const docs = await planTests({ ...common, codeChanged: 'false', testProfile: 'docs', eventName: 'push', ref: 'refs/heads/main', api });
   assert.deepEqual([docs.runTests, docs.reusedRun], [false, '']);
+});
+
+test('the reuse certificate binds both profile and current rules version', async () => {
+  assert.equal(testedTreeArtifact(TREE, 'ui'), `ci-tested-tree-v2-ui-${TREE}`);
+  assert.equal(testedTreeArtifact(TREE, 'full'), `ci-tested-tree-v2-full-${TREE}`);
+  assert.throws(() => testedTreeArtifact(TREE, 'docs'), /profile_invalid/);
+  assert.equal((await find({ artifact: { name: `ci-tested-tree-${TREE}` } })).reason, 'tested_tree_not_found');
+  assert.equal((await find({ artifact: { name: `ci-tested-tree-v1-full-${TREE}` } })).reason, 'tested_tree_not_found');
+  assert.equal((await find({ artifact: { name: testedTreeArtifact(TREE, 'ui') } })).reason, 'tested_tree_not_found');
+  const ui = await find({ artifact: { name: testedTreeArtifact(TREE, 'ui') } }, { testProfile: 'ui' });
+  assert.equal(ui.testProfile, 'ui');
+  assert.equal(ui.rulesVersion, 'v2');
+  assert.equal((await find({}, { testProfile: 'ui' })).testProfile, 'full');
+  assert.equal((await find({}, { testProfile: 'anything' })).reason, 'input_invalid');
+});
+
+test('UI main push reuses the matching profile but full main never accepts a UI certificate', async () => {
+  const { api } = fixture({ artifact: { name: testedTreeArtifact(TREE, 'ui') } });
+  const common = { codeChanged: 'true', repo: REPO, sha: SHA, tree: TREE, eventName: 'push', ref: 'refs/heads/main',
+    api, log: () => {}, sleep: async () => {} };
+  assert.equal((await planTests({ ...common, testProfile: 'ui' })).runTests, false);
+  assert.equal((await planTests({ ...common, testProfile: 'full' })).runTests, true);
+  assert.equal((await planTests({ ...common, codeChanged: 'invalid' })).runTests, true);
+});
+
+
+test('missing or inconsistent scope cannot authorize skipping code tests', async () => {
+  const common = { eventName: 'push', ref: 'refs/heads/main', repo: REPO, sha: SHA, tree: TREE,
+    api: async () => { throw new Error('must not call'); }, log: () => {} };
+  for (const [codeChanged, testProfile] of [['false', 'full'], ['false', 'ui'], ['true', 'docs'], [undefined, 'ui']]) {
+    const plan = await planTests({ ...common, codeChanged, testProfile });
+    assert.equal(plan.runTests, true);
+    assert.equal(plan.reason, 'scope_invalid');
+  }
 });

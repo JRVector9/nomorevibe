@@ -1,13 +1,14 @@
 #!/bin/bash
-# nomorevibe의 이전 수동 운영 도우미. 현재 13개 앱 공통 이미지 배포에는
-# scripts/ops/deploy_shared_images.py와 docs/operations/independent-workers-runbook.md를 따른다.
-# 이 파일은 아래에 열거한 앱의 상태 조회·개별 환경 진단을 위한 로컬 보조 명령이다.
+# nomorevibe 운영 도우미. 일반 배포는 scope → plan → run으로 실행한다.
+# docs/operations/deployment-fast-path.md 및 npm run deploy -- --help를 따른다.
+# 이전 수동 API 요청은 legacy-deploy로만 제공한다.
 #
 # 허용 규칙을 좁게 걸려고 배포에 쓰는 명령을 이 파일 하나로 모았다. 규칙은 이 파일만 허용한다 —
 # curl 이나 node 를 통째로 허용하지 않기 위해서다.
 #
 #   prod.sh status <앱>...   배포 상태(applicationStatus 와 마지막 배포)
-#   prod.sh deploy <앱>...   배포 요청. 200 은 큐에 넣었다는 뜻일 뿐이다 — status 로 done 을 확인한다
+#   prod.sh scope|plan|run ... 변경 분류·사전 준비·검증을 포함한 일반 배포
+#   prod.sh legacy-deploy <앱>... 개별 API 요청(복구용). HTTP 200은 완료 증거가 아니다.
 #   prod.sh migrate          현재 디렉터리의 drizzle/ 를 프로드에 적용(직접 연결 5432)
 #   prod.sh env-names <앱>   그 앱에 걸린 환경변수 이름만 (값은 찍지 않는다)
 #   prod.sh copy-env <이름> <원본앱> <대상앱>...
@@ -47,6 +48,16 @@ key() { security find-generic-password -a deploy.brut.bot -s dokploy-api-key -w;
 
 cmd="${1:-}"; shift || true
 case "$cmd" in
+  scope|plan|run)
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    cd "$root"
+    exec python3 -I scripts/ops/deploy_release.py "$cmd" "$@"
+    ;;
+  deploy)
+    root="$(cd "$(dirname "$0")/.." && pwd)"
+    cd "$root"
+    exec python3 -I scripts/ops/deploy_release.py run "$@"
+    ;;
   status)
     [ $# -gt 0 ] || { echo "앱 이름을 주세요" >&2; exit 2; }
     KEY="$(key)"
@@ -56,7 +67,7 @@ case "$cmd" in
         | jq -r --arg n "$name" '"\($n)\t\(.applicationStatus)\t" + ((.deployments // []) | sort_by(.createdAt) | last | if . then "\(.status) \(.createdAt) \((.title // "") | split("\n")[0])" else "-" end)'
     done
     ;;
-  deploy)
+  legacy-deploy)
     [ $# -gt 0 ] || { echo "앱 이름을 주세요" >&2; exit 2; }
     KEY="$(key)"
     for name in "$@"; do

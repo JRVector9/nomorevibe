@@ -6,6 +6,8 @@
 
 [LLM 보강·AI2 운영 전환과 최신 배포 기록](docs/operations/2026-10-25-llm-assist-production-activation.md) · [테스트·배포 시간 단축 검토](docs/operations/2026-10-25-deployment-time-review.md)
 
+일반 배포 기본 명령: `npm run deploy -- scope|plan|run` — [변경 범위별 단축 배포 절차](docs/operations/deployment-fast-path.md).
+
 [2026-10-22 관리자·보안 15앱 배포 기록](docs/operations/2026-10-22-admin-production-rollout.md) ·
 [워커 감시·mini/Oracle Push 연결 기록](docs/operations/2026-10-22-worker-monitor-rollout.md)
 
@@ -125,7 +127,9 @@ DB 는 pgvector 가 든 이미지를 쓴다(의미 검색 벡터, 0059). 프로�
 ## GitHub CI와 변경 절차
 
 main push와 PR에서 필수 `check`를 항상 실행한다. `README.md`, `PENDING.md`, `docs/**`만 바뀌면
-변경 범위와 공백 오류를 확인하고 끝낸다. 코드·설정 변경이나 수동 실행은 typecheck(타입 생성·TypeScript·i18n)·
+변경 범위와 공백 오류를 확인하고 끝낸다. 규칙 v2의 좁은 UI 프로필(`app`/`components` CSS와 `messages` JSON만)은
+typecheck·lint·unit·build를 유지하고 DB 통합·ledger만 생략한다. 실제 `messages/**/*.ts`와 그 밖의
+코드·설정 변경이나 수동 실행은 typecheck(타입 생성·TypeScript·i18n)·
 lint(ESLint·Python unittest)·단위 테스트 2개 묶음·build(번들 크기)와 PostgreSQL 통합 테스트 6개 묶음·직렬 ledger 잡을
 병렬 실행한다. 통합 묶음은 파일 수가 아니라 `tests/integration/durations.json`의 파일별 시간으로 나눈다
 (긴 파일부터 가장 가벼운 묶음에, `scripts/integration-shards.mjs`). 묶음과 ledger 잡은 각자 runner 안의 일회용 DB
@@ -139,7 +143,7 @@ draft PR은 CI를 돌리지 않는다. 검사 잡은 모두 건너뛰고 필수 
 실패해 draft head에 초록 `check`가 남지 않는다(초록이던 PR을 draft로 되돌려도 다시 돌아 실패하는 `check`가 대신한다).
 ready for review로 바꾸면 그 이벤트로 전체 CI가 돈다.
 같은 PR의 새 커밋은 이전 실행을 취소하며, 서로 다른 PR은 별도로 실행한다. main push와 수동 실행은 실행마다 따로 끝까지 돈다.
-같은 저장소 PR 실행이 검사를 모두 통과하면 검사한 트리를 `ci-tested-tree-<트리>` artifact로 남긴다. main push의 병합 커밋
+같은 저장소 PR 실행이 선택된 필수 검사를 모두 통과하면 검사한 트리를 `ci-tested-tree-v2-<full|ui>-<트리>` artifact로 남긴다. full은 full 증거만 재사용한다. main push의 병합 커밋
 트리가 그 PR의 성공한 실행이 남긴 트리와 같으면 검사 잡을 다시 돌리지 않고 `check`가 그 실행을 근거로 통과한다
 (`scripts/ci-reuse.mjs`). 증거가 하나라도 없거나 조회가 실패하면 전체 검사를 돌고, 수동 실행은 늘 전체 검사다.
 재사용한 커밋에서는 `refresh-caches` 잡이 다음 PR이 읽을 tsc·ESLint·Turbopack 캐시를 갱신한다(결과를 기다리지 않는다).
@@ -185,6 +189,12 @@ TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55436/nomorevibe_te
 ```
 
 ## 운영 배포와 상태 확인
+
+기본 절차는 [변경 범위별 단축 배포](docs/operations/deployment-fast-path.md)의
+`npm run deploy -- scope|plan|run`이다. 앱별 실제 baseline으로 필요한 앱만 갱신하고 나머지는 원 상태를
+검증한다. text·maintenance·scheduler 다섯 앱은 다음 해당 앱 배포에서 공통 worker digest로 전환하며
+최대2개씩 갱신한다. 배포 후 관측은 별도 작업으로 실행하고 실제 관측 전에는 통과로 기록하지 않는다.
+아래의 Git/공통 이미지 구분은 전환 전 현재 상태와 이전 도구의 설명이다.
 
 운영은 Dokploy를 사용한다. 웹 2개와 crawler·reviewer·publisher의 주·예비 6개는
 main CI가 만든 GHCR 이미지의 digest로 배포한다. scheduler·text·maintenance는

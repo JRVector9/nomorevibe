@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
-import { findTestedRun } from "@/scripts/ci-reuse.mjs";
+import { findTestedRun, testedTreeArtifact } from "@/scripts/ci-reuse.mjs";
 
 /**
  * 필수 `check` 와 배포 스크립트가 기대는 CI 모양을 지킨다.
@@ -29,8 +29,14 @@ describe("CI 워크플로", () => {
     expect(needs(jobs.check).sort()).toEqual(["scope", ...gated].sort());
     expect(jobs.check.if).toBe("always()");
     const verdict = jobs.check.steps.find((step) => step.name === "Required branch-protection result")!;
-    for (const name of gated) expect(verdict.env?.TEST_RESULTS).toContain(`needs.${name}.result`);
-    expect(verdict.run).toContain("true/false) [[ \"$REUSED_RUN\" =~ ^[0-9]+$ ]]; expected=skipped");
+    expect(verdict.env?.NEEDS_JSON).toBe("${{ toJSON(needs) }}");
+    expect(verdict.run).toBe("node scripts/ci-check.mjs");
+    for (const name of ["integration", "integration-ledger"]) {
+      expect(jobs[name].if).toBe("needs.scope.outputs.run_tests == 'true' && needs.scope.outputs.test_profile == 'full'");
+    }
+    for (const name of ["typecheck", "lint", "unit", "build"]) {
+      expect(jobs[name].if).toBe("needs.scope.outputs.run_tests == 'true'");
+    }
   });
 
   it("검사한 트리 기록은 같은 저장소 PR 이 검사를 다 통과했을 때만 남긴다", () => {
@@ -41,6 +47,9 @@ describe("CI 워크플로", () => {
       expect(step.if).toContain("needs.scope.outputs.run_tests == 'true'");
       expect(step.if).toContain("github.event.pull_request.head.repo.full_name == github.repository");
     }
+    expect(record[0].run).toContain('rules=%s');
+    expect(record[0].run).toContain('profile=%s');
+    expect(record[1].with?.name).toBe("ci-tested-tree-${{ needs.scope.outputs.rules_version }}-${{ needs.scope.outputs.test_profile }}-${{ needs.scope.outputs.tree }}");
     expect(record[1].uses).toMatch(/^actions\/upload-artifact@[0-9a-f]{40}$/);
   });
 
@@ -64,10 +73,15 @@ describe("CI 워크플로", () => {
       expect(job.if).toMatch(/^!cancelled\(\) &&/);
       expect(job.if).toContain("needs.check.result == 'success'");
       const digestKeys = job.steps.flatMap((step) => Object.keys(step.env ?? {}).filter((key) => /DIGEST$/.test(key)));
-      expect(digestKeys).toEqual(["DIGEST"]);
+      expect(digestKeys).toEqual(["DIGEST", "IMAGE_DIGEST"]);
       const record = job.steps.find((step) => step.env?.DIGEST);
       expect(record?.name).toMatch(/^Record (worker|web) digest$/);
       expect(record?.run).toContain("[[ \"$DIGEST\" =~ ^sha256:[a-f0-9]{64}$ ]]");
+      const proof = job.steps.find((step) => step.env?.IMAGE_DIGEST);
+      expect(proof?.run).toBe("node scripts/ci-image-receipt.mjs");
+      expect(proof?.env?.RELEASE_SHA).toBe("${{ github.sha }}");
+      const upload = job.steps.find((step) => typeof step.with?.name === "string" && step.with.name.startsWith("release-image-"));
+      expect(upload?.with?.name).toBe(`release-image-${name === "publish-worker-image" ? "worker" : "web"}-${"${{ github.sha }}"}`);
     }
   });
 
@@ -105,7 +119,7 @@ describe("CI 워크플로", () => {
     const api = (checkConclusion: string) => async (url: string) => {
       if (url.endsWith(`/commits/${sha}/pulls`)) return [{ number: 1, merge_commit_sha: sha, merged_at: "2026-10-22T00:00:00Z",
         base: { ref: "main", repo: { full_name: repo } }, head: { sha: head, repo: { full_name: repo } } }];
-      if (url.includes("/actions/artifacts?name=")) return { artifacts: [{ name: `ci-tested-tree-${tree}`, expired: false,
+      if (url.includes("/actions/artifacts?name=")) return { artifacts: [{ name: testedTreeArtifact(tree), expired: false,
         workflow_run: { id: 7, head_sha: head, head_repository_id: 1, repository_id: 1 } }] };
       if (url.endsWith("/actions/runs/7")) return { id: 7, event: "pull_request", path: ".github/workflows/ci.yml", head_sha: head,
         repository: { full_name: repo }, head_repository: { full_name: repo } };

@@ -9,27 +9,30 @@
  *  - 이 커밋을 merge_commit_sha 로 가진, main 으로 병합된 같은 저장소 PR 이 정확히 하나다(fork PR 은 늘 전체 검사).
  *  - 그 PR head 로 돈 CI(.github/workflows/ci.yml, pull_request) 실행의 `check` 잡(최신 시도)이 성공했다.
  *    실행 전체의 결론은 보지 않는다 — check 가 기다리지 않는 잡(PR 이미지 미리 빌드)이 아직 돌거나 실패해도 검사 결과는 그대로다.
- *  - 그 실행의 `check` 잡이 실제 검사를 마친 뒤 올린 `ci-tested-tree-<트리>` artifact 가 있고, 그 트리가 이 커밋의 트리와 같다.
+ *  - 그 실행의 `check` 잡이 실제 검사를 마친 뒤 올린 `ci-tested-tree-<규칙버전>-<검사범위>-<트리>` artifact 가 있고, 그 트리가 이 커밋의 트리와 같다.
  *    (artifact 는 문서만 바뀐 실행에서는 올리지 않는다 — 검사를 실제로 돌린 트리만 증거가 된다.)
  */
 import { appendFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { CI_RULES_VERSION } from './ci-scope.mjs';
 
 const SHA = /^[a-f0-9]{40}$/;
 export const WORKFLOW_PATH = '.github/workflows/ci.yml';
 
-export function testedTreeArtifact(tree) {
+export function testedTreeArtifact(tree, testProfile = 'full') {
   if (!SHA.test(tree ?? '')) throw new Error('ci_reuse_tree_invalid');
-  return `ci-tested-tree-${tree}`;
+  if (!['full', 'ui'].includes(testProfile)) throw new Error('ci_reuse_profile_invalid');
+  return `ci-tested-tree-${CI_RULES_VERSION}-${testProfile}-${tree}`;
 }
 
 /**
  * 재사용할 PR 실행을 찾는다. 반환: { runId, prNumber, headSha } 또는 { reason }.
  * api(path) 는 GitHub REST 응답 JSON 을 돌려준다(테스트에서 바꿔 끼운다).
  */
-export async function findTestedRun({ repo, sha, tree, api, sleep = ms => new Promise(done => setTimeout(done, ms)), attempts = 3 }) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '') || !SHA.test(sha ?? '') || !SHA.test(tree ?? '')) return { reason: 'input_invalid' };
+export async function findTestedRun({ repo, sha, tree, testProfile = 'full', api, sleep = ms => new Promise(done => setTimeout(done, ms)), attempts = 3 }) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? '') || !SHA.test(sha ?? '') || !SHA.test(tree ?? '')
+    || !['full', 'ui'].includes(testProfile)) return { reason: 'input_invalid' };
 
   // 병합 직후에는 커밋과 PR 의 연결이 몇 초 늦게 보일 수 있다
   let merged = [];
@@ -45,13 +48,21 @@ export async function findTestedRun({ repo, sha, tree, api, sleep = ms => new Pr
   const headSha = pull.head?.sha;
   if (!SHA.test(headSha ?? '')) return { reason: 'pull_request_head_invalid' };
 
-  const listed = await api(`/repos/${repo}/actions/artifacts?name=${encodeURIComponent(testedTreeArtifact(tree))}&per_page=100`);
-  const candidates = (listed?.artifacts ?? [])
-    .filter(artifact => artifact?.name === testedTreeArtifact(tree) && artifact.expired === false
-      && artifact.workflow_run?.head_sha === headSha
-      && Number.isInteger(artifact.workflow_run?.id)
-      && artifact.workflow_run.head_repository_id === artifact.workflow_run.repository_id)
-    .sort((a, b) => b.workflow_run.id - a.workflow_run.id);
+  // A full certificate also covers UI requirements; a partial certificate never covers the full suite.
+  const profiles = testProfile === 'ui' ? ['ui', 'full'] : ['full'];
+  const candidates = [];
+  for (const profile of profiles) {
+    const name = testedTreeArtifact(tree, profile);
+    const listed = await api(`/repos/${repo}/actions/artifacts?name=${encodeURIComponent(name)}&per_page=100`);
+    candidates.push(...(listed?.artifacts ?? [])
+      .filter(artifact => artifact?.name === name && artifact.expired === false
+        && artifact.workflow_run?.head_sha === headSha
+        && Number.isInteger(artifact.workflow_run?.id)
+        && Number.isInteger(artifact.workflow_run.head_repository_id)
+        && artifact.workflow_run.head_repository_id === artifact.workflow_run.repository_id)
+      .map(artifact => ({ ...artifact, testProfile: profile })));
+  }
+  candidates.sort((a, b) => b.workflow_run.id - a.workflow_run.id);
   if (candidates.length === 0) return { reason: 'tested_tree_not_found' };
 
   for (const artifact of candidates) {
@@ -61,7 +72,8 @@ export async function findTestedRun({ repo, sha, tree, api, sleep = ms => new Pr
     const listed = await api(`/repos/${repo}/actions/runs/${run.id}/jobs?filter=latest&per_page=100`);
     const checks = (listed?.jobs ?? []).filter(job => job?.name === 'check');
     if (checks.length === 1 && checks[0].status === 'completed' && checks[0].conclusion === 'success') {
-      return { runId: run.id, runAttempt: run.run_attempt, runUrl: run.html_url, prNumber: pull.number, headSha };
+      return { runId: run.id, runAttempt: run.run_attempt, runUrl: run.html_url, prNumber: pull.number, headSha,
+        testProfile: artifact.testProfile, rulesVersion: CI_RULES_VERSION };
     }
   }
   return { reason: 'tested_run_not_successful' };
@@ -80,21 +92,22 @@ export function githubApi({ token, fetchImpl = fetch, base = 'https://api.github
 
 /**
  * main push 의 코드 변경만 재사용을 찾는다. 결과는 늘 run_tests / reused_run 두 줄로 남긴다.
- * 무엇이 실패하든 run_tests=true(전체 검사)로 끝낸다 — 이 스크립트가 검사를 건너뛰게 만드는 길은 증거를 찾았을 때뿐이다.
+ * 조회가 실패하면 run_tests=true(선택한 profile 의 필수 검사)로 끝낸다 — 이 스크립트가 검사를 건너뛰게 만드는 길은 증거를 찾았을 때뿐이다.
  */
-export async function planTests({ eventName, ref, codeChanged, repo, sha, tree, api, sleep, log = console.log }) {
-  if (codeChanged !== 'true') return { runTests: false, reusedRun: '', reason: 'code_unchanged' };
+export async function planTests({ eventName, ref, codeChanged, testProfile = 'full', repo, sha, tree, api, sleep, log = console.log }) {
+  if (codeChanged === 'false' && testProfile === 'docs') return { runTests: false, reusedRun: '', reason: 'code_unchanged' };
+  if (codeChanged !== 'true' || !['ui', 'full'].includes(testProfile)) return { runTests: true, reusedRun: '', reason: 'scope_invalid' };
   if (eventName !== 'push' || ref !== 'refs/heads/main') return { runTests: true, reusedRun: '', reason: 'not_main_push' };
   try {
-    const found = await findTestedRun({ repo, sha, tree, api, ...(sleep ? { sleep } : {}) });
+    const found = await findTestedRun({ repo, sha, tree, testProfile, api, ...(sleep ? { sleep } : {}) });
     if (found.runId) {
-      log(`Reusing PR #${found.prNumber} CI run ${found.runUrl ?? found.runId} (attempt ${found.runAttempt}) for tree ${tree}`);
+      log(`Reusing PR #${found.prNumber} ${found.testProfile}/${found.rulesVersion} CI run ${found.runUrl ?? found.runId} (attempt ${found.runAttempt}) for tree ${tree}`);
       return { runTests: false, reusedRun: String(found.runId), reason: 'tested_tree_reused', ...found };
     }
-    log(`Full CI: ${found.reason}`);
+    log(`Required ${testProfile} CI: ${found.reason}`);
     return { runTests: true, reusedRun: '', reason: found.reason };
   } catch (error) {
-    log(`Full CI: reuse lookup failed (${error?.message ?? 'unknown'})`);
+    log(`Required ${testProfile} CI: reuse lookup failed (${error?.message ?? 'unknown'})`);
     return { runTests: true, reusedRun: '', reason: 'lookup_failed' };
   }
 }
@@ -102,13 +115,13 @@ export async function planTests({ eventName, ref, codeChanged, repo, sha, tree, 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const plan = await planTests({
     eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF, codeChanged: process.env.CODE_CHANGED,
-    repo: process.env.GITHUB_REPOSITORY, sha: process.env.HEAD_SHA, tree: process.env.HEAD_TREE,
+    repo: process.env.GITHUB_REPOSITORY, sha: process.env.HEAD_SHA, tree: process.env.HEAD_TREE, testProfile: process.env.TEST_PROFILE,
     api: githubApi({ token: process.env.GITHUB_TOKEN }),
   });
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `run_tests=${plan.runTests}\nreused_run=${plan.reusedRun}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(process.env.GITHUB_STEP_SUMMARY, plan.reusedRun
       ? `Tests reused from PR #${plan.prNumber}: ${plan.runUrl} (tree \`${process.env.HEAD_TREE}\`)\n`
-      : `Tests: ${plan.runTests ? 'full run' : 'skipped (documentation only)'} — ${plan.reason}\n`);
+      : `Tests: ${plan.runTests ? `${process.env.TEST_PROFILE ?? 'full'} run` : 'skipped (documentation only)'} — ${plan.reason}\n`);
   }
 }

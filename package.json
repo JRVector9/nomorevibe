@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "deploy": "python3 -I scripts/ops/deploy_release.py",
     "lint": "eslint",
     "check:i18n": "node --import tsx scripts/public-i18n-contract.mjs",
     "test": "vitest run",

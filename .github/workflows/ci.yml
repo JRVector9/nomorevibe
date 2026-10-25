@@ -31,6 +31,8 @@ jobs:
       pull-requests: read
     outputs:
       code_changed: ${{ steps.detect.outputs.code_changed }}
+      test_profile: ${{ steps.detect.outputs.test_profile }}
+      rules_version: ${{ steps.detect.outputs.rules_version }}
       run_tests: ${{ steps.plan.outputs.run_tests }}
       reused_run: ${{ steps.plan.outputs.reused_run }}
       tree: ${{ steps.tree.outputs.tree }}
@@ -42,7 +44,7 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      - run: node --test scripts/ci-scope.node-test.mjs scripts/ci-reuse.node-test.mjs
+      - run: node --test scripts/ci-scope.node-test.mjs scripts/ci-reuse.node-test.mjs scripts/ci-check.node-test.mjs scripts/ci-image-receipt.node-test.mjs
       - id: detect
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -57,6 +59,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CODE_CHANGED: ${{ steps.detect.outputs.code_changed }}
+          TEST_PROFILE: ${{ steps.detect.outputs.test_profile }}
           HEAD_SHA: ${{ github.sha }}
           HEAD_TREE: ${{ steps.tree.outputs.tree }}
         run: node scripts/ci-reuse.mjs
@@ -70,12 +73,14 @@ jobs:
           if [ "$CODE_CHANGED" = false ]; then
             printf 'run_tests=false\nreused_run=\n' >> "$GITHUB_OUTPUT"
           elif [ "$CODE_CHANGED" = true ] && [ "$REUSE_OUTCOME" = success ] && [ "$REUSE_RUN_TESTS" = false ] \
-            && [[ "$REUSED_RUN" =~ ^[0-9]+$ ]]; then
+            && [[ "$REUSED_RUN" =~ ^[1-9][0-9]*$ ]]; then
             printf 'run_tests=false\nreused_run=%s\n' "$REUSED_RUN" >> "$GITHUB_OUTPUT"
           else
             printf 'run_tests=true\nreused_run=\n' >> "$GITHUB_OUTPUT"
           fi
 
+  # docs: all code jobs skip. ui: typegen/tsc/i18n, lint, both unit shards and build stay required.
+  # full: feature/DB/worker/ops/CI/config/dependency/mixed/unknown changes also run both DB job groups.
   typecheck:
     needs: scope
     if: needs.scope.outputs.run_tests == 'true'
@@ -132,7 +137,8 @@ jobs:
         with:
           path: .eslintcache
           key: nmv-eslint-v1-${{ hashFiles('package-lock.json') }}-${{ github.sha }}
-      - run: python3 -m unittest tests/test_deploy_shared_images.py
+      - run: python3 -B -m unittest discover -s tests -p 'test_deploy*.py'
+      - run: python3 -B -m unittest discover -s tests -p 'test_release*.py'
       - run: python3 -m unittest tests/test_oracle_runtime.py
       - run: python3 -m unittest tests/test_oracle_activation.py
       - run: python3 -m unittest tests/test_oracle_activation_check.py
@@ -194,7 +200,7 @@ jobs:
 
   integration:
     needs: scope
-    if: needs.scope.outputs.run_tests == 'true'
+    if: needs.scope.outputs.run_tests == 'true' && needs.scope.outputs.test_profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -234,7 +240,7 @@ jobs:
 
   integration-ledger:
     needs: scope
-    if: needs.scope.outputs.run_tests == 'true'
+    if: needs.scope.outputs.run_tests == 'true' && needs.scope.outputs.test_profile == 'full'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -283,29 +289,18 @@ jobs:
         run: |
           echo "::error title=Draft PR::draft PR — CI not run; mark ready for review"
           exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - name: Required branch-protection result
         env:
-          SCOPE_RESULT: ${{ needs.scope.result }}
-          CODE_CHANGED: ${{ needs.scope.outputs.code_changed }}
-          RUN_TESTS: ${{ needs.scope.outputs.run_tests }}
-          REUSED_RUN: ${{ needs.scope.outputs.reused_run }}
-          TEST_RESULTS: >-
-            ${{ needs.typecheck.result }} ${{ needs.lint.result }} ${{ needs.unit.result }} ${{ needs.build.result }}
-            ${{ needs.integration.result }} ${{ needs.integration-ledger.result }}
-        run: |
-          test "$SCOPE_RESULT" = success
-          case "$CODE_CHANGED/$RUN_TESTS" in
-            true/true) expected=success ;;
-            # 같은 트리를 같은 저장소 PR 실행이 검사했다(scope 의 재사용 조회가 실행 id 를 남겼다)
-            true/false) [[ "$REUSED_RUN" =~ ^[0-9]+$ ]]; expected=skipped ;;
-            false/false) expected=skipped ;;
-            *) exit 1 ;;
-          esac
-          for result in $TEST_RESULTS; do test "$result" = "$expected"; done
-          if [ -n "$REUSED_RUN" ]; then
-            echo "Tests reused from https://github.com/$GITHUB_REPOSITORY/actions/runs/$REUSED_RUN" | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
-      # 실제로 검사를 다 돈 PR 실행만 검사한 트리를 남긴다. main 병합 뒤 scope 가 이 이름으로 찾아 같은 트리면 검사를 다시 쓴다.
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci-check.mjs
+      # 선택한 profile 의 필수 검사를 마친 같은 저장소 PR 만 범위·규칙버전에 묶인 증거를 남긴다.
+      # main 은 같은 tree 에 대해 같은 범위 이상의 인증서만 재사용한다(full 은 ui 인증서를 받지 않는다).
       - name: Record the tested tree
         if: >-
           success() && github.event_name == 'pull_request' && needs.scope.outputs.run_tests == 'true' &&
@@ -313,15 +308,18 @@ jobs:
         env:
           TREE: ${{ needs.scope.outputs.tree }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PROFILE: ${{ needs.scope.outputs.test_profile }}
+          RULES_VERSION: ${{ needs.scope.outputs.rules_version }}
         run: |
           [[ "$TREE" =~ ^[0-9a-f]{40}$ ]]
-          printf 'tree=%s\nhead=%s\nmerge=%s\nrun=%s\n' "$TREE" "$HEAD_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/tested-tree.txt"
+          printf 'tree=%s\nhead=%s\nmerge=%s\nrun=%s\nrules=%s\nprofile=%s\n' \
+            "$TREE" "$HEAD_SHA" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$RULES_VERSION" "$PROFILE" > "$RUNNER_TEMP/tested-tree.txt"
       - if: >-
           success() && github.event_name == 'pull_request' && needs.scope.outputs.run_tests == 'true' &&
           github.event.pull_request.head.repo.full_name == github.repository
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ci-tested-tree-${{ needs.scope.outputs.tree }}
+          name: ci-tested-tree-${{ needs.scope.outputs.rules_version }}-${{ needs.scope.outputs.test_profile }}-${{ needs.scope.outputs.tree }}
           path: ${{ runner.temp }}/tested-tree.txt
           retention-days: 30
           overwrite: true
@@ -533,6 +531,23 @@ jobs:
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'worker image: ghcr.io/jrvector9/nomorevibe-worker@%s (%s)\n' "$DIGEST" "$HOW" >> "$GITHUB_STEP_SUMMARY"
+      - name: Write worker release image proof
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          HEAD_TREE: ${{ needs.scope.outputs.tree }}
+          IMAGE_worker: worker
+          IMAGE_DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
+          TEST_PROFILE: ${{ needs.scope.outputs.test_profile }}
+          RULES_VERSION: ${{ needs.scope.outputs.rules_version }}
+          RECEIPT_FILE: ${{ runner.temp }}/release-image-worker.json
+        run: node scripts/ci-image-receipt.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-image-worker-${{ github.sha }}
+          path: ${{ runner.temp }}/release-image-worker.json
+          if-no-files-found: error
+          retention-days: 30
+
 
   publish-web-image:
     needs: [scope, check]
@@ -598,3 +613,19 @@ jobs:
         run: |
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]]
           printf 'web image: ghcr.io/jrvector9/nomorevibe-runtime-web@%s (%s)\n' "$DIGEST" "$HOW" >> "$GITHUB_STEP_SUMMARY"
+      - name: Write web release image proof
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          HEAD_TREE: ${{ needs.scope.outputs.tree }}
+          IMAGE_web: web
+          IMAGE_DIGEST: ${{ steps.promote.outputs.digest || steps.build.outputs.digest }}
+          TEST_PROFILE: ${{ needs.scope.outputs.test_profile }}
+          RULES_VERSION: ${{ needs.scope.outputs.rules_version }}
+          RECEIPT_FILE: ${{ runner.temp }}/release-image-web.json
+        run: node scripts/ci-image-receipt.mjs
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-image-web-${{ github.sha }}
+          path: ${{ runner.temp }}/release-image-web.json
+          if-no-files-found: error
+          retention-days: 30

@@ -641,7 +641,7 @@ print(result.stdout.strip().splitlines()[-1])
 
 def git_blob(sha, path):
     """Exact committed bytes (no strip): drizzle hashes the whole migration file."""
-    result = subprocess.run(['git', 'show', f'{sha}:{path}'], capture_output=True, timeout=45)
+    result = subprocess.run(['git', '--no-replace-objects', 'show', f'{sha}:{path}'], capture_output=True, timeout=45)
     if result.returncode:
         raise RuntimeError(f'command_failed:git:{result.returncode}')
     return result.stdout
