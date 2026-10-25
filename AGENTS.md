@@ -17,6 +17,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 이미 실행한 결과와 실패는 보존하며, 실행하지 않은 검사를 통과했다고 기록하지 않는다.
 - GitHub의 필수 병합 CI는 저장소 규칙대로 유지한다.
 
+## 일반 배포 기본 경로 (2026-10-25)
+
+- [단축 배포 절차](docs/operations/deployment-fast-path.md)의 `npm run deploy -- scope|plan|run`을 기본으로 사용한다.
+- 실제 앱별 baseline으로 변경 대상을 정하고, 필요한 main `check`·이미지 publish만 기다린다. `refresh-caches`와 6시간 관측은 동기 배포 대기가 아니다.
+- text·maintenance·scheduler는 다음 실제 배포에서 공통 worker digest로 전환한다. connect는 Git이며 출처를 검증한다. 같은 역할의 mini→M3, scheduler 2복제본과 기존 설정을 보존한다.
+- 이미 목표 상태인 앱은 재배포하지 않고 유지 대상으로 검증한다. 실패한 once 디렉터리를 재사용하거나 응답이 불명확한 배포를 자동 재요청하지 않는다.
+- DB 이전·native unknown 회수·capacity 변경은 일반 배포와 별도다. 장기 관측은 실제 실행 영수증으로만 완료를 기록한다.
+
 ## 운영 상태와 남은 검증
 
 운영 서비스는 `https://nomorevibe.com`에 배포되어 있다. Dokploy는 main을 사용하며

@@ -1,3 +1,45 @@
+# 2026-10-25 — 배포 단축안 구현 완료, 필수 PR CI 대기
+
+현재 목표는 사용자가 승인한 `2026-10-25-deployment-time-review.md`를 다음 배포의 기본 절차로 적용해 main에 반영하는 것이다. 구현·문서·독립 검토 수정을 완료했고 필수 PR CI/병합이 남았다. 이전 be71 운영 배포는 완료했으며 이번 작업에서 런타임·DB·모델·capacity 변경은0이다.
+
+작업 WT `/Users/jr/Desktop/projects/nomorevibe-deployment-fast-path`, branch `feat/deployment-fast-path-20261025`, base `499027fcf42569e82e4d193b8f06a03bfa711cef`. 원 사용자 WT의 미커밋·디자인 파일은 보존한다. 병렬 agent는 모두 gpt-6.1-sol/xhigh를 사용했다.
+
+## 완료·설계 결정
+
+- 기본 명령 `npm run deploy -- scope|plan|run`과 `.claude/prod.sh` 경로를 연결했다. `scope`는 로컬 확인, `plan`은 실제 앱별 baseline/원 설정·source·image·spec/필수 check와 image artifact/기존 관문·이미지 cache 준비, `run`은 대상만 갱신하고 전체17앱의 대상/유지 상태를 검증한다.
+- docs/ui/full CI 규칙v2, 정확한 필수 success/skipped matrix와 프로필별 재사용 인증서. CSS/JSON 문구만 ui이며 실제 messages/*.ts는 full이다. typegen/tsc/i18n/lint/unit/build는 ui에도 유지하고 DB integration/ledger만 생략한다. Python 운영 회귀는 lint에 유지했다.
+- worker5(text2/maintenance2/scheduler)는 다음 해당 앱 배포에서 common immutable worker digest로 전환한다. mini(text+maintenance)→M3(text+maintenance)→scheduler/connect의 최대2개/세 묶음, scheduler2복제본·전체 설정 유지. connect는 Git 유지, NMV_SOURCE_SHA/OCI revision/COPY SHA256 출처를 요구한다. 새 catalog 잡은 scheduler 뒤 실제 jobs 행 등록을 읽어 증명하고 shared 배포를 시작한다.
+- 이미 목표 상태인 앱은 receipt 없는 유지 대상으로 처리한다. 원 Git image는 첫 서비스 변경 전 rollback 태그로 보존한다. once/attempt/completed/verified 원문은 외부0700/0600에 기록하며 실패 원문은 failure.private.json에만 둔다. 자동 재배포·자동 복구는 없다.
+- 모니터는 별도 health/source/spec와 새 컨테이너 부팅 뒤 primary/external 수신 ACK를 검증한다. 배포 완료 result.safe를 먼저 기록하고 관측 예약 상태는 별도로 둔다. 5/10/15분/6h 관측은 pinned private snapshot·실제 UTC 시각·자식 프로세스 제한·중복 잠금으로 실행한다. 미래 관측 통과를 주장하지 않으며 6h 동안 관측 worktree/소스를 보존해야 한다.
+- 독립 검토의 Git skipped 영수증, 관측 예약 실패와 배포 성공 혼동, 계획 이후 tool 소스 변경, Git replace 객체의 출처 우회 모두 수정했다. 계획에 실행 모듈 SHA256를 묶고 run이 재대조한다. CI/scope/manifest/tree/migration bytes는 no-replace-objects로 읽는다. workflow/build/promotion/image-proof 변경은 보수적으로 전체17배포 범위다.
+
+## 수정 파일
+
+`.github/workflows/ci.yml`, `Dockerfile`(connect ARG/LABEL), `.claude/prod.sh`, `package.json`, `AGENTS.md`, `README.md`; CI scope/reuse/check/image-receipt JS 및 Node 회귀, workflow Vitest; `scripts/ops/{deploy_shared_images,deploy_git_apps,deploy_release,deployment_scope,release_runtime,release_readiness,release_monitor,release_catalog,release_observer}.py`와 대응 Python 회귀; 단축 runbook·원 보고서 후속 표기·기존 운영 runbook·구현 계획·이 handoff.
+
+## 실제 검사와 실패
+
+- Node CI 21/21 통과, workflow Vitest10/10 통과. ESLint9개·actionlint·bash -n·신규 Python 모듈 py_compile·CLI --help·git diff --check 실제 성공.
+- 최종 deploy glob181개 실행은 1실패/2skip: root가 image-proof 파일을 runtime0으로 잘못 등록한 분류 회귀였다. 해당 허용 항목을 제거해 원래 full 경계를 복구하고 `test_deployment_scope.py`41/41 재검증 성공. 다른 수정 없이 같은 전체 suite를 반복하지 않으며 최종 PR CI를 공동 근거로 사용한다.
+- 관련 release Python: runtime11/readiness24/observer23/monitor10/catalog13 각각 실제 통과. 실행 coordinator flow9개는 실제 localGit/stateful fakeAPI로 web2 순서·실패 중단·CI/profile/digest/attempt/scope/DDL 차단·mixed Git skip·관측 실패 분리를 검증했다. Git27, root 기본10개는 마지막 deploy glob에도 포함했다.
+- scope/manifest/migration의 실제 임시 Git replace 우회, Git 실제 command/tini/Cmdnull·multiline env 불일치와 초기 미생성 모듈 RED를 수정해 관련 회귀 통과. image proof의 새 IMAGE_DIGEST env 때문에 기존 workflow 기대값1실패 후 실제 receipt 연결을 추가 검증해10/10 통과. 저장된 실제17앱 API/runtime와 Git6 오프라인 계약 검증도 성공했으며 실제 운영 배포를 대신한 결과라고 주장하지 않는다.
+
+## 남은 작업·다음 명령
+
+필수 최신 base PR CI 성공→main 병합, main check/필요 image publish artifact를 실제 읽기 검증하고 결과 기록. 이번 도구 적용 자체로 앱을 다시 배포하지 않는다. 새 경로의 시간 절감은 다음 실제 배포에서 실측한다. 이전 be71 T15는 실제 DB `2026-10-24T23:46:18.963Z`, native104/AI2검수32, unknown/구세대/terminal누락0·findings=[]·기존 guard exit0을 확인했다. 기존 detached observer는 재시작하지 않으며 h6 due `2026-10-25T05:31:18.360Z`는 아직 미래다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-deployment-fast-path
+git status --short
+gh pr list --head feat/deployment-fast-path-20261025 --json number,url,state,headRefOid
+gh pr checks <PR번호>
+# merge 전에 최신 base/check 성공을 확인한다. main image proof 검증은 release_readiness.resolve_readiness를 읽기 전용 호출한다.
+# 다음 실제 배포: docs/operations/deployment-fast-path.md의 정확한 scope/plan/run 명령을 사용한다.
+# be71 런타임/DDL/unknown 회수/capacity open/원 작업 재개/생산자 등록은 반복하지 않는다.
+```
+
+---
+
 # 2026-10-25 08:42 KST — be71 운영 배포 완료, T0·T5·T10 통과, 시간 단축안 정리
 
 이 기록이 아래의 과거 진행 기록보다 우선한다. 현재 목표는 승인된 LLM 보강 구현·운영 활성화·배포의 완료 기록과 테스트/배포 시간 단축 검토를 문서 PR로 반영하는 것이다. **실제 런타임 작업은 완료했으며, 운영 배포를 다시 실행하지 않는다.** 원 사용자 worktree는 보존했다.

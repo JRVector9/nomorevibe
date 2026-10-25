@@ -1,5 +1,11 @@
 # 독립 워커 운영 절차
 
+일반 릴리스는 [변경 범위별 단축 배포](deployment-fast-path.md)의
+`npm run deploy -- scope|plan|run`을 기본으로 사용한다. 실제17앱의 혼합 baseline과 유지 앱을 검증하며,
+text·maintenance·scheduler는 다음 해당 앱 배포 때 공통 worker digest로 전환한다.
+이 문서의 기존 `deploy_shared_images.py`·수동 Git 배포/복구 명령은 이전 경로와 예외 복구를 설명한다.
+새 경로의 once 영수증을 지우거나 이전 도구의 `--resume`를 새 실행에 적용하지 않는다.
+
 이 문서는 로컬 Compose의 실제 실행 명령과 운영 전환 시 지켜야 하는 순서를 정리한다.
 운영은 M3 다섯 역할·scheduler 2복제본, mini의 다섯 역할 예비와 M3·mini 웹 2개가 외부 `nomorevibe` DB를 공유한다. 이 파일 자체는
 실제 배포 완료 증거가 아니며 완료 여부는 Dokploy 상태·DB 결과·health 응답으로 확인한다.
