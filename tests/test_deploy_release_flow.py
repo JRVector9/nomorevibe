@@ -90,6 +90,8 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.new_client = self.stack.enter_context(patch.object(release, 'new_client', return_value=self.client))
         self.ready = self.stack.enter_context(patch.object(release.readiness, 'resolve_readiness', side_effect=self.resolve))
         self.main = self.stack.enter_context(patch.object(release.git, 'verify_main', side_effect=lambda target: self.events.append('main-verified')))
+        self.registry = self.stack.enter_context(patch.object(release.shared, 'main_sha_and_token',
+            side_effect=lambda target: self.record('registry-verified', 'synthetic-token')))
         self.fleet = self.stack.enter_context(patch.object(release.fleet, 'verify_fleet', side_effect=self.verify_fleet))
         self.stack.enter_context(patch.object(release.shared, 'run', side_effect=self.local_transport))
         self.stack.enter_context(patch.object(release.shared, 'ssh_python', side_effect=AssertionError('unexpected SSH')) )
@@ -183,6 +185,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(self.fleet.call_count, 2)
         self.assertEqual(len(result['retainedApps']), 15)
         self.assertEqual(len(self.observations), 1)
+
         for short in ('web-mini', 'web-m3'):
             for label in ('environment', 'provider', 'deploy'):
                 self.assertTrue((self.execution / (short + '.' + label + '.attempted.json')).is_file())
@@ -196,6 +199,22 @@ class CoordinatorFlowTests(unittest.TestCase):
             release.run_release(self.plan, self.execution)
         self.assertEqual(len(self.client.posts), 6); self.assertEqual(self.new_client.call_count, 1)
         self.assertEqual(len(self.observations), 1)
+
+    def test_private_registry_guard_rejects_before_first_service_write(self):
+        self.registry.side_effect = ValueError('web_package_not_private')
+        with self.assertRaisesRegex(ValueError, 'web_package_not_private'):
+            release.run_release(self.plan, self.execution)
+        self.assertEqual(self.client.posts, [])
+        self.assertEqual(self.health.call_count, 0)
+        self.assertEqual(self.observations, [])
+
+    def test_image_preparation_checks_private_registry_and_preserves_existing_pull_credentials(self):
+        with patch.object(release.shared, 'ssh_python', return_value=json.dumps({
+                'pulled': True, 'revision': self.after})) as remote:
+            release.prepull(self.snapshot, self.target, ['web-mini', 'web-m3'])
+        self.assertEqual(self.registry.call_count, 1)
+        self.assertEqual(remote.call_count, 2)
+        self.assertTrue(all(call.kwargs['input_text'] == 'preserved-registry-secret' for call in remote.call_args_list))
 
     def test_role_closure_keeps_exact_target_text_mini_as_retained_without_requiring_a_deployment_receipt(self):
         # Every app already serves the target except text-m3. A shared-code diff
