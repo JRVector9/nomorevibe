@@ -1,3 +1,32 @@
+# 2026-10-25 — 단축 배포 기본 절차 적용 완료
+
+사용자의 단축 보고서 적용 요청을 완료했다. 코드 PR653·보완 PR654를 필수 최신 base CI 성공 후 병합했고, 코드 main은 **64a8868dbb0050a716d5c20e08655283ceaaa7ec**다. 앞으로 `npm run deploy -- scope|plan|run`과 `docs/operations/deployment-fast-path.md`를 일반 배포 기본 절차로 사용한다. 원 사용자 WT의 미커밋 파일은 보존했다.
+
+## 완료·실제 검증
+
+- docs/ui/full CI·범위/버전 인증서·정확한 필수 결과 집계, 앱별 혼합 baseline 영향 분류, 변경 대상만 배포/유지 앱 검증, worker5 공통 이미지 전환·최대2개 묶음, connect 실제 출처, catalog 등록·기존 DB/health/registry 관문, private once/원복 자료와 비동기 관측을 구현했다. 자세한 파일·설계·실패 이력은 아래 단계 기록에 보존한다.
+- PR653 CI40148205856 및 **PR654 CI40149298374**의 타입·lint·unit2·통합6·직렬 ledger·build·필수 check가 실제 성공했다. 최신 lint 원문에서 deploy Python183개(2skip), release Python81개 성공을 확인했다. 기존 Oracle/DR 회귀도 성공했다. CI Node22, workflow10개와 실제 YAML→Node writer→Python ZIP 파서6개를 검증했고 프로젝트 tsc/ESLint/actionlint/py_compile도 통과했다.
+- **Main CI40149879165**의 check는 PR654의 같은 tree 전체 검사 증거를 실제 재사용했고 두 image publish가 성공했다. 새 `release_readiness.resolve_readiness`를 실제 GitHub API/두 ZIP artifact에 실행해 exact main/run40149879165/attempt1/full/v2·tree·immutable digest가 일치함을 확인했다. 기존 GitHub 계정/main/private web registry 관문도 실제 통과했다. 앞선 실패 main702429e9를 worker_publish_failed로 거부한 실제 음성 검증도 수행했다.
+- 준비 worker digest `e7f9f590037cfda7f75670f8f7cf31ffc079570235c7f360ec22d31f8a9df75b`, web digest `473a82839005de16b6438c7e542ddb2e4d07afc782ce33cd84737c8644d30324`. 실제 읽기 전용 증명 `/Users/jr/.local/state/nomorevibe-fast-path-verification-20261025/main-readiness.safe.json`, SHA256 **4ba1ede52e5c9b58cbf0f984c60c611eb5997866a0f18db0c263938706a4dbd9**. 이는 위 코드 main 시점의 준비 증거이며 운영 배포 완료 증거가 아니다.
+
+## 운영 상태·남은 작업
+
+이번 도구 적용으로 서비스·DB·모델·capacity·producer·기존 observer를 변경하지 않았다. **운영은 기존 be71/17앱/22컨테이너를 유지**한다. worker5 provider 전환과 새 경로의 실제 배포 시간 측정은 다음 해당 앱 릴리스에서 수행한다. 구현상 남은 필수 작업은 없다. 기존 be71의 h6 관측은 KST14:31:18.360 due이며 미래 표본/사람 품질 통과는 주장하지 않는다. 기존 driver를 중복 실행하지 않는다.
+
+현재 완료 WT는 `/Users/jr/Desktop/projects/nomorevibe-deployment-fast-path`다. 다음 실제 코드 릴리스에서는 깨끗한 최신 main과 그 push CI의 정확한 이미지 증거를 준비하고 guide의 scope→plan→run을 실행한다. 문서만 바뀌면 runtime0이고 새 이미지는 발행하지 않는다. CI cache 전체 종료나 미래6h 관측을 일반 배포의 동기 대기로 추가하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-deployment-fast-path
+git status --short
+gh pr view 654 --json state,mergeCommit,url
+npm run deploy -- --help
+# 실행 인자·private plan/once·실패 readback·관측 보존 규칙:
+cat docs/operations/deployment-fast-path.md
+# 운영 재배포/DDL/unknown 회수/open/원 작업 재개/producer 등록은 반복하지 않는다.
+```
+
+---
+
 # 2026-10-25 — 단축 도구 main 반영, 이미지 증명 환경 연결 보완
 
 사용자 목표는 단축 보고서를 다음 배포의 기본 명령으로 적용하는 것이다. 구현 PR653은 최신 전체 필수 CI40148205856 성공 뒤 **main702429e9b98ddc3008674f39e030f4e7c178e14b**에 00:56:43Z 병합했다. 일반 명령은 `npm run deploy -- scope|plan|run`, 상세는 `docs/operations/deployment-fast-path.md`다. 원 사용자 WT는 보존했고 운영 be71 앱·DB·모델·capacity는 변경0이다.
