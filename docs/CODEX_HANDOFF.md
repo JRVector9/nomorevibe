@@ -1,3 +1,28 @@
+## 2026-10-25T11:29:44Z — 자동복구 실증 문서 초안 PR663 생성
+
+목표는 웹·백엔드 자동복구, Oracle 전 과정 감시·관리자 알림, 전 페이지 병목 개선이며 **전체 목표 미완료**다. 이 작업 트리는 최신 mainfadb527c 기반의 문서 전용 `codex/reliability-verified-docs-20261025`이며 운영 변경을 실행하지 않는다.
+
+PR659 구현 병합·Oracle19대상 감시 및 Osaka native followup1 실제 자동복구 PASS를 문서화했다. 원 native 시험 FAIL·once·복구 예산을 보존한다. 실제10:54:46.973Z 종료 뒤 새PID·최신health·원 설정·빈 driver/fallback·timerinactive·job0·DB writer/agent설정 동일성·네Push ACK를 검증했다. 상세 범위·SHA·실패 접근은 [native 실증](operations/2026-10-25-native-recovery-verification.md)을 따른다. runtime hang·전체host·DB DR/PITR·fallback 실제 발화 성공으로 확대하지 않는다. 수정파일은 이 handoff, Oracle runbook, security audit, implementation plan 및 새 native 실증 총5문서이며 앱 source0이다.
+
+문서의 artifact/source/manifest/predecessor SHA11개와 상대링크23개는 원 reliability WT에서 실제 대조 EXIT0, 독립 보안 검토는 노출/깨진 링크/보안 blocker0이었다. 지적된 집계·OPEN 문구를 수정했다. 초기 Python 선택 회귀 숫자와 최종 CI 실행 성공을 구분하고 raw 수치가 없는 최종 집계를 새 요약에서 제거했다. 이 clean WT에서도 최종 증거 SHA13개/추가·운영문서 상대링크24개/entrypoint 도달을 실제 검증했고 diff-check를 실행했다. 초안 [PR663](https://github.com/JRVector9/nomorevibe/pull/663)을 최초head92ca3d72에서 실제 생성했다. 최신 head/CI는 아래 gh 명령으로 확인하며 통과 전 성공을 주장하지 않는다. 전체 앱 테스트는 새 source 변경 없이 반복하지 않는다.
+
+공유 provider 회수·최신18앱 배포는 별도 운영 소유자가 담당한다. 그 소유자의11:26 실제 기록은 migration START1/EXIT0·DB132였으나 wrapper의 종료 뒤 hostname 검사 거절로 추가 읽기 전용 completion 검증 중이었다. Root도11:33:25 primary READ ONLY로 journal132/draining11:20:43.235/원unknown2·writer/agent설정 동일·M3기존be71 running을 직접 확인했다. 11:33:43 Oracle READ ONLY는 active/NRestarts0·19대상·nativeok/기존budget1·네Push ACKtrue·전체pipelinefalse였다. 두 새 영수증과 SHA는 native 실증에 기록했다. 전체 마이그레이션 검증/unknown회수/18앱 완료로 확대하지 않는다. session28440/helper를 재실행하거나 출력 소비를 경쟁하지 않는다. 실제 최신 공유 운영 상태는 원 checkout `/Users/jr/Desktop/projects/nomorevibe/docs/CODEX_HANDOFF.md` 최상단과 소유자의 실행 영수증을 따른다.
+
+첫 ship 시도는 설치 패키지에 필수 review/checklist.md가 없어 멈췄다. 원본 garrytan/gstack Git blobd79d11585025bb428c32e8630ff1253094128314/SHA256cb9a5b6feb7fff38f9b041e89257f23fe92655c444214f4358aec86188490604를 검증해 별도0700/0600 캐시에 보관하고 전체를 읽었다. 캐시는 `/Users/jr/.local/state/nomorevibe-reliability-20261025/prepared-doc-review/review/checklist.md`, 출처는 sibling source.safe.json이다. 설치 스킬이나 upstream 실행 스크립트는 변경·실행하지 않았다. 캐시 checklist 두 pass의 독립 문서 범위 pre-landing 검토는 No issues found였다. 추가11:33 관측 delta도 독립 로컬 대조 blocker0였다.
+
+남은 일은 공유 DB132/unknown0/최종OPEN·18앱 실제 source/health 검증 → 준비된 miniweb/idletext 단1회 드릴 → 새 릴리스 지연·text7/AIlegacy/items/hold/provider·Oracle19/알림 검증 → 이 문서 PR에 실제 결과 반영이다. 전체 목표 완료나 운영 배포 승인을 이 문서 PR로 주장하지 않는다. Native 완료 helper/예산을 재실행·초기화하지 않는다.
+
+다음 읽기 명령:
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-reliability-docs-20261025
+git status --short
+git diff --check
+gh pr view 663 --json url,state,isDraft,headRefOid,statusCheckRollup
+sed -n '1,40p' /Users/jr/Desktop/projects/nomorevibe/docs/CODEX_HANDOFF.md
+cat docs/operations/2026-10-25-native-recovery-verification.md
+```
+전체 실제 증거와 과거 실패 기록은 `/Users/jr/Desktop/projects/nomorevibe-reliability-autorecovery/docs/CODEX_HANDOFF.md` 및 로컬0700/0600 evidence archive에 보존한다.
+
 # 2026-10-25 — 웹·백엔드 자동복구와 Oracle 독립 감시
 
 ## 2026-10-25 — 역사 owner + direct native boot V4 (운영 실행0)

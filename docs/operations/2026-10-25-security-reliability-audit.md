@@ -2,6 +2,10 @@
 
 검토 기준은 reliability/autorecovery 작업 트리의 `e7136238` 기반 코드다. 이 문서는 확인한 경계와 실제 실행한 회귀를 기록한다. 운영 자격 정보, Push URL, Telegram 설정은 수집하거나 기록하지 않았다. 운영 DB 변경·실제 알림·서비스 재시작은 이 보안 검토에서 실행하지 않았다.
 
+주 작업의 후속 실행은 별도다. PR659는 정상 병합됐고 최종 통합 unit7398PASS/9skip, typegen/tsc/i18n/lint/build 성공, npm audit0을 확인했다. 최종 Python recovery/watchdog discovery 두 단계도 PR659 CI40173805135에서 성공했다. 별도 보존 CI 로그에는 수치 집계가 없어 초기 선택 회귀의 수치와 합치지 않는다. 실제 격리Engine CAS 복구, 격리웹 DB 재연결, mini scheduler 단독120초, watchdog deadman·receiver 장애 알림도 실행했다. Osaka native는3c63/Node24.22.1로 갱신했으나 Docker18앱의 새 소스 배포와 배포 후 관측은 남았다. 아래 역할별 초기 기록을 현재 운영 완료로 해석하지 않으며, 최신 운영 상태·공유 배포 소유권과 실제 영수증은 [인계 문서](../CODEX_HANDOFF.md) 최상단 및 [Oracle 운영 절차](oracle-recovery-runbook.md)를 따른다.
+
+private native 시험도구는 초기46개 회귀 이후 실제 첫 시험에서 실패했다. 이를 보존한 고정 followup1은 작성자·보안·root 각각90개 회귀를 통과하고 실제 Oracle 복구까지 PASS했다. 최종 증거의 독립 로컬 검토도59개 assertion/EXIT0·차단 결함0이었다. 범위·실패 이력·정확한 해시는 [native 복구 실증](2026-10-25-native-recovery-verification.md)에 기록했다. 이 실증의 운영 창은 닫혔으며 Docker18앱 배포의 native 보류 사유는 해소됐다.
+
 ## 확인하고 수정한 문제
 
 | 문제 | 근거와 영향 | 수정 |
@@ -81,7 +85,7 @@ Vitest 실행에는 기존 CommonJS/ESM config loader 경고가 있었다. 단�
 | M3 전체 단절 → mini | [기존 도메인 전환 기록](2026-10-11-primary-domain-cutover.md)은 M3·mini Cloudflare pool을 기록한다. 다섯 mini 역할은 DB role lease로 선출된다. Oracle은 SSH 실패·heartbeat 중단을 감지한다. | scheduler 두 복제본이 M3에만 있어 새 정기 요청 생성이 끊기는 구현 gap을 확인했다. mini scheduler 1개 추가를 주 작업이 인수했다. M3 전체 단절 후 새 due 요청·작업 완료·웹 응답을 함께 확인하는 운영 증명은 남는다. DB/모델까지 함께 사라지는 경우는 별도다. |
 | DB 일시 불통 뒤 재접속 | [DB pool](../../lib/db/pool.ts)과 [network route](../../lib/db/network-route.ts)는 새 연결 및 구성된 fallback을 관리한다. scheduler는 다음 틱을 계속한다. gateway는 DB unavailable을 재시작 원인으로 쓰지 않는다. 감시 unknown은 경보가 되고 새 liveness는 DB 503 때문에 task를 바꾸지 않는다. | 운영 DB 단절·회복 드릴은 이 검토에서 실행하지 않았다. [Patroni/DCS 제한](../runbooks/db-lan-fallback.md)과 영구 DR·PITR/RPO/RTO 증명은 별개다. |
 | 모델/provider 장애 / 정책 hold | 텍스트 7단계 수요·실패·성공 조회와 fixed-key heartbeat를 Oracle이 관측한다. durable first/last로 provider 연속 실패 30분 후 경보를 내며 retry/backoff·lease/fence·capacity hold를 보존한다. 모델 강제 재시작은 없다. | pause/no work/hold/최근 성공은 provider 연속 실패에서 제외한다. 주 작업의 후속 운영 검증은 12표 SELECT grant·readonly on·쓰기42501 및 reason2552ms/other788ms를 확인했다. 새 monitor 배포·실제 장기 provider 알림 증명은 별도이며, 독립 모델의 물리 실행·품질·terminal 증명이나 PR16 활성화까지 완료한 것은 아니다. |
-| Osaka agent-scan systemd 중단 | 기존 Restart=on-failure는 의도적 stop과 start-limit 소진을 계속 복구하지 않는다. 글로벌 alive 판정은 M3 소비자가 살아 있으면 Osaka 단일 부재를 숨길 수 있다. 새 [native gateway](../../scripts/ops/native_recovery_gateway.py)는 고정 unit의 failed/MainPID0/180초/빈 재귀 cgroup에만 reset-failed→start를 허용한다. inactive는 경보만, active hung은 기존 fenced supervisor가 담당한다. | 단위 회귀와 실제 active unit 읽기 검증은 통과했다. 독립 SSH 설치·Oracle 세 번째 host 연결·실패 복구 드릴은 주 작업이 인수했으며 완료 여부는 최신 인계 기록을 따른다. |
+| Osaka agent-scan systemd 중단 | 기존 Restart=on-failure는 의도적 stop과 start-limit 소진을 계속 복구하지 않는다. 글로벌 alive 판정은 M3 소비자가 살아 있으면 Osaka 단일 부재를 숨길 수 있다. 새 [native gateway](../../scripts/ops/native_recovery_gateway.py)는 고정 unit의 failed/MainPID0/180초/빈 재귀 cgroup에만 reset-failed→start를 허용한다. inactive는 경보만, active hung은 기존 fenced supervisor가 담당한다. | 후속 실제 pre-launcher 실패 복구 PASS: Oracle180초/동일version3표본/requested1회/양budget각1/새PID·boot·freshhealth·원source/config/caps/fallback0을 확인했다. 최종 독립 읽기에서 driver/fallback empty·timerinactive·job0/DB writer·agent-control 전후 동일/네 ACK를 확인했다. 첫 시험은 도구 실패로 별도 보존한다. |
 | Oracle watchdog / 한쪽 receiver 중단 | watchdog의 systemd Restart=always와 양 Kuma heartbeat가 watchdog 자체 중단을 감지한다. pipeline DOWN과 watchdog 생존 UP은 다른 monitor다. 주 작업은 SIGKILL 복귀·양 수신기 deadman DOWN/UP·Telegram API 수락을 실제 확인했다. | 새 notifier는 watchdog이 살아 있는 동안 receiver ACK=false를 직접 Telegram incident로 알린다. Oracle host 자체가 끊기면 mini heartbeat74의 timeout이 경보를 낸다. 추가 Kuma 상호 HTTP 점검은 컨테이너 MagicDNS ENOTFOUND 오탐으로 주 작업이 제거했다. 원 pipeline/heartbeat는 유지한다. 단말 읽음과 receiver+watchdog host 동시 손실까지 증명한 것은 아니다. |
 
 ## Scheduler와 Oracle emergency의 경계
@@ -115,7 +119,13 @@ PR16 emergency admission은 실행 중인 Oracle workload의 예산·우선순�
 
 systemd에는 Docker Engine과 같은 원자적 state CAS가 없다. 운영자가 의도적으로 멈추기 전 `recoverEnabled=false`로 disarm해야 한다. 설치 후 운영 실패 복구 드릴은 이 단위 회귀와 구분해 기록해야 한다.
 
-이후 주 작업은 Osaka 전용 SSH 설치와 recoverEnabled=true, Oracle→Osaka 실제 probe 정상 및 `id` 거절(exit1)을 확인했다. consumer 자체는 바꾸지 않았다. 이 설치·권한 증명은 실제 consumer 실패 후 시작 드릴을 대신하지 않는다.
+이후 주 작업은 Osaka 전용 SSH 설치와 recoverEnabled=true, Oracle→Osaka 실제 probe 정상 및 `id` 거절(exit1)을 확인했다. 설치 당시 consumer는 유지했고, 별도 정상 drain·TTL 대기·검증된 release 전환으로3c63/Node24.22.1·npmUndici8.12.3에 갱신했다. 이 설치·권한·정상 runtime 전환 증명은 실제 consumer 실패 후 시작 드릴을 대신하지 않는다.
+
+첫 실제 native 드릴은10:03:09Z 관측 EXIT1로 실패했다. false prestart3회 뒤 PID1은 시작 제한을 기록했지만 실제 Result는 exit-code였고, 시험도구의 start-limit-hit 가정 때문에 Oracle 재활성화 단계에 도달하지 못했다. fallback timer의 실제 발화도 늦었으며, fallback은 새 consumer를 시작한 뒤 결과 영수증·rearm을 완료하지 못했다. root는 기존 driver/fallback 종료와 빈 cgroup·job0, 새 PID·boot·fresh health·원 파일 정체성을 확인한 다음 자기 elapsed timer 종료와 원 recoverEnabled 복원만 수행했다. 이 마무리에서 consumer start/stop/reset은0이다.
+
+첫 시험의 최종 read-only 증거는 native/Oracle 예산0·Oracle 복구 이벤트0, 원 config/identity와 fresh health, DB writer/fence/agent control/settings 전후 동일을 확인했다. 독립 security는 연결된8개 파일 해시·크기와 old unit 원문을 검증했다. 기존 fallback에 FileNotFoundError를 주입한 offline 재현은 예외 탈출·영수증/rearm 미도달을 보였지만 실제 historical 원인으로 단정하지 않는다. 원 실패와 모든 once는 보존했다.
+
+이후 고정 followup1은 원 terminal/operator 복원 SHA에 결속한 단1회 새 예약, 절대 OnBootSec·reload 후 typed deadline 검증, 실제 PID1 control-exit3/counter1·2·3/limit 순서, known old DB PID의 bounded pending과45초 전후·내부 명령 제한을 적용했다. 작성자/security/root 각90/90 offline PASS 뒤 양host root0600 새 경로에 exclusive 설치했다. 실제10:54:46.973Z EXIT0/PASS: 같은 failed version180초/복구가능1·2·3/Oracle requested1회/양budget각append1/newPID1886533·새 supervisor serviceboot/freshhealth/fallback발화0. 독립 최종 읽기에서 원env/config/source/caps/fullrelease, empty driver/fallback·inactive timer/LastTrigger0·job0, DB writer/fence/agent settings 전후 동일과 네 Push ACK를 확인했다. native실패 bad2 cycle의 Telegram API수락도 기록했다. 원 시험의 FAIL, runtime hang·모델/provider·DB DR 미검증 범위는 유지하며 자세한 SHA는 [native 복구 실증](2026-10-25-native-recovery-verification.md)을 따른다.
 
 ## 독립 incident 알림 검토
 
