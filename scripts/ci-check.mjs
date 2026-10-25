@@ -11,7 +11,7 @@ export function validateRequiredCheck(needs) {
   if (!needs || Object.keys(needs).sort().join(',') !== ['scope', ...JOBS].sort().join(',')) fail('jobs_invalid');
   if (needs.scope?.result !== 'success') fail('scope_failed');
   const { code_changed: codeChanged, test_profile: profile, rules_version: rulesVersion,
-    run_tests: runTests, reused_run: reusedRun } = needs.scope.outputs ?? {};
+    run_tests: runTests, reused_run: reusedRun = '' } = needs.scope.outputs ?? {};
   if (!TEST_PROFILES.includes(profile) || rulesVersion !== CI_RULES_VERSION) fail('profile_invalid');
   if (!['true', 'false'].includes(runTests) || typeof reusedRun !== 'string') fail('plan_invalid');
   if (codeChanged !== String(profile !== 'docs')) fail('code_scope_mismatch');

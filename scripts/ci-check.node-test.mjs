@@ -2,6 +2,17 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { validateRequiredCheck } from './ci-check.mjs';
 
+test('GitHub omits empty reused_run job outputs without invalidating a fresh full check', () => {
+  const needs = { scope: { result: 'success', outputs: {
+    code_changed: 'true', test_profile: 'full', rules_version: 'v2', run_tests: 'true',
+  } }, ...Object.fromEntries(['typecheck', 'lint', 'unit', 'build', 'integration', 'integration-ledger']
+    .map(name => [name, { result: 'success', outputs: {} }])) };
+  const actual = JSON.parse(JSON.stringify(needs));
+  assert.deepEqual(validateRequiredCheck(actual), { testProfile: 'full', rulesVersion: 'v2', reusedRun: '' });
+  actual.scope.outputs.run_tests = 'false';
+  assert.throws(() => validateRequiredCheck(actual), /ci_check_reuse_missing/);
+});
+
 const jobs = ['typecheck', 'lint', 'unit', 'build', 'integration', 'integration-ledger'];
 function needs(profile = 'full', runTests = 'true', reusedRun = '') {
   return Object.fromEntries([

@@ -21,6 +21,7 @@
 
 - Node CI 21/21 통과, workflow Vitest10/10 통과. ESLint9개·actionlint·bash -n·신규 Python 모듈 py_compile·CLI --help·git diff --check 실제 성공.
 - PR653 첫 CI40147439279의 lint/build는 통과했으나 typecheck가 workflow 회귀의 `with.name: string|boolean`에 직접 startsWith를 호출한 TS2339로 실패했다. typeof 문자열 가드를 넣고 실제 Next typegen·tsc·관련 Vitest10/10·ESLint를 통과했다. 최신 head 필수 CI가 남았다.
+- 두 번째 CI40147609235는 타입/빌드/lint/unit2/통합6/ledger/PR이미지 모두 성공했다. lint 원문에서 deploy181개(2skip)·release81개 실제 성공을 확인했다. 최종 check만 GitHub가 빈 reused_run 출력을 생략하는 실제 형상을 거절했다. 실제 NEEDS_JSON 형상 회귀1FAIL→누락값만 빈 문자열 기본값으로 처리해3/3 성공, ESLint도 통과했다. 재사용 증거 없는 run_tests=false는 계속 거부한다. 이 수정의 최신 필수 CI를 확인해야 한다.
 - 최종 deploy glob181개 실행은 1실패/2skip: root가 image-proof 파일을 runtime0으로 잘못 등록한 분류 회귀였다. 해당 허용 항목을 제거해 원래 full 경계를 복구하고 `test_deployment_scope.py`41/41 재검증 성공. 다른 수정 없이 같은 전체 suite를 반복하지 않으며 최종 PR CI를 공동 근거로 사용한다.
 - 관련 release Python: runtime11/readiness24/observer23/monitor10/catalog13 각각 실제 통과. 실행 coordinator flow9개는 실제 localGit/stateful fakeAPI로 web2 순서·실패 중단·CI/profile/digest/attempt/scope/DDL 차단·mixed Git skip·관측 실패 분리를 검증했다. Git27, root 기본10개는 마지막 deploy glob에도 포함했다.
 - scope/manifest/migration의 실제 임시 Git replace 우회, Git 실제 command/tini/Cmdnull·multiline env 불일치와 초기 미생성 모듈 RED를 수정해 관련 회귀 통과. image proof의 새 IMAGE_DIGEST env 때문에 기존 workflow 기대값1실패 후 실제 receipt 연결을 추가 검증해10/10 통과. 저장된 실제17앱 API/runtime와 Git6 오프라인 계약 검증도 성공했으며 실제 운영 배포를 대신한 결과라고 주장하지 않는다.
