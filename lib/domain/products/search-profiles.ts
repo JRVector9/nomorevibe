@@ -71,7 +71,8 @@ const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is
             or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`;
 
 export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "instanceId" | "bootId">): Promise<ProfileTask[]> {
-  const own = owner ? await findOwnPendingTextProfileRequests({ owner, model: PROFILE_MODEL }) : [];
+  const own = owner ? await findOwnPendingTextProfileRequests({
+    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: PROFILE_MODEL }) : [];
   const resumed = own.length ? await onPrimary(() => db.transaction(async tx => {
     const rows = await tx.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
       .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
