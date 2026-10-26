@@ -35,11 +35,10 @@ RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs
 # Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
-COPY scripts/install-codex-native-entrypoint.mjs /tmp/install-codex-native-entrypoint.mjs
 RUN apk add --no-cache tini util-linux font-dejavu && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
-  && claude --version && codex --version \
-  && node /tmp/install-codex-native-entrypoint.mjs "${CODEX_CLI_VERSION}" \
-  && codex --version && rm /tmp/install-codex-native-entrypoint.mjs
+  && claude --version && codex --version
+RUN --mount=type=bind,source=scripts/install-codex-native-entrypoint.mjs,target=/tmp/install-codex-native-entrypoint.mjs,readonly \
+  node /tmp/install-codex-native-entrypoint.mjs "${CODEX_CLI_VERSION}" && codex --version
 RUN mkdir -p /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok && chown worker:nodejs /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok
 # 2차 표 제공자 grok-cli — xAI 공식 Grok Build CLI(정적 바이너리, alpine arm64 에서 동작 확인). 설치 스크립트가
 # $HOME/.grok/downloads 에 받고 GROK_BIN_DIR 에 절대 경로로 링크한다. 로그인 파일은 실행 시 GROK_AUTH_PATH 로 넣는다.
