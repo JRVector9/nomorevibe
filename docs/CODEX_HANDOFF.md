@@ -1,3 +1,25 @@
+## Product detail facts compact layout — 2026-10-26
+
+Current objective: slightly compact the product detail facts panel from the user's screenshot while retaining every existing label, value, note, source warning and license interaction. Isolated WT `/Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026`, branch `codex/detail-compact-20261026`, base `df1e641189e2e2d6ba0da9ca5b50cfe996f69a77`. The original user WT remains untouched. No skills, production access, push or PR were used by this agent.
+
+Completed: tile padding changes from 14×12px to 12×10px, internal gap from 4px to 2px, values from 18px to 17px, explicit compact line heights, and panel radius from 18px to 12px. Labels and notes retain the repository's 13px minimum. Existing desktop 200px auto-fit minimum remains for the three-column layout; at viewport widths through 440px the minimum becomes 140px, allowing two columns at 320/375px without forcing sparse facts into empty columns. Values, labels and notes wrap. Root additionally authorized the one license-trigger class change from truncation to normal wrapping, retaining all dialog handlers, focus behavior, ARIA and `dl`/`dt`/`dd` structure. Fact selection, translations, dates, sources and values are unchanged.
+
+Modified files: `components/product-detail/FactsStrip.tsx`, `components/product-detail/LicenseDialog.tsx` (trigger class only), and this handoff. No tests were added or edited. The local Next CSS guide `node_modules/next/dist/docs/01-app/01-getting-started/11-css.md` was read before changes. `node_modules` is an ignored symlink to the already installed reliability-autorecovery dependencies.
+
+Actually executed after the final license-trigger class change, using Node24.18.0:
+- `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/vitest/vitest.mjs run tests/product-detail-components.test.tsx tests/p12-detail-a11y.test.tsx tests/repository-release.test.tsx tests/ui-contract.test.ts` → **4 files / 62 tests PASS**, 441ms. The existing Vite config-loader advisory remains informational.
+- `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/eslint/bin/eslint.js components/product-detail/FactsStrip.tsx components/product-detail/LicenseDialog.tsx --max-warnings 0` → EXIT0.
+- `git diff --check` → EXIT0.
+
+Failed approaches: none in implementation. The initial guessed Next styling-guide path did not exist; the actual local CSS guide above was then read. No browser/viewport measurements, full suites, build, DB tests or operational actions were run by this agent; root owns integrated visual verification and delivery. Remaining work: root reviews and integrates this commit with the other isolated layout changes, visually verifies desktop and narrow mobile panels, and handles GitHub/deploy.
+
+Exact next commands (root's integration WT):
+```sh
+git show --stat --oneline codex/detail-compact-20261026
+git cherry-pick codex/detail-compact-20261026
+```
+If the shared handoff conflicts, retain this phase and the other agent/root phases. Existing scoped tests above passed on this isolated component change; run only integration checks justified by the combined changes.
+
 ## 2026-10-26 운영 수정 3개 병렬 착수
 
 사용자가 기존 수정의 커밋·병합·운영 배포와 우선순위 1/2/3 병렬 수정을 승인했다. AI2 실측 문서 3개를 커밋하고 최신 main에 반영 중이다. 원래 사용자 작업 트리의 `.claude/prod.sh`, PT/프로토타입 등 다른 수정은 그대로 보존한다.
