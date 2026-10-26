@@ -131,6 +131,15 @@ export function supervisorCommand(role: RuntimeRole, options: { once?: boolean; 
   return command;
 }
 
+const SUPERVISOR_ABORT_REASONS = ['shutdown_requested', 'progress_stalled', 'batch_admission_blocked', 'primary_handoff', 'role_lease_lost'] as const;
+function knownAbortReason(value: unknown): typeof SUPERVISOR_ABORT_REASONS[number] | null {
+  return typeof value === 'string' && (SUPERVISOR_ABORT_REASONS as readonly string[]).includes(value)
+    ? value as typeof SUPERVISOR_ABORT_REASONS[number] : null;
+}
+function knownChildSignal(value: unknown): 'SIGINT' | 'SIGTERM' | 'SIGKILL' | null {
+  return value === 'SIGINT' || value === 'SIGTERM' || value === 'SIGKILL' ? value : null;
+}
+
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
   signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: ConsumerName;
@@ -189,6 +198,11 @@ export async function superviseWorker(role: RuntimeRole, options: {
   return await new Promise<number>(resolveResult => {
     let exitCode = 1, stopping = false, finishing = false, requestedStop = false, everHeartbeat = false;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    let receivedSignal: 'SIGINT' | 'SIGTERM' | null = null;
+    let abortReason: string | null = null;
+    let drainTimedOut = false, forcedKill = false;
+    let childExitCodeSeen: number | null = null;
+    let childSignalSeen: 'SIGINT' | 'SIGTERM' | 'SIGKILL' | null = null;
     const log = (event: string, fields: Record<string, unknown> = {}) =>
       console.log(JSON.stringify({ event, role, at: new Date().toISOString(), ...fields }));
     const publish = () => {
@@ -201,28 +215,35 @@ export async function superviseWorker(role: RuntimeRole, options: {
       try { writeHealth(healthPath, health); }
       catch { stop('health_write_failed', false); }
     };
-    const stop = (reason: string, requested: boolean) => {
+    const stop = (reason: string, requested: boolean, attribution: { signal?: 'SIGINT' | 'SIGTERM' | null; abortReason?: string | null } = {}) => {
       if (stopping || finishing) return;
       stopping = true;
       requestedStop = requested;
       exitCode = requested ? 0 : 1;
+      if (attribution.signal === 'SIGINT' || attribution.signal === 'SIGTERM') receivedSignal = attribution.signal;
+      if (attribution.abortReason) abortReason = attribution.abortReason;
       health = { ...health, status: 'stopping', reason };
-      log('supervisor.stopping', { reason });
+      log('supervisor.stopping', { reason, requested, signal: receivedSignal, abortReason, sentSignal: 'SIGTERM' });
       // Let the worker abort and drain first. Signalling its whole group here also kills
       // tsx/esbuild during startup and turns a requested graceful shutdown into a failure.
       // The deadline and final cleanup still SIGKILL the entire group, including CLI children.
       child.kill('SIGTERM');
       drainTimer = setTimeout(() => {
-        log('supervisor.force_stop', { reason });
+        drainTimedOut = true;
+        forcedKill = true;
+        log('supervisor.force_stop', {
+          reason, signal: receivedSignal, abortReason, forcedKill: true, drainTimeout: true, drainMs: limits.drainMs, sentSignal: 'SIGKILL',
+        });
         exitCode = 1;
         signalGroup(child, 'SIGKILL');
       }, limits.drainMs);
     };
-    const onSignal = () => stop('shutdown_requested', true);
-    const onAbort = () => stop(options.signal?.reason === 'shutdown_requested'
-      ? 'shutdown_requested' : options.signal?.reason === 'progress_stalled'
-        ? 'progress_stalled' : options.signal?.reason === 'batch_admission_blocked' ? 'batch_admission_blocked'
-          : options.signal?.reason === 'primary_handoff' ? 'primary_handoff' : 'role_lease_lost', true);
+    const onSigint = () => stop('shutdown_requested', true, { signal: 'SIGINT' });
+    const onSigterm = () => stop('shutdown_requested', true, { signal: 'SIGTERM' });
+    const onAbort = () => {
+      const known = knownAbortReason(options.signal?.reason);
+      stop(known ?? 'role_lease_lost', true, { abortReason: known });
+    };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
     const monitor = setInterval(() => {
@@ -246,17 +267,21 @@ export async function superviseWorker(role: RuntimeRole, options: {
       }
       health = { ...health, status: exitCode === 0 ? 'stopping' : 'failed', updatedAt: Date.now() };
       try { writeHealth(healthPath, health); } catch { exitCode = 1; }
-      process.removeListener('SIGINT', onSignal);
-      process.removeListener('SIGTERM', onSignal);
+      process.removeListener('SIGINT', onSigint);
+      process.removeListener('SIGTERM', onSigterm);
       options.signal?.removeEventListener('abort', onAbort);
-      log('supervisor.stopped', { exitCode });
+      log('supervisor.stopped', {
+        exitCode, childExitCode: childExitCodeSeen, childSignal: childSignalSeen,
+        reason: typeof health.reason === 'string' ? health.reason : null,
+        signal: receivedSignal, abortReason, forcedKill, drainTimeout: drainTimedOut, cleanupSignal: 'SIGKILL',
+      });
       if (!sharedHost) await host.stop();
       const client=(globalThis as unknown as {pgClient?:{end:(options:{timeout:number})=>Promise<void>}}).pgClient;
       if(options.closeDbOnExit !== false && client)await client.end({timeout:1}).catch(()=>{});
       resolveResult(exitCode);
     };
-    process.on('SIGINT', onSignal);
-    process.on('SIGTERM', onSignal);
+    process.on('SIGINT', onSigint);
+    process.on('SIGTERM', onSigterm);
     child.on('message', value => {
       if (!child.pid || !isRuntimeHeartbeat(value, role, child.pid)) return;
       everHeartbeat = true;
@@ -270,7 +295,9 @@ export async function superviseWorker(role: RuntimeRole, options: {
       publish();
     });
     child.once('error', () => { exitCode = 1; health.reason = 'child_spawn_failed'; void finish(); });
-    child.once('exit', code => {
+    child.once('exit', (code, childSignal) => {
+      childExitCodeSeen = typeof code === 'number' && Number.isSafeInteger(code) ? code : null;
+      childSignalSeen = knownChildSignal(childSignal);
       exitCode = childExitCode(exitCode, code, {
         stopping, requested: requestedStop, everHeartbeat, once: options.once ?? false,
       });

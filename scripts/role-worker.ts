@@ -30,7 +30,10 @@ type Dependencies = {
   release?: typeof releaseRole;
   supervise: (lease: RoleLease, signal: AbortSignal) => Promise<number>;
   sleep?: typeof interruptibleSleep;
-  checkProgress?: (role: RoleCandidate['role']) => Promise<boolean>;
+  /** true/false 는 기존 호출·시험 그대로다. 객체는 그 한 번 읽은 보고서의 트리거이며 다시 조회하지 않는다. */
+  checkProgress?: (role: RoleCandidate['role']) => Promise<boolean | ProgressStallTrigger>;
+  /** 이 boot 의 종료 기록. 없으면 DB 를 부르지 않는다. */
+  recordStop?: (record: WorkerExitRecord) => Promise<void>;
   report?: (phase: 'standby' | 'active' | 'stopping', epoch: number | null) => void;
   /** versioned lease 의 claim 관문 readiness. null 이면 판정 대상 아님(draining·epoch 바뀜 — 갱신이 따로 본다) */
   checkAdmission?: (lease: RoleLease) => Promise<{ ready: boolean; reason: string } | null>;
@@ -107,22 +110,166 @@ export class PrimaryHandoff {
   }
 }
 
-export function roleHasUnexplainedStall(report: {
-  scheduler: { reason: string };
-  stages: Array<{ role: string; reason: string; lane?: string; job?: string; restartEligible?: boolean }>;
-  lanes?: Array<{ role: string; reason: string | null; restartEligible: boolean }>;
-  activeJobs?: string[];
-}, role: RoleCandidate['role'], activeJobs: string[] = report.activeJobs ?? []): boolean {
-  if (report.lanes?.some(lane => lane.role === role && lane.restartEligible)) return true;
-  if (report.scheduler.reason !== 'scheduled') return false;
+/** 재시작 로그에 남기는 정체 트리거. 프롬프트·본문·환경·토큰은 넣지 않는다. */
+export type ProgressStallTrigger = {
+  kind: 'stage' | 'lane';
+  reason: string;
+  job: string | null;
+  lane: string | null;
+  /** stage 는 최장 대기 분, lane 은 마지막 진행 이후 ms */
+  age: number | null;
+  /** stage 는 대기 건수, lane 은 poll 연령 ms */
+  wait: number | null;
+  /** stage 는 최근 진행 건수. lane 에는 같은 카운터가 없다 */
+  progress: number | null;
+  restartEligible: boolean;
+};
+
+const EXPLAINED_STAGE_REASONS: readonly string[] = ['progressing', 'running', 'upstream_or_job_error', 'upstream_stalled', 'backoff', 'paused'];
+type LeaseCause = 'role_renew_deadline' | 'role_lease_expired' | 'renew_rejected' | 'renew_failed';
+type StallStage = {
+  role: string; reason: string; lane?: string; job?: string; restartEligible?: boolean;
+  waiting?: number; oldestMinutes?: number | null; progress5m?: number | null; completed5m?: number | null;
+};
+type StallLane = {
+  role: string; reason: string | null; restartEligible: boolean;
+  name?: string; currentJob?: string | null; progressAgeMs?: number; pollAgeMs?: number | null;
+};
+type StallReport = { scheduler: { reason: string }; stages: StallStage[]; lanes?: StallLane[]; activeJobs?: string[] };
+
+function boundLabel(value: unknown, max = 80): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > max) return null;
+  return /^[A-Za-z0-9_.:@+/-]+$/.test(value) ? value : null;
+}
+function boundMetric(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1_000_000_000) return null;
+  return Math.round(value * 1_000) / 1_000;
+}
+function boundReason(value: unknown): string {
+  return boundLabel(value, 64) ?? 'unspecified';
+}
+function knownStopSignal(reason: unknown): 'SIGINT' | 'SIGTERM' | null {
+  return reason === 'SIGINT' || reason === 'SIGTERM' ? reason : null;
+}
+function candidateLog(candidate: RoleCandidate, epoch: number | null, fields: Record<string, unknown> = {}) {
+  return {
+    role: candidate.role, instanceId: boundLabel(candidate.instanceId, 48), bootId: boundLabel(candidate.bootId, 80),
+    release: boundLabel(candidate.release, 120), epoch, ...fields,
+  };
+}
+function stallFields(trigger: ProgressStallTrigger | null) {
+  return {
+    kind: trigger?.kind ?? null, reason: trigger?.reason ?? null, job: trigger?.job ?? null, lane: trigger?.lane ?? null,
+    age: trigger?.age ?? null, wait: trigger?.wait ?? null, progress: trigger?.progress ?? null,
+    restartEligible: trigger?.restartEligible ?? null,
+  };
+}
+/** boolean true 는 기존 호출이다. 객체는 restartEligible 이 정확히 true 일 때만 정체다. */
+function progressSample(result: boolean | ProgressStallTrigger): { stalled: boolean; trigger: ProgressStallTrigger | null } {
+  if (result === true) return { stalled: true, trigger: null };
+  if (typeof result !== 'object' || result === null) return { stalled: false, trigger: null };
+  if ((result.kind !== 'stage' && result.kind !== 'lane') || result.restartEligible !== true) return { stalled: false, trigger: null };
+  return { stalled: true, trigger: {
+    kind: result.kind, reason: boundReason(result.reason), job: boundLabel(result.job), lane: boundLabel(result.lane),
+    age: boundMetric(result.age), wait: boundMetric(result.wait), progress: boundMetric(result.progress),
+    restartEligible: true,
+  } };
+}
+function stageWouldRestart(stage: StallStage, stages: StallStage[], activeJobs: string[], role: RoleCandidate['role']): boolean {
+  if (stage.reason !== 'no_progress' || stage.restartEligible === false) return false;
+  const siblings = stages.filter(other => other.lane === stage.lane);
+  const activeInLane = activeJobs.some(job => siblings.some(other => other.job === job) ||
+    (stage.lane !== undefined && laneForJob(role, job) === stage.lane));
+  return !activeInLane && !siblings.some(other => EXPLAINED_STAGE_REASONS.includes(other.reason));
+}
+function stageTriggerOf(stage: StallStage): ProgressStallTrigger {
+  return {
+    kind: 'stage', reason: boundReason(stage.reason), job: boundLabel(stage.job), lane: boundLabel(stage.lane),
+    age: boundMetric(stage.oldestMinutes), wait: boundMetric(stage.waiting),
+    progress: boundMetric(stage.progress5m ?? stage.completed5m), restartEligible: stage.restartEligible !== false,
+  };
+}
+function laneTriggerOf(lane: StallLane): ProgressStallTrigger {
+  return {
+    kind: 'lane', reason: boundReason(lane.reason), job: boundLabel(lane.currentJob), lane: boundLabel(lane.name),
+    age: boundMetric(lane.progressAgeMs), wait: boundMetric(lane.pollAgeMs), progress: null, restartEligible: true,
+  };
+}
+
+/**
+ * 재시작 판정과 같은 첫 후보. lane 이 우선이고, scheduler 가 scheduled 일 때만 stage 를 본다.
+ * 배열에서 먼저 걸리는 FIRST 가 원인이면 그 stage 가 로그에 남는다. 이미 읽은 report 만 사용한다.
+ */
+export function selectUnexplainedStall(report: StallReport, role: RoleCandidate['role'], activeJobs: string[] = report.activeJobs ?? []): ProgressStallTrigger | null {
+  const lane = report.lanes?.find(item => item.role === role && item.restartEligible);
+  if (lane) return laneTriggerOf(lane);
+  if (report.scheduler.reason !== 'scheduled') return null;
   const stages = report.stages.filter(stage => stage.role === role);
-  return stages.some(stage => {
-    if (stage.reason !== 'no_progress' || stage.restartEligible === false) return false;
-    const siblings = stages.filter(other => other.lane === stage.lane);
-    const activeInLane = activeJobs.some(job => siblings.some(other => other.job === job) ||
-      (stage.lane !== undefined && laneForJob(role, job) === stage.lane));
-    return !activeInLane && !siblings.some(other => ['progressing', 'running', 'upstream_or_job_error', 'upstream_stalled', 'backoff', 'paused'].includes(other.reason));
-  });
+  const stage = stages.find(item => stageWouldRestart(item, stages, activeJobs, role));
+  return stage ? stageTriggerOf(stage) : null;
+}
+
+export function roleHasUnexplainedStall(report: StallReport, role: RoleCandidate['role'], activeJobs: string[] = report.activeJobs ?? []): boolean {
+  return selectUnexplainedStall(report, role, activeJobs) !== null;
+}
+
+function maintenanceStallTrigger(state: { oldestMinutes: number | null; waiting: boolean; persistedWithin5m: boolean }): ProgressStallTrigger {
+  return {
+    kind: 'stage', reason: 'no_progress', job: 'uptime-ping', lane: laneForJob('maintenance', 'uptime-ping'),
+    age: boundMetric(state.oldestMinutes), wait: state.waiting ? 1 : 0, progress: state.persistedWithin5m ? 1 : 0,
+    restartEligible: true,
+  };
+}
+function textStallTrigger(oldestReadyMinutes: number | null): ProgressStallTrigger {
+  return {
+    kind: 'stage', reason: 'no_progress', job: null, lane: null, age: boundMetric(oldestReadyMinutes),
+    wait: null, progress: 0, restartEligible: true,
+  };
+}
+
+export type WorkerExitRecord = {
+  why: string;
+  stopReason: string | null;
+  trigger: ReturnType<typeof stallFields>;
+  previous: ReturnType<typeof stallFields>;
+  instanceId: string | null;
+  bootId: string | null;
+  release: string | null;
+  epoch: number | null;
+  exitCode: number;
+  drainTimedOut: boolean;
+  signal: 'SIGINT' | 'SIGTERM' | null;
+  leaseCause: LeaseCause | null;
+};
+
+const EXIT_RECORD_MS = 2_000;
+const BOOT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** 한 boot 하나의 키. 다음 boot 가 같은 역할을 덮어쓰지 않는다. 80자 미만. */
+export function workerExitObservationKey(role: string, bootId: string): string | null {
+  if (!/^[a-z0-9-]{1,32}$/.test(role) || !BOOT_UUID.test(bootId)) return null;
+  const key = `worker-exit:${role}:${bootId}`;
+  return key.length < 80 ? key : null;
+}
+
+async function writeExitRecord(candidate: RoleCandidate, record: WorkerExitRecord, write: Dependencies['recordStop']): Promise<void> {
+  if (!write) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const attempt = Promise.resolve().then(() => write(record)).then(
+    () => ({ ok: true as const }),
+    () => ({ ok: false as const, code: 'exit_record_failed' }),
+  );
+  const result = await Promise.race([
+    attempt,
+    new Promise<{ ok: false; code: string }>(resolve => {
+      timer = setTimeout(() => resolve({ ok: false, code: 'exit_record_timeout' }), EXIT_RECORD_MS);
+      timer.unref?.();
+    }),
+  ]);
+  if (timer) clearTimeout(timer);
+  if (!result.ok) {
+    runtimeLog('role.exit_record_failed', candidateLog(candidate, record.epoch, { code: result.code }));
+  }
 }
 
 export function parseRoleWorkerArgs(args: string[], env: Readonly<Record<string, string | undefined>> = process.env): RoleCandidate {
@@ -167,6 +314,26 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       runtimeLog('role.lock_blockers_unknown', { role: candidate.role, code: blocker.code, errorName: blocker.name, message: blocker.message });
     });
   };
+  let decisionTrigger: ProgressStallTrigger | null = null;
+  let decisionPrevious: ProgressStallTrigger | null = null;
+  const receivedSignal = () => knownStopSignal(signal.reason);
+  const controlledExit = (code: number, why: string, detail: {
+    epoch?: number | null; drainTimedOut?: boolean; stopReason?: string | null; leaseCause?: LeaseCause | null;
+  } = {}) => {
+    const exitCode = Number.isSafeInteger(code) ? code : 1;
+    const record: WorkerExitRecord = {
+      why: boundLabel(why, 64) ?? 'unspecified',
+      stopReason: boundLabel(detail.stopReason, 64),
+      trigger: stallFields(decisionTrigger),
+      previous: stallFields(decisionPrevious),
+      instanceId: boundLabel(candidate.instanceId, 48),
+      bootId: boundLabel(candidate.bootId, 80),
+      release: boundLabel(candidate.release, 120),
+      epoch: typeof detail.epoch === 'number' && Number.isSafeInteger(detail.epoch) ? detail.epoch : null,
+      exitCode, drainTimedOut: detail.drainTimedOut === true, signal: receivedSignal(), leaseCause: detail.leaseCause ?? null,
+    };
+    return writeExitRecord(candidate, record, deps.recordStop).then(() => exitCode);
+  };
   while (!signal.aborted) {
     let lease: RoleLease | null = null;
     const acquiredAt = Date.now();
@@ -188,14 +355,15 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       // An election already in flight may still commit after SIGTERM. Never start its child.
       if (lease) await deps.release?.(lease).catch(() => false);
       deps.report?.('stopping', null);
-      return 0;
+      runtimeLog('role.shutdown_requested', candidateLog(candidate, lease?.epoch ?? null, { signal: receivedSignal(), phase: lease ? 'acquired' : 'election' }));
+      return controlledExit(0, 'shutdown_requested', { epoch: lease?.epoch ?? null });
     }
     if (!lease) {
       // 스스로 회복하지 못한 boot 는 깨끗이 끝낸다 — 재시작 정책이 새 프로세스·새 DB pool 로 다시 띄운다.
       if (health.dbFailingSince !== null && Date.now() - health.dbFailingSince >= ROLE_STUCK_UNHEALTHY_MS) {
         runtimeLog('role.db_unavailable_exit', { role: candidate.role, instanceId: candidate.instanceId,
           failures: health.dbFailures, failingForMs: Date.now() - health.dbFailingSince });
-        return 1;
+        return controlledExit(1, 'db_unavailable');
       }
       deps.report?.('standby', null);
       await sleep(5_000, signal);
@@ -206,10 +374,18 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     handoff?.acquired();
     deps.report?.('active', lease.epoch);
     const active = new AbortController();
-    const onStop = () => active.abort('shutdown_requested');
+    let abortReason: string | null = null;
+    let leaseCause: LeaseCause | null = null;
+    const abortActive = (reason: string) => {
+      if (active.signal.aborted) return;
+      abortReason = reason;
+      active.abort(reason);
+    };
+    const onStop = () => abortActive('shutdown_requested');
     signal.addEventListener('abort', onStop, { once: true });
     if (signal.aborted) onStop();
-    let renewing = false, lost = false, checkingProgress = false, stalledSamples = 0, progressRestart = false;
+    let renewing = false, lost = false, checkingProgress = false, progressRestart = false;
+    let stallSamples: Array<ProgressStallTrigger | null> = [];
     let checkingAdmission = false, admissionRelease = false, ended = false, checkingHandoff = false, handoffRelease = false;
     // 갱신은 drain 이 시작되면 멈춘다. 넘겨주기 drain 만은 자식이 끝날 때까지 갱신해 주가 그 전에 선출되지 않게 한다(두 자식이 겹치지 않는다).
     const renewalsStopped = () => active.signal.aborted && !(handoffRelease && !signal.aborted);
@@ -217,12 +393,15 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     const lose = (reason: string) => {
       if (lost || ended) return;
       lost = true;
-      failed('role.renew_unknown', new Error(reason), { epoch: lease.epoch });
-      active.abort('role_lease_lost');
+      const cause: LeaseCause = reason === 'role_renew_deadline' || reason === 'role_lease_expired' ? reason : 'renew_failed';
+      leaseCause = cause;
+      failed('role.renew_unknown', new Error(reason), { epoch: lease.epoch, cause });
+      abortActive('role_lease_lost');
     };
     // Independent of the renew promise: a wedged DB call cannot keep a child alive.
     const watchdog = setInterval(() => {
-      if (Date.now() >= leaseDeadline || (renewDeadline !== null && Date.now() >= renewDeadline)) lose('role_renew_deadline');
+      if (Date.now() >= leaseDeadline) lose('role_lease_expired');
+      else if (renewDeadline !== null && Date.now() >= renewDeadline) lose('role_renew_deadline');
     }, 250);
     watchdog.unref();
     const timer = setInterval(() => {
@@ -236,26 +415,39 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         if (ended || lost || renewalsStopped()) return;
         if (Date.now() >= renewDeadline!) { lose('role_renew_deadline'); return; }
         succeeded();
-        if (!ok) { lost = true; active.abort('role_lease_lost'); }
-        else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
+        if (!ok) {
+          lost = true; leaseCause = 'renew_rejected';
+          runtimeLog('role.lease_lost', candidateLog(candidate, lease.epoch, { cause: 'renew_rejected' }));
+          abortActive('role_lease_lost');
+        } else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
       }).catch(error => {
         if (ended || lost || renewalsStopped()) return;
-        failed('role.renew_unknown', error, { epoch: lease.epoch }); lost = true; active.abort('role_lease_lost');
+        leaseCause = 'renew_failed';
+        failed('role.renew_unknown', error, { epoch: lease.epoch, cause: 'renew_failed' }); lost = true; abortActive('role_lease_lost');
       }).finally(() => { renewing = false; renewDeadline = null; });
     }, 10_000);
     timer.unref();
     const progressTimer = candidate.kind === 'primary' && deps.checkProgress ? setInterval(() => {
-      if (checkingProgress || lost || progressRestart || signal.aborted) return;
+      if (checkingProgress || lost || progressRestart || signal.aborted || active.signal.aborted) return;
       checkingProgress = true;
-      void deps.checkProgress!(candidate.role).then(stalled => {
-        stalledSamples = stalled ? stalledSamples + 1 : 0;
-        if (stalledSamples >= 2) {
-          progressRestart = true;
-          runtimeLog('role.progress_stalled', { role: candidate.role, epoch: lease.epoch });
-          active.abort('progress_stalled');
-        }
-      }).catch(() => { stalledSamples = 0; runtimeLog('role.progress_unknown', { role: candidate.role }); })
-        .finally(() => { checkingProgress = false; });
+      void deps.checkProgress!(candidate.role).then(result => {
+        if (lost || ended || progressRestart || signal.aborted || active.signal.aborted) return;
+        const sample = progressSample(result);
+        if (!sample.stalled) { stallSamples = []; return; }
+        stallSamples = [...stallSamples, sample.trigger].slice(-2);
+        if (stallSamples.length < 2) return;
+        progressRestart = true;
+        decisionPrevious = stallSamples[0] ?? null;
+        decisionTrigger = stallSamples[1] ?? null;
+        runtimeLog('role.progress_stalled', candidateLog(candidate, lease.epoch, {
+          samples: 2, trigger: stallFields(decisionTrigger), previous: stallFields(decisionPrevious),
+        }));
+        abortActive('progress_stalled');
+      }).catch(() => {
+        if (lost || ended || signal.aborted || active.signal.aborted) return;
+        stallSamples = [];
+        runtimeLog('role.progress_unknown', candidateLog(candidate, lease.epoch));
+      }).finally(() => { checkingProgress = false; });
     }, 15_000) : null;
     progressTimer?.unref();
     // versioned 갱신은 readiness 를 보지 않는다. 모든 claim 이 막힌(stale 결과·만료 capability 등) 선출 상태를 찾아 알리고, 계속되면 놓는다.
@@ -275,7 +467,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         if (now - health.admissionBlockedSince < BATCH_ADMISSION_RELEASE_MS) return;
         admissionRelease = true;
         runtimeLog('role.batch_admission_release', { role: candidate.role, epoch: lease.epoch, reason: result.reason, blockedForMs: now - health.admissionBlockedSince });
-        active.abort('batch_admission_blocked');
+        abortActive('batch_admission_blocked');
       }).catch(error => {
         const detail = dbErrorFields(error);
         runtimeLog('role.batch_admission_unknown', { role: candidate.role, code: detail.code, errorName: detail.name, message: detail.message });
@@ -291,7 +483,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         handoffRelease = true;
         runtimeLog('role.primary_handoff', { role: candidate.role, instanceId: candidate.instanceId, epoch: lease.epoch,
           primaryInstanceId: primary!.instanceId, primaryBootId: primary!.bootId, waitedMs: handoff.requiredMs() });
-        active.abort('primary_handoff');
+        abortActive('primary_handoff');
       }).catch(error => {
         handoff.observe(null);
         const detail = dbErrorFields(error);
@@ -302,9 +494,16 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     let exitCode = 1, drainTimedOut = false;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     let startDrain: () => void;
+    const drainLimitMs = supervisorLimits(candidate.role).drainMs + 5_000;
     const drainExpired = new Promise<number>(resolve => {
       startDrain = () => {
-        drainTimer = setTimeout(() => { drainTimedOut = true; resolve(1); }, supervisorLimits(candidate.role).drainMs + 5_000);
+        drainTimer = setTimeout(() => {
+          drainTimedOut = true;
+          runtimeLog('role.supervisor_drain_timeout', candidateLog(candidate, lease.epoch, {
+            abortReason, signal: receivedSignal(), leaseCause, drainTimeout: true, drainMs: drainLimitMs,
+          }));
+          resolve(1);
+        }, drainLimitMs);
       };
       active.signal.addEventListener('abort', startDrain, { once: true });
       if (active.signal.aborted) startDrain();
@@ -321,12 +520,15 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       if (handoffTimer) clearInterval(handoffTimer);
       signal.removeEventListener('abort', onStop);
     }
-    runtimeLog('role.supervisor_stopped', { role: candidate.role, epoch: lease.epoch, exitCode, lost, progressRestart, admissionRelease, handoffRelease });
+    runtimeLog('role.supervisor_stopped', candidateLog(candidate, lease.epoch, {
+      exitCode, lost, progressRestart, admissionRelease, handoffRelease,
+      abortReason, signal: receivedSignal(), leaseCause, drainTimedOut,
+    }));
     deps.report?.(signal.aborted ? 'stopping' : 'standby', null);
-    if (drainTimedOut) return 1; // Never elect another child while the old supervisor is uncertain.
+    if (drainTimedOut) return controlledExit(1, 'drain_timeout', { epoch: lease.epoch, drainTimedOut: true, stopReason: abortReason, leaseCause });
     if (signal.aborted) {
       if (exitCode === 0) await deps.release?.(lease).catch(() => false);
-      return exitCode;
+      return controlledExit(exitCode, 'shutdown_requested', { epoch: lease.epoch, drainTimedOut, stopReason: abortReason, leaseCause });
     }
     if (lost) continue;
     if (admissionRelease) {
@@ -341,16 +543,20 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       // 주는 유예 없이, 새 예비 boot 는 20초 유예 뒤에야 선출에 나선다.
       let yielded: boolean;
       try { yielded = await deps.yieldRole!(lease); }
-      catch (error) { failed('role.primary_handoff_unknown', error, { epoch: lease.epoch }); return 1; }
+      catch (error) { failed('role.primary_handoff_unknown', error, { epoch: lease.epoch });
+        return controlledExit(1, 'primary_handoff_failed', { epoch: lease.epoch, stopReason: 'primary_handoff', leaseCause }); }
       runtimeLog('role.primary_handoff_yielded', { role: candidate.role, instanceId: candidate.instanceId, epoch: lease.epoch, yielded });
       // false 는 이미 이 epoch 의 lease 가 아니라는 뜻이다(다른 후보가 맡았거나 batch·fence 상태) — 다음 선출이 DB 로 다시 정한다
       if (yielded) handoff!.yielded();
       continue;
     }
     // An unexpected supervisor exit gets the container's existing restart policy.
-    return 1;
+    return controlledExit(1, progressRestart ? 'progress_stalled' : 'supervisor_exit', {
+      epoch: lease.epoch, drainTimedOut, stopReason: abortReason, leaseCause,
+    });
   }
-  return 0;
+  runtimeLog('role.shutdown_requested', candidateLog(candidate, null, { signal: receivedSignal(), phase: 'standby' }));
+  return controlledExit(0, 'shutdown_requested');
 }
 
 /**
@@ -400,9 +606,14 @@ async function main() {
       pid: process.pid, updatedAt: Date.now(), ...runtime }), { mode: 0o600 });
     renameSync(path, healthPath);
   };
-  const stop = () => { phase = 'stopping'; writeLocal(); controller.abort(); };
-  process.once('SIGINT', stop);
-  process.once('SIGTERM', stop);
+  const stop = (received: 'SIGINT' | 'SIGTERM') => {
+    phase = 'stopping'; writeLocal();
+    if (!controller.signal.aborted) controller.abort(received);
+  };
+  const onSigint = () => stop('SIGINT');
+  const onSigterm = () => stop('SIGTERM');
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
   // electable: 선출에 나설 수 있는 boot(host 장부 준비·DB 실패 연속 없음). 같은 릴리스 예비는 이 값이 true 인 주에게만 넘긴다
   const record = () => { writeLocal(); void observe(roleCandidateObservationKey(candidate), {
     role: candidate.role, kind: candidate.kind, instanceId: candidate.instanceId,
@@ -422,13 +633,24 @@ async function main() {
         // These roles retain their specialized main-work progress policy; the supervisor observes each runtime lane.
         if ((role === 'maintenance' || role === 'text') && await hasActiveRoleJob(role)) return false;
         const report = await readWorkerProgress(undefined, { includeText: false });
-        if (role === 'maintenance') return maintenanceUptimeStalled({
-          ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',
+        if (role === 'maintenance') {
+          const uptime = { ...await readMaintenanceUptimeProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
+          return maintenanceUptimeStalled(uptime) ? maintenanceStallTrigger(uptime) : false;
+        }
+        if (role === 'text') {
+          const text = { ...await readTextProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled' };
+          return textProgressStalled(text) ? textStallTrigger(text.oldestReadyMinutes) : false;
+        }
+        return selectUnexplainedStall(report, role) ?? false;
+      },
+      recordStop: async record => {
+        const key = workerExitObservationKey(candidate.role, candidate.bootId);
+        if (!key) throw Object.assign(new Error('exit_record_key'), { code: 'exit_record_key' });
+        await observe(key, {
+          why: record.why, stopReason: record.stopReason, trigger: record.trigger, previous: record.previous,
+          instanceId: record.instanceId, bootId: record.bootId, release: record.release, epoch: record.epoch,
+          exitCode: record.exitCode, drainTimedOut: record.drainTimedOut, signal: record.signal, leaseCause: record.leaseCause,
         });
-        if (role === 'text') return textProgressStalled({
-          ...await readTextProgress(), schedulerScheduled: report.scheduler.reason === 'scheduled',
-        });
-        return roleHasUnexplainedStall(report, role);
       },
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       checkAdmission: batchLeaseAdmission, health: state => { runtime = state; }, lockBlockers: readRoleLockHolders,
@@ -450,8 +672,8 @@ async function main() {
   } finally {
     clearInterval(localTimer);
     clearInterval(observationTimer);
-    process.removeListener('SIGINT', stop);
-    process.removeListener('SIGTERM', stop);
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
     await host.stop();
     const client = (globalThis as {pgClient?: {end: (options: {timeout:number}) => Promise<void>}}).pgClient;
     await client?.end({timeout: 5});

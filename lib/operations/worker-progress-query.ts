@@ -4,6 +4,7 @@ import { modelCapacityControl, operationsObservations, pipelineStageModes } from
 import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
 import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
+import { applyCapacityAdmissionBlock, readCapacityAdmissionBlocks, type CapacityAdmissionBlock, type StageAdmissionDetail } from './capacity-admission-block';
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
@@ -45,8 +46,9 @@ const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${val
 const CONSUMER_HEARTBEAT_MS = AGENT_SCAN_CONSUMER_HEARTBEAT_MS;
 type ReviewStageMode = Pick<typeof pipelineStageModes.$inferSelect, 'stage' | 'mode' | 'drainingFrom'>;
 
+export type WorkerProgressStage = StageProgress & { admissionBlock?: StageAdmissionDetail };
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
-  stages: StageProgress[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
+  stages: WorkerProgressStage[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
   /** Optional for readers/fixtures written before lane metadata was introduced. */
   lanes?: WorkerLaneProgress[]; activeJobs?: string[] };
 
@@ -73,6 +75,7 @@ export function buildWorkerProgress(
   reviewModes: ReviewStageMode[] = [],
   capacityMode: typeof modelCapacityControl.$inferSelect.mode = 'disabled',
   publisherClassificationDraining = false,
+  admissionBlocks: readonly CapacityAdmissionBlock[] = [],
 ): WorkerProgressReport {
   const instances = serviceInstancesFromObservations(observations);
   const liveness = (["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"] as const).map(role => {
@@ -152,18 +155,22 @@ export function buildWorkerProgress(
   const stages = classified.map(stage => {
     // A briefly running legacy admission/settlement job is not evidence of independent consumer progress.
     if (stage.lane === 'ai1-consumer' || stage.lane === 'ai2-consumer') return stage;
-    if (stage.reason !== "no_progress" || !stage.job || !activeJobs.includes(stage.job)) return stage;
-    const lane = lanes.find(row => row.role === stage.role && row.currentJob === stage.job && row.state === "running");
-    let healthyRun = lane && lane.reason === null && lane.startedAt !== null && lane.startedAt <= now.getTime();
-    // Older supervisors did not publish lanes; retain the exact-job hard timeout fallback.
-    const instance = latestServiceInstance(instances, stage.role);
-    if (!lane && instance && instance.value.lanes === undefined && instance.value.status === "running" && isObserved(stage.role)
-      && instance.value.currentJob === stage.job && instance.value.state === "running") {
-      const startedAt = instance.value.jobStartedAt;
-      healthyRun = typeof startedAt === "number" && Number.isFinite(startedAt) && startedAt <= now.getTime()
-        && now.getTime() - startedAt <= 180_000;
+    let next = stage;
+    if (stage.reason === "no_progress" && stage.job && activeJobs.includes(stage.job)) {
+      const lane = lanes.find(row => row.role === stage.role && row.currentJob === stage.job && row.state === "running");
+      let healthyRun = lane && lane.reason === null && lane.startedAt !== null && lane.startedAt <= now.getTime();
+      // Older supervisors did not publish lanes; retain the exact-job hard timeout fallback.
+      const instance = latestServiceInstance(instances, stage.role);
+      if (!lane && instance && instance.value.lanes === undefined && instance.value.status === "running" && isObserved(stage.role)
+        && instance.value.currentJob === stage.job && instance.value.state === "running") {
+        const startedAt = instance.value.jobStartedAt;
+        healthyRun = typeof startedAt === "number" && Number.isFinite(startedAt) && startedAt <= now.getTime()
+          && now.getTime() - startedAt <= 180_000;
+      }
+      if (healthyRun) next = { ...stage, reason: "running" as const, alarm: false, restartEligible: false };
     }
-    return healthyRun ? { ...stage, reason: "running" as const, alarm: false, restartEligible: false } : stage;
+    // 미임대(admission defer) 단계도 여기 온다. 경보·reason·줄 재시작은 유지한다.
+    return applyCapacityAdmissionBlock(next, admissionBlocks);
   });
   const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now, batch);
   const alarm = liveness.some(row => row.alarm) || stages.some(row => row.alarm) || lanes.some(row => row.alarm) || scheduler.alarm;
@@ -343,10 +350,11 @@ export function withProviderBackoff<J extends { name: string; notBefore: Date | 
 }
 
 export async function readWorkerProgress(now = new Date(), options: { includeText?: boolean } = {}) {
-  const [settings, jobs, batch, agentScan, reviewModes, capacity] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
+  const [settings, jobs, batch, agentScan, reviewModes, capacity, admissionBlocks] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
     db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
       .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2'])),
     readModelCapacityControlObservation(),
+    readCapacityAdmissionBlocks(),
   ]);
   // A missing control row must not fall back to legacy restart authority.
   if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');
@@ -366,5 +374,5 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
     capacity.mode === 'draining' ? readPublisherClassificationDrain() : Promise.resolve(false),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
-    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode, publisherDraining);
+    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode, publisherDraining, admissionBlocks);
 }
