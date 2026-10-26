@@ -6,6 +6,7 @@ import type { JobContext } from "@/lib/jobs/runner";
 const boundary = vi.hoisted(() => ({
   candidates: vi.fn(), prepare: vi.fn(), authority: vi.fn(), path: vi.fn(),
   agent: vi.fn(), classify: vi.fn(), publish: vi.fn(), hold: vi.fn(),
+  recordDrain: vi.fn(),
 }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({ enabled: true, classify: { definitions: {} } }) }));
 vi.mock("@/lib/crawl/repository", () => ({ listCandidates: boundary.candidates }));
@@ -13,6 +14,7 @@ vi.mock("@/lib/crawl/publish", () => ({ prepareCandidateClassification: boundary
 vi.mock("@/lib/crawl/publication-classify-capacity", () => ({ publicationClassificationAuthority: boundary.authority, publicationClassificationPath: boundary.path }));
 vi.mock("@/lib/operations/agent-client", () => ({ agentRequest: boundary.agent }));
 vi.mock("@/lib/crawl/classify", () => ({ classifyCategories: boundary.classify }));
+vi.mock('@/lib/operations/publisher-drain-progress', () => ({ recordPublisherClassificationDraining: boundary.recordDrain }));
 vi.mock("@/lib/operations/categories", () => ({
   classificationReadyPredicate: () => undefined, decisionFor: async () => null, holdClassification: boundary.hold,
 }));
@@ -25,6 +27,7 @@ beforeEach(() => {
   vi.stubEnv("CONNECT_AGENT_URL", "http://agent.test");
   boundary.candidates.mockResolvedValue([{ id: 42, repo: "owner/tool" }]);
   boundary.prepare.mockResolvedValue({ input: { repo: "owner/tool" }, snapshot: { document: {}, starAutoApproved: false } });
+  boundary.recordDrain.mockResolvedValue(undefined);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -38,6 +41,25 @@ function expectNoFallbackOrPublication() {
 }
 
 describe("publication classification deferral", () => {
+  it.each(['draining', 'capacity', 'provider_contract_unavailable', 'dispatched'] as const)(
+    'records only the typed draining refusal (%s)', async reason => {
+      boundary.authority.mockRejectedValue(new ModelCapacityDeferredError(reason));
+      const ctx = context();
+      expect(await publishCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' });
+      expect(boundary.recordDrain).toHaveBeenCalledTimes(reason === 'draining' ? 1 : 0);
+      expectNoFallbackOrPublication();
+    });
+
+  it('keeps drain observation failure advisory and observes a typed no-agent drain', async () => {
+    boundary.recordDrain.mockRejectedValue(new Error('observation_unavailable'));
+    boundary.authority.mockRejectedValue(new ModelCapacityDeferredError('draining'));
+    expect(await publishCandidates(context())).toEqual({ done: false, deferred: 'model_capacity' });
+    vi.stubEnv('CONNECT_AGENT_URL', '');
+    boundary.path.mockRejectedValue(new ModelCapacityDeferredError('draining'));
+    await expect(publishCandidates(context())).rejects.toMatchObject({ reason: 'draining' });
+    expect(boundary.recordDrain).toHaveBeenCalledTimes(2);
+    expectNoFallbackOrPublication();
+  });
   it("returns a typed defer when capacity admission refuses the classification", async () => {
     boundary.authority.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
     const ctx = context();

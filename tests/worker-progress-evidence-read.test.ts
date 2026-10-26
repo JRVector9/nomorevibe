@@ -7,6 +7,7 @@ import { createReplicaRouter } from "@/lib/db/replica";
 import { evidenceProgress, readWorkerProgress, withProviderBackoff } from "@/lib/operations/worker-progress-query";
 import { readTextStageProgress } from '@/lib/operations/text-stage-progress';
 import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
+import { readPublisherClassificationDrain } from '@/lib/operations/publisher-drain-progress';
 import type { ThroughputStage } from '@/lib/operations/throughput-model';
 
 /**
@@ -69,6 +70,7 @@ vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityControlObserv
   if (!fixture.capacity.mode) throw new Error('model_capacity_control_missing');
   return { mode: fixture.capacity.mode };
 }) }));
+vi.mock('@/lib/operations/publisher-drain-progress', () => ({ readPublisherClassificationDrain: vi.fn(async () => false) }));
 vi.mock("@/lib/crawl/settings", async () => {
   const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
   return { getSettings: async () => ({ ...DEFAULT_CRAWL_SETTINGS, agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: true } }) };
@@ -108,6 +110,12 @@ const expectedStages = [
 ];
 
 describe("배포 관문 근거 읽기", () => {
+  it('propagates a failed publisher drain read instead of suppressing the monitor alarm', async () => {
+    fixture.capacity.mode = 'draining';
+    vi.mocked(readPublisherClassificationDrain).mockRejectedValueOnce(new Error('publisher_observation_unavailable'));
+    try { await expect(readWorkerProgress(fixture.NOW)).rejects.toThrow('publisher_observation_unavailable'); }
+    finally { fixture.capacity.mode = 'disabled'; }
+  });
   it('reads global capacity drain on primary and holds eligible first-review demand', async () => {
     vi.mocked(readModelCapacityControlObservation).mockClear();
     fixture.capacity.mode = 'draining';
