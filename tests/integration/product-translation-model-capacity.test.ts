@@ -218,7 +218,7 @@ it("dispatches one ordered demanded batch through actual role/runJob, native ter
     expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
     const sent = JSON.parse(bodies[0]); expect(sent.stream).toBe(false);
     expect(JSON.parse(sent.messages[1].content)).toEqual(tasks.map(task => ({ name: task.source.name, locale: task.locale,
-      field: task.field, text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })));
+      field: task.field, text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "", protectedTokens: [] })));
     const [row] = await admin`SELECT to_jsonb(r) AS raw FROM model_capacity_requests r WHERE owner_instance_id=${prefix}`;
     expect(row.raw).toMatchObject({ state: "settled", route_id: jobName, model: TRANSLATE_MODEL });
     expect(row.raw.dispatch_binding).toMatchObject({ kind: "product_translation_gateway", totalTokenBound: 8000, chargedTokens: 8000,
