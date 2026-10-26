@@ -332,6 +332,131 @@ class GitRolloutTests(unittest.TestCase):
             release.deploy(self.client, self.target, state, Path(directory) / 'receipts')
         self.assertEqual([path for path, _ in self.client.requests], ['application.saveEnvironment'])
 
+    def poll_fixture(self):
+        short = 'text-mini'
+        original = copy.deepcopy(self.apps[short])
+        self.apps[short] = release.expected_config(short, original, self.target, 'shared-worker')
+        self.client.deployments[short] = 'new-text-mini'
+        manifest = {'lib/fixture.ts': 'f' * 64}
+        old_image = 'sha256:' + 'e' * 64
+        before = {'serviceSpec': {'Name': original['appName'], 'Mode': {'Replicated': {'Replicas': 1}},
+                    'TaskTemplate': {'ForceUpdate': 1, 'ContainerSpec': {
+                        'Image': old_image, 'Env': original['env'].splitlines()}}},
+                  'updateStatus': {'State': 'completed'}, 'containers': [{'image': old_image,
+                    'config': {'Image': old_image, 'Env': original['env'].splitlines(),
+                        'Cmd': original['command'].split(), 'Entrypoint': [],
+                        'Labels': {'com.docker.swarm.service.name': original['appName']},
+                        'Healthcheck': {'Test': ['CMD-SHELL', 'node --import tsx scripts/worker-healthcheck.ts']}},
+                    'state': {'Running': True, 'Health': {'Status': 'healthy'}}, 'codeHashes': manifest}]}
+        current = copy.deepcopy(before)
+        cs = current['serviceSpec']['TaskTemplate']['ContainerSpec']
+        cs.update(Image=self.target['worker'], Env=self.apps[short]['env'].splitlines())
+        current['serviceSpec']['TaskTemplate']['ForceUpdate'] = 2
+        current['containers'][0]['config'].update(Image=self.target['worker'], Env=cs['Env'])
+        current['containers'][0]['image'] = 'sha256:' + 'c' * 64
+        return original, manifest, before, current
+
+    def test_transient_api_json_reads_retry_then_require_actual_healthy_runtime(self):
+        self.runtime.stop()
+        original, manifest, before, current = self.poll_fixture()
+        for broken_endpoint in ('application.one?', 'deployment.all?'):
+            calls, invalid = [], [True]
+            def read(command, **kwargs):
+                self.assertNotIn('--data-binary', command)
+                endpoint = command[-1]; calls.append(endpoint)
+                if broken_endpoint in endpoint and invalid[0]:
+                    invalid[0] = False
+                    return subprocess.CompletedProcess(command, 0, stdout='{', stderr='')
+                value = self.apps['text-mini'] if 'application.one?' in endpoint else [self.client.latest('text-mini')]
+                return subprocess.CompletedProcess(command, 0, stdout=json.dumps(value), stderr='')
+            with self.subTest(endpoint=broken_endpoint), patch.object(release.shared.subprocess, 'run', side_effect=read), \
+                    patch.object(release.shared, 'ssh_python', return_value=json.dumps(current)) as inspect, \
+                    patch.object(release.time, 'sleep') as sleep:
+                result = release.check_deployed(release.shared.Dokploy('fixture'), 'text-mini', self.target,
+                    original, 'old-text-mini', manifest, mode='shared-worker', expected_runtime=before)
+            self.assertEqual(result['deploymentId'], 'new-text-mini')
+            self.assertEqual(result['specHash'], release.spec_hash(current['serviceSpec']))
+            self.assertEqual(result['service'], 'healthy')
+            sleep.assert_called_once_with(2)
+            inspect.assert_called_once()
+            self.assertEqual(sum('application.one?' in url for url in calls), 2)
+        self.assertEqual(self.client.requests, [])
+
+    def test_transient_probe_json_read_retries_complete_poll_then_checks_source_and_contract(self):
+        self.runtime.stop()
+        original, manifest, before, current = self.poll_fixture()
+        wrong_source = copy.deepcopy(current)
+        wrong_source['containers'][0]['codeHashes'] = {}
+        with patch.object(release.shared, 'ssh_python', side_effect=['{', json.dumps(wrong_source), json.dumps(current)]) as inspect, \
+                patch.object(self.client, 'app', wraps=self.client.app) as app, \
+                patch.object(self.client, 'latest', wraps=self.client.latest) as latest, \
+                patch.object(release.time, 'sleep') as sleep:
+            result = release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                manifest, mode='shared-worker', expected_runtime=before)
+        self.assertEqual(result['deploymentId'], 'new-text-mini')
+        self.assertEqual(result['specHash'], release.spec_hash(current['serviceSpec']))
+        self.assertEqual((app.call_count, latest.call_count, inspect.call_count), (3, 3, 3))
+        self.assertEqual(sleep.call_count, 2)
+        self.assertTrue(all(call.args == (2,) for call in sleep.call_args_list))
+        self.assertEqual(self.client.requests, [])
+
+    def test_persistent_invalid_json_exhausts_original_default_deadline_without_writes(self):
+        self.runtime.stop()
+        original, manifest, before, current = self.poll_fixture()
+        def invalid(*args):
+            return json.loads('{')
+        for source in ('app', 'latest', 'probe'):
+            clock = [0]
+            def sleep(seconds): clock[0] += seconds
+            with self.subTest(source=source), patch.object(release.time, 'monotonic', side_effect=lambda: clock[0]), \
+                    patch.object(release.time, 'sleep', side_effect=sleep), \
+                    patch.object(self.client, 'app', side_effect=invalid if source == 'app' else lambda s: copy.deepcopy(self.apps[s])) as app, \
+                    patch.object(self.client, 'latest', side_effect=invalid if source == 'latest' else lambda s: {'deploymentId': 'new-text-mini', 'status': 'done'}), \
+                    patch.object(release.shared, 'ssh_python', return_value='{') as inspect:
+                with self.assertRaisesRegex(TimeoutError, 'text-mini_verification_timeout'):
+                    release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                        manifest, mode='shared-worker', expected_runtime=before)
+            self.assertEqual(clock[0], 480)
+            self.assertEqual(app.call_count, 240)
+            self.assertEqual(inspect.call_count, 240 if source == 'probe' else 0)
+        self.assertEqual(self.client.requests, [])
+
+    def test_poll_contract_stop_and_rollback_errors_are_never_retried(self):
+        original, manifest, before, current = self.poll_fixture()
+        failures = (ValueError('identity_mismatch'), release.shared.ReleaseStopped('explicit_stop'),
+                    release.shared.SwarmRollback('text-mini', {'updateState': 'rollback_completed'}))
+        for source in ('app', 'latest', 'probe'):
+            for error in failures:
+                obj, method = (release, 'probe') if source == 'probe' else (self.client, source)
+                with self.subTest(source=source, error=type(error).__name__), \
+                        patch.object(obj, method, side_effect=error) as read, \
+                        patch.object(release.time, 'sleep') as sleep:
+                    with self.assertRaises(type(error)) as caught:
+                        release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                            manifest, mode='shared-worker', expected_runtime=before)
+                self.assertIs(caught.exception, error)
+                read.assert_called_once()
+                sleep.assert_not_called()
+        self.runtime.stop()
+        with patch.object(release.shared, 'ssh_python', return_value='{}'), patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(ValueError, 'runtime_unknown'):
+                release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                    manifest, mode='shared-worker', expected_runtime=before)
+        sleep.assert_not_called()
+        self.assertEqual(self.client.requests, [])
+
+    def test_known_app_error_stops_before_unreadable_latest(self):
+        original, manifest, before, current = self.poll_fixture()
+        self.apps['text-mini']['applicationStatus'] = 'error'
+        with patch.object(self.client, 'latest', side_effect=json.JSONDecodeError('invalid', '{', 0)) as latest, \
+                patch.object(release.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(release.shared.ReleaseStopped, 'text-mini_deployment_error'):
+                release.check_deployed(self.client, 'text-mini', self.target, original, 'old-text-mini',
+                    manifest, mode='shared-worker', expected_runtime=before)
+        latest.assert_not_called()
+        sleep.assert_not_called()
+        self.assertEqual(self.client.requests, [])
+
     def test_new_id_and_done_are_required_and_swarm_rollback_stops_without_retry(self):
         app = copy.deepcopy(self.apps['text-mini'])
         self.apps['text-mini']['env'] = release.shared.replace_setting(app['env'], 'RELEASE_TAG', self.new)
