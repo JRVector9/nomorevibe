@@ -16,11 +16,11 @@ type Fact = { label: string; value: ReactNode; note?: string; tone?: "up" | "dow
 function Tile({ label, value, note, tone, title }: Fact) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="flex min-w-0 flex-col gap-1 border-l border-t border-line px-[14px] py-3" title={title}>
-      <dt className="text-[13px] text-fg-2">{label}</dt>
-      <dd className={`m-0 truncate text-[18px] font-semibold tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
+    <div className="flex min-w-0 flex-col gap-0.5 border-l border-t border-line px-3 py-2.5" title={title}>
+      <dt className="break-words text-[13px] leading-[18px] text-fg-2">{label}</dt>
+      <dd className={`m-0 min-w-0 break-words text-[17px] font-semibold leading-6 tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
       {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
-      {note && <dd className="m-0 text-[13px] text-fg-2">{note}</dd>}
+      {note && <dd className="m-0 break-words text-[13px] leading-[18px] text-fg-2">{note}</dd>}
     </div>
   );
 }
@@ -137,11 +137,11 @@ export function FactsStrip({ product, repository, license, health, visits }: {
   const tiles = cells.filter((cell): cell is Fact => Boolean(cell));
 
   return (
-    <div className="overflow-hidden rounded-[18px] border border-line bg-bg-card">
-      <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]">
+    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
+      <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] max-[440px]:grid-cols-[repeat(auto-fit,minmax(min(140px,100%),1fr))]">
         {tiles.map((tile) => <Tile key={tile.label} {...tile} />)}
       </dl>
-      {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-[14px] py-3 text-[13px] text-fg-2">{t("facts.notCollected")}</p>}
+      {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-3 py-2.5 text-[13px] leading-[18px] text-fg-2">{t("facts.notCollected")}</p>}
     </div>
   );
 }
