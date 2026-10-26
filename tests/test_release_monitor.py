@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -183,6 +184,49 @@ class PushReceiptTests(unittest.TestCase):
                                     for name in ('primary', 'external')])
         self.assertFalse(self.verdict([failed, success])['verified'])
 
+    def test_rfc3339nano_z_and_offsets_preserve_exact_order_on_python39(self):
+        actual = '2026-10-26T00:35:03.948294479Z'
+        self.assertEqual(monitor._timestamp(actual), Decimal('1792974903.948294479'))
+        self.assertEqual(monitor._timestamp(actual), monitor._timestamp('2026-10-26T09:35:03.948294479+09:00'))
+        self.assertEqual(monitor._timestamp(actual), monitor._timestamp('2026-10-25T20:35:03.948294479-04:00'))
+        self.assertLess(monitor._timestamp(actual), monitor._timestamp('2026-10-26T00:35:03.948294480Z'))
+        for fraction in ('1', '12', '123', '1234', '12345', '123456', '1234567', '12345678', '123456789'):
+            with self.subTest(fraction=fraction):
+                self.assertIsNotNone(monitor._timestamp('2026-10-26T00:35:03.' + fraction + 'Z'))
+
+    def test_malformed_or_ambiguous_timestamps_are_rejected(self):
+        for value in (None, 42, '', '2026-10-26', '2026-10-26T00:35:03',
+                      '2026-10-26 00:35:03Z', '2026-10-26X00:35:03+00:00',
+                      '2026-10-26T00:35:03.Z', '2026-10-26T00:35:03,123Z',
+                      '2026-10-26T00:35:03.1234567890Z', '2026-10-26T00:35:03Z ',
+                      '2026-10-26T00:35:03+0000', '2026-10-26T00:35:03+00:00:01',
+                      '2026-10-26T00:35:03+01:60', '2026-10-26T00:35:03+24:00',
+                      '2026-10-26T00:35:03-00:00', '2026-02-30T00:35:03Z',
+                      '2026-10-26T24:35:03Z', '2026-10-26T00:35:60Z'):
+            with self.subTest(value=value): self.assertIsNone(monitor._timestamp(value))
+
+    def test_nanosecond_latest_down_and_duplicate_event_never_pass(self):
+        started, now = '2026-10-26T00:35:03.948294479Z', Decimal('1792974920')
+        def line(at, state):
+            return at + ' ' + json.dumps({'event': 'monitor.push', 'state': state, 'receipts': [
+                {'target': name, 'ok': True, 'attemptedAt': at} for name in ('primary', 'external')]})
+        up = line('2026-10-26T00:35:10.000000001Z', 'up')
+        down = line('2026-10-26T00:35:10.000000002Z', 'down')
+        self.assertTrue(monitor.push_receipt_verdict([up], started, now=now)['verified'])
+        verdict = monitor.push_receipt_verdict([down, up], started, now=now)
+        self.assertEqual(verdict, {'verified': False, 'primary': True, 'external': True, 'fresh': True, 'stateUp': False})
+        self.assertFalse(monitor.push_receipt_verdict([up, up], started, now=now)['verified'])
+        before_boot = line('2026-10-26T00:35:03.948294478Z', 'up')
+        self.assertFalse(monitor.push_receipt_verdict([before_boot], started, now=now)['verified'])
+
+    def test_nano_receipts_enforce_stale_and_future_boundaries(self):
+        started, now = '2026-10-26T00:30:00Z', Decimal('1792974920')
+        for stamp in ('2026-10-26T00:33:49.999999999Z', '2026-10-26T00:35:25.000000001Z'):
+            event = {'event': 'monitor.push', 'state': 'up', 'receipts': [
+                {'target': name, 'ok': True, 'attemptedAt': stamp} for name in ('primary', 'external')]}
+            with self.subTest(stamp=stamp):
+                self.assertFalse(monitor.push_receipt_verdict([stamp + ' ' + json.dumps(event)], started, now=now)['verified'])
+
     def test_malformed_duplicate_oversized_or_unclocked_receipts_fail_closed(self):
         for receipts in ([{'target': [], 'ok': True}, {'target': 'external', 'ok': True}],
                          [{'target': 'primary', 'ok': True, 'attemptedAt': self.at.isoformat()}] * 2,
@@ -203,8 +247,8 @@ print(os.environ['FAKE_LOGS'])
             docker.write_text('#!' + sys.executable + '\n' + fake); docker.chmod(0o755)
             env = {**os.environ, 'PATH': directory + os.pathsep + os.environ['PATH'],
                    'FAKE_LOGS': 'https://secret.invalid/private-token\n' + self.line(),
-                   'FAKE_STARTED': self.started.isoformat()}
-            result = subprocess.run([sys.executable, '-c', monitor.REMOTE_PUSH_RECEIPTS, 'd' * 64, self.started.isoformat()],
+                   'FAKE_STARTED': self.started.isoformat(timespec='microseconds').replace('+00:00', '479Z')}
+            result = subprocess.run([sys.executable, '-c', monitor.REMOTE_PUSH_RECEIPTS, 'd' * 64, env['FAKE_STARTED']],
                 env=env, capture_output=True, text=True, timeout=5, check=True)
         summary = json.loads(result.stdout)
         self.assertTrue(summary['verified'])

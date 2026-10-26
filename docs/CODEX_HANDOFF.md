@@ -1,3 +1,32 @@
+## Deployment proof compatibility — 2026-10-26
+
+Objective: remove two measured deployment-proof false failures without changing deployments, real monitor alarms, or preservation guards. Owned WT `/Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026`, branch `codex/deploy-proof-compat-20261026`, base `df1e6411`. Root owns PR/merge and all production work. This agent used no skills, SSH, production calls, push or PR; original user WT stayed read-only.
+
+Completed: strict RFC3339Nano parsing on Python 3.9, preserving exact nanosecond order with Decimal seconds rather than float truncation. Explicit timezone, 1–9 fractional digits and valid dates/offsets are required; ambiguous `-00:00` is rejected. The embedded remote parser uses identical code. Boot/freshness/future bounds, unique latest event, both ACKs and UP-state requirements remain: fresh acknowledged DOWN returns primary/external/fresh=true, stateUp/verified=false.
+
+Selected web final verification alone can opt into a NULL→inherited target-image Healthcheck transition. Both service specs must omit Healthcheck; old effective/image health must be NULL; unique old/new inspected images must link immutable web refs, RepoDigests, image IDs, actual container image refs and matching revision/tree labels. The new effective check must exactly equal its target image check and be Docker healthy. Other service fields and command/env/entrypoint/mount checks stay strict; worker/connect/monitor callers and retained apps do not opt in. Web runtime evidence additionally compares effective health with the actual service/image, rejecting missing health even when the old value was NULL; source revision/tree and direct HTTP/database health still independently pass through existing checks.
+
+Modified files: `scripts/ops/release_monitor.py`, `scripts/ops/deploy_git_apps.py`, `scripts/ops/release_runtime.py`, `tests/test_release_monitor.py`, `tests/test_release_runtime.py`, this handoff.
+
+Actually executed using `/usr/bin/python3 --version` → Python **3.9.6**:
+- `/usr/bin/python3 -m unittest discover -s tests -p test_release_monitor.py` → **14 PASS**, including the embedded remote script under the same interpreter, actual 9-digit Z/offset timestamps, malformed/ambiguous inputs, nanosecond latest DOWN/duplicate, preboot/future/stale semantics.
+- `/usr/bin/python3 -m unittest discover -s tests -p test_release_runtime.py` → **14 PASS** (final 0.297s), including both selected web apps, wrong image/digest/revision/tree, explicit overrides, missing/disabled/unhealthy health and other drift.
+- `/usr/bin/python3 -m unittest discover -s tests -p test_deploy_git_apps.py` → **30 PASS**, 2.477s; existing worker/connect/shared contract behavior retained.
+- `git diff --check` → EXIT0, including this documentation entry.
+
+Failed approaches preserved in session results: original Python 3.9 parser produced 9 failing assertions/subcases in the new monitor regressions and could not parse the actual nanosecond StartedAt. New positive web fixture reproduced `web-mini_selected_runtime_contract_drift`; before the opt-in implementation, new helper kwargs were unsupported. Initial helper-only negatives exposed equal-NULL/equal-health paths that require actual web image-health validation; the final runtime check now rejects those evidence inconsistencies. No full application/DB suites were run.
+
+Remaining: root reviews/lands this commit under required CI and verifies against existing private actual snapshots/monitor evidence. Parsing a real DOWN receipt proves receiver ACKs, not normal UP or alert delivery; no alarm is suppressed. These ops-only files are excluded from images by `.dockerignore`; this fix changes proof automation, not runtime image contents. Root decides the next normal deployment from actual scope and current state; no old once directory is reused.
+
+Exact next commands (read-only, owned WT):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026
+git status --short
+git show --stat --oneline HEAD
+git show HEAD -- scripts/ops/release_monitor.py scripts/ops/release_runtime.py scripts/ops/deploy_git_apps.py
+```
+Root can import the updated modules locally against the already preserved private old/new Docker evidence; never print secret-bearing runtime/API records. This agent made no production deployment or operational completion claim.
+
 ## 2026-10-26 운영 수정 3개 병렬 착수
 
 사용자가 기존 수정의 커밋·병합·운영 배포와 우선순위 1/2/3 병렬 수정을 승인했다. AI2 실측 문서 3개를 커밋하고 최신 main에 반영 중이다. 원래 사용자 작업 트리의 `.claude/prod.sh`, PT/프로토타입 등 다른 수정은 그대로 보존한다.
@@ -2842,6 +2871,20 @@ A `/tmp/nomorevibe-pr462-a-recorder-wait-investigation-20261016.md`은CI38850700
 
 
 2026-10-16 14:04 UTC: profile lock-order fix345f28d2를 정상 push/remote exact 확인했고 PR480에 보호merge846ef22f로 취합·정상 push했다. Reason CI후속bbf62b73→보호parentmerge01b015c5 정상 push, 초안 [PR481](https://github.com/JRVector9/nomorevibe/pull/481)(base480) 제출했다. Source17 exact/actual13 distinct PASS·filesOnly211 정확1회/미배포다. A PR10c source4+NEWunit1을 root전체diff/host모듈/190행unit/68행보고서/역변환proof 읽고 리뷰했다. NEW24+기존선택27 PASS/scoped0·원test변경0이며 선언상 legacy/ai1/ai2를 각각1+3으로 계산한다. Physicalaggregate unknown은 유지한다. Source5+validation+공유4 featurecommit→latest481 보호parentmerge→새draft 예정. B/C 제품 번역은 ledger/native 구현 중, A는runtime+phantomhold의 읽기 계획 중이다. ActiveDB0/다음55580미배정/운영0/수동전체는모든PR뒤다.
+
+## Priority 1 text progress drain fix — 2026-10-26
+
+Objective: prevent intentional admission drain/collection pause from triggering specialized text progress restarts. Isolated WT `/Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026`, branch `codex/text-drain-progress-20261026`, base `df1e6411`. Root owns GitHub/production; original checkout read-only, skills0.
+
+Completed/cause: `scripts/role-worker.ts` primary checkProgress reads the generic report with includeText:false, then separately calls readTextProgress/textProgressStalled; the latter omitted admission/settings state. Added a validated primary capacity snapshot and settings read. Exact draining adds admissionHeld to suppress only this progress restart. Collection disabled excludes only crawl-tagline age; translation/profile/verify remain eligible and genuinely stalled work still alarms. Disabled capacity retains legacy transport. Failed/unknown control or queue reads and unreadable-settings fallback reject even during drain; provider flags remain visible. Child exit, role lease loss/renewal, heartbeat, lane poll and job hard deadlines are unchanged. Reviewer already uses generic progress and was not modified. No recovery/provider restart/slot release/capacity change; Oracle alert-only scope preserved.
+
+Files: lib/operations/text-progress.ts, tests/text-progress.test.ts, new tests/text-progress-read.test.ts, this handoff. Existing ignored node_modules symlink reuses original dependencies. README/runbook and installed Next TypeScript guide read.
+
+Executed with `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`: initial regression tests text-progress + text-progress-read → EXIT1/11FAIL+5PASS before sourcefix. Final `node node_modules/vitest/vitest.mjs run tests/text-progress.test.ts tests/text-progress-read.test.ts tests/role-worker.test.ts tests/worker-supervisor.test.ts tests/worker-progress-capacity-drain.test.ts` → EXIT0/5files68PASS/1.65s. Additional existing `node node_modules/vitest/vitest.mjs run tests/model-capacity-admission.test.ts` → EXIT0/1file8PASS/1.74s (missing/unknown/failing control and no update/insert). Changed3TS ESLint EXIT0; next typegen EXIT0; tsc --noEmit --incremental false EXIT0; diffcheck EXIT0 before this append. Full suites/build/DBintegration/production operations not executed.
+
+Rejected approach: blanket collectionpause hold would hide runnable translation/profile/verify stalls. Read snapshots add a short existing shared-lock read, never expire/grant/refund capacity. Remaining: root review/PR/required latest-base CI/merge/normal worker deployment and actual drain/reopen observations. No migration/config change needed. Existing indeterminate charges remain untouched.
+
+Exact next commands (agent only): `cd /Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026`; `git diff --check`; `git add lib/operations/text-progress.ts tests/text-progress.test.ts tests/text-progress-read.test.ts docs/CODEX_HANDOFF.md`; `git commit -m "fix(workers): respect text admission drain in progress checks"`; `git show --stat --oneline HEAD`. Root alone performs push/PR/merge/deploy.
 
 
 ## 2026-10-26 — priority 2 reason reservation recovery (isolated implementation)
