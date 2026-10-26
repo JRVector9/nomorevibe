@@ -1,0 +1,28 @@
+# Manual indeterminate CLI executor closure
+
+This dedicated `cli_executor_indeterminate_boundary_exit` version1 path withdraws one still-indeterminate publication-classify CLI request after privileged physical closure proof. The0134 dispatched-known-exit and0135 dispatched-removed-unknown-exit contracts, migrations, functions and kinds remain unchanged. No timeout, elapsed TTL, owner death, failed wrapper, local process exit or healthy replacement alone proves remote executor closure.
+
+Root separately maintains an audited global DRAIN, active writer and the complete fixed executor service at zero through canonical commit. No automatic stop, cancellation, grant, retry, lease clear, policy change or deployment is implemented here. Operator evidence is a trusted-root boundary: hashes bind actual reviewed bytes and cannot authenticate invented lifecycle assertions.
+
+Use `cliExecutorIndeterminatePlanSchema` and `cliExecutorIndeterminatePlanHash`. It has a distinct plan kind, request.state=`indeterminate`, the original full token/generation/binding/transport/C fields, and request.rowHash. Capture rowHash as SHA256 of PostgreSQL `to_jsonb(r)::text` for the complete actual indeterminate row in a UTC session, including token/updated_at/queue metadata. This is a hash-only private proof; do not print tokens. The canonical wrapper sets LOCAL TIME ZONE UTC and compares that hash under the row lock; the trigger independently compares actual OLD, never a reconstructed post-write timestamp. Changed request bytes require a newly reviewed plan.
+
+The new receipt retains only unchanged known numeric lifecycle exit primitives: taskState shutdown/complete/failed, runningfalse, exitCode integer0–255, trusted container PID0 or previously witnessed trusted init exit, and exact task/container/service/node identities. Null or fabricated exit status and the removed-unknown branch are rejected. Every candidate also carries originalBefore: actual running worker/tini/node command and hostPID, same executor/source/config/topology, explicit init-owned private PID namespace and no child escape, observation after dispatch and before stop, plus raw before/taskSpec/containerConfig/PID-namespace artifact hashes. The plan interval/candidate inventory must exclude no possible executor and match the fixed endpoint/source/original service spec. An absent old namespace inode is not silently manufactured.
+
+receipt.closureBoundary binds the actual stop attempt/review hashes and continuous service fence plus exactly two fresh observations. Each repeats the same executor/topology/current DRAIN/writer, servicePresent/daemonReachable/singleNode/noAlternativeExecutor, replicas0-only original-spec projection, whole service zero, all exact known exits and timestamped capture/inventory hashes. Observations must follow the NEW plan, be strictly ordered, use distinct raw bytes and remain within5minutes of DB time; the last equals receipt.observedAt. Plan validity is30minutes and evaluatedAt is the current DB clock, at most30seconds old in the trigger. A historical known stop may precede the new plan; fresh observations and unchanged continuous service fence are still mandatory.
+
+Store every hash returned by `cliExecutorIndeterminateArtifactHashes` as actual0600 bytes at `<artifact-dir>/<sha256>.json`, at most5MiB each. `.json` is a storage suffix and permits opaque raw capture logs. Do not replace a required raw capture/closure with normalized JSON under its old hash. Any normalized manifest must preserve its raw source references and be labeled honestly.
+
+Root's credential-safe launcher invokes this exact stock CLI from the reviewed clean merged checkout, supplying the explicit primary database URL through stdin only:
+
+```text
+node --import tsx scripts/ops/model-cli-executor-indeterminate-boundary-release.ts
+  --plan=/private/plan.json --plan-sha=<actual-plan-file-sha256>
+  --receipt=/private/receipt.json --receipt-sha=<actual-receipt-file-sha256>
+  --artifact-dir=/private/hash-named-artifacts
+  --operator=<reviewed-operator> --reference=<exact-plan-reviewReference>
+  --database-url-stdin
+```
+
+Default runs the canonical transaction and rolls it back. Reviewed first apply alone adds `--apply`. It writes exactly one `dispatch_released` event from indeterminate→withdrawn and audit `model-cli-executor-indeterminate-boundary-release`; only state/terminal_evidence/terminal_evidence_hash/updated_at change. C, token, full binding and settled_at=NULL remain intact. Audit explicitly records physicalExecutorEnded/exitCodeKnown true and modelTerminal/usageKnown/businessResult false. There is no opaque CLI terminal, group event, refund or native/business success. Exact identical subsequent evidence returns already_released without another row/event/audit mutation; ambiguous transport must be read back, never blind retried.
+
+0136 appends strict validators to all five COMPLETE0135 CHECK predicates, adds five literal functions plus one new same-state-indeterminate predecessor snapshot and an immutable exact-transition trigger; journal count becomes137. All existing functions/triggers/old migration bytes are preserved. Tests were authored for wrong state/owner/token/full-row hash/control/writer/binding/C, unknown exit/live init/namespace/source/candidate/zero spoofing, artifact tampering, historical constraints, canonical rollback and real CLI one-row release. Per user instruction no manual tests, lint, typecheck, build, compilation or DB calls were executed. Only the standalone source-to-SQL artifact generator was run; required automatic CI remains the validation gate.

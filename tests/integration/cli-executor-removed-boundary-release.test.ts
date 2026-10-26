@@ -81,7 +81,8 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
   for(const n of names){
     const table=n.startsWith("model_capacity_events_")?"model_capacity_events":"model_capacity_requests";
     const branch=table==="model_capacity_events"?"nmv_cli_executor_removed_event_valid(to_jsonb(model_capacity_events))":"nmv_cli_executor_removed_request_valid(to_jsonb(model_capacity_requests))";
-    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK ((${prior[n].slice(6)}) OR ${branch})`);
+    const current = table === "model_capacity_events" ? "nmv_cli_executor_indeterminate_event_valid(to_jsonb(model_capacity_events))" : "nmv_cli_executor_indeterminate_request_valid(to_jsonb(model_capacity_requests))";
+    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (((${prior[n].slice(6)}) OR ${branch}) OR ${current})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected'`)[0].def);}
     finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected`);}
   }
