@@ -34,21 +34,23 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks();
 async function start() { await import('../scripts/connect-agent'); await Promise.resolve(); }
 async function flush() { await vi.advanceTimersByTimeAsync(0); }
 
-it('waits for the admitted classification and HTTP close before deleting credentials or exiting', async () => {
+it('allows an admitted classification to settle just before the three-minute deadline and waits for HTTP close', async () => {
   let settled!: () => void;
   fixture.drain.mockImplementation(() => new Promise<void>(resolve => { settled = resolve; }));
   await start(); fixture.signal.get('SIGTERM')!();
   expect(exit).not.toHaveBeenCalled(); expect(fixture.close).not.toHaveBeenCalled();
   expect(fixture.drain).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(179_999);
+  expect(exit).not.toHaveBeenCalled(); expect(fixture.close).not.toHaveBeenCalled();
   settled(); await flush(); expect(exit).not.toHaveBeenCalled();
   fixture.closed!(); await flush();
   expect(fixture.close).toHaveBeenCalledTimes(1); expect(exit).toHaveBeenCalledWith(0);
 });
 
-it('bounds an unproven drain without closing credentials or manufacturing a successful exit', async () => {
+it('bounds an unproven drain at exactly three minutes without closing credentials or reporting success', async () => {
   fixture.drain.mockReturnValue(new Promise(() => {}));
   await start(); fixture.signal.get('SIGTERM')!(); fixture.closed?.();
-  await vi.advanceTimersByTimeAsync(44_999); expect(exit).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(179_999); expect(exit).not.toHaveBeenCalled();
   await vi.advanceTimersByTimeAsync(1);
   expect(exit).toHaveBeenCalledWith(1); expect(fixture.close).not.toHaveBeenCalled();
 });

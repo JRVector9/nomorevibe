@@ -151,7 +151,8 @@ export function settleCliNotStarted(call: PreparedCliCall, dispatch: CliDispatch
   return issue(owned.state, owned.requestId, unstarted("not_started"));
 }
 
-export async function runReservedCliCall(call: PreparedCliCall, dispatch: CliDispatchRef, options: { signal?: AbortSignal } = {}): Promise<CliCallOutcome> {
+export async function runReservedCliCall(call: PreparedCliCall, dispatch: CliDispatchRef,
+  options: { signal?: AbortSignal; beforeSpawn?: () => boolean } = {}): Promise<CliCallOutcome> {
   assertLiveReviewAdapterAllowed();
   const owned = own(call, dispatch), signal = options.signal;
   if (!owned || owned.state.used) throw new Error("cli_call_mismatch");
@@ -166,7 +167,9 @@ export async function runReservedCliCall(call: PreparedCliCall, dispatch: CliDis
       await writeFile(target, file.content, "utf8");
     }
   } catch { return notStarted({ kind: "cli_error" }); }
-  if (signal?.aborted) return notStarted({ kind: "cancelled" });
+  // File preparation yields to shutdown. This admission check has no await before synchronous spawn;
+  // it is not an abort signal and never cancels a child that has already started.
+  if (signal?.aborted || options.beforeSpawn?.() === false) return notStarted({ kind: "cancelled" });
   const observed = await observe(state, signal);
   if (observed.ending === null) return { result: observed.result, terminal: null, indeterminate: observed.indeterminate };
   if (observed.ending === "spawn_failed") return { result: observed.result, terminal: issue(state, requestId, unstarted("spawn_failed")), indeterminate: null };

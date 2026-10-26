@@ -1,8 +1,8 @@
 import type { Server } from 'node:http';
 import type { ConnectAgent } from './agent';
 
-/** Leave time for container cleanup within the existing 60-second stop grace. No dispatch is refunded here. */
-export const CONNECT_AGENT_DRAIN_MS = 45_000;
+/** ConnectAgent requires a container stop grace longer than this drain. No dispatch is refunded here. */
+export const CONNECT_AGENT_DRAIN_MS = 180_000;
 
 export async function shutdownConnectAgent(agent: Pick<ConnectAgent, 'drain' | 'close'>,
   server: Pick<Server, 'close'>): Promise<0 | 1> {

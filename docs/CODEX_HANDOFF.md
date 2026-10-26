@@ -3230,3 +3230,29 @@ git diff --check
 git diff -- lib/operations/agent.ts lib/crawl/publication-classify-capacity.ts scripts/connect-agent.ts
 cat lib/operations/agent-shutdown.ts
 ```
+
+## ConnectAgent user override: three-minute shutdown and final spawn fence — 2026-10-26
+
+Current objective/completed: the user's explicit request, "최대 기다리는 시간이 너무 짧을데? 최대 3분은 기다려야지싶다", supersedes the previous phase's45-second shutdown bound. This follow-up extends `CONNECT_AGENT_DRAIN_MS` to180000 and gives only the named Compose `connect-agent` service a240-second stop grace; the shared anchor and seven other runtime services remain60seconds. The preceding45-second test/design record describes the already shared commit `2a6e85387d23d257ec1a7e39e935348ff87d9521`, not the current bound. This is a new follow-up commit, not an amendment. Physical model-call timeout35000, transport/serving contract hashes, models, admission TTLs and quality/release gates are unchanged.
+
+Independent review also found and this phase reproduced a late-spawn race: the initial `work.beforeSpawn()` check preceded asynchronous schema-file writes, so shutdown during those writes could still start a child. `lib/llm/cli-model-capacity.ts` now carries that predicate into `lib/llm/cli-process-runner.ts`, which checks it after all file preparation without an intervening await before the synchronous spawn. False yields the existing one-use opaque `not_started` terminal and normal canonical reconciliation. This callback never becomes an abort/kill signal for an already running child. Original timeout/error/uncertain-end occupancy remains charged; no terminal or refund is fabricated.
+
+Modified files in this follow-up: `compose.yml`, `lib/operations/agent-shutdown.ts`, `lib/llm/cli-model-capacity.ts`, `lib/llm/cli-process-runner.ts`, `tests/connect-agent-shutdown.test.ts`, `tests/cli-process-runner.test.ts`, `tests/capacity-unsettled.test.ts`, this handoff. Existing classification/shutdown implementation source is otherwise unchanged.
+
+Actually executed with `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`:
+- `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts --bail=1` ->1file/5PASS/EXIT0. Virtual clock permits settlement at179999ms and exits1 at exactly180000ms when physical/native settlement remains unproven; credential cleanup remains prohibited on failure.
+- Intentional RED before the runner fix: `node node_modules/vitest/vitest.mjs run tests/cli-process-runner.test.ts -t 'refuses admission lost during asynchronous file preparation' --bail=1` ->1FAIL/21SKIP/EXIT1. A deferred real filesystem write allowed shutdown before a real fake CLI wrongly spawned and returned exit0.
+- GREEN: `node node_modules/vitest/vitest.mjs run tests/cli-process-runner.test.ts -t 'refuses admission lost during asynchronous file preparation|does not cancel an already spawned CLI' --bail=1` ->2PASS/20SKIP/EXIT0. Confirms zero child invocations with canonical not_started after the race, one-use refusal, and natural exit+close of an already spawned child after admission closes. Only local fake child processes run, never a model CLI.
+- `node node_modules/vitest/vitest.mjs run tests/capacity-unsettled.test.ts --bail=1` ->1file/5PASS/EXIT0, including final-predicate propagation, exactly one terminal reconciliation and existing failed-reconciliation commit_unknown handling.
+- `node node_modules/eslint/bin/eslint.js lib/operations/agent-shutdown.ts lib/llm/cli-process-runner.ts lib/llm/cli-model-capacity.ts tests/connect-agent-shutdown.test.ts tests/cli-process-runner.test.ts tests/capacity-unsettled.test.ts` ->EXIT0; `node node_modules/typescript/bin/tsc --noEmit --incremental false` ->EXIT0. Pure YAML merge assertions confirmed ConnectAgent240s, all seven other inherited runtime services60s and unchanged shared60s anchor. Diffcheck before handoff ->EXIT0. No unimpacted broad test/build, DB, production, SSH/API or provider call was run. The RED race above is the only failed attempt in this follow-up.
+
+Operational requirement, root-owned and not executed here: Compose does not update the Dokploy application. Current captured production application `stopGracePeriodSwarm` is60000000000nanoseconds; ConnectAgent alone needs240000000000 and effective Swarm `TaskTemplate.ContainerSpec.StopGracePeriod`240000000000. The repo's `Dokploy.request(path,payload)` client can issue updates, but application.update's schema is not defined locally, so root must validate that endpoint before using the connect app ID from `app_metadata('connect-agent-m3')`. Strict `stable_config` and `runtime_contract_matches` preserve all other configuration/spec bytes and remain unchanged. Apply/verify this explicit configuration change before a fresh baseline/plan; changing it mid-plan correctly fails drift checks. No operator helper or production setting was edited. This prevention patch still does not reclaim the existing stranded63c request or certify its physical boundary.
+
+Remaining/next agent commands: independent final hash review, root push/required latest-base CI/merge, root-only explicit grace update and fresh canonical rollout. Do not rerun unchanged tests without a new concern.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026
+git status --short
+git diff --check
+git show --stat --oneline HEAD
+git diff 2a6e85387d23d257ec1a7e39e935348ff87d9521...HEAD -- compose.yml lib/operations/agent-shutdown.ts lib/llm/cli-model-capacity.ts lib/llm/cli-process-runner.ts
+```
