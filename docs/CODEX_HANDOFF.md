@@ -3199,3 +3199,60 @@ git status --short
 git diff --check d9722326ec7dabe0ac289344ab0bb26ea8853097...HEAD
 ```
 Only if a justified local PG re-run is needed, retrieve the owned32800 container password into subprocess environment without printing it and use the exact scoped integration command above. Root alone handles push/PR/latest-base CI/merge/images/production.
+
+
+## ConnectAgent SIGTERM native classification drain — 2026-10-26
+
+Objective/completed: fix the independently reproduced ConnectAgent shutdown path that immediately called `process.exit(0)` while native classification/terminal reconciliation was still pending. Owned WT `/Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026`, branch `codex/connect-shutdown-drain-20261026`, exact base `50f9239c1b33b853513a632ca197be45ab26398a`. No skills, provider/model calls, production DB/API/SSH, push/PR/merge/deployment or other-WT edits. Existing node_modules is an ignored symlink. Read applicable AGENTS, README/runbook shutdown guidance and installed Next custom-server guide; this standalone Node service uses no new Next API.
+
+Evidence boundary: original entrypoint SIGTERM regression actually observed immediate exit(0) before the admitted drain completed (intentional RED). Root's separately collected production request63c0c598 remains an operational recovery investigation: dispatch13:05:16.740Z temporally overlaps old ConnectAgent replacement/exit13:05:22.928Z, but this implementation does not certify endpoint exclusivity/clock bounds or reclaim that request. Ledger publisher ownership is not proof of the remote CLI process boundary. No old native charge is released by this change.
+
+Production files: `lib/operations/agent.ts`, new `lib/operations/agent-shutdown.ts`, `lib/crawl/publication-classify-capacity.ts`, `scripts/connect-agent.ts`. Tests: new `tests/connect-agent-shutdown.test.ts`, new `tests/publication-classify-shutdown.test.ts`, `tests/operations-publication-capacity.test.ts`; this handoff is the only documentation change.
+
+Design: shutdown synchronously closes agent admission/classifyReady, tracks the complete admitted classification promise, blocks subsequent fallback calls, and rechecks classifyReady in the native current/prove/beforeSpawn predicate. Existing not_started native reconciliation remains responsible for a dispatch whose final spawn check is false. The signal handler is idempotent, prevents a pending CLI-probe callback from reopening the server, and awaits both classification drain and HTTP close. Only successful completion deletes the temporary credential home and exits0. Drain/reconciliation error, prior classification_unknown, or the45-second local deadline exits1 and keeps local artifacts/native occupancy; no terminal, refund, TTL release or model stop/recovery is fabricated.45seconds stays within the existing60-second container grace. Model/quality/prompt/schema/capacity settings, existing request identity and monitor gates are unchanged.
+
+Actual tests/checks with Node24 `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`:
+- RED: `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts -t 'waits for the admitted classification' --bail=1` against original entrypoint ->1FAIL/4SKIP/EXIT1, because exit(0) occurred immediately.
+- GREEN: `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts tests/operations-publication-capacity.test.ts tests/publication-classify-shutdown.test.ts tests/operations-agent.test.ts --bail=1` ->4files/23PASS/EXIT0. Covers admitted promise waiting, immediate new-admission/fallback refusal, post-proof pre-spawn shutdown, native error/prior physical-end unknown,45-second bound, repeated signals and shutdown-before-probe completion. These are local orchestration tests with mocked native reconciliation; no actual DB authority or provider result is claimed.
+- Existing core continuation: `node node_modules/vitest/vitest.mjs run tests/cli-background-model-capacity.test.ts -t 'when the tick margin is gone|whose start condition is lost' --bail=1` ->2PASS/11SKIP/EXIT0, proving unchanged not_started terminal reconciliation when final beforeSpawn fails.
+- `node node_modules/eslint/bin/eslint.js scripts/connect-agent.ts lib/operations/agent.ts lib/operations/agent-shutdown.ts lib/crawl/publication-classify-capacity.ts tests/connect-agent-shutdown.test.ts tests/operations-publication-capacity.test.ts tests/publication-classify-shutdown.test.ts` ->EXIT0.
+- `node node_modules/next/dist/bin/next typegen` ->EXIT0. `node node_modules/typescript/bin/tsc --noEmit --incremental false` ->EXIT0. `git diff --check` ->EXIT0. No PG/full suite/build run.
+
+Failed test setup: the first focused run was22PASS/1FAIL because a new beforeEach returned `mockReset()`'s mock function, which Vitest invoked as a cleanup without work arguments. Changing the hook to return void corrected the test harness. An unmatched `tests/cli-model-capacity.test.ts` filter in that first invocation ran no extra file; the actual existing beforeSpawn tests were subsequently run explicitly as recorded above.
+
+Remaining/impact: root independent source review and required latest-base CI/PR/merge/source-image deployment. This prevents losing a native terminal on orderly ConnectAgent shutdown; crash/OOM/forced termination and the already stranded63c request still require separate canonical physical/provider boundary evidence. No recovery/waiver for an unresolved physical call is provided.
+
+Exact next-agent commands (do not rerun passed tests unless source changes or a new concern justifies it):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026
+git status --short
+git diff --check
+git diff -- lib/operations/agent.ts lib/crawl/publication-classify-capacity.ts scripts/connect-agent.ts
+cat lib/operations/agent-shutdown.ts
+```
+
+## ConnectAgent user override: three-minute shutdown and final spawn fence — 2026-10-26
+
+Current objective/completed: the user's explicit request, "최대 기다리는 시간이 너무 짧을데? 최대 3분은 기다려야지싶다", supersedes the previous phase's45-second shutdown bound. This follow-up extends `CONNECT_AGENT_DRAIN_MS` to180000 and gives only the named Compose `connect-agent` service a240-second stop grace; the shared anchor and seven other runtime services remain60seconds. The preceding45-second test/design record describes the already shared commit `2a6e85387d23d257ec1a7e39e935348ff87d9521`, not the current bound. This is a new follow-up commit, not an amendment. Physical model-call timeout35000, transport/serving contract hashes, models, admission TTLs and quality/release gates are unchanged.
+
+Independent review also found and this phase reproduced a late-spawn race: the initial `work.beforeSpawn()` check preceded asynchronous schema-file writes, so shutdown during those writes could still start a child. `lib/llm/cli-model-capacity.ts` now carries that predicate into `lib/llm/cli-process-runner.ts`, which checks it after all file preparation without an intervening await before the synchronous spawn. False yields the existing one-use opaque `not_started` terminal and normal canonical reconciliation. This callback never becomes an abort/kill signal for an already running child. Original timeout/error/uncertain-end occupancy remains charged; no terminal or refund is fabricated.
+
+Modified files in this follow-up: `compose.yml`, `lib/operations/agent-shutdown.ts`, `lib/llm/cli-model-capacity.ts`, `lib/llm/cli-process-runner.ts`, `tests/connect-agent-shutdown.test.ts`, `tests/cli-process-runner.test.ts`, `tests/capacity-unsettled.test.ts`, this handoff. Existing classification/shutdown implementation source is otherwise unchanged.
+
+Actually executed with `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`:
+- `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts --bail=1` ->1file/5PASS/EXIT0. Virtual clock permits settlement at179999ms and exits1 at exactly180000ms when physical/native settlement remains unproven; credential cleanup remains prohibited on failure.
+- Intentional RED before the runner fix: `node node_modules/vitest/vitest.mjs run tests/cli-process-runner.test.ts -t 'refuses admission lost during asynchronous file preparation' --bail=1` ->1FAIL/21SKIP/EXIT1. A deferred real filesystem write allowed shutdown before a real fake CLI wrongly spawned and returned exit0.
+- GREEN: `node node_modules/vitest/vitest.mjs run tests/cli-process-runner.test.ts -t 'refuses admission lost during asynchronous file preparation|does not cancel an already spawned CLI' --bail=1` ->2PASS/20SKIP/EXIT0. Confirms zero child invocations with canonical not_started after the race, one-use refusal, and natural exit+close of an already spawned child after admission closes. Only local fake child processes run, never a model CLI.
+- `node node_modules/vitest/vitest.mjs run tests/capacity-unsettled.test.ts --bail=1` ->1file/5PASS/EXIT0, including final-predicate propagation, exactly one terminal reconciliation and existing failed-reconciliation commit_unknown handling.
+- `node node_modules/eslint/bin/eslint.js lib/operations/agent-shutdown.ts lib/llm/cli-process-runner.ts lib/llm/cli-model-capacity.ts tests/connect-agent-shutdown.test.ts tests/cli-process-runner.test.ts tests/capacity-unsettled.test.ts` ->EXIT0; `node node_modules/typescript/bin/tsc --noEmit --incremental false` ->EXIT0. Pure YAML merge assertions confirmed ConnectAgent240s, all seven other inherited runtime services60s and unchanged shared60s anchor. Diffcheck before handoff ->EXIT0. No unimpacted broad test/build, DB, production, SSH/API or provider call was run. The RED race above is the only failed attempt in this follow-up.
+
+Operational requirement, root-owned and not executed here: Compose does not update the Dokploy application. Current captured production application `stopGracePeriodSwarm` is60000000000nanoseconds; ConnectAgent alone needs240000000000 and effective Swarm `TaskTemplate.ContainerSpec.StopGracePeriod`240000000000. The repo's `Dokploy.request(path,payload)` client can issue updates, but application.update's schema is not defined locally, so root must validate that endpoint before using the connect app ID from `app_metadata('connect-agent-m3')`. Strict `stable_config` and `runtime_contract_matches` preserve all other configuration/spec bytes and remain unchanged. Apply/verify this explicit configuration change before a fresh baseline/plan; changing it mid-plan correctly fails drift checks. No operator helper or production setting was edited. This prevention patch still does not reclaim the existing stranded63c request or certify its physical boundary.
+
+Remaining/next agent commands: independent final hash review, root push/required latest-base CI/merge, root-only explicit grace update and fresh canonical rollout. Do not rerun unchanged tests without a new concern.
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026
+git status --short
+git diff --check
+git show --stat --oneline HEAD
+git diff 2a6e85387d23d257ec1a7e39e935348ff87d9521...HEAD -- compose.yml lib/operations/agent-shutdown.ts lib/llm/cli-model-capacity.ts lib/llm/cli-process-runner.ts
+```

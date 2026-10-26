@@ -227,6 +227,7 @@ services:
 
   connect-agent:
     <<: *worker
+    stop_grace_period: 240s
     image: nomorevibe-connect-agent:${RELEASE_TAG:-local}
     build: { context: ., target: connect-agent }
     command: ["node", "--import", "tsx", "scripts/connect-agent.ts"]

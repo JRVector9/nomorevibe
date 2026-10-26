@@ -5,6 +5,7 @@ import { agentToken } from '../lib/operations/agent-client';
 import { observeService } from '../lib/operations/observations';
 import { ModelCapacityDeferredError } from '../lib/llm/capacity-deferred';
 import { probeCliServingContracts } from '../lib/llm/cli-serving-contract';
+import { shutdownConnectAgent } from '../lib/operations/agent-shutdown';
 const secret=process.env.OPERATIONS_AGENT_SECRET ?? '';
 if(secret.length<32)throw new Error('OPERATIONS_AGENT_SECRET is required');
 const agent=new ConnectAgent(process.env.CODEX_VAULT_DIR ?? '/var/lib/nomorevibe-codex',secret);
@@ -46,5 +47,10 @@ const timer=setInterval(()=>{
   void observeService('connect-agent',{...state,status:'running',bootedAt:startedAt,release:process.env.RELEASE_TAG??'unknown',connection:state.connection?{id:state.connection.id,provider:state.connection.provider,error:state.connection.error,state:state.connection.state,expiresAt:state.connection.expiresAt}:null,rssBytes:process.memoryUsage().rss})
     .catch(()=>{}).finally(()=>{observing=false;});
 },5000);
-void probeCliServingContracts().then(() => server.listen(Number(process.env.PORT ?? 3020),'0.0.0.0'));
-for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{clearInterval(timer);server.close();agent.close();process.exit(0);});
+let shuttingDown = false;
+void probeCliServingContracts().then(() => { if (!shuttingDown) server.listen(Number(process.env.PORT ?? 3020),'0.0.0.0'); });
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => {
+  if (shuttingDown) return;
+  shuttingDown = true; clearInterval(timer);
+  void shutdownConnectAgent(agent, server).then(code => process.exit(code));
+});
