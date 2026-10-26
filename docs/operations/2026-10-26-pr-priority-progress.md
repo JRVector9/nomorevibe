@@ -1,10 +1,11 @@
 # 운영 수정 및 상세페이지 PR 진행
 
-2026-10-26 22:27 KST 기준. 스킬 없이 저장소와 실제 운영 결과를 검토했다. 수정은 PR 단위로 분리해 모두 병합했다. 최신 main은 `50f9239c1b33b853513a632ca197be45ab26398a`이며 필수 CI와 이미지 발행이 성공했다.
+2026-10-26 23:13 KST 기준. 스킬 없이 저장소와 실제 운영 결과를 검토했다. PR668–679는 병합했다. 최신 main은 `50f9239c1b33b853513a632ca197be45ab26398a`이며 필수 CI와 이미지 발행이 성공했다. 추가 실측에서 발견한 종료 처리 문제는 별도 PR681로 분리했고 CI가 진행 중이다.
 
 | 우선순위 | PR | 해결하는 문제 | 확인한 범위 |
 |---|---|---|---|
 | 운영 1 | [#668](https://github.com/JRVector9/nomorevibe/pull/668), [#674](https://github.com/JRVector9/nomorevibe/pull/674), [#678](https://github.com/JRVector9/nomorevibe/pull/678) | 의도한 모델 작업 중단을 정체로 오인해 워커를 재시작하거나 과거 실패를 현재 장애로 표시 | 운영 반영, 실제 DRAIN/OPEN 확인. 발행 감시도 적용, 최종 정상 판정 대기 |
+| 운영 1 후속 | [#681](https://github.com/JRVector9/nomorevibe/pull/681) | 배포 시 원격 CLI 실행을 기다리지 않고 ConnectAgent가 종료돼 발행 요청의 점유가 남음 | 종료 시작 후 새 실행 차단, 실제 종료·정산을 최대3분 대기, ConnectAgent 종료 유예4분. 비동기 파일 준비 중 종료 회귀 포함 로컬 시험·독립 검토 통과. CI 진행 중·운영 적용 전 |
 | 운영 2 | [#671](https://github.com/JRVector9/nomorevibe/pull/671), [#677](https://github.com/JRVector9/nomorevibe/pull/677), [#679](https://github.com/JRVector9/nomorevibe/pull/679) | 대기 배치를 이어받지 못하거나 SQL OR 조건이 다른 행까지 읽어 예약을 매번 취소 | text 주·예비 적용 완료. 실제 PostgreSQL 회귀, 새 주 서버의 모델 완료와 결과 저장 확인 |
 | 운영 2 후속 | [#676](https://github.com/JRVector9/nomorevibe/pull/676) | 번역 요청이 보존 토큰과 자연스러운 영어 문장 조건을 충분히 전달하지 않음 | 동일 품질검사를 유지한 요청문 보완, 단위64개·DB8개, text 적용 |
 | 운영 3 | [#669](https://github.com/JRVector9/nomorevibe/pull/669), [#675](https://github.com/JRVector9/nomorevibe/pull/675) | 나노초 시각·Healthcheck 상속·일시 JSON 오류 때문에 완료된 배포 확인이 중단 | 실제 runtime/source 검증과 회귀 통과. 읽기 오류에 앱 배포를 다시 요청하지 않음 |
@@ -20,4 +21,6 @@
 
 AI2는 GPU3090 Tailscale 직접 기본 모델 `qwen3.8-flash-next`, abcLLM의 Supa Qwen3.8 대체 모델, no-thinking, 총32k/출력10k 설정을 유지한다. 이번 text 교체로 AI2 설정을 바꾸지 않았다.
 
-남은 순서: 새 서비스 변경 없이 monitor UP·기존 일반 관문·전체18앱의 실제 상태 재검증 → 정상 완료 영수증 → 단일5·10·15분/6시간 관측 시작과 실제 결과 확인. 별도24시간 관측도 남아 있다. 실제 사용자 소유권 등록과 장기 백업 복구 검증은 수행하지 않았으며 별도 남은 항목으로 유지한다.
+후속 실측에서 한국어 문구 경보는 사라졌지만 발행 작업이 정체됐다.13:05:16에 원격 CLI로 전달한 요청 한 건이 실행 중 장부에 남았고, 이를 실행하던 ConnectAgent의 교체가 같은 시점에 있었다. 원래 코드가 SIGTERM에서 실행 종료·정산을 기다리지 않고 즉시 종료하는 문제를 확인해 PR681로 수정했다.14:11:26 UTC 읽기 전용 실측에서도 해당 요청은 실행 중·종료 증거 없음, capacity OPEN은 동일했다. 현재 ConnectAgent의 실제 프로세스에는 실행 중인 모델 CLI가 없었다. 오래됐다는 이유로 점유를 지우지 않고, 서비스 전체의 실제 실행 종료를 증명한 뒤 해당 한 건만 정식 복구 경로로 회수하도록 별도 준비 중이다.
+
+남은 순서: PR681 CI·병합 → 새 개별 복구 계획 검토 → 실제 ConnectAgent 실행 종료 증명과 한 요청 정식 회수 → 새 종료 처리·4분 유예 운영 반영 → monitor UP·일반 관문·전체18앱 최종 정상 영수증 → 단일5·10·15분/6시간 관측. 기존 실패 배포나 모호한 API 요청은 반복하지 않는다. 별도24시간 관측, 실제 사용자 소유권 등록, 장기 백업 복구 검증도 남아 있다.
