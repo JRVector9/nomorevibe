@@ -1,4 +1,60 @@
-# 현재 진행 — 2026-10-27 KST08:12, DeepSeek 종료·정확 회수·서비스 복원 완료 / 코드 통합 중
+# 현재 인계 — 2026-10-27 KST08:37, PR687 전체18 배포·접수/6잡 원복 완료
+
+**운영 코드50be0d706b9562067a44867d239d0362bc83892b, capacity OPEN 감사20533, text6잡 모두 재개 감사20534–20539. DeepSeek8dc withdrawn 감사20523. 유지보수·회수·배포·종료/복원 once를 다시 실행하지 않는다.**
+
+## 목표·완료한 구현
+
+사용자는 실제 Grok CLI 병렬 실행으로 DeepSeek 미확정 점유와 reviewer 반복 재시작을 해결하고, 재발 방지 및 종료원인 로그를 구현·병합·배포하라고 지시했다. 스킬은 사용하지 않았다. 사용자 dirty 원본 WT와 clean686/687 운영자 WT는 수정하지 않았다.
+
+- 실제 native Grok3개 독립 WT에서 실행. 각20turn source탐색 후 focused continuation physical62633/guard62302/logging63772 모두 EXIT0. root가 결과를 독립 대조했다. guard/logging 소스는 통합했고, physical factory/report는 root 실제 회수 이후의 stale 준비 산출물이어서 미실행·미채택이다. 그 명령을 실행하지 않는다. PRIVATE `ROOT_GROK_REVIEW.private.json`에 각 보고서 SHA·채택/수정 범위를 남겼다.
+- FIRST/SECOND의 **현재 OPEN 정책·route·fence·최근 미만료 waiting·실제 group/provider/pool/global 포화**가 입증될 때만 단계 restartEligiblefalse. no_progress 경보/대기량을 유지하고, 실제 job/poll timeout lane과 다른 잡·독립 AI consumer의 복구 판정은 유지한다. 현재 queueTtlMs120000/reservationTtlMs30000이다.
+- 동일 보고서에서 고른 실제 재시작 트리거의2표본(stage/lane/reason/age/wait/progress), role/instance/boot/release/epoch와 실제 abort/signal/lease cause/drain/exit를 JSON 로깅. 제어된 프로세스 종료 직전 boot별 `operations_observations`의 `worker-exit:<role>:<boot UUID>`에 최대2초 best-effort 기록. 새 종료를 만들기 위해 인위적으로 재시작하지 않았다. 이번 새 boot는 종료가 없어 durable exit 실제 표본은0이며 저장 성공을 관측했다고 주장하지 않는다.
+- root가 Grok 초기 inactive-FIRST 적용 누락 수정 여부, 객체 restartEligiblefalse 보호를 확인했다. 추가로 선택 writer의 동기 throw/비Error 거절도 종료를 막지 않게 고정 code 처리하고 watchdog lease만료/renew기한을 구분했다.
+
+## 실제 DeepSeek 종료·단건 회수·원복
+
+PRIVATE `STATE=/Users/jr/.local/state/nomorevibe-reliability-20261025`, 이번 자료는 `STATE/grok-fix-20261027/`다(0700/0600). raw env·credential·binding·prompt·Docker 원문은 Git/공개 로그에 넣지 않는다.
+
+1. 공식 DRAIN20521 후 native PID50759/PGID50759 launchd disable→bootout ACK 각0으로 종료. 다음 owner reviewer와 M3/mini gateway의 실제 private PID namespace 종료/Docker wait0·replicas0·교체없음을 확인했다. 사용자 즉시 종료 지시로 provider가 먼저였으며 stop 순서를 거짓으로 바꾸지 않았다.
+2. 원 owner durable group exit, local-end, strict V2 plan/실제 경계종료와 모든 경계 뒤 native 부재 재관측23:05:54.709Z로 공식 dry-run 성공/rollback 후 apply **audit20523/event95577** 단1회. dry-run20522는 committed audit가 아니다.
+3. 독립23:09:41 사후 읽기 및23:36:56 최신 읽기에서 request8dc `withdrawn`, releaseevent1, bindingunchanged, charge/totalbound262144·settledNULL. 원 failed/cancelled attempt121607과 보류 후보를 성공으로 바꾸지 않았다. 모델 정상응답·사용량 정산을 주장하지 않는다.
+4. 같은 boot/config/plist/entry의 native 새 PID72251·listener8010 일치·인증 health GET200을 실제 확인했다. 원 spec/image로 gateway-mini version45688 / gateway-m3 6239607 / owner6239614 복원 verifiedtrue. 첫 OPEN20524 후 FIRST/AI2 자연 진행도 확인했다.
+
+## PR·CI·운영 배포 완료
+
+- PR687 code commitc602c156, 자동 CI40418372835 **전체 success/필수checksuccess**. 타입·린트·빌드·unit2묶음·통합6묶음·ledger·두 PR이미지 실제 자동 통과. inactive-FIRST 대기/진짜 hung lane/다른job 차단의 새3회귀 포함. **수동 test/lint/typecheck/build/컴파일·합성 모델 호출은 실행하지 않았다.** `git diff --check`만 실제 통과했다.
+- 실제 병합 **23:22:52Z**, main50be. main CI40419359154는 tested-tree 재사용해 필수check와 두 image publish success. refresh-caches를 기다리지 않았다. worker digestce67a6c45e7a3b6de1ea72b4ca34d3df98cd0fa38f6d5d3421e1b9fb547fc5da, web e9f42c3bdd2e5fa3b13417117b1c8c1eedcc02ad029ed7fb58183dd5038bd89f.
+- clean operator `/Users/jr/Desktop/projects/nomorevibe-release-687-20261027` HEAD50be를 보존한다. fast deploy scope/plan/run 사용. 공통 lib 변경으로 전체18 선택, 모두34cc인 baseline과 원 replica/spec/serving 설정을 대조하고 두 호스트 prePull. DDL 변경 없음.
+- 배포 전 공식 DRAIN **20526**. 실제5표본/20.3초 뒤 **23:23:52.459Z unexpiredreserved/dispatched/indeterminate0** 확인. 단순 만료로 unknown을 회수하지 않았다. 첫 raw count에는 이미 만료된 reserved3행도 나왔으므로 `reserved_until > clock_timestamp()`를 적용한 실제 active 읽기와 구분한다.
+- `release-687/plan.private.json` SHA **d24ea02a5c71d446388874da33952a17d7e9347b54e3140ff0e7a430ac478367**. run78737 한 번 실행, **23:35:04.133843Z EXIT0/deployed-and-verified**. selected/deployed18, skipped0, retained0, failed0, 앱 실제 새 deployment/source/image/health·원복자료·public gate 확인. final snapshot SHA **cc4679873fd625ab800089628580a019ba7dafd29c1e51c77f21c9872c6b49cc**.
+- 초기 DRAIN progressok 뒤 tagline-ko 기존 오류가23:30:55 다시 관문을 막았다. 원 오류·lease/cursor/version을 보존한 공식 text6잡 계획 일시정지 **20527–20532**로 유지보수 관문을 통과했다. 이 상태의 progressok는 OPEN 업무 전체정상 인증이 아니다.
+- 모든 앱 확인 후 공식 OPEN **20533**, own pause 영수증만으로 새 resume-plan/apply 실행 **20534–20539**,6잡 모두 pausedfalse. 계획된 pause·DRAIN을 남기지 않았다. 기존 intro Claude미계약1개는 deferred 유지, serving 모델/한도/정책/AI2 설정 그대로.
+
+## 최신 실제 관측·남은 한계
+
+- **23:36:56.332Z** `final-db-open.private.json`: OPEN/epoch1/revision3, 원8dc withdrawn·releaseevent1·정산NULL·binding/charge보존. 전역 indeterminate0. 정상 FIRSTdispatched1·GPU3090unexpiredreserved1,5역할 모두 새50be M3 owner/unexpired.
+- **23:36:56** reviewer 주·예비 실제4파일 SHA 일치, healthy, restartCount0. CID m3 `2543025f9259`/mini `dec4d604b9a1`가23:33:07 표본부터 **약229초 동일**이다. 새 종료/반복재시작 이벤트 없음. 시작은 각각23:32:14/23:31:56으로180초도 경과했다. 이것을 장기 무장애 증거로 확대하지 않는다.
+- **23:37:01.123654Z** 공식 운영 progress: FIRST 진행5분4/SECOND3, lane alarm0. **overallalarm**: reason-translate waiting9371/no_progress, keywords14644/upstream_stalled, product-translate113738/upstream_stalled(errors5m4), tagline-ko540/upstream_stalled. 별도 실제 업무 경보이며 이 PR에서 해결했다고 쓰지 않는다. 다시 pause하거나 오류/품질 관문을 완화하지 않는다.
+- stock observer는23:35:04.148914Z PID14178로 한 번 시작,5/10/15분/6시간, productionMutations0/**futurePassedfalse**. 표본은 실제 due 후에만 읽는다. OPEN text 경보로 실패할 수 있고 실패 시 원본을 보존하며 재시작/과거시각 소급통과 금지. 별도24시간 관측은 남는다.
+- response_only provider의 request별 취소 ACK/서버 강제실행기한 자동화는 **설계 후속**이다. 배포 시 DRAIN→실제 진행요청 종료대기(최대3분, 남으면 교체중단)→교체/확인→OPEN을 지킨다. TTL/clientabort를 provider종료로 해석하지 않는다.
+
+## 파일·실패·다음 agent 명령
+
+구현7파일: `lib/operations/capacity-admission-block.ts`, `worker-progress-query.ts`, `scripts/role-worker.ts`, `worker-supervisor.ts`, `tests/worker-progress-items.test.ts`, `docs/CODEX_HANDOFF.md`, `docs/operations/2026-10-27-reviewer-restart-recovery.md`. 이번 후속 문서 branch `codex/reviewer-recovery-report-20261027`는 docs/PENDING만 수정하며 앱 재배포 대상이 아니다.
+
+실패 보존: native stop ACK 뒤 macOS disabled parser가 `=>disabled`를 true문법만 허용해 후검증 실패. 별도 실제 부재 재관측으로 판단했고 stop 재전송하지 않았다. 최초 Docker readonly 이중user SSH255는 barehost 읽기로 수정(변경0). auto-merge는 저장소 설정상 불가해 요청 실패/상태변경0, 필수CI 완료 후 정상 merge했다. pause 전 태그라인 관문대기는 오류를 숨기지 않고 유지보수 pause/resume 감사로 남겼다.
+
+후속 문서PR 상태는 GitHub의 실제 merge/check로 확인한다. 미병합이면 필수CI 후 병합하고 docs-onlyscope0을 확인하며, 병합됐으면 별도 남은 업무 경보·장기 관측 읽기만 진행한다. 배포·회수·stop/restore·capacity·pause/resume once를 다시 실행하지 않는다.
+
+```bash
+git -C /Users/jr/Desktop/projects/nomorevibe-grok-fix-integration-20261027 status --short
+# 새 조회만 필요하면, NEW_OUTPUT은 이전에 없는 PRIVATE 절대 경로다.
+python3 /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-fix-20261027/root-final-db.py NEW_OUTPUT
+# observer 기존 파일을 읽기만 한다. sample 재실행/driver 재시작 금지.
+cat /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-fix-20261027/release-687/execution/observation/summary.private.json
+```
+
+아래는 당시의 진행 기록이다. 위 최신 실제 완료·남은 경보가 우선한다.
 
 ## 목표와 완료
 

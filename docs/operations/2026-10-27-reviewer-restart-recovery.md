@@ -40,3 +40,39 @@ stdout만으로는 사라진 Swarm task의 종료 이유를 다시 볼 수 없�
 ## 검증 범위
 
 사용자 지시로 수동 테스트·lint·컴파일·빌드와 합성 모델 호출은 실행하지 않았다. 실제 운영 종료/복원/DB readback 및 health GET을 수행했다. 새 코드의 필수 자동 CI와 실제 배포·자연 업무 관측 결과는 CODEX_HANDOFF에 이어 기록한다.
+
+
+## 이후 종료 원인 확인
+
+현재 실행 컨테이너의 JSON 로그에서 `role.progress_stalled` → `supervisor.stopping` → `role.supervisor_stopped`를 같은 boot/epoch로 연결한다. `trigger`와 `previous`는 실제 재시작 판정에 쓰인 두 표본이다. `forcedKill`은 supervisor의 drain 타이머가 작동한 경우에만 채워지며, 자식 종료 신호와 요청된 종료 신호를 따로 본다.
+
+교체된 역할 프로세스의 마지막 제어된 종료는 다음 읽기로 찾는다. 기록 부재를 정상 종료나 OOM의 증거로 해석하지 않는다.
+
+```sql
+SELECT key, observed_at,
+       value->>'instanceId' AS instance_id,
+       value->>'bootId' AS boot_id,
+       value->>'why' AS cause,
+       value->>'stopReason' AS stop_reason,
+       value->>'exitCode' AS exit_code,
+       value->>'signal' AS received_signal,
+       value->>'leaseCause' AS lease_cause,
+       value->>'drainTimedOut' AS parent_drain_timed_out,
+       value->'trigger' AS deciding_sample,
+       value->'previous' AS first_sample
+FROM operations_observations
+WHERE key LIKE 'worker-exit:reviewer:%'
+ORDER BY observed_at DESC
+LIMIT 20;
+```
+
+
+## 배포 및 마지막 운영 읽기
+
+[PR687](https://github.com/JRVector9/nomorevibe/pull/687), 앱 소스50be0d706b9562067a44867d239d0362bc83892b. PR CI40418372835 전체와 main CI40419359154 필수check/두 image publish 성공을 확인했다. 검증된 tree와 이미지를 재사용해 stock fast deploy scope/plan/run으로18앱 모두 실제 교체했다. 완료23:35:04.133843 UTC, source/image/health와 public gate 통과, 실패0이다.
+
+배포는 공식 DRAIN20526 뒤 unexpiredreserved/dispatched/indeterminate0을 확인한 후 진행했다. 중간에 기존 tagline-ko 오류가 다시 관문을 막아6text잡 계획 일시정지20527–20532를 사용했고, 완료 후 OPEN20533/own6잡재개20534–20539로 모두 원복했다. 오류·lease·cursor·version은 보존했다. 유지보수 상태의 progressok와 OPEN 업무 정상 여부를 구분한다.
+
+23:36:56 실제 DB에서 원8dc withdrawn·releaseevent1·정산NULL·binding/charge보존과 전역indeterminate0을 재확인했다. reviewer 주·예비의 실제4개 수정 파일 SHA가 앱 소스와 같고, 두 CID가 약229초 동일/healthy/restartCount0이다. 23:37:01 실제 progress에서 FIRST4/AI2 3건 진행·lane alarm0이다.
+
+전체 progress는 여전히alarm이다. reason-translate/no_progress, keywords·product-translate·tagline-ko/upstream_stalled는 별도 미해결 업무 경보다. 새 boot의 종료는 발생하지 않아 durable exit 실제 표본은0이며, 저장 성공을 운영에서 관측했다고 쓰지 않는다. 실제6시간/24시간 결과도 아직 없다. 새 observer는23:35:04 시작했고 예약된 미래 표본은 통과 증거가 아니다.
