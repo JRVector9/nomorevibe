@@ -1,5 +1,12 @@
 # 남은 작업
 
+## AI2 운영 전환 후 현재 상태 — 2026-10-26
+
+최신 운영은 main `df1e6411`·18앱·DB journal134·capacity OPEN revision3이다. AI2는 GPU3090 직접 연결을 기본, abcLLM Supa를 대체로 사용하며 두 경로 no-thinking·총32k/출력10k 제한을 적용했다. 실제 GPU1,112건과 자동 대체345건의 종료·DB 결과를 확인했다. 이전 날짜의 앱 수·미확정 요청·미배포 설명은 현재 상태로 해석하지 않는다. [현재 실측 및 남은 PR 범위](docs/operations/2026-10-26-ai2-native-recovery.md)를 우선한다.
+
+진행 중: 의도한 중단 중 text 재시작 방지, reason 번역 예약 배치 회복, 배포 자동 검증 오류 수정. 아래 사람 라벨·백업 복구·장기 관측 등 미완료 경계는 별도로 유지한다.
+
+
 ## LLM 보강 운영 전환 — 2026-10-25
 
 main `be71a75a`의 17앱/22컨테이너 배포·AI2 items·6업무 dispatch·capacity open을 완료했다. DB는 journal130개/최신0129다. Admission 예약 소비 결함과 원 owner/Mac 경계 지원을 배포했고 M3 미확정07ef도 실제 종료 증거로 한 번 회수했다. 원4잡 재개·생산자 등록·원 뉴스 실패 행은 반복하지 않는다. 최신 상태는 [운영 전환 기록](docs/operations/2026-10-25-llm-assist-production-activation.md)과 [시간 단축 검토](docs/operations/2026-10-25-deployment-time-review.md)를 따른다. 아래 과거 앱 수·미배포 기록을 현재 상태로 해석하지 않는다.
