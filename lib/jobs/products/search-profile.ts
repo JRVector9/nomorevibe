@@ -57,7 +57,7 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
     let written = 0, reused = 0, failed = 0, blocked = "", inARow = 0;
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-      const tasks = await pendingProfiles(BATCH);
+      const tasks = await pendingProfiles(BATCH, roleLease);
       if (tasks.length === 0) {
         ctx.log("search_profile.done", { written, reused, failed, drained: true });
         return { done: true };

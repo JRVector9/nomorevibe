@@ -3,7 +3,7 @@ import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { prepareTextProfileGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { textProfileInputSchema, textProfileInputHash, textProfileDispatchBindingSchema } from "@/lib/llm/capacity";
 import { lockModelCapacityCallerControl, lockTextProfileModelCapacityDispatch,
-  finishTextProfileModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+  finishTextProfileModelCapacityDispatch, findOwnPendingTextProfileRequests } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { createHash } from "node:crypto";
@@ -70,7 +70,31 @@ const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is
         or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
             or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`;
 
-export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
+export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "instanceId" | "bootId">): Promise<ProfileTask[]> {
+  const own = owner ? await findOwnPendingTextProfileRequests({
+    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: PROFILE_MODEL }) : [];
+  const resumed = own.length ? await onPrimary(() => db.transaction(async tx => {
+    const rows = await tx.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
+      .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
+      .where(and(inArray(products.id, own.map(row => row.productId)),
+        inArray(products.status, ["seeded", "verified"]), profileGenerationDueSql()));
+    const tasks = new Map(rows.map(row => [row.product.id, { product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }]));
+    const selected: ProfileTask[] = [];
+    for (const candidate of own) {
+      const task = tasks.get(candidate.productId);
+      if (!task || selected.some(row => row.product.id === candidate.productId)) continue;
+      const input = { productId: task.product.id, slug: task.product.slug,
+        evidenceHash: profileHash(profileEvidence(task.product, task.reviewerNote)),
+        profile: await currentProfileIdentity(tx, task.product.id), model: PROFILE_MODEL };
+      // An old source/profile snapshot gets no priority and no new authority.
+      if (candidate.workKey !== `text:profile:${task.product.id}:${textProfileInputHash(input)}`) continue;
+      selected.push(task);
+      if (selected.length >= limit) break;
+    }
+    return selected;
+  })) : [];
+  if (resumed.length >= limit) return resumed;
+
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products)
     .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
@@ -82,7 +106,8 @@ export async function pendingProfiles(limit: number): Promise<ProfileTask[]> {
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
       ${REFRESH_SINCE}, ${products.id} desc`)
     .limit(limit);
-  return rows.map((row) => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }));
+  const fresh = rows.map((row) => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }));
+  return [...resumed, ...fresh.filter(task => !resumed.some(row => row.product.id === task.product.id))].slice(0, limit);
 }
 
 export type ProfileResult =

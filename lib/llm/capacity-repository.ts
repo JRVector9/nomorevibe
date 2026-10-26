@@ -239,6 +239,44 @@ export async function findOwnPendingModelRequest(value: ModelCapacityRequestIden
   });
 }
 
+export type OwnPendingTextProfileRequest = Readonly<{ productId: number; workKey: string }>;
+
+/** Priority metadata only. The normal coordinator must re-poll the exact input
+ * key and validate all current domain, role, job and dispatch fences. */
+export async function findOwnPendingTextProfileRequests(value: {
+  owner: ModelCapacityRequestIdentity["owner"]; model: string;
+}): Promise<OwnPendingTextProfileRequest[]> {
+  const identity = modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "profile-queue-readback",
+    class: "background", pool: "text", routeId: "product-search-profile", provider: "abcllm" });
+  return transaction(async tx => {
+    const state = await control(tx, "share");
+    const route = state.policy?.routes.find(route => route.routeId === identity.routeId
+      && route.provider === identity.provider && route.model === identity.model);
+    if (state.fenced || state.mode !== "open" || !route) return [];
+    const rows = await tx.select({ workKey: modelCapacityRequests.workKey, logicalWorkKey: modelCapacityRequests.logicalWorkKey })
+      .from(modelCapacityRequests).where(and(
+        eq(modelCapacityRequests.ownerInstanceId, identity.owner.instanceId), eq(modelCapacityRequests.ownerBootId, identity.owner.bootId),
+        eq(modelCapacityRequests.class, identity.class), eq(modelCapacityRequests.pool, identity.pool),
+        eq(modelCapacityRequests.routeId, identity.routeId), eq(modelCapacityRequests.provider, identity.provider),
+        eq(modelCapacityRequests.model, identity.model), eq(modelCapacityRequests.epoch, state.epoch),
+        eq(modelCapacityRequests.revision, state.revision), eq(modelCapacityRequests.policyHash, state.policyHash!),
+        eq(modelCapacityRequests.providerBudgetId, route.providerBudgetId), eq(modelCapacityRequests.groupId, route.groupId),
+        sql`((${modelCapacityRequests.state} = 'reserved' AND ${modelCapacityRequests.reservedUntil} > clock_timestamp())
+          OR (${modelCapacityRequests.state} = 'waiting' AND ${modelCapacityRequests.queueUntil} > clock_timestamp()))`,
+        sql`${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.dispatchBinding} IS NULL
+          AND ${modelCapacityRequests.dispatchBindingHash} IS NULL AND ${modelCapacityRequests.dispatchedAt} IS NULL
+          AND ${modelCapacityRequests.terminalEvidence} IS NULL
+          AND ${modelCapacityRequests.terminalEvidenceHash} IS NULL AND ${modelCapacityRequests.settledAt} IS NULL`
+      )).orderBy(sql`CASE WHEN ${modelCapacityRequests.state} = 'reserved' THEN 0 ELSE 1 END`, asc(modelCapacityRequests.queueOrdinal)).limit(32);
+    return rows.flatMap(row => {
+      const match = /^text:profile:([1-9][0-9]*):[a-f0-9]{64}$/.exec(row.workKey);
+      const productId = match && Number(match[1]);
+      return productId && Number.isSafeInteger(productId) && row.logicalWorkKey === `text:profile:${productId}`
+        ? [{ productId, workKey: row.workKey }] : [];
+    });
+  });
+}
+
 export type OwnPendingReasonTranslationRequest = Readonly<{
   request: ModelCapacityRequest; memberKeys: string[]; state: "waiting" | "reserved";
   epoch: number; revision: number; policyHash: string; token: string | null;
