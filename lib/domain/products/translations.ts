@@ -133,7 +133,7 @@ export async function pendingProductTranslations(limit = 4): Promise<ProductTran
     sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
     .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`,
-      sql`${t.retryAt} is null or ${t.retryAt} <= now()`))
+      sql`(${t.retryAt} is null or ${t.retryAt} <= now())`))
     .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
   return rows;
 }
@@ -150,7 +150,7 @@ export async function pendingProductTranslationBatch(memberKeys: readonly string
       .innerJoin(products, eq(products.id, t.productId)).where(and(eligible,
         or(...targets.map(target => and(eq(t.productId, target.productId), eq(t.locale, target.locale as ProductTranslationLocale),
           eq(t.field, target.field as ProductTranslationField)))), inArray(t.status, ["pending", "failed"]),
-        sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`, sql`${t.retryAt} is null or ${t.retryAt} <= clock_timestamp()`));
+        sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`, sql`(${t.retryAt} is null or ${t.retryAt} <= clock_timestamp())`));
     if (rows.length !== keys.length) return null;
     const batch = targets.map(target => rows.find(row => row.source.id === target.productId && row.locale === target.locale && row.field === target.field)!);
     if (batch.some(task => productTranslationSourceHash(task.source, task.field) !== task.sourceHash)
