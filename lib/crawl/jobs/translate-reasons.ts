@@ -32,11 +32,12 @@ const MIN_CALL_MS = 30_000;
 const SOLO_ATTEMPTS = 3;
 
 /** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다 */
-export function packBatch<T extends { body: string }>(items: T[]): T[] {
+export function packBatch<T extends { body: string; attempts?: number }>(items: T[]): T[] {
   const batch: T[] = [];
   let chars = 0;
   for (const item of items) {
-    if (batch.length && (batch.length >= BATCH || chars + item.body.length > BATCH_CHARS)) break;
+    if (batch.length && ((item.attempts ?? 0) >= SOLO_ATTEMPTS || (batch[0].attempts ?? 0) >= SOLO_ATTEMPTS
+      || batch.length >= BATCH || chars + item.body.length > BATCH_CHARS)) break;
     batch.push(item);
     chars += item.body.length;
   }
@@ -88,7 +89,7 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
       if (prepared.kind === 'skipped') return { done: false };
       const result = prepared.result;
       if (signal.aborted) return { done: false };
-      const rows = batch.map((item, index) => ({
+      const rows = (prepared.kind === 'ready' ? prepared.batch : batch).map((item, index) => ({
         hash: item.hash,
         translated: result.ok ? result.translations[index] : null,
         error: result.ok ? undefined : result.error,

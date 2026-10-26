@@ -91,6 +91,12 @@ it("글자 수로 묶는다 — 최대 4건·1,600자, 순서를 지키고, 긴 
   expect(packBatch([])).toEqual([]);
 });
 
+it("stops before a later solo-retry member so the eligible prefix passes complete batch validation", () => {
+  const first = item("first", 1), solo = item("solo", 3), latest = item("latest");
+  expect(packBatch([first, solo, latest])).toEqual([first]);
+  expect(packBatch([solo, first])).toEqual([solo]);
+});
+
 it("틱 끝에 시간이 모자라면 새로 부르지 않는다 — 줄어든 제한으로 헛실패하지 않게", async () => {
   vi.useFakeTimers();
   try {

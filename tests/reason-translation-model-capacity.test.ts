@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 const mocks = vi.hoisted(() => ({ control: vi.fn(), legacy: vi.fn(), prepare: vi.fn(), domain: vi.fn(),
-  pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), native: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(), role: vi.fn() }));
+  pending: vi.fn(), batches: vi.fn(), batch: vi.fn(), abandon: vi.fn(), request: vi.fn(), cancel: vi.fn(), native: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(), role: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl: mocks.control,
   findOwnPendingModelRequest: mocks.pending, requestReasonTranslationModelSlot: mocks.request,
+  findOwnPendingReasonTranslationRequests: mocks.batches, cancelOwnPendingReasonTranslationRequest: mocks.abandon,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown,
   reconcileReasonTranslationGatewayTerminal: mocks.reconcile }));
 vi.mock('@/lib/crawl/translate', async () => { const { createHash } = await import('node:crypto'); return {
   TRANSLATE_MODEL: 'Reason Model', translateToKorean: mocks.legacy,
   textHash: (value: string) => createHash('sha256').update(value).digest('hex') }; });
-vi.mock('@/lib/crawl/translations', () => ({ prepareReasonTranslationDispatch: mocks.domain }));
+vi.mock('@/lib/crawl/translations', () => ({ prepareReasonTranslationDispatch: mocks.domain, pendingReasonTranslationBatch: mocks.batch }));
 vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareReasonTranslationGatewayCall: mocks.prepare,
   translateWithReservedReasonGateway: mocks.native }));
 vi.mock('@/lib/jobs/role-leader', () => ({ roleLeaseFromEnv: mocks.role }));
@@ -31,6 +32,7 @@ beforeEach(() => {
   vi.resetAllMocks(); vi.stubEnv('ABCLLM_API_KEY', 'test-key'); vi.stubEnv('ROLE_LEASE_ROLE', 'text');
   mocks.control.mockResolvedValue({ mode: 'open', policy: { routes: [{ routeId: 'reason-translate', provider: 'abcllm', model: 'Reason Model' }] } });
   mocks.role.mockReturnValue(role); mocks.prepare.mockReturnValue(call); mocks.pending.mockResolvedValue(null);
+  mocks.batches.mockResolvedValue([]);
   mocks.domain.mockImplementation(async (_batch, _lease, options) => options.reserved
     ? { kind: 'ready', dispatch, expectation } : { kind: 'ready', members, role });
   mocks.request.mockResolvedValue({ kind: 'granted', reservation });
