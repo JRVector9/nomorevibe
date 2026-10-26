@@ -479,16 +479,33 @@ def check_deployed(client, short, target, original, previous_id, manifest, *, mo
     expected = expected_config(short, original, target, mode)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        app, latest = client.app(short), client.latest(short)
-        if app.get('applicationStatus') == 'error' or latest.get('status') == 'error':
+        try:
+            app = client.app(short)
+        except json.JSONDecodeError:
+            # An incomplete read is not a deployment result. Re-read within the
+            # same deadline; never repeat the deployment or hide contract errors.
+            time.sleep(pause)
+            continue
+        if app.get('applicationStatus') == 'error':
+            raise shared.ReleaseStopped(short + '_deployment_error')
+        try:
+            latest = client.latest(short)
+        except json.JSONDecodeError:
+            time.sleep(pause)
+            continue
+        if latest.get('status') == 'error':
             raise shared.ReleaseStopped(short + '_deployment_error')
         if (latest.get('deploymentId') != previous_id and latest.get('deploymentId') and
                 app.get('applicationStatus') == 'done' and latest.get('status') == 'done'):
             if stable_config(app) != stable_config(expected):
                 raise shared.ReleaseStopped(short + '_saved_configuration_mismatch')
             docker = expected['sourceType'] == 'docker'
-            evidence = probe(short, app, target['sha'], image=target['worker'] if docker else None,
-                             manifest=manifest, expected_runtime=expected_runtime, require_revision=not docker)
+            try:
+                evidence = probe(short, app, target['sha'], image=target['worker'] if docker else None,
+                                 manifest=manifest, expected_runtime=expected_runtime, require_revision=not docker)
+            except json.JSONDecodeError:
+                time.sleep(pause)
+                continue
             if evidence.get('updateState') in shared.SWARM_ROLLBACK_STATES + shared.SWARM_STOP_STATES:
                 raise shared.SwarmRollback(short, evidence)
             if evidence.get('ready') is True and evidence.get('updateState') in DEPLOYED_SETTLED_STATES:
