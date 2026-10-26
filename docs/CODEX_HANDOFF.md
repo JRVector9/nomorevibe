@@ -1,3 +1,13 @@
+## PR #672 최신 고정 main 로컬 통합 준비 — 2026-10-26
+
+Objective: PR #672를 고정 main `531b4afbb0e6665f13dfb217237e87519991d206`과 로컬 통합하고 기존 facts 축소 범위를 유지한다. 시작 HEAD `ca9718ee5eea2ed42ca772fc052e8ef5164da7ba`, 시작 WT clean, `origin/main` 일치 확인. 사용자 원본 WT는 읽기 전용이다.
+
+Completed/decisions: `git merge --no-ff --no-commit 531b4afbb0e6665f13dfb217237e87519991d206`에서 충돌은 이 handoff의 prepend 한 곳뿐이었다. 양쪽 기록을 모두 보존했다. 제품 소스 및 테스트 충돌은 없으며 PR 고유 변경은 `FactsStrip.tsx`, `LicenseDialog.tsx`와 이 문서다. 다른 상세 PR의 코드를 합치지 않았다. 기존 모든 facts/notes/warnings/license 상호작용, mobile 두 열과 license 줄바꿈 범위 그대로다.
+
+Validation: 이번 단계에서 `git diff --check`와 `git diff --cached --check`를 실제 실행해 둘 다 EXIT0을 확인했다. 양쪽 handoff 모든 줄의 순서 보존과 기존 PR 소스 바이트 불변도 로컬 비교로 확인했다. 의미 있는 소스 변경이 없으므로 기존 4 files / 62 tests PASS는 재실행하지 않으며 이전 기록의 결과로만 인용한다. Failed approaches: merge가 handoff prepend 충돌로 중단되었고 양쪽 기록 보존으로 해결했다.
+
+Remaining/unverified: 이 agent는 GitHub 쓰기, 운영/DB/SSH/Dokploy 호출, 배포 및 시각 재검증을 수행하지 않는다. root가 push, 필수 CI, 최종 최신 base 검증, 병합과 배포를 담당한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat 531b4afbb0e6665f13dfb217237e87519991d206...HEAD`.
+
 ## Product detail facts compact layout — 2026-10-26
 
 Current objective: slightly compact the product detail facts panel from the user's screenshot while retaining every existing label, value, note, source warning and license interaction. Isolated WT `/Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026`, branch `codex/detail-compact-20261026`, base `df1e641189e2e2d6ba0da9ca5b50cfe996f69a77`. The original user WT remains untouched. No skills, production access, push or PR were used by this agent.
@@ -19,6 +29,34 @@ git show --stat --oneline codex/detail-compact-20261026
 git cherry-pick codex/detail-compact-20261026
 ```
 If the shared handoff conflicts, retain this phase and the other agent/root phases. Existing scoped tests above passed on this isolated component change; run only integration checks justified by the combined changes.
+## Deployment proof compatibility — 2026-10-26
+
+Objective: remove two measured deployment-proof false failures without changing deployments, real monitor alarms, or preservation guards. Owned WT `/Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026`, branch `codex/deploy-proof-compat-20261026`, base `df1e6411`. Root owns PR/merge and all production work. This agent used no skills, SSH, production calls, push or PR; original user WT stayed read-only.
+
+Completed: strict RFC3339Nano parsing on Python 3.9, preserving exact nanosecond order with Decimal seconds rather than float truncation. Explicit timezone, 1–9 fractional digits and valid dates/offsets are required; ambiguous `-00:00` is rejected. The embedded remote parser uses identical code. Boot/freshness/future bounds, unique latest event, both ACKs and UP-state requirements remain: fresh acknowledged DOWN returns primary/external/fresh=true, stateUp/verified=false.
+
+Selected web final verification alone can opt into a NULL→inherited target-image Healthcheck transition. Both service specs must omit Healthcheck; old effective/image health must be NULL; unique old/new inspected images must link immutable web refs, RepoDigests, image IDs, actual container image refs and matching revision/tree labels. The new effective check must exactly equal its target image check and be Docker healthy. Other service fields and command/env/entrypoint/mount checks stay strict; worker/connect/monitor callers and retained apps do not opt in. Web runtime evidence additionally compares effective health with the actual service/image, rejecting missing health even when the old value was NULL; source revision/tree and direct HTTP/database health still independently pass through existing checks.
+
+Modified files: `scripts/ops/release_monitor.py`, `scripts/ops/deploy_git_apps.py`, `scripts/ops/release_runtime.py`, `tests/test_release_monitor.py`, `tests/test_release_runtime.py`, this handoff.
+
+Actually executed using `/usr/bin/python3 --version` → Python **3.9.6**:
+- `/usr/bin/python3 -m unittest discover -s tests -p test_release_monitor.py` → **14 PASS**, including the embedded remote script under the same interpreter, actual 9-digit Z/offset timestamps, malformed/ambiguous inputs, nanosecond latest DOWN/duplicate, preboot/future/stale semantics.
+- `/usr/bin/python3 -m unittest discover -s tests -p test_release_runtime.py` → **14 PASS** (final 0.297s), including both selected web apps, wrong image/digest/revision/tree, explicit overrides, missing/disabled/unhealthy health and other drift.
+- `/usr/bin/python3 -m unittest discover -s tests -p test_deploy_git_apps.py` → **30 PASS**, 2.477s; existing worker/connect/shared contract behavior retained.
+- `git diff --check` → EXIT0, including this documentation entry.
+
+Failed approaches preserved in session results: original Python 3.9 parser produced 9 failing assertions/subcases in the new monitor regressions and could not parse the actual nanosecond StartedAt. New positive web fixture reproduced `web-mini_selected_runtime_contract_drift`; before the opt-in implementation, new helper kwargs were unsupported. Initial helper-only negatives exposed equal-NULL/equal-health paths that require actual web image-health validation; the final runtime check now rejects those evidence inconsistencies. No full application/DB suites were run.
+
+Remaining: root reviews/lands this commit under required CI and verifies against existing private actual snapshots/monitor evidence. Parsing a real DOWN receipt proves receiver ACKs, not normal UP or alert delivery; no alarm is suppressed. These ops-only files are excluded from images by `.dockerignore`; this fix changes proof automation, not runtime image contents. Root decides the next normal deployment from actual scope and current state; no old once directory is reused.
+
+Exact next commands (read-only, owned WT):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026
+git status --short
+git show --stat --oneline HEAD
+git show HEAD -- scripts/ops/release_monitor.py scripts/ops/release_runtime.py scripts/ops/deploy_git_apps.py
+```
+Root can import the updated modules locally against the already preserved private old/new Docker evidence; never print secret-bearing runtime/API records. This agent made no production deployment or operational completion claim.
 
 ## 2026-10-26 운영 수정 3개 병렬 착수
 
@@ -2864,3 +2902,43 @@ A `/tmp/nomorevibe-pr462-a-recorder-wait-investigation-20261016.md`은CI38850700
 
 
 2026-10-16 14:04 UTC: profile lock-order fix345f28d2를 정상 push/remote exact 확인했고 PR480에 보호merge846ef22f로 취합·정상 push했다. Reason CI후속bbf62b73→보호parentmerge01b015c5 정상 push, 초안 [PR481](https://github.com/JRVector9/nomorevibe/pull/481)(base480) 제출했다. Source17 exact/actual13 distinct PASS·filesOnly211 정확1회/미배포다. A PR10c source4+NEWunit1을 root전체diff/host모듈/190행unit/68행보고서/역변환proof 읽고 리뷰했다. NEW24+기존선택27 PASS/scoped0·원test변경0이며 선언상 legacy/ai1/ai2를 각각1+3으로 계산한다. Physicalaggregate unknown은 유지한다. Source5+validation+공유4 featurecommit→latest481 보호parentmerge→새draft 예정. B/C 제품 번역은 ledger/native 구현 중, A는runtime+phantomhold의 읽기 계획 중이다. ActiveDB0/다음55580미배정/운영0/수동전체는모든PR뒤다.
+
+## Priority 1 text progress drain fix — 2026-10-26
+
+Objective: prevent intentional admission drain/collection pause from triggering specialized text progress restarts. Isolated WT `/Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026`, branch `codex/text-drain-progress-20261026`, base `df1e6411`. Root owns GitHub/production; original checkout read-only, skills0.
+
+Completed/cause: `scripts/role-worker.ts` primary checkProgress reads the generic report with includeText:false, then separately calls readTextProgress/textProgressStalled; the latter omitted admission/settings state. Added a validated primary capacity snapshot and settings read. Exact draining adds admissionHeld to suppress only this progress restart. Collection disabled excludes only crawl-tagline age; translation/profile/verify remain eligible and genuinely stalled work still alarms. Disabled capacity retains legacy transport. Failed/unknown control or queue reads and unreadable-settings fallback reject even during drain; provider flags remain visible. Child exit, role lease loss/renewal, heartbeat, lane poll and job hard deadlines are unchanged. Reviewer already uses generic progress and was not modified. No recovery/provider restart/slot release/capacity change; Oracle alert-only scope preserved.
+
+Files: lib/operations/text-progress.ts, tests/text-progress.test.ts, new tests/text-progress-read.test.ts, this handoff. Existing ignored node_modules symlink reuses original dependencies. README/runbook and installed Next TypeScript guide read.
+
+Executed with `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`: initial regression tests text-progress + text-progress-read → EXIT1/11FAIL+5PASS before sourcefix. Final `node node_modules/vitest/vitest.mjs run tests/text-progress.test.ts tests/text-progress-read.test.ts tests/role-worker.test.ts tests/worker-supervisor.test.ts tests/worker-progress-capacity-drain.test.ts` → EXIT0/5files68PASS/1.65s. Additional existing `node node_modules/vitest/vitest.mjs run tests/model-capacity-admission.test.ts` → EXIT0/1file8PASS/1.74s (missing/unknown/failing control and no update/insert). Changed3TS ESLint EXIT0; next typegen EXIT0; tsc --noEmit --incremental false EXIT0; diffcheck EXIT0 before this append. Full suites/build/DBintegration/production operations not executed.
+
+Rejected approach: blanket collectionpause hold would hide runnable translation/profile/verify stalls. Read snapshots add a short existing shared-lock read, never expire/grant/refund capacity. Remaining: root review/PR/required latest-base CI/merge/normal worker deployment and actual drain/reopen observations. No migration/config change needed. Existing indeterminate charges remain untouched.
+
+Exact next commands (agent only): `cd /Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026`; `git diff --check`; `git add lib/operations/text-progress.ts tests/text-progress.test.ts tests/text-progress-read.test.ts docs/CODEX_HANDOFF.md`; `git commit -m "fix(workers): respect text admission drain in progress checks"`; `git show --stat --oneline HEAD`. Root alone performs push/PR/merge/deploy.
+
+
+## 2026-10-26 — priority 2 reason reservation recovery (isolated implementation)
+
+- Objective: stop reason-translate reservations expiring unused when the fresh retry/untried page changes batch membership. Worktree `/Users/jr/Desktop/projects/nomorevibe-reason-reservation-recovery-20261026`, branch `codex/reason-reservation-recovery-20261026`, base `df1e641189e2e2d6ba0da9ca5b50cfe996f69a77`. Parent/root owns PR, merge and all production operations; this phase did not push or deploy.
+- Root cause/reproduction: the coordinator searched only the fresh complete work key. A previously queued/granted batch could overlap the next fresh batch, so the membership fence correctly refused a new request while its own original reservation was never adopted. Restoring the base coordinator/job against the new real-PostgreSQL membership-change regression reproduced `deferred` where a completed native call was expected (intentional RED); restoring the fix passes and preserves the original request ID through queued → reserved → dispatch_started → dispatch_settled.
+- Completed/design: read back at most 32 current-generation, live, unstarted reason batches for the exact owner instance/boot/model, prioritizing reservations; rehydrate their entire canonical membership and current due cache; compare the complete original work/input hash; re-poll the same request and retain all transactional source/cache/job/role/policy/fence/gateway binding checks. Stale own unstarted batches can be withdrawn only under exact identity, generation, state and token checks. Dispatched/indeterminate work is never adopted or cancelled. The writer uses the batch actually dispatched, preserving output/hash correspondence. Queue ties now use source hash, and packing stops before a later member needing a solo retry. Source existence validation uses the same canonical source union, exact body and needs-Korean predicate without repeating the full grouped history scan after the body/hash snapshot was validated.
+- Modified files: `lib/llm/capacity-repository.ts`, `lib/crawl/translations.ts`, `lib/crawl/reason-translation-model-capacity.ts`, `lib/crawl/jobs/translate-reasons.ts`, `tests/integration/reason-translation-capacity-dispatch.test.ts`, `tests/reason-translation-model-capacity.test.ts`, `tests/translate-reasons-job.test.ts`, `tests/capacity-unsettled.test.ts`, and this handoff.
+- Actual validation: scoped unit 5 files / 68 tests PASS; reason dispatch + ledger integration 2 files / 20 tests PASS; existing translations integration 12 tests PASS; touched-TS ESLint PASS; `next typegen` then `tsc --noEmit --pretty false --incremental false` PASS; `git diff --check` PASS. The existing intentional late-job-wall integration logs `job_lease_lost` while its rollback assertion passes. New integration coverage includes reserved and waiting reuse despite membership drift, exact recovered output/hash writes, unchanged microsecond cache snapshots, changed cache/source rejection with new work continuing, other boot/token/revision rejection, draining/expiry, and no release of a real EOF indeterminate dispatch.
+- Failed approaches/results preserved: bare initial tsc failed because generated `PageProps` were absent; `next typegen` resolved that setup requirement. A new expiry test initially expected immediate fresh completion; the existing safe contract withdraws/defer the expired exact-key request first, then a later tick creates a fresh request, and the test now verifies that behavior without changing expiry semantics. The first RED harness checked a reason omitted by Vitest's abbreviated diff; the corrected harness confirmed the intended deferred result. No full suite/build or production native call was run.
+- Test DB: only this phase's local Docker PostgreSQL, container `nmv-reason-reservation-recovery-20261026`, full ID `24576e6796fff2806de61dc082cc1c7b0be3ca8aa6f740da421dd70f3e250c4e`, image `pgvector/pgvector:0.8.6-pg17`, loopback port `32791`, database `nomorevibe_test`, dummy user/password `nomorevibe`. It remains running for root review; no other agent DB was accessed. Ignored `node_modules` is a symlink to the authorized shared dependency installation.
+- Remaining/impact: no migration, dependency or capacity-policy change. Root must integrate/review and use the deployment scope planner, then prove actual production reason native dispatch plus translated-cache progress. Existing remote unknown settlement remains conservative. Product `english_uncertain` is separate output-language validation (`checkProductTranslation` → insufficient English evidence after removing names/URLs/quotes); no product policy or failure classification was changed here.
+
+Exact next-agent review/retest commands:
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-reason-reservation-recovery-20261026
+git show --stat codex/reason-reservation-recovery-20261026
+export PATH=/Users/jr/.nvm/versions/node/v24.18.0/bin:$PATH
+npm test -- tests/reason-translation-model-capacity.test.ts tests/translate-reasons-job.test.ts tests/capacity-unsettled.test.ts tests/model-capacity-reason-translation-terminal.test.ts tests/reason-translation-gateway-native.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32791/nomorevibe_test npm run test:integration -- tests/integration/reason-translation-capacity-dispatch.test.ts tests/integration/reason-translation-capacity-ledger.test.ts
+TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32791/nomorevibe_test npm run test:integration -- tests/integration/translations.test.ts
+npx next typegen
+npx tsc --noEmit --pretty false --incremental false
+npx eslint lib/llm/capacity-repository.ts lib/crawl/translations.ts lib/crawl/reason-translation-model-capacity.ts lib/crawl/jobs/translate-reasons.ts tests/reason-translation-model-capacity.test.ts tests/translate-reasons-job.test.ts tests/capacity-unsettled.test.ts tests/integration/reason-translation-capacity-dispatch.test.ts
+```

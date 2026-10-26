@@ -7,9 +7,10 @@ import { createHash, randomUUID } from "node:crypto";
  */
 const mocks = vi.hoisted(() => ({ unknown: vi.fn(), reconcileCli: vi.fn(), reconcileReason: vi.fn(), pending: vi.fn(), requestCli: vi.fn(),
   cancel: vi.fn(), lock: vi.fn(), finish: vi.fn(), control: vi.fn(), requestReason: vi.fn(), prepare: vi.fn(), run: vi.fn(),
-  notStarted: vi.fn(), read: vi.fn(), reasonPrepare: vi.fn(), reasonNative: vi.fn(), domain: vi.fn(), role: vi.fn(), warn: vi.fn() }));
+  notStarted: vi.fn(), read: vi.fn(), reasonPrepare: vi.fn(), reasonNative: vi.fn(), domain: vi.fn(), role: vi.fn(), warn: vi.fn(), batches: vi.fn() }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ markModelDispatchIndeterminate: mocks.unknown, reconcileCliProcessTerminal: mocks.reconcileCli,
   reconcileReasonTranslationGatewayTerminal: mocks.reconcileReason, findOwnPendingModelRequest: mocks.pending, requestCliModelSlot: mocks.requestCli,
+  findOwnPendingReasonTranslationRequests: mocks.batches,
   cancelReservedModelSlot: mocks.cancel, lockCliModelCapacityDispatch: mocks.lock, finishCliModelCapacityDispatch: mocks.finish,
   readModelCapacityCallerControl: mocks.control, requestReasonTranslationModelSlot: mocks.requestReason }));
 vi.mock("@/lib/llm/cli-process-runner", () => ({ prepareCliCall: mocks.prepare, runReservedCliCall: mocks.run,
@@ -31,6 +32,7 @@ const terminal = Object.freeze({ kind: "cli_process_terminal" }), cleanup = new 
 beforeEach(() => {
   vi.resetAllMocks(); vi.unstubAllEnvs();
   mocks.unknown.mockResolvedValue(true); mocks.prepare.mockReturnValue({ kind: "prepared" }); mocks.pending.mockResolvedValue(null);
+  mocks.batches.mockResolvedValue([]);
   mocks.requestCli.mockResolvedValue({ kind: "granted", reservation: { boundary: "reservation" } });
   mocks.lock.mockResolvedValue({ boundary: "lock" }); mocks.finish.mockResolvedValue(dispatch);
 });
