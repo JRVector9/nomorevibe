@@ -12,7 +12,8 @@ import { requestJob, type JobLease } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
 import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
-import { requestReasonTranslationModelSlot, cancelReservedModelSlot } from '@/lib/llm/capacity-repository';
+import { requestReasonTranslationModelSlot, cancelReservedModelSlot, findOwnPendingReasonTranslationRequests,
+  cancelOwnPendingReasonTranslationRequest } from '@/lib/llm/capacity-repository';
 import { modelCapacityPolicyHash, reasonTranslationLogicalWorkKey, reasonTranslationInputHash,
   type ModelCapacityPolicy, type ModelCapacityRequest } from '@/lib/llm/capacity';
 import type { ReasonTranslationServingContract } from '@/lib/llm/reason-translation-serving-contract';
@@ -174,7 +175,7 @@ async function custom(run: (lease: JobLease) => Promise<void>) {
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 async function until(check: () => Promise<boolean>) { const deadline = Date.now() + 2500;
   while (!await check()) { if (Date.now() >= deadline) throw new Error('fixture_barrier_deadline'); await new Promise(resolve => setTimeout(resolve, 10)); } }
-async function reserve(batch: PendingTranslation[], lease: JobLease) {
+async function requestBatch(batch: PendingTranslation[], lease: JobLease) {
   const call = prepareReasonTranslationGatewayCall(batch.map(item => item.body), { model: TRANSLATE_MODEL, timeoutMs: 45000 });
   expect(call.kind).toBe('prepared'); if (call.kind !== 'prepared') throw new Error('fixture_native_contract_required');
   const ready = await tracked(prepareReasonTranslationDispatch(batch, lease, { roleLease: role, call }));
@@ -183,6 +184,10 @@ async function reserve(batch: PendingTranslation[], lease: JobLease) {
     class: 'background', pool: 'text', routeId: jobName, provider: 'abcllm', model: TRANSLATE_MODEL,
     workKey: `${reasonTranslationLogicalWorkKey(ready.members)}:${reasonTranslationInputHash({ members: ready.members, model: TRANSLATE_MODEL })}` };
   const slot = await tracked(requestReasonTranslationModelSlot(request, ready.members));
+  return { call, ready, request, slot };
+}
+async function reserve(batch: PendingTranslation[], lease: JobLease) {
+  const { call, ready, request, slot } = await requestBatch(batch, lease);
   expect(slot.kind).toBe('granted'); if (slot.kind !== 'granted') throw new Error('fixture_reservation_required');
   const { requestId: _id, ...identity } = request; void _id; return { call, ready, reservation: slot.reservation, identity };
 }
@@ -236,6 +241,139 @@ it('commits actual legacy text role/job, one batch permit, native terminal, part
     expect(Array.from(rows)).toEqual([{ status: 'done', attempts: 1, error_code: null, backed_off: null }, { status: 'failed', attempts: 1, error_code: 'invalid_output', backed_off: true }]);
     const [job] = await admin`SELECT requested_version,processed_version,lease_token FROM jobs WHERE name=${jobName}`;
     expect(job.processed_version).toBe(job.requested_version); expect(job.lease_token).toBeNull();
+  });
+}));
+it('dispatches the original own reserved batch after fresh queue membership changes and writes the recovered hashes', exercise(async () => {
+  const first = await seed(), second = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let requestId = '';
+    expect(await custom(async lease => { requestId = (await reserve([first, second], lease)).reservation.requestId; }))
+      .toMatchObject({ status: 'completed' });
+    const latest = await seed();
+    expect((await untriedTranslations(8)).map(item => item.hash).sort()).toEqual([first.hash, second.hash, latest.hash].sort());
+    let calls = 0;
+    setReply(response => response.end(JSON.stringify(replyBody(++calls === 1 ? ['첫째 번역', '둘째 번역'] : ['새 사유 번역']))));
+    expect(await tick()).toMatchObject({ status: 'completed', done: true });
+    expect(bodies).toHaveLength(2);
+    const requests = await admin`SELECT request_id,state,logical_member_keys FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`;
+    expect(Array.from(requests)).toEqual([
+      { request_id: requestId, state: 'settled', logical_member_keys: [`ko:${first.hash}`, `ko:${second.hash}`].sort() },
+      { request_id: requests[1].request_id, state: 'settled', logical_member_keys: [`ko:${latest.hash}`] },
+    ]);
+    const rows = await admin`SELECT source_hash,status,attempts,translated FROM text_translations WHERE source_hash=ANY(${[first.hash, second.hash, latest.hash]}::text[]) ORDER BY source_hash`;
+    expect(rows).toHaveLength(3); expect(rows.every(row => row.status === 'done' && row.attempts === 1)).toBe(true);
+    expect(rows.find(row => row.source_hash === latest.hash)?.translated).toBe('새 사유 번역');
+    const ordered = [first, second].sort((a, b) => a.hash.localeCompare(b.hash));
+    expect(rows.find(row => row.source_hash === ordered[0].hash)?.translated).toBe('첫째 번역');
+    expect(rows.find(row => row.source_hash === ordered[1].hash)?.translated).toBe('둘째 번역');
+    expect(Array.from(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`))
+      .toEqual([{ kind: 'queued' }, { kind: 'reserved' }, { kind: 'dispatch_started' }, { kind: 'dispatch_settled' }]);
+  });
+}));
+it('abandons a stale complete cache binding and keeps the remaining/new eligible work moving', exercise(async () => {
+  const first = await seed(1), second = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let requestId = '';
+    await custom(async lease => { requestId = (await reserve([first, second], lease)).reservation.requestId; });
+    // The same canonical member remains due, but a one-microsecond cache change
+    // must invalidate the original full input hash instead of rebinding its ID.
+    await admin`UPDATE text_translations SET updated_at=updated_at+interval '1 microsecond' WHERE source_hash=${first.hash} AND target_lang='ko'`;
+    const latest = await seed(); let calls = 0;
+    setReply(response => response.end(JSON.stringify(replyBody(++calls === 1 ? ['재시도 번역'] : ['기존 사유 번역', '새 사유 번역']))));
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT state,dispatch_binding,dispatched_at FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
+      .toMatchObject({ state: 'withdrawn', dispatch_binding: null, dispatched_at: null });
+    expect(Array.from(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`))
+      .toEqual([{ kind: 'queued' }, { kind: 'reserved' }, { kind: 'reservation_cancelled' }]);
+    const rows = await admin`SELECT source_hash,status,attempts FROM text_translations WHERE source_hash=ANY(${[first.hash, second.hash, latest.hash]}::text[])`;
+    expect(rows).toHaveLength(3); expect(rows.every(row => row.status === 'done')).toBe(true);
+    expect(rows.find(row => row.source_hash === first.hash)?.attempts).toBe(2);
+  });
+}));
+it('adopts an existing waiting batch after membership changes instead of enqueueing a competing overlapping set', exercise(async () => {
+  const blocker = await seed(), first = await seed(1), second = await seed();
+  await install({ ...basePolicy, globalLimit: 1 });
+  await server(async ({ bodies, setReply }) => {
+    let requestId = '';
+    await custom(async lease => {
+      const held = await reserve([blocker], lease);
+      const queued = await requestBatch([first, second], lease); requestId = queued.request.requestId;
+      expect(queued.slot).toEqual({ kind: 'deferred', reason: 'capacity' });
+      expect(await cancelReservedModelSlot(held.reservation)).toBe(true);
+    });
+    const latest = await seed();
+    // A fresh retry page would contain first alone, omitting the queued second.
+    expect((await retryableTranslations(4)).map(item => item.hash)).toEqual([first.hash]);
+    setReply(response => response.end(JSON.stringify(replyBody(['한국어 사유 하나', '한국어 사유 둘']))));
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(2);
+    const [request] = await admin`SELECT state,logical_member_keys FROM model_capacity_requests WHERE request_id=${requestId}::uuid`;
+    expect(request.state).toBe('settled'); expect(request.logical_member_keys).toEqual([`ko:${first.hash}`, `ko:${second.hash}`].sort());
+    expect(Array.from(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`))
+      .toEqual([{ kind: 'queued' }, { kind: 'reserved' }, { kind: 'dispatch_started' }, { kind: 'dispatch_settled' }]);
+    expect((await admin`SELECT status FROM text_translations WHERE source_hash=ANY(${[blocker.hash, first.hash, second.hash, latest.hash]}::text[])`).every(row => row.status === 'done')).toBe(true);
+  });
+}));
+it('cancels only an unstarted batch whose original canonical source disappeared and dispatches eligible neighbours', exercise(async () => {
+  const removed = await seed(), neighbour = await seed();
+  await server(async ({ bodies, setReply }) => {
+    let requestId = '';
+    await custom(async lease => { requestId = (await reserve([removed, neighbour], lease)).reservation.requestId; });
+    const sourceId = [...ownSources.keys()][0];
+    await admin`UPDATE second_reviews SET second_reason=NULL WHERE id=${sourceId}`;
+    try {
+      const latest = await seed();
+      setReply(response => response.end(JSON.stringify(replyBody(['기존 사유 번역', '새 사유 번역']))));
+      expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(1);
+      expect((await admin`SELECT state,dispatch_binding FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
+        .toMatchObject({ state: 'withdrawn', dispatch_binding: null });
+      expect(await admin`SELECT source_hash FROM text_translations WHERE source_hash=${removed.hash}`).toEqual([]);
+      expect((await admin`SELECT status FROM text_translations WHERE source_hash=ANY(${[neighbour.hash, latest.hash]}::text[])`).every(row => row.status === 'done')).toBe(true);
+    } finally { await admin`UPDATE second_reviews SET second_reason=${removed.body} WHERE id=${sourceId}`; }
+  });
+}));
+it('rejects adoption/cancellation under another boot, token or policy revision and never POSTs', exercise(async () => {
+  const item = await seed();
+  await server(async ({ bodies }) => {
+    await custom(async lease => {
+      const { reservation } = await reserve([item], lease);
+      const owner = { instanceId: role.instanceId, bootId: role.bootId };
+      const [pending] = await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL });
+      expect(pending.request.requestId).toBe(reservation.requestId);
+      expect(await findOwnPendingReasonTranslationRequests({ owner: { ...owner, bootId: randomUUID() }, model: TRANSLATE_MODEL })).toEqual([]);
+      expect(await cancelOwnPendingReasonTranslationRequest({ ...pending, request: { ...pending.request, owner: { ...owner, bootId: randomUUID() } } })).toBe(false);
+      expect(await cancelOwnPendingReasonTranslationRequest({ ...pending, token: randomUUID() })).toBe(false);
+      expect(await cancelOwnPendingReasonTranslationRequest({ ...pending, revision: pending.revision + 1 })).toBe(false);
+      await admin`UPDATE model_capacity_control SET revision=revision+1 WHERE id=1`;
+      expect(await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL })).toEqual([]);
+      expect(await cancelOwnPendingReasonTranslationRequest(pending)).toBe(false);
+      expect((await admin`SELECT state,dispatch_binding FROM model_capacity_requests WHERE request_id=${reservation.requestId}::uuid`)[0])
+        .toMatchObject({ state: 'reserved', dispatch_binding: null });
+    });
+    expect(bodies).toHaveLength(0);
+  });
+}));
+it('does not adopt an expired reservation or release it while control is draining', exercise(async () => {
+  const item = await seed();
+  await server(async ({ bodies }) => {
+    await custom(async lease => {
+      const { reservation } = await reserve([item], lease), owner = reservation.owner;
+      const [pending] = await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL });
+      await install(basePolicy, 'draining');
+      expect(await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL })).toEqual([]);
+      expect(await cancelOwnPendingReasonTranslationRequest(pending)).toBe(false);
+      expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${reservation.requestId}::uuid`)[0].state).toBe('reserved');
+      await install();
+      await admin`UPDATE model_capacity_requests SET reserved_until=clock_timestamp()-interval '1 second' WHERE request_id=${reservation.requestId}::uuid`;
+      expect(await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL })).toEqual([]);
+    });
+    expect(bodies).toHaveLength(0);
+    // Exact-key recovery retains the coordinator's expiry boundary: the old
+    // request is withdrawn first; a later duty creates a fresh reservation.
+    expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(bodies).toHaveLength(0);
+    expect(await admin`SELECT source_hash FROM text_translations WHERE source_hash=${item.hash}`).toEqual([]);
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(1);
+    const requests = await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`;
+    expect(Array.from(requests)).toEqual([{ state: 'withdrawn' }, { state: 'settled' }]);
   });
 }));
 it('compares the complete present cache including one microsecond before reserved dispatch and POST', exercise(async () => {
@@ -314,10 +452,15 @@ it('settles historical terminal before a late actual job wall rolls cache and or
 }));
 it('retains full C after EOF and fences a new boot from another POST or failed cache attempt', exercise(async () => {
   const item = await seed(); await server(async ({ bodies, setReply }) => {
+    await custom(async lease => { await reserve([item], lease); });
+    const owner = { instanceId: role.instanceId, bootId: role.bootId };
+    const [unstarted] = await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL });
     setReply(response => { response.writeHead(200, { 'Content-Length': '1000' }); response.write('{'); response.socket?.destroy(); });
     expect(await tick()).toMatchObject({ status: 'completed', done: false }); expect(bodies).toHaveLength(1);
     const [unknown] = await admin`SELECT request_id,state,dispatch_binding FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
     expect(unknown.state).toBe('indeterminate'); expect(unknown.dispatch_binding.chargedTokens).toBe(8000);
+    expect(await cancelOwnPendingReasonTranslationRequest(unstarted)).toBe(false);
+    expect(await findOwnPendingReasonTranslationRequests({ owner, model: TRANSLATE_MODEL })).toEqual([]);
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
     expect(await tracked(releaseRole(role))).toBe(true); await elect();
     await admin`UPDATE text_translations SET retry_at=clock_timestamp()-interval '1 second' WHERE source_hash=${item.hash} AND target_lang='ko'`;
