@@ -258,8 +258,58 @@ def inspect_runtime(short, app, *, manifest=None):
     return result
 
 
-def runtime_contract_matches(original, current, sha, *, deployment_id=None):
-    """Only the image, exact release env lines, and ForceUpdate may change."""
+def _inherited_web_healthcheck_matches(original, current, old, new, sha, web_image):
+    """Permit only a newly inherited healthcheck from the pinned web image.
+
+    The fleet caller independently verifies both image revision/tree provenance
+    and runtime health. These links additionally prevent an unrelated image
+    inspection or a service/container override from authorizing this exception.
+    Other callers retain exact effective-healthcheck comparison by default.
+    """
+    try:
+        pattern = re.escape(shared.IMAGE_PREFIX['web']) + r'sha256:[a-f0-9]{64}'
+        if not re.fullmatch(pattern, web_image or '') or not re.fullmatch(r'[a-f0-9]{40}', sha):
+            return False
+        old_cs = original['serviceSpec']['TaskTemplate']['ContainerSpec']
+        new_cs = current['serviceSpec']['TaskTemplate']['ContainerSpec']
+        if ('Healthcheck' in old_cs or 'Healthcheck' in new_cs or new_cs['Image'] != web_image or
+                old_cs['Image'] == web_image or old.get('image') == new.get('image') or
+                not re.fullmatch(pattern, old_cs['Image'])):
+            return False
+        old_releases = [line.split('=', 1)[1] for line in old_cs['Env'] if line.startswith('RELEASE_TAG=')]
+        if len(old_releases) != 1 or not re.fullmatch(r'[a-f0-9]{40}', old_releases[0]):
+            return False
+        image_configs = []
+        for runtime, container, cs, revision in ((original, old, old_cs, old_releases[0]), (current, new, new_cs, sha)):
+            images = runtime.get('images')
+            if not isinstance(images, list) or len(images) != 1:
+                return False
+            image, config = images[0], container['config']
+            if (not re.fullmatch(r'sha256:[a-f0-9]{64}', container.get('image') or '') or
+                    image.get('Id') != container['image'] or config.get('Image') != cs['Image'] or
+                    not isinstance(image.get('RepoDigests'), list) or cs['Image'] not in image['RepoDigests']):
+                return False
+            image_config = image['Config']
+            labels, actual_labels = image_config.get('Labels') or {}, config.get('Labels') or {}
+            if (labels.get('org.opencontainers.image.revision') != revision or
+                    not re.fullmatch(r'[a-f0-9]{40}', labels.get('dev.nomorevibe.tree') or '') or
+                    any(actual_labels.get(key) != labels[key] for key in
+                        ('org.opencontainers.image.revision', 'dev.nomorevibe.tree'))):
+                return False
+            image_configs.append(image_config)
+        health = new['config'].get('Healthcheck')
+        test = health.get('Test') if isinstance(health, dict) else None
+        return bool(old['config'].get('Healthcheck') is None and image_configs[0].get('Healthcheck') is None and
+                    isinstance(test, list) and len(test) >= 2 and test[0] in ('CMD', 'CMD-SHELL') and
+                    all(isinstance(value, str) and value for value in test) and
+                    health == image_configs[1].get('Healthcheck') and
+                    ((new.get('state') or {}).get('Health') or {}).get('Status') == 'healthy')
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
+def runtime_contract_matches(original, current, sha, *, deployment_id=None, web_image=None):
+    """Preserve the service contract; opt in to proven inherited web health only."""
     try:
         old, new = copy.deepcopy(original['serviceSpec']), copy.deepcopy(current['serviceSpec'])
         old_task, new_task = old['TaskTemplate'], new['TaskTemplate']
@@ -281,11 +331,11 @@ def runtime_contract_matches(original, current, sha, *, deployment_id=None):
             old_task['ForceUpdate'] = force
         if old != new:
             return False
-        contracts = [{key: row['config'].get(key) for key in ('Cmd', 'Entrypoint', 'Healthcheck', 'User', 'WorkingDir')}
-                     for row in original['containers']]
-        return bool(contracts and current['containers'] and all(
-            {key: row['config'].get(key) for key in ('Cmd', 'Entrypoint', 'Healthcheck', 'User', 'WorkingDir')} in contracts
-            for row in current['containers']))
+        return bool(original['containers'] and current['containers'] and all(any(
+            all(row['config'].get(key) == previous['config'].get(key) for key in ('Cmd', 'Entrypoint', 'User', 'WorkingDir')) and
+            (row['config'].get('Healthcheck') == previous['config'].get('Healthcheck') or
+             (deployment_id == sha and _inherited_web_healthcheck_matches(original, current, previous, row, sha, web_image)))
+            for previous in original['containers']) for row in current['containers']))
     except (KeyError, TypeError, ValueError):
         return False
 
