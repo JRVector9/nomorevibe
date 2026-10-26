@@ -14,6 +14,7 @@ import { requiresProfileCategory } from "@/lib/crawl/rules";
 import { requestJob } from "@/lib/jobs/control";
 import { publicationClassificationAuthority, publicationClassificationPath } from '@/lib/crawl/publication-classify-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { recordPublisherClassificationDraining } from '@/lib/operations/publisher-drain-progress';
 
 /**
  * 발행 잡 — 통과한 후보를 목록에 올린다. 파이프라인의 마지막 단계다.
@@ -39,6 +40,11 @@ const PUBLISH_STOPS: Record<string, string> = {
   repository_relationship_conflict: "페이지가 가리키는 저장소가 이 레포가 아니다",
   suspected_spam: "스팸·악성 배포 의심 — 틀에 찍은 README·다운로드 미끼·남의 github.io 첫 화면. 사람이 승인해야 올린다",
 };
+
+async function observeClassificationDrain(error: unknown, ctx: JobContext<null>) {
+  if (error instanceof ModelCapacityDeferredError && error.reason === 'draining')
+    await recordPublisherClassificationDraining(ctx.lease).catch(() => ctx.log('crawl.classification_drain_observation_failed', {}));
+}
 
 export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
@@ -84,6 +90,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           classified = (await agentRequest<{ categories: (Category | null)[] }>('classify', { ...payload, ...(authority ? { authority } : {}) })).categories;
         } catch (error) {
           if (error instanceof ModelCapacityDeferredError || nativeRequested) {
+            await observeClassificationDrain(error, ctx);
             // A lost RPC response cannot prove whether the remote native child has ended.
             ctx.log('crawl.classification_deferred', { count: inputs.length,
               reason: error instanceof ModelCapacityDeferredError ? error.reason : 'dispatched' });
@@ -92,7 +99,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
           classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length });
         }
       } else {
-        if (await publicationClassificationPath() !== 'legacy') {
+        const path = await publicationClassificationPath().catch(async error => { await observeClassificationDrain(error, ctx); throw error; });
+        if (path !== 'legacy') {
           ctx.log('crawl.classification_deferred', { count: inputs.length, reason: 'provider_contract_unavailable' });
           return { done: false, deferred: 'model_capacity' };
         }
