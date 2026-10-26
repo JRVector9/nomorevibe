@@ -39,7 +39,7 @@ import { logger } from "@/lib/observability/logger";
 import { publicRead } from "@/lib/domain/products/public-reads";
 import { productJsonLd, serializeJsonLd } from "@/lib/seo/product-json-ld";
 import { siteOrigin } from "@/lib/site";
-import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled } from "@/lib/domain/github-integration/flags";
+import { githubFeedbackDeliveryEnabled, githubStarEnabled, productFeedbackEnabled, publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { parseGithubRepository } from "@/lib/github/repositories";
 import { getProductGithubBinding } from "@/lib/domain/github-installations/bindings";
 import { TalkBand } from "@/components/social/TalkBand";
@@ -188,7 +188,8 @@ async function ProductDetail({ slug, locale }: { slug: string; locale: Locale })
           <InfoCard product={product} repository={detail.repository} freshness={detail.freshness} unclaimed={detail.unclaimed} />
           <PreviewFigure product={product} media={detail.media} />
           {detail.unclaimed && (
-            <UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable={product.accessMode === "installable"} />
+            <UnclaimedOwnerContact productId={product.id} repoUrl={product.repoUrl} slug={product.slug} installable={product.accessMode === "installable"}
+              authEnabled={publicUserAuthEnabled()} githubEnabled={githubStarEnabled()} />
           )}
           {product.status === "unverified" && (
             <section className="rounded-[12px] border border-line bg-bg-card p-5">

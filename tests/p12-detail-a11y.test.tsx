@@ -64,7 +64,7 @@ describe("사실 표의 dl 구조(A11Y-04)", () => {
 });
 
 describe("요청 폼(A11Y-01·A11Y-03)", () => {
-  const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} />);
+  const html = renderToStaticMarkup(<UnclaimedOwnerContact productId={1} repoUrl={product.repoUrl} slug={product.slug} />);
 
   it("이유 칸에 보이는 이름표가 이어져 있다", () => {
     const labelFor = html.match(/<label for="([^"]+)"[^>]*>요청 이유 /)?.[1];

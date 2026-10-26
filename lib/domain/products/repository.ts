@@ -668,7 +668,7 @@ export async function update(id: number, values: Partial<Product>): Promise<void
       await tx.delete(productRepoReviews).where(eq(productRepoReviews.productId, id));
       // GitHub 저장소 주인 확인도 옛 저장소에 대한 것이다 — 같은 트랜잭션에서 푼다(새 저장소 주인이면 다시 확인한다)
       await tx.update(productMakerMembers).set({ revokedAt: sql`now()`, revokedReason: "repo_changed" })
-        .where(and(eq(productMakerMembers.productId, id), inArray(productMakerMembers.method, ["github_repo_owner", "github_repo_admin"]),
+        .where(and(eq(productMakerMembers.productId, id), inArray(productMakerMembers.method, ["github_repo_owner", "github_repo_admin", "repo_file"]),
           isNull(productMakerMembers.revokedAt)));
     }
     if (values.repoUrl !== undefined) await syncRepositoryLink({ productId: product.id, slug: product.slug,
