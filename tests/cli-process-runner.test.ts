@@ -14,7 +14,14 @@ import { CLI_CLOSE_GRACE_MS, CLI_KILL_GRACE_MS, prepareCliCall, readCliProcessTe
  * 가짜 CLI(tests/fixtures/fake-cli/fake.mjs)를 실제 자식 프로세스로 띄워 물리 종료 근거를 실증한다. 실제 claude/grok/codex 는
  * 부르지 않는다 — 명령은 절대경로 sh 래퍼이고, 자식의 PATH 는 빈 디렉터리다(가짜가 PATH 에서 실제 CLI 를 못 찾았는지 기록한다).
  */
-const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
+const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[], beforeWrite: undefined as (() => Promise<void>) | undefined }));
+vi.mock("node:fs/promises", async original => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, writeFile: async (...args: Parameters<typeof fs.writeFile>) => {
+    await fixture.beforeWrite?.();
+    return fs.writeFile(...args);
+  } };
+});
 vi.mock("@/lib/llm/cli-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/cli-serving-contract")>(),
   resolveCliServingContract: (routeId: string, provider: string, model: string) =>
@@ -45,9 +52,39 @@ beforeAll(async () => {
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 afterEach(async () => {
+  fixture.beforeWrite = undefined;
   vi.unstubAllEnvs();
   for (const name of await readdir(records)) await rm(path.join(records, name));
 });
+
+it("refuses admission lost during asynchronous file preparation with a canonical not_started terminal", async () => {
+  stubFake("ok");
+  let writing!: () => void, resume!: () => void, admitted = true;
+  const entered = new Promise<void>(resolve => { writing = resolve; });
+  const blocked = new Promise<void>(resolve => { resume = resolve; });
+  fixture.beforeWrite = async () => { writing(); await blocked; };
+  const call = prepared(claudeCall("{}", { files: [{ path: "shutdown/schema.json", content: "{}" }] })), dispatch = ref(call);
+  const pending = runReservedCliCall(call, dispatch, { beforeSpawn: () => admitted });
+  await entered; admitted = false; resume();
+  const outcome = await pending;
+  expect(outcome.result).toEqual({ kind: "cancelled" });
+  expect(readCliProcessTerminal(outcome.terminal)).toMatchObject({ ending: "not_started", requestId: dispatch.requestId,
+    transport: call.transport, stdoutBytes: 0, stderrBytes: 0, killReason: null });
+  expect(outcome.indeterminate).toBeNull(); expect(await recorded()).toEqual([]);
+  await expect(runReservedCliCall(call, ref(call))).rejects.toThrow("cli_call_mismatch");
+});
+
+it.skipIf(process.platform === "win32")("does not cancel an already spawned CLI when admission later closes", async () => {
+  stubFake("late-close");
+  let admitted = true;
+  const beforeSpawn = vi.fn(() => admitted), call = prepared(claudeCall("{}")), dispatch = ref(call);
+  const pending = runReservedCliCall(call, dispatch, { beforeSpawn });
+  await waitForRecord(); admitted = false;
+  const outcome = await pending;
+  expect(outcome.result).toEqual({ kind: "exit", code: 0, stdout: "earlylate", stderr: "" });
+  expect(readCliProcessTerminal(outcome.terminal)).toMatchObject({ ending: "exited", exitCode: 0, killReason: null });
+  expect(beforeSpawn).toHaveBeenCalledTimes(1); expect(await recorded()).toHaveLength(1);
+}, PROCESS_TEST_MS);
 
 type Recorded = { mode: string; pid: number; argv: string[]; env: Record<string, string | null>; realCliOnPath: boolean; stdin?: string; grandchild?: number };
 async function recorded(): Promise<Recorded[]> {
