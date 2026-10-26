@@ -108,7 +108,7 @@ describe("제품 상세", () => {
   });
 
   it("운영자 상자의 '1분 만에 확인하기' → claim_start(verify)", () => {
-    const root = tree(<UnclaimedOwnerContact repoUrl="https://github.com/acme/foo" slug="foo" />);
+    const root = tree(<UnclaimedOwnerContact productId={1} repoUrl="https://github.com/acme/foo" slug="foo" />);
     expect(click(find(root, byHref("/launch#verify")), at("/p/foo"))).toEqual([{ name: "claim_start", params: { product_slug: "foo", step: "verify" } }]);
   });
 
@@ -211,7 +211,7 @@ describe("금지 키 — 화면에 단 어떤 표시도 개인정보·자격 키
     const roots = [
       parseMarkup(renderToStaticMarkup(await LaunchPage())),
       tree(<SaveButton slug="foo" name="Foo" />),
-      tree(<UnclaimedOwnerContact repoUrl="https://github.com/acme/foo" slug="foo" />),
+      tree(<UnclaimedOwnerContact productId={1} repoUrl="https://github.com/acme/foo" slug="foo" />),
       tree(<BrowseFilters state={{ sort: "ai", category: "Games", query: "pdf" }} counts={{ Games: 3 }} categoryOrderCounts={{ Games: 3 }} total={5} resultCount={3} />),
       tree(<SiteFooter locale="ko" messages={common}>{null}</SiteFooter>),
     ];

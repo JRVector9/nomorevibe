@@ -1,3 +1,7 @@
+## 2026-10-26 UpdateTimeline 최신 base 재통합
+
+Root가 PR673 병합 main549eb849caf25826ff799fa7e071a91581b069ed를 로컬 반영했다. 충돌은 이 기록의 추가 위치뿐이며 양쪽 고유 기록과 공통 이력을 한 번씩 보존했다. 제품 소스 충돌은 없다. 로컬 diff check만 다시 실행하고 필수 CI는 새 head에서 확인한다. 운영 반영은 아직이다.
+
 ## Updates recent three: exact main local merge — 2026-10-26
 
 Current objective: locally merge fixed main `c3878fcffd6804f01338b6e4bc250adf7295cd4f` into `codex/detail-updates-three-20261026`, starting clean at `e41206aaf7b8c01ec0144d6ecf06b8d285634dae`. Root owns push, required CI, merge and deployment. No skills or operational calls; frozen private recovery helpers and the original user WT are untouched.
@@ -29,6 +33,23 @@ New WTs: /Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026 (agent de
 Last actual production state: runtime df1e/schema134/18앱, AI2 GPU 직접 + abc Supa fallback 및 32k/10k/no-thinking 유지, capacity OPEN epoch1/rev3. 06:43Z 감시의 유일한 blocker는 reason-translate/no_progress였고 전체 정상 gate는 통과하지 않았다. 정상으로 위장하거나 이전 배포·복구 once 재실행 금지. 최신 main의 새 코드를 적용할 때 공식 scope/plan/run 및 실제 DB 진행 결과가 필요하다.
 
 Next commands (read-only): git -C /Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026 show --stat HEAD; git -C /Users/jr/Desktop/projects/nomorevibe-reason-reservation-recovery-20261026 show --stat HEAD; git -C /Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026 show --stat HEAD. 이후 각각 최신 main에 rebase·PR·필수 check, PR별 분리 유지. 독립 branch의 handoff 합칠 때 의미 있는 모든 기록 보존. 배포는 root만, 비밀·raw API 설정 출력 금지. 기존 once는 모두 역사적 소비 상태.
+## PR #673 순차 병합 후 최신 base 재통합 — 2026-10-26
+
+Objective/completed: root가 PR #672를 병합한 정확한 main `c3878fcffd6804f01338b6e4bc250adf7295cd4f`을 소유권 PR #673 WT에 `git merge --no-ff --no-commit c3878fcffd6804f01338b6e4bc250adf7295cd4f`으로 로컬 통합했다. 시작 HEAD `8b4ba7aab7972973617b2e4845a93cd473f67a6f`와 clean WT, `origin/main` 일치를 확인했다. 충돌은 handoff뿐이며 양쪽 모든 줄의 순서를 보존했다. 수동 수정은 이 문서뿐이다. #672 코드는 이제 main의 일부로 들어오며 #673 고유 소스·테스트·auth-off copyfix는 바이트 그대로 유지한다.
+
+Validation: `git diff --check` 및 `git diff --cached --check`를 실제 실행해 EXIT0 확인 후 아래 로컬 merge 커밋에 포함한다. 로컬 비교로 양쪽 handoff 줄 보존, #673 고유 파일 바이트 불변, 최신 main 대비 기존 19개 PR 파일 범위 일치를 확인한다. 새 소스 변경이 없으므로 테스트는 재실행하지 않는다. Failed approaches: 최초 merge의 handoff 충돌은 양쪽 보존으로 해결했다.
+
+Remaining/unverified: 운영·DB·SSH·Dokploy·GitHub 쓰기·배포·시각 검증은 하지 않았다. root가 push/필수 CI/최종 최신 base 확인/병합/배포를 수행한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat c3878fcffd6804f01338b6e4bc250adf7295cd4f...HEAD`.
+
+## PR #673 최신 고정 main 로컬 통합 준비 — 2026-10-26
+
+Objective: PR #673를 고정 main `531b4afbb0e6665f13dfb217237e87519991d206`과 로컬 통합하고 GitHub 개인 숫자 ID 확인 및 조직 저장소 파일 확인 범위를 유지한다. 시작 HEAD `4481b1d7f0102ab0d8a3b7e1c1389b5856fe5b74`, 시작 WT clean, `origin/main` 일치 확인. 로컬의 미푸시 auth-off 문구 수정 커밋 `4481b1d7`도 보존한다. 사용자 원본 WT는 읽기 전용이다.
+
+Completed/decisions: `git merge --no-ff --no-commit 531b4afbb0e6665f13dfb217237e87519991d206`에서 충돌은 이 handoff의 기록 추가 위치 한 곳뿐이었다. 양쪽 모든 기록을 보존했다. 제품 소스/공통 상세 테스트 충돌은 없다. 다른 상세 PR의 코드나 테스트 변경을 합치지 않았다. 빠른 소스 검토에서 30분 HMAC purpose/계정/제품/저장소 고정, 기본 브랜치 파일·immutable anchors 대조, DR write fence·Origin·CSRF, 30일 재검증과 파일 삭제 시 회수, 관리자 승인 없는 UI 흐름을 확인했다. 새 소스 변경은 없다.
+
+Modified files: 이번 통합 자체의 수동 수정은 `docs/CODEX_HANDOFF.md`뿐이다. PR 고유 19개 파일과 copyfix는 그대로 보존한다. Validation: 이번 단계에서 `git diff --check`와 `git diff --cached --check`를 실제 실행해 둘 다 EXIT0을 확인했다. 양쪽 handoff 모든 줄의 순서 보존과 기존 PR 소스/테스트/copyfix 바이트 불변도 로컬 비교로 확인했다. 기존 unit/PG/security/visual PASS는 이번 단계 재실행 결과가 아니다. 의미 있는 소스 변경이 없어 반복하지 않는다. Failed approaches: merge가 handoff 충돌로 중단되었고 양쪽 기록 보존으로 해결했다.
+
+Remaining/unverified: 이 agent는 GitHub 쓰기, 운영/DB/SSH/Dokploy 호출, 배포 및 시각 재검증을 수행하지 않는다. root가 push, 필수 CI, 최종 최신 base 검증, 병합과 배포를 담당한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat 531b4afbb0e6665f13dfb217237e87519991d206...HEAD`.
 
 ## PR #672 최신 고정 main 로컬 통합 준비 — 2026-10-26
 
@@ -2950,6 +2971,41 @@ Rejected approach: blanket collectionpause hold would hide runnable translation/
 Exact next commands (agent only): `cd /Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026`; `git diff --check`; `git add lib/operations/text-progress.ts tests/text-progress.test.ts tests/text-progress-read.test.ts docs/CODEX_HANDOFF.md`; `git commit -m "fix(workers): respect text admission drain in progress checks"`; `git show --stat --oneline HEAD`. Root alone performs push/PR/merge/deploy.
 
 
+## Product detail self-service ownership — 2026-10-26
+
+Current objective: let a public product's operator verify and manage it without administrator approval, including organization-owned installable repositories. Scope is isolated WT `/Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`, branch `codex/maker-github-claim-20261026`, based on `df1e`. Root owns latest-base integration, PR, CI, merge and all production/deployment operations. No skills were used.
+
+Completed: detail now supplies the exact product ID and runtime auth/GitHub flags to `UnclaimedOwnerContact`; the new client action reuses shared account state, localized GitHub login/return to product query + `#owner-claim`, and the existing CSRF-protected personal-owner claims API. Verified/already-verified results expose `/me/projects`. The existing domain CLI option remains. All four locales replace the obsolete preparing/administrator-required text. Auth-off renders no enabled claim controls.
+
+Organization/other repository operators can sign in, generate a 30-minute signed verification file, open the prefilled GitHub editor, commit/merge it into the repository's default branch, and explicitly check it. The file must remain for periodic access rechecks. New `/api/maker/claims/repo-file` uses existing public login, Origin, CSRF, bounded JSON, account/global GitHub quotas and writer fence. HMAC uses the existing `PUBLIC_AUTH_SECRET` with independent purpose prefix, actor/product/raw repo URL, immutable numeric and node repository IDs, current owner ID, random nonce and expiry. Verification reads the immutable GitHub node's `HEAD:path`, rejects forks/private/replaced/unanchored repositories, partial GraphQL errors and missing/truncated/binary proof, and reuses generation/live-account/locked membership checks. Issuance predating or equalling revocation cannot regrant access. Repository URL edits revoke `repo_file` in the same transaction. Recheck only retains an active membership established within that proof's signed window; it cannot revive revoked membership or grant another actor. A fresh replacement proof is fully checked and renews verifiedAt, while a retry of the established file is idempotent. No OAuth scope, dependencies, DB schema/migration or environment changes.
+
+Modified files: product detail page; `components/product-detail/{UnclaimedOwnerContact,GithubOwnershipClaim}.tsx`; `app/api/maker/claims/repo-file/route.ts`; `lib/me/{repo-proof-token,maker-repo-proof,maker-claims}.ts`; `lib/domain/products/repository.ts`; four locale `detail.ts` catalogs; new `tests/{repo-proof-token.test.ts,product-owner-claim.test.tsx,integration/maker-repo-proof.test.ts}`; ownership-only prop/copy updates in `tests/{product-detail-components.test.tsx,p12-detail-a11y.test.tsx,analytics-client-events.test.tsx}`; this handoff. FactsStrip and UpdateTimeline source/tests were not changed.
+
+Actually executed validations:
+- `vitest run tests/repo-proof-token.test.ts tests/me-maker-claims.test.ts tests/public-login-page.test.tsx tests/p12-detail-a11y.test.tsx tests/analytics-client-events.test.tsx tests/product-detail-components.test.tsx` → 6 files, 138 PASS.
+- `vitest run tests/product-owner-claim.test.tsx tests/repo-proof-token.test.ts tests/ui-contract.test.ts` → 3 files, 25 PASS (16 client action, 4 token, 5 UI contract).
+- Dedicated local PG fixture `pgvector/pgvector:0.8.6-pg17`, container `nmv-github-claim-pgvector-20261026`, `127.0.0.1:32794`: existing `tests/integration/me-maker.test.ts` 37/37 PASS; final new `tests/integration/maker-repo-proof.test.ts` 21/21 PASS, including valid org installable, actor/product/ref/CSRF/Origin/expiry/fork/owner/replacement/anchor defenses, ban/repo/account/revocation races, retained expired proof, fresh proof renewal, same-TX revoke, personal-owner regression and writer fence. Logs: `/tmp/nomorevibe-github-claim-integration.log` (initial partial), `/tmp/nomorevibe-github-claim-integration-final.log` (fixture correction partial), `/tmp/nomorevibe-github-claim-integration-renewal.log` (final 21 PASS).
+- `next typegen`, final `tsc --noEmit --pretty false`, ESLint on all changed TS/TSX files, `npm run check:i18n`, `git diff --check` → EXIT0.
+- Independent compact-facts agent security read, including final revocation and renewal deltas: no P1/P2; it separately ran token unit 4/4 PASS and did not run PG.
+- Official GitHub schema docs checked at `/en/graphql/reference/repos#repository`, `/git#blob`, and global node-ID guide. Root additionally executed a real read-only GraphQL `HEAD:README.md` query on the public repository using all Repository/Blob fields: EXIT0, errors[], expected ID/default-branch/blob shapes. No proof file was written to GitHub, and no real user ownership happy-path claim was performed.
+
+Failed approaches/results preserved: first plain `postgres:17` fixture (owned container `nmv-github-claim-20261026`, stopped, port32792) could not migrate because vector extension was absent; `/tmp/nomorevibe-github-claim-migrate.log` retained. Two new test fixture failures were corrected (missing description, then duplicate product URL); final proof suite passes. Initial tsc lacked generated PageProps and later found those fixture typing omissions; typegen and fixture corrections yielded final EXIT0. No full unit/DB suite, build, live OAuth, production DB, SSH, push, PR or deployment was executed by this agent.
+
+Remaining work: root integrate latest main, required CI/PR/merge and normal deployment scope for web + shared worker/crawler recheck behavior. No migration/config rollout is required. Keep the dedicated local PG fixture until root no longer needs it; do not use the shared default or any production DB. Existing public auth/GitHub flags and prerequisites were confirmed configured by root's read-only production inspection.
+
+Exact next commands (root):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026
+git show --stat --oneline HEAD
+git status --short
+```
+For a justified scoped re-run only, use `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32794/nomorevibe_test npm run test:integration -- tests/integration/maker-repo-proof.test.ts`. Latest base/PR/deploy remain root-owned.
+
+### Ownership auth-off copy follow-up — 2026-10-26
+
+Objective/completed: the independent browser review found that auth-off installable projects referred to a domain-verification block that is only shown for websites. Updated only `owner.claim.disabled` in all four locale `messages/*/detail.ts` catalogs to point to the existing contact link for other verification options, which is present for both project modes. No behavior, auth, API, dependency, schema or deployment changes. No failed approach.
+
+Executed: `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/vitest/vitest.mjs run tests/product-owner-claim.test.tsx` → EXIT0, 1 file/16 PASS; `npm run check:i18n` → EXIT0, 4 locales/9 namespaces/19 public pages; `git diff --check` → EXIT0. Remaining: independent reviewer final capture and root's latest-base/push/CI/merge/deployment. Exact next root commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git show --stat --oneline HEAD`; `git status --short`. No push or production action by this agent.
 ## 2026-10-26 — priority 2 reason reservation recovery (isolated implementation)
 
 - Objective: stop reason-translate reservations expiring unused when the fresh retry/untried page changes batch membership. Worktree `/Users/jr/Desktop/projects/nomorevibe-reason-reservation-recovery-20261026`, branch `codex/reason-reservation-recovery-20261026`, base `df1e641189e2e2d6ba0da9ca5b50cfe996f69a77`. Parent/root owns PR, merge and all production operations; this phase did not push or deploy.
