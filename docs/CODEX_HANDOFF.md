@@ -1,3 +1,38 @@
+## 2026-10-26 UpdateTimeline 최신 base 재통합
+
+Root가 PR673 병합 main549eb849caf25826ff799fa7e071a91581b069ed를 로컬 반영했다. 충돌은 이 기록의 추가 위치뿐이며 양쪽 고유 기록과 공통 이력을 한 번씩 보존했다. 제품 소스 충돌은 없다. 로컬 diff check만 다시 실행하고 필수 CI는 새 head에서 확인한다. 운영 반영은 아직이다.
+
+## Updates recent three: exact main local merge — 2026-10-26
+
+Current objective: locally merge fixed main `c3878fcffd6804f01338b6e4bc250adf7295cd4f` into `codex/detail-updates-three-20261026`, starting clean at `e41206aaf7b8c01ec0144d6ecf06b8d285634dae`. Root owns push, required CI, merge and deployment. No skills or operational calls; frozen private recovery helpers and the original user WT are untouched.
+
+Completed/decisions: `git merge --no-ff --no-commit c3878fcffd6804f01338b6e4bc250adf7295cd4f` initially stopped only on this handoff's prepend conflict. Both complete parent records were preserved in order. Main's existing FactsStrip/LicenseDialog bytes and this branch's UpdateTimeline/test bytes remain exactly their owning parent versions; no product source or test was manually changed. Modified manually: only this handoff. The merge retains the updates PR's existing three-file scope relative to main.
+
+Actually executed: local Python checks confirmed both complete parent handoff line sequences and all four relevant source/test files byte-identical to their respective parent; `git diff --check` and `git diff --cached --check` EXIT0. No application tests were repeated because the only conflict was documentation; previous test results below remain historical results. Failed approach: automatic merge stopped on the handoff prepend; resolved by preserving both sides.
+
+Remaining: root reviews/pushes the local merge, waits for required latest-base CI, then handles merge/deploy and actual UI verification. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-detail-updates-three-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --check c3878fcffd6804f01338b6e4bc250adf7295cd4f...HEAD`; `git diff --stat c3878fcffd6804f01338b6e4bc250adf7295cd4f...HEAD`.
+
+## 2026-10-26 상세 업데이트 최근 3개 표시 완료 (운영 미반영)
+
+Current objective: 상세 페이지 업데이트에서 메이커·자동 감지 필터를 제거하고 전체 출처를 섞어 최근 3개만 표시한다. 운영 우선순위 3개 및 상세 공간/소유권 작업은 다른 별도 PR에서 진행한다.
+
+Completed: UpdateTimeline의 필터·확장 상태와 버튼을 제거했다. 전체 표시는 정적 레이블이며 상세 SQL의 발행일/관측일 내림차순에서 처음 3개를 사용한다. 최근30일 전체 건수·날짜·출처·원문 링크는 유지한다. 수정 파일은 components/product-detail/UpdateTimeline.tsx, tests/product-detail-components.test.tsx의 업데이트 블록, 이 문서다. 새 의존성/DB 변경 없다.
+
+Actually executed: Node24 vitest run tests/product-detail-components.test.tsx tests/ui-contract.test.ts --maxWorkers=2 → 2파일48 PASS. 동일 Node24 eslint 두 변경TSX → EXIT0; git diff --check → EXIT0. 전체 CI/브라우저/운영 반영은 아직 안 했다. 기존 8개 및 모두보기 기대를 3개·버튼 없음으로 변경했다. 실패한 접근 없음.
+
+Remaining: root 최신 main rebase, 별도PR·필수 check, 다른 완료 작업과 배포범위 판정 후 실제 화면 확인. 다음 명령: git -C /Users/jr/Desktop/projects/nomorevibe-detail-updates-three-20261026 diff --stat; git -C /Users/jr/Desktop/projects/nomorevibe-detail-updates-three-20261026 status --short. 이 WT만 변경하며 원래 사용자WT는 보존한다.
+
+## 2026-10-26 추가 상세 페이지 3개 병렬 구현 / 운영 3개 코드 완료
+
+Current objective: 사용자 승인에 따라 기존 운영 우선순위 1~3을 각각 PR로 검토·병합하고 운영 반영한다. 추가 요청도 각각 PR: (4) FactsStrip 정보 전부 유지하며 공간 축소, (5) GitHub 로그인 또는 실제 저장소 권한 증명으로 관리자 없는 소유권 확인, (6) 업데이트 필터 제거·전체 최근 3개만 표시. 스킬 사용하지 않는다. 원래 사용자 WT는 읽기 전용으로 유지한다.
+
+Completed source commits (아직 PR/배포 아님): priority1 4eb945cf71bf3464ac012889877def81457f74c3, priority2 8c5fbdc87ab99782415f29ba18a2428128537194, priority3 8a0fffe60d0bbc57c12146256a08a9684a1a5662. 각 별도 WT의 handoff에 실제 실행 검증·실패 재현을 기록했다. Root가 아직 최종 diff·운영 적용을 확인하지 않았으므로 운영 해결 완료로 해석하지 않는다. 문서 PR667은 main423069662f58629c808a3ec44b296a0b2bd93936에 병합됨(CI40281425717 성공), 앱 코드 변경 없음.
+
+New WTs: /Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026 (agent detail_compact_facts); /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026 (agent detail_github_ownership); /Users/jr/Desktop/projects/nomorevibe-detail-updates-three-20261026 (root). 각 base df1e. 업데이트 구현은 미커밋: UpdateTimeline와 해당 기존 테스트 수정, 2파일48검증 PASS를 실제 실행했으며 lint/시각 확인은 아직 안 했다. 소유권은 기존 개인 GitHub 숫자ID·불변 repo anchor 검증을 재사용하고 정확한 productId로 제한한다. 조직 저장소는 단순 조직 소속만으로 승인하지 않고 관리자 없는 실제 쓰기 권한 증명 방식을 추가 검토한다.
+
+Last actual production state: runtime df1e/schema134/18앱, AI2 GPU 직접 + abc Supa fallback 및 32k/10k/no-thinking 유지, capacity OPEN epoch1/rev3. 06:43Z 감시의 유일한 blocker는 reason-translate/no_progress였고 전체 정상 gate는 통과하지 않았다. 정상으로 위장하거나 이전 배포·복구 once 재실행 금지. 최신 main의 새 코드를 적용할 때 공식 scope/plan/run 및 실제 DB 진행 결과가 필요하다.
+
+Next commands (read-only): git -C /Users/jr/Desktop/projects/nomorevibe-text-drain-progress-20261026 show --stat HEAD; git -C /Users/jr/Desktop/projects/nomorevibe-reason-reservation-recovery-20261026 show --stat HEAD; git -C /Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026 show --stat HEAD. 이후 각각 최신 main에 rebase·PR·필수 check, PR별 분리 유지. 독립 branch의 handoff 합칠 때 의미 있는 모든 기록 보존. 배포는 root만, 비밀·raw API 설정 출력 금지. 기존 once는 모두 역사적 소비 상태.
 ## PR #673 순차 병합 후 최신 base 재통합 — 2026-10-26
 
 Objective/completed: root가 PR #672를 병합한 정확한 main `c3878fcffd6804f01338b6e4bc250adf7295cd4f`을 소유권 PR #673 WT에 `git merge --no-ff --no-commit c3878fcffd6804f01338b6e4bc250adf7295cd4f`으로 로컬 통합했다. 시작 HEAD `8b4ba7aab7972973617b2e4845a93cd473f67a6f`와 clean WT, `origin/main` 일치를 확인했다. 충돌은 handoff뿐이며 양쪽 모든 줄의 순서를 보존했다. 수동 수정은 이 문서뿐이다. #672 코드는 이제 main의 일부로 들어오며 #673 고유 소스·테스트·auth-off copyfix는 바이트 그대로 유지한다.
