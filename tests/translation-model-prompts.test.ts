@@ -25,9 +25,9 @@ beforeEach(() => { vi.stubEnv("ABCLLM_API_KEY", "local-fixture-only"); });
 afterEach(() => vi.unstubAllEnvs());
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const comparableWire = (wire: string) => JSON.stringify({ ...JSON.parse(wire), model: "same-model-for-comparison" });
-// Frozen from main6931ba54 before KO legacy expansion. Native and unrelated routes must retain these bytes.
+// Product hashes pin this prompt alignment. KO native hashes retain main6931ba54's pre-expansion bytes.
 const frozenWires = {
-  "product-translate": { default: "e8b01ab69d4cabdd00055b1a6742c20666d9a98e4352d388cb04ad4072ece131", qwen: "85f30a45fec8d70de70012de9dfc6627bae4b226e5fa26f5fa4a88bbcd2c3526" },
+  "product-translate": { default: "22c72ae7c58335607b66ccbbbff875aba358420fcc7ba627a491a0f48410f9ea", qwen: "635640240f858caef0c0bc4f93b828b347384bf0755b3abefec7b5a11d5258b7" },
   "product-tagline-ko": { default: "d183d8e22faa861cc1b1236410be8e3024e129bc657a27784cd985f70b7e41c2", qwen: "da6f1dc04d85c707946bfdde00c55d286aa7fe7ba39078c2c21eab170e86fa8f" },
 } as const;
 const products = [
@@ -48,11 +48,49 @@ const run = (route: typeof routes[number], model: string, request: typeof fetch)
   ? translateProductFields(products, 1000, request, undefined, model)
   : translateTaglinesToKorean(taglines, 1000, request, undefined, model);
 
+it.each(["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"])(
+  "supplies each product item's exact protected tokens and faithful English prose requirements for %s", model => {
+    const batch = [
+      { name: "Acme", locale: "en" as const, field: "tagline" as const, text: "FREE API tools for GitHub and GraphQL; API tools" },
+      { name: "Notes", locale: "zh-Hant" as const, field: "description" as const, text: "A tool that manages notes" },
+    ];
+    const original = structuredClone(batch), wire = JSON.parse(productTranslationGatewayWire(batch, model));
+    expect(JSON.parse(wire.messages[1].content)).toEqual([
+      { ...batch[0], protectedTokens: ["FREE", "API", "GitHub", "GraphQL"] },
+      { ...batch[1], protectedTokens: [] },
+    ]);
+    expect(batch).toEqual(original);
+    const system = wire.messages[0].content as string;
+    expect(system).toContain("protectedTokens");
+    expect(system).toContain("verbatim and case-sensitively");
+    expect(system).toContain("English sentence prose");
+    expect(system).toContain("articles and prepositions");
+    expect(system).toContain("Do not add facts");
+    expect(system).toContain("incomplete source");
+    expect(system).toContain("360 characters maximum");
+    expect(system).toContain("8000 characters maximum");
+    expect(system).toContain("in the input order, with exactly the input count");
+  },
+);
+
+it("retains exact protected-token and conservative English validation after prompt alignment", () => {
+  const source = { id: 1, name: "Acme", tagline: "FREE API tools for GitHub and GraphQL" };
+  expect(checkProductTranslation(source.tagline, source, "en", "tagline")).toEqual({ ok: true, text: source.tagline });
+  for (const token of ["FREE", "API", "GitHub", "GraphQL"])
+    expect(checkProductTranslation(source.tagline.replace(token, token.toLowerCase()), source, "en", "tagline"))
+      .toEqual({ ok: false, reason: "term_lost" });
+  const korean = { id: 2, name: "Acme", tagline: "문서를 정리하고 팀과 공유하는 도구" };
+  const faithful = "A tool for organizing documents and sharing them with your team";
+  expect(checkProductTranslation(faithful, korean, "en", "tagline")).toEqual({ ok: true, text: faithful });
+  expect(checkProductTranslation("Document organization and team sharing", korean, "en", "tagline"))
+    .toEqual({ ok: false, reason: "english_uncertain" });
+});
+
 it.each([
   ["[MLX] gpt-oss-120b", false], ["openai/gpt-oss-20b", false],
   ["[supa] Qwen3.8-27B-NVFP4", true], ["Qwen/Qwen3.8-27B", true],
   ["[MLX] deepseek-v4.1-flash", false], ["unknown-qwen-lookalike", false],
-] as const)("keeps native and multilingual wire frozen for %s and isolates expanded KO changes", async (model, qwen) => {
+] as const)("pins aligned product and original native KO wires for %s and isolates expanded KO changes", async (model, qwen) => {
   for (const route of routes) {
     const original = JSON.parse(wireFor(route, "unknown-fixture"));
     const expected = wireFor(route, model), body = JSON.parse(expected);
@@ -62,9 +100,9 @@ it.each([
     if (qwen) {
       expect(system.startsWith(original.messages[0].content + "\n\n")).toBe(true);
       expect(system).not.toContain("{count}");
-      // Full systems for two items, from the separately frozen v2.1 experiment snapshot.
+      // The product base is aligned; the model-specific v2.1 suffix and full KO system remain unchanged.
       expect(sha(system)).toBe(route === "product-translate"
-        ? "47d493f090499c57120810f103c878f12afc14c6ca475d46d89ecfe20d9c7e1c"
+        ? "980b5f9656d0cce3aeeada93f99bbb3c096785f9300ddfc823cf9fbf41dcb8b4"
         : "8e4c66ebee8fc42faeea32b42f1c03944acf9545acec055ec19f38a3d5342ccd");
     } else expect(system).toBe(original.messages[0].content);
     let actual = "";
