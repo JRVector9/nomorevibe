@@ -4,13 +4,16 @@ import { productTranslationSourceHash } from "@/lib/domain/products/translation-
 import { productTranslationInputHash, productTranslationLogicalWorkKey, modelCapacityReservationSchema, type ProductTranslationMember } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 const mocks = vi.hoisted(() => ({ control: vi.fn(), prepare: vi.fn(), legacy: vi.fn(), call: vi.fn(), pending: vi.fn(),
+  batches: vi.fn(), restore: vi.fn(), abandon: vi.fn(),
   request: vi.fn(), cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), transaction: vi.fn(), prefix: vi.fn(),
   finish: vi.fn(), batch: vi.fn(), generation: vi.fn(), jobWall: vi.fn(), product: vi.fn(), log: vi.fn(), tasks: vi.fn(), write: vi.fn() }));
 vi.mock("@/lib/domain/products/translations", () => ({ prepareProductTranslationDispatch: mocks.prepare,
+  pendingProductTranslationBatch: mocks.restore,
   pendingProductTranslations: mocks.tasks, recordProductTranslations: mocks.write }));
 vi.mock("@/lib/crawl/translate", async original => ({ ...await original<typeof import("@/lib/crawl/translate")>(), PRODUCT_TRANSLATION_MODEL: "product-translation-unit", translateProductFields: mocks.legacy }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: mocks.control,
   findOwnPendingModelRequest: mocks.pending, requestProductTranslationModelSlot: mocks.request, cancelReservedModelSlot: mocks.cancel,
+  findOwnPendingProductTextRequests: mocks.batches, cancelOwnPendingProductTextRequest: mocks.abandon,
   markModelDispatchIndeterminate: mocks.unknown, reconcileProductTranslationGatewayTerminal: mocks.reconcile,
   lockModelCapacityCallerControl: mocks.control, lockProductTranslationModelCapacityDispatch: mocks.prefix,
   finishProductTranslationModelCapacityDispatch: mocks.finish }));
@@ -45,6 +48,7 @@ beforeEach(() => {
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
   mocks.pending.mockResolvedValue(null); mocks.request.mockResolvedValue({ kind: "granted", reservation });
+  mocks.batches.mockResolvedValue([]); mocks.abandon.mockResolvedValue(true);
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
@@ -211,4 +215,55 @@ it("settles a terminal even if the caller aborts before native returns", async (
   expect(await translateProductFieldsWithModelCapacity([task], job, { ...options(), signal: controller.signal }))
     .toEqual({ kind: "result", result: failure, expectation });
   expect(mocks.reconcile).toHaveBeenCalledWith(terminal); expect(mocks.unknown).not.toHaveBeenCalled();
+});
+
+function recoverProductBatch() {
+  const otherSource = { ...source, id: 18, tagline: "팀 문서를 정리하는 도구" };
+  const other = { ...task, source: otherSource, sourceHash: productTranslationSourceHash(otherSource, "tagline") };
+  const restored = [task, other];
+  const recoveredMembers = [members[0], { ...members[0], productId: 18, slug: "product-unit-other", sourceHash: other.sourceHash }];
+  const pending = { request: { requestId: reservation.requestId, owner: reservation.owner, routeId: "product-translate", provider: "abcllm",
+    model: PRODUCT_TRANSLATION_MODEL, class: "background", pool: "text",
+    workKey: `${productTranslationLogicalWorkKey(recoveredMembers)}:${productTranslationInputHash({ members: recoveredMembers, model: PRODUCT_TRANSLATION_MODEL })}` },
+    memberKeys: ["product-translate:17:en:tagline", "product-translate:18:en:tagline"], state: "reserved" };
+  mocks.batches.mockResolvedValue([pending]); mocks.restore.mockResolvedValue(restored);
+  mocks.prepare.mockReset().mockImplementation(async (selected, _job, options) => options.reserved
+    ? { kind: "ready", dispatch, expectation } : { kind: "ready", members: selected.length === 2 ? recoveredMembers : members, role: boundRole });
+  mocks.native.mockResolvedValue({ result: { ok: true, outputs: ["Manage documents with your team", "Organize documents for your team"] }, terminal });
+  return { restored, pending, recoveredMembers };
+}
+it("adopts a reserved old product batch under the same ID without mixing the newly selected overlap", async () => {
+  const { restored, pending, recoveredMembers } = recoverProductBatch();
+  const outcome = await translateProductFieldsWithModelCapacity([task], job, options());
+  expect(outcome).toMatchObject({ kind: "result", batch: restored, expectation });
+  expect(mocks.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ requestId: pending.request.requestId,
+    workKey: pending.request.workKey }), recoveredMembers);
+  expect(mocks.native.mock.calls[0][0]).toEqual(restored.map(item => ({ name: item.source.name, text: item.source.tagline, field: item.field, locale: item.locale })));
+  expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.abandon).not.toHaveBeenCalled();
+});
+it.each(["ineligible", "input_changed"])("abandons only a stale own product readback: %s", async stale => {
+  const { pending } = recoverProductBatch();
+  mocks.native.mockResolvedValue({ result, terminal });
+  if (stale === "ineligible") mocks.restore.mockResolvedValue(null);
+  else pending.request.workKey = "text:product-translate:" + "a".repeat(64) + ":" + "b".repeat(64);
+  expect(await translateProductFieldsWithModelCapacity([task], job, options())).toEqual({ kind: "result", result, expectation });
+  expect(mocks.abandon).toHaveBeenCalledExactlyOnceWith(pending, expect.objectContaining({ owner: reservation.owner,
+    routeId: "product-translate", model: PRODUCT_TRANSLATION_MODEL }));
+  expect(mocks.native.mock.calls[0][0]).toEqual([item]);
+});
+it("propagates a recovery read failure without abandoning a reservation or making HTTP", async () => {
+  recoverProductBatch(); const error = new Error("recovery read unavailable"); mocks.restore.mockRejectedValue(error);
+  await expect(translateProductFieldsWithModelCapacity([task], job, options())).rejects.toBe(error);
+  expect(mocks.abandon).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
+it("validates and writes the recovered product batch in the real job, rather than its candidate batch", async () => {
+  const { restored } = recoverProductBatch();
+  for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: role.instanceId,
+    ROLE_LEASE_BOOT_ID: role.bootId, ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
+  mocks.tasks.mockResolvedValue([task]); mocks.write.mockResolvedValue(2);
+  const { translateDemandedProductFields } = await vi.importActual<typeof import("@/lib/jobs/products/translations")>("@/lib/jobs/products/translations");
+  await translateDemandedProductFields({ lease: job, hasBudget: () => true, log: vi.fn() } as unknown as Parameters<typeof translateDemandedProductFields>[0]);
+  expect(mocks.write.mock.calls[0][0].map((entry: { task: typeof task }) => entry.task)).toEqual(restored);
+  expect(mocks.write.mock.calls[0][0].every((entry: { result: { ok: boolean } }) => entry.result.ok)).toBe(true);
+  expect(mocks.write.mock.calls[0][2]).toBe(expectation);
 });

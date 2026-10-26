@@ -19,7 +19,8 @@ import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { jobsForRole } from "@/lib/jobs/catalog";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { releaseRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
-import { requestProductTaglineKoModelSlot, cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
+import { requestProductTaglineKoModelSlot, cancelReservedModelSlot, findOwnPendingProductTextRequests,
+  cancelOwnPendingProductTextRequest, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { modelCapacityPolicyHash, productTaglineKoInputHash, productTaglineKoLogicalWorkKey,
   type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
@@ -440,3 +441,64 @@ it("settles the historical physical terminal before rejecting the expired curren
     finally { if (response && !response.writableEnded) response.end(JSON.stringify(replyBody())); await steps([() => running], errors); }
   });
 }), 20_000);
+
+
+it("recovers an old Korean reservation before a changed overlapping queue batch and keeps output membership exact", exercise(async () => {
+  const seeded=await seed(9),old=seeded.tasks.slice(-2);
+  await server(async ({bodies})=>{
+    let requestId="";
+    await custom(async lease=>{ requestId=(await reserve(old,lease)).reservation.requestId; });
+    const candidates=await pendingKoreanTaglines(8,[]);
+    expect(candidates.filter(task=>old.some(member=>member.productId===task.productId))).toHaveLength(1);
+    expect(await tick()).toMatchObject({status:"completed",done:true});
+    expect(bodies.length).toBeGreaterThanOrEqual(1);
+    expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(2);
+    const [request]=await admin`SELECT state,logical_member_keys FROM model_capacity_requests WHERE request_id=${requestId}::uuid`;
+    expect(request).toMatchObject({state:"settled",logical_member_keys:old.map(task=>`product-tagline-ko:${task.productId}`).sort()});
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`).map(row=>row.kind))
+      .toEqual(["queued","reserved","dispatch_started","dispatch_settled"]);
+    expect((await admin`SELECT error_code,tagline_ko FROM product_korean_taglines WHERE product_id=ANY(${old.map(task=>task.productId)}::int[])`))
+      .toEqual(old.map(()=>({error_code:null,tagline_ko:"문서를 관리하는 도구"})));
+  });
+}));
+it("abandons a stale Korean input reservation before dispatching a current complete batch", exercise(async () => {
+  const seeded=await seed(3),old=seeded.tasks.slice(-2);
+  await server(async ({bodies})=>{
+    let requestId="";
+    await custom(async lease=>{ requestId=(await reserve(old,lease)).reservation.requestId; });
+    await admin`UPDATE products SET name='Changed source name' WHERE id=${old[0].productId}`;
+    expect(await tick()).toMatchObject({status:"completed",done:true}); expect(bodies).toHaveLength(1);
+    expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(3);
+    expect((await admin`SELECT state,dispatch_binding,dispatched_at FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
+      .toMatchObject({state:"withdrawn",dispatch_binding:null,dispatched_at:null});
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`).map(row=>row.kind))
+      .toEqual(["queued","reserved","reservation_cancelled"]);
+    expect((await admin`SELECT error_code FROM product_korean_taglines WHERE product_id=ANY(${seeded.products.map(row=>row.id)}::int[])`).every(row=>row.error_code===null)).toBe(true);
+  });
+}));
+it("refuses foreign or changed Korean readbacks and never refunds dispatched or unknown work", exercise(async () => {
+  const {tasks}=await seed();
+  await server(async ({bodies})=>{
+    await custom(async lease=>{
+      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:TRANSLATE_MODEL,routeId:"product-tagline-ko" as const};
+      const [pending]=await findOwnPendingProductTextRequests(expected);
+      expect(pending.request.requestId).toBe(slot.reservation.requestId);
+      expect(await findOwnPendingProductTextRequests({...expected,owner:{...expected.owner,bootId:randomUUID()}})).toEqual([]);
+      expect(await findOwnPendingProductTextRequests({...expected,model:"foreign-model"})).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,{...expected,owner:{...expected.owner,bootId:randomUUID()}})).toBe(false);
+      for(const changed of [{...pending,token:randomUUID()},{...pending,revision:pending.revision+1},{...pending,memberKeys:[]}])
+        expect(await cancelOwnPendingProductTextRequest(changed,expected)).toBe(false);
+      const prepared=await prepareKoreanTaglineDispatch(tasks,[],lease,{roleLease:role,call:slot.call,
+        reserved:{reservation:slot.reservation,identity:slot.identity,members:slot.ready.members,role:slot.ready.role}});
+      if(!("dispatch" in prepared)) throw new Error("fixture_dispatch_required");
+      expect(await findOwnPendingProductTextRequests(expected)).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,expected)).toBe(false);
+      expect(await markModelDispatchIndeterminate(prepared.dispatch,"transport_unknown")).toBe(true);
+      expect(await findOwnPendingProductTextRequests(expected)).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,expected)).toBe(false);
+      expect((await admin`SELECT state,settled_at FROM model_capacity_requests WHERE request_id=${slot.reservation.requestId}::uuid`)[0])
+        .toMatchObject({state:"indeterminate",settled_at:null});
+    });
+    expect(bodies).toHaveLength(0);
+  });
+}));

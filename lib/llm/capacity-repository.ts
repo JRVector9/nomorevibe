@@ -298,6 +298,65 @@ export async function cancelOwnPendingReasonTranslationRequest(value: OwnPending
   });
 }
 
+type ProductTextBatchIdentity = { owner: ModelCapacityRequestIdentity["owner"]; model: string;
+  routeId: "product-translate" | "product-tagline-ko" };
+export type OwnPendingProductTextRequest = OwnPendingReasonTranslationRequest;
+function productTextBatchIdentity(value: ProductTextBatchIdentity) {
+  if (!["product-translate", "product-tagline-ko"].includes(value.routeId)) fail("invalid_product_text_batch_route");
+  return modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "product-text-batch-readback",
+    class: "background", pool: "text", provider: "abcllm" });
+}
+
+/** Recover complete unstarted membership independently of a newly selected queue page. No grant or expiry. */
+export async function findOwnPendingProductTextRequests(value: ProductTextBatchIdentity): Promise<OwnPendingProductTextRequest[]> {
+  const identity = productTextBatchIdentity(value);
+  return transaction(async tx => {
+    const state = await control(tx, "share");
+    if (state.fenced || state.mode !== "open") return [];
+    const rows = await tx.select().from(modelCapacityRequests).where(and(
+      eq(modelCapacityRequests.ownerInstanceId, identity.owner.instanceId), eq(modelCapacityRequests.ownerBootId, identity.owner.bootId),
+      eq(modelCapacityRequests.class, identity.class), eq(modelCapacityRequests.pool, identity.pool),
+      eq(modelCapacityRequests.routeId, identity.routeId), eq(modelCapacityRequests.provider, identity.provider),
+      eq(modelCapacityRequests.model, identity.model), eq(modelCapacityRequests.epoch, state.epoch),
+      eq(modelCapacityRequests.revision, state.revision), eq(modelCapacityRequests.policyHash, state.policyHash!),
+      sql`((${modelCapacityRequests.state} = 'reserved' AND ${modelCapacityRequests.reservedUntil} > clock_timestamp())
+        OR (${modelCapacityRequests.state} = 'waiting' AND ${modelCapacityRequests.queueUntil} > clock_timestamp()))`,
+      sql`${modelCapacityRequests.logicalMemberKeys} IS NOT NULL AND ${modelCapacityRequests.dispatchBinding} IS NULL
+        AND ${modelCapacityRequests.dispatchBindingHash} IS NULL AND ${modelCapacityRequests.dispatchedAt} IS NULL`
+    )).orderBy(sql`CASE WHEN ${modelCapacityRequests.state} = 'reserved' THEN 0 ELSE 1 END`, asc(modelCapacityRequests.queueOrdinal)).limit(32);
+    return rows.map(row => ({ request: { ...identity, requestId: row.requestId, workKey: row.workKey },
+      memberKeys: row.logicalMemberKeys!, state: row.state as "waiting" | "reserved",
+      epoch: row.epoch, revision: row.revision, policyHash: row.policyHash, token: row.token }));
+  });
+}
+
+/** Exact own readback CAS only: never release dispatched/unknown work, a foreign owner or a successor generation. */
+export async function cancelOwnPendingProductTextRequest(value: OwnPendingProductTextRequest,
+  expected: ProductTextBatchIdentity): Promise<boolean> {
+  const identity = productTextBatchIdentity(expected), checked = modelCapacityRequestSchema.parse(value.request), snapshot = structuredClone(value);
+  if (checked.owner.instanceId !== identity.owner.instanceId || checked.owner.bootId !== identity.owner.bootId
+    || checked.routeId !== identity.routeId || checked.model !== identity.model || checked.provider !== identity.provider
+    || checked.class !== identity.class || checked.pool !== identity.pool) return false;
+  return transaction(async tx => {
+    const state = await control(tx);
+    if (state.fenced || state.mode !== "open") return false;
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
+    if (!row || !["waiting", "reserved"].includes(row.state) || row.state !== snapshot.state
+      || row.ownerInstanceId !== identity.owner.instanceId || row.ownerBootId !== identity.owner.bootId
+      || row.epoch !== snapshot.epoch || row.revision !== snapshot.revision || row.policyHash !== snapshot.policyHash
+      || row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash
+      || row.token !== snapshot.token || !isDeepStrictEqual(row.logicalMemberKeys, snapshot.memberKeys)
+      || row.dispatchBinding !== null || row.dispatchBindingHash !== null || row.dispatchedAt !== null
+      || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null) return false;
+    sameIdentity(row, checked);
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
+    if (!changed) return false;
+    await event(tx, changed, row.state === "waiting" ? "wait_cancelled" : "reservation_cancelled", row.state, "withdrawn");
+    return true;
+  });
+}
+
 export async function requestModelSlot(value: ModelCapacityRequest): Promise<ModelSlotResult> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestSchema.parse(value);
