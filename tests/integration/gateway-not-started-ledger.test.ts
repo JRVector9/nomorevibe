@@ -291,10 +291,9 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     for (const name of [LEFT[1], ...UNTOUCHED.slice(3).filter(name => name !== eventKind)])
       expect(current[name], `${name}: current unchanged CHECK`).toBe(priorBoundary[name]);
 
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const [latestApplied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    expect(latestApplied.count).toBe(journal.entries.length);
-    const latest = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    // Keep the historical 0131→0132 equality at its exact migration boundary.
+    await migrateThrough(132);
+    const afterAi2 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const ai2Checks = [...LEFT, ...UNTOUCHED.slice(0, 2)];
     const ai2Migration = readFileSync(path.join(root, "drizzle", `${journal.entries.find(entry => entry.idx === 132)!.tag}.sql`), "utf8");
     for (const name of ai2Checks) {
@@ -307,11 +306,32 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_ai2_expected CHECK ((${inner(current[name])}) OR (${branch}))`);
       try {
         const expected = await constraintDefs(step, ["f2_ai2_expected"]);
-        expect(latest[name], `${name}: entire 0131 predecessor`).toBe(expected.f2_ai2_expected);
+        expect(afterAi2[name], `${name}: entire 0131 predecessor`).toBe(expected.f2_ai2_expected);
       } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_ai2_expected`); }
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !ai2Checks.includes(name)))
-      expect(latest[name], `${name}: 0132 unchanged CHECK`).toBe(current[name]);
+      expect(afterAi2[name], `${name}: 0132 unchanged CHECK`).toBe(current[name]);
+
+    // 0133 leaves these CHECKs intact. 0134 adds only the strict CLI executor
+    // branches; reparse the whole captured predecessor without normalizing SQL.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const [latestApplied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    expect(latestApplied.count).toBe(journal.entries.length);
+    const latest = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const cliChecks: readonly string[] = [LEFT[0], ...UNTOUCHED.slice(0, 3), eventKind];
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind
+        ? "coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)"
+        : "nmv_cli_executor_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_cli_expected CHECK ((${inner(afterAi2[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_cli_expected"]);
+        expect(latest[name], `${name}: entire 0132 predecessor plus strict 0134 branch`).toBe(expected.f2_cli_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_cli_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(latest[name], `${name}: 0134 unchanged CHECK`).toBe(afterAi2[name]);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 
