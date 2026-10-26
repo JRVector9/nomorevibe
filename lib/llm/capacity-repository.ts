@@ -2266,7 +2266,7 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash, localEnd }));
   if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
   const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
-  if (evidence.kind === "cli_executor_boundary_exit") {
+  if (evidence.kind === "cli_executor_boundary_exit" || evidence.kind === "cli_executor_removed_boundary_exit") {
     const p = evidence.plan, q = p.request;
     const [exact] = await tx.execute<{ at: string; lineage_id: string; writer_epoch: string; fence_state: string }>(sql`SELECT
       to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
@@ -2319,7 +2319,7 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
     || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence,
-    terminalEvidenceHash: evidence.kind === "provider_boundary_exit" || evidence.kind === "cli_executor_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
+    terminalEvidenceHash: evidence.kind === "provider_boundary_exit" || evidence.kind === "cli_executor_boundary_exit" || evidence.kind === "cli_executor_removed_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
     updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
   if (!changed) fail("model_capacity_release_state_changed");
   await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
