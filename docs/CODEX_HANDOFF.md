@@ -1,3 +1,10 @@
+## 2026-10-26 PR682 automatic CI static mirror follow-up
+
+- Actual automatic CI40341795545 unit1: two failures in tests/local-model-capacity-schema.test.ts (old last-migration tags0127/0126 vs actual0134);3424 other tests passed per root-captured log STATE/pr682-unit1-failure-40341795545.private.log:687-710. This is a test expectation gap, not evidence of a runtime failure.
+- Changed only that test file plus this handoff: retain exact0126→0127 waiting predicate assertion, exact0125→0126 member predicate assertion, then require whole predecessor plus the complete strict0134 event/request branches and exact Drizzle/migration equality. No skip/removal/weakened predicate and no production source change.
+- User explicitly requested no further tests: test/lint/tsc/compile were NOT executed for this follow-up. Code read/edit only, then local commit. Root pushes and uses the next automatic required CI; do not claim this follow-up passed locally.
+- Next: root push the new HEAD on existingPR682, inspect automatic CI; source/migration/CLI pins unchanged from1078c40a. No production/GitHub calls by this agent.
+
 ## 2026-10-26 CLI executor boundary local implementation
 
 - Objective/completed: additive manual `cli_executor_boundary_exit` for exactly one dispatched publication CLI request. C/token/binding/unknown usage/settled_atNULL stay intact; only withdrawn+one release event+one audit. Root alone owns production/SSH/API/GitHub/push/merge. No production/model calls executed here.
