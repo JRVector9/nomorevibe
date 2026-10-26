@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { buildWorkerProgress } from '@/lib/operations/worker-progress-query';
 import type { ThroughputStage } from '@/lib/operations/throughput-model';
-import { roleHasUnexplainedStall } from '@/scripts/role-worker';
+import { selectUnexplainedStall, roleHasUnexplainedStall } from '@/scripts/role-worker';
 
 const now = new Date('2026-10-25T06:01:00Z');
 const batch = { mode: 'legacy', writerContractVersion: 0 };
@@ -102,4 +102,36 @@ it('does not hide a stalled non-model publication stage during global capacity d
   const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [{ ...stage('first'), key: 'publish' }] },
     jobs, observations, now, batch, [], null, [], 'draining');
   expect(report.stages[0]).toMatchObject({ stage: 'publish', reason: 'no_progress', alarm: true, restartEligible: true });
+});
+
+
+it('keeps unleased FIRST capacity waiting alarmed without restarting reviewer', () => {
+  const blocked = [{ job: 'crawl-agent-review', routeId: 'crawl-agent-review', groupId: 'm3-mlx', scope: 'group' as const }];
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    observations, now, batch, [], null, [], 'open', false, blocked);
+  expect(report.activeJobs).toEqual([]);
+  expect(report.stages[0]).toMatchObject({ reason: 'no_progress', alarm: true, waiting: 3, progress5m: 0,
+    restartEligible: false, admissionBlock: { reason: 'capacity', groupId: 'm3-mlx', scope: 'group' } });
+  expect(roleHasUnexplainedStall(report, 'reviewer')).toBe(false);
+  expect(selectUnexplainedStall(report, 'reviewer')).toBeNull();
+});
+
+it('still diagnoses a hung reviewer lane while FIRST is capacity blocked', () => {
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    observations, now, batch, [], null, [], 'open', false,
+    [{ job: 'crawl-agent-review', routeId: 'crawl-agent-review', groupId: 'm3-mlx', scope: 'group' }]);
+  report.lanes = [{ role: 'reviewer', name: 'audit-screen-review', jobs: ['crawl-agent-review'], state: 'polling',
+    currentJob: null, startedAt: null, pollStartedAt: now.getTime() - 100_000, lastProgressAt: now.getTime() - 100_000,
+    pollAgeMs: 100_000, progressAgeMs: 100_000, reason: 'lane_poll_timeout', alarm: true, restartEligible: true }];
+  expect(selectUnexplainedStall(report, 'reviewer')).toMatchObject({ kind: 'lane', reason: 'lane_poll_timeout',
+    lane: 'audit-screen-review', age: 100_000, wait: 100_000, restartEligible: true });
+  expect(roleHasUnexplainedStall(report, 'reviewer')).toBe(true);
+});
+
+it('does not apply another job capacity block to FIRST recovery', () => {
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    observations, now, batch, [], null, [], 'open', false,
+    [{ job: 'second-review', routeId: 'second-review', groupId: 'gpu3090', scope: 'group' }]);
+  expect(selectUnexplainedStall(report, 'reviewer')).toMatchObject({ kind: 'stage', reason: 'no_progress',
+    job: 'crawl-agent-review', age: 468, wait: 3, progress: 0, restartEligible: true });
 });
