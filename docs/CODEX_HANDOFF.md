@@ -1,3 +1,11 @@
+## PR #673 순차 병합 후 최신 base 재통합 — 2026-10-26
+
+Objective/completed: root가 PR #672를 병합한 정확한 main `c3878fcffd6804f01338b6e4bc250adf7295cd4f`을 소유권 PR #673 WT에 `git merge --no-ff --no-commit c3878fcffd6804f01338b6e4bc250adf7295cd4f`으로 로컬 통합했다. 시작 HEAD `8b4ba7aab7972973617b2e4845a93cd473f67a6f`와 clean WT, `origin/main` 일치를 확인했다. 충돌은 handoff뿐이며 양쪽 모든 줄의 순서를 보존했다. 수동 수정은 이 문서뿐이다. #672 코드는 이제 main의 일부로 들어오며 #673 고유 소스·테스트·auth-off copyfix는 바이트 그대로 유지한다.
+
+Validation: `git diff --check` 및 `git diff --cached --check`를 실제 실행해 EXIT0 확인 후 아래 로컬 merge 커밋에 포함한다. 로컬 비교로 양쪽 handoff 줄 보존, #673 고유 파일 바이트 불변, 최신 main 대비 기존 19개 PR 파일 범위 일치를 확인한다. 새 소스 변경이 없으므로 테스트는 재실행하지 않는다. Failed approaches: 최초 merge의 handoff 충돌은 양쪽 보존으로 해결했다.
+
+Remaining/unverified: 운영·DB·SSH·Dokploy·GitHub 쓰기·배포·시각 검증은 하지 않았다. root가 push/필수 CI/최종 최신 base 확인/병합/배포를 수행한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat c3878fcffd6804f01338b6e4bc250adf7295cd4f...HEAD`.
+
 ## PR #673 최신 고정 main 로컬 통합 준비 — 2026-10-26
 
 Objective: PR #673를 고정 main `531b4afbb0e6665f13dfb217237e87519991d206`과 로컬 통합하고 GitHub 개인 숫자 ID 확인 및 조직 저장소 파일 확인 범위를 유지한다. 시작 HEAD `4481b1d7f0102ab0d8a3b7e1c1389b5856fe5b74`, 시작 WT clean, `origin/main` 일치 확인. 로컬의 미푸시 auth-off 문구 수정 커밋 `4481b1d7`도 보존한다. 사용자 원본 WT는 읽기 전용이다.
@@ -8,6 +16,37 @@ Modified files: 이번 통합 자체의 수동 수정은 `docs/CODEX_HANDOFF.md`
 
 Remaining/unverified: 이 agent는 GitHub 쓰기, 운영/DB/SSH/Dokploy 호출, 배포 및 시각 재검증을 수행하지 않는다. root가 push, 필수 CI, 최종 최신 base 검증, 병합과 배포를 담당한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat 531b4afbb0e6665f13dfb217237e87519991d206...HEAD`.
 
+## PR #672 최신 고정 main 로컬 통합 준비 — 2026-10-26
+
+Objective: PR #672를 고정 main `531b4afbb0e6665f13dfb217237e87519991d206`과 로컬 통합하고 기존 facts 축소 범위를 유지한다. 시작 HEAD `ca9718ee5eea2ed42ca772fc052e8ef5164da7ba`, 시작 WT clean, `origin/main` 일치 확인. 사용자 원본 WT는 읽기 전용이다.
+
+Completed/decisions: `git merge --no-ff --no-commit 531b4afbb0e6665f13dfb217237e87519991d206`에서 충돌은 이 handoff의 prepend 한 곳뿐이었다. 양쪽 기록을 모두 보존했다. 제품 소스 및 테스트 충돌은 없으며 PR 고유 변경은 `FactsStrip.tsx`, `LicenseDialog.tsx`와 이 문서다. 다른 상세 PR의 코드를 합치지 않았다. 기존 모든 facts/notes/warnings/license 상호작용, mobile 두 열과 license 줄바꿈 범위 그대로다.
+
+Validation: 이번 단계에서 `git diff --check`와 `git diff --cached --check`를 실제 실행해 둘 다 EXIT0을 확인했다. 양쪽 handoff 모든 줄의 순서 보존과 기존 PR 소스 바이트 불변도 로컬 비교로 확인했다. 의미 있는 소스 변경이 없으므로 기존 4 files / 62 tests PASS는 재실행하지 않으며 이전 기록의 결과로만 인용한다. Failed approaches: merge가 handoff prepend 충돌로 중단되었고 양쪽 기록 보존으로 해결했다.
+
+Remaining/unverified: 이 agent는 GitHub 쓰기, 운영/DB/SSH/Dokploy 호출, 배포 및 시각 재검증을 수행하지 않는다. root가 push, 필수 CI, 최종 최신 base 검증, 병합과 배포를 담당한다. Exact next commands: `cd /Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026`; `git status --short`; `git log -1 --format=fuller`; `git diff --stat 531b4afbb0e6665f13dfb217237e87519991d206...HEAD`.
+
+## Product detail facts compact layout — 2026-10-26
+
+Current objective: slightly compact the product detail facts panel from the user's screenshot while retaining every existing label, value, note, source warning and license interaction. Isolated WT `/Users/jr/Desktop/projects/nomorevibe-detail-compact-20261026`, branch `codex/detail-compact-20261026`, base `df1e641189e2e2d6ba0da9ca5b50cfe996f69a77`. The original user WT remains untouched. No skills, production access, push or PR were used by this agent.
+
+Completed: tile padding changes from 14×12px to 12×10px, internal gap from 4px to 2px, values from 18px to 17px, explicit compact line heights, and panel radius from 18px to 12px. Labels and notes retain the repository's 13px minimum. Existing desktop 200px auto-fit minimum remains for the three-column layout; at viewport widths through 440px the minimum becomes 140px, allowing two columns at 320/375px without forcing sparse facts into empty columns. Values, labels and notes wrap. Root additionally authorized the one license-trigger class change from truncation to normal wrapping, retaining all dialog handlers, focus behavior, ARIA and `dl`/`dt`/`dd` structure. Fact selection, translations, dates, sources and values are unchanged.
+
+Modified files: `components/product-detail/FactsStrip.tsx`, `components/product-detail/LicenseDialog.tsx` (trigger class only), and this handoff. No tests were added or edited. The local Next CSS guide `node_modules/next/dist/docs/01-app/01-getting-started/11-css.md` was read before changes. `node_modules` is an ignored symlink to the already installed reliability-autorecovery dependencies.
+
+Actually executed after the final license-trigger class change, using Node24.18.0:
+- `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/vitest/vitest.mjs run tests/product-detail-components.test.tsx tests/p12-detail-a11y.test.tsx tests/repository-release.test.tsx tests/ui-contract.test.ts` → **4 files / 62 tests PASS**, 441ms. The existing Vite config-loader advisory remains informational.
+- `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/eslint/bin/eslint.js components/product-detail/FactsStrip.tsx components/product-detail/LicenseDialog.tsx --max-warnings 0` → EXIT0.
+- `git diff --check` → EXIT0.
+
+Failed approaches: none in implementation. The initial guessed Next styling-guide path did not exist; the actual local CSS guide above was then read. No browser/viewport measurements, full suites, build, DB tests or operational actions were run by this agent; root owns integrated visual verification and delivery. Remaining work: root reviews and integrates this commit with the other isolated layout changes, visually verifies desktop and narrow mobile panels, and handles GitHub/deploy.
+
+Exact next commands (root's integration WT):
+```sh
+git show --stat --oneline codex/detail-compact-20261026
+git cherry-pick codex/detail-compact-20261026
+```
+If the shared handoff conflicts, retain this phase and the other agent/root phases. Existing scoped tests above passed on this isolated component change; run only integration checks justified by the combined changes.
 ## Deployment proof compatibility — 2026-10-26
 
 Objective: remove two measured deployment-proof false failures without changing deployments, real monitor alarms, or preservation guards. Owned WT `/Users/jr/Desktop/projects/nomorevibe-deploy-proof-compat-20261026`, branch `codex/deploy-proof-compat-20261026`, base `df1e6411`. Root owns PR/merge and all production work. This agent used no skills, SSH, production calls, push or PR; original user WT stayed read-only.
