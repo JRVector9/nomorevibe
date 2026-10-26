@@ -1,98 +1,88 @@
-# Codex handoff — 2026-10-26
+# 현재 인계 — 2026-10-27, PR686 배포 전
 
-## Active phase — 2026-10-26 23:10 KST (overrides all older next-step instructions)
+## 목표와 작업 경계
 
-User requested another subagent and at least three minutes maximum wait. Root explicitly scoped this change to ConnectAgent shutdown drain: 180000ms, ConnectAgent-only container grace240s. The physical per-call CLI timeout35000ms remains unchanged. Local branch `codex/connect-shutdown-drain-20261026`, WT `/Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026`, clean commits2a6e85387d23d257ec1a7e39e935348ff87d9521 + finalf12bc00d4624fc5ea973c7f7a8c6243ac24576e6 on50f. It fences admission synchronously, waits actual native+DB settlement, preserves unknown occupancy, and rechecks admission after asynchronous file preparation immediately before spawn. Independent final review reports noP1/P2. Author actually ran focused23PASS, shutdown180s5PASS, late-spawn RED then2PASS, capacity-unsettled5PASS, lint/typegen/tsc/diff and Compose invariants EXIT0. PR not yet created as of14:06UTC; root reviewed final delta and will push/create normally. Main still50f.
+사용자가 요청한 운영 자동화·정체 복구와 상세페이지3건을 실제 배포·확인까지 마무리한다. PR685 운영 복구를 완료했고, 검색 프로필 예약 이어받기 결함을 고친 PR686은 필수 자동 CI 성공 후 병합했다. 새 main의 필수 CI·웹/워커 이미지 준비를 확인했고, root가 공식 전체18 계획을 생성 중이다. 전체18앱 배포·최종 영수증·새 관측은 아직 미완료다.
 
-Additional agent connect_grace_rollout completed local/public-official-source review: `STATE/connect-grace-review-20261026/REPORT.md`, SHA4514a3cc4139991cf727a4a6cb18a5e220d61d5c2a693148f4ccb318c13fd45a. Live historical API/spec60s must be explicitly transitioned to240s in a NEW reviewed incident plan; application.update stages DB only, next deployment realizes Swarm spec. Existing frozen full18 plan/once and normalvalidators remain untouched. application.stop reply/idle alone does not prove zero processes. First transition requires audited DRAIN, no manual connect/probe/test/login RPCs, concrete executor boundary proof, exact connect-only stop/update/deploy once/readback, retained17 comparison, then honest fresh baseline.
+- 모델은 `gpt-6.1-sol`, reasoning `xhigh`. 스킬을 사용하지 않는다.
+- **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일 금지**. 필수 자동 CI는 유지한다. 작성한 회귀 테스트를 실행했다고 기록하지 않는다.
+- 운영·SSH·API·Keychain·DB·GitHub·git 작업은 root만 담당한다. 기존 once를 지우거나 실패한 요청을 자동 재시도하지 않는다.
+- 이번 문서 단계에서 수정한 파일은 `docs/CODEX_HANDOFF.md`, `docs/operations/2026-10-26-pr-priority-progress.md`, `PENDING.md` 세 개뿐이다. PENDING의 2026-10-25 이하 본문은 원바이트를 보존했다.
 
-Actual63c timing evidence: `STATE/old-connect-publisher-task-details-679-20261026T134700Z.private.json` SHA9f2bac883944ba334c729ce4285dfc462362c32847a24477c1be284735f98cac. Old Connect taskn0tg2kpn3fyh8erhvebodc5ip/fullCIDa98268ef05a395e5e1a27e730de3342b02e20034cbc52efcb78ced2ca075136e shut down13:05:22.928826764Z/exit0; new taskdo5ugisl0hmoihe5ddoukdim8 created13:05:19.628885118Z/running13:05:30.207883589Z. Request dispatch13:05:16.740Z precedes new task creation2.889s, but historical clock step is not excluded. Current-clock bracket `native-clock-link-679-20261026T135500Z.private.json` shows DB13:55:51.591Z between Docker13:55:51.367922404Z and13:55:51.890391882Z; this proves only current agreement. Old container absence alone is not physical exit proof. Actual SSH host is macOS; do not read Linux /proc on host.
+## 현재 실제 상태
 
-Root-only production writes remain unchanged: none since monitor deploy13:09; capacityOPEN audit20388. Existing stock reclaim targets logical publisher groups and is insufficient for remote Connect executor. No terminal/release/fake group evidence has been created. Root reserved migration0134 for a separate exact-request `cli_executor_boundary_exit` canonical DR path. Detail agent is preparing a precise evidence schema then local implementation/tests only; new receipt must bind audited DRAIN/current writer/control/request/CAS and actual fixed-endpoint service-wide executor closure, preserving C, unknown usage, binding and business failure. Other agents prepare local incident helper and independently review closure captures. No new production mutation until concrete plan and actual proof are reviewed. All agents gpt-6.1-sol/xhigh; no skills.
+| 항목 | 확인한 결과 |
+|---|---|
+| main·이미지 | PR668–679·681–686 병합. 최신 main `34cc2045cbb7105313861792adb37c035b64e70c`. PR686 필수 CI40382748901 전체 성공; 새 main CI40383949515의 필수 check·웹/워커 이미지 발행도19:08 UTC대에 모두 성공. 검증한 PR tree·이미지를 재사용했으며 진행 중 refresh-caches는 관문이 아님. 운영 Connect는 이전20493 유지 |
+| DB | 0137까지 journal138개, 실제 적용·전체 사후 검증 완료. 완료 영수증 SHA `4cec42a948f8e5ed9882598ffeb1ea0017f7b12bd5ac0341289d353c47d73acf` |
+| 정확한 요청 회수 | 6c 요청은 실제 Docker die 종료 코드1·작업/컨테이너 삭제·새 전체0 증거로 감사20474에서 withdrawn. C272000·settled_at NULL·사용량 미확정 보존. 모델 정상 종료나 업무 성공으로 세지 않음 |
+| ConnectAgent | 20493 소스·OCI·healthy1·종료 유예240초 실제 확인. 종료 때 새 실행 차단/180초 대기와 동일 네이티브 바이너리 직접 exec 적용 |
+| 접수 제어 | 공식 OPEN 감사20475 완료. 과거 DRAIN20472는 이력 |
+| 나머지17앱 | 기존50f 소스 유지. AI2 컨테이너 한 건의 자동 교체는 같은 API·spec·이미지·설정임을 별도 실제 증거로 검증 |
+| 최신 일반 관문 | **2026-10-26 18:54:22 UTC** stock monitor에서 다섯 역할·scheduler·전체 progress=ok 실제 통과. 현재 표본이며 PR686 배포·이후 관측의 통과 증거는 아님 |
+| PR686 | head `4fd6981b61cd447fd237dfc274a1fb561a3cf6b4`, CI40382748901 전체 성공. **2026-10-26 19:07:47 UTC** main으로 병합; 소스·테스트 파일 유지. 운영 배포는 아직 미완료 |
+| 전체18 계획·실행 | root의 공식 plan 세션24626이19:09 UTC부터 진행 중. 경로 `STATE/full18-release686-20261027-a`, 새686 운영자·정확한34cc·`--migration-verified`. 아직 plan 파일·서비스 POST·실제 run 없음 |
+| 최종 인증·관측 | 최신 전체18앱 최종 영수증과 새 observer 결과 없음. 과거12:57 인증은 당시 상태만 증명 |
 
-Exact next: push/create the reviewed shutdown source PR and collect required latest-base CI; inspect agent canonical schema before approving it; root collect fresh read-only Connect service/daemon isolation/endpoint/native-state evidence using NEW private scripts. Finish source/helper/CI preparation before DRAIN. Never rerun old consumed rollout/readonly completion. Full18 final normal certificate and observer remain absent. Production UI already PASS50f. PR680 is draft and must be updated with publisher incident and final new PR/recovery outcome before readiness/merge.
+최신 관문 영수증은 `STATE/normal686-preflight-monitor-readback-20261027-a.private.json`, SHA `8f2ce086fdf5ec5f73503fb8c655709180ed76a54aa946dd6b981c7e0ed8a09f`다. `STATE`는 `/Users/jr/.local/state/nomorevibe-reliability-20261025`다. 원문에는 민감한 설정이 있으므로 공개 응답·Git에 넣지 않는다.
 
-## Active incident — 2026-10-26 22:40 KST (overrides older active phase below)
+## 추가 결함과 PR686
 
-Readonly full18 completion76897 EXIT2, no mutations, receipt `STATE/full18-readonly-completion-679-20261026/readback-1/failed.private.json` at13:38:26.374498Z, phase same_existing_monitor_official_verification, TimeoutError. Do not repeat the old physical run or blindly repeat this observer. Still no final snapshot/observer launch. PR680 remainsDRAFT at4a32871fb1bf839086a3e2a608db6ac89cd5ea54; its initial requiredcheck red is intentional draft policy (`Draft PRs do not run CI`), not an executed code failure; ready_for_review triggers normalCI. Main remains50f. This handoff has newer uncommitted updates.
+새 제품 순으로 12개를 고르는 동안 이전 자기 소유 예약 제품이 범위 밖으로 밀렸다. coordinator가 이번에 고른 work key만 이어받아, grant가 난 기존 제품이 실제 호출 없이 만료됐다. 실제11개 grant 중10개 미사용 만료와 제품 rank17/19/24를 확인했다. 영구 예약 점유나 공급자 과부하로 단정하지 않는다.
 
-NEW actual incident, not justKO: official current report `STATE/full18-ordinary-diag-679-20261026T133500Z.private.json` SHA80bd2062313c7f474af092850bf9f9cbce5e65a4d974ab547ceef7b65ae96faa at13:34:34.526Z has publisher=primary_quarantined + solepublish no_progress/waiting22/restartEligibletrue. KOalarm cleared in this sample. Root read-only publisher currentAPI/runtime/log capture `STATE/publisher-incident-679-20261026T133600Z.private.json` SHAc0a387321b03d999cfdc46ac40bc9b3333b7d930e140e882e582b1c5da500c56 at13:35:51: actualapp done/newtargetsource; currentCIDd7ef81369c1d started13:19:53.94365132Z, dockerlogs0 (not evidence of absenceof priorfailure). No logs fabricated; need durableDB/process evidence or actualremoteConnectAgent execution boundary.
+PR686의4파일 수정은 자기 소유·같은 boot·현재 정책·route/model·현재 입력 해시가 맞는 미시작 waiting/reserved 작업을 새 후보보다 먼저 이어받는다. 기존 dispatch·role/job/control·binding·C·CAS 검증은 유지하며 취소·환불·품질·모델·한도·일반 관문을 바꾸지 않는다. 독립 소스 검토 완료, 회귀 테스트는 작성만 했고 수동 실행하지 않았다.
 
-Root readonly native capture `STATE/publisher-native-active-679-20261026T133800Z.private.json` wrapper.stdout at13:37:48.948618Z: EXACT old dispatched request63c0c598-d4ca-40d5-9eff-a0e699b51f7b, routecrawl-publish-classify/providercodex-cli/modelgpt-5.6-terra, owner m3-publisher boot3df06912-8278-4e50-b5e7-124ef79167f8 (baseline df1e), dispatch13:05:16.740Z, terminalnull despite>32min; transportcli-process-v1/timeout35000. NewM3boot a9f481f2-1bd3-443c-a8a9-80933bb20fe0 and minifb7cb149... publisher calls arewaiting/withdrawn repeatedly. Unknown0, controlOPEN20388 same. Do not equate age/TTL/replacement with physicalend, do not clearlocks/cancel/settle/fabricate CliProcessTerminal. Runtime publisher selection can now change because quarantine; reference originaltext remainsretained.
+첫 자동 CI `40381826340`의 integration-ledger8건은 `runtimeRoleLease`의 추가 owner 필드가 strict Zod 입력에 전달되어 실패했다. SQL 실패가 아니다. domain에서 `instanceId`·`bootId`만 명시적으로 투영하는2줄을 수정했고 strict schema·dispatch·테스트는 유지했다. root+독립 소스 검토 완료 후 위4fd6981b를 push했고, 후속 필수 CI40382748901은 전체 성공하여 병합했다. 당시 다른 CI shard는 통과 중이었지만 integration1·5는 실행 중이었으므로 이전 CI 전체 통과를 주장하지 않는다. 원 로그는 `STATE/ci686-ledger-job.private.log`에 보존하며 원 파라미터를 문서에 싣지 않는다.
 
-Critical source finding frompriority1: actualCLI runs remotely on ConnectAgent, ledger owner remains authority.publisherRole (lib/crawl/publication-classify-capacity.ts). Publisheroldcontainer exit ALONE cannotprovephysicalmodelend. Need exactConnectAgent process host/boot/child boundary and canonical operatorpath. Original plan baseline oldconnect appNameapp-compress-wireless-panel-rtlr7b/CIDa98268ef05a3/image09d2c197.../deploymentKakjT7a23wMMsubvTfKoK; oldpublisherCID8ebecb5fbd2e (fullCID availableplan)/deploymentsKuzoMFOuy9ng_KLmiGqd. Connect deployment was in Git phase around13:05 before publisherM3 rollout; correlateactualtimestamps, don'tassume causality. Plan/sources/126files preserved. No app/control/lease/model/process mutations since originalmonitordeploy13:09.
+**18:56:10 UTC** 실제 읽기 `STATE/text-job-errors686-20261027-a.private.json` SHA `ade300c0991de0c9f8e856e2aab072c6099616a4aa2be536fa0cbfa5f75f8a5c`에서 KO `has_error=true`, 나머지5작업은 false였다. 오류를 reset하지 않았고 새 DRAIN 변경도 없다. 18:54 관문 통과를 durable KO 오류 해소나 이후 통과로 확대하지 않는다.
 
-Agents currently LOCAL ONLY: priority1_drain_progress investigating exactnative old/newowner/sourceadmission and causalminimalfix; priority3_deploy_proof inspecting STOCK canonical CLI process-boundary/DR recovery support (provider-boundary release appears direct-model/indeterminate only and maynotfit CLI). Detail agent completed independentreadonlyhelper review, availablefor laterreview. Root collecting physicalend evidence only. Newnative requestdata containsprivatebindings/tokens; printonly safe metadata/counts. Generated operations-schema contains giantconstraintlines: searches must use --max-columns200 toavoid massiveoutput. EarliercustomKOdiagnosticSQL42703failure preserved, v2/v3 correctreadonly captures.
+- 소스 WT: `/Users/jr/Desktop/projects/nomorevibe-profile-owned-queue-resume-20261027`, branch `codex/profile-owned-queue-resume-20261027`.
+- 새 깨끗한 운영자 WT: `/Users/jr/Desktop/projects/nomorevibe-release-686-20261027`, 정확한 main `34cc2045cbb7105313861792adb37c035b64e70c`, node_modules는685 운영자에 연결. 이전 `/Users/jr/Desktop/projects/nomorevibe-release-685-20261027`은 보존한다. 새 main CI·이미지 준비 확인 완료. 현재는 공식 plan 진행 중이며 배포 완료로 세지 않는다.
+- 문서 WT: `/Users/jr/Desktop/projects/nomorevibe-ops-delivery-report-20261026`, branch `codex/ops-delivery-report-20261026`. PR680은 아직50f 기반 draft이며 root가 최신 main을 통합해야 한다.
 
-Root latest businesscache v3 at13:24:57 (STATE/ko-progress-readonly-v3-20261026T132500Z.private.json):52102 translatedtrue/attempts3/quality2/errornull saved13:17:42.143146 (31secafter originalmonitor timeout);52103 attempts4/quality4 rejected:too_long retry13:55:44;52109 attempts3/quality3 rejected:too_long retry13:31:58;52119 attempts3/quality3 rejected:empty retry13:40:47. Distinctproducts/hash/response; not identicalrequestloop. No quality/gate/TTL/model changes. ActualproductionUI alreadyPASS asbelow, no needrepeat.
+## 완료 범위와 남은 사용자 확인
 
-Exact next: collect agent local findings; inspect actual oldConnectAgent execution host/process boundary through root read-only calls and durable DB evidence; only after a concrete reviewed recovery plan may use existing canonical API once. Ifsourcecapabilitymissing, minimalgenericPR with actualregression/independentreview/latestCI beforedeploy; do not create adhocSQL releases. Keepmain50f untilcurrentreadonlyrecoveryboundaries understood. Do not merge PR680 prematurely or claim fullnormal/observer. UpdatePR680/report/PENDING with newpublisherincident beforefinaldocsmerge. Userno skills/CDSTATEstillapplies.
+- 상세 UI: PR672 정보·설명 유지/높이 약13.7% 절감·모바일2열·라이선스 줄바꿈, PR670 최신 업데이트3개, PR673 개인 숫자ID·조직 저장소 증명 파일 경로. 운영 두 웹의 익명 화면은 **2026-10-26 13:19:31 UTC** 데스크톱1280/모바일375에서 확인했다. 실제 OAuth·claim·멤버 관리·30일 재검증·파일 삭제 회수는 미실행이다.
+- AI2: GPU3090 Tailscale 직접 기본 `qwen3.8-flash-next`, abcLLM Supa Qwen3.8 대체, no-thinking·총32k/출력10k를 유지했다. 번역 품질 기준도 바꾸지 않았다.
+- 운영 판단: OPEN의 capacity waiting을 progress 통과로 바꾸는 예외는 없다. 공식 일반 관문이 실제 통과해야 한다. 실제 유지보수 DRAIN은 별도 감사·새 계획이 필요하며, 그 관문을 OPEN 정상 인증으로 기록하지 않는다.
+- KO의 과거 last_error는 정상 ACK한 `done:false`도 지우지만, capacity/DRAIN deferred는 보존한다. 새 출력 일부만으로 durable 오류 해소를 단정하거나 직접 reset하지 않는다.
+- 미완료: 새 전체18 인증/monitor UP·두 수신처, 새5·10·15분/6시간 및 별도24시간 관측, 실제 소유권 사용자 경로, 백업/PITR/보존기간·용량·nonempty media_assets 복원, 독립 사람 라벨5개/assist 적용 꺼짐 등 `PENDING.md`의 기존 검증.
 
+## root의 다음 순서와 명령
 
-## Current objective and authorization
+1. PR686 병합 및 새 main CI40383949515의 필수 check·웹/워커 이미지 준비 확인 완료. root가 아래 새 운영자에서 **공식 plan 세션24626**을 실행 중이다. 새 계획을 중복 시작하지 않는다. 아직 plan 파일·서비스 POST·run은 없다.
+2. 진행 중인 `STATE/full18-release686-20261027-a` 계획의 실제 결과·hash를 수집한다. 아래 명령은 동일한 공식 진입점의 기록이며 진행 중 plan을 다시 실행하라는 지시가 아니다. 새 실제 혼합 baseline·DB138·모든 일반 관문을 확인한다. 텍스트 쌍 전용 `--apps`는 없다. 공통 코드 변경은 전체18 범위를 계산하며 실행 직전 다시 대조한다.
 
-User authorized commit, PR, merge, production deployment, parallel agents, and quick minimal verification for operational priorities1/2/3 and three detail-page changes. No skills. Use `/Users/jr/.local/state/nomorevibe-reliability-20261025/` (STATE) as current workdir. Root alone performs production/SSH/DB/API/GitHub mutations; agents inspect local sources/tests/captured evidence only. Agents and directly invoked Codex must use `gpt-6.1-sol` with `xhigh`. Original `/Users/jr/Desktop/projects/nomorevibe` stays read-only; unrelated user changes are untouched.
-
-## Completed source work
-
-All source PRs668–679 are merged; exact application target is `50f9239c1b33b853513a632ca197be45ab26398a`. See [PR progress](operations/2026-10-26-pr-priority-progress.md) for grouped problems and validation. Latest main CI40316335176, full profile, attempt1, required check and worker/web images succeeded.
-
-- 668/674/678: intentional model DRAIN observations, read-only monitor DB compatibility, publisher current-control provenance.
-- 671/677/679: native waiting-batch adoption.679 fixes two SQL OR predicates that let unrelated due retry rows escape exact-target conditions and cancel product batches each poll. KO SQL already had parentheses.
-- 676: translate instructions preserve exact protected tokens and natural English; quality checks remain.
-- 669/675: actual runtime provenance, RFC3339 nanoseconds/Python3.9, narrowly bounded JSON read retries, no deploy retries.
-- 672: compact facts, same six values/notes, mobile two columns.
-- 673: personal GitHub numeric-ID ownership and organization default-branch HMAC proof-file flow without administrator approval; session/CSRF, locked writer, revocation and recheck.
-- 670: static All and latest3 updates, descending dates, no maker/auto filter or expand.
-
-## Current production / active phase (22:23 KST)
-
-Both text apps actually run50f; M3 primary epoch155/boot0ee187bd-0c62-43ee-b603-d8138b35575f and mini standby bootd806c8b7-768d-453d-bd47-d036654ae83f. Capacity OPEN audit20388/controlAt2026-10-26T12:06:30.555000Z, epoch1/revision3; schema134. Settings/policy/DR unchanged. The other16 apps were df1e before the current official run; do not claim completion until its final receipt exists.
-
-Fresh readonly business+ordinary+full18 certificate at12:57:43UTC: `STATE/product-ko-observe-wire-order-679-20261026/observe-20261026T125400Z/certified.private.json`, SHA44bd3df29220f031563bb2871aec6ef342254b58c088ad04de4f7bb1c72ecc2e. It verifies actual product and Korean cache results, native schema/hash/wire/owner/model/attempt/quality/timestamps/no-later-dispatch, unchanged normal gates and full18. Past fixtures/process health were not substituted for business progress. Observer89014 exited0, mutations0.
-
-Official plan `STATE/full18-release-679-20261026T130000Z/plan.private.json`, SHAff80dc454e93db613630a7bdba0ebb1334ab97a280675f563fd159371d186376: sixteen selected, two text apps retained, no migration or catalog additions, normal guard ok/ready. Actual fresh readiness images: worker sha256:4c430fd604cf5b9e94088b875da588c90e7b5d3d14d6e7c34b2b79a7e223060e; web sha256:c9a2734a21c0d1db256753c126cafac36bd5bef309de415229d7e41e000f2bc8. Older194a web notes are stale. Plan ran unmodified official `create_plan` via pinned diagnostic wrapper0307c889; source deploy_release4008bcba.
-
-Root official run exec session56744 EXIT1 at13:17:11UTC (sole monitor UP/progress verification timeout; all service changes applied, final certification pending); private log `STATE/full18-run-679-20261026T130300Z.private.log`. `execution/once.json` exists: NEVER rerun it. Latest readback: fifteen selected apps verified; monitor request completed once at13:09:09UTC. Readonly diagnostic d4cc6b... at13:12:33 confirms monitor new deployment done, exact config/source/runtimeReady=true, running, both primary/external push receipts fresh/true, but stateUp=false. Current ordinary report3460f000... at13:13:35 has all5roles ready and sole tagline-ko alarm (completed5m0/errors5m1/waiting495/upstream_stalled/restartEligiblefalse). Final run failed in monitor-only check; no final snapshot/observer launch. Agentpriority3 prepared NEW immutable READONLY reconciliation helper STATE/full18-readonly-completion-679-20261026/complete.py SHA7ef2cd8a6299e2a400577febb25ae9bc5dc8cfb9a90dc9be87ef612c41663c29, inputsSHA4895336e46068a3225962fdd5e81b37f4423237d7406d44c2232473b173dd65f binding126 originalfiles/15receipts. Root+independentreview noP1/P2; author Python3.9.6 focused5 PASS (provenance/negativeguards/timer/AST), inputs/source unchanged. Root newreadonly session76897 is active inSTATE/full18-readonly-completion-679-20261026/readback-1, actualstart~13:30UTC; collect this first, never use oldrun. No more appmutations. Readonly output so farprotected-before snapshot only; normalUPnotproven. Helper (fresh monitorUP+bothACK/sameoriginalrequest+all18fleet+normalstrict4+protected checks), no re-deploy/action/monkeypatch. Review/independentreview before root execution. Consumed original execution remains untouched. Official run auto-launches one readonly5/10/15min/6h observer after full verification. Do not launch duplicates. Keep operator/source/private inputs at least6h.
-
-## Modified files / worktrees
-
-Final documentation branch `codex/ops-delivery-report-20261026` at `/Users/jr/Desktop/projects/nomorevibe-ops-delivery-report-20261026`, based50f: only `PENDING.md`, this handoff, `docs/operations/2026-10-26-pr-priority-progress.md` should be committed after actual outcome. All three docs have current prefixes; final normal certificate/observer results remain pending. Older working docs remain in `/Users/jr/Desktop/projects/nomorevibe-ops-docs-current-20261026`; do not merge that stale branch. Historical full handoff remains at `git show 50f9239c1b33b853513a632ca197be45ab26398a:docs/CODEX_HANDOFF.md`; large working handoffs retained in private `STATE/final-docs-history-20261026T130400Z/` backups (0600).
-
-Clean exact50f operator `/Users/jr/Desktop/projects/nomorevibe-release-679-20261026`, npm ci complete, Node24.18.0. Preserve old d972 operator `/Users/jr/Desktop/projects/nomorevibe-release-final-20261026` and frozen helpers/consumed markers. Local source fixture/ownership/PG databases have distinct owners; do not reset/drop shared ones.
-
-## Actual tests and evidence
-
-PR679: actual PostgreSQL5 passed/8 skipped on exclusive32800/nomorevibe_test, unit23 passed, ESLint/typegen/tsc/diff passed. Old source with unrelated due retry row reproduced failure; fixed source kept the same waiting request through two polls, dispatch and four writes. Earlier PR validation counts are in progress report/PRs; don't relabel skipped tests as passed. UI local actual measurements: same facts201→173.5px; mobile320/375, long values, keyboard/light/dark; latest3 timeline and ownership UI tested. No real production ownership claim was performed. Actual anonymous production UI canonical runner a4511ed7713da673ce0009a3f06f770e3928e5d2d9de4c5ec6bc0f1a12ccea7e passed desktop1280/mobile375 at2026-10-26T13:19:31.079Z–2026-10-26T13:19:46.990Z,7populatedfacts/staticlatest3/nocontrols/nooverflow/GitHub CTA→/login?connectGithub=1&returnTo=/p/thinkrail#owner-claim, browsererrors0/11PNGs. Receipt STATE/detail-ui-production-verification-20261026/run-2026-10-26T13-19-31-079Z/results.private.json SHAbc2eb5eec75d645c630edf4b1b0fadc60885ccbeb8a6082bf97b264be156d947. Root visually inspected desktopfacts+mobileupdates. UI ran after both actualweb deployments were verified, while unrelated monitor progress gate pending; it does not certify full18 normality.
-
-Actual author commands (Node24 alias below; rerun only when justified, use its owned local database, never production):
-
-```sh
-NODE24=/Users/jr/.nvm/versions/node/v24.18.0/bin/node
-$NODE24 node_modules/vitest/vitest.mjs run tests/product-translation-model-capacity.test.ts tests/product-translation-policy.test.ts
-TEST_DATABASE_URL="$OWNED_TEST_DATABASE_URL" DATABASE_URL="$OWNED_TEST_DATABASE_URL" \
-$NODE24 node_modules/vitest/vitest.mjs run --config vitest.integration.config.ts \
-tests/integration/product-translation-model-capacity.test.ts \
--t 'preserves the same complete four-field|keeps due retries|recovers an old product|abandons a stale product|refuses foreign or changed product' --bail=1
-$NODE24 node_modules/eslint/bin/eslint.js lib/domain/products/translations.ts tests/integration/product-translation-model-capacity.test.ts
-$NODE24 node_modules/next/dist/bin/next typegen
-$NODE24 node_modules/typescript/bin/tsc --noEmit --incremental false
-git diff --check 55d4adad9be0a025dd9895dfb1f8f40a8c69cb3d...HEAD
+```bash
+cd /Users/jr/Desktop/projects/nomorevibe-release-686-20261027
+MERGED_686_SHA=34cc2045cbb7105313861792adb37c035b64e70c
+STATE=/Users/jr/.local/state/nomorevibe-reliability-20261025
+npm run deploy -- scope --base 20493cfdf43b98bcb239bc8d097a705707da23d9 --sha "$MERGED_686_SHA"
+npm run deploy -- plan --sha "$MERGED_686_SHA" --migration-verified --out "$STATE/full18-release686-20261027-a"
+# root가 실제 plan·hash·선택/유지 앱·현재 관문을 검토한 다음, 새 계획을 단 한 번 실행한다.
+npm run deploy -- run --plan "$PLAN" --plan-sha "$PLAN_SHA256"
 ```
 
-Unit command executed one file/23 tests; the policy-file filter added no second file. Owned DB endpoint127.0.0.1:32800/nomorevibe_test, containernmv-product-waiting-fix-20261026-6d9e5f5d; credential remains private. PG GREEN log `STATE/product-waiting-fix-local-20261026/canonical-four-retry-guards-GREEN.private.log`. All listed author commands actually exited0; this documentation pass did not rerun them.
+`--migration-verified`는 이미 적용한138 journal의 실제 검증 주장이지 DB 이전 재실행 지시가 아니다. 서비스 변경 전 관문이 실패하면 실패 원문을 보존하고 원인을 확인한다. 관문·계획·runtime을 위조하거나 timeout을 우회하지 않는다. API 응답이 불명확하면 같은 배포를 다시 요청하지 않고 실제 읽기로 대조한다.
 
-Readonly proof repair: original probe reconstructed object keys in different order from actual coordinator, causing wrong wireHash. New probe10bb49ee differs by one input-order line; observer1b7dce6c retains all positive guards and unchanged ordinary gates. Python3.9 AST/import/timer checks, Node syntax, actual5-candidate offline replay, independent review passed. Fresh actual certificate above is separate evidence.
+3. 실제 최종 영수증이 나온 뒤에만 전체18 완료를 기록한다. 도구의 새 observer 예약과 실제 실행/PID를 구분하고, 5·10·15분/6시간 결과는 경과 후 각각 수집한다. 별도24시간 관측은 남겨 둔다.
+4. root가 아래 결과 슬롯과 보고서/PENDING 현재 블록을 실제로 갱신하고, PR680에 최신 main을 통합한다. 문서 변경만으로 앱을 재배포하지 않는다.
 
-## Failed approaches and hard boundaries
+| PR686 이후 결과 슬롯 | 현재 |
+|---|---|
+| 병합 main / CI·이미지 / 새 운영자 | main34cc·깨끗한686 운영자·main CI40383949515 필수 check/웹·워커 이미지 성공 |
+| 공식 전체18 plan·hash / 실행 경로 / 최종 영수증 | plan 세션24626/`STATE/full18-release686-20261027-a` 진행 중; plan 파일·run·최종 영수증 대기 |
+| 배포 후 제어 상태 / monitor UP·두 ACK / 일반 관문 | 대기 |
+| 새 observer 시작 및 실제 시각별 결과 | 대기 |
 
-Preserve all failed receipts. First full18 planning89827 timed out before plan creation; exact phase unproven. Original UI runner3ffe failed root14741 (5failures): defaultko canonical /ko→unprefixed redirect assumption, homepage account-response navigation race. Actual50f routing confirmed; new separatecanonical runner changes onlypaths/sourceContract/rootpageisolation/immediateaccountbodyconsume, preserves all positive/writeblock guards, Nodecheck+rootdiffreview actualPASS, then root64289 actualUI PASS. Originalscript/failure receipts unchanged. Custom rootKOread-only diagnostic initially used nonexistent status column (42703), preserved failureartifact; newv2 omitted unrelatedcachequery and succeeded at13:22:03 with OPENsame/unknown0, MLXtextwaitingroutes, recentKOmodelsettlements+expiredwaiting. SQLsource/outputs private0600; no business quality inferred fromsettlement. Frozen old completion observers68929/90804 failed due local probe JSON/wire verification; never rerun them. KO historical invalid_output16 was batch parsing, not quality rejection; raw response missing, concrete format cause unproven. Later actual KO succeeded; don't weaken quality/prompt/limits on speculation.
+## 소비한 once·실패·역사 보존
 
-All earlier text-pair, M3-completion and canonical expiry once markers are consumed. Canonical expiry only removed expired unstarted requests, never dispatched work. No more DRAIN/control/expiry/restart/lease cancellation is needed for current normal run. Do not clear locks, delete markers, repeat ambiguous mutations, extend TTL, waive gates or monkeypatch frozen modules. Any failure needs actual readback and a new concrete reviewed recovery plan. AI2 remains GPU3090 Tailscale direct qwen3.8-flash-next primary and abcLLM Supa fallback, both no-thinking, total32k/output10k; do not change it during this release.
+- 과거63 요청: stop·journal136·감사20456 회수·기존 finish·OPEN20457은 완료 이력이다. 재실행하지 않는다.
+- 6c 요청: 유일한 Engine stop은 실제 die1을 확보했지만 Swarm 작업이 삭제되어0136 계약으로 인증하지 못했다. 종료 상태를 만들어 넣지 않고0137 새 계약으로 처리했다. journal137/138, 감사20474 canonical 공유 once, V2 finish 공유 once, OPEN20475는 모두 소비했다. **stop·migration·canonical·finish·OPEN을 다시 실행하지 않는다.**
+- journal138 완료: `STATE/cli-executor-indeterminate-removed-0137-migration-20261027/apply-20261027-a/completed.private.json`.
+- canonical 완료: `STATE/cli-6c-removed-canonical-apply-20261027-a/canonical-receipt.private.json`, SHA `be8db75b76bb24eb6b4a855a540c4a63431012f8e607506b9e45e1a0d84a4137`.
+- Connect 완료: `STATE/cli-indeterminate-removed-known-exit-ops-20261027-v2/finish-run-20261027-a/final-6.private.json`; 원 V1/V2 helper와 request-wide once는 그대로 보존한다.
+- 기존 일반685 plan-a/b는 progress 관문 timeout으로 정상 서비스 POST 전 중단했다. 새 실제 출력과18:54:22 통과를 과거 실패 구간에 소급 적용하지 않는다. 사용한 경로·실패 영수증은 재사용하지 않는다.
+- source manifest의 추가 COPY, 과거 migration count/static mirror, 동적 CREATE를 가로지른 regex 등 자동 CI/읽기 거절과 수정 이력은 아래 비공개 원문에 보존한다. 실패를 삭제하거나 수동 시험 통과로 바꾸지 않는다. 미완성 `expire.mjs`는 실행하지 않는다.
 
-## Remaining work and exact next commands
-
-1. Exec56744 is complete/failed; do not collect/rerun it. Newreadonly session76897/readback-1 already RUNNING after independentreview/offline5PASS. Collect it first; do not duplicate. Original command was: `python3 STATE/full18-readonly-completion-679-20261026/complete.py --out STATE/full18-readonly-completion-679-20261026/observe-UNIQUE --review-reference root-reviewed-monitor-only-timeout-after15verified-679-20261026 --wait-seconds 600`. Root+independent fullsource7ef/input489 review done; actualexecution pendingresult. All paths absolute fromSTATE. Inspect only safe summaries of `STATE/full18-release-679-20261026T130000Z/execution/{result.safe,stopped.safe,observation.safe}.json` and private failure locally if needed. Do not execute `run` again. Confirm actual all18 source/image/health and retained text state.
-2. Actual production UI already passed via `node STATE/detail-ui-production-verification-20261026/verify-canonical.mjs --expected-release 50f9239c1b33b853513a632ca197be45ab26398a --slug thinkrail`. No repeat needed without new app change or failed evidence.
-3. Collect automatic observer actual5/10/15 receipts while finalizing docs.6h remains future/unconfirmed until due; never report scheduled as passed. Authenticated personal/organization owner claim, proof-file commit/check, membership management and30-day revocation/revalidation remain untested. Independent person holdout5/apply_enabled=false, old backup/PITR/media_assets restore,24h observation, whole-host/storage-stall/reboot-isolation and alert-receipt drills, eligible mini publisher output, remaining candidate/business-quality work and ambiguous Star lock stay pending per PENDING.md. The September29 new logical dump/og_images isolated restore was already verified; do not relabel it as untested.
-4. Update these three docs with actual outcome. `git diff --check`; local official `npm run deploy -- scope --base 50f9239c1b33b853513a632ca197be45ab26398a --sha <docs-head>` must select0. Initial docs commit4a32871fb1bf839086a3e2a608db6ac89cd5ea54 pushed; DRAFT PR680 https://github.com/JRVector9/nomorevibe/pull/680 created, `git diff --check`/scope0 actuallyPASS. Keepmain50f unchanged until runtime final verification; updateactualfinal/observer docs, normalcommit/push, readyPR, verify latest-base docs CI check then merge; no app redeploy for docs-only.
+이번 교체 직전 dirty3파일 원문과 SHA manifest: `STATE/docs-before-686-final-consolidation-20261027/` (0700/0600). 더 긴 과거 handoff는 Git의50f 이력 및 `STATE/final-docs-history-20261026T130400Z/{main-handoff.private.md,working-handoff.private.md}`, `STATE/docs-before-final-consolidation-20261027T162700Z/`, `STATE/handoff-before-684-stop-phase-20261027/`에 보존한다. 현재 문서와 실제 저장소·영수증을 우선하며 과거 진행 문단을 현재 상태로 해석하지 않는다.

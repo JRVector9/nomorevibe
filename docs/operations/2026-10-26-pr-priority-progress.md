@@ -1,26 +1,42 @@
 # 운영 수정 및 상세페이지 PR 진행
 
-2026-10-26 23:13 KST 기준. 스킬 없이 저장소와 실제 운영 결과를 검토했다. PR668–679는 병합했다. 최신 main은 `50f9239c1b33b853513a632ca197be45ab26398a`이며 필수 CI와 이미지 발행이 성공했다. 추가 실측에서 발견한 종료 처리 문제는 별도 PR681로 분리했고 CI가 진행 중이다.
+**기준: 2026-10-27, PR686 배포 전.** PR668–679·681–686은 병합했다. PR685 main `20493cfdf43b98bcb239bc8d097a705707da23d9`의 필수 CI와 웹·워커 이미지가 준비됐고, DB journal138·정확한 요청 회수·Connect 수정 배포·공식 OPEN20475를 실제 완료했다. 나머지17앱은 기존50f이며, 최신 전체18앱 최종 인증과 새 observer 결과는 아직 없다.
 
-| 우선순위 | PR | 해결하는 문제 | 확인한 범위 |
+검색 프로필에서 이미 예약된 제품이 최신12개 선택 범위 밖으로 밀려 호출 없이 만료되는 원인을 추가 확인했다. 이를 고친 [PR686](https://github.com/JRVector9/nomorevibe/pull/686)은 head `4fd6981b61cd447fd237dfc274a1fb561a3cf6b4`, 독립 소스 검토와 필수 자동 CI40382748901 전체 성공 후 **2026-10-26 19:07:47 UTC** 병합했다. 최신 main은 `34cc2045cbb7105313861792adb37c035b64e70c`이며 새 main CI40383949515의 필수 check·웹/워커 이미지 발행도19:08 UTC대에 모두 성공했다. 검증한 PR tree·이미지를 재사용했고 refresh-caches는 관문이 아니다. 운영 배포는 아직 미완료다.
+
+첫 자동 CI40381826340의 ledger8건은 role lease의 추가 owner 필드를 strict Zod 입력으로 넘겨 실패했다. SQL 오류가 아니며 `instanceId`·`bootId`만 투영하는2줄 수정 후 새4fd6981b를 push했다. 엄격한 schema·dispatch·테스트는 유지했고 root·독립 소스 검토를 마쳤다. 이전 CI의 integration1·5는 당시 실행 중이어서 전체 통과로 세지 않는다. 원 로그는 비공개 `STATE/ci686-ledger-job.private.log`에 보존한다. 후속 CI40382748901은 전체 성공했다. 실패한 첫 CI 이력은 그대로 보존한다.
+
+| 묶음 | PR | 해결한 문제 | 실제 확인 범위 |
 |---|---|---|---|
-| 운영 1 | [#668](https://github.com/JRVector9/nomorevibe/pull/668), [#674](https://github.com/JRVector9/nomorevibe/pull/674), [#678](https://github.com/JRVector9/nomorevibe/pull/678) | 의도한 모델 작업 중단을 정체로 오인해 워커를 재시작하거나 과거 실패를 현재 장애로 표시 | 운영 반영, 실제 DRAIN/OPEN 확인. 발행 감시도 적용, 최종 정상 판정 대기 |
-| 운영 1 후속 | [#681](https://github.com/JRVector9/nomorevibe/pull/681) | 배포 시 원격 CLI 실행을 기다리지 않고 ConnectAgent가 종료돼 발행 요청의 점유가 남음 | 종료 시작 후 새 실행 차단, 실제 종료·정산을 최대3분 대기, ConnectAgent 종료 유예4분. 비동기 파일 준비 중 종료 회귀 포함 로컬 시험·독립 검토 통과. CI 진행 중·운영 적용 전 |
-| 운영 2 | [#671](https://github.com/JRVector9/nomorevibe/pull/671), [#677](https://github.com/JRVector9/nomorevibe/pull/677), [#679](https://github.com/JRVector9/nomorevibe/pull/679) | 대기 배치를 이어받지 못하거나 SQL OR 조건이 다른 행까지 읽어 예약을 매번 취소 | text 주·예비 적용 완료. 실제 PostgreSQL 회귀, 새 주 서버의 모델 완료와 결과 저장 확인 |
-| 운영 2 후속 | [#676](https://github.com/JRVector9/nomorevibe/pull/676) | 번역 요청이 보존 토큰과 자연스러운 영어 문장 조건을 충분히 전달하지 않음 | 동일 품질검사를 유지한 요청문 보완, 단위64개·DB8개, text 적용 |
-| 운영 3 | [#669](https://github.com/JRVector9/nomorevibe/pull/669), [#675](https://github.com/JRVector9/nomorevibe/pull/675) | 나노초 시각·Healthcheck 상속·일시 JSON 오류 때문에 완료된 배포 확인이 중단 | 실제 runtime/source 검증과 회귀 통과. 읽기 오류에 앱 배포를 다시 요청하지 않음 |
-| 상세 정보 | [#672](https://github.com/JRVector9/nomorevibe/pull/672) | 같은 정보가 화면 공간을 많이 차지 | 여섯 항목·보조 설명 유지. 로컬 실제 컴포넌트 높이201→173.5px, 모바일 두 열·줄바꿈 검증. 운영 웹 두 곳 반영·데스크톱/모바일 확인 완료 |
-| 소유권 | [#673](https://github.com/JRVector9/nomorevibe/pull/673) | GitHub 확인이 준비 중이라 관리자 요청으로 끝남 | 개인 저장소 숫자 GitHub ID 확인, 조직 저장소 기본 브랜치 증명 파일 구현. 보안·DB·화면 검증 통과. 운영 웹 두 곳 반영·데스크톱/모바일 확인 완료 |
-| 업데이트 | [#670](https://github.com/JRVector9/nomorevibe/pull/670) | 메이커·자동 감지 구분이 혼란스럽고 목록이 김 | 전체 표시와 최신3개만 유지. 필터·펼치기 제거, 날짜 내림차순 검증. 운영 웹 두 곳 반영·데스크톱/모바일 확인 완료 |
+| 의도한 중단과 장애 구분 | [668](https://github.com/JRVector9/nomorevibe/pull/668)·[674](https://github.com/JRVector9/nomorevibe/pull/674)·[678](https://github.com/JRVector9/nomorevibe/pull/678) | DRAIN 중 과거 오류·정상 대기를 현재 장애로 오인 |50f 운영 반영·DRAIN/OPEN 확인. 생존·실제 오류 경보 유지 |
+| 대기 배치 이어받기 | [671](https://github.com/JRVector9/nomorevibe/pull/671)·[677](https://github.com/JRVector9/nomorevibe/pull/677)·[679](https://github.com/JRVector9/nomorevibe/pull/679) | 자기 배치를 놓치거나 SQL OR 범위가 넓어 같은 요청 반복 취소 | text 주·예비50f 반영, 실제 제품 번역·한국어 문구 저장 확인 |
+| 번역 요청문 정합성 | [676](https://github.com/JRVector9/nomorevibe/pull/676) | 보존 토큰·자연스러운 영어 문장 조건 누락 | 운영 반영. 품질 기준·모델·재시도 정책 유지 |
+| 배포 읽기 검증 | [669](https://github.com/JRVector9/nomorevibe/pull/669)·[675](https://github.com/JRVector9/nomorevibe/pull/675) | 출처·시각 정밀도·일시 JSON 읽기 오류로 완료 확인 중단 | 공식 도구 반영. 읽기 실패에 배포 재요청하지 않음 |
+| 상세 정보 압축 | [672](https://github.com/JRVector9/nomorevibe/pull/672) | 같은 정보가 과도한 높이를 차지 | 정보·보조 설명 유지, 로컬 컴포넌트201→173.5px(약13.7%), 모바일2열·라이선스 줄바꿈·운영 익명 화면 확인 |
+| GitHub 소유권 확인 | [673](https://github.com/JRVector9/nomorevibe/pull/673) | 준비 중 안내·관리자 요청으로 끝나던 흐름 | 개인 숫자ID·조직 증명 파일 구현, 운영 로그인 진입 확인. 실제 OAuth·등록은 미실행 |
+| 최신 업데이트3개 | [670](https://github.com/JRVector9/nomorevibe/pull/670) | 목록·필터·펼치기로 상세 화면 복잡 | 최신3개·전체 표시·날짜 내림차순, 운영 데스크톱·모바일 확인 |
+| 종료 때 새 실행 차단 | [681](https://github.com/JRVector9/nomorevibe/pull/681) | 원격 CLI가 끝나기 전에 배포 종료되어 점유 잔류 | 새 실행 차단·최대180초 대기 구현. Connect healthy1·최신 소스·유예240초 실제 확인 |
+| 정확한 한 요청 수동 복구 | [682](https://github.com/JRVector9/nomorevibe/pull/682)·[683](https://github.com/JRVector9/nomorevibe/pull/683) | 실행체 삭제·종료 코드 미확정으로 기존 계약 사용 불가 | journal136·첫 요청 회수 실제 완료. 알 수 없는 종료 코드는NULL, 비용·사용량 미확정 보존 |
+| 네이티브 실행·미확정 회수 | [684](https://github.com/JRVector9/nomorevibe/pull/684)·[685](https://github.com/JRVector9/nomorevibe/pull/685) | npm 자식 실행기의 종료 미확정 및 실제 die 뒤 Swarm 작업 삭제 | 동일 바이너리 직접 exec, journal137/138 검증. 6c 요청 감사20474 withdrawn·C272000/사용량 미확정 보존. Connect20493 healthy·OPEN20475 완료 |
+| 검색 프로필 예약 우선 처리 | [686](https://github.com/JRVector9/nomorevibe/pull/686) | 자기 예약 제품이 새 후보12개 밖으로 밀려 미사용 만료 |4파일 최소 수정·독립 소스 검토 완료. CI40382748901 전체 성공·main34cc 병합. 새 main 필수 CI·웹/워커 이미지 준비 완료. 공식 전체18 plan 진행 중, 운영 미반영 |
+| 결과 문서 정리 | [680](https://github.com/JRVector9/nomorevibe/pull/680) | 진행 문단 누적으로 현재 상태 불명확 |50f 기반 draft. 현재 결과로 교체 중이며 최신 main 통합·병합은 root 담당 |
 
-운영 text 두 앱을 먼저 `50f9239c`로 교체한 뒤, 공식 도구로 나머지16앱을 한 번씩 갱신했다.15개 앱은 실제 배포 영수증 검증을 마쳤다. 마지막 monitor도 새 버전·원 설정·source·healthy runtime·두 수신처의 실제 응답을 확인했으나, 업무 진행 경보 때문에 UP 상태가 되지 않아 최종 검증480초 제한에 걸렸다. 공식 실행은13:17:11 UTC에 중단됐고 전체18앱 정상 완료 영수증은 아직 없다. 완료된 앱을 다시 배포하지 않고 같은 요청의 실제 현재 상태만 대조한다.
+상세페이지3건은50f 운영 웹 두 곳에 반영됐다. **2026-10-26 13:19:31 UTC** 익명 GET/HEAD 검수에서 데스크톱1280·모바일375, 정보 누락·가로 넘침·브라우저 예외, 최신3개 표시, GitHub 로그인 진입을 확인했다. 실제 OAuth·claim·조직 증명 파일 등록 성공으로 세지 않는다.
 
-12:57:43 UTC의 새 읽기 전용 관측에서는 제품 번역·한국어 문구의 실제 저장 결과, schema/hash/품질검사, 일반 운영 관문과 당시 전체18앱 상태를 모두 통과했다. 이후 최종 배포 검증 중 한국어 문구의 최근5분 성공0건 경보가 발생했다. 추가 실측에서 최근 서로 다른4개 제품의 모델 요청은 정상 종료했으며,52102는13:17:42에 실제 저장됐다.52103·52109는 `rejected:too_long`,52119는 `rejected:empty` 품질검사로 거절돼 정해진 재시도를 기다린다. Native 종료를 번역 저장으로 세지 않았고 품질·모델·토큰·capacity 정책·일반 관문은 바꾸지 않았다. 13:24:57 UTC 실측에서 capacity OPEN epoch1/revision3·결과 불명0을 확인했다.
+**2026-10-26 18:54:22 UTC** stock monitor는 다섯 역할·scheduler·전체 progress=ok를 실제 통과했다. 영수증 `STATE/normal686-preflight-monitor-readback-20261027-a.private.json`의 SHA는 `8f2ce086fdf5ec5f73503fb8c655709180ed76a54aa946dd6b981c7e0ed8a09f`다. 이 표본은 현재 관문만 증명하며 PR686 배포나 이후 연속 정상·장기 관측을 증명하지 않는다. 과거12:57 인증과 뒤의 실패 구간도 별도로 유지한다.
 
-운영 화면은13:19:31 UTC 새 GET/HEAD 검수에서 데스크톱1280·모바일375 모두 통과했다. 실제 채워진 정보7개가 잘리지 않고, 업데이트는 최신3개·전체 표시만 보이며, GitHub 버튼은 `/login?connectGithub=1&returnTo=/p/thinkrail#owner-claim`로 이동했다. 가로 넘침·브라우저 예외0, 스크린샷11개다. 초기 검수 스크립트의 기본 한국어 경로와 응답 수집 오류는 실제 routing 규칙에 맞춘 새 별도 스크립트로 수정했고 실패 기록도 보존했다. 실제 OAuth/소유권 claim은 실행하지 않았다.
+**18:56:10 UTC** 실제 작업 읽기에서는 KO 오류가 남아 있고 나머지5작업은 오류 없음이었다. 영수증 `STATE/text-job-errors686-20261027-a.private.json`, SHA `ade300c0991de0c9f8e856e2aab072c6099616a4aa2be536fa0cbfa5f75f8a5c`. 오류 reset이나 새 DRAIN 변경은 하지 않았다. 앞선 관문 표본을 이후 오류 해소로 세지 않는다.
 
-AI2는 GPU3090 Tailscale 직접 기본 모델 `qwen3.8-flash-next`, abcLLM의 Supa Qwen3.8 대체 모델, no-thinking, 총32k/출력10k 설정을 유지한다. 이번 text 교체로 AI2 설정을 바꾸지 않았다.
+사용자 지시에 따라 **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일을 실행하지 않았다.** PR686까지 필수 자동 CI 성공을 확인해 병합했다. 새 main 필수 CI·웹/워커 이미지도 성공했으며 공식 전체18 plan 진행과 실제 운영 배포를 구분한다. 이전 개발 단계의 실제 시험 결과는 당시 PR·인계 이력에 보존한다. 운영 읽기·DB 이전·정식 복구와 수동 회귀 테스트를 구분한다.
 
-후속 실측에서 한국어 문구 경보는 사라졌지만 발행 작업이 정체됐다.13:05:16에 원격 CLI로 전달한 요청 한 건이 실행 중 장부에 남았고, 이를 실행하던 ConnectAgent의 교체가 같은 시점에 있었다. 원래 코드가 SIGTERM에서 실행 종료·정산을 기다리지 않고 즉시 종료하는 문제를 확인해 PR681로 수정했다.14:11:26 UTC 읽기 전용 실측에서도 해당 요청은 실행 중·종료 증거 없음, capacity OPEN은 동일했다. 현재 ConnectAgent의 실제 프로세스에는 실행 중인 모델 CLI가 없었다. 오래됐다는 이유로 점유를 지우지 않고, 서비스 전체의 실제 실행 종료를 증명한 뒤 해당 한 건만 정식 복구 경로로 회수하도록 별도 준비 중이다.
+AI2는 GPU3090 Tailscale 직접 기본 `qwen3.8-flash-next`, abcLLM Supa Qwen3.8 대체, no-thinking·총32k/출력10k를 유지했다. 이번 작업으로 모델 선택·한도·번역 품질 기준을 바꾸지 않았다.
 
-남은 순서: PR681 CI·병합 → 새 개별 복구 계획 검토 → 실제 ConnectAgent 실행 종료 증명과 한 요청 정식 회수 → 새 종료 처리·4분 유예 운영 반영 → monitor UP·일반 관문·전체18앱 최종 정상 영수증 → 단일5·10·15분/6시간 관측. 기존 실패 배포나 모호한 API 요청은 반복하지 않는다. 별도24시간 관측, 실제 사용자 소유권 등록, 장기 백업 복구 검증도 남아 있다.
+## 남은 확인
+
+1. root가 새 main34cc·깨끗한 `/Users/jr/Desktop/projects/nomorevibe-release-686-20261027`에서 공식 전체18 plan 세션24626을19:09 UTC부터 실행 중이다. 경로는 `STATE/full18-release686-20261027-a`, `--migration-verified`. 아직 plan 파일·서비스 POST·실제 run은 없으며 계획 결과 검토 후 한 번만 실행한다. 소비한 stop·migration·canonical·finish·OPEN은 반복하지 않는다.
+2. 실제 최종18앱 영수증과 배포 후 monitor UP·두 수신처·일반 관문 확인. **현재: 미완료.** root가 실제 SHA·경로·시각을 기록한다.
+3. 최종 정상 확인 뒤 새5·10·15분/6시간 관측 시작과 실제 결과 수집, 별도24시간 관측. **현재: 새 observer 결과 없음.** 예약·일회 표본을 이후 통과로 세지 않는다.
+4. 실제 사용자 OAuth·개인/조직 등록·멤버 관리·30일 재검증·증명 파일 삭제 회수.
+5. 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·실제 nonempty media_assets 복원. 이미 검증한9월29일 논리 dump·og_images 격리복원은 유지한다.
+
+독립 사람 라벨5개·assist 자동 적용 꺼짐, 미복구 후보·보강 적체의 실제 품질, 전체 호스트 장애·저장 정체·반복 부팅/알림 드릴 등 기존 미완료는 [PENDING](../../PENDING.md)에 유지한다. 정확한 경로·다음 명령·소비한 once·원문 백업은 [인계](../CODEX_HANDOFF.md)를 따른다.

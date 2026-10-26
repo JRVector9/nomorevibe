@@ -1,27 +1,24 @@
 # 남은 작업
 
-## 현재 발행 정체와 후속 PR — 2026-10-26 23:13 KST
+## 현재 운영 마무리 — 2026-10-27, PR686 배포 전
 
-아래22:27 기록 이후 읽기 전용 관측을 추가했으나 전체18앱 정상 검증은 아직 통과하지 않았다. 한국어 문구 경보는 해소된 표본을 확인했고, 현재는 ConnectAgent 교체 때 원격 CLI 요청 한 건이 실행 중 상태로 남아 발행을 막는 문제가 우선이다. 최대3분 종료 대기·실행 직전 admission 재검사·ConnectAgent 전용4분 유예는 [PR681](https://github.com/JRVector9/nomorevibe/pull/681)로 분리했다. 로컬 회귀와 독립 검토는 통과, CI 진행 중·운영 적용 전이다.
+PR668–679·681–686은 병합했다. PR685 main `20493cfdf43b98bcb239bc8d097a705707da23d9`의 필수 자동 CI·웹/워커 이미지, DB0137/journal138 실제 적용·사후 검증, 6c 요청 감사20474 withdrawn, Connect20493 healthy1·종료 유예240초, 공식 OPEN20475를 완료했다. 비용 C272000·settled_at NULL·사용량 미확정과 원 실패는 보존한다. 소비한 stop·migration·canonical·finish·OPEN은 재실행하지 않는다.
 
-기존 요청의 종료를 임의로 만들어 점유를 지우지 않는다. 새 공식 DRAIN 아래 정확한 Connect 서비스의 실행체 전체 종료를 실측하고, 해당 요청만 CAS·감사 로그를 남기는 정식 복구 경로로 회수한 뒤 새 소스와 실제 Dokploy 유예240초를 적용해야 한다. 기존 실패 배포/소비한 once 기록은 재사용하지 않는다. 최종 정상 영수증·배포 후5/10/15분·6시간 관측은 아직 없다. 상세페이지 운영 화면 검수는 통과했고 실제 OAuth 소유권 등록은 별도 미확인이다.
+현재 나머지17앱은50f이며 최신 전체18앱 최종 인증과 새 observer 결과는 없다. 검색 프로필 자기 예약이 최신12개 후보 밖으로 밀려 미사용 만료되는 문제의 [PR686](https://github.com/JRVector9/nomorevibe/pull/686)은 head `4fd6981b61cd447fd237dfc274a1fb561a3cf6b4`,4파일 수정·독립 소스 검토와 필수 CI40382748901 전체 성공 후 **2026-10-26 19:07:47 UTC** 병합했다. 최신 main `34cc2045cbb7105313861792adb37c035b64e70c`의 새 CI40383949515의 필수 check·웹/워커 이미지 발행도19:08 UTC대에 모두 성공했다. 검증한 PR tree·이미지를 재사용했으며 refresh-caches는 관문이 아니다. 운영은 아직 미반영이다.
 
-## 최신 배포 및 미확인 범위 — 2026-10-26 22:27 KST
+**2026-10-26 18:54:22 UTC** 실제 stock monitor에서 다섯 역할·scheduler·progress=ok를 확인했다. 영수증 `STATE/normal686-preflight-monitor-readback-20261027-a.private.json`, SHA `8f2ce086fdf5ec5f73503fb8c655709180ed76a54aa946dd6b981c7e0ed8a09f`. 이 결과는 현재 한 표본이며 새 배포·장기 정상 증거가 아니다.
 
-소스 PR668–679는 모두 병합했고 배포 목표는 `50f9239c1b33b853513a632ca197be45ab26398a`이다. text 주·예비는 이미 이 버전이다. 12:57:43 UTC 새 관측에서 제품 번역·한국어 문구의 실제 저장과 일반 운영 관문을 통과했다. 나머지16앱 변경도 반영했다.15개 앱 검증을 마쳤고 마지막 monitor는 새 버전·healthy runtime·수신처 응답을 확인했지만 한국어 문구 처리량 경보가 남아 최종480초 검증에서 중단됐다. 전체18앱 정상 완료로 세지 않는다. 상세페이지3건은 운영 데스크톱/모바일 검수를 통과했다. [현재 PR별 진행](docs/operations/2026-10-26-pr-priority-progress.md)과 [현재 인계](docs/CODEX_HANDOFF.md)가 아래 날짜별 설치 기록보다 우선한다.
+첫 자동 CI40381826340의 ledger8건은 role lease 추가 owner 필드의 strict Zod 입력 거절로 실패했다(SQL 원인 아님). `instanceId`·`bootId`만 투영하는2줄 수정 후 새head를 push했고 root+독립 소스 검토 후 후속 CI40382748901 전체 성공으로 병합했다. schema·dispatch·테스트는 그대로다. 당시 integration1·5가 실행 중이어서 이전 CI 전체 통과는 주장하지 않는다. 원 로그는 `STATE/ci686-ledger-job.private.log`에 비공개 보존한다.
 
-- **현재 릴리스 확인**: 완료된 앱을 재배포하지 않고 monitor UP·기존 일반 관문·실제 전체18앱 source/image/health를 새 읽기 전용 자료로 대조한다. 상세 정보 압축·GitHub 확인 진입·업데이트 최신3개의 운영 익명 화면은 확인했다. 배포 후 실제5·10·15분/6시간 관측과 별도24시간 관측을 구분한다. 예약이나 한 시점의 정상은 이후 통과·연속 무오류의 증거가 아니다.
-- **소유권 실제 사용자 경로**: 개인 numeric ID와 조직 기본 브랜치 증명 파일의 실제 OAuth·claim·파일 commit/check·멤버 관리,30일 재검증·파일 삭제 회수는 아직 수행하지 않았다. 구현의 로컬 보안/DB 시험과 익명 운영 화면 확인을 실제 소유권 등록 성공으로 세지 않는다.
-- **기존 미완료 유지**: 미사용 독립 사람 라벨5개와 `apply_enabled=false`, 미복구 후보3건 및 보강 적체의 실제 업무 품질 결과, 불명확한 개인 Star 요청 잠금, 전체 호스트/실제 저장 정체/반복 부팅 격리·알림 수신 드릴, 예비 publisher 적격 신규 발행은 별도 항목이다.
-- **백업·용량**: 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·PgBouncer 용량·실제 nonempty `media_assets` 바이너리 복원은 남아 있다. 9월29일 새 논리 dump와 `og_images` 격리복원은 이미 검증했으므로 다시 미실행으로 표시하지 않는다. 아래 백업 항목의 경계를 유지한다.
+**18:56:10 UTC** 실제 읽기에서 KO `has_error=true`, 나머지5작업 false였다. 영수증 `STATE/text-job-errors686-20261027-a.private.json`, SHA `ade300c0991de0c9f8e856e2aab072c6099616a4aa2be536fa0cbfa5f75f8a5c`. 오류 reset·새 DRAIN 변경은 없으며18:54 관문 통과는 해당 시점의 표본으로만 유지한다.
 
+- **이번 배포 마무리**: root가 새 main34cc·깨끗한 `/Users/jr/Desktop/projects/nomorevibe-release-686-20261027`에서 공식 전체18 plan 세션24626을19:09 UTC부터 실행 중이다. 경로 `STATE/full18-release686-20261027-a`, `--migration-verified`. 아직 plan 파일·서비스 POST·실제 run은 없다. 계획 결과를 검토한 뒤 한 번 실행하고 최종 영수증을 확인한다. 배포 후 monitor UP·두 수신처·기존 일반 관문까지 실제 확인한다. 현재 미완료이며 root가 실제 결과로 갱신한다.
+- **경과 관측**: 최종 인증 뒤 새5·10·15분/6시간 observer를 시작하고 각 실제 결과를 수집한다. 별도24시간도 남아 있다. 예약·PID·한 시점 정상만으로 후속 통과나 연속 무오류를 주장하지 않는다.
+- **소유권 사용자 경로**: 상세페이지3건의 운영 익명 화면은 확인했다. 실제 OAuth·개인/조직 claim·기본 브랜치 증명 파일·멤버 관리·30일 재검증·파일 삭제 회수는 미실행이다.
+- **기존 미완료 유지**: 미사용 독립 사람 라벨5개·assist `apply_enabled=false`, 미복구 후보3건·보강 적체 실제 품질, 불명확한 개인 Star 잠금, 전체 호스트/저장 정체/반복 부팅·알림 수신 드릴·예비 publisher 적격 신규 발행을 보존한다.
+- **백업·용량**: 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·PgBouncer 용량·실제 nonempty media_assets 바이너리 복원이 남아 있다. 이미 확인한9월29일 논리 dump·og_images 격리복원은 다시 미실행으로 표시하지 않는다.
 
-## AI2 운영 전환 후 현재 상태 — 2026-10-26
-
-최신 운영은 main `df1e6411`·18앱·DB journal134·capacity OPEN revision3이다. AI2는 GPU3090 직접 연결을 기본, abcLLM Supa를 대체로 사용하며 두 경로 no-thinking·총32k/출력10k 제한을 적용했다. 실제 GPU1,112건과 자동 대체345건의 종료·DB 결과를 확인했다. 이전 날짜의 앱 수·미확정 요청·미배포 설명은 현재 상태로 해석하지 않는다. [현재 실측 및 남은 PR 범위](docs/operations/2026-10-26-ai2-native-recovery.md)를 우선한다.
-
-진행 중: 의도한 중단 중 text 재시작 방지, reason 번역 예약 배치 회복, 배포 자동 검증 오류 수정. 아래 사람 라벨·백업 복구·장기 관측 등 미완료 경계는 별도로 유지한다.
-
+AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 그대로다. **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** [PR별 진행](docs/operations/2026-10-26-pr-priority-progress.md)과 [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 삭제·재해석하지 않고 그대로 보존한다.
 
 ## LLM 보강 운영 전환 — 2026-10-25
 
