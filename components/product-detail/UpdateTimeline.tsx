@@ -1,17 +1,11 @@
 "use client";
 
 import { useLocale, useTranslations } from "@/lib/i18n/context";
-import { useState } from "react";
 import { formatNumber, formatDate } from "@/lib/i18n/format";
 import type { ProductDetailView } from "@/lib/domain/products/detail-view";
 import { safeExternalUrl } from "./format";
-import { trackAttrs } from "@/lib/analytics/attrs";
-
-type Filter = "all" | "maker" | "automatic";
-
-const FILTERS: Array<{ key: Filter }> = [{ key: "all" }, { key: "maker" }, { key: "automatic" }];
-/** 처음에 보여 주는 줄 수 — PostHog 는 30일에 179건이라 다 펼치면 페이지가 그것으로 가득 찬다 */
-const FIRST = 8;
+/** 출처를 나누지 않고 최신 세 건만 보여 상세 페이지를 짧게 유지한다. */
+const LIMIT = 3;
 const DAY = 86_400_000;
 
 /** 최근 30일 안의 건수 — 발행일이 없으면 처음 본 날로 센다 */
@@ -21,19 +15,15 @@ function countRecent(updates: ProductDetailView["updates"], now: Date): number {
 }
 
 /**
- * 업데이트 — 한 건이 한 줄(날짜 · 제목 · 출처). 처음엔 여덟 줄, 나머지는 '모두 보기'로.
+ * 업데이트 — 출처를 섞어 최신 세 줄(날짜 · 제목 · 출처)만 표시한다.
  * now 는 서버가 읽은 시각이다 — 날짜의 '올해'와 30일 셈을 서버·브라우저가 같게 낸다.
  */
 export function UpdateTimeline({ updates, now }: { updates: ProductDetailView["updates"]; now: Date }) {
   const t = useTranslations("detail");
   const locale = useLocale();
-  const [filter, setFilter] = useState<Filter>("all");
-  const [expanded, setExpanded] = useState(false);
-  const visible = updates.filter((update) => (
-    filter === "all" || (filter === "maker" ? update.sourceKind === "maker" : update.sourceKind !== "maker")
-  ));
   const recent = countRecent(updates, now);
-  const rows = expanded ? visible : visible.slice(0, FIRST);
+  // 상세 조회가 발행일(없으면 관측일) 내림차순으로 정렬한다.
+  const rows = updates.slice(0, LIMIT);
   // 해가 다른 날짜("2025년 10월 8일")가 보이면 날짜 칸을 넓힌다 — 줄마다 같은 너비라야 제목이 한 줄로 맞는다
   const year = new Intl.DateTimeFormat("en", { timeZone: "Asia/Seoul", year: "numeric" });
   const wide = locale !== "ko" || rows.some((update) => year.format(update.publishedAt ?? update.observedAt) !== year.format(now));
@@ -47,29 +37,10 @@ export function UpdateTimeline({ updates, now }: { updates: ProductDetailView["u
             {recent > 0 ? t("updates.recent", { count: formatNumber(recent, locale) }) : t("updates.count", { count: formatNumber(updates.length, locale) })}
           </span>
         </h2>
-        {/* 필터도 누르는 단추라 다른 단추처럼 44px */}
-        <div className="inline-flex gap-0.5 rounded-full bg-bg-soft p-0.5" role="tablist" aria-label={t("updates.filter")}>
-          {FILTERS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              onClick={() => setFilter(item.key)}
-              {...trackAttrs("filter_change", { filter_name: "updates", filter_value: item.key, surface: "product" })}
-              aria-selected={filter === item.key}
-              className={`inline-flex h-11 items-center rounded-full px-3.5 text-[13px] ${
-                filter === item.key ? "bg-bg-card font-medium text-fg shadow-[0_1px_4px_rgba(0,0,0,0.08)]" : "text-fg-2 hover:text-fg"
-              }`}
-            >
-              {t(`updates.filter.${item.key}`)}
-            </button>
-          ))}
-        </div>
+        <span className="text-[13px] text-fg-2">{t("updates.filter.all")}</span>
       </div>
-      {visible.length === 0 ? (
-        <p className="m-0 text-[14px] text-fg-2">
-          {updates.length === 0 ? t("updates.empty") : t("updates.emptySource")}
-        </p>
+      {rows.length === 0 ? (
+        <p className="m-0 text-[14px] text-fg-2">{t("updates.empty")}</p>
       ) : (
         <ol className="m-0 flex list-none flex-col border-t border-line p-0">
           {rows.map((update) => {
@@ -88,12 +59,6 @@ export function UpdateTimeline({ updates, now }: { updates: ProductDetailView["u
             );
           })}
         </ol>
-      )}
-      {visible.length > FIRST && (
-        <button type="button" onClick={() => setExpanded((value) => !value)} className="inline-flex min-h-11 items-center self-start text-[13px] text-accent-ink hover:underline"
-          {...trackAttrs("select_content", { content_type: "updates", content_id: expanded ? "collapse" : "expand", surface: "product" })}>
-          {expanded ? t("action.collapse") : t("updates.all", { count: formatNumber(visible.length, locale) })}
-        </button>
       )}
     </section>
   );
