@@ -44,7 +44,8 @@ Tailscale [HTTPS 8443](https://onetwoday.tail02799e.ts.net:8443/)으로 수신�
 새 역할 `nomorevibe_monitor_20261022`를 주 DB에 만들었다. 기존 역할이 있으면 생성을 거절하는 절차를 사용했고
 오프라인 SCRAM verifier를 전달해 SQL·명령 인자·출력에 평문 비밀번호를 넣지 않았다.
 역할은 LOGIN·connection limit 2, 기본 `default_transaction_read_only=on`, `statement_timeout=10s`, UTC다.
-DB CONNECT·public USAGE와 아래 25개 표의 SELECT를 허용하고, 역할 플래그·읽기 범위·실제 UPDATE 거절을 확인했다.
+초기 연결에서 DB CONNECT·public USAGE와 기존 25개 표의 SELECT를 허용하고, 역할 플래그·읽기 범위·실제 UPDATE 거절을 확인했다.
+재프로비저닝의 SELECT 검사 목록에는 이후 추가된 `public.dr_writer_fence`도 포함한다.
 
 ```text
 role_leases                  operations_observations
@@ -59,12 +60,25 @@ product_links                product_evidence_sources
 agent_repository_scans       repository_ai_levels
 agent_repository_claims      uptime_control
 uptime_claims                product_health
-uptime_host_breakers
+uptime_host_breakers          dr_writer_fence
 ```
 
-뒤의 5개는 agent-scan/uptime 모드에 따라 읽는 표이며 현재는 모두 존재해 25개를 검증했다.
+초기 25개 중 `agent_repository_claims`부터 `uptime_host_breakers`까지 5개는 agent-scan/uptime 모드에 따라 읽으며, 당시 모두 존재해 검증했다.
 일반 앱 계정을 복사하거나 PUBLIC의 권한을 바꾸지 않았다. 감시자는 Tailscale 경로의 PostgreSQL 직접 5432를 사용한다.
 `DATABASE_URL`이 전용 SELECT 계정을 가리키며, `READ_DATABASE_URL`을 대신 사용하는 경로가 아니다.
+
+2026-10-27에는 현재 main `34cc2045`의 감시 읽기에 필요한 `public.dr_writer_fence` SELECT 누락을 감사 **20513**으로 보완했다.
+`readModelCapacityControlObservation()`은 행 잠금 없이 `to_jsonb(f)`로 fence의 전체 행을 읽으므로 일부 컬럼 권한만으로 대신하지 않고 테이블 SELECT를 확인한다.
+운영 역할의 기본 읽기 전용은 on, 해당 표의 SELECT는 true·쓰기는 false임을 재확인했다. 신규 프로비저닝에도 다음 권한과 검사를 포함하며 쓰기 권한은 부여하지 않는다.
+
+```sql
+GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_monitor_20261022;
+SELECT has_table_privilege('nomorevibe_monitor_20261022', 'public.dr_writer_fence', 'SELECT') AS can_select,
+       (has_any_column_privilege('nomorevibe_monitor_20261022', 'public.dr_writer_fence', 'INSERT,UPDATE')
+        OR has_table_privilege('nomorevibe_monitor_20261022', 'public.dr_writer_fence', 'DELETE,TRUNCATE')) AS can_write;
+```
+
+기대값은 `can_select=true`, `can_write=false`다. 이 권한 확인은 새 monitor의 readiness·양쪽 Push UP이나 전체 정상 인증의 통과를 뜻하지 않는다.
 
 Push URL은 `MONITOR_PUSH_URL`과 `MONITOR_EXTERNAL_PUSH_URL`에만 주입했다. 신규 monitor 앱에만
 Dokploy `mounts.create`로 `/etc/resolv.conf`를 지정해 nameserver `100.100.100.100`을 사용했다.

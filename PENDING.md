@@ -1,24 +1,23 @@
 # 남은 작업
 
-## 현재 운영 마무리 — 2026-10-27, PR686 배포 전
+## 현재 미해결 — 2026-10-27, 전체18 source/runtime·6잡 재개 완료
 
-PR668–679·681–686은 병합했다. PR685 main `20493cfdf43b98bcb239bc8d097a705707da23d9`의 필수 자동 CI·웹/워커 이미지, DB0137/journal138 실제 적용·사후 검증, 6c 요청 감사20474 withdrawn, Connect20493 healthy1·종료 유예240초, 공식 OPEN20475를 완료했다. 비용 C272000·settled_at NULL·사용량 미확정과 원 실패는 보존한다. 소비한 stop·migration·canonical·finish·OPEN은 재실행하지 않는다.
+PR668–679·681–686은 병합했고 최신 main은 `34cc2045cbb7105313861792adb37c035b64e70c`다. PR686 필수 CI40382748901과 main CI40383949515의 필수 check·웹/워커 이미지가 성공했다. 전체18 source/runtime34cc를 실제 확인했으나 **정상 관문·monitor UP는 미통과**다. 관측은 한 번 시작했으며 미래 통과는 false다. 두 번째 own 재개30148도 실제 완료해 현재 text6잡은 모두 paused=false이며 계획된 pause는 없다. capacity OPEN20475는 그대로다.
 
-현재 나머지17앱은50f이며 최신 전체18앱 최종 인증과 새 observer 결과는 없다. 검색 프로필 자기 예약이 최신12개 후보 밖으로 밀려 미사용 만료되는 문제의 [PR686](https://github.com/JRVector9/nomorevibe/pull/686)은 head `4fd6981b61cd447fd237dfc274a1fb561a3cf6b4`,4파일 수정·독립 소스 검토와 필수 CI40382748901 전체 성공 후 **2026-10-26 19:07:47 UTC** 병합했다. 최신 main `34cc2045cbb7105313861792adb37c035b64e70c`의 새 CI40383949515의 필수 check·웹/워커 이미지 발행도19:08 UTC대에 모두 성공했다. 검증한 PR tree·이미지를 재사용했으며 refresh-caches는 관문이 아니다. 운영은 아직 미반영이다.
+DB0137/journal138 적용·사후 검증, 6c 요청 감사20474 withdrawn, Connect 직접 네이티브 실행·180초 종료 대기/240초 유예는 완료했다. 비용 C272000·settled_at NULL·사용량 미확정과 원 실패를 보존한다. PR686은 새 boot의1grant→1dispatch→1settled/generated를 **19:29:48.471 UTC** 실제 확인했고 새 profile 미사용 예약 만료는 없었다. 이 한 표본을 전체 업무·품질 정상으로 확대하지 않는다.
 
-**2026-10-26 18:54:22 UTC** 실제 stock monitor에서 다섯 역할·scheduler·progress=ok를 확인했다. 영수증 `STATE/normal686-preflight-monitor-readback-20261027-a.private.json`, SHA `8f2ce086fdf5ec5f73503fb8c655709180ed76a54aa946dd6b981c7e0ed8a09f`. 이 결과는 현재 한 표본이며 새 배포·장기 정상 증거가 아니다.
+실행b는 Git7앱34cc 검증 뒤 progress 관문에서 중단했다. 새 실행C는 이7앱을 유지하고11앱을 선택해10앱 verified·monitor latest done/healthy1을 확인했으나 **19:47:10 UTC monitor 최종 source/health/push 증명 timeout**으로 중단했다. 감시 역할의 실제 PG42501·dr_writer_fence SELECT 누락을 확인해 root가 **SELECT만 한 번 보완·감사20513**을 남겼다. 쓰기 불가·읽기 전용 설정과 앱·모델 설정은 유지한다. C나 grant·기존 stop/migration/canonical/pause/resume once를 재실행하지 않는다.
 
-첫 자동 CI40381826340의 ledger8건은 role lease 추가 owner 필드의 strict Zod 입력 거절로 실패했다(SQL 원인 아님). `instanceId`·`bootId`만 투영하는2줄 수정 후 새head를 push했고 root+독립 소스 검토 후 후속 CI40382748901 전체 성공으로 병합했다. schema·dispatch·테스트는 그대로다. 당시 integration1·5가 실행 중이어서 이전 CI 전체 통과는 주장하지 않는다. 원 로그는 `STATE/ci686-ledger-job.private.log`에 비공개 보존한다.
-
-**18:56:10 UTC** 실제 읽기에서 KO `has_error=true`, 나머지5작업 false였다. 영수증 `STATE/text-job-errors686-20261027-a.private.json`, SHA `ade300c0991de0c9f8e856e2aab072c6099616a4aa2be536fa0cbfa5f75f8a5c`. 오류 reset·새 DRAIN 변경은 없으며18:54 관문 통과는 해당 시점의 표본으로만 유지한다.
-
-- **이번 배포 마무리**: root가 새 main34cc·깨끗한 `/Users/jr/Desktop/projects/nomorevibe-release-686-20261027`에서 공식 전체18 plan 세션24626을19:09 UTC부터 실행 중이다. 경로 `STATE/full18-release686-20261027-a`, `--migration-verified`. 아직 plan 파일·서비스 POST·실제 run은 없다. 계획 결과를 검토한 뒤 한 번 실행하고 최종 영수증을 확인한다. 배포 후 monitor UP·두 수신처·기존 일반 관문까지 실제 확인한다. 현재 미완료이며 root가 실제 결과로 갱신한다.
-- **경과 관측**: 최종 인증 뒤 새5·10·15분/6시간 observer를 시작하고 각 실제 결과를 수집한다. 별도24시간도 남아 있다. 예약·PID·한 시점 정상만으로 후속 통과나 연속 무오류를 주장하지 않는다.
-- **소유권 사용자 경로**: 상세페이지3건의 운영 익명 화면은 확인했다. 실제 OAuth·개인/조직 claim·기본 브랜치 증명 파일·멤버 관리·30일 재검증·파일 삭제 회수는 미실행이다.
-- **기존 미완료 유지**: 미사용 독립 사람 라벨5개·assist `apply_enabled=false`, 미복구 후보3건·보강 적체 실제 품질, 불명확한 개인 Star 잠금, 전체 호스트/저장 정체/반복 부팅·알림 수신 드릴·예비 publisher 적격 신규 발행을 보존한다.
+- **source/runtime 확인 완료·정상 인증 아님**: 제한된 읽기 증명97182 EXIT0,19:56:03.736950 UTC. stock verify_fleet selected11+retained7 전체18 확인. `STATE/full18-release686-source-runtime-20261027/source-runtime.final.private.json`, SHA `1ce7da702b3b6a01423867ffddabf8c53977820fbd9499e95810363edb0de0da`; result의 normalCompletionCertified=false를 유지한다. 원 C와62719 monitor timeout 실패는 보존한다.
+- **현재 경보**:19:56 normalGate는 reviewer owner_mismatch·progress alarm이었다. **최신80777 EXIT0(19:58:05.270076 UTC, `STATE/final-current686-readback-20261027-b.private.json`)에서 reviewer 소유권은 자연 해소돼 모든5역할·scheduler ready이며 ONLY progress=alarm만 남았다.** 정상 관문은 여전히 false다. FIRST110/SECOND71 대기·진행5분0, reason-translate9287 무진행, keywords14468/translate113147/KO542 upstream_stalled. 역할 생존·scheduler·lanes와 별개인 실제 업무 경보를 완화하지 않는다. monitor 두 ACK/fresh는 true여도 UP=false다.
+- **새 Deepseek 미확정1건**:19:58 UTC대 `STATE/capacity-final686-readback-20261027-a.private.json`에서 OPEN/epoch1/revision3 유지, local-human-deepseek/m3-mlx/reviewer의 INDETERMINATE1건을 확인했다(queued19:36:44.442/dispatched19:37:37.933/updated19:37:40.584 UTC). active TEXT는 없다. 경보 원인/그룹 차단의 인과는 미입증이다. 과거6c와 다른 정확한 한 요청의 실제 물리/모델 종료 증거·현재 권한/CAS를 확인한 뒤 별도 회수를 검토한다. unknown을 지우거나 과거 once·종료 증거를 재사용하지 않는다.
+- **유지보수 종료 완료**: 두 번째 resume30148/감사20514–20519,19:54:59.077–19:55:02.865 UTC.6잡 모두 paused=false·계획된 pause 없음. pause/resume·배포·회수·migration·grant once를 재실행하지 않는다. SELECT20513 후 실제 읽기 오류는 해소됐다.
+- **진행 중 관측**: snapshot/hash에 결속한 stock observer는19:56:25.106637 UTC PID51355로 한 번 시작했다.5·10·15분/6시간, productionMutations0·futurePassed=false. 실제 결과는 경과 후 확인하고 실패시 중단된 driver를 재시작하거나 후속 표본을 통과로 채우지 않는다. 별도24시간도 남아 있다. 원문·시작/summary 경로와 로컬 읽기 명령은 인계에 있다.
+- **소유권 사용자 경로**: 상세페이지3건의 운영 익명 화면·로그인 진입은 확인했다. 실제 OAuth·개인/조직 claim·증명 파일·멤버 관리·30일 재검증·파일 삭제 회수는 미실행이다.
+- **기존 미완료**: 독립 사람 라벨5개·assist `apply_enabled=false`, 미복구 후보3건·보강 적체 품질, 불명확한 개인 Star 잠금, 전체 호스트/저장 정체/반복 부팅·알림 수신 드릴·예비 publisher 적격 신규 발행을 유지한다.
 - **백업·용량**: 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·PgBouncer 용량·실제 nonempty media_assets 바이너리 복원이 남아 있다. 이미 확인한9월29일 논리 dump·og_images 격리복원은 다시 미실행으로 표시하지 않는다.
 
-AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 그대로다. **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** [PR별 진행](docs/operations/2026-10-26-pr-priority-progress.md)과 [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 삭제·재해석하지 않고 그대로 보존한다.
+AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 그대로다. **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** PR686 첫 CI의 strict owner projection 실패·수정·후속 성공 이력은 [보고서](docs/operations/2026-10-26-pr-priority-progress.md)에 남겼다. [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 그대로 보존한다.
 
 ## LLM 보강 운영 전환 — 2026-10-25
 
