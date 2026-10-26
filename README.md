@@ -1,3 +1,5 @@
+[AI2 GPU3090 직접 연결·Supa 자동 대체 운영 실측](docs/operations/2026-10-26-ai2-native-recovery.md)
+
 # NoMoreVibe
 
 [![CI](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml/badge.svg)](https://github.com/JRVector9/nomorevibe/actions/workflows/ci.yml)
