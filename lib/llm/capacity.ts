@@ -1,3 +1,4 @@
+import { cliExecutorEvidenceSchema } from "./cli-executor-boundary-contract";
 import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 import { createHash } from "node:crypto";
@@ -895,6 +896,7 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
  * 회수는 점유만 푼다: dispatch binding(chargedTokens = C)은 그대로이고 정산(settled)·사용량 증거를 만들지 않는다.
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
+  cliExecutorEvidenceSchema,
   z.object({ ...releaseBase, kind: z.literal("provider_boundary_exit"), fromState: z.literal("indeterminate"), dispatchAt: isoMillis,
     bindingHash: sha64, reference: identity(400), plan: providerBoundaryPlanSchema, receipt: providerBoundaryReceiptSchema }).strict(),
   z.object({ ...releaseBase, kind: z.literal("process_group_exit"), dispatchAt: isoMillis,

@@ -2266,6 +2266,24 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     oldGeneration: row.epoch !== state.epoch || row.revision !== state.revision || row.policyHash !== state.policyHash, localEnd }));
   if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
   const evidence = modelDispatchReleaseEvidenceSchema.parse(verdict);
+  if (evidence.kind === "cli_executor_boundary_exit") {
+    const p = evidence.plan, q = p.request;
+    const [exact] = await tx.execute<{ at: string; lineage_id: string; writer_epoch: string; fence_state: string }>(sql`SELECT
+      to_char(c.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at,
+      f.lineage_id::text, f.writer_epoch::text, f.state AS fence_state FROM model_capacity_control c CROSS JOIN dr_writer_fence f WHERE c.id=1 AND f.id=1`);
+    const b = row.dispatchBinding;
+    if (state.fenced || state.mode !== "draining" || state.epoch !== p.control.epoch || state.revision !== p.control.revision
+      || state.policyHash !== p.control.policyHash || exact.at !== p.control.updatedAt || exact.fence_state !== "active"
+      || exact.lineage_id !== p.writer.lineageId || Number(exact.writer_epoch) !== p.writer.writerEpoch
+      || row.state !== "dispatched" || row.terminalEvidence !== null || row.settledAt !== null || row.token === null
+      || createHash("sha256").update(row.token).digest("hex") !== q.tokenHash
+      || row.epoch !== q.epoch || row.revision !== q.revision || row.policyHash !== q.policyHash
+      || row.providerBudgetId !== q.providerBudgetId || row.groupId !== q.groupId || row.routeId !== q.routeId
+      || row.provider !== q.provider || row.model !== q.model || row.logicalWorkKey !== q.logicalWorkKey
+      || !b || b.kind !== "publication_classify_cli" || cliDispatchBindingHash(b) !== row.dispatchBindingHash || b.inputHash !== q.inputHash || b.payloadHash !== q.payloadHash
+      || b.totalTokenBound !== q.totalTokenBound || b.chargedTokens !== q.chargedTokens || !isDeepStrictEqual(b.transport, q.transport))
+      fail("model_capacity_cli_executor_boundary_conflict");
+  }
   if (evidence.kind === "provider_boundary_exit") {
     const expected = evidence.plan.request, expectedControl = evidence.plan.control;
     const [exactControl] = await tx.execute<{ at: string }>(sql`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
@@ -2301,7 +2319,7 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
     || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence,
-    terminalEvidenceHash: evidence.kind === "provider_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
+    terminalEvidenceHash: evidence.kind === "provider_boundary_exit" || evidence.kind === "cli_executor_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
     updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
   if (!changed) fail("model_capacity_release_state_changed");
   await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);

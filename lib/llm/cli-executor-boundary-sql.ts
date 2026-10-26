@@ -1,0 +1,3 @@
+/** The migration appends these branches after each complete predecessor predicate. */
+export const cliExecutorRequestSql = "nmv_cli_executor_request_valid(to_jsonb(model_capacity_requests))";
+export const cliExecutorEventSql = "coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)";
