@@ -939,6 +939,34 @@
       "when": 1794086400045,
       "tag": "0133_historical_systemd_provider_boundary",
       "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1794086400046,
+      "tag": "0134_cli_executor_boundary_exit",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1794086400047,
+      "tag": "0135_cli_executor_removed_boundary_exit",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1794086400048,
+      "tag": "0136_cli_executor_indeterminate_boundary_exit",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1794086400049,
+      "tag": "0137_cli_executor_indeterminate_removed_boundary_exit",
+      "breakpoints": true
     }
   ]
 }

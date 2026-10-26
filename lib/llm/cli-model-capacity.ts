@@ -124,7 +124,7 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
     return { kind: "not_started" };
   }
   let outcome: CliCallOutcome;
-  try { outcome = await runReservedCliCall(call, ref, { signal }); }
+  try { outcome = await runReservedCliCall(call, ref, { signal, beforeSpawn: work.beforeSpawn }); }
   catch (error) {
     let failure: unknown = error;
     try {

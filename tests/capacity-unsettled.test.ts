@@ -64,6 +64,21 @@ it("CLI runner: a not_started settlement failure is marked commit_unknown; succe
   expect(mocks.reconcileCli).toHaveBeenCalledExactlyOnceWith(terminal); expect(mocks.unknown).not.toHaveBeenCalled();
 });
 
+it("CLI runner: carries the final admission predicate through file preparation and reconciles not_started once", async () => {
+  let admitted = true;
+  const beforeSpawn = vi.fn(() => admitted);
+  mocks.run.mockImplementation(async (_call, _dispatch, options) => {
+    expect(options.beforeSpawn).toBe(beforeSpawn);
+    admitted = false;
+    expect(options.beforeSpawn()).toBe(false);
+    return { result: { kind: "cancelled" }, terminal, indeterminate: null };
+  });
+  mocks.read.mockReturnValue({ ending: "not_started" }); mocks.reconcileCli.mockResolvedValue({ kind: "settled" });
+  expect(await runCliWithModelCapacity({} as never, undefined, { ...work(), beforeSpawn })).toEqual({ kind: "not_started" });
+  expect(mocks.reconcileCli).toHaveBeenCalledExactlyOnceWith(terminal);
+  expect(mocks.unknown).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+});
+
 it("text coordinator (reason translation): a failed terminal settlement is marked commit_unknown with both errors kept", async () => {
   const body = "This original reason describes a deployed useful task tracker.", hash = createHash("sha256").update(body).digest("hex");
   vi.stubEnv("ABCLLM_API_KEY", "test-key"); vi.stubEnv("ROLE_LEASE_ROLE", "text");

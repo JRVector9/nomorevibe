@@ -23,8 +23,9 @@ const url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });
 const client = postgres(url.toString(), { max: 2, prepare: false, onnotice: () => {} });
 const fullJournal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8"));
-// Exercise the additive 0133 migration over the complete nonempty 133-entry predecessor.
-const journal = fullJournal;
+// Exercise exactly the additive 0133 migration over its complete nonempty 133-entry predecessor.
+// Later migrations have their own contracts and must not change this historical boundary.
+const journal = { ...fullJournal, entries: fullJournal.entries.filter((entry: { idx: number }) => entry.idx < 134) };
 
 const requestId = randomUUID(), token = randomUUID(), fx = historicalSystemdOwnerFixture(), hash = "a".repeat(64);
 const inputWork: SearchVerifyInput = { member: { productId: 17, slug: "synthetic-systemd", evidenceHash: hash,

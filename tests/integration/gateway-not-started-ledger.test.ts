@@ -291,10 +291,9 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     for (const name of [LEFT[1], ...UNTOUCHED.slice(3).filter(name => name !== eventKind)])
       expect(current[name], `${name}: current unchanged CHECK`).toBe(priorBoundary[name]);
 
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const [latestApplied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
-    expect(latestApplied.count).toBe(journal.entries.length);
-    const latest = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    // Keep the historical 0131→0132 equality at its exact migration boundary.
+    await migrateThrough(132);
+    const afterAi2 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const ai2Checks = [...LEFT, ...UNTOUCHED.slice(0, 2)];
     const ai2Migration = readFileSync(path.join(root, "drizzle", `${journal.entries.find(entry => entry.idx === 132)!.tag}.sql`), "utf8");
     for (const name of ai2Checks) {
@@ -307,11 +306,76 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_ai2_expected CHECK ((${inner(current[name])}) OR (${branch}))`);
       try {
         const expected = await constraintDefs(step, ["f2_ai2_expected"]);
-        expect(latest[name], `${name}: entire 0131 predecessor`).toBe(expected.f2_ai2_expected);
+        expect(afterAi2[name], `${name}: entire 0131 predecessor`).toBe(expected.f2_ai2_expected);
       } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_ai2_expected`); }
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !ai2Checks.includes(name)))
-      expect(latest[name], `${name}: 0132 unchanged CHECK`).toBe(current[name]);
+      expect(afterAi2[name], `${name}: 0132 unchanged CHECK`).toBe(current[name]);
+
+    // 0133 leaves these CHECKs intact. 0134 adds only the strict CLI executor
+    // branches; reparse the whole captured predecessor without normalizing SQL.
+    await migrateThrough(134);
+    const [latestApplied] = await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
+    expect(latestApplied.count).toBe(journal.entries.filter(entry => entry.idx <= 134).length);
+    const latest = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const cliChecks: readonly string[] = [LEFT[0], ...UNTOUCHED.slice(0, 3), eventKind];
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind
+        ? "coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)"
+        : "nmv_cli_executor_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_cli_expected CHECK ((${inner(afterAi2[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_cli_expected"]);
+        expect(latest[name], `${name}: entire 0132 predecessor plus strict 0134 branch`).toBe(expected.f2_cli_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_cli_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(latest[name], `${name}: 0134 unchanged CHECK`).toBe(afterAi2[name]);
+    // The whole compiled0134 predicate remains the left side of0135; reparse the exact new strict row-validator branch.
+    await migrateThrough(135);
+    const final = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind ? "nmv_cli_executor_removed_event_valid(to_jsonb(model_capacity_events))"
+        : "nmv_cli_executor_removed_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_removed_expected CHECK ((${inner(latest[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_removed_expected"]);
+        expect(final[name], `${name}: entire0134 predecessor plus strict0135 branch`).toBe(expected.f2_removed_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_removed_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(final[name], `${name}: 0135 unchanged CHECK`).toBe(latest[name]);
+    await migrateThrough(136);
+    const unknown = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind ? "nmv_cli_executor_indeterminate_event_valid(to_jsonb(model_capacity_events))"
+        : "nmv_cli_executor_indeterminate_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_unknown_expected CHECK ((${inner(final[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_unknown_expected"]);
+        expect(unknown[name], `${name}: entire0135 predecessor plus strict0136 branch`).toBe(expected.f2_unknown_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_unknown_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(unknown[name], `${name}: 0136 unchanged CHECK`).toBe(final[name]);
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const removedUnknown = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind ? "nmv_cli_executor_indeterminate_removed_event_valid(to_jsonb(model_capacity_events))"
+        : "nmv_cli_executor_indeterminate_removed_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_removed_unknown_expected CHECK ((${inner(unknown[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_removed_unknown_expected"]);
+        expect(removedUnknown[name], `${name}: entire0136 predecessor plus strict0137 branch`).toBe(expected.f2_removed_unknown_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_removed_unknown_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(removedUnknown[name], `${name}: 0137 unchanged CHECK`).toBe(unknown[name]);
+    expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
 

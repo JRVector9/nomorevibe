@@ -1,0 +1,2 @@
+export const cliExecutorIndeterminateRemovedRequestSql = "nmv_cli_executor_indeterminate_removed_request_valid(to_jsonb(model_capacity_requests))";
+export const cliExecutorIndeterminateRemovedEventSql = "nmv_cli_executor_indeterminate_removed_event_valid(to_jsonb(model_capacity_events))";

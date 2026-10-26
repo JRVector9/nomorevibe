@@ -77,4 +77,35 @@ describe('ConnectAgent native publisher boundary', () => {
     expect(fixture.call.mock.calls[1][0].args).toContain('--max-turns');
     expect(legacy).not.toHaveBeenCalled(); expect(agent.snapshot().busy).toBeNull();
   });
+  it('closes admission immediately but drains through the admitted native result and reconciliation promise', async () => {
+    const { agent, legacy } = create(); let reconciled!: () => void;
+    fixture.call.mockImplementation(() => new Promise(resolve => { reconciled = () => resolve({ kind: 'exit', code: 0,
+      stdout: JSON.stringify({ results: [{ id: 0, category: 'Productivity', reason: 'Tasks' }] }), stderr: '' }); }));
+    const running = agent.classify({ inputs: [input], definitions: DEFAULT_CATEGORY_DEFINITIONS, authority: authority() });
+    await vi.waitFor(() => expect(fixture.call).toHaveBeenCalledTimes(1));
+    let drained = false; const drain = agent.drain().then(() => { drained = true; });
+    expect(agent.snapshot().classifyReady).toBe(false);
+    await expect(agent.classify({ inputs: [input], definitions: DEFAULT_CATEGORY_DEFINITIONS, authority: authority() }))
+      .rejects.toMatchObject({ reason: 'draining' });
+    await Promise.resolve(); expect(drained).toBe(false); expect(fixture.call).toHaveBeenCalledTimes(1);
+    reconciled(); expect((await running).categories).toEqual(['Productivity']); await drain;
+    expect(drained).toBe(true); expect(legacy).not.toHaveBeenCalled();
+  });
+  it('does not start fallback after shutdown even when the admitted primary returns a settled failure', async () => {
+    const { agent, legacy } = create(); let primaryEnded!: () => void;
+    fixture.call.mockImplementation(() => new Promise(resolve => { primaryEnded = () => resolve({ kind: 'exit', code: 1, stdout: '', stderr: 'rate limit' }); }));
+    const running = agent.classify({ inputs: [input], definitions: DEFAULT_CATEGORY_DEFINITIONS, authority: authority() });
+    const rejected = expect(running).rejects.toMatchObject({ reason: 'draining' });
+    await vi.waitFor(() => expect(fixture.call).toHaveBeenCalledTimes(1));
+    const drain = agent.drain(); const drainRejected = expect(drain).rejects.toMatchObject({ reason: 'draining' });
+    primaryEnded(); await rejected; await drainRejected;
+    expect(fixture.call).toHaveBeenCalledTimes(1); expect(legacy).not.toHaveBeenCalled();
+  });
+  it('does not turn a prior unknown physical end into a successful shutdown drain', async () => {
+    const { agent } = create(); fixture.call.mockRejectedValue(new CliPhysicalEndUnknownError());
+    await expect(agent.classify({ inputs: [input], definitions: DEFAULT_CATEGORY_DEFINITIONS, authority: authority() }))
+      .rejects.toBeInstanceOf(CliPhysicalEndUnknownError);
+    await expect(agent.drain()).rejects.toBeInstanceOf(CliPhysicalEndUnknownError);
+    expect(agent.snapshot().busy).toBe('classification_unknown');
+  });
 });
