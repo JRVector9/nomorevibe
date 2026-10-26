@@ -23,6 +23,7 @@ import { classifyLiveness, classifyScheduler, classifyStage, laneForJob, parseAg
   runtimeLaneStall, TEXT_PROGRESS_STAGE_JOBS, type AgentProviderFailure, type ProgressStageInput, type ProgressStageKey, type StageProgress } from "./worker-progress";
 import { readUptimeSplitStage } from "./uptime-split-repository";
 import { readTextStageProgress } from './text-stage-progress';
+import { readPublisherClassificationDrain } from './publisher-drain-progress';
 
 type ProgressJob = { name: string; nextScheduledAt: Date | null; notBefore: Date | null; lockedAt?: Date | null;
   leaseToken?: string | null; cursor?: unknown; lastError?: string | null };
@@ -71,6 +72,7 @@ export function buildWorkerProgress(
   agentScan: AgentScanModeState | null = null,
   reviewModes: ReviewStageMode[] = [],
   capacityMode: typeof modelCapacityControl.$inferSelect.mode = 'disabled',
+  publisherClassificationDraining = false,
 ): WorkerProgressReport {
   const instances = serviceInstancesFromObservations(observations);
   const liveness = (["scheduler", "crawler", "reviewer", "publisher", "maintenance", "text"] as const).map(role => {
@@ -111,6 +113,10 @@ export function buildWorkerProgress(
     // Retain their counters, and keep fresh item failures or a durable job failure alarmed.
     if (capacityHeld && stage.errors5m === 0 && !job?.lastError && result.reason === 'upstream_stalled')
       result = { ...result, reason: 'backoff', alarm: false, restartEligible: false };
+    // Publication can also run without a model. Only an exact current draining-classification observation explains its inactivity.
+    if (stage.key === 'publish' && capacityMode === 'draining' && publisherClassificationDraining
+      && !job?.lastError && result.reason === 'no_progress')
+      result = { ...result, held: true, reason: 'backoff', alarm: false, restartEligible: false };
     // The role supervisor cannot repair or own an independent AI consumer. Drain deliberately admits no new work.
     if (mode && mode.mode !== 'legacy') {
       result = { ...result, restartEligible: false };
@@ -350,14 +356,15 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   // claim 표로 셀 때는 잡 커서의 스캔 전 실패(legacy 스캔의 기록)를 쓰지 않는다
   const agentClaims = agentScanByClaims(agentScan);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
-  const [throughput, observations, evidence, split, text] = await Promise.all([
+  const [throughput, observations, evidence, split, text, publisherDraining] = await Promise.all([
     pipelineThroughput(settings, now), db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES)),
     evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
       agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims),
     // 응답 점검은 split claims 모드에서만 단계로 본다(legacy 는 지금처럼 maintenance 생존·줄로만 본다)
     readUptimeSplitStage(db),
     options.includeText === false ? Promise.resolve([]) : readTextStageProgress(),
+    capacity.mode === 'draining' ? readPublisherClassificationDrain() : Promise.resolve(false),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
-    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode);
+    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode, publisherDraining);
 }
