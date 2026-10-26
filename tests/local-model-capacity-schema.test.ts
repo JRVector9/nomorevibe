@@ -73,31 +73,34 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
   }
 });
 
-it("event kind CHECK는 0126·0127 전체를 보존하고 0134 exact CLI 회수만 추가한다", () => {
+it("event kind CHECK는 0126·0127·0134 전체를 보존하고 0135 exact removed CLI 회수만 추가한다", () => {
   const name = "model_capacity_events_kind_check", history = checkHistory(name);
-  const previous = history.find(entry => entry.idx === 126)!, waiting = history.find(entry => entry.idx === 127)!, latest = history.at(-1)!;
+  const previous = history.find(entry => entry.idx === 126)!, waiting = history.find(entry => entry.idx === 127)!, cli = history.find(entry => entry.idx === 134)!, latest = history.at(-1)!;
   const check = getTableConfig(modelCapacityEvents).checks.find(check => check.name === name)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0134_cli_executor_boundary_exit");
+  expect(latest.tag).toBe("0135_cli_executor_removed_boundary_exit");
   expect(expression).toBe(latest.expression);
   expect(waiting.expression).toBe(`(${previous.expression}) OR coalesce(kind='wait_cancelled' AND from_state='waiting' AND to_state='withdrawn' AND reason IS NULL AND evidence IS NULL,false)`);
-  expect(expression).toBe(`(${waiting.expression}) OR coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)`);
+  expect(cli.expression).toBe(`(${waiting.expression}) OR coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)`);
+  expect(expression).toBe(`(${cli.expression}) OR nmv_cli_executor_removed_event_valid(to_jsonb(model_capacity_events))`);
   expect(previous.expression).toContain("nmv_provider_boundary_release_valid(evidence)");
 });
 
-it("member CHECK는 0125·0126 전체와 0134의 exact predecessor 확장을 모두 보존한다", () => {
+it("member CHECK는 0125·0126·0134 전체와 0135의 exact predecessor 확장을 모두 보존한다", () => {
   const check = getTableConfig(modelCapacityRequests).checks.find(check => check.name === "model_capacity_requests_members_check")!;
   const history = checkHistory(check.name);
   const latest = history.at(-1)!;
   const publication = history.find(entry => entry.idx === 125)!;
   const provider = history.find(entry => entry.idx === 126)!;
+  const cli = history.find(entry => entry.idx === 134)!;
   const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0134_cli_executor_boundary_exit");
+  expect(latest.tag).toBe("0135_cli_executor_removed_boundary_exit");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
-  expect(expression).toBe(`(${provider.expression}) OR nmv_cli_executor_request_valid(to_jsonb(model_capacity_requests))`);
+  expect(cli.expression).toBe(`(${provider.expression}) OR nmv_cli_executor_request_valid(to_jsonb(model_capacity_requests))`);
+  expect(expression).toBe(`(${cli.expression}) OR nmv_cli_executor_removed_request_valid(to_jsonb(model_capacity_requests))`);
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {

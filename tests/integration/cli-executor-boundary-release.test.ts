@@ -79,7 +79,7 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
   expect(await rows()).toEqual(beforeRows);
   const after=await defs(),normalize=(s:string)=>s.replace(/::text\[\]|::text|::character varying/g,"").replace(/[()\s]/g,"");
   for(const n of names)expect(normalize(after[n]).startsWith(normalize(prior[n]))).toBe(true);
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(135);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
 });
 it("SQL and TS agree on canonical hash, strict proof shape and both trusted closure variants",async()=>{
   const e=await evidence();

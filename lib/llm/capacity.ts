@@ -1,3 +1,4 @@
+import { cliExecutorRemovedEvidenceSchema } from "./cli-executor-removed-boundary-contract";
 import { cliExecutorEvidenceSchema } from "./cli-executor-boundary-contract";
 import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
@@ -897,6 +898,7 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
   cliExecutorEvidenceSchema,
+  cliExecutorRemovedEvidenceSchema,
   z.object({ ...releaseBase, kind: z.literal("provider_boundary_exit"), fromState: z.literal("indeterminate"), dispatchAt: isoMillis,
     bindingHash: sha64, reference: identity(400), plan: providerBoundaryPlanSchema, receipt: providerBoundaryReceiptSchema }).strict(),
   z.object({ ...releaseBase, kind: z.literal("process_group_exit"), dispatchAt: isoMillis,
