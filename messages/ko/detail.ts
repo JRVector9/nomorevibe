@@ -268,7 +268,7 @@ export const detail = {
   "owner.claim.checkFile": "기본 브랜치에 올린 파일 확인",
   "owner.claim.proofExpired": "확인 파일의 기한이 지났거나 현재 계정·프로젝트와 맞지 않습니다. 새 파일을 만들어 다시 올려 주세요.",
   "owner.claim.proofMissing": "기본 브랜치에서 같은 내용의 확인 파일을 찾지 못했습니다. 경로와 내용을 확인하고, PR을 열었다면 기본 브랜치에 병합한 뒤 다시 눌러 주세요.",
-  "owner.claim.disabled": "현재 로그인 확인 기능을 사용할 수 없습니다. 웹사이트 운영자는 아래 도메인 확인 방법을 이용할 수 있습니다.",
+  "owner.claim.disabled": "현재 로그인 확인 기능을 사용할 수 없습니다. 다른 확인 방법은 아래 문의 링크를 이용해 주세요.",
   "owner.claim.checking": "저장소 소유 확인 중…",
   "owner.claim.returnHint": "로그인이 필요하면 로그인 화면으로 이동합니다. 로그인 후 이곳으로 돌아와 원하는 확인 버튼을 다시 눌러 주세요.",
   "owner.claim.manage": "내 프로젝트 관리하기",

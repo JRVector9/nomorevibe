@@ -2916,3 +2916,9 @@ git show --stat --oneline HEAD
 git status --short
 ```
 For a justified scoped re-run only, use `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@127.0.0.1:32794/nomorevibe_test npm run test:integration -- tests/integration/maker-repo-proof.test.ts`. Latest base/PR/deploy remain root-owned.
+
+### Ownership auth-off copy follow-up — 2026-10-26
+
+Objective/completed: the independent browser review found that auth-off installable projects referred to a domain-verification block that is only shown for websites. Updated only `owner.claim.disabled` in all four locale `messages/*/detail.ts` catalogs to point to the existing contact link for other verification options, which is present for both project modes. No behavior, auth, API, dependency, schema or deployment changes. No failed approach.
+
+Executed: `/Users/jr/.nvm/versions/node/v24.18.0/bin/node node_modules/vitest/vitest.mjs run tests/product-owner-claim.test.tsx` → EXIT0, 1 file/16 PASS; `npm run check:i18n` → EXIT0, 4 locales/9 namespaces/19 public pages; `git diff --check` → EXIT0. Remaining: independent reviewer final capture and root's latest-base/push/CI/merge/deployment. Exact next root commands: `cd /Users/jr/Desktop/projects/nomorevibe-maker-github-claim-20261026`; `git show --stat --oneline HEAD`; `git status --short`. No push or production action by this agent.

@@ -271,7 +271,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "owner.claim.checkFile": "Check the file on the default branch",
   "owner.claim.proofExpired": "The verification file expired or does not match this account and project. Generate and commit a new file.",
   "owner.claim.proofMissing": "We could not find matching file contents on the default branch. Check the path and contents. If you opened a pull request, merge it into the default branch before checking again.",
-  "owner.claim.disabled": "Sign-in verification is currently unavailable. Website operators can use domain verification below.",
+  "owner.claim.disabled": "Sign-in verification is currently unavailable. Use the contact link below for other verification options.",
   "owner.claim.checking": "Checking repository ownership…",
   "owner.claim.returnHint": "If needed, you will go to sign-in. After signing in, return here and press your chosen verification button again.",
   "owner.claim.manage": "Manage my projects",

@@ -271,7 +271,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "owner.claim.checkFile": "檢查預設分支上的檔案",
   "owner.claim.proofExpired": "驗證檔案已過期或與目前帳號及專案不符。請產生並提交新檔案。",
   "owner.claim.proofMissing": "在預設分支上未找到內容相符的檔案。請檢查路徑和內容。如果已建立提取要求，請合併至預設分支後再次檢查。",
-  "owner.claim.disabled": "目前無法透過登入驗證。網站營運者可使用下方的網域驗證。",
+  "owner.claim.disabled": "目前無法透過登入驗證。如需其他驗證方式，請使用下方的聯絡連結。",
   "owner.claim.checking": "正在檢查儲存庫所有權…",
   "owner.claim.returnHint": "如需登入，將前往登入頁面。登入後請回到此處，再次點擊所選的驗證按鈕。",
   "owner.claim.manage": "管理我的專案",

@@ -271,7 +271,7 @@ export const detail = defineCatalog<typeof KoreanDetail>()({
   "owner.claim.checkFile": "检查默认分支上的文件",
   "owner.claim.proofExpired": "验证文件已过期或与当前账号和项目不匹配。请生成并提交新文件。",
   "owner.claim.proofMissing": "在默认分支上未找到内容匹配的文件。请检查路径和内容。如果已创建拉取请求，请合并到默认分支后再次检查。",
-  "owner.claim.disabled": "目前无法通过登录验证。网站运营者可使用下方的域名验证。",
+  "owner.claim.disabled": "目前无法通过登录验证。如需其他验证方式，请使用下方的联系链接。",
   "owner.claim.checking": "正在检查仓库所有权…",
   "owner.claim.returnHint": "如需登录，将前往登录页面。登录后请回到此处，再次点击所选的验证按钮。",
   "owner.claim.manage": "管理我的项目",
