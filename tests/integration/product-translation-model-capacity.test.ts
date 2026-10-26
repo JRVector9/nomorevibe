@@ -8,7 +8,7 @@ import { products } from "@/lib/db/schema";
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { pendingProductTranslations, requestProductTranslations, prepareProductTranslationDispatch,
+import { pendingProductTranslations, pendingProductTranslationBatch, requestProductTranslations, prepareProductTranslationDispatch,
   type ProductTranslationTask } from "@/lib/domain/products/translations";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { requestTakedown } from "@/lib/domain/products/takedown";
@@ -178,13 +178,13 @@ async function blocking(pid: number, operation: Promise<unknown>) {
   await until(async () => { if (result) { if ("error" in result) throw result.error; throw new Error("fixture_operation_finished_before_block", { cause: result.value }); }
     return (await admin`SELECT pid FROM pg_stat_activity WHERE ${pid}=ANY(pg_blocking_pids(pid))`).length > 0; });
 }
-async function reserve(tasks: ProductTranslationTask[], lease: JobLease) {
+async function reserve(tasks: ProductTranslationTask[], lease: JobLease, owner = { instanceId: role.instanceId, bootId: role.bootId }) {
   const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
     text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })), { model: TRANSLATE_MODEL, timeoutMs: 20_000 });
   expect(call.kind).toBe("prepared"); if (call.kind !== "prepared") throw new Error("fixture_native_contract_required");
   const ready = await tracked(prepareProductTranslationDispatch(tasks, lease, { roleLease: role, call }));
   expect(ready.kind).toBe("ready"); if (ready.kind !== "ready" || !("members" in ready)) throw new Error("fixture_current_input_required");
-  const request: ModelCapacityRequest = { requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
+  const request: ModelCapacityRequest = { requestId: randomUUID(), owner,
     class: "background", pool: "text", routeId: jobName, provider: "abcllm", model: TRANSLATE_MODEL,
     workKey: `${productTranslationLogicalWorkKey(ready.members)}:${productTranslationInputHash({ members: ready.members, model: TRANSLATE_MODEL })}` };
   const slot = await tracked(requestProductTranslationModelSlot(request, ready.members));
@@ -420,6 +420,52 @@ it("settles the historical physical terminal before rejecting the expired curren
   });
 }), 20_000);
 
+
+it("keeps due retries inside pending status and attempt guards", exercise(async () => {
+  const pending = await seed(), exhausted = await seed(), ready = await seed();
+  await admin`UPDATE product_translations SET status='failed',attempts=4,retry_at=clock_timestamp()-interval '1 minute'
+    WHERE product_id=${exhausted.product.id}`;
+  await admin`UPDATE product_translations SET status='ready',text='Doc helps you manage documents',retry_at=clock_timestamp()-interval '1 minute'
+    WHERE product_id=${ready.product.id}`;
+  expect((await pendingProductTranslations(8)).map(task => task.source.id)).toEqual([pending.product.id]);
+}));
+
+it("preserves the same complete four-field product batch across waiting polls before native dispatch", exercise(async () => {
+  const first = await seed(["tagline", "description"]), second = await seed(["tagline", "description"]);
+  const blockers = [await seed(), await seed()];
+  const unrelated = await seed();
+  await admin`UPDATE product_translations SET status='failed',attempts=1,retry_at=clock_timestamp()-interval '1 minute'
+    WHERE product_id=${unrelated.product.id}`;
+  await server(async ({ bodies }) => {
+    const tasks = (await pendingProductTranslations(4));
+    expect(tasks).toHaveLength(4);
+    const reservations: Awaited<ReturnType<typeof reserve>>[] = [];
+    const bootId = randomUUID(); ownerBoots.add(bootId);
+    await custom(async lease => { for (const blocker of blockers) reservations.push(await reserve(blocker.tasks, lease, { instanceId: prefix, bootId })); });
+    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+    const [waiting] = await admin`SELECT request_id,work_key,logical_member_keys FROM model_capacity_requests
+      WHERE owner_instance_id=${prefix} AND state='waiting'`;
+    expect(waiting).toBeDefined();
+    expect(await pendingProductTranslationBatch(waiting.logical_member_keys)).toHaveLength(4);
+    for (let poll = 0; poll < 2; poll++) {
+      expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+      expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix} AND state='waiting'`)
+        .toEqual([{ request_id: waiting.request_id }]);
+      expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${waiting.request_id}::uuid ORDER BY id`).map(row => row.kind))
+        .toEqual(["queued"]);
+    }
+    for (const slot of reservations) await cancelReservedModelSlot(slot.reservation);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(1);
+    expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(3);
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${waiting.request_id}::uuid ORDER BY id`).map(row => row.kind))
+      .toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
+    expect((await admin`SELECT status FROM product_translations WHERE product_id=ANY(${[first.product.id,second.product.id]}::int[])`)
+      .every(row => row.status === "ready")).toBe(true);
+    expect(await admin`SELECT status,attempts,text FROM product_translations WHERE product_id=${unrelated.product.id}`)
+      .toEqual([{ status: "failed", attempts: 1, text: null }]);
+  });
+}));
 
 it("recovers an old product reservation before a changed overlapping queue batch and writes only recovered members", exercise(async () => {
   const first = await seed(), second = await seed(), fresh = [await seed(), await seed(), await seed()];
