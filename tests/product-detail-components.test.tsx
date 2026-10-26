@@ -726,7 +726,7 @@ describe("evidence product detail components", () => {
     expect(empty).not.toContain(">0<");
   });
 
-  it("offers maker/automatic filters without a connecting timeline line", () => {
+  it("shows all update sources without maker or automatic filter controls", () => {
     const older: ProductDetailView["updates"] = [
       {
         id: 1,
@@ -754,10 +754,9 @@ describe("evidence product detail components", () => {
       },
     ];
     const html = renderToStaticMarkup(<UpdateTimeline updates={older} now={new Date()} />);
-    expect(html.match(/role="tab"/g)).toHaveLength(3);
-    expect(html).toMatch(/aria-selected="true"[^>]*>전체</);
-    expect(html).toContain("메이커");
-    expect(html).toContain("자동 감지");
+    expect(html).not.toContain('role="tab');
+    expect(html).toContain(">전체</span>");
+    expect(html).toContain("표가 포함된 문서의 텍스트 추출을 개선했습니다");
     expect(html).toContain("v1.6.0 공개");
     expect(html).toContain("GitHub 릴리스 ↗");
     // 최근 30일 안의 것이 없으면 전체 건수만
@@ -768,7 +767,7 @@ describe("evidence product detail components", () => {
     expect(source).not.toMatch(/border-l(?:-|\s)|before:|after:/);
   });
 
-  it("shows the thirty-day count in the heading and only eight rows before the toggle", () => {
+  it("keeps the full thirty-day count but displays only the latest three updates", () => {
     const recent: ProductDetailView["updates"] = Array.from({ length: 10 }, (_, index) => ({
       id: 10 + index,
       sourceKind: "github_release" as const,
@@ -784,9 +783,12 @@ describe("evidence product detail components", () => {
     const old = { ...recent[0], id: 99, title: "v1.0.0", publishedAt: new Date(Date.now() - 60 * 86_400_000) };
     const html = renderToStaticMarkup(<UpdateTimeline updates={[...recent, old]} now={new Date()} />);
     expect(html).toContain("최근 30일 10건");
-    expect(html.match(/<li/g)).toHaveLength(8);
-    expect(html).toContain("11건 모두 보기");
-    expect(html).not.toContain("v2.8.0");
+    expect(html.match(/<li/g)).toHaveLength(3);
+    expect(html).toContain("v2.0.0");
+    expect(html).toContain("v2.2.0");
+    expect(html).not.toContain("v2.3.0");
+    expect(html).not.toContain("모두 보기");
+    expect(html).not.toContain("<button");
   });
 
   it("keeps source badges explicit and every touched visible font at least 13px", async () => {
