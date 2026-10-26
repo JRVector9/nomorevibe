@@ -99,6 +99,11 @@ function tokensPreserved(source: string, output: string, pattern: RegExp): boole
 }
 
 export type ProductTranslationCheck = { ok: true; text: string } | { ok: false; reason: string };
+/** Exact source tokens already required by the validator; shared with the product-only model prompt. */
+export function productTranslationProtectedTokens(text: string): string[] {
+  return [...new Set(text.match(/\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g) ?? [])];
+}
+
 export function checkProductTranslation(
   output: string, source: ProductTranslationSource, locale: ProductTranslationLocale, field: ProductTranslationField,
 ): ProductTranslationCheck {
@@ -111,8 +116,7 @@ export function checkProductTranslation(
   if (MARKUP.test(text) || /[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) return { ok: false, reason: "markup" };
   if (BOILERPLATE.test(text)) return { ok: false, reason: "boilerplate" };
   if (source.name.trim().length >= 2 && original.includes(source.name) && !text.includes(source.name)) return { ok: false, reason: "name_lost" };
-  const names = original.match(/\b(?:[A-Z]{2,}[A-Za-z0-9]*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*)\b/g) ?? [];
-  if (names.some((name) => !text.includes(name))) return { ok: false, reason: "term_lost" };
+  if (productTranslationProtectedTokens(original).some((token) => !text.includes(token))) return { ok: false, reason: "term_lost" };
   if (!tokensPreserved(original, text, NUMBERS)) return { ok: false, reason: "number_changed" };
   if (!tokensPreserved(original, text, URL) || !tokensPreserved(original, text, QUOTE)) return { ok: false, reason: "citation_changed" };
   const prose = text.replaceAll(source.name, "").replace(URL, "").replace(QUOTE, "");
