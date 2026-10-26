@@ -61,7 +61,7 @@ afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`
 it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",async()=>{
   expect(await rows()).toEqual(beforeRows);const after=await defs();
   for(const n of checks){const table=n===checks[4]?"model_capacity_events":"model_capacity_requests",fn=n===checks[4]?"event":"request";
-    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK ((${beforeChecks[n].slice(6)}) OR nmv_cli_executor_indeterminate_${fn}_valid(to_jsonb(${table})))`);
+    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (((${beforeChecks[n].slice(6)}) OR nmv_cli_executor_indeterminate_${fn}_valid(to_jsonb(${table}))) OR nmv_cli_executor_indeterminate_removed_${fn}_valid(to_jsonb(${table})))`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(137);
 });

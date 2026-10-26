@@ -347,7 +347,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
       expect(final[name], `${name}: 0135 unchanged CHECK`).toBe(latest[name]);
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    await migrateThrough(136);
     const unknown = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     for (const name of cliChecks) {
       const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
@@ -361,6 +361,20 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
       expect(unknown[name], `${name}: 0136 unchanged CHECK`).toBe(final[name]);
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const removedUnknown = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    for (const name of cliChecks) {
+      const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
+      const branch = name === eventKind ? "nmv_cli_executor_indeterminate_removed_event_valid(to_jsonb(model_capacity_events))"
+        : "nmv_cli_executor_indeterminate_removed_request_valid(to_jsonb(model_capacity_requests))";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_removed_unknown_expected CHECK ((${inner(unknown[name])}) OR ${branch})`);
+      try {
+        const expected = await constraintDefs(step, ["f2_removed_unknown_expected"]);
+        expect(removedUnknown[name], `${name}: entire0136 predecessor plus strict0137 branch`).toBe(expected.f2_removed_unknown_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_removed_unknown_expected`); }
+    }
+    for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
+      expect(removedUnknown[name], `${name}: 0137 unchanged CHECK`).toBe(unknown[name]);
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
