@@ -22,6 +22,8 @@ NEW_ID = 'sha256:' + 'f' * 64
 TARGET = {'sha': NEW, 'worker': runtime.shared.IMAGE_PREFIX['worker'] + NEW_ID,
           'web': runtime.shared.IMAGE_PREFIX['web'] + NEW_ID}
 MANIFEST = {sha: {'package-lock.json': hashlib.sha256(sha.encode()).hexdigest()} for sha in (OLD, NEW)}
+WEB_HEALTH = {'Test': ['CMD-SHELL', 'node -e "fetch(\'http://\'+(process.env.HOSTNAME||\'127.0.0.1\')+\':3000/api/live\').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"'],
+              'Interval': 30000000000, 'Timeout': 5000000000, 'StartPeriod': 60000000000, 'Retries': 3}
 
 
 def fixture():
@@ -78,7 +80,7 @@ def fixture():
             row = {'id': short + '-' + str(index), 'image': IMAGE_ID,
                    'config': {'Env': ['NODE_ENV=production', *env], 'Image': service_image,
                        'Entrypoint': entry, 'Cmd': cmd, 'Healthcheck': health, 'User': 'worker', 'WorkingDir': '/app',
-                       'Labels': {'com.docker.swarm.service.name': app['appName']}},
+                       'Labels': {**image_config['Labels'], 'com.docker.swarm.service.name': app['appName']}},
                    'mounts': [{'Type': 'bind', 'Source': '/private/data', 'Destination': '/state', 'RW': True}],
                    'state': {'Running': True, 'Health': {'Status': 'healthy'}}}
             if kind == 'web': row['directHealth'] = {'status': 200, 'body': {'status': 'ok', 'db': 'ok', 'release': OLD}}
@@ -86,7 +88,8 @@ def fixture():
             containers.append(row)
         rows[short] = {'serviceId': short, 'version': {'Index': 1}, 'updateStatus': {'State': 'completed'},
                        'serviceSpec': spec, 'specHash': runtime.git_rollout.spec_hash(spec),
-                       'containers': containers, 'images': [{'Id': IMAGE_ID, 'Config': image_config}]}
+                       'containers': containers, 'images': [{'Id': IMAGE_ID, 'RepoDigests': [service_image] if not github else [],
+                                                            'Config': image_config}]}
         apps[short], latest[short] = app, {'status': 'done', 'deploymentId': 'old-' + short}
     return apps, rows, latest
 
@@ -127,10 +130,12 @@ class RuntimeProofTests(unittest.TestCase):
             row['version']['Index'] += 1
             row['specHash'] = runtime.git_rollout.spec_hash(spec)
             row['images'][0]['Id'] = NEW_ID
+            row['images'][0]['RepoDigests'] = [cs['Image']] if app['sourceType'] == 'docker' else []
             row['images'][0]['Config']['Labels'].update({'org.opencontainers.image.revision': NEW, 'dev.nomorevibe.tree': NEW_TREE})
             for container in row['containers']:
                 container['image'] = NEW_ID; container['config']['Image'] = cs['Image']
                 container['config']['Env'] = ['NODE_ENV=production', *cs['Env']]
+                container['config']['Labels'].update({'org.opencontainers.image.revision': NEW, 'dev.nomorevibe.tree': NEW_TREE})
                 if kind == 'web': container['directHealth']['body']['release'] = NEW
                 else: container['codeHashes'] = copy.deepcopy(MANIFEST[NEW])
             self.client.deployments[short]['deploymentId'] = 'new-' + short
@@ -187,6 +192,81 @@ class RuntimeProofTests(unittest.TestCase):
         self.assertEqual(observed['connect-agent-m3']['image'], NEW_ID)
         self.assertEqual(baseline, before)
         self.assertNotIn('synthetic-secret', json.dumps(observed))
+
+    def web_health_transition(self):
+        baseline = self.collect(); baseline['target'] = TARGET
+        receipts = self.select(['web-mini', 'web-m3'])
+        for short in ('web-mini', 'web-m3'):
+            row = self.client.rows[short]
+            row['images'][0]['Config']['Healthcheck'] = copy.deepcopy(WEB_HEALTH)
+            for container in row['containers']: container['config']['Healthcheck'] = copy.deepcopy(WEB_HEALTH)
+        return baseline, receipts
+
+    def test_selected_web_may_inherit_health_only_from_the_verified_target_image(self):
+        baseline, receipts = self.web_health_transition()
+        before = copy.deepcopy(baseline)
+        observed = runtime.verify_fleet(self.client, baseline, TARGET, ['web-mini', 'web-m3'], receipts, ROOT)
+        self.assertEqual(observed['web-mini']['release'], NEW)
+        self.assertEqual(baseline, before)
+        old, new = baseline['runtime']['web-mini'], self.client.rows['web-mini']
+        self.assertFalse(runtime.git_rollout.runtime_contract_matches(old, new, NEW, deployment_id=NEW))
+        self.assertFalse(runtime._preserves_containers(old, new, NEW, 'web'))
+
+    def test_inherited_web_health_rejects_overrides_forged_images_missing_health_and_other_drift(self):
+        baseline, _ = self.web_health_transition()
+        original, current = baseline['runtime']['web-mini'], self.client.rows['web-mini']
+        def service(row): return row['serviceSpec']['TaskTemplate']['ContainerSpec']
+        def config(row): return row['containers'][0]['config']
+        def image(row): return row['images'][0]
+        mutations = [
+            ('service override', lambda old, new: service(new).update(Healthcheck=WEB_HEALTH)),
+            ('unchanged explicit null override', lambda old, new: (service(old).update(Healthcheck=None), service(new).update(Healthcheck=None))),
+            ('old image already had health', lambda old, new: image(old)['Config'].update(Healthcheck=WEB_HEALTH)),
+            ('arbitrary actual health', lambda old, new: config(new).update(Healthcheck={'Test': ['CMD', 'true']})),
+            ('missing image health', lambda old, new: image(new)['Config'].pop('Healthcheck')),
+            ('disabled image health', lambda old, new: (image(new)['Config'].update(Healthcheck={'Test': ['NONE']}), config(new).update(Healthcheck={'Test': ['NONE']}))),
+            ('wrong target reference', lambda old, new: (service(new).update(Image=TARGET['worker']), config(new).update(Image=TARGET['worker']), image(new).update(RepoDigests=[TARGET['worker']]))),
+            ('forged config image', lambda old, new: config(new).update(Image=service(old)['Image'])),
+            ('unlinked image id', lambda old, new: image(new).update(Id=IMAGE_ID)),
+            ('unlinked image digest', lambda old, new: image(new).update(RepoDigests=[service(old)['Image']])),
+            ('unlinked old image digest', lambda old, new: image(old).update(RepoDigests=[])),
+            ('duplicate image metadata', lambda old, new: new['images'].append(copy.deepcopy(image(new)))),
+            ('wrong image revision', lambda old, new: image(new)['Config']['Labels'].update({'org.opencontainers.image.revision': OLD})),
+            ('wrong old image revision', lambda old, new: image(old)['Config']['Labels'].update({'org.opencontainers.image.revision': NEW})),
+            ('missing image tree', lambda old, new: image(new)['Config']['Labels'].pop('dev.nomorevibe.tree')),
+            ('forged container revision', lambda old, new: config(new)['Labels'].update({'org.opencontainers.image.revision': OLD})),
+            ('command drift', lambda old, new: config(new).update(Cmd=['true'])),
+            ('entrypoint drift', lambda old, new: config(new).update(Entrypoint=['true'])),
+            ('user drift', lambda old, new: config(new).update(User='root'))]
+        for name, mutate in mutations:
+            old, new = copy.deepcopy(original), copy.deepcopy(current); mutate(old, new)
+            with self.subTest(name=name):
+                self.assertFalse(runtime.git_rollout.runtime_contract_matches(old, new, NEW, deployment_id=NEW, web_image=TARGET['web']))
+                self.assertFalse(runtime._preserves_containers(old, new, NEW, 'web', web_image=TARGET['web']))
+        for field, value in (('Env', ['RELEASE_TAG=' + NEW]), ('Mounts', []), ('Args', ['true'])):
+            old, new = copy.deepcopy(original), copy.deepcopy(current); service(new)[field] = value
+            with self.subTest(service_field=field):
+                self.assertFalse(runtime.git_rollout.runtime_contract_matches(old, new, NEW, deployment_id=NEW, web_image=TARGET['web']))
+        for mutate in (lambda row: config(row)['Env'].append('UNAPPROVED=1'),
+                       lambda row: row['containers'][0]['mounts'][0].update(Source='/elsewhere'),
+                       lambda row: config(row).update(Volumes={'/elsewhere': {}})):
+            new = copy.deepcopy(current); mutate(new)
+            with self.subTest(container_drift=mutate):
+                self.assertFalse(runtime._preserves_containers(original, new, NEW, 'web', web_image=TARGET['web']))
+        self.assertFalse(runtime._preserves_containers(original, current, NEW, 'connect-agent', web_image=TARGET['web']))
+
+    def test_final_checks_effective_web_health_against_its_actual_image_and_docker_health(self):
+        mutations = [lambda old, new: old['containers'][0]['config'].update(Healthcheck=WEB_HEALTH),
+            lambda old, new: new['containers'][0]['config'].pop('Healthcheck'),
+            lambda old, new: new['containers'][0]['state'].pop('Health'),
+            lambda old, new: new['containers'][0]['state']['Health'].update(Status='unhealthy'),
+            lambda old, new: (new['images'][0]['Config']['Labels'].update({'dev.nomorevibe.tree': OLD_TREE}),
+                             new['containers'][0]['config']['Labels'].update({'dev.nomorevibe.tree': OLD_TREE}))]
+        for mutate in mutations:
+            self.client = Client(); baseline, receipts = self.web_health_transition()
+            mutate(baseline['runtime']['web-mini'], self.client.rows['web-mini'])
+            with self.subTest(mutation=mutate), self.assertRaisesRegex(ValueError, 'web_provenance_or_health_mismatch'):
+                runtime.verify_fleet(self.client, baseline, TARGET, ['web-mini', 'web-m3'], receipts, ROOT)
 
     def test_final_refuses_retained_drift_and_unapproved_selected_changes(self):
         mutations = [lambda: self.client.apps['publisher-mini'].update(command='true'),

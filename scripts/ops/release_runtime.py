@@ -196,8 +196,11 @@ def _runtime_state(short, app, runtime, release, manifest, repo):
             labels = image_config.get('Labels') or {}
             health = container.get('directHealth') or {}
             body = health.get('body') or {}
+            expected_health = cs.get('Healthcheck') if 'Healthcheck' in cs else image_config.get('Healthcheck')
             if (labels.get('org.opencontainers.image.revision') != release or
                     labels.get('dev.nomorevibe.tree') != git_tree(repo, release) or
+                    config.get('Healthcheck') != expected_health or
+                    (expected_health is not None and (state.get('Health') or {}).get('Status') != 'healthy') or
                     actual_env.get('NEXT_DEPLOYMENT_ID') != release or health.get('status') != 200 or
                     (body.get('status'), body.get('db'), body.get('release')) != ('ok', 'ok', release)):
                 _fail(short, 'web_provenance_or_health_mismatch')
@@ -305,7 +308,7 @@ def expected_api(short, original, target):
     return expected
 
 
-def _preserves_containers(original, current, sha, kind):
+def _preserves_containers(original, current, sha, kind, *, web_image=None):
     for row in current['containers']:
         actual = row.get('config') or {}
         matches = False
@@ -315,9 +318,11 @@ def _preserves_containers(original, current, sha, kind):
             env['RELEASE_TAG'] = sha
             if kind == 'web':
                 env['NEXT_DEPLOYMENT_ID'] = sha
-            if (_env(actual.get('Env')) == env and row.get('mounts') == old.get('mounts') and all(
+            health_matches = (actual.get('Healthcheck') == wanted.get('Healthcheck') or
+                (kind == 'web' and git_rollout._inherited_web_healthcheck_matches(original, current, old, row, sha, web_image)))
+            if (_env(actual.get('Env')) == env and row.get('mounts') == old.get('mounts') and health_matches and all(
                     actual.get(key) == wanted.get(key) for key in
-                    ('Cmd', 'Entrypoint', 'Healthcheck', 'User', 'WorkingDir', 'ExposedPorts', 'Volumes', 'StopSignal'))):
+                    ('Cmd', 'Entrypoint', 'User', 'WorkingDir', 'ExposedPorts', 'Volumes', 'StopSignal'))):
                 matches = True
                 break
         if not matches:
@@ -376,8 +381,10 @@ def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_s
                         _fail(short, 'image_revision_mismatch')
             if ((raw.get('updateStatus') or {}).get('State') not in (None, 'completed') or
                     not git_rollout.runtime_contract_matches(old_runtime, raw, target['sha'],
-                        deployment_id=target['sha'] if kind == 'web' else None) or
-                    not _preserves_containers(old_runtime, raw, target['sha'], kind)):
+                        deployment_id=target['sha'] if kind == 'web' else None,
+                        web_image=target['web'] if kind == 'web' else None) or
+                    not _preserves_containers(old_runtime, raw, target['sha'], kind,
+                        web_image=target['web'] if kind == 'web' else None)):
                 _fail(short, 'selected_runtime_contract_drift')
         elif (raw.get('serviceSpec') != old_runtime.get('serviceSpec') or
               actual != snapshot['baseline'][short] or
