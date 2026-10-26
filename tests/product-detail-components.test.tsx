@@ -542,7 +542,7 @@ describe("evidence product detail components", () => {
   });
 
   it("운영자 안내에는 소유자 정보를 되풀이하지 않고 확인 명령과 내려달라는 요청을 남긴다", () => {
-    const html = renderToStaticMarkup(<UnclaimedOwnerContact
+    const html = renderToStaticMarkup(<UnclaimedOwnerContact productId={1}
       repoUrl="https://github.com/AgentWorkforce/relay"
       slug="agent-relay"
     />);
@@ -550,8 +550,10 @@ describe("evidence product detail components", () => {
     expect(html).toContain("/nomorevibe verify");
     // 막다른 안내가 아니다 — 확인 순서(/launch#verify)와 사이트 안 요청(/policy#contact)으로 보낸다(UX-18, C5·C6)
     expect(html).toMatch(/<a [^>]*href="\/launch#verify"[^>]*>1분 만에 확인하기<\/a>/);
-    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
-    expect(textOf(html)).toContain("CLI를 쓰지 않나요? GitHub 로그인으로 확인하는 방법은 준비 중입니다.");
+    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>다른 확인 방법 문의<\/a>/);
+    expect(textOf(html)).toContain("GitHub로 운영자 확인");
+    expect(textOf(html)).toContain("관리자 승인은 필요하지 않습니다.");
+    expect(html).not.toContain("준비 중");
     // 이 상자에는 이메일을 싣지 않는다 — 공개 연락처는 /policy#contact 에만(2026-10-22)
     expect(html).not.toMatch(/mailto:|[\w.+-]+@[\w-]+\.[a-z]{2,}/i);
     expect(html).not.toContain("운영 주체와 연락");
@@ -569,14 +571,14 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("<img");
     expect(html).toContain("소개 수정·목록에서 내리기 요청하기");
 
-    expect(renderToStaticMarkup(<UnclaimedOwnerContact repoUrl="https://gitlab.com/acme/app" slug="app" />))
+    expect(renderToStaticMarkup(<UnclaimedOwnerContact productId={1} repoUrl="https://gitlab.com/acme/app" slug="app" />))
       .toBe("");
   });
 
   it("정보 카드와 운영자 안내를 함께 보여줘도 저장소 소유자 프로필은 한 번만 나온다", () => {
     const html = renderToStaticMarkup(<>
       <InfoCard product={product} repository={observedRepository} freshness={freshness} unclaimed />
-      <UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} />
+      <UnclaimedOwnerContact productId={1} repoUrl={product.repoUrl} slug={product.slug} />
     </>);
     expect(textOf(html).match(/@example ↗/g)).toHaveLength(1);
     expect(html.match(/href="https:\/\/github.com\/example"/g)).toHaveLength(1);
@@ -585,12 +587,13 @@ describe("evidence product detail components", () => {
   });
 
   it("설치형 프로젝트의 소유권 확인 안내는 지원하지 않는 도메인 확인 명령을 권하지 않는다", () => {
-    const html = renderToStaticMarkup(<UnclaimedOwnerContact repoUrl={product.repoUrl} slug={product.slug} installable />);
-    expect(textOf(html)).toContain("설치형 프로젝트는 배포 도메인이 없어 명령으로 소유를 확인할 수 없습니다.");
+    const html = renderToStaticMarkup(<UnclaimedOwnerContact productId={1} repoUrl={product.repoUrl} slug={product.slug} installable />);
+    expect(textOf(html)).toContain("설치형 프로젝트는 배포 도메인 없이도 확인할 수 있습니다.");
     // 소개를 고쳐 달라는 길은 바로 아래 폼의 셋째 갈래다(UX-18)
-    expect(textOf(html)).toContain("소개를 고치려면 아래 요청에서 ‘소개 수정 요청’을 골라");
-    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>관리자에게 요청<\/a>/);
-    expect(textOf(html)).toContain("GitHub 로그인으로 저장소 주인을 확인하는 방법은 준비 중입니다.");
+    expect(textOf(html)).toContain("조직 저장소·저장소 파일로 직접 확인");
+    expect(html).toMatch(/<a [^>]*href="\/policy#contact"[^>]*>다른 확인 방법 문의<\/a>/);
+    expect(textOf(html)).toContain("GitHub로 운영자 확인");
+    expect(html).not.toContain("준비 중");
     expect(html).toContain("소개 수정·목록에서 내리기 요청하기");
     expect(html).not.toContain("/nomorevibe verify");
     expect(html).not.toContain("/launch#verify");

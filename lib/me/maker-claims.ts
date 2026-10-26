@@ -85,7 +85,7 @@ export function productRepoRef(repoUrl: string | null | undefined): RepoRef | nu
 }
 
 /** GitHub 이 저장소에 대해 답한 주인 사실 — repoId 는 저장소 숫자 id, nodeId 는 GraphQL node id(답에 있을 때) */
-export type RepoOwnerFact = { ownerId: number; ownerType: string; private: boolean; repoId?: number; nodeId?: string };
+export type RepoOwnerFact = { ownerId: number; ownerType: string; private: boolean; repoId?: number; nodeId?: string; defaultBranch?: string };
 export type ClaimRejection = "org_repo_not_supported_yet" | "owner_mismatch" | "repo_not_found" | "repo_not_public" | "repo_unverified" | "repo_replaced";
 export type OwnershipDecision = { ok: true; githubUserId: number } | { ok: false; reason: ClaimRejection };
 
@@ -160,7 +160,8 @@ export async function lookupRepositoryOwner(ref: RepoRef, options: { deadlineAt?
   if (!owner || !isGithubNumericId(owner.id) || typeof owner.type !== "string" || typeof result.value.private !== "boolean") return { kind: "unavailable" };
   const nodeId = typeof result.value.node_id === "string" && result.value.node_id.trim() && result.value.node_id.length <= 200 ? result.value.node_id : null;
   return { kind: "found", fact: { ownerId: owner.id, ownerType: owner.type, private: result.value.private,
-    ...(isGithubNumericId(result.value.id) ? { repoId: result.value.id } : {}), ...(nodeId ? { nodeId } : {}) } };
+    ...(isGithubNumericId(result.value.id) ? { repoId: result.value.id } : {}), ...(nodeId ? { nodeId } : {}),
+    ...(typeof result.value.default_branch === "string" && result.value.default_branch.length <= 255 ? { defaultBranch: result.value.default_branch } : {}) } };
 }
 
 /**
@@ -239,7 +240,7 @@ export async function githubUserIdsOf(userId: number): Promise<number[]> {
 export type ClaimResult = "verified" | "already_verified" | ClaimRejection | "not_found" | "no_github_repo" | "github_unavailable";
 export type ClaimItem = { productId: number; slug: string | null; name: string | null; repo: string | null; result: ClaimResult };
 export type ClaimInput = { productIds: number[] } | { repoUrl: string };
-type ClaimProduct = { id: number; slug: string; name: string; status: string; repoUrl: string | null; repoRenamedTo: string | null };
+export type ClaimProduct = { id: number; slug: string; name: string; status: string; repoUrl: string | null; repoRenamedTo: string | null };
 
 /** 요청 본문 → 확인할 것. productIds 는 1~20개 양의 정수(겹치면 하나로), repoUrl 은 저장소 주소 하나 */
 export function parseClaimInput(value: unknown): ClaimInput {
@@ -258,7 +259,7 @@ export function parseClaimInput(value: unknown): ClaimInput {
 }
 
 /** 확인 결과를 남긴다 — 같은 제품·계정이면 다시 살려 쓴다(멱등) */
-async function recordOwnerMembership(product: ClaimProduct, userId: number, githubUserId: number): Promise<boolean> {
+export async function recordOwnerMembership(product: ClaimProduct, userId: number, githubUserId: number | null, method: "github_repo_owner" | "repo_file" = "github_repo_owner", proof?: { issuedAt: number; expiresAt: number }): Promise<boolean> {
   return onPrimary(() => db.transaction(async (tx) => {
     // 제품 쓰기와 같은 잠금 차례(repository.update · markVerified)
     await lockPipelineInputStages(tx);
@@ -270,10 +271,15 @@ async function recordOwnerMembership(product: ClaimProduct, userId: number, gith
     // 탈퇴(계정 행 FOR UPDATE)와 줄을 세운다 — 탈퇴한 계정에 운영자 자격을 다시 만들지 않는다
     const [member] = await tx.select({ id: publicUsers.id }).from(publicUsers).where(and(eq(publicUsers.id, userId), isNull(publicUsers.deletedAt))).for("share");
     if (!member) return false;
+    if (proof) {
+      const [previous] = await tx.select({ revokedAt: productMakerMembers.revokedAt }).from(productMakerMembers)
+        .where(and(eq(productMakerMembers.productId, product.id), eq(productMakerMembers.userId, userId))).for("update");
+      if (Date.now() >= proof.expiresAt || (previous?.revokedAt && proof.issuedAt <= previous.revokedAt.getTime())) return false;
+    }
     const recheckAt = sql`now() + ${MAKER_RECHECK_DAYS} * interval '1 day'`;
-    await tx.insert(productMakerMembers).values({ productId: product.id, userId, role: "owner", githubUserId, method: "github_repo_owner", recheckAt })
+    await tx.insert(productMakerMembers).values({ productId: product.id, userId, role: "owner", githubUserId, method, recheckAt })
       .onConflictDoUpdate({ target: [productMakerMembers.productId, productMakerMembers.userId], set: {
-        role: "owner", githubUserId, method: "github_repo_owner", verifiedAt: sql`now()`, recheckAt, revokedAt: null, revokedReason: null,
+        role: "owner", githubUserId, method, verifiedAt: sql`now()`, recheckAt, revokedAt: null, revokedReason: null,
       } });
     // products.claimed_at·builder 는 건드리지 않는다 — 그 칸은 도메인 검증(verify.ts)이 수정 키를 주는 근거라,
     // 여기서 채우면 진짜 도메인 주인의 클레임을 막고 자격이 풀려도 되돌릴 수 없다. 운영자 여부는 product_maker_members 로만 본다
@@ -359,13 +365,14 @@ export async function recheckMakerMemberships(options: {
   const lookup = options.lookup ?? lookupRepositoryOwner;
   const due = await onPrimary(() => db.select({
     productId: productMakerMembers.productId, userId: productMakerMembers.userId, githubUserId: productMakerMembers.githubUserId,
+    method: productMakerMembers.method, verifiedAt: productMakerMembers.verifiedAt,
     // 시각은 글자로 읽어 그대로 비교한다 — JS Date 는 마이크로초를 버려 같은 값을 다르게 본다
     recheckAt: sql<string | null>`${productMakerMembers.recheckAt}::text`, slug: products.slug, repoUrl: products.repoUrl, identityId: publicIdentities.id,
   }).from(productMakerMembers)
     .innerJoin(products, eq(products.id, productMakerMembers.productId))
     .leftJoin(publicIdentities, and(eq(publicIdentities.userId, productMakerMembers.userId), eq(publicIdentities.provider, "github"),
       eq(publicIdentities.subject, sql`${productMakerMembers.githubUserId}::text`)))
-    .where(and(isNull(productMakerMembers.revokedAt), eq(productMakerMembers.method, "github_repo_owner"),
+    .where(and(isNull(productMakerMembers.revokedAt), inArray(productMakerMembers.method, ["github_repo_owner", "repo_file"]),
       or(isNull(productMakerMembers.recheckAt), lte(productMakerMembers.recheckAt, sql`now()`))))
     .orderBy(sql`${productMakerMembers.recheckAt} asc nulls first`, asc(productMakerMembers.productId))
     .limit(options.limit ?? 20));
@@ -376,7 +383,10 @@ export async function recheckMakerMemberships(options: {
     if (options.signal?.aborted || (options.hasBudget && !options.hasBudget()) || Date.now() >= options.deadlineAt - 2_000) break;
     const ref = productRepoRef(row.repoUrl);
     let outcome: { keep: true } | { keep: false; reason: string } | null;
-    if (row.githubUserId === null || row.identityId === null) outcome = { keep: false, reason: "identity_removed" };
+    if (row.method === "repo_file") {
+      const { recheckRepositoryProof } = await import("./maker-repo-proof");
+      outcome = await recheckRepositoryProof(row, { lookup, deadlineAt: options.deadlineAt, signal: options.signal });
+    } else if (row.githubUserId === null || row.identityId === null) outcome = { keep: false, reason: "identity_removed" };
     else if (!ref || !row.repoUrl) outcome = { keep: false, reason: "repo_changed" };
     else {
       const answer = await lookup(ref, { deadlineAt: Math.min(options.deadlineAt, Date.now() + 10_000), signal: options.signal });
