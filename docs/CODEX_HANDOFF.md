@@ -3199,3 +3199,34 @@ git status --short
 git diff --check d9722326ec7dabe0ac289344ab0bb26ea8853097...HEAD
 ```
 Only if a justified local PG re-run is needed, retrieve the owned32800 container password into subprocess environment without printing it and use the exact scoped integration command above. Root alone handles push/PR/latest-base CI/merge/images/production.
+
+
+## ConnectAgent SIGTERM native classification drain — 2026-10-26
+
+Objective/completed: fix the independently reproduced ConnectAgent shutdown path that immediately called `process.exit(0)` while native classification/terminal reconciliation was still pending. Owned WT `/Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026`, branch `codex/connect-shutdown-drain-20261026`, exact base `50f9239c1b33b853513a632ca197be45ab26398a`. No skills, provider/model calls, production DB/API/SSH, push/PR/merge/deployment or other-WT edits. Existing node_modules is an ignored symlink. Read applicable AGENTS, README/runbook shutdown guidance and installed Next custom-server guide; this standalone Node service uses no new Next API.
+
+Evidence boundary: original entrypoint SIGTERM regression actually observed immediate exit(0) before the admitted drain completed (intentional RED). Root's separately collected production request63c0c598 remains an operational recovery investigation: dispatch13:05:16.740Z temporally overlaps old ConnectAgent replacement/exit13:05:22.928Z, but this implementation does not certify endpoint exclusivity/clock bounds or reclaim that request. Ledger publisher ownership is not proof of the remote CLI process boundary. No old native charge is released by this change.
+
+Production files: `lib/operations/agent.ts`, new `lib/operations/agent-shutdown.ts`, `lib/crawl/publication-classify-capacity.ts`, `scripts/connect-agent.ts`. Tests: new `tests/connect-agent-shutdown.test.ts`, new `tests/publication-classify-shutdown.test.ts`, `tests/operations-publication-capacity.test.ts`; this handoff is the only documentation change.
+
+Design: shutdown synchronously closes agent admission/classifyReady, tracks the complete admitted classification promise, blocks subsequent fallback calls, and rechecks classifyReady in the native current/prove/beforeSpawn predicate. Existing not_started native reconciliation remains responsible for a dispatch whose final spawn check is false. The signal handler is idempotent, prevents a pending CLI-probe callback from reopening the server, and awaits both classification drain and HTTP close. Only successful completion deletes the temporary credential home and exits0. Drain/reconciliation error, prior classification_unknown, or the45-second local deadline exits1 and keeps local artifacts/native occupancy; no terminal, refund, TTL release or model stop/recovery is fabricated.45seconds stays within the existing60-second container grace. Model/quality/prompt/schema/capacity settings, existing request identity and monitor gates are unchanged.
+
+Actual tests/checks with Node24 `/Users/jr/.nvm/versions/node/v24.18.0/bin/node`:
+- RED: `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts -t 'waits for the admitted classification' --bail=1` against original entrypoint ->1FAIL/4SKIP/EXIT1, because exit(0) occurred immediately.
+- GREEN: `node node_modules/vitest/vitest.mjs run tests/connect-agent-shutdown.test.ts tests/operations-publication-capacity.test.ts tests/publication-classify-shutdown.test.ts tests/operations-agent.test.ts --bail=1` ->4files/23PASS/EXIT0. Covers admitted promise waiting, immediate new-admission/fallback refusal, post-proof pre-spawn shutdown, native error/prior physical-end unknown,45-second bound, repeated signals and shutdown-before-probe completion. These are local orchestration tests with mocked native reconciliation; no actual DB authority or provider result is claimed.
+- Existing core continuation: `node node_modules/vitest/vitest.mjs run tests/cli-background-model-capacity.test.ts -t 'when the tick margin is gone|whose start condition is lost' --bail=1` ->2PASS/11SKIP/EXIT0, proving unchanged not_started terminal reconciliation when final beforeSpawn fails.
+- `node node_modules/eslint/bin/eslint.js scripts/connect-agent.ts lib/operations/agent.ts lib/operations/agent-shutdown.ts lib/crawl/publication-classify-capacity.ts tests/connect-agent-shutdown.test.ts tests/operations-publication-capacity.test.ts tests/publication-classify-shutdown.test.ts` ->EXIT0.
+- `node node_modules/next/dist/bin/next typegen` ->EXIT0. `node node_modules/typescript/bin/tsc --noEmit --incremental false` ->EXIT0. `git diff --check` ->EXIT0. No PG/full suite/build run.
+
+Failed test setup: the first focused run was22PASS/1FAIL because a new beforeEach returned `mockReset()`'s mock function, which Vitest invoked as a cleanup without work arguments. Changing the hook to return void corrected the test harness. An unmatched `tests/cli-model-capacity.test.ts` filter in that first invocation ran no extra file; the actual existing beforeSpawn tests were subsequently run explicitly as recorded above.
+
+Remaining/impact: root independent source review and required latest-base CI/PR/merge/source-image deployment. This prevents losing a native terminal on orderly ConnectAgent shutdown; crash/OOM/forced termination and the already stranded63c request still require separate canonical physical/provider boundary evidence. No recovery/waiver for an unresolved physical call is provided.
+
+Exact next-agent commands (do not rerun passed tests unless source changes or a new concern justifies it):
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-connect-shutdown-drain-20261026
+git status --short
+git diff --check
+git diff -- lib/operations/agent.ts lib/crawl/publication-classify-capacity.ts scripts/connect-agent.ts
+cat lib/operations/agent-shutdown.ts
+```

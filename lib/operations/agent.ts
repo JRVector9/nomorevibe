@@ -25,6 +25,8 @@ export class ConnectAgent {
   private home: string;
   private loginChild: ChildProcess | null = null;
   private pendingEnter: ReturnType<typeof setTimeout> | null = null;
+  private shuttingDown = false;
+  private activeClassification: Promise<unknown> | null = null;
   private state: AgentStatus = { connected: false, generation: 0, configVersion: 0, config: DEFAULT_CONFIG,
     busy: null, activity: null, connection: null, verification: null, lastAttempt: null, appliedAt: null, lastUsedVersion: null };
   constructor(private directory: string, private secret: string, private run: CliRun = defaultRun, private claudeRun?: CliRun) {
@@ -57,7 +59,7 @@ export class ConnectAgent {
    * 2026-10-08 Codex 재로그인 뒤 적용 전 한 시간 동안 잘 돌던 Claude 예비까지 거부해 발행이 2건에 그쳤다.
    * 새 계정에서 안 되는 모델은 호출이 실패하고 다음 모델로 넘어간다. configReady 는 "새 계정으로 다시 검사·적용"이 남았는지만 뜻한다.
    */
-  private canClassify() { return this.state.configVersion > 0 && (!!this.credential || !!this.claudeCredential); }
+  private canClassify() { return !this.shuttingDown && this.state.configVersion > 0 && (!!this.credential || !!this.claudeCredential); }
   private writeAuth(home: string, value: string) {
     const file = join(home, 'auth.json'); writeFileSync(file+'.tmp', value, { mode: 0o600 }); renameSync(file+'.tmp',file); chmodSync(file,0o600);
   }
@@ -74,7 +76,10 @@ export class ConnectAgent {
   private startActivity(kind: 'login' | 'oauth_exchange' | 'model', durationMs: number, model?: string) {
     const startedAt=Date.now();this.state.activity={id:randomUUID(),kind,startedAt,deadlineAt:startedAt+durationMs,...(model?{model}:{})};
   }
-  private available() { if (this.state.busy) throw new Error('다른 AI 작업이 진행 중입니다. 잠시 후 다시 시도해주세요.'); }
+  private available() {
+    if (this.shuttingDown) throw new ModelCapacityDeferredError('draining');
+    if (this.state.busy) throw new Error('다른 AI 작업이 진행 중입니다. 잠시 후 다시 시도해주세요.');
+  }
   connect(provider: 'codex' | 'claude' = 'codex') {
     this.available();
     if(provider === 'claude') return this.connectClaude();
@@ -105,6 +110,7 @@ export class ConnectAgent {
     return this.snapshot();
   }
   private routeRun: CliRun = (args, stdin, timeout) => {
+    if (this.shuttingDown) throw new ModelCapacityDeferredError('draining');
     const claude = args[args.indexOf('-m') + 1] === 'sonnet';
     if (claude ? !this.claudeCredential : !this.credential) return Promise.resolve({kind:'exit',code:1,stdout:'',stderr:'authentication required'});
     this.startActivity('model',timeout,args[args.indexOf('-m')+1]);
@@ -112,6 +118,7 @@ export class ConnectAgent {
   };
   private nativeClassificationRun(payload: { inputs: ClassifyInput[]; definitions?: CategoryDefinitions }, authority: ClassificationAuthority): CliRun {
     return async (codexArgs, stdin, timeoutMs) => {
+      if (this.shuttingDown) throw new ModelCapacityDeferredError('draining');
       const model = codexArgs[codexArgs.indexOf('-m') + 1], claude = model === 'sonnet';
       if (claude ? !this.claudeCredential : !this.credential) return { kind: 'exit', code: 1, stdout: '', stderr: 'authentication required' };
       this.startActivity('model', timeoutMs, model);
@@ -262,7 +269,14 @@ export class ConnectAgent {
     return this.snapshot();
   }
   async classify(input: unknown) {
-    this.available();const {inputs,definitions,authority}=classifyPayloadSchema.parse(input);
+    this.available();
+    const running = this.classifyAccepted(input);
+    this.activeClassification = running;
+    try { return await running; }
+    finally { if (this.activeClassification === running) this.activeClassification = null; }
+  }
+  private async classifyAccepted(input: unknown) {
+    const {inputs,definitions,authority}=classifyPayloadSchema.parse(input);
     if(!this.canClassify())throw new Error('AI 연결 후 모델 검사·적용이 필요합니다.');
     this.state.busy='classification';const config=this.state.config;let unknown = false;
     try {
@@ -279,6 +293,13 @@ export class ConnectAgent {
       if (unknown) this.state.busy = 'classification_unknown';
       else try {this.captureRefresh();}finally{this.state.busy=null;this.state.activity=null;}
     }
+  }
+  /** Stop admission synchronously; an admitted native promise returns only after its terminal reconciliation. */
+  drain(): Promise<void> {
+    this.shuttingDown = true;
+    if (this.activeClassification) return this.activeClassification.then(() => {});
+    if (this.state.busy === 'classification_unknown') return Promise.reject(new CliPhysicalEndUnknownError());
+    return Promise.resolve();
   }
   close() {this.stopLogin();rmSync(this.home,{recursive:true,force:true});}
 }

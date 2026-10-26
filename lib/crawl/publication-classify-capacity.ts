@@ -131,7 +131,7 @@ export async function publicationClassificationAuthority(expected: readonly Expe
 /** Native admission and the private terminal never leave this remote process. The RPC result grants no settlement authority. */
 export async function runPublicationClassificationCall(input: CliCallInput, payload: Payload, authority: ClassificationAuthority,
   status: () => AgentStatus): Promise<CliProcessResult> {
-  const current = () => { const value = status(); return value.generation === authority.generation
+  const current = () => { const value = status(); return value.classifyReady === true && value.generation === authority.generation
     && value.configVersion === authority.configVersion && classificationConfigHash(value) === authority.configHash; };
   try {
     if (input.routeId !== PUBLICATION_CLASSIFY_ROUTE || input.provider !== 'claude-cli' && input.provider !== 'codex-cli')
