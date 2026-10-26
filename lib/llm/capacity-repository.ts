@@ -41,7 +41,7 @@ import {
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
-import { writerSiteActive } from "@/lib/operations/dr/epoch";
+import { fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
@@ -62,6 +62,11 @@ function transaction<T>(load: (tx: ProductTransaction) => Promise<T>): Promise<T
 async function control(tx: ProductTransaction, lock: "share" | "update" = "update") {
   const fenced = !await writerSiteActive(tx);
   const [row] = await tx.select().from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for(lock);
+  return parsedControl(row, fenced);
+}
+function parsedControl<T extends { mode: typeof modelCapacityControl.$inferSelect.mode; policy: unknown; policyHash: string | null }>(
+  row: T | undefined, fenced: boolean,
+) {
   if (!row) return fail("model_capacity_control_missing");
   const policy = row.policy === null ? null : parseModelCapacityPolicy(row.policy);
   if (policy !== null && modelCapacityPolicyHash(policy) !== row.policyHash) fail("model_capacity_policy_hash_mismatch");
@@ -86,7 +91,23 @@ export async function readModelCapacityCallerControl() {
   return snapshot;
 }
 
-function callerControlSnapshot(row: Control) {
+/** SELECT-only primary observation, never caller admission. One statement observes the fence and control consistently,
+ * without row locks, request expiry/grants or the transport-only slotOnlyModelCapacity behavior. */
+export async function readModelCapacityControlObservation() {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const [row] = await onPrimary(() => db.execute<{
+    mode: typeof modelCapacityControl.$inferSelect.mode; epoch: string | number; revision: string | number;
+    policy: unknown; policy_hash: string | null; writer_fence: Parameters<typeof fenceFromRow>[0] | null;
+  }>(sql`SELECT mode, epoch, revision, policy, policy_hash,
+    (SELECT to_jsonb(f) FROM dr_writer_fence f WHERE f.id = 1) AS writer_fence
+    FROM model_capacity_control WHERE id = 1`));
+  if (!row) return fail("model_capacity_control_missing");
+  const fence = fenceFromRow(row.writer_fence ?? undefined);
+  return callerControlSnapshot(parsedControl({ mode: row.mode, epoch: Number(row.epoch), revision: Number(row.revision),
+    policy: row.policy, policyHash: row.policy_hash }, fence.state !== "active"));
+}
+
+function callerControlSnapshot(row: Pick<Control, "mode" | "epoch" | "revision" | "policyHash" | "policy" | "fenced">) {
   if (!["disabled", "open", "draining"].includes(row.mode)
     || !Number.isSafeInteger(row.epoch) || row.epoch < 1
     || !Number.isSafeInteger(row.revision) || row.revision < 1

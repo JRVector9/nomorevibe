@@ -9,6 +9,7 @@ import { crawlCandidates, crawlDocuments, crawlTaglines, jobs, operationsObserva
 import { textHash } from '@/lib/crawl/translate';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
 import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
+import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import { progressNeedsKoreanSql, progressReasonNeedsKoreanSql, readTextStageProgress, textStageProgressSql } from '@/lib/operations/text-stage-progress';
 import { TRANSLATION_NEEDS_KOREAN_SQL } from '@/lib/crawl/translations';
 import { NEEDS_KOREAN } from '@/lib/domain/products/korean-tagline';
@@ -187,7 +188,7 @@ it('runs the canonical reader with SELECT-only monitor grants and refuses writes
     'agent_repository_scans', 'repository_ai_levels', 'agent_repository_claims', 'uptime_control', 'uptime_claims', 'product_health',
     'uptime_host_breakers', 'text_translations', 'crawl_taglines', 'product_translations', 'product_korean_taglines',
     'product_intro_checks', 'product_maker_members', 'product_search_profiles', 'takedown_requests', 'model_capacity_control',
-    'uptime_gates', 'uptime_observations', 'pipeline_stage_modes'];
+    'uptime_gates', 'uptime_observations', 'pipeline_stage_modes', 'dr_writer_fence'];
   await db.execute(sql.raw(`CREATE ROLE ${role} LOGIN PASSWORD 'local-fixture-only' NOSUPERUSER NOCREATEDB NOCREATEROLE`));
   await db.execute(sql.raw(`GRANT USAGE ON SCHEMA public TO ${role}`));
   await db.execute(sql.raw(`GRANT SELECT ON ${tables.join(', ')} TO ${role}`));
@@ -200,7 +201,10 @@ it('runs the canonical reader with SELECT-only monitor grants and refuses writes
     clearAllMemos();
     vi.stubEnv('KOREAN_TRANSLATION_QWEN_ENABLED', 'true'); vi.stubEnv('KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED', 'true');
     expect(await readTextStageProgress()).toHaveLength(7);
+    expect(await readModelCapacityControlObservation()).toMatchObject({ epoch: expect.any(Number), revision: expect.any(Number) });
     expect((await readWorkerProgress()).stages.filter(stage => ['product-translate', 'tagline-ko', 'intro-check'].includes(stage.stage))).toHaveLength(3);
+    await expect(client`SELECT 1 FROM dr_writer_fence FOR SHARE`).rejects.toMatchObject({ code: '42501' });
+    await expect(client`SELECT 1 FROM model_capacity_control FOR SHARE`).rejects.toMatchObject({ code: '42501' });
     await expect(client`UPDATE jobs SET runs=runs`).rejects.toMatchObject({ code: '42501' });
     const [plan] = await db.execute<{ 'QUERY PLAN': Array<{ 'Execution Time': number }> }>(
       sql`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${textStageProgressSql([])}`);

@@ -3,7 +3,7 @@ import { and, inArray, sql, type SQL } from "drizzle-orm";
 import { modelCapacityControl, operationsObservations, pipelineStageModes } from "@/lib/db/schema";
 import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
-import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
+import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
@@ -340,7 +340,7 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   const [settings, jobs, batch, agentScan, reviewModes, capacity] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
     db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
       .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2'])),
-    readModelCapacityCallerControl(),
+    readModelCapacityControlObservation(),
   ]);
   // A missing control row must not fall back to legacy restart authority.
   if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');

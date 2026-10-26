@@ -6,7 +6,7 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { createReplicaRouter } from "@/lib/db/replica";
 import { evidenceProgress, readWorkerProgress, withProviderBackoff } from "@/lib/operations/worker-progress-query";
 import { readTextStageProgress } from '@/lib/operations/text-stage-progress';
-import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
+import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import type { ThroughputStage } from '@/lib/operations/throughput-model';
 
 /**
@@ -65,7 +65,7 @@ vi.mock("@/lib/db", () => ({ db: { ...recordingExecutor(fixture.primary.transact
     const { pipelineStageModes } = await import('@/lib/db/schema');
     return table === pipelineStageModes ? ['ai1', 'ai2'].map(stage => ({ stage, mode: 'legacy', drainingFrom: null })) : fixture.observations;
   } }) }) } }));
-vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl: vi.fn(async () => {
+vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityControlObservation: vi.fn(async () => {
   if (!fixture.capacity.mode) throw new Error('model_capacity_control_missing');
   return { mode: fixture.capacity.mode };
 }) }));
@@ -109,14 +109,14 @@ const expectedStages = [
 
 describe("배포 관문 근거 읽기", () => {
   it('reads global capacity drain on primary and holds eligible first-review demand', async () => {
-    vi.mocked(readModelCapacityCallerControl).mockClear();
+    vi.mocked(readModelCapacityControlObservation).mockClear();
     fixture.capacity.mode = 'draining';
     fixture.throughputStages = [{ key: 'first', enabled: true, waiting: 220, oldestMinutes: 239,
       completed1m: 0, completed5m: 0, progress5m: 0, errors5m: 0, label: 'AI1', unit: '건',
       queueNote: '', detail: '', status: 'stalled' }];
     try {
       const report = await readWorkerProgress(fixture.NOW, { includeText: false });
-      expect(readModelCapacityCallerControl).toHaveBeenCalledExactlyOnceWith();
+      expect(readModelCapacityControlObservation).toHaveBeenCalledExactlyOnceWith();
       expect(report.stages.find(stage => stage.stage === 'first')).toMatchObject({ held: true, reason: 'backoff', alarm: false, restartEligible: false });
     } finally { fixture.capacity.mode = 'disabled'; fixture.throughputStages = []; }
   });
@@ -130,7 +130,7 @@ describe("배포 관문 근거 읽기", () => {
   it.each(['model_capacity_control_invalid', 'model_capacity_policy_hash_mismatch', 'database_unavailable'])(
     'propagates validated control failure %s without reporting intentional waiting', async code => {
       const failure = new Error(code);
-      vi.mocked(readModelCapacityCallerControl).mockRejectedValueOnce(failure);
+      vi.mocked(readModelCapacityControlObservation).mockRejectedValueOnce(failure);
       await expect(readWorkerProgress(fixture.NOW)).rejects.toBe(failure);
     },
   );
