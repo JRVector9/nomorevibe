@@ -1,6 +1,18 @@
 # 남은 작업
 
-## 현재 미해결 — 2026-10-27, 전체18 source/runtime·6잡 재개 완료
+## 최신 상태 — 2026-10-27 KST08:37, PR687 복구·전체18 배포 완료
+
+- DeepSeek8dc 미확정 점유는 실제 종료 증거로 **withdrawn/audit20523** 단건 회수했다. 원 charge262144·settledNULL·실패 결과는 보존했다. 모델 서버·gateway·reviewer를 원복했고 최종 capacityOPEN20533/text6잡재개20534–20539다. 아래 이전 미회수1건은 더 이상 현재 미해결이 아니다.
+- PR687/main50be를 **전체18앱 실제 배포·source/image/health 확인**했다(23:35:04Z, final snapshot SHA cc4679873fd625ab800089628580a019ba7dafd29c1e51c77f21c9872c6b49cc). 슬롯 대기를 reviewer 재시작 사유에서 제외하고, 종료 트리거·신호·코드/boot별 DB 기록을 구현했다. 사용자 지시로 수동 테스트는 실행하지 않았고 필수 자동 CI는 통과했다.
+- OPEN 복귀 뒤 **23:37:01Z FIRST4/AI2 3건 진행**, reviewer 주·예비 동일CID 약229초/healthy, 추가재시작0, 전역indeterminate0 확인. 종료를 인위적으로 만들지 않아 새 durable exit의 실제 저장 표본은 아직0이다. 향후 자연 종료 때 기록을 확인한다.
+- **남은 현재 업무 경보**: reason-translate/no_progress, keywords·product-translate·tagline-ko/upstream_stalled. 전체 progress는alarm이다. 배포 유지보수 pause 상태의 ok를 정상 업무 인증으로 해석하지 않는다. 오류 reset/품질 완화/무기한 pause로 숨기지 않는다.
+- **재발 방지 후속 설계**: response_only provider의 요청별 취소 ACK/서버 실행기한. 현재 배포 DRAIN→실제 in-flight 종료 확인→교체→OPEN을 지키고, 미확정은 TTL로 회수하지 않는다. 실제 job/poll timeout 경보·복구는 유지했다.
+- **장기 관측·기존 사람/백업 검증**: 새 observer23:35:04Z/PID14178는5/10/15분/6시간 예약만 됐고 futurePassedfalse다. 실패 표본은 보존하고 driver를 재시작해 소급 통과로 만들지 않는다.24시간·실제 OAuth/소유권·라벨·과거보관본 복원/PITR/nonempty media 복원 등 기존 미실행은 아래 기록대로 남는다.
+
+자세한 실제 영수증/실패/다음 명령은 [최신 인계](docs/CODEX_HANDOFF.md), 구현·읽기 SQL은 [복구 기록](docs/operations/2026-10-27-reviewer-restart-recovery.md)을 따른다. 아래는 PR686 시점의 과거 상태다.
+
+
+## 이전 상태 — PR686 전체18 source/runtime·6잡 재개 시점
 
 PR668–679·681–686은 병합했고 최신 main은 `34cc2045cbb7105313861792adb37c035b64e70c`다. PR686 필수 CI40382748901과 main CI40383949515의 필수 check·웹/워커 이미지가 성공했다. 전체18 source/runtime34cc를 실제 확인했으나 **정상 관문·monitor UP는 미통과**다. 관측은 한 번 시작했으며 미래 통과는 false다. 두 번째 own 재개30148도 실제 완료해 현재 text6잡은 모두 paused=false이며 계획된 pause는 없다. capacity OPEN20475는 그대로다.
 
