@@ -2,19 +2,22 @@ import { sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { pendingTaglines } from '@/lib/crawl/taglines';
 import { oldestPendingTranslationMinutes } from '@/lib/crawl/translations';
+import { getSettings, settingsUnreadable } from '@/lib/crawl/settings';
 import { profileGenerationRetryAllowedSql } from '@/lib/domain/products/search-profile-retry';
+import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
 
 export type TextProgress = { schedulerScheduled: boolean; oldestReadyMinutes: number | null;
-  persistedWithin10m: boolean; inBackoff: boolean; providerError: boolean };
+  persistedWithin10m: boolean; inBackoff: boolean; providerError: boolean; admissionHeld: boolean };
 
 export function textProgressStalled(state: TextProgress): boolean {
   return state.schedulerScheduled && (state.oldestReadyMinutes ?? 0) >= 10 &&
-    !state.persistedWithin10m && !state.inBackoff && !state.providerError;
+    !state.persistedWithin10m && !state.inBackoff && !state.providerError && !state.admissionHeld;
 }
 
 /** Persisted progress of the serial main text jobs; product translation runs in a separate runtime lane. */
 export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerScheduled'>> {
-  const [translationAge, taglines, rows] = await Promise.all([
+  const [settings, capacity, translationAge, taglines, rows] = await Promise.all([
+    getSettings(), readModelCapacityCallerControl(),
     oldestPendingTranslationMinutes(), pendingTaglines(1), db.execute<{
       profile_age: number | null; verify_age: number | null; persisted: boolean;
       in_backoff: boolean; provider_error: boolean;
@@ -53,10 +56,15 @@ export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerS
           and last_error is not null and last_run_at > now() - interval '10 minutes') as provider_error
     `),
   ]);
+  // A malformed settings fallback is unknown, not proof that an operator paused collection.
+  if (settingsUnreadable(settings)) throw new Error('crawl_settings_unreadable');
   const row = rows[0];
-  const taglineAge = taglines[0]?.readyAgeMinutes ?? null;
+  // Collection pauses only crawl-tagline. Translation and keyword jobs still admit work.
+  const taglineAge = settings.enabled ? taglines[0]?.readyAgeMinutes ?? null : null;
   const ages = [translationAge, taglineAge, row.profile_age, row.verify_age].filter((n): n is number => n !== null).map(Number);
   return { oldestReadyMinutes: ages.length ? Math.max(...ages) : null,
     persistedWithin10m: row.persisted, inBackoff: row.in_backoff,
-    providerError: row.provider_error || !process.env.ABCLLM_API_KEY?.trim() };
+    providerError: row.provider_error || !process.env.ABCLLM_API_KEY?.trim(),
+    // Only drain blocks all model admission; disabled retains the existing legacy transport.
+    admissionHeld: capacity.mode === 'draining' };
 }
