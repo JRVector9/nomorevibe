@@ -63,7 +63,7 @@ export async function untriedTranslations(limit: number): Promise<PendingTransla
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
      where t.source_hash is null
-     order by u.at desc nulls last
+     order by u.at desc nulls last, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
 }
@@ -81,9 +81,32 @@ export async function retryableTranslations(limit: number): Promise<PendingTrans
       from (${UNIQUE_SOURCES}) u
       join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
      where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now())
-     order by t.retry_at asc nulls first, t.attempts asc
+     order by t.retry_at asc nulls first, t.attempts asc, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
+}
+
+/** Rehydrate the complete durable membership, independently of the current
+ * retry/new queue page. This read grants nothing; dispatch locks and compares
+ * every current source/cache row again, including its original input hash. */
+export async function pendingReasonTranslationBatch(memberKeys: readonly string[]): Promise<PendingTranslation[] | null> {
+  const keys = z.array(z.string().regex(/^ko:[a-f0-9]{64}$/)).min(1).max(4).parse(memberKeys);
+  if (new Set(keys).size !== keys.length) throw new Error('invalid_reason_translation_members');
+  const hashes = keys.map(key => key.slice(3));
+  return onPrimary(async () => {
+    const rows = await db.execute<PendingTranslation>(sql`
+      SELECT u.hash, u.body, coalesce(t.attempts,0)::int AS attempts
+      FROM (${UNIQUE_SOURCES}) u LEFT JOIN text_translations t ON t.source_hash=u.hash AND t.target_lang='ko'
+      WHERE u.hash=ANY(ARRAY[${sql.join(hashes.map(hash => sql`${hash}`), sql`, `)}]::text[])
+        AND (t.source_hash IS NULL OR (t.status='failed' AND (t.retry_at IS NULL OR t.retry_at<=clock_timestamp())))
+      ORDER BY u.hash`);
+    if (rows.length !== hashes.length) return null;
+    const batch = [...rows].map(row => ({ ...row, attempts: Number(row.attempts) }));
+    // A once-batched member may now require a solo retry. It must never drag
+    // unchanged neighbours into a different logical batch under the old ID.
+    if (batch.length > 1 && (batch.some(row => row.attempts >= 3) || batch.reduce((n, row) => n + row.body.length, 0) > 1600)) return null;
+    return snapshotReasonTranslationBatch(batch);
+  });
 }
 
 /** Oldest currently selectable translation, using the same source and retry predicates as the worker. */
@@ -270,7 +293,7 @@ async function lockReasonCache(tx: ProductTransaction, batch: PendingTranslation
   for (const item of [...batch].sort((a, b) => a.hash.localeCompare(b.hash))) {
     if (currentSource) {
       const [source] = await tx.execute<{ present: boolean }>(sql`SELECT EXISTS (
-        SELECT 1 FROM (${UNIQUE_SOURCES}) u WHERE u.hash = ${item.hash} AND u.body = ${item.body}
+        SELECT 1 FROM (${SOURCES}) src WHERE body = ${item.body} AND ${NEEDS_KOREAN}
       ) AS present`);
       if (!source?.present) throw new ReasonTranslationChanged();
     }
