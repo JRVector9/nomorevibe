@@ -12,7 +12,7 @@ import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { jobsForRole } from "@/lib/jobs/catalog";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { releaseRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
-import { requestModelSlot, requestTextProfileModelSlot, cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
+import { requestModelSlot, requestTextProfileModelSlot, cancelReservedModelSlot, findOwnPendingTextProfileRequests } from "@/lib/llm/capacity-repository";
 import { modelCapacityPolicyHash, textProfileInputHash, type ModelCapacityPolicy, type ModelCapacityRequest,
   type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
@@ -144,7 +144,8 @@ async function seed(): Promise<ProfileTask> {
   const [row] = await tracked(db.insert(products).values({ slug, name: "Expense Demo", url: `https://${slug}.test`, tagline: "Track household expenses",
     description: "Track household expenses", category: "Productivity", status: "seeded", source: "crawler", verifyToken: "fixture", editTokenHash: "fixture" }).returning());
   ownProducts.set(row.id, slug); // registration follows successful commit; absence checked before INSERT.
-  const tasks = await tracked(pendingProfiles(12)); expect(tasks.map(task => task.product.id)).toEqual([row.id]); return tasks[0];
+  const tasks = await tracked(pendingProfiles(12)), task = tasks.find(task => task.product.id === row.id);
+  expect(task).toBeDefined(); if (!task) throw new Error("fixture_seed_not_pending"); return task;
 }
 const replyBody = () => ({ id: "profile-local", object: "chat.completion", created: 1, model: "served-profile",
   choices: [{ index: 0, message: { role: "assistant", content: '{"keywords_en":["expense tracker"],"keywords_ko":["가계부"]}' }, finish_reason: "stop" }],
@@ -210,6 +211,7 @@ it("commits real text role/job dispatch, one native POST, historical terminal, o
     const [row] = await admin`SELECT * FROM model_capacity_requests WHERE logical_work_key=${`text:profile:${task.product.id}`}`;
     expect(row.state).toBe("settled"); expect(row.dispatch_binding).toMatchObject({ productId: task.product.id, role: { instanceId: role.instanceId, bootId: role.bootId, epoch: role.epoch }, chargedTokens: 8000 });
     expect(row.terminal_evidence.dispatch.bindingHash).toBe(row.dispatch_binding_hash);
+    expect(await findOwnPendingTextProfileRequests({ owner: { instanceId: role.instanceId, bootId: role.bootId }, model: PROFILE_MODEL })).toEqual([]);
     expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${row.request_id}::uuid AND kind='dispatch_settled'`).toHaveLength(1);
     const [profile] = await admin`SELECT * FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(profile).toMatchObject({ keywords_en: ["expense tracker"], keywords_ko: ["가계부"], attempts: 1, verified_at: null, verify_attempts: 0 });
@@ -240,6 +242,54 @@ it("reuses its actual pending ID after a shared engine cap is released", exercis
     if (slot.kind !== "granted") throw new Error("fixture_capacity_control"); await tracked(cancelReservedModelSlot(slot.reservation));
     expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT request_id,state FROM model_capacity_requests WHERE logical_work_key=${`text:profile:${task.product.id}`}`)[0]).toEqual({ request_id: waiting.request_id, state: "settled" });
+  });
+}));
+it("resumes its existing reservation after new arrivals push the product outside the fresh twelve", exercise(async () => {
+  const task = await seed(); await install({ ...basePolicy, poolLimits: { reviewer: 2, text: 1 } });
+  await server(async ({ bodies }) => {
+    let requestId = "";
+    await custom(task, async lease => { requestId = (await reserve(task, lease)).request.requestId; });
+    for (let index = 0; index < 13; index++) await seed();
+    expect((await pendingProfiles(12)).map(row => row.product.id)).not.toContain(task.product.id);
+    const resumed = await pendingProfiles(12, role);
+    expect(resumed).toHaveLength(12); expect(resumed[0].product.id).toBe(task.product.id);
+    expect(new Set(resumed.map(row => row.product.id)).size).toBe(12);
+    await tick();
+    expect(bodies.length).toBeGreaterThan(0);
+    expect(await admin`SELECT request_id,state FROM model_capacity_requests WHERE logical_work_key=${`text:profile:${task.product.id}`}`)
+      .toEqual([{ request_id: requestId, state: "settled" }]);
+    expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid AND kind='dispatch_started'`).toHaveLength(1);
+    expect((await admin`SELECT keywords_en FROM product_search_profiles WHERE product_id=${task.product.id}`)[0].keywords_en).toEqual(["expense tracker"]);
+  });
+}));
+it("reads only its current-policy unstarted profile queue and excludes foreign identity, route and completed work", exercise(async () => {
+  const task = await seed(); await server(async () => {
+    await custom(task, async lease => {
+      const own = await reserve(task, lease), expected = { owner: own.request.owner, model: PROFILE_MODEL };
+      expect(await findOwnPendingTextProfileRequests(expected)).toEqual([{ productId: task.product.id, workKey: own.request.workKey }]);
+      expect(await findOwnPendingTextProfileRequests({ ...expected, owner: { ...expected.owner, instanceId: "foreign-text" } })).toEqual([]);
+      expect(await findOwnPendingTextProfileRequests({ ...expected, owner: { ...expected.owner, bootId: randomUUID() } })).toEqual([]);
+      expect(await findOwnPendingTextProfileRequests({ ...expected, model: "foreign-model" })).toEqual([]);
+      const other: ModelCapacityRequest = { ...own.request, requestId: randomUUID(), workKey: "profile-reader-other-route",
+        class: "first", pool: "reviewer", routeId: "crawl-agent-review" };
+      ownRequests.set(other.requestId, {}); expect((await requestModelSlot(other)).kind).toBe("granted");
+      expect(await findOwnPendingTextProfileRequests(expected)).toEqual([{ productId: task.product.id, workKey: own.request.workKey }]);
+      await install(basePolicy, "draining"); expect(await findOwnPendingTextProfileRequests(expected)).toEqual([]);
+      await install(); await admin`UPDATE model_capacity_control SET revision=revision+1 WHERE id=1`;
+      expect(await findOwnPendingTextProfileRequests(expected)).toEqual([]);
+    });
+  });
+}));
+it("does not prioritize a stale owned input or mutate that unused reservation", exercise(async () => {
+  const task = await seed(); await server(async ({ bodies }) => {
+    let requestId = "";
+    await custom(task, async lease => { requestId = (await reserve(task, lease)).request.requestId; });
+    for (let index = 0; index < 13; index++) await seed();
+    await db.update(products).set({ tagline: "Changed source while waiting" }).where(eq(products.id, task.product.id));
+    const [before] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${requestId}::uuid`;
+    expect((await pendingProfiles(12, role)).map(row => row.product.id)).not.toContain(task.product.id);
+    expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${requestId}::uuid`)[0]).toEqual(before);
+    expect(bodies).toHaveLength(0);
   });
 }));
 it("rejects changed source/profile generation on reserved reentry and cancels only unused capacity", exercise(async () => {
@@ -319,6 +369,7 @@ it("keeps EOF full-C unknown fenced across a new boot and changed source without
     setReply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
     const [unknown] = await admin`SELECT * FROM model_capacity_requests`; expect(unknown.state).toBe("indeterminate"); expect(unknown.dispatch_binding.chargedTokens).toBe(8000);
+    expect(await findOwnPendingTextProfileRequests({ owner: { instanceId: role.instanceId, bootId: role.bootId }, model: PROFILE_MODEL })).toEqual([]);
     expect((await admin`SELECT attempts FROM product_search_profiles WHERE product_id=${task.product.id}`)[0].attempts).toBe(1);
     const [beforeSource] = await admin`SELECT source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(await tracked(releaseRole(role))).toBe(true); await elect();
