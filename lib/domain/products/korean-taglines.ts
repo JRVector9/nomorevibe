@@ -156,6 +156,22 @@ export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly s
   return rows.map((row) => ({ ...row, attempts: Number(row.attempts) }));
 }
 
+/** Restore every original target under current general/home eligibility; dispatch still rechecks full raw source/cache hashes. */
+export async function pendingKoreanTaglineBatch(memberKeys: readonly string[], homeSlugs: readonly string[]): Promise<KoreanTaglineTask[] | null> {
+  const keys = z.array(z.string().regex(/^product-tagline-ko:[1-9]\d*$/)).min(1).max(8).parse(memberKeys);
+  if (new Set(keys).size !== keys.length) throw new Error("invalid_product_tagline_ko_members");
+  const ids = keys.map(key => z.number().int().positive().safe().parse(Number(key.split(":")[1])));
+  const { current, ready } = koreanQueuePredicates(homeSlugs);
+  return onPrimary(async () => {
+    const rows = await db.select({ productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
+      attempts: sql<number>`case when ${current} then ${productKoreanTaglines.attempts} else 0 end`,
+      lastError: sql<string | null>`case when ${current} then ${productKoreanTaglines.errorCode} end`,
+    }).from(products).leftJoin(productKoreanTaglines, eq(productKoreanTaglines.productId, products.id))
+      .where(and(inArray(products.id, ids), inArray(products.status, PUBLIC), NEEDS_KOREAN, ready));
+    return rows.length === ids.length ? ids.map(id => rows.find(row => row.productId === id)!) : null;
+  });
+}
+
 /**
  * Opt-in Qwen-only candidates; callers also enforce fresh job/capacity ownership and the per-tick cap.
  * The cumulative attempt ceiling bounds home changes and later writes by another model.

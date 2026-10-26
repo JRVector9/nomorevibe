@@ -4,14 +4,17 @@ import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, modelCapacit
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { leadClause } from "@/lib/domain/products/korean-tagline";
 const mocks = vi.hoisted(() => ({ control: vi.fn(), prepare: vi.fn(), legacy: vi.fn(), call: vi.fn(), pending: vi.fn(),
+  batches: vi.fn(), restore: vi.fn(), abandon: vi.fn(),
   request: vi.fn(), cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), transaction: vi.fn(), prefix: vi.fn(),
   finish: vi.fn(), batch: vi.fn(), jobWall: vi.fn(), tasks: vi.fn(), write: vi.fn(), home: vi.fn() }));
 vi.mock("@/lib/domain/products/korean-taglines", () => ({ prepareKoreanTaglineDispatch: mocks.prepare,
+  pendingKoreanTaglineBatch: mocks.restore,
   koreanTaglineSource: (task: { tagline: string; lastError?: string | null }) => task.lastError && ["rejected:too_long", "rejected:empty"].includes(task.lastError) ? leadClause(task.tagline) : task.tagline,
   homeListSlugs: mocks.home, pendingKoreanTaglines: mocks.tasks, recordKoreanTaglines: mocks.write }));
 vi.mock("@/lib/crawl/translate", async original => ({ ...await original<typeof import("@/lib/crawl/translate")>(), translateTaglinesToKorean: mocks.legacy }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: mocks.control,
   findOwnPendingModelRequest: mocks.pending, requestProductTaglineKoModelSlot: mocks.request, cancelReservedModelSlot: mocks.cancel,
+  findOwnPendingProductTextRequests: mocks.batches, cancelOwnPendingProductTextRequest: mocks.abandon,
   markModelDispatchIndeterminate: mocks.unknown, reconcileProductTaglineKoGatewayTerminal: mocks.reconcile,
   lockModelCapacityCallerControl: mocks.control, lockProductTaglineKoModelCapacityDispatch: mocks.prefix,
   finishProductTaglineKoModelCapacityDispatch: mocks.finish }));
@@ -44,6 +47,7 @@ beforeEach(() => {
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
   mocks.pending.mockResolvedValue(null); mocks.request.mockResolvedValue({ kind: "granted", reservation });
+  mocks.batches.mockResolvedValue([]); mocks.abandon.mockResolvedValue(true);
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
@@ -192,4 +196,54 @@ it("stops a positive zero-store before original success counters can certify wor
   expect(await writeKoreanTaglines({ lease: job, hasBudget: () => true, log } as unknown as Parameters<typeof writeKoreanTaglines>[0])).toEqual({ done: false });
   expect(mocks.write.mock.calls[0][2]).toBe(expectation); expect(mocks.native).toHaveBeenCalledTimes(1);
   expect(log.mock.calls.some(([event, data]) => event === "tagline_ko.done" && data.written > 0)).toBe(false);
+});
+
+function recoverKoreanBatch() {
+  const restored = [task, { ...task, productId: 18, tagline: "Tools to manage documents for your team" }];
+  const recoveredMembers = [members[0], { ...members[0], productId: 18, slug: "korean-unit-other" }];
+  const pending = { request: { requestId: reservation.requestId, owner: reservation.owner, routeId: "product-tagline-ko", provider: "abcllm",
+    model: TRANSLATE_MODEL, class: "background", pool: "text",
+    workKey: `${productTaglineKoLogicalWorkKey(recoveredMembers)}:${productTaglineKoInputHash({ members: recoveredMembers, model: TRANSLATE_MODEL })}` },
+    memberKeys: ["product-tagline-ko:17", "product-tagline-ko:18"], state: "reserved" };
+  mocks.batches.mockResolvedValue([pending]); mocks.restore.mockResolvedValue(restored);
+  mocks.prepare.mockReset().mockImplementation(async (selected, _home, _job, options) => options.reserved
+    ? { kind: "ready", dispatch, expectation } : { kind: "ready", members: selected.length === 2 ? recoveredMembers : members, role: boundRole });
+  mocks.native.mockResolvedValue({ result: { ok: true, outputs: ["Doc로 팀 문서를 관리하는 도구", "Doc로 팀 문서를 정리하는 도구"] }, terminal });
+  return { restored, pending, recoveredMembers };
+}
+it("adopts a reserved old Korean batch under the same ID without mixing the newly selected overlap", async () => {
+  const { restored, pending, recoveredMembers } = recoverKoreanBatch();
+  const outcome = await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, options());
+  expect(outcome).toMatchObject({ kind: "result", batch: restored, expectation });
+  expect(mocks.request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ requestId: pending.request.requestId,
+    workKey: pending.request.workKey }), recoveredMembers);
+  expect(mocks.native.mock.calls[0][0]).toEqual([{ name: "Doc", tagline: leadClause(task.tagline) },
+    { name: "Doc", tagline: leadClause(restored[1].tagline) }]);
+  expect(mocks.pending).not.toHaveBeenCalled(); expect(mocks.abandon).not.toHaveBeenCalled();
+});
+it.each(["ineligible", "input_changed"])("abandons only a stale own Korean readback: %s", async stale => {
+  const { pending } = recoverKoreanBatch();
+  mocks.native.mockResolvedValue({ result, terminal });
+  if (stale === "ineligible") mocks.restore.mockResolvedValue(null);
+  else pending.request.workKey = "text:product-tagline-ko:" + "a".repeat(64) + ":" + "b".repeat(64);
+  expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, options())).toMatchObject({ kind: "result", expectation });
+  expect(mocks.abandon).toHaveBeenCalledExactlyOnceWith(pending, expect.objectContaining({ owner: reservation.owner,
+    routeId: "product-tagline-ko", model: TRANSLATE_MODEL }));
+  expect(mocks.native.mock.calls[0][0]).toEqual([item]);
+});
+it("propagates a Korean recovery read failure without abandonment or HTTP", async () => {
+  recoverKoreanBatch(); const error = new Error("recovery read unavailable"); mocks.restore.mockRejectedValue(error);
+  await expect(translateKoreanTaglinesWithModelCapacity([task], [], job, options())).rejects.toBe(error);
+  expect(mocks.abandon).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
+it("validates and writes the recovered Korean batch in the real job, rather than its candidate batch", async () => {
+  const { restored } = recoverKoreanBatch(); mocks.home.mockResolvedValue(["korean-unit"]); mocks.write.mockResolvedValue(2);
+  let reads = 0; mocks.tasks.mockImplementation(async () => ++reads === 1 ? [task] : []);
+  for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: role.instanceId,
+    ROLE_LEASE_BOOT_ID: role.bootId, ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
+  const { writeKoreanTaglines } = await vi.importActual<typeof import("@/lib/jobs/products/korean-tagline")>("@/lib/jobs/products/korean-tagline");
+  await writeKoreanTaglines({ lease: job, hasBudget: () => true, log: vi.fn() } as unknown as Parameters<typeof writeKoreanTaglines>[0]);
+  expect(mocks.write.mock.calls[0][0].map((entry: { task: typeof task }) => entry.task)).toEqual(restored);
+  expect(mocks.write.mock.calls[0][0].every((entry: { result: { kind: string } }) => entry.result.kind === "success")).toBe(true);
+  expect(mocks.write.mock.calls[0][2]).toBe(expectation);
 });

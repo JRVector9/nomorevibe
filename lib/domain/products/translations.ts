@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
@@ -136,6 +136,27 @@ export async function pendingProductTranslations(limit = 4): Promise<ProductTran
       sql`${t.retryAt} is null or ${t.retryAt} <= now()`))
     .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
   return rows;
+}
+
+/** Complete original membership only; fresh queue ordering cannot replace one member of an admitted batch. */
+export async function pendingProductTranslationBatch(memberKeys: readonly string[]): Promise<ProductTranslationTask[] | null> {
+  const keys = z.array(z.string().regex(/^product-translate:[1-9]\d*:(en|zh-Hans|zh-Hant):(tagline|description)$/)).min(1).max(4).parse(memberKeys);
+  if (new Set(keys).size !== keys.length) throw new Error("invalid_product_translation_members");
+  const targets = keys.map(key => { const [, id, locale, field] = key.split(":");
+    return { productId: z.number().int().positive().safe().parse(Number(id)), locale, field }; });
+  return onPrimary(async () => {
+    const rows = await db.select({ source: sourceColumns, locale: t.locale, field: t.field,
+      sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
+      .innerJoin(products, eq(products.id, t.productId)).where(and(eligible,
+        or(...targets.map(target => and(eq(t.productId, target.productId), eq(t.locale, target.locale as ProductTranslationLocale),
+          eq(t.field, target.field as ProductTranslationField)))), inArray(t.status, ["pending", "failed"]),
+        sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`, sql`${t.retryAt} is null or ${t.retryAt} <= clock_timestamp()`));
+    if (rows.length !== keys.length) return null;
+    const batch = targets.map(target => rows.find(row => row.source.id === target.productId && row.locale === target.locale && row.field === target.field)!);
+    if (batch.some(task => productTranslationSourceHash(task.source, task.field) !== task.sourceHash)
+      || batch.reduce((size, task) => size + translationSourceText(task.source, task.field).length, 0) > 4_000) return null;
+    return translationBatch(batch);
+  });
 }
 
 export type ProductTranslationResult = { ok: true; text: string; model: string } | { ok: false; error: string; model: string };

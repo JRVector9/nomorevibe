@@ -126,7 +126,10 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         const outcome: KoreanTaglineCapacityResult = entry.backend === "gpt"
           ? await translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal })
           : { kind: "result" as const, result: await translateKoreanTaglinesWithQwen(items, { timeoutMs, signal }) };
-        return { ...entry, items, outcome, elapsedMs: Date.now() - calledAt };
+        const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
+        completedBatch.forEach(task => visited.add(task.productId));
+        const completedItems = completedBatch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
+        return { ...entry, batch: completedBatch, items: completedItems, outcome, elapsedMs: Date.now() - calledAt };
       }));
       if (signal.aborted || !ctx.hasBudget()) return { done: false };
       let skipped = false;

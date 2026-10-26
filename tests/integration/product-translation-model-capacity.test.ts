@@ -18,7 +18,8 @@ import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { jobsForRole } from "@/lib/jobs/catalog";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { releaseRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
-import { requestProductTranslationModelSlot, cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
+import { requestProductTranslationModelSlot, cancelReservedModelSlot, findOwnPendingProductTextRequests,
+  cancelOwnPendingProductTextRequest, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { modelCapacityPolicyHash, productTranslationInputHash, productTranslationLogicalWorkKey,
   type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import type { ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
@@ -141,7 +142,7 @@ async function seed(fields: ("tagline" | "description")[] = ["tagline"]) {
     description: "문서를 정리하는 도구", taglineSource: "ai_page", category: "Productivity", status: "seeded", source: "crawler", verifyToken: "fixture", editTokenHash: "fixture" }).returning());
   ownProducts.set(row.id, slug); // committed ID registration, not an unexecuted lazy builder
   expect(await tracked(requestProductTranslations([row.id], "en", fields))).toBe(fields.length);
-  const tasks = (await tracked(pendingProductTranslations(4))).filter(task => task.source.id === row.id);
+  const tasks = (await tracked(pendingProductTranslations(8))).filter(task => task.source.id === row.id);
   expect(tasks).toHaveLength(fields.length); return { product: row, tasks };
 }
 const replyBody = (outputs: string[] = ["Doc helps you manage documents"]) => ({ id: "product-local", object: "chat.completion", created: 1, model: "served-product",
@@ -418,3 +419,70 @@ it("settles the historical physical terminal before rejecting the expired curren
     finally { if (response && !response.writableEnded) response.end(JSON.stringify(replyBody())); await steps([() => running], errors); }
   });
 }), 20_000);
+
+
+it("recovers an old product reservation before a changed overlapping queue batch and writes only recovered members", exercise(async () => {
+  const first = await seed(), second = await seed(), fresh = [await seed(), await seed(), await seed()];
+  await server(async ({ bodies }) => {
+    let requestId = "";
+    await custom(async lease => { requestId = (await reserve([...first.tasks, ...second.tasks], lease)).reservation.requestId; });
+    await admin`UPDATE product_translations SET updated_at=clock_timestamp()-interval '1 hour'
+      WHERE product_id=ANY(${fresh.map(item => item.product.id)}::int[])`;
+    const candidates = await pendingProductTranslations(4);
+    expect(candidates.some(task => task.source.id === first.product.id)).toBe(true);
+    expect(candidates.some(task => task.source.id === second.product.id)).toBe(false);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(2);
+    expect((await admin`SELECT state,logical_member_keys FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
+      .toMatchObject({ state: "settled", logical_member_keys: [first.product.id,second.product.id].sort((a,b)=>a-b).map(id=>`product-translate:${id}:en:tagline`).sort() });
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`).map(row=>row.kind))
+      .toEqual(["queued","reserved","dispatch_started","dispatch_settled"]);
+    expect((await admin`SELECT status FROM product_translations WHERE product_id=ANY(${[first.product.id,second.product.id]}::int[])`).every(row=>row.status==="ready")).toBe(true);
+    expect((await admin`SELECT status,attempts,text FROM product_translations WHERE product_id=ANY(${fresh.map(item=>item.product.id)}::int[])`))
+      .toEqual(fresh.map(()=>({status:"pending",attempts:0,text:null})));
+    expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
+  });
+}));
+it("abandons a stale product reservation without mixing or reviving its changed source", exercise(async () => {
+  const first=await seed(),second=await seed();
+  await server(async ({ bodies }) => {
+    let requestId="";
+    await custom(async lease=>{ requestId=(await reserve([...first.tasks,...second.tasks],lease)).reservation.requestId; });
+    await admin`UPDATE products SET name='Changed source name' WHERE id=${first.product.id}`;
+    expect(await tick()).toMatchObject({status:"completed",done:true}); expect(bodies).toHaveLength(1);
+    expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(1);
+    expect((await admin`SELECT state,dispatch_binding,dispatched_at FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
+      .toMatchObject({state:"withdrawn",dispatch_binding:null,dispatched_at:null});
+    expect((await admin`SELECT status,error_code FROM product_translations WHERE product_id=${first.product.id}`)[0])
+      .toMatchObject({status:"failed",error_code:"stale_source"});
+    expect((await admin`SELECT status FROM product_translations WHERE product_id=${second.product.id}`)[0].status).toBe("ready");
+    expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`).map(row=>row.kind))
+      .toEqual(["queued","reserved","reservation_cancelled"]);
+  });
+}));
+it("refuses foreign or changed product readbacks and never refunds dispatched or unknown work", exercise(async () => {
+  const {tasks}=await seed();
+  await server(async ({bodies})=>{
+    await custom(async lease=>{
+      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:TRANSLATE_MODEL,routeId:"product-translate" as const};
+      const [pending]=await findOwnPendingProductTextRequests(expected);
+      expect(pending.request.requestId).toBe(slot.reservation.requestId);
+      expect(await findOwnPendingProductTextRequests({...expected,owner:{...expected.owner,bootId:randomUUID()}})).toEqual([]);
+      expect(await findOwnPendingProductTextRequests({...expected,model:"foreign-model"})).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,{...expected,owner:{...expected.owner,bootId:randomUUID()}})).toBe(false);
+      for(const changed of [{...pending,token:randomUUID()},{...pending,revision:pending.revision+1},{...pending,memberKeys:[]}])
+        expect(await cancelOwnPendingProductTextRequest(changed,expected)).toBe(false);
+      const prepared=await prepareProductTranslationDispatch(tasks,lease,{roleLease:role,call:slot.call,
+        reserved:{reservation:slot.reservation,identity:slot.identity,members:slot.ready.members,role:slot.ready.role}});
+      if(!("dispatch" in prepared)) throw new Error("fixture_dispatch_required");
+      expect(await findOwnPendingProductTextRequests(expected)).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,expected)).toBe(false);
+      expect(await markModelDispatchIndeterminate(prepared.dispatch,"transport_unknown")).toBe(true);
+      expect(await findOwnPendingProductTextRequests(expected)).toEqual([]);
+      expect(await cancelOwnPendingProductTextRequest(pending,expected)).toBe(false);
+      expect((await admin`SELECT state,settled_at FROM model_capacity_requests WHERE request_id=${slot.reservation.requestId}::uuid`)[0])
+        .toMatchObject({state:"indeterminate",settled_at:null});
+    });
+    expect(bodies).toHaveLength(0);
+  });
+}));

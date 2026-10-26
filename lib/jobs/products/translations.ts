@@ -35,10 +35,11 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: 20_000, signal });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;
+    const completedBatch = outcome.batch ?? batch;
     if (ctx.signal?.aborted) return { done: false };
     // Account for calls aborted by the tick budget. The final lease check in
     // recordProductTranslations rolls back writes if ownership was actually lost.
-    const entries = batch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
+    const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
       if (!response.ok) return { task, result: { ok: false, error: response.error, model: PRODUCT_TRANSLATION_MODEL } };
       const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
       return { task, result: checked.ok ? { ok: true, text: checked.text, model: PRODUCT_TRANSLATION_MODEL }
@@ -46,7 +47,7 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     });
     const stored = await (outcome.expectation ? recordProductTranslations(entries, ctx.lease, outcome.expectation)
       : recordProductTranslations(entries, ctx.lease));
-    ctx.log("product_translation.tick", { model: PRODUCT_TRANSLATION_MODEL, demanded: batch.length, stored,
+    ctx.log("product_translation.tick", { model: PRODUCT_TRANSLATION_MODEL, demanded: completedBatch.length, stored,
       accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error });
     return { done: true };
   } finally {
