@@ -6,6 +6,7 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { createReplicaRouter } from "@/lib/db/replica";
 import { evidenceProgress, readWorkerProgress, withProviderBackoff } from "@/lib/operations/worker-progress-query";
 import { readTextStageProgress } from '@/lib/operations/text-stage-progress';
+import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import type { ThroughputStage } from '@/lib/operations/throughput-model';
 
 /**
@@ -61,10 +62,13 @@ function recordingExecutor(log: Log) {
 vi.mock("@/lib/db", () => ({ db: { ...recordingExecutor(fixture.primary.transactions),
   // 관문의 관측 읽기는 미룬 이유(defer:<job>) 줄을 빼고 읽는다(운영센터 v8 PR4) — 조건만 붙고 결과는 같다
   select: () => ({ from: (table: unknown) => ({ where: async () => {
-    const { pipelineStageModes, modelCapacityControl } = await import('@/lib/db/schema');
-    if (table === modelCapacityControl) return fixture.capacity.mode ? [{ mode: fixture.capacity.mode }] : [];
+    const { pipelineStageModes } = await import('@/lib/db/schema');
     return table === pipelineStageModes ? ['ai1', 'ai2'].map(stage => ({ stage, mode: 'legacy', drainingFrom: null })) : fixture.observations;
   } }) }) } }));
+vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityControlObservation: vi.fn(async () => {
+  if (!fixture.capacity.mode) throw new Error('model_capacity_control_missing');
+  return { mode: fixture.capacity.mode };
+}) }));
 vi.mock("@/lib/crawl/settings", async () => {
   const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
   return { getSettings: async () => ({ ...DEFAULT_CRAWL_SETTINGS, agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: true } }) };
@@ -105,12 +109,14 @@ const expectedStages = [
 
 describe("배포 관문 근거 읽기", () => {
   it('reads global capacity drain on primary and holds eligible first-review demand', async () => {
+    vi.mocked(readModelCapacityControlObservation).mockClear();
     fixture.capacity.mode = 'draining';
     fixture.throughputStages = [{ key: 'first', enabled: true, waiting: 220, oldestMinutes: 239,
       completed1m: 0, completed5m: 0, progress5m: 0, errors5m: 0, label: 'AI1', unit: '건',
       queueNote: '', detail: '', status: 'stalled' }];
     try {
       const report = await readWorkerProgress(fixture.NOW, { includeText: false });
+      expect(readModelCapacityControlObservation).toHaveBeenCalledExactlyOnceWith();
       expect(report.stages.find(stage => stage.stage === 'first')).toMatchObject({ held: true, reason: 'backoff', alarm: false, restartEligible: false });
     } finally { fixture.capacity.mode = 'disabled'; fixture.throughputStages = []; }
   });
@@ -120,6 +126,14 @@ describe("배포 관문 근거 읽기", () => {
     try { await expect(readWorkerProgress(fixture.NOW)).rejects.toThrow('model_capacity_control_missing'); }
     finally { fixture.capacity.mode = 'disabled'; }
   });
+
+  it.each(['model_capacity_control_invalid', 'model_capacity_policy_hash_mismatch', 'database_unavailable'])(
+    'propagates validated control failure %s without reporting intentional waiting', async code => {
+      const failure = new Error(code);
+      vi.mocked(readModelCapacityControlObservation).mockRejectedValueOnce(failure);
+      await expect(readWorkerProgress(fixture.NOW)).rejects.toBe(failure);
+    },
+  );
 
   it('lets role-local recovery skip the extra read-only text queries while the default monitor includes them', async () => {
     vi.mocked(readTextStageProgress).mockClear();

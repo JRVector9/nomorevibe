@@ -1,8 +1,9 @@
 import { db } from "@/lib/db";
-import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { and, inArray, sql, type SQL } from "drizzle-orm";
 import { modelCapacityControl, operationsObservations, pipelineStageModes } from "@/lib/db/schema";
 import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
+import { readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { WITHOUT_JOB_DEFERRALS } from "@/lib/jobs/deferral-observation";
@@ -106,6 +107,10 @@ export function buildWorkerProgress(
     const classifiedStage = classifyStage(stage, job ?? null, observed, now);
     let result = stage.key === "agent-evidence" && agentScan && agentScan.mode !== "legacy"
       ? agentScanStage(classifiedStage, agentScan, agentScanConsumerAlive) : classifiedStage;
+    // Historical item failures cannot establish stalled admission while new model calls are deliberately blocked.
+    // Retain their counters, and keep fresh item failures or a durable job failure alarmed.
+    if (capacityHeld && stage.errors5m === 0 && !job?.lastError && result.reason === 'upstream_stalled')
+      result = { ...result, reason: 'backoff', alarm: false, restartEligible: false };
     // The role supervisor cannot repair or own an independent AI consumer. Drain deliberately admits no new work.
     if (mode && mode.mode !== 'legacy') {
       result = { ...result, restartEligible: false };
@@ -335,11 +340,10 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   const [settings, jobs, batch, agentScan, reviewModes, capacity] = await Promise.all([getSettings(), listJobStates(), readJobBatchMode(), readAgentScanMode(db),
     db.select({ stage: pipelineStageModes.stage, mode: pipelineStageModes.mode, drainingFrom: pipelineStageModes.drainingFrom })
       .from(pipelineStageModes).where(inArray(pipelineStageModes.stage, ['ai1', 'ai2'])),
-    db.select({ mode: modelCapacityControl.mode }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)),
+    readModelCapacityControlObservation(),
   ]);
   // A missing control row must not fall back to legacy restart authority.
   if (!['ai1', 'ai2'].every(stage => reviewModes.some(row => row.stage === stage))) throw new Error('review_stage_modes_missing');
-  if (!capacity[0]) throw new Error('model_capacity_control_missing');
   const aiCursor = jobs.find(job => job.name === "ai-level-refresh")?.cursor as { unseenIdleUntil?: unknown } | null;
   const idleUntil = typeof aiCursor?.unseenIdleUntil === "string" ? Date.parse(aiCursor.unseenIdleUntil) : NaN;
   const agentCursor = jobs.find(job => job.name === "agent-evidence-refresh")?.cursor as { providerFailure?: unknown } | null;
@@ -355,5 +359,5 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
     options.includeText === false ? Promise.resolve([]) : readTextStageProgress(),
   ]);
   return buildWorkerProgress(throughput, withProviderBackoff(jobs, now), observations, now, batch,
-    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity[0].mode);
+    [...evidence, ...(split ? [split] : []), ...text], agentScan, reviewModes, capacity.mode);
 }
