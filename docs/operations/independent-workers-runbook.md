@@ -684,8 +684,12 @@ DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON
 공통 8앱의 배포 성공만으로 monitor까지 교체됐다고 보지 말고 실제 digest·release·명령·health를 확인한다.
 
 `DATABASE_URL`은 전용 SELECT 계정의 주 DB 직접 연결(5432)이다. 운영 계정은
-`nomorevibe_monitor_20261022`, connection limit 2·기본 읽기 전용·statement timeout 10초이며 25개 업무 표의
-SELECT와 UPDATE 거절을 확인했다. 표 목록은 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)에 있다.
+`nomorevibe_monitor_20261022`, connection limit 2·기본 읽기 전용·statement timeout 10초다. 초기 25개 업무 표에 더해
+`public.dr_writer_fence`의 테이블 SELECT를 프로비저닝 검사에 포함한다. 현재 main `34cc2045`의
+`readModelCapacityControlObservation()`이 잠금 없이 `to_jsonb(f)`로 전체 행을 읽기 때문이다. 쓰기 권한은 부여하지 않는다.
+2026-10-27 감사 20513으로 누락된 SELECT를 보완하고 기본 읽기 전용 on·SELECT true·쓰기 false를 확인했다.
+정확한 표 목록과 GRANT·검사 SQL은 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)에 있다.
+이 권한 보완과 새 monitor의 readiness·양쪽 Push 수신·전체 정상 인증 결과는 각각 확인한다.
 진행 판정은 주 DB의 `db`를 사용하므로 `READ_DATABASE_URL`만 넣어서는 연결되지 않는다.
 현재 발행 적격 큐는 `CONNECT_AGENT_URL` 유무에 의존하지 않는다. 감시자에게 publisher의 URL·인증을 복사하지 않는다.
 

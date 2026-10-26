@@ -1,11 +1,23 @@
 # 남은 작업
 
-## AI2 운영 전환 후 현재 상태 — 2026-10-26
+## 현재 미해결 — 2026-10-27, 전체18 source/runtime·6잡 재개 완료
 
-최신 운영은 main `df1e6411`·18앱·DB journal134·capacity OPEN revision3이다. AI2는 GPU3090 직접 연결을 기본, abcLLM Supa를 대체로 사용하며 두 경로 no-thinking·총32k/출력10k 제한을 적용했다. 실제 GPU1,112건과 자동 대체345건의 종료·DB 결과를 확인했다. 이전 날짜의 앱 수·미확정 요청·미배포 설명은 현재 상태로 해석하지 않는다. [현재 실측 및 남은 PR 범위](docs/operations/2026-10-26-ai2-native-recovery.md)를 우선한다.
+PR668–679·681–686은 병합했고 최신 main은 `34cc2045cbb7105313861792adb37c035b64e70c`다. PR686 필수 CI40382748901과 main CI40383949515의 필수 check·웹/워커 이미지가 성공했다. 전체18 source/runtime34cc를 실제 확인했으나 **정상 관문·monitor UP는 미통과**다. 관측은 한 번 시작했으며 미래 통과는 false다. 두 번째 own 재개30148도 실제 완료해 현재 text6잡은 모두 paused=false이며 계획된 pause는 없다. capacity OPEN20475는 그대로다.
 
-진행 중: 의도한 중단 중 text 재시작 방지, reason 번역 예약 배치 회복, 배포 자동 검증 오류 수정. 아래 사람 라벨·백업 복구·장기 관측 등 미완료 경계는 별도로 유지한다.
+DB0137/journal138 적용·사후 검증, 6c 요청 감사20474 withdrawn, Connect 직접 네이티브 실행·180초 종료 대기/240초 유예는 완료했다. 비용 C272000·settled_at NULL·사용량 미확정과 원 실패를 보존한다. PR686은 새 boot의1grant→1dispatch→1settled/generated를 **19:29:48.471 UTC** 실제 확인했고 새 profile 미사용 예약 만료는 없었다. 이 한 표본을 전체 업무·품질 정상으로 확대하지 않는다.
 
+실행b는 Git7앱34cc 검증 뒤 progress 관문에서 중단했다. 새 실행C는 이7앱을 유지하고11앱을 선택해10앱 verified·monitor latest done/healthy1을 확인했으나 **19:47:10 UTC monitor 최종 source/health/push 증명 timeout**으로 중단했다. 감시 역할의 실제 PG42501·dr_writer_fence SELECT 누락을 확인해 root가 **SELECT만 한 번 보완·감사20513**을 남겼다. 쓰기 불가·읽기 전용 설정과 앱·모델 설정은 유지한다. C나 grant·기존 stop/migration/canonical/pause/resume once를 재실행하지 않는다.
+
+- **source/runtime 확인 완료·정상 인증 아님**: 제한된 읽기 증명97182 EXIT0,19:56:03.736950 UTC. stock verify_fleet selected11+retained7 전체18 확인. `STATE/full18-release686-source-runtime-20261027/source-runtime.final.private.json`, SHA `1ce7da702b3b6a01423867ffddabf8c53977820fbd9499e95810363edb0de0da`; result의 normalCompletionCertified=false를 유지한다. 원 C와62719 monitor timeout 실패는 보존한다.
+- **현재 경보**:19:56 normalGate는 reviewer owner_mismatch·progress alarm이었다. **최신80777 EXIT0(19:58:05.270076 UTC, `STATE/final-current686-readback-20261027-b.private.json`)에서 reviewer 소유권은 자연 해소돼 모든5역할·scheduler ready이며 ONLY progress=alarm만 남았다.** 정상 관문은 여전히 false다. FIRST110/SECOND71 대기·진행5분0, reason-translate9287 무진행, keywords14468/translate113147/KO542 upstream_stalled. 역할 생존·scheduler·lanes와 별개인 실제 업무 경보를 완화하지 않는다. monitor 두 ACK/fresh는 true여도 UP=false다.
+- **새 Deepseek 미확정1건**:19:58 UTC대 `STATE/capacity-final686-readback-20261027-a.private.json`에서 OPEN/epoch1/revision3 유지, local-human-deepseek/m3-mlx/reviewer의 INDETERMINATE1건을 확인했다(queued19:36:44.442/dispatched19:37:37.933/updated19:37:40.584 UTC). active TEXT는 없다. 경보 원인/그룹 차단의 인과는 미입증이다. 과거6c와 다른 정확한 한 요청의 실제 물리/모델 종료 증거·현재 권한/CAS를 확인한 뒤 별도 회수를 검토한다. unknown을 지우거나 과거 once·종료 증거를 재사용하지 않는다.
+- **유지보수 종료 완료**: 두 번째 resume30148/감사20514–20519,19:54:59.077–19:55:02.865 UTC.6잡 모두 paused=false·계획된 pause 없음. pause/resume·배포·회수·migration·grant once를 재실행하지 않는다. SELECT20513 후 실제 읽기 오류는 해소됐다.
+- **진행 중 관측**: snapshot/hash에 결속한 stock observer는19:56:25.106637 UTC PID51355로 한 번 시작했다.5·10·15분/6시간, productionMutations0·futurePassed=false. 실제 결과는 경과 후 확인하고 실패시 중단된 driver를 재시작하거나 후속 표본을 통과로 채우지 않는다. 별도24시간도 남아 있다. 원문·시작/summary 경로와 로컬 읽기 명령은 인계에 있다.
+- **소유권 사용자 경로**: 상세페이지3건의 운영 익명 화면·로그인 진입은 확인했다. 실제 OAuth·개인/조직 claim·증명 파일·멤버 관리·30일 재검증·파일 삭제 회수는 미실행이다.
+- **기존 미완료**: 독립 사람 라벨5개·assist `apply_enabled=false`, 미복구 후보3건·보강 적체 품질, 불명확한 개인 Star 잠금, 전체 호스트/저장 정체/반복 부팅·알림 수신 드릴·예비 publisher 적격 신규 발행을 유지한다.
+- **백업·용량**: 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·PgBouncer 용량·실제 nonempty media_assets 바이너리 복원이 남아 있다. 이미 확인한9월29일 논리 dump·og_images 격리복원은 다시 미실행으로 표시하지 않는다.
+
+AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 그대로다. **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** PR686 첫 CI의 strict owner projection 실패·수정·후속 성공 이력은 [보고서](docs/operations/2026-10-26-pr-priority-progress.md)에 남겼다. [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 그대로 보존한다.
 
 ## LLM 보강 운영 전환 — 2026-10-25
 
