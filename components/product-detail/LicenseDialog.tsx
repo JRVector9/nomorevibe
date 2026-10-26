@@ -82,7 +82,7 @@ export function LicenseDialog({ license, source, repositoryUrl, label }: {
         aria-controls={id}
         aria-label={t("license.open", { label })}
         onClick={open}
-        className="max-w-full cursor-pointer truncate rounded-sm text-left underline decoration-line underline-offset-4 hover:decoration-current focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-ink"
+        className="max-w-full cursor-pointer break-words whitespace-normal rounded-sm text-left underline decoration-line underline-offset-4 hover:decoration-current focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-ink"
       >
         {label}<span aria-hidden className="ml-1 text-[13px] font-normal text-fg-2">ⓘ</span>
       </button>
