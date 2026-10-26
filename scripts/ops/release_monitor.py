@@ -12,7 +12,8 @@ import json
 import re
 import subprocess
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -30,11 +31,18 @@ PUSH_FIELDS = frozenset(('verified', 'primary', 'external', 'fresh', 'stateUp'))
 
 
 def _timestamp(value):
+    """Strict RFC3339Nano, with exact ordering on Python 3.9 as well as newer hosts."""
     if not isinstance(value, str):
         return None
+    parts = re.fullmatch(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})'
+                         r'(?:\.([0-9]{1,9}))?(Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])', value)
+    # RFC3339 -00:00 denotes an unknown local offset, not a known UTC instant.
+    if parts is None or parts[3] == '-00:00':
+        return None
     try:
-        parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
-        return parsed.timestamp() if parsed.tzinfo is not None else None
+        parsed = datetime.fromisoformat(parts[1] + ('+00:00' if parts[3] == 'Z' else parts[3]))
+        elapsed = parsed - datetime(1970, 1, 1, tzinfo=timezone.utc)
+        return Decimal(elapsed.days * 86400 + elapsed.seconds) + Decimal('0.' + (parts[2] or '0'))
     except (ValueError, OverflowError):
         return None
 
@@ -47,7 +55,7 @@ def push_receipt_verdict(lines, started_at, *, now=None):
     timestamps. The output contains booleans only, including on parse failure.
     """
     result = {'verified': False, 'primary': False, 'external': False, 'fresh': False, 'stateUp': False}
-    now = time.time() if now is None else now
+    now = Decimal(str(time.time() if now is None else now))
     started = _timestamp(started_at)
     if started is None or started > now + 5 or not isinstance(lines, (list, tuple)) or len(lines) > 128:
         return result
@@ -95,7 +103,7 @@ def push_receipt_verdict(lines, started_at, *, now=None):
 # Use the exact same parser in offline tests and on the remote host. Only this
 # boolean result crosses SSH; raw lines, URLs and response bodies stay remote.
 REMOTE_PUSH_RECEIPTS = (
-    'import json,re,subprocess,sys,time\nfrom datetime import datetime\n'
+    'import json,re,subprocess,sys,time\nfrom datetime import datetime,timezone\nfrom decimal import Decimal\n'
     + 'MAX_RECEIPT_AGE_SECONDS=' + str(MAX_RECEIPT_AGE_SECONDS) + '\n'
     + inspect.getsource(_timestamp) + '\n' + inspect.getsource(push_receipt_verdict) + '\n'
     + r'''
