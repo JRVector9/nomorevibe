@@ -24,6 +24,7 @@ import { FlowNodes, type FlowLane } from "./FlowNodes";
 import { dbClock, defaultNode, deferralLabel, deferralText, enrichmentFlowNodes, enrichmentNodes, ledgerRows, reviewNodes, slotRows,
   sourceNodes, sourceSummary, xSummary, type EnrichmentNode, type FlowNode, type SlotRow } from "./flow-model";
 import { CompletionsStage } from "./PipelineCompletions";
+import { FirstReviewPurpose } from "./FirstReviewStatus";
 import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./render-reads";
 import { evidenceFor, sourceSplitOnce, type FlowSlotProps } from "./flow-slots";
 
@@ -97,6 +98,7 @@ function NodeDetail({ node, data }: { node: FlowNode; data: FlowDetailData }) {
   const report = data.x.report;
   return <div className="ops-flow-detail-in" aria-label={`${node.label} 상세`}>
     <h2 className="ops-flow-lane-h">{node.label} <span>({node.code}) · {node.state}{node.big !== null ? ` · ${node.big}${node.unit ? ` ${node.unit}` : ""}` : ""}</span></h2>
+    {node.key === "first" && <><FirstReviewPurpose /><p className="ops-flow-line"><Link href={ACTION_LINKS.firstReviewStatus} prefetch={false}>AI 1차 상세 상태 · 설정 모델·5/15/60분 성공률·수집 압력 보기 →</Link></p></>}
     <div className="ops-flow-detail-grid">
       {completion && <div><h3>처리 지표 <span>지금 처리 지표 카드의 이 단계 칸 그대로 · {data.completions.observedAt ? `DB 조회 ${dbClock(data.completions.observedAt)}` : "조회 시각 미확인"}</span></h3>
         <CompletionsStage stage={completion} /></div>}

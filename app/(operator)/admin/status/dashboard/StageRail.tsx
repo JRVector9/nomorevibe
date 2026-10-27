@@ -67,7 +67,7 @@ export function StageRail({ snapshot, flow, human, signals, liveness }: {
           const state = worker(stage, signals?.find((row) => row.stage === stage.key), liveness);
           return (
             <li key={stage.key} data-tone={railTone(stage.status, stage.manualAttention ?? 0, state.alarm)} title={flowNote(stage.key)}>
-              <span className="t">{stage.label}</span>
+              <span className="t">{stage.key === "first" ? <Link href={ACTION_LINKS.firstReviewStatus} prefetch={false}>{stage.label} 상세 →</Link> : stage.label}</span>
               <span className="n">{n(stage.waiting)}</span>
               <span className="s">{stage.waiting > 0 ? `최장 ${age(stage.oldestMinutes, stage.waiting)}`
                 : (stage.manualAttention ?? 0) > 0 ? <Link href={ACTION_LINKS.reviewHuman}>직접 확인 {n(stage.manualAttention ?? 0)}건</Link>

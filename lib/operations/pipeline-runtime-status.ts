@@ -19,12 +19,16 @@ export type HostLedger = { state: 'unknown' | 'absent' | 'invalid' | 'ok'; proce
   eventLoopDelayMs: number | null; loadPerCpu: number | null; rssBytes: number | null; translationHeld: number | null; translationCap: number | null };
 export type ModelBudget = { budget: string; limit: number | null; waiting: number; reserved: number; expiredReserved: number;
   dispatched: number; indeterminate: number; oldestWaitingMin: number | null; oldestUnsettledMin: number | null };
+export type ModelGroup = { group: string; limit: number | null; firstModels: { provider: string; model: string }[];
+  waitingFirst: number; reserved: number; dispatched: number; indeterminate: number;
+  occupants: { route: string; state: 'reserved' | 'dispatched' | 'indeterminate'; count: number }[] };
 export type DrStatus = { state: 'active' | 'fenced' | null; epoch: number | null; reason: string | null; updatedAt: string | null;
   promoted: number | null; sealed: { id: string; fromEpoch: number; toEpoch: number; sealedAt: string; evidence: string[] }[] | null };
 export type OracleRole = { role: string; candidate: boolean | null; db: string | null; http: string | null; model: string | null;
   reason: string | null; anchor: AnchorState; lease: boolean | null };
 export type PipelineRuntimeStatus = { ledgers: { host: string; ledger: HostLedger }[]; anchors: { host: string; role: string; anchor: AnchorState }[];
-  ownersRead: boolean; models: ModelBudget[] | null; dr: DrStatus; oracle: { checks: GateCheck[]; roles: OracleRole[]; liveLeases: number | null } };
+  ownersRead: boolean; models: ModelBudget[] | null; modelGroups?: ModelGroup[] | null;
+  dr: DrStatus; oracle: { checks: GateCheck[]; roles: OracleRole[]; liveLeases: number | null } };
 export type RuntimeContext = { at: string | null; batchMode: string | null; batchPolicy: BatchPolicy | null;
   readiness: { host: string; role: string; reason: string; anchor: boolean | null }[] | null;
   owners: { role: string; host: string | null; live: boolean }[] | null };
@@ -35,6 +39,9 @@ const timestamp = z.iso.datetime({ offset: true });
 const ledgerSchema = z.object({ atMs: z.number().finite(), rows: z.array(z.object({ key: z.string(), value: z.unknown() })) });
 const budgetsSchema = z.array(z.object({ budget: z.string().min(1).max(120), waiting: count, reserved: count, expiredReserved: count,
   dispatched: count, indeterminate: count, oldestWaitingAt: timestamp.nullable(), oldestUnsettledAt: timestamp.nullable(), untimed: count }));
+const groupRowsSchema = z.object({ limited: z.literal(false), rows: z.array(z.object({ group: z.string().min(1).max(120),
+  route: z.string().min(1).max(120), state: z.enum(['waiting', 'reserved', 'dispatched', 'indeterminate']), count,
+})).max(512) });
 const drSchema = z.object({ state: z.enum(['active', 'fenced']), epoch: positive, reason: z.enum(['operator_fence', 'promotion_sealed']).nullable(),
   updatedAt: timestamp, promoted: count, sealed: z.array(z.object({ id: z.uuid(), fromEpoch: positive, toEpoch: positive, sealedAt: timestamp,
     evidence: z.array(z.enum(EVIDENCE_KINDS)) })) }).refine(row => (row.state === 'active') === (row.reason === null));
@@ -85,12 +92,28 @@ export function buildPipelineRuntimeStatus(raw: unknown, ctx: RuntimeContext): P
   const anchors = (ctx.readiness ?? []).map(row => ({ host: row.host, role: row.role,
     anchor: row.anchor === null ? null : row.reason.startsWith('anchor_') ? 'invalid' as const : row.anchor ? 'pinned' as const : 'absent' as const }));
   const result: PipelineRuntimeStatus = { ledgers: BATCH_HOSTS.map(host => ({ host, ledger: summarizeHostLedger(host, null, 0) })), anchors,
-    ownersRead: ctx.owners !== null, models: null, dr: { state: null, epoch: null, reason: null, updatedAt: null, promoted: null, sealed: null },
+    ownersRead: ctx.owners !== null, models: null, modelGroups: null,
+    dr: { state: null, epoch: null, reason: null, updatedAt: null, promoted: null, sealed: null },
     oracle: { checks: [], roles: [], liveLeases: null } };
   if (at !== null) {
     const ledger = ledgerSchema.safeParse(input.hostSlots);
     if (ledger.success) result.ledgers = BATCH_HOSTS.map(host => ({ host, ledger: summarizeHostLedger(host, ledger.data.rows, ledger.data.atMs) }));
     const model = verifiedPolicy(input.model, modelCapacityPolicySchema, modelCapacityPolicyHash);
+    const groups = groupRowsSchema.safeParse(input.modelGroups);
+    if (groups.success) {
+      const limits = model?.policy?.groupLimits ?? {};
+      const names = [...new Set([...Object.keys(limits), ...groups.data.rows.map(row => row.group)])].sort();
+      result.modelGroups = names.map(group => {
+        const rows = groups.data.rows.filter(row => row.group === group);
+        const total = (state: typeof rows[number]['state']) => rows.filter(row => row.state === state).reduce((sum, row) => sum + row.count, 0);
+        return { group, limit: limits[group] ?? null,
+          firstModels: model?.policy?.routes.filter(row => row.routeId === 'crawl-agent-review' && row.groupId === group)
+            .map(row => ({ provider: row.provider, model: row.model })) ?? [],
+          waitingFirst: total('waiting'), reserved: total('reserved'), dispatched: total('dispatched'), indeterminate: total('indeterminate'),
+          occupants: rows.flatMap(row => row.state === 'waiting' ? [] : [{ route: row.route, state: row.state, count: row.count }]),
+        };
+      });
+    }
     const budgets = budgetsSchema.safeParse(input.modelBudgets);
     if (budgets.success) {
       const limits = model?.policy?.providerLimits ?? {};

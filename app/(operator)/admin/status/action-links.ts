@@ -28,6 +28,8 @@ export const ACTION_LINKS = {
   flow: "/admin/status?tab=flow",
   roles: "/admin/status#roles",
   models: "/admin/status#models",
+  firstReviewStatus: "/admin/status#first-review-status",
+  modelCapacity: "/admin/status#pipeline-models-title",
   /** 직접 판단 구간, 오래 기다린 것부터 */
   reviewHuman: "/admin/review?stage=human&sort=wait#review-list",
   /** 확정만 하면 됨 — 두 모델이 같은 결론 */
