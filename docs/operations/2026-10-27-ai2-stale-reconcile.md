@@ -29,7 +29,7 @@ native Grok CLI가 초안을 작성했고 root가 read-only call 사이 SIGINT�
 
 PR692의 운영 적용 뒤 새 stale 힌트가 완료되지 않는 현상을 확인했다. primary READ ONLY로 확인한 실행계획에서 후보별 capacity 이력 Seq Scan이 반복됐으며 전체 추정 비용은574138.10이었다. 이 수치는 실행시간이 아니다. 실제 reviewer의 약95초 실행 중 SQL과 stale 힌트의 실패 기록을 별도로 관측했으며, 잘린 오류에서 SQLSTATE는 확인하지 못했다.
 
-보호 상태의 capacity 행을 MATERIALIZED CTE로 한 번 선별한 뒤 후보별 작업 키를 비교한다. 각 후보 트랜잭션에서는 현재 보호 요청을 다시 조회한다. 미확정 호출·null 예약기한·불명확 AI2 identity 보호, 작업 커서, 락 순서와 모델 설정은 유지한다. capacity 이력이나 호출을 삭제·회수하지 않는다. 새 인덱스나 DB 마이그레이션은 없다.
+종료되지 않은 capacity 행을 MATERIALIZED CTE로 한 번 선별한 뒤 후보별 작업 키를 비교한다. 예약 행은 만료 시각과 관계없이 먼저 포함하며, 힌트는 DB 현재 시각, 후보 콜백은 기존 JS 틱 시각으로 최종 판단해 이전 보호 의미를 유지한다. 각 후보 트랜잭션에서는 현재 보호 요청을 다시 조회한다. 미확정 호출·null 예약기한·불명확 AI2 identity 보호, 작업 커서, 락 순서와 모델 설정은 유지한다. capacity 이력이나 호출을 삭제·회수하지 않는다. 새 인덱스나 DB 마이그레이션은 없다.
 
 회귀 코드는 PostgreSQL 실행계획에서 원본 capacity 접근1회와 CTE Scan을 확인하고, 활성·unknown·null 예약기한 및 다른 route의 보호 의미를 비교한다. 로컬 테스트는 실행하지 않았으며 PR의 필수 CI 결과와 운영 후 실제 정리·재등록 결과를 따로 확인한다.
 

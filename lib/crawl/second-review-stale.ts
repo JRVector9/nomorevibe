@@ -40,11 +40,11 @@ export function staleReviewCapacityIdentitySql(cap: SQL, candidateId: SQL): SQL 
     )))`;
 }
 
-/** Filter history once before candidate-dependent LIKE/regex checks. MATERIALIZED callers
- * keep PostgreSQL from rescanning all capacity history for every candidate. */
+/** Filter terminal history once before candidate-dependent LIKE/regex checks.
+ * Keep every reserved row: hints use wall time, while callbacks retain their existing JS tick time. */
 function protectingCapacityRowsSql(): SQL {
   return sql`SELECT cap.state, cap.reserved_until, cap.logical_work_key, cap.work_key, cap.route_id
-    FROM model_capacity_requests cap WHERE ${protectingCapacityStateSql(sql`cap`)}`;
+    FROM model_capacity_requests cap WHERE coalesce(cap.state, '') NOT IN ('waiting', 'withdrawn', 'settled')`;
 }
 
 export function protectingCapacityExistsSql(candidateId: SQL, source = sql`model_capacity_requests`): SQL {

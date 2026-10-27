@@ -9,7 +9,7 @@ import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { inSample, pendingSecondReviews, publishedInputHash, publishedSecondReviews, reconcileStaleSecondReviews, secondReviewSummary } from '@/lib/crawl/second-review';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { secondReviewGeneration } from '@/lib/crawl/second-review-input';
-import { protectingCapacityExistsSql, staleReviewCapacityProbeSql, staleSecondReviewHintSql,
+import { capacityBlocksStaleReconcile, protectingCapacityExistsSql, staleReviewCapacityProbeSql, staleSecondReviewHintSql,
   staleSecondReviewScanDemand, STALE_REVIEW_OWNER } from '@/lib/crawl/second-review-stale';
 import { humanQueueOverview } from '@/lib/crawl/review-overview';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
@@ -125,6 +125,18 @@ it('fails closed on unbound active/unknown AI2 requests and null reservation tim
     expect(row.busy).toBe(route === 'second-review');
     expect(row.probe_busy).toBe(row.busy);
   }
+});
+
+it('keeps reservations that expired after the callback tick for its original time check', async () => {
+  const rows = await db.execute<{ state: string; reserved_until: Date | string }>(sql`WITH model_capacity_requests AS (
+    SELECT 'reserved'::text state, 'second-review'::text route_id, 'ai2:123:456'::text logical_work_key,
+      'ai2:123:456:binding'::text work_key, clock_timestamp() - interval '1 second' reserved_until
+  ) ${staleReviewCapacityProbeSql(123)}`);
+  expect(rows).toHaveLength(1);
+  const reservation = { state: rows[0].state, reservedUntil: rows[0].reserved_until };
+  const expiry = new Date(rows[0].reserved_until).getTime();
+  expect(capacityBlocksStaleReconcile(reservation, new Date(expiry - 1))).toBe(true);
+  expect(capacityBlocksStaleReconcile(reservation, new Date(expiry + 1))).toBe(false);
 });
 
 it('plans one capacity-history scan outside candidate-correlated hint and protection probes', async () => {

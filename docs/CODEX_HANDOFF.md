@@ -1,3 +1,11 @@
+# 독립 schema 리뷰 경계조건 반영 — 2026-10-27 KST15:26
+
+사용자는추가subagent+nativeClaudeCLI Fable5.1 xhigh로스키마개선교차검토를요청했다. schema_performance_review/schema_compatibility_review 모두 gpt-6.1-sol xhigh/forknone/readonlysource이며root는actualClaudeCLI를실행했다. 첫literal fable5.1은404/EXIT1이었고공식claude-fable-5-1 확인후새dir B/claude-schema-fable51-2/PID3389/exec65247로동일모델xhigh재실행중. skills/tools비활성,reviewsource만제공,운영변경0. 모델성공은아직미확인.
+
+성능agent가callback시각의미변경을발견해root최소보완: materialized집합은정적nonterminal superset(reserved는만료포함),hint는원DBwall판정/callback은원JSnow판정유지. 만료가tick후/probe전에오는회귀코드를추가했다. 기존목적전체반복검색제거/unknown/null/unboundfailclosed보호/커서/락순서는같다. PR693 head069eb057 첫CI40460560933는type/lint/build/unit/images성공·integration진행중이었으며최종통과아님. root가새commit/push후필수CI다시확인한다. 로컬test/lint/build미실행.
+
+---
+
 # SQL 보완 root 검토 완료·PR 준비 — 2026-10-27 KST15:20
 
 원본PR691/692는main93794615로병합·운영18앱교체됐다. 공식run은finalprogressalarm으로stopped/EXIT1이며원본once보존·재실행금지. 별도READONLY fullfleet readback는18앱source/digest/env/deployment一致이나guard-blocked였다. OPENaudit20588/epoch1revision3·자기6textresume全6実EXIT0복원완료. 아직전체운영정상으로보고하지않는다.
