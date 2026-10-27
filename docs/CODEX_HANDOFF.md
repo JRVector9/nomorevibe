@@ -1,3 +1,45 @@
+# 현재 인계 — DB 스키마 교차검토·운영 반영 (2026-10-27 KST16:10)
+
+## 목표와 완료
+
+사용자 요청: 추가 서브에이전트와 스키마 개선 검토, Claude CLI Fable5.1/xhigh 직접 교차검토. 두 schema agent(gpt-6.1-sol/xhigh)와 실제 native Claude claude-fable-5-1/xhigh(402.84초 EXIT0/modelUsage 확인) 결과를 root가 소스와 대조했다. 보고서는 docs/operations/2026-10-27-db-schema-review.md. SQL 우선→실측 후 필요한 부분 index→반복 필요 시 별도 subject 매핑 순서다. schema/index/backfill0, 커넥션 확대0. 단순 generated컬럼도 전체 행 감사hash/terminal immutable/Oracle·replay·DR 영향을 피하지 못한다.
+
+원래 작업의 PR691/692/693은 병합·운영 반영됐다. source06ac66c1ebbb130258eb72a73b0a83dbed6420b1, 공식693b run89721 실제EXIT0/deployed-and-verified 2026-10-27T06:56:25.001613Z. 최종18앱 모두target, 이번14배포+4이미target유지. finalSnapshotSHA d7dc6476a5c8d427023dddde350d339adb0ebd7583fc6e0a029adcd058d2052d. own8모델job pause 전부재개/OPEN audit20604(1/rev3/정책불변), 과거pause/드레인/실패run 재실행 금지. 수집 pages6→10 canonical saveSettings audit20630/readback확인, 모델·정책·query/window/cursor/목표3000·5분250 유지.
+
+## 실제 관측과 한계
+
+B=/Users/jr/.local/state/nomorevibe-reliability-20261025/grok-reconcile-discovery-20261027 (0700, private0600). sql693b-root-final.private.json 07:10:29Z READONLY/primary: 기존76 중74superseded/1not_required/1pending.69새세대등록/51기존행에새세대실제모델판별, 승인수와다름. 최근60분신규2046/원본2033(혼합창), 완전postdeploy5분신규26/원본20.3천/h미확인/현재유입감소관측필요.
+
+실제SQL SELECT direct5432 LIMIT25 1059.399ms, PgBouncer6432 1157.373ms, LIMIT80 direct1159.639ms. 각각1표본/전체tick p95아님. helper는실제pinned generator를컴파일한 READONLY SELECT이며SQLSTATE없음. EXPLAIN ONLY(capacitybaseScan1)는추정이며ANALYZE0. reviewer DB_POOL_MAX12/consumer3, pooler6432/같은credentialhash. 기존job.last_error/last_success보존은stageblocked deferred경로 영향: ai2-post693-deferral.private.json 07:10:20Z 최신defer stage_blocked07:09:21Z. 이를현재SQL실패로단정하지않는다.
+
+NativeGrok sql693b-grok-final1 actual80802/PID31864 EXIT0/end_turn88.17초, helperreceipt검증/root REPORT.reviewed.private.md 대조완료. 해당06:58표본에서는25정리만확인됐으나이후root07:10표본이위결과다. 공식success18앱·14/4분할원본계약재검증/추가원격fleet검증아님과freshstrictmonitor구분. 텍스트경보로overallHealthyfalse/paused[]였다. observer PID11481은첫5분관문 actual07:03:37Z failed/stopped; 나머지미래표본통과0/장기관측완료0. OP /Users/jr/Desktop/projects/nomorevibe-release-ai2-sql-fix-20261027 과소스/원본receipt6h보존.
+
+## 변경 파일·검증·실패
+
+현재docs WT /Users/jr/Desktop/projects/nomorevibe-schema-review-report-20261027, branchcodex/db-schema-review-report-20261027. docs/CODEX_HANDOFF.md와새schema보고서만변경. 수동tests/lint/typecheck/build/컴파일미실행(사용자지시). 운영READONLY실측만위와같이실행. PR693 CI40461058061 및main40461953037 check/worker·webimage 실제success. 이docs PR CI는아직실행전이며통과로주장하지않는다. 원사용자dirtyWT보존.
+
+실패이력: Claude첫literal fable5.1은404/EXIT1, 공식동일모델ID claude-fable-5-1로별도실행성공. 공식693a는text/maintenance4배포뒤globalprogress관문실패/once소비·원본보존. OPEN·ownpause복원후새mixedbaseline693b가4유지/14배포로성공했다. gate/timeout완화0. relative resume-plan시도는readonlypreflight실패후새절대경로plan으로진행. 과거once/failed 영수증을지우거나성공으로바꾸지않았다.
+
+## 남은 작업과 다음 정확 명령
+
+1. 미게시pending1(id138985/candidate357316): ai_approved표지만candidateauto needs_review/splitfalse. currentitems admission은입력불일치를skip하고legacy만supersede. stalehint도approved만보기때문에자동정리공백이있다. 별도PR에서인간결정/실행중·미확정capacity/옛세대표보호를유지해cleanup범위를검토한다. 현재직접SQL수정0.
+2. 수집3000/h 실제유지미확인. GitHubApp/토큰추가0. 5분26으로감소한원인은최신seedcursor/admission/backpressure/quota/검색수율의새READONLY표본으로구분할것. 과거06:18snapshot을현재원인으로단정하지않는다.
+3. 기존텍스트품질·진행경보/전체healthyfalse, observer장기/백업DR등은PENDING기존범위. 일시pause를경보해결로쓰지않는다. 모델defaultGPU3090직접qwen3.8-flash-next/abcLLM Supa fallback/no-thinking32k출력10k그대로.
+4. 이문서PR게시→필수docsCI→exacthead/latestbase확인병합. docs-only이므로앱재배포하지않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-schema-review-report-20261027
+git diff --check
+git add docs/CODEX_HANDOFF.md docs/operations/2026-10-27-db-schema-review.md
+git commit -m 'docs: record DB schema cross-review and production evidence'
+git push -u origin codex/db-schema-review-report-20261027
+# PR본문은 B/schema-review-pr-body.private.md를사용
+# 새운영관측이필요하면새stem만사용(기존once재사용금지):
+python3 /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-reconcile-discovery-20261027/read-postdeploy-metrics.py SCHEMA-NEXT-UNUSED --target-sha 06ac66c1ebbb130258eb72a73b0a83dbed6420b1 --deployed-at 2026-10-27T06:56:25.001613Z
+```
+
+---
+
 # 독립 schema 리뷰 경계조건 반영 — 2026-10-27 KST15:26
 
 사용자는추가subagent+nativeClaudeCLI Fable5.1 xhigh로스키마개선교차검토를요청했다. schema_performance_review/schema_compatibility_review 모두 gpt-6.1-sol xhigh/forknone/readonlysource이며root는actualClaudeCLI를실행했다. 첫literal fable5.1은404/EXIT1이었고공식claude-fable-5-1 확인후새dir B/claude-schema-fable51-2/PID3389/exec65247로동일모델xhigh재실행중. skills/tools비활성,reviewsource만제공,운영변경0. 모델성공은아직미확인.
