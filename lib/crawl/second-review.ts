@@ -1,4 +1,5 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
+import { logger } from "@/lib/observability/logger";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { and, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notInArray, or, sql } from "drizzle-orm";
@@ -9,12 +10,12 @@ import { findRepositoryProduct } from "@/lib/domain/products/repository-identity
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { recordAi2Attempt, recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
-import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type ProductStatus, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
-import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
+import { REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { loadReviewInput } from "./agent-review-repository";
 import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGeneration, secondReviewInputMatches } from "./second-review-input";
 import { assertSecondReviewOwnership, finishSecondReviewOwnership, secondReviewBinding, type SecondReviewReceipt } from "./second-review-ownership";
@@ -24,6 +25,10 @@ import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./re
 import { firstReviewer } from "./agent-review";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, underlyingModelSql } from "./held-qwen-retry-policy";
+import { hasLiveFetchItem } from "./fetch-ownership";
+import { lockFrontierIdentity } from "./repository";
+import { capacityBlocksStaleReconcile, SOURCE_REFRESH_COOLDOWN_MS, STALE_REVIEW_OWNER, STALE_RECONCILE_EXAMINE_LIMIT,
+  STALE_RECONCILE_LIMIT, staleFallbackRootIds, staleReviewCapacityIdentitySql, staleReviewCursorAfterPage, staleSecondReviewHintSql } from "./second-review-stale";
 
 /** All isolated AI2 mutations take this before candidate/row/job locks. Live workers are unchanged. */
 async function lockReplaySecondReviewMutation(tx: ProductTransaction): Promise<void> {
@@ -34,9 +39,12 @@ type ControllerDomain = {
   candidate: CrawlCandidate | null; document: CrawlDocument | null; settings: CrawlSettings;
   input: ReviewInput | null; attempts: CrawlReviewAttempt[]; votes: SecondReview[];
   publishedProductId: number | null;
+  staleSources?: { scan: typeof agentRepositoryScans.$inferSelect | null;
+    frontier: typeof crawlFrontier.$inferSelect | null; inserted: boolean; blocked: boolean; fetchBusy?: boolean };
 };
 type ControllerTransition = Parameters<typeof recordReplaySecondReviewTransition>[1];
-type ControllerLockOptions = { skipCandidateLocked?: boolean };
+type ControllerLockOptions = { skipCandidateLocked?: boolean; prepareStaleSourcesAt?: Date };
+class UnusedStaleSourcePreparation extends Error {}
 
 /** Hints select work only. All facts used by a controller are reread after this
  * domain prefix. A changed product hint is retried without reversing lock order. */
@@ -68,13 +76,35 @@ async function lockControllerDomain(tx: ProductTransaction, candidateId: number,
   const [document] = candidate ? await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)).for("share") : [];
   const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
   const settings = mergeWithDefaults(saved?.values);
+  let staleSources: ControllerDomain["staleSources"];
   if (candidate) {
     await lockRepositoryAgentEvidence(tx, candidate.repo);
-    const [scan] = await tx.select().from(agentRepositoryScans).where(and(
+    const scanQuery = tx.select().from(agentRepositoryScans).where(and(
       eq(agentRepositoryScans.repositoryKey, candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
-    )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
+    )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1);
+    const [scan] = await (options.prepareStaleSourcesAt ? scanQuery.for("update") : scanQuery.for("share"));
     if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
       .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
+    if (options.prepareStaleSourcesAt) {
+      staleSources = { scan: scan ?? null, frontier: null, inserted: false, blocked: false };
+      const now = options.prepareStaleSourcesAt;
+      if (!document || document.productUrl !== candidate.productUrl || !evidenceStillFresh(document.fetchedAt, reviewSemanticNow(now))) {
+        await lockFrontierIdentity(tx, candidate.repo);
+        const matching = sql`lower(${crawlFrontier.repo}) = ${candidate.repo.toLowerCase()}`;
+        const locked = await tx.select().from(crawlFrontier).where(matching).for("update", { skipLocked: true });
+        const visible = await tx.select().from(crawlFrontier).where(matching);
+        staleSources.blocked = visible.length !== locked.length || visible.some(row => row.repo !== candidate.repo);
+        if (!staleSources.blocked) {
+          staleSources.frontier = locked[0] ?? null;
+          // Create absent domain rows before votes/items. An unused preparation rolls the transaction back.
+          if (!staleSources.frontier) {
+            [staleSources.frontier] = await tx.insert(crawlFrontier).values({ repo: candidate.repo,
+              signal: "review-source-refresh", priority: 100 }).returning();
+            staleSources.inserted = true;
+          }
+        }
+      }
+    }
   }
   if (candidate && publishedProductId && (await findRepositoryProduct(candidate.repo, candidate.productUrl, tx))?.id !== publishedProductId) publishedProductId = null;
   const attempts = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidateId))
@@ -83,7 +113,7 @@ async function lockControllerDomain(tx: ProductTransaction, candidateId: number,
     .orderBy(secondReviews.id).for("update");
   const input = candidate && document && candidate.productUrl === document.productUrl
     ? await loadReviewInput(candidate, document, settings, tx) : null;
-  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId };
+  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId, staleSources };
 }
 
 /** Protect every generation, including malformed persisted bindings that still
@@ -113,19 +143,27 @@ async function controllerWrite(lease: JobLease, candidateId: number | null,
   write: (tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[]) => Promise<number>,
   options: ControllerLockOptions = {}): Promise<number> {
   if (!lease || lease.name !== "second-review") throw new JobLeaseLostError();
-  return db.transaction(async tx => {
+  try { return await db.transaction(async tx => {
     await lockPipelineInputStages(tx);
     await lockReplaySecondReviewMutation(tx);
     const domain = candidateId === null ? null : await lockControllerDomain(tx, candidateId, options);
     const events: ControllerTransition[] = [];
+    // Every domain row is already locked. Fetch items precede AI2 items; jobs remain last.
+    if (domain?.staleSources?.frontier) domain.staleSources.fetchBusy = await hasLiveFetchItem(tx, domain.staleSources.frontier.id);
     const count = domain && !(await candidateItemsBusy(tx, candidateId!, domain.votes)) ? await write(tx, domain, events) : 0;
+    if (!count && domain?.staleSources?.inserted) throw new UnusedStaleSourcePreparation();
     await assertControllerJob(tx, lease);
     for (const event of events) await recordReplaySecondReviewTransition(tx, event);
     // Nondeferred replay recording can wait for the run row. Recheck the same
     // held job afterward; certified post-callback flush remains a separate boundary.
     await assertControllerJob(tx, lease);
     return count;
-  });
+  }); } catch (error) {
+    if (!(error instanceof UnusedStaleSourcePreparation)) throw error;
+    // The rollback also discards an absent-frontier insert when an AI2 owner is busy or input is still current.
+    await db.transaction(tx => assertControllerJob(tx, lease));
+    return 0;
+  }
 }
 
 function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttempt | undefined {
@@ -716,6 +754,210 @@ export async function reopenOrphanedGateHolds(_settingsHint: CrawlSettings, now:
       if (count >= limit) return count;
     }
   }
+}
+
+function evidenceStillFresh(at: Date, now: Date): boolean {
+  return at.getTime() <= now.getTime() && now.getTime() - at.getTime() < REVIEW_FRESH_MS;
+}
+
+/** 로더가 받을 세대만 다시 올린다. 사이트나 스캔이 오래되면 그 해시로 행을 만들지 않는다. */
+function staleReviewEvidenceFresh(document: CrawlDocument, scan: {
+  state: string; completedAt: Date | null; detectorVersion: string; lastErrorCode: string | null;
+} | null, detector: string, now: Date): boolean {
+  return Boolean(scan?.completedAt && evidenceStillFresh(document.fetchedAt, now) && evidenceStillFresh(scan.completedAt, now)
+    && scan.state === "complete" && !scan.lastErrorCode && scan.detectorVersion === detector);
+}
+
+/**
+ * 용량 행은 읽기만 한다. FOR UPDATE 를 잡지 않아, 후보 잠금을 쥔 채 입장 쪽 용량 잠금과 교착하지 않는다.
+ * 재현 역할에는 이 테이블이 없다 — 호출부가 currentReplayDb 에서 여기까지 오지 않는다.
+ */
+async function staleReviewCapacityBusy(tx: ProductTransaction, candidateId: number, now: Date): Promise<boolean> {
+  const rows = await tx.execute<{ state: string; reserved_until: Date | string | null }>(sql`
+    SELECT cap.state, cap.reserved_until FROM model_capacity_requests cap
+    WHERE ${staleReviewCapacityIdentitySql(sql`cap`, sql`${candidateId}`)}`);
+  for (const row of rows) {
+    if (capacityBlocksStaleReconcile({ state: row.state, reservedUntil: row.reserved_until }, now)) return true;
+  }
+  return false;
+}
+
+/** 원본이 오래됐을 때만 프론티어를 다시 연다. 후보 상태를 1차로 되돌리지 않는다. */
+async function queueStaleReviewSource(tx: ProductTransaction, prepared: ControllerDomain["staleSources"], now: Date): Promise<boolean> {
+  if (!prepared || prepared.blocked || prepared.fetchBusy || !prepared.frontier) return false;
+  const frontier = prepared.frontier;
+  if (prepared.inserted) return true;
+  if (frontier.state === "pending" || frontier.state === "fetching"
+    || frontier.updatedAt.getTime() > now.getTime() - SOURCE_REFRESH_COOLDOWN_MS) return false;
+  await tx.update(crawlFrontier).set({ state: "pending", attempts: 0, nextAttemptAt: sql`clock_timestamp()`,
+    lastError: null, updatedAt: sql`clock_timestamp()` }).where(eq(crawlFrontier.id, frontier.id));
+  return true;
+}
+
+/**
+ * 최신 스캔의 next_attempt 만 당긴다. 실패 백오프와 살아있는 claim 토큰은 그대로 둔다.
+ * claim 행은 만들지 않는다 — 큐 채우기가 due 를 정한다.
+ */
+async function pullStaleReviewScan(tx: ProductTransaction, scanId: number, repositoryKey: string): Promise<boolean> {
+  const pulled = await tx.update(agentRepositoryScans).set({ nextAttemptAt: sql`(clock_timestamp() AT TIME ZONE 'UTC')` })
+    .where(and(eq(agentRepositoryScans.id, scanId), isNull(agentRepositoryScans.lastErrorCode),
+      sql`${agentRepositoryScans.nextAttemptAt} > (clock_timestamp() AT TIME ZONE 'UTC')`,
+      sql`NOT EXISTS (SELECT 1 FROM agent_repository_claims claim WHERE claim.repository_key = ${repositoryKey}
+        AND claim.token IS NOT NULL AND claim.lease_until > (clock_timestamp() AT TIME ZONE 'UTC'))`))
+    .returning({ id: agentRepositoryScans.id });
+  return pulled.length > 0;
+}
+
+async function reconcileLockedStaleCandidate(tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[], now: Date): Promise<number> {
+  // 재현 DB 역할은 model_capacity_requests 가 없다. 용량을 못 읽는 경로에서 행을 닫지 않는다.
+  if (currentReplayDb()) return 0;
+  const { candidate, document, input, settings } = domain;
+  if (!candidate || !settings.enabled || !settings.secondReview.enabled) return 0;
+  if (await staleReviewCapacityBusy(tx, candidate.id, now)) return 0;
+  const semanticNow = reviewSemanticNow(now);
+  const stale = domain.votes.filter(row => (row.status === "pending" || row.status === "failed")
+    && !controllerInputMatches(domain, row, semanticNow));
+  const demand = domain.votes.filter(row => !row.fallbackForId && row.status === "resolved" && row.resolution === "superseded"
+    && row.resolvedBy === STALE_REVIEW_OWNER);
+  // 세대가 맞으면 오래된 근거라도 그대로 둔다. 신선도만으로 공개분 전체를 다시 열지 않는다.
+  if (!stale.length && !demand.length) return 0;
+  const roots = staleFallbackRootIds(domain.votes, stale);
+  const closeIds = [...stale.map(row => row.id), ...roots];
+  const closed = closeIds.length ? await tx.update(secondReviews).set({ status: "resolved", resolution: "superseded",
+    resolvedBy: STALE_REVIEW_OWNER, resolvedAt: now })
+    .where(inArray(secondReviews.id, closeIds))
+    .returning({ id: secondReviews.id }) : [];
+  const closedIds = new Set(closed.map(row => row.id));
+  const scan = domain.staleSources?.scan;
+  const detector = settings.agentEvidence.detectorVersion;
+  const urlMatches = Boolean(document && candidate.productUrl === document.productUrl);
+  const fresh = Boolean(urlMatches && document && staleReviewEvidenceFresh(document, scan ?? null, detector, semanticNow));
+  if (fresh && document && candidate.publishedSlug) {
+    const [product] = domain.publishedProductId ? await tx.select({ status: products.status }).from(products)
+      .where(eq(products.id, domain.publishedProductId)) : [];
+    if (candidate.state !== "published" || !automatedPublication(candidate.decidedBy) || !product || !PUBLIC_STATUSES.includes(product.status)
+      || !publishedStaleReviewSignals(candidate, document).length && !inSample(candidate.repo, settings.secondReview.sampleRate)) {
+      // Fresh evidence proves this automatic request is no longer required. Preserve failure history and human votes.
+      const retired = await tx.update(secondReviews).set({ resolution: "not_required", resolvedAt: now })
+        .where(and(eq(secondReviews.candidateId, candidate.id), eq(secondReviews.status, "resolved"),
+          eq(secondReviews.resolution, "superseded"), eq(secondReviews.resolvedBy, STALE_REVIEW_OWNER)))
+        .returning({ id: secondReviews.id });
+      if (closed.length || retired.length) events.push({ kind: "cleanup",
+        secondReviewIds: [...new Set([...closed, ...retired].map(row => row.id))], candidateIds: [candidate.id] });
+      return closed.length + retired.length;
+    }
+  }
+  const inserted = fresh && input ? await insertCurrentStaleGeneration(tx, domain, closedIds, semanticNow) : [];
+  let queuedSite = false, queuedScan = false;
+  if (!fresh) {
+    if (!urlMatches || !document || !evidenceStillFresh(document.fetchedAt, semanticNow)) queuedSite = await queueStaleReviewSource(tx, domain.staleSources, now);
+    const scanFresh = Boolean(scan?.completedAt && evidenceStillFresh(scan.completedAt, semanticNow) && scan.state === "complete"
+      && !scan.lastErrorCode && scan.detectorVersion === detector);
+    // 오류가 남은 스캔은 저장된 백오프를 유지한다. due 만 당기면 수집기는 캐시로 보고 GitHub 를 부르지 않는다.
+    if (!scanFresh && scan && !scan.lastErrorCode) queuedScan = await pullStaleReviewScan(tx, scan.id, candidate.repo.toLowerCase())
+      || scan.nextAttemptAt.getTime() <= now.getTime();
+    else if (!scan) queuedScan = true;
+  }
+  if (closed.length) events.push({ kind: "cleanup", secondReviewIds: closed.map(row => row.id), candidateIds: [candidate.id] });
+  if (inserted.length) events.push({ kind: "enqueue", secondReviewIds: inserted.map(row => row.id), candidateIds: [candidate.id] });
+  if (queuedSite) await requestJob("crawl-fetch", tx);
+  if (queuedScan) await requestJob("agent-evidence-refresh", tx);
+  return closed.length + inserted.length + (queuedSite || queuedScan ? 1 : 0);
+}
+
+function publishedStaleReviewSignals(candidate: CrawlCandidate, document: CrawlDocument): string[] {
+  const meta = document.pageMeta as { title?: unknown; readmeSample?: unknown } | null;
+  return riskSignals({ name: typeof meta?.title === "string" ? meta.title : candidate.repo, productUrl: candidate.productUrl,
+    textSample: pageFactsFromDocument(document).textSample ?? null,
+    readme: typeof meta?.readmeSample === "string" ? meta.readmeSample : null });
+}
+
+/** 방금 닫은 행은 이미 본 표가 아니다. 사람 확인·일치·그 밖 결정은 새 행으로 덮지 않는다. */
+async function insertCurrentStaleGeneration(tx: ProductTransaction, domain: ControllerDomain, closedIds: Set<number>, now: Date): Promise<{ id: number }[]> {
+  const { candidate, document, input, settings } = domain;
+  if (!candidate || !document || !input) return [];
+  const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+  const taken = (model: string | null, publishedSlug: string | null) => domain.votes.some(existing => !closedIds.has(existing.id)
+    && existing.publishedSlug === publishedSlug && sameReviewModel(existing.model, model) && publishedVoteTaken(existing));
+  let proposed: (typeof secondReviews.$inferInsert)[] = [];
+  if (candidate.publishedSlug) {
+    if (candidate.state !== "published" || !domain.publishedProductId || !automatedPublication(candidate.decidedBy)) return [];
+    const [product] = await tx.select({ status: products.status }).from(products).where(eq(products.id, domain.publishedProductId));
+    if (!product || !PUBLIC_STATUSES.includes(product.status)) return [];
+    const signals = publishedStaleReviewSignals(candidate, document);
+    if (!signals.length && !inSample(candidate.repo, settings.secondReview.sampleRate)) return [];
+    proposed = voters.filter(voter => !taken(voter.model, candidate.publishedSlug)).map(voter => ({ ...voter, candidateId: candidate.id,
+      repo: candidate.repo, publishedSlug: candidate.publishedSlug, trigger: signals.length ? "risk" as const : "sample" as const, signals,
+      firstDecision: "approve", firstConfidence: null, firstAttemptId: null, generationKey: secondReviewGeneration(null, input),
+      inputHash: publishedInputHash(candidate.publishedSlug!) }));
+  } else {
+    if (candidate.decidedBy !== "auto" || candidate.reason === "second_review_split") return [];
+    const gate = domain.votes.some(row => row.trigger === "ai_approved" && (closedIds.has(row.id)
+      || row.status === "resolved" && row.resolution === "superseded" && row.resolvedBy === STALE_REVIEW_OWNER));
+    if (gate ? settings.reviewMode !== "enforce" || candidate.state !== "approved" : candidate.state !== "needs_review") return [];
+    const first = currentFirst(domain, gate);
+    if (!freshFirst(domain, first, now)) return [];
+    const decision = first.outcome?.decision;
+    if (!(decision === "approve" || decision === "reject" || settings.secondReview.includeAiHeld && decision === "needs_review")
+      || first.outcome?.confidence == null && decision !== "needs_review") return [];
+    const trigger = gate ? "ai_approved" as const : decision === "needs_review" ? "ai_held" as const : "ai_decided" as const;
+    proposed = voters.filter(voter => !sameUnderlyingModel(first.model, voter.model)).map(voter => ({ ...voter, candidateId: candidate.id,
+      repo: candidate.repo, trigger, firstDecision: decision, firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
+      firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, trigger), inputHash: input.inputHash }));
+  }
+  proposed = proposed.filter(row => !domain.votes.some(existing => !closedIds.has(existing.id) && existing.generationKey === row.generationKey
+    && existing.inputHash === row.inputHash && sameReviewModel(existing.model, row.model)));
+  if (!proposed.length) return [];
+  return tx.insert(secondReviews).values(proposed).onConflictDoNothing().returning({ id: secondReviews.id });
+}
+
+/**
+ * 로더가 거절하는 낡은 2차 심사를 닫고, 필요한 원본·스캔만 지금 큐에 다시 넣은 뒤, 근거가 신선할 때 최신 세대를 한 번 더 올린다.
+ *
+ * 공개된 지 이틀이 넘은 위험·표본도, 그 수요 행이 이미 있으면 다시 올린다. 공개 제품 전체를 1차로 되돌리거나 다시 발행하지 않는다.
+ * 사람 확인·일치·사람이 남긴 결정은 닫지 않는다. 아이템이 바쁘면 controllerWrite 가 쓰기 전에 빠진다.
+ * 재현 시계에서는 용량 테이블이 없어 아무것도 닫지 않는다.
+ */
+export async function reconcileStaleSecondReviews(now: Date | undefined, lease: JobLease, progress?: {
+  afterCandidateId?: number; save: (afterCandidateId: number) => Promise<void>;
+}): Promise<number> {
+  now ??= new Date();
+  if (currentReplayDb()) return controllerWrite(lease, null, async () => 0);
+  const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+  const settings = mergeWithDefaults(saved?.values);
+  if (!settings.enabled || !settings.secondReview.enabled) return controllerWrite(lease, null, async () => 0);
+  let changed = 0, mutations = 0, examined = 0;
+  const previous = progress?.afterCandidateId;
+  let afterCandidateId = typeof previous === "number" && Number.isSafeInteger(previous) && previous > 0 ? previous : 0;
+  const startedAfterCandidateId = afterCandidateId;
+  while (mutations < STALE_RECONCILE_LIMIT && examined < STALE_RECONCILE_EXAMINE_LIMIT) {
+    const room = Math.min(STALE_RECONCILE_LIMIT, STALE_RECONCILE_EXAMINE_LIMIT - examined);
+    const hints = await db.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(afterCandidateId, room));
+    if (!hints.length) { afterCandidateId = 0; break; }
+    let visited = 0;
+    for (const hint of hints) {
+      if (mutations >= STALE_RECONCILE_LIMIT || examined >= STALE_RECONCILE_EXAMINE_LIMIT) break;
+      const candidateId = Number(hint.candidate_id);
+      afterCandidateId = candidateId;
+      visited++;
+      examined++;
+      const count = await controllerWrite(lease, candidateId, (tx, domain, events) => reconcileLockedStaleCandidate(tx, domain, events, now!),
+        { prepareStaleSourcesAt: now }).catch(async (error: unknown) => {
+        if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
+        // This candidate's transaction rolled back. Preserve its demand and let later candidates progress.
+        await controllerWrite(lease, null, async () => 0);
+        logger.warn("crawl.second_review_stale_skipped", { candidateId, reason: "input_too_large" });
+        return 0;
+      });
+      changed += count;
+      if (count > 0) mutations++;
+    }
+    afterCandidateId = staleReviewCursorAfterPage(hints.map(row => Number(row.candidate_id)), visited, room);
+    if (afterCandidateId === 0) break;
+  }
+  if (progress && afterCandidateId !== startedAfterCandidateId) await progress.save(afterCandidateId);
+  if (examined === 0) return controllerWrite(lease, null, async () => 0);
+  return changed;
 }
 
 export async function pendingSecondReviews(limit: number) {

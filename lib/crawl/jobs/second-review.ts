@@ -4,7 +4,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { runGateSplitTiebreak } from "@/lib/crawl/gate-split-tiebreak";
 import { getSettings } from "@/lib/crawl/settings";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
-import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
+import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, reconcileStaleSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
   retryFailedSecondReviews } from "@/lib/crawl/second-review";
 import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { assertReviewFixtureSettings } from "../review-fixture-transport";
@@ -23,23 +23,29 @@ const CONCURRENT = 4;
 const TICK_MS = 108_000;
 /** 한 틱에 집어 둘 일감 — 워커가 굶지 않을 만큼만 */
 const FETCH = CONCURRENT * 6;
+export type SecondReviewCursor = { staleReviewAfterCandidateId?: number; [key: string]: unknown };
 
 /**
  * 2차 심사. 올릴 것을 올리고, 끝난 것을 닫고, 대기 중인 것을 행에 적힌 모델로 본다.
  * 결과는 기록만 한다 — 대기 후보는 사람이 확정하고, 공개된 제품은 사람이 내릴지 정한다.
  */
-export async function secondReviewCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+export async function secondReviewCandidates(ctx: JobContext<SecondReviewCursor>): Promise<JobOutcome<SecondReviewCursor>> {
   const startedAt = Date.now();
   const settings = await getSettings();
   assertReviewFixtureSettings(settings);
   if (!settings.enabled || !settings.secondReview.enabled) {
     ctx.log("crawl.second_review_skipped", { reason: !settings.enabled ? "disabled" : "second_review_off" });
-    return { done: true };
+    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Second review requires a valid worker job lease");
   const enqueued = await enqueueSecondReviews(settings, undefined, lease);
   const closed = await closeSettledSecondReviews(undefined, lease);
+  // 세대가 어긋난 대기 표를 닫고, 근거가 오래되면 기존 큐로 새로 받은 뒤 맞는 세대만 다시 넣는다.
+  const reconciled = await reconcileStaleSecondReviews(undefined, lease, {
+    afterCandidateId: ctx.cursor?.staleReviewAfterCandidateId,
+    save: afterCandidateId => ctx.save({ ...ctx.cursor, staleReviewAfterCandidateId: afterCandidateId }),
+  });
   const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
   await retryFailedSecondReviews(undefined, lease);
   /*
@@ -49,18 +55,18 @@ export async function secondReviewCandidates(ctx: JobContext<null>): Promise<Job
    * 함께한다(qwen-endpoint-backoff.ts). 두 잡이 겹쳐 돌아도 동시 호출은 감사 자리(2~4) + 1
    */
   const tiebreak = runGateSplitTiebreak(ctx, lease, { deadlineAt: startedAt + TICK_MS }).then(() => null, (error: unknown) => ({ error }));
-  const outcome = await reviewPendingVotes(ctx, lease, startedAt, { enqueued, closed, reopened })
+  const outcome = await reviewPendingVotes(ctx, lease, startedAt, { enqueued, closed, reopened, reconciled })
     .catch(async (error: unknown) => { await tiebreak; throw error; });
   const failure = await tiebreak;
   if (failure) throw failure.error;
-  return outcome;
+  return "deferred" in outcome ? outcome : { ...outcome, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
 }
 
 /** 대기 중인 2차 표를 행에 적힌 모델로 본다 — 위 틱의 나머지다 */
-async function reviewPendingVotes(ctx: JobContext<null>, lease: JobLease, startedAt: number,
-  { enqueued, closed, reopened }: { enqueued: number; closed: number; reopened: number }): Promise<JobOutcome<null>> {
+async function reviewPendingVotes(ctx: JobContext<SecondReviewCursor>, lease: JobLease, startedAt: number,
+  { enqueued, closed, reopened, reconciled }: { enqueued: number; closed: number; reopened: number; reconciled: number }): Promise<JobOutcome<SecondReviewCursor>> {
   if (!await canStartLegacySecondReview(lease)) {
-    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive" });
+    ctx.log("crawl.second_review_skipped", { reason: "stage_inactive", reconciled });
     return { done: false, deferred: "stage_blocked" };
   }
   const queue = [...await pendingSecondReviews(FETCH)];
@@ -138,7 +144,7 @@ async function reviewPendingVotes(ctx: JobContext<null>, lease: JobLease, starte
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
 
-  ctx.log("crawl.second_reviewed", { enqueued, closed, reopened, reviewed, failed, deferred });
+  ctx.log("crawl.second_reviewed", { enqueued, closed, reopened, reconciled, reviewed, failed, deferred });
   // A budget-exhausted lane may not have reached row admission. This is a stage
   // observation, not a durable barrier between preflight and external dispatch.
   if (stageBlocked || !await canStartLegacySecondReview(lease)) return { done: false, deferred: "stage_blocked" };

@@ -21,7 +21,7 @@ import { crawlCandidates, crawlDocuments, crawlSettings, secondReviews } from "@
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { claimAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
-import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { secondReviewCandidates, type SecondReviewCursor } from "@/lib/crawl/jobs/second-review";
 import { enqueueSecondReviews, recordSecondReview } from "@/lib/crawl/second-review";
 import { admitLegacySecondReview, claimItemSecondReview, renewSecondReviewOwnership,
   type SecondReviewItemReceipt } from "@/lib/crawl/second-review-ownership";
@@ -275,7 +275,7 @@ async function source() {
 }
 const voteRows = (id: number) => admin`SELECT to_jsonb(s) value FROM second_reviews s WHERE candidate_id=${id} ORDER BY id`;
 const jobRow = async () => (await admin`SELECT to_jsonb(j) value FROM jobs j WHERE name='second-review'`)[0].value as Raw;
-const tick = () => tracked(runJob<null>("second-review", async ctx => {
+const tick = () => tracked(runJob<SecondReviewCursor>("second-review", async ctx => {
   if (ctx.lease) jobTokens.add(ctx.lease.token);
   return secondReviewCandidates(ctx);
 }, { requestedOnly: true }));
@@ -507,7 +507,7 @@ it("keeps a genuine replacement job untouched when the old actual handler return
   const ready = latch(), finish = latch();
   let replacement: Promise<unknown> | undefined, protectedRow: Raw | undefined;
   try {
-    const original = await tracked(runJob<null>("second-review", async ctx => {
+    const original = await tracked(runJob<SecondReviewCursor>("second-review", async ctx => {
       jobTokens.add(ctx.lease!.token);
       const outcome = await secondReviewCandidates(ctx);
       expect(outcome).toEqual({ done: false, deferred: "model_capacity" });
@@ -533,7 +533,7 @@ it("rejects expired job authority after the actual model-deferred unlock waits",
   let holding: Promise<unknown> | undefined, running: ReturnType<typeof tick> | undefined;
   let pid = 0, until = "", protectedRow: Raw | undefined;
   try {
-    running = tracked(runJob<null>("second-review", async ctx => {
+    running = tracked(runJob<SecondReviewCursor>("second-review", async ctx => {
       jobTokens.add(ctx.lease!.token);
       const outcome = await secondReviewCandidates(ctx);
       expect(outcome).toEqual({ done: false, deferred: "model_capacity" });

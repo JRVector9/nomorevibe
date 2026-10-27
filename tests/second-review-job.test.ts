@@ -1,10 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { secondReviewCandidates, type SecondReviewCursor } from "@/lib/crawl/jobs/second-review";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 const mocks = vi.hoisted(() => ({
-  settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(),
+  settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(), reconcile: vi.fn(),
   candidate: vi.fn(), document: vi.fn(), input: vi.fn(), admit: vi.fn(), canStart: vi.fn(), review: vi.fn(), gateway: vi.fn(), grok: vi.fn(),
   tiebreak: vi.fn(),
 }));
@@ -21,7 +21,7 @@ vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
   // 판단을 합치는 규칙은 진짜를 쓴다 — 잡이 그것을 제대로 부르는지가 이 테스트의 요점이다
   combineVerdicts: (await importOriginal<typeof import("@/lib/crawl/second-review")>()).combineVerdicts,
   enqueueSecondReviews: mocks.enqueue, closeSettledSecondReviews: mocks.close, reopenOrphanedGateHolds: mocks.reopen, retryFailedSecondReviews: mocks.retry,
-  pendingSecondReviews: mocks.pending, recordSecondReview: mocks.record,
+  pendingSecondReviews: mocks.pending, recordSecondReview: mocks.record, reconcileStaleSecondReviews: mocks.reconcile,
 }));
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "second-review", token: "t", requestedVersion: 1 } });
@@ -37,6 +37,7 @@ beforeEach(() => {
   mocks.document.mockResolvedValue({ repo: "acme/demo" });
   mocks.input.mockResolvedValue({ snapshot: {} });
   mocks.canStart.mockResolvedValue(true);
+  mocks.reconcile.mockResolvedValue(0);
   mocks.record.mockResolvedValue({ state: "recorded" });
   mocks.tiebreak.mockResolvedValue({ calls: 0 });
   // Unit orchestration only: DB authority is exercised by the unmocked integration suite.
@@ -56,6 +57,20 @@ it("꺼져 있으면 아무것도 올리지도 부르지도 않는다", async ()
   expect(await secondReviewCandidates(context())).toEqual({ done: true });
   expect(mocks.enqueue).not.toHaveBeenCalled();
   expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("persists the stale candidate cursor and preserves other job cursor fields", async () => {
+  let cursor: SecondReviewCursor | null = { marker: "preserved", staleReviewAfterCandidateId: 80 };
+  const ctx = { ...context(), get cursor() { return cursor; },
+    save: vi.fn(async (next: SecondReviewCursor) => { cursor = next; }) };
+  mocks.pending.mockResolvedValue([]);
+  mocks.reconcile.mockImplementationOnce(async (_now, _lease, progress) => {
+    expect(progress.afterCandidateId).toBe(80);
+    await progress.save(160);
+    return 0;
+  });
+  expect(await secondReviewCandidates(ctx)).toEqual({ done: true,
+    cursor: { marker: "preserved", staleReviewAfterCandidateId: 160 } });
 });
 
 it("1차와 다른 모델로 보고, 두 판단이 같고 확신이 높으면 일치로 적는다", async () => {

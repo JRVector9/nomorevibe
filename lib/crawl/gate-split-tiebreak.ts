@@ -374,7 +374,7 @@ export async function applySplitReject(tx: ProductTransaction, input: { claim: C
  * 한 틱의 판가름. 2차 잡이 표 심사와 나란히 부른다(lib/crawl/jobs/second-review.ts). 던지는 것은 잡 lease 를 잃었거나 DB 가 실패했을 때뿐이다.
  * request·env 는 시험의 가짜 서버다.
  */
-export async function runGateSplitTiebreak(ctx: JobContext<null>, lease: JobLease, options: {
+export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLease, options: {
   deadlineAt: number; request?: typeof fetch; env?: QwenEnv;
 }): Promise<SplitTiebreakTick> {
   const tick: SplitTiebreakTick = { calls: 0, rejected: 0, awaiting: 0, kept: 0, held: 0, failed: 0, superseded: 0, skipped: 0, stopped: null };

@@ -7,6 +7,7 @@ import { crawlCandidates, crawlSettings } from '@/lib/db/schema';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 import { reviewHash } from '@/lib/crawl/agent-review-contract';
 import { reviewCandidatePredicate } from '@/lib/crawl/agent-review-repository';
+import { staleSecondReviewScanDemand } from '@/lib/crawl/second-review-stale';
 import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 import { mergeWithDefaults } from '@/lib/crawl/settings';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
@@ -270,12 +271,15 @@ export async function fillAgentScanQueue(input: { settings: CrawlSettings; lease
     const due = agentRefreshDueAtSql(sql`latest`, sql`d.requires_daily`, settings.agentEvidence.backgroundRefreshDays, sql`clock.at`);
     const [row] = await tx.execute<AgentScanQueueFill>(sql`
       WITH clock AS MATERIALIZED (SELECT clock_timestamp() AT TIME ZONE 'UTC' AS at),
+      second_review AS ${staleSecondReviewScanDemand(settings.agentEvidence.detectorVersion, settings.secondReview.enabled)},
       inputs AS (
         SELECT lower(regexp_replace(repo_url, '^https://github.com/([^/]+/[^/#?]+?)([.]git)?/?$', '\\1')) AS repository_key,
           status NOT IN ('seeded', 'verified') AS requires_daily, CASE WHEN status IN ('seeded', 'verified') THEN created_at END AS public_created_at
         FROM products WHERE status != 'banned' AND repo_url ~ '^https://github.com/[^/]+/[^/#?]+/?$'
         UNION ALL
         SELECT lower(repo), true, NULL FROM crawl_candidates WHERE state IN ('new', 'needs_review', 'approved')
+        UNION ALL
+        SELECT repository_key, true, NULL FROM second_review
       ),
       demand AS (
         SELECT repository_key, bool_or(requires_daily) AS requires_daily, min(public_created_at) AS public_created_at FROM inputs
@@ -293,6 +297,8 @@ export async function fillAgentScanQueue(input: { settings: CrawlSettings; lease
       review AS (
         SELECT DISTINCT lower(${crawlCandidates.repo}) AS repository_key FROM ${crawlCandidates}
         WHERE ${reviewCandidatePredicate(settings, { staleScanOnly: true })}
+        UNION
+        SELECT repository_key FROM second_review
       ),
       computed AS (
         SELECT d.repository_key, d.requires_daily,

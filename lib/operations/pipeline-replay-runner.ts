@@ -98,8 +98,9 @@ export async function runFixtureReviewReplay(options: FixtureReviewReplayOptions
               // Read through the verified scope before every claim; no transaction spans inference.
               await assertLegacyReplayStages(database);
               await assertReplaySettings(manifest);
-              const result = await runJob(name, name === "crawl-agent-review" ? reviewCrawlCandidates : secondReviewCandidates,
-                { requestedOnly: true, budgetMs, signal });
+              const options = { requestedOnly: true, budgetMs, signal };
+              const result = name === "crawl-agent-review" ? await runJob(name, reviewCrawlCandidates, options)
+                : await runJob(name, secondReviewCandidates, options);
               jobs.push({ name, result });
               if (signal.aborted || result.status === "failed" || result.status === "deferred"
                 || result.status === "skipped" && result.reason === "stopping") break;
@@ -177,9 +178,9 @@ async function runCertifiedReviewReplay(options: CertifiedFixtureReviewReplayOpt
                 if (signal.aborted) break;
                 if (!items) await assertLegacyReplayStages(database);
                 await assertReplaySettings(manifest);
-                const result = await runJob<null>(name, name === "crawl-agent-review" ? reviewCrawlCandidates
-                  : items ? secondReviewItemControllers : secondReviewCandidates,
-                  { requestedOnly: true, budgetMs, signal });
+                const options = { requestedOnly: true, budgetMs, signal };
+                const result = name === "crawl-agent-review" ? await runJob(name, reviewCrawlCandidates, options)
+                  : await runJob(name, items ? secondReviewItemControllers : secondReviewCandidates, options);
                 jobs.push({ name, result });
                 if (items && name === "second-review" && result.status === "completed" && !signal.aborted) {
                   const owner = { instanceId: `replay:${run.runId}`, bootId: randomUUID() }, visited = new Set<number>();
