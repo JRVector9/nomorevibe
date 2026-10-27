@@ -235,13 +235,20 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <div className="flex flex-col gap-1.5">
             <span className={labelClass}>부르는 곳</span>
             <Segmented name="firstReviewProvider" label="1차 심사를 부르는 곳" defaultValue={settings.firstReview?.provider ?? "abcllm"}
-              options={[{ value: "abcllm", label: "사내 게이트웨이 · 한도 없음" }, { value: "claude-cli", label: "Claude CLI · 한도 있음" }]} />
+              options={[{ value: "abcllm", label: "사내 게이트웨이" }, { value: "claude-cli", label: "Claude CLI" }, { value: "grok-cli", label: "Grok CLI" }]} />
           </div>
           <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
             <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
             <input id="firstReviewModel" name="firstReviewModel" defaultValue={settings.firstReview?.model ?? ""}
               placeholder="[MLX] gpt-oss-120b — 비우면 서버 기본값(CRAWL_REVIEW_MODEL)" className={`${inputClass} font-mono`} />
           </div>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <span className={labelClass}>추가 1차 모델 · 후보를 나눠 처리</span>
+          <input type="hidden" name="firstAdditionalPresent" value="1" />
+          <ModelRows prefix="firstAdditional" initial={settings.firstReviewAdditional ?? []} max={2} allowDirect={false}
+            placeholder="[supa] Qwen3.8-27B-NVFP4" addLabel="+ 추가 1차 모델" />
+          <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">단계별 모델 선택 · Supa 1차 / GPU3090 2차 구성 →</Link>
         </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="reviewConcurrency" className={labelClass}>동시 실행 수</label>

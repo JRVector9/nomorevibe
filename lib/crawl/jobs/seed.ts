@@ -52,7 +52,10 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   const snapshot = await readDiscoveryAdmission(settings);
   const admission = discoveryAdmission(snapshot, ctx.cursor?.admissionThrottled === true, settings.discover.maxNewPerHour);
   ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,
-    newAllowance:Number.isFinite(admission.remainingNew) ? admission.remainingNew : null });
+    newAllowance:Number.isFinite(admission.remainingNew) ? admission.remainingNew : null,
+    configuredPages:settings.discover.pagesPerTick,effectivePages:admission.throttled ? 1 : settings.discover.pagesPerTick,
+    rateCapped:admission.remainingNew === 0,measurementUnknown:Boolean(snapshot.timedOut
+      || snapshot.secondVoteWindowLimited || (snapshot.secondWindowLimited && !snapshot.secondObservationLimited)) });
   if (admission.throttled) settings = { ...settings, discover:{ ...settings.discover, pagesPerTick:1 } };
   if (settings.discover.sort !== 'recent') {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
@@ -155,9 +158,14 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   cursor.admissionThrottled = admission.throttled;
   if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
   delete cursor.retryAt;
-  let discovered = 0;
+  let discovered = 0, searchRequests = 0, examined = 0, existing = 0;
+  // Record actual insertions even when a rate/budget boundary leaves a partial page.
+  // Each invocation emits one summary; latest and historical scans keep separate events.
+  const summarize = (drained = false) => ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',
+    {discovered,searchRequests,examined,existing,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
+      incompleteWindows:cursor.incompleteWindows?.length ?? 0});
   const save = () => ctx.save(cursor);
-  const defer = async () => {await save(); return {done:false,cursor};};
+  const defer = async () => {await save(); summarize(); return {done:false,cursor};};
   const resetWindow = (next:SearchWindow) => {
     cursor = {...cursor,page:1,window:next,windowIncomplete:false};
     delete cursor.pendingPage;
@@ -254,6 +262,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     const window = cursor.window ?? initial;
     if (!cursor.pendingPage) {
       const query = `${signal.query} ${signal.kind === 'commits' ? 'committer-date' : 'pushed'}:${window.from}..${window.to}`;
+      searchRequests++;
       const result = signal.kind === 'commits'
         ? await searchCommits({query,page:cursor.page,sort:settings.discover.sort})
         : await searchRepositories({query,page:cursor.page,sort:settings.discover.sort});
@@ -302,6 +311,8 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
       }))),ctx.lease);
       const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
       discovered += added;
+      examined += batch.length;
+      existing += batch.length-added;
       admission.remainingNew -= added;
       page.itemIndex += batch.length;
       if (admission.remainingNew <= 0 && page.itemIndex < page.items.length) return defer();
@@ -328,11 +339,11 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         if (!retainIncomplete()) return defer();
       } else clearIncomplete();
       // 훑을 것은 없지만(done) 어디까지 덮었는지는 남긴다 — 잃으면 다음 주기가 같은 구간을 다시 긁는다.
-      if (!advance()) {ctx.log('crawl.seeded',{discovered,drained:true}); return {done:true,cursor};}
+      if (!advance()) {summarize(true); return {done:true,cursor};}
     }
     await save();
   }
-  ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',{discovered,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,incompleteWindows:cursor.incompleteWindows?.length ?? 0});
+  summarize();
   return {done:false,cursor};
 }
 

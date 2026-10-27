@@ -22,6 +22,6 @@ export const setHumanReview = webWriteAction(async function setHumanReview(_prev
   }
   const result = await setHumanReviewEnabled({ enabled: enabled === 'true', expectedGeneration: Number(rawGeneration), actor: admin.login });
   if (!result.ok) return { error: result.issues.join(' ') };
-  for (const path of ['/admin', '/admin/review', '/admin/status']) revalidatePath(path);
+  for (const path of ['/admin', '/admin/models', '/admin/review', '/admin/status']) revalidatePath(path);
   return { message: enabled === 'true' ? '사람 검토를 M3 Ultra DeepSeek에 맡깁니다.' : 'DeepSeek 자동 판단을 껐습니다. 진행 중인 결과도 적용하지 않습니다.' };
 });

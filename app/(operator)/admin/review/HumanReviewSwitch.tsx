@@ -20,7 +20,7 @@ export function HumanReviewSwitch({ enabled, generation, ready }: { enabled: boo
         <span aria-hidden className={`absolute top-[3px] left-[3px] h-4 w-4 rounded-full bg-white shadow transition-transform ${enabled ? 'translate-x-4' : ''}`} />
       </button>
     </div>
-    <p className="text-fg-2">{enabled ? '켜짐' : '꺼짐'} · M3 Ultra · DeepSeek v4.1 Flash · 저장 없이 바로 적용</p>
+    <p className="text-fg-2">{enabled ? 'DeepSeek 자동 위임' : '사람이 직접 판단'} · M3 Ultra · DeepSeek v4.1 Flash · 저장 없이 바로 적용</p>
     <p className="leading-relaxed text-fg-3">심사 큐의 직접 판단·확정 대기를 승인 또는 거부합니다. 판단 보류·실패는 사람 큐에 남습니다.
       스팸 의심·원본 소실은 자동 승인하지 않으며, 소개·발행 검사는 유지합니다. 기존 사람 결정과 공개 제품은 바꾸지 않습니다.</p>
     <p className={ready ? 'text-fg-3' : 'text-warn'}>{ready ? '로컬 모델 확인됨' : '로컬 모델 연결 미확인 — 끄기는 항상 가능합니다'}</p>
