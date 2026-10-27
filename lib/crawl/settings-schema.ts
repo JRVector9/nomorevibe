@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
+import { underlyingReviewModel } from "./review-model-identity";
 
 /**
  * 크롤 기준.
@@ -495,6 +496,8 @@ export const crawlSettingsSchema = z.object({
    * 게이트웨이는 한도가 없어 enforce 로 올릴 때 발행이 심사 속도에 묶이지 않는다.
    */
   firstReview: reviewVoterSchema.optional(),
+  /** Extra first reviewers share unfinished candidates; they do not add votes to the same input. */
+  firstReviewAdditional: z.array(reviewVoterSchema).max(2).optional(),
   /**
    * 한 틱에 동시에 띄우는 1차 심사 수.
    *
@@ -574,6 +577,11 @@ export const crawlSettingsSchema = z.object({
   auditHold: auditHoldSchema.default(DEFAULT_AUDIT_HOLD),
   /** gpu3090 Qwen-v2 가 사람 없이 정하는 자동 단계 넷 — 위 qwenAutoSchema. 크롤 설정 폼·기본값 되돌리기는 건드리지 않는다 */
   qwenAuto: qwenAutoSchema.default(DEFAULT_QWEN_AUTO),
+}).superRefine((settings, context) => {
+  if (!settings.firstReviewAdditional?.length) return;
+  if (!settings.firstReview) context.addIssue({ code: "custom", path: ["firstReviewAdditional"], message: "추가 1차 모델은 기본 1차 모델과 함께 설정해야 한다" });
+  const models = [settings.firstReview, ...settings.firstReviewAdditional].filter(Boolean).map(reviewer => underlyingReviewModel(reviewer!.model));
+  if (new Set(models).size !== models.length) context.addIssue({ code: "custom", path: ["firstReviewAdditional"], message: "같은 1차 모델을 두 번 세울 수 없다" });
 });
 
 export type CrawlSettings = z.infer<typeof crawlSettingsSchema>;

@@ -5,7 +5,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
-  type CliModelCapacityReviewClaim } from "@/lib/crawl/agent-review-repository";
+  type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -17,6 +17,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity } from "../agent-review-model-capacity";
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
+import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -25,13 +26,13 @@ const MAX_STARTS = 16;
 const FIRST_GATEWAY_MS = 24_000;
 
 /** Refill bounded slots without changing the full input, reviewers or admission rules. */
-export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobOutcome<null>> {
+export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>): Promise<JobOutcome<FirstReviewCursor>> {
   const startedAt = Date.now();
   const settings = await getSettings();
   assertReviewFixtureSettings(settings);
   if (!settings.enabled || settings.reviewMode === "off") {
     ctx.log("crawl.agent_review_skipped", { reason: !settings.enabled ? "disabled" : "review_off" });
-    return { done: true };
+    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("AI review requires a valid worker job lease");
@@ -43,20 +44,28 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     ctx.log("crawl.agent_review_skipped", { reason: "stage_inactive" });
     return { done: false, deferred: "stage_blocked" };
   }
-  const reviewer = firstReviewer(settings);
-  if (!reviewer) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
-  const { provider: reviewProvider, model } = reviewer;
+  const primary = firstReviewer(settings);
+  if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
+  const pool = firstReviewers(settings, primary);
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
-  const candidates = await listReviewCandidates(settings, Math.max(20, concurrency * 2));
-  if (!candidates.length) return { done: true };
-  const tickMs = reviewProvider === "grok-cli" ? GROK_TICK_MS : TICK_MS;
+  const poolEnabled = settings.firstReviewAdditional !== undefined;
+  const after = poolEnabled ? firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan) : null;
+  const page = poolEnabled ? await listFirstReviewPoolCandidates(settings, Math.max(20, concurrency * 2), after) : null;
+  const candidates = page ? page.map(row => row.candidate) : await listReviewCandidates(settings, Math.max(20, concurrency * 2));
+  if (!candidates.length) {
+    if (after) { await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null }); return { done: false, continuation: "ready" }; }
+    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
+  }
+  const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS : TICK_MS;
   const remaining = () => tickMs - (Date.now() - startedAt);
-  const ceiling = reviewProvider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS)
-    : reviewProvider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  const timeoutFor = (provider: string) => provider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS)
+    : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  const minimumCeiling = Math.min(...pool.map(reviewer => timeoutFor(reviewer.provider)));
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
+  const pausedModels = new Set<string>();
   let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false, modelDeferred = false;
-  const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + 2_000;
+  const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= minimumCeiling + 2_000;
   const canAdmit = () => !modelDeferred && canStart();
   const processCandidate = async (candidate: typeof candidates[number]) => {
     if (!isReviewCandidate(candidate)) return;
@@ -70,6 +79,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     if (!document) return;
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil <= reviewSemanticNow()) return;
+    const reviewer = settings.firstReviewAdditional === undefined ? primary
+      : await chooseFirstReviewForCandidate({ candidate, document, settings, input });
+    if (!reviewer) return;
+    const { provider: reviewProvider, model } = reviewer;
+    const key = firstReviewerKey(reviewer), ceiling = timeoutFor(reviewProvider);
+    const canStartModel = () => canStart() && !pausedModels.has(key) && remaining() >= ceiling + 2_000;
+    if (!canStartModel()) return;
     const preparation = await prepareAgentReview({ candidate, document, settings, input }, reviewer);
     const { verdict, hardReason, evidenceHold, provider } = preparation;
     // README 를 받고 나서 드러난 스팸·악성 의심은 모델에게 보내지 않고 사람에게 넘긴다
@@ -78,7 +94,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
       return;
     }
-    if (!canAdmit()) return;
+    if (!canAdmit() || !canStartModel()) return;
     const context = { candidate, document, settings, input };
     let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
     let prepared: PreparedAi1GatewayCall | undefined;
@@ -108,8 +124,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       }
       // The claim TX has rolled back. Stop new claims without cancelling any
       // already admitted lane; all real work settles before returning deferred.
-      modelDeferred = true;
-      ctx.log("crawl.agent_review_deferred", { reason: error.reason });
+      if (settings.firstReviewAdditional !== undefined && firstReviewDeferralIsLocal(error.reason)) pausedModels.add(key);
+      else modelDeferred = true;
+      ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
       return;
     }
     if (claim.kind === "skipped") {
@@ -117,7 +134,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
       return;
     }
-    if (!canStart()) {
+    if (!canStartModel()) {
       // CLI 는 spawn 하지 않은, gateway 는 fetch 를 부르지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
       if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
       else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch, prepared);
@@ -147,7 +164,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
     ownershipPoll.unref?.();
     try {
       // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
-      if (!canStart()) controller.abort();
+      if (!canStartModel()) controller.abort();
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
       const dispatch = claim.dispatch;
       const call = prepared;
@@ -164,7 +181,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
         : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
       }, ctx.log);
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
-      if (!result.ok) stopped = true;
+      if (!result.ok) {
+        if (settings.firstReviewAdditional !== undefined) pausedModels.add(key);
+        else stopped = true;
+      }
       const recorded = await recordAgentReview({
         ...context, receipt: claim.receipt,
         ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
@@ -202,8 +222,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<null>): Promise<JobO
   const settled = await Promise.allSettled(lanes);
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
+  // Advance only examined hints. A paused model prefix must not repeat forever on later ticks.
+  // This saves no provider authority, and preserves unrelated durable cursor fields.
+  if (page && next > 0) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: page[next - 1].position });
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
-  if (modelDeferred) return { done: false, deferred: "model_capacity" };
+  if (modelDeferred || pausedModels.size) return { done: false, deferred: "model_capacity" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };

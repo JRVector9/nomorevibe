@@ -58,6 +58,15 @@ it("accepts the actual first verdict and current primary vote", () => {
   expect(secondReviewInputMatches(row, current, now)).toBe(true);
 });
 
+it("accepts a first result from an added worker and refuses it after that worker is removed", () => {
+  const { row, current } = fixture();
+  current.settings.firstReviewAdditional = [current.settings.firstReview!];
+  current.settings.firstReview = { provider: "abcllm", model: "another-primary" };
+  expect(secondReviewInputMatches(row, current, now)).toBe(true);
+  current.settings.firstReviewAdditional = [];
+  expect(secondReviewInputMatches(row, current, now)).toBe(false);
+});
+
 it("accepts a fallback bound to its actual resolved primary root", () => {
   const { row, current } = fallbackFixture();
   expect(secondReviewInputMatches(row, current, now)).toBe(true);

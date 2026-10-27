@@ -125,7 +125,7 @@ export function stageForJob(job: string): PipelineStageDef | null {
   return PIPELINE_STAGES.find((row) => row.jobs.includes(job)) ?? null;
 }
 
-type ModelSettings = Pick<CrawlSettings, "firstReview" | "secondReview">;
+type ModelSettings = Pick<CrawlSettings, "firstReview" | "firstReviewAdditional" | "secondReview">;
 type Env = Readonly<Record<string, string | undefined>>;
 
 export type ModelSlot = Readonly<{
@@ -183,6 +183,9 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
   const first = firstReviewSlot(settings, env);
   const slots: ModelSlot[] = [
     { stage: "first", key: "first", label: "주", ...first, approximated: false },
+    ...(settings.firstReviewAdditional ?? []).map((reviewer, index): ModelSlot => ({ stage: "first", key: `first-additional-${index + 1}`,
+      label: `추가 ${index + 1}`, code: `firstReviewAdditional[${index}]`, provider: reviewer.provider, model: reviewer.model,
+      source: "settings", approximated: false })),
     ...settings.secondReview.voters.map((voter, index): ModelSlot => ({ stage: "second", key: `second-voter-${index + 1}`, label: `투표 ${index + 1}`,
       code: `secondReview.voters[${index}]`, provider: voter.provider, model: voter.model, source: "settings", approximated: false })),
     ...(settings.secondReview.fallbacks ?? []).map((voter, index): ModelSlot => ({ stage: "second", key: `second-fallback-${index + 1}`, label: `예비 ${index + 1}`,

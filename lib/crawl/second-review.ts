@@ -23,6 +23,7 @@ import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
+import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, underlyingModelSql } from "./held-qwen-retry-policy";
 import { hasLiveFetchItem } from "./fetch-ownership";
@@ -167,11 +168,10 @@ async function controllerWrite(lease: JobLease, candidateId: number | null,
 }
 
 function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttempt | undefined {
-  const reviewer = firstReviewer(domain.settings);
+  const pool = firstReviewers(domain.settings, firstReviewer(domain.settings));
   return [...domain.attempts].reverse().find(row => row.kind === "automatic" && row.state === "succeeded"
-    && (row.provider === "claude-cli" || row.provider === "abcllm" || reviewer?.provider === "grok-cli"
-      && row.provider === reviewer.provider && row.model === reviewer.model)
-    && (!gate || reviewer && row.provider === reviewer.provider && row.model === reviewer.model)
+    && (row.provider === "claude-cli" || row.provider === "abcllm" || hasFirstReviewer(pool, row))
+    && (!gate || hasFirstReviewer(pool, row))
     // 관문은 보류 Qwen-v2 의 승인에도 붙는다 — 독립 투표자가 있을 때만(held-qwen-retry-policy.ts)
     || gate && heldQwenGateFirst(domain.settings, row, domain.candidate));
 }
@@ -187,10 +187,9 @@ function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now
   const { candidate, document, input, settings } = domain;
   if (!candidate || !document || !input) return false;
   const identity = domain.attempts.find(first => first.id === row.firstAttemptId);
-  const reviewer = firstReviewer(settings);
+  const pool = firstReviewers(settings, firstReviewer(settings));
   const first = [...domain.attempts].reverse().find(attempt => (attempt.kind === "automatic" && attempt.state === "succeeded"
-    && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || reviewer?.provider === "grok-cli"
-      && attempt.provider === reviewer.provider && attempt.model === reviewer.model)
+    && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || hasFirstReviewer(pool, attempt))
     || row.trigger === "ai_approved" && heldQwenGateFirst(settings, attempt, candidate))
     && (row.trigger !== "ai_approved" || identity && attempt.provider === identity.provider && attempt.model === identity.model));
   return (!row.publishedSlug || Boolean(domain.publishedProductId)) && secondReviewInputMatches(row,
@@ -444,8 +443,8 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
    * 발행된다 — reviewApprovalPredicate·assertReviewApproval 이 이 행들을 본다. 1차와 같은 모델의 표는 되풀이라
    * 올리지 않는다. 실측(블라인드 159건): 1차 혼자 승인하면 124건 중 오답 9, 둘 다 승인하면 116건 중 5.
    */
-  const reviewer = firstReviewer(settings);
-  if (settings.reviewMode === "enforce" && reviewer) {
+  const pool = firstReviewers(settings, firstReviewer(settings));
+  if (settings.reviewMode === "enforce" && pool.length) {
     // 지금 1차 심사자의 판단만 본다 — 발행 조건(activeReviewIdentity)과 같은 기준이어야 관문이 엉뚱한 판단에 붙지 않는다
     const approved = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
       candidateId: crawlReviewAttempts.candidateId, repo: crawlCandidates.repo, inputHash: crawlReviewAttempts.inputHash,
@@ -456,8 +455,8 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
     }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId))
       .where(and(eq(crawlCandidates.state, "approved"), eq(crawlCandidates.decidedBy, "auto"), isNull(crawlCandidates.publishedSlug),
         eq(crawlReviewAttempts.state, "succeeded"),
-        or(and(eq(crawlReviewAttempts.kind, "automatic"), eq(crawlReviewAttempts.provider, reviewer.provider),
-          eq(crawlReviewAttempts.model, reviewer.model)), heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals)))))
+        or(and(eq(crawlReviewAttempts.kind, "automatic"), firstReviewIdentitySql(pool, crawlReviewAttempts)),
+          heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals)))))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
       .as("approved_latest");
     const gateRequired = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => voter.model))}::jsonb) as v(model)
@@ -1021,7 +1020,8 @@ export async function recordSecondReview(input: {
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
       const excluded = [...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
       const eligible = (settings.secondReview.fallbacks ?? []).filter(v => !excluded.some(model => sameReviewModel(model, v.model)));
-      // Prefer an independent model. A same-first fallback is reference-only and must end in human review.
+      // Prefer an independent model. This also covers an extra AI1 worker using
+      // the configured AI2 fallback: a same-first fallback is reference-only and must end in human review.
       // 같은 가중치는 자리 표시가 달라도 같은 모델이다('[gpu3090] qwen3.8-flash-next' 와 보류 재심사의 'qwen3.8-flash-next')
       const backup = eligible.find(v => !sameUnderlyingModel(row.firstModel, v.model)) ?? eligible[0];
       if (backup) {

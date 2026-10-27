@@ -26,6 +26,7 @@ import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { claimAgentReview, claimItemAgentReview, loadReviewInput, recordAgentReview,
   handOffExhaustedFirstReviews, requeueStaleReviewSources } from "@/lib/crawl/agent-review-repository";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
+import type { FirstReviewCursor } from "@/lib/crawl/first-reviewers";
 import { claimItemLease, lockItemStage, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemBindingHash } from "@/lib/jobs/items/types";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
@@ -556,7 +557,7 @@ it("settles a semantic-reuse attempt when the actual handler loses budget immedi
     await admin.begin(async blocker => {
       const [{ pid }] = await blocker`SELECT pg_backend_pid() AS pid`;
       await blocker`SELECT pg_advisory_xact_lock(1485805, ${context.candidate.id})`;
-      running = runJob<null>("crawl-agent-review", ctx => reviewCrawlCandidates({ ...ctx,
+      running = runJob<FirstReviewCursor>("crawl-agent-review", ctx => reviewCrawlCandidates({ ...ctx,
         hasBudget: () => allowed && ctx.hasBudget() }));
       void running.catch(() => {});
       await waitForBlockedBy(pid);

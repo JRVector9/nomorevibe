@@ -4,6 +4,7 @@ import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, se
   type CrawlReviewAttempt, type SecondReview } from "@/lib/db/schema";
 import { loadReviewInput, secondGateRequired, secondReviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { firstReviewer } from "@/lib/crawl/agent-review";
+import { firstReviewers, hasFirstReviewer } from "@/lib/crawl/first-reviewers";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { secondReviewInputMatches } from "@/lib/crawl/second-review-input";
 import { canonicalReviewModel, sameReviewModel } from "@/lib/crawl/review-model-identity";
@@ -47,7 +48,10 @@ export async function snapshotPipelineGenerations(candidateIds: number[], expect
     const policyHash = fullReviewPolicyHash(settings);
     if (policyHash !== expectedPolicyHash) throw new Error("snapshot_policy_mismatch");
     const reviewer = firstReviewer(settings);
+    const reviewers = firstReviewers(settings, reviewer);
     if (expected) {
+      // The certified manifest declares one AI1 model; it does not authorize an additive pool.
+      if (settings.firstReviewAdditional?.length) throw new Error("unsupported_capacity_first_review_pool");
       if (expected.inputPolicyHash !== reviewPolicyHash(settings)
         || expected.comparisonPolicyHash !== comparisonReviewPolicyHash(settings)) throw new Error("snapshot_policy_mismatch");
       const identity = (row: { provider: string; model: string }) => ({ provider: row.provider, model: row.model,
@@ -80,7 +84,7 @@ export async function snapshotPipelineGenerations(candidateIds: number[], expect
           && input.validUntil > capturedAt && attempt.inputHash === input.inputHash
           && attempt.sourceRevisionHash === input.sourceRevisionHash && attempt.policyHash === input.policyHash
           && attempt.promptVersion === REVIEW_PROMPT_VERSION && attempt.rulesVersion === REVIEW_RULES_VERSION
-          && attempt.provider === reviewer?.provider && attempt.model === reviewer?.model);
+          && hasFirstReviewer(reviewers, attempt));
         const required = attempt.outcome?.decision === "approve" && secondGateRequired(settings);
         const completed = required && gate && input && document && currentInputMatched
           ? gateTime(attempt, votes, { candidate, document, settings, input }, capturedAt) : null;

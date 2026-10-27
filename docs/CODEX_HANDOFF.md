@@ -1,3 +1,23 @@
+# AI1 추가 모델 pool 구현 — 2026-10-27, 로컬 실행 검사 없이 root 검토 단계
+
+목표: 기본 `firstReview`를 유지하며 선택 설정 `firstReviewAdditional` 최대2개로 AI1 미완료 후보를 분담한다. 작업 WT는 `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, base `06ac66c1ebbb130258eb72a73b0a83dbed6420b1`이다. UI/API 상태 구현은 별도 PR695이며 이 WT에서 main을 병합하지 않는다. root가 최신 base를 통합하고 PR/필수 CI/배포를 맡는다.
+
+완료: 공용 pool/선택기, schema 검증, 기존 legacy와 item AI1 실행, 현재 pool 완료 결과 인정, AI2 enqueue/current-input/publication gate 연결, discovery first-pressure 집계 identity, stage 모델 슬롯과 pipeline control route 목록을 연결했다. primary 모델/실제 추가 모델/용량 정책/운영 설정은 바꾸지 않았다. 후보별 새 작업은 stable ID 분담, 재시도와 현재 native waiting/reserved/dispatched/indeterminate 의도는 기존 provider/model에 고정한다. 제거된 활성 의도나 여러 모델의 충돌 의도는 재배정하지 않는다. 기존 candidate/item/native 권한과 `ai1:<candidateId>` binding을 보존한다.
+
+독립 리뷰 P1 두 건을 반영했다. 고정 prefix만 반복하면 정상 모델이 굶는 초안을 폐기하고 기존 미검수 우선·오래된 순서/ID ceiling을 쓰는 bounded keyset을 `jobs.cursor.firstReviewPoolScan`에 저장한다. 최대32 힌트/16 examined·claim 및 기존 동시성/시간 예산을 유지하며 cursor의 다른 필드를 보존한다. 현재 승인 pool과 재시도 identity를 분리해 동일 input/source/policy/prompt/rules의 모든 자동 모델 실패·유예·owner-change와 실제 attempt 번호를 합산한다. 모델 제거 후 시도 한도가 리셋되던 기존 테스트의 기대를 새 요구에 맞게 정정했다.
+
+모델/route별 용량 거절·회로만 국소 대기하고 global drain·정책·owner/host/epoch fence는 그대로 전체 적용한다. pool 추가는 reviewPolicyHash/secondReviewPolicyHash에 넣지 않아 완료 입력 전체를 재검수하지 않는다. AI2와 같은 underlying 모델은 독립 표로 세지 않으며 같은 모델 fallback은 needs_human이다. 기존 단일 AI1 manifest의 capacity/replay 권한을 확대하지 않고 추가 pool을 명시 거절한다. 일반 운영 generation snapshot은 pool 결과를 인정한다. 일반 설정 폼은 추가 필드를 보내지 않아 canonical saveSettings 부분 병합으로 보존한다. Zod4 superRefine은 object의 shape를 유지하고 저장소에 crawlSettingsSchema.extend/pick 호출은 없다.
+
+수정 파일: `lib/crawl/first-reviewers.ts`, `settings-schema.ts`, `agent-review-repository.ts`, `jobs/agent-review.ts`, `agent-review-item-lifecycle.ts`, `consumers/first.ts`, `discovery-admission.ts`, `second-review-input.ts`, `second-review.ts`, `second-review-ownership.ts`; `lib/operations/stage-registry.ts`, `pipeline-control.ts`, `pipeline-capacity-repository.ts`, `pipeline-replay-readiness.ts`, `pipeline-replay-runner.ts`; 관련 unit/integration 회귀, 운영 설계 문서 `docs/operations/2026-10-27-ai1-additive-pool.md`, 이 인계. schema/grant/앱/UI/API 변경은 없다.
+
+검증: 소스 독립 리뷰 및 자체 정적 diff 검토를 했다. `git diff --check` 실제 EXIT0이다. 사용자 지시로 로컬 tests/lint/typecheck/build/compile/provider probe는 실행하지 않았다. 추가한 회귀는 stable/retry/active-intent, capacity 국소 대기/global drain, 32개 막힌 prefix 뒤 정상 후보의 tick간 진행, 완료 결과 유지, 제거 후 backoff/3회 상한, 실제 AI2 발행 관문/자가 fallback 금지, route 목록/replay 거절을 다룬다. 회귀 실행·CI 성공은 아직 주장하지 않는다.
+
+남은 일: root가 frozen diff 검토→scoped commit 통합→최신 main/UI695 base와 필수 GitHub CI→별도 운영 적용을 결정한다. 기존 native indeterminate 실제 정산 및 Supa/M3 serving·용량 상태는 root의 운영 조사 범위이며 이번 agent가 조회/수정하지 않았다. 추가 모델 설정은 미적용이다. 모델 추가만으로 즉시 적체 해소나 수집3천/h 달성을 주장하지 않는다.
+
+다음 root 명령(로컬 tests 금지 유지): `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 status --short`; `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 diff HEAD --stat`; `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 show --stat --oneline HEAD`. root가 최신 base 통합 뒤 PR을 생성하고 exact-head CI `check`를 확인한다. main merge/PR/push/배포는 이 agent가 하지 않는다.
+
+---
+
 # 독립 schema 리뷰 경계조건 반영 — 2026-10-27 KST15:26
 
 사용자는추가subagent+nativeClaudeCLI Fable5.1 xhigh로스키마개선교차검토를요청했다. schema_performance_review/schema_compatibility_review 모두 gpt-6.1-sol xhigh/forknone/readonlysource이며root는actualClaudeCLI를실행했다. 첫literal fable5.1은404/EXIT1이었고공식claude-fable-5-1 확인후새dir B/claude-schema-fable51-2/PID3389/exec65247로동일모델xhigh재실행중. skills/tools비활성,reviewsource만제공,운영변경0. 모델성공은아직미확인.

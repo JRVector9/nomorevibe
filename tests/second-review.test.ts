@@ -3,6 +3,11 @@ import { combineVotes, combineVerdicts, inSample, riskSignals } from "@/lib/craw
 
 const base = { name: "Taskly", productUrl: "https://taskly.app", textSample: "Plan your week", readme: null };
 
+it("an added AI1 worker cannot use its own underlying model as an independent AI2 fallback", () => {
+  expect(combineVerdicts({ decision: "approve", confidence: .99, model: "[supa] same-weights" },
+    { decision: "approve", confidence: .99, model: "same-weights", provider: "abcllm" }, .85, false)).toBe("needs_human");
+});
+
 describe("riskSignals — 규칙은 통과했지만 한 번 더 볼 이유", () => {
   it("평범한 제품에는 신호가 없다", () => {
     expect(riskSignals(base)).toEqual([]);

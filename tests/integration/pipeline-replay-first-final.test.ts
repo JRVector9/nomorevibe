@@ -20,6 +20,7 @@ import { loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-rep
 import { legacyReviewReceiptFixture } from "./agent-review-receipt-fixtures";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
+import type { FirstReviewCursor } from "@/lib/crawl/first-reviewers";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
 
@@ -136,7 +137,7 @@ async function finals() {
   return table.name ? admin`SELECT * FROM pipeline_replay.capacity_finals` : [];
 }
 async function runWithRepeatedWriter(value: Awaited<ReturnType<typeof prepare>>, fixture: ReviewFixtureCallback,
-  repeat: (context: JobContext<null>) => Promise<void>) {
+  repeat: (context: JobContext<FirstReviewCursor>) => Promise<void>) {
   const database = await openVerifiedReplayHandlerDatabase(value.identityPath, {});
   const ledger = new ReplayLedger(database), replay = await ledger.prepare(value.manifest, value.inputs);
   try {
@@ -146,7 +147,7 @@ async function runWithRepeatedWriter(value: Awaited<ReturnType<typeof prepare>>,
       return withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(replay, () =>
         withReviewFixtureTransport({ ledger, run: replay, fixture, inputs: value.inputs,
           fullReviewPolicyHash: value.manifest.fullReviewPolicyHash, tokenUpperBound: 100 }, () =>
-          runJob<null>("crawl-agent-review", async ctx => {
+          runJob<FirstReviewCursor>("crawl-agent-review", async ctx => {
             const result = await reviewCrawlCandidates(ctx);
             await repeat(ctx);
             return result;

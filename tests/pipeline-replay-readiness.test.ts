@@ -289,6 +289,12 @@ it("refuses an environment-only first reviewer that is absent from the fixed pro
   expect(() => deriveReplayReadiness(projection, wall)).toThrow("replay_readiness_explicit_first_reviewer_required");
 });
 
+it("refuses additive first pools outside the single-model replay contract", () => {
+  const projection = readinessFixture();
+  (projection.tables.crawl_settings[0].values as { firstReviewAdditional?: unknown }).firstReviewAdditional = [{ provider: "abcllm", model: "extra-first" }];
+  expect(() => deriveReplayReadiness(projection, wall)).toThrow("unsupported_replay_first_review_pool");
+});
+
 it("normalizes only reviewConcurrency and named wall-relative timers in the comparison digest", () => {
   const projection = readinessFixture();
   (projection.tables.crawl_settings[0].values as {reviewConcurrency: number}).reviewConcurrency = 1;

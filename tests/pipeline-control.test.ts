@@ -6,6 +6,7 @@ import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/cap
 import { deferredRoutes, formatControlResult, formatControlStatus, modelRouteContracts, parsePipelineControlArgs, pipelineControlDatabaseUrl,
   planPipelineControl, usedModelRoutes, type ControlSnapshot, type TransitionCommand } from "@/lib/operations/pipeline-control";
 import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
+import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 
 const audit = ["--operator=jr", "--reason=pr06d unit"];
 function transition(...args: string[]): TransitionCommand {
@@ -26,6 +27,14 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}): ControlSnapshot {
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { abcllm: 4 }, groupLimits: { gateway: 4 },
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 30_000,
   routes: [{ routeId: "second-review", provider: "abcllm", model: "m", providerBudgetId: "abcllm", groupId: "gateway" }] };
+
+it("includes every additive first reviewer in route admission and route status", () => {
+  const reviewSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "primary-model" },
+    firstReviewAdditional: [{ provider: "abcllm", model: "extra-model" }] };
+  const uses = usedModelRoutes(snapshot({ reviewSettings }), null);
+  expect(uses.filter(row => row.routeId === "crawl-agent-review").map(row => row.model)).toEqual(["primary-model", "extra-model"]);
+  expect(modelRouteContracts(policy, "legacy", uses)).toContainEqual({ routeId: "crawl-agent-review", provider: "abcllm", model: "extra-model", status: "unmapped" });
+});
 
 describe("pipeline control arguments", () => {
   it("parses a transition with every expectation, audit field and flag", () => {

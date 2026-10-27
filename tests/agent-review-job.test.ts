@@ -3,13 +3,15 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+import { firstReviewers, selectFirstReviewer, type FirstReviewCursor } from "@/lib/crawl/first-reviewers";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
@@ -23,6 +25,7 @@ const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
+  mocks.choose.mockImplementation(async ({ candidate, settings }) => selectFirstReviewer(firstReviewers(settings), candidate.id));
   mocks.canStart.mockResolvedValue(true);
   mocks.requeue.mockResolvedValue(0);
   mocks.handOff.mockResolvedValue(0);
@@ -31,6 +34,9 @@ beforeEach(() => {
   const document = {id:1,repo:"acme/demo",productUrl:"https://demo.example",repoMeta:{description:"Task tracker",homepage:"https://demo.example",pushed_at:now.toISOString(),stargazers_count:0,owner:{type:"User"}},
     pageMeta:{title:"Demo"},pageStatus:200,fetchedAt:now} as CrawlDocument;
   mocks.list.mockResolvedValue([candidate()]);mocks.document.mockResolvedValue(document);
+  mocks.poolList.mockImplementation(async (settings, limit, after) => ((await mocks.list(settings, limit)) as CrawlCandidate[])
+    .filter(row => !after || row.id > after.id).slice(0, limit).map(candidate => ({ candidate,
+      position: { id: candidate.id, reviewed: false, updatedAt: "2026-10-27 00:00:00.000001", ceiling: 1000 } })));
   mocks.input.mockImplementation(async (c,d,s) => createReviewInput(c,d,s,{scan:null,observations:[]}));
   mocks.existing.mockResolvedValue(null);mocks.claim.mockResolvedValue({kind:"claimed",attempt:{id:1,attemptNumber:1},receipt:receipt()});
   mocks.record.mockResolvedValue({applied:false,state:"succeeded"});
@@ -379,4 +385,49 @@ it("preserves a genuine lane failure after settling a concurrent capacity refusa
     throw selected.id === 1 ? new ModelCapacityDeferredError("unmapped") : original;
   });
   await expect(reviewCrawlCandidates(context())).rejects.toBe(original);
+});
+
+it("a local model capacity wait leaves the extra reviewer working without rerouting pinned candidates", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  const extra = { provider: "abcllm" as const, model: "extra-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }, { ...candidate(), id: 3 }]);
+  mocks.claim.mockImplementation(async ({ model }) => {
+    if (model === primary.model) throw new ModelCapacityDeferredError("capacity");
+    return { kind: "claimed", attempt: { id: 2, attemptNumber: 1 }, receipt: receipt(2) };
+  });
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
+  expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: extra.model }));
+});
+
+it("an additive pool still stops all new admission on a global drain", async () => {
+  mocks.settings = { ...mocks.settings!, firstReview: { provider: "abcllm", model: "primary-model" },
+    firstReviewAdditional: [{ provider: "abcllm", model: "extra-model" }], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }]);
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("draining"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.claim).toHaveBeenCalledTimes(1);
+  expect(mocks.gateway).not.toHaveBeenCalled();
+});
+
+it("persists bounded scan progress past a blocked-model prefix and keeps unrelated cursor fields", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" }, extra = { ...primary, model: "extra-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue(Array.from({ length: 33 }, (_, index) => ({ ...candidate(), id: index + 1 })));
+  mocks.choose.mockImplementation(async ({ candidate }) => candidate.id === 33 ? extra : primary);
+  mocks.claim.mockImplementation(async ({ candidate }) => {
+    if (candidate.id !== 33) throw new ModelCapacityDeferredError("capacity");
+    return { kind: "claimed", attempt: { id: 33, attemptNumber: 1 }, receipt: receipt(33) };
+  });
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Product", evidenceIds: ["product"] } });
+  let cursor: FirstReviewCursor | null = { sentinel: { keep: true } };
+  for (let tick = 0; tick < 3; tick++) {
+    const ctx = { ...context(), cursor, save: async (next: FirstReviewCursor) => { cursor = next; } };
+    await reviewCrawlCandidates(ctx);
+  }
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 17, 33]);
+  expect(mocks.gateway).toHaveBeenCalledOnce();
+  expect(cursor).toMatchObject({ sentinel: { keep: true }, firstReviewPoolScan: { id: 33 } });
 });

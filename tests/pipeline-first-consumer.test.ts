@@ -8,13 +8,13 @@ import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { DEFAULT_CRAWL_SETTINGS } from '@/lib/crawl/settings-schema';
 import { consumerHealthPath, supervisorCommand, supervisorHealthPath } from '@/scripts/worker-supervisor';
 
-const mocks = vi.hoisted(() => ({ load: vi.fn(), prepare: vi.fn(), claim: vi.fn(), observe: vi.fn(), renew: vi.fn(),
+const mocks = vi.hoisted(() => ({ choose: vi.fn(), load: vi.fn(), prepare: vi.fn(), claim: vi.fn(), observe: vi.fn(), renew: vi.fn(),
   record: vi.fn(), spam: vi.fn(), select: vi.fn(), where: vi.fn(), pages: [] as unknown[][], limit: vi.fn(),
   sleep: vi.fn(), runtime: vi.fn(), report: vi.fn(), settings: vi.fn(), predicate: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { select: mocks.select }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: () => null }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: mocks.settings }));
-vi.mock('@/lib/crawl/agent-review-repository', () => ({ loadFirstReviewConsumerContext: mocks.load,
+vi.mock('@/lib/crawl/agent-review-repository', () => ({ chooseFirstReviewForCandidate: mocks.choose, loadFirstReviewConsumerContext: mocks.load,
   claimConsumerItemAgentReview: mocks.claim, observeAgentReviewItemDispatch: mocks.observe,
   renewAgentReviewItemOwnership: mocks.renew, recordAgentReview: mocks.record,
   recordConsumerSuspectedSpam: mocks.spam, reviewCandidatePredicate: mocks.predicate }));
@@ -71,6 +71,31 @@ it('stopClaims ends the AI1 loop after the current item without a backoff', asyn
   expect(await runFirstReviewConsumer({ owner: owner(), signal: cancel.signal, stopClaims: stopClaims.signal }))
     .toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
   expect(mocks.load.mock.calls.map(call => call[0])).toEqual([4]); expect(mocks.sleep).not.toHaveBeenCalled(); expect(cancel.signal.aborted).toBe(false);
+});
+
+it('an additive item pool isolates local capacity waits and provider circuits by selected model', async () => {
+  const primary = { provider: 'abcllm' as const, model: 'primary-model' };
+  const extra = { provider: 'abcllm' as const, model: 'extra-model' };
+  const settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' as const,
+    firstReview: primary, firstReviewAdditional: [extra] };
+  mocks.settings.mockResolvedValue(settings);
+  mocks.pages = [[hint(4), hint(5), hint(6)]];
+  mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id }, settings } }));
+  mocks.choose.mockImplementation(async ({ candidate }) => candidate.id === 5 ? extra : primary);
+  mocks.prepare.mockImplementation(async (_context, reviewer) => ({ ...reviewer, spam: false }));
+  mocks.claim.mockImplementation(async ({ candidate }) => {
+    if (candidate.id === 4) throw new ModelCapacityDeferredError('capacity');
+    return { kind: 'reused', receipt, attempt: { id: 3, outcome } };
+  });
+  const circuit = { admitted: true as const, record: vi.fn(), done: vi.fn() };
+  const circuits = { admit: vi.fn((key: string) => { void key; return circuit; }) };
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true, circuits }))
+    .toEqual({ attempted: 3, recorded: 1, skipped: 1, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([4, 5]);
+  expect(circuits.admit.mock.calls.map(call => call[0])).toEqual([
+    'ai1:' + JSON.stringify([primary.provider, primary.model]), 'ai1:' + JSON.stringify([extra.provider, extra.model]),
+  ]);
+  expect(circuit.done).toHaveBeenCalledTimes(2);
 });
 it('launches one fixed reviewer runtime with a fresh boot and matching observation identity', async () => {
   await runPipelineFirstConsumer(['--once'], { PIPELINE_ITEM_CONSUMER_VERSION: '1',

@@ -459,6 +459,8 @@ export async function observeSecondReviewItemDispatch(receipt: SecondReviewItemR
 }
 
 export function secondReviewPolicyHash(settings: CrawlSettings): string {
+  // Extra AI1 workers do not invalidate every existing AI2 receipt. Its source
+  // binds the actual first attempt; input validation checks active pool membership.
   return reviewHash({ version: "second-review-policy-v1", inputPolicyHash: reviewPolicyHash(settings),
     enabled: settings.enabled, reviewMode: settings.reviewMode, firstReview: firstReviewer(settings),
     secondReview: settings.secondReview, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION });

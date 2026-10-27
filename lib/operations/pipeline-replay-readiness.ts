@@ -171,6 +171,7 @@ function deriveWithFailureHistory(value: ReplayReadinessProjection, wallNow: str
   const projection = canonicalProjection(value), wall = time(date.parse(wallNow)), reference = time(projection.referenceTime);
   ensure(+reviewSemanticNow(new Date(reference / 1000)) * 1000 === reference, "replay_readiness_reference_scope_mismatch");
   const settings = mergeWithDefaults(projection.tables.crawl_settings.find(row => row.id === 1)?.values);
+  ensure(!settings.firstReviewAdditional?.length, "unsupported_replay_first_review_pool");
   ensure(settings.firstReview, "replay_readiness_explicit_first_reviewer_required");
   const reviewer = firstReviewer(settings), work: ReplayReadinessWork[] = [];
   const attempts = projection.tables.crawl_review_attempts.map(row => hydrate<schema.CrawlReviewAttempt>(row, schema.crawlReviewAttempts));
