@@ -16,16 +16,16 @@ NativeGrok sql693b-grok-final1 actual80802/PID31864 EXIT0/end_turn88.17초, help
 
 ## 변경 파일·검증·실패
 
-현재docs WT /Users/jr/Desktop/projects/nomorevibe-schema-review-report-20261027, branchcodex/db-schema-review-report-20261027. docs/CODEX_HANDOFF.md와새schema보고서만변경. 수동tests/lint/typecheck/build/컴파일미실행(사용자지시). 운영READONLY실측만위와같이실행. PR693 CI40461058061 및main40461953037 check/worker·webimage 실제success. 이docs PR CI는아직실행전이며통과로주장하지않는다. 원사용자dirtyWT보존.
+현재docs WT /Users/jr/Desktop/projects/nomorevibe-schema-review-report-20261027, branchcodex/db-schema-review-report-20261027. docs/CODEX_HANDOFF.md와새schema보고서만변경. 수동tests/lint/typecheck/build/컴파일미실행(사용자지시). 운영READONLY실측만위와같이실행. PR693 CI40461058061 및main40461953037 check/worker·webimage 실제success. 문서PR694 첫head418854a6의CI40465904466/check07:14:40Z는실제success. 이번원인추가커밋의필수CI는최신PR상태로확인해야하며기존성공을재사용해단정하지않는다. 원사용자dirtyWT보존.
 
 실패이력: Claude첫literal fable5.1은404/EXIT1, 공식동일모델ID claude-fable-5-1로별도실행성공. 공식693a는text/maintenance4배포뒤globalprogress관문실패/once소비·원본보존. OPEN·ownpause복원후새mixedbaseline693b가4유지/14배포로성공했다. gate/timeout완화0. relative resume-plan시도는readonlypreflight실패후새절대경로plan으로진행. 과거once/failed 영수증을지우거나성공으로바꾸지않았다.
 
 ## 남은 작업과 다음 정확 명령
 
 1. 미게시pending1(id138985/candidate357316): ai_approved표지만candidateauto needs_review/splitfalse. currentitems admission은입력불일치를skip하고legacy만supersede. stalehint도approved만보기때문에자동정리공백이있다. 별도PR에서인간결정/실행중·미확정capacity/옛세대표보호를유지해cleanup범위를검토한다. 현재직접SQL수정0.
-2. 수집3000/h 실제유지미확인. GitHubApp/토큰추가0. 5분26으로감소한원인은최신seedcursor/admission/backpressure/quota/검색수율의새READONLY표본으로구분할것. 과거06:18snapshot을현재원인으로단정하지않는다.
+2. 수집3000/h 실제유지미확인/GitHubApp·토큰추가0. 사용자추가질문 검색수집량감소→root현재원인확인/답변완료. B/discovery-bottleneck-readonly-20261027-2.{db,logs}.private.json actual86250 EXIT0/primaryREADONLY07:15:31Z/실제crawler source06ac일치. 06:57:43 first498/53.69분/throttledfalse→06:58:43 first506/54.69분/throttledtrue→07:14:42 first514/68.45분/true. seed.ts:56의 pagesPerTick=1 강제경로가설정10을덮는다. 19admission timedOut0/GitHub rate-auth0/cooldown[]/seed-fetchhas_errorfalse. 최신탐색은6/16진행/waitingfalse라시간당휴지는현재주원인아님. 다음우선작업은AI1처리율진단/복구와발견저장-검수backpressure결합의안전한분리설계,cap·품질·pending저장상한을무작정없애지않는다. sourceagent에도현재로그전달완료. 과거06:18snapshot을현재원인으로쓰지않는다.
 3. 기존텍스트품질·진행경보/전체healthyfalse, observer장기/백업DR등은PENDING기존범위. 일시pause를경보해결로쓰지않는다. 모델defaultGPU3090직접qwen3.8-flash-next/abcLLM Supa fallback/no-thinking32k출력10k그대로.
-4. 이문서PR게시→필수docsCI→exacthead/latestbase확인병합. docs-only이므로앱재배포하지않는다.
+4. 문서PR694 https://github.com/JRVector9/nomorevibe/pull/694 에실제원인추가커밋후최신필수docsCI→exacthead/latestbase확인병합. docs-only이므로앱재배포하지않는다.
 
 ```sh
 cd /Users/jr/Desktop/projects/nomorevibe-schema-review-report-20261027
