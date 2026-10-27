@@ -1,27 +1,66 @@
-# 현재 — 2026-10-27, 수집 시간당 3000 코드·루트 검토 (발견·원본만, 미관측)
+# AI2 구현 단계 완료 — 2026-10-27 KST14:36, PR 게시·필수CI 전
 
-목표: 새 고유 저장소 발견과 원본 확보를 시간당 3000 쪽으로 올리는 코드. 발행 3000이 아니고 AI2 생애주기와 분리. 이 세션은 테스트·린트·타입체크·빌드·컴파일·합성 모델 호출을 실행하지 않았고, 커밋·푸시·PR·배포·운영 설정 변경·자격 읽기를 하지 않았다. 3000은 아직 관측이 아니다.
+목표는 stale AI2 수요의 자동 정리→원본/근거 갱신→최신 세대 재등록과 별도 수집3천/h 확대다. 수집PR691은05:27:20Z main683888914db4152a6893dc1dfc164e58ec1f66f6로 병합됐고 main40455412090 필수check/worker·web publish 실제success다. refresh-caches는 기다리지 않는다. 이번 운영 변경·배포는 아직0이다.
 
-## 완료
+AI2 코드 commit `fb86c7319e90a144a3dafa495ebd383743106764`는 최신main6838889에 clean rebase했다. 수정 파일은 second-review/stale helper/job, claims scan demand, generic gate/replay 호출과 관련 회귀12개다. root가 추가로 secondReview off 시 scan수요 공급을 막는 guard와 회귀1개를 넣었다. 두 운영문서 및 이 handoff를 함께 기록한다. native Grok 초안 뒤 EXIT130/1180.36초로 명시 종료했고 성공으로 주장하지 않는다. 구현·독립 검토 agent는 사용자 지정gpt-6.1-sol xhigh다. 최종 코드파일 소유권은 root에게 돌아왔다.
 
-- 시드 `crawl-seed` 는 10분·기본 줄에서 60초·`discovery` 줄, 예산 30초. 페치 `crawl-fetch` 는 `fetch` 줄, 예산 120초, 묶음 24, 동시성 12. GitHub 같은 origin 직렬은 유지.
-- 크롤러 DB 풀과 host workerMax 는 4→8. 동시성 12는 풀보다 크다. HTTP 중 연결을 잡지 않는다. 호스트 예산 카탈로그는 기본 연결 55→59(복제 포함 합 63), 롤아웃 겹침 108→116(합 124).
-- `discover.maxNewPerHour` 기본 3000. 시드만 5분 창 250건으로 넘긴다. 압력 500·5분 / 1,000과 소스 버퍼·2인자 입장은 유지. 저장 JSON 에 키가 없으면 배포 후 읽기 기본값이 적용된다. DB 쓰기는 없다.
-- 루트 감사의 M3 코어 3버킷(사용자 259063951, 사용자 227736397, installation 169989496, 합 15,000/시)을 계산 근거로만 적었다. Oracle installation 172855274 제외는 코드에서 빼지 않았고 자격도 추가하지 않았다. 토큰 신원 키·선제 페이스는 넣지 않았다. 검색 처리량은 확인된 검색 신원 하나(1,800페이지/시) 기준으로 360(저장 6페이지) 또는 600(상한 10).
-- 홈페이지 10.5초·동시성 8은 2,742/시라 목표에 못 미친다. 동시성 12는 10.5초에 4,114, 14초에 3,085, 15초에 2,880이다. 15초 이상 또는 getRepo 직렬 1.2초 이상이 남은 한계다.
-- 루트는 운영 코드에 고정된 감사 버킷 수·이론 처리량 계산을 남기지 않도록 미사용 `discovery-throughput.ts`와 수학 기대값 회귀를 제거했다. 실제 5분 입장 계산만 기존 함수에 남겼다. 새 회귀는 `tests/discovery-rate-limit.test.ts`의 기존 설정 호환·창 상한·압력/미측정 우선 동작이다. 카탈로그·풀·페치 동시성·설정 힌트 기존 기대값도 갱신했다. 수동 실행하지 않았으며 필수 CI는 아직 미실행이다.
-- 실제14:01 KST readonly: crawler-m3/mini는 명시적 DB_POOL_MAX4로 기본8을 덮는다. 공식 계획 전에 이 두 앱만8로 맞추고 agent-scan의4는 보존한다. DB max_connections150/예약3/전체세션68. private `B/crawler-pools.private.json`, `B/db-budget-baseline.private.json` 근거이며 자격은 기록하지 않는다.
-- 운영 가정과 루트 적용 순서는 `docs/operations/2026-10-27-discovery-3000-hour.md`.
+설계: 실제 controllerInputMatches로 세대 외 부적격도 검출, stale-input-reconciler 소유 표만 기한 없이 이어감, fresh 미대상이면not_required, fallback 미완료 root도 함께 닫음, source잠금을 votes/items 앞에 준비하고 사용하지 않은 insert는 rollback, 미확정·활성 capacity를 failclosed로 보호, job cursor를 기존필드와 함께 보존. oversized 후보는 rollback+명시log로 뒤 후보를 막지 않는다. replay/Oracle grant 확대 없음.
 
-## 남은 일
+수동 tests/lint/typecheck/build/컴파일·합성 모델 호출은 미실행. `git diff --cached --check` 실제EXIT0. 아직 AI2 PR CI는 실행 전이며 통과라고 기록하지 않는다. 테스트코드는 docs/operations/2026-10-27-ai2-stale-reconcile.md의 회귀 범위를 따른다. 실제 DB80개 초과 연속 cursor 접근은 이번 회귀 범위 밖이다.
 
-루트가 검토·PR·필수 CI·병합·배포한 뒤, 정식 CAS 로 `maxNewPerHour`(필요 시 `pagesPerTick`)만 맞춘다. 제외 설치 172855274 는 유지. 배포 후 1시간 이상 새 고유·원본을 재기 전에 3000이라고 적지 않는다. 관리자 숫자 칸은 브라우저로 확인하지 않았다.
+다음 root 명령: 이 문서/운영문서를 커밋→`git push -u origin codex/ai2-stale-reconcile-20261027`→`gh pr create --base main --head codex/ai2-stale-reconcile-20261027 --title 'AI2: 오래된 재검수 정리·원본 갱신·재등록 자동화' --body-file B/ai2-pr-body.private.md`→필수CI→exacthead 병합→최종main check/이미지→새clean operatorWT에서공식scope/plan/run. runtime환경 DB_POOL_MAX4 유지. 새 `B/read-postdeploy-metrics.py NEWSTEM --target-sha FULLSHA --deployed-at UTCZ` helper는 코드준비만 끝났고 실행하지 않았다. runtimeproof는 별도이며 marker정리와 실제모델성공을 구분한다.
 
-PR691 첫 CI40453659689에서 build/lint/두 이미지 success, typecheck는 상태 화면의 새 discovery/fetch 라벨 누락, unit2는 수동 fetch 예산/감독 자식 풀의 옛 기대값 두 건으로 failure였다. 루트가 `CrawlerActivity.tsx`, `manual-job-budget.test.ts`, `worker-supervisor.test.ts`를 해당 새 설정에 맞췄다. 로컬 수동 검사는 여전히 미실행이며 후속 CI 성공을 기다린다. 실패 원본은 private `B/ci691-{typecheck,unit2}.private.log`에 보존했다.
+---
 
-후속40453993018의 typecheck/build/lint/두 이미지는 success였으나 단위 검사는 풀 총합/worker-runtime 옛 기대값 두 건과 기존25ms 타이밍에 의존한 동시성 검사로 실패했다. 루트는 총합27·fetch120초/seed30초 기대값을 맞추고, HTTP 첫 파동의 실제12개 진입을 동기화해 시간 부하와 무관하게 GitHub 직렬/페이지 병렬을 검증하도록 했다. 로컬 실행 없이 다음 필수 CI를 기다린다. 이전 실패 로그는 private `B/ci691b-*.private.log`.
+# 현재 작업 — 2026-10-27 KST, 수집 PR691 CI·AI2 자동 재등록 구현/검토 병렬 진행
 
-아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
+## 현재 목표·제약
+
+오래된 AI2 재검수의 정리→원본 갱신→최신 세대 재등록 자동화를 고치고, 신규 고유 저장소 시간당3,000건 수집 확대를 별도 PR로 진행한다. 사용자가 native Grok CLI 직접 실행과 추가 서브에이전트 병렬 작업을 명시했다. 스킬 사용·수동 test/lint/typecheck/build·합성 LLM 호출 없이 개발하며 필수 GitHub CI를 통과한다. 원 사용자 dirty WT·과거 운영 once 영수증은 보존한다. 아직 이번 작업의 운영 변경·병합·배포는 없다.
+
+## 완료·변경 파일·현재 실행
+
+- 실제 native Grok discovery는 `B/discovery-follow/` end_turn/EXIT0(30turn/585.87초). root가 검토하고 미사용 이론상 수학 모듈을 제거했다. PR https://github.com/JRVector9/nomorevibe/pull/691 , branch `codex/discovery-3000-hour-20261027`, WT `/Users/jr/Desktop/projects/nomorevibe-discovery-3000-hour-20261027`, 최종 head `8d37a58a`(앞선4b620ad1/cc5b3921 포함), 필수 전체 CI success 뒤05:27:20Z squash merge `683888914db4152a6893dc1dfc164e58ec1f66f6` 완료. 운영 배포는 아직 없다.
+- 주요 파일: `lib/jobs/catalog.ts`, `scripts/worker.ts`, `lib/crawl/jobs/{seed,fetch}.ts`, `lib/crawl/discovery-admission.ts`, `lib/crawl/settings-schema.ts`, DB pool/host-budget, admin 설정/상태 화면, 수집 회귀 코드·운영 문서. seed60초/discovery lane/30초, fetch 별도 lane/120초/BATCH24/concurrency12, crawler 기본 pool8, maxNewPerHour 기본3000(rolling5분250). 기존 quota/backpressure/품질/중복/role lease 유지. 신규3천 실측은 아직 없다.
+- 실제 native Grok AI2 `B/ai2-follow/` PID87390 / exec session94202, session01a17bac-9ae6-7051-9c74-4defb1e70d93, grok-4.7 xhigh --no-subagents --resume --no-plan 65turn으로 진행하다 코드 검토 소유권 이전을 위해 root가 read-only call 사이 SIGINT했다. 실제 EXIT130/1180.36초이며 최종 성공 보고는 없다. WT `/Users/jr/Desktop/projects/nomorevibe-ai2-stale-reconcile-20261027`, branch `codex/ai2-stale-reconcile-20261027`. `lib/crawl/second-review-stale.ts`와 `second-review.ts`에 실제 코드 작성 중이며 최종 native 성공 보고는 없으며 코드의 안전 보완은 ai2_independent_safety_review에 단독 위임했다. 동일 파일에 동시 수정 금지.
+- root 발견 검토 사항은 `B/ai2-follow/ROOT_REVIEW.private.md`에 보관했지만 native 종료 뒤 구현 담당에게 전달했다. 예약시간 파싱 failclosed, fallback child ghost, 세대 변경 감지·bounded prefix 기아,7일 뒤 수요 소실, 불명확 capacity binding 보호, source/frontier identity 잠금이 votes/items보다 늦는 순서 문제를 최종 수정 전에 해결해야 한다. 미검토 코드를 운영 배포하지 않는다.
+- 추가 서브에이전트는 모두 사용자 지정 gpt-6.1-sol xhigh: discovery_ci_finish(PR691 최신 CI 및 실제 실패 수정 전용), ai2_independent_safety_review(AI2 안전 보완 구현 단독 담당), release_readiness(공식 배포 준비 읽기전용). native Grok와 수정 충돌을 피한다. root integration WT는 이 handoff만 dirty다.
+
+## 테스트 명령·실제 결과·실패한 접근
+
+- 수동 tests/lint/typecheck/build는 실행하지 않았다. `git diff --check`만 실제 EXIT0.
+- PR691 첫 CI40453659689/4b620ad1은 타입의 신규 lane 라벨 및 unit의 기존 budget/pool 기대값 실패. 다음40453993018/cc5b3921은 타입/빌드/린트/이미지 성공, unit의 추가 pool/budget 기대값과 fetch 동시성 시간 경합 실패. 모두 최신8d37a58a에 수정했고 과거 run은 cancelled다. 실패를 성공으로 기록하지 않는다.
+- 최종 CI40454513467/8d37a58a는 completed/success. typecheck/lint/build/unit2/integration6/ledger/PR이미지2개 및 필수check(05:26:33Z) 실제 success. root가 latestbase1cfd1ba/exacthead8d37/mergeableCLEAN을 확인한 뒤 병합했다. 동시성 회귀는 wall-clock 지연 대신 첫12개 page 요청이 모두 도착하는 barrier로 바꿨다.
+- AI2 첫 native Grok는 provider403/EXIT1/107.76초. AI2 retry와 discovery 초기 호출은55turn max_turn 상한으로 코드 없이 종료했다. discovery만 후속에서 실제 구현/보고까지 완료했다. AI2 follow는 구현 중이다. 과거 실패 또는 시작을 완료로 쓰지 않는다.
+
+## 운영 근거·핵심 결정
+
+14:23:58 readonly 추가 snapshot `B/predeploy-live.private.json`: 신규 고유/원본 최근60분355/355, pending76그대로, 실제AI2최근1h agreed16/needs_human9/resolved39. 전체AI2중단이 아니라 stale 수요고립이다. `B/predeploy-monitor.private.json`은 공식 monitor의 역할·scheduler·전체worker progress 관문 passedtrue/blocking[] (운영변경0).
+
+- 시작 base1cfd1bab8c2563eb5f842757ae8d5698b97bbb27, 현재 main683888914db4152a6893dc1dfc164e58ec1f66f6, 운영 runtime50be0d706b9562067a44867d239d0362bc83892b. private B=`/Users/jr/.local/state/nomorevibe-reliability-20261025/grok-reconcile-discovery-20261027` (0700/0600).
+-13:41:38 KST readonly baseline60분 신규 고유383/원본382,15분59/59,5분1/1. AI2 pending76(게시75/미게시1), 최장10/26 09:51:38 KST. 현재 Supa dispatched1/예약2가 있어 TTL 강제회수 금지. 당시 실제 loader에서76모두 generation mismatch였고 published slug inputHash는 의도된 값이다.
+- 기존 M3 REST quota는 서로 다른 env PAT JRVector9 + DB PAT lollol-jr + findai App의 총15,000/h. 같은 계정 PAT 추가는 한도를 늘리지 않는다. Oracle App installation172855274 제외를 유지한다. 토큰 추가 없음. 전체 repo별 원본/agent 요청까지3천/h를 감당하는지는 실측으로 확인한다.
+- 실제 crawler-m3/mini/agent-scan은 명시 DB_POOL_MAX4, HOST_DB_BUDGET 비활성이다. 기본8은 현운영을 바꾸지 않는다. 추가 검토에서 HTTP12 동시성은 DB transaction 밖이고 짧은 저장만 pool을 쓰므로 명시4를 유지하기로 결정했다. 공식 run은 runtime env변경을 허용하지 않으므로8변경용 추가배포도 하지 않는다. 실제 풀대기/DB오류/처리율 관측으로 병목 때만 별도 조정한다. 수집 PR의8필수 문장은 AI2 PR에서 정정한다. DB max150/관리예약3/관측 전체68(일부 필드 권한상NULL), 순간 headroom은 있지만 장기관측 보장은 아니다.
+- AI2 정리는 product→candidate→source→votes→items→job lease 순서와 capacity dispatched/indeterminate/유효예약 보호를 지켜야 한다. 인간 결정/과거투표 변경 없이 원래 수요를 최신 세대로 멱등 생성한다. 임의7일 경과로 수요가 사라지면 안 된다. Oracle claim-only/replay grant를 넓혀 우회하지 않는다.
+
+## 남은 일·다음 정확한 명령
+
+1. AI2 구현 담당 완료 diff를 root 독립 검토→위6개 이슈 해결→별도 PR/필수 CI. AI2 구현 담당 파일을 동시에 수정하지 않는다.
+2. PR691 병합 완료(main6838889). AI2 구현 commit 뒤 이 base로 rebase해 별도 PR/필수CI. 자동배포는 없으며 두 변경을 함께 공식 배포한다.
+3. crawler/agent-scan 환경값4 유지→clean mergedmain WT에서 scope/plan/run. 공통 lib 변경이면18앱 대상. 과거 once 또는 알 수 없는 provider request TTL 해제 금지.
+4. canonical saveSettings CAS로 discovery 설정만 변경, 실제 자동 정리·refresh·새 검수 결과와 수집량 관측. native Grok 읽기전용 운영 재검증 후 root가 원본과 대조.3천/h는 실제60분 관측 전 달성으로 보고하지 않는다.
+
+```sh
+cd /Users/jr/Desktop/projects/nomorevibe-discovery-3000-hour-20261027
+gh run view 40454513467 --json status,conclusion,jobs
+cd /Users/jr/Desktop/projects/nomorevibe-ai2-stale-reconcile-20261027
+git status --short
+git diff --stat
+```
+
+private `B/ai2-follow/{exit.private.json,REPORT.private.md,ROOT_REVIEW.private.md}`가 다음 근거다. 같은 output stem/once 영수증을 재실행하지 않는다. 아래는 이전 완료 단계의 역사다.
+
+---
 
 # 현재 — 2026-10-27 KST12:09, PR689 병합·운영 반영·10분47초 재검증 완료
 
