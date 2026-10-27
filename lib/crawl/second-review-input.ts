@@ -13,16 +13,16 @@ import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
+import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
   attempts: { provider: AnyPgColumn; model: AnyPgColumn } = crawlReviewAttempts) {
-  const reviewer = firstReviewer(settings);
+  const pool = firstReviewers(settings, firstReviewer(settings));
   return or(inArray(attempts.provider, ["claude-cli", "abcllm"]),
-    reviewer?.provider === "grok-cli" ? and(eq(attempts.provider, reviewer.provider),
-      eq(attempts.model, reviewer.model)) : undefined)!;
+    firstReviewIdentitySql(pool.filter(reviewer => reviewer.provider === "grok-cli"), attempts))!;
 }
 
 /** Shared pure validation for a locked worker input and the bounded admission snapshot. */
@@ -51,13 +51,15 @@ export function secondReviewInputMatches(row: SecondReview, current: {
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
     || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return false;
   if (!row.publishedSlug) {
-    const reviewer = firstReviewer(settings);
+    const pool = firstReviewers(settings, firstReviewer(settings));
     // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
     const heldQwen = Boolean(first && row.trigger === "ai_approved" && heldQwenGateFirst(settings, first, candidate));
+    if (settings.firstReviewAdditional !== undefined && row.trigger === "ai_approved" && !heldQwen
+      && first && !hasFirstReviewer(pool, first)) return false;
     if (!first || !first.model?.trim() || first.id !== row.firstAttemptId || first.candidateId !== row.candidateId
       || !heldQwen && (first.kind !== "automatic" || first.state !== "succeeded"
       || !["claude-cli", "abcllm", "grok-cli"].includes(first.provider ?? "")
-      || (first.provider === "grok-cli" && (reviewer?.provider !== first.provider || reviewer.model !== first.model)))
+      || (first.provider === "grok-cli" && !hasFirstReviewer(pool, first)))
       || first.inputHash !== input.inputHash || first.sourceRevisionHash !== input.sourceRevisionHash
       || first.policyHash !== input.policyHash || first.promptVersion !== REVIEW_PROMPT_VERSION || first.rulesVersion !== REVIEW_RULES_VERSION
       || first.outcome?.decision !== row.firstDecision || (first.outcome?.confidence ?? null) !== (row.firstConfidence ?? null)

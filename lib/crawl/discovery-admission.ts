@@ -10,6 +10,7 @@ import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPred
 import { createReviewInput, REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "./agent-review-contract";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
 import { firstReviewer } from "./agent-review";
+import { firstReviewers, firstReviewIdentitySql } from "./first-reviewers";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
 import { MAX_SECOND_REVIEW_FAILURES, SECOND_REVIEW_RETRY_MS, SECOND_REVIEW_TRANSIENT_ERRORS, TRANSIENT_RETRY_MS } from "./second-review";
@@ -74,7 +75,7 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
   const at = sql`${now.toISOString()}::timestamp`;
   const available = (name: string) => sql`not exists(select 1 from ${jobs} where ${jobs.name} = ${name} and ${jobs.notBefore} > ${at})`;
   const age = (column: SQL) => sql`extract(epoch from (${at} - min(${column}))) / 60`;
-  const reviewer = firstReviewer(settings);
+  const reviewers = firstReviewers(settings, firstReviewer(settings));
   const modelName = (model: SQL) => sql`regexp_replace(lower(trim(${model})), '^\\[mlx\\][[:space:]]*', '', 'i')`;
   const voterMatches = (provider: SQL, model: SQL, pool: CrawlSettings["secondReview"]["voters"]) => sql`exists(
     select 1 from jsonb_array_elements(${JSON.stringify(pool)}::jsonb) voter
@@ -113,9 +114,9 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
       where (${judgementQueuePredicate()}) and ${available("crawl-judge")}
       union all select 'first', count(*)::int, ${age(sql`greatest(${crawlDocuments.fetchedAt}, ${crawlCandidates.updatedAt},
         (select max(a.retry_after) from crawl_review_attempts a where a.candidate_id=${crawlCandidates.id}
-          and a.provider=${reviewer?.provider ?? ""} and a.model=${reviewer?.model ?? ""} and a.retry_after <= ${at}))`)}
+          and ${firstReviewIdentitySql(reviewers, { provider: sql`a.provider`, model: sql`a.model` })} and a.retry_after <= ${at}))`)}
       from ${crawlCandidates} join ${crawlDocuments} on ${crawlCandidates.repo}=${crawlDocuments.repo}
-      where ${reviewCandidatePredicate(settings, { readyOnly: true })} and ${reviewer !== null} and ${available("crawl-agent-review")}
+      where ${reviewCandidatePredicate(settings, { readyOnly: true })} and ${reviewers.length > 0} and ${available("crawl-agent-review")}
       union all select 'publish', count(*)::int, ${age(sql`greatest(${crawlCandidates.updatedAt}, ${crawlDocuments.fetchedAt},
         (select max(a.completed_at) from crawl_review_attempts a where a.candidate_id=${crawlCandidates.id}),
         (select max(s.reviewed_at) from second_reviews s where s.candidate_id=${crawlCandidates.id}),

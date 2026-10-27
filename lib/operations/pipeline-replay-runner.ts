@@ -50,6 +50,7 @@ async function assertLegacyReplayStages(database: VerifiedReplayDatabase): Promi
 
 async function assertReplaySettings(manifest: CapacityManifest): Promise<void> {
   const settings = await getSettings();
+  if (settings.firstReviewAdditional?.length) throw new Error("unsupported_replay_first_review_pool");
   const first = firstReviewer(settings);
   const identity = (value: { provider: string; model: string }) => ({ ...value, canonicalModel: canonicalReviewModel(value.model) });
   if (!first || reviewPolicyHash(settings) !== manifest.inputPolicyHash

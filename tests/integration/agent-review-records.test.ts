@@ -134,6 +134,24 @@ it("stores observed reviews without mutating the candidate and reuses immutable 
   expect(rows[0]).toMatchObject({ outcome, inputTokens: null, outputTokens: null, costUsd: null });
 });
 
+it("adding another first reviewer keeps the primary's completed current-input result valid", async () => {
+  const original = await fixture();
+  await saveSettings({ firstReview: { provider: original.provider, model: original.model } }, "test");
+  const settings = await getSettings();
+  const context = { ...original, settings, input: await loadReviewInput(original.candidate, original.document, settings) };
+  const claim = await claimAgentReview(context);
+  if (claim.kind === "skipped") throw new Error(claim.reason);
+  await recordAgentReview({ ...context, receipt: claim.receipt, outcome });
+  expect((await listReviewCandidates(settings)).some(row => row.id === context.candidate.id)).toBe(false);
+  await saveSettings({ firstReviewAdditional: [{ provider: "abcllm", model: "extra-review-model" }] }, "test");
+  const expanded = await getSettings();
+  expect((await loadReviewInput(context.candidate, context.document, expanded)).inputHash).toBe(context.input.inputHash);
+  expect((await listReviewCandidates(expanded)).some(row => row.id === context.candidate.id)).toBe(false);
+  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(1);
+  await saveSettings({ reviewConcurrency: 3 }, "test");
+  expect((await getSettings()).firstReviewAdditional).toEqual(expanded.firstReviewAdditional);
+});
+
 it("does not create another case variant while refreshing stale review sources", async () => {
   const context = await fixture();
   const stale = new Date(Date.now() - 25 * 60 * 60_000);
@@ -328,13 +346,35 @@ it("does not reuse another model's success on the same or a refreshed source", a
   await recordAgentReview({...context, receipt: first.receipt, outcome});
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {reusedFromAttemptId: null, outcome: null}});
 });
-it("does not exhaust a new model from the old model's failures", async () => {
+it("keeps the current-input attempt budget when the selected model changes", async () => {
   const context = await fixture();
   for (let i = 0; i < 3; i++) {
     const attempt = await claimAgentReview(context); if (attempt.kind === "skipped") throw new Error(attempt.reason);
     await recordAgentReview({...context, receipt: attempt.receipt, error: "timeout", retryAfter: new Date(0)});
   }
-  expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {attemptNumber: 1}});
+  expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "skipped", reason: "attempts_exhausted"});
+});
+
+it("removing an extra reviewer preserves its current-input backoff and shared attempt limit", async () => {
+  const original = await fixture("enforce");
+  for (let number = 0; number < 2; number++) {
+    const claim = await claimAgentReview(original); if (claim.kind === "skipped") throw new Error(claim.reason);
+    await recordAgentReview({ ...original, receipt: claim.receipt, error: "timeout", retryAfter: new Date(number ? Date.now() + 60_000 : 0) });
+  }
+  await saveSettings({ firstReview: { provider: original.provider, model: "other-model" },
+    firstReviewAdditional: [{ provider: original.provider, model: original.model }] }, "test");
+  await saveSettings({ firstReviewAdditional: [] }, "test");
+  const settings = await getSettings(), context = { ...original, settings, model: "other-model",
+    input: await loadReviewInput(original.candidate, original.document, settings) };
+  expect(await listReviewCandidates(settings)).toEqual([]);
+  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "retry_wait" });
+  await db.update(crawlReviewAttempts).set({ retryAfter: new Date(0) });
+  const third = await claimAgentReview(context); if (third.kind === "skipped") throw new Error(third.reason);
+  expect(third.attempt.attemptNumber).toBe(3);
+  await recordAgentReview({ ...context, receipt: third.receipt, error: "timeout", retryAfter: new Date(0) });
+  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "attempts_exhausted" });
+  expect(await listReviewCandidates(settings)).toEqual([]);
+  expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
 });
 it("does not let an old model approval suppress review or satisfy enforce publication", async () => {
   const context = await fixture("enforce"); const first = await claimAgentReview(context);

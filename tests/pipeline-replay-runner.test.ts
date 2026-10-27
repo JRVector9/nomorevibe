@@ -202,6 +202,13 @@ it("preserves the configured order of second-review voter slots", async () => {
   expect(fake.runJob).not.toHaveBeenCalled();
 });
 
+it("does not authorize an additive first pool with a single-model replay manifest", async () => {
+  fake.settings.mockResolvedValue({ ...settings(), firstReviewAdditional: [{ provider: "abcllm", model: "extra-first" }] });
+  const value = options();
+  await expect(runFixtureReviewReplay(value)).rejects.toThrow("unsupported_replay_first_review_pool");
+  expect(fake.runJob).not.toHaveBeenCalled(); expect(value.fixture).not.toHaveBeenCalled();
+});
+
 it("rechecks actual settings before a second claim after the first tick changes policy", async () => {
   const changed = settings(); changed.reviewConcurrency++;
   fake.settings.mockResolvedValueOnce(settings()).mockResolvedValueOnce(changed);

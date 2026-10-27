@@ -265,6 +265,20 @@ it("1차 승인만으로는 발행하지 않고, 2차 모델도 승인하면 발
   expect(await db.select().from(products)).toHaveLength(1);
 });
 
+it("an added first reviewer uses the same independent AI2 publication gate", async () => {
+  await withGate();
+  await saveSettings({ firstReview: { provider: "abcllm", model: "unchanged-primary" },
+    firstReviewAdditional: [{ provider: "claude-cli", model: "test-model" }] }, "test");
+  const settings = await getSettings(), { row, attempt } = await candidate(0, true, .95);
+  expect(await listReviewCandidates(settings)).toEqual([]);
+  await tick(); expect(await db.select().from(products)).toHaveLength(0);
+  expect(await enqueueSecondReviews(settings)).toBe(1);
+  const [gate] = await db.select().from(secondReviews);
+  expect(gate).toMatchObject({ candidateId: row.id, firstAttemptId: attempt!.id, firstModel: "test-model", trigger: "ai_approved" });
+  await vote(gate, "approve");
+  await tick(); expect(await db.select().from(products)).toHaveLength(1);
+});
+
 it("2차 모델이 승인하지 않으면 발행하지 않고 사람에게 넘긴다 — AI 심사는 다시 집지 않는다", async () => {
   const settings = await withGate();
   const { row } = await candidate(0, true, 0.95);

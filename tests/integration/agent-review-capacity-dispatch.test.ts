@@ -18,7 +18,7 @@ import { loadReviewInput, claimAgentReview, recordAgentReview } from '@/lib/craw
 import { reviewCrawlCandidates } from '@/lib/crawl/jobs/agent-review';
 import { claimAgentReviewModelCapacity } from '@/lib/crawl/agent-review-model-capacity';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from '@/lib/llm/capacity';
-import { runJob, type JobContext, type JobOutcome } from '@/lib/jobs/runner';
+import { runJob } from '@/lib/jobs/runner';
 import { requestJob } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
@@ -87,7 +87,7 @@ async function source() {
 const attempts = async (id: number) => (await admin`SELECT to_jsonb(a) AS row FROM crawl_review_attempts a WHERE candidate_id=${id} ORDER BY id`).map(row => row.row);
 const requests = async () => (await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${instanceId} AND owner_boot_id=${bootId} ORDER BY queue_ordinal`).map(row => row.row);
 const events = async (id: string) => (await admin`SELECT kind FROM model_capacity_events WHERE request_id=${id}::uuid ORDER BY id`).map(row => row.kind);
-const tick = (handler: (ctx: JobContext<null>) => Promise<JobOutcome<null>> = reviewCrawlCandidates) => track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role! }));
+const tick = (handler: typeof reviewCrawlCandidates = reviewCrawlCandidates) => track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role! }));
 async function until(load: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 2500;
   while (!await load()) { if (Date.now() > deadline) throw new Error(label); await new Promise(resolve => setTimeout(resolve, 5)); }

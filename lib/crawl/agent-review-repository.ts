@@ -1,7 +1,7 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, lte, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
@@ -34,7 +34,8 @@ import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, f
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { firstReviewer } from "./agent-review";
+import { firstReviewer, type FirstReviewer } from "./agent-review";
+import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer, type FirstReviewPoolPosition } from "./first-reviewers";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
 import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired } from "./review-replay-context";
@@ -48,6 +49,25 @@ import {
 } from "./agent-review-contract";
 
 type Executor = typeof db | ProductTransaction;
+
+/** Selection is a hint; the existing candidate/item/capacity locks still grant all authority. */
+export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db): Promise<FirstReviewer | null> {
+  const pool = firstReviewers(context.settings, firstReviewer(context.settings));
+  // Preserve the original query footprint for installations which never enabled a pool.
+  if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
+  const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model })
+    .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
+      eq(crawlReviewAttempts.kind, "automatic"), ne(crawlReviewAttempts.provider, "rules"),
+      eq(crawlReviewAttempts.inputHash, context.input.inputHash))).orderBy(desc(crawlReviewAttempts.id)).limit(1);
+  // Separate branches retain the existing active/waiting partial-index predicates.
+  // Indeterminate native calls stay pinned, including a model removed from the pool.
+  const active = currentReplayDb() ? [] : await executor.execute<{ provider: string; model: string }>(sql`
+    SELECT DISTINCT provider, model FROM ((SELECT provider, model FROM model_capacity_requests
+      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state IN ('reserved','dispatched','indeterminate'))
+    UNION ALL (SELECT provider, model FROM model_capacity_requests
+      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state = 'waiting')) ai1_intents LIMIT 2`);
+  return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active));
+}
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
 ): Promise<ReviewInput> {
@@ -161,10 +181,9 @@ export async function renewAgentReviewItemOwnership(context: ReviewDomainContext
  * 갈아 끼운 뒤 첫 회차부터 새 심사자의 답으로만 발행되게 한다.
  */
 function activeReviewIdentity(settings: CrawlSettings): SQL {
-  const reviewer = firstReviewer(settings);
+  const pool = firstReviewers(settings, firstReviewer(settings));
   return or(and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION)),
-    and(eq(crawlReviewAttempts.provider, reviewer?.provider ?? "claude-cli"),
-      eq(crawlReviewAttempts.model, reviewer?.model ?? "")))!;
+    firstReviewIdentitySql(pool, crawlReviewAttempts))!;
 }
 
 function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): SQL {
@@ -176,10 +195,16 @@ function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): S
     AND ${crawlReviewAttempts.id}::text = ${attemptId === undefined ? sql`${crawlCandidates.signals}->>'delegatedReviewAttemptId'` : attemptId})`;
 }
 
-function matchingSource(settings: CrawlSettings, delegated = false): SQL {
+/** Retry budgets survive model removal; a different worker is not a fresh attempt budget. */
+function retryReviewIdentity(): SQL {
+  return and(eq(crawlReviewAttempts.kind, "automatic"), or(ne(crawlReviewAttempts.provider, "rules"),
+    and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION))))!;
+}
+
+function matchingSource(settings: CrawlSettings, delegated = false, retry = false): SQL {
   // 보류 Qwen-v2 의 승인(성공·승인 행만)도 지금 1차 심사자의 판단처럼 관문에 선다(held-qwen-retry-policy.ts)
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
-    AND ${delegated ? delegatedReviewIdentity(settings) : sql`((${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}) OR ${heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals))})`}
+    AND ${delegated ? delegatedReviewIdentity(settings) : retry ? retryReviewIdentity() : sql`((${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}) OR ${heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals))})`}
     AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
@@ -434,7 +459,7 @@ export async function handOffExhaustedFirstReviews(
       sql`EXISTS (SELECT 1 FROM ${crawlDocuments} d WHERE d.repo = ${crawlCandidates.repo}
         AND d.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
         AND d.fetched_at <= ${reviewSemanticNowSql()} AND d.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
-      sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+      sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
         AND ${crawlReviewAttempts.state} IN ('failed', 'superseded')
         AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
         AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) >= ${MAX_REVIEW_ATTEMPTS}`,
@@ -456,12 +481,13 @@ export async function handOffExhaustedFirstReviews(
       if (input.validUntil <= reviewSemanticNow()) continue;
       const attempts = await tx.select().from(crawlReviewAttempts).where(and(
         eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
-        activeReviewIdentity(settings), eq(crawlReviewAttempts.inputHash, input.inputHash),
+        retryReviewIdentity(), eq(crawlReviewAttempts.inputHash, input.inputHash),
         eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash),
         eq(crawlReviewAttempts.policyHash, input.policyHash), eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
         eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
       )).for("share");
-      if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow())) continue;
+      if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow()
+        && (attempt.provider === "rules" || hasFirstReviewer(firstReviewers(settings, firstReviewer(settings)), attempt)))) continue;
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
         && attempt.errorCode !== "owner_changed" && attempt.errorCode !== NATIVE_TERMINAL_FAILURE).length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
@@ -509,11 +535,10 @@ export type ReviewCandidateOptions = {
  * 1차가 잠깐 실패해 기다리는 중(1차 대상에서 잠시 빠진 것)인 후보는 맡지 않는다 — 그 후보는 1차가 다시 본다.
  */
 export function firstReviewAbstainedPredicate(settings: CrawlSettings): SQL {
-  const reviewer = firstReviewer(settings);
-  if (!reviewer) return sql`false`;
+  const pool = firstReviewers(settings, firstReviewer(settings));
+  if (!pool.length) return sql`false`;
   return sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
-    AND ${crawlReviewAttempts.kind} = 'automatic' AND ${crawlReviewAttempts.provider} = ${reviewer.provider}
-    AND ${crawlReviewAttempts.model} = ${reviewer.model} AND ${crawlReviewAttempts.state} = 'succeeded'
+    AND ${crawlReviewAttempts.kind} = 'automatic' AND ${firstReviewIdentitySql(pool, crawlReviewAttempts)} AND ${crawlReviewAttempts.state} = 'succeeded'
     AND ${crawlReviewAttempts.outcome}->>'decision' = 'needs_review' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`;
 }
 
@@ -523,7 +548,7 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
   return and(
     not(liveAgentReviewItem(sql`${crawlCandidates.id}`)),
     options.excludeCandidateIds?.length ? notInArray(crawlCandidates.id, options.excludeCandidateIds) : undefined,
-    options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+    options.readyOnly ? sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} = 'running' AND EXISTS (SELECT 1 FROM jobs j
         WHERE j.name = 'crawl-agent-review' AND j.lease_token = ${crawlReviewAttempts.leaseToken}
           AND j.locked_at >= clock_timestamp() - interval '90 seconds'))` : undefined,
@@ -547,13 +572,13 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
       AND (${settings.reviewMode === "observe"}
         OR (${crawlCandidates.state} = 'approved' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve')
         OR (${crawlCandidates.state} = 'needs_review' AND ${crawlReviewAttempts.outcome}->>'decision' = 'needs_review')))`,
-    sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+    sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > clock_timestamp())`,
-    sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+    sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')
       AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
       AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) < ${MAX_REVIEW_ATTEMPTS}`,
-    sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
+    sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} = 'superseded'
       AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
       AND ${crawlReviewAttempts.completedAt} > clock_timestamp() - interval '24 hours') < 3`,
@@ -577,6 +602,23 @@ export async function listReviewCandidates(settings: CrawlSettings, limit = 20,
       WHERE seen.candidate_id = ${crawlCandidates.id} AND seen.state = 'succeeded')`,
     asc(crawlCandidates.updatedAt), asc(crawlCandidates.id),
   ).limit(Math.max(1, Math.min(100, limit)));
+}
+
+/** Bounded keyset page, retaining the existing unseen/oldest ordering and a fixed ID ceiling. */
+export async function listFirstReviewPoolCandidates(settings: CrawlSettings, limit: number, after: FirstReviewPoolPosition | null) {
+  const reviewed = sql<boolean>`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} seen
+    WHERE seen.candidate_id = ${crawlCandidates.id} AND seen.state = 'succeeded')`;
+  const rows = await db.select({ candidate: crawlCandidates, id: crawlCandidates.id, reviewed,
+    updatedAt: sql<string>`${crawlCandidates.updatedAt}::text`,
+    ceiling: after ? sql<number>`${after.ceiling}::integer` : sql<number>`(SELECT coalesce(max(id), 0) FROM ${crawlCandidates})` })
+    .from(crawlCandidates).where(and(reviewCandidatePredicate(settings, { readyOnly: true }),
+      after ? lte(crawlCandidates.id, after.ceiling) : undefined,
+      after ? or(gt(reviewed, after.reviewed), and(eq(reviewed, after.reviewed), or(
+        sql`${crawlCandidates.updatedAt} > (${after.updatedAt}::text)::timestamp`,
+        and(sql`${crawlCandidates.updatedAt} = (${after.updatedAt}::text)::timestamp`, gt(crawlCandidates.id, after.id)),
+      ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+    .limit(Math.max(1, Math.min(32, limit)));
+  return rows.map(({ candidate, ...position }) => ({ candidate, position }));
 }
 
 /** Read-only admission, never a substitute for the later claim/result transaction. */
@@ -790,16 +832,19 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       return { kind: "skipped", reason: "input_changed" };
     }
     const current = locked.input;
-    const configuredReviewer = reserved && "expected" in reserved ? firstReviewer(locked.settings) : null;
+    const configuredPool = firstReviewers(locked.settings, firstReviewer(locked.settings));
     if (reserved && "expected" in reserved && (!isDeepStrictEqual(current, reserved.expected.context.input)
       || !isDeepStrictEqual(locked, reserved.expected.context) || authority.kind !== "item"
-      || !isDeepStrictEqual(authority.owner, reserved.expected.owner) || !configuredReviewer
-      || configuredReviewer.provider !== input.provider || configuredReviewer.model !== input.model)) return { kind: "skipped", reason: "input_changed" };
+      || !isDeepStrictEqual(authority.owner, reserved.expected.owner)
+      || !hasFirstReviewer(configuredPool, input))) return { kind: "skipped", reason: "input_changed" };
+    if (locked.settings.firstReviewAdditional !== undefined && input.provider !== "rules") {
+      const selected = await chooseFirstReviewForCandidate(locked, tx);
+      if (!selected || selected.provider !== input.provider || selected.model !== input.model) return { kind: "skipped", reason: "input_changed" };
+    }
     const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
     const rows = await tx.select().from(crawlReviewAttempts).where(and(
       eq(crawlReviewAttempts.candidateId, locked.candidate.id), eq(crawlReviewAttempts.kind, "automatic"),
-      or(and(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.provider, input.provider),
-        eq(crawlReviewAttempts.model, input.model)), eq(crawlReviewAttempts.state, "running")),
+      or(eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.state, "running")),
     )).orderBy(desc(crawlReviewAttempts.id)).limit(16).for("update");
     // 위임(DeepSeek·보류 Qwen-v2)이 이 후보를 보는 중이면 비킨다 — 한 후보에 진행 중 시도는 하나다(crawl_review_one_active_idx).
     // 위 rows 는 1차의 행만 읽어 그 행을 보지 못한다. 그 시도가 끝나면 다음 틱에 다시 본다
@@ -856,14 +901,21 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       });
       if (success) return result(success, "direct_reuse");
       // native 게이트웨이 계약 위반은 모델 실패가 아니다 — 기록·재시도 대기는 그대로 두고 시도 수로만 세지 않는다
-      const modelFailures = same.filter(row => (row.state === "failed" || row.state === "superseded")
-        && row.errorCode !== "owner_changed" && row.errorCode !== NATIVE_TERMINAL_FAILURE).length;
-      const ownerChanges = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed"
-        && row.completedAt !== null && row.completedAt.getTime() > wallNow.getTime() - 24 * 60 * 60_000).length;
+      const [retryState] = await tx.select({ attemptCount: sql<number>`count(*)::integer`,
+        failures: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} IN ('failed','superseded')
+        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed' AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE})::integer`,
+        ownerChanges: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'superseded' AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
+          AND ${gt(crawlReviewAttempts.completedAt, new Date(wallNow.getTime() - 24 * 60 * 60_000))})::integer`,
+        waiting: sql<boolean>`coalesce(bool_or(${crawlReviewAttempts.state} = 'failed' AND ${gt(crawlReviewAttempts.retryAfter, wallNow)}), false)` })
+        .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, locked.candidate.id), retryReviewIdentity(),
+          eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),
+          eq(crawlReviewAttempts.policyHash, current.policyHash), eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
+          eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION)));
+      const modelFailures = retryState.failures, ownerChanges = retryState.ownerChanges;
       if (ownerChanges >= 3) return { kind: "skipped", reason: "infrastructure_interruptions_exhausted" };
       if (input.provider !== "rules" && modelFailures >= MAX_REVIEW_ATTEMPTS)
         return { kind: "skipped", reason: "attempts_exhausted" };
-      if (same.some(row => row.state === "failed" && row.retryAfter && row.retryAfter > wallNow)) {
+      if (retryState.waiting) {
         return { kind: "skipped", reason: "retry_wait" };
       }
       const reusable = rows.find(row => row.inputHash === current.inputHash && row.state === "succeeded"
@@ -916,7 +968,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         inputHash: current.inputHash, policyHash: current.policyHash, sourceRevisionHash: current.sourceRevisionHash,
         snapshot: current.snapshot, source: current.source,
         promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-        provider: input.provider, model: input.model, attemptNumber: same.length + 1,
+        provider: input.provider, model: input.model, attemptNumber: retryState.attemptCount + 1,
         reusedFromAttemptId: reusable?.id ?? null,
         outcome: copiedOutcome ? validateReviewOutcome(current, copiedOutcome) : null,
         leaseToken: token, validUntil: current.validUntil, startedAt: now,

@@ -21,7 +21,7 @@ import { claudeCliTokenBound, type CliServingContract } from '@/lib/llm/cli-serv
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from '@/lib/llm/capacity';
 import { requestAi1ModelSlot, requestCliModelSlot, cancelReservedModelSlot } from '@/lib/llm/capacity-repository';
 import { itemBindingHash } from '@/lib/jobs/items/types';
-import { runJob, type JobContext, type JobOutcome } from '@/lib/jobs/runner';
+import { runJob } from '@/lib/jobs/runner';
 import { requestJob } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
@@ -283,7 +283,7 @@ async function vote() {
   expect(await admin`SELECT work_key FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${row.id}`}`).toHaveLength(0);
   return { candidate, document, input, first, row };
 }
-const tick = (handler: (ctx: JobContext<null>) => Promise<JobOutcome<null>> = reviewCrawlCandidates) =>
+const tick = (handler: typeof reviewCrawlCandidates = reviewCrawlCandidates) =>
   track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role! }));
 async function withRole() {
   role = await tryAcquireRole({ role: 'reviewer', instanceId, bootId, release: marker, kind: 'primary' }); expect(role).not.toBeNull();

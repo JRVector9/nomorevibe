@@ -1,3 +1,45 @@
+# PR696 두 번째 CI 수정 — 2026-10-27 KST17:25 root
+
+CI40472373532는 type/lint/build/unit/ledger/images 및 integration5개가 실제통과했고 integration4의새회귀1개만실패했다. agent-review-records removing-extra-reviewer는 fixture()가 observe인 상태에서 enforce전용 handOffExhaustedFirstReviews 결과1을기대한 테스트조건 오류다. 새회귀의fixture를 enforce로명시했다. productionguard를완화하지않았고lib/scripts트리변경0이다. 로컬test/compiler/lint/build0, gitdiffcheck실제EXIT0. 다음새head필수CI를확인한다.
+
+---
+
+# PR696 CI 수정 인계 — 2026-10-27, 로컬 실행 검사 없음
+
+목표: AI1 추가 pool PR696의 GitHub CI run `40471239295`에서 확인한 타입·DB 날짜 인코딩·기존 단일 모델 cursor 회귀를 최소 수정한다. WT `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, 시작 HEAD `ee8d28d3668dac53c0da0caba6e224540cf3e63d`(최신 main 병합 상태)다. root가 소스 diff를 검토하고 같은 PR branch의 scoped commit/push를 승인했다. PR/병합/운영 I/O는 root가 맡는다.
+
+완료·결정: 새 retry 집계의 `completedAt`·`retryAfter` 비교를 Drizzle `gt(column, Date)`로 바꿔 실제 timestamp 컬럼 encoder를 사용한다. raw SQL 보간의 Date가 postgres.js types1184에 그대로 전달되어 `ERR_INVALID_ARG_TYPE`을 낸 원인을 수정하며, 모든 자동 모델 합산/벽시계 backoff/3회 실패 한도는 그대로다. 단일 모델의 disabled·빈 큐 `done:true`는 기존 cursor 초기화를 복구하고, 명시적 추가 pool에서만 keyset와 관련 없는 durable cursor 필드를 보존한다. 테스트 tick helper는 `typeof reviewCrawlCandidates`, fetch/AI1 공통 회귀 등록은 `registerBlockedStageTests<C>`를 사용해 실제 cursor 타입을 보존한다. `any`·광범위 cast·운영 타입 약화는 없다.
+
+수정 파일: `lib/crawl/agent-review-repository.ts`, `lib/crawl/jobs/agent-review.ts`, `tests/integration/agent-review-capacity-dispatch.test.ts`, `tests/integration/review-cli-capacity-dispatch.test.ts`, `tests/integration/pipeline-blocked-requests.test.ts`, 이 인계.
+
+실제 검증·실패: GitHub jobs API와 실패 로그를 읽었다. typecheck job `122078661020`의 오류는 위 integration 3파일의 `FirstReviewCursor` 대 `null` 7건이다. ledger job `122078660903`과 integration shards 1~6의 `122078661481/1460/1374/1411/1257/1366` 로그에서 raw Date 집계 오류 및 하위 결과·호출수 assertion 실패를 확인했다. 별도로 shard3의 `ai1 normal empty queue keeps its existing ACK and cursor-reset behavior`는 cursor 보존 회귀였다. 이전 성공 CI를 수정 후 성공으로 재사용하지 않는다. 사용자 지시에 따라 로컬 tests/lint/typecheck/build/compile/provider probe와 운영 I/O는 모두 실행하지 않았다. 이번 `git diff --check`는 실제 EXIT0이다.
+
+폐기한 접근: 실제 AI1 handler를 `JobContext<null>`로 고정하거나 fetch/AI1 handler를 invariant cursor union으로 전달하는 타입은 유지할 수 없다. raw Date SQL 보간을 그대로 두는 변경, 현재 pool만으로 retry 이력을 세는 변경, 정상 단일 모델 완료 cursor까지 보존하는 변경은 사용하지 않는다.
+
+남은 작업·다음 정확 명령: `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 log -1 --oneline`; `gh pr view 696 --repo JRVector9/nomorevibe --json headRefOid,statusCheckRollup`; `gh pr checks 696 --repo JRVector9/nomorevibe`. root가 새 exact-head 필수 GitHub CI 결과를 확인하고 최신 base 병합/배포를 결정한다. 로컬 검사 금지는 유지한다.
+
+---
+
+# AI1 추가 모델 pool 구현 — 2026-10-27, 로컬 실행 검사 없이 root 검토 단계
+
+목표: 기본 `firstReview`를 유지하며 선택 설정 `firstReviewAdditional` 최대2개로 AI1 미완료 후보를 분담한다. 작업 WT는 `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, base `06ac66c1ebbb130258eb72a73b0a83dbed6420b1`이다. UI/API 상태 구현은 별도 PR695이며 이 WT에서 main을 병합하지 않는다. root가 최신 base를 통합하고 PR/필수 CI/배포를 맡는다.
+
+완료: 공용 pool/선택기, schema 검증, 기존 legacy와 item AI1 실행, 현재 pool 완료 결과 인정, AI2 enqueue/current-input/publication gate 연결, discovery first-pressure 집계 identity, stage 모델 슬롯과 pipeline control route 목록을 연결했다. primary 모델/실제 추가 모델/용량 정책/운영 설정은 바꾸지 않았다. 후보별 새 작업은 stable ID 분담, 재시도와 현재 native waiting/reserved/dispatched/indeterminate 의도는 기존 provider/model에 고정한다. 제거된 활성 의도나 여러 모델의 충돌 의도는 재배정하지 않는다. 기존 candidate/item/native 권한과 `ai1:<candidateId>` binding을 보존한다.
+
+독립 리뷰 P1 두 건을 반영했다. 고정 prefix만 반복하면 정상 모델이 굶는 초안을 폐기하고 기존 미검수 우선·오래된 순서/ID ceiling을 쓰는 bounded keyset을 `jobs.cursor.firstReviewPoolScan`에 저장한다. 최대32 힌트/16 examined·claim 및 기존 동시성/시간 예산을 유지하며 cursor의 다른 필드를 보존한다. 현재 승인 pool과 재시도 identity를 분리해 동일 input/source/policy/prompt/rules의 모든 자동 모델 실패·유예·owner-change와 실제 attempt 번호를 합산한다. 모델 제거 후 시도 한도가 리셋되던 기존 테스트의 기대를 새 요구에 맞게 정정했다.
+
+모델/route별 용량 거절·회로만 국소 대기하고 global drain·정책·owner/host/epoch fence는 그대로 전체 적용한다. pool 추가는 reviewPolicyHash/secondReviewPolicyHash에 넣지 않아 완료 입력 전체를 재검수하지 않는다. AI2와 같은 underlying 모델은 독립 표로 세지 않으며 같은 모델 fallback은 needs_human이다. 기존 단일 AI1 manifest의 capacity/replay 권한을 확대하지 않고 추가 pool을 명시 거절한다. 일반 운영 generation snapshot은 pool 결과를 인정한다. 일반 설정 폼은 추가 필드를 보내지 않아 canonical saveSettings 부분 병합으로 보존한다. Zod4 superRefine은 object의 shape를 유지하고 저장소에 crawlSettingsSchema.extend/pick 호출은 없다.
+
+수정 파일: `lib/crawl/first-reviewers.ts`, `settings-schema.ts`, `agent-review-repository.ts`, `jobs/agent-review.ts`, `agent-review-item-lifecycle.ts`, `consumers/first.ts`, `discovery-admission.ts`, `second-review-input.ts`, `second-review.ts`, `second-review-ownership.ts`; `lib/operations/stage-registry.ts`, `pipeline-control.ts`, `pipeline-capacity-repository.ts`, `pipeline-replay-readiness.ts`, `pipeline-replay-runner.ts`; 관련 unit/integration 회귀, 운영 설계 문서 `docs/operations/2026-10-27-ai1-additive-pool.md`, 이 인계. schema/grant/앱/UI/API 변경은 없다.
+
+검증: 소스 독립 리뷰 및 자체 정적 diff 검토를 했다. `git diff --check` 실제 EXIT0이다. 사용자 지시로 로컬 tests/lint/typecheck/build/compile/provider probe는 실행하지 않았다. 추가한 회귀는 stable/retry/active-intent, capacity 국소 대기/global drain, 32개 막힌 prefix 뒤 정상 후보의 tick간 진행, 완료 결과 유지, 제거 후 backoff/3회 상한, 실제 AI2 발행 관문/자가 fallback 금지, route 목록/replay 거절을 다룬다. 회귀 실행·CI 성공은 아직 주장하지 않는다.
+
+남은 일: root가 frozen diff 검토→scoped commit 통합→최신 main/UI695 base와 필수 GitHub CI→별도 운영 적용을 결정한다. 기존 native indeterminate 실제 정산 및 Supa/M3 serving·용량 상태는 root의 운영 조사 범위이며 이번 agent가 조회/수정하지 않았다. 추가 모델 설정은 미적용이다. 모델 추가만으로 즉시 적체 해소나 수집3천/h 달성을 주장하지 않는다.
+
+다음 root 명령(로컬 tests 금지 유지): `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 status --short`; `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 diff HEAD --stat`; `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 show --stat --oneline HEAD`. root가 최신 base 통합 뒤 PR을 생성하고 exact-head CI `check`를 확인한다. main merge/PR/push/배포는 이 agent가 하지 않는다.
+
+---
+
 # 현재 인계 — DB 스키마 교차검토·운영 반영 (2026-10-27 KST16:10)
 
 ## 목표와 완료
