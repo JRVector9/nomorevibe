@@ -367,7 +367,8 @@ it("every admin server action and every write route handler goes through the web
   // '보류 모두 풀기'(admin/audit/actions.ts) 하나는 정책의 보류 풀기로 바뀌어 빠졌다
   // 개별 잡 멈춤·재개(status/job-control-actions.ts) 하나가 더해졌다.
   // 0117 문의 접수·문의 처리·메이커 답장 검수 세 액션을 더한다.
-  expect(wrapped).toBe(75);
+  // 단계별 모델 저장(admin/models/actions.ts)도 기존 쓰기 관문을 통과한다.
+  expect(wrapped).toBe(76);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
