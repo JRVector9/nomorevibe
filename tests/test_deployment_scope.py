@@ -71,7 +71,7 @@ class DeploymentClassificationTests(unittest.TestCase):
 
     def test_reviewed_operator_workflow_and_ci_entrypoints_have_no_runtime_apps(self):
         paths = ('scripts/ops/deploy_release.py', 'scripts/ops/deploy_git_apps.py', 'scripts/ops/release_runtime.py',
-                 'scripts/ops/release_readiness.py',
+                 'scripts/ops/release_readiness.py', 'scripts/ops/incident_notifications.py',
                  'scripts/ops/release_observer.py', '.claude/prod.sh',
                  'scripts/ci-scope.mjs', 'scripts/ci-reuse.mjs', 'scripts/ci-check.mjs',
                  'scripts/ci-scope.node-test.mjs', 'scripts/ci-reuse.node-test.mjs',

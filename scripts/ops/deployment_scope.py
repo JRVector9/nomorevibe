@@ -38,6 +38,8 @@ LOCAL_OPERATOR_FILES = frozenset({
     'scripts/ops/release_monitor.py',
     'scripts/ops/release_catalog.py',
     'scripts/ops/oracle_activation_check.py',
+    # Installed separately on the Oracle watchdog host; excluded from Docker images.
+    'scripts/ops/incident_notifications.py',
     '.claude/prod.sh',
     'scripts/ci-scope.mjs',
     'scripts/ci-reuse.mjs',

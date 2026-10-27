@@ -63,6 +63,12 @@ class NotificationTests(unittest.TestCase):
     def fail_service(self, key='web', reason='web_page_failed'):
         self.rows[:] = [self.row(key, reason) if row['key'] == key else row for row in self.rows]
 
+    def alarm_pipeline(self):
+        self.rows[:] = [self.row('web'), self.row('monitor', 'pipeline_alarm')]
+
+    def recover_rows(self):
+        self.rows[:] = [self.row('web'), self.row('monitor')]
+
     def test_new_fault_alerts_while_aggregate_is_already_down_and_ack_survives_reload(self):
         self.fail_service()
         self.cycle(1000)
@@ -234,6 +240,197 @@ class NotificationTests(unittest.TestCase):
         self.n.notify(self.config, self.state, {'m3': {'services': [self.row('web')]}},
                       {'events': []}, self.receipts, now=1030, send=self.send)
         self.assertIn(signature, self.state['notifications']['incidents'])
+
+    def test_pipeline_short_recovery_reload_and_relapse_do_not_resend(self):
+        signature = 'm3/monitor/service/pipeline_alarm'
+        self.alarm_pipeline()
+        self.cycle(1000)
+        self.cycle(1030)
+        self.assertEqual(self.messages, ['NoMoreVibe incidents\n- m3/monitor pipeline_alarm'])
+        self.recover_rows()
+        self.cycle(1060)
+        self.cycle(1210)
+        self.assertEqual(len(self.messages), 1)
+        stored = json.loads(self.path.read_text())
+        incident = stored['notifications']['incidents'][signature]
+        self.assertEqual(stored['notifications']['version'], 1)
+        self.assertTrue(incident['sent'])
+        self.assertEqual(incident['clearSince'], 1060)
+        self.assertEqual(incident['lastClearAt'], 1210)
+        self.state = stored
+        self.cycle(1360)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['clearSince'], 1060)
+        self.assertEqual(incident['lastClearAt'], 1360)
+        self.alarm_pipeline()
+        self.cycle(1400)
+        self.cycle(1430)
+        self.assertEqual(len(self.messages), 1)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertTrue(incident['sent'])
+        self.assertNotIn('clearSince', incident)
+
+        self.messages.clear()
+        self.state['notifications'] = {'version': 1, 'incidents': {}}
+        self.state['targets'] = {}
+        self.accept = False
+        self.alarm_pipeline()
+        self.cycle(5000)
+        self.cycle(5030)
+        self.assertEqual(len(self.messages), 1)
+        self.assertFalse(self.state['notifications']['incidents'][signature]['sent'])
+        self.recover_rows()
+        self.accept = True
+        self.cycle(5060)
+        self.assertEqual(len(self.messages), 1)
+        self.assertFalse(self.state['notifications']['incidents'][signature]['sent'])
+        self.alarm_pipeline()
+        self.cycle(5090)
+        self.assertEqual(len(self.messages), 2)
+        self.assertTrue(self.state['notifications']['incidents'][signature]['sent'])
+
+    def test_pipeline_stable_600_recovery_rearms(self):
+        self.assertEqual((self.n.PIPELINE_RECOVERY_SECONDS, self.n.PIPELINE_RECOVERY_GAP_SECONDS), (600, 150))
+        signature = 'm3/monitor/service/pipeline_alarm'
+        self.alarm_pipeline()
+        self.cycle(2000)
+        self.cycle(2030)
+        self.assertEqual(len(self.messages), 1)
+        self.recover_rows()
+        start = 2060
+        for now in range(start, start + 600, 150):
+            self.cycle(now)
+            incident = self.state['notifications']['incidents'][signature]
+            self.assertEqual(incident['clearSince'], start)
+            self.assertTrue(incident['sent'])
+        self.state = json.loads(self.path.read_text())
+        self.assertEqual(self.state['notifications']['incidents'][signature]['lastClearAt'], start + 450)
+        self.cycle(start + 600)
+        self.assertNotIn(signature, self.state['notifications']['incidents'])
+        self.assertEqual(self.state['notifications']['version'], 1)
+        self.assertEqual(len(self.messages), 1)
+        self.alarm_pipeline()
+        self.cycle(2700)
+        self.cycle(2730)
+        self.assertEqual(len(self.messages), 2)
+        self.assertIn('m3/monitor pipeline_alarm', self.messages[-1])
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['firstSeen'], 2730)
+        self.assertTrue(incident['sent'])
+        self.assertNotIn('clearSince', incident)
+
+    def test_pipeline_unknown_gap_and_rollback_do_not_clear(self):
+        signature = 'm3/monitor/service/pipeline_alarm'
+        self.alarm_pipeline()
+        self.cycle(3000)
+        self.cycle(3030)
+        self.recover_rows()
+        self.cycle(3060)
+        self.reports['m3'] = None
+        self.cycle(3120)
+        self.reports['m3'] = {'services': self.rows}
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertTrue(incident['sent'])
+        self.assertNotIn('clearSince', incident)
+        self.assertEqual(len(self.messages), 1)
+        self.cycle(3180)
+        self.assertEqual(self.state['notifications']['incidents'][signature]['clearSince'], 3180)
+
+        incident = self.state['notifications']['incidents'][signature]
+        incident['clearSince'] = 1000
+        incident['lastClearAt'] = 3180
+        self.cycle(3331)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual((incident['clearSince'], incident['lastClearAt']), (3331, 3331))
+
+        incident['clearSince'] = 1000
+        incident['lastClearAt'] = 9000
+        self.cycle(3400)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['clearSince'], 3400)
+        self.assertTrue(incident['sent'])
+
+        incident['clearSince'] = float('nan')
+        incident['lastClearAt'] = 3400
+        self.cycle(3460)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['clearSince'], 3460)
+
+        incident['clearSince'] = 3400
+        incident['lastClearAt'] = 1000
+        self.cycle(4000)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['clearSince'], 4000)
+
+        incident['clearSince'] = 1000
+        incident['lastClearAt'] = 4000
+        self.alarm_pipeline()
+        self.cycle(4100)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertTrue(incident['sent'])
+        self.assertNotIn('clearSince', incident)
+        self.recover_rows()
+        self.cycle(4130)
+        self.n.notify(self.config, self.state, {'m3': {'services': [self.row('web')]}},
+                      {'events': []}, self.receipts, now=4200, send=self.send)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertTrue(incident['sent'])
+        self.assertNotIn('clearSince', incident)
+        self.reports['m3'] = {'services': self.rows}
+        self.cycle(4800)
+        incident = self.state['notifications']['incidents'][signature]
+        self.assertEqual(incident['clearSince'], 4800)
+        self.assertEqual(len(self.messages), 1)
+
+    def test_unrelated_fault_provider_and_receiver_recovery_stays_immediate(self):
+        self.fail_service()
+        self.cycle(8000)
+        self.cycle(8030)
+        web = self.state['notifications']['incidents']['m3/web/service/web_page_failed']
+        self.assertTrue(web['sent'])
+        self.assertNotIn('clearSince', web)
+        self.recover_rows()
+        self.cycle(8060)
+        self.assertEqual(self.state['notifications']['incidents'], {})
+        self.fail_service()
+        self.cycle(8090)
+        self.cycle(8120)
+        self.assertEqual(sum('web_page_failed' in text for text in self.messages), 2)
+        self.recover_rows()
+        self.cycle(8150)
+        self.assertEqual(self.state['notifications']['incidents'], {})
+
+        self.provider_alarm(now=10000)
+        self.assertIn('m3/monitor/tagline-ko/upstream_stalled', self.state['notifications']['incidents'])
+        self.rows[1]['providerFailures'] = []
+        self.cycle(10030)
+        self.assertEqual(self.state['notifications']['incidents'], {})
+        self.assertEqual(len(self.messages), 3)
+
+        signature = 'm3/monitor/service/pipeline_alarm'
+        self.alarm_pipeline()
+        self.cycle(11000)
+        self.cycle(11030)
+        self.recover_rows()
+        self.cycle(11060)
+        self.assertEqual(self.state['notifications']['incidents'][signature]['clearSince'], 11060)
+        self.receipts['receipts'] = [False]
+        self.cycle(11090)
+        self.assertIn('receiver/pipeline/0', self.messages[-1])
+        self.assertNotIn('pipeline_alarm', self.messages[-1])
+        self.receipts['receipts'] = [True]
+        self.cycle(11120)
+        self.assertNotIn('receiver/pipeline/0/push_failed', self.state['notifications']['incidents'])
+        self.assertEqual(self.state['notifications']['incidents'][signature]['clearSince'], 11060)
+        self.fail_service('monitor', 'monitor_stale')
+        self.cycle(11150)
+        self.assertNotIn(signature, self.state['notifications']['incidents'])
+        self.assertNotIn('monitor_stale', json.dumps(self.state['notifications']))
+        self.cycle(11180)
+        self.assertIn('m3/monitor/service/monitor_stale', self.state['notifications']['incidents'])
+        self.assertIn('monitor_stale', self.messages[-1])
+        self.assertNotIn('pipeline_alarm', self.messages[-1])
+        self.assertEqual(len(self.messages), 6)
 
     def test_optional_configuration_is_validated_without_exposing_secrets(self):
         material = self.path.parent / 'ssh-material'

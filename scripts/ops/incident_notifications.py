@@ -19,6 +19,8 @@ FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing
 MESSAGE_LIMIT = 4096
 RESPONSE_LIMIT = 16384
 INPUT_LIMIT = 32768
+PIPELINE_RECOVERY_SECONDS = 600
+PIPELINE_RECOVERY_GAP_SECONDS = 150
 
 
 def validate_destination(value):
@@ -96,6 +98,40 @@ def _signature(config, value):
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'))
 
 
+def _finite_time(value, now):
+    return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= now
+
+
+def _load_incident(signature, item, now):
+    """버전 1 장애. 파이프라인 복구 시각은 선택이며 재시작 뒤에도 남는다."""
+    first = item.get('firstSeen')
+    record = {'sent': item.get('sent') is True, 'firstSeen': first if _finite_time(first, now) else now}
+    parts = signature.split('/')
+    if parts[2] == 'service' and parts[3] == 'pipeline_alarm':
+        started, seen = item.get('clearSince'), item.get('lastClearAt')
+        if not (started is None and seen is None):
+            if _finite_time(started, now) and _finite_time(seen, now) and started <= seen:
+                record['clearSince'] = started
+                record['lastClearAt'] = seen
+    return record
+
+
+def _reset_pipeline_recovery(item):
+    item.pop('clearSince', None)
+    item.pop('lastClearAt', None)
+
+
+def _advance_pipeline_recovery(item, now):
+    """양호 관측 간격이 150초 이내면 연속이다. 간격·역행·불완전 시각은 다시 시작한다."""
+    started, seen = item.get('clearSince'), item.get('lastClearAt')
+    if not (_finite_time(started, now) and _finite_time(seen, now) and started <= seen and
+            now - seen <= PIPELINE_RECOVERY_GAP_SECONDS):
+        started = now
+    item['clearSince'] = started
+    item['lastClearAt'] = now
+    return now - started >= PIPELINE_RECOVERY_SECONDS
+
+
 def notify(config, state, reports, result, receipts, *, now=None, send=send_telegram):
     """One batch of new/pending incidents. Only explicit observations resolve an incident."""
     if 'incidentNotifications' not in config:
@@ -107,33 +143,70 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
     incidents = {}
     for signature, item in old.items() if isinstance(old, dict) else []:
         if _signature(config, signature) and isinstance(item, dict):
-            first = item.get('firstSeen')
-            first = first if type(first) in (int, float) and math.isfinite(first) and 0 <= first <= now else now
-            incidents[signature] = {'sent': item.get('sent') is True, 'firstSeen': first}
+            incidents[signature] = _load_incident(signature, item, now)
+    quiet = set()
 
     def clear(predicate):
         for signature in list(incidents):
             if predicate(signature.split('/')):
                 del incidents[signature]
 
-    # A missing report is not recovery. Service reason changes replace that service's
-    # old fault, while missing provider metadata preserves its independent incident.
+    def pause_pipeline(host):
+        for signature, item in incidents.items():
+            parts = signature.split('/')
+            if parts[0] == host and parts[2] == 'service' and parts[3] == 'pipeline_alarm':
+                _reset_pipeline_recovery(item)
+
+    # 보고서가 없거나 불완전하면 복구가 아니고 pipeline_alarm 연속 구간을 끊는다.
+    # 그 서명은 명시적 양호 행이 150초 이하 간격으로 600초 쌓여야만 지운다.
+    # 그동안 양호로 관측되면 아직 보내지 못한 건은 보류한다. 다른 서비스 사유는
+    # 첫 명시적 복구나 사유 교체에서 즉시 정리한다. provider 메타데이터가 없으면
+    # 그 장애는 그대로 둔다.
     for host in config['hosts']:
         report = reports.get(host)
         if not isinstance(report, dict) or not isinstance(report.get('services'), list):
+            pause_pipeline(host)
             continue
         rows = report['services']
         if (not rows or len(rows) > 30 or any(not isinstance(row, dict) or not isinstance(row.get('key'), str) for row in rows) or
                 len({row['key'] for row in rows}) != len(rows) or
                 {row['key'] for row in rows} != set(config['hosts'][host].get('services', []))):
+            pause_pipeline(host)
             continue
         clear(lambda parts: parts[:3] == [host, 'host', 'service'])
         for row in rows:
-            if (not isinstance(row, dict) or not _target(config, host + '/' + str(row.get('key', ''))) or
-                    type(row.get('ok')) is not bool or row.get('reason') not in FAULTS | {'ok'}):
+            if not isinstance(row, dict):
                 continue
-            service, reason = row['key'], row['reason']
-            clear(lambda parts: parts[:3] == [host, service, 'service'] and (row['ok'] or parts[3] != reason))
+            service = row.get('key')
+            pipeline = host + '/' + service + '/service/pipeline_alarm' if isinstance(service, str) else None
+            if (not isinstance(service, str) or not _target(config, host + '/' + service) or
+                    type(row.get('ok')) is not bool or row.get('reason') not in FAULTS | {'ok'}):
+                if pipeline in incidents:
+                    _reset_pipeline_recovery(incidents[pipeline])
+                continue
+            reason = row['reason']
+            prefix = [host, service, 'service']
+            good = row['ok'] is True and reason == 'ok'
+            fault = row['ok'] is False and reason in FAULTS
+
+            row_ok = row['ok']
+
+            def stale(parts, prefix=prefix, fault=fault, reason=reason, row_ok=row_ok):
+                if parts[:3] != prefix:
+                    return False
+                if parts[3] == 'pipeline_alarm':
+                    return fault and reason != 'pipeline_alarm'
+                return row_ok or parts[3] != reason
+
+            clear(stale)
+            item = incidents.get(pipeline)
+            if item is not None and good:
+                if _advance_pipeline_recovery(item, now):
+                    del incidents[pipeline]
+                else:
+                    quiet.add(pipeline)
+            elif item is not None:
+                _reset_pipeline_recovery(item)
             failures = row.get('providerFailures')
             if isinstance(failures, list) and all(isinstance(stage, str) and stage in STAGES for stage in failures):
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in STAGES and parts[2] not in failures)
@@ -159,7 +232,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             elif accepted is False:
                 incidents.setdefault(signature, {'sent': False, 'firstSeen': now})
 
-    pending = sorted((key for key, item in incidents.items() if not item['sent']),
+    pending = sorted((key for key, item in incidents.items() if not item['sent'] and key not in quiet),
                      key=lambda key: (incidents[key]['firstSeen'], key))
     message, included = 'NoMoreVibe incidents', []
     for signature in pending:
