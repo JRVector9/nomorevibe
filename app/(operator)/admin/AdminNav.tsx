@@ -32,6 +32,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
     title: "설정·기록",
     pages: [
       { href: "/admin", label: "크롤 설정", hint: "수집 규칙·검색 신호", icon: "sliders" },
+      { href: "/admin/models", label: "단계별 모델", hint: "1·2차·사람 검토·LLM 경로", icon: "sliders" },
       { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시", icon: "tag" },
       { href: "/admin/evidence", label: "근거 수집 설정", hint: "출처·갱신 정책", icon: "file" },
       { href: "/admin/ranking", label: "랭킹 설정", hint: "집계·시즌 정책", icon: "bars" },

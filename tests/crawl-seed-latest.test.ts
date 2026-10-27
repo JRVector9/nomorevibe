@@ -179,3 +179,17 @@ it('marks a full preview page incomplete even below the 1000-result split thresh
   expect(mocks.record.mock.calls[0][0]).toHaveLength(100);
   expect(mocks.record.mock.calls[0][0].every((r:{incomplete:boolean}) => r.incomplete)).toBe(true);
 });
+
+it('records a partial latest preview in its own summary instead of losing its new insertions', async () => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.admission.mockResolvedValue({recentNew:249,stages:[],secondWindowLimited:false});
+  mocks.search.mockResolvedValue(page(true));
+  const tick = ctx(old);
+  const result = await seedFrontier(tick);
+  expect(result.cursor?.latestScan?.pendingPage?.itemIndex).toBe(1);
+  expect(tick.log.mock.calls.filter(([event]) => event === 'crawl.seed_latest_scanned')).toEqual([
+    ['crawl.seed_latest_scanned',expect.objectContaining({discovered:1,examined:1,existing:0,searchRequests:1})],
+  ]);
+  expect(tick.log.mock.calls.some(([event]) => event === 'crawl.seeded')).toBe(false);
+});

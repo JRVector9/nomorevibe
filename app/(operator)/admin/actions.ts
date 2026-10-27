@@ -114,6 +114,10 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
       const model = String(form.get("firstReviewModel") ?? "").trim();
       return model ? { provider: String(form.get("firstReviewProvider") ?? "abcllm"), model } : undefined;
     })(),
+    ...(form.has("firstAdditionalPresent") ? { firstReviewAdditional: [0, 1].flatMap(index => {
+      const model = String(form.get(`firstAdditionalModel${index}`) ?? "").trim();
+      return model ? [{ provider: String(form.get(`firstAdditionalProvider${index}`) ?? "abcllm"), model }] : [];
+    }) } : {}),
     reviewConcurrency: num(form.get("reviewConcurrency")),
     // 수집을 켜는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 따로 둔다
     agentEvidence: {

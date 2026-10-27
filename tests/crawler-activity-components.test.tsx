@@ -173,3 +173,20 @@ describe("read-only collector activity", () => {
     expect(out).toContain("누적 미확인");
   });
 });
+
+
+it("shows discovery throughput and effective admission pages with safe labels", () => {
+  const value = buildCrawlerActivity({settings:DEFAULT_CRAWL_SETTINGS,jobs:[],roles:[],throughput:null,now,observations:[
+    {key:"job:crawl-seed",observedAt:now,value:{done:false,events:[
+      {event:"crawl.seed_admission",counts:{throttled:true,configuredPages:10,effectivePages:1,newAllowance:100,rateCapped:false,measurementUnknown:false}},
+      {event:"crawl.seeded",counts:{discovered:1,searchRequests:1,examined:2,existing:1}},
+    ]}},
+  ]});
+  const out = html(value);
+  expect(out).toContain("설정 페이지 10");
+  expect(out).toContain("적용 페이지 1");
+  expect(out).toContain("신규 허용량 100");
+  expect(out).toContain("검색 요청 1");
+  expect(out).toContain("기존·중복 1");
+  expect(out).not.toMatch(/configuredPages|effectivePages|searchRequests|measurementUnknown/);
+});
