@@ -1,12 +1,39 @@
-# 2026-10-27 Grok 반복 알림 수정: 최종 코드 검토 완료, PR/운영 설치 대기
+# 현재 — 2026-10-27 KST12:09, PR689 병합·운영 반영·10분47초 재검증 완료
 
-실제 native Grok 코드 세션 `01a17b2c-9d73-7062-8c7b-b917ae23eb5f`는 12turn 후 end_turn/EXIT0. notifier와 새 회귀4개를 작성했고 root가 실제 diff·private 최종 보고서를 대조했다. 아래 STATE의 `code/REPORT.private.md`가 결과다. 수동 test/lint/typecheck/build/컴파일·합성 모델 호출·시험 Telegram은 실행하지 않았다. `git diff --check` 실제 성공. 자동 필수 CI·병합·Oracle 소스 설치는 아직 완료 전이다.
+목표: checkMini 중복/반복 알림을 실제 Grok CLI로 수정하고 root가 운영 결과를 대조한다. 스킬·수동 test/lint/typecheck/build/컴파일·합성 모델 호출·시험 Telegram 금지 유지. 원 사용자 dirty WT와 pinned686/687 운영자 WT는 보존했다.
 
-라우팅 Grok는 초기/첫 focused/report-only 실행이 max_turn_requests로 끝났으며, 최종 응답 전용 continuation은 end_turn/EXIT0. `routing/REPORT.private.md`는 실제 최종 응답에서 추출했다. Grok 준비 helper는 운영 apply하지 않았다. root의 두 호스트 apply 영수증과 Grok read-only prepare, root 02:45:24/27Z 별도 재읽기가 모두 네 링크 해제·heartbeat 연결 유지·정의/다른 링크 보존을 확인했다. root가 링크만 제거했으며 monitor 자체를 삭제한 것이 아니다.
+## 완료·변경·판단
 
-현 notifier는 source SHA8d5b190c…/PID3224044다. 최신 02:46:57Z 사전 읽기에서는 기존 정상 표본으로 incidents가 비워져 있었다. 따라서 설치 시 "이전 pipeline sent가 항상 존재"한다고 가정하지 않는다. 최신 자연 업무 관측과 sent 상태를 그대로 보존한다. root 준비 operator `STATE/root-watchdog-rollout.py`는 merged40SHA에서 소스를 읽어 원 SHA/config SHA를 확인한 뒤 원자 교체·watchdog1개 restart한다. install.once는 아직 미생성. `observe`는 읽기 전용이다. 웹/워커18앱 재배포·이전 recovery/deploy/observer once 재실행 금지.
+- PR689 최종head4729e6e3(코드bd36a09f), 자동 CI40440673155의 타입·린트(Python 회귀 포함)·빌드·unit2·통합6·ledger·두 이미지·필수check 실제 success. 02:57:29Z merge225965189581877e59bc5e1cac5a00b288fdfc7b. main40441430068도 검사한 트리를 재사용해 필수check success.
+- Grok가 `scripts/ops/incident_notifications.py`와 `tests/test_oracle_watchdog_notifications.py`를 수정했다. pipeline_alarm은 명시적 정상600초/표본간격≤150초 뒤 전송완료 기록을 해제한다. 짧은 회복·재시작·누락/불완전 보고·시간역행은 같은 장애를 재무장하지 않는다. 다른 고장/provider/receiver 처리는 유지. 새 회귀4개를 수동 실행 없이 자동 CI에서 검증했다.
+- root가 `scripts/ops/deployment_scope.py`와 기존 scope 회귀 목록에 Oracle 별도 설치 파일의 정확한 경계만 추가했다. Docker에서 scripts/ops 제외·Node production caller 부재를 확인했다. 실제 `npm run deploy -- scope --base f483704184b81ea167bc3a0d7e4145e48c10cac1 --sha 225965189581877e59bc5e1cac5a00b288fdfc7b`는 selected0/retained18/mode none. 웹·워커 재배포0. 문서는 이 파일과 `docs/operations/2026-10-27-alert-notification-fix.md`.
+- mini02:36:33.286Z 72/73, Oracle02:38:00.209Z 1/2의 notification1 연결만 제거. 모니터·알림 정의·수집/상태 이력·다른 연결과 mini74/Oracle3 heartbeat 알림 보존. 네 monitor 자체를 삭제한 것이 아니다. 매 전송 시 연결 DB를 SELECT하는 실제 Kuma2.3.2 소스 SHA20e3d6e…를 확인한 뒤 짧은 CAS 트랜잭션으로 제거했다.
+- **02:58:24.745Z Oracle notifier 설치·watchdog1개 restart 성공**. merged source SHA256 `3b0305a89cb2050df0174c61e3ab1964e6e6df610404914ca6d9ec3f647f9550`, 이전8d5b190c…를 CAS/원자교체. PID3224044→4036892, active/running/NRestarts0. config SHA 불변, state0600과 pipeline senttrue/firstSeen1793069494.7789228 보존. root0644 `/opt/nomorevibe-watchdog/incident_notifications.py`; 원본 backup0600 `/var/lib/nomorevibe-watchdog/alert-fix-20261027/incident_notifications.before.py`.
 
-PR689, 코드 커밋bd36a09f. GitHub 필수 자동 CI 진행 중이며 최신 head의 성공 후 병합한다. 다음: PR 필수 최신base CI→merge→mergedSHA로 source install 단1회→새 PID/source/config/state와 실제 ≥3분 cycle 및 Kuma 연결 재읽기→최신 완료기록. 자세한 원인/운영 적용 경계는 `docs/operations/2026-10-27-alert-notification-fix.md`.
+## 실제 운영 검증
+
+PRIVATE `STATE=/Users/jr/.local/state/nomorevibe-reliability-20261025/grok-alert-spam-fix-20261027`(0700/0600). 두 routing apply once와 root-watchdog-install.once는 **소비됨, 재실행 금지**. 설정·상태를 과거로 덮거나 이전 recovery/deploy/observer once도 재실행하지 않는다.
+
+코드 Grok 세션01a17b2c-9d73-7062-8c7b-b917ae23eb5f는12turn/end_turn/EXIT0. 최종 `code/REPORT.private.md`와 diff를 root 대조. routing 준비 초기/후속 상한 종료는 보존했고 최종response는 end_turn. `routing/REPORT.private.md`는 실제 최종 응답이다. Grok routing helper는 apply하지 않았다.
+
+운영 Grok 세션01a17b4b-c990-76f3-a268-d0730e21698d는2turn/end_turn. 직접 `python3 STATE/root-final-readonly.py`를 실행했고 operator EXIT0/productionMutations0. 실제 SSH로 source/systemd/state/journal와 두 Kuma SELECT를 읽었다. `FINAL_GROK_REPORT.private.md`와 `grok-final-live/{watchdog,mini,oracle}.private.json`을 root 대조. 이 첫 Grok 표본은 설치38.61초/1cycle이며 업무 pipeline_alarm은 그대로, 전송0이었다. helper oktrue는 구조 검증 성공이며 업무 전체정상을 뜻하지 않는다.
+
+root 독립 재읽기03:09:11.416Z(`root-final-watchdog.private.json`)는 설치646.67초 후 실제18cycle(경보16/정상2), notification sent0/accepted전부NULL/pending전부0, failedCycles0, Push·heartbeat 각2개 ACKtrue, source/config 동일·PID4036892/NRestarts0. 기존 pipeline senttrue/firstSeen 유지하고 실제 정상2표본 뒤 clearSince1793070482.034188/lastClearAt1793070517.507393가 생겨 즉시 지워지지 않음을 확인했다. **600초 연속 정상 관측은 아직 아니며**, 전체10분47초를 연속정상10분으로 쓰지 않는다. mini03:09:08/Oracle03:09:11 재읽기도 target link0/heartbeat link1·정의/다른 링크 보존.
+
+사용자가 보낸11:28/29/37/39/51 알림은 notifier 설치11:58:24 전이다. 특히 기존 firstSeen은 KST11:51:34.778923이며 설치 후 그대로 유지됐다. 사용자가 재질문해 실제 native Grok가 별도 `root-final-readonly.py recheck`를 실행했다. `grok-final-live-recheck/`의 원본을 root가 대조:03:10:54Z/설치749.62초·21cycle(경보16/정상5), 전송0/실패0, 원 firstSeen과 senttrue·정상 streak142.51초 보존, source/config/PID 동일. 두 Kuma도 네 링크0/heartbeat1 유지. 재조회 Grok 세션01a17b56-a9fc-73b0-a983-3b7ecf044257는2turn/end_turn, operator EXIT0. 최종응답 `STATE/FINAL_GROK_RECHECK_REPORT.private.md`를 root가21개 원본 cycle과 대조했다. 사용자11:37 메시지는 분 단위이므로 Grok가 임의 계산한 제거 전후 초 차이는 채택하지 않았다. 실제 기록된 적용시각과 설치 후 전송0만 근거로 쓴다. 600초 연속 실제 정상 해제는 아직 관측하지 않았다.
+
+## 실패·남은 일·다음 명령
+
+첫 CI40440628344는 handoff EOF 공백으로 scope 실패했다. 4729e6e3에서 문서 순서/EOF를 고치고 base→head `git diff --check` 및 최신 전체 CI 성공. Grok routing 상한 종료를 성공으로 쓰지 않는다. Oracle public SSH 간헐 불통은 기존 host key를 HostKeyAlias로 검증하는 Tailnet 경로로 해결했다. hostkey 검증 해제·비밀 출력 없음.
+
+운영 반영과 root 독립 검토·Grok 재확인/최종응답 보관은 완료했다. 이 기록은 후속 docs-only PR로 반영하며 앱 재배포 대상0이다. 병합 상태는 이 문서 branch의 GitHub 필수 check/PR 상태로 확인한다. 번역 등 실제 업무 적체와 장기 관찰은 별도 과제이며 이번 알림 변경으로 해결했다고 주장하지 않는다. 모델/큐/용량·품질 관문은 유지했다.
+
+```bash
+# 읽기 전용: 최신 Grok 검증 결과가 생성되면 확인한다.
+sed -n '1,180p' /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-alert-spam-fix-20261027/FINAL_GROK_REPORT.private.md
+# 추가 read가 필요할 때만 OUT을 새 private 절대 경로로 준다. install/apply 재실행 금지.
+python3 /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-alert-spam-fix-20261027/root-watchdog-rollout.py observe OUT 1793069904.7450373
+```
 
 아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
 
