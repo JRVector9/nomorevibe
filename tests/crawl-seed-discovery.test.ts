@@ -153,3 +153,51 @@ it('검색어를 고치면 여전히 처음부터 다시 돈다', async () => {
   expect(mocks.search.mock.calls[0][0].query).not.toContain(`${parked.from}..${parked.to}`);
   expect(mocks.search.mock.calls[0][0].page).toBe(1);
 });
+
+it('counts actual insertions before the rate cap pauses a partial page, including resume without another search', async () => {
+  mocks.settings!.discover.queries = [signal(0)];
+  mocks.search.mockResolvedValue(saturating);
+  mocks.enqueue.mockImplementation(async (rows:unknown[]) => rows.length);
+  mocks.admission.mockResolvedValue({recentNew:249,stages:[],secondWindowLimited:false});
+  const firstContext = context();
+  const first = await seedFrontier(firstContext);
+  expect(first.cursor?.pendingPage?.itemIndex).toBe(1);
+  expect(firstContext.log.mock.calls.filter(([event]) => event === 'crawl.seeded')).toEqual([
+    ['crawl.seeded',expect.objectContaining({discovered:1,examined:1,existing:0,searchRequests:1,drained:false})],
+  ]);
+
+  mocks.admission.mockResolvedValue({recentNew:248,stages:[],secondWindowLimited:false});
+  const resumedContext = context(first.cursor!);
+  const resumed = await seedFrontier(resumedContext);
+  expect(resumed.cursor?.pendingPage?.itemIndex).toBe(3);
+  expect(mocks.search).toHaveBeenCalledOnce();
+  expect(resumedContext.log.mock.calls.filter(([event]) => event === 'crawl.seeded')).toEqual([
+    ['crawl.seeded',expect.objectContaining({discovered:2,examined:2,existing:0,searchRequests:0})],
+  ]);
+});
+
+it('keeps inserted and existing counts when the worker budget expires within a page', async () => {
+  mocks.settings!.discover.queries = [signal(0)];
+  mocks.search.mockResolvedValue(saturating);
+  mocks.admission.mockResolvedValue({recentNew:248,stages:[],secondWindowLimited:false});
+  let budget = true;
+  mocks.enqueue.mockImplementation(async () => {budget = false; return 1;});
+  const tick = context(null, () => budget);
+  const result = await seedFrontier(tick);
+  expect(result.cursor?.pendingPage?.itemIndex).toBe(2);
+  expect(tick.log.mock.calls.filter(([event]) => event === 'crawl.seeded')).toEqual([
+    ['crawl.seeded',expect.objectContaining({discovered:1,examined:2,existing:1,searchRequests:1})],
+  ]);
+});
+
+it('shows configured and effective pages while retaining the existing pressure limit', async () => {
+  mocks.settings!.discover.pagesPerTick = 10;
+  mocks.search.mockResolvedValue(saturating);
+  mocks.admission.mockResolvedValue({recentNew:0,stages:[{key:'first',waiting:506,oldestMinutes:54}],secondWindowLimited:false});
+  const tick = context();
+  await seedFrontier(tick);
+  expect(mocks.search).toHaveBeenCalledOnce();
+  expect(tick.log).toHaveBeenCalledWith('crawl.seed_admission',expect.objectContaining({
+    throttled:true,configuredPages:10,effectivePages:1,newAllowance:100,rateCapped:false,measurementUnknown:false,
+  }));
+});

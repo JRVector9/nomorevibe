@@ -21,6 +21,26 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
+class SshAccountTests(unittest.TestCase):
+    def test_uses_existing_registered_account_without_changing_hosts_or_options(self):
+        for configured, expected in ((None, 'root'), ('jr', 'jr')):
+            with self.subTest(configured=configured), patch.dict(os.environ, {}, clear=True):
+                if configured is not None:
+                    os.environ['NMV_DEPLOY_SSH_USER'] = configured
+                with patch.object(release, 'run', return_value='ok') as run:
+                    self.assertEqual(release.ssh_python('100.92.77.66', 'print(1)'), 'ok')
+                self.assertEqual(run.call_args.args[0][:6],
+                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', expected + '@100.92.77.66'])
+
+    def test_rejects_options_and_unexpected_target_syntax_before_ssh(self):
+        for user in ('', '-oProxyCommand=x', 'jr@other', 'jr root', 'jr;id'):
+            with self.subTest(user=user), patch.dict(os.environ, {'NMV_DEPLOY_SSH_USER': user}), \
+                    patch.object(release, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'invalid_deploy_ssh_user'):
+                    release.ssh_python('100.92.77.66', 'print(1)')
+                run.assert_not_called()
+
+
 class FakeClient:
     def __init__(self, apps, deployment_id='old'):
         self.apps = apps

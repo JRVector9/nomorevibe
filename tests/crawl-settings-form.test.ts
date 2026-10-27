@@ -63,6 +63,20 @@ beforeEach(() => {
 });
 
 describe("검색 신호 편집", () => {
+  it("추가 1차 모델을 표시하고 명시적으로 비우되 옛 폼은 해당 설정을 건드리지 않는다", async () => {
+    const html = render({ ...twoSignals, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
+      firstReviewAdditional: [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }] });
+    expect(html).toContain('name="firstAdditionalModel0"');
+    expect(html).toContain('value="[supa] Qwen3.8-27B-NVFP4"');
+    await saveCrawlSettings(null, submitted({ firstAdditionalPresent: "1", firstAdditionalProvider0: "abcllm", firstAdditionalModel0: "[supa] Qwen3.8-27B-NVFP4" }));
+    expect(saveSettings.mock.calls[0][0].firstReviewAdditional).toEqual([{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }]);
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted({ firstAdditionalPresent: "1" }));
+    expect(saveSettings.mock.calls[0][0].firstReviewAdditional).toEqual([]);
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    expect(saveSettings.mock.calls[0][0]).not.toHaveProperty("firstReviewAdditional");
+  });
   it("직접 AI2 모델을 선택된 제공자로 표시하고 저장할 때 보존한다", async () => {
     const html = render({ ...twoSignals, secondReview: { ...twoSignals.secondReview,
       voters: [{ provider: "local-direct", model: "qwen3.8-flash-next" }] } });

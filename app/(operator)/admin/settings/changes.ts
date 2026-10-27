@@ -89,5 +89,6 @@ export function describeChanges(before: FieldValues, after: FieldValues): string
     changes.push(`${label}${plus ? ` +${plus}` : ""}${minus ? ` −${minus}` : ""}`);
   }
   if (keys.some((key) => /^(voter|fallback)(Provider|Model)\d$/.test(key) && differs(key))) changes.push("2차 심사 모델");
+  if (keys.some((key) => /^firstAdditional(Provider|Model)\d$/.test(key) && differs(key))) changes.push("추가 1차 모델");
   return changes;
 }
