@@ -17,6 +17,8 @@
 
 루트가 검토·PR·필수 CI·병합·배포한 뒤, 정식 CAS 로 `maxNewPerHour`(필요 시 `pagesPerTick`)만 맞춘다. 제외 설치 172855274 는 유지. 배포 후 1시간 이상 새 고유·원본을 재기 전에 3000이라고 적지 않는다. 관리자 숫자 칸은 브라우저로 확인하지 않았다.
 
+PR691 첫 CI40453659689에서 build/lint/두 이미지 success, typecheck는 상태 화면의 새 discovery/fetch 라벨 누락, unit2는 수동 fetch 예산/감독 자식 풀의 옛 기대값 두 건으로 failure였다. 루트가 `CrawlerActivity.tsx`, `manual-job-budget.test.ts`, `worker-supervisor.test.ts`를 해당 새 설정에 맞췄다. 로컬 수동 검사는 여전히 미실행이며 후속 CI 성공을 기다린다. 실패 원본은 private `B/ci691-{typecheck,unit2}.private.log`에 보존했다.
+
 아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
 
 # 현재 — 2026-10-27 KST12:09, PR689 병합·운영 반영·10분47초 재검증 완료

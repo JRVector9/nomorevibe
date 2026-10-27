@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 it.each([
-  ["product-audit", 70_000], ["crawl-publish", 120_000], ["crawl-fetch", undefined],
+  ["product-audit", 70_000], ["crawl-publish", 120_000], ["crawl-fetch", 120_000],
 ])("manual %s uses the same budget and cancellation as its worker", async (name, budgetMs) => {
   process.argv = [originalArgv[0], "run-job.ts", name as string];
   await import("@/scripts/run-job");
