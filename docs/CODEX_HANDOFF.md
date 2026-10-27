@@ -379,3 +379,38 @@ ps -p 51355 -o pid=,etime=
 문서 WT `/Users/jr/Desktop/projects/nomorevibe-ops-delivery-report-20261026`, branch codex/ops-delivery-report-20261026. root가906e9772 문서 정리 후 d855154a로 main34cc를 통합했다. PR680은 docs-only 최종 CI·병합 대상이며 문서 변경으로 앱을 재배포하지 않는다.
 
 통합 전 원 main handoff: `STATE/docs-686-before-base-integration-20261027/main34cc-handoff.private.md`. 정리 전 dirty3파일+SHA manifest: `STATE/docs-before-686-final-consolidation-20261027/`. 긴 역사 원문은 Git50f와 `STATE/final-docs-history-20261026T130400Z/{main-handoff.private.md,working-handoff.private.md}`, `STATE/docs-before-final-consolidation-20261027T162700Z/`, `STATE/handoff-before-684-stop-phase-20261027/`의0600 보관본에 있다. 실제 저장소·영수증을 대화 기억보다 우선한다.
+
+---
+
+# AI 1차 관리자 상세 상태 — 2026-10-27 KST, source 단계 완료
+
+## 현재 목표·완료
+
+`/admin/status`에 AI 1차 검수의 목적·설정 모델·대기·실행·최근 처리·공유 용량과 수집 압력 연결을 표시한다. WT `/Users/jr/Desktop/projects/nomorevibe-ai1-admin-status-20261027`, branch `codex/ai1-admin-status-20261027`, 시작 base `06ac66c1ebbb130258eb72a73b0a83dbed6420b1`이다. 원 dirty WT·운영 설정은 수정하지 않았다. PR·필수 CI·병합·운영 배포·실제 화면 확인은 아직이며 root 담당이다.
+
+전체 현황에 독립 상세 카드를 추가하고 모바일에서도 표시한다. 파이프라인 AI 1차와 흐름 상세 노드에서 카드로 이동한다. 저장된 홈페이지 본문·README·설명·근거로 게시 적격을 처음 판단한다는 목적, AI 2차 재검토·별도 개발 AI 근거 판정과의 차이를 설명한다. 모델은 `resolveModelSlots`의 first 슬롯 모두를 표시하므로 별도 pool 변경의 추가 슬롯도 반영한다.
+
+## 변경 파일·핵심 결정
+
+- `app/(operator)/admin/status/{FirstReviewStatus.tsx,page.tsx,render-reads.ts,FlowDetail.tsx,action-links.ts,dashboard/StageRail.tsx}`: 기존 throughput.first·workerProgress·jobStates·수집 cursor.admissionThrottled·처리 지표·제어 상태를 재사용한다. 실행 가능 대기·최장 추정, 재시도 유예·시도 소진, legacy 작업과 items 점유, 회차 성공과 후보 완료를 구분한다. 원문/오류 본문·토큰·키는 보내지 않는다.
+- `lib/operations/first-review-status.ts`: 부족한5/15/60분 완료·기술 실패·승인/거절/사람 확인·최근 종료5건만 새 집계한다. 시각 인덱스 없는 시도 이력에서 시간 필터 전에 PK 역순 최대10,001행을 읽고10,000행 표본으로 계산한다. 상한 도달 시 전체 수량·전체 성공률이 아님을 표시한다. 분모는 표본 안 성공+기술 실패이며 취소·연기·규칙·재사용·대체·실행 중을 제외한다. 승인·거절·사람 확인은 모두 기술 성공이다.
+- 새 집계는 복제본 전용 read-only TX·문장3초·JIT off,60초 공유 캐시·동시 읽기 합치기·수동 새로고침 분3회 상한이다. DB 조회시각·캐시·오래된 값·표본을 표시한다. 복제 지연·장애·시간 초과·스키마 불일치는0이 아닌미확인이다. 새 API·migration·쓰기·모델 호출은 없다.
+- `lib/operations/{pipeline-control-status,pipeline-runtime-status}.ts`: 기존 제어 readback에 공유 물리 group별 AI1 대기·유효 예약·dispatched·indeterminate·점유 route를 additive로 추가한다. active/waiting 부분 인덱스 대상 최대513행을 읽으며512행 초과/누락 자료는 group 미확인이다. settled 이력·요청 payload는 읽지 않는다. 검증된 policy의 group 상한과 AI1 모델 경로를 함께 보인다. AI1 실행0·실패0이어도 번역 등 다른 단계의 종료 미확정 점유가 막을 수 있음을 표시하고 전역 장부 링크를 제공한다. 자동 회수·용량 변경은 하지 않는다.
+- 수집 압력은 기존 대기 지표의 참고 판정이다. 수집기의 retry/job 조건을 반영한 실제 판정과 다를 수 있음을 밝히고, 마지막 저장 커서의 완화 여부·마지막 실행시각을 별도로 표시한다. 실제 현재 페이지 실행량·단일 병목 원인으로 승격하지 않는다.
+- `tests/first-review-status.test.tsx`, `tests/pipeline-runtime-status.test.ts`: 미확인/0·분모/표본·오래된 값·나이 미확인·PK 상한·다른 단계 종료 미확정 공유 점유의 회귀 코드를 추가했다. 실행하지 않았다.
+
+## 검증·실패한 접근·남은 일
+
+사용자 지시대로 로컬 tests/lint/typecheck/build/컴파일·합성 provider·Telegram 호출은 모두 미실행이다. `git diff --check`와 최종 `git diff --cached --check`는 실제 EXIT0이었다. 기능 GitHub CI는 아직 실행하지 않았다. 실행 후 실패한 구현 접근은 없으며, 운영 재현·성능 실측도 하지 않았다.
+
+root가 별도 AI1 pool 변경과 통합 검토→필수 GitHub CI→최신 base 병합→공식 배포를 진행한다. 실제 복제본 권한/성능·로그인된 데스크톱/모바일 표시·모델 실제 적용은 미확인이다. 표본 성공률은 전체 처리 성능 증명이 아니며10,000행 이전에 생성된 늦은 종료가 누락될 수 있다. group readback은 상한 초과 시0/정상으로 축약하지 않는다. root의 실제 운영 장애·회수 조사 결과를 이 source 구현이 대신하지 않는다.
+
+다음 정확한 읽기 명령:
+
+```sh
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-admin-status-20261027 log -1 --oneline
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-admin-status-20261027 show --stat --oneline HEAD
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-admin-status-20261027 status --short
+```
+
+통합 WT에서 `git cherry-pick codex/ai1-admin-status-20261027`로 최종 scoped commit을 옮길 수 있다. pool agent 담당 `stage-registry.ts`는 이 branch에서 수정하지 않았다. PR·병합·운영 I/O는 root만 수행한다.

@@ -157,7 +157,17 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
     onReplica(() => db.transaction(async tx => {
       await tx.execute(sql`SET LOCAL statement_timeout = '10s'`);
       const [row] = await tx.execute<{ snapshot: unknown }>(sql`
-        WITH observation_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)
+        WITH observation_clock AS MATERIALIZED (SELECT clock_timestamp() AS at),
+        -- Bounded indexed live-set read; settled history and request payloads never enter the view.
+        model_group_rows AS MATERIALIZED (
+          SELECT group_id, route_id, state FROM (
+            SELECT group_id, route_id, state FROM model_capacity_requests
+              WHERE state IN ('reserved','dispatched','indeterminate')
+                AND (state <> 'reserved' OR reserved_until > (SELECT at FROM observation_clock))
+            UNION ALL
+            SELECT group_id, route_id, state FROM model_capacity_requests
+              WHERE state='waiting' AND class='first' AND queue_until > (SELECT at FROM observation_clock)
+          ) live LIMIT 513)
         SELECT jsonb_build_object(
           'at', c.at,
           'batch', (SELECT jsonb_build_object('mode',mode,'epoch',epoch,'contract',writer_contract_version,
@@ -200,6 +210,10 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             'epoch',epoch,'live',owner_instance_id IS NOT NULL AND lease_until>c.at::timestamp) ORDER BY role) FROM role_leases),'[]'::jsonb),
           'hostSlots', jsonb_build_object('atMs',(extract(epoch FROM c.at)*1000)::float8,
             'rows',coalesce((SELECT jsonb_agg(jsonb_build_object('key',key,'value',value) ORDER BY key) FROM operations_observations WHERE key LIKE 'host-slot:%'),'[]'::jsonb)),
+          'modelGroups', jsonb_build_object('limited',(SELECT count(*) FROM model_group_rows)>512,
+            'rows',coalesce((SELECT jsonb_agg(to_jsonb(g) ORDER BY g."group",g.route,g.state) FROM (
+              SELECT group_id AS "group", route_id AS route, state, count(*)::int AS count
+              FROM model_group_rows GROUP BY group_id,route_id,state) g),'[]'::jsonb)),
           'modelBudgets', coalesce((SELECT jsonb_agg(to_jsonb(b) ORDER BY b.budget) FROM (SELECT r.provider_budget_id AS budget,
               count(*) FILTER (WHERE r.state='waiting') AS waiting, count(*) FILTER (WHERE r.state='reserved') AS reserved,
               count(*) FILTER (WHERE r.state='reserved' AND r.reserved_until<=c.at) AS "expiredReserved",

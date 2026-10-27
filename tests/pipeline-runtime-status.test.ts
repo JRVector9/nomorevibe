@@ -113,6 +113,20 @@ describe('runtime readback', () => {
     const model = buildPipelineControlStatus(fixture(), readiness).controls.find(row => row.key === 'model')!;
     expect(model.metrics).toEqual(expect.arrayContaining([{ label: '미정산', value: 8 }, { label: 'dispatched', value: 4 }, { label: 'indeterminate', value: 4 }]));
   });
+  it('keeps cross-stage physical group occupancy and first-review model routing visible', () => {
+    const raw = fixture();
+    const sharedPolicy = { ...modelPolicy, routes: [...modelPolicy.routes,
+      { routeId: 'crawl-agent-review', provider: 'abcllm', model: 'first-model', providerBudgetId: 'abcllm', groupId: 'g' }] };
+    const status = buildPipelineControlStatus({ ...raw,
+      model: { ...raw.model, policy: sharedPolicy, policyHash: modelCapacityPolicyHash(sharedPolicy) },
+      modelGroups: { limited: false, rows: [{ group: 'g', route: 'reason-translate', state: 'indeterminate', count: 1 },
+        { group: 'g', route: 'crawl-agent-review', state: 'waiting', count: 4 }] },
+    }, readiness);
+    expect(status.runtime.modelGroups).toEqual([{ group: 'g', limit: 2, firstModels: [{ provider: 'abcllm', model: 'first-model' }],
+      waitingFirst: 4, reserved: 0, dispatched: 0, indeterminate: 1,
+      occupants: [{ route: 'reason-translate', state: 'indeterminate', count: 1 }] }]);
+    expect(buildPipelineControlStatus({ ...raw, modelGroups: { limited: true, rows: [] } }, readiness).runtime.modelGroups).toBeNull();
+  });
   it('never carries ledger tokens, boot ids, pids, DB roles or privilege hashes into the view model', () => {
     const text = JSON.stringify(buildPipelineControlStatus(fixture(), readiness));
     for (const secret of [boot, token, '987654', 'nmv_oracle_news_private', 'a'.repeat(64), 'c'.repeat(64)]) expect(text).not.toContain(secret);
