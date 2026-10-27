@@ -905,8 +905,8 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
         failures: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} IN ('failed','superseded')
         AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed' AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE})::integer`,
         ownerChanges: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'superseded' AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
-          AND ${crawlReviewAttempts.completedAt} > ${new Date(wallNow.getTime() - 24 * 60 * 60_000)})::integer`,
-        waiting: sql<boolean>`coalesce(bool_or(${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > ${wallNow}), false)` })
+          AND ${gt(crawlReviewAttempts.completedAt, new Date(wallNow.getTime() - 24 * 60 * 60_000))})::integer`,
+        waiting: sql<boolean>`coalesce(bool_or(${crawlReviewAttempts.state} = 'failed' AND ${gt(crawlReviewAttempts.retryAfter, wallNow)}), false)` })
         .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, locked.candidate.id), retryReviewIdentity(),
           eq(crawlReviewAttempts.inputHash, current.inputHash), eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),
           eq(crawlReviewAttempts.policyHash, current.policyHash), eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),

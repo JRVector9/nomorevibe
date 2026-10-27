@@ -30,9 +30,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const startedAt = Date.now();
   const settings = await getSettings();
   assertReviewFixtureSettings(settings);
+  const poolEnabled = settings.firstReviewAdditional !== undefined;
   if (!settings.enabled || settings.reviewMode === "off") {
     ctx.log("crawl.agent_review_skipped", { reason: !settings.enabled ? "disabled" : "review_off" });
-    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
+    return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("AI review requires a valid worker job lease");
@@ -48,13 +49,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const pool = firstReviewers(settings, primary);
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
-  const poolEnabled = settings.firstReviewAdditional !== undefined;
   const after = poolEnabled ? firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan) : null;
   const page = poolEnabled ? await listFirstReviewPoolCandidates(settings, Math.max(20, concurrency * 2), after) : null;
   const candidates = page ? page.map(row => row.candidate) : await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   if (!candidates.length) {
     if (after) { await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null }); return { done: false, continuation: "ready" }; }
-    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
+    return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS : TICK_MS;
   const remaining = () => tickMs - (Date.now() - startedAt);

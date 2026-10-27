@@ -1,3 +1,19 @@
+# PR696 CI 수정 인계 — 2026-10-27, 로컬 실행 검사 없음
+
+목표: AI1 추가 pool PR696의 GitHub CI run `40471239295`에서 확인한 타입·DB 날짜 인코딩·기존 단일 모델 cursor 회귀를 최소 수정한다. WT `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, 시작 HEAD `ee8d28d3668dac53c0da0caba6e224540cf3e63d`(최신 main 병합 상태)다. root가 소스 diff를 검토하고 같은 PR branch의 scoped commit/push를 승인했다. PR/병합/운영 I/O는 root가 맡는다.
+
+완료·결정: 새 retry 집계의 `completedAt`·`retryAfter` 비교를 Drizzle `gt(column, Date)`로 바꿔 실제 timestamp 컬럼 encoder를 사용한다. raw SQL 보간의 Date가 postgres.js types1184에 그대로 전달되어 `ERR_INVALID_ARG_TYPE`을 낸 원인을 수정하며, 모든 자동 모델 합산/벽시계 backoff/3회 실패 한도는 그대로다. 단일 모델의 disabled·빈 큐 `done:true`는 기존 cursor 초기화를 복구하고, 명시적 추가 pool에서만 keyset와 관련 없는 durable cursor 필드를 보존한다. 테스트 tick helper는 `typeof reviewCrawlCandidates`, fetch/AI1 공통 회귀 등록은 `registerBlockedStageTests<C>`를 사용해 실제 cursor 타입을 보존한다. `any`·광범위 cast·운영 타입 약화는 없다.
+
+수정 파일: `lib/crawl/agent-review-repository.ts`, `lib/crawl/jobs/agent-review.ts`, `tests/integration/agent-review-capacity-dispatch.test.ts`, `tests/integration/review-cli-capacity-dispatch.test.ts`, `tests/integration/pipeline-blocked-requests.test.ts`, 이 인계.
+
+실제 검증·실패: GitHub jobs API와 실패 로그를 읽었다. typecheck job `122078661020`의 오류는 위 integration 3파일의 `FirstReviewCursor` 대 `null` 7건이다. ledger job `122078660903`과 integration shards 1~6의 `122078661481/1460/1374/1411/1257/1366` 로그에서 raw Date 집계 오류 및 하위 결과·호출수 assertion 실패를 확인했다. 별도로 shard3의 `ai1 normal empty queue keeps its existing ACK and cursor-reset behavior`는 cursor 보존 회귀였다. 이전 성공 CI를 수정 후 성공으로 재사용하지 않는다. 사용자 지시에 따라 로컬 tests/lint/typecheck/build/compile/provider probe와 운영 I/O는 모두 실행하지 않았다. 이번 `git diff --check`는 실제 EXIT0이다.
+
+폐기한 접근: 실제 AI1 handler를 `JobContext<null>`로 고정하거나 fetch/AI1 handler를 invariant cursor union으로 전달하는 타입은 유지할 수 없다. raw Date SQL 보간을 그대로 두는 변경, 현재 pool만으로 retry 이력을 세는 변경, 정상 단일 모델 완료 cursor까지 보존하는 변경은 사용하지 않는다.
+
+남은 작업·다음 정확 명령: `git -C /Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027 log -1 --oneline`; `gh pr view 696 --repo JRVector9/nomorevibe --json headRefOid,statusCheckRollup`; `gh pr checks 696 --repo JRVector9/nomorevibe`. root가 새 exact-head 필수 GitHub CI 결과를 확인하고 최신 base 병합/배포를 결정한다. 로컬 검사 금지는 유지한다.
+
+---
+
 # AI1 추가 모델 pool 구현 — 2026-10-27, 로컬 실행 검사 없이 root 검토 단계
 
 목표: 기본 `firstReview`를 유지하며 선택 설정 `firstReviewAdditional` 최대2개로 AI1 미완료 후보를 분담한다. 작업 WT는 `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, base `06ac66c1ebbb130258eb72a73b0a83dbed6420b1`이다. UI/API 상태 구현은 별도 PR695이며 이 WT에서 main을 병합하지 않는다. root가 최신 base를 통합하고 PR/필수 CI/배포를 맡는다.

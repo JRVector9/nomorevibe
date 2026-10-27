@@ -31,7 +31,7 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { claimItemAgentReview, loadReviewInput } from "@/lib/crawl/agent-review-repository";
 import { requestJob } from "@/lib/jobs/control";
-import { runJob } from "@/lib/jobs/runner";
+import { runJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
@@ -54,9 +54,6 @@ let originalCandidateRows: unknown[] = [], originalFrontierRows: unknown[] = [];
 let inputSentinel: { candidate: typeof crawlCandidates.$inferSelect; document: typeof crawlDocuments.$inferSelect;
   frontier: typeof crawlFrontier.$inferSelect } | undefined;
 let initialized = false, sequence = 0;
-const stages = [{ stage: "fetch", name: "crawl-fetch", handler: fetchCrawlDocuments },
-  { stage: "ai1", name: "crawl-agent-review", handler: reviewCrawlCandidates }] as const;
-
 function settings(): CrawlSettings {
   return { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "enforce",
     firstReview: { provider: "claude-cli", model: "pr03c-blocked-fixture" },
@@ -203,7 +200,8 @@ async function domainRows(source: Awaited<ReturnType<typeof queuedSource>>) {
     attempts: source.candidate ? await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, source.candidate.id)) : [] };
 }
 
-for (const { stage, name, handler } of stages) {
+function registerBlockedStageTests<C>(stage: "fetch" | "ai1", name: string,
+  handler: (ctx: JobContext<C>) => Promise<JobOutcome<C>>) {
   it.each(["items", "draining"] as const)(`${stage} %s preserves its pending request and histories without dispatch or domain/outbox writes`, async mode => {
     const beforeJob = await requestedJob(name), source = await queuedSource(stage), beforeDomain = await domainRows(source);
     const downstream = managedJobs.filter(other => other !== name);
@@ -254,7 +252,7 @@ for (const { stage, name, handler } of stages) {
     await db.update(pipelineStageModes).set({ mode: "items", writerContractVersion: 1 }).where(eq(pipelineStageModes.stage, stage));
     const completed = barrier(), finish = barrier();
     let reached = false;
-    const running = runJob<null>(name, async ctx => {
+    const running = runJob<C>(name, async ctx => {
       const outcome = await handler(ctx);
       reached = true;
       completed.resolve();
@@ -275,6 +273,9 @@ for (const { stage, name, handler } of stages) {
     for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
   });
 }
+
+registerBlockedStageTests("fetch", "crawl-fetch", fetchCrawlDocuments);
+registerBlockedStageTests("ai1", "crawl-agent-review", reviewCrawlCandidates);
 
 it("keeps normal bounded done:false ACK behavior", async () => {
   const before = await requestedJob("crawl-fetch");
