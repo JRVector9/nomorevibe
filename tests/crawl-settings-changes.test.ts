@@ -30,6 +30,10 @@ describe("저장 바의 바뀐 항목", () => {
   it("바뀐 것이 없으면 비어 있다", () => {
     expect(describeChanges(before, { ...before })).toEqual([]);
   });
+  it("추가 1차 모델을 바꾸거나 지우면 저장할 변경으로 표시한다", () => {
+    expect(describeChanges({}, { firstAdditionalProvider0: "abcllm", firstAdditionalModel0: "[supa] Qwen3.8-27B-NVFP4" })).toEqual(["추가 1차 모델"]);
+    expect(describeChanges({ firstAdditionalModel0: "opus" }, {})).toEqual(["추가 1차 모델"]);
+  });
 });
 
 describe("크롤 설정 계산", () => {

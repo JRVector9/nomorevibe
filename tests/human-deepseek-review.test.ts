@@ -101,7 +101,7 @@ describe('admin switch', () => {
     expect(mocks.ready).toHaveBeenCalledTimes(1);
     expect(mocks.save).toHaveBeenCalledWith({ enabled: true, expectedGeneration: 3, actor: 'operator' });
     expect(mocks.ready.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]);
-    expect(mocks.revalidate.mock.calls).toEqual([['/admin'], ['/admin/review'], ['/admin/status']]);
+    expect(mocks.revalidate.mock.calls).toEqual([['/admin'], ['/admin/models'], ['/admin/review'], ['/admin/status']]);
   });
   it('checks administrator access before model lookup or writes', async () => {
     mocks.admin.mockResolvedValue(null);

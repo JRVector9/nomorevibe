@@ -10,9 +10,11 @@ export type CollectorEventDefinition = { label: string; fields: string[]; error?
   noSum?: string[]; foldInto?: { event: string; fields: string[] } };
 
 export const COLLECTOR_EVENTS: Record<string, CollectorEventDefinition> = {
-  "crawl.seeded": { label: "탐색 결과", fields: ["discovered", "drained", "page", "incompleteWindows"] },
-  "crawl.seed_latest_scanned": { label: "최신 탐색 결과", fields: ["discovered", "page", "incompleteWindows"] },
-  "crawl.seed_admission": { label: "탐색 수용 확인", fields: ["throttled"] },
+  "crawl.seeded": { label: "탐색 결과", fields: ["discovered", "searchRequests", "examined", "existing", "drained", "page", "incompleteWindows"] },
+  "crawl.seed_latest_scanned": { label: "최신 탐색 결과", fields: ["discovered", "searchRequests", "examined", "existing", "page", "incompleteWindows"] },
+  "crawl.seed_admission": { label: "탐색 수용 확인",
+    fields: ["throttled", "configuredPages", "effectivePages", "newAllowance", "rateCapped", "measurementUnknown"],
+    noSum: ["configuredPages", "effectivePages", "newAllowance"] },
   "crawl.seed_failed": { label: "탐색 항목 오류", fields: [], error: true },
   "crawl.seed_incomplete": { label: "탐색 이어서 처리", fields: ["page"], waiting: true },
   "crawl.fetched": { label: "원본 수집 결과", fields: ["fetched", "skipped", "failed", "gated", "drained"] },
