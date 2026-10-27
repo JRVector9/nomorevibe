@@ -479,9 +479,12 @@ print(json.dumps(result))
 
 
 def ssh_python(host, source, *args, input_text=None, timeout=40):
+    user = os.environ.get('NMV_DEPLOY_SSH_USER', 'root')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
+        raise ValueError('invalid_deploy_ssh_user')
     command = 'python3 -c ' + shlex.quote(source) + ''.join(' ' + shlex.quote(arg) for arg in args)
     return run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                'root@' + host, command], input_text=input_text, timeout=timeout)
+                user + '@' + host, command], input_text=input_text, timeout=timeout)
 
 
 WEB_MAX_REPLICAS = 8

@@ -10,6 +10,11 @@ main의 정확한 SHA를 checkout한 깨끗한 운영자 Mac에서 실행한다.
 Git·GitHub CLI 로그인, 기존 Keychain의 Dokploy 키와 두 호스트 SSH 접근이 필요하다.
 웹 이미지 패키지의 비공개 설정과 기존 registry 자격 증명을 유지한다.
 
+gpu3090에서는 `prod` 스킬의 기존 Keychain 호환 도구를 PATH에 추가한다.
+현재 등록된 M3/mini SSH 계정이 `jr`이면 `NMV_DEPLOY_SSH_USER=jr`을 plan/run 및
+후속 관측에 동일하게 지정한다. 기본 계정은 기존 `root`이며 호스트·SSH 옵션·접속
+권한은 변경하지 않는다. 배포 전 두 호스트에서 해당 계정의 Docker 접근을 확인한다.
+
 ```bash
 # 1. 로컬 미리 보기. BASE/SHA는 검토한 40자리 커밋이다. 자격 증명·운영 호출 없음.
 npm run deploy -- scope --base "$BASE" --sha "$SHA"
