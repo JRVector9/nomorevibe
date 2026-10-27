@@ -221,7 +221,8 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   const base = { requestedOnly: true as const };
   expect(jobRunOptions('crawl-publish', base)).toEqual({ ...base, budgetMs: 120_000 });
   expect(jobRunOptions('reason-translate', base)).toEqual({ ...base, budgetMs: 55_000 });
-  expect(jobRunOptions('crawl-fetch', base)).toBe(base);
+  expect(jobRunOptions('crawl-fetch', base)).toEqual({ ...base, budgetMs: 120_000 });
+  expect(jobRunOptions('crawl-seed', base)).toEqual({ ...base, budgetMs: 30_000 });
 });
 
 it('re-polls only the crawler source lane without sleeping when the runner verified a continuation', async () => {

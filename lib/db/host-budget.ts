@@ -46,7 +46,7 @@ const OptionsSchema = z.discriminatedUnion('mode', [
 ]);
 const unverified = { enforcement: 'unknown', ready: false, activationAllowed: false } as const;
 const workerMax: Record<WorkerRole, number> = {
-  crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3,
+  crawler: 8, reviewer: 3, publisher: 3, text: 3, maintenance: 3,
   translation: 3, 'product-health': 3, 'site-evidence': 3, 'official-news': 3,
 };
 

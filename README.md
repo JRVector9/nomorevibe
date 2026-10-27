@@ -376,7 +376,7 @@ Compose `scheduler`가 10초마다 `lib/jobs/catalog.ts`의 주기를 확인해 
 | `crawl-judge` | 5분 | 계산만 한다. 원본 쌓이는 속도만 따라가면 된다 |
 | `crawl-agent-review` | 1분 | 모드·입력 유효성·설정 병렬도에 따라 한 틱 시작 최대 16개 |
 | `crawl-publish` | 5분 | 판정 직후에 돌아야 통과한 것이 바로 목록에 오른다 |
-| `crawl-seed` | 10분 | 공유 API 대기와 frontier 적체 시 탐색 양보 |
+| `crawl-seed` | 1분 | 전용 줄. 검색 신원 하나의 분당 30회 안. 새 저장소는 시간당 상한과 기존 입장으로 양보 |
 | `uptime-ping` | 1분 | 제품이 죽는 것은 분 단위로 급한 일이 아니다. 같은 제품은 6시간에 한 번만 본다 |
 | `click-rollup` | 1시간 | 집계는 하루 단위라 자주 돌 이유가 없다 |
 | `ranking-refresh` | 독립 주기 없음 | `click-rollup`의 done=true 성공 완료 트랜잭션이 요청 |

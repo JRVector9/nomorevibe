@@ -20,6 +20,7 @@ const SCALARS: Record<string, string> = {
   windowDays: "최근 며칠",
   sort: "정렬",
   pagesPerTick: "틱당 페이지",
+  maxNewPerHour: "시간당 새 저장소",
   autoApproveMinStars: "자동 승인 최소 스타",
   minStars: "스타 하한",
   maxPushAgeDays: "방치 기준",

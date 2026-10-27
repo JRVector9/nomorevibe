@@ -68,6 +68,8 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
       windowDays: num(form.get("windowDays")),
       sort: String(form.get("sort") ?? "relevance"),
       pagesPerTick: num(form.get("pagesPerTick")),
+      // 옛 화면은 이 칸이 없다. 빼 두면 저장된 값, 없으면 스키마 기본 3000이 남는다.
+      ...(form.has("maxNewPerHour") ? { maxNewPerHour: num(form.get("maxNewPerHour")) } : {}),
       // Show HN 행은 2026-10-08 화면부터 있다 — 그 칸을 보내지 않은 폼은 Show HN 설정을 건드리지 않는다
       ...(form.has("showHn.priority") ? { showHn: {
         enabled: form.get("showHn.enabled") === "on",

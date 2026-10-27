@@ -177,7 +177,7 @@ it.each(['crawler', 'scheduler'] as const)('uses the production supervisor spawn
     const childEnv = options.env as NodeJS.ProcessEnv;
     expect(JSON.parse(childEnv.HOST_DB_BUDGET!)).toEqual({ ...budget,
       process: { ...parent, kind: role === 'scheduler' ? 'scheduler-worker' : 'worker' } });
-    expect(dbPoolConfig(childEnv).max).toBe(role === 'scheduler' ? 2 : 4);
+    expect(dbPoolConfig(childEnv).max).toBe(role === 'scheduler' ? 2 : 8);
     expect(JSON.parse(process.env.HOST_DB_BUDGET!).process).toEqual(parent);
     child.emit('exit', 0);
     expect(await running).toBe(0);

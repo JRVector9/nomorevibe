@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { dbPoolConfig } from "@/lib/db/pool";
 
-it("allocates finite role-specific pools within the initial 23-connection budget", () => {
+it("allocates finite role-specific pools within the 27-connection budget", () => {
   const roles = ["web","crawler","reviewer","publisher","maintenance","scheduler"];
-  expect(roles.map(WORKER_ROLE => dbPoolConfig({WORKER_ROLE}).max)).toEqual([8,4,3,3,3,2]);
-  expect(roles.reduce((total,WORKER_ROLE) => total+dbPoolConfig({WORKER_ROLE}).max,0)).toBe(23);
+  expect(roles.map(WORKER_ROLE => dbPoolConfig({WORKER_ROLE}).max)).toEqual([8,8,3,3,3,2]);
+  expect(roles.reduce((total,WORKER_ROLE) => total+dbPoolConfig({WORKER_ROLE}).max,0)).toBe(27);
   expect(dbPoolConfig({}).role).toBe("web");
   expect(dbPoolConfig({WORKER_ROLE:"maintenance"}).statementMs).toBeGreaterThan(25_000);
 });

@@ -5,7 +5,7 @@
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 
-/** GitHub 검색 한도 — 분당 30회 */
+/** GitHub 검색 한도 — 인증된 검색 신원 하나당 분당 30회. 같은 사용자의 토큰 수를 곱하지 않는다. */
 const SEARCH_LIMIT_PER_HOUR = 30 * 60;
 /** 수집(crawl-seed)이 도는 간격(분) — 틱당 페이지가 곧 틱당 검색 횟수다 */
 export const SEED_INTERVAL_MINUTES = (JOB_CATALOG.find((job) => job.name === "crawl-seed")?.intervalMs ?? 600_000) / 60_000;

@@ -44,7 +44,8 @@ function databaseReadTimedOut(error: unknown): boolean {
   return false;
 }
 
-export function discoveryAdmission(snapshot: DiscoveryAdmissionSnapshot, previouslyThrottled: boolean): DiscoveryAdmission {
+export function discoveryAdmission(snapshot: DiscoveryAdmissionSnapshot, previouslyThrottled: boolean,
+  maxNewPerHour = Number.POSITIVE_INFINITY): DiscoveryAdmission {
   const unknownWindow = snapshot.secondVoteWindowLimited || (snapshot.secondWindowLimited && !snapshot.secondObservationLimited);
   const throttled = snapshot.timedOut || unknownWindow || snapshot.stages.some(observed => {
     const stage = observed.key === "second" ? { ...observed, waiting: observed.waiting + (snapshot.secondUnvalidated ?? 0),
@@ -53,8 +54,12 @@ export function discoveryAdmission(snapshot: DiscoveryAdmissionSnapshot, previou
     ? stage.waiting >= DISCOVERY_PRESSURE_COUNT || (stage.waiting > DISCOVERY_RESUME_COUNT && (stage.oldestMinutes ?? 0) > DISCOVERY_RESUME_AGE_MINUTES)
     : stage.waiting >= DISCOVERY_HARD_PRESSURE_COUNT || (stage.waiting >= DISCOVERY_PRESSURE_COUNT && (stage.oldestMinutes ?? 0) >= DISCOVERY_PRESSURE_AGE_MINUTES);
   });
-  return { throttled: Boolean(throttled), remainingNew: snapshot.timedOut || unknownWindow ? 1
-    : throttled ? Math.max(1, DISCOVERY_NEW_ALLOWANCE - snapshot.recentNew) : Infinity };
+  const pressureRemaining = snapshot.timedOut || unknownWindow ? 1
+    : throttled ? Math.max(1, DISCOVERY_NEW_ALLOWANCE - snapshot.recentNew) : Number.POSITIVE_INFINITY;
+  const rateRemaining = Number.isFinite(maxNewPerHour)
+    ? Math.max(0, Math.floor(maxNewPerHour * DISCOVERY_NEW_WINDOW_MS / 3_600_000) - Math.max(0, snapshot.recentNew))
+    : Number.POSITIVE_INFINITY;
+  return { throttled: Boolean(throttled), remainingNew: Math.min(pressureRemaining, rateRemaining) };
 }
 
 type ReadState = { expired: boolean; partial: DiscoveryAdmissionSnapshot };

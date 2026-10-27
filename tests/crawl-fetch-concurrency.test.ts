@@ -4,7 +4,7 @@ import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 /**
  * 수집 잡의 동시 처리.
  *
- * HTTP 대기가 지배적이라 셋을 함께 받는다. 다만 GitHub에는 순서대로(같은 origin 하나씩),
+ * HTTP 대기가 지배적이라 설정한 동시성만큼 함께 받는다. 다만 GitHub에는 순서대로(같은 origin 하나씩),
  * 같은 사이트에는 한 번에 하나만 보낸다. 예산이 끝나거나 리스를 잃어도 시작하지 않은
  * 항목의 claim은 반드시 돌려준다 — 안 그러면 10분 동안 fetching에 묶인다.
  */
@@ -23,7 +23,7 @@ vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));
 vi.mock("@/lib/jobs/control", () => ({ requestJob: mocks.request }));
 
-const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
+const { fetchCrawlDocuments, FETCH_CONCURRENCY } = await import("@/lib/crawl/jobs/fetch");
 
 const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
 const entry = (i: number): FetchClaim => ({ id: i + 1, repo: `acme/app-${i}`, signal: "test", builder: null,
@@ -52,24 +52,31 @@ beforeEach(() => {
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "" }));
 });
 
-it("페이지는 최대 셋까지 함께 받고, GitHub에는 하나씩 보낸다", async () => {
-  const entries = Array.from({ length: 7 }, (_, i) => entry(i));
+it("페이지는 동시성까지 함께 받고, GitHub에는 하나씩 보낸다", async () => {
+  const entries = Array.from({ length: FETCH_CONCURRENCY + 1 }, (_, i) => entry(i));
   mocks.dequeue.mockResolvedValueOnce(entries).mockResolvedValue([]);
   const github = gauge();
   const pages = gauge();
+  let startedPages = 0;
+  let releaseFirstWave!: () => void;
+  const firstWave = new Promise<void>(resolve => { releaseFirstWave = resolve; });
   mocks.repo.mockImplementation((repo: string) => github.around(async () => {
     await delay(2);
     return { ok: true, value: { homepage: `https://${repo.split("/")[1]}.test` } };
   }));
   mocks.page.mockImplementation((url: string) => pages.around(async () => {
-    await delay(25);
+    // Keep the first wave open until every lane arrives; wall-clock timing is
+    // unrelated to the concurrency and serialization contract under test.
+    startedPages++;
+    if (startedPages === FETCH_CONCURRENCY) releaseFirstWave();
+    if (startedPages <= FETCH_CONCURRENCY) await firstWave;
     return { status: 200, finalUrl: url, html: "" };
   }));
 
   expect(await fetchCrawlDocuments(context())).toEqual({ done: true });
 
-  expect(mocks.save).toHaveBeenCalledTimes(7);
-  expect(pages.max).toBe(3);
+  expect(mocks.save).toHaveBeenCalledTimes(FETCH_CONCURRENCY + 1);
+  expect(pages.max).toBe(FETCH_CONCURRENCY);
   expect(github.max).toBe(1);
   expect(mocks.defer).not.toHaveBeenCalled();
   // 판정 요청은 각 실제 source 저장 transaction이 소유하며 handler가 중복 요청하지 않는다.

@@ -125,7 +125,7 @@ it('rejects a second process for the same declared slot and a larger roster unti
   expect(await b.admit('crawl-fetch')).toEqual(expect.objectContaining({ admitted: false, reason: 'host_process_duplicate' }));
   expect(await larger.admit('crawl-fetch')).toEqual(expect.objectContaining({ admitted: false, reason: 'host_policy_mismatch' }));
   const [holder] = await ledger('mini');
-  expect(holder).toMatchObject({ key: 'host-slot:mini:p:worker:crawler:-:1:1', value: { type: 'process', primaryMax: 4, readMax: 0 } });
+  expect(holder).toMatchObject({ key: 'host-slot:mini:p:worker:crawler:-:1:1', value: { type: 'process', primaryMax: 8, readMax: 0 } });
   await larger.kill();
   await a.kill();
   // SIGKILL 은 정리 코드를 돌리지 않는다. 자리는 DB 시계 만료 전까지 그대로다
