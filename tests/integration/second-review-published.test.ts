@@ -9,7 +9,8 @@ import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { inSample, pendingSecondReviews, publishedInputHash, publishedSecondReviews, reconcileStaleSecondReviews, secondReviewSummary } from '@/lib/crawl/second-review';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
 import { secondReviewGeneration } from '@/lib/crawl/second-review-input';
-import { protectingCapacityExistsSql, staleSecondReviewScanDemand, STALE_REVIEW_OWNER } from '@/lib/crawl/second-review-stale';
+import { capacityBlocksStaleReconcile, protectingCapacityExistsSql, staleReviewCapacityProbeSql, staleSecondReviewHintSql,
+  staleSecondReviewScanDemand, STALE_REVIEW_OWNER } from '@/lib/crawl/second-review-stale';
 import { humanQueueOverview } from '@/lib/crawl/review-overview';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 import { banReasonLabel } from '@/app/(operator)/admin/products/ban-reasons';
@@ -114,13 +115,39 @@ it('leaves a stale vote and its live capacity reservation unchanged', async () =
   } finally { await db.delete(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, request.requestId)); }
 });
 
-it('fails closed on unbound dispatched/indeterminate AI2 requests while excluding unrelated routes', async () => {
-  for (const state of ['dispatched', 'indeterminate']) for (const route of ['second-review', 'unrelated-background']) {
-    const [row] = await db.execute<{ busy: boolean }>(sql`WITH model_capacity_requests AS (
+it('fails closed on unbound active/unknown AI2 requests and null reservation times while excluding unrelated routes', async () => {
+  for (const state of ['dispatched', 'indeterminate', 'unknown', 'reserved']) for (const route of ['second-review', 'unrelated-background']) {
+    const [row] = await db.execute<{ busy: boolean; probe_busy: boolean }>(sql`WITH model_capacity_requests AS (
       SELECT ${state}::text state, ${route}::text route_id, NULL::text logical_work_key,
-        'malformed'::text work_key, clock_timestamp() - interval '1 day' reserved_until
-    ) SELECT ${protectingCapacityExistsSql(sql`123`)} AS busy`);
+        'malformed'::text work_key, ${state === 'reserved' ? sql`NULL::timestamptz` : sql`clock_timestamp() - interval '1 day'`} reserved_until
+    ) SELECT ${protectingCapacityExistsSql(sql`123`)} AS busy,
+      EXISTS (SELECT 1 FROM (${staleReviewCapacityProbeSql(123)}) protected) AS probe_busy`);
     expect(row.busy).toBe(route === 'second-review');
+    expect(row.probe_busy).toBe(row.busy);
+  }
+});
+
+it('keeps reservations that expired after the callback tick for its original time check', async () => {
+  const rows = await db.execute<{ state: string; reserved_until: Date | string }>(sql`WITH model_capacity_requests AS (
+    SELECT 'reserved'::text state, 'second-review'::text route_id, 'ai2:123:456'::text logical_work_key,
+      'ai2:123:456:binding'::text work_key, clock_timestamp() - interval '1 second' reserved_until
+  ) SELECT protected.* FROM (${staleReviewCapacityProbeSql(123)}) protected`);
+  expect(rows).toHaveLength(1);
+  const reservation = { state: rows[0].state, reservedUntil: rows[0].reserved_until };
+  const expiry = new Date(rows[0].reserved_until).getTime();
+  expect(capacityBlocksStaleReconcile(reservation, new Date(expiry - 1))).toBe(true);
+  expect(capacityBlocksStaleReconcile(reservation, new Date(expiry + 1))).toBe(false);
+});
+
+it('plans one capacity-history scan outside candidate-correlated hint and protection probes', async () => {
+  const value = await stalePublishedFixture('stale-capacity-plan');
+  type Plan = { 'Node Type': string; 'Relation Name'?: string; 'CTE Name'?: string; Plans?: Plan[] };
+  const flatten = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(flatten)];
+  for (const query of [staleSecondReviewHintSql(0, 25), staleReviewCapacityProbeSql(value.candidate.id)]) {
+    const rows = await db.execute<{ 'QUERY PLAN': { Plan: Plan }[] }>(sql`EXPLAIN (FORMAT JSON) ${query}`);
+    const nodes = flatten(rows[0]['QUERY PLAN'][0].Plan);
+    expect(nodes.filter(node => node['Relation Name'] === 'model_capacity_requests')).toHaveLength(1);
+    expect(nodes.some(node => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'stale_review_protecting_capacity')).toBe(true);
   }
 });
 

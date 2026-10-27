@@ -40,9 +40,23 @@ export function staleReviewCapacityIdentitySql(cap: SQL, candidateId: SQL): SQL 
     )))`;
 }
 
-export function protectingCapacityExistsSql(candidateId: SQL): SQL {
-  return sql`EXISTS (SELECT 1 FROM model_capacity_requests cap
+/** Filter terminal history once before candidate-dependent LIKE/regex checks.
+ * Keep every reserved row: hints use wall time, while callbacks retain their existing JS tick time. */
+function protectingCapacityRowsSql(): SQL {
+  return sql`SELECT cap.state, cap.reserved_until, cap.logical_work_key, cap.work_key, cap.route_id
+    FROM model_capacity_requests cap WHERE coalesce(cap.state, '') NOT IN ('waiting', 'withdrawn', 'settled')`;
+}
+
+export function protectingCapacityExistsSql(candidateId: SQL, source = sql`model_capacity_requests`): SQL {
+  return sql`EXISTS (SELECT 1 FROM ${source} cap
     WHERE ${staleReviewCapacityIdentitySql(sql`cap`, candidateId)} AND ${protectingCapacityStateSql(sql`cap`)})`;
+}
+
+/** Recheck current protection inside the candidate transaction; hints grant no authority. */
+export function staleReviewCapacityProbeSql(candidateId: number): SQL {
+  return sql`WITH stale_review_protecting_capacity AS MATERIALIZED (${protectingCapacityRowsSql()})
+    SELECT cap.state, cap.reserved_until FROM stale_review_protecting_capacity cap
+    WHERE ${staleReviewCapacityIdentitySql(sql`cap`, sql`${candidateId}`)}`;
 }
 
 /** A replaced primary is still the demand owner until its unfinished fallback chain is superseded too. */
@@ -94,7 +108,8 @@ export function staleSecondReviewScanDemand(detectorVersion: string, enabled = t
  * Owned closed demand also reaches the callback for an explicit no-longer-required outcome.
  */
 export function staleSecondReviewHintSql(afterCandidateId: number, limit: number): SQL {
-  return sql`SELECT DISTINCT s.candidate_id FROM second_reviews s
+  return sql`WITH stale_review_protecting_capacity AS MATERIALIZED (${protectingCapacityRowsSql()})
+    SELECT DISTINCT s.candidate_id FROM second_reviews s
     JOIN crawl_candidates c ON c.id = s.candidate_id
     WHERE s.candidate_id > ${afterCandidateId}
       AND ((s.status IN ('pending', 'failed') AND (
@@ -105,6 +120,6 @@ export function staleSecondReviewHintSql(afterCandidateId: number, limit: number
           AND ((s.trigger = 'ai_approved' AND c.state = 'approved')
             OR (s.trigger IN ('ai_decided', 'ai_held') AND c.state = 'needs_review')))))
         OR ${carriedDemandSql(sql`s`)})
-      AND NOT ${protectingCapacityExistsSql(sql`s.candidate_id`)}
+      AND NOT ${protectingCapacityExistsSql(sql`s.candidate_id`, sql`stale_review_protecting_capacity`)}
     ORDER BY s.candidate_id LIMIT ${limit}`;
 }
