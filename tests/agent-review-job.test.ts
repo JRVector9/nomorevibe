@@ -5,13 +5,15 @@ import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { firstReviewers, selectFirstReviewer, type FirstReviewCursor } from "@/lib/crawl/first-reviewers";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+import { agentReviewBinding } from "@/lib/crawl/agent-review-ownership";
+import { itemBindingHash } from "@/lib/jobs/items/types";
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
-vi.mock("@/lib/crawl/agent-review-repository", () => ({listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
+vi.mock("@/lib/crawl/agent-review-repository", () => ({listOwnPendingFirstReviewCandidates:mocks.pendingList,listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
 vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
@@ -27,6 +29,7 @@ beforeEach(() => {
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
   mocks.choose.mockImplementation(async ({ candidate, settings }) => selectFirstReviewer(firstReviewers(settings), candidate.id));
   mocks.canStart.mockResolvedValue(true);
+  mocks.pendingList.mockResolvedValue([]);
   mocks.requeue.mockResolvedValue(0);
   mocks.handOff.mockResolvedValue(0);
   mocks.readme.mockResolvedValue("");
@@ -410,6 +413,53 @@ it("an additive pool still stops all new admission on a global drain", async () 
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
   expect(mocks.claim).toHaveBeenCalledTimes(1);
   expect(mocks.gateway).not.toHaveBeenCalled();
+});
+
+it("a peer's local capacity refusal cannot cancel the same model's committed claim before transport", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [{ ...primary, model: "extra-model" }], reviewConcurrency: 2 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 3 }]);
+  let release!: (claim: unknown) => void, refused!: () => void;
+  const committed = new Promise(resolve => { release = resolve; });
+  const peerRefused = new Promise<void>(resolve => { refused = resolve; });
+  mocks.claim.mockImplementation(async ({ candidate: selected }) => {
+    if (selected.id === 1) return committed;
+    refused(); throw new ModelCapacityDeferredError("capacity");
+  });
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Product", evidenceIds: ["product"] } });
+  const running = reviewCrawlCandidates(context());
+  await peerRefused; await new Promise(resolve => setImmediate(resolve));
+  release({ kind: "claimed", attempt: { id: 1, attemptNumber: 1 }, receipt: receipt() });
+  expect(await running).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: primary.model,
+    signal: expect.objectContaining({ aborted: false }) }));
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "approve" }) }));
+  expect(mocks.record.mock.calls.some(([value]) => value.error === "cancelled")).toBe(false);
+});
+
+it("revisits a reservation behind the cursor without advancing ordinary progress by its priority index", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [{ ...primary, model: "extra-model" }], reviewConcurrency: 1 };
+  const own = candidate(), document = await mocks.document(own.repo);
+  const input = createReviewInput(own, document, mocks.settings, { scan: null, observations: [] });
+  mocks.pendingList.mockResolvedValue([{ candidate: own, reviewer: primary, state: "reserved",
+    workKey: `ai1:${own.id}:${itemBindingHash(agentReviewBinding(own.id, input, primary))}` }]);
+  mocks.list.mockResolvedValue([{ ...candidate(), id: 51 }, { ...candidate(), id: 52 }]);
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Product", evidenceIds: ["product"] } });
+  const ctx = { ...context(), cursor: { sentinel: "keep", firstReviewPoolScan: {
+    id: 50, reviewed: false, updatedAt: "2026-10-27 00:00:00.000001", ceiling: 1000 } } };
+  await reviewCrawlCandidates(ctx);
+  expect(mocks.claim.mock.calls.map(([value]) => value.candidate.id)).toEqual([1, 51, 52]);
+  expect(ctx.save).toHaveBeenCalledExactlyOnceWith({ sentinel: "keep", firstReviewPoolScan: {
+    id: 52, reviewed: false, updatedAt: "2026-10-27 00:00:00.000001", ceiling: 1000 } });
+});
+
+it("rejects a stale priority binding without dispatching its duplicate page hint", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [{ ...primary, model: "extra-model" }], reviewConcurrency: 2 };
+  mocks.pendingList.mockResolvedValue([{ candidate: candidate(), reviewer: primary, state: "waiting", workKey: `ai1:1:${"0".repeat(64)}` }]);
+  await reviewCrawlCandidates(context());
+  expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.gateway).not.toHaveBeenCalled();
 });
 
 it("persists bounded scan progress past a blocked-model prefix and keeps unrelated cursor fields", async () => {

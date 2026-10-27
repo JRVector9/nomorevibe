@@ -5,7 +5,8 @@ import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
-  type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates } from "@/lib/crawl/agent-review-repository";
+  type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates,
+  listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
 import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
 import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -18,6 +19,8 @@ import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonA
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
 import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
+import { agentReviewBinding } from "../agent-review-ownership";
+import { itemBindingHash } from "@/lib/jobs/items/types";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -49,10 +52,16 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const pool = firstReviewers(settings, primary);
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
+  const pending = poolEnabled ? await listOwnPendingFirstReviewCandidates(settings, lease) : [];
+  if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
+    reserved: pending.filter(row => row.state === "reserved").length, waiting: pending.filter(row => row.state === "waiting").length });
   const after = poolEnabled ? firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan) : null;
-  const page = poolEnabled ? await listFirstReviewPoolCandidates(settings, Math.max(20, concurrency * 2), after) : null;
+  const pageLimit = Math.min(Math.max(20, concurrency * 2), 32 - pending.length);
+  const page = poolEnabled ? await listFirstReviewPoolCandidates(settings, pageLimit, after) : null;
   const candidates = page ? page.map(row => row.candidate) : await listReviewCandidates(settings, Math.max(20, concurrency * 2));
-  if (!candidates.length) {
+  const work = [...pending.map(hint => ({ candidate: hint.candidate, hint, position: undefined })),
+    ...candidates.map((candidate, index) => ({ candidate, hint: undefined, position: page?.[index].position }))];
+  if (!work.length) {
     if (after) { await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null }); return { done: false, continuation: "ready" }; }
     return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
@@ -64,10 +73,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
   const pausedModels = new Set<string>();
+  let lastPagePosition: NonNullable<typeof page>[number]["position"] | undefined;
   let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false, modelDeferred = false;
   const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= minimumCeiling + 2_000;
   const canAdmit = () => !modelDeferred && canStart();
-  const processCandidate = async (candidate: typeof candidates[number]) => {
+  const processCandidate = async (candidate: typeof candidates[number], hint?: PendingFirstReviewCandidate) => {
     if (!isReviewCandidate(candidate)) return;
     if (!await canStartLegacyAgentReview(lease, candidate.id)) {
       // Candidate-level refusal can mean a healthy foreign item. Only an actual
@@ -83,8 +93,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       : await chooseFirstReviewForCandidate({ candidate, document, settings, input });
     if (!reviewer) return;
     const { provider: reviewProvider, model } = reviewer;
+    if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model
+      || hint.workKey !== `ai1:${candidate.id}:${itemBindingHash(agentReviewBinding(candidate.id, input, reviewer))}`)) return;
     const key = firstReviewerKey(reviewer), ceiling = timeoutFor(reviewProvider);
-    const canStartModel = () => canStart() && !pausedModels.has(key) && remaining() >= ceiling + 2_000;
+    const canExecuteClaim = () => canStart() && remaining() >= ceiling + 2_000;
+    const canStartModel = () => canExecuteClaim() && !pausedModels.has(key);
     if (!canStartModel()) return;
     const preparation = await prepareAgentReview({ candidate, document, settings, input }, reviewer);
     const { verdict, hardReason, evidenceHold, provider } = preparation;
@@ -134,7 +147,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: claim.reason });
       return;
     }
-    if (!canStartModel()) {
+    if (!canExecuteClaim()) {
+      ctx.log("crawl.agent_review_claim_cancelled_before_transport", { provider: reviewProvider, model,
+        elapsedMs: Date.now() - startedAt, remainingMs: remaining(), modelPaused: pausedModels.has(key),
+        globalDeferred: modelDeferred, stageBlocked });
       // CLI 는 spawn 하지 않은, gateway 는 fetch 를 부르지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
       if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
       else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch, prepared);
@@ -164,7 +180,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     ownershipPoll.unref?.();
     try {
       // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
-      if (!canStartModel()) controller.abort();
+      // A peer's local capacity wait stops new admission, never this committed claim.
+      if (!canExecuteClaim()) controller.abort();
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
       const dispatch = claim.dispatch;
       const call = prepared;
@@ -206,12 +223,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   };
   const lanes = Array.from({ length: concurrency }, async () => {
     try {
-      while (next < candidates.length && admitted < MAX_STARTS && canAdmit()) {
-        const candidate = candidates[next++];
+      while (next < work.length && admitted < MAX_STARTS && canAdmit()) {
+        const { candidate, hint, position } = work[next++];
+        if (position) lastPagePosition = position;
         if (visited.has(candidate.id)) continue;
         visited.add(candidate.id);
         admitted++;
-        await processCandidate(candidate);
+        await processCandidate(candidate, hint);
       }
     } catch (error) {
       stopped = true;
@@ -224,7 +242,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (failure) throw failure.reason;
   // Advance only examined hints. A paused model prefix must not repeat forever on later ticks.
   // This saves no provider authority, and preserves unrelated durable cursor fields.
-  if (page && next > 0) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: page[next - 1].position });
+  if (lastPagePosition) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: lastPagePosition });
+  else if (page && !page.length && after) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null });
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
   if (modelDeferred || pausedModels.size) return { done: false, deferred: "model_capacity" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {

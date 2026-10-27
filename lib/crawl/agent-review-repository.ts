@@ -14,7 +14,7 @@ import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from 
 import type { PreparedAi1GatewayCall } from "./agent-review-gateway";
 import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract, type ReviewCliProvider } from "./review-cli-call";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts, secondReviews,
-  agentRepositoryScans, agentRepositoryObservations, jobs,
+  agentRepositoryScans, agentRepositoryObservations, jobs, modelCapacityRequests,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type DecisionReason, type ProductStatus } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
@@ -24,6 +24,7 @@ import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplayFirstRevie
 import { recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { claimItemLease, readItemStage, assertItemLease, releaseItemLease, renewItemLease } from "@/lib/jobs/items/repository";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
+import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
@@ -619,6 +620,72 @@ export async function listFirstReviewPoolCandidates(settings: CrawlSettings, lim
       ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
     .limit(Math.max(1, Math.min(32, limit)));
   return rows.map(({ candidate, ...position }) => ({ candidate, position }));
+}
+
+export type PendingFirstReviewCandidate = {
+  candidate: CrawlCandidate; reviewer: FirstReviewer; workKey: string; state: "reserved" | "waiting";
+};
+
+/** Revisit this live legacy owner's unstarted queue before walking a new keyset page.
+ * These bounded hints grant no reservation/dispatch authority and never expire or cancel a row. */
+export async function listOwnPendingFirstReviewCandidates(settings: CrawlSettings, job: JobLease): Promise<PendingFirstReviewCandidate[]> {
+  if (settings.firstReviewAdditional === undefined || currentReplayDb()) return [];
+  const role = roleLeaseFromEnv("reviewer", process.env);
+  if (!role) return [];
+  const lease = structuredClone(job), pool = firstReviewers(settings, firstReviewer(settings)).filter(row => row.provider === "abcllm");
+  if (!pool.length) return [];
+  return onPrimary(() => db.transaction(async tx => {
+    const control = await lockModelCapacityCallerControl(tx);
+    if (control.mode !== "open") return [];
+    const stages = await lockPipelineInputStages(tx);
+    if ((await readItemStage(tx, stages.ai1)).mode !== "legacy") return [];
+    await assertAgentReviewJob(tx, lease);
+    const [currentJob] = await tx.select({ name: jobs.name }).from(jobs).where(and(eq(jobs.name, lease.name),
+      eq(jobs.leaseToken, lease.token), sql`${jobs.requestedVersion} >= ${lease.requestedVersion}`,
+      sql`${jobs.processedVersion} < ${lease.requestedVersion}`));
+    if (!currentJob) return [];
+    const byModel: Array<Array<{ id: number; reviewer: FirstReviewer; workKey: string; state: "reserved" | "waiting" }>> = [];
+    for (const reviewer of pool) {
+      const route = control.policy?.routes.find(row => row.routeId === "crawl-agent-review"
+        && row.provider === reviewer.provider && row.model === reviewer.model);
+      if (!route) continue;
+      const rows = await tx.select({ workKey: modelCapacityRequests.workKey, logicalKey: modelCapacityRequests.logicalWorkKey,
+        state: modelCapacityRequests.state }).from(modelCapacityRequests).where(and(
+        eq(modelCapacityRequests.ownerInstanceId, role.instanceId), eq(modelCapacityRequests.ownerBootId, role.bootId),
+        eq(modelCapacityRequests.class, "first"), eq(modelCapacityRequests.pool, "reviewer"),
+        eq(modelCapacityRequests.routeId, "crawl-agent-review"), eq(modelCapacityRequests.provider, reviewer.provider),
+        eq(modelCapacityRequests.model, reviewer.model), eq(modelCapacityRequests.epoch, control.epoch),
+        eq(modelCapacityRequests.revision, control.revision), eq(modelCapacityRequests.policyHash, control.policyHash!),
+        eq(modelCapacityRequests.providerBudgetId, route.providerBudgetId), eq(modelCapacityRequests.groupId, route.groupId),
+        sql`((${modelCapacityRequests.state} = 'reserved' AND ${modelCapacityRequests.reservedUntil} > clock_timestamp()
+          AND ${modelCapacityRequests.token} IS NOT NULL) OR (${modelCapacityRequests.state} = 'waiting'
+          AND ${modelCapacityRequests.queueUntil} > clock_timestamp() AND ${modelCapacityRequests.token} IS NULL))`,
+        sql`${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.dispatchBinding} IS NULL
+          AND ${modelCapacityRequests.dispatchBindingHash} IS NULL AND ${modelCapacityRequests.dispatchedAt} IS NULL
+          AND ${modelCapacityRequests.terminalEvidence} IS NULL AND ${modelCapacityRequests.terminalEvidenceHash} IS NULL
+          AND ${modelCapacityRequests.settledAt} IS NULL`,
+        sql`EXISTS (SELECT 1 FROM role_leases own_role WHERE own_role.role = 'reviewer'
+          AND own_role.owner_instance_id = ${role.instanceId} AND own_role.owner_boot_id = ${role.bootId}
+          AND own_role.owner_release = ${role.release} AND own_role.epoch = ${role.epoch}
+          AND own_role.lease_until > clock_timestamp())`,
+      )).orderBy(sql`CASE WHEN ${modelCapacityRequests.state} = 'reserved' THEN 0 ELSE 1 END`,
+        asc(modelCapacityRequests.queueOrdinal)).limit(4);
+      byModel.push(rows.flatMap(row => {
+        const match = /^ai1:([1-9][0-9]*):[a-f0-9]{64}$/.exec(row.workKey), id = match ? Number(match[1]) : NaN;
+        return Number.isSafeInteger(id) && row.logicalKey === `ai1:${id}` && (row.state === "reserved" || row.state === "waiting")
+          ? [{ id, reviewer, workKey: row.workKey, state: row.state }] : [];
+      }));
+    }
+    // At most four per model (twelve total); alternate models inside each state.
+    const ordered = (["reserved", "waiting"] as const).flatMap(state => Array.from({ length: 4 }, (_, index) =>
+      byModel.flatMap(rows => rows.filter(row => row.state === state)[index] ?? [])).flat());
+    if (!ordered.length) return [];
+    const candidates = await tx.select().from(crawlCandidates).where(and(inArray(crawlCandidates.id, ordered.map(row => row.id)),
+      reviewCandidatePredicate(settings, { readyOnly: true })));
+    const byId = new Map(candidates.map(candidate => [candidate.id, candidate]));
+    return ordered.flatMap(row => { const candidate = byId.get(row.id); return candidate ? [{ candidate, reviewer: row.reviewer,
+      workKey: row.workKey, state: row.state }] : []; });
+  }));
 }
 
 /** Read-only admission, never a substitute for the later claim/result transaction. */

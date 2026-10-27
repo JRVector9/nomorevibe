@@ -1,3 +1,29 @@
+# AI1 자체 예약 재방문·동일 모델 local pause 수정 — 2026-10-27, 실행 검사 없음
+
+목표: 배포696 이후 AI1이 현재 owner의 이미 예약된 후보를 재방문하지 않아 예약만 만료되는 경로와, peer lane의 모델별 capacity 대기가 이미 committed된 같은 모델 claim까지 취소하던 경로를 좁게 수정한다. WT `/Users/jr/Desktop/projects/nomorevibe-ai1-owned-reservation-priority-20261027`, branch `codex/ai1-owned-reservation-priority-20261027`, base/main `2e7d8acac2abcb44bcfe00acb03a45661e09b15a`이다. immutable OP·원 dirty WT·운영 설정은 수정하지 않았다.
+
+근거(root의 실제 읽기): Supa AI1 첫 attempt는 12:54:28.392→12:54:29.433 UTC에 cancelled되었다. 1.041초이므로 40초 tick 예산 소진만으로 설명되지 않으며 `pausedModels`를 post-claim에 재사용하던 source와 일치한다. 별도 Supa 요청은 queued 12:57:18.367→reserved 12:59:10.399→reservation_expired 12:59:40.512 UTC이고 dispatch 이벤트·모델 attempt가 0이었다. cursor는 앞으로 이동하고 있었다. 이 root 관측을 agent의 새 운영 조회나 처리량 검증으로 부르지 않는다.
+
+완료·설계: 명시적 AI1 pool에서 현재 reviewer owner/boot/release/role epoch/live lease, 현재 legacy job token/requestedVersion의 미처리 범위, capacity generation/route/provider/group와 live TTL·unbound 상태를 만족하는 자체 reserved→waiting 힌트만 모델별4개·전체최대12개 읽는다. 모델별 교대로 합치며 ordinary page까지 합친 조회 힌트는 최대32개, 기존 동시성/MAX_STARTS16/40초 tick/full24초 timeout은 유지한다. `role_leases`는 legacy·versioned job batch 모두 같은 owner 저장소이다. AI1 item stage legacy 조건을 job batch legacy 조건으로 확장하지 않는다.
+
+priority는 권한이 아니며 현재 문서/input/reviewer를 다시 읽고 `agentReviewBinding`의 workKey가 일치해야 원래 claim/coordinator로 보낸다. 기존 candidate/item/job/native/epoch/drain/unknown·동일 모델 독립성 검증을 유지한다. cursor는 ordinary page에서 실제로 살펴본 위치로만 옮기고 다른 durable 필드는 보존한다. `pausedModels`는 신규 admission에만 적용하며 committed claim은 기존 stopped/stage/abort/ctx budget/동일 timeout 여유 조건으로 실행한다. `modelDeferred`는 원래 신규 admission 위치를 유지한다. 시작 전 취소에는 경과/잔여시간과 safe boolean 진단 로그만 추가했다.
+
+수정 파일: `lib/crawl/agent-review-repository.ts`, `lib/crawl/jobs/agent-review.ts`, `tests/agent-review-job.test.ts`, `tests/integration/agent-review-model-capacity.test.ts`, 이 인계. schema/grant/모델/용량/설정/UI 변경은 없다.
+
+검증·실패 접근: source 자체·독립 리뷰와 회귀 source를 준비했다. 로컬 tests/lint/typecheck/build/compile/provider probe와 운영 I/O는 사용자 지시로 실행하지 않았다. `git diff --check` 실제 EXIT0(최종 문서 추가 전)이다. 회귀는 post-commit/pre-transport local pause race, cursor 뒤 예약 우선 재방문과 ordinary cursor, stale input hint, 실제 SQL own/foreign boot/current generation/TTL/요청 version·무변경을 다룬다. claim 이후 `!modelDeferred`를 새로 추가하는 초안은 원래 admitted-lane 의미를 바꾸므로 폐기했다. tick 상수만 높이거나 모델 timeout/품질·용량 한도를 낮추는 접근은 쓰지 않았다.
+
+남은 작업: scoped diff freeze 독립 리뷰→최종 `git diff --check`→root 승인 범위 commit/push/PR→새 exact-head 필수 GitHub CI. 실제 CI 성공 전 통과를 주장하지 않는다. root가 최신 base/병합/공식 배포/운영 readback을 수행한다.
+
+다음 정확 명령:
+
+```sh
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-owned-reservation-priority-20261027 diff --stat
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-owned-reservation-priority-20261027 diff --check
+git -C /Users/jr/Desktop/projects/nomorevibe-ai1-owned-reservation-priority-20261027 status --short
+```
+
+---
+
 # PR696 두 번째 CI 수정 — 2026-10-27 KST17:25 root
 
 CI40472373532는 type/lint/build/unit/ledger/images 및 integration5개가 실제통과했고 integration4의새회귀1개만실패했다. agent-review-records removing-extra-reviewer는 fixture()가 observe인 상태에서 enforce전용 handOffExhaustedFirstReviews 결과1을기대한 테스트조건 오류다. 새회귀의fixture를 enforce로명시했다. productionguard를완화하지않았고lib/scripts트리변경0이다. 로컬test/compiler/lint/build0, gitdiffcheck실제EXIT0. 다음새head필수CI를확인한다.
