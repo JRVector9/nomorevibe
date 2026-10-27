@@ -19,6 +19,8 @@
 
 PR691 첫 CI40453659689에서 build/lint/두 이미지 success, typecheck는 상태 화면의 새 discovery/fetch 라벨 누락, unit2는 수동 fetch 예산/감독 자식 풀의 옛 기대값 두 건으로 failure였다. 루트가 `CrawlerActivity.tsx`, `manual-job-budget.test.ts`, `worker-supervisor.test.ts`를 해당 새 설정에 맞췄다. 로컬 수동 검사는 여전히 미실행이며 후속 CI 성공을 기다린다. 실패 원본은 private `B/ci691-{typecheck,unit2}.private.log`에 보존했다.
 
+후속40453993018의 typecheck/build/lint/두 이미지는 success였으나 단위 검사는 풀 총합/worker-runtime 옛 기대값 두 건과 기존25ms 타이밍에 의존한 동시성 검사로 실패했다. 루트는 총합27·fetch120초/seed30초 기대값을 맞추고, HTTP 첫 파동의 실제12개 진입을 동기화해 시간 부하와 무관하게 GitHub 직렬/페이지 병렬을 검증하도록 했다. 로컬 실행 없이 다음 필수 CI를 기다린다. 이전 실패 로그는 private `B/ci691b-*.private.log`.
+
 아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
 
 # 현재 — 2026-10-27 KST12:09, PR689 병합·운영 반영·10분47초 재검증 완료
