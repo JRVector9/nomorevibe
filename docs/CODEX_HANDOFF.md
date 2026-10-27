@@ -1,3 +1,39 @@
+# 2026-10-27 Grok 반복 알림 수정: 최종 코드 검토 완료, PR/운영 설치 대기
+
+실제 native Grok 코드 세션 `01a17b2c-9d73-7062-8c7b-b917ae23eb5f`는 12turn 후 end_turn/EXIT0. notifier와 새 회귀4개를 작성했고 root가 실제 diff·private 최종 보고서를 대조했다. 아래 STATE의 `code/REPORT.private.md`가 결과다. 수동 test/lint/typecheck/build/컴파일·합성 모델 호출·시험 Telegram은 실행하지 않았다. `git diff --check` 실제 성공. 자동 필수 CI·병합·Oracle 소스 설치는 아직 완료 전이다.
+
+라우팅 Grok는 초기/첫 focused/report-only 실행이 max_turn_requests로 끝났으며, 최종 응답 전용 continuation은 end_turn/EXIT0. `routing/REPORT.private.md`는 실제 최종 응답에서 추출했다. Grok 준비 helper는 운영 apply하지 않았다. root의 두 호스트 apply 영수증과 Grok read-only prepare, root 02:45:24/27Z 별도 재읽기가 모두 네 링크 해제·heartbeat 연결 유지·정의/다른 링크 보존을 확인했다. root가 링크만 제거했으며 monitor 자체를 삭제한 것이 아니다.
+
+현 notifier는 source SHA8d5b190c…/PID3224044다. 최신 02:46:57Z 사전 읽기에서는 기존 정상 표본으로 incidents가 비워져 있었다. 따라서 설치 시 "이전 pipeline sent가 항상 존재"한다고 가정하지 않는다. 최신 자연 업무 관측과 sent 상태를 그대로 보존한다. root 준비 operator `STATE/root-watchdog-rollout.py`는 merged40SHA에서 소스를 읽어 원 SHA/config SHA를 확인한 뒤 원자 교체·watchdog1개 restart한다. install.once는 아직 미생성. `observe`는 읽기 전용이다. 웹/워커18앱 재배포·이전 recovery/deploy/observer once 재실행 금지.
+
+PR689, 코드 커밋bd36a09f. GitHub 필수 자동 CI 진행 중이며 최신 head의 성공 후 병합한다. 다음: PR 필수 최신base CI→merge→mergedSHA로 source install 단1회→새 PID/source/config/state와 실제 ≥3분 cycle 및 Kuma 연결 재읽기→최신 완료기록. 자세한 원인/운영 적용 경계는 `docs/operations/2026-10-27-alert-notification-fix.md`.
+
+아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
+
+# 진행 중 — 2026-10-27 KST11:38, Grok 알림 반복 수정·중복4경로 운영 반영
+
+사용자가 원인보고만으로는 해결되지 않았다고 확인하고 실제 native Grok CLI로 수정/운영반영/결과검토를 지시했다. 이번 objective는 반복 알림 해결이며 번역 backlog 품질기준·모델·DB큐/용량 정책을 바꾸지 않는다. 스킬/수동 테스트·lint/compile/build·합성 모델 호출 금지 유지. 필수 GitHub 자동CI는 유지한다.
+
+- 새 WT `/Users/jr/Desktop/projects/nomorevibe-grok-alert-spam-fix-20261027`, branch `codex/grok-alert-spam-fix-20261027`, origin/mainf4837041. 원 사용자 dirtyWT·직전 조사WT·pinned686/687 운영자 WT는 그대로.
+- PRIVATE `STATE=/Users/jr/.local/state/nomorevibe-reliability-20261025/grok-alert-spam-fix-20261027`(0700/0600). nativeGrok code58193 진행 중, 소스77줄 patch까지 작성(아직 root최종검토/자동CI/병합/설치 전); routing40287는18turn상한, 후속27771는검토가능helper 준비중(아직apply권한 없음). Grok 결과 확인 후 root가 검토한다. 새 codex subagent 없음.
+- **실제 운영 중복 경로 적용 완료**: root가 두 Kuma2.3.2 설치 소스 `Monitor.sendNotification`→`getNotificationList`가 매 전송마다 DB association을 다시 SELECT함을 직접 확인(두 호스트 SHA20e3d6e 동일). API자격 미발견으로 liveSQLite 일괄수정 금지라는 초기 자체가정을 이 증거로 좁혀, 정확한 notification association만 guarded BEGIN IMMEDIATE로 제거했다. Kuma/worker재시작·전역기본알림변경·보안우회 없음.
+- mini02:36:33.286Z 대상72/73 notification1 각1행 삭제·readback 성공, 링크42→40/모니터42그대로. Oracle02:38:00.209Z 대상1/2 각1행 삭제·readback 성공, 링크3→1/모니터3그대로. mini74/Oracle3 생존알림 link1 보존. 전체 monitor행/notification정의/비대상links unchanged 실제검증. 두 apply once **소비됨, 재실행 금지**. helper `root-kuma-link.py/js`, plan/영수증 `root-kuma-{mini,oracle}-{prepare,apply}.private.json`.
+- 실제 Oracle 별도알림 경로 configuredtrue·serviceactive·NRestarts0/1프로세스, 기존 pipeline incident senttrue를 확인하고 중복4개만 분리했다. 장애별 directTelegram 알림은 그대로이며 수신테스트 메시지는 보내지 않았다. 잠깐 회복 시 sent기록을 지우는 문제의600초 연속회복 코드는 아직 설치 전이다.
+- root `scripts/ops/deployment_scope.py`에 `incident_notifications.py`의 정확한 Oracle별도설치 경계만 추가하고 기존 scope test목록을 확장했다. .dockerignore에 scripts/ops 제외, Node production caller없음 확인. 웹/워커18앱은 다시 배포하지 않는다. Python모듈은 Oracle 설치+watchdog1개 controlledrestart로 반영한다.
+
+남은 작업: nativeGrok code/tests/REPORT 완료→root review(명시적정상만연속600s/간격150s/unknown·clock rollback/reset/재시작보존/unsent전송)→commitPR/필수 자동CI/merge→Oracle notifier파일만 installedoldSHA8d5b190c…에서 새merged소스로 CAS교체, 설정/상태보존, watchdog1개 restart→실제해시/PID/정상cycle/보존된sent/latch/두Kuma추가readback 확인. 수동테스트 실행금지. 아직 commit/CI/merge/sourceinstall을 완료라고 주장하지 않는다.
+
+Oracle root검토 연결: public onetwoday SSH는간헐unreachable이어서 기존 알려진키를 HostKeyAlias로 검증하는 Tailnet경로 사용. `ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=yes -o HostKeyAlias=161.33.31.250 -i /Users/jr/.ssh/id_rsa_oci_osaka ubuntu@onetwoday.tail02799e.ts.net` 성공(hostnameonetwoday/active 확인). Source `/opt/nomorevibe-watchdog/incident_notifications.py` root0644. Config `/etc/nomorevibe-watchdog/config.json`와 state `/var/lib/nomorevibe-watchdog/state.json`은 건드리지 않는다. 기존 소스·configSHA·incident beforeimage는 `STATE/root-watchdog-before.private.json`에 보존. 민감값 stdout/Git금지.
+
+정확한 다음 읽기:
+```bash
+git -C /Users/jr/Desktop/projects/nomorevibe-grok-alert-spam-fix-20261027 diff --stat
+# Grok 보고서가 생성되면 PRIVATE로 읽고 실제diff와 대조
+sed -n '1,220p' /Users/jr/.local/state/nomorevibe-reliability-20261025/grok-alert-spam-fix-20261027/code/REPORT.private.md
+```
+
+아래는 이전 완료 단계 기록이다. 위 진행상태가 우선한다.
+
 # 현재 인계 — 2026-10-27 KST08:37, PR687 전체18 배포·접수/6잡 원복 완료
 
 **운영 코드50be0d706b9562067a44867d239d0362bc83892b, capacity OPEN 감사20533, text6잡 모두 재개 감사20534–20539. DeepSeek8dc withdrawn 감사20523. 유지보수·회수·배포·종료/복원 once를 다시 실행하지 않는다.**
