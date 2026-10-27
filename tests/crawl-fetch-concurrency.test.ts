@@ -23,7 +23,7 @@ vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/net/fetch", () => ({ fetchPage: mocks.page }));
 vi.mock("@/lib/jobs/control", () => ({ requestJob: mocks.request }));
 
-const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
+const { fetchCrawlDocuments, FETCH_CONCURRENCY } = await import("@/lib/crawl/jobs/fetch");
 
 const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
 const entry = (i: number): FetchClaim => ({ id: i + 1, repo: `acme/app-${i}`, signal: "test", builder: null,
@@ -52,8 +52,8 @@ beforeEach(() => {
   mocks.page.mockImplementation(async (url: string) => ({ status: 200, finalUrl: url, html: "" }));
 });
 
-it("페이지는 최대 셋까지 함께 받고, GitHub에는 하나씩 보낸다", async () => {
-  const entries = Array.from({ length: 7 }, (_, i) => entry(i));
+it("페이지는 동시성까지 함께 받고, GitHub에는 하나씩 보낸다", async () => {
+  const entries = Array.from({ length: FETCH_CONCURRENCY + 1 }, (_, i) => entry(i));
   mocks.dequeue.mockResolvedValueOnce(entries).mockResolvedValue([]);
   const github = gauge();
   const pages = gauge();
@@ -68,8 +68,8 @@ it("페이지는 최대 셋까지 함께 받고, GitHub에는 하나씩 보낸�
 
   expect(await fetchCrawlDocuments(context())).toEqual({ done: true });
 
-  expect(mocks.save).toHaveBeenCalledTimes(7);
-  expect(pages.max).toBe(3);
+  expect(mocks.save).toHaveBeenCalledTimes(FETCH_CONCURRENCY + 1);
+  expect(pages.max).toBe(FETCH_CONCURRENCY);
   expect(github.max).toBe(1);
   expect(mocks.defer).not.toHaveBeenCalled();
   // 판정 요청은 각 실제 source 저장 transaction이 소유하며 handler가 중복 요청하지 않는다.

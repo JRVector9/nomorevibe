@@ -116,6 +116,10 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-thumbnail-refresh') return { ...options, budgetMs: 40_000 };
   // Bluesky 화제 — 요청 30번 상한·0.5초 간격(lib/social/bluesky-talk.ts). 기본 25초면 다시 묻기를 다 못 한다
   if (name === 'bluesky-talk') return { ...options, budgetMs: 40_000 };
+  // 검색 10페이지와 커서 저장. 감독 잡 상한 180초 안이며 전용 줄이라 원본 확보를 기다리지 않는다.
+  if (name === 'crawl-seed') return { ...options, budgetMs: 30_000 };
+  // 홈페이지가 10초대면 25초 예산은 두 파동에서 끝난다. 120초면 전용 줄이 쉬지 않고 이어서 받는다. 감독 상한 180초 안.
+  if (name === 'crawl-fetch') return { ...options, budgetMs: 120_000 };
   return options;
 }
 

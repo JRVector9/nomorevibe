@@ -12,7 +12,8 @@ export function withDbDeadline<T>(deadlineAt: number, load: () => Promise<T>): P
   return dbDeadlineScope.run(deadline, load);
 }
 
-const ROLE_POOL_MAX = { translation:3, "product-health":3, "site-evidence":3, "official-news":3, web: 8, crawler: 4, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
+// crawler 8은 host-budget workerMax.crawler 와 같다. crawl-fetch 동시성(12)보다 작다 — HTTP 중에는 연결을 잡지 않는다.
+const ROLE_POOL_MAX = { translation:3, "product-health":3, "site-evidence":3, "official-news":3, web: 8, crawler: 8, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;

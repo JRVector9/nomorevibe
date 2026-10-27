@@ -58,8 +58,13 @@ const discoverSchema = z.object({
   /** 최근 N일 이내의 커밋만 본다 */
   windowDays: z.number().int().min(1).max(3650),
   sort: searchSortSchema,
-  /** 한 틱에 볼 검색 페이지 수. rate limit(30회/분)을 고려해 낮게 유지한다 */
+  /** 한 틱에 볼 검색 페이지 수. 검색 신원 하나의 분당 30회 안에서 고른다. */
   pagesPerTick: z.number().int().min(1).max(10),
+  /**
+   * 시간당 새 프론티어 상한. 5분 창으로 나눠 적용한다(3000이면 창마다 250).
+   * 저장값에 없으면 기본 3000이 읽기에 채워진다. 심사·발행 속도를 올리지 않는다.
+   */
+  maxNewPerHour: z.number().int().min(60).max(3600).default(3000),
   /**
    * Show HN 수집.
    *
@@ -634,6 +639,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     windowDays: 3,
     sort: "recent",
     pagesPerTick: 10,
+    maxNewPerHour: 3000,
     showHn: { enabled: true, priority: 120 },
   },
   judge: {

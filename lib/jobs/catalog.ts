@@ -7,16 +7,17 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation";
+export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
-   * 검색 쿼터는 토큰 단위(30회/분 = 시간당 1,800페이지)라 워커를 늘려도 늘지 않는다.
-   * 병목은 이 주기였다 — 15분 × 10페이지면 시간당 40페이지로 허용량의 2.2%만 썼다.
-   * 3분으로 당겼더니 하루 5천 건이 들어와 1,287건이 자동 발행됐다 — 사람이 품질을 볼
-   * 겨를이 없었다. 수집 속도는 발행 속도이기도 하다. 10분으로 되돌린다.
+   * 검색 한도는 인증된 GitHub 사용자 또는 App 설치마다 분당 30회다. 같은 사용자의 토큰을
+   * 더해도 한도는 늘지 않는다. 수집을 발행과 같이 늦추던 10분 주기를 걷는다 — 심사·발행이
+   * 500건·5분 또는 1,000건이면 기존 입장이 검색을 줄이고, discover.maxNewPerHour 가 새
+   * 프론티어를 시간당 3,000건(5분마다 250건)에서 막는다. 1분·전용 줄은 검색 페이지만 늘린다.
+   * GitHub 429/403 1차·2차 한도는 그대로 이번 틱을 미룬다.
    */
-  { name: "crawl-seed", role: "crawler", intervalMs: 10 * 60_000 },
+  { name: "crawl-seed", role: "crawler", intervalMs: 60_000, lane: "discovery" },
   // 하루 약 123건이 올라온다. 30분이면 한 번에 100건 상한에 걸릴 일이 없다.
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
   // HN 화제 글 기록 — 최근 72시간·10점 이상 GitHub 글을 한두 요청으로 다시 읽는다(lib/social/hn-talk.ts)
@@ -27,7 +28,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 보통 첫 쪽(100건) 안팎이고, 다시 묻기 300건이면 72시간 창의 글을 8시간 안팎에 한 번씩 다시 본다(공개 24시간 창 안)
    */
   { name: "bluesky-talk", role: "crawler", intervalMs: 2 * 60 * 60_000 },
-  { name: "crawl-fetch", role: "crawler", intervalMs: 60_000 },
+  // 원본 확보는 별·README 갱신과 겹치지 않게 전용 줄에서 돈다. GitHub 같은 origin 직렬은 잡 안에 남긴다.
+  { name: "crawl-fetch", role: "crawler", intervalMs: 60_000, lane: "fetch" },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
   // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다

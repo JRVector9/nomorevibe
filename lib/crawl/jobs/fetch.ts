@@ -30,21 +30,25 @@ import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
  * 실패는 항목별로 남기고, 한 항목의 예외가 묶음의 나머지 claim을 붙잡지 않게 한다.
  */
 
-/** 한 번에 꺼내는 프론티어 항목 수. 예산이 남으면 다음 묶음을 또 꺼낸다 */
-const BATCH = 10;
+/** 한 번에 꺼내는 프론티어 항목 수. 예산이 남으면 다음 묶음을 또 꺼낸다. 동시성 두 파동분. */
+const BATCH = 24;
 
 /**
  * 동시에 처리하는 항목 수.
  *
- * crawler 역할의 DB 풀은 4연결이다(lib/db/pool.ts). 러너의 리스 갱신이 하나를 쓰고, 항목은
- * HTTP 동안 DB를 잡지 않고 짧은 조회·저장 트랜잭션 때만 하나씩 쓰므로 셋이면 풀을 기다리지 않는다.
+ * 홈페이지 대기가 10.5초일 때 8이면 시간당 약 2,700건이라 목표 3,000에 닿지 않는다.
+ * 12면 같은 가정에서 시간당 약 4,100건이다. 이 계산은 운영 측정값이 아니다. GitHub API 는 아래
+ * origin 직렬이라 이 숫자가 core 호출을 병렬로 만들지 않는다.
+ * crawler DB 풀은 8연결이다(lib/db/pool.ts, host-budget workerMax). HTTP 동안에는 연결을
+ * 잡지 않고, 짧은 저장이 몰리면 풀 대기(DB_POOL_WAIT_MS)로 넘긴다. 리스 갱신과 다른 줄이
+ * 그 8연결을 같이 쓴다.
  */
-const CONCURRENCY = 3;
+export const FETCH_CONCURRENCY = 12;
 
 /**
  * GitHub API의 origin. "같은 origin에는 한 번에 하나"를 GitHub에도 건다 — GitHub은 2차 한도를
  * 피하려면 한 토큰의 요청을 동시가 아니라 차례로 보내라고 안내하고, core 쿼터는 모든 수집 잡이
- * 나눠 쓴다(github-quota.ts). 페이지 대기가 길어서 GitHub을 차례로 보내도 셋이 함께 도는 효과는 남는다.
+ * 나눠 쓴다(github-quota.ts). 페이지 대기가 길어서 GitHub을 차례로 보내도 여러 칸이 페이지를 함께 받는다.
  */
 const GITHUB_ORIGIN = "https://api.github.com";
 
@@ -176,7 +180,7 @@ async function fetchBatch(
     }
   };
 
-  const lanes = await Promise.allSettled(Array.from({ length: Math.min(CONCURRENCY, entries.length) }, lane));
+  const lanes = await Promise.allSettled(Array.from({ length: Math.min(FETCH_CONCURRENCY, entries.length) }, lane));
 
   const unfinished = entries.filter((entry, index) => index >= batch.next || batch.giveBack.has(entry));
   if (unfinished.length > 0) await crawl.deferFrontier(unfinished, batch.retryAt ?? undefined);
@@ -343,7 +347,7 @@ type OneAtATime = ReturnType<typeof originQueue>;
 /**
  * 같은 origin에는 한 번에 하나만 보낸다.
  *
- * 셋이 함께 돌면 owner.github.io 아래 레포별 배포물처럼 한 사이트에 줄지어 있는 항목을
+ * 여러 칸이 함께 돌면 owner.github.io 아래 레포별 배포물처럼 한 사이트에 줄지어 있는 항목을
  * 동시에 두드리게 된다. 남의 서버에 몰아서 보내지 않도록 origin마다 줄을 세운다. 줄은 이
  * 실행 안에서만 유효하다 — 다른 프로세스까지 맞추려고 DB를 쓰지는 않는다.
  */

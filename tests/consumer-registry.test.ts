@@ -40,7 +40,7 @@ it('declares a registered consumer pair under its parent role with the registry 
   expect(hostDbBudgetCatalog(declared)).toMatchObject({ totalClients: 3, processes: [
     { kind: 'role-parent', role: 'crawler', count: 1, primaryMax: 1, readMax: 0, consumer: 'fixture-scan' },
     { kind: 'worker', role: 'crawler', count: 1, primaryMax: 2, readMax: 0, consumer: 'fixture-scan' }] });
-  expect(hostDbBudgetCatalog({ ...declared, roles: ['crawler'], rolloutCopies: 2 }).totalClients).toBe(2 * (1 + 4) + 2 * (1 + 2));
+  expect(hostDbBudgetCatalog({ ...declared, roles: ['crawler'], rolloutCopies: 2 }).totalClients).toBe(2 * (1 + 8) + 2 * (1 + 2));
   expect(hostDbBudgetCatalog({ ...policy, consumers: [] })).toEqual(hostDbBudgetCatalog(policy));
 });
 it('rejects unknown, duplicated or AI rosters in the general consumer field', () => {

@@ -10,6 +10,8 @@ describe("저장 바의 바뀐 항목", () => {
   it("값·스위치·정렬을 화면 순서대로 적는다", () => {
     expect(describeChanges(before, { ...before, pagesPerTick: "12", sort: "relevance" }))
       .toEqual(["정렬 최신 활동순 → 관련도", "틱당 페이지 10 → 12"]);
+    expect(describeChanges({ ...before, maxNewPerHour: "3000" }, { ...before, maxNewPerHour: "2500" }))
+      .toEqual(["시간당 새 저장소 3000 → 2500"]);
     // 꺼진 체크박스는 폼에서 값이 빠진다
     const off = Object.fromEntries(Object.entries(before).filter(([key]) => key !== "excludeForks"));
     expect(describeChanges(before, off)).toEqual(["포크 제외 켬 → 끔"]);
@@ -31,9 +33,10 @@ describe("저장 바의 바뀐 항목", () => {
 });
 
 describe("크롤 설정 계산", () => {
-  it("틱당 페이지를 시간당 검색 수와 한도 대비로 바꾼다 — 수집은 10분마다", () => {
-    expect(searchUsage(10)).toEqual({ perHour: 60, percent: "3.3%" });
-    expect(searchUsage(2)).toEqual({ perHour: 12, percent: "0.7%" });
+  it("틱당 페이지를 시간당 검색 수와 한도 대비로 바꾼다 — 수집은 1분마다, 검색 신원 하나", () => {
+    expect(searchUsage(10)).toEqual({ perHour: 600, percent: "33.3%" });
+    expect(searchUsage(6)).toEqual({ perHour: 360, percent: "20.0%" });
+    expect(searchUsage(2)).toEqual({ perHour: 120, percent: "6.7%" });
   });
 
   it("코드 기본값에 있는데 저장된 목록에 없는 것만 고른다", () => {

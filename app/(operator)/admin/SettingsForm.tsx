@@ -198,7 +198,9 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
             <p className={hintClass}>뒤처지면 최신 구간부터 확인하고 미완 구간도 이어 갑니다. 관련도는 검색어와의 관련성을 우선합니다.</p>
           </div>
           <NumberField id="pagesPerTick" label="틱당 페이지" defaultValue={discover.pagesPerTick} min={1} max={10} onValue={setPages}
-            hint={<span className="font-semibold text-up">{SEED_INTERVAL_MINUTES}분마다 {pages}회 → 시간당 {usage.perHour}회 · 한도의 {usage.percent}</span>} />
+            hint={<span className="font-semibold text-up">{SEED_INTERVAL_MINUTES}분마다 {pages}회 → 시간당 {usage.perHour}회 · 검색 신원 하나의 {usage.percent}</span>} />
+          <NumberField id="maxNewPerHour" label="시간당 새 저장소" defaultValue={discover.maxNewPerHour} min={60} max={3600}
+            hint="5분 창으로 나눈다. 3000이면 창마다 250건까지 새로 넣는다. 심사 대기가 500건·5분 또는 1,000건이면 더 줄인다." />
         </div>
       </SettingsCard>
 

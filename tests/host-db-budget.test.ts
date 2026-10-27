@@ -36,10 +36,10 @@ it('counts role parents including their supervisors once, separate worker pools,
 it('includes web primary plus READ, all nine role children, monitor, connect agent and migration', () => {
   const result = hostDbBudgetCatalog({ ...policy, host: 'm3', roles: ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', ...policy.roles],
     schedulerReplicas: 2, webReplicas: 1, webReadReplica: true, connectAgent: true, migrationProcesses: 1 });
-  expect(result.primaryClients).toBe(55);
+  expect(result.primaryClients).toBe(59);
   expect(result.replicaClients).toBe(4);
-  expect(result.totalClients).toBe(59);
-  expect(result.processes.find(row => row.kind === 'worker' && row.role === 'crawler')).toMatchObject({ primaryMax: 4 });
+  expect(result.totalClients).toBe(63);
+  expect(result.processes.find(row => row.kind === 'worker' && row.role === 'crawler')).toMatchObject({ primaryMax: 8 });
   expect(result.processes.find(row => row.kind === 'web')).toMatchObject({ primaryMax: 8, readMax: 4 });
   expect(result.processes.find(row => row.kind === 'migration')).toMatchObject({ count: 1, primaryMax: 1 });
 });
@@ -47,9 +47,9 @@ it('includes web primary plus READ, all nine role children, monitor, connect age
 it('counts rolling old/new overlap for persistent processes and keeps explicit CLI counts separate', () => {
   const result = hostDbBudgetCatalog({ ...policy, host: 'm3', roles: ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', ...policy.roles],
     schedulerReplicas: 2, webReplicas: 1, webReadReplica: true, connectAgent: true, migrationProcesses: 1, rolloutCopies: 2 });
-  expect(result.primaryClients).toBe(108);
+  expect(result.primaryClients).toBe(116);
   expect(result.replicaClients).toBe(8);
-  expect(result.totalClients).toBe(116);
+  expect(result.totalClients).toBe(124);
   expect(result.processes.find(row => row.kind === 'scheduler-parent')).toMatchObject({ count: 4 });
   expect(result.processes.find(row => row.kind === 'monitor')).toMatchObject({ count: 2 });
   expect(result.processes.find(row => row.kind === 'preflight')).toMatchObject({ count: 1 });
@@ -87,7 +87,7 @@ it('accepts a lower explicit worker override and uses fixed child quota when abs
   expect(resolveHostDbPoolConfig(config, enabled({ ...parent, kind: 'worker' }, { max: 2 })).config.max).toBe(2);
   const crawlerPolicy = { ...policy, roles: ['crawler'] };
   expect(resolveHostDbPoolConfig({ ...config, role: 'crawler' }, { mode: 'enabled', policy: crawlerPolicy,
-    process: { ...parent, role: 'crawler', kind: 'worker' } }).config.max).toBe(4);
+    process: { ...parent, role: 'crawler', kind: 'worker' } }).config.max).toBe(8);
 });
 
 it('resolves web READ separately and allows only smaller declared primary/READ overrides', () => {

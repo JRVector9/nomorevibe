@@ -12,6 +12,7 @@ const LABELS: Record<string, string> = {
   "discover.windowDays": "최근 며칠",
   "discover.sort": "검색 정렬",
   "discover.pagesPerTick": "틱당 페이지",
+  "discover.maxNewPerHour": "시간당 새 저장소",
   "discover.showHn.enabled": "Show HN 수집",
   "discover.showHn.priority": "Show HN 우선순위",
   "discover.showHn.requireEvidence": "Show HN AI 흔적",

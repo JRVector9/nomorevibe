@@ -50,9 +50,9 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   let settings = await getSettings();
   if (!settings.enabled) return {done:true};
   const snapshot = await readDiscoveryAdmission(settings);
-  const admission = discoveryAdmission(snapshot, ctx.cursor?.admissionThrottled === true);
+  const admission = discoveryAdmission(snapshot, ctx.cursor?.admissionThrottled === true, settings.discover.maxNewPerHour);
   ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,
-    newAllowance:admission.throttled ? admission.remainingNew : null });
+    newAllowance:Number.isFinite(admission.remainingNew) ? admission.remainingNew : null });
   if (admission.throttled) settings = { ...settings, discover:{ ...settings.discover, pagesPerTick:1 } };
   if (settings.discover.sort !== 'recent') {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
