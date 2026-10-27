@@ -1,3 +1,15 @@
+# 2026-10-27 Grok 반복 알림 수정: 최종 코드 검토 완료, PR/운영 설치 대기
+
+실제 native Grok 코드 세션 `01a17b2c-9d73-7062-8c7b-b917ae23eb5f`는 12turn 후 end_turn/EXIT0. notifier와 새 회귀4개를 작성했고 root가 실제 diff·private 최종 보고서를 대조했다. 아래 STATE의 `code/REPORT.private.md`가 결과다. 수동 test/lint/typecheck/build/컴파일·합성 모델 호출·시험 Telegram은 실행하지 않았다. `git diff --check` 실제 성공. 자동 필수 CI·병합·Oracle 소스 설치는 아직 완료 전이다.
+
+라우팅 Grok는 초기/첫 focused/report-only 실행이 max_turn_requests로 끝났으며, 최종 응답 전용 continuation은 end_turn/EXIT0. `routing/REPORT.private.md`는 실제 최종 응답에서 추출했다. Grok 준비 helper는 운영 apply하지 않았다. root의 두 호스트 apply 영수증과 Grok read-only prepare, root 02:45:24/27Z 별도 재읽기가 모두 네 링크 해제·heartbeat 연결 유지·정의/다른 링크 보존을 확인했다. root가 링크만 제거했으며 monitor 자체를 삭제한 것이 아니다.
+
+현 notifier는 source SHA8d5b190c…/PID3224044다. 최신 02:46:57Z 사전 읽기에서는 기존 정상 표본으로 incidents가 비워져 있었다. 따라서 설치 시 "이전 pipeline sent가 항상 존재"한다고 가정하지 않는다. 최신 자연 업무 관측과 sent 상태를 그대로 보존한다. root 준비 operator `STATE/root-watchdog-rollout.py`는 merged40SHA에서 소스를 읽어 원 SHA/config SHA를 확인한 뒤 원자 교체·watchdog1개 restart한다. install.once는 아직 미생성. `observe`는 읽기 전용이다. 웹/워커18앱 재배포·이전 recovery/deploy/observer once 재실행 금지.
+
+PR689, 코드 커밋bd36a09f. GitHub 필수 자동 CI 진행 중이며 최신 head의 성공 후 병합한다. 다음: PR 필수 최신base CI→merge→mergedSHA로 source install 단1회→새 PID/source/config/state와 실제 ≥3분 cycle 및 Kuma 연결 재읽기→최신 완료기록. 자세한 원인/운영 적용 경계는 `docs/operations/2026-10-27-alert-notification-fix.md`.
+
+아래는 이전 진행 기록이다. 위 최신 상태가 우선한다.
+
 # 진행 중 — 2026-10-27 KST11:38, Grok 알림 반복 수정·중복4경로 운영 반영
 
 사용자가 원인보고만으로는 해결되지 않았다고 확인하고 실제 native Grok CLI로 수정/운영반영/결과검토를 지시했다. 이번 objective는 반복 알림 해결이며 번역 backlog 품질기준·모델·DB큐/용량 정책을 바꾸지 않는다. 스킬/수동 테스트·lint/compile/build·합성 모델 호출 금지 유지. 필수 GitHub 자동CI는 유지한다.
@@ -242,13 +254,3 @@ ps -p 51355 -o pid=,etime=
 문서 WT `/Users/jr/Desktop/projects/nomorevibe-ops-delivery-report-20261026`, branch codex/ops-delivery-report-20261026. root가906e9772 문서 정리 후 d855154a로 main34cc를 통합했다. PR680은 docs-only 최종 CI·병합 대상이며 문서 변경으로 앱을 재배포하지 않는다.
 
 통합 전 원 main handoff: `STATE/docs-686-before-base-integration-20261027/main34cc-handoff.private.md`. 정리 전 dirty3파일+SHA manifest: `STATE/docs-before-686-final-consolidation-20261027/`. 긴 역사 원문은 Git50f와 `STATE/final-docs-history-20261026T130400Z/{main-handoff.private.md,working-handoff.private.md}`, `STATE/docs-before-final-consolidation-20261027T162700Z/`, `STATE/handoff-before-684-stop-phase-20261027/`의0600 보관본에 있다. 실제 저장소·영수증을 대화 기억보다 우선한다.
-# 2026-10-27 Grok 반복 알림 수정: 최종 코드 검토 완료, PR/운영 설치 대기
-
-실제 native Grok 코드 세션 `01a17b2c-9d73-7062-8c7b-b917ae23eb5f`는 12turn 후 end_turn/EXIT0. notifier와 새 회귀4개를 작성했고 root가 실제 diff·private 최종 보고서를 대조했다. 아래 STATE의 `code/REPORT.private.md`가 결과다. 수동 test/lint/typecheck/build/컴파일·합성 모델 호출·시험 Telegram은 실행하지 않았다. `git diff --check` 실제 성공. 자동 필수 CI·병합·Oracle 소스 설치는 아직 완료 전이다.
-
-라우팅 Grok는 초기/첫 focused/report-only 실행이 max_turn_requests로 끝났으며, 최종 응답 전용 continuation은 end_turn/EXIT0. `routing/REPORT.private.md`는 실제 최종 응답에서 추출했다. Grok 준비 helper는 운영 apply하지 않았다. root의 두 호스트 apply 영수증과 Grok read-only prepare, root 02:45:24/27Z 별도 재읽기가 모두 네 링크 해제·heartbeat 연결 유지·정의/다른 링크 보존을 확인했다. root가 링크만 제거했으며 monitor 자체를 삭제한 것이 아니다.
-
-현 notifier는 source SHA8d5b190c…/PID3224044다. 최신 02:46:57Z 사전 읽기에서는 기존 정상 표본으로 incidents가 비워져 있었다. 따라서 설치 시 "이전 pipeline sent가 항상 존재"한다고 가정하지 않는다. 최신 자연 업무 관측과 sent 상태를 그대로 보존한다. root 준비 operator `STATE/root-watchdog-rollout.py`는 merged40SHA에서 소스를 읽어 원 SHA/config SHA를 확인한 뒤 원자 교체·watchdog1개 restart한다. install.once는 아직 미생성. `observe`는 읽기 전용이다. 웹/워커18앱 재배포·이전 recovery/deploy/observer once 재실행 금지.
-
-다음: 변경6파일 커밋→PR 필수 최신base CI→merge→mergedSHA로 source install 단1회→새 PID/source/config/state와 실제 ≥3분 cycle 및 Kuma 연결 재읽기→최신 완료기록. 자세한 원인/운영 적용 경계는 `docs/operations/2026-10-27-alert-notification-fix.md`.
-
