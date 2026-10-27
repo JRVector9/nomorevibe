@@ -23,7 +23,8 @@ import { crawlCandidates, crawlDocuments, crawlSettings, jobs } from "@/lib/db/s
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
-import { claimAgentReview, claimItemAgentReview, loadReviewInput, recordAgentReview } from "@/lib/crawl/agent-review-repository";
+import { claimAgentReview, claimItemAgentReview, loadReviewInput, recordAgentReview,
+  listOwnPendingFirstReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { reviewHash, reviewPolicyHash, REVIEW_RULES_VERSION, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
@@ -217,6 +218,58 @@ it("keeps a disabled legacy model control on the actual claim, transport and res
   expect(await tick()).toMatchObject({ status: "completed" });
   expect(transport.gateway).toHaveBeenCalledOnce();
   expect((await attemptRows(context.candidate.id)).map(row => row.value)).toMatchObject([{ state: "succeeded", attempt_number: 1 }]);
+}));
+
+it("reads own live unstarted AI1 reservations before waits without granting, expiring or touching a foreign boot", () => exercise(async () => {
+  const primary = settings().firstReview!, extra = { ...primary, model: "pr05b-extra-fixture" };
+  const configured = { ...settings(), firstReviewAdditional: [extra] };
+  const dualPolicy = { ...policy, routes: [...policy.routes, { ...policy.routes[0], model: extra.model }] };
+  await mode("open", dualPolicy);
+  const owner = { instanceId: "pr05b-own-priority", bootId: randomUUID() }, token = randomUUID(), ids: string[] = [];
+  const oldRole = [...await admin`SELECT to_jsonb(r) AS value FROM role_leases r WHERE role='reviewer'`].map(row => row.value as Raw);
+  const priorEnv = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "reviewer", ROLE_LEASE_INSTANCE_ID: owner.instanceId,
+    ROLE_LEASE_BOOT_ID: owner.bootId, ROLE_LEASE_RELEASE: "pr05b-priority-release", ROLE_LEASE_EPOCH: "1" })) {
+    priorEnv.set(key, process.env[key]); process.env[key] = value;
+  }
+  try {
+    await admin`INSERT INTO role_leases(role,owner_instance_id,owner_boot_id,owner_release,epoch,lease_until)
+      VALUES('reviewer',${owner.instanceId},${owner.bootId},'pr05b-priority-release',1,clock_timestamp()+interval '5 minutes')
+      ON CONFLICT(role) DO UPDATE SET owner_instance_id=excluded.owner_instance_id,owner_boot_id=excluded.owner_boot_id,
+        owner_release=excluded.owner_release,epoch=excluded.epoch,lease_until=excluded.lease_until`;
+    await admin`UPDATE jobs SET lease_token=${token},locked_at=clock_timestamp() WHERE name='crawl-agent-review'`;
+    const [control] = await admin`SELECT epoch,revision,policy_hash FROM model_capacity_control WHERE id=1`;
+    const waiting = await source(), reserved = await source(), foreign = await source(), stale = await source(), expired = await source();
+    async function seed(context: Awaited<ReturnType<typeof source>>, model: string, state: "waiting" | "reserved",
+      boot = owner.bootId, revision = Number(control.revision), expiredWait = false) {
+      const id = randomUUID(); ids.push(id);
+      await admin`INSERT INTO model_capacity_requests(request_id,work_key,logical_work_key,owner_instance_id,owner_boot_id,
+        class,pool,route_id,provider,model,provider_budget_id,group_id,epoch,revision,policy_hash,state,token,reserved_until,queued_at,queue_until)
+        VALUES(${id}::uuid,${`ai1:${context.candidate.id}:${"a".repeat(64)}`},${`ai1:${context.candidate.id}`},${owner.instanceId},${boot}::uuid,
+          'first','reviewer','crawl-agent-review','abcllm',${model},'account','engine',${Number(control.epoch)},${revision},${control.policy_hash},${state},
+          ${state === "reserved" ? randomUUID() : null}::uuid,${state === "reserved" ? new Date(Date.now()+60_000) : null},
+          clock_timestamp()-interval '1 minute',${new Date(Date.now()+(expiredWait ? -1000 : 120_000))})`;
+    }
+    await seed(waiting, primary.model, "waiting"); await seed(reserved, extra.model, "reserved");
+    await seed(foreign, primary.model, "waiting", randomUUID());
+    await seed(stale, primary.model, "waiting", owner.bootId, Number(control.revision)+1);
+    await seed(expired, extra.model, "waiting", owner.bootId, Number(control.revision), true);
+    const beforeRequests = await rows("model_capacity_requests"), beforeEvents = await rows("model_capacity_events");
+    const lease = { name: "crawl-agent-review", token, requestedVersion: 12 };
+    expect((await listOwnPendingFirstReviewCandidates(configured, lease)).map(row => ({ id: row.candidate.id, state: row.state, model: row.reviewer.model })))
+      .toEqual([{ id: reserved.candidate.id, state: "reserved", model: extra.model },
+        { id: waiting.candidate.id, state: "waiting", model: primary.model }]);
+    expect(await listOwnPendingFirstReviewCandidates(configured, { ...lease, requestedVersion: 13 })).toEqual([]);
+    expect(await listOwnPendingFirstReviewCandidates(configured, { ...lease, requestedVersion: 4 })).toEqual([]);
+    expect(await rows("model_capacity_requests")).toEqual(beforeRequests); expect(await rows("model_capacity_events")).toEqual(beforeEvents);
+  } finally {
+    await admin`DELETE FROM model_capacity_requests WHERE request_id=ANY(${ids}::uuid[])`;
+    if (oldRole.length) await admin`UPDATE role_leases r SET (owner_instance_id,owner_boot_id,owner_release,epoch,lease_until)=
+      (saved.owner_instance_id,saved.owner_boot_id,saved.owner_release,saved.epoch,saved.lease_until)
+      FROM jsonb_populate_record(NULL::role_leases,${JSON.stringify(oldRole[0])}::text::jsonb) saved WHERE r.role='reviewer'`;
+    else await admin`DELETE FROM role_leases WHERE role='reviewer' AND owner_instance_id=${owner.instanceId} AND owner_boot_id=${owner.bootId}`;
+    for (const [key, value] of priorEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  }
 }));
 
 it.each(["open", "draining"] as const)("defers fresh AI1 in %s without consuming a model attempt or acknowledging the request", value => exercise(async () => {
