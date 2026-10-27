@@ -131,7 +131,7 @@ it('keeps reservations that expired after the callback tick for its original tim
   const rows = await db.execute<{ state: string; reserved_until: Date | string }>(sql`WITH model_capacity_requests AS (
     SELECT 'reserved'::text state, 'second-review'::text route_id, 'ai2:123:456'::text logical_work_key,
       'ai2:123:456:binding'::text work_key, clock_timestamp() - interval '1 second' reserved_until
-  ) ${staleReviewCapacityProbeSql(123)}`);
+  ) SELECT protected.* FROM (${staleReviewCapacityProbeSql(123)}) protected`);
   expect(rows).toHaveLength(1);
   const reservation = { state: rows[0].state, reservedUntil: rows[0].reserved_until };
   const expiry = new Date(rows[0].reserved_until).getTime();
