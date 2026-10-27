@@ -1,3 +1,9 @@
+# PR696 두 번째 CI 수정 — 2026-10-27 KST17:25 root
+
+CI40472373532는 type/lint/build/unit/ledger/images 및 integration5개가 실제통과했고 integration4의새회귀1개만실패했다. agent-review-records removing-extra-reviewer는 fixture()가 observe인 상태에서 enforce전용 handOffExhaustedFirstReviews 결과1을기대한 테스트조건 오류다. 새회귀의fixture를 enforce로명시했다. productionguard를완화하지않았고lib/scripts트리변경0이다. 로컬test/compiler/lint/build0, gitdiffcheck실제EXIT0. 다음새head필수CI를확인한다.
+
+---
+
 # PR696 CI 수정 인계 — 2026-10-27, 로컬 실행 검사 없음
 
 목표: AI1 추가 pool PR696의 GitHub CI run `40471239295`에서 확인한 타입·DB 날짜 인코딩·기존 단일 모델 cursor 회귀를 최소 수정한다. WT `/Users/jr/Desktop/projects/nomorevibe-ai1-additive-pool-20261027`, branch `codex/ai1-additive-pool-20261027`, 시작 HEAD `ee8d28d3668dac53c0da0caba6e224540cf3e63d`(최신 main 병합 상태)다. root가 소스 diff를 검토하고 같은 PR branch의 scoped commit/push를 승인했다. PR/병합/운영 I/O는 root가 맡는다.

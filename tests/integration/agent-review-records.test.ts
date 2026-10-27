@@ -356,7 +356,7 @@ it("keeps the current-input attempt budget when the selected model changes", asy
 });
 
 it("removing an extra reviewer preserves its current-input backoff and shared attempt limit", async () => {
-  const original = await fixture();
+  const original = await fixture("enforce");
   for (let number = 0; number < 2; number++) {
     const claim = await claimAgentReview(original); if (claim.kind === "skipped") throw new Error(claim.reason);
     await recordAgentReview({ ...original, receipt: claim.receipt, error: "timeout", retryAfter: new Date(number ? Date.now() + 60_000 : 0) });
