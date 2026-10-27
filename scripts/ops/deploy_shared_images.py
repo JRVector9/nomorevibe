@@ -594,6 +594,11 @@ REMOTE_PULL = r'''import json,os,subprocess,sys,tempfile
 images=json.loads(sys.argv[1]);sha=sys.argv[2];key_hash=sys.argv[3];token=sys.stdin.read()
 with tempfile.TemporaryDirectory(prefix='nmv-release-pull-') as directory:
  env={**os.environ,'DOCKER_CONFIG':directory}
+ # Seed a file-backed registry entry so Docker does not auto-select the macOS
+ # Keychain helper over SSH. Credentials remain in this private temporary dir.
+ config=os.path.join(directory,'config.json')
+ with open(config,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as stream:
+  json.dump({'auths':{'ghcr.io':{}}},stream)
  login=subprocess.run(['docker','login','ghcr.io','-u','JRVector9','--password-stdin'],
                       input=token,capture_output=True,text=True,env=env)
  if login.returncode: raise SystemExit('docker_login_failed')

@@ -41,6 +41,33 @@ class SshAccountTests(unittest.TestCase):
                 run.assert_not_called()
 
 
+class PullCredentialTests(unittest.TestCase):
+    def test_login_uses_private_temporary_file_store_and_removes_it_after_pull(self):
+        directory = None
+        def docker(command, **kwargs):
+            nonlocal directory
+            directory = Path(kwargs['env']['DOCKER_CONFIG'])
+            if command[1] == 'login':
+                config = directory / 'config.json'
+                self.assertEqual(json.loads(config.read_text()), {'auths': {'ghcr.io': {}}})
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(kwargs['input'], 'test-registry-token')
+                return subprocess.CompletedProcess(command, 0, '', '')
+            if command[1] == 'pull':
+                return subprocess.CompletedProcess(command, 0, '', '')
+            self.assertEqual(command[1:3], ['image', 'inspect'])
+            return subprocess.CompletedProcess(command, 0, json.dumps([{'Architecture': 'arm64',
+                'Config': {'Labels': {'org.opencontainers.image.revision': 'a' * 40}}}]), '')
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['pull', json.dumps({'worker': 'test-image'}), 'a' * 40, '']), \
+                patch.object(sys, 'stdin', io.StringIO('test-registry-token')), \
+                patch.object(subprocess, 'run', side_effect=docker), redirect_stdout(output):
+            exec(release.REMOTE_PULL, {})
+        self.assertEqual(json.loads(output.getvalue())['pulled'], True)
+        self.assertNotIn('test-registry-token', output.getvalue())
+        self.assertFalse(directory.exists())
+
+
 class FakeClient:
     def __init__(self, apps, deployment_id='old'):
         self.apps = apps
