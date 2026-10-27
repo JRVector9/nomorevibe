@@ -22,6 +22,7 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSource
 vi.mock("@/lib/crawl/second-review-ownership", () => ({ canStartLegacySecondReview: async () => true, admitLegacySecondReview: mocks.admitSecond }));
 vi.mock("@/lib/crawl/second-review", () => ({ enqueueSecondReviews: async () => 0, closeSettledSecondReviews: async () => 0,
   reopenOrphanedGateHolds: async () => 0, retryFailedSecondReviews: async () => 0, pendingSecondReviews: async () => [mocks.row],
+  reconcileStaleSecondReviews: async () => 0,
   combineVerdicts: () => "agreed", recordSecondReview: mocks.recordSecond }));
 vi.mock("@/lib/crawl/agent-review", () => ({ firstReviewer: (settings: CrawlSettings) => settings.firstReview,
   REVIEW_CLI_TIMEOUT_MS: 20_000, reviewWithAgent: mocks.external }));

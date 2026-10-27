@@ -20,7 +20,7 @@ import { openVerifiedReplayHandlerDatabase } from "@/lib/operations/pipeline-rep
 import { withReplayFinalScope } from "@/lib/operations/pipeline-replay-final";
 import { runJob } from "@/lib/jobs/runner";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
-import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { secondReviewCandidates, type SecondReviewCursor } from "@/lib/crawl/jobs/second-review";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
 import { withLegacySecondReviewJob } from "./second-review-receipt-fixtures";
@@ -119,7 +119,7 @@ it("binds a successful fallback to its original slot and ignores duplicate compl
             } }, async () => {
             expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true })).status).toBe("completed");
             expect((await runJob("second-review", secondReviewCandidates, { requestedOnly: true })).status).toBe("completed");
-            expect((await runJob<null>("second-review", async ctx => {
+            expect((await runJob<SecondReviewCursor>("second-review", async ctx => {
               if (!ctx.lease) throw new Error("second_review_fixture_job_missing");
               const [fallback] = await admin`SELECT id FROM second_reviews WHERE candidate_id = ${value.candidate.id}
                 AND fallback_for_id IS NOT NULL AND status = 'pending'`;
@@ -302,7 +302,7 @@ async function runWithHeldSecondLease(value: Awaited<ReturnType<typeof prepare>>
         withReviewFixtureTransport({ ledger, run, inputs: value.inputs, fixture,
           tokenUpperBound: value.manifest.limits.perCallTokenUpperBound, fullReviewPolicyHash: value.manifest.fullReviewPolicyHash }, async () => {
           const first = await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true });
-          const second = await runJob<null>("second-review", async ctx => {
+          const second = await runJob<SecondReviewCursor>("second-review", async ctx => {
             try { return await secondReviewCandidates(ctx); }
             finally { await afterSecond(); }
           }, { requestedOnly: true });
