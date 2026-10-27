@@ -17,6 +17,7 @@ import { Panel } from "@/components/Panel";
 import { OperationsCenter } from "./OperationsCenter";
 import { PipelineControlStatus } from "./PipelineControlStatus";
 import { PipelineCompletions } from "./PipelineCompletions";
+import { FirstReviewStatusCard } from "./FirstReviewStatus";
 import { ModelRouteContracts } from "./ModelRouteContracts";
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
@@ -61,7 +62,7 @@ import { SearchHealthPanel } from "./SearchHealthPanel";
 import { ScrollToHash } from "../ScrollToHash";
 import { ScrollTable } from "../components/ScrollTable";
 import { actionCounts, buildActions, deriveJobHealth, deriveStatus, loadActionInputs, rememberCriticalCount, splitActions, type DerivedStatus } from "./attention";
-import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "./render-reads";
+import { completionsOnce, controlStatusOnce, firstReviewOnce, flowOnce, hourlyOnce } from "./render-reads";
 import { EnrichmentDot, EnrichmentDotSlot, FlowSideCells } from "./flow-slots";
 import { FlowDetailSlot } from "./FlowDetail";
 import { flowVerdict, otherModelSlots } from "./flow-model";
@@ -132,6 +133,18 @@ async function ModelRouteSlot() {
 /** PR13c 처리 지표 — 복제본에서 따로 센다. 못 읽으면 칸마다 미확인으로 남는다 */
 async function PipelineCompletionsSlot() {
   return <PipelineCompletions status={await completionsOnce()} />;
+}
+
+async function FirstReviewStatusSlot({ inputs, derived, fresh }: {
+  inputs: Awaited<ReturnType<typeof loadActionInputs>>; derived: DerivedStatus; fresh: boolean;
+}) {
+  const [read, completions, control] = await Promise.all([
+    withDeadline(firstReviewOnce(fresh)).catch(() => ({ ok: false as const, reason: "error" as const })),
+    withDeadline(completionsOnce()).catch(() => ({ observedAt: null, stages: [] })),
+    withDeadline(controlStatusOnce()).catch(() => ({ stages: [] })),
+  ]);
+  return <FirstReviewStatusCard settings={inputs.settings} throughput={inputs.throughput} progress={derived.workerProgress}
+    jobs={inputs.jobStates} now={inputs.ops.fetchedAt} read={read} completions={completions} control={control} />;
 }
 
 async function KpiSlot({ derived, fresh }: { derived: DerivedStatus; fresh: boolean }) {
@@ -512,6 +525,9 @@ export default async function StatusPage() {
         <Suspense fallback={<CardPending span="dash-12" label="파이프라인 제어 상태" />}><PipelineControlSlot /></Suspense>
         <Suspense fallback={<CardPending span="dash-12" label="처리 지표" />}><PipelineCompletionsSlot /></Suspense>
       </div>
+      <Suspense fallback={<section id="first-review-status" className="dash-card dash-12 scroll-mt-24" aria-busy="true"><p className="text-[13px] text-fg-3">AI 1차 검수 상세 읽는 중…</p></section>}>
+        <FirstReviewStatusSlot inputs={inputs} derived={derived} fresh={fresh} />
+      </Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
       <KoreanTranslationStatus queue={inputs.koreanTranslation} owners={owners["korean-translation"] ?? null}
         runtime={koreanTranslationRuntime(ownerContext)} hasLastError={!!derived.states.get("product-tagline-ko")?.lastError} now={now} />
