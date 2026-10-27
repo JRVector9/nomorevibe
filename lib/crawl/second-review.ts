@@ -28,7 +28,7 @@ import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, 
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
 import { capacityBlocksStaleReconcile, SOURCE_REFRESH_COOLDOWN_MS, STALE_REVIEW_OWNER, STALE_RECONCILE_EXAMINE_LIMIT,
-  STALE_RECONCILE_LIMIT, staleFallbackRootIds, staleReviewCapacityIdentitySql, staleReviewCursorAfterPage, staleSecondReviewHintSql } from "./second-review-stale";
+  STALE_RECONCILE_LIMIT, staleFallbackRootIds, staleReviewCapacityProbeSql, staleReviewCursorAfterPage, staleSecondReviewHintSql } from "./second-review-stale";
 
 /** All isolated AI2 mutations take this before candidate/row/job locks. Live workers are unchanged. */
 async function lockReplaySecondReviewMutation(tx: ProductTransaction): Promise<void> {
@@ -773,9 +773,7 @@ function staleReviewEvidenceFresh(document: CrawlDocument, scan: {
  * 재현 역할에는 이 테이블이 없다 — 호출부가 currentReplayDb 에서 여기까지 오지 않는다.
  */
 async function staleReviewCapacityBusy(tx: ProductTransaction, candidateId: number, now: Date): Promise<boolean> {
-  const rows = await tx.execute<{ state: string; reserved_until: Date | string | null }>(sql`
-    SELECT cap.state, cap.reserved_until FROM model_capacity_requests cap
-    WHERE ${staleReviewCapacityIdentitySql(sql`cap`, sql`${candidateId}`)}`);
+  const rows = await tx.execute<{ state: string; reserved_until: Date | string | null }>(staleReviewCapacityProbeSql(candidateId));
   for (const row of rows) {
     if (capacityBlocksStaleReconcile({ state: row.state, reservedUntil: row.reserved_until }, now)) return true;
   }

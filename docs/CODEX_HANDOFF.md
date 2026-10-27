@@ -1,3 +1,29 @@
+# SQL 보완 root 검토 완료·PR 준비 — 2026-10-27 KST15:20
+
+원본PR691/692는main93794615로병합·운영18앱교체됐다. 공식run은finalprogressalarm으로stopped/EXIT1이며원본once보존·재실행금지. 별도READONLY fullfleet readback는18앱source/digest/env/deployment一致이나guard-blocked였다. OPENaudit20588/epoch1revision3·자기6textresume全6実EXIT0복원완료. 아직전체운영정상으로보고하지않는다.
+
+새stalehint SQL 회귀의최소패치를root독립diff검토했다. 활성보호집합을한번materialize하고각candidateTXfresh재검증하므로미확정요청보호는유지한다. production2+integration1+운영문서+handoff수정. 실제diff --check EXIT0,로컬test/lint/typecheck/build0. 아래agent의계획근거는추정cost이며실측속도개선치아님. root가이제commit/push/PR/필수CI진행한다.
+
+nativeGrok 실제 B/reconciled-grok-check1 PID37099/exec42606는69.08초 EXIT0,groк-4.7xhigh/no-subagents/단일readonlyhelper영수증검증true. 전체건강false/sourceguardblocked를보존했다. 최종문장root검토는아직이며원76정리실제완료0을성공으로승격하지않는다. fullypostdeploy5m(06:14:16Z) 신규고유149/원본행123. 3천/h실측달성아님. discoveryagent가admission/read-only1회조사중이다.
+
+사용자DBconnection/schema질문에대한현황: 실제병목은후보별전체capacity반복검색이며connection증설은보류. 기존active/logicalactive인덱스있지만이번OR/LIKE/regex가충분히활용못함. candidate/secondreview별도typedcolumn+index·완료이력분리는후속설계검토다. 신규migration은이번fix에없다. 원본dirtyWT/oldonce/clean9379OP보존.
+
+---
+
+# AI2 stale 힌트 비용 수정 — 2026-10-27 KST, root 검토·CI 전
+
+목표: 배포93794615에서 stale 조정기 힌트가 용량 이력 전체를 후보마다 반복 읽어 커서 저장 전에 실패하는 문제를 최소 보완한다. branch `codex/ai2-stale-capacity-scan-20261027`은 fetch한 origin/main93794615에서 만들었다. commit/push·운영 쓰기는 하지 않았다.
+
+완료 근거: 승인된 primary READ ONLY 조회에서 기존76행은 pending, owned수요0, 보호capacity0, replay오인식 근거0이었다. `B/ai2-query-phase-rootcause.private.json`의 최근 Drizzle 실패는 stale hint로 식별됐다. `B/ai2-stale-hint-explain-rootcause.private.json`(06:13:56Z, SHA256 `a1f8797c3cf654fc4ace70ec44cd30e3d4efae9997ab8780dde0f2c13c3ec9e2`)은 EXPLAIN ONLY이며 상관 capacity SeqScan cost6035.78/전체574138.10을 확인했다. SQLSTATE는 잘린 wrapper 오류에서 복원하지 못했다. EXPLAIN ANALYZE는 실행하지 않았다.
+
+수정: `lib/crawl/second-review-stale.ts`, `lib/crawl/second-review.ts`, `tests/integration/second-review-published.test.ts` 및 이 인계. 보호 상태 행을 MATERIALIZED CTE로 먼저 선별해 후보별 LIKE/정규식이 전체 이력에 반복 적용되지 않게 했다. 후보 TX에서도 현재 보호 집합을 다시 읽는다. null 예약기한·unknown 상태·불명확 AI2 identity 보호, cursor·lease·락 순서·실행 순서는 보존한다. 후보별 현재 보호 재검증은 각 TX의 상태 선별1회가 남는다.
+
+회귀 코드: 실제 PostgreSQL EXPLAIN의 원본 capacity scan1회/CTE Scan, hint·callback의 active/unknown/null 예약기한/다른 route 보호 일치. 로컬 tests/lint/typecheck/build/컴파일은 미실행이며 CI 결과도 아직 없다. 실패한 기존 접근은 상관 OR/LIKE 보호 조회로 전체 capacity 이력을 반복 읽은 것이다. stale 실행 순서를 앞당겨 오류를 숨기는 변경은 하지 않았다.
+
+남은 일: root diff 검토→필요한 보완→root가 commit/push/PR·필수 CI 후 별도 공식 배포를 결정한다. 기존 release/once 재실행·임의 capacity 회수는 하지 않는다. 다음 읽기 명령: `git -C /Users/jr/Desktop/projects/nomorevibe-ai2-stale-reconcile-20261027 diff --stat`, `git -C /Users/jr/Desktop/projects/nomorevibe-ai2-stale-reconcile-20261027 diff -- lib/crawl/second-review-stale.ts lib/crawl/second-review.ts tests/integration/second-review-published.test.ts`.
+
+---
+
 # AI2 구현 단계 완료 — 2026-10-27 KST14:36, PR 게시·필수CI 전
 
 목표는 stale AI2 수요의 자동 정리→원본/근거 갱신→최신 세대 재등록과 별도 수집3천/h 확대다. 수집PR691은05:27:20Z main683888914db4152a6893dc1dfc164e58ec1f66f6로 병합됐고 main40455412090 필수check/worker·web publish 실제success다. refresh-caches는 기다리지 않는다. 이번 운영 변경·배포는 아직0이다.
