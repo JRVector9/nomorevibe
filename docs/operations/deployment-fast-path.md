@@ -14,6 +14,9 @@ gpu3090에서는 `prod` 스킬의 기존 Keychain 호환 도구를 PATH에 추�
 현재 등록된 M3/mini SSH 계정이 `jr`이면 `NMV_DEPLOY_SSH_USER=jr`을 plan/run 및
 후속 관측에 동일하게 지정한다. 기본 계정은 기존 `root`이며 호스트·SSH 옵션·접속
 권한은 변경하지 않는다. 배포 전 두 호스트에서 해당 계정의 Docker 접근을 확인한다.
+이미지 준비의 Docker 로그인은 0700 임시 디렉터리 안 0600 설정 파일만 사용하고
+종료 시 제거한다. macOS SSH 세션의 Keychain 자동 선택·저장에 의존하지 않으며
+기존 Dokploy registry 자격 정보나 OS Keychain을 변경하지 않는다.
 
 ```bash
 # 1. 로컬 미리 보기. BASE/SHA는 검토한 40자리 커밋이다. 자격 증명·운영 호출 없음.
