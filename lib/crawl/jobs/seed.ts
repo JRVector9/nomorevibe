@@ -73,14 +73,18 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
         : snapshot.queuedRepositories >= settings.discover.maxReviewBacklog ? 'queue_cap' : 'rate_cap'});
     return { done:false, cursor:ctx.cursor ?? undefined };
   }
-  if (settings.discover.sort !== 'recent') {
+  const savedLatest = ctx.cursor?.latestScan;
+  const unfinishedLatest = savedLatest && (!savedLatest.waiting || savedLatest.coverageVersion !== 2
+    || savedLatest.pendingPage || savedLatest.pendingWindows?.length || savedLatest.incompleteWindows?.length);
+  if (settings.discover.sort !== 'recent' && !unfinishedLatest) {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
     return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
   }
   const covered = Date.parse(ctx.cursor?.cycleWindow?.to ?? '');
   // 전체 수집이 하루 이상 뒤처진 경우 최신 탐색을 먼저 배정한다. 전체 수집도 매 틱 진행한다.
-  if (!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) {
+  // A full cursor's target date is not completed coverage; retain every unfinished latest range.
+  if ((!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) && !unfinishedLatest) {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
     return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
