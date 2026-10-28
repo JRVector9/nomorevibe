@@ -35,13 +35,18 @@ export async function sharedDiscoverySearch<T>(input: SearchInput,
       leaseUntil: sql`clock_timestamp() + ${DISCOVERY_PAGE_LEASE_MS} * interval '1 millisecond'`,
     }).onConflictDoNothing();
     const [row] = await tx.select().from(githubDiscoveryPages).where(eq(githubDiscoveryPages.key, key)).for('update');
-    const [clock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp()::timestamp as now`);
+    // Read wall time after the row lock, and compare timestamps in PostgreSQL.
+    // Raw execute() timestamps are strings even when declared as Date in TS.
+    const [timing] = await tx.execute<{ leaseActive: boolean; cacheFresh: boolean | null }>(sql`
+      select lease_until > clock_timestamp() as "leaseActive",
+        completed_at > clock_timestamp() - interval '1 minute' as "cacheFresh"
+      from ${githubDiscoveryPages} where key = ${key}`);
     if (row.state === 'complete') {
       // A partial API response is reusable briefly, never frozen as complete coverage.
       const incomplete = (row.result as { incomplete_results?: unknown } | null)?.incomplete_results === true;
-      if (!incomplete || (row.completedAt && row.completedAt.getTime() + 60_000 > clock.now.getTime()))
+      if (!incomplete || timing.cacheFresh)
         return { cached: row.result as T };
-    } else if (row.owner !== token && row.leaseUntil > clock.now) return { busy: row.leaseUntil };
+    } else if (row.owner !== token && timing.leaseActive) return { busy: row.leaseUntil };
     await tx.update(githubDiscoveryPages).set({ owner: token, state: 'running', result: null, completedAt: null,
       ownerName: (input.ownerName ?? process.env.HOSTNAME ?? 'crawler').slice(0, 120),
       leaseUntil: sql`clock_timestamp() + ${DISCOVERY_PAGE_LEASE_MS} * interval '1 millisecond'`, updatedAt: sql`clock_timestamp()`,
