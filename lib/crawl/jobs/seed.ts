@@ -1,3 +1,4 @@
+import { m3DiscoveryQueries } from '@/lib/crawl/korean-discovery/repository';
 import { createHash } from 'node:crypto';
 import { logger } from '@/lib/observability/logger';
 import type { DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
@@ -56,8 +57,9 @@ const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to 
 
 /** Search finds candidates; stored cursors contain bounded normalized facts, never commit messages. */
 export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
-  const settings = await getSettings();
+  let settings = await getSettings();
   if (!settings.enabled) return {done:true};
+  settings = { ...settings, discover: { ...settings.discover, queries: await m3DiscoveryQueries(settings) } };
   const snapshot = await readReviewBacklog();
   const admission = reviewBacklogAdmission(snapshot, settings.discover.maxNewPerHour, settings.discover.maxReviewBacklog);
   ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,

@@ -1,3 +1,4 @@
+vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
 import { recordDiscoveryProgress } from '@/lib/crawl/discovery-progress';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
