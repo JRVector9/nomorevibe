@@ -20,10 +20,10 @@ export type ProductTranslationCapacityResult = { kind: "skipped" } | {
 
 /** A single demanded batch; neither queue waiting nor HTTP retains a DB TX. */
 export async function translateProductFieldsWithModelCapacity(value: readonly ProductTranslationTask[], job: JobLease,
-  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProductTranslationCapacityResult> {
+  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; deadlineAt?: number }): Promise<ProductTranslationCapacityResult> {
   let tasks = structuredClone(value);
   const lease = structuredClone(job);
-  const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal,
+  const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal, deadlineAt: valueOptions.deadlineAt,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const env = Object.fromEntries(["ROLE_LEASE_ROLE", "ROLE_LEASE_INSTANCE_ID", "ROLE_LEASE_BOOT_ID", "ROLE_LEASE_RELEASE",
     "ROLE_LEASE_EPOCH", "ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_BATCH_EPOCH", "ROLE_LEASE_HOST"].map(key => [key, process.env[key]]));
@@ -78,7 +78,8 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   try {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
     prepared = await prepareProductTranslationDispatch(tasks, lease, { roleLease, call,
-      reserved: { reservation: slot.reservation, identity, members, role } });
+      reserved: { reservation: slot.reservation, identity, members, role },
+      ...(options.deadlineAt === undefined ? {} : { callBudget: { deadlineAt: options.deadlineAt, minimumRemainingMs: options.timeoutMs + 2_000 } }) });
   } catch (error) {
     try { await cancelReservedModelSlot(slot.reservation); }
     catch (cleanup) { throw new AggregateError([error, cleanup], "product_translation_reservation_cleanup_failed"); }

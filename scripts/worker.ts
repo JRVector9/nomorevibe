@@ -96,6 +96,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
+  // Admission/DB waits must leave the public-field call its full 20-second ceiling.
+  if (name === 'product-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
   if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
   if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };

@@ -22,6 +22,12 @@ field. Use the existing audited DRAINING -> policy -> OPEN commands. This is not
 a replacement for native recovery of an unknown request on its original server.
 No DB migration or new DB account is required.
 
+The product job receives a 55-second tick, matching the existing reason
+translation budget. After admission and domain locks, it must still have the
+full 20-second HTTP ceiling plus 2 seconds before marking a dispatch. Otherwise
+it cancels the untouched reservation and defers; waiting must not cause an
+immediately aborted model request.
+
 M1 readback on 2026-10-28: oMLX 0.7.2, server source
 `1aa9294eb56fd36a0b4bb71af308dc387f26aaa8f71eb3b31e4830a1e5ea0662`,
 model settings `c1f4c84b5a65125082979cf64d03d2a286eea1f4c593848f28165701ab12e7b6`.
