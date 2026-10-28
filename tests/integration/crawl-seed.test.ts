@@ -12,7 +12,7 @@ vi.mock("@/lib/crawl/github", async (original) => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlDiscoveryEvidence, jobs } = await import(
+const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlDiscoveryEvidence, githubDiscoveryPages, jobs } = await import(
   "@/lib/db/schema"
 );
 const crawl = await import("@/lib/crawl/repository");
@@ -36,11 +36,12 @@ const searchPage = (repos: string[], full = false) => ({
 });
 
 const tick = () => runJob("crawl-seed", seedFrontier);
-const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0];
+const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0].replace(" is:public", "");
 let fetchLease: JobLease | undefined;
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  await db.delete(githubDiscoveryPages);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
