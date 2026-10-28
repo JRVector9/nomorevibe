@@ -12,7 +12,7 @@ const ROUTE_JOB = {
   'second-review': { job: 'second-review', class: 'second', pool: 'reviewer' },
 } as const;
 
-export type CapacityAdmissionScope = 'global' | 'pool' | 'provider' | 'group';
+export type CapacityAdmissionScope = 'global' | 'pool' | 'provider' | 'group' | 'policy';
 export type CapacityAdmissionBlock = {
   job: string; routeId: string; groupId: string; scope: CapacityAdmissionScope;
 };
@@ -25,7 +25,8 @@ type ActiveRow = { groupId: string; providerBudgetId: string; pool: string; n: n
 type WaitingRow = ActiveRow & { routeId: string; provider: string; model: string; class: string };
 
 /**
- * 현재 OPEN 정책에서, 정확히 그 경로의 미만료 waiting 이 한도(전역·풀·공급자·그룹)에 막혀 있으면 그 job 만 반환한다.
+ * OPEN 정책의 이전 세대 점유는 모든 신규 접수를 막는다. 이 경우 waiting INSERT 이전에 거절되므로 대기 행이 없어도 보호한다.
+ * 같은 세대 점유는 정확히 그 경로의 미만료 waiting 이 한도(전역·풀·공급자·그룹)에 막혀 있을 때만 보호한다.
  * 증거 없음·조회 실패·정책 불일치는 빈 배열이다(재시작 판정을 그대로 둔다).
  */
 export async function readCapacityAdmissionBlocks(): Promise<CapacityAdmissionBlock[]> {
@@ -103,10 +104,14 @@ export function applyCapacityAdmissionBlock<T extends { job?: string; restartEli
 function classifyCapacityAdmission(value: unknown): CapacityAdmissionBlock[] {
   if (!value || typeof value !== 'object') return [];
   const row = value as { mode?: unknown; policy?: unknown; policyHash?: unknown; writerActive?: unknown; oldActive?: unknown; active?: unknown; waiting?: unknown };
-  if (row.mode !== 'open' || row.writerActive !== true || row.oldActive !== false) return [];
+  if (row.mode !== 'open' || row.writerActive !== true || typeof row.oldActive !== 'boolean') return [];
   if (typeof row.policyHash !== 'string' || !/^[a-f0-9]{64}$/.test(row.policyHash)) return [];
   const policy = parseModelCapacityPolicy(row.policy);
   if (modelCapacityPolicyHash(policy) !== row.policyHash) return [];
+  if (row.oldActive) return policy.routes.flatMap(route => {
+    const spec = ROUTE_JOB[route.routeId as keyof typeof ROUTE_JOB];
+    return spec ? [{ job: spec.job, routeId: route.routeId, groupId: route.groupId, scope: 'policy' as const }] : [];
+  });
   const active = parseRows(row.active, false);
   const waiting = parseRows(row.waiting, true);
   if (!active || !waiting || active.length >= ACTIVE_GROUP_CAP || waiting.length >= WAITING_ROUTE_CAP) return [];

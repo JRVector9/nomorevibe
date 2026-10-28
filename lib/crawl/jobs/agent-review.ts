@@ -90,7 +90,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil <= reviewSemanticNow()) return;
     const reviewer = settings.firstReviewAdditional === undefined ? primary
-      : await chooseFirstReviewForCandidate({ candidate, document, settings, input });
+      : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, pausedModels);
     if (!reviewer) return;
     const { provider: reviewProvider, model } = reviewer;
     if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model

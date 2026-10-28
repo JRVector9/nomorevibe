@@ -20,6 +20,7 @@ it("operator CLI defaults to rollback and pins reviewed plan bytes plus every ac
     const bytes=JSON.stringify(plan,null,2);writeFileSync(join(dir,"plan.json"),bytes,{mode:0o600});writeFileSync(join(dir,"receipt.json"),JSON.stringify(receipt),{mode:0o600});
     const args=[`--plan=${join(dir,"plan.json")}`,`--plan-sha=${sha(bytes)}`,`--receipt=${join(dir,"receipt.json")}`,`--artifact-dir=${dir}`,"--operator=fixture","--reference=fixture observations","--database-url-stdin"];
     expect(readBoundaryReleaseFiles(args).apply).toBe(false);expect(readBoundaryReleaseFiles([...args,"--apply"]).apply).toBe(true);
+    expect(readBoundaryReleaseFiles([...args, `--relay-state-dir=${dir}`])).toMatchObject({ apply: false, relayStateDirectory: dir });
     expect(()=>readBoundaryReleaseFiles([...args,"--client-bound=abcllm-supa"])).toThrow("provider_boundary_cli_option");
     expect(()=>readBoundaryReleaseFiles([...args,"--apply","--apply"])).toThrow("provider_boundary_cli_option");
     writeFileSync(join(dir,`${receipt.provider.artifactHash}.json`),"changed");

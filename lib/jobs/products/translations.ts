@@ -3,6 +3,7 @@ import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/p
 import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { PRODUCT_TRANSLATION_LADDER } from "@/lib/llm/deadline-ladder";
 
 /** One call / at most four demanded fields per 25-second text-role tick. No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
@@ -32,7 +33,8 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       chars += text.length;
     }
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: 20_000, signal });
+    // Client is the outermost deadline layer (engine < relay < gateway < client). Needs main's 55s product-translate budget.
+    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_LADDER.clientMs, signal, deadlineAt: ctx.deadlineAt });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;
     const completedBatch = outcome.batch ?? batch;

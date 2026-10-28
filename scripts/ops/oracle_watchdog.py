@@ -17,13 +17,16 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from recovery_gateway import PROVIDER_STAGES, bounded_output, save
+from recovery_gateway import PROVIDER_STAGES, bounded_output, save, validate_capacity_unknowns
 from incident_notifications import notify, validate_destination
 
 
 REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warming_up',
            'database_unavailable', 'web_page_failed', 'ok', 'web_not_ready', 'monitor_stale',
            'pipeline_alarm', 'container_unhealthy', 'native_unit_failed', 'native_unit_inactive', 'native_unit_unknown'}
+# Worker auto-release target (client deadline + inner bound + skew, see lib/operations/model-capacity-auto-reclaim.ts) is
+# under 5 minutes. An unknown request still listed after this is escalated as a separate incident.
+CAPACITY_RECLAIM_OVERDUE_SECONDS = 300
 
 
 def validate_report(report):
@@ -31,7 +34,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -42,6 +45,10 @@ def validate_report(report):
                 any(not isinstance(stage, str) or stage not in PROVIDER_STAGES for stage in failures) or
                 len(set(failures)) != len(failures)):
             raise ValueError('invalid_provider_failures')
+        if 'capacityUnknowns' in row:
+            capacity = validate_capacity_unknowns(row['capacityUnknowns'])
+            if capacity['status'] != 'ok' and (row['ok'] or row['recoverable']):
+                raise ValueError('invalid_capacity_recovery_claim')
         if row['recoverable'] and (row['reason'] not in ('web_page_failed', 'monitor_stale', 'native_unit_failed') or not row['settled'] or row['ok']):
             raise ValueError('invalid_recovery_claim')
         keys.add(row['key'])
@@ -77,7 +84,8 @@ def cycle(config, state, reports, *, now=None, recover=None):
     for host in config['hosts']:
         report = reports.get(host)
         if report is None:
-            alarm = alarm or any(key.startswith(host + '/') and value.get('bad', 0) >= 2
+            alarm = alarm or any(key.startswith(host + '/') and (value.get('bad', 0) >= 2
+                                 or isinstance(value.get('capacityUnknowns'), dict) and value['capacityUnknowns'].get('status') in ('alarm', 'unknown'))
                                  for key, value in state['targets'].items())
             rows = [{'key': 'host', 'ok': False, 'version': None, 'recoverable': False, 'reason': 'probe_unknown'}]
         else:
@@ -115,6 +123,39 @@ def cycle(config, state, reports, *, now=None, recover=None):
                     events.append({'target': key, 'stage': stage, 'reason': 'upstream_stalled'})
             if observations:
                 target['providerFailures'] = observations
+            capacity = row.get('capacityUnknowns')
+            # A missing/failed read cannot clear a known request. Only a fresh, explicit empty observation can.
+            if capacity is None or capacity['status'] == 'unknown':
+                previous_capacity = old.get('capacityUnknowns')
+                if previous_capacity is not None:
+                    try:
+                        previous_capacity = validate_capacity_unknowns(previous_capacity)
+                    except ValueError:
+                        previous_capacity = {'status': 'unknown', 'truncated': False, 'requests': []}
+                    if capacity is None or previous_capacity['status'] == 'alarm':
+                        capacity = previous_capacity
+            if capacity is not None:
+                capacity = validate_capacity_unknowns(capacity)
+                target['capacityUnknowns'] = capacity
+                if capacity['status'] != 'ok':
+                    alarm = True
+                # Oracle keeps its own first-seen clock per request. The worker's automatic release must clear a request
+                # within CAPACITY_RECLAIM_OVERDUE_SECONDS; otherwise a person is asked to look (no Oracle DB/model rights).
+                previous_seen = old.get('capacitySeen') if isinstance(old.get('capacitySeen'), dict) else {}
+                seen = {}
+                for request in capacity['requests']:
+                    first = previous_seen.get(request['requestId'])
+                    first = first if type(first) in (int, float) and math.isfinite(first) and 0 <= first <= now else now
+                    seen[request['requestId']] = first
+                    events.append({'target': key, 'reason': 'model_indeterminate', **request,
+                                   'recovery': 'provider_exit_required' if request['localEndRecorded'] else 'local_and_provider_exit_required'})
+                    if now - first >= CAPACITY_RECLAIM_OVERDUE_SECONDS:
+                        events.append({'target': key, 'reason': 'model_reclaim_overdue', 'requestId': request['requestId'],
+                                       'routeId': request['routeId'], 'ageSeconds': int(now - first)})
+                if capacity['status'] == 'unknown' or capacity['truncated']:
+                    seen = {**previous_seen, **seen}  # a partial read cannot reset the clock of an unlisted request
+                if seen:
+                    target['capacitySeen'] = seen
             state['targets'][key] = target
             if bad >= 2:
                 alarm = True

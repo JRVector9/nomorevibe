@@ -1,7 +1,7 @@
 import http from "node:http";
 import net from "node:net";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { LOCAL_MODEL_RELAY_PROTOCOL, LOCAL_MODEL_RELAY_REQUEST_HEADER, LOCAL_MODEL_UPSTREAM_HOST, LOCAL_MODEL_UPSTREAM_PORT,
+import { LOCAL_MODEL_RELAY_PROTOCOL, LOCAL_MODEL_RELAY_REQUEST_HEADER, LOCAL_MODEL_RELAY_SKEW_MS, LOCAL_MODEL_UPSTREAM_HOST, LOCAL_MODEL_UPSTREAM_PORT,
   validRelayRequestId, type RelayNativeReadinessVerifier, type RelayReceipt } from "./protocol";
 import type { RelayReceiptStore } from "./store";
 import { relayResponseObserver } from "./observer";
@@ -18,6 +18,13 @@ export type LocalModelRelayOptions = {
   upstreamPort?: number;
   maxBodyBytes?: number;
   upstreamTimeoutMs?: number;
+  /**
+   * 서빙 계약의 provider_hard_deadline으로 선언·검증된 엔진 최대 실행시간. 있으면 relay 기한은 이보다 길어야 하고(엔진 < relay),
+   * 미확인 receipt는 시작+상한+skew가 지난 뒤 표식만 정리해 다시 연다. 없으면 기존처럼 운영자 경계 해제까지 거절한다.
+   */
+  engineDeadlineMs?: number;
+  /** 생성 길이 상한. 있으면 max_tokens(또는 max_completion_tokens)가 없거나 넘는 요청을 보내지 않는다. */
+  maxOutputTokens?: number;
   verifyNativeReadiness?: RelayNativeReadinessVerifier;
 };
 
@@ -70,10 +77,31 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
   const timeout = options.upstreamTimeoutMs ?? 90_000;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 16 * 1024 * 1024 || !Number.isSafeInteger(timeout) || timeout < 1 || timeout > 90_000)
     throw new Error("relay_invalid_limit");
+  const engineDeadline = options.engineDeadlineMs, outputCap = options.maxOutputTokens;
+  if (engineDeadline !== undefined && (!Number.isSafeInteger(engineDeadline) || engineDeadline < 1
+    || engineDeadline + LOCAL_MODEL_RELAY_SKEW_MS >= timeout)) throw new Error("relay_deadline_order_invalid");
+  if (outputCap !== undefined && (!Number.isSafeInteger(outputCap) || outputCap < 1 || outputCap > 262_144)) throw new Error("relay_invalid_limit");
   const allow = new Set(options.allowFrom.map(plainIp));
   const generation = randomUUID();
   let activeRequestId: string | null = null, indeterminate = options.store.hasUnsettled(), draining = false;
-  let lastReceipt: RelayReceipt | null = null;
+  let lastReceipt: RelayReceipt | null = null, lastDeadlineRelease: string | null = null;
+  const deadlinePolicy = engineDeadline === undefined ? null : { engineDeadlineMs: engineDeadline, skewMs: LOCAL_MODEL_RELAY_SKEW_MS };
+  /** 선언된 엔진 상한이 지난 미확인만 정리한다. 실패·불일치는 미확인을 유지한다(운영자 경계 해제 경로는 그대로). */
+  const releaseAfterDeadline = (requestId: string, delayMs: number) => {
+    if (!deadlinePolicy || !options.store.releaseAfterEngineDeadline) return;
+    const timer = setTimeout(() => {
+      if (activeRequestId || draining) return;
+      try {
+        const result = options.store.releaseAfterEngineDeadline!(requestId, deadlinePolicy);
+        if (result.kind === "waiting") return releaseAfterDeadline(requestId, Math.max(50, result.notBeforeMs - Date.now()));
+        if (!options.store.hasUnsettled()) { indeterminate = false; lastDeadlineRelease = requestId; }
+      } catch { /* keep indeterminate */ }
+    }, delayMs);
+    timer.unref();
+  };
+  if (indeterminate && deadlinePolicy) {
+    try { const pending = options.store.pendingIndeterminate?.(); if (pending) releaseAfterDeadline(pending.requestId, 0); } catch { /* keep */ }
+  }
   const send = (res: http.ServerResponse, status: number, body: unknown) => {
     if (res.destroyed) return;
     const text = JSON.stringify(body);
@@ -93,6 +121,7 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
       && typeof terminal.usage?.total_tokens === "number" && Number.isSafeInteger(terminal.usage.total_tokens) && terminal.usage.total_tokens >= 0;
     return { protocol: LOCAL_MODEL_RELAY_PROTOCOL, relayRevision: options.relayRevision, deploymentRevision: options.deploymentRevision,
       relayGeneration: generation, relayReady: !draining && !indeterminate, busy: activeRequestId !== null, indeterminate, draining,
+      engineDeadlineMs: engineDeadline ?? null, lastDeadlineRelease,
       nativeCapacityReady: Boolean(!draining && !indeterminate && !activeRequestId && observed
         && options.deploymentRevision !== "unverified" && verified?.ready
         && verified.contractHash && /^[0-9a-f]{64}$/.test(verified.contractHash)),
@@ -127,6 +156,11 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
         if (Object.keys(object).some(key => !supportedParameters.has(key)) || object.model !== options.model
           || !Array.isArray(object.messages) || !object.messages.length || (object.n !== undefined && object.n !== 1)
           || (object.stream !== undefined && typeof object.stream !== "boolean")) throw new Error();
+        // 생성 길이 상한이 엔진 실행시간을 묶는다. 없거나 넘는 요청은 보내지 않는다(호출 0, 미확인 없음).
+        if (outputCap !== undefined && !((object.max_tokens !== undefined || object.max_completion_tokens !== undefined)
+          && [object.max_tokens, object.max_completion_tokens].every(value => value === undefined
+            || Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= outputCap)))
+          return refuse(res, 400, "output_bound_required");
         model = options.model;
       } catch (error) { return refuse(res, error instanceof Error && error.message === "request_too_large" ? 413 : 400,
         error instanceof Error && error.message === "request_too_large" ? "request_too_large" : "invalid_request"); }
@@ -163,6 +197,7 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
         catch { indeterminate = true; }
         if (state === "indeterminate") indeterminate = true;
         activeRequestId = null;
+        if (state === "indeterminate") releaseAfterDeadline(receipt.requestId, 0);
       }
     };
     const upstream = http.request({ hostname: LOCAL_MODEL_UPSTREAM_HOST, port, path: inference ? "/v1/chat/completions" : "/v1/models",

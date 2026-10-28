@@ -119,6 +119,7 @@ export const STAGE_EXCLUDED_JOBS: Readonly<Record<string, string>> = {
   "notification-delisted": "팔로한 프로젝트 내려감 알림 — 내린 뒤 계정 알림함에 적기",
   "notification-category-digest": "팔로한 분야 주간 묶음 알림 — 공개 제품을 세기만 한다",
   "notification-prune": "90일 지난 알림 지우기 — 계정 알림함 정리",
+  "model-capacity-reclaim": "미확인 모델 점유 자동 해제 — 종료 증거가 있는 점유만 풀고 후보·제품은 처리하지 않는다",
 };
 
 export function stageForJob(job: string): PipelineStageDef | null {
