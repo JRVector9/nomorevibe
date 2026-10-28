@@ -24,6 +24,6 @@ export function KoreanDiscoveryStatusCard({ read }: { read: ReplicaRead<KoreanDi
     {s.blockers.length > 0 && <ul className="mt-2 text-[13px] text-fg-2">{s.blockers.map(reason => <li key={reason}>{BLOCKERS[reason]}</li>)}</ul>}
     <details className="mt-2 text-[13px]"><summary>설정된 한국어 검색 조건 {s.queries.length}개</summary><ul>{s.queries.map(q => <li key={q.label}>{q.label} · <code>{q.query}</code></li>)}</ul></details>
     <KoreanDiscoveryControls key={s.epoch} enabled={s.enabled} startAt={s.startAt} epoch={s.epoch} />
-    <p className="mt-2 text-[12px] text-fg-3">DB 기준 {date(s.at)}. 켜짐과 생존 관측은 신규 수집 성공을 뜻하지 않습니다. 실제 요청·한국어 통과·신규 적재량은 크롤러 탭의 탐색 진척에서 확인합니다.</p>
+    <p className="mt-2 text-[13px] text-fg-3">DB 기준 {date(s.at)}. 켜짐과 생존 관측은 신규 수집 성공을 뜻하지 않습니다. 실제 요청·한국어 통과·신규 적재량은 크롤러 탭의 탐색 진척에서 확인합니다.</p>
   </section>;
 }
