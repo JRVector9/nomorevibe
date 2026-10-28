@@ -137,3 +137,13 @@
 - 검증 대상 AI 상한을50/55/60초로 갱신. M1 내부28/31/34초 상수는 확정값으로 내보내지 않고 번역 client40초만 #708 job55초 안에 유지. 확정 내부 값은 M1 표본·서버 강제 확인 후 정함.
 - relay max_tokens 강제·미확인 후 자동 열기는 검증된 엔진 상한 선언 시만 사용. 추가로 보장 적용 UTC 시각을 요구하고 그 이전 요청은 소급 해제하지 않음. 기존 archive의 active/receipt hash·정책 불일치 시 표식 유지. 원본 receipt 보존 회귀 추가.
 - `bash scripts/verify-review-stall.sh` 종료0(typegen/tsc/lint, 관련TS/Python). 실제 서버·gateway 강제, vLLM disconnect abort·종료 기록, M1 최근 지연/최저 decode, 90초 운영 드릴은 막힘(별도 checkout/배포 receipt용 지정 scratch 생성 불가). 로컬 fake upstream 시험을 운영 종료 증거로 세지 않음.
+
+### 단계5 자동 해제 코드 (운영 선언은 막힘)
+
+- maintenance `model-capacity-reclaim` 1분 잡·catalog/역할 연결, Oracle 요청별5분 지연 경보를 분리 도입. 선언 없음/잘못된 선언이면 해제 경로를 호출하지 않음. 유효 선언도 기존 `releaseEvidencedDispatches`와 owner/프로세스 그룹/로컬 종료 증거 판정만 사용.
+- 추가 보강: `enforcedAfter` UTC 시각 필수. 선언된 새 서버 상한을 그 전에 시작한 old-policy/기존 미확인 요청에 소급하지 않음. 공통 판정에 적용해 보고와 실행이 같은 결과를 냄. 해제 이벤트 reference에 보장 적용 시각도 남김.
+- 관련 단위17시험 성공 후 `bash scripts/verify-review-stall.sh` 전체 차선 종료0(typegen/tsc/lint·TS/Python). timeout/연결 끊김/owner 교체의 순수 판정과 무증거·과거 요청 거절은 로컬 시험이며 운영 드릴 아님.
+- 운영 `MODEL_CAPACITY_AUTO_RECLAIM`·relay engine 상한 선언 미설정, 실제 자동/수동 해제0(이 작업이 요청한 해제 없음). 단계4 서버/gateway 강제·M1 표본·vLLM abort가 미검증이므로 선언 금지 조건을 유지.
+- 기존 AI1 `MAX_REVIEW_ATTEMPTS=3`, AI2 `MAX_SECOND_REVIEW_FAILURES` 및 receipt/item owner·현재 입력 검증을 유지. 늦은 응답이 새 owner/입력의 성공을 쓰도록 완화하지 않음. 실제 중복 저장 방지 드릴은 미실행.
+- **남음/막힘**: Oracle의 현재 허용 forced command는 service observe/recover(web/monitor)에 한정된다. 새 해제용 trigger를 운영에서 설치·권한 추가하지 않았으며 현재 구현은 scheduler가 매분 worker를 깨우고 Oracle이 요청별 감시/경보만 한다. Oracle 트리거까지 검증하려면 기존 승인된 트리거 통로의 확인이 필요하며 실행 권한 설정 변경으로 만들지 않음.
+- 실제4종(timeout·끊김·owner교체·응답유실) 드릴5분 내 해제/재개, 이후60분 AI1·AI2 저장 증가·수동 해제0 관측은 단계4 실제 보장과 배포 경로가 막혀 수행하지 않음.

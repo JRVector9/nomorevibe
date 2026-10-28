@@ -105,3 +105,11 @@
 추가 안전 조건: `LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS`를 쓰려면 `LOCAL_MODEL_RELAY_ENGINE_BOUND_EFFECTIVE_AT`(실제 엔진 상한이 보장되기 시작한 UTC 시각)을 함께 적어야 한다. 이 시각보다 먼저 전송된 미확인 receipt는 새 상한으로 자동 해제하지 않는다. 재시작·기한 경과·기존 archive 불일치도 이를 우회하지 않는다. 현재 운영의 기존 미확인3건을 새 선언으로 자동 소급 해제하지 않는다.
 
 배포/강제 막힘: 지정 scratch 디렉터리 생성이 `Read-only file system`으로 거절되었고 별도 abcLLM/engine 작업용 checkout과 private 배포 영수증을 그 밖 경로로 우회 생성하지 않았다. 이 저장소 코드의 회귀 시험은 서버 종료·vLLM abort 운영 증명이 아니다.
+
+### 자동 해제 선언의 소급 적용 차단 (단계5 코드, 운영 미선언)
+
+`MODEL_CAPACITY_AUTO_RECLAIM` 각 항목에 `enforcedAfter`(실제 서버·gateway 보장 적용을 검증한 UTC ISO 시각)가 필수다. `provider_bound` 판정의 `enforcedAfterMs`로 전달하며, `dispatchAt < enforcedAfter`이면 로컬 종료·프로세스 그룹 종료가 있어도 `provider_bound_not_effective_at_dispatch`로 남긴다. 수동 절차의 기존 판정은 이 선택 필드가 없으면 기존대로다. 해제의 append-only reference에는 보장 적용 시각도 함께 남는다.
+
+예전 선언 예제에는 이 필드가 없어 지금 검증에서 거절된다. 문서 예제값을 복사해 운영 선언하지 않는다. 특히 현재 미확인3건은 새 서버 상한을 적용하기 전에 시작했으므로 그 선언으로 소급 해제할 수 없다. 별도 실제 종료 증거를 갖춘 정식 경계 해제만 가능하다.
+
+코드의 시간 합산은 클라이언트 기한+안쪽 상한+skew이며 스케줄 지연·업무 재시도·운영 재개의 5분 보장이 아니다. 이를 포함한 실제4종 드릴과 이후60분 저장 증가/수동 해제0은 여전히 미실측이다. 운영 env를 설정하거나 실제 점유를 해제하지 않았다.

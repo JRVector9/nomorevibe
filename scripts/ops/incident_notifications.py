@@ -112,7 +112,7 @@ def _signature(config, value):
     return (_target(config, host + '/' + service) and
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
              or stage in REVIEW_STAGES and reason in REVIEW_REASONS
-             or _request_id(stage) and reason == 'model_indeterminate'))
+             or _request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')))
 
 
 def _finite_time(value, now):
@@ -247,11 +247,11 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
         if not isinstance(event, dict) or not _target(config, event.get('target')):
             continue
         stage, reason = event.get('stage', 'service'), event.get('reason')
-        if reason == 'model_indeterminate' and _request_id(event.get('requestId')):
+        if reason in ('model_indeterminate', 'model_reclaim_overdue') and _request_id(event.get('requestId')):
             stage = event['requestId']
         if not ((stage in STAGES and reason == 'upstream_stalled') or
                 (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
-                (_request_id(stage) and reason == 'model_indeterminate') or
+                (_request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
         signature = event['target'] + '/' + stage + '/' + reason
