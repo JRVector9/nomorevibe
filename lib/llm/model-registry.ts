@@ -30,7 +30,7 @@ const local = "http://100.77.43.63:8090/v1";
 /** All compatibility defaults live here. Selection never grants capacity or verified serving authority. */
 export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "gpu3090:review", equipment: "gpu3090", displayName: "GPU3090 · Qwen · 직접 연결", provider: "local-direct", baseUrl: local,
-    model: "qwen3.8-flash-next", family: "qwen3.8-flash-next", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 2,
+    model: "qwen3.8-flash-next", family: "qwen3.8-flash-next", timeoutMs: 60_000, maxTokens: 10_000, concurrency: 2,
     purposes: ["direct-review", "ai2-direct", "assist-primary", "korean-translation-direct", "relay"] },
   { key: "m3:review", equipment: "m3", displayName: "M3 · DeepSeek", provider: "local-direct", baseUrl: "http://100.92.77.66:8010/v1",
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
@@ -44,7 +44,7 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     model: "gpt-oss-120b", family: "gpt-oss-120b", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 2,
     purposes: ["product-search-profile", "reason-translate", "product-tagline-ko", "search-query-translate", "assist-legacy-family"] },
   { key: "mlx:tagline", equipment: "mlx", displayName: "MLX · 소개 생성", provider: "abcllm", baseUrl: gateway, gatewayLabel: "MLX",
-    model: "qwen3.6-35b-heretic", family: "qwen3.6-35b-heretic", timeoutMs: 60_000, maxTokens: 400, concurrency: 1, purposes: ["crawl-tagline"] },
+    model: "qwen3.6-35b-heretic", family: "qwen3.6-35b-heretic", timeoutMs: 60_000, maxTokens: 400, concurrency: 2, purposes: ["crawl-tagline"] },
   { key: "connect:sonnet", equipment: "connect", displayName: "Claude CLI · sonnet", provider: "claude-cli", baseUrl: null,
     model: "sonnet", family: "sonnet", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-intro-check", "classify-claude"] },
   { key: "connect:opus", equipment: "connect", displayName: "Claude CLI · opus", provider: "claude-cli", baseUrl: null,
@@ -58,8 +58,11 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
 ];
 /** Per-purpose request budgets preserve existing adaptive wire sizing under the model ceiling. */
 export const DEFAULT_MODEL_PURPOSE_LIMITS: Readonly<Record<string, { maxTokens: number; concurrency: number }>> = {
+  "gateway-review": { maxTokens: 3_000, concurrency: 2 }, "review-cli": { maxTokens: 2_000, concurrency: 1 },
+  "human-review": { maxTokens: 2_000, concurrency: 1 }, "product-intro-check": { maxTokens: 8_000, concurrency: 1 },
+  "classify-claude": { maxTokens: 4_000, concurrency: 1 },
   "product-search-profile": { maxTokens: 500, concurrency: 2 }, "product-search-verify": { maxTokens: 3_000, concurrency: 4 },
-  "crawl-tagline": { maxTokens: 400, concurrency: 1 }, "reason-translate": { maxTokens: 6_000, concurrency: 2 },
+  "crawl-tagline": { maxTokens: 400, concurrency: 2 }, "reason-translate": { maxTokens: 6_000, concurrency: 2 },
   "product-tagline-ko": { maxTokens: 5_400, concurrency: 1 }, "product-translate": { maxTokens: 8_000, concurrency: 1 },
   "search-query-translate": { maxTokens: 200, concurrency: 1 }, "direct-review": { maxTokens: 3_000, concurrency: 2 },
 };
@@ -141,6 +144,12 @@ export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: Mo
   return modelRequestName(modelForPurpose(purpose, env));
 }
 export function modelFamily(purpose: string, env: ModelEnvironment = process.env): string { return modelForPurpose(purpose, env).family; }
+export function configuredModelForProvider(purpose: keyof typeof MODEL_PURPOSE_ENV, provider: ModelDefinition["provider"], env: ModelEnvironment = process.env): string {
+  if (configuredModelDefinition(purpose, env).provider !== provider) throw new Error("model_provider_adapter_mismatch");
+  const model = configuredModel(purpose, env);
+  if (provider.endsWith("-cli") && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model)) throw new Error("invalid_cli_model");
+  return model;
+}
 export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.env, expectedProvider?: ModelDefinition["provider"]): string {
   const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   if (expectedProvider && definition.provider !== expectedProvider) throw new Error("model_provider_adapter_mismatch");
@@ -157,4 +166,10 @@ export function modelLimits(purpose: string, env: ModelEnvironment = process.env
   const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   const budget = readModelRegistry(env).limits[purpose] ?? DEFAULT_MODEL_PURPOSE_LIMITS[purpose] ?? definition;
   return { maxTokens: Math.min(budget.maxTokens, definition.maxTokens), concurrency: Math.min(budget.concurrency, definition.concurrency) };
+}
+
+export function modelRequestBudget(purpose: string, env: ModelEnvironment = process.env): { maxTokens: number; concurrency: number } {
+  const budget = readModelRegistry(env).limits[purpose] ?? DEFAULT_MODEL_PURPOSE_LIMITS[purpose];
+  if (!budget) throw new Error(`model_request_budget_missing:${purpose}`);
+  return budget;
 }

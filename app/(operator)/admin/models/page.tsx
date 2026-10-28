@@ -1,3 +1,4 @@
+import { ModelRegistryTable } from "./ModelRegistryTable";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
@@ -49,9 +50,10 @@ export default async function ModelsPage() {
       <div className="overflow-x-auto"><table className="w-full text-left text-[13px]"><thead><tr className="border-b border-line"><th className="py-2 pr-4">단계</th><th className="py-2 pr-4">현재 웹 설정 모델</th><th className="py-2">설정 위치 · 변경 불가</th></tr></thead>
         <tbody>{textStages.map(([stage, model, location]) => <tr key={stage} className="border-b border-line"><th className="py-3 pr-4 font-semibold">{stage}</th><td className="py-3 pr-4 font-mono">{model}</td><td className="py-3 font-mono text-fg-3">{location}</td></tr>)}</tbody>
       </table></div>
-      <p className="text-[13px] text-fg-3">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 Qwen/vision/DeepSeek 계약을 사용합니다. 이들 모델의 자유 변경은 아직 지원하지 않습니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
+      <p className="text-[13px] text-fg-3">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 Qwen/vision/DeepSeek 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
       <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
     </section>
+    <ModelRegistryTable />
   </main>;
 }
 

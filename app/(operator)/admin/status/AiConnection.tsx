@@ -4,13 +4,12 @@ import { useState } from 'react';
 import { Countdown } from './Countdown';
 import { OperationsDialog } from './OperationsDialog';
 import { useAgentConnection } from './useAgentConnection';
-import { DEFAULT_CONFIG, MODEL_IDS, modelConfigSchema, type AgentStatus, type ModelConfig } from '@/lib/operations/contracts';
+import { DEFAULT_CONFIG, CLASSIFICATION_MODEL_OPTIONS, modelConfigSchemaFor, type AgentStatus, type ModelConfig } from '@/lib/operations/contracts';
 import { formatDetailTime } from '@/lib/format/time';
 
 type Provider = 'codex'|'claude';
 const PROVIDERS: Provider[]=['codex','claude'];
 const providerName=(p:Provider)=>p==='codex'?'Codex':'Claude';
-const modelName=(m:string)=>m==='sonnet'?'Claude Sonnet':m==='gpt-5.3-codex-spark'?'Codex Spark':'Codex Terra';
 /** 상세 시각 "2026-10-08 13:38:13 KST" — 화면마다 달랐던 표기를 하나로(ADM-26) */
 const time=(value:string|null|undefined)=>formatDetailTime(value,'기록 없음');
 const LABELS:Record<string,string>={starting:'인증 페이지 준비 중',awaiting_approval:'공식 페이지 승인 대기',exchanging:'인증 코드 확인 중',stored:'연결 완료',cancelled:'연결 취소됨',expired:'연결 시간 만료',failed:'연결 실패',running:'검사 중',verified:'검사 통과',applied:'설정 적용 완료',success:'정상 응답 확인',auth:'인증 실패 · 재연결 필요',timeout:'응답 시간 초과',access_denied:'이 모델에 접근할 수 없음',rate_limit:'사용 한도 또는 요청 제한',invalid_output:'응답 형식 오류',no_cli:'CLI 실행 불가',error:'요청 실패',cli_error:'CLI 요청 실패',output_too_large:'응답 크기 초과',credential_store_failed:'인증 저장 실패'};
@@ -21,9 +20,13 @@ export function AiConnection({initial,reviewMode}:{initial:AgentStatus|null;revi
   const {status,pending,transportError,message,checkedAt,refresh,perform}=useAgentConnection(initial);
   const [draft,setDraft]=useState<ModelConfig|null>(null),[dialogProvider,setDialogProvider]=useState<Provider|null>(null);
   const [authCode,setAuthCode]=useState(''),[dialogError,setDialogError]=useState(''),[copied,setCopied]=useState(false);
-  const config=draft??(status?.configVersion?status.config:DEFAULT_CONFIG);
+  const options=status?.modelOptions??CLASSIFICATION_MODEL_OPTIONS;
+  const isClaude=(model:string|undefined)=>options.find(option=>option.model===model)?.provider==='claude-cli';
+  const modelName=(model:string)=>options.find(option=>option.model===model)?.displayName??model;
+  const defaults=status?.defaultModelConfig??DEFAULT_CONFIG;
+  const config=draft??status?.config??defaults;
   const anyConnected=Boolean(status?.connected||status?.claudeConnected),busy=Boolean(status?.busy);
-  const valid=modelConfigSchema.safeParse(config).success;
+  const valid=modelConfigSchemaFor(options).safeParse(config).success;
   const verification=status?.verification;
   const verified=verification?.state==='verified'&&verification.generation===status?.generation&&JSON.stringify(verification.config)===JSON.stringify(config);
   const ready=status?.configReady===true;
@@ -33,7 +36,7 @@ export function AiConnection({initial,reviewMode}:{initial:AgentStatus|null;revi
   const countdown=activity&&status?.serverNow?<Countdown key={activity.id} deadlineAt={activity.deadlineAt} serverNow={status.serverNow} label={activity.kind==='model'?`${modelName(activity.model!)} 응답 대기`:activity.kind==='oauth_exchange'?'인증 코드 확인':'계정 연결 유효시간'}/>:null;
   const busyText=status?.busy==='login'?`${providerName(status.connection?.provider??'codex')} 계정 연결이 진행 중입니다. 모델은 미리 선택할 수 있으며, 검사는 연결을 완료하거나 취소한 뒤 실행할 수 있습니다.`:status?.busy==='verification'?'선택한 모델에 샘플 분류를 요청하고 있습니다. 모델당 최대 35초가 걸립니다.':status?.busy==='account_check'?'저장된 계정으로 모델 응답을 확인하고 있습니다. 최대 35초가 걸립니다.':status?.busy==='classification'?'퍼블리셔가 분류 중입니다. 완료 후 연결·검사를 진행할 수 있습니다.':'';
   function update(which:'primary'|'fallback',key:'model'|'effort',value:string) {
-    setDraft({...config,[which]:key==='model'&&value==='none'?null:{...(config[which]??{model:'sonnet',effort:'high'}),[key]:value,...(key==='model'&&value==='sonnet'?{effort:'high'}:{})}} as ModelConfig);
+    setDraft({...config,[which]:key==='model'&&value==='none'?null:{...(config[which]??{model:options.find(option=>option.provider==='claude-cli')?.model??options[0].model,effort:'high'}),[key]:value,...(key==='model'&&isClaude(value)?{effort:'high'}:{})}} as ModelConfig);
   }
   async function connect(p:Provider) {
     setDialogProvider(p);setDialogError('');setAuthCode('');setCopied(false);
@@ -73,8 +76,8 @@ export function AiConnection({initial,reviewMode}:{initial:AgentStatus|null;revi
       <p className="ai-caption">Claude 연결 확인은 저장된 인증으로 hi~를 보내고 실제 답변을 표시합니다. 분류 설정 적용에는 아래의 선택 모델 검사가 필요합니다.</p>
     </section>
     <section className="ops-panel ai-model-panel" aria-labelledby="ai-model-title">
-      <div className="ops-row"><div><h3 id="ai-model-title">분류 모델 선택</h3><p>우선 모델이 실패하면 예비 모델로 다시 시도합니다.</p></div><button disabled={pending} onClick={()=>setDraft(DEFAULT_CONFIG)}>Spark → Claude 선택</button></div>
-      <div className="ai-model-fields">{(['primary','fallback'] as const).map(which=><fieldset key={which} disabled={pending}><legend>{which==='primary'?'우선 모델':'예비 모델'}</legend><label>{which==='primary'?'우선':'예비'} 모델<select value={config[which]?.model??'none'} onChange={e=>update(which,'model',e.target.value)}>{which==='fallback'&&<option value="none">사용하지 않음</option>}{MODEL_IDS.map(id=><option value={id} key={id}>{modelName(id)} · {id}</option>)}</select></label><label>{which==='primary'?'우선':'예비'} 추론 강도<select disabled={!config[which]} value={config[which]?.effort??'high'} onChange={e=>update(which,'effort',e.target.value)}><option value="high">High</option>{config[which]?.model!=='sonnet'&&<option value="xhigh">XHigh</option>}</select></label><p>{config[which]?.model==='sonnet'&&!status?.claudeConnected?'Claude 계정 연결이 필요합니다.':config[which]&&config[which]?.model!=='sonnet'&&!status?.connected?'Codex 계정 연결이 필요합니다.':which==='fallback'?'두 모델 모두 실패하면 발행을 보류합니다.':'제품 설명을 기준으로 카테고리를 분류합니다.'}</p></fieldset>)}</div>
+      <div className="ops-row"><div><h3 id="ai-model-title">분류 모델 선택</h3><p>우선 모델이 실패하면 예비 모델로 다시 시도합니다.</p></div><button disabled={pending} onClick={()=>setDraft(defaults)}>기본 모델 선택</button></div>
+      <div className="ai-model-fields">{(['primary','fallback'] as const).map(which=><fieldset key={which} disabled={pending}><legend>{which==='primary'?'우선 모델':'예비 모델'}</legend><label>{which==='primary'?'우선':'예비'} 모델<select aria-label={`${which==='primary'?'우선':'예비'} 모델`} value={config[which]?.model??'none'} onChange={e=>update(which,'model',e.target.value)}>{which==='fallback'&&<option value="none">사용하지 않음</option>}{options.map(({model})=><option value={model} key={model}>{modelName(model)} · {model}</option>)}</select></label><label>{which==='primary'?'우선':'예비'} 추론 강도<select aria-label={`${which==='primary'?'우선':'예비'} 추론 강도`} disabled={!config[which]} value={config[which]?.effort??'high'} onChange={e=>update(which,'effort',e.target.value)}><option value="high">High</option>{!isClaude(config[which]?.model)&&<option value="xhigh">XHigh</option>}</select></label><p>{isClaude(config[which]?.model)&&!status?.claudeConnected?'Claude 계정 연결이 필요합니다.':config[which]&&!isClaude(config[which]?.model)&&!status?.connected?'Codex 계정 연결이 필요합니다.':which==='fallback'?'두 모델 모두 실패하면 발행을 보류합니다.':'제품 설명을 기준으로 카테고리를 분류합니다.'}</p></fieldset>)}</div>
       {!valid&&<p className="ai-warning" role="alert">우선 모델과 예비 모델을 다르게 선택해주세요.</p>}
       <div className="ai-model-footer"><div><strong>{verification?.state==='running'?'모델 검사 중':verified?'검사 통과 · 적용할 수 있습니다.':ready&&JSON.stringify(config)===JSON.stringify(status?.config)?'현재 적용된 모델 설정입니다.':'선택한 모델의 검사가 필요합니다.'}</strong><p>{!anyConnected?'계정을 연결하면 검사를 시작할 수 있습니다.':busy?'진행 중인 AI 작업이 끝나면 검사·적용할 수 있습니다.':'한 모델 이상 정상 응답해야 적용됩니다. 모델을 바꾸면 다시 검사해주세요.'}</p></div><div className="ops-actions"><button disabled={!anyConnected||pending||busy||!valid} onClick={()=>void perform('test',{config})}>선택 모델 검사</button><button className="primary" disabled={!verified||pending||busy} onClick={()=>void perform('apply',{config,verificationId:verification?.id,expectedVersion:status?.configVersion}).then(r=>{if(!r.error)setDraft(null);})}>설정 적용</button></div></div>
       {verification&&<div className="ai-results" aria-live="polite"><h4>최근 모델 검사 · {label(verification.state)}</h4>{verification.results.length?verification.results.map((r,i)=><div key={i}><span>{modelName(r.model)}</span><strong className={r.result==='success'?'ai-success':'ai-warning'}>{label(r.result)}</strong></div>):<p>첫 번째 모델의 응답을 기다리고 있습니다.</p>}</div>}

@@ -1,3 +1,5 @@
+import { classificationModelOptions, classificationModelProvider } from "./classification-models";
+import { modelForPurpose } from "@/lib/llm/model-registry";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,10 +50,10 @@ export class ConnectAgent {
   snapshot(): AgentStatus {
     const classificationContracts = [this.state.config.primary, this.state.config.fallback].flatMap(model => {
       if (!model) return [];
-      const contract = resolveCliServingContract(PUBLICATION_CLASSIFY_ROUTE, model.model === 'sonnet' ? 'claude-cli' : 'codex-cli', model.model);
+      const contract = resolveCliServingContract(PUBLICATION_CLASSIFY_ROUTE, classificationModelProvider(model.model), model.model);
       return contract ? [contract] : [];
     });
-    return structuredClone({...this.state, classificationCapacityVersion: 1, classificationContracts, serverNow: Date.now(),
+    return structuredClone({...this.state, modelOptions: classificationModelOptions(), defaultModelConfig: DEFAULT_CONFIG, classificationCapacityVersion: 1, classificationContracts, serverNow: Date.now(),
       configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation, classifyReady: this.canClassify()});
   }
   /**
@@ -111,7 +113,7 @@ export class ConnectAgent {
   }
   private routeRun: CliRun = (args, stdin, timeout) => {
     if (this.shuttingDown) throw new ModelCapacityDeferredError('draining');
-    const claude = args[args.indexOf('-m') + 1] === 'sonnet';
+    const claude = classificationModelProvider(args[args.indexOf('-m') + 1]) === 'claude-cli';
     if (claude ? !this.claudeCredential : !this.credential) return Promise.resolve({kind:'exit',code:1,stdout:'',stderr:'authentication required'});
     this.startActivity('model',timeout,args[args.indexOf('-m')+1]);
     return (claude ? this.claudeRun ?? runClaude(this.claudeCredential!) : this.run)(args,stdin,timeout);
@@ -119,7 +121,7 @@ export class ConnectAgent {
   private nativeClassificationRun(payload: { inputs: ClassifyInput[]; definitions?: CategoryDefinitions }, authority: ClassificationAuthority): CliRun {
     return async (codexArgs, stdin, timeoutMs) => {
       if (this.shuttingDown) throw new ModelCapacityDeferredError('draining');
-      const model = codexArgs[codexArgs.indexOf('-m') + 1], claude = model === 'sonnet';
+      const model = codexArgs[codexArgs.indexOf('-m') + 1], claude = classificationModelProvider(model) === 'claude-cli';
       if (claude ? !this.claudeCredential : !this.credential) return { kind: 'exit', code: 1, stdout: '', stderr: 'authentication required' };
       this.startActivity('model', timeoutMs, model);
       const cwd = mkdtempSync(join(tmpdir(), claude ? 'nomorevibe-claude-run-' : 'nomorevibe-classify-run-'));
@@ -205,7 +207,7 @@ export class ConnectAgent {
     this.state.accounts={...this.state.accounts,[provider]:{storedAt:new Date().toISOString()}};
   }
   private checkedAccount(model: string, result: string) {
-    const provider=model==='sonnet'?'claude':'codex';
+    const provider=classificationModelProvider(model)==='claude-cli'?'claude':'codex';
     this.state.accounts={...this.state.accounts,[provider]:{...this.state.accounts?.[provider],model,result,checkedAt:new Date().toISOString()}};
   }
   private async manualModelAdmission() {
@@ -218,8 +220,8 @@ export class ConnectAgent {
     this.available();
     if(provider!=='codex'&&provider!=='claude')throw new Error('지원하지 않는 AI 제공자입니다.');
     if(provider==='codex'?!this.credential:!this.claudeCredential)throw new Error('계정을 먼저 연결해주세요.');
-    const selected=[this.state.config.primary,this.state.config.fallback].find(m=>m&&(m.model==='sonnet')===(provider==='claude'));
-    const model=selected??{model:provider==='claude'?'sonnet':'gpt-5.3-codex-spark',effort:'high' as const};
+    const selected=[this.state.config.primary,this.state.config.fallback].find(m=>m&&(classificationModelProvider(m.model)==='claude-cli')===(provider==='claude'));
+    const model=selected??{model:modelForPurpose(provider==='claude'?'classify-claude':'classify-primary').model,effort:'high' as const};
     this.state.busy='account_check';
     await this.manualModelAdmission();
     void (async()=>{

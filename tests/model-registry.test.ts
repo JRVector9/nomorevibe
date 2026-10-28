@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry,
-  resolveRegistryModel, modelLimits } from "@/lib/llm/model-registry";
+  resolveRegistryModel, modelLimits, configuredModelForProvider } from "@/lib/llm/model-registry";
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
@@ -43,6 +43,8 @@ describe("model registry equipment identity", () => {
     expect(modelLimits("product-search-profile", env)).toEqual({ maxTokens: 900, concurrency: 2 });
     expect(modelLimits("product-search-profile", {})).toEqual({ maxTokens: 500, concurrency: 2 });
     expect(() => modelBaseUrl("relay", {}, "abcllm")).toThrow("model_provider_adapter_mismatch");
+    expect(() => configuredModelForProvider("product-intro-check", "codex-cli", {})).toThrow("model_provider_adapter_mismatch");
+    expect(() => configuredModelForProvider("product-intro-check", "claude-cli", { INTRO_CHECK_MODEL: "bad model" })).toThrow("invalid_cli_model");
   });
   it("rejects duplicate keys, wrong equipment, credentials, missing selections and malformed JSON", () => {
     for (const models of [[DEFAULT_MODEL_DEFINITIONS[0], DEFAULT_MODEL_DEFINITIONS[0]],

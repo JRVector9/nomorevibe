@@ -1,3 +1,4 @@
+import { classificationModelProvider } from "./classification-models";
 import { z } from "zod";
 import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
@@ -250,7 +251,7 @@ function classifierModelRoutes(snapshot: ControlSnapshot): RouteUse[] {
     && observation.value.classificationCapacityVersion === 1 && contracts.success;
   return [config.data.primary, config.data.fallback].flatMap(model => {
     if (!model) return [];
-    const provider = model.model === 'sonnet' ? 'claude-cli' : 'codex-cli', routeId = 'crawl-publish-classify';
+    const provider = classificationModelProvider(model.model), routeId = 'crawl-publish-classify';
     return [{ routeId, provider, model: model.model, remoteContractReady: Boolean(ready && contracts.data?.filter(contract =>
       contract.routeId === routeId && contract.provider === provider && contract.model === model.model).length === 1) }];
   });

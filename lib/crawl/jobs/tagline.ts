@@ -1,3 +1,4 @@
+import { modelLimits } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
@@ -16,7 +17,7 @@ import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 
 /** 한 번에 집는 수. 한 건이 4초쯤이라 둘씩 돌리면 한 틱에 20여 건 */
 const BATCH = 12;
-const CONCURRENCY = 2;
+const CONCURRENCY = modelLimits("crawl-tagline").concurrency;
 /** 한 번 부르는 데 둘 시간 */
 const CALL_MS = 45_000;
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */

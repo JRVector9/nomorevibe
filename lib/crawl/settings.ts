@@ -1,3 +1,4 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -495,7 +496,7 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
     await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, {
       action: 'human-review-deepseek', target: 'crawl_settings',
-      detail: { before: current.humanReview, after: settings.humanReview, model: 'deepseek-v4.1-flash-1017', host: 'm3ultra' },
+      detail: { before: current.humanReview, after: settings.humanReview, model: modelForPurpose("human-review").model, host: 'm3ultra' },
     }));
     if (input.enabled) await requestJob('human-deepseek-review', tx);
     return { ok: true, settings };

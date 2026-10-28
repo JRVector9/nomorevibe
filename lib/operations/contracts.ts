@@ -1,13 +1,20 @@
+import { classificationDefaultConfig, classificationModelOptions, type ClassificationModelOption } from "./classification-models";
 import type { CliServingContract } from '@/lib/llm/cli-serving-contract';
 import { z } from 'zod';
 import { categoryDefinitionsSchema } from '@/lib/crawl/settings-schema';
 import { publicationClassifyInputSchema, publicationPublisherRoleSchema } from '@/lib/llm/publication-classify-contract';
-export const MODEL_IDS = ['gpt-5.3-codex-spark', 'gpt-5.6-terra', 'sonnet'] as const;
-const model = z.object({ model: z.enum(MODEL_IDS), effort: z.enum(['high', 'xhigh']) }).strict().refine(v => v.model !== 'sonnet' || v.effort === 'high', 'Claude는 high 강도를 사용합니다.');
-export const modelConfigSchema = z.object({ primary: model, fallback: model.nullable() }).strict()
-  .refine(v => v.primary.model !== v.fallback?.model, '우선·예비 모델이 같습니다.');
+export const CLASSIFICATION_MODEL_OPTIONS = classificationModelOptions();
+export const MODEL_IDS = CLASSIFICATION_MODEL_OPTIONS.map(option => option.model);
+export function modelConfigSchemaFor(options: readonly ClassificationModelOption[]) {
+  const model = z.object({ model: z.string().refine(value => options.some(option => option.model === value), '설정에 없는 모델입니다.'),
+    effort: z.enum(['high', 'xhigh']) }).strict().refine(value => options.find(option => option.model === value.model)?.provider !== 'claude-cli'
+      || value.effort === 'high', 'Claude는 high 강도를 사용합니다.');
+  return z.object({ primary: model, fallback: model.nullable() }).strict()
+    .refine(value => value.primary.model !== value.fallback?.model, '우선·예비 모델이 같습니다.');
+}
+export const modelConfigSchema = modelConfigSchemaFor(CLASSIFICATION_MODEL_OPTIONS);
 export type ModelConfig = z.infer<typeof modelConfigSchema>;
-export const DEFAULT_CONFIG: ModelConfig = { primary: { model: MODEL_IDS[0], effort: 'xhigh' }, fallback: { model: 'sonnet', effort: 'high' } };
+export const DEFAULT_CONFIG: ModelConfig = classificationDefaultConfig();
 export const classifyInputsSchema = z.array(z.object({
   repo: z.string().max(200), url: z.string().max(2000), name: z.string().max(300),
   tagline: z.string().max(2000), topics: z.array(z.string().max(200)).max(100), language: z.string().max(100).nullable(),
@@ -60,6 +67,8 @@ export const ROLE_LABELS: Record<string, string> = { app: '웹·관리자 서비
   // 분리 역할(batch versioned) — 기존 역할의 잡을 떼어 Oracle 등 다른 host 에서 돈다
   translation: '번역', 'product-health': '서비스 응답 점검', 'site-evidence': '공식 사이트 근거', 'official-news': 'AI 소식 수집' };
 export type AgentStatus = {
+  modelOptions?: ClassificationModelOption[];
+  defaultModelConfig?: ModelConfig;
   classificationCapacityVersion?: 1;
   classificationContracts?: readonly CliServingContract[];
   serverNow?: number;

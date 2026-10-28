@@ -1,3 +1,4 @@
+import { knownClassificationProvider } from "@/lib/operations/classification-models";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { DEEPSEEK_REVIEW_MODEL } from "@/lib/crawl/deepseek-review-policy";
 import { qwenDirectConfig, qwenDirectServerLabel, QWEN_DIRECT_DEFAULT_MODEL } from "@/lib/crawl/qwen-direct-review";
@@ -330,7 +331,7 @@ function serviceOwners(service: WorkService, ctx: OwnerContext): { models: Model
     const instance = hosts[0]?.row.instanceId ?? "connect-agent";
     for (const [slot, choice] of [["분류 · 우선", config.primary], ["분류 · 예비", config.fallback]] as const) {
       if (!choice) continue;
-      models.push({ name: choice.model, full: `${choice.model} · ${choice.effort}`, row: { slot, job: info.label, provider: choice.model === "sonnet" ? "Claude 계정" : "Codex 계정",
+      models.push({ name: choice.model, full: `${choice.model} · ${choice.effort}`, row: { slot, job: info.label, provider: knownClassificationProvider(choice.model, ctx.agent?.modelOptions) === "claude-cli" ? "Claude 계정" : knownClassificationProvider(choice.model, ctx.agent?.modelOptions) === "codex-cli" ? "Codex 계정" : "제공자 확인 필요",
         runsOn: `AI 연결 서비스(${instance})`, source: `AI 연결 적용 설정 v${ctx.agent?.configVersion ?? "?"}`, stats: null } });
     }
   }

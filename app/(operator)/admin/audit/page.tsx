@@ -1,3 +1,4 @@
+import { configuredModel } from "@/lib/llm/model-registry";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -249,7 +250,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
               </Link>
             ))}
             <span className="ml-auto flex flex-wrap items-center gap-3">
-              <ReasonLanguageToggle done={null} total={null} />
+              <ReasonLanguageToggle model={configuredModel("reason-translate")} done={null} total={null} />
               {/* 내보내기의 view 는 화면 갈래라 감사의 갈래는 decision 으로 싣는다 — 보류·두 번째 의견 갈래는 내보내지 않는다 */}
               {(view === "reject" || view === "needs_review") &&
                 <a href={`/admin/export?view=audit&format=csv&decision=${view}`} className="text-[13px] text-accent hover:underline">CSV 내보내기</a>}

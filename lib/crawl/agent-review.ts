@@ -1,3 +1,4 @@
+import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,7 +13,7 @@ import {
 export const REVIEW_CLI_TIMEOUT_MS = 20_000;
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-const MAX_OUTPUT_TOKENS = 2_000;
+const MAX_OUTPUT_TOKENS = modelRequestBudget("review-cli").maxTokens;
 export type ReviewUsage = { inputTokens?: number; outputTokens?: number; costUsd?: number };
 export type ReviewFailure = "not_configured" | "input_too_large" | "timeout" | "cancelled" | "output_too_large" | "missing_cli" | "auth" | "cli_error" | "invalid_output" | "max_turns" | "budget" | "rate_limited"
   /** 게이트웨이에 그 모델이 없다(404) — 목록이 예고 없이 바뀐다 */
