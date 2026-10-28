@@ -160,6 +160,37 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(len(self.state['notifications']['incidents']), 1)
         self.assertIn('intro-check', next(iter(self.state['notifications']['incidents'])))
 
+    def test_review_capacity_is_a_distinct_incident_even_when_pipeline_is_already_down(self):
+        self.alarm_pipeline()
+        self.cycle(1000)
+        self.cycle(1030)
+        self.rows[1]['reviewFailures'] = [{'stage': 'first', 'reason': 'capacity_blocked'}]
+        self.cycle(1060)
+        _, receipt = self.cycle(1090)
+        self.assertTrue(receipt['accepted'])
+        self.assertIn('m3/monitor/first capacity_blocked', self.messages[-1])
+        self.assertIn('restart does not release capacity', self.messages[-1])
+        self.state = json.loads(self.path.read_text())
+        self.cycle(1120)
+        self.assertEqual(sum('/first capacity_blocked' in message for message in self.messages), 1)
+        self.rows[1].pop('reviewFailures')
+        self.cycle(1150)
+        self.assertIn('m3/monitor/first/capacity_blocked', self.state['notifications']['incidents'])
+        self.rows[1]['reviewFailures'] = []
+        self.cycle(1180)
+        self.assertNotIn('m3/monitor/first/capacity_blocked', self.state['notifications']['incidents'])
+
+    def test_review_local_stall_labels_existing_supervisor_recovery_and_second_is_independent(self):
+        self.rows[1]['reviewFailures'] = [{'stage': 'first', 'reason': 'local_stalled'},
+                                          {'stage': 'second', 'reason': 'consumer_missing'}]
+        self.cycle(1000)
+        self.cycle(1030)
+        self.assertIn('local fenced supervisor handles recovery', self.messages[-1])
+        self.assertIn('m3/monitor/second consumer_missing', self.messages[-1])
+        self.rows[1]['reviewFailures'] = [{'stage': 'second', 'reason': 'consumer_missing'}]
+        self.cycle(1060)
+        self.assertEqual(set(self.state['notifications']['incidents']), {'m3/monitor/second/consumer_missing'})
+
     def test_receiver_namespaces_and_indices_dedupe_independently_and_true_clears(self):
         self.receipts = {'receipts': [False], 'heartbeatReceipts': [False]}
         self.cycle(1000)
