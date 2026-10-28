@@ -3,7 +3,8 @@
 이 절이 현재 상태이며 아래 이전 기록은 당시 이력이다.
 
 - 끝남(로컬): PR709에 origin/main b047bddb를 정상 merge해 PR707 drain 보호를 복구. main과 다른 파일을 07930102의 재시작 보호 범위로 제한했다. 무관한 tests/crawl-seed-latest.test.ts, docs/CODEX_HANDOFF.md, GPU3090 개발 문서를 main으로 복구했다. 이력 재작성/force push 없음.
-- 검증: bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, 관련 TS/Python). 별도 crawl-seed-latest 22시험 성공. PR709 기존 CI40783523028/unit(1) 실패 원인은 main에 없는 탐색 시험 혼입이었다. 새 check 통과·병합은 대기.
+- 검증: bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, 관련 TS/Python). 별도 crawl-seed-latest 22시험 성공. PR709 기존 CI40783523028/unit(1) 실패 원인은 main에 없는 탐색 시험 혼입이었다. 새 CI40789227478/check SUCCESS 후 PR709를 7973d9b7421dad81cfe66fb4b05fded862d7c446으로 병합(23:51:18Z).
+- 진행: 01514beb를 최신 main 7973d9b7 위에 cherry-pick. item 경로만 우회하던 누락을 고쳐 실제 legacy 잡도 같은 blocked/paused hint를 선택 함수에 전달한다. 미전송 우회 및 이미 보낸 후보 고정의 legacy 회귀 2개 추가. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS20파일321시험/Python68시험). PR/CI 대기.
 - 남음: 01514beb → dc704d87 → d7fea73c+7eaf8bef를 각각 최신 main에서 PR/필수CI/병합. 이후 표준 배포, 실제 강제 확인 후 자동 회수 선언·4종 드릴·60분 관측.
 - 실제 운영 23:41:15Z: AI1 94871(최근1시간0), AI2 91158(최근1시간2). 이전 측정과 총수 동일. GPT-OSS AI1/Supa tagline/M1 translation indeterminate 각1. scripts/ops/measure-review-stall.mjs(원 커밋 dc704d87)를 기존 M3 text 컨테이너에서 node stdin 실행, primary READ ONLY. 세부 원인 추가 조회 예정.
 - 막힘(사람 필요, 배포 checkout): ssh jr@m3Ultra 연결·Docker 조회는 성공. 문서 경로 /Users/jr/Desktop/projects/nomorevibe-release-ai1-queue-fix-20261027 및 /Users/jr/Desktop/projects/nomorevibe는 `No such file or directory`. `ls -la /Users/jr/Desktop`는 `Operation not permitted`. 경로/OS 권한을 우회하지 않았다. M3에서 SSH로 읽을 수 있는 기존 운영자 checkout의 정확한 경로 확인이 필요하다. Keychain 접근 성공은 아직 확인하지 않았다.
