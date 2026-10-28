@@ -147,3 +147,35 @@
 - 기존 AI1 `MAX_REVIEW_ATTEMPTS=3`, AI2 `MAX_SECOND_REVIEW_FAILURES` 및 receipt/item owner·현재 입력 검증을 유지. 늦은 응답이 새 owner/입력의 성공을 쓰도록 완화하지 않음. 실제 중복 저장 방지 드릴은 미실행.
 - **남음/막힘**: Oracle의 현재 허용 forced command는 service observe/recover(web/monitor)에 한정된다. 새 해제용 trigger를 운영에서 설치·권한 추가하지 않았으며 현재 구현은 scheduler가 매분 worker를 깨우고 Oracle이 요청별 감시/경보만 한다. Oracle 트리거까지 검증하려면 기존 승인된 트리거 통로의 확인이 필요하며 실행 권한 설정 변경으로 만들지 않음.
 - 실제4종(timeout·끊김·owner교체·응답유실) 드릴5분 내 해제/재개, 이후60분 AI1·AI2 저장 증가·수동 해제0 관측은 단계4 실제 보장과 배포 경로가 막혀 수행하지 않음.
+
+### 단계6 p84-5 최신 검토
+
+- 최초 보고를 보존하고 최신 코드 정정과 실제14일 표본19093건을 추가. prompt2026-10-06.2 동일, 규칙 provider/재사용 제외. READ ONLY primary 조회의 원본 JSON2개와 측정 스크립트 보존.
+- 단순 본문50/100/200/400자 거절 규칙의 AI 일치율71.27/70.12/67.43/63.71%. 200자 미만5431건 중 AI approve1593건. installable 예외를 읽지 않은 전역 빈 본문 거절은 정책을 재현하지 못함. 신규 자동 거절 대신 그림자 평가를 선택(가장 덜 파괴적이며 실측상98% 기준 미달).
+- AI1 후보 reason·packageProof 성격·installable 예외·AI2 출력 상한 설명을 최신 코드와 대조해 정정. 사람 기준 대체 가능 비율은 측정 없음(동일 입력의 검증된 사람 정답 대조 미실행), 추정치 없음.
+- 운영 저장23:14→23:30 AI1 94871→94871, AI2 91158→91158. 배포 없음/증가0. 정체 해결 또는 운영 완료로 기록하지 않음.
+- 마지막 `git fetch origin` 확인 main b047bddb 그대로. 단계2 이후 PR/병합/배포는 단계1 private receipt 쓰기 막힘과 운영 확인 조건 때문에 대기. 그 밖 남은 것은 단계4 외부 서버/gateway 강제·M1 표본, 단계5 Oracle 승인된 트리거 통로/실제 드릴·60분 관측이다. 로컬 코드 단계는 모두 분리 커밋으로 보존.
+
+### Oracle 트리거 추가 확인·막힘 (앞선 단계5 기록 보충)
+
+- 별도 `lib/runtime/oracle-scheduler.ts`의 `runOracleSchedulerTick → requestDueJobs`와 `deploy/oracle/least-privilege.sql`의 기존 scheduler jobs 권한을 확인했다. 공통 catalog에 등록한 model-capacity-reclaim은 이 정기 트리거 통로에도 포함된다(`catalogJobsForBatch`, interval60000). 그러므로 새 실행 권한을 만드는 것이 필수라는 뜻은 아니다. watchdog forced command 자체에는 모델 회수 트리거가 없고, 실제 nomore-x scheduler 통로가 설치/활성인지 확인해야 한다.
+- 실제 읽기 명령 `ssh -o BatchMode=yes -o ConnectTimeout=10 ubuntu@nomore-x 'systemctl list-units --type=service --all --no-legend "nomorevibe*"'` 을 간격을 두고 같은 명령으로 총3회 시도. 매회 exit255, `Connection closed by UNKNOWN port 65535`.
+- 이 연결 실패로 nomore-x의 실제 scheduler/watchdog 가동·새 catalog 반영을 확인하지 못했다. 다른 계정/주소/직접 TCP로 우회하거나 host-key 검증·실행 권한·인증을 바꾸지 않았다.
+
+## 2026-10-28 최종 상태 (이 표가 현재 상태, 앞 기록은 이력)
+
+| 단계 | 로컬 결과 | PR·CI·병합·배포/운영 |
+| --- | --- | --- |
+| 0 기존 작업 회수 | 86203e5d, main199a3ebb에 충돌 해결·verify0 | 로컬 보존용, 합쳐서 publish하지 않음 |
+| 1 PR707 | 최신 base check SUCCESS | PR707 병합b047bddb, main check·두 image publish SUCCESS. scope상 runtime변경0. 실제 baseline plan의 private receipt 작성은 지정 scratch 부모 쓰기 차단으로 막힘. run/앱 변경/저장 증가 확인 없음 |
+| 2 재시작 보호 | 07930102, 전용 브랜치에 main b047 병합, verify0 | 단계1 운영 관문 미완료로 후속 PR·병합·배포 대기 |
+| 3 미전송 우회 | 01514beb, verify0. 제거 모델 재시도도 보호 | 동일 선행 배포 의존으로 PR/배포 막힘 |
+| 4 기한/relay | dc704d87, 최근 p95/p99 측정·비소급 relay·verify0 | AI50/55/60초는 검증 대상. 외부 gateway/엔진 강제·종료 기록·vLLM abort·M1 성공 지연은 미검증. 별도 checkout용 지정 scratch 쓰기 막힘 |
+| 5 자동 회수 | d7fea73c, 선언 기본off·시작 시각 보호·verify0 | 4의 강제 미검증이므로 운영 선언 금지. Oracle 현재 통로의 실제 서비스 확인은 SSH3회 실패.4종 실제5분 드릴·60분 저장 증가 관측 막힘 |
+| 6 p84-5 보고서 | 최신 코드 정정·primary19093 표본·측정 도구·보고서 별도 커밋 | 신규 규칙 자동 거절은 채택하지 않음. 사람 정답 기반 대체율은 측정 없음 |
+
+품질 명령 `bash scripts/verify-review-stall.sh`: 최초 종료1 → 최종 종료0. 최종 typegen/tsc/lint, TS23파일336시험·Python71시험 성공. 새 측정 mjs2개 node syntax/eslint 및 실제 READ ONLY SQL 성공. 실제 DB 통합 시험·운영 드릴·UI 검수는 수행하지 않음(UI 레이아웃/창 변경 없음). 검증 로그는 작업 공간의 review-stall-*-verify.log에 보존.
+
+AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에서 stdin 실행한 primary READ ONLY 쿼리. 23:14→23:30 AI1 **94871→94871**, AI2 **91158→91158**. 배포 없음·증가0. 운영 회복 성공을 주장하지 않는다. 이 작업이 요청한 수동/자동 해제도 없음이며, 전체 운영의60분 수동 해제0은 관측하지 않았다.
+
+이후 할 수 있는 로컬 코드 단계는 모두 완료·커밋했고, 남은 것은 위 배포 경로/외부 강제/연결/운영 측정에 막힌 항목뿐이다. 파일시스템·인증·권한 제한을 우회하지 않았다.
