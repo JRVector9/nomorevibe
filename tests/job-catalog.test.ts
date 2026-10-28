@@ -105,7 +105,7 @@ describe('lanesForRole', () => {
     expect(crawler).toHaveLength(7);
     expect(crawler[0]).not.toContain('crawl-seed');
     expect(crawler[0]).not.toContain('crawl-fetch');
-    expect(crawler[1]).toEqual(['crawl-seed']);
+    expect(crawler[1]).toEqual(['crawl-ko-apply', 'crawl-seed']);
     expect(crawler[2]).toEqual(['crawl-fetch']);
     expect(crawler.slice(3)).toEqual([['product-evidence-refresh'], ['agent-evidence-refresh'], ['ai-level-refresh'], ['product-star-observation']]);
     expect(crawler[0]).not.toContain('product-evidence-refresh');
