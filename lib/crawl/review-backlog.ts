@@ -18,8 +18,11 @@ const READ_MS = 3_000;
  * occurs in several stages consumes one place. Terminal candidates consume none
  * unless new source collection is pending for them.
  */
-export async function readReviewBacklogInTransaction(tx: ProductTransaction, now: Date,
+export async function readReviewBacklogInTransaction(tx: ProductTransaction, now: Date | string,
   deadlineAt: number): Promise<ReviewBacklogSnapshot> {
+  // Atomic admission passes PostgreSQL's full microsecond wall time. A JavaScript
+  // Date would hide insertions in the current millisecond from the rate window.
+  const wallTime = typeof now === 'string' ? now : now.toISOString();
   const remaining = Math.floor(deadlineAt - Date.now() - 50);
   if (remaining < 1) throw new Error("review_backlog_deadline");
   await tx.execute(sql`select set_config(name, (case when setting::bigint = 0 then ${remaining}
@@ -42,8 +45,8 @@ export async function readReviewBacklogInTransaction(tx: ProductTransaction, now
     select (select count(*)::int from queued) as "queuedRepositories",
       (select count(*)::int from downstream) as "downstreamRepositories",
       (select count(*)::int from ${crawlFrontier}
-        where ${crawlFrontier.discoveredAt} > ${now.toISOString()}::timestamp - ${WINDOW_MS} * interval '1 millisecond'
-          and ${crawlFrontier.discoveredAt} <= ${now.toISOString()}::timestamp
+        where ${crawlFrontier.discoveredAt} > ${wallTime}::timestamp - ${WINDOW_MS} * interval '1 millisecond'
+          and ${crawlFrontier.discoveredAt} <= ${wallTime}::timestamp
           and ${crawlFrontier.aliasOf} is null
           and ${crawlFrontier.signal} not in ('review-source-refresh', 'star-auto-source-refresh', 'admin-evidence-refresh')) as "recentNew"
   `);
