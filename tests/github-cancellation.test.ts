@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { githubRequest } from "@/lib/crawl/github";
+import { githubRequest, searchCommits, searchRepositories } from "@/lib/crawl/github";
 
 const mocks = vi.hoisted(() => ({ tokens: vi.fn(), auth: vi.fn(), quota: vi.fn(), observe: vi.fn(), fetch: vi.fn() }));
 vi.mock("@/lib/crawl/github-accounts", () => ({ collectorTokens: mocks.tokens, observeCollectorQuota: mocks.observe }));
@@ -69,5 +69,18 @@ it('bounds an unresolved token provider and fences late token settlement at the 
   await vi.advanceTimersByTimeAsync(1);
   expect(mocks.auth).not.toHaveBeenCalled();
   expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each([searchCommits,searchRepositories])('passes a search slice deadline through credential preparation',async search => {
+  let resolve!: (value: unknown) => void;
+  mocks.tokens.mockImplementation(() => new Promise(done => {resolve=done;}));
+  const pending = search({query:'topic:test',page:1,sort:'recent'},{deadlineAt:Date.now()+25});
+  await vi.advanceTimersByTimeAsync(25);
+  expect(await pending).toMatchObject({ok:false,error:{kind:'transport'}});
+  resolve([{token:'late',userId:null,login:'late'}]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(mocks.fetch).not.toHaveBeenCalled();
+  expect(mocks.quota).not.toHaveBeenCalled();
   expect(vi.getTimerCount()).toBe(0);
 });

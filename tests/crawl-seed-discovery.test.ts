@@ -1,3 +1,4 @@
+import { recordDiscoveryProgress } from '@/lib/crawl/discovery-progress';
 import { createHash } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
@@ -6,6 +7,7 @@ import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), log:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/observability/logger', () => ({logger:{info:mocks.log}}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
+vi.mock('@/lib/crawl/discovery-progress', () => ({recordDiscoveryProgress:vi.fn().mockResolvedValue(undefined)}));
 vi.mock('@/lib/crawl/shared-discovery', () => ({
   sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
   enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
@@ -20,6 +22,7 @@ const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cur
 const topicQuery = {label:'topic:glm',kind:'repositories' as const,query:'topic:glm',enabled:true,builder:null,priority:50};
 
 beforeEach(() => {
+  vi.mocked(recordDiscoveryProgress).mockClear();
   mocks.log.mockReset();
   mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
   mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
@@ -244,6 +247,7 @@ it('preserves a partial page at the configured cap and resumes without losing it
   mocks.admission.mockResolvedValue({recentNew:1,queuedRepositories:1000000,downstreamRepositories:2600});
   const blocked = await seedFrontier(context(first.cursor!));
   expect(blocked.cursor).toEqual(first.cursor);
+  expect(recordDiscoveryProgress).toHaveBeenCalledWith(expect.objectContaining({blockedBy:'queue_cap'}));
   expect(mocks.search).not.toHaveBeenCalled();
   expect(mocks.enqueue).not.toHaveBeenCalled();
   mocks.settings!.discover.maxReviewBacklog = 2000000;
