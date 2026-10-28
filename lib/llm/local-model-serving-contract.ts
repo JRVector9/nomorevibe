@@ -15,7 +15,8 @@ export const localModelServingContractSchema = z.object({
       && !url.search && !url.hash && url.pathname === "/v1/chat/completions";
   }, "invalid_chat_endpoint"),
   model: identity(), responseModel: identity(),
-  modelFamily: z.enum(["qwen3.8-flash-next", "deepseek-v4.1-flash-1017", "gpt-oss-120b"]),
+  // Family is a configured identity. Eligibility and verified readback remain separate gates.
+  modelFamily: identity(120),
   deploymentRevision: identity(),
   contextWindowTokens: positive.max(1_048_576), totalTokenBound: positive.max(1_048_576),
   maxOutputTokens: positive.max(262_144), maxInputBytes: positive.max(16 * 1024 * 1024),
