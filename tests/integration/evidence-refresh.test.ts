@@ -138,21 +138,30 @@ describe("bounded product evidence refresh", () => {
       sourceUrl: "https://site-cutoff.example", state: "failed", nextAttemptAt: NOW });
     const controller = new AbortController();
     let budget = true;
+    const originalClock = Date.now;
+    const startedAt = originalClock();
+    const deadlineAt = startedAt + 30_000;
+    // Expire during the provider call, regardless of runner/DB scheduling latency.
+    // A 30ms real deadline could elapse before the provider and leave the initial
+    // identity read in this spy, testing a different cutoff from the intended one.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(startedAt);
+    const siteFingerprint = vi.fn(async () => {
+      identityRead.mockClear();
+      if (stop === "abort") controller.abort();
+      if (stop === "budget") budget = false;
+      if (stop === "deadline") clock.mockReturnValue(deadlineAt);
+      return true;
+    });
     const identityRead = vi.spyOn(db.query.products, "findFirst");
     try {
       const result = await refreshProductEvidence("site-cutoff", { now: NOW, signal: controller.signal,
-        deadlineAt: stop === "deadline" ? Date.now() + 30 : undefined, hasBudget: () => budget,
+        deadlineAt: stop === "deadline" ? deadlineAt : undefined, hasBudget: () => budget,
         progress: progress ? { completedKeys: [], retryAfterByKey: {} } : undefined, saveProgress: vi.fn(),
-        dependencies: { siteFingerprint: async () => {
-          identityRead.mockClear();
-          if (stop === "abort") controller.abort();
-          if (stop === "budget") budget = false;
-          if (stop === "deadline") await new Promise(resolve => setTimeout(resolve, 40));
-          return true;
-        } } });
+        dependencies: { siteFingerprint } });
+      expect(siteFingerprint).toHaveBeenCalledTimes(1);
       expect(identityRead).not.toHaveBeenCalled();
       expect(result).toMatchObject({ complete: false, sourcesFailed: 0 });
-    } finally { identityRead.mockRestore(); }
+    } finally { identityRead.mockRestore(); clock.mockRestore(); }
   });
 
   it("preserves a known relationship for an unknown README host in default site-only selection, then confirms it at the next repository due time", async () => {
