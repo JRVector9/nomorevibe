@@ -164,7 +164,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   finally { serving.contract = null; await steps([() => drain(work),
     () => new Promise<void>((resolve, reject) => http.listening ? http.close(error => error ? reject(error) : resolve()) : resolve()), () => drain(responses, true)], failures); }
 }
-async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateDemandedProductFields, { requestedOnly: true, roleLease: role })); }
+async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateDemandedProductFields, { requestedOnly: true, roleLease: role, budgetMs: 55_000 })); }
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
   return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
