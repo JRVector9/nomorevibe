@@ -29,9 +29,9 @@ export async function applyKoreanDiscovery(ctx: JobContext<null>): Promise<JobOu
     if (!await writerSiteActive(tx)) throw new Error('korean_apply_writer_fenced');
     if (ctx.lease) await assertJobLeaseAtWallTime(tx,ctx.lease);
     if (accepted.length) await tx.execute(sql`UPDATE github_ko_discovery_staging SET state='applied',updated_at=now()
-      WHERE repo=ANY(${accepted}::text[]) AND state='pending' AND language='yes'`);
+      WHERE repo IN (${sql.join(accepted.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='yes'`);
     if (rejected.length) await tx.execute(sql`UPDATE github_ko_discovery_staging SET state='excluded',updated_at=now()
-      WHERE repo=ANY(${rejected}::text[]) AND state='pending' AND language='no'`);
+      WHERE repo IN (${sql.join(rejected.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='no'`);
   });
   const applied=outcome.added,excluded=rejected.length;
   await recordDiscoveryProgress({worker:process.env.SERVICE_INSTANCE_ID??'home-crawler',lane:'korean',signal:ORACLE_KOREAN_SIGNAL,

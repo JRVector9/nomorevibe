@@ -35,3 +35,10 @@ export function nextKoreanCursor(cursor: KoreanCursor, page: { length: number; t
   if (after >= now.getTime()) return { window: cursor.window, page: 1, pendingWindows: [], waitingUntil: iso(now.getTime() + KOREAN_CYCLE_WAIT_MS) };
   return firstKoreanCursor(new Date(after), days, now);
 }
+
+/** Each unresolved retry starts a fresh attempt over the same retained interval; a recovered complete response may finish it. */
+export function resumeKoreanCursor(cursor: KoreanCursor, days: number, now: Date): KoreanCursor {
+  if (!cursor.waitingUntil || Date.parse(cursor.waitingUntil)>now.getTime()) return cursor;
+  if (cursor.unresolved) return {window:cursor.window,page:1,pendingWindows:cursor.pendingWindows};
+  return firstKoreanCursor(new Date(Date.parse(cursor.window.to)-5*60_000),days,now);
+}

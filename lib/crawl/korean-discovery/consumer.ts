@@ -32,7 +32,7 @@ export async function koreanDiscoveryTick(options: { instanceId: string; signal?
         if (!Array.isArray(page.items)) throw new Error('invalid_korean_search_page');
         const repositories = [...new Map(page.items.filter(item => item && typeof item.full_name === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(item.full_name) && !item.full_name.split('/').some(part=>part==='.' || part==='..'))
           .map(item => [item.full_name.toLowerCase(), { repo: item.full_name.toLowerCase(), signal: claim.label, priority: claim.priority,
-            description: typeof (item as { description?: unknown }).description === 'string' ? (item as { description: string }).description : null }])).values()];
+            description: typeof (item as { description?: unknown }).description === 'string' ? String((item as { description?: unknown }).description) : null }])).values()];
         const next = nextKoreanCursor(claim.cursor, { length: page.items.length, total: page.total_count, incomplete: page.incomplete_results }, claim.windowDays, new Date());
         const staged = await stageKoreanPage(claim, repositories, next);
         if (!staged) await deferKoreanQuery(claim, new Date(Date.now()+60_000), 'staging_capacity_or_lease');

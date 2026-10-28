@@ -31,10 +31,10 @@ WHERE id = 1;
 COMMIT;
 ```
 
-M3 적용기는 기존 활성 한국어 repository 검색어의 query·우선순위와 미완료 날짜·페이지·분할·재시도 구간을 Oracle 표로 복사한 뒤에만 소유권을 넘긴다. 전체 원본 cursor도 `legacy_state`에 보존한다. 동일 label의 검색식이 바뀌면 이전 query/cursor를 보존하고 새 조건으로 시작한다. 일반 M3 검색어의 진행 위치는 유지한다. 소비자가 중단되면 query lease 만료 뒤 이어가며, 제어 변경은 epoch를 증가시켜 늦게 돌아온 이전 응답을 차단한다.
+M3 적용기는 기존 활성 한국어 repository 검색어의 query·우선순위와 미완료 날짜·페이지·분할·재시도 구간을 Oracle 표로 복사한 뒤에만 소유권을 넘긴다. 전체 원본 cursor도 `legacy_state`에 보존한다. 기존 검색 정렬이 recent인지 확인할 수 없으면 고정 날짜·분할·재시도 구간은 유지하고 첫 페이지부터 다시 확인한다. 다른 정렬의 같은 페이지를 재사용해 누락시키지 않는다. 동일 label의 검색식이 바뀌면 이전 query/cursor를 보존하고 새 조건으로 시작한다. 일반 M3 검색어의 진행 위치는 유지한다. 소비자가 중단되면 query lease 만료 뒤 이어가며, 제어 변경은 epoch를 증가시켜 늦게 돌아온 이전 응답을 차단한다.
 
 ## 확인과 중지
 
-`github_ko_discovery_queries`의 due/error/lease/cursor, staging의 `language`/`state`, `crawl.ko_applied` 작업 로그와 관리자 탐색 계측을 확인한다. 검색 요청과 새 frontier 적재는 별도 지표다. 한국어가 아니라고 M3 일반 탐색 결과를 삭제하지 않는다.
+`github_ko_discovery_queries`의 due/error/lease/cursor, staging의 `language`/`state`, `crawl.korean_applied` 작업 로그와 관리자 탐색 계측을 확인한다. 검색 요청과 새 frontier 적재는 별도 지표다. 한국어가 아니라고 M3 일반 탐색 결과를 삭제하지 않는다.
 
 문제가 있으면 control의 `enabled=false`로 Oracle의 새 탐색·판별·적용을 멈춘다. 기존 M3 한국어 검색어는 다시 M3가 맡으며 일반 최신·전체 탐색과 저장된 Oracle cursor·staging은 보존한다. 실제 활성화 뒤 M3·Oracle·X·agent-scan의 진척과 API 오류를 함께 관측한다. 배포와 관측 완료는 실제 기록으로만 보고한다.

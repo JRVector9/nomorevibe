@@ -4,7 +4,7 @@ import { assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
 import { db } from '@/lib/db';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
-import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
+import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
 import type { KoreanLanguageResult } from './language';
 
 export type KoreanQueryClaim = KoreanQuery & { token: string; epoch: number; controlEpoch: number; cursor: KoreanCursor; windowDays: number };
@@ -26,14 +26,15 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
       if (!selected.some(q=>q.label===query.label || normalized(q.query)===normalized(query.query))
         && !settings.discover.queries.some(q=>!q.enabled && normalized(q.query)===normalized(query.query))) selected.push(query);
     }
-    const [job] = await tx.execute<{ cursor: { states?: Record<string, unknown>; signal?: string; window?: unknown; page?: number; pendingWindows?: unknown[]; incompleteWindows?:{signal:string;window:unknown;retryAt?:string}[]; retryAt?:string } | null }>(sql`SELECT cursor FROM jobs WHERE name='crawl-seed' FOR SHARE`);
+    const [job] = await tx.execute<{ cursor: { states?: Record<string, unknown>; signal?: string; window?: unknown; page?: number; pendingWindows?: unknown[]; incompleteWindows?:{signal:string;window:unknown;retryAt?:string}[]; retryAt?:string; searchSort?:string } | null }>(sql`SELECT cursor FROM jobs WHERE name='crawl-seed' FOR SHARE`);
     for (const query of selected) {
       const legacy = job?.cursor?.states?.[query.label] ?? (job?.cursor?.signal === query.label ? job.cursor : null);
       const parsed = KoreanCursorSchema.safeParse(legacy && typeof legacy === 'object' ? { window: (legacy as Record<string, unknown>).window,
         page: (legacy as Record<string, unknown>).page, pendingWindows: [...((legacy as {pendingWindows?:unknown[]}).pendingWindows ?? []), ...(job?.cursor?.incompleteWindows ?? []).filter(w=>w.signal===query.label).map(w=>w.window)],
         ...((legacy as Record<string,unknown>).windowIncomplete ? {unresolved:true} : {}),
         ...(job?.cursor?.retryAt ? {waitingUntil:job.cursor.retryAt} : {}) } : null);
-      const cursor = parsed.success ? parsed.data : firstKoreanCursor(control.start_at, settings.discover.windowDays, new Date());
+      // A sort change makes page offsets incomparable. Preserve the fixed interval and replay from page one.
+      const cursor = parsed.success ? {...parsed.data,page:job?.cursor?.searchSort==='recent' ? parsed.data.page : 1} : firstKoreanCursor(control.start_at, settings.discover.windowDays, new Date());
       await tx.execute(sql`INSERT INTO github_ko_discovery_queries (label,query,priority,transferred,cursor,legacy_state,config_hash,due_at)
         VALUES (${query.label},${query.query},${query.priority},true,${JSON.stringify(cursor)}::jsonb,${JSON.stringify(legacy)}::jsonb,${queryHash(query.query)},${cursor.waitingUntil ? new Date(cursor.waitingUntil) : new Date()})
         ON CONFLICT (label) DO UPDATE SET enabled=true,priority=excluded.priority,transferred=true,
@@ -48,7 +49,7 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
     }
     const labels = selected.map(q => q.label);
     await tx.execute(sql`UPDATE github_ko_discovery_queries SET enabled=false,transferred=false,updated_at=now()
-      WHERE enabled AND NOT (label = ANY(${labels}::text[]))`);
+      WHERE enabled AND NOT (${labels.length ? sql`label IN (${sql.join(labels.map(label=>sql`${label}`),sql`,`)})` : sql`false`})`);
   });
 }
 
@@ -77,9 +78,7 @@ export async function claimKoreanQuery(windowDays: number): Promise<KoreanQueryC
         AND (lease_until IS NULL OR lease_until<=now()) ORDER BY due_at,label FOR UPDATE SKIP LOCKED LIMIT 1)
       RETURNING label,query,priority,epoch,cursor`);
     if (!row) return null;
-    let cursor = KoreanCursorSchema.parse(row.cursor);
-    if (cursor.waitingUntil && Date.parse(cursor.waitingUntil) <= Date.now() && !cursor.unresolved)
-      cursor = firstKoreanCursor(new Date(Date.parse(cursor.window.to) - 5 * 60_000), windowDays, new Date());
+    const cursor = resumeKoreanCursor(KoreanCursorSchema.parse(row.cursor),windowDays,new Date());
     return { label: row.label, query: row.query, priority: row.priority, token, epoch: row.epoch, controlEpoch: control.epoch, cursor, windowDays };
   });
 }
@@ -92,7 +91,7 @@ export async function stageKoreanPage(claim: KoreanQueryClaim, repositories: Kor
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('github-ko-staging-cap-v1'))`);
     const [capacity] = await tx.execute<{remaining:number}>(sql`SELECT greatest(0,10000-count(*)::integer) AS remaining FROM github_ko_discovery_staging WHERE state='pending'`);
     const keys=[...new Set(repositories.map(row=>row.repo.toLowerCase()))];
-    const known=keys.length ? await tx.execute<{repo:string}>(sql`SELECT repo FROM github_ko_discovery_staging WHERE repo=ANY(${keys}::text[])`) : [];
+    const known=keys.length ? await tx.execute<{repo:string}>(sql`SELECT repo FROM github_ko_discovery_staging WHERE repo IN (${sql.join(keys.map(key=>sql`${key}`),sql`,`)} )`) : [];
     if (keys.length-known.length > capacity.remaining) return false;
     const [owned] = await tx.execute(sql`SELECT label FROM github_ko_discovery_queries WHERE label=${claim.label} AND token=${claim.token}::uuid
       AND epoch=${claim.epoch} AND lease_until>now() AND enabled AND transferred FOR UPDATE`);
