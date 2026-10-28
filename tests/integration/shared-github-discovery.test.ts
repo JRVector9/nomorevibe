@@ -37,6 +37,12 @@ it('serializes two producers at the queue boundary without overspending one plac
   expect(outcomes.reduce((sum,o)=>sum+o.added,0)).toBe(1);
   expect(await db.select().from(crawlFrontier)).toHaveLength(1);
   expect(outcomes.map(o=>o.processed).sort()).toEqual([0,1]);
+  expect(outcomes.every(o=>o.blockedBy==='queue_cap')).toBe(true);
+});
+it('reports the rolling rate boundary separately from the queue capacity boundary',async()=>{
+  await db.insert(crawlFrontier).values(Array.from({length:249},(_,i)=>({repo:`a/rate${i}`,signal:'test'})));
+  const result=await enqueueDiscoveryBatch([{repo:'a/final',signal:'test'}],{maxNewPerHour:3000,maxReviewBacklog:1000000});
+  expect(result).toMatchObject({added:1,processed:1,remainingNew:0,blockedBy:'rate_cap'});
 });
 it('does not charge a known downstream repository or overwrite a job after lease loss',async()=>{
   await db.insert(crawlDocuments).values({repo:'a/known',repoMeta:{}});

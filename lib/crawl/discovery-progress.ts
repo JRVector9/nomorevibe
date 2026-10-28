@@ -12,7 +12,7 @@ export type DiscoveryProgressInput = {
   /** Only a fully processed range can advance this watermark. */
   completedThrough?: string;
   counts: Partial<Record<DiscoveryProgressCounter, number>>;
-  blockedBy?: "queue_cap" | "rate_cap" | "api_wait" | "auth" | "incomplete" | null;
+  blockedBy?: "queue_cap" | "rate_cap" | "api_wait" | "auth" | "incomplete" | "measurement_unknown" | null;
 };
 
 const iso = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;

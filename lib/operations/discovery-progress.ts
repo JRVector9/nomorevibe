@@ -15,7 +15,7 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const iso = (value: unknown) => typeof value === "string" && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const label = (value: unknown) => typeof value === "string" && /^[\p{L}\p{N} .:_/-]{1,96}$/u.test(value) ? value : null;
 const count = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
-const BLOCKERS = new Set(["queue_cap", "rate_cap", "api_wait", "auth", "incomplete"]);
+const BLOCKERS = new Set(["queue_cap", "rate_cap", "api_wait", "auth", "incomplete", "measurement_unknown"]);
 
 /** Ignore malformed/unrecognised fields rather than rendering arbitrary observation contents. */
 export function buildDiscoveryProgress(at: string, source: unknown, truncated = false): DiscoveryProgressReport {

@@ -4,6 +4,7 @@ import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, type CrawlS
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
+vi.mock('@/lib/crawl/discovery-progress', () => ({recordDiscoveryProgress:vi.fn().mockResolvedValue(undefined)}));
 vi.mock('@/lib/crawl/shared-discovery', () => ({
   sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
   enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),

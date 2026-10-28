@@ -88,7 +88,7 @@ export type DiscoveryLimits = { maxNewPerHour: number; maxReviewBacklog: number 
  * only actual insertions in one transaction, so no abandoned reservation exists.
  */
 export async function enqueueDiscoveryBatch(entries: DiscoveryEntry[], limits: DiscoveryLimits, lease?: JobLease)
-  : Promise<{ added: number; processed: number; remainingNew: number }> {
+  : Promise<{ added: number; processed: number; remainingNew: number; blockedBy?: 'queue_cap' | 'rate_cap' | 'measurement_unknown' }> {
   if (![limits.maxNewPerHour, limits.maxReviewBacklog].every(n => Number.isSafeInteger(n) && n >= 1))
     throw new Error('invalid_discovery_limits');
   if (entries.some(e => !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(e.repo) || e.repo.length > 200))
@@ -122,6 +122,9 @@ export async function enqueueDiscoveryBatch(entries: DiscoveryEntry[], limits: D
       repo: e.repo, signal: e.signal, builder: e.builder ?? null, priority: e.priority ?? 0,
     }))).onConflictDoNothing({ target: crawlFrontier.repo }).returning({ id: crawlFrontier.id }) : [];
     if (lease) await assertJobLease(tx, lease);
-    return { added: inserted.length, processed, remainingNew: Math.max(0, admission.remainingNew - inserted.length) };
+    const remainingNew = Math.max(0, admission.remainingNew - inserted.length);
+    const blockedBy = remainingNew > 0 ? undefined : snapshot.timedOut ? 'measurement_unknown' as const
+      : snapshot.queuedRepositories + inserted.length >= limits.maxReviewBacklog ? 'queue_cap' as const : 'rate_cap' as const;
+    return { added: inserted.length, processed, remainingNew, blockedBy };
   });
 }
