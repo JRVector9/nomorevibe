@@ -3,7 +3,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
-const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
+const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), log:vi.fn(), settings:null as CrawlSettings|null}));
+vi.mock('@/lib/observability/logger', () => ({logger:{info:mocks.log}}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
 vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
@@ -15,6 +16,7 @@ const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cur
 const topicQuery = {label:'topic:glm',kind:'repositories' as const,query:'topic:glm',enabled:true,builder:null,priority:50};
 
 beforeEach(() => {
+  mocks.log.mockReset();
   mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
   mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,
@@ -44,6 +46,26 @@ it('커밋 검색: homepage를 알 수 없으므로 그대로 넣는다', async 
   mocks.search.mockResolvedValue(page([{repository:{full_name:'acme/unknown'},sha:'a'.repeat(40),commit:{message:'fix'}}]));
   await seedFrontier(context());
   expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/unknown']);
+});
+
+it('separates raw search hits, rejected items, identical evidence and existing repositories', async () => {
+  mocks.settings!.discover.queries = [signal(0)];
+  const hit = {repository:{full_name:'Acme/Tool'},sha:'a'.repeat(40),commit:{message:'fix'}};
+  mocks.search.mockResolvedValue(page([hit,{...hit,repository:{full_name:'acme/tool'}},
+    {...hit,sha:'b'.repeat(40)}, {repository:{full_name:'bad/repo/path'}}]));
+  const tick = context();
+  await seedFrontier(tick);
+  // Distinct commits remain evidence, while an identical case variant is discarded.
+  expect(mocks.record.mock.calls[0][0]).toHaveLength(2);
+  expect(mocks.log).toHaveBeenCalledWith('crawl.seed_page',expect.objectContaining({
+    signal:'신호0',scan:'historical',page:1,returned:4,eligible:2,filtered:1,pageDuplicates:1,
+  }));
+  expect(mocks.log).toHaveBeenCalledWith('crawl.seed_batch',expect.objectContaining({
+    signal:'신호0',examined:2,discovered:1,existing:1,
+  }));
+  expect(tick.log).toHaveBeenCalledWith('crawl.seeded',expect.objectContaining({
+    returned:4,filtered:1,pageDuplicates:1,examined:2,discovered:1,existing:1,
+  }));
 });
 
 const signal = (n: number) => ({label:`신호${n}`,kind:'commits' as const,query:`q${n}`,enabled:true,builder:null,priority:100-n});
@@ -172,7 +194,7 @@ it('counts actual insertions before the rate cap pauses a partial page, includin
   expect(resumed.cursor?.pendingPage?.itemIndex).toBe(3);
   expect(mocks.search).toHaveBeenCalledOnce();
   expect(resumedContext.log.mock.calls.filter(([event]) => event === 'crawl.seeded')).toEqual([
-    ['crawl.seeded',expect.objectContaining({discovered:2,examined:2,existing:0,searchRequests:0})],
+    ['crawl.seeded',expect.objectContaining({discovered:2,examined:2,existing:0,searchRequests:0,returned:0,filtered:0,pageDuplicates:0})],
   ]);
 });
 

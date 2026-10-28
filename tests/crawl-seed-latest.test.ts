@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
-import { seedFrontier, LATEST_SCAN_INTERVAL_MS, type SeedCursor } from '@/lib/crawl/jobs/seed';
+import { seedFrontier, LATEST_SCAN_INTERVAL_MS, LATEST_SCAN_OVERLAP_MS, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
 const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:vi.fn() }));
@@ -89,7 +89,36 @@ it('does not repeat the latest preview before its interval, then refreshes it wh
   vi.advanceTimersByTime(LATEST_SCAN_INTERVAL_MS);
   mocks.search.mockClear();
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
-  expect(range(mocks.search.mock.calls[0][0].query)).toContain('2026-10-01T01:00:00Z');
+  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-30T23:55:00Z..2026-10-01T01:00:00Z');
+  expect(Date.parse(cursor.latestScan!.cycleWindow!.from)).toBe(Date.parse('2026-10-01T00:00:00Z')-LATEST_SCAN_OVERLAP_MS);
+  expect(cursor.cycleWindow).toEqual(oldWindow);
+});
+
+it('bounds the latest preview after long downtime without moving the historical cursor', async () => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue(page(true));
+  let cursor = (await seedFrontier(ctx(old))).cursor!;
+  vi.advanceTimersByTime(7*86_400_000);
+  mocks.search.mockClear();
+  cursor = (await seedFrontier(ctx(cursor))).cursor!;
+  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-10-05T00:00:00Z..2026-10-08T00:00:00Z');
+  expect(cursor.cycleWindow).toEqual(oldWindow);
+});
+
+it('finishes all preview signals in the saved range before advancing the incremental window', async () => {
+  mocks.settings!.discover.queries.push({...one,label:'Codex',query:'Codex'});
+  let cursor = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 1;
+  mocks.search.mockResolvedValue(page(true));
+  cursor = (await seedFrontier(ctx(cursor))).cursor!; // latest Claude
+  const firstRange = range(mocks.search.mock.calls[0][0].query);
+  vi.advanceTimersByTime(2*LATEST_SCAN_INTERVAL_MS);
+  cursor = (await seedFrontier(ctx(cursor))).cursor!; // historical
+  mocks.search.mockClear();
+  cursor = (await seedFrontier(ctx(cursor))).cursor!; // latest Codex
+  expect(mocks.search.mock.calls[0][0].query).toMatch(/^Codex /);
+  expect(range(mocks.search.mock.calls[0][0].query)).toBe(firstRange);
   expect(cursor.cycleWindow).toEqual(oldWindow);
 });
 

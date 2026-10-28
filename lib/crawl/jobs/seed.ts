@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { logger } from '@/lib/observability/logger';
 import type { DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
 import { readReviewBacklog, reviewBacklogAdmission } from '@/lib/crawl/review-backlog';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
@@ -42,6 +43,8 @@ export type SeedCursor = SearchCursor & {
   latestTurn?: boolean;
 };
 export const LATEST_SCAN_INTERVAL_MS = 60 * 60_000;
+/** Allow delayed search indexing without replaying the entire three-day preview. */
+export const LATEST_SCAN_OVERLAP_MS = 5 * 60_000;
 export const LATEST_SCAN_LAG_MS = 24 * 60 * 60_000;
 const iso = (date:Date) => date.toISOString().replace(/\.\d{3}Z$/, 'Z');
 const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to === b.to;
@@ -56,6 +59,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     newAllowance:Number.isFinite(admission.remainingNew) ? admission.remainingNew : null,
     configuredPages:settings.discover.pagesPerTick,effectivePages:admission.remainingNew === 0 ? 0 : settings.discover.pagesPerTick,
     maxReviewBacklog:settings.discover.maxReviewBacklog,
+    queueCapped:!snapshot.timedOut && snapshot.queuedRepositories >= settings.discover.maxReviewBacklog,
     rateCapped:snapshot.recentNew >= Math.floor(settings.discover.maxNewPerHour / 12),measurementUnknown:Boolean(snapshot.timedOut) });
   if (admission.remainingNew === 0) return { done:false, cursor:ctx.cursor ?? undefined };
   if (settings.discover.sort !== 'recent') {
@@ -160,10 +164,11 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
   delete cursor.retryAt;
   let discovered = 0, searchRequests = 0, examined = 0, existing = 0;
+  let returned = 0, filtered = 0, pageDuplicates = 0;
   // Record actual insertions even when a rate/budget boundary leaves a partial page.
   // Each invocation emits one summary; latest and historical scans keep separate events.
   const summarize = (drained = false) => ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',
-    {discovered,searchRequests,examined,existing,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
+    {discovered,searchRequests,examined,existing,returned,filtered,pageDuplicates,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
       incompleteWindows:cursor.incompleteWindows?.length ?? 0});
   const save = () => ctx.save(cursor);
   const defer = async () => {await save(); summarize(); return {done:false,cursor};};
@@ -231,7 +236,10 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     const from = Number.isFinite(covered) ? covered : Date.now()-spanMs;
     // 따라잡았다. 새로 쌓일 때까지 기다린다 — 같은 구간을 다시 검색하지 않는다.
     if (from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS) > Date.now()) {cursor.retryAt = iso(new Date(from+(latestOnly ? LATEST_SCAN_INTERVAL_MS : MIN_CYCLE_SPAN_MS))); cursor.waiting = true; return false;}
-    initial = latestOnly ? freshWindow() : chunkFrom(from); index = 0;
+    // Historical coverage remains authoritative, including capped/incomplete previews.
+    // Only the preview advances: keep a small indexing overlap, bounded by windowDays
+    // after long downtime. Saved pages and unfinished signals finish before this runs.
+    initial = latestOnly ? {from:iso(new Date(Math.max(Date.now()-spanMs,from-LATEST_SCAN_OVERLAP_MS))),to:iso(new Date())} : chunkFrom(from); index = 0;
     cursor = {admissionThrottled:admission.throttled,signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
       pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[]};
     return true;
@@ -279,8 +287,16 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         ctx.log('crawl.seed_failed',{signal:signal.label,error:'invalid_response'});
         return defer();
       }
+      const raw = result.value.items.slice(0,SEARCH_PER_PAGE);
+      const normalized = normalizeItems(raw);
+      returned += raw.length; filtered += normalized.filtered; pageDuplicates += normalized.duplicates;
+      // Detailed query dimensions go to structured logs, keeping the bounded job
+      // observation free for admission state and the aggregate summaries.
+      logger.info('crawl.seed_page',{job:'crawl-seed',signal:signal.label,kind:signal.kind,scan:latestOnly ? 'latest' : 'historical',
+        window,page:cursor.page,returned:raw.length,eligible:normalized.items.length,
+        filtered:normalized.filtered,pageDuplicates:normalized.duplicates});
       cursor.pendingPage = {
-        items:normalizeItems(result.value.items.slice(0,SEARCH_PER_PAGE)),itemIndex:0,
+        items:normalized.items,itemIndex:0,
         size:Math.min(result.value.items.length,SEARCH_PER_PAGE),
         incomplete:result.value.incomplete_results === true || result.value.items.length > SEARCH_PER_PAGE,
         saturated:(result.value.total_count ?? 0) > SEARCH_PER_PAGE*MAX_SEARCH_PAGES,
@@ -314,6 +330,8 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
       discovered += added;
       examined += batch.length;
       existing += batch.length-added;
+      logger.info('crawl.seed_batch',{job:'crawl-seed',signal:signal.label,kind:signal.kind,scan:latestOnly ? 'latest' : 'historical',
+        window,page:cursor.page,examined:batch.length,discovered:added,existing:batch.length-added});
       admission.remainingNew -= added;
       page.itemIndex += batch.length;
       if (admission.remainingNew <= 0 && page.itemIndex < page.items.length) return defer();
@@ -353,25 +371,26 @@ function storableAttributions(item:PendingItem):(CommitAttribution|null)[] {
   const kept = item.attributions.filter(attribution => attribution === null || isStorableLabel(attribution.label));
   return kept.length ? kept : [null];
 }
-function normalizeItems(items:CommitSearchResult['items']|RepositorySearchResult['items']):PendingItem[] {
+function normalizeItems(items:CommitSearchResult['items']|RepositorySearchResult['items']) {
   const output:PendingItem[] = [];
+  let filtered = 0, duplicates = 0;
   const seen = new Set<string>();
   for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
+    if (!item || typeof item !== 'object') {filtered++; continue;}
     const repo = 'repository' in item ? item.repository?.full_name : item.full_name;
-    if (typeof repo !== 'string' || repo.length > 200 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) continue;
-    if (!('repository' in item) && !isDeploymentUrl(item.homepage)) continue;
+    if (typeof repo !== 'string' || repo.length > 200 || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) {filtered++; continue;}
+    if (!('repository' in item) && !isDeploymentUrl(item.homepage)) {filtered++; continue;}
     const sha = 'sha' in item && typeof item.sha === 'string' && /^[a-f0-9]{40,64}$/i.test(item.sha) ? item.sha.toLowerCase() : null;
     const message = 'commit' in item && typeof item.commit?.message === 'string' ? item.commit.message : '';
     const parsed = sha ? parseCommitAttributions(message) : [];
     // Known agent names take precedence within the cap; unknown coauthors cannot crowd them out.
     const attributions = [...parsed.filter(a => a.client !== null),...parsed.filter(a => a.client === null)].slice(0,MAX_SEED_ATTRIBUTIONS);
-    const key = JSON.stringify([repo,sha,attributions]);
-    if (seen.has(key)) continue;
+    const key = JSON.stringify([repo.toLowerCase(),sha,attributions]);
+    if (seen.has(key)) {duplicates++; continue;}
     seen.add(key);
     output.push({repo,sha,attributions:attributions.length ? attributions : [null],attributionLimited:parsed.length > MAX_SEED_ATTRIBUTIONS});
   }
-  return output;
+  return {items:output,filtered,duplicates};
 }
 function isDeploymentUrl(homepage:unknown):boolean {
   if (typeof homepage !== 'string') return false;
