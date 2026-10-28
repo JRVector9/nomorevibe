@@ -91,11 +91,28 @@ await r.body?.cancel();return {page:r.ok};}catch{return path==='/api/health'?{re
 })).then(rows=>console.log(JSON.stringify(Object.assign({},...rows))))"""
 PROVIDER_STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'keyword-verify',
                              'product-translate', 'tagline-ko', 'intro-check'})
+REVIEW_STAGES = frozenset({'first', 'second'})
+REVIEW_REASONS = frozenset({'capacity_blocked', 'consumer_missing', 'worker_missing',
+                          'upstream_stalled', 'local_stalled', 'review_stalled'})
+
+
+def valid_review_failures(value):
+    return (isinstance(value, list) and len(value) <= len(REVIEW_STAGES) and
+            all(isinstance(row, dict) and set(row) == {'stage', 'reason'} and
+                isinstance(row['stage'], str) and row['stage'] in REVIEW_STAGES and
+                isinstance(row['reason'], str) and row['reason'] in REVIEW_REASONS for row in value) and
+            len({row['stage'] for row in value}) == len(value))
+
+
 MONITOR_PROBE = """try {const j=JSON.parse(require('fs').readFileSync(process.env.MONITOR_HEALTH_PATH||'/tmp/monitor-health.json','utf8'));
 const allowed=['reason-translate','crawl-tagline','keywords','keyword-verify','product-translate','tagline-ko','intro-check'];
+const reviews=['first','second'],reasons=['capacity_blocked','consumer_missing','worker_missing','upstream_stalled','local_stalled','review_stalled'];
+const reviewKnown=Array.isArray(j.reviewFailures)&&j.reviewFailures.length<=2&&j.reviewFailures.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
+Object.keys(v).sort().join(',')==='reason,stage'&&reviews.includes(v.stage)&&reasons.includes(v.reason))&&new Set(j.reviewFailures.map(v=>v.stage)).size===j.reviewFailures.length;
 console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-j.checkedAt>=-1000&&Date.now()-j.checkedAt<90000,
 overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
-...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{})}));}
+...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{}),
+...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
 catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
 
 
@@ -159,6 +176,18 @@ def observe(key, cfg, run=command, now=None):
                                    if isinstance(stage, str) and stage in PROVIDER_STAGES})
                 if failures or all(isinstance(check.get('providerFailures'), list) for check in checks):
                     result['providerFailures'] = failures
+                # Mixed/old replicas and contradictory observations are unknown,
+                # never an explicit clear of an already reported review incident.
+                if all(valid_review_failures(check.get('reviewFailures')) for check in checks):
+                    review = {}
+                    conflict = False
+                    for check in checks:
+                        for failure in check['reviewFailures']:
+                            previous = review.get(failure['stage'])
+                            conflict |= previous is not None and previous != failure['reason']
+                            review[failure['stage']] = failure['reason']
+                    if not conflict:
+                        result['reviewFailures'] = [{'stage': stage, 'reason': review[stage]} for stage in sorted(review)]
         else:
             result.update(reason='ok' if healthy else 'container_unhealthy', ok=healthy)
         return result

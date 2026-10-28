@@ -38,7 +38,22 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
     stage.stage === key && !['paused', 'no_work', 'manual_attention'].includes(stage.reason) && stage.held !== true
     && (positive(stage.waiting) || positive(stage.deferred)) && (positive(stage.providerErrors) || positive(stage.errors5m))
     && [stage.completed5m, stage.progress5m].every(value => value == null || value === 0))) : undefined;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures }), { mode: 0o600 });
+  // A healthy process can be unable to review because a remote model still owns
+  // capacity. Report the actual stage separately from the service heartbeat;
+  // these observations never grant remote kill/restart or ledger-release rights.
+  const reviewFailures = status.progress ? (['first', 'second'] as const).flatMap(key => {
+    const stage = status.progress!.stages.find(row => row.stage === key);
+    if (!stage || stage.alarm !== true || stage.held === true
+      || !(positive(stage.waiting) || positive(stage.deferred))
+      || ![stage.completed5m, stage.progress5m].every(value => value == null || value === 0)) return [];
+    const reason = stage.admissionBlock?.reason === 'capacity' ? 'capacity_blocked'
+      : stage.reason === 'consumer_missing' ? 'consumer_missing'
+      : stage.reason === 'worker_missing' ? 'worker_missing'
+      : stage.reason === 'upstream_stalled' ? 'upstream_stalled'
+      : stage.reason === 'no_progress' ? (stage.restartEligible === true ? 'local_stalled' : 'review_stalled') : null;
+    return reason ? [{ stage: key, reason }] : [];
+  }) : undefined;
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 

@@ -21,6 +21,21 @@ Oracle에는 Dokploy/DB/모델 자격을 전달하지 않는다. 공개·DB·모
 - Oracle/gateway 양쪽이 요청 전에 상태에 예약한다. 응답을 잃어도 재요청하지 않는다. 앱별15분 cooldown·24시간2회 상한이며 재부팅 후에도 유지한다. 손상·미래·NaN 이력은 새 예산을 열지 않는다.
 - 모델 worker·DB·role lease·policy/hold·replica0·stopped/deploying/불확실한 상태는 gateway가 복구하지 않는다. 기존 fenced supervisor/Swarm이 담당한다. 실제 host/DB disaster readiness는 별도다.
 
+## AI 1차·2차 정체 진단 (2026-10-28 소스 보완)
+
+프로세스가 `healthy`여도 검수가 진행된다는 뜻은 아니다. monitor heartbeat의 `reviewFailures`는 AI 1차(`first`)·2차(`second`)의 실제 진행 경보를 SSH gateway로 전달한다. Oracle은 같은 단계·사유를 150초 이내 간격으로 두 번 관측하면 기존 aggregate DOWN과 별도로 장애를 알린다. stage·reason 고정 값만 전달하며 요청 ID·모델명·본문·자격은 전달하지 않는다. text 공급자 오류의 기존 30분 관측과 별개다.
+
+| 사유 | 의미와 복구 주체 |
+| --- | --- |
+| `capacity_blocked` | 실행 대기가 현재 공유 용량에 막혔다. 원격 생성 종료 확인과 정규 장부 회수가 필요하다. reviewer 재시작은 점유를 풀지 않는다. 이 신호만으로 종료 미확정이라고 단정하지 않는다. |
+| `local_stalled` | 해당 단계의 `restartEligible=true`인 로컬 정체다. 기존 역할 supervisor가 임대·실행 작업·연속 표본을 다시 확인해 복구한다. Oracle은 같은 장애를 무한 재시작하지 않는다. |
+| `consumer_missing`·`worker_missing` | 독립 consumer/워커 관측 부재다. Swarm/systemd와 운영자 확인 대상이며 legacy reviewer 재시작으로 대체하지 않는다. |
+| `upstream_stalled`·`review_stalled` | 공급자 오류 또는 자동 재시작 조건이 없는 정체다. 운영자 확인이 필요하며 공유 모델 강제 종료 권한을 주지 않는다. |
+
+관측을 읽지 못했거나 구버전 heartbeat에 필드가 없으면 미확인으로 보존한다. 명시적 `reviewFailures=[]` 또는 사유 교체만 해당 알림을 해제하며 다른 단계의 장애와 기존 pipeline 경보는 유지한다. Oracle 관측 상태와 notification receipt는 재시작 뒤에도 보존한다. 복구 요청의 앱별 cooldown·상한과 allowlist에는 변화가 없다.
+
+적용 순서는 **Oracle watchdog·incident notifier → M3/mini SSH gateway → monitor 앱**이다. 새 gateway의 선택 필드를 구버전 Oracle validator가 거절하므로 이 순서를 지킨다. 기존 state/config/key를 지우거나 수동 `--once`를 중복 실행하지 않는다. 이 절은 소스 계약이며 실제 설치·알림·복구 완료는 운영 영수증으로 별도 확인한다.
+
 ## 장애별 현재 검증 범위
 
 | 장애 | 자동 동작 | 현재 근거 / 남은 일 |

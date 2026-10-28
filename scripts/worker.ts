@@ -86,7 +86,7 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
  * 번역은 별도 text 워커에서 실행하며 발행 잡의 실행 시간을 차지하지 않는다.
  */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
-  // The Grok adapter needs 90 seconds plus startup; shorter providers keep their own smaller tick.
+  // AI1 gives gateway calls their full 60s ceiling; Grok needs 90s plus startup.
   if (name === 'crawl-agent-review') return { ...options, budgetMs: 110_000 };
   if (name === 'product-audit') return { ...options, budgetMs: 70_000 };
   // 화면 판별 — 그리기(서버 상한 40초) + 묻기(상한 90초). reviewer 의 작업 상한 180초 안(lib/screen-review/job.ts)
