@@ -285,6 +285,16 @@ describe("consumer instances", () => {
 });
 
 describe("회차 누적·미룸·실패", () => {
+  it("projects discovery hit categories in both latest results and hourly totals without query text", () => {
+    const counts = {returned:100,filtered:10,pageDuplicates:5,examined:85,existing:75,discovered:10};
+    const report = build({observations:[observation("job:crawl-seed",{events:[
+      {event:"crawl.seeded",counts:{...counts,query:"private-query",signal:"private-signal"}},
+    ]})],tallies:[{job:"crawl-seed",hour:Object.fromEntries(Object.entries(counts).map(([key,value]) => [`crawl.seeded#${key}`,value])),day:{},lastFailedAt:null}]});
+    const row = report.jobs.find(item => item.name === "crawl-seed")!;
+    expect(row.latest!.events[0].counts).toEqual(counts);
+    expect(row.totals!.hour.events[0].counts).toEqual(counts);
+    expect(JSON.stringify(report)).not.toMatch(/private-query|private-signal/);
+  });
   const tally = (patch: Partial<{ hour: Record<string, number>; day: Record<string, number>; lastFailedAt: string | null }> = {}) =>
     ({ job: "crawl-fetch", hour: {}, day: {}, lastFailedAt: null, ...patch });
 

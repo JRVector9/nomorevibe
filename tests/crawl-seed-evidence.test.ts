@@ -1,8 +1,14 @@
+vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
+vi.mock('@/lib/crawl/discovery-progress', () => ({recordDiscoveryProgress:vi.fn().mockResolvedValue(undefined)}));
+vi.mock('@/lib/crawl/shared-discovery', () => ({
+  sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
+  enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
+}));
 vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
@@ -135,7 +141,7 @@ it('retains unresolved windows across other signals and resumes fresh discovery 
   expect(nextCycle.cursor).toMatchObject({phase:'discovery',incompleteWindows:[]});
   // 새 주기의 첫 검색은 첫 신호로, 지난 주기가 덮은 끝에서 시작한다
   expect(mocks.search.mock.calls[searches][0].query)
-    .toBe('Co-authored-by: Codex committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
+    .toBe('Co-authored-by: Codex is:public committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
 });
 it('keeps the cursor at the page start when the evidence write fails, then replays the page without refetching', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app','fix\n\nCo-authored-by: Codex <a@example.com>\nCo-authored-by: Claude <b@example.com>')]));

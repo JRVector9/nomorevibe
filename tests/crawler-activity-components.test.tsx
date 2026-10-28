@@ -178,15 +178,20 @@ describe("read-only collector activity", () => {
 it("shows discovery throughput and effective admission pages with safe labels", () => {
   const value = buildCrawlerActivity({settings:DEFAULT_CRAWL_SETTINGS,jobs:[],roles:[],throughput:null,now,observations:[
     {key:"job:crawl-seed",observedAt:now,value:{done:false,events:[
-      {event:"crawl.seed_admission",counts:{throttled:true,configuredPages:10,effectivePages:1,newAllowance:100,rateCapped:false,measurementUnknown:false}},
-      {event:"crawl.seeded",counts:{discovered:1,searchRequests:1,examined:2,existing:1}},
+      {event:"crawl.seed_admission",counts:{throttled:true,configuredPages:10,effectivePages:0,newAllowance:0,rateCapped:true,queueCapped:false,measurementUnknown:false}},
+      {event:"crawl.seeded",counts:{discovered:1,searchRequests:1,examined:2,existing:1,returned:4,filtered:1,pageDuplicates:1}},
     ]}},
   ]});
   const out = html(value);
   expect(out).toContain("설정 페이지 10");
-  expect(out).toContain("적용 페이지 1");
-  expect(out).toContain("신규 허용량 100");
+  expect(out).toContain("적용 페이지 0");
+  expect(out).toContain("신규 허용량 0");
   expect(out).toContain("검색 요청 1");
   expect(out).toContain("기존·중복 1");
+  expect(out).toContain("검색 응답 항목 4");
+  expect(out).toContain("조건 미달 제외 1");
+  expect(out).toContain("페이지 내 동일 근거 중복 1");
+  expect(out).toContain("신규 적재 5분 예산 대기 예");
+  expect(out).toContain("대기열 상한 도달 아니오");
   expect(out).not.toMatch(/configuredPages|effectivePages|searchRequests|measurementUnknown/);
 });
