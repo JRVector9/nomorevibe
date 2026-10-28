@@ -119,7 +119,7 @@ describe("레포 검색 신호", () => {
     await tick();
 
     expect(searchRepositories).toHaveBeenCalledWith(
-      expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding pushed:[^ ]+\.\.[^ ]+$/) }),
+      expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding is:public pushed:[^ ]+\.\.[^ ]+$/) }),
     );
   });
 });
@@ -223,7 +223,7 @@ describe("검색 잡", () => {
 
     expect(searchCommits).toHaveBeenCalledWith(
       expect.objectContaining({
-        query: expect.stringMatching(/^Co-authored-by: Claude committer-date:[^ ]+\.\.[^ ]+$/),
+        query: expect.stringMatching(/^Co-authored-by: Claude is:public committer-date:[^ ]+\.\.[^ ]+$/),
         page: 1,
         sort: "relevance",
       }),
