@@ -38,7 +38,7 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
       // A sort change makes page offsets incomparable. Preserve the fixed interval and replay from page one.
       const cursor = parsed.success ? {...parsed.data,page:job?.cursor?.searchSort==='recent' ? parsed.data.page : 1} : firstKoreanCursor(new Date(control.start_at_ms), settings.discover.windowDays, new Date());
       await tx.execute(sql`INSERT INTO github_ko_discovery_queries (label,query,priority,transferred,cursor,legacy_state,config_hash,due_at)
-        VALUES (${query.label},${query.query},${query.priority},true,${JSON.stringify(cursor)}::jsonb,${JSON.stringify(legacy)}::jsonb,${queryHash(query.query)},${cursor.waitingUntil ? new Date(cursor.waitingUntil) : new Date()})
+        VALUES (${query.label},${query.query},${query.priority},true,${JSON.stringify(cursor)}::jsonb,${JSON.stringify(legacy)}::jsonb,${queryHash(query.query)},coalesce(${cursor.waitingUntil ?? null}::timestamp,now()))
         ON CONFLICT (label) DO UPDATE SET enabled=true,priority=excluded.priority,transferred=true,
           query=excluded.query,config_hash=excluded.config_hash,
           cursor=CASE WHEN github_ko_discovery_queries.config_hash=excluded.config_hash THEN github_ko_discovery_queries.cursor ELSE excluded.cursor END,
@@ -101,7 +101,7 @@ export async function stageKoreanPage(claim: KoreanQueryClaim, repositories: Kor
     for (const row of repositories) await tx.execute(sql`INSERT INTO github_ko_discovery_staging (repo,signal,priority,description)
       VALUES (${row.repo.toLowerCase()},${row.signal},${row.priority},${row.description?.slice(0,4000) ?? null}) ON CONFLICT (repo) DO NOTHING`);
     await tx.execute(sql`UPDATE github_ko_discovery_queries SET cursor=${JSON.stringify(cursor)}::jsonb,token=NULL,lease_until=NULL,
-      due_at=${cursor.waitingUntil ? new Date(cursor.waitingUntil) : new Date()},last_error=NULL,updated_at=now() WHERE label=${claim.label}`);
+      due_at=coalesce(${cursor.waitingUntil ?? null}::timestamp,now()),last_error=NULL,updated_at=now() WHERE label=${claim.label}`);
     return true;
   });
 }
@@ -111,7 +111,7 @@ export async function deferKoreanQuery(claim: KoreanQueryClaim, dueAt: Date, rea
     if (!await writerSiteActive(tx)) return;
     const [control]=await tx.execute<{enabled:boolean;epoch:number}>(sql`SELECT enabled,epoch FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
     if (!control?.enabled || control.epoch!==claim.controlEpoch) return;
-    await tx.execute(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt},last_error=${reason.slice(0,100)},updated_at=now()
+    await tx.execute(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt.toISOString()}::timestamp,last_error=${reason.slice(0,100)},updated_at=now()
       WHERE label=${claim.label} AND token=${claim.token}::uuid AND epoch=${claim.epoch} AND lease_until>now()`);
   });
 }

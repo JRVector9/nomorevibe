@@ -46,6 +46,28 @@ it('permits one query owner and fences a lease after disable/re-enable; page sta
   expect(await stageKoreanPage(current,[{repo:'test/late',signal:current.label,priority:60,description:null}],current.cursor)).toBe(false);
   expect((await db.execute(sql`SELECT repo FROM github_ko_discovery_staging`)).map(r=>r.repo)).toEqual(['test/korean']);
 });
+it('persists retry deadlines and completed-cycle waits without making the query claimable early',async()=>{
+  await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);
+  await synchronizeKoreanQueries(settings);
+  const claim=(await claimKoreanQuery(3))!;
+  const retryAt=new Date('2099-01-01T01:02:03.456Z');
+  await deferKoreanQuery(claim,retryAt,'rate_limited');
+  expect(await claimKoreanQuery(3)).toBeNull();
+  const [retry]=await db.execute<{due_ms:number;token:string|null;last_error:string}>(sql`
+    SELECT (extract(epoch FROM due_at)*1000)::double precision AS due_ms,token,last_error
+    FROM github_ko_discovery_queries WHERE label=${claim.label}`);
+  expect(retry).toEqual({due_ms:retryAt.getTime(),token:null,last_error:'rate_limited'});
+  await db.execute(sql`UPDATE github_ko_discovery_queries SET due_at=now()-interval '1 second' WHERE label=${claim.label}`);
+  const resumed=(await claimKoreanQuery(3))!;
+  const cursor={...resumed.cursor,waitingUntil:'2099-01-02T04:05:06.789Z'};
+  expect(await stageKoreanPage(resumed,[],cursor)).toBe(true);
+  await synchronizeKoreanQueries(settings);
+  expect(await claimKoreanQuery(3)).toBeNull();
+  const [waiting]=await db.execute<{due_ms:number;cursor:unknown}>(sql`
+    SELECT (extract(epoch FROM due_at)*1000)::double precision AS due_ms,cursor
+    FROM github_ko_discovery_queries WHERE label=${claim.label}`);
+  expect(waiting).toEqual({due_ms:Date.parse(cursor.waitingUntil),cursor});
+});
 it('reuses a bounded stored public repository page without network and preserves a cursor',async()=>{
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);
   const key='b'.repeat(64), completedAt='2099-10-01 00:00:00.123456';
