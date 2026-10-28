@@ -16,8 +16,10 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
   await db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return;
     if (lease) await assertJobLeaseAtWallTime(tx, lease);
-    const [control] = await tx.execute<{ enabled: boolean; start_at: Date; queries: unknown }>(sql`SELECT enabled, start_at, queries FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
-    if (!control?.enabled || !control.start_at || !settings.enabled) return;
+    // Raw execute results do not apply Drizzle timestamp-column decoders. Read an epoch to keep the historical UTC boundary explicit.
+    const [control] = await tx.execute<{ enabled: boolean; start_at_ms: number | null; queries: unknown }>(sql`SELECT enabled,
+      (extract(epoch FROM start_at) * 1000)::double precision AS start_at_ms, queries FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
+    if (!control?.enabled || control.start_at_ms === null || !settings.enabled) return;
     const selected = settings.discover.queries.filter(q => q.enabled && q.kind === 'repositories' && /[가-힣]/.test(q.query)).map(q => ({label:q.label,query:q.query,priority:q.priority}));
     const configured = KoreanQuerySchema.array().max(30).parse(control.queries);
     const normalized = (query:string)=>query.trim().replace(/\s+/g,' ').toLowerCase();
@@ -34,7 +36,7 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
         ...((legacy as Record<string,unknown>).windowIncomplete ? {unresolved:true} : {}),
         ...(job?.cursor?.retryAt ? {waitingUntil:job.cursor.retryAt} : {}) } : null);
       // A sort change makes page offsets incomparable. Preserve the fixed interval and replay from page one.
-      const cursor = parsed.success ? {...parsed.data,page:job?.cursor?.searchSort==='recent' ? parsed.data.page : 1} : firstKoreanCursor(control.start_at, settings.discover.windowDays, new Date());
+      const cursor = parsed.success ? {...parsed.data,page:job?.cursor?.searchSort==='recent' ? parsed.data.page : 1} : firstKoreanCursor(new Date(control.start_at_ms), settings.discover.windowDays, new Date());
       await tx.execute(sql`INSERT INTO github_ko_discovery_queries (label,query,priority,transferred,cursor,legacy_state,config_hash,due_at)
         VALUES (${query.label},${query.query},${query.priority},true,${JSON.stringify(cursor)}::jsonb,${JSON.stringify(legacy)}::jsonb,${queryHash(query.query)},${cursor.waitingUntil ? new Date(cursor.waitingUntil) : new Date()})
         ON CONFLICT (label) DO UPDATE SET enabled=true,priority=excluded.priority,transferred=true,

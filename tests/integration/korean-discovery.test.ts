@@ -23,6 +23,8 @@ it('keeps M3 ownership until explicitly enabled and exactly transferred; disable
   expect(await claimKoreanQuery(3)).toBeNull();
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);
   await synchronizeKoreanQueries(settings);
+  const [saved] = await db.execute<{cursor: {window: {from: string; to: string}}}>(sql`SELECT cursor FROM github_ko_discovery_queries WHERE label='기존 한글'`);
+  expect(saved.cursor.window).toEqual({from:'2026-01-01T00:00:00Z',to:'2026-01-04T00:00:00Z'});
   expect((await m3DiscoveryQueries(settings)).map(q=>q.label)).toEqual(['일반']);
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=false WHERE id=1`);
   expect(await m3DiscoveryQueries(settings)).toEqual(settings.discover.queries);
