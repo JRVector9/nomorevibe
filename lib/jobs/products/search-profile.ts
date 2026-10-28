@@ -1,3 +1,4 @@
+import { modelLimits } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
@@ -26,7 +27,7 @@ const BATCH = 12;
  * 하나일 때 시간당 약 680건(2026-09-24), 셋일 때 1차 심사가 평균 9.7→10.5초로 늘었다(9/23).
  * 게이트웨이가 밀리면 아래 SLOW_CALL_MS 가 틱을 접어 심사에 자리를 준다.
  */
-const CONCURRENCY = 2;
+const CONCURRENCY = modelLimits("product-search-profile").concurrency;
 /** 한 번 부르는 데 둘 시간 */
 const CALL_MS = 45_000;
 /** 한 건이 이보다 오래 걸리면 게이트웨이가 밀린 것이다(평소 7초 안팎) — 이번 틱을 접고 심사에 자리를 준다 */

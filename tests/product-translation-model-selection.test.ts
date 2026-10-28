@@ -22,13 +22,13 @@ function recorder() {
   return { bodies, request };
 }
 
-it.each([undefined, "   "])("keeps the existing shared model when the product override is absent or blank (%j)", async override => {
+it.each([undefined, "   "])("selects M1 Gemma independently when the product override is absent or blank (%j)", async override => {
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL", override);
   const { PRODUCT_TRANSLATION_MODEL, translateProductFields } = await import("@/lib/crawl/translate");
   const recorded = recorder();
-  expect(PRODUCT_TRANSLATION_MODEL).toBe("shared-text-fixture");
+  expect(PRODUCT_TRANSLATION_MODEL).toBe("[m1] gemma4-26b");
   expect((await translateProductFields(items, 1000, recorded.request)).ok).toBe(true);
-  expect(recorded.bodies[0].model).toBe("shared-text-fixture");
+  expect(recorded.bodies[0].model).toBe("[m1] gemma4-26b");
 });
 
 it("changes only product-field translation and preserves the exact non-model wire", async () => {

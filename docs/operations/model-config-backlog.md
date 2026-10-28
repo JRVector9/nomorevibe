@@ -18,9 +18,9 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 | 2. 장비별 라우팅 | 진행 중 | 중앙 resolver는 key/명시적 gateway label 우선, 동명 bare 모델은 거절. M1/GPU3090 동명 회귀 추가. 실제 소비자 연결과 HTTP 회귀 남음. |
 | 3a. lib/llm | 끝남 | serving family 검증 및 레지스트리 연계. 검증 hash·물리 용량·unknown 보존. |
 | 3b. lib/db, lib/jobs | 끝남 | 실제 고정값 여부 확인 후 소비자 연계. 역사 주석은 설정 사용처로 세지 않는다. |
-| 3c. lib/operations | 남음 | 현재 모델 조회·단계별 표시·CLI 모델 선택의 중앙 값 연결. |
-| 3d. scripts/local-model-relay | 남음 | 레지스트리 기반 모델 선택. 사설 인증·고정 loopback upstream·검증 readback 유지. |
-| 3e. lib/domain | 남음 | text 및 assist 소비자 연결, 용량·독립성 정책 유지. |
+| 3c. lib/operations | 진행 중 | 현재 모델 조회·단계별 표시·CLI 모델 선택의 중앙 값 연결. |
+| 3d. scripts/local-model-relay | 끝남 | 레지스트리 기반 모델 선택. 사설 인증·고정 loopback upstream·검증 readback 유지. |
+| 3e. lib/domain | 진행 중 | text 및 assist 소비자 연결, 용량·독립성 정책 유지. |
 | 3f. app/(operator) | 남음 | 현재 설정과 선택지 중앙 조회. 보이는 기능 변경 시 실제 브라우저 확인. |
 | 3g. lib/crawl | 남음 | 모델·주소·리소스 설정 연결. 아래 병행 차선 제외. |
 | 4. M1 번역 설정 문서·기본값 | 진행 중 | 기본 `m1:translation` → `[m1] gemma4-26b` (Gemma 4 26B). 실제 서버의 정확한 advertised id는 운영 readback 확인 뒤 설정에 입력; 이 차선은 운영 접속·변경하지 않음. 적용·롤백·strict contract/policy 변경 방법 문서화 남음. |
@@ -36,3 +36,6 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 - 1항목: `npx vitest run tests/model-registry.test.ts`: 1파일 5시험 통과. `npx tsc --noEmit --incremental false`: 실행 중, 결과는 다음 기록에서 보존.
 - 3a: serving contract의 고정 family enum을 검증된 문자열 identity로 확장. 새 family의 shape 통과가 readiness를 뜻하지 않으며 기존 exact hash·provider·endpoint·토큰 검사는 유지. 관련 4파일 17시험 통과 (`model-registry`, `local-model-serving-contract`, `local-model-capacity-schema`, `local-model-terminal`).
 - 3b 조사: `lib/db` 7줄과 `lib/jobs` 7줄의 측정 일치는 모두 설명·역사 주석이다. 실제 모델 선택 상수는 없으며 jobs는 translate/profile 등 소비자 상수를 이미 재사용한다. 주석을 레지스트리 조회로 바꾸지 않는다. 향후 연결된 소비자의 회귀를 함께 실행한다.
+- 3c–3e 연결: 운영 단계 표의 제품 번역이 실제 `PRODUCT_TRANSLATION_MODEL`과 달랐던 부분을 고침. relay 모델 선택·readback family, assist family 정책·SQL parameter, 검색 profile/verify·소개 검수·tagline·번역 모델/주소와 출력 상한을 중앙 조회로 연결. 목적별 토큰/동시 실행 예산은 `limits`로 조절하며 모델 ceiling·기존 검증 계약을 넘지 않는다. jobs의 검색 동시 실행 2/4 기본값 유지.
+- 변경 범위 회귀: 처음 14파일 203시험 중 3실패(이전 공용 번역 기본값을 기대한 시험). 요청한 M1 독립 기본값과 실제 제품 번역 상수를 기대하도록 갱신한 뒤 18파일 269시험 통과. 실패 이력은 삭제하지 않는다.
+- 첫 `npx tsc --noEmit --incremental false`는 `PageProps` 생성 파일 부재로 exit 2 (공개 페이지·기존 시험 8곳). 동봉 Next CLI 문서의 `next typegen && tsc --noEmit` 절차 적용 중. 차선 코드 오류로 단정하지 않음.

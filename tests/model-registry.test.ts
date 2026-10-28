@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry,
-  resolveRegistryModel } from "@/lib/llm/model-registry";
+  resolveRegistryModel, modelLimits } from "@/lib/llm/model-registry";
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
@@ -36,6 +36,13 @@ describe("model registry equipment identity", () => {
     expect(modelForPurpose("reason-translate", {}).key).toBe("mlx:text");
     expect(modelRequestName(modelForPurpose("direct-review", {}))).toBe("qwen3.8-flash-next");
     expect(modelBaseUrl("reason-translate", { ABCLLM_BASE_URL: "https://gateway.example/" })).toBe("https://gateway.example/v1");
+  });
+  it("applies configured purpose budgets beneath the selected model ceiling", () => {
+    const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
+      limits: { "product-search-profile": { maxTokens: 900, concurrency: 6 } } }) };
+    expect(modelLimits("product-search-profile", env)).toEqual({ maxTokens: 900, concurrency: 2 });
+    expect(modelLimits("product-search-profile", {})).toEqual({ maxTokens: 500, concurrency: 2 });
+    expect(() => modelBaseUrl("relay", {}, "abcllm")).toThrow("model_provider_adapter_mismatch");
   });
   it("rejects duplicate keys, wrong equipment, credentials, missing selections and malformed JSON", () => {
     for (const models of [[DEFAULT_MODEL_DEFINITIONS[0], DEFAULT_MODEL_DEFINITIONS[0]],

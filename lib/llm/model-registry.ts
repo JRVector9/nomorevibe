@@ -20,6 +20,7 @@ export const modelDefinitionSchema = z.object({
   if (!model.key.startsWith(`${model.equipment}:`)) context.addIssue({ code: "custom", message: "model_key_equipment_mismatch" });
   if ((model.provider === "abcllm" || model.provider === "local-direct" || model.provider === "llama-server") && !model.baseUrl)
     context.addIssue({ code: "custom", message: "model_base_url_required" });
+  if (model.gatewayLabel && model.gatewayLabel.toLowerCase() !== model.equipment) context.addIssue({ code: "custom", message: "gateway_label_equipment_mismatch" });
   if (model.gatewayLabel && model.provider !== "abcllm") context.addIssue({ code: "custom", message: "gateway_label_provider_mismatch" });
 });
 export type ModelDefinition = Readonly<z.infer<typeof modelDefinitionSchema>>;
@@ -37,7 +38,7 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: gateway, gatewayLabel: "m1",
     model: "gemma4-26b", family: "gemma4-26b", timeoutMs: 20_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate"] },
   { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: gateway, gatewayLabel: "supa",
-    model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 2,
+    model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
     purposes: ["ai1-preset", "product-search-verify"] },
   { key: "mlx:text", equipment: "mlx", displayName: "MLX · GPT OSS", provider: "abcllm", baseUrl: gateway, gatewayLabel: "MLX",
     model: "gpt-oss-120b", family: "gpt-oss-120b", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 2,
@@ -55,8 +56,17 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "connect:terra", equipment: "connect", displayName: "Codex Terra", provider: "codex-cli", baseUrl: null,
     model: "gpt-5.6-terra", family: "gpt-5.6-terra", timeoutMs: 12_000, maxTokens: 8_000, concurrency: 1, purposes: ["classify-fallback"] },
 ];
+/** Per-purpose request budgets preserve existing adaptive wire sizing under the model ceiling. */
+export const DEFAULT_MODEL_PURPOSE_LIMITS: Readonly<Record<string, { maxTokens: number; concurrency: number }>> = {
+  "product-search-profile": { maxTokens: 500, concurrency: 2 }, "product-search-verify": { maxTokens: 3_000, concurrency: 4 },
+  "crawl-tagline": { maxTokens: 400, concurrency: 1 }, "reason-translate": { maxTokens: 6_000, concurrency: 2 },
+  "product-tagline-ko": { maxTokens: 5_400, concurrency: 1 }, "product-translate": { maxTokens: 8_000, concurrency: 1 },
+  "search-query-translate": { maxTokens: 200, concurrency: 1 }, "direct-review": { maxTokens: 3_000, concurrency: 2 },
+};
+const purposeLimitSchema = z.object({ maxTokens: z.number().int().positive().max(262_144),
+  concurrency: z.number().int().positive().max(64) }).strict();
 const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(64),
-  selections: z.record(z.string(), z.string()).default({}) }).strict().superRefine((value, context) => {
+  selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}) }).strict().superRefine((value, context) => {
   const keys = new Set<string>();
   for (const model of value.models) {
     if (keys.has(model.key)) context.addIssue({ code: "custom", message: "duplicate_model_key" });
@@ -105,6 +115,16 @@ export const MODEL_PURPOSE_ENV = {
   "product-translate": "PRODUCT_TRANSLATION_MODEL", "product-intro-check": "INTRO_CHECK_MODEL",
   "direct-review": "AUDIT_SECOND_OPINION_MODEL", "relay": "LOCAL_MODEL_RELAY_MODEL",
 } as const;
+export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
+  const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
+  if (key) {
+    const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
+    if (!selected) throw new Error(`invalid_model_key:${variable}_KEY`);
+    return selected;
+  }
+  const legacy = env[variable]?.trim();
+  return (legacy ? resolveRegistryModel(legacy, env) : null) ?? modelForPurpose(purpose, env);
+}
 export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): string {
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
   if (key) {
@@ -121,8 +141,9 @@ export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: Mo
   return modelRequestName(modelForPurpose(purpose, env));
 }
 export function modelFamily(purpose: string, env: ModelEnvironment = process.env): string { return modelForPurpose(purpose, env).family; }
-export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.env): string {
-  const definition = modelForPurpose(purpose, env);
+export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.env, expectedProvider?: ModelDefinition["provider"]): string {
+  const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
+  if (expectedProvider && definition.provider !== expectedProvider) throw new Error("model_provider_adapter_mismatch");
   const legacy = definition.provider === "abcllm" ? env.ABCLLM_BASE_URL?.trim()
     : purpose === "direct-review" ? env.AUDIT_SECOND_OPINION_URL?.trim() : undefined;
   const base = legacy || definition.baseUrl;
@@ -130,4 +151,10 @@ export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.en
   const url = new URL(base);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error("invalid_model_base_url");
   return `${base.replace(/\/+$/, "").replace(/\/v1$/, "")}/v1`;
+}
+
+export function modelLimits(purpose: string, env: ModelEnvironment = process.env): { maxTokens: number; concurrency: number } {
+  const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
+  const budget = readModelRegistry(env).limits[purpose] ?? DEFAULT_MODEL_PURPOSE_LIMITS[purpose] ?? definition;
+  return { maxTokens: Math.min(budget.maxTokens, definition.maxTokens), concurrency: Math.min(budget.concurrency, definition.concurrency) };
 }

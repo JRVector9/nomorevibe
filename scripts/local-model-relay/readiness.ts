@@ -1,3 +1,4 @@
+import { configuredModelDefinition } from "../../lib/llm/model-registry";
 import { localModelContractHash, localModelServingContractsSchema } from "../../lib/llm/local-model-serving-contract";
 import type { RelayNativeReadinessVerifier } from "./protocol";
 import { lstatSync, readFileSync } from "node:fs";
@@ -22,7 +23,7 @@ export function relayNativeReadinessVerifier(endpoint: string, env: Readonly<Rec
         || (verified as Record<string, unknown>)[contract.backendId] !== hash) return { ready: false, contractHash: hash, reason: "native_readback_missing" };
       const receipt = context.lastReceipt;
       if (contract.model !== context.model || contract.responseModel !== context.model || contract.deploymentRevision !== context.deploymentRevision
-        || contract.modelFamily !== "qwen3.8-flash-next" || context.indeterminate || context.activeRequestId
+        || contract.modelFamily !== configuredModelDefinition("relay", env).family || context.indeterminate || context.activeRequestId
         || receipt?.deploymentRevision !== contract.deploymentRevision || receipt.relayRevision !== context.relayRevision
         || receipt.state !== "response_complete" || receipt.upstreamStatus !== 200 || !receipt.responseHash)
         return { ready: false, contractHash: hash, reason: "native_observation_mismatch" };
