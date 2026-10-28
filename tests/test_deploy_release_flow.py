@@ -96,6 +96,8 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.stack.enter_context(patch.object(release.shared, 'run', side_effect=self.local_transport))
         self.stack.enter_context(patch.object(release.shared, 'ssh_python', side_effect=AssertionError('unexpected SSH')) )
         self.stack.enter_context(patch.object(release.git.shared, 'ssh_python', side_effect=AssertionError('unexpected Git rollout SSH')))
+        self.model_drain = self.stack.enter_context(patch.object(release, 'model_replacement_gate',
+            return_value={'required': True, 'mode': 'draining', 'active': 0}))
         integration = release.shared.github_integration_preflight
         def actual_integration(client, app_map):
             result = integration(client, app_map); self.events.append('integration-verified'); return result
@@ -175,6 +177,8 @@ class CoordinatorFlowTests(unittest.TestCase):
     def test_real_engine_updates_web_pair_serially_records_each_action_and_launches_observer_last(self):
         result = release.run_release(self.plan, self.execution)
         self.assertEqual(result['status'], 'deployed-and-verified')
+        self.assertEqual([list(call.args[1]) for call in self.model_drain.call_args_list],
+                         [['web-mini', 'web-m3'], ['web-mini'], ['web-m3']])
         self.assertEqual([(short, endpoint) for short, endpoint, _ in self.client.posts], [
             (short, endpoint) for short in ('web-mini', 'web-m3') for endpoint in
             ('application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy')])
@@ -203,6 +207,14 @@ class CoordinatorFlowTests(unittest.TestCase):
     def test_private_registry_guard_rejects_before_first_service_write(self):
         self.registry.side_effect = ValueError('web_package_not_private')
         with self.assertRaisesRegex(ValueError, 'web_package_not_private'):
+            release.run_release(self.plan, self.execution)
+        self.assertEqual(self.client.posts, [])
+        self.assertEqual(self.health.call_count, 0)
+        self.assertEqual(self.observations, [])
+
+    def test_model_drain_failure_blocks_before_any_application_write(self):
+        self.model_drain.side_effect = ValueError('model_replacement_requires_explicit_drain_and_zero_active_calls')
+        with self.assertRaisesRegex(ValueError, 'explicit_drain_and_zero_active_calls'):
             release.run_release(self.plan, self.execution)
         self.assertEqual(self.client.posts, [])
         self.assertEqual(self.health.call_count, 0)
