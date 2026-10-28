@@ -2,6 +2,7 @@ export const LOCAL_MODEL_RELAY_PROTOCOL = 1;
 export const LOCAL_MODEL_UPSTREAM_HOST = "127.0.0.1";
 export const LOCAL_MODEL_UPSTREAM_PORT = 8000;
 export const LOCAL_MODEL_RELAY_REQUEST_HEADER = "x-nmv-relay-request-id";
+export const LOCAL_MODEL_RELAY_RECOVERY_LOCK = '.boundary-recovery.lock';
 
 export type RelayTerminalObservation = {
   models: string[];

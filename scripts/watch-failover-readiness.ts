@@ -53,7 +53,8 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
       : stage.reason === 'no_progress' ? (stage.restartEligible === true ? 'local_stalled' : 'review_stalled') : null;
     return reason ? [{ stage: key, reason }] : [];
   }) : undefined;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures }), { mode: 0o600 });
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures,
+    capacityUnknowns: status.capacityUnknowns }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 

@@ -34,6 +34,10 @@ def valid_review_failures(value):
             len({row['stage'] for row in value}) == len(value))
 
 
+def _request_id(value):
+    return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', value) is not None
+
+
 def validate_destination(value):
     if (not isinstance(value, dict) or set(value) != {'botToken', 'chatId'} or
             not isinstance(value['botToken'], str) or
@@ -107,7 +111,8 @@ def _signature(config, value):
                 int(stage) < len(config.get(setting, [])) and reason == 'push_failed')
     return (_target(config, host + '/' + service) and
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
-             or stage in REVIEW_STAGES and reason in REVIEW_REASONS))
+             or stage in REVIEW_STAGES and reason in REVIEW_REASONS
+             or _request_id(stage) and reason == 'model_indeterminate'))
 
 
 def _finite_time(value, now):
@@ -227,13 +232,26 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
                 current = {(failure['stage'], failure['reason']) for failure in reviews}
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in REVIEW_STAGES
                       and (parts[2], parts[3]) not in current)
+            capacity = row.get('capacityUnknowns')
+            if isinstance(capacity, dict):
+                try:
+                    from recovery_gateway import validate_capacity_unknowns
+                    capacity = validate_capacity_unknowns(capacity)
+                    if capacity['status'] != 'unknown' and not capacity['truncated']:
+                        pending_requests = {item['requestId'] for item in capacity['requests']}
+                        clear(lambda parts: parts[:2] == [host, service] and _request_id(parts[2]) and parts[2] not in pending_requests)
+                except ValueError:
+                    pass
 
     for event in result.get('events', []):
         if not isinstance(event, dict) or not _target(config, event.get('target')):
             continue
         stage, reason = event.get('stage', 'service'), event.get('reason')
+        if reason == 'model_indeterminate' and _request_id(event.get('requestId')):
+            stage = event['requestId']
         if not ((stage in STAGES and reason == 'upstream_stalled') or
                 (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
+                (_request_id(stage) and reason == 'model_indeterminate') or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
         signature = event['target'] + '/' + stage + '/' + reason

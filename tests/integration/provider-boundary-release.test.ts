@@ -12,6 +12,8 @@ import { ai2DispatchBindingHash, modelCapacityPolicyHash, type Ai2DispatchBindin
 import { itemBindingHash, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { providerBoundaryCanonicalHash, providerBoundaryPlanHash, providerBoundaryPlanSchema, providerBoundaryReceiptSchema } from "@/lib/llm/provider-boundary-contract";
 import { releaseProviderBoundaryRequest } from "@/lib/operations/dr/provider-boundary-release";
+import { readCommittedRelayBoundaryProof } from '@/lib/operations/dr/provider-boundary-relay';
+import { readModelCapacityUnknowns } from '@/lib/operations/model-capacity-unknowns';
 import { boundaryFixture } from "../fixtures/provider-boundary-release";
 import { TEST_DATABASE_URL } from "./setup";
 
@@ -157,7 +159,10 @@ it("operations audit failure rolls back both the exact request release and its a
   expect(await rows()).toEqual(beforeRows);expect(await client`SELECT id FROM model_capacity_events WHERE request_id=${requestId}`).toHaveLength(0);
 });
 it("dry-run rolls back; apply changes exact one row plus one matching release event and operations audit; replay never duplicates",async()=>{
+  expect(await readModelCapacityUnknowns()).toMatchObject({ status: 'alarm', requests: [expect.objectContaining({ requestId })] });
+  await expect(readCommittedRelayBoundaryProof(input())).rejects.toThrow('relay_recovery_committed_release_missing');
   expect((await releaseProviderBoundaryRequest(input(),false)).kind).toBe("released");expect(await rows()).toEqual(beforeRows);
+  await expect(readCommittedRelayBoundaryProof(input())).rejects.toThrow('relay_recovery_committed_release_missing');
   expect(await client`SELECT id FROM model_capacity_events WHERE request_id=${requestId}`).toHaveLength(0);
   const result=await releaseProviderBoundaryRequest(input(),true);expect(result.kind).toBe("released");
   const [row]=await client`SELECT * FROM model_capacity_requests WHERE request_id=${requestId}`;
@@ -165,6 +170,10 @@ it("dry-run rolls back; apply changes exact one row plus one matching release ev
   expect(row.dispatch_binding_hash).toBe(ai2DispatchBindingHash(binding));expect(row.logical_work_key).toBe(binding.logicalWorkKey);expect(row.logical_member_keys).toBeNull();
   const [event]=await client`SELECT * FROM model_capacity_events WHERE request_id=${requestId}`;expect(event.kind).toBe("dispatch_released");expect(event.evidence).toEqual(row.terminal_evidence);
   expect(row.terminal_evidence_hash).toBe(providerBoundaryCanonicalHash(row.terminal_evidence));
+  expect(await readCommittedRelayBoundaryProof(input())).toEqual({ requestId, planHash: input().expectedPlanHash,
+    bindingHash: ai2DispatchBindingHash(binding), wireHash: binding.wireHash, model: binding.model,
+    releaseEvidenceHash: row.terminal_evidence_hash });
+  expect(await readModelCapacityUnknowns()).toEqual({ status: 'ok', truncated: false, requests: [] });
   // Deployed e0ef monitoring/pending queries are unchanged: a withdrawn boundary has no inferred usage and is not pending.
   const [oldRead]=await client`SELECT state IN ('waiting','reserved','dispatched','indeterminate') pending,
     CASE WHEN state='settled' AND terminal_evidence->>'provenance'='upstream_reported' THEN terminal_evidence->'actualUsage' END usage
