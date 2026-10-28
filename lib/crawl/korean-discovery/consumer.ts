@@ -20,7 +20,7 @@ export async function koreanDiscoveryTick(options: { instanceId: string; signal?
       const query = koreanSearchQuery(claim.query, claim.cursor.window);
       let requested = false;
       const result = await sharedDiscoverySearch<RepositorySearchResult>({ kind: 'repositories', query, sort: 'recent', page: claim.cursor.page,
-        scope: 'public-v1', ownerName: options.instanceId }, () => { requested = true; return searchRepositories({ query, page: claim.cursor.page, sort: 'recent' }); });
+        scope: 'public-v1', ownerName: options.instanceId }, () => { requested = true; return searchRepositories({ query, page: claim.cursor.page, sort: 'recent' }, {deadlineAt,signal:options.signal}); });
       searched = Number(requested);
       if (!result.ok) {
         const dueAt = result.error.kind === 'discovery_busy' ? result.error.retryAt
