@@ -267,3 +267,20 @@ it("validates and writes the recovered product batch in the real job, rather tha
   expect(mocks.write.mock.calls[0][0].every((entry: { result: { ok: boolean } }) => entry.result.ok)).toBe(true);
   expect(mocks.write.mock.calls[0][2]).toBe(expectation);
 });
+
+
+it("defers after admission locks when the full HTTP ceiling no longer fits", async () => {
+  const tx = domainTx();
+  mocks.prefix.mockResolvedValue({ control: await mocks.control() });
+  const domain = await vi.importActual<typeof import("@/lib/domain/products/translations")>("@/lib/domain/products/translations");
+  const currentMembers = [{ ...members[0], demand: { attempts: 0, rowIdentityHash: reviewHash(tx.raw) } }];
+  const identity = { owner: reservation.owner,
+    workKey: `${productTranslationLogicalWorkKey(currentMembers)}:${productTranslationInputHash({ members: currentMembers, model: PRODUCT_TRANSLATION_MODEL })}`,
+    class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-translate", model: PRODUCT_TRANSLATION_MODEL };
+  await expect(domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
+    callBudget: { deadlineAt: Date.now() + 1_000, minimumRemainingMs: 22_000 },
+    reserved: { reservation, identity, members: currentMembers, role: { ...boundRole, kind: "standby" } } }))
+    .rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "capacity" });
+  expect(mocks.finish).not.toHaveBeenCalled();
+  expect(mocks.native).not.toHaveBeenCalled();
+});
