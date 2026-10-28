@@ -87,7 +87,8 @@ async function source() {
 const attempts = async (id: number) => (await admin`SELECT to_jsonb(a) AS row FROM crawl_review_attempts a WHERE candidate_id=${id} ORDER BY id`).map(row => row.row);
 const requests = async () => (await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${instanceId} AND owner_boot_id=${bootId} ORDER BY queue_ordinal`).map(row => row.row);
 const events = async (id: string) => (await admin`SELECT kind FROM model_capacity_events WHERE request_id=${id}::uuid ORDER BY id`).map(row => row.kind);
-const tick = (handler: typeof reviewCrawlCandidates = reviewCrawlCandidates) => track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role! }));
+// Match scripts/worker.ts: a full AI1 transport ceiling must fit in the runner budget.
+const tick = (handler: typeof reviewCrawlCandidates = reviewCrawlCandidates) => track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role!, budgetMs: 110_000 }));
 async function until(load: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 2500;
   while (!await load()) { if (Date.now() > deadline) throw new Error(label); await new Promise(resolve => setTimeout(resolve, 5)); }
@@ -355,7 +356,7 @@ it('caller abort after native POST retains unknown charge and a fresh-signal tic
   await serve(async (_endpoint, calls) => {
     // This is the actual caller signal accepted by runJob and forwarded by its
     // real review lane; it does not replace a job/role/permit authority object.
-    const execution = track(runJob('crawl-agent-review', reviewCrawlCandidates, { requestedOnly: true, roleLease: role!, signal: controller.signal }));
+    const execution = track(runJob('crawl-agent-review', reviewCrawlCandidates, { requestedOnly: true, roleLease: role!, budgetMs: 110_000, signal: controller.signal }));
     const errors: unknown[] = [];
     try {
       await Promise.race([calls.received, execution.then(() => { throw new Error('abort_job_ended_before_post'); })]);

@@ -152,7 +152,8 @@ async function source() {
 }
 const attemptRows = (id: number) => admin`SELECT to_jsonb(a) AS value FROM crawl_review_attempts a WHERE candidate_id=${id} ORDER BY id`;
 const jobRow = async () => (await admin`SELECT to_jsonb(j) AS value FROM jobs j WHERE name='crawl-agent-review'`)[0].value as Raw;
-const tick = () => tracked(runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true }));
+// Match the production AI1 worker budget, including the full transport ceiling.
+const tick = () => tracked(runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, budgetMs: 110_000 }));
 
 beforeAll(() => tracked((async () => {
   ensureSchema();
