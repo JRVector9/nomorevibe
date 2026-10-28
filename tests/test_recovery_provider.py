@@ -103,5 +103,40 @@ class ProviderProbeTests(unittest.TestCase):
         self.assertNotIn('reviewFailures', fixture.observe())
 
 
+class CapacityProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.gateway = load('recovery_gateway_capacity', ROOT / 'scripts/ops/recovery_gateway.py')
+        self.fixtures = load('recovery_capacity_fixtures', ROOT / 'tests/test_recovery_observation.py')
+        self.request = {'requestId': '00000000-0000-4000-8000-000000000001', 'routeId': 'product-translate',
+                        'groupId': 'm1-mlx', 'oldPolicy': True, 'localEndRecorded': True}
+        self.capacity = {'status': 'alarm', 'truncated': False, 'requests': [self.request]}
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is needed for the actual probe')
+    def test_actual_node_probe_carries_only_bounded_allowlisted_request_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / 'health.json'
+            for value, expected in [(self.capacity, self.capacity),
+                                    ({**self.capacity, 'requests': [{**self.request, 'token': 'private-token'}]}, self.capacity),
+                                    ({**self.capacity, 'requests': [{'requestId': 'private-token'}]}, {'status': 'unknown', 'truncated': False, 'requests': []})]:
+                heartbeat.write_text(json.dumps({'checkedAt': int(time.time() * 1000), 'overall': 'alarm', 'capacityUnknowns': value}))
+                result = subprocess.run(['node', '-e', self.gateway.MONITOR_PROBE], check=True, timeout=10,
+                                        capture_output=True, env={**os.environ, 'MONITOR_HEALTH_PATH': str(heartbeat)})
+                self.assertEqual(json.loads(result.stdout)['capacityUnknowns'], expected)
+                self.assertNotIn(b'private-token', result.stdout)
+
+    def test_monitor_unknown_is_nonrecoverable_and_missing_replica_cannot_clear_requests(self):
+        fixture = self.fixtures.DockerFixture(self.gateway, kind='monitor')
+        fixture.monitor[self.fixtures.IDS[0]]['capacityUnknowns'] = self.capacity
+        row = fixture.observe()
+        self.assertEqual(row['capacityUnknowns'], self.capacity)
+        self.assertEqual(row['reason'], 'pipeline_alarm')
+        self.assertFalse(row['ok'])
+        self.assertFalse(row['recoverable'])
+        fixture.monitor[self.fixtures.IDS[0]]['capacityUnknowns'] = {'status': 'ok', 'truncated': False, 'requests': []}
+        self.assertEqual(fixture.observe()['capacityUnknowns']['status'], 'unknown')
+        fixture.monitor[self.fixtures.IDS[1]]['capacityUnknowns'] = {'status': 'ok', 'truncated': False, 'requests': []}
+        self.assertEqual(fixture.observe()['capacityUnknowns']['status'], 'ok')
+
+
 if __name__ == '__main__':
     unittest.main()

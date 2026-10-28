@@ -1,7 +1,7 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { createLocalModelRelay, type LocalModelRelayOptions } from "@/scripts/lo
 import { fileRelayReceiptStore } from "@/scripts/local-model-relay/store";
 import { LOCAL_MODEL_RELAY_REQUEST_HEADER, type RelayReceipt } from "@/scripts/local-model-relay/protocol";
 import { isTailnetIpv4, localModelRelayConfig } from "@/scripts/local-model-relay/config";
+import { reconcileRelayBoundary } from '@/scripts/local-model-relay/boundary-reconcile';
 
 const TOKEN = "relay-private-token-" + "a".repeat(40);
 const UPSTREAM_TOKEN = "upstream-private-key-" + "b".repeat(40);
@@ -195,6 +196,27 @@ describe("M1 사설 모델 relay", () => {
     expect((await relay.receipt(id)).state).toBe("indeterminate");
     expect((await relay.chat()).status).toBe(503);
     release.release();
+  });
+
+  it('정식 DB 해제 proof에 따른 marker 정리 뒤 relay를 복원하면 새 요청을 받고 원래 timeout 기록은 보존한다', async () => {
+    const release = gate(); let upstreamEnded = false;
+    const relay = await start(async (_req, res) => {
+      await release.promise; upstreamEnded = true; if (!res.destroyed) res.end('{}');
+    }, { upstreamTimeoutMs: 30 });
+    const id = randomUUID(); expect((await relay.chat(body, id)).status).toBe(502);
+    const receipt = await relay.receipt(id), file = path.join(relay.state, `${id}.json`), original = readFileSync(file);
+    expect(receipt.state).toBe('indeterminate');
+    release.release(); await waitUntil(() => upstreamEnded);
+    relay.service.closeAllConnections(); await new Promise<void>(resolve => relay.service.close(() => resolve()));
+    // Synthetic proof is only a test seam. Production obtains this exclusively from the exact committed primary row.
+    reconcileRelayBoundary(relay.state, { requestId: id, wireHash: receipt.requestHash, model: MODEL,
+      planHash: 'a'.repeat(64), bindingHash: 'b'.repeat(64), releaseEvidenceHash: 'c'.repeat(64) });
+    const restarted = await start((_req, res) => { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.end(finish); }, {}, relay.state);
+    expect(restarted.service.relayHealth()).toMatchObject({ relayReady: true, indeterminate: false });
+    const next = randomUUID(); expect(await (await restarted.chat(body, next)).text()).toBe(finish);
+    expect((await restarted.receipt(next)).state).toBe('response_complete');
+    expect(readFileSync(file)).toEqual(original);
+    expect((await restarted.chat(body, id)).status).toBe(409);
   });
 
   it("native readiness는 검증 hook과 실제 model·finish 관측이 모두 있어야 열린다", async () => {

@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from recovery_gateway import PROVIDER_STAGES, bounded_output, save, valid_review_failures
+from recovery_gateway import PROVIDER_STAGES, bounded_output, save, valid_review_failures, validate_capacity_unknowns
 from incident_notifications import notify, validate_destination
 
 
@@ -31,7 +31,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -44,6 +44,10 @@ def validate_report(report):
             raise ValueError('invalid_provider_failures')
         if 'reviewFailures' in row and not valid_review_failures(row['reviewFailures']):
             raise ValueError('invalid_review_failures')
+        if 'capacityUnknowns' in row:
+            capacity = validate_capacity_unknowns(row['capacityUnknowns'])
+            if capacity['status'] != 'ok' and (row['ok'] or row['recoverable']):
+                raise ValueError('invalid_capacity_recovery_claim')
         if row['recoverable'] and (row['reason'] not in ('web_page_failed', 'monitor_stale', 'native_unit_failed') or not row['settled'] or row['ok']):
             raise ValueError('invalid_recovery_claim')
         keys.add(row['key'])
@@ -79,7 +83,8 @@ def cycle(config, state, reports, *, now=None, recover=None):
     for host in config['hosts']:
         report = reports.get(host)
         if report is None:
-            alarm = alarm or any(key.startswith(host + '/') and value.get('bad', 0) >= 2
+            alarm = alarm or any(key.startswith(host + '/') and (value.get('bad', 0) >= 2
+                                 or isinstance(value.get('capacityUnknowns'), dict) and value['capacityUnknowns'].get('status') in ('alarm', 'unknown'))
                                  for key, value in state['targets'].items())
             rows = [{'key': 'host', 'ok': False, 'version': None, 'recoverable': False, 'reason': 'probe_unknown'}]
         else:
@@ -133,6 +138,25 @@ def cycle(config, state, reports, *, now=None, recover=None):
                     events.append({'target': key, 'stage': stage, 'reason': reason, 'bad': samples})
             if review_observations:
                 target['reviewFailures'] = review_observations
+            capacity = row.get('capacityUnknowns')
+            # A missing/failed read cannot clear a known request. Only a fresh, explicit empty observation can.
+            if capacity is None or capacity['status'] == 'unknown':
+                previous_capacity = old.get('capacityUnknowns')
+                if previous_capacity is not None:
+                    try:
+                        previous_capacity = validate_capacity_unknowns(previous_capacity)
+                    except ValueError:
+                        previous_capacity = {'status': 'unknown', 'truncated': False, 'requests': []}
+                    if capacity is None or previous_capacity['status'] == 'alarm':
+                        capacity = previous_capacity
+            if capacity is not None:
+                capacity = validate_capacity_unknowns(capacity)
+                target['capacityUnknowns'] = capacity
+                if capacity['status'] != 'ok':
+                    alarm = True
+                for request in capacity['requests']:
+                    events.append({'target': key, 'reason': 'model_indeterminate', **request,
+                                   'recovery': 'provider_exit_required' if request['localEndRecorded'] else 'local_and_provider_exit_required'})
             state['targets'][key] = target
             if bad >= 2:
                 alarm = True

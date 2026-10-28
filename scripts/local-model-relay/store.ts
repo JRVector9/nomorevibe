@@ -1,7 +1,7 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { validRelayRequestId, type RelayReceipt } from "./protocol";
+import { LOCAL_MODEL_RELAY_RECOVERY_LOCK, validRelayRequestId, type RelayReceipt } from "./protocol";
 
 export type RelayReceiptStore = {
   hasUnsettled: () => boolean;
@@ -31,13 +31,14 @@ export function fileRelayReceiptStore(directory: string): RelayReceiptStore {
     syncDirectory();
   };
   return {
-    hasUnsettled: () => existsSync(active),
+    hasUnsettled: () => existsSync(active) || existsSync(path.join(directory, LOCAL_MODEL_RELAY_RECOVERY_LOCK)),
     get: (id) => {
       const target = file(id);
       if (!existsSync(target)) return null;
       return JSON.parse(readFileSync(target, "utf8")) as RelayReceipt;
     },
     begin: (receipt) => {
+      if (existsSync(path.join(directory, LOCAL_MODEL_RELAY_RECOVERY_LOCK))) throw new Error('relay_recovery_locked');
       if (existsSync(file(receipt.requestId))) throw new Error("duplicate_request_id");
       writeFileSync(active, JSON.stringify({ requestId: receipt.requestId, relayGeneration: receipt.relayGeneration }), { mode: 0o600, flag: "wx", flush: true });
       write(receipt);
