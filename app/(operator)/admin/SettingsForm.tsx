@@ -200,7 +200,9 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <NumberField id="pagesPerTick" label="틱당 페이지" defaultValue={discover.pagesPerTick} min={1} max={10} onValue={setPages}
             hint={<span className="font-semibold text-up">{SEED_INTERVAL_MINUTES}분마다 {pages}회 → 시간당 {usage.perHour}회 · 검색 신원 하나의 {usage.percent}</span>} />
           <NumberField id="maxNewPerHour" label="시간당 새 저장소" defaultValue={discover.maxNewPerHour} min={60} max={3600}
-            hint="5분 창으로 나눈다. 3000이면 창마다 250건까지 새로 넣는다. 심사 대기가 500건·5분 또는 1,000건이면 더 줄인다." />
+            hint="5분 창으로 나눕니다. 3000이면 창마다 250건까지 새로 넣습니다." />
+          <NumberField id="maxReviewBacklog" label="검수 대기열 상한" defaultValue={discover.maxReviewBacklog} min={1} max={10000000}
+            hint="기본 100만 건. 탐색·원본 수집·사람 검토를 포함한 미완료 저장소를 중복 없이 셉니다. 상한까지 설정한 탐색량을 유지하고, 도달하면 신규 탐색만 멈춥니다. 기존 수집·검수는 계속됩니다." />
         </div>
       </SettingsCard>
 

@@ -5,7 +5,7 @@ import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
-vi.mock('@/lib/crawl/discovery-admission', async original => ({ ...await original<typeof import('@/lib/crawl/discovery-admission')>(), readDiscoveryAdmission:mocks.admission }));
+vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidenceBatch:mocks.record}));
@@ -16,7 +16,7 @@ const topicQuery = {label:'topic:glm',kind:'repositories' as const,query:'topic:
 
 beforeEach(() => {
   mocks.enqueue.mockReset().mockResolvedValue(1); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
-  mocks.admission.mockReset().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:false });
+  mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,
     discover:{...DEFAULT_CRAWL_SETTINGS.discover,sort:"relevance",pagesPerTick:1,queries:[{...topicQuery}]}};
 });
@@ -158,7 +158,7 @@ it('counts actual insertions before the rate cap pauses a partial page, includin
   mocks.settings!.discover.queries = [signal(0)];
   mocks.search.mockResolvedValue(saturating);
   mocks.enqueue.mockImplementation(async (rows:unknown[]) => rows.length);
-  mocks.admission.mockResolvedValue({recentNew:249,stages:[],secondWindowLimited:false});
+  mocks.admission.mockResolvedValue({recentNew:249,queuedRepositories:0,downstreamRepositories:0});
   const firstContext = context();
   const first = await seedFrontier(firstContext);
   expect(first.cursor?.pendingPage?.itemIndex).toBe(1);
@@ -166,7 +166,7 @@ it('counts actual insertions before the rate cap pauses a partial page, includin
     ['crawl.seeded',expect.objectContaining({discovered:1,examined:1,existing:0,searchRequests:1,drained:false})],
   ]);
 
-  mocks.admission.mockResolvedValue({recentNew:248,stages:[],secondWindowLimited:false});
+  mocks.admission.mockResolvedValue({recentNew:248,queuedRepositories:0,downstreamRepositories:0});
   const resumedContext = context(first.cursor!);
   const resumed = await seedFrontier(resumedContext);
   expect(resumed.cursor?.pendingPage?.itemIndex).toBe(3);
@@ -179,7 +179,7 @@ it('counts actual insertions before the rate cap pauses a partial page, includin
 it('keeps inserted and existing counts when the worker budget expires within a page', async () => {
   mocks.settings!.discover.queries = [signal(0)];
   mocks.search.mockResolvedValue(saturating);
-  mocks.admission.mockResolvedValue({recentNew:248,stages:[],secondWindowLimited:false});
+  mocks.admission.mockResolvedValue({recentNew:248,queuedRepositories:0,downstreamRepositories:0});
   let budget = true;
   mocks.enqueue.mockImplementation(async () => {budget = false; return 1;});
   const tick = context(null, () => budget);
@@ -190,14 +190,38 @@ it('keeps inserted and existing counts when the worker budget expires within a p
   ]);
 });
 
-it('shows configured and effective pages while retaining the existing pressure limit', async () => {
+it('keeps ten configured pages despite the former 500-item review pressure threshold', async () => {
   mocks.settings!.discover.pagesPerTick = 10;
   mocks.search.mockResolvedValue(saturating);
-  mocks.admission.mockResolvedValue({recentNew:0,stages:[{key:'first',waiting:506,oldestMinutes:54}],secondWindowLimited:false});
+  mocks.admission.mockResolvedValue({recentNew:0,queuedRepositories:506,downstreamRepositories:506});
   const tick = context();
   await seedFrontier(tick);
-  expect(mocks.search).toHaveBeenCalledOnce();
+  expect(mocks.search).toHaveBeenCalledTimes(10);
   expect(tick.log).toHaveBeenCalledWith('crawl.seed_admission',expect.objectContaining({
-    throttled:true,configuredPages:10,effectivePages:1,newAllowance:100,rateCapped:false,measurementUnknown:false,
+    throttled:false,configuredPages:10,effectivePages:10,newAllowance:250,rateCapped:false,measurementUnknown:false,
   }));
+});
+
+
+it('preserves a partial page at the configured cap and resumes without losing its remaining items', async () => {
+  mocks.settings!.discover.maxReviewBacklog = 1000000;
+  mocks.settings!.discover.pagesPerTick = 10;
+  mocks.enqueue.mockImplementation(async (rows: unknown[]) => rows.length);
+  mocks.admission.mockResolvedValue({recentNew:0,queuedRepositories:999999,downstreamRepositories:2600});
+  mocks.search.mockResolvedValue(page([
+    {full_name:'acme/one',homepage:'https://one.example'},
+    {full_name:'acme/two',homepage:'https://two.example'},
+  ]));
+  const first = await seedFrontier(context());
+  expect(first.cursor?.pendingPage?.itemIndex).toBe(1);
+  mocks.search.mockClear(); mocks.enqueue.mockClear();
+  mocks.admission.mockResolvedValue({recentNew:1,queuedRepositories:1000000,downstreamRepositories:2600});
+  const blocked = await seedFrontier(context(first.cursor!));
+  expect(blocked.cursor).toEqual(first.cursor);
+  expect(mocks.search).not.toHaveBeenCalled();
+  expect(mocks.enqueue).not.toHaveBeenCalled();
+  mocks.settings!.discover.maxReviewBacklog = 2000000;
+  await seedFrontier(context(blocked.cursor!));
+  expect(mocks.enqueue.mock.calls[0][0].map((item: {repo: string}) => item.repo)).toEqual(['acme/two']);
+  expect(mocks.search).not.toHaveBeenCalled();
 });

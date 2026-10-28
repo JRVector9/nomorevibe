@@ -4,7 +4,7 @@ import { seedFrontier, LATEST_SCAN_INTERVAL_MS, type SeedCursor } from '@/lib/cr
 
 const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:vi.fn() }));
-vi.mock('@/lib/crawl/discovery-admission', async original => ({ ...await original<typeof import('@/lib/crawl/discovery-admission')>(), readDiscoveryAdmission:mocks.admission }));
+vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({ searchCommits:mocks.search, searchRepositories:mocks.search, SEARCH_PER_PAGE:100, MAX_SEARCH_PAGES:10 }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings:async () => mocks.settings, enabledQueries:(s:CrawlSettings) => s.discover.queries.filter(q => q.enabled) }));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({ recordDiscoveryEvidenceBatch:mocks.record }));
@@ -27,7 +27,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
   mocks.enqueue.mockReset().mockImplementation(async (rows:unknown[]) => rows.length);
   mocks.record.mockReset().mockResolvedValue(undefined);
-  mocks.search.mockReset(); mocks.admission.mockReset().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:false });
+  mocks.search.mockReset(); mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled:true,
     discover:{ ...DEFAULT_CRAWL_SETTINGS.discover, sort:'recent', pagesPerTick:1, queries:[one] } };
 });
@@ -120,32 +120,29 @@ it('a shared auth cooldown preserves both cursors and prevents a second search i
   expect(mocks.search).toHaveBeenCalledTimes(1);
 });
 
-it('shares one readiness snapshot and exploration page across latest and full cursors', async () => {
+it('clears old pressure state and shares one capacity snapshot across latest and full cursors', async () => {
   const old = {...await oldCursor(),admissionThrottled:true,backlogPaused:true};
   mocks.settings!.discover.pagesPerTick = 6;
-  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, stages:[{key:'first',waiting:300,oldestMinutes:3}], secondWindowLimited:false });
+  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, queuedRepositories:300,downstreamRepositories:300 });
   const result = (await seedFrontier(ctx(old))).cursor!;
-  expect(result.admissionThrottled).toBe(true);
-  expect(mocks.search).toHaveBeenCalledTimes(1);
+  expect(result.admissionThrottled).toBe(false);
+  expect(mocks.search).toHaveBeenCalledTimes(3); // 250 new rows share the hourly allowance across both cursors.
   expect(mocks.admission).toHaveBeenCalledTimes(1);
   expect(result.cycleWindow).toEqual(oldWindow);
-  mocks.admission.mockResolvedValue({ recentNew:900, stages:[{key:'first',waiting:250,oldestMinutes:2}], secondWindowLimited:false });
+  mocks.admission.mockResolvedValue({ recentNew:0, queuedRepositories:250,downstreamRepositories:250 });
   mocks.search.mockResolvedValue(page());
   const resumed = (await seedFrontier(ctx(result))).cursor!;
   expect(resumed.admissionThrottled).toBe(false);
 });
 
-it.each(['timeout', 'vote-window'])('keeps partial cursors and only one new candidate when the snapshot is incomplete: %s', async reason => {
+it('keeps both cursors and sends no new request when queue depth cannot be read', async () => {
   const old = await oldCursor();
   mocks.settings!.discover.pagesPerTick = 6;
-  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:true,
-    secondVoteWindowLimited:reason === 'vote-window', timedOut:reason === 'timeout' });
-  mocks.search.mockResolvedValue(page(true));
-  const result = (await seedFrontier(ctx(old))).cursor!;
+  mocks.admission.mockClear().mockResolvedValue({ recentNew:0, queuedRepositories:0, downstreamRepositories:0, timedOut:true });
+  const result = await seedFrontier(ctx(old));
   expect(mocks.admission).toHaveBeenCalledOnce();
-  expect(mocks.search).toHaveBeenCalledOnce();
-  expect(mocks.enqueue.mock.calls[0][0]).toHaveLength(1);
-  expect(result).toMatchObject({ admissionThrottled:true, cycleWindow:oldWindow, latestScan:{ pendingPage:{ itemIndex:1 } } });
+  expect(mocks.search).not.toHaveBeenCalled();
+  expect(result.cursor).toEqual(old);
 });
 
 it('sort changes reorder saved subwindows newest first without losing any old range', async () => {
@@ -183,7 +180,7 @@ it('marks a full preview page incomplete even below the 1000-result split thresh
 it('records a partial latest preview in its own summary instead of losing its new insertions', async () => {
   const old = await oldCursor();
   mocks.settings!.discover.pagesPerTick = 2;
-  mocks.admission.mockResolvedValue({recentNew:249,stages:[],secondWindowLimited:false});
+  mocks.admission.mockResolvedValue({recentNew:249,queuedRepositories:0,downstreamRepositories:0});
   mocks.search.mockResolvedValue(page(true));
   const tick = ctx(old);
   const result = await seedFrontier(tick);

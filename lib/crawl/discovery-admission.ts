@@ -45,6 +45,7 @@ function databaseReadTimedOut(error: unknown): boolean {
   return false;
 }
 
+/** Legacy runnable-stage pressure telemetry. New storage admission uses review-backlog.ts. */
 export function discoveryAdmission(snapshot: DiscoveryAdmissionSnapshot, previouslyThrottled: boolean,
   maxNewPerHour = Number.POSITIVE_INFINITY): DiscoveryAdmission {
   const unknownWindow = snapshot.secondVoteWindowLimited || (snapshot.secondWindowLimited && !snapshot.secondObservationLimited);
