@@ -38,7 +38,8 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
     stage.stage === key && !['paused', 'no_work', 'manual_attention'].includes(stage.reason) && stage.held !== true
     && (positive(stage.waiting) || positive(stage.deferred)) && (positive(stage.providerErrors) || positive(stage.errors5m))
     && [stage.completed5m, stage.progress5m].every(value => value == null || value === 0))) : undefined;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures }), { mode: 0o600 });
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures,
+    capacityUnknowns: status.capacityUnknowns }), { mode: 0o600 });
   renameSync(temporary, path);
 }
 

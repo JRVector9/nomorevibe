@@ -14,6 +14,7 @@ import { claimConsumerItemAgentReview, loadFirstReviewConsumerContext, observeAg
   renewAgentReviewItemOwnership, recordAgentReview, recordConsumerSuspectedSpam, AgentReviewItemCliModelReservationRequired,
   chooseFirstReviewForCandidate, type AgentReviewItemModelReservationRequired, type ItemModelCapacityReviewClaim, type CliModelCapacityReviewClaim } from './agent-review-repository';
 import type { PreparedReviewCliCall } from './review-cli-call';
+import { REVIEW_GATEWAY_LADDER } from '@/lib/llm/deadline-ladder';
 
 export type FirstReviewConsumerOutcome = { state: 'skipped'; reason: string }
   | { applied: boolean; state: 'succeeded' | 'failed' | 'superseded' };
@@ -26,6 +27,8 @@ export async function executeFirstReviewConsumerItem(input: {
   /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목(규칙·재사용·취소 전)은 부르지 않는다 */
   onProviderResult?: (result: AgentReviewResult) => void;
   pausedReviewers?: ReadonlySet<string>;
+  /** 물리 그룹이 미확인 점유로 꽉 찬 모델(읽기 전용 hint). 한 번도 보내지 않은 후보만 다른 모델로 돌린다 */
+  blockedReviewers?: ReadonlySet<string>;
   reviewerCircuits?: ProviderCircuits;
 }): Promise<FirstReviewConsumerOutcome> {
   const candidateId = z.number().int().positive().safe().parse(input.candidateId);
@@ -35,7 +38,8 @@ export async function executeFirstReviewConsumerItem(input: {
   if (loaded.kind === 'skipped') return { state: 'skipped', reason: loaded.reason };
   const context = loaded.context;
   const reviewer = context.settings.firstReviewAdditional === undefined ? firstReviewer(context.settings)
-    : await chooseFirstReviewForCandidate(context);
+    : await chooseFirstReviewForCandidate(context, undefined,
+      new Set([...input.pausedReviewers ?? [], ...input.blockedReviewers ?? []]));
   if (!reviewer && context.settings.firstReviewAdditional !== undefined) return { state: 'skipped', reason: 'model_intent_protected' };
   if (!reviewer) throw new Error('1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다');
   if (input.pausedReviewers?.has(firstReviewerKey(reviewer))) return { state: 'skipped', reason: 'model_paused' };
@@ -95,7 +99,7 @@ export async function executeFirstReviewConsumerItem(input: {
         if (current && !transportSignal.aborted && !stopClaims?.aborted && dispatch.binding.attemptId === receipt.attemptId
           && isDeepStrictEqual(dispatch.binding.review, agentReviewBinding(context.candidate.id, context.input,
             { provider: prepared.provider, model: prepared.model })))
-          result = await capacity.reviewAgentReviewItemModelCapacity(context.input, dispatch, call, { timeoutMs: 60_000, signal: transportSignal });
+          result = await capacity.reviewAgentReviewItemModelCapacity(context.input, dispatch, call, { timeoutMs: REVIEW_GATEWAY_LADDER.clientMs, signal: transportSignal });
         else await capacity.abandonAgentReviewItemModelCapacity(dispatch, call);
       } else if (cli) {
         const binding = cli.dispatch.binding;

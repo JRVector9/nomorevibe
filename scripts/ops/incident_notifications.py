@@ -23,6 +23,10 @@ PIPELINE_RECOVERY_SECONDS = 600
 PIPELINE_RECOVERY_GAP_SECONDS = 150
 
 
+def _request_id(value):
+    return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', value) is not None
+
+
 def validate_destination(value):
     if (not isinstance(value, dict) or set(value) != {'botToken', 'chatId'} or
             not isinstance(value['botToken'], str) or
@@ -95,7 +99,8 @@ def _signature(config, value):
         return (setting is not None and re.fullmatch(r'0|[1-9][0-9]{0,4}', stage) and
                 int(stage) < len(config.get(setting, [])) and reason == 'push_failed')
     return (_target(config, host + '/' + service) and
-            (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'))
+            (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
+             or _request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')))
 
 
 def _finite_time(value, now):
@@ -210,12 +215,25 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             failures = row.get('providerFailures')
             if isinstance(failures, list) and all(isinstance(stage, str) and stage in STAGES for stage in failures):
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in STAGES and parts[2] not in failures)
+            capacity = row.get('capacityUnknowns')
+            if isinstance(capacity, dict):
+                try:
+                    from recovery_gateway import validate_capacity_unknowns
+                    capacity = validate_capacity_unknowns(capacity)
+                    if capacity['status'] != 'unknown' and not capacity['truncated']:
+                        pending_requests = {item['requestId'] for item in capacity['requests']}
+                        clear(lambda parts: parts[:2] == [host, service] and _request_id(parts[2]) and parts[2] not in pending_requests)
+                except ValueError:
+                    pass
 
     for event in result.get('events', []):
         if not isinstance(event, dict) or not _target(config, event.get('target')):
             continue
         stage, reason = event.get('stage', 'service'), event.get('reason')
+        if reason in ('model_indeterminate', 'model_reclaim_overdue') and _request_id(event.get('requestId')):
+            stage = event['requestId']
         if not ((stage in STAGES and reason == 'upstream_stalled') or
+                (_request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
         signature = event['target'] + '/' + stage + '/' + reason

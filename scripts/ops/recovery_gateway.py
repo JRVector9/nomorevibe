@@ -91,10 +91,39 @@ await r.body?.cancel();return {page:r.ok};}catch{return path==='/api/health'?{re
 })).then(rows=>console.log(JSON.stringify(Object.assign({},...rows))))"""
 PROVIDER_STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'keyword-verify',
                              'product-translate', 'tagline-ko', 'intro-check'})
+
+
+def validate_capacity_unknowns(value):
+    if (not isinstance(value, dict) or set(value) != {'status', 'truncated', 'requests'} or
+            value['status'] not in ('ok', 'alarm', 'unknown') or type(value['truncated']) is not bool or
+            not isinstance(value['requests'], list) or len(value['requests']) > 64):
+        raise ValueError('invalid_capacity_unknowns')
+    ids = set()
+    for row in value['requests']:
+        if (not isinstance(row, dict) or set(row) != {'requestId', 'routeId', 'groupId', 'oldPolicy', 'localEndRecorded'} or
+                not isinstance(row['requestId'], str) or not re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', row['requestId']) or
+                row['requestId'] in ids or any(type(row[k]) is not bool for k in ('oldPolicy', 'localEndRecorded')) or
+                any(not isinstance(row[k], str) or not re.fullmatch(r'[A-Za-z0-9_.:@+/-]{1,120}', row[k]) for k in ('routeId', 'groupId'))):
+            raise ValueError('invalid_capacity_unknowns')
+        ids.add(row['requestId'])
+    pending = bool(value['requests']) or value['truncated']
+    if (value['status'] == 'alarm') != pending:
+        raise ValueError('invalid_capacity_unknowns')
+    return value
+
+
 MONITOR_PROBE = """try {const j=JSON.parse(require('fs').readFileSync(process.env.MONITOR_HEALTH_PATH||'/tmp/monitor-health.json','utf8'));
 const allowed=['reason-translate','crawl-tagline','keywords','keyword-verify','product-translate','tagline-ko','intro-check'];
+const capacity=v=>{const unknown={status:'unknown',truncated:false,requests:[]};
+if(!v||!['ok','alarm','unknown'].includes(v.status)||typeof v.truncated!=='boolean'||!Array.isArray(v.requests)||v.requests.length>64)return unknown;
+const ids=new Set(),rows=[];
+for(const r of v.requests){if(!r||typeof r.requestId!=='string'||!(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/).test(r.requestId)||ids.has(r.requestId)
+||!['routeId','groupId'].every(k=>typeof r[k]==='string'&&(/^[A-Za-z0-9_.:@+/-]{1,120}$/).test(r[k]))||typeof r.oldPolicy!=='boolean'||typeof r.localEndRecorded!=='boolean')return unknown;
+ids.add(r.requestId);rows.push({requestId:r.requestId,routeId:r.routeId,groupId:r.groupId,oldPolicy:r.oldPolicy,localEndRecorded:r.localEndRecorded});}
+return ((v.status==='alarm')===(rows.length>0||v.truncated))?{status:v.status,truncated:v.truncated,requests:rows}:unknown;};
 console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-j.checkedAt>=-1000&&Date.now()-j.checkedAt<90000,
 overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
+...(j.capacityUnknowns!==undefined?{capacityUnknowns:capacity(j.capacityUnknowns)}:{}),
 ...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{})}));}
 catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
 
@@ -159,6 +188,14 @@ def observe(key, cfg, run=command, now=None):
                                    if isinstance(stage, str) and stage in PROVIDER_STAGES})
                 if failures or all(isinstance(check.get('providerFailures'), list) for check in checks):
                     result['providerFailures'] = failures
+                capacity = [validate_capacity_unknowns(check['capacityUnknowns']) for check in checks if 'capacityUnknowns' in check]
+                if capacity:
+                    requests = {row['requestId']: row for item in capacity for row in item['requests']}
+                    truncated = len(requests) > 64 or any(item['truncated'] for item in capacity)
+                    status = 'alarm' if requests or truncated else 'unknown' if len(capacity) != len(checks) or any(item['status'] == 'unknown' for item in capacity) else 'ok'
+                    result['capacityUnknowns'] = {'status': status, 'truncated': truncated, 'requests': list(requests.values())[:64]}
+                    if status != 'ok':
+                        result.update(reason='pipeline_alarm', ok=False, recoverable=False)
         else:
             result.update(reason='ok' if healthy else 'container_unhealthy', ok=healthy)
         return result

@@ -100,6 +100,7 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "notification-delisted": "팔로한 프로젝트가 내려가면 알림함에 적습니다.",
   "notification-category-digest": "팔로한 분야의 주간 묶음 알림을 넣습니다(월요일 KST).",
   "notification-prune": "90일 지난 알림을 지웁니다.",
+  "model-capacity-reclaim": "종료가 확인되지 않은 모델 요청 중 종료 증거와 기한이 확인된 것만 1분마다 풀어 다음 심사가 이어지게 합니다.",
   "product-evidence-refresh": "공개 제품의 근거 출처를 다시 읽어 갱신합니다.",
   "product-site-evidence-refresh": "공식 사이트 근거를 갱신합니다(분리 역할, versioned 방식에서만 돕니다).",
   "agent-evidence-refresh": "저장소 파일·커밋 서명으로 개발 AI 근거를 조사합니다. items 방식에서는 이 작업이 저장소별 대기열을 채우고, 제작 근거 consumer 들이 나눠 스캔합니다.",

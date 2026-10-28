@@ -93,13 +93,17 @@ function exitsBefore(events: readonly ProcessGroupEvent[], dispatchAtMs: number)
  * owner 가 남긴 게이트웨이 로컬 종료(local_call_ended). 둘 다 운영자가 선언한 provider 정책(client_bound, 또는 증명된 hard deadline)을 따른다.
  * lock 순서: fence SHARE → (장부 hook) control UPDATE → 요청 행 UPDATE. fenced DB 에서는 장부를 바꾸지 않는다. dry-run 은 같은 TX 뒤 ROLLBACK.
  */
-export async function releaseEvidencedDispatches(value: { policies: ReadonlyMap<string, ReclaimPolicyWithReference>; operator: string },
-  apply: boolean): Promise<{ rows: DispatchReleaseRow[] }> {
+export async function releaseEvidencedDispatches(value: { policies: ReadonlyMap<string, ReclaimPolicyWithReference>; operator: string;
+  /** 자동 회수(PR 미확인 차선): 정책을 선언한 budget 행만 잠근다. 없으면 기존처럼 모든 활성 행을 본다. */
+  onlyDeclaredBudgets?: boolean }, apply: boolean): Promise<{ rows: DispatchReleaseRow[] }> {
   const operator = identity(120).parse(value.operator);
+  const budgets = value.onlyDeclaredBudgets ? [...value.policies.keys()] : null;
   return drTransactionMaybeDry(apply, async tx => {
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
+    if (budgets && !budgets.length) return { rows: [] };
     const ids = Array.from(await tx.execute<{ request_id: string }>(sql`SELECT request_id::text FROM model_capacity_requests
-      WHERE state IN ('dispatched','indeterminate') ORDER BY queue_ordinal`)).map(item => item.request_id);
+      WHERE state IN ('dispatched','indeterminate') ${budgets ? sql`AND provider_budget_id IN (${sql.join(budgets.map(id => sql`${id}`), sql`, `)})` : sql``}
+      ORDER BY queue_ordinal`)).map(item => item.request_id);
     const rows: DispatchReleaseRow[] = [];
     for (const requestId of ids) rows.push(row(requestId, await releaseModelDispatchWithEvidence(tx, requestId,
       async (candidate: ModelDispatchReleaseCandidate): Promise<ModelDispatchReleaseEvidence | { blocked: string }> => {

@@ -34,10 +34,15 @@ export function firstReviewIdentitySql(pool: FirstReviewer[], columns: { provide
   return pool.length ? sql`(${sql.join(pool.map(reviewer => sql`(${columns.provider} = ${reviewer.provider} AND ${columns.model} = ${reviewer.model})`), sql` OR `)})` : sql`false`;
 }
 
-/** Pin active intents and retries before assigning untouched candidates. No state is reclaimed here. */
+/**
+ * Pin active intents and retries before assigning untouched candidates. No state is reclaimed here.
+ * Only a candidate with no intent and no attempt at all (`untouched`) may skip a blocked model,
+ * rotating from its fixed slot. If every model is blocked it keeps the fixed slot and waits.
+ */
 export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
   attempts: { provider: string | null; model: string | null }[] = [],
-  active: { provider: string | null; model: string | null }[] = []): FirstReviewer | null {
+  active: { provider: string | null; model: string | null }[] = [],
+  avoid: { blocked: ReadonlySet<string>; untouched: boolean } = { blocked: new Set(), untouched: false }): FirstReviewer | null {
   if (!pool.length || !Number.isSafeInteger(candidateId) || candidateId < 1) return null;
   if (active.length) {
     const identities = new Set(active.map(row => JSON.stringify([row.provider, row.model])));
@@ -45,8 +50,13 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
   const previous = attempts.find(row => hasFirstReviewer(pool, row));
-  return previous ? pool.find(row => row.provider === previous.provider && row.model === previous.model)!
-    : pool[(candidateId - 1) % pool.length];
+  if (previous) return pool.find(row => row.provider === previous.provider && row.model === previous.model)!;
+  const start = (candidateId - 1) % pool.length;
+  if (avoid.untouched && attempts.length === 0) for (let offset = 0; offset < pool.length; offset++) {
+    const reviewer = pool[(start + offset) % pool.length];
+    if (!avoid.blocked.has(firstReviewerKey(reviewer))) return reviewer;
+  }
+  return pool[start];
 }
 
 /** Only known model/route-local refusals may leave other models running. */

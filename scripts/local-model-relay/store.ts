@@ -1,13 +1,17 @@
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { validRelayRequestId, type RelayReceipt } from "./protocol";
+import { LOCAL_MODEL_RELAY_RECOVERY_LOCK, validRelayRequestId, type RelayReceipt } from "./protocol";
+import { pendingIndeterminateReceipt, releaseRelayAfterEngineDeadline, type RelayDeadlinePolicy } from "./deadline-release";
 
 export type RelayReceiptStore = {
   hasUnsettled: () => boolean;
   get: (id: string) => RelayReceipt | null;
   begin: (receipt: RelayReceipt) => void;
   finish: (receipt: RelayReceipt) => void;
+  /** 선언된 엔진 상한 경과 뒤 표식 정리. 없는 store(시험용 등)는 기존처럼 미확인을 유지한다 */
+  pendingIndeterminate?: () => RelayReceipt | null;
+  releaseAfterEngineDeadline?: (requestId: string, policy: RelayDeadlinePolicy, nowMs?: number) => ReturnType<typeof releaseRelayAfterEngineDeadline>;
 };
 
 /** active 표시는 요청 전 저장하고 정상 HTTP 종료 뒤에만 지운다. 재시작이 unknown을 풀지 않는다. */
@@ -31,13 +35,14 @@ export function fileRelayReceiptStore(directory: string): RelayReceiptStore {
     syncDirectory();
   };
   return {
-    hasUnsettled: () => existsSync(active),
+    hasUnsettled: () => existsSync(active) || existsSync(path.join(directory, LOCAL_MODEL_RELAY_RECOVERY_LOCK)),
     get: (id) => {
       const target = file(id);
       if (!existsSync(target)) return null;
       return JSON.parse(readFileSync(target, "utf8")) as RelayReceipt;
     },
     begin: (receipt) => {
+      if (existsSync(path.join(directory, LOCAL_MODEL_RELAY_RECOVERY_LOCK))) throw new Error('relay_recovery_locked');
       if (existsSync(file(receipt.requestId))) throw new Error("duplicate_request_id");
       writeFileSync(active, JSON.stringify({ requestId: receipt.requestId, relayGeneration: receipt.relayGeneration }), { mode: 0o600, flag: "wx", flush: true });
       write(receipt);
@@ -50,5 +55,7 @@ export function fileRelayReceiptStore(directory: string): RelayReceiptStore {
       unlinkSync(active);
       syncDirectory();
     },
+    pendingIndeterminate: () => pendingIndeterminateReceipt(directory),
+    releaseAfterEngineDeadline: (requestId, policy, nowMs) => releaseRelayAfterEngineDeadline(directory, requestId, policy, nowMs),
   };
 }
