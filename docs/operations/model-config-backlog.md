@@ -63,3 +63,5 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 | 임베딩 모델 revision/dimensions, context C·byte/tokenizer 증명 | **공유 데이터/검증 계약**. 자유로운 생성 모델 선택과 다르며 기존 벡터 호환·재색인·실제 readback을 유지한다. 임베딩 revision/차원 변경과 운영 데이터 재작성은 이 차선에서 하지 않는다. |
 | 역사·측정 주석과 중앙 기본값 | **보존**. 모델 교체 설정은 중앙에서 바뀌며 주석의 과거 실측을 새 모델 이름으로 덮거나 줄 수를 줄이기 위해 지우지 않는다. |
 | `repoPushedAt` 등 광역 grep 일치 | **검색 오탐**. 고정 검색식의 opus가 식별자 일부에도 맞는다. 기준/현재 모두 같은 검색식을 사용하고 전체 줄 수를 실제 실행 모델 상수 수로 해석하지 않는다. |
+- 3 최종 추가 회귀: native 키·provider·publication 가드 관련 8파일 51시험 + `tsc --noEmit --incremental false` 통과. 구현 커밋 `acb3314b`.
+- 4 문서 확인: 전체 기본 JSON export→재해석→`m1:translation` 선택을 실제 실행해 통과. 처음 예시의 tsx CLI는 `listen EPERM: operation not permitted /tmp/tsx-1000/3.pipe`로 불필요한 IPC socket 생성이 막혔다. 예시를 IPC 서버를 만들지 않는 `node --import tsx` 로더 호출로 고쳐 같은 설치를 재사용해 통과했다. OS/네트워크 허용을 넓히지 않았다.
