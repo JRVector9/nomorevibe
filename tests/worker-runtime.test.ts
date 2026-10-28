@@ -12,6 +12,47 @@ function runtimeGate() {
   return { promise, release };
 }
 
+it.each([false, true])('drains an active tick without cancelling transport or refilling (consumer=%s)', async consumer => {
+  const cancel = new AbortController(), claims = new AbortController();
+  const entered = runtimeGate(), finish = runtimeGate();
+  const run = vi.fn(async (_name: string, options: { signal?: AbortSignal }) => {
+    entered.release();
+    await finish.promise;
+    expect(options.signal).toBe(cancel.signal);
+    expect(options.signal?.aborted).toBe(false);
+    return { status: 'completed', done: false };
+  });
+  const request = vi.fn();
+  const work = runWorker({ role: 'text', signal: cancel.signal, stopClaims: claims.signal }, {
+    names: ['reason-translate', 'product-translate'], pending: async () => ['reason-translate', 'product-translate'],
+    seen: async () => {}, run,
+    ...(consumer ? { consumer: { names: ['reason-translate'], open: async () => true, run, request },
+      lanes: [['reason-translate']] } : {}),
+  });
+  await entered.promise;
+  claims.abort();
+  finish.release();
+  expect((await work).failures).toBe(0);
+  expect(run).toHaveBeenCalledOnce();
+  expect(request).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('releases a host admission that returns after drain without starting a tick (consumer=%s)', async consumer => {
+  const claims = new AbortController(), entered = runtimeGate(), finish = runtimeGate();
+  const release = vi.fn(async () => {}), run = vi.fn();
+  const work = runWorker({ role: 'text', stopClaims: claims.signal }, {
+    names: ['reason-translate'], pending: async () => ['reason-translate'], seen: async () => {}, run,
+    admit: async () => { entered.release(); await finish.promise; return { admitted: true, release }; },
+    ...(consumer ? { consumer: { names: ['reason-translate'], open: async () => true, run, request: vi.fn() } } : {}),
+  });
+  await entered.promise;
+  claims.abort();
+  finish.release();
+  await work;
+  expect(run).not.toHaveBeenCalled();
+  expect(release).toHaveBeenCalledOnce();
+});
+
 it('re-polls the single site-evidence lane only after an actual runner continuation', async () => {
   const controller = new AbortController();
   let polls = 0;

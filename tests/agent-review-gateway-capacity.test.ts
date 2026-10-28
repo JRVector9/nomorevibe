@@ -8,6 +8,7 @@ import { ai1DispatchBindingHash, ai1ModelDispatchSchema } from "@/lib/llm/capaci
 import { prepareAi1GatewayCall, readAi1GatewayTerminal, reviewWithGateway, reviewWithReservedAi1Gateway,
   type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
+import { runWorker } from "@/scripts/worker";
 
 const fixture = vi.hoisted(() => ({ contract: null as Ai1GatewayServingContract | null }));
 vi.mock("@/lib/crawl/agent-review-serving-contract", async importOriginal => ({
@@ -76,6 +77,31 @@ async function server<T>(run: (state: { bodies: string[]; setReply: (reply: Repl
   }
 }
 afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+
+it("keeps the original native terminal and exact usage when handoff stops new worker ticks", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  await server(async ({ bodies, setReply }) => {
+    const cancel = new AbortController(), claims = new AbortController();
+    const value = input(), call = prepared(value), owned = dispatch(value, call);
+    let terminal: ReturnType<typeof readAi1GatewayTerminal> = null;
+    setReply(response => { claims.abort(); response.end(JSON.stringify(envelope())); });
+    await runWorker({ role: 'reviewer', signal: cancel.signal, stopClaims: claims.signal }, {
+      names: ['crawl-agent-review', 'second-review'], seen: async () => {},
+      pending: async () => ['crawl-agent-review', 'second-review'],
+      run: async (name, options) => {
+        expect(name).toBe('crawl-agent-review');
+        const response = await reviewWithReservedAi1Gateway(value, owned, call, { signal: options.signal });
+        expect(response.result.ok).toBe(true);
+        terminal = readAi1GatewayTerminal(response.terminal);
+        return { status: 'completed' };
+      },
+    });
+    expect(bodies).toHaveLength(1);
+    expect(cancel.signal.aborted).toBe(false);
+    expect(terminal).toMatchObject({ dispatch: owned, finishReason: 'stop', provenance: 'upstream_reported',
+      actualUsage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 } });
+  });
+});
 
 it("production resolver stays unsupported and does not consume an injected callback", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-secret");

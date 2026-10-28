@@ -14,7 +14,7 @@ function untilAborted(signal: AbortSignal) {
   return new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
 }
 
-it('hands a same-release role back to a primary boot that keeps waiting, draining first while still renewing', async () => {
+it.each([20_000, 60_000])('hands a role back only after a %sms drain while still renewing', async drainMs => {
   vi.useFakeTimers();
   const controller = new AbortController();
   const events: string[] = [];
@@ -24,7 +24,7 @@ it('hands a same-release role back to a primary boot that keeps waiting, drainin
     await untilAborted(signal);
     reason = signal.reason;
     events.push(`abort@${Date.now()}`);
-    await new Promise(resolve => setTimeout(resolve, 20_000)); // 자식 drain
+    await new Promise(resolve => setTimeout(resolve, drainMs));
     events.push(`drained@${Date.now()}`);
     return 0;
   });
@@ -146,8 +146,11 @@ it('a lease lost during the handoff drain is not yielded and the next election d
   const running = runRoleCandidate(standby, controller.signal, {
     // 10·20·30초 갱신은 되고, 넘겨주기 drain(30초부터) 중인 40초 갱신에서 lease 를 잃는다
     acquire, renew: async () => ++renewals < 4, sleep: async () => {},
-    supervise: async (_lease, signal) => {
-      await untilAborted(signal); reason = signal.reason; await new Promise(resolve => setTimeout(resolve, 30_000)); return 0;
+    supervise: async (_lease, signal, forceSignal) => {
+      await untilAborted(signal); reason = signal.reason;
+      await untilAborted(forceSignal);
+      expect(forceSignal.reason).toBe('role_lease_lost');
+      return 0;
     },
     waitingPrimary: async () => waiting, yieldRole, handoffStableMs: 15_000, handoffPollMs: 15_000,
   });
