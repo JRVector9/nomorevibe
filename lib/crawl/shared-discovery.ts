@@ -100,8 +100,8 @@ export async function enqueueDiscoveryBatch(entries: DiscoveryEntry[], limits: D
     // Keep lock ordering the same as enqueue(): identity locks before the job fence.
     const keys = [...new Set(entries.map(e => e.repo.toLowerCase()))].sort();
     for (const key of keys) await lockFrontierIdentity(tx, key);
-    const [clock] = await tx.execute<{ now: Date }>(sql`select clock_timestamp()::timestamp as now`);
-    const snapshot = await readReviewBacklogInTransaction(tx, clock.now, Date.now() + 3_000);
+    const [clock] = await tx.execute<{ wall: string }>(sql`select to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as wall`);
+    const snapshot = await readReviewBacklogInTransaction(tx, clock.wall, Date.now() + 3_000);
     const admission = reviewBacklogAdmission(snapshot, limits.maxNewPerHour, limits.maxReviewBacklog);
     const known = (column:typeof crawlFrontier.repo | typeof crawlDocuments.repo | typeof crawlCandidates.repo) => inArray(sql`lower(${column})`,keys);
     const rows = await tx.select({repo:sql<string>`lower(${crawlFrontier.repo})`}).from(crawlFrontier).where(known(crawlFrontier.repo))

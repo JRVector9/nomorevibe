@@ -57,3 +57,11 @@ it('expires incomplete API responses for retry instead of asserting finished cov
   await db.update(githubDiscoveryPages).set({completedAt:sql`clock_timestamp()-interval '2 minutes'`});
   expect(await sharedDiscoverySearch(identity,async()=>({ok:true,value:value('a/final')}))).toMatchObject({ok:true,cached:false,value:value('a/final')});
 });
+
+it('shares the five-minute insertion budget across concurrent producers at its final place',async()=>{
+  await db.execute(sql`insert into crawl_frontier(repo,signal,discovered_at)
+    select 'rate-fixture/' || i::text,'test',now()-interval '1 minute' from generate_series(1,249) i`);
+  const outcomes=await Promise.all(['rate/m3','rate/oracle'].map(repo=>enqueueDiscoveryBatch([{repo,signal:'test'}],{...limits,maxReviewBacklog:10000})));
+  expect(outcomes.reduce((sum,o)=>sum+o.added,0)).toBe(1);
+  expect(await db.select().from(crawlFrontier)).toHaveLength(250);
+});
