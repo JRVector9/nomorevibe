@@ -12,7 +12,7 @@ vi.mock("@/lib/crawl/github", async (original) => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlDiscoveryEvidence, jobs } = await import(
+const { crawlFrontier, crawlDocuments, crawlCandidates, crawlSettings, crawlDiscoveryEvidence, githubDiscoveryPages, jobs } = await import(
   "@/lib/db/schema"
 );
 const crawl = await import("@/lib/crawl/repository");
@@ -36,11 +36,12 @@ const searchPage = (repos: string[], full = false) => ({
 });
 
 const tick = () => runJob("crawl-seed", seedFrontier);
-const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0];
+const signalOf = (arg: { query: string }) => arg.query.split(" committer-date")[0].replace(" is:public", "");
 let fetchLease: JobLease | undefined;
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
+  await db.delete(githubDiscoveryPages);
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(crawlFrontier);
@@ -124,15 +125,15 @@ describe("레포 검색 신호", () => {
 });
 
 describe("검색 잡", () => {
-  it("keeps one exploration page when executable old fetch backlog is under pressure", async () => {
+  it("keeps the configured exploration budget below the review queue cap", async () => {
     await saveSettings({ discover: { pagesPerTick: 6 } }, "test");
     await db.insert(crawlFrontier).values(Array.from({ length: 500 }, (_, i) => ({ repo: `waiting/repo-${i}`, signal: "test",
       discoveredAt: new Date(Date.now() - 10 * 60_000), nextAttemptAt: new Date(Date.now() - 10 * 60_000) })));
     searchCommits.mockResolvedValue(searchPage(["a/one"], true));
     await tick();
-    expect(searchCommits).toHaveBeenCalledTimes(1);
-    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ admissionThrottled: true,
-      states: { "Claude 커밋 트레일러": { page: 2 } } });
+    expect(searchCommits).toHaveBeenCalledTimes(6);
+    expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ admissionThrottled: false,
+      states: { "Claude 커밋 트레일러": { page: 4 }, "Codex 커밋 트레일러": { page: 4 } } });
   });
 
   it("ignores historical and delayed fetch rows when admitting discovery", async () => {
@@ -145,12 +146,14 @@ describe("검색 잡", () => {
     expect((await getJobState("crawl-seed"))?.cursor).toMatchObject({ admissionThrottled: false });
   });
 
-  it("caps actual new inserts under pressure and resumes the saved page without repeating search", async () => {
+  it("shares the configured five-minute admission budget and resumes a saved page without repeating search", async () => {
     await saveSettings({ discover: { pagesPerTick: 6 } }, "test");
     const old = new Date(Date.now() - 10 * 60_000);
     await db.insert(crawlFrontier).values(Array.from({ length: 500 }, (_, i) => ({ repo: `waiting/repo-${i}`, signal: "test",
       discoveredAt: old, nextAttemptAt: old })));
-    await crawl.enqueue(Array.from({ length: 99 }, (_, i) => ({ repo: `recent/repo-${i}`, signal: "test" })));
+    // The hourly target of 3,000 is apportioned as 250 new entries per five minutes.
+    // Old review backlog must not replace it with the removed 100-entry pressure cap.
+    await crawl.enqueue(Array.from({ length: 249 }, (_, i) => ({ repo: `recent/repo-${i}`, signal: "test" })));
     searchCommits.mockResolvedValue(searchPage(["recent/repo-0", "new/one", "new/two"], true));
     await tick();
     expect(searchCommits).toHaveBeenCalledTimes(1);
@@ -161,7 +164,24 @@ describe("검색 잡", () => {
     expect(repos).not.toContain("new/two");
     await tick();
     expect(searchCommits).toHaveBeenCalledTimes(1);
+    expect((await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map(row => row.repo)).not.toContain("new/two");
+    await db.update(crawlFrontier).set({ discoveredAt: old }).where(eq(crawlFrontier.repo, "recent/repo-1"));
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(1);
     expect((await db.select({ repo: crawlFrontier.repo }).from(crawlFrontier)).map(row => row.repo)).toContain("new/two");
+  });
+
+  it("preserves the search cursor at the configured queue cap and resumes when space returns", async () => {
+    searchCommits.mockResolvedValue(searchPage(["existing/one"], true));
+    await tick();
+    const cursor = (await getJobState("crawl-seed"))?.cursor;
+    await saveSettings({ discover: { maxReviewBacklog: 1 } }, "test");
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(1);
+    expect((await getJobState("crawl-seed"))?.cursor).toEqual(cursor);
+    await db.delete(crawlFrontier);
+    await tick();
+    expect(searchCommits).toHaveBeenCalledTimes(2);
   });
 
   it("검색 결과를 프론티어에 넣는다", async () => {

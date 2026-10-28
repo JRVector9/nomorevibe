@@ -4,6 +4,10 @@ import { seedFrontier, LATEST_SCAN_INTERVAL_MS, LATEST_SCAN_OVERLAP_MS, type See
 
 const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:vi.fn() }));
+vi.mock('@/lib/crawl/shared-discovery', () => ({
+  sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
+  enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
+}));
 vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({ searchCommits:mocks.search, searchRepositories:mocks.search, SEARCH_PER_PAGE:100, MAX_SEARCH_PAGES:10 }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings:async () => mocks.settings, enabledQueries:(s:CrawlSettings) => s.discover.queries.filter(q => q.enabled) }));
@@ -55,7 +59,9 @@ it('searches the latest range before old work, preserving the old coverage on a 
   expect(mocks.search.mock.calls[1][0]).toMatchObject({sort:'recent',page:1});
   expect(range(mocks.search.mock.calls[1][0].query)).toBe(`${oldWindow.from}..${oldWindow.to}`);
   expect(result.cycleWindow).toEqual(oldWindow);
-  expect(result.latestScan).toMatchObject({waiting:true,cycleWindow:{to:'2026-10-01T00:00:00Z'}});
+  expect(result.latestScan).toMatchObject({page:1,cycleWindow:{to:'2026-10-01T00:00:00Z'}});
+  expect(result.latestScan?.waiting).not.toBe(true);
+  expect(result.latestScan?.pendingWindows).toHaveLength(1);
   // The preview's capped first page does not mark the old complete scan as covered.
   expect(result.window!.from).not.toBe(oldWindow.from);
   expect(result.pendingWindows![0].from).toBe(oldWindow.from);
@@ -78,10 +84,10 @@ it('with one page per tick alternates latest and full coverage, then uses idle p
   expect(range(queries[3])).not.toContain('2026-10-01');
 });
 
-it('does not repeat the latest preview before its interval, then refreshes it while retaining old work', async () => {
+it('does not repeat a fully drained latest window before its interval, then refreshes it while retaining old work', async () => {
   let cursor = await oldCursor();
   mocks.settings!.discover.pagesPerTick = 2;
-  mocks.search.mockResolvedValue(page(true));
+  mocks.search.mockResolvedValue(page(false));
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
   mocks.search.mockClear();
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
@@ -91,10 +97,10 @@ it('does not repeat the latest preview before its interval, then refreshes it wh
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
   expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-30T23:55:00Z..2026-10-01T01:00:00Z');
   expect(Date.parse(cursor.latestScan!.cycleWindow!.from)).toBe(Date.parse('2026-10-01T00:00:00Z')-LATEST_SCAN_OVERLAP_MS);
-  expect(cursor.cycleWindow).toEqual(oldWindow);
+  expect(Date.parse(cursor.cycleWindow!.to)).toBeGreaterThan(Date.parse(oldWindow.to));
 });
 
-it('bounds the latest preview after long downtime without moving the historical cursor', async () => {
+it('preserves unfinished latest split windows across long downtime without moving historical progress', async () => {
   const old = await oldCursor();
   mocks.settings!.discover.pagesPerTick = 2;
   mocks.search.mockResolvedValue(page(true));
@@ -102,7 +108,7 @@ it('bounds the latest preview after long downtime without moving the historical 
   vi.advanceTimersByTime(7*86_400_000);
   mocks.search.mockClear();
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
-  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-10-05T00:00:00Z..2026-10-08T00:00:00Z');
+  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-29T12:00:01Z..2026-10-01T00:00:00Z');
   expect(cursor.cycleWindow).toEqual(oldWindow);
 });
 
@@ -197,13 +203,18 @@ it('one-page alternation also respects the shared auth wait before selecting old
   expect(mocks.search).toHaveBeenCalledTimes(1);
 });
 
-it('marks a full preview page incomplete even below the 1000-result split threshold', async () => {
+it('continues the latest second page before marking a fixed window complete', async () => {
   const old = await oldCursor();
   mocks.settings!.discover.pagesPerTick = 2;
   mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
-  await seedFrontier(ctx(old));
+  const first=(await seedFrontier(ctx(old))).cursor!;
   expect(mocks.record.mock.calls[0][0]).toHaveLength(100);
-  expect(mocks.record.mock.calls[0][0].every((r:{incomplete:boolean}) => r.incomplete)).toBe(true);
+  expect(first.latestScan?.page).toBe(2);
+  expect(first.latestScan?.waiting).not.toBe(true);
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(false));
+  const second=(await seedFrontier(ctx(first))).cursor!;
+  expect(mocks.search.mock.calls[0][0].page).toBe(2);
+  expect(second.latestScan?.waiting).toBe(true);
 });
 
 it('records a partial latest preview in its own summary instead of losing its new insertions', async () => {
@@ -218,4 +229,13 @@ it('records a partial latest preview in its own summary instead of losing its ne
     ['crawl.seed_latest_scanned',expect.objectContaining({discovered:1,examined:1,existing:0,searchRequests:1})],
   ]);
   expect(tick.log.mock.calls.some(([event]) => event === 'crawl.seeded')).toBe(false);
+});
+
+it('upgrades legacy page-one previews by replaying the saved fixed latest range', async()=>{
+  const old=await oldCursor();mocks.settings!.discover.pagesPerTick=2;mocks.search.mockResolvedValue(page(false));
+  const first=(await seedFrontier(ctx(old))).cursor!;
+  const legacy={...first,latestScan:{...first.latestScan!,coverageVersion:undefined}};
+  mocks.search.mockClear();
+  await seedFrontier(ctx(legacy));
+  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-28T00:00:00Z..2026-10-01T00:00:00Z');
 });
