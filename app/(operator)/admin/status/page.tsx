@@ -27,6 +27,8 @@ import { jobControlCsrf } from "./job-control-csrf";
 import { CollectorTotalsDetail, CrawlerActivity } from "./CrawlerActivity";
 import { DiscoveryProgress } from "./DiscoveryProgress";
 import { readDiscoveryProgress } from "@/lib/operations/discovery-progress";
+import { readKoreanDiscoveryStatus } from "@/lib/operations/korean-discovery-status";
+import { KoreanDiscoveryStatusCard } from "./KoreanDiscoveryStatus";
 import { readDeferrals, readTallies } from "@/lib/operations/flow-reads";
 import { buildCrawlerActivity, COLLECTOR_JOBS } from "@/lib/operations/crawler-activity";
 import { signalYields, todayPublications } from "@/lib/operations/dashboard";
@@ -194,6 +196,11 @@ async function CrawlerActivitySlot({ inputs, fresh }: { inputs: Awaited<ReturnTy
 async function DiscoveryProgressSlot({ fresh }: { fresh: boolean }) {
   const read = await withDeadline(readDiscoveryProgress(fresh)).catch(() => ({ ok: false as const, reason: "error" as const }));
   return <DiscoveryProgress read={read} />;
+}
+
+async function KoreanDiscoveryStatusSlot({ fresh }: { fresh: boolean }) {
+  const read = await withDeadline(readKoreanDiscoveryStatus(fresh)).catch(() => ({ ok: false as const, reason: "error" as const }));
+  return <KoreanDiscoveryStatusCard read={read} />;
 }
 
 /** 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만 */
@@ -536,6 +543,7 @@ export default async function StatusPage() {
         <FirstReviewStatusSlot inputs={inputs} derived={derived} fresh={fresh} />
       </Suspense>
       <RolesTable roles={roleRows} scheduler={scheduler} web={web} />
+      <Suspense fallback={<CardPending span="dash-12" label="Oracle 한국어 프로젝트 탐색" />}><KoreanDiscoveryStatusSlot fresh={fresh} /></Suspense>
       <KoreanTranslationStatus queue={inputs.koreanTranslation} owners={owners["korean-translation"] ?? null}
         runtime={koreanTranslationRuntime(ownerContext)} hasLastError={!!derived.states.get("product-tagline-ko")?.lastError} now={now} />
       <div className="ops-phone-rest">
