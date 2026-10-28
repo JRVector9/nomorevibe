@@ -283,3 +283,35 @@ it('records completed coverage only after the final complete page and preserves 
   expect(recordDiscoveryProgress).toHaveBeenCalledWith(expect.objectContaining({counts:expect.objectContaining({discovered:0,existing:1})}));
   expect(mocks.record).toHaveBeenCalled();
 });
+
+it.each(['page','split','incomplete'] as const)('keeps unfinished latest %s when the full target date catches up',async pending => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  const first = (await seedFrontier(ctx(old))).cursor!;
+  const preview = {...first.latestScan!};
+  if (pending === 'split') preview.pendingWindows = [{from:'2026-09-28T00:00:00Z',to:'2026-09-29T00:00:00Z'}];
+  if (pending === 'incomplete') {
+    preview.waiting = true;
+    preview.incompleteWindows = [{signal:'Claude',window:{from:'2026-09-28T00:00:00Z',to:'2026-09-28T00:00:01Z'},retryAt:new Date(Date.now()+60_000).toISOString()}];
+    preview.retryAt = new Date(Date.now()+60_000).toISOString();
+  }
+  const recentFull = {...first,cycleWindow:{from:'2026-09-30T00:00:00Z',to:new Date().toISOString()},latestScan:preview};
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(true));
+  const next = (await seedFrontier(ctx(recentFull))).cursor!;
+  expect(next.latestScan).toBeDefined();
+  if (pending === 'incomplete') expect(next.latestScan?.incompleteWindows).toEqual(preview.incompleteWindows);
+  else expect(mocks.search.mock.calls.some(([p]) => range(p.query).includes('2026-10-01'))).toBe(true);
+});
+
+it('retains unfinished latest ranges when the configured sort changes to relevance',async()=>{
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  const first = (await seedFrontier(ctx(old))).cursor!;
+  mocks.settings!.discover.sort = 'relevance';
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(true));
+  const next = (await seedFrontier(ctx(first))).cursor!;
+  expect(next.latestScan?.cycleWindow).toEqual(first.latestScan?.cycleWindow);
+  expect(mocks.search.mock.calls.some(([p]) => p.sort === 'relevance' && p.page === 1 && range(p.query).includes('2026-10-01'))).toBe(true);
+});
