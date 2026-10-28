@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityOwnerSchema,
+  compatibleModelCapacityGeneration, modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityOwnerSchema,
   modelCapacityPolicyHash, modelCapacityPolicySchema, modelCapacityRequestSchema,
   modelCapacityReservationSchema, parseModelCapacityPolicy,
 } from "@/lib/llm/capacity";
@@ -102,4 +102,41 @@ describe("inactive model capacity contract", () => {
     expect(modelCapacityClassCycle(policy)).toHaveLength(6);
     expect(policy).toEqual(before);
   });
+});
+
+
+const extension = () => ({ ...structuredClone(policy),
+  providerLimits: { ...policy.providerLimits, m1: 1 }, groupLimits: { ...policy.groupLimits, m1: 1 },
+  routes: [...policy.routes, { routeId: "product-translate", provider: "abcllm", model: "[m1] qwen", providerBudgetId: "m1", groupId: "m1" }],
+  compatiblePredecessor: { epoch: 1, revision: 5, policy: structuredClone(policy) } });
+
+it("authenticates the complete predecessor without erasing unknown occupancy", () => {
+  const next = parseModelCapacityPolicy(extension());
+  expect(compatibleModelCapacityGeneration(next, { epoch: 1, revision: 5, policyHash: modelCapacityPolicyHash(policy) },
+    { epoch: 1, revision: 7 })).toBe(true);
+  for (const old of [{ epoch: 2, revision: 5, policyHash: modelCapacityPolicyHash(policy) },
+    { epoch: 1, revision: 4, policyHash: modelCapacityPolicyHash(policy) }, { epoch: 1, revision: 5, policyHash: "a".repeat(64) }])
+    expect(compatibleModelCapacityGeneration(next, old, { epoch: 1, revision: 7 })).toBe(false);
+});
+
+it("does not accept predecessor authority across writer epochs or backwards revisions", () => {
+  const next = parseModelCapacityPolicy(extension()), old = { epoch: 1, revision: 5, policyHash: modelCapacityPolicyHash(policy) };
+  expect(compatibleModelCapacityGeneration(next, old, { epoch: 2, revision: 7 })).toBe(false);
+  expect(compatibleModelCapacityGeneration(next, old, { epoch: 1, revision: 5 })).toBe(false);
+  expect(compatibleModelCapacityGeneration(policy, old, { epoch: 1, revision: 7 })).toBe(false);
+});
+
+it("rejects a compatibility claim when an existing bound or scheduling decision changes", () => {
+  for (const edit of [
+    (p: ReturnType<typeof extension>) => { p.globalLimit++; },
+    (p: ReturnType<typeof extension>) => { p.poolLimits.text++; },
+    (p: ReturnType<typeof extension>) => { p.providerLimits["account-a"]++; },
+    (p: ReturnType<typeof extension>) => { p.groupLimits["group-a"]++; },
+    (p: ReturnType<typeof extension>) => { p.weights.first++; },
+    (p: ReturnType<typeof extension>) => { p.queueTtlMs++; },
+    (p: ReturnType<typeof extension>) => { p.routes[0] = { ...p.routes[0], groupId: "m1" }; },
+    (p: ReturnType<typeof extension>) => { p.routes.shift(); },
+    (p: ReturnType<typeof extension>) => { p.routes.at(-1)!.groupId = "group-a"; },
+    (p: ReturnType<typeof extension>) => { p.routes.at(-1)!.providerBudgetId = "account-a"; },
+  ]) { const changed = extension(); edit(changed); expect(modelCapacityPolicySchema.safeParse(changed).success).toBe(false); }
 });
