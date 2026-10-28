@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { discoveryAdmission, readDiscoveryAdmission, type DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
+import type { DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
+import { readReviewBacklog, reviewBacklogAdmission } from '@/lib/crawl/review-backlog';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import * as crawl from '@/lib/crawl/repository';
 import { normalizeUrl } from '@/lib/net/normalize';
@@ -47,16 +48,16 @@ const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to 
 
 /** Search finds candidates; stored cursors contain bounded normalized facts, never commit messages. */
 export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
-  let settings = await getSettings();
+  const settings = await getSettings();
   if (!settings.enabled) return {done:true};
-  const snapshot = await readDiscoveryAdmission(settings);
-  const admission = discoveryAdmission(snapshot, ctx.cursor?.admissionThrottled === true, settings.discover.maxNewPerHour);
+  const snapshot = await readReviewBacklog();
+  const admission = reviewBacklogAdmission(snapshot, settings.discover.maxNewPerHour, settings.discover.maxReviewBacklog);
   ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,
     newAllowance:Number.isFinite(admission.remainingNew) ? admission.remainingNew : null,
-    configuredPages:settings.discover.pagesPerTick,effectivePages:admission.throttled ? 1 : settings.discover.pagesPerTick,
-    rateCapped:admission.remainingNew === 0,measurementUnknown:Boolean(snapshot.timedOut
-      || snapshot.secondVoteWindowLimited || (snapshot.secondWindowLimited && !snapshot.secondObservationLimited)) });
-  if (admission.throttled) settings = { ...settings, discover:{ ...settings.discover, pagesPerTick:1 } };
+    configuredPages:settings.discover.pagesPerTick,effectivePages:admission.remainingNew === 0 ? 0 : settings.discover.pagesPerTick,
+    maxReviewBacklog:settings.discover.maxReviewBacklog,
+    rateCapped:snapshot.recentNew >= Math.floor(settings.discover.maxNewPerHour / 12),measurementUnknown:Boolean(snapshot.timedOut) });
+  if (admission.remainingNew === 0) return { done:false, cursor:ctx.cursor ?? undefined };
   if (settings.discover.sort !== 'recent') {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }

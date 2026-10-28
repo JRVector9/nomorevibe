@@ -18,6 +18,7 @@ const LANE_STATES = { idle: "일감 확인 대기", polling: "요청 확인 중"
 const ERROR_LABELS = { timeout: "시간 초과", "rate-limited": "공급자 한도", authentication: "인증 확인 필요", "job-error": "실행 오류" };
 const COUNTERS: Record<string, string> = { discovered: "발견", drained: "이번 탐색 완료", page: "페이지", incompleteWindows: "남은 탐색 구간",
   searchRequests: "검색 요청", existing: "기존·중복", configuredPages: "설정 페이지", effectivePages: "적용 페이지",
+  queuedRepositories: "전체 대기 저장소", downstreamRepositories: "원본 확보 후 대기", maxReviewBacklog: "검수 대기열 상한",
   newAllowance: "신규 허용량", rateCapped: "시간당 상한 대기", measurementUnknown: "수용 측정 미확인",
   throttled: "수용 제한", fetched: "원본 확보", skipped: "건너뜀", failed: "오류", gated: "근거 미달", recovered: "회수",
   examined: "확인", backlogPages: "이전 페이지", attempted: "시도", succeeded: "성공", factsChanged: "근거 변경",
