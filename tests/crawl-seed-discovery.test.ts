@@ -6,6 +6,10 @@ import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), log:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/observability/logger', () => ({logger:{info:mocks.log}}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
+vi.mock('@/lib/crawl/shared-discovery', () => ({
+  sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
+  enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
+}));
 vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
@@ -162,16 +166,16 @@ it('배포 전 해시를 든 커서도 설정이 그대로면 이어 간다', as
   expect(second.cursor?.configHash).toBe(first.cursor!.configHash);
 });
 
-it('검색어를 고치면 여전히 처음부터 다시 돈다', async () => {
+it('검색어를 고치면 해당 신호만 같은 고정 기간에서 재시작하고 다른 진척은 보존한다', async () => {
   mocks.settings!.discover.queries = [signal(0), signal(1)];
   mocks.search.mockResolvedValue(saturating);
   const first = await seedFrontier(context());
   mocks.settings!.discover.queries = [signal(0), {...signal(1), query:'q1 changed'}];
   mocks.search.mockClear();
   const parked = first.cursor!.states!['신호0'].window;
-  await seedFrontier(context(first.cursor!));
-  // 보관해 둔 반쪽 창이 아니라 새 주기의 첫 신호·첫 페이지부터
-  expect(mocks.search.mock.calls[0][0].query.startsWith('q0 ')).toBe(true);
+  const next=await seedFrontier(context(first.cursor!));
+  expect(next.cursor?.states?.['신호0'].window).toEqual(parked);
+  expect(mocks.search.mock.calls[0][0].query.startsWith('q1 changed ')).toBe(true);
   expect(mocks.search.mock.calls[0][0].query).not.toContain(`${parked.from}..${parked.to}`);
   expect(mocks.search.mock.calls[0][0].page).toBe(1);
 });
@@ -246,4 +250,16 @@ it('preserves a partial page at the configured cap and resumes without losing it
   await seedFrontier(context(blocked.cursor!));
   expect(mocks.enqueue.mock.calls[0][0].map((item: {repo: string}) => item.repo)).toEqual(['acme/two']);
   expect(mocks.search).not.toHaveBeenCalled();
+});
+
+it('preserves remaining query windows when an Oracle-owned query leaves the M3 set',async()=>{
+  mocks.settings!.discover.queries=[signal(0),signal(1)];
+  mocks.search.mockResolvedValue(saturating);
+  const first=(await seedFrontier(context())).cursor!;
+  const parked=first.states!['신호0'];
+  mocks.settings!.discover.queries=[signal(0)];
+  mocks.search.mockClear();
+  const next=await seedFrontier(context(first));
+  expect(mocks.search.mock.calls[0][0].query).toContain(`${parked.window.from}..${parked.window.to}`);
+  expect(next.cursor?.cycleWindow).toEqual(first.cycleWindow);
 });
