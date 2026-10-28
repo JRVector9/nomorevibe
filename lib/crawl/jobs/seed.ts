@@ -1,9 +1,12 @@
+import { m3DiscoveryQueries } from '@/lib/crawl/korean-discovery/repository';
 import { createHash } from 'node:crypto';
 import { logger } from '@/lib/observability/logger';
 import type { DiscoveryAdmission } from '@/lib/crawl/discovery-admission';
 import { readReviewBacklog, reviewBacklogAdmission } from '@/lib/crawl/review-backlog';
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
-import * as crawl from '@/lib/crawl/repository';
+import { sharedDiscoverySearch, enqueueDiscoveryBatch } from '@/lib/crawl/shared-discovery';
+import { runDiscoveryBudget, type DiscoveryLane } from '@/lib/crawl/discovery-budget';
+import { recordDiscoveryProgress, type DiscoveryProgressInput } from '@/lib/crawl/discovery-progress';
 import { normalizeUrl } from '@/lib/net/normalize';
 import { getSettings, enabledQueries } from '@/lib/crawl/settings';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
@@ -21,11 +24,13 @@ type PendingItem = {repo:string; sha:string|null; attributions:(CommitAttributio
 type PendingPage = {items:PendingItem[]; itemIndex:number; size:number; incomplete:boolean; saturated:boolean; capped:boolean};
 type IncompleteWindow = {signal:string; window:SearchWindow; retryAt:string};
 /** 차례를 넘길 때 보관하는 신호별 진행 위치. 페이지 경계에서만 저장하므로 pendingPage는 담지 않는다 */
-type SignalState = {page:number; window:SearchWindow; pendingWindows:SearchWindow[]; windowIncomplete?:boolean};
+type SignalState = {page:number; window:SearchWindow; pendingWindows:SearchWindow[]; windowIncomplete?:boolean; lastServedAt?:number};
 type SearchCursor = {
   signal:string; page:number; queryHash?:string; configHash?:string;
+  querySignatures?:Record<string,string>; searchSort?:CrawlSettings['discover']['sort'];
+  coverageVersion?:2;
   window?:SearchWindow; cycleWindow?:SearchWindow; pendingWindows?:SearchWindow[];
-  retryAt?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
+  retryAt?:string; retryKind?:string; pendingPage?:PendingPage; windowIncomplete?:boolean;
   incompleteWindows?:IncompleteWindow[]; phase?:'discovery'|'retry';
   /** Legacy marker is cleared while retaining saved page/window progress. */
   backlogPaused?:boolean;
@@ -38,9 +43,10 @@ type SearchCursor = {
   waiting?:boolean;
 };
 export type SeedCursor = SearchCursor & {
-  /** 뒤처진 전체 탐색을 버리지 않고 최신 첫 페이지를 별도로 확인한다. 중첩 커서는 없다. */
+  /** Both paths retain complete fixed ranges independently. */
   latestScan?: SearchCursor;
   latestTurn?: boolean;
+  laneProgress?: Partial<Record<DiscoveryLane,number>>;
 };
 export const LATEST_SCAN_INTERVAL_MS = 60 * 60_000;
 /** Allow delayed search indexing without replaying the entire three-day preview. */
@@ -51,8 +57,9 @@ const sameWindow = (a:SearchWindow,b:SearchWindow) => a.from === b.from && a.to 
 
 /** Search finds candidates; stored cursors contain bounded normalized facts, never commit messages. */
 export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcome<SeedCursor>> {
-  const settings = await getSettings();
+  let settings = await getSettings();
   if (!settings.enabled) return {done:true};
+  settings = { ...settings, discover: { ...settings.discover, queries: await m3DiscoveryQueries(settings) } };
   const snapshot = await readReviewBacklog();
   const admission = reviewBacklogAdmission(snapshot, settings.discover.maxNewPerHour, settings.discover.maxReviewBacklog);
   ctx.log('crawl.seed_admission', { ...snapshot, throttled:admission.throttled,
@@ -61,57 +68,83 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
     maxReviewBacklog:settings.discover.maxReviewBacklog,
     queueCapped:!snapshot.timedOut && snapshot.queuedRepositories >= settings.discover.maxReviewBacklog,
     rateCapped:snapshot.recentNew >= Math.floor(settings.discover.maxNewPerHour / 12),measurementUnknown:Boolean(snapshot.timedOut) });
-  if (admission.remainingNew === 0) return { done:false, cursor:ctx.cursor ?? undefined };
-  if (settings.discover.sort !== 'recent') {
+  if (admission.remainingNew === 0) {
+    const current = ctx.cursor;
+    await recordDiscoveryProgress({worker:discoveryWorker(),lane:'full',signal:current?.signal ?? enabledQueries(settings)[0]?.label ?? 'GitHub',
+      window:current?.window,page:current?.page,counts:{},blockedBy:snapshot.timedOut ? 'measurement_unknown'
+        : snapshot.queuedRepositories >= settings.discover.maxReviewBacklog ? 'queue_cap' : 'rate_cap'});
+    return { done:false, cursor:ctx.cursor ?? undefined };
+  }
+  const savedLatest = ctx.cursor?.latestScan;
+  const unfinishedLatest = savedLatest && (!savedLatest.waiting || savedLatest.coverageVersion !== 2
+    || savedLatest.pendingPage || savedLatest.pendingWindows?.length || savedLatest.incompleteWindows?.length);
+  if (settings.discover.sort !== 'recent' && !unfinishedLatest) {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
     return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
   }
   const covered = Date.parse(ctx.cursor?.cycleWindow?.to ?? '');
   // 전체 수집이 하루 이상 뒤처진 경우 최신 탐색을 먼저 배정한다. 전체 수집도 매 틱 진행한다.
-  if (!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) {
+  // A full cursor's target date is not completed coverage; retain every unfinished latest range.
+  if ((!Number.isFinite(covered) || covered >= Date.now() - LATEST_SCAN_LAG_MS) && !unfinishedLatest) {
     const historical = ctx.cursor ? { ...ctx.cursor } : null;
     if (historical) { delete historical.latestScan; delete historical.latestTurn; }
     return seedSearchCycle({ ...ctx, cursor: historical }, settings, admission);
   }
-  const { latestScan, latestTurn, ...historical } = ctx.cursor!;
+  const { latestScan, latestTurn, laneProgress: priorProgress, ...historical } = ctx.cursor!;
   let full: SearchCursor = historical;
   let latest: SearchCursor | undefined = latestScan;
-  const savedSnapshot = (): SeedCursor => ({ ...full, admissionThrottled:admission.throttled, latestScan: latest, latestTurn: latestPages === 0 });
-  if (latest?.retryAt && !latest.waiting && Date.parse(latest.retryAt) > Date.now()) {
-    return { done:false, cursor:ctx.cursor! };
+  const laneProgress = {...priorProgress};
+  if (latest && latest.coverageVersion !== 2) {
+    // Legacy latest cursors only previewed page one. Replay that fixed window,
+    // keeping historical progress, before claiming full coverage under v2.
+    latest = {...latest,page:1,window:latest.cycleWindow ?? latest.window,pendingWindows:[],
+      states:{},doneSignals:[],incompleteWindows:[],coverageVersion:2};
+    delete latest.pendingPage; delete latest.retryAt; delete latest.waiting;
   }
-  const total = settings.discover.pagesPerTick;
-  const latestWaiting = latest?.waiting && Date.parse(latest.retryAt ?? '') > Date.now();
-  const latestPages = latestWaiting ? 0 : total === 1 ? (latestTurn === false ? 0 : 1) : Math.ceil(total / 2);
-  const fullPages = total - latestPages;
-  let latestDone = latestWaiting === true;
-  if (latestPages && ctx.hasBudget()) {
-    const outcome = await seedSearchCycle({ ...ctx,
-      cursor: latest ?? null,
-      save: async value => { latest = value; await ctx.save(savedSnapshot()); },
-    }, { ...settings, discover: { ...settings.discover, pagesPerTick: latestPages } }, admission, true);
-    latest = outcome.cursor ?? latest;
-    latestDone = outcome.done;
-    // 큐 상한·인증/쿼터 대기는 두 탐색에 공통이다. 같은 틱에 다시 외부 호출하지 않는다.
-    if (admission.remainingNew <= 0 || (latest?.retryAt && !latest.waiting)) {
-      await ctx.save(savedSnapshot());
-      return { done: false, cursor: savedSnapshot() };
-    }
-  }
-  let fullDone = false;
-  if (fullPages && admission.remainingNew > 0 && ctx.hasBudget()) {
-    const outcome = await seedSearchCycle({ ...ctx, cursor: full,
-      save: async value => { full = value; await ctx.save(savedSnapshot()); },
-    }, { ...settings, discover: { ...settings.discover, pagesPerTick: fullPages } }, admission);
-    full = outcome.cursor ?? full;
-    fullDone = outcome.done;
-  }
+  let nextLane:DiscoveryLane = latestTurn === false ? 'full' : 'latest';
+  const savedSnapshot = (): SeedCursor => ({ ...full, admissionThrottled:admission.throttled, latestScan: latest, latestTurn:nextLane === 'latest',laneProgress });
+  const waiting = (cursor:SearchCursor|undefined) => Boolean(cursor?.retryAt && Date.parse(cursor.retryAt) > Date.now());
+  const sharedWait = (cursor:SearchCursor|undefined) => waiting(cursor) && !cursor?.waiting &&
+    (cursor?.retryKind === 'rate_limited' || cursor?.retryKind === 'auth_unavailable'
+      || (!cursor?.retryKind && cursor?.phase !== 'retry' && !cursor?.incompleteWindows?.length));
+  // An authentication/quota wait is shared; a finished preview or an occupied page is not.
+  if (sharedWait(latest) || sharedWait(full)) return {done:false,cursor:savedSnapshot()};
+  let latestDone = latest?.waiting === true, fullDone = full.waiting === true;
+  const budget = await runDiscoveryBudget({pages:settings.discover.pagesPerTick,nextLane,
+    latestReady:!waiting(latest),fullReady:!waiting(full),lastProgressAt:laneProgress,deadlineAt:ctx.deadlineAt,
+    run:async (lane,pages,deadlineAt) => {
+      let usedPages = 0, completedPages = 0;
+      // Save the following turn before I/O so a restart cannot keep the first lane forever.
+      nextLane = lane === 'latest' ? 'full' : 'latest';
+      const outcome = await seedSearchCycle({...ctx,cursor:lane === 'latest' ? latest ?? null : full,deadlineAt,
+        hasBudget:() => ctx.hasBudget() && (deadlineAt === undefined || Date.now() < deadlineAt),
+        log:(event,fields) => {
+          if (event === 'crawl.seeded' || event === 'crawl.seed_latest_scanned') {
+            usedPages += typeof fields?.pagesVisited === 'number' ? fields.pagesVisited : 0;
+            completedPages += typeof fields?.pagesCompleted === 'number' ? fields.pagesCompleted : 0;
+          }
+          ctx.log(event,fields);
+        },save:async value => {
+          if (lane === 'latest') latest = {...value,coverageVersion:2}; else full = value;
+          await ctx.save(savedSnapshot());
+        },
+      },{...settings,discover:{...settings.discover,pagesPerTick:pages}},admission,lane === 'latest');
+      if (lane === 'latest') {latest = outcome.cursor ? {...outcome.cursor,coverageVersion:2} : latest;latestDone = outcome.done;}
+      else {full = outcome.cursor ?? full;fullDone = outcome.done;}
+      if (completedPages > 0) laneProgress[lane] = Date.now();
+      const current = lane === 'latest' ? latest : full;
+      return {usedPages,blocked:admission.remainingNew <= 0 || sharedWait(current),idle:outcome.done || waiting(current)};
+    }});
+  nextLane = budget.nextLane;
+  ctx.log('crawl.seed_budget',{latestPages:budget.used.latest,fullPages:budget.used.full,donatedPages:budget.donated});
   await ctx.save(savedSnapshot());
   return { done: fullDone && latestDone, cursor: savedSnapshot() };
 }
 
-/** 최신 탐색은 신호별 첫 페이지만 확인한다. 완전한 날짜 구간의 수집 책임은 전체 커서에 있다. */
+const discoveryWorker = () => process.env.SERVICE_INSTANCE_ID ?? process.env.HOSTNAME ?? 'crawler';
+
+/** Both cursors own complete fixed windows, including all pages and split retries. */
 async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSettings, admission:DiscoveryAdmission, latestOnly = false):Promise<JobOutcome<SearchCursor>> {
   const queries = enabledQueries(settings);
   if (!queries.length) return {done:true};
@@ -146,6 +179,32 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   let cursor:SearchCursor = matches ? { ...structuredClone(ctx.cursor!), configHash } : {
     signal:queries[0].label,page:1,queryHash:queryHash(0),configHash,window:initial,cycleWindow:initial,pendingWindows:[],incompleteWindows:[],phase:'discovery',states:{},doneSignals:[],
   };
+  if (!matches && ctx.cursor?.cycleWindow && Number.isFinite(Date.parse(ctx.cursor.cycleWindow.from))
+    && Number.isFinite(Date.parse(ctx.cursor.cycleWindow.to))) {
+    // Query ownership may change without changing the remaining queries. Keep
+    // their verified per-query progress. Legacy cursors retain the fixed cycle
+    // but restart unverifiable pages, rather than abandoning the old date range.
+    const prior=ctx.cursor;
+    initial=prior.cycleWindow!;
+    const signatures=Object.fromEntries(queries.map((q,i)=>[q.label,queryHash(i)]));
+    const unchanged=(label:string)=>prior.querySignatures?.[label] === signatures[label];
+    const states=Object.fromEntries(Object.entries(prior.states ?? {}).filter(([label])=>unchanged(label)));
+    if (unchanged(prior.signal) && prior.searchSort === settings.discover.sort) {
+      states[prior.signal]={page:prior.page,window:prior.window ?? initial,pendingWindows:prior.pendingWindows ?? [],windowIncomplete:prior.windowIncomplete};
+    }
+    index=resumedIndex>=0 ? resumedIndex : 0;
+    const active=states[queries[index].label];
+    cursor={signal:queries[index].label,page:active?.page ?? 1,queryHash:queryHash(index),configHash,
+      cycleWindow:initial,window:active?.window ?? initial,pendingWindows:active?.pendingWindows ?? [],
+      windowIncomplete:active?.windowIncomplete,states,doneSignals:(prior.doneSignals ?? []).filter(unchanged),
+      incompleteWindows:(prior.incompleteWindows ?? []).filter(entry=>queries.some(q=>q.label===entry.signal)),
+      phase:'discovery',coverageVersion:prior.coverageVersion};
+    if (unchanged(prior.signal) && cursor.signal === prior.signal && prior.searchSort === settings.discover.sort)
+      cursor.pendingPage=prior.pendingPage;
+    ctx.log('crawl.seed_queries_changed',{preservedWindow:initial,retainedSignals:Object.keys(states).length});
+  }
+  cursor.querySignatures=Object.fromEntries(queries.map((q,i)=>[q.label,queryHash(i)]));
+  cursor.searchSort=settings.discover.sort;
   if (matches && sortChanged) {
     cursor.configHash = configHash; cursor.page = 1;
     delete cursor.pendingPage; delete cursor.retryAt;
@@ -162,15 +221,18 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   delete cursor.backlogPaused;
   cursor.admissionThrottled = admission.throttled;
   if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return {done:false,cursor};
-  delete cursor.retryAt;
-  let discovered = 0, searchRequests = 0, examined = 0, existing = 0;
+  delete cursor.retryAt; delete cursor.retryKind;
+  let discovered = 0, searchRequests = 0, pagesVisited = 0, pagesCompleted = 0, cacheHits = 0, examined = 0, existing = 0;
   let returned = 0, filtered = 0, pageDuplicates = 0;
   // Record actual insertions even when a rate/budget boundary leaves a partial page.
   // Each invocation emits one summary; latest and historical scans keep separate events.
   const summarize = (drained = false) => ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',
-    {discovered,searchRequests,examined,existing,returned,filtered,pageDuplicates,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
+    {discovered,searchRequests,pagesVisited,pagesCompleted,cacheHits,examined,existing,returned,filtered,pageDuplicates,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
       incompleteWindows:cursor.incompleteWindows?.length ?? 0});
   const save = () => ctx.save(cursor);
+  const measure = (counts:DiscoveryProgressInput['counts'], extra:Partial<Pick<DiscoveryProgressInput,'blockedBy'|'completedThrough'>> = {}) =>
+    recordDiscoveryProgress({worker:discoveryWorker(),lane:latestOnly ? 'latest' : 'full',signal:cursor.signal,
+      window:cursor.window ?? initial,page:cursor.page,counts,...extra});
   const defer = async () => {await save(); summarize(); return {done:false,cursor};};
   const resetWindow = (next:SearchWindow) => {
     cursor = {...cursor,page:1,window:next,windowIncomplete:false};
@@ -179,7 +241,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   const park = () => {
     cursor.states = {...cursor.states,[cursor.signal]:{
       page:cursor.page,window:cursor.window ?? initial,
-      pendingWindows:[...(cursor.pendingWindows ?? [])],windowIncomplete:cursor.windowIncomplete,
+      pendingWindows:[...(cursor.pendingWindows ?? [])],windowIncomplete:cursor.windowIncomplete,lastServedAt:Date.now(),
     }};
   };
   /**
@@ -193,11 +255,14 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   const rotate = () => {
     park();
     const finished = new Set(cursor.doneSignals ?? []);
+    const choices:Array<{index:number;servedAt:number;step:number}> = [];
     for (let step = 1; step <= queries.length; step++) {
       const next = (index + step) % queries.length;
-      if (finished.has(queries[next].label) && step < queries.length) continue;
-      index = next; break;
+      if (finished.has(queries[next].label)) continue;
+      choices.push({index:next,servedAt:cursor.states?.[queries[next].label]?.lastServedAt ?? 0,step});
     }
+    choices.sort((a,b) => a.servedAt-b.servedAt || a.step-b.step);
+    index = choices[0]?.index ?? index;
     const saved = cursor.states?.[queries[index].label];
     cursor = {...cursor,signal:queries[index].label,queryHash:queryHash(index),
       page:saved?.page ?? 1,window:saved?.window ?? initial,
@@ -241,7 +306,8 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     // after long downtime. Saved pages and unfinished signals finish before this runs.
     initial = latestOnly ? {from:iso(new Date(Math.max(Date.now()-spanMs,from-LATEST_SCAN_OVERLAP_MS))),to:iso(new Date())} : chunkFrom(from); index = 0;
     cursor = {admissionThrottled:admission.throttled,signal:queries[0].label,page:1,configHash,queryHash:queryHash(0),window:initial,cycleWindow:initial,
-      pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[]};
+      pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'discovery',states:{},doneSignals:[],
+      querySignatures:cursor.querySignatures,searchSort:cursor.searchSort,coverageVersion:cursor.coverageVersion};
     return true;
   };
   const advance = ():boolean => {
@@ -253,11 +319,10 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     // A persistently capped second must not starve discovery of newly pushed repositories.
     if (cursor.phase === 'retry') return startNextCycle();
     if (queries.some(query => !cursor.doneSignals!.includes(query.label))) {rotate(); return true;}
-    if (latestOnly) return startNextCycle();
     const retry = [...(cursor.incompleteWindows ?? [])].sort((a,b) => a.retryAt.localeCompare(b.retryAt))[0];
     if (!retry) return startNextCycle();
     index = queries.findIndex(q => q.label === retry.signal);
-    cursor = {admissionThrottled:admission.throttled,signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt,states:{},doneSignals:[]};
+    cursor = {admissionThrottled:admission.throttled,signal:retry.signal,page:1,configHash,queryHash:queryHash(index),window:retry.window,cycleWindow:initial,pendingWindows:[],incompleteWindows:cursor.incompleteWindows,phase:'retry',retryAt:retry.retryAt,states:{},doneSignals:[],querySignatures:cursor.querySignatures,searchSort:cursor.searchSort,coverageVersion:cursor.coverageVersion};
     return true;
   };
 
@@ -270,21 +335,33 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     const signal = queries[index];
     const window = cursor.window ?? initial;
     if (!cursor.pendingPage) {
-      const query = `${signal.query} ${signal.kind === 'commits' ? 'committer-date' : 'pushed'}:${window.from}..${window.to}`;
-      searchRequests++;
-      const result = signal.kind === 'commits'
-        ? await searchCommits({query,page:cursor.page,sort:settings.discover.sort})
-        : await searchRepositories({query,page:cursor.page,sort:settings.discover.sort});
+      const query = `${signal.query} is:public ${signal.kind === 'commits' ? 'committer-date' : 'pushed'}:${window.from}..${window.to}`;
+      const requestsBefore = searchRequests;
+      const result = await sharedDiscoverySearch<CommitSearchResult | RepositorySearchResult>({
+        kind:signal.kind,query,page:cursor.page,sort:settings.discover.sort,scope:'public-v1',lease:ctx.lease,cleanup:true,
+      }, async () => {
+        searchRequests++;
+        const params = {query,page:cursor.page,sort:settings.discover.sort};
+        const search = signal.kind === 'commits' ? searchCommits : searchRepositories;
+        return ctx.deadlineAt !== undefined || ctx.signal
+          ? search(params,{deadlineAt:ctx.deadlineAt,signal:ctx.signal}) : search(params);
+      });
+      pagesVisited++;
+      if (result.ok && result.cached) cacheHits++;
       if (!result.ok) {
         ctx.log('crawl.seed_failed',{signal:signal.label,error:result.error.kind});
-        const reset = result.error.kind === 'rate_limited' || result.error.kind === 'auth_unavailable'
-          ? result.error.resetAt : null;
+        const reset = result.error.kind === 'discovery_busy' ? result.error.retryAt
+          : result.error.kind === 'rate_limited' || result.error.kind === 'auth_unavailable' ? result.error.resetAt : null;
         cursor.retryAt = new Date(Math.max(Date.now()+60_000,reset?.getTime() ?? 0)).toISOString();
+        cursor.retryKind = result.error.kind;
+        await measure({searchRequests:searchRequests-requestsBefore},{blockedBy:result.error.kind === 'auth_unavailable' ? 'auth' : 'api_wait'});
         return defer();
       }
       if (!Array.isArray(result.value.items)) {
         cursor.retryAt = new Date(Date.now()+60_000).toISOString();
+        cursor.retryKind = 'invalid_response';
         ctx.log('crawl.seed_failed',{signal:signal.label,error:'invalid_response'});
+        await measure({searchRequests:searchRequests-requestsBefore},{blockedBy:'api_wait'});
         return defer();
       }
       const raw = result.value.items.slice(0,SEARCH_PER_PAGE);
@@ -302,6 +379,8 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         saturated:(result.value.total_count ?? 0) > SEARCH_PER_PAGE*MAX_SEARCH_PAGES,
         capped:cursor.page >= MAX_SEARCH_PAGES && result.value.items.length >= SEARCH_PER_PAGE,
       };
+      await measure({searchRequests:searchRequests-requestsBefore,pagesVisited:1,cacheHits:result.cached ? 1 : 0,
+        returned:raw.length,pageDuplicates:normalized.duplicates,incomplete:cursor.pendingPage.incomplete ? 1 : 0});
       // Save before side effects so a process restart does not need to repeat a shifting API page.
       await save();
     }
@@ -324,21 +403,27 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         repositoryKey:item.repo,signalId:signal.label,sourceUrl:`https://github.com/${item.repo}${item.sha ? `/commit/${item.sha}` : ''}`,
         commitSha:item.sha,attribution,
         searchWindowFrom:new Date(window.from),searchWindowTo:new Date(window.to),
-        incomplete:page.incomplete || page.saturated || page.capped || (latestOnly && page.size >= SEARCH_PER_PAGE) || item.attributionLimited,
+        incomplete:page.incomplete || page.saturated || page.capped || item.attributionLimited,
       }))),ctx.lease);
-      const added = await crawl.enqueue(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),ctx.lease);
+      const committed = await enqueueDiscoveryBatch(batch.map(item => ({repo:item.repo,signal:signal.label,builder:null,priority:signal.priority})),
+        {maxNewPerHour:settings.discover.maxNewPerHour,maxReviewBacklog:settings.discover.maxReviewBacklog},ctx.lease);
+      const {added,processed} = committed;
       discovered += added;
-      examined += batch.length;
-      existing += batch.length-added;
+      examined += processed;
+      existing += processed-added;
       logger.info('crawl.seed_batch',{job:'crawl-seed',signal:signal.label,kind:signal.kind,scan:latestOnly ? 'latest' : 'historical',
-        window,page:cursor.page,examined:batch.length,discovered:added,existing:batch.length-added});
-      admission.remainingNew -= added;
-      page.itemIndex += batch.length;
+        window,page:cursor.page,examined:processed,discovered:added,existing:processed-added});
+      admission.remainingNew = Math.min(admission.remainingNew-added, committed.remainingNew);
+      page.itemIndex += processed;
+      await measure({examined:processed,discovered:added,existing:processed-added},
+        admission.remainingNew <= 0 ? {blockedBy:committed.blockedBy} : {});
+      if (!processed) return defer();
       if (admission.remainingNew <= 0 && page.itemIndex < page.items.length) return defer();
     }
     delete cursor.pendingPage;
+    pagesCompleted++;
     const incomplete = page.incomplete || page.saturated || page.capped;
-    if (incomplete && !latestOnly) {
+    if (incomplete) {
       const pieces = splitSearchWindow(window);
       if (pieces) {
         const [next, later] = settings.discover.sort === 'recent' ? [pieces[1], pieces[0]] : pieces;
@@ -351,12 +436,17 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
       cursor.windowIncomplete = true;
     }
     // Even at one-second granularity, pages 2..10 remain accessible and may contain new repos.
-    if (!latestOnly && page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) {cursor.page++; rotate();}
+    if (page.size >= SEARCH_PER_PAGE && cursor.page < MAX_SEARCH_PAGES) {cursor.page++; rotate();}
     else {
       if (cursor.windowIncomplete) {
         ctx.log('crawl.seed_incomplete',{signal:signal.label,window,page:cursor.page});
+        await measure({}, {blockedBy:'incomplete'});
         if (!retainIncomplete()) return defer();
       } else clearIncomplete();
+      if (!cursor.windowIncomplete && !cursor.pendingWindows?.length
+        && !cursor.incompleteWindows?.some(entry => entry.signal === signal.label)) {
+        await measure({}, {completedThrough:initial.to});
+      }
       // 훑을 것은 없지만(done) 어디까지 덮었는지는 남긴다 — 잃으면 다음 주기가 같은 구간을 다시 긁는다.
       if (!advance()) {summarize(true); return {done:true,cursor};}
     }
@@ -388,7 +478,7 @@ function normalizeItems(items:CommitSearchResult['items']|RepositorySearchResult
     const key = JSON.stringify([repo.toLowerCase(),sha,attributions]);
     if (seen.has(key)) {duplicates++; continue;}
     seen.add(key);
-    output.push({repo,sha,attributions:attributions.length ? attributions : [null],attributionLimited:parsed.length > MAX_SEED_ATTRIBUTIONS});
+    output.push({repo,sha,attributions:attributions.length ? attributions : [null],attributionLimited:parsed.length > MAX_SEED_ATTRIBUTIONS || ('_discovery_attributionLimited' in item && item._discovery_attributionLimited === true)});
   }
   return {items:output,filtered,duplicates};
 }

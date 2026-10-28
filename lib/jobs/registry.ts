@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "./runner";
+import { applyKoreanDiscovery } from "@/lib/crawl/korean-discovery/apply";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { seedFromShowHN } from "@/lib/crawl/jobs/hn-show";
 import { collectHnTalk } from "@/lib/social/hn-talk";
@@ -67,6 +68,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** GitHub 검색으로 프론티어를 채운다 — 파이프라인의 입구 */
   "crawl-seed": seedFrontier,
+  "crawl-ko-apply": applyKoreanDiscovery,
 
   /** Show HN에서 배포를 알린 프로젝트를 프론티어에 넣는다 — 반대 방향의 입구 */
   "hn-show-seed": seedFromShowHN,
