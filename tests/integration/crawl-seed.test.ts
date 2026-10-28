@@ -120,6 +120,7 @@ describe("레포 검색 신호", () => {
 
     expect(searchRepositories).toHaveBeenCalledWith(
       expect.objectContaining({ query: expect.stringMatching(/^topic:vibe-coding is:public pushed:[^ ]+\.\.[^ ]+$/) }),
+      expect.objectContaining({ deadlineAt: expect.any(Number), signal: undefined }),
     );
   });
 });
@@ -227,6 +228,7 @@ describe("검색 잡", () => {
         page: 1,
         sort: "relevance",
       }),
+      expect.objectContaining({ deadlineAt: expect.any(Number), signal: undefined }),
     );
   });
 
@@ -341,7 +343,10 @@ describe("검색 잡", () => {
 
     await tick();
 
-    expect(searchCommits).toHaveBeenCalledWith(expect.objectContaining({ page: 1 }));
+    expect(searchCommits).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1 }),
+      expect.objectContaining({ deadlineAt: expect.any(Number), signal: undefined }),
+    );
   });
 
   it("수집이 꺼져 있으면 검색하지 않는다", async () => {
