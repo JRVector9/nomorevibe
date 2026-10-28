@@ -50,7 +50,8 @@ describe("비상 잡 분류", () => {
     expect(tier("crawl-publish")).toBe("approved-publish");
     for (const job of ["crawl-judge", "crawl-agent-review", "second-review", "crawl-tagline"]) expect(tier(job)).toBe("prepared-review");
     for (const job of ["product-site-evidence-refresh", "product-evidence-refresh", "news-refresh"]) expect(tier(job)).toBe("evidence");
-    for (const job of ["crawl-seed", "hn-show-seed", "crawl-fetch"]) expect(tier(job)).toBe("discovery");
+    for (const job of ["crawl-seed", "crawl-ko-apply", "hn-show-seed", "crawl-fetch"]) expect(tier(job)).toBe("discovery");
+    expect(EMERGENCY_JOB_POLICY["crawl-ko-apply"]).toEqual({tier:"discovery"});
     for (const job of ["product-audit", "product-repo-review", "product-spam-rescan", "click-rollup"]) expect(tier(job)).toBe("suspended");
   });
 });
