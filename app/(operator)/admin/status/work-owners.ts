@@ -126,6 +126,7 @@ const JOB_CONSUMERS: Readonly<Record<string, ConsumerName>> = {
   "crawl-agent-review": "ai1", "second-review": "ai2", "uptime-ping": "uptime", "agent-evidence-refresh": "agent-scan",
 };
 const CONSUMER_LABELS: Readonly<Record<ConsumerName, string>> = {
+  "github-ko-discovery": "한국어 GitHub 탐색 consumer",
   ai1: "1차 심사 consumer", ai2: "2차 심사 consumer", uptime: "연결 확인 consumer", "agent-scan": "제작 근거 consumer",
 };
 
