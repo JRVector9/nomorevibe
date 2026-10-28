@@ -44,7 +44,7 @@ const stage = <K extends string>(def: Omit<PipelineStageDef, "key" | "connected"
 
 export const PIPELINE_STAGES = Object.freeze([
   // 들어오는 곳 — pipelineFlow 의 discover 는 소스 합계라 소스마다 잇지 않는다
-  stage({ key: "github", group: "source", label: "GitHub 검색", code: "crawl-seed", jobs: ["crawl-seed"], role: "crawler" }),
+  stage({ key: "github", group: "source", label: "GitHub 검색", code: "crawl-seed", jobs: ["crawl-seed", "crawl-ko-apply"], role: "crawler" }),
   stage({ key: "show-hn", group: "source", label: "Show HN", code: "hn-show-seed", jobs: ["hn-show-seed"], role: "crawler" }),
   // X 는 시험 스크립트(lib/social/x-pilot.ts)만 있고 카탈로그 잡이 없다 — 연결은 v8 PR9
   stage({ key: "x", group: "source", label: "X", code: "x-pilot", jobs: [], role: null, connected: false }),

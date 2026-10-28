@@ -221,6 +221,32 @@ GRANT UPDATE (reset_at) ON TABLE public.rate_limits TO nomorevibe_oracle_agent_s
 GRANT USAGE ON SEQUENCE public.agent_repository_scans_id_seq TO nomorevibe_oracle_agent_scan;
 GRANT USAGE ON SEQUENCE public.agent_repository_observations_id_seq TO nomorevibe_oracle_agent_scan;
 
+-- consumer github-ko-discovery
+CREATE ROLE nomorevibe_oracle_github_ko LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :github_ko_discovery_connections;
+ALTER ROLE nomorevibe_oracle_github_ko SET statement_timeout = '10s';
+ALTER ROLE nomorevibe_oracle_github_ko SET lock_timeout = '5s';
+ALTER ROLE nomorevibe_oracle_github_ko SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE nomorevibe_oracle_github_ko SET timezone = 'UTC';
+GRANT USAGE ON SCHEMA public TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.crawl_settings TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (id) ON TABLE public.dr_writer_fence TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.github_collector_apps TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (core_quota, quota_observed_at) ON TABLE public.github_collector_apps TO nomorevibe_oracle_github_ko;
+GRANT SELECT, INSERT ON TABLE public.github_discovery_pages TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (owner, state, result, completed_at, owner_name, lease_until, updated_at) ON TABLE public.github_discovery_pages TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.github_ko_discovery_control TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (id, shared_cursor) ON TABLE public.github_ko_discovery_control TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.github_ko_discovery_queries TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (token, epoch, lease_until, cursor, due_at, last_error, updated_at) ON TABLE public.github_ko_discovery_queries TO nomorevibe_oracle_github_ko;
+GRANT SELECT ON TABLE public.github_ko_discovery_staging TO nomorevibe_oracle_github_ko;
+GRANT INSERT (repo, signal, priority, description) ON TABLE public.github_ko_discovery_staging TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (language, evidence, checked_at, due_at, updated_at) ON TABLE public.github_ko_discovery_staging TO nomorevibe_oracle_github_ko;
+GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (value, observed_at) ON TABLE public.operations_observations TO nomorevibe_oracle_github_ko;
+GRANT SELECT, INSERT ON TABLE public.rate_limits TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (reset_at) ON TABLE public.rate_limits TO nomorevibe_oracle_github_ko;
+
 -- consumer uptime
 CREATE ROLE nomorevibe_oracle_uptime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS CONNECTION LIMIT :uptime_connections;
 ALTER ROLE nomorevibe_oracle_uptime SET statement_timeout = '10s';

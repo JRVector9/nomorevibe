@@ -1,9 +1,12 @@
+vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
+import { recordDiscoveryProgress } from '@/lib/crawl/discovery-progress';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, LATEST_SCAN_INTERVAL_MS, LATEST_SCAN_OVERLAP_MS, type SeedCursor } from '@/lib/crawl/jobs/seed';
 
 const mocks = vi.hoisted(() => ({ enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null }));
 vi.mock('@/lib/crawl/repository', () => ({ enqueue:mocks.enqueue, frontierCounts:vi.fn() }));
+vi.mock('@/lib/crawl/discovery-progress', () => ({recordDiscoveryProgress:vi.fn().mockResolvedValue(undefined)}));
 vi.mock('@/lib/crawl/shared-discovery', () => ({
   sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
   enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
@@ -31,6 +34,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
   mocks.enqueue.mockReset().mockImplementation(async (rows:unknown[]) => rows.length);
   mocks.record.mockReset().mockResolvedValue(undefined);
+  vi.mocked(recordDiscoveryProgress).mockClear();
   mocks.search.mockReset(); mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled:true,
     discover:{ ...DEFAULT_CRAWL_SETTINGS.discover, sort:'recent', pagesPerTick:1, queries:[one] } };
@@ -55,7 +59,7 @@ it('searches the latest range before old work, preserving the old coverage on a 
   mocks.search.mockResolvedValue(page(true));
   const result = (await seedFrontier(ctx(old))).cursor!;
   expect(mocks.search.mock.calls).toHaveLength(2);
-  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-28T00:00:00Z..2026-10-01T00:00:00Z');
+  expect(mocks.search.mock.calls.some(([p]) => range(p.query) === '2026-09-28T00:00:00Z..2026-10-01T00:00:00Z')).toBe(true);
   expect(mocks.search.mock.calls[1][0]).toMatchObject({sort:'recent',page:1});
   expect(range(mocks.search.mock.calls[1][0].query)).toBe(`${oldWindow.from}..${oldWindow.to}`);
   expect(result.cycleWindow).toEqual(oldWindow);
@@ -108,7 +112,7 @@ it('preserves unfinished latest split windows across long downtime without movin
   vi.advanceTimersByTime(7*86_400_000);
   mocks.search.mockClear();
   cursor = (await seedFrontier(ctx(cursor))).cursor!;
-  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-29T12:00:01Z..2026-10-01T00:00:00Z');
+  expect(mocks.search.mock.calls.some(([p]) => range(p.query) === '2026-09-29T12:00:01Z..2026-10-01T00:00:00Z')).toBe(true);
   expect(cursor.cycleWindow).toEqual(oldWindow);
 });
 
@@ -138,9 +142,10 @@ it('saves both cursors before side effects and resumes the preview page after a 
   expect(saved).toMatchObject({cycleWindow:oldWindow,latestScan:{pendingPage:{itemIndex:0}}});
   expect(mocks.enqueue).not.toHaveBeenCalled();
   await seedFrontier(ctx(saved));
-  // One initial preview search and one old search; the saved preview is replayed without fetching again.
-  expect(mocks.search).toHaveBeenCalledTimes(2);
-  expect(mocks.enqueue).toHaveBeenCalledTimes(2);
+  // The resumed stored page uses no API page; its spare search slot goes to full coverage.
+  expect(mocks.search).toHaveBeenCalledTimes(3);
+  expect(mocks.search.mock.calls.filter(([p]) => range(p.query).includes('2026-10-01'))).toHaveLength(1);
+  expect(mocks.enqueue).toHaveBeenCalledTimes(3);
 });
 
 it('a shared auth cooldown preserves both cursors and prevents a second search in the tick', async () => {
@@ -237,5 +242,76 @@ it('upgrades legacy page-one previews by replaying the saved fixed latest range'
   const legacy={...first,latestScan:{...first.latestScan!,coverageVersion:undefined}};
   mocks.search.mockClear();
   await seedFrontier(ctx(legacy));
-  expect(range(mocks.search.mock.calls[0][0].query)).toBe('2026-09-28T00:00:00Z..2026-10-01T00:00:00Z');
+  expect(mocks.search.mock.calls.some(([p]) => range(p.query) === '2026-09-28T00:00:00Z..2026-10-01T00:00:00Z')).toBe(true);
+});
+
+it('donates unused latest pages after full coverage receives its reserved share', async () => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 6;
+  mocks.enqueue.mockResolvedValue(0);
+  mocks.search.mockImplementation(async (p:{query:string}) => range(p.query).includes('2026-10-01') ? page(false) : page(true));
+  const tick = ctx(old);
+  await seedFrontier(tick);
+  expect(mocks.search.mock.calls.filter(([p]) => range(p.query).includes('2026-10-01'))).toHaveLength(1);
+  expect(mocks.search.mock.calls.filter(([p]) => !range(p.query).includes('2026-10-01'))).toHaveLength(5);
+  expect(tick.log).toHaveBeenCalledWith('crawl.seed_budget',{latestPages:1,fullPages:5,donatedPages:2});
+});
+
+it('starts with full coverage next tick when a latest request consumes the wall-time budget', async () => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  const tick = {...ctx(old),deadlineAt:Date.now()+1_000};
+  mocks.search.mockImplementationOnce(async () => {vi.advanceTimersByTime(1_001);return page(true);});
+  const first = (await seedFrontier(tick)).cursor!;
+  expect(mocks.search).toHaveBeenCalledTimes(1);
+  expect(mocks.search.mock.calls[0][1]).toMatchObject({deadlineAt:tick.deadlineAt-500});
+  expect(first.latestTurn).toBe(false);
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(true));
+  await seedFrontier({...ctx(first),deadlineAt:Date.now()+1_000});
+  expect(range(mocks.search.mock.calls[0][0].query)).not.toContain('2026-10-01');
+});
+
+it('records completed coverage only after the final complete page and preserves evidence for known repos', async () => {
+  mocks.settings!.discover.sort = 'relevance';
+  mocks.enqueue.mockResolvedValue(0);
+  mocks.search.mockResolvedValueOnce({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  const first = (await seedFrontier(ctx())).cursor!;
+  expect(vi.mocked(recordDiscoveryProgress).mock.calls.some(([p]) => p.completedThrough)).toBe(false);
+  vi.mocked(recordDiscoveryProgress).mockClear();mocks.search.mockResolvedValue(page(false));
+  await seedFrontier(ctx(first));
+  expect(recordDiscoveryProgress).toHaveBeenCalledWith(expect.objectContaining({completedThrough:first.cycleWindow!.to}));
+  expect(recordDiscoveryProgress).toHaveBeenCalledWith(expect.objectContaining({counts:expect.objectContaining({discovered:0,existing:1})}));
+  expect(mocks.record).toHaveBeenCalled();
+});
+
+it.each(['page','split','incomplete'] as const)('keeps unfinished latest %s when the full target date catches up',async pending => {
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  const first = (await seedFrontier(ctx(old))).cursor!;
+  const preview = {...first.latestScan!};
+  if (pending === 'split') preview.pendingWindows = [{from:'2026-09-28T00:00:00Z',to:'2026-09-29T00:00:00Z'}];
+  if (pending === 'incomplete') {
+    preview.waiting = true;
+    preview.incompleteWindows = [{signal:'Claude',window:{from:'2026-09-28T00:00:00Z',to:'2026-09-28T00:00:01Z'},retryAt:new Date(Date.now()+60_000).toISOString()}];
+    preview.retryAt = new Date(Date.now()+60_000).toISOString();
+  }
+  const recentFull = {...first,cycleWindow:{from:'2026-09-30T00:00:00Z',to:new Date().toISOString()},latestScan:preview};
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(true));
+  const next = (await seedFrontier(ctx(recentFull))).cursor!;
+  expect(next.latestScan).toBeDefined();
+  if (pending === 'incomplete') expect(next.latestScan?.incompleteWindows).toEqual(preview.incompleteWindows);
+  else expect(mocks.search.mock.calls.some(([p]) => range(p.query).includes('2026-10-01'))).toBe(true);
+});
+
+it('retains unfinished latest ranges when the configured sort changes to relevance',async()=>{
+  const old = await oldCursor();
+  mocks.settings!.discover.pagesPerTick = 2;
+  mocks.search.mockResolvedValue({ok:true,value:{...page(true).value,total_count:200,incomplete_results:false}});
+  const first = (await seedFrontier(ctx(old))).cursor!;
+  mocks.settings!.discover.sort = 'relevance';
+  mocks.search.mockClear();mocks.search.mockResolvedValue(page(true));
+  const next = (await seedFrontier(ctx(first))).cursor!;
+  expect(next.latestScan?.cycleWindow).toEqual(first.latestScan?.cycleWindow);
+  expect(mocks.search.mock.calls.some(([p]) => p.sort === 'relevance' && p.page === 1 && range(p.query).includes('2026-10-01'))).toBe(true);
 });

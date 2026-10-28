@@ -25,6 +25,8 @@ import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferC
 import { sourceBufferCsrf } from "./source-buffer-csrf";
 import { jobControlCsrf } from "./job-control-csrf";
 import { CollectorTotalsDetail, CrawlerActivity } from "./CrawlerActivity";
+import { DiscoveryProgress } from "./DiscoveryProgress";
+import { readDiscoveryProgress } from "@/lib/operations/discovery-progress";
 import { readDeferrals, readTallies } from "@/lib/operations/flow-reads";
 import { buildCrawlerActivity, COLLECTOR_JOBS } from "@/lib/operations/crawler-activity";
 import { signalYields, todayPublications } from "@/lib/operations/dashboard";
@@ -187,6 +189,11 @@ async function CrawlerActivitySlot({ inputs, fresh }: { inputs: Awaited<ReturnTy
   // X 칸은 이미 읽은 관측 줄의 X 수집기 보고(readXStatus) — 흐름 상세·X 보고 끊김 조치와 같은 값, 새 쿼리 없음
   return report ? <CrawlerActivity report={report} x={readXStatus(inputs.ops.observations, inputs.ops.fetchedAt)} />
     : <p className="ops-note">크롤러 활동을 제때 읽지 못했습니다 — 미확인. 다음 갱신에서 다시 읽습니다.</p>;
+}
+
+async function DiscoveryProgressSlot({ fresh }: { fresh: boolean }) {
+  const read = await withDeadline(readDiscoveryProgress(fresh)).catch(() => ({ ok: false as const, reason: "error" as const }));
+  return <DiscoveryProgress read={read} />;
 }
 
 /** 작업 상세 창의 "최근 1시간 · 24시간 누적" — 수집기만 */
@@ -579,7 +586,7 @@ export default async function StatusPage() {
         jobControlCsrf={secret ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : undefined}
         verdict={verdict} flow={flowDetail}
         enrichmentDot={<Suspense fallback={<EnrichmentDot title="발행 후 보강 세는 중" />}><EnrichmentDotSlot {...flowSlot} /></Suspense>}
-        crawlers={<Suspense fallback={<p className="ops-note" aria-busy="true">크롤러 활동을 읽는 중…</p>}><CrawlerActivitySlot inputs={inputs} fresh={fresh} /></Suspense>}
+        crawlers={<div className="crawler-activity"><Suspense fallback={<p className="ops-note" aria-busy="true">탐색 진척을 읽는 중…</p>}><DiscoveryProgressSlot fresh={fresh} /></Suspense><Suspense fallback={<p className="ops-note" aria-busy="true">크롤러 활동을 읽는 중…</p>}><CrawlerActivitySlot inputs={inputs} fresh={fresh} /></Suspense></div>}
         jobTotals={jobTotals}
         manual={<Suspense fallback={<p className="ops-note" aria-busy="true">분류할 후보를 읽는 중…</p>}><ManualSlot /></Suspense>}
         // 시간별 조치 수는 화면에 쓰지 않는다 — 브라우저로 보내지 않는다
