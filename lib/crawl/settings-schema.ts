@@ -66,6 +66,8 @@ const discoverSchema = z.object({
    * 저장값에 없으면 기본 3000이 읽기에 채워진다. 심사·발행 속도를 올리지 않는다.
    */
   maxNewPerHour: z.number().int().min(60).max(3600).default(3000),
+  /** Outstanding unique repositories across discovery, ingestion and review; independent of model concurrency. */
+  maxReviewBacklog: z.number().int().min(1).max(10_000_000).default(1_000_000),
   /**
    * Show HN 수집.
    *
@@ -648,6 +650,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     sort: "recent",
     pagesPerTick: 10,
     maxNewPerHour: 3000,
+    maxReviewBacklog: 1_000_000,
     showHn: { enabled: true, priority: 120 },
   },
   judge: {

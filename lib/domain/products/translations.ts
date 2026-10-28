@@ -242,6 +242,7 @@ async function lockedTranslationDemands(tx: ProductTranslationTransaction, targe
   return rows;
 }
 type TranslationPreparationOptions = { call: PreparedProductTranslationGatewayCall; roleLease: RoleLease;
+  callBudget?: { deadlineAt: number; minimumRemainingMs: number };
   reserved?: { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity;
     members: readonly ProductTranslationMember[]; role: TranslationRole } };
 export type ProductTranslationPreparation = { kind: "disabled" } | { kind: "skipped" }
@@ -254,6 +255,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const tasks = translationBatch(value), lease = structuredClone(job), roleLease = structuredClone(valueOptions.roleLease);
   const reserved = valueOptions.reserved && structuredClone(valueOptions.reserved), call = valueOptions.call;
+  const callBudget = valueOptions.callBudget && structuredClone(valueOptions.callBudget);
   if (lease.name !== PRODUCT_TRANSLATION_JOB) throw new Error("translation_job_lease_required");
   let writer: Parameters<typeof productWrites.set>[1] | undefined;
   try {
@@ -285,6 +287,11 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
         inputHash: productTranslationInputHash({ members, model: call.model }), provider: "abcllm", routeId: PRODUCT_TRANSLATION_JOB,
         wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound,
         chargedTokens: call.totalTokenBound, job: lease, role });
+      // Check after all potentially waiting domain/owner locks, before recording
+      // any physical dispatch. A refusal leaves the reservation cancellable.
+      if (callBudget && (!Number.isFinite(callBudget.deadlineAt) || !Number.isFinite(callBudget.minimumRemainingMs)
+        || callBudget.minimumRemainingMs < 1 || callBudget.deadlineAt - Date.now() < callBudget.minimumRemainingMs))
+        throw new ModelCapacityDeferredError("capacity");
       const dispatch = await finishProductTranslationModelCapacityDispatch(tx, lock!, binding);
       // Event INSERT may have waited. All three held owners must still be live at this wall.
       await translationRoleWall(tx, role); await assertJobLeaseAtWallTime(tx, lease, "update");

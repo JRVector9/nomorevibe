@@ -1,4 +1,4 @@
-import { and, eq, sql, desc } from 'drizzle-orm';
+import { and, eq, sql, desc, notLike } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { jobs, operationsObservations, operationsAudit, categoryDecisions } from '@/lib/db/schema';
 import { JOB_NAMES } from '@/lib/jobs/catalog';
@@ -23,7 +23,8 @@ export async function requestAdminJob(name:string,actor:string) {
 export async function operationsData() {
   const start=Date.now();
   // 미룸(defer:)·수집기 누적(job-tally:)은 따로 읽는다 — 이 목록은 브라우저(운영센터 상세)까지 간다
-  const observations=await db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS,WITHOUT_JOB_TALLIES));
+  const observations=await db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS,WITHOUT_JOB_TALLIES,
+    notLike(operationsObservations.key,'discovery-progress:%')));
   const dbLatencyMs=Date.now()-start;
   const [audit,held,jobControlVersions]=await Promise.all([
     db.select().from(operationsAudit).orderBy(desc(operationsAudit.createdAt)).limit(20),

@@ -479,9 +479,12 @@ print(json.dumps(result))
 
 
 def ssh_python(host, source, *args, input_text=None, timeout=40):
+    user = os.environ.get('NMV_DEPLOY_SSH_USER', 'root')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
+        raise ValueError('invalid_deploy_ssh_user')
     command = 'python3 -c ' + shlex.quote(source) + ''.join(' ' + shlex.quote(arg) for arg in args)
     return run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                'root@' + host, command], input_text=input_text, timeout=timeout)
+                user + '@' + host, command], input_text=input_text, timeout=timeout)
 
 
 WEB_MAX_REPLICAS = 8
@@ -591,6 +594,11 @@ REMOTE_PULL = r'''import json,os,subprocess,sys,tempfile
 images=json.loads(sys.argv[1]);sha=sys.argv[2];key_hash=sys.argv[3];token=sys.stdin.read()
 with tempfile.TemporaryDirectory(prefix='nmv-release-pull-') as directory:
  env={**os.environ,'DOCKER_CONFIG':directory}
+ # Seed a file-backed registry entry so Docker does not auto-select the macOS
+ # Keychain helper over SSH. Credentials remain in this private temporary dir.
+ config=os.path.join(directory,'config.json')
+ with open(config,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as stream:
+  json.dump({'auths':{'ghcr.io':{}}},stream)
  login=subprocess.run(['docker','login','ghcr.io','-u','JRVector9','--password-stdin'],
                       input=token,capture_output=True,text=True,env=env)
  if login.returncode: raise SystemExit('docker_login_failed')

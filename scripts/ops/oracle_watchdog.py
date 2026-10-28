@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from recovery_gateway import PROVIDER_STAGES, bounded_output, save
+from recovery_gateway import PROVIDER_STAGES, bounded_output, save, valid_review_failures
 from incident_notifications import notify, validate_destination
 
 
@@ -31,7 +31,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -42,6 +42,8 @@ def validate_report(report):
                 any(not isinstance(stage, str) or stage not in PROVIDER_STAGES for stage in failures) or
                 len(set(failures)) != len(failures)):
             raise ValueError('invalid_provider_failures')
+        if 'reviewFailures' in row and not valid_review_failures(row['reviewFailures']):
+            raise ValueError('invalid_review_failures')
         if row['recoverable'] and (row['reason'] not in ('web_page_failed', 'monitor_stale', 'native_unit_failed') or not row['settled'] or row['ok']):
             raise ValueError('invalid_recovery_claim')
         keys.add(row['key'])
@@ -115,6 +117,22 @@ def cycle(config, state, reports, *, now=None, recover=None):
                     events.append({'target': key, 'stage': stage, 'reason': 'upstream_stalled'})
             if observations:
                 target['providerFailures'] = observations
+            review_observations = {}
+            previous_reviews = old.get('reviewFailures', {})
+            for failure in row.get('reviewFailures', []):
+                stage, reason = failure['stage'], failure['reason']
+                history = previous_reviews.get(stage, {}) if isinstance(previous_reviews, dict) else {}
+                previous_at = history.get('at') if isinstance(history, dict) else None
+                continuous = (type(previous_at) in (int, float) and math.isfinite(previous_at) and
+                              0 <= now - previous_at <= 150 and history.get('reason') == reason and
+                              type(history.get('bad')) is int and 0 <= history['bad'] <= 3)
+                samples = min(3, history['bad'] + 1) if continuous else 1
+                review_observations[stage] = {'at': now, 'reason': reason, 'bad': samples}
+                if samples >= 2:
+                    alarm = True
+                    events.append({'target': key, 'stage': stage, 'reason': reason, 'bad': samples})
+            if review_observations:
+                target['reviewFailures'] = review_observations
             state['targets'][key] = target
             if bad >= 2:
                 alarm = True

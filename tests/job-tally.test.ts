@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { createTally, jobTallyKey, summarizeJobTallies, tallyCounts, TALLY_METRICS_PER_TICK } from "@/lib/jobs/tally";
 
 describe("한 틱의 지표 합", () => {
+  it("keeps new discovery counters after the unknown metric budget is exhausted", () => {
+    const tally = createTally();
+    for (let i = 0; i < TALLY_METRICS_PER_TICK + 5; i++) tally.add({event:`unknown${i}`,counts:{}});
+    tally.add({event:"crawl.seeded",counts:{returned:100,filtered:20,pageDuplicates:3,examined:77,existing:67,discovered:10}});
+    tally.add({event:"crawl.seed_latest_scanned",counts:{returned:10,filtered:1,pageDuplicates:2}});
+    expect(tally.counts()).toMatchObject({
+      "crawl.seeded#returned":100,"crawl.seeded#filtered":20,"crawl.seeded#pageDuplicates":3,
+      "crawl.seed_latest_scanned#returned":10,"crawl.seed_latest_scanned#pageDuplicates":2,
+    });
+  });
   it("숫자 필드는 더하고, 0·참거짓·자리 값은 빼고, 이벤트마다 나온 횟수를 센다", () => {
     expect(tallyCounts([
       { event: "crawl.fetched", counts: { fetched: 3, skipped: 0, drained: true } },

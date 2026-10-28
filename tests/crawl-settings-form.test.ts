@@ -63,6 +63,17 @@ beforeEach(() => {
 });
 
 describe("검색 신호 편집", () => {
+  it("검수 대기열 기본 100만 건을 표시하고 변경값만 저장한다", async () => {
+    const html = render(twoSignals);
+    expect(html).toContain('name="maxReviewBacklog"');
+    expect(html).toMatch(/id="maxReviewBacklog"[^>]*value="1000000"/);
+    await saveCrawlSettings(null, submitted({ maxReviewBacklog: "2000000" }));
+    expect(saveSettings.mock.calls[0][0].discover.maxReviewBacklog).toBe(2000000);
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("maxReviewBacklog");
+  });
+
   it("추가 1차 모델을 표시하고 명시적으로 비우되 옛 폼은 해당 설정을 건드리지 않는다", async () => {
     const html = render({ ...twoSignals, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
       firstReviewAdditional: [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }] });

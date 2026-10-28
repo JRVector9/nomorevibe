@@ -60,6 +60,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "product-evidence-refresh": { tier: "evidence", http: true },
   "news-refresh": { tier: "evidence", http: true },
   "crawl-seed": { tier: "discovery", http: true },
+  "crawl-ko-apply": { tier: "discovery" },
   "hn-show-seed": { tier: "discovery", http: true },
   "crawl-fetch": { tier: "discovery", http: true },
   "product-audit": "suspended", "audit-screen-review": "suspended", "product-intro-check": "suspended", "grok-session-check": "suspended",

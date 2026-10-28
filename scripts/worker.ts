@@ -41,7 +41,9 @@ export type BackgroundConsumerLanes = {
   /** provider 회로(PR06e). 줄(job)마다 센다 — 틱 안 gateway 전송 결과가 쌓인다. 없으면 기존 그대로 */
   circuits?: ProviderCircuits;
 };
-type WorkerOptions = { role: BatchRole; once?: boolean; intervalMs?: number; signal?: AbortSignal };
+type WorkerOptions = { role: BatchRole; once?: boolean; intervalMs?: number; signal?: AbortSignal;
+  /** Stop new ticks without aborting the bounded tick already in flight. */
+  stopClaims?: AbortSignal };
 type WorkerDependencies = {
   names: readonly string[];
   /** 한 프로세스 안에서 동시에 도는 줄(catalog lanesForRole) — 없으면 names 한 줄 */
@@ -84,7 +86,7 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
  * 번역은 별도 text 워커에서 실행하며 발행 잡의 실행 시간을 차지하지 않는다.
  */
 export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
-  // The Grok adapter needs 90 seconds plus startup; shorter providers keep their own smaller tick.
+  // AI1 gives gateway calls their full 60s ceiling; Grok needs 90s plus startup.
   if (name === 'crawl-agent-review') return { ...options, budgetMs: 110_000 };
   if (name === 'product-audit') return { ...options, budgetMs: 70_000 };
   // 화면 판별 — 그리기(서버 상한 40초) + 묻기(상한 90초). reviewer 의 작업 상한 180초 안(lib/screen-review/job.ts)
@@ -94,6 +96,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
+  // Admission/DB waits must leave the public-field call its full 20-second ceiling.
+  if (name === 'product-translate') return { ...options, budgetMs: 55_000 };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
   if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
   if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };
@@ -170,14 +174,15 @@ const CONSUMER_REFILL_MS = 1_000;
  */
 async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDependencies, consumer: BackgroundConsumerLanes,
   name: string, intervalMs: number, report: RuntimeReport) {
+  const halt = options.stopClaims ? AbortSignal.any([options.stopClaims, ...(options.signal ? [options.signal] : [])]) : options.signal;
   let ticks = 0, failures = 0, streak = 0;
-  while (!options.signal?.aborted) {
+  while (!halt?.aborted) {
     ticks++;
     let refill = false, failed = false;
     report('polling');
     try {
       await dependencies.seen([name]);
-      if ((await dependencies.pending()).includes(name) && await consumer.open()) {
+      if ((await dependencies.pending()).includes(name) && !halt?.aborted && await consumer.open()) {
         // 회로가 열렸으면 틱(job claim)을 시작하지 않는다 — job 요청·cursor·항목 실패 수는 그대로 남고 다음 poll 에 다시 본다
         const circuit = consumer.circuits?.admit(name);
         const admission = circuit?.admitted === false ? null : dependencies.admit
@@ -188,6 +193,11 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
           dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason, consumer: true });
           await noteDeferred(dependencies, name, reason);
         } else {
+          if (halt?.aborted) {
+            if (circuit?.admitted) circuit.done();
+            if (admission?.admitted) await admission.release().catch(() => {});
+            break;
+          }
           report('running', name);
           try {
             const tick = () => consumer.run(name, { requestedOnly: true, signal: options.signal });
@@ -205,7 +215,7 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
           }
         }
       }
-      refill &&= !options.once && !options.signal?.aborted;
+      refill &&= !options.once && !halt?.aborted;
       if (refill) await consumer.request(name);
     } catch (error) {
       refill = false;
@@ -214,17 +224,18 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
     }
     if (!failed) streak = 0;
     report('idle');
-    if (options.once || options.signal?.aborted) break;
-    await (dependencies.sleep ?? interruptibleSleep)(refill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
+    if (options.once || halt?.aborted) break;
+    await (dependencies.sleep ?? interruptibleSleep)(refill ? CONSUMER_REFILL_MS : intervalMs, halt);
   }
   return { ticks, failures };
 }
 
 async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
+  const halt = options.stopClaims ? AbortSignal.any([options.stopClaims, ...(options.signal ? [options.signal] : [])]) : options.signal;
   let ticks = 0, failures = 0, nextIndex = 0, streak = 0;
   const sourceLane = names.length === 1 && ((options.role === "crawler" && names[0] === "product-evidence-refresh")
     || (options.role === "site-evidence" && names[0] === "product-site-evidence-refresh"));
-  while (!options.signal?.aborted) {
+  while (!halt?.aborted) {
     ticks++;
     let sourceContinued = false, stageRefill = false, failed = false;
     report('polling');
@@ -234,7 +245,7 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
       // Visit each role-owned job at most once per poll. Never run names from another role.
       const ordered = [...names.slice(nextIndex), ...names.slice(0, nextIndex)];
       for (const name of ordered) {
-        if (options.signal?.aborted) break;
+        if (halt?.aborted) break;
         if (!pending.has(name)) continue;
         // 한도를 넘으면 claim 전에 미룬다 — 잡 요청·cursor·attempt 는 그대로 남고 다음 틱에 다시 본다
         const admission = dependencies.admit
@@ -243,6 +254,10 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           dependencies.log?.('worker.job', { role: options.role, name, status: 'deferred', reason: admission.reason });
           await noteDeferred(dependencies, name, admission.reason);
           continue;
+        }
+        if (halt?.aborted) {
+          if (admission?.admitted) await admission.release().catch(() => {});
+          break;
         }
         report('running', name);
         try {
@@ -272,9 +287,9 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
     }
     if (!failed) streak = 0;
     report('idle');
-    if (options.once || options.signal?.aborted) break;
+    if (options.once || halt?.aborted) break;
     if (sourceContinued) continue;
-    await (dependencies.sleep ?? interruptibleSleep)(stageRefill ? CONSUMER_REFILL_MS : intervalMs, options.signal);
+    await (dependencies.sleep ?? interruptibleSleep)(stageRefill ? CONSUMER_REFILL_MS : intervalMs, halt);
   }
   return { ticks, failures };
 }
@@ -282,9 +297,10 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
 /** Shared CLI lifecycle. A supervisor can distinguish event-loop liveness from job progress. */
 export async function withRuntimeProcess<T>(
   role: string,
-  execute: (signal: AbortSignal, report: RuntimeReport) => Promise<T>,
+  execute: (signal: AbortSignal, report: RuntimeReport, stopClaims: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
+  const claims = new AbortController();
   let current: Omit<RuntimeHeartbeat, 'at'> = {
     type: 'runtime.heartbeat', role, pid: process.pid, state: 'idle',
     currentJob: null, startedAt: null, lastProgressAt: Date.now(),
@@ -298,17 +314,26 @@ export async function withRuntimeProcess<T>(
   const report: RuntimeReport = (state, currentJob = null, startedAt = null, lanes) => {
     const now = Date.now();
     current = {
-      ...current, state: controller.signal.aborted ? 'stopping' : state,
+      ...current, state: controller.signal.aborted || claims.signal.aborted ? 'stopping' : state,
       currentJob, startedAt: state === 'running' ? startedAt ?? now : null, lastProgressAt: now,
       ...(lanes ? { lanes } : {}),
     };
     heartbeat();
   };
   const shutdown = () => {
+    claims.abort();
     controller.abort();
     current = { ...current, state: 'stopping' };
     heartbeat();
   };
+  const drain = (message: unknown) => {
+    if (!message || typeof message !== 'object' || Array.isArray(message) ||
+        Object.keys(message).length !== 1 || (message as { type?: unknown }).type !== 'runtime.drain') return;
+    claims.abort();
+    current = { ...current, state: 'stopping' };
+    heartbeat();
+  };
+  process.on('message', drain);
   process.once('SIGINT', shutdown);
   process.once('SIGTERM', shutdown);
   const timer = setInterval(heartbeat, 5_000);
@@ -317,7 +342,7 @@ export async function withRuntimeProcess<T>(
   try {
     // CLI 계약은 이 probe 를 마친 프로세스에서만 열린다(D7) — reviewer 만 CLI 모델을 부른다
     if (role === 'reviewer') for (const status of await probeCliServingContracts()) runtimeLog('cli_contract.probe', status);
-    return await execute(controller.signal, report);
+    return await execute(controller.signal, report, claims.signal);
   } finally {
     // Keep heartbeat reporting while the pool drains; stop accepting another tick immediately.
     shutdown();
@@ -328,6 +353,7 @@ export async function withRuntimeProcess<T>(
       clearInterval(timer);
       process.removeListener('SIGINT', shutdown);
       process.removeListener('SIGTERM', shutdown);
+      process.removeListener('message', drain);
       if (process.connected) process.disconnect?.();
     }
   }
@@ -359,7 +385,7 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
-  await withRuntimeProcess(options.role, async (signal, report) => {
+  await withRuntimeProcess(options.role, async (signal, report, stopClaims) => {
     const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits },
       { backgroundConsumerJobs, backgroundConsumerLanes }, { recordJobDeferral }] = await Promise.all([
       import('@/lib/jobs/catalog'), import('@/lib/jobs/control'), import('@/lib/jobs/registry'),
@@ -377,7 +403,7 @@ async function main() {
     const host = startHostBudget(process.env, { holdMs: limits.jobMs + limits.drainMs });
     try {
       if (host.enabled) await host.settled;
-      const result = await runWorker({ ...options, signal }, {
+      const result = await runWorker({ ...options, signal, stopClaims }, {
         names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
         lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
         pending: () => pendingJobNames(options.role),

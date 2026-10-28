@@ -7,6 +7,7 @@ import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
 import { deepseekReviewReady } from "@/lib/crawl/deepseek-review";
 import { currentModelEnv } from "@/lib/operations/model-env";
+import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
 import { reviewModelOptions } from "./model-options";
@@ -27,6 +28,7 @@ export default async function ModelsPage() {
     ["소개 검수", models.introCheck, "INTRO_CHECK_MODEL · Claude CLI"],
   ];
   return <main className="mx-auto flex max-w-[1100px] flex-col gap-5 px-8 py-7 max-sm:px-4">
+    <PageStamp />
     <header className="flex flex-col gap-2"><h1 className="text-[26px] font-bold">단계별 모델</h1>
       <p className="text-[14px] text-fg-3">1차·2차 검수 모델과 사람이 직접 판단할 단계를 관리합니다. 모델 선택과 단계의 실행 스위치는 각각 적용됩니다.</p>
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>

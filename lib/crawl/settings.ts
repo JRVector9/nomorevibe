@@ -544,6 +544,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
   { label: "시간당 새 저장소 상한", read: (s) => s.discover.maxNewPerHour },
+  { label: "검수 대기열 상한", read: (s) => s.discover.maxReviewBacklog },
   { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
   { label: "자동 승인 최소 스타", read: (s) => s.judge.autoApproveMinStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },
