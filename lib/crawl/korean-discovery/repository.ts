@@ -106,8 +106,13 @@ export async function stageKoreanPage(claim: KoreanQueryClaim, repositories: Kor
 }
 
 export async function deferKoreanQuery(claim: KoreanQueryClaim, dueAt: Date, reason: string): Promise<void> {
-  await db.execute(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt},last_error=${reason.slice(0,100)},updated_at=now()
-    WHERE label=${claim.label} AND token=${claim.token}::uuid AND epoch=${claim.epoch} AND lease_until>now()`);
+  await db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) return;
+    const [control]=await tx.execute<{enabled:boolean;epoch:number}>(sql`SELECT enabled,epoch FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
+    if (!control?.enabled || control.epoch!==claim.controlEpoch) return;
+    await tx.execute(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt},last_error=${reason.slice(0,100)},updated_at=now()
+      WHERE label=${claim.label} AND token=${claim.token}::uuid AND epoch=${claim.epoch} AND lease_until>now()`);
+  });
 }
 
 export async function koreanLanguageBatch(limit=5): Promise<KoreanStagedRepository[]> {
@@ -134,19 +139,19 @@ export async function importSharedKoreanCandidates(): Promise<number> {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('github-ko-staging-cap-v1'))`);
     const [count] = await tx.execute<{total:number}>(sql`SELECT count(*)::integer AS total FROM github_ko_discovery_staging WHERE state='pending'`);
     if (count.total >= 9900) return 0;
-    const pages = await tx.execute<{key:string;completed_at:Date;result:{items?:{full_name?:string;description?:string|null}[]}}>(sql`
-      SELECT key,completed_at,result FROM github_discovery_pages WHERE state='complete' AND kind='repositories' AND scope='public-v1'
-        AND (completed_at,key) > (${control.shared_cursor?.at ? new Date(control.shared_cursor.at) : new Date(0)},${control.shared_cursor?.key ?? ''})
+    const pages = await tx.execute<{key:string;completed_at_key:string;result:{items?:{full_name?:string;description?:string|null}[]}}>(sql`
+      SELECT key,completed_at::text AS completed_at_key,result FROM github_discovery_pages WHERE state='complete' AND kind='repositories' AND scope='public-v1'
+        AND (completed_at,key) > (${control.shared_cursor?.at ?? '1970-01-01T00:00:00.000000'}::timestamp,${control.shared_cursor?.key ?? ''})
       ORDER BY completed_at,key LIMIT 1`);
     let staged=0;
     for (const page of pages) {
       if (Array.isArray(page.result?.items)) for (const item of page.result.items.slice(0,100)) {
-        if (!item.full_name || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(item.full_name) || !/[가-힣]/.test(item.description ?? '')) continue;
+        if (!item || !item.full_name || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(item.full_name) || !/[가-힣]/.test(item.description ?? '')) continue;
         const inserted=await tx.execute(sql`INSERT INTO github_ko_discovery_staging (repo,signal,priority,description)
           VALUES (${item.full_name.toLowerCase()},'공유 GitHub 한국어 후보',50,${item.description?.slice(0,4000) ?? null}) ON CONFLICT (repo) DO NOTHING RETURNING repo`);
         staged+=inserted.length;
       }
-      await tx.execute(sql`UPDATE github_ko_discovery_control SET shared_cursor=${JSON.stringify({at:page.completed_at.toISOString(),key:page.key})}::jsonb WHERE id=1`);
+      await tx.execute(sql`UPDATE github_ko_discovery_control SET shared_cursor=${JSON.stringify({at:page.completed_at_key,key:page.key})}::jsonb WHERE id=1`);
     }
     return staged;
   });

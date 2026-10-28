@@ -21,10 +21,12 @@ export function firstKoreanCursor(startAt: Date, days: number, now: Date): Korea
 }
 /** A saturated/incomplete one-second interval is retained for retry, never reported complete. */
 export function nextKoreanCursor(cursor: KoreanCursor, page: { length: number; total?: number; incomplete?: boolean }, days: number, now: Date): KoreanCursor {
-  if (page.incomplete || (page.total ?? 0) > 1000 || (cursor.page === 10 && page.length >= 100)) {
+  if (page.incomplete || cursor.unresolved || (page.total ?? 0) > 1000 || (cursor.page === 10 && page.length >= 100)) {
     const halves = splitSearchWindow(cursor.window);
-    if (!halves || cursor.pendingWindows.length >= 255) return { ...cursor, page: 1, unresolved: true,
-      waitingUntil: iso(now.getTime() + KOREAN_CYCLE_WAIT_MS) };
+    if (!halves || cursor.pendingWindows.length >= 255) {
+      if (page.length >= 100 && cursor.page < 10) return { ...cursor, page: cursor.page+1, unresolved: true, waitingUntil: undefined };
+      return { ...cursor, page: 1, unresolved: true, waitingUntil: iso(now.getTime() + KOREAN_CYCLE_WAIT_MS) };
+    }
     return { window: halves[0], page: 1, pendingWindows: [halves[1], ...cursor.pendingWindows] };
   }
   if (page.length >= 100 && cursor.page < 10) return { ...cursor, page: cursor.page + 1 };

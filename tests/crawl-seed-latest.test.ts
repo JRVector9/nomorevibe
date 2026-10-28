@@ -1,3 +1,4 @@
+vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, LATEST_SCAN_INTERVAL_MS, LATEST_SCAN_OVERLAP_MS, type SeedCursor } from '@/lib/crawl/jobs/seed';

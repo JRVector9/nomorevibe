@@ -37,6 +37,8 @@ it('permits one query owner and fences a lease after disable/re-enable; page sta
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true WHERE id=1`);
   expect(await stageKoreanPage(claim,[{repo:'test/korean',signal:claim.label,priority:60,description:null}],claim.cursor)).toBe(false);
   await deferKoreanQuery(claim,new Date(0),'retry');
+  // Old control epoch cannot release or defer its claim. Expiry permits the next owner.
+  await db.execute(sql`UPDATE github_ko_discovery_queries SET lease_until=now()-interval '1 second' WHERE label=${claim.label}`);
   const current=(await claimKoreanQuery(3))!;
   expect(await stageKoreanPage(current,[{repo:'test/korean',signal:current.label,priority:60,description:null}],current.cursor)).toBe(true);
   expect(await stageKoreanPage(current,[{repo:'test/late',signal:current.label,priority:60,description:null}],current.cursor)).toBe(false);
@@ -44,8 +46,8 @@ it('permits one query owner and fences a lease after disable/re-enable; page sta
 });
 it('reuses a bounded stored public repository page without network and preserves a cursor',async()=>{
   await db.execute(sql`UPDATE github_ko_discovery_control SET enabled=true,start_at='2026-01-01' WHERE id=1`);
-  const key='b'.repeat(64), completedAt=new Date(Date.now()+3600000);
-  await db.execute(sql`UPDATE github_ko_discovery_control SET shared_cursor=${JSON.stringify({at:new Date(completedAt.getTime()-1).toISOString(),key:''})}::jsonb WHERE id=1`);
+  const key='b'.repeat(64), completedAt='2099-10-01 00:00:00.123456';
+  await db.execute(sql`UPDATE github_ko_discovery_control SET shared_cursor=${JSON.stringify({at:'2099-10-01 00:00:00.123000',key:''})}::jsonb WHERE id=1`);
   await db.execute(sql`INSERT INTO github_discovery_pages (key,kind,query,sort,page,scope,generation,state,owner,owner_name,lease_until,result,completed_at)
     VALUES (${key},'repositories','테스트 is:public pushed:2026-01-01..2026-01-02','recent',1,'public-v1','v1','complete',
       '00000000-0000-4000-8000-000000000001','fixture',now(),
@@ -55,5 +57,7 @@ it('reuses a bounded stored public repository page without network and preserves
     expect(await importSharedKoreanCandidates()).toBe(1);
     expect((await db.execute(sql`SELECT repo FROM github_ko_discovery_staging WHERE repo LIKE 'test/shared-%'`)).map(r=>r.repo)).toEqual(['test/shared-ko']);
     expect(await importSharedKoreanCandidates()).toBe(0);
+    const [saved]=await db.execute<{shared_cursor:{at:string}}>(sql`SELECT shared_cursor FROM github_ko_discovery_control WHERE id=1`);
+    expect(saved.shared_cursor.at).toBe(completedAt);
   } finally {await db.execute(sql`DELETE FROM github_discovery_pages WHERE key=${key}`);}
 });
