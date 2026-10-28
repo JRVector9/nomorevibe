@@ -96,3 +96,21 @@
 - `bash scripts/verify-review-stall.sh` 종료0: typegen·tsc·변경 lint, TS19파일312시험, Python 요청감시5 + watchdog9/10/24 + recovery7 + catalog13 성공. 아직 도입하지 않은 단계5 시험 파일은 명시적으로 건너뜀.
 - 첫 분리 검사에서 아직 존재하지 않는 단계5 Python 파일 discovery가 `NO TESTS RAN` / exit5로 끝나 수정 후 위 명령을 재실행해0 확인. 실패 결과를 성공으로 덮어 적지 않음.
 - PR·배포는 단계1 배포와 운영 저장 확인 뒤 진행. 지정 배포 영수증 디렉터리 생성이 막혀 후속 병합·배포 순서를 앞당기지 않음.
+
+### 단계1 PR707 병합 / 배포 준비 기록
+
+- 최신 main 기반 head `4e490d2cf15f3e88b611191cfb733727f8ad0919`의 필수 `check` SUCCESS: https://github.com/JRVector9/nomorevibe/actions/runs/40785613934 .
+- `gh pr merge 707 --merge --match-head-commit 4e490d2cf15f3e88b611191cfb733727f8ad0919` 성공. 병합 `b047bddbeb86a2828e2ab1e0f293a91df5affda2`.
+- main run https://github.com/JRVector9/nomorevibe/actions/runs/40786665949 의 `check`·`publish-worker-image`·`publish-web-image` SUCCESS. 전체 workflow/refresh-caches는 기다릴 관문 아님.
+- 올바른 exact SHA로 `npm run deploy -- scope --base 199a3ebb68772f1ccbefd397172effce72029796 --sha b047bddbeb86a2828e2ab1e0f293a91df5affda2` 실행: mode=none, selectedApps=[], no_runtime_change. PR707은 배포 coordinator 보호 변경이므로 이 diff만으로 앱을 불필요 재배포하지 않음. 실제 혼합 baseline 검증은 plan 몫.
+- 앞선 scope의 짧은 ref / 잘못 적은 base는 각각 invalid_commit_identity / unproven_git_history로 full fallback. 위 정확한 SHA 재실행 결과만 채택.
+- 첫 `PATH=/home/ubuntu/.codex/skills/prod/bin:$PATH NMV_DEPLOY_SSH_USER=jr npm run deploy -- plan --sha b047bddbeb86a2828e2ab1e0f293a91df5affda2 --out /home/ubuntu/.xaegis-hub/data/local-agent/jobs/6b64d562-ec09-4b3e-96a1-2a6a103a4073/scratch/review-stall-pr707-20261028` 은 exit1, `{"status":"release-not-complete","errorClass":"ValueError","reason":"inspect-private-receipts","automaticRetry":false}`. 당시 checkout이 code 분리 브랜치였으므로 `create_plan` 첫 관문 `checkout_must_be_target_release`에 해당. 깨끗한 대상 SHA에서 다시 확인할 예정. 이 결과를 배포 시도/완료로 세지 않음.
+- mini의 jr 계정도 읽기 전용 docker 확인 성공. 계정·SSH·실행 권한 변경 없음.
+
+### 단계3 전송 전 후보만 우회
+
+- AI1: 미확인으로 group/provider budget이 꽉 찬 모델을 읽기 전용 hint로 제외. 해당 후보의 모든 입력 이력에서 모델 시도 기록이 없고 활성/대기 intent도 없을 때만 고정 칸부터 다음 모델 선택. hint 실패 시 기존 고정 선택. claim 잠금 아래 같은 선택 재확인.
+- 추가 보강: 최신 시도 모델이 풀에서 제거되었거나 읽을 수 없어도 다른 모델로 재시도하지 않고 보호(null). 과거 다른 모델 시도로 건너뛰지 않음.
+- AI2 재확인: `second-review.ts` enqueue는 voter별 독립 행을 만들며 AI1처럼 candidateId % pool 방식이 아님. `second-review-model-capacity.ts` / `fallbackWaitingSecondReview`는 local-direct 전송 전 waiting/reserved에 한한 기존 fallback. 본 단계에서 AI2의 전송·고정·점유·fallback 정책은 변경하지 않음.
+- 최초 분리 tsc는 lifecycle에 단계4 import가 섞여 TS2307(deadline-ladder 없음)로 실패. 이 단계의 timeout 60000을 유지하도록 import만 분리한 후 재실행.
+- `bash scripts/verify-review-stall.sh` 최종 종료0, typegen/tsc/lint 및 관련 TS·Python 회귀 성공. 배포와 운영 저장 증가는 단계1 plan 막힘 해소 전 보류.
