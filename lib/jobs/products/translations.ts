@@ -3,8 +3,9 @@ import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/p
 import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS } from "@/lib/llm/deadline-ladder";
 
-/** One call / at most four demanded fields per 25-second text-role tick. No catalog backfill. */
+/** One call / at most four demanded fields per 55-second text-role tick. No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
@@ -32,7 +33,8 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       chars += text.length;
     }
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: 20_000, signal, deadlineAt: ctx.deadlineAt });
+    // Outermost HTTP deadline fits the 55s job budget; inner M1 bounds still require measurement and enforcement.
+    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, signal, deadlineAt: ctx.deadlineAt });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;
     const completedBatch = outcome.batch ?? batch;

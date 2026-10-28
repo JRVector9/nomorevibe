@@ -115,3 +115,13 @@
 - AI2 재확인: `second-review.ts` enqueue는 voter별 독립 행을 만들며 AI1처럼 candidateId % pool 방식이 아님. `second-review-model-capacity.ts` / `fallbackWaitingSecondReview`는 local-direct 전송 전 waiting/reserved에 한한 기존 fallback. 본 단계에서 AI2의 전송·고정·점유·fallback 정책은 변경하지 않음.
 - 최초 분리 tsc는 lifecycle에 단계4 import가 섞여 TS2307(deadline-ladder 없음)로 실패. 이 단계의 timeout 60000을 유지하도록 import만 분리한 후 재실행.
 - `bash scripts/verify-review-stall.sh` 최종 종료0, typegen/tsc/lint 및 관련 TS·Python 회귀 성공. 배포와 운영 저장 증가는 단계1 plan 막힘 해소 전 보류.
+
+### 단계1 최종 배포 막힘 / 단계4 코드·실측
+
+- 대상 b047bddb의 깨끗한 detached checkout에서 표준 `PATH=/home/ubuntu/.codex/skills/prod/bin:$PATH NMV_DEPLOY_SSH_USER=jr npm run deploy -- plan --sha b047bddbeb86a2828e2ab1e0f293a91df5affda2 --out /home/ubuntu/.xaegis-hub/data/local-agent/jobs/6b64d562-ec09-4b3e-96a1-2a6a103a4073/scratch/review-stall-pr707-20261028-clean` 실행 → exit1, `{"status":"release-not-complete","errorClass":"FileNotFoundError","reason":"inspect-private-receipts","automaticRetry":false}`.
+- 같은 create_plan의 예외 경로만 진단(별도 새 diagnostic out 경로, 관문 비활성화 없음): `FileNotFoundError.filename=/home/ubuntu/.xaegis-hub/data/local-agent/jobs/6b64d562-ec09-4b3e-96a1-2a6a103a4073/scratch/review-stall-pr707-20261028-diagnostic`, deploy_release.py:254 create_plan → :99 fresh_directory → pathlib.mkdir. 지정 부모 생성은 앞서 `Read-only file system`으로 실패. 배포 영수증을 다른 경로에 우회 작성하지 않음. run 요청 없음.
+- 단계2 전용 브랜치에도 origin/main b047bddb를 병합해 최신 main 기반으로 보존. 단계2 이후 PR/CI/병합/배포는 단계1 실제 운영 검증을 앞질러 진행하지 않음. 로컬 분리 개발은 계속함.
+- 단계4: 최근7일 primary 장부 지연을 다시 측정. AI1 GPT p95/p99=7.644500/10.320340s(n5807), AI1 Supa=6.242650/7.764920s(n1458), AI2 Supa=6.145950/7.967630s(n1552, max42.991s), AI2 gpu3090=3.781000/5.254440s(n3985). GPT 번역=7.382000/9.390320s(n774). M1 성공 표본0이므로 p95/p99 측정 없음.
+- 검증 대상 AI 상한을50/55/60초로 갱신. M1 내부28/31/34초 상수는 확정값으로 내보내지 않고 번역 client40초만 #708 job55초 안에 유지. 확정 내부 값은 M1 표본·서버 강제 확인 후 정함.
+- relay max_tokens 강제·미확인 후 자동 열기는 검증된 엔진 상한 선언 시만 사용. 추가로 보장 적용 UTC 시각을 요구하고 그 이전 요청은 소급 해제하지 않음. 기존 archive의 active/receipt hash·정책 불일치 시 표식 유지. 원본 receipt 보존 회귀 추가.
+- `bash scripts/verify-review-stall.sh` 종료0(typegen/tsc/lint, 관련TS/Python). 실제 서버·gateway 강제, vLLM disconnect abort·종료 기록, M1 최근 지연/최저 decode, 90초 운영 드릴은 막힘(별도 checkout/배포 receipt용 지정 scratch 생성 불가). 로컬 fake upstream 시험을 운영 종료 증거로 세지 않음.

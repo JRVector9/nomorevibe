@@ -3,6 +3,9 @@ export const LOCAL_MODEL_UPSTREAM_HOST = "127.0.0.1";
 export const LOCAL_MODEL_UPSTREAM_PORT = 8000;
 export const LOCAL_MODEL_RELAY_REQUEST_HEADER = "x-nmv-relay-request-id";
 export const LOCAL_MODEL_RELAY_RECOVERY_LOCK = '.boundary-recovery.lock';
+/** 선언된 엔진 상한이 지난 뒤 relay가 스스로 남기는 표식 정리 기록. 원래 receipt는 그대로 둔다. */
+export const LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX = '.deadline-release.json';
+export const LOCAL_MODEL_RELAY_SKEW_MS = 2_000;
 
 export type RelayTerminalObservation = {
   models: string[];
