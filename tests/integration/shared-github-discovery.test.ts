@@ -47,7 +47,10 @@ it('does not charge a known downstream repository or overwrite a job after lease
   expect(await db.select().from(crawlFrontier)).toHaveLength(0);
 });
 it('expires incomplete API responses for retry instead of asserting finished coverage',async()=>{
-  await sharedDiscoverySearch(identity,async()=>({ok:true,value:{...value('a/partial'),incomplete_results:true}}));
+  const partial=vi.fn(async()=>({ok:true as const,value:{...value('a/partial'),incomplete_results:true}}));
+  await sharedDiscoverySearch(identity,partial);
+  expect(await sharedDiscoverySearch(identity,partial)).toMatchObject({ok:true,cached:true,value:{incomplete_results:true}});
+  expect(partial).toHaveBeenCalledTimes(1);
   await db.update(githubDiscoveryPages).set({completedAt:sql`clock_timestamp()-interval '2 minutes'`});
   expect(await sharedDiscoverySearch(identity,async()=>({ok:true,value:value('a/final')}))).toMatchObject({ok:true,cached:false,value:value('a/final')});
 });
