@@ -1,7 +1,9 @@
 """Read-only hop readback for replaced-path release. Runs ON the target host: no stop, restart, model call or secret read.
 
-stdin/payload: {"role", "host", "kind", "service"}. stdout: {"hop": {...}, "artifact": "<canonical json>"} or {"error": code}, exit 1.
+stdin/payload: {"role", "host", "kind", "service"} plus optional "idle" probe and "allowAbsent".
+stdout: {"hop": {...}, "artifact": "<canonical json>"} or {"error": code}, exit 1.
 startedAt is the OLDEST process of the service, floored (container to ms, others to the second), so a pre-dispatch survivor can never look newer.
+An absent service (allowed hops only) reports startedAt null; an idle probe reports whether the engine had zero running and waiting requests.
 """
 import datetime
 import hashlib
@@ -12,12 +14,19 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.request
 
 os.environ['PATH'] = '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 
 
 class HopError(Exception):
     pass
+
+
+class Absent(Exception):
+    def __init__(self, facts):
+        super().__init__('absent')
+        self.facts = facts
 
 
 def need(ok, code):
@@ -70,9 +79,11 @@ def mac_process_hop(pid, extra):
 
 def container(service):
     running = run(['docker', 'ps', '-q', '--no-trunc', '--filter', 'label=com.docker.swarm.service.name=' + service]).split()
-    need(len(running) == 1, 'container_count_%d' % len(running))
     tasks = [json.loads(line) for line in run(['docker', 'service', 'ps', service, '--no-trunc', '--format', '{{json .}}']).splitlines() if line.strip()]
     live = [t for t in tasks if t.get('DesiredState') == 'Running' or str(t.get('CurrentState', '')).startswith('Running')]
+    if not running and not live:
+        raise Absent({'runningContainers': 0, 'runningTasks': 0})
+    need(len(running) == 1, 'container_count_%d' % len(running))
     need(len(live) == 1, 'running_task_count_%d' % len(live))
     state = json.loads(run(['docker', 'inspect', '--format', '{{json .State}}', running[0]]))
     need(state.get('Running') is True and state.get('Pid', 0) > 0, 'container_not_running')
@@ -105,9 +116,13 @@ def systemd(service):
 
 
 def launchd(service):
-    text = run(['/bin/launchctl', 'print', service])
-    pid = re.search(r'^\s*pid = (\d+)$', text, re.M)
-    need(pid and re.search(r'^\s*state = running$', text, re.M), 'launchd_not_running')
+    result = subprocess.run(['/bin/launchctl', 'print', service], capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise Absent({'launchctlExit': result.returncode})
+    pid = re.search(r'^\s*pid = (\d+)$', result.stdout, re.M)
+    if not pid:
+        raise Absent({'loaded': True, 'pid': None})
+    need(re.search(r'^\s*state = running$', result.stdout, re.M), 'launchd_not_running')
     return mac_process_hop(int(pid[1]), {'service': service})
 
 
@@ -116,22 +131,60 @@ def listener(service):
     need(m, 'listener_service_shape')
     out = subprocess.run(['/usr/sbin/lsof', '-nP', '-a', '-iTCP@%s:%s' % (m[1], m[2]), '-sTCP:LISTEN', '-Fp'], capture_output=True, text=True, timeout=30).stdout
     pids = sorted({int(line[1:]) for line in out.splitlines() if line.startswith('p')})
+    if not pids:
+        raise Absent({'listeners': 0})
     need(len(pids) == 1, 'listener_count_%d' % len(pids))
     return mac_process_hop(pids[0], {'listener': service})
 
 
+def get_json(url, token=None, raw=False):
+    request = urllib.request.Request(url, headers={'Authorization': 'Bearer ' + token} if token else {})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        body = response.read(1048577)
+    need(len(body) <= 1048576, 'probe_read_cap')
+    return body.decode() if raw else json.loads(body)
+
+
+def idle_counts(probe):
+    """Zero running and zero waiting requests in the engine itself. Only counters leave the host, never the token."""
+    if probe.get('type') == 'vllm-metrics':
+        text = get_json('http://127.0.0.1:%d/metrics' % int(probe['port']), raw=True)
+        total = {'running': 0.0, 'waiting': 0.0}
+        for line in text.splitlines():
+            m = re.match(r'^vllm:num_requests_(running|waiting)(?:\{[^}]*\})?\s+([0-9.eE+-]+)$', line)
+            if m:
+                total[m[1]] += float(m[2])
+        return {'type': 'vllm-metrics', 'running': total['running'], 'waiting': total['waiting']}
+    need(probe.get('type') == 'omlx-status', 'idle_probe_denied')
+    with open(probe['settings']) as f:
+        settings = json.load(f)
+    status = get_json('http://127.0.0.1:%d/api/status' % int(settings['server']['port']), settings['auth']['api_key'])
+    need(isinstance(status.get('active_requests'), int) and isinstance(status.get('waiting_requests'), int), 'omlx_status_shape')
+    return {'type': 'omlx-status', 'running': status['active_requests'], 'waiting': status['waiting_requests']}
+
+
 def collect(request):
-    need(set(request) == {'role', 'host', 'kind', 'service'}, 'request_shape')
+    need(set(request) <= {'role', 'host', 'kind', 'service', 'idle', 'allowAbsent'} and {'role', 'host', 'kind', 'service'} <= set(request), 'request_shape')
     kind, service = request['kind'], request['service']
     need(kind in ('container', 'systemd', 'launchd', 'listener') and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}', service), 'request_denied')
-    incarnation, started, facts = {'container': container, 'systemd': systemd, 'launchd': launchd, 'listener': listener}[kind](service)
+    hop_request = {k: request[k] for k in ('role', 'host', 'kind', 'service')}
+    try:
+        incarnation, started, facts = {'container': container, 'systemd': systemd, 'launchd': launchd, 'listener': listener}[kind](service)
+    except Absent as absent:
+        need(request.get('allowAbsent') is True, 'service_absent')
+        incarnation, started, facts = 'absent', None, {'absent': absent.facts}
+    idle = None
+    if request.get('idle') and started is not None:
+        counts = idle_counts(request['idle'])
+        facts = {**facts, 'idle': counts}
+        idle = counts['running'] == 0 and counts['waiting'] == 0
     observed = now_ms()
-    need(started <= observed, 'started_after_observation')
-    artifact = {'version': 1, 'kind': 'replaced_path_hop_readback', 'request': request, 'hostname': socket.gethostname(),
-                'observedAt': iso(observed), 'startedAt': iso(started), 'incarnationId': incarnation, 'facts': facts}
+    need(started is None or started <= observed, 'started_after_observation')
+    artifact = {'version': 1, 'kind': 'replaced_path_hop_readback', 'request': hop_request, 'hostname': socket.gethostname(),
+                'observedAt': iso(observed), 'startedAt': None if started is None else iso(started), 'incarnationId': incarnation, 'facts': facts}
     raw = json.dumps(artifact, sort_keys=True, separators=(',', ':'))
-    hop = {**request, 'incarnationId': incarnation, 'startedAt': iso(started), 'observedAt': iso(observed), 'singleInstance': True,
-           'artifactHash': hashlib.sha256(raw.encode()).hexdigest()}
+    hop = {**hop_request, 'incarnationId': incarnation, 'startedAt': None if started is None else iso(started), 'observedAt': iso(observed),
+           'singleInstance': True, 'idle': idle, 'artifactHash': hashlib.sha256(raw.encode()).hexdigest()}
     return {'hop': hop, 'artifact': raw}
 
 

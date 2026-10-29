@@ -12,7 +12,10 @@ const roles = ["owner", "gateway-m3", "gateway-mini", "relay", "provider"] as co
 type Hop = Readonly<{ role: typeof roles[number]; host: string; kind: typeof kinds[number]; service: string }>;
 /**
  * Every process that could still hold an abandoned call: the owner, both gateways and the provider processes behind its budget.
- * A request is released only when each of them is a single instance that started after the dispatch.
+ * - owner: replaced (a single instance started after the dispatch). Only it holds the token and could dispatch again.
+ * - gateway/relay: replaced, or absent (no process). A pass-through could otherwise retry the old call.
+ * - provider: replaced, or idle (zero running and waiting requests) observed after every hop above it was replaced or absent:
+ *   nothing upstream can resend, so an idle engine is not running the old call.
  * The SQL copy in drizzle/0145 is the authority; a topology change needs a new migration, never a runtime value.
  */
 export const REPLACED_PATH_OWNERS: Readonly<Record<string, Hop>> = {
@@ -41,8 +44,16 @@ export const replacedPathPlanSchema = z.object({ version: z.literal(1), kind: z.
   writer: z.object({ lineageId: z.uuid(), writerEpoch: positive }).strict(),
 }).strict();
 /** One operator readback per process: the current incarnation, when it started, and that no second instance exists. */
-export const replacedPathHopSchema = z.object({ role: z.enum(roles), host: id, kind: z.enum(kinds), service: id, incarnationId: id, startedAt: at, observedAt: at,
+export const replacedPathHopSchema = z.object({ role: z.enum(roles), host: id, kind: z.enum(kinds), service: id,
+  mode: z.enum(["replaced", "idle", "absent"]), incarnationId: id, startedAt: at.nullable(), observedAt: at,
   singleInstance: z.literal(true), artifactHash: sha }).strict();
+/** Per-hop readback options that are not part of the topology authority: how to read an engine's idle counters, and who may be absent. */
+export const REPLACED_PATH_PROBES: Readonly<Record<string, { idle?: { type: "vllm-metrics"; port: number } | { type: "omlx-status"; settings: string }; allowAbsent?: true }>> = {
+  "supa\nvllm.service": { idle: { type: "vllm-metrics", port: 8000 } },
+  "m3ultra\ngui/501/com.jr.deepseek": { idle: { type: "omlx-status", settings: "/Users/jr/deepseek-serve/state/settings.json" } },
+  "m3ultra\napp-reboot-optical-matrix-3bl2a4": { allowAbsent: true }, "9mini\napp-hack-optical-monitor-v1ioak": { allowAbsent: true },
+  "m1studio\nsystem/bot.brut.nmv-llm-relay": { allowAbsent: true },
+};
 export const replacedPathReceiptSchema = z.object({ version: z.literal(1), kind: z.literal("replaced_path_boundary_receipt"),
   planHash: sha, observedAt: at, hops: z.array(replacedPathHopSchema).min(2).max(8) }).strict();
 export const replacedPathEvidenceShape = z.object({ version: z.literal(1), kind: z.literal("replaced_path_boundary_exit"),
@@ -59,13 +70,22 @@ export const REPLACED_PATH_PLAN_MAX_AGE_MS = 60 * 60_000;
 export const REPLACED_PATH_RECEIPT_MAX_AGE_MS = 24 * 60 * 60_000;
 export function replacedPathPlanHash(plan: ReplacedPathPlan) { return providerBoundaryCanonicalHash(plan); }
 
-/** Hops must be exactly the registered path, in order, each a single instance that started after the dispatch. */
+/** When the upstream hops last could have held the call: a replacement's start, or an absence's observation. */
+export function replacedPathUpstreamCutoff(hops: readonly ReplacedPathHop[]): number {
+  return Math.max(...hops.filter(hop => hop.role !== "provider").map(hop => Date.parse(hop.mode === "absent" ? hop.observedAt : hop.startedAt ?? "")));
+}
+/** Hops must be exactly the registered path, in order, each in a mode its role allows (see the registry comment). */
 export function validReplacedPathHops(plan: ReplacedPathPlan, receipt: ReplacedPathReceipt): boolean {
   const q = plan.request, required = replacedPathRequiredHops(q.owner.instanceId, q.providerBudgetId), ms = Date.parse;
-  return !!required && receipt.hops.length === required.length
+  const cutoff = replacedPathUpstreamCutoff(receipt.hops);
+  const modeValid = (hop: ReplacedPathHop) => hop.mode === "replaced" ? hop.startedAt !== null && ms(hop.startedAt) > ms(q.dispatchAt) && ms(hop.startedAt) <= ms(hop.observedAt)
+    : hop.mode === "idle" ? hop.role === "provider" && hop.startedAt !== null && ms(hop.startedAt) <= ms(hop.observedAt) && ms(hop.observedAt) > cutoff
+      : hop.role !== "owner" && hop.role !== "provider" && hop.startedAt === null && hop.incarnationId === "absent";
+  const present = receipt.hops.filter(hop => hop.mode !== "absent");
+  return !!required && receipt.hops.length === required.length && Number.isFinite(cutoff)
     && receipt.hops.every((hop, i) => isDeepStrictEqual({ role: hop.role, host: hop.host, kind: hop.kind, service: hop.service }, required[i])
-      && ms(hop.startedAt) > ms(q.dispatchAt) && ms(hop.startedAt) <= ms(hop.observedAt) && ms(hop.observedAt) <= ms(receipt.observedAt))
-    && new Set(receipt.hops.map(hop => `${hop.host}\n${hop.incarnationId}`)).size === receipt.hops.length;
+      && modeValid(hop) && ms(hop.observedAt) <= ms(receipt.observedAt))
+    && new Set(present.map(hop => `${hop.host}\n${hop.incarnationId}`)).size === present.length;
 }
 export function validReplacedPathEvidence(e: z.infer<typeof replacedPathEvidenceShape>): boolean {
   const p = e.plan, q = p.request, r = e.receipt, ms = Date.parse, now = ms(e.evaluatedAt);

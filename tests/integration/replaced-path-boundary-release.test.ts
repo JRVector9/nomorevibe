@@ -31,7 +31,7 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits
   routes: [{ routeId: "product-translate", provider: "abcllm", model, providerBudgetId: "abcllm-m1-qwen", groupId: "m1-qwen" }] };
 const replacedReceipt = (p: ReplacedPathPlan): ReplacedPathReceipt => {
   const observed = new Date(Math.max(Date.now() - 1000, Date.parse(p.createdAt))).toISOString();
-  const hops = (replacedPathRequiredHops(p.request.owner.instanceId, p.request.providerBudgetId) ?? []).map((hop, i) => ({ ...hop,
+  const hops = (replacedPathRequiredHops(p.request.owner.instanceId, p.request.providerBudgetId) ?? []).map((hop, i) => ({ ...hop, mode: "replaced" as const,
     incarnationId: `incarnation-${i}`, startedAt: new Date(Date.parse(dispatchAt) + 60_000 + i).toISOString(), observedAt: observed,
     singleInstance: true as const, artifactHash: sha(`artifact-${i}`) }));
   return { version: 1, kind: "replaced_path_boundary_receipt", planHash: replacedPathPlanHash(p), observedAt: observed, hops };
@@ -68,6 +68,20 @@ it("plans from the exact ledger row, DRAIN pin and writer", async () => {
   for (const hop of early.hops) hop.observedAt = before;
   early.observedAt = before;
   expect(await sqlValid(evidenceFor(plan, early)), "a replacement read back before the plan stays valid").toBe(true);
+  // Engine idle after every upstream hop was replaced; relay absent. Same rule in SQL as in TypeScript.
+  const idle = structuredClone(receipt), engine = idle.hops[4], relay = idle.hops[3];
+  Object.assign(relay, { mode: "absent", incarnationId: "absent", startedAt: null, observedAt: new Date(Date.parse(relay.observedAt) - 1).toISOString() });
+  Object.assign(engine, { mode: "idle", startedAt: new Date(Date.parse(dispatchAt) - 3_600_000).toISOString() });
+  expect(await sqlValid(evidenceFor(plan, idle))).toBe(true);
+  for (const mutate of [
+    (r: ReplacedPathReceipt) => { r.hops[4].observedAt = r.hops[0].startedAt!; },
+    (r: ReplacedPathReceipt) => { r.hops[4].observedAt = r.hops[3].observedAt; },
+    (r: ReplacedPathReceipt) => { Object.assign(r.hops[0], { mode: "idle" }); },
+    (r: ReplacedPathReceipt) => { Object.assign(r.hops[0], { mode: "absent", incarnationId: "absent", startedAt: null }); },
+    (r: ReplacedPathReceipt) => { Object.assign(r.hops[4], { mode: "absent", incarnationId: "absent", startedAt: null }); },
+    (r: ReplacedPathReceipt) => { Object.assign(r.hops[3], { incarnationId: "relay-1" }); },
+    (r: ReplacedPathReceipt) => { Object.assign(r.hops[4], { mode: "replaced" }); },
+  ]) { const r = structuredClone(idle); mutate(r); expect(await sqlValid(evidenceFor(plan, r))).toBe(false); }
 });
 it("SQL denies an unreplaced, missing, reordered or unregistered hop", async () => {
   for (const mutate of [

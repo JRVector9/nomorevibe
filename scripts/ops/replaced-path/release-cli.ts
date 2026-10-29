@@ -9,8 +9,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { parseDatabaseUrl } from "../dr/promotion";
-import { replacedPathHopSchema, replacedPathPlanHash, replacedPathPlanSchema, replacedPathReceiptSchema, replacedPathRequiredHops,
-  validReplacedPathHops, replacedPathArtifactHashes, type ReplacedPathHop } from "@/lib/llm/replaced-path-boundary-contract";
+import { REPLACED_PATH_PROBES, replacedPathHopSchema, replacedPathPlanHash, replacedPathPlanSchema, replacedPathReceiptSchema, replacedPathRequiredHops,
+  validReplacedPathHops, replacedPathArtifactHashes, type ReplacedPathHop, type ReplacedPathPlan } from "@/lib/llm/replaced-path-boundary-contract";
 
 const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 /** Registry host → this operator shell's SSH alias. m1studio is reached only through device_admin. */
@@ -39,11 +39,20 @@ function options(args: readonly string[], allowed: readonly string[], flags: rea
     has: (key: string) => opts.has(key), flag: (name: string) => set.has(name) };
 }
 const readPlan = (path: string) => replacedPathPlanSchema.parse(JSON.parse(privateFile(path).toString("utf8")));
-/** Program text for `python3 -I -`: the reviewed helper with its request bound in, so stdin carries only reviewed code. */
-export function hopProgram(request: { role: string; host: string; kind: string; service: string }) {
+/** Program text for `python3 -I -`: the reviewed helper with its request (and registered probe options) bound in, so stdin carries only reviewed code. */
+export function hopProgram(hop: { role: string; host: string; kind: string; service: string }) {
+  const probe = REPLACED_PATH_PROBES[`${hop.host}\n${hop.service}`] ?? {}, request = { role: hop.role, host: hop.host, kind: hop.kind, service: hop.service, ...probe };
   return `import io,sys\nsys.stdin=io.StringIO(${JSON.stringify(JSON.stringify(request))})\n${readFileSync(HOP_SOURCE, "utf8")}`;
 }
-const bundleSchema = z.array(z.object({ hop: replacedPathHopSchema, artifact: z.string().min(2).max(1024 * 1024) }).strict()).min(1).max(8);
+const bundleHopSchema = replacedPathHopSchema.omit({ mode: true }).extend({ idle: z.boolean().nullable() }).strict();
+const bundleSchema = z.array(z.object({ hop: bundleHopSchema, artifact: z.string().min(2).max(1024 * 1024) }).strict()).min(1).max(8);
+type BundleHop = z.infer<typeof bundleHopSchema>;
+/** Prefer the strongest fact: a replacement, else an observed absence, else (engine only) an idle readback. Validation still decides. */
+export function hopMode(plan: ReplacedPathPlan, hop: BundleHop): ReplacedPathHop {
+  const { idle, ...rest } = hop;
+  const mode = hop.startedAt === null ? "absent" : Date.parse(hop.startedAt) > Date.parse(plan.request.dispatchAt) ? "replaced" : idle === true ? "idle" : "replaced";
+  return { ...rest, mode };
+}
 
 async function withDatabase<T>(load: () => Promise<T>) {
   const chunks: Buffer[] = [];
@@ -93,7 +102,7 @@ export async function replacedPathMain(args: readonly string[]): Promise<unknown
     const plan = readPlan(o.get("plan")), dir = o.get("artifact-dir");
     const entries = o.get("bundle").split(",").flatMap(path => bundleSchema.parse(JSON.parse(privateFile(path).toString("utf8"))));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const byRole = new Map<string, ReplacedPathHop>();
+    const byRole = new Map<string, BundleHop>();
     for (const { hop, artifact } of entries) {
       if (sha(artifact) !== hop.artifactHash || byRole.has(`${hop.role}\n${hop.service}`)) throw new Error("replaced_path_bundle_conflict");
       byRole.set(`${hop.role}\n${hop.service}`, hop);
@@ -102,9 +111,9 @@ export async function replacedPathMain(args: readonly string[]): Promise<unknown
       catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; writePrivate(file, artifact); }
     }
     const required = replacedPathRequiredHops(plan.request.owner.instanceId, plan.request.providerBudgetId) ?? [];
-    const hops = required.map(r => byRole.get(`${r.role}\n${r.service}`));
-    if (hops.some(hop => !hop)) throw new Error("replaced_path_hop_missing");
-    const observedAt = hops.map(hop => hop!.observedAt).sort().at(-1)!;
+    const found = required.map(r => byRole.get(`${r.role}\n${r.service}`));
+    if (found.some(hop => !hop)) throw new Error("replaced_path_hop_missing");
+    const hops = found.map(hop => hopMode(plan, hop!)), observedAt = hops.map(hop => hop.observedAt).sort().at(-1)!;
     const receipt = replacedPathReceiptSchema.parse({ version: 1, kind: "replaced_path_boundary_receipt", planHash: replacedPathPlanHash(plan), observedAt, hops });
     if (!validReplacedPathHops(plan, receipt)) throw new Error("replaced_path_hops_not_replaced_after_dispatch");
     return { receiptSha: writePrivate(o.get("out"), JSON.stringify(receipt)), observedAt };

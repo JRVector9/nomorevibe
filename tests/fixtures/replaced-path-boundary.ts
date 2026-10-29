@@ -12,7 +12,7 @@ export function replacedPathFixture(budget = "abcllm-m1-qwen", instanceId = "m3-
       routeId: "product-translate", provider: "abcllm", model: "[m1] qwen3.8-flash-next" },
     control: { mode: "draining", epoch: 1, revision: 7, policyHash: h, updatedAt: at(-30_000).replace("Z", "000Z") },
     writer: { lineageId: randomUUID(), writerEpoch: 1 } };
-  const hops = (replacedPathRequiredHops(instanceId, budget) ?? []).map((hop, i) => ({ ...hop, incarnationId: `incarnation-${i}`,
+  const hops = (replacedPathRequiredHops(instanceId, budget) ?? []).map((hop, i) => ({ ...hop, mode: "replaced" as const, incarnationId: `incarnation-${i}`,
     startedAt: at(-1_800_000 + i * 1000), observedAt: at(-5000 + i * 100), singleInstance: true as const, artifactHash: sha(`artifact-${i}`) }));
   const receipt: ReplacedPathReceipt = { version: 1, kind: "replaced_path_boundary_receipt", planHash: replacedPathPlanHash(plan),
     observedAt: at(-2000), hops };

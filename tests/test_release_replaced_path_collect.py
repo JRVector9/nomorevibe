@@ -58,25 +58,47 @@ class MacProcessTest(unittest.TestCase):
     def ps(self, rows):
         return '\n'.join('%d %d %s %s' % (pid, ppid, lstart(start), comm) for pid, ppid, start, comm in rows) + '\n'
 
+    def launchctl(self, out, code=0):
+        return mock.patch.object(hop.subprocess, 'run', return_value=mock.Mock(returncode=code, stdout=out))
+
     def test_oldest_descendant_defines_start(self):
         rows = [(1, 0, 100, '/sbin/launchd'), (500, 1, 1_790_000_100, 'omlx-server'), (501, 500, 1_790_000_050, 'helper'), (9, 1, 1_700_000_000, 'other')]
-        table = {'/bin/launchctl print gui/501/com.jr.deepseek': '\tstate = running\n\tpid = 500\n', '/bin/ps': self.ps(rows)}
-        with mock.patch.object(hop, 'run', fake_run(table)):
+        with mock.patch.object(hop, 'run', fake_run({'/bin/ps': self.ps(rows)})), self.launchctl('\tstate = running\n\tpid = 500\n'):
             value = hop.collect({'role': 'provider', 'host': 'm3ultra', 'kind': 'launchd', 'service': 'gui/501/com.jr.deepseek'})
         self.assertEqual(value['hop']['startedAt'], hop.iso(1_790_000_050 * 1000))
         self.assertEqual(value['hop']['incarnationId'], 'pid:500:1790000100')
 
     def test_old_copy_outside_the_job_is_refused(self):
         rows = [(500, 1, 1_790_000_100, 'omlx-server'), (77, 1, 1_700_000_000, 'omlx-server')]
-        table = {'/bin/launchctl print gui/501/com.jr.deepseek': 'state = running\npid = 500\n', '/bin/ps': self.ps(rows)}
-        with mock.patch.object(hop, 'run', fake_run(table)):
+        with mock.patch.object(hop, 'run', fake_run({'/bin/ps': self.ps(rows)})), self.launchctl('state = running\npid = 500\n'):
             with self.assertRaisesRegex(hop.HopError, 'second_instance_present'):
                 hop.collect({'role': 'provider', 'host': 'm3ultra', 'kind': 'launchd', 'service': 'gui/501/com.jr.deepseek'})
 
-    def test_stopped_job_is_refused(self):
-        with mock.patch.object(hop, 'run', fake_run({'/bin/launchctl print system/bot.brut.nmv-llm-relay': 'state = waiting\n'})):
-            with self.assertRaisesRegex(hop.HopError, 'launchd_not_running'):
-                hop.collect({'role': 'relay', 'host': 'm1studio', 'kind': 'launchd', 'service': 'system/bot.brut.nmv-llm-relay'})
+    def test_unloaded_relay_is_absent_only_when_allowed(self):
+        request = {'role': 'relay', 'host': 'm1studio', 'kind': 'launchd', 'service': 'system/bot.brut.nmv-llm-relay'}
+        with self.launchctl('', code=113):
+            with self.assertRaisesRegex(hop.HopError, 'service_absent'):
+                hop.collect(request)
+            value = hop.collect({**request, 'allowAbsent': True})
+        self.assertEqual((value['hop']['incarnationId'], value['hop']['startedAt'], value['hop']['idle']), ('absent', None, None))
+        self.assertEqual(value['hop']['artifactHash'], hashlib.sha256(value['artifact'].encode()).hexdigest())
+
+    def test_loaded_job_without_a_process_is_absent(self):
+        with self.launchctl('\tstate = not running\n'):
+            value = hop.collect({'role': 'relay', 'host': 'm1studio', 'kind': 'launchd', 'service': 'system/bot.brut.nmv-llm-relay', 'allowAbsent': True})
+        self.assertIsNone(value['hop']['startedAt'])
+
+    def test_omlx_idle_counters_never_leave_the_token(self):
+        rows = [(500, 1, 1_790_000_100, 'omlx-server')]
+        settings = io.StringIO(json.dumps({'auth': {'api_key': 'secret-token'}, 'server': {'port': 8010}}))
+        status = {'active_requests': 0, 'waiting_requests': 0, 'status': 'ok'}
+        with mock.patch.object(hop, 'run', fake_run({'/bin/ps': self.ps(rows)})), self.launchctl('state = running\npid = 500\n'), \
+                mock.patch('builtins.open', return_value=settings), mock.patch.object(hop, 'get_json', return_value=status) as get:
+            value = hop.collect({'role': 'provider', 'host': 'm3ultra', 'kind': 'launchd', 'service': 'gui/501/com.jr.deepseek',
+                                 'idle': {'type': 'omlx-status', 'settings': '/x/settings.json'}})
+        self.assertIs(value['hop']['idle'], True)
+        self.assertEqual(get.call_args.args, ('http://127.0.0.1:8010/api/status', 'secret-token'))
+        self.assertNotIn('secret-token', value['artifact'])
 
     def test_listener_needs_exactly_one_owner(self):
         result = mock.Mock(stdout='p10\np11\n')
@@ -95,6 +117,21 @@ class SystemdTest(unittest.TestCase):
             value = hop.collect({'role': 'provider', 'host': 'supa', 'kind': 'systemd', 'service': 'vllm.service'})
         self.assertEqual(value['hop']['startedAt'], hop.iso((1_790_000_000 + 300) * 1000))
         self.assertEqual(value['hop']['incarnationId'], 'abc123')
+
+
+class IdleTest(unittest.TestCase):
+    METRICS = ('# HELP vllm:num_requests_running x\nvllm:num_requests_running{engine="0",model_name="m"} %s\n'
+               'vllm:num_requests_waiting{engine="0",model_name="m"} %s\nvllm:num_requests_waiting_by_reason{reason="capacity"} 5.0\n')
+
+    def test_vllm_counts_ignore_by_reason_series(self):
+        with mock.patch.object(hop, 'get_json', return_value=self.METRICS % ('0.0', '0.0')):
+            self.assertEqual(hop.idle_counts({'type': 'vllm-metrics', 'port': 8000}), {'type': 'vllm-metrics', 'running': 0.0, 'waiting': 0.0})
+        with mock.patch.object(hop, 'get_json', return_value=self.METRICS % ('1.0', '0.0')):
+            self.assertEqual(hop.idle_counts({'type': 'vllm-metrics', 'port': 8000})['running'], 1.0)
+
+    def test_unknown_probe_is_refused(self):
+        with self.assertRaisesRegex(hop.HopError, 'idle_probe_denied'):
+            hop.idle_counts({'type': 'shell'})
 
 
 class RequestTest(unittest.TestCase):

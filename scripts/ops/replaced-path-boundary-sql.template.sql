@@ -14,9 +14,9 @@ CREATE FUNCTION nmv_replaced_path_required_hops(owner_instance text, budget text
   FROM (SELECT $owners$__OWNERS__$owners$::jsonb->owner_instance AS o, $providers$__PROVIDERS__$providers$::jsonb->budget AS p) x
 $$;
 --> statement-breakpoint
--- Every process on the call path was replaced after the dispatch and is a single instance. No stop, usage, success or TTL release.
+-- Every process on the call path is replaced, absent, or (engine only) idle after its upstream. No stop, usage, success or TTL release.
 CREATE FUNCTION nmv_replaced_path_release_valid(e jsonb) RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
-DECLARE p jsonb:=e->'plan'; q jsonb:=p->'request'; r jsonb:=e->'receipt'; req jsonb; h jsonb; i integer; t text;
+DECLARE p jsonb:=e->'plan'; q jsonb:=p->'request'; r jsonb:=e->'receipt'; req jsonb; h jsonb; i integer; t text; cutoff timestamptz;
 BEGIN
   IF NOT nmv_replaced_provider_shape_valid(e,$shape$__EVIDENCE_SHAPE__$shape$::jsonb) THEN RETURN false; END IF;
   IF e->'requestId' IS DISTINCT FROM q->'requestId' OR e->'owner' IS DISTINCT FROM q->'owner' OR e->'dispatchAt' IS DISTINCT FROM q->'dispatchAt'
@@ -34,15 +34,27 @@ BEGIN
     OR (e->>'evaluatedAt')::timestamptz-(r->>'observedAt')::timestamptz>interval '24 hours' THEN RETURN false; END IF;
   req:=nmv_replaced_path_required_hops(q->'owner'->>'instanceId',q->>'providerBudgetId');
   IF req IS NULL OR jsonb_array_length(r->'hops')<>jsonb_array_length(req)
-    OR (SELECT count(DISTINCT (x->>'host')||chr(10)||(x->>'incarnationId')) FROM jsonb_array_elements(r->'hops') x)<>jsonb_array_length(req) THEN RETURN false; END IF;
+    OR (SELECT count(DISTINCT (x->>'host')||chr(10)||(x->>'incarnationId')) FROM jsonb_array_elements(r->'hops') x WHERE x->>'mode'<>'absent')
+      <>(SELECT count(*) FROM jsonb_array_elements(r->'hops') x WHERE x->>'mode'<>'absent') THEN RETURN false; END IF;
+  -- An idle engine counts only after every hop above it was replaced (its start) or absent (its observation).
+  SELECT max(CASE WHEN x->>'mode'='absent' THEN (x->>'observedAt')::timestamptz ELSE (x->>'startedAt')::timestamptz END) INTO cutoff
+    FROM jsonb_array_elements(r->'hops') x WHERE x->>'role'<>'provider';
+  IF cutoff IS NULL THEN RETURN false; END IF;
   FOR i IN 0..jsonb_array_length(req)-1 LOOP
     h:=r->'hops'->i;
     IF jsonb_build_object('role',h->'role','host',h->'host','kind',h->'kind','service',h->'service') IS DISTINCT FROM req->i
-      OR to_char((h->>'startedAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')<>h->>'startedAt'
       OR to_char((h->>'observedAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')<>h->>'observedAt'
-      OR (h->>'startedAt')::timestamptz<=(q->>'dispatchAt')::timestamptz OR (h->>'startedAt')::timestamptz>(h->>'observedAt')::timestamptz
-      OR (h->>'observedAt')::timestamptz>(r->>'observedAt')::timestamptz
-      THEN RETURN false; END IF;
+      OR (h->>'observedAt')::timestamptz>(r->>'observedAt')::timestamptz THEN RETURN false; END IF;
+    IF h->>'mode'='absent' THEN
+      IF h->>'role' IN ('owner','provider') OR h->'startedAt'<>'null'::jsonb OR h->>'incarnationId'<>'absent' THEN RETURN false; END IF;
+    ELSIF h->>'mode' IN ('replaced','idle') THEN
+      IF jsonb_typeof(h->'startedAt')<>'string'
+        OR to_char((h->>'startedAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')<>h->>'startedAt'
+        OR (h->>'startedAt')::timestamptz>(h->>'observedAt')::timestamptz
+        OR h->>'mode'='replaced' AND (h->>'startedAt')::timestamptz<=(q->>'dispatchAt')::timestamptz
+        OR h->>'mode'='idle' AND (h->>'role'<>'provider' OR (h->>'observedAt')::timestamptz<=cutoff) THEN RETURN false; END IF;
+    ELSE RETURN false;
+    END IF;
   END LOOP;
   RETURN true;
 EXCEPTION WHEN OTHERS THEN RETURN false;

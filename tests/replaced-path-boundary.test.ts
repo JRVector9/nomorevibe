@@ -58,6 +58,31 @@ for (const [name, change] of negatives) it(`rejects ${name}`, () => {
   const { evidence } = replacedPathFixture(); change(evidence); evidence.receipt.planHash = replacedPathPlanHash(evidence.plan);
   expect(modelDispatchReleaseEvidenceSchema.safeParse(evidence).success).toBe(false);
 });
+it("accepts an idle engine after its upstream was replaced, and an absent relay", () => {
+  const { evidence } = replacedPathFixture(), hops = evidence.receipt.hops;
+  Object.assign(hops[3], { mode: "absent", incarnationId: "absent", startedAt: null });
+  Object.assign(hops[4], { mode: "idle", startedAt: new Date(Date.parse(evidence.dispatchAt) - 60_000).toISOString() });
+  expect(modelDispatchReleaseEvidenceSchema.safeParse(evidence).success).toBe(true);
+});
+const modeNegatives: [string, (e: E) => void][] = [
+  ["an idle engine observed before an upstream replacement", e => { const h = e.receipt.hops;
+    Object.assign(h[4], { mode: "idle", startedAt: e.dispatchAt, observedAt: h[2].startedAt }); }],
+  ["an idle engine observed at the same moment as an absent relay", e => { const h = e.receipt.hops;
+    Object.assign(h[3], { mode: "absent", incarnationId: "absent", startedAt: null });
+    Object.assign(h[4], { mode: "idle", startedAt: e.dispatchAt, observedAt: h[3].observedAt }); }],
+  ["an idle owner", e => { Object.assign(e.receipt.hops[0], { mode: "idle" }); }],
+  ["an idle gateway", e => { Object.assign(e.receipt.hops[1], { mode: "idle" }); }],
+  ["an absent owner", e => { Object.assign(e.receipt.hops[0], { mode: "absent", incarnationId: "absent", startedAt: null }); }],
+  ["an absent engine", e => { Object.assign(e.receipt.hops[4], { mode: "absent", incarnationId: "absent", startedAt: null }); }],
+  ["an absent hop with a start", e => { Object.assign(e.receipt.hops[3], { mode: "absent", incarnationId: "absent" }); }],
+  ["an absent hop with an incarnation", e => { Object.assign(e.receipt.hops[3], { mode: "absent", startedAt: null }); }],
+  ["a replaced hop without a start", e => { Object.assign(e.receipt.hops[1], { startedAt: null }); }],
+  ["an engine called replaced but started before dispatch", e => { Object.assign(e.receipt.hops[4], { startedAt: e.dispatchAt }); }],
+];
+for (const [name, change] of modeNegatives) it(`rejects ${name}`, () => {
+  const { evidence } = replacedPathFixture(); change(evidence); evidence.receipt.planHash = replacedPathPlanHash(evidence.plan);
+  expect(modelDispatchReleaseEvidenceSchema.safeParse(evidence).success).toBe(false);
+});
 it("accepts a replacement read back before the plan", () => {
   const { evidence } = replacedPathFixture();
   for (const hop of evidence.receipt.hops) hop.observedAt = new Date(Date.parse(evidence.plan.createdAt) - 600_000).toISOString();

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { replacedPathDigest as sha, replacedPathReceiptSchema } from "@/lib/llm/replaced-path-boundary-contract";
-import { hopProgram, replacedPathMain } from "@/scripts/ops/replaced-path/release-cli";
+import { hopMode, hopProgram, replacedPathMain } from "@/scripts/ops/replaced-path/release-cli";
 import { replacedPathFixture } from "./fixtures/replaced-path-boundary";
 
 const dirs: string[] = [];
@@ -11,7 +11,8 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "replaced-path-cli-")); dirs.push(dir);
   const { plan, receipt } = replacedPathFixture();
-  const bundle = receipt.hops.map(hop => { const artifact = JSON.stringify({ hop: hop.service }); return { hop: { ...hop, artifactHash: sha(artifact) }, artifact }; });
+  const bundle = receipt.hops.map(({ mode: _mode, ...hop }) => { void _mode; const artifact = JSON.stringify({ hop: hop.service });
+    return { hop: { ...hop, idle: null as boolean | null, artifactHash: sha(artifact) }, artifact }; });
   writeFileSync(join(dir, "plan.json"), JSON.stringify(plan), { mode: 0o600 });
   return { dir, plan, bundle };
 }
@@ -38,8 +39,18 @@ it("refuses a tampered artifact, a missing hop and a world-readable input", asyn
   writeFileSync(join(dir, "open.json"), JSON.stringify(bundle), { mode: 0o644 });
   await expect(replacedPathMain(args(join(dir, "open.json")))).rejects.toThrow("replaced_path_private_file_required");
 });
+it("decides each hop mode from the dispatch: replaced, absent, or idle engine", () => {
+  const { plan, bundle } = setup(), before = new Date(Date.parse(plan.request.dispatchAt) - 1000).toISOString();
+  expect(hopMode(plan, bundle[0].hop).mode).toBe("replaced");
+  expect(hopMode(plan, { ...bundle[3].hop, startedAt: null, incarnationId: "absent" }).mode).toBe("absent");
+  expect(hopMode(plan, { ...bundle[4].hop, startedAt: before, idle: true }).mode).toBe("idle");
+  // Not idle and not replaced stays "replaced" so validation, not the assembler, refuses it.
+  expect(hopMode(plan, { ...bundle[4].hop, startedAt: before, idle: false }).mode).toBe("replaced");
+  expect("idle" in hopMode(plan, bundle[0].hop)).toBe(false);
+});
 it("binds the reviewed helper and only the hop request into the remote program", () => {
   const program = hopProgram({ role: "provider", host: "supa", kind: "systemd", service: "vllm.service" });
   expect(program.startsWith('import io,sys\nsys.stdin=io.StringIO("{\\"role\\":\\"provider\\"')).toBe(true);
+  expect(program).toContain('\\"idle\\":{\\"type\\":\\"vllm-metrics\\",\\"port\\":8000}');
   expect(program).toContain(readFileSync("scripts/ops/replaced-path/collect_hop.py", "utf8"));
 });
