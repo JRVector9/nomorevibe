@@ -115,7 +115,7 @@ function ModelOperationDialog({ busy, onClose, children }: { busy: boolean; onCl
 }
 
 function ProbeNotice({ result }: { result: ModelProbeResult }) {
-  return <div role="status" className="mt-2 flex flex-col gap-1 text-[12px]">
+  return <div role="status" className="mt-2 flex flex-col gap-1 text-[13px]">
     <p>{result.listed === undefined ? "목록 미확인" : result.listed ? "모델 목록에 있음" : "모델 목록에 없음"} · {result.listMs ?? "—"}ms</p>
     {result.error && <p>{result.error}</p>}<p>시험 호출: {result.callMs === undefined ? result.callBlocked : `${result.callMs}ms`}</p>
   </div>;

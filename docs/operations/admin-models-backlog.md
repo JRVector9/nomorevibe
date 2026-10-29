@@ -93,3 +93,6 @@
 - 후속 PR #716을 생성했다. 초기 head 43ce5422 / a5030746의 CI 40806021121·40806168506은 scope에서 `lib/operations/admin-models-observation.ts:57: new blank line at EOF`로 중단됐다. runtime 검사는 실행되지 않았으며 성공으로 기록하지 않는다. 작업 트리 diff만 확인해 앞선 관측 커밋의 공백을 놓친 것을 PR 전체 base diff 검사로 수정했다.
 
 - #716 CI 40806263673의 첫 DB ledger는 1파일4시험 통과 후 product-translation-model-capacity 로드에서 `This module cannot be imported from a Client Component module. It should only be used from a Server Component.`로 실패했다. 공용 Node 워커 모듈에 둔 server-only 표식이 원인이었으며 제거했다. 새 admin-models-worker-runtime.test.ts가 실제 Node/tsx 자식 프로세스로 풀 모듈을 로드하는 경계를 검증한다. 현재 `vitest run admin-models` 6파일34시험 PASS. CI의 나머지 실패가 같은 원인인지 로그를 보존해 확인한다.
+
+- 40806263673 unit(1) 추가 실패도 확인: 공개 페이지 facade가 기존 resolver의 언어 판별 export를 불필요하게 요구한 것, generic runJob에 새 설정 조회를 넣은 것, 신규 연결 안내의 12px 문구가 저장소 최소 글자 기준에 맞지 않은 것. 실제 모델 handler 등록 경계(JOBS)로 범위 적용을 옮기고 generic runner는 기존 모습으로 복구했다. 번역할 필요 없는 공개 검색은 원 resolver로 바로 위임하고 안내를 13px로 고쳤다. 기존 실패 시험 파일/기대값은 바꾸지 않았다.
+- 재검증: admin-models + 해당 공개 화면·deferral/replay·글자/UI·worker runtime 13파일154시험 PASS. 새 모델 handler는 실제 lease가 있는 진입점에서만 DB 풀 범위를 연다. unleased handler의 기존 거절 계약은 보존한다.
