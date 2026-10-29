@@ -20,7 +20,9 @@ describe("model registry equipment identity", () => {
     const env = twins();
     expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL: "[m1] same-model" })).toBe("[m1] same-model");
     expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL_KEY: "m1:translation", PRODUCT_TRANSLATION_MODEL: "obsolete" })).toBe("[m1] same-model");
-    expect(() => configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL: "same-model" })).toThrow("ambiguous_model_identity");
+    // A shared bare name follows the registry route: only M1 serves product translation; GPU3090 keeps direct review.
+    expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL: "same-model" })).toBe("[m1] same-model");
+    expect(configuredModel("direct-review", { ...env, AUDIT_SECOND_OPINION_MODEL: "same-model" })).toBe("same-model");
     expect(() => configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL_KEY: "gpu3090:review" })).toThrow("invalid_model_key");
   });
   it("replaces model, provider, address and resource configuration without editing consumers", () => {
@@ -42,7 +44,7 @@ describe("model registry equipment identity", () => {
       limits: { "product-search-profile": { maxTokens: 900, concurrency: 6 } } }) };
     expect(modelLimits("product-search-profile", env)).toEqual({ maxTokens: 900, concurrency: 2 });
     expect(modelLimits("product-search-profile", {})).toEqual({ maxTokens: 500, concurrency: 2 });
-    expect(() => modelBaseUrl("relay", {}, "abcllm")).toThrow("model_provider_adapter_mismatch");
+    expect(() => modelBaseUrl("direct-review", {}, "abcllm")).toThrow("model_provider_adapter_mismatch");
     expect(() => configuredModelForProvider("product-intro-check", "codex-cli", {})).toThrow("model_provider_adapter_mismatch");
     expect(() => configuredModelForProvider("product-intro-check", "claude-cli", { INTRO_CHECK_MODEL: "bad model" })).toThrow("invalid_cli_model");
   });

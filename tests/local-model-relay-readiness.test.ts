@@ -3,9 +3,11 @@ import { relayNativeReadinessVerifier, relayUpstreamModels } from "../scripts/lo
 import { localModelContractHash, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import type { RelayReadinessContext } from "../scripts/local-model-relay/protocol";
 
-const contract: LocalModelServingContract = { version: 1, protocol: "local-openai-chat-v1", backendId: "m1-qwen", provider: "local-direct",
-  physicalGroup: "m1", endpoint: "http://100.64.0.2:8792/v1/chat/completions", model: "qwen3.8-flash-next", responseModel: "qwen3.8-flash-next",
-  modelFamily: "qwen3.8-flash-next", deploymentRevision: "m1-test-q4", contextWindowTokens: 32000, totalTokenBound: 32000,
+// The registry's default M1 relay entry; Qwen is the old M1 id that must no longer pass.
+const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit", QWEN = "qwen3.8-flash-next";
+const contract: LocalModelServingContract = { version: 1, protocol: "local-openai-chat-v1", backendId: "m1-gemma", provider: "local-direct",
+  physicalGroup: "m1", endpoint: "http://100.64.0.2:8792/v1/chat/completions", model: GEMMA, responseModel: GEMMA,
+  modelFamily: "gemma4-26b", deploymentRevision: "m1-test-q4", contextWindowTokens: 32000, totalTokenBound: 32000,
   maxOutputTokens: 1024, maxInputBytes: 100000, capabilities: { vision: true, jsonSchema: true },
   thinking: { mode: "disabled", parameter: "chat_template_kwargs.enable_thinking" }, termination: { kind: "response_only" } };
 const context: RelayReadinessContext = { upstreamModels: [contract.model], model: contract.model, deploymentRevision: contract.deploymentRevision, relayRevision: "a".repeat(40),
@@ -32,7 +34,7 @@ describe("실행 entry의 native 준비 확인", () => {
 
 it("requires a fresh exact upstream model id, never an alias or missing observation", () => {
   const verify = relayNativeReadinessVerifier(contract.endpoint, env);
-  for (const upstreamModels of [undefined, null, [], ["different-model"], ["[m1] " + contract.model]])
+  for (const upstreamModels of [undefined, null, [], ["different-model"], [QWEN], ["[m1] " + contract.model]])
     expect(verify({ ...context, upstreamModels }).ready).toBe(false);
   expect(verify({ ...context, upstreamModels: [contract.model] }).ready).toBe(true);
 });
@@ -45,8 +47,8 @@ it("uses the configured Gemma identity and family from the same registry", () =>
   const observation = { ...context, model, upstreamModels: [model], lastReceipt: { ...context.lastReceipt!, requestModel: model,
     terminal: { ...context.lastReceipt!.terminal!, models: [model] } } };
   expect(relayNativeReadinessVerifier(gemma.endpoint, configuration)(observation).ready).toBe(true);
-  expect(relayNativeReadinessVerifier(gemma.endpoint, configuration)({ ...observation, upstreamModels: [contract.model] }).ready).toBe(false);
-  expect(relayNativeReadinessVerifier(gemma.endpoint, { ...configuration, LOCAL_MODEL_RELAY_MODEL_FAMILY: contract.modelFamily })(observation).ready).toBe(false);
+  expect(relayNativeReadinessVerifier(gemma.endpoint, configuration)({ ...observation, upstreamModels: [QWEN] }).ready).toBe(false);
+  expect(relayNativeReadinessVerifier(gemma.endpoint, { ...configuration, LOCAL_MODEL_RELAY_MODEL_FAMILY: QWEN })(observation).ready).toBe(false);
 });
 it("reads only bounded successful upstream model lists with no redirect", async () => {
   for (const body of [{ data: [{ id: contract.model }] }, { data: [] }, { data: [{}] }, { data: "bad" }]) {

@@ -14,7 +14,8 @@ async function main() {
   const config = (() => { try { return localModelRelayConfig(); } catch { return fail("invalid_config"); } })();
   if (mode === "check") {
     console.log(JSON.stringify({ event: "local_model_relay.config_valid", host: config.host, port: config.port,
-      allowedClients: config.allowFrom.length, model: config.model, relayRevision: config.relayRevision,
+      allowedClients: config.allowFrom.length, equipment: config.equipment, model: config.model, allowedModels: config.models,
+      relayRevision: config.relayRevision,
       deploymentRevision: config.deploymentRevision, upstream: "127.0.0.1:8000", nativeCapacityReady: false }));
   } else if (mode === "status") {
     try {

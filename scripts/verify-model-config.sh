@@ -37,6 +37,7 @@ tests=(
   tests/publication-classify-readiness.test.ts tests/operations-publication-capacity.test.ts
   tests/admin-review-models.test.tsx tests/crawl-settings-form.test.ts tests/crawl-settings-changes.test.ts
   tests/second-voter-switch.test.tsx tests/operations-actions.test.ts tests/operations-action-contract.test.tsx tests/operations-work-owners.test.tsx
+  tests/m1-relay-model-config.test.ts tests/product-translate-model-registry.test.ts tests/local-model-relay-deadline.test.ts
 )
 for test_file in "${tests[@]}"; do
   [[ -f "$test_file" ]] || { printf 'Missing scoped test: %s\n' "$test_file" >&2; exit 1; }
