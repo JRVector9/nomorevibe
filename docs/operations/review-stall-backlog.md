@@ -1,3 +1,19 @@
+# 2026-10-29 현재 상태 — 단건 해제 코드 main 병합 / 운영 sudo 중단
+
+- [PR721](https://github.com/JRVector9/nomorevibe/pull/721) 병합 완료: `c42dcb0b16e317132f4218172e27ed64c19b3260`(07:58:53Z). 구현 head5a5bbefc의 [CI40837650963](https://github.com/JRVector9/nomorevibe/actions/runs/40837650963)은 필수check/typecheck/lint/build/unit2묶음/DB6묶음/직렬장부/PR이미지 모두 SUCCESS다. 이전 결제·한도 미시작 실패는 아래 이력에 남겼으며 이번 실행의 성공으로 구분한다. 결제·한도·관문 설정은 변경하지 않았다.
+- 원본 `/home/ubuntu/projects/nomorevibe`에서 최신main `bde9bcf7` fetch 후 `origin/main:scripts/ops/verify-prod-revision.sh` 존재 및00aa00e3 ancestry를 확인했다. 요청된 새 스크립트만 exclusive-create로 추가했고 main 및28ada57b와 바이트가 같다. 원본 HEAD edc56865/브랜치/기존 미추적9개는 그대로다. 기존 사용자 파일 덮어쓰기/원본 브랜치 전환/실행 비트 변경0.
+- 원본 경로 실제 판 검사: 요청한 ancestry루프 exit1(`mini-web 199a3ebb68772f1ccbefd397172effce72029796 lacks 00aa00e3`); bash 검증 스크립트 exit1(`m3-web: release 199a3ebb… does not contain required commit 00aa00e3…`). 이전 script부재 exit127은 해소됐지만 **운영 release 목표는 미달**이다. 별도 health12회 모두ok/dbok, 두 웹 모두199a3ebb.
+- 재실행 초반 남은 SSH wrapper가 없는 sandbox proxy를 호출해 Git3회/M1·M3각3회 연결종료였다. 승인된 전체권한 재실행은 proxy를 생성하지 않는 코드 경로임을 확인한 뒤 등록된 같은 호스트에 `/usr/bin/ssh -F /home/ubuntu/.ssh/config`로 기존 인증·host-key 검증을 유지해 읽기 접속을 복구했다. Git은 명령 단위 HTTPS와 기존 gh helper로 fetch/push했고 영구 remote/인증/SSH 설정은 변경하지 않았다.
+- PRIMARY REPEATABLE READ READ ONLY 신규 실측07:56:02Z: AI1 **95667→95724**, AI2 **91822→91867**(이번 재실행 비교; 최초06:24 기준95603/91774). 기존 서비스의 자연 증가이며 배포/모델 저장 뒤 성과가 아니다. 번역 완료 **16917→16917**, 마지막 갱신10/28 07:01:54Z. 새미확인(최초기준)1건/Supa65f8c399, 기존M1포함 indeterminate총2로 이전과 같다. 당시 dispatched0, capacity OPEN epoch1/revision7.
+- **현재 남은 차단은 M1 sudo 단계**: root readiness파일 stat은 `Permission denied`, 앞서 요청한 사용자 검토용 사본은 `No such file or directory`. 29877f65는 여전히indeterminate/C40768/terminalNULL/settled_atNULL이고 운영 해제 감사번호 없음. 사용자 sudo 중단 규칙에 따라 운영 migration/dry-run/apply/DRAIN/모델 저장/배포/새 모델POST를 실행하지 않았다.
+- 사람이 M1에서 할 다음 한 줄(원본을 보존하는 검토용 사본 생성): `sudo /usr/bin/install -o jinwooro -g staff -m 600 /var/nmvllm/native-readback.json /Users/jinwooro/.local/share/nomorevibe-m1-translation-20261028/receipts-20261029/native-readback-review-49b91700.json`. 미실행이다. 이 사본 생성은 실제 모델 수리/해제/배포 완료가 아니다.
+- main에는 [PR722](https://github.com/JRVector9/nomorevibe/pull/722)의 Gemma relay 모델/readiness와 Supa rootHandoff 코드도 들어왔다. 별도 차선의 파일·검증 이력은 보존했고 운영 설치/권한/정지·재시작은 하지 않았다. 해당 root argv 목록을 현재 사용자 규칙과 실제 snapshot 검토 없이 실행하지 않는다. Supa65f8c399의 실제 원격 종료 근거도 아직 없다.
+- 남음(B~D): 사람 권한의 정식 M1 relay/readiness 수리 및 Supa 종료 근거→merged 단건 CLI의 정식 dry-run/apply·감사→표준 plan/deploy·OPEN·두 웹 판 exit0→/admin/models 버튼 정식 Supa+[MLX] 저장·감사·스크린샷·30분 모델별 성공/AI1·AI2/번역 증가/새미확인0 실측. 운영 DB 쓰기/해제/배포0이며 저장 후 모델별 성공·UI/30분 관측은 미측정이다.
+
+---
+
+아래는 각 실행 시점의 이전 기록이며 현재 상태는 위 절을 따른다.
+
 # 2026-10-29 M1 교체 경계 — 코드 준비 완료, 운영·병합 차단
 
 재실행 확인(2026-10-29 07:43 UTC): 기존 구현·시험은 반복하지 않았다. GitHub API와 이번 명령에만 적용한 동일 저장소 HTTPS fetch로 최신 main `00aa00e3`를 대조했고 정상 merge는 Already up to date다. 일반 `git fetch origin`은 간격을 둔3회 모두 exit128/`Connection closed by UNKNOWN port 65535`로 실패했다. 영구 remote/SSH/인증 설정은 바꾸지 않았다. CI40835471662의 실패 job만1회 재요청한 attempt2도 scope/check가 실행 단계 없이 실패했으며 annotation은 동일한 계정 결제실패/사용한도 차단이다. 결제·한도·필수관문 변경 없음. 공개 health12회는 모두ok/dbok이며 m3-web·mini-web 둘 다199a3ebb다. M1 검토용 사본 조회와 M3 DB 측정용 SSH도 각각 간격을 둔3회 모두 exit255/같은 연결종료 오류였다. 따라서 이번 AI1·AI2/번역/새미확인/29877f65 현재 상태의 **신규 DB 측정 없음**. 아래07:23값은 이전 실행 실측이며 현재값으로 재사용하지 않는다. 사람의 M1 사본 생성 여부도 확인하지 못했다. 운영 쓰기/DRAIN/해제/모델 저장/마이그레이션/배포/새 모델 호출0, 원본 사용자 파일 변경0. main 병합은 필수CI 차단에 남아 있고 B~D도 그 선행조건에 막혔다.
