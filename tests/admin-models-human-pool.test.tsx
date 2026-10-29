@@ -7,8 +7,8 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings, setHumanRe
 vi.mock("@/lib/crawl/deepseek-review", () => ({ deepseekReviewReady: mocks.ready }));
 vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (fn: unknown) => fn }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-import { configuredHumanModelsReady } from "@/lib/operations/admin-models-human";
-import { scopedModel } from "@/lib/llm/model-registry";
+import { configuredHumanModelsReady, humanReviewModelDisplay } from "@/lib/operations/admin-models-human";
+import { DEFAULT_MODEL_DEFINITIONS, scopedModel } from "@/lib/llm/model-registry";
 import { setHumanReview } from "@/app/(operator)/admin/review/human-review-actions";
 import { HumanReviewSwitch } from "@/app/(operator)/admin/review/HumanReviewSwitch";
 const form = (enabled = "true") => { const data = new FormData(); data.set("enabled", enabled); data.set("generation", "3"); return data; };
@@ -38,4 +38,17 @@ it("끄기는 연결 확인 없이 기존 정식 경로를 사용하고 비관�
 it("선택 모델을 M3 DeepSeek로 잘못 표시하지 않는다", () => {
   const html = renderToStaticMarkup(createElement(HumanReviewSwitch, { enabled: true, generation: 3, ready: true, modelLabel: "선택 모델", modelLocation: "사람 위임 검수 풀" }));
   expect(html).toContain("선택 모델"); expect(html).not.toContain("M3 Ultra"); expect(html).not.toContain("DeepSeek v4.1");
+});
+it("사람 검토 모델 표시는 저장한 풀, 없으면 레지스트리의 human-review 모델에서 읽는다", () => {
+  expect(humanReviewModelDisplay(["gpu3090:review", "m3:review"])).toEqual({ modelLabel: "선택 모델",
+    modelLocation: "사람 위임 검수 풀 · GPU3090 · Qwen · 직접 연결, M3 · DeepSeek" });
+  expect(humanReviewModelDisplay([])).toEqual({ modelLabel: "M3 · DeepSeek", modelLocation: "m3:review · deepseek-v4.1-flash-1017" });
+  const previous = process.env.MODEL_REGISTRY_CONFIG;
+  process.env.MODEL_REGISTRY_CONFIG = JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "m3:review"
+    ? { ...model, purposes: ["assist-audit"] } : model.key === "gpu3090:review" ? { ...model, purposes: [...model.purposes, "human-review"] } : model) });
+  try {
+    expect(humanReviewModelDisplay()).toEqual({ modelLabel: "GPU3090 · Qwen · 직접 연결", modelLocation: "gpu3090:review · qwen3.8-flash-next" });
+  } finally {
+    if (previous === undefined) delete process.env.MODEL_REGISTRY_CONFIG; else process.env.MODEL_REGISTRY_CONFIG = previous;
+  }
 });

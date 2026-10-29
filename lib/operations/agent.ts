@@ -16,6 +16,10 @@ import { CliPhysicalEndUnknownError } from '@/lib/llm/cli-model-capacity';
 import type { CategoryDefinitions } from '@/lib/crawl/settings-schema';
 import type { ClassifyInput } from '@/lib/crawl/classify';
 import { resolveCliServingContract } from '@/lib/llm/cli-serving-contract';
+import { modelTimeoutMs } from '@/lib/llm/model-registry';
+
+/** Account checks, verification and classification share one registry route budget (default 35s). */
+const CLASSIFY_CLI_TIMEOUT_MS = modelTimeoutMs('classify-cli');
 
 const SAMPLE = [{ repo: 'verification/sample', url: 'https://example.com', name: 'Task planner', tagline: 'Plan team tasks and deadlines in a shared calendar.', topics: ['productivity'], language: null }];
 /** Single process owns login, classification and CLI refresh. No shared writable auth.json. */
@@ -231,15 +235,15 @@ export class ConnectAgent {
     void (async()=>{
       try{
         if(provider==='claude') {
-          this.startActivity('model',35_000,model.model);
-          const response=await (this.claudeRun??runClaude(this.claudeCredential!,'text'))(['-m',model.model],'hi~',35_000);
+          this.startActivity('model',CLASSIFY_CLI_TIMEOUT_MS,model.model);
+          const response=await (this.claudeRun??runClaude(this.claudeCredential!,'text'))(['-m',model.model],'hi~',CLASSIFY_CLI_TIMEOUT_MS);
           const ok=response.kind==='exit'&&response.code===0&&Boolean(response.stdout.trim());
           const result=ok?'success':failureReason(response);
           this.checkedAccount(model.model,result);
           // Only the fixed greeting's successful reply is exposed, never raw CLI diagnostics or credentials.
           const reply=ok&&response.kind==='exit'?response.stdout.trim().slice(0,2000).replace(/sk-ant-[A-Za-z0-9_-]+/g,'[REDACTED]'):undefined;
           this.state.accounts!.claude!.probe={prompt:'hi~',reply,result,model:model.model,checkedAt:new Date().toISOString()};
-        } else await classifyCategories(SAMPLE,this.routeRun,[{...model,timeoutMs:35_000}],(model,result)=>this.checkedAccount(model,result));
+        } else await classifyCategories(SAMPLE,this.routeRun,[{...model,timeoutMs:CLASSIFY_CLI_TIMEOUT_MS}],(model,result)=>this.checkedAccount(model,result));
       }
       catch{this.checkedAccount(model.model,'error');}
       finally{try{this.captureRefresh();}catch{this.checkedAccount(model.model,'credential_store_failed');}this.state.busy=null;this.state.activity=null;}
@@ -256,7 +260,7 @@ export class ConnectAgent {
       try {
         let successes = 0;
         for(const m of [config.primary,...(config.fallback?[config.fallback]:[])]) {
-          const categories=await classifyCategories(SAMPLE,this.routeRun,[{...m,timeoutMs:35_000}],(model,result)=>{this.checkedAccount(model,result);this.state.verification?.results.push({model,result});});
+          const categories=await classifyCategories(SAMPLE,this.routeRun,[{...m,timeoutMs:CLASSIFY_CLI_TIMEOUT_MS}],(model,result)=>{this.checkedAccount(model,result);this.state.verification?.results.push({model,result});});
           if(categories[0]!==null)successes++;
         }
         this.state.verification!.state=successes > 0 ? 'verified' : 'failed';
@@ -289,7 +293,7 @@ export class ConnectAgent {
       const native = await publicationClassificationPath() === 'native';
       if (native && !authority) throw new ModelCapacityDeferredError('owner_unavailable');
       const run = native ? this.nativeClassificationRun({ inputs, definitions }, authority!) : this.routeRun;
-      const result=await classifyCategories(inputs,run,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:35_000})),(model,result)=>{
+      const result=await classifyCategories(inputs,run,[config.primary,...(config.fallback?[config.fallback]:[])].map(m=>({...m,timeoutMs:CLASSIFY_CLI_TIMEOUT_MS})),(model,result)=>{
         this.checkedAccount(model,result);this.state.lastAttempt={model,result,at:new Date().toISOString(),generation:this.state.generation,configVersion:this.state.configVersion};
       },definitions);
       this.state.lastUsedVersion=this.state.configVersion;
