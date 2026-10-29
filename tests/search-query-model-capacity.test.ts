@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { TRANSLATE_MODEL, glossaryHints } from "@/lib/crawl/translate";
+import { SEARCH_QUERY_MODEL, glossaryHints } from "@/lib/crawl/translate";
 import { normalizeQuery, queryTranslationKey, resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import type { WebsearchQueryInput } from "@/lib/llm/capacity";
 
@@ -24,9 +24,9 @@ vi.mock("@/lib/observability/logger", () => ({ logger: { info: mocks.log, warn: 
 
 const query = "문서 정리", owner = { instanceId: "web-unit", bootId: randomUUID(), release: "unit-release" };
 const open = { mode: "open", epoch: 1, revision: 1, policyHash: "a".repeat(64),
-  policy: { routes: [{ routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL, providerBudgetId: "a", groupId: "g" }] } };
+  policy: { routes: [{ routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL, providerBudgetId: "a", groupId: "g" }] } };
 function input(text = query): WebsearchQueryInput {
-  return { model: TRANSLATE_MODEL, member: { cacheKey: queryTranslationKey(text), sourceLocale: "ko", queryHash: "b".repeat(64),
+  return { model: SEARCH_QUERY_MODEL, member: { cacheKey: queryTranslationKey(text), sourceLocale: "ko", queryHash: "b".repeat(64),
     promptVersion: 2, glossaryVersion: glossaryHints(normalizeQuery(text)) ? 1 : null, cache: { kind: "absent" } } };
 }
 const dispatch = { requestId: randomUUID() }, expectation = Object.freeze({ kind: "websearch_query_write" });
@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit-only");
   mocks.primary.mockImplementation((load: () => Promise<unknown>) => load());
   mocks.cacheRead.mockResolvedValue([]); mocks.control.mockResolvedValue(open); mocks.owner.mockReturnValue(owner);
-  mocks.prepareCall.mockReturnValue({ kind: "prepared", model: TRANSLATE_MODEL, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64),
+  mocks.prepareCall.mockReturnValue({ kind: "prepared", model: SEARCH_QUERY_MODEL, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64),
     totalTokenBound: 4096, queryHash: "b".repeat(64), sourceLocale: "ko" });
   mocks.prepare.mockImplementation(async (_target: unknown, options: { reserved?: unknown }) => options.reserved
     ? { kind: "ready", dispatch, expectation } : { kind: "ready", input: input() });
@@ -52,7 +52,7 @@ it.each([["disabled", { ...open, mode: "disabled", policy: null }], ["missing ke
     const result = await resolveSearchQuery(query, { waitForTranslation: true });
     expect(result).toMatchObject({ translated: "legacy words" }); expect(result.translationPending).toBeUndefined();
     expect(mocks.legacyKo.mock.calls).toEqual([[query, 8_000]]);
-    expect(mocks.legacyWrite.mock.calls).toEqual([[[{ hash: queryTranslationKey(query), translated: "legacy words", error: undefined }], TRANSLATE_MODEL, "en"]]);
+    expect(mocks.legacyWrite.mock.calls).toEqual([[[{ hash: queryTranslationKey(query), translated: "legacy words", error: undefined }], SEARCH_QUERY_MODEL, "en"]]);
     expect(mocks.primary).toHaveBeenCalledTimes(1);
     for (const ledger of [mocks.owner, mocks.prepareCall, mocks.prepare, mocks.slot, mocks.native, mocks.record]) expect(ledger).not.toHaveBeenCalled();
     expect(mocks.control).toHaveBeenCalledTimes(name === "disabled" ? 1 : 0);
@@ -63,7 +63,7 @@ it("disabled Chinese query keeps its own original leaf and failure cache", async
   mocks.legacyZh.mockResolvedValue({ ok: false, error: "network" });
   const result = await resolveSearchQuery("代码编辑器", { waitForTranslation: true });
   expect(result.translated).toBeNull(); expect(mocks.legacyZh.mock.calls).toEqual([["代码编辑器", "zh-Hans", 8_000]]);
-  expect(mocks.legacyWrite.mock.calls).toEqual([[[{ hash: queryTranslationKey("代码编辑器"), translated: null, error: "network" }], TRANSLATE_MODEL, "en"]]);
+  expect(mocks.legacyWrite.mock.calls).toEqual([[[{ hash: queryTranslationKey("代码编辑器"), translated: null, error: "network" }], SEARCH_QUERY_MODEL, "en"]]);
 });
 
 it("connects an immediately granted permit to one native POST, settlement first and then the guarded cache writer", async () => {
@@ -76,10 +76,10 @@ it("connects an immediately granted permit to one native POST, settlement first 
   expect(order).toEqual(["post", "settle", "cache"]);
   expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.native.mock.calls[0][0]).toEqual({ sourceLocale: "ko", query });
   expect(mocks.native.mock.calls[0][3]).toEqual({ timeoutMs: 8_000 });
-  expect(mocks.prepareCall.mock.calls).toEqual([[{ sourceLocale: "ko", query }, { model: TRANSLATE_MODEL, timeoutMs: 8_000 }]]);
+  expect(mocks.prepareCall.mock.calls).toEqual([[{ sourceLocale: "ko", query }, { model: SEARCH_QUERY_MODEL, timeoutMs: 8_000 }]]);
   expect(mocks.slot).toHaveBeenCalledTimes(1);
   expect(mocks.slot.mock.calls[0][0]).toMatchObject({ owner: { instanceId: owner.instanceId, bootId: owner.bootId }, class: "background",
-    pool: "text", routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL });
+    pool: "text", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL });
   expect(mocks.record.mock.calls).toEqual([[expectation, { ok: true, keywords: "document organizer" }]]);
   expect(mocks.legacyKo).not.toHaveBeenCalled(); expect(mocks.legacyWrite).not.toHaveBeenCalled();
 });

@@ -188,3 +188,12 @@
 AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에서 stdin 실행한 primary READ ONLY 쿼리. 23:14→23:30 AI1 **94871→94871**, AI2 **91158→91158**. 배포 없음·증가0. 운영 회복 성공을 주장하지 않는다. 이 작업이 요청한 수동/자동 해제도 없음이며, 전체 운영의60분 수동 해제0은 관측하지 않았다.
 
 이후 할 수 있는 로컬 코드 단계는 모두 완료·커밋했고, 남은 것은 위 배포 경로/외부 강제/연결/운영 측정에 막힌 항목뿐이다. 파일시스템·인증·권한 제한을 우회하지 않았다.
+
+## 2026-10-29 코드 전용 차선74afc085
+
+- 끝: origin/main `00aa00e3` 병합. 충돌은 main 후속판을 보존. 장비 라우팅/Gemma 기본값은 이미 main에 있어 중복 cherry-pick하지 않음.
+- 끝: relay 모델/family를 등록부와 env로 선택, 실제 upstream models 대조·기존 native 증명 유지. 상품·사유 번역을 같은 M1 entry로 정렬. 설치 스크립트는 명시 모델을 보존.
+- 시험: 변경 전 main typegen/tsc PASS(TS2353 재현 없음). M1 범위5파일/34시험 PASS. verify-model-config 최초35실패는 독립 번역 모델을 공용 상수로 쓰던 fixture 등이며 재검증 결과는 후속 기록.
+- 남음: Supa root prepare argv/검증된 결과 수집 분리, 범위시험·커밋·PR/CI.
+- 운영은 막힘이 아닌 명시적 제외: DRAIN/해제/배포/DB 쓰기/장비 변경0. 대표용 argv는 `2026-10-29-m1-relay-model-handoff.md`. 운영 native ready/새 저장 실측 미수행.
+- M1 최종 로컬 검증: verify-model-config 69파일/988시험·next typegen·tsc PASS, 동일 git grep 모델 리터럴158→99. 범위 ESLint·bash -n·git diff --check PASS. 이후 Supa 구현으로 계속 진행.

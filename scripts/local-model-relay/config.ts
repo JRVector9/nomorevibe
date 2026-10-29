@@ -1,5 +1,5 @@
 import { DEADLINE_LADDER_SKEW_MS } from "../../lib/llm/deadline-policy";
-import { configuredModel, configuredModelDefinition, modelTimeoutMs, modelLimits } from "../../lib/llm/model-registry";
+import { configuredModelDefinition, resolveRegistryModel, modelTimeoutMs, modelLimits } from "../../lib/llm/model-registry";
 import net from "node:net";
 import path from "node:path";
 import { lstatSync, readFileSync } from "node:fs";
@@ -9,6 +9,17 @@ export const isTailnetIpv4 = (value: string): boolean => {
   const [a, b] = value.split(".").map(Number);
   return a === 100 && b >= 64 && b <= 127;
 };
+
+/** The relay sends the actual upstream id, never a gateway label or a model alias. */
+export function relayModelDefinition(env: Readonly<Record<string, string | undefined>>) {
+  const name = env.LOCAL_MODEL_RELAY_MODEL?.trim();
+  const definition = name ? resolveRegistryModel(name, env) : configuredModelDefinition("relay", env);
+  if (!definition || !["local-direct", "abcllm"].includes(definition.provider) || (name && name !== definition.model))
+    throw new Error("relay_model_not_allowed");
+  const family = env.LOCAL_MODEL_RELAY_MODEL_FAMILY?.trim();
+  if (family && family !== definition.family) throw new Error("relay_model_family_mismatch");
+  return definition;
+}
 
 function secretFile(value: string | undefined): string {
   if (!value || !path.isAbsolute(value)) throw new Error("relay_private_token_file_required");
@@ -35,9 +46,8 @@ export function localModelRelayConfig(env: Readonly<Record<string, string | unde
   if (!/^[a-zA-Z0-9._:-]{1,200}$/.test(deploymentRevision)) throw new Error("relay_invalid_deployment_revision");
   if (env.LOCAL_MODEL_RELAY_UPSTREAM_URL || env.LOCAL_MODEL_RELAY_UPSTREAM_HOST || env.LOCAL_MODEL_RELAY_UPSTREAM_PORT)
     throw new Error("relay_upstream_is_fixed");
-  const definition = configuredModelDefinition("relay", env);
-  const model = configuredModel("relay", env);
-  if (definition.provider !== "local-direct" || model !== definition.model) throw new Error("relay_model_not_allowed");
+  const definition = relayModelDefinition(env);
+  const model = definition.model;
   const token = secretFile(env.LOCAL_MODEL_RELAY_TOKEN_FILE), upstreamToken = secretFile(env.LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE);
   if (token.length < 32 || token === upstreamToken) throw new Error("relay_separate_tokens_required");
   // 기한 사다리(엔진 < relay < gateway < client)의 relay 몫. 값 근거는 docs/operations/2026-10-28-deadline-ladder.md.

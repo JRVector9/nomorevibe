@@ -151,3 +151,8 @@
 - 어댑터가 성공 JSON을 출력했어도 프로세스가 비정상 종료/강제 종료되면 성공으로 받지 않는 검증을 추가했다. native의 구조화된 실패(JSON ok=false, exit1)는 계속 실패 근거로만 처리한다.
 
 - 병합 뒤 남은 항목은 위의 화면 환경 제한, 별도 권한 영역의 운영 설치/새 프로필, 실제 운영 드릴/실측/활성화다. 코드·시험·PR·CI·기능 병합은 완료했으며 운영 배포 준비물은 저장소 실행기/문서뿐이다. 실행기 설치나 운영 배포를 완료했다고 기록하지 않는다.
+
+## 2026-10-29 코드 전용 차선74afc085
+
+M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정렬 구현. 명시된 DB 풀/env는 보존. main typecheck PASS로 TS2353 재현 없음. M1 범위34시험 PASS, verify-model-config 첫35실패 fixture 원인을 보존하고 재검증 중. 대표 argv는 `2026-10-29-m1-relay-model-handoff.md`. 다음 항목은 Supa root 단계를 관리자 argv 준비/검증된 결과 수집으로 분리하는 구현이다. 운영·UI 변경 없음.
+- M1 최종 검증: verify-model-config 69파일/988시험·typegen·tsc PASS, 모델 리터럴158→99. 범위 ESLint/installer bash 문법 PASS. Supa 구현 계속.

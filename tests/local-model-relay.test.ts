@@ -68,6 +68,10 @@ describe("M1 사설 모델 relay", () => {
       LOCAL_MODEL_RELAY_TOKEN_FILE: relayKey, LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE: upstreamKey,
       LOCAL_MODEL_RELAY_STATE_DIR: directory, LOCAL_MODEL_RELAY_VERSION: "c".repeat(40) };
     expect(localModelRelayConfig(env)).toMatchObject({ host: "100.80.1.2", port: 8792, model: MODEL, deploymentRevision: "unverified" });
+    const gemma = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    expect(localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: "gemma4-26b" }).model).toBe(gemma);
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: "[m1] " + gemma })).toThrow("relay_model_not_allowed");
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: MODEL })).toThrow("relay_model_family_mismatch");
     const configured = { ...env, MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
       limits: { relay: { maxTokens: 700, concurrency: 1, timeoutMs: 35_000 } } }) };
     expect(localModelRelayConfig(configured)).toMatchObject({ upstreamTimeoutMs: 35_000, maxOutputTokens: 700 });

@@ -36,6 +36,8 @@ export type RelayReceipt = {
 };
 
 export type RelayReadinessContext = {
+  /** Fresh authenticated /v1/models observation for this health request. */
+  upstreamModels?: readonly string[] | null;
   relayRevision: string;
   deploymentRevision: string;
   model: string;
