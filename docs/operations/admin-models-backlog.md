@@ -2,13 +2,13 @@
 
 기준: fetch 성공, origin/main a3094a73. 원래 허브 브랜치 xaegis/e1b30377의 다른 차선 변경은 보존하고 최신 main에서 전용 브랜치를 만들었다. 원본 사용자 폴더 변경 없음.
 
-## 현재 상태 (후속 PR CI 검증 중)
+## 현재 상태 (기능 PR #716 병합 후 최종 검색 모델 제약 표시)
 
 | 항목 | 현재 결과 |
 | --- | --- |
 | 1 저장 버튼 | PR #714 필수 CI 통과·main 77eadd1c 병합 |
-| 2 단계별 모델 풀 | #713 병합 후 구현·로컬 시험·커밋 완료, PR #716 CI 중. 화면 판별은 실제 목적 모델 등록 전 선택 불가 |
-| 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
+| 2 단계별 모델 풀 | #713 병합 후 구현. PR #716 필수 CI 통과·main 9b316234 병합. 화면 판별은 실제 목적 모델 등록 전 선택 불가 |
+| 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 운영 primary READ ONLY SQL 확인 완료. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
 | 4 미확인·점유 | 장부 snapshot/발생·경과/그룹 점유·접수 상태 구현·로컬 시험 |
 | 5 수동 복구 | 조건 안내·실행 불가 버튼/M1 수동 작업 표시. 정식 prepare→run 실행기 연결 부재로 자동 종료·해제·재시작·native verify 미구현 |
 | 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험 |
@@ -21,7 +21,7 @@
 - 요청된 xaegis/88105c3c는 로컬 refs와 origin ls-remote에 없다. 같은 UI 변경을 최신 main 위에 직접 적용하는 최소 변경을 선택했다. 다른 브랜치 이력 재작성 없음.
 - 최초 `npx --no-install vitest run admin-models`: 파일 없음으로 exit1. 새 범위 시험을 추가해 다시 검증한다.
 
-## 남음
+## 착수 당시 남은 목록 (완료 여부는 위 현재 상태와 아래 최종 기록 기준)
 
 1. 저장 UI 브라우저 확인 → 단독 PR → 필수 CI → 병합.
 2. 등록부 PR #713 (feat/model-config-registry) 병합 후 단계별 전체 모델 관리. 2026-10-29 최초 확인 OPEN. 해당 작업 파일 직접 변경 금지.
@@ -99,3 +99,32 @@
 
 - 1a269841의 CI 40807436518은 모든 DB 묶음·build/typecheck/lint·unit(2)를 통과했고 unit(1)의 전역 쓰기 관문 소스 규칙에서 새 action 3개 형식을 거절했다. 실제 내부 runWebWrite 보호는 있었으나 저장소 표준의 export webWriteAction 형식으로 맞췄다. 전역 관문 시험의 정확한 등록 개수도 기존77→새 action3개를 더한80으로 갱신(guard 삭제·예외 추가 없음)한다. 새 시험 파일들은 모두 admin-models 이름이며, 이 기존 전역 guard 파일은 개수만 필요한 만큼 수정했다.
 - 운영 SQL 실제 검증: 2026-10-29T02:41:06.994Z, M3 text 기존 연결에서 이 화면의 4개 SQL(기한 설정/제어/집계/요청)을 READ ONLY REPEATABLE READ로 실행. primary in_recovery=false/read_only=on, OPEN epoch1/revision7, 집계24줄/요청12줄. M1 요청29877f65는 indeterminate이고 로컬 종료 기록이 있으며 그대로 보존했다. 최근1시간 AI1 응답 종료는 Supa147/실패0/철회52, GPT-OSS0/실패0/철회0. 이는 배포 전 장부 관측이며 두 모델의 새 업무 성공·이번 코드의 배포 결과가 아니다.
+
+## 기능 병합과 최종 남은 경계
+
+- PR #716 최종 head1add0863, 필수 CI40808550518의 전체 선택 검사와 check SUCCESS. 2026-10-29 02:57:08 UTC main **9b31623417dfda4385f1fdba0dc2814c17047513**로 병합했다. PR #714와 합쳐 기능 변경은 main에 있다. 이미지 PR 빌드도 통과했으나 운영 배포 완료를 뜻하지 않는다.
+- 준비된 변경: `/admin/models`의 파란 저장·충돌 피드백, 20개 모델 풀(기존 AI1/AI2 폼·분류 모델 검사/적용 포함), 장부 실측·미확인·점유·접수 제어, 복구 조건 확인과 실행 불가 사유. 20개 풀에는 감사/공개분/갈림/보류의 별도 선택, 한국어 소개 직접 모델, 화면 판별 등록 조건도 포함한다.
+- LLM 보강 일반 풀은 uptime/repo_move/intro_recheck/news 작업의 검증된 backend를, 감사 풀은 decision_audit/semantic_exception을 처리한다. 작업의 적용 권한·검증 계약·기존 backend drain 설정은 별도이며 변경하지 않는다.
+- 전체 모델 호출 추가 점검: **의미 검색 임베딩**(`embedding.ts`, bge-m3-f16@daec91ff,1024차원)과 **검색 결과 재정렬**(`hybrid-search.ts`)은 등록부 밖의 서버 적재 모델 API다. 이 두 단계도 화면에 상태·제약을 추가했다. 현재 API에는 호출자가 모델을 고르는 인자가 없으며, 임베딩은 모델 SHA/차원/전처리 및 최소32표본·코사인0.999의 기존 parity 검증이 필수다. 승인된 모델 등록/동일 공간 검증·색인 이전 계약 없이 임의 풀을 저장하거나 벡터를 섞지 않는다. 실제 재정렬 모델 식별자도 미확인으로 표시한다. 두 단계의 임의 추가·제거·저장은 이 계약이 제공되기 전까지 남음이다.
+- 새 검색 모델 표시: admin-models-search-constraints.test.tsx 포함 완료 명령 **7파일36시험 PASS**, TypeScript/scoped ESLint/diff check PASS. 화면 클릭은 기존 Chromium/Next 환경 제한으로 계속 막힘이다.
+- 배포 직전 키 재검사도 실제 수행: 같은 M3 Keychain 명령이 다시 `The specified item could not be found in the keychain.` / 원격 exit44. 표준 deploy scope/plan/run과 운영 설정 쓰기는 실행하지 않았다.
+- GitHub 상태 조회 중 cafe.github.com allowlist 오류1회. 접속·인증 설정을 바꾸지 않고 동일 gh 조회를20초 후1회 다시 실행해 성공했다. 지속 차단이 아니다.
+
+### 운영 완료로 남겨 둔 항목
+
+1. 정식 수동 probe dispatch/종료 증거 계약이 제공된 뒤 짧은 실제 호출과 CLI 목록 검사.
+2. legacy 경로까지 포함한 완전한 실패 이력 계량 계약(기록이 없는 과거를0으로 만들지 않음).
+3. 승인된 prepare→run 종료 근거 수집/서비스·모델 stop·restore 실행기 연결, native stop의 exit_fact_missing_launchdUnloaded에 대한 실제 native verify 경로·시험. 현재 해제 버튼은 실행 불가이며 request·업무 기록·점유를 보존한다.
+4. M1 sudo 종료·복원은 사람이 장비에서 수행. 29877f65 해제 시험은 하지 않는다.
+5. 화면 판별의 실제 목적 모델 등록, 임베딩/재정렬의 모델 선택·색인 검증 계약.
+6. 브라우저/Next dev 제한 해소 뒤 실제 저장·추가/제거·연결·미확인·복구 조건 창 클릭과 스크린샷·화면 품질 측정.
+7. M3 Keychain 복구 뒤 표준 drain 배포, 운영 화면에서 Supa+GPT OSS 저장, 두 모델의 새 업무 성공을 운영 DB로 확인.
+
+운영 배포0/운영 설정 저장0/unknown 해제0/유료 DeepSeek 호출0/권한 설정 변경0/SQL 초기화0. 원본 사용자 폴더의 변경과 미추적 파일은 보존했다.
+
+## 사람 위임 풀의 활성화 검증 보완 (#717)
+
+- 기본 DeepSeek만 확인하던 활성화 경로를 수정했다. 저장한 사람 위임 풀의 모든 모델을 실제 선택 범위에서 `/models`로 확인한 뒤 정식 setHumanReviewEnabled로 저장한다. 짧은 유료/추론 호출은 하지 않는다.
+- 연결 확인과 저장 사이 풀이 바뀌면 잠근 설정 행에서 expectedModelPoolKeys를 비교해 거절하고 실패 감사 기록을 남긴다. 성공 기록에는 실제 선택 key·모델·장비·제공자를 남긴다. 끄기는 연결 미확인이어도 계속 허용한다. 모델 화면의 위임 제목/설명도 선택 풀을 가리킨다.
+- `npx --no-install vitest run admin-models`: **9파일43시험 PASS**. 같은 범위에 기존 human-deepseek-review를 더한 **10파일73시험 PASS**. TypeScript noEmit/변경 파일 ESLint(--max-warnings 0)/PR 전체 diff check PASS. 브라우저 실행·스크린샷은 앞서 기록한 OS 권한/Next 네트워크 제한으로 미완료이며, 정적 렌더 시험을 실제 화면 확인으로 세지 않는다.
+- #717 첫 검색 표시 head2a3917d9의 CI40810209449도 전체 필수 check SUCCESS. 이후 위임 풀 보완 head의 필수 CI를 다시 요구하며, 앞선 head의 성공을 새 head의 성공으로 사용하지 않는다.
