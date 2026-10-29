@@ -25,7 +25,7 @@ import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finis
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, type ModelCapacityReservation, type ModelCapacityRequestIdentity, type Ai2ModelDispatch,
   type CliModelDispatch } from "@/lib/llm/capacity";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
-import { resolveAi2GatewayServingContract, ai2GatewayServingContractHash } from "./second-review-serving-contract";
+import { resolveAi2GatewayServingContract, ai2ServingContractMatches, ai2GatewayServingContractHash } from "./second-review-serving-contract";
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract } from "./review-cli-call";
@@ -344,14 +344,14 @@ async function claimReview(id: number, authority: ClaimAuthority,
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
       } else {
         const gateway = reserved as ModelReservation, serving = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
-        if (!serving || serving.model !== binding.reviewer.model || gateway.call.model !== binding.reviewer.model
+        if (!serving || !ai2ServingContractMatches(serving, binding.reviewer.model) || gateway.call.model !== binding.reviewer.model
           || gateway.call.inputHash !== context.input.inputHash
           || gateway.call.servingContractHash !== ai2GatewayServingContractHash(serving)
           || gateway.call.totalTokenBound !== serving.totalTokenBound)
           throw new ModelCapacityDeferredError("provider_contract_unavailable");
         if (serving.provider === "local-direct") {
           const route = capacity?.policy?.routes.find(route => route.routeId === "second-review"
-            && route.provider === serving.provider && route.model === serving.model);
+            && route.provider === serving.provider && route.model === binding.reviewer.model);
           if (!route || route.groupId !== serving.physicalGroup || route.providerBudgetId !== serving.backendId)
             throw new ModelCapacityDeferredError("provider_contract_unavailable");
         }
@@ -531,7 +531,7 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
         && !excluded.some(model => sameReviewModel(model, voter.model))
         && capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
         && (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
-          return serving?.provider === voter.provider && serving.model === voter.model; })());
+          return serving?.provider === voter.provider && ai2ServingContractMatches(serving, voter.model); })());
       const backup = eligible.find(voter => !sameUnderlyingModel(row.firstModel, voter.model)) ?? eligible[0];
       if (!backup) throw new WaitingFallbackRefused();
       await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,

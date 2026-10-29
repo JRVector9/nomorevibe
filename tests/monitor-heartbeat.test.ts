@@ -34,7 +34,7 @@ it('records only fixed text-stage keys and deduplicates failures without leaking
   const report = status([...keys.map(stage => ({ ...lane({ stage }), ...extra })), lane(),
     lane({ stage: 'evidence' }), { ...lane(), stage: 'untrusted-secret' } as unknown as StageProgress]);
   const { value, path } = heartbeat(report);
-  expect(value).toEqual({ checkedAt: expect.any(Number), overall: 'ok', providerFailures: keys });
+  expect(value).toEqual({ checkedAt: expect.any(Number), overall: 'ok', providerFailures: keys, reviewFailures: [] });
   expect(JSON.stringify(value)).not.toMatch(/private|untrusted|url|secret/);
   expect(statSync(path).mode & 0o777).toBe(0o600);
   expect(monitorHeartbeatIsFresh(value)).toBe(true);
@@ -69,4 +69,31 @@ it('preserves the legacy heartbeat fields and omits unavailable provider observa
   expect(value).toEqual({ checkedAt: expect.any(Number), overall: 'ok' });
   expect(monitorHeartbeatIsFresh(value)).toBe(true);
   expect(heartbeat(status([])).value.providerFailures).toEqual([]);
+});
+
+it('reports AI1 capacity blocking and AI2 consumer absence without transmitting model or request data', () => {
+  const first = { ...lane({ stage: 'first', role: 'reviewer', reason: 'no_progress', alarm: true,
+    restartEligible: false, providerErrors: 0 }), admissionBlock: { reason: 'capacity' as const,
+    routeId: 'crawl-agent-review', groupId: 'private-model-group', scope: 'group' as const } };
+  const second = lane({ stage: 'second', role: 'reviewer', reason: 'consumer_missing', alarm: true, restartEligible: false });
+  const value = heartbeat(status([first, second])).value;
+  expect(value.reviewFailures).toEqual([{ stage: 'first', reason: 'capacity_blocked' },
+    { stage: 'second', reason: 'consumer_missing' }]);
+  expect(JSON.stringify(value)).not.toMatch(/private|routeId|groupId|scope/);
+});
+
+it('distinguishes a locally restartable review stall from an independent consumer stall', () => {
+  expect(heartbeat(status([lane({ stage: 'first', reason: 'no_progress', alarm: true, restartEligible: true })]))
+    .value.reviewFailures).toEqual([{ stage: 'first', reason: 'local_stalled' }]);
+  expect(heartbeat(status([lane({ stage: 'first', reason: 'no_progress', alarm: true, restartEligible: false })]))
+    .value.reviewFailures).toEqual([{ stage: 'first', reason: 'review_stalled' }]);
+});
+
+it.each([
+  { reason: 'paused' as const, alarm: false }, { reason: 'backoff' as const, alarm: false },
+  { waiting: 0, deferred: 0 }, { completed5m: 1 }, { progress5m: 1 }, { held: true },
+  { completed5m: Number.NaN }, { waiting: Number.POSITIVE_INFINITY },
+])('does not turn inactive, progressing or unobserved review work into a stall: %j', extra => {
+  expect(heartbeat(status([lane({ stage: 'first', reason: 'no_progress', alarm: true, ...extra })]))
+    .value.reviewFailures).toEqual([]);
 });

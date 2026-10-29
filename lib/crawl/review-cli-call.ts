@@ -1,3 +1,4 @@
+import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -38,7 +39,7 @@ export const reviewCliCallRefSchema = z.object({ kind: z.literal("prepared_cli")
 // legacy runReviewCli·runGrokCli 와 같은 값이다 — 같은 입력에서 legacy 와 byte 단위로 같은지 테스트가 고정한다
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-const CLAUDE_MAX_OUTPUT_TOKENS = "2000";
+const CLAUDE_MAX_OUTPUT_TOKENS = String(modelRequestBudget("review-cli").maxTokens);
 
 type State = { cli: PreparedCliCall; directory: string; inputIdentity: string; args: readonly string[]; stdin: string | null;
   timeoutMs: number; started: boolean; released: Promise<void> | null };

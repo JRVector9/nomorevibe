@@ -60,3 +60,27 @@ describe('operations credentials and model lifecycle',()=>{
   expect(()=>a.apply({verificationId:a.snapshot().verification!.id,expectedVersion:0,config:DEFAULT_CONFIG})).toThrow();
  });
 });
+
+it('preserves stored selections and credentials across a registry replacement until a new selection is verified',async()=>{
+  const {DEFAULT_MODEL_DEFINITIONS}=await import('@/lib/llm/model-registry');
+  dir=mkdtempSync(join(tmpdir(),'operations-test-'));
+  const old={connected:true,generation:1,configVersion:1,config:DEFAULT_CONFIG};
+  writeFileSync(join(dir,'vault.enc'),seal(JSON.stringify({credential:auth,appliedGeneration:1,state:old}),secret));
+  vi.stubEnv('MODEL_REGISTRY_CONFIG',JSON.stringify({version:1,models:DEFAULT_MODEL_DEFINITIONS.map(model=>
+    model.key==='connect:spark'?{...model,model:'replacement-model'}:model)}));
+  try{
+    vi.resetModules();
+    const {ConnectAgent:RestartedAgent}=await import('@/lib/operations/agent');
+    agent=new RestartedAgent(dir,secret,async()=>({kind:'exit',code:0,stdout:JSON.stringify({results:[{id:0,category:'Productivity',reason:'Tasks'}]}),stderr:''}));
+    expect(agent.snapshot().config).toEqual(DEFAULT_CONFIG);
+    expect(agent.snapshot().classifyReady).toBe(false);
+    expect(agent.snapshot().configReady).toBe(false);
+    expect(agent.snapshot().modelOptions?.some(option=>option.model==='replacement-model')).toBe(true);
+    const saved=JSON.parse(unseal(readFileSync(join(dir,'vault.enc'),'utf8'),secret));
+    expect(saved.credential).toBe(auth);expect(saved.state.config).toEqual(DEFAULT_CONFIG);
+    await agent.test({primary:{model:'replacement-model',effort:'xhigh'},fallback:null});
+    await settle();
+    expect(agent.snapshot().verification?.state).toBe('verified');
+    expect(agent.snapshot().config).toEqual(DEFAULT_CONFIG);
+  }finally{vi.unstubAllEnvs();}
+});

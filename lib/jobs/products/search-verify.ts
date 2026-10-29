@@ -1,3 +1,4 @@
+import { modelLimits } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
@@ -13,7 +14,7 @@ import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-ve
 
 /** 한 번에 집는 수. 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다 */
 const BATCH = 16;
-const CONCURRENCY = 4;
+const CONCURRENCY = modelLimits("product-search-verify").concurrency;
 /** 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초 */
 const CALL_MS = 60_000;
 /** 틱 예산(worker.ts jobRunOptions 110초)보다 조금 짧게 */

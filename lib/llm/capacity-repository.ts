@@ -30,7 +30,7 @@ import { gatewayNotStartedEvidenceSchema } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
-  modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
+  compatibleModelCapacityGeneration, modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
   modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
   type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason,
   type ModelCapacityRequest, type ModelCapacityRequestIdentity, type ModelCapacityReservation, type ModelSlotResult,
@@ -575,11 +575,13 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     const route = state.policy.routes.find(route => route.routeId === checked.routeId
       && route.provider === checked.provider && route.model === checked.model);
     if (!route) return { kind: "deferred", reason: "unmapped" };
-    const [oldActive] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
+    const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
+      policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
       .where(sql`${modelCapacityRequests.state} in ('reserved','dispatched','indeterminate') AND (
         ${modelCapacityRequests.epoch} <> ${state.epoch} OR ${modelCapacityRequests.revision} <> ${state.revision}
-        OR ${modelCapacityRequests.policyHash} <> ${state.policyHash})`).limit(1);
-    if (oldActive) return { kind: "deferred", reason: "policy_changed" };
+        OR ${modelCapacityRequests.policyHash} <> ${state.policyHash})`);
+    if (oldActive.some(row => !compatibleModelCapacityGeneration(state.policy!, row, state)))
+      return { kind: "deferred", reason: "policy_changed" };
     if (!existing) {
       const [duplicateWork] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
         .where(and(eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),

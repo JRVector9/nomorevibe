@@ -117,7 +117,7 @@ it("binds a successful fallback to its original slot and ignores duplicate compl
                 return { result: { ok: false, error: "model_unavailable" }, receipt: { inputTokens: 0, outputTokens: 0 } };
               return approve(call);
             } }, async () => {
-            expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true })).status).toBe("completed");
+            expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, budgetMs: 110_000 })).status).toBe("completed");
             expect((await runJob("second-review", secondReviewCandidates, { requestedOnly: true })).status).toBe("completed");
             expect((await runJob<SecondReviewCursor>("second-review", async ctx => {
               if (!ctx.lease) throw new Error("second_review_fixture_job_missing");
@@ -221,7 +221,7 @@ it("appends actual cleanup in the authentic run scope without rewriting its earl
       withReplayFinalScope(run, () => withReviewFixtureTransport({ ledger, run, inputs: value.inputs, fixture: approve,
         tokenUpperBound: value.manifest.limits.perCallTokenUpperBound,
         fullReviewPolicyHash: value.manifest.fullReviewPolicyHash }, async () => {
-        expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true })).status).toBe("completed");
+        expect((await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, budgetMs: 110_000 })).status).toBe("completed");
         expect((await runJob("second-review", secondReviewCandidates, { requestedOnly: true })).status).toBe("completed");
         const finals = await admin`SELECT * FROM pipeline_replay.capacity_finals`;
         expect(finals).toHaveLength(1);
@@ -301,7 +301,7 @@ async function runWithHeldSecondLease(value: Awaited<ReturnType<typeof prepare>>
       return withReviewReplayContext({ referenceTime: reference }, () => withReplayFinalScope(run, () =>
         withReviewFixtureTransport({ ledger, run, inputs: value.inputs, fixture,
           tokenUpperBound: value.manifest.limits.perCallTokenUpperBound, fullReviewPolicyHash: value.manifest.fullReviewPolicyHash }, async () => {
-          const first = await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true });
+          const first = await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, budgetMs: 110_000 });
           const second = await runJob<SecondReviewCursor>("second-review", async ctx => {
             try { return await secondReviewCandidates(ctx); }
             finally { await afterSecond(); }

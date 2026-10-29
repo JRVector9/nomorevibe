@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { interruptibleSleep, runtimeLog } from './worker';
-import { superviseWorker, supervisorLimits } from './worker-supervisor';
+import { primaryHandoffDrainMs, superviseWorker, supervisorLimits } from './worker-supervisor';
 import { readRoleLockHolders, readWaitingPrimary, releaseRole, renewRole, tryAcquireRole, yieldRoleToPrimary,
   type RoleCandidate, type RoleLease, type WaitingPrimary } from '@/lib/jobs/role-leader';
 import { batchLeaseAdmission } from '@/lib/jobs/batch-repository';
@@ -28,7 +28,7 @@ type Dependencies = {
   acquire: typeof tryAcquireRole;
   renew: typeof renewRole;
   release?: typeof releaseRole;
-  supervise: (lease: RoleLease, signal: AbortSignal) => Promise<number>;
+  supervise: (lease: RoleLease, signal: AbortSignal, forceSignal: AbortSignal) => Promise<number>;
   sleep?: typeof interruptibleSleep;
   /** true/false 는 기존 호출·시험 그대로다. 객체는 그 한 번 읽은 보고서의 트리거이며 다시 조회하지 않는다. */
   checkProgress?: (role: RoleCandidate['role']) => Promise<boolean | ProgressStallTrigger>;
@@ -374,6 +374,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     handoff?.acquired();
     deps.report?.('active', lease.epoch);
     const active = new AbortController();
+    const forceStop = new AbortController();
     let abortReason: string | null = null;
     let leaseCause: LeaseCause | null = null;
     const abortActive = (reason: string) => {
@@ -381,7 +382,10 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       abortReason = reason;
       active.abort(reason);
     };
-    const onStop = () => abortActive('shutdown_requested');
+    const onStop = () => {
+      if (active.signal.aborted) forceStop.abort('shutdown_requested');
+      abortActive('shutdown_requested');
+    };
     signal.addEventListener('abort', onStop, { once: true });
     if (signal.aborted) onStop();
     let renewing = false, lost = false, checkingProgress = false, progressRestart = false;
@@ -396,6 +400,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       const cause: LeaseCause = reason === 'role_renew_deadline' || reason === 'role_lease_expired' ? reason : 'renew_failed';
       leaseCause = cause;
       failed('role.renew_unknown', new Error(reason), { epoch: lease.epoch, cause });
+      forceStop.abort('role_lease_lost');
       abortActive('role_lease_lost');
     };
     // Independent of the renew promise: a wedged DB call cannot keep a child alive.
@@ -418,12 +423,14 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         if (!ok) {
           lost = true; leaseCause = 'renew_rejected';
           runtimeLog('role.lease_lost', candidateLog(candidate, lease.epoch, { cause: 'renew_rejected' }));
+          forceStop.abort('role_lease_lost');
           abortActive('role_lease_lost');
         } else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
       }).catch(error => {
         if (ended || lost || renewalsStopped()) return;
         leaseCause = 'renew_failed';
-        failed('role.renew_unknown', error, { epoch: lease.epoch, cause: 'renew_failed' }); lost = true; abortActive('role_lease_lost');
+        failed('role.renew_unknown', error, { epoch: lease.epoch, cause: 'renew_failed' }); lost = true;
+        forceStop.abort('role_lease_lost'); abortActive('role_lease_lost');
       }).finally(() => { renewing = false; renewDeadline = null; });
     }, 10_000);
     timer.unref();
@@ -494,9 +501,10 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     let exitCode = 1, drainTimedOut = false;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     let startDrain: () => void;
-    const drainLimitMs = supervisorLimits(candidate.role).drainMs + 5_000;
+    let drainLimitMs = supervisorLimits(candidate.role).drainMs + 5_000;
     const drainExpired = new Promise<number>(resolve => {
       startDrain = () => {
+        if (abortReason === 'primary_handoff') drainLimitMs = primaryHandoffDrainMs(supervisorLimits(candidate.role)) + 5_000;
         drainTimer = setTimeout(() => {
           drainTimedOut = true;
           runtimeLog('role.supervisor_drain_timeout', candidateLog(candidate, lease.epoch, {
@@ -508,7 +516,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       active.signal.addEventListener('abort', startDrain, { once: true });
       if (active.signal.aborted) startDrain();
     });
-    try { exitCode = await Promise.race([deps.supervise(lease, active.signal), drainExpired]); }
+    try { exitCode = await Promise.race([deps.supervise(lease, active.signal, forceStop.signal), drainExpired]); }
     finally {
       ended = true;
       active.signal.removeEventListener('abort', startDrain!);
@@ -655,7 +663,7 @@ async function main() {
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       checkAdmission: batchLeaseAdmission, health: state => { runtime = state; }, lockBlockers: readRoleLockHolders,
       waitingPrimary: readWaitingPrimary, yieldRole: yieldRoleToPrimary, handoffStableMs, handoffPollMs,
-      supervise: (lease, signal) => {
+      supervise: (lease, signal, forceSignal) => {
         process.env.ROLE_LEASE_ROLE = lease.role;
         process.env.ROLE_LEASE_INSTANCE_ID = lease.instanceId;
         process.env.ROLE_LEASE_BOOT_ID = lease.bootId;
@@ -666,7 +674,7 @@ async function main() {
           process.env.ROLE_LEASE_BATCH_EPOCH = String(lease.batchEpoch);
           process.env.ROLE_LEASE_HOST = lease.host;
         }
-        return superviseWorker(lease.role, { signal, closeDbOnExit: false, ...(processGroup ? { processGroup } : {}) });
+        return superviseWorker(lease.role, { signal, forceSignal, closeDbOnExit: false, ...(processGroup ? { processGroup } : {}) });
       },
     });
   } finally {

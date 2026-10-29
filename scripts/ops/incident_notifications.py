@@ -9,9 +9,12 @@ import subprocess
 import sys
 import time
 
-
 STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'keyword-verify',
                     'product-translate', 'tagline-ko', 'intro-check'})
+# Kept import-free for this module's isolated (-I) Telegram child process.
+REVIEW_STAGES = frozenset({'first', 'second'})
+REVIEW_REASONS = frozenset({'capacity_blocked', 'consumer_missing', 'worker_missing',
+                          'upstream_stalled', 'local_stalled', 'review_stalled'})
 FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warming_up',
                     'database_unavailable', 'web_page_failed', 'web_not_ready', 'monitor_stale',
                     'pipeline_alarm', 'container_unhealthy', 'native_unit_failed',
@@ -21,6 +24,14 @@ RESPONSE_LIMIT = 16384
 INPUT_LIMIT = 32768
 PIPELINE_RECOVERY_SECONDS = 600
 PIPELINE_RECOVERY_GAP_SECONDS = 150
+
+
+def valid_review_failures(value):
+    return (isinstance(value, list) and len(value) <= len(REVIEW_STAGES) and
+            all(isinstance(row, dict) and set(row) == {'stage', 'reason'} and
+                isinstance(row['stage'], str) and row['stage'] in REVIEW_STAGES and
+                isinstance(row['reason'], str) and row['reason'] in REVIEW_REASONS for row in value) and
+            len({row['stage'] for row in value}) == len(value))
 
 
 def _request_id(value):
@@ -100,6 +111,7 @@ def _signature(config, value):
                 int(stage) < len(config.get(setting, [])) and reason == 'push_failed')
     return (_target(config, host + '/' + service) and
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
+             or stage in REVIEW_STAGES and reason in REVIEW_REASONS
              or _request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')))
 
 
@@ -215,6 +227,11 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             failures = row.get('providerFailures')
             if isinstance(failures, list) and all(isinstance(stage, str) and stage in STAGES for stage in failures):
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in STAGES and parts[2] not in failures)
+            reviews = row.get('reviewFailures')
+            if valid_review_failures(reviews):
+                current = {(failure['stage'], failure['reason']) for failure in reviews}
+                clear(lambda parts: parts[:2] == [host, service] and parts[2] in REVIEW_STAGES
+                      and (parts[2], parts[3]) not in current)
             capacity = row.get('capacityUnknowns')
             if isinstance(capacity, dict):
                 try:
@@ -233,6 +250,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
         if reason in ('model_indeterminate', 'model_reclaim_overdue') and _request_id(event.get('requestId')):
             stage = event['requestId']
         if not ((stage in STAGES and reason == 'upstream_stalled') or
+                (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
                 (_request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
@@ -256,6 +274,10 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
     for signature in pending:
         host, service, stage, reason = signature.split('/')
         line = '\n- ' + host + '/' + service + ('/' + stage if stage != 'service' else '') + ' ' + reason
+        if stage in REVIEW_STAGES:
+            line += ' (' + ('provider completion evidence required; restart does not release capacity' if reason == 'capacity_blocked'
+                            else 'local fenced supervisor handles recovery' if reason == 'local_stalled'
+                            else 'operator attention required; no automatic model kill') + ')'
         if len(message) + len(line) > MESSAGE_LIMIT:
             break
         message += line

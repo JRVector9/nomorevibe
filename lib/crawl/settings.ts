@@ -1,3 +1,4 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -495,7 +496,7 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
     await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, {
       action: 'human-review-deepseek', target: 'crawl_settings',
-      detail: { before: current.humanReview, after: settings.humanReview, model: 'deepseek-v4.1-flash-1017', host: 'm3ultra' },
+      detail: { before: current.humanReview, after: settings.humanReview, model: modelForPurpose("human-review").model, host: 'm3ultra' },
     }));
     if (input.enabled) await requestJob('human-deepseek-review', tx);
     return { ok: true, settings };
@@ -544,6 +545,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
   { label: "시간당 새 저장소 상한", read: (s) => s.discover.maxNewPerHour },
+  { label: "검수 대기열 상한", read: (s) => s.discover.maxReviewBacklog },
   { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
   { label: "자동 승인 최소 스타", read: (s) => s.judge.autoApproveMinStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },

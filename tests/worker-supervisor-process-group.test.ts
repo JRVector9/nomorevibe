@@ -29,6 +29,42 @@ function fakeChild(order: string[]) {
   return child;
 }
 
+it.each(['complete', 'lease_lost', 'shutdown', 'timeout', 'delivery_failed', 'delivery_failed_exit'] as const)("drains handoff over the short kill budget, then handles %s", async outcome => {
+  vi.useFakeTimers();
+  const order: string[] = [], group = recorder(order), child = fakeChild(order);
+  const send = vi.fn((_message: unknown, callback: (error: Error | null) => void) => {
+    callback(outcome.startsWith('delivery_failed') ? new Error('ipc_closed') : null);
+    return true;
+  });
+  Object.assign(child, { send });
+  let gone = false;
+  const kill = vi.spyOn(process, 'kill').mockImplementation(((_target: number, signal?: string | number) => {
+    if (signal === 'SIGKILL') gone = true;
+    if (signal === 0 && gone) throw esrch();
+    return true;
+  }) as typeof process.kill);
+  const signal = new AbortController(), force = new AbortController();
+  const work = superviseWorker('reviewer', { signal: signal.signal, forceSignal: force.signal, closeDbOnExit: false,
+    healthPath: join(directory, `handoff-${outcome}.json`), limits, processGroup: group });
+  await vi.waitFor(() => expect(group.spawned).toHaveBeenCalled());
+  signal.abort('primary_handoff');
+  expect(send).toHaveBeenCalledWith({ type: 'runtime.drain' }, expect.any(Function));
+  expect(child.kill).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(kill).not.toHaveBeenCalled(); // the old 5s drain must not kill an active tick
+  if (outcome === 'lease_lost' || outcome === 'shutdown') {
+    force.abort(outcome === 'shutdown' ? 'shutdown_requested' : 'role_lease_lost');
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM');
+  } else if (outcome === 'timeout' || outcome === 'delivery_failed') {
+    await vi.advanceTimersByTimeAsync(125_000);
+    expect(kill).toHaveBeenCalledWith(-pid, 'SIGKILL');
+    expect(group.exited).not.toHaveBeenCalled(); // process exit still has to be observed
+  }
+  child.emit('exit', 0);
+  expect(await work).toBe(outcome === 'complete' || outcome === 'shutdown' ? 0 : 1);
+  expect(group.exited).toHaveBeenCalledOnce();
+});
+
 it("refuses to spawn when the spawn intent cannot be committed", async () => {
   const order: string[] = [], group = recorder(order, { intent: async () => { throw new Error("db_down"); } });
   fakeChild(order);

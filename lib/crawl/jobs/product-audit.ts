@@ -1,3 +1,4 @@
+import { modelLimits } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
@@ -218,13 +219,13 @@ export const QWEN_MIN_START_MS = 15_000;
 const QWEN_CONTROL_CHECK_MS = 5_000;
 /** 한 번에 읽어 둘 일감 — 자리마다 틱 하나(65초)에 3초씩 스무 건 남짓이라 넉넉히 */
 const QWEN_QUEUE_PER_SLOT = 40;
-export const QWEN_AUDIT_DEFAULT_CONCURRENCY = 2;
+export const QWEN_AUDIT_DEFAULT_CONCURRENCY = modelLimits("direct-review", {}).concurrency;
 export const QWEN_AUDIT_MAX_CONCURRENCY = 4;
 
 /** 동시 호출 수 — AUDIT_QWEN_CONCURRENCY(기본 2, 최대 4). 1차 심사의 reviewConcurrency(공유 게이트웨이 몫)와 따로다 */
 export function qwenAuditConcurrency(env: Readonly<Record<string, string | undefined>> = process.env): number {
   const value = Number(env.AUDIT_QWEN_CONCURRENCY?.trim() || Number.NaN);
-  return Number.isSafeInteger(value) && value >= 1 ? Math.min(value, QWEN_AUDIT_MAX_CONCURRENCY) : QWEN_AUDIT_DEFAULT_CONCURRENCY;
+  return Number.isSafeInteger(value) && value >= 1 ? Math.min(value, QWEN_AUDIT_MAX_CONCURRENCY) : Math.min(modelLimits("direct-review", env).concurrency, QWEN_AUDIT_MAX_CONCURRENCY);
 }
 
 /** 부르는 곳이 탈 났을 때 물러나는 시간 — 1분에서 두 배씩, 15분까지. 한 틱에서라도 답을 받으면 처음부터 센다 */

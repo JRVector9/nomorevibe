@@ -139,7 +139,7 @@ it('Oracle role principals, a non-owner application role and the owner keep thei
   expect((await admin`UPDATE uptime_claims SET host = 'mini' WHERE product_id = ${PRODUCT_ID} RETURNING host`)).toEqual([{ host: 'mini' }]);
 });
 
-it('adds only invoker origin triggers — no new row security (logical DR plan) and nothing the replay handler profile rejects', async () => {
+it('keeps invoker origin triggers and the explicitly enumerated row-security baseline', async () => {
   const triggers = await admin<{ table: string; name: string; enabled: string; definer: boolean }[]>`SELECT c.relname AS table, t.tgname AS name,
       t.tgenabled AS enabled, p.prosecdef AS definer
     FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_proc p ON p.oid = t.tgfoid
@@ -148,8 +148,8 @@ it('adds only invoker origin triggers — no new row security (logical DR plan) 
     { table: 'operations_observations', name: 'operations_observations_oracle_consumer_scope', enabled: 'O', definer: false },
     { table: 'uptime_claims', name: 'uptime_claims_oracle_scope', enabled: 'O', definer: false },
   ]);
-  // RLS 를 켠 표는 0106 의 두 표뿐이다(논리 DR 계획의 row_security_requires_review 대상이 늘지 않는다)
+  // 0106의 두 표와 0139의 공유 검색 표만 RLS를 쓴다. 논리 DR의 row_security_requires_review 보호는 유지한다.
   const rls = await admin<{ name: string }[]>`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relrowsecurity ORDER BY 1`;
-  expect(rls.map(row => row.name)).toEqual(['github_collector_apps', 'rate_limits']);
+  expect(rls.map(row => row.name)).toEqual(['github_collector_apps', 'github_discovery_pages', 'rate_limits']);
 });

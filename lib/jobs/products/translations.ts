@@ -5,7 +5,7 @@ import { pendingProductTranslations, recordProductTranslations, type ProductTran
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { PRODUCT_TRANSLATION_LADDER } from "@/lib/llm/deadline-ladder";
 
-/** One call / at most four demanded fields per 25-second text-role tick. No catalog backfill. */
+/** One call / at most four demanded fields per 55-second text-role tick. No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("product_translation.deferred", { reason: "no_key" });

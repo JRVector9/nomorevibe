@@ -47,6 +47,11 @@ export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string,
   };
 }
 
+/** A voluntary handoff waits for the bounded tick and its usual cleanup budget. */
+export function primaryHandoffDrainMs(limits: SupervisorLimits): number {
+  return limits.jobMs + limits.drainMs;
+}
+
 export function stalledReason(health: WorkerHealth, now: number, limits: SupervisorLimits): string | null {
   if (health.status === 'stopping' || health.status === 'failed') return null;
   if (now - health.lastHeartbeatAt > limits.heartbeatMs) return 'heartbeat_timeout';
@@ -143,6 +148,8 @@ function knownChildSignal(value: unknown): 'SIGINT' | 'SIGTERM' | 'SIGKILL' | nu
 export async function superviseWorker(role: RuntimeRole, options: {
   once?: boolean; healthPath?: string; limits?: SupervisorLimits;
   signal?: AbortSignal; closeDbOnExit?: boolean; consumer?: ConsumerName;
+  /** Lease loss during a voluntary drain must still cancel the child immediately. */
+  forceSignal?: AbortSignal;
   /** D11: role-worker boot 의 프로세스 그룹 근거 기록기. 없으면(직접 실행·scheduler·consumer) 기존 순서 그대로다. */
   processGroup?: ProcessGroupRecorder;
 } = {}): Promise<number> {
@@ -215,37 +222,56 @@ export async function superviseWorker(role: RuntimeRole, options: {
       try { writeHealth(healthPath, health); }
       catch { stop('health_write_failed', false); }
     };
-    const stop = (reason: string, requested: boolean, attribution: { signal?: 'SIGINT' | 'SIGTERM' | null; abortReason?: string | null } = {}) => {
-      if (stopping || finishing) return;
+    const stop = (reason: string, requested: boolean, attribution: { signal?: 'SIGINT' | 'SIGTERM' | null; abortReason?: string | null } = {}, force = false) => {
+      if (finishing || stopping && !force) return;
+      if (drainTimer) clearTimeout(drainTimer);
       stopping = true;
       requestedStop = requested;
       exitCode = requested ? 0 : 1;
       if (attribution.signal === 'SIGINT' || attribution.signal === 'SIGTERM') receivedSignal = attribution.signal;
       if (attribution.abortReason) abortReason = attribution.abortReason;
       health = { ...health, status: 'stopping', reason };
-      log('supervisor.stopping', { reason, requested, signal: receivedSignal, abortReason, sentSignal: 'SIGTERM' });
+      // Only the elected role worker implements voluntary handoff. Consumers and
+      // shutdown/lease loss retain their cancellation semantics.
+      const handoff = reason === 'primary_handoff' && !options.consumer && role !== 'scheduler' && !force;
+      const drainMs = handoff ? primaryHandoffDrainMs(limits) : limits.drainMs;
+      log('supervisor.stopping', { reason, requested, signal: receivedSignal, abortReason,
+        sentSignal: handoff ? null : 'SIGTERM', drainMs, stopMode: handoff ? 'drain' : 'cancel' });
       // Let the worker abort and drain first. Signalling its whole group here also kills
       // tsx/esbuild during startup and turns a requested graceful shutdown into a failure.
       // The deadline and final cleanup still SIGKILL the entire group, including CLI children.
-      child.kill('SIGTERM');
+      if (handoff) {
+        // IPC is queued even during startup; SIGTERM would abort in-flight HTTP
+        // and leave no evidence that the remote model actually stopped.
+        const deliveryFailed = () => { exitCode = 1; log('supervisor.drain_delivery_failed'); };
+        try { child.send({ type: 'runtime.drain' }, error => {
+          if (error) deliveryFailed();
+        }); } catch { deliveryFailed(); }
+      } else child.kill('SIGTERM');
       drainTimer = setTimeout(() => {
         drainTimedOut = true;
         forcedKill = true;
         log('supervisor.force_stop', {
-          reason, signal: receivedSignal, abortReason, forcedKill: true, drainTimeout: true, drainMs: limits.drainMs, sentSignal: 'SIGKILL',
+          reason, signal: receivedSignal, abortReason, forcedKill: true, drainTimeout: true, drainMs, sentSignal: 'SIGKILL',
         });
         exitCode = 1;
         signalGroup(child, 'SIGKILL');
-      }, limits.drainMs);
+      }, drainMs);
     };
-    const onSigint = () => stop('shutdown_requested', true, { signal: 'SIGINT' });
-    const onSigterm = () => stop('shutdown_requested', true, { signal: 'SIGTERM' });
+    const onSigint = () => stop('shutdown_requested', true, { signal: 'SIGINT' }, stopping && health.reason === 'primary_handoff');
+    const onSigterm = () => stop('shutdown_requested', true, { signal: 'SIGTERM' }, stopping && health.reason === 'primary_handoff');
+    const onForceAbort = () => {
+      const reason = knownAbortReason(options.forceSignal?.reason) ?? 'role_lease_lost';
+      stop(reason, reason === 'shutdown_requested', { abortReason: reason }, true);
+    };
     const onAbort = () => {
       const known = knownAbortReason(options.signal?.reason);
       stop(known ?? 'role_lease_lost', true, { abortReason: known });
     };
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
+    options.forceSignal?.addEventListener('abort', onForceAbort, { once: true });
+    if (options.forceSignal?.aborted) onForceAbort();
     const monitor = setInterval(() => {
       const reason = stalledReason(health, Date.now(), limits);
       if (reason) stop(reason, false);
@@ -270,6 +296,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
       process.removeListener('SIGINT', onSigint);
       process.removeListener('SIGTERM', onSigterm);
       options.signal?.removeEventListener('abort', onAbort);
+      options.forceSignal?.removeEventListener('abort', onForceAbort);
       log('supervisor.stopped', {
         exitCode, childExitCode: childExitCodeSeen, childSignal: childSignalSeen,
         reason: typeof health.reason === 'string' ? health.reason : null,

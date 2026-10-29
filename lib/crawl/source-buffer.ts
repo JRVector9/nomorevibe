@@ -2,8 +2,7 @@ import { and, eq, sql, type SQL } from "drizzle-orm";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlSourceBufferControl, operationsObservations } from "@/lib/db/schema";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { discoveryAdmission, DiscoveryAdmissionDeadlineError, readDiscoveryAdmissionInTransaction,
-  type DiscoveryAdmissionSnapshot } from "./discovery-admission";
+import { readReviewBacklogInTransaction, type ReviewBacklogSnapshot } from "./review-backlog";
 import { mergeWithDefaults } from "./settings";
 import { crawlSettingsSchema } from "./settings-schema";
 
@@ -11,19 +10,15 @@ export type SourceBufferDecision = { mode: "count"; blocked: boolean;
   reason: "count_pressure" | "measurement_unknown" | "ready"; measuredAt: string;
   R: null; targetHours: null; capHours: null };
 
-/** Count thresholds are safety signals, never a measured final-review rate. */
-export function sourceBufferAdmission(snapshot: DiscoveryAdmissionSnapshot, priorBlocked: boolean, wallTime: string): SourceBufferDecision {
+/** Fetch may drain the discovery queue even when its own pending frontier is full. */
+export function sourceBufferAdmission(snapshot: ReviewBacklogSnapshot, priorBlocked: boolean, wallTime: string,
+  maxReviewBacklog = 1_000_000): SourceBufferDecision {
   if (!Number.isFinite(Date.parse(wallTime)) || new Date(wallTime).toISOString() !== wallTime) throw new Error("invalid_source_buffer_wall");
-  if (typeof priorBlocked !== "boolean" || !Array.isArray(snapshot.stages)
-    || !Number.isSafeInteger(snapshot.recentNew) || snapshot.recentNew < 0
-    || snapshot.stages.some(stage => !["fetch", "judge", "first", "second", "publish"].includes(stage.key)
-      || !Number.isSafeInteger(stage.waiting) || stage.waiting < 0
-      || stage.oldestMinutes !== null && (!Number.isFinite(stage.oldestMinutes) || stage.oldestMinutes < 0))) throw new Error("invalid_source_buffer_snapshot");
-  const downstream = snapshot.stages.filter(stage => stage.key !== "fetch");
-  const unknown = Boolean(snapshot.timedOut || snapshot.secondWindowLimited || snapshot.secondVoteWindowLimited || snapshot.secondObservationLimited)
-    || downstream.length !== 4 || new Set(downstream.map(stage => stage.key)).size !== 4
-    || downstream.some(stage => stage.waiting > 0 && stage.oldestMinutes === null);
-  const blocked = unknown || discoveryAdmission({ ...snapshot, stages: downstream }, priorBlocked).throttled;
+  if (typeof priorBlocked !== "boolean"
+    || ![snapshot.recentNew, snapshot.queuedRepositories, snapshot.downstreamRepositories].every(value => Number.isSafeInteger(value) && value >= 0)
+    || snapshot.downstreamRepositories > snapshot.queuedRepositories) throw new Error("invalid_source_buffer_snapshot");
+  const unknown = Boolean(snapshot.timedOut);
+  const blocked = unknown || snapshot.downstreamRepositories >= maxReviewBacklog;
   return { mode: "count", blocked, reason: unknown ? "measurement_unknown" : blocked ? "count_pressure" : "ready",
     measuredAt: wallTime, R: null, targetHours: null, capHours: null };
 }
@@ -33,7 +28,7 @@ export class SourceBufferReadDeferredError extends Error {
   constructor(cause: unknown) { super("source_buffer_read_deferred", { cause }); this.name = "SourceBufferReadDeferredError"; }
 }
 function readBudgetFailed(error: unknown): boolean {
-  if (error instanceof DiscoveryAdmissionDeadlineError) return true;
+  if (error instanceof Error && error.message === "review_backlog_deadline") return true;
   for (let value = error, depth = 0; value && typeof value === "object" && depth < 5; depth++) {
     if ("code" in value && ["57014", "55P03", "DB_POOL_WAIT_TIMEOUT"].includes(String(value.code))) return true;
     value = "cause" in value ? value.cause : null;
@@ -63,11 +58,11 @@ export async function lockSourceBufferAdmission(tx: ProductTransaction): Promise
     (select setting from pg_settings where name='lock_timeout') AS lock, current_setting('jit') AS jit`);
   if (!prior || !/^\d+$/.test(prior.statement) || !/^\d+$/.test(prior.lock)) throw new Error("invalid_source_buffer_timeouts");
   let control: typeof crawlSourceBufferControl.$inferSelect | undefined;
-  let snapshot: DiscoveryAdmissionSnapshot;
+  let snapshot: ReviewBacklogSnapshot;
   let wall: string;
   try {
     const remaining = Math.floor(deadlineAt - Date.now() - 50);
-    if (remaining < 1) throw new DiscoveryAdmissionDeadlineError();
+    if (remaining < 1) throw new Error("review_backlog_deadline");
     await tx.execute(sql`select set_config(name, (case when setting::bigint=0 then ${remaining}
       else least(setting::bigint, ${remaining}) end)::text || 'ms', true)
       from pg_settings where name in ('statement_timeout','lock_timeout')`);
@@ -75,7 +70,7 @@ export async function lockSourceBufferAdmission(tx: ProductTransaction): Promise
     if (!control || control.policyVersion !== 1) throw new Error("source_buffer_control_missing");
     const [clock] = await tx.execute<{ wall: string }>(sql`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS wall`);
     wall = clock.wall;
-    snapshot = await readDiscoveryAdmissionInTransaction(tx, settings, new Date(wall), deadlineAt);
+    snapshot = await readReviewBacklogInTransaction(tx, new Date(wall), deadlineAt);
   } catch (error) {
     if (readBudgetFailed(error)) throw new SourceBufferReadDeferredError(error);
     throw error;
@@ -83,13 +78,14 @@ export async function lockSourceBufferAdmission(tx: ProductTransaction): Promise
   // Restore only after a successful read. Never issue finally SQL into an aborted transaction.
   await tx.execute(sql`select set_config('statement_timeout', ${prior.statement + 'ms'}, true),
     set_config('lock_timeout', ${prior.lock + 'ms'}, true), set_config('jit', ${prior.jit}, true)`);
-  const decision = sourceBufferAdmission(snapshot, control.blocked, wall);
+  const decision = sourceBufferAdmission(snapshot, control.blocked, wall, settings.discover.maxReviewBacklog);
   const changed = await tx.update(crawlSourceBufferControl).set({ blocked: decision.blocked,
     lastReason: decision.reason, lastDecisionAt: new Date(wall), revision: sql`${crawlSourceBufferControl.revision}+1` })
     .where(and(eq(crawlSourceBufferControl.id, 1), sql`${crawlSourceBufferControl.revision}<9007199254740991`)).returning({ id: crawlSourceBufferControl.id });
   if (!changed.length) throw new Error("source_buffer_revision_exhausted");
   const value = { ...decision, revision: control.revision + 1, rateEvidence: "unavailable",
-    stages: snapshot.stages, secondUnvalidated: snapshot.secondUnvalidated ?? 0 };
+    queuedRepositories: snapshot.queuedRepositories, downstreamRepositories: snapshot.downstreamRepositories,
+    maxReviewBacklog: settings.discover.maxReviewBacklog };
   await tx.insert(operationsObservations).values({ key: "crawl:source-buffer", value, observedAt: new Date(wall) })
     .onConflictDoUpdate({ target: operationsObservations.key, set: { value, observedAt: new Date(wall) } });
   return decision;

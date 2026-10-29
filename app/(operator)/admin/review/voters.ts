@@ -1,3 +1,4 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 
 /**
@@ -8,8 +9,8 @@ import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 export type VoterProvider = "grok-cli" | "abcllm" | "claude-cli" | "local-direct";
 export type VoterChoice = { value: string; provider: VoterProvider; model: string; label: string; group: string; disabled: string | null };
 
-export const GROK_MODELS = ["grok-4.7"] as const;
-export const CLAUDE_MODELS = ["sonnet", "opus"] as const;
+export const GROK_MODELS = [modelForPurpose("ai2-grok").model] as const;
+export const CLAUDE_MODELS = [modelForPurpose("classify-claude").model, modelForPurpose("ai2-cli").model] as const;
 
 export const voterValue = (provider: VoterProvider, model: string) => `${provider}|${model}`;
 

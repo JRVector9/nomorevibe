@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from recovery_gateway import PROVIDER_STAGES, bounded_output, save, validate_capacity_unknowns
+from recovery_gateway import PROVIDER_STAGES, bounded_output, save, valid_review_failures, validate_capacity_unknowns
 from incident_notifications import notify, validate_destination
 
 
@@ -34,7 +34,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -45,6 +45,9 @@ def validate_report(report):
                 any(not isinstance(stage, str) or stage not in PROVIDER_STAGES for stage in failures) or
                 len(set(failures)) != len(failures)):
             raise ValueError('invalid_provider_failures')
+        if 'reviewFailures' in row and not valid_review_failures(row['reviewFailures']):
+            raise ValueError('invalid_review_failures')
+
         if 'capacityUnknowns' in row:
             capacity = validate_capacity_unknowns(row['capacityUnknowns'])
             if capacity['status'] != 'ok' and (row['ok'] or row['recoverable']):
@@ -123,6 +126,23 @@ def cycle(config, state, reports, *, now=None, recover=None):
                     events.append({'target': key, 'stage': stage, 'reason': 'upstream_stalled'})
             if observations:
                 target['providerFailures'] = observations
+            review_observations = {}
+            previous_reviews = old.get('reviewFailures', {})
+            for failure in row.get('reviewFailures', []):
+                stage, reason = failure['stage'], failure['reason']
+                history = previous_reviews.get(stage, {}) if isinstance(previous_reviews, dict) else {}
+                previous_at = history.get('at') if isinstance(history, dict) else None
+                continuous = (type(previous_at) in (int, float) and math.isfinite(previous_at) and
+                              0 <= now - previous_at <= 150 and history.get('reason') == reason and
+                              type(history.get('bad')) is int and 0 <= history['bad'] <= 3)
+                samples = min(3, history['bad'] + 1) if continuous else 1
+                review_observations[stage] = {'at': now, 'reason': reason, 'bad': samples}
+                if samples >= 2:
+                    alarm = True
+                    events.append({'target': key, 'stage': stage, 'reason': reason, 'bad': samples})
+            if review_observations:
+                target['reviewFailures'] = review_observations
+
             capacity = row.get('capacityUnknowns')
             # A missing/failed read cannot clear a known request. Only a fresh, explicit empty observation can.
             if capacity is None or capacity['status'] == 'unknown':
