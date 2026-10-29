@@ -34,16 +34,34 @@ node --import tsx -e 'const {readModelRegistry}=require("./lib/llm/model-registr
 
 M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELAY_EQUIPMENT`(기본 `m1`) 장비의 `relay` 용도 entry. 중앙 기본값에서 `relay` 용도는 `m1:translation`에 있다. 기존 JSON을 쓰면 M1 entry에 `relay` 용도를 넣는다(`scripts/migrate-model-registry-m1.ts --print-migration`이 함께 준비한다).
 
-## M1 Gemma 4 26B로 제품 번역 설정하기
+## M1 Gemma 4 26B로 번역 설정하기 (main PR732 기준)
 
-현재 코드 기본 entry는 `m1:translation`, 표시 이름 `M1 · Gemma 4 26B`, gateway wire 이름 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`다. 사용자가 제공한 정확한 교체 모델 id를 기본값으로 반영했다. 원격 advertised id/revision·gateway label 보존을 이 차선에서 확인한 것은 아니므로, 운영 참여는 serving readback과 별도로 검증한다. 기존에 알려진 공용 gateway 주소를 유지하며 확인되지 않은 M1 직접 주소를 만들지 않는다. HTTP entry의 baseUrl 누락/null은 필드 경로를 포함한 invalid_model_registry 또는 model_base_url_required 오류로 거절한다.
+대표가 실제로 실행할 순서·읽기 명령·성공 조건은 [M1 relay·상품 번역 등록부 연결 — 대표 실행 안내](2026-10-29-m1-relay-registry-rollout.md)가 기준이다. 이 절은 그 안내가 기대는 코드 기본값과 우선순위만 정리한다.
 
-1. 기존 레지스트리·env·검증 계약·capacity policy의 읽기 전용 사본과 현재 세대/unknown 요청을 보존한다. 운영자가 승인된 readback 절차로 M1 모델 id, revision, `/v1/models`의 `[m1]` 장비 label, 요청 라우팅, context/output 제한을 확인한다. GPU3090에 같은 이름의 모델이 있어도 label은 `[m1]` 그대로여야 한다. 외부 abcLLM의 장비 label 보존 지원도 필요하다(기존 PR7 경로).
-2. 전체 JSON에서 `m1:translation` entry의 `model`·`family`·필요한 주소/표시/리소스만 실제 값으로 바꾼다. provider=abcllm, equipment=m1, gatewayLabel=m1은 유지한다. 직접 M1 relay로 전환하려면 이 번역 어댑터와 다른 전송이므로 임의로 provider만 바꾸지 않는다.
-3. 제품 번역 소비자에 `MODEL_REGISTRY_CONFIG`와 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 설정한다. 웹 표시도 같은 설정을 받는다. 오래된 `PRODUCT_TRANSLATION_MODEL=[m1] qwen...`은 삭제/대체 대상이며 KEY 설정이 있으면 우선순위상 무시된다. KEY 없이 호환 변수만 사용하는 운영 절차라면 `PRODUCT_TRANSLATION_MODEL=[m1] <실제 Gemma id>`로 바꾼다. 사유·한국어 소개·검색 질의를 함께 바꾸려고 `ABCLLM_MODEL`을 덮지 않는다. 한국어 소개와 검색 질의도 각각 `selections["product-tagline-ko"]`, `selections["search-query-translate"]`로 독립 선택할 수 있다. 대상 entry의 purposes에도 해당 용도를 추가하고, 우선순위가 높은 공용 ABCLLM_MODEL/KEY override를 확인한다. 요청 모델·용량 route·결과 기록·운영자 표시는 각 선택을 함께 따른다.
-4. `product-translate`의 정확한 scoped wire 모델 이름·endpoint·responseModel·deploymentRevision에 맞는 `ABCLLM_SERVING_CONTRACTS`와 해당 capacity route를 준비한다. 기존 strict terminal opt-in, 서버 readback hash, 물리 그룹·토큰 예산은 그대로 요구된다. 계약이 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. M1은 독립 장비 예산·단일 물리 슬롯을 유지한다.
-5. 실제 적용은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차와 배포 runbook을 따른다. 이미 전송된 요청과 unknown은 원래 세대/모델/정책에 남겨 둔다. 레지스트리 이름을 바꿨다고 취소·정산·해제·재전송하지 않는다. 호환 predecessor 판단도 기존 용량 검증을 그대로 거친다.
-6. 소비자 프로세스가 읽은 키/모델, M1 실제 dispatch, strict terminal, 번역 품질 검사와 저장 model label을 확인한다. 설치·설정·OPEN만으로 참여 완료라고 기록하지 않는다.
+현재 코드 기본 entry는 `m1:translation`(표시 이름 `M1 · Gemma 4 26B`, provider=abcllm, gatewayLabel=m1, 공용 gateway 주소, timeoutMs 40초)이고 wire 이름은 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`다. purposes는 `product-translate`·`reason-translate`·`relay`다. 확인되지 않은 M1 직접 주소는 만들지 않으며, HTTP entry의 baseUrl 누락은 `model_base_url_required`로 거절한다.
+
+`MODEL_REGISTRY_CONFIG`가 **없을 때** 실제 해석(2026-10-29 이 저장소에서 `configuredModel` 실행으로 확인):
+
+| 설정 | 상품 번역 | 사유 번역 | 한국어 소개·검색 질의 |
+| --- | --- | --- | --- |
+| 아무 env 없음 | `[m1] mlx-community--gemma-4-26b-a4b-it-4bit` | 같음 | `[MLX] gpt-oss-120b` |
+| 옛 `PRODUCT_TRANSLATION_MODEL=[m1] qwen3.8-flash-next`만 남음 | 같은 M1 장비의 현재 등록 모델(Gemma)로 해석 | Gemma | gpt-oss |
+| `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation` | Gemma(KEY가 옛 변수보다 우선) | Gemma | gpt-oss |
+| `ABCLLM_MODEL=gpt-oss-120b`가 설정됨 | Gemma | **gpt-oss**(공용 env가 등록부 기본값보다 우선) | gpt-oss |
+
+따라서 운영 반영에 필요한 설정은 다음뿐이다. 모두 대표가 승인된 절차로 수행하며, 이 차선은 운영 env·DB·relay를 바꾸지 않았다.
+
+1. 상품 번역 소비자(text-m3·mini 예비 text)와 표시용 web에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 둔다. 오래된 `PRODUCT_TRANSLATION_MODEL`은 KEY가 있으면 무시되며 정리 대상으로 기록한다.
+2. 운영 앱이 `MODEL_REGISTRY_CONFIG`를 쓰고 있으면 코드 기본값이 그 JSON을 바꾸지 않는다. 오프라인 도구로 후보를 만들고 diff를 검토한다. 기대 diff는 `m1:translation`의 model·family·displayName이 Gemma 값이 되고 purposes·selections에 `product-translate`·`reason-translate`·`relay`가 들어가는 것뿐이다.
+
+   ```bash
+   node --import tsx scripts/migrate-model-registry-m1.ts --print-migration < registry-before.json > registry-candidate.json
+   ```
+
+3. 사유 번역도 M1로 옮기려면 그 소비자의 `ABCLLM_MODEL`/`ABCLLM_MODEL_KEY`와 DB 단계 풀을 먼저 확인한다. 우선순위는 `*_MODEL_KEY` → 모델 env → `selections` → 기본값이므로, `ABCLLM_MODEL`이 설정된 소비자에서는 `selections["reason-translate"]`만으로는 바뀌지 않는다(확인: selection+`ABCLLM_MODEL=gpt-oss-120b` → `[MLX] gpt-oss-120b`). 공용 변수를 바꾸면 한국어 소개·검색 질의도 함께 바뀐다. 사유 번역만 옮기려면 `/admin/models`의 «심사 사유 번역» 단계 풀에 `m1:translation`을 저장한다(그 용도의 실행 범위에만 KEY를 준다). 공용 env가 없는 소비자는 JSON `selections["reason-translate"]`로도 된다.
+4. 용량 정책의 `product-translate`(필요 시 `reason-translate`) route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`이고 같은 이름의 `ABCLLM_SERVING_CONTRACTS`가 있어야 호출이 열린다. 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. 정책 변경은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차로만 한다.
+5. M1 relay는 설치기 plist가 `MODEL_REGISTRY_CONFIG`를 넘기지 않으므로 중앙 기본값(`relay` 용도 = `m1:translation`)을 읽는다. 재설치 SHA·plist 모델 값·시점 제약은 위 대표 실행 안내를 따른다.
+6. 이미 전송된 요청과 unknown은 원래 세대/모델/정책에 남는다. 이름을 바꿨다고 취소·정산·재전송하지 않는다. 실제 참여는 M1 dispatch·strict terminal·번역 저장 model label 증가로만 기록한다.
 
 롤백은 보존한 정확한 entry/env/계약/정책을 같은 감사 절차로 되돌리는 것이다. 공유 번역 기본값으로 추측해 바꾸거나 번역 행·재시도·품질 보류·unknown 요청을 초기화하지 않는다.
 
@@ -57,6 +75,8 @@ AI2의 새 직접 모델 선택지는 `model: gpu3090:review`, provider=local-di
 
 ## 검증과 운영자 화면
 
+사람 검토 위임 스위치(설정 화면·모델 화면)와 심사 화면의 바로가기 알약은 저장된 `human-review` 풀이 있으면 그 표시 이름들을, 없으면 레지스트리의 `human-review` 모델 표시 이름과 `key · 요청 이름`을 보여 준다(`humanReviewModelDisplay`). 고정 «DeepSeek·M3 Ultra» 문구는 없앴다.
+
 `/admin/models`의 기존 단계 표는 실제 소비자와 같은 모델 선택을 표시한다. 제품 번역은 `PRODUCT_TRANSLATION_MODEL`의 독립 선택을 보여 준다. `등록된 모델 설정`을 펼치면 현재 웹 프로세스의 키·표시 이름·provider·주소·요청 이름·모델 상한을 본다. 개별 env override는 단계 표를 확인한다. connect 모델 선택과 provider 표시는 서버가 전한 레지스트리 metadata를 사용한다. registry 교체로 저장된 옛 CLI 선택이 목록에서 사라져도 인증·기존 선택을 삭제하거나 새 기본값으로 자동 적용하지 않는다. 선택을 화면에 보존하고 실행/준비를 보류하며, 새 등록 모델을 선택·검사·적용한 뒤 분류를 재개한다.
 
 ```bash
@@ -68,6 +88,8 @@ scripts/verify-model-config.sh
 남은 항목과 검증 실패 이력은 [model-config-backlog.md](model-config-backlog.md)에 보존한다.
 
 ## 기한·후보 설정과 오프라인 설정 이전
+
+경로별 호출 예산 기본값(`timeouts[경로]`로 대체 가능): 운영자 분류 검사·분류 호출 `classify-cli` 35초, 화면 판별 `screen-review` 90초 등은 `DEFAULT_MODEL_TIMEOUTS`에 있다. 값은 기존 상수와 같다.
 
 `deadlines["review-gateway"]`의 기본값은 PR711과 같은 `{engineMs:50000, relayMs:null, gatewayMs:55000, clientMs:60000}`다. 모델별 deadlineLadder가 있으면 그 장비의 클라이언트 기한을 사용하며, 없으면 역할의 기한과 모델 timeoutMs 중 작은 값을 사용한다. 순서 위반은 `invalid_model_registry:...deadline_order_inverted`, 선언 불일치는 `model_timeout_ladder_mismatch`로 실패한다. timeouts[용도]로 경로별 예산을 지정할 수도 있다. 같은 경로에 전체 사다리가 있으면 clientMs와 같아야 한다. 모델/용도별 출력은 maxTokens와 역할 예산 중 작은 값이다. 검증 계약과 exact tokenizer의 상한은 별도로 보존한다.
 
