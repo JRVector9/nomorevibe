@@ -205,3 +205,8 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 2. 사유 번역도 M1로 옮기려면 `/admin/models` «심사 사유 번역» 단계 풀에 `m1:translation`(공용 `ABCLLM_MODEL`이 있으면 JSON selection만으로는 안 바뀜).
 3. 용량 정책 `product-translate` route 모델·serving 계약을 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`로(DRAINING→정책→OPEN 감사 절차), M1 relay 재설치는 PR732 대표 실행 안내의 SHA·시점 제약대로.
 4. 이번 PR의 기한·표시 변경은 설정 변경 없이 기본값이 같다. 다른 값을 원할 때만 `MODEL_REGISTRY_CONFIG.timeouts["classify-cli"|"screen-review"]`.
+
+### PR·CI (2026-10-29)
+
+- PR [#739](https://github.com/JRVector9/nomorevibe/pull/739) `feat/model-config-registry-20261029` → main.
+- **막힘: CI 미시작.** [CI 40895046245](https://github.com/JRVector9/nomorevibe/actions/runs/40895046245)의 `scope`·`check`가 runner 배정 없이 실패했다. 주석: "The job was not started because recent account payments have failed or your spending limit needs to be increased." 필수 check가 없으므로 병합·관리자 병합·검사 건너뛰기를 하지 않았다. 로컬 검증 결과는 PR 본문에 남겼다. 결제·지출 한도를 해결한 뒤 CI 재실행 → `check` 통과 시 일반 병합한다.
