@@ -30,7 +30,7 @@
 | `scripts/ops/release-29877f65/in-container.sh` | `8690b97adf6497d28470ab2a42339a3efd6c562d127ac1ac1b54b1573c2c0611` |
 | `scripts/ops/release-29877f65/assemble.ts` | `724f537c814a5159c360b4961984159a56417eb451a13e531a10122afb6691d2` |
 | `scripts/ops/release-29877f65/wire.ts` | `065f7639006caafaff961236eb82de7ed75aa6d9d6334a455412e15bfc6e5c51` |
-| `scripts/ops/release-65f8c399/build-manifest.py` | `4099b7e0c3ed76e5005d23a060241673d02aa639cf81fa45a491752eb067526e` |
+| `scripts/ops/release-65f8c399/build-manifest.py` (`xaegis/7b7a2d23`, `--final-admission` 추가. 4ed4ea33 판은 `4099b7e0…`이며 S5 인자를 받지 못한다) | `1d974717b4b6b45ffa1e6119f05edfca003cb217dcb92feafbf26e692c2285c7` |
 | `scripts/ops/model-replaced-provider-boundary-release.ts` (main 그대로) | `c9e1ae002ecb49ad7e7cf1382adbdf7f41228f10a7262eafee5114f513463771` |
 | `scripts/ops/admin-models-boundary-adapter.py` (main 그대로) | `f51d5ef76232bf74e652a27627aabed97236029ae1c17742a55df55311707f61` |
 | `admin_models_helpers/systemd_action.py` | `744e082e9b7e8708e41203eb481b640df4542453a0f965e4039ac55ce2dd160e` |
@@ -156,7 +156,7 @@ RUN 이름 예시는 `run-20261029T1200Z`이다(처음 쓰는 이름). REF는 �
 
 ### D1. 현재 상태 확인
 - 위치: m3ultra 컨테이너 / 명령: `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`
-- 성공(확정 순서): capacity `draining`이고 epoch/revision이 Supa runner 인계 값(release-order 11단계의 `EPOCH1`·`REV1`)과 같다. ops-runner 미완료 job이 없고, 그 DRAIN의 감사가 `<JOB>:handoff`다. (단독 실행이라면 capacity `open`, epoch 1, revision 7을 확인하고 D2로 간다.)
+- 성공(확정 순서): capacity `draining`이고 epoch/revision이 Supa runner 인계 값(release-order 7·11단계의 `EPOCH1`·`REV1`)과 같다. `status`는 ops-runner job과 감사를 보여 주지 않는다. job `completed`와 `<JOB>:draining`·`<JOB>:handoff` 감사 2행은 release-order 11단계의 읽기로 이미 확인한 것을 쓴다. (단독 실행이라면 capacity `open`, epoch 1, revision 7을 확인하고 D2로 간다. 모드 전환은 revision을 바꾸지 않으므로 D2 뒤에도 D10은 같은 `1 7`이다.)
 
 ### D2. DRAIN (정식 CAS, dry-run 뒤 실행) — 확정 순서에서는 하지 않는다
 - 위치: m3ultra 컨테이너
@@ -232,7 +232,7 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --e
 ## B-3. 선행 조건 (하나라도 아니면 시작하지 않는다)
 
 - 배포를 기다리지 않는다. 운영 웹 199a3ebb에는 `ops-runner-actions.ts`가 없으므로 job은 운영자 셸 접수 CLI `scripts/ops/admin-models-ops-submit.ts`로 접수한다(S3). 이 CLI는 웹과 같은 `submitModelOpsCommand`를 쓴다. 배포는 미확인 0건을 요구하므로 Supa 해제가 배포보다 먼저다. Supa 해제 자체에는 0143이 필요 없지만, 확정 순서에서는 M1 때문에 0143(+0144)을 먼저 적용·확인한다.
-- capacity가 **OPEN**이다(prepare가 요구한다). 확정 순서에서는 A절을 아직 시작하지 않았다. runner는 시작할 때 이미 DRAIN이면 거절하고, 이 보호는 그대로다. runner는 끝에 OPEN하지 않고 자기 DRAIN을 A절에 인계한다(profile `finalAdmission:"draining"`).
+- capacity가 **OPEN**이다(prepare가 요구한다). 확정 순서에서는 A-2(C1~C7, 읽기 전용)만 0143 전에 끝냈고 A-4(D1~D9)는 아직 시작하지 않았다. runner는 시작할 때 이미 DRAIN이면 거절하고, 이 보호는 그대로다. runner는 끝에 OPEN하지 않고 자기 DRAIN을 A절에 인계한다(profile `finalAdmission:"draining"`).
 - 다른 ops-runner 미완료 job이 없다. 요청 owner가 M3 reviewer `app-copy-primary-hard-drive-b5fhzd` 안에 아직 있다. 06:33Z 이후 reviewer가 재배포됐으면 prepare가 `request_owner_incarnation_changed`로 거절한다. 그때는 이 경로로 해제할 수 없다.
 - supa에 root helper 3개가 설치돼 있다(B-4의 S2).
 
@@ -283,7 +283,7 @@ P='PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin /usr/bin/python3 -I -'
 ### S5. manifest/profile 생성
 - 위치: gpu3090
 ```sh
-python3 -I "$SRC/scripts/ops/release-65f8c399/build-manifest.py" --job="$JOB" --out-dir="/home/ubuntu/ops/jobs/$JOB" \
+python3 -I "$T/scripts/ops/release-65f8c399/build-manifest.py" --job="$JOB" --out-dir="/home/ubuntu/ops/jobs/$JOB" \
   --adapter="$T/scripts/ops/admin-models-boundary-adapter.py" --affected-group="$GROUP" --container-progress-root=/Users/jr/.nmv-admin-models-progress \
   --owner="jr@m3Ultra:$I/owner.json" --gateway-m3="jr@m3Ultra:$I/gw-m3.json" --gateway-mini="<MINI_SSH>:$I/gw-mini.json" --provider="jr@supa:$I/supa.json" \
   --final-admission=draining
@@ -300,7 +300,7 @@ for p in "$J/profile.json" "$J/manifest.json" "$T/scripts/ops/admin-models-bound
 ### S7. DB 연결 준비 (값 출력 없음)
 ```sh
 read -rs DATABASE_URL; export DATABASE_URL     # 대표의 비밀 저장소에서 직접 5432 primary URL을 붙여 넣는다
-printf '%s\n' "$DATABASE_URL" | (cd "$SRC" && node --import tsx scripts/ops/release-29877f65/assemble.ts db-target --database-url-stdin)
+printf '%s\n' "$DATABASE_URL" | (cd "$T" && node --import tsx scripts/ops/release-29877f65/assemble.ts db-target --database-url-stdin)   # S1의 $T(REL archive + node_modules 연결)에서 실행한다
 ```
 - 성공: host/port가 직접 primary다(PgBouncer 6432가 아니다. session advisory lock이 필요하다). gpu3090에서 5432가 닿지 않으면 `ssh -N -L 127.0.0.1:15432:100.99.209.55:5432 jr@m3Ultra` 터널과 그 host/port를 쓴다. sslmode 검증이 host 불일치로 실패하면 중단한다.
 

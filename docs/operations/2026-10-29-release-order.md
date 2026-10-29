@@ -32,7 +32,7 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 
 | 이름 | 값 |
 | --- | --- |
-| 도구 소스 | gpu3090 작업 공간 `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0`, 브랜치 `xaegis/7b7a2d23`(push 안 함). `xaegis/4ed4ea33`·`xaegis/4cefcc24`를 포함한다. `REL=$(git -C "$SRC" rev-parse xaegis/7b7a2d23)`를 적어 둔다. 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다 |
+| 도구 소스 | gpu3090 작업 공간 `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0`, 브랜치 `xaegis/7b7a2d23`(push 안 함). `xaegis/4ed4ea33`·`xaegis/4cefcc24`를 포함한다. `REL=$(git -C "$SRC" rev-parse xaegis/7b7a2d23)`를 적어 둔다. 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다. `$SRC`는 `git -C "$SRC" show/archive`로만 쓴다(작업 트리 파일을 직접 실행하지 않는다). 그래서 같은 저장소의 다른 checkout(예: `/home/ubuntu/projects/nomorevibe`)을 `SRC`로 써도 결과가 같다. Node 실행은 모두 `node_modules`를 연결한 `$T`에서 한다 |
 | runner 실행 트리 | `T=/home/ubuntu/ops/nmv-runner-$REL`(실행서 S1의 `git archive 75b8aa31` 대신 `git -C "$SRC" archive "$REL"`). runner와 접수 CLI가 이 커밋 코드여야 handoff를 쓸 수 있다 |
 | 요청 | M1 `29877f65-9f95-4efb-88f9-aea5f39a28b2`, Supa `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` |
 | 유지보수 컨테이너 | m3ultra Swarm `app-navigate-neural-system-yf43c7`. `DK='env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin docker'` |
@@ -71,9 +71,9 @@ SELECT (SELECT count(*) FROM drizzle.__drizzle_migrations) AS applied,
 
 ### 2. OPEN인 상태에서 사전 확인 (쓰기 0)
 - 위치: gpu3090 셸 → m3ultra 유지보수 컨테이너, crawler-m3
-- 명령: (a) `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`를 실행해 capacity `open`, `EPOCH0`·`REV0`를 적는다. (b) `xa-ssh m3ultra "$DK exec -i $CID sh -s -- routes" < capacity-control.sh`(아래 `CC`)를 실행한다. 현재 이미지 env 기준으로 serving·unused가 아닌 route 수를 적는다. (c) 관문 문서 S0을 실행해 `job_batch_mode`를 확인한다. (d) S3을 실행해 미확인이 정확히 2건(29877f65·65f8c399)이고 다른 활성이 0인지 확인한다.
-  - `CC`: `git -C "$SRC" show "$REL:scripts/ops/release-order/capacity-control.sh" > "$W/capacity-control.sh"`. sha256이 표 3과 같아야 한다.
-- 성공: (c)가 `legacy`다(아니면 14단계의 job-pause를 쓸 수 없다. 관문 문서 2절 ①을 따른다). (d)의 미확인이 그 2건뿐이다.
+- 명령: (a) `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`를 실행해 capacity `open`, `EPOCH0`·`REV0`를 적는다(`$W`·`$CID`·`/tmp` 스테이징은 실행서 C1·C5의 것이다. 그사이 컨테이너가 바뀌어 CID가 다르면 C5부터 다시 한다). (b) 먼저 `git -C "$SRC" show "$REL:scripts/ops/release-order/capacity-control.sh" > "$W/capacity-control.sh"`로 받고 sha256이 표 3과 같은지 본다. 그다음 `xa-ssh m3ultra "$DK exec -i $CID sh -s -- routes" < "$W/capacity-control.sh"`를 실행한다. 현재 이미지 env 기준으로 serving·unused가 아닌 route 수를 적는다. (c) 관문 문서 S0을 실행해 `job_batch_mode`를 확인한다. (d) S3을 실행해 미확인이 정확히 2건(29877f65·65f8c399)이고 다른 활성이 0인지 확인한다. (e) 관문 문서 R1을 실행해 경보 단계를 표로 남긴다(관문 문서 6절 1번).
+- (e)의 판단: 관문 문서 3절에서 pause 대상(「예」·조건부)이거나 first·second(DRAIN의 held로 처리)인 경보는 시작을 막지 않는다. 생존·lane·scheduler, fetch·judge·publish·evidence 등 「아니오」인 경보가 있으면 시작하지 않는다. 그 상태로 진행하면 해제 뒤 14단계에서 배포가 막혀 DRAIN만 남는다.
+- 성공: (c)가 `legacy`다(아니면 14단계의 job-pause를 쓸 수 없다. 관문 문서 2절 ①을 따른다). (d)의 미확인이 그 2건뿐이다. (e)에 「아니오」인 경보가 없다.
 - 실패 시: 미확인이 더 있으면 그 요청이 없어지기 전에는 배포 관문을 통과할 수 없다. 이 순서를 시작하지 않는다. (b)에서 non-serving route가 있으면 **배포 전 OPEN이 거절될 수 있다는 뜻**이다. 그 경우 아래 실패 경로의 「배포 전 OPEN」을 쓸 수 없고, 9~19단계를 끝까지 이어야만 OPEN할 수 있다. 이 사실을 알고 시작할지 대표가 정한다.
 
 ### 3. Supa 준비 (쓰기 0, DRAIN 없음)
@@ -93,7 +93,7 @@ cd "$T" && node --import tsx scripts/ops/admin-models-ops-submit.ts --target=65f
 ```
 - 전제: 2·3단계가 끝났고 4~11단계를 이어 갈 시간이 있다(접수한 job은 끝날 때까지 다른 job 접수를 막는다. 5절). 미리 보기에서 `blocked: []`가 나오고, `request.state`가 `indeterminate`, `request.groupId`(= `GROUP`)가 Supa 물리 그룹, `request.ownerInstanceId`가 M3 reviewer다.
 - 성공: exit 0이고 `state.status: "queued"`, `state.id == $JOB`이며 `state.auditId`가 숫자다. 관문 문서 7절 실행기로 `SELECT id, actor, actor_kind, detail->>'status' FROM operations_audit WHERE action='ops-runner-state' AND target='<JOB>'`를 읽으면 1행이 나오고 actor_kind가 NULL이다.
-- 실패 시: exit 3(`ops_runner_unfinished_operation`, `request_not_indeterminate`, `id_conflict`, `dr_writer_site_fenced`)이면 아무것도 쓰지 않은 것이다. 원인을 본다. exit 1 `ops_submit_unconfirmed_readback_required`이면 같은 `--id`로 미리 보기를 다시 실행한다. `existing`이 나오면 접수된 것이다. 새 ID로 다시 접수하지 않는다.
+- 실패 시: exit 3이면 stdout의 `blocked`(`ops_runner_unfinished_operation`, `ops_runner_request_not_indeterminate`, `ops_runner_id_conflict`, `dr_writer_site_fenced`)가 이유이고 아무것도 쓰지 않은 것이다. 원인을 본다. `--execute` 도중 같은 이유로 거절되면 exit 1과 stderr `{"code":"<위 코드 중 하나>"}`가 나온다. 이것도 쓰지 않은 것이다. exit 1 `ops_submit_unconfirmed_readback_required`이면 같은 `--id`로 미리 보기를 다시 실행한다. `existing`이 나오면 접수된 것이다. 새 ID로 다시 접수하지 않는다.
 
 ### 5. Supa 스냅샷·manifest(인계 선택)·prepare (쓰기는 감사 행만, DRAIN 없음)
 - 위치: gpu3090 실제 셸
@@ -115,7 +115,7 @@ python3 -I -c 'import json,sys;p=json.load(open(sys.argv[1]));print(p["finalAdmi
 
 ### 7. [승인] runner run → DRAIN 시작 → stop 대기
 - 위치: gpu3090 실제 셸. 명령: 실행서 S10.
-- 성공: exit 1, `status:"manual"`, `step:"stop"`, `code:"supa_root_result_required"`. 이때부터 **모든 모델 호출이 미뤄진다**. capacity는 `draining`이고 revision은 `REV0+1`이다.
+- 성공: exit 1, `status:"manual"`, `step:"stop"`, `code:"supa_root_result_required"`. 이때부터 **모든 모델 호출이 미뤄진다**. 유지보수 컨테이너 `status`(2단계 (a)와 같은 명령)로 capacity가 `draining`인지 보고 epoch·revision을 `EPOCH1`·`REV1`로 적는다. 모드 전환(`setModelCapacityMode`)은 `mode`와 `updated_at`만 바꾸므로 정상이면 `EPOCH1 = EPOCH0`, `REV1 = REV0`이다(revision은 policy 변경 때만 오른다). 값이 다르면 그사이 다른 정책 변경이 끼어든 것이다. 멈추고 감사를 본다.
 - 실패 시: `blocked`이면 code를 본다. DRAIN 뒤의 실패라면 runner가 DRAIN을 쥔 상태다. **수동으로 OPEN하지 않는다**(job이 경계를 쥐고 있다). 같은 `run`으로 이어가거나, 막힌 원인이 해소되지 않으면 아래 「실패 경로」를 따른다.
 
 ### 8. [승인] root stop (device_admin, supa)
@@ -212,3 +212,4 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order
 - 로컬 시험(Node v22.22.1, 운영 접근 없음). 바꾼 영역 묶음은 다음과 같다: `release-29877f65`, `release-65f8c399-manifest`, `worker-progress-job-pause`, `worker-progress`, `worker-progress-capacity-drain`, `ops-runner-*` 9개, `admin-models-ops-*` 3개(ui 포함), `release-order-capacity-control`. 결과는 Vitest **17파일/145시험 PASS**이고, 변경 전(병합 커밋 51136a32, 같은 묶음에서 새 파일 제외)은 14파일/130시험이었다. Python `test_release_65f8c399_manifest` 3→**4건 PASS**. `next typegen` 뒤 `tsc --noEmit` exit 0, 변경 파일 ESLint 0.
 - 화면: 관리 화면 작업 카드(인계 완료/일반 완료)를 앱 CSS로 정적 렌더해 확인했다(`ops-runner-handoff-card.png`). 운영 DB와 관리자 로그인이 필요한 `/admin/models` 실제 화면은 띄우지 않았다.
 - 실제 운영에서는 아무것도 실행하지 않았다. 따라서 운영 수치(미확인 수, route 상태, revision)는 이번에 측정하지 않았다. 표의 `EPOCH*`·`REV*`는 대표가 실행하면서 적는 값이다.
+- 재검증(2026-10-29, 브랜치 `xaegis/e84f26ca`, `xaegis/7b7a2d23`를 fast-forward로 합침, node_modules 연결): 지정 7파일(`release-29877f65`, `release-65f8c399-manifest`, `worker-progress-job-pause`, `ops-runner-root-handoff`, `ops-runner-operator`, `ops-runner-handoff`, `release-order-capacity-control`) Vitest **7파일/38시험 PASS**. 표 3의 SHA-256 10개를 `git show xaegis/7b7a2d23:<파일> | sha256sum`으로 다시 계산해 모두 일치했다. `drizzle/0143`·`0144` sha256과 저널 145항목, 0144 인덱스 이름이 1단계 기대값과 같다. `package-lock.json`은 199a3ebb·`/home/ubuntu/projects/nomorevibe`와 같다(C5 `same_as_image`, S1 `cmp` 전제 성립). 코드와 대조해 고친 곳: 7단계 revision(모드 전환은 revision을 올리지 않는다), 4단계 실패 코드 이름과 exit, 2단계 (b) 파일 경로·순서와 (e) R1 사전 확인(관문 문서 6절 1번과 맞춤), 실행서 표 0의 `build-manifest.py` 해시·S5/S7 실행 위치·B-3/D1 문구.
