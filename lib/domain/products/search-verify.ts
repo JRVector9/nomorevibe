@@ -1,3 +1,5 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import type { ProfileEvidence } from "./search-profile";
@@ -62,7 +64,7 @@ export function searchVerifyGatewayWire(item: VerifyItem, model: string): string
   return JSON.stringify({
     // 기본 어댑터는 근거를 요약해 버린다 — 키워드 짓기와 같은 이유로 원문을 그대로 보낸다
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: MAX_TOKENS,
+    model, stream: false, temperature: 0, max_tokens: Math.min(MAX_TOKENS, modelLimits("product-search-verify").maxTokens),
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_object" },
     messages: [
@@ -76,8 +78,8 @@ export type VerifyResult = { ok: true; unsupported: string[] } | { ok: false; er
 export async function verifyKeywordsInChunks(item: VerifyItem, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<VerifyResult> {
-  const deadline = Date.now() + Math.max(1, options.timeoutMs);
-  const timer = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  const deadline = Date.now() + Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs));
+  const timer = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs)));
   const signal = options.signal ? AbortSignal.any([options.signal, timer]) : timer;
   const stopped = (): VerifyResult | null => options.signal?.aborted ? { ok: false, error: "cancelled" }
     : timer.aborted || Date.now() >= deadline ? { ok: false, error: "timeout" } : null;
@@ -162,11 +164,11 @@ export async function verifyKeywords(item: VerifyItem, options: {
 }): Promise<VerifyResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? VERIFY_MODEL });
-  const wire = searchVerifyGatewayWire(item, options.model ?? VERIFY_MODEL);
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? scopedModel("product-search-verify", VERIFY_MODEL) });
+  const wire = searchVerifyGatewayWire(item, options.model ?? scopedModel("product-search-verify", VERIFY_MODEL));
+  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs)));
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-verify", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: wire,

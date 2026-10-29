@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModelForProvider, modelLimits } from "@/lib/llm/model-registry";
 import { cliFailure, runReviewCli, usageFrom, type ReviewCliRun, type ReviewUsage } from "@/lib/crawl/agent-review";
 import { tidyTagline } from "@/lib/crawl/tagline";
@@ -143,9 +145,9 @@ export async function checkIntros(items: readonly IntroItem[], options: {
   const body = JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   let result;
   try {
-    result = await (options.run ?? runReviewCli)(introCheckCliArgs(options.model ?? INTRO_CHECK_MODEL),
+    result = await (options.run ?? runReviewCli)(introCheckCliArgs(options.model ?? scopedModel("product-intro-check", INTRO_CHECK_MODEL)),
       `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>`,
-      { timeoutMs: options.timeoutMs, signal: options.signal, maxOutputTokens: MAX_OUTPUT_TOKENS });
+      { timeoutMs: scopedRequestTimeout("product-intro-check", options.timeoutMs), signal: options.signal, maxOutputTokens: Math.min(MAX_OUTPUT_TOKENS, modelLimits("product-intro-check").maxTokens) });
   } catch { return { ok: false, error: "cli_error" }; }
   if (result.kind !== "exit") return { ok: false, error: result.kind };
   let output: Record<string, unknown>;

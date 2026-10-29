@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { TAGLINE_MODEL, taglineEvidence, type TaglineResult } from "./tagline";
@@ -29,7 +31,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled" && !previous) return { kind: "disabled" };
   if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-  if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === TAGLINE_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" ? roleLeaseFromEnv("text", env) : undefined);
   if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
@@ -40,18 +42,18 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   }
   if (initial.kind === "skipped") return initial;
   if (!("snapshot" in initial)) throw new Error("crawl_tagline_preparation_invalid");
-  const history = await readCrawlTaglineContinuation({ member: initial.member, model: TAGLINE_MODEL });
+  const history = await readCrawlTaglineContinuation({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
   if (history && (!previous || history.second)) return prepareCrawlTaglineHistory(task, lease, { initial, history });
   if (previous && (!history || !isDeepStrictEqual(previous.parent, { requestId: history.first.requestId,
     bindingHash: history.first.bindingHash, responseHash: history.first.responseHash }) || !history.first.outcome.ok || history.first.outcome.tagline))
     throw new ModelCapacityDeferredError("reservation_lost");
-  const input = { member: initial.member, model: TAGLINE_MODEL, askOrdinal: previous ? 2 as const : 1 as const,
+  const input = { member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL), askOrdinal: previous ? 2 as const : 1 as const,
     parent: previous?.parent ?? null };
   const evidence = taglineEvidence(task.candidate.repo, task.document);
-  const call = prepareCrawlTaglineGatewayCall(evidence, { model: TAGLINE_MODEL, timeoutMs: options.timeoutMs });
+  const call = prepareCrawlTaglineGatewayCall(evidence, { model: scopedModel("crawl-tagline", TAGLINE_MODEL), timeoutMs: scopedRequestTimeout("crawl-tagline", options.timeoutMs) });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    class: "background", pool: "text", routeId: "crawl-tagline", provider: "abcllm", model: TAGLINE_MODEL,
+    class: "background", pool: "text", routeId: "crawl-tagline", provider: "abcllm", model: scopedModel("crawl-tagline", TAGLINE_MODEL),
     workKey: `${crawlTaglineLogicalWorkKey(input)}:${crawlTaglineInputHash(input)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
@@ -73,7 +75,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
     return { kind: "skipped", reason: "source_changed" };
   }
   let native: Awaited<ReturnType<typeof writeTaglineWithReservedGateway>>;
-  try { native = await writeTaglineWithReservedGateway(evidence, prepared.dispatch, call, { signal: options.signal, timeoutMs: options.timeoutMs }); }
+  try { native = await writeTaglineWithReservedGateway(evidence, prepared.dispatch, call, { signal: options.signal, timeoutMs: scopedRequestTimeout("crawl-tagline", options.timeoutMs) }); }
   catch (error) {
     try { if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("crawl_tagline_dispatch_not_marked"); }

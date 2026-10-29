@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { PRODUCT_TRANSLATION_MODEL, translateProductFields } from "@/lib/crawl/translate";
 import { prepareProductTranslationGatewayCall, translateProductFieldsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
@@ -23,21 +25,21 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; deadlineAt?: number }): Promise<ProductTranslationCapacityResult> {
   let tasks = structuredClone(value);
   const lease = structuredClone(job);
-  const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal, deadlineAt: valueOptions.deadlineAt,
+  const options = { timeoutMs: scopedRequestTimeout("product-translate", valueOptions.timeoutMs), signal: valueOptions.signal, deadlineAt: valueOptions.deadlineAt,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const env = Object.fromEntries(["ROLE_LEASE_ROLE", "ROLE_LEASE_INSTANCE_ID", "ROLE_LEASE_BOOT_ID", "ROLE_LEASE_RELEASE",
     "ROLE_LEASE_EPOCH", "ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_BATCH_EPOCH", "ROLE_LEASE_HOST"].map(key => [key, process.env[key]]));
   let items = tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
     text: translationSourceText(task.source, task.field) }));
   const legacy = async () => ({ kind: "result" as const,
-    result: await translateProductFields(items, options.timeoutMs, undefined, options.signal, PRODUCT_TRANSLATION_MODEL) });
+    result: await translateProductFields(items, scopedRequestTimeout("product-translate", options.timeoutMs), undefined, options.signal, scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL)) });
   if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-translate" && route.provider === "abcllm" && route.model === PRODUCT_TRANSLATION_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "product-translate" && route.provider === "abcllm" && route.model === scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
-  let call = prepareProductTranslationGatewayCall(items, { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: options.timeoutMs });
+  let call = prepareProductTranslationGatewayCall(items, { model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), timeoutMs: scopedRequestTimeout("product-translate", options.timeoutMs) });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" || env.ROLE_LEASE_ROLE === "translation"
     ? roleLeaseFromEnv(env.ROLE_LEASE_ROLE, env) : undefined);
@@ -47,7 +49,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   if (initial.kind === "skipped") return initial;
   if (!("members" in initial)) throw new Error("product_translation_preparation_invalid");
   const expected = { owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    model: PRODUCT_TRANSLATION_MODEL, routeId: "product-translate" as const };
+    model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), routeId: "product-translate" as const };
   let adopted: { requestId: string; state: "waiting" | "reserved" } | undefined;
   for (const candidate of await findOwnPendingProductTextRequests(expected)) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
@@ -55,21 +57,21 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     const recoveredItems = recovered.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
       text: translationSourceText(task.source, task.field) }));
-    const recoveredCall = prepareProductTranslationGatewayCall(recoveredItems, { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: options.timeoutMs });
+    const recoveredCall = prepareProductTranslationGatewayCall(recoveredItems, { model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), timeoutMs: scopedRequestTimeout("product-translate", options.timeoutMs) });
     if (recoveredCall.kind !== "prepared") throw new ModelCapacityDeferredError(recoveredCall.reason);
     const current = await prepareProductTranslationDispatch(recovered, lease, { roleLease, call: recoveredCall });
     if (current.kind === "disabled") return legacy();
     if (current.kind === "skipped") { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     if (!("members" in current)) throw new Error("product_translation_preparation_invalid");
-    const recoveredKey = `${productTranslationLogicalWorkKey(current.members)}:${productTranslationInputHash({ members: current.members, model: PRODUCT_TRANSLATION_MODEL })}`;
+    const recoveredKey = `${productTranslationLogicalWorkKey(current.members)}:${productTranslationInputHash({ members: current.members, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) })}`;
     if (candidate.request.workKey !== recoveredKey) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     tasks = recovered; items = recoveredItems; call = recoveredCall; initial = current;
     adopted = { requestId: candidate.request.requestId, state: candidate.state }; break;
   }
   const { members, role } = initial;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: role.instanceId, bootId: role.bootId },
-    class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model: PRODUCT_TRANSLATION_MODEL,
-    workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: PRODUCT_TRANSLATION_MODEL })}` });
+    class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
+    workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
@@ -79,7 +81,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
     prepared = await prepareProductTranslationDispatch(tasks, lease, { roleLease, call,
       reserved: { reservation: slot.reservation, identity, members, role },
-      ...(options.deadlineAt === undefined ? {} : { callBudget: { deadlineAt: options.deadlineAt, minimumRemainingMs: options.timeoutMs + 2_000 } }) });
+      ...(options.deadlineAt === undefined ? {} : { callBudget: { deadlineAt: options.deadlineAt, minimumRemainingMs: scopedRequestTimeout("product-translate", options.timeoutMs) + 2_000 } }) });
   } catch (error) {
     try { await cancelReservedModelSlot(slot.reservation); }
     catch (cleanup) { throw new AggregateError([error, cleanup], "product_translation_reservation_cleanup_failed"); }
@@ -92,7 +94,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   }
   let native: Awaited<ReturnType<typeof translateProductFieldsWithReservedGateway>>;
   try { native = await translateProductFieldsWithReservedGateway(items, prepared.dispatch, call,
-    { signal: options.signal, timeoutMs: options.timeoutMs }); }
+    { signal: options.signal, timeoutMs: scopedRequestTimeout("product-translate", options.timeoutMs) }); }
   catch (error) {
     try {
       if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))

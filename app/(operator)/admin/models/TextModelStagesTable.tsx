@@ -14,7 +14,7 @@ export function TextModelStagesTable({ models }: { models: ModelEnv }) {
   return <>
     <p className="mb-2 text-[13px] text-fg-3 sm:hidden">표를 좌우로 밀어 모든 설정을 확인하세요.</p>
     <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="단계별 모델 설정 표"><table className="w-full min-w-[760px] text-left text-[13px]"><thead><tr className="border-b border-line">
-    <th className="whitespace-nowrap py-2 pr-4">단계</th><th className="py-2 pr-4">현재 웹 설정 모델</th><th className="py-2">설정 위치 · 변경 불가</th>
+    <th className="whitespace-nowrap py-2 pr-4">단계</th><th className="py-2 pr-4">배포 기본 모델</th><th className="py-2">기본값 출처</th>
   </tr></thead><tbody>{stages.map(([stage, model, location]) => <tr key={stage} className="border-b border-line align-top">
     <th className="whitespace-nowrap py-3 pr-4 font-semibold">{stage}</th><td className="min-w-[180px] break-all py-3 pr-4 font-mono">{model}</td>
     <td className="py-3 font-mono text-fg-3">{location}</td>

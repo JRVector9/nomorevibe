@@ -11,6 +11,26 @@ import { currentModelEnv } from "@/lib/operations/model-env";
 import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
+import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
+
+async function listRegisteredModel(definition: ReturnType<typeof readModelRegistry>["models"][number]): Promise<boolean | null> {
+  if (!definition.baseUrl) return null;
+  try {
+    const response = await fetch(`${definition.baseUrl.replace(/\/+$/, "")}/models`, { cache: "no-store", redirect: "error",
+      signal: AbortSignal.timeout(5000), headers: definition.provider === "abcllm" && process.env.ABCLLM_API_KEY
+        ? { authorization: `Bearer ${process.env.ABCLLM_API_KEY}` } : {} });
+    if (!response.ok || !response.body) return null;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = []; let size = 0;
+    try {
+      for (;;) { const part = await reader.read(); if (part.done) break; size += part.value.length;
+        if (size > 128 * 1024) { await reader.cancel(); return null; } chunks.push(part.value); }
+    } finally { reader.releaseLock(); }
+    const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return Array.isArray(body.data) ? body.data.some((row: { id?: unknown }) => row?.id === definition.model || row?.id === modelRequestName(definition)) : null;
+  } catch { return null; }
+}
 
 export type ModelProbeResult = { error?: string; listed?: boolean; listMs?: number; callMs?: number; callBlocked?: string };
 export async function probeAdminModel(input: unknown): Promise<ModelProbeResult> {
@@ -20,17 +40,21 @@ export async function probeAdminModel(input: unknown): Promise<ModelProbeResult>
   if (!parsed.success) return { error: "모델 식별자가 올바르지 않습니다." };
   return runWebWrite(async () => {
     const identity = parsed.data, observation = await readAdminModelsObservation();
-    if (observation.error || !observation.rows.some(row => modelIdentityKey(row) === modelIdentityKey(identity)))
+    const stage = ADMIN_MODEL_STAGES.find(row => row.id === identity.routeId);
+    const definition = readModelRegistry().models.find(model => model.key === identity.model && model.provider === identity.provider);
+    const registered = stage && definition && definition.provider === stage.provider;
+    if (!registered && (observation.error || !observation.rows.some(row => modelIdentityKey(row) === modelIdentityKey(identity))))
       return { error: "운영 DB에서 해당 단계·모델을 확인하지 못했습니다. 새로고침해주세요." };
     // Commit intent before network IO. Failure to audit must prevent the operation.
     await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-start", target: identity.routeId, detail: identity }));
     const started = Date.now();
-    const models = identity.provider === "abcllm" ? await listGatewayModels() : null;
-    const result: ModelProbeResult = { listed: models ? models.includes(identity.model) : undefined, listMs: Date.now() - started,
+    const models = !definition && identity.provider === "abcllm" ? await listGatewayModels() : null;
+    const listed = definition ? await listRegisteredModel(definition) : models ? models.includes(identity.model) : null;
+    const result: ModelProbeResult = { listed: listed ?? undefined, listMs: Date.now() - started,
       callBlocked: /deepseek/i.test(`${identity.provider} ${identity.model}`)
         ? "유료 DeepSeek 시험 호출은 허용되지 않습니다."
         : "이 단계의 수동 시험 호출에 사용할 정식 슬롯·종료 증거 계약이 없습니다. 업무 요청으로 위장하거나 공통 용량 제어를 우회해 호출하지 않습니다.",
-      ...(models === null ? { error: identity.provider === "abcllm" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
+      ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
     await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-result", target: identity.routeId,
       detail: { ...identity, ...result }, ok: false, error: result.error ?? "short_call_contract_missing" }));
     return result;

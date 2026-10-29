@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
@@ -38,7 +39,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     }
     // 공통 모델 슬롯: disabled 면 원 호출 그대로. open 이고 CLI 계약이 있으면 슬롯을 얻어 부르고, 그 밖(draining·매핑·계약 없음)과
     // 슬롯 대기는 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
-    const capacity = await backgroundCliPath("product-intro-check", INTRO_CHECK_MODEL);
+    const capacity = await backgroundCliPath("product-intro-check", scopedModel("product-intro-check", INTRO_CHECK_MODEL));
     const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
     const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
     const native = capacity === "native" ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
@@ -53,7 +54,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     for (const task of tasks) {
       const judgement = result.ok ? result.judgements.get(task.product.slug) : undefined;
       // 답이 빠진 제품은 실패로 적는다 — 다음에 다시 본다
-      const outcome: IntroCheckRecord = judgement ? { kind: "success", judgement, model: INTRO_CHECK_MODEL }
+      const outcome: IntroCheckRecord = judgement ? { kind: "success", judgement, model: scopedModel("product-intro-check", INTRO_CHECK_MODEL) }
         : { kind: "failure", error: result.ok ? "missing_result" : result.error };
       const recorded = await recordIntroCheck(task, lease, outcome);
       if (recorded) counts[recorded]++;
@@ -63,7 +64,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       ctx.log("intro_check.blocked", { ...counts, error: result.error });
       // 멈추라는 신호(cancelled)는 배포·종료다. 그 밖(인증·CLI 없음·한도·시간 초과)은 성공이 아니다 — 소개 검수가 일을 못 했다
       return result.error === "cancelled" ? { done: true }
-        : { done: true, degraded: { code: result.error, detail: `소개 검수 ${INTRO_CHECK_MODEL} 호출 실패` } };
+        : { done: true, degraded: { code: result.error, detail: `소개 검수 ${scopedModel("product-intro-check", INTRO_CHECK_MODEL)} 호출 실패` } };
     }
   }
   ctx.log("intro_check.done", { ...counts, drained: false });

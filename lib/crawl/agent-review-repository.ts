@@ -1,3 +1,4 @@
+import { registeredPoolModelNames } from "@/lib/llm/model-registry";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -196,7 +197,7 @@ function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): S
   return sql`(${settings.humanReview.enabled}
     AND ${crawlReviewAttempts.kind} = 'delegated'
     AND ${crawlReviewAttempts.provider} = ${DEEPSEEK_REVIEW_PROVIDER}
-    AND ${crawlReviewAttempts.model} = ${DEEPSEEK_REVIEW_MODEL}
+    AND ${inArray(crawlReviewAttempts.model, registeredPoolModelNames(settings.stageModelPools?.["human-review"], DEEPSEEK_REVIEW_MODEL))}
     AND ${crawlReviewAttempts.actor} = ${deepseekActor(settings.humanReview.generation)}
     AND ${crawlReviewAttempts.id}::text = ${attemptId === undefined ? sql`${crawlCandidates.signals}->>'delegatedReviewAttemptId'` : attemptId})`;
 }

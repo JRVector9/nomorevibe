@@ -1,3 +1,5 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
@@ -164,14 +166,14 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
 }): Promise<KeywordResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? PROFILE_MODEL });
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? scopedModel("product-search-profile", PROFILE_MODEL) });
+  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-profile", options.timeoutMs)));
   let body: string;
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-profile", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: profileGatewayWire(evidence, options.model ?? PROFILE_MODEL),
+      body: profileGatewayWire(evidence, options.model ?? scopedModel("product-search-profile", PROFILE_MODEL)),
       signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
     });
     if (!response.ok) {

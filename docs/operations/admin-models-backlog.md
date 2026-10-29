@@ -47,3 +47,32 @@
 - 배포 precheck 실제 실행: M3 `security find-generic-password -a deploy.brut.bot -s dokploy-api-key -w >/dev/null` → `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.` / 원격 `keychain_exit=44`. SSH wrapper의 exit0을 성공으로 해석하지 않음. 키가 없으므로 배포0·운영 설정 저장0·양 모델 새 성공 확인0.
 
 - 2026-10-29 01:52:58 UTC: 등록부 PR #713 필수 check SUCCESS로 main 병합 확인. 현재 실측 변경을 독립 커밋으로 보존한 뒤 최신 main을 merge하고 해당 등록부 위에서 2번 구현을 시작한다.
+
+## 저장 PR 완료와 단계별 풀 구현
+
+- PR #714는 최신 base 35ef739a에서 필수 check SUCCESS 후 2026-10-29 02:05:28 UTC main `77eadd1c`로 병합. 저장 head `2da5d29b`(원 변경 `3b6039b2`). 첫 CI 실패와 재실행 기록은 위에 보존. 이후 main을 작업 브랜치에 정상 merge했다.
+- 등록부 #713 위에서 `stageModelPools`를 기존 crawl_settings JSON에 추가하고 saveSettings의 CAS/감사 경로로 저장한다. 이름·주소·제공자 정의는 등록부를 그대로 재사용한다. 선택이 어댑터나 실행 계약·물리 상한을 바꾸지 않는다.
+- AsyncLocalStorage 범위에서 새 job lease/공개 검색 요청마다 모델을 한 번 배정한다. 같은 묶음에서는 wire·기록·용량 식별자가 같은 모델을 사용하고, 다른 동시 작업과 섞이지 않는다. 풀을 비우면 배포 기본값을 사용한다. 기존 전송·미확인은 기존 논리 키와 정식 용량 보호에 남으며 재배정 권한을 주지 않는다.
+- 지원 선택: 사람 위임, Qwen 공통 기본, 발행분 Qwen 감사, 감사 두 번째 의견, 공개분 추가 검수, Qwen 갈림/보류 재검토, DeepSeek 갈림 재확인, 사유·제품 다국어·한국어 소개(게이트웨이/직접)·검색 질의 번역, 키워드/프로필 생성·검증, 수집 소개, 소개 검수, LLM 보강 일반/감사. AI1/추가AI1/AI2/예비AI2는 기존 정식 폼을 유지한다. 카테고리 분류는 기존 검사→적용 컴포넌트를 이 화면에도 제공한다.
+- 화면 판별 선택/런타임 연결도 구현했으나 기본 등록부에는 screen-review 목적 모델이 없다. 해당 칸에 미등록 사유를 표시하며 비전 기능을 이름으로 추정해 선택지를 만들지 않는다. 기존 SCREEN_REVIEW_MODEL 설정은 보존한다.
+- 모델 선택에 따라 요청 주소·토큰·클라이언트 상한도 등록부와 맞춘다. native는 기존 검증 계약의 endpoint/증거/정산 경로를 그대로 사용한다. 계약이 없으면 호출을 보류한다.
+- 게이트웨이뿐 아니라 등록된 직접 HTTP 모델도 연결 버튼에서 bounded `/models` 조회·시간을 표시한다. CLI/짧은 시험 호출은 앞서 적은 정식 probe 계약 부재로 차단한다. 연결 확인 결과를 실제 시험 호출 성공으로 표시하지 않는다.
+
+## 보존한 시험 실패와 수정
+
+- 첫 확장 회귀 `verify-model-config`: 69파일 중 검색 번역 2파일22실패/963성공. 공개 검색의 낮은 계층에 새 설정 조회를 넣어 기존 native 회귀의 DB 경계와 singleflight 시험에 영향을 줬다. 조회를 실제 공개 페이지 호출 경계의 admin-models-search로 옮기고 낮은 계층 계약을 보존했다.
+- 재검증 `bash scripts/verify-model-config.sh`: 69파일985시험 PASS, typegen/TypeScript PASS, 동일 모델 literal 측정158→99, 종료0. 추가 사람 위임/화면 판별 관련4파일54시험 PASS. 확장 admin-models 시험은 현재5파일32시험 PASS. 이후 최종 변경분은 다시 검증한다.
+- 화면 검증은 OS socket 권한 제한으로 여전히 미완료이며 스크린샷 없음. 브라우저 제한을 우회하지 않는다. UI의 메뉴/확인 창 이름 일치와 불가 버튼 비활성은 코드·정적 렌더 검증만 수행했다.
+
+## 여전히 막힘 / 완료로 기록하지 않는 것
+
+- 모든 단계의 짧은 실제 시험 호출, 장부가 없는 legacy 경로까지의 완전한 실패 이력 계량, 자동 prepare→run 서비스/모델 종료·복원·재시작·native verify: 정식 실행/계량 계약·종료 근거 수집 연결 필요. 복구 창은 이 사유와 중단 위치를 표시하고 해제를 실행하지 않는다. native verify-stop 재확인의 실제 구현·시험도 아직 완료하지 않았다.
+- 운영 M1 29877f65 해제시험0, TTL 해제0, SQL 초기화0, 상한 우회0, 실행권한 변경0, 유료 DeepSeek 호출0.
+- 배포·운영 화면 저장·Supa/GPT OSS 양 모델 자연 성공 확인은 M3 Keychain exit44 때문에 막힘.
+
+## 최종 소스 검증과 화면 환경 제한 추가
+
+- 최종 범위 시험: `npx --no-install vitest run admin-models` 5파일33시험 PASS. TypeScript `node node_modules/typescript/bin/tsc --noEmit` PASS. 변경 파일 ESLint `--max-warnings 0` PASS(초기 미사용 import 경고2건도 수정).
+- 실제 클라이언트 시험에서 사유 번역·프로필 생성·키워드 검증·소개 생성의 저장된 모델명/주소/토큰·시간 상한을 확인했다. 모델 선택 간 동시 실행 격리와 감사·공개분·보류 단계의 독립 범위도 시험했다. 이들은 시험 응답이며 운영 성공이 아니다.
+- 기존 측정 방식 그대로 최신 origin/main 대비 모델 literal 줄 수 `99 → 99`(git grep 패턴은 verify-model-config.sh의 count_model_lines와 동일). 이 차선 회귀 파일 최초0(명령exit1) → 현재33시험 통과. 화면 품질 수치는 측정 없음: Chromium OS socket 권한 거부.
+- 확대된 로컬 preview fixture도 실제 컴포넌트·시험 전용 server action으로 준비했다. 두 번째 Next dev 기동은 Next 내부의 npm registry 접근이 `Network access to "registry.npmjs.org" was blocked: domain is not on the allowlist for the current sandbox mode.`로 거절되어 로컬 SSR/브라우저 검증을 마치지 못했다. 의존성을 설치하거나 네트워크 제한을 우회하지 않았다. 임시 preview 페이지 연결은 실제 페이지 내용으로 정확히 복원했다.

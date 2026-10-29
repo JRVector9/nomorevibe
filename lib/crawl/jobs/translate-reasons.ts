@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
@@ -96,9 +97,9 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         error: result.ok ? undefined : result.error,
       }));
       if (prepared.kind === 'ready') {
-        const stored = await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease, prepared.expectation);
+        const stored = await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease, prepared.expectation);
         if (stored === 0) return { done: false };
-      } else await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
+      } else await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease);
       translated += rows.filter((row) => row.translated !== null).length;
       failed += rows.filter((row) => row.translated === null).length;
       // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다

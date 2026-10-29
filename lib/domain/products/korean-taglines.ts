@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
@@ -86,7 +87,7 @@ export function koreanQueuePredicates(homeSlugs: readonly string[]) {
   const recovery = koreanTranslationQwenRecoveryEnabled() ? sql`(${current} and ${k.errorCode} is not null
     and exists (select 1 from ${modelCapacityControl} where ${modelCapacityControl.id} = 1 and ${modelCapacityControl.mode} = 'disabled')
     and ${k.qualityRejections} = case when ${home} then ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}::int else ${MAX_REJECTIONS}::int end
-    and ${k.attempts} < 10 and ${k.model} <> ${KOREAN_TRANSLATION_QWEN_MODEL})` : sql`false`;
+    and ${k.attempts} < 10 and ${k.model} <> ${scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)})` : sql`false`;
   return { home, current, fresh, allowance, retry, due, recovery,
     recoveryReady: sql`(${recovery} and ${due})`,
     ready: sql`(${fresh} or (${k.errorCode} is not null and ${allowance} and ${due}))` };
@@ -396,7 +397,7 @@ export async function prepareKoreanTaglineDispatch(value: readonly KoreanTagline
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (call.model !== KOREAN_TAGLINE_MODEL || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
+      if (call.model !== scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
         && route.provider === "abcllm" && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, "product-tagline-ko", roleLease);

@@ -1,3 +1,4 @@
+import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
@@ -228,7 +229,12 @@ const autoOpinion = (review: QwenDirectReview, input: ReviewInput): SecondReview
 export async function runQwenSecondOpinions(ctx: JobContext<null>, settings: CrawlSettings): Promise<QwenAutoTally> {
   const tally = emptyTally();
   try {
-    await runStep(ctx, settings, tally);
+    if (settings.stageModelPools?.["audit-second-opinion"]?.length || settings.stageModelPools?.["published-filter"]?.length) {
+      await withAdminModelStage("audit-second-opinion", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+        publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally));
+      await withAdminModelStage("published-filter", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+        auditSecondOpinion: { ...settings.qwenAuto.auditSecondOpinion, enabled: false } } }, tally));
+    } else await runStep(ctx, settings, tally);
   } catch (error) {
     const code = error instanceof Error ? error.name === "Error" ? error.message.slice(0, 80) : error.name : "unknown";
     logger.error("qwen_second_opinion.failed", { code });

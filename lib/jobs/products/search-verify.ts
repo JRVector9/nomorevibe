@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -76,7 +77,7 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
               continue;
             }
             inARow = 0;
-            const success = { kind: "success" as const, removed: result.unsupported, model: VERIFY_MODEL };
+            const success = { kind: "success" as const, removed: result.unsupported, model: scopedModel("product-search-verify", VERIFY_MODEL) };
             if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
               : recordVerificationResult(task, lease, success))) continue;
             verified++;

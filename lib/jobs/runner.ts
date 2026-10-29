@@ -1,4 +1,5 @@
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
+import { MODEL_POOL_JOBS, withStoredAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, or, sql } from "drizzle-orm";
@@ -205,7 +206,7 @@ export async function runJob<C>(
   };
   try {
     let outcome: JobOutcome<C>;
-    try { outcome = await handler(ctx); } catch (error) {
+    try { outcome = await (MODEL_POOL_JOBS.has(name) ? withStoredAdminStagePools(`${name}:${ctx.lease?.token ?? startedAt}`, () => handler(ctx)) : handler(ctx)); } catch (error) {
       if (error instanceof HttpOriginPermitError) outcome = { done: false, deferred: "http_origin_permit" };
       else if (error instanceof ModelCapacityDeferredError) outcome = { done: false, deferred: "model_capacity" };
       else throw error;

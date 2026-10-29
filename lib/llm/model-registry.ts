@@ -2,6 +2,41 @@ import { z } from "zod";
 import { deadlineLadderSchema, deadlineLadderViolation, type DeadlineLadder } from "./deadline-policy";
 
 export type ModelEnvironment = Readonly<Record<string, string | undefined>>;
+type EnvironmentResolver = (env: ModelEnvironment, purpose?: string) => ModelEnvironment;
+let environmentResolver: EnvironmentResolver | undefined;
+/** The server installs one AsyncLocalStorage reader. Client bundles retain the immutable environment defaults. */
+export function setModelEnvironmentResolver(resolver: EnvironmentResolver) { environmentResolver = resolver; }
+export function modelEnvironment(env: ModelEnvironment = process.env, purpose?: string): ModelEnvironment {
+  return environmentResolver?.(env, purpose) ?? env;
+}
+/** Import-time compatibility constants remain valid outside a DB-selected execution scope. */
+export function scopedModel(purpose: string, fallback: string): string {
+  const env = modelEnvironment(process.env, purpose);
+  if (env === process.env) return fallback;
+  return purpose in MODEL_PURPOSE_ENV ? configuredModel(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelRequestName(modelForPurpose(purpose, env));
+}
+export function scopedModelBaseUrl(purpose: string, fallback: string, provider: ModelDefinition["provider"]): string {
+  const env = modelEnvironment(process.env, purpose);
+  return env === process.env ? fallback : modelBaseUrl(purpose, env, provider);
+}
+export function scopedModelDefinition(purpose: string): ModelDefinition | null {
+  const env = modelEnvironment(process.env, purpose);
+  if (env === process.env) return null;
+  return purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
+}
+export function registeredPoolModelNames(keys: readonly string[] | undefined, fallback: string): string[] {
+  if (!keys?.length) return [fallback];
+  const registry = readModelRegistry();
+  return keys.map(key => {
+    const model = registry.models.find(row => row.key === key);
+    if (!model) throw new Error("stage_model_missing");
+    return modelRequestName(model);
+  });
+}
+export function scopedRequestTimeout(purpose: string, fallbackMs: number): number {
+  const env = modelEnvironment(process.env, purpose);
+  return env === process.env ? fallbackMs : Math.max(1, Math.min(fallbackMs, modelTimeoutMs(purpose, env)));
+}
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const modelProviderSchema = z.enum(["abcllm", "local-direct", "claude-cli", "codex-cli", "grok-cli", "llama-server"]);
 export const modelDefinitionSchema = z.object({
@@ -126,6 +161,7 @@ export type ModelRegistry = z.infer<typeof registrySchema>;
 
 /** Same versioned JSON environment convention as LOCAL_MODEL_SERVING_CONTRACTS; malformed input fails closed. */
 export function readModelRegistry(env: ModelEnvironment = process.env): ModelRegistry {
+  env = modelEnvironment(env);
   try {
     return registrySchema.parse(env.MODEL_REGISTRY_CONFIG?.trim() ? JSON.parse(env.MODEL_REGISTRY_CONFIG)
       : { version: 1, models: DEFAULT_MODEL_DEFINITIONS });
@@ -165,6 +201,7 @@ export const MODEL_PURPOSE_ENV = {
   "direct-review": "AUDIT_SECOND_OPINION_MODEL", "relay": "LOCAL_MODEL_RELAY_MODEL",
 } as const;
 export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
+  env = modelEnvironment(env, purpose);
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
@@ -175,6 +212,7 @@ export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_EN
   return (legacy ? resolveRegistryModel(legacy, env) : null) ?? modelForPurpose(purpose, env);
 }
 export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): string {
+  env = modelEnvironment(env, purpose);
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
@@ -197,6 +235,7 @@ export function configuredModelForProvider(purpose: keyof typeof MODEL_PURPOSE_E
   return model;
 }
 export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.env, expectedProvider?: ModelDefinition["provider"]): string {
+  env = modelEnvironment(env, purpose);
   const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   if (expectedProvider && definition.provider !== expectedProvider) throw new Error("model_provider_adapter_mismatch");
   const legacy = definition.provider === "abcllm" ? env.ABCLLM_BASE_URL?.trim()

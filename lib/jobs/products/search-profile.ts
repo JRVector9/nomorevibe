@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
@@ -101,7 +102,7 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             inARow = 0;
-            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: PROFILE_MODEL };
+            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: scopedModel("product-search-profile", PROFILE_MODEL) };
             if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, success, outcome.expectedProfile)
               : recordProfileResult(task, lease, success))) return;
             written++;
