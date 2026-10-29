@@ -2,7 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ admin: vi.fn(), insert: vi.fn(), values: vi.fn(), audit: vi.fn(), observation: vi.fn(), list: vi.fn(), control: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("@/lib/db", () => ({ db: { insert: mocks.insert }, onPrimary: (fn: () => unknown) => fn() }));
-vi.mock("@/lib/operations/dr/web-gate", () => ({ runWebWrite: (fn: () => unknown) => fn() }));
+vi.mock("@/lib/operations/dr/web-gate", () => ({ runWebWrite: (fn: () => unknown) => fn(), webWriteAction: (fn: unknown) => fn }));
 vi.mock("@/lib/operations/admin-log", () => ({ adminAuditRow: mocks.audit }));
 vi.mock("@/lib/operations/admin-models-repository", () => ({ readAdminModelsObservation: mocks.observation }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ listGatewayModels: mocks.list }));

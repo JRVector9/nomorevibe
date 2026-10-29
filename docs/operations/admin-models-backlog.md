@@ -96,3 +96,6 @@
 
 - 40806263673 unit(1) 추가 실패도 확인: 공개 페이지 facade가 기존 resolver의 언어 판별 export를 불필요하게 요구한 것, generic runJob에 새 설정 조회를 넣은 것, 신규 연결 안내의 12px 문구가 저장소 최소 글자 기준에 맞지 않은 것. 실제 모델 handler 등록 경계(JOBS)로 범위 적용을 옮기고 generic runner는 기존 모습으로 복구했다. 번역할 필요 없는 공개 검색은 원 resolver로 바로 위임하고 안내를 13px로 고쳤다. 기존 실패 시험 파일/기대값은 바꾸지 않았다.
 - 재검증: admin-models + 해당 공개 화면·deferral/replay·글자/UI·worker runtime 13파일154시험 PASS. 새 모델 handler는 실제 lease가 있는 진입점에서만 DB 풀 범위를 연다. unleased handler의 기존 거절 계약은 보존한다.
+
+- 1a269841의 CI 40807436518은 모든 DB 묶음·build/typecheck/lint·unit(2)를 통과했고 unit(1)의 전역 쓰기 관문 소스 규칙에서 새 action 3개 형식을 거절했다. 실제 내부 runWebWrite 보호는 있었으나 저장소 표준의 export webWriteAction 형식으로 맞췄다. 전역 관문 시험의 정확한 등록 개수도 기존77→새 action3개를 더한80으로 갱신(guard 삭제·예외 추가 없음)한다. 새 시험 파일들은 모두 admin-models 이름이며, 이 기존 전역 guard 파일은 개수만 필요한 만큼 수정했다.
+- 운영 SQL 실제 검증: 2026-10-29T02:41:06.994Z, M3 text 기존 연결에서 이 화면의 4개 SQL(기한 설정/제어/집계/요청)을 READ ONLY REPEATABLE READ로 실행. primary in_recovery=false/read_only=on, OPEN epoch1/revision7, 집계24줄/요청12줄. M1 요청29877f65는 indeterminate이고 로컬 종료 기록이 있으며 그대로 보존했다. 최근1시간 AI1 응답 종료는 Supa147/실패0/철회52, GPT-OSS0/실패0/철회0. 이는 배포 전 장부 관측이며 두 모델의 새 업무 성공·이번 코드의 배포 결과가 아니다.
