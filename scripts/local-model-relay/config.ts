@@ -37,5 +37,19 @@ export function localModelRelayConfig(env: Readonly<Record<string, string | unde
   if (model !== "qwen3.8-flash-next") throw new Error("relay_model_not_allowed");
   const token = secretFile(env.LOCAL_MODEL_RELAY_TOKEN_FILE), upstreamToken = secretFile(env.LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE);
   if (token.length < 32 || token === upstreamToken) throw new Error("relay_separate_tokens_required");
-  return { host, port, allowFrom, stateDirectory, relayRevision, deploymentRevision, token, upstreamToken, model };
+  // 기한 사다리(엔진 < relay < gateway < client)의 relay 몫. 값 근거는 docs/operations/2026-10-28-deadline-ladder.md.
+  const optionalMs = (name: string, max: number) => {
+    const raw = env[name]?.trim();
+    if (!raw) return undefined;
+    const value = Number(raw);
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > max) throw new Error("relay_invalid_deadline");
+    return value;
+  };
+  const upstreamTimeoutMs = optionalMs("LOCAL_MODEL_RELAY_UPSTREAM_TIMEOUT_MS", 90_000);
+  const engineDeadlineMs = optionalMs("LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS", 90_000);
+  const engineBoundEffectiveAt = env.LOCAL_MODEL_RELAY_ENGINE_BOUND_EFFECTIVE_AT?.trim();
+  const maxOutputTokens = optionalMs("LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS", 262_144);
+  return { host, port, allowFrom, stateDirectory, relayRevision, deploymentRevision, token, upstreamToken, model,
+    ...(upstreamTimeoutMs ? { upstreamTimeoutMs } : {}), ...(engineDeadlineMs ? { engineDeadlineMs, engineBoundEffectiveAt } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}) };
 }

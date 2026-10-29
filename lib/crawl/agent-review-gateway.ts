@@ -15,6 +15,7 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
+import { REVIEW_GATEWAY_LADDER } from "@/lib/llm/deadline-ladder";
 /** 공통 슬롯 경로의 모든 gateway 전송: 로컬 종료 증인(PR15d)을 거치고, 배경 consumer 줄 범위 안에서만 전송 결과를 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
 const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>) =>
   observeProviderTransport(localEndGatewayFetch(requestId, ...args), args[1]?.signal);
@@ -32,7 +33,7 @@ const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>
  * (2026-09-12 실측: gemma4-26b 가 사라졌다 돌아왔고 그 사이 gpt-oss 가 502) 없는 모델은
  * model_unavailable 로 남겨 운영 화면에 드러낸다 — 조용히 넘기면 심사가 통째로 멈춘 줄 모른다.
  */
-export const REVIEW_GATEWAY_TIMEOUT_MS = 60_000;
+export const REVIEW_GATEWAY_TIMEOUT_MS = REVIEW_GATEWAY_LADDER.clientMs;
 /**
  * 받을 답의 상한.
  *

@@ -4,12 +4,24 @@
 
 - 끝남(로컬): PR709에 origin/main b047bddb를 정상 merge해 PR707 drain 보호를 복구. main과 다른 파일을 07930102의 재시작 보호 범위로 제한했다. 무관한 tests/crawl-seed-latest.test.ts, docs/CODEX_HANDOFF.md, GPU3090 개발 문서를 main으로 복구했다. 이력 재작성/force push 없음.
 - 검증: bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, 관련 TS/Python). 별도 crawl-seed-latest 22시험 성공. PR709 기존 CI40783523028/unit(1) 실패 원인은 main에 없는 탐색 시험 혼입이었다. 새 CI40789227478/check SUCCESS 후 PR709를 7973d9b7421dad81cfe66fb4b05fded862d7c446으로 병합(23:51:18Z).
-- 진행: 01514beb를 최신 main 7973d9b7 위에 cherry-pick. item 경로만 우회하던 누락을 고쳐 실제 legacy 잡도 같은 blocked/paused hint를 선택 함수에 전달한다. 미전송 우회 및 이미 보낸 후보 고정의 legacy 회귀 2개 추가. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS20파일320시험/Python68시험). PR710 첫 CI40790400261/typecheck는 Node heap OOM(exit134, 약2GiB)으로 실패했다. 로컬2GiB도 OOM 재현. 조회 단순화로 해결되지 않아 해당 실험은 되돌렸고 CI typecheck 단계만4GiB heap으로 명시한다. 검사/필수관문/운영용량 변경 없음. 같은 CI integration(4)는 제거된 모델의 시도를 다른 모델로 재시도하던 이전 기대값 때문에 실패했다. 요청한 전송 후 고정을 검증하도록, 제거 시 시도0/거절과 원 모델 복원 후 backoff·총3회 상한을 모두 확인하는 DB 회귀로 갱신. 수정 후 NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh 종료0, CI workflow 회귀2파일16시험 성공. 관련 DB 회귀의 로컬 실행은 Docker API permission denied로 막힘(CI에서 실제 실행). 새CI 대기.
+- 진행: 01514beb를 최신 main 7973d9b7 위에 cherry-pick. item 경로만 우회하던 누락을 고쳐 실제 legacy 잡도 같은 blocked/paused hint를 선택 함수에 전달한다. 미전송 우회 및 이미 보낸 후보 고정의 legacy 회귀 2개 추가. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS20파일320시험/Python68시험). PR710 첫 CI40790400261/typecheck는 Node heap OOM(exit134, 약2GiB)으로 실패했다. 로컬2GiB도 OOM 재현. 조회 단순화로 해결되지 않아 해당 실험은 되돌렸고 CI typecheck 단계만4GiB heap으로 명시한다. 검사/필수관문/운영용량 변경 없음. 같은 CI integration(4)는 제거된 모델의 시도를 다른 모델로 재시도하던 이전 기대값 때문에 실패했다. 요청한 전송 후 고정을 검증하도록, 제거 시 시도0/거절과 원 모델 복원 후 backoff·총3회 상한을 모두 확인하는 DB 회귀로 갱신. 수정 후 NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh 종료0, CI workflow 회귀2파일16시험 성공. 관련 DB 회귀의 로컬 실행은 Docker API permission denied로 막힘(CI에서 실제 실행). 새 CI40791156676 전체 성공(check/typecheck/integration4 포함) 후 PR710을 717549486e83d04425cf861d539e048aba39cc2d로 병합(2026-10-29 00:09:53Z).
+- 단계3 로컬: dc704d87 cherry-pick, legacy 선택 충돌은 blocked+paused 합집합 유지. bash scripts/verify-review-stall.sh 종료0(TS22파일332시험/Python68시험), 측정mjs syntax/eslint 성공. PR710 병합 후 최신 main71754948을 정상 merge, 단계3 PR/필수CI 진행. 서버/gateway 강제 및 M1 표본 미검증으로 자동 회수는 선언하지 않음.
+- 막힘(사람 필요, Oracle): 10초 timeout/BatchMode의 동일 sanctioned `ssh ubuntu@nomore-x 'systemctl list-units --type=service --all --no-legend "nomorevibe*"'`를 시차를 두고3회 시도, 매회 exit255 `Connection closed by UNKNOWN port 65535`. 서비스/권한/키 변경 없음.
+- 막힘(결과 디렉터리): 지정 jobs/3d813382.../artifacts와scratch의 mkdir은 `Read-only file system`. 작업 공간에 로그 보존, 보고함 첨부로 결과를 보관한다.
 - 남음: 01514beb → dc704d87 → d7fea73c+7eaf8bef를 각각 최신 main에서 PR/필수CI/병합. 이후 표준 배포, 실제 강제 확인 후 자동 회수 선언·4종 드릴·60분 관측.
 - 실제 운영 23:41:15Z: AI1 94871(최근1시간0), AI2 91158(최근1시간2). 이전 측정과 총수 동일. GPT-OSS AI1/Supa tagline/M1 translation indeterminate 각1. scripts/ops/measure-review-stall.mjs(원 커밋 dc704d87)를 기존 M3 text 컨테이너에서 node stdin 실행, primary READ ONLY. 세부 원인 추가 조회 예정.
 - 막힘(사람 필요, 배포 checkout): ssh jr@m3Ultra 연결·Docker 조회는 성공. 문서 경로 /Users/jr/Desktop/projects/nomorevibe-release-ai1-queue-fix-20261027 및 /Users/jr/Desktop/projects/nomorevibe는 `No such file or directory`. `ls -la /Users/jr/Desktop`는 `Operation not permitted`. 경로/OS 권한을 우회하지 않았다. M3에서 SSH로 읽을 수 있는 기존 운영자 checkout의 정확한 경로 확인이 필요하다. Keychain 접근 성공은 아직 확인하지 않았다.
 - 의존성: npm ci --ignore-scripts --no-audit --no-fund는 registry.npmjs.org allowlist 차단. 이전 작업 공간의 기존 node_modules를 이 작업 공간에 복사해 로컬 검사했다. 원본 폴더·설정·자격정보 변경 없음.
 - 결정: 가장 적게 바꾸는 정상 merge와 main 파일 복구를 선택했다. 자동 회수는 기본 비활성으로 유지한다.
+
+## 저장 정체 읽기 전용 원인 확인 (23:42:49Z / 23:43:26Z)
+
+- 기존 M3 text 컨테이너의 업무 DB 연결에서 BEGIN READ ONLY + statement_timeout15초로 조회. primary(pg_is_in_recovery=false), capacity open/epoch1/revision7.
+- active는 indeterminate3건뿐: product-translate/M1 `29877f65-9f95-4efb-88f9-aea5f39a28b2`(13:58:16Z 전송), crawl-tagline/Supa `161d7780-5b1f-4ce8-be8d-baed927b28e8`(18:16:16Z), crawl-agent-review/MLX `547292c0-6bf9-4052-b1c1-90c98fc75277`(18:16:26Z). 각 group/provider 상한1을 해당1건이 차지했다. AI1 두 모델 waiting각2건. heartbeat는 최근 수초이고 현재 작업 잠금도 null이라, 워커 전체가 사라졌다고 볼 근거는 없다.
+- 각 요청에 dispatch_indeterminate(reason transport_unknown)와 dispatch_local_ended가 있지만 provider 종료/dispatch_settled/dispatch_released 증거는 없다. 로컬 종료만으로 원격 생성 종료를 단정하거나 해제하지 않는다. 세 요청은 새 선언 이전이므로 비소급 보호상 자동 회수 대상도 아니다.
+- AI2는 설정상 local-direct Qwen voter1, fallback없음, 공개분 sampleRate0.05. 실제 pending0. 최신12표는 first_attempt_id가 모두null인 공개분 표본. 최근1시간2건은22:48/23:08 저장이고 신규 AI1 성공은18:16 이후0. **AI1 공급 정체와 일치하며 GPU 고장/활성 점유 때문에 AI2가 멈췄다는 근거는 없다.** AI2 job.last_error의 과거 SELECT 오류만으로 현재 DB 장애라고 판단하지 않는다.
+- 이 차선 코드 보강: legacy AI1의 blocked hint 연결 누락을 PR710에서 수정. 두 모델이 모두 막히면 안전하게 기다리므로 기존3건은 별도 provider 경계 종료 증거에 따른 회수가 필요하다. 그룹 상향/SQL 초기화/TTL 해제/점유 파일 삭제는 하지 않았다.
+- 원본 진단 JSON과 SELECT 스크립트는 이 작업 공간 및 /tmp/review-stall-{rca,ai2}-3d813382.mjs에 보존(자격정보 없음). 운영 DB를 시험 DB로 사용하지 않았다.
 
 ---
 
@@ -115,3 +127,13 @@
 - AI2 재확인: `second-review.ts` enqueue는 voter별 독립 행을 만들며 AI1처럼 candidateId % pool 방식이 아님. `second-review-model-capacity.ts` / `fallbackWaitingSecondReview`는 local-direct 전송 전 waiting/reserved에 한한 기존 fallback. 본 단계에서 AI2의 전송·고정·점유·fallback 정책은 변경하지 않음.
 - 최초 분리 tsc는 lifecycle에 단계4 import가 섞여 TS2307(deadline-ladder 없음)로 실패. 이 단계의 timeout 60000을 유지하도록 import만 분리한 후 재실행.
 - `bash scripts/verify-review-stall.sh` 최종 종료0, typegen/tsc/lint 및 관련 TS·Python 회귀 성공. 배포와 운영 저장 증가는 단계1 plan 막힘 해소 전 보류.
+
+### 단계1 최종 배포 막힘 / 단계4 코드·실측
+
+- 대상 b047bddb의 깨끗한 detached checkout에서 표준 `PATH=/home/ubuntu/.codex/skills/prod/bin:$PATH NMV_DEPLOY_SSH_USER=jr npm run deploy -- plan --sha b047bddbeb86a2828e2ab1e0f293a91df5affda2 --out /home/ubuntu/.xaegis-hub/data/local-agent/jobs/6b64d562-ec09-4b3e-96a1-2a6a103a4073/scratch/review-stall-pr707-20261028-clean` 실행 → exit1, `{"status":"release-not-complete","errorClass":"FileNotFoundError","reason":"inspect-private-receipts","automaticRetry":false}`.
+- 같은 create_plan의 예외 경로만 진단(별도 새 diagnostic out 경로, 관문 비활성화 없음): `FileNotFoundError.filename=/home/ubuntu/.xaegis-hub/data/local-agent/jobs/6b64d562-ec09-4b3e-96a1-2a6a103a4073/scratch/review-stall-pr707-20261028-diagnostic`, deploy_release.py:254 create_plan → :99 fresh_directory → pathlib.mkdir. 지정 부모 생성은 앞서 `Read-only file system`으로 실패. 배포 영수증을 다른 경로에 우회 작성하지 않음. run 요청 없음.
+- 단계2 전용 브랜치에도 origin/main b047bddb를 병합해 최신 main 기반으로 보존. 단계2 이후 PR/CI/병합/배포는 단계1 실제 운영 검증을 앞질러 진행하지 않음. 로컬 분리 개발은 계속함.
+- 단계4: 최근7일 primary 장부 지연을 다시 측정. AI1 GPT p95/p99=7.644500/10.320340s(n5807), AI1 Supa=6.242650/7.764920s(n1458), AI2 Supa=6.145950/7.967630s(n1552, max42.991s), AI2 gpu3090=3.781000/5.254440s(n3985). GPT 번역=7.382000/9.390320s(n774). M1 성공 표본0이므로 p95/p99 측정 없음.
+- 검증 대상 AI 상한을50/55/60초로 갱신. M1 내부28/31/34초 상수는 확정값으로 내보내지 않고 번역 client40초만 #708 job55초 안에 유지. 확정 내부 값은 M1 표본·서버 강제 확인 후 정함.
+- relay max_tokens 강제·미확인 후 자동 열기는 검증된 엔진 상한 선언 시만 사용. 추가로 보장 적용 UTC 시각을 요구하고 그 이전 요청은 소급 해제하지 않음. 기존 archive의 active/receipt hash·정책 불일치 시 표식 유지. 원본 receipt 보존 회귀 추가.
+- `bash scripts/verify-review-stall.sh` 종료0(typegen/tsc/lint, 관련TS/Python). 실제 서버·gateway 강제, vLLM disconnect abort·종료 기록, M1 최근 지연/최저 decode, 90초 운영 드릴은 막힘(별도 checkout/배포 receipt용 지정 scratch 생성 불가). 로컬 fake upstream 시험을 운영 종료 증거로 세지 않음.

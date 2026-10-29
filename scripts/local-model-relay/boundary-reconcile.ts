@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { LOCAL_MODEL_RELAY_RECOVERY_LOCK, validRelayRequestId, type RelayReceipt } from './protocol';
+import { LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX, LOCAL_MODEL_RELAY_RECOVERY_LOCK, validRelayRequestId, type RelayReceipt } from './protocol';
 
 export const relayBoundaryProofSchema = z.object({ requestId: z.uuid(), planHash: z.string().regex(/^[a-f0-9]{64}$/),
   bindingHash: z.string().regex(/^[a-f0-9]{64}$/), wireHash: z.string().regex(/^[a-f0-9]{64}$/), model: z.string().min(1).max(200),
@@ -17,6 +17,8 @@ function read(path: string): Buffer {
   if (!info.isFile() || info.isSymbolicLink() || info.size > 128 * 1024) throw new Error('relay_recovery_file_invalid');
   return readFileSync(path);
 }
+const deadlineReleased = (directory: string, requestId: string) => validRelayRequestId(requestId)
+  && existsSync(join(directory, `${requestId}${LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX}`));
 function pending(directory: string, requestId: string) {
   if (!validRelayRequestId(requestId)) throw new Error('relay_recovery_request_invalid');
   const activePath = join(directory, 'active.json'), receiptPath = join(directory, `${requestId}.json`);
@@ -30,7 +32,8 @@ function pending(directory: string, requestId: string) {
 /** An in-flight receipt is never cleared. Stop/drain first; this path cannot stop a model or a relay. */
 export function checkRelayBoundaryPending(directory: string, requestId: string) {
   if (!existsSync(join(directory, 'active.json'))) {
-    if (!existsSync(join(directory, `${requestId}.boundary-release.json`))) throw new Error('relay_recovery_marker_missing');
+    if (!existsSync(join(directory, `${requestId}.boundary-release.json`)) && !deadlineReleased(directory, requestId))
+      throw new Error('relay_recovery_marker_missing');
     return;
   }
   pending(directory, requestId);
@@ -50,6 +53,12 @@ function reconcileLocked(directory: string, proof: RelayBoundaryProof): { kind: 
   const archivePath = join(directory, `${proof.requestId}.boundary-release.json`);
   const activePath = join(directory, 'active.json');
   if (!existsSync(activePath)) {
+    // The relay already re-opened itself after the declared engine deadline; only the DB side remained.
+    if (!existsSync(archivePath) && deadlineReleased(directory, proof.requestId)) {
+      const receipt = JSON.parse(read(join(directory, `${proof.requestId}.json`)).toString()) as RelayReceipt;
+      if (receipt.requestHash !== proof.wireHash || receipt.requestModel !== proof.model) throw new Error('relay_recovery_dispatch_mismatch');
+      return { kind: 'already_cleared', requestId: proof.requestId };
+    }
     const archive = JSON.parse(read(archivePath).toString());
     if (JSON.stringify(archive.proof) !== JSON.stringify(proof)
       || hash(read(join(directory, `${proof.requestId}.json`))) !== archive.receiptHash) throw new Error('relay_recovery_archive_mismatch');
