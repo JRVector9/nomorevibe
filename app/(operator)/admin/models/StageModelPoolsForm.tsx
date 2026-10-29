@@ -28,14 +28,14 @@ export function StageModelPoolsForm({ pools, models, defaults, version, saveActi
     <input type="hidden" name="settingsVersion" value={formVersion} />
     <input type="hidden" name="stageModelPools" value={JSON.stringify(draft)} />
     <SettingsCard title="단계별 모델 풀" note="등록부의 장비 식별자로 선택합니다. 각 새 작업 묶음은 저장된 풀에서 한 모델을 배정받습니다. 이미 전송한 요청·미확인 요청과 기존 업무 기록은 원래 계약에 남습니다.">
-      <p className={hintClass}>모두 빼면 그 단계의 배포 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택한 모델에 정식 실행 계약이 없으면 워커가 호출을 보류하며 계약이나 상한을 자동 변경하지 않습니다.</p>
+      <p className={hintClass}>세부 검수 풀을 비우면 공통 검수 풀을 따르고, 공통 풀도 비어 있으면 배포 기본 모델을 사용합니다. 다른 단계의 풀도 비우면 배포 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택한 모델에 정식 실행 계약이 없으면 워커가 호출을 보류하며 계약이나 상한을 자동 변경하지 않습니다.</p>
       <fieldset disabled={pending || checking} className="grid min-w-0 gap-4 md:grid-cols-2">
         {ADMIN_MODEL_STAGES.map(stage => {
           const keys = draft[stage.id] ?? [];
           const choices = models.filter(model => model.provider === stage.provider && (!(stage.id.startsWith("assist-") || stage.id === "screen-review") || model.purposes.includes(stage.purpose)));
           return <div key={stage.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-line p-3">
             <h3 className="text-[14px] font-semibold">{stage.label}</h3>
-            <p className={`${hintClass} break-all`}>기본: {defaults[stage.id] ?? "미확인"}</p>
+            <p className={`${hintClass} break-all`}>배포 기본: {defaults[stage.id] ?? "미확인"}</p>
             {!choices.length && <p className={hintClass}>등록부에 이 용도의 검증 대상 모델이 없습니다. 장비·기능 계약 등록 후 선택할 수 있습니다.</p>}
             {keys.map((key, index) => <div key={`${stage.id}:${index}`} className="flex min-w-0 flex-col gap-2"><div className="flex min-w-0 items-center gap-2">
               <select aria-label={`${stage.label} ${index + 1}번째 모델`} value={key}

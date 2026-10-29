@@ -2,7 +2,20 @@
 
 기준: fetch 성공, origin/main a3094a73. 원래 허브 브랜치 xaegis/e1b30377의 다른 차선 변경은 보존하고 최신 main에서 전용 브랜치를 만들었다. 원본 사용자 폴더 변경 없음.
 
-## 완료·검증 중
+## 현재 상태 (후속 PR CI 검증 중)
+
+| 항목 | 현재 결과 |
+| --- | --- |
+| 1 저장 버튼 | PR #714 필수 CI 통과·main 77eadd1c 병합 |
+| 2 단계별 모델 풀 | #713 병합 후 구현·로컬 시험·커밋 완료, PR #716 CI 중. 화면 판별은 실제 목적 모델 등록 전 선택 불가 |
+| 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
+| 4 미확인·점유 | 장부 snapshot/발생·경과/그룹 점유·접수 상태 구현·로컬 시험 |
+| 5 수동 복구 | 조건 안내·실행 불가 버튼/M1 수동 작업 표시. 정식 prepare→run 실행기 연결 부재로 자동 종료·해제·재시작·native verify 미구현 |
+| 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험 |
+| 실제 화면·배포 | Chromium/Next dev 제한으로 클릭·스크린샷 미완료. M3 Keychain exit44로 배포·운영 설정/실측 미완료 |
+
+## 착수 시 기록
+
 
 - 저장 버튼: 기존 파란 관리자 주 버튼 토큰 적용, 성공·거절·동시 수정 충돌 표시, 네트워크 오류 시 결과 미확인 안내. 기존 saveSettings의 CAS와 감사 기록 경로 유지.
 - 요청된 xaegis/88105c3c는 로컬 refs와 origin ls-remote에 없다. 같은 UI 변경을 최신 main 위에 직접 적용하는 최소 변경을 선택했다. 다른 브랜치 이력 재작성 없음.
@@ -78,3 +91,5 @@
 - 확대된 로컬 preview fixture도 실제 컴포넌트·시험 전용 server action으로 준비했다. 두 번째 Next dev 기동은 Next 내부의 npm registry 접근이 `Network access to "registry.npmjs.org" was blocked: domain is not on the allowlist for the current sandbox mode.`로 거절되어 로컬 SSR/브라우저 검증을 마치지 못했다. 의존성을 설치하거나 네트워크 제한을 우회하지 않았다. 임시 preview 페이지 연결은 실제 페이지 내용으로 정확히 복원했다.
 
 - 후속 PR #716을 생성했다. 초기 head 43ce5422 / a5030746의 CI 40806021121·40806168506은 scope에서 `lib/operations/admin-models-observation.ts:57: new blank line at EOF`로 중단됐다. runtime 검사는 실행되지 않았으며 성공으로 기록하지 않는다. 작업 트리 diff만 확인해 앞선 관측 커밋의 공백을 놓친 것을 PR 전체 base diff 검사로 수정했다.
+
+- #716 CI 40806263673의 첫 DB ledger는 1파일4시험 통과 후 product-translation-model-capacity 로드에서 `This module cannot be imported from a Client Component module. It should only be used from a Server Component.`로 실패했다. 공용 Node 워커 모듈에 둔 server-only 표식이 원인이었으며 제거했다. 새 admin-models-worker-runtime.test.ts가 실제 Node/tsx 자식 프로세스로 풀 모듈을 로드하는 경계를 검증한다. 현재 `vitest run admin-models` 6파일34시험 PASS. CI의 나머지 실패가 같은 원인인지 로그를 보존해 확인한다.
