@@ -16,7 +16,7 @@ import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-lead
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { COLLECTOR_NAMES, createTally, jobTallyUpsert } from "./tally";
 // 누적 실패는 오류 code·잘린 message 만 — drizzle 이 감싼 message 의 SQL·params 를 로그에 남기지 않는다
-import { dbErrorFields } from "@/lib/db/error-fields";
+import { dbErrorFields, dbErrorPrefix, dbErrorTag } from "@/lib/db/error-fields";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
@@ -214,9 +214,14 @@ export async function runJob<C>(
     if (lost) throw new JobLeaseLostError();
     if (outcome.deferred) {
       // No work was acknowledged. Preserve producer signals, cursor, pause and
-      // historical success/error fields, including changes made during this tick.
+      // historical success fields, including changes made during this tick.
+      // lastError 는 "마지막 회차가 던졌다"이다. stage_blocked 는 단계가 item 소비자에게 넘어간 동안의 정상 상태라 이 잡은
+      // 완료 틱을 다시 내지 못한다 — 그 사이 한 번 던진 오류(예: 교착)가 영원히 "마지막 회차 실패"(긴급)로 남았다(2026-10-29).
+      // 던지지 않고 끝난 이 틱이 지운다. 일시적인 미룸(model_capacity·http_origin_permit·source_buffer)은 일을 시도하지 않았고
+      // 곧 완료 틱이 오므로 기존대로 남긴다. 성공 시각은 어느 미룸도 옮기지 않는다.
+      const settled = outcome.deferred === "stage_blocked" ? { lastError: null } : {};
       const release = async (tx: typeof db | ProductTransaction) => {
-        return tx.update(jobs).set({ lockedAt: null, leaseToken: null })
+        return tx.update(jobs).set({ lockedAt: null, leaseToken: null, ...settled })
           .where(owned).returning({ name: jobs.name });
       };
       const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"
@@ -312,7 +317,9 @@ export async function runJob<C>(
     }
     // PostgreSQL rejects NUL even in diagnostic text. A failed error write used to
     // leave the lease locked and hide the original failure from operations.
-    const message = (error instanceof Error ? error.message : String(error)).replaceAll("\0", "\\0");
+    // drizzle 이 감싼 message 에는 SQLSTATE 가 없다 — 드라이버 오류면 code·표·제약 이름(값 아님)을 앞에 붙인다("[40P01] Failed query…")
+    const tag = dbErrorTag(error);
+    const message = (dbErrorPrefix(tag) + (error instanceof Error ? error.message : String(error))).replaceAll("\0", "\\0");
     // Preserve pending version/cursor and never release somebody else's lease.
     await db.update(jobs).set({
       lockedAt: null, leaseToken: null, lastError: message.slice(0, 2000),
@@ -326,7 +333,7 @@ export async function runJob<C>(
       }).catch(tallyError => logger.warn("job.tally_failed", { job: name, ...dbErrorFields(tallyError) }));
     }
     const durationMs = Date.now() - startedAt;
-    logger.error("job.failed", { job: name, durationMs, error });
+    logger.error("job.failed", { job: name, durationMs, ...(tag ? { code: tag.code, table: tag.table, constraint: tag.constraint } : {}), error });
     return { status: "failed", error: message, durationMs };
   }
 }

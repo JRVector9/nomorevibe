@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { eq, like, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, operationsObservations } from "@/lib/db/schema";
@@ -171,6 +171,67 @@ describe("runJob — 실패 기록", () => {
   it("실행 횟수를 센다 (스케줄이 도는지 확인하는 근거)", async () => {
     for (let i = 0; i < 3; i++) await runJob("counted", async () => ({ done: true }));
     expect((await getJobState("counted"))?.runs).toBe(3);
+  });
+
+  /**
+   * 2026-10-24 부터 AI2 는 item 소비자 단계라 second-review 의 정상 틱은 모두 stage_blocked 로 미룬다. 미룸이 실패 기록을 그대로 두어
+   * 가끔 난 교착 한 번이 영원히 "마지막 회차가 실패한 작업"(긴급)·작업 흐름 "실패"로 남았다(attention.tsx·job-lateness.ts 는 lastError 를 읽는다).
+   */
+  it("단계가 넘어가 미룬(stage_blocked) 틱은 던지지 않고 끝났으므로 지난 실패 기록을 지운다 — 성공 시각·요청·커서는 그대로", async () => {
+    await runJob("stage-moved", async () => ({ done: true }));
+    const succeeded = await getJobState("stage-moved");
+    await runJob("stage-moved", async (ctx) => { await ctx.save({ page: 3 }); throw new Error("교착 한 번"); });
+    expect((await getJobState("stage-moved"))?.lastError).toContain("교착 한 번");
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "stage-moved"));
+
+    expect(await runJob("stage-moved", async () => ({ done: false, deferred: "stage_blocked" as const }), { requestedOnly: true }))
+      .toMatchObject({ status: "deferred", reason: "stage_blocked" });
+    const deferred = await getJobState("stage-moved");
+    expect(deferred).toMatchObject({ lastError: null, cursor: { page: 3 }, lockedAt: null, leaseToken: null,
+      processedVersion: succeeded!.processedVersion, lastSuccessAt: succeeded!.lastSuccessAt });
+    expect(deferred!.requestedVersion).toBeGreaterThan(deferred!.processedVersion);
+
+    // 진짜로 다시 던지면 다시 남는다 — 이어지는 실패의 경보는 그대로다
+    await runJob("stage-moved", async () => { throw new Error("또 실패"); });
+    expect((await getJobState("stage-moved"))?.lastError).toContain("또 실패");
+  });
+
+  it("일을 시도하지 않은 일시적 미룸(model_capacity)은 지난 실패 기록을 그대로 둔다", async () => {
+    await runJob("capacity-wait", async () => { throw new Error("모델 호출 뒤 실패"); });
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "capacity-wait"));
+    expect(await runJob("capacity-wait", async () => ({ done: false, deferred: "model_capacity" as const }), { requestedOnly: true }))
+      .toMatchObject({ status: "deferred", reason: "model_capacity" });
+    expect((await getJobState("capacity-wait"))?.lastError).toContain("모델 호출 뒤 실패");
+  });
+
+  it("DB 오류는 SQLSTATE 와 표·제약 이름을 실패 기록 앞과 job.failed 로그에 남긴다 — 키 값(detail)은 남기지 않는다", async () => {
+    const lines: Record<string, unknown>[] = [];
+    const level = process.env.LOG_LEVEL;
+    process.env.LOG_LEVEL = "error";
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      try { lines.push(JSON.parse(String(chunk))); } catch { /* 다른 출력 */ }
+      return true;
+    });
+    try {
+      await db.insert(jobs).values({ name: "duplicate-key-secret" });
+      const result = await runJob("sqlstate", async () => {
+        await db.insert(jobs).values({ name: "duplicate-key-secret" });
+        return { done: true };
+      });
+      expect(result).toMatchObject({ status: "failed", error: expect.stringMatching(/^\[23505 table=jobs constraint=jobs_pkey\] Failed query: /) });
+      const state = await getJobState("sqlstate");
+      expect(state?.lastError).toMatch(/^\[23505 table=jobs constraint=jobs_pkey\] Failed query: insert into "jobs"/);
+      expect(state?.lastError).not.toContain("Key (name)");
+      const failed = lines.find((line) => line.event === "job.failed" && line.job === "sqlstate");
+      expect(failed).toMatchObject({ code: "23505", table: "jobs", constraint: "jobs_pkey" });
+      expect(JSON.stringify(failed)).not.toContain("Key (name)");
+    } finally {
+      stderr.mockRestore();
+      process.env.LOG_LEVEL = level;
+    }
+    // 드라이버 오류가 아니면 머리말이 없다
+    await runJob("plain-failure", async () => { throw Object.assign(new Error("EPIPE 같은 code"), { code: "EPIPE" }); });
+    expect((await getJobState("plain-failure"))?.lastError).toBe("EPIPE 같은 code");
   });
 });
 
