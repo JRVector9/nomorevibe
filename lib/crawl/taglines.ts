@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { isDeepStrictEqual } from "node:util";
 import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
@@ -248,7 +249,7 @@ export async function prepareCrawlTaglineDispatch(value: TaglineTask, job: JobLe
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && !prior && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === TAGLINE_MODEL))
+      if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
         throw new ModelCapacityDeferredError("unmapped");
       await assertJobBatchAdmission(tx, lease.name, roleLease);
       const role = await lockCrawlRole(tx, roleLease);
@@ -259,7 +260,7 @@ export async function prepareCrawlTaglineDispatch(value: TaglineTask, job: JobLe
       if (reserved && (!isDeepStrictEqual(initial, reserved.initial) || !isDeepStrictEqual(member, reserved.input.member))) throw new CrawlTaglineChanged();
       await lockCrawlJobs(tx, lease);
       if (!reserved) { await crawlWall(tx, role, lease); return initial; }
-      if (!call || call.model !== TAGLINE_MODEL || call.sourceHash !== member.sourceHash) throw new CrawlTaglineChanged();
+      if (!call || call.model !== scopedModel("crawl-tagline", TAGLINE_MODEL) || call.sourceHash !== member.sourceHash) throw new CrawlTaglineChanged();
       const binding = crawlTaglineDispatchBindingSchema.parse({ ...reserved.input, kind: "crawl_tagline_gateway", version: 1,
         generationHash: crawlTaglineGenerationHash(reserved.input), logicalWorkKey: crawlTaglineLogicalWorkKey(reserved.input), inputHash: crawlTaglineInputHash(reserved.input),
         provider: "abcllm", routeId: "crawl-tagline", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
@@ -281,17 +282,17 @@ async function storedCrawlPhase(tx: ProductTransaction, parent: CrawlTaglinePare
   const evidence = parsed.data, dispatch = evidence.dispatch, binding = dispatch.binding;
   if (dispatch.requestId !== row.requestId || dispatch.token !== row.token || dispatch.owner.instanceId !== row.ownerInstanceId
     || dispatch.owner.bootId !== row.ownerBootId || dispatch.epoch !== row.epoch || dispatch.revision !== row.revision || dispatch.policyHash !== row.policyHash
-    || row.class !== "background" || row.pool !== "text" || row.routeId !== "crawl-tagline" || row.provider !== "abcllm" || row.model !== TAGLINE_MODEL
+    || row.class !== "background" || row.pool !== "text" || row.routeId !== "crawl-tagline" || row.provider !== "abcllm" || row.model !== scopedModel("crawl-tagline", TAGLINE_MODEL)
     || row.workKey !== `${binding.logicalWorkKey}:${binding.inputHash}` || row.logicalWorkKey !== binding.logicalWorkKey
     || !isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(binding.member))
     || !isDeepStrictEqual(row.dispatchBinding, binding) || row.dispatchBindingHash !== dispatch.bindingHash
     || row.terminalEvidenceHash !== reviewHash(evidence) || !isDeepStrictEqual(row.terminalEvidence, evidence)
     || parent.bindingHash !== dispatch.bindingHash || parent.responseHash !== evidence.responseHash
-    || binding.askOrdinal !== ordinal || binding.generationHash !== crawlTaglineGenerationHash({ member: initial.member, model: TAGLINE_MODEL })) throw new CrawlTaglineChanged();
+    || binding.askOrdinal !== ordinal || binding.generationHash !== crawlTaglineGenerationHash({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) })) throw new CrawlTaglineChanged();
   return evidence;
 }
 async function noSecondCrawlPhase(tx: ProductTransaction, initial: CrawlInitial) {
-  const input = { member: initial.member, model: TAGLINE_MODEL, askOrdinal: 2 as const,
+  const input = { member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL), askOrdinal: 2 as const,
     parent: { requestId: "00000000-0000-4000-8000-000000000000", bindingHash: "0".repeat(64), responseHash: "0".repeat(64) } };
   const [second] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
     .where(and(eq(modelCapacityRequests.logicalWorkKey, crawlTaglineLogicalWorkKey(input)),
@@ -299,7 +300,7 @@ async function noSecondCrawlPhase(tx: ProductTransaction, initial: CrawlInitial)
   if (second) throw new ModelCapacityDeferredError("dispatched");
 }
 async function checkCrawlHistory(tx: ProductTransaction, initial: CrawlInitial, history: CrawlTaglineContinuation, writing = true) {
-  if (history.generationHash !== crawlTaglineGenerationHash({ member: initial.member, model: TAGLINE_MODEL })) throw new CrawlTaglineChanged();
+  if (history.generationHash !== crawlTaglineGenerationHash({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) })) throw new CrawlTaglineChanged();
   const first = await storedCrawlPhase(tx, history.first, initial, 1);
   if (!isDeepStrictEqual(first.outcome, history.first.outcome)) throw new CrawlTaglineChanged();
   if (!history.second) { if (writing || !first.outcome.ok || first.outcome.tagline) await noSecondCrawlPhase(tx, initial); return first; }
@@ -333,7 +334,7 @@ export async function prepareCrawlTaglineHistory(value: TaglineTask, job: JobLea
 async function recordReservedCrawlTagline(value: TaglineTask, job: JobLease, valueResult: AutomaticTaglineResult, expectation: CrawlTaglineWriteExpectation) {
   const proof = crawlWrites.get(expectation), task = structuredClone(value), lease = structuredClone(job), result = structuredClone(valueResult);
   if (!proof || proof.used || !isDeepStrictEqual(task, proof.task) || !isDeepStrictEqual(lease, proof.job)
-    || result.kind === "reuse" || result.kind === "success" && result.model !== TAGLINE_MODEL) throw new Error("invalid_crawl_tagline_write_expectation");
+    || result.kind === "reuse" || result.kind === "success" && result.model !== scopedModel("crawl-tagline", TAGLINE_MODEL)) throw new Error("invalid_crawl_tagline_write_expectation");
   proof.used = true;
   let request: Awaited<ReturnType<typeof requestJob>> | undefined;
   try {
@@ -349,7 +350,7 @@ async function recordReservedCrawlTagline(value: TaglineTask, job: JobLease, val
         if (!row || !["settled", "dispatched", "indeterminate"].includes(row.state) || row.token !== proof.dispatch.token
           || row.ownerInstanceId !== proof.dispatch.owner.instanceId || row.ownerBootId !== proof.dispatch.owner.bootId
           || row.epoch !== proof.dispatch.epoch || row.revision !== proof.dispatch.revision || row.policyHash !== proof.dispatch.policyHash
-          || row.routeId !== "crawl-tagline" || row.provider !== "abcllm" || row.model !== TAGLINE_MODEL || row.class !== "background" || row.pool !== "text"
+          || row.routeId !== "crawl-tagline" || row.provider !== "abcllm" || row.model !== scopedModel("crawl-tagline", TAGLINE_MODEL) || row.class !== "background" || row.pool !== "text"
           || row.workKey !== `${proof.dispatch.binding.logicalWorkKey}:${proof.dispatch.binding.inputHash}`
           || row.logicalWorkKey !== proof.dispatch.binding.logicalWorkKey || !isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(proof.dispatch.binding.member))
           || row.dispatchBindingHash !== proof.dispatch.bindingHash || !isDeepStrictEqual(row.dispatchBinding, proof.dispatch.binding)) throw new CrawlTaglineChanged();

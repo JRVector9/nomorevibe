@@ -38,7 +38,7 @@ import { ProjectGrid } from "@/components/home/ProjectGrid";
 import { ToolsBoard } from "@/components/home/ToolsBoard";
 import { aiLevelCounts, categoryCounts, countProducts } from "@/lib/domain/products/repository";
 import { getStarGrowthPage } from "@/lib/domain/products/star-growth";
-import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
+import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/admin-models-search";
 import { relevanceWindow, searchRelevance } from "@/lib/domain/products/relevance";
 import type { SearchQuery } from "@/lib/domain/products/search";
 import type { Category } from "@/lib/domain/products/schema";

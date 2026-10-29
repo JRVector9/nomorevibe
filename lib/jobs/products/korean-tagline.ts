@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
@@ -100,8 +101,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
       }
       const work = [
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: KOREAN_TAGLINE_MODEL, batch: gptBatch, recovery: false }] : []),
-        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: KOREAN_TRANSLATION_QWEN_MODEL, batch: qwenBatch, recovery: recoveryBatch }] : []),
+        ...(gptBatch.length ? [{ backend: "gpt" as const, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), batch: gptBatch, recovery: false }] : []),
+        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
         if (recoveryDeferred) { ctx.log("tagline_ko.budget_deferred", { ...counts(), backend: "qwen", recovery: true }); return { done: false }; }

@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { modelLimits } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
@@ -127,7 +128,7 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
               continue;
             }
             inARow = 0;
-            const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: TAGLINE_MODEL });
+            const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
             if (!saved.stored) { skipped = capacity.kind === "result"; return; }
             if (!result.tagline) { empty++; continue; }
             written++;

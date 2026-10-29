@@ -1,4 +1,5 @@
 import { modelForPurpose } from "@/lib/llm/model-registry";
+import { adminStagePoolsSchema } from "@/lib/llm/admin-model-stages";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
@@ -478,6 +479,7 @@ export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
 };
 
 export const crawlSettingsSchema = z.object({
+  stageModelPools: adminStagePoolsSchema.optional(),
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
