@@ -1,3 +1,10 @@
+## 2026-10-29 M1 교체 경계 후속 (진행 중)
+
+- `00aa00e3` 위에서 새 단건 해제 경로를 추가 중. 원 장부 wireHash와 relay requestHash를 당시 본문 재생성과 실제 gateway/HTTPX0.27.2 직렬화로 연결했다(양쪽 full SHA 일치). 모델 명 변경/stream 변환/float·ASCII escape 차이를 무시하지 않는다.
+- 누락된 Docker/Swarm·원 owner DB·relay/native 종료 근거가 있으면 거절. 기존 ops-runner의 M1 sudo 차단/V1~V4 보호는 변경하지 않는다. 새 도구는 기존 종료 증거를 검토해 점유만 해제하며 정지/재시작은 하지 않는다.
+- 새 회귀97시험 통과. `NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh` 종료0. DB 회귀는 로컬 전용 DB 연결을 확보하지 못해 실행 전 global migration 단계에서 실패; CI 실제 결과는 별도 기록 예정.
+- 남음: PR/CI/병합 및 정식 해제 감사 → 표준 배포/양웹 판 검증 → 운영 /admin/models 저장(Supa+MLX) 감사·화면 확인·30분 운영 성공/번역/AI1·AI2 증가 측정. 아직 수행한 것으로 세지 않는다.
+
 # 관리자 단계별 모델 작업 — 2026-10-29
 
 기준: fetch 성공, origin/main a3094a73. 원래 허브 브랜치 xaegis/e1b30377의 다른 차선 변경은 보존하고 최신 main에서 전용 브랜치를 만들었다. 원본 사용자 폴더 변경 없음.

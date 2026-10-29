@@ -1,3 +1,14 @@
+# 2026-10-29 M1 교체 경계 해제·배포 (진행 중)
+
+- 기준 main `00aa00e3`, 전용 브랜치 `fix/m1-replaced-provider-boundary`. 원본 checkout의 사용자 변경 보존.
+- 해시 대조 완료: 당시 `199a3ebb`의 제품 원문 4개 sourceHash가 모두 일치. 원문 재생성 SHA256 `0507685dd86a3fe61a62d0c83b71cfafbc1add1e08feb70fb6436c38854a40d8` = 장부 wireHash. abcLLM의 모델 prefix 제거/stream=true/옵션 변환 + HTTPX0.27.2 Python 기본 json.dumps 적용 결과 `81d1f5713daacd9a742e853b7880e5636efd53910ed473038ea91f61a75c1768` = M1 receipt requestHash. 단순 시간 근접으로 동일 요청을 추정하지 않음.
+- 운영 READ ONLY 06:24:03Z: AI1 95603, AI2 91774, indeterminate1(M1), 공개웹 `199a3ebb`. 번역 ready/reviewed 16917, 최종 갱신 10/28 07:01:54Z.
+- 원 owner DB 기록: opened1932/intent1933/spawn1934/exit1967, request local-end156477. 해제 때 같은 트랜잭션에서 재검증 예정.
+- 남음: 엄격한 단건 해제 경로/시험/PR·CI·병합 → 병합 코드 dry-run/apply → 표준 배포/OPEN/양 웹 판 확인 → 모델 정식 저장/30분 실측 → 최종 기록.
+- 로컬 Docker 조회는 `docker ps --format '{{.ID}} {{.Names}}'`가 `permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`로 실패. 권한 변경/sudo 없이 DB 시험은 기존 CI 경로를 사용한다.
+
+---
+
 # 현재 재개 상태 — 2026-10-29 (3d813382)
 
 이 절이 현재 상태이며 아래 이전 기록은 당시 이력이다.
