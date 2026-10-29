@@ -1,5 +1,12 @@
 # 남은 작업
 
+## 빈 화면 본문 규칙(shadow)·남의 사이트 8곳 — 2026-10-29, 운영 미적용(코드·단위·일회용 DB 시험만)
+
+- PR #738(규칙 5종·`judge.stubTextRules` 기본 shadow·코드 기본값 8곳)·#742(재측정 스크립트·확인 SQL). 재측정은 지시 수치와 같다(1~5 합계 1,582/260/30 · 84.5%).
+- **배포 뒤(대표)**: [절차·READ ONLY SQL ①~⑥](docs/operations/2026-10-14-backlog-catchup.md#2026-10-29-빈-화면-본문-규칙shadow과-남의-사이트-8곳--libcrawlrulests).
+  운영 `judge.thirdPartyHosts`는 저장된 21개가 코드 기본값을 덮으므로 `/admin` → 거르는 목록 → 남의 사이트 → **모두 더하기** → 저장으로 29개를 만들고 ④⑤⑥으로 확인한다.
+- 하루 shadow 관측(①②) → AI 승인과 엇갈린 50건(③) 사람 검토 → `/admin` 판정 기준 "빈 화면 본문 규칙" **적용** 저장. 운영 shadow 실측·50건 검토·enforce 전환은 아직 없다.
+
 ## second-review 교착·거짓 긴급 경보·SQLSTATE — 2026-10-29, 운영 미적용(코드·로컬 DB 시험만)
 
 - **교착(40P01)**: stale 재검수 컨트롤러가 후보 TX 안에서 `agent-evidence-refresh`(카탈로그 뒤)를 요청한 뒤 `second-review` 를 FOR SHARE 로 다시 봤고, scheduler `requestDueJobs` 는 그 반대 순서로 잠가 컨트롤러가 약 한 시간에 한 번 졌다. 수집 잡 깨움을 commit 뒤 별도 TX(fence → 카탈로그 순서)로 옮기고 회차마다 잡당 한 번만 보낸다. 이미 due 인 스캔은 다시 깨우지 않는다. 컨트롤러 TX 는 40P01 이면 한 번만 다시 한다(`crawl.second_review_controller_retry`). 이전·카탈로그 변경 없음.
