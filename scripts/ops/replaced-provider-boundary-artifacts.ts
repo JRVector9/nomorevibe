@@ -14,6 +14,7 @@ export function verifyReplacedProviderArtifacts(plan: ReplacedProviderPlan, rece
     if (original[key] !== relay[key]) fail("relay_receipt");
   const recovery = json(relay.recoveryArtifactHash);
   if (recovery.kind !== "m1-original-request-relay-recovery" || recovery.relayRequestId !== relay.requestId
+    || recovery.originalReceiptSha256 !== relay.receiptArtifactHash
     || recovery.originalRelayGeneration !== relay.relayGeneration || recovery.restored?.relayGeneration !== relay.currentGeneration
     || recovery.newRelayPid !== relay.currentPid || recovery.nativeExit?.oldPidESRCH !== true || recovery.nativeExit?.processGroupESRCH !== true
     || recovery.relayExit?.oldPidESRCH !== true || recovery.relayExit?.processGroupESRCH !== true || recovery.relayExit?.allKnownDescendantsESRCH !== true

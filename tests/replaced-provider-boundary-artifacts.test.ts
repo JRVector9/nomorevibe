@@ -12,7 +12,7 @@ function material() {
   fx.plan.originalOwner.artifactHash = put({ originalOwner });
   r.originalWireArtifactHash = put(r.originalWire);
   r.receiptArtifactHash = put(Object.fromEntries(["requestId", "requestModel", "requestHash", "relayGeneration", "startedAt", "endedAt", "state", "error"].map(k => [k, r[k as keyof typeof r]])));
-  r.recoveryArtifactHash = put({ kind: "m1-original-request-relay-recovery", relayRequestId: r.requestId, originalRelayGeneration: r.relayGeneration,
+  r.recoveryArtifactHash = put({ kind: "m1-original-request-relay-recovery", relayRequestId: r.requestId, originalReceiptSha256: r.receiptArtifactHash, originalRelayGeneration: r.relayGeneration,
     restored: { relayGeneration: r.currentGeneration }, newRelayPid: r.currentPid, nativeExit: { oldPidESRCH: true, processGroupESRCH: true },
     relayExit: { oldPidESRCH: true, processGroupESRCH: true, allKnownDescendantsESRCH: true },
     originalNativeIdentity: { pid: r.originalModelPid, startedAt: r.originalModelStartedAt }, nativeRestarted: false, completedAt: fx.receipt.observedAt });
