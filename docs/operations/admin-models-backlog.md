@@ -2,7 +2,7 @@
 
 기준: fetch 성공, origin/main a3094a73. 원래 허브 브랜치 xaegis/e1b30377의 다른 차선 변경은 보존하고 최신 main에서 전용 브랜치를 만들었다. 원본 사용자 폴더 변경 없음.
 
-## 현재 상태 (기능 PR #716 병합 후 최종 검색 모델 제약 표시)
+## 현재 상태 (PR #714·#716·#717 병합, 배포/실행 계약/화면 검증 막힘)
 
 | 항목 | 현재 결과 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 운영 primary READ ONLY SQL 확인 완료. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
 | 4 미확인·점유 | 장부 snapshot/발생·경과/그룹 점유·접수 상태 구현·로컬 시험 |
 | 5 수동 복구 | 조건 안내·실행 불가 버튼/M1 수동 작업 표시. 정식 prepare→run 실행기 연결 부재로 자동 종료·해제·재시작·native verify 미구현 |
-| 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험 |
+| 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험. #717 선택 위임 풀 재확인·충돌 거절 감사 포함 |
 | 실제 화면·배포 | Chromium/Next dev 제한으로 클릭·스크린샷 미완료. M3 Keychain exit44로 배포·운영 설정/실측 미완료 |
 
 ## 착수 시 기록
@@ -128,3 +128,11 @@
 - 연결 확인과 저장 사이 풀이 바뀌면 잠근 설정 행에서 expectedModelPoolKeys를 비교해 거절하고 실패 감사 기록을 남긴다. 성공 기록에는 실제 선택 key·모델·장비·제공자를 남긴다. 끄기는 연결 미확인이어도 계속 허용한다. 모델 화면의 위임 제목/설명도 선택 풀을 가리킨다.
 - `npx --no-install vitest run admin-models`: **9파일43시험 PASS**. 같은 범위에 기존 human-deepseek-review를 더한 **10파일73시험 PASS**. TypeScript noEmit/변경 파일 ESLint(--max-warnings 0)/PR 전체 diff check PASS. 브라우저 실행·스크린샷은 앞서 기록한 OS 권한/Next 네트워크 제한으로 미완료이며, 정적 렌더 시험을 실제 화면 확인으로 세지 않는다.
 - #717 첫 검색 표시 head2a3917d9의 CI40810209449도 전체 필수 check SUCCESS. 이후 위임 풀 보완 head의 필수 CI를 다시 요구하며, 앞선 head의 성공을 새 head의 성공으로 사용하지 않는다.
+
+## 최종 실제 영수증 — 2026-10-29 03:27 UTC
+
+- #717 최종 head **466ba59dd13beb8bf08d0513cc6c2861cef7fe8f**의 CI **40811283664** 전체 선택 검사와 `check` SUCCESS. `--match-head-commit` 정상 merge로 **907b8df3d113a270ec7d0712c95adcf9d61fc0b7**에 03:26:40Z 병합했다. `git fetch origin` 후 같은 main을 이 작업 브랜치에 fast-forward merge했다. 강제 push·관리자 우회·필수 검사 설정 변경 없음.
+- 병합 영수증: 저장 #714/main77eadd1c, 모델 풀·실측 #716/main9b316234, 검색 제약·위임 풀 활성화 보완 #717/main907b8df3. 기능은 main에 있다. 이 마지막 종료 기록은 기능 병합 뒤 현재 작업 브랜치에 문서 커밋으로 보존한다.
+- 최종 배포 직전 확인: `ssh jr@m3Ultra 'security find-generic-password -a deploy.brut.bot -s dokploy-api-key -w >/dev/null'`의 stderr는 **`security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.`**. 별도로 캡처한 실제 원격 종료는 **keychain_exit=44**. SSH wrapper exit0은 성공이 아니다. deploy scope/plan/run·운영 설정 저장·Supa+GPT OSS 배포 후 성공 검증은 실행하지 않았다.
+- 품질 실측: 완료 명령의 시험 파일 없음(exit1) → **9파일43시험 PASS**. 모델 literal 줄 수는 verify-model-config.sh와 동일 git grep 패턴/경로로 최신 main 대비 **99→99**. 화면 품질 **측정 없음**(Chromium socket EPERM/SIGABRT, Next dev registry 접근 차단), 스크린샷 없음. 정적 렌더를 브라우저 확인으로 바꾸어 기록하지 않는다.
+- 남은 일은 위 운영 완료 목록 1~7과 같다. 특히 종료 근거 없음→자동 해제 안 함은 비활성 UI/기존 정식 해제 경계 보존이며, 새로운 웹 자동 복구나 native verify-stop 재확인 구현·시험을 완료한 것이 아니다.
