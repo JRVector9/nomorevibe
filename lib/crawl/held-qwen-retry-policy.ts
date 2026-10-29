@@ -1,3 +1,5 @@
+import { readModelRegistry } from "@/lib/llm/model-registry";
+import { underlyingReviewModel } from "./review-model-identity";
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { crawlReviewAttempts, type CrawlReviewAttempt } from "@/lib/db/schema";
@@ -93,7 +95,10 @@ export const appliedHeldQwenAttemptSql = (candidate: { signals?: unknown } | nul
 export const appliedHeldQwenAttemptColumn = (signals: AnyPgColumn | SQL): SQL => sql`(${signals}->>'heldQwenAttemptId')`;
 
 /** 앞의 대괄호 덩이를 모두 뗀 모델 이름 — sameOpinionModel·review-model-identity.ts sameUnderlyingModel 의 SQL 짝 */
-export const underlyingModelSql = (name: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '[+](vision(-shot2)?|prompt-v3)$', '')`;
+export const underlyingModelSql = (name: SQL): SQL => {
+  const aliases = readModelRegistry().models.map(model => sql`WHEN ${model.key} THEN ${underlyingReviewModel(model.model)}`);
+  return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
+};
 
 /**
  * heldQwenGateFirst 의 SQL — crawl_review_attempts 행(또는 같은 열을 가진 별칭)에 건다. appliedAttemptId 는 그 후보에 적용된 시도 id 의 글자 값이다

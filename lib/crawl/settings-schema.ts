@@ -1,3 +1,4 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
@@ -346,7 +347,7 @@ export const splitTiebreakSchema = z.object({
   dailyRejectCap: z.number().int().min(0).max(500).default(SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP),
 }).strict();
 
-const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: modelForPurpose("ai2-cli").model }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 export const reviewVoterSchema = z.object({
   provider: z.enum(["claude-cli", "abcllm", "grok-cli"]),

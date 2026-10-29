@@ -1,3 +1,4 @@
+import { knownClassificationProvider } from "@/lib/operations/classification-models";
 import { Fragment } from "react";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { listJobStates } from "@/lib/jobs/runner";
@@ -261,7 +262,10 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   const ACCOUNT_FAILURES = new Set(["access_denied", "auth", "rate_limit", "no_cli"]);
   const providerName = { codex: "Codex", claude: "Claude" } as const;
   const configuredProviders = agent ? [...new Set([agent.config?.primary, agent.config?.fallback]
-    .flatMap((model) => model ? [model.model === "sonnet" ? "claude" as const : "codex" as const] : []))] : [];
+    .flatMap((model) => {
+      const provider = model ? knownClassificationProvider(model.model, agent.modelOptions) : null;
+      return provider ? [provider === "claude-cli" ? "claude" as const : "codex" as const] : [];
+    }))] : [];
   const failingProviders = configuredProviders.filter((provider) => ACCOUNT_FAILURES.has(agent?.accounts?.[provider]?.result ?? ""));
   // 옛 연결 서비스는 classifyReady 를 보내지 않는다 — 그때는 적용 전 분류를 거부하므로 configReady 가 곧 분류 가능 여부다
   const classifyReady = agent?.classifyReady ?? agent?.configReady === true;

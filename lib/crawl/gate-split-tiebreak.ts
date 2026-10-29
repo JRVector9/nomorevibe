@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, isNull, not, sql } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -59,7 +60,7 @@ export { SPLIT_QWEN_REJECT_REASON, SPLIT_TIEBREAK_MAX_FAILURES } from "./gate-sp
  * 한 번 부르는 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 이 시간과 기록 여유가 다 남을 때만 새로 부른다 — 줄인 제한 시간으로
  * 부르지 않으니 틱 끝 때문에 난 시간 초과가 서버 탈로 셈되지 않는다(틱 끝에 끊긴 호출은 멈춤 qwen_cancelled 이다)
  */
-const CALL_TIMEOUT_MS = 20_000;
+const CALL_TIMEOUT_MS = modelTimeoutMs("split-tiebreak");
 const WRITE_MARGIN_MS = 2_000;
 /**
  * 이 틱에서 판가름이 쓰는 시간 — 2차 잡 틱(108초) 안이다. 표 심사와 나란히 돌지만 표 심사가 일찍 끝나면 틱이 이만큼 길어지고,

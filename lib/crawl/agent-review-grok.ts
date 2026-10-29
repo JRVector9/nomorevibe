@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -16,7 +17,7 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
  * 호출마다 GROK_HOME 을 빈 임시 디렉터리로 두어 세션·로그가 쌓이지 않게 하고(200건에 39MB), 로그인 파일은
  * GROK_AUTH_PATH 하나만 함께 쓴다 — CLI 가 갱신한 토큰을 그 파일에 다시 쓰므로 쓸 수 있는 경로여야 한다.
  */
-export const GROK_REVIEW_TIMEOUT_MS = 90_000;
+export const GROK_REVIEW_TIMEOUT_MS = modelTimeoutMs("grok-review");
 /**
  * 추론 강도 — 기본 low, 환경변수로 바꾼다. 모델 카탈로그: minimal·low·medium·high·xhigh.
  * 50건 비교(2026-10-04, 프롬프트 2026-10-03.1): low 는 high 와 48/50 같은 판정(다른 2건은 low 가 더 엄격), 중앙값 9.6초 vs 17.2초,

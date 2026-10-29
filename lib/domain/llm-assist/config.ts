@@ -1,3 +1,4 @@
+import { modelFamily, modelLimits } from "@/lib/llm/model-registry";
 import { z } from "zod";
 import { assistWorkTaskSchema, isAuditAssistTask } from "./work";
 import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
@@ -16,9 +17,9 @@ export function assistBackendDrains(env: Readonly<Record<string, string | undefi
   return drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => lane === "audit" ? isAuditAssistTask(task) && auditEnabled : !isAuditAssistTask(task)) }))
     .filter(drain => drain.tasks.length).map(drain => {
     const contract = resolveLocalModelServingContract(drain.backendId, env);
-    if (!contract || !["qwen3.8-flash-next", "deepseek-v4.1-flash-1017"].includes(contract.modelFamily)
-      || drain.tasks.some(task => !isAuditAssistTask(task)) && contract.modelFamily !== "qwen3.8-flash-next") throw new Error("assist_qwen_or_audit_backend_required");
-    return { ...drain, contract };
+    if (!contract || ![modelFamily("assist-primary", env), modelFamily("assist-audit", env)].includes(contract.modelFamily)
+      || drain.tasks.some(task => !isAuditAssistTask(task)) && contract.modelFamily !== modelFamily("assist-primary", env)) throw new Error("assist_qwen_or_audit_backend_required");
+    return { ...drain, maxClaims: Math.min(drain.maxClaims, modelLimits(isAuditAssistTask(drain.tasks[0]) ? "assist-audit" : "assist-primary", env).concurrency), contract };
   });
 }
 

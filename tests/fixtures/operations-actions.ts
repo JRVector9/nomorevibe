@@ -1,3 +1,4 @@
+import type { ClassificationModelOption } from "@/lib/operations/classification-models";
 import type { ActionInputs, DerivedStatus } from "@/app/(operator)/admin/status/attention";
 import { humanOverview } from "./human-queue";
 
@@ -40,6 +41,7 @@ export function brokenActionInputs(): ActionInputs {
         instance("app", "m3-web", { release: "web-b" }), instance("app", "mini-web", { release: "web-a" }),
         instance("connect-agent", "m3", {
           config: { primary: { model: "gpt-5.5" }, fallback: { model: "sonnet" } },
+          modelOptions: ACTION_MODEL_OPTIONS,
           accounts: { codex: { result: "access_denied", checkedAt: ago(60).toISOString() }, claude: { result: "success" } },
           classifyReady: true, configReady: false, configVersion: 2,
         }),
@@ -118,3 +120,9 @@ export function unreadableActionInputs(): ActionInputs {
     throughput: null, models: null, attention: null, roles: null, accounts: null, apps: null, takedowns: null, modelServers: null,
   } as unknown as ActionInputs;
 }
+
+/** The historical connect observation declares its providers explicitly, independent of today's registry aliases. */
+export const ACTION_MODEL_OPTIONS: ClassificationModelOption[] = [
+  { model: "gpt-5.5", provider: "codex-cli", displayName: "Codex fixture" },
+  { model: "sonnet", provider: "claude-cli", displayName: "Claude fixture" },
+];

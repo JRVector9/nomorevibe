@@ -1,3 +1,4 @@
+import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import type { CrawlDocument } from "@/lib/db/schema";
@@ -19,8 +20,8 @@ import type { CrawlDocument } from "@/lib/db/schema";
  * 게이트웨이는 스트리밍이 기본이라 stream:false 를, 기본 어댑터가 증거를 요약해 버리므로
  * context_strategy:"raw" 를 꼭 보낸다(agent-review-gateway.ts 와 같은 이유).
  */
-export const TAGLINE_MODEL = process.env.ABCLLM_TAGLINE_MODEL?.trim() || "[MLX] qwen3.6-35b-heretic";
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+export const TAGLINE_MODEL = configuredModel("crawl-tagline");
+const BASE_URL = modelBaseUrl("crawl-tagline", process.env, "abcllm");
 
 /** 목록에서 이름 밑에 한 줄로 서는 길이 — 여기까지는 짧게 끊을 자리를 찾는다 */
 export const TAGLINE_LIMIT = 100;
@@ -163,7 +164,7 @@ export function crawlTaglineGatewayWire(evidence: TaglineEvidence, model: string
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   return JSON.stringify({
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: 400,
+    model, stream: false, temperature: 0, max_tokens: modelLimits("crawl-tagline").maxTokens,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_schema", json_schema: { name: "tagline", schema: SCHEMA } },
     messages: [
@@ -181,7 +182,7 @@ export async function writeTagline(evidence: TaglineEvidence, options: {
   await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? TAGLINE_MODEL });
   const wire = crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL);
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${BASE_URL}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: wire,
