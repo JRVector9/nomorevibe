@@ -20,7 +20,7 @@ let baseline: Record<string, unknown[]> | undefined;
 let directory = "";
 
 // CLI는 앱 DATABASE_URL·PG* 없이 전용 변수만으로 붙어야 한다. 호출 지점 model env는 route 행이 셸에 따라 바뀌지 않게 고정한다.
-const MODEL_ENV = { ABCLLM_MODEL: "pr06d-model", ABCLLM_TAGLINE_MODEL: "pr06d-tagline", ABCLLM_PROFILE_MODEL: "pr06d-profile",
+const MODEL_ENV = { PRODUCT_TRANSLATION_MODEL: "pr06d-product", ABCLLM_MODEL: "pr06d-model", ABCLLM_TAGLINE_MODEL: "pr06d-tagline", ABCLLM_PROFILE_MODEL: "pr06d-profile",
   SEARCH_VERIFY_MODEL: "pr06d-verify", INTRO_CHECK_MODEL: "pr06d-intro", CRAWL_REVIEW_MODEL: "pr06d-env-ai1" };
 const env: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$)/.test(key))),
   ...MODEL_ENV, NODE_ENV: "test", PIPELINE_CONTROL_DATABASE_URL: TEST_DATABASE_URL };
@@ -324,7 +324,7 @@ it("judges capacity open only on the (route, provider, model) combinations the s
       { routeId: "product-search-profile", provider: "abcllm", model: MODEL_ENV.ABCLLM_PROFILE_MODEL, status: "unmapped" },
       { routeId: "product-search-verify", provider: "abcllm", model: MODEL_ENV.SEARCH_VERIFY_MODEL, status: "unmapped" },
       { routeId: "reason-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "no_contract" },
-      { routeId: "product-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
+      { routeId: "product-translate", provider: "abcllm", model: MODEL_ENV.PRODUCT_TRANSLATION_MODEL, status: "unmapped" },
       { routeId: "product-tagline-ko", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
       { routeId: "search-query-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
       { routeId: "crawl-tagline", provider: "abcllm", model: MODEL_ENV.ABCLLM_TAGLINE_MODEL, status: "unmapped" },

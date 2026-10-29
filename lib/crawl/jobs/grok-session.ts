@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -17,7 +18,7 @@ import { serviceInstanceId } from "@/lib/operations/instance";
  * 그래서 심사와 무관하게 주기적으로 한 번 부른다. 결과는 `service:grok:<instance>` 관측으로 남겨 운영센터
  * 모델 카드가 Claude·Codex 처럼 "Grok 연결 확인"을 보인다. grok-cli 를 쓰는 설정이 없으면 아무것도 하지 않는다.
  */
-export const GROK_SESSION_TIMEOUT_MS = 60_000;
+export const GROK_SESSION_TIMEOUT_MS = modelTimeoutMs("grok-session");
 
 export function grokSessionArgs(model: string): string[] {
   return ["-p", "Reply with the single word OK.", "-m", model, "--effort", "low", "--output-format", "json",

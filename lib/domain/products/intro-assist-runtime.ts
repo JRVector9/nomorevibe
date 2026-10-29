@@ -1,3 +1,4 @@
+import { modelFamily } from "@/lib/llm/model-registry";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -123,7 +124,7 @@ export async function proveIntroCorrectionDomain(tx: ProductTransaction, targetV
     select r.outcome,r.capacity_request_id::text from llm_assist_results r join model_capacity_requests n on n.request_id=r.capacity_request_id
     where r.id=${value.factualResultId} and r.work_id=${target.workId} and r.work_revision=${target.workRevision}
       and r.input_hash=${assistInputHash(value.input)} and r.prompt_hash=${assistPromptHash("intro")} and not r.applied
-      and r.model_family='qwen3.8-flash-next'
+      and r.model_family=${modelFamily("assist-primary")}
       and coalesce(nullif(to_jsonb(r)->'input','null'::jsonb),${JSON.stringify(value.input)}::jsonb)=${JSON.stringify(value.input)}::jsonb
       and n.state='settled' and n.provider='local-direct' and n.terminal_evidence_hash is not null
       and n.dispatch_binding->>'kind'='local_model_direct' and n.dispatch_binding->'target'->>'kind'='assist'
@@ -145,7 +146,7 @@ export type IntroCorrectionModelPlan = { capacityInput: IntroCorrectionCapacityI
   promptVersion: typeof INTRO_CORRECTION_PROMPT_VERSION; promptHash: string; contract: LocalModelServingContract };
 export function buildIntroCorrectionModelPlan(candidate: IntroRecheckCandidate, input: AssistInput, factualResultId: string,
   factual: AssistOutcome, contract: LocalModelServingContract): IntroCorrectionModelPlan {
-  if (contract.modelFamily !== "qwen3.8-flash-next" || !contract.capabilities.jsonSchema) throw new Error("intro_correction_qwen_contract_required");
+  if (contract.modelFamily !== modelFamily("assist-primary") || !contract.capabilities.jsonSchema) throw new Error("intro_correction_qwen_contract_required");
   const capacityInput = introCorrectionCapacityInput(candidate, input, factualResultId, factual);
   const body = { model: contract.model, messages: buildIntroCorrectionMessages(candidate, input, factual), temperature: 0, stream: false,
     max_tokens: Math.min(2048, contract.maxOutputTokens), response_format: { type: "json_schema", json_schema: { name: "intro_correction",

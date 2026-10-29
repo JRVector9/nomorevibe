@@ -1,3 +1,4 @@
+import { configuredModel, modelBaseUrl, modelForPurpose } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { observedLocalModelWireHash } from "@/lib/llm/local-model-wire-observation";
 import { reviewHash, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
@@ -15,8 +16,8 @@ import { gatewayModel, reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "./ag
  *  - 정책 글 뒤의 한 줄(GATEWAY_SYSTEM_SUFFIX)을 v2 덧붙임(QWEN_V2_ADDENDUM)으로 바꿔 끼운다. 정책 글(2026-10-06.2)은 한 바이트도 그대로다.
  * 덧붙임은 표본을 보기 전에 쓴 글이라 고치면 측정이 무너진다 — 바꾸려면 새 판(QWEN_V2_PROMPT_VERSION)으로 다시 재고 올린다.
  */
-export const QWEN_DIRECT_DEFAULT_URL = "http://100.77.43.63:8090/v1";
-export const QWEN_DIRECT_DEFAULT_MODEL = "qwen3.8-flash-next";
+export const QWEN_DIRECT_DEFAULT_URL = modelBaseUrl("direct-review", {}, "local-direct");
+export const QWEN_DIRECT_DEFAULT_MODEL = modelForPurpose("direct-review", {}).model;
 /** 덧붙임의 판 — 의견 행에 함께 적어, 판이 바뀌면 다시 묻는다 */
 export const QWEN_V2_PROMPT_VERSION = "2026-10-21.v2";
 /** 자동 의견의 출처(product_audit_second_opinions.source) — grok 일괄(grok-cli-batch)과 가른다 */
@@ -78,12 +79,12 @@ export type QwenDirectConfig = { baseUrl: string; model: string; apiKey: string 
  * 고칠 수 없는 값이면 null — 부르는 쪽은 qwen_not_configured 로 받는다
  */
 export function qwenDirectConfig(env: Readonly<Record<string, string | undefined>> = process.env): QwenDirectConfig | null {
-  const raw = env.AUDIT_SECOND_OPINION_URL?.trim() || QWEN_DIRECT_DEFAULT_URL;
-  const model = gatewayModel(env.AUDIT_SECOND_OPINION_MODEL?.trim() || QWEN_DIRECT_DEFAULT_MODEL);
-  let url: URL;
-  try { url = new URL(raw); } catch { return null; }
-  if (!model || (url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password || url.search || url.hash) return null;
-  return { baseUrl: raw.replace(/\/+$/, ""), model, apiKey: env.AUDIT_SECOND_OPINION_API_KEY?.trim() || null };
+  try {
+    const raw = modelBaseUrl("direct-review", env, "local-direct");
+    const model = gatewayModel(configuredModel("direct-review", env));
+    if (!model) return null;
+    return { baseUrl: raw, model, apiKey: env.AUDIT_SECOND_OPINION_API_KEY?.trim() || null };
+  } catch { return null; }
 }
 
 /**

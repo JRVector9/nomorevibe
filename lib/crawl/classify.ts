@@ -1,3 +1,5 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
+import { classificationModelProvider } from "@/lib/operations/classification-models";
 import { spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -69,9 +71,9 @@ export type ClassifierModel = {
 
 export const MODELS: readonly ClassifierModel[] = [
   // Fast path. Spark is currently available through a ChatGPT/Codex access token.
-  { model: "gpt-5.3-codex-spark", effort: "xhigh", timeoutMs: 8_000 },
+  { model: modelForPurpose("classify-primary").model, effort: modelForPurpose("classify-primary").provider === "claude-cli" ? "high" : "xhigh", timeoutMs: modelForPurpose("classify-primary").timeoutMs },
   // Stable API-key path when Spark is unavailable, queued, or rate limited.
-  { model: "gpt-5.6-terra", effort: "high", timeoutMs: 12_000 },
+  { model: modelForPurpose("classify-fallback").model, effort: "high", timeoutMs: modelForPurpose("classify-fallback").timeoutMs },
 ];
 
 /**
@@ -265,7 +267,7 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun, models: reado
         logger.info("crawl.classify_disabled", { reason: "no_cli" });
         warnedMissing = true;
       }
-      if (!models.some(m => (m.model === "sonnet") !== (config.model === "sonnet"))) break;
+      if (!models.some(m => classificationModelProvider(m.model) !== classificationModelProvider(config.model))) break;
       continue;
     }
     const parsed = parseCategories(result, inputs.length);
@@ -273,7 +275,7 @@ async function classifyBatch(inputs: ClassifyInput[], run: CliRun, models: reado
       onAttempt?.(config.model, "success");
       parsed.forEach((item, index) => logger.info("crawl.classified", {
         repo: inputs[index].repo,
-        provider: config.model === "sonnet" ? "claude-cli" : "codex-cli",
+        provider: classificationModelProvider(config.model),
         model: config.model,
         category: item.category,
         reason: item.reason.slice(0, 200),

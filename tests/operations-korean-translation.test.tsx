@@ -1,3 +1,4 @@
+import { KOREAN_TRANSLATION_QWEN_MODEL, KOREAN_TRANSLATION_QWEN_SERVER } from "@/lib/crawl/korean-translation-config";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -130,7 +131,7 @@ it("shows both configured Korean translation backends and the expanded request b
     }));
     expect(html).toContain("3,600");
     expect(html).toContain("2,250~5,400");
-    expect(html).toContain("gpu3090 Qwen 직접 연결");
+    expect(html).toContain(`${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결`);
     expect(html).toContain("Qwen 제한 재검토 2건");
   } finally { vi.unstubAllEnvs(); }
 });

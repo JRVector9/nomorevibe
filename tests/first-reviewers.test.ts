@@ -1,5 +1,6 @@
+import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { expect, it } from "vitest";
-import { firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition } from "@/lib/crawl/first-reviewers";
+import { firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition, firstReviewCandidates } from "@/lib/crawl/first-reviewers";
 import { crawlSettingsSchema, DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { secondReviewPolicyHash } from "@/lib/crawl/second-review-ownership";
@@ -91,4 +92,14 @@ it("does not move retries from removed or unreadable models to an available pool
   expect(selectFirstReviewer([primary], 2, [extra], [], avoid)).toBeNull();
   expect(selectFirstReviewer([primary, extra], 2, [{ provider: null, model: null }], [], avoid)).toBeNull();
   expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, model: "removed" }, primary], [], avoid)).toBeNull();
+});
+
+it("configures candidate suggestions while preserving the stored pool and all retry assignment rules", () => {
+  const defaults = firstReviewCandidates({});
+  expect(defaults.map(row => row.model)).toEqual(["[supa] Qwen3.8-27B-NVFP4", "[MLX] gpt-oss-120b", "sonnet", "opus", "grok-4.7"]);
+  const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
+    candidates: { "first-review": ["connect:opus"] } }) };
+  expect(firstReviewCandidates(env)).toEqual([{ provider: "claude-cli", model: "opus" }]);
+  expect(firstReviewers(expanded)).toEqual([primary, extra]);
+  expect(selectFirstReviewer([primary, extra], 1, [extra])).toEqual(extra);
 });

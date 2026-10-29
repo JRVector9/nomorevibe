@@ -1,3 +1,4 @@
+import { configuredModel } from "@/lib/llm/model-registry";
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -178,7 +179,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
           </span>
         </div>
         <div className="r">
-          <Suspense fallback={<ReasonLanguageToggle done={null} total={null} />}>
+          <Suspense fallback={<ReasonLanguageToggle model={configuredModel("reason-translate")} done={null} total={null} />}>
             <TranslationToggleSlot progress={translation} />
           </Suspense>
           {/* 2차 표·운영 모드는 읽기만 — 바꾸는 폼은 설정 화면 한 곳에 있다(ADM-24) */}
@@ -281,7 +282,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
 /** 번역 진행이 오면 수를 붙인다 — 못 세면 수 없이 단추만 */
 async function TranslationToggleSlot({ progress }: { progress: Promise<{ done: number; total: number } | null> }) {
   const value = await progress;
-  return <ReasonLanguageToggle done={value?.done ?? null} total={value?.total ?? null} />;
+  return <ReasonLanguageToggle model={configuredModel("reason-translate")} done={value?.done ?? null} total={value?.total ?? null} />;
 }
 
 /** 거르기 한 줄 — 이름 칸과 값 칸. rq-filters 격자의 두 칸에 그대로 선다(좁은 화면에서는 이름이 위로) */
