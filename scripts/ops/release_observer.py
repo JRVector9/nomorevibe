@@ -296,7 +296,7 @@ def _load_runtime():
 def _read_only_sample(snapshot, target, repo):
     runtime = _load_runtime()
     shared = runtime.shared
-    key = shared.run(['security', 'find-generic-password', '-a', 'deploy.brut.bot', '-s', 'dokploy-api-key', '-w'])
+    key = shared.dokploy_api_key()
     client = shared.Dokploy(key)
     observed = runtime.verify_fleet(client, snapshot, target, selected=[], receipts={}, repo=repo)
     gate = shared.monitor_gate(client, 'crawler', roles=ROLES, strict=())
