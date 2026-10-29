@@ -29,6 +29,12 @@ describe("checkKoreanTaglineOutput — 통과할 수 있는 출력은 정리해�
     expect(checkKoreanTaglineOutput(output, source)).toEqual({ ok: true, line: core, cleaned: "parenthetical" });
   });
 
+  it("keeps a mid-line parenthetical qualifier — only a trailing aside is dropped", () => {
+    const beta = { name: "Toolkit", tagline: "Toolkit (beta) helps teams organize documents and share notes across projects" };
+    const output = long(`Toolkit(베타)으로 팀 문서를 정리하고 프로젝트 사이에 메모를 공유하며 팀원 누구나 문서를 바로 찾고 함께 고치며 나누도록 돕는 문서 정리 도구`);
+    expect(checkKoreanTaglineOutput(output, beta)).toEqual({ ok: false, reason: "too_long" });
+  });
+
   it("keeps only the leading complete sentences when a second sentence overflows", () => {
     const output = long(`${core}입니다. 팀원 누구나 프로젝트 사이의 메모와 문서를 한곳에서 빠르게 찾고 함께 고치며 정리하도록 돕습니다.`);
     expect(checkKoreanTaglineOutput(output, source)).toEqual({ ok: true, line: `${core}입니다`, cleaned: "first_sentences" });

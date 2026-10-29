@@ -242,7 +242,8 @@ function restoreNameSpelling(line: string, name: string): string | null {
 /** 길이를 줄이는 정리 — 뜻을 더하지 않고 뒤쪽 부연만 뗀다. 어느 것이든 아래에서 검사를 처음부터 다시 받는다 */
 function shortenings(line: string): [KoreanTaglineCleanup, string][] {
   const out: [KoreanTaglineCleanup, string][] = [];
-  const withoutParens = line.replace(/\s*[(（][^()（）]*[)）]/g, "").replace(/\s+/g, " ").trim();
+  // 줄 끝의 괄호 부연만 뗀다 — 가운데 괄호("(베타)"·"(Wireshark)")는 조건·이름일 수 있어 그대로 둔다
+  const withoutParens = line.replace(/(?:\s*[(（][^()（）]*[)）])+\s*$/, "").trim();
   if (withoutParens !== line) out.push(["parenthetical", withoutParens]);
   for (const text of [line, withoutParens]) {
     // 여러 문장이면 앞 문장부터 한도까지 — 완결된 문장만 남긴다
