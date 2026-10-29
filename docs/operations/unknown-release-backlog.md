@@ -39,9 +39,12 @@
 - 시험: 지정 7파일 40 → 49, 관련 18파일 175 → 184, 통합 4파일/17 PASS(새 파일 2건 포함, 고치기 전 1/2 실패), tsc·ESLint 0.
 - 범위 밖이라 고치지 않은 같은 전제: `docs/operations/2026-10-17-pipeline-control-runbook.md:9`, `docs/runbooks/uptime-gate-transition.md:31`, `docs/runbooks/uptime-split.md:66`은 「maintenance 컨테이너에서 `node --import tsx scripts/ops/…`」를 실행 위치로 적는다. 운영 이미지에서는 같은 이유로 실패한다. 다른 구역 문서라 여기서는 기록만 한다.
 
+- H4 PR #730(위 H1~H3과 `xaegis/da3bd4a3` 계열 전체)이 필수 CI(typecheck·lint·unit 2·integration 6·integration-ledger·build·이미지 시험 2·check)를 모두 통과했다. 일반 병합으로 main `1f52c9efea0bfab555567c17889cf919f41938be`가 됐다. 이 값이 확정본 `REL`이자 배포 `TARGET`이다.
+- H5 대표용 [0143 전 사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 썼다. 내용은 C1~C7과 확정본 2단계 a~e, 스테이징 포함 명령, `blockedNow`·`non_serving` 읽는 법이다. `REL` 기준 해시와 스테이징 tar `75f388d4…`를 실제로 계산해 넣었다. 확정본 표 3·실행서 표 0·C1·B절 `REL`도 이 SHA로 바꿨다.
+
 ## 남음 (대표 실행)
 - 확정본 1~20단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치 → OPEN → job-resume → verify-prod-revision.
-- 권장: 이 브랜치를 PR로 main에 병합해 배포 `TARGET`에 넣는다(관리 화면 handoff 표시). 넣지 않아도 안전에는 영향이 없다.
+- 0143 전: [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다(`blockedNow`·`non_serving` 기록). 배포 `TARGET`은 `1f52c9ef…`이다. 그 main `check`와 이미지 publish가 끝났는지 배포 전에 `deployment-fast-path.md`대로 확인한다.
 - 해제 뒤 30분 동안 모델별 성공·AI1/AI2·새 미확인 0을 실측한다(실제 영수증으로만 기록).
 
 ## 막힘·위험
