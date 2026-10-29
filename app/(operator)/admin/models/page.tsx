@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
-import { configuredHumanModelsReady } from "@/lib/operations/admin-models-human";
+import { configuredHumanModelsReady, humanReviewModelDisplay } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
@@ -96,5 +96,5 @@ async function SearchModelsSlot() {
 
 async function HumanSlot({ enabled, generation, keys }: { enabled: boolean; generation: number; keys: string[] }) {
   return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await configuredHumanModelsReady(keys)}
-    modelLabel="선택 모델" modelLocation="사람 위임 검수 풀 · 비어 있으면 배포 기본 모델" />;
+    {...humanReviewModelDisplay(keys)} />;
 }
